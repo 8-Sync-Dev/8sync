@@ -5,6 +5,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 ### Added
+- **`8sync codex-web [up|status|wire|off]` — bridge ChatGPT Web (incl. Pro) into omp CLI.**
+  Opens the [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web) launcher so YOU
+  log into ChatGPT (never logs in for you), polls the local loopback Responses server on `:17841`,
+  auto-detects `/v1/models`, and wires an **isolated** `chatgpt-web` provider (`api: openai-responses`)
+  into `~/.omp/agent/models.yml` — never touching native `anthropic`/`openai`, no global env var, no
+  secret copied. `up` = launch + wait-for-login + auto-wire; bare/`status` = probe + auto-wire if ready;
+  `wire` = force re-detect; `off` = remove the provider. Source dir auto-detected under
+  `<home>/Projects/tools/codex-chatgpt-web` (or `--dir`/`CODEX_WEB_DIR`). Loopback-only; ChatGPT web
+  automation carries the upstream project's inherent account risk.
 - **`8sync gen-img <prompt> [-o file.png]` — AI Image Generation via `gpt-image-2`.**
   Generates logos, icons, diagrams, UI mockups, and illustrations via `gpt-image-2`
   (OpenAI Images API via `https://api.apikey.fun/v1/images/generations`). Resolves API key

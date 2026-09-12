@@ -120,6 +120,10 @@ enum Cmd {
     /// Generate an image from a prompt via AI (gpt-image-2)
     #[command(name = "gen-img")]
     GenImg(verbs::gen_img::Args),
+
+    /// Bridge ChatGPT Web into omp: open login, auto-check, wire an isolated provider
+    #[command(name = "codex-web")]
+    CodexWeb(verbs::codex_web::Args),
     /// Show overview cheatsheet (alias of `8sync` with no args)
     Help,
 
@@ -189,6 +193,7 @@ fn main() -> Result<()> {
         Some(Cmd::PdfImg(a))  => verbs::pdf_img::run(a),
         Some(Cmd::Locate(a))  => verbs::locate::run(a),
         Some(Cmd::GenImg(a))  => verbs::gen_img::run(a),
+        Some(Cmd::CodexWeb(a)) => verbs::codex_web::run(a),
         Some(Cmd::Help)       => { verbs::root::print_cheatsheet(); Ok(()) }
         Some(Cmd::Flow)       => verbs::flow::run(),
         Some(Cmd::Find(a))    => verbs::find::run(a),

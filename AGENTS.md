@@ -407,6 +407,7 @@ Không tự nói chuyện USB: đi qua IPC của `lian-li-linux` daemon (`$XDG_R
 | `8sync gen-img <prompt>` | Tạo ảnh AI từ prompt qua `gpt-image-2` (`-o <file.png>`, `--size 1024x1024`) |
 | `8sync diff-img [ref]` | Git diff → PNG |
 | `8sync pdf-img <file>` | PDF page → PNG |
+| `8sync codex-web [up\|status\|wire\|off]` | Cầu nối ChatGPT Web (kể cả Pro) vào omp: mở launcher [miuuyy/codex-chatgpt-web] cho bạn login, poll server loopback `:17841`, auto-detect `/v1/models` rồi wire provider **cô lập** `chatgpt-web` (`api: openai-responses`) vào `models.yml` — KHÔNG đụng anthropic/openai native, không set env toàn cục. `up`=mở+đợi login+auto-wire; bare/`status`=probe+wire nếu sẵn sàng; `wire`=detect lại; `off`=gỡ. Dir auto `<home>/Projects/tools/codex-chatgpt-web` (hoặc `--dir`/`CODEX_WEB_DIR`). Loopback-only; automation ChatGPT có rủi ro ban account (bản chất upstream) |
 
 ---
 
@@ -503,7 +504,7 @@ Repo chưa theo spec (không có `SKILL.md`)? 8sync fallback: phát hiện `CLAU
 - **Idempotent install**: mọi thao tác cài đặt trong `setup.rs`/`pkg.rs` phải an toàn khi chạy lần 2.
 - **Default KHÔNG ĐÈ (invariant cho mọi verb)**: file user-owned (`su-code/*.md`, `CHANGELOG.md`, `su-code/skills/`, `AGENTS.md` ngoài sentinel, hooks, config key user đã set) → chỉ seed-if-missing hoặc update trong sentinel-block; đè thật CHỈ qua flag rõ ràng (`--force`). File managed (bundled `~/.omp/skills`, `00-force-load.md`, `APPEND_SYSTEM.md`, extensions) → refresh byte-compare khi binary update; user custom thì sửa bản project.
 - **Smart-parse args**: 1 verb nhận nhiều dạng input (vd `8sync ai "..."` = prompt · `8sync ai --model glm "..."` = model override · `8sync find -f x` = filename mode · `8sync harness compaction 50` = set). Tránh subcommand sâu.
-- **Verb count target**: giữ ≤ 30 verb flat (hiện 27 gồm cả `help`/`flow`; look&feel delegate cho HyDE, kitty glass deploy qua `setup`).
+- **Verb count target**: giữ ≤ 30 verb flat (hiện 29 gồm cả `help`/`flow`; look&feel delegate cho HyDE, kitty glass deploy qua `setup`).
 - **Binary size — ceiling 5 180 KiB / 5 304 320 B (ENFORCED), goal 4 MiB**: `scripts/size-gate.sh` chạy trong `release.yml` cho MỌI asset → build **FAIL** nếu vượt `5 304 320 B`; vượt goal `4 194 304 B` chỉ warn. Ceiling đặt TRÊN size hiện tại có chủ ý — gate đỏ sẵn thì ai cũng phớt lờ; hạ dần mỗi khi có headroom (ratchet). Nâng ceiling CHỈ sau khi attribute bằng `bash scripts/size-report.sh` (lần gần nhất 2026-08-21: `web` gate +1 732 232 B là voi; v0.56+v0.57 tăng 160 KB feature thật ăn hết headroom). Hiện tại (CI musl, v0.58.0): **linux-x86_64 5 259 280 B** (+25.39% so goal) · **minimal (`--no-default-features`) 3 475 288 B** (gnu local, −17.14%) · số cũ trong CHANGELOG-ARCHIVE chỉ mang tính lịch sử. Mỗi build 1 `--target-dir` riêng + `--target` tường minh. Số của `cargo bloat` CHỈ để xếp hạng nghi phạm — nó hụt SQLite ~26× (xem `su-code/KNOWLEDGE.md`).
 - **Help format**: mọi verb có `-h`/`--help` với `EXAMPLES` block (xem `setup.rs:7-15`).
 
