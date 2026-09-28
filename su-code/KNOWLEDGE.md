@@ -261,3 +261,24 @@ _(consolidated 19 dòng cũ → su-code/archive/KNOWLEDGE-1787286513.md)_
 - **validated: `8sync gen-img <prompt> -o <file.png>` CLI verb and `image-gen` skill deployed machine-wide.**
   Allows any project or agent to generate images without python/pip dependencies. VLM models (GLM-5.3-Flash,
   Opus) can immediately verify the result in-session with `read path: "<output.png>"`.
+
+## codex-web bridge: DEV harness vs PRODUCTION launcher (2026-09-13)
+- **failure: the source launcher (`bun run app`) builds a DEV harness that can NEVER serve omp.**
+  Running codex-chatgpt-web from source creates an isolated dev profile at `~/.codex-chatgpt-web-dev/`
+  with `config.json` `purpose: "dev-harness"`, connector name `Codex Native2 DEV`, and a "DEV" badge in
+  the launcher UI. `src/server.ts:775` hard-blocks it: *"DEV harness configuration cannot start a
+  Responses listener"* — so `:17841` never comes up and omp sees no `chatgpt-web` provider, no matter how
+  fully you complete login + MCP tunnel + connector. `src/setup.ts:411` likewise refuses to install a DEV
+  config into Codex. The dev flow uses the internal `dev-chat` transport, not real browser automation.
+- **validated: real omp use requires the installed PRODUCTION app.**
+  Install via `irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex`
+  (Windows) → runs as `%LOCALAPPDATA%\Programs\Codex Web GPT\Codex Web GPT.exe`, uses home
+  `~/.codex-chatgpt-web/` (no `-dev`), `purpose` unset, connector `Codex Native2`. Its supervisor starts
+  the daemon that serves the loopback Responses API on `:17841`. Only then does `8sync codex-web wire`
+  detect `/v1/models` and register the isolated `chatgpt-web` provider into omp.
+- **validated: `8sync codex-web up` must launch the prod app, not `bun run app`.**
+  Fixed `codex_web.rs`: `up` now calls `resolve_prod_app()` (per-OS packaged app) and only uses the source
+  `bun run app` launcher when `--dir`/`CODEX_WEB_DIR` is set explicitly (tool-dev). Distinguish the two
+  launchers by process name (`Codex Web GPT.exe` = prod) vs command line (`codex-chatgpt-web` = dev source),
+  and by the `.codex-chatgpt-web` vs `.codex-chatgpt-web-dev` home dir. `git-bash` mangles
+  `taskkill //PID //T //F`; use PowerShell `Stop-Process -Id -Force` filtered on `Win32_Process.CommandLine`.

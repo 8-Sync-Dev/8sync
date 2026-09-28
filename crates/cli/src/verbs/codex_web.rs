@@ -49,9 +49,10 @@ SAFETY
   Browser automation of ChatGPT can risk your account per the upstream project — that
   risk is inherent, not added by this command.
 
-SOURCE DIR
-  Defaults to a vendored checkout at <home>/Projects/tools/codex-chatgpt-web (and the
-  C:/Users/Projects/tools sibling on this box). Override with --dir or CODEX_WEB_DIR.
+LAUNCHER
+  `up` launches the installed production Codex Web GPT app (the only build that serves
+  omp). Not installed? It prints the one-line installer. `--dir` / CODEX_WEB_DIR opt into
+  the source `bun run app` launcher — a DEV harness that CANNOT serve omp; tool-dev only.
 "})]
 pub struct Args {
     /// up | login | open | status | wire | off  (default: status)
@@ -61,7 +62,7 @@ pub struct Args {
     #[arg(long, default_value_t = DEFAULT_PORT)]
     pub port: u16,
 
-    /// codex-chatgpt-web source dir (has package.json). Overrides auto-detect.
+    /// Source dir for the `bun run app` DEV launcher (tool-dev only; cannot serve omp).
     #[arg(long)]
     pub dir: Option<String>,
 
@@ -123,8 +124,10 @@ fn extract_model_ids(json: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Resolve the codex-chatgpt-web source dir (must contain package.json).
-fn resolve_dir(explicit: Option<&str>) -> Option<PathBuf> {
+/// Resolve an EXPLICIT codex-chatgpt-web source dir (`--dir` or `CODEX_WEB_DIR`).
+/// Returns `None` unless the user opted in — the default `up` path launches the
+/// installed production app, never the source tree (which builds a DEV harness).
+fn resolve_explicit_source(explicit: Option<&str>) -> Option<PathBuf> {
     let has_pkg = |p: &PathBuf| p.join("package.json").is_file();
     if let Some(d) = explicit {
         let p = PathBuf::from(d);
@@ -138,15 +141,30 @@ fn resolve_dir(explicit: Option<&str>) -> Option<PathBuf> {
             return Some(p);
         }
     }
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(home) = dirs::home_dir() {
-        candidates.push(home.join("Projects/tools/codex-chatgpt-web"));
-        // This box lays out projects under C:/Users/Projects (sibling of the home dir).
-        if let Some(parent) = home.parent() {
-            candidates.push(parent.join("Projects/tools/codex-chatgpt-web"));
+    None
+}
+
+/// Locate the installed **production** launcher (packaged app) per-OS and return a
+/// spawnable command. Only this build serves a Responses listener for omp; the source
+/// `bun run app` launcher is a DEV harness that is hard-blocked from serving.
+fn resolve_prod_app() -> Option<Command> {
+    #[cfg(target_os = "windows")]
+    if let Some(local) = dirs::data_local_dir() {
+        let exe = local
+            .join("Programs")
+            .join("Codex Web GPT")
+            .join("Codex Web GPT.exe");
+        if exe.is_file() {
+            return Some(Command::new(exe));
         }
     }
-    candidates.into_iter().find(has_pkg)
+    #[cfg(target_os = "macos")]
+    if PathBuf::from("/Applications/Codex Web GPT.app").exists() {
+        let mut c = Command::new("open");
+        c.args(["-a", "Codex Web GPT"]);
+        return Some(c);
+    }
+    None
 }
 
 /// Build the isolated omp provider block for the detected model ids.
@@ -255,16 +273,34 @@ fn unwire_omp() -> Result<()> {
     Ok(())
 }
 
-/// Spawn the launcher (`bun run app`) so the user can log into ChatGPT.
-fn launch(dir: &PathBuf) -> Result<()> {
-    ui::step(&format!("launching codex-chatgpt-web launcher from {}", dir.display()));
-    Command::new("bun")
-        .args(["run", "app"])
-        .current_dir(dir)
-        .spawn()
-        .context("failed to spawn `bun run app` — is bun on PATH? (need >= 1.4.0)")?;
-    ui::info("a launcher window is opening — sign into ChatGPT there (browser-only mode is safest)");
-    Ok(())
+/// Launch the ChatGPT launcher so the user can sign in.
+/// Default: the installed **production** app (the only build that serves omp). An explicit
+/// source dir opts into `bun run app`, a DEV harness that cannot serve a Responses listener.
+fn launch(explicit_source: Option<&PathBuf>) -> Result<()> {
+    if let Some(dir) = explicit_source {
+        ui::step(&format!("launching source dev launcher from {}", dir.display()));
+        ui::warn("source `bun run app` is a DEV harness — it cannot serve a Responses listener for omp");
+        Command::new("bun")
+            .args(["run", "app"])
+            .current_dir(dir)
+            .spawn()
+            .context("failed to spawn `bun run app` — is bun on PATH? (need >= 1.4.0)")?;
+        ui::info("sign into ChatGPT in the launcher window");
+        return Ok(());
+    }
+    if let Some(mut cmd) = resolve_prod_app() {
+        ui::step("launching installed Codex Web GPT (production launcher)");
+        cmd.spawn().context("failed to launch the installed Codex Web GPT app")?;
+        ui::info("sign into ChatGPT, run the Browser smoke test, then press Install models (browser-only is safest)");
+        return Ok(());
+    }
+    bail!(
+        "Codex Web GPT production launcher is not installed.\n\
+         Install it, then rerun `8sync codex-web up`:\n\
+         \u{20}\u{20}Windows:     irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex\n\
+         \u{20}\u{20}macOS/Linux: curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh\n\
+         (the `bun run app` source launcher is a DEV harness that cannot serve omp — pass --dir only for tool development)"
+    )
 }
 
 /// Poll until the server reports a ready model catalog, or the deadline passes.
@@ -324,10 +360,8 @@ pub fn run(a: Args) -> Result<()> {
                 print_usage_hint(&ids);
                 return Ok(());
             }
-            let dir = resolve_dir(a.dir.as_deref()).context(
-                "codex-chatgpt-web source not found — clone/vendor it and pass --dir or set CODEX_WEB_DIR",
-            )?;
-            launch(&dir)?;
+            let explicit_source = resolve_explicit_source(a.dir.as_deref());
+            launch(explicit_source.as_ref())?;
             ui::step(&format!("waiting up to {}s for login + server on :{port}…", a.wait));
             match wait_ready(port, a.wait) {
                 Some(ids) => {
