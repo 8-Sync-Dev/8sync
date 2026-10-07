@@ -33,6 +33,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   tracked in `~/.config/8sync/feynman-sessions/<project-key>/index.json`. Supports `ls` (list project sessions with last active
   time), `rm <name>` (clean up session and directory), and `new <name>`. Automatically bridges omp credentials on first launch.
 ### Fixed
+- **Session resume no longer clobbers active model with GLM:** `cfg.resume_flags()` previously emitted
+  `--model <roles.default>`, which defaulted to `"glm"`. Whenever a user resumed a session with `8sync .`,
+  `8sync . <name>`, or `8sync ai continue`, omp was invoked with `--model glm --continue`, forcibly overriding
+  the session's active model (e.g. Claude Opus or Gemini Flash) to GLM. `resume_flags()` now omits `--model`,
+  preserving the session's active model across resumes.
+
+### Fixed
 - **`8sync feynman auth-omp` on Windows without sqlite3 CLI:** Replaced rigid `which("sqlite3")` with a multi-runner fallback chain (`sqlite3` CLI → `python`/`python3`/`py` stdlib `sqlite3` → `bun:sqlite` → `node:sqlite`), resolved `omp` binary path to avoid Windows PATHEXT search traps, unwrapped JSON token envelopes (e.g. `google-antigravity`), and mapped `google-antigravity` to `google`.
 
 

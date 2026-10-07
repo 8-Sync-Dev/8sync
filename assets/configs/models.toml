@@ -37,11 +37,10 @@ advisor = true
 step0 = true
 
 [roles]
-default = "glm"     # main working model — code/edit/read/delete (mechanical) → GLM
+default = ""        # main working model ("" = let omp decide via ~/.omp/agent/config.yml)
 plan    = "opus"    # architectural planning → Opus (deep thinking)
 smol    = "glm"     # cheap/fast: titles + memory (mechanical) → GLM
 slow    = "opus"    # deep reasoning / hard bugs → Opus
-
 [tasks]
 # Prompt class → model. Classes detected heuristically: plan | review | debug | code | trivial
 plan    = "opus"    # planning            → thinking → Opus

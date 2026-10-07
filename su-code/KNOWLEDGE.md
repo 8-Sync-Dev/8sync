@@ -248,3 +248,13 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
   Upstream pi packages renamed from `@mariozechner/*` to `@earendil-works/*`. Linking `@mariozechner/*`
   to `~/.feynman/npm-global/node_modules/@earendil-works/*` resolved module resolution for `pi-subagents`,
   `pi-web-access`, and `@aliou/pi-processes`.
+
+## session resume model persistence vs forced GLM default (2026-10-07)
+- **failure: resuming an omp session (`8sync .`, `8sync . <name>`, `8sync ai continue`) switched model to GLM.**
+  `resume_flags()` in `crates/cli/src/models.rs` emitted `--model <roles.default>`, which defaulted to `"glm"`
+  in `assets/configs/models.toml`. Passing `--model glm` alongside `--continue` forced `omp` to override whatever
+  model was saved in that session (e.g. Gemini 3.8 Flash, Claude Opus) to GLM on every resume.
+- **validated: omit `--model` in `resume_flags()` to preserve active session model.**
+  When continuing/resuming an existing session in `omp`, omitting `--model` allows `omp` to load and maintain the
+  exact model saved in the session transcript. `--model` is now only passed when explicitly requested by the user
+  (e.g. `8sync ai --model <m> continue`), and `[roles].default` in `models.toml` defaults to `""` (omp decides).

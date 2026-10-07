@@ -293,11 +293,15 @@ impl ModelConfig {
         out
     }
 
-    /// Role flags (+ default `--model`) for resume/continue, where there is no
-    /// new prompt to classify.
+    /// Role flags for resume/continue.
+    ///
+    /// Does NOT emit `--model`: resuming or continuing an existing session in
+    /// omp must preserve whatever model was active in that session (or omp's
+    /// configured default). Emitting `--model <roles.default>` on resume forcibly
+    /// switched the conversation model to `roles.default` (which defaults to "glm")
+    /// every time the user ran `8sync .` or `8sync ai continue`.
     pub fn resume_flags(&self) -> Vec<String> {
         let mut out = Vec::new();
-        push_flag(&mut out, "--model", &self.roles.default);
         self.push_role_flags(&mut out);
         // Interactive dev session (`8sync .` / resume): advisor on.
         if self.advisor {
@@ -423,6 +427,17 @@ mod tests {
             let i = flags.iter().position(|f| f == "--config").expect("overlay passed");
             assert!(flags[i + 1].ends_with("omp-step0.yml"), "{flags:?}");
         }
+    }
+
+    #[test]
+    fn resume_flags_never_emits_model_flag() {
+        let mut cfg = ModelConfig::default();
+        cfg.roles.default = "glm".to_string();
+        let flags = cfg.resume_flags();
+        assert!(
+            !flags.iter().any(|f| f == "--model"),
+            "resume_flags must never emit --model so existing sessions preserve their model: {flags:?}"
+        );
     }
 
     /// Test-private overlay path: these cases WRITE, and the real one is shared

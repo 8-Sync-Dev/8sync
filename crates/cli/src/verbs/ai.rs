@@ -64,6 +64,9 @@ pub fn run(a: Args) -> Result<()> {
     cmd.current_dir(&root).arg("--cwd").arg(&root);
     let status = if trimmed.is_empty() || trimmed == "continue" || trimmed == "resume" {
         ui::info("omp — continue previous session");
+        if let Some(m) = a.model.as_deref() {
+            cmd.arg("--model").arg(m);
+        }
         cmd.args(cfg.resume_flags()).arg("--continue").status()?
     } else {
         let flags = cfg.omp_flags(trimmed, a.model.as_deref());
