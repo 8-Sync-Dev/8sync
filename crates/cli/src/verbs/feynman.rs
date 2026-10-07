@@ -67,9 +67,8 @@ pub fn run(a: Args) -> Result<()> {
 fn auth_omp(home: &Path, agent_dir: &Path) -> Result<()> {
     ui::header("8sync feynman auth-omp");
 
-    if which::which("omp").is_err() {
-        return Err(anyhow!("omp not found on PATH - run `8sync setup` first"));
-    }
+    let omp_bin = which::which("omp")
+        .map_err(|_| anyhow!("omp not found on PATH - run `8sync setup` first"))?;
     let db = home.join(".omp/agent/agent.db");
     if !db.exists() {
         return Err(anyhow!(
@@ -102,7 +101,7 @@ fn auth_omp(home: &Path, agent_dir: &Path) -> Result<()> {
         let entry = if ctype == "oauth" {
             // Live access token from omp (omp refreshes as needed). No refresh token
             // copied -> Feynman uses it read-only and never rotates omp's OAuth.
-            let access = omp_token(provider);
+            let access = omp_token(&omp_bin, provider);
             if access.is_empty() {
                 ui::skip(&key, "omp returned no token");
                 continue;
@@ -187,19 +186,69 @@ fn off(agent_dir: &Path) -> Result<()> {
 }
 
 /// Read omp's active credentials as (provider, credential_type). Reads ONLY the
-/// stable metadata columns via the `sqlite3` CLI — never the secret `data` blob.
+/// stable metadata columns — never the secret `data` blob.
+/// Tries multiple sqlite runners for cross-platform resilience:
+/// 1. `sqlite3` CLI (standard on Linux/macOS)
+/// 2. `python3` / `python` / `py` (standard library `sqlite3` module)
+/// 3. `bun` (built-in `bun:sqlite` module)
+/// 4. `node` (built-in `node:sqlite` in Node 22+)
 fn omp_active_credentials(db: &Path) -> Result<Vec<(String, String)>> {
-    let sqlite = which::which("sqlite3")
-        .map_err(|_| anyhow!("sqlite3 not found - install it (`pacman -S sqlite`) to read omp's credential store"))?;
-    let out = Command::new(sqlite)
-        .arg(db)
-        .arg("SELECT DISTINCT provider, credential_type FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY provider;")
-        .output()?;
-    if !out.status.success() {
-        return Err(anyhow!("sqlite3 read failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    let sql = "SELECT DISTINCT provider, credential_type FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY provider;";
+
+    // 1. sqlite3 CLI
+    if let Ok(sqlite) = which::which("sqlite3") {
+        if let Ok(out) = Command::new(sqlite).arg(db).arg(sql).output() {
+            if out.status.success() {
+                return parse_credentials_pipe(&String::from_utf8_lossy(&out.stdout));
+            }
+        }
     }
+
+    // 2. Python (built-in sqlite3 in stdlib)
+    for py_name in &["python3", "python", "py"] {
+        if let Ok(py) = which::which(py_name) {
+            let py_code = "import sqlite3, sys; con = sqlite3.connect(sys.argv[1]); [print(f'{r[0]}|{r[1]}') for r in con.execute('SELECT DISTINCT provider, credential_type FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY provider')]";
+            if let Ok(out) = Command::new(py).arg("-c").arg(py_code).arg(db).output() {
+                if out.status.success() {
+                    return parse_credentials_pipe(&String::from_utf8_lossy(&out.stdout));
+                }
+            }
+        }
+    }
+
+    // 3. Bun (built-in bun:sqlite)
+    if let Ok(bun) = which::which("bun") {
+        let bun_code = "import { Database } from 'bun:sqlite'; const db = new Database(process.argv[1], { readonly: true }); for (const r of db.query('SELECT DISTINCT provider, credential_type FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY provider').all()) console.log(r.provider + '|' + r.credential_type);";
+        if let Ok(out) = Command::new(bun).arg("-e").arg(bun_code).arg(db).output() {
+            if out.status.success() {
+                return parse_credentials_pipe(&String::from_utf8_lossy(&out.stdout));
+            }
+        }
+    }
+
+    // 4. Node (built-in node:sqlite in Node 22+)
+    for node_name in &["node", "nodejs"] {
+        if let Ok(node) = which::which(node_name) {
+            let node_code = "const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(process.argv[1], { readOnly: true }); for (const r of db.prepare('SELECT DISTINCT provider, credential_type FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY provider').all()) console.log(r.provider + '|' + r.credential_type);";
+            if let Ok(out) = Command::new(node).arg("-e").arg(node_code).arg(db).output() {
+                if out.status.success() {
+                    return parse_credentials_pipe(&String::from_utf8_lossy(&out.stdout));
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    let hint = "install sqlite3 (`scoop install sqlite` or `winget install SQLite.SQLite`) or ensure Python, Bun, or Node is installed";
+    #[cfg(not(windows))]
+    let hint = "install it (`pacman -S sqlite` / `apt install sqlite3` / `brew install sqlite3`) or ensure Python, Bun, or Node is installed";
+
+    Err(anyhow!("no sqlite runner found to read omp credential store ({hint})"))
+}
+
+fn parse_credentials_pipe(raw: &str) -> Result<Vec<(String, String)>> {
     let mut v = Vec::new();
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
+    for line in raw.lines() {
         let line = line.trim();
         if let Some((p, t)) = line.split_once('|') {
             let (p, t) = (p.trim(), t.trim());
@@ -212,9 +261,21 @@ fn omp_active_credentials(db: &Path) -> Result<Vec<(String, String)>> {
 }
 
 /// A live token for `provider` from omp (`omp token <p> --raw`); empty on failure.
-fn omp_token(provider: &str) -> String {
-    match Command::new("omp").arg("token").arg(provider).arg("--raw").output() {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+fn omp_token(omp_bin: &Path, provider: &str) -> String {
+    match Command::new(omp_bin).arg("token").arg(provider).arg("--raw").output() {
+        Ok(o) if o.status.success() => {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            // If omp returned a JSON envelope (e.g. google-antigravity {"token":"ya29...", ...}),
+            // extract the bearer token string.
+            if s.starts_with('{') {
+                if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                    if let Some(t) = v.get("token").and_then(|t| t.as_str()) {
+                        return t.to_string();
+                    }
+                }
+            }
+            s
+        }
         _ => String::new(),
     }
 }
@@ -226,7 +287,7 @@ fn omp_token(provider: &str) -> String {
 fn pi_key(omp_provider: &str) -> String {
     match omp_provider {
         "kimi-code" => "kimi-coding",
-        "gemini" | "google-gemini" => "google",
+        "gemini" | "google-gemini" | "google-antigravity" => "google",
         other => other,
     }
     .to_string()
@@ -254,5 +315,42 @@ fn set_600(p: &Path) {
     #[cfg(not(unix))]
     {
         let _ = p;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_credentials_pipe_extracts_pairs() {
+        let raw = "anthropic|oauth\ncursor|oauth\n\n  openai-codex | oauth  \nzai|api_key\n";
+        let res = parse_credentials_pipe(raw).unwrap();
+        assert_eq!(
+            res,
+            vec![
+                ("anthropic".into(), "oauth".into()),
+                ("cursor".into(), "oauth".into()),
+                ("openai-codex".into(), "oauth".into()),
+                ("zai".into(), "api_key".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_credentials_pipe_ignores_malformed() {
+        let raw = "no-delimiter\n|\n|only-type\nonly-provider|\n\n";
+        let res = parse_credentials_pipe(raw).unwrap();
+        assert!(res.is_empty());
+    }
+
+    #[test]
+    fn pi_key_mappings() {
+        assert_eq!(pi_key("kimi-code"), "kimi-coding");
+        assert_eq!(pi_key("gemini"), "google");
+        assert_eq!(pi_key("google-gemini"), "google");
+        assert_eq!(pi_key("google-antigravity"), "google");
+        assert_eq!(pi_key("anthropic"), "anthropic");
+        assert_eq!(pi_key("custom-llm"), "custom-llm");
     }
 }

@@ -10,78 +10,7 @@
 # KNOWLEDGE (8sync managed — append-only)
 
 ## Learnings (append-only — ghi DƯỚI đây; KHÔNG sửa block `8sync:harness` ở trên)
-_(consolidated 19 dòng cũ → su-code/archive/KNOWLEDGE-1787286513.md)_
-  normal invocation and it is a full recursive walk), and `find -path`/`-regex` were all open.
-  Tools with no single-file mode worth preserving (`rg`, `fd`, `git grep`) are blocked outright;
-  only `grep` needs flag analysis.
-- failure (`Bun.YAML.parse` does NOT reject duplicate mapping keys — it takes the LAST): the code
-  assumed a duplicate top-level key would make omp fail loudly, so appending an 8sync block next
-  to a user-authored `bashInterceptor:` was thought to be self-announcing. In reality omp
-  (17.2.10, `var {YAML:jQf}=globalThis.Bun`) silently keeps the last key, and 8sync always appends
-  last — so every rule the user wrote was voided on each `8sync harness`, with no error anywhere.
-  Rule: when a managed writer cannot merge, it must DETECT the user's block and BAIL OUT with a
-  warning, never append-and-hope. Never assume a parser is strict; verify what it actually does.
-- validated (`8sync up` was Linux-only — hard-coded `-linux-x86_64` asset + extension-less
-  `~/.local/bin/8sync` dest + plain rename): on Windows this downloaded the Linux binary, wrote a
-  file with no `.exe`, and tried to `rename` over a running `.exe` (forbidden). The extension-less
-  file then made Windows pop the "Select an app to open '8sync'" picker. Fix in `selfup.rs`: derive
-  the asset label from `platform::os()`+`std::env::consts::ARCH` (mind macOS arm = `arm64`, not
-  `aarch64`), install to `std::env::current_exe()` (replace 8sync wherever it lives, all OSes), and
-  do a Windows-safe replace (rename the live `.exe` aside to `.8sync.old.<pid>`, then move the new
-  one in). Rule: any self-updater must key the asset name, install path, AND replace strategy off
-  the target OS — a `#[cfg(unix)]`-only path silently ships a broken updater to every other OS.
-
-- validated: **Encore Go apps compile với `go` thuần trong podman — không cần Docker/encore codegen** (2026-08-07, feature ai-router-hub M0). `go mod tidy && go vet ./... && go build ./... && go test ./...` trong `docker.io/library/golang:1.24` (mount source + named volume `/go` cache) PASS trên app có `//encore:api`/`//encore:authhandler` — các directive chỉ là comment với `go` thuần, hàm là Go thường. `encore.dev` resolve qua go mod (v1.57.13). ⇒ verify **Go-level** (compile/type/logic) được ở máy rootless-podman-no-Docker; chỉ `encore run/build/test` mới cần Docker (dựng runtime + codegen). Cách rẻ để verify Encore mà không dựng Docker.
-- failure: **`errs.Code(err)` panic dưới `go test` thuần** (encore.dev/beta/errs builder.go:121 `doPanic` — helper cần Encore runtime). Fix: soi field trực tiếp `err.(*errs.Error).Code == errs.Unauthenticated` (construct + đọc field KHÔNG cần runtime). Rule: test Encore package bằng `go test` thuần chỉ chạm hàm/logic thuần; mọi helper `errs.*`/`rlog.*`/`auth.UserID()` cần runtime → dùng `encore test` (Docker) hoặc né bằng field access.
-- failure: **grep-based endpoint-lister tự match comment của chính nó** (verify-public-endpoints.sh: regex `//encore:api public...path=` quét cả `*.md`/`*.sh` bắt phải path ví dụ `/x` trong comment). Fix: `grep --include='*.go'` — endpoint chỉ định nghĩa trong Go source. Rule: script "liệt kê directive từ source" phải giới hạn theo đuôi file, không quét doc/self.
-- validated: **Encore API type risk — `interface{}`/`any` trong request/response có thể bị Encore schema-parser từ chối** (go build pass nhưng `encore run` fail). Chưa xác nhận (defer Docker box). Nếu envelope dùng `Result interface{}` → sẵn sàng đổi `json.RawMessage`/type cụ thể. Kiểm TRƯỚC khi tin `encore run`.
-- validated (multi-session, 2026-08-08): **omp exposes exactly the session levers 8sync needs — build a thin layer, don't reinvent.** `omp --session-dir <dir>` scopes storage+lookup; `--continue` then resumes the latest conversation *in that dir* → one dir per named session = isolated conversations with ZERO uuid tracking (verified: captured omp argv shows `--session-dir …/<name> … --continue`). Fresh session = launch WITHOUT `--continue`; resume = WITH. Always route through `models::ModelConfig::resume_flags()` so the STEP-0 `--tools` allowlist + `--advisor` survive (a bare `Command::new("omp")` would silently drop them).
-- validated (worktree-per-session merge, ECC blueprint, MIT): the whole isolation+merge engine is `git` CLI shell-out, no crate. `git worktree add -b 8sync/<name> <path> HEAD` per session; land via read-only `git merge-tree --write-tree <target> <branch>` (exit code = conflict truth; parse conflicted files by taking non-blank lines after the tree-oid and dropping any containing a space to skip "Auto-merging …"/"CONFLICT …" info lines) → `git merge --no-edit` → on conflict `git rebase <target>` in the worktree (auto `rebase --abort` on fail) → `git worktree remove` + `git branch -d`. Sequential merges make the target advance so branch-vs-branch conflicts surface naturally. `git branch -d` (not -D) keeps unmerged work safe by default.
-- gotcha (multi-session): `8sync . new` runs `seed_project_context` on the MAIN repo, writing untracked `AGENTS.md`/`su-code/`/`CLAUDE.md` when missing → a fresh test repo then looks "dirty" and `merge` (which refuses a dirty main tree) balks until you commit them. Real repos already track these → fresh-repo artifact, not a bug. Smoke tests must `git add -A && commit` after the first `new`.
-- validated (testing an omp-launching verb headlessly): stub `omp` with `printf '#!/bin/sh\nexit 0\n'` on `PATH` + isolated `XDG_CONFIG_HOME` → exercises the real registry + git engine without a TTY hang; assert on recorded argv for launch-flag correctness. `git init -qb main` for a deterministic base-branch name.
-- failure (fedora-harness, 2026-08-08): **`8sync setup` aborted at step 3 of 8 on every non-Arch Linux.** `setup.rs` gated the AUR-helper step on `platform::Os::Linux` instead of the Arch family; on Fedora `pacman_install_safe` failed, and `try_step` PROPAGATES in strict (non-`yolo`) mode, so the `?` killed the run before `codegraph`/`configs`/`skills`/`codegraph-skill`. Symptom looked like "skills never install on Fedora"; cause was one wrong gate five steps earlier. Rule: an OS check is not a distro check — gate package work by distro family, and remember `try_step` only swallows errors when `yolo` (`--full`/`--profile`/`--community`).
-- failure (fedora-harness): **8sync wrote machine-absolute skill paths into every project's `AGENTS.md`.** `skill/inject.rs` built `p.join(entry)` from a cwd-derived PathBuf, emitting `/home/alexdev/...` / `/home/alexng/...` into the sentinel block. On any other clone those files do not exist, so omp was told to read nothing and silently skipped the skills — the real reason "omp hay bỏ qua skills". The on-demand tier 15 lines below already built relative strings, so the correct pattern was sitting next to the bug. `harness audit` structurally could not catch it: it `continue`d on every `/`-prefixed token. Rule: anything written into a COMMITTED file must be repo-relative (or `~/`-anchored for genuinely-global paths), and the audit that guards it must flag `/home/`,`/Users/`,`/root/` while still ignoring `/etc`,`/usr`,`/tmp`.
-- validated (fedora-harness): **prose does not steer omp; enforced levers do.** `APPEND_SYSTEM.md` asking for codegraph/serena/cbm is advisory and gets ignored under load. The mechanisms omp implements in CODE are: a TTSR rule (`condition:` + `scope: "tool:grep(*)"` + `interruptMode: tool-only`) that aborts the stream mid-tool-call and re-injects — zero prompt tokens and compaction-proof because rules re-evaluate every stream; a `tool_call` hook returning `{block:true, reason}` (fail-closed); and `bashInterceptor.patterns[]` to close the `bash rg` escape. Distilled reference lives in `su-code/omp-reference/LEVERS.md` (26 levers). Gotcha: an interceptor whose `tool:` names an MCP server is SILENTLY SKIPPED when that tool is absent — point `tool:` at something always present (`lsp`) and name the real replacement in `message`.
-- validated (fedora-harness): **capability-gate any enforcement you deploy.** Blocking `grep` on a box with no codegraph/serena/cbm dead-ends the session. Gate at deploy time (install the rule/interceptor only when a replacement is actually reachable, delete both when it is not) because omp cannot express a capability predicate inside `condition:`/`pattern`. TTSR `repeatMode: once` also caps the blast radius at one restarted turn.
-- gotcha (fedora-harness): **`dnf` is not `pacman` and needs LESS code.** RPM transactions are atomic, so the hand-rolled pacman snapshot+`-Rns` rollback must NOT be ported; use `dnf history undo <id>`. But a PLAN of two dnf transactions (install missing, then upgrade outdated) is not atomic as a whole — if the upgrade fails after the install committed, you must undo the committed one. Also: on dnf5 the `copr` subcommand comes from **`dnf5-plugins`**, not the dnf4-era `dnf-plugins-core`, and Fedora 44's `/etc/os-release` has **no `ID_LIKE`** line, so distro detection cannot rely on it.
-- validated (fedora-harness): **6 agents editing one Rust crate in parallel compiled on the FIRST try** because the exact trait/struct signatures were fixed in the batch `context` up front and every agent was told to skip `cargo build`. Contract-first + no mid-flight validation is what makes wide fan-out safe; agents then self-corrected over IRC (one caught that `load_all()` returns `HashMap`, not a slice, and refused my wrong signature).
-- gotcha (fedora-harness): **`.gitignore` bare `reference/` silently swallows any `reference/` dir at any depth.** Distilled omp docs written to `su-code/reference/omp/` vanished from `git status`; relocated to `su-code/omp-reference/`. `assets/skills/impeccable/reference/` survives only because it was tracked BEFORE the rule existed. Verify a new doc dir is actually tracked (`git check-ignore -v <file>`) before assuming it is committed.
-- gotcha: a "dead code" warning can be a real bug in disguise — `undo` was unused because nothing wired it to the partial-failure path, and deleting the warning properly meant fixing the rollback. Prefer wiring over `#[allow(dead_code)]`.
-
-## v0.54.0 release closeout (2026-08-09)
-
-- **validated: an independent reviewer pass before a tag pays for itself.** Two `task` reviewers
-  (`reviewer` + `security-reviewer`) on `git diff origin/main..HEAD` found 28 issues the author
-  (me) had missed, including one that would have broken the release outright and two exploitable
-  bugs. Cost ~18 min wall-clock, run in parallel with the test suite. Do this for every tag.
-- **failure: `--full`/`--yall` hardcoded the maintainer's personal bundle** (`"alexdev"`) as the
-  meaning of "install everything". Any teammate running it got Lian Li chassis drivers, a
-  Vietnamese IME and DisplayLink DKMS. Root cause: three separate hardcoded profile lists that
-  could disagree with the `Visibility` enum. Fix = one `offered_profiles()` source of truth, and
-  `Visibility` now defaults to `Personal` so a forgotten marker fails CLOSED.
-- **failure: a profile's own `post_install` guard is too late to stop a bad install.**
-  `profile::apply` installs packages first, so `nvidia`'s "no NVIDIA GPU detected" check ran after
-  the driver stack was already on an AMD box. Gates must live in `resolve`'s walk, per bundle
-  member, before any package work.
-- **failure: `std::thread::spawn` cannot do background work in a CLI.** The M5 "non-blocking"
-  update check spawned a detached thread; the runtime kills it when `main` returns, and
-  `touch_check()` had already burned the 6-hour window — so the notice could never print. A CLI
-  that needs work to outlive the command must re-exec itself as a detached child process and read
-  the result from cache on the next run.
-- **failure: `JSON.stringify` is not shell quoting.** It escapes `"` and `\` but a double-quoted
-  bash word still performs `$()`/backtick substitution. `git commit -m ${JSON.stringify(msg)}` via
-  `bash -lc`, with `msg` model-supplied, was arbitrary code execution. Use argv (`spawnSync(file,
-  args)`); never build a shell string from data.
-- **failure: package names spliced into a `sudo` argv with no `--`.** A profile entry starting
-  with `-` becomes a package-manager FLAG: `--hookdir=` gives alpm attacker-written root hooks.
-  Validate AND emit `--`.
-- **validated: `if command -v X; then X …; fi` is a fail-OPEN security gate** — it exits 0 when X
-  is absent. Probe presence separately and say so when a check did not run.
-- **validated: test the negative direction too.** The existing guard only checked
-  list→asset, so two new skills silently never deployed. Every registry needs both directions.
-
-## v0.56.0 — `8sync hz`, `8sync lcd`, and the duplicate-command upgrade bug (2026-08-09)
-
+_(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - **validated: a "content-gated" migration must compare against every version it ever shipped, not
   the current one.** v0.55.0's un-prefixed-command cleanup only deleted a file byte-identical to
   today's asset — but the same release rewrote every command body, so the compare could never match
@@ -282,3 +211,17 @@ _(consolidated 19 dòng cũ → su-code/archive/KNOWLEDGE-1787286513.md)_
   launchers by process name (`Codex Web GPT.exe` = prod) vs command line (`codex-chatgpt-web` = dev source),
   and by the `.codex-chatgpt-web` vs `.codex-chatgpt-web-dev` home dir. `git-bash` mangles
   `taskkill //PID //T //F`; use PowerShell `Stop-Process -Id -Force` filtered on `Win32_Process.CommandLine`.
+
+## feynman auth-omp on Windows: sqlite runner fallbacks (2026-10-07)
+- **failure: `8sync feynman auth-omp` failed on Windows with "sqlite3 not found - install it (`pacman -S sqlite`)".**
+  Windows machines running scoop/winget rarely have `sqlite3.exe` CLI installed, and the error advice
+  (`pacman -S sqlite`) assumed Arch Linux/CachyOS. Since `rusqlite` was previously removed to reduce binary
+  size by ~1MB, `feynman.rs` relied exclusively on `which("sqlite3")`.
+- **validated: zero-dependency SQLite query fallbacks via Python, Bun, or Node.**
+  Both `python` (stdlib `sqlite3`), `bun` (`bun:sqlite`), and `node` 22+ (`node:sqlite`) are present on typical
+  dev workstations and can query SQLite database tables sub-second (0.13s) without external dependencies.
+  Chaining: `sqlite3` CLI → `python3`/`python`/`py` → `bun` → `node`/`nodejs` guarantees seamless execution across
+  Windows, macOS, and Linux.
+- **validated: unwrap JSON token envelopes from `omp token <provider> --raw`.**
+  Providers like `google-antigravity` return a JSON envelope (`{"token":"ya29...", ...}`) rather than a bare
+  string. Unwrapping `"token"` ensures Feynman's `auth.json` receives the valid OAuth bearer token.

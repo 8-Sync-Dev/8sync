@@ -27,6 +27,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - **Standalone image generation scripts:** `scripts/gen-img.ps1` (PowerShell) and `scripts/gen-img.sh` (Bash).
 - **Codex & OpenAI provider auto-configuration in `models.yml`:** Registered `gpt-5.6-sol`, `gpt-5.6-terra`,
   `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, and `gpt-5.3-codex-spark`.
+### Fixed
+- **`8sync feynman auth-omp` on Windows without sqlite3 CLI:** Replaced rigid `which("sqlite3")` with a multi-runner fallback chain (`sqlite3` CLI → `python`/`python3`/`py` stdlib `sqlite3` → `bun:sqlite` → `node:sqlite`), resolved `omp` binary path to avoid Windows PATHEXT search traps, unwrapped JSON token envelopes (e.g. `google-antigravity`), and mapped `google-antigravity` to `google`.
+
 
 ## [0.60.0] — 2026-09-04
 ### Added
