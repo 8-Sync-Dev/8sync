@@ -225,3 +225,17 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - **validated: unwrap JSON token envelopes from `omp token <provider> --raw`.**
   Providers like `google-antigravity` return a JSON envelope (`{"token":"ya29...", ...}`) rather than a bare
   string. Unwrapping `"token"` ensures Feynman's `auth.json` receives the valid OAuth bearer token.
+
+## feynman named sessions & Windows Node 24+ ESM loader (2026-10-07)
+- **validated: `8sync feynman <name>` per-project research session management.**
+  Brought parity with `8sync . <name>` for the Feynman research agent (`companion-inc/feynman`).
+  Maps `<name>` to an isolated `--session-dir` at `~/.config/8sync/feynman-sessions/<project-key>/<name>`,
+  tracks `last_used` and `last_active` in `index.json`, supports `ls` / `rm` / `new`, and auto-bridges omp
+  credentials on first launch.
+- **failure: Feynman's `launch.js` crashes on Windows Node 24+ with `ERR_UNSUPPORTED_ESM_URL_SCHEME`.**
+  Feynman's `launchPiChat` spawned Node with `--import <promisePolyfillPath>`, passing raw Windows paths
+  like `C:\Users\...`. Node's ESM loader on Windows strictly requires `file://` URLs for `--import`.
+  Passing bare `C:\` throws `ERR_UNSUPPORTED_ESM_URL_SCHEME: Received protocol 'c:'`.
+- **validated: auto-patching `launch.js` with `pathToFileURL` in `8sync feynman`.**
+  Converting import paths to `pathToFileURL(p).href` (`file:///C:/...`) fixes Node 24+ execution cleanly.
+  `8sync feynman` detects and auto-heals `dist/pi/launch.js` before launching Feynman on Windows.

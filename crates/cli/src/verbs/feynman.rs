@@ -14,52 +14,87 @@
 //!
 //! `status` shows the bridge; `off` removes only the entries we manage (a sidecar
 //! records them; Feynman's own `feynman model login` creds are never touched).
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Args as ClapArgs;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::env_detect::Env;
 use crate::ui;
-
 /// Sidecar recording which auth.json providers WE wrote (so `off` removes only ours).
 const MANAGED: &str = ".8sync-omp.json";
 
 #[derive(ClapArgs, Debug)]
 #[command(after_help = indoc::indoc! {"
     EXAMPLES
+      8sync feynman core        create or resume the 'core' Feynman research session
+      8sync feynman             resume latest session in this repo (or sync auth if none)
+      8sync feynman ls          list Feynman sessions in this repo
+      8sync feynman rm <name>   remove a Feynman session
+      8sync feynman new <name>  create a new Feynman session
       8sync feynman auth-omp    mirror omp's authed providers -> Feynman (reuse Claude OAuth + keys)
-      8sync feynman             same as `auth-omp` (default)
-      8sync feynman status      show which providers are bridged from omp
+      8sync feynman status      show bridged providers and current project sessions
       8sync feynman off         remove the omp-managed entries from Feynman's auth.json
 
     WHAT IT DOES
-      Feynman (Pi research agent) and omp both read `<home>/agent/auth.json` in the same
-      schema. This copies omp's LIVE credentials into `~/.feynman/agent/auth.json`:
-        - OAuth (Claude Pro/Max) -> access token only (NO refresh) so omp stays the sole
-          refresher; re-run when it expires. Uses your Claude subscription's extra usage
-          (billed per token), same as any third-party harness.
-        - API keys -> `!omp token <p>` (fetched live from omp; no secret duplicated).
-      Then `feynman model list` shows the same providers/models omp is authed for -
-      handy because omp's catalog updates faster than Feynman's.
+      Manages per-project named Feynman research sessions (`feynman --session-dir`)
+      and bridges omp credentials into `~/.feynman/agent/auth.json` so Feynman shows
+      and uses the same models (OAuth + API keys) without duplicate logins.
 "})]
 pub struct Args {
-    /// auth-omp (default) | status | off
-    pub sub: Option<String>,
+    /// Subcommand (`auth-omp`, `status`, `off`, `ls`, `rm <name>`, `new <name>`),
+    /// or a bare session name (e.g. `core`) to create-or-resume. Empty = resume latest.
+    pub rest: Vec<String>,
 }
 
 pub fn run(a: Args) -> Result<()> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot resolve home directory"))?;
     let agent_dir = home.join(".feynman/agent");
-    match a.sub.as_deref() {
-        None | Some("auth-omp") | Some("auth") | Some("sync") => auth_omp(&home, &agent_dir),
-        Some("status") => status(&agent_dir),
-        Some("off") | Some("remove") | Some("clear") => off(&agent_dir),
-        Some(other) => {
-            ui::warn(&format!("unknown subcommand: {other}"));
-            ui::info("try: 8sync feynman [auth-omp|status|off]");
-            Ok(())
+    let env = Env::detect()?;
+    let cwd = std::env::current_dir().context("no cwd")?;
+    let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd.clone());
+
+    let (verb, rest) = a
+        .rest
+        .split_first()
+        .map(|(v, r)| (v.as_str(), r))
+        .unwrap_or(("", &[][..]));
+
+    match verb {
+        "auth-omp" | "auth" | "sync" => auth_omp(&home, &agent_dir),
+        "status" => status(&agent_dir, &env, &root),
+        "off" | "remove" | "clear" => off(&agent_dir),
+        "ls" | "list" => cmd_ls(&env, &root),
+        "rm" => {
+            let name = rest.first().context("usage: 8sync feynman rm <name>")?;
+            cmd_rm(&env, &root, name)
+        }
+        "new" => {
+            let name = rest.first().context("usage: 8sync feynman new <name>")?;
+            resume_named(&env, &root, name, &home, &agent_dir, true)
+        }
+        "" => {
+            let kdir = feynman_key_dir(&env, &root);
+            let reg = load_registry(&kdir);
+            if let Some(name) = reg.last_used.clone() {
+                ui::header("8sync feynman");
+                ui::info(&format!("project: {}", root.display()));
+                resume_named(&env, &root, &name, &home, &agent_dir, false)
+            } else {
+                auth_omp(&home, &agent_dir)?;
+                ui::info(&format!("project: {}", root.display()));
+                ui::info("no Feynman session yet in this repo — create one with: 8sync feynman <name>");
+                Ok(())
+            }
+        }
+        name => {
+            ui::header("8sync feynman");
+            ui::info(&format!("project: {}", root.display()));
+            resume_named(&env, &root, name, &home, &agent_dir, false)
         }
     }
 }
@@ -138,25 +173,262 @@ fn auth_omp(home: &Path, agent_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn status(agent_dir: &Path) -> Result<()> {
+fn status(agent_dir: &Path, env: &Env, root: &Path) -> Result<()> {
     ui::header("8sync feynman - status");
     let auth_path = agent_dir.join("auth.json");
     if !auth_path.exists() {
         ui::info(&format!("no Feynman auth.json yet ({}). Run `8sync feynman auth-omp`.", auth_path.display()));
-        return Ok(());
-    }
-    let managed = read_managed(&agent_dir.join(MANAGED));
-    if managed.is_empty() {
-        ui::info("no omp-managed providers recorded here. Run `8sync feynman auth-omp`.");
     } else {
-        for p in &managed {
-            ui::ok(&format!("bridged from omp: {p}"));
+        let managed = read_managed(&agent_dir.join(MANAGED));
+        if managed.is_empty() {
+            ui::info("no omp-managed providers recorded here. Run `8sync feynman auth-omp`.");
+        } else {
+            for p in &managed {
+                ui::ok(&format!("bridged from omp: {p}"));
+            }
         }
     }
     if which::which("feynman").is_ok() {
         ui::info("live check: `feynman model list`");
     }
+    let kdir = feynman_key_dir(env, root);
+    let reg = load_registry(&kdir);
+    if !reg.sessions.is_empty() {
+        println!();
+        ui::info(&format!("sessions in {}:", root.display()));
+        let n = now();
+        for s in &reg.sessions {
+            let is_latest = reg.last_used.as_deref() == Some(&s.name);
+            let star = if is_latest { "★ " } else { "  " };
+            println!("  {}{:<16}  last active: {:<12}", star, s.name, ago(s.last_active, n));
+        }
+    }
     Ok(())
+}
+
+// ── session management ─────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Default)]
+struct FeynmanRegistry {
+    last_used: Option<String>,
+    sessions: Vec<FeynmanSession>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct FeynmanSession {
+    name: String,
+    session_dir: PathBuf,
+    created: u64,
+    last_active: u64,
+}
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn project_key(root: &Path) -> String {
+    let s = root.to_string_lossy();
+    let key: String = s
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    if key.len() <= 120 {
+        return key;
+    }
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    format!("h{:016x}", h.finish())
+}
+
+fn feynman_key_dir(env: &Env, root: &Path) -> PathBuf {
+    env.xdg_config.join("8sync").join("feynman-sessions").join(project_key(root))
+}
+
+fn load_registry(kdir: &Path) -> FeynmanRegistry {
+    std::fs::read_to_string(kdir.join("index.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_registry(kdir: &Path, reg: &FeynmanRegistry) -> Result<()> {
+    std::fs::create_dir_all(kdir).with_context(|| format!("mkdir {}", kdir.display()))?;
+    let json = serde_json::to_string_pretty(reg)?;
+    std::fs::write(kdir.join("index.json"), json).context("write feynman session index")?;
+    Ok(())
+}
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name.len() <= 64
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn ago(secs: u64, now: u64) -> String {
+    let d = now.saturating_sub(secs);
+    match d {
+        0..=59 => format!("{d}s ago"),
+        60..=3599 => format!("{}m ago", d / 60),
+        3600..=86_399 => format!("{}h ago", d / 3600),
+        _ => format!("{}d ago", d / 86_400),
+    }
+}
+#[cfg(windows)]
+fn ensure_feynman_windows_esm_patch(feynman_bin: &Path) {
+    if let Some(bin_dir) = feynman_bin.parent() {
+        let launch_js = bin_dir.join("node_modules/@companion-ai/feynman/dist/pi/launch.js");
+        if launch_js.exists() {
+            if let Ok(code) = std::fs::read_to_string(&launch_js) {
+                if !code.contains("pathToFileURL") {
+                    let patched = code
+                        .replace(
+                            "import { existsSync } from \"node:fs\";",
+                            "import { existsSync } from \"node:fs\";\nimport { pathToFileURL } from \"node:url\";",
+                        )
+                        .replace(
+                            "const importArgs = useDevPolyfill\n        ? [\"--import\", tsxLoaderPath, \"--import\", promisePolyfillSourcePath]\n        : [\"--import\", promisePolyfillPath];",
+                            "const toUrl = (p) => pathToFileURL(p).href;\n    const importArgs = useDevPolyfill\n        ? [\"--import\", toUrl(tsxLoaderPath), \"--import\", toUrl(promisePolyfillSourcePath)]\n        : [\"--import\", toUrl(promisePolyfillPath)];",
+                        );
+                    let _ = std::fs::write(&launch_js, patched);
+                }
+            }
+        }
+    }
+}
+
+fn launch_feynman(root: &Path, session_dir: &Path) -> Result<()> {
+    let feynman_bin = which::which("feynman")
+        .map_err(|_| anyhow!("feynman not found on PATH (install: curl -fsSL https://feynman.is/install | bash)"))?;
+    #[cfg(windows)]
+    ensure_feynman_windows_esm_patch(&feynman_bin);
+    std::fs::create_dir_all(session_dir)?;
+    ui::info(&format!("feynman --cwd {} --session-dir {}", root.display(), session_dir.display()));
+    let status = if cfg!(windows) {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C")
+            .arg(&feynman_bin)
+            .arg("--cwd")
+            .arg(root)
+            .arg("--session-dir")
+            .arg(session_dir)
+            .current_dir(root)
+            .status()
+            .context("could not exec feynman")?
+    } else {
+        Command::new(&feynman_bin)
+            .arg("--cwd")
+            .arg(root)
+            .arg("--session-dir")
+            .arg(session_dir)
+            .current_dir(root)
+            .status()
+            .context("could not exec feynman")?
+    };
+    if !status.success() {
+        ui::warn("feynman exited non-zero");
+    }
+    Ok(())
+}
+
+fn cmd_ls(env: &Env, root: &Path) -> Result<()> {
+    let kdir = feynman_key_dir(env, root);
+    let reg = load_registry(&kdir);
+    ui::header("8sync feynman sessions");
+    ui::info(&format!("project: {}", root.display()));
+    if reg.sessions.is_empty() {
+        ui::info("no sessions yet — create one with `8sync feynman <name>`");
+        return Ok(());
+    }
+    let n = now();
+    for s in &reg.sessions {
+        let is_latest = reg.last_used.as_deref() == Some(&s.name);
+        let star = if is_latest { "★ " } else { "  " };
+        println!(
+            "{}{:<16}  last active: {:<12}  dir: {}",
+            star,
+            s.name,
+            ago(s.last_active, n),
+            s.session_dir.display()
+        );
+    }
+    Ok(())
+}
+
+fn cmd_rm(env: &Env, root: &Path, name: &str) -> Result<()> {
+    let kdir = feynman_key_dir(env, root);
+    let mut reg = load_registry(&kdir);
+    let idx = reg.sessions.iter().position(|s| s.name == name);
+    match idx {
+        Some(i) => {
+            let s = reg.sessions.remove(i);
+            if reg.last_used.as_deref() == Some(name) {
+                reg.last_used = reg.sessions.last().map(|x| x.name.clone());
+            }
+            save_registry(&kdir, &reg)?;
+            if s.session_dir.exists() {
+                let _ = std::fs::remove_dir_all(&s.session_dir);
+            }
+            ui::ok(&format!("removed session '{name}'"));
+        }
+        None => {
+            ui::warn(&format!("no session '{name}' found"));
+        }
+    }
+    Ok(())
+}
+
+fn resume_named(
+    env: &Env,
+    root: &Path,
+    name: &str,
+    home: &Path,
+    agent_dir: &Path,
+    refuse_existing: bool,
+) -> Result<()> {
+    if !valid_name(name) {
+        anyhow::bail!("invalid session name '{name}' (use letters, digits, '-', '_', '.'; ≤64 chars)");
+    }
+    let auth_file = agent_dir.join("auth.json");
+    if !auth_file.exists() {
+        let _ = auth_omp(home, agent_dir);
+    }
+
+    let kdir = feynman_key_dir(env, root);
+    let mut reg = load_registry(&kdir);
+    let session_dir = kdir.join(name);
+    let t = now();
+
+    let exists = reg.sessions.iter().any(|s| s.name == name);
+    if refuse_existing && exists {
+        anyhow::bail!("session '{name}' already exists — resume with `8sync feynman {name}`");
+    }
+
+    if let Some(s) = reg.sessions.iter_mut().find(|s| s.name == name) {
+        s.last_active = t;
+        let sdir = s.session_dir.clone();
+        reg.last_used = Some(name.to_string());
+        save_registry(&kdir, &reg)?;
+        ui::ok(&format!("→ resume session '{name}'"));
+        launch_feynman(root, &sdir)
+    } else {
+        std::fs::create_dir_all(&session_dir)?;
+        reg.sessions.push(FeynmanSession {
+            name: name.to_string(),
+            session_dir: session_dir.clone(),
+            created: t,
+            last_active: t,
+        });
+        reg.last_used = Some(name.to_string());
+        save_registry(&kdir, &reg)?;
+        ui::ok(&format!("created session '{name}'"));
+        launch_feynman(root, &session_dir)
+    }
 }
 
 fn off(agent_dir: &Path) -> Result<()> {
@@ -352,5 +624,17 @@ mod tests {
         assert_eq!(pi_key("google-antigravity"), "google");
         assert_eq!(pi_key("anthropic"), "anthropic");
         assert_eq!(pi_key("custom-llm"), "custom-llm");
+    }
+
+    #[test]
+    fn test_valid_name() {
+        assert!(valid_name("core"));
+        assert!(valid_name("team-1"));
+        assert!(valid_name("research_v2"));
+        assert!(!valid_name(""));
+        assert!(!valid_name("."));
+        assert!(!valid_name(".."));
+        assert!(!valid_name("bad/slash"));
+        assert!(!valid_name("bad\\backslash"));
     }
 }

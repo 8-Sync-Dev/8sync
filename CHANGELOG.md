@@ -27,6 +27,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - **Standalone image generation scripts:** `scripts/gen-img.ps1` (PowerShell) and `scripts/gen-img.sh` (Bash).
 - **Codex & OpenAI provider auto-configuration in `models.yml`:** Registered `gpt-5.6-sol`, `gpt-5.6-terra`,
   `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, and `gpt-5.3-codex-spark`.
+- **`8sync feynman [name|ls|rm|new|auth-omp|status|off]` — named session management for Feynman research agent.**
+  Brings `8sync . <name>` parity to Feynman (`companion-inc/feynman`): `8sync feynman <name>` (e.g. `8sync feynman core`)
+  creates or resumes an isolated named research session in the current project via `feynman --cwd <root> --session-dir <dir>`,
+  tracked in `~/.config/8sync/feynman-sessions/<project-key>/index.json`. Supports `ls` (list project sessions with last active
+  time), `rm <name>` (clean up session and directory), and `new <name>`. Automatically bridges omp credentials on first launch.
 ### Fixed
 - **`8sync feynman auth-omp` on Windows without sqlite3 CLI:** Replaced rigid `which("sqlite3")` with a multi-runner fallback chain (`sqlite3` CLI → `python`/`python3`/`py` stdlib `sqlite3` → `bun:sqlite` → `node:sqlite`), resolved `omp` binary path to avoid Windows PATHEXT search traps, unwrapped JSON token envelopes (e.g. `google-antigravity`), and mapped `google-antigravity` to `google`.
 
