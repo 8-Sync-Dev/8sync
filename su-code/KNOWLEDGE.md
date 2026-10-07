@@ -239,3 +239,12 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - **validated: auto-patching `launch.js` with `pathToFileURL` in `8sync feynman`.**
   Converting import paths to `pathToFileURL(p).href` (`file:///C:/...`) fixes Node 24+ execution cleanly.
   `8sync feynman` detects and auto-heals `dist/pi/launch.js` before launching Feynman on Windows.
+- **failure: `pi-tui` crashed on startup with "Rendered line exceeds terminal width (96 > 91)".**
+  Feynman's banner or extension prompt list (`/gather-context-and-clarify`) exceeded narrow terminal windows.
+  `@mariozechner/pi-tui/dist/tui.js` threw an unhandled exception when any line exceeded terminal width.
+- **validated: auto-truncating lines in `pi-tui` instead of crashing.**
+  Patched `tui.js` to call `truncateToWidth(line, width)` when `visibleWidth(line) > width`, preventing terminal crash.
+- **validated: npm-global `@earendil-works/*` backward-compatibility aliases.**
+  Upstream pi packages renamed from `@mariozechner/*` to `@earendil-works/*`. Linking `@mariozechner/*`
+  to `~/.feynman/npm-global/node_modules/@earendil-works/*` resolved module resolution for `pi-subagents`,
+  `pi-web-access`, and `@aliou/pi-processes`.
