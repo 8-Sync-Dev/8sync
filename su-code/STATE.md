@@ -12,13 +12,13 @@ Every member installs with one line (`curl … /install | sh` · `irm … /insta
 - [x] v0.61.2 published (run 38092880520): `8sync up` checksum on Windows (`\\?\` path broke MSYS `sha256sum`). Installed 0.61.1 printed the v0.61.2 notice and `8sync up` installed it.
 - [x] Published `install.sh` on WSL Ubuntu (temp HOME): 8sync, omp, codegraph, forge, 58 skills, APPEND_SYSTEM — but gh MISSING (Manual route) and zsh needs sudo.
 - [x] `8sync forge probe` zsh re-proven after setup patched `~/.zshrc`: `shell-42`, session UUID, `: …` → `ZSHCHECK612`.
-- [ ] v0.61.3 (gh release tarball on Debian/Ubuntu): push + tag; release green; WSL install shows gh; `8sync up` 0.61.2 → 0.61.3 prints `checksum ok`.
+- [x] v0.61.3 published (run 38093303867): WSL `install.sh` installed gh v2.102.0 (sha256 ok) next to 8sync/omp/codegraph/forge; `8sync up` 0.61.2 → 0.61.3 printed `checksum ok`; published `install.ps1` one-liner (PS 5.1, temp BinDir) → checksum ok + idempotent setup.
 
 ## Current
-Local 0.61.3: 132 tests, minimal build compiles.
+Done. Installed binary on this box: 0.61.3. Every published installer and the update chain verified on real targets.
 
 ## Next
-Release v0.61.1. Known residuals: `crates/cli/src/verbs/harness/gateway.rs` and `crates/cli/src/verbs/harness/local_model.rs` still use `curl -w` (fails on stock Windows curl 8.8.0); no CI job builds `--no-default-features`.
+Known residuals: `crates/cli/src/verbs/harness/gateway.rs` and `crates/cli/src/verbs/harness/local_model.rs` still use `curl -w` (fails on stock Windows curl 8.8.0); no CI job builds `--no-default-features`; zsh on Debian/Ubuntu needs sudo (prompts in a real terminal, fails unattended); macOS without Homebrew still gets "install gh manually".
 
 # HANDOFF 2026-10-08 — urgent omp Windows input hotfix
 
