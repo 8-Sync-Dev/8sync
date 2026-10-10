@@ -200,24 +200,42 @@ if (-not (Test-Path -LiteralPath $tmp) -or (Get-Item -LiteralPath $tmp -Force).L
     throw "8sync: downloaded an empty file from $url"
 }
 
-if (-not (Get-Command Get-FileHash -ErrorAction SilentlyContinue)) {
-    Write-Host "  checksum: skipped (Get-FileHash unavailable on this PowerShell)"
-} else {
-    $wantHash = Get-PublishedSha256 $asset
-    if ($wantHash) {
-        $gotHash = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash
-        if ($gotHash -ne $wantHash) {
-            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-            throw "8sync: checksum mismatch for $asset - refusing to install.`n  expected sha256:$($wantHash.ToLowerInvariant())`n  actual   sha256:$($gotHash.ToLowerInvariant())"
-        }
-        Write-Host "  checksum: ok (sha256:$($wantHash.ToLowerInvariant()))"
-    } else {
-        Write-Host "  checksum: skipped (no sha256 digest available for $asset)"
+# .NET, not Get-FileHash: Windows PowerShell started from pwsh 7 inherits a
+# PSModulePath that loads pwsh's Microsoft.PowerShell.Utility, which hides
+# Get-FileHash — and the checksum then silently never ran.
+$wantHash = Get-PublishedSha256 $asset
+if ($wantHash) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($tmp)
+    try { $gotHash = -join ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('X2') }) }
+    finally { $stream.Dispose(); $sha.Dispose() }
+    if ($gotHash -ne $wantHash) {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        throw "8sync: checksum mismatch for $asset - refusing to install.`n  expected sha256:$($wantHash.ToLowerInvariant())`n  actual   sha256:$($gotHash.ToLowerInvariant())"
     }
+    Write-Host "  checksum: ok (sha256:$($wantHash.ToLowerInvariant()))"
+} else {
+    Write-Host "  checksum: skipped (no sha256 digest available for $asset)"
 }
 
-# Same-directory rename: atomic replace of any existing binary (upgrade path).
-Move-Item -LiteralPath $tmp -Destination $BinPath -Force
+# Windows cannot overwrite a running .exe (an open `8sync . <session>` holds it),
+# but CAN rename it aside: move the live binary to .8sync.old.<pid>, drop the new
+# one in, restore on failure. Mirrors selfup.rs, which also sweeps the leftovers.
+Get-ChildItem -LiteralPath $BinDir -Filter '.8sync.old.*' -Force -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+$old = $null
+if (Test-Path -LiteralPath $BinPath) {
+    $old = Join-Path $BinDir (".8sync.old." + $PID)
+    Move-Item -LiteralPath $BinPath -Destination $old -Force
+}
+try {
+    Move-Item -LiteralPath $tmp -Destination $BinPath -Force
+} catch {
+    if ($old) { Move-Item -LiteralPath $old -Destination $BinPath -Force -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    throw "8sync: could not install $BinPath`n$($_.Exception.Message)"
+}
+if ($old) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }
 
 Write-Host "Installed -> $BinPath"
 try { & $BinPath --version } catch {}

@@ -1,22 +1,21 @@
-# v0.61.0 — zsh-native `8sync forge`, self-setting-up installers, rate-limit-proof update notice
+# v0.61.0 + v0.61.1 — zsh-native `8sync forge`, self-setting-up installers, working update notice
 
 ## Goal
-Every member installs with one line (`curl … /install | sh` · `irm … /install.ps1 | iex`) and gets the full AI harness (gh, omp, codegraph, forge + zsh, skills, `harness global`); `8sync forge <name>` is a zsh shell bound to the named Forge conversation (`--tui` = Forge TUI); `8sync up` notices reach users even when the GitHub API is throttled.
+Every member installs with one line (`curl … /install | sh` · `irm … /install.ps1 | iex`) and gets the full AI harness (gh, omp, codegraph, forge + zsh, skills, `harness global`); `8sync forge <name>` is a zsh shell bound to the named Forge conversation (`--tui` = Forge TUI); `8sync` notices new releases.
 
 ## Checklist
-- [x] `8sync forge <name>`: zsh + Forge plugin, `_FORGE_CONVERSATION_ID` = session UUID; `--tui`; `-p` one-shot; Forge auto-install from GitHub release.
-- [x] Windows zsh: MSYS2 zsh 5.9.2 (sha256-pinned) in `%LOCALAPPDATA%\8sync\zsh` + Git for Windows runtime/terminfo/fstab.
-- [x] ConPTY proof: shell command, `: prompt` → `ZSHNATIVE81`, relaunch `Continue <same id>` + recall, `--tui` continues same id.
-- [x] Stage A: omp `-Binary` + Git Bash `shellPath` seed, codegraph `install.ps1`, gh presence check, forge + zsh, `harness global`; `--no-profile` unattended.
-- [x] Installers auto-run `setup --no-profile` (`SUSYNC_NO_SETUP=1` opts out); setup stdin never the script pipe.
-- [x] Update probe/`up` fall back to the `releases/latest` Location header (Windows curl 8.8.0 breaks every `-w`); GNU `sha256sum` `\`-escaped output parsed.
-- [ ] Commit, push, tag v0.61.0; verify release assets + Pages installers; run the published one-liners; verify the update notice.
+- [x] `8sync forge <name>`: zsh + Forge plugin, `_FORGE_CONVERSATION_ID` = session UUID; `--tui`; `-p` one-shot; Forge auto-install; Windows zsh (MSYS2, sha256-pinned) + ConPTY proof.
+- [x] Stage A: omp `-Binary`, codegraph `install.ps1`, gh, forge + zsh, `harness global`; installers auto-run `setup --no-profile` (`SUSYNC_NO_SETUP=1` opts out).
+- [x] v0.61.0 published (run 38091385123, 5 assets) after size-gate attribution (ceiling 5180 → 5300 KiB) and the `--no-default-features` build fix.
+- [x] Notice proven: installed v0.60.0 printed `! 8sync update available: v0.60.0 → v0.61.0`.
+- [x] v0.61.1 fixes: NTFS-proof probe throttle (epoch in content), install.ps1 replaces a running exe, install.ps1 checksum via .NET — each reproduced before, proven after.
+- [ ] Push + tag v0.61.1; release green; Pages redeploy; `8sync up` 0.60.0 → 0.61.1 on this box; WSL `install.sh` run.
 
 ## Current
-Local 0.61.0 build: 130 tests pass, size gate OK. Real `setup --no-profile` on this Windows box: all steps succeeded. Fresh-install invocations of omp (`-Binary`) and codegraph (`install.ps1`) proven into temp dirs with user PATH restored.
+Local 0.61.1: 131 tests, minimal build compiles, size gate OK, throttle smoke (run 2 keeps the stamp).
 
 ## Next
-Release, then run the published installers (Windows here; WSL Ubuntu with a temp HOME) and a v0.60.0 → v0.61.0 notice check. Known residual: `crates/cli/src/verbs/harness/gateway.rs` and `crates/cli/src/verbs/harness/local_model.rs` still use `curl -w` (fails on stock Windows curl 8.8.0).
+Release v0.61.1. Known residuals: `crates/cli/src/verbs/harness/gateway.rs` and `crates/cli/src/verbs/harness/local_model.rs` still use `curl -w` (fails on stock Windows curl 8.8.0); no CI job builds `--no-default-features`.
 
 # HANDOFF 2026-10-08 — urgent omp Windows input hotfix
 

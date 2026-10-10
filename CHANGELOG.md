@@ -5,6 +5,20 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.61.1] — 2026-10-11
+### Fixed
+- **Update check throttles on Windows.** The 6-hour window was the mtime of an empty `last_check` file;
+  rewriting an empty file with `""` leaves the NTFS mtime alone, so every 8sync command in a terminal
+  spawned a probe against the GitHub API (60 req/h unauthenticated). The stamp is now epoch seconds in
+  the file's content; legacy empty markers, garbage and future stamps count as due.
+- **`install.ps1` upgrades a running 8sync.** `Move-Item -Force` cannot replace a live `.exe` (any open
+  `8sync . <session>`), so re-running the one-liner died with "Cannot create a file when that file
+  already exists" and left a `.8sync.new.*` behind. The live binary is now renamed to `.8sync.old.<pid>`
+  first (restored on failure, swept on the next install) — the same dance as `8sync up`.
+- **`install.ps1` checksum no longer silently skipped.** Windows PowerShell launched from pwsh 7 inherits
+  pwsh's `PSModulePath`, loads the wrong `Microsoft.PowerShell.Utility`, and loses `Get-FileHash`; the
+  installer then printed "checksum: skipped". SHA-256 now comes from .NET directly.
+
 ## [0.61.0] — 2026-10-11
 ### Added
 - **`8sync codex-web [up|status|wire|off]` — bridge ChatGPT Web (incl. Pro) into omp CLI.**

@@ -24,19 +24,28 @@ fn last_seen_tag_file() -> PathBuf { cache_dir().join("last_seen_tag") }
 
 fn build_version() -> &'static str { env!("CARGO_PKG_VERSION") }
 
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// The last check time lives in the file's CONTENT (epoch seconds), not its
+/// mtime: rewriting an already-empty file with "" leaves the NTFS mtime alone,
+/// so on Windows the 6-hour window never started and every command spawned a probe.
+/// Empty, garbage, or future stamps (clock moved back) count as due.
+fn check_due(stamp: &str, now: u64) -> bool {
+    match stamp.trim().parse::<u64>() {
+        Ok(t) => now.checked_sub(t).is_none_or(|age| age > CHECK_INTERVAL.as_secs()),
+        Err(_) => true,
+    }
+}
+
 fn should_check() -> bool {
-    let p = last_check_file();
-    if !p.exists() { return true; }
-    let modified = match p.metadata().and_then(|m| m.modified()) {
-        Ok(t) => t,
-        Err(_) => return true,
-    };
-    SystemTime::now().duration_since(modified).map(|d| d > CHECK_INTERVAL).unwrap_or(true)
+    std::fs::read_to_string(last_check_file()).map_or(true, |s| check_due(&s, now_secs()))
 }
 
 fn touch_check() {
     let _ = std::fs::create_dir_all(cache_dir());
-    let _ = std::fs::write(last_check_file(), "");
+    let _ = std::fs::write(last_check_file(), now_secs().to_string());
 }
 
 /// Strip leading `v` from a release tag so it can be compared to CARGO_PKG_VERSION.
@@ -511,7 +520,20 @@ pub fn install_tag(tag: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_asset, first_hex64, is_newer, parse_digest, tag_from_release_url};
+    use super::{check_due, find_asset, first_hex64, is_newer, parse_digest, tag_from_release_url};
+
+    #[test]
+    fn update_probe_is_throttled_by_the_stamp_it_writes() {
+        let now = 1_791_700_000;
+        // What touch_check writes must close the window (the mtime-based gate never did on NTFS).
+        assert!(!check_due(&now.to_string(), now));
+        assert!(!check_due(&format!("{}\n", now - 6 * 3600), now));
+        assert!(check_due(&(now - 6 * 3600 - 1).to_string(), now));
+        // Legacy empty marker, garbage, or a stamp from the future (clock moved back): probe.
+        assert!(check_due("", now));
+        assert!(check_due("x", now));
+        assert!(check_due(&(now + 60).to_string(), now));
+    }
 
     #[test]
     fn redirect_fallback_only_accepts_a_resolved_release_tag() {
