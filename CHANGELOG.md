@@ -59,6 +59,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   (60 req/h per IP), the latest tag is resolved from the `releases/latest` redirect, as the installers do.
 - **Checksums on Windows:** Git for Windows' `sha256sum` prefixes its output with `\` for backslash paths,
   so every Windows download was reported "checksum NOT VERIFIED"; the marker is now skipped.
+- **`--no-default-features` builds again** (`8sync forge` no longer calls the `web`-gated project
+  scaffolder — which also `git init`-ed any directory a session was opened in).
+- **Size gate ceiling 5180 → 5300 KiB, with attribution** (`scripts/size-gate.sh`): v0.60.0 → v0.61.0 every
+  asset grew by the same four new verbs/bridges (linux-x86_64 +102,656 B → 5,390,608 B; windows +123,392 B);
+  `web` gate still +1,159,680 B. `scripts/size-report.sh` now finds `8sync.exe` on Windows hosts.
 - **`8sync feynman <name>`: automatic authenticated model synchronization and native omp inference.**
   Replaces hardcoded Opus registration and copied OAuth tokens with managed `models.json` entries,
   live vault lookups and a Pi extension using `omp auth-gateway stdio`. Keeps Feynman's existing

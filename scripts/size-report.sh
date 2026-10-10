@@ -44,7 +44,9 @@ for entry in "${COMBOS[@]}"; do
   say "building $name ${flags:-(default features)}"
   # shellcheck disable=SC2086
   ( cd "$ROOT" && cargo build --release --target "$TARGET" --target-dir "$dir" $flags >/dev/null 2>&1 )
-  SIZE[$name]=$(stat -c%s "$dir/$TARGET/release/8sync")
+  bin="$dir/$TARGET/release/8sync"
+  [ -f "$bin" ] || bin="$bin.exe"   # Windows host targets
+  SIZE[$name]=$(stat -c%s "$bin")
 done
 
 full=${SIZE[full]}

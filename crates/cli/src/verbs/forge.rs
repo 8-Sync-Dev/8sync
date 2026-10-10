@@ -103,7 +103,6 @@ fn open_session(env: &Env, root: &Path, name: &str, refuse_existing: bool, extra
         bail!("invalid session name '{name}' (use letters, digits, '-', '_', '.'; ≤64 chars)");
     }
     let forge = ensure_forge()?;
-    let _ = crate::verbs::here::scaffold_project(env, root);
     let session = touch_session(env, root, name, refuse_existing)?;
 
     ui::header("8sync forge");

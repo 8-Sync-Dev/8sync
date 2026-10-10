@@ -16,11 +16,18 @@
 # the ratchet's original 4,208 B headroom was eaten by v0.56 (+81,920) and v0.57
 # (+78,240) feature growth, so v0.58's legitimate +20,608 B tripped it). Tight on
 # purpose: the next feature release trips it again and must attribute again.
+#
+# Raised 2026-10-11 for v0.61.0, WITH attribution: v0.60.0 → v0.61.0 grew every
+# asset by the same new code — four verbs/bridges (`codex-web`, `gen-img`, the
+# Feynman omp bridge, zsh-native `forge` + installer setup): linux-x86_64
+# +102,656 B (5,390,608), linux-aarch64 +88,064, darwin-x86_64 +94,392,
+# darwin-arm64 +82,960, windows +123,392. size-report (x86_64-pc-windows-msvc):
+# `web` gate = +1,159,680 B, still the only elephant. 36,592 B headroom left.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-5304320}"   # 5180 KiB (raised 2026-08-21 from 5120 KiB, see below). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-5427200}"   # 5300 KiB (raised 2026-10-11 from 5180 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"
