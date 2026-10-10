@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.61.0] — 2026-10-11
 ### Added
 - **`8sync codex-web [up|status|wire|off]` — bridge ChatGPT Web (incl. Pro) into omp CLI.**
   Opens the [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web) launcher so YOU
@@ -31,18 +33,70 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   Brings `8sync . <name>` parity to Feynman (`companion-inc/feynman`): `8sync feynman <name>` (e.g. `8sync feynman core`)
   creates or resumes an isolated named research session in the current project via `feynman --cwd <root> --session-dir <dir>`,
   tracked in `~/.config/8sync/feynman-sessions/<project-key>/index.json`. Supports `ls` (list project sessions with last active
-  time), `rm <name>` (clean up session and directory), and `new <name>`. Automatically bridges omp credentials on first launch.
+  time), `rm <name>` (clean up session and directory), and `new <name>`. Every launch synchronizes omp's available chat catalog, including configured API-key providers.
+- **`8sync forge <name> [--tui]` (alias `forgecode`) — named ForgeCode sessions, zsh-native by default.**
+  `8sync forge core` opens an interactive zsh with Forge's own zsh plugin bound to the session's
+  conversation: `: <prompt>` asks Forge, `:<Tab>` lists Forge commands, everything else is a normal
+  terminal. `--tui` opens Forge's TUI on the same conversation; `-p "…"` is a one-shot. Names map to
+  the UUID conversation ids Forge requires, per project (`<config>/8sync/forge-sessions/<key>/index.json`);
+  `ls`, `new`, `rm`, `status`, `key [provider] <key>` (writes Forge's credential file — never `~/.env`,
+  which Forge no longer reads) and `provider|config|workspace|mcp|info` passthrough. Forge is installed
+  from its GitHub release when missing (`forgecode.dev/cli` currently 404s). Windows has no zsh: MSYS2's
+  zsh 5.9.2 (pinned, sha256-verified) is unpacked with Windows' bsdtar into `%LOCALAPPDATA%\8sync\zsh`,
+  reusing Git for Windows' runtime DLLs, terminfo, mount table and coreutils — no admin rights.
+- **One-line installers now set up the whole harness.** `curl … /install | sh` and
+  `irm … /install.ps1 | iex` run `8sync setup --no-profile` after installing the binary (opt out:
+  `SUSYNC_NO_SETUP=1`). Under `curl | sh` setup reads the terminal (or `/dev/null`), never the script pipe.
+### Changed
+- **Setup Stage A = full AI harness on every OS:** gh, omp, codegraph, **forge + zsh**, configs, skills and
+  **`harness global`** (every bundled skill, APPEND_SYSTEM, MCP, hooks). `--no-profile` now runs
+  unattended (logged, a failed tool is reported and the rest still installs).
 ### Fixed
+- **Windows Stage A no longer needs `sh`:** omp and codegraph install through their official
+  `install.ps1` (`irm | iex`) instead of `sh -c "curl … | sh"`, which a stock PowerShell box lacks; tools
+  that a fresh install put only on the user PATH are detected at their default locations.
+- **Update notifications and `8sync up` survive GitHub API rate limits:** when `api.github.com` refuses
+  (60 req/h per IP), the latest tag is resolved from the `releases/latest` redirect, as the installers do.
+- **Checksums on Windows:** Git for Windows' `sha256sum` prefixes its output with `\` for backslash paths,
+  so every Windows download was reported "checksum NOT VERIFIED"; the marker is now skipped.
+- **`8sync feynman <name>`: automatic authenticated model synchronization and native omp inference.**
+  Replaces hardcoded Opus registration and copied OAuth tokens with managed `models.json` entries,
+  live vault lookups and a Pi extension using `omp auth-gateway stdio`. Keeps Feynman's existing
+  `/model` picker, tools and selected default; supports omp-native transports including Cursor.
+  Synchronization and `off` preserve user-edited models, credentials and unrelated providers.
+  Omit null/unknown model limits instead of invalidating Pi's whole catalog. On Windows, seed
+  missing `shellPath` with real Git Bash; isolate Feynman's `PI_CODING_AGENT_DIR` from omp's
+  vault while restoring any original user override for both key lookup and inference.
+  Native stdio buffers each turn before returning its SSE events; output is not token-live.
+  Verified 345 bridged models across 12 providers in actual Pi; real named-session `/model`
+  selection and Opus 5.5 inference passed, as did native tool-call/result continuation.
+- **Feynman Windows renderer crash:** repair the missing `truncateToWidth` import and reassigned
+  `const line` on every launch. Actual differential-render smoke covers normal text, ANSI/Unicode
+  overflow and intact image data; bundled versions with the intentional overflow guard remain unchanged.
+- **`8sync feynman` (Windows): `/` was swallowed, so slash commands (`/model`, `/settings`) never opened.**
+  Feynman's embedded Pi 0.62 key parser ignores modifiers it cannot detect, so pi-btw's default
+  `super+/` focus shortcut matched a bare `/`. The launcher now patches that parser (both bundled
+  `@mariozechner/pi-tui` copies) to reject unsupported modifiers. Verified via ConPTY: `/` opens the
+  command menu and `/mod` filters to `model`; `ctrl+c`/`shift+tab` still match.
+- **Local omp 18.8.3 Windows terminal hotfix:** preserve incomplete win32-input-mode
+  packets across the 75 ms input timeout instead of inserting `ESC[8;14;8;…_`
+  fragments into the composer. Reproducible upstream source/test patch:
+  `scripts/omp-win32-record-framing.patch`; installed locally, not an upstream release.
+  Verified all Backspace packet split positions with 500 ms delays, existing Escape,
+  Enter, paste and modifier tests (23 passing), plus compiled-binary smoke test.
 - **Session resume no longer clobbers active model with GLM:** `cfg.resume_flags()` previously emitted
   `--model <roles.default>`, which defaulted to `"glm"`. Whenever a user resumed a session with `8sync .`,
   `8sync . <name>`, or `8sync ai continue`, omp was invoked with `--model glm --continue`, forcibly overriding
   the session's active model (e.g. Claude Opus or Gemini Flash) to GLM. `resume_flags()` now omits `--model`,
   preserving the session's active model across resumes.
-
-### Fixed
-- **`8sync feynman auth-omp` on Windows without sqlite3 CLI:** Replaced rigid `which("sqlite3")` with a multi-runner fallback chain (`sqlite3` CLI → `python`/`python3`/`py` stdlib `sqlite3` → `bun:sqlite` → `node:sqlite`), resolved `omp` binary path to avoid Windows PATHEXT search traps, unwrapped JSON token envelopes (e.g. `google-antigravity`), and mapped `google-antigravity` to `google`.
-
-
+- **`8sync feynman` Windows process launch, `/model` switching, and OAuth/API-key bridge:**
+  - **Preserved `google-antigravity` OAuth provider:** Previously mapped to `google`, causing all Gemini and Antigravity models (`claude-opus-4-6-thinking`, `claude-sonnet-4-6`, `gemini-3-flash`, `gemini-3.1-pro-high`) to fail or disappear. Now correctly mapped with full OAuth payload (`token`, `projectId`, `refreshToken`, `expiresAt`, `email`).
+  - **Direct token resolution for API keys:** Replaced `!omp token <p> --raw` with pre-resolved keys in `auth.json`, eliminating Windows WSL bash 127 status traps where `resolveConfigValue` failed on Windows.
+  - **Removed invalid legacy entries:** Purged invalid `google` (oauth) and `cursor` entries that broke model selection dialogs.
+  - **Fixed broken default model on startup:** Automatically checks `settings.json` and resets failing default models (such as rate-limited `anthropic/claude-opus-4-6`) to verified available models (`google-antigravity/gemini-3-flash` or `zai/glm-5`).
+  - **Direct Node runner on Windows:** Bypasses `cmd.exe /C` by invoking `node bin/feynman.js` directly with inherited stdio, avoiding quoting bugs and signal interception.
+  - **CLI subcommand passthrough & flag support:** Supports `8sync feynman model [list|set]`, `8sync feynman doctor`, `8sync feynman setup`, and flags (`--model`, `--prompt`, `-h`) with `allow_hyphen_values`.
+  - **Patched `pi-subagents` extension crash:** Guarded `selectedTools` access with optional chaining to prevent undefined property errors on turn startup.
 ## [0.60.0] — 2026-09-04
 ### Added
 - **`8sync harness claude-code [JSON|FILE]` — one-command Claude Code settings & Anthropic models auto-setup.**

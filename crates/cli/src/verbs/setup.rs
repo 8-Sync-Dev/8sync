@@ -28,12 +28,14 @@ const GH: platform::CorePkg = platform::CorePkg {
 
         STAGE A — HARNESS (always run, idempotent)
           · github-cli (gh)                     (native pkg manager; required by `8sync ship`)
-          · omp AI CLI                          (curl installer from omp.sh, if missing)
+          · omp AI CLI                          (official installer: install.sh / install.ps1)
           · paru                                (AUR helper — Arch family only)
           · codegraph                           (semantic code index)
+          · forge + zsh                         (`8sync forge <name>`; Windows: MSYS2 zsh)
           · PATH bootstrap                      (~/.local/bin, ~/.cargo/bin, ~/.bun/bin,
                                                  ~/.encore/bin — zsh/bash + fish conf.d)
           · configs + skills under ~/.config/8sync/ and ~/.omp/skills/
+          · harness global                      (every bundled skill, APPEND_SYSTEM, MCP, hooks)
 
         STAGE B — PROFILES (community-visible)
           dev-stack    Docker + Node/npm/bun/pnpm + Encore + TS LSP + build chain
@@ -47,7 +49,7 @@ const GH: platform::CorePkg = platform::CorePkg {
           8sync setup profile show <name>      resolved packages + services + post-install
           8sync setup profile apply <name>     (re-)apply one profile idempotently
 
-        UNATTENDED MODE (auto-on with --community / --full / --profile)
+        UNATTENDED MODE (auto-on with --community / --full / --profile / --no-profile)
           1. Preflight: print OS, display manager, sessions, GPU, tool presence
           2. Log every step to ~/.cache/8sync/setup-<unix_ts>.log
           3. On any step failure: log + track + CONTINUE (re-run to retry)
@@ -120,11 +122,13 @@ pub fn run(a: Args) -> Result<()> {
 
     // ── YOLO mode setup: auto-on for any unattended path ─────────
     // Triggers when user requests an unambiguous install path:
-    //   --full          → alexdev bundle
+    //   --full          → every community profile
     //   --profile <n>   → just one profile
+    //   --no-profile    → harness only (what install.sh / install.ps1 run): one
+    //                     failed tool must not stop the rest of the harness
     // Strict mode (default `8sync setup` with no flags) keeps existing
     // behaviour: interactive prompts, errors bail, no log file.
-    let yolo = a.full || a.profile.is_some() || a.community;
+    let yolo = a.full || a.profile.is_some() || a.community || a.no_profile;
     let log_path = if yolo && !a.dry_run {
         init_yolo_log().ok()
     } else {
@@ -152,7 +156,7 @@ pub fn run(a: Args) -> Result<()> {
             }
             platform::CoreRoute::Manual => platform::no_pkg_manager_notice("gh"),
         }
-        ui::info("would install omp (curl) if missing");
+        ui::info("would install omp (official installer) if missing");
         if env.family() == env_detect::Family::Arch {
             ui::info("would install paru (AUR helper) if missing");
         } else {
@@ -161,12 +165,20 @@ pub fn run(a: Args) -> Result<()> {
                 env.os_id
             ));
         }
-        ui::info("would install codegraph (curl) if missing");
+        ui::info("would install codegraph (official installer) if missing");
+        ui::info("would install forge (GitHub release) + zsh (Windows: MSYS2 zsh) if missing");
         ui::info("would write: configs + skills");
         ui::info("would patch PATH in zsh/bash + ~/.config/fish/conf.d/8sync-path.fish");
         ui::info("would register codegraph as a global+local skill");
+        ui::info("would run `8sync harness global` (skills, APPEND_SYSTEM, MCP, hooks)");
     } else {
         try_step("gh cli", yolo, &mut failures, || {
+            // winget/brew exit non-zero for an already-installed package, which
+            // would report a failure on every re-run.
+            if which::which("gh").is_ok() {
+                ui::skip("gh", "present");
+                return Ok(());
+            }
             platform::install_core_pkg("gh", GH)
         })?;
         try_step("omp",        yolo, &mut failures, install_omp)?;
@@ -180,10 +192,20 @@ pub fn run(a: Args) -> Result<()> {
             ui::info(&format!("AUR helper is Arch-only — skipping on {}", env.os_id));
         }
         try_step("codegraph",  yolo, &mut failures, install_codegraph)?;
+        try_step("forge",      yolo, &mut failures, || {
+            ui::step("Forge + zsh (`8sync forge <name>`)");
+            let forge = crate::verbs::forge::ensure_forge()?;
+            let zsh = crate::verbs::forge::ensure_zsh()?;
+            ui::ok(&format!("forge {} · zsh {}", forge.display(), zsh.exe.display()));
+            Ok(())
+        })?;
         try_step("path-bootstrap", yolo, &mut failures, || { ensure_path_in_shells(); Ok(()) })?;
         try_step("configs",    yolo, &mut failures, || install_configs(&env))?;
         try_step("skills",     yolo, &mut failures, || install_skills(&env))?;
         try_step("codegraph-skill", yolo, &mut failures, || register_codegraph_skill(&env))?;
+        try_step("harness-global", yolo, &mut failures, || {
+            crate::verbs::harness::global::harness_global(&env, None, false, false)
+        })?;
     }
     // Stage B profiles install NATIVE packages (pacman on Arch, dnf on Fedora).
     // Gate on the distro FAMILY, not on `Os::Linux`: a Linux host with neither
@@ -399,15 +421,84 @@ fn do_reboot_with_countdown(secs: u32) {
 // Stage A helpers
 // ─────────────────────────────────────────────────────────────────
 
+/// Run an upstream one-line installer with the platform's own shell:
+/// `curl -fsSL <sh_url> | sh` on Unix, `irm <ps1_url> | iex` on Windows (a
+/// stock Windows box has no `sh`).
+fn run_installer(sh_url: &str, ps1_url: &str) -> Result<()> {
+    if platform::os() == platform::Os::Windows {
+        pkg::run_loud(
+            "powershell",
+            &[
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &format!("$ProgressPreference='SilentlyContinue'; irm {ps1_url} | iex"),
+            ],
+        )
+    } else {
+        pkg::run_loud("sh", &["-c", &format!("curl -fsSL {sh_url} | sh")])
+    }
+}
+
+/// A tool counts as present when it is on PATH or at its installer's default
+/// location (a fresh Windows install updates the user PATH, not ours).
+fn tool_present(bin: &str, win_default: &[&str]) -> Option<String> {
+    if which::which(bin).is_ok() {
+        return Some(env_detect::cmd_version(bin, &["--version"]).unwrap_or_default());
+    }
+    let local = dirs::data_local_dir()?;
+    let p = win_default.iter().fold(local, |p, seg| p.join(seg));
+    (platform::os() == platform::Os::Windows && p.exists()).then(|| p.display().to_string())
+}
+
 fn install_omp() -> Result<()> {
     ui::step("omp AI CLI");
-    if which::which("omp").is_ok() {
-        let v = env_detect::cmd_version("omp", &["--version"]).unwrap_or_default();
+    if let Some(v) = tool_present("omp", &["omp", "omp.exe"]) {
         ui::skip("omp", &format!("present ({})", v));
         return Ok(());
     }
-    pkg::run_loud("sh", &["-c", "curl -fsSL https://omp.sh/install | sh"])?;
-    Ok(())
+    if platform::os() != platform::Os::Windows {
+        return run_installer("https://omp.sh/install", "https://omp.sh/install.ps1");
+    }
+    // Without a flag the Windows installer prefers `bun install -g` (and throws
+    // on an older bun); `-Binary` installs the self-contained omp.exe. It also
+    // records the FIRST bash on PATH as omp's shell — usually the WSL launcher
+    // System32\bash.exe — unless shellPath is already set, so seed Git Bash.
+    #[cfg(windows)]
+    seed_omp_shell_path();
+    pkg::run_loud(
+        "powershell",
+        &[
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "$ProgressPreference='SilentlyContinue'; & ([scriptblock]::Create((irm https://omp.sh/install.ps1))) -Binary",
+        ],
+    )
+}
+
+/// Set `shellPath` in `~/.omp/agent/settings.json` to Git Bash when unset.
+#[cfg(windows)]
+fn seed_omp_shell_path() {
+    let (Some(bash), Some(home)) = (crate::verbs::forge::git_bash(), dirs::home_dir()) else {
+        return;
+    };
+    let file = home.join(".omp").join("agent").join("settings.json");
+    let mut v: serde_json::Value = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let Some(obj) = v.as_object_mut() else { return };
+    if obj.contains_key("shellPath") {
+        return;
+    }
+    obj.insert("shellPath".into(), bash.display().to_string().into());
+    let _ = std::fs::create_dir_all(file.parent().unwrap_or(&home));
+    if std::fs::write(&file, serde_json::to_string_pretty(&v).unwrap_or_default()).is_ok() {
+        ui::ok(&format!("omp shellPath → {}", bash.display()));
+    }
 }
 
 fn install_aur_helper() -> Result<()> {
@@ -428,17 +519,13 @@ fn install_aur_helper() -> Result<()> {
 
 fn install_codegraph() -> Result<()> {
     ui::step("codegraph (semantic code index for omp / claude / cursor)");
-    if which::which("codegraph").is_ok() {
-        let v = env_detect::cmd_version("codegraph", &["--version"]).unwrap_or_default();
+    if let Some(v) = tool_present("codegraph", &["codegraph", "current", "bin", "codegraph.cmd"]) {
         ui::skip("codegraph", &format!("present ({})", v));
         return Ok(());
     }
-    pkg::run_loud(
-        "sh",
-        &[
-            "-c",
-            "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh",
-        ],
+    run_installer(
+        "https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh",
+        "https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1",
     )?;
     ensure_path_in_shells();
     Ok(())

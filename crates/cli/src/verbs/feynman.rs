@@ -1,19 +1,8 @@
-//! `8sync feynman auth-omp` — bridge Feynman (companion-inc/feynman, a Pi-based
-//! research agent) to omp's already-authenticated providers, so Feynman shows and
-//! uses the SAME models — reusing omp's Claude Pro/Max OAuth (and API keys) without
-//! a second login. omp is a fast-moving Pi fork with a fresh model catalog + a
-//! credential vault; Feynman is base pi-ai. Both read `<home>/agent/auth.json` in
-//! the SAME schema, so we mirror omp's live credentials into `~/.feynman/agent/auth.json`.
-//!
-//! Mechanism (verified live against feynman 0.3.5 + omp 16.4.6):
-//! - OAuth providers (e.g. anthropic Claude Pro/Max) → `{type:oauth, access:<omp token>}`
-//!   WITHOUT the refresh token, so Feynman never rotates omp's OAuth (no dueling
-//!   refresher). omp stays the sole refresher; re-run `auth-omp` when the token expires.
-//! - API-key providers → `{type:api_key, key:"!omp token <p> --raw"}` so the key is
-//!   fetched live from omp at request time — no secret copied into Feynman's file.
-//!
-//! `status` shows the bridge; `off` removes only the entries we manage (a sidecar
-//! records them; Feynman's own `feynman model login` creds are never touched).
+//! Named Feynman sessions with omp's authenticated chat catalog.
+//! Feynman retains its agent, tools and `/model` picker; a managed Pi extension
+//! sends canonical contexts to `omp auth-gateway stdio`, keeping newer protocols
+//! and OAuth refresh in omp. No model IDs or provider transports are hardcoded.
+//! The sidecar tracks exact managed config values so user edits survive sync/off.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -25,7 +14,7 @@ use serde_json::{Map, Value};
 
 use crate::env_detect::Env;
 use crate::ui;
-/// Sidecar recording which auth.json providers WE wrote (so `off` removes only ours).
+/// Sidecar recording bridge-owned config values (no credential material).
 const MANAGED: &str = ".8sync-omp.json";
 
 #[derive(ClapArgs, Debug)]
@@ -36,18 +25,19 @@ const MANAGED: &str = ".8sync-omp.json";
       8sync feynman ls          list Feynman sessions in this repo
       8sync feynman rm <name>   remove a Feynman session
       8sync feynman new <name>  create a new Feynman session
-      8sync feynman auth-omp    mirror omp's authed providers -> Feynman (reuse Claude OAuth + keys)
+      8sync feynman auth-omp    sync authenticated omp models and install the native bridge
       8sync feynman status      show bridged providers and current project sessions
-      8sync feynman off         remove the omp-managed entries from Feynman's auth.json
+      8sync feynman off         remove only unmodified omp-managed config entries
 
     WHAT IT DOES
       Manages per-project named Feynman research sessions (`feynman --session-dir`)
-      and bridges omp credentials into `~/.feynman/agent/auth.json` so Feynman shows
-      and uses the same models (OAuth + API keys) without duplicate logins.
+      and syncs authenticated omp chat models on every launch. Inference uses omp's
+      native gateway; change models with Feynman's existing /model command.
 "})]
 pub struct Args {
-    /// Subcommand (`auth-omp`, `status`, `off`, `ls`, `rm <name>`, `new <name>`),
+    /// Subcommand (`auth-omp`, `status`, `off`, `ls`, `rm <name>`, `new <name>`, `model ...`, `doctor`),
     /// or a bare session name (e.g. `core`) to create-or-resume. Empty = resume latest.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub rest: Vec<String>,
 }
 
@@ -65,7 +55,7 @@ pub fn run(a: Args) -> Result<()> {
         .unwrap_or(("", &[][..]));
 
     match verb {
-        "auth-omp" | "auth" | "sync" => auth_omp(&home, &agent_dir),
+        "auth-omp" | "auth" | "sync" => auth_omp(&agent_dir),
         "status" => status(&agent_dir, &env, &root),
         "off" | "remove" | "clear" => off(&agent_dir),
         "ls" | "list" => cmd_ls(&env, &root),
@@ -75,7 +65,8 @@ pub fn run(a: Args) -> Result<()> {
         }
         "new" => {
             let name = rest.first().context("usage: 8sync feynman new <name>")?;
-            resume_named(&env, &root, name, &home, &agent_dir, true)
+            let extra: Vec<String> = rest.iter().skip(1).cloned().collect();
+            resume_named(&env, &root, name, &agent_dir, true, &extra)
         }
         "" => {
             let kdir = feynman_key_dir(&env, &root);
@@ -83,109 +74,240 @@ pub fn run(a: Args) -> Result<()> {
             if let Some(name) = reg.last_used.clone() {
                 ui::header("8sync feynman");
                 ui::info(&format!("project: {}", root.display()));
-                resume_named(&env, &root, &name, &home, &agent_dir, false)
+                resume_named(&env, &root, &name, &agent_dir, false, &[])
             } else {
-                auth_omp(&home, &agent_dir)?;
+                auth_omp(&agent_dir)?;
                 ui::info(&format!("project: {}", root.display()));
                 ui::info("no Feynman session yet in this repo — create one with: 8sync feynman <name>");
                 Ok(())
             }
         }
+        "model" | "doctor" | "setup" | "alpha" | "search" | "chat" | "update" | "packages"
+        | "audit" | "autoresearch" | "compare" | "deepresearch" | "draft" | "lit" | "replicate"
+        | "review" | "watch" => {
+            auth_omp(&agent_dir)?;
+            run_feynman_passthrough(&root, &a.rest)
+        }
+        v if v.starts_with('-') => {
+            auth_omp(&agent_dir)?;
+            run_feynman_passthrough(&root, &a.rest)
+        }
         name => {
             ui::header("8sync feynman");
             ui::info(&format!("project: {}", root.display()));
-            resume_named(&env, &root, name, &home, &agent_dir, false)
+            let extra: Vec<String> = rest.to_vec();
+            resume_named(&env, &root, name, &agent_dir, false, &extra)
         }
     }
 }
 
-fn auth_omp(home: &Path, agent_dir: &Path) -> Result<()> {
-    ui::header("8sync feynman auth-omp");
+fn pi_model(row: &Value) -> Result<Value> {
+    let id = row.get("id").and_then(Value::as_str).context("model missing id")?;
+    let mut model = Map::new();
+    model.insert("id".into(), Value::String(id.into()));
+    model.insert("api".into(), Value::String("8sync-omp".into()));
+    for key in ["name", "reasoning", "input", "cost", "contextWindow", "maxTokens"] {
+        // omp uses null for unknown limits; Pi accepts omitted limits, not null.
+        if let Some(value) = row.get(key).filter(|value| !value.is_null()) {
+            model.insert(key.into(), value.clone());
+        }
+    }
+    Ok(Value::Object(model))
+}
 
+fn bash_escape(value: &str) -> std::borrow::Cow<'_, str> {
+    if value.contains('\'') {
+        std::borrow::Cow::Owned(value.replace('\'', "'\\''"))
+    } else {
+        std::borrow::Cow::Borrowed(value)
+    }
+}
+
+fn auth_omp(agent_dir: &Path) -> Result<()> {
     let omp_bin = which::which("omp")
         .map_err(|_| anyhow!("omp not found on PATH - run `8sync setup` first"))?;
-    let db = home.join(".omp/agent/agent.db");
-    if !db.exists() {
-        return Err(anyhow!(
-            "omp credential store not found ({}). Authenticate in omp first (`/login` in an omp session).",
-            db.display()
-        ));
-    }
-    if which::which("feynman").is_err() {
-        ui::warn("feynman not on PATH - writing config anyway (install: curl -fsSL https://feynman.is/install | bash)");
-    }
-
-    // Provider + type only — never the secret `data` blob (stable columns, version-safe).
-    let creds = omp_active_credentials(&db)?;
-    if creds.is_empty() {
-        return Err(anyhow!(
-            "omp has no active credentials. Authenticate in omp first (`/login`)."
-        ));
-    }
-
-    std::fs::create_dir_all(agent_dir)?;
-    let auth_path = agent_dir.join("auth.json");
-    let mut root: Map<String, Value> = match std::fs::read_to_string(&auth_path) {
-        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
-        _ => Map::new(),
+    let command_path = omp_bin.to_string_lossy();
+    #[cfg(windows)]
+    let command_path = command_path.replace('\\', "/");
+    let omp_pi_agent_dir = std::env::var("PI_CODING_AGENT_DIR").ok();
+    let credential_env = match omp_pi_agent_dir.as_deref() {
+        Some(dir) => std::borrow::Cow::Owned(format!("PI_CODING_AGENT_DIR='{}'", bash_escape(dir))),
+        None => std::borrow::Cow::Borrowed("-u PI_CODING_AGENT_DIR"),
     };
-
-    let mut managed: Vec<String> = Vec::new();
-    for (provider, ctype) in &creds {
-        let key = pi_key(provider);
-        let entry = if ctype == "oauth" {
-            // Live access token from omp (omp refreshes as needed). No refresh token
-            // copied -> Feynman uses it read-only and never rotates omp's OAuth.
-            let access = omp_token(&omp_bin, provider);
-            if access.is_empty() {
-                ui::skip(&key, "omp returned no token");
-                continue;
+    let output = Command::new(&omp_bin).args(["models", "--json"]).output()
+        .context("export omp model catalog")?;
+    anyhow::ensure!(output.status.success(), "omp models --json failed");
+    let catalog: Value = serde_json::from_slice(&output.stdout).context("parse omp model catalog")?;
+    let rows = catalog.get("models").and_then(Value::as_array)
+        .context("omp models --json did not return a models array")?;
+    let mut models = Map::new();
+    for row in rows {
+        let provider = row.get("provider").and_then(Value::as_str).context("model missing provider")?;
+        if row.get("kind").and_then(Value::as_str).unwrap_or("chat") != "chat" {
+            continue;
+        }
+        models.entry(provider.to_string()).or_insert_with(|| serde_json::json!({
+            "baseUrl": "stdio://omp",
+            "apiKey": format!("!env {} '{}' token '{}' --raw", credential_env, bash_escape(&command_path), bash_escape(provider)),
+            "models": []
+        })).get_mut("models").and_then(Value::as_array_mut).unwrap().push(pi_model(row)?);
+    }
+    anyhow::ensure!(!models.is_empty(), "omp has no authenticated chat models; authenticate with `/login` first");
+    std::fs::create_dir_all(agent_dir)?;
+    let side_path = agent_dir.join(MANAGED);
+    let previous = read_json_object(&side_path)?;
+    let models_path = agent_dir.join("models.json");
+    let mut config = read_json_object(&models_path)?;
+    let providers = config.entry("providers").or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut().context("models.json providers must be an object")?;
+    remove_managed_models(providers, previous.get("models").and_then(Value::as_object));
+    let mut owned = Map::new();
+    let mut count = 0;
+    for (provider, additions) in &models {
+        let config = providers.entry(provider.clone()).or_insert_with(|| Value::Object(Map::new()))
+            .as_object_mut().with_context(|| format!("models.json provider {provider} must be an object"))?;
+        let mut managed = Map::new();
+        for key in ["baseUrl", "apiKey"] {
+            let old = previous.get("models").and_then(|m| m.get(provider)).and_then(|p| p.get(key));
+            if !config.contains_key(key) || old.is_some_and(|value| config.get(key) == Some(value)) {
+                config.insert(key.into(), additions[key].clone());
+                managed.insert(key.into(), additions[key].clone());
             }
-            let mut m = Map::new();
-            m.insert("type".into(), Value::String("oauth".into()));
-            m.insert("access".into(), Value::String(access));
-            Value::Object(m)
-        } else {
-            // API key: resolved live from omp at request time via `!command`.
-            let mut m = Map::new();
-            m.insert("type".into(), Value::String("api_key".into()));
-            m.insert("key".into(), Value::String(format!("!omp token {provider} --raw")));
-            Value::Object(m)
-        };
-        root.insert(key.clone(), entry);
-        ui::step(&format!("bridged {key} ({ctype})"));
-        managed.push(key);
+        }
+        let current = config.entry("models").or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut().with_context(|| format!("models.json {provider}.models must be an array"))?;
+        let mut inserted = Vec::new();
+        for model in additions["models"].as_array().unwrap() {
+            if !current.iter().any(|m| m.get("id") == model.get("id")) {
+                current.push(model.clone());
+                inserted.push(model.clone());
+                count += 1;
+            }
+        }
+        managed.insert("models".into(), Value::Array(inserted));
+        owned.insert(provider.clone(), Value::Object(managed));
     }
-
-    if managed.is_empty() {
-        return Err(anyhow!("no providers bridged (omp returned no usable tokens)"));
+    // Replace legacy copied credentials with live vault lookups, without
+    // overwriting credentials for providers the old bridge did not own.
+    let auth_path = agent_dir.join("auth.json");
+    let mut auth = read_json_object(&auth_path)?;
+    let mut owned_auth = Map::new();
+    let previous_auth = previous.get("auth").and_then(Value::as_object);
+    let legacy = if previous_auth.is_none() { read_managed(&side_path) } else { Vec::new() };
+    for (provider, _) in &models {
+        let unchanged = previous_auth.and_then(|m| m.get(provider))
+            .map(|old| auth.get(provider) == Some(old)).unwrap_or(false);
+        if !auth.contains_key(provider) || unchanged || legacy.contains(provider) {
+            let credential = serde_json::json!({ "type": "api_key", "key": models[provider]["apiKey"] });
+            auth.insert(provider.clone(), credential.clone());
+            owned_auth.insert(provider.clone(), credential);
+        }
     }
-
-    std::fs::write(&auth_path, serde_json::to_string_pretty(&Value::Object(root))?)?;
+    if let Some(old) = previous_auth {
+        for (provider, credential) in old {
+            if !models.contains_key(provider) && auth.get(provider) == Some(credential) {
+                auth.remove(provider);
+            }
+        }
+    }
+    let extension = agent_dir.join(".8sync/omp-extension.mjs");
+    let source = crate::assets::read("extensions/feynman-omp.mjs").context("embedded Feynman bridge missing")?;
+    std::fs::create_dir_all(extension.parent().unwrap())?;
+    write_if_changed(&extension, source.as_bytes())?;
+    let settings_path = agent_dir.join("settings.json");
+    let mut settings = read_json_object(&settings_path)?;
+    #[cfg(windows)]
+    let owned_shell = {
+        let mut owned = previous.get("shellSetting")
+            .filter(|value| !value.is_null() && settings.get("shellPath") == Some(*value)).cloned();
+        if !settings.contains_key("shellPath") || owned.is_some() {
+            // Pi otherwise finds the WSL bash stub on PATH, which cannot run vault lookups.
+            let git = which::which("git").context("Git for Windows is required for Feynman's Bash commands")?;
+            let output = Command::new(git).arg("--exec-path").output().context("locate Git Bash")?;
+            anyhow::ensure!(output.status.success(), "git --exec-path failed");
+            let exec_path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+            let bash = exec_path.ancestors().nth(3).map(|root| root.join("bin/bash.exe"))
+                .filter(|path| path.is_file()).context("Git Bash not found beside git --exec-path")?;
+            let value = Value::String(bash.to_string_lossy().into_owned());
+            settings.insert("shellPath".into(), value.clone());
+            owned = Some(value);
+        }
+        owned
+    };
+    #[cfg(not(windows))]
+    let owned_shell: Option<Value> = None;
+    let extensions = settings.entry("extensions").or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut().context("settings.json extensions must be an array")?;
+    let extension_value = Value::String(extension.to_string_lossy().into_owned());
+    let mut owned_extension = previous.get("extensionSetting").filter(|v| *v == &extension_value).cloned();
+    if !extensions.contains(&extension_value) {
+        extensions.push(extension_value.clone());
+        owned_extension = Some(extension_value);
+    }
+    write_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
+    write_if_changed(&models_path, &serde_json::to_vec_pretty(&config)?)?;
+    write_if_changed(&auth_path, &serde_json::to_vec_pretty(&auth)?)?;
     set_600(&auth_path);
-
-    let side = agent_dir.join(MANAGED);
-    std::fs::write(&side, serde_json::to_string_pretty(&serde_json::json!({ "providers": managed }))?)?;
-
-    ui::ok(&format!("bridged {} provider(s) -> {}", managed.len(), auth_path.display()));
-    ui::info("verify: `feynman model list` (shows the same providers/models omp is authed for)");
-    ui::info("Claude Pro/Max OAuth draws from subscription extra-usage (billed per token). Re-run `8sync feynman auth-omp` when the OAuth token expires - omp stays the sole refresher.");
+    let managed: Vec<&String> = models.keys().collect();
+    write_if_changed(&side_path, &serde_json::to_vec_pretty(&serde_json::json!({
+        "providers": managed, "models": owned, "auth": owned_auth, "extensionSetting": owned_extension,
+        "ompBin": omp_bin, "shellSetting": owned_shell, "ompPiAgentDir": omp_pi_agent_dir
+    }))?)?;
+    ui::ok(&format!("synced {count} available omp chat model(s), {} configured provider(s); change with /model", models.len()));
     Ok(())
+}
+
+fn read_json_object(path: &Path) -> Result<Map<String, Value>> {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).with_context(|| format!("invalid JSON object: {}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Map::new()),
+        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<()> {
+    if std::fs::read(path).ok().as_deref() != Some(bytes) {
+        std::fs::write(path, bytes).with_context(|| format!("write {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn remove_managed_models(providers: &mut Map<String, Value>, previous: Option<&Map<String, Value>>) {
+    if let Some(previous) = previous {
+        for (provider, owned) in previous {
+            if let Some(current) = providers.get_mut(provider).and_then(Value::as_object_mut) {
+                if let (Some(models), Some(old)) = (
+                    current.get_mut("models").and_then(Value::as_array_mut),
+                    owned.get("models").and_then(Value::as_array),
+                ) {
+                    models.retain(|model| !old.contains(model));
+                    if models.is_empty() {
+                        current.remove("models");
+                    }
+                }
+                let retained_models = current.get("models").and_then(Value::as_array)
+                    .is_some_and(|models| !models.is_empty());
+                for key in ["baseUrl", "apiKey"] {
+                    if !retained_models && owned.get(key).is_some() && current.get(key) == owned.get(key) {
+                        current.remove(key);
+                    }
+                }
+                if current.is_empty() {
+                    providers.remove(provider);
+                }
+            }
+        }
+    }
 }
 
 fn status(agent_dir: &Path, env: &Env, root: &Path) -> Result<()> {
     ui::header("8sync feynman - status");
-    let auth_path = agent_dir.join("auth.json");
-    if !auth_path.exists() {
-        ui::info(&format!("no Feynman auth.json yet ({}). Run `8sync feynman auth-omp`.", auth_path.display()));
+    let managed = read_managed(&agent_dir.join(MANAGED));
+    if managed.is_empty() {
+        ui::info("no omp-managed providers recorded. Run `8sync feynman auth-omp`.");
     } else {
-        let managed = read_managed(&agent_dir.join(MANAGED));
-        if managed.is_empty() {
-            ui::info("no omp-managed providers recorded here. Run `8sync feynman auth-omp`.");
-        } else {
-            for p in &managed {
-                ui::ok(&format!("bridged from omp: {p}"));
-            }
+        for p in &managed {
+            ui::ok(&format!("bridged from omp: {p}"));
         }
     }
     if which::which("feynman").is_ok() {
@@ -299,42 +421,160 @@ fn ensure_feynman_windows_esm_patch(feynman_bin: &Path) {
                 }
             }
         }
+        let subagents_paths = [
+            bin_dir.join("node_modules/@companion-ai/feynman/.feynman/npm/node_modules/pi-subagents/src/extension/index.js"),
+            dirs::home_dir().map(|h| h.join(".feynman/npm-global/node_modules/pi-subagents/src/extension/index.js")).unwrap_or_default(),
+        ];
+        for p in subagents_paths {
+            if p.exists() {
+                if let Ok(code) = std::fs::read_to_string(&p) {
+                    let target = "if (!event.systemPromptOptions.selectedTools.includes(\"subagent\"))";
+                    let replacement = "if (!event.systemPromptOptions?.selectedTools?.includes(\"subagent\"))";
+                    if code.contains(target) {
+                        let _ = std::fs::write(&p, code.replace(target, replacement));
+                    }
+                }
+            }
+        }
+        // Feynman's Pi 0.62 key parser drops modifiers it cannot detect, so pi-btw's
+        // default `super+/` shortcut matched a bare "/" and swallowed every slash command.
+        let tui_keys = [
+            bin_dir.join("node_modules/@companion-ai/feynman/node_modules/@mariozechner/pi-tui/dist/keys.js"),
+            bin_dir.join("node_modules/@companion-ai/feynman/.feynman/npm/node_modules/@mariozechner/pi-tui/dist/keys.js"),
+        ];
+        let target = "    if (!key)\n        return null;\n    return {\n        key,\n        ctrl: parts.includes(\"ctrl\"),";
+        let replacement = "    if (!key)\n        return null;\n    if (parts.slice(0, -1).some((part) => part !== \"ctrl\" && part !== \"shift\" && part !== \"alt\"))\n        return null;\n    return {\n        key,\n        ctrl: parts.includes(\"ctrl\"),";
+        for p in tui_keys {
+            if let Ok(code) = std::fs::read_to_string(&p) {
+                if code.contains(target) {
+                    let _ = std::fs::write(&p, code.replacen(target, replacement, 1));
+                }
+            }
+        }
+        // Repair only the truncating renderer variant; older Pi copies deliberately
+        // throw on overflow and must retain that behavior.
+        let tui_renderers = [
+            bin_dir.join("node_modules/@companion-ai/feynman/node_modules/@mariozechner/pi-tui/dist/tui.js"),
+            bin_dir.join("node_modules/@companion-ai/feynman/.feynman/npm/node_modules/@mariozechner/pi-tui/dist/tui.js"),
+        ];
+        let immutable_overflow = "const line = newLines[i];\n            const isImage = isImageLine(line);\n            if (!isImage && visibleWidth(line) > width) {\n                line = truncateToWidth(line, width);";
+        let mutable_overflow = "let line = newLines[i];\n            const isImage = isImageLine(line);\n            if (!isImage && visibleWidth(line) > width) {\n                line = truncateToWidth(line, width);";
+        for p in tui_renderers {
+            if let Ok(code) = std::fs::read_to_string(&p) {
+                if !code.contains("line = truncateToWidth(line, width);") {
+                    continue;
+                }
+                let mut patched = code.replacen(immutable_overflow, mutable_overflow, 1);
+                if let Some(import_line) = code.lines().find(|line| {
+                    line.starts_with("import {")
+                        && line.ends_with("from \"./utils.js\";")
+                        && !line.contains("truncateToWidth")
+                }) {
+                    let replacement = import_line.replacen("import {", "import { truncateToWidth,", 1);
+                    patched = patched.replacen(import_line, &replacement, 1);
+                }
+                if patched != code {
+                    let _ = std::fs::write(&p, patched);
+                }
+            }
+        }
     }
 }
 
-fn launch_feynman(root: &Path, session_dir: &Path) -> Result<()> {
+fn get_feynman_runner(feynman_bin: &Path) -> (PathBuf, Vec<String>) {
+    #[cfg(windows)]
+    {
+        if let Some(bin_dir) = feynman_bin.parent() {
+            let feynman_js = bin_dir.join("node_modules/@companion-ai/feynman/bin/feynman.js");
+            if feynman_js.exists() {
+                if let Ok(node_bin) = which::which("node") {
+                    return (node_bin, vec![feynman_js.to_string_lossy().to_string()]);
+                }
+            }
+        }
+        (PathBuf::from("cmd"), vec!["/C".into(), feynman_bin.to_string_lossy().to_string()])
+    }
+    #[cfg(not(windows))]
+    {
+        (feynman_bin.to_path_buf(), Vec::new())
+    }
+}
+
+fn configure_omp_bridge(cmd: &mut Command, feynman_bin: &Path) -> Result<()> {
+    let home = dirs::home_dir().context("cannot resolve home directory")?;
+    let agent_dir = home.join(".feynman/agent");
+    let canonical = std::fs::canonicalize(feynman_bin).unwrap_or_else(|_| feynman_bin.to_path_buf());
+    let mut candidates = Vec::new();
+    if let Some(parent) = feynman_bin.parent() {
+        candidates.push(parent.join("node_modules/@companion-ai/feynman/node_modules/@mariozechner/pi-ai/dist/index.js"));
+    }
+    if let Some(parent) = canonical.parent().and_then(Path::parent) {
+        candidates.push(parent.join("node_modules/@mariozechner/pi-ai/dist/index.js"));
+    }
+    let ai_entry = candidates.into_iter().find(|p| p.exists())
+        .context("cannot locate Feynman's pi-ai package for the omp bridge")?;
+    cmd.env("EIGHTSYNC_OMP_BIN", which::which("omp").context("omp not found")?)
+        .env("EIGHTSYNC_FEYNMAN_AI", ai_entry)
+        .env("EIGHTSYNC_FEYNMAN_BRIDGE", agent_dir.join(MANAGED));
+    Ok(())
+}
+
+fn launch_feynman(root: &Path, session_dir: &Path, extra_args: &[String]) -> Result<()> {
     let feynman_bin = which::which("feynman")
         .map_err(|_| anyhow!("feynman not found on PATH (install: curl -fsSL https://feynman.is/install | bash)"))?;
     #[cfg(windows)]
     ensure_feynman_windows_esm_patch(&feynman_bin);
     std::fs::create_dir_all(session_dir)?;
     ui::info(&format!("feynman --cwd {} --session-dir {}", root.display(), session_dir.display()));
-    let status = if cfg!(windows) {
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/C")
-            .arg(&feynman_bin)
-            .arg("--cwd")
-            .arg(root)
-            .arg("--session-dir")
-            .arg(session_dir)
-            .current_dir(root)
-            .status()
-            .context("could not exec feynman")?
-    } else {
-        Command::new(&feynman_bin)
-            .arg("--cwd")
-            .arg(root)
-            .arg("--session-dir")
-            .arg(session_dir)
-            .current_dir(root)
-            .status()
-            .context("could not exec feynman")?
-    };
+    let (runner, prefix_args) = get_feynman_runner(&feynman_bin);
+    let mut cmd = Command::new(&runner);
+    for arg in prefix_args {
+        cmd.arg(arg);
+    }
+    configure_omp_bridge(&mut cmd, &feynman_bin)?;
+    cmd.arg("--cwd")
+        .arg(root)
+        .arg("--session-dir")
+        .arg(session_dir);
+    for arg in extra_args {
+        cmd.arg(arg);
+    }
+    let status = cmd
+        .current_dir(root)
+        .status()
+        .context("could not exec feynman")?;
     if !status.success() {
         ui::warn("feynman exited non-zero");
     }
     Ok(())
 }
+
+fn run_feynman_passthrough(root: &Path, args: &[String]) -> Result<()> {
+    let feynman_bin = which::which("feynman")
+        .map_err(|_| anyhow!("feynman not found on PATH (install: curl -fsSL https://feynman.is/install | bash)"))?;
+    #[cfg(windows)]
+    ensure_feynman_windows_esm_patch(&feynman_bin);
+    let (runner, prefix_args) = get_feynman_runner(&feynman_bin);
+    let mut cmd = Command::new(&runner);
+    for arg in prefix_args {
+        cmd.arg(arg);
+    }
+    for arg in args {
+        cmd.arg(arg);
+    }
+    if args.first().map(|a| a.as_str()) != Some("model") {
+        configure_omp_bridge(&mut cmd, &feynman_bin)?;
+    }
+    let status = cmd
+        .current_dir(root)
+        .status()
+        .context("could not exec feynman")?;
+    if !status.success() {
+        ui::warn("feynman exited non-zero");
+    }
+    Ok(())
+}
+
 
 fn cmd_ls(env: &Env, root: &Path) -> Result<()> {
     let kdir = feynman_key_dir(env, root);
@@ -387,17 +627,14 @@ fn resume_named(
     env: &Env,
     root: &Path,
     name: &str,
-    home: &Path,
     agent_dir: &Path,
     refuse_existing: bool,
+    extra_args: &[String],
 ) -> Result<()> {
     if !valid_name(name) {
         anyhow::bail!("invalid session name '{name}' (use letters, digits, '-', '_', '.'; ≤64 chars)");
     }
-    let auth_file = agent_dir.join("auth.json");
-    if !auth_file.exists() {
-        let _ = auth_omp(home, agent_dir);
-    }
+    auth_omp(agent_dir)?;
 
     let kdir = feynman_key_dir(env, root);
     let mut reg = load_registry(&kdir);
@@ -415,7 +652,7 @@ fn resume_named(
         reg.last_used = Some(name.to_string());
         save_registry(&kdir, &reg)?;
         ui::ok(&format!("→ resume session '{name}'"));
-        launch_feynman(root, &sdir)
+        launch_feynman(root, &sdir, extra_args)
     } else {
         std::fs::create_dir_all(&session_dir)?;
         reg.sessions.push(FeynmanSession {
@@ -427,142 +664,59 @@ fn resume_named(
         reg.last_used = Some(name.to_string());
         save_registry(&kdir, &reg)?;
         ui::ok(&format!("created session '{name}'"));
-        launch_feynman(root, &session_dir)
+        launch_feynman(root, &session_dir, extra_args)
     }
 }
 
 fn off(agent_dir: &Path) -> Result<()> {
     ui::header("8sync feynman - off");
-    let auth_path = agent_dir.join("auth.json");
     let side = agent_dir.join(MANAGED);
-    let managed = read_managed(&side);
-    if managed.is_empty() {
-        ui::info("nothing to remove (no omp-managed providers recorded).");
+    let previous = read_json_object(&side)?;
+    if previous.is_empty() {
+        ui::info("nothing to remove (no omp-managed config recorded).");
         return Ok(());
     }
-    if let Ok(s) = std::fs::read_to_string(&auth_path) {
-        let mut root: Map<String, Value> = serde_json::from_str(&s).unwrap_or_default();
-        let mut removed = 0;
-        for p in &managed {
-            if root.remove(p).is_some() {
-                removed += 1;
+    let models_path = agent_dir.join("models.json");
+    let mut models = read_json_object(&models_path)?;
+    if let Some(providers) = models.get_mut("providers").and_then(Value::as_object_mut) {
+        remove_managed_models(providers, previous.get("models").and_then(Value::as_object));
+    }
+    let auth_path = agent_dir.join("auth.json");
+    let mut auth = read_json_object(&auth_path)?;
+    if let Some(owned) = previous.get("auth").and_then(Value::as_object) {
+        for (provider, credential) in owned {
+            if auth.get(provider) == Some(credential) {
+                auth.remove(provider);
             }
         }
-        std::fs::write(&auth_path, serde_json::to_string_pretty(&Value::Object(root))?)?;
-        set_600(&auth_path);
-        ui::ok(&format!("removed {removed} omp-managed provider(s) from {}", auth_path.display()));
+    } else {
+        for provider in read_managed(&side) {
+            auth.remove(&provider);
+        }
     }
-    let _ = std::fs::remove_file(&side);
-    ui::info("Feynman's own `feynman model login` credentials (if any) were left untouched.");
+    let settings_path = agent_dir.join("settings.json");
+    let mut settings = read_json_object(&settings_path)?;
+    if let (Some(owned), Some(extensions)) = (
+        previous.get("extensionSetting").filter(|v| !v.is_null()),
+        settings.get_mut("extensions").and_then(Value::as_array_mut),
+    ) {
+        extensions.retain(|extension| extension != owned);
+    }
+    if previous.get("shellSetting").filter(|v| !v.is_null())
+        .is_some_and(|owned| settings.get("shellPath") == Some(owned)) {
+        settings.remove("shellPath");
+    }
+    write_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
+    write_if_changed(&models_path, &serde_json::to_vec_pretty(&models)?)?;
+    write_if_changed(&auth_path, &serde_json::to_vec_pretty(&auth)?)?;
+    set_600(&auth_path);
+    std::fs::remove_file(&side)?;
+    let extension = agent_dir.join(".8sync/omp-extension.mjs");
+    if extension.exists() {
+        std::fs::remove_file(extension)?;
+    }
+    ui::ok("removed unmodified omp-managed models and vault lookups; user credentials/settings preserved");
     Ok(())
-}
-
-/// Read omp's active credentials as (provider, credential_type). Reads ONLY the
-/// stable metadata columns — never the secret `data` blob.
-/// Tries multiple sqlite runners for cross-platform resilience:
-/// 1. `sqlite3` CLI (standard on Linux/macOS)
-/// 2. `python3` / `python` / `py` (standard library `sqlite3` module)
-/// 3. `bun` (built-in `bun:sqlite` module)
-/// 4. `node` (built-in `node:sqlite` in Node 22+)
-fn omp_active_credentials(db: &Path) -> Result<Vec<(String, String)>> {
-    let sql = "SELECT DISTINCT provider, credential_type FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY provider;";
-
-    // 1. sqlite3 CLI
-    if let Ok(sqlite) = which::which("sqlite3") {
-        if let Ok(out) = Command::new(sqlite).arg(db).arg(sql).output() {
-            if out.status.success() {
-                return parse_credentials_pipe(&String::from_utf8_lossy(&out.stdout));
-            }
-        }
-    }
-
-    // 2. Python (built-in sqlite3 in stdlib)
-    for py_name in &["python3", "python", "py"] {
-        if let Ok(py) = which::which(py_name) {
-            let py_code = "import sqlite3, sys; con = sqlite3.connect(sys.argv[1]); [print(f'{r[0]}|{r[1]}') for r in con.execute('SELECT DISTINCT provider, credential_type FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY provider')]";
-            if let Ok(out) = Command::new(py).arg("-c").arg(py_code).arg(db).output() {
-                if out.status.success() {
-                    return parse_credentials_pipe(&String::from_utf8_lossy(&out.stdout));
-                }
-            }
-        }
-    }
-
-    // 3. Bun (built-in bun:sqlite)
-    if let Ok(bun) = which::which("bun") {
-        let bun_code = "import { Database } from 'bun:sqlite'; const db = new Database(process.argv[1], { readonly: true }); for (const r of db.query('SELECT DISTINCT provider, credential_type FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY provider').all()) console.log(r.provider + '|' + r.credential_type);";
-        if let Ok(out) = Command::new(bun).arg("-e").arg(bun_code).arg(db).output() {
-            if out.status.success() {
-                return parse_credentials_pipe(&String::from_utf8_lossy(&out.stdout));
-            }
-        }
-    }
-
-    // 4. Node (built-in node:sqlite in Node 22+)
-    for node_name in &["node", "nodejs"] {
-        if let Ok(node) = which::which(node_name) {
-            let node_code = "const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(process.argv[1], { readOnly: true }); for (const r of db.prepare('SELECT DISTINCT provider, credential_type FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY provider').all()) console.log(r.provider + '|' + r.credential_type);";
-            if let Ok(out) = Command::new(node).arg("-e").arg(node_code).arg(db).output() {
-                if out.status.success() {
-                    return parse_credentials_pipe(&String::from_utf8_lossy(&out.stdout));
-                }
-            }
-        }
-    }
-
-    #[cfg(windows)]
-    let hint = "install sqlite3 (`scoop install sqlite` or `winget install SQLite.SQLite`) or ensure Python, Bun, or Node is installed";
-    #[cfg(not(windows))]
-    let hint = "install it (`pacman -S sqlite` / `apt install sqlite3` / `brew install sqlite3`) or ensure Python, Bun, or Node is installed";
-
-    Err(anyhow!("no sqlite runner found to read omp credential store ({hint})"))
-}
-
-fn parse_credentials_pipe(raw: &str) -> Result<Vec<(String, String)>> {
-    let mut v = Vec::new();
-    for line in raw.lines() {
-        let line = line.trim();
-        if let Some((p, t)) = line.split_once('|') {
-            let (p, t) = (p.trim(), t.trim());
-            if !p.is_empty() && !t.is_empty() {
-                v.push((p.to_string(), t.to_string()));
-            }
-        }
-    }
-    Ok(v)
-}
-
-/// A live token for `provider` from omp (`omp token <p> --raw`); empty on failure.
-fn omp_token(omp_bin: &Path, provider: &str) -> String {
-    match Command::new(omp_bin).arg("token").arg(provider).arg("--raw").output() {
-        Ok(o) if o.status.success() => {
-            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            // If omp returned a JSON envelope (e.g. google-antigravity {"token":"ya29...", ...}),
-            // extract the bearer token string.
-            if s.starts_with('{') {
-                if let Ok(v) = serde_json::from_str::<Value>(&s) {
-                    if let Some(t) = v.get("token").and_then(|t| t.as_str()) {
-                        return t.to_string();
-                    }
-                }
-            }
-            s
-        }
-        _ => String::new(),
-    }
-}
-
-/// Map an omp provider id to Feynman/Pi's `auth.json` key. Identity for the common
-/// ones (anthropic, zai, xai, openai, google, openrouter, ...); a couple of omp ids
-/// differ from Pi's canonical keys. Unknown ids pass through — if wrong, Feynman just
-/// marks that provider unavailable (harmless), while the verified ones still work.
-fn pi_key(omp_provider: &str) -> String {
-    match omp_provider {
-        "kimi-code" => "kimi-coding",
-        "gemini" | "google-gemini" | "google-antigravity" => "google",
-        other => other,
-    }
-    .to_string()
 }
 
 fn read_managed(side: &Path) -> Vec<String> {
@@ -595,37 +749,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_credentials_pipe_extracts_pairs() {
-        let raw = "anthropic|oauth\ncursor|oauth\n\n  openai-codex | oauth  \nzai|api_key\n";
-        let res = parse_credentials_pipe(raw).unwrap();
-        assert_eq!(
-            res,
-            vec![
-                ("anthropic".into(), "oauth".into()),
-                ("cursor".into(), "oauth".into()),
-                ("openai-codex".into(), "oauth".into()),
-                ("zai".into(), "api_key".into()),
-            ]
-        );
+    fn unknown_model_limits_are_omitted_instead_of_invalidating_pi_catalog() {
+        let unknown = pi_model(&serde_json::json!({
+            "id": "unknown-limits", "contextWindow": null, "maxTokens": null
+        })).unwrap();
+        assert!(unknown.get("contextWindow").is_none());
+        assert!(unknown.get("maxTokens").is_none());
+        let known = pi_model(&serde_json::json!({
+            "id": "known-limits", "contextWindow": 200000, "maxTokens": 32000
+        })).unwrap();
+        assert_eq!(known["contextWindow"], 200000);
+        assert_eq!(known["maxTokens"], 32000);
     }
 
     #[test]
-    fn parse_credentials_pipe_ignores_malformed() {
-        let raw = "no-delimiter\n|\n|only-type\nonly-provider|\n\n";
-        let res = parse_credentials_pipe(raw).unwrap();
-        assert!(res.is_empty());
+    fn removing_managed_models_preserves_user_edits_and_unrelated_providers() {
+        let mut providers = serde_json::json!({
+            "anthropic": {
+                "baseUrl": "https://user.example",
+                "apiKey": "!omp token anthropic --raw",
+                "models": [
+                    {"id": "old", "contextWindow": 100},
+                    {"id": "edited", "contextWindow": 999},
+                    {"id": "user"}
+                ]
+            },
+            "custom": {"baseUrl": "https://custom.example"}
+        }).as_object().unwrap().clone();
+        let owned = serde_json::json!({
+            "anthropic": {
+                "baseUrl": "stdio://omp",
+                "apiKey": "!omp token anthropic --raw",
+                "models": [
+                    {"id": "old", "contextWindow": 100},
+                    {"id": "edited", "contextWindow": 100}
+                ]
+            }
+        });
+        remove_managed_models(&mut providers, owned.as_object());
+        assert_eq!(Value::Object(providers), serde_json::json!({
+            "anthropic": {
+                "baseUrl": "https://user.example",
+                "apiKey": "!omp token anthropic --raw",
+                "models": [
+                    {"id": "edited", "contextWindow": 999},
+                    {"id": "user"}
+                ]
+            },
+            "custom": {"baseUrl": "https://custom.example"}
+        }));
     }
 
     #[test]
-    fn pi_key_mappings() {
-        assert_eq!(pi_key("kimi-code"), "kimi-coding");
-        assert_eq!(pi_key("gemini"), "google");
-        assert_eq!(pi_key("google-gemini"), "google");
-        assert_eq!(pi_key("google-antigravity"), "google");
-        assert_eq!(pi_key("anthropic"), "anthropic");
-        assert_eq!(pi_key("custom-llm"), "custom-llm");
+    fn removing_managed_models_removes_only_empty_owned_provider() {
+        let owned = serde_json::json!({
+            "cursor": {"baseUrl": "stdio://omp", "apiKey": "!omp token cursor --raw", "models": [{"id": "chat"}]}
+        });
+        let mut providers = owned.as_object().unwrap().clone();
+        providers.insert("other".into(), serde_json::json!({"models": [{"id": "mine"}]}));
+        remove_managed_models(&mut providers, owned.as_object());
+        assert_eq!(Value::Object(providers), serde_json::json!({"other": {"models": [{"id": "mine"}]}}));
     }
-
     #[test]
     fn test_valid_name() {
         assert!(valid_name("core"));

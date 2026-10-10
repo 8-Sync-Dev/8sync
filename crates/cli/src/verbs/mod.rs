@@ -31,3 +31,4 @@ pub mod vpn;
 pub mod omp;
 pub mod gen_img;
 pub mod codex_web;
+pub mod forge;

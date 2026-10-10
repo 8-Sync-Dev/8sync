@@ -141,6 +141,10 @@ enum Cmd {
 
     /// Bridge Feynman (Pi research agent) to omp's auth: `auth-omp` reuses Claude OAuth + keys
     Feynman(verbs::feynman::Args),
+
+    /// Named ForgeCode sessions with persistent UUID conversation mapping: 8sync forge <name>
+    #[command(name = "forge", alias = "forgecode")]
+    Forge(verbs::forge::Args),
 }
 
 fn main() -> Result<()> {
@@ -200,6 +204,7 @@ fn main() -> Result<()> {
         Some(Cmd::Note(a))    => verbs::note::run(a),
         Some(Cmd::Feature(a)) => verbs::feature::run(a),
         Some(Cmd::Feynman(a)) => verbs::feynman::run(a),
+        Some(Cmd::Forge(a))   => verbs::forge::run(a),
     }
 }
 

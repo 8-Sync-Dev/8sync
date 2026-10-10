@@ -16,7 +16,7 @@ pub(crate) mod audit;
 mod bench;
 mod eval;
 mod external;
-mod global;
+pub(crate) mod global;
 mod init;
 pub(crate) mod memory;
 mod model;

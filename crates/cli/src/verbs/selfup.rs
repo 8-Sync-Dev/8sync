@@ -118,9 +118,12 @@ fn is_hex64(s: &str) -> bool {
 /// `<hex>  <file>`; certutil prints a header line, the digest (older builds
 /// space-separate every byte), then a trailer. Testing the first field and then
 /// the whitespace-stripped line covers all three without a per-tool parser.
+/// GNU coreutils prefixes the line with `\` when the file name contains a
+/// backslash — every Windows path — so that marker is skipped.
 fn first_hex64(stdout: &str) -> Option<String> {
     for line in stdout.lines() {
         if let Some(tok) = line.split_whitespace().next() {
+            let tok = tok.strip_prefix('\\').unwrap_or(tok);
             if is_hex64(tok) {
                 return Some(tok.to_ascii_lowercase());
             }
@@ -138,7 +141,7 @@ fn first_hex64(stdout: &str) -> Option<String> {
 /// the binary sits near its size ceiling and a hashing dependency is not worth
 /// it for one call per update. `None` means no hasher on PATH, which the caller
 /// reports out loud instead of pretending the download was checked.
-fn sha256_file(path: &Path) -> Option<String> {
+pub(crate) fn sha256_file(path: &Path) -> Option<String> {
     let p = path.to_str()?;
     let (bin, args): (&str, Vec<&str>) = if which::which("sha256sum").is_ok() {
         ("sha256sum", vec![p])
@@ -294,11 +297,53 @@ fn find_asset(release: &serde_json::Value, want_name: &str) -> Option<(String, O
 /// Query GitHub for the latest release. Returns
 /// `(tag_name, asset_browser_download_url, sha256_digest)`.
 /// Short timeout so it never blocks. Silent on offline / no-curl.
+///
+/// The API is rate-limited to 60 unauthenticated requests per hour per IP, so a
+/// throttled API falls back to the `releases/latest` web redirect — the same
+/// source install.sh/install.ps1 trust. That path has no digest; the download
+/// then reports "checksum NOT VERIFIED" instead of failing.
 fn fetch_latest_release() -> Option<(String, String, Option<String>)> {
-    let v = github_release_json("latest")?;
-    let tag = v.get("tag_name")?.as_str()?.to_string();
-    let (url, digest) = find_asset(&v, &asset_filename(&tag))?;
-    Some((tag, url, digest))
+    if let Some(v) = github_release_json("latest") {
+        if let Some(tag) = v.get("tag_name").and_then(|t| t.as_str()) {
+            if let Some((url, digest)) = find_asset(&v, &asset_filename(tag)) {
+                return Some((tag.to_string(), url, digest));
+            }
+        }
+    }
+    let tag = latest_tag_from_redirect()?;
+    let url = format!(
+        "https://github.com/{}/{}/releases/download/{}/{}",
+        REPO_OWNER, REPO_NAME, tag, asset_filename(&tag)
+    );
+    Some((tag, url, None))
+}
+
+/// Resolve the latest tag from `github.com/<repo>/releases/latest`, which
+/// redirects to `.../releases/tag/<tag>` and is not API rate-limited.
+///
+/// Reads the `Location:` header of the unfollowed response instead of
+/// `-w %{url_effective}`: the curl 8.8.0 that ships with Windows fails every
+/// `--write-out` with error 43.
+fn latest_tag_from_redirect() -> Option<String> {
+    let url = format!("https://github.com/{}/{}/releases/latest", REPO_OWNER, REPO_NAME);
+    let out = Command::new("curl")
+        .args(["-fsSI", "--proto", "=https", "--tlsv1.2", "--max-time", "5", &url])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case("location")).map(|(_, v)| v.trim().to_string()))
+        .and_then(|loc| tag_from_release_url(&loc))
+}
+
+/// `https://github.com/o/r/releases/tag/v1.2.3` → `v1.2.3`.
+fn tag_from_release_url(url: &str) -> Option<String> {
+    let tag = url.trim().rsplit_once("/releases/tag/")?.1.trim_end_matches('/');
+    (tag.starts_with('v') && tag[1..].starts_with(|c: char| c.is_ascii_digit()))
+        .then(|| tag.to_string())
 }
 
 /// Digest for a pinned tag's asset, read from `releases/tags/<tag>` — the same
@@ -466,7 +511,18 @@ pub fn install_tag(tag: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_asset, first_hex64, is_newer, parse_digest};
+    use super::{find_asset, first_hex64, is_newer, parse_digest, tag_from_release_url};
+
+    #[test]
+    fn redirect_fallback_only_accepts_a_resolved_release_tag() {
+        let base = "https://github.com/8-Sync-Dev/su-code/releases";
+        assert_eq!(tag_from_release_url(&format!("{base}/tag/v0.61.0")), Some("v0.61.0".into()));
+        assert_eq!(tag_from_release_url(&format!("{base}/tag/v0.61.0/\n")), Some("v0.61.0".into()));
+        // No redirect happened (no releases yet, or an error page): never a tag.
+        assert_eq!(tag_from_release_url(&format!("{base}/latest")), None);
+        assert_eq!(tag_from_release_url(&format!("{base}/tag/")), None);
+        assert_eq!(tag_from_release_url(&format!("{base}/tag/nightly")), None);
+    }
 
     #[test]
     fn only_strictly_newer_releases_notify() {
@@ -519,6 +575,8 @@ mod tests {
         let hex = "b".repeat(64);
         // coreutils sha256sum / shasum -a 256
         assert_eq!(first_hex64(&format!("{hex}  /tmp/.8sync.new.1\n")), Some(hex.clone()));
+        // GNU sha256sum (Git for Windows) on a backslash path escapes the line
+        assert_eq!(first_hex64(&format!("\\{hex}  C:\\\\Users\\\\x\\\\.8sync.new.1\n")), Some(hex.clone()));
         // certutil: header, digest, trailer — including the space-separated form
         let spaced = hex
             .as_bytes()

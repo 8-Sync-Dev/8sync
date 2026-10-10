@@ -238,8 +238,10 @@ Stack: **Rust** (single workspace, 1 binary `8sync` ≈ **4.9 MB stripped**, ho�
 ## 2. Cài đặt cho user
 
 ```bash
-# Khuyến nghị — one-liner, binary prebuilt (không cần git/rust/cargo):
-curl -fsSL https://8-sync-dev.github.io/su-code/install | sh
+# Khuyến nghị — one-liner: binary prebuilt + tự chạy `8sync setup --no-profile` (không cần git/rust/cargo):
+curl -fsSL https://8-sync-dev.github.io/su-code/install | sh          # Linux / macOS
+irm https://8-sync-dev.github.io/su-code/install.ps1 | iex            # Windows PowerShell
+# Chỉ binary, bỏ qua setup: SUSYNC_NO_SETUP=1
 
 # Hoặc build từ source (contributor / arch chưa có prebuilt):
 git clone https://github.com/8-Sync-Dev/su-code.git
@@ -249,13 +251,13 @@ bash scripts/bootstrap.sh        # cài rustup (nếu thiếu) + build + install
 
 Sau đó:
 ```bash
-8sync setup                      # AI core thuần (omp + codegraph + MCP/skills + gh + PATH) + hỏi y/N từng profile (kitty/helix, dev-stack… đều opt-in)
+8sync setup                      # Stage A (gh · omp · codegraph · forge+zsh · configs · harness global) + hỏi y/N từng profile
 # hoặc:
 8sync setup --yall               # unattended: mọi profile COMMUNITY (không gồm personal), không hỏi
-8sync setup --no-profile         # chỉ harness (không hỏi profile)
+8sync setup --no-profile         # chỉ harness, unattended (installer chạy lệnh này): bước lỗi được ghi lại, phần còn lại vẫn cài
 8sync setup --profile alexdev    # apply bundle cá nhân hóa của alexdev
 
-# omp được cài tự động bởi setup; cấu hình API key theo hướng dẫn omp
+# omp/codegraph cài bằng installer chính thức (install.sh / install.ps1 -Binary); forge từ GitHub release
 8sync doctor                     # verify
 ```
 
@@ -320,6 +322,7 @@ su-code/
 | `8sync note "msg" [-t tag]` | Append `su-code/NOTES.md` |
 | `8sync run [dev\|build\|test\|fmt\|lint]` | Project command theo recipe |
 | `8sync ship "msg"` | `git add -A && commit && push && gh pr create` |
+| `8sync forge <name> [--tui]` | Session ForgeCode theo tên (alias `forgecode`): mặc định zsh có plugin Forge gắn đúng conversation (`: <prompt>` hỏi Forge, `:<Tab>` liệt kê lệnh); `--tui` mở TUI; `-p` one-shot. Tự cài Forge; Windows dựng MSYS2 zsh trong `%LOCALAPPDATA%\8sync\zsh`. Sub: `ls`/`new`/`rm`/`key`/`status` |
 
 ### Session mgmt — named per-project sessions (sub của `.`)
 Nhiều feature song song trong 1 repo, mỗi cái 1 omp conversation cô lập. Lever = omp có sẵn (`--session-dir` + `--continue`); 8sync chỉ thêm lớp **tên → session-dir** + **git worktree** + **merge**. Registry máy-local: `~/.config/8sync/sessions/<repo>/index.json` (KHÔNG commit — trỏ path máy-local).

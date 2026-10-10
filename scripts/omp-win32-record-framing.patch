@@ -1,0 +1,47 @@
+diff --git a/packages/tui/src/windows-input-mode.ts b/packages/tui/src/windows-input-mode.ts
+index 5259764..762fd13 100644
+--- a/packages/tui/src/windows-input-mode.ts
++++ b/packages/tui/src/windows-input-mode.ts
+@@ -409,6 +409,10 @@ export class Win32PasteMarkerNormalizer {
+ 		if (output) this.#onInput(output);
+ 		if (this.#candidate || this.#pending) {
+ 			this.#timer = setTimeout(() => {
++				// Raw ESC/CSI prefixes are transport framing in win32-input-mode:
++				// a user's Escape arrives as a complete key record instead. Console
++				// reads can be delayed under load, even after the first byte.
++				if (this.#pending === "\x1b" || RECORD_PREFIX.test(this.#pending)) return;
+ 				this.flush();
+ 				this.#onExpired?.();
+ 			}, 75);
+diff --git a/packages/tui/test/windows-input-mode.test.ts b/packages/tui/test/windows-input-mode.test.ts
+index 3fef18e..e02fa8a 100644
+--- a/packages/tui/test/windows-input-mode.test.ts
++++ b/packages/tui/test/windows-input-mode.test.ts
+@@ -212,6 +212,27 @@ describe("ProcessTerminal win32-input-mode fallback", () => {
+ 		expect(recorder.received).toEqual(["\x1b"]);
+ 	});
+ 
++	it("keeps delayed win32 record fragments out of the editor", async () => {
++		harness = createProcessTerminalRenderHarness(100, 30, { conpty: true, nativeWindowsConsole: true });
++		const editor = new Editor(defaultEditorTheme);
++		harness.tui.addChild(editor);
++		harness.tui.setFocus(editor);
++		await harness.settle();
++		await harness.feed("\x1b[?1;2c", pasteRecords("a"));
++		vi.useFakeTimers();
++
++		const backspace = "\x1b[8;14;8;1;0;1_";
++		for (let split = 1; split < backspace.length; split++) {
++			process.stdin.emit("data", pasteRecords("b") + backspace.slice(0, split));
++			vi.advanceTimersByTime(500);
++			expect(editor.getText()).toBe("ab");
++			process.stdin.emit("data", backspace.slice(split));
++			expect(editor.getText()).toBe("a");
++		}
++		process.stdin.emit("data", pasteRecords("c"));
++		expect(editor.getText()).toBe("ac");
++	});
++
+ 	it("delivers a held relayed Escape when a late kitty reply turns the mode off", async () => {
+ 		harness = createProcessTerminalRenderHarness(100, 30, { conpty: true, nativeWindowsConsole: true });
+ 		const recorder = new InputRecorder();

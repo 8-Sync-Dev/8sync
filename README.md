@@ -21,9 +21,9 @@
 ## TL;DR
 
 ```bash
-# 1. Install — one-liner, prebuilt binary (NO git/rust/cargo required)
-curl -fsSL https://8-sync-dev.github.io/su-code/install | sh
-8sync setup                       # install the AI core (omp + codegraph + MCP/skills + gh) — y/N per profile
+# 1. Install — one-liner: prebuilt binary + AI harness setup (NO git/rust/cargo required)
+curl -fsSL https://8-sync-dev.github.io/su-code/install | sh          # Linux / macOS
+irm https://8-sync-dev.github.io/su-code/install.ps1 | iex            # Windows PowerShell
 8sync doctor                      # verify (auto-cleans stale state if any)
 
 # 2. Enter a project → stand up the harness (1 command, idempotent)
@@ -46,7 +46,7 @@ cd <project>
 
 ### 1. One-liner (recommended) — download the prebuilt binary
 
-No git, rustup, or cargo needed. `install.sh` resolves the latest release and downloads the matching `8sync-<tag>-<os>-<arch>` prebuilt (Linux `x86_64`/`aarch64`, macOS `x86_64`/`arm64`) from GitHub Releases into `~/.local/bin/8sync` (atomically replacing any previous version). On **Windows**, use `install.ps1` instead (below).
+No git, rustup, or cargo needed. `install.sh` resolves the latest release and downloads the matching `8sync-<tag>-<os>-<arch>` prebuilt (Linux `x86_64`/`aarch64`, macOS `x86_64`/`arm64`) from GitHub Releases into `~/.local/bin/8sync` (atomically replacing any previous version), then runs **`8sync setup --no-profile`** — the full AI harness (gh, omp, codegraph, Forge + zsh, configs, skills, `harness global`), unattended and best-effort (a failed tool is reported, the rest still installs). On **Windows**, use `install.ps1` instead (below) — same flow.
 
 ```bash
 curl -fsSL https://8-sync-dev.github.io/su-code/install | sh
@@ -67,7 +67,8 @@ irm https://8-sync-dev.github.io/su-code/install.ps1 | iex
 > **Want `8sync.sh/install`?** Point a domain's CNAME at `8-sync-dev.github.io`, add a
 > `docs/CNAME` file containing it, and the same path gets shorter with no code change.
 
-- **Upgrade**: run the exact same command again, or `8sync up`.
+- **Upgrade**: run the exact same command again, or `8sync up`. 8sync checks GitHub every 6 h in the background and prints `8sync update available: vX → vY` on the next command once a newer release exists (falls back to the `releases/latest` redirect when the API is rate-limited).
+- **Binary only (skip setup)**: `curl -fsSL .../install | SUSYNC_NO_SETUP=1 sh` (or `$env:SUSYNC_NO_SETUP='1'` for `install.ps1`)
 - **Pin a version**: `curl -fsSL .../install.sh | SUSYNC_VERSION=v0.48.0 sh` (or `$env:SUSYNC_VERSION` for `install.ps1`)
 - **Change the install dir**: `... | SUSYNC_BIN_DIR=~/bin sh`
 - **Uninstall**: `curl -fsSL .../install.sh | sh -s -- --uninstall`
@@ -88,12 +89,16 @@ bash scripts/bootstrap.sh
 
 ### 3. `8sync setup` — install the rest
 
+The one-line installers already run `8sync setup --no-profile` (Stage A). Run `8sync setup` again for the optional Stage B profiles.
+
 Stage A (harness, always idempotent):
 
-- `pacman -S --needed helix lazygit abduco github-cli`
-- omp CLI via `curl -fsSL https://omp.sh/install | sh` (skipped if already present)
-- writes configs: `~/.config/helix/`, `~/.config/kitty/8sync.session`, `~/.config/8sync/{global,skills}.toml`
-- writes skills (23 bundled) to `~/.omp/skills/<name>/SKILL.md` + `00-force-load.md`. Core always-on: codegraph, karpathy-guidelines, ponytail, 8sync-cli. Specialist always-on: assp-skill, impeccable, taste-skill, image-routing, zai-vision, locate-anything. On-demand: feature (large-scope GSD), code-review-and-quality, senior-security, senior-frontend, full-flow, last30days, branch-sync, token-bench + research: deep-research, research-paper, remote-compute (`encore-deploy` tech-gated, `social-growth` opt-in)
+- `gh` via the native package manager (pacman/dnf/brew/winget)
+- omp CLI via its official installer — `curl -fsSL https://omp.sh/install | sh`, or `irm https://omp.sh/install.ps1 | iex` on Windows (skipped if already present)
+- codegraph via its official installer (`install.sh` / `install.ps1`)
+- Forge from its GitHub release + zsh for `8sync forge <name>` (Windows: MSYS2 zsh in `%LOCALAPPDATA%\8sync\zsh`, reusing Git for Windows' runtime — no admin rights)
+- writes configs `~/.config/8sync/{global,skills,models}.toml` and the PATH bootstrap for zsh / bash / fish
+- `8sync harness global`: every bundled skill to `~/.omp/skills/`, `00-force-load.md`, `APPEND_SYSTEM.md`, MCP servers and hooks. Core always-on: codegraph, karpathy-guidelines, ponytail, 8sync-cli. Specialist always-on: assp-skill, impeccable, taste-skill, image-routing, zai-vision, locate-anything, image-gen. The rest are on-demand.
 
 Stage B (community profiles, opt-in y/N per profile):
 
@@ -145,7 +150,12 @@ System packages (`pacman -Syu`) are **not** run automatically — you decide whe
 | `8sync run [dev\|build\|test\|fmt\|lint]` | Project runner via per-stack recipe |
 | `8sync ship "msg"` | `git add -A && commit && push && gh pr create` |
 | `8sync feature [new\|switch\|status\|list] <slug>` | Large multi-phase scopes (GSD): scaffold a planning tree `su-code/planning/<slug>/` with per-phase acceptance-criteria gates + a cross-feature `ACTIVE` switch; then run `/sx-feature plan\|go\|ship` in an omp session (`go` delegates to the `engine_*` verify-gate loop) |
-| `8sync feynman [auth-omp\|status\|off]` | Bridge **Feynman** (companion-inc/feynman, a Pi research agent) to omp's already-authed providers: mirror omp's live creds into `~/.feynman/agent/auth.json` so `feynman model list` shows the **same models** reusing omp's **Claude Pro/Max OAuth** + API keys — no second login, and omp's faster-moving catalog. OAuth copied access-only (no refresh) so omp stays the sole refresher; API keys resolved live via `!omp token`. `off` removes only omp-managed entries |
+| `8sync feynman [name\|ls\|new\|rm\|auth-omp\|status\|off]` | Named **Feynman** research sessions; every launch synchronizes omp's authenticated chat models, preserving the selected default. Use the existing `/model` picker to switch. A managed Pi extension sends native contexts/tools through `omp auth-gateway stdio`, so newer protocols (including Cursor and Opus 5.5) use omp's auth and transport without another login. No copied OAuth tokens; `off` removes only unmodified managed config. Requires an omp version with `auth-gateway stdio`; stdio buffers each turn rather than displaying live tokens |
+| `8sync forge [name\|ls\|new\|rm\|key\|status] [--tui]` | Named **ForgeCode** sessions per repo (alias `forgecode`). Default: an interactive **zsh** with Forge's own plugin bound to the session's conversation — `: <prompt>` asks Forge, `:<Tab>` lists Forge commands (`:model`, `:provider`, `:agent`…), everything else is a normal terminal. `--tui` opens Forge's TUI on the same conversation; `-p "…"` is a one-shot. Names map to the UUID conversation ids Forge requires. Installs Forge from its GitHub release if missing; on Windows provisions MSYS2 zsh (pinned + sha256-verified) into `%LOCALAPPDATA%\8sync\zsh`, reusing Git for Windows' runtime. `key [provider] <key>` writes Forge's credential file |
+
+On Windows, a missing `shellPath` is seeded with installed Git Bash; existing user choices remain
+unchanged. The bridge isolates Feynman's `PI_CODING_AGENT_DIR` from omp's vault, preserving the
+original omp directory override and profile settings.
 
 ### Session management (sub-commands of `.`)
 

@@ -7,7 +7,10 @@
   no Rust toolchain, no cargo build. Ideal for a fresh machine or quick upgrade.
 
   One-liner:
-    irm https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.ps1 | iex
+    irm https://8-sync-dev.github.io/su-code/install.ps1 | iex
+
+  After the binary lands, the installer runs `8sync setup --no-profile`: the AI
+  harness (gh, omp, codegraph, forge + zsh, configs, skills, `harness global`).
 
   Upgrade:   re-run the same command (atomically replaces the old binary).
   Uninstall: download the script and run:  .\install.ps1 -Uninstall
@@ -19,6 +22,7 @@
   Environment:
     SUSYNC_VERSION   release tag to install (default: latest, e.g. v0.12.1)
     SUSYNC_BIN_DIR   install location (default: %LOCALAPPDATA%\Programs\8sync)
+    SUSYNC_NO_SETUP  set to 1 to install the binary only (skip `8sync setup`)
 #>
 param(
     [switch]$Uninstall
@@ -234,10 +238,31 @@ if (-not $already) {
     Write-Host "Restart your shell (or open a new terminal) for the change to take effect."
 }
 
+# --- harness setup -----------------------------------------------------------
+
+Write-Host ""
+if ($env:SUSYNC_NO_SETUP -eq '1') {
+    Write-Host "SUSYNC_NO_SETUP=1 - skipped setup. Run it any time: 8sync setup --no-profile"
+} else {
+    Write-Host "Running 8sync setup --no-profile (AI harness: omp, codegraph, forge, skills, MCP)..."
+    # Native-command failures must not abort the installer under 'Stop'; setup
+    # reports its own per-step summary.
+    $ErrorActionPreference = 'Continue'
+    & $BinPath setup --no-profile
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Setup finished - the summary above lists any step to retry."
+    } else {
+        Write-Warning "8sync setup exited with code $LASTEXITCODE - re-run: 8sync setup --no-profile"
+    }
+    # Installers run by setup (omp, codegraph, forge) extend the user PATH; pick
+    # those up so this window can use them immediately.
+    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')
+}
+
 # --- next steps ------------------------------------------------------------
 
 Write-Host ""
-Write-Host "Done. Next steps:"
-Write-Host "  8sync setup        # full stack + config"
-Write-Host "  8sync doctor       # verify"
-Write-Host "  8sync up           # upgrade later (or re-run this installer)"
+Write-Host "Next steps:"
+Write-Host "  8sync doctor             # verify"
+Write-Host "  cd <project>; 8sync .    # omp session   |   8sync forge <name>   # Forge zsh session"
+Write-Host "  8sync up                 # upgrade later (8sync also notifies when a release is out)"

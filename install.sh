@@ -10,9 +10,13 @@
 # Upgrade:   re-run the same command (atomically replaces the old binary).
 # Uninstall: curl -fsSL .../install.sh | sh -s -- --uninstall
 #
+# After the binary lands, the installer runs `8sync setup --no-profile`: the AI
+# harness (gh, omp, codegraph, forge + zsh, configs, skills, `harness global`).
+#
 # Environment:
 #   SUSYNC_VERSION   release tag to install (default: latest, e.g. v0.12.1)
 #   SUSYNC_BIN_DIR   install location (default: ~/.local/bin)
+#   SUSYNC_NO_SETUP  set to 1 to install the binary only (skip `8sync setup`)
 set -eu
 
 REPO="8-Sync-Dev/su-code"
@@ -163,7 +167,27 @@ case ":$PATH:" in
     ;;
 esac
 echo ""
-echo "Done. Next steps:"
-echo "  8sync setup        # full stack + config"
-echo "  8sync doctor       # verify"
-echo "  8sync up           # upgrade later (or re-run this installer)"
+
+# 6. Harness setup. Under `curl | sh` our stdin IS this script: a child that
+# reads stdin would swallow the rest of it, so give setup the terminal when
+# there is one and /dev/null otherwise (setup never prompts with --no-profile;
+# sudo reads the tty directly).
+if [ "${SUSYNC_NO_SETUP:-0}" = "1" ]; then
+  echo "SUSYNC_NO_SETUP=1 — skipped setup. Run it any time: 8sync setup"
+else
+  echo "Running 8sync setup --no-profile (AI harness: omp, codegraph, forge, skills, MCP)..."
+  if (exec </dev/tty) 2>/dev/null; then setup_in=/dev/tty; else setup_in=/dev/null; fi
+  # Tools installed during setup land in these dirs; later steps must see them
+  # even before the user's shell rc picks them up.
+  if PATH="$BIN_DIR:$HOME/.local/bin:$HOME/.bun/bin:$PATH" "$BIN" setup --no-profile <"$setup_in"; then
+    echo "Setup finished — the summary above lists any step to retry."
+  else
+    echo "8sync: setup reported failures — fix them and re-run: 8sync setup --no-profile" >&2
+  fi
+fi
+echo ""
+echo "Next steps:"
+echo "  8sync doctor             # verify"
+echo "  8sync setup              # optional Linux profiles (dev-stack, nvidia, terminal, ...)"
+echo "  cd <project> && 8sync .  # omp session  ·  8sync forge <name>  # Forge zsh session"
+echo "  8sync up                 # upgrade later (8sync also notifies when a release is out)"
