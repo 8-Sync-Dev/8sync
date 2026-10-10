@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.61.2] — 2026-10-11
+### Fixed
+- **`8sync up` verifies checksums on Windows.** The install target came from `canonicalize`, i.e.
+  `\\?\C:\…`; Git's MSYS `sha256sum` mangles that form into a missing file, and the failure was reported
+  as "no sha256sum, shasum or certutil on PATH" — every Windows self-update ran unverified. The drive form
+  is now unwrapped, and the hashers are tried in turn until one works.
+- `8sync --help` described `up` as "8sync + omp + system pkgs + rustup + flatpak"; it updates 8sync only.
+
 ## [0.61.1] — 2026-10-11
 ### Fixed
 - **Update check throttles on Windows.** The 6-hour window was the mtime of an empty `last_check` file;

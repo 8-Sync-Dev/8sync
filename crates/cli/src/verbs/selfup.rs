@@ -82,7 +82,7 @@ fn asset_filename(tag: &str) -> String {
 /// the legacy Unix path only if the current exe cannot be resolved.
 fn dest_path() -> Result<PathBuf> {
     if let Ok(p) = std::env::current_exe() {
-        return Ok(std::fs::canonicalize(&p).unwrap_or(p));
+        return Ok(std::fs::canonicalize(&p).map(strip_verbatim_drive).unwrap_or(p));
     }
     let name = if platform::os() == platform::Os::Windows { "8sync.exe" } else { "8sync" };
     Ok(dirs::home_dir()
@@ -145,27 +145,36 @@ fn first_hex64(stdout: &str) -> Option<String> {
     None
 }
 
+/// `canonicalize` on Windows returns `\\?\C:\…`; Git's MSYS `sha256sum` eats
+/// the backslashes of that form and fails, so self-update checksums never ran.
+/// Only the drive form is unwrapped — `\\?\UNC\…` has no equivalent plain spelling here.
+fn strip_verbatim_drive(p: PathBuf) -> PathBuf {
+    match p.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => p,
+    }
+}
+
 /// sha256 of `path` using whatever the box already has: coreutils `sha256sum`,
-/// the BSD/macOS `shasum`, or Windows `certutil`. Deliberately not a crate —
-/// the binary sits near its size ceiling and a hashing dependency is not worth
-/// it for one call per update. `None` means no hasher on PATH, which the caller
-/// reports out loud instead of pretending the download was checked.
+/// the BSD/macOS `shasum`, or Windows `certutil` — the first that WORKS, so one
+/// broken hasher does not masquerade as "none installed". Deliberately not a
+/// crate — the binary sits near its size ceiling and a hashing dependency is not
+/// worth it for one call per update. `None` is reported out loud by the caller
+/// instead of pretending the download was checked.
 pub(crate) fn sha256_file(path: &Path) -> Option<String> {
     let p = path.to_str()?;
-    let (bin, args): (&str, Vec<&str>) = if which::which("sha256sum").is_ok() {
-        ("sha256sum", vec![p])
-    } else if which::which("shasum").is_ok() {
-        ("shasum", vec!["-a", "256", p])
-    } else if which::which("certutil").is_ok() {
-        ("certutil", vec!["-hashfile", p, "SHA256"])
-    } else {
-        return None;
-    };
-    let out = Command::new(bin).args(&args).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    first_hex64(&String::from_utf8_lossy(&out.stdout))
+    let hashers: [(&str, Vec<&str>); 3] = [
+        ("sha256sum", vec![p]),
+        ("shasum", vec!["-a", "256", p]),
+        ("certutil", vec!["-hashfile", p, "SHA256"]),
+    ];
+    hashers.iter().find_map(|(bin, args)| {
+        let out = Command::new(bin).args(args).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        first_hex64(&String::from_utf8_lossy(&out.stdout))
+    })
 }
 
 /// Check the freshly downloaded `tmp` against the release's published digest
@@ -182,7 +191,7 @@ fn verify_download(tmp: &Path, expected: Option<&str>, asset_url: &str) -> Resul
         return Ok(());
     };
     let Some(got) = sha256_file(tmp) else {
-        ui::warn("checksum NOT VERIFIED — no sha256sum, shasum or certutil on PATH");
+        ui::warn("checksum NOT VERIFIED — no working sha256sum, shasum or certutil");
         return Ok(());
     };
     if !got.eq_ignore_ascii_case(want) {
@@ -520,7 +529,17 @@ pub fn install_tag(tag: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_due, find_asset, first_hex64, is_newer, parse_digest, tag_from_release_url};
+    use super::{check_due, find_asset, first_hex64, is_newer, parse_digest, strip_verbatim_drive, tag_from_release_url};
+    use std::path::PathBuf;
+
+    #[test]
+    fn verbatim_drive_paths_are_unwrapped_for_external_hashers() {
+        let unwrap = |s: &str| strip_verbatim_drive(PathBuf::from(s));
+        assert_eq!(unwrap(r"\\?\C:\Users\a\8sync.exe"), PathBuf::from(r"C:\Users\a\8sync.exe"));
+        // UNC verbatim has no drive form to fall back to; plain paths pass through.
+        assert_eq!(unwrap(r"\\?\UNC\srv\share\8sync.exe"), PathBuf::from(r"\\?\UNC\srv\share\8sync.exe"));
+        assert_eq!(unwrap("/home/a/.local/bin/8sync"), PathBuf::from("/home/a/.local/bin/8sync"));
+    }
 
     #[test]
     fn update_probe_is_throttled_by_the_stamp_it_writes() {

@@ -50,7 +50,7 @@ enum Cmd {
     /// Install harness (gh + omp + configs + skills) then prompt per community profile
     Setup(verbs::setup::Args),
 
-    /// Full update: 8sync + omp + system pkgs (pacman/AUR) + rustup + flatpak. See `8sync up -h`.
+    /// Self-update 8sync from the latest GitHub Release (checksum-verified). omp: `8sync omp update`.
     #[command(alias = "update")]
     Up(verbs::up::Args),
 

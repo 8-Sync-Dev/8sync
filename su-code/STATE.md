@@ -1,4 +1,4 @@
-# v0.61.0 + v0.61.1 — zsh-native `8sync forge`, self-setting-up installers, working update notice
+# v0.61.0 → v0.61.2 — zsh-native `8sync forge`, self-setting-up installers, working update notice
 
 ## Goal
 Every member installs with one line (`curl … /install | sh` · `irm … /install.ps1 | iex`) and gets the full AI harness (gh, omp, codegraph, forge + zsh, skills, `harness global`); `8sync forge <name>` is a zsh shell bound to the named Forge conversation (`--tui` = Forge TUI); `8sync` notices new releases.
@@ -8,11 +8,12 @@ Every member installs with one line (`curl … /install | sh` · `irm … /insta
 - [x] Stage A: omp `-Binary`, codegraph `install.ps1`, gh, forge + zsh, `harness global`; installers auto-run `setup --no-profile` (`SUSYNC_NO_SETUP=1` opts out).
 - [x] v0.61.0 published (run 38091385123, 5 assets) after size-gate attribution (ceiling 5180 → 5300 KiB) and the `--no-default-features` build fix.
 - [x] Notice proven: installed v0.60.0 printed `! 8sync update available: v0.60.0 → v0.61.0`.
-- [x] v0.61.1 fixes: NTFS-proof probe throttle (epoch in content), install.ps1 replaces a running exe, install.ps1 checksum via .NET — each reproduced before, proven after.
-- [ ] Push + tag v0.61.1; release green; Pages redeploy; `8sync up` 0.60.0 → 0.61.1 on this box; WSL `install.sh` run.
+- [x] v0.61.1 published (run 38092267328): NTFS-proof probe throttle (epoch in content), install.ps1 replaces a running exe, install.ps1 checksum via .NET — each reproduced before, proven after. `8sync up` 0.60.0 → 0.61.1 on this box with live sessions holding the exe.
+- [x] v0.61.2 fix: `8sync up` checksum never ran on Windows (`\\?\` path broke MSYS `sha256sum`); proven `checksum ok` from a temp copy.
+- [ ] Push + tag v0.61.2; release green; installed 0.61.1 shows the notice and `8sync up` → 0.61.2 with `checksum ok`; WSL `install.sh` run.
 
 ## Current
-Local 0.61.1: 131 tests, minimal build compiles, size gate OK, throttle smoke (run 2 keeps the stamp).
+Local 0.61.2: 132 tests, minimal build compiles.
 
 ## Next
 Release v0.61.1. Known residuals: `crates/cli/src/verbs/harness/gateway.rs` and `crates/cli/src/verbs/harness/local_model.rs` still use `curl -w` (fails on stock Windows curl 8.8.0); no CI job builds `--no-default-features`.
