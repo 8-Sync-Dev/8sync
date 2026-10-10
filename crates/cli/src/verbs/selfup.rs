@@ -328,7 +328,7 @@ fn fetch_latest_release() -> Option<(String, String, Option<String>)> {
             }
         }
     }
-    let tag = latest_tag_from_redirect()?;
+    let tag = latest_release_tag(&format!("{REPO_OWNER}/{REPO_NAME}"))?;
     let url = format!(
         "https://github.com/{}/{}/releases/download/{}/{}",
         REPO_OWNER, REPO_NAME, tag, asset_filename(&tag)
@@ -336,14 +336,15 @@ fn fetch_latest_release() -> Option<(String, String, Option<String>)> {
     Some((tag, url, None))
 }
 
-/// Resolve the latest tag from `github.com/<repo>/releases/latest`, which
-/// redirects to `.../releases/tag/<tag>` and is not API rate-limited.
+/// Resolve the latest tag of `repo` (`owner/name`) from
+/// `github.com/<repo>/releases/latest`, which redirects to
+/// `.../releases/tag/<tag>` and is not API rate-limited.
 ///
 /// Reads the `Location:` header of the unfollowed response instead of
 /// `-w %{url_effective}`: the curl 8.8.0 that ships with Windows fails every
 /// `--write-out` with error 43.
-fn latest_tag_from_redirect() -> Option<String> {
-    let url = format!("https://github.com/{}/{}/releases/latest", REPO_OWNER, REPO_NAME);
+pub(crate) fn latest_release_tag(repo: &str) -> Option<String> {
+    let url = format!("https://github.com/{repo}/releases/latest");
     let out = Command::new("curl")
         .args(["-fsSI", "--proto", "=https", "--tlsv1.2", "--max-time", "5", &url])
         .output()

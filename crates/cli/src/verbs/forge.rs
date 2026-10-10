@@ -420,7 +420,7 @@ fn forge_asset() -> Option<&'static str> {
 
 /// Download `url` to a temp sibling of `dest`, then rename it into place, so a
 /// failed transfer never leaves a truncated file at `dest`.
-fn download(url: &str, dest: &Path) -> Result<()> {
+pub(crate) fn download(url: &str, dest: &Path) -> Result<()> {
     let dir = dest.parent().context("bad download destination")?;
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join(format!(".8sync-dl.{}", std::process::id()));

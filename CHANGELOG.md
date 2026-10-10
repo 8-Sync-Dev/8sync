@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.61.3] — 2026-10-11
+### Fixed
+- **`8sync setup` installs gh on Debian, Ubuntu and other Linux without a native gh route.** Those distros
+  only got "install `gh` manually" — not even counted as a failed step — so the one-line installer left
+  Ubuntu members without gh (`8sync ship` needs it). Stage A now fetches the official
+  `gh_<ver>_linux_<amd64|arm64>.tar.gz` from `cli/cli`'s latest release, checks it against the release's
+  `checksums.txt`, and installs `~/.local/bin/gh` — no sudo, no apt repo.
+
 ## [0.61.2] — 2026-10-11
 ### Fixed
 - **`8sync up` verifies checksums on Windows.** The install target came from `canonicalize`, i.e.

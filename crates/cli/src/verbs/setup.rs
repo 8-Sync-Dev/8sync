@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,6 +15,53 @@ const GH: platform::CorePkg = platform::CorePkg {
     winget: "GitHub.cli",
 };
 
+/// gh on Linux distros without a native gh route (Debian, Ubuntu, …): the
+/// official release tarball into `~/.local/bin`, so no sudo and no apt repo.
+/// Verified against the release's own checksums file before it is installed.
+fn install_gh_release() -> Result<()> {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        a => bail!("no gh release for linux/{a} — install gh manually"),
+    };
+    let tag = crate::verbs::selfup::latest_release_tag("cli/cli").context("could not resolve the latest gh release")?;
+    let ver = tag.trim_start_matches('v');
+    let tarball = format!("gh_{ver}_linux_{arch}.tar.gz");
+    let base = format!("https://github.com/cli/cli/releases/download/{tag}");
+    let work = std::env::temp_dir().join(format!("8sync-gh.{}", std::process::id()));
+    let installed = (|| {
+        let tgz = work.join(&tarball);
+        let sums = work.join("checksums.txt");
+        ui::step(&format!("Installing gh {tag} ({tarball})"));
+        crate::verbs::forge::download(&format!("{base}/{tarball}"), &tgz)?;
+        crate::verbs::forge::download(&format!("{base}/gh_{ver}_checksums.txt"), &sums)?;
+        let want = std::fs::read_to_string(&sums)?
+            .lines()
+            .find_map(|l| l.strip_suffix(tarball.as_str()).map(|h| h.trim().to_string()))
+            .context("gh checksums file has no entry for the tarball")?;
+        let got = crate::verbs::selfup::sha256_file(&tgz).context("no working sha256 hasher")?;
+        if !got.eq_ignore_ascii_case(&want) {
+            bail!("gh checksum mismatch — refusing to install\n  expected {want}\n  actual   {got}");
+        }
+        let (tgz_s, work_s) = (tgz.to_str().context("non-UTF-8 temp path")?, work.to_str().context("non-UTF-8 temp path")?);
+        pkg::run_loud("tar", &["-xzf", tgz_s, "-C", work_s])?;
+        let dest = dirs::home_dir().context("no home dir")?.join(".local/bin/gh");
+        std::fs::create_dir_all(dest.parent().context("bad gh path")?)?;
+        let staged = dest.with_file_name(format!(".gh.new.{}", std::process::id()));
+        std::fs::copy(work.join(tarball.trim_end_matches(".tar.gz")).join("bin/gh"), &staged)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
+        }
+        std::fs::rename(&staged, &dest)?;
+        ui::ok(&format!("gh {tag} → {} (sha256 ok)", dest.display()));
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&work);
+    installed
+}
+
 #[derive(ClapArgs, Debug)]
 #[command(
     after_help = indoc::indoc! {"
@@ -27,7 +74,7 @@ const GH: platform::CorePkg = platform::CorePkg {
           8sync setup --dry-run                print the full plan, change nothing
 
         STAGE A — HARNESS (always run, idempotent)
-          · github-cli (gh)                     (native pkg manager; required by `8sync ship`)
+          · github-cli (gh)                     (native pkg manager; Debian/Ubuntu/other Linux: GitHub release → ~/.local/bin)
           · omp AI CLI                          (official installer: install.sh / install.ps1)
           · paru                                (AUR helper — Arch family only)
           · codegraph                           (semantic code index)
@@ -154,6 +201,9 @@ pub fn run(a: Args) -> Result<()> {
             platform::CoreRoute::Winget => {
                 ui::info(&format!("would install {} via winget", GH.winget))
             }
+            platform::CoreRoute::Manual if platform::os() == platform::Os::Linux => {
+                ui::info("would install gh from github.com/cli/cli releases into ~/.local/bin (sha256-checked)")
+            }
             platform::CoreRoute::Manual => platform::no_pkg_manager_notice("gh"),
         }
         ui::info("would install omp (official installer) if missing");
@@ -175,9 +225,13 @@ pub fn run(a: Args) -> Result<()> {
         try_step("gh cli", yolo, &mut failures, || {
             // winget/brew exit non-zero for an already-installed package, which
             // would report a failure on every re-run.
-            if which::which("gh").is_ok() {
+            if which::which("gh").is_ok() || dirs::home_dir().is_some_and(|h| h.join(".local/bin/gh").exists()) {
                 ui::skip("gh", "present");
                 return Ok(());
+            }
+            let manual = platform::core_route(platform::os(), env.family(), GH) == platform::CoreRoute::Manual;
+            if manual && platform::os() == platform::Os::Linux {
+                return install_gh_release();
             }
             platform::install_core_pkg("gh", GH)
         })?;
