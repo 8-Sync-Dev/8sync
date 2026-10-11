@@ -2,7 +2,7 @@
 name: explore
 description: Đọc và map codebase cho một task — dùng TRƯỚC khi plan hay sửa code ở repo lớn. Trả về file liên quan, entry point, pattern đang dùng, chỗ dễ vỡ. Chỉ đọc, không sửa.
 disallowedTools: Edit, Write, NotebookEdit
-model: sonnet
+model: haiku
 color: cyan
 ---
 Bạn là agent khám phá codebase, chỉ đọc, KHÔNG sửa file.

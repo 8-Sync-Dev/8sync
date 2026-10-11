@@ -5,8 +5,8 @@
 //! {
 //!   "$schema": "https://json.schemastore.org/claude-code-settings.json",
 //!   "env": {
-//!     "ANTHROPIC_BASE_URL": "https://api.apikey.fun",
-//!     "ANTHROPIC_AUTH_TOKEN": "your-api-key",
+//!     "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+//!     "ANTHROPIC_AUTH_TOKEN": "your-console-api-key",
 //!     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 //!     "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
 //!   }
@@ -15,12 +15,13 @@
 //!
 //! Actions performed:
 //! 1. Parses settings JSON (supports full schema, flat env map, or CLI flags).
-//! 2. Writes `~/.claude/settings.json`.
-//! 3. On Windows: sets User persistent environment variables (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, etc.).
-//! 4. Injects the 9 latest Claude models into `~/.omp/agent/models.yml` under both `anthropic` and
-//!    the gateway provider, configuring `anthropic-budget-effort` thinking and 1M context.
-//! 5. Updates `~/.omp/agent/config.yml` to set the latest Claude model (`anthropic/claude-fable-5-1:high`)
-//!    as default role and `anthropic/claude-opus-5:high` as advisor.
+//! 2. Merges the env keys into `~/.claude/settings.json` (any endpoint: Claude Code's own LLM-gateway support).
+//! 3. On Windows: sets User persistent environment variables (official endpoint only).
+//! 4. Official endpoint only: injects the 9 latest Claude models into `~/.omp/agent/models.yml`
+//!    under `anthropic`, with `anthropic-budget-effort` thinking and 1M context, and
+//! 5. sets omp's default role to `anthropic/claude-fable-5-1:high`, advisor `anthropic/claude-opus-5:high`.
+//!    A third-party gateway never reaches omp: Anthropic's Usage Policy (8sync rules) lets tools
+//!    other than Claude Code use Claude only through a Console API key.
 //! 6. Verifies connection with a live probe.
 
 use std::path::Path;
@@ -349,6 +350,15 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
         }
     }
 
+    // A third-party gateway configures Claude Code only: Anthropic's Usage
+    // Policy (8sync rules) lets tools other than Claude Code — omp here — use
+    // Claude only through a Console API key, never a gateway's Claude access.
+    if !is_official {
+        ui::warn("endpoint is not api.anthropic.com → Claude Code configured, omp left untouched. Tools other than Claude Code (omp, Forge, Feynman) use a Console API key; a gateway reselling Claude subscriptions breaks Anthropic's Usage Policy.");
+        report_probe(&v1_url, token);
+        return Ok(());
+    }
+
     // 4. Update ~/.omp/agent/models.yml
     let agent_dir = env.home.join(".omp").join("agent");
     std::fs::create_dir_all(&agent_dir)?;
@@ -360,19 +370,14 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
         "providers:\n".to_string()
     };
 
-    // Build replacement blocks: custom gateways register ONLY under their slug, never hijacking native 'anthropic'
-    let mut replacement_blocks: Vec<(&str, String)> = Vec::new();
-    if is_official || slug == "anthropic" {
-        replacement_blocks.push(("anthropic", render_provider_block("anthropic", &v1_url, token)));
-    } else {
-        replacement_blocks.push((&slug, render_provider_block(&slug, &v1_url, token)));
-    }
+    // Official endpoint: register under the native `anthropic` provider.
+    let replacement_blocks: Vec<(&str, String)> = vec![("anthropic", render_provider_block("anthropic", &v1_url, token))];
 
     let block_refs: Vec<(&str, &str)> = replacement_blocks.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let updated_models_yml = merge_provider_blocks(&existing_content, &block_refs);
 
     std::fs::write(&models_yml_path, &updated_models_yml)?;
-    ui::ok(&format!("updated {} (registered 9 Claude models under {})", models_yml_path.display(), if is_official { "anthropic" } else { &slug }));
+    ui::ok(&format!("updated {} (registered 9 Claude models under anthropic)", models_yml_path.display()));
     // 5. Update ~/.omp/agent/config.yml default model to latest Claude model
     let config_yml_path = agent_dir.join("config.yml");
     if config_yml_path.exists() {
@@ -383,15 +388,7 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
     }
 
     // 6. Live probe test
-    ui::step("verifying connection with 1-token probe...");
-    match probe_endpoint(&v1_url, token) {
-        Ok(ms) => {
-            ui::ok(&format!("live probe OK ({ms}ms) — gateway is responsive"));
-        }
-        Err(e) => {
-            ui::warn(&format!("probe returned notice: {e} (config is still written)"));
-        }
-    }
+    report_probe(&v1_url, token);
 
     println!();
     println!("{}", "Active Models available in omp:".to_string());
@@ -404,11 +401,16 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
     println!("  • anthropic/claude-sonnet-5    (1M ctx, 128K max-out)");
     println!("  • anthropic/claude-sonnet-4-6  (1M ctx, 128K max-out)");
     println!("  • anthropic/claude-haiku-4-5   (200K ctx, 64K max-out)");
-    if slug != "anthropic" {
-        println!("  (also available under `{}/<model>`)", slug);
-    }
 
     Ok(())
+}
+
+fn report_probe(v1_url: &str, token: &str) {
+    ui::step("verifying connection with 1-token probe...");
+    match probe_endpoint(v1_url, token) {
+        Ok(ms) => ui::ok(&format!("live probe OK ({ms}ms) — endpoint is responsive")),
+        Err(e) => ui::warn(&format!("probe returned notice: {e} (config is still written)")),
+    }
 }
 
 /// Replace or insert provider blocks inside models.yml content.

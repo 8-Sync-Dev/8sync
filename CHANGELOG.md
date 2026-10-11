@@ -5,6 +5,29 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.64.0] — 2026-10-11
+### Added
+- **`8sync ccc hook guard`** — a native PreToolUse hook in the kit (Bash/Edit/Write/MultiEdit/NotebookEdit, about 23 ms per call on Windows). It denies, with the reason handed back to Claude:
+  - writing a credential file: `.env` / `.env.*` (templates `.example`/`.sample`/`.template` pass), `*.pem`/`*.p12`/`*.pfx`, `id_rsa*`/`id_ed25519*`, `*.session`, `*.pkl` — with either path separator;
+  - content or a command carrying a real-looking Anthropic/OpenAI/GitHub/AWS/Slack/Google key or a private key (short fixtures, `EXAMPLE`/`xxxx` placeholders pass);
+  - `git add` of a credential file, named or swept up by `git add -A`/`.` (`:!path` exclusions honoured);
+  - code that wires a Claude subscription into another client (Claude Code's OAuth client id / OAuth beta headers).
+  It replaces the bash + python `aup-guard.sh` from omp-style-kit v2, which let `C:\…\.env` and `.env.staging` through and cost ~240 ms per call.
+- **`/aup-audit` skill** (bundled for omp and copied into the Claude Code kit): Anthropic Usage Policy + 8 Sync rules check — gitleaks over tree and history, sensitive files ever committed, then the model reads the product and walks `RULES.md` (Usage Policy sections incl. High-risk Physical Actions, access paths, 8 Sync internal rules). No python scanner: the kit's 240-line regex scanner reported 1 BLOCK + 52 WARN on this repo, all false positives, in 37 s.
+- The kit now also ships the `deep-research` skill; more deny rules (`Edit(**/.env*)`, keys, `*.session`, `*.pkl` — `Write(...)` path rules are ignored by Claude Code, so none are used).
+- Stage A of `8sync setup` installs **gitleaks** (GitHub release, sha256-checked, `~/.local/bin`), so the pre-commit secret hook exists on fresh machines.
+- `8sync doctor` warns when omp's `anthropic` login is a Claude subscription (OAuth).
+
+### Changed
+- **Fewer tokens in Claude Code on 8sync repos.** `CLAUDE.md` gets a compact block (~0.7k tokens) that points at `AGENTS.md` and the skill dirs instead of a second copy of the full force-load block (~8k). Per-request prefix in this repo: 41.0k → 34.3k tokens (omp: 56.2k). Importing `AGENTS.md` instead was measured at 20.5k and rejected.
+- Kit agents: `explore` runs on Haiku, `reviewer`/`designer` inherit the session model instead of forcing Opus, and the `plan` agent is gone (`/ship` plans in the main context). An unedited `plan.md` from 0.63 is removed on the next `8sync ccc kit`.
+- Kit `CLAUDE.md` rules gain the Anthropic Usage Policy points (subscription only in Claude Code / claude.ai, AI disclosure, human review for high-risk decisions, `/aup-audit` before publishing); the "read AGENTS.md first" rule is gone.
+- `deep-research` skill rewritten token-lean and host-neutral (omp + Claude Code tools): one artifact (`outputs/<slug>.md`) instead of five, snippets before pages, compressed worker returns, measure-when-you-can. The binary-weight audit protocol moved to `assets/skills/deep-research/references/binary-weight-audit.md`.
+- The managed `.gitignore` block also ignores `*.pem`, `*.p12`, `*.pfx`, `id_rsa*`, `id_ed25519*`, `*.session`, `*.session-journal`, `*.pkl`.
+
+### Fixed
+- **Usage Policy compliance.** `8sync feynman auth-omp` no longer bridges Claude models (omp's `anthropic` OAuth login or gateways serving `claude-*`) into Feynman; set `ANTHROPIC_API_KEY` to a Console key there. `8sync harness claude-code` with a non-Anthropic endpoint configures Claude Code only and leaves omp's models alone.
+
 ## [0.63.0] — 2026-10-11
 ### Added
 - **`8sync ccc` — Claude Code with named sessions.** `8sync ccc . <name>` create-or-resumes a Claude Code conversation by name in this repo: the name maps to a UUID that starts the session (`--session-id`, `--name`) and resumes it (`--resume`). Also `8sync ccc .` (last used), `. ls`, `. new`, `. rm` (removes the transcript too), `status`, and flags after the name go to `claude`. Installs Claude Code with Anthropic's official installer when missing.

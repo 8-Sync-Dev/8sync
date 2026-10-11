@@ -139,7 +139,7 @@ enum Cmd {
     /// Large multi-phase feature scopes: new/switch/status/list (GSD planning tree)
     Feature(verbs::feature::Args),
 
-    /// Bridge Feynman (Pi research agent) to omp's auth: `auth-omp` reuses Claude OAuth + keys
+    /// Bridge Feynman (Pi research agent) to omp's logins: `auth-omp` (Claude needs a Console API key)
     Feynman(verbs::feynman::Args),
 
     /// Named ForgeCode sessions with persistent UUID conversation mapping: 8sync forge <name>

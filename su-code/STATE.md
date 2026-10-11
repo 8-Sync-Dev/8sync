@@ -1,3 +1,22 @@
+# v0.64.0 — ccc token/quality R&D, native guard, /aup-audit, Usage Policy pass
+
+## Goal
+R&D (auto) on omp-style-kit v2 + `8sync-anthropic-rules.md`: pick the best options, cut ccc tokens, check ccc vs omp quality, nothing in 8sync breaks Anthropic's Usage Policy; rebuild + release.
+
+## Checklist
+- [x] A/B bench (Sonnet 5, Console key, hidden tests): all harnesses 31/31 + 20/20; ccc 1.3-2× omp input tokens (≈2× requests), cost close. Parallel-calls rule: no effect, dropped.
+- [x] CLAUDE.md compact block (8k → 0.7k): su-code prefix 41.0k → 34.3k (omp 56.2k); AGENTS.md import measured 20.5k, rejected.
+- [x] Native `ccc hook guard` (23 ms) + deny `Read/Edit` rules + gitignore secrets + gitleaks in Stage A + `/aup-audit` (no python) + `deep-research` token-lean; kit agents re-routed, `plan` retired.
+- [x] Compliance: feynman bridge excludes Claude; `harness claude-code` third-party endpoint → Claude Code only; doctor warns on omp Anthropic OAuth.
+- [x] 142 tests; live guard run (git add -A with untracked .env.production denied → Claude added .gitignore).
+- [ ] Release v0.64.0 (size: linux-x86_64 headroom was 40,400 B; Windows grew +32,768 B).
+
+## Current
+Committing v0.64.0.
+
+## Next
+User: omp's `anthropic` login on this box is a Claude subscription (OAuth) — Usage Policy wants a Console key there (`/logout` anthropic in omp, `ANTHROPIC_API_KEY`). Feynman: set `ANTHROPIC_API_KEY` for Claude. Re-run `8sync ccc kit` after `8sync up`.
+
 # v0.63.0 — `8sync ccc` (Claude Code named sessions) + the 8sync kit
 
 ## Goal

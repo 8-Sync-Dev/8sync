@@ -104,12 +104,13 @@ The kit lives in `~/.claude`, so it works in every repo and for plain `claude` t
 
 | Part | What it does |
 |---|---|
-| Subagents | `explore` · `plan` · `task` · `quick-task` · `reviewer` · `designer`. The read-only ones keep the code-graph MCP tools. |
-| `/ship <task>` | explore → plan → implement each task with build/test → `reviewer` → CHANGELOG + commit. Never pushes. |
+| Subagents | `explore` (Haiku) · `task` · `quick-task` · `reviewer` · `designer`. Reviewer and designer use your session model; the read-only ones keep the code-graph MCP tools. |
+| Skills | `/ship <task>`: explore → task list → implement with build/test → `reviewer` → CHANGELOG + commit, never pushes. `/aup-audit`: Anthropic Usage Policy + secret check before you publish. `deep-research`: cited research brief, token-lean. |
 | Verify hook | After every Edit/Write, runs `cargo check`, the package's `typecheck` script (or `tsc --noEmit`) or `go vet` from the edited file's nearest manifest, and hands only failures back to Claude. Native Rust: no python, jq or bash, so it works on Windows. |
+| Guard hook | Before Bash/Edit/Write: no writing `.env`/keys/`*.session`/`*.pkl`, no real-looking API key in code or commands, no `git add -A` that would sweep up a secret, no code routing a Claude subscription into another client. About 23 ms per call. |
 | Stop gate | When Claude tries to end a turn, Haiku reads its last message. Planned steps not done, edits not verified, failing checks, `NOT MERGEABLE`, or a question it could answer itself: the turn goes on. |
 | Ask gate | Before Claude interrupts you with a question, Sonnet checks it. Only credentials, destructive or paid actions, and product decisions reach you; everything else goes back with "pick the conventional option and continue". |
-| Defaults | Auto permission mode and a task list on every model (only if you haven't set them), no `.env` reads, no force-push, global rules in `~/.claude/CLAUDE.md`, omp's `codebase-memory-mcp` + `serena` registered. |
+| Defaults | Auto permission mode and a task list on every model (only if you haven't set them), deny rules for reading/editing `.env`, keys, `*.session`, `*.pkl` and for force-push, global rules in `~/.claude/CLAUDE.md`, omp's `codebase-memory-mcp` + `serena` registered. |
 
 A real run with the kit. The first edit broke the build, the verify hook fed the compiler error back, and the stop gate refused "Next I will add tests":
 
@@ -131,6 +132,25 @@ Limits, so you know what you are getting:
 - `AskUserQuestion` does not exist in `claude -p`, so the ask gate only acts in interactive sessions. If its model id is ever retired, the hook fails open and questions go through.
 - The verify hook checks the whole package, not only the edited file. On a large monorepo, `typecheck` can take a while (the hook timeout is 180 s).
 
+### Tokens and quality next to omp (measured)
+
+Same model (Sonnet 5, Console API key), same prompt, fresh copy of the repo per run, two runs per cell. Task A: implement a parser from a spec and fix three reported bugs (31 hidden tests). Task B: add save/load that survives hostile item names (20 hidden tests). Nobody saw the hidden tests.
+
+| Harness | Hidden tests | Input tokens A · B | Requests A · B | Cost A · B |
+|---|---|---|---|---|
+| Claude Code, no kit | 31/31 · 20/20 (all runs) | 523k · 347k | 18 · 9.5 | $0.24 · $0.14 |
+| `8sync ccc`, kit 0.63 | 31/31 · 20/20 | 555k · 344k | 19 · 10.5 | $0.26 · $0.16 |
+| `8sync ccc`, kit 0.64 | 31/31 · 20/20 | 490k · 272k | 18.5 · 7.5 | $0.29 · $0.19 ¹ |
+| omp | 31/31 · 20/20 | 274k · 208k | 8 · 7 | $0.25 · $0.13 |
+
+¹ First runs on a new config dir, so the prompt cache was cold (cache writes 39-48k vs 18-30k); input tokens are the cache-independent number.
+
+What this says, and what it doesn't:
+
+- On these tasks every harness got every hidden test right. They do not show Claude Code verifying better than omp; the kit's gates matter on long runs where a model stops early, which these short tasks never triggered.
+- Claude Code processes 1.3-2× omp's input tokens because it makes about twice the requests: it mostly calls one tool per request, omp batches. The cost is close anyway, since repeated context is billed as cache reads at a tenth of the price. Telling Claude to batch calls in `CLAUDE.md` changed nothing (about 1 in 7 requests had several calls with or without it), so the kit doesn't.
+- In an 8sync repo the per-request prefix is where the kit saves: in this repo it is 34.3k tokens for `8sync ccc` 0.64, 41.0k for 0.63, 56.2k for omp. The difference is `CLAUDE.md`: 0.64 writes a 0.7k pointer block instead of a copy of the 8k skill list (importing `AGENTS.md` would cost 20.5k).
+
 ---
 
 ## Claude, the official way
@@ -148,7 +168,7 @@ export ANTHROPIC_API_KEY=sk-ant-...        # omp (`8sync .`, `8sync ai`): standa
 
 Pick the model inside the tools: `/model` in Claude Code and omp, `:model` in a Forge shell. The keys stay on your machine, and 8sync never prints them in full.
 
-> Bridges such as `8sync codex-web` or `8sync feynman auth-omp`, and third-party gateways (`8sync harness gateway`), are separate opt-in tools. Whether a given account or reseller may be used that way is governed by that provider's terms, not by 8sync.
+> `8sync feynman auth-omp` bridges omp's other logins into Feynman but never Claude; give Feynman a Console key (`ANTHROPIC_API_KEY`). `8sync harness claude-code` with a non-Anthropic endpoint configures Claude Code only and leaves omp alone, and `8sync doctor` warns when omp is signed in to Anthropic with a Claude plan instead of an API key. Other bridges (`8sync codex-web`) and gateways are opt-in tools under their provider's terms.
 
 ---
 

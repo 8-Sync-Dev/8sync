@@ -9,6 +9,14 @@ su-code/planning/**/evidence-*.png
 .env
 .env.*
 !.env.example
+*.pem
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.session
+*.session-journal
+*.pkl
 # KEEP COMMITTED (do NOT add here): su-code/ (memory), AGENTS.md, CHANGELOG.md, .cursor/rules/
 # Host skill mirrors (rebuilt from su-code/skills/ by `8sync harness create`):
 .cursor/skills/

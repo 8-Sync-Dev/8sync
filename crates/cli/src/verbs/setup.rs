@@ -62,6 +62,71 @@ fn install_gh_release() -> Result<()> {
     installed
 }
 
+/// gitleaks — the secret scanner behind the pre-commit hook `8sync harness`
+/// seeds and behind `/aup-audit`: the official release archive into
+/// `~/.local/bin`, verified against the release's checksums file.
+fn install_gitleaks() -> Result<()> {
+    if which::which("gitleaks").is_ok() {
+        ui::skip("gitleaks", "already installed");
+        return Ok(());
+    }
+    let os = match std::env::consts::OS {
+        "linux" => "linux",
+        "macos" => "darwin",
+        "windows" => "windows",
+        o => bail!("no gitleaks release for {o}"),
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        a => bail!("no gitleaks release for {os}/{a}"),
+    };
+    let tag = crate::verbs::selfup::latest_release_tag("gitleaks/gitleaks").context("could not resolve the latest gitleaks release")?;
+    let ver = tag.trim_start_matches('v');
+    let archive = format!("gitleaks_{ver}_{os}_{arch}.{}", if os == "windows" { "zip" } else { "tar.gz" });
+    let base = format!("https://github.com/gitleaks/gitleaks/releases/download/{tag}");
+    let work = std::env::temp_dir().join(format!("8sync-gitleaks.{}", std::process::id()));
+    let installed = (|| {
+        std::fs::create_dir_all(&work)?;
+        let file = work.join(&archive);
+        let sums = work.join("checksums.txt");
+        ui::step(&format!("Installing gitleaks {tag} ({archive})"));
+        crate::verbs::forge::download(&format!("{base}/{archive}"), &file)?;
+        crate::verbs::forge::download(&format!("{base}/gitleaks_{ver}_checksums.txt"), &sums)?;
+        let want = std::fs::read_to_string(&sums)?
+            .lines()
+            .find_map(|l| l.strip_suffix(archive.as_str()).map(|h| h.trim().to_string()))
+            .context("gitleaks checksums file has no entry for the archive")?;
+        let got = crate::verbs::selfup::sha256_file(&file).context("no working sha256 hasher")?;
+        if !got.eq_ignore_ascii_case(&want) {
+            bail!("gitleaks checksum mismatch — refusing to install\n  expected {want}\n  actual   {got}");
+        }
+        // Windows' own bsdtar reads the .zip; Git Bash's GNU tar on PATH does not.
+        let tar = if cfg!(windows) {
+            std::path::Path::new(&std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())).join(r"System32\tar.exe").display().to_string()
+        } else {
+            "tar".to_string()
+        };
+        let (file_s, work_s) = (file.to_str().context("non-UTF-8 temp path")?, work.to_str().context("non-UTF-8 temp path")?);
+        pkg::run_loud(&tar, &["-xf", file_s, "-C", work_s])?;
+        let exe = if cfg!(windows) { "gitleaks.exe" } else { "gitleaks" };
+        let dest = dirs::home_dir().context("no home dir")?.join(".local").join("bin").join(exe);
+        std::fs::create_dir_all(dest.parent().context("bad gitleaks path")?)?;
+        let staged = dest.with_file_name(format!(".gitleaks.new.{}", std::process::id()));
+        std::fs::copy(work.join(exe), &staged)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
+        }
+        std::fs::rename(&staged, &dest)?;
+        ui::ok(&format!("gitleaks {tag} → {} (sha256 ok)", dest.display()));
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&work);
+    installed
+}
+
 #[derive(ClapArgs, Debug)]
 #[command(
     after_help = indoc::indoc! {"
@@ -79,7 +144,8 @@ fn install_gh_release() -> Result<()> {
           · paru                                (AUR helper — Arch family only)
           · codegraph                           (semantic code index)
           · forge + zsh                         (`8sync forge <name>`; Windows: MSYS2 zsh; Linux without sudo: static zsh)
-          · Claude Code + 8sync kit             (`8sync ccc . <name>`; official installer; agents · /ship · hooks)
+          · Claude Code + 8sync kit             (`8sync ccc . <name>`; official installer; agents · skills · hooks)
+          · gitleaks                            (secret scanner for the pre-commit hook + /aup-audit; GitHub release)
           · PATH bootstrap                      (~/.local/bin, ~/.cargo/bin, ~/.bun/bin,
                                                  ~/.encore/bin — zsh/bash + fish conf.d)
           · configs + skills under ~/.config/8sync/ and ~/.omp/skills/
@@ -220,6 +286,7 @@ pub fn run(a: Args) -> Result<()> {
         ui::info("would install codegraph (official installer) if missing");
         ui::info("would install forge (GitHub release) + zsh (Windows: MSYS2 zsh) if missing");
         ui::info("would install Claude Code (official installer) if missing + the 8sync kit into ~/.claude");
+        ui::info("would install gitleaks (GitHub release → ~/.local/bin, sha256-checked) if missing");
         ui::info("would write: configs + skills");
         ui::info("would patch PATH in zsh/bash + ~/.config/fish/conf.d/8sync-path.fish");
         ui::info("would register codegraph as a global+local skill");
@@ -262,6 +329,7 @@ pub fn run(a: Args) -> Result<()> {
             ui::ok(&format!("claude {}", claude.display()));
             Ok(())
         })?;
+        try_step("gitleaks", yolo, &mut failures, install_gitleaks)?;
         try_step("path-bootstrap", yolo, &mut failures, || { ensure_path_in_shells(); Ok(()) })?;
         try_step("configs",    yolo, &mut failures, || install_configs(&env))?;
         try_step("skills",     yolo, &mut failures, || install_skills(&env))?;

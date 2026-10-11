@@ -84,6 +84,23 @@ pub fn run() -> Result<()> {
         ui::info("gitleaks not found — recommended for `harness up --commit` (pre-commit secret scan; GitGuardian 2026)");
     }
 
+    // Anthropic's terms: a Claude subscription (OAuth, `sk-ant-oat…`) stays in
+    // Claude Code / claude.ai; omp, Forge, Feynman need a Console API key.
+    if which::which("omp").is_ok() {
+        let token = std::process::Command::new("omp")
+            .args(["token", "anthropic", "--raw"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if token.starts_with("sk-ant-oat") {
+            ui::warn("omp uses a Claude subscription login (OAuth) for `anthropic` — Anthropic's Usage Policy keeps subscriptions in Claude Code / claude.ai. Log out of anthropic in omp (`/logout`) and use a Console key (ANTHROPIC_API_KEY); for the subscription use `8sync ccc`.");
+        } else if token.starts_with("sk-ant-") {
+            ui::ok("omp anthropic: API key (Console)");
+        }
+    }
+
     // Fish PATH bootstrap (only relevant if fish is present)
     if which::which("fish").is_ok() {
         let fish_snippet = env.home.join(".config/fish/conf.d/8sync-path.fish");

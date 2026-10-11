@@ -1,5 +1,5 @@
 //! `8sync ccc` — Claude Code CLI (`claude`) with named per-repo sessions plus the
-//! 8sync kit: subagents, `/ship`, a native verify hook and a stop gate.
+//! 8sync kit: subagents, skills, a native verify hook + guard, and stop/ask gates.
 //!
 //! Claude Code accepts a caller-chosen conversation UUID (`--session-id`) and
 //! resumes by UUID (`--resume`), so `8sync ccc . <name>` maps names to UUIDs in
@@ -19,6 +19,8 @@ use crate::env_detect::Env;
 use crate::verbs::uuid_sessions::{self, Store};
 use crate::{assets, pkg, ui};
 
+mod guard;
+
 #[derive(ClapArgs, Debug)]
 #[command(after_help = indoc::indoc! {"
     EXAMPLES
@@ -32,14 +34,16 @@ use crate::{assets, pkg, ui};
       8sync ccc status               claude binary, login, kit, MCP and sessions
 
     THE KIT (installed by `8sync setup`; edited files are kept unless --force)
-      agents   explore · plan · task · quick-task · reviewer · designer
-      /ship    explore → plan → implement → review → commit
+      agents   explore (haiku) · task · quick-task · reviewer · designer
+      skills   /ship (explore → task list → implement → review → commit) · /aup-audit · deep-research
       verify   after every Edit/Write: cargo check · package typecheck/tsc · go vet;
                errors go back to Claude (`8sync ccc hook verify`, no python/jq/bash)
+      guard    before Bash/Edit/Write: no credential files, real secrets, `git add` of
+               secrets, or Claude-subscription routing (`8sync ccc hook guard`)
       gates    stop: a Haiku check keeps the turn going while work is visibly unfinished;
                ask: questions without a real need go back to Claude to decide itself
-      also     auto permission mode · task list on every model · deny .env reads and
-               force-push · codebase-memory-mcp + serena copied from omp's MCP config
+      also     auto permission mode · task list on every model · deny reads of .env / keys /
+               *.session / *.pkl and force-push · codebase-memory-mcp + serena from omp's MCP config
 "})]
 pub struct Args {
     /// `.` then a session name, or a subcommand: `ls`, `new <name>`, `rm <name>`,
@@ -192,16 +196,25 @@ pub(crate) fn ensure_claude() -> Result<PathBuf> {
 
 // ── the kit ─────────────────────────────────────────────────────────────────
 
-/// Kit files under `assets/claude/`, installed at the same path in `~/.claude`.
-const KIT_FILES: [&str; 7] = [
-    "agents/explore.md",
-    "agents/plan.md",
-    "agents/task.md",
-    "agents/quick-task.md",
-    "agents/reviewer.md",
-    "agents/designer.md",
-    "skills/ship/SKILL.md",
+/// Kit files: (asset path, path under Claude Code's config dir). The shared
+/// skills come from omp's bundled tree, so both harnesses read one source.
+const KIT_FILES: [(&str, &str); 10] = [
+    ("claude/agents/explore.md", "agents/explore.md"),
+    ("claude/agents/task.md", "agents/task.md"),
+    ("claude/agents/quick-task.md", "agents/quick-task.md"),
+    ("claude/agents/reviewer.md", "agents/reviewer.md"),
+    ("claude/agents/designer.md", "agents/designer.md"),
+    ("claude/skills/ship/SKILL.md", "skills/ship/SKILL.md"),
+    ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
+    ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
+    ("skills/deep-research/SKILL.md", "skills/deep-research/SKILL.md"),
+    ("skills/deep-research/references/binary-weight-audit.md", "skills/deep-research/references/binary-weight-audit.md"),
 ];
+
+/// Files an earlier kit installed and this one dropped: deleted while they are
+/// still exactly what 8sync wrote (the `plan` agent: the main agent plans in
+/// its own context instead of paying a second Opus context for it).
+const RETIRED: [&str; 1] = ["agents/plan.md"];
 
 /// Hashes of the files as 8sync last wrote them: a file whose current content
 /// no longer matches was edited by the user and is left alone.
@@ -210,9 +223,21 @@ const CLAUDE_MD_BEGIN: &str = "<!-- 8sync:kit:begin -->";
 const CLAUDE_MD_END: &str = "<!-- 8sync:kit:end -->";
 
 /// Rules merged into `permissions.deny` (`**/` covers monorepo sub-packages).
-const DENY: [&str; 6] = [
+/// Path rules only work as `Read(...)` / `Edit(...)`: Claude Code accepts a
+/// `Write(...)` path rule but never consults it.
+const DENY: [&str; 16] = [
     "Read(**/.env)",
     "Read(**/.env.*)",
+    "Edit(**/.env)",
+    "Edit(**/.env.*)",
+    "Read(**/*.pem)",
+    "Edit(**/*.pem)",
+    "Read(**/id_rsa*)",
+    "Read(**/id_ed25519*)",
+    "Read(**/*.session)",
+    "Edit(**/*.session)",
+    "Read(**/*.pkl)",
+    "Edit(**/*.pkl)",
     "Bash(git push --force*)",
     "Bash(git push -f*)",
     "Bash(git push * --force*)",
@@ -265,7 +290,7 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5";
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
-    ui::step("Claude Code kit → ~/.claude (agents · /ship · verify hook · stop + ask gates)");
+    ui::step("Claude Code kit → ~/.claude (agents · skills · verify hook · guard · stop + ask gates)");
     let dir = claude_dir(env);
     let stamp_path = dir.join(KIT_STAMP);
     let mut stamps: BTreeMap<String, String> = std::fs::read_to_string(&stamp_path)
@@ -274,8 +299,8 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
         .unwrap_or_default();
 
     let mut kept = Vec::new();
-    for rel in KIT_FILES {
-        let body = assets::read(&format!("claude/{rel}")).with_context(|| format!("asset missing: claude/{rel}"))?;
+    for (asset, rel) in KIT_FILES {
+        let body = assets::read(asset).with_context(|| format!("asset missing: {asset}"))?;
         let target = dir.join(rel);
         match std::fs::read_to_string(&target) {
             Ok(cur) if cur == body => {}
@@ -289,6 +314,18 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
             }
         }
         stamps.insert(rel.to_string(), fnv1a(&body));
+    }
+    for rel in RETIRED {
+        let target = dir.join(rel);
+        match std::fs::read_to_string(&target) {
+            Ok(cur) if stamps.get(rel) == Some(&fnv1a(&cur)) => {
+                std::fs::remove_file(&target).with_context(|| format!("remove {}", target.display()))?;
+                ui::ok(&format!("removed retired {}", target.display()));
+            }
+            Ok(_) if stamps.contains_key(rel) => ui::info(&format!("kept your edited {} (no longer part of the kit)", target.display())),
+            _ => {}
+        }
+        stamps.remove(rel);
     }
     std::fs::create_dir_all(&dir)?;
     std::fs::write(&stamp_path, serde_json::to_string_pretty(&stamps)?)?;
@@ -312,9 +349,9 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
     if out != raw {
         std::fs::write(&settings, out).with_context(|| format!("write {}", settings.display()))?;
     }
+    let agents = KIT_FILES.iter().filter(|(_, rel)| rel.starts_with("agents/")).count();
     ui::ok(&format!(
-        "kit: {} agents · /ship · verify hook · stop + ask gates · auto mode · CLAUDE.md rules ({})",
-        KIT_FILES.len() - 1,
+        "kit: {agents} agents · /ship · /aup-audit · deep-research · verify hook · guard · stop + ask gates · auto mode · CLAUDE.md rules ({})",
         dir.display()
     ));
 
@@ -383,22 +420,42 @@ fn apply_kit_settings(v: &mut Value, exe: &str) -> Result<()> {
             }]
         }),
     );
+    upsert_hook_group(
+        hooks,
+        "PreToolUse",
+        json!({
+            "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+            "hooks": [{
+                "type": "command",
+                "command": exe,
+                "args": ["ccc", "hook", "guard"],
+                "timeout": 30
+            }]
+        }),
+    );
     Ok(())
 }
 
-/// Replace 8sync's matcher group for `event` in place (or append it), dropping duplicates.
+/// Which 8sync hook a matcher group carries: `hook verify` / `hook guard` for
+/// the native commands, the first sentence of a gate prompt (`8sync gate: stop`).
+fn hook_role(g: &Value) -> Option<String> {
+    g["hooks"].as_array()?.iter().find_map(|h| {
+        if let Some(a) = h["args"].as_array().filter(|a| a.len() >= 3 && a[0] == "ccc" && a[1] == "hook") {
+            return a[2].as_str().map(|r| format!("hook {r}"));
+        }
+        let p = h["prompt"].as_str().filter(|p| p.starts_with(GATE_MARKER))?;
+        Some(p.split('.').next().unwrap_or(p).to_string())
+    })
+}
+
+/// Replace 8sync's group with the same role for `event` in place (or append
+/// it), dropping duplicates; user groups are never touched.
 fn upsert_hook_group(hooks: &mut serde_json::Map<String, Value>, event: &str, group: Value) {
     let Some(groups) = hooks.entry(event).or_insert_with(|| json!([])).as_array_mut() else {
         return;
     };
-    let ours = |g: &Value| {
-        g["hooks"].as_array().is_some_and(|hs| {
-            hs.iter().any(|h| {
-                h["args"].as_array().is_some_and(|a| a.len() >= 2 && a[0] == "ccc" && a[1] == "hook")
-                    || h["prompt"].as_str().is_some_and(|p| p.starts_with(GATE_MARKER))
-            })
-        })
-    };
+    let role = hook_role(&group);
+    let ours = |g: &Value| role.is_some() && hook_role(g) == role;
     match groups.iter().position(&ours) {
         Some(i) => {
             groups[i] = group;
@@ -472,11 +529,11 @@ fn status(env: &Env, root: &Path) -> Result<()> {
         None => ui::warn("claude: not installed — `8sync ccc . <name>` installs it"),
     }
     let dir = claude_dir(env);
-    let present = KIT_FILES.iter().filter(|r| dir.join(r).exists()).count();
+    let present = KIT_FILES.iter().filter(|(_, r)| dir.join(r).exists()).count();
     let settings = std::fs::read_to_string(dir.join("settings.json")).unwrap_or_default();
-    let hooks = settings.contains("\"hook\"") && settings.contains(GATE_MARKER);
+    let hooks = settings.contains("\"verify\"") && settings.contains("\"guard\"") && settings.contains(GATE_MARKER);
     if present == KIT_FILES.len() && hooks {
-        ui::ok(&format!("kit: {present}/{} files · verify hook · stop + ask gates ({})", KIT_FILES.len(), dir.display()));
+        ui::ok(&format!("kit: {present}/{} files · verify hook · guard · stop + ask gates ({})", KIT_FILES.len(), dir.display()));
     } else {
         ui::warn(&format!("kit: {present}/{} files · hooks {} — run `8sync ccc kit`", KIT_FILES.len(), if hooks { "on" } else { "off" }));
     }
@@ -498,7 +555,15 @@ fn hook(rest: &[String]) -> Result<()> {
             }
             Ok(())
         }
-        _ => bail!("usage: 8sync ccc hook verify   (run by Claude Code's PostToolUse hook)"),
+        Some("guard") => {
+            let mut input = String::new();
+            let _ = std::io::stdin().read_to_string(&mut input);
+            if let Some(out) = guard::check(&input) {
+                println!("{out}");
+            }
+            Ok(())
+        }
+        _ => bail!("usage: 8sync ccc hook verify|guard   (run by Claude Code's PostToolUse / PreToolUse hooks)"),
     }
 }
 
@@ -616,7 +681,11 @@ mod tests {
                     { "matcher": "Write", "hooks": [{ "type": "command", "command": "prettier" }] },
                     { "matcher": "Edit", "hooks": [{ "type": "command", "command": "/old/8sync", "args": ["ccc", "hook", "verify"] }] }
                 ],
-                "Stop": [{ "hooks": [{ "type": "prompt", "prompt": "8sync gate: stop. old wording" }] }]
+                "Stop": [{ "hooks": [{ "type": "prompt", "prompt": "8sync gate: stop. old wording" }] }],
+                "PreToolUse": [
+                    { "matcher": "AskUserQuestion", "hooks": [{ "type": "prompt", "prompt": "8sync gate: ask. old wording" }] },
+                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "my-linter" }] }
+                ]
             }
         });
         apply_kit_settings(&mut v, "/new/8sync").unwrap();
@@ -637,7 +706,12 @@ mod tests {
         let stop = v["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.len(), 1);
         assert_eq!(stop[0]["hooks"][0]["prompt"], format!("{STOP_GATE}{ASK_POLICY}"));
-        assert_eq!(v["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 3, "ask gate replaced in place, user hook kept, guard appended");
+        assert_eq!(pre[0]["hooks"][0]["prompt"], format!("{ASK_GATE}{ASK_POLICY}"));
+        assert_eq!(pre[1]["hooks"][0]["command"], "my-linter");
+        assert_eq!(pre[2]["hooks"][0]["args"], json!(["ccc", "hook", "guard"]));
+        assert!(deny.iter().any(|r| r == "Edit(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write("))));
         assert_eq!(v["permissions"]["defaultMode"], "auto");
     }
 

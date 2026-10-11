@@ -290,7 +290,7 @@ fn print_help() {
     println!("\nFILE TAXONOMY (portability — survives a move to a new machine)");
     println!("  COMMIT : AGENTS.md · CLAUDE.md · su-code/*.md · CHANGELOG.md · su-code/skills/ · .cursor/rules/   (learned/decided)");
     println!("{}", crate::brand::render("  IGNORE : .codegraph/ · .cache/8sync/ · .cursor/skills/ · .zcode/skills/   (derived → rebuilt by create/init)"));
-    println!("  SECRET : .env · .env.* (keep .env.example)                                     (NEVER commit)");
+    println!("  SECRET : .env · .env.* (keep .env.example) · *.pem/*.p12 · id_rsa* · *.session · *.pkl   (NEVER commit)");
     println!("{}", crate::brand::render("  → init seeds these into a managed .gitignore block; `8sync doctor` warns if memory is ignored."));
 
     println!("\nOVERWRITE POLICY (default = NEVER overwrite — only add what's missing)");

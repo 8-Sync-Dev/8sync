@@ -274,6 +274,37 @@ KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Kh
     ForceLoadStats { block, core, specialist, ondemand }
 }
 
+/// CLAUDE.md's block: a compact pointer version of the force-load. Claude Code
+/// loads CLAUDE.md into every request (and skips AGENTS.md once a CLAUDE.md
+/// exists), so the ~8k-token full block — mostly bare on-demand skill names —
+/// is replaced by ~400 tokens that point at AGENTS.md and the skill dirs.
+/// Importing AGENTS.md instead measured 20.5k tokens in this repo.
+fn claude_block(stats: &ForceLoadStats) -> String {
+    let names = |v: &[PathBuf]| {
+        v.iter()
+            .filter_map(|p| p.file_name().and_then(|s| s.to_str()))
+            .map(|n| format!("`{n}`"))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
+    let block = format!(
+        "{BEGIN}\n\
+## 8sync harness — Claude Code (bản gọn; bản đầy đủ cho omp/Cursor nằm trong `AGENTS.md`)\n\
+\n\
+- **Quy ước repo, lệnh build/test, kiến trúc:** `AGENTS.md` — xem mục lục (`grep -n '^#' AGENTS.md`) rồi đọc đúng mục cần trước khi sửa code.\n\
+- **Code intelligence trước grep:** MCP `codebase-memory-mcp` (search_graph · trace_path · get_code_snippet), `serena` (find_symbol · find_referencing_symbols), hoặc `codegraph query|explore` qua Bash. Chỉ đọc raw file khi sắp sửa nó.\n\
+- **Luôn áp dụng** ({core}): đọc trước khi viết, bước nhỏ có kiểm chứng, làm ít nhất mà đúng (YAGNI, xoá > thêm), ưu tiên lệnh `8sync` (`8sync run test`, `8sync find` …) hơn shell thô. Chi tiết: `su-code/skills/<tên>/SKILL.md` (hoặc `~/.omp/skills/<tên>/`), chỉ mở khi cần.\n\
+- **Mở SKILL.md khi task khớp:** {specialist} — `impeccable` bắt buộc cho mọi việc UI/design.\n\
+- **{ondemand} skill on-demand khác:** `ls su-code/skills ~/.omp/skills`, mở `SKILL.md` khi tên/description khớp task.\n\
+- **Memory dự án:** đọc `su-code/STATE.md` đầu phiên, cập nhật ở mỗi mốc; bài học → `su-code/KNOWLEDGE.md`; thay đổi → `CHANGELOG.md` (Unreleased).\n\
+{END}",
+        core = names(&stats.core),
+        specialist = names(&stats.specialist),
+        ondemand = stats.ondemand.len(),
+    );
+    crate::brand::render(&block).into_owned()
+}
+
 /// Rewrite (or insert) the force-load block in **every** agent entry file at the
 /// project root: AGENTS.md, CLAUDE.md, GEMINI.md, OPENCODE.md,
 /// .github/copilot-instructions.md, .cursorrules, .windsurfrules.
@@ -281,11 +312,13 @@ pub(crate) fn inject_agents_md(home: &Path, root: &Path) -> Result<()> {
     let stats = build_force_load(home, root);
     let always_count = stats.core.len() + stats.specialist.len();
     let on_count = stats.ondemand.len();
+    let claude_block = claude_block(&stats);
     let block = stats.block;
 
     // Inject into every known agent entry file (markdown: sentinel rewrite or
     // skeleton; plain text: prepend). AGENTS.md + CLAUDE.md are stub-created;
-    // the rest are touched only if they already exist.
+    // the rest are touched only if they already exist. CLAUDE.md gets the
+    // compact block (see `claude_block`).
     let targets: &[(&str, EntryKind)] = &[
         ("AGENTS.md",                       EntryKind::Markdown { h1: "AGENTS.md — guidance for AI" }),
         ("CLAUDE.md",                       EntryKind::Markdown { h1: "CLAUDE.md — guidance for Claude Code" }),
@@ -303,9 +336,10 @@ pub(crate) fn inject_agents_md(home: &Path, root: &Path) -> Result<()> {
         let stub_create = matches!(*name, "AGENTS.md" | "CLAUDE.md");
         if existing.is_empty() && !stub_create { continue; }
 
+        let block = if *name == "CLAUDE.md" { &claude_block } else { &block };
         let new_contents = match kind {
-            EntryKind::Markdown { h1 } => rewrite_md_with_block(&existing, &block, h1),
-            EntryKind::Plain => rewrite_plain_with_block(&existing, &block),
+            EntryKind::Markdown { h1 } => rewrite_md_with_block(&existing, block, h1),
+            EntryKind::Plain => rewrite_plain_with_block(&existing, block),
         };
         if new_contents != existing {
             if let Some(parent) = path.parent() {

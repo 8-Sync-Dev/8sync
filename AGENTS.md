@@ -323,7 +323,7 @@ su-code/
 | `8sync run [dev\|build\|test\|fmt\|lint]` | Project command theo recipe |
 | `8sync ship "msg"` | `git add -A && commit && push && gh pr create` |
 | `8sync forge <name> [--tui]` | Session ForgeCode theo tên (alias `forgecode`): mặc định zsh có plugin Forge gắn đúng conversation (`: <prompt>` hỏi Forge, `:<Tab>` liệt kê lệnh, `@<Tab>` file); `--tui` mở TUI; `-p` one-shot. Prompt 2 dòng dùng chung `assets/configs/zsh/8sync.zsh` (repo-relative path · branch đọc thẳng `.git/HEAD` · segment Forge async · duration · `❯` theo exit) + autosuggestions/syntax-highlighting pin commit. Tự cài Forge; zsh: Windows MSYS2 trong `%LOCALAPPDATA%\8sync\zsh`, Linux/macOS không sudo → zsh-bin static. Sub: `ls`/`new`/`rm`/`key`/`status` |
-| `8sync ccc . <name>` | Claude Code (`claude`) theo tên trong repo: tên → UUID (`--session-id` lần đầu, `--resume` sau), registry dùng chung với forge (`uuid_sessions.rs`). `8sync ccc .` = session dùng gần nhất; `. ls`/`. new`/`. rm` (xoá cả transcript)/`status`; flag sau tên chuyển thẳng cho `claude`. Tự cài Claude Code bằng installer chính thức. **Kit** (`8sync ccc kit`, setup tự chạy) vào `~/.claude`: 6 subagent + `/ship`, hook verify native (`8sync ccc hook verify`: cargo check / typecheck / go vet, chỉ trả lỗi), Stop gate (Haiku) + Ask gate (Sonnet, full model id), auto mode, deny `.env`/force-push, block `CLAUDE.md`, MCP cbm + serena; file user sửa được giữ (`--force` đè) |
+| `8sync ccc . <name>` | Claude Code (`claude`) theo tên trong repo: tên → UUID (`--session-id` lần đầu, `--resume` sau), registry dùng chung với forge (`uuid_sessions.rs`). `8sync ccc .` = session dùng gần nhất; `. ls`/`. new`/`. rm` (xoá cả transcript)/`status`; flag sau tên chuyển thẳng cho `claude`. Tự cài Claude Code bằng installer chính thức. **Kit** (`8sync ccc kit`, setup tự chạy) vào `~/.claude`: 5 subagent (`explore` Haiku, `reviewer`/`designer` inherit, không còn `plan`) + skill `/ship` · `/aup-audit` · `deep-research`, hook verify native (`8sync ccc hook verify`: cargo check / typecheck / go vet, chỉ trả lỗi), hook guard native (`8sync ccc hook guard`: chặn ghi file credential, secret thật, `git add -A` dính secret, code chuyển subscription Claude sang client khác), Stop gate (Haiku) + Ask gate (Sonnet, full model id), auto mode, deny đọc/sửa `.env`/key/`*.session`/`*.pkl` + force-push (rule path chỉ `Read(...)`/`Edit(...)` — `Write(...)` bị Claude Code bỏ qua), block `CLAUDE.md`, MCP cbm + serena; file user sửa được giữ (`--force` đè) |
 
 ### Session mgmt — named per-project sessions (sub của `.`)
 Nhiều feature song song trong 1 repo, mỗi cái 1 omp conversation cô lập. Lever = omp có sẵn (`--session-dir` + `--continue`); 8sync chỉ thêm lớp **tên → session-dir** + **git worktree** + **merge**. Registry máy-local: `~/.config/8sync/sessions/<repo>/index.json` (KHÔNG commit — trỏ path máy-local).
@@ -388,7 +388,7 @@ Không tự nói chuyện USB: đi qua IPC của `lian-li-linux` daemon (`$XDG_R
 ### Lifecycle
 | Verb | Mô tả |
 |---|---|
-| `8sync setup` | Stage A = **AI core thuần** (omp · codegraph · MCP/skills · gh · forge + zsh · Claude Code + kit · PATH bootstrap) + Stage B (curated y/N: dev-stack, nvidia, bluetooth, warp, **terminal**). `--profile terminal` chạy MỌI OS: helix + JetBrainsMono Nerd Font (+ font mặc định Windows Terminal nếu chưa set) + pro zsh; kitty glass chỉ Arch/Fedora |
+| `8sync setup` | Stage A = **AI core thuần** (omp · codegraph · MCP/skills · gh · forge + zsh · Claude Code + kit · gitleaks · PATH bootstrap) + Stage B (curated y/N: dev-stack, nvidia, bluetooth, warp, **terminal**). `--profile terminal` chạy MỌI OS: helix + JetBrainsMono Nerd Font (+ font mặc định Windows Terminal nếu chưa set) + pro zsh; kitty glass chỉ Arch/Fedora |
 | `8sync setup --community` | Auto-yes — Stage A + dev-stack + bluetooth (KHÔNG include warp) |
 | `8sync setup --no-profile` | Chỉ harness, không hỏi profile |
 | `8sync setup --profile <name>` | Apply 1 profile cụ thể non-interactive (cả community + personal) |
@@ -463,7 +463,7 @@ Session memory được `omp` tự quản (retain/recall/auto-compact). 8sync ch
 
 ## 7. Skill system (force-load)
 
-Khi `8sync harness init` (hoặc `8sync setup`) chạy, **27 skill bundled** được deploy vào `~/.omp/skills/` theo [Agent Skills open standard](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview). 10 skill **always-on** chia 2 tầng (progressive disclosure — giữ prefix gọn cho KV-cache): 4 **CORE** đọc body ngay đúng thứ tự (codegraph → karpathy-guidelines → ponytail → 8sync-cli), 6 **specialist** chỉ biết khả năng rồi đọc body khi task khớp; phần còn lại on-demand; `encore-deploy` tech-gated; `social-growth` opt-in:
+Khi `8sync harness init` (hoặc `8sync setup`) chạy, **29 skill bundled** được deploy vào `~/.omp/skills/` theo [Agent Skills open standard](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview). 10 skill **always-on** chia 2 tầng (progressive disclosure — giữ prefix gọn cho KV-cache): 4 **CORE** đọc body ngay đúng thứ tự (codegraph → karpathy-guidelines → ponytail → 8sync-cli), 6 **specialist** chỉ biết khả năng rồi đọc body khi task khớp; phần còn lại on-demand; `encore-deploy` tech-gated; `social-growth` opt-in:
 
 | Skill | Trigger | Mô tả |
 |---|---|---|
@@ -485,7 +485,8 @@ Khi `8sync harness init` (hoặc `8sync setup`) chạy, **27 skill bundled** đ�
 |`super-pdf`|on-demand|báo cáo/tài liệu PDF "boardroom-grade" từ HTML design system (chips strip + kicker cover, §N section spine, bảng cmp navy + pills, callout 4 màu, stat cards, footer chạy) — template + `scripts/build.sh` (WeasyPrint); cùng họ với các PDF review CloudGO|
 |`token-bench`|on-demand|đo token thật mà codegraph/codebase-memory-mcp tiết kiệm vs grep+read (kèm correctness check)|
 |`last30days`|on-demand|research social recency (Reddit/X/YouTube/HN…)|
-|`deep-research`|on-demand|điều tra source-heavy → brief có provenance/citation|
+|`deep-research`|on-demand|điều tra source-heavy → 1 brief có citation; token-lean (snippet trước page, worker trả gọn); cũng nằm trong kit Claude Code|
+|`aup-audit`|on-demand|Usage Policy Anthropic + quy tắc 8 Sync: gitleaks cả history, file nhạy cảm, đường truy cập Claude, tính năng rủi ro (`RULES.md`); cũng nằm trong kit Claude Code|
 |`research-paper`|on-demand|paper end-to-end: replicate · recipe · audit · draft · autoresearch loop|
 |`remote-compute`|on-demand|chạy code ở Docker sandbox · Modal GPU · RunPod pod thay vì bare host|
 |`encore-deploy`|tech-gated|deploy runbook — chỉ hiện khi project dùng Encore|

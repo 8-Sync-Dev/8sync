@@ -25,7 +25,7 @@ const MANAGED: &str = ".8sync-omp.json";
       8sync feynman ls          list Feynman sessions in this repo
       8sync feynman rm <name>   remove a Feynman session
       8sync feynman new <name>  create a new Feynman session
-      8sync feynman auth-omp    sync authenticated omp models and install the native bridge
+      8sync feynman auth-omp    sync omp's logged-in models (Claude excluded) and install the native bridge
       8sync feynman status      show bridged providers and current project sessions
       8sync feynman off         remove only unmodified omp-managed config entries
 
@@ -141,9 +141,19 @@ fn auth_omp(agent_dir: &Path) -> Result<()> {
     let rows = catalog.get("models").and_then(Value::as_array)
         .context("omp models --json did not return a models array")?;
     let mut models = Map::new();
+    let mut skipped_claude = false;
     for row in rows {
         let provider = row.get("provider").and_then(Value::as_str).context("model missing provider")?;
         if row.get("kind").and_then(Value::as_str).unwrap_or("chat") != "chat" {
+            continue;
+        }
+        // omp's `anthropic` login is a Claude subscription (OAuth), and gateway
+        // providers serving `claude-*` are not Console keys either. Anthropic's
+        // terms keep a subscription inside Claude Code / claude.ai; other tools
+        // use a Console API key, which Feynman reads itself from ANTHROPIC_API_KEY.
+        let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
+        if provider == "anthropic" || id.starts_with("claude") {
+            skipped_claude = true;
             continue;
         }
         models.entry(provider.to_string()).or_insert_with(|| serde_json::json!({
@@ -152,7 +162,10 @@ fn auth_omp(agent_dir: &Path) -> Result<()> {
             "models": []
         })).get_mut("models").and_then(Value::as_array_mut).unwrap().push(pi_model(row)?);
     }
-    anyhow::ensure!(!models.is_empty(), "omp has no authenticated chat models; authenticate with `/login` first");
+    if skipped_claude {
+        ui::info("Claude models not bridged: a Claude subscription stays in Claude Code / claude.ai (Usage Policy). For Claude in Feynman set ANTHROPIC_API_KEY to a Console key.");
+    }
+    anyhow::ensure!(!models.is_empty(), "omp has no other authenticated chat models; authenticate with `/login` first");
     std::fs::create_dir_all(agent_dir)?;
     let side_path = agent_dir.join(MANAGED);
     let previous = read_json_object(&side_path)?;
