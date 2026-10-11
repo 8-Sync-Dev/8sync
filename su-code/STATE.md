@@ -9,11 +9,11 @@ ccc at least as fast as omp on hard tasks; `8sync ccc . <name>` auto-creates/upd
 - [x] Org rules doc in repo (`assets/skills/aup-audit/8sync-anthropic-rules.md`), imported in kit CLAUDE.md (0-tool answers), bundled skills linked into `~/.claude/skills`, `8sync-cli` skill covers every verb (Skill → `8sync hz max`).
 - [x] `legal-sync.yml` + `scripts/legal-sync.py` (snapshot in `docs/legal/anthropic/`, idempotent; CI Claude draft rehearsed), `ci.yml`, `install-smoke.yml` (ubuntu x64/arm64, macOS arm64/Intel, Windows).
 - [x] 144 tests; size ceiling 5,505,024 → 5,521,408 with size-report attribution (Windows +8,192 B).
-- [ ] Push, CI green, install-smoke green on v0.64.0 and v0.65.0, release v0.65.0, `8sync up` here.
+- [x] Pushed (eab4dd0, d76c8e4); CI green on Linux/macOS/Windows + minimal; legal-sync dispatch = no change (snapshot deterministic). install-smoke on v0.64.0: 4 unix green, Windows red → `install.ps1` PS 5.1 redirect bug fixed. v0.65.0 published (run 38157941632): linux-x86_64 5,517,968 B (3,440 under 5,521,408), windows 4,337,664. install-smoke (workflow_run 38158279488): ubuntu x64/arm64, macOS arm64/Intel, Windows all green. This box: `8sync up` → 0.65.0 (sha256 matches the published digest; the API was rate-limited so `up` printed NOT VERIFIED), first `ccc` launch refreshed the real kit (stamp 0.65.0, effort medium, async verify, rules import, 27 bundled links).
 - [x] INCIDENT (2026-10-11): WSL check cleanup emptied `/home/admin8syncdev`; unrecoverable (VSS copy of the vhdx is all zeros, ext4magic found nothing under home). After-delete image kept in `C:\Users\Admin\wsl-recovery\` for an optional photorec carve.
 
 ## Current
-Committing v0.65.0, then CI + install-smoke + release.
+Done (v0.65.0 published, installers green on 5 platforms).
 
 ## Next
 User: omp's `anthropic` login is OAuth (subscription) — use a Console key there; add repo secret `ANTHROPIC_API_KEY` to let legal-sync draft rules PRs; decide on the WSL recovery image.

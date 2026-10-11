@@ -32,7 +32,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   - `effortLevel: "medium"` when you have not set one (Sonnet 5 and Opus 5 default to `high`; Opus 5.5 is already `medium`). Output tokens on the bench: 9.4k / 15.3k vs 17.6-20.6k at `high`. Use `/effort high` for a hard reasoning session.
   - Tried and dropped: Anthropic's `<use_parallel_tool_calls>` system-prompt snippet (`--append-system-prompt-file`) did not raise multi-call requests on a lookup task.
 - `8sync-cli` skill rewritten harness-neutral (omp and Claude Code) and complete: every verb (sessions, `ccc`, `forge`, `find`, `note`, `run`, `ship`, image tools, `locate`, `gen-img`, harness/skills, `setup`/`up`/`doctor`, `hz`, `bt`, `sec`, `lcd`, `clean`, `codex-web`) plus the `su-code/` memory layout. The old text told agents never to edit `su-code/*.md`, which contradicted `AGENTS.md`.
-- `aup-audit/RULES.md` now points at the org rules doc for the 8 Sync rules instead of keeping a second copy.
+- `assets/skills/aup-audit/RULES.md` now points at the org rules doc for the 8 Sync rules instead of keeping a second copy.
 
 ### Fixed
 - **Skill links were committed.** The managed `.gitignore` used `.cursor/skills/` and `.zcode/skills/`, but git sees a symlink/junction as a file and a `dir/` pattern never matches it, so `git add -A` committed the links (this repo tracked both). The block now writes `.cursor/skills`, `.zcode/skills`, `.claude/skills` and `.claude/settings.local.json`; a test runs real `git status` against the links. The two links are untracked here.

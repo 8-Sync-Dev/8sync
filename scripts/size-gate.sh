@@ -38,7 +38,8 @@
 # (`assets/skills/aup-audit/8sync-anthropic-rules.md`) and a fuller `8sync-cli`
 # skill. size-report (x86_64-pc-windows-msvc): full 4,328,448 B, minimal
 # 3,169,280 B, `web` gate = +1,159,168 B (unchanged). Windows release build
-# +8,192 B over v0.64.0 (4,321,280 → 4,329,472). +16 KiB of ceiling.
+# +8,192 B over v0.64.0 (4,321,280 → 4,329,472). +16 KiB of ceiling. Published:
+# linux-x86_64 5,517,968 B (+20,512 over v0.64.0; 3,440 B left), windows 4,337,664.
 
 set -euo pipefail
 export LC_ALL=C
