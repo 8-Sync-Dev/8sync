@@ -105,13 +105,7 @@ fn open_session(env: &Env, root: &Path, name: &str, refuse_existing: bool, extra
     let forge = ensure_forge()?;
     let session = touch_session(env, root, name, refuse_existing)?;
 
-    ui::header("8sync forge");
-    ui::info(&format!(
-        "project: {} · session: {} ({})",
-        root.display(),
-        session.name,
-        session.conversation_id
-    ));
+    ui::info(&format!("forge · {} · {}", session.name, root.display()));
 
     let tui = extra.iter().any(|a| a == "--tui");
     let args: Vec<String> = extra.iter().filter(|a| *a != "--tui").cloned().collect();
@@ -145,19 +139,36 @@ _8sync_zdot=$ZDOTDIR
 ZDOTDIR=$_8sync_zdot
 "#;
 
+/// Managed `.zshrc`: the user's own rc, Forge's plugin, then 8sync's shared pro
+/// zsh (`assets/configs/zsh/8sync.zsh` — prompt, keys, completion, plugins),
+/// which picks up the Forge widgets and segment when they exist.
 const ZSHRC: &str = r#"# Managed by `8sync forge` — rewritten on every launch. Personal settings: ~/.zshrc
-_8sync_zdot=$ZDOTDIR
+_8s_zdot=$ZDOTDIR
 [[ -r "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
-ZDOTDIR=$_8sync_zdot
-[[ -z "$TERM" || "$TERM" == dumb ]] && export TERM=xterm-256color
-setopt interactive_comments prompt_subst hist_ignore_dups share_history
-HISTFILE="$ZDOTDIR/.zsh_history" HISTSIZE=10000 SAVEHIST=10000
-autoload -Uz compinit && compinit -u -d "$ZDOTDIR/.zcompdump"
+ZDOTDIR=$_8s_zdot
+: ${HISTFILE:=$ZDOTDIR/.zsh_history}
+# Forge's plugin ends with `compdef`, so the completion system must exist first
+# (8sync.zsh skips its own compinit when it does).
+autoload -Uz compinit
+() {
+  setopt local_options extended_glob
+  local dump=$ZDOTDIR/.zcompdump
+  if [[ -f $dump && -z $dump(#qN.mh+20) ]]; then compinit -C -d $dump; else compinit -u -d $dump; fi
+}
 source "$ZDOTDIR/forge-plugin.zsh"
 source "$ZDOTDIR/forge-theme.zsh"
-PROMPT='%F{cyan}forge%f:%F{yellow}${EIGHTSYNC_FORGE_SESSION}%f %F{blue}%~%f %# '
-print -P "%F{cyan}8sync forge%f · session %F{yellow}${EIGHTSYNC_FORGE_SESSION}%f · %B: <prompt>%b asks Forge · %B:<Tab>%b commands · %Bexit%b leaves"
+source "${ZDOTDIR:h}/zsh/8sync.zsh"
+print -P "%8F: <prompt> asks Forge · :<Tab> commands · @<Tab> files · exit leaves%f"
 "#;
+
+/// Write 8sync's shared zsh config to `<config>/8sync/zsh/8sync.zsh`.
+pub(crate) fn write_zsh_config(env: &Env) -> Result<PathBuf> {
+    let path = env.xdg_config.join("8sync").join("zsh").join("8sync.zsh");
+    let body = crate::assets::read("configs/zsh/8sync.zsh").context("bundled zsh config missing")?;
+    std::fs::create_dir_all(path.parent().context("bad zsh config path")?)?;
+    write_if_changed(&path, body.as_bytes())?;
+    Ok(path)
+}
 
 pub(crate) struct Zsh {
     pub(crate) exe: PathBuf,
@@ -171,36 +182,110 @@ pub(crate) struct Zsh {
 fn launch_zsh(forge: &Path, zsh: &Zsh, env: &Env, root: &Path, s: &ForgeSession) -> Result<()> {
     let zdot = env.xdg_config.join("8sync").join("forge-zsh");
     std::fs::create_dir_all(&zdot).with_context(|| format!("mkdir {}", zdot.display()))?;
-    for (kind, file) in [("plugin", "forge-plugin.zsh"), ("theme", "forge-theme.zsh")] {
-        let out = Command::new(forge)
-            .args(["zsh", kind])
-            .stdin(Stdio::null())
-            .output()
-            .context("could not run forge")?;
-        if !out.status.success() || out.stdout.is_empty() {
-            bail!("`forge zsh {kind}` failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+    // Regenerate only when the forge binary changed (path · size · mtime): the two
+    // `forge zsh` calls are most of the launch time.
+    let stamp = std::fs::metadata(forge)
+        .map(|m| format!("{}|{}|{:?}", forge.display(), m.len(), m.modified().ok()))
+        .unwrap_or_default();
+    let stamp_file = zdot.join(".forge-stamp");
+    let fresh = ["forge-plugin.zsh", "forge-theme.zsh"].iter().all(|f| zdot.join(f).exists())
+        && std::fs::read_to_string(&stamp_file).is_ok_and(|s| s == stamp);
+    if !fresh {
+        for (kind, file) in [("plugin", "forge-plugin.zsh"), ("theme", "forge-theme.zsh")] {
+            let out = Command::new(forge)
+                .args(["zsh", kind])
+                .stdin(Stdio::null())
+                .output()
+                .context("could not run forge")?;
+            if !out.status.success() || out.stdout.is_empty() {
+                bail!("`forge zsh {kind}` failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+            }
+            write_if_changed(&zdot.join(file), &out.stdout)?;
         }
-        std::fs::write(zdot.join(file), &out.stdout)?;
+        std::fs::write(&stamp_file, &stamp)?;
     }
-    std::fs::write(zdot.join(".zshenv"), ZSHENV)?;
-    std::fs::write(zdot.join(".zshrc"), ZSHRC)?;
+    write_if_changed(&zdot.join(".zshenv"), ZSHENV.as_bytes())?;
+    write_if_changed(&zdot.join(".zshrc"), ZSHRC.as_bytes())?;
+    write_zsh_config(env)?;
+    let plugins = ensure_zsh_plugins();
 
     let mut path = zsh.path_prefix.clone();
     path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
-    let status = Command::new(&zsh.exe)
-        .arg("-i")
+    let mut cmd = Command::new(&zsh.exe);
+    cmd.arg("-i")
         .current_dir(root)
         .env("PATH", std::env::join_paths(path)?)
         .env("ZDOTDIR", shell_path(&zdot))
         .env("FORGE_BIN", shell_path(forge))
         .env("_FORGE_CONVERSATION_ID", &s.conversation_id)
-        .env("EIGHTSYNC_FORGE_SESSION", &s.name)
-        .status()
-        .with_context(|| format!("could not start {}", zsh.exe.display()))?;
+        .env("EIGHTSYNC_FORGE_SESSION", &s.name);
+    if let Some(dir) = plugins {
+        cmd.env("EIGHTSYNC_ZSH_PLUGINS", shell_path(&dir));
+    }
+    let status = cmd.status().with_context(|| format!("could not start {}", zsh.exe.display()))?;
     if !status.success() {
         ui::warn("zsh exited non-zero");
     }
     Ok(())
+}
+
+/// Leave unchanged files alone so their mtimes (and zsh's caches) stay valid.
+fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<()> {
+    if std::fs::read(path).is_ok_and(|old| old == bytes) {
+        return Ok(());
+    }
+    std::fs::write(path, bytes).with_context(|| format!("write {}", path.display()))
+}
+
+/// Plugins sourced by the managed `.zshrc`: (dir, repo, tag, commit the tag must resolve to).
+const ZSH_PLUGINS: [(&str, &str, &str, &str); 2] = [
+    (
+        "zsh-autosuggestions",
+        "https://github.com/zsh-users/zsh-autosuggestions",
+        "v0.7.1",
+        "e52ee8ca55bcc56a17c828767a3f98f22a68d4eb",
+    ),
+    (
+        "zsh-syntax-highlighting",
+        "https://github.com/zsh-users/zsh-syntax-highlighting",
+        "0.8.0",
+        "db085e4661f6aafd24e5acb5b2e17e4dd5dddf3e",
+    ),
+];
+
+/// Shallow-clone each pinned plugin once and check it landed on the pinned
+/// commit. Best effort: the shell works without them, so offline or no git is
+/// a warning, not an error. Returns the plugins directory.
+pub(crate) fn ensure_zsh_plugins() -> Option<PathBuf> {
+    let dir = dirs::data_local_dir()?.join("8sync").join("zsh-plugins");
+    for (name, url, tag, commit) in ZSH_PLUGINS {
+        let dst = dir.join(name);
+        if std::fs::read_to_string(dst.join(".8sync-commit")).is_ok_and(|c| c.trim() == commit) {
+            continue;
+        }
+        let stage = dir.join(format!(".{name}.{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&stage);
+        let cloned = std::fs::create_dir_all(&dir).is_ok()
+            && Command::new("git")
+                .args(["-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1", "--branch", tag, url])
+                .arg(&stage)
+                .stdin(Stdio::null())
+                .stderr(Stdio::null()) // "tag is not a commit" chatter for annotated tags
+                .status()
+                .is_ok_and(|s| s.success());
+        let head = Command::new("git").arg("-C").arg(&stage).args(["rev-parse", "HEAD"]).output();
+        let pinned = cloned && head.is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == commit);
+        if pinned && std::fs::write(stage.join(".8sync-commit"), commit).is_ok() {
+            let _ = std::fs::remove_dir_all(&dst);
+            if std::fs::rename(&stage, &dst).is_ok() {
+                ui::ok(&format!("zsh plugin {name} {tag}"));
+                continue;
+            }
+        }
+        let _ = std::fs::remove_dir_all(&stage);
+        ui::warn(&format!("zsh plugin {name} not installed (needs git + network); the shell works without it"));
+    }
+    Some(dir)
 }
 
 /// A path as zsh sees it. MSYS zsh takes POSIX paths: `C:\a\b` → `/c/a/b`.
@@ -213,26 +298,103 @@ fn shell_path(p: &Path) -> String {
     s
 }
 
+/// zsh from the system when it is there or installable without a password;
+/// otherwise romkatv/zsh-bin's static, relocatable build (sha256-pinned) into
+/// `~/.local/share/8sync/zsh` — so an unattended `curl | sh` never needs sudo.
 #[cfg(not(windows))]
 pub(crate) fn ensure_zsh() -> Result<Zsh> {
-    if let Ok(exe) = which::which("zsh") {
-        return Ok(Zsh { exe, path_prefix: Vec::new() });
+    let system = || which::which("zsh").ok().map(|exe| Zsh { exe, path_prefix: Vec::new() });
+    if let Some(z) = system() {
+        return Ok(z);
     }
-    if which::which("apt-get").is_ok() {
-        // Debian/Ubuntu (incl. WSL) sits outside the pacman/dnf/brew core routes.
-        let apt = "apt-get update -qq && apt-get install -y zsh";
-        if which::which("sudo").is_ok() {
-            crate::pkg::run_loud("sudo", &["sh", "-c", apt])?;
+    let root = zsh_root()?;
+    let private = root.join("bin/zsh");
+    if private.exists() {
+        return Ok(Zsh { exe: private, path_prefix: Vec::new() });
+    }
+    if root_without_password() {
+        let installed = if which::which("apt-get").is_ok() {
+            // Debian/Ubuntu (incl. WSL) sits outside the pacman/dnf/brew core routes.
+            let apt = "apt-get update -qq && apt-get install -y zsh";
+            if is_root() {
+                crate::pkg::run_loud("sh", &["-c", apt])
+            } else {
+                crate::pkg::run_loud("sudo", &["-n", "sh", "-c", apt])
+            }
         } else {
-            crate::pkg::run_loud("sh", &["-c", apt])?;
+            let names = crate::platform::CorePkg { arch: "zsh", fedora: "zsh", brew: "zsh", winget: "" };
+            crate::platform::install_core_pkg("zsh", names)
+        };
+        if let (Ok(()), Some(z)) = (installed, system()) {
+            return Ok(z);
         }
-    } else {
-        let names = crate::platform::CorePkg { arch: "zsh", fedora: "zsh", brew: "zsh", winget: "" };
-        crate::platform::install_core_pkg("zsh", names)?;
     }
-    which::which("zsh").map(|exe| Zsh { exe, path_prefix: Vec::new() }).map_err(|_| {
-        anyhow::anyhow!("zsh is required for `8sync forge <name>` — install it (e.g. `sudo apt install zsh`) or add `--tui`")
+    install_zsh_bin(&root)?;
+    Ok(Zsh { exe: private, path_prefix: Vec::new() })
+}
+
+#[cfg(not(windows))]
+fn is_root() -> bool {
+    Command::new("id").arg("-u").output().is_ok_and(|o| o.stdout.starts_with(b"0\n"))
+}
+
+#[cfg(not(windows))]
+fn root_without_password() -> bool {
+    is_root()
+        || Command::new("sudo")
+            .args(["-n", "true"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+}
+
+#[cfg(not(windows))]
+const ZSH_BIN_RELEASE: &str = "https://github.com/romkatv/zsh-bin/releases/download/v6.1.1";
+
+/// (asset, sha256) of the static zsh 5.8 build for this platform.
+#[cfg(not(windows))]
+fn zsh_bin_asset() -> Option<(&'static str, &'static str)> {
+    Some(match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => ("zsh-5.8-linux-x86_64.tar.gz", "6df668fb6e9a12874e0d80518d582f2e99e512d4a4532fa73d938360aaddc838"),
+        ("linux", "aarch64") => ("zsh-5.8-linux-aarch64.tar.gz", "5caca77bcdaa218ec12e79f2e65c53c39058e0ed4f4f299991d18a800ca7c06d"),
+        ("macos", "x86_64") => ("zsh-5.8-darwin-x86_64.tar.gz", "fba37a2fc286b0d8acfe73659a7ddce802689b8d5e76095d267651a182f7181f"),
+        ("macos", "aarch64") => ("zsh-5.8-darwin-arm64.tar.gz", "db777549692029b7c1c0474cdc2affc2dc87a74a2971dfa7be1be1ffcab695e3"),
+        _ => return None,
     })
+}
+
+/// Download, verify and unpack zsh-bin, then run its `relocate` script so the
+/// baked-in function/terminfo paths point at `root`.
+#[cfg(not(windows))]
+fn install_zsh_bin(root: &Path) -> Result<()> {
+    let (asset, sha) = zsh_bin_asset()
+        .context("zsh is required for `8sync forge <name>` and there is no portable build for this platform — install zsh, or add `--tui`")?;
+    ui::step(&format!("zsh (portable static build, no sudo) → {}", root.display()));
+    let base = root.parent().context("bad zsh root")?;
+    std::fs::create_dir_all(base)?;
+    let tgz = base.join(asset);
+    let stage = base.join(format!("zsh.new.{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&stage);
+    let built = (|| -> Result<()> {
+        download(&format!("{ZSH_BIN_RELEASE}/{asset}"), &tgz)?;
+        let got = crate::verbs::selfup::sha256_file(&tgz).context("no sha256 tool to verify the zsh build")?;
+        if !got.eq_ignore_ascii_case(sha) {
+            bail!("checksum mismatch for {asset}: expected {sha}, got {got}");
+        }
+        std::fs::create_dir_all(&stage)?;
+        crate::pkg::run_loud("tar", &["-xzf", &tgz.to_string_lossy(), "-C", &stage.to_string_lossy()])
+    })();
+    let _ = std::fs::remove_file(&tgz);
+    if let Err(e) = built {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(e);
+    }
+    let _ = std::fs::remove_dir_all(root);
+    std::fs::rename(&stage, root)?;
+    crate::pkg::run_loud("sh", &[&root.join("share/zsh/5.8/scripts/relocate").to_string_lossy()])?;
+    ui::ok(&format!("zsh ready → {}", root.join("bin/zsh").display()));
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -252,9 +414,9 @@ const MSYS_DLLS: [&str; 6] = [
     "msys-gcc_s-seh-1.dll",
 ];
 
-#[cfg(windows)]
+/// The private zsh (Windows: MSYS root; elsewhere: the zsh-bin fallback).
 fn zsh_root() -> Result<PathBuf> {
-    Ok(dirs::data_local_dir().context("no %LOCALAPPDATA%")?.join("8sync").join("zsh"))
+    Ok(dirs::data_local_dir().context("no local data dir")?.join("8sync").join("zsh"))
 }
 
 #[cfg(windows)]
@@ -584,19 +746,18 @@ fn status(env: &Env, root: &Path) -> Result<()> {
         }
         None => ui::warn("forge: not installed — `8sync forge <name>` installs it"),
     }
-    #[cfg(windows)]
-    {
-        let exe = zsh_root()?.join("usr/bin/zsh.exe");
-        if exe.exists() {
-            ui::ok(&format!("zsh: {}", exe.display()));
-        } else {
-            ui::info("zsh: provisioned on first `8sync forge <name>` (MSYS2 zsh + Git for Windows)");
-        }
+    let private = zsh_root()?.join(if cfg!(windows) { "usr/bin/zsh.exe" } else { "bin/zsh" });
+    match which::which("zsh").ok().filter(|_| !cfg!(windows)).or_else(|| private.exists().then_some(private)) {
+        Some(p) => ui::ok(&format!("zsh: {}", p.display())),
+        None => ui::info("zsh: installed on first `8sync forge <name>` (no admin/sudo needed)"),
     }
-    #[cfg(not(windows))]
-    match which::which("zsh") {
-        Ok(p) => ui::ok(&format!("zsh: {}", p.display())),
-        Err(_) => ui::warn("zsh: not installed — `8sync forge <name>` tries the system package manager"),
+    let plugins = dirs::data_local_dir().map(|d| d.join("8sync").join("zsh-plugins")).unwrap_or_default();
+    for (name, _, tag, _) in ZSH_PLUGINS {
+        if plugins.join(name).join(".8sync-commit").exists() {
+            ui::ok(&format!("zsh plugin: {name} {tag}"));
+        } else {
+            ui::info(&format!("zsh plugin: {name} — installed on first `8sync forge <name>`"));
+        }
     }
     let reg = load_registry(&forge_key_dir(env, root));
     println!();

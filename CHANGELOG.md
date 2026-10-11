@@ -5,6 +5,29 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.62.0] — 2026-10-11
+### Added
+- **Pro zsh for `8sync forge` and everyday use** (`assets/configs/zsh/8sync.zsh`):
+  - Two-line prompt: repo-relative path, branch read straight from `.git/HEAD` (no `git` process per prompt), session name, Forge's agent · tokens · model segment, last-command duration (≥ 2 s), `❯` green/red by exit status. The Forge segment renders asynchronously (`zle -F`) and refreshes only after a Forge command, on resize, or every 30 s, so the prompt never waits for `forge`. Before this it sat in a right prompt that clipped in narrow panes (`claude-opus-5-5 ME…`).
+  - Arrow-key completion menu: case-insensitive and fuzzy on `._-`, grouped, cached; the dump is rebuilt at most daily.
+  - ↑/↓ history search by prefix; Windows Terminal/xterm Home, End, Delete and Ctrl/Alt word keys; window title set to `dir · forge:<session>`.
+  - Pinned **zsh-autosuggestions v0.7.1** and **zsh-syntax-highlighting 0.8.0**, shallow-cloned and checked against their commits; Forge's `:command` / `@[file]` highlight rules stay.
+  - Measured in a ConPTY on Windows: about 0.3 s from `8sync forge core` to a prompt (was 3.4 s), about 0.2 s per command.
+- **`8sync setup --profile terminal` works on every OS:**
+  - Windows: helix + JetBrainsMono Nerd Font via winget; the installed Nerd face becomes the Windows Terminal default only when none is set (targeted insert, re-parsed before writing).
+  - macOS: brew helix + Nerd font cask.
+  - Debian/Ubuntu: helix 25.07.1 release tarball, sha256-pinned, into `~/.local/share/8sync/helix`.
+  - Arch/Fedora: native packages + kitty glass, as before.
+  - Every OS: helix config if absent + the pro zsh. On Linux/macOS it is wired into `~/.zshrc` as one managed block.
+  - Before this, every OS other than Arch/Fedora printed "Stage B profiles need pacman or dnf".
+- **README rewritten**: Rust-core harness, one-line install table, the official Anthropic API path for Claude, the Forge shell.
+
+### Fixed
+- **zsh without sudo on Linux/macOS.** When zsh is missing and root needs a password, setup installs romkatv/zsh-bin's static zsh 5.8 (sha256-pinned per platform, relocated) into `~/.local/share/8sync/zsh`. The unattended `curl | sh` used to fail the Forge step on Ubuntu.
+- **PATH bootstrap on Windows.** `~/.zshrc` / `~/.bashrc` got `C:\Users\…` entries whose `:` split PATH into junk in Git Bash and MSYS zsh. The block now uses `$HOME/…`, and existing blocks are rewritten in place.
+- `8sync forge` writes its zsh files only when they change, and regenerates Forge's plugin/theme only when the forge binary changes (they were 150 ms of every launch). `compinit` now runs before Forge's plugin, which ends with `compdef`.
+- Forge's per-command `$(date +%s)` fork is replaced with `$EPOCHSECONDS`, and autosuggestions run synchronously (async forks per keystroke). Each fork costs 10–25 ms on Windows.
+
 ## [0.61.3] — 2026-10-11
 ### Fixed
 - **`8sync setup` installs gh on Debian, Ubuntu and other Linux without a native gh route.** Those distros

@@ -70,7 +70,7 @@ fn install_gh_release() -> Result<()> {
           8sync setup --community              unattended: dev-stack + bluetooth
           8sync setup --profile dev-stack      just dev-stack (Docker + Node/Bun + Encore)
           8sync setup --no-profile             harness only (skip profile stage)
-          8sync setup --profile terminal       kitty glass + helix + Nerd font (opt-in)
+          8sync setup --profile terminal       helix + Nerd font + pro zsh, any OS (opt-in)
           8sync setup --dry-run                print the full plan, change nothing
 
         STAGE A — HARNESS (always run, idempotent)
@@ -78,7 +78,7 @@ fn install_gh_release() -> Result<()> {
           · omp AI CLI                          (official installer: install.sh / install.ps1)
           · paru                                (AUR helper — Arch family only)
           · codegraph                           (semantic code index)
-          · forge + zsh                         (`8sync forge <name>`; Windows: MSYS2 zsh)
+          · forge + zsh                         (`8sync forge <name>`; Windows: MSYS2 zsh; Linux without sudo: static zsh)
           · PATH bootstrap                      (~/.local/bin, ~/.cargo/bin, ~/.bun/bin,
                                                  ~/.encore/bin — zsh/bash + fish conf.d)
           · configs + skills under ~/.config/8sync/ and ~/.omp/skills/
@@ -89,7 +89,8 @@ fn install_gh_release() -> Result<()> {
           nvidia       Auto-detect GPU family → open-dkms / dkms (skipped if chwd active)
           warp         Cloudflare WARP VPN + DoH + MASQUE  (toggle via `8sync sec`)
           bluetooth    bluez + bluez-utils + service enable  (control via `8sync bt`)
-          terminal     kitty (glass) + helix + JetBrains Nerd font (3-pane vibe loop)
+          terminal     helix + JetBrains Nerd font + pro zsh (prompt · menu completion ·
+                       suggestions · highlighting); Windows Terminal font; kitty glass on Arch/Fedora
 
         PROFILE MANAGEMENT
           8sync setup profile list             every profile (community + personal tag)
@@ -250,6 +251,7 @@ pub fn run(a: Args) -> Result<()> {
             ui::step("Forge + zsh (`8sync forge <name>`)");
             let forge = crate::verbs::forge::ensure_forge()?;
             let zsh = crate::verbs::forge::ensure_zsh()?;
+            crate::verbs::forge::ensure_zsh_plugins();
             ui::ok(&format!("forge {} · zsh {}", forge.display(), zsh.exe.display()));
             Ok(())
         })?;
@@ -260,6 +262,14 @@ pub fn run(a: Args) -> Result<()> {
         try_step("harness-global", yolo, &mut failures, || {
             crate::verbs::harness::global::harness_global(&env, None, false, false)
         })?;
+    }
+    // `terminal` is cross-platform (winget / brew / release downloads), so it is
+    // dispatched before the native-package gate below.
+    if a.profile.as_deref() == Some("terminal") {
+        ui::step("Stage B — terminal (helix · Nerd font · pro zsh; kitty glass on Arch/Fedora)");
+        try_step("terminal", yolo, &mut failures, || install_terminal(&env, a.dry_run))?;
+        finish_summary(&failures, log_path.as_ref(), a.reboot, a.dry_run);
+        return Ok(());
     }
     // Stage B profiles install NATIVE packages (pacman on Arch, dnf on Fedora).
     // Gate on the distro FAMILY, not on `Os::Linux`: a Linux host with neither
@@ -284,12 +294,6 @@ pub fn run(a: Args) -> Result<()> {
 
     // explicit --profile <name>
     if let Some(name) = a.profile.as_ref() {
-        if name == "terminal" {
-            ui::step("Stage B — terminal (kitty glass + helix + Nerd font)");
-            try_step("terminal", yolo, &mut failures, || install_terminal(&env, a.dry_run))?;
-            finish_summary(&failures, log_path.as_ref(), a.reboot, a.dry_run);
-            return Ok(());
-        }
         ui::step(&format!("Stage B — applying profile `{}`", name));
         try_step(&format!("profile:{}", name), yolo, &mut failures, || {
             let resolved = profile::resolve_with(name, &all, true)?;
@@ -600,33 +604,22 @@ fn ensure_path_in_shells() {
     let dirs = [".local/bin", ".cargo/bin", ".bun/bin", ".encore/bin"];
 
     // ── zsh / bash ────────────────────────────────────────────────
+    // `$HOME/…`, not the expanded path: on Windows the expansion is `C:\Users\…`,
+    // whose `:` splits PATH in Git Bash / MSYS zsh into junk entries.
     let marker = "# 8sync: PATH bootstrap (user-local bins for codegraph/bun/encore/cargo)";
-    let mut posix_block = String::from("\n");
-    posix_block.push_str(marker);
-    posix_block.push('\n');
-    for d in &dirs {
-        let p = home.join(d);
-        posix_block.push_str(&format!(
-            "case \":$PATH:\" in *\":{lb}:\"*) ;; *) export PATH=\"{lb}:$PATH\" ;; esac\n",
-            lb = p.display(),
-        ));
-    }
+    let lines: Vec<String> = dirs
+        .iter()
+        .map(|d| format!("case \":$PATH:\" in *\":$HOME/{d}:\"*) ;; *) export PATH=\"$HOME/{d}:$PATH\" ;; esac"))
+        .collect();
     for rc in [home.join(".zshrc"), home.join(".bashrc")] {
         if !rc.exists() {
             continue;
         }
         let existing = std::fs::read_to_string(&rc).unwrap_or_default();
-        if existing.contains(marker) {
+        let Some(updated) = upsert_marked_block(&existing, marker, &lines, |l| l.starts_with("case \":$PATH:\"")) else {
             continue;
-        }
-        if let Err(e) = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&rc)
-            .and_then(|mut f| {
-                use std::io::Write;
-                f.write_all(posix_block.as_bytes())
-            })
-        {
+        };
+        if let Err(e) = std::fs::write(&rc, updated) {
             ui::warn(&format!("could not patch {}: {}", rc.display(), e));
             continue;
         }
@@ -661,6 +654,29 @@ fn ensure_path_in_shells() {
         return;
     }
     ui::ok(&format!("wrote {} (fish PATH bootstrap)", fish_file.display()));
+}
+
+/// `existing` with a managed block (marker line + `lines`) appended, or rewritten
+/// in place when the old one differs (e.g. the absolute Windows paths earlier
+/// releases wrote). Old block lines are the ones right after the marker that
+/// `is_block` recognizes. `None` when it is already current.
+fn upsert_marked_block(existing: &str, marker: &str, lines: &[String], is_block: fn(&str) -> bool) -> Option<String> {
+    let mut out: Vec<&str> = existing.lines().collect();
+    match out.iter().position(|l| *l == marker) {
+        Some(at) => {
+            let end = at + 1 + out[at + 1..].iter().take_while(|l| is_block(l)).count();
+            if out[at + 1..end].iter().copied().eq(lines.iter().map(String::as_str)) {
+                return None;
+            }
+            out.splice(at + 1..end, lines.iter().map(String::as_str));
+        }
+        None => {
+            out.push("");
+            out.push(marker);
+            out.extend(lines.iter().map(String::as_str));
+        }
+    }
+    Some(out.join("\n") + "\n")
 }
 
 fn register_codegraph_skill(env: &env_detect::Env) -> Result<()> {
@@ -752,33 +768,240 @@ fn install_terminal_config(env: &env_detect::Env) -> Result<()> {
     // Make the user's kitty.conf include ours (managed line, idempotent, no clobber).
     ensure_kitty_include(&kitty_dir)?;
 
-    // Helix: transparent config if the user has none yet (never overwrite).
+    deploy_helix_config(env)
+}
+
+/// Helix: the bundled config if the user has none yet (never overwrite).
+fn deploy_helix_config(env: &env_detect::Env) -> Result<()> {
     let hx_cfg = env.xdg_config.join("helix/config.toml");
     if !hx_cfg.exists() && assets::read("configs/helix/config.toml").is_some() {
         assets::install("configs/helix/config.toml", &hx_cfg, false)?;
         ui::ok(&format!("wrote {}", hx_cfg.display()));
     } else {
-        ui::skip("helix config", "exists or no asset — left as-is");
+        ui::skip("helix config", "exists — left as-is");
     }
     Ok(())
 }
 
-/// Opt-in terminal stack (packages + glass config). Used by the Stage B menu,
-/// `--profile terminal`, and `--full` — never in the default AI-core Stage A.
+/// Opt-in terminal stack. Used by the Stage B menu, `--profile terminal`, and
+/// `--full` — never in the default AI-core Stage A. Every OS gets helix, a Nerd
+/// font where the OS owns fonts, and 8sync's pro zsh; kitty glass is Arch/Fedora.
 fn install_terminal(env: &env_detect::Env, dry_run: bool) -> Result<()> {
+    let os = platform::os();
+    let native = matches!(env.family(), env_detect::Family::Arch | env_detect::Family::Fedora);
     if dry_run {
-        match pkg::backend() {
-            Some(b) => ui::info(&format!(
-                "would install kitty + helix + JetBrains Mono via {}",
-                b.name()
-            )),
-            None => platform::no_pkg_manager_notice("terminal stack"),
+        match os {
+            platform::Os::Windows => ui::info(
+                "would install helix + JetBrainsMono Nerd Font via winget, set it as the Windows Terminal default font (if unset)",
+            ),
+            platform::Os::Macos => ui::info("would install helix + font-jetbrains-mono-nerd-font via brew"),
+            _ if native => ui::info("would install kitty + helix + JetBrains Mono natively + kitty glass config"),
+            _ => ui::info(&format!("would install helix {HELIX_VERSION} (GitHub release) into ~/.local/bin")),
         }
-        ui::info("would deploy kitty glass config + wallpaper + helix config (if absent)");
+        ui::info("would deploy helix config (if absent) + 8sync pro zsh (prompt, completion, suggestions, highlighting)");
         return Ok(());
     }
-    install_terminal_pkgs(env)?;
-    install_terminal_config(env)
+    match os {
+        platform::Os::Windows => install_terminal_windows()?,
+        platform::Os::Macos => {
+            if which::which("brew").is_err() {
+                bail!("Homebrew is required on macOS for helix + Nerd font — https://brew.sh");
+            }
+            if which::which("hx").is_err() {
+                pkg::run_loud("brew", &["install", "helix"])?;
+            }
+            let _ = pkg::run_loud("brew", &["install", "--cask", "font-jetbrains-mono-nerd-font"]);
+        }
+        _ if native => {
+            install_terminal_pkgs(env)?;
+            install_terminal_config(env)?;
+        }
+        _ => install_helix_release()?,
+    }
+    deploy_helix_config(env)?;
+    install_pro_zsh(env)
+}
+
+#[cfg(not(windows))]
+const HELIX_VERSION: &str = "25.07.1";
+#[cfg(windows)]
+const HELIX_VERSION: &str = "";
+
+/// helix on Linux without a native package (Debian, Ubuntu, …): the pinned
+/// release tarball (`hx` + `runtime/`) into `~/.local/share/8sync/helix`, `hx`
+/// linked into `~/.local/bin` — helix finds `runtime/` next to the real binary.
+#[cfg(not(windows))]
+fn install_helix_release() -> Result<()> {
+    if which::which("hx").is_ok() {
+        ui::skip("helix", "present");
+        return Ok(());
+    }
+    let (arch, sha) = match std::env::consts::ARCH {
+        "x86_64" => ("x86_64", "3f08e63ecd388fff657ad39722f88bb03dcf326f1f2da2700d99e1dc40ab2e8b"),
+        "aarch64" => ("aarch64", "ce23fa8d395e633e3e54c052012f11965d91d8d5c2bfa659685f50430b4f8175"),
+        a => bail!("no helix release for linux/{a} — install helix manually"),
+    };
+    let stem = format!("helix-{HELIX_VERSION}-{arch}-linux");
+    let share = dirs::data_local_dir().context("no data dir")?.join("8sync");
+    let tarball = share.join(format!("{stem}.tar.xz"));
+    ui::step(&format!("Installing helix {HELIX_VERSION} ({stem})"));
+    crate::verbs::forge::download(
+        &format!("https://github.com/helix-editor/helix/releases/download/{HELIX_VERSION}/{stem}.tar.xz"),
+        &tarball,
+    )?;
+    let got = crate::verbs::selfup::sha256_file(&tarball).context("no working sha256 hasher")?;
+    if !got.eq_ignore_ascii_case(sha) {
+        let _ = std::fs::remove_file(&tarball);
+        bail!("helix checksum mismatch — refusing to install\n  expected {sha}\n  actual   {got}");
+    }
+    let unpacked = pkg::run_loud("tar", &["-xJf", &tarball.to_string_lossy(), "-C", &share.to_string_lossy()]);
+    let _ = std::fs::remove_file(&tarball);
+    unpacked.context("unpacking helix needs xz (apt install xz-utils)")?;
+    let dir = share.join("helix");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::rename(share.join(&stem), &dir)?;
+    let bin = dirs::home_dir().context("no home dir")?.join(".local/bin");
+    std::fs::create_dir_all(&bin)?;
+    let link = bin.join("hx");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(dir.join("hx"), &link)?;
+    ui::ok(&format!("helix {HELIX_VERSION} → {} (sha256 ok)", link.display()));
+    Ok(())
+}
+
+#[cfg(windows)]
+fn install_helix_release() -> Result<()> {
+    Ok(())
+}
+
+/// 8sync's pro zsh as the user's everyday shell config (Linux/macOS): pinned
+/// plugins, `<config>/8sync/zsh/8sync.zsh`, and one managed block in `~/.zshrc`
+/// (skipped inside `8sync forge`, which loads it itself after Forge's plugin).
+fn install_pro_zsh(env: &env_detect::Env) -> Result<()> {
+    ui::step("zsh — prompt · completion menu · suggestions · syntax highlighting");
+    let zsh = crate::verbs::forge::ensure_zsh()?;
+    let plugins = crate::verbs::forge::ensure_zsh_plugins().context("no data dir for zsh plugins")?;
+    let config = crate::verbs::forge::write_zsh_config(env)?;
+    if platform::os() == platform::Os::Windows {
+        ui::ok(&format!("pro zsh ready inside `8sync forge <name>` ({})", config.display()));
+        return Ok(());
+    }
+    let rc = dirs::home_dir().context("no home dir")?.join(".zshrc");
+    let marker = "# 8sync: pro zsh — `8sync setup --profile terminal` (delete this block to opt out)";
+    let lines = vec![
+        format!("export EIGHTSYNC_ZSH_PLUGINS=\"{}\"", plugins.display()),
+        format!("[[ -z $EIGHTSYNC_FORGE_SESSION && -r \"{0}\" ]] && source \"{0}\"", config.display()),
+    ];
+    let existing = std::fs::read_to_string(&rc).unwrap_or_default();
+    match upsert_marked_block(&existing, marker, &lines, |l| l.contains("EIGHTSYNC_")) {
+        Some(updated) => {
+            std::fs::write(&rc, updated)?;
+            ui::ok(&format!("patched {} (sources {})", rc.display(), config.display()));
+        }
+        None => ui::skip(&rc.display().to_string(), "pro zsh already wired"),
+    }
+    let login = std::env::var("SHELL").unwrap_or_default();
+    if !login.ends_with("zsh") {
+        ui::info(&format!("make zsh your login shell: chsh -s {}", zsh.exe.display()));
+    }
+    Ok(())
+}
+
+/// Windows: helix + JetBrainsMono Nerd Font via winget, and that font as the
+/// Windows Terminal default when the user has not chosen one (Forge's prompt
+/// segment and helix's statusline use Nerd Font glyphs).
+fn install_terminal_windows() -> Result<()> {
+    if which::which("winget").is_err() {
+        bail!("winget (App Installer) is required — install it from the Microsoft Store");
+    }
+    let winget = |id: &str| {
+        pkg::run_loud(
+            "winget",
+            &["install", "--silent", "--accept-package-agreements", "--accept-source-agreements", "-e", "--id", id],
+        )
+    };
+    if which::which("hx").is_ok() {
+        ui::skip("helix", "present");
+    } else {
+        winget("Helix.Helix")?;
+    }
+    let face = match installed_nerd_face() {
+        Some(face) => {
+            ui::skip(face, "present");
+            face
+        }
+        None => {
+            winget("DEVCOM.JetBrainsMonoNerdFont")?;
+            "JetBrainsMono Nerd Font"
+        }
+    };
+    set_windows_terminal_font(face);
+    Ok(())
+}
+
+/// The installed JetBrainsMono Nerd Font family (the `NL` no-ligature variant
+/// counts), from the per-user or system font directory.
+fn installed_nerd_face() -> Option<&'static str> {
+    let dirs = [
+        dirs::data_local_dir().map(|d| d.join("Microsoft/Windows/Fonts")),
+        std::env::var_os("WINDIR").map(|w| PathBuf::from(w).join("Fonts")),
+    ];
+    let mut nl = false;
+    for entry in dirs.into_iter().flatten().filter_map(|d| std::fs::read_dir(d).ok()).flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with("JetBrainsMonoNerdFont") {
+            return Some("JetBrainsMono Nerd Font");
+        }
+        nl |= name.starts_with("JetBrainsMonoNLNerdFont");
+    }
+    nl.then_some("JetBrainsMonoNL Nerd Font")
+}
+
+/// Set `profiles.defaults.font.face` in Windows Terminal's settings.json only
+/// when no font is configured there. A targeted insert, not a re-serialization,
+/// so the user's formatting and key order survive; the result is re-parsed
+/// before it is written.
+fn set_windows_terminal_font(face: &str) {
+    let Some(path) = dirs::data_local_dir()
+        .map(|d| d.join("Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json"))
+        .filter(|p| p.exists())
+    else {
+        ui::info(&format!("Windows Terminal settings not found — set its font to \"{face}\" for icons"));
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+    match wt_with_default_font(&text, face) {
+        Ok(Some(updated)) => match std::fs::write(&path, updated) {
+            Ok(()) => ui::ok(&format!("Windows Terminal default font → {face}")),
+            Err(e) => ui::warn(&format!("could not write {}: {e}", path.display())),
+        },
+        Ok(None) => ui::skip("Windows Terminal font", "already set — left as-is"),
+        Err(why) => ui::info(&format!("Windows Terminal font not changed ({why}) — set it to \"{face}\" in Settings › Defaults › Appearance")),
+    }
+}
+
+/// `text` with `"font": {"face": face}` inserted into `profiles.defaults`, or
+/// `None` when a font is already set there.
+fn wt_with_default_font(text: &str, face: &str) -> std::result::Result<Option<String>, &'static str> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|_| "settings.json has comments or is not plain JSON")?;
+    let defaults = v.pointer("/profiles/defaults").ok_or("no profiles.defaults object")?;
+    let obj = defaults.as_object().ok_or("profiles.defaults is not an object")?;
+    if obj.contains_key("font") || obj.contains_key("fontFace") {
+        return Ok(None);
+    }
+    let mut hits = text.match_indices("\"defaults\"");
+    let (at, _) = hits.next().ok_or("no \"defaults\" key")?;
+    if hits.next().is_some() {
+        return Err("ambiguous \"defaults\" keys");
+    }
+    let brace = at + text[at..].find('{').ok_or("malformed defaults")?;
+    let entry = format!("\"font\": {{ \"face\": {} }}{}", serde_json::Value::from(face), if obj.is_empty() { "" } else { "," });
+    let updated = format!("{}{}{}", &text[..=brace], entry, &text[brace + 1..]);
+    let check: serde_json::Value = serde_json::from_str(&updated).map_err(|_| "insert would break settings.json")?;
+    if check.pointer("/profiles/defaults/font/face").and_then(|f| f.as_str()) != Some(face) {
+        return Err("insert landed outside profiles.defaults");
+    }
+    Ok(Some(updated))
 }
 
 /// Put a wallpaper at `target`. Bundled `assets/wallpapers/default.png` wins; else
@@ -1165,6 +1388,35 @@ where
 #[cfg(test)]
 mod offered_tests {
     use super::*;
+
+    #[test]
+    fn path_bootstrap_heals_old_windows_paths_and_is_idempotent() {
+        let marker = "# 8sync: PATH bootstrap";
+        let lines = vec!["case \":$PATH:\" in *\":$HOME/.local/bin:\"*) ;; *) export PATH=\"$HOME/.local/bin:$PATH\" ;; esac".to_string()];
+        let old = "export A=1\n# 8sync: PATH bootstrap\ncase \":$PATH:\" in *\":C:\\Users\\a\\.local/bin:\"*) ;; *) export PATH=\"C:\\Users\\a\\.local/bin:$PATH\" ;; esac\nalias x=y\n";
+        let is_path = |l: &str| l.starts_with("case \":$PATH:\"");
+        let healed = upsert_marked_block(old, marker, &lines, is_path).expect("stale block must be rewritten");
+        assert_eq!(healed, format!("export A=1\n{marker}\n{}\nalias x=y\n", lines[0]));
+        assert_eq!(upsert_marked_block(&healed, marker, &lines, is_path), None);
+        // no block yet: appended after the user's content, user lines untouched
+        let fresh = upsert_marked_block("export A=1\n", marker, &lines, is_path).unwrap();
+        assert_eq!(fresh, format!("export A=1\n\n{marker}\n{}\n", lines[0]));
+    }
+
+    #[test]
+    fn windows_terminal_font_is_inserted_only_when_unset() {
+        let face = "JetBrainsMono Nerd Font";
+        let empty = "{\n  \"profiles\": {\n    \"defaults\": {},\n    \"list\": []\n  }\n}\n";
+        let set = wt_with_default_font(empty, face).unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&set).unwrap();
+        assert_eq!(v.pointer("/profiles/defaults/font/face").unwrap(), face);
+        // the user's other defaults survive, and a chosen font is never replaced
+        let other = "{\"profiles\":{\"defaults\":{\"opacity\":80},\"list\":[]}}";
+        let v: serde_json::Value = serde_json::from_str(&wt_with_default_font(other, face).unwrap().unwrap()).unwrap();
+        assert_eq!(v.pointer("/profiles/defaults/opacity").unwrap(), 80);
+        assert_eq!(wt_with_default_font(&set, face), Ok(None));
+        assert!(wt_with_default_font("// comment\n{}", face).is_err());
+    }
 
     /// Every bundled profile, parsed from the embedded assets only — deliberately
     /// NOT `profile::load_all()`, which also reads the developer's own

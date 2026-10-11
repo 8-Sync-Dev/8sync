@@ -322,7 +322,7 @@ su-code/
 | `8sync note "msg" [-t tag]` | Append `su-code/NOTES.md` |
 | `8sync run [dev\|build\|test\|fmt\|lint]` | Project command theo recipe |
 | `8sync ship "msg"` | `git add -A && commit && push && gh pr create` |
-| `8sync forge <name> [--tui]` | Session ForgeCode theo tên (alias `forgecode`): mặc định zsh có plugin Forge gắn đúng conversation (`: <prompt>` hỏi Forge, `:<Tab>` liệt kê lệnh); `--tui` mở TUI; `-p` one-shot. Tự cài Forge; Windows dựng MSYS2 zsh trong `%LOCALAPPDATA%\8sync\zsh`. Sub: `ls`/`new`/`rm`/`key`/`status` |
+| `8sync forge <name> [--tui]` | Session ForgeCode theo tên (alias `forgecode`): mặc định zsh có plugin Forge gắn đúng conversation (`: <prompt>` hỏi Forge, `:<Tab>` liệt kê lệnh, `@<Tab>` file); `--tui` mở TUI; `-p` one-shot. Prompt 2 dòng dùng chung `assets/configs/zsh/8sync.zsh` (repo-relative path · branch đọc thẳng `.git/HEAD` · segment Forge async · duration · `❯` theo exit) + autosuggestions/syntax-highlighting pin commit. Tự cài Forge; zsh: Windows MSYS2 trong `%LOCALAPPDATA%\8sync\zsh`, Linux/macOS không sudo → zsh-bin static. Sub: `ls`/`new`/`rm`/`key`/`status` |
 
 ### Session mgmt — named per-project sessions (sub của `.`)
 Nhiều feature song song trong 1 repo, mỗi cái 1 omp conversation cô lập. Lever = omp có sẵn (`--session-dir` + `--continue`); 8sync chỉ thêm lớp **tên → session-dir** + **git worktree** + **merge**. Registry máy-local: `~/.config/8sync/sessions/<repo>/index.json` (KHÔNG commit — trỏ path máy-local).
@@ -387,7 +387,7 @@ Không tự nói chuyện USB: đi qua IPC của `lian-li-linux` daemon (`$XDG_R
 ### Lifecycle
 | Verb | Mô tả |
 |---|---|
-| `8sync setup` | Stage A = **AI core thuần** (omp · codegraph · MCP/skills · gh · PATH bootstrap) + Stage B (curated y/N: dev-stack, nvidia, bluetooth, warp, **terminal**). Không cài kitty/helix/wallpaper mặc định |
+| `8sync setup` | Stage A = **AI core thuần** (omp · codegraph · MCP/skills · gh · forge + zsh · PATH bootstrap) + Stage B (curated y/N: dev-stack, nvidia, bluetooth, warp, **terminal**). `--profile terminal` chạy MỌI OS: helix + JetBrainsMono Nerd Font (+ font mặc định Windows Terminal nếu chưa set) + pro zsh; kitty glass chỉ Arch/Fedora |
 | `8sync setup --community` | Auto-yes — Stage A + dev-stack + bluetooth (KHÔNG include warp) |
 | `8sync setup --no-profile` | Chỉ harness, không hỏi profile |
 | `8sync setup --profile <name>` | Apply 1 profile cụ thể non-interactive (cả community + personal) |
