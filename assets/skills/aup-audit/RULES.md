@@ -1,6 +1,6 @@
 # Rules map for `/aup-audit`
 
-Nguồn chính thức (bản có hiệu lực 2026-11-12): https://www.anthropic.com/legal/aup · Commercial Terms https://www.anthropic.com/legal/commercial-terms · Consumer Terms https://www.anthropic.com/legal/terms. File này chỉ tóm tắt để tìm dấu hiệu; khi trích dẫn, mở bản gốc.
+Luật gốc của org: `8sync-anthropic-rules.md` (cùng thư mục) — đọc trước; file này chỉ thêm dấu hiệu để tìm trong code. Nguồn chính thức (Usage Policy hiệu lực 2026-11-12): https://www.anthropic.com/legal/aup · Commercial Terms https://www.anthropic.com/legal/commercial-terms · Consumer Terms https://www.anthropic.com/legal/terms. Snapshot văn bản gốc mới nhất (tự cập nhật hàng tuần): https://github.com/8-Sync-Dev/su-code/tree/main/docs/legal/anthropic. Khi trích dẫn, mở bản gốc.
 
 ## Đường truy cập Claude
 | Truy cập qua | Điều khoản | Dấu hiệu sai |
@@ -37,9 +37,4 @@ Quy tắc: token gói chỉ chạy trong Claude Code và claude.ai chính chủ;
 - Agentic: người dựng chịu trách nhiệm mọi hành động agent làm qua tool/browser/hệ thống kết nối.
 
 ## Quy tắc nội bộ 8 Sync
-- Không tạo/đọc/in/commit secret: `.env`, token, key, deploy key, `*.session`, `*.pkl`. Lộ → rotate ngay.
-- ZUS local-first: không thiết kế đẩy dữ liệu user ZUS lên server.
-- Dữ liệu client/CRM: tách từng client, thu tối thiểu, ví dụ phải anonymize.
-- Số liệu traction chỉ lấy từ dashboard Vercel/Cloudflare, ghi nguồn; không bịa metric, khách, đối tác, giải thưởng, gọi vốn.
-- Dữ liệu cá nhân VN: Nghị định 13/2023/NĐ-CP, Luật Bảo vệ dữ liệu cá nhân 2025 — trích số hiệu, đối chiếu bản gốc trên vbpl.vn / chinhphu.vn.
-- Bị safeguard chặn một prompt ≠ vi phạm; thứ bị xử lý là hành vi có chủ đích, lặp lại, hoặc cách truy cập. Không lập account mới để né.
+Mục 3 của `8sync-anthropic-rules.md` là bản duy nhất (secret, ZUS local-first, dữ liệu client/CRM, số liệu traction, luật dữ liệu cá nhân VN). Dấu hiệu cần tìm: file secret đang track; code đẩy dữ liệu user ZUS lên server; dữ liệu CRM thật trong fixture/seed/ví dụ; số traction/khách/đối tác trong README, landing, pitch không ghi nguồn dashboard.

@@ -1,0 +1,74 @@
+# Weekly snapshot of Anthropic's legal texts (Usage Policy, Commercial/Consumer
+# Terms, privacy, Claude Code legal + data usage, the /legal/ index) into
+# docs/legal/anthropic/. A change is committed to main and opens an issue so the
+# org rules (assets/skills/aup-audit/8sync-anthropic-rules.md) get reviewed.
+# With an ANTHROPIC_API_KEY repo secret (a Console key — Commercial Terms),
+# Claude Code also drafts the rules update as a pull request for human review.
+name: legal-sync
+
+on:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: legal-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Snapshot
+        run: python3 scripts/legal-sync.py
+
+      - name: Commit + issue when a text changed
+        id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git add docs/legal
+          if git diff --cached --quiet; then
+            echo "no change"
+            exit 0
+          fi
+          files=$(git diff --cached --name-only | sed 's/^/- /')
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs(legal): Anthropic legal texts changed"
+          git push
+          echo "changed=1" >> "$GITHUB_OUTPUT"
+          gh issue create \
+            --title "Anthropic legal texts changed — review the org rules" \
+            --body "$(printf 'legal-sync committed %s.\n\nChanged:\n%s\n\nReview \x60assets/skills/aup-audit/8sync-anthropic-rules.md\x60 and \x60RULES.md\x60 against the diff, then release so \x608sync up\x60 / \x608sync ccc\x60 deliver them.' "$(git rev-parse --short HEAD)" "$files")"
+
+      - name: Draft the rules update with Claude Code (needs ANTHROPIC_API_KEY)
+        if: steps.commit.outputs.changed == '1'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "no ANTHROPIC_API_KEY secret — the issue asks for a manual review"
+            exit 0
+          fi
+          npm install -g @anthropic-ai/claude-code
+          branch="legal-sync/$(date -u +%Y%m%d)"
+          git switch -c "$branch"
+          claude -p "Anthropic changed its legal texts; the diff is \`git show HEAD -- docs/legal\`. Update assets/skills/aup-audit/8sync-anthropic-rules.md (keep its Vietnamese, structure and the owner line; bump the 'Cập nhật' date) and assets/skills/aup-audit/RULES.md so they match the new official text. Change only what the diff requires; quote dates and effective dates exactly. If nothing in them needs to change, edit nothing." \
+            --model claude-sonnet-5 --permission-mode acceptEdits --allowedTools "Read,Edit,Bash(git show*),Bash(git diff*)"
+          if git diff --quiet; then
+            echo "Claude found nothing to change"
+            exit 0
+          fi
+          git commit -am "docs(rules): follow Anthropic legal changes"
+          git push -u origin "$branch"
+          gh pr create --fill --title "docs(rules): follow Anthropic legal changes" \
+            --body "Drafted by Claude Code from the legal-sync diff. Review against docs/legal/anthropic before merging."

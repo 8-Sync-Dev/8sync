@@ -5,6 +5,39 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.65.0] — 2026-10-11
+### Added
+- **`8sync ccc` keeps itself and the repo current on every launch** (no network on the launch path, never blocks it):
+  - a newer 8sync release (found by the 6-hourly background probe) is installed with the usual sha256 check and the same command re-runs on the new binary (`SUSYNC_NO_AUTO_UPDATE=1` opts out);
+  - after an update, the bundled skills (`~/.omp/skills`) and the Claude Code kit are refreshed once;
+  - a git repo gets the 8sync harness: missing skills vendored into `su-code/skills`, memory + `AGENTS.md`/`CLAUDE.md` blocks, `.claude/skills` → `su-code/skills`, and the managed `.gitignore`.
+- **Claude Code sees every 8sync skill.** Project skills come through `.claude/skills` (also created by `8sync harness create`); each bundled skill is linked into `~/.claude/skills/<name>` → `~/.omp/skills/<name>`, and personal skills win over project ones, so Claude Code always reads the current bundled copy. On-demand skills are listed by name only (`.claude/settings.local.json` → `skillOverrides`), always-on skills keep their descriptions: the per-request prefix with 237 skills is 41.1k tokens instead of 57.3k with every description (38.9k with no project skills). Live check: "which command raises the refresh rate to the max?" → Claude invoked `8sync-cli` and answered `8sync hz max`.
+- **The org's Anthropic rules ship with 8sync and load into every Claude Code session.** `assets/skills/aup-audit/8sync-anthropic-rules.md` (the 8 Sync rules doc) is installed into `~/.omp/skills/aup-audit/` and `~/.claude/skills/aup-audit/`, and the kit's `CLAUDE.md` block imports it ahead of every other instruction. Live check: three rules questions answered from context with zero tool calls.
+- **`legal-sync` workflow**: every Monday it snapshots Anthropic's Usage Policy, Commercial and Consumer Terms, Privacy Policy, Claude Code legal + data-usage pages and the sitemap's `/legal/` index into `docs/legal/anthropic/` (`scripts/legal-sync.py`). A change is committed and opens an issue to review the rules doc; with an `ANTHROPIC_API_KEY` repo secret (Console key), Claude Code drafts the rules update as a pull request. The draft step was rehearsed on a fake effective-date change: it changed only the date reference.
+- **Free CI on the public repo**: `ci.yml` runs `cargo test` on Linux, macOS and Windows and builds `--no-default-features` on every push/PR; `install-smoke.yml` runs the published one-line installers on ubuntu x64 + arm64, macOS arm64 + Intel and Windows after each release and weekly, and fails unless the installed version is the latest and setup reports "all steps succeeded".
+
+### Changed
+- **Claude Code is about as fast as omp on a hard task now** (was ~1.8× slower). Calc evaluator: 3 bugs + missing features across 4 files, 11 hidden tests, Sonnet 5, Console key, wall-clock per run:
+
+  | Harness | Runs | Mean | Hidden tests |
+  |---|---|---|---|
+  | omp | 155 · 124 · 136 s | 138 s | 11 · 10 · 11 of 11 |
+  | ccc kit 0.64 | 281 · 216 s | 249 s | 11 · 11 |
+  | ccc kit 0.65 at `high` effort | 209 · 179 s | 194 s | 11 · 11 |
+  | ccc kit 0.65 default (`medium` effort) | 100 · 161 s | 131 s | 11 · 11 |
+
+  - The verify hook is **async** (`asyncRewake`): edits no longer wait for `cargo check` (2.5 s per edit warm on this repo, 8.6 s cold). One check per project runs at a time and the latest edit wins; a failure wakes Claude with the errors.
+  - New `8sync ccc hook verify-stop` (Stop): before a turn ends it waits for a running check or checks once, and blocks the stop while the build is broken — once per broken state, so a deliberate stop cannot loop 8 times.
+  - `permissions.allow` gets the build/test/lint commands of the supported stacks plus `git add`: in auto mode each would otherwise wait for a classifier review (~0.65 s per `cargo check`). Commits, pushes and anything that discards work stay reviewed.
+  - `effortLevel: "medium"` when you have not set one (Sonnet 5 and Opus 5 default to `high`; Opus 5.5 is already `medium`). Output tokens on the bench: 9.4k / 15.3k vs 17.6-20.6k at `high`. Use `/effort high` for a hard reasoning session.
+  - Tried and dropped: Anthropic's `<use_parallel_tool_calls>` system-prompt snippet (`--append-system-prompt-file`) did not raise multi-call requests on a lookup task.
+- `8sync-cli` skill rewritten harness-neutral (omp and Claude Code) and complete: every verb (sessions, `ccc`, `forge`, `find`, `note`, `run`, `ship`, image tools, `locate`, `gen-img`, harness/skills, `setup`/`up`/`doctor`, `hz`, `bt`, `sec`, `lcd`, `clean`, `codex-web`) plus the `su-code/` memory layout. The old text told agents never to edit `su-code/*.md`, which contradicted `AGENTS.md`.
+- `aup-audit/RULES.md` now points at the org rules doc for the 8 Sync rules instead of keeping a second copy.
+
+### Fixed
+- **Skill links were committed.** The managed `.gitignore` used `.cursor/skills/` and `.zcode/skills/`, but git sees a symlink/junction as a file and a `dir/` pattern never matches it, so `git add -A` committed the links (this repo tracked both). The block now writes `.cursor/skills`, `.zcode/skills`, `.claude/skills` and `.claude/settings.local.json`; a test runs real `git status` against the links. The two links are untracked here.
+- A repo's own committed `.claude/skills/` is never replaced, not even by `harness create --force`.
+
 ## [0.64.0] — 2026-10-11
 ### Added
 - **`8sync ccc hook guard`** — a native PreToolUse hook in the kit (Bash/Edit/Write/MultiEdit/NotebookEdit, about 23 ms per call on Windows). It denies, with the reason handed back to Claude:

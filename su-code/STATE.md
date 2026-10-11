@@ -1,3 +1,23 @@
+# v0.65.0 — ccc speed, auto-current launch, every skill + org rules in Claude Code, legal sync, free CI
+
+## Goal
+ccc at least as fast as omp on hard tasks; `8sync ccc . <name>` auto-creates/updates the harness and 8sync itself; Claude Code reads every su-code skill, the harness commands and the org's Anthropic rules (always loaded, auto-refreshed from Anthropic's texts); public-repo CI proves the one-line installers on every platform; push + release.
+
+## Checklist
+- [x] Speed R&D (docs + web + measured): async verify (`asyncRewake`) + once-per-state Stop check, allow rules (classifier ~0.65 s/cmd), `effortLevel: medium` default. Calc bench: omp 155/124/136 s, ccc 0.64 281/216 s, ccc 0.65 high 209/179 s, ccc 0.65 medium 100/161 s (mean 131 vs omp 138), all 11/11 except one omp run (10/11). Parallel-call snippet: no effect.
+- [x] Launch `prepare`: auto-update + re-run (proven 0.63.9 → v0.64.0), kit/bundled refresh on version change, project harness + `.claude/skills` + `skillOverrides` name-only (prefix 41.1k vs 57.3k), gitignore links without trailing slash (bug fixed, test bites).
+- [x] Org rules doc in repo (`assets/skills/aup-audit/8sync-anthropic-rules.md`), imported in kit CLAUDE.md (0-tool answers), bundled skills linked into `~/.claude/skills`, `8sync-cli` skill covers every verb (Skill → `8sync hz max`).
+- [x] `legal-sync.yml` + `scripts/legal-sync.py` (snapshot in `docs/legal/anthropic/`, idempotent; CI Claude draft rehearsed), `ci.yml`, `install-smoke.yml` (ubuntu x64/arm64, macOS arm64/Intel, Windows).
+- [x] 144 tests; size ceiling 5,505,024 → 5,521,408 with size-report attribution (Windows +8,192 B).
+- [ ] Push, CI green, install-smoke green on v0.64.0 and v0.65.0, release v0.65.0, `8sync up` here.
+- [x] INCIDENT (2026-10-11): WSL check cleanup emptied `/home/admin8syncdev`; unrecoverable (VSS copy of the vhdx is all zeros, ext4magic found nothing under home). After-delete image kept in `C:\Users\Admin\wsl-recovery\` for an optional photorec carve.
+
+## Current
+Committing v0.65.0, then CI + install-smoke + release.
+
+## Next
+User: omp's `anthropic` login is OAuth (subscription) — use a Console key there; add repo secret `ANTHROPIC_API_KEY` to let legal-sync draft rules PRs; decide on the WSL recovery image.
+
 # v0.64.0 — ccc token/quality R&D, native guard, /aup-audit, Usage Policy pass
 
 ## Goal
@@ -9,13 +29,14 @@ R&D (auto) on omp-style-kit v2 + `8sync-anthropic-rules.md`: pick the best optio
 - [x] Native `ccc hook guard` (23 ms) + deny `Read/Edit` rules + gitignore secrets + gitleaks in Stage A + `/aup-audit` (no python) + `deep-research` token-lean; kit agents re-routed, `plan` retired.
 - [x] Compliance: feynman bridge excludes Claude; `harness claude-code` third-party endpoint → Claude Code only; doctor warns on omp Anthropic OAuth.
 - [x] 142 tests; live guard run (git add -A with untracked .env.production denied → Claude added .gitignore).
-- [ ] Release v0.64.0 (size: linux-x86_64 headroom was 40,400 B; Windows grew +32,768 B).
+- [x] v0.64.0 published (run 38152137697): linux-x86_64 5,497,456 B (7,568 under 5,505,024), windows 4,321,280. `8sync up` checksum ok, real `~/.claude` kit refreshed (plan.md retired). WSL one-liner: gitleaks v8.30.1 sha256 ok, kit 5 agents + 3 skills, all steps succeeded.
+- [x] INCIDENT: the WSL check's cleanup emptied `/home/admin8syncdev` (Ubuntu-22.04) — see v0.65.0.
 
 ## Current
-Committing v0.64.0.
+Done (v0.64.0 published).
 
 ## Next
-User: omp's `anthropic` login on this box is a Claude subscription (OAuth) — Usage Policy wants a Console key there (`/logout` anthropic in omp, `ANTHROPIC_API_KEY`). Feynman: set `ANTHROPIC_API_KEY` for Claude. Re-run `8sync ccc kit` after `8sync up`.
+See v0.65.0.
 
 # v0.63.0 — `8sync ccc` (Claude Code named sessions) + the 8sync kit
 

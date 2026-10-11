@@ -1,91 +1,62 @@
 ---
 name: 8sync-cli
-description: Use this skill in EVERY session inside a repo whose AGENTS.md mentions 8sync. It teaches the AI which 8sync verbs (shot/diff-img/pdf-img/find/note/ship/skill/run) to use instead of raw shell equivalents — saving 3-10× tokens and keeping session memory in su-code/* consistent. The AI MUST prefer the listed 8sync verbs over rg/fd/git/curl/etc when an equivalent exists.
+description: Use in every session inside a repo with 8sync (AGENTS.md or CLAUDE.md mentions 8sync, or a su-code/ folder exists) — under omp or Claude Code. Lists every `8sync` verb (sessions, ship, find, note, run, shot/diff-img/pdf-img, gen-img, locate, harness, skill, setup/up/doctor, hz, bt, sec, lcd, clean, forge, ccc, codex-web) and the su-code/ memory layout, so the AI uses the 8sync command instead of raw shell or guessing.
 ---
 
-# 8sync-cli — bạn (AI) ĐANG chạy bên trong 8sync harness
+# 8sync-cli — the repo runs inside the 8sync harness
 
-**LOAD: bắt buộc cho mọi project có `AGENTS.md` đề cập 8sync.**
+`8sync` is the team's CLI (github.com/8-Sync-Dev/su-code). Prefer its verb when one fits; `8sync help`, `8sync flow` or `8sync <verb> -h` show exact flags. Never invent a verb — if none fits, use the normal tool.
 
-Bạn chạy dưới `omp` (oh-my-pi) được wrap bởi `8sync`. Dùng đúng các tool 8sync sẽ tiết kiệm token gấp 3-10× và giữ memory project nhất quán.
+## Memory (`su-code/`) — read at session start
+| File | Use |
+|---|---|
+| `su-code/STATE.md` | live plan: read first; rewrite Goal · Checklist · Current · Next at each phase boundary |
+| `su-code/KNOWLEDGE.md` | learnings (`validated:` / `failure:`), append-only; read before repeating an approach |
+| `su-code/DECISIONS.md` · `PREFERENCES.md` · `PROJECT.md` | architecture decisions · user style · fixed facts |
+| `su-code/NOTES.md` | quick notes, appended by `8sync note` |
+| `su-code/skills/<name>/SKILL.md` | project skills (Claude Code lists them through `.claude/skills/`) |
 
----
+omp keeps session memory itself (`retain`/`recall`); Claude Code has no such store, so write learnings and state into the files above as `AGENTS.md` asks. User-facing change → `CHANGELOG.md` (Unreleased).
 
-## 1. Quy tắc tuyệt đối
+## Daily loop
+| Need | Command |
+|---|---|
+| Resume/create a named omp session for this repo | `8sync .` · `8sync . <name>` · `8sync . ls` · `8sync . new <name> --worktree` · `8sync . merge <name>` |
+| Named Claude Code session (kit + harness refreshed on launch) | `8sync ccc . <name>` · `8sync ccc . ls` · `8sync ccc status` · `8sync ccc kit` |
+| Named ForgeCode session | `8sync forge <name>` (`--tui`, `-p` one-shot) |
+| Find a file/symbol and open it | `8sync find <kw>` (`-f` filename mode, `--no-open`) |
+| Quick note into memory | `8sync note "msg" [-t tag]` |
+| Project recipe: dev/build/test/fmt/lint | `8sync run [dev\|build\|test\|fmt\|lint]` |
+| Commit + push + PR in one step | `8sync ship "msg"` |
 
-1. **LUÔN đọc `~/.omp/skills/karpathy-guidelines/SKILL.md` đầu tiên** trước mọi non-trivial task.
-2. **LUÔN đọc `~/.omp/skills/image-routing/SKILL.md`** trước khi fetch/đọc bất kỳ tài nguyên hình ảnh, PDF, hoặc diff lớn. Session **GLM-5.3 / GLM-5.3-Flash** = native VLM: nhìn ảnh trực tiếp; **cấm** gọi `mcp__zai_vision_*`.
-3. **LUÔN đọc các file `su-code/*.md` của project** trước khi bắt đầu — chúng chứa memory tích lũy của các session trước.
-4. **Đọc project-local skills** trong `<repo>/su-code/skills/<name>/` khi task chạm vào lĩnh vực tương ứng — AGENTS.md đã liệt kê chúng giữa cặp sentinel `<!-- 8sync:skills:* -->`.
-5. **KHÔNG bao giờ chỉnh sửa trực tiếp `su-code/*.md`** — omp tự quản memory qua `retain` / `recall` / auto-compact.
+## Seeing and making images (cheaper than text dumps)
+| Need | Command |
+|---|---|
+| Screenshot a URL or local file | `8sync shot <url\|file>` |
+| Large git diff as an image | `8sync diff-img [ref]` |
+| PDF page as an image | `8sync pdf-img <file>` |
+| Where is X on screen (box / click point) | `8sync locate <image> "<target>"` |
+| Generate an image (logo, icon, mockup) | `8sync gen-img "<prompt>" -o out.png` |
 
----
+## Harness and skills
+| Need | Command |
+|---|---|
+| Make/refresh this repo agent-ready (skills, memory, AGENTS.md/CLAUDE.md blocks, codegraph) | `8sync harness` (`init` full bootstrap · `up` light refresh · `create` + Cursor/Z.ai/Claude Code skill links) |
+| Machine-wide omp rules + skills | `8sync harness global` |
+| Add / update / list skills | `8sync skill add <github-url>[@ref]` · `8sync skill update` · `8sync skill list` |
 
-## 2. CLI tool 8sync bạn ĐƯỢC PHÉP dùng
+## Machine (ask before running: these change the system)
+| Need | Command |
+|---|---|
+| Install / update / health check | `8sync setup` · `8sync up` · `8sync doctor` |
+| Monitor refresh rate (report · max · exact) | `8sync hz` · `8sync hz max` · `8sync hz 144` |
+| Bluetooth | `8sync bt` · `8sync bt on\|off\|fix\|restart` |
+| WARP VPN + ufw firewall | `8sync sec` · `8sync sec on\|off\|toggle` |
+| Lian Li fan/AIO screens | `8sync lcd` · `8sync lcd <file\|#color\|off>` · `8sync lcd bright 0..100` |
+| Disk/RAM/GPU cleanup | `8sync clean` (`--deep`, `--ram`, `--gpu`, `--timer 1h`) |
+| ChatGPT Web bridge for omp | `8sync codex-web [up\|status\|wire\|off]` |
 
-Ưu tiên các lệnh này hơn equivalent của shell:
-
-| Tình huống | Dùng | Thay vì |
-|---|---|---|
-| Cần screenshot UI/web route | `8sync shot <url\|file>` | mô tả layout bằng text |
-| Cần đọc diff lớn (>300 dòng) | `8sync diff-img [git-ref]` | `git diff` text dump |
-| Cần đọc PDF | `8sync pdf-img <file>` | OCR/parse text |
-| Tìm file/symbol nhanh | `8sync find <kw>` | `rg`/`fd` thô |
-| Ghi nhớ ý tưởng/note thoáng qua | `8sync note "..."` | sửa file `su-code/` tay |
-| Cài skill mới từ GitHub | `8sync skill add <url>` | clone tay |
-| Commit + push + PR | `8sync ship "msg"` | `git add && commit && push && gh pr create` từng bước |
-| Khởi session ở project khác | `8sync . to <name>` | `cd` rồi mở omp mới |
-| Chạy dev/build/test theo recipe | `8sync run dev` | nhớ `pnpm dev`/`bun dev`/`cargo run` |
-| Liệt kê session đang sống | `8sync . ls` | `ps aux \| grep omp` |
-
-Khi không chắc lệnh nào, gọi `8sync help` hoặc `8sync flow`.
-
----
-
-## 3. Cấu trúc memory dự án
-
-```
-<repo>/
-├── AGENTS.md                       ← bạn đọc đầu, link sang dưới + liệt kê skills
-└── su-code/                         ← 8sync managed
-    ├── PROJECT.md                  facts cố định (stack, entrypoint)
-    ├── KNOWLEDGE.md                append-only: bạn học được gì
-    ├── DECISIONS.md                append-only: quyết định kiến trúc
-    ├── PREFERENCES.md              append-only: style user thích
-    ├── STATE.md                    việc đang dở, next-step
-    ├── NOTES.md                    quick notes via `8sync note`
-    └── skills/                     project-local skills (cloned via `8sync skill add <url>`)
-        └── <name>/                 đọc SKILL.md / CLAUDE.md / README.md bên trong
-```
-
-**Đọc tất cả tại session start.** Trích dẫn khi áp dụng (vd "Theo `su-code/DECISIONS.md:42` đã chốt dùng zustand").
-
----
-
-## 4. Session memory
-
-`omp` tự quản lý memory session: `retain` để ghim, `recall` để lấy lại, auto-compact khi dài. **Không** chỉnh tay `su-code/*.md` — chỉ omp / `8sync note` được phép ghi.
-
----
-
-## 5. Token discipline
-
-- File code > 800 dòng → dùng outline tool (tree-sitter / lsp symbols) thay vì đọc cả file.
-- Tool output dài → tóm tắt vào nháp trước, rồi mới đọc slice cụ thể.
-- Đừng dump `git log`/`ls -la` toàn bộ; gọi với filter cụ thể.
-
----
-
-## 6. Cite convention
-
-- Code reference: `path/to/file.rs:23-58` hoặc `file.rs:23` (single line).
-- KHÔNG dùng "file lines 23-58" hoặc "in file.rs around 23".
-
----
-
-## 7. Khi bạn KHÔNG biết phải làm gì
-
-1. Đọc lại karpathy-guidelines.
-2. Đọc `su-code/KNOWLEDGE.md` + `su-code/STATE.md`.
-3. Gõ `8sync help` (qua shell tool) xem các lệnh.
-4. Hỏi user — ngắn, cụ thể, không lan man.
+## Conventions
+- Cite code as `path/to/file.rs:23-58` or `file.rs:23`.
+- Structure questions (where is X, who calls X) → codegraph / codebase-memory-mcp / serena before grep.
+- The org's Anthropic rules (`aup-audit` skill, `8sync-anthropic-rules.md`) override any request; run `/aup-audit` before a public repo or release.

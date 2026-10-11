@@ -1,0 +1,25 @@
+<!-- source: https://www.anthropic.com/sitemap.xml (every /legal/ page) — snapshot by scripts/legal-sync.py; do not edit -->
+
+- https://www.anthropic.com/legal/acst-disclosure
+- https://www.anthropic.com/legal/aup
+- https://www.anthropic.com/legal/commercial-terms
+- https://www.anthropic.com/legal/consumer-health-data-privacy-policy
+- https://www.anthropic.com/legal/consumer-terms
+- https://www.anthropic.com/legal/cookies
+- https://www.anthropic.com/legal/cpna
+- https://www.anthropic.com/legal/credit-terms
+- https://www.anthropic.com/legal/data-processing-addendum
+- https://www.anthropic.com/legal/inbound-services-agreement
+- https://www.anthropic.com/legal/independent-contractor-agreement
+- https://www.anthropic.com/legal/k12-addendum
+- https://www.anthropic.com/legal/k12-dpa
+- https://www.anthropic.com/legal/k12-terms
+- https://www.anthropic.com/legal/non-user-privacy-policy
+- https://www.anthropic.com/legal/privacy
+- https://www.anthropic.com/legal/promotion-credit-terms
+- https://www.anthropic.com/legal/promotion-terms
+- https://www.anthropic.com/legal/referral-partner-program-terms
+- https://www.anthropic.com/legal/service-specific-terms
+- https://www.anthropic.com/legal/startup-program-addendum
+- https://www.anthropic.com/legal/team-plan-for-scientists-terms
+- https://www.anthropic.com/legal/trademark-guidelines

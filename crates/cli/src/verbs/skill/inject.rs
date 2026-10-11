@@ -295,7 +295,7 @@ fn claude_block(stats: &ForceLoadStats) -> String {
 - **Code intelligence trước grep:** MCP `codebase-memory-mcp` (search_graph · trace_path · get_code_snippet), `serena` (find_symbol · find_referencing_symbols), hoặc `codegraph query|explore` qua Bash. Chỉ đọc raw file khi sắp sửa nó.\n\
 - **Luôn áp dụng** ({core}): đọc trước khi viết, bước nhỏ có kiểm chứng, làm ít nhất mà đúng (YAGNI, xoá > thêm), ưu tiên lệnh `8sync` (`8sync run test`, `8sync find` …) hơn shell thô. Chi tiết: `su-code/skills/<tên>/SKILL.md` (hoặc `~/.omp/skills/<tên>/`), chỉ mở khi cần.\n\
 - **Mở SKILL.md khi task khớp:** {specialist} — `impeccable` bắt buộc cho mọi việc UI/design.\n\
-- **{ondemand} skill on-demand khác:** `ls su-code/skills ~/.omp/skills`, mở `SKILL.md` khi tên/description khớp task.\n\
+- **{ondemand} skill on-demand khác:** Claude Code liệt kê theo tên (`/<tên>`, từ `.claude/skills/` → `su-code/skills/`); gọi skill khi tên khớp task, hoặc `ls su-code/skills` rồi đọc `SKILL.md`.\n\
 - **Memory dự án:** đọc `su-code/STATE.md` đầu phiên, cập nhật ở mỗi mốc; bài học → `su-code/KNOWLEDGE.md`; thay đổi → `CHANGELOG.md` (Unreleased).\n\
 {END}",
         core = names(&stats.core),
@@ -303,6 +303,45 @@ fn claude_block(stats: &ForceLoadStats) -> String {
         ondemand = stats.ondemand.len(),
     );
     crate::brand::render(&block).into_owned()
+}
+
+/// Skills the Claude Code kit installs into `~/.claude/skills`: their
+/// descriptions stay listed whatever tier the project gives them.
+const KIT_SKILLS: [&str; 3] = ["ship", "aup-audit", "deep-research"];
+
+/// `.claude/settings.local.json` → `skillOverrides`: on-demand skills are listed
+/// by name only, the same progressive disclosure as `AGENTS.md` (always-on
+/// skills keep their descriptions). Listing every description of 237 skills
+/// measured +18.4k tokens on every request. Adds missing entries only, so a
+/// value set in Claude Code's `/skills` menu wins.
+pub(crate) fn claude_skill_overrides(home: &Path, root: &Path) -> Result<()> {
+    use anyhow::Context;
+    let stats = build_force_load(home, root);
+    let path = root.join(".claude/settings.local.json");
+    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut v: serde_json::Value = if raw.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", path.display()))?
+    };
+    let overrides = v
+        .as_object_mut()
+        .context("settings.local.json is not a JSON object")?
+        .entry("skillOverrides")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .context("`skillOverrides` is not an object")?;
+    for name in stats.ondemand.iter().filter_map(|p| p.file_name()?.to_str()) {
+        if !KIT_SKILLS.contains(&name) {
+            overrides.entry(name).or_insert_with(|| serde_json::json!("name-only"));
+        }
+    }
+    let out = serde_json::to_string_pretty(&v)? + "\n";
+    if out != raw {
+        std::fs::create_dir_all(root.join(".claude"))?;
+        std::fs::write(&path, out).with_context(|| format!("write {}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// Rewrite (or insert) the force-load block in **every** agent entry file at the

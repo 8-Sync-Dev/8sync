@@ -217,15 +217,19 @@ pub(crate) fn seed_gitignore(root: &Path) -> Result<()> {
         "*.session-journal\n",
         "*.pkl\n",
         "# KEEP COMMITTED (do NOT add here): su-code/ (memory), AGENTS.md, CHANGELOG.md, .cursor/rules/\n",
-        "# Host skill mirrors (rebuilt from su-code/skills/ by `8sync harness create`):\n",
-        ".cursor/skills/\n",
-        ".zcode/skills/\n",
+        "# Host skill mirrors (rebuilt from su-code/skills/ by `8sync harness create`).\n",
+        "# No trailing slash: git sees a symlink/junction as a file, and `dir/` never matches it.\n",
+        ".cursor/skills\n",
+        ".zcode/skills\n",
     );
+    // `.claude/skills` is 8sync's link only when the repo has no skills of its own
+    // there; `.claude/settings.local.json` (skill listing overrides) is per machine.
+    let claude = if crate::verbs::skill::deploy::claude_skills_is_ours(root) { ".claude/skills\n.claude/settings.local.json\n" } else { ".claude/settings.local.json\n" };
     upsert_block(
         &root.join(".gitignore"),
         "# >>> 8sync (managed) >>>",
         "# <<< 8sync <<<",
-        body,
+        &format!("{body}{claude}"),
     )
 }
 

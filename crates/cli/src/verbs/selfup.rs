@@ -80,7 +80,7 @@ fn asset_filename(tag: &str) -> String {
 /// bug where a hard-coded extension-less `~/.local/bin/8sync` left an
 /// un-runnable file (Windows then popped an "open with" dialog). Falls back to
 /// the legacy Unix path only if the current exe cannot be resolved.
-fn dest_path() -> Result<PathBuf> {
+pub(crate) fn installed_path() -> Result<PathBuf> {
     if let Ok(p) = std::env::current_exe() {
         return Ok(std::fs::canonicalize(&p).map(strip_verbatim_drive).unwrap_or(p));
     }
@@ -449,6 +449,12 @@ pub fn auto_check_notice() {
     spawn_detached_probe();
 }
 
+/// Whether the background probe's cached latest release is newer than this
+/// binary. No network: the probe refreshes the cache at most every 6 hours.
+pub(crate) fn update_cached() -> bool {
+    std::fs::read_to_string(latest_tag_file()).is_ok_and(|t| !t.trim().is_empty() && is_newer(strip_v(t.trim()), build_version()))
+}
+
 fn latest_tag_file() -> PathBuf {
     cache_dir().join("latest_tag")
 }
@@ -498,7 +504,7 @@ pub fn run_self_update(force: bool) -> Result<bool> {
         return Ok(false);
     }
 
-    let dst = dest_path()?;
+    let dst = installed_path()?;
     ui::info(&format!("local v{} → {} ({})", local, tag, asset_url));
     download_and_replace(&asset_url, &dst, digest.as_deref())?;
 
@@ -516,7 +522,7 @@ pub fn install_tag(tag: &str) -> Result<bool> {
         "https://github.com/{}/{}/releases/download/{}/{}",
         REPO_OWNER, REPO_NAME, tag, asset_filename(&tag)
     );
-    let dst = dest_path()?;
+    let dst = installed_path()?;
     ui::info(&format!("local v{} → {} ({})", build_version(), tag, asset_url));
     // A pinned tag skips the /latest payload, so its digest comes from the
     // per-tag endpoint — the same one install.sh uses under SUSYNC_VERSION.

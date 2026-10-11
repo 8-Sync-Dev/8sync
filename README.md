@@ -19,12 +19,12 @@
 |---|---|
 | **Rust core, one file** | A single static binary: 4.2 MB on Windows, 5.4 MB on linux-x86_64 (musl), no runtime to install. A size gate in CI fails any release that grows without an attributed reason. |
 | **One line to a full AI workstation** | The installer drops the binary, then sets up gh, [omp](https://omp.sh), codegraph, [Forge](https://forgecode.dev) with zsh, [Claude Code](https://code.claude.com) with the 8sync kit, 50+ skills, MCP servers and global agent rules. Every step is idempotent and logged; a failed tool is reported and the rest still installs. |
-| **Claude Code that finishes the job** | `8sync ccc . <name>` opens a named Claude Code session per repo. The kit adds subagents, `/ship`, a compile check after every edit, and two gates: one keeps Claude working while it has unfinished work, the other sends questions it can answer itself back to it. [Details](#claude-code-8sync-ccc). |
+| **Claude Code that finishes the job** | `8sync ccc . <name>` opens a named Claude Code session per repo. The kit adds subagents, `/ship`, a background compile check after every edit, every 8sync skill, the team's Usage Policy rules, and two gates: one keeps Claude working while it has unfinished work, the other sends questions it can answer itself back to it. [Details](#claude-code-8sync-ccc). |
 | **Claude, the legitimate way** | Claude Code signs in with Anthropic's own login; Forge and omp use your own API key on the official API. No scraped web sessions, no shared accounts. [Details](#claude-the-official-way). |
 | **A shell that is also an agent** | `8sync forge <name>` opens a fast zsh bound to a named Forge conversation: type commands as usual, prefix with `:` to ask Claude. |
 | **Agents that know the code** | Code graph indexing (codegraph, codebase-memory-mcp, Serena), per-project memory in `su-code/`, and always-on engineering skills, so agents query structure instead of grepping blindly. |
 | **Same commands everywhere** | Linux, macOS and Windows. On Windows there is no WSL requirement and no admin rights needed. zsh is provisioned privately next to Git for Windows. |
-| **Updates itself, safely** | Every command checks for a new release in the background (throttled to once per 6 h). `8sync up` installs it with a sha256 check, even while sessions keep the old binary open. |
+| **Updates itself, safely** | Every command checks for a new release in the background (throttled to once per 6 h). `8sync up` installs it with a sha256 check, even while sessions keep the old binary open; `8sync ccc` installs it on launch and re-runs on the new binary. |
 
 ```mermaid
 flowchart LR
@@ -74,6 +74,8 @@ A real run of the v0.63.0 one-liner on a fresh Ubuntu account without sudo:
 Options: `SUSYNC_NO_SETUP=1` (binary only) · `SUSYNC_VERSION=v0.63.0` (pin) · `SUSYNC_BIN_DIR=~/bin` · `sh -s -- --uninstall`.
 Run it again any time, or `8sync up`. Fallback URL: `https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.sh`.
 
+CI runs these exact one-liners on Ubuntu (x64 and arm64), macOS (Apple silicon and Intel) and Windows after every release and every week ([`install-smoke`](.github/workflows/install-smoke.yml)); a run fails unless the installed version is the latest and setup reports "all steps succeeded".
+
 **Pro terminal (opt-in, any OS):** `8sync setup --profile terminal` installs:
 
 - **helix** with a tuned config, plus the **JetBrainsMono Nerd Font**. On Windows the font also becomes the Windows Terminal default if you have none.
@@ -100,17 +102,18 @@ Each name maps to a fixed conversation id per repo, so `8sync ccc . core` tomorr
 
 ![8sync ccc kit and a named session](docs/assets/ccc-kit.png)
 
-The kit lives in `~/.claude`, so it works in every repo and for plain `claude` too:
+The kit lives in `~/.claude`, so it works in every repo and for plain `claude` too. Every `8sync ccc` launch also keeps things current, without network on the launch path: a newer 8sync release is installed and the command re-runs on it, the kit and bundled skills refresh after an update, and the repo gets the 8sync harness (memory, `AGENTS.md`/`CLAUDE.md` blocks, `.claude/skills` → `su-code/skills`). `SUSYNC_NO_AUTO_UPDATE=1` keeps the installed binary.
 
 | Part | What it does |
 |---|---|
+| Org rules | The 8 Sync rules for Anthropic's Usage Policy and terms ([`8sync-anthropic-rules.md`](assets/skills/aup-audit/8sync-anthropic-rules.md)) are imported into every session ahead of other instructions. |
 | Subagents | `explore` (Haiku) · `task` · `quick-task` · `reviewer` · `designer`. Reviewer and designer use your session model; the read-only ones keep the code-graph MCP tools. |
-| Skills | `/ship <task>`: explore → task list → implement with build/test → `reviewer` → CHANGELOG + commit, never pushes. `/aup-audit`: Anthropic Usage Policy + secret check before you publish. `deep-research`: cited research brief, token-lean. |
-| Verify hook | After every Edit/Write, runs `cargo check`, the package's `typecheck` script (or `tsc --noEmit`) or `go vet` from the edited file's nearest manifest, and hands only failures back to Claude. Native Rust: no python, jq or bash, so it works on Windows. |
+| Skills | `/ship <task>`: explore → task list → implement with build/test → `reviewer` → CHANGELOG + commit, never pushes. `/aup-audit`: Usage Policy + secret check before you publish. `deep-research`: cited research brief. Plus every 8sync skill: bundled ones linked to the current `~/.omp/skills` copy, project ones through `.claude/skills`; on-demand skills are listed by name only to keep the prefix small. |
+| Verify hook | After every Edit/Write, runs `cargo check`, the package's `typecheck` script (or `tsc --noEmit`) or `go vet` from the edited file's nearest manifest **in the background**; only a failure comes back to Claude. The latest edit wins, so a burst of edits costs one check. Before a turn ends, the build must pass (blocked once per broken state). Native Rust, works on Windows. |
 | Guard hook | Before Bash/Edit/Write: no writing `.env`/keys/`*.session`/`*.pkl`, no real-looking API key in code or commands, no `git add -A` that would sweep up a secret, no code routing a Claude subscription into another client. About 23 ms per call. |
 | Stop gate | When Claude tries to end a turn, Haiku reads its last message. Planned steps not done, edits not verified, failing checks, `NOT MERGEABLE`, or a question it could answer itself: the turn goes on. |
 | Ask gate | Before Claude interrupts you with a question, Sonnet checks it. Only credentials, destructive or paid actions, and product decisions reach you; everything else goes back with "pick the conventional option and continue". |
-| Defaults | Auto permission mode and a task list on every model (only if you haven't set them), deny rules for reading/editing `.env`, keys, `*.session`, `*.pkl` and for force-push, global rules in `~/.claude/CLAUDE.md`, omp's `codebase-memory-mcp` + `serena` registered. |
+| Defaults | Only where you haven't set them: auto permission mode, `medium` effort, a task list on every model. Build/test/lint commands and `git add` skip the auto-mode classifier. Deny rules for reading/editing `.env`, keys, `*.session`, `*.pkl` and for force-push; omp's `codebase-memory-mcp` + `serena` registered. |
 
 A real run with the kit. The first edit broke the build, the verify hook fed the compiler error back, and the stop gate refused "Next I will add tests":
 
@@ -130,7 +133,21 @@ Limits, so you know what you are getting:
 
 - The stop gate judges Claude's last message, not the whole transcript. Claude Code stops after 8 forced continuations in a row.
 - `AskUserQuestion` does not exist in `claude -p`, so the ask gate only acts in interactive sessions. If its model id is ever retired, the hook fails open and questions go through.
-- The verify hook checks the whole package, not only the edited file. On a large monorepo, `typecheck` can take a while (the hook timeout is 180 s).
+- The verify hook checks the whole package, not only the edited file. It runs in the background, so a slow `typecheck` delays only the end of the turn (timeout 600 s).
+- `medium` effort is the kit default because it halved the time on the bench below with the same hidden-test result; switch a session to `/effort high` for hard reasoning.
+
+### Speed next to omp (measured)
+
+A harder task: an expression evaluator with three bugs and missing features across four files, 11 hidden tests, Sonnet 5 with a Console key, a fresh copy per run, up to four runs in parallel. Wall-clock per run:
+
+| Harness | Runs | Mean | Hidden tests |
+|---|---|---|---|
+| omp | 155 · 124 · 136 s | 138 s | 11 · 10 · 11 of 11 |
+| `8sync ccc`, kit 0.64 | 281 · 216 s | 249 s | 11 · 11 |
+| `8sync ccc`, kit 0.65 at `high` effort | 209 · 179 s | 194 s | 11 · 11 |
+| `8sync ccc`, kit 0.65 default (`medium`) | 100 · 161 s | 131 s | 11 · 11 |
+
+Where the time went: in kit 0.64 every edit waited for `cargo check` (2.5 s warm, 8.6 s cold in this repo), every build/test command waited for the auto-mode classifier (~0.65 s), and Sonnet 5 at `high` effort wrote 17.6-20.6k output tokens per run against 9.4k and 15.3k at `medium`. Run-to-run spread is large (100 vs 161 s at the same settings), so read this as "on par with omp", not "faster". Anthropic's parallel-tool-call prompt snippet did not change how often Claude batched calls, so the kit doesn't use it. [Fast mode](https://code.claude.com/docs/en/fast-mode) (`/fast`, Opus only, higher price) is the remaining lever and stays your call.
 
 ### Tokens and quality next to omp (measured)
 
@@ -149,7 +166,7 @@ What this says, and what it doesn't:
 
 - On these tasks every harness got every hidden test right. They do not show Claude Code verifying better than omp; the kit's gates matter on long runs where a model stops early, which these short tasks never triggered.
 - Claude Code processes 1.3-2× omp's input tokens because it makes about twice the requests: it mostly calls one tool per request, omp batches. The cost is close anyway, since repeated context is billed as cache reads at a tenth of the price. Telling Claude to batch calls in `CLAUDE.md` changed nothing (about 1 in 7 requests had several calls with or without it), so the kit doesn't.
-- In an 8sync repo the per-request prefix is where the kit saves: in this repo it is 34.3k tokens for `8sync ccc` 0.64, 41.0k for 0.63, 56.2k for omp. The difference is `CLAUDE.md`: 0.64 writes a 0.7k pointer block instead of a copy of the 8k skill list (importing `AGENTS.md` would cost 20.5k).
+- In an 8sync repo the per-request prefix is where the kit saves: in this repo it is 34.3k tokens for `8sync ccc` 0.64, 41.0k for 0.63, 56.2k for omp. The difference is `CLAUDE.md`: 0.64 writes a 0.7k pointer block instead of a copy of the 8k skill list (importing `AGENTS.md` would cost 20.5k). 0.65 adds the always-loaded org rules and every skill by name: 41.1k in a fresh 8sync repo with 237 skills, against 57.3k if every description were listed.
 
 ---
 
@@ -169,6 +186,8 @@ export ANTHROPIC_API_KEY=sk-ant-...        # omp (`8sync .`, `8sync ai`): standa
 Pick the model inside the tools: `/model` in Claude Code and omp, `:model` in a Forge shell. The keys stay on your machine, and 8sync never prints them in full.
 
 > `8sync feynman auth-omp` bridges omp's other logins into Feynman but never Claude; give Feynman a Console key (`ANTHROPIC_API_KEY`). `8sync harness claude-code` with a non-Anthropic endpoint configures Claude Code only and leaves omp alone, and `8sync doctor` warns when omp is signed in to Anthropic with a Claude plan instead of an API key. Other bridges (`8sync codex-web`) and gateways are opt-in tools under their provider's terms.
+
+The team's rules live in [`assets/skills/aup-audit/8sync-anthropic-rules.md`](assets/skills/aup-audit/8sync-anthropic-rules.md), ship inside the binary and load into every Claude Code session. A weekly workflow (`legal-sync`) snapshots Anthropic's own texts into [`docs/legal/anthropic/`](docs/legal/anthropic), commits any change and opens an issue to review the rules; with an `ANTHROPIC_API_KEY` repo secret, Claude Code drafts that update as a pull request.
 
 ---
 

@@ -138,7 +138,7 @@ pub(crate) fn detect_project_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
-fn detect_stack(root: &Path) -> Vec<String> {
+pub(crate) fn detect_stack(root: &Path) -> Vec<String> {
     let mut s = Vec::new();
     if root.join("Cargo.toml").exists() { s.push("rust".into()); }
     if root.join("package.json").exists() { s.push("node".into()); }
@@ -159,7 +159,7 @@ fn detect_stack(root: &Path) -> Vec<String> {
     s
 }
 
-fn seed_project_context(env: &env_detect::Env, root: &Path, stack: &[String]) -> Result<()> {
+pub(crate) fn seed_project_context(env: &env_detect::Env, root: &Path, stack: &[String]) -> Result<()> {
     let _ = crate::verbs::harness::memory::migrate_legacy_layout(root);
     let agents = root.join("AGENTS.md");
     if !agents.exists() {

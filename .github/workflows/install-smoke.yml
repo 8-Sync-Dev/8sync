@@ -1,0 +1,69 @@
+# The published one-line installers, run as a new user would on every platform
+# that has a release asset: after each release, weekly (omp / codegraph / forge /
+# Claude Code installers change upstream), and on demand. A run fails unless the
+# installer exits 0, `8sync --version` is the latest release, and `8sync setup`
+# reports "all steps succeeded". Free on public repositories.
+name: install-smoke
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  schedule:
+    - cron: "41 4 * * 2" # Tuesdays 04:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: One-line install (curl … | sh)
+        run: |
+          set -o pipefail
+          curl -fsSL https://8-sync-dev.github.io/su-code/install | sh 2>&1 | tee install.log
+      - name: Check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          latest=$(gh release view --repo 8-Sync-Dev/su-code --json tagName -q .tagName)
+          got=$(8sync --version)
+          echo "installed: $got · latest: $latest"
+          [ "$got" = "8sync ${latest#v}" ]
+          grep -q "all steps succeeded" install.log || { grep -E "failed|✗|!" install.log | tail -20; exit 1; }
+          8sync doctor || true
+          8sync ccc status
+
+  windows:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-latest
+    steps:
+      - name: One-line install (irm … | iex)
+        shell: powershell
+        run: |
+          irm https://8-sync-dev.github.io/su-code/install.ps1 | iex *>&1 | Tee-Object -FilePath install.log
+      - name: Check
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path
+          $latest = gh release view --repo 8-Sync-Dev/su-code --json tagName -q .tagName
+          $got = (8sync --version | Out-String).Trim()
+          Write-Host "installed: $got · latest: $latest"
+          if ($got -ne "8sync $($latest.TrimStart('v'))") { exit 1 }
+          if (-not (Select-String -Path install.log -Pattern 'all steps succeeded' -Quiet)) {
+            Select-String -Path install.log -Pattern 'failed|✗' | Select-Object -Last 20
+            exit 1
+          }
+          8sync doctor
+          8sync ccc status
+          exit 0

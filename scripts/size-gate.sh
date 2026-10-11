@@ -30,11 +30,20 @@
 # (x86_64-pc-windows-msvc): full 4,281,856 B, minimal 3,122,688 B (was 3,069,952:
 # +52,736 B), `web` gate = +1,159,168 B (unchanged). Windows release build
 # +41,472 B over v0.62.0. linux-x86_64 v0.62.0 was 5,415,216 B with 11,984 B left.
+#
+# Raised 2026-10-11 for v0.65.0, WITH attribution: v0.64.0 left 7,568 B on
+# linux-x86_64 (5,497,456). v0.65.0 adds the async verify + Stop check module,
+# the launch-time auto-update / kit refresh / project harness for `8sync ccc`,
+# Claude Code skill links + `skillOverrides`, and embeds the org rules doc
+# (`assets/skills/aup-audit/8sync-anthropic-rules.md`) and a fuller `8sync-cli`
+# skill. size-report (x86_64-pc-windows-msvc): full 4,328,448 B, minimal
+# 3,169,280 B, `web` gate = +1,159,168 B (unchanged). Windows release build
+# +8,192 B over v0.64.0 (4,321,280 → 4,329,472). +16 KiB of ceiling.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-5505024}"   # 5376 KiB (raised 2026-10-11 from 5300 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-5521408}"   # 5392 KiB (raised 2026-10-11 from 5376 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

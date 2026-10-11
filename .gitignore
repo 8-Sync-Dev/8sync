@@ -18,9 +18,12 @@ id_ed25519*
 *.session-journal
 *.pkl
 # KEEP COMMITTED (do NOT add here): su-code/ (memory), AGENTS.md, CHANGELOG.md, .cursor/rules/
-# Host skill mirrors (rebuilt from su-code/skills/ by `8sync harness create`):
-.cursor/skills/
-.zcode/skills/
+# Host skill mirrors (rebuilt from su-code/skills/ by `8sync harness create`).
+# No trailing slash: git sees a symlink/junction as a file, and `dir/` never matches it.
+.cursor/skills
+.zcode/skills
+.claude/skills
+.claude/settings.local.json
 
 # <<< 8sync <<<
 
