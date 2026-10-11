@@ -14,10 +14,10 @@ Every member installs with one line (`curl … /install | sh` · `irm … /insta
 - [x] `8sync forge probe` zsh re-proven after setup patched `~/.zshrc`: `shell-42`, session UUID, `: …` → `ZSHCHECK612`.
 - [x] v0.61.3 published (run 38093303867): WSL `install.sh` installed gh v2.102.0 (sha256 ok) next to 8sync/omp/codegraph/forge; `8sync up` 0.61.2 → 0.61.3 printed `checksum ok`; published `install.ps1` one-liner (PS 5.1, temp BinDir) → checksum ok + idempotent setup.
 - [x] v0.62.0 local: pro zsh (two-line prompt, async Forge segment, menu completion, pinned autosuggestions + syntax-highlighting), `--profile terminal` on every OS, zsh-bin without sudo, `$HOME` PATH block, README rewrite. ConPTY: 0.36 s to prompt, ~0.2 s per command, `:` prompt → `SHELL062`. 134 tests; linux/macOS type-check via fake cc.
-- [ ] Push + tag v0.62.0; release green; WSL published installer gets zsh-bin; `8sync up` → 0.62.0.
+- [x] v0.62.0 published (run 38097639848, 5 assets, linux-x86_64 5,415,216 B under the 5,427,200 ceiling). WSL Ubuntu published installer: gh, omp, codegraph, forge, zsh-bin 5.8 (no sudo), plugins — zero failed steps; `--profile terminal` → helix 25.07.1 (sha256 ok) + pro zsh block. Windows: `8sync up` 0.61.3 → 0.62.0 `checksum ok`; `--profile terminal` set the Windows Terminal default font.
 
 ## Current
-Releasing v0.62.0.
+Done. Installed binary on this box: 0.62.0.
 
 ## Next
 Known residuals: `crates/cli/src/verbs/harness/gateway.rs` and `crates/cli/src/verbs/harness/local_model.rs` still use `curl -w` (fails on stock Windows curl 8.8.0); no CI job builds `--no-default-features`; zsh on Debian/Ubuntu needs sudo (prompts in a real terminal, fails unattended); macOS without Homebrew still gets "install gh manually".
