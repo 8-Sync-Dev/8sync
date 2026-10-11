@@ -5,6 +5,23 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.63.0] — 2026-10-11
+### Added
+- **`8sync ccc` — Claude Code with named sessions.** `8sync ccc . <name>` create-or-resumes a Claude Code conversation by name in this repo: the name maps to a UUID that starts the session (`--session-id`, `--name`) and resumes it (`--resume`). Also `8sync ccc .` (last used), `. ls`, `. new`, `. rm` (removes the transcript too), `status`, and flags after the name go to `claude`. Installs Claude Code with Anthropic's official installer when missing.
+- **The 8sync kit for Claude Code** (`8sync ccc kit`, run by `8sync setup`). It goes into `~/.claude`, so it applies to every repo:
+  - 6 subagents (`explore` · `plan` · `task` · `quick-task` · `reviewer` · `designer`) and the `/ship` skill (explore → plan → implement → review → commit). Read-only agents use `disallowedTools` instead of a tool allow-list, so they keep the MCP code-intelligence tools.
+  - **Verify hook**: after every Edit/Write, `8sync ccc hook verify` runs `cargo check`, the package's `typecheck` script (or `tsc --noEmit`) or `go vet` from the edited file's nearest manifest, and returns only failures to Claude. Native Rust, so no python3/jq/bash is needed, and it runs on Windows.
+  - **Stop gate**: a Haiku prompt hook keeps the turn going while the last message shows unfinished work: planned steps not done, edits not verified, failing checks, `NOT MERGEABLE`, or a question it should have answered itself.
+  - **Ask gate**: a Sonnet prompt hook on `AskUserQuestion` sends unnecessary questions back to Claude to decide. Questions about credentials, destructive or paid actions, and product decisions go through.
+  - Auto permission mode and task tools on every model (both only when you have not set them), deny rules for `.env` reads and force-push, global rules in a managed block of `~/.claude/CLAUDE.md`, and omp's `codebase-memory-mcp` + `serena` registered in Claude Code.
+  - Files you edited are kept (`--force` overwrites); settings are merged, never replaced.
+- Stage A of `8sync setup` installs Claude Code + the kit (after `harness global`, so the MCP servers exist).
+- The name → UUID registry is now shared by `8sync forge` and `8sync ccc` (`uuid_sessions.rs`).
+
+### Fixed
+- **Official installers on Windows launched from PowerShell 7.** Windows PowerShell 5.1 inherited pwsh's `PSModulePath`, lost `Get-FileHash`, and `claude.ai/install.ps1` failed. 8sync now clears that variable for every `powershell` child it starts.
+- `8sync harness claude-code` overwrote `~/.claude/settings.json` and wrote lower-case `env` keys that Claude Code ignores. It now merges the upper-case `ANTHROPIC_*` keys into the existing file.
+
 ## [0.62.0] — 2026-10-11
 ### Added
 - **Pro zsh for `8sync forge` and everyday use** (`assets/configs/zsh/8sync.zsh`):

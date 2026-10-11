@@ -1,16 +1,13 @@
 <div align="center">
 
-# 8sync
-
-**The Rust-native AI terminal harness of the 8 Sync team.**
-One binary turns any terminal into an AI engineering workstation: agents, Claude, Forge, code intelligence, memory and skills, set up with one line.
+<img src="docs/assets/hero.png" alt="8sync — the Rust-native AI terminal harness of the 8 Sync team" width="100%">
 
 [![Release](https://img.shields.io/github/v/release/8-Sync-Dev/su-code?label=release&color=7c3aed)](https://github.com/8-Sync-Dev/su-code/releases/latest)
 [![Rust](https://img.shields.io/badge/core-Rust-dea584?logo=rust)](crates/cli)
 [![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-0ea5e9)](#install)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
-[Install](#install) · [Claude](#claude-on-the-official-anthropic-api) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://8-sync-dev.github.io/su-code)
+[Install](#install) · [Claude Code](#claude-code-8sync-ccc) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://8-sync-dev.github.io/su-code)
 
 </div>
 
@@ -21,8 +18,9 @@ One binary turns any terminal into an AI engineering workstation: agents, Claude
 | | |
 |---|---|
 | **Rust core, one file** | A single static binary: 4.2 MB on Windows, 5.4 MB on linux-x86_64 (musl), no runtime to install. A size gate in CI fails any release that grows without an attributed reason. |
-| **One line to a full AI workstation** | The installer drops the binary, then sets up gh, [omp](https://omp.sh), codegraph, [Forge](https://forgecode.dev) with zsh, 50+ skills, MCP servers and global agent rules. Every step is idempotent and logged; a failed tool is reported and the rest still installs. |
-| **Claude, the legitimate way** | Claude runs on the official Anthropic API with your own key. No scraped web sessions, no shared accounts. [Details](#claude-on-the-official-anthropic-api). |
+| **One line to a full AI workstation** | The installer drops the binary, then sets up gh, [omp](https://omp.sh), codegraph, [Forge](https://forgecode.dev) with zsh, [Claude Code](https://code.claude.com) with the 8sync kit, 50+ skills, MCP servers and global agent rules. Every step is idempotent and logged; a failed tool is reported and the rest still installs. |
+| **Claude Code that finishes the job** | `8sync ccc . <name>` opens a named Claude Code session per repo. The kit adds subagents, `/ship`, a compile check after every edit, and two gates: one keeps Claude working while it has unfinished work, the other sends questions it can answer itself back to it. [Details](#claude-code-8sync-ccc). |
+| **Claude, the legitimate way** | Claude Code signs in with Anthropic's own login; Forge and omp use your own API key on the official API. No scraped web sessions, no shared accounts. [Details](#claude-the-official-way). |
 | **A shell that is also an agent** | `8sync forge <name>` opens a fast zsh bound to a named Forge conversation: type commands as usual, prefix with `:` to ask Claude. |
 | **Agents that know the code** | Code graph indexing (codegraph, codebase-memory-mcp, Serena), per-project memory in `su-code/`, and always-on engineering skills, so agents query structure instead of grepping blindly. |
 | **Same commands everywhere** | Linux, macOS and Windows. On Windows there is no WSL requirement and no admin rights needed. zsh is provisioned privately next to Git for Windows. |
@@ -32,13 +30,16 @@ One binary turns any terminal into an AI engineering workstation: agents, Claude
 flowchart LR
   U([you, in any terminal]) --> X[8sync · Rust]
   X --> O[omp agent<br/>8sync . / 8sync ai]
+  X --> K[Claude Code + kit<br/>8sync ccc . name]
   X --> F[Forge + zsh<br/>8sync forge name]
   X --> H[harness<br/>skills · rules · MCP · hooks]
   X --> M[(su-code/ memory<br/>STATE · KNOWLEDGE · DECISIONS)]
-  O --> C[Claude via Anthropic API]
+  O --> C[Claude via Anthropic]
+  K --> C
   F --> C
   H --> G[code graph<br/>codegraph · cbm · serena]
   O --> G
+  K --> G
   F --> G
 ```
 
@@ -62,10 +63,11 @@ You don't need git, Rust or admin rights. The installer verifies the binary's sh
 | omp | The coding agent ([oh-my-pi](https://omp.sh)), from its official installer. |
 | codegraph | Semantic code index used by every agent. |
 | Forge + zsh | Forge from its GitHub release. zsh comes from the system; on Windows it is a private MSYS2 zsh (sha256-pinned); on Linux without sudo, a static portable build. |
+| Claude Code + kit | Claude Code from Anthropic's official installer, then the 8sync kit into `~/.claude` ([below](#claude-code-8sync-ccc)). |
 | harness global | 50+ skills, `APPEND_SYSTEM.md` agent rules, MCP servers (codebase-memory-mcp, headroom, serena), hooks, context compaction at 50%. |
 | PATH | `~/.local/bin`, `~/.cargo/bin`, `~/.bun/bin`, `~/.encore/bin` wired into zsh/bash/fish. |
 
-Options: `SUSYNC_NO_SETUP=1` (binary only) · `SUSYNC_VERSION=v0.61.3` (pin) · `SUSYNC_BIN_DIR=~/bin` · `sh -s -- --uninstall`.
+Options: `SUSYNC_NO_SETUP=1` (binary only) · `SUSYNC_VERSION=v0.63.0` (pin) · `SUSYNC_BIN_DIR=~/bin` · `sh -s -- --uninstall`.
 Run it again any time, or `8sync up`. Fallback URL: `https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.sh`.
 
 **Pro terminal (opt-in, any OS):** `8sync setup --profile terminal` installs:
@@ -78,9 +80,61 @@ Then check everything with `8sync doctor`.
 
 ---
 
-## Claude on the official Anthropic API
+## Claude Code: `8sync ccc`
 
-8sync never logs into claude.ai for you and never proxies a consumer subscription. The supported Claude path is an API key from [console.anthropic.com](https://console.anthropic.com), used against Anthropic's official API under Anthropic's Commercial Terms.
+```bash
+cd <project>
+8sync ccc . core               # Claude Code session "core" in this repo (create or resume)
+8sync ccc . core -p "…"        # one-shot; any flag after the name goes to claude
+8sync ccc .                    # the session you used last
+8sync ccc . ls | new <n> | rm <n>
+8sync ccc kit                  # (re)install the kit; `8sync setup` already did
+8sync ccc status               # claude, login, kit, sessions
+```
+
+Each name maps to a fixed conversation id per repo, so `8sync ccc . core` tomorrow continues today's thread, next to `8sync forge core` and `8sync . core` for the other agents.
+
+![8sync ccc kit and a named session](docs/assets/ccc-kit.png)
+
+The kit lives in `~/.claude`, so it works in every repo and for plain `claude` too:
+
+| Part | What it does |
+|---|---|
+| Subagents | `explore` · `plan` · `task` · `quick-task` · `reviewer` · `designer`. The read-only ones keep the code-graph MCP tools. |
+| `/ship <task>` | explore → plan → implement each task with build/test → `reviewer` → CHANGELOG + commit. Never pushes. |
+| Verify hook | After every Edit/Write, runs `cargo check`, the package's `typecheck` script (or `tsc --noEmit`) or `go vet` from the edited file's nearest manifest, and hands only failures back to Claude. Native Rust: no python, jq or bash, so it works on Windows. |
+| Stop gate | When Claude tries to end a turn, Haiku reads its last message. Planned steps not done, edits not verified, failing checks, `NOT MERGEABLE`, or a question it could answer itself: the turn goes on. |
+| Ask gate | Before Claude interrupts you with a question, Sonnet checks it. Only credentials, destructive or paid actions, and product decisions reach you; everything else goes back with "pick the conventional option and continue". |
+| Defaults | Auto permission mode and a task list on every model (only if you haven't set them), no `.env` reads, no force-push, global rules in `~/.claude/CLAUDE.md`, omp's `codebase-memory-mcp` + `serena` registered. |
+
+A real run with the kit. The first edit broke the build, the verify hook fed the compiler error back, and the stop gate refused "Next I will add tests":
+
+![verify hook and stop gate in a real Claude Code run](docs/assets/ccc-gates.png)
+
+Gate accuracy on labelled cases (the exact hook prompts sent to the model):
+
+| Gate | Model | Correct |
+|---|---|---|
+| Stop | Haiku 4.5 | 18 / 18 (6 cases × 3 runs) |
+| Ask | Sonnet 5 | 6 / 6 |
+| Ask | Haiku 4.5 | 4 / 6, so not used |
+
+Your edits win: a kit file you changed is kept (`8sync ccc kit --force` overwrites it), and `settings.json` is merged, never replaced.
+
+Limits, so you know what you are getting:
+
+- The stop gate judges Claude's last message, not the whole transcript. Claude Code stops after 8 forced continuations in a row.
+- `AskUserQuestion` does not exist in `claude -p`, so the ask gate only acts in interactive sessions. If its model id is ever retired, the hook fails open and questions go through.
+- The verify hook checks the whole package, not only the edited file. On a large monorepo, `typecheck` can take a while (the hook timeout is 180 s).
+
+---
+
+## Claude, the official way
+
+8sync never logs into claude.ai for another tool and never proxies a consumer subscription.
+
+- **Claude Code** (`8sync ccc`) is Anthropic's own CLI. Sign in with `claude auth login` (your Claude plan) or `claude auth login --console` (API billing).
+- **Forge and omp** use an API key from [console.anthropic.com](https://console.anthropic.com) against Anthropic's official API, under Anthropic's Commercial Terms:
 
 ```bash
 8sync forge key sk-ant-...                 # Forge: stored in ~/.forge/.credentials.json, printed masked
@@ -88,7 +142,7 @@ export ANTHROPIC_API_KEY=sk-ant-...        # omp (`8sync .`, `8sync ai`): standa
 8sync forge key                            # list stored keys (masked)
 ```
 
-Pick the model inside the tools: `:model` in a Forge shell, `/model` in omp. The keys stay on your machine, and 8sync never prints them in full.
+Pick the model inside the tools: `/model` in Claude Code and omp, `:model` in a Forge shell. The keys stay on your machine, and 8sync never prints them in full.
 
 > Bridges such as `8sync codex-web` or `8sync feynman auth-omp`, and third-party gateways (`8sync harness gateway`), are separate opt-in tools. Whether a given account or reseller may be used that way is governed by that provider's terms, not by 8sync.
 
@@ -106,10 +160,7 @@ cd <project>
 
 Each name maps to a persistent Forge conversation per repo, so `8sync forge core` tomorrow continues today's thread. In the shell, the prompt looks like this:
 
-```text
-su-code/crates on main · core   FORGE 48.5k   claude-opus-5-5 MEDIUM 3.2s
-❯ cargo test
-```
+![8sync forge prompt: repo, branch, session, Forge agent, tokens, model, duration](docs/assets/forge-prompt.png)
 
 | Prompt part | Shows |
 |---|---|
@@ -148,7 +199,8 @@ Your own `~/.zshrc` loads first, and 8sync's managed files never overwrite it.
 |---|---|
 | `8sync .` · `8sync . <name>` | Resume the project's omp session, or a named one. `. new <name> --worktree` gives a feature its own git worktree + branch; `. merge <name>` lands it locally. |
 | `8sync ai "…"` | One-shot prompt; empty resumes the session. `--model <alias>` overrides the model. |
-| `8sync forge <name>` | AI shell (above). |
+| `8sync ccc . <name>` | Claude Code session by name, with the kit ([above](#claude-code-8sync-ccc)). |
+| `8sync forge <name>` | AI shell ([above](#forge-the-ai-shell)). |
 | `8sync find <kw>` | ripgrep + fzf, opens `file:line` in your editor. |
 | `8sync run dev\|build\|test\|fmt\|lint` | Project command from the detected stack. |
 | `8sync ship "msg"` | add · commit · push · `gh pr create`. |

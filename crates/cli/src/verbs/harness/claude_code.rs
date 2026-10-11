@@ -297,13 +297,35 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
     ui::info(&format!("provider slug:     {}", slug));
     ui::info(&format!("auth token:        {}...{}", &token[..token.len().min(8)], &token[token.len().saturating_sub(6)..]));
 
-    // 2. Persist ~/.claude/settings.json
+    // 2. Merge into ~/.claude/settings.json: only these `env` keys change, so the
+    //    8sync kit's hooks/permissions and the user's own settings survive. Claude
+    //    Code reads the upper-case names; the struct's field names are not them.
     let claude_dir = env.home.join(".claude");
     std::fs::create_dir_all(&claude_dir)?;
     let settings_path = claude_dir.join("settings.json");
-    let serialized_json = serde_json::to_string_pretty(&settings)?;
-    std::fs::write(&settings_path, &serialized_json)?;
-    ui::ok(&format!("wrote {}", settings_path.display()));
+    let raw = std::fs::read_to_string(&settings_path).unwrap_or_default();
+    let mut doc: Value = if raw.trim().is_empty() {
+        serde_json::json!({ "$schema": "https://json.schemastore.org/claude-code-settings.json" })
+    } else {
+        serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", settings_path.display()))?
+    };
+    let env_map = doc
+        .as_object_mut()
+        .context("settings.json is not a JSON object")?
+        .entry("env")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .context("settings.json `env` is not an object")?;
+    for (k, v) in [
+        ("ANTHROPIC_BASE_URL", base_url.as_str()),
+        ("ANTHROPIC_AUTH_TOKEN", token.as_str()),
+        ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", settings.env.claude_code_disable_nonessential_traffic.as_str()),
+        ("CLAUDE_CODE_ATTRIBUTION_HEADER", settings.env.claude_code_attribution_header.as_str()),
+    ] {
+        env_map.insert(k.to_string(), Value::String(v.to_string()));
+    }
+    std::fs::write(&settings_path, serde_json::to_string_pretty(&doc)? + "\n")?;
+    ui::ok(&format!("updated env in {}", settings_path.display()));
 
     // 3. Set environment variables
     std::env::set_var("ANTHROPIC_BASE_URL", base_url);

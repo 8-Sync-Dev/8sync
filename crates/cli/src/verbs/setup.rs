@@ -79,6 +79,7 @@ fn install_gh_release() -> Result<()> {
           · paru                                (AUR helper — Arch family only)
           · codegraph                           (semantic code index)
           · forge + zsh                         (`8sync forge <name>`; Windows: MSYS2 zsh; Linux without sudo: static zsh)
+          · Claude Code + 8sync kit             (`8sync ccc . <name>`; official installer; agents · /ship · hooks)
           · PATH bootstrap                      (~/.local/bin, ~/.cargo/bin, ~/.bun/bin,
                                                  ~/.encore/bin — zsh/bash + fish conf.d)
           · configs + skills under ~/.config/8sync/ and ~/.omp/skills/
@@ -218,6 +219,7 @@ pub fn run(a: Args) -> Result<()> {
         }
         ui::info("would install codegraph (official installer) if missing");
         ui::info("would install forge (GitHub release) + zsh (Windows: MSYS2 zsh) if missing");
+        ui::info("would install Claude Code (official installer) if missing + the 8sync kit into ~/.claude");
         ui::info("would write: configs + skills");
         ui::info("would patch PATH in zsh/bash + ~/.config/fish/conf.d/8sync-path.fish");
         ui::info("would register codegraph as a global+local skill");
@@ -255,6 +257,11 @@ pub fn run(a: Args) -> Result<()> {
             ui::ok(&format!("forge {} · zsh {}", forge.display(), zsh.exe.display()));
             Ok(())
         })?;
+        try_step("claude-code", yolo, &mut failures, || {
+            let claude = crate::verbs::ccc::ensure_claude()?;
+            ui::ok(&format!("claude {}", claude.display()));
+            Ok(())
+        })?;
         try_step("path-bootstrap", yolo, &mut failures, || { ensure_path_in_shells(); Ok(()) })?;
         try_step("configs",    yolo, &mut failures, || install_configs(&env))?;
         try_step("skills",     yolo, &mut failures, || install_skills(&env))?;
@@ -262,6 +269,9 @@ pub fn run(a: Args) -> Result<()> {
         try_step("harness-global", yolo, &mut failures, || {
             crate::verbs::harness::global::harness_global(&env, None, false, false)
         })?;
+        // After harness-global, so the code-intelligence MCP servers it installs
+        // exist when the kit copies them into Claude Code.
+        try_step("claude-kit", yolo, &mut failures, || crate::verbs::ccc::install_kit(&env, false))?;
     }
     // `terminal` is cross-platform (winget / brew / release downloads), so it is
     // dispatched before the native-package gate below.

@@ -1,3 +1,21 @@
+# v0.63.0 — `8sync ccc` (Claude Code named sessions) + the 8sync kit
+
+## Goal
+`8sync ccc . <name>` = Claude Code by name per repo; `8sync setup` installs Claude Code + a kit that makes it autonomous (verify hook, stop gate, ask gate, subagents, /ship) without asking more than needed.
+
+## Checklist
+- [x] Audit of omp-style-kit.zip: old Stop prompt schema (`decision` vs `ok`), python3/bash hook breaks on Windows, tool allow-lists drop MCP, task tools off on new models, project-only paths, ZUS-specific CLAUDE.md.
+- [x] `ccc.rs` + shared `uuid_sessions.rs`; kit assets in `assets/claude/`; Stage A `claude-code` + `claude-kit` steps; PSModulePath fix; `harness claude-code` merge fix.
+- [x] Live proof (API key, isolated CLAUDE_CONFIG_DIR): verify hook fed E0425 back; stop gate continued "Next I will add tests"; named session remembered PELICAN-63 across runs; `. rm` deleted the transcript. Gates: stop 18/18 Haiku, ask 6/6 Sonnet (Haiku 4/6).
+- [x] 136 tests; `--no-default-features` builds; size ceiling 5,505,024 B with attribution.
+- [ ] Release v0.63.0 + published installer run (WSL: Claude Code + kit) + `8sync up` here + README setup capture.
+
+## Current
+Committing v0.63.0.
+
+## Next
+After release: `8sync up` on this box, then `8sync ccc kit` (hooks point at the installed exe). Ask gate never driven live (AskUserQuestion is absent in `claude -p`).
+
 # v0.61.0 → v0.62.0 — zsh-native `8sync forge`, self-setting-up installers, pro zsh + terminal profile
 
 ## Goal

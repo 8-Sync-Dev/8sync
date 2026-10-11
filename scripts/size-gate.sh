@@ -23,11 +23,18 @@
 # +102,656 B (5,390,608), linux-aarch64 +88,064, darwin-x86_64 +94,392,
 # darwin-arm64 +82,960, windows +123,392. size-report (x86_64-pc-windows-msvc):
 # `web` gate = +1,159,680 B, still the only elephant. 36,592 B headroom left.
+#
+# Raised 2026-10-11 for v0.63.0, WITH attribution: `8sync ccc` (Claude Code
+# sessions, kit installer, native verify hook, settings merge) + the embedded kit
+# (6 agents, /ship, CLAUDE.md block) + the shared name→UUID registry. size-report
+# (x86_64-pc-windows-msvc): full 4,281,856 B, minimal 3,122,688 B (was 3,069,952:
+# +52,736 B), `web` gate = +1,159,168 B (unchanged). Windows release build
+# +41,472 B over v0.62.0. linux-x86_64 v0.62.0 was 5,415,216 B with 11,984 B left.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-5427200}"   # 5300 KiB (raised 2026-10-11 from 5180 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-5505024}"   # 5376 KiB (raised 2026-10-11 from 5300 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

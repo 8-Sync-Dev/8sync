@@ -777,7 +777,14 @@ fn run_capture(cmd: &[&str]) -> Option<String> {
 /// Run a shell command, printing it first
 pub fn run_loud(cmd: &str, args: &[&str]) -> Result<()> {
     ui::info(&format!("$ {} {}", cmd, args.join(" ")));
-    let status = Command::new(cmd).args(args).status()?;
+    let mut c = Command::new(cmd);
+    // Started from PowerShell 7, Windows PowerShell 5.1 inherits pwsh's module
+    // path and loses built-ins like Get-FileHash, which official installers
+    // (claude.ai/install.ps1) need. Without the variable it rebuilds its own.
+    if cmd == "powershell" {
+        c.env_remove("PSModulePath");
+    }
+    let status = c.args(args).status()?;
     if !status.success() {
         return Err(anyhow!("command failed: {}", cmd));
     }

@@ -43,6 +43,7 @@ pub fn print_cheatsheet() {
         ("8sync ship \"<msg>\"",   "git add -A + commit + push + `gh pr create` in one shot"),
         ("8sync feynman auth-omp", "reuse omp's Claude OAuth + keys in Feynman (Pi research agent)"),
         ("8sync forge <name>",     "zsh shell bound to a named Forge session (`: <prompt>` asks Forge; --tui for the TUI)"),
+        ("8sync ccc . <name>",     "Claude Code session by name in this repo (kit: subagents · /ship · verify hook · stop + ask gates)"),
     ]);
     println!("  {}", crate::brand::render("→ each project gets an AGENTS.md (managed) + su-code/ folder (memory) on first `8sync .`").dimmed());
 

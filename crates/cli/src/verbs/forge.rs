@@ -12,14 +12,13 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use serde::{Deserialize, Serialize};
 
 use crate::env_detect::Env;
 use crate::ui;
+use crate::verbs::uuid_sessions::{self, Store};
 
 const FORGE_RELEASE: &str = "https://github.com/tailcallhq/forgecode/releases/latest/download";
 
@@ -82,7 +81,7 @@ pub fn run(a: Args) -> Result<()> {
         "provider" | "config" | "workspace" | "mcp" | "vscode" | "banner" | "info" => {
             run_forge(&ensure_forge()?, &root, None, &a.rest)
         }
-        "" | "--tui" => match load_registry(&forge_key_dir(&env, &root)).last_used {
+        "" | "--tui" => match sessions(&env, &root).load().last_used {
             Some(name) => open_session(&env, &root, &name, false, &a.rest),
             None => {
                 ui::header("8sync forge");
@@ -99,11 +98,8 @@ pub fn run(a: Args) -> Result<()> {
 /// Create-or-resume `name`, then enter it: zsh by default, the TUI with `--tui`,
 /// or a direct forge invocation when other arguments (e.g. `-p`) are given.
 fn open_session(env: &Env, root: &Path, name: &str, refuse_existing: bool, extra: &[String]) -> Result<()> {
-    if !valid_name(name) {
-        bail!("invalid session name '{name}' (use letters, digits, '-', '_', '.'; ≤64 chars)");
-    }
+    let session = sessions(env, root).touch(name, refuse_existing)?;
     let forge = ensure_forge()?;
-    let session = touch_session(env, root, name, refuse_existing)?;
 
     ui::info(&format!("forge · {} · {}", session.name, root.display()));
 
@@ -179,7 +175,7 @@ pub(crate) struct Zsh {
 /// Start zsh with Forge's plugin and theme (regenerated from the installed forge
 /// so they always match its version) and the session's conversation exported as
 /// `_FORGE_CONVERSATION_ID`, which the plugin passes to every `: <prompt>`.
-fn launch_zsh(forge: &Path, zsh: &Zsh, env: &Env, root: &Path, s: &ForgeSession) -> Result<()> {
+fn launch_zsh(forge: &Path, zsh: &Zsh, env: &Env, root: &Path, s: &uuid_sessions::Session) -> Result<()> {
     let zdot = env.xdg_config.join("8sync").join("forge-zsh");
     std::fs::create_dir_all(&zdot).with_context(|| format!("mkdir {}", zdot.display()))?;
     // Regenerate only when the forge binary changed (path · size · mtime): the two
@@ -619,121 +615,6 @@ fn add_user_path(dir: &Path) {
     }
 }
 
-// ── session registry ────────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize, Default)]
-struct ForgeRegistry {
-    last_used: Option<String>,
-    sessions: Vec<ForgeSession>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct ForgeSession {
-    name: String,
-    conversation_id: String,
-    created: u64,
-    last_active: u64,
-}
-
-fn touch_session(env: &Env, root: &Path, name: &str, refuse_existing: bool) -> Result<ForgeSession> {
-    let kdir = forge_key_dir(env, root);
-    let mut reg = load_registry(&kdir);
-    let t = now();
-    let session = match reg.sessions.iter_mut().find(|s| s.name == name) {
-        Some(_) if refuse_existing => {
-            bail!("session '{name}' already exists in this repo (resume it with `8sync forge {name}`)")
-        }
-        Some(existing) => {
-            existing.last_active = t;
-            existing.clone()
-        }
-        None => {
-            let s = ForgeSession { name: name.to_string(), conversation_id: new_uuid(), created: t, last_active: t };
-            reg.sessions.push(s.clone());
-            s
-        }
-    };
-    reg.last_used = Some(name.to_string());
-    save_registry(&kdir, &reg)?;
-    Ok(session)
-}
-
-/// Random RFC 4122 version-4 UUID — the only conversation-id form Forge accepts.
-/// `RandomState` is seeded from the OS RNG; no extra crate needed.
-fn new_uuid() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let mut bytes = [0u8; 16];
-    for (i, chunk) in bytes.chunks_mut(8).enumerate() {
-        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-        h.write_u128(SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
-        h.write_usize(i);
-        chunk.copy_from_slice(&h.finish().to_le_bytes());
-    }
-    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
-    bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
-    let h: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
-}
-
-fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
-fn project_key(root: &Path) -> String {
-    let s = root.to_string_lossy();
-    let key: String = s.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    if key.len() <= 120 {
-        return key;
-    }
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    s.hash(&mut h);
-    format!("h{:016x}", h.finish())
-}
-
-fn forge_key_dir(env: &Env, root: &Path) -> PathBuf {
-    env.xdg_config.join("8sync").join("forge-sessions").join(project_key(root))
-}
-
-fn load_registry(kdir: &Path) -> ForgeRegistry {
-    std::fs::read_to_string(kdir.join("index.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn save_registry(kdir: &Path, reg: &ForgeRegistry) -> Result<()> {
-    std::fs::create_dir_all(kdir).with_context(|| format!("mkdir {}", kdir.display()))?;
-    std::fs::write(kdir.join("index.json"), serde_json::to_string_pretty(reg)?)
-        .context("write forge session index")
-}
-
-fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && name.len() <= 64
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-}
-
-fn ago(secs: u64, now: u64) -> String {
-    let d = now.saturating_sub(secs);
-    match d {
-        0..=59 => format!("{d}s ago"),
-        60..=3599 => format!("{}m ago", d / 60),
-        3600..=86_399 => format!("{}h ago", d / 3600),
-        _ => format!("{}d ago", d / 86_400),
-    }
-}
-
-fn print_sessions(reg: &ForgeRegistry) {
-    let n = now();
-    for s in &reg.sessions {
-        let star = if reg.last_used.as_deref() == Some(&s.name) { "★ " } else { "  " };
-        println!("{star}{:<16}  last active: {:<12}  id: {}", s.name, ago(s.last_active, n), s.conversation_id);
-    }
-}
-
 // ── subcommands ─────────────────────────────────────────────────────────────
 
 fn status(env: &Env, root: &Path) -> Result<()> {
@@ -759,41 +640,34 @@ fn status(env: &Env, root: &Path) -> Result<()> {
             ui::info(&format!("zsh plugin: {name} — installed on first `8sync forge <name>`"));
         }
     }
-    let reg = load_registry(&forge_key_dir(env, root));
+    let reg = sessions(env, root).load();
     println!();
     if reg.sessions.is_empty() {
         ui::info(&format!("no sessions recorded in {}", root.display()));
     } else {
         ui::info(&format!("sessions in {}:", root.display()));
-        print_sessions(&reg);
+        uuid_sessions::print(&reg);
     }
     Ok(())
 }
 
 fn cmd_ls(env: &Env, root: &Path) -> Result<()> {
-    let reg = load_registry(&forge_key_dir(env, root));
+    let reg = sessions(env, root).load();
     ui::header("8sync forge sessions");
     ui::info(&format!("project: {}", root.display()));
     if reg.sessions.is_empty() {
         ui::info("no sessions yet — create one with `8sync forge <name>`");
     } else {
-        print_sessions(&reg);
+        uuid_sessions::print(&reg);
     }
     Ok(())
 }
 
 fn cmd_rm(env: &Env, root: &Path, name: &str) -> Result<()> {
-    let kdir = forge_key_dir(env, root);
-    let mut reg = load_registry(&kdir);
-    let Some(i) = reg.sessions.iter().position(|s| s.name == name) else {
+    let Some(s) = sessions(env, root).remove(name)? else {
         ui::warn(&format!("no session '{name}' found"));
         return Ok(());
     };
-    let s = reg.sessions.remove(i);
-    if reg.last_used.as_deref() == Some(name) {
-        reg.last_used = reg.sessions.last().map(|x| x.name.clone());
-    }
-    save_registry(&kdir, &reg)?;
     // A session that never sent a prompt has no stored conversation; ignore that.
     if let Some(forge) = find_forge() {
         let _ = Command::new(forge)
@@ -805,6 +679,10 @@ fn cmd_rm(env: &Env, root: &Path, name: &str) -> Result<()> {
     }
     ui::ok(&format!("removed session '{name}' ({})", s.conversation_id));
     Ok(())
+}
+
+fn sessions(env: &Env, root: &Path) -> Store {
+    Store::new(env, root, "forge-sessions", "forge")
 }
 
 fn mask(key: &str) -> String {
@@ -861,18 +739,7 @@ fn cmd_key(rest: &[String]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{mask, new_uuid, shell_path};
-
-    #[test]
-    fn session_ids_are_rfc4122_v4_and_unique() {
-        let a = new_uuid();
-        let groups: Vec<&str> = a.split('-').collect();
-        assert_eq!(groups.iter().map(|g| g.len()).collect::<Vec<_>>(), [8, 4, 4, 4, 12]);
-        assert!(a.chars().all(|c| c == '-' || c.is_ascii_hexdigit()));
-        assert!(groups[2].starts_with('4'), "version nibble: {a}");
-        assert!(matches!(&groups[3][..1], "8" | "9" | "a" | "b"), "variant: {a}");
-        assert_ne!(a, new_uuid());
-    }
+    use super::{mask, shell_path};
 
     #[test]
     fn keys_never_print_in_full() {

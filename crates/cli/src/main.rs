@@ -145,6 +145,9 @@ enum Cmd {
     /// Named ForgeCode sessions with persistent UUID conversation mapping: 8sync forge <name>
     #[command(name = "forge", alias = "forgecode")]
     Forge(verbs::forge::Args),
+
+    /// Claude Code CLI with named per-repo sessions + the 8sync kit: 8sync ccc . <name>
+    Ccc(verbs::ccc::Args),
 }
 
 fn main() -> Result<()> {
@@ -163,10 +166,8 @@ fn main() -> Result<()> {
         let matches = cmd.get_matches();
         Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
     };
-    if !matches!(
-        cli.cmd,
-        Some(Cmd::Up(_)) | Some(Cmd::Setup(_)) | Some(Cmd::Help)
-    ) {
+    let hook = matches!(&cli.cmd, Some(Cmd::Ccc(a)) if a.is_hook());
+    if !hook && !matches!(cli.cmd, Some(Cmd::Up(_)) | Some(Cmd::Setup(_)) | Some(Cmd::Help)) {
         verbs::selfup::auto_check_notice();
     }
     match cli.cmd {
@@ -205,6 +206,7 @@ fn main() -> Result<()> {
         Some(Cmd::Feature(a)) => verbs::feature::run(a),
         Some(Cmd::Feynman(a)) => verbs::feynman::run(a),
         Some(Cmd::Forge(a))   => verbs::forge::run(a),
+        Some(Cmd::Ccc(a))     => verbs::ccc::run(a),
     }
 }
 
