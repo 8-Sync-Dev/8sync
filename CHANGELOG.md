@@ -37,6 +37,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Fixed
 - **Skill links were committed.** The managed `.gitignore` used `.cursor/skills/` and `.zcode/skills/`, but git sees a symlink/junction as a file and a `dir/` pattern never matches it, so `git add -A` committed the links (this repo tracked both). The block now writes `.cursor/skills`, `.zcode/skills`, `.claude/skills` and `.claude/settings.local.json`; a test runs real `git status` against the links. The two links are untracked here.
 - A repo's own committed `.claude/skills/` is never replaced, not even by `harness create --force`.
+- **Windows one-liner failed whenever the GitHub API was rate-limited** (shared CI runners, office NAT): `install.ps1` resolved the latest tag with `Invoke-WebRequest -MaximumRedirection 0`, which on Windows PowerShell 5.1 throws without the response, so only the 60-per-hour API fallback ever worked. It now reads the `releases/latest` 302 with a no-redirect `HttpWebRequest` (proven on PS 5.1 and 7 with the API path disabled). Found by the new `install-smoke` run on `windows-latest`.
 
 ## [0.64.0] — 2026-10-11
 ### Added

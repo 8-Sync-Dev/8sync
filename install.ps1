@@ -60,17 +60,24 @@ function Get-HeaderLocation($obj) {
 #
 # Prefer the releases/latest *web* redirect over the GitHub API: the
 # unauthenticated API is rate-limited to 60 req/hour per IP (403 once
-# exhausted). The redirect (github.com/<repo>/releases/latest ->
-# .../releases/tag/vX.Y.Z) is not.
+# exhausted, routine on shared CI runners and office NAT). The redirect
+# (github.com/<repo>/releases/latest -> .../releases/tag/vX.Y.Z) is not.
+# HttpWebRequest with AllowAutoRedirect off returns the 302 itself on both
+# Windows PowerShell 5.1 and PS 7; `Invoke-WebRequest -MaximumRedirection 0`
+# throws on 5.1 without the response, which silently left only the API path.
 function Get-LatestVersion {
     $latestUrl = "https://github.com/$Repo/releases/latest"
     $loc = $null
     try {
-        # -MaximumRedirection 0: PS7 returns the 3xx response; 5.1 throws (caught below).
-        $resp = Invoke-WebRequest -Uri $latestUrl -MaximumRedirection 0 -UseBasicParsing -ErrorAction Stop
-        $loc = Get-HeaderLocation $resp
+        $req = [System.Net.HttpWebRequest]::Create($latestUrl)
+        $req.AllowAutoRedirect = $false
+        $req.Method = 'HEAD'
+        $req.UserAgent = '8sync-installer'
+        $resp = $req.GetResponse()
+        $loc = $resp.Headers['Location']
+        $resp.Close()
     } catch {
-        $loc = Get-HeaderLocation $_.Exception.Response
+        $loc = Get-HeaderLocation $_.Exception.InnerException.Response
     }
     if ($loc -and $loc -match '/releases/tag/([^/?#]+)') {
         return $matches[1].Trim()
