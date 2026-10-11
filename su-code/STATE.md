@@ -8,10 +8,10 @@
 - [x] `ccc.rs` + shared `uuid_sessions.rs`; kit assets in `assets/claude/`; Stage A `claude-code` + `claude-kit` steps; PSModulePath fix; `harness claude-code` merge fix.
 - [x] Live proof (API key, isolated CLAUDE_CONFIG_DIR): verify hook fed E0425 back; stop gate continued "Next I will add tests"; named session remembered PELICAN-63 across runs; `. rm` deleted the transcript. Gates: stop 18/18 Haiku, ask 6/6 Sonnet (Haiku 4/6).
 - [x] 136 tests; `--no-default-features` builds; size ceiling 5,505,024 B with attribution.
-- [ ] Release v0.63.0 + published installer run (WSL: Claude Code + kit) + `8sync up` here + README setup capture.
+- [x] v0.63.0 published (run 38140427447, 5 assets, linux-x86_64 5,464,624 B under 5,505,024). WSL Ubuntu one-liner (fresh HOME, no sudo): Claude Code 2.1.296 + kit + cbm/serena in Claude Code, "all steps succeeded". This box: `8sync up` 0.62.0 → 0.63.0 checksum ok, `8sync ccc kit` refreshed. README images from real output (hero, install, ccc-kit, ccc-gates, forge-prompt).
 
 ## Current
-Committing v0.63.0.
+Done. Installed 8sync 0.63.0 + Claude Code 2.1.296 on this box (not logged in: `claude auth login`).
 
 ## Next
 After release: `8sync up` on this box, then `8sync ccc kit` (hooks point at the installed exe). Ask gate never driven live (AskUserQuestion is absent in `claude -p`).

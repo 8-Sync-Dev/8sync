@@ -67,6 +67,10 @@ You don't need git, Rust or admin rights. The installer verifies the binary's sh
 | harness global | 50+ skills, `APPEND_SYSTEM.md` agent rules, MCP servers (codebase-memory-mcp, headroom, serena), hooks, context compaction at 50%. |
 | PATH | `~/.local/bin`, `~/.cargo/bin`, `~/.bun/bin`, `~/.encore/bin` wired into zsh/bash/fish. |
 
+A real run of the v0.63.0 one-liner on a fresh Ubuntu account without sudo:
+
+![v0.63.0 installer on Ubuntu without sudo: gh, omp, codegraph, Forge, zsh, Claude Code and the kit, all steps succeeded](docs/assets/install.png)
+
 Options: `SUSYNC_NO_SETUP=1` (binary only) · `SUSYNC_VERSION=v0.63.0` (pin) · `SUSYNC_BIN_DIR=~/bin` · `sh -s -- --uninstall`.
 Run it again any time, or `8sync up`. Fallback URL: `https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.sh`.
 
