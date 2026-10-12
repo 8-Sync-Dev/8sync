@@ -42,17 +42,20 @@ mod verify;
 
     THE KIT (installed by `8sync setup`; edited files are kept unless --force)
       rules    the 8 Sync Anthropic rules (aup-audit/8sync-anthropic-rules.md) load in every session
-      agents   explore (haiku) · task · quick-task · reviewer · designer
+      agents   explore (haiku) · task · quick-task · reviewer · designer · verifier · researcher
       skills   /ship · /aup-audit · deep-research + every bundled 8sync skill (linked to ~/.omp/skills)
       verify   after every Edit/Write, in the background: cargo check · package typecheck/tsc · go vet;
                errors wake Claude; a turn cannot end on a broken build (`hook verify` / `verify-stop`)
       guard    before Bash/Edit/Write: no credential files, real secrets, `git add` of
                secrets, or Claude-subscription routing (`8sync ccc hook guard`)
-      gates    stop: a Haiku check keeps the turn going while work is visibly unfinished;
-               ask: questions without a real need go back to Claude to decide itself
+      gates    stop: a Haiku check keeps the turn going while work is visibly unfinished (not while
+               it waits on background agents); ask: questions without a real need go back to Claude
+      session  SessionStart digest of su-code/STATE.md + recent failure/validated notes (<= 6 KB,
+               stable for the prompt cache); non-core bundled skills load name-only (skillOverrides)
       also     auto permission mode · medium effort · task list (each only if unset) · build/test
                commands skip the classifier · deny .env / keys / *.session / *.pkl and force-push ·
-               codebase-memory-mcp + serena from omp's MCP config
+               codebase-memory-mcp + serena from omp's MCP config when their command is on PATH
+               (serena alwaysLoad=false; failures are reported)
 "})]
 pub struct Args {
     /// `.` then a session name, or a subcommand: `ls`, `new <name>`, `rm <name>`,
@@ -277,16 +280,18 @@ pub(crate) fn ensure_claude() -> Result<PathBuf> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 11] = [
+const KIT_FILES: [(&str, &str); 13] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
     ("claude/agents/reviewer.md", "agents/reviewer.md"),
     ("claude/agents/designer.md", "agents/designer.md"),
+    ("claude/agents/verifier.md", "agents/verifier.md"),
+    ("claude/agents/researcher.md", "agents/researcher.md"),
     ("claude/skills/ship/SKILL.md", "skills/ship/SKILL.md"),
     ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
     ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
-    // The org's rules, imported by the kit's CLAUDE.md block into every session.
+    // The org's rules: summarised in the kit's CLAUDE.md block, full text opened on demand (/aup-audit).
     ("skills/aup-audit/8sync-anthropic-rules.md", "skills/aup-audit/8sync-anthropic-rules.md"),
     ("skills/deep-research/SKILL.md", "skills/deep-research/SKILL.md"),
     ("skills/deep-research/references/binary-weight-audit.md", "skills/deep-research/references/binary-weight-audit.md"),
@@ -377,6 +382,8 @@ const STOP_GATE: &str = "8sync gate: stop. Decide whether Claude may end this tu
 Judge only from `last_assistant_message`, using the question policy at the end.\n\
 Reply {\"ok\": true} when the work is done, when the message is a plain answer to the user, or when it ends with \
 a JUSTIFIED question.\n\
+Reply {\"ok\": true} when the message says Claude is waiting on background agents, tasks or workflows it \
+launched (they notify on completion) and it has nothing else it can do meanwhile.\n\
 Reply {\"ok\": false, \"reason\": \"<the concrete next step Claude should take>\"} when the message shows work \
 Claude can still do itself: planned tasks left undone (\"next I will…\"), code edited but build/test not run \
 since, a failing build/test/lint it has not fixed, a reviewer verdict NOT MERGEABLE, or a NOT JUSTIFIED question \
@@ -392,11 +399,19 @@ Rules 1, 2 or 3 → reply exactly {\"ok\": true}.\n\
 Rule 4 only → reply {\"ok\": false, \"reason\": \"Don't ask: go with <the option you would pick> because \
 <one-line why>; state that assumption and continue.\"}\n\n";
 
-/// The ask gate fires only on AskUserQuestion, so it can afford Sonnet: with the
-/// same prompt Haiku misjudged 2 of 6 labelled questions, Sonnet none. A hook
-/// `model` must be a full id — an alias fails as `unrecognized_model` and the
-/// hook then fails open (the question goes through).
-const ASK_GATE_MODEL: &str = "claude-sonnet-5";
+/// A hook `model` must be a full id — an alias fails as `unrecognized_model` and
+/// the hook then fails open. The ASK gate stays on Sonnet: on the same prompt
+/// Haiku misjudged 2 of 6 labelled questions, Sonnet none. The Stop gate is a
+/// simpler check, so Haiku is enough. Evidence measured on the previous pair
+/// (Sonnet 5 vs Haiku 4.5); not re-measured on 5.5.
+const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
+const STOP_GATE_MODEL: &str = "claude-haiku-5-5";
+
+/// Skills the kit itself relies on: never demoted by `skillOverrides`.
+/// Includes the repo-rule skills (always-on or required for UI), whose trigger
+/// text must not be dropped.
+const CORE_SKILLS: [&str; 8] =
+    ["ship", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
@@ -440,11 +455,13 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
     stamps.insert(KIT_VERSION_KEY.to_string(), env!("CARGO_PKG_VERSION").to_string());
     std::fs::create_dir_all(&dir)?;
     std::fs::write(&stamp_path, serde_json::to_string_pretty(&stamps)?)?;
-    match deploy::link_bundled_skills(&env.home, &dir.join("skills")) {
+    let linked = deploy::link_bundled_skills(&env.home, &dir.join("skills"));
+    match linked {
         Ok(0) => {}
         Ok(n) => ui::ok(&format!("{n} bundled skill(s) linked → {} (always the current ~/.omp/skills copy)", dir.join("skills").display())),
         Err(e) => ui::warn(&format!("bundled skills not linked into Claude Code: {e:#}")),
     }
+    let skills = linked_bundled_skills(&env.home, &dir.join("skills"));
     for rel in &kept {
         ui::info(&format!("kept your edited {} (`8sync ccc kit --force` overwrites)", dir.join(rel).display()));
     }
@@ -460,7 +477,7 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
     } else {
         serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON — fix it, then `8sync ccc kit`", settings.display()))?
     };
-    apply_kit_settings(&mut v, &exe)?;
+    apply_kit_settings(&mut v, &exe, &skills)?;
     let out = serde_json::to_string_pretty(&v)? + "\n";
     if out != raw {
         std::fs::write(&settings, out).with_context(|| format!("write {}", settings.display()))?;
@@ -490,7 +507,7 @@ fn hook_exe() -> Result<String> {
 /// `env`, `defaultMode` and `effortLevel` defaults (a user value wins),
 /// `permissions` rules, and 8sync's hooks (replaced in place on re-run, so the
 /// file only changes when the kit does).
-fn apply_kit_settings(v: &mut Value, exe: &str) -> Result<()> {
+fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()> {
     let obj = v.as_object_mut().context("settings.json is not a JSON object")?;
     if let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() {
         env.entry("CLAUDE_CODE_ENABLE_TODO_TOOLS").or_insert_with(|| json!("1"));
@@ -513,7 +530,24 @@ fn apply_kit_settings(v: &mut Value, exe: &str) -> Result<()> {
             }
         }
     }
+    // Bundled skills the kit does not rely on load name-only (listing without
+    // the body), cutting the per-session prefix. Only missing keys are added.
+    let over = obj.entry("skillOverrides").or_insert_with(|| json!({}));
+    if let Some(over) = over.as_object_mut() {
+        for name in skills.iter().filter(|n| !CORE_SKILLS.contains(&n.as_str())) {
+            over.entry(name.clone()).or_insert_with(|| json!("name-only"));
+        }
+    }
     let hooks = obj.entry("hooks").or_insert_with(|| json!({})).as_object_mut().context("settings.json `hooks` is not an object")?;
+    // Repo digest on session start (stdout becomes context).
+    upsert_hook_group(
+        hooks,
+        "SessionStart",
+        json!({
+            "matcher": "startup|clear|compact",
+            "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "session-start"], "timeout": 10 }]
+        }),
+    );
     // Async: edits never wait for the compiler. Latest edit wins; a failure
     // wakes Claude (exit 2). `verify-stop` keeps a turn from ending broken.
     upsert_hook_group(
@@ -530,7 +564,7 @@ fn apply_kit_settings(v: &mut Value, exe: &str) -> Result<()> {
             }]
         }),
     );
-    upsert_hook_group(hooks, "Stop", json!({ "hooks": [{ "type": "prompt", "prompt": format!("{STOP_GATE}{ASK_POLICY}"), "timeout": 30 }] }));
+    upsert_hook_group(hooks, "Stop", json!({ "hooks": [{ "type": "prompt", "prompt": format!("{STOP_GATE}{ASK_POLICY}"), "model": STOP_GATE_MODEL, "timeout": 30 }] }));
     upsert_hook_group(
         hooks,
         "Stop",
@@ -550,6 +584,9 @@ fn apply_kit_settings(v: &mut Value, exe: &str) -> Result<()> {
             }]
         }),
     );
+    // The guard stays on the broad matcher with no `if`: the hook `if` field takes
+    // a single permission rule, and narrowing it would let some commands/edits
+    // (e.g. `git add` of secrets, credential paths) skip the check.
     upsert_hook_group(
         hooks,
         "PreToolUse",
@@ -596,6 +633,94 @@ fn upsert_hook_group(hooks: &mut serde_json::Map<String, Value>, event: &str, gr
     }
 }
 
+/// Skill names (SKILL.md frontmatter `name:`, else the dir name — Claude Code
+/// keys `skillOverrides` by name) of the entries under `skills_dir` that are
+/// links (symlink / Windows junction) resolving under omp's bundled tree, i.e.
+/// the ones `link_bundled_skills` manages. Plain user directories are skipped.
+fn linked_bundled_skills(home: &Path, skills_dir: &Path) -> Vec<String> {
+    let Ok(omp) = home.join(".omp/skills").canonicalize() else { return Vec::new() };
+    let mut out: Vec<String> = std::fs::read_dir(skills_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            let Ok(meta) = std::fs::symlink_metadata(e.path()) else { return false };
+            is_link(&meta) && e.path().canonicalize().is_ok_and(|t| t.starts_with(&omp))
+        })
+        .filter_map(|e| {
+            let dir_name = e.file_name().into_string().ok()?;
+            Some(skill_frontmatter_name(&e.path().join("SKILL.md")).unwrap_or(dir_name))
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn is_link(meta: &std::fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return meta.file_attributes() & 0x400 != 0; // junction (reparse point)
+    }
+    #[cfg(not(windows))]
+    false
+}
+
+/// `name:` from the YAML frontmatter of a SKILL.md.
+fn skill_frontmatter_name(skill_md: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(skill_md).ok()?;
+    let mut lines = text.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    for l in lines {
+        if l.trim() == "---" {
+            break;
+        }
+        if let Some(v) = l.strip_prefix("name:") {
+            let v = v.trim().trim_matches(|c| c == '"' || c == '\'');
+            return (!v.is_empty()).then(|| v.to_string());
+        }
+    }
+    None
+}
+
+/// A KNOWLEDGE.md lesson line: `- failure:` / `- validated:`, optionally bold (`- **failure:`).
+fn is_lesson(l: &str) -> bool {
+    let Some(rest) = l.strip_prefix("- ") else { return false };
+    let rest = rest.strip_prefix("**").unwrap_or(rest);
+    rest.starts_with("failure:") || rest.starts_with("validated:")
+}
+
+/// Stable digest for `hook session-start`: head of `su-code/STATE.md`, then the
+/// last failure/validated lines of `su-code/KNOWLEDGE.md`. No timestamps, so the
+/// prompt prefix stays cache-stable. Empty when the repo has no `su-code/STATE.md`.
+fn session_digest(root: &Path) -> String {
+    const CAP: usize = 6000;
+    let Ok(state) = std::fs::read_to_string(root.join("su-code/STATE.md")) else { return String::new() };
+    let mut out = state.lines().take(60).collect::<Vec<_>>().join("\n");
+    if let Ok(k) = std::fs::read_to_string(root.join("su-code/KNOWLEDGE.md")) {
+        let lines: Vec<&str> = k.lines().filter(|l| is_lesson(l)).collect();
+        let tail = &lines[lines.len().saturating_sub(20)..];
+        if !tail.is_empty() {
+            out.push_str("\n\n");
+            out.push_str(&tail.join("\n"));
+        }
+    }
+    if out.len() > CAP {
+        let mut end = CAP;
+        while !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
+    }
+    out
+}
+
 /// Copy omp's code-intelligence MCP servers into Claude Code's user scope so
 /// subagents get the same graph tools. Existing registrations are left alone.
 fn mirror_mcp(env: &Env, claude: &Path) {
@@ -608,26 +733,30 @@ fn mirror_mcp(env: &Env, claude: &Path) {
         None => env.home.join(".claude.json"),
     });
     for name in ["codebase-memory-mcp", "serena"] {
-        let spec = &omp["mcpServers"][name];
-        let Some(bin) = spec["command"].as_str() else { continue };
         if user["mcpServers"].get(name).is_some() {
             ui::skip(&format!("MCP {name}"), "already in Claude Code");
             continue;
         }
-        if which::which(bin).is_err() {
+        let mut spec = omp["mcpServers"][name].clone();
+        let Some(bin) = spec["command"].as_str().map(str::to_string) else {
+            ui::warn(&format!("MCP {name}: not in ~/.omp/agent/mcp.json — not registered in Claude Code"));
+            continue;
+        };
+        if which::which(&bin).is_err() {
+            ui::warn(&format!("MCP {name}: command `{bin}` not found on PATH — not registered in Claude Code"));
             continue;
         }
-        let added = Command::new(claude)
+        if name == "serena" {
+            spec["alwaysLoad"] = json!(false);
+        }
+        match Command::new(claude)
             .args(["mcp", "add-json", "--scope", "user", name, &spec.to_string()])
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-        if added {
-            ui::ok(&format!("MCP {name} → Claude Code (user scope)"));
-        } else {
-            ui::warn(&format!("MCP {name}: `claude mcp add-json` failed"));
+            .output()
+        {
+            Ok(o) if o.status.success() => ui::ok(&format!("MCP {name} → Claude Code (user scope)")),
+            Ok(o) => ui::warn(&format!("MCP {name}: `claude mcp add-json` failed: {}", String::from_utf8_lossy(&o.stderr).trim())),
+            Err(e) => ui::warn(&format!("MCP {name}: could not run `claude mcp add-json`: {e}")),
         }
     }
 }
@@ -675,6 +804,20 @@ fn status(env: &Env, root: &Path) -> Result<()> {
 
 // ── hooks ───────────────────────────────────────────────────────────────────
 
+/// Walk up from `start` to the first dir holding `su-code/STATE.md`; stop after checking
+/// `home` (inclusive) or at the filesystem root.
+fn find_state_root(start: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    for dir in start.ancestors() {
+        if dir.join("su-code/STATE.md").is_file() {
+            return Some(dir.to_path_buf());
+        }
+        if home == Some(dir) {
+            return None;
+        }
+    }
+    None
+}
+
 fn hook(rest: &[String]) -> Result<()> {
     let mut input = String::new();
     let _ = std::io::stdin().read_to_string(&mut input);
@@ -683,7 +826,14 @@ fn hook(rest: &[String]) -> Result<()> {
         Some("verify") => std::process::exit(verify::post_tool_use(&input)),
         Some("verify-stop") => verify::stop(&input),
         Some("guard") => guard::check(&input),
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard   (run by the kit's Claude Code hooks)"),
+        Some("session-start") => {
+            let cwd = serde_json::from_str::<Value>(&input).ok().and_then(|v| v["cwd"].as_str().map(PathBuf::from));
+            let start = cwd.or_else(|| std::env::current_dir().ok()).unwrap_or_default();
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let root = find_state_root(&start, home.as_deref());
+            root.map(|r| session_digest(&r)).filter(|d| !d.is_empty())
+        }
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|session-start   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -713,15 +863,15 @@ mod tests {
                 ]
             }
         });
-        apply_kit_settings(&mut v, "/new/8sync").unwrap();
+        apply_kit_settings(&mut v, "/new/8sync", &[]).unwrap();
         let once = v.clone();
-        apply_kit_settings(&mut v, "/new/8sync").unwrap();
+        apply_kit_settings(&mut v, "/new/8sync", &[]).unwrap();
         assert_eq!(v, once, "second merge must not change anything");
 
         assert_eq!(v["model"], "opus");
         assert_eq!(v["effortLevel"], "medium", "effort defaults to medium when unset");
         let mut mine = json!({ "effortLevel": "xhigh" });
-        apply_kit_settings(&mut mine, "/new/8sync").unwrap();
+        apply_kit_settings(&mut mine, "/new/8sync", &[]).unwrap();
         assert_eq!(mine["effortLevel"], "xhigh", "a user-set effort wins");
         assert_eq!(v["env"]["CLAUDE_CODE_ENABLE_TODO_TOOLS"], "0", "a user-set env value wins");
         let deny = v["permissions"]["deny"].as_array().unwrap();
@@ -747,5 +897,90 @@ mod tests {
         assert_eq!(pre[2]["hooks"][0]["args"], json!(["ccc", "hook", "guard"]));
         assert!(deny.iter().any(|r| r == "Edit(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write("))));
         assert_eq!(v["permissions"]["defaultMode"], "auto");
+    }
+
+    #[test]
+    fn old_kit_settings_upgrade_in_place_without_duplicates() {
+        let mut v = json!({
+            "skillOverrides": { "impeccable": "off" },
+            "hooks": {
+                "Stop": [{ "hooks": [{ "type": "prompt", "prompt": "8sync gate: stop. v1 text", "timeout": 30 }] }],
+                "PreToolUse": [{ "matcher": "AskUserQuestion", "hooks": [{ "type": "prompt", "prompt": "8sync gate: ask. v1", "model": "claude-sonnet-5" }] }]
+            }
+        });
+        let skills: Vec<String> = ["ship", "codegraph", "impeccable", "ponytail", "taste"].map(String::from).to_vec();
+        apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
+        let stop = v["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(stop.iter().filter(|g| g["hooks"][0]["prompt"].is_string()).count(), 1);
+        assert_eq!(stop[0]["hooks"][0]["model"], STOP_GATE_MODEL);
+        assert!(stop[0]["hooks"][0]["prompt"].as_str().unwrap().contains("background agents"));
+        assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["model"], ASK_GATE_MODEL);
+        assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["args"], json!(["ccc", "hook", "session-start"]));
+        let o = &v["skillOverrides"];
+        assert_eq!(o["impeccable"], "off", "user value kept");
+        assert_eq!(o["taste"], "name-only");
+        assert!(o.get("ship").is_none() && o.get("codegraph").is_none() && o.get("ponytail").is_none(), "core skills untouched");
+        assert_eq!(v["hooks"]["SessionStart"][0]["matcher"], "startup|clear|compact");
+        let once = v.clone();
+        apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
+        assert_eq!(v, once);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_bundled_skills_only_counts_omp_symlinks_keyed_by_frontmatter_name() {
+        let d = std::env::temp_dir().join(format!("8sync-linked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let omp = d.join(".omp/skills");
+        let cl = d.join(".claude/skills");
+        std::fs::create_dir_all(omp.join("taste-skill")).unwrap();
+        std::fs::create_dir_all(omp.join("plain")).unwrap();
+        std::fs::create_dir_all(omp.join("mine")).unwrap();
+        std::fs::create_dir_all(cl.join("mine")).unwrap(); // user's own dir, same name
+        std::fs::write(omp.join("taste-skill/SKILL.md"), "---\nname: design-taste-frontend\ndescription: x\n---\nbody").unwrap();
+        std::os::unix::fs::symlink(omp.join("taste-skill"), cl.join("taste-skill")).unwrap();
+        std::os::unix::fs::symlink(omp.join("plain"), cl.join("plain")).unwrap(); // no SKILL.md → dir name
+        let elsewhere = d.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, cl.join("foreign")).unwrap(); // link outside omp
+        assert_eq!(linked_bundled_skills(&d, &cl), vec!["design-taste-frontend".to_string(), "plain".to_string()]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn session_digest_is_bounded_and_stable() {
+        let d = std::env::temp_dir().join(format!("8sync-digest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(session_digest(&d), "", "no su-code/ prints nothing");
+        std::fs::create_dir_all(d.join("su-code")).unwrap();
+        let state: String = (0..100).map(|i| format!("state {i}\n")).collect();
+        std::fs::write(d.join("su-code/STATE.md"), state).unwrap();
+        let know: String = (0..30).map(|i| format!("- **failure:** f{i}\n- **other:** x{i}\n- validated: v{i}\n- failures: nope{i}\n")).collect();
+        std::fs::write(d.join("su-code/KNOWLEDGE.md"), know).unwrap();
+        let out = session_digest(&d);
+        assert!(out.contains("state 59") && !out.contains("state 60"));
+        assert!(out.contains("f29") && out.contains("f20") && !out.contains("f19\n") && !out.contains("other") && !out.contains("nope"));
+        assert!(out.contains("- validated: v29") && out.contains("- validated: v20") && !out.contains("v19\n"), "plain form kept, last 20 only");
+        assert_eq!(out, session_digest(&d), "deterministic");
+        std::fs::write(d.join("su-code/STATE.md"), "é".repeat(5000)).unwrap();
+        let out = session_digest(&d);
+        assert!(out.len() <= 6000 && out.chars().all(|c| c == 'é' || c == '\n' || c.is_ascii()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn state_root_found_from_nested_subdir_and_stops_at_home() {
+        let d = std::env::temp_dir().join(format!("8sync-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let nested = d.join("proj/a/b");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(d.join("proj/su-code")).unwrap();
+        std::fs::write(d.join("proj/su-code/STATE.md"), "state").unwrap();
+        assert_eq!(find_state_root(&nested, Some(&d)), Some(d.join("proj")));
+        assert_eq!(session_digest(&find_state_root(&nested, Some(&d)).unwrap()), "state");
+        // STATE above $HOME is not reached.
+        assert_eq!(find_state_root(&nested, Some(&d.join("proj/a"))), None);
+        assert_eq!(find_state_root(&d.join("nope"), Some(&d)), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

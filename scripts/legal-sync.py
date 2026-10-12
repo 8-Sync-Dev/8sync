@@ -10,6 +10,7 @@ empty snapshot would read as "the policy was deleted".
 import html
 import pathlib
 import re
+import datetime
 import sys
 import urllib.request
 
@@ -66,9 +67,22 @@ def legal_index() -> str:
     return "\n".join(f"- {u}" for u in urls)
 
 
+def stamp_index(day: str) -> None:
+    """Put `Snapshot date: YYYY-MM-DD (UTC)` right under index.md's source comment."""
+    path = OUT / "index.md"
+    if not path.exists():
+        return
+    lines = [l for l in path.read_text(encoding="utf-8").splitlines() if not l.startswith("Snapshot date:")]
+    while len(lines) > 1 and lines[1] == "":
+        del lines[1]
+    lines[1:1] = ["", f"Snapshot date: {day} (UTC)", ""]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     failed = []
+    changed = False
     jobs = {name: (url, lambda url=url: (md_text if url.endswith(".md") else html_text)(fetch(url))) for name, url in SOURCES.items()}
     jobs["index"] = ("https://www.anthropic.com/sitemap.xml (every /legal/ page)", legal_index)
     for name, (url, get) in jobs.items():
@@ -81,9 +95,17 @@ def main() -> int:
             continue
         body = f"<!-- source: {url} — snapshot by scripts/legal-sync.py; do not edit -->\n\n{text}\n"
         path = OUT / f"{name}.md"
+        if name == "index" and path.exists():  # keep the existing stamp so an unchanged run is a no-op
+            m = re.search(r"^Snapshot date: .*$", path.read_text(encoding="utf-8"), re.M)
+            if m:
+                head, rest = body.split("\n\n", 1)
+                body = f"{head}\n\n{m.group(0)}\n\n{rest}"
         if not path.exists() or path.read_text(encoding="utf-8") != body:
             path.write_text(body, encoding="utf-8", newline="\n")
             print(f"updated {path.relative_to(OUT.parent.parent.parent)}")
+            changed = True
+    if changed:  # stamp only on a real change, so unchanged runs stay byte-identical
+        stamp_index(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"))
     for f in failed:
         print(f"error: {f}", file=sys.stderr)
     return 1 if failed else 0

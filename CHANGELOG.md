@@ -4,6 +4,29 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Security
+- **`8sync harness claude-code` only accepts endpoints Anthropic sanctions.** Allowed: `https://api.anthropic.com`, Amazon Bedrock, Google Vertex, Microsoft Foundry, and localhost or one exact host you run yourself (`EIGHTSYNC_SELF_HOSTED_GATEWAY=<host>`). Any other gateway is refused before anything is written: gateways that resell Claude break the Usage Policy ("Do Not Abuse Our Platform"), and your code would go to an undisclosed third party. The official-endpoint check is an exact host match now (`api.anthropic.com.evil.io` used to pass as a substring); plain `http://` is refused except on localhost.
+- **Only Console API keys leave Claude Code.** `harness claude-code` writes a token into `~/.omp/agent/models.yml` (and Windows User env) only when it starts with `sk-ant-api`; `harness add-model` refuses non-Console Anthropic tokens and Claude-protocol providers outside the allowlist; `forge key` takes only a Console key for `anthropic` and refuses ForgeCode's `claude_code` provider; the Feynman bridge skips every Claude/Anthropic model. A subscription/OAuth token stays in Claude Code and is not used for the endpoint probe. Tokens are printed as `…` + the last 4 characters (`harness claude-code`, `harness gateway`, `forge`) and kept out of `curl`'s argv. `scripts/setup-claude-key.ps1` and `.sh` now only forward to `8sync harness claude-code` on stdin (the `.ps1` used to write any token for any endpoint into settings.json and the Windows User env first; the `.sh` overwrote settings.json when 8sync was missing). A subscription/OAuth token is accepted only for `api.anthropic.com`, never for localhost or a self-hosted gateway.
+- **`8sync harness gateway` no longer routes Claude through the 9router proxy**: the `cc/` provider (which made omp pose as Claude Code) is gone and `apply` removes an already-deployed one. The remaining non-Claude routes need `EIGHTSYNC_GATEWAY_ACCEPT=1`, `gateway key` rewrites only its own provider block, `gateway apply` re-deploys the template but keeps your other providers (backup in `models.yml.bak`), and both refuse Anthropic keys (`sk-ant-…`).
+- **`8sync codex-web` is opt-in** (`EIGHTSYNC_CODEX_WEB_ACCEPT=1`): it automates a ChatGPT Web subscription into omp, the same pattern 8 Sync's rules forbid for Claude, and OpenAI's terms for it are not verified. Without the opt-in only `status`/`off` run.
+- `8sync forge` writes `~/.forge/.credentials.json` with mode 0600 (and tightens an existing file).
+
+### Fixed
+- `8sync feynman` works with Feynman ≥ 0.5.35: the bridge finds Pi's packages under `@earendil-works/*` (then `@mariozechner/*`), in the launcher and the extension (was `Cannot find module '@mariozechner/pi-ai'`).
+- Claude 5.5 model IDs (`claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`) in `harness claude-code`, the `harness model` aliases (`opus`/`sonnet`/`haiku`), the endpoint probe (now `x-api-key` + `anthropic-version`, official endpoint and localhost only) and the kit's gates.
+- `8sync ccc kit` says why codebase-memory-mcp / serena were not registered in Claude Code (missing from omp's `mcp.json`, not on PATH, or the `claude mcp add-json` error) instead of skipping silently; serena is registered with `alwaysLoad: false`.
+
+### Changed
+- **Leaner Claude Code sessions.** Measured on one machine (2026-10-12; `wc -c` of every always-loaded layer, and `message.usage` of the first request in 2 Claude Code transcripts), the kit + repo layers came to 55,663 B (≈13.9k tokens at 4 B/token) of a ~58k-token first request; most of it is gone:
+  - the repo `CLAUDE.md` block is compact (≤1.1 KB), no longer orders reading 4 SKILL.md bodies (15.4 KB) before the first tool call, and no longer claims MCP tools are always present;
+  - no block in a `su-code/` memory dir, and no new block in a child repo when an ancestor `CLAUDE.md` already has it (Claude Code loads both; they were byte-identical 8.6 KB copies); an existing child block is kept and refreshed to the compact one;
+  - the kit's `CLAUDE.md` summarises the 8 Sync / Anthropic rules instead of importing the 6.7 KB rules doc into every session (full text: `/aup-audit`, `skills/aup-audit/8sync-anthropic-rules.md`);
+  - on-demand bundled skills are `name-only` in user-scope `skillOverrides` (values you set are kept; core skills keep their descriptions).
+- **Kit agents are routed by role**: explore and quick-task on Haiku (`effort: low`), task on Sonnet, reviewer on Sonnet (`effort: high`), with `maxTurns`, read-only `disallowedTools` where they only read, and a short return envelope (reviewer keeps its BLOCKER/SHOULD/NIT + verdict format).
+- New kit agents `researcher` and `verifier`, and `deep-research` v2: plan → scale gate → lead drafts → verifier checks every citation → reviewer grades FATAL/MAJOR/MINOR → provenance file, `Verification: BLOCKED` when it cannot finish. Adapted from Feynman (MIT, see `THIRD_PARTY_NOTICES.md`). Private repo source is researched locally, not sent to third-party models.
+- The Stop gate (Haiku 5.5) lets a turn end while Claude waits on background agents it launched (it blocked 4 times in a row in a real session); the ask gate stays on Sonnet (5.5). `/ship` requires every "done/verified" claim to cite the command output.
+- New `8sync ccc hook session-start` (startup/clear/compact, found from any subdirectory): a byte-stable digest of `su-code/STATE.md` plus recent `failure:`/`validated:` lessons, at most 6,000 B.
+- `docs/legal/anthropic/index.md` records the snapshot date; `legal-sync.py` refreshes it only when a page changed.
 
 ## [0.65.0] — 2026-10-11
 ### Added
