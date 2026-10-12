@@ -48,11 +48,21 @@
 # org policy, 3 new skills, 3 new agents (pm, architect, qa) embedded). Local builds run 137,888 B below the
 # published asset, so the next linux asset is estimated ~5,749,888 B → ceiling
 # 5632 KiB (~17 KiB left). Re-check against the real release asset.
+# Published v0.66.0: linux-x86_64 5,747,632 B (19,536 B left).
+#
+# 2026-10-12 (Unreleased after v0.66.0: destructive-command guard `ccc/danger.rs`
+# — a shell/PowerShell lexer and delete/force-push/credential classifier — and
+# the native Stop gate `ccc/gate.rs`). Windows release builds, same flags,
+# separate --target-dir: Windows v0.66.0 (fe4bbe5) 4,538,368 B → 4,646,400 B
+# (+108,032); x86_64-unknown-linux-musl (local, `zig cc` linker,
+# `-C link-self-contained=no`) 5,180,360 → 5,294,808 B (+114,448). Published
+# v0.66.0 linux-x86_64 5,747,632 B + 114,448 ≈ 5,862,080 B → ceiling 5760 KiB
+# (~35 KiB left). Re-check against the real release asset.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-5767168}"   # 5632 KiB (raised 2026-10-12 from 5392 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-5898240}"   # 5760 KiB (raised 2026-10-12 from 5632 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

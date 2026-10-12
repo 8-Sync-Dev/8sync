@@ -77,10 +77,11 @@ pub(super) fn post_tool_use(input: &str) -> i32 {
 /// edited does not pass its check. One block per broken state: if Claude was
 /// already shown these errors and made no edit since, it is leaving the build
 /// broken on purpose (or cannot fix it), and blocking again would only loop
-/// to Claude Code's cap of 8 continuations.
+/// to Claude Code's cap of 8 continuations. With the build fine, the native
+/// Stop gate (`gate`) gets its say.
 pub(super) fn stop(input: &str) -> Option<String> {
     let v: Value = serde_json::from_str(input).ok()?;
-    let edited = std::fs::read_to_string(session_file(v["session_id"].as_str()?)).ok()?;
+    let edited = v["session_id"].as_str().and_then(|id| std::fs::read_to_string(session_file(id)).ok()).unwrap_or_default();
     let mut failures = Vec::new();
     for check in edited.lines().filter_map(|f| plan_check(Path::new(f))) {
         let state = State::new(&check.dir);
@@ -99,13 +100,12 @@ pub(super) fn stop(input: &str) -> Option<String> {
             failures.push(format!("`{}` in {}:\n{tail}", check.cmd(), check.dir.display()));
         }
     }
-    (!failures.is_empty()).then(|| {
-        json!({
-            "decision": "block",
-            "reason": format!("8sync verify: the build is broken — fix it before finishing.\n{}", failures.join("\n\n"))
-        })
-        .to_string()
-    })
+    let reason = if failures.is_empty() {
+        super::gate::check(&v)?
+    } else {
+        format!("8sync verify: the build is broken — fix it before finishing.\n{}", failures.join("\n\n"))
+    };
+    Some(json!({ "decision": "block", "reason": reason }).to_string())
 }
 
 pub(super) fn plan_check(file: &Path) -> Option<Check> {
@@ -331,5 +331,13 @@ mod tests {
         assert!(stop(&json!({ "session_id": "no-edits" }).to_string()).is_none(), "a session without edits never blocks");
         let _ = std::fs::remove_file(session_file(&session));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn stop_runs_the_native_gate_when_the_build_is_fine() {
+        let plan = json!({ "session_id": "no-edits", "last_assistant_message": "Next I'll add the tests." }).to_string();
+        assert!(stop(&plan).is_some_and(|o| o.contains("\"block\"") && o.contains("announces more work")));
+        let done = json!({ "session_id": "no-edits", "last_assistant_message": "Done. All tests pass." }).to_string();
+        assert!(stop(&done).is_none());
     }
 }

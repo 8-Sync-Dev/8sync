@@ -21,6 +21,8 @@ use crate::verbs::uuid_sessions::{self, Store};
 use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
+mod danger;
+mod gate;
 mod guard;
 mod verify;
 
@@ -53,16 +55,17 @@ mod verify;
                claude.ai org, marketplace allowlist, opt-in MCP allowlist, sandbox, channels); you install it with sudo
       verify   after every Edit/Write, in the background: cargo check · package typecheck/tsc · go vet;
                errors wake Claude; a turn cannot end on a broken build (`hook verify` / `verify-stop`)
-      guard    before Bash/Edit/Write: no credential files, real secrets, `git add` of
-               secrets, or Claude-subscription routing (`8sync ccc hook guard`)
-      gates    stop: a Haiku check keeps the turn going while work is visibly unfinished (not while
-               it waits on background agents); ask: questions without a real need go back to Claude
+      guard    before Bash/PowerShell/Edit/Write: no credential files, real secrets, `git add` of
+               secrets, Claude-subscription routing, deleting root/home/the project, disk wipes or
+               force-push; deletes outside the project, `git reset --hard`, `git clean -f` ask first
+      gates    stop (native, no model call): a turn that announces more work or asks to go ahead with
+               routine work continues; ask: questions without a real need go back to Claude to decide
       session  SessionStart digest of su-code/STATE.md + recent failure/validated notes (<= 6 KB,
                stable for the prompt cache); non-core bundled skills load name-only (skillOverrides)
       hq hooks TaskCreated/TaskCompleted/TeammateIdle/Notification → `8sync hq hook <Event>`, async
                (no-op until `8sync hq setup`)
-      also     auto permission mode · medium effort · task list (each only if unset) · build/test
-               commands skip the classifier · deny .env / keys / *.session / *.pkl and force-push ·
+      also     auto permission mode · medium effort · task list · claude.ai connectors off (each only
+               if unset) · build/test commands skip the classifier · deny .env / keys / *.session / *.pkl and force-push ·
                codebase-memory-mcp + serena from omp's MCP config when their command is on PATH
                (serena alwaysLoad=false; failures are reported)
 "})]
@@ -375,11 +378,12 @@ const ALLOW: [&str; 15] = [
     "Bash(git add*)",
 ];
 
-/// Both gates' prompts start with this, which is how a re-merge finds them.
+/// The ask gate's prompt starts with this, which is how a re-merge finds it.
 const GATE_MARKER: &str = "8sync gate";
 
-/// The one bar for interrupting the user, shared by both gates. A checklist,
-/// because Haiku given a prose rule refused credential and pricing questions.
+/// The bar for interrupting the user. A checklist, because Haiku given a prose
+/// rule refused credential and pricing questions. The native Stop gate
+/// (`gate.rs`) applies the same bar to a turn's last line.
 const ASK_POLICY: &str = "QUESTION POLICY — check in order; the first match decides:\n\
 1. Does it ask the user for a secret or access (password, API key, token, login, account)? → JUSTIFIED. \
 Asking the owner for a secret is correct; never tell Claude to guess or skip it.\n\
@@ -392,24 +396,14 @@ questions for the user.\n\
 choices, or confirmation to continue routine work → NOT JUSTIFIED: Claude picks the conservative, conventional \
 option, states the assumption and continues.";
 
-/// Prompt hook on `Stop` (response schema `{ok, reason, impossible}`). It sees
-/// the hook input — chiefly `last_assistant_message` — not the transcript.
-const STOP_GATE: &str = "8sync gate: stop. Decide whether Claude may end this turn. Hook input: $ARGUMENTS\n\n\
-Judge only from `last_assistant_message`, using the question policy at the end.\n\
-Reply {\"ok\": true} when the work is done, when the message is a plain answer to the user, or when it ends with \
-a JUSTIFIED question.\n\
-Reply {\"ok\": true} when the message says Claude is waiting on background agents, tasks or workflows it \
-launched (they notify on completion) and it has nothing else it can do meanwhile.\n\
-Reply {\"ok\": true} only when the message QUOTES the user's own stop/wait words (e.g. \"dừng\", \"stop\", \"wait\", \
-\"chờ\") and states Claude is holding for the user's next instruction: the user's explicit stop outranks this gate. \
-Claude merely saying it will pause, with no quoted user words, does not qualify.\n\
-Reply {\"ok\": false, \"reason\": \"<the concrete next step Claude should take>\"} when the message shows work \
-Claude can still do itself: planned tasks left undone (\"next I will…\"), code edited but build/test not run \
-since, a failing build/test/lint it has not fixed, a reviewer verdict NOT MERGEABLE, or a NOT JUSTIFIED question \
-(then the reason names the option to pick).\n\
-If `stop_hook_active` is true and the same item is still blocked on something only the user can provide, reply \
-{\"ok\": false, \"impossible\": true, \"reason\": \"<why>\"}.\n\n";
+/// Hook roles earlier kits installed and this one dropped: (event, role). The
+/// Haiku `Stop` prompt gate re-sent the whole transcript at every turn end
+/// (~2.6 s and ~30k Haiku tokens per turn end, ~48k per bench run); `verify-stop` now runs the gate natively.
+const RETIRED_HOOKS: [(&str, &str); 1] = [("Stop", "8sync gate: stop")];
 
+/// Hook-matcher for the guard: Windows without Git Bash only has `PowerShell`,
+/// whose commands no `Bash(...)` rule or `Bash` matcher sees.
+const GUARD_MATCHER: &str = "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit";
 /// Prompt hook on `PreToolUse` for `AskUserQuestion`: unjustified questions are
 /// returned to Claude as a tool error (`continueOnBlock`), so it decides and goes on.
 const ASK_GATE: &str = "8sync gate: ask. Claude wants to interrupt the user with AskUserQuestion. Hook input: \
@@ -420,11 +414,9 @@ Rule 4 only → reply {\"ok\": false, \"reason\": \"Don't ask: go with <the opti
 
 /// A hook `model` must be a full id — an alias fails as `unrecognized_model` and
 /// the hook then fails open. The ASK gate stays on Sonnet: on the same prompt
-/// Haiku misjudged 2 of 6 labelled questions, Sonnet none. The Stop gate is a
-/// simpler check, so Haiku is enough. Evidence measured on the previous pair
-/// (Sonnet 5 vs Haiku 4.5); not re-measured on 5.5.
+/// Haiku misjudged 2 of 6 labelled questions, Sonnet none. Evidence measured on
+/// the previous pair (Sonnet 5 vs Haiku 4.5); not re-measured on 5.5.
 const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
-const STOP_GATE_MODEL: &str = "claude-haiku-5-5";
 
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
@@ -523,10 +515,6 @@ fn hook_exe() -> Result<String> {
     Ok(p.display().to_string())
 }
 
-/// Merge the kit into a parsed `settings.json`, leaving everything else as is:
-/// `env`, `defaultMode` and `effortLevel` defaults (a user value wins),
-/// `permissions` rules, and 8sync's hooks (replaced in place on re-run, so the
-/// file only changes when the kit does).
 /// Official LSP plugins (anthropics/claude-plugins-official, `lspServers` only)
 /// and the language-server binary each one starts. Claude Code's LSP tool needs
 /// no MCP schema in the prompt; serena stays as the fallback when it is present.
@@ -558,6 +546,10 @@ fn apply_lsp_plugins(v: &mut Value, on_path: impl Fn(&str) -> bool) {
     }
 }
 
+/// Merge the kit into a parsed `settings.json`, leaving everything else as is:
+/// `env`, `defaultMode`, `effortLevel` and `disableClaudeAiConnectors` defaults
+/// (a user value wins), `permissions` rules, and 8sync's hooks (replaced in
+/// place on re-run, retired ones removed, so the file only changes when the kit does).
 fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()> {
     let obj = v.as_object_mut().context("settings.json is not a JSON object")?;
     if let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() {
@@ -568,6 +560,11 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
     // passed 11/11 in 100 and 161 s (9.4k / 15.3k output tokens) vs 179-209 s
     // and 17.6-20.6k at `high` (omp: 124-155 s). `/effort high` for hard reasoning.
     obj.entry("effortLevel").or_insert_with(|| json!("medium"));
+    // A team/claude.ai login pulls the account's connectors (Gmail, Drive,
+    // Calendar, Docs…) into every coding session: ~1.2 s more startup, ~2k tokens
+    // per request, and mail/drive tools in reach of any prompt injection in the
+    // code being read. `false` here brings them back.
+    obj.entry("disableClaudeAiConnectors").or_insert_with(|| json!(true));
     let Some(perms) = obj.entry("permissions").or_insert_with(|| json!({})).as_object_mut() else {
         bail!("settings.json `permissions` is not an object");
     };
@@ -615,7 +612,11 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             }]
         }),
     );
-    upsert_hook_group(hooks, "Stop", json!({ "hooks": [{ "type": "prompt", "prompt": format!("{STOP_GATE}{ASK_POLICY}"), "model": STOP_GATE_MODEL, "timeout": 30 }] }));
+    for (event, role) in RETIRED_HOOKS {
+        if let Some(groups) = hooks.get_mut(event).and_then(Value::as_array_mut) {
+            groups.retain(|g| hook_role(g).as_deref() != Some(role));
+        }
+    }
     upsert_hook_group(
         hooks,
         "Stop",
@@ -642,7 +643,7 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
         hooks,
         "PreToolUse",
         json!({
-            "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+            "matcher": GUARD_MATCHER,
             "hooks": [{
                 "type": "command",
                 "command": exe,
@@ -1047,7 +1048,15 @@ fn hook(rest: &[String]) -> Result<()> {
         // Async (asyncRewake): exit code 2 + stderr is how a failure reaches Claude.
         Some("verify") => std::process::exit(verify::post_tool_use(&input)),
         Some("verify-stop") => verify::stop(&input),
-        Some("guard") => guard::check(&input),
+        Some("guard") => {
+            // Release builds abort on panic, and Claude Code runs the tool when a hook dies:
+            // a bug in the analyser must ask instead of waving the command through.
+            std::panic::set_hook(Box::new(|_| {
+                println!("{}", guard::decision("ask", "8sync could not analyse this command (internal error). Check it with the user."));
+                std::process::exit(0);
+            }));
+            guard::check(&input)
+        }
         Some("session-start") => {
             let cwd = serde_json::from_str::<Value>(&input).ok().and_then(|v| v["cwd"].as_str().map(PathBuf::from));
             let start = cwd.or_else(|| std::env::current_dir().ok()).unwrap_or_default();
@@ -1106,9 +1115,12 @@ mod tests {
         assert_eq!(post[1]["hooks"][0]["command"], "/new/8sync");
         assert_eq!(post[1]["hooks"][0]["asyncRewake"], true, "edits never wait for the check");
         let stop = v["hooks"]["Stop"].as_array().unwrap();
-        assert_eq!(stop.len(), 2, "stop gate replaced in place, verify-stop appended");
-        assert_eq!(stop[0]["hooks"][0]["prompt"], format!("{STOP_GATE}{ASK_POLICY}"));
-        assert_eq!(stop[1]["hooks"][0]["args"], json!(["ccc", "hook", "verify-stop"]));
+        assert_eq!(stop.len(), 1, "the retired Haiku stop gate is removed, verify-stop (native gate) appended");
+        assert_eq!(stop[0]["hooks"][0]["args"], json!(["ccc", "hook", "verify-stop"]));
+        assert_eq!(v["disableClaudeAiConnectors"], true);
+        let mut keep = json!({ "disableClaudeAiConnectors": false });
+        apply_kit_settings(&mut keep, "/new/8sync", &[]).unwrap();
+        assert_eq!(keep["disableClaudeAiConnectors"], false, "a user choice wins");
         let allow = v["permissions"]["allow"].as_array().unwrap();
         assert!(allow.iter().any(|r| r == "Bash(make*)") && allow.iter().any(|r| r == "Bash(cargo check*)"));
         assert!(!allow.iter().any(|r| r.as_str().is_some_and(|s| s.contains("git push"))), "pushes stay reviewed");
@@ -1133,9 +1145,9 @@ mod tests {
         let skills: Vec<String> = ["ship", "codegraph", "impeccable", "ponytail", "taste"].map(String::from).to_vec();
         apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
         let stop = v["hooks"]["Stop"].as_array().unwrap();
-        assert_eq!(stop.iter().filter(|g| g["hooks"][0]["prompt"].is_string()).count(), 1);
-        assert_eq!(stop[0]["hooks"][0]["model"], STOP_GATE_MODEL);
-        assert!(stop[0]["hooks"][0]["prompt"].as_str().unwrap().contains("background agents"));
+        assert_eq!(stop.iter().filter(|g| g["hooks"][0]["prompt"].is_string()).count(), 0, "Haiku stop gate retired");
+        assert_eq!(stop.len(), 1);
+        assert_eq!(stop[0]["hooks"][0]["args"], json!(["ccc", "hook", "verify-stop"]));
         assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["model"], ASK_GATE_MODEL);
         assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["args"], json!(["ccc", "hook", "session-start"]));
         let o = &v["skillOverrides"];
@@ -1300,11 +1312,4 @@ mod tests {
         assert!(managed_settings_dir("macos").unwrap().ends_with("ClaudeCode"));
         assert_eq!(managed_settings_dir("freebsd"), None);
     }
-    #[test]
-    fn stop_gate_yields_to_user_stop() {
-        assert!(STOP_GATE.contains("QUOTES the user's own stop/wait words"));
-        assert!(!STOP_GATE.contains("interrupted"));
-        assert!(STOP_GATE.contains("waiting on background agents"));
-    }
-
 }

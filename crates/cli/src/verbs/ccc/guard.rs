@@ -1,4 +1,4 @@
-//! `8sync ccc hook guard` — Claude Code PreToolUse guard for Bash / Edit / Write.
+//! `8sync ccc hook guard` — Claude Code PreToolUse guard for Bash / PowerShell / Edit / Write.
 //!
 //! Denies, with the reason handed back to Claude:
 //! - writing a credential file (`.env*` except templates, keys, `*.session`, `*.pkl`);
@@ -6,7 +6,11 @@
 //!   GitHub, AWS, Slack, Google, private keys); fixtures and doc examples pass;
 //! - `git add` of a credential file, named or swept up by `git add -A` / `.`;
 //! - code wiring a Claude subscription into another client (Claude Code's
-//!   OAuth client id or its OAuth beta header): AUP "Do Not Abuse Our Platform".
+//!   OAuth client id or its OAuth beta header): AUP "Do Not Abuse Our Platform";
+//! - destructive shell commands (see `danger`): deleting a root, home, the project or
+//!   an ancestor, disk wipes, force-pushes. Riskier-than-usual deletes (outside the
+//!   project, run-time targets, other environments) and `git reset --hard` / `git clean -f`
+//!   get `ask` instead: a prompt in a session, a denial under `claude -p`.
 //!
 //! Pure string scanning in-process; only `git add -A` spawns `git status`.
 use std::path::Path;
@@ -14,35 +18,49 @@ use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 
-/// The hook's stdout for a PreToolUse input: a deny decision, or `None` to allow.
+use super::danger::{self, Shell, Verdict};
+
+/// The hook's stdout for a PreToolUse input: a deny/ask decision, or `None` to allow.
 pub(super) fn check(input: &str) -> Option<String> {
     let v: Value = serde_json::from_str(input).ok()?;
     let tool = v["tool_name"].as_str().unwrap_or_default();
     let ti = &v["tool_input"];
-    let reason = match tool {
-        "Bash" => {
+    let verdict = match tool {
+        "Bash" | "PowerShell" => {
             let cmd = ti["command"].as_str().unwrap_or_default();
             let cwd = v["cwd"].as_str().map(Path::new);
-            git_add(cmd, cwd).or_else(|| content(cmd))
+            let shell = if tool == "Bash" { Shell::Bash } else { Shell::PowerShell };
+            let found = danger::check(cmd, shell, &danger::Ctx::local(cwd));
+            match git_add(cmd, cwd).or_else(|| content(cmd)) {
+                Some(why) => Some(Verdict::Deny(why)),
+                None => found,
+            }
         }
         "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => {
             let path = ti["file_path"].as_str().or_else(|| ti["notebook_path"].as_str()).unwrap_or_default();
             credential_file(path)
                 .map(|why| format!("{path} is a credential file ({why}). The user creates it themselves and keeps it out of git; read values from the environment instead."))
                 .or_else(|| content(&written_text(ti)))
+                .map(Verdict::Deny)
         }
         _ => None,
     }?;
-    Some(
-        json!({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": format!("8sync guard: {reason}")
-            }
-        })
-        .to_string(),
-    )
+    Some(match verdict {
+        Verdict::Deny(r) => decision("deny", &r),
+        Verdict::Ask(r) => decision("ask", &r),
+    })
+}
+
+/// The PreToolUse hook output for a deny/ask decision.
+pub(super) fn decision(decision: &str, reason: &str) -> String {
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": decision,
+            "permissionDecisionReason": format!("8sync guard: {reason}")
+        }
+    })
+    .to_string()
 }
 
 /// All text an edit tool would write.
@@ -268,6 +286,18 @@ mod tests {
         std::fs::write(dir.join(".gitignore"), ".env\n").unwrap();
         assert!(check(&input("git add .")).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shell_commands_get_deny_ask_or_pass_through_the_hook() {
+        // Claude Code sends the session's absolute cwd.
+        let cwd = std::env::current_dir().unwrap();
+        let said = |tool: &str, cmd: &str| check(&json!({ "tool_name": tool, "tool_input": { "command": cmd }, "cwd": cwd }).to_string()).map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"]["permissionDecision"].as_str().unwrap().to_string());
+        assert_eq!(said("PowerShell", "Remove-Item -Recurse -Force ~").as_deref(), Some("deny"));
+        assert_eq!(said("PowerShell", "git push --force-with-lease origin main").as_deref(), Some("deny"));
+        assert_eq!(said("Bash", "git reset --hard HEAD~1").as_deref(), Some("ask"));
+        assert_eq!(said("Bash", "rm -rf target"), None);
+        assert_eq!(said("PowerShell", "Remove-Item -Recurse .\\dist"), None);
     }
 
     #[test]
