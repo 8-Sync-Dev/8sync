@@ -1,3 +1,26 @@
+# v0.66.0 — Claude-token compliance, leaner role-routed kit, Agent HQ on Discord, security commands, org policy
+
+## Goal
+Make official Claude Code + the 8sync kit stronger than omp without breaking Anthropic's terms: close every path where a Claude token could leave Claude Code, cut the kit's context, route agents by role, give the owner an agent team visible on Discord, and ship `/rules` `/sec` `/harden` + an org managed-settings policy.
+
+## Checklist
+- [x] Research (local clones only, no decompiling): omp, Feynman, ForgeCode, Claude Code public repo + plugins → `plans/2026-10-12-ccc-beyond-omp.md`; CowAgent (MIT) → borrow ideas, not a base → `outputs/ccc-agent-team-discord-plan.md` (not in repo).
+- [x] Compliance (PR #5): harness allowlist + https, Console-key-only to omp/forge/add-model, 9router `cc/` proxy removed, gateway/codex-web opt-in, Feynman skips Claude, setup scripts stdin-only. 5 reviewer rounds → MERGEABLE.
+- [x] Kit: compact CLAUDE.md blocks, rules summary, name-only skills, role-routed agents (+pm/architect/qa/researcher/verifier), deep-research v2, LSP plugins, public `8sync-kit` plugin marketplace.
+- [x] `8sync hq` (Discord Agent HQ) + `/rules /sec /harden` + `ccc policy`. UAT: mock Discord full flow, parallel-hook race → 1 post, real `claude -p` sessions back to back (found + fixed task-id-per-session bug), `systemd-analyze verify` (found + fixed quoted WorkingDirectory). 3 reviewer rounds → MERGEABLE; `/aup-audit` PASS.
+- [x] 235 tests; size ceiling 5,521,408 → 5,767,168 with per-commit attribution.
+- [x] Released: PR #6 merged (5caa5f0, closes #5); tag v0.66.0 → Release run 38227111385 all green; assets linux-x86_64 5,747,632 B (19,536 under ceiling; estimate was 5,749,888), linux-aarch64 4,742,400, darwin-arm64 4,174,624, darwin-x86_64 4,728,872, windows 4,544,000. install-smoke run 38227740499: ubuntu x64/arm64, macOS arm64/Intel, Windows all green.
+- [x] This box: `8sync up` 0.65.0 → 0.66.0 (checksum ok 9ab61a69…); `ccc kit` → 19/19 files, hq + session-start hooks, gates sonnet-5-5/haiku-5-5, 22 name-only skills, rust-analyzer LSP plugin, codebase-memory-mcp + serena registered (was 0). First-request context in ~/startup/su-code (Opus 5.5, `-p`): 35,918 tokens vs 57,914 at session start on 0.65 (1 sample each; omp sample 37,129).
+
+## Current
+Released and installed. Not verified: real Discord (needs the owner's bot token), agent-team mode (teammates need an interactive session), Channels plugin under a Team org (`channelsEnabled`).
+
+## Next
+- Owner: create the Discord bot → `8sync hq setup --guild <id> --token-stdin` → Channels plugin → `8sync hq up --repo <zus> --install`; real-Discord UAT.
+- ccc vs omp bench with a Console key (cost) before claiming speed/quality numbers.
+- Re-inject the compact CLAUDE.md block in ~/startup (parent + su-code still carry the old 8.6 KB block).
+- Size: linux asset 19.5 KiB under the ceiling — next feature needs attribution or trimming.
+
 # v0.65.0 — ccc speed, auto-current launch, every skill + org rules in Claude Code, legal sync, free CI
 
 ## Goal
