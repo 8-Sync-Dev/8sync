@@ -1,5 +1,7 @@
 <!-- source: https://www.anthropic.com/sitemap.xml (every /legal/ page) — snapshot by scripts/legal-sync.py; do not edit -->
 
+Snapshot date: 2026-10-12 (UTC)
+
 - https://www.anthropic.com/legal/acst-disclosure
 - https://www.anthropic.com/legal/aup
 - https://www.anthropic.com/legal/commercial-terms

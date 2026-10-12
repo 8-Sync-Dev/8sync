@@ -9,3 +9,5 @@ Không phải tư vấn pháp lý: báo cáo phát hiện, user quyết định 
 3. **Hiểu sản phẩm trước khi phán:** đọc README, entry point, route/API chính. Rồi đi từng dòng trong `RULES.md` (cùng thư mục): tìm theo cột "Dấu hiệu" bằng code intelligence hoặc grep, đọc ngữ cảnh từng chỗ. Tài liệu phòng thủ, test fixture, ví dụ trong docs, regex mẫu ≠ vi phạm.
 4. **Báo cáo:** bảng `mức | mục AUP / quy tắc | file:dòng | việc cần làm`. BLOCK = vi phạm rõ (dừng ship; hỏi user trước khi xoá/sửa) · WARN = rủi ro cần user quyết · bỏ qua mục sạch.
 5. **Secret thật:** bảo user rotate ngay và xoá khỏi history; không tự rotate, không tự xoá.
+
+Chọn nhanh: hỏi "được phép không / điều khoản nào" → `/rules` · quét repo theo AUP (skill này) · secret + lỗ hổng code → `/sec` · cấu hình Claude Code của máy/org → `/harden`.

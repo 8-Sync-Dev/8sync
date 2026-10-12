@@ -115,6 +115,15 @@ fn pi_model(row: &Value) -> Result<Value> {
     Ok(Value::Object(model))
 }
 
+/// Claude models (subscription, gateway, legacy `9router-cc` proxy) never enter the bridge.
+fn is_claude_model(provider: &str, id: &str, api: &str, base_url: &str) -> bool {
+    provider == "anthropic"
+        || provider == "9router-cc"
+        || id.to_ascii_lowercase().contains("claude")
+        || matches!(api, "anthropic" | "anthropic-messages")
+        || base_url.to_ascii_lowercase().contains("://api.anthropic.com")
+}
+
 fn bash_escape(value: &str) -> std::borrow::Cow<'_, str> {
     if value.contains('\'') {
         std::borrow::Cow::Owned(value.replace('\'', "'\\''"))
@@ -152,7 +161,10 @@ fn auth_omp(agent_dir: &Path) -> Result<()> {
         // terms keep a subscription inside Claude Code / claude.ai; other tools
         // use a Console API key, which Feynman reads itself from ANTHROPIC_API_KEY.
         let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
-        if provider == "anthropic" || id.starts_with("claude") {
+        // `omp models --json` (18.9) has no `api`/`baseUrl` per row; checked when present.
+        let api = row.get("api").and_then(Value::as_str).unwrap_or_default();
+        let base_url = row.get("baseUrl").and_then(Value::as_str).unwrap_or_default();
+        if is_claude_model(provider, id, api, base_url) {
             skipped_claude = true;
             continue;
         }
@@ -451,10 +463,13 @@ fn ensure_feynman_windows_esm_patch(feynman_bin: &Path) {
         }
         // Feynman's Pi 0.62 key parser drops modifiers it cannot detect, so pi-btw's
         // default `super+/` shortcut matched a bare "/" and swallowed every slash command.
-        let tui_keys = [
-            bin_dir.join("node_modules/@companion-ai/feynman/node_modules/@mariozechner/pi-tui/dist/keys.js"),
-            bin_dir.join("node_modules/@companion-ai/feynman/.feynman/npm/node_modules/@mariozechner/pi-tui/dist/keys.js"),
-        ];
+        let tui_keys: Vec<PathBuf> = [
+            bin_dir.join("node_modules/@companion-ai/feynman/node_modules"),
+            bin_dir.join("node_modules/@companion-ai/feynman/.feynman/npm/node_modules"),
+        ]
+        .iter()
+        .flat_map(|root| pi_package_candidates(root, "pi-tui", "keys.js"))
+        .collect();
         let target = "    if (!key)\n        return null;\n    return {\n        key,\n        ctrl: parts.includes(\"ctrl\"),";
         let replacement = "    if (!key)\n        return null;\n    if (parts.slice(0, -1).some((part) => part !== \"ctrl\" && part !== \"shift\" && part !== \"alt\"))\n        return null;\n    return {\n        key,\n        ctrl: parts.includes(\"ctrl\"),";
         for p in tui_keys {
@@ -466,10 +481,13 @@ fn ensure_feynman_windows_esm_patch(feynman_bin: &Path) {
         }
         // Repair only the truncating renderer variant; older Pi copies deliberately
         // throw on overflow and must retain that behavior.
-        let tui_renderers = [
-            bin_dir.join("node_modules/@companion-ai/feynman/node_modules/@mariozechner/pi-tui/dist/tui.js"),
-            bin_dir.join("node_modules/@companion-ai/feynman/.feynman/npm/node_modules/@mariozechner/pi-tui/dist/tui.js"),
-        ];
+        let tui_renderers: Vec<PathBuf> = [
+            bin_dir.join("node_modules/@companion-ai/feynman/node_modules"),
+            bin_dir.join("node_modules/@companion-ai/feynman/.feynman/npm/node_modules"),
+        ]
+        .iter()
+        .flat_map(|root| pi_package_candidates(root, "pi-tui", "tui.js"))
+        .collect();
         let immutable_overflow = "const line = newLines[i];\n            const isImage = isImageLine(line);\n            if (!isImage && visibleWidth(line) > width) {\n                line = truncateToWidth(line, width);";
         let mutable_overflow = "let line = newLines[i];\n            const isImage = isImageLine(line);\n            if (!isImage && visibleWidth(line) > width) {\n                line = truncateToWidth(line, width);";
         for p in tui_renderers {
@@ -513,16 +531,26 @@ fn get_feynman_runner(feynman_bin: &Path) -> (PathBuf, Vec<String>) {
     }
 }
 
+/// Upstream Pi packages moved `@mariozechner/*` -> `@earendil-works/*`; try the new scope first.
+fn pi_package_candidates(node_modules: &Path, pkg: &str, file: &str) -> Vec<PathBuf> {
+    ["@earendil-works", "@mariozechner"]
+        .iter()
+        .map(|scope| node_modules.join(scope).join(pkg).join("dist").join(file))
+        .collect()
+}
+
 fn configure_omp_bridge(cmd: &mut Command, feynman_bin: &Path) -> Result<()> {
     let home = dirs::home_dir().context("cannot resolve home directory")?;
     let agent_dir = home.join(".feynman/agent");
     let canonical = std::fs::canonicalize(feynman_bin).unwrap_or_else(|_| feynman_bin.to_path_buf());
     let mut candidates = Vec::new();
     if let Some(parent) = feynman_bin.parent() {
-        candidates.push(parent.join("node_modules/@companion-ai/feynman/node_modules/@mariozechner/pi-ai/dist/index.js"));
+        candidates.extend(pi_package_candidates(
+            &parent.join("node_modules/@companion-ai/feynman/node_modules"), "pi-ai", "index.js"));
     }
     if let Some(parent) = canonical.parent().and_then(Path::parent) {
-        candidates.push(parent.join("node_modules/@mariozechner/pi-ai/dist/index.js"));
+        candidates.extend(pi_package_candidates(&parent.join("node_modules"), "pi-ai", "index.js"));
+        candidates.extend(pi_package_candidates(&parent.join("app/node_modules"), "pi-ai", "index.js"));
     }
     let ai_entry = candidates.into_iter().find(|p| p.exists())
         .context("cannot locate Feynman's pi-ai package for the omp bridge")?;
@@ -759,6 +787,29 @@ fn set_600(p: &Path) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn claude_models_are_excluded_from_bridge() {
+        assert!(is_claude_model("anthropic", "x", "", ""));
+        assert!(is_claude_model("9router-cc", "x", "", ""));
+        assert!(is_claude_model("9router-cx", "cc/claude-sonnet", "", ""));
+        assert!(is_claude_model("openai", "anthropic/Claude-opus", "", ""));
+        assert!(is_claude_model("x", "claude-3", "", ""));
+        assert!(!is_claude_model("9router-cx", "cx/gpt-5.5", "", ""));
+        assert!(is_claude_model("x", "m", "anthropic-messages", ""));
+        assert!(is_claude_model("x", "m", "anthropic", ""));
+        assert!(is_claude_model("x", "m", "", "https://api.anthropic.com/v1"));
+        assert!(!is_claude_model("x", "m", "openai-completions", "https://api.x.ai/v1"));
+    }
+
+    #[test]
+    fn pi_package_candidates_prefer_earendil_then_mariozechner() {
+        let c = pi_package_candidates(Path::new("/x/node_modules"), "pi-ai", "index.js");
+        assert_eq!(c, vec![
+            PathBuf::from("/x/node_modules/@earendil-works/pi-ai/dist/index.js"),
+            PathBuf::from("/x/node_modules/@mariozechner/pi-ai/dist/index.js"),
+        ]);
+    }
+
     use super::*;
 
     #[test]

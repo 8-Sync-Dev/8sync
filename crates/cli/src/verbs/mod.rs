@@ -27,6 +27,7 @@ pub mod note;
 pub mod locate;
 pub mod feature;
 pub mod feynman;
+pub mod hq;
 pub mod vpn;
 pub mod omp;
 pub mod gen_img;

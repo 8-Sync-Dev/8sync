@@ -7,6 +7,7 @@ Thực hiện đúng thứ tự, theo dõi bằng task list (TaskCreate/TaskUpda
 1. Repo lạ hoặc task chạm nhiều module → subagent `explore` với task: $ARGUMENTS. Repo nhỏ/đã quen → tự đọc, bỏ bước này.
 2. Tự viết plan ngắn ngay trong lượt này (không cần subagent) rồi chuyển thành task list.
 3. Mỗi task: tự làm hoặc giao `task` / `quick-task` (song song nếu độc lập). Sau mỗi task chạy build/test của repo.
+3b. Tự kiểm kiểu verifier: mọi câu "xong/đã verify/pass" phải trích đúng lệnh + output đã chạy; không có → chạy lại hoặc ghi "not verified".
 4. Hết task: gọi `reviewer`. NOT MERGEABLE → tạo task mới từ BLOCKER/SHOULD, quay lại bước 3.
 5. Diff thêm tính năng thu thập dữ liệu người dùng, chat với người ngoài, scrape/nhắn tin hàng loạt, hoặc đụng file credential → chạy `/aup-audit` trên phần thay đổi; BLOCK thì dừng và báo user.
 6. Cập nhật CHANGELOG.md, commit theo conventional commits. Không push.

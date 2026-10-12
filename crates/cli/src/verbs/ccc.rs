@@ -34,25 +34,37 @@ mod verify;
       8sync ccc . new <name>         create a session (refuses an existing name)
       8sync ccc . rm <name>          remove a session and its transcript
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
-      8sync ccc status               claude binary, login, kit, MCP and sessions
+      8sync ccc status               claude binary, login, kit, managed settings, MCP and sessions
+      8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]
+                                     print a recommended managed-settings.json (never installs it)
 
     EVERY LAUNCH (no network on the launch path; SUSYNC_NO_AUTO_UPDATE=1 skips the update)
       newer 8sync release → install + re-run · after an update: bundled skills + kit refresh ·
       git repo → harness: su-code/ memory, AGENTS.md/CLAUDE.md blocks, .claude/skills → su-code/skills
 
     THE KIT (installed by `8sync setup`; edited files are kept unless --force)
-      rules    the 8 Sync Anthropic rules (aup-audit/8sync-anthropic-rules.md) load in every session
-      agents   explore (haiku) · task · quick-task · reviewer · designer
-      skills   /ship · /aup-audit · deep-research + every bundled 8sync skill (linked to ~/.omp/skills)
+      rules    a short 8 Sync/Anthropic rules block in every session; full text (aup-audit/8sync-anthropic-rules.md)
+               opens on demand through /rules
+      agents   explore (haiku) · task · quick-task · reviewer · designer · verifier · researcher ·
+               pm (team lead) · architect (opus, writes docs/ADR/RFC only) · qa (tests only)
+      skills   /ship · /rules (is X allowed?) · /aup-audit (repo vs Usage Policy) · /sec (secrets, deps, OWASP) ·
+               /harden (Claude Code security posture) · deep-research + every bundled 8sync skill (linked to ~/.omp/skills)
+      policy   `8sync ccc policy` prints org managed settings (bypass off, deny rules, login pinned to your
+               claude.ai org, marketplace allowlist, opt-in MCP allowlist, sandbox, channels); you install it with sudo
       verify   after every Edit/Write, in the background: cargo check · package typecheck/tsc · go vet;
                errors wake Claude; a turn cannot end on a broken build (`hook verify` / `verify-stop`)
       guard    before Bash/Edit/Write: no credential files, real secrets, `git add` of
                secrets, or Claude-subscription routing (`8sync ccc hook guard`)
-      gates    stop: a Haiku check keeps the turn going while work is visibly unfinished;
-               ask: questions without a real need go back to Claude to decide itself
+      gates    stop: a Haiku check keeps the turn going while work is visibly unfinished (not while
+               it waits on background agents); ask: questions without a real need go back to Claude
+      session  SessionStart digest of su-code/STATE.md + recent failure/validated notes (<= 6 KB,
+               stable for the prompt cache); non-core bundled skills load name-only (skillOverrides)
+      hq hooks TaskCreated/TaskCompleted/TeammateIdle/Notification → `8sync hq hook <Event>`, async
+               (no-op until `8sync hq setup`)
       also     auto permission mode · medium effort · task list (each only if unset) · build/test
                commands skip the classifier · deny .env / keys / *.session / *.pkl and force-push ·
-               codebase-memory-mcp + serena from omp's MCP config
+               codebase-memory-mcp + serena from omp's MCP config when their command is on PATH
+               (serena alwaysLoad=false; failures are reported)
 "})]
 pub struct Args {
     /// `.` then a session name, or a subcommand: `ls`, `new <name>`, `rm <name>`,
@@ -84,6 +96,7 @@ pub fn run(a: Args) -> Result<()> {
     match verb {
         "kit" => install_kit(&env, rest.iter().any(|a| a == "--force")),
         "status" => status(&env, &root),
+        "policy" => policy(rest),
         "ls" | "list" => {
             ui::header("8sync ccc sessions");
             ui::info(&format!("project: {}", root.display()));
@@ -277,16 +290,24 @@ pub(crate) fn ensure_claude() -> Result<PathBuf> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 11] = [
+const KIT_FILES: [(&str, &str); 19] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
     ("claude/agents/reviewer.md", "agents/reviewer.md"),
     ("claude/agents/designer.md", "agents/designer.md"),
+    ("claude/agents/verifier.md", "agents/verifier.md"),
+    ("claude/agents/researcher.md", "agents/researcher.md"),
+    ("claude/agents/pm.md", "agents/pm.md"),
+    ("claude/agents/architect.md", "agents/architect.md"),
+    ("claude/agents/qa.md", "agents/qa.md"),
     ("claude/skills/ship/SKILL.md", "skills/ship/SKILL.md"),
+    ("claude/skills/rules/SKILL.md", "skills/rules/SKILL.md"),
+    ("claude/skills/sec/SKILL.md", "skills/sec/SKILL.md"),
+    ("claude/skills/harden/SKILL.md", "skills/harden/SKILL.md"),
     ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
     ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
-    // The org's rules, imported by the kit's CLAUDE.md block into every session.
+    // The org's rules: summarised in the kit's CLAUDE.md block, full text opened on demand (/aup-audit).
     ("skills/aup-audit/8sync-anthropic-rules.md", "skills/aup-audit/8sync-anthropic-rules.md"),
     ("skills/deep-research/SKILL.md", "skills/deep-research/SKILL.md"),
     ("skills/deep-research/references/binary-weight-audit.md", "skills/deep-research/references/binary-weight-audit.md"),
@@ -377,6 +398,11 @@ const STOP_GATE: &str = "8sync gate: stop. Decide whether Claude may end this tu
 Judge only from `last_assistant_message`, using the question policy at the end.\n\
 Reply {\"ok\": true} when the work is done, when the message is a plain answer to the user, or when it ends with \
 a JUSTIFIED question.\n\
+Reply {\"ok\": true} when the message says Claude is waiting on background agents, tasks or workflows it \
+launched (they notify on completion) and it has nothing else it can do meanwhile.\n\
+Reply {\"ok\": true} only when the message QUOTES the user's own stop/wait words (e.g. \"dừng\", \"stop\", \"wait\", \
+\"chờ\") and states Claude is holding for the user's next instruction: the user's explicit stop outranks this gate. \
+Claude merely saying it will pause, with no quoted user words, does not qualify.\n\
 Reply {\"ok\": false, \"reason\": \"<the concrete next step Claude should take>\"} when the message shows work \
 Claude can still do itself: planned tasks left undone (\"next I will…\"), code edited but build/test not run \
 since, a failing build/test/lint it has not fixed, a reviewer verdict NOT MERGEABLE, or a NOT JUSTIFIED question \
@@ -392,11 +418,19 @@ Rules 1, 2 or 3 → reply exactly {\"ok\": true}.\n\
 Rule 4 only → reply {\"ok\": false, \"reason\": \"Don't ask: go with <the option you would pick> because \
 <one-line why>; state that assumption and continue.\"}\n\n";
 
-/// The ask gate fires only on AskUserQuestion, so it can afford Sonnet: with the
-/// same prompt Haiku misjudged 2 of 6 labelled questions, Sonnet none. A hook
-/// `model` must be a full id — an alias fails as `unrecognized_model` and the
-/// hook then fails open (the question goes through).
-const ASK_GATE_MODEL: &str = "claude-sonnet-5";
+/// A hook `model` must be a full id — an alias fails as `unrecognized_model` and
+/// the hook then fails open. The ASK gate stays on Sonnet: on the same prompt
+/// Haiku misjudged 2 of 6 labelled questions, Sonnet none. The Stop gate is a
+/// simpler check, so Haiku is enough. Evidence measured on the previous pair
+/// (Sonnet 5 vs Haiku 4.5); not re-measured on 5.5.
+const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
+const STOP_GATE_MODEL: &str = "claude-haiku-5-5";
+
+/// Skills the kit itself relies on: never demoted by `skillOverrides`.
+/// Includes the repo-rule skills (always-on or required for UI), whose trigger
+/// text must not be dropped.
+const CORE_SKILLS: [&str; 8] =
+    ["ship", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
@@ -440,11 +474,13 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
     stamps.insert(KIT_VERSION_KEY.to_string(), env!("CARGO_PKG_VERSION").to_string());
     std::fs::create_dir_all(&dir)?;
     std::fs::write(&stamp_path, serde_json::to_string_pretty(&stamps)?)?;
-    match deploy::link_bundled_skills(&env.home, &dir.join("skills")) {
+    let linked = deploy::link_bundled_skills(&env.home, &dir.join("skills"));
+    match linked {
         Ok(0) => {}
         Ok(n) => ui::ok(&format!("{n} bundled skill(s) linked → {} (always the current ~/.omp/skills copy)", dir.join("skills").display())),
         Err(e) => ui::warn(&format!("bundled skills not linked into Claude Code: {e:#}")),
     }
+    let skills = linked_bundled_skills(&env.home, &dir.join("skills"));
     for rel in &kept {
         ui::info(&format!("kept your edited {} (`8sync ccc kit --force` overwrites)", dir.join(rel).display()));
     }
@@ -460,7 +496,8 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
     } else {
         serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON — fix it, then `8sync ccc kit`", settings.display()))?
     };
-    apply_kit_settings(&mut v, &exe)?;
+    apply_kit_settings(&mut v, &exe, &skills)?;
+    apply_lsp_plugins(&mut v, |bin| which::which(bin).is_ok());
     let out = serde_json::to_string_pretty(&v)? + "\n";
     if out != raw {
         std::fs::write(&settings, out).with_context(|| format!("write {}", settings.display()))?;
@@ -490,7 +527,38 @@ fn hook_exe() -> Result<String> {
 /// `env`, `defaultMode` and `effortLevel` defaults (a user value wins),
 /// `permissions` rules, and 8sync's hooks (replaced in place on re-run, so the
 /// file only changes when the kit does).
-fn apply_kit_settings(v: &mut Value, exe: &str) -> Result<()> {
+/// Official LSP plugins (anthropics/claude-plugins-official, `lspServers` only)
+/// and the language-server binary each one starts. Claude Code's LSP tool needs
+/// no MCP schema in the prompt; serena stays as the fallback when it is present.
+const LSP_PLUGINS: [(&str, &str); 4] = [
+    ("rust-analyzer-lsp", "rust-analyzer"),
+    ("typescript-lsp", "typescript-language-server"),
+    ("gopls-lsp", "gopls"),
+    ("pyright-lsp", "pyright-langserver"),
+];
+const OFFICIAL_MARKETPLACE: &str = "claude-plugins-official";
+
+/// Enable an official LSP plugin only when its server is on PATH. Insert-only:
+/// a value the user set (including `false`) is kept.
+fn apply_lsp_plugins(v: &mut Value, on_path: impl Fn(&str) -> bool) {
+    let Some(obj) = v.as_object_mut() else { return };
+    let wanted: Vec<&str> = LSP_PLUGINS.iter().filter(|(_, bin)| on_path(bin)).map(|(p, _)| *p).collect();
+    if wanted.is_empty() {
+        return;
+    }
+    if let Some(m) = obj.entry("extraKnownMarketplaces").or_insert_with(|| json!({})).as_object_mut() {
+        m.entry(OFFICIAL_MARKETPLACE).or_insert_with(|| {
+            json!({ "source": { "source": "github", "repo": "anthropics/claude-plugins-official" } })
+        });
+    }
+    if let Some(en) = obj.entry("enabledPlugins").or_insert_with(|| json!({})).as_object_mut() {
+        for p in wanted {
+            en.entry(format!("{p}@{OFFICIAL_MARKETPLACE}")).or_insert(json!(true));
+        }
+    }
+}
+
+fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()> {
     let obj = v.as_object_mut().context("settings.json is not a JSON object")?;
     if let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() {
         env.entry("CLAUDE_CODE_ENABLE_TODO_TOOLS").or_insert_with(|| json!("1"));
@@ -513,7 +581,24 @@ fn apply_kit_settings(v: &mut Value, exe: &str) -> Result<()> {
             }
         }
     }
+    // Bundled skills the kit does not rely on load name-only (listing without
+    // the body), cutting the per-session prefix. Only missing keys are added.
+    let over = obj.entry("skillOverrides").or_insert_with(|| json!({}));
+    if let Some(over) = over.as_object_mut() {
+        for name in skills.iter().filter(|n| !CORE_SKILLS.contains(&n.as_str())) {
+            over.entry(name.clone()).or_insert_with(|| json!("name-only"));
+        }
+    }
     let hooks = obj.entry("hooks").or_insert_with(|| json!({})).as_object_mut().context("settings.json `hooks` is not an object")?;
+    // Repo digest on session start (stdout becomes context).
+    upsert_hook_group(
+        hooks,
+        "SessionStart",
+        json!({
+            "matcher": "startup|clear|compact",
+            "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "session-start"], "timeout": 10 }]
+        }),
+    );
     // Async: edits never wait for the compiler. Latest edit wins; a failure
     // wakes Claude (exit 2). `verify-stop` keeps a turn from ending broken.
     upsert_hook_group(
@@ -530,7 +615,7 @@ fn apply_kit_settings(v: &mut Value, exe: &str) -> Result<()> {
             }]
         }),
     );
-    upsert_hook_group(hooks, "Stop", json!({ "hooks": [{ "type": "prompt", "prompt": format!("{STOP_GATE}{ASK_POLICY}"), "timeout": 30 }] }));
+    upsert_hook_group(hooks, "Stop", json!({ "hooks": [{ "type": "prompt", "prompt": format!("{STOP_GATE}{ASK_POLICY}"), "model": STOP_GATE_MODEL, "timeout": 30 }] }));
     upsert_hook_group(
         hooks,
         "Stop",
@@ -550,6 +635,9 @@ fn apply_kit_settings(v: &mut Value, exe: &str) -> Result<()> {
             }]
         }),
     );
+    // The guard stays on the broad matcher with no `if`: the hook `if` field takes
+    // a single permission rule, and narrowing it would let some commands/edits
+    // (e.g. `git add` of secrets, credential paths) skip the check.
     upsert_hook_group(
         hooks,
         "PreToolUse",
@@ -563,8 +651,20 @@ fn apply_kit_settings(v: &mut Value, exe: &str) -> Result<()> {
             }]
         }),
     );
+    // Agent-team events -> `8sync hq hook <Event>`. Event names, `async` (background, never
+    // blocks) and `timeout` (seconds) per https://code.claude.com/docs/en/hooks (checked
+    // 2026-10-12). `hq hook` is a fast no-op until `8sync hq setup`, so always registering is safe.
+    for ev in HQ_EVENTS {
+        upsert_hook_group(
+            hooks,
+            ev,
+            json!({ "hooks": [{ "type": "command", "command": exe, "args": ["hq", "hook", ev], "async": true, "timeout": 15 }] }),
+        );
+    }
     Ok(())
 }
+
+const HQ_EVENTS: [&str; 4] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification"];
 
 /// Which 8sync hook a matcher group carries: `hook verify` / `hook guard` for
 /// the native commands, the first sentence of a gate prompt (`8sync gate: stop`).
@@ -572,6 +672,9 @@ fn hook_role(g: &Value) -> Option<String> {
     g["hooks"].as_array()?.iter().find_map(|h| {
         if let Some(a) = h["args"].as_array().filter(|a| a.len() >= 3 && a[0] == "ccc" && a[1] == "hook") {
             return a[2].as_str().map(|r| format!("hook {r}"));
+        }
+        if let Some(a) = h["args"].as_array().filter(|a| a.len() == 3 && a[0] == "hq" && a[1] == "hook") {
+            return a[2].as_str().map(|r| format!("hq {r}"));
         }
         let p = h["prompt"].as_str().filter(|p| p.starts_with(GATE_MARKER))?;
         Some(p.split('.').next().unwrap_or(p).to_string())
@@ -596,6 +699,94 @@ fn upsert_hook_group(hooks: &mut serde_json::Map<String, Value>, event: &str, gr
     }
 }
 
+/// Skill names (SKILL.md frontmatter `name:`, else the dir name — Claude Code
+/// keys `skillOverrides` by name) of the entries under `skills_dir` that are
+/// links (symlink / Windows junction) resolving under omp's bundled tree, i.e.
+/// the ones `link_bundled_skills` manages. Plain user directories are skipped.
+fn linked_bundled_skills(home: &Path, skills_dir: &Path) -> Vec<String> {
+    let Ok(omp) = home.join(".omp/skills").canonicalize() else { return Vec::new() };
+    let mut out: Vec<String> = std::fs::read_dir(skills_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            let Ok(meta) = std::fs::symlink_metadata(e.path()) else { return false };
+            is_link(&meta) && e.path().canonicalize().is_ok_and(|t| t.starts_with(&omp))
+        })
+        .filter_map(|e| {
+            let dir_name = e.file_name().into_string().ok()?;
+            Some(skill_frontmatter_name(&e.path().join("SKILL.md")).unwrap_or(dir_name))
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn is_link(meta: &std::fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return meta.file_attributes() & 0x400 != 0; // junction (reparse point)
+    }
+    #[cfg(not(windows))]
+    false
+}
+
+/// `name:` from the YAML frontmatter of a SKILL.md.
+fn skill_frontmatter_name(skill_md: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(skill_md).ok()?;
+    let mut lines = text.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    for l in lines {
+        if l.trim() == "---" {
+            break;
+        }
+        if let Some(v) = l.strip_prefix("name:") {
+            let v = v.trim().trim_matches(|c| c == '"' || c == '\'');
+            return (!v.is_empty()).then(|| v.to_string());
+        }
+    }
+    None
+}
+
+/// A KNOWLEDGE.md lesson line: `- failure:` / `- validated:`, optionally bold (`- **failure:`).
+fn is_lesson(l: &str) -> bool {
+    let Some(rest) = l.strip_prefix("- ") else { return false };
+    let rest = rest.strip_prefix("**").unwrap_or(rest);
+    rest.starts_with("failure:") || rest.starts_with("validated:")
+}
+
+/// Stable digest for `hook session-start`: head of `su-code/STATE.md`, then the
+/// last failure/validated lines of `su-code/KNOWLEDGE.md`. No timestamps, so the
+/// prompt prefix stays cache-stable. Empty when the repo has no `su-code/STATE.md`.
+fn session_digest(root: &Path) -> String {
+    const CAP: usize = 6000;
+    let Ok(state) = std::fs::read_to_string(root.join("su-code/STATE.md")) else { return String::new() };
+    let mut out = state.lines().take(60).collect::<Vec<_>>().join("\n");
+    if let Ok(k) = std::fs::read_to_string(root.join("su-code/KNOWLEDGE.md")) {
+        let lines: Vec<&str> = k.lines().filter(|l| is_lesson(l)).collect();
+        let tail = &lines[lines.len().saturating_sub(20)..];
+        if !tail.is_empty() {
+            out.push_str("\n\n");
+            out.push_str(&tail.join("\n"));
+        }
+    }
+    if out.len() > CAP {
+        let mut end = CAP;
+        while !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
+    }
+    out
+}
+
 /// Copy omp's code-intelligence MCP servers into Claude Code's user scope so
 /// subagents get the same graph tools. Existing registrations are left alone.
 fn mirror_mcp(env: &Env, claude: &Path) {
@@ -608,26 +799,30 @@ fn mirror_mcp(env: &Env, claude: &Path) {
         None => env.home.join(".claude.json"),
     });
     for name in ["codebase-memory-mcp", "serena"] {
-        let spec = &omp["mcpServers"][name];
-        let Some(bin) = spec["command"].as_str() else { continue };
         if user["mcpServers"].get(name).is_some() {
             ui::skip(&format!("MCP {name}"), "already in Claude Code");
             continue;
         }
-        if which::which(bin).is_err() {
+        let mut spec = omp["mcpServers"][name].clone();
+        let Some(bin) = spec["command"].as_str().map(str::to_string) else {
+            ui::warn(&format!("MCP {name}: not in ~/.omp/agent/mcp.json — not registered in Claude Code"));
+            continue;
+        };
+        if which::which(&bin).is_err() {
+            ui::warn(&format!("MCP {name}: command `{bin}` not found on PATH — not registered in Claude Code"));
             continue;
         }
-        let added = Command::new(claude)
+        if name == "serena" {
+            spec["alwaysLoad"] = json!(false);
+        }
+        match Command::new(claude)
             .args(["mcp", "add-json", "--scope", "user", name, &spec.to_string()])
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-        if added {
-            ui::ok(&format!("MCP {name} → Claude Code (user scope)"));
-        } else {
-            ui::warn(&format!("MCP {name}: `claude mcp add-json` failed"));
+            .output()
+        {
+            Ok(o) if o.status.success() => ui::ok(&format!("MCP {name} → Claude Code (user scope)")),
+            Ok(o) => ui::warn(&format!("MCP {name}: `claude mcp add-json` failed: {}", String::from_utf8_lossy(&o.stderr).trim())),
+            Err(e) => ui::warn(&format!("MCP {name}: could not run `claude mcp add-json`: {e}")),
         }
     }
 }
@@ -636,6 +831,155 @@ fn mirror_mcp(env: &Env, claude: &Path) {
 fn fnv1a(s: &str) -> String {
     let h = s.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3));
     format!("{h:016x}")
+}
+
+// ── org managed-settings policy ─────────────────────────────────────────────
+
+/// Marketplaces a managed policy lets people add: the official Anthropic one and 8sync's own
+/// (the kit plugin). `github` source shape: settings-reference#strictknownmarketplaces
+/// (https://code.claude.com/docs/en/settings-reference).
+const POLICY_MARKETPLACES: [&str; 2] = ["anthropics/claude-plugins-official", "8-Sync-Dev/su-code"];
+/// MCP servers the kit mirrors from omp's config (see `mirror_mcp`).
+const POLICY_MCP: [&str; 2] = ["codebase-memory-mcp", "serena"];
+
+/// Recommended managed settings for an org (Claude Team, solo owner, official OAuth only), built
+/// only from keys checked against https://code.claude.com/docs/en/settings-reference and
+/// /en/managed-settings on 2026-10-12 (Claude Code 2.1.296). Pure: no I/O, no secrets.
+///   - `permissions.disableBypassPermissionsMode: "disable"` — reference § permissions-disablebypasspermissionsmode
+///   - `permissions.deny` — the kit's DENY list (same rule syntax as the user file)
+///   - `forceLoginMethod: "claudeai"` + `forceLoginOrgUUID` (string UUID; only a managed source enforces it)
+///   - `strictKnownMarketplaces` — array of `{source:"github", repo}`; managed-only
+///   - `allowManagedMcpServersOnly` + `allowedMcpServers` (`{serverName}` entries) — managed-only lock, opt-in (`lock_mcp`)
+///   - `sandbox.enabled`, `sandbox.filesystem.denyRead` (`~/` prefix) — sandbox settings
+///   - `channelsEnabled: true` — Team/Enterprise need it for any channel plugin; managed-only
+///
+/// Not set on purpose: `sandbox.failIfUnavailable` / `allowUnsandboxedCommands: false` (would stop
+/// sessions where bubblewrap is missing, or block builds needing the escape hatch), `allowedChannelPlugins`
+/// (replaces Anthropic's default allowlist), `allowManagedHooksOnly` (only with `strict_hooks`).
+#[cfg(test)]
+pub(crate) fn org_policy(org_uuid: Option<&str>) -> Value {
+    org_policy_with(org_uuid, None, false)
+}
+
+/// `hooks_exe = Some(path)` adds the kit's hooks to the policy and turns `allowManagedHooksOnly` on,
+/// so the kit keeps working when only managed hooks run. Off by default: the same hooks already live in
+/// `~/.claude/settings.json`, and registering them twice would run each hook twice.
+pub(crate) fn org_policy_with(org_uuid: Option<&str>, hooks_exe: Option<&str>, lock_mcp: bool) -> Value {
+    let mut v = json!({
+        "permissions": { "disableBypassPermissionsMode": "disable", "deny": DENY },
+        "forceLoginMethod": "claudeai",
+        "strictKnownMarketplaces": POLICY_MARKETPLACES.iter().map(|r| json!({ "source": "github", "repo": r })).collect::<Vec<_>>(),
+        "sandbox": { "enabled": true, "filesystem": { "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg"] } },
+        "channelsEnabled": true
+    });
+    if lock_mcp {
+        v["allowManagedMcpServersOnly"] = json!(true);
+        v["allowedMcpServers"] = json!(POLICY_MCP.iter().map(|n| json!({ "serverName": n })).collect::<Vec<_>>());
+    }
+    if let Some(u) = org_uuid {
+        v["forceLoginOrgUUID"] = json!(u);
+    }
+    if let Some(exe) = hooks_exe {
+        let mut kit = json!({});
+        // Cannot fail on a fresh object.
+        let _ = apply_kit_settings(&mut kit, exe, &[]);
+        v["hooks"] = kit["hooks"].take();
+        v["allowManagedHooksOnly"] = json!(true);
+    }
+    v
+}
+
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && parts.iter().zip([8, 4, 4, 4, 12]).all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Where a managed-settings file lives per OS (https://code.claude.com/docs/en/managed-settings,
+/// "Place the file on each machine").
+fn managed_settings_dir(os: &str) -> Option<&'static str> {
+    match os {
+        "linux" => Some("/etc/claude-code"),
+        "macos" => Some("/Library/Application Support/ClaudeCode"),
+        "windows" => Some(r"C:\Program Files\ClaudeCode"),
+        _ => None,
+    }
+}
+
+/// `8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]`: print or write the
+/// recommended managed settings. Never touches a system path.
+fn policy(args: &[String]) -> Result<()> {
+    let (mut uuid, mut out, mut strict, mut lock_mcp) = (None::<String>, None::<PathBuf>, false, false);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--strict-hooks" => strict = true,
+            "--lock-mcp" => lock_mcp = true,
+            "--org-uuid" => uuid = Some(it.next().context("--org-uuid needs a value")?.clone()),
+            "--out" => out = Some(PathBuf::from(it.next().context("--out needs a file")?)),
+            o if o.starts_with("--org-uuid=") => uuid = Some(o["--org-uuid=".len()..].to_string()),
+            o if o.starts_with("--out=") => out = Some(PathBuf::from(&o["--out=".len()..])),
+            o => bail!("unknown option `{o}` — usage: 8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]"),
+        }
+    }
+    if let Some(u) = &uuid {
+        if !is_uuid(u) {
+            bail!("--org-uuid must be a UUID like xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (claude.ai > Admin settings)");
+        }
+    }
+    let exe = if strict { Some(hook_exe()?) } else { None };
+    let json = serde_json::to_string_pretty(&org_policy_with(uuid.as_deref(), exe.as_deref(), lock_mcp))? + "\n";
+    match &out {
+        Some(f) => {
+            std::fs::write(f, &json).with_context(|| format!("write {}", f.display()))?;
+            ui::ok(&format!("wrote {} (nothing installed)", f.display()));
+        }
+        None => print!("{json}"),
+    }
+    let (stderr_note, file) = (|m: &str| eprintln!("{m}"), out.as_ref().map(|f| f.display().to_string()).unwrap_or_else(|| "<file>".into()));
+    stderr_note("");
+    stderr_note("INSTALL (you run it; 8sync never writes system paths)");
+    stderr_note(&format!("  Linux/WSL  sudo install -D -m 0644 {file} /etc/claude-code/managed-settings.json"));
+    stderr_note(&format!("  macOS      sudo install -m 0644 {file} \"/Library/Application Support/ClaudeCode/managed-settings.json\""));
+    stderr_note(&format!("  Windows    copy {file} to C:\\Program Files\\ClaudeCode\\managed-settings.json (admin)"));
+    stderr_note("  then run /status in Claude Code: `Setting sources` must show the managed file.");
+    stderr_note("");
+    stderr_note("NOTES");
+    stderr_note("  - Team plan alternative: the same keys can be set as server-managed settings in the claude.ai admin console");
+    stderr_note("    (https://code.claude.com/docs/en/server-managed-settings) — no file on disk.");
+    if uuid.is_none() {
+        stderr_note("  - no --org-uuid: forceLoginOrgUUID is omitted, so any claude.ai org may log in. Re-run with your org UUID.");
+    } else {
+        stderr_note("  - forceLoginOrgUUID pinned: a wrong UUID locks every login out.");
+    }
+    stderr_note("  - forceLoginMethod refuses to start while an API key, token or apiKeyHelper is configured;");
+    stderr_note("    the error names it (remove it, then `claude auth login`).");
+    if lock_mcp {
+        stderr_note("  - --lock-mcp: allowManagedMcpServersOnly limits MCP to codebase-memory-mcp and serena. Plugin MCP servers (e.g. the");
+        stderr_note("    Discord Channels plugin) are blocked unless added to allowedMcpServers. A plugin server registers as");
+        stderr_note("    `plugin:<plugin>:<server>` (https://code.claude.com/docs/en/mcp); whether allowedMcpServers `serverName` matches that");
+        stderr_note("    scoped name is not verified (managed-mcp docs not confirmed) - test with /mcp after installing.");
+    } else {
+        stderr_note("  - MCP lock is OFF (default) so the Discord Channels plugin works; add --lock-mcp to restrict MCP to an allowlist.");
+    }
+    stderr_note("  - sandbox.enabled needs bubblewrap + socat on Linux; without them commands run unsandboxed (failIfUnavailable not set).");
+    stderr_note("  - allowManagedHooksOnly is OFF. `--strict-hooks` adds the kit's hooks to this file and turns it on; then remove");
+    stderr_note("    the kit hooks from ~/.claude/settings.json or they run twice, and re-run this after every `8sync` update.");
+    Ok(())
+}
+
+/// Managed-settings files present on this machine (read-only probe), for `ccc status`.
+fn managed_settings_present(os: &str) -> Vec<PathBuf> {
+    let Some(dir) = managed_settings_dir(os) else { return vec![] };
+    let dir = Path::new(dir);
+    let mut found = vec![];
+    if dir.join("managed-settings.json").is_file() {
+        found.push(dir.join("managed-settings.json"));
+    }
+    if let Ok(rd) = std::fs::read_dir(dir.join("managed-settings.d")) {
+        found.extend(rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")));
+    }
+    found
 }
 
 // ── status ──────────────────────────────────────────────────────────────────
@@ -667,6 +1011,13 @@ fn status(env: &Env, root: &Path) -> Result<()> {
     } else {
         ui::warn(&format!("kit: {present}/{} files · hooks {} — run `8sync ccc kit`", KIT_FILES.len(), if hooks { "on" } else { "off" }));
     }
+    let managed = managed_settings_present(std::env::consts::OS);
+    if managed.is_empty() {
+        ui::warn("managed settings: none — org lock-down not installed (`8sync ccc policy`)");
+    } else {
+        let names: Vec<String> = managed.iter().map(|p| p.display().to_string()).collect();
+        ui::ok(&format!("managed settings: {}", names.join(", ")));
+    }
     println!();
     ui::info(&format!("sessions in {}:", root.display()));
     print_sessions(&sessions(env, root));
@@ -674,6 +1025,20 @@ fn status(env: &Env, root: &Path) -> Result<()> {
 }
 
 // ── hooks ───────────────────────────────────────────────────────────────────
+
+/// Walk up from `start` to the first dir holding `su-code/STATE.md`; stop after checking
+/// `home` (inclusive) or at the filesystem root.
+fn find_state_root(start: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    for dir in start.ancestors() {
+        if dir.join("su-code/STATE.md").is_file() {
+            return Some(dir.to_path_buf());
+        }
+        if home == Some(dir) {
+            return None;
+        }
+    }
+    None
+}
 
 fn hook(rest: &[String]) -> Result<()> {
     let mut input = String::new();
@@ -683,7 +1048,14 @@ fn hook(rest: &[String]) -> Result<()> {
         Some("verify") => std::process::exit(verify::post_tool_use(&input)),
         Some("verify-stop") => verify::stop(&input),
         Some("guard") => guard::check(&input),
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard   (run by the kit's Claude Code hooks)"),
+        Some("session-start") => {
+            let cwd = serde_json::from_str::<Value>(&input).ok().and_then(|v| v["cwd"].as_str().map(PathBuf::from));
+            let start = cwd.or_else(|| std::env::current_dir().ok()).unwrap_or_default();
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let root = find_state_root(&start, home.as_deref());
+            root.map(|r| session_digest(&r)).filter(|d| !d.is_empty())
+        }
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|session-start   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -713,15 +1085,15 @@ mod tests {
                 ]
             }
         });
-        apply_kit_settings(&mut v, "/new/8sync").unwrap();
+        apply_kit_settings(&mut v, "/new/8sync", &[]).unwrap();
         let once = v.clone();
-        apply_kit_settings(&mut v, "/new/8sync").unwrap();
+        apply_kit_settings(&mut v, "/new/8sync", &[]).unwrap();
         assert_eq!(v, once, "second merge must not change anything");
 
         assert_eq!(v["model"], "opus");
         assert_eq!(v["effortLevel"], "medium", "effort defaults to medium when unset");
         let mut mine = json!({ "effortLevel": "xhigh" });
-        apply_kit_settings(&mut mine, "/new/8sync").unwrap();
+        apply_kit_settings(&mut mine, "/new/8sync", &[]).unwrap();
         assert_eq!(mine["effortLevel"], "xhigh", "a user-set effort wins");
         assert_eq!(v["env"]["CLAUDE_CODE_ENABLE_TODO_TOOLS"], "0", "a user-set env value wins");
         let deny = v["permissions"]["deny"].as_array().unwrap();
@@ -748,4 +1120,191 @@ mod tests {
         assert!(deny.iter().any(|r| r == "Edit(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write("))));
         assert_eq!(v["permissions"]["defaultMode"], "auto");
     }
+
+    #[test]
+    fn old_kit_settings_upgrade_in_place_without_duplicates() {
+        let mut v = json!({
+            "skillOverrides": { "impeccable": "off" },
+            "hooks": {
+                "Stop": [{ "hooks": [{ "type": "prompt", "prompt": "8sync gate: stop. v1 text", "timeout": 30 }] }],
+                "PreToolUse": [{ "matcher": "AskUserQuestion", "hooks": [{ "type": "prompt", "prompt": "8sync gate: ask. v1", "model": "claude-sonnet-5" }] }]
+            }
+        });
+        let skills: Vec<String> = ["ship", "codegraph", "impeccable", "ponytail", "taste"].map(String::from).to_vec();
+        apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
+        let stop = v["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(stop.iter().filter(|g| g["hooks"][0]["prompt"].is_string()).count(), 1);
+        assert_eq!(stop[0]["hooks"][0]["model"], STOP_GATE_MODEL);
+        assert!(stop[0]["hooks"][0]["prompt"].as_str().unwrap().contains("background agents"));
+        assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["model"], ASK_GATE_MODEL);
+        assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["args"], json!(["ccc", "hook", "session-start"]));
+        let o = &v["skillOverrides"];
+        assert_eq!(o["impeccable"], "off", "user value kept");
+        assert_eq!(o["taste"], "name-only");
+        assert!(o.get("ship").is_none() && o.get("codegraph").is_none() && o.get("ponytail").is_none(), "core skills untouched");
+        assert_eq!(v["hooks"]["SessionStart"][0]["matcher"], "startup|clear|compact");
+        let once = v.clone();
+        apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
+        assert_eq!(v, once);
+    }
+
+    #[test]
+    fn hq_hooks_added_once_async_and_user_hooks_kept() {
+        let mut v = json!({
+            "hooks": {
+                "Notification": [{ "hooks": [{ "type": "command", "command": "notify-send" }] }],
+                "TaskCompleted": [{ "hooks": [{ "type": "command", "command": "/old/8sync", "args": ["hq", "hook", "TaskCompleted"] }] }]
+            }
+        });
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        let once = v.clone();
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        assert_eq!(v, once, "re-run adds nothing");
+        for ev in HQ_EVENTS {
+            let n = v["hooks"][ev].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", ev])).count();
+            assert_eq!(n, 1, "{ev} registered exactly once");
+        }
+        let tc = &v["hooks"]["TaskCompleted"][0]["hooks"][0];
+        assert_eq!((tc["command"].as_str(), &tc["async"], &tc["timeout"]), (Some("/x/8sync"), &json!(true), &json!(15)));
+        let n = v["hooks"]["Notification"].as_array().unwrap();
+        assert_eq!(n.len(), 2);
+        assert_eq!(n[0]["hooks"][0]["command"], "notify-send", "user hook kept");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_bundled_skills_only_counts_omp_symlinks_keyed_by_frontmatter_name() {
+        let d = std::env::temp_dir().join(format!("8sync-linked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let omp = d.join(".omp/skills");
+        let cl = d.join(".claude/skills");
+        std::fs::create_dir_all(omp.join("taste-skill")).unwrap();
+        std::fs::create_dir_all(omp.join("plain")).unwrap();
+        std::fs::create_dir_all(omp.join("mine")).unwrap();
+        std::fs::create_dir_all(cl.join("mine")).unwrap(); // user's own dir, same name
+        std::fs::write(omp.join("taste-skill/SKILL.md"), "---\nname: design-taste-frontend\ndescription: x\n---\nbody").unwrap();
+        std::os::unix::fs::symlink(omp.join("taste-skill"), cl.join("taste-skill")).unwrap();
+        std::os::unix::fs::symlink(omp.join("plain"), cl.join("plain")).unwrap(); // no SKILL.md → dir name
+        let elsewhere = d.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, cl.join("foreign")).unwrap(); // link outside omp
+        assert_eq!(linked_bundled_skills(&d, &cl), vec!["design-taste-frontend".to_string(), "plain".to_string()]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn session_digest_is_bounded_and_stable() {
+        let d = std::env::temp_dir().join(format!("8sync-digest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(session_digest(&d), "", "no su-code/ prints nothing");
+        std::fs::create_dir_all(d.join("su-code")).unwrap();
+        let state: String = (0..100).map(|i| format!("state {i}\n")).collect();
+        std::fs::write(d.join("su-code/STATE.md"), state).unwrap();
+        let know: String = (0..30).map(|i| format!("- **failure:** f{i}\n- **other:** x{i}\n- validated: v{i}\n- failures: nope{i}\n")).collect();
+        std::fs::write(d.join("su-code/KNOWLEDGE.md"), know).unwrap();
+        let out = session_digest(&d);
+        assert!(out.contains("state 59") && !out.contains("state 60"));
+        assert!(out.contains("f29") && out.contains("f20") && !out.contains("f19\n") && !out.contains("other") && !out.contains("nope"));
+        assert!(out.contains("- validated: v29") && out.contains("- validated: v20") && !out.contains("v19\n"), "plain form kept, last 20 only");
+        assert_eq!(out, session_digest(&d), "deterministic");
+        std::fs::write(d.join("su-code/STATE.md"), "é".repeat(5000)).unwrap();
+        let out = session_digest(&d);
+        assert!(out.len() <= 6000 && out.chars().all(|c| c == 'é' || c == '\n' || c.is_ascii()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn state_root_found_from_nested_subdir_and_stops_at_home() {
+        let d = std::env::temp_dir().join(format!("8sync-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let nested = d.join("proj/a/b");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(d.join("proj/su-code")).unwrap();
+        std::fs::write(d.join("proj/su-code/STATE.md"), "state").unwrap();
+        assert_eq!(find_state_root(&nested, Some(&d)), Some(d.join("proj")));
+        assert_eq!(session_digest(&find_state_root(&nested, Some(&d)).unwrap()), "state");
+        // STATE above $HOME is not reached.
+        assert_eq!(find_state_root(&nested, Some(&d.join("proj/a"))), None);
+        assert_eq!(find_state_root(&d.join("nope"), Some(&d)), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn lsp_plugins_enabled_only_when_server_on_path_and_user_value_kept() {
+        let mut v = json!({ "enabledPlugins": { "gopls-lsp@claude-plugins-official": false } });
+        apply_lsp_plugins(&mut v, |bin| bin == "rust-analyzer" || bin == "gopls");
+        let en = &v["enabledPlugins"];
+        assert_eq!(en["rust-analyzer-lsp@claude-plugins-official"], json!(true));
+        assert_eq!(en["gopls-lsp@claude-plugins-official"], json!(false));
+        assert!(en.get("typescript-lsp@claude-plugins-official").is_none());
+        assert_eq!(v["extraKnownMarketplaces"]["claude-plugins-official"]["source"]["repo"], json!("anthropics/claude-plugins-official"));
+        let before = v.clone();
+        apply_lsp_plugins(&mut v, |bin| bin == "rust-analyzer" || bin == "gopls");
+        assert_eq!(v, before);
+        let mut none = json!({});
+        apply_lsp_plugins(&mut none, |_| false);
+        assert_eq!(none, json!({}));
+    }
+
+    #[test]
+    fn plugin_manifest_version_matches_crate() {
+        let m: Value = serde_json::from_str(include_str!("../../../../assets/claude/.claude-plugin/plugin.json")).unwrap();
+        assert_eq!(m["name"], json!("8sync-kit"));
+        assert_eq!(m["version"], json!(env!("CARGO_PKG_VERSION")));
+        let mk: Value = serde_json::from_str(include_str!("../../../../.claude-plugin/marketplace.json")).unwrap();
+        assert_eq!(mk["plugins"][0]["source"], json!("./assets/claude"));
+    }
+
+
+    #[test]
+    fn org_policy_is_valid_json_with_locks_and_no_secrets() {
+        let p = org_policy(None);
+        let text = serde_json::to_string(&p).unwrap();
+        assert!(serde_json::from_str::<Value>(&text).is_ok());
+        assert_eq!(p["permissions"]["disableBypassPermissionsMode"], "disable");
+        let deny: Vec<&str> = p["permissions"]["deny"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        assert!(DENY.iter().all(|r| deny.contains(r)));
+        assert_eq!(p["forceLoginMethod"], "claudeai");
+        assert_eq!(p["sandbox"]["enabled"], true);
+        assert_eq!(p["channelsEnabled"], true);
+        assert!(p["strictKnownMarketplaces"].as_array().unwrap().iter().any(|m| m["repo"] == "8-Sync-Dev/su-code"));
+        // Keys that need an opt-in stay out of the default.
+        assert!(p.get("allowManagedHooksOnly").is_none() && p.get("hooks").is_none());
+        // MCP lock is opt-in so the Discord Channels plugin server is not blocked.
+        assert!(p.get("allowManagedMcpServersOnly").is_none() && p.get("allowedMcpServers").is_none());
+        let locked = org_policy_with(None, None, true);
+        assert_eq!(locked["allowManagedMcpServersOnly"], true);
+        assert!(locked["allowedMcpServers"].as_array().unwrap().iter().any(|m| m["serverName"] == "serena"));
+        let lower = text.to_lowercase();
+        assert!(["sk-ant", "ghp_", "api_key", "apikey", "bearer "].iter().all(|n| !lower.contains(n)));
+    }
+
+    #[test]
+    fn org_policy_pins_org_only_when_uuid_given() {
+        assert!(org_policy(None).get("forceLoginOrgUUID").is_none());
+        let u = "123e4567-e89b-12d3-a456-426614174000";
+        assert_eq!(org_policy(Some(u))["forceLoginOrgUUID"], u);
+        assert!(is_uuid(u) && !is_uuid("nope") && !is_uuid("123e4567-e89b-12d3-a456-42661417400"));
+    }
+
+    #[test]
+    fn org_policy_strict_hooks_carry_the_kit_hooks() {
+        let p = org_policy_with(None, Some("/usr/bin/8sync"), false);
+        assert_eq!(p["allowManagedHooksOnly"], true);
+        let text = p["hooks"].to_string();
+        assert!(text.contains("\"guard\"") && text.contains("\"verify\"") && text.contains("/usr/bin/8sync"));
+    }
+
+    #[test]
+    fn managed_dirs_per_os() {
+        assert_eq!(managed_settings_dir("linux"), Some("/etc/claude-code"));
+        assert!(managed_settings_dir("macos").unwrap().ends_with("ClaudeCode"));
+        assert_eq!(managed_settings_dir("freebsd"), None);
+    }
+    #[test]
+    fn stop_gate_yields_to_user_stop() {
+        assert!(STOP_GATE.contains("QUOTES the user's own stop/wait words"));
+        assert!(!STOP_GATE.contains("interrupted"));
+        assert!(STOP_GATE.contains("waiting on background agents"));
+    }
+
 }

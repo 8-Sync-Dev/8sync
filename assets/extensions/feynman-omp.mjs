@@ -9,8 +9,15 @@ import { pathToFileURL } from 'node:url';
 export default async function (pi) {
   const managed = JSON.parse(readFileSync(process.env.EIGHTSYNC_FEYNMAN_BRIDGE
     ?? new URL('../.8sync-omp.json', import.meta.url), 'utf8'));
-  const aiEntry = process.env.EIGHTSYNC_FEYNMAN_AI
-    ?? createRequire(process.env.FEYNMAN_BIN_PATH).resolve('@mariozechner/pi-ai');
+  const resolveAi = () => {
+    const req = createRequire(process.env.FEYNMAN_BIN_PATH);
+    let err;
+    for (const spec of ['@earendil-works/pi-ai', '@mariozechner/pi-ai']) {
+      try { return req.resolve(spec); } catch (e) { err ??= e; }
+    }
+    throw err;
+  };
+  const aiEntry = process.env.EIGHTSYNC_FEYNMAN_AI ?? resolveAi();
   const { createAssistantMessageEventStream } = await import(pathToFileURL(aiEntry).href);
   const ompBin = process.env.EIGHTSYNC_OMP_BIN ?? managed.ompBin;
   let worker;

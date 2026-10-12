@@ -686,10 +686,49 @@ fn sessions(env: &Env, root: &Path) -> Store {
 }
 
 fn mask(key: &str) -> String {
-    match (key.get(..8), key.len().checked_sub(6).and_then(|i| key.get(i..))) {
-        (Some(head), Some(tail)) if key.len() > 14 => format!("{head}...{tail}"),
-        _ => "***".to_string(),
+    super::harness::claude_code::mask_token(key)
+}
+
+/// Write a secrets file readable only by the owner (0600 on unix, also tightening an existing file).
+fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+        f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        f.write_all(data)
     }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, data)
+    }
+}
+
+/// Map `key` args to (provider, key). Anthropic needs a Console API key: Claude subscription
+/// (OAuth) tokens stay in Claude Code (Anthropic Usage Policy / Commercial Terms), and Forge's
+/// `claude_code` provider reuses Claude Code's OAuth client, so it is refused outright.
+fn resolve_key(rest: &[String]) -> Result<(String, String)> {
+    let (provider, key) = match rest {
+        [key] if key.starts_with("sk-ant") => ("anthropic".to_string(), key.clone()),
+        [key] if key.starts_with("sk-or-") => ("open_router".to_string(), key.clone()),
+        [key] if key.starts_with("sk-") => ("openai".to_string(), key.clone()),
+        [_] => bail!("cannot infer the provider from this key — use: 8sync forge key <provider> <key>"),
+        [provider, key, ..] => (provider.to_lowercase(), key.clone()),
+        [] => bail!("usage: 8sync forge key <provider> <key>"),
+    };
+    if provider == "claude_code" {
+        bail!("refused: Forge's `claude_code` provider impersonates Claude Code's OAuth client, which Anthropic's Usage Policy forbids. Use provider `anthropic` with a Console API key.");
+    }
+    if provider == "anthropic" && !super::harness::claude_code::is_console_key(&key) {
+        bail!("refused: Forge needs an Anthropic Console API key (sk-ant-api…). Claude subscription logins (sk-ant-oat…) stay in Claude Code only — see Anthropic Usage Policy / Commercial Terms.");
+    }
+    Ok((provider, key))
+}
+
+/// True when a `claude_code` (OAuth) credential exists.
+fn has_claude_code_cred(creds: &[serde_json::Value]) -> bool {
+    creds.iter().any(|c| c.get("id").and_then(|v| v.as_str()) == Some("claude_code"))
 }
 
 /// Store a provider API key in Forge's credential file (`~/.forge/.credentials.json`),
@@ -713,17 +752,14 @@ fn cmd_key(rest: &[String]) -> Result<()> {
             let key = item.pointer("/auth_details/api_key").and_then(|k| k.as_str());
             ui::ok(&format!("{id}: {}", key.map(mask).unwrap_or_else(|| "(oauth)".into())));
         }
+        if has_claude_code_cred(&credentials) {
+            ui::warn("a `claude_code` (OAuth) credential is stored: it uses a Claude subscription through a third-party client, which Anthropic's terms and 8 Sync rules do not allow.");
+            ui::info(&format!("remove it: delete the entry with \"id\": \"claude_code\" from {} (not deleted automatically), then use `8sync forge key anthropic <Console API key>`", cred_file.display()));
+        }
         return Ok(());
     }
 
-    let (provider, key) = match rest {
-        [key] if key.starts_with("sk-ant") => ("anthropic".to_string(), key.clone()),
-        [key] if key.starts_with("sk-or-") => ("open_router".to_string(), key.clone()),
-        [key] if key.starts_with("sk-") => ("openai".to_string(), key.clone()),
-        [_] => bail!("cannot infer the provider from this key — use: 8sync forge key <provider> <key>"),
-        [provider, key, ..] => (provider.to_lowercase(), key.clone()),
-        [] => unreachable!(),
-    };
+    let (provider, key) = resolve_key(rest)?;
 
     let entry = serde_json::json!({ "id": provider, "auth_details": { "api_key": key } });
     match credentials.iter_mut().find(|c| c.get("id").and_then(|v| v.as_str()) == Some(&provider)) {
@@ -731,7 +767,7 @@ fn cmd_key(rest: &[String]) -> Result<()> {
         None => credentials.push(entry),
     }
     std::fs::create_dir_all(&forge_dir)?;
-    std::fs::write(&cred_file, serde_json::to_string_pretty(&credentials)?).context("write .credentials.json")?;
+    write_private(&cred_file, serde_json::to_string_pretty(&credentials)?.as_bytes()).context("write .credentials.json")?;
     ui::ok(&format!("set {provider} API key ({}) → {}", mask(&key), cred_file.display()));
     ui::info("pick the model inside the shell with `:model` (or `8sync forge <name> --tui`)");
     Ok(())
@@ -741,11 +777,54 @@ fn cmd_key(rest: &[String]) -> Result<()> {
 mod tests {
     use super::{mask, shell_path};
 
+    #[cfg(unix)]
+    #[test]
+    fn credentials_file_is_0600_even_if_preexisting() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("8sync-forge-cred-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join(".credentials.json");
+        std::fs::write(&f, b"old").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        super::write_private(&f, b"[]").unwrap();
+        assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read(&f).unwrap(), b"[]");
+        let f2 = dir.join("new.json");
+        super::write_private(&f2, b"x").unwrap();
+        assert_eq!(std::fs::metadata(&f2).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn keys_never_print_in_full() {
-        assert_eq!(mask("sk-ant-usr-0123456789abcdef"), "sk-ant-u...abcdef");
-        assert_eq!(mask("short-key"), "***");
-        assert_eq!(mask("sk-ant-é0123456789"), "***"); // non-ASCII boundary: no panic
+        assert_eq!(mask("sk-ant-api03-abcd"), "…abcd");
+        assert_eq!(mask("ab"), "…");
+        assert_eq!(mask("sk-ant-é0123456789"), "…6789"); // non-ASCII: no panic
+    }
+
+    fn v(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn anthropic_requires_console_key() {
+        assert_eq!(super::resolve_key(&v(&["sk-ant-api03-test"])).unwrap().0, "anthropic");
+        assert!(super::resolve_key(&v(&["anthropic", "sk-ant-api03-test"])).is_ok());
+        assert!(super::resolve_key(&v(&["sk-ant-oat01-test"])).is_err());
+        assert!(super::resolve_key(&v(&["anthropic", "sk-ant-oat01-test"])).is_err());
+    }
+
+    #[test]
+    fn detects_claude_code_oauth_cred() {
+        let c = vec![serde_json::json!({"id":"claude_code"}), serde_json::json!({"id":"anthropic"})];
+        assert!(super::has_claude_code_cred(&c));
+        assert!(!super::has_claude_code_cred(&c[1..]));
+    }
+
+    #[test]
+    fn claude_code_provider_refused() {
+        assert!(super::resolve_key(&v(&["claude_code", "sk-ant-api03-test"])).is_err());
+        assert!(super::resolve_key(&v(&["Claude_Code", "x"])).is_err());
     }
 
     #[test]

@@ -16,12 +16,11 @@ if [ -f "$INPUT" ]; then
     INPUT=$(cat "$INPUT")
 fi
 
-if command -v 8sync >/dev/null 2>&1; then
-    8sync harness claude-code "$INPUT"
-else
-    # Fallback to python / jq to write ~/.claude/settings.json
-    CLAUDE_DIR="$HOME/.claude"
-    mkdir -p "$CLAUDE_DIR"
-    echo "$INPUT" > "$CLAUDE_DIR/settings.json"
-    echo "✓ Wrote $CLAUDE_DIR/settings.json"
+if ! command -v 8sync >/dev/null 2>&1; then
+    # No raw fallback: `8sync harness claude-code` enforces the endpoint allowlist
+    # and the Console-key rule, and merges settings without wiping the kit.
+    echo "8sync not found in PATH. Install it first, then re-run." >&2
+    exit 1
 fi
+# JSON on stdin keeps the token out of the process list.
+printf '%s' "$INPUT" | 8sync harness claude-code

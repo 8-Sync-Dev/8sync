@@ -40,11 +40,19 @@
 # 3,169,280 B, `web` gate = +1,159,168 B (unchanged). Windows release build
 # +8,192 B over v0.64.0 (4,321,280 → 4,329,472). +16 KiB of ceiling. Published:
 # linux-x86_64 5,517,968 B (+20,512 over v0.64.0; 3,440 B left), windows 4,337,664.
+#
+# 2026-10-12 (Unreleased: compliance hardening + `8sync hq` Discord Agent HQ +
+# `ccc policy` + /rules /sec /harden). Local x86_64-unknown-linux-gnu release
+# builds, same flags: main d18128d 5,380,080 B · compliance/kit branch 7e2b99f
+# 5,418,288 B (+38,208) · agent-hq 5,612,000 B (+193,712; `hq.rs` ~1.9k lines,
+# org policy, 3 new skills, 3 new agents (pm, architect, qa) embedded). Local builds run 137,888 B below the
+# published asset, so the next linux asset is estimated ~5,749,888 B → ceiling
+# 5632 KiB (~17 KiB left). Re-check against the real release asset.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-5521408}"   # 5392 KiB (raised 2026-10-11 from 5376 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-5767168}"   # 5632 KiB (raised 2026-10-12 from 5392 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

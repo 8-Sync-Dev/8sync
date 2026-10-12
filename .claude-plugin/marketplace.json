@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "8sync",
+  "description": "8 Sync plugins for Claude Code",
+  "owner": { "name": "8 Sync", "url": "https://8syncdev.com" },
+  "plugins": [
+    {
+      "name": "8sync-kit",
+      "description": "Role-routed subagents (explore, task, quick-task, reviewer, designer, researcher, verifier) and the /ship skill from the 8 Sync kit.",
+      "source": "./assets/claude",
+      "category": "development"
+    }
+  ]
+}

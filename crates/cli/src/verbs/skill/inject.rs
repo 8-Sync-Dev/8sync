@@ -274,35 +274,45 @@ KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Kh
     ForceLoadStats { block, core, specialist, ondemand }
 }
 
-/// CLAUDE.md's block: a compact pointer version of the force-load. Claude Code
-/// loads CLAUDE.md into every request (and skips AGENTS.md once a CLAUDE.md
-/// exists), so the ~8k-token full block — mostly bare on-demand skill names —
-/// is replaced by ~400 tokens that point at AGENTS.md and the skill dirs.
-/// Importing AGENTS.md instead measured 20.5k tokens in this repo.
-fn claude_block(stats: &ForceLoadStats) -> String {
-    let names = |v: &[PathBuf]| {
-        v.iter()
-            .filter_map(|p| p.file_name().and_then(|s| s.to_str()))
-            .map(|n| format!("`{n}`"))
-            .collect::<Vec<_>>()
-            .join(" · ")
-    };
+/// CLAUDE.md's block: a compact pointer (~1 KB). Claude Code loads CLAUDE.md
+/// into every request and already lists skills with descriptions, so the block
+/// does NOT force-read SKILL.md bodies and does NOT claim MCP tools exist.
+/// The full CORE/SPECIALIST block stays in AGENTS.md (omp/Cursor harnesses).
+fn claude_block() -> String {
     let block = format!(
         "{BEGIN}\n\
-## 8sync harness — Claude Code (bản gọn; bản đầy đủ cho omp/Cursor nằm trong `AGENTS.md`)\n\
+## 8sync harness — Claude Code\n\
 \n\
-- **Quy ước repo, lệnh build/test, kiến trúc:** `AGENTS.md` — xem mục lục (`grep -n '^#' AGENTS.md`) rồi đọc đúng mục cần trước khi sửa code.\n\
-- **Code intelligence trước grep:** MCP `codebase-memory-mcp` (search_graph · trace_path · get_code_snippet), `serena` (find_symbol · find_referencing_symbols), hoặc `codegraph query|explore` qua Bash. Chỉ đọc raw file khi sắp sửa nó.\n\
-- **Luôn áp dụng** ({core}): đọc trước khi viết, bước nhỏ có kiểm chứng, làm ít nhất mà đúng (YAGNI, xoá > thêm), ưu tiên lệnh `8sync` (`8sync run test`, `8sync find` …) hơn shell thô. Chi tiết: `su-code/skills/<tên>/SKILL.md` (hoặc `~/.omp/skills/<tên>/`), chỉ mở khi cần.\n\
-- **Mở SKILL.md khi task khớp:** {specialist} — `impeccable` bắt buộc cho mọi việc UI/design.\n\
-- **{ondemand} skill on-demand khác:** Claude Code liệt kê theo tên (`/<tên>`, từ `.claude/skills/` → `su-code/skills/`); gọi skill khi tên khớp task, hoặc `ls su-code/skills` rồi đọc `SKILL.md`.\n\
-- **Memory dự án:** đọc `su-code/STATE.md` đầu phiên, cập nhật ở mỗi mốc; bài học → `su-code/KNOWLEDGE.md`; thay đổi → `CHANGELOG.md` (Unreleased).\n\
-{END}",
-        core = names(&stats.core),
-        specialist = names(&stats.specialist),
-        ondemand = stats.ondemand.len(),
+- **Repo:** quy ước, lệnh build/test, kiến trúc nằm trong `AGENTS.md` — xem mục lục (`grep -n '^#' AGENTS.md`), đọc đúng mục cần.\n\
+- **Code intelligence:** nếu có tool `codebase-memory-mcp` / `serena` thì ưu tiên; không thì `codegraph query|explore` qua Bash. Chỉ đọc raw file khi sắp sửa.\n\
+- **Skills nạp theo nhu cầu:** Claude Code đã liệt kê skill kèm mô tả; chỉ mở khi task khớp (UI/design → `impeccable`). Không đọc SKILL.md trước.\n\
+- **Lệnh:** ưu tiên `8sync` (`8sync run test`, `8sync find` …) hơn shell thô.\n\
+- **Memory:** `su-code/STATE.md` đầu phiên; bài học → `su-code/KNOWLEDGE.md`; thay đổi → `CHANGELOG.md`.\n\
+{END}"
     );
     crate::brand::render(&block).into_owned()
+}
+
+/// True when `dir` is a su-code MEMORY dir (not a repo root): a dir named
+/// `su-code` holding STATE.md/KNOWLEDGE.md, or a dir whose parent is such a dir
+/// (e.g. the nested `su-code/su-code/`). Conservative: both need the marker file.
+pub(crate) fn is_memory_dir(dir: &Path) -> bool {
+    let has_markers = |d: &Path| d.join("STATE.md").is_file() || d.join("KNOWLEDGE.md").is_file();
+    let named = |d: &Path| d.file_name().and_then(|n| n.to_str()) == Some("su-code");
+    (named(dir) && has_markers(dir)) || dir.parent().is_some_and(|p| named(p) && has_markers(p))
+}
+
+/// True when an ancestor of `root` (up to `home`, exclusive) has a CLAUDE.md that
+/// already carries the 8sync block. Claude Code loads ancestor CLAUDE.md files
+/// too, so the child would duplicate it. Roots outside `home` → false.
+pub(crate) fn ancestor_claude_has_block(home: &Path, root: &Path) -> bool {
+    if !root.starts_with(home) {
+        return false;
+    }
+    root.ancestors()
+        .skip(1)
+        .take_while(|a| *a != home)
+        .any(|a| std::fs::read_to_string(a.join("CLAUDE.md")).is_ok_and(|t| find_block(&t).is_some()))
 }
 
 /// Skills the Claude Code kit installs into `~/.claude/skills`: their
@@ -348,10 +358,15 @@ pub(crate) fn claude_skill_overrides(home: &Path, root: &Path) -> Result<()> {
 /// project root: AGENTS.md, CLAUDE.md, GEMINI.md, OPENCODE.md,
 /// .github/copilot-instructions.md, .cursorrules, .windsurfrules.
 pub(crate) fn inject_agents_md(home: &Path, root: &Path) -> Result<()> {
+    if is_memory_dir(root) {
+        ui::info(&format!("skip force-load: {} is a su-code memory dir, not a repo root", root.display()));
+        return Ok(());
+    }
     let stats = build_force_load(home, root);
     let always_count = stats.core.len() + stats.specialist.len();
     let on_count = stats.ondemand.len();
-    let claude_block = claude_block(&stats);
+    let claude_block = claude_block();
+    let ancestor_dup = ancestor_claude_has_block(home, root);
     let block = stats.block;
 
     // Inject into every known agent entry file (markdown: sentinel rewrite or
@@ -375,6 +390,12 @@ pub(crate) fn inject_agents_md(home: &Path, root: &Path) -> Result<()> {
         let stub_create = matches!(*name, "AGENTS.md" | "CLAUDE.md");
         if existing.is_empty() && !stub_create { continue; }
 
+        // Never strip an existing block (the ancestor may exist only on this machine);
+        // only skip CREATING one. An existing child block is still upserted (compacted).
+        if *name == "CLAUDE.md" && ancestor_dup && find_block(&existing).is_none() {
+            ui::info(&format!("skip {}: an ancestor CLAUDE.md already has the 8sync block", path.display()));
+            continue;
+        }
         let block = if *name == "CLAUDE.md" { &claude_block } else { &block };
         let new_contents = match kind {
             EntryKind::Markdown { h1 } => rewrite_md_with_block(&existing, block, h1),
@@ -564,5 +585,75 @@ mod tests {
             "Cursor alwaysApply rule must tell GLM-5.3 to look at images, not zai-vision"
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("8sync-inject-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn memory_dir_detection() {
+        let b = tmp("mem");
+        let mem = b.join("su-code");
+        std::fs::create_dir_all(mem.join("su-code")).unwrap();
+        assert!(!is_memory_dir(&mem), "no marker file yet");
+        std::fs::write(mem.join("STATE.md"), "x").unwrap();
+        assert!(is_memory_dir(&mem));
+        assert!(is_memory_dir(&mem.join("su-code")), "nested dir under a memory dir");
+        assert!(!is_memory_dir(&b), "repo root is not a memory dir");
+        let other = b.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("STATE.md"), "x").unwrap();
+        assert!(!is_memory_dir(&other), "name must be su-code");
+        let _ = std::fs::remove_dir_all(&b);
+    }
+
+    #[test]
+    fn ancestor_block_detected_up_to_home() {
+        let home = tmp("anc");
+        let proj = home.join("startup");
+        let child = proj.join("app");
+        std::fs::create_dir_all(&child).unwrap();
+        assert!(!ancestor_claude_has_block(&home, &child));
+        std::fs::write(proj.join("CLAUDE.md"), format!("# x\n{BEGIN}\nold\n{END}\n")).unwrap();
+        assert!(ancestor_claude_has_block(&home, &child));
+        assert!(!ancestor_claude_has_block(&home, &proj), "own file is not an ancestor");
+        // $HOME's own CLAUDE.md is excluded
+        std::fs::remove_file(proj.join("CLAUDE.md")).unwrap();
+        std::fs::write(home.join("CLAUDE.md"), format!("{BEGIN}\nx\n{END}\n")).unwrap();
+        assert!(!ancestor_claude_has_block(&home, &child));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn ancestor_block_skips_create_but_keeps_and_compacts_existing() {
+        let home = tmp("dup");
+        let proj = home.join("startup");
+        let (new, old) = (proj.join("new"), proj.join("old"));
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(proj.join("CLAUDE.md"), format!("# p\n{BEGIN}\nx\n{END}\n")).unwrap();
+        std::fs::write(old.join("CLAUDE.md"), format!("# mine\nkeep top\n{BEGIN}\nold\n{END}\nkeep bottom\n")).unwrap();
+        inject_agents_md(&home, &new).unwrap();
+        assert!(!new.join("CLAUDE.md").exists(), "no new block created under an ancestor block");
+        inject_agents_md(&home, &old).unwrap();
+        let out = std::fs::read_to_string(old.join("CLAUDE.md")).unwrap();
+        assert!(out.contains(BEGIN) && out.contains("keep top") && out.contains("keep bottom") && !out.contains("\nold\n"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn compact_block_replaces_old_full_block_and_is_small() {
+        let blk = claude_block();
+        assert!(blk.len() <= 1100, "block is {} B", blk.len());
+        assert!(!blk.contains("ĐỌC NGAY") && !blk.contains("LUÔN có"));
+        let old = format!("# T\n\nmine-before\n\n{BEGIN}\n## OLD full block\n{END}\n\nmine-after\n");
+        let out = rewrite_md_with_block(&old, &blk, "T");
+        assert!(!out.contains("OLD full block"));
+        assert!(out.contains("mine-before") && out.contains("mine-after"));
+        assert_eq!(out.matches(BEGIN).count(), 1);
     }
 }
