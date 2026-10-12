@@ -102,18 +102,25 @@ Each name maps to a fixed conversation id per repo, so `8sync ccc . core` tomorr
 
 ![8sync ccc kit and a named session](docs/assets/ccc-kit.png)
 
+Only want the subagents and `/ship`? They are also a Claude Code plugin in this repo's public marketplace (hooks, rules and the full skill set still come from `8sync ccc kit`):
+
+```
+/plugin marketplace add 8-Sync-Dev/su-code
+/plugin install 8sync-kit@8sync
+```
+
 The kit lives in `~/.claude`, so it works in every repo and for plain `claude` too. Every `8sync ccc` launch also keeps things current, without network on the launch path: a newer 8sync release is installed and the command re-runs on it, the kit and bundled skills refresh after an update, and the repo gets the 8sync harness (memory, `AGENTS.md`/`CLAUDE.md` blocks, `.claude/skills` → `su-code/skills`). `SUSYNC_NO_AUTO_UPDATE=1` keeps the installed binary.
 
 | Part | What it does |
 |---|---|
-| Org rules | The 8 Sync rules for Anthropic's Usage Policy and terms ([`8sync-anthropic-rules.md`](assets/skills/aup-audit/8sync-anthropic-rules.md)) are imported into every session ahead of other instructions. |
-| Subagents | `explore` (Haiku) · `task` · `quick-task` · `reviewer` · `designer`. Reviewer and designer use your session model; the read-only ones keep the code-graph MCP tools. |
+| Org rules | A short summary of the 8 Sync rules for Anthropic's Usage Policy and terms loads in every session ahead of other instructions; the full text ([`8sync-anthropic-rules.md`](assets/skills/aup-audit/8sync-anthropic-rules.md)) opens on demand and in `/aup-audit`. |
+| Subagents | Routed by role: `explore` and `quick-task` on Haiku (low effort), `task` and `reviewer` on Sonnet, `designer` on your session model, plus `researcher` and `verifier` for `deep-research`. Each has `maxTurns`; the read-only ones cannot edit; all return a short summary with details in a file. |
 | Skills | `/ship <task>`: explore → task list → implement with build/test → `reviewer` → CHANGELOG + commit, never pushes. `/aup-audit`: Usage Policy + secret check before you publish. `deep-research`: cited research brief. Plus every 8sync skill: bundled ones linked to the current `~/.omp/skills` copy, project ones through `.claude/skills`; on-demand skills are listed by name only to keep the prefix small. |
 | Verify hook | After every Edit/Write, runs `cargo check`, the package's `typecheck` script (or `tsc --noEmit`) or `go vet` from the edited file's nearest manifest **in the background**; only a failure comes back to Claude. The latest edit wins, so a burst of edits costs one check. Before a turn ends, the build must pass (blocked once per broken state). Native Rust, works on Windows. |
 | Guard hook | Before Bash/Edit/Write: no writing `.env`/keys/`*.session`/`*.pkl`, no real-looking API key in code or commands, no `git add -A` that would sweep up a secret, no code routing a Claude subscription into another client. About 23 ms per call. |
-| Stop gate | When Claude tries to end a turn, Haiku reads its last message. Planned steps not done, edits not verified, failing checks, `NOT MERGEABLE`, or a question it could answer itself: the turn goes on. |
+| Stop gate | When Claude tries to end a turn, Haiku reads its last message. Planned steps not done, edits not verified, failing checks, `NOT MERGEABLE`, or a question it could answer itself: the turn goes on. Waiting on background agents it launched is fine. |
 | Ask gate | Before Claude interrupts you with a question, Sonnet checks it. Only credentials, destructive or paid actions, and product decisions reach you; everything else goes back with "pick the conventional option and continue". |
-| Defaults | Only where you haven't set them: auto permission mode, `medium` effort, a task list on every model. Build/test/lint commands and `git add` skip the auto-mode classifier. Deny rules for reading/editing `.env`, keys, `*.session`, `*.pkl` and for force-push; omp's `codebase-memory-mcp` + `serena` registered. |
+| Defaults | Only where you haven't set them: auto permission mode, `medium` effort, a task list on every model. Build/test/lint commands and `git add` skip the auto-mode classifier. Deny rules for reading/editing `.env`, keys, `*.session`, `*.pkl` and for force-push; omp's `codebase-memory-mcp` + `serena` registered when installed (the kit says why not otherwise); Anthropic's official LSP plugins (rust-analyzer, TypeScript, gopls, pyright) enabled for the language servers on your PATH; a `SessionStart` digest of `su-code/STATE.md` and recent lessons. |
 
 A real run with the kit. The first edit broke the build, the verify hook fed the compiler error back, and the stop gate refused "Next I will add tests":
 

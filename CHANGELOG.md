@@ -16,6 +16,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - Claude 5.5 model IDs (`claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`) in `harness claude-code`, the `harness model` aliases (`opus`/`sonnet`/`haiku`), the endpoint probe (now `x-api-key` + `anthropic-version`, official endpoint and localhost only) and the kit's gates.
 - `8sync ccc kit` says why codebase-memory-mcp / serena were not registered in Claude Code (missing from omp's `mcp.json`, not on PATH, or the `claude mcp add-json` error) instead of skipping silently; serena is registered with `alwaysLoad: false`.
 
+### Added
+- **Public plugin marketplace**: the kit's subagents and `/ship` install as a Claude Code plugin — `/plugin marketplace add 8-Sync-Dev/su-code` then `/plugin install 8sync-kit@8sync` (~630 tokens always-on per `claude plugin details`); hooks, rules and the full skill set still come from `8sync ccc kit`.
+- `8sync ccc kit` enables Anthropic's official LSP plugins (rust-analyzer, TypeScript, gopls, pyright from `claude-plugins-official`) for the language servers found on PATH — code intelligence without MCP schemas in the prompt; values you set are kept.
+
 ### Changed
 - **Leaner Claude Code sessions.** Measured on one machine (2026-10-12; `wc -c` of every always-loaded layer, and `message.usage` of the first request in 2 Claude Code transcripts), the kit + repo layers came to 55,663 B (≈13.9k tokens at 4 B/token) of a ~58k-token first request; most of it is gone:
   - the repo `CLAUDE.md` block is compact (≤1.1 KB), no longer orders reading 4 SKILL.md bodies (15.4 KB) before the first tool call, and no longer claims MCP tools are always present;

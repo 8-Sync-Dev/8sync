@@ -478,6 +478,7 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
         serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON — fix it, then `8sync ccc kit`", settings.display()))?
     };
     apply_kit_settings(&mut v, &exe, &skills)?;
+    apply_lsp_plugins(&mut v, |bin| which::which(bin).is_ok());
     let out = serde_json::to_string_pretty(&v)? + "\n";
     if out != raw {
         std::fs::write(&settings, out).with_context(|| format!("write {}", settings.display()))?;
@@ -507,6 +508,37 @@ fn hook_exe() -> Result<String> {
 /// `env`, `defaultMode` and `effortLevel` defaults (a user value wins),
 /// `permissions` rules, and 8sync's hooks (replaced in place on re-run, so the
 /// file only changes when the kit does).
+/// Official LSP plugins (anthropics/claude-plugins-official, `lspServers` only)
+/// and the language-server binary each one starts. Claude Code's LSP tool needs
+/// no MCP schema in the prompt; serena stays as the fallback when it is present.
+const LSP_PLUGINS: [(&str, &str); 4] = [
+    ("rust-analyzer-lsp", "rust-analyzer"),
+    ("typescript-lsp", "typescript-language-server"),
+    ("gopls-lsp", "gopls"),
+    ("pyright-lsp", "pyright-langserver"),
+];
+const OFFICIAL_MARKETPLACE: &str = "claude-plugins-official";
+
+/// Enable an official LSP plugin only when its server is on PATH. Insert-only:
+/// a value the user set (including `false`) is kept.
+fn apply_lsp_plugins(v: &mut Value, on_path: impl Fn(&str) -> bool) {
+    let Some(obj) = v.as_object_mut() else { return };
+    let wanted: Vec<&str> = LSP_PLUGINS.iter().filter(|(_, bin)| on_path(bin)).map(|(p, _)| *p).collect();
+    if wanted.is_empty() {
+        return;
+    }
+    if let Some(m) = obj.entry("extraKnownMarketplaces").or_insert_with(|| json!({})).as_object_mut() {
+        m.entry(OFFICIAL_MARKETPLACE).or_insert_with(|| {
+            json!({ "source": { "source": "github", "repo": "anthropics/claude-plugins-official" } })
+        });
+    }
+    if let Some(en) = obj.entry("enabledPlugins").or_insert_with(|| json!({})).as_object_mut() {
+        for p in wanted {
+            en.entry(format!("{p}@{OFFICIAL_MARKETPLACE}")).or_insert(json!(true));
+        }
+    }
+}
+
 fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()> {
     let obj = v.as_object_mut().context("settings.json is not a JSON object")?;
     if let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() {
@@ -983,4 +1015,30 @@ mod tests {
         assert_eq!(find_state_root(&d.join("nope"), Some(&d)), None);
         let _ = std::fs::remove_dir_all(&d);
     }
+    #[test]
+    fn lsp_plugins_enabled_only_when_server_on_path_and_user_value_kept() {
+        let mut v = json!({ "enabledPlugins": { "gopls-lsp@claude-plugins-official": false } });
+        apply_lsp_plugins(&mut v, |bin| bin == "rust-analyzer" || bin == "gopls");
+        let en = &v["enabledPlugins"];
+        assert_eq!(en["rust-analyzer-lsp@claude-plugins-official"], json!(true));
+        assert_eq!(en["gopls-lsp@claude-plugins-official"], json!(false));
+        assert!(en.get("typescript-lsp@claude-plugins-official").is_none());
+        assert_eq!(v["extraKnownMarketplaces"]["claude-plugins-official"]["source"]["repo"], json!("anthropics/claude-plugins-official"));
+        let before = v.clone();
+        apply_lsp_plugins(&mut v, |bin| bin == "rust-analyzer" || bin == "gopls");
+        assert_eq!(v, before);
+        let mut none = json!({});
+        apply_lsp_plugins(&mut none, |_| false);
+        assert_eq!(none, json!({}));
+    }
+
+    #[test]
+    fn plugin_manifest_version_matches_crate() {
+        let m: Value = serde_json::from_str(include_str!("../../../../assets/claude/.claude-plugin/plugin.json")).unwrap();
+        assert_eq!(m["name"], json!("8sync-kit"));
+        assert_eq!(m["version"], json!(env!("CARGO_PKG_VERSION")));
+        let mk: Value = serde_json::from_str(include_str!("../../../../.claude-plugin/marketplace.json")).unwrap();
+        assert_eq!(mk["plugins"][0]["source"], json!("./assets/claude"));
+    }
+
 }
