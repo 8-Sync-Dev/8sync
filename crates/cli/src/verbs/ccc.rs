@@ -661,10 +661,16 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             json!({ "hooks": [{ "type": "command", "command": exe, "args": ["hq", "hook", ev], "async": true, "timeout": 15 }] }),
         );
     }
+    // Agent-to-agent messages for the local journal (`hq hook` ignores other PostToolUse tools).
+    upsert_hook_group(
+        hooks,
+        "PostToolUse",
+        json!({ "matcher": "SendMessage", "hooks": [{ "type": "command", "command": exe, "args": ["hq", "hook", "PostToolUse"], "async": true, "timeout": 15 }] }),
+    );
     Ok(())
 }
 
-const HQ_EVENTS: [&str; 4] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification"];
+const HQ_EVENTS: [&str; 6] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification", "SessionStart", "SessionEnd"];
 
 /// Which 8sync hook a matcher group carries: `hook verify` / `hook guard` for
 /// the native commands, the first sentence of a gate prompt (`8sync gate: stop`).
@@ -1101,7 +1107,7 @@ mod tests {
         assert!(deny.iter().any(|r| r == "WebFetch") && deny.iter().any(|r| r == "Bash(git push -f*)"));
 
         let post = v["hooks"]["PostToolUse"].as_array().unwrap();
-        assert_eq!(post.len(), 2, "user hook kept, ours replaced in place");
+        assert_eq!(post.len(), 3, "user hook kept, ours replaced in place, hq SendMessage appended");
         assert_eq!(post[0]["hooks"][0]["command"], "prettier");
         assert_eq!(post[1]["hooks"][0]["command"], "/new/8sync");
         assert_eq!(post[1]["hooks"][0]["asyncRewake"], true, "edits never wait for the check");
@@ -1164,6 +1170,8 @@ mod tests {
             let n = v["hooks"][ev].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", ev])).count();
             assert_eq!(n, 1, "{ev} registered exactly once");
         }
+        let pt = v["hooks"]["PostToolUse"].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", "PostToolUse"]) && g["matcher"] == "SendMessage").count();
+        assert_eq!(pt, 1, "SendMessage hook registered once");
         let tc = &v["hooks"]["TaskCompleted"][0]["hooks"][0];
         assert_eq!((tc["command"].as_str(), &tc["async"], &tc["timeout"]), (Some("/x/8sync"), &json!(true), &json!(15)));
         let n = v["hooks"]["Notification"].as_array().unwrap();
