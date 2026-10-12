@@ -17,9 +17,12 @@
 //! 1. Parses settings JSON (supports full schema, flat env map, or CLI flags).
 //! 2. Merges the env keys into `~/.claude/settings.json` (any endpoint: Claude Code's own LLM-gateway support).
 //! 3. On Windows: sets User persistent environment variables (official endpoint only).
-//! 4. Official endpoint only: injects the 9 latest Claude models into `~/.omp/agent/models.yml`
+//! 4. Official endpoint only: injects the Claude 5.5 family (opus/sonnet/haiku 5.5, fable 5.1) plus older models into `~/.omp/agent/models.yml`
 //!    under `anthropic`, with `anthropic-budget-effort` thinking and 1M context, and
-//! 5. sets omp's default role to `anthropic/claude-fable-5-1:high`, advisor `anthropic/claude-opus-5:high`.
+//! 5. sets omp's default role to `anthropic/claude-fable-5-1:high`, advisor `anthropic/claude-opus-5-5:high`.
+//!    The omp write needs a Console API key (`sk-ant-api…`); OAuth/subscription tokens stay in Claude Code.
+//!    Base URLs outside an allowlist (Anthropic, Bedrock, Vertex, Foundry, localhost) are refused;
+//!    https is required except for localhost.
 //!    A third-party gateway never reaches omp: Anthropic's Usage Policy (8sync rules) lets tools
 //!    other than Claude Code use Claude only through a Console API key.
 //! 6. Verifies connection with a live probe.
@@ -125,6 +128,95 @@ pub fn parse_claude_settings(raw: &str) -> Result<ClaudeSettings> {
     })
 }
 
+/// Last 4 chars only (`…abcd`); never the prefix.
+pub fn mask_token(token: &str) -> String {
+    let n = token.chars().count();
+    if n <= 4 {
+        return "…".to_string();
+    }
+    format!("…{}", token.chars().skip(n - 4).collect::<String>())
+}
+
+/// Anthropic Console API keys start with `sk-ant-api`; OAuth/subscription tokens do not.
+pub fn is_console_key(token: &str) -> bool {
+    token.starts_with("sk-ant-api")
+}
+
+/// Lowercased host of a base URL: scheme, userinfo, port and path stripped.
+pub fn base_url_host(base_url: &str) -> Option<String> {
+    let rest = base_url.trim();
+    let rest = rest.split_once("://").map_or(rest, |(_, r)| r);
+    let auth = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let auth = auth.rsplit('@').next().unwrap_or("");
+    let host = if let Some(r) = auth.strip_prefix('[') {
+        r.split(']').next().unwrap_or("")
+    } else {
+        auth.split(':').next().unwrap_or("")
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() { None } else { Some(host) }
+}
+
+fn host_allowed_builtin(host: &str) -> bool {
+    let label_ok = |l: &str| !l.is_empty() && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    // exactly one region label between prefix and suffix
+    let one_label = |h: &str, pre: &str, suf: &str| {
+        h.strip_prefix(pre).and_then(|r| r.strip_suffix(suf)).is_some_and(label_ok)
+    };
+    host == "api.anthropic.com"
+        || matches!(host, "localhost" | "127.0.0.1" | "::1")
+        || one_label(host, "bedrock-runtime.", ".amazonaws.com")
+        || host == "aiplatform.googleapis.com"
+        || host.strip_suffix("-aiplatform.googleapis.com").is_some_and(label_ok)
+        || host.strip_suffix(".services.ai.azure.com").is_some_and(label_ok)
+}
+
+fn is_loopback(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+/// `https://` is required for every host; plain `http://` only for loopback.
+pub fn scheme_ok(base_url: &str, host: &str) -> bool {
+    let u = base_url.trim().to_ascii_lowercase();
+    u.starts_with("https://") || (is_loopback(host) && u.starts_with("http://"))
+}
+
+/// Whether the flow may write Claude credentials into omp's models.yml:
+/// official host (exact) AND Console API key AND https.
+pub fn omp_write_allowed(base_url: &str, token: &str) -> bool {
+    base_url_host(base_url).as_deref() == Some("api.anthropic.com")
+        && is_console_key(token)
+        && base_url.trim().to_ascii_lowercase().starts_with("https://")
+}
+
+/// A non-Console `sk-ant-` token (subscription/OAuth) is only valid for Claude
+/// Code talking to api.anthropic.com itself; never to localhost or a self-hosted proxy.
+pub fn token_allowed_for_host(base_url: &str, token: &str) -> bool {
+    let t = token.trim();
+    !t.starts_with("sk-ant-") || is_console_key(t) || base_url_host(base_url).as_deref() == Some("api.anthropic.com")
+}
+
+/// Token safe to embed in a PowerShell command: `^[A-Za-z0-9_-]+$`.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn persist_value_safe(v: &str) -> bool {
+    !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Allowlist for `ANTHROPIC_BASE_URL`. Escape hatch for a self-operated gateway:
+/// env `EIGHTSYNC_SELF_HOSTED_GATEWAY=<host>` must equal the URL host exactly.
+pub fn gateway_allowed(base_url: &str) -> bool {
+    let Some(host) = base_url_host(base_url) else { return false };
+    if !scheme_ok(base_url, &host) {
+        return false;
+    }
+    if host_allowed_builtin(&host) {
+        return true;
+    }
+    std::env::var("EIGHTSYNC_SELF_HOSTED_GATEWAY")
+        .map(|v| !v.trim().is_empty() && v.trim().to_ascii_lowercase() == host)
+        .unwrap_or(false)
+}
+
 /// Derive a friendly provider name from base URL (e.g. "https://api.apikey.fun" → "apikey-fun")
 pub fn provider_slug(base_url: &str) -> String {
     let clean = base_url
@@ -146,8 +238,41 @@ pub fn provider_slug(base_url: &str) -> String {
     }
 }
 
-/// Canonical modern Claude model catalog (the 9 current models).
-pub const CLAUDE_MODELS_YAML: &str = r#"      - id: claude-opus-5
+/// Canonical modern Claude model catalog (Claude 5.5 family first, then older models).
+pub const CLAUDE_MODELS_YAML: &str = r#"      - id: claude-opus-5-5
+        name: Claude Opus 5.5
+        reasoning: true
+        input: [text, image]
+        contextWindow: 1000000 # not verified
+        maxTokens: 128000
+        cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}
+        thinking:
+          mode: anthropic-budget-effort
+          efforts: [low, medium, high, xhigh, max]
+          defaultLevel: medium
+      - id: claude-sonnet-5-5
+        name: Claude Sonnet 5.5
+        reasoning: true
+        input: [text, image]
+        contextWindow: 1000000 # not verified
+        maxTokens: 128000
+        cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}
+        thinking:
+          mode: anthropic-budget-effort
+          efforts: [low, medium, high, xhigh, max]
+          defaultLevel: medium
+      - id: claude-haiku-5-5
+        name: Claude Haiku 5.5
+        reasoning: true
+        input: [text, image]
+        contextWindow: 200000 # not verified
+        maxTokens: 64000
+        cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}
+        thinking:
+          mode: anthropic-budget-effort
+          efforts: [minimal, low, medium, high, xhigh]
+          defaultLevel: minimal
+      - id: claude-opus-5
         name: Claude Opus 5
         reasoning: true
         input: [text, image]
@@ -294,9 +419,28 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
     };
     let slug = provider_slug(base_url);
 
+    if !gateway_allowed(base_url) {
+        bail!(
+            "refusing base URL host {:?}: not on the allowlist (api.anthropic.com, Amazon Bedrock, Google Vertex, Microsoft Foundry; https required, plain http only for localhost). \
+             Routing Claude through a third-party gateway/proxy conflicts with Anthropic's Usage Policy (\"Do Not Abuse Our Platform\", https://www.anthropic.com/legal/aup) \
+             and would send your code and token to an undisclosed third party. localhost is allowed for a gateway you run yourself (otherwise set EIGHTSYNC_SELF_HOSTED_GATEWAY=<host>, https, host must equal the URL host exactly). \
+             Local tools or proxies that re-route a Claude subscription (Pro/Max/OAuth) into other clients are still forbidden.",
+            base_url_host(base_url).unwrap_or_default()
+        );
+    }
+    if !token_allowed_for_host(base_url, token) {
+        bail!(
+            "refusing: a Claude subscription/OAuth token (`sk-ant-` but not a Console key) may only go to api.anthropic.com — \
+             sending it to {:?} would re-route a subscription through another endpoint (Anthropic Usage Policy, https://www.anthropic.com/legal/aup). \
+             Use a Console API key (`sk-ant-api…`) or the provider's own credentials.",
+            base_url_host(base_url).unwrap_or_default()
+        );
+    }
+    let console_key = is_console_key(token);
+
     ui::info(&format!("detected endpoint: {}", base_url));
     ui::info(&format!("provider slug:     {}", slug));
-    ui::info(&format!("auth token:        {}...{}", &token[..token.len().min(8)], &token[token.len().saturating_sub(6)..]));
+    ui::info(&format!("auth token:        {}", mask_token(token)));
 
     // 2. Merge into ~/.claude/settings.json: only these `env` keys change, so the
     //    8sync kit's hooks/permissions and the user's own settings survive. Claude
@@ -334,11 +478,19 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
     std::env::set_var("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", &settings.env.claude_code_disable_nonessential_traffic);
     std::env::set_var("CLAUDE_CODE_ATTRIBUTION_HEADER", &settings.env.claude_code_attribution_header);
 
-    let is_official = base_url.contains("api.anthropic.com");
+    let is_official = base_url_host(base_url).as_deref() == Some("api.anthropic.com");
+    let write_omp = omp_write_allowed(base_url, token);
 
     #[cfg(target_os = "windows")]
     {
-        if is_official {
+        let vals = [
+            token.as_str(),
+            settings.env.claude_code_disable_nonessential_traffic.as_str(),
+            settings.env.claude_code_attribution_header.as_str(),
+        ];
+        if write_omp && !vals.iter().all(|v| persist_value_safe(v)) {
+            ui::warn("skipping Windows env persistence: a value has characters outside [A-Za-z0-9_-]");
+        } else if write_omp {
             let ps_cmd = format!(
                 "[System.Environment]::SetEnvironmentVariable('ANTHROPIC_AUTH_TOKEN', '{}', [System.EnvironmentVariableTarget]::User); \
                  [System.Environment]::SetEnvironmentVariable('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', '{}', [System.EnvironmentVariableTarget]::User); \
@@ -354,8 +506,13 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
     // Policy (8sync rules) lets tools other than Claude Code — omp here — use
     // Claude only through a Console API key, never a gateway's Claude access.
     if !is_official {
-        ui::warn("endpoint is not api.anthropic.com → Claude Code configured, omp left untouched. Tools other than Claude Code (omp, Forge, Feynman) use a Console API key; a gateway reselling Claude subscriptions breaks Anthropic's Usage Policy.");
-        report_probe(&v1_url, token);
+        ui::warn("endpoint is not api.anthropic.com → Claude Code configured, omp left untouched. Tools other than Claude Code (omp, Forge, Feynman) use a Console API key only.");
+        report_probe(&v1_url, token, console_key);
+        return Ok(());
+    }
+    if !write_omp {
+        ui::warn("token is not a Console API key (sk-ant-api…) → Claude Code configured, omp models.yml untouched. Subscription/OAuth tokens stay in Claude Code only (and https is required).");
+        report_probe(&v1_url, token, console_key);
         return Ok(());
     }
 
@@ -382,16 +539,19 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
     let config_yml_path = agent_dir.join("config.yml");
     if config_yml_path.exists() {
         let config_raw = std::fs::read_to_string(&config_yml_path).unwrap_or_default();
-        let updated_config = set_model_roles(&config_raw, "anthropic/claude-fable-5-1:high", "anthropic/claude-opus-5:high");
+        let updated_config = set_model_roles(&config_raw, "anthropic/claude-fable-5-1:high", "anthropic/claude-opus-5-5:high");
         std::fs::write(&config_yml_path, updated_config)?;
-        ui::ok("set default modelRole to anthropic/claude-fable-5-1:high and advisor to anthropic/claude-opus-5:high");
+        ui::ok("set default modelRole to anthropic/claude-fable-5-1:high and advisor to anthropic/claude-opus-5-5:high");
     }
 
     // 6. Live probe test
-    report_probe(&v1_url, token);
+    report_probe(&v1_url, token, console_key);
 
     println!();
-    println!("{}", "Active Models available in omp:".to_string());
+    println!("Active Models available in omp:");
+    println!("  • anthropic/claude-opus-5-5    (1M ctx, 128K max-out) [ADVISOR]");
+    println!("  • anthropic/claude-sonnet-5-5  (1M ctx, 128K max-out)");
+    println!("  • anthropic/claude-haiku-5-5   (200K ctx, 64K max-out)");
     println!("  • anthropic/claude-opus-5      (1M ctx, 128K max-out)");
     println!("  • anthropic/claude-fable-5-1   (1M ctx, 128K max-out) [DEFAULT]");
     println!("  • anthropic/claude-fable-5     (1M ctx, 128K max-out)");
@@ -405,7 +565,15 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
     Ok(())
 }
 
-fn report_probe(v1_url: &str, token: &str) {
+fn report_probe(v1_url: &str, token: &str, console_key: bool) {
+    if !console_key {
+        ui::info("probe skipped: token is not a Console API key; a subscription token is only used inside Claude Code.");
+        return;
+    }
+    if !probe_supported(v1_url) {
+        ui::info("probe skipped: only api.anthropic.com and localhost use the Messages API header format; Bedrock/Vertex/Foundry need their own auth.");
+        return;
+    }
     ui::step("verifying connection with 1-token probe...");
     match probe_endpoint(v1_url, token) {
         Ok(ms) => ui::ok(&format!("live probe OK ({ms}ms) — endpoint is responsive")),
@@ -530,22 +698,43 @@ pub fn set_model_roles(raw: &str, default_role: &str, advisor_role: &str) -> Str
     lines.join("\n") + "\n"
 }
 
+/// Probe only hosts that speak the Anthropic Messages API directly.
+fn probe_supported(v1_url: &str) -> bool {
+    base_url_host(v1_url).is_some_and(|h| h == "api.anthropic.com" || is_loopback(&h))
+}
+
+/// Header lines sent to curl via stdin (`-H @-`), one per line. Messages API
+/// headers for Console keys: x-api-key + anthropic-version.
+fn probe_header_lines(token: &str) -> String {
+    format!("x-api-key: {token}\nanthropic-version: 2023-06-01\n")
+}
+
 /// Fast 1-token probe test against the messages endpoint.
 fn probe_endpoint(v1_url: &str, token: &str) -> Result<u128> {
     let endpoint = format!("{}/messages", v1_url.trim_end_matches('/'));
     let start = std::time::Instant::now();
 
-    let output = Command::new("curl")
+    // Auth header goes through stdin (`-H @-`) so the token never shows in argv.
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new("curl")
         .args([
             "-s",
             "-X", "POST",
             &endpoint,
-            "-H", &format!("Authorization: Bearer {}", token),
+            "-H", "@-",
             "-H", "Content-Type: application/json",
-            "-d", r#"{"model":"claude-haiku-4-5","max_tokens":5,"messages":[{"role":"user","content":"ping"}]}"#,
+            "-d", r#"{"model":"claude-haiku-5-5","max_tokens":5,"messages":[{"role":"user","content":"ping"}]}"#,
         ])
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .context("failed executing curl probe")?;
+    if let Some(mut si) = child.stdin.take() {
+        let _ = si.write_all(probe_header_lines(token).as_bytes());
+    }
+    let output = child.wait_with_output().context("curl probe failed")?;
 
     let elapsed = start.elapsed().as_millis();
     let body = String::from_utf8_lossy(&output.stdout);
@@ -562,6 +751,22 @@ fn probe_endpoint(v1_url: &str, token: &str) -> Result<u128> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_headers_use_x_api_key_and_version() {
+        let h = probe_header_lines("test-key-placeholder");
+        let lines: Vec<&str> = h.lines().collect();
+        assert_eq!(lines, ["x-api-key: test-key-placeholder", "anthropic-version: 2023-06-01"]);
+        assert!(!h.to_ascii_lowercase().contains("authorization"));
+    }
+
+    #[test]
+    fn probe_only_for_anthropic_and_localhost() {
+        assert!(probe_supported("https://api.anthropic.com/v1"));
+        assert!(probe_supported("http://localhost:8080/v1"));
+        assert!(!probe_supported("https://bedrock-runtime.us-east-1.amazonaws.com"));
+        assert!(!probe_supported("https://aiplatform.googleapis.com"));
+    }
 
     #[test]
     fn parse_full_claude_settings_json() {
@@ -616,8 +821,100 @@ mod tests {
     #[test]
     fn update_config_roles() {
         let raw = "setupVersion: 2\nmodelRoles:\n  advisor: old/opus\n  default: old/default\n";
-        let updated = set_model_roles(raw, "anthropic/claude-fable-5-1:high", "anthropic/claude-opus-5:high");
+        let updated = set_model_roles(raw, "anthropic/claude-fable-5-1:high", "anthropic/claude-opus-5-5:high");
         assert!(updated.contains("default: anthropic/claude-fable-5-1:high"));
-        assert!(updated.contains("advisor: anthropic/claude-opus-5:high"));
+        assert!(updated.contains("advisor: anthropic/claude-opus-5-5:high"));
     }
+
+    #[test]
+    fn gateway_allowlist() {
+        // env-touching: kept in ONE test (env is process-global, tests run in parallel)
+        std::env::remove_var("EIGHTSYNC_SELF_HOSTED_GATEWAY");
+        for ok in [
+            "https://api.anthropic.com",
+            "https://API.Anthropic.com:443/v1",
+            "https://bedrock-runtime.us-east-1.amazonaws.com",
+            "https://us-east5-aiplatform.googleapis.com/v1",
+            "https://aiplatform.googleapis.com",
+            "https://myres.services.ai.azure.com/anthropic",
+            "http://localhost:8080",
+            "https://localhost:8080",
+            "http://127.0.0.1:4000/v1",
+            "http://[::1]:4000",
+        ] {
+            assert!(gateway_allowed(ok), "{ok}");
+        }
+        for bad in [
+            "https://api.apikey.fun",
+            "http://api.anthropic.com",
+            "api.anthropic.com",
+            "http://bedrock-runtime.us-east-1.amazonaws.com",
+            "https://api.anthropic.com.evil.io",
+            "https://evilapi.anthropic.com",
+            "https://api.anthropic.com@evil.io",
+            "https://bedrock-runtime.us-east-1.amazonaws.com.evil.io",
+            "https://evil.io/api.anthropic.com",
+            "https://x.y.services.ai.azure.com",
+            "",
+        ] {
+            assert!(!gateway_allowed(bad), "{bad}");
+        }
+        std::env::set_var("EIGHTSYNC_SELF_HOSTED_GATEWAY", "gw.example.test");
+        assert!(gateway_allowed("https://gw.example.test:8443/v1"));
+        assert!(!gateway_allowed("https://other.example.test"));
+        assert!(!gateway_allowed("https://sub.gw.example.test"));
+        std::env::remove_var("EIGHTSYNC_SELF_HOSTED_GATEWAY");
+        assert!(!gateway_allowed("https://gw.example.test"));
+    }
+
+    #[test]
+    fn omp_write_gate() {
+        assert!(omp_write_allowed("https://api.anthropic.com", "sk-ant-api03-test"));
+        assert!(!omp_write_allowed("http://api.anthropic.com", "sk-ant-api03-test"));
+        assert!(!omp_write_allowed("https://api.anthropic.com", "sk-ant-oat01-test"));
+        assert!(!omp_write_allowed("https://bedrock-runtime.us-east-1.amazonaws.com", "sk-ant-api03-test"));
+        assert!(!omp_write_allowed("http://localhost:8080", "sk-ant-api03-test"));
+    }
+
+    #[test]
+    fn persist_value_validation() {
+        assert!(persist_value_safe("sk-ant-api03-test_x"));
+        assert!(persist_value_safe("1"));
+        assert!(!persist_value_safe(""));
+        assert!(!persist_value_safe("a'b"));
+        assert!(!persist_value_safe("a b;c"));
+        assert!(!persist_value_safe("a$(x)"));
+    }
+
+    #[test]
+    fn console_key_detection() {
+        assert!(is_console_key("sk-ant-api03-test"));
+        assert!(!is_console_key("sk-ant-oat01-test"));
+        assert!(!is_console_key("other"));
+        assert!(!is_console_key(""));
+    }
+
+    #[test]
+    fn mask_shows_only_last_four() {
+        assert_eq!(mask_token("sk-ant-api03-abcd"), "…abcd");
+        assert_eq!(mask_token("ab"), "…");
+    }
+
+    #[test]
+    fn models_yaml_has_55_family() {
+        for id in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"] {
+            assert!(CLAUDE_MODELS_YAML.contains(&format!("id: {id}\n")), "{id}");
+        }
+    }
+    #[test]
+    fn subscription_tokens_only_to_official_host() {
+        let oat = "sk-ant-oat01-test";
+        assert!(token_allowed_for_host("https://api.anthropic.com", oat));
+        assert!(!token_allowed_for_host("http://localhost:8080", oat));
+        assert!(!token_allowed_for_host("https://my-gw.example.org", oat));
+        assert!(!token_allowed_for_host("http://127.0.0.1:4000", " sk-ant-oat01-test"));
+        assert!(token_allowed_for_host("http://localhost:8080", "sk-ant-api03-test"));
+        assert!(token_allowed_for_host("http://localhost:8080", "local-gw-token"));
+    }
+
 }

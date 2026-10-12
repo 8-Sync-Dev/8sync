@@ -9,6 +9,9 @@
 //! copied (the bridge is a same-user loopback listener). Browser automation of ChatGPT
 //! still carries the account-risk the upstream project documents; that is inherent.
 //!
+//! OPT-IN: all actions except `status` (probe only, no wiring) and `off` are refused unless
+//! `EIGHTSYNC_CODEX_WEB_ACCEPT=1` (see [`opted_in`]).
+//!
 //! Actions (smart first positional):
 //! - `up` / `login` / `open` : launch the launcher, then poll until you finish login, then wire.
 //! - (none) / `status`       : probe the server + report; auto-wire if it is ready and unwired.
@@ -37,6 +40,12 @@ EXAMPLES
   8sync codex-web status            same as bare, without auto-wiring surprises
   8sync codex-web wire              (re)detect models and write the omp provider
   8sync codex-web off               remove the chatgpt-web provider from omp
+
+OPT-IN (REQUIRED)
+  Everything except `status` / `off` is refused unless EIGHTSYNC_CODEX_WEB_ACCEPT=1 is set.
+  This browser-automates a ChatGPT subscription; OpenAI's terms are not verified and it
+  may violate them. 8 Sync rules forbid routing subscriptions into third-party clients.
+  Opting in is at your own risk.
 
 USE CASE
   Use your ChatGPT Web subscription (incl. Pro) as a model inside omp — no API key,
@@ -331,9 +340,23 @@ fn print_usage_hint(ids: &[String]) {
     }
 }
 
+/// True only when the opt-in env var is exactly "1".
+fn opted_in(env_value: Option<&str>) -> bool {
+    env_value == Some("1")
+}
+
 pub fn run(a: Args) -> Result<()> {
     let action = a.action.as_deref().unwrap_or("status").to_lowercase();
     let port = a.port;
+    let accepted = opted_in(std::env::var("EIGHTSYNC_CODEX_WEB_ACCEPT").ok().as_deref());
+    let read_only = matches!(action.as_str(), "status" | "" | "off" | "unwire" | "remove");
+    if !accepted && !read_only {
+        ui::warn("codex-web is OPT-IN and was NOT run.");
+        ui::info("It browser-automates a ChatGPT Web subscription into a third-party client (omp) and installs a launcher from a third-party repo.");
+        ui::info("This may violate OpenAI's terms of use (not verified), and 8 Sync's rules forbid routing subscriptions into third-party clients.");
+        ui::info("Prefer an API key. To proceed at your own risk: EIGHTSYNC_CODEX_WEB_ACCEPT=1 8sync codex-web <action>");
+        bail!("codex-web requires EIGHTSYNC_CODEX_WEB_ACCEPT=1 (opt-in, at your own risk)");
+    }
 
     match action.as_str() {
         "off" | "unwire" | "remove" => unwire_omp(),
@@ -386,9 +409,12 @@ pub fn run(a: Args) -> Result<()> {
                     for id in &ids {
                         ui::info(&format!("  {id}"));
                     }
-                    // Auto-wire for convenience (the whole point: cho lẹ).
-                    wire_omp(port, &ids)?;
-                    print_usage_hint(&ids);
+                    if accepted {
+                        wire_omp(port, &ids)?;
+                        print_usage_hint(&ids);
+                    } else {
+                        ui::info("not wiring omp: set EIGHTSYNC_CODEX_WEB_ACCEPT=1 to opt in (see --help)");
+                    }
                 }
                 Probe::UpNoModels => {
                     ui::warn(&format!("bridge up on :{port} but NOT signed in / no models"));
@@ -409,6 +435,15 @@ pub fn run(a: Args) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opted_in_only_for_exactly_one() {
+        assert!(opted_in(Some("1")));
+        assert!(!opted_in(None));
+        assert!(!opted_in(Some("")));
+        assert!(!opted_in(Some("0")));
+        assert!(!opted_in(Some("true")));
+    }
 
     #[test]
     fn extract_ids_reads_openai_models_shape() {

@@ -1,67 +1,13 @@
 # 9router gateway (~/.omp/agent/models.yml) — deployed by `8sync harness gateway apply`.
 #
-# Claude = cc/ prefix (Anthropic Messages API); GPT/Codex = cx/ prefix (OpenAI API).
-# omp masquerades as claude-cli so the cc/ prefix routes correctly through the proxy.
-#
-# IMPORTANT: Claude models use thinking.mode = anthropic-budget-effort so omp sends
-# `thinking:{type:enabled,budget_tokens}`. The gateway REJECTS `type:adaptive` with
-# "thinking.enabled.budget_tokens: Field required" (notably claude-sonnet-5). Do NOT
-# change this back to adaptive. Efforts are minimal..high (NO xhigh).
+# GPT/Codex = cx/ prefix (OpenAI API). No Claude provider here: Claude in omp goes only
+# through a Console API key (`8sync harness claude-code`), never a third-party proxy.
+# OPT-IN: routes a ChatGPT/Codex subscription through a third-party router (OpenAI terms
+# not verified) — requires EIGHTSYNC_GATEWAY_ACCEPT=1.
 #
 # `__NINE_ROUTER_KEY__` is substituted at apply time from $NINE_ROUTER_KEY (or the
 # previously-deployed key). Edit modelRoles routing via `8sync harness model`, NOT here.
 providers:
-  9router-cc:
-    baseUrl: https://9router.cloudgo.vn/v1
-    apiKey: __NINE_ROUTER_KEY__
-    api: anthropic-messages
-    authHeader: true
-    models:
-      - id: cc/claude-opus-4-8
-        name: Claude Opus 4.8 (9router)
-        reasoning: true
-        input: [text, image]
-        contextWindow: 1000000
-        maxTokens: 32000
-        cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}
-        thinking:
-          mode: anthropic-budget-effort
-          efforts: [minimal, low, medium, high]
-          defaultLevel: high
-      - id: cc/claude-sonnet-5
-        name: Claude Sonnet 5 (9router)
-        reasoning: true
-        input: [text, image]
-        contextWindow: 1000000
-        maxTokens: 128000
-        cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}
-        thinking:
-          mode: anthropic-budget-effort
-          efforts: [minimal, low, medium, high]
-          defaultLevel: high
-      - id: cc/claude-sonnet-4-6
-        name: Claude Sonnet 4.6 (9router)
-        reasoning: true
-        input: [text, image]
-        contextWindow: 1000000
-        maxTokens: 64000
-        cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}
-        thinking:
-          mode: anthropic-budget-effort
-          efforts: [minimal, low, medium, high]
-          defaultLevel: high
-      - id: cc/claude-haiku-4-5-20251001
-        name: Claude Haiku 4.5 (9router)
-        reasoning: true
-        input: [text, image]
-        contextWindow: 200000
-        maxTokens: 64000
-        cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}
-        thinking:
-          mode: anthropic-budget-effort
-          efforts: [minimal, low, medium, high]
-          defaultLevel: minimal
-
   9router-cx:
     baseUrl: https://9router.cloudgo.vn/v1
     apiKey: __NINE_ROUTER_KEY__

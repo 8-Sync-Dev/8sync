@@ -97,8 +97,9 @@ fn add(env: &env_detect::Env, selector: &str, flags: Flags) -> Result<()> {
     let env_key = format!("{}_API_KEY", provider.to_uppercase().replace('-', "_"));
     let api_key = flags
         .key
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var(&env_key).ok().filter(|s| !s.is_empty()))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var(&env_key).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
         .unwrap_or_else(|| {
             ui::warn(&format!(
                 "no API key (pass --key, or set ${env_key}) — wrote a placeholder; edit models.yml"
@@ -107,6 +108,7 @@ fn add(env: &env_detect::Env, selector: &str, flags: Flags) -> Result<()> {
         });
 
     let api = normalize_api(flags.api.as_deref());
+    check_anthropic_policy(&api, &base_url, &api_key)?;
     let think = flags.think.map(|s| normalize_efforts(&s)).unwrap_or_default();
 
     let m = CustomModel {
@@ -194,9 +196,32 @@ fn split_selector(sel: &str) -> Result<(String, String)> {
     Ok((prov.trim().to_string(), model.trim().to_string()))
 }
 
+/// Anthropic Usage Policy guard: Claude keys/protocol only reach Anthropic or an
+/// approved cloud gateway (`gateway_allowed`); subscription (OAuth) tokens never.
+fn check_anthropic_policy(api: &str, url: &str, key: &str) -> Result<()> {
+    use super::claude_code::{gateway_allowed, is_console_key};
+    const WHY: &str = "Anthropic's Usage Policy / Commercial Terms do not allow routing Claude \
+        through third-party resellers or subscription tokens (https://www.anthropic.com/legal/aup); \
+        use a Console API key against api.anthropic.com, Bedrock, Vertex or Foundry";
+    let key = key.trim();
+    if key.starts_with("sk-ant-") {
+        if !is_console_key(key) {
+            bail!("refusing: `sk-ant-` key is not a Console API key (subscription/OAuth token). {WHY}");
+        }
+        if !gateway_allowed(url) {
+            bail!("refusing: Anthropic key with non-approved --url `{url}`. {WHY}");
+        }
+    }
+    if matches!(api, "anthropic" | "anthropic-messages") && !gateway_allowed(url) {
+        bail!("refusing: Claude protocol (--api {api}) with non-approved --url `{url}`. {WHY}");
+    }
+    Ok(())
+}
+
 /// Map a friendly `--api` value to the omp dialect string. Default: OpenAI.
 fn normalize_api(api: Option<&str>) -> String {
-    match api.map(str::trim).unwrap_or("openai") {
+    let api = api.map(|a| a.trim().to_lowercase()).unwrap_or_else(|| "openai".to_string());
+    match api.as_str() {
         "anthropic" | "anthropic-messages" | "claude" => "anthropic-messages",
         "openai" | "openai-completions" | "" => "openai-completions",
         other => other, // pass through any exact dialect omp supports
@@ -313,12 +338,28 @@ fn save_registry(env: &env_detect::Env, reg: &[CustomModel]) -> Result<()> {
 fn sync_models_yml(env: &env_detect::Env, reg: &[CustomModel]) -> Result<()> {
     let path = env.home.join(".omp/agent/models.yml");
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let merged = super::local_model::insert_block(&strip_block(&existing), &render_block(reg));
+    let allowed = policy_filtered(reg);
+    let merged = super::local_model::insert_block(&strip_block(&existing), &render_block(&allowed));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&path, merged)?;
     Ok(())
+}
+
+/// Drop (with a warning) registry entries that fail the Anthropic policy check,
+/// so entries saved before the guard existed are never re-rendered into models.yml.
+fn policy_filtered(reg: &[CustomModel]) -> Vec<CustomModel> {
+    reg.iter()
+        .filter(|m| match check_anthropic_policy(&m.api, &m.base_url, &m.api_key) {
+            Ok(()) => true,
+            Err(e) => {
+                ui::warn(&format!("skipping `{}` in models.yml: {e}", m.selector));
+                false
+            }
+        })
+        .cloned()
+        .collect()
 }
 
 /// Remove the managed custom-models sentinel block (if present) from a body.
@@ -390,7 +431,7 @@ fn render_block(reg: &[CustomModel]) -> String {
         b.push_str(&format!("    api: {}\n", head.api));
         b.push_str("    models:\n");
         for m in models {
-            let id = m.selector.splitn(2, '/').nth(1).unwrap_or(&m.selector);
+            let id = m.selector.split_once('/').map_or(m.selector.as_str(), |(_, id)| id);
             let input = if m.vision { "[text, image]" } else { "[text]" };
             b.push_str(&format!("      - id: {id}\n"));
             b.push_str(&format!("        name: {id} (custom)\n"));
@@ -452,4 +493,84 @@ fn usage() {
     ui::info("e.g. 8sync harness add-model xai/grok-4.5 --url https://api.x.ai/v1 --key $XAI_API_KEY --ctx 256000 --max 32000 --think");
     ui::info("Writes a custom provider into ~/.omp/agent/models.yml; selector = <provider>/<model>.");
     ui::info("For a local GGUF instead, use `8sync harness add-local-model`.");
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::check_anthropic_policy as chk;
+
+    #[test]
+    fn oat_token_refused() {
+        assert!(chk("openai-completions", "https://api.anthropic.com", "sk-ant-oat01-test").is_err());
+    }
+    #[test]
+    fn console_key_third_party_refused() {
+        assert!(chk("openai-completions", "https://reseller.example.com/v1", "sk-ant-api03-test").is_err());
+    }
+    #[test]
+    fn console_key_anthropic_ok() {
+        assert!(chk("anthropic-messages", "https://api.anthropic.com", "sk-ant-api03-test").is_ok());
+    }
+    #[test]
+    fn anthropic_api_reseller_refused() {
+        assert!(chk("anthropic-messages", "https://reseller.example.com", "other-key").is_err());
+    }
+    #[test]
+    fn openai_api_other_key_ok() {
+        assert!(chk("openai-completions", "https://api.x.ai/v1", "xai-test").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    fn model(sel: &str, url: &str, key: &str, api: &str) -> CustomModel {
+        CustomModel {
+            selector: sel.into(),
+            base_url: url.into(),
+            api_key: key.into(),
+            api: api.into(),
+            ctx: 1000,
+            max: 100,
+            vision: false,
+            think: String::new(),
+        }
+    }
+
+    #[test]
+    fn api_is_lowercased_and_trimmed() {
+        assert_eq!(normalize_api(Some("  Anthropic ")), "anthropic-messages");
+        assert_eq!(normalize_api(Some("CLAUDE")), "anthropic-messages");
+        assert_eq!(normalize_api(Some("OpenAI")), "openai-completions");
+        assert_eq!(normalize_api(None), "openai-completions");
+    }
+
+    #[test]
+    fn uppercase_anthropic_api_hits_policy() {
+        let api = normalize_api(Some("ANTHROPIC"));
+        assert!(check_anthropic_policy(&api, "https://reseller.example.com", "k").is_err());
+    }
+
+    #[test]
+    fn padded_oauth_key_hits_policy_after_trim() {
+        let key = "  sk-ant-oat01-test \n".trim();
+        assert!(check_anthropic_policy("openai-completions", "https://api.anthropic.com", key).is_err());
+        // the policy trims too, so padding cannot skip the `sk-ant-` prefix check
+        assert!(check_anthropic_policy("openai-completions", "https://api.anthropic.com", "  sk-ant-oat01-test").is_err());
+    }
+
+    #[test]
+    fn registry_entries_failing_policy_are_skipped() {
+        let reg = vec![
+            model("xai/grok", "https://api.x.ai/v1", "xai-test", "openai-completions"),
+            model("bad/oat", "https://api.anthropic.com", "sk-ant-oat01-test", "openai-completions"),
+            model("bad/resell", "https://reseller.example.com", "k", "anthropic-messages"),
+        ];
+        let out = policy_filtered(&reg);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].selector, "xai/grok");
+        let block = render_block(&out);
+        assert!(block.contains("xai:") && !block.contains("bad"));
+    }
 }

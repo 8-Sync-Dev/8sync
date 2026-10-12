@@ -69,7 +69,7 @@ pub(crate) fn harness_model(env: &env_detect::Env, args: &[String]) -> Result<()
     println!();
     print_omp_roles(&omp_cfg);
     ui::info("combo: 8sync harness model claude+glm   (set ALL omp roles: opus=thinking, glm=mechanical)");
-    ui::info("aliases: claude|opus → anthropic/claude-opus-4-8 · sonnet → sonnet-5 · glm|zai → zai/glm-5.3-flash");
+    ui::info("aliases: claude|opus → anthropic/claude-opus-5-5 · sonnet → sonnet-5-5 · glm|zai → zai/glm-5.3-flash");
     ui::info("one role: 8sync harness model <default|plan|smol|slow | review|debug|code|trivial> <model>");
     Ok(())
 }
@@ -135,9 +135,9 @@ fn resolve_alias(tok: &str) -> String {
         return tok.to_string();
     }
     match tok.to_ascii_lowercase().as_str() {
-        "claude" | "opus" | "anthropic" => "anthropic/claude-opus-4-8".to_string(),
-        "sonnet" => "anthropic/claude-sonnet-5".to_string(),
-        "haiku" => "anthropic/claude-haiku-4-5-20251001".to_string(),
+        "claude" | "opus" | "anthropic" => "anthropic/claude-opus-5-5".to_string(),
+        "sonnet" => "anthropic/claude-sonnet-5-5".to_string(),
+        "haiku" => "anthropic/claude-haiku-5-5".to_string(),
         "fable" | "fable-5-1" | "claude-fable-5-1" => "anthropic/claude-fable-5-1".to_string(),
         "glm" | "zai" | "flash" => "zai/glm-5.3-flash".to_string(),
         "glm-5.3" | "glm53" => "zai/glm-5.3".to_string(),
@@ -320,7 +320,7 @@ mod tests {
         assert!(is_native_vlm("GLM-5.3-Flash"));
         assert!(!is_native_vlm("zai/glm-5.2:xhigh"));
         assert!(!is_native_vlm("zai/glm-5.2"));
-        assert!(!is_native_vlm("anthropic/claude-opus-4-8"));
+        assert!(!is_native_vlm("anthropic/claude-opus-5-5"));
     }
 
     #[test]
@@ -332,8 +332,8 @@ mod tests {
             "zai/glm-5.3-flash:high"
         );
         assert_eq!(
-            vision_role_for_combo("anthropic/claude-opus-4-8", "zai/glm-5.2"),
-            "anthropic/claude-opus-4-8:high"
+            vision_role_for_combo("anthropic/claude-opus-5-5", "zai/glm-5.2"),
+            "anthropic/claude-opus-5-5:high"
         );
     }
 }
