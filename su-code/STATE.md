@@ -1,3 +1,36 @@
+# Unreleased (after v0.66.0) — ccc vs omp vs forge, measured; destructive-command guard; native stop gate; connectors off
+
+## Goal
+Measure ccc (Claude Code, OAuth team plan) against omp and Forge (Console key) on the same model and tasks, then close every gap the numbers show — speed, cost per task, safety — without losing quality. Release.
+
+## Assumptions (sourced)
+- Same model everywhere: `claude-sonnet-5-5` (API `/v1/models`, 2026-09-28). Prices $/MTok in 2 · 5m write 2.5 · 1h write 4 · read 0.10 · out 10; Haiku 5.5 0.10/0.125/0.20/0.01/0.50 (platform.claude.com pricing, via librarian 2026-10-12).
+- Claude Code 2.1.296 is latest (npm latest=next). On Windows the `PowerShell` tool is separate from `Bash`; `Bash(...)` rules and `Bash` matchers never see it; without Git Bash it is the only shell (code.claude.com hooks.md#powershell, permissions docs).
+- PreToolUse `permissionDecision: "ask"` prompts even in auto mode; under `-p` it is a denial Claude reads (hooks.md).
+- `disableClaudeAiConnectors: true` (settings-reference) stops the claude.ai connector fetch; measured −1.2 s startup, −2k tokens/request on this team login.
+- Stop hook input carries `background_tasks` (status running/…); Claude Code wakes the session when they finish (captured live, `stopin.jsonl`).
+- omp 18.9.2: approval mode default yolo; no destructive/secret guard; `claude-api-8sync` provider without `auth:` is treated as OAuth → Claude Code identity block + 1h cache writes on the Console key (librarian, oh-my-pi v18.9.2 custom-models.ts:59-62). omp default role is still `anthropic/…` = OAuth.
+- Forge 2.14.0: `restricted=false` default, no denylist, loads every `.env` up the tree into the process env, sends prompt text to PostHog in release builds; `-p` reports no usage — read `~/.forge/.forge.db` (librarian, forgecode v2.14.0).
+
+## Checklist
+- [x] Bench rig (`~/tmp/hb/bench.py`, throwaway): 4 tasks (Rust calc 12 hidden tests, TS cart 10, Python iniconf 12, explore su-code 7 answers), fixtures validated by reference solutions.
+- [x] Baseline (Sonnet 5.5, 2 runs each): all 3 harnesses 100% hidden tests. Mean wall ccc 44.8 s · omp 38.0 · forge 36.3; uniform-price cost ccc $0.150 · omp $0.111 · forge $0.159.
+- [x] Root causes in ccc: startup 3.1 s (1.2 s claude.ai connectors), Haiku Stop gate 2.6 s + ~30k tokens per turn end, fired on 3/8 bench runs (CHANGELOG nitpicks) and in real sessions mostly on turns waiting for background agents.
+- [x] Guard: `danger.rs` (deny root/home/project deletes, disk wipes, force-push, credential prints/uploads; ask outside-project/run-time/remote deletes, reset --hard, clean -f), Bash + PowerShell + nested shells; matcher adds `PowerShell`.
+- [x] Native Stop gate (`gate.rs`, inside `verify-stop`); Haiku prompt gate retired from settings; `disableClaudeAiConnectors: true` default.
+- [x] After-bench (all three again, every arm 82/82), live safety probes on all three: omp + Forge deleted outside the repo, printed `.env`, force-pushed; ccc blocked all three (KNOWLEDGE 2026-10-12).
+- [x] Rebased onto upstream v0.66.0 (stash → pull → merge): Haiku Stop gate stays retired; its v0.66 "yield to a quoted user stop" rule ported to `gate.rs` (`user_stop_quoted`).
+- [x] Review round 1 (NOT MERGEABLE: size ceiling claim, gate false positives, missing wiring tests) → owner asked for /deep-research first: CowAgent, oh-my-pi, ForgeCode, Claude Code docs/plugins, dcg/cc-safety-net → `outputs/stop-gate-guard-design.md` (+ provenance). Gate now reads the user's stop from the transcript, RISKY list for plans, word-boundary matching, hand-off phrases; guard resolves literal vars in straight-line Bash only; `eval "$(…)"` asks unless shell-init.
+- [x] Review round 2 (NOT MERGEABLE: var-resolution bypasses via nested `bash -c`, `+=`, loops, IFS, functions, source, eval; gate hand-off false positives; docs) → all fixed with test rows. Size measured: musl (zig cc) +114,448 B, Windows +108,032 B → ceiling 5760 KiB.
+- [x] Review round 3: MERGEABLE; SHOULDs fixed too (shell_init needs tool + printing subcommand, no newline/redirect/relative path; hand-off phrases in any word order; `i'll need to`/`until`/`summarize` plans block again; a user stop must be the word alone or + punctuation). 249 tests.
+- [x] Committed locally (not pushed). Owner: push + release as v0.67.0.
+
+## Current
+Done locally (committed, not pushed).
+
+## Next
+Owner: push + release as v0.67.0.
+
 # v0.66.0 — Claude-token compliance, leaner role-routed kit, Agent HQ on Discord, security commands, org policy
 
 ## Goal
