@@ -34,16 +34,23 @@ mod verify;
       8sync ccc . new <name>         create a session (refuses an existing name)
       8sync ccc . rm <name>          remove a session and its transcript
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
-      8sync ccc status               claude binary, login, kit, MCP and sessions
+      8sync ccc status               claude binary, login, kit, managed settings, MCP and sessions
+      8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]
+                                     print a recommended managed-settings.json (never installs it)
 
     EVERY LAUNCH (no network on the launch path; SUSYNC_NO_AUTO_UPDATE=1 skips the update)
       newer 8sync release → install + re-run · after an update: bundled skills + kit refresh ·
       git repo → harness: su-code/ memory, AGENTS.md/CLAUDE.md blocks, .claude/skills → su-code/skills
 
     THE KIT (installed by `8sync setup`; edited files are kept unless --force)
-      rules    the 8 Sync Anthropic rules (aup-audit/8sync-anthropic-rules.md) load in every session
-      agents   explore (haiku) · task · quick-task · reviewer · designer · verifier · researcher
-      skills   /ship · /aup-audit · deep-research + every bundled 8sync skill (linked to ~/.omp/skills)
+      rules    a short 8 Sync/Anthropic rules block in every session; full text (aup-audit/8sync-anthropic-rules.md)
+               opens on demand through /rules
+      agents   explore (haiku) · task · quick-task · reviewer · designer · verifier · researcher ·
+               pm (team lead) · architect (opus, writes docs/ADR/RFC only) · qa (tests only)
+      skills   /ship · /rules (is X allowed?) · /aup-audit (repo vs Usage Policy) · /sec (secrets, deps, OWASP) ·
+               /harden (Claude Code security posture) · deep-research + every bundled 8sync skill (linked to ~/.omp/skills)
+      policy   `8sync ccc policy` prints org managed settings (bypass off, deny rules, login pinned to your
+               claude.ai org, marketplace allowlist, opt-in MCP allowlist, sandbox, channels); you install it with sudo
       verify   after every Edit/Write, in the background: cargo check · package typecheck/tsc · go vet;
                errors wake Claude; a turn cannot end on a broken build (`hook verify` / `verify-stop`)
       guard    before Bash/Edit/Write: no credential files, real secrets, `git add` of
@@ -52,6 +59,8 @@ mod verify;
                it waits on background agents); ask: questions without a real need go back to Claude
       session  SessionStart digest of su-code/STATE.md + recent failure/validated notes (<= 6 KB,
                stable for the prompt cache); non-core bundled skills load name-only (skillOverrides)
+      hq hooks TaskCreated/TaskCompleted/TeammateIdle/Notification → `8sync hq hook <Event>`, async
+               (no-op until `8sync hq setup`)
       also     auto permission mode · medium effort · task list (each only if unset) · build/test
                commands skip the classifier · deny .env / keys / *.session / *.pkl and force-push ·
                codebase-memory-mcp + serena from omp's MCP config when their command is on PATH
@@ -87,6 +96,7 @@ pub fn run(a: Args) -> Result<()> {
     match verb {
         "kit" => install_kit(&env, rest.iter().any(|a| a == "--force")),
         "status" => status(&env, &root),
+        "policy" => policy(rest),
         "ls" | "list" => {
             ui::header("8sync ccc sessions");
             ui::info(&format!("project: {}", root.display()));
@@ -280,7 +290,7 @@ pub(crate) fn ensure_claude() -> Result<PathBuf> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 13] = [
+const KIT_FILES: [(&str, &str); 19] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -288,7 +298,13 @@ const KIT_FILES: [(&str, &str); 13] = [
     ("claude/agents/designer.md", "agents/designer.md"),
     ("claude/agents/verifier.md", "agents/verifier.md"),
     ("claude/agents/researcher.md", "agents/researcher.md"),
+    ("claude/agents/pm.md", "agents/pm.md"),
+    ("claude/agents/architect.md", "agents/architect.md"),
+    ("claude/agents/qa.md", "agents/qa.md"),
     ("claude/skills/ship/SKILL.md", "skills/ship/SKILL.md"),
+    ("claude/skills/rules/SKILL.md", "skills/rules/SKILL.md"),
+    ("claude/skills/sec/SKILL.md", "skills/sec/SKILL.md"),
+    ("claude/skills/harden/SKILL.md", "skills/harden/SKILL.md"),
     ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
     ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
     // The org's rules: summarised in the kit's CLAUDE.md block, full text opened on demand (/aup-audit).
@@ -384,6 +400,9 @@ Reply {\"ok\": true} when the work is done, when the message is a plain answer t
 a JUSTIFIED question.\n\
 Reply {\"ok\": true} when the message says Claude is waiting on background agents, tasks or workflows it \
 launched (they notify on completion) and it has nothing else it can do meanwhile.\n\
+Reply {\"ok\": true} only when the message QUOTES the user's own stop/wait words (e.g. \"dừng\", \"stop\", \"wait\", \
+\"chờ\") and states Claude is holding for the user's next instruction: the user's explicit stop outranks this gate. \
+Claude merely saying it will pause, with no quoted user words, does not qualify.\n\
 Reply {\"ok\": false, \"reason\": \"<the concrete next step Claude should take>\"} when the message shows work \
 Claude can still do itself: planned tasks left undone (\"next I will…\"), code edited but build/test not run \
 since, a failing build/test/lint it has not fixed, a reviewer verdict NOT MERGEABLE, or a NOT JUSTIFIED question \
@@ -632,8 +651,20 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             }]
         }),
     );
+    // Agent-team events -> `8sync hq hook <Event>`. Event names, `async` (background, never
+    // blocks) and `timeout` (seconds) per https://code.claude.com/docs/en/hooks (checked
+    // 2026-10-12). `hq hook` is a fast no-op until `8sync hq setup`, so always registering is safe.
+    for ev in HQ_EVENTS {
+        upsert_hook_group(
+            hooks,
+            ev,
+            json!({ "hooks": [{ "type": "command", "command": exe, "args": ["hq", "hook", ev], "async": true, "timeout": 15 }] }),
+        );
+    }
     Ok(())
 }
+
+const HQ_EVENTS: [&str; 4] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification"];
 
 /// Which 8sync hook a matcher group carries: `hook verify` / `hook guard` for
 /// the native commands, the first sentence of a gate prompt (`8sync gate: stop`).
@@ -641,6 +672,9 @@ fn hook_role(g: &Value) -> Option<String> {
     g["hooks"].as_array()?.iter().find_map(|h| {
         if let Some(a) = h["args"].as_array().filter(|a| a.len() >= 3 && a[0] == "ccc" && a[1] == "hook") {
             return a[2].as_str().map(|r| format!("hook {r}"));
+        }
+        if let Some(a) = h["args"].as_array().filter(|a| a.len() == 3 && a[0] == "hq" && a[1] == "hook") {
+            return a[2].as_str().map(|r| format!("hq {r}"));
         }
         let p = h["prompt"].as_str().filter(|p| p.starts_with(GATE_MARKER))?;
         Some(p.split('.').next().unwrap_or(p).to_string())
@@ -799,6 +833,155 @@ fn fnv1a(s: &str) -> String {
     format!("{h:016x}")
 }
 
+// ── org managed-settings policy ─────────────────────────────────────────────
+
+/// Marketplaces a managed policy lets people add: the official Anthropic one and 8sync's own
+/// (the kit plugin). `github` source shape: settings-reference#strictknownmarketplaces
+/// (https://code.claude.com/docs/en/settings-reference).
+const POLICY_MARKETPLACES: [&str; 2] = ["anthropics/claude-plugins-official", "8-Sync-Dev/su-code"];
+/// MCP servers the kit mirrors from omp's config (see `mirror_mcp`).
+const POLICY_MCP: [&str; 2] = ["codebase-memory-mcp", "serena"];
+
+/// Recommended managed settings for an org (Claude Team, solo owner, official OAuth only), built
+/// only from keys checked against https://code.claude.com/docs/en/settings-reference and
+/// /en/managed-settings on 2026-10-12 (Claude Code 2.1.296). Pure: no I/O, no secrets.
+///   - `permissions.disableBypassPermissionsMode: "disable"` — reference § permissions-disablebypasspermissionsmode
+///   - `permissions.deny` — the kit's DENY list (same rule syntax as the user file)
+///   - `forceLoginMethod: "claudeai"` + `forceLoginOrgUUID` (string UUID; only a managed source enforces it)
+///   - `strictKnownMarketplaces` — array of `{source:"github", repo}`; managed-only
+///   - `allowManagedMcpServersOnly` + `allowedMcpServers` (`{serverName}` entries) — managed-only lock, opt-in (`lock_mcp`)
+///   - `sandbox.enabled`, `sandbox.filesystem.denyRead` (`~/` prefix) — sandbox settings
+///   - `channelsEnabled: true` — Team/Enterprise need it for any channel plugin; managed-only
+///
+/// Not set on purpose: `sandbox.failIfUnavailable` / `allowUnsandboxedCommands: false` (would stop
+/// sessions where bubblewrap is missing, or block builds needing the escape hatch), `allowedChannelPlugins`
+/// (replaces Anthropic's default allowlist), `allowManagedHooksOnly` (only with `strict_hooks`).
+#[cfg(test)]
+pub(crate) fn org_policy(org_uuid: Option<&str>) -> Value {
+    org_policy_with(org_uuid, None, false)
+}
+
+/// `hooks_exe = Some(path)` adds the kit's hooks to the policy and turns `allowManagedHooksOnly` on,
+/// so the kit keeps working when only managed hooks run. Off by default: the same hooks already live in
+/// `~/.claude/settings.json`, and registering them twice would run each hook twice.
+pub(crate) fn org_policy_with(org_uuid: Option<&str>, hooks_exe: Option<&str>, lock_mcp: bool) -> Value {
+    let mut v = json!({
+        "permissions": { "disableBypassPermissionsMode": "disable", "deny": DENY },
+        "forceLoginMethod": "claudeai",
+        "strictKnownMarketplaces": POLICY_MARKETPLACES.iter().map(|r| json!({ "source": "github", "repo": r })).collect::<Vec<_>>(),
+        "sandbox": { "enabled": true, "filesystem": { "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg"] } },
+        "channelsEnabled": true
+    });
+    if lock_mcp {
+        v["allowManagedMcpServersOnly"] = json!(true);
+        v["allowedMcpServers"] = json!(POLICY_MCP.iter().map(|n| json!({ "serverName": n })).collect::<Vec<_>>());
+    }
+    if let Some(u) = org_uuid {
+        v["forceLoginOrgUUID"] = json!(u);
+    }
+    if let Some(exe) = hooks_exe {
+        let mut kit = json!({});
+        // Cannot fail on a fresh object.
+        let _ = apply_kit_settings(&mut kit, exe, &[]);
+        v["hooks"] = kit["hooks"].take();
+        v["allowManagedHooksOnly"] = json!(true);
+    }
+    v
+}
+
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && parts.iter().zip([8, 4, 4, 4, 12]).all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Where a managed-settings file lives per OS (https://code.claude.com/docs/en/managed-settings,
+/// "Place the file on each machine").
+fn managed_settings_dir(os: &str) -> Option<&'static str> {
+    match os {
+        "linux" => Some("/etc/claude-code"),
+        "macos" => Some("/Library/Application Support/ClaudeCode"),
+        "windows" => Some(r"C:\Program Files\ClaudeCode"),
+        _ => None,
+    }
+}
+
+/// `8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]`: print or write the
+/// recommended managed settings. Never touches a system path.
+fn policy(args: &[String]) -> Result<()> {
+    let (mut uuid, mut out, mut strict, mut lock_mcp) = (None::<String>, None::<PathBuf>, false, false);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--strict-hooks" => strict = true,
+            "--lock-mcp" => lock_mcp = true,
+            "--org-uuid" => uuid = Some(it.next().context("--org-uuid needs a value")?.clone()),
+            "--out" => out = Some(PathBuf::from(it.next().context("--out needs a file")?)),
+            o if o.starts_with("--org-uuid=") => uuid = Some(o["--org-uuid=".len()..].to_string()),
+            o if o.starts_with("--out=") => out = Some(PathBuf::from(&o["--out=".len()..])),
+            o => bail!("unknown option `{o}` — usage: 8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]"),
+        }
+    }
+    if let Some(u) = &uuid {
+        if !is_uuid(u) {
+            bail!("--org-uuid must be a UUID like xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (claude.ai > Admin settings)");
+        }
+    }
+    let exe = if strict { Some(hook_exe()?) } else { None };
+    let json = serde_json::to_string_pretty(&org_policy_with(uuid.as_deref(), exe.as_deref(), lock_mcp))? + "\n";
+    match &out {
+        Some(f) => {
+            std::fs::write(f, &json).with_context(|| format!("write {}", f.display()))?;
+            ui::ok(&format!("wrote {} (nothing installed)", f.display()));
+        }
+        None => print!("{json}"),
+    }
+    let (stderr_note, file) = (|m: &str| eprintln!("{m}"), out.as_ref().map(|f| f.display().to_string()).unwrap_or_else(|| "<file>".into()));
+    stderr_note("");
+    stderr_note("INSTALL (you run it; 8sync never writes system paths)");
+    stderr_note(&format!("  Linux/WSL  sudo install -D -m 0644 {file} /etc/claude-code/managed-settings.json"));
+    stderr_note(&format!("  macOS      sudo install -m 0644 {file} \"/Library/Application Support/ClaudeCode/managed-settings.json\""));
+    stderr_note(&format!("  Windows    copy {file} to C:\\Program Files\\ClaudeCode\\managed-settings.json (admin)"));
+    stderr_note("  then run /status in Claude Code: `Setting sources` must show the managed file.");
+    stderr_note("");
+    stderr_note("NOTES");
+    stderr_note("  - Team plan alternative: the same keys can be set as server-managed settings in the claude.ai admin console");
+    stderr_note("    (https://code.claude.com/docs/en/server-managed-settings) — no file on disk.");
+    if uuid.is_none() {
+        stderr_note("  - no --org-uuid: forceLoginOrgUUID is omitted, so any claude.ai org may log in. Re-run with your org UUID.");
+    } else {
+        stderr_note("  - forceLoginOrgUUID pinned: a wrong UUID locks every login out.");
+    }
+    stderr_note("  - forceLoginMethod refuses to start while an API key, token or apiKeyHelper is configured;");
+    stderr_note("    the error names it (remove it, then `claude auth login`).");
+    if lock_mcp {
+        stderr_note("  - --lock-mcp: allowManagedMcpServersOnly limits MCP to codebase-memory-mcp and serena. Plugin MCP servers (e.g. the");
+        stderr_note("    Discord Channels plugin) are blocked unless added to allowedMcpServers. A plugin server registers as");
+        stderr_note("    `plugin:<plugin>:<server>` (https://code.claude.com/docs/en/mcp); whether allowedMcpServers `serverName` matches that");
+        stderr_note("    scoped name is not verified (managed-mcp docs not confirmed) - test with /mcp after installing.");
+    } else {
+        stderr_note("  - MCP lock is OFF (default) so the Discord Channels plugin works; add --lock-mcp to restrict MCP to an allowlist.");
+    }
+    stderr_note("  - sandbox.enabled needs bubblewrap + socat on Linux; without them commands run unsandboxed (failIfUnavailable not set).");
+    stderr_note("  - allowManagedHooksOnly is OFF. `--strict-hooks` adds the kit's hooks to this file and turns it on; then remove");
+    stderr_note("    the kit hooks from ~/.claude/settings.json or they run twice, and re-run this after every `8sync` update.");
+    Ok(())
+}
+
+/// Managed-settings files present on this machine (read-only probe), for `ccc status`.
+fn managed_settings_present(os: &str) -> Vec<PathBuf> {
+    let Some(dir) = managed_settings_dir(os) else { return vec![] };
+    let dir = Path::new(dir);
+    let mut found = vec![];
+    if dir.join("managed-settings.json").is_file() {
+        found.push(dir.join("managed-settings.json"));
+    }
+    if let Ok(rd) = std::fs::read_dir(dir.join("managed-settings.d")) {
+        found.extend(rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")));
+    }
+    found
+}
+
 // ── status ──────────────────────────────────────────────────────────────────
 
 fn status(env: &Env, root: &Path) -> Result<()> {
@@ -827,6 +1010,13 @@ fn status(env: &Env, root: &Path) -> Result<()> {
         ui::ok(&format!("kit: {present}/{} files · verify hook · guard · stop + ask gates ({})", KIT_FILES.len(), dir.display()));
     } else {
         ui::warn(&format!("kit: {present}/{} files · hooks {} — run `8sync ccc kit`", KIT_FILES.len(), if hooks { "on" } else { "off" }));
+    }
+    let managed = managed_settings_present(std::env::consts::OS);
+    if managed.is_empty() {
+        ui::warn("managed settings: none — org lock-down not installed (`8sync ccc policy`)");
+    } else {
+        let names: Vec<String> = managed.iter().map(|p| p.display().to_string()).collect();
+        ui::ok(&format!("managed settings: {}", names.join(", ")));
     }
     println!();
     ui::info(&format!("sessions in {}:", root.display()));
@@ -958,6 +1148,29 @@ mod tests {
         assert_eq!(v, once);
     }
 
+    #[test]
+    fn hq_hooks_added_once_async_and_user_hooks_kept() {
+        let mut v = json!({
+            "hooks": {
+                "Notification": [{ "hooks": [{ "type": "command", "command": "notify-send" }] }],
+                "TaskCompleted": [{ "hooks": [{ "type": "command", "command": "/old/8sync", "args": ["hq", "hook", "TaskCompleted"] }] }]
+            }
+        });
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        let once = v.clone();
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        assert_eq!(v, once, "re-run adds nothing");
+        for ev in HQ_EVENTS {
+            let n = v["hooks"][ev].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", ev])).count();
+            assert_eq!(n, 1, "{ev} registered exactly once");
+        }
+        let tc = &v["hooks"]["TaskCompleted"][0]["hooks"][0];
+        assert_eq!((tc["command"].as_str(), &tc["async"], &tc["timeout"]), (Some("/x/8sync"), &json!(true), &json!(15)));
+        let n = v["hooks"]["Notification"].as_array().unwrap();
+        assert_eq!(n.len(), 2);
+        assert_eq!(n[0]["hooks"][0]["command"], "notify-send", "user hook kept");
+    }
+
     #[cfg(unix)]
     #[test]
     fn linked_bundled_skills_only_counts_omp_symlinks_keyed_by_frontmatter_name() {
@@ -1039,6 +1252,59 @@ mod tests {
         assert_eq!(m["version"], json!(env!("CARGO_PKG_VERSION")));
         let mk: Value = serde_json::from_str(include_str!("../../../../.claude-plugin/marketplace.json")).unwrap();
         assert_eq!(mk["plugins"][0]["source"], json!("./assets/claude"));
+    }
+
+
+    #[test]
+    fn org_policy_is_valid_json_with_locks_and_no_secrets() {
+        let p = org_policy(None);
+        let text = serde_json::to_string(&p).unwrap();
+        assert!(serde_json::from_str::<Value>(&text).is_ok());
+        assert_eq!(p["permissions"]["disableBypassPermissionsMode"], "disable");
+        let deny: Vec<&str> = p["permissions"]["deny"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        assert!(DENY.iter().all(|r| deny.contains(r)));
+        assert_eq!(p["forceLoginMethod"], "claudeai");
+        assert_eq!(p["sandbox"]["enabled"], true);
+        assert_eq!(p["channelsEnabled"], true);
+        assert!(p["strictKnownMarketplaces"].as_array().unwrap().iter().any(|m| m["repo"] == "8-Sync-Dev/su-code"));
+        // Keys that need an opt-in stay out of the default.
+        assert!(p.get("allowManagedHooksOnly").is_none() && p.get("hooks").is_none());
+        // MCP lock is opt-in so the Discord Channels plugin server is not blocked.
+        assert!(p.get("allowManagedMcpServersOnly").is_none() && p.get("allowedMcpServers").is_none());
+        let locked = org_policy_with(None, None, true);
+        assert_eq!(locked["allowManagedMcpServersOnly"], true);
+        assert!(locked["allowedMcpServers"].as_array().unwrap().iter().any(|m| m["serverName"] == "serena"));
+        let lower = text.to_lowercase();
+        assert!(["sk-ant", "ghp_", "api_key", "apikey", "bearer "].iter().all(|n| !lower.contains(n)));
+    }
+
+    #[test]
+    fn org_policy_pins_org_only_when_uuid_given() {
+        assert!(org_policy(None).get("forceLoginOrgUUID").is_none());
+        let u = "123e4567-e89b-12d3-a456-426614174000";
+        assert_eq!(org_policy(Some(u))["forceLoginOrgUUID"], u);
+        assert!(is_uuid(u) && !is_uuid("nope") && !is_uuid("123e4567-e89b-12d3-a456-42661417400"));
+    }
+
+    #[test]
+    fn org_policy_strict_hooks_carry_the_kit_hooks() {
+        let p = org_policy_with(None, Some("/usr/bin/8sync"), false);
+        assert_eq!(p["allowManagedHooksOnly"], true);
+        let text = p["hooks"].to_string();
+        assert!(text.contains("\"guard\"") && text.contains("\"verify\"") && text.contains("/usr/bin/8sync"));
+    }
+
+    #[test]
+    fn managed_dirs_per_os() {
+        assert_eq!(managed_settings_dir("linux"), Some("/etc/claude-code"));
+        assert!(managed_settings_dir("macos").unwrap().ends_with("ClaudeCode"));
+        assert_eq!(managed_settings_dir("freebsd"), None);
+    }
+    #[test]
+    fn stop_gate_yields_to_user_stop() {
+        assert!(STOP_GATE.contains("QUOTES the user's own stop/wait words"));
+        assert!(!STOP_GATE.contains("interrupted"));
+        assert!(STOP_GATE.contains("waiting on background agents"));
     }
 
 }
