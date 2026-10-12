@@ -26,10 +26,14 @@ Measure ccc (Claude Code, OAuth team plan) against omp and Forge (Console key) o
 - [x] Committed locally (not pushed). Owner: push + release as v0.67.0.
 
 ## Current
-Done locally (committed, not pushed).
+Pushed to origin/main (not released). Next-step plan researched: `outputs/ccc-harness-next.md` (proposals only, nothing built yet).
 
-## Next
-Owner: push + release as v0.67.0.
+## Next (from outputs/ccc-harness-next.md, in order)
+- P0-1 guard fail-closed: `onFailure: "block"` on the guard hook (CC 2.1.295+); decide default vs `ccc policy --strict-hooks`; message + `8sync ccc kit --remove` path.
+- P0-2 guard false positive: heredoc *to a file* containing `rm -rf ~`/`rm -rf /` is denied by the raw backstop; skip only when the parser proves the body is not fed to a shell; regression tests `cat <<EOF | sh`, `cat <<EOF > x; sh x`, `eval "$(cat <<EOF …)"`, `bash <<EOF`.
+- Release v0.67.0 after P0 (owner).
+- P1 `/planning` (opt-in): spike first (deny ExitPlanMode → resubmit? additionalContext → tasks? clear-context path?), then skill + PreToolUse(ExitPlanMode) minimal lint + PostToolUse archive + TaskCompleted `[Tn]` ticks, together with P2-1 (open steps → one nudge) and P2-3 (PreCompact/SessionStart clear re-inline).
+- P2: loop breaker (3 nudge / 5 deny), measure `git push` on default/auto/-p then ask for deploy/publish/messaging, statusline, mid-run todo nudge. Hook budget ≤15 ms, no model calls.
 
 # v0.66.0 — Claude-token compliance, leaner role-routed kit, Agent HQ on Discord, security commands, org policy
 
