@@ -142,6 +142,9 @@ enum Cmd {
     /// Bridge Feynman (Pi research agent) to omp's logins: `auth-omp` (Claude needs a Console API key)
     Feynman(verbs::feynman::Args),
 
+    /// Discord Agent HQ: one-way reporting + server layout for the Claude Code agent team (Channels = two-way chat)
+    Hq(verbs::hq::Args),
+
     /// Named ForgeCode sessions with persistent UUID conversation mapping: 8sync forge <name>
     #[command(name = "forge", alias = "forgecode")]
     Forge(verbs::forge::Args),
@@ -166,7 +169,8 @@ fn main() -> Result<()> {
         let matches = cmd.get_matches();
         Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
     };
-    let hook = matches!(&cli.cmd, Some(Cmd::Ccc(a)) if a.is_hook());
+    let hook = matches!(&cli.cmd, Some(Cmd::Ccc(a)) if a.is_hook())
+        || matches!(&cli.cmd, Some(Cmd::Hq(a)) if a.is_hook());
     if !hook && !matches!(cli.cmd, Some(Cmd::Up(_)) | Some(Cmd::Setup(_)) | Some(Cmd::Help)) {
         verbs::selfup::auto_check_notice();
     }
@@ -205,6 +209,7 @@ fn main() -> Result<()> {
         Some(Cmd::Note(a))    => verbs::note::run(a),
         Some(Cmd::Feature(a)) => verbs::feature::run(a),
         Some(Cmd::Feynman(a)) => verbs::feynman::run(a),
+        Some(Cmd::Hq(a))      => verbs::hq::run(a),
         Some(Cmd::Forge(a))   => verbs::forge::run(a),
         Some(Cmd::Ccc(a))     => verbs::ccc::run(a),
     }

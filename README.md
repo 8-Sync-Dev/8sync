@@ -177,6 +177,10 @@ What this says, and what it doesn't:
 
 ---
 
+## Agent HQ on Discord: `8sync hq`
+
+Run your Claude Code agent team in the open, in a private Discord server. A forum task board has status, role and priority tags, and there are daily standups, team rooms, logs and alerts. Personas post through webhooks driven by Claude Code hooks, and you talk to the lead session through Anthropic's official Channels plugin. `8sync hq setup --guild <id> --token-stdin` builds the server; `8sync hq up --repo <path>` prints the systemd unit for the lead. Setup and rules: [docs/hq.md](docs/hq.md).
+
 ## Claude, the official way
 
 8sync never logs into claude.ai for another tool and never proxies a consumer subscription.

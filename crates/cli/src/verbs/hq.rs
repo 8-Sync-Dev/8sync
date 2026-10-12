@@ -1,0 +1,2500 @@
+//! `8sync hq` — the Discord "Agent HQ" for a solo owner whose Claude Code agent
+//! team works on a repo.
+//!
+//! Scope: HQ is ONE-WAY reporting + server layout. Owner <-> session two-way chat is the
+//! official Claude Code Channels plugin (`discord@claude-plugins-official`) — HQ never
+//! touches Claude credentials and only talks to Discord.
+//!
+//! * Secrets (bot token, webhook URLs): `~/.config/8sync/hq/secrets.json`, mode 0600, dir 0700.
+//!   Never printed unmasked, never in curl argv (curl `--config -` over stdin).
+//! * Non-secret config: `~/.config/8sync/hq/config.toml`. State (task_id -> forum thread):
+//!   `~/.local/state/8sync/hq/tasks.json` — ids/status/short title only, no message content
+//!   (Discord Developer Terms: keep only what is needed).
+//! * HTTP: shells out to `curl` (no reqwest). `EIGHTSYNC_HQ_API_BASE` overrides the API base.
+//!
+//! Sources (checked 2026-10):
+//! * Discord API fields: docs.discord.com/developers/resources/{guild,channel,webhook}
+//!   (channel types 4/0/15, `available_tags`, `default_forum_layout=1`, `default_sort_order=0`,
+//!   REQUIRE_TAG = 1<<4, webhook `thread_name`/`applied_tags`/`thread_id`/`wait`).
+//!   NOT verified in the docs: that `wait=true` on a forum-thread-creating webhook returns the
+//!   thread id as `channel_id`, and the pin endpoint `PUT /channels/{id}/pins/{message}`.
+//! * Hook payloads: code.claude.com/docs/en/hooks — TaskCreated/TaskCompleted carry
+//!   `task_id`, `task_subject`, `task_description`, `teammate_name`, `team_name`; TeammateIdle
+//!   carries `teammate_name`, `team_name`; Notification carries `message`, `title`,
+//!   `notification_type` (`permission_prompt`, `agent_needs_input`, `agent_completed`, ...).
+use std::collections::BTreeMap;
+use std::io::{IsTerminal, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use anyhow::{anyhow, bail, Context, Result};
+use clap::{Args as ClapArgs, Subcommand};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+
+use crate::ui;
+
+const DEFAULT_API: &str = "https://discord.com/api/v10";
+const WEBHOOK_NAME: &str = "8sync HQ";
+const CONTENT_MAX: usize = 2000;
+const EMBED_DESC_MAX: usize = 4096;
+const EMBED_TITLE_MAX: usize = 256;
+const THREAD_NAME_MAX: usize = 100;
+const LOG_KEEP: usize = 500;
+const BOARD: &str = "task-board";
+const STATUSES: [&str; 5] = ["todo", "doing", "review", "blocked", "done"];
+const PRIOS: [&str; 3] = ["p0", "p1", "p2"];
+const AI_ROLE: &str = "AI-Agent";
+const REQUIRE_TAG: u64 = 1 << 4;
+
+#[derive(ClapArgs, Debug)]
+#[command(after_help = indoc::indoc! {"
+    EXAMPLES
+      printf %s \"$BOT_TOKEN\" | 8sync hq setup --guild <id> --token-stdin
+      8sync hq setup --guild <id> --dry-run       show planned requests, send nothing
+      8sync hq post --as backend --to eng-backend 'migration done'
+      8sync hq task new 'Add login' --role backend --prio p1
+      8sync hq task status <task_id> doing
+      8sync hq standup                            daily standup thread (no model call)
+      8sync hq doctor                             config / perms / webhooks (masked)
+      8sync hq up --repo . --install              systemd user unit (Channels session) + standup timer
+
+    NOTES
+      HQ is one-way reporting. Two-way owner<->session chat = the official Claude Code
+      Channels plugin `discord@claude-plugins-official`. HQ never touches Claude credentials.
+      Hooks: `8sync hq hook <TaskCreated|TaskCompleted|TeammateIdle|Notification>` (stdin JSON).
+"})]
+pub struct Args {
+    /// Print planned requests (secrets masked) and send nothing
+    #[arg(long, global = true)]
+    pub dry_run: bool,
+    #[command(subcommand)]
+    pub cmd: Sub,
+}
+
+impl Args {
+    /// Hook calls skip the auto-update notice in `main` (must stay fast and silent).
+    pub fn is_hook(&self) -> bool {
+        matches!(self.cmd, Sub::Hook { .. })
+    }
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Sub {
+    /// Create the server layout (idempotent, by name) + webhooks
+    Setup {
+        /// Guild (server) id
+        #[arg(long)]
+        guild: String,
+        /// Read the bot token from stdin (one line) and save it to secrets.json
+        #[arg(long)]
+        token_stdin: bool,
+        /// Owner user id (alerts mention this user)
+        #[arg(long)]
+        owner: Option<String>,
+    },
+    /// Post as a persona to a channel via its webhook
+    Post {
+        /// pm|architect|backend|frontend|qa|reviewer|researcher|hq
+        #[arg(long = "as")]
+        persona: String,
+        /// channel key, e.g. eng-backend, logs, alerts, standup
+        #[arg(long)]
+        to: String,
+        /// embed title (forces embed)
+        #[arg(long)]
+        title: Option<String>,
+        /// read the text from stdin
+        #[arg(long)]
+        stdin: bool,
+        text: Vec<String>,
+    },
+    /// task-board forum: new | status | comment
+    #[command(subcommand)]
+    Task(TaskCmd),
+    /// Map a Claude Code hook event (JSON on stdin); always exits 0
+    Hook { event: String },
+    /// Post the daily standup thread from local state
+    Standup,
+    /// Config presence, secret perms, channels/webhooks (masked), last errors
+    #[command(alias = "doctor")]
+    Status,
+    /// Print (or --install) the systemd user unit + standup timer
+    Up {
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// tmux session name
+        #[arg(long, default_value = "8sync-hq")]
+        name: String,
+        /// write the unit files and enable them (does not start anything)
+        #[arg(long)]
+        install: bool,
+        /// with --install: also start now
+        #[arg(long)]
+        now: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TaskCmd {
+    /// New forum post (tag todo)
+    New {
+        title: String,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        role: Option<String>,
+        /// p0|p1|p2
+        #[arg(long)]
+        prio: Option<String>,
+        #[arg(long)]
+        body: Option<String>,
+    },
+    /// Change status tag (needs bot token) + comment
+    Status { id: String, status: String },
+    /// Comment on the task thread
+    Comment {
+        id: String,
+        #[arg(long = "as", default_value = "hq")]
+        persona: String,
+        text: Vec<String>,
+    },
+}
+
+// ── personas ────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Persona {
+    Pm,
+    Architect,
+    Backend,
+    Frontend,
+    Qa,
+    Reviewer,
+    Researcher,
+    Hq,
+}
+
+const PERSONAS: [Persona; 8] = [
+    Persona::Pm,
+    Persona::Architect,
+    Persona::Backend,
+    Persona::Frontend,
+    Persona::Qa,
+    Persona::Reviewer,
+    Persona::Researcher,
+    Persona::Hq,
+];
+
+impl Persona {
+    fn key(self) -> &'static str {
+        match self {
+            Persona::Pm => "pm",
+            Persona::Architect => "architect",
+            Persona::Backend => "backend",
+            Persona::Frontend => "frontend",
+            Persona::Qa => "qa",
+            Persona::Reviewer => "reviewer",
+            Persona::Researcher => "researcher",
+            Persona::Hq => "hq",
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Persona::Pm => "PM",
+            Persona::Architect => "Architect",
+            Persona::Backend => "Backend",
+            Persona::Frontend => "Frontend",
+            Persona::Qa => "QA",
+            Persona::Reviewer => "Reviewer",
+            Persona::Researcher => "Researcher",
+            Persona::Hq => "HQ",
+        }
+    }
+    fn username(self) -> String {
+        format!("{} · 8sync", self.label())
+    }
+    /// task-board forum tag for this role.
+    fn tag(self) -> Option<&'static str> {
+        Some(match self {
+            Persona::Pm => "pm",
+            Persona::Architect => "arch",
+            Persona::Backend => "be",
+            Persona::Frontend => "fe",
+            Persona::Qa => "qa",
+            Persona::Reviewer => "rev",
+            Persona::Researcher => "research",
+            Persona::Hq => return None,
+        })
+    }
+    fn parse(s: &str) -> Option<Persona> {
+        let s = s.trim().to_lowercase();
+        PERSONAS.iter().copied().find(|p| p.key() == s)
+    }
+    /// Find a role word (whole token) in free text such as a teammate name or task subject.
+    fn from_text(text: &str) -> Option<Persona> {
+        let lower = text.to_lowercase();
+        for tok in lower.split(|c: char| !c.is_alphanumeric()) {
+            let p = match tok {
+                "pm" | "manager" => Persona::Pm,
+                "architect" | "arch" => Persona::Architect,
+                "backend" | "be" => Persona::Backend,
+                "frontend" | "fe" => Persona::Frontend,
+                "qa" | "tester" => Persona::Qa,
+                "reviewer" | "review" => Persona::Reviewer,
+                "researcher" | "research" => Persona::Researcher,
+                _ => continue,
+            };
+            return Some(p);
+        }
+        None
+    }
+}
+
+// ── layout ──────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Text,
+    Forum,
+}
+impl Kind {
+    fn ty(self) -> i64 {
+        match self {
+            Kind::Text => 0,
+            Kind::Forum => 15,
+        }
+    }
+}
+
+struct ChanSpec {
+    key: &'static str,
+    name: &'static str,
+    kind: Kind,
+    topic: &'static str,
+    tags: &'static [&'static str],
+    /// task-board: REQUIRE_TAG + list layout + latest-activity sort
+    board: bool,
+}
+
+struct CatSpec {
+    name: &'static str,
+    chans: &'static [ChanSpec],
+}
+
+const fn text(key: &'static str, topic: &'static str) -> ChanSpec {
+    ChanSpec { key, name: key, kind: Kind::Text, topic, tags: &[], board: false }
+}
+
+const BOARD_TAGS: &[&str] = &[
+    "todo", "doing", "review", "blocked", "done", "pm", "arch", "be", "fe", "qa", "rev",
+    "research", "p0", "p1", "p2",
+];
+
+const LAYOUT: &[CatSpec] = &[
+    CatSpec {
+        name: "📌 HQ",
+        chans: &[
+            text("readme", "Charter and AI disclosure"),
+            text("owner-desk", "Owner <-> lead session chat (Claude Code Channels plugin)"),
+            text("announcements", "Releases and milestones"),
+        ],
+    },
+    CatSpec {
+        name: "🗂 WORK",
+        chans: &[
+            ChanSpec { key: "task-board", name: "task-board", kind: Kind::Forum, topic: "One post per task", tags: BOARD_TAGS, board: true },
+            ChanSpec { key: "rfcs", name: "rfcs", kind: Kind::Forum, topic: "Design proposals", tags: &["proposed", "accepted", "rejected"], board: false },
+        ],
+    },
+    CatSpec {
+        name: "🗓 RITUALS",
+        chans: &[
+            text("standup", "Daily standup threads"),
+            ChanSpec { key: "notes", name: "notes", kind: Kind::Forum, topic: "Working notes", tags: &[], board: false },
+        ],
+    },
+    CatSpec {
+        name: "🤖 TEAM ROOMS",
+        chans: &[
+            text("eng-backend", "Backend persona"),
+            text("eng-frontend", "Frontend persona"),
+            text("qa-review", "QA and review"),
+            text("research", "Research persona"),
+        ],
+    },
+    CatSpec {
+        name: "⚙ OPS",
+        chans: &[
+            text("logs", "Teammate activity"),
+            text("alerts", "Needs input / permission / completed"),
+            text("audit", "Audit trail"),
+        ],
+    },
+];
+
+const ROLE_NAMES: [&str; 8] =
+    ["PM", "Architect", "Backend", "Frontend", "QA", "Reviewer", "Researcher", AI_ROLE];
+
+const CHARTER: &str = "**8 Sync Agent HQ**\n\n\
+Every persona here (PM, Architect, Backend, Frontend, QA, Reviewer, Researcher) is an AI agent run by Claude Code. \
+There are no human teammates behind these names; the owner is the only human.\n\n\
+- #task-board: one post per task, status via tags\n\
+- #standup: daily summary built from local task state\n\
+- #alerts: needs input / permission / completed\n\
+- #owner-desk: talk to the lead session (Claude Code Channels plugin)\n\n\
+(VI) Mọi persona ở đây là AI agent chạy bằng Claude Code; chỉ owner là người thật.";
+
+// Permission bits (docs.discord.com/developers/topics/permissions). No Administrator.
+const PERMS: [(&str, u32); 13] = [
+    ("View Channels", 10),
+    ("Send Messages", 11),
+    ("Send Messages in Threads", 38),
+    ("Create Public Threads", 35),
+    ("Manage Threads", 34),
+    ("Manage Channels (setup only)", 4),
+    ("Manage Webhooks", 29),
+    ("Manage Roles (setup only)", 28),
+    ("Embed Links", 14),
+    ("Attach Files", 15),
+    ("Read Message History", 16),
+    ("Add Reactions", 6),
+    // PIN_MESSAGES 1<<51 (docs.discord.com/developers/topics/permissions): pin the charter
+    ("Pin Messages", 51),
+];
+
+fn perm_bits() -> u64 {
+    PERMS.iter().fold(0u64, |a, (_, b)| a | (1u64 << b))
+}
+
+// ── paths / config / secrets / state ────────────────────────────────────────
+
+struct Paths {
+    cfg_dir: PathBuf,
+    state_dir: PathBuf,
+}
+
+impl Paths {
+    fn new() -> Result<Self> {
+        let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot resolve home directory"))?;
+        Ok(Self::under(&home))
+    }
+    fn under(home: &Path) -> Self {
+        Paths {
+            cfg_dir: crate::brand::config_dir(home).join("hq"),
+            state_dir: home.join(".local/state").join(crate::brand::NS).join("hq"),
+        }
+    }
+    fn config(&self) -> PathBuf {
+        self.cfg_dir.join("config.toml")
+    }
+    fn secrets(&self) -> PathBuf {
+        self.cfg_dir.join("secrets.json")
+    }
+    fn tasks(&self) -> PathBuf {
+        self.state_dir.join("tasks.json")
+    }
+    fn log(&self) -> PathBuf {
+        self.state_dir.join("hq.log")
+    }
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+#[serde(default)]
+struct Config {
+    enabled: bool,
+    guild_id: String,
+    owner_id: Option<String>,
+    charter_message_id: Option<String>,
+    channels: BTreeMap<String, String>,
+    roles: BTreeMap<String, String>,
+    avatars: BTreeMap<String, String>,
+    tags: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+#[serde(default)]
+struct Secrets {
+    bot_token: Option<String>,
+    webhooks: BTreeMap<String, String>,
+}
+
+impl Secrets {
+    fn values(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.webhooks.values().cloned().collect();
+        if let Some(t) = &self.bot_token {
+            v.push(t.clone());
+        }
+        v
+    }
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+#[serde(default)]
+struct Task {
+    thread_id: String,
+    status: String,
+    role: Option<String>,
+    prio: Option<String>,
+    /// short title only (needed for standup); no message content
+    title: String,
+    updated: u64,
+    done_at: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+#[serde(default)]
+struct State {
+    tasks: BTreeMap<String, Task>,
+}
+
+fn now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Write a file with mode 0600 (parent dir 0700), atomically via temp + rename.
+fn write_private(path: &Path, data: &[u8]) -> Result<()> {
+    let dir = path.parent().ok_or_else(|| anyhow!("no parent dir"))?;
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(&tmp)?;
+    f.write_all(data)?;
+    f.sync_all().ok();
+    drop(f);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn mode_of(p: &Path) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).ok().map(|m| m.permissions().mode() & 0o777)
+}
+#[cfg(not(unix))]
+fn mode_of(_p: &Path) -> Option<u32> {
+    None
+}
+
+fn load_config(p: &Paths) -> Option<Config> {
+    toml::from_str(&std::fs::read_to_string(p.config()).ok()?).ok()
+}
+fn save_config(p: &Paths, c: &Config) -> Result<()> {
+    write_private(&p.config(), toml::to_string_pretty(c)?.as_bytes())
+}
+fn load_secrets(p: &Paths) -> Secrets {
+    std::fs::read_to_string(p.secrets())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+fn save_secrets(p: &Paths, s: &Secrets) -> Result<()> {
+    write_private(&p.secrets(), serde_json::to_string_pretty(s)?.as_bytes())
+}
+fn load_state(p: &Paths) -> State {
+    std::fs::read_to_string(p.tasks())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Run `f` while holding a crude lock file `name` in the state dir. Waits up to ~1.5 s;
+/// returns None (without running `f`) when the lock cannot be taken. Also stops waiting once
+/// `deadline` (the hook budget) has passed.
+fn with_lock<R>(p: &Paths, name: &str, deadline: Option<std::time::Instant>, f: impl FnOnce() -> R) -> Option<R> {
+    std::fs::create_dir_all(&p.state_dir).ok()?;
+    let lock = p.state_dir.join(name);
+    for _ in 0..30 {
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            return None;
+        }
+        if std::fs::OpenOptions::new().write(true).create_new(true).open(&lock).is_ok() {
+            let r = f();
+            let _ = std::fs::remove_file(&lock);
+            return Some(r);
+        }
+        // stale lock (> 10 s) from a crashed hook
+        if let Ok(m) = std::fs::metadata(&lock) {
+            if m.modified().ok().and_then(|t| t.elapsed().ok()).map(|e| e.as_secs() > 10).unwrap_or(false) {
+                let _ = std::fs::remove_file(&lock);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    None
+}
+
+/// Drop done tasks older than `DONE_KEEP` and thread-less `pending` reservations older than
+/// `PENDING_KEEP`. (`pending-done` retries are kept: they carry a completion.)
+fn prune_state(st: &mut State, now: u64) {
+    st.tasks.retain(|_, t| {
+        let age = now.saturating_sub(t.done_at.unwrap_or(t.updated));
+        !(t.status == "done" && age > DONE_KEEP) && !(t.status == PENDING && t.thread_id.is_empty() && now.saturating_sub(t.updated) > PENDING_KEEP)
+    });
+}
+
+/// Resolve a user-typed task id: the full key, else a suffix at a `:` boundary (so a bare `<n>`),
+/// else a `:`-containing suffix; it must match exactly one task.
+fn resolve_task_id(st: &State, q: &str) -> Result<String> {
+    if st.tasks.contains_key(q) {
+        return Ok(q.to_string());
+    }
+    let tail = format!(":{q}");
+    let hits: Vec<&String> = st.tasks.keys().filter(|k| k.ends_with(&tail) || (q.contains(':') && k.ends_with(q))).collect();
+    match hits.as_slice() {
+        [] => bail!("unknown task '{q}'"),
+        [one] => Ok((*one).clone()),
+        many => bail!("task '{q}' is ambiguous; use the full id: {}", many.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")),
+    }
+}
+
+/// Newest `n` tasks by last update (ties by id).
+fn recent_tasks(st: &State, n: usize) -> Vec<(&String, &Task)> {
+    let mut v: Vec<_> = st.tasks.iter().collect();
+    v.sort_by(|a, b| b.1.updated.cmp(&a.1.updated).then_with(|| a.0.cmp(b.0)));
+    v.truncate(n);
+    v
+}
+
+fn task_line(id: &str, t: &Task) -> String {
+    format!("  {id}  {}  {}  {}", t.status, t.role.as_deref().unwrap_or("-"), truncate_chars(&t.title.replace('\n', " "), 60))
+}
+
+/// Read-modify-write the state under the lock (hooks may run in parallel).
+/// Lock not acquired -> Err and nothing is written.
+fn update_state_with<R>(p: &Paths, deadline: Option<std::time::Instant>, f: impl FnOnce(&mut State) -> R) -> Result<R> {
+    with_lock(p, "tasks.lock", deadline, || -> Result<R> {
+        let mut st = load_state(p);
+        prune_state(&mut st, now());
+        let r = f(&mut st);
+        write_private(&p.tasks(), serde_json::to_string_pretty(&st)?.as_bytes())?;
+        Ok(r)
+    })
+    .unwrap_or_else(|| bail!("state lock busy; write skipped"))
+}
+
+#[cfg(test)]
+fn update_state(p: &Paths, f: impl FnOnce(&mut State)) -> Result<()> {
+    update_state_with(p, None, f)
+}
+
+/// Like `update_state_with` but retried up to 3x (a post already happened; losing the write
+/// would cause a duplicate thread). Stops early once `deadline` passes.
+fn update_state_retry<R>(p: &Paths, deadline: Option<std::time::Instant>, f: impl Fn(&mut State) -> R) -> Result<R> {
+    let mut last = anyhow!("state write not attempted");
+    for i in 0..3 {
+        if i > 0 {
+            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        match update_state_with(p, deadline, &f) {
+            Ok(r) => return Ok(r),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+/// Append to the 0600 log, keep the last `LOG_KEEP` lines. Secrets are scrubbed.
+/// Takes its own lock; if busy the line is dropped (never blocks a hook).
+fn log_err(p: &Paths, secrets: &Secrets, msg: &str) {
+    let clean = scrub(msg, &secrets.values()).replace('\n', " ");
+    let path = p.log();
+    let _ = with_lock(p, "hq.log.lock", None, || {
+        let mut lines: Vec<String> = std::fs::read_to_string(&path)
+            .map(|s| s.lines().map(String::from).collect())
+            .unwrap_or_default();
+        lines.push(format!("[{}] {}", now(), clean));
+        let skip = lines.len().saturating_sub(LOG_KEEP);
+        let body = lines[skip..].join("\n") + "\n";
+        let _ = write_private(&path, body.as_bytes());
+    });
+}
+
+// ── text helpers ────────────────────────────────────────────────────────────
+
+/// Truncate to at most `max` chars (char-boundary safe), ending with `…` when cut.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+/// Mask a secret: never more than the last 4 chars.
+fn mask(s: &str) -> String {
+    let n = s.chars().count();
+    if n >= 12 {
+        format!("****{}", s.chars().skip(n - 4).collect::<String>())
+    } else {
+        "****".into()
+    }
+}
+
+/// `https://…/webhooks/<id>/<token>?q` -> token replaced by `****`.
+fn mask_webhook_url(u: &str) -> String {
+    match u.split_once("/webhooks/") {
+        Some((head, rest)) => {
+            let (path, query) = rest.split_once('?').map(|(a, b)| (a, Some(b))).unwrap_or((rest, None));
+            let id = path.split('/').next().unwrap_or("");
+            let mut out = format!("{head}/webhooks/{id}/****");
+            if let Some(q) = query {
+                out.push('?');
+                out.push_str(q);
+            }
+            out
+        }
+        None => u.to_string(),
+    }
+}
+
+fn scrub(text: &str, secrets: &[String]) -> String {
+    let mut t = text.to_string();
+    for s in secrets.iter().filter(|s| s.len() >= 8) {
+        t = t.replace(s.as_str(), "****");
+        // webhook token alone
+        if let Some((_, rest)) = s.split_once("/webhooks/") {
+            if let Some(tok) = rest.split('/').nth(1) {
+                let tok = tok.split('?').next().unwrap_or("");
+                if tok.len() >= 8 {
+                    t = t.replace(tok, "****");
+                }
+            }
+        }
+    }
+    t
+}
+
+/// Quote for a curl config file value (`\\`, `\"`, `\n`, `\r`, `\t`).
+fn cq(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 2);
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => o.push_str("\\\\"),
+            '"' => o.push_str("\\\""),
+            '\n' => o.push_str("\\n"),
+            '\r' => o.push_str("\\r"),
+            '\t' => o.push_str("\\t"),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+// ── requests (pure builders) + transport ────────────────────────────────────
+
+#[derive(Clone, Debug)]
+enum Target {
+    /// path under the API base, authenticated with the bot token
+    Api(String),
+    /// full webhook URL (contains the secret token), no auth header
+    Webhook(String),
+}
+
+#[derive(Clone, Debug)]
+struct Req {
+    method: &'static str,
+    target: Target,
+    body: Option<Value>,
+}
+
+fn api(method: &'static str, path: impl Into<String>, body: Option<Value>) -> Req {
+    Req { method, target: Target::Api(path.into()), body }
+}
+
+fn req_create_role(guild: &str, name: &str) -> Req {
+    api("POST", format!("/guilds/{guild}/roles"), Some(json!({"name": name, "mentionable": true, "permissions": "0"})))
+}
+
+fn req_create_category(guild: &str, name: &str) -> Req {
+    api("POST", format!("/guilds/{guild}/channels"), Some(json!({"name": name, "type": 4})))
+}
+
+fn tag_objs(names: &[&str]) -> Vec<Value> {
+    names.iter().map(|n| json!({"name": n, "moderated": false})).collect()
+}
+
+fn req_create_channel(guild: &str, spec: &ChanSpec, parent: &str) -> Req {
+    let mut b = json!({"name": spec.name, "type": spec.kind.ty(), "parent_id": parent, "topic": spec.topic});
+    if spec.kind == Kind::Forum {
+        if !spec.tags.is_empty() {
+            b["available_tags"] = Value::Array(tag_objs(spec.tags));
+        }
+        if spec.board {
+            b["default_forum_layout"] = json!(1); // LIST_VIEW
+            b["default_sort_order"] = json!(0); // LATEST_ACTIVITY
+            b["flags"] = json!(REQUIRE_TAG);
+        }
+    }
+    api("POST", format!("/guilds/{guild}/channels"), Some(b))
+}
+
+/// PATCH available_tags: keep existing (with ids), append the missing names.
+fn req_add_tags(channel: &str, existing: &[Tag], missing: &[&str]) -> Req {
+    let mut v: Vec<Value> = existing.iter().map(|t| json!({"id": t.id, "name": t.name})).collect();
+    v.extend(tag_objs(missing));
+    api("PATCH", format!("/channels/{channel}"), Some(json!({"available_tags": v})))
+}
+
+fn req_create_webhook(channel: &str) -> Req {
+    api("POST", format!("/channels/{channel}/webhooks"), Some(json!({"name": WEBHOOK_NAME})))
+}
+
+fn req_patch_thread_tags(thread: &str, tags: &[String]) -> Req {
+    api("PATCH", format!("/channels/{thread}"), Some(json!({"applied_tags": tags, "archived": false})))
+}
+
+/// Current Pin Message endpoint (docs.discord.com/developers/resources/message).
+fn req_pin(channel: &str, msg: &str) -> Req {
+    api("PUT", format!("/channels/{channel}/messages/pins/{msg}"), None)
+}
+
+/// Deprecated pin path, only used as a fallback on 404.
+fn req_pin_legacy(channel: &str, msg: &str) -> Req {
+    api("PUT", format!("/channels/{channel}/pins/{msg}"), None)
+}
+
+fn pin_message(ctx: &Ctx, channel: &str, msg: &str) -> Result<()> {
+    match ctx.send(&req_pin(channel, msg)) {
+        Err(e) if e.to_string().contains("HTTP 404") => ctx.send(&req_pin_legacy(channel, msg)).map(|_| ()),
+        r => r.map(|_| ()),
+    }
+}
+
+fn req_start_thread(channel: &str, msg: &str, name: &str) -> Req {
+    api(
+        "POST",
+        format!("/channels/{channel}/messages/{msg}/threads"),
+        Some(json!({"name": truncate_chars(name, THREAD_NAME_MAX)})),
+    )
+}
+
+fn req_webhook(url: &str, body: Value, thread_id: Option<&str>, wait: bool) -> Req {
+    let mut q = vec![];
+    if wait {
+        q.push("wait=true".to_string());
+    }
+    if let Some(t) = thread_id {
+        q.push(format!("thread_id={t}"));
+    }
+    let sep = if url.contains('?') { '&' } else { '?' };
+    let full = if q.is_empty() { url.to_string() } else { format!("{url}{sep}{}", q.join("&")) };
+    Req { method: "POST", target: Target::Webhook(full), body: Some(body) }
+}
+
+struct Msg<'a> {
+    persona: Persona,
+    avatar: Option<&'a str>,
+    title: Option<&'a str>,
+    text: &'a str,
+    mention_user: Option<&'a str>,
+    thread_name: Option<&'a str>,
+    tags: &'a [String],
+}
+
+/// Webhook execute body. Short plain text -> `content`; titled or > 2000 chars -> embed.
+/// Content is cut to 2000 chars, embed description to 4096, title to 256.
+fn webhook_body(m: &Msg) -> Value {
+    let mut b = json!({"username": m.persona.username()});
+    if let Some(a) = m.avatar.filter(|a| !a.is_empty()) {
+        b["avatar_url"] = json!(a);
+    }
+    let mention = m.mention_user.map(|u| format!("<@{u}>"));
+    let embed = m.title.is_some() || m.text.chars().count() > CONTENT_MAX;
+    if embed {
+        let mut e = json!({"description": truncate_chars(m.text, EMBED_DESC_MAX), "color": 0x5865F2});
+        if let Some(t) = m.title {
+            e["title"] = json!(truncate_chars(t, EMBED_TITLE_MAX));
+        }
+        b["embeds"] = json!([e]);
+        if let Some(mn) = &mention {
+            b["content"] = json!(mn);
+        }
+    } else {
+        let t = match &mention {
+            Some(mn) => format!("{mn} {}", m.text),
+            None => m.text.to_string(),
+        };
+        b["content"] = json!(truncate_chars(&t, CONTENT_MAX));
+    }
+    b["allowed_mentions"] = match m.mention_user {
+        Some(u) => json!({"parse": [], "users": [u]}),
+        None => json!({"parse": []}),
+    };
+    if let Some(n) = m.thread_name {
+        b["thread_name"] = json!(truncate_chars(n, THREAD_NAME_MAX));
+    }
+    if !m.tags.is_empty() {
+        b["applied_tags"] = json!(m.tags);
+    }
+    b
+}
+
+/// Dry-run rendering: secrets masked, nothing sent.
+fn render_dry(req: &Req, base: &str) -> String {
+    let (url, auth) = match &req.target {
+        Target::Api(p) => (format!("{base}{p}"), "\n  Authorization: Bot ****"),
+        Target::Webhook(u) => (mask_webhook_url(u), ""),
+    };
+    let mut s = format!("{} {}{}", req.method, url, auth);
+    if let Some(b) = &req.body {
+        s.push_str("\n  body: ");
+        s.push_str(&b.to_string());
+    }
+    s
+}
+
+/// curl config text (fed over stdin: neither the token nor webhook URL reaches argv).
+fn curl_config(method: &str, url: &str, token: Option<&str>, body: Option<&str>, max_time: u64) -> String {
+    let mut c = String::new();
+    c.push_str("silent\nshow-error\n");
+    c.push_str(&format!("max-time = {max_time}\n"));
+    c.push_str(&format!("url = {}\n", cq(url)));
+    c.push_str(&format!("request = {}\n", cq(method)));
+    c.push_str(&format!("user-agent = {}\n", cq("DiscordBot (https://8syncdev.com, 0.1)")));
+    c.push_str("header = \"Content-Type: application/json\"\n");
+    if let Some(t) = token {
+        c.push_str(&format!("header = {}\n", cq(&format!("Authorization: Bot {t}"))));
+    }
+    match body {
+        Some(b) => c.push_str(&format!("data-raw = {}\n", cq(b))),
+        None if method != "GET" => c.push_str("data-raw = \"\"\n"),
+        None => {}
+    }
+    c.push_str("write-out = \"\\n%{http_code}\"\n");
+    c
+}
+
+struct Ctx {
+    base: String,
+    token: Option<String>,
+    dry: bool,
+    /// cap on a single 429 sleep (seconds)
+    retry_cap: f64,
+    max_time: u64,
+    /// hook wall-clock budget (registered hook timeout is 15 s)
+    deadline: Option<std::time::Instant>,
+    seq: std::cell::Cell<u32>,
+}
+
+/// Hook wall-clock budget (registered timeout 15 s). Network calls and state-lock waits both stop
+/// at this deadline; the final log write (<= ~1.5 s lock wait) fits in the remainder.
+const HOOK_BUDGET_SECS: u64 = 8;
+
+/// True when `base` points at a loopback host (the only override allowed, for tests).
+fn is_loopback_base(base: &str) -> bool {
+    let rest = base.strip_prefix("http://").or_else(|| base.strip_prefix("https://")).unwrap_or("");
+    let auth = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if auth.contains('@') {
+        return false;
+    }
+    let host = if let Some(h) = auth.strip_prefix('[') {
+        h.split(']').next().unwrap_or("")
+    } else {
+        auth.split(':').next().unwrap_or("")
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
+/// API base: `EIGHTSYNC_HQ_API_BASE` is honored only for loopback hosts, so the bot token
+/// cannot be redirected to an arbitrary host.
+fn api_base(env: Option<&str>) -> String {
+    match env.filter(|s| !s.is_empty()) {
+        Some(b) if is_loopback_base(b) => b.trim_end_matches('/').to_string(),
+        Some(_) => {
+            eprintln!("hq: ignoring EIGHTSYNC_HQ_API_BASE (not a loopback host)");
+            DEFAULT_API.into()
+        }
+        None => DEFAULT_API.into(),
+    }
+}
+
+impl Ctx {
+    fn new(token: Option<String>, dry: bool, hook: bool) -> Self {
+        Ctx {
+            base: api_base(std::env::var("EIGHTSYNC_HQ_API_BASE").ok().as_deref()),
+            token,
+            dry,
+            retry_cap: if hook { 3.0 } else { 30.0 },
+            max_time: if hook { 8 } else { 30 },
+            deadline: hook.then(|| std::time::Instant::now() + Duration::from_secs(HOOK_BUDGET_SECS)),
+            seq: std::cell::Cell::new(0),
+        }
+    }
+
+    fn send(&self, req: &Req) -> Result<Value> {
+        if self.dry {
+            return Ok(self.fake(req));
+        }
+        let (url, tok) = match &req.target {
+            Target::Api(p) => {
+                let t = self.token.as_deref().ok_or_else(|| anyhow!("no bot token (secrets.json or --token-stdin)"))?;
+                (format!("{}{}", self.base, p), Some(t))
+            }
+            Target::Webhook(u) => (u.clone(), None),
+        };
+        let body = req.body.as_ref().map(|b| b.to_string());
+        let body_s = body.as_deref();
+        for attempt in 0..4 {
+            let mut max_time = self.max_time;
+            if let Some(d) = self.deadline {
+                let left = d.saturating_duration_since(std::time::Instant::now()).as_secs();
+                if left < 1 {
+                    bail!("hook time budget exhausted");
+                }
+                max_time = max_time.min(left);
+            }
+            let cfg = curl_config(req.method, &url, tok, body_s, max_time);
+            let (code, text) = run_curl(&cfg)?;
+            if code == 429 && attempt < 3 {
+                let ra = serde_json::from_str::<Value>(&text)
+                    .ok()
+                    .and_then(|v| v["retry_after"].as_f64())
+                    .unwrap_or(1.0);
+                let mut nap = ra.clamp(0.0, self.retry_cap) + 0.05;
+                if let Some(d) = self.deadline {
+                    nap = nap.min(d.saturating_duration_since(std::time::Instant::now()).as_secs_f64());
+                }
+                std::thread::sleep(Duration::from_secs_f64(nap));
+                continue;
+            }
+            if !(200..300).contains(&code) {
+                bail!("discord {} {} -> HTTP {code}: {}", req.method, mask_path(&req.target), truncate_chars(&text, 300));
+            }
+            return Ok(serde_json::from_str(&text).unwrap_or(Value::Null));
+        }
+        bail!("rate limited (429) after 3 retries")
+    }
+
+    /// Synthetic reply for --dry-run so the same code path can run end to end.
+    fn fake(&self, req: &Req) -> Value {
+        println!("{}", render_dry(req, &self.base));
+        if req.method == "GET" {
+            return json!([]);
+        }
+        let n = self.seq.get() + 1;
+        self.seq.set(n);
+        let mut v = json!({"id": format!("DRY{n}"), "token": "DRYTOKEN", "channel_id": format!("DRYTHREAD{n}")});
+        for k in ["name", "type"] {
+            if let Some(x) = req.body.as_ref().and_then(|b| b.get(k)) {
+                v[k] = x.clone();
+            }
+        }
+        if let Some(tags) = req.body.as_ref().and_then(|b| b["available_tags"].as_array()) {
+            v["available_tags"] = Value::Array(
+                tags.iter()
+                    .map(|t| {
+                        let name = t["name"].as_str().unwrap_or("");
+                        json!({"id": t["id"].as_str().map(String::from).unwrap_or_else(|| format!("DRYTAG-{name}")), "name": name})
+                    })
+                    .collect(),
+            );
+        }
+        v
+    }
+}
+
+fn mask_path(t: &Target) -> String {
+    match t {
+        Target::Api(p) => p.clone(),
+        Target::Webhook(u) => mask_webhook_url(u),
+    }
+}
+
+/// Run curl with the config on stdin; returns (status, body).
+fn run_curl(cfg: &str) -> Result<(u16, String)> {
+    let mut child = Command::new("curl")
+        .args(["--config", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("curl not found on PATH")?;
+    child.stdin.take().context("curl stdin")?.write_all(cfg.as_bytes())?;
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        // stderr may echo the URL: only report the first line, scrubbed of webhook tokens.
+        let e = String::from_utf8_lossy(&out.stderr);
+        let first = e.lines().next().unwrap_or("curl failed");
+        bail!("curl: {}", mask_webhook_url(first));
+    }
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    let (body, code) = s.rsplit_once('\n').ok_or_else(|| anyhow!("malformed curl output"))?;
+    Ok((code.trim().parse().unwrap_or(0), body.to_string()))
+}
+
+// ── setup ───────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+struct Tag {
+    id: String,
+    name: String,
+}
+
+#[derive(Clone, Debug)]
+struct Chan {
+    id: String,
+    name: String,
+    ty: i64,
+    tags: Vec<Tag>,
+}
+
+fn parse_chan(v: &Value) -> Option<Chan> {
+    Some(Chan {
+        id: v["id"].as_str()?.to_string(),
+        name: v["name"].as_str()?.to_string(),
+        ty: v["type"].as_i64().unwrap_or(0),
+        tags: v["available_tags"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| Some(Tag { id: t["id"].as_str()?.into(), name: t["name"].as_str()?.into() }))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
+fn find_chan<'a>(ex: &'a [Chan], name: &str, ty: i64) -> Option<&'a Chan> {
+    ex.iter().find(|c| c.ty == ty && c.name.to_lowercase() == name.to_lowercase())
+}
+
+#[derive(Debug, PartialEq)]
+struct PlanItem {
+    what: &'static str,
+    name: String,
+    exists: bool,
+}
+
+/// Setup diff: which layout items already exist (by name + type) and which are missing.
+fn plan(roles: &[String], chans: &[Chan]) -> Vec<PlanItem> {
+    let mut out = vec![];
+    for r in ROLE_NAMES {
+        out.push(PlanItem { what: "role", name: r.into(), exists: roles.iter().any(|x| x.eq_ignore_ascii_case(r)) });
+    }
+    for cat in LAYOUT {
+        out.push(PlanItem { what: "category", name: cat.name.into(), exists: find_chan(chans, cat.name, 4).is_some() });
+        for c in cat.chans {
+            out.push(PlanItem { what: "channel", name: c.name.into(), exists: find_chan(chans, c.name, c.kind.ty()).is_some() });
+        }
+    }
+    out
+}
+
+fn missing_tags<'a>(have: &[Tag], want: &'a [&'a str]) -> Vec<&'a str> {
+    want.iter().copied().filter(|w| !have.iter().any(|t| t.name.eq_ignore_ascii_case(w))).collect()
+}
+
+fn invite_hint() -> String {
+    format!(
+        "https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot&permissions={}",
+        perm_bits()
+    )
+}
+
+fn read_stdin_line() -> Result<String> {
+    let mut s = String::new();
+    std::io::stdin().read_line(&mut s)?;
+    Ok(s.trim().to_string())
+}
+
+fn cmd_setup(guild: &str, token_stdin: bool, owner: Option<String>, dry: bool) -> Result<()> {
+    let paths = Paths::new()?;
+    let mut sec = load_secrets(&paths);
+    if token_stdin {
+        let t = read_stdin_line()?;
+        if t.is_empty() {
+            bail!("empty token on stdin");
+        }
+        sec.bot_token = Some(t);
+    }
+    let token = sec.bot_token.clone().ok_or_else(|| anyhow!("no bot token: use --token-stdin"))?;
+    let ctx = Ctx::new(Some(token), dry, false);
+    let mut cfg = load_config(&paths).unwrap_or_default();
+    cfg.guild_id = guild.to_string();
+    if owner.is_some() {
+        cfg.owner_id = owner;
+    }
+    ui::header("8sync hq setup");
+    let (mut created, mut existing) = (0u32, 0u32);
+    let mut note = |c: bool, what: &str, name: &str| {
+        if c {
+            created += 1;
+            ui::ok(&format!("created {what} {name}"));
+        } else {
+            existing += 1;
+            ui::skip(&format!("{what} {name}"), "exists");
+        }
+    };
+
+    // roles
+    let rv = ctx.send(&api("GET", format!("/guilds/{guild}/roles"), None))?;
+    let have: Vec<(String, String)> = rv
+        .as_array()
+        .map(|a| a.iter().filter_map(|r| Some((r["id"].as_str()?.into(), r["name"].as_str()?.into()))).collect())
+        .unwrap_or_default();
+    for r in ROLE_NAMES {
+        let key = r.to_lowercase();
+        if let Some((id, _)) = have.iter().find(|(_, n)| n.eq_ignore_ascii_case(r)) {
+            cfg.roles.insert(key, id.clone());
+            note(false, "role", r);
+        } else {
+            let v = ctx.send(&req_create_role(guild, r))?;
+            cfg.roles.insert(key, v["id"].as_str().unwrap_or("").to_string());
+            note(true, "role", r);
+        }
+    }
+
+    // categories + channels
+    let cv = ctx.send(&api("GET", format!("/guilds/{guild}/channels"), None))?;
+    let chans: Vec<Chan> = cv.as_array().map(|a| a.iter().filter_map(parse_chan).collect()).unwrap_or_default();
+    let have_roles: Vec<String> = have.iter().map(|(_, n)| n.clone()).collect();
+    let todo = plan(&have_roles, &chans).iter().filter(|i| !i.exists).count();
+    ui::info(&format!("plan: {todo} role/category/channel item(s) missing (webhooks and tags checked below)"));
+    for cat in LAYOUT {
+        let cat_id = match find_chan(&chans, cat.name, 4) {
+            Some(c) => {
+                note(false, "category", cat.name);
+                c.id.clone()
+            }
+            None => {
+                let v = ctx.send(&req_create_category(guild, cat.name))?;
+                note(true, "category", cat.name);
+                v["id"].as_str().unwrap_or("").to_string()
+            }
+        };
+        for spec in cat.chans {
+            let chan = match find_chan(&chans, spec.name, spec.kind.ty()) {
+                Some(c) => {
+                    note(false, "channel", spec.name);
+                    c.clone()
+                }
+                None => {
+                    let v = ctx.send(&req_create_channel(guild, spec, &cat_id))?;
+                    note(true, "channel", spec.name);
+                    parse_chan(&v).ok_or_else(|| anyhow!("unexpected channel reply for {}", spec.name))?
+                }
+            };
+            cfg.channels.insert(spec.key.into(), chan.id.clone());
+            if spec.kind == Kind::Forum && !spec.tags.is_empty() {
+                let miss = missing_tags(&chan.tags, spec.tags);
+                let tags = if miss.is_empty() {
+                    chan.tags.clone()
+                } else {
+                    let v = ctx.send(&req_add_tags(&chan.id, &chan.tags, &miss))?;
+                    note(true, "tags", &format!("{} (+{})", spec.name, miss.len()));
+                    parse_chan(&v).map(|c| c.tags).unwrap_or_default()
+                };
+                let m = cfg.tags.entry(spec.key.into()).or_default();
+                for t in tags {
+                    m.insert(t.name.to_lowercase(), t.id);
+                }
+            }
+        }
+    }
+
+    // one webhook per channel/forum HQ posts to (owner-desk belongs to the Channels plugin)
+    for cat in LAYOUT {
+        for spec in cat.chans.iter().filter(|c| c.key != "owner-desk") {
+            if sec.webhooks.contains_key(spec.key) {
+                note(false, "webhook", spec.key);
+                continue;
+            }
+            let ch = cfg.channels.get(spec.key).cloned().unwrap_or_default();
+            let list = ctx.send(&api("GET", format!("/channels/{ch}/webhooks"), None))?;
+            let found = list.as_array().and_then(|a| {
+                a.iter().find(|w| w["name"] == WEBHOOK_NAME && w["token"].is_string()).cloned()
+            });
+            let (w, was_new) = match found {
+                Some(w) => (w, false),
+                None => (ctx.send(&req_create_webhook(&ch))?, true),
+            };
+            let url = format!("{}/webhooks/{}/{}", ctx.base, w["id"].as_str().unwrap_or(""), w["token"].as_str().unwrap_or(""));
+            sec.webhooks.insert(spec.key.into(), url);
+            note(was_new, "webhook", spec.key);
+        }
+    }
+
+    // charter (once), pinned
+    if cfg.charter_message_id.is_none() {
+        if let Some(url) = sec.webhooks.get("readme") {
+            let body = webhook_body(&Msg { persona: Persona::Hq, avatar: None, title: Some("Charter"), text: CHARTER, mention_user: None, thread_name: None, tags: &[] });
+            let v = ctx.send(&req_webhook(url, body, None, true))?;
+            if let (Some(id), Some(ch)) = (v["id"].as_str(), cfg.channels.get("readme")) {
+                if let Err(e) = pin_message(&ctx, ch, id) {
+                    ui::warn(&format!("pin failed: {e}"));
+                }
+                cfg.charter_message_id = Some(id.to_string());
+                note(true, "message", "charter");
+            }
+        }
+    } else {
+        note(false, "message", "charter");
+    }
+
+    println!();
+    ui::info(&format!("created: {created} · existing: {existing}"));
+    if dry {
+        ui::info("dry-run: nothing sent, nothing saved");
+    } else {
+        cfg.enabled = true;
+        save_secrets(&paths, &sec)?;
+        save_config(&paths, &cfg)?;
+        ui::ok(&format!("saved {} (0600) and {}", paths.secrets().display(), paths.config().display()));
+    }
+    ui::info("Invite the bot (no Administrator). Manage Channels / Manage Roles are for setup only: remove them after.");
+    ui::info(&format!("  {}", invite_hint()));
+    Ok(())
+}
+
+// ── posting / tasks ─────────────────────────────────────────────────────────
+
+fn avatar(cfg: &Config, p: Persona) -> Option<&str> {
+    cfg.avatars.get(p.key()).map(String::as_str)
+}
+
+fn exec_webhook(ctx: &Ctx, sec: &Secrets, key: &str, body: Value, thread: Option<&str>, wait: bool) -> Result<Value> {
+    let url = sec.webhooks.get(key).ok_or_else(|| anyhow!("no webhook for '{key}' (run `8sync hq setup`)"))?;
+    ctx.send(&req_webhook(url, body, thread, wait))
+}
+
+/// Task-board tag ids for status + role + priority (unknown names skipped).
+fn applied_tags(cfg: &Config, status: &str, role: Option<&str>, prio: Option<&str>) -> Vec<String> {
+    let Some(m) = cfg.tags.get(BOARD) else { return vec![] };
+    let role_tag = role.and_then(Persona::parse).and_then(Persona::tag);
+    [Some(status), role_tag, prio]
+        .into_iter()
+        .flatten()
+        .filter_map(|n| m.get(n).cloned())
+        .collect()
+}
+
+const PENDING: &str = "pending";
+const PENDING_DONE: &str = "pending-done";
+/// a TaskCompleted hook is PATCHing this task to done right now (a second one must not repeat it)
+const DONE_SENDING: &str = "done-sending";
+/// prune: finished tasks older than this are dropped from tasks.json
+const DONE_KEEP: u64 = 14 * 86_400;
+/// prune: reservations that never got a thread and are older than this are dropped
+const PENDING_KEEP: u64 = 86_400;
+/// a reservation older than this is treated as a crashed hook and may be taken over
+const PENDING_TTL: u64 = 120;
+
+fn is_pending(status: &str) -> bool {
+    status == PENDING || status == PENDING_DONE
+}
+
+#[derive(Debug, PartialEq)]
+enum Claim {
+    /// caller reserved the id and must post the thread
+    Created,
+    /// another hook is posting it right now
+    InFlight,
+    /// already posted; carries the thread id
+    Exists(String),
+    /// a completion was asked for and the task is already done or another hook is marking it
+    /// done: nothing to PATCH or comment
+    Done,
+}
+
+/// The post failed. A plain reservation is dropped; one that already absorbed a TaskCompleted
+/// (`pending-done`) stays, marked stale (updated=0) so the next claim takes it at once and
+/// posts it as done. Returns true when the entry was kept for retry.
+fn release_failed_claim(st: &mut State, id: &str) -> bool {
+    match st.tasks.get_mut(id) {
+        Some(t) if t.status == PENDING_DONE && t.thread_id.is_empty() => {
+            t.updated = 0;
+            true
+        }
+        Some(t) if is_pending(&t.status) => {
+            st.tasks.remove(id);
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Thread id of a task that already has one; errors for unknown or still-being-created tasks.
+fn posted_thread(st: &State, id: &str) -> Result<String> {
+    let t = st.tasks.get(id).ok_or_else(|| anyhow!("unknown task '{id}'"))?;
+    if t.thread_id.is_empty() {
+        bail!("task '{id}' is still being created");
+    }
+    Ok(t.thread_id.clone())
+}
+
+/// Idempotency core for TaskCreated/TaskCompleted racing each other. Runs under the state lock:
+/// unknown id -> insert a `pending` entry (caller posts); pending (fresh) -> in flight, and a
+/// completion upgrades it to `pending-done`; a completion for a posted task claims the PATCH
+/// (`done-sending`) so a parallel duplicate gets `Claim::Done`; otherwise it already exists.
+/// A stale `pending-done` (failed post, kept for retry) is retried when the next event or
+/// `hq task new --id` for that task arrives, and is taken over still as `pending-done` so the
+/// post-success path patches it to done.
+fn claim_task(st: &mut State, id: &str, title: &str, role: Option<String>, prio: Option<String>, want_done: bool, now: u64) -> Claim {
+    if let Some(t) = st.tasks.get_mut(id) {
+        if !is_pending(&t.status) {
+            if want_done {
+                let fresh = now.saturating_sub(t.updated) <= PENDING_TTL;
+                if t.status == "done" || (t.status == DONE_SENDING && fresh) {
+                    return Claim::Done;
+                }
+                t.status = DONE_SENDING.into();
+                t.updated = now;
+            }
+            return Claim::Exists(t.thread_id.clone());
+        }
+        if now.saturating_sub(t.updated) <= PENDING_TTL {
+            if want_done {
+                t.status = PENDING_DONE.into();
+            }
+            return Claim::InFlight;
+        }
+        // stale, but a thread was already recorded: never repost
+        if !t.thread_id.is_empty() {
+            if t.status == PENDING_DONE {
+                t.status = "done".into();
+                t.done_at = Some(now);
+            } else {
+                t.status = "todo".into();
+            }
+            t.updated = now;
+            return Claim::Exists(t.thread_id.clone());
+        }
+    }
+    let folded = st.tasks.get(id).is_some_and(|t| t.status == PENDING_DONE);
+    let status = if want_done || folded { PENDING_DONE } else { PENDING };
+    st.tasks.insert(id.to_string(), Task { thread_id: String::new(), status: status.into(), role, prio, title: title.to_string(), updated: now, done_at: None });
+    Claim::Created
+}
+
+struct Env {
+    paths: Paths,
+    cfg: Config,
+    sec: Secrets,
+    ctx: Ctx,
+}
+
+impl Env {
+    fn load(dry: bool, hook: bool) -> Result<Env> {
+        let paths = Paths::new()?;
+        let cfg = load_config(&paths).ok_or_else(|| anyhow!("HQ not configured: run `8sync hq setup --guild <id>`"))?;
+        let sec = load_secrets(&paths);
+        let ctx = Ctx::new(sec.bot_token.clone(), dry, hook);
+        Ok(Env { paths, cfg, sec, ctx })
+    }
+
+    fn post(&self, p: Persona, key: &str, title: Option<&str>, text: &str, mention: bool) -> Result<Value> {
+        let m = Msg {
+            persona: p,
+            avatar: avatar(&self.cfg, p),
+            title,
+            text,
+            mention_user: if mention { self.cfg.owner_id.as_deref() } else { None },
+            thread_name: None,
+            tags: &[],
+        };
+        exec_webhook(&self.ctx, &self.sec, key, webhook_body(&m), None, false)
+    }
+
+    /// Forum webhook post: starts a new thread named `thread_name`.
+    fn post_forum(&self, p: Persona, key: &str, thread_name: &str, text: &str) -> Result<()> {
+        let m = Msg { persona: p, avatar: avatar(&self.cfg, p), title: None, text, mention_user: None, thread_name: Some(thread_name), tags: &[] };
+        exec_webhook(&self.ctx, &self.sec, key, webhook_body(&m), None, false).map(|_| ())
+    }
+
+    /// Reserve `id` in the local state before posting (parallel hooks must not double-post).
+    fn claim(&self, id: &str, title: &str, role: Option<&str>, prio: Option<&str>, want_done: bool) -> Result<Claim> {
+        if self.ctx.dry {
+            return Ok(Claim::Created);
+        }
+        let (title, role, prio) = (truncate_chars(title, THREAD_NAME_MAX), role.map(String::from), prio.map(String::from));
+        update_state_with(&self.paths, self.ctx.deadline, |st| claim_task(st, id, &title, role, prio, want_done, now()))
+    }
+
+    /// Post the task thread. The caller must hold a `Claim::Created` for `id`.
+    fn task_new(&self, id: &str, title: &str, body: &str, role: Option<Persona>, prio: Option<&str>, status: &str) -> Result<()> {
+        let role_key = role.filter(|r| r.tag().is_some()).map(|r| r.key());
+        let tags = applied_tags(&self.cfg, status, role_key, prio);
+        let p = role.unwrap_or(Persona::Hq);
+        let text = if body.trim().is_empty() { title } else { body };
+        let m = Msg { persona: p, avatar: avatar(&self.cfg, p), title: None, text, mention_user: None, thread_name: Some(title), tags: &tags };
+        let posted = exec_webhook(&self.ctx, &self.sec, BOARD, webhook_body(&m), None, true).and_then(|v| {
+            v["channel_id"].as_str().map(String::from).ok_or_else(|| anyhow!("webhook reply has no channel_id (thread id not verified)"))
+        });
+        if self.ctx.dry {
+            return posted.map(|_| ());
+        }
+        let thread = match posted {
+            Ok(t) => t,
+            Err(e) => {
+                // release the reservation so a later hook can retry; a folded-in completion is kept
+                let kept = update_state_with(&self.paths, self.ctx.deadline, |st| release_failed_claim(st, id)).unwrap_or(false);
+                if kept {
+                    log_err(&self.paths, &self.sec, &format!("task {id}: post failed with completion pending; kept pending-done for retry"));
+                }
+                return Err(e);
+            }
+        };
+        let status_s = status.to_string();
+        let upgrade = update_state_retry(&self.paths, self.ctx.deadline, |st| {
+            let t = st.tasks.entry(id.to_string()).or_default();
+            let upgrade = t.status == PENDING_DONE && status_s != "done";
+            t.thread_id = thread.clone();
+            t.status = status_s.clone();
+            t.updated = now();
+            t.done_at = (status_s == "done").then(now);
+            upgrade
+        });
+        let upgrade = match upgrade {
+            Ok(u) => u,
+            Err(e) => {
+                log_err(&self.paths, &self.sec, &format!("task {id}: thread {thread} posted but state write failed ({e}); reconcile manually"));
+                return Err(e);
+            }
+        };
+        if upgrade {
+            // a TaskCompleted arrived while we were posting
+            self.task_status(id, "done", "Completed")?;
+        }
+        Ok(())
+    }
+
+    fn task_status(&self, id: &str, status: &str, comment: &str) -> Result<()> {
+        if !STATUSES.contains(&status) {
+            bail!("status must be one of {}", STATUSES.join("|"));
+        }
+        let st = load_state(&self.paths);
+        let id = resolve_task_id(&st, id)?;
+        let id = id.as_str();
+        let thread = posted_thread(&st, id)?;
+        let t = &st.tasks[id];
+        let tags = applied_tags(&self.cfg, status, t.role.as_deref(), t.prio.as_deref());
+        // un-archive the thread together with the tag change, then post the comment (keeps it active)
+        self.ctx.send(&req_patch_thread_tags(&thread, &tags))?;
+        if !comment.is_empty() {
+            let m = Msg { persona: Persona::Hq, avatar: avatar(&self.cfg, Persona::Hq), title: None, text: comment, mention_user: None, thread_name: None, tags: &[] };
+            exec_webhook(&self.ctx, &self.sec, BOARD, webhook_body(&m), Some(&thread), false)?;
+        }
+        if !self.ctx.dry {
+            let s = status.to_string();
+            update_state_with(&self.paths, self.ctx.deadline, |st| {
+                if let Some(t) = st.tasks.get_mut(id) {
+                    t.status = s.clone();
+                    t.updated = now();
+                    t.done_at = (s == "done").then(now);
+                }
+            })?;
+        }
+        Ok(())
+    }
+
+    fn task_comment(&self, id: &str, p: Persona, text: &str) -> Result<()> {
+        let st = load_state(&self.paths);
+        let id = resolve_task_id(&st, id)?;
+        let thread = posted_thread(&st, &id)?;
+        let m = Msg { persona: p, avatar: avatar(&self.cfg, p), title: None, text, mention_user: None, thread_name: None, tags: &[] };
+        exec_webhook(&self.ctx, &self.sec, BOARD, webhook_body(&m), Some(&thread), false)?;
+        Ok(())
+    }
+}
+
+fn read_text(stdin: bool, words: &[String]) -> Result<String> {
+    let t = if stdin || words.first().map(String::as_str) == Some("-") {
+        let mut s = String::new();
+        std::io::stdin().take(1 << 20).read_to_string(&mut s)?;
+        s
+    } else {
+        words.join(" ")
+    };
+    if t.trim().is_empty() {
+        bail!("no text (pass text or --stdin)");
+    }
+    Ok(t)
+}
+
+/// Forum channels (rfcs, notes, task-board) only accept webhook posts that start a thread,
+/// which needs `thread_name`. Returns it for forum keys; None for plain text channels.
+fn forum_thread_name(to: &str, title: Option<&str>) -> Result<Option<String>> {
+    let forum = LAYOUT.iter().flat_map(|c| c.chans.iter()).any(|c| c.key == to && c.kind == Kind::Forum);
+    if !forum {
+        return Ok(None);
+    }
+    if to == "task-board" {
+        // REQUIRE_TAG is set on the board: an untagged post is rejected, and tasks need state.
+        bail!("#task-board posts are tasks: use `8sync hq task new <title> --role <role> [--prio p1]`");
+    }
+    match title.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => Ok(Some(t.to_string())),
+        None => bail!("#{to} is a forum channel: pass --title (it becomes the thread name)"),
+    }
+}
+
+fn persona_arg(s: &str) -> Result<Persona> {
+    Persona::parse(s).ok_or_else(|| anyhow!("unknown persona '{s}' (pm|architect|backend|frontend|qa|reviewer|researcher|hq)"))
+}
+
+// ── hooks ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, PartialEq)]
+enum Action {
+    TaskNew { id: String, title: String, body: String, role: Option<Persona> },
+    TaskDone { id: String, title: String, body: String, role: Option<Persona>, by: String },
+    Log { persona: Persona, text: String },
+    Alert { persona: Persona, title: String, text: String, mention: bool },
+}
+
+/// A task event from a teammate without `team_name`: its id is scoped by session only, so the
+/// lead's and the teammate's sessions would not share a key.
+fn lacks_team_scope(event: &str, v: &Value) -> bool {
+    matches!(event.to_lowercase().as_str(), "taskcreated" | "taskcompleted") && !s(v, "task_id").is_empty() && !s(v, "teammate_name").is_empty() && s(v, "team_name").is_empty()
+}
+
+fn s<'a>(v: &'a Value, k: &str) -> &'a str {
+    v[k].as_str().unwrap_or("")
+}
+
+/// Claude Code numbers tasks per task list ("1", "2", … again in every new session),
+/// so a bare id collides with yesterday's tasks and the new ones were silently skipped
+/// (found in UAT). Scope by `team_name` (lead + teammates share one list across
+/// sessions), else `session_id`.
+fn scoped_task_id(v: &Value, id: &str) -> String {
+    let scope = [s(v, "team_name"), s(v, "session_id")].into_iter().find(|x| !x.is_empty());
+    match scope {
+        Some(sc) => format!("{sc}:{id}"),
+        None => id.to_string(),
+    }
+}
+
+/// Map a Claude Code hook payload to an HQ action (field names: see module docs).
+fn map_hook(event: &str, v: &Value) -> Option<Action> {
+    let role = || Persona::from_text(s(v, "teammate_name")).or_else(|| Persona::from_text(s(v, "task_subject")));
+    match event.to_lowercase().as_str() {
+        "taskcreated" | "taskcompleted" => {
+            let id = s(v, "task_id");
+            if id.is_empty() {
+                return None;
+            }
+            let title = if s(v, "task_subject").is_empty() { id } else { s(v, "task_subject") }.to_string();
+            let body = s(v, "task_description").to_string();
+            let id = scoped_task_id(v, id);
+            Some(if event.eq_ignore_ascii_case("taskcreated") {
+                Action::TaskNew { id, title, body, role: role() }
+            } else {
+                Action::TaskDone { id, title, body, role: role(), by: s(v, "teammate_name").to_string() }
+            })
+        }
+        "teammateidle" => {
+            let n = s(v, "teammate_name");
+            Some(Action::Log { persona: Persona::from_text(n).unwrap_or(Persona::Hq), text: format!("{} is idle{}", if n.is_empty() { "teammate" } else { n }, if s(v, "team_name").is_empty() { String::new() } else { format!(" (team {})", s(v, "team_name")) }) })
+        }
+        "notification" => {
+            let ty = s(v, "notification_type");
+            let (label, mention) = match ty {
+                "agent_needs_input" => ("needs input", true),
+                "agent_completed" => ("completed", false),
+                "permission_prompt" | "permission" => ("permission", false),
+                _ => return None,
+            };
+            let msg = s(v, "message");
+            Some(Action::Alert {
+                persona: Persona::Hq,
+                title: if s(v, "title").is_empty() { label.to_string() } else { format!("{label}: {}", s(v, "title")) },
+                text: if msg.is_empty() { label.to_string() } else { msg.to_string() },
+                mention,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn run_action(env: &Env, a: Action) -> Result<()> {
+    match a {
+        Action::TaskNew { id, title, body, role } => {
+            let rk = role.filter(|r| r.tag().is_some()).map(|r| r.key());
+            if env.claim(&id, &title, rk, None, false)? != Claim::Created {
+                return Ok(());
+            }
+            env.task_new(&id, &title, &body, role, None, "todo")
+        }
+        Action::TaskDone { id, title, body, role, by } => {
+            let note = if by.is_empty() { "Completed".to_string() } else { format!("Completed by {by}") };
+            let rk = role.filter(|r| r.tag().is_some()).map(|r| r.key());
+            match env.claim(&id, &title, rk, None, true)? {
+                Claim::Created => env.task_new(&id, &title, &format!("{note}\n\n{body}"), role, None, "done"),
+                Claim::Done => Ok(()), // finished or being finished by a parallel hook
+                Claim::Exists(_) => {
+                    let r = env.task_status(&id, "done", &note);
+                    if r.is_err() && !env.ctx.dry {
+                        // release the done-sending claim so a retry is not skipped
+                        let _ = update_state_with(&env.paths, env.ctx.deadline, |st| {
+                            if let Some(t) = st.tasks.get_mut(&id).filter(|t| t.status == DONE_SENDING) {
+                                t.status = "todo".into();
+                            }
+                        });
+                    }
+                    r
+                }
+                Claim::InFlight => Ok(()), // creator upgrades it to done after posting
+            }
+        }
+        Action::Log { persona, text } => env.post(persona, "logs", None, &text, false).map(|_| ()),
+        Action::Alert { persona, title, text, mention } => env.post(persona, "alerts", Some(&title), &text, mention).map(|_| ()),
+    }
+}
+
+/// Never fails, never blocks Claude: errors go to the 0600 log.
+fn cmd_hook(event: &str, dry: bool) {
+    let Ok(paths) = Paths::new() else { return };
+    // fast silent no-op: not configured / disabled -> no stdin read, no network
+    let Some(cfg) = load_config(&paths) else { return };
+    if !cfg.enabled {
+        return;
+    }
+    let sec = load_secrets(&paths);
+    let r = (|| -> Result<()> {
+        let mut raw = String::new();
+        if !std::io::stdin().is_terminal() {
+            std::io::stdin().take(1 << 20).read_to_string(&mut raw)?;
+        }
+        let v: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        let Some(a) = map_hook(event, &v) else { return Ok(()) };
+        if lacks_team_scope(event, &v) {
+            log_err(&paths, &sec, "no team_name; scoped by session");
+        }
+        let env = Env { ctx: Ctx::new(sec.bot_token.clone(), dry, true), paths: Paths::new()?, cfg: cfg.clone(), sec: sec.clone() };
+        run_action(&env, a)
+    })();
+    if let Err(e) = r {
+        log_err(&paths, &sec, &format!("hook {event}: {e}"));
+    }
+}
+
+// ── standup ─────────────────────────────────────────────────────────────────
+
+fn civil_ymd(secs: u64) -> String {
+    // days since epoch -> y-m-d (Howard Hinnant's algorithm), UTC
+    let z = (secs / 86400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn today() -> String {
+    Command::new("date")
+        .arg("+%F")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| civil_ymd(now()))
+}
+
+/// One embed per role: doing / review / blocked / done in the last 24 h. No model call.
+fn standup_embeds(st: &State, now: u64) -> Vec<Value> {
+    let mut by: BTreeMap<String, Vec<&Task>> = BTreeMap::new();
+    for t in st.tasks.values() {
+        by.entry(t.role.clone().unwrap_or_else(|| "hq".into())).or_default().push(t);
+    }
+    let mut out = vec![];
+    for p in PERSONAS {
+        let Some(ts) = by.get(p.key()) else { continue };
+        let mut sections = vec![];
+        for (label, f) in [
+            ("Doing", Box::new(|t: &Task| t.status == "doing") as Box<dyn Fn(&Task) -> bool>),
+            ("In review", Box::new(|t: &Task| t.status == "review")),
+            ("Blocked", Box::new(|t: &Task| t.status == "blocked")),
+            ("Done (24h)", Box::new(move |t: &Task| t.status == "done" && t.done_at.map(|d| now.saturating_sub(d) <= 86_400).unwrap_or(false))),
+        ] {
+            let lines: Vec<String> = ts.iter().filter(|t| f(t)).map(|t| format!("• {}", t.title)).collect();
+            if !lines.is_empty() {
+                sections.push(format!("**{label}**\n{}", lines.join("\n")));
+            }
+        }
+        if sections.is_empty() {
+            continue;
+        }
+        out.push(json!({"title": truncate_chars(&format!("{} · standup", p.label()), EMBED_TITLE_MAX), "description": truncate_chars(&sections.join("\n\n"), EMBED_DESC_MAX), "color": 0x5865F2}));
+    }
+    if out.is_empty() {
+        out.push(json!({"title": "Standup", "description": "No active or recently completed tracked tasks.", "color": 0x5865F2}));
+    }
+    out.truncate(10);
+    out
+}
+
+fn cmd_standup(dry: bool) -> Result<()> {
+    let env = Env::load(dry, false)?;
+    let day = today();
+    let embeds = standup_embeds(&load_state(&env.paths), now());
+    let hq = Persona::Hq;
+    let head = webhook_body(&Msg { persona: hq, avatar: avatar(&env.cfg, hq), title: None, text: &format!("Daily standup {day}"), mention_user: None, thread_name: None, tags: &[] });
+    let v = exec_webhook(&env.ctx, &env.sec, "standup", head, None, true)?;
+    let thread = match (v["id"].as_str(), env.cfg.channels.get("standup"), env.sec.bot_token.is_some()) {
+        (Some(m), Some(ch), true) => env.ctx.send(&req_start_thread(ch, m, &format!("Standup {day}"))).ok().and_then(|t| t["id"].as_str().map(String::from)),
+        _ => None,
+    };
+    let mut body = json!({"username": hq.username(), "embeds": embeds, "allowed_mentions": {"parse": []}});
+    if let Some(a) = avatar(&env.cfg, hq) {
+        body["avatar_url"] = json!(a);
+    }
+    exec_webhook(&env.ctx, &env.sec, "standup", body, thread.as_deref(), false)?;
+    ui::ok(&format!("standup {day} posted ({} embed(s))", embeds.len()));
+    Ok(())
+}
+
+// ── status / doctor ─────────────────────────────────────────────────────────
+
+fn cmd_status() -> Result<()> {
+    let paths = Paths::new()?;
+    ui::header("8sync hq status");
+    let cfg = load_config(&paths);
+    match &cfg {
+        Some(c) => ui::ok(&format!("config {} · enabled={} · guild={} · owner_id={}", paths.config().display(), c.enabled, if c.guild_id.is_empty() { "-" } else { &c.guild_id }, if c.owner_id.is_some() { "set" } else { "unset" })),
+        None => ui::warn(&format!("no config at {} (run `8sync hq setup --guild <id>`)", paths.config().display())),
+    }
+    let sec = load_secrets(&paths);
+    match mode_of(&paths.secrets()) {
+        Some(0o600) => ui::ok("secrets.json mode 0600"),
+        Some(m) => ui::warn(&format!("secrets.json mode {m:o} (want 600): chmod 600 {}", paths.secrets().display())),
+        None if paths.secrets().exists() => ui::info("secrets.json present (perms not checked on this OS)"),
+        None => ui::warn("no secrets.json"),
+    }
+    if let Some(m) = mode_of(&paths.cfg_dir) {
+        if m != 0o700 {
+            ui::warn(&format!("{} mode {m:o} (want 700)", paths.cfg_dir.display()));
+        }
+    }
+    ui::info(&format!("bot token: {}", sec.bot_token.as_deref().map(mask).unwrap_or_else(|| "missing".into())));
+    if let Some(c) = &cfg {
+        for (k, id) in &c.channels {
+            let wh = sec.webhooks.get(k).map(|u| mask_webhook_url(u)).unwrap_or_else(|| "no webhook".into());
+            println!("  #{k:<14} {id}  {wh}");
+        }
+    }
+    let st = load_state(&paths);
+    ui::info(&format!("tracked tasks: {} (newest 15: id status role title)", st.tasks.len()));
+    for (id, t) in recent_tasks(&st, 15) {
+        println!("{}", task_line(id, t));
+    }
+    if let Ok(l) = std::fs::read_to_string(paths.log()) {
+        let lines: Vec<&str> = l.lines().collect();
+        ui::info(&format!("last errors ({} in log):", lines.len()));
+        for x in lines.iter().rev().take(5).rev() {
+            println!("  {}", scrub(x, &sec.values()));
+        }
+    }
+    Ok(())
+}
+
+// ── up (systemd user unit + standup timer) ──────────────────────────────────
+
+const CHANNELS_CMD: &str = "--channels plugin:discord@claude-plugins-official";
+
+/// Escape a value for a systemd unit: `%` -> `%%` (specifiers) and `$` -> `$$` (env expansion).
+/// WorkingDirectory= does not expand `$`: only `%` specifiers need escaping there.
+fn sd_escape_pct(s: &str) -> String {
+    s.replace('%', "%%")
+}
+
+fn sd_escape(s: &str) -> String {
+    s.replace('%', "%%").replace('$', "$$")
+}
+
+/// Quote one word for a POSIX shell (single quotes).
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn unit_text(repo: &str, name: &str, tmux: &str, claude: &str) -> Result<String> {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') || name.is_empty() {
+        bail!("--name must be [A-Za-z0-9_-]");
+    }
+    if repo.contains(['"', '\n', '\\']) || tmux.contains(['"', '\n', '\\']) || claude.contains(['"', '\n', '\\', '\'']) {
+        bail!("path has unsupported characters");
+    }
+    // tmux runs this string through `sh -c`: the claude path must be quoted there. The shell
+    // string is then wrapped in "..." for systemd, so escape that layer too.
+    let shell = format!("env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 {} {CHANNELS_CMD}", sh_quote(claude));
+    let shell = sd_escape(&shell);
+    let (repo_e, tmux_e) = (sd_escape(repo), sd_escape(tmux));
+    let repo_wd = sd_escape_pct(repo);
+    Ok(format!(
+        "[Unit]\nDescription=8sync HQ lead session ({name}): Claude Code Channels in tmux\nAfter=network-online.target\nWants=network-online.target\n\n\
+         [Service]\nType=oneshot\nRemainAfterExit=yes\nWorkingDirectory={repo_wd}\n\
+         ExecStart=-\"{tmux_e}\" new-session -d -s {name} -c \"{repo_e}\" \"{shell}\"\n\
+         ExecStop=-\"{tmux_e}\" kill-session -t {name}\n\n[Install]\nWantedBy=default.target\n"
+    ))
+}
+
+fn standup_service_text(exe: &str) -> String {
+    format!("[Unit]\nDescription=8sync HQ daily standup\n\n[Service]\nType=oneshot\nExecStart=\"{}\" hq standup\n", sd_escape(exe))
+}
+
+const TIMER_TEXT: &str = "[Unit]\nDescription=8sync HQ standup at 09:00 local\n\n[Timer]\nOnCalendar=*-*-* 09:00:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n";
+
+fn cmd_up(repo: Option<PathBuf>, name: &str, install: bool, now_: bool) -> Result<()> {
+    let repo = match repo {
+        Some(r) => std::fs::canonicalize(r)?,
+        None => {
+            let cwd = std::env::current_dir()?;
+            crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd)
+        }
+    };
+    let which_or = |bin: &str, fb: &str| which::which(bin).map(|p| p.display().to_string()).unwrap_or_else(|_| fb.to_string());
+    let tmux = which_or("tmux", "/usr/bin/tmux");
+    let claude = which_or("claude", "claude");
+    let exe = std::env::current_exe()?.display().to_string();
+    let unit = unit_text(&repo.display().to_string(), name, &tmux, &claude)?;
+    let svc = standup_service_text(&exe);
+    ui::header("8sync hq up");
+    println!("# ~/.config/systemd/user/8sync-hq.service\n{unit}\n# ~/.config/systemd/user/8sync-hq-standup.service\n{svc}\n# ~/.config/systemd/user/8sync-hq-standup.timer\n{TIMER_TEXT}");
+    ui::info("Channels needs an open session, so the lead runs inside tmux; attach with `tmux attach -t <name>`.");
+    ui::info("Install the plugin once inside Claude Code: /plugin install discord@claude-plugins-official (HQ never touches Claude credentials).");
+    ui::info("Team/Enterprise plans: the org Owner must set `channelsEnabled`.");
+    ui::info("Keep the session alive after logout: `loginctl enable-linger $USER` (not run by HQ).");
+    if !install {
+        ui::info("print-only. Use --install to write the files (--install --now to also start).");
+        return Ok(());
+    }
+    if !cfg!(target_os = "linux") {
+        bail!("--install is systemd (Linux) only");
+    }
+    let dir = dirs::home_dir().ok_or_else(|| anyhow!("no home"))?.join(".config/systemd/user");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join("8sync-hq.service"), unit)?;
+    std::fs::write(dir.join("8sync-hq-standup.service"), svc)?;
+    std::fs::write(dir.join("8sync-hq-standup.timer"), TIMER_TEXT)?;
+    let sysctl = |args: &[&str]| -> Result<()> {
+        let st = Command::new("systemctl").arg("--user").args(args).status().context("systemctl not found")?;
+        if !st.success() {
+            bail!("systemctl --user {} failed", args.join(" "));
+        }
+        Ok(())
+    };
+    sysctl(&["daemon-reload"])?;
+    let mut en = vec!["enable"];
+    if now_ {
+        en.push("--now");
+    }
+    en.extend(["8sync-hq.service", "8sync-hq-standup.timer"]);
+    sysctl(&en)?;
+    ui::ok(if now_ { "installed, enabled and started" } else { "installed and enabled (not started)" });
+    Ok(())
+}
+
+// ── entry ───────────────────────────────────────────────────────────────────
+
+pub fn run(a: Args) -> Result<()> {
+    let dry = a.dry_run;
+    match a.cmd {
+        Sub::Hook { event } => {
+            cmd_hook(&event, dry);
+            Ok(())
+        }
+        Sub::Setup { guild, token_stdin, owner } => cmd_setup(&guild, token_stdin, owner, dry),
+        Sub::Post { persona, to, title, stdin, text } => {
+            let p = persona_arg(&persona)?;
+            let t = read_text(stdin, &text)?;
+            let thread = forum_thread_name(&to, title.as_deref())?;
+            let env = Env::load(dry, false)?;
+            match thread {
+                Some(n) => env.post_forum(p, &to, &n, &t)?,
+                None => {
+                    env.post(p, &to, title.as_deref(), &t, false)?;
+                }
+            }
+            ui::ok(&format!("posted as {} to #{to}", p.username()));
+            Ok(())
+        }
+        Sub::Task(c) => {
+            let env = Env::load(dry, false)?;
+            match c {
+                TaskCmd::New { title, id, role, prio, body } => {
+                    let role = role.as_deref().map(persona_arg).transpose()?;
+                    if let Some(p) = prio.as_deref() {
+                        if !PRIOS.contains(&p) {
+                            bail!("prio must be p0|p1|p2");
+                        }
+                    }
+                    let id = id.unwrap_or_else(|| format!("t{}", now()));
+                    let rk = role.filter(|r| r.tag().is_some()).map(|r| r.key());
+                    if env.claim(&id, &title, rk, prio.as_deref(), false)? != Claim::Created {
+                        bail!("task '{id}' already exists");
+                    }
+                    env.task_new(&id, &title, body.as_deref().unwrap_or(""), role, prio.as_deref(), "todo")?;
+                    ui::ok(&format!("task {id} created"));
+                }
+                TaskCmd::Status { id, status } => {
+                    env.task_status(&id, &status, &format!("Status: {status}"))?;
+                    ui::ok(&format!("task {id} -> {status}"));
+                }
+                TaskCmd::Comment { id, persona, text } => {
+                    env.task_comment(&id, persona_arg(&persona)?, &read_text(false, &text)?)?;
+                    ui::ok("comment posted");
+                }
+            }
+            Ok(())
+        }
+        Sub::Standup => cmd_standup(dry),
+        Sub::Status => cmd_status(),
+        Sub::Up { repo, name, install, now } => cmd_up(repo, &name, install, now),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("hq-test-{tag}-{}-{}", std::process::id(), now()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    fn cfg_with_tags() -> Config {
+        let mut c = Config::default();
+        let m = c.tags.entry(BOARD.into()).or_default();
+        for t in BOARD_TAGS {
+            m.insert((*t).into(), format!("id-{t}"));
+        }
+        c
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn secrets_and_config_are_private() {
+        let home = tmp("perm");
+        let p = Paths::under(&home);
+        let s = Secrets { bot_token: Some("tok-123456789012".into()), webhooks: BTreeMap::new() };
+        save_secrets(&p, &s).unwrap();
+        save_config(&p, &Config::default()).unwrap();
+        assert_eq!(mode_of(&p.secrets()), Some(0o600));
+        assert_eq!(mode_of(&p.config()), Some(0o600));
+        assert_eq!(mode_of(&p.cfg_dir), Some(0o700));
+        // re-save over a loosened file restores 0600
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(p.secrets(), std::fs::Permissions::from_mode(0o644)).unwrap();
+        save_secrets(&p, &s).unwrap();
+        assert_eq!(mode_of(&p.secrets()), Some(0o600));
+        assert_eq!(load_secrets(&p).bot_token.as_deref(), Some("tok-123456789012"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn masking_hides_secrets() {
+        assert_eq!(mask("short"), "****");
+        assert_eq!(mask("abcdefghijklmnop"), "****mnop");
+        let u = "https://discord.com/api/v10/webhooks/123/SECRETTOKEN?wait=true&thread_id=9";
+        let m = mask_webhook_url(u);
+        assert!(!m.contains("SECRETTOKEN"));
+        assert!(m.contains("/webhooks/123/****?wait=true&thread_id=9"));
+        let s = scrub("curl failed for https://x/webhooks/1/SECRETTOKEN and SECRETTOKEN", &["https://x/webhooks/1/SECRETTOKEN".into()]);
+        assert!(!s.contains("SECRETTOKEN"));
+    }
+
+    #[test]
+    fn truncation_is_char_safe() {
+        let s = "ế".repeat(2500);
+        let t = truncate_chars(&s, CONTENT_MAX);
+        assert_eq!(t.chars().count(), 2000);
+        assert!(t.ends_with('…'));
+        assert_eq!(truncate_chars("ngắn", 10), "ngắn");
+        let emoji = "😀".repeat(5000);
+        assert_eq!(truncate_chars(&emoji, EMBED_DESC_MAX).chars().count(), 4096);
+    }
+
+    #[test]
+    fn webhook_body_shapes() {
+        let m = |text: &'static str, title| Msg { persona: Persona::Qa, avatar: Some("https://a/x.png"), title, text, mention_user: None, thread_name: None, tags: &[] };
+        let b = webhook_body(&m("hi", None));
+        assert_eq!(b["username"], "QA · 8sync");
+        assert_eq!(b["content"], "hi");
+        assert_eq!(b["avatar_url"], "https://a/x.png");
+        assert!(b.get("embeds").is_none());
+        assert_eq!(b["allowed_mentions"], json!({"parse": []}));
+        let long = "é".repeat(3000);
+        let b = webhook_body(&Msg { text: &long, ..m("", None) });
+        assert!(b.get("content").is_none());
+        assert_eq!(b["embeds"][0]["description"].as_str().unwrap().chars().count(), 3000);
+        let b = webhook_body(&m("x", Some("T")));
+        assert_eq!(b["embeds"][0]["title"], "T");
+        let tags = vec!["a".to_string()];
+        let b = webhook_body(&Msg { thread_name: Some("Thread"), tags: &tags, mention_user: Some("42"), ..m("go", None) });
+        assert_eq!(b["thread_name"], "Thread");
+        assert_eq!(b["applied_tags"], json!(["a"]));
+        assert_eq!(b["content"], "<@42> go");
+        assert_eq!(b["allowed_mentions"], json!({"parse": [], "users": ["42"]}));
+    }
+
+    #[test]
+    fn tag_mapping() {
+        let c = cfg_with_tags();
+        assert_eq!(applied_tags(&c, "todo", Some("backend"), Some("p1")), vec!["id-todo", "id-be", "id-p1"]);
+        assert_eq!(applied_tags(&c, "done", Some("hq"), None), vec!["id-done"]);
+        assert_eq!(applied_tags(&c, "doing", Some("architect"), None), vec!["id-doing", "id-arch"]);
+        assert!(applied_tags(&Config::default(), "todo", None, None).is_empty());
+        assert_eq!(BOARD_TAGS.len(), 15);
+        assert!(BOARD_TAGS.len() <= 20);
+        // thread limit is 5 applied tags; we use at most 3
+        assert!(applied_tags(&c, "todo", Some("qa"), Some("p0")).len() <= 5);
+    }
+
+    #[test]
+    fn role_detection() {
+        assert_eq!(Persona::from_text("backend-dev"), Some(Persona::Backend));
+        assert_eq!(Persona::from_text("Add QA tests"), Some(Persona::Qa));
+        assert_eq!(Persona::from_text("implementer"), None);
+        assert_eq!(Persona::from_text("unbackended"), None);
+    }
+
+    // Fixtures copied from https://code.claude.com/docs/en/hooks
+    #[test]
+    fn hook_payloads_map() {
+        let created: Value = serde_json::from_str(r#"{"session_id":"abc123","cwd":"/x","hook_event_name":"TaskCreated","task_id":"task-001","task_subject":"Implement user authentication","task_description":"Add login and signup endpoints","teammate_name":"implementer","team_name":"session-a1b2c3d4"}"#).unwrap();
+        assert_eq!(
+            map_hook("TaskCreated", &created),
+            Some(Action::TaskNew { id: "session-a1b2c3d4:task-001".into(), title: "Implement user authentication".into(), body: "Add login and signup endpoints".into(), role: None })
+        );
+        let done: Value = serde_json::from_str(r#"{"hook_event_name":"TaskCompleted","task_id":"task-001","task_subject":"QA pass on auth","task_description":"d","teammate_name":"implementer","team_name":"t"}"#).unwrap();
+        match map_hook("taskcompleted", &done) {
+            Some(Action::TaskDone { id, role, by, .. }) => {
+                assert_eq!(id, "t:task-001");
+                assert_eq!(role, Some(Persona::Qa)); // from subject
+                assert_eq!(by, "implementer");
+            }
+            o => panic!("{o:?}"),
+        }
+        let idle: Value = serde_json::from_str(r#"{"hook_event_name":"TeammateIdle","teammate_name":"researcher","team_name":"session-a1b2c3d4"}"#).unwrap();
+        assert_eq!(
+            map_hook("TeammateIdle", &idle),
+            Some(Action::Log { persona: Persona::Researcher, text: "researcher is idle (team session-a1b2c3d4)".into() })
+        );
+        let n = |t: &str| serde_json::from_str::<Value>(&format!(r#"{{"hook_event_name":"Notification","message":"m","title":"T","notification_type":"{t}"}}"#)).unwrap();
+        assert!(matches!(map_hook("Notification", &n("agent_needs_input")), Some(Action::Alert { mention: true, .. })));
+        assert!(matches!(map_hook("Notification", &n("agent_completed")), Some(Action::Alert { mention: false, .. })));
+        assert!(matches!(map_hook("Notification", &n("permission_prompt")), Some(Action::Alert { mention: false, .. })));
+        assert_eq!(map_hook("Notification", &n("idle_prompt")), None);
+        assert_eq!(map_hook("PreToolUse", &created), None);
+        assert_eq!(map_hook("TaskCreated", &json!({})), None);
+    }
+
+    #[test]
+    fn setup_plan_diff() {
+        let chans = vec![
+            Chan { id: "1".into(), name: "📌 HQ".into(), ty: 4, tags: vec![] },
+            Chan { id: "2".into(), name: "readme".into(), ty: 0, tags: vec![] },
+            // same name, wrong type -> still missing
+            Chan { id: "3".into(), name: "task-board".into(), ty: 0, tags: vec![] },
+            Chan { id: "4".into(), name: "Rfcs".into(), ty: 15, tags: vec![] },
+        ];
+        let p = plan(&["pm".into(), "AI-Agent".into()], &chans);
+        let ex = |what: &str, name: &str| p.iter().find(|i| i.what == what && i.name == name).unwrap().exists;
+        assert!(ex("role", "PM") && ex("role", "AI-Agent") && !ex("role", "QA"));
+        assert!(ex("category", "📌 HQ") && !ex("category", "⚙ OPS"));
+        assert!(ex("channel", "readme") && !ex("channel", "owner-desk"));
+        assert!(!ex("channel", "task-board"));
+        assert!(ex("channel", "rfcs"));
+        assert_eq!(p.iter().filter(|i| i.what == "channel").count(), 14);
+        let have = vec![Tag { id: "9".into(), name: "Todo".into() }];
+        assert_eq!(missing_tags(&have, BOARD_TAGS).len(), 14);
+    }
+
+    #[test]
+    fn setup_request_bodies() {
+        let board = LAYOUT[1].chans.iter().find(|c| c.key == "task-board").unwrap();
+        let r = req_create_channel("G", board, "CAT");
+        let b = r.body.unwrap();
+        assert_eq!(b["type"], 15);
+        assert_eq!(b["parent_id"], "CAT");
+        assert_eq!(b["default_forum_layout"], 1);
+        assert_eq!(b["default_sort_order"], 0);
+        assert_eq!(b["flags"], 16);
+        assert_eq!(b["available_tags"].as_array().unwrap().len(), 15);
+        assert_eq!(b["available_tags"][0], json!({"name": "todo", "moderated": false}));
+        let rfcs = LAYOUT[1].chans.iter().find(|c| c.key == "rfcs").unwrap();
+        let b = req_create_channel("G", rfcs, "CAT").body.unwrap();
+        assert!(b.get("flags").is_none());
+        let t = LAYOUT[0].chans.iter().find(|c| c.key == "readme").unwrap();
+        assert_eq!(req_create_channel("G", t, "C").body.unwrap()["type"], 0);
+        assert_eq!(req_create_category("G", "x").body.unwrap()["type"], 4);
+        let r = req_create_role("G", "PM");
+        assert_eq!(r.body.unwrap(), json!({"name": "PM", "mentionable": true, "permissions": "0"}));
+        assert_eq!(req_create_webhook("C").body.unwrap(), json!({"name": "8sync HQ"}));
+        let r = req_patch_thread_tags("T", &["a".into()]);
+        assert_eq!(r.method, "PATCH");
+        assert_eq!(r.body.unwrap(), json!({"applied_tags": ["a"], "archived": false}));
+        let r = req_add_tags("C", &[Tag { id: "1".into(), name: "x".into() }], &["y"]);
+        assert_eq!(r.body.unwrap()["available_tags"], json!([{"id": "1", "name": "x"}, {"name": "y", "moderated": false}]));
+        match req_webhook("https://h/webhooks/1/t", json!({}), Some("9"), true).target {
+            Target::Webhook(u) => assert_eq!(u, "https://h/webhooks/1/t?wait=true&thread_id=9"),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn invite_has_no_administrator() {
+        let bits = perm_bits();
+        assert_eq!(bits & (1 << 3), 0);
+        for b in [10, 11, 38, 35, 34, 29, 14, 15, 16, 6, 51] {
+            assert_ne!(bits & (1u64 << b), 0);
+        }
+        assert!(invite_hint().ends_with(&bits.to_string()));
+    }
+
+    #[test]
+    fn pin_endpoints_and_thread_patch_body() {
+        let r = req_pin("C", "M");
+        assert!(matches!(&r.target, Target::Api(p) if p == "/channels/C/messages/pins/M"));
+        assert!(matches!(&req_pin_legacy("C", "M").target, Target::Api(p) if p == "/channels/C/pins/M"));
+        let b = req_patch_thread_tags("T", &["a".into(), "b".into()]).body.unwrap();
+        assert_eq!(b, json!({"applied_tags": ["a", "b"], "archived": false}));
+    }
+
+    #[test]
+    fn claim_is_idempotent_across_parallel_hooks() {
+        let mut st = State::default();
+        assert_eq!(claim_task(&mut st, "t1", "T", None, None, false, 100), Claim::Created);
+        // second TaskCreated and a TaskCompleted while the first is posting: no second post
+        assert_eq!(claim_task(&mut st, "t1", "T", None, None, false, 101), Claim::InFlight);
+        assert_eq!(claim_task(&mut st, "t1", "T", None, None, true, 102), Claim::InFlight);
+        assert_eq!(st.tasks["t1"].status, PENDING_DONE);
+        // stale reservation is taken over
+        assert_eq!(claim_task(&mut st, "t1", "T", None, None, false, 100 + PENDING_TTL + 5), Claim::Created);
+        // posted -> Exists
+        st.tasks.get_mut("t1").unwrap().status = "todo".into();
+        st.tasks.get_mut("t1").unwrap().thread_id = "TH".into();
+        assert_eq!(claim_task(&mut st, "t1", "T", None, None, true, 500), Claim::Exists("TH".into()));
+        // unknown task completed: created once with the done reservation, then in flight
+        assert_eq!(claim_task(&mut st, "t2", "T", None, None, true, 10), Claim::Created);
+        assert_eq!(claim_task(&mut st, "t2", "T", None, None, true, 11), Claim::InFlight);
+    }
+
+    #[test]
+    fn busy_lock_skips_write() {
+        let home = tmp("lock");
+        let p = Paths::under(&home);
+        std::fs::create_dir_all(&p.state_dir).unwrap();
+        std::fs::write(p.state_dir.join("tasks.lock"), "").unwrap();
+        let r = update_state(&p, |s| {
+            s.tasks.insert("a".into(), Task::default());
+        });
+        assert!(r.is_err());
+        assert!(!p.tasks().exists());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn api_base_only_loopback() {
+        assert_eq!(api_base(None), DEFAULT_API);
+        assert_eq!(api_base(Some("http://127.0.0.1:8080/")), "http://127.0.0.1:8080");
+        assert_eq!(api_base(Some("http://localhost:1/api")), "http://localhost:1/api");
+        assert_eq!(api_base(Some("http://[::1]:9")), "http://[::1]:9");
+        for bad in ["https://evil.example", "http://127.0.0.1.evil.com", "http://localhost@evil.com", "ftp://localhost", "localhost"] {
+            assert_eq!(api_base(Some(bad)), DEFAULT_API, "{bad}");
+        }
+    }
+
+    #[test]
+    fn forum_posts_need_title() {
+        for k in ["rfcs", "notes"] {
+            assert!(forum_thread_name(k, None).is_err());
+            assert!(forum_thread_name(k, Some("  ")).is_err());
+            assert_eq!(forum_thread_name(k, Some("My RFC")).unwrap().as_deref(), Some("My RFC"));
+        }
+        assert_eq!(forum_thread_name("logs", None).unwrap(), None);
+        let m = Msg { persona: Persona::Hq, avatar: None, title: None, text: "x", mention_user: None, thread_name: Some("My RFC"), tags: &[] };
+        assert_eq!(webhook_body(&m)["thread_name"], "My RFC");
+    }
+
+    #[test]
+    fn dry_run_and_curl_config_hold_no_secret_in_output() {
+        let url = "https://discord.com/api/v10/webhooks/55/WEBHOOKSECRET?wait=true";
+        let r = req_webhook(url, json!({"content": "hi"}), None, false);
+        let out = render_dry(&r, DEFAULT_API);
+        assert!(!out.contains("WEBHOOKSECRET"));
+        let r = req_pin("C", "M");
+        let out = render_dry(&r, DEFAULT_API);
+        assert!(out.contains("Bot ****") && !out.contains("BOTSECRET"));
+        // curl config carries the secrets (stdin), quoting is safe
+        let cfg = curl_config("POST", url, Some("BOTSECRET"), Some(r#"{"a":"q\"\n"}"#), 8);
+        assert!(cfg.contains("Authorization: Bot BOTSECRET"));
+        assert!(cfg.contains(r#"data-raw = "{\"a\":\"q\\\"\\n\"}""#));
+        assert!(curl_config("PUT", "https://x", None, None, 5).contains("data-raw = \"\""));
+        assert!(!curl_config("GET", "https://x", None, None, 5).contains("data-raw"));
+        assert_eq!(cq("a\"b\\c\n"), "\"a\\\"b\\\\c\\n\"");
+    }
+
+    #[test]
+    fn dry_run_setup_path_fakes_ids_without_network() {
+        let ctx = Ctx::new(Some("t".into()), true, false);
+        let board = LAYOUT[1].chans.iter().find(|c| c.key == "task-board").unwrap();
+        let v = ctx.send(&req_create_channel("G", board, "P")).unwrap();
+        let ch = parse_chan(&v).unwrap();
+        assert_eq!(ch.tags.len(), 15);
+        assert!(ch.tags[0].id.starts_with("DRYTAG-"));
+        assert_eq!(ctx.send(&api("GET", "/x", None)).unwrap(), json!([]));
+    }
+
+    #[test]
+    fn state_roundtrip_and_log_cap() {
+        let home = tmp("state");
+        let p = Paths::under(&home);
+        update_state(&p, |s| {
+            s.tasks.insert("a".into(), Task { thread_id: "T".into(), status: "todo".into(), title: "x".into(), ..Default::default() });
+        })
+        .unwrap();
+        update_state(&p, |s| s.tasks.get_mut("a").unwrap().status = "done".into()).unwrap();
+        assert_eq!(load_state(&p).tasks["a"].status, "done");
+        assert!(!p.state_dir.join("tasks.lock").exists());
+        let sec = Secrets { bot_token: Some("SECRETSECRET1".into()), ..Default::default() };
+        for i in 0..520 {
+            log_err(&p, &sec, &format!("e{i} SECRETSECRET1"));
+        }
+        let l = std::fs::read_to_string(p.log()).unwrap();
+        assert_eq!(l.lines().count(), LOG_KEEP);
+        assert!(!l.contains("SECRETSECRET1") && l.contains("e519"));
+        #[cfg(unix)]
+        assert_eq!(mode_of(&p.log()), Some(0o600));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn failed_post_keeps_folded_completion_retryable() {
+        let mut st = State::default();
+        assert_eq!(claim_task(&mut st, "t1", "T", None, None, false, 100), Claim::Created);
+        assert_eq!(claim_task(&mut st, "t1", "T", None, None, true, 101), Claim::InFlight);
+        assert!(release_failed_claim(&mut st, "t1"));
+        assert_eq!(st.tasks["t1"].status, PENDING_DONE);
+        assert_eq!(st.tasks["t1"].updated, 0);
+        // next hook takes it immediately, still carrying the folded completion
+        assert_eq!(claim_task(&mut st, "t1", "T", None, None, false, 1_000_000), Claim::Created);
+        assert_eq!(st.tasks["t1"].status, PENDING_DONE);
+        st.tasks.get_mut("t1").unwrap().status = PENDING.into();
+        // plain reservation is dropped
+        assert!(!release_failed_claim(&mut st, "t1"));
+        assert!(!st.tasks.contains_key("t1"));
+    }
+
+    #[test]
+    fn stale_takeover_with_thread_does_not_repost() {
+        let mut st = State::default();
+        st.tasks.insert("t".into(), Task { thread_id: "TH".into(), status: PENDING.into(), updated: 1, ..Default::default() });
+        assert_eq!(claim_task(&mut st, "t", "T", None, None, false, 1 + PENDING_TTL + 5), Claim::Exists("TH".into()));
+        assert_eq!(st.tasks["t"].thread_id, "TH");
+        assert!(!is_pending(&st.tasks["t"].status));
+    }
+
+    #[test]
+    fn stale_takeover_with_thread_keeps_folded_done() {
+        let mut st = State::default();
+        st.tasks.insert("t".into(), Task { thread_id: "TH".into(), status: PENDING_DONE.into(), updated: 1, ..Default::default() });
+        assert_eq!(claim_task(&mut st, "t", "T", None, None, false, 1 + PENDING_TTL + 5), Claim::Exists("TH".into()));
+        assert_eq!(st.tasks["t"].status, "done");
+    }
+
+    #[test]
+    fn parallel_completions_patch_once() {
+        let mut st = State::default();
+        st.tasks.insert("t".into(), Task { thread_id: "TH".into(), status: "doing".into(), updated: 1, ..Default::default() });
+        assert_eq!(claim_task(&mut st, "t", "T", None, None, true, 100), Claim::Exists("TH".into()));
+        assert_eq!(st.tasks["t"].status, DONE_SENDING);
+        assert_eq!(claim_task(&mut st, "t", "T", None, None, true, 101), Claim::Done);
+        // a crashed sender goes stale and is taken over
+        assert_eq!(claim_task(&mut st, "t", "T", None, None, true, 101 + PENDING_TTL + 5), Claim::Exists("TH".into()));
+        st.tasks.get_mut("t").unwrap().status = "done".into();
+        assert_eq!(claim_task(&mut st, "t", "T", None, None, true, 999), Claim::Done);
+    }
+
+    #[test]
+    fn prune_drops_old_done_and_orphan_pending() {
+        let t = |status: &str, thread: &str, updated: u64, done_at: Option<u64>| Task { status: status.into(), thread_id: thread.into(), updated, done_at, ..Default::default() };
+        let now = 100 * 86_400;
+        let mut st = State::default();
+        st.tasks.insert("old-done".into(), t("done", "T", 1, Some(now - DONE_KEEP - 1)));
+        st.tasks.insert("new-done".into(), t("done", "T", 1, Some(now - DONE_KEEP + 10)));
+        st.tasks.insert("old-pending".into(), t(PENDING, "", now - PENDING_KEEP - 1, None));
+        st.tasks.insert("new-pending".into(), t(PENDING, "", now - 10, None));
+        st.tasks.insert("old-doing".into(), t("doing", "T", 1, None));
+        st.tasks.insert("retry".into(), t(PENDING_DONE, "", 0, None));
+        prune_state(&mut st, now);
+        let keys: Vec<_> = st.tasks.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["new-done", "new-pending", "old-doing", "retry"]);
+        // and through the locked write path
+        let home = tmp("prune");
+        let p = Paths::under(&home);
+        update_state(&p, |s| {
+            s.tasks.insert("x".into(), t("done", "T", 1, Some(1)));
+        })
+        .unwrap();
+        update_state(&p, |_| {}).unwrap();
+        assert!(load_state(&p).tasks.is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn task_id_lookup_and_status_list() {
+        let mut st = State::default();
+        for (k, u) in [("team-a:1", 5), ("team-a:2", 9), ("s9:1", 7)] {
+            st.tasks.insert(k.into(), Task { thread_id: "T".into(), status: "todo".into(), title: "x\ny".into(), updated: u, ..Default::default() });
+        }
+        assert_eq!(resolve_task_id(&st, "team-a:1").unwrap(), "team-a:1");
+        assert_eq!(resolve_task_id(&st, "2").unwrap(), "team-a:2");
+        assert_eq!(resolve_task_id(&st, "a:2").unwrap(), "team-a:2");
+        let e = resolve_task_id(&st, "1").unwrap_err().to_string();
+        assert!(e.contains("ambiguous") && e.contains("team-a:1") && e.contains("s9:1"), "{e}");
+        assert!(resolve_task_id(&st, "7").is_err());
+        let ids: Vec<_> = recent_tasks(&st, 2).iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(ids, ["team-a:2", "s9:1"]);
+        let line = task_line("s9:1", &st.tasks["s9:1"]);
+        assert!(line.contains("s9:1") && line.contains("todo") && line.contains("x y") && !line.contains('\n'));
+    }
+
+    #[test]
+    fn posted_thread_guards_pending_and_unknown() {
+        let mut st = State::default();
+        assert!(posted_thread(&st, "x").is_err());
+        claim_task(&mut st, "x", "T", None, None, false, 1);
+        assert!(posted_thread(&st, "x").unwrap_err().to_string().contains("still being created"));
+        st.tasks.get_mut("x").unwrap().thread_id = "TH".into();
+        assert_eq!(posted_thread(&st, "x").unwrap(), "TH");
+    }
+
+    #[test]
+    fn lock_wait_respects_deadline_and_retry_gives_up() {
+        let home = tmp("lockdl");
+        let p = Paths::under(&home);
+        std::fs::create_dir_all(&p.state_dir).unwrap();
+        std::fs::write(p.state_dir.join("tasks.lock"), "").unwrap(); // held, fresh
+        let t0 = std::time::Instant::now();
+        let past = Some(std::time::Instant::now());
+        assert!(with_lock(&p, "tasks.lock", past, || ()).is_none());
+        assert!(update_state_retry(&p, past, |_| ()).is_err());
+        assert!(t0.elapsed() < Duration::from_millis(500));
+        std::fs::remove_file(p.state_dir.join("tasks.lock")).unwrap();
+        assert!(update_state_retry(&p, None, |s| s.tasks.insert("a".into(), Task::default()).is_none()).unwrap());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn hook_budget_leaves_room_under_registered_timeout() {
+        const { assert!(HOOK_BUDGET_SECS <= 8) };
+    }
+
+    #[test]
+    fn working_directory_does_not_double_dollar() {
+        let u = unit_text("/home/a/r$x%y", "lead", "/usr/bin/tmux", "/usr/bin/claude").unwrap();
+        assert!(u.contains("WorkingDirectory=/home/a/r$x%%y\n"));
+        assert!(u.contains("-c \"/home/a/r$$x%%y\""));
+    }
+
+    #[test]
+    fn standup_groups_by_role() {
+        let mut st = State::default();
+        let t = |role: Option<&str>, status: &str, title: &str, done_at: Option<u64>| Task { role: role.map(Into::into), status: status.into(), title: title.into(), done_at, ..Default::default() };
+        st.tasks.insert("1".into(), t(Some("backend"), "doing", "API", None));
+        st.tasks.insert("2".into(), t(Some("backend"), "done", "Old", Some(1_000)));
+        st.tasks.insert("3".into(), t(Some("backend"), "done", "Fresh", Some(1_000_000)));
+        st.tasks.insert("4".into(), t(Some("qa"), "blocked", "Flaky", None));
+        let e = standup_embeds(&st, 1_000_100);
+        assert_eq!(e.len(), 2);
+        let be = e[0]["description"].as_str().unwrap();
+        assert!(be.contains("API") && be.contains("Fresh") && !be.contains("Old"));
+        assert!(e[1]["description"].as_str().unwrap().contains("Blocked"));
+        assert_eq!(standup_embeds(&State::default(), 0).len(), 1);
+        assert_eq!(civil_ymd(0), "1970-01-01");
+        assert_eq!(civil_ymd(1_782_000_000), "2026-06-21");
+    }
+
+    #[test]
+    fn unit_files() {
+        let u = unit_text("/home/a/repo", "8sync-hq", "/usr/bin/tmux", "/home/a/.local/bin/claude").unwrap();
+        assert!(u.contains("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"));
+        assert!(u.contains("--channels plugin:discord@claude-plugins-official"));
+        assert!(u.contains("WantedBy=default.target"));
+        assert!(unit_text("/r", "bad name", "t", "c").is_err());
+        assert!(unit_text("/r\"x", "n", "t", "c").is_err());
+        assert!(unit_text("/r", "n", "t", "/a'b").is_err());
+        assert!(TIMER_TEXT.contains("09:00:00"));
+        assert!(standup_service_text("/bin/8sync").contains("hq standup"));
+    }
+    #[test]
+    fn exec_start_quotes_and_escapes() {
+        let u = unit_text("/home/a b/r$x", "lead", "/opt/t mux/tmux", "/home/$u/50%/claude bin").unwrap();
+        assert!(u.contains("ExecStart=-\"/opt/t mux/tmux\" new-session"));
+        assert!(u.contains("ExecStop=-\"/opt/t mux/tmux\" kill-session"));
+        assert!(u.contains("'/home/$$u/50%%/claude bin' --channels"));
+        assert!(u.contains("-c \"/home/a b/r$$x\""));
+        assert!(u.contains("\nWorkingDirectory=/home/a b/r$x\n"));
+    }
+
+    #[test]
+    fn working_directory_is_unquoted_absolute_path() {
+        // systemd rejects a quoted WorkingDirectory ("path is not absolute"); found in UAT
+        // with `systemd-analyze --user verify`.
+        let u = unit_text("/home/a b/repo", "lead", "/usr/bin/tmux", "/usr/bin/claude").unwrap();
+        assert!(u.contains("\nWorkingDirectory=/home/a b/repo\n"));
+    }
+
+    #[test]
+    fn task_board_post_points_to_task_new() {
+        let e = forum_thread_name("task-board", Some("x")).unwrap_err().to_string();
+        assert!(e.contains("hq task new"));
+        assert_eq!(forum_thread_name("rfcs", Some("ADR 1")).unwrap().as_deref(), Some("ADR 1"));
+    }
+
+    #[test]
+    fn task_ids_are_scoped_per_team_or_session() {
+        let a: Value = serde_json::from_str(r#"{"session_id":"s1","task_id":"1","task_subject":"x"}"#).unwrap();
+        let b: Value = serde_json::from_str(r#"{"session_id":"s2","task_id":"1","task_subject":"x"}"#).unwrap();
+        let t: Value = serde_json::from_str(r#"{"session_id":"s3","team_name":"team-a","task_id":"1"}"#).unwrap();
+        let bare: Value = serde_json::from_str(r#"{"task_id":"1"}"#).unwrap();
+        assert_ne!(scoped_task_id(&a, "1"), scoped_task_id(&b, "1"));
+        assert_eq!(scoped_task_id(&t, "1"), "team-a:1");
+        assert_eq!(scoped_task_id(&bare, "1"), "1");
+        assert_eq!(scoped_task_id(&a, "1"), "s1:1");
+    }
+
+    #[test]
+    fn lead_and_teammate_share_a_key_via_team_name() {
+        let lead: Value = serde_json::from_str(r#"{"session_id":"lead1","team_name":"tm","task_id":"3","task_subject":"x"}"#).unwrap();
+        let mate: Value = serde_json::from_str(r#"{"session_id":"mate1","team_name":"tm","teammate_name":"backend","task_id":"3","task_subject":"x"}"#).unwrap();
+        let (Some(Action::TaskNew { id: a, .. }), Some(Action::TaskDone { id: b, .. })) = (map_hook("TaskCreated", &lead), map_hook("TaskCompleted", &mate)) else { panic!("mapping") };
+        assert_eq!(a, "tm:3");
+        assert_eq!(a, b);
+        assert!(!lacks_team_scope("TaskCompleted", &mate));
+        let no_team: Value = serde_json::from_str(r#"{"session_id":"m","teammate_name":"backend","task_id":"3"}"#).unwrap();
+        assert!(lacks_team_scope("TaskCompleted", &no_team));
+        assert!(!lacks_team_scope("TaskCompleted", &lead));
+        assert!(!lacks_team_scope("Notification", &no_team));
+    }
+
+}
