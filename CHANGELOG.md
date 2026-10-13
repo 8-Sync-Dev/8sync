@@ -4,6 +4,18 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **HQ web team control (`8sync hq ui`).** Everything works from the browser:
+  - **Roles with model routing.** R&D, Plan and Architect use Opus 5.5. Fullstack, AI and Reviewer use Sonnet 5.5. Tester and Quick use Haiku 5.5. The model can be overridden from an allowlist of those three ids. The session starts with `--model` and `EIGHTSYNC_HQ_ROLE`, and the role badge shows on session rows.
+  - **"Giao việc" dialog.** Send a task to a role or to one session. With a role, HQ reuses the least busy running session or starts `hq-<role>-<n>`. A new session gets the task as its first prompt, so a booting pane never loses it. Errors show inside the dialog, and projects whose folder is gone are not offered.
+  - **Live terminal drawer.** Click a desk or a "needs you" card to open the session's tmux screen, refreshed under 1 s. The drawer has a "Gõ cho session" box, dialog keys and a full-screen toggle.
+  - **"Chat nhóm" tab.** One thread with owner messages, replies, handoff cards (A → B), task cards with role, and "needs you" callouts.
+  - **Handoff bubbles.** Desks show "→ B" / "← A" for 4 s when a session messages another. Reduced motion shows a static label.
+  - **"Cách dùng" guide.** Five steps in Vietnamese, opened on first run and from the header.
+  - **`scripts/hq-offline-check.sh`.** It fails on non-local fetch/WebSocket/EventSource targets, remote fonts/CDNs, or key-shaped strings in the UI source.
+
+### Fixed
+- HQ journal: a `SendMessage` sender that is the session's own uuid was masked to `***`, so every handoff lost its sender. The own session id now bypasses the masker, and the web falls back to the row's session for older rows.
 
 ## [0.78.1] — 2026-10-13
 ### Changed

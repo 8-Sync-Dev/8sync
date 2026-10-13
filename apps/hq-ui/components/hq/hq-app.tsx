@@ -1,7 +1,7 @@
 "use client";
 
 import { sessionLabel } from "@/lib/labels";
-import { MenuIcon } from "lucide-react";
+import { CircleHelpIcon, MenuIcon, SendIcon } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -9,16 +9,20 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Toaster } from "@/components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ActivityView } from "./activity-view";
+import { AssignDialog } from "./assign-dialog";
 import { shortName } from "./bits";
 import { BoardView } from "./board-view";
 import { FloorView } from "./floor-view";
 import { FirstRun } from "./first-run";
+import { Guide, useGuideFirstRun } from "./guide";
 import { Nav, type Scope } from "./nav";
 import { SessionsView } from "./sessions-view";
+import { TeamThread } from "./team-thread";
 import { TeamView } from "./team-view";
+import { TerminalDrawer } from "./terminal-drawer";
 import { useHq } from "./use-hq";
 
-type Tab = "floor" | "team" | "board" | "sessions" | "activity";
+type Tab = "floor" | "chat" | "team" | "board" | "sessions" | "activity";
 const SESSION_NAME_INPUT = "start-session-name";
 
 export function HqApp({ token }: { token: string }) {
@@ -27,6 +31,11 @@ export function HqApp({ token }: { token: string }) {
   const [tab, setTab] = useState<Tab>("floor");
   const [target, setTarget] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
+  // The session whose live terminal is open in the right drawer (hq-* tmux sessions only).
+  const [drawer, setDrawer] = useState<string | null>(null);
+  const [assign, setAssign] = useState<{ open: boolean; session?: string; n: number }>({ open: false, n: 0 });
+  const [firstGuide, dismissGuide] = useGuideFirstRun();
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const onScope = useCallback((s: Scope) => {
     setScope(s);
@@ -72,6 +81,17 @@ export function HqApp({ token }: { token: string }) {
   };
   const loaded = !hq.projects.loading && !hq.sessions.loading;
 
+  const drawerSession = drawer ? (hq.sessions.data.find((x) => x.name === drawer) ?? null) : null;
+  /** Open the live terminal when HQ runs the session in tmux; otherwise scope the Team view to it. */
+  const openSession = (name: string) => {
+    const s = hq.sessions.data.find((x) => x.name === name || x.session_id === name);
+    if (s?.tmux) return setDrawer(s.name);
+    onScope({ project: null, session: name });
+    setTab("team");
+  };
+  const openAssign = (session?: string) => setAssign((a) => ({ open: true, session, n: a.n + 1 }));
+  const roleOf = (name: string) => hq.sessions.data.find((x) => x.name === name || x.session_id === name)?.role ?? null;
+
   const focusAddProject = () => {
     setNavOpen(true);
     // The input lives in the sidebar (or the mobile sheet once it opens).
@@ -113,6 +133,14 @@ export function HqApp({ token }: { token: string }) {
                   {subtitle || " "}
                 </p>
               </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Button size="sm" onClick={() => openAssign()} disabled={!hq.projects.data.length && !running}>
+                  <SendIcon /> Giao việc
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setGuideOpen(true)} aria-label="Cách dùng HQ">
+                  <CircleHelpIcon /> <span className="hidden lg:inline">Cách dùng</span>
+                </Button>
+              </div>
               <dl className="hidden shrink-0 items-center gap-4 text-xs text-muted-foreground sm:flex">
                 <div className="flex items-baseline gap-1.5">
                   <dt>Running</dt>
@@ -128,6 +156,7 @@ export function HqApp({ token }: { token: string }) {
             </div>
             <TabsList variant="line" className="mt-2 h-9 gap-4 px-4 sm:px-6">
               <TabsTrigger value="floor" className="flex-none px-0">Văn phòng</TabsTrigger>
+              <TabsTrigger value="chat" className="flex-none px-0">Chat nhóm</TabsTrigger>
               <TabsTrigger value="team" className="flex-none px-0">Team</TabsTrigger>
               <TabsTrigger value="board" className="flex-none px-0">
                 Board
@@ -145,12 +174,13 @@ export function HqApp({ token }: { token: string }) {
             <TabsContent value="floor" className="h-full">
               <FloorView
                 token={token}
-                onSelect={(name) => {
-                  onScope({ project: null, session: name });
-                  setTab("team");
-                }}
+                onSelect={openSession}
                 onStart={focusStartSession}
+                messages={hq.messages.data}
               />
+            </TabsContent>
+            <TabsContent value="chat" className="flex h-full min-h-0 flex-col">
+              <TeamThread rows={view.messages} filters={{ roleOf, tasks: view.tasks }} onOpenSession={openSession} />
             </TabsContent>
             <TabsContent value="team" className="h-full">
               <TeamView
@@ -185,6 +215,30 @@ export function HqApp({ token }: { token: string }) {
           </main>
         </Tabs>
       </div>
+      <TerminalDrawer
+        session={drawerSession}
+        token={token}
+        onClose={() => setDrawer(null)}
+        role={drawerSession?.role}
+        model={drawerSession?.model}
+      />
+      <AssignDialog
+        key={assign.n}
+        hq={hq}
+        open={assign.open}
+        onOpenChange={(open) => setAssign((a) => ({ ...a, open }))}
+        sessions={hq.sessions.data}
+        projects={hq.projects.data}
+        defaultSession={assign.session ?? (scope.session?.startsWith("hq-") ? scope.session : undefined)}
+        defaultProjectId={scope.project}
+      />
+      <Guide
+        open={guideOpen || firstGuide}
+        onOpenChange={(open) => {
+          setGuideOpen(open);
+          if (!open) dismissGuide();
+        }}
+      />
       <Toaster position="bottom-right" />
     </>
   );

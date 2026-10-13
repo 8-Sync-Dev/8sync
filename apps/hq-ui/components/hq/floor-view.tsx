@@ -11,21 +11,24 @@ import {
   UsersIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
   ageLabel,
+  deriveHandoffs,
   engineLabel,
   groupFloor,
   type DeskRow,
+  type FloorHandoff,
   type FloorRow,
   type FloorState,
   type RepoGroup,
 } from "@/lib/floor";
 import { EmptyState, ErrorNote } from "./bits";
-import { SpriteCanvas } from "./sprite-canvas";
+import { HandoffBubble, SpriteCanvas } from "./sprite-canvas";
+import type { Message } from "./types";
 
 const ICON: Record<FloorState, LucideIcon> = {
   idle: MoonIcon,
@@ -59,6 +62,10 @@ const ROOM = {
 const DESK_BG: CSSProperties = {
   backgroundImage: `linear-gradient(to bottom, var(--wall) 0 ${SEAM_PX}px, var(--seam) ${SEAM_PX}px ${SEAM_PX + 2}px, var(--floor) ${SEAM_PX + 2}px)`,
 };
+
+/** Live handoffs (A → B) per desk name, from session_message events that arrived while the page is open. */
+const PAGE_OPENED_AT = Date.now(); // only events after the page loaded animate; older ones are history
+const Handoffs = createContext<Map<string, FloorHandoff>>(new Map());
 
 function useFloor(token: string) {
   const [data, setData] = useState<{ rows: FloorRow[]; at: number } | null>(null);
@@ -113,6 +120,7 @@ function Desk({ row, onSelect }: { row: DeskRow; onSelect: (name: string) => voi
   const Icon = ICON[row.state];
   const waiting = row.state === "waiting";
   const stalled = row.state === "stalled";
+  const handoff = useContext(Handoffs).get(row.name);
   return (
     <li className="flex min-w-0 flex-[1_1_15rem]" style={DESK_BG}>
       <button
@@ -136,6 +144,11 @@ function Desk({ row, onSelect }: { row: DeskRow; onSelect: (name: string) => voi
           >
             <Icon className="size-3.5" aria-hidden />
             {waiting ? "Chờ anh" : "Kẹt"}
+          </span>
+        )}
+        {handoff && (
+          <span className="absolute top-3 right-3">
+            <HandoffBubble handoff={handoff} />
           </span>
         )}
         <SpriteCanvas state={row.state} shirtKey={row.id} size={SPRITE_PX} />
@@ -258,15 +271,20 @@ export function FloorView({
   token,
   onSelect,
   onStart,
+  messages = [],
 }: {
   token: string;
   onSelect: (name: string) => void;
   onStart: () => void;
+  /** Journal rows (useHq, live over SSE); handoffs newer than page load animate on the desks. */
+  messages?: Message[];
 }) {
   const { rows, at, error, retry } = useFloor(token);
+  const handoffs = useMemo(() => deriveHandoffs(messages, PAGE_OPENED_AT), [messages]);
   const { groups, old } = useMemo(() => groupFloor(rows ?? [], at), [rows, at]);
 
   return (
+    <Handoffs.Provider value={handoffs}>
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl space-y-8 px-4 py-5 sm:px-6">
         {error && rows === null ? (
@@ -310,5 +328,6 @@ export function FloorView({
         )}
       </div>
     </div>
+    </Handoffs.Provider>
   );
 }
