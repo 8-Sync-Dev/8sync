@@ -8,6 +8,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - Guard: a data here-doc later in the command (`cat > report.md <<'EOF' … for … () …`) no longer turns off variable resolution, so `S=/tmp/x/scratchpad; rm -rf $S/target` stops asking (seen live in a subagent's cleanup).
 
 ### Added
+- **Watchdog soft remedy + early warning:** under sustained pressure (MemAvailable, load, or PSI `/proc/pressure` memory/io full, cpu some) busy session processes — compilers, linkers, bundlers (new `build` list) and watched runtimes, above 25% CPU — get `renice 19` + `ionice -c3` once (they keep running; never killed), and Claude is told to stop parallel agents/builds and use CI. PSI gives its own `pressure` alert, earlier than MemAvailable/load.
+- **Watchdog GPU without vendor tools:** AMD GPUs are read from sysfs (`gpu_busy_percent`, `mem_info_vram_*`) and warn on busy/VRAM; `8sync watchdog status` shows the GPU sources, says when an NVIDIA card is present but unmeasured (no `nvidia-smi`), and prints PSI.
 - **Session fence (Linux, systemd --user):** `8sync ccc .` runs claude inside `8sync-ccc.slice` — shared by all ccc sessions, `MemoryHigh=70%` (soft: the kernel throttles, never kills), `CPUWeight=50`, `IOWeight=50` — so a heavy session slows down instead of freezing the desktop. Off: `EIGHTSYNC_FENCE=0` or `session_fence = false` in features.toml.
 - **Kit rules: no heavy local builds; sessions work as a team.** Heavy build/test goes to GitHub Actions (`gh workflow run` → `gh run watch` → `--log-failed`); locally only light checks under `nice -n 19 ionice -c3 -j2`; never flip repo visibility for free minutes. Sessions check `8sync ccc . ls` / ListAgents first, split overlapping work and announce shared changes via SendMessage.
 
