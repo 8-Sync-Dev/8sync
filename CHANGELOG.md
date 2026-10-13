@@ -4,6 +4,11 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **Workspace skill libraries for every ccc session:** `8sync ccc kit --skills-from <dir>` registers a skill folder, for example `~/startup/8sync-startup/su-code/skills` with its 237 skills (`loop-me`, `grill-me`, `agent-browser`, `live-verify`…). Before this, those skills only existed inside that repo.
+  - Each kit run links every skill Claude Code doesn't have yet into `~/.claude/skills`. Kit files, bundled skills and the owner's own skills are never overwritten.
+  - Library skills are listed by name only (`skillOverrides`), so a large library barely grows the session prefix.
+  - The libraries are kept in `features.toml` as `skill_libraries`.
 
 ## [0.72.0] — 2026-10-13
 ### Fixed
