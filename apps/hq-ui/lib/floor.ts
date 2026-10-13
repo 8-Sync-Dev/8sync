@@ -141,8 +141,14 @@ const LEAD_EMOJI = /^(?:[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}
 const LEAD_TAG = /^[A-Z][A-Z0-9_-]{1,15}:\s+/;
 
 /** "🔗 TRACE: Clarify x" -> "Clarify x". Falls back to the input when nothing would remain. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A session id as people read it: the first 8 hex chars. */
+export const shortId = (id: string | null | undefined): string | null => (id ? (UUID.test(id.trim()) ? id.trim().slice(0, 8) : id.trim()) : null);
+
 export function cleanTitle(raw: string | null | undefined): string {
   const t = (raw ?? "").replace(/\s+/g, " ").trim();
+  // an untitled Claude session reports its uuid as the title
+  if (UUID.test(t)) return `phiên ${t.slice(0, 8)}`;
   const out = t.replace(LEAD_EMOJI, "").replace(LEAD_TAG, "").trim();
   return out || t;
 }
@@ -201,7 +207,7 @@ export function disambiguate(rows: FloorRow[]): DeskRow[] {
     seen.set(k, n);
     const dup = (count.get(k) ?? 0) > 1;
     const heading = cleanTitle(r.title) || r.name;
-    return { ...r, heading, who: dup ? `${r.name} · ${r.sid ?? `#${n}`}` : r.name };
+    return { ...r, heading, who: dup ? `${r.name} · ${shortId(r.sid) ?? `#${n}`}` : r.name };
   });
 }
 

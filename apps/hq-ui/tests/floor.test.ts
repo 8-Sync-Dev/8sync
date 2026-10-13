@@ -145,3 +145,13 @@ describe("grouping by repo", () => {
     expect(old.map((x) => x.id)).toEqual(["c1"]);
   });
 });
+
+describe("uuid display", () => {
+  it("an untitled session's uuid title and sid show as 8 chars", async () => {
+    const { cleanTitle, shortId } = await import("../lib/floor");
+    expect(cleanTitle("a2830544-0719-4d6f-aaa3-644783ddb0b3")).toBe("phiên a2830544");
+    expect(shortId("6ede5cff-b5c6-4324-a64f-be210e36ba8e")).toBe("6ede5cff");
+    expect(shortId("hq-alpha")).toBe("hq-alpha");
+    expect(shortId(null)).toBeNull();
+  });
+});
