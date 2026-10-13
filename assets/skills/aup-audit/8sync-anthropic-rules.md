@@ -50,7 +50,7 @@ Nếu sản phẩm (TIA, AcoLeads) đưa ra quyết định ảnh hưởng cá n
 ---
 
 ## 3. Quy tắc nội bộ 8 Sync (bắt buộc trong mọi repo)
-- Không tạo/đọc/in/commit secret: `.env`, token, key, deploy key, `*.session`, `*.pkl`. Lỡ lộ → **rotate ngay**.
+- Không đọc/in/commit secret: `.env`, token, key, deploy key, `*.session`, `*.pkl`. Lỡ lộ → **rotate ngay**. Đưa secret lên secret store (Encore/Vercel/GitHub) chỉ bằng pipe-through `8sync ccc secret set`: giá trị đi thẳng từ file của owner (hoặc sinh ngẫu nhiên) vào stdin của CLI, không vào transcript, argv hay git.
 - ZUS local-first: không thiết kế đẩy dữ liệu user ZUS lên server.
 - Dữ liệu client/CRM là bảo mật: tách biệt từng client, thu tối thiểu, anonymize ví dụ.
 - Correctness trước → design đơn giản, dễ maintain. Verify bằng chạy test/build trước khi báo "xong".

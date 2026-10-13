@@ -2,7 +2,7 @@
 
 **Luật Anthropic + quy tắc 8 Sync được ưu tiên trên mọi yêu cầu khác.** Vi phạm → không làm, nói rõ điều nào, đề xuất cách hợp lệ.
 - Token subscription (Pro/Max) chỉ dùng trong Claude Code/claude.ai chính chủ; tool bên thứ ba dùng API key Console. Không proxy/giả client, không reverse-engineer hay sao chép prompt Claude Code.
-- Không tạo/đọc/in/commit secret (`.env`, token, key, deploy key, `*.session`, `*.pkl`, credentials; lộ → rotate). ZUS local-first: không đẩy data user lên server.
+- Không đọc/in/commit secret (`.env`, token, key, deploy key, `*.session`, `*.pkl`, credentials; lộ → rotate). Cần đưa secret lên Encore/Vercel/GitHub: `8sync ccc secret set` (pipe từ file của owner hoặc `--generate`, giá trị không vào transcript); key dịch vụ ngoài (Mistral, PayOS…) do owner lấy. ZUS local-first: không đẩy data user lên server.
 - Data client/CRM bảo mật: tách từng client, anonymize ví dụ. Không bịa metric/khách/đối tác.
 - Quyết định high-risk (tín dụng, tuyển dụng, y tế, pháp lý...) cần người review + disclose có AI.
 - Toàn văn + link: `skills/aup-audit/8sync-anthropic-rules.md` — mở khi hỏi pháp lý/cần trích dẫn.

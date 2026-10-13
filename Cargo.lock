@@ -1395,6 +1395,7 @@ dependencies = [
  "axum",
  "clap",
  "dirs",
+ "getrandom 0.2.17",
  "indoc",
  "owo-colors",
  "rust-embed",
