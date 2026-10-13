@@ -4,6 +4,15 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **`8sync ccc compact`**: auto-compact threshold for Claude Code sessions. `compact` shows it (`--json`), `compact --at <10..95>` writes `env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in `~/.claude/settings.json` (atomic + `.bak-8sync`, other keys kept, no-op when unchanged), `compact --reset` removes it. `ccc kit` sets 60 only when the key is absent (an owner value is never overwritten); `kit --remove` drops it only if it still equals 60. Claude Code can only lower the threshold with this variable, and it applies to new sessions (https://code.claude.com/docs/en/env-vars).
+- **`8sync ccc help`**: every ccc verb on one screen (Vietnamese), grouped Session / Kit / Tự động / Xem / An toàn. A unit test reads the dispatcher and fails if a verb is missing from the list.
+- **Statusline reaches every machine**: `8sync ccc kit` now installs the 8sync status line (and subagent line) by default and chains a foreign `statusLine` as the last row (parked as `statusLine_prev`), instead of only printing a hint; our command path is refreshed to the current exe. `8sync ccc statusline --uninstall` records `statusline = false` in `features.toml` so the kit never reinstalls it; `--install` clears that. **Behaviour change** (kit used to keep a foreign statusLine untouched).
+- **`8sync up` refreshes the kit** after a successful update when a kit is installed (runs `ccc kit` on the new binary), so other machines get new kit files + statusline without a separate step.
+- Statusline faster and tidier: branch read from `.git/HEAD` (worktrees and detached HEAD handled, no `git` spawn; one spawn left for the dirty check); model label `Opus 5.5 (1M context)` → `Opus 5.5 · 1M`, effort dim `med/high/low`; row 2 shows the dim folder name outside a git repo.
+
+### Fixed
+- `8sync ccc <verb-like word>` (`help`, `compact`, `guard`, `ship-grant`, …) never starts a headless claude session: reserved words route to their handler or print help.
 
 ## [0.78.1] — 2026-10-13
 ### Changed
