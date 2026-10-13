@@ -28,7 +28,7 @@ Level 4. Mặc định `--max-iter 12`, `--max-min 90`. Chỉ owner khởi độ
 1. **Implement** phần nhỏ nhất tiến tới criterion đỏ (đọc file trước khi sửa; `task`/`quick-task` song song khi file tách bạch; watchdog áp lực → không thêm agent). Code mới có test; không sửa test cho pass.
 2. **Check** — chạy lệnh của TẤT CẢ criterion (nhẹ, local) hoặc workflow CI (`gh workflow run … --ref <branch>` → `gh run watch <id> --exit-status` nền). Build/test nặng chỉ trên CI.
 3. **Evidence** — append vào LOOP.md: `iter <k> | <lệnh> | exit <n> | <1 dòng output>` cho mỗi lệnh. Không có dòng evidence → criterion không tính là pass.
-4. **Tick** — `8sync ccc loop tick --changed <số file đổi> --digest "<sha256 diff + dòng cuối output check fail đầu tiên>"`. In `continue` → iteration kế. In `stop:<reason>` → bước D.
+4. **Tick** — nếu MỌI criterion đã xanh ở bước 2 (có evidence) → sang D "tất cả xanh" ngay, KHÔNG tick (tránh `stop:max-iter` ở vòng cuối). Còn criterion đỏ → `8sync ccc loop tick --changed <số file đổi> --digest "<sha256 diff + dòng cuối output check fail đầu tiên>"`. In `continue` → iteration kế. In `stop:<reason>` → bước D.
 5. Stuck cũng tính khi hai iteration liền cùng digest (content hash, không phải tên tool) hoặc không file nào đổi (DESIGN: `su-code/ship/auto-harness/DESIGN.md`). Hết lượt mà goal chưa met, evaluator đẩy lý do làm hướng dẫn cho lượt sau.
 
 ## D. Kết thúc

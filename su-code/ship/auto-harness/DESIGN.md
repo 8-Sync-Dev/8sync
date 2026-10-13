@@ -16,7 +16,7 @@ Common rails at every level: guard deny rules (destructive, secrets, force-push)
 
 ## Stop conditions (level 4/5) — stronger than omp's goal loop
 - **Done only with evidence**: a criterion is "pass" only after its check command ran and exited 0 in this iteration (recorded in `su-code/ship/<slug>/LOOP.md`: iteration, command, exit, 1-line output). No self-declared done.
-- **Stuck**: the same (tool name + first 80 chars of input) digest for two consecutive iterations, or no file changed in an iteration → stop with a brief.
+- **Stuck**: the same content digest (`git diff | sha256sum | cut -c1-16` + last output line of the first failing check) for two consecutive iterations, or no file changed in an iteration → stop with a brief. An empty digest never counts as stuck.
 - **Caps**: `--max-iter N` (12), `--max-min M` (90), per-item for autopilot `--max-items K` (5/day). Claude Code's Stop-hook continuation cap is 8 per chain, so an iteration never relies on more than one Stop block; the loop re-enters through the skill, not the hook.
 - **Owner stop**: "dừng"/"stop" in a message ends the loop at once (gate already honours it).
 

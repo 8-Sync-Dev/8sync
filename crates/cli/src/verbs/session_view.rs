@@ -800,11 +800,20 @@ fn stalled_error(row: &Row) -> Option<String> {
     stalled_error_in(&dir, row, now)
 }
 
+/// Claude session uuid for `claude`/`ccc` rows: the transcript file stem (= registry conversation_id).
+fn claude_sid(row: &Row) -> Option<String> {
+    if !matches!(row.engine, "claude" | "ccc") {
+        return None;
+    }
+    row.transcript.as_deref()?.file_stem()?.to_str().map(str::to_string)
+}
+
 /// JSON for one session — the `--json` contract of `ls`.
 pub fn row_json(row: &Row) -> Value {
     let d = &row.digest;
     serde_json::json!({
         "engine": row.engine,
+        "sid": claude_sid(row),
         "name": row.name,
         "last_used": row.is_last,
         "status": row.status.as_str(),
@@ -1157,6 +1166,13 @@ mod tests {
         assert_eq!(v["current_task"], "build it");
         assert_eq!(v["doing"], "build it");
         assert_eq!(v["branch"], Value::Null);
+        assert_eq!(v["sid"], Value::Null, "omp row has no claude sid");
+        let mut c = row(scan_reader(Cursor::new(OMP), Fmt::Omp, false));
+        c.engine = "ccc";
+        c.transcript = Some(PathBuf::from("/x/abc-123.jsonl"));
+        assert_eq!(row_json(&c)["sid"], "abc-123");
+        c.engine = "feynman";
+        assert_eq!(row_json(&c)["sid"], Value::Null);
     }
 
     #[test]
