@@ -1575,7 +1575,7 @@ mod tests {
         assert_eq!(classify(&names(&["node"]), &cfg).0, Kind::Watched);
         assert_eq!(classify(&names(&["codebase-memory-mcp"]), &cfg).0, Kind::Helper);
         assert_eq!(classify(&names(&["firefox"]), &cfg).0, Kind::Other);
-        assert_eq!(classify(&names(&["cargo"]), &cfg).0, Kind::Other);
+        assert_eq!(classify(&names(&["cargo"]), &cfg).0, Kind::Build, "builds are reniced, never killed");
     }
 
     #[test]
