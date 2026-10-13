@@ -22,6 +22,7 @@ use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
 mod danger;
+mod fence;
 mod gate;
 mod guard;
 mod resume;
@@ -281,7 +282,14 @@ fn open(env: &Env, root: &Path, name: &str, refuse_existing: bool, extra: &[Stri
     } else {
         cmd.args(["--session-id", &s.conversation_id, "--name", &s.name]);
     }
-    launch(cmd.args(extra).current_dir(root))
+    cmd.args(extra).current_dir(root);
+    match fence::wrap(&cmd, &env.home) {
+        Some(mut fenced) => {
+            ui::info(&format!("fence: {} (RAM soft cap 70%, CPU/IO weight 50) · off: EIGHTSYNC_FENCE=0", fence::SLICE));
+            launch(&mut fenced)
+        }
+        None => launch(&mut cmd),
+    }
 }
 
 fn launch(cmd: &mut Command) -> Result<()> {
