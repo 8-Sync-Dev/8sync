@@ -106,7 +106,8 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
   for (const s of paired.values()) used.add(s.name);
   const rows: FloorRow[] = ls.map((r, i) => {
     const hq = paired.get(i) ?? null;
-    const name = hq?.name ?? r.name;
+    // hq may report its session uuid as `name` (unnamed session): keep the ls name, the id goes to `sid`.
+    const name = hq && !UUID_ISH.test(hq.name) ? hq.name : r.name;
     const title = r.title?.trim() || (hq && hq.label !== hq.name ? hq.label : "") || (hq?.name.startsWith("hq-") ? hq.name : "") || short(r.name);
     const repo = r.repo ?? tilde(hq?.cwd);
     const engine = r.engine ?? (hq ? "ccc" : null);

@@ -107,6 +107,13 @@ describe("grouping by repo", () => {
     id, name, title: name, repo, state, label: "", caption: "", progress: null, last_active: last, hq: false, ...extra,
   });
 
+  it("never shows a full session uuid as the desk name", () => {
+    const U = "6ede5cff-b5c6-4324-a64f-be210e36ba8e";
+    const out = disambiguate([r("1", U, "~/a", "idle", undefined, { sid: "6ede5cff" }), r("2", U, "~/a", "idle", undefined, { sid: "11112222" })]);
+    expect(out.map((x) => x.who)).toEqual(["6ede5cff · 6ede5cff", "6ede5cff · 11112222"]);
+    expect(disambiguate([r("3", U, "~/b", "idle", undefined, { sid: "6ede5cff" })])[0].who).toBe("6ede5cff");
+  });
+
   it("identical names in one repo get the 8-char id, else #n; other repos untouched", () => {
     const out = disambiguate([
       r("1", "core", "~/a", "idle", undefined, { sid: "abcd1234" }),
