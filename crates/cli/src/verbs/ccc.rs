@@ -1439,7 +1439,8 @@ mod tests {
         assert!(deny.iter().any(|r| r == "WebFetch") && deny.iter().any(|r| r == "Bash(git push -f*)"));
 
         let post = v["hooks"]["PostToolUse"].as_array().unwrap();
-        assert_eq!(post.len(), 4, "user hook kept, ours replaced in place, watchdog + hq SendMessage appended");
+        assert_eq!(post.len(), 5, "user hook kept, ours replaced in place, watchdog + hq SendMessage + ship-grant appended");
+        assert!(post.iter().any(|g| g["matcher"] == "AskUserQuestion" && g["hooks"][0]["args"] == json!(["ccc", "hook", "ship-grant"])));
         assert_eq!(post[0]["hooks"][0]["command"], "prettier");
         assert_eq!(post[1]["hooks"][0]["command"], "/new/8sync");
         assert_eq!(post[1]["hooks"][0]["asyncRewake"], true, "edits never wait for the check");
