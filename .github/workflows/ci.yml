@@ -39,3 +39,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo build --no-default-features
         run: cargo build --locked --no-default-features
+
+  # Exercise the hq-ui release packaging on PRs (the real one only runs on a tag).
+  package-hq-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+      - name: package hq-ui
+        run: bash scripts/package-hq-ui.sh 0.0.0-ci
+      - name: tarball has no symlinks or native files
+        run: |
+          set -euo pipefail
+          t=dist/8sync-hq-ui-v0.0.0-ci.tar.gz
+          bad=$(tar -tvzf "$t" | grep -E '^l' || true)
+          [ -z "$bad" ] || { echo "symlinks in tarball:" >&2; echo "$bad" >&2; exit 1; }
+          native=$(tar -tzf "$t" | grep -E '\.(node|so|dylib|dll|exe)$|\.so\.' || true)
+          [ -z "$native" ] || { echo "native files in tarball:" >&2; echo "$native" >&2; exit 1; }
+      - name: tarball boots (server.js + static assets)
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          tar -xzf dist/8sync-hq-ui-v0.0.0-ci.tar.gz -C "$d"
+          HOME="$d" HOSTNAME=127.0.0.1 PORT=8799 node "$d/hq-ui/server.js" > "$d/ui.log" 2>&1 &
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8799/ && break; sleep 1; done
+          code=$(curl -s -o "$d/index.html" -w '%{http_code}' http://127.0.0.1:8799/)
+          [ "$code" = 200 ] || { echo "/ -> $code" >&2; cat "$d/ui.log" >&2; exit 1; }
+          asset=$(grep -oE '/_next/static/[^"]+\.(css|js)' "$d/index.html" | head -1)
+          [ -n "$asset" ] || { echo "no /_next/static asset in the page" >&2; exit 1; }
+          acode=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8799$asset")
+          [ "$acode" = 200 ] || { echo "$asset -> $acode" >&2; exit 1; }
+          echo "ok: / and $asset -> 200"

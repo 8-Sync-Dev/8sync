@@ -5,6 +5,19 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.68.0] — 2026-10-13
+### Added
+- **`8sync hq ui` works without a repo checkout.** The UI (Next standalone) and the `8sync-hq` channel (one esbuild file, no `node_modules`) ship as a platform-independent release asset `8sync-hq-ui-v<version>.tar.gz` + `.sha256` (built by the new `hq-ui` job in `release.yml` via `scripts/package-hq-ui.sh`, which fails if any native `.node`/`.so` is inside). On first run 8sync downloads it with `curl` (https only), verifies the sha256 (mismatch or no hasher = refuse, existing install untouched), extracts it with `tar` into `.tmp-<pid>` (refuses absolute / `..` entries and any symlink or file that resolves outside the tree), then swaps it atomically into `~/.local/share/8sync/hq-ui/<version>/`, then runs `node hq-ui/server.js` (no pnpm). It also writes `~/.config/8sync/hq/channel-mcp.json` (0600) for the installed channel and defaults `HQ_CHANNEL_FLAGS` for the UI process. Resolution order: `--app` / `EIGHTSYNC_HQ_UI_APP`, installed copy, a *built* `~/tools/su-code/apps/hq-ui`, else download. `8sync hq ui --update` reinstalls; `EIGHTSYNC_HQ_UI_TARBALL=<file>` installs a local tarball (sha from `<file>.sha256`).
+
+- Install hardening: `<base>/.install.lock` (stale after 10 min), failed update restores the previous install, leftover `.tmp-*`/`.dl-*`/`.old-*` older than 1 h are cleaned, only the current and previous version dirs are kept. The `.sha256` comes from the same release as the tarball, so it checks integrity (corrupt/partial download), not an independent root of trust; when the GitHub API lists an asset digest it is cross-checked too (mismatch = refuse; API unreachable = warning). The asset has no symlinks (dereferenced when packaged; `ci.yml` job `package-hq-ui` checks it on PRs) and no server-side `*.js.map`. `--update` with `--app` / `EIGHTSYNC_HQ_UI_APP` prints a warning.
+
+### Fixed
+- `8sync hq ui --app <dir>` / env / a repo checkout now runs the app's `pnpm start` (fallback `npm start`) instead of `.next/standalone/server.js`, which has no `.next/static` next to it (every CSS/JS asset 404). Only the installed release asset runs `hq-ui/server.js`.
+
+### Changed
+- `apps/hq-channel` pins `esbuild` 0.25.12 as a devDependency; the package script uses `pnpm exec esbuild`.
+- `apps/hq-ui` builds with `output: "standalone"`, `images.unoptimized` and sharp/libvips excluded from tracing (platform-independent asset). The old `<exe>/../share/8sync/hq-ui` lookup is gone.
+
 ## [0.67.1] — 2026-10-13
 ### Changed
 - Release size ceiling 5888 → 5952 KiB from the measured v0.67.0 linux-x86_64 asset (6,030,288 B, 976 B over). v0.67.0 was tagged but not published; this release carries everything listed under 0.67.0.
