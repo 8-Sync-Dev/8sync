@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { sessionLabel } from "@/lib/labels";
 import { EmptyState, ErrorNote, STATUS_LABEL, StatusDot, WaitingBadge, ago, shortName } from "./bits";
 import type { Hq } from "./use-hq";
 import type { ChannelMode, Project, Session } from "./types";
@@ -31,6 +32,7 @@ export function SessionsView({
 }) {
   const [viewing, setViewing] = useState<string | null>(null);
   const { loading, error } = hq.sessions;
+  const viewingSession = sessions.find((x) => x.name === viewing);
   const projectName = (id: number | null) => projects.find((p) => p.id === id)?.name ?? "No project";
 
   return (
@@ -69,9 +71,9 @@ export function SessionsView({
                 {sessions.map((s) => (
                   <tr key={s.name} className="border-b last:border-0 hover:bg-muted/40">
                     <td className="px-3 py-2">
-                      <span className="flex items-center gap-2 font-mono text-[13px]">
+                      <span className="flex items-center gap-2 text-[13px]" title={s.name}>
                         <StatusDot status={s.status} />
-                        {shortName(s.label)}
+                        {sessionLabel(s)}
                       </span>
                     </td>
                     <td className="max-w-40 truncate px-3 py-2 text-muted-foreground" title={s.cwd ?? undefined}>
@@ -120,7 +122,7 @@ export function SessionsView({
                             size="sm"
                             variant={s.waiting ? "outline" : "ghost"}
                             onClick={() => setViewing(s.name)}
-                            aria-label={s.waiting ? `Answer ${shortName(s.name)} in its terminal` : `Open ${shortName(s.name)} terminal`}
+                            aria-label={s.waiting ? `Answer ${sessionLabel(s)} in its terminal` : `Open ${sessionLabel(s)} terminal`}
                           >
                             <TerminalSquareIcon /> {s.waiting ? "Answer" : "Terminal"}
                           </Button>
@@ -139,7 +141,7 @@ export function SessionsView({
       <Sheet open={viewing != null} onOpenChange={(o) => !o && setViewing(null)}>
         <SheetContent side="right" className="w-full gap-3 p-4 data-[side=right]:w-full data-[side=right]:sm:max-w-3xl">
           <SheetHeader className="p-0 pr-8">
-            <SheetTitle className="font-mono text-sm">{viewing}</SheetTitle>
+            <SheetTitle className="text-sm">{viewingSession ? sessionLabel(viewingSession) : shortName(viewing ?? "")}</SheetTitle>
             <SheetDescription>Live pane, refreshed every 1.5 s. The keys below go straight to this session.</SheetDescription>
           </SheetHeader>
           {viewing && <TerminalPanel api={hq.api} name={viewing} session={sessions.find((x) => x.name === viewing)} />}

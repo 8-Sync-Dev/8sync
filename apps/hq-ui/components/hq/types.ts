@@ -1,5 +1,12 @@
 // Client-side mirrors of the API rows (lib/server/*). Kept small on purpose.
-export type Project = { id: number; path: string; name: string; added_at: number };
+export type Project = {
+  id: number;
+  path: string;
+  name: string;
+  added_at: number;
+  /** The folder no longer exists on disk (set by GET /api/projects). */
+  missing?: boolean;
+};
 
 export type SessionStatus = "running" | "idle" | "needs_input" | "ended";
 
