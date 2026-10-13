@@ -19,6 +19,11 @@
 //! act where the owner must decide. Any doubt lets the turn end.
 //!
 //! Optional extras ("Want me to also…?") and plain answers end the turn.
+//!
+//! Open tasks: when Claude touched its task list (TaskCreate/TaskUpdate/TodoWrite)
+//! since the owner's last message and still has pending/in-progress tasks, a
+//! silent stop is blocked once with the open list — unless the last message
+//! hands off, asks something, or is about a risky action.
 use serde_json::Value;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -33,7 +38,9 @@ pub(super) fn check(v: &Value) -> Option<String> {
     }
     // No hook field says the user asked to stop (Stop does not fire on an interrupt);
     // their last message in the transcript does.
-    if v["transcript_path"].as_str().and_then(last_user_text).is_some_and(|t| asks_to_stop(&t)) {
+    let path = v["transcript_path"].as_str();
+    let tail = path.map(read_tail).unwrap_or_default();
+    if tail.user.as_deref().is_some_and(asks_to_stop) {
         return None;
     }
     let msg = v["last_assistant_message"].as_str()?;
@@ -86,7 +93,26 @@ pub(super) fn check(v: &Value) -> Option<String> {
             "8sync gate: don't stop to ask for routine confirmation (\"{quote}\"). Pick the conservative, conventional option, state the assumption and continue. Ask only for secrets/access, destructive or paid actions, or product decisions."
         ));
     }
+    if tail.tasks_touched && !offer && !risky && !question {
+        let open = open_tasks(path?);
+        if !open.is_empty() {
+            let list: Vec<String> = open.iter().take(6).map(|t| format!("\"{}\"", t.chars().take(80).collect::<String>())).collect();
+            return Some(format!(
+                "8sync gate: {} task(s) in your task list are still open: {}{}. Carry on with them. If one is no longer needed, TaskUpdate it to completed/deleted; if it is blocked on the owner, say exactly what you need. Then stop.",
+                open.len(),
+                list.join(", "),
+                if open.len() > 6 { ", …" } else { "" }
+            ));
+        }
+    }
     None
+}
+
+/// Titles of this session's pending / in-progress tasks (full replay of the transcript's
+/// task calls; tail-only above the size cap).
+fn open_tasks(path: &str) -> Vec<String> {
+    use crate::verbs::session_view::{scan_file, Fmt, TaskState};
+    scan_file(std::path::Path::new(path), Fmt::Claude, false).tasks.into_iter().filter(|t| t.state != TaskState::Done).map(|t| t.title).collect()
 }
 
 /// Questions the owner must answer: secrets/access, destructive or paid actions, product
@@ -143,36 +169,58 @@ fn asks_to_stop(text: &str) -> bool {
 /// The text of the last message the user typed, from the tail of the session transcript (JSONL).
 /// Tool results, task notifications and skill bodies are `user` entries too; only
 /// `origin.kind == "human"` (or entries without an `origin`, older Claude Code) count.
-fn last_user_text(path: &str) -> Option<String> {
+#[derive(Default)]
+struct Tail {
+    /// The owner's last typed message.
+    user: Option<String>,
+    /// A TaskCreate / TaskUpdate / TodoWrite call after that message.
+    tasks_touched: bool,
+}
+
+fn read_tail(path: &str) -> Tail {
     const TAIL: u64 = 512 * 1024;
-    let mut f = std::fs::File::open(path).ok()?;
-    let len = f.metadata().ok()?.len();
-    f.seek(SeekFrom::Start(len.saturating_sub(TAIL))).ok()?;
+    let mut t = Tail::default();
+    let Ok(mut f) = std::fs::File::open(path) else { return t };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if f.seek(SeekFrom::Start(len.saturating_sub(TAIL))).is_err() {
+        return t;
+    }
     let mut buf = Vec::new();
-    f.read_to_end(&mut buf).ok()?;
+    if f.read_to_end(&mut buf).is_err() {
+        return t;
+    }
     let text = String::from_utf8_lossy(&buf);
     for line in text.lines().rev() {
-        let Ok(e) = serde_json::from_str::<Value>(line) else { continue };
-        if e["type"] != "user" || e["isMeta"] == true {
-            continue;
+        if line.contains(r#""type":"assistant""#)
+            && [r#""name":"TaskCreate""#, r#""name":"TaskUpdate""#, r#""name":"TodoWrite""#].iter().any(|n| line.contains(n))
+        {
+            t.tasks_touched = true;
         }
-        if e["origin"].is_object() && e["origin"]["kind"] != "human" {
-            continue;
+        if let Some(u) = human_text(line) {
+            t.user = Some(u);
+            break;
         }
-        let c = &e["message"]["content"];
-        let t = match c {
-            Value::String(s) => s.clone(),
-            Value::Array(parts) => {
-                if parts.iter().any(|p| p["type"] == "tool_result") {
-                    continue;
-                }
-                parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n")
-            }
-            _ => continue,
-        };
-        return Some(t);
     }
-    None
+    t
+}
+
+/// The owner's text when `line` is a message they typed; `None` for tool results,
+/// meta entries, task notifications and anything else.
+fn human_text(line: &str) -> Option<String> {
+    let e = serde_json::from_str::<Value>(line).ok()?;
+    if e["type"] != "user" || e["isMeta"] == true {
+        return None;
+    }
+    if e["origin"].is_object() && e["origin"]["kind"] != "human" {
+        return None;
+    }
+    match &e["message"]["content"] {
+        Value::String(s) => Some(s.clone()),
+        Value::Array(parts) if !parts.iter().any(|p| p["type"] == "tool_result") => {
+            Some(parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"))
+        }
+        _ => None,
+    }
 }
 
 /// `para` attributes stop/wait words to the user and quotes them (`you said "stop"`, `bạn bảo
@@ -206,6 +254,40 @@ mod tests {
 
     fn blocks(msg: &str) -> bool {
         check(&json!({ "last_assistant_message": msg, "stop_hook_active": false, "background_tasks": [] })).is_some()
+    }
+
+    #[test]
+    fn silent_stop_with_open_tasks_blocks_once() {
+        let dir = std::env::temp_dir().join(format!("8sync-gate-tasks-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let human = |t: &str| format!(r#"{{"type":"user","message":{{"role":"user","content":"{t}"}},"origin":{{"kind":"human"}}}}"#);
+        let create = |id: &str, s: &str| format!(r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"tool_use","id":"{id}","name":"TaskCreate","input":{{"subject":"{s}"}}}}]}}}}"#);
+        let done = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u1","name":"TaskUpdate","input":{"taskId":"1","status":"completed"}}]}}"#;
+        let write = |name: &str, lines: &[String]| {
+            let p = dir.join(name);
+            std::fs::write(&p, lines.join("\n") + "\n").unwrap();
+            p.to_string_lossy().to_string()
+        };
+        let input = |path: &str, msg: &str, active: bool| {
+            serde_json::json!({"transcript_path": path, "last_assistant_message": msg, "stop_hook_active": active})
+        };
+        let open = write("open.jsonl", &[human("làm hết đi"), create("t1", "viết test"), create("t2", "sửa lỗi login"), done.to_string()]);
+        let r = check(&input(&open, "Đã viết xong test.", false)).expect("open task → block");
+        assert!(r.contains("1 task(s)") && r.contains("sửa lỗi login") && !r.contains("viết test"), "{r}");
+        // the second stop in a row, a question to the owner, a hand-off: the turn ends
+        assert!(check(&input(&open, "Đã viết xong test.", true)).is_none());
+        assert!(check(&input(&open, "Anh muốn dùng Postgres hay SQLite?", false)).is_none());
+        assert!(check(&input(&open, "Nếu anh gửi token thì tôi làm tiếp.", false)).is_none());
+        // all done → ends
+        let all = write("all.jsonl", &[human("x"), create("t1", "a"), done.to_string()]);
+        assert!(check(&input(&all, "Xong.", false)).is_none());
+        // tasks from an earlier turn, untouched since the owner's new question → no block
+        let old = write("old.jsonl", &[create("t1", "a"), create("t2", "b"), human("cái này là gì?")]);
+        assert!(check(&input(&old, "Đó là stop gate.", false)).is_none());
+        // the owner said stop
+        let stop = write("stop.jsonl", &[create("t1", "a"), human("dừng lại")]);
+        assert!(check(&input(&stop, "Ok.", false)).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

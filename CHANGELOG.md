@@ -4,6 +4,9 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **Stop gate checks the task list:** when Claude touched its tasks (TaskCreate/TaskUpdate/TodoWrite) since the owner's last message and still has pending/in-progress ones, a silent stop is blocked once with the open titles ("finish them, or mark them completed/deleted, or say what you need"). A question to the owner, a hand-off, a risky action, the owner saying stop, or a second stop in a row still end the turn. Measured on a 14 MB transcript: 34–38 ms (release); 5 ms when tasks were not touched this turn.
+- **Turns that die on an API error are caught:** `ccc hook stop-failure` (Claude Code's `StopFailure`: rate_limit, overloaded, server_error, max_output_tokens, …) records the error per session and shows a desktop notification; on the next prompt in that session — even a bare "tiếp" — `ccc hook resume-note` tells Claude its last turn ended early and to check TaskList and `su-code/ship/ACTIVE` before continuing (said once). StopFailure itself cannot make Claude continue (docs: no decision control).
 
 ## [0.70.0] — 2026-10-13
 ### Added

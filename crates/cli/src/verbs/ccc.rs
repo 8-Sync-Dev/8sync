@@ -24,6 +24,7 @@ use crate::{assets, pkg, ui};
 mod danger;
 mod gate;
 mod guard;
+mod resume;
 mod verify;
 
 #[derive(ClapArgs, Debug)]
@@ -740,6 +741,18 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "watchdog"], "timeout": 5 }] }),
         );
     }
+    // A turn that dies on an API error fires StopFailure, not Stop: record it, and remind
+    // Claude on the next prompt (https://code.claude.com/docs/en/hooks, StopFailure).
+    upsert_hook_group(
+        hooks,
+        "StopFailure",
+        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "stop-failure"], "timeout": 5 }] }),
+    );
+    upsert_hook_group(
+        hooks,
+        "UserPromptSubmit",
+        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "resume-note"], "timeout": 5 }] }),
+    );
     // Agent-team events -> `8sync hq hook <Event>`. Event names, `async` (background, never
     // blocks) and `timeout` (seconds) per https://code.claude.com/docs/en/hooks (checked
     // 2026-10-12). `hq hook` is a fast no-op until `8sync hq setup`, so always registering is safe.
@@ -1317,12 +1330,26 @@ fn hook(rest: &[String]) -> Result<()> {
         }
         // Fast path: no alerts file / nothing new = no output (sync hook, timeout 5 s).
         Some("watchdog") => crate::verbs::watchdog::run_hook(&input),
+        // StopFailure (no decision control): record + notify; resume-note says it once next prompt.
+        Some("stop-failure") => {
+            let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            if let Some(msg) = resume::record(&input, &resume::state_dir(&home), now) {
+                resume::notify(&msg);
+            }
+            None
+        }
+        Some("resume-note") => {
+            let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            resume::note(&input, &resume::state_dir(&home), now)
+        }
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");

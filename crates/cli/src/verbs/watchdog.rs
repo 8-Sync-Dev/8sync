@@ -1116,7 +1116,7 @@ fn my_session_root(cfg: &Config) -> Option<u32> {
     None
 }
 
-fn safe_id(s: &str) -> Option<String> {
+pub(crate) fn safe_id(s: &str) -> Option<String> {
     (!s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then(|| s.to_string())
 }
 
