@@ -297,6 +297,27 @@ pub fn scan_file(path: &Path, fmt: Fmt, detail: bool) -> Digest {
     d
 }
 
+/// Scan only the last `max_bytes` of a transcript (cheap, bounded; for per-refresh callers like
+/// the status line). Never fails: an unreadable file yields an empty digest.
+pub fn scan_tail(path: &Path, fmt: Fmt, max_bytes: u64) -> Digest {
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return Digest::default();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let partial = len > max_bytes;
+    if partial {
+        let _ = f.seek(SeekFrom::Start(len - max_bytes));
+    }
+    let mut r = BufReader::with_capacity(64 * 1024, f);
+    if partial {
+        let mut skip = Vec::new();
+        let _ = r.read_until(b'\n', &mut skip); // drop the cut line
+    }
+    let mut d = scan_reader(r, fmt, false);
+    d.partial = partial;
+    d
+}
+
 fn title_of(v: &Value) -> Option<String> {
     (v.get("type")?.as_str()? == "title").then(|| v.get("title")?.as_str().map(str::to_string)).flatten()
 }
@@ -812,6 +833,7 @@ fn claude_sid(row: &Row) -> Option<String> {
 pub fn row_json(row: &Row) -> Value {
     let d = &row.digest;
     serde_json::json!({
+        "schema": JSON_SCHEMA,
         "engine": row.engine,
         "sid": claude_sid(row),
         "name": row.name,
@@ -832,8 +854,36 @@ pub fn row_json(row: &Row) -> Value {
         "messages": d.user_msgs,
         "tokens": d.tokens,
         "model": d.model,
-        "resume": row.resume,
+        "resume": mask_secrets(&row.resume),
     })
+}
+
+/// Version of every machine-readable `ls` / `show` / `ccc` JSON surface
+/// (`docs/hq-ui-contract.md`, "ccc JSON surfaces"). Bump on a breaking change.
+pub const JSON_SCHEMA: u32 = 1;
+
+/// JSON for `show --json`: [`row_json`] plus the detail `8sync show` prints.
+/// Every free-text field goes through the shared masker (`secret_mask.rs`).
+pub fn show_json(row: &Row) -> Value {
+    let d = &row.digest;
+    let mut v = row_json(row);
+    v["last_users"] = d.last_users.iter().map(|u| clean(u, 600)).collect::<Vec<_>>().into();
+    v["last_text"] = d.last_text.as_deref().map(|t| truncate(&mask_secrets(t), 4000)).into();
+    v["tasks"] = d
+        .tasks
+        .iter()
+        .map(|t| {
+            let state = match t.state {
+                TaskState::Pending => "pending",
+                TaskState::InProgress => "in_progress",
+                TaskState::Done => "done",
+            };
+            serde_json::json!({ "id": clean(&t.id, 60), "title": clean(&t.title, 300), "state": state })
+        })
+        .collect::<Vec<_>>()
+        .into();
+    v["files"] = d.files.iter().map(|f| clean(f, 400)).collect::<Vec<_>>().into();
+    v
 }
 
 // ── collecting rows ─────────────────────────────────────────────────────────
@@ -1081,6 +1131,26 @@ mod tests {
         assert_eq!(j["last_user"], "sudo password của tôi là *** nhé");
         assert_eq!(j["title"], "mật khẩu: ***");
         assert!(!j.to_string().contains("Fake9876"));
+    }
+
+    #[test]
+    fn show_json_has_schema_detail_and_masks_prose_password() {
+        let mut d = Digest::default();
+        d.last_users = vec!["a".into(), "sudo password của tôi là Fake9876 nhé".into()];
+        d.last_text = Some("line one\nmật khẩu: Fake9876x\nlast".into());
+        d.tasks = vec![Task { id: "1".into(), title: "viết test".into(), state: TaskState::InProgress }];
+        d.files = vec!["/w/src/a.rs".into()];
+        let j = show_json(&row(d));
+        assert_eq!(j["schema"], 1);
+        assert_eq!(j["engine"], "omp");
+        assert_eq!(j["last_users"][1], "sudo password của tôi là *** nhé");
+        assert!(j["last_text"].as_str().unwrap().contains("mật khẩu: ***"));
+        assert!(j["last_text"].as_str().unwrap().contains('\n'), "multi-line text kept");
+        assert_eq!(j["tasks"][0], serde_json::json!({"id": "1", "title": "viết test", "state": "in_progress"}));
+        assert_eq!(j["files"][0], "/w/src/a.rs");
+        assert_eq!(j["resume"], "8sync . core");
+        assert!(!j.to_string().contains("Fake9876"));
+        assert_eq!(row_json(&row(Digest::default()))["schema"], 1);
     }
 
     #[test]

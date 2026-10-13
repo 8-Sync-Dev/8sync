@@ -28,6 +28,7 @@ mod grant;
 mod guard;
 mod looper;
 mod resume;
+mod statusline;
 mod verify;
 
 #[derive(ClapArgs, Debug)]
@@ -46,6 +47,7 @@ mod verify;
                                      (also `EIGHTSYNC_OFFLINE=1`; works on `new`, `.`, `kit`; `claude` must already be installed)
       8sync ccc kit --remove         take 8sync's hooks out of ~/.claude/settings.json (run before uninstalling)
       8sync ccc loop <init|tick|status|done|ls> <slug>   bounded-loop state for /ship-loop (su-code/ship/<slug>/loop.json)
+      8sync ccc statusline [--agents|--install|--uninstall]   Claude Code status line (usage, branch, PR, tasks, loop, grant); chains an existing one
       8sync ccc status               claude binary, login, kit, managed settings, MCP and sessions
       8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]
                                      print a recommended managed-settings.json (never installs it)
@@ -90,7 +92,7 @@ pub struct Args {
 impl Args {
     /// Hook invocations run on every edit: keep them free of side work.
     pub fn is_hook(&self) -> bool {
-        self.rest.first().is_some_and(|v| v == "hook")
+        self.rest.first().is_some_and(|v| v == "hook" || v == "statusline")
     }
 }
 
@@ -107,11 +109,32 @@ pub fn run(a: Args) -> Result<()> {
     if verb == "hook" {
         return hook(rest);
     }
+    if verb == "statusline" {
+        return statusline::run(rest); // before Env::detect: runs every few seconds, must stay fast
+    }
     let env = Env::detect()?;
     let cwd = std::env::current_dir().context("no cwd")?;
     let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd);
     match verb {
         "kit" if rest.iter().any(|a| a == "--remove") => remove_kit_hooks(&env),
+        "kit" if rest.first().map(String::as_str) == Some("status") => {
+            let v = kit_status_json(&env, &claude_dir(&env));
+            println!("{}", serde_json::to_string_pretty(&v)?);
+            Ok(())
+        }
+        "login-kind" => {
+            let k = login_kind(&env);
+            if rest.iter().any(|a| a == "--json") {
+                println!("{}", serde_json::to_string_pretty(&login_kind_json(&k))?);
+            } else {
+                println!("{}", login_kind_line(&k));
+            }
+            Ok(())
+        }
+        "show" => {
+            let name = rest.iter().find(|a| !a.starts_with('-')).context("usage: 8sync ccc . show <name> [--json]")?;
+            super::session_cmds::run_show(super::session_cmds::ShowArgs { name: name.clone(), engine: Some("ccc".into()), json: rest.iter().any(|a| a == "--json") })
+        }
         "kit" => {
             if let Some(i) = rest.iter().position(|a| a == "--skills-from") {
                 let dir = rest.get(i + 1).context("--skills-from needs a directory (e.g. ~/startup/8sync-startup/su-code/skills)")?;
@@ -642,6 +665,9 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<(
     };
     apply_kit_settings(&mut v, &exe, &skills)?;
     apply_lsp_plugins(&mut v, |bin| which::which(bin).is_ok());
+    if statusline::kit_apply(&mut v, &exe)? {
+        ui::info("your own statusLine was kept: `8sync ccc statusline --install` swaps in the 8sync one and chains yours");
+    }
     let out = serde_json::to_string_pretty(&v)? + "\n";
     if out != raw {
         std::fs::write(&settings, out).with_context(|| format!("write {}", settings.display()))?;
@@ -903,26 +929,41 @@ fn strip_kit_hooks(v: &mut Value) -> usize {
     removed
 }
 
-/// Strip 8sync hooks from the settings file at `path`. Nothing removed: nothing
-/// written. Otherwise the original goes to `settings.json.bak-8sync` and the new
-/// file replaces it by rename (a crash never leaves a half-written settings.json).
-fn remove_kit_hooks_at(path: &Path) -> Result<usize> {
-    let raw = std::fs::read_to_string(path)?;
-    let mut v: Value = serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", path.display()))?;
-    let n = strip_kit_hooks(&mut v);
-    if n == 0 {
-        return Ok(0);
-    }
+/// Replace `path` with `new` by tmp+rename, after saving `old` (its current content) to
+/// `<name>.bak-8sync`. Keeps the file's permissions; a crash never leaves a half-written file.
+pub(super) fn write_atomic_bak(path: &Path, old: &str, new: &str) -> Result<()> {
     let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-    std::fs::write(path.with_file_name(format!("{name}.bak-8sync")), &raw).context("write backup")?;
+    std::fs::write(path.with_file_name(format!("{name}.bak-8sync")), old).context("write backup")?;
     let tmp = path.with_file_name(format!("{name}.tmp-8sync"));
-    std::fs::write(&tmp, serde_json::to_string_pretty(&v)? + "\n")?;
+    std::fs::write(&tmp, new)?;
     if let Ok(m) = std::fs::metadata(path) {
         let _ = std::fs::set_permissions(&tmp, m.permissions());
     }
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })?;
+    Ok(())
+}
+
+/// Strip 8sync hooks from the settings file at `path`. Nothing removed: nothing
+/// written. Otherwise the original goes to `settings.json.bak-8sync` and the new
+/// file replaces it by rename (a crash never leaves a half-written settings.json).
+#[cfg(test)]
+fn remove_kit_hooks_at(path: &Path) -> Result<usize> {
+    let raw = std::fs::read_to_string(path)?;
+    remove_kit_hooks_from(path, &raw)
+}
+
+/// Strip hooks from the current content of `path`; `orig` is the content from before this run
+/// (the backup source, so a statusLine step that already wrote the backup is not clobbered).
+fn remove_kit_hooks_from(path: &Path, orig: &str) -> Result<usize> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut v: Value = serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", path.display()))?;
+    let n = strip_kit_hooks(&mut v);
+    if n == 0 {
+        return Ok(0);
+    }
+    write_atomic_bak(path, orig, &(serde_json::to_string_pretty(&v)? + "\n"))?;
     Ok(n)
 }
 
@@ -930,12 +971,26 @@ fn remove_kit_hooks_at(path: &Path) -> Result<usize> {
 /// uninstalling 8sync. The guard fails closed (`onFailure: "block"`), so a hook left
 /// pointing at a missing binary would block every Bash/Edit call.
 fn remove_kit_hooks(env: &Env) -> Result<()> {
-    let path = claude_dir(env).join("settings.json");
+    remove_kit_hooks_in(&claude_dir(env).join("settings.json"), &statusline::features(&env.home))
+}
+
+fn remove_kit_hooks_in(path: &Path, fp: &Path) -> Result<()> {
+    // Read the original before any write: the .bak-8sync must hold it, whichever step writes first.
+    let orig = std::fs::read_to_string(path).unwrap_or_default();
+    match statusline::uninstall_at(path, fp) {
+        Ok(msgs) => {
+            for m in msgs {
+                ui::ok(&m);
+            }
+        }
+        // Non-fatal: a broken features.toml or statusLine must not keep the guard hooks in place.
+        Err(e) => ui::warn(&format!("statusline not restored: {e:#}")),
+    }
     if !path.is_file() {
         ui::info("no ~/.claude/settings.json — nothing to remove");
         return Ok(());
     }
-    match remove_kit_hooks_at(&path)? {
+    match remove_kit_hooks_from(path, &orig)? {
         0 => ui::info(&format!("no 8sync hooks in {} — nothing changed", path.display())),
         n => {
             ui::ok(&format!("removed {n} 8sync hook(s) from {} (your own hooks kept; backup: settings.json.bak-8sync)", path.display()));
@@ -1347,6 +1402,78 @@ fn managed_settings_present(os: &str) -> Vec<PathBuf> {
 
 // ── status ──────────────────────────────────────────────────────────────────
 
+/// Which kit hooks `settings.json` text registers (same substring tests `status` uses).
+fn kit_hook_flags(settings: &str) -> [(&'static str, bool); 6] {
+    let has = |n: &str| settings.contains(&format!("\"{n}\""));
+    [
+        ("guard", has("guard")),
+        ("verify", has("verify")),
+        ("stop_gate", settings.contains(GATE_MARKER) || has("verify-stop")),
+        ("watchdog", has("watchdog")),
+        ("ship_grant", has("ship-grant")),
+        ("session_start", has("session-start")),
+    ]
+}
+
+/// `8sync ccc kit status --json` — machine-readable twin of the kit line of `status`.
+fn kit_status_json(env: &Env, dir: &Path) -> Value {
+    let missing: Vec<&str> = KIT_FILES.iter().map(|(_, r)| *r).filter(|r| !dir.join(r).exists()).collect();
+    let settings = std::fs::read_to_string(dir.join("settings.json")).unwrap_or_default();
+    let hooks: serde_json::Map<String, Value> = kit_hook_flags(&settings).iter().map(|(k, v)| (k.to_string(), json!(v))).collect();
+    let claude = find_claude();
+    let version = claude.as_ref().and_then(|c| crate::env_detect::cmd_version(&c.display().to_string(), &["--version"])).unwrap_or_default();
+    let onoff = |b: bool| if b { "on" } else { "off" };
+    json!({
+        "schema": 1,
+        "kit_version": kit_version(env),
+        "files": { "present": KIT_FILES.len() - missing.len(), "total": KIT_FILES.len(), "missing": missing },
+        "hooks": hooks,
+        "skills": {
+            "linked": linked_bundled_skills(&env.home, &dir.join("skills")).len(),
+            "libraries": deploy::skill_libraries(&env.home).iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+        },
+        "mcp": {
+            "cbm": onoff(crate::verbs::harness::cbm::enabled(&env.home)),
+            "serena": onoff(crate::verbs::harness::serena::enabled(&env.home)),
+        },
+        "claude": { "found": claude.is_some(), "version": version },
+    })
+}
+
+/// How the user is logged in. Presence checks only: no value is read into output.
+#[derive(Debug, PartialEq, Eq)]
+struct LoginKind {
+    kind: &'static str,
+    source: &'static str,
+}
+
+fn login_kind_with(api_key_env_set: bool, claude_json: Option<&Value>) -> LoginKind {
+    if api_key_env_set {
+        return LoginKind { kind: "api-key", source: "env" };
+    }
+    if claude_json.is_some_and(|v| v["oauthAccount"].is_object()) {
+        return LoginKind { kind: "subscription", source: "claude-config" };
+    }
+    LoginKind { kind: "none", source: "unknown" }
+}
+
+fn login_kind(env: &Env) -> LoginKind {
+    let path = match std::env::var_os("CLAUDE_CONFIG_DIR") {
+        Some(d) => PathBuf::from(d).join(".claude.json"),
+        None => env.home.join(".claude.json"),
+    };
+    let cfg: Option<Value> = std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok());
+    login_kind_with(std::env::var_os("ANTHROPIC_API_KEY").is_some_and(|v| !v.is_empty()), cfg.as_ref())
+}
+
+fn login_kind_json(k: &LoginKind) -> Value {
+    json!({ "schema": 1, "kind": k.kind, "source": k.source })
+}
+
+fn login_kind_line(k: &LoginKind) -> String {
+    format!("{} ({})", k.kind, k.source)
+}
+
 fn status(env: &Env, root: &Path) -> Result<()> {
     ui::header("8sync ccc — status");
     match find_claude() {
@@ -1458,6 +1585,43 @@ fn hook(rest: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_kind_detects_without_values() {
+        let acct = json!({ "oauthAccount": { "emailAddress": "x@y.z" } });
+        assert_eq!(login_kind_with(true, Some(&acct)), LoginKind { kind: "api-key", source: "env" });
+        assert_eq!(login_kind_with(false, Some(&acct)), LoginKind { kind: "subscription", source: "claude-config" });
+        assert_eq!(login_kind_with(false, Some(&json!({}))), LoginKind { kind: "none", source: "unknown" });
+        assert_eq!(login_kind_with(false, None).kind, "none");
+        let out = login_kind_json(&login_kind_with(false, Some(&acct))).to_string();
+        assert!(!out.contains("x@y.z"));
+        assert_eq!(login_kind_json(&login_kind_with(true, None)), json!({"schema": 1, "kind": "api-key", "source": "env"}));
+        assert_eq!(login_kind_line(&login_kind_with(false, None)), "none (unknown)");
+    }
+
+    #[test]
+    fn kit_status_json_shape() {
+        let d = std::env::temp_dir().join(format!("8sync-ks-{}-{}", std::process::id(), line!()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("settings.json"), r#"{"hooks":{"x":[{"args":["ccc","hook","guard"]}]}}"#).unwrap();
+        let env = Env { home: d.clone(), xdg_config: d.join("cfg"), os_id: "x".into(), os_id_like: String::new() };
+        let v = kit_status_json(&env, &d);
+        assert_eq!(v["schema"], 1);
+        assert_eq!(v["files"]["total"], KIT_FILES.len());
+        assert_eq!(v["files"]["present"], 0);
+        assert_eq!(v["files"]["missing"].as_array().unwrap().len(), KIT_FILES.len());
+        for k in ["guard", "verify", "stop_gate", "watchdog", "ship_grant", "session_start"] {
+            assert!(v["hooks"][k].is_boolean(), "{k}");
+        }
+        assert_eq!(v["hooks"]["guard"], true);
+        assert_eq!(v["hooks"]["watchdog"], false);
+        assert!(v["skills"]["libraries"].is_array());
+        assert!(matches!(v["mcp"]["cbm"].as_str(), Some("on" | "off")));
+        assert!(matches!(v["mcp"]["serena"].as_str(), Some("on" | "off")));
+        assert!(v["claude"]["found"].is_boolean());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn kit_settings_merge_keeps_user_config_and_is_idempotent() {
@@ -1835,6 +1999,26 @@ mod tests {
         assert_eq!(remove_kit_hooks_at(&p).unwrap(), 0);
         assert_eq!(std::fs::read_to_string(&p).unwrap(), again);
         assert!(!d.join("settings.json.bak-8sync").exists(), "no backup when nothing changed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn kit_remove_survives_corrupt_features_toml() {
+        let d = std::env::temp_dir().join(format!("kit-rm-corrupt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let (p, fp) = (d.join("settings.json"), d.join("features.toml"));
+        let mut v = json!({"theme": "dark", "statusLine": {"type": "command", "command": "/x/8sync ccc statusline"}});
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        let before = serde_json::to_string_pretty(&v).unwrap() + "\n";
+        std::fs::write(&p, &before).unwrap();
+        std::fs::write(&fp, "this is = [not toml").unwrap();
+        remove_kit_hooks_in(&p, &fp).expect("statusline failure must not abort the run");
+        let after: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert!(strip_kit_hooks(&mut after.clone()) == 0, "hooks removed");
+        assert_eq!(after["theme"], "dark");
+        assert_eq!(std::fs::read_to_string(&fp).unwrap(), "this is = [not toml", "corrupt features left alone");
+        assert_eq!(std::fs::read_to_string(d.join("settings.json.bak-8sync")).unwrap(), before, "backup holds the original");
         let _ = std::fs::remove_dir_all(&d);
     }
 
