@@ -194,9 +194,9 @@ pub(super) fn agents_row(v: &Value, now_ms: u64, color: bool) -> Option<String> 
     for t in tasks {
         match t["status"].as_str().unwrap_or("") {
             "running" => {
-                let name = t["name"].as_str().or_else(|| t["agentType"].as_str()).unwrap_or("agent");
+                let name = plain(t["name"].as_str().or_else(|| t["agentType"].as_str()).unwrap_or("agent"));
                 let s = t["startTime"].as_u64().map(|st| now_ms.saturating_sub(st) / 1000).unwrap_or(0);
-                running.push(format!("{} {}", truncate(name, 20), elapsed(s)));
+                running.push(format!("{} {}", truncate(&name, 20), elapsed(s)));
             }
             "completed" | "failed" | "killed" => {}
             _ => idle += 1,
@@ -309,8 +309,11 @@ fn ship_active(cwd: &Path) -> Option<(u64, u64)> {
             continue;
         }
         let Ok(raw) = std::fs::read_to_string(dir.join(slug).join("loop.json")) else { continue };
-        let v: Value = serde_json::from_str(&raw).ok()?;
-        return v["stopped"].is_null().then(|| (v["iter"].as_u64().unwrap_or(0), v["max_iter"].as_u64().unwrap_or(0)));
+        let Ok(v) = serde_json::from_str::<Value>(&raw) else { continue };
+        if !v["stopped"].is_null() {
+            continue;
+        }
+        return Some((v["iter"].as_u64().unwrap_or(0), v["max_iter"].as_u64().unwrap_or(0)));
     }
     None
 }
@@ -328,7 +331,7 @@ fn last_line(p: &Path) -> Option<String> {
 fn fresh_alert(home: &Path, now: u64) -> Option<String> {
     let l = last_line(&home.join(".local/state/8sync/watchdog/alerts.jsonl"))?;
     let v: Value = serde_json::from_str(&l).ok()?;
-    (now.saturating_sub(v["ts"].as_u64()?) <= ALERT_FRESH_S).then(|| v["kind"].as_str().unwrap_or("alert").to_string())
+    (now.saturating_sub(v["ts"].as_u64()?) <= ALERT_FRESH_S).then(|| plain(v["kind"].as_str().unwrap_or("alert")))
 }
 
 pub(super) fn features(home: &Path) -> PathBuf {
@@ -436,7 +439,8 @@ fn prev_object(stored: &str) -> Option<Value> {
 
 /// Kit side: set both lines when absent, refresh ours, never override another. Returns whether a
 /// foreign `statusLine` was left alone (the kit then prints a hint).
-pub(super) fn kit_apply(settings: &mut Value, exe: &str) -> bool {
+pub(super) fn kit_apply(settings: &mut Value, exe: &str) -> Result<bool> {
+    require_object(settings)?;
     let foreign = cmd_of(&settings["statusLine"]).is_some_and(|c| !is_ours(c)) || (settings.get("statusLine").is_some() && cmd_of(&settings["statusLine"]).is_none());
     if !foreign {
         settings["statusLine"] = status_value(exe);
@@ -444,11 +448,21 @@ pub(super) fn kit_apply(settings: &mut Value, exe: &str) -> bool {
     if settings.get("subagentStatusLine").is_none_or(|s| cmd_of(s).is_some_and(is_agents_ours)) {
         settings["subagentStatusLine"] = agents_value(exe);
     }
-    foreign
+    Ok(foreign)
+}
+
+/// Writing into a non-object (array, number, `null`) would panic on indexing; refuse instead.
+fn require_object(settings: &Value) -> Result<()> {
+    if settings.is_object() {
+        Ok(())
+    } else {
+        bail!("settings.json is not a JSON object — fix it first")
+    }
 }
 
 /// `--install` on parsed settings + features. Returns human lines.
-pub(super) fn install_into(settings: &mut Value, exe: &str, feats: &mut toml::Table) -> Vec<String> {
+pub(super) fn install_into(settings: &mut Value, exe: &str, feats: &mut toml::Table) -> Result<Vec<String>> {
+    require_object(settings)?;
     let mut msg = Vec::new();
     match settings.get("statusLine").cloned() {
         Some(old) if cmd_of(&old).is_some_and(|c| !is_ours(c)) => {
@@ -458,7 +472,7 @@ pub(super) fn install_into(settings: &mut Value, exe: &str, feats: &mut toml::Ta
         }
         Some(old) if cmd_of(&old).is_none() => {
             msg.push("statusLine: existing entry has no command, left as is".into());
-            return msg;
+            return Ok(msg);
         }
         _ => msg.push("statusLine: installed".into()),
     }
@@ -470,7 +484,7 @@ pub(super) fn install_into(settings: &mut Value, exe: &str, feats: &mut toml::Ta
             msg.push("subagentStatusLine: installed".into());
         }
     }
-    msg
+    Ok(msg)
 }
 
 /// `--uninstall`: drop ours, restore the whole previous `statusLine` object.
@@ -522,17 +536,19 @@ fn write_file(p: &Path, old: &str, new: &str) -> Result<()> {
 fn setup_at(sp: &Path, fp: &Path, exe: Option<&str>) -> Result<Vec<String>> {
     let raw = read_or_empty(sp)?;
     let mut s: Value = if raw.trim().is_empty() { json!({}) } else { serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", sp.display()))? };
+    require_object(&s).with_context(|| sp.display().to_string())?;
+    let s0 = s.clone();
     let fraw = read_or_empty(fp)?;
     let mut f: toml::Table = fraw.parse().map_err(|e| anyhow::anyhow!("{} is not valid TOML ({e}); fix it first", fp.display()))?;
     let f0 = f.clone();
     let msgs = match exe {
-        Some(e) => install_into(&mut s, e, &mut f),
+        Some(e) => install_into(&mut s, e, &mut f)?,
         None => uninstall_from(&mut s, &mut f),
     };
-    let out = serde_json::to_string_pretty(&s)? + "\n";
-    let write_settings = |s: &Value| -> Result<()> {
-        if out != raw && !(raw.trim().is_empty() && s.as_object().is_some_and(|o| o.is_empty())) {
-            write_file(sp, &raw, &out)?;
+    // Compare parsed values, not text: a no-op must not rewrite the file (formatting kept) or leave a .bak.
+    let write_settings = || -> Result<()> {
+        if s != s0 {
+            write_file(sp, &raw, &(serde_json::to_string_pretty(&s)? + "\n"))?;
         }
         Ok(())
     };
@@ -545,9 +561,9 @@ fn setup_at(sp: &Path, fp: &Path, exe: Option<&str>) -> Result<Vec<String>> {
     // Never lose the parked statusLine: install saves it first, uninstall removes it last.
     if exe.is_some() {
         write_feats()?;
-        write_settings(&s)?;
+        write_settings()?;
     } else {
-        write_settings(&s)?;
+        write_settings()?;
         write_feats()?;
     }
     Ok(msgs)
@@ -706,14 +722,14 @@ mod tests {
         let mut s = json!({"theme": "dark", "statusLine": prev});
         let mut f = toml::Table::new();
         f.insert("serena".into(), toml::Value::Boolean(true));
-        install_into(&mut s, "/bin/8sync", &mut f);
+        install_into(&mut s, "/bin/8sync", &mut f).unwrap();
         assert_eq!(s["statusLine"]["command"], "/bin/8sync ccc statusline");
         assert_eq!(s["statusLine"]["refreshInterval"], 5);
         assert_eq!(s["subagentStatusLine"]["command"], "/bin/8sync ccc statusline --agents");
         let stored = f[PREV_KEY].as_str().unwrap().to_string();
         assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), prev);
         // idempotent: a second install must not park our own command as prev
-        install_into(&mut s, "/bin/8sync", &mut f);
+        install_into(&mut s, "/bin/8sync", &mut f).unwrap();
         assert_eq!(f[PREV_KEY].as_str(), Some(stored.as_str()));
         uninstall_from(&mut s, &mut f);
         assert_eq!(s["statusLine"], prev, "whole object restored");
@@ -726,7 +742,7 @@ mod tests {
     fn install_fresh_then_remove_and_foreign_subagent_kept() {
         let mut s = json!({"subagentStatusLine": {"type": "command", "command": "mine"}});
         let mut f = toml::Table::new();
-        install_into(&mut s, "/opt/my dir/8sync", &mut f);
+        install_into(&mut s, "/opt/my dir/8sync", &mut f).unwrap();
         assert_eq!(s["statusLine"]["command"], "'/opt/my dir/8sync' ccc statusline");
         assert_eq!(s["subagentStatusLine"]["command"], "mine");
         assert!(f.is_empty());
@@ -794,10 +810,10 @@ mod tests {
     #[test]
     fn kit_never_overrides_foreign() {
         let mut s = json!({"statusLine": {"type": "command", "command": "orca"}});
-        assert!(kit_apply(&mut s, "/bin/8sync"));
+        assert!(kit_apply(&mut s, "/bin/8sync").unwrap());
         assert_eq!(s["statusLine"]["command"], "orca");
         let mut e = json!({});
-        assert!(!kit_apply(&mut e, "/bin/8sync"));
+        assert!(!kit_apply(&mut e, "/bin/8sync").unwrap());
         assert!(is_ours(e["statusLine"]["command"].as_str().unwrap()));
     }
 
@@ -805,5 +821,62 @@ mod tests {
     fn until_and_elapsed() {
         assert_eq!((until(100, 100), until(190, 100), until(4980 + 100, 100)), ("now".to_string(), "2m".to_string(), "1h23m".to_string()));
         assert_eq!((elapsed(40), elapsed(192), elapsed(3720)), ("40s".to_string(), "3m12s".to_string(), "1h02m".to_string()));
+    }
+
+    #[test]
+    fn noop_uninstall_keeps_bytes_and_writes_no_bak() {
+        let d = std::env::temp_dir().join(format!("sl-noop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let (sp, fp) = (d.join("settings.json"), d.join("features.toml"));
+        let raw = "{\n    \"theme\": \"dark\",\n    \"env\": {\n        \"X\": \"1\"\n    }\n}\n";
+        std::fs::write(&sp, raw).unwrap();
+        uninstall_at(&sp, &fp).unwrap();
+        assert_eq!(std::fs::read_to_string(&sp).unwrap(), raw, "byte-identical");
+        assert!(!d.join("settings.json.bak-8sync").exists(), "no backup when nothing changed");
+        assert!(!fp.exists(), "no features file created");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn non_object_settings_is_err() {
+        let mut s = json!([1, 2]);
+        assert!(install_into(&mut s, "/bin/8sync", &mut toml::Table::new()).is_err());
+        assert!(kit_apply(&mut s, "/bin/8sync").is_err());
+        assert_eq!(s, json!([1, 2]), "left untouched");
+        let d = std::env::temp_dir().join(format!("sl-nonobj-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let (sp, fp) = (d.join("settings.json"), d.join("features.toml"));
+        for raw in ["[]", "42", "null"] {
+            std::fs::write(&sp, raw).unwrap();
+            assert!(setup_at(&sp, &fp, Some("/bin/8sync")).is_err(), "{raw}");
+            assert!(uninstall_at(&sp, &fp).is_err(), "{raw}");
+            assert_eq!(std::fs::read_to_string(&sp).unwrap(), raw);
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ship_active_skips_stopped_and_broken_loops() {
+        let d = std::env::temp_dir().join(format!("sl-ship2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let ship = d.join("su-code/ship");
+        for s in ["stopped-one", "broken", "live"] {
+            std::fs::create_dir_all(ship.join(s)).unwrap();
+        }
+        std::fs::write(ship.join("ACTIVE"), "stopped-one\nbroken\nlive\n").unwrap();
+        std::fs::write(ship.join("stopped-one/loop.json"), r#"{"iter":1,"max_iter":9,"stopped":"done"}"#).unwrap();
+        std::fs::write(ship.join("broken/loop.json"), "{not json").unwrap();
+        std::fs::write(ship.join("live/loop.json"), r#"{"iter":4,"max_iter":9}"#).unwrap();
+        assert_eq!(ship_active(&d), Some((4, 9)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn agent_names_are_sanitized() {
+        let v = json!({"tasks": [{"id": "a", "name": "evil\x1b]0;x\x07name", "status": "running", "startTime": 0}]});
+        let row = agents_row(&v, 1000, false).unwrap();
+        assert!(!row.chars().any(|c| c.is_control()), "{row:?}");
     }
 }

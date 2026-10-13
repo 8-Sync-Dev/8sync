@@ -647,7 +647,7 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<(
     };
     apply_kit_settings(&mut v, &exe, &skills)?;
     apply_lsp_plugins(&mut v, |bin| which::which(bin).is_ok());
-    if statusline::kit_apply(&mut v, &exe) {
+    if statusline::kit_apply(&mut v, &exe)? {
         ui::info("your own statusLine was kept: `8sync ccc statusline --install` swaps in the 8sync one and chains yours");
     }
     let out = serde_json::to_string_pretty(&v)? + "\n";
@@ -930,14 +930,22 @@ pub(super) fn write_atomic_bak(path: &Path, old: &str, new: &str) -> Result<()> 
 /// Strip 8sync hooks from the settings file at `path`. Nothing removed: nothing
 /// written. Otherwise the original goes to `settings.json.bak-8sync` and the new
 /// file replaces it by rename (a crash never leaves a half-written settings.json).
+#[cfg(test)]
 fn remove_kit_hooks_at(path: &Path) -> Result<usize> {
+    let raw = std::fs::read_to_string(path)?;
+    remove_kit_hooks_from(path, &raw)
+}
+
+/// Strip hooks from the current content of `path`; `orig` is the content from before this run
+/// (the backup source, so a statusLine step that already wrote the backup is not clobbered).
+fn remove_kit_hooks_from(path: &Path, orig: &str) -> Result<usize> {
     let raw = std::fs::read_to_string(path)?;
     let mut v: Value = serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", path.display()))?;
     let n = strip_kit_hooks(&mut v);
     if n == 0 {
         return Ok(0);
     }
-    write_atomic_bak(path, &raw, &(serde_json::to_string_pretty(&v)? + "\n"))?;
+    write_atomic_bak(path, orig, &(serde_json::to_string_pretty(&v)? + "\n"))?;
     Ok(n)
 }
 
@@ -945,16 +953,26 @@ fn remove_kit_hooks_at(path: &Path) -> Result<usize> {
 /// uninstalling 8sync. The guard fails closed (`onFailure: "block"`), so a hook left
 /// pointing at a missing binary would block every Bash/Edit call.
 fn remove_kit_hooks(env: &Env) -> Result<()> {
-    let path = claude_dir(env).join("settings.json");
-    let (sp, fp) = (path.clone(), statusline::features(&env.home));
-    for m in statusline::uninstall_at(&sp, &fp)? {
-        ui::ok(&m);
+    remove_kit_hooks_in(&claude_dir(env).join("settings.json"), &statusline::features(&env.home))
+}
+
+fn remove_kit_hooks_in(path: &Path, fp: &Path) -> Result<()> {
+    // Read the original before any write: the .bak-8sync must hold it, whichever step writes first.
+    let orig = std::fs::read_to_string(path).unwrap_or_default();
+    match statusline::uninstall_at(path, fp) {
+        Ok(msgs) => {
+            for m in msgs {
+                ui::ok(&m);
+            }
+        }
+        // Non-fatal: a broken features.toml or statusLine must not keep the guard hooks in place.
+        Err(e) => ui::warn(&format!("statusline not restored: {e:#}")),
     }
     if !path.is_file() {
         ui::info("no ~/.claude/settings.json — nothing to remove");
         return Ok(());
     }
-    match remove_kit_hooks_at(&path)? {
+    match remove_kit_hooks_from(path, &orig)? {
         0 => ui::info(&format!("no 8sync hooks in {} — nothing changed", path.display())),
         n => {
             ui::ok(&format!("removed {n} 8sync hook(s) from {} (your own hooks kept; backup: settings.json.bak-8sync)", path.display()));
@@ -1854,6 +1872,26 @@ mod tests {
         assert_eq!(remove_kit_hooks_at(&p).unwrap(), 0);
         assert_eq!(std::fs::read_to_string(&p).unwrap(), again);
         assert!(!d.join("settings.json.bak-8sync").exists(), "no backup when nothing changed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn kit_remove_survives_corrupt_features_toml() {
+        let d = std::env::temp_dir().join(format!("kit-rm-corrupt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let (p, fp) = (d.join("settings.json"), d.join("features.toml"));
+        let mut v = json!({"theme": "dark", "statusLine": {"type": "command", "command": "/x/8sync ccc statusline"}});
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        let before = serde_json::to_string_pretty(&v).unwrap() + "\n";
+        std::fs::write(&p, &before).unwrap();
+        std::fs::write(&fp, "this is = [not toml").unwrap();
+        remove_kit_hooks_in(&p, &fp).expect("statusline failure must not abort the run");
+        let after: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert!(strip_kit_hooks(&mut after.clone()) == 0, "hooks removed");
+        assert_eq!(after["theme"], "dark");
+        assert_eq!(std::fs::read_to_string(&fp).unwrap(), "this is = [not toml", "corrupt features left alone");
+        assert_eq!(std::fs::read_to_string(d.join("settings.json.bak-8sync")).unwrap(), before, "backup holds the original");
         let _ = std::fs::remove_dir_all(&d);
     }
 

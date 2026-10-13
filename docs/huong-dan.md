@@ -59,7 +59,7 @@ Claude Code sessions · /home/you/works/du-an
 8sync ccc statusline --uninstall   # gỡ, khôi phục statusLine cũ nếu có
 ```
 
-- Dòng 1: model, ngữ cảnh (thanh 10 ô, đỏ khi >80%), giới hạn 5h/7d kèm `↻ còn bao lâu`, chi phí, `+dòng/-dòng`. Dòng 2: nhánh git (`*` nếu có thay đổi), PR, tasks, việc nền, cảnh báo watchdog, loop, `🚢 grant`.
+- Dòng 1: model, ngữ cảnh (thanh 10 ô, đỏ khi >80%), giới hạn 5h/7d kèm `↻ còn bao lâu`, chi phí, `+dòng/-dòng`. Dòng 2: nhánh git (`*` nếu có thay đổi), PR, tasks, cảnh báo watchdog, loop, `🚢 grant`.
 - Nếu anh đã có `statusLine` riêng (ví dụ Orca), 8sync lưu nó thành `statusLine_prev` trong `~/.config/8sync/features.toml` và chạy nối tiếp: output của nó thành dòng cuối. `8sync ccc kit` không bao giờ ghi đè statusLine có sẵn.
 
 ## 4. Giao việc trọn gói trong Claude Code
