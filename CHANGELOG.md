@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **ccc JSON surfaces** (`docs/hq-ui-contract.md` section 4): `8sync ccc . show <name> --json` / `8sync show <name> --json` (adds `last_users`, `last_text`, `tasks`, `files`, masked), `8sync ccc kit status --json`, `8sync ccc login-kind [--json]` (presence checks only, never prints a token or email). Every ccc/ls JSON output now carries `"schema": 1` (on each row for arrays).
 
 ## [0.77.0] — 2026-10-13
 ### Added

@@ -112,6 +112,24 @@ pub fn run(a: Args) -> Result<()> {
     let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd);
     match verb {
         "kit" if rest.iter().any(|a| a == "--remove") => remove_kit_hooks(&env),
+        "kit" if rest.first().map(String::as_str) == Some("status") => {
+            let v = kit_status_json(&env, &claude_dir(&env));
+            println!("{}", serde_json::to_string_pretty(&v)?);
+            Ok(())
+        }
+        "login-kind" => {
+            let k = login_kind(&env);
+            if rest.iter().any(|a| a == "--json") {
+                println!("{}", serde_json::to_string_pretty(&login_kind_json(&k))?);
+            } else {
+                println!("{}", login_kind_line(&k));
+            }
+            Ok(())
+        }
+        "show" => {
+            let name = rest.iter().find(|a| !a.starts_with('-')).context("usage: 8sync ccc . show <name> [--json]")?;
+            super::session_cmds::run_show(super::session_cmds::ShowArgs { name: name.clone(), engine: Some("ccc".into()), json: rest.iter().any(|a| a == "--json") })
+        }
         "kit" => {
             if let Some(i) = rest.iter().position(|a| a == "--skills-from") {
                 let dir = rest.get(i + 1).context("--skills-from needs a directory (e.g. ~/startup/8sync-startup/su-code/skills)")?;
@@ -1347,6 +1365,78 @@ fn managed_settings_present(os: &str) -> Vec<PathBuf> {
 
 // ── status ──────────────────────────────────────────────────────────────────
 
+/// Which kit hooks `settings.json` text registers (same substring tests `status` uses).
+fn kit_hook_flags(settings: &str) -> [(&'static str, bool); 6] {
+    let has = |n: &str| settings.contains(&format!("\"{n}\""));
+    [
+        ("guard", has("guard")),
+        ("verify", has("verify")),
+        ("stop_gate", settings.contains(GATE_MARKER) || has("verify-stop")),
+        ("watchdog", has("watchdog")),
+        ("ship_grant", has("ship-grant")),
+        ("session_start", has("session-start")),
+    ]
+}
+
+/// `8sync ccc kit status --json` — machine-readable twin of the kit line of `status`.
+fn kit_status_json(env: &Env, dir: &Path) -> Value {
+    let missing: Vec<&str> = KIT_FILES.iter().map(|(_, r)| *r).filter(|r| !dir.join(r).exists()).collect();
+    let settings = std::fs::read_to_string(dir.join("settings.json")).unwrap_or_default();
+    let hooks: serde_json::Map<String, Value> = kit_hook_flags(&settings).iter().map(|(k, v)| (k.to_string(), json!(v))).collect();
+    let claude = find_claude();
+    let version = claude.as_ref().and_then(|c| crate::env_detect::cmd_version(&c.display().to_string(), &["--version"])).unwrap_or_default();
+    let onoff = |b: bool| if b { "on" } else { "off" };
+    json!({
+        "schema": 1,
+        "kit_version": kit_version(env),
+        "files": { "present": KIT_FILES.len() - missing.len(), "total": KIT_FILES.len(), "missing": missing },
+        "hooks": hooks,
+        "skills": {
+            "linked": linked_bundled_skills(&env.home, &dir.join("skills")).len(),
+            "libraries": deploy::skill_libraries(&env.home).iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+        },
+        "mcp": {
+            "cbm": onoff(crate::verbs::harness::cbm::enabled(&env.home)),
+            "serena": onoff(crate::verbs::harness::serena::enabled(&env.home)),
+        },
+        "claude": { "found": claude.is_some(), "version": version },
+    })
+}
+
+/// How the user is logged in. Presence checks only: no value is read into output.
+#[derive(Debug, PartialEq, Eq)]
+struct LoginKind {
+    kind: &'static str,
+    source: &'static str,
+}
+
+fn login_kind_with(api_key_env_set: bool, claude_json: Option<&Value>) -> LoginKind {
+    if api_key_env_set {
+        return LoginKind { kind: "api-key", source: "env" };
+    }
+    if claude_json.is_some_and(|v| v["oauthAccount"].is_object()) {
+        return LoginKind { kind: "subscription", source: "claude-config" };
+    }
+    LoginKind { kind: "none", source: "unknown" }
+}
+
+fn login_kind(env: &Env) -> LoginKind {
+    let path = match std::env::var_os("CLAUDE_CONFIG_DIR") {
+        Some(d) => PathBuf::from(d).join(".claude.json"),
+        None => env.home.join(".claude.json"),
+    };
+    let cfg: Option<Value> = std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok());
+    login_kind_with(std::env::var_os("ANTHROPIC_API_KEY").is_some_and(|v| !v.is_empty()), cfg.as_ref())
+}
+
+fn login_kind_json(k: &LoginKind) -> Value {
+    json!({ "schema": 1, "kind": k.kind, "source": k.source })
+}
+
+fn login_kind_line(k: &LoginKind) -> String {
+    format!("{} ({})", k.kind, k.source)
+}
+
 fn status(env: &Env, root: &Path) -> Result<()> {
     ui::header("8sync ccc — status");
     match find_claude() {
@@ -1458,6 +1548,43 @@ fn hook(rest: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_kind_detects_without_values() {
+        let acct = json!({ "oauthAccount": { "emailAddress": "x@y.z" } });
+        assert_eq!(login_kind_with(true, Some(&acct)), LoginKind { kind: "api-key", source: "env" });
+        assert_eq!(login_kind_with(false, Some(&acct)), LoginKind { kind: "subscription", source: "claude-config" });
+        assert_eq!(login_kind_with(false, Some(&json!({}))), LoginKind { kind: "none", source: "unknown" });
+        assert_eq!(login_kind_with(false, None).kind, "none");
+        let out = login_kind_json(&login_kind_with(false, Some(&acct))).to_string();
+        assert!(!out.contains("x@y.z"));
+        assert_eq!(login_kind_json(&login_kind_with(true, None)), json!({"schema": 1, "kind": "api-key", "source": "env"}));
+        assert_eq!(login_kind_line(&login_kind_with(false, None)), "none (unknown)");
+    }
+
+    #[test]
+    fn kit_status_json_shape() {
+        let d = std::env::temp_dir().join(format!("8sync-ks-{}-{}", std::process::id(), line!()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("settings.json"), r#"{"hooks":{"x":[{"args":["ccc","hook","guard"]}]}}"#).unwrap();
+        let env = Env { home: d.clone(), xdg_config: d.join("cfg"), os_id: "x".into(), os_id_like: String::new() };
+        let v = kit_status_json(&env, &d);
+        assert_eq!(v["schema"], 1);
+        assert_eq!(v["files"]["total"], KIT_FILES.len());
+        assert_eq!(v["files"]["present"], 0);
+        assert_eq!(v["files"]["missing"].as_array().unwrap().len(), KIT_FILES.len());
+        for k in ["guard", "verify", "stop_gate", "watchdog", "ship_grant", "session_start"] {
+            assert!(v["hooks"][k].is_boolean(), "{k}");
+        }
+        assert_eq!(v["hooks"]["guard"], true);
+        assert_eq!(v["hooks"]["watchdog"], false);
+        assert!(v["skills"]["libraries"].is_array());
+        assert!(matches!(v["mcp"]["cbm"].as_str(), Some("on" | "off")));
+        assert!(matches!(v["mcp"]["serena"].as_str(), Some("on" | "off")));
+        assert!(v["claude"]["found"].is_boolean());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn kit_settings_merge_keeps_user_config_and_is_idempotent() {

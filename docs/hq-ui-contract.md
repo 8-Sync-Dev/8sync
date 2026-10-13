@@ -59,3 +59,12 @@ Retention: the journal is rotated at 5 MB (`events.1.jsonl` kept, older dropped)
   - On a claude.ai Team/Enterprise org, an Owner must enable Channels (`channelsEnabled`).
   - Set `MCP_PROTOCOL_NEGOTIATION=legacy` if the server isn't registered (MCP v2 runtime note).
 - Fallback when the channel isn't connected (no `session_reply`/heartbeat from it): the UI types the owner's message into that session's own tmux pane (`tmux send-keys -l` + Enter). It is the same as the owner typing in their terminal: the official binary is unmodified and no credential is involved. The UI shows which path delivered the message.
+
+## 4. ccc JSON surfaces
+
+Machine-readable output for IDE integrations (ZUS Sessions). Every object carries `"schema": 1`; a breaking change bumps it. Arrays (`ls`) put `schema` on each row, so old readers that ignore unknown keys keep working. Free text goes through the shared masker (`secret_mask.rs`); no command prints a token, key or account email.
+
+- `8sync ccc . ls --json`, `8sync ls [--all] --json`: array of rows (`engine, sid, name, status, title, doing, last_user, tasks_done, tasks_total, resume, ...`), each with `schema`.
+- `8sync ccc . show <name> --json` (also `8sync show <name> [--engine ccc] --json`): one row plus `last_users: [str]` (max 5), `last_text: str|null`, `tasks: [{id,title,state}]` (`state` = `pending|in_progress|done`), `files: [str]`.
+- `8sync ccc kit status --json`: `{schema, kit_version, files:{present,total,missing:[]}, hooks:{guard,verify,stop_gate,watchdog,ship_grant,session_start: bool}, skills:{linked,libraries:[]}, mcp:{cbm,serena:"on"|"off"}, claude:{found,version}}`.
+- `8sync ccc login-kind [--json]`: `{schema, kind:"subscription"|"api-key"|"none", source:"env"|"claude-config"|"unknown"}`. `api-key` when `ANTHROPIC_API_KEY` is set (presence only), else `subscription` when `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`) has an `oauthAccount`, else `none`. Plain form: `kind (source)`.
