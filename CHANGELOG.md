@@ -5,6 +5,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 ### Changed
+- **Release notes come from CHANGELOG:** the release workflow publishes the version's CHANGELOG section plus an install line, followed by GitHub's generated PR list. Before this, the notes were only the PR title. The v0.72.0 and v0.73.0 notes were rewritten the same way.
 - `taste-skill` (design-taste-frontend) refreshed from upstream Leonxlnx/taste-skill d237dd3 (MIT, LICENSE now shipped). Five plain-markdown variants are added as skills: `taste-brutalist`, `taste-minimalist`, `taste-soft`, `taste-redesign` and `taste-output`. Variants that need image generation or Google Stitch are left out.
 
 ## [0.73.0] — 2026-10-13

@@ -206,16 +206,36 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
+      # Release notes = this version's CHANGELOG section (+ install line); GitHub's
+      # generated PR list is appended below it.
+      - name: Release notes from CHANGELOG
+        shell: bash
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          v="${TAG#v}"
+          awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {f=1; next} f && /^## \[/ {exit} f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md." > notes.md
+          printf '\n---\nInstall or update: `curl -fsSL https://8-sync-dev.github.io/su-code/install | sh` · `8sync up` · then `8sync ccc kit`\n' >> notes.md
+          head -5 notes.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: dist/*
+          body_path: notes.md
           generate_release_notes: true
           fail_on_unmatched_files: true
