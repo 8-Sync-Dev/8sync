@@ -17,6 +17,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Fixed
 - HQ journal: a `SendMessage` sender that is the session's own uuid was masked to `***`, so every handoff lost its sender. The own session id now bypasses the masker, and the web falls back to the row's session for older rows.
 
+## [0.78.1] — 2026-10-13
+### Changed
+- Release size ceiling 6144 → 6272 KiB from the measured v0.78.0 linux-x86_64 asset (6,338,096 B, 46,640 B over: statusline + JSON surfaces). v0.78.0 was tagged but not published; this release carries everything listed under 0.78.0.
+
 ## [0.78.0] — 2026-10-13
 ### Added
 - **`8sync ccc statusline`: a Claude Code status line.** Row 1: model (+ effort), context bar (green below 50%, yellow 50–80%, red above 80%), 5h and 7d rate limits with reset countdown (`↻ 1h23m`, only when Claude Code sends them), session cost, `+lines/-lines`. Row 2: branch (`*` when dirty; 50 ms git budget), PR `#12 ✓/●/✗` from Claude Code's own `pr` field (no `gh` calls), tasks done/total with the current task, fresh watchdog alert, `ccc loop` iteration, `🚢 grant` while the session holds a ship grant. Respects `COLUMNS`, never fails (falls back to `8sync · <model>`).
