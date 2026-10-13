@@ -14,6 +14,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - **Guard asks before shipping:** push to `main`/`master`, tag pushes (`v1.2.3`, `--tags`, `--follow-tags`), push to an `encore` remote, `gh pr merge`, `gh release create`, `vercel --prod`, `npm|pnpm|yarn|bun|cargo publish`, `fly|flyctl|wrangler|firebase deploy`. Feature-branch pushes, PRs and dry-runs stay silent.
 
 ### Fixed
+- Watchdog: machine load is compared with the real core count from `/proc/stat`; under the service's `CPUQuota=5%`, `available_parallelism` reported 1 core, so load > 2 alerted on a 16-core box.
 - Watchdog: a RAM/CPU alert for a process that is not a known helper (e.g. `node`) no longer says "keep that helper off"; it says the watchdog only reports it.
 
 

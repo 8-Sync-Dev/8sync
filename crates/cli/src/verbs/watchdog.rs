@@ -315,6 +315,19 @@ pub fn parse_meminfo(s: &str) -> Option<(u64, u64)> {
     Some((get("MemAvailable:")?, get("MemTotal:")?))
 }
 
+/// Online CPUs from `/proc/stat` (`cpuN` lines). Not `available_parallelism`:
+/// under the service's `CPUQuota=5%` that reports 1, and load avg is machine-wide.
+pub fn parse_cores(stat: &str) -> usize {
+    stat.lines().filter(|l| l.strip_prefix("cpu").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))).count()
+}
+
+fn machine_cores() -> f64 {
+    match parse_cores(&read("/proc/stat".into())) {
+        0 => std::thread::available_parallelism().map_or(1.0, |n| n.get() as f64),
+        n => n as f64,
+    }
+}
+
 pub fn parse_loadavg(s: &str) -> Option<f64> {
     s.split_whitespace().next()?.parse().ok()
 }
@@ -811,7 +824,7 @@ impl Sampler {
             last: None,
             t0: Instant::now(),
             uid: uid_of("/proc/self"),
-            cores: std::thread::available_parallelism().map_or(1.0, |n| n.get() as f64),
+            cores: machine_cores(),
             nvidia: which::which("nvidia-smi").ok(),
             gpu_at: None,
             gpu: HashMap::new(),
@@ -1288,6 +1301,15 @@ mod tests {
         assert_eq!(parse_loadavg("49.12 30.00 20.00 3/900 1234\n"), Some(49.12));
         assert_eq!(parse_nvidia("119579, 2048\n 77, 12\nbad\n"), vec![(119579, 2048), (77, 12)]);
         assert!(parse_stat("garbage").is_none());
+    }
+
+    #[test]
+    fn cores_come_from_proc_stat_not_the_cgroup_quota() {
+        let stat = "cpu  1 2 3\ncpu0 1 2 3\ncpu1 1 2 3\ncpu15 1\nintr 5\nctxt 9\n";
+        assert_eq!(parse_cores(stat), 3);
+        assert_eq!(parse_cores(""), 0);
+        #[cfg(target_os = "linux")]
+        assert!(machine_cores() >= 1.0);
     }
 
     #[test]
