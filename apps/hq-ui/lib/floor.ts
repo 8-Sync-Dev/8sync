@@ -209,7 +209,8 @@ export function disambiguate(rows: FloorRow[]): DeskRow[] {
     seen.set(k, n);
     const dup = (count.get(k) ?? 0) > 1;
     const heading = cleanTitle(r.title) || r.name;
-    return { ...r, heading, who: dup ? `${r.name} · ${shortId(r.sid) ?? `#${n}`}` : r.name };
+    const label = shortId(r.name) ?? r.name;
+    return { ...r, heading, who: dup ? `${label} · ${shortId(r.sid) ?? `#${n}`}` : label };
   });
 }
 

@@ -43,6 +43,8 @@ mod verify;
       8sync ccc . <name> --team      same session with Claude Code agent teams on (lead + teammates; interactive)
       8sync ccc . <name> --team --panes   teammates as tmux split panes (run inside tmux)
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
+      8sync ccc . <name> --offline   no network step at all: no auto-update, installer, `claude mcp add` or download
+                                     (also `EIGHTSYNC_OFFLINE=1`; works on `new`, `.`, `kit`; `claude` must already be installed)
       8sync ccc kit --remove         take 8sync's hooks out of ~/.claude/settings.json (run before uninstalling)
       8sync ccc loop <init|tick|status|done|ls> <slug>   bounded-loop state for /ship-loop (su-code/ship/<slug>/loop.json)
       8sync ccc statusline [--agents|--install|--uninstall]   Claude Code status line (usage, branch, PR, tasks, loop, grant); chains an existing one
@@ -100,6 +102,9 @@ pub fn run(a: Args) -> Result<()> {
         Some((dot, rest)) if dot == "." => rest,
         _ => &a.rest[..],
     };
+    // `--offline` (or EIGHTSYNC_OFFLINE=1) is ours, never passed on to `claude`.
+    let (offline, args) = take_offline(args, std::env::var("EIGHTSYNC_OFFLINE").ok().as_deref());
+    let args = &args[..];
     let (verb, rest) = args.split_first().map(|(v, r)| (v.as_str(), r)).unwrap_or(("", &[][..]));
     if verb == "hook" {
         return hook(rest);
@@ -120,7 +125,7 @@ pub fn run(a: Args) -> Result<()> {
                     ui::ok(&format!("skill library registered → {}", dir.display()));
                 }
             }
-            install_kit(&env, rest.iter().any(|a| a == "--force"))
+            install_kit(&env, rest.iter().any(|a| a == "--force"), offline)
         }
         "status" => status(&env, &root),
         "policy" => policy(rest),
@@ -131,30 +136,30 @@ pub fn run(a: Args) -> Result<()> {
         "rm" => cmd_rm(&env, &root, rest.first().context("usage: 8sync ccc . rm <name>")?),
         "new" => {
             let name = rest.first().context("usage: 8sync ccc . new <name>")?;
-            prepare(&env, &root);
-            open(&env, &root, name, true, &rest[1..])
+            prepare(&env, &root, offline);
+            open(&env, &root, name, true, &rest[1..], offline)
         }
         "" => {
-            prepare(&env, &root);
+            prepare(&env, &root, offline);
             match sessions(&env, &root).load().last_used {
-                Some(name) => open(&env, &root, &name, false, &[]),
-                None => launch(Command::new(ensure_claude()?).current_dir(&root)),
+                Some(name) => open(&env, &root, &name, false, &[], offline),
+                None => launch(Command::new(ensure_claude(offline)?).current_dir(&root)),
             }
         }
         _ if verb.starts_with('-') && args.iter().any(|a| a == "--team" || a == "--panes") => {
-            prepare(&env, &root);
+            prepare(&env, &root, offline);
             match sessions(&env, &root).load().last_used {
-                Some(name) => open(&env, &root, &name, false, args),
+                Some(name) => open(&env, &root, &name, false, args, offline),
                 None => bail!("no session in this repo yet: start one with `8sync ccc . <name> --team`"),
             }
         }
         _ if verb.starts_with('-') => {
-            prepare(&env, &root);
-            launch(Command::new(ensure_claude()?).args(args).current_dir(&root))
+            prepare(&env, &root, offline);
+            launch(Command::new(ensure_claude(offline)?).args(args).current_dir(&root))
         }
         name => {
-            prepare(&env, &root);
-            open(&env, &root, name, false, rest)
+            prepare(&env, &root, offline);
+            open(&env, &root, name, false, rest, offline)
         }
     }
 }
@@ -165,14 +170,14 @@ pub fn run(a: Args) -> Result<()> {
 /// and the bundled skills are refreshed; a git repo gets the 8sync harness.
 /// Never blocks the launch — a failed step is reported and skipped.
 /// `SUSYNC_NO_AUTO_UPDATE=1` keeps the installed binary.
-fn prepare(env: &Env, root: &Path) {
+fn prepare(env: &Env, root: &Path, offline: bool) {
     if std::env::var_os("SUSYNC_NO_AUTO_UPDATE").is_none() && selfup::update_cached() {
-        if let Some(code) = update_and_rerun() {
+        if let Some(code) = auto_update(offline, update_and_rerun) {
             std::process::exit(code);
         }
     }
     if kit_version(env).as_deref() != Some(env!("CARGO_PKG_VERSION")) {
-        if let Err(e) = deploy::install_bundled_global(env).and_then(|()| install_kit(env, false)) {
+        if let Err(e) = deploy::install_bundled_global(env).and_then(|()| install_kit(env, false, offline)) {
             ui::warn(&format!("kit refresh failed: {e:#} — `8sync ccc kit` retries"));
         }
     }
@@ -181,6 +186,30 @@ fn prepare(env: &Env, root: &Path) {
             ui::warn(&format!("project harness: {e:#} — `8sync harness` repairs it"));
         }
     }
+}
+
+/// `--offline` / `EIGHTSYNC_OFFLINE=1`: split our flag out of the args and
+/// resolve it (flag or env value `1`/`true`).
+fn take_offline(args: &[String], env: Option<&str>) -> (bool, Vec<String>) {
+    let flag = args.iter().any(|a| a == "--offline");
+    let on = flag || env.is_some_and(|v| matches!(v.trim(), "1" | "true"));
+    (on, args.iter().filter(|a| *a != "--offline").cloned().collect())
+}
+
+/// The one gate before any step that spawns curl / an installer / `claude mcp`
+/// / a release download. Offline: refuse with a `skip` line, never spawn.
+fn net_allowed(offline: bool, step: &str) -> Result<()> {
+    if offline {
+        ui::skip(step, "offline (--offline / EIGHTSYNC_OFFLINE=1)");
+        bail!("offline: `{step}` needs the network");
+    }
+    Ok(())
+}
+
+/// Run the self-update (`update`) unless offline; `Some(code)` = re-ran on the new binary.
+fn auto_update(offline: bool, update: impl FnOnce() -> Option<i32>) -> Option<i32> {
+    net_allowed(offline, "auto-update").ok()?;
+    update()
 }
 
 /// Install the newer release, then run this same command on it. `None`: stay
@@ -279,11 +308,11 @@ fn team_flags(extra: &[String]) -> Result<(bool, bool, Vec<String>)> {
 
 /// Create-or-resume `name`: a fresh session takes the registry UUID and the
 /// name as its display title; once Claude Code has a transcript, resume by UUID.
-fn open(env: &Env, root: &Path, name: &str, refuse_existing: bool, extra: &[String]) -> Result<()> {
+fn open(env: &Env, root: &Path, name: &str, refuse_existing: bool, extra: &[String], offline: bool) -> Result<()> {
     let (team, panes, extra) = team_flags(extra)?;
     let extra = &extra[..];
     let s = sessions(env, root).touch(name, refuse_existing)?;
-    let claude = ensure_claude()?;
+    let claude = ensure_claude(offline)?;
     ui::info(&format!("claude · {} · {}", s.name, root.display()));
     let mut cmd = Command::new(claude);
     if team {
@@ -359,11 +388,21 @@ fn find_claude() -> Option<PathBuf> {
 }
 
 /// The installed `claude`, or install it with Anthropic's native installer
-/// (`~/.local/bin/claude`, self-updating).
-pub(crate) fn ensure_claude() -> Result<PathBuf> {
-    if let Some(p) = find_claude() {
+/// (`~/.local/bin/claude`, self-updating). Offline: only look, never install.
+pub(crate) fn ensure_claude(offline: bool) -> Result<PathBuf> {
+    ensure_claude_with(offline, find_claude, install_claude)
+}
+
+fn ensure_claude_with(offline: bool, find: impl Fn() -> Option<PathBuf>, install: impl FnOnce() -> Result<()>) -> Result<PathBuf> {
+    if let Some(p) = find() {
         return Ok(p);
     }
+    net_allowed(offline, "Claude Code installer").context("`claude` is not on PATH: install Claude Code first, then retry")?;
+    install()?;
+    find().context("Claude Code installed but `claude` was not found in ~/.local/bin")
+}
+
+fn install_claude() -> Result<()> {
     ui::step("Claude Code (official installer → ~/.local/bin/claude)");
     if cfg!(windows) {
         pkg::run_loud(
@@ -379,7 +418,7 @@ pub(crate) fn ensure_claude() -> Result<PathBuf> {
     } else {
         pkg::run_loud("sh", &["-c", "curl -fsSL https://claude.ai/install.sh | bash"])?;
     }
-    find_claude().context("Claude Code installed but `claude` was not found in ~/.local/bin")
+    Ok(())
 }
 
 // ── the kit ─────────────────────────────────────────────────────────────────
@@ -526,9 +565,15 @@ const CORE_SKILLS: [&str; 13] =
     ["ship", "ship-loop", "autopilot", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
-pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
+pub(crate) fn install_kit(env: &Env, force: bool, offline: bool) -> Result<()> {
+    install_kit_at(env, &claude_dir(env), force, offline)
+}
+
+/// Offline: every file write and the local skill linking still happen; only the
+/// MCP mirroring (`claude mcp add-json`) is skipped.
+fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<()> {
     ui::step("Claude Code kit → ~/.claude (agents · skills · verify hook · guard · stop + ask gates)");
-    let dir = claude_dir(env);
+    let dir = dir.to_path_buf();
     let stamp_path = dir.join(KIT_STAMP);
     let mut stamps: BTreeMap<String, String> = std::fs::read_to_string(&stamp_path)
         .ok()
@@ -615,9 +660,10 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
         dir.display()
     ));
 
-    if let Some(claude) = find_claude() {
+    let mcp_ok = net_allowed(offline, "MCP mirror (`claude mcp add-json`)").is_ok();
+    if let Some(claude) = find_claude().filter(|_| mcp_ok) {
         mirror_mcp(env, &claude);
-    } else {
+    } else if mcp_ok {
         ui::info("MCP: run `8sync ccc kit` again after `claude` is installed to add opted-in MCP servers (harness serena|cbm on)");
     }
     Ok(())
@@ -1817,4 +1863,45 @@ mod tests {
         assert!(team_flags(&v(&["--team", "--permission-mode", "auto"])).is_ok(), "--permission-mode is not -p");
     }
 
+
+    #[test]
+    fn offline_parses_from_flag_and_env_and_is_not_passed_to_claude() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(take_offline(&a(&["core", "--offline", "-p", "x"]), None), (true, a(&["core", "-p", "x"])));
+        assert_eq!(take_offline(&a(&["core"]), Some("1")), (true, a(&["core"])));
+        assert!(!take_offline(&a(&["core"]), None).0);
+        assert!(!take_offline(&a(&["core"]), Some("0")).0);
+    }
+
+    #[test]
+    fn offline_never_calls_the_installer_or_updater() {
+        let calls = std::cell::Cell::new(0);
+        let r = ensure_claude_with(true, || None, || { calls.set(calls.get() + 1); Ok(()) });
+        assert!(r.is_err());
+        assert_eq!(calls.get(), 0, "installer spawned while offline");
+        // an installed claude is returned untouched, online or not
+        assert!(ensure_claude_with(true, || Some(PathBuf::from("/x/claude")), || unreachable!()).is_ok());
+        assert_eq!(auto_update(true, || { calls.set(calls.get() + 1); Some(0) }), None);
+        assert_eq!(calls.get(), 0, "updater ran while offline");
+        // online still reaches the installer / updater
+        let _ = ensure_claude_with(false, || None, || { calls.set(calls.get() + 1); Ok(()) });
+        assert_eq!(auto_update(false, || { calls.set(calls.get() + 1); Some(7) }), Some(7));
+        assert_eq!(calls.get(), 2);
+        assert!(net_allowed(true, "x").is_err() && net_allowed(false, "x").is_ok());
+    }
+
+    #[test]
+    fn offline_kit_install_writes_files_without_mcp_mirroring() {
+        let tmp = std::env::temp_dir().join(format!("8sync-offline-kit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let home = tmp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let env = Env { home: home.clone(), xdg_config: home.join(".config"), os_id: String::new(), os_id_like: String::new() };
+        let dir = tmp.join("claude");
+        install_kit_at(&env, &dir, false, true).unwrap();
+        assert!(dir.join("settings.json").exists() && dir.join("CLAUDE.md").exists());
+        assert!(dir.join("agents/explore.md").exists());
+        assert!(!home.join(".claude.json").exists(), "offline kit must not touch MCP config");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

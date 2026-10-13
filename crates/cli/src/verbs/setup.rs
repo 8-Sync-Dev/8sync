@@ -325,7 +325,7 @@ pub fn run(a: Args) -> Result<()> {
             Ok(())
         })?;
         try_step("claude-code", yolo, &mut failures, || {
-            let claude = crate::verbs::ccc::ensure_claude()?;
+            let claude = crate::verbs::ccc::ensure_claude(false)?;
             ui::ok(&format!("claude {}", claude.display()));
             Ok(())
         })?;
@@ -339,7 +339,7 @@ pub fn run(a: Args) -> Result<()> {
         })?;
         // After harness-global, so the code-intelligence MCP servers it installs
         // exist when the kit copies them into Claude Code.
-        try_step("claude-kit", yolo, &mut failures, || crate::verbs::ccc::install_kit(&env, false))?;
+        try_step("claude-kit", yolo, &mut failures, || crate::verbs::ccc::install_kit(&env, false, false))?;
     }
     // `terminal` is cross-platform (winget / brew / release downloads), so it is
     // dispatched before the native-package gate below.
