@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Changed
+- `taste-skill` (design-taste-frontend) refreshed from upstream Leonxlnx/taste-skill d237dd3 (MIT, LICENSE now shipped). Five plain-markdown variants are added as skills: `taste-brutalist`, `taste-minimalist`, `taste-soft`, `taste-redesign` and `taste-output`. Variants that need image generation or Google Stitch are left out.
 
 ## [0.73.0] — 2026-10-13
 ### Added
