@@ -58,7 +58,8 @@ mod verify;
       agents   explore (haiku) · task · quick-task · reviewer · designer · verifier · researcher ·
                pm (team lead) · architect (opus, writes docs/ADR/RFC only) · qa (tests only)
       skills   /ship · /rules (is X allowed?) · /aup-audit (repo vs Usage Policy) · /sec (secrets, deps, OWASP) ·
-               /harden (Claude Code security posture) · deep-research + every bundled 8sync skill (linked to ~/.omp/skills)
+               /harden (Claude Code security posture) ·
+               /do · /ship-auto · /ship-loop · /autopilot (graded auto levels) · deep-research + every bundled 8sync skill (linked to ~/.omp/skills)
       policy   `8sync ccc policy` prints org managed settings (bypass off, deny rules, login pinned to your
                claude.ai org, marketplace allowlist, opt-in MCP allowlist, sandbox, channels); you install it with sudo
       verify   after every Edit/Write, in the background: cargo check · package typecheck/tsc · go vet;

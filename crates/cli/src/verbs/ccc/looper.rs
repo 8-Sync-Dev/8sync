@@ -34,7 +34,9 @@ fn load(p: &Path) -> Result<Value> {
 
 fn save(p: &Path, v: &Value) -> Result<()> {
     std::fs::create_dir_all(p.parent().context("no parent")?)?;
-    std::fs::write(p, serde_json::to_string_pretty(v)? + "\n")?;
+    let tmp = p.with_file_name("loop.json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(v)? + "\n")?;
+    std::fs::rename(&tmp, p)?;
     Ok(())
 }
 
@@ -46,7 +48,8 @@ fn elapsed_min(v: &Value, now: u64) -> u64 {
     now.saturating_sub(n(v, "started")) / 60
 }
 
-/// Pure: apply one tick to `v`; returns the line to print.
+/// Pure: apply one tick to `v`; returns the line to print. `digest` must be a content hash of the
+/// work state (e.g. `git diff | sha256sum`), not a file list; an empty digest never counts as stuck.
 pub(super) fn tick_state(v: &mut Value, changed: u64, digest: &str, now: u64) -> String {
     if let Some(r) = v["stopped"].as_str() {
         return format!("stop:{r}");
@@ -61,11 +64,11 @@ pub(super) fn tick_state(v: &mut Value, changed: u64, digest: &str, now: u64) ->
     }
     v["digests"] = json!(ds);
     let (max_iter, max_min) = (n(v, "max_iter"), n(v, "max_min"));
-    let reason = if iter > max_iter {
+    let reason = if iter >= max_iter {
         Some("max-iter")
-    } else if now.saturating_sub(n(v, "started")) > max_min * 60 {
+    } else if now.saturating_sub(n(v, "started")) >= max_min.saturating_mul(60) {
         Some("max-min")
-    } else if prev.as_deref() == Some(digest) {
+    } else if !digest.is_empty() && prev.as_deref() == Some(digest) {
         Some("stuck")
     } else if changed == 0 {
         Some("no-change")
@@ -114,12 +117,24 @@ fn run_at(rest: &[String], cwd: &Path, now: u64) -> Result<()> {
             if !args.iter().any(|a| a == "--force") && p.exists() && load(&p).map_or(true, |v| v["stopped"].is_null()) {
                 bail!("loop {slug} is still live ({}); finish it with `loop done` or pass --force", p.display());
             }
-            let v = json!({"slug": slug, "started": now, "max_iter": num("--max-iter", 12)?, "max_min": num("--max-min", 90)?, "iter": 0, "digests": [], "stopped": null});
+            let (max_iter, max_min) = (num("--max-iter", 12)?, num("--max-min", 90)?);
+            if max_iter == 0 || max_min == 0 {
+                bail!("--max-iter and --max-min must be at least 1");
+            }
+            let v = json!({"slug": slug, "started": now, "max_iter": max_iter, "max_min": max_min, "iter": 0, "digests": [], "stopped": null});
             save(&p, &v)?;
             println!("{}", p.display());
         }
         "tick" => {
-            let mut v = load(&p)?;
+            let mut v = match load(&p) {
+                Ok(v) => v,
+                Err(e) if p.exists() => {
+                    eprintln!("{e:#}");
+                    println!("stop:corrupt");
+                    return Ok(());
+                }
+                Err(e) => return Err(e),
+            };
             let line = tick_state(&mut v, num("--changed", 0)?, flag(args, "--digest").unwrap_or(""), now);
             save(&p, &v)?;
             println!("{line}");
@@ -136,9 +151,11 @@ fn run_at(rest: &[String], cwd: &Path, now: u64) -> Result<()> {
         }
         "done" => {
             let mut v = load(&p)?;
-            v["stopped"] = json!("done");
+            if v["stopped"].as_str().map_or(true, str::is_empty) {
+                v["stopped"] = json!("done");
+            }
             if let Some(r) = flag(args, "--reason") {
-                v["reason"] = json!(r);
+                v["note"] = json!(r);
             }
             save(&p, &v)?;
             println!("{}", status_line(&v, now));
@@ -152,8 +169,13 @@ fn ls(cwd: &Path, now: u64, json_out: bool) -> Result<()> {
     let mut rows: Vec<Value> = Vec::new();
     if let Ok(rd) = std::fs::read_dir(ship_dir(cwd)) {
         for e in rd.flatten() {
-            if let Ok(v) = load(&e.path().join("loop.json")) {
-                rows.push(v);
+            let lp = e.path().join("loop.json");
+            if !lp.exists() {
+                continue;
+            }
+            match load(&lp) {
+                Ok(v) => rows.push(v),
+                Err(_) => rows.push(json!({"slug": e.file_name().to_string_lossy(), "stopped": "corrupt"})),
             }
         }
     }
@@ -198,19 +220,50 @@ mod tests {
         run_at(&s(&["done", "a"]), &d, 103).unwrap();
         run_at(&s(&["init", "a"]), &d, 104).unwrap(); // stopped loop may be re-initialised
         assert!(path(&d, "../x").is_err());
+        assert!(run_at(&s(&["init", "z", "--max-iter", "0"]), &d, 1).is_err());
+        assert!(run_at(&s(&["init", "z", "--max-min", "0"]), &d, 1).is_err());
+    }
+
+    #[test]
+    fn bad_slugs_rejected() {
+        let d = tmp("slug");
+        for bad in ["a/b", ".x", ""] {
+            assert!(path(&d, bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn empty_digest_is_not_stuck() {
+        let mut v = fresh(12, 90);
+        assert!(tick_state(&mut v, 1, "", 1000).starts_with("continue"));
+        assert!(tick_state(&mut v, 1, "", 1000).starts_with("continue"));
+    }
+
+    #[test]
+    fn done_keeps_existing_reason_and_corrupt_is_reported() {
+        let d = tmp("corrupt");
+        run_at(&s(&["init", "c"]), &d, 0).unwrap();
+        let mut v = load(&d.join("su-code/ship/c/loop.json")).unwrap();
+        v["stopped"] = json!("stuck");
+        save(&d.join("su-code/ship/c/loop.json"), &v).unwrap();
+        run_at(&s(&["done", "c", "--reason", "why"]), &d, 1).unwrap();
+        let v = load(&d.join("su-code/ship/c/loop.json")).unwrap();
+        assert_eq!((v["stopped"].as_str(), v["note"].as_str()), (Some("stuck"), Some("why")));
+        std::fs::write(d.join("su-code/ship/c/loop.json"), "{nope").unwrap();
+        run_at(&s(&["tick", "c", "--changed", "1"]), &d, 2).unwrap(); // prints stop:corrupt, exit 0
+        assert!(run_at(&s(&["ls"]), &d, 2).is_ok());
     }
 
     #[test]
     fn tick_caps_iter_and_time() {
         let mut v = fresh(2, 90);
         assert!(tick_state(&mut v, 1, "a", 1000).starts_with("continue"));
-        assert!(tick_state(&mut v, 1, "b", 1000).starts_with("continue"));
-        assert_eq!(tick_state(&mut v, 1, "c", 1000), "stop:max-iter");
+        assert_eq!(tick_state(&mut v, 1, "b", 1000), "stop:max-iter"); // inclusive: 2nd tick stops
         assert_eq!(v["stopped"], "max-iter");
         let mut v = fresh(12, 1);
-        assert_eq!(tick_state(&mut v, 1, "a", 1000 + 61), "stop:max-min");
+        assert_eq!(tick_state(&mut v, 1, "a", 1000 + 60), "stop:max-min");
         let mut v = fresh(12, 1);
-        assert!(tick_state(&mut v, 1, "a", 1000 + 60).starts_with("continue")); // exactly at the cap is allowed
+        assert!(tick_state(&mut v, 1, "a", 1000 + 59).starts_with("continue"));
     }
 
     #[test]
@@ -239,7 +292,7 @@ mod tests {
         assert_eq!(status_line(&v, 120), "b iter=1/4 min=2/90 state=running");
         let a = load(&d.join("su-code/ship/a/loop.json")).unwrap();
         assert_eq!(status_line(&a, 120), "a iter=0/12 min=2/90 state=stopped:done");
-        assert_eq!(a["reason"], "ok");
+        assert_eq!(a["note"], "ok");
         run_at(&s(&["status", "b", "--json"]), &d, 120).unwrap();
         run_at(&s(&["ls"]), &d, 120).unwrap();
         assert!(run_at(&s(&["tick", "nope", "--changed", "1"]), &d, 1).is_err());
