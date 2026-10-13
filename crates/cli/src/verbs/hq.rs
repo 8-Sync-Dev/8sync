@@ -2578,7 +2578,10 @@ mod tests {
     use super::*;
 
     fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("hq-test-{tag}-{}-{}", std::process::id(), now()));
+        // unique per call: tests run in parallel and may share a tag within one second
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!("hq-test-{tag}-{}-{}-{n}", std::process::id(), now()));
         let _ = std::fs::remove_dir_all(&d);
         d
     }
@@ -2730,7 +2733,8 @@ mod tests {
     #[test]
     fn ui_argv_per_source() {
         let inst = AppSrc::Installed(PathBuf::from("/d/0.1.0"));
-        assert_eq!(ui_argv(&inst, true), ("node", vec!["/d/0.1.0/hq-ui/server.js".to_string()]));
+        let want = PathBuf::from("/d/0.1.0").join("hq-ui/server.js").display().to_string();
+        assert_eq!(ui_argv(&inst, true), ("node", vec![want]));
         let dev = AppSrc::Dev(PathBuf::from("/r/apps/hq-ui"));
         // never standalone/server.js for a checkout: its static assets are not next to it
         assert_eq!(ui_argv(&dev, true), ("pnpm", vec!["--dir".into(), "/r/apps/hq-ui".into(), "start".into()]));
@@ -2867,7 +2871,12 @@ mod tests {
             assert_eq!(mode_of(&f), Some(0o600));
             assert_eq!(mode_of(&p.cfg_dir), Some(0o700));
         }
+        // Backslash paths (Windows) fail the allow-list on purpose: the UI then uses its own
+        // default lookup of channel-mcp.json, so only unix gets explicit flags.
+        #[cfg(unix)]
         assert_eq!(channel_flags(&f).unwrap(), format!("--mcp-config {} --dangerously-load-development-channels server:8sync-hq", f.display()));
+        #[cfg(windows)]
+        assert_eq!(channel_flags(&f), None);
         assert_eq!(channel_flags(Path::new("/home/a b/x.json")), None);
         let _ = std::fs::remove_dir_all(&d);
     }
