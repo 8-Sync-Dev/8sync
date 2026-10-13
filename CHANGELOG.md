@@ -5,7 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
-## [0.67.0] — 2026-10-13
+## [0.67.1] — 2026-10-13
+### Changed
+- Release size ceiling 5888 → 5952 KiB from the measured v0.67.0 linux-x86_64 asset (6,030,288 B, 976 B over). v0.67.0 was tagged but not published; this release carries everything listed under 0.67.0.
+
+## [0.67.0] — 2026-10-13 (not published)
 ### Added
 - **`8sync ccc . ls` shows what every session is doing**: `● running` (a live Claude Code process holds it), `● active` (written < 2 min ago) or `○ idle`; the latest request ("ask"), the latest action ("now"), task progress (`todo 3/7 ▸ current task`, from TaskCreate/TaskUpdate/TodoWrite), messages, context tokens and model. Width-aware, secrets masked (title included), reads at most the last 256 KB of transcripts over 24 MB and smaller ones whole, on at most 8 threads (45–115 ms per repo here); a session whose scan fails shows as `unreadable` instead of vanishing. `--json` carries the same fields. `8sync . ls` (omp) uses the same view.
 - `8sync ls [--all]` (every session of this repo, or of every repo), `8sync show <name>` (last 5 requests, last answer, task checklist, files touched, resume line), `8sync guide` (Vietnamese quickstart, Claude Code first); full guide in `docs/huong-dan.md`.
