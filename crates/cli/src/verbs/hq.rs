@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::ui;
+use super::secret_mask;
 
 const DEFAULT_API: &str = "https://discord.com/api/v10";
 const WEBHOOK_NAME: &str = "8sync HQ";
@@ -117,6 +118,24 @@ pub enum Sub {
     Hook { event: String },
     /// Post the daily standup thread from local state
     Standup,
+    /// Run the local HQ web UI (turns the event journal on); `--off` turns it off
+    Ui {
+        #[arg(long, default_value_t = 8740)]
+        port: u16,
+        /// hq-ui app directory (else $EIGHTSYNC_HQ_UI_APP or the install location)
+        #[arg(long)]
+        app: Option<PathBuf>,
+        #[arg(long)]
+        no_open: bool,
+        /// turn the local event journal off (local = false) and exit
+        #[arg(long)]
+        off: bool,
+    },
+    /// Delete the local HQ data: events*.jsonl, hq.db*, channel-*.json (asks with no --yes: only lists)
+    Purge {
+        #[arg(long)]
+        yes: bool,
+    },
     /// Config presence, secret perms, channels/webhooks (masked), last errors
     #[command(alias = "doctor")]
     Status,
@@ -395,6 +414,9 @@ impl Paths {
     fn tasks(&self) -> PathBuf {
         self.state_dir.join("tasks.json")
     }
+    fn events(&self) -> PathBuf {
+        self.state_dir.join("events.jsonl")
+    }
     fn log(&self) -> PathBuf {
         self.state_dir.join("hq.log")
     }
@@ -404,6 +426,8 @@ impl Paths {
 #[serde(default)]
 struct Config {
     enabled: bool,
+    /// write the local event journal (`events.jsonl`) for `8sync hq ui`
+    local: bool,
     guild_id: String,
     owner_id: Option<String>,
     charter_message_id: Option<String>,
@@ -1523,9 +1547,9 @@ impl Env {
 
 fn read_text(stdin: bool, words: &[String]) -> Result<String> {
     let t = if stdin || words.first().map(String::as_str) == Some("-") {
-        let mut s = String::new();
-        std::io::stdin().take(1 << 20).read_to_string(&mut s)?;
-        s
+        let mut b = Vec::new();
+        std::io::stdin().take(1 << 20).read_to_end(&mut b)?;
+        String::from_utf8_lossy(&b).into_owned() // the 1 MiB cut may split a char
     } else {
         words.join(" ")
     };
@@ -1668,18 +1692,30 @@ fn run_action(env: &Env, a: Action) -> Result<()> {
 /// Never fails, never blocks Claude: errors go to the 0600 log.
 fn cmd_hook(event: &str, dry: bool) {
     let Ok(paths) = Paths::new() else { return };
-    // fast silent no-op: not configured / disabled -> no stdin read, no network
+    // fast silent no-op: not configured / nothing enabled -> no stdin read, no writes, no network
     let Some(cfg) = load_config(&paths) else { return };
-    if !cfg.enabled {
+    if !cfg.enabled && !cfg.local {
         return;
     }
     let sec = load_secrets(&paths);
     let r = (|| -> Result<()> {
-        let mut raw = String::new();
+        let mut buf = Vec::new();
         if !std::io::stdin().is_terminal() {
-            std::io::stdin().take(1 << 20).read_to_string(&mut raw)?;
+            std::io::stdin().take(1 << 20).read_to_end(&mut buf)?;
         }
+        let raw = String::from_utf8_lossy(&buf); // the 1 MiB cut may split a char
         let v: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        if cfg.local && !dry {
+            let sid = std::env::var("EIGHTSYNC_HQ_SESSION").ok();
+            if let Some(e) = journal_entry(event, &v, sid.as_deref(), now() * 1000) {
+                if let Err(e) = append_journal(&paths.events(), &e.to_string(), JOURNAL_MAX) {
+                    log_err(&paths, &sec, &format!("journal {event}: {e}"));
+                }
+            }
+        }
+        if !cfg.enabled {
+            return Ok(());
+        }
         let Some(a) = map_hook(event, &v) else { return Ok(()) };
         if lacks_team_scope(event, &v) {
             log_err(&paths, &sec, "no team_name; scoped by session");
@@ -1690,6 +1726,215 @@ fn cmd_hook(event: &str, dry: bool) {
     if let Err(e) = r {
         log_err(&paths, &sec, &format!("hook {event}: {e}"));
     }
+}
+
+// ── local event journal (docs/hq-ui-contract.md §1) ────────────────────────
+
+const JOURNAL_MAX: u64 = 5 << 20;
+const JOURNAL_TEXT: usize = 4000;
+
+/// `hq-[a-z0-9][a-z0-9-]{0,31}`
+fn hq_session_ok(s: &str) -> bool {
+    let b = s.as_bytes();
+    s.strip_prefix("hq-").is_some_and(|r| (1..=32).contains(&r.len()) && !r.starts_with('-') && r.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')) && b.len() > 3
+}
+
+/// One journal line for a hook payload, or None for events the UI does not show.
+fn journal_entry(event: &str, v: &Value, session_env: Option<&str>, ts_ms: u64) -> Option<Value> {
+    let sess = s(v, "session_id");
+    let hq_session = session_env.filter(|x| hq_session_ok(x));
+    let (mut subject, mut from, mut to, mut text) = (None, None, None, None);
+    let mut task_id = None;
+    let kind = match event.to_lowercase().as_str() {
+        k @ ("taskcreated" | "taskcompleted") => {
+            let id = s(v, "task_id");
+            if id.is_empty() {
+                return None;
+            }
+            task_id = Some(scoped_task_id(v, id));
+            subject = Some(if s(v, "task_subject").is_empty() { id } else { s(v, "task_subject") }.to_string());
+            from = Some(s(v, "teammate_name").to_string()).filter(|x| !x.is_empty());
+            if k == "taskcreated" { "task_created" } else { "task_completed" }
+        }
+        "teammateidle" => {
+            from = Some(s(v, "teammate_name").to_string()).filter(|x| !x.is_empty());
+            "teammate_idle"
+        }
+        // Bodies of Notification / Stop only for sessions started by `hq ui` (hq-*).
+        "notification" if hq_session.is_some() => {
+            text = Some(format!("{}: {}", s(v, "notification_type"), s(v, "message")));
+            "notification"
+        }
+        "sessionstart" => "session_start",
+        "sessionend" => "session_end",
+        "stop" if hq_session.is_some() => {
+            // Stop input `last_assistant_message`: https://code.claude.com/docs/en/hooks (Stop), read in ccc/gate.rs
+            text = Some(v["last_assistant_message"].as_str().filter(|m| !m.trim().is_empty())?.to_string());
+            "session_reply"
+        }
+        "posttooluse" if s(v, "tool_name") == "SendMessage" => {
+            let i = &v["tool_input"];
+            from = session_env.filter(|x| !x.is_empty()).or(Some(sess)).map(String::from);
+            to = i["to"].as_str().map(String::from);
+            text = Some(i["message"].as_str().map_or_else(|| i["message"].to_string(), String::from));
+            "session_message"
+        }
+        _ => return None,
+    };
+    let role = Persona::from_text(s(v, "teammate_name")).or_else(|| Persona::from_text(s(v, "task_subject"))).map(|p| p.key());
+    let team = Some(s(v, "team_name")).filter(|x| !x.is_empty());
+    // every free-text field goes through the shared masker before it is stored
+    let text = text.map(|t| secret_mask::mask(&t).chars().take(JOURNAL_TEXT).collect::<String>());
+    let subject = subject.map(|t| secret_mask::mask(&t).chars().take(JOURNAL_TEXT).collect::<String>());
+    let (from, to) = (from.map(|t| secret_mask::mask(&t)), to.map(|t| secret_mask::mask(&t)));
+    Some(json!({"v":1,"ts":ts_ms,"kind":kind,"session_id":sess,"hq_session":hq_session,"team":team,"cwd":s(v,"cwd"),
+        "task_id":task_id,"subject":subject,"role":role,"from":from,"to":to,"text":text}))
+}
+
+/// Append one line (0600, dir 0700); rotate to `events.1.jsonl` once the file reaches `max`.
+fn append_journal(path: &Path, line: &str, max: u64) -> Result<()> {
+    let dir = path.parent().ok_or_else(|| anyhow!("no parent dir"))?;
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    if std::fs::metadata(path).is_ok_and(|m| m.len() >= max) {
+        std::fs::rename(path, path.with_file_name("events.1.jsonl"))?;
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.append(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path)?.write_all(format!("{line}\n").as_bytes())?;
+    Ok(())
+}
+
+// ── ui ──────────────────────────────────────────────────────────────────────
+
+/// Flag > env > `<exe-dir>/../share/8sync/hq-ui` > ~/tools/su-code/apps/hq-ui.
+fn resolve_app(flag: Option<PathBuf>, env: Option<PathBuf>, exe: Option<&Path>, home: &Path) -> Result<PathBuf> {
+    if let Some(p) = flag.or(env) {
+        return if p.is_dir() { Ok(p) } else { bail!("hq-ui app dir not found: {}", p.display()) };
+    }
+    let share = exe.and_then(|e| e.parent()).map(|d| d.join("../share/8sync/hq-ui"));
+    [share, Some(home.join("tools/su-code/apps/hq-ui"))]
+        .into_iter()
+        .flatten()
+        .find(|p| p.is_dir())
+        .ok_or_else(|| anyhow!("hq-ui app not found; pass --app <dir> or set EIGHTSYNC_HQ_UI_APP"))
+}
+
+/// `v22.5.1` -> true when >= 22.5.
+fn node_ok(ver: &str) -> bool {
+    let mut n = ver.trim().trim_start_matches('v').split('.').map(|x| x.parse::<u32>().unwrap_or(0));
+    (n.next().unwrap_or(0), n.next().unwrap_or(0)) >= (22, 5)
+}
+
+const LOCAL_ON_NOTICE: &str = "HQ local journal on: hq-* sessions' messages are stored in ~/.local/state/8sync/hq (0600). Turn off: 8sync hq ui --off";
+
+/// `8sync hq ui --off`: stop writing the journal (existing files stay; `hq purge` deletes them).
+fn cmd_ui_off() -> Result<()> {
+    let paths = Paths::new()?;
+    let mut cfg = load_config(&paths).unwrap_or_default();
+    if cfg.local {
+        cfg.local = false;
+        save_config(&paths, &cfg)?;
+    }
+    ui::ok("HQ local journal off (local = false). Existing data stays until `8sync hq purge`.");
+    Ok(())
+}
+
+/// Local HQ data files under the state dir: `events*.jsonl`, `hq.db*`, `channel-*.json`.
+fn purge_targets(state_dir: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(state_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            (n.starts_with("events") && n.ends_with(".jsonl")) || n.starts_with("hq.db") || (n.starts_with("channel-") && n.ends_with(".json"))
+        })
+        .map(|e| e.path())
+        .collect();
+    v.sort();
+    v
+}
+
+fn cmd_purge(yes: bool) -> Result<()> {
+    let paths = Paths::new()?;
+    let files = purge_targets(&paths.state_dir);
+    if files.is_empty() {
+        ui::info(&format!("nothing to delete in {}", paths.state_dir.display()));
+        return Ok(());
+    }
+    for f in &files {
+        println!("{}{}", if yes { "delete " } else { "would delete " }, f.display());
+    }
+    if !yes {
+        ui::info("nothing deleted; stop `8sync hq ui`, then re-run with --yes");
+        return Ok(());
+    }
+    for f in &files {
+        std::fs::remove_file(f).with_context(|| format!("delete {}", f.display()))?;
+    }
+    ui::ok(&format!("deleted {} file(s)", files.len()));
+    Ok(())
+}
+
+fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, dry: bool) -> Result<()> {
+    let paths = Paths::new()?;
+    let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot resolve home directory"))?;
+    let app = resolve_app(app, std::env::var_os("EIGHTSYNC_HQ_UI_APP").map(PathBuf::from), std::env::current_exe().ok().as_deref(), &home)?;
+    let server = app.join(".next/standalone/server.js");
+    let (prog, args): (&str, Vec<String>) = if server.is_file() {
+        ("node", vec![server.display().to_string()])
+    } else {
+        let pm = if Command::new("pnpm").arg("--version").output().is_ok() { "pnpm" } else { "npm" };
+        let dir = app.display().to_string();
+        (pm, if pm == "pnpm" { vec!["--dir".into(), dir, "start".into()] } else { vec!["--prefix".into(), dir, "start".into()] })
+    };
+    let url = format!("http://127.0.0.1:{port}");
+    if dry {
+        println!("set local = true in {}\nHOSTNAME=127.0.0.1 PORT={port} {prog} {}\nopen {url}{}", paths.config().display(), args.join(" "), if no_open { " (skipped)" } else { "" });
+        return Ok(());
+    }
+    let out = Command::new("node").arg("--version").output().map_err(|_| anyhow!("node not found on PATH (need >= 22.5)"))?;
+    let ver = String::from_utf8_lossy(&out.stdout);
+    if !node_ok(&ver) {
+        bail!("node {} is too old (need >= 22.5)", ver.trim());
+    }
+    let mut child = Command::new(prog).args(&args).env("HOSTNAME", "127.0.0.1").env("PORT", port.to_string()).spawn().with_context(|| format!("start {prog}"))?;
+    // journal on only once the UI process exists
+    let mut cfg = load_config(&paths).unwrap_or_default();
+    if !cfg.local {
+        cfg.local = true;
+        if let Err(e) = save_config(&paths, &cfg) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(e);
+        }
+        ui::info(LOCAL_ON_NOTICE);
+    }
+    if !no_open {
+        std::thread::spawn(move || {
+            for _ in 0..60 {
+                if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                    let (o, a): (&str, &[&str]) = if cfg!(target_os = "macos") { ("open", &[]) } else if cfg!(windows) { ("cmd", &["/c", "start", ""]) } else { ("xdg-open", &[]) };
+                    let _ = Command::new(o).args(a).arg(&url).stdout(Stdio::null()).stderr(Stdio::null()).status();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        });
+    }
+    let st = child.wait()?;
+    if st.success() { Ok(()) } else { bail!("{prog} exited with {st}") }
 }
 
 // ── standup ─────────────────────────────────────────────────────────────────
@@ -1965,6 +2210,9 @@ pub fn run(a: Args) -> Result<()> {
             Ok(())
         }
         Sub::Standup => cmd_standup(dry),
+        Sub::Ui { off: true, .. } => cmd_ui_off(),
+        Sub::Ui { port, app, no_open, off: false } => cmd_ui(port, app, no_open, dry),
+        Sub::Purge { yes } => cmd_purge(yes),
         Sub::Status => cmd_status(),
         Sub::Up { repo, name, install, now } => cmd_up(repo, &name, install, now),
     }
@@ -1978,6 +2226,119 @@ mod tests {
         let d = std::env::temp_dir().join(format!("hq-test-{tag}-{}-{}", std::process::id(), now()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn journal_maps_each_event() {
+        let ts = 7;
+        let e = |ev: &str, v: Value, env: Option<&str>| journal_entry(ev, &v, env, ts);
+        let c = e("TaskCreated", json!({"session_id":"s1","team_name":"t","cwd":"/r","task_id":"3","task_subject":"[be] x","teammate_name":"backend"}), None).unwrap();
+        assert_eq!((c["kind"].as_str(), c["task_id"].as_str(), c["subject"].as_str(), c["team"].as_str(), c["role"].as_str(), c["v"].as_u64()), (Some("task_created"), Some("t:3"), Some("[be] x"), Some("t"), Some("backend"), Some(1)));
+        assert_eq!(e("TaskCompleted", json!({"task_id":"3"}), None).unwrap()["kind"], "task_completed");
+        assert!(e("TaskCreated", json!({}), None).is_none(), "no task id");
+        assert_eq!(e("TeammateIdle", json!({"teammate_name":"qa"}), None).unwrap()["kind"], "teammate_idle");
+        let n = e("Notification", json!({"notification_type":"agent_needs_input","message":"hi"}), Some("hq-a")).unwrap();
+        assert_eq!((n["kind"].as_str(), n["text"].as_str()), (Some("notification"), Some("agent_needs_input: hi")));
+        assert_eq!(e("SessionStart", json!({"session_id":"s"}), None).unwrap()["kind"], "session_start");
+        assert_eq!(e("SessionEnd", json!({"session_id":"s"}), None).unwrap()["kind"], "session_end");
+        let m = json!({"session_id":"s9","tool_name":"SendMessage","tool_input":{"to":"hq-b","message":"yo"}});
+        let a = e("PostToolUse", m.clone(), None).unwrap();
+        assert_eq!((a["kind"].as_str(), a["from"].as_str(), a["to"].as_str(), a["text"].as_str()), (Some("session_message"), Some("s9"), Some("hq-b"), Some("yo")));
+        assert_eq!(e("PostToolUse", m, Some("hq-a")).unwrap()["from"], "hq-a");
+        assert!(e("PostToolUse", json!({"tool_name":"Bash"}), None).is_none());
+        let long = e("Notification", json!({"message":"é".repeat(5000)}), Some("hq-a")).unwrap();
+        assert_eq!(long["text"].as_str().unwrap().chars().count(), 4000);
+        let r = e("Stop", json!({"session_id":"s","last_assistant_message":"hi\nkey sk-ant-api03-abcdefgh\nbye"}), Some("hq-a")).unwrap();
+        assert_eq!((r["kind"].as_str(), r["text"].as_str(), r["hq_session"].as_str()), (Some("session_reply"), Some("hi\nkey ***\nbye"), Some("hq-a")));
+        assert!(e("Stop", json!({"session_id":"s"}), None).is_none(), "no message");
+        assert!(e("SessionStart", json!({}), Some("hq-a")).unwrap()["hq_session"] == "hq-a");
+        for bad in ["hq-", "hq--a", "HQ-a", "hq-A", "x", &format!("hq-{}", "a".repeat(33))] {
+            assert!(e("SessionStart", json!({}), Some(bad)).unwrap()["hq_session"].is_null(), "{bad}");
+        }
+        assert!(e("SessionStart", json!({}), Some(&format!("hq-{}", "a".repeat(32)))).unwrap()["hq_session"].is_string());
+    }
+
+    #[test]
+    fn journal_masks_every_text_field_and_gates_bodies_on_hq_session() {
+        let e = |ev: &str, v: Value, env: Option<&str>| journal_entry(ev, &v, env, 1);
+        // non-hq sessions: no Stop / Notification body at all
+        assert!(e("Stop", json!({"last_assistant_message":"hello"}), None).is_none());
+        assert!(e("Stop", json!({"last_assistant_message":"hello"}), Some("not-hq")).is_none());
+        assert!(e("Notification", json!({"notification_type":"x","message":"hello"}), None).is_none());
+        // hq sessions: stored, masked (secret on its own line after "Here:")
+        let r = e("Stop", json!({"last_assistant_message":"Here:\nsk-ant-api03-abcdefghijkl\npassword: hunter2"}), Some("hq-a")).unwrap();
+        assert_eq!(r["text"], "Here:\n***\npassword: ***");
+        let n = e("Notification", json!({"notification_type":"t","message":"token: abc123def456"}), Some("hq-a")).unwrap();
+        assert_eq!(n["text"], "t: token: ***");
+        // SendMessage body and task subjects are masked for everyone
+        let m = e("PostToolUse", json!({"session_id":"s","tool_name":"SendMessage","tool_input":{"to":"hq-b","message":"{\"api_key\":\"hunter2abc\"}"}}), None).unwrap();
+        assert_eq!(m["text"], "{\"api_key\":\"***\"}");
+        let t = e("TaskCreated", json!({"task_id":"1","task_subject":"deploy with ghp_abcdefghijklmnop"}), None).unwrap();
+        assert_eq!(t["subject"], "deploy with ***");
+        // metadata events survive without a body
+        assert!(e("SessionEnd", json!({"session_id":"s"}), None).is_some());
+    }
+
+    #[test]
+    fn purge_targets_only_hq_data_files() {
+        let d = tmp("purge");
+        std::fs::create_dir_all(&d).unwrap();
+        for f in ["events.jsonl", "events.1.jsonl", "hq.db", "hq.db-wal", "hq.db-shm", "channel-hq-a.json", "tasks.json", "hq.log", "notes.txt"] {
+            std::fs::write(d.join(f), "x").unwrap();
+        }
+        let got: Vec<String> = purge_targets(&d).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(got, ["channel-hq-a.json", "events.1.jsonl", "events.jsonl", "hq.db", "hq.db-shm", "hq.db-wal"]);
+        assert!(purge_targets(&d.join("missing")).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn journal_appends_private_and_rotates() {
+        let d = tmp("journal");
+        let p = d.join("hq/events.jsonl");
+        append_journal(&p, "{\"a\":1}", 30).unwrap();
+        append_journal(&p, "{\"a\":2}", 30).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap().lines().count(), 2);
+        append_journal(&p, "{\"a\":3}", 10).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "{\"a\":3}\n");
+        assert_eq!(std::fs::read_to_string(d.join("hq/events.1.jsonl")).unwrap().lines().count(), 2);
+        #[cfg(unix)]
+        assert_eq!((mode_of(&p), mode_of(p.parent().unwrap())), (Some(0o600), Some(0o700)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn hook_is_a_noop_unless_local_or_enabled() {
+        // cmd_hook gates on exactly this predicate before any read or write
+        let off = Config::default();
+        assert!(!off.enabled && !off.local, "default config writes nothing");
+        let on: Config = toml::from_str("local = true").unwrap();
+        assert!(on.local && !on.enabled);
+    }
+
+    #[test]
+    fn ui_app_dir_resolution_and_config() {
+        let d = tmp("ui");
+        let (flag, env, share, dev) = (d.join("flag"), d.join("env"), d.join("bin/../share/8sync/hq-ui"), d.join("tools/su-code/apps/hq-ui"));
+        for x in [&flag, &env, &share, &dev] {
+            std::fs::create_dir_all(x).unwrap();
+        }
+        let exe = d.join("bin/8sync");
+        assert_eq!(resolve_app(Some(flag.clone()), Some(env.clone()), Some(&exe), &d).unwrap(), flag);
+        assert_eq!(resolve_app(None, Some(env.clone()), Some(&exe), &d).unwrap(), env);
+        assert_eq!(resolve_app(None, None, Some(&exe), &d).unwrap(), share);
+        assert_eq!(resolve_app(None, None, None, &d).unwrap(), dev);
+        assert!(resolve_app(Some(d.join("nope")), None, None, &d).is_err());
+        assert!(resolve_app(None, None, None, &d.join("empty")).is_err());
+        assert!(node_ok("v22.5.0") && node_ok("v24.1.2\n") && !node_ok("v22.4.9") && !node_ok("v20.0.0"));
+        let p = Paths::under(&d);
+        let mut c = load_config(&p).unwrap_or_default();
+        c.local = true;
+        save_config(&p, &c).unwrap();
+        assert!(load_config(&p).unwrap().local);
+        #[cfg(unix)]
+        assert_eq!(mode_of(&p.config()), Some(0o600));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     fn cfg_with_tags() -> Config {

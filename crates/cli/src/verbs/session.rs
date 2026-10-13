@@ -68,7 +68,7 @@ fn now() -> u64 {
 
 /// Sanitized, collision-safe key for a repo path. Readable like omp's own
 /// (`-Projects-tools-su-code`); very long paths fall back to a hash.
-fn project_key(root: &Path) -> String {
+pub(crate) fn project_key(root: &Path) -> String {
     let s = root.to_string_lossy();
     let key: String = s
         .chars()
@@ -150,37 +150,6 @@ fn launch(cwd: &Path, session_dir: &Path, fresh: bool) -> Result<()> {
     Ok(())
 }
 
-/// Best-effort omp auto-title: first line of the newest `*.jsonl` in the session
-/// dir is `{"type":"title","title":"…"}`.
-fn session_title(session_dir: &Path) -> Option<String> {
-    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
-    for entry in std::fs::read_dir(session_dir).ok()?.flatten() {
-        let p = entry.path();
-        if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-            continue;
-        }
-        let m = entry.metadata().ok()?.modified().ok()?;
-        if newest.as_ref().map(|(t, _)| m > *t).unwrap_or(true) {
-            newest = Some((m, p));
-        }
-    }
-    let (_, path) = newest?;
-    let content = std::fs::read_to_string(path).ok()?;
-    let first = content.lines().next()?;
-    let v: serde_json::Value = serde_json::from_str(first).ok()?;
-    v.get("title").and_then(|t| t.as_str()).map(|s| s.to_string())
-}
-
-fn ago(secs: u64, now: u64) -> String {
-    let d = now.saturating_sub(secs);
-    match d {
-        0..=59 => format!("{d}s ago"),
-        60..=3599 => format!("{}m ago", d / 60),
-        3600..=86_399 => format!("{}h ago", d / 3600),
-        _ => format!("{}d ago", d / 86_400),
-    }
-}
-
 // ── git / worktree ─────────────────────────────────────────────────────────
 
 /// Working dir for a session: its worktree when isolated, else the repo root.
@@ -224,7 +193,7 @@ fn current_branch(root: &Path) -> Result<String> {
 }
 
 /// True when the working tree at `dir` has uncommitted changes.
-fn is_dirty(dir: &Path) -> bool {
+pub(crate) fn is_dirty(dir: &Path) -> bool {
     git_out(dir, &["status", "--porcelain"]).map(|s| !s.is_empty()).unwrap_or(false)
 }
 
@@ -359,46 +328,40 @@ fn create(env: &Env, root: &Path, reg: &mut Registry, name: &str, worktree: bool
     save(env, root, reg)
 }
 
-/// `8sync . ls` / `8sync . --list` — list sessions in this repo. `json=true`
-/// emits a machine-readable array (scripting).
+/// `8sync . ls` / `8sync . --list` — list this repo's omp sessions with what
+/// each is doing (rendering in `session_view.rs`). `json=true` emits a
+/// machine-readable array (scripting).
 pub fn cmd_ls(env: &Env, root: &Path, json: bool) -> Result<()> {
+    use super::session_view as view;
     let reg = load(env, root);
-    let now = now();
+    let rows = view::omp_rows(&reg, &view::agent_cmdlines(), false, true);
+    debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry (zip below)");
     if json {
-        let arr: Vec<serde_json::Value> = reg
-            .sessions
+        let arr: Vec<serde_json::Value> = rows
             .iter()
-            .map(|s| {
-                serde_json::json!({
-                    "name": s.name,
-                    "last_used": reg.last_used.as_deref() == Some(s.name.as_str()),
-                    "last_active": s.last_active,
-                    "title": session_title(&s.session_dir),
-                    "branch": s.worktree.as_ref().map(|w| w.branch.clone()),
-                    "dirty": s.worktree.as_ref().map(|w| is_dirty(&w.path)),
-                    "worktree": s.worktree.as_ref().map(|w| w.path.clone()),
-                    "session_dir": s.session_dir,
-                })
+            .zip(&reg.sessions)
+            .map(|(r, s)| {
+                let mut v = view::row_json(r);
+                v["worktree"] = serde_json::json!(s.worktree.as_ref().map(|w| w.path.clone()));
+                v["session_dir"] = serde_json::json!(s.session_dir);
+                v
             })
             .collect();
         println!("{}", serde_json::to_string_pretty(&arr)?);
         return Ok(());
     }
-    if reg.sessions.is_empty() {
+    if rows.is_empty() {
         ui::info("no named sessions in this repo — create one: `8sync . new <name>`");
         return Ok(());
     }
     ui::header(&format!("sessions · {}", root.display()));
-    for s in &reg.sessions {
-        let star = if reg.last_used.as_deref() == Some(s.name.as_str()) { "★" } else { " " };
-        let title = session_title(&s.session_dir).unwrap_or_else(|| "(no messages yet)".to_string());
-        let loc = match &s.worktree {
-            Some(w) => format!("{}{}", w.branch, if is_dirty(&w.path) { " *dirty" } else { "" }),
-            None => "-".to_string(),
-        };
-        println!("  {star} {:<18} {:<11} {:<24} {}", s.name, ago(s.last_active, now), loc, title);
+    let (now, width, color) = (now(), view::term_width(), view::use_color());
+    for r in &rows {
+        for l in view::render(r, width, now, color) {
+            println!("{l}");
+        }
     }
-    println!("\n  resume: 8sync . <name>   ·   new: 8sync . new <name> [--worktree]   ·   merge: 8sync . merge <name>...");
+    println!("\n  8sync . <name> resume  ·  8sync . new <name> [--worktree]  ·  8sync show <name>  ·  8sync ls --all");
     Ok(())
 }
 

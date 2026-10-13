@@ -35,6 +35,8 @@ QUICK START
   8sync setup                       install harness, then ask y/N per profile
   8sync setup --community           install harness + dev-stack + bluetooth, no prompts
   8sync .                           seed su-code/* context and run `omp --continue`
+  8sync ls                          every engine's sessions here: running? doing what? (--all = every repo)
+  8sync show <name>                 one session in detail   ·   8sync guide   Vietnamese quickstart
   8sync ai \"add dark mode toggle\"   one-shot AI prompt (or resume with `8sync ai`)
   8sync find \"useAuth\"              rg + fzf preview, open at file:line
   8sync ship \"feat: dark mode\"      commit + push + open a GitHub PR
@@ -149,6 +151,15 @@ enum Cmd {
     #[command(name = "forge", alias = "forgecode")]
     Forge(verbs::forge::Args),
 
+    /// Every engine's sessions in this repo (omp · ccc · forge · feynman): status + what each is doing. `--all` = every repo
+    Ls(verbs::session_cmds::LsArgs),
+
+    /// Details of one session: last requests, last reply, task checklist, files touched, how to resume
+    Show(verbs::session_cmds::ShowArgs),
+
+    /// Short Vietnamese quickstart: sessions, ccc, hq, rules commands, /ship
+    Guide,
+
     /// Claude Code CLI with named per-repo sessions + the 8sync kit: 8sync ccc . <name>
     Ccc(verbs::ccc::Args),
 }
@@ -212,6 +223,9 @@ fn main() -> Result<()> {
         Some(Cmd::Hq(a))      => verbs::hq::run(a),
         Some(Cmd::Forge(a))   => verbs::forge::run(a),
         Some(Cmd::Ccc(a))     => verbs::ccc::run(a),
+        Some(Cmd::Ls(a))      => verbs::session_cmds::run_ls(a),
+        Some(Cmd::Show(a))    => verbs::session_cmds::run_show(a),
+        Some(Cmd::Guide)      => verbs::session_cmds::run_guide(),
     }
 }
 

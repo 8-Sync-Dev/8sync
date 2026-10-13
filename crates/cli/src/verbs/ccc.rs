@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 
 use crate::env_detect::Env;
 use crate::verbs::skill::deploy;
-use crate::verbs::uuid_sessions::{self, Store};
+use crate::verbs::uuid_sessions::Store;
 use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
@@ -35,7 +35,10 @@ mod verify;
       8sync ccc . ls                 list sessions in this repo
       8sync ccc . new <name>         create a session (refuses an existing name)
       8sync ccc . rm <name>          remove a session and its transcript
+      8sync ccc . <name> --team      same session with Claude Code agent teams on (lead + teammates; interactive)
+      8sync ccc . <name> --team --panes   teammates as tmux split panes (run inside tmux)
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
+      8sync ccc kit --remove         take 8sync's hooks out of ~/.claude/settings.json (run before uninstalling)
       8sync ccc status               claude binary, login, kit, managed settings, MCP and sessions
       8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]
                                      print a recommended managed-settings.json (never installs it)
@@ -97,14 +100,12 @@ pub fn run(a: Args) -> Result<()> {
     let cwd = std::env::current_dir().context("no cwd")?;
     let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd);
     match verb {
+        "kit" if rest.iter().any(|a| a == "--remove") => remove_kit_hooks(&env),
         "kit" => install_kit(&env, rest.iter().any(|a| a == "--force")),
         "status" => status(&env, &root),
         "policy" => policy(rest),
         "ls" | "list" => {
-            ui::header("8sync ccc sessions");
-            ui::info(&format!("project: {}", root.display()));
-            print_sessions(&sessions(&env, &root));
-            Ok(())
+            print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
         }
         "rm" => cmd_rm(&env, &root, rest.first().context("usage: 8sync ccc . rm <name>")?),
         "new" => {
@@ -117,6 +118,13 @@ pub fn run(a: Args) -> Result<()> {
             match sessions(&env, &root).load().last_used {
                 Some(name) => open(&env, &root, &name, false, &[]),
                 None => launch(Command::new(ensure_claude()?).current_dir(&root)),
+            }
+        }
+        _ if verb.starts_with('-') && args.iter().any(|a| a == "--team" || a == "--panes") => {
+            prepare(&env, &root);
+            match sessions(&env, &root).load().last_used {
+                Some(name) => open(&env, &root, &name, false, args),
+                None => bail!("no session in this repo yet: start one with `8sync ccc . <name> --team`"),
             }
         }
         _ if verb.starts_with('-') => {
@@ -194,22 +202,79 @@ fn sessions(env: &Env, root: &Path) -> Store {
     Store::new(env, root, "claude-sessions", "ccc .")
 }
 
-fn print_sessions(store: &Store) {
-    let reg = store.load();
-    if reg.sessions.is_empty() {
-        ui::info("no sessions yet — create one with `8sync ccc . <name>`");
-    } else {
-        uuid_sessions::print(&reg);
+/// `8sync ccc . ls`: per session — running?, last request, last action, task
+/// progress (rendering shared with `8sync . ls` in `session_view.rs`).
+fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
+    use super::session_view as view;
+    let reg = sessions(env, root).load();
+    let rows = view::uuid_rows(env, "ccc", &reg, &view::agent_cmdlines(), false);
+    debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry (zip below)");
+    if json {
+        let arr: Vec<Value> = rows
+            .iter()
+            .zip(&reg.sessions)
+            .map(|(r, s)| {
+                let mut v = view::row_json(r);
+                v["id"] = json!(s.conversation_id);
+                v
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&arr)?);
+        return Ok(());
     }
+    if rows.is_empty() {
+        ui::info("no sessions yet — create one with `8sync ccc . <name>`");
+        return Ok(());
+    }
+    ui::header(&format!("Claude Code sessions · {}", root.display()));
+    let (now, width, color) = (view::now_secs(), view::term_width(), view::use_color());
+    for r in &rows {
+        for l in view::render(r, width, now, color) {
+            println!("{l}");
+        }
+    }
+    println!("\n  8sync ccc . <name> resume  ·  8sync ccc . new <name>  ·  8sync show <name> --engine ccc  ·  8sync ls --all");
+    Ok(())
+}
+
+/// 8sync's own flags on `ccc . <name>`: `--team` turns on Claude Code agent teams for
+/// this launch only (env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1, never written to a
+/// settings file), `--panes` shows teammates as tmux split panes (`teammateMode`).
+/// https://code.claude.com/docs/en/agent-teams — interactive only: `-p` spawns no teammates.
+fn team_flags(extra: &[String]) -> Result<(bool, bool, Vec<String>)> {
+    let team = extra.iter().any(|a| a == "--team");
+    let panes = extra.iter().any(|a| a == "--panes");
+    let rest: Vec<String> = extra.iter().filter(|a| *a != "--team" && *a != "--panes").cloned().collect();
+    // Any short-option cluster containing `p` (`-pc`, also `-xp`) counts as print:
+    // refusing too much is the safe direction for an interactive-only feature.
+    let is_print = |a: &String| {
+        a == "--print" || a.starts_with("--print=") || (a.starts_with('-') && !a.starts_with("--") && a.contains('p'))
+    };
+    if (team || panes) && rest.iter().any(is_print) {
+        bail!("--team needs an interactive session: Claude Code spawns no teammates with -p/--print");
+    }
+    Ok((team || panes, panes, rest))
 }
 
 /// Create-or-resume `name`: a fresh session takes the registry UUID and the
 /// name as its display title; once Claude Code has a transcript, resume by UUID.
 fn open(env: &Env, root: &Path, name: &str, refuse_existing: bool, extra: &[String]) -> Result<()> {
+    let (team, panes, extra) = team_flags(extra)?;
+    let extra = &extra[..];
     let s = sessions(env, root).touch(name, refuse_existing)?;
     let claude = ensure_claude()?;
     ui::info(&format!("claude · {} · {}", s.name, root.display()));
     let mut cmd = Command::new(claude);
+    if team {
+        cmd.env("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1");
+        if panes && std::env::var_os("TMUX").is_some() {
+            cmd.args(["--settings", r#"{"teammateMode":"tmux"}"#]);
+        } else if panes {
+            ui::warn("--panes needs tmux (run inside a tmux session); teammates stay in-process");
+        }
+        ui::info("agent team on · ask the lead e.g. \"spawn 3 teammates: backend (agent task), qa (agent qa), reviewer (agent reviewer); each owns different files\"");
+        ui::info("teammates: ↑/↓ select · Enter open/message · x stop · Ctrl+T task list · 3–5 teammates; cost grows per teammate");
+    }
     if transcripts(env, &s.conversation_id).next().is_some() {
         cmd.args(["--resume", &s.conversation_id]);
     } else {
@@ -648,7 +713,11 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
                 "type": "command",
                 "command": exe,
                 "args": ["ccc", "hook", "guard"],
-                "timeout": 30
+                "timeout": 30,
+                // Fail closed (Claude Code 2.1.295+, https://code.claude.com/docs/en/hooks):
+                // if the guard can't start, crashes, times out or prints bad JSON, the tool
+                // call is blocked instead of running unguarded. Older versions ignore the key.
+                "onFailure": "block"
             }]
         }),
     );
@@ -662,24 +731,101 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             json!({ "hooks": [{ "type": "command", "command": exe, "args": ["hq", "hook", ev], "async": true, "timeout": 15 }] }),
         );
     }
+    // Terminal-mode replies for the local journal; separate group from `ccc hook verify-stop`.
+    upsert_hook_group(
+        hooks,
+        "Stop",
+        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["hq", "hook", "Stop"], "async": true, "timeout": 15 }] }),
+    );
+    // Agent-to-agent messages for the local journal (`hq hook` ignores other PostToolUse tools).
+    upsert_hook_group(
+        hooks,
+        "PostToolUse",
+        json!({ "matcher": "SendMessage", "hooks": [{ "type": "command", "command": exe, "args": ["hq", "hook", "PostToolUse"], "async": true, "timeout": 15 }] }),
+    );
     Ok(())
 }
 
-const HQ_EVENTS: [&str; 4] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification"];
+const HQ_EVENTS: [&str; 6] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification", "SessionStart", "SessionEnd"];
 
-/// Which 8sync hook a matcher group carries: `hook verify` / `hook guard` for
-/// the native commands, the first sentence of a gate prompt (`8sync gate: stop`).
+/// Which 8sync hook one hook entry is: `hook verify` / `hook guard` for the
+/// native commands, the first sentence of a gate prompt (`8sync gate: stop`).
+fn entry_role(h: &Value) -> Option<String> {
+    if let Some(a) = h["args"].as_array().filter(|a| a.len() >= 3 && a[0] == "ccc" && a[1] == "hook") {
+        return a[2].as_str().map(|r| format!("hook {r}"));
+    }
+    if let Some(a) = h["args"].as_array().filter(|a| a.len() == 3 && a[0] == "hq" && a[1] == "hook") {
+        return a[2].as_str().map(|r| format!("hq {r}"));
+    }
+    let p = h["prompt"].as_str().filter(|p| p.starts_with(GATE_MARKER))?;
+    Some(p.split('.').next().unwrap_or(p).to_string())
+}
+
+/// Which 8sync hook a matcher group carries (its first 8sync entry).
 fn hook_role(g: &Value) -> Option<String> {
-    g["hooks"].as_array()?.iter().find_map(|h| {
-        if let Some(a) = h["args"].as_array().filter(|a| a.len() >= 3 && a[0] == "ccc" && a[1] == "hook") {
-            return a[2].as_str().map(|r| format!("hook {r}"));
+    g["hooks"].as_array()?.iter().find_map(entry_role)
+}
+
+/// Drop every 8sync hook *entry* (`entry_role`) from a parsed `settings.json`.
+/// A group left with no entries is dropped, so is an empty event; a group that
+/// also holds the user's own hooks keeps them. Returns how many entries went.
+fn strip_kit_hooks(v: &mut Value) -> usize {
+    let Some(hooks) = v.get_mut("hooks").and_then(Value::as_object_mut) else { return 0 };
+    let mut removed = 0;
+    for groups in hooks.values_mut() {
+        let Some(arr) = groups.as_array_mut() else { continue };
+        arr.retain_mut(|g| {
+            let Some(entries) = g.get_mut("hooks").and_then(Value::as_array_mut) else { return true };
+            let before = entries.len();
+            entries.retain(|h| entry_role(h).is_none());
+            removed += before - entries.len();
+            before == entries.len() || !entries.is_empty()
+        });
+    }
+    hooks.retain(|_, g| g.as_array().is_none_or(|a| !a.is_empty()));
+    removed
+}
+
+/// Strip 8sync hooks from the settings file at `path`. Nothing removed: nothing
+/// written. Otherwise the original goes to `settings.json.bak-8sync` and the new
+/// file replaces it by rename (a crash never leaves a half-written settings.json).
+fn remove_kit_hooks_at(path: &Path) -> Result<usize> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut v: Value = serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", path.display()))?;
+    let n = strip_kit_hooks(&mut v);
+    if n == 0 {
+        return Ok(0);
+    }
+    let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    std::fs::write(path.with_file_name(format!("{name}.bak-8sync")), &raw).context("write backup")?;
+    let tmp = path.with_file_name(format!("{name}.tmp-8sync"));
+    std::fs::write(&tmp, serde_json::to_string_pretty(&v)? + "\n")?;
+    if let Ok(m) = std::fs::metadata(path) {
+        let _ = std::fs::set_permissions(&tmp, m.permissions());
+    }
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })?;
+    Ok(n)
+}
+
+/// `8sync ccc kit --remove`: take 8sync's hooks out of ~/.claude/settings.json before
+/// uninstalling 8sync. The guard fails closed (`onFailure: "block"`), so a hook left
+/// pointing at a missing binary would block every Bash/Edit call.
+fn remove_kit_hooks(env: &Env) -> Result<()> {
+    let path = claude_dir(env).join("settings.json");
+    if !path.is_file() {
+        ui::info("no ~/.claude/settings.json — nothing to remove");
+        return Ok(());
+    }
+    match remove_kit_hooks_at(&path)? {
+        0 => ui::info(&format!("no 8sync hooks in {} — nothing changed", path.display())),
+        n => {
+            ui::ok(&format!("removed {n} 8sync hook(s) from {} (your own hooks kept; backup: settings.json.bak-8sync)", path.display()));
+            ui::info("agents, skills and the CLAUDE.md block stay; delete them by hand if you want them gone");
         }
-        if let Some(a) = h["args"].as_array().filter(|a| a.len() == 3 && a[0] == "hq" && a[1] == "hook") {
-            return a[2].as_str().map(|r| format!("hq {r}"));
-        }
-        let p = h["prompt"].as_str().filter(|p| p.starts_with(GATE_MARKER))?;
-        Some(p.split('.').next().unwrap_or(p).to_string())
-    })
+    }
+    Ok(())
 }
 
 /// Replace 8sync's group with the same role for `event` in place (or append
@@ -1020,9 +1166,7 @@ fn status(env: &Env, root: &Path) -> Result<()> {
         ui::ok(&format!("managed settings: {}", names.join(", ")));
     }
     println!();
-    ui::info(&format!("sessions in {}:", root.display()));
-    print_sessions(&sessions(env, root));
-    Ok(())
+    print_sessions(env, root, false)
 }
 
 // ── hooks ───────────────────────────────────────────────────────────────────
@@ -1110,12 +1254,12 @@ mod tests {
         assert!(deny.iter().any(|r| r == "WebFetch") && deny.iter().any(|r| r == "Bash(git push -f*)"));
 
         let post = v["hooks"]["PostToolUse"].as_array().unwrap();
-        assert_eq!(post.len(), 2, "user hook kept, ours replaced in place");
+        assert_eq!(post.len(), 3, "user hook kept, ours replaced in place, hq SendMessage appended");
         assert_eq!(post[0]["hooks"][0]["command"], "prettier");
         assert_eq!(post[1]["hooks"][0]["command"], "/new/8sync");
         assert_eq!(post[1]["hooks"][0]["asyncRewake"], true, "edits never wait for the check");
         let stop = v["hooks"]["Stop"].as_array().unwrap();
-        assert_eq!(stop.len(), 1, "the retired Haiku stop gate is removed, verify-stop (native gate) appended");
+        assert_eq!(stop.len(), 2, "retired Haiku stop gate removed; verify-stop + hq Stop appended");
         assert_eq!(stop[0]["hooks"][0]["args"], json!(["ccc", "hook", "verify-stop"]));
         assert_eq!(v["disableClaudeAiConnectors"], true);
         let mut keep = json!({ "disableClaudeAiConnectors": false });
@@ -1129,6 +1273,7 @@ mod tests {
         assert_eq!(pre[0]["hooks"][0]["prompt"], format!("{ASK_GATE}{ASK_POLICY}"));
         assert_eq!(pre[1]["hooks"][0]["command"], "my-linter");
         assert_eq!(pre[2]["hooks"][0]["args"], json!(["ccc", "hook", "guard"]));
+        assert_eq!(pre[2]["hooks"][0]["onFailure"], "block", "guard fails closed");
         assert!(deny.iter().any(|r| r == "Edit(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write("))));
         assert_eq!(v["permissions"]["defaultMode"], "auto");
     }
@@ -1146,7 +1291,7 @@ mod tests {
         apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
         let stop = v["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.iter().filter(|g| g["hooks"][0]["prompt"].is_string()).count(), 0, "Haiku stop gate retired");
-        assert_eq!(stop.len(), 1);
+        assert_eq!(stop.len(), 2);
         assert_eq!(stop[0]["hooks"][0]["args"], json!(["ccc", "hook", "verify-stop"]));
         assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["model"], ASK_GATE_MODEL);
         assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["args"], json!(["ccc", "hook", "session-start"]));
@@ -1176,6 +1321,11 @@ mod tests {
             let n = v["hooks"][ev].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", ev])).count();
             assert_eq!(n, 1, "{ev} registered exactly once");
         }
+        let stop = v["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(stop.iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", "Stop"]) && g["hooks"][0]["async"] == true).count(), 1, "hq Stop once");
+        assert_eq!(stop.iter().filter(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "verify-stop"])).count(), 1, "verify-stop kept");
+        let pt = v["hooks"]["PostToolUse"].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", "PostToolUse"]) && g["matcher"] == "SendMessage").count();
+        assert_eq!(pt, 1, "SendMessage hook registered once");
         let tc = &v["hooks"]["TaskCompleted"][0]["hooks"][0];
         assert_eq!((tc["command"].as_str(), &tc["async"], &tc["timeout"]), (Some("/x/8sync"), &json!(true), &json!(15)));
         let n = v["hooks"]["Notification"].as_array().unwrap();
@@ -1312,4 +1462,81 @@ mod tests {
         assert!(managed_settings_dir("macos").unwrap().ends_with("ClaudeCode"));
         assert_eq!(managed_settings_dir("freebsd"), None);
     }
+    #[test]
+    fn kit_remove_strips_only_8sync_hooks() {
+        let mut v = json!({});
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        v["hooks"]["PreToolUse"].as_array_mut().unwrap().push(json!({"matcher": "Bash", "hooks": [{"type": "command", "command": "my-linter"}]}));
+        let n = strip_kit_hooks(&mut v);
+        assert!(n >= 5, "removed {n}");
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 1);
+        assert_eq!(pre[0]["hooks"][0]["command"], "my-linter");
+        assert!(v["hooks"].get("TaskCreated").is_none(), "empty events dropped");
+        assert_eq!(strip_kit_hooks(&mut v), 0, "idempotent");
+    }
+
+    #[test]
+    fn kit_remove_strips_hq_groups_and_keeps_user_hooks_in_mixed_groups() {
+        let mut v = json!({});
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        for ev in ["Stop", "PostToolUse", "SessionStart"] {
+            assert!(v["hooks"][ev].as_array().unwrap().iter().any(|g| hook_role(g).is_some_and(|r| r.starts_with("hq "))), "{ev} has an hq group");
+        }
+        // a user hook sharing a group with an 8sync hook
+        let g = v["hooks"]["Stop"].as_array_mut().unwrap().iter_mut().find(|g| hook_role(g).is_some_and(|r| r.starts_with("hq "))).unwrap();
+        g["hooks"].as_array_mut().unwrap().push(json!({"type": "command", "command": "my-notify"}));
+        v["hooks"]["PostToolUse"].as_array_mut().unwrap().push(json!({"matcher": "Edit", "hooks": [{"type": "command", "command": "mine"}]}));
+        assert!(strip_kit_hooks(&mut v) >= 3);
+        for ev in ["Stop", "PostToolUse", "SessionStart"] {
+            let groups = v["hooks"].get(ev).and_then(|g| g.as_array()).cloned().unwrap_or_default();
+            assert!(groups.iter().all(|g| hook_role(g).is_none()), "{ev}: no 8sync entry left");
+        }
+        let stop = v["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!((stop.len(), stop[0]["hooks"].as_array().unwrap().len(), stop[0]["hooks"][0]["command"].as_str()), (1, 1, Some("my-notify")));
+        assert_eq!(v["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
+        assert!(v["hooks"].get("SessionStart").is_none());
+    }
+
+    #[test]
+    fn kit_remove_file_is_atomic_backed_up_and_skips_when_clean() {
+        let d = std::env::temp_dir().join(format!("kit-rm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("settings.json");
+        let mut v = json!({"theme": "dark"});
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        let before = serde_json::to_string_pretty(&v).unwrap() + "\n";
+        std::fs::write(&p, &before).unwrap();
+        assert!(remove_kit_hooks_at(&p).unwrap() >= 5);
+        assert_eq!(std::fs::read_to_string(d.join("settings.json.bak-8sync")).unwrap(), before);
+        assert!(!d.join("settings.json.tmp-8sync").exists());
+        let after: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(after["theme"], "dark");
+        // nothing left to remove: no write, file bytes and mtime-independent content unchanged
+        let again = std::fs::read_to_string(&p).unwrap();
+        std::fs::remove_file(d.join("settings.json.bak-8sync")).unwrap();
+        assert_eq!(remove_kit_hooks_at(&p).unwrap(), 0);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), again);
+        assert!(!d.join("settings.json.bak-8sync").exists(), "no backup when nothing changed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn team_flags_are_consumed_and_refuse_print() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (t, p, rest) = team_flags(&v(&["--team", "--model", "opus"])).unwrap();
+        assert!(t && !p);
+        assert_eq!(rest, v(&["--model", "opus"]));
+        let (t, p, rest) = team_flags(&v(&["--panes"])).unwrap();
+        assert!(t && p && rest.is_empty(), "--panes implies --team");
+        let (t, _, rest) = team_flags(&v(&["-p", "hi"])).unwrap();
+        assert!(!t && rest.len() == 2, "plain -p passes through");
+        assert!(team_flags(&v(&["--team", "-p", "hi"])).is_err());
+        assert!(team_flags(&v(&["--team", "--print"])).is_err());
+        assert!(team_flags(&v(&["--team", "-pc"])).is_err());
+        assert!(team_flags(&v(&["--team", "--print=json"])).is_err());
+        assert!(team_flags(&v(&["--team", "--permission-mode", "auto"])).is_ok(), "--permission-mode is not -p");
+    }
+
 }
