@@ -120,6 +120,18 @@ pub struct Config {
     /// Helpers that are legitimately heavy while indexing (LSPs, codegraph): alert, never kill.
     pub warn_only: Vec<String>,
     pub watch: Vec<String>,
+    pub build: Vec<String>,
+    /// Under machine pressure, session processes above this CPU% get `renice 19` + `ionice -c3`.
+    pub auto_renice: bool,
+    pub renice_cpu_pct: f64,
+    pub renice_after_secs: f64,
+    /// PSI (`/proc/pressure/*`, avg10 %): earlier than MemAvailable/load.
+    pub psi_mem_full_pct: f64,
+    pub psi_io_full_pct: f64,
+    pub psi_cpu_some_pct: f64,
+    /// Machine GPU (AMD sysfs; NVIDIA is measured per process via nvidia-smi): warn above these.
+    pub gpu_vram_pct: f64,
+    pub gpu_busy_pct: f64,
 }
 
 impl Default for Config {
@@ -151,6 +163,18 @@ impl Default for Config {
                 "codegraph", "tsserver", "rust-analyzer", "typescript-language-server", "gopls", "pyright-langserver",
                 "basedpyright-langserver",
             ]),
+            build: v(&[
+                "cargo", "rustc", "rust-lld", "ld", "ld.lld", "mold", "collect2", "cc", "cc1", "cc1plus", "clang", "gcc", "g++",
+                "go", "tsc", "esbuild", "vite", "webpack", "next", "turbo", "make", "ninja", "cmake", "gradle", "mvn",
+            ]),
+            auto_renice: true,
+            renice_cpu_pct: 25.0,
+            renice_after_secs: 6.0,
+            psi_mem_full_pct: 5.0,
+            psi_io_full_pct: 20.0,
+            psi_cpu_some_pct: 70.0,
+            gpu_vram_pct: 90.0,
+            gpu_busy_pct: 98.0,
             watch: v(&["node", "bun", "python", "python3", "uv", "uvx", "npx", "deno", "java"]),
         }
     }
@@ -180,6 +204,15 @@ roots = [\"claude\", \"omp\"]
 helpers = [\"codebase-memory-mcp\", \"serena\", \"headroom\", \"codegraph\", \"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
 # helpers that index heavily by design: alert only, never killed
 warn_only = [\"codegraph\", \"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
+# under pressure (low MemAvailable, high load or PSI), session processes above renice_cpu_pct
+# get renice 19 + ionice idle (they keep running, the desktop stays responsive)
+auto_renice = true
+renice_cpu_pct = 25.0
+psi_mem_full_pct = 5.0       # /proc/pressure/memory full avg10
+psi_io_full_pct = 20.0       # /proc/pressure/io full avg10
+psi_cpu_some_pct = 70.0      # /proc/pressure/cpu some avg10
+gpu_vram_pct = 90.0          # AMD (sysfs) machine VRAM: warn above
+gpu_busy_pct = 98.0
 watch = [\"node\", \"bun\", \"python\", \"python3\", \"uv\", \"uvx\", \"npx\", \"deno\", \"java\"]
 ";
 
@@ -227,6 +260,17 @@ impl Config {
         l("helpers", &mut c.helpers);
         l("warn_only", &mut c.warn_only);
         l("watch", &mut c.watch);
+        l("build", &mut c.build);
+        f("renice_cpu_pct", &mut c.renice_cpu_pct);
+        f("renice_after_secs", &mut c.renice_after_secs);
+        f("psi_mem_full_pct", &mut c.psi_mem_full_pct);
+        f("psi_io_full_pct", &mut c.psi_io_full_pct);
+        f("psi_cpu_some_pct", &mut c.psi_cpu_some_pct);
+        f("gpu_vram_pct", &mut c.gpu_vram_pct);
+        f("gpu_busy_pct", &mut c.gpu_busy_pct);
+        if let Some(b) = t.get("auto_renice").and_then(|x| x.as_bool()) {
+            c.auto_renice = b;
+        }
         c
     }
 
@@ -328,6 +372,50 @@ fn machine_cores() -> f64 {
     }
 }
 
+/// `/proc/pressure/*`: (some avg10, full avg10).
+pub fn parse_psi(s: &str) -> (f64, f64) {
+    let avg10 = |kind: &str| {
+        s.lines()
+            .find(|l| l.starts_with(kind))
+            .and_then(|l| l.split_whitespace().find_map(|f| f.strip_prefix("avg10=")))
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
+    };
+    (avg10("some"), avg10("full"))
+}
+
+/// AMD (amdgpu sysfs): (busy %, VRAM used %) from `gpu_busy_percent`, `mem_info_vram_used/_total`.
+pub fn parse_amdgpu(busy: &str, used: &str, total: &str) -> Option<(f64, f64)> {
+    let b = busy.trim().parse::<f64>().ok()?;
+    let u = used.trim().parse::<f64>().ok().unwrap_or(0.0);
+    let t = total.trim().parse::<f64>().ok().filter(|t| *t > 0.0);
+    Some((b, t.map_or(0.0, |t| u / t * 100.0)))
+}
+
+/// The busiest readable GPU: AMD via sysfs; `None` if no card exposes stats.
+fn machine_gpu() -> Option<(f64, f64, String)> {
+    let mut best: Option<(f64, f64, String)> = None;
+    for e in fs::read_dir("/sys/class/drm").into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.starts_with("card") || name.contains('-') {
+            continue;
+        }
+        let d = e.path().join("device");
+        let rd = |f: &str| fs::read_to_string(d.join(f)).unwrap_or_default();
+        // reading a runtime-suspended dGPU's counters can wake it: only read active cards
+        let pm = rd("power/runtime_status");
+        if !pm.is_empty() && pm.trim() != "active" {
+            continue;
+        }
+        if let Some((b, v)) = parse_amdgpu(&rd("gpu_busy_percent"), &rd("mem_info_vram_used"), &rd("mem_info_vram_total")) {
+            if best.as_ref().is_none_or(|x| b.max(v) > x.0.max(x.1)) {
+                best = Some((b, v, format!("amdgpu {name}")));
+            }
+        }
+    }
+    best
+}
+
 pub fn parse_loadavg(s: &str) -> Option<f64> {
     s.split_whitespace().next()?.parse().ok()
 }
@@ -360,6 +448,8 @@ pub enum Kind {
     Helper,
     /// node/python/... under a session: alert only.
     Watched,
+    /// Compilers/linkers/bundlers under a session: never alerted on, reniced under pressure.
+    Build,
     Other,
 }
 
@@ -398,6 +488,9 @@ pub fn classify(names: &[String], cfg: &Config) -> (Kind, String) {
     }
     if let Some(w) = has(&cfg.watch) {
         return (Kind::Watched, w);
+    }
+    if let Some(b) = has(&cfg.build) {
+        return (Kind::Build, b);
     }
     (Kind::Other, primary)
 }
@@ -455,6 +548,7 @@ impl Sustain {
     }
 }
 
+#[derive(Default)]
 pub struct Snap {
     /// monotonic seconds
     pub now: f64,
@@ -467,6 +561,12 @@ pub struct Snap {
     pub cores: f64,
     /// the watchdog and its ancestors: never signalled
     pub protect: HashSet<u32>,
+    /// PSI avg10 %: memory full, io full, cpu some
+    pub psi_mem: f64,
+    pub psi_io: f64,
+    pub psi_cpu: f64,
+    /// busiest GPU: (busy %, VRAM used %, label); None when no GPU can be read
+    pub gpu: Option<(f64, f64, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -524,6 +624,8 @@ pub enum Act {
     Kill(u32, u64),
     /// the full quarantine list to persist
     Block(String),
+    /// lowest CPU + idle IO priority (the process keeps running)
+    Renice(u32, u64),
 }
 
 #[derive(Default)]
@@ -543,11 +645,18 @@ pub struct Engine {
     gpu: HashMap<Key, Sustain>,
     mem: Sustain,
     load: Sustain,
+    psi: Sustain,
+    gpu_sys: Sustain,
+    pressure_since: Option<f64>,
+    reniced: HashSet<Key>,
     pending: HashMap<Key, f64>,
     kills: HashMap<String, Vec<f64>>,
     pub blocked: BTreeSet<String>,
     last_id: u64,
 }
+
+/// What Claude should do when the machine is under pressure.
+const THROTTLE: &str = "the machine is under pressure: start no new parallel agents or builds; run heavy build/test on CI (push + `gh workflow run`/`gh run watch`); locally only light checks with `nice -n 19 ionice -c3` and `-j2`.";
 
 /// Remedy for any process alert: helpers get their off switch; anything else
 /// (node, python, a build) is only reported, never killed.
@@ -580,6 +689,10 @@ impl Engine {
             gpu: HashMap::new(),
             mem: Sustain::default(),
             load: Sustain::default(),
+            psi: Sustain::default(),
+            gpu_sys: Sustain::default(),
+            pressure_since: None,
+            reniced: HashSet::new(),
             pending: HashMap::new(),
             kills: HashMap::new(),
             blocked,
@@ -686,14 +799,19 @@ impl Engine {
             }
         }
 
+        self.reniced.retain(|k| live.contains(k));
         let prev = std::mem::take(&mut self.prev);
         let mut top: Option<(f64, String, u32)> = None;
+        let mut heavy: Vec<(u32, u64, String)> = Vec::new();
         for p in s.procs.iter().filter(|p| p.kind != Kind::Other) {
             let key = (p.pid, p.start);
             self.prev.insert(key, p.ticks);
             let cpu = prev.get(&key).map_or(0.0, |&t| cpu_pct(t, p.ticks, s.dt));
             if p.kind != Kind::Root && top.as_ref().is_none_or(|t| cpu > t.0) {
                 top = Some((cpu, p.name.clone(), p.pid));
+            }
+            if matches!(p.kind, Kind::Build | Kind::Watched) && p.root.is_some() && cpu >= self.cfg.renice_cpu_pct && !s.protect.contains(&p.pid) {
+                heavy.push((p.pid, p.start, p.name.clone()));
             }
             let rss_mb = p.rss / (1024 * 1024);
             let act_for = |this: &Engine| if this.may_kill(s, p) { "kill" } else { "warn" };
@@ -739,7 +857,7 @@ impl Engine {
                         out.alerts.push(a);
                     }
                 }
-                Kind::Other => {}
+                Kind::Build | Kind::Other => {}
             }
         }
 
@@ -756,6 +874,43 @@ impl Engine {
             let msg = format!("load average {:.1} (> {limit:.0} = {}x {:.0} cores) for {:.0} s{tops}", s.load, self.cfg.load_factor, s.cores, self.cfg.sys_sustain_secs);
             let a = self.alert(s, None, "load", "load1", s.load, limit, "warn", msg, "pause heavy work; check `ps -eo pid,pcpu,args --sort=-pcpu | head`.");
             out.alerts.push(a);
+        }
+        // cpu "some" is high in any parallel build: it only triggers the renice, not an alert
+        let psi_alert = s.psi_mem >= self.cfg.psi_mem_full_pct || s.psi_io >= self.cfg.psi_io_full_pct;
+        let psi_over = psi_alert || s.psi_cpu >= self.cfg.psi_cpu_some_pct;
+        if self.psi.update(s.now, psi_alert, self.cfg.sys_sustain_secs.min(20.0)) {
+            let msg = format!("machine pressure (PSI avg10): memory full {:.0}%, io full {:.0}%, cpu some {:.0}%{tops}", s.psi_mem, s.psi_io, s.psi_cpu);
+            let a = self.alert(s, None, "pressure", "psi", s.psi_mem.max(s.psi_io).max(s.psi_cpu), self.cfg.psi_mem_full_pct, "warn", msg, THROTTLE);
+            out.alerts.push(a);
+        }
+        if let Some((busy, vram, label)) = &s.gpu {
+            let over = *vram >= self.cfg.gpu_vram_pct || *busy >= self.cfg.gpu_busy_pct;
+            if self.gpu_sys.update(s.now, over, self.cfg.sys_sustain_secs) {
+                let msg = format!("GPU {label}: busy {busy:.0}%, VRAM {vram:.0}% for {:.0} s", self.cfg.sys_sustain_secs);
+                let a = self.alert(s, None, "gpu_machine", "vram_pct", *vram, self.cfg.gpu_vram_pct, "warn", msg, "stop the model/worker holding the GPU, or run it on CI / a remote box.");
+                out.alerts.push(a);
+            }
+        }
+        // soft remedy: under sustained pressure, lower the priority of busy session processes
+        let pressured = s.avail_pct < self.cfg.mem_avail_pct || s.load > limit || psi_over;
+        self.pressure_since = if pressured { self.pressure_since.or(Some(s.now)) } else { None };
+        let active = self.pressure_since.is_some_and(|t| s.now - t >= self.cfg.renice_after_secs);
+        if active && self.cfg.auto_renice && self.dry {
+            let fresh: Vec<_> = heavy.iter().filter(|(pid, start, _)| self.reniced.insert((*pid, *start))).map(|(pid, _, n)| format!("{n}({pid})")).collect();
+            if !fresh.is_empty() {
+                let msg = format!("dry-run: would renice {} busy session process(es): {}", fresh.len(), fresh.join(", "));
+                let a = self.alert(s, None, "renice", "procs", fresh.len() as f64, 0.0, "dry-run", msg, THROTTLE);
+                out.alerts.push(a);
+            }
+        } else if active && self.cfg.auto_renice {
+            let fresh: Vec<_> = heavy.into_iter().filter(|(pid, start, _)| self.reniced.insert((*pid, *start))).collect();
+            if !fresh.is_empty() {
+                let names: Vec<String> = fresh.iter().take(6).map(|(pid, _, n)| format!("{n}({pid})")).collect();
+                out.acts.extend(fresh.iter().map(|(pid, start, _)| Act::Renice(*pid, *start)));
+                let msg = format!("machine under pressure → lowered priority (nice 19, idle IO) of {} busy session process(es): {}", fresh.len(), names.join(", "));
+                let a = self.alert(s, None, "renice", "procs", fresh.len() as f64, 0.0, "reniced", msg, THROTTLE);
+                out.alerts.push(a);
+            }
         }
         out
     }
@@ -784,6 +939,7 @@ struct Sampler {
     nvidia: Option<PathBuf>,
     gpu_at: Option<Instant>,
     gpu: HashMap<u32, u64>,
+    last_gpu: Option<(f64, f64, String)>,
 }
 
 fn read(path: String) -> String {
@@ -828,6 +984,7 @@ impl Sampler {
             nvidia: which::which("nvidia-smi").ok(),
             gpu_at: None,
             gpu: HashMap::new(),
+            last_gpu: None,
         }
     }
 
@@ -909,6 +1066,10 @@ impl Sampler {
         }
         let (avail, total) = parse_meminfo(&read("/proc/meminfo".into())).unwrap_or((1, 1));
         let wall_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        // AMD sysfs reads are cheap, but the GPU barely changes in 2 s: every 5th tick
+        if self.tick % 5 == 1 {
+            self.last_gpu = machine_gpu();
+        }
         Snap {
             now: now_i.duration_since(self.t0).as_secs_f64(),
             dt,
@@ -918,6 +1079,10 @@ impl Sampler {
             load: parse_loadavg(&read("/proc/loadavg".into())).unwrap_or(0.0),
             cores: self.cores,
             protect,
+            psi_mem: parse_psi(&read("/proc/pressure/memory".into())).1,
+            psi_io: parse_psi(&read("/proc/pressure/io".into())).1,
+            psi_cpu: parse_psi(&read("/proc/pressure/cpu".into())).0,
+            gpu: self.last_gpu.clone(),
         }
     }
 }
@@ -1029,6 +1194,25 @@ fn signal(sig: &str, pid: u32, start: u64) {
     }
 }
 
+/// `renice 19` + `ionice -c3` on the very process we measured (pid-reuse guard as in `signal`).
+fn renice(pid: u32, start: u64) {
+    let same = parse_stat(&read(format!("/proc/{pid}/stat"))).is_some_and(|s| s.start == start);
+    if same && pid > 1 {
+        let q = |c: &mut Command| {
+            let _ = c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        };
+        // Linux priorities are per thread: touch every task of the process (rustc, ld, node are multithreaded)
+        let mut tids: Vec<String> = fs::read_dir(format!("/proc/{pid}/task")).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|t| t.bytes().all(|b| b.is_ascii_digit())).collect();
+        if tids.is_empty() {
+            tids.push(pid.to_string());
+        }
+        q(Command::new("renice").args(["-n", "19", "-p"]).args(&tids));
+        for t in &tids {
+            q(Command::new("ionice").args(["-c", "3", "-p", t]));
+        }
+    }
+}
+
 fn notify(a: &Alert) {
     if let Ok(mut c) = Command::new("notify-send").args(["-u", "critical", "-a", "8sync", "8sync watchdog", &a.msg]).stdin(Stdio::null()).stderr(Stdio::null()).spawn() {
         std::thread::spawn(move || {
@@ -1077,6 +1261,7 @@ fn run_loop(paths: &Paths, config: Option<&Path>, dry: bool) -> Result<()> {
             match act {
                 Act::Term(pid, start) => signal("-TERM", pid, start),
                 Act::Kill(pid, start) => signal("-KILL", pid, start),
+                Act::Renice(pid, start) => renice(pid, start),
                 Act::Block(name) => {
                     let _ = update_blocked(paths, |b| {
                         b.insert(name.clone());
@@ -1243,6 +1428,20 @@ fn status(paths: &Paths) -> Result<()> {
     };
     println!("service   {UNIT}: {svc}");
     println!("config    {} ({})", paths.config.display(), if paths.config.exists() { "present" } else { "defaults; created on first run" });
+    let nv = which::which("nvidia-smi").is_ok();
+    let nv_card = Path::new("/proc/driver/nvidia/version").exists() || fs::read_dir("/sys/bus/pci/devices").into_iter().flatten().flatten().any(|d| {
+        fs::read_to_string(d.path().join("vendor")).is_ok_and(|v| v.trim() == "0x10de") && fs::read_to_string(d.path().join("class")).is_ok_and(|c| c.starts_with("0x03"))
+    });
+    let amd = machine_gpu().map(|(b, v, l)| format!("{l} busy {b:.0}% VRAM {v:.0}%"));
+    let nvs = match (nv_card, nv) {
+        (true, true) => "NVIDIA per-process VRAM via nvidia-smi".to_string(),
+        (true, false) => "NVIDIA card present but not measured (no nvidia-smi: install the NVIDIA driver utils)".into(),
+        _ => String::new(),
+    };
+    let gpus: Vec<String> = [amd.unwrap_or_default(), nvs].into_iter().filter(|x| !x.is_empty()).collect();
+    println!("gpu       {}", if gpus.is_empty() { "none readable".into() } else { gpus.join(" · ") });
+    let (ms, mf) = parse_psi(&read("/proc/pressure/memory".into()));
+    println!("pressure  memory some {ms:.1}% full {mf:.1}% · io full {:.1}% · cpu some {:.1}% (avg10)", parse_psi(&read("/proc/pressure/io".into())).1, parse_psi(&read("/proc/pressure/cpu".into())).0);
     let blocked = read_blocked(paths);
     println!("blocked   {}", if blocked.is_empty() { "none".into() } else { blocked.into_iter().collect::<Vec<_>>().join(", ") });
     let text = fs::read_to_string(&paths.alerts).unwrap_or_default();
@@ -1283,7 +1482,7 @@ mod tests {
         let mut procs = procs;
         let roots: Vec<_> = procs.iter().map(|p| root_of(p.pid, |c| procs.iter().find(|x| x.pid == c).map(|x| x.ppid), |c| procs.iter().any(|x| x.pid == c && x.kind == Kind::Root))).collect();
         procs.iter_mut().zip(roots).for_each(|(p, r)| p.root = r);
-        Snap { now, dt: 2.0, wall_ms: 1_000_000 + (now * 1000.0) as u64, procs, avail_pct: 50.0, load: 1.0, cores: 8.0, protect: HashSet::from([1]) }
+        Snap { now, dt: 2.0, wall_ms: 1_000_000 + (now * 1000.0) as u64, procs, avail_pct: 50.0, load: 1.0, cores: 8.0, protect: HashSet::from([1]), ..Default::default() }
     }
 
     /// claude(100) → helper cbm(200) burning `ticks_per_step` ticks every 2 s step.
@@ -1301,6 +1500,67 @@ mod tests {
         assert_eq!(parse_loadavg("49.12 30.00 20.00 3/900 1234\n"), Some(49.12));
         assert_eq!(parse_nvidia("119579, 2048\n 77, 12\nbad\n"), vec![(119579, 2048), (77, 12)]);
         assert!(parse_stat("garbage").is_none());
+    }
+
+    #[test]
+    fn psi_and_amdgpu_parsers() {
+        let mem = "some avg10=7.66 avg60=8.93 avg300=6.21 total=61092211\nfull avg10=6.76 avg60=7.55 avg300=5.15 total=51328271\n";
+        assert_eq!(parse_psi(mem), (7.66, 6.76));
+        assert_eq!(parse_psi("some avg10=3.89 avg60=4.48 avg300=6.98 total=1\n"), (3.89, 0.0));
+        assert_eq!(parse_psi(""), (0.0, 0.0));
+        assert_eq!(parse_amdgpu("37\n", "536870912\n", "2147483648\n"), Some((37.0, 25.0)));
+        assert_eq!(parse_amdgpu("", "1", "2"), None, "no busy file → not an amdgpu card");
+        assert_eq!(parse_amdgpu("5", "x", "0"), Some((5.0, 0.0)));
+    }
+
+    #[test]
+    fn builds_are_reniced_once_under_pressure_never_killed() {
+        let cfg = Config::default();
+        assert_eq!(classify(&names(&["rustc"]), &cfg).0, Kind::Build);
+        assert_eq!(classify(&names(&["claude"]), &cfg).0, Kind::Root);
+        let world = |now: f64, avail: f64| {
+            let procs = vec![
+                proc(100, 1, "claude", Kind::Root, 0, 500),
+                proc(200, 100, "rustc", Kind::Build, (now as u64) * 100, 900), // ~100% CPU, under the session
+                proc(300, 1, "rustc", Kind::Build, (now as u64) * 100, 900),   // same burn, not under a session
+            ];
+            let mut s = snap(now, procs);
+            s.avail_pct = avail;
+            s
+        };
+        let run = |e: &mut Engine, avail: f64| {
+            let mut acts = Vec::new();
+            let mut kinds = Vec::new();
+            for i in 0..10 {
+                let o = e.step(&world(i as f64 * 2.0, avail));
+                acts.extend(o.acts);
+                kinds.extend(o.alerts.into_iter().map(|a| a.kind));
+            }
+            (acts, kinds)
+        };
+        let (acts, kinds) = run(&mut Engine::new(cfg.clone(), false, BTreeSet::new()), 5.0);
+        assert_eq!(acts, vec![Act::Renice(200, 2000)], "once, only the in-session build, no kill");
+        assert_eq!(kinds.iter().filter(|k| *k == "renice").count(), 1);
+        let (acts, _) = run(&mut Engine::new(cfg.clone(), false, BTreeSet::new()), 50.0);
+        assert!(acts.is_empty(), "no pressure → nothing touched");
+        let (acts, _) = run(&mut Engine::new(cfg.clone(), true, BTreeSet::new()), 5.0);
+        assert!(acts.is_empty(), "dry-run");
+        let off = Config { auto_renice: false, ..cfg };
+        assert!(run(&mut Engine::new(off, false, BTreeSet::new()), 5.0).0.is_empty());
+    }
+
+    #[test]
+    fn psi_pressure_and_machine_gpu_warn() {
+        let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+        let mut kinds = Vec::new();
+        for i in 0..20 {
+            let mut s = snap(i as f64 * 2.0, vec![proc(100, 1, "claude", Kind::Root, 0, 1)]);
+            s.psi_mem = 12.0;
+            s.gpu = Some((10.0, 95.0, "amdgpu card1".into()));
+            kinds.extend(e.step(&s).alerts.into_iter().map(|a| a.kind));
+        }
+        assert_eq!(kinds.iter().filter(|k| *k == "pressure").count(), 1);
+        assert_eq!(kinds.iter().filter(|k| *k == "gpu_machine").count(), 1);
     }
 
     #[test]
@@ -1336,7 +1596,7 @@ mod tests {
         assert_eq!(classify(&names(&["node"]), &cfg).0, Kind::Watched);
         assert_eq!(classify(&names(&["codebase-memory-mcp"]), &cfg).0, Kind::Helper);
         assert_eq!(classify(&names(&["firefox"]), &cfg).0, Kind::Other);
-        assert_eq!(classify(&names(&["cargo"]), &cfg).0, Kind::Other);
+        assert_eq!(classify(&names(&["cargo"]), &cfg).0, Kind::Build, "builds are reniced, never killed");
     }
 
     #[test]

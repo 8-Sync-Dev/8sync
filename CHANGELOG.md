@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.72.0] — 2026-10-13
+### Fixed
+- Guard: a data here-doc later in the command (`cat > report.md <<'EOF' … for … () …`) no longer turns off variable resolution, so `S=/tmp/x/scratchpad; rm -rf $S/target` stops asking (seen live in a subagent's cleanup).
+
+### Added
+- **Watchdog soft remedy + early warning:** under sustained pressure (MemAvailable, load, or PSI `/proc/pressure` memory/io full, cpu some) busy session processes — compilers, linkers, bundlers (new `build` list) and watched runtimes, above 25% CPU — get `renice 19` + `ionice -c3` once (they keep running; never killed), and Claude is told to stop parallel agents/builds and use CI. PSI gives its own `pressure` alert, earlier than MemAvailable/load.
+- **Watchdog GPU without vendor tools:** AMD GPUs are read from sysfs (`gpu_busy_percent`, `mem_info_vram_*`) and warn on busy/VRAM; `8sync watchdog status` shows the GPU sources, says when an NVIDIA card is present but unmeasured (no `nvidia-smi`), and prints PSI.
+- **Session fence (Linux, systemd --user):** `8sync ccc .` runs claude inside `8sync-ccc.slice` — shared by all ccc sessions, `MemoryHigh=70%` (soft: the kernel throttles, never kills), `CPUWeight=50`, `IOWeight=50` — so a heavy session slows down instead of freezing the desktop. Off: `EIGHTSYNC_FENCE=0` or `session_fence = false` in features.toml.
+- **Kit rules: no heavy local builds; sessions work as a team.** Heavy build/test goes to GitHub Actions (`gh workflow run` → `gh run watch` → `--log-failed`); locally only light checks under `nice -n 19 ionice -c3 -j2`; never flip repo visibility for free minutes. Sessions check `8sync ccc . ls` / ListAgents first, split overlapping work and announce shared changes via SendMessage.
+
 ## [0.71.0] — 2026-10-13
 ### Added
 - **Stop gate checks the task list:** when Claude touched its tasks (TaskCreate/TaskUpdate/TodoWrite) since the owner's last message and still has open tasks of this turn (in progress, or created since that message — older pending ones are left alone), a silent stop is blocked once with their titles ("finish them, or mark them completed/deleted, or say what you need"). A question to the owner, a hand-off, a risky action, the owner saying stop, or a second stop in a row still end the turn. Never blocks an agent-team lead (TeamCreate/SendMessage: teammates' completions are not in its transcript) or a transcript only tail-scanned (> 24 MB). Measured on a 14 MB transcript: 34–38 ms (release); 5 ms when tasks were not touched this turn.
