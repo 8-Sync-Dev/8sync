@@ -110,12 +110,19 @@ export const GROUP_ORDER: Record<FloorState, number> = {
 };
 
 export type FloorRow = Derived & {
+  /** Unique per row (engine + repo + name); names repeat across repos and engines. */
   id: string;
   /** Session name used for selection (hq name when known). */
   name: string;
   title: string;
   last_active: number | null;
   hq: boolean;
+  /** `repo` from `8sync ls` ("~/startup/x"), or the hq cwd. */
+  repo?: string | null;
+  /** ccc | omp | feynman | forge ... */
+  engine?: string | null;
+  /** 8-char session id when one is known. */
+  sid?: string | null;
 };
 
 export function sortFloor(rows: FloorRow[]): FloorRow[] {
@@ -126,3 +133,101 @@ export function sortFloor(rows: FloorRow[]): FloorRow[] {
 
 export const isOldIdle = (r: FloorRow, nowMs = Date.now()) =>
   r.state === "idle" && r.last_active != null && nowMs / 1000 - r.last_active > OLD_IDLE_SECS;
+
+// ---- display helpers (pure; tested in tests/floor.test.ts) ----
+
+// Leading emoji (with variation selectors / ZWJ joins) and an ALLCAPS tag like "TRACE:".
+const LEAD_EMOJI = /^(?:[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}\u{20E3}]|\s)+/u;
+const LEAD_TAG = /^[A-Z][A-Z0-9_-]{1,15}:\s+/;
+
+/** "🔗 TRACE: Clarify x" -> "Clarify x". Falls back to the input when nothing would remain. */
+export function cleanTitle(raw: string | null | undefined): string {
+  const t = (raw ?? "").replace(/\s+/g, " ").trim();
+  const out = t.replace(LEAD_EMOJI, "").replace(LEAD_TAG, "").trim();
+  return out || t;
+}
+
+const ENGINE: Record<string, string> = { ccc: "Claude", claude: "Claude", omp: "omp" };
+export const engineLabel = (e: string | null | undefined): string | null => (e ? (ENGINE[e] ?? e) : null);
+
+/** Last path segment: "~/startup/su-code" -> "su-code". */
+export function repoName(repo: string | null | undefined): string {
+  const r = repo?.trim().replace(/\/+$/, "");
+  if (!r) return "Khác";
+  const i = r.lastIndexOf("/");
+  return i >= 0 ? r.slice(i + 1) || r : r;
+}
+
+/** Compact Vietnamese age: "vừa xong", "12 phút", "3 giờ", "2 ngày". */
+export function ageLabel(lastActive: number | null | undefined, nowMs = Date.now()): string {
+  if (lastActive == null) return "";
+  const s = Math.max(0, nowMs / 1000 - lastActive);
+  if (s < 60) return "vừa xong";
+  if (s < 3600) return `${Math.floor(s / 60)} phút`;
+  if (s < 86400) return `${Math.floor(s / 3600)} giờ`;
+  return `${Math.floor(s / 86400)} ngày`;
+}
+
+export type DeskRow = FloorRow & {
+  /** Cleaned title for display (full title stays in `title`). */
+  heading: string;
+  /** Name shown on the desk; identical names in one repo get the 8-char id (or #n). */
+  who: string;
+};
+
+export type RepoGroup = {
+  repo: string;
+  name: string;
+  /** waiting / stalled / working: big desks on the floor strip. */
+  desks: DeskRow[];
+  /** idle / done (not older than a day): compact list. */
+  rest: DeskRow[];
+  needs: number;
+  working: number;
+};
+
+const ACTIVE = new Set<FloorState>(["waiting", "stalled", "typing", "running", "reading"]);
+const WORKING = new Set<FloorState>(["typing", "running", "reading"]);
+
+/** Annotate `who`: identical names inside one repo get a suffix so "core" x3 stays tellable. */
+export function disambiguate(rows: FloorRow[]): DeskRow[] {
+  const count = new Map<string, number>();
+  const key = (r: FloorRow) => `${r.repo ?? ""}\0${r.name}`;
+  for (const r of rows) count.set(key(r), (count.get(key(r)) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return rows.map((r) => {
+    const k = key(r);
+    const n = (seen.get(k) ?? 0) + 1;
+    seen.set(k, n);
+    const dup = (count.get(k) ?? 0) > 1;
+    const heading = cleanTitle(r.title) || r.name;
+    return { ...r, heading, who: dup ? `${r.name} · ${r.sid ?? `#${n}`}` : r.name };
+  });
+}
+
+/**
+ * Floor layout: one group per repo. Groups with someone waiting or stuck come
+ * first, then groups with work in progress, then by latest activity. Idle rows
+ * older than a day leave the groups and go to `old`.
+ */
+export function groupFloor(rows: FloorRow[], nowMs = Date.now()): { groups: RepoGroup[]; old: DeskRow[] } {
+  const all = disambiguate(sortFloor(rows));
+  const old: DeskRow[] = [];
+  const by = new Map<string, RepoGroup>();
+  for (const r of all) {
+    if (isOldIdle(r, nowMs)) {
+      old.push(r);
+      continue;
+    }
+    const repo = r.repo?.trim() || "";
+    let g = by.get(repo);
+    if (!g) by.set(repo, (g = { repo, name: repoName(repo), desks: [], rest: [], needs: 0, working: 0 }));
+    (ACTIVE.has(r.state) ? g.desks : g.rest).push(r);
+    if (r.state === "waiting" || r.state === "stalled") g.needs++;
+    if (WORKING.has(r.state)) g.working++;
+  }
+  const rank = (g: RepoGroup) => (g.needs ? 0 : g.working ? 1 : 2);
+  const latest = (g: RepoGroup) => Math.max(0, ...[...g.desks, ...g.rest].map((r) => r.last_active ?? 0));
+  const groups = [...by.values()].sort((a, b) => rank(a) - rank(b) || latest(b) - latest(a));
+  return { groups, old };
+}

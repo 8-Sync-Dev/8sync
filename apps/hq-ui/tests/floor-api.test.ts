@@ -64,6 +64,30 @@ describe("GET /api/floor", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it("carries repo/engine, unique ids for repeated names, joins hq only for Claude rows in the matching cwd", async () => {
+    const now = Date.now() / 1000;
+    run.mockResolvedValue(
+      lsOut([
+        { name: "core", engine: "omp", repo: "~/a", status: "idle", last_active: now, title: "📋 BAOCAO: x" },
+        { name: "core", engine: "ccc", repo: "~/a", status: "running", last_tool: "Edit", last_active: now },
+        { name: "core", engine: "ccc", repo: "~/b", status: "running", last_tool: "Edit", last_active: now },
+      ]),
+    );
+    const home = (await import("node:os")).homedir();
+    merged.mockResolvedValue([
+      { name: "core", label: "core", session_id: "11112222-3333", status: "needs_input", detail: "Trust?", started_at: 1, tmux: true, cwd: `${home}/b` },
+    ]);
+    const body = await (await GET(req("/api/floor", { token }))).json();
+    const rows = body.rows as { id: string; engine: string; repo: string; state: string; sid: string | null; hq: boolean }[];
+    expect(new Set(rows.map((r) => r.id)).size).toBe(3);
+    expect(rows.map((r) => [r.engine, r.repo, r.hq])).toEqual([
+      ["omp", "~/a", false],
+      ["ccc", "~/a", false],
+      ["ccc", "~/b", true],
+    ]);
+    expect(rows[2]).toMatchObject({ state: "waiting", sid: "11112222" });
+  });
+
   it("returns [] when 8sync is missing", async () => {
     run.mockResolvedValue({ ok: false, stdout: "", stderr: "ENOENT" });
     const res = await GET(req("/api/floor", { token }));

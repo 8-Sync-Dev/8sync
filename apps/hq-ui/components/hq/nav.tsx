@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRightIcon, FolderIcon, FolderPlusIcon, LayersIcon, MoonIcon, RadioIcon, SunIcon } from "lucide-react";
+import { ChevronRightIcon, FolderIcon, FolderPlusIcon, FolderXIcon, LayersIcon, MoonIcon, RadioIcon, SunIcon } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useState, useSyncExternalStore, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -56,17 +56,7 @@ export function Nav({ hq, scope, onScope }: { hq: Hq; scope: Scope; onScope: (s:
         ) : projects.data.length === 0 ? (
           <p className="px-2 py-1 text-xs text-muted-foreground">No folders yet. Add one below.</p>
         ) : (
-          <ul className="space-y-0.5">
-            {projects.data.map((p) => (
-              <ProjectItem
-                key={p.id}
-                project={p}
-                sessions={sessions.data.filter((s) => s.project_id === p.id)}
-                scope={scope}
-                onScope={onScope}
-              />
-            ))}
-          </ul>
+          <ProjectList projects={projects.data} sessions={sessions.data} scope={scope} onScope={onScope} />
         )}
 
         {unassigned.length > 0 && (
@@ -81,6 +71,50 @@ export function Nav({ hq, scope, onScope }: { hq: Hq; scope: Scope; onScope: (s:
 
       <AddProject hq={hq} onAdded={(id) => onScope({ project: id, session: null })} />
     </nav>
+  );
+}
+
+/** Projects on disk first; folders that no longer exist fold under one disclosure (open if one is selected). */
+function ProjectList({
+  projects,
+  sessions,
+  scope,
+  onScope,
+}: {
+  projects: Project[];
+  sessions: Session[];
+  scope: Scope;
+  onScope: (s: Scope) => void;
+}) {
+  const here = projects.filter((p) => !p.missing);
+  const gone = projects.filter((p) => p.missing);
+  const hasSelected = gone.some(
+    (p) => scope.project === p.id || sessions.some((s) => s.project_id === p.id && s.name === scope.session),
+  );
+  const render = (p: Project) => (
+    <ProjectItem
+      key={p.id}
+      project={p}
+      sessions={sessions.filter((s) => s.project_id === p.id)}
+      scope={scope}
+      onScope={onScope}
+    />
+  );
+  return (
+    <ul className="space-y-0.5">
+      {here.map(render)}
+      {gone.length > 0 && (
+        <li>
+          <details className="group/gone" open={hasSelected || undefined}>
+            <summary className="flex h-7 cursor-pointer list-none items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/60 [&::-webkit-details-marker]:hidden">
+              <ChevronRightIcon className="size-3 transition-transform group-open/gone:rotate-90" aria-hidden />
+              Không còn thư mục ({gone.length})
+            </summary>
+            <ul className="space-y-0.5">{gone.map(render)}</ul>
+          </details>
+        </li>
+      )}
+    </ul>
   );
 }
 
@@ -100,12 +134,16 @@ function ProjectItem({
     <li>
       <button
         type="button"
-        title={project.path}
-        className={cn(item, "h-8")}
+        title={project.missing ? `${project.path} (thư mục không còn trên máy)` : project.path}
+        className={cn(item, "h-8", project.missing && "text-muted-foreground")}
         aria-current={scope.project === project.id && scope.session == null}
         onClick={() => onScope({ project: project.id, session: null })}
       >
-        <FolderIcon className="size-4 text-muted-foreground" aria-hidden />
+        {project.missing ? (
+          <FolderXIcon className="size-4 text-muted-foreground" aria-hidden />
+        ) : (
+          <FolderIcon className="size-4 text-muted-foreground" aria-hidden />
+        )}
         <span className="flex-1 truncate">{project.name}</span>
         <Count n={active.length} />
       </button>

@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { deriveFloor, isOldIdle, sortFloor, toolOf, type FloorRow } from "@/lib/floor";
+import {
+  ageLabel,
+  cleanTitle,
+  deriveFloor,
+  disambiguate,
+  engineLabel,
+  groupFloor,
+  isOldIdle,
+  repoName,
+  sortFloor,
+  toolOf,
+  type FloorRow,
+} from "@/lib/floor";
 
 const NOW = 1_800_000_000_000;
 const ago = (s: number) => NOW / 1000 - s;
@@ -57,5 +69,79 @@ describe("ordering", () => {
     expect(isOldIdle(row("a", "idle", NOW / 1000 - 90_000), NOW)).toBe(true);
     expect(isOldIdle(row("a", "idle", NOW / 1000 - 3600), NOW)).toBe(false);
     expect(isOldIdle(row("a", "typing", 1), NOW)).toBe(false);
+  });
+});
+
+describe("display helpers", () => {
+  it.each([
+    ["🔗 TRACE: Clarify agent domain grouping", "Clarify agent domain grouping"],
+    ["💰 QUOTE: Estimate cost", "Estimate cost"],
+    ["📋 BAOCAO: Báo cáo tiến độ", "Báo cáo tiến độ"],
+    ["🖥️ APP: Run app", "Run app"],
+    ["🗓️ WEEKLY: Update weeks", "Update weeks"],
+    ["Trace copilot knowledge", "Trace copilot knowledge"],
+    ["Fix: lowercase tag stays", "Fix: lowercase tag stays"],
+    ["core", "core"],
+    ["🔗", "🔗"],
+    ["", ""],
+  ])("cleanTitle(%j) -> %j", (raw, out) => expect(cleanTitle(raw)).toBe(out));
+
+  it("engine, repo name, age", () => {
+    expect(engineLabel("ccc")).toBe("Claude");
+    expect(engineLabel("omp")).toBe("omp");
+    expect(engineLabel("feynman")).toBe("feynman");
+    expect(engineLabel(null)).toBeNull();
+    expect(repoName("~/startup/su-code/")).toBe("su-code");
+    expect(repoName("-home-x-fix")).toBe("-home-x-fix");
+    expect(repoName(null)).toBe("Khác");
+    expect(ageLabel(NOW / 1000 - 30, NOW)).toBe("vừa xong");
+    expect(ageLabel(NOW / 1000 - 600, NOW)).toBe("10 phút");
+    expect(ageLabel(NOW / 1000 - 7200, NOW)).toBe("2 giờ");
+    expect(ageLabel(NOW / 1000 - 3 * 86400, NOW)).toBe("3 ngày");
+    expect(ageLabel(null, NOW)).toBe("");
+  });
+});
+
+describe("grouping by repo", () => {
+  const r = (id: string, name: string, repo: string | null, state: FloorRow["state"], last = NOW / 1000 - 60, extra: Partial<FloorRow> = {}): FloorRow => ({
+    id, name, title: name, repo, state, label: "", caption: "", progress: null, last_active: last, hq: false, ...extra,
+  });
+
+  it("identical names in one repo get the 8-char id, else #n; other repos untouched", () => {
+    const out = disambiguate([
+      r("1", "core", "~/a", "idle", undefined, { sid: "abcd1234" }),
+      r("2", "core", "~/a", "idle"),
+      r("3", "core", "~/b", "idle"),
+      r("4", "feats", "~/a", "idle", undefined, { title: "🔗 TRACE: Clarify x" }),
+    ]);
+    expect(out.map((x) => x.who)).toEqual(["core · abcd1234", "core · #2", "core", "feats"]);
+    expect(out[3].heading).toBe("Clarify x");
+    expect(out[3].title).toBe("🔗 TRACE: Clarify x");
+  });
+
+  it("splits desks (active) from the quiet list, repos needing the owner first, old idle aside", () => {
+    const { groups, old } = groupFloor(
+      [
+        r("a1", "core", "~/a", "typing", NOW / 1000 - 5),
+        r("a2", "price", "~/a", "idle", NOW / 1000 - 600),
+        r("a3", "done", "~/a", "done", NOW / 1000 - 60),
+        r("b1", "core", "~/b", "idle", NOW / 1000 - 30),
+        r("b2", "fix", "~/b", "waiting", NOW / 1000 - 3000),
+        r("c1", "old", "~/c", "idle", NOW / 1000 - 90_000),
+        r("n1", "x", null, "running", NOW / 1000 - 1),
+      ],
+      NOW,
+    );
+    expect(groups.map((g) => g.repo)).toEqual(["~/b", "", "~/a"]);
+    const b = groups[0];
+    expect(b.needs).toBe(1);
+    expect(b.desks.map((x) => x.id)).toEqual(["b2"]);
+    expect(b.rest.map((x) => x.id)).toEqual(["b1"]);
+    const a = groups[2];
+    expect(a.working).toBe(1);
+    expect(a.desks.map((x) => x.id)).toEqual(["a1"]);
+    expect(a.rest.map((x) => x.id)).toEqual(["a3", "a2"]);
+    expect(groups[1].name).toBe("Khác");
+    expect(old.map((x) => x.id)).toEqual(["c1"]);
   });
 });

@@ -11,6 +11,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   - The sprites are drawn in the browser on a canvas: no image files, no image-generation APIs.
   - The animation runs at about 7 fps, pauses while the tab is hidden or the desk is offscreen, and shows a single frame under `prefers-reduced-motion`.
   - Data comes from the new token-gated `/api/floor` (`8sync ls --json --all` + hq sessions, 4 s cache, single flight).
+  - Desks are grouped by repo. Working, waiting and stuck sessions sit as large desks (character ~100 px) in one shared pixel room per repo. Idle and done sessions show as one line each (state, name, engine, last line, age). Repos with someone waiting or stuck come first.
+  - Each desk shows an engine badge (Claude / omp). Repeated names inside a repo get the 8-char session id (or `#n`). Leading emoji and ALLCAPS tags ("🔗 TRACE:") are hidden from titles; the full title stays in the tooltip.
+  - Waiting desks get a lime ring and a "Chờ anh" badge; stuck desks get a red ring and a "Kẹt" badge.
+- **Sidebar: projects whose folder no longer exists fold under "Không còn thư mục (N)".** `GET /api/projects` now returns `missing` per project. No data is deleted.
 - **`8sync ls --json` rows gain `last_tool` and `stalled_error`.** `last_tool` is the raw name of the latest tool. `stalled_error` is the API error that the kit's StopFailure hook recorded for that Claude session within the last 24 h.
 - **HQ UI on brand and simpler.**
   - 8 Sync mark and lime-on-near-black tokens (WCAG AA checked in light and dark); Geist and Be Vietnam Pro fonts.
