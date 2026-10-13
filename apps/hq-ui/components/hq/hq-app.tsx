@@ -1,5 +1,6 @@
 "use client";
 
+import { sessionLabel } from "@/lib/labels";
 import { MenuIcon } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -10,19 +11,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ActivityView } from "./activity-view";
 import { shortName } from "./bits";
 import { BoardView } from "./board-view";
+import { FloorView } from "./floor-view";
 import { FirstRun } from "./first-run";
 import { Nav, type Scope } from "./nav";
 import { SessionsView } from "./sessions-view";
 import { TeamView } from "./team-view";
 import { useHq } from "./use-hq";
 
-type Tab = "team" | "board" | "sessions" | "activity";
+type Tab = "floor" | "team" | "board" | "sessions" | "activity";
 const SESSION_NAME_INPUT = "start-session-name";
 
 export function HqApp({ token }: { token: string }) {
   const hq = useHq(token);
   const [scope, setScope] = useState<Scope>({ project: null, session: null });
-  const [tab, setTab] = useState<Tab>("team");
+  const [tab, setTab] = useState<Tab>("floor");
   const [target, setTarget] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
 
@@ -52,7 +54,8 @@ export function HqApp({ token }: { token: string }) {
   }, [hq.sessions.data, hq.messages.data, hq.tasks.data, scope]);
 
   const project = hq.projects.data.find((p) => p.id === scope.project);
-  const title = scope.session ? shortName(scope.session) : project ? project.name : "Everything";
+  const scoped = scope.session ? hq.sessions.data.find((x) => x.name === scope.session || x.session_id === scope.session) : undefined;
+  const title = scope.session ? (scoped ? sessionLabel(scoped) : shortName(scope.session)) : project ? project.name : "Everything";
   const subtitle = scope.session
     ? (view.sessions[0]?.cwd ?? project?.path ?? "")
     : project
@@ -124,6 +127,7 @@ export function HqApp({ token }: { token: string }) {
               </dl>
             </div>
             <TabsList variant="line" className="mt-2 h-9 gap-4 px-4 sm:px-6">
+              <TabsTrigger value="floor" className="flex-none px-0">Văn phòng</TabsTrigger>
               <TabsTrigger value="team" className="flex-none px-0">Team</TabsTrigger>
               <TabsTrigger value="board" className="flex-none px-0">
                 Board
@@ -138,6 +142,16 @@ export function HqApp({ token }: { token: string }) {
           </header>
 
           <main className="min-h-0 flex-1">
+            <TabsContent value="floor" className="h-full">
+              <FloorView
+                token={token}
+                onSelect={(name) => {
+                  onScope({ project: null, session: name });
+                  setTab("team");
+                }}
+                onStart={focusStartSession}
+              />
+            </TabsContent>
             <TabsContent value="team" className="h-full">
               <TeamView
                 hq={hq}
@@ -145,6 +159,7 @@ export function HqApp({ token }: { token: string }) {
                 sessions={view.sessions}
                 target={target}
                 onTarget={setTarget}
+                onStartSession={focusStartSession}
                 header={
                   loaded ? (
                     <FirstRun state={firstRun} onAddProject={focusAddProject} onStartSession={focusStartSession} />

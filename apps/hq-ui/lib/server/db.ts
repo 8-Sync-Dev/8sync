@@ -114,6 +114,17 @@ export function tx<T>(db: DatabaseSync, fn: () => T): T {
 
 export type ProjectRow = { id: number; path: string; name: string; added_at: number };
 
+/**
+ * Flags projects whose folder is gone (old UAT temp dirs). Read-only: the row
+ * and its sessions stay in the db, the sidebar just folds them away.
+ */
+export function withMissing<T extends { path: string }>(
+  rows: T[],
+  exists: (p: string) => boolean = fs.existsSync,
+): (T & { missing: boolean })[] {
+  return rows.map((r) => ({ ...r, missing: !exists(r.path) }));
+}
+
 /** Longest registered project path that contains `cwd`. */
 export function projectIdFor(db: DatabaseSync, cwd: string | null | undefined): number | null {
   if (!cwd) return null;
