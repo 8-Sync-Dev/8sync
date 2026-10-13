@@ -1103,10 +1103,10 @@ fn walk(cmd: &str, shell: Shell, ctx: &Ctx, mut cwd: Option<Abs>, place: Place, 
     // is not shell, and its words used to switch variable resolution off for the whole command.
     let vars_ok = shell == Shell::Bash && {
         let code = without_data_heredocs(cmd);
-        // An unquoted here-doc body still expands, and `${V:=x}` / `$((V=x))` there assign in
-        // this shell: then judge the whole text as before.
+        // `${V:=x}` / `$((V=x))` assign as a side effect of expansion (also inside an unquoted
+        // here-doc body): nothing can be resolved safely.
         let assigns = cmd.contains(":=") || cmd.contains("$((");
-        if code == cmd || assigns { straight_line(cmd, &lx.toks) } else { straight_line(&code, &lex(&code, shell).toks) }
+        !assigns && if code == cmd { straight_line(cmd, &lx.toks) } else { straight_line(&code, &lex(&code, shell).toks) }
     };
     let mut subs = lx.subs.into_iter().peekable();
     let n = lx.toks.len();
