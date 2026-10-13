@@ -32,6 +32,12 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
     let v: Value = serde_json::from_str(input).ok()?;
     let tool = v["tool_name"].as_str().unwrap_or_default();
     let ti = &v["tool_input"];
+    // Ship grants are written only by the `ship-grant` hook from the owner's real answer;
+    // a tool call that names the grant store could forge one.
+    let touched = [ti["command"].as_str(), ti["file_path"].as_str(), ti["notebook_path"].as_str(), ti["path"].as_str()];
+    if touched.into_iter().flatten().any(|t| t.contains("8sync/ccc/grants")) {
+        return Some(decision("deny", "the ship-grant store is written only by the kit's hook from the owner's answer to a \"Ship\" question. Ask that question instead."));
+    }
     let verdict = match tool {
         "Bash" | "PowerShell" => {
             let cmd = ti["command"].as_str().unwrap_or_default();
@@ -331,6 +337,12 @@ mod tests {
     fn a_ship_grant_lets_shipping_steps_through_and_nothing_else() {
         let d = std::env::temp_dir().join(format!("8sync-guard-grant-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
+        let forge = |tool: &str, input: Value| {
+            check_with(&json!({ "tool_name": tool, "tool_input": input, "cwd": "/tmp", "session_id": "s1" }).to_string(), &d, 1_000)
+                .map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"]["permissionDecision"].as_str().unwrap().to_string())
+        };
+        assert_eq!(forge("Bash", json!({ "command": "echo '{}' > ~/.local/state/8sync/ccc/grants/s1.json" })).as_deref(), Some("deny"));
+        assert_eq!(forge("Write", json!({ "file_path": "/home/u/.local/state/8sync/ccc/grants/s1.json", "content": "{}" })).as_deref(), Some("deny"));
         let run = |session: &str, cmd: &str| {
             check_with(&json!({ "tool_name": "Bash", "tool_input": { "command": cmd }, "cwd": "/tmp", "session_id": session }).to_string(), &d, 1_000)
                 .map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"]["permissionDecision"].as_str().unwrap().to_string())
