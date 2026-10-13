@@ -347,7 +347,9 @@ pub fn run_guide() -> Result<()> {
     row("8sync ccc kit --remove", "gỡ hook 8sync trước khi gỡ 8sync (guard chặn khi lỗi)");
 
     h("5. Trong Claude Code");
-    row("/ship <việc>", "explore → plan → làm + test → review → commit");
+    row("/ship <việc> [release]", "plan → R&D → code → test → UAT → review → docs → commit (→ release + monitor)");
+    row("/planning <việc>", "chỉ lập plan: acceptance criteria, task, rủi ro, câu hỏi gom 1 lần");
+    row("/remember · /consolidate", "ghi bài học có bằng chứng vào KNOWLEDGE · dọn memory");
     row("/rules <việc>", "việc này có được phép không (Anthropic + quy tắc 8 Sync)");
     row("/sec · /harden · /aup-audit", "quét secret/lỗ hổng · siết cấu hình · quét Usage Policy");
 

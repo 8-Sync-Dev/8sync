@@ -4,6 +4,16 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **`/ship` runs the whole team process:** plan → R&D → code → test → UAT → review/QC (`/sec`, `/aup-audit` when triggered) → docs + memory → commit; with `release`/`deploy` it goes on to PR → CI → merge/tag/deploy → monitor. State lives in `su-code/planning/<slug>/STATE.md` so it survives /compact, /clear and resume.
+- **`/planning`** (plan only: acceptance criteria, tasks by file, risks, one batched question), **`/remember`** (one evidence-backed `failure:`/`validated:`/`decision:` line in `su-code/KNOWLEDGE.md`) and **`/consolidate`** (dedup/prune memory, owner approves once). Kit: 22 files.
+- **Session thread survives /compact and resume:** `ccc hook session-start` (matcher now `startup|resume|clear|compact`) appends this session's latest owner requests, open tasks first and recent files (masked, ≤ 3 KB; STATE digest + block ≤ ~9 KB, under the 10,000-char hook cap). Measured on a 14 MB transcript: 149 ms (debug build).
+- Release size ceiling 6016 → 6080 KiB (+11,920 B local gnu vs v0.69.0, embedded skills; attribution in `scripts/size-gate.sh`).
+- **Guard asks before shipping:** push to `main`/`master`, tag pushes (`v1.2.3`, `--tags`, `--follow-tags`), push to an `encore` remote, `gh pr merge`, `gh release create`, `vercel --prod`, `npm|pnpm|yarn|bun|cargo publish`, `fly|flyctl|wrangler|firebase deploy`. Feature-branch pushes, PRs and dry-runs stay silent.
+
+### Fixed
+- Watchdog: a RAM/CPU alert for a process that is not a known helper (e.g. `node`) no longer says "keep that helper off"; it says the watchdog only reports it.
+
 
 ## [0.69.0] — 2026-10-13
 ### Added

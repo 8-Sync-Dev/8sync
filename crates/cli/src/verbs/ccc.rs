@@ -358,7 +358,7 @@ pub(crate) fn ensure_claude() -> Result<PathBuf> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 19] = [
+const KIT_FILES: [(&str, &str); 22] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -370,6 +370,9 @@ const KIT_FILES: [(&str, &str); 19] = [
     ("claude/agents/architect.md", "agents/architect.md"),
     ("claude/agents/qa.md", "agents/qa.md"),
     ("claude/skills/ship/SKILL.md", "skills/ship/SKILL.md"),
+    ("claude/skills/planning/SKILL.md", "skills/planning/SKILL.md"),
+    ("claude/skills/remember/SKILL.md", "skills/remember/SKILL.md"),
+    ("claude/skills/consolidate/SKILL.md", "skills/consolidate/SKILL.md"),
     ("claude/skills/rules/SKILL.md", "skills/rules/SKILL.md"),
     ("claude/skills/sec/SKILL.md", "skills/sec/SKILL.md"),
     ("claude/skills/harden/SKILL.md", "skills/harden/SKILL.md"),
@@ -486,8 +489,8 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
-const CORE_SKILLS: [&str; 8] =
-    ["ship", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
+const CORE_SKILLS: [&str; 10] =
+    ["ship", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
@@ -663,7 +666,7 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
         hooks,
         "SessionStart",
         json!({
-            "matcher": "startup|clear|compact",
+            "matcher": "startup|resume|clear|compact",
             "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "session-start"], "timeout": 10 }]
         }),
     );
@@ -918,11 +921,12 @@ fn skill_frontmatter_name(skill_md: &Path) -> Option<String> {
     None
 }
 
-/// A KNOWLEDGE.md lesson line: `- failure:` / `- validated:`, optionally bold (`- **failure:`).
+/// A KNOWLEDGE.md lesson line: `- failure:` / `- validated:` / `- decision:` (what `/remember`
+/// writes), optionally bold (`- **failure:`).
 fn is_lesson(l: &str) -> bool {
     let Some(rest) = l.strip_prefix("- ") else { return false };
     let rest = rest.strip_prefix("**").unwrap_or(rest);
-    rest.starts_with("failure:") || rest.starts_with("validated:")
+    rest.starts_with("failure:") || rest.starts_with("validated:") || rest.starts_with("decision:")
 }
 
 /// Stable digest for `hook session-start`: head of `su-code/STATE.md`, then the
@@ -940,6 +944,51 @@ fn session_digest(root: &Path) -> String {
             out.push_str(&tail.join("\n"));
         }
     }
+    if out.len() > CAP {
+        let mut end = CAP;
+        while !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
+    }
+    out
+}
+
+/// Pure: this session's thread for `hook session-start` on compact/resume — latest
+/// owner asks, the task checklist and recent files, masked and capped (~3 KB) so
+/// digest + block stay under Claude Code's 10,000-char hook output limit.
+fn session_block(d: &crate::verbs::session_view::Digest) -> String {
+    use crate::verbs::session_view::{clean, TaskState};
+    const CAP: usize = 3000;
+    if d.last_users.is_empty() && d.tasks.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("## This session (8sync: restored after /compact or resume)\n");
+    if !d.last_users.is_empty() {
+        out.push_str("Owner's latest requests, oldest → newest:\n");
+        for u in &d.last_users {
+            out.push_str(&format!("- {}\n", clean(u, 300)));
+        }
+    }
+    if !d.tasks.is_empty() {
+        out.push_str(&format!("Task list ({}/{} done{}):\n", d.tasks_done(), d.tasks.len(), if d.partial { ", from the transcript tail" } else { "" }));
+        // open work first (it is what must survive), then only the last few done
+        let open = d.tasks.iter().filter(|t| t.state != TaskState::Done);
+        let done: Vec<_> = d.tasks.iter().filter(|t| t.state == TaskState::Done).collect();
+        for t in open.chain(done[done.len().saturating_sub(5)..].iter().copied()) {
+            let mark = match t.state {
+                TaskState::Done => "[x]",
+                TaskState::InProgress => "[~]",
+                TaskState::Pending => "[ ]",
+            };
+            out.push_str(&format!("- {mark} {}\n", clean(&t.title, 160)));
+        }
+    }
+    if !d.files.is_empty() {
+        let files: Vec<&str> = d.files.iter().take(8).map(String::as_str).collect();
+        out.push_str(&format!("Recently edited: {}\n", files.join(", ")));
+    }
+    out.push_str("Continue the unfinished tasks; re-read files before editing them.");
     if out.len() > CAP {
         let mut end = CAP;
         while !out.is_char_boundary(end) {
@@ -1233,7 +1282,23 @@ fn hook(rest: &[String]) -> Result<()> {
             let start = cwd.or_else(|| std::env::current_dir().ok()).unwrap_or_default();
             let home = std::env::var_os("HOME").map(PathBuf::from);
             let root = find_state_root(&start, home.as_deref());
-            root.map(|r| session_digest(&r)).filter(|d| !d.is_empty())
+            let mut out = root.map(|r| session_digest(&r)).unwrap_or_default();
+            // After /compact or on --resume, give back this session's own thread:
+            // the owner's latest asks, the task checklist, files touched.
+            let v = serde_json::from_str::<Value>(&input).unwrap_or(Value::Null);
+            if matches!(v["source"].as_str(), Some("compact" | "resume")) {
+                if let Some(t) = v["transcript_path"].as_str().filter(|t| !t.is_empty()) {
+                    let d = crate::verbs::session_view::scan_file(Path::new(t), crate::verbs::session_view::Fmt::Claude, true);
+                    let block = session_block(&d);
+                    if !block.is_empty() {
+                        if !out.is_empty() {
+                            out.push_str("\n\n");
+                        }
+                        out.push_str(&block);
+                    }
+                }
+            }
+            Some(out).filter(|d| !d.is_empty())
         }
         _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start   (run by the kit's Claude Code hooks)"),
     };
@@ -1326,7 +1391,7 @@ mod tests {
         assert_eq!(o["impeccable"], "off", "user value kept");
         assert_eq!(o["taste"], "name-only");
         assert!(o.get("ship").is_none() && o.get("codegraph").is_none() && o.get("ponytail").is_none(), "core skills untouched");
-        assert_eq!(v["hooks"]["SessionStart"][0]["matcher"], "startup|clear|compact");
+        assert_eq!(v["hooks"]["SessionStart"][0]["matcher"], "startup|resume|clear|compact");
         let once = v.clone();
         apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
         assert_eq!(v, once);
@@ -1379,6 +1444,25 @@ mod tests {
         std::os::unix::fs::symlink(&elsewhere, cl.join("foreign")).unwrap(); // link outside omp
         assert_eq!(linked_bundled_skills(&d, &cl), vec!["design-taste-frontend".to_string(), "plain".to_string()]);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn session_block_restores_thread_masked_and_capped() {
+        use crate::verbs::session_view::{Digest, Task, TaskState};
+        assert_eq!(session_block(&Digest::default()), "");
+        let t = |id: &str, title: &str, state| Task { id: id.into(), title: title.into(), state };
+        let d = Digest {
+            last_users: vec!["fix login".into(), "deploy với token sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAA".into()],
+            tasks: vec![t("1", "explore", TaskState::Done), t("2", "implement", TaskState::InProgress), t("3", "review", TaskState::Pending)],
+            files: vec!["src/a.rs".into()],
+            ..Default::default()
+        };
+        let b = session_block(&d);
+        assert!(b.contains("- fix login") && b.contains("Task list (1/3 done)") && b.contains("- [~] implement") && b.contains("- [ ] review"));
+        assert!(b.contains("Recently edited: src/a.rs"));
+        assert!(!b.contains("AAAAAAAAAAAAAAAAAAAAAAAA"), "secrets masked: {b}");
+        let many = Digest { tasks: (0..200).map(|i| t(&i.to_string(), &"x".repeat(150), TaskState::Pending)).collect(), ..Default::default() };
+        assert!(session_block(&many).len() <= 3000);
     }
 
     #[test]

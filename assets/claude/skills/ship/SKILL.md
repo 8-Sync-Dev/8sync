@@ -1,15 +1,22 @@
 ---
 name: ship
-description: Chạy trọn gói explore → plan → implement → review → commit cho một feature/bug. Dùng khi user gõ /ship <mô tả task>.
-argument-hint: <mô tả task>
+description: Chạy trọn quy trình một feature/bug như một team — plan → R&D → code → test → UAT → review/QC → docs+memory → commit, rồi release/deploy + monitor khi owner yêu cầu. Dùng khi user gõ /ship <mô tả task>.
+argument-hint: <mô tả task> [release|deploy]
 ---
-Thực hiện đúng thứ tự, theo dõi bằng task list (TaskCreate/TaskUpdate):
-1. Repo lạ hoặc task chạm nhiều module → subagent `explore` với task: $ARGUMENTS. Repo nhỏ/đã quen → tự đọc, bỏ bước này.
-2. Tự viết plan ngắn ngay trong lượt này (không cần subagent) rồi chuyển thành task list.
-3. Mỗi task: tự làm hoặc giao `task` / `quick-task` (song song nếu độc lập). Sau mỗi task chạy build/test của repo.
-3b. Tự kiểm kiểu verifier: mọi câu "xong/đã verify/pass" phải trích đúng lệnh + output đã chạy; không có → chạy lại hoặc ghi "not verified".
-4. Hết task: gọi `reviewer`. NOT MERGEABLE → tạo task mới từ BLOCKER/SHOULD, quay lại bước 3.
-5. Diff thêm tính năng thu thập dữ liệu người dùng, chat với người ngoài, scrape/nhắn tin hàng loạt, hoặc đụng file credential → chạy `/aup-audit` trên phần thay đổi; BLOCK thì dừng và báo user.
-6. Cập nhật CHANGELOG.md, commit theo conventional commits. Không push.
+Task: $ARGUMENTS
 
-Không hỏi người dùng trừ khi plan có câu hỏi chưa trả lời được. Không dừng khi còn task hoặc test fail.
+Trạng thái sống trong file, không chỉ trong hội thoại (sống sót qua /compact, /clear, resume):
+`su-code/planning/<slug>/STATE.md` (repo không có `su-code/` → `.claude/ship/<slug>/STATE.md`) gồm Goal · Checklist các phase · Evidence (lệnh + output ngắn) · Next. Cập nhật ở mỗi ranh giới phase. Theo dõi việc bằng TaskCreate/TaskUpdate.
+
+1. **Plan** — làm như `/planning`: goal, acceptance criteria kiểm được, task + file, rủi ro. Câu hỏi thật sự cần → gom MỘT `AskUserQuestion` (≤4 câu, Recommended đầu). Owner đã nói "tự làm đi"/"auto" → chọn Recommended, ghi giả định, đi tiếp.
+2. **R&D** (chỉ khi có ẩn số) — `explore` cho codebase lạ; `researcher` song song cho câu hỏi con (≤10 bullet mỗi agent); lựa chọn lớn → `deep-research`. Không research thứ đã có trong repo.
+3. **Code** — từng task; giao `task`/`quick-task` song song khi file tách bạch. Code mới phải có test. Không sửa test cho pass. Sau mỗi task chạy build/test của repo.
+4. **Test** — full build + test + lint của repo. Fail → sửa gốc, không skip.
+5. **UAT** — chạy thật như người dùng: CLI chạy lệnh thật trên dữ liệu thật/tạm; web → script e2e của repo hoặc `/chrome`; API → gọi endpoint thật ở local. Ghi lệnh + output vào Evidence. Không chạy được → ghi "UAT: not verified (<lý do>)".
+6. **Review/QC** — `reviewer` trên diff; NOT MERGEABLE → task mới từ BLOCKER/SHOULD, quay lại 3. Diff đụng secret/auth/input/dependency → `/sec`. Thêm thu thập dữ liệu, nhắn người ngoài, scrape, high-risk → `/aup-audit`; BLOCK thì dừng và báo.
+7. **Docs + memory** — CHANGELOG.md (Unreleased) cho thay đổi user-facing; docs liên quan; bài học có bằng chứng → `/remember` (failure/validated/decision). Cập nhật STATE.
+8. **Commit** — conventional commits, branch riêng nếu đang ở main.
+9. **Release/deploy — chỉ khi task có `release`/`deploy` hoặc owner đã đồng ý**: push branch → PR → chờ CI (`gh pr checks --watch` chạy nền) → merge → tag/deploy. Guard sẽ hỏi owner ở merge, push main, tag, deploy prod, publish — không né, không dùng bypass.
+10. **Monitor** — sau release/deploy: theo dõi workflow/health tới khi xanh; đỏ → đọc log, quay lại 3. Ghi kết quả vào STATE.
+
+Mọi câu "xong/pass/verified" phải kèm lệnh + output đã chạy; không có → chạy lại hoặc ghi "not verified". Không dừng khi còn task, test fail hoặc phase chưa xong — trừ khi owner bảo dừng. Báo cáo cuối: phase nào xong, bằng chứng, cái gì chưa verify, việc owner cần làm.

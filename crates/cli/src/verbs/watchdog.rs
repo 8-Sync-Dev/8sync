@@ -536,6 +536,16 @@ pub struct Engine {
     last_id: u64,
 }
 
+/// Remedy for any process alert: helpers get their off switch; anything else
+/// (node, python, a build) is only reported, never killed.
+pub fn suggest_for(helper: bool, name: &str) -> String {
+    if helper {
+        helper_suggest(name)
+    } else {
+        format!("check what it is (`ps -o args -p <pid>`); `{name}` is not a known helper, so the watchdog only reports it — stop it yourself if it is stuck.")
+    }
+}
+
 /// Remedy for a helper alert; 8sync-managed MCP servers get their own off switch.
 pub fn helper_suggest(name: &str) -> String {
     let off = match name {
@@ -690,7 +700,7 @@ impl Engine {
                         let verdict = if act_for(self) == "kill" { self.terminate(s, p, &mut out) } else { "warn only".into() };
                         let verb = if verdict.starts_with("SIGTERM") { "killed" } else if verdict.starts_with("dry-run") { "dry-run" } else { "warn" };
                         let msg = format!("{} (pid {}) used {cpu:.0}% CPU for {window:.0} s → {verdict}", p.name, p.pid);
-                        let sug = if helper { helper_suggest(&p.name) } else { "check `ps -p <pid> -o args`; not a known helper, so it is not killed.".into() };
+                        let sug = suggest_for(helper, &p.name);
                         let a = self.alert(s, Some(p), "cpu", "cpu_pct", cpu, self.cfg.cpu_pct, verb, msg, &sug);
                         out.alerts.push(a);
                     }
@@ -699,7 +709,7 @@ impl Engine {
                         let verdict = if act_for(self) == "kill" { self.terminate(s, p, &mut out) } else { "warn only".into() };
                         let verb = if verdict.starts_with("SIGTERM") { "killed" } else if verdict.starts_with("dry-run") { "dry-run" } else { "warn" };
                         let msg = format!("{} (pid {}) holds {rss_mb} MB RAM (limit {} MB) → {verdict}", p.name, p.pid, self.cfg.helper_rss_mb);
-                        let a = self.alert(s, Some(p), "rss", "rss_mb", rss_mb as f64, self.cfg.helper_rss_mb as f64, verb, msg, &helper_suggest(&p.name));
+                        let a = self.alert(s, Some(p), "rss", "rss_mb", rss_mb as f64, self.cfg.helper_rss_mb as f64, verb, msg, &suggest_for(helper, &p.name));
                         out.alerts.push(a);
                     }
                     if p.gpu_mb > 0 && self.gpu.entry(key).or_default().update(s.now, p.gpu_mb > self.cfg.gpu_mem_mb, 0.0) {
@@ -1517,6 +1527,7 @@ mod tests {
     fn helper_remedy_names_the_8sync_switch() {
         assert!(helper_suggest("codebase-memory-mcp").contains("8sync harness cbm off"));
         assert!(helper_suggest("serena").contains("8sync harness serena off"));
+        assert!(suggest_for(false, "node").contains("only reports") && !suggest_for(false, "node").contains("helper off"));
         let other = helper_suggest("gopls");
         assert!(!other.contains("8sync harness") && other.contains("8sync watchdog unblock"));
     }
