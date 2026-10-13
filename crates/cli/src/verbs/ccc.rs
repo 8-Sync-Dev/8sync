@@ -26,6 +26,7 @@ mod fence;
 mod gate;
 mod grant;
 mod guard;
+mod looper;
 mod resume;
 mod verify;
 
@@ -42,6 +43,7 @@ mod verify;
       8sync ccc . <name> --team --panes   teammates as tmux split panes (run inside tmux)
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
       8sync ccc kit --remove         take 8sync's hooks out of ~/.claude/settings.json (run before uninstalling)
+      8sync ccc loop <init|tick|status|done|ls> <slug>   bounded-loop state for /ship-loop (su-code/ship/<slug>/loop.json)
       8sync ccc status               claude binary, login, kit, managed settings, MCP and sessions
       8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]
                                      print a recommended managed-settings.json (never installs it)
@@ -116,6 +118,7 @@ pub fn run(a: Args) -> Result<()> {
         }
         "status" => status(&env, &root),
         "policy" => policy(rest),
+        "loop" => looper::run(rest, &std::env::current_dir().context("no cwd")?),
         "ls" | "list" => {
             print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
         }
@@ -377,7 +380,7 @@ pub(crate) fn ensure_claude() -> Result<PathBuf> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 23] = [
+const KIT_FILES: [(&str, &str); 27] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -396,6 +399,10 @@ const KIT_FILES: [(&str, &str); 23] = [
     ("claude/skills/rules/SKILL.md", "skills/rules/SKILL.md"),
     ("claude/skills/sec/SKILL.md", "skills/sec/SKILL.md"),
     ("claude/skills/harden/SKILL.md", "skills/harden/SKILL.md"),
+    ("claude/skills/do/SKILL.md", "skills/do/SKILL.md"),
+    ("claude/skills/ship-auto/SKILL.md", "skills/ship-auto/SKILL.md"),
+    ("claude/skills/ship-loop/SKILL.md", "skills/ship-loop/SKILL.md"),
+    ("claude/skills/autopilot/SKILL.md", "skills/autopilot/SKILL.md"),
     ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
     ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
     // The org's rules: summarised in the kit's CLAUDE.md block, full text opened on demand (/aup-audit).
@@ -509,8 +516,8 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
-const CORE_SKILLS: [&str; 11] =
-    ["ship", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
+const CORE_SKILLS: [&str; 13] =
+    ["ship", "ship-loop", "autopilot", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
