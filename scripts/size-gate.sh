@@ -90,11 +90,16 @@
 # 5 embedded `taste-*` variants (~52 KB markdown, compressed) + `ls` last_tool/stalled_error.
 # v0.75.0 adds the ship-grant guard module (~200 lines). Ceiling 6144 KiB (~60 KiB left).
 # v0.74.0 was tagged but not published; v0.75.0 is the release.
+#
+# 2026-10-13 v0.78.0 release run 38399343524: linux-x86_64 (musl) asset 6,338,096 B,
+# 46,640 B over 6144 KiB. v0.77.0 asset 6,280,752 → +57,344 B = `ccc statusline`
+# (renderer, install/chain, process-group runner) + ccc JSON surfaces (show/kit status/
+# login-kind). Ceiling 6272 KiB (~84 KiB left). v0.78.0 was tagged, not published.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-6291456}"   # 6144 KiB (raised 2026-10-13 from 6080 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-6422528}"   # 6272 KiB (raised 2026-10-13 from 6144 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"
