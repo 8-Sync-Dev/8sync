@@ -28,6 +28,7 @@ mod grant;
 mod guard;
 mod looper;
 mod resume;
+mod statusline;
 mod verify;
 
 #[derive(ClapArgs, Debug)]
@@ -44,6 +45,7 @@ mod verify;
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
       8sync ccc kit --remove         take 8sync's hooks out of ~/.claude/settings.json (run before uninstalling)
       8sync ccc loop <init|tick|status|done|ls> <slug>   bounded-loop state for /ship-loop (su-code/ship/<slug>/loop.json)
+      8sync ccc statusline [--agents|--install|--uninstall]   Claude Code status line (usage, branch, PR, tasks, loop, grant); chains an existing one
       8sync ccc status               claude binary, login, kit, managed settings, MCP and sessions
       8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]
                                      print a recommended managed-settings.json (never installs it)
@@ -88,7 +90,7 @@ pub struct Args {
 impl Args {
     /// Hook invocations run on every edit: keep them free of side work.
     pub fn is_hook(&self) -> bool {
-        self.rest.first().is_some_and(|v| v == "hook")
+        self.rest.first().is_some_and(|v| v == "hook" || v == "statusline")
     }
 }
 
@@ -101,6 +103,9 @@ pub fn run(a: Args) -> Result<()> {
     let (verb, rest) = args.split_first().map(|(v, r)| (v.as_str(), r)).unwrap_or(("", &[][..]));
     if verb == "hook" {
         return hook(rest);
+    }
+    if verb == "statusline" {
+        return statusline::run(rest); // before Env::detect: runs every few seconds, must stay fast
     }
     let env = Env::detect()?;
     let cwd = std::env::current_dir().context("no cwd")?;
@@ -597,6 +602,9 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
     };
     apply_kit_settings(&mut v, &exe, &skills)?;
     apply_lsp_plugins(&mut v, |bin| which::which(bin).is_ok());
+    if statusline::kit_apply(&mut v, &exe) {
+        ui::info("your own statusLine was kept: `8sync ccc statusline --install` swaps in the 8sync one and chains yours");
+    }
     let out = serde_json::to_string_pretty(&v)? + "\n";
     if out != raw {
         std::fs::write(&settings, out).with_context(|| format!("write {}", settings.display()))?;

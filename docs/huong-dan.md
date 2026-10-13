@@ -52,6 +52,16 @@ Claude Code sessions · /home/you/works/du-an
 - `8sync ls`: mọi session của repo (ccc, omp, forge). `8sync ls --all`: mọi repo trên máy.
 - `--json` có ở `ls` và `ccc . ls` cho script.
 
+## 3b. Status line của Claude Code
+
+```bash
+8sync ccc statusline --install     # ghi statusLine + subagentStatusLine vào ~/.claude/settings.json
+8sync ccc statusline --uninstall   # gỡ, khôi phục statusLine cũ nếu có
+```
+
+- Dòng 1: model, ngữ cảnh (thanh 10 ô, đỏ khi >80%), giới hạn 5h/7d kèm `↻ còn bao lâu`, chi phí, `+dòng/-dòng`. Dòng 2: nhánh git (`*` nếu có thay đổi), PR, tasks, việc nền, cảnh báo watchdog, loop, `🚢 grant`.
+- Nếu anh đã có `statusLine` riêng (ví dụ Orca), 8sync lưu nó thành `statusLine_prev` trong `~/.config/8sync/features.toml` và chạy nối tiếp: output của nó thành dòng cuối. `8sync ccc kit` không bao giờ ghi đè statusLine có sẵn.
+
 ## 4. Giao việc trọn gói trong Claude Code
 
 | Lệnh | Dùng khi |
