@@ -346,11 +346,87 @@ fn link_dir(src: &Path, dst: &Path, link: &Path) -> Result<&'static str> {
 /// already exists (a kit file, a user's own skill) is left alone.
 pub(crate) fn link_bundled_skills(home: &Path, skills_dir: &Path) -> Result<usize> {
     let mut linked = 0;
-    for (_, name) in BUNDLED_SKILLS {
-        let (src, dst) = (home.join(".omp/skills").join(name), skills_dir.join(name));
-        if src.is_dir() && std::fs::symlink_metadata(&dst).is_err() {
+    // Every skill folder in ~/.omp/skills, not only the ones 8sync ships: omp
+    // installs more (frontend-ui-engineering, browser-testing-with-devtools…).
+    let omp = home.join(".omp/skills");
+    for e in std::fs::read_dir(&omp).into_iter().flatten().flatten() {
+        let src = e.path();
+        let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
+        if name.starts_with('.') || !src.join("SKILL.md").is_file() {
+            continue;
+        }
+        let dst = skills_dir.join(&name);
+        if std::fs::symlink_metadata(&dst).is_err() {
+            std::fs::create_dir_all(skills_dir)?;
             link_dir(&src, &dst, &src)?;
             linked += 1;
+        }
+    }
+    Ok(linked)
+}
+
+/// Workspace skill libraries the owner registered (`skill_libraries = [..]` in
+/// features.toml, written by `8sync ccc kit --skills-from <dir>`): absolute dirs
+/// whose children are skill folders, e.g. a workspace's `su-code/skills`.
+pub(crate) fn skill_libraries(home: &Path) -> Vec<std::path::PathBuf> {
+    let p = crate::verbs::harness::cbm::features_path(home);
+    let Some(t) = std::fs::read_to_string(p).ok().and_then(|s| s.parse::<toml::Table>().ok()) else { return Vec::new() };
+    t.get("skill_libraries")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str())
+        .map(|s| s.strip_prefix("~/").map_or_else(|| std::path::PathBuf::from(s), |r| home.join(r)))
+        .filter(|p| p.is_absolute())
+        .collect()
+}
+
+/// Records `dir` (canonical) in features.toml; false when it was already there.
+pub(crate) fn add_skill_library(home: &Path, dir: &Path) -> Result<bool> {
+    let dir = anyhow::Context::with_context(dir.canonicalize(), || format!("{} does not exist", dir.display()))?;
+    if !dir.is_dir() || !has_skills(&dir) {
+        anyhow::bail!("{} has no <skill>/SKILL.md folders", dir.display());
+    }
+    if skill_libraries(home).iter().any(|p| p.canonicalize().is_ok_and(|c| c == dir)) {
+        return Ok(false);
+    }
+    let p = crate::verbs::harness::cbm::features_path(home);
+    let mut t = match std::fs::read_to_string(&p) {
+        Ok(s) => s.parse::<toml::Table>().map_err(|e| anyhow::anyhow!("{} is not valid TOML ({e}); fix it first", p.display()))?,
+        Err(_) => toml::Table::new(),
+    };
+    let arr = t.entry("skill_libraries").or_insert_with(|| toml::Value::Array(Vec::new()));
+    let Some(a) = arr.as_array_mut() else { anyhow::bail!("`skill_libraries` in {} is not an array", p.display()) };
+    a.push(toml::Value::String(dir.to_string_lossy().into_owned()));
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    std::fs::write(&p, toml::to_string_pretty(&t)?)?;
+    Ok(true)
+}
+
+fn has_skills(dir: &Path) -> bool {
+    std::fs::read_dir(dir).into_iter().flatten().flatten().any(|e| e.path().join("SKILL.md").is_file())
+}
+
+/// Links every skill of the registered libraries that Claude Code does not have
+/// yet (kit files, bundled links and the owner's own skills always win; nothing
+/// is overwritten). Returns how many links were made.
+pub(crate) fn link_library_skills(home: &Path, skills_dir: &Path) -> Result<usize> {
+    let mut linked = 0;
+    for lib in skill_libraries(home) {
+        for e in std::fs::read_dir(&lib).into_iter().flatten().flatten() {
+            let src = e.path();
+            let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
+            if name.starts_with('.') || !src.join("SKILL.md").is_file() {
+                continue;
+            }
+            let dst = skills_dir.join(&name);
+            if std::fs::symlink_metadata(&dst).is_err() {
+                std::fs::create_dir_all(skills_dir)?;
+                link_dir(&src, &dst, &src)?;
+                linked += 1;
+            }
         }
     }
     Ok(linked)
@@ -2042,5 +2118,61 @@ mod host_adapter_tests {
         assert!(root.join(".cursor/skills/foo/SKILL.md").is_file());
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod skill_library_tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("8sync-skilllib-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn skill(lib: &Path, name: &str) {
+        std::fs::create_dir_all(lib.join(name)).unwrap();
+        std::fs::write(lib.join(name).join("SKILL.md"), format!("---\nname: {name}\ndescription: x\n---\n")).unwrap();
+    }
+
+    #[test]
+    fn every_omp_skill_folder_is_linked() {
+        let home = tmp("omp-home");
+        skill(&home.join(".omp/skills"), "frontend-ui-engineering"); // not in the shipped list
+        std::fs::write(home.join(".omp/skills/00-force-load.md"), "x").unwrap(); // a file, not a skill
+        let skills = home.join(".claude/skills");
+        assert_eq!(link_bundled_skills(&home, &skills).unwrap(), 1);
+        assert!(skills.join("frontend-ui-engineering/SKILL.md").is_file());
+        assert!(!skills.join("00-force-load.md").exists());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn library_is_registered_once_and_links_only_missing_skills() {
+        let home = tmp("home");
+        let lib = tmp("lib");
+        skill(&lib, "loop-me");
+        skill(&lib, "ship"); // the kit's own skill of that name must win
+        std::fs::create_dir_all(lib.join("notes")).unwrap(); // no SKILL.md: ignored
+        assert!(add_skill_library(&home, &lib).unwrap());
+        assert!(!add_skill_library(&home, &lib).unwrap(), "second add is a no-op");
+        assert_eq!(skill_libraries(&home), vec![lib.canonicalize().unwrap()]);
+
+        let skills = home.join(".claude/skills");
+        std::fs::create_dir_all(skills.join("ship")).unwrap();
+        std::fs::write(skills.join("ship/SKILL.md"), "kit").unwrap();
+        assert_eq!(link_library_skills(&home, &skills).unwrap(), 1);
+        assert!(skills.join("loop-me/SKILL.md").is_file());
+        assert_eq!(std::fs::read_to_string(skills.join("ship/SKILL.md")).unwrap(), "kit", "never overwritten");
+        assert!(!skills.join("notes").exists());
+        assert_eq!(link_library_skills(&home, &skills).unwrap(), 0, "idempotent");
+
+        let empty = tmp("empty");
+        assert!(add_skill_library(&home, &empty).is_err(), "a dir without skills is refused");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&lib);
+        let _ = std::fs::remove_dir_all(&empty);
     }
 }

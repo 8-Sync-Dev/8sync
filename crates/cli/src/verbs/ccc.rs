@@ -103,7 +103,16 @@ pub fn run(a: Args) -> Result<()> {
     let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd);
     match verb {
         "kit" if rest.iter().any(|a| a == "--remove") => remove_kit_hooks(&env),
-        "kit" => install_kit(&env, rest.iter().any(|a| a == "--force")),
+        "kit" => {
+            if let Some(i) = rest.iter().position(|a| a == "--skills-from") {
+                let dir = rest.get(i + 1).context("--skills-from needs a directory (e.g. ~/startup/8sync-startup/su-code/skills)")?;
+                let dir = PathBuf::from(dir.strip_prefix("~/").map_or_else(|| dir.clone(), |r| env.home.join(r).to_string_lossy().into_owned()));
+                if deploy::add_skill_library(&env.home, &dir)? {
+                    ui::ok(&format!("skill library registered → {}", dir.display()));
+                }
+            }
+            install_kit(&env, rest.iter().any(|a| a == "--force"))
+        }
         "status" => status(&env, &root),
         "policy" => policy(rest),
         "ls" | "list" => {
@@ -367,7 +376,7 @@ pub(crate) fn ensure_claude() -> Result<PathBuf> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 22] = [
+const KIT_FILES: [(&str, &str); 23] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -380,6 +389,7 @@ const KIT_FILES: [(&str, &str); 22] = [
     ("claude/agents/qa.md", "agents/qa.md"),
     ("claude/skills/ship/SKILL.md", "skills/ship/SKILL.md"),
     ("claude/skills/planning/SKILL.md", "skills/planning/SKILL.md"),
+    ("claude/skills/ui-ux/SKILL.md", "skills/ui-ux/SKILL.md"),
     ("claude/skills/remember/SKILL.md", "skills/remember/SKILL.md"),
     ("claude/skills/consolidate/SKILL.md", "skills/consolidate/SKILL.md"),
     ("claude/skills/rules/SKILL.md", "skills/rules/SKILL.md"),
@@ -498,8 +508,8 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
-const CORE_SKILLS: [&str; 10] =
-    ["ship", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
+const CORE_SKILLS: [&str; 11] =
+    ["ship", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
@@ -551,6 +561,11 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
         Ok(0) => {}
         Ok(n) => ui::ok(&format!("{n} bundled skill(s) linked → {} (always the current ~/.omp/skills copy)", dir.join("skills").display())),
         Err(e) => ui::warn(&format!("bundled skills not linked into Claude Code: {e:#}")),
+    }
+    match deploy::link_library_skills(&env.home, &dir.join("skills")) {
+        Ok(0) => {}
+        Ok(n) => ui::ok(&format!("{n} workspace skill(s) linked from {} (listed by name only)", deploy::skill_libraries(&env.home).iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))),
+        Err(e) => ui::warn(&format!("workspace skills not linked: {e:#}")),
     }
     let skills = linked_bundled_skills(&env.home, &dir.join("skills"));
     for rel in &kept {
@@ -888,17 +903,21 @@ fn upsert_hook_group(hooks: &mut serde_json::Map<String, Value>, event: &str, gr
 
 /// Skill names (SKILL.md frontmatter `name:`, else the dir name — Claude Code
 /// keys `skillOverrides` by name) of the entries under `skills_dir` that are
-/// links (symlink / Windows junction) resolving under omp's bundled tree, i.e.
-/// the ones `link_bundled_skills` manages. Plain user directories are skipped.
+/// links (symlink / Windows junction) resolving under omp's bundled tree or a
+/// registered workspace skill library, i.e. the ones `link_bundled_skills` /
+/// `link_library_skills` manage. Plain user directories are skipped.
 fn linked_bundled_skills(home: &Path, skills_dir: &Path) -> Vec<String> {
-    let Ok(omp) = home.join(".omp/skills").canonicalize() else { return Vec::new() };
+    let roots: Vec<PathBuf> = std::iter::once(home.join(".omp/skills")).chain(deploy::skill_libraries(home)).filter_map(|p| p.canonicalize().ok()).collect();
+    if roots.is_empty() {
+        return Vec::new();
+    }
     let mut out: Vec<String> = std::fs::read_dir(skills_dir)
         .into_iter()
         .flatten()
         .flatten()
         .filter(|e| {
             let Ok(meta) = std::fs::symlink_metadata(e.path()) else { return false };
-            is_link(&meta) && e.path().canonicalize().is_ok_and(|t| t.starts_with(&omp))
+            is_link(&meta) && e.path().canonicalize().is_ok_and(|t| roots.iter().any(|r| t.starts_with(r)))
         })
         .filter_map(|e| {
             let dir_name = e.file_name().into_string().ok()?;

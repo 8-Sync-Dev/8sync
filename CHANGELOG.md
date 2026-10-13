@@ -5,6 +5,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.73.0] — 2026-10-13
+### Added
+- **`/ui-ux <việc>`**: an easy-to-type entry point for UI/UX work. The `/` menu matches skill names, so `/ui` never found `impeccable`. It opens `impeccable` (the 8 Sync design system) first and routes to the right sub-command, then to taste-skill, frontend-ui-engineering, senior-frontend, nextjs-app or browser testing when they fit.
+- The kit links **every** skill in `~/.omp/skills`, not only the 29 8sync ships. Previously `frontend-ui-engineering`, `browser-testing-with-devtools`, `api-and-interface-design` and others were missing from Claude Code.
+- **Workspace skill libraries for every ccc session:** `8sync ccc kit --skills-from <dir>` registers a skill folder, for example `~/startup/8sync-startup/su-code/skills` with its 237 skills (`loop-me`, `grill-me`, `agent-browser`, `live-verify`…). Before this, those skills only existed inside that repo.
+  - Each kit run links every skill Claude Code doesn't have yet into `~/.claude/skills`. Kit files, bundled skills and the owner's own skills are never overwritten.
+  - Library skills are listed by name only (`skillOverrides`), so a large library barely grows the session prefix.
+  - The libraries are kept in `features.toml` as `skill_libraries`.
+
 ## [0.72.0] — 2026-10-13
 ### Fixed
 - Guard: a data here-doc later in the command (`cat > report.md <<'EOF' … for … () …`) no longer turns off variable resolution, so `S=/tmp/x/scratchpad; rm -rf $S/target` stops asking (seen live in a subagent's cleanup).

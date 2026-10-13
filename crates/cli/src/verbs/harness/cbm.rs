@@ -15,7 +15,7 @@ use crate::{env_detect, ui};
 pub(crate) const NAME: &str = "codebase-memory-mcp";
 const KEY: &str = "codebase_memory_mcp";
 
-fn features_path(home: &Path) -> PathBuf {
+pub(crate) fn features_path(home: &Path) -> PathBuf {
     crate::brand::config_dir(home).join("features.toml")
 }
 
