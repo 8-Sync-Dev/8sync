@@ -27,6 +27,9 @@ export type Session = {
   channel_state: "blocked-by-org" | "unresponsive" | null;
   /** A Claude Code dialog open in the pane ("Trust this folder?"), or null. */
   waiting: string | null;
+  /** Team role (lib/roles.ts) and model id, set when HQ started the session with one. */
+  role?: string | null;
+  model?: string | null;
 };
 
 export type Task = {

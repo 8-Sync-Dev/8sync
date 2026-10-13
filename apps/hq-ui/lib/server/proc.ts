@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import os from "node:os";
 import type { DatabaseSync } from "node:sqlite";
+import { isModelId, isRoleId } from "@/lib/roles";
 import { projectIdFor } from "./db";
 import fs from "node:fs";
 import path from "node:path";
@@ -75,6 +76,9 @@ export type SessionView = {
   tmux: boolean;
   source: "tmux" | "claude" | "journal";
   detail: string | null;
+  /** Team role / model the session was started with (null for sessions started elsewhere). */
+  role?: string | null;
+  model?: string | null;
 };
 
 function agentStatus(s: string | undefined): SessionStatus {
@@ -96,8 +100,8 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
   const [tmux, listed] = await Promise.all([listTmux(), listClaudeAgents()]);
   const agents = listed ?? [];
   const rows = db
-    .prepare("SELECT name, project_id, started_at, status, cwd FROM sessions")
-    .all() as { name: string; project_id: number | null; started_at: number | null; status: string; cwd: string | null }[];
+    .prepare("SELECT name, project_id, started_at, status, cwd, role, model FROM sessions")
+    .all() as { name: string; project_id: number | null; started_at: number | null; status: string; cwd: string | null; role: string | null; model: string | null }[];
   const byName = new Map(rows.map((r) => [r.name, r]));
   const out = new Map<string, SessionView>();
   const usedAgents = new Set<string>();
@@ -152,7 +156,9 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
       detail: null,
     });
   }
-  return [...out.values()].sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0));
+  return [...out.values()]
+    .map((s) => ({ ...s, role: byName.get(s.name)?.role ?? null, model: byName.get(s.name)?.model ?? null }))
+    .sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0));
 }
 
 export type ChannelMode = { args: string[]; mode: "channel" | "off"; reason: string | null };
@@ -193,17 +199,29 @@ export function channelArgs(env: Record<string, string | undefined> = process.en
 export function tmuxStartArgs(
   name: string,
   cwd: string,
-  opts: { channel?: ChannelMode; port?: string } = {},
+  opts: { channel?: ChannelMode; port?: string; model?: string; role?: string; prompt?: string } = {},
 ): string[] {
   if (!isTmuxName(name)) throw new Error("invalid tmux name");
   const ch = opts.channel ?? channelArgs();
   const envs = [`EIGHTSYNC_HQ_SESSION=${name}`];
   if (ch.mode === "channel") envs.push("MCP_PROTOCOL_NEGOTIATION=legacy");
   if (opts.port && /^\d{1,5}$/.test(opts.port)) envs.push(`HQ_UI_PORT=${opts.port}`);
-  return ["new-session", "-d", "-s", name, "-c", cwd, "--", "env", ...envs, "claude", ...ch.args];
+  // Only allowlisted values reach argv (lib/roles.ts); anything else is refused here too.
+  if (opts.role) {
+    if (!isRoleId(opts.role)) throw new Error("invalid role");
+    envs.push(`EIGHTSYNC_HQ_ROLE=${opts.role}`);
+  }
+  const model: string[] = [];
+  if (opts.model) {
+    if (!isModelId(opts.model)) throw new Error("invalid model");
+    model.push("--model", opts.model);
+  }
+  // A first prompt (a task assigned at start) goes after `--`, so it is never read as a flag and waits behind any boot dialog.
+  const prompt = opts.prompt?.trim() ? ["--", opts.prompt] : [];
+  return ["new-session", "-d", "-s", name, "-c", cwd, "--", "env", ...envs, "claude", ...model, ...ch.args, ...prompt];
 }
 
-export async function startTmux(name: string, cwd: string, opts: { channel?: ChannelMode; port?: string } = {}): Promise<Run> {
+export async function startTmux(name: string, cwd: string, opts: Parameters<typeof tmuxStartArgs>[2] = {}): Promise<Run> {
   return run("tmux", tmuxStartArgs(name, cwd, opts));
 }
 

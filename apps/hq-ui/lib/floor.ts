@@ -240,3 +240,34 @@ export function groupFloor(rows: FloorRow[], nowMs = Date.now()): { groups: Repo
   const groups = [...by.values()].sort((a, b) => rank(a) - rank(b) || latest(b) - latest(a));
   return { groups, old };
 }
+
+// ---- handoff bubbles (AC5) ----
+
+/** How long a "→ B" / "← A" bubble stays on a desk. */
+export const HANDOFF_MS = 4000;
+
+export type FloorHandoff = { dir: "out" | "in"; peer: string; ts: number };
+
+type HandoffRow = { ts: number; kind: string; session?: string | null; from_?: string | null; to_?: string | null };
+
+/**
+ * Transient handoff state per desk name. A `session_message` from A to B newer
+ * than `sinceTs` (the previous refresh) and younger than HANDOFF_MS gives A an
+ * "out" bubble and B an "in" bubble. The latest event wins per desk.
+ */
+export function deriveHandoffs(rows: HandoffRow[], sinceTs: number, nowMs = Date.now()): Map<string, FloorHandoff> {
+  const out = new Map<string, FloorHandoff>();
+  const live = rows
+    .filter((r) => r.kind === "session_message" && r.ts > sinceTs && nowMs - r.ts < HANDOFF_MS)
+    .sort((a, b) => a.ts - b.ts);
+  for (const r of live) {
+    const from = r.from_ ?? r.session;
+    const to = r.to_;
+    if (!from || !to || from === to) continue;
+    out.set(from, { dir: "out", peer: to, ts: r.ts });
+    out.set(to, { dir: "in", peer: from, ts: r.ts });
+  }
+  return out;
+}
+
+export const handoffLabel = (h: FloorHandoff, peerLabel = h.peer): string => (h.dir === "out" ? `→ ${peerLabel}` : `← ${peerLabel}`);

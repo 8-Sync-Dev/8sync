@@ -162,3 +162,25 @@ describe("uuid display", () => {
     expect(shortId(null)).toBeNull();
   });
 });
+
+import { HANDOFF_MS, deriveHandoffs, handoffLabel } from "@/lib/floor";
+
+describe("deriveHandoffs", () => {
+  const msg = (ts: number, from_: string | null, to_: string | null, kind = "session_message") => ({ ts, kind, session: from_, from_, to_ });
+  it("A gets an out bubble, B an in bubble, only for events newer than the last refresh", () => {
+    const m = deriveHandoffs([msg(NOW - 1000, "hq-a", "hq-b"), msg(NOW - 3000, "hq-c", "hq-d")], NOW - 2000, NOW);
+    expect(m.get("hq-a")).toEqual({ dir: "out", peer: "hq-b", ts: NOW - 1000 });
+    expect(m.get("hq-b")).toEqual({ dir: "in", peer: "hq-a", ts: NOW - 1000 });
+    expect(m.has("hq-c")).toBe(false);
+    expect(handoffLabel(m.get("hq-a")!)).toBe("→ hq-b");
+    expect(handoffLabel(m.get("hq-b")!, "a")).toBe("← a");
+  });
+  it("expires after HANDOFF_MS and ignores other kinds / self / missing peer", () => {
+    expect(deriveHandoffs([msg(NOW - HANDOFF_MS - 1, "hq-a", "hq-b")], 0, NOW).size).toBe(0);
+    expect(deriveHandoffs([msg(NOW - 10, "hq-a", "hq-b", "notification"), msg(NOW - 10, "hq-a", "hq-a"), msg(NOW - 10, "hq-a", null)], 0, NOW).size).toBe(0);
+  });
+  it("latest event wins per desk", () => {
+    const m = deriveHandoffs([msg(NOW - 900, "hq-a", "hq-c"), msg(NOW - 100, "hq-a", "hq-b")], 0, NOW);
+    expect(m.get("hq-a")?.peer).toBe("hq-b");
+  });
+});

@@ -1789,7 +1789,10 @@ fn journal_entry(event: &str, v: &Value, session_env: Option<&str>, ts_ms: u64) 
     // every free-text field goes through the shared masker before it is stored
     let text = text.map(|t| secret_mask::mask(&t).chars().take(JOURNAL_TEXT).collect::<String>());
     let subject = subject.map(|t| secret_mask::mask(&t).chars().take(JOURNAL_TEXT).collect::<String>());
-    let (from, to) = (from.map(|t| secret_mask::mask(&t)), to.map(|t| secret_mask::mask(&t)));
+    // The sender is often this session's own id (a uuid, already stored unmasked as session_id): the masker
+    // would turn it into "***" and every handoff would lose its sender, so only foreign names are masked.
+    let keep = |t: String| if t == sess { t } else { secret_mask::mask(&t) };
+    let (from, to) = (from.map(keep), to.map(keep));
     Some(json!({"v":1,"ts":ts_ms,"kind":kind,"session_id":sess,"hq_session":hq_session,"team":team,"cwd":s(v,"cwd"),
         "task_id":task_id,"subject":subject,"role":role,"from":from,"to":to,"text":text}))
 }
@@ -2603,6 +2606,10 @@ mod tests {
         let a = e("PostToolUse", m.clone(), None).unwrap();
         assert_eq!((a["kind"].as_str(), a["from"].as_str(), a["to"].as_str(), a["text"].as_str()), (Some("session_message"), Some("s9"), Some("hq-b"), Some("yo")));
         assert_eq!(e("PostToolUse", m, Some("hq-a")).unwrap()["from"], "hq-a");
+        // A uuid session id is the sender's identity, not a secret: it must survive the masker.
+        let uuid = "a2830544-0719-4d6f-aaa3-644783ddb0b3";
+        let u = e("PostToolUse", json!({"session_id":uuid,"tool_name":"SendMessage","tool_input":{"to":"rd","message":"hi"}}), None).unwrap();
+        assert_eq!((u["from"].as_str(), u["to"].as_str()), (Some(uuid), Some("rd")));
         assert!(e("PostToolUse", json!({"tool_name":"Bash"}), None).is_none());
         let long = e("Notification", json!({"message":"é".repeat(5000)}), Some("hq-a")).unwrap();
         assert_eq!(long["text"].as_str().unwrap().chars().count(), 4000);

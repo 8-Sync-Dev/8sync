@@ -85,6 +85,10 @@ export function getDb(): DatabaseSync {
 
 /** Additive column migrations for DBs created by an earlier build. */
 function migrate(db: DatabaseSync): void {
+  const scols = (db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]).map((c) => c.name);
+  // Team role the session was started with (lib/roles.ts) and the model it runs on.
+  if (!scols.includes("role")) db.exec("ALTER TABLE sessions ADD COLUMN role TEXT");
+  if (!scols.includes("model")) db.exec("ALTER TABLE sessions ADD COLUMN model TEXT");
   const cols = (db.prepare("PRAGMA table_info(messages)").all() as { name: string }[]).map((c) => c.name);
   // How an owner message reached the session: 'channel' | 'terminal' | 'channel→terminal' | 'failed'.
   // On a session_reply: 'terminal' when it came from the Stop hook, not the channel.

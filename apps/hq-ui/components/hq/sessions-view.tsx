@@ -10,6 +10,8 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { sessionLabel } from "@/lib/labels";
+import { ROLES, modelShort } from "@/lib/roles";
+import { RoleBadge } from "./role-badge";
 import { EmptyState, ErrorNote, STATUS_LABEL, StatusDot, WaitingBadge, ago, shortName } from "./bits";
 import type { Hq } from "./use-hq";
 import type { ChannelMode, Project, Session } from "./types";
@@ -74,6 +76,7 @@ export function SessionsView({
                       <span className="flex items-center gap-2 text-[13px]" title={s.name}>
                         <StatusDot status={s.status} />
                         {sessionLabel(s)}
+                        {s.role && <RoleBadge role={s.role} model={s.model ?? undefined} />}
                       </span>
                     </td>
                     <td className="max-w-40 truncate px-3 py-2 text-muted-foreground" title={s.cwd ?? undefined}>
@@ -199,6 +202,7 @@ function StartSession({
 }) {
   const [picked, setPicked] = useState<string>("");
   const [name, setName] = useState("");
+  const [role, setRole] = useState<string>("none");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const project = projects.find((p) => String(p.id) === picked) ?? projects.find((p) => p.id === projectId) ?? projects[0];
@@ -216,7 +220,7 @@ function StartSession({
     try {
       const r = await hq.api<{ channel: ChannelMode }>("/api/sessions", {
         method: "POST",
-        body: { project: project.id, name: bare },
+        body: role === "none" ? { project: project.id, name: bare } : { project: project.id, name: bare, role },
       });
       toast.success(
         r.channel.mode === "channel"
@@ -271,6 +275,24 @@ function StartSession({
               className="h-full min-w-0 flex-1 bg-transparent pr-2 outline-none"
             />
           </div>
+        </div>
+        <div className="space-y-1">
+          <span id="start-role-label" className="block text-xs font-medium text-muted-foreground">
+            Vai trò
+          </span>
+          <Select value={role} onValueChange={setRole}>
+            <SelectTrigger size="sm" className="w-52" aria-labelledby="start-role-label">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Không gán (model mặc định)</SelectItem>
+              {ROLES.map((r) => (
+                <SelectItem key={r.id} value={r.id}>
+                  {r.labelVi} · {modelShort(r.model)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <Button type="submit" size="sm" disabled={busy || !project || !nameOk}>
           <PlayIcon /> {busy ? "Starting…" : "Start session"}
