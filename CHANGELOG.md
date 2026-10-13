@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- Security: `8sync ls/show` and the HQ journal printed passwords typed in prose ("sudo password của tôi là …", "mật khẩu: …", "pass: …", "password is …"). The shared masker (`secret_mask.rs`) now masks the value after pass/password/passwd/pwd/pin/otp/secret/token/api key/mật khẩu/sudo triggers; ordinary prose ("password reset flow", "sudo apt install") is left alone.
 
 ## [0.76.0] — 2026-10-13
 ### Added
