@@ -156,7 +156,7 @@ fn run_at(rest: &[String], cwd: &Path, now: u64) -> Result<()> {
             let label = args.get(1).filter(|a| *a != "--").context("usage: 8sync ccc loop ev <slug> <label> -- <command>")?;
             let cmd = args.iter().position(|a| a == "--").map(|i| &args[i + 1..]).filter(|c| !c.is_empty()).context("usage: 8sync ccc loop ev <slug> <label> -- <command>")?;
             let mut c = if cmd.len() == 1 {
-                let mut c = std::process::Command::new(if cfg!(windows) { "bash" } else { "sh" });
+                let mut c = std::process::Command::new(shell()?);
                 c.args(["-c", &cmd[0]]);
                 c
             } else {
@@ -191,6 +191,22 @@ fn run_at(rest: &[String], cwd: &Path, now: u64) -> Result<()> {
         _ => bail!("usage: 8sync ccc loop <init|tick|ev|status|done|ls> <slug> …"),
     }
     Ok(())
+}
+
+/// The shell for a one-string `ev` command. On Windows, Git Bash: `System32\bash.exe` (and the
+/// WindowsApps alias) is the WSL launcher, which runs nothing without a distro (seen on CI).
+fn shell() -> Result<PathBuf> {
+    if !cfg!(windows) {
+        return Ok(PathBuf::from("sh"));
+    }
+    which::which_all("bash")
+        .into_iter()
+        .flatten()
+        .find(|p| {
+            let s = p.to_string_lossy().to_ascii_lowercase();
+            !s.contains("\\system32\\") && !s.contains("\\windowsapps\\")
+        })
+        .context("no Git Bash on PATH (System32 bash is WSL); pass the command as separate words after --")
 }
 
 /// The last non-empty output line, one line and at most 160 chars (`|` would break the table).
