@@ -5,6 +5,19 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.70.0] — 2026-10-13
+### Added
+- **`/ship` runs the whole team process:** plan → R&D → code → test → UAT → review/QC (`/sec`, `/aup-audit` when triggered) → docs + memory → commit; with a trailing `--release`/`--deploy` flag it goes on to PR → CI → merge/tag/deploy → monitor (no push without it). State lives in `su-code/ship/<slug>/STATE.md`; `su-code/ship/ACTIVE` names the running one and the session-start digest puts its head first, so it survives /compact, /clear and resume.
+- **`/planning`** (plan only: acceptance criteria, tasks by file, risks, one batched question), **`/remember`** (one evidence-backed `failure:`/`validated:`/`decision:` line in `su-code/KNOWLEDGE.md`) and **`/consolidate`** (dedup/prune memory, owner approves once). Kit: 22 files.
+- **Session thread survives /compact and resume:** `ccc hook session-start` (matcher now `startup|resume|clear|compact`) appends this session's latest owner requests, open tasks first and recent files (masked, ≤ 3 KB; STATE digest + block ≤ ~9 KB, under the 10,000-char hook cap). Measured on a 14 MB transcript: 149 ms (debug build).
+- Release size ceiling 6016 → 6080 KiB (+14,320 B local gnu vs v0.69.0, embedded skills; attribution in `scripts/size-gate.sh`).
+- **Guard asks before shipping:** push to `main`/`master`, tag pushes (`v1.2.3`, `--tags`, `--follow-tags`), push to an `encore` remote, `gh pr merge`, `gh release create`, `vercel --prod`, `npm|pnpm|yarn|bun|cargo publish`, `fly|flyctl|wrangler|firebase deploy`. Feature-branch pushes, PRs and dry-runs stay silent.
+
+### Fixed
+- Watchdog: machine load is compared with the real core count from `/proc/stat`; under the service's `CPUQuota=5%`, `available_parallelism` reported 1 core, so load > 2 alerted on a 16-core box.
+- Watchdog: a RAM/CPU alert for a process that is not a known helper (e.g. `node`) no longer says "keep that helper off"; it says the watchdog only reports it.
+
+
 ## [0.69.0] — 2026-10-13
 ### Added
 - **`8sync watchdog`** — an always-on, std-only guard (reads `/proc`, ~2 s period) for runaway harness helpers. `run [--dry-run]` builds the process trees under `claude`/`omp` plus known helpers (codebase-memory-mcp, serena, headroom, codegraph, tsserver, rust-analyzer…; list in `~/.config/8sync/watchdog.toml`, created with defaults) and, on sustained CPU / RSS, machine MemAvailable or load, GPU memory (optional `nvidia-smi`, 10 s), writes an alert to `~/.local/state/8sync/watchdog/alerts.jsonl` (0600), calls `notify-send`, and — only for known helpers running inside a `claude`/`omp` process tree, never `claude`/`omp`/editors/browsers/runtimes, and never for the `warn_only` indexers (codegraph, LSPs: alert only) — sends SIGTERM then SIGKILL after a grace period; a helper killed more than 3× in 10 min is quarantined in `~/.config/8sync/watchdog-blocked`. `install|uninstall|status` manage a `systemd --user` service (Nice=10, CPUQuota=5%, MemoryMax=64M; other OSes print "not supported yet").

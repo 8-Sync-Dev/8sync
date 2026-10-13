@@ -23,7 +23,12 @@
 //!   PowerShell command; a .NET `Delete()` on an expression; unbalanced quotes; deep nesting;
 //! - a recursive search that would print the lines of a `.env` below it;
 //! - `git reset --hard`, `git clean -f`, `git restore .`, `git checkout -- .`, `git switch -f`,
-//!   `git rm -r .`, `git stash clear`, deleting or pruning remote branches.
+//!   `git rm -r .`, `git stash clear`, deleting or pruning remote branches;
+//! - shipping to production or the public: a push to `main`/`master`, a tag push or
+//!   `--tags`, a push to an `encore` remote, `gh pr merge`, `gh release create`,
+//!   `vercel --prod`, `npm|pnpm|yarn|bun|cargo publish`, `fly|flyctl|wrangler|firebase deploy`
+//!   (also through `npx`/`bunx`/`pnpm dlx|exec`). Known gap: a bare `git push` / `git push
+//!   origin HEAD` while ON main has no ref to read here and passes; CI branch protection covers it.
 //!
 //! Two passes. A parser groups the command the way the shell would (quotes, escapes, comments,
 //! here-docs, here-strings, redirections, `;` `&&` `||` `&` `|`, groups), follows `cd`, unwraps
@@ -383,7 +388,7 @@ fn scan(seg: &str, ctx: &Ctx, f: &mut Found, depth: u8) {
                 ));
             }
         }
-        let at_start = i == 0 || ["-c", "/c", "-command", "--", "eval", "iex", "sudo", "then", "do", "exec"].contains(&words[i - 1].to_ascii_lowercase().as_str());
+        let at_start = i == 0 || ["-c", "/c", "-command", "--", "eval", "iex", "sudo", "then", "do", "exec", "env"].contains(&words[i - 1].to_ascii_lowercase().as_str());
         if v == "git" && at_start {
             let mut j = 0;
             while j < rest.len() && rest[j].starts_with('-') {
@@ -394,9 +399,78 @@ fn scan(seg: &str, ctx: &Ctx, f: &mut Found, depth: u8) {
                 let dry = push.iter().any(|a| a == "-n" || a == "--dry-run");
                 if !dry && push.iter().any(|a| forcing(a)) {
                     f.deny(format!("`{}` force-pushes and can destroy commits on the remote. Push normally; if history must be rewritten, the user does it.", seg.trim()));
+                } else if !dry && ships_push(push) {
+                    f.ask(format!("`{}` publishes: it pushes to the default branch, pushes a tag (which can trigger a release) or pushes to a deploy remote. The owner approves shipping.", seg.trim()));
                 }
             }
         }
+        // `gh` counts as text for deletes (`--body "rm -rf …"`), not for its own verbs.
+        if at_start && (!text || v == "gh") {
+            if let Some(what) = ships(&v, rest) {
+                f.ask(format!("`{}` {what}. The owner approves shipping to production or the public.", seg.trim()));
+            }
+        }
+    }
+}
+
+/// Positional args of `git push …`: a default-branch ref, a tag, `--tags`/`--follow-tags`
+/// or an `encore` remote (Encore Cloud deploys on push).
+fn ships_push(args: &[String]) -> bool {
+    let pos: Vec<&str> = args.iter().map(String::as_str).filter(|a| !a.starts_with('-')).collect();
+    let branch = |r: &str| {
+        let dst = r.rsplit_once(':').map_or(r, |(_, d)| d);
+        let dst = dst.strip_prefix("refs/heads/").unwrap_or(dst);
+        matches!(dst, "main" | "master")
+    };
+    // a release tag looks like a version: `v1.2`, `1.2.3`, `refs/tags/…` (not `v2-redesign`)
+    let tag = |r: &str| {
+        let r = r.rsplit_once(':').map_or(r, |(_, d)| d);
+        if r.starts_with("refs/tags/") {
+            return true;
+        }
+        let mut parts = r.strip_prefix('v').unwrap_or(r).splitn(3, '.');
+        let num = |x: Option<&str>| x.is_some_and(|x| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit()));
+        num(parts.next()) && num(parts.next())
+    };
+    args.iter().any(|a| a == "--tags" || a == "--follow-tags" || a == "--all")
+        || pos.first().is_some_and(|r| *r == "encore")
+        || pos.iter().skip(1).any(|r| branch(r) || tag(r))
+}
+
+/// Commands that ship to production or publish; `None` for everything else.
+fn ships(v: &str, rest: &[String]) -> Option<&'static str> {
+    // package runners: `npx vercel --prod`, `bunx …`, `pnpm dlx|exec …`, `yarn dlx|exec …`, `bun x …`
+    let runner = match (v, rest.first().map(String::as_str)) {
+        ("npx" | "bunx" | "pnpx", _) => Some(0),
+        ("pnpm" | "yarn", Some("dlx" | "exec")) | ("bun", Some("x")) => Some(1),
+        _ => None,
+    };
+    if let Some(k) = runner {
+        let tail = &rest[k..];
+        let p = tail.iter().position(|a| !a.starts_with('-'))?;
+        return ships(&verb(&tail[p]), &tail[p + 1..]);
+    }
+    let has = |x: &str| rest.iter().any(|a| a == x || a.strip_prefix(x).is_some_and(|t| t.starts_with('=')));
+    // positional words, skipping the values of options that take one (`gh -R o/r pr merge`)
+    let mut pos = Vec::new();
+    let mut skip = false;
+    for a in rest {
+        if std::mem::take(&mut skip) {
+            continue;
+        }
+        if matches!(a.as_str(), "-R" | "--repo" | "-H" | "--hostname") {
+            skip = true;
+        } else if !a.starts_with('-') {
+            pos.push(a.as_str());
+        }
+    }
+    match (v, pos.first().copied(), pos.get(1).copied()) {
+        ("gh", Some("pr"), Some("merge")) => Some("merges a pull request"),
+        ("gh", Some("release"), Some("create")) => Some("publishes a GitHub release"),
+        ("vercel", ..) if has("--prod") || has("--production") => Some("deploys to Vercel production"),
+        ("npm" | "pnpm" | "yarn" | "bun" | "cargo", Some("publish"), _) if !has("--dry-run") => Some("publishes a package"),
+        ("fly" | "flyctl" | "wrangler" | "firebase", Some("deploy"), _) => Some("deploys"),
+        _ => None,
     }
 }
 
@@ -2442,6 +2516,61 @@ mod tests {
             assert_eq!(verdict(cmd, *shell, ctx), *want, "{cmd}");
         }
     }
+    #[test]
+    fn shipping_asks_the_owner() {
+        use Shell::Bash as B;
+        table(
+            &[
+                ("git push origin main", B, "ask"),
+                ("git push -u origin HEAD:main", B, "ask"),
+                ("git -C /home/u/work/app push origin refs/heads/master", B, "ask"),
+                ("git push origin v0.69.0", B, "ask"),
+                ("git push --tags", B, "ask"),
+                ("git push encore", B, "ask"),
+                ("cd /home/u/work/app && git push origin main", B, "ask"),
+                ("gh pr merge 10 --merge", B, "ask"),
+                ("gh release create v1.0.0", B, "ask"),
+                ("vercel deploy --prod", B, "ask"),
+                ("pnpm publish", B, "ask"),
+                ("cargo publish", B, "ask"),
+                ("fly deploy", B, "ask"),
+                // everyday work stays silent
+                ("git push -u origin feat/watchdog", B, "pass"),
+                ("git push origin feat/main-menu", B, "pass"),
+                ("git push --dry-run origin main", B, "pass"),
+                ("gh pr create -B main -H feat/x", B, "pass"),
+                ("gh pr view 10", B, "pass"),
+                ("gh release view v0.69.0", B, "pass"),
+                ("vercel deploy", B, "pass"),
+                ("cargo publish --dry-run", B, "pass"),
+                ("cargo build --release", B, "pass"),
+                ("echo git push origin main", B, "pass"),
+                // review round: option values, runners, tag shape, env
+                ("gh -R o/r pr merge 3", B, "ask"),
+                ("gh --repo o/r pr merge 3", B, "ask"),
+                ("gh pr -R o/r merge 3", B, "ask"),
+                ("gh -R o/r pr view 3", B, "pass"),
+                ("npx vercel --prod", B, "ask"),
+                ("npx -y vercel deploy --prod", B, "ask"),
+                ("pnpm dlx vercel --prod", B, "ask"),
+                ("pnpm exec wrangler deploy", B, "ask"),
+                ("bunx vercel --prod=true", B, "ask"),
+                ("npx vercel", B, "pass"),
+                ("pnpm exec tsc", B, "pass"),
+                ("env git push origin main", B, "ask"),
+                ("git -c core.x=y push origin main", B, "ask"),
+                ("git push origin @:main", B, "ask"),
+                ("git push origin 1.2.3", B, "ask"),
+                ("git push origin v2-redesign", B, "pass"),
+                ("git push origin v8", B, "pass"),
+                ("git push -o main origin feat/x", B, "pass"),
+                ("git push origin fix/main-x", B, "pass"),
+                ("git push origin maintenance", B, "pass"),
+            ],
+            &unix(),
+        );
+    }
+
     /// The parser alone: a row here cannot pass because of the backstop.
     fn parser_table(rows: &[(&str, Shell, &str)], ctx: &Ctx) {
         for (cmd, shell, want) in rows {
@@ -2707,9 +2836,9 @@ mod tests {
                 ("git push origin +main", Bash, "deny"),
                 ("git push --force-with-lease", Bash, "deny"),
                 ("git -C ../other push -uf origin x", Bash, "deny"),
-                ("git push origin main", Bash, "pass"),
+                ("git push origin feat/x", Bash, "pass"),
                 ("git push -u origin feat/x", Bash, "pass"),
-                ("git push --follow-tags origin main", Bash, "pass"),
+                ("git push --follow-tags origin main", Bash, "ask"),
                 ("git push --dry-run --force", Bash, "pass"),
                 ("git push origin --delete old", Bash, "ask"),
             ],

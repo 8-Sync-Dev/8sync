@@ -78,11 +78,17 @@
 # 5,917,472 B → 6,004,648 B (+87,176). v0.68.0 musl asset 6,050,768 B, so the next
 # one is ≈ 6,137,944 B → ceiling 6016 KiB (~22 KiB left). Re-check against the real
 # release asset.
+#
+# 2026-10-13 (after v0.69.0: `/ship` full process + `/planning` `/remember` `/consolidate`
+# embedded skills, compact/resume session block, guard ship-asks). Local gnu release:
+# v0.69.0 6,009,312 B → 6,023,632 B (+14,320; mostly embedded skill text). v0.69.0 musl
+# asset 6,149,072 B, so the next ≈ 6,163,392 B — 3,008 B over 6016 KiB → ceiling 6080 KiB
+# (~63 KiB left). Re-check against the real release asset.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-6160384}"   # 6016 KiB (raised 2026-10-13 from 5952 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-6225920}"   # 6080 KiB (raised 2026-10-13 from 6016 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

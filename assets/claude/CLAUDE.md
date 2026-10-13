@@ -19,5 +19,6 @@
 @serena - serena đã bật: `mcp__serena_find_symbol` / `_find_referencing_symbols`.
 - Chạy build/test/lint của repo trước khi báo "xong". Code mới phải có test. Không sửa test cho pass. Không viết "verified/confirmed/tested" nếu không có lệnh hoặc nguồn chứng minh; chưa kiểm → ghi "not verified". Không bịa số liệu, kết quả hay nguồn.
 - Conventional commits; thay đổi user-facing → cập nhật `CHANGELOG.md`.
-- Task lớn: `explore` → task list → làm từng task + build/test → `reviewer` → commit. Gói sẵn: `/ship <task>`.
+- Task lớn: `/ship <task>` = plan → R&D → code → test → UAT → review/QC → docs+memory → commit (cờ `--release`/`--deploy` ở cuối để đi tiếp tới CI, release, monitor). Chỉ plan: `/planning <task>`.
+- Memory: bài học có bằng chứng → `/remember` (vào `su-code/KNOWLEDGE.md`, digest tự nạp đầu phiên và sau /compact); dọn định kỳ → `/consolidate`.
 - Subagent trả ≤10 bullet (`claim — file:line/URL`); chi tiết dài ghi vào file, trả path.
