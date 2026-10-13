@@ -24,6 +24,7 @@ use crate::{assets, pkg, ui};
 mod danger;
 mod gate;
 mod guard;
+mod resume;
 mod verify;
 
 #[derive(ClapArgs, Debug)]
@@ -740,6 +741,18 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "watchdog"], "timeout": 5 }] }),
         );
     }
+    // A turn that dies on an API error fires StopFailure, not Stop: record it, and remind
+    // Claude on the next prompt (https://code.claude.com/docs/en/hooks, StopFailure).
+    upsert_hook_group(
+        hooks,
+        "StopFailure",
+        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "stop-failure"], "timeout": 5 }] }),
+    );
+    upsert_hook_group(
+        hooks,
+        "UserPromptSubmit",
+        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "resume-note"], "timeout": 5 }] }),
+    );
     // Agent-team events -> `8sync hq hook <Event>`. Event names, `async` (background, never
     // blocks) and `timeout` (seconds) per https://code.claude.com/docs/en/hooks (checked
     // 2026-10-12). `hq hook` is a fast no-op until `8sync hq setup`, so always registering is safe.
@@ -1317,12 +1330,26 @@ fn hook(rest: &[String]) -> Result<()> {
         }
         // Fast path: no alerts file / nothing new = no output (sync hook, timeout 5 s).
         Some("watchdog") => crate::verbs::watchdog::run_hook(&input),
+        // StopFailure (no decision control): record + notify; resume-note says it once next prompt.
+        Some(h @ ("stop-failure" | "resume-note")) => {
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            resume::state_dir(home.as_deref()).and_then(|dir| {
+                if h == "resume-note" {
+                    return resume::note(&input, &dir, now);
+                }
+                if let Some(msg) = resume::record(&input, &dir, now) {
+                    resume::notify(&msg);
+                }
+                None
+            })
+        }
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -1650,6 +1677,20 @@ mod tests {
         assert_eq!(pre[0]["hooks"][0]["command"], "my-linter");
         assert!(v["hooks"].get("TaskCreated").is_none(), "empty events dropped");
         assert_eq!(strip_kit_hooks(&mut v), 0, "idempotent");
+    }
+
+    #[test]
+    fn kit_registers_stop_failure_and_resume_note_and_removes_them() {
+        let mut v = json!({});
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap(); // idempotent
+        let args = |ev: &str| -> Vec<Value> { v["hooks"][ev].as_array().unwrap().iter().map(|g| g["hooks"][0]["args"].clone()).collect() };
+        assert_eq!(args("StopFailure"), vec![json!(["ccc", "hook", "stop-failure"])]);
+        let ups = args("UserPromptSubmit");
+        assert!(ups.contains(&json!(["ccc", "hook", "resume-note"])) && ups.contains(&json!(["ccc", "hook", "watchdog"])), "both coexist: {ups:?}");
+        assert_eq!(ups.len(), 2);
+        strip_kit_hooks(&mut v);
+        assert!(v["hooks"].get("StopFailure").is_none() && v["hooks"].get("UserPromptSubmit").is_none());
     }
 
     #[test]
