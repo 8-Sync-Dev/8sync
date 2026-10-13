@@ -911,7 +911,9 @@ fn curl_config(method: &str, url: &str, token: Option<&str>, body: Option<&str>,
         None if method != "GET" => c.push_str("data-raw = \"\"\n"),
         None => {}
     }
-    c.push_str("write-out = \"\\n%{http_code}\"\n");
+    // Status from the response headers, not `write-out`: the stock Windows curl.exe 8.8.0
+    // fails every `-w` with error 43.
+    c.push_str("include\n");
     c
 }
 
@@ -1068,9 +1070,20 @@ fn run_curl(cfg: &str) -> Result<(u16, String)> {
         let first = e.lines().next().unwrap_or("curl failed");
         bail!("curl: {}", mask_webhook_url(first));
     }
-    let s = String::from_utf8_lossy(&out.stdout).into_owned();
-    let (body, code) = s.rsplit_once('\n').ok_or_else(|| anyhow!("malformed curl output"))?;
-    Ok((code.trim().parse().unwrap_or(0), body.to_string()))
+    split_included(&String::from_utf8_lossy(&out.stdout)).ok_or_else(|| anyhow!("malformed curl output"))
+}
+
+/// `include` output → (status, body); interim `1xx` header blocks (`100 Continue`) are skipped.
+fn split_included(s: &str) -> Option<(u16, String)> {
+    let mut rest = s;
+    loop {
+        let (head, body) = rest.split_once("\r\n\r\n").or_else(|| rest.split_once("\n\n"))?;
+        let code: u16 = head.lines().next()?.split_whitespace().nth(1)?.parse().ok()?;
+        if !(100..200).contains(&code) {
+            return Some((code, body.to_string()));
+        }
+        rest = body;
+    }
 }
 
 // ── setup ───────────────────────────────────────────────────────────────────
@@ -1900,18 +1913,37 @@ fn download_status(code: u16, url: &str, ver: &str) -> Result<()> {
     }
 }
 
+/// The HTTP status in curl's `--fail` message (`curl: (22) The requested URL returned error: 404`).
+fn failed_status(stderr: &str) -> Option<u16> {
+    stderr.split("returned error:").nth(1)?.trim().split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+}
+
+/// No `write-out`: the stock Windows `curl.exe` (8.8.0) fails every `-w` with error 43, so the
+/// status comes from `fail` (exit 22 + "returned error: <code>") instead.
 fn curl_download(url: &str, dest: &Path, ver: &str) -> Result<()> {
     let cfg = format!(
-        "silent\nshow-error\nlocation\nproto = \"=https\"\ntlsv1.2\nmax-time = 300\nurl = {}\noutput = {}\nwrite-out = \"\\n%{{http_code}}\"\n",
+        "silent\nshow-error\nfail\nlocation\nproto = \"=https\"\ntlsv1.2\nmax-time = 300\nurl = {}\noutput = {}\n",
         cq(url),
         cq(&dest.display().to_string())
     );
-    let (code, _) = run_curl(&cfg)?;
-    let r = download_status(code, url, ver);
-    if r.is_err() {
-        let _ = std::fs::remove_file(dest);
+    let mut child = Command::new("curl")
+        .args(["--config", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("curl not found on PATH")?;
+    child.stdin.take().context("curl stdin")?.write_all(cfg.as_bytes())?;
+    let out = child.wait_with_output()?;
+    if out.status.success() {
+        return Ok(());
     }
-    r
+    let _ = std::fs::remove_file(dest);
+    let e = String::from_utf8_lossy(&out.stderr);
+    match failed_status(&e) {
+        Some(code) => download_status(code, url, ver),
+        None => bail!("download failed: {url}\n  curl: {}", e.lines().next().unwrap_or("curl failed")),
+    }
 }
 
 const INSTALL_LOCK_STALE: Duration = Duration::from_secs(600);
@@ -2750,6 +2782,9 @@ mod tests {
 
     #[test]
     fn download_status_hints() {
+        assert_eq!(failed_status("curl: (22) The requested URL returned error: 404\n"), Some(404));
+        assert_eq!(failed_status("curl: (22) The requested URL returned error: 503 Service Unavailable"), Some(503));
+        assert_eq!(failed_status("curl: (6) Could not resolve host: github.com"), None);
         assert!(download_status(200, "u", "1.2.3").is_ok());
         let e = download_status(404, "https://x/y", "1.2.3").unwrap_err().to_string();
         assert!(e.contains("HTTP 404") && e.contains("release or asset for v1.2.3 may not exist yet"), "{e}");
@@ -3145,6 +3180,17 @@ mod tests {
         assert_eq!(forum_thread_name("logs", None).unwrap(), None);
         let m = Msg { persona: Persona::Hq, avatar: None, title: None, text: "x", mention_user: None, thread_name: Some("My RFC"), tags: &[] };
         assert_eq!(webhook_body(&m)["thread_name"], "My RFC");
+    }
+
+    #[test]
+    fn curl_status_comes_from_headers_not_write_out() {
+        // Windows curl.exe 8.8.0 fails every `write-out` with error 43.
+        assert!(!curl_config("GET", "https://x", None, None, 5).contains("write-out"));
+        assert!(curl_config("GET", "https://x", None, None, 5).contains("include"));
+        assert_eq!(split_included("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"id\":\"1\"}"), Some((200, "{\"id\":\"1\"}".into())));
+        assert_eq!(split_included("HTTP/1.1 100 Continue\r\n\r\nHTTP/2 429 \r\nretry-after: 1\r\n\r\n{\"retry_after\":0.5}"), Some((429, "{\"retry_after\":0.5}".into())));
+        assert_eq!(split_included("HTTP/2 204\r\n\r\n"), Some((204, String::new())));
+        assert_eq!(split_included("garbage"), None);
     }
 
     #[test]
