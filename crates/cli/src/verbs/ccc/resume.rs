@@ -117,7 +117,7 @@ mod tests {
         record(r#"{"session_id":"old","error":"e"}"#, &dir, 1).unwrap();
         assert!(note(r#"{"session_id":"old"}"#, &dir, 1 + MAX_AGE_S + 1).is_none());
         // no HOME / relative HOME → nowhere to write
-        assert!(state_dir(None).is_none() && state_dir(Some(Path::new(""))).is_none() && state_dir(Some(Path::new("/h"))).is_some());
+        assert!(state_dir(None).is_none() && state_dir(Some(Path::new(""))).is_none() && state_dir(Some(&std::env::temp_dir())).is_some());
         // the error string is sanitised before it reaches Claude
         record(r#"{"session_id":"s2","error":"x\"; echo `pwn`"}"#, &dir, 1).unwrap();
         assert!(note(r#"{"session_id":"s2"}"#, &dir, 1).unwrap().contains("`xechopwn`"));
