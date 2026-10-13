@@ -935,7 +935,9 @@ fn is_lesson(l: &str) -> bool {
 fn session_digest(root: &Path) -> String {
     const CAP: usize = 6000;
     let Ok(state) = std::fs::read_to_string(root.join("su-code/STATE.md")) else { return String::new() };
-    let mut out = state.lines().take(60).collect::<Vec<_>>().join("\n");
+    // The running `/ship` (su-code/ship/ACTIVE → su-code/ship/<slug>/STATE.md) comes first.
+    let mut out = active_ship(root).unwrap_or_default();
+    out.push_str(&state.lines().take(60).collect::<Vec<_>>().join("\n"));
     if let Ok(k) = std::fs::read_to_string(root.join("su-code/KNOWLEDGE.md")) {
         let lines: Vec<&str> = k.lines().filter(|l| is_lesson(l)).collect();
         let tail = &lines[lines.len().saturating_sub(20)..];
@@ -952,6 +954,41 @@ fn session_digest(root: &Path) -> String {
         out.truncate(end);
     }
     out
+}
+
+/// `hook session-start`: repo digest, plus this session's thread on compact/resume.
+fn session_start_output(input: &str, home: Option<&Path>) -> Option<String> {
+    let v = serde_json::from_str::<Value>(input).unwrap_or(Value::Null);
+    let start = v["cwd"].as_str().map(PathBuf::from).or_else(|| std::env::current_dir().ok()).unwrap_or_default();
+    let root = find_state_root(&start, home);
+    let mut out = root.map(|r| session_digest(&r)).unwrap_or_default();
+    // After /compact or on --resume, give back this session's own thread:
+    // the owner's latest asks, the task checklist, files touched.
+    if matches!(v["source"].as_str(), Some("compact" | "resume")) {
+        if let Some(t) = v["transcript_path"].as_str().filter(|t| !t.is_empty()) {
+            let d = crate::verbs::session_view::scan_file(Path::new(t), crate::verbs::session_view::Fmt::Claude, true);
+            let block = session_block(&d);
+            if !block.is_empty() {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str(&block);
+            }
+        }
+    }
+    Some(out).filter(|d| !d.is_empty())
+}
+
+/// Head of the active `/ship` state, if `su-code/ship/ACTIVE` names a slug that has one.
+fn active_ship(root: &Path) -> Option<String> {
+    let slug = std::fs::read_to_string(root.join("su-code/ship/ACTIVE")).ok()?;
+    let slug = slug.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#'))?.to_string();
+    if slug.is_empty() || slug.len() > 64 || !slug.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return None;
+    }
+    let st = std::fs::read_to_string(root.join("su-code/ship").join(&slug).join("STATE.md")).ok()?;
+    let head = st.lines().take(40).collect::<Vec<_>>().join("\n");
+    Some(format!("## Active /ship: {slug} (su-code/ship/{slug}/)\n{head}\n\n"))
 }
 
 /// Pure: this session's thread for `hook session-start` on compact/resume — latest
@@ -975,7 +1012,7 @@ fn session_block(d: &crate::verbs::session_view::Digest) -> String {
         // open work first (it is what must survive), then only the last few done
         let open = d.tasks.iter().filter(|t| t.state != TaskState::Done);
         let done: Vec<_> = d.tasks.iter().filter(|t| t.state == TaskState::Done).collect();
-        for t in open.chain(done[done.len().saturating_sub(5)..].iter().copied()) {
+        for t in open.chain(done[done.len().saturating_sub(5)..].iter().copied()).take(25) {
             let mark = match t.state {
                 TaskState::Done => "[x]",
                 TaskState::InProgress => "[~]",
@@ -985,17 +1022,20 @@ fn session_block(d: &crate::verbs::session_view::Digest) -> String {
         }
     }
     if !d.files.is_empty() {
-        let files: Vec<&str> = d.files.iter().take(8).map(String::as_str).collect();
+        let files: Vec<String> = d.files.iter().take(8).map(|f| clean(f, 120)).collect();
         out.push_str(&format!("Recently edited: {}\n", files.join(", ")));
     }
-    out.push_str("Continue the unfinished tasks; re-read files before editing them.");
-    if out.len() > CAP {
-        let mut end = CAP;
+    const FOOTER: &str = "Continue the unfinished tasks; re-read files before editing them.";
+    let room = CAP - FOOTER.len() - 1;
+    if out.len() > room {
+        let mut end = room;
         while !out.is_char_boundary(end) {
             end -= 1;
         }
         out.truncate(end);
+        out.push('\n');
     }
+    out.push_str(FOOTER);
     out
 }
 
@@ -1278,28 +1318,10 @@ fn hook(rest: &[String]) -> Result<()> {
         // Fast path: no alerts file / nothing new = no output (sync hook, timeout 5 s).
         Some("watchdog") => crate::verbs::watchdog::run_hook(&input),
         Some("session-start") => {
-            let cwd = serde_json::from_str::<Value>(&input).ok().and_then(|v| v["cwd"].as_str().map(PathBuf::from));
-            let start = cwd.or_else(|| std::env::current_dir().ok()).unwrap_or_default();
             let home = std::env::var_os("HOME").map(PathBuf::from);
-            let root = find_state_root(&start, home.as_deref());
-            let mut out = root.map(|r| session_digest(&r)).unwrap_or_default();
-            // After /compact or on --resume, give back this session's own thread:
-            // the owner's latest asks, the task checklist, files touched.
-            let v = serde_json::from_str::<Value>(&input).unwrap_or(Value::Null);
-            if matches!(v["source"].as_str(), Some("compact" | "resume")) {
-                if let Some(t) = v["transcript_path"].as_str().filter(|t| !t.is_empty()) {
-                    let d = crate::verbs::session_view::scan_file(Path::new(t), crate::verbs::session_view::Fmt::Claude, true);
-                    let block = session_block(&d);
-                    if !block.is_empty() {
-                        if !out.is_empty() {
-                            out.push_str("\n\n");
-                        }
-                        out.push_str(&block);
-                    }
-                }
-            }
-            Some(out).filter(|d| !d.is_empty())
+            session_start_output(&input, home.as_deref())
         }
+
         _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
@@ -1447,6 +1469,45 @@ mod tests {
     }
 
     #[test]
+    fn session_start_gates_on_source_and_stays_under_cap() {
+        let d = std::env::temp_dir().join(format!("8sync-ss-{}-{}", std::process::id(), line!()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("su-code/ship/fix-login")).unwrap();
+        std::fs::write(d.join("su-code/STATE.md"), format!("# repo state\n{}", "s".repeat(9000))).unwrap();
+        let lessons: String = (0..40).map(|i| format!("- decision: d{i} {}\n", "k".repeat(200))).collect();
+        std::fs::write(d.join("su-code/KNOWLEDGE.md"), lessons).unwrap();
+        std::fs::write(d.join("su-code/ship/ACTIVE"), "fix-login\n").unwrap();
+        std::fs::write(d.join("su-code/ship/fix-login/STATE.md"), "## Goal\nfix the login loop\n").unwrap();
+        let t = d.join("t.jsonl");
+        let mut tr = String::from(r#"{"type":"user","message":{"role":"user","content":"sửa đăng nhập Zalo"},"origin":{"kind":"human"}}"#);
+        tr.push('\n');
+        tr.push_str(r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"TaskCreate","input":{"subject":"viết test"}}]}}"#);
+        tr.push('\n');
+        std::fs::write(&t, tr).unwrap();
+        let input = |src: &str, tp: &str| json!({"source": src, "cwd": d, "transcript_path": tp}).to_string();
+        let tp = t.to_string_lossy().to_string();
+        for src in ["compact", "resume"] {
+            let o = session_start_output(&input(src, &tp), None).unwrap();
+            assert!(o.starts_with("## Active /ship: fix-login") && o.contains("fix the login loop"), "{src}");
+            assert!(o.contains("- sửa đăng nhập Zalo") && o.contains("- [ ] viết test"), "{src}: {o}");
+            assert!(o.chars().count() < 10_000, "hook cap");
+        }
+        for src in ["startup", "clear"] {
+            let o = session_start_output(&input(src, &tp), None).unwrap();
+            assert!(!o.contains("This session"), "{src}");
+        }
+        // a bad transcript path or garbage input never panics and adds nothing
+        let o = session_start_output(&input("compact", "/nonexistent/x.jsonl"), None).unwrap();
+        assert!(!o.contains("This session"));
+        let _ = session_start_output("not json", None);
+        // an ACTIVE slug that tries to leave su-code/ship is ignored
+        std::fs::write(d.join("su-code/ship/ACTIVE"), "../../etc\n").unwrap();
+        assert!(active_ship(&d).is_none());
+        assert!(is_lesson("- decision: x") && is_lesson("- **failure: y") && !is_lesson("- note: z"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
     fn session_block_restores_thread_masked_and_capped() {
         use crate::verbs::session_view::{Digest, Task, TaskState};
         assert_eq!(session_block(&Digest::default()), "");
@@ -1461,8 +1522,12 @@ mod tests {
         assert!(b.contains("- fix login") && b.contains("Task list (1/3 done)") && b.contains("- [~] implement") && b.contains("- [ ] review"));
         assert!(b.contains("Recently edited: src/a.rs"));
         assert!(!b.contains("AAAAAAAAAAAAAAAAAAAAAAAA"), "secrets masked: {b}");
-        let many = Digest { tasks: (0..200).map(|i| t(&i.to_string(), &"x".repeat(150), TaskState::Pending)).collect(), ..Default::default() };
-        assert!(session_block(&many).len() <= 3000);
+        let many = Digest { tasks: (0..200).map(|i| t(&i.to_string(), &"ừ".repeat(150), TaskState::Pending)).collect(), ..Default::default() };
+        let b = session_block(&many);
+        assert!(b.len() <= 3000 && b.ends_with("re-read files before editing them."), "footer survives the cut");
+        let done = Digest { tasks: (0..9).map(|i| t(&i.to_string(), &format!("done{i}"), TaskState::Done)).collect(), partial: true, ..Default::default() };
+        let b = session_block(&done);
+        assert!(b.contains("(9/9 done, from the transcript tail)") && !b.contains("done3") && b.contains("done4") && b.contains("done8"));
     }
 
     #[test]

@@ -6,7 +6,7 @@ argument-hint: <mô tả task>
 Task: $ARGUMENTS
 
 1. Đọc đủ để plan đúng: `su-code/STATE.md` + PLAN cũ cùng slug nếu có; code liên quan (codegraph/LSP trước grep); repo lạ hoặc nhiều module → subagent `explore`.
-2. Viết `su-code/planning/<slug>/PLAN.md` (không có `su-code/` → `.claude/ship/<slug>/PLAN.md`):
+2. Viết `su-code/ship/<slug>/PLAN.md` (không có `su-code/` → `.claude/ship/<slug>/PLAN.md`):
    - **Goal** (1–2 câu) · **Non-goals**
    - **Acceptance criteria** — mỗi dòng kiểm được bằng một lệnh/hành vi cụ thể (cái UAT sẽ chạy)
    - **Tasks** — thứ tự, file/module chạm tới, test kèm theo; đánh dấu task chạy song song được

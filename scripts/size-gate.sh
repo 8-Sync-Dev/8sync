@@ -81,8 +81,8 @@
 #
 # 2026-10-13 (after v0.69.0: `/ship` full process + `/planning` `/remember` `/consolidate`
 # embedded skills, compact/resume session block, guard ship-asks). Local gnu release:
-# v0.69.0 6,009,312 B → 6,021,232 B (+11,920; mostly embedded skill text). v0.69.0 musl
-# asset 6,149,072 B, so the next ≈ 6,160,992 B — 608 B over 6016 KiB → ceiling 6080 KiB
+# v0.69.0 6,009,312 B → 6,023,632 B (+14,320; mostly embedded skill text). v0.69.0 musl
+# asset 6,149,072 B, so the next ≈ 6,163,392 B — 3,008 B over 6016 KiB → ceiling 6080 KiB
 # (~63 KiB left). Re-check against the real release asset.
 
 set -euo pipefail

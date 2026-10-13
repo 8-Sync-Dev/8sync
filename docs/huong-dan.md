@@ -56,7 +56,7 @@ Claude Code sessions · /home/you/works/du-an
 
 | Lệnh | Dùng khi |
 |---|---|
-| `/ship <việc>` | Làm trọn một feature hoặc bug như một team: plan → R&D → code → test → UAT → review/QC → CHANGELOG + memory → commit. Thêm `release` hoặc `deploy` để đi tiếp: PR → CI → merge/tag/deploy (guard hỏi anh) → monitor. Trạng thái nằm ở `su-code/planning/<slug>/STATE.md` nên không mất khi /compact |
+| `/ship <việc>` | Làm trọn một feature hoặc bug như một team: plan → R&D → code → test → UAT → review/QC → CHANGELOG + memory → commit. Thêm cờ `--release` hoặc `--deploy` ở cuối để đi tiếp: PR → CI → merge/tag/deploy (guard hỏi anh) → monitor. Trạng thái nằm ở `su-code/ship/<slug>/STATE.md` (con trỏ `su-code/ship/ACTIVE`), được nạp lại đầu phiên và sau /compact |
 | `/planning <việc>` | Chỉ lập plan (không code): goal, acceptance criteria, task theo file, rủi ro; câu hỏi gom một bảng |
 | `/remember <bài học>` | Ghi một bài học có bằng chứng vào `su-code/KNOWLEDGE.md`; session sau tự đọc |
 | `/consolidate` | Dọn memory: gộp trùng, bỏ dòng sai/cũ, chuyển quy trình sang PLAYBOOKS (hỏi duyệt một lần) |
