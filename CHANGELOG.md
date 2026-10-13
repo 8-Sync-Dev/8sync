@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.69.0] — 2026-10-13
 ### Added
 - **`8sync watchdog`** — an always-on, std-only guard (reads `/proc`, ~2 s period) for runaway harness helpers. `run [--dry-run]` builds the process trees under `claude`/`omp` plus known helpers (codebase-memory-mcp, serena, headroom, codegraph, tsserver, rust-analyzer…; list in `~/.config/8sync/watchdog.toml`, created with defaults) and, on sustained CPU / RSS, machine MemAvailable or load, GPU memory (optional `nvidia-smi`, 10 s), writes an alert to `~/.local/state/8sync/watchdog/alerts.jsonl` (0600), calls `notify-send`, and — only for known helpers running inside a `claude`/`omp` process tree, never `claude`/`omp`/editors/browsers/runtimes, and never for the `warn_only` indexers (codegraph, LSPs: alert only) — sends SIGTERM then SIGKILL after a grace period; a helper killed more than 3× in 10 min is quarantined in `~/.config/8sync/watchdog-blocked`. `install|uninstall|status` manage a `systemd --user` service (Nice=10, CPUQuota=5%, MemoryMax=64M; other OSes print "not supported yet").
 - **`8sync ccc hook watchdog`** (registered by `8sync ccc kit` on `UserPromptSubmit` and `PostToolUse`, synchronous, timeout 5): feeds unseen alerts for this session's process tree or the whole machine to Claude Code as `hookSpecificOutput.additionalContext` (≤ 1,500 chars; per-session cursor; no output and no writes when nothing is new).
