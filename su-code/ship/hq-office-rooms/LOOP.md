@@ -35,3 +35,4 @@ iter 3 | C9 cargo test report/usage/inbox/subagent/stop/dispatcher | exit 0 | 11
 iter 3 | C6 hq-offline-check.sh | exit 0 | hq-offline-check: OK
 iter 3 | C8 UAT live (5 real sessions, Edge headless) | PASS 7/7 | found + fixed: tab bar overflow 170 px at 390 px; header said "0 projects" (now "N dự án · M phòng")
 iter 3 | C8 UAT seeded (uat.sh, isolated HOME) | PASS 15/15 | found + fixed: Board and Giao việc only offered tmux sessions ("Start a session to hand it tasks" with sessions running) -> tasks to inbox sessions (/api/tasks accepts a session id)
+iter 3 | C7 CI run 38483582880 on feat/hq-office-rooms (85c3010) | exit 0 | all jobs green (test ubuntu, minimal, hq-ui-test)
