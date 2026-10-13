@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **`--offline` for `8sync ccc`** (`new <name>`, `<name>`, `.`, `kit`; or `EIGHTSYNC_OFFLINE=1`): no network step runs — no auto-update, no background update probe, no Claude Code installer (`claude` must already be on PATH), no `claude mcp add-json` mirroring. Kit files and local skill linking still install. Each skipped step prints one `skip` line. All of these go through one `net_allowed` gate, covered by unit tests.
 
 ## [0.76.0] — 2026-10-13
 ### Added
