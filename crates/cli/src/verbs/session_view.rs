@@ -80,6 +80,8 @@ pub struct Digest {
     pub last_users: Vec<String>,
     /// Latest tool call, e.g. `bash: running tests`.
     pub last_tool: Option<String>,
+    /// Raw name of that tool call (`Bash`, `Edit`, …).
+    pub last_tool_name: Option<String>,
     /// Latest assistant text block, whole.
     pub last_text: Option<String>,
     /// Context size reported by the latest assistant message.
@@ -416,7 +418,10 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
         d.last_text = blocks(&v).iter().rev().find_map(text_block).map(|t| mask_secrets(&t));
     }
     if let Ok(v) = serde_json::from_slice::<Value>(&last_tool) {
-        d.last_tool = blocks(&v).iter().rev().find_map(tool_block).map(|(n, a)| tool_summary(&n, &a));
+        if let Some((n, a)) = blocks(&v).iter().rev().find_map(tool_block) {
+            d.last_tool = Some(tool_summary(&n, &a));
+            d.last_tool_name = Some(n);
+        }
     }
     if detail {
         let mut seen = std::collections::HashSet::new();
@@ -773,6 +778,28 @@ pub fn render_compact(row: &Row, width: usize, now: u64, color: bool) -> String 
     format!("  {star} {dot} {}{pad}  {:<9}  {}", p.bold(&name), when, p.dim(&ask))
 }
 
+/// API error type recorded by the kit's StopFailure hook for a Claude session
+/// (`<dir>/<session_id>.json`, written by `ccc/resume.rs`). Read-only; records older
+/// than 24 h are ignored.
+fn stalled_error_in(dir: &Path, row: &Row, now_s: u64) -> Option<String> {
+    if row.engine != "claude" {
+        return None;
+    }
+    let id = crate::verbs::watchdog::safe_id(row.transcript.as_deref()?.file_stem()?.to_str()?)?;
+    let rec: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(format!("{id}.json"))).ok()?).ok()?;
+    if now_s.saturating_sub(rec["ts"].as_u64()?) > 24 * 3600 {
+        return None;
+    }
+    rec["error"].as_str().map(str::to_string)
+}
+
+fn stalled_error(row: &Row) -> Option<String> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let dir = home.filter(|h| h.is_absolute())?.join(".local/state/8sync/ccc/stopfail");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    stalled_error_in(&dir, row, now)
+}
+
 /// JSON for one session — the `--json` contract of `ls`.
 pub fn row_json(row: &Row) -> Value {
     let d = &row.digest;
@@ -788,6 +815,8 @@ pub fn row_json(row: &Row) -> Value {
         "doing": d.current_task().map(|t| t.title.clone()).or_else(|| d.last_activity()).map(|s| clean(&s, 200)),
         "last_user": d.last_user().map(|u| clean(u, 200)),
         "last_activity": d.last_activity().map(|s| clean(&s, 200)),
+        "last_tool": d.last_tool_name.as_deref().map(|s| clean(s, 60)),
+        "stalled_error": stalled_error(row),
         "current_task": d.current_task().map(|t| clean(&t.title, 200)),
         "tasks_done": d.tasks_done(),
         "tasks_total": d.tasks.len(),
@@ -1090,6 +1119,8 @@ mod tests {
         assert_eq!((d.tasks_done(), d.tasks.len()), (1, 2));
         assert_eq!(d.current_task().unwrap().title, "implement");
         assert_eq!(d.last_tool.as_deref(), Some("Bash: Run client tests"));
+        assert_eq!(d.last_tool_name.as_deref(), Some("Bash"));
+        assert_eq!(row_json(&row(d.clone()))["last_tool"], "Bash");
         assert_eq!(d.last_text.as_deref(), Some("Starting now"));
         assert!(d.files.is_empty(), "files only on detail scans");
         assert_eq!(d.model.as_deref(), Some("claude-x"));
@@ -1126,6 +1157,23 @@ mod tests {
         assert_eq!(v["current_task"], "build it");
         assert_eq!(v["doing"], "build it");
         assert_eq!(v["branch"], Value::Null);
+    }
+
+    #[test]
+    fn stalled_error_reads_fresh_record_only() {
+        let dir = std::env::temp_dir().join(format!("8sync-sv-stopfail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut r = row(Digest::default());
+        r.engine = "claude";
+        r.transcript = Some(PathBuf::from("/x/abc-123.jsonl"));
+        assert_eq!(stalled_error_in(&dir, &r, 1000), None, "absent");
+        std::fs::write(dir.join("abc-123.json"), r#"{"error":"rate_limit","ts":1000,"cwd":"/w"}"#).unwrap();
+        assert_eq!(stalled_error_in(&dir, &r, 2000).as_deref(), Some("rate_limit"));
+        assert_eq!(stalled_error_in(&dir, &r, 1000 + 24 * 3600 + 1), None, "old");
+        assert!(dir.join("abc-123.json").exists(), "never deleted");
+        r.engine = "omp";
+        assert_eq!(stalled_error_in(&dir, &r, 2000), None, "claude only");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

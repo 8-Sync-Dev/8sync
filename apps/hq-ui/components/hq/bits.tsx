@@ -223,5 +223,6 @@ export function shortName(name: string | null | undefined): string {
   if (!name) return "unknown";
   if (name === "owner") return "you";
   if (name.startsWith("hq-")) return name.slice(3);
+  // Never show a full uuid as primary text.
   return /^[0-9a-f-]{20,}$/i.test(name) ? name.slice(0, 8) : name;
 }

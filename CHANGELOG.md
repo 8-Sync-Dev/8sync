@@ -4,6 +4,20 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **`8sync hq ui` "Văn phòng" (default tab): every Claude Code / omp session is a pixel coworker at a desk.**
+  - Seven code-drawn 32×32 animated states: resting, typing, running a command, reading/searching, waiting for you (raised hand), stuck (red "!"), done (cheer).
+  - Each desk shows a Vietnamese text label, one caption line and task progress; waiting and stuck desks come first, and old idle ones are collapsed.
+  - The sprites are drawn in the browser on a canvas: no image files, no image-generation APIs.
+  - The animation runs at about 7 fps, pauses while the tab is hidden or the desk is offscreen, and shows a single frame under `prefers-reduced-motion`.
+  - Data comes from the new token-gated `/api/floor` (`8sync ls --json --all` + hq sessions, 4 s cache, single flight).
+- **`8sync ls --json` rows gain `last_tool` and `stalled_error`.** `last_tool` is the raw name of the latest tool. `stalled_error` is the API error that the kit's StopFailure hook recorded for that Claude session within the last 24 h.
+- **HQ UI on brand and simpler.**
+  - 8 Sync mark and lime-on-near-black tokens (WCAG AA checked in light and dark); Geist and Be Vietnam Pro fonts.
+  - Readable session names instead of uuids, with old or ended sessions under "Older".
+  - The composer is replaced by a "Start a session" action when no session is running.
+  - Chat is rendered with Vercel AI Elements components (display only: no model calls, no keys).
+- CI runs hq-ui typecheck (`next typegen` + `tsc`) and vitest, and uploads the packaged hq-ui tarball as an artifact for local UAT without building.
 
 ## [0.71.0] — 2026-10-13
 ### Added

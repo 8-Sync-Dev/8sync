@@ -4,6 +4,7 @@ import {
   ArrowRightIcon,
   BellIcon,
   CircleCheckIcon,
+  ChevronDownIcon,
   CirclePlusIcon,
   MessagesSquareIcon,
   MoonIcon,
@@ -11,14 +12,17 @@ import {
   SendHorizontalIcon,
   SquareIcon,
 } from "lucide-react";
-import { Fragment, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { toast } from "sonner";
+import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
+import { Message as ChatMessage, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { messageTargets, sessionLabel, splitStale } from "@/lib/labels";
 import { cn } from "@/lib/utils";
-import { ChannelNotice, DeliveryTag, EmptyState, ErrorNote, ReplySource, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
+import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
 import type { Hq } from "./use-hq";
 import type { Message, Session } from "./types";
 
@@ -31,6 +35,7 @@ export function TeamView({
   target,
   onTarget,
   header,
+  onStartSession,
 }: {
   hq: Hq;
   messages: Message[];
@@ -38,26 +43,9 @@ export function TeamView({
   target: string | null;
   onTarget: (s: string) => void;
   header?: ReactNode;
+  /** Opens the start-session form (hq-app: focusStartSession). Without it the CTA is text only. */
+  onStartSession?: () => void;
 }) {
-  const scroller = useRef<HTMLDivElement>(null);
-  const content = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
-
-  // Stay pinned to the newest row unless the owner scrolled up to read. A
-  // ResizeObserver also catches late growth (header card, wrapped text).
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    const inner = content.current;
-    if (!el || !inner) return;
-    const stick = () => {
-      if (pinned.current) el.scrollTop = el.scrollHeight;
-    };
-    stick();
-    const ro = new ResizeObserver(stick);
-    ro.observe(inner);
-    return () => ro.disconnect();
-  }, []);
-
   const groups = useMemo(() => {
     const out: { day: string; rows: Message[] }[] = [];
     for (const m of messages) {
@@ -68,70 +56,145 @@ export function TeamView({
     return out;
   }, [messages]);
 
+  const who = useMemo<Who>(() => {
+    const names = new Map<string, string>();
+    for (const x of sessions) {
+      names.set(x.name, sessionLabel(x));
+      if (x.session_id) names.set(x.session_id, sessionLabel(x));
+    }
+    return (n) => (n ? (names.get(n) ?? shortName(n)) : "unknown");
+  }, [sessions]);
+
   const { loading, error } = hq.messages;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div
-        ref={scroller}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-        }}
-        className="min-h-0 flex-1 overflow-y-auto"
-      >
-        <div ref={content} className="mx-auto w-full max-w-3xl px-4 py-4 sm:px-6">
+      <Conversation className="min-h-0 flex-1">
+        <ConversationContent className="mx-auto w-full max-w-3xl gap-0 px-4 py-4 sm:px-6">
           {header && <div className="mb-6">{header}</div>}
+          <SessionStrip sessions={sessions} />
           {error ? (
             <ErrorNote what="messages" error={error} onRetry={hq.reload.messages} />
           ) : loading ? (
             <TimelineSkeleton />
           ) : messages.length === 0 ? (
-            <EmptyState icon={<MessagesSquareIcon />} title="No conversation yet">
-              Messages you send, replies from sessions, and messages sessions send each other show up here as they
-              happen.
-            </EmptyState>
+            <ConversationEmptyState
+              icon={<MessagesSquareIcon />}
+              title="No conversation yet"
+              description="Messages you send, replies from sessions, and messages sessions send each other show up here as they happen."
+            />
           ) : (
-            <ol aria-label="Team timeline" className="pb-2">
+            <div aria-label="Team timeline" className="pb-2">
               {groups.map((g) => (
                 <Fragment key={g.day + g.rows[0].id}>
-                  <li
+                  <div
                     aria-hidden
                     className="sticky top-0 z-10 -mx-2 bg-background/95 px-2 pt-3 pb-1.5 text-xs font-medium text-muted-foreground backdrop-blur-[2px]"
                   >
                     {g.day}
-                  </li>
+                  </div>
                   {g.rows.map((m, i) => (
-                    <Row key={m.id} m={m} prev={g.rows[i - 1]} />
+                    <Row key={m.id} m={m} prev={g.rows[i - 1]} who={who} />
                   ))}
                 </Fragment>
               ))}
-            </ol>
+            </div>
           )}
-        </div>
-      </div>
-      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} />
+        </ConversationContent>
+        <ConversationScrollButton />
+      </Conversation>
+      {messageTargets(sessions).length === 0 ? (
+        <StartCta onStartSession={onStartSession} />
+      ) : (
+        <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} />
+      )}
     </div>
   );
 }
 
-function Row({ m, prev }: { m: Message; prev?: Message }) {
-  if (!CHAT_KINDS.has(m.kind)) return <EventRow m={m} />;
+/** One status line per live session; cwd, channel and detail open on demand. */
+function SessionStrip({ sessions }: { sessions: Session[] }) {
+  const { fresh } = splitStale(sessions);
+  const live = fresh.filter((s) => s.status !== "ended");
+  if (live.length === 0) return null;
+  return (
+    <ul aria-label="Sessions" className="mb-4 divide-y rounded-xl border bg-card text-sm">
+      {live.map((s) => {
+        const state = s.waiting ? "Waiting for you" : STATUS_LABEL[s.status];
+        const via = s.channel ? "Channel" : s.tmux ? "Terminal" : "Not started here";
+        return (
+          <li key={s.name}>
+            <details className="group/s">
+              <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 px-3 py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 [&::-webkit-details-marker]:hidden">
+                <StatusDot status={s.status} />
+                <span className="min-w-0 flex-1 truncate font-medium">{sessionLabel(s)}</span>
+                <span className={cn("shrink-0 text-xs", s.waiting || s.status === "needs_input" ? "font-medium text-st-needs" : "text-muted-foreground")}>
+                  {state}
+                </span>
+                <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/s:rotate-180" aria-hidden />
+              </summary>
+              <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1 px-3 pt-1 pb-3 text-xs text-muted-foreground">
+                <dt>Name</dt>
+                <dd className="truncate font-mono">{s.name}</dd>
+                {s.cwd && (
+                  <>
+                    <dt>Folder</dt>
+                    <dd className="truncate font-mono" title={s.cwd}>{s.cwd}</dd>
+                  </>
+                )}
+                <dt>Via</dt>
+                <dd>{via}</dd>
+                {(s.waiting || s.detail) && (
+                  <>
+                    <dt>Detail</dt>
+                    <dd>{s.waiting ?? s.detail}</dd>
+                  </>
+                )}
+              </dl>
+            </details>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function StartCta({ onStartSession }: { onStartSession?: () => void }) {
+  return (
+    <div className="shrink-0 border-t bg-background">
+      <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
+        <p className="min-w-0 flex-1 text-sm text-muted-foreground">No session is running, so there is nobody to message.</p>
+        {onStartSession ? (
+          <Button size="sm" onClick={onStartSession}>
+            <PlayIcon /> Start a session
+          </Button>
+        ) : (
+          <span className="text-sm font-medium">Start one in the Sessions tab.</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type Who = (name: string | null | undefined) => string;
+
+function Row({ m, prev, who }: { m: Message; prev?: Message; who: Who }) {
+  if (!CHAT_KINDS.has(m.kind)) return <EventRow m={m} who={who} />;
   const owner = m.kind === "owner_message";
-  const from = owner ? "You" : shortName(m.from_ ?? m.session);
-  const to = owner ? shortName(m.to_ ?? m.session) : m.kind === "session_reply" ? "you" : m.to_ ? shortName(m.to_) : null;
+  const from = owner ? "You" : who(m.from_ ?? m.session);
+  const to = owner ? who(m.to_ ?? m.session) : m.kind === "session_reply" ? "you" : m.to_ ? who(m.to_) : null;
   // Collapse the header for consecutive rows from the same sender within 5 min.
   const sameRun =
     prev && CHAT_KINDS.has(prev.kind) && prev.kind === m.kind && prev.from_ === m.from_ && prev.to_ === m.to_ && m.ts - prev.ts < 300_000;
   return (
-    <li className={cn("group", sameRun ? "mt-1" : "mt-4")}>
+    <div className={cn(sameRun ? "mt-1" : "mt-4")}>
       {!sameRun && (
-        <div className="mb-1 flex items-baseline gap-1.5 text-[13px]">
-          <span className={cn("font-semibold", !owner && "font-mono text-[12.5px]")}>{from}</span>
+        <div className={cn("mb-1 flex items-baseline gap-1.5 text-[13px]", owner && "justify-end")}>
+          <span className="font-semibold">{from}</span>
           {to && (
             <>
               <ArrowRightIcon className="size-3 translate-y-[1px] text-muted-foreground" aria-label="to" />
-              <span className="font-mono text-[12.5px] text-muted-foreground">{to}</span>
+              <span className="text-muted-foreground">{to}</span>
             </>
           )}
           <time className="ml-1 text-xs text-muted-foreground tabular" dateTime={new Date(m.ts).toISOString()}>
@@ -139,16 +202,13 @@ function Row({ m, prev }: { m: Message; prev?: Message }) {
           </time>
         </div>
       )}
-      <div
-        className={cn(
-          "w-fit max-w-full rounded-lg px-3 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap",
-          owner ? "bg-owner" : "border bg-card",
-        )}
-      >
-        {m.text}
-      </div>
+      <ChatMessage from={owner ? "user" : "assistant"}>
+        <MessageContent className={cn(!owner && "rounded-lg border bg-card px-3 py-2")}>
+          {owner ? <span className="break-words whitespace-pre-wrap">{m.text}</span> : <MessageResponse>{m.text ?? ""}</MessageResponse>}
+        </MessageContent>
+      </ChatMessage>
       {owner && m.delivery && (
-        <div className="mt-1">
+        <div className="mt-1 flex justify-end">
           <DeliveryTag delivery={m.delivery} />
         </div>
       )}
@@ -157,7 +217,7 @@ function Row({ m, prev }: { m: Message; prev?: Message }) {
           <ReplySource delivery={m.delivery} />
         </div>
       )}
-    </li>
+    </div>
   );
 }
 
@@ -170,16 +230,16 @@ const EVENT_META: Record<string, { icon: ReactNode; verb: string }> = {
   session_end: { icon: <SquareIcon />, verb: "ended" },
 };
 
-function EventRow({ m }: { m: Message }) {
+function EventRow({ m, who: label }: { m: Message; who: Who }) {
   const meta = EVENT_META[m.kind] ?? { icon: <BellIcon />, verb: m.kind };
-  const who = shortName(m.from_ ?? m.session);
+  const who = label(m.from_ ?? m.session);
   return (
-    <li className="mt-2 flex items-start gap-2 text-[13px] text-muted-foreground">
+    <div className="mt-2 flex items-start gap-2 text-[13px] text-muted-foreground">
       <span aria-hidden className="mt-[3px] [&_svg]:size-3.5">
         {meta.icon}
       </span>
       <p className="min-w-0 flex-1">
-        <span className="font-mono text-[12.5px] text-foreground/80">{who}</span> {meta.verb}
+        <span className="text-foreground/80">{who}</span> {meta.verb}
         {m.text && (
           <>
             {meta.verb ? ": " : " "}
@@ -190,7 +250,7 @@ function EventRow({ m }: { m: Message }) {
       <time className="text-xs tabular" dateTime={new Date(m.ts).toISOString()}>
         {clock(m.ts)}
       </time>
-    </li>
+    </div>
   );
 }
 
@@ -221,7 +281,7 @@ function Composer({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
-  const targets = sessions.filter((s) => s.tmux && s.status !== "ended");
+  const targets = messageTargets(sessions);
   // Default to the first live session until the owner picks one.
   const current = targets.find((s) => s.name === target) ?? targets[0] ?? null;
 
@@ -298,7 +358,7 @@ function Composer({
             disabled={disabled}
             rows={2}
             maxLength={4000}
-            placeholder={current ? `Message ${shortName(current.name)}` : "No running session"}
+            placeholder={current ? `Message ${shortName(current.name)}` : "Message"}
             className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
           <div className="flex items-center gap-2 px-2 pb-2">
