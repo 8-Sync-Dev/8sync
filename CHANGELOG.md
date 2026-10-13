@@ -5,6 +5,17 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.75.0] — 2026-10-13
+### Changed
+- Release size ceiling 6080 → 6144 KiB from the measured v0.74.0 linux-x86_64 asset (6,231,472 B, 5,552 B over: taste-skill variants + `ls` fields). v0.74.0 was tagged but not published; this release carries everything listed under 0.74.0.
+
+### Added
+- **Ship once, not at every step.** Claude now asks a single `AskUserQuestion` with header "Ship" that lists every merge, push to main, tag, release, publish and production deploy it will do. Options: "Duyệt tất cả", "Chỉ merge, chưa deploy" or "Dừng".
+  - Claude Code passes the owner's answer to the new `ccc hook ship-grant` (PostToolUse on AskUserQuestion), so it cannot be forged. The hook writes an 8-hour grant for that session (0600 file).
+  - The guard then lets those shipping steps through without a prompt each time. "Chỉ merge" grants shipping but not production deploys.
+  - Deny rules (force-push, deleting roots, secrets) never look at a grant. A command that also contains a non-shipping ask still prompts.
+  - Before this, every `gh pr merge` or `vercel --prod` prompted separately.
+
 ## [0.74.0] — 2026-10-13
 ### Added
 - **`8sync hq ui` "Văn phòng" (default tab): every Claude Code / omp session is a pixel coworker at a desk.**

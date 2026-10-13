@@ -43,6 +43,9 @@ use std::path::{Path, PathBuf};
 pub(super) enum Verdict {
     Deny(String),
     Ask(String),
+    /// Only shipping steps (merge, push to main, tag, release, publish; `deploy` = a
+    /// production deploy): the owner may have approved them already in one batch.
+    Ship { why: String, deploy: bool },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -86,13 +89,16 @@ fn analyse(cmd: &str, shell: Shell, ctx: &Ctx, raw: bool) -> Option<Verdict> {
     }
     let cwd = ctx.cwd.as_deref().and_then(|c| abs(c, None, ctx.windows));
     walk(cmd, shell, ctx, cwd, Place::Here, &mut found, 0);
-    found.deny.map(Verdict::Deny).or(found.ask.map(Verdict::Ask))
+    // A non-shipping ask anywhere in the command keeps the plain prompt.
+    found.deny.map(Verdict::Deny).or(found.ask.map(Verdict::Ask)).or(found.ship.map(|why| Verdict::Ship { why, deploy: found.deploy }))
 }
 
 #[derive(Default)]
 struct Found {
     deny: Option<String>,
     ask: Option<String>,
+    ship: Option<String>,
+    deploy: bool,
     /// Inside `X=$(…)` / `export $(…)`: the output is captured, not printed.
     quiet_reads: bool,
 }
@@ -103,6 +109,10 @@ impl Found {
     }
     fn ask(&mut self, why: String) {
         self.ask.get_or_insert(why);
+    }
+    fn ship(&mut self, why: String, deploy: bool) {
+        self.ship.get_or_insert(why);
+        self.deploy |= deploy;
     }
 }
 
@@ -400,14 +410,15 @@ fn scan(seg: &str, ctx: &Ctx, f: &mut Found, depth: u8) {
                 if !dry && push.iter().any(|a| forcing(a)) {
                     f.deny(format!("`{}` force-pushes and can destroy commits on the remote. Push normally; if history must be rewritten, the user does it.", seg.trim()));
                 } else if !dry && ships_push(push) {
-                    f.ask(format!("`{}` publishes: it pushes to the default branch, pushes a tag (which can trigger a release) or pushes to a deploy remote. The owner approves shipping.", seg.trim()));
+                    let encore = push.iter().find(|a| !a.starts_with('-')).is_some_and(|a| a == "encore");
+                    f.ship(format!("`{}` publishes: it pushes to the default branch, pushes a tag (which can trigger a release) or pushes to a deploy remote. The owner approves shipping.", seg.trim()), encore);
                 }
             }
         }
         // `gh` counts as text for deletes (`--body "rm -rf …"`), not for its own verbs.
         if at_start && (!text || v == "gh") {
             if let Some(what) = ships(&v, rest) {
-                f.ask(format!("`{}` {what}. The owner approves shipping to production or the public.", seg.trim()));
+                f.ship(format!("`{}` {what}. The owner approves shipping to production or the public.", seg.trim()), what.starts_with("deploys"));
             }
         }
     }
@@ -2511,7 +2522,7 @@ mod tests {
     fn name(v: Option<Verdict>) -> &'static str {
         match v {
             Some(Verdict::Deny(_)) => "deny",
-            Some(Verdict::Ask(_)) => "ask",
+            Some(Verdict::Ask(_)) | Some(Verdict::Ship { .. }) => "ask",
             None => "pass",
         }
     }

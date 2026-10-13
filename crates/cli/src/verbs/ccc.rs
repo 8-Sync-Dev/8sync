@@ -24,6 +24,7 @@ use crate::{assets, pkg, ui};
 mod danger;
 mod fence;
 mod gate;
+mod grant;
 mod guard;
 mod resume;
 mod verify;
@@ -764,6 +765,13 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "watchdog"], "timeout": 5 }] }),
         );
     }
+    // The owner's one-time ship approval (AskUserQuestion header "Ship") → per-session grant
+    // the guard honours for merge/tag/release/publish/deploy steps.
+    upsert_hook_group(
+        hooks,
+        "PostToolUse",
+        json!({ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "ship-grant"], "timeout": 5 }] }),
+    );
     // A turn that dies on an API error fires StopFailure, not Stop: record it, and remind
     // Claude on the next prompt (https://code.claude.com/docs/en/hooks, StopFailure).
     upsert_hook_group(
@@ -1358,6 +1366,15 @@ fn hook(rest: &[String]) -> Result<()> {
         // Fast path: no alerts file / nothing new = no output (sync hook, timeout 5 s).
         Some("watchdog") => crate::verbs::watchdog::run_hook(&input),
         // StopFailure (no decision control): record + notify; resume-note says it once next prompt.
+        // PostToolUse(AskUserQuestion): the owner's answer to a `Ship` question → session grant.
+        Some("ship-grant") => {
+            let home = std::env::var_os("HOME").map(PathBuf::from).filter(|h| h.is_absolute());
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            if let Some(h) = home {
+                let _ = grant::record(&input, &grant::dir(&h), now);
+            }
+            None
+        }
         Some(h @ ("stop-failure" | "resume-note")) => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -1376,7 +1393,7 @@ fn hook(rest: &[String]) -> Result<()> {
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -1422,7 +1439,8 @@ mod tests {
         assert!(deny.iter().any(|r| r == "WebFetch") && deny.iter().any(|r| r == "Bash(git push -f*)"));
 
         let post = v["hooks"]["PostToolUse"].as_array().unwrap();
-        assert_eq!(post.len(), 4, "user hook kept, ours replaced in place, watchdog + hq SendMessage appended");
+        assert_eq!(post.len(), 5, "user hook kept, ours replaced in place, watchdog + hq SendMessage + ship-grant appended");
+        assert!(post.iter().any(|g| g["matcher"] == "AskUserQuestion" && g["hooks"][0]["args"] == json!(["ccc", "hook", "ship-grant"])));
         assert_eq!(post[0]["hooks"][0]["command"], "prettier");
         assert_eq!(post[1]["hooks"][0]["command"], "/new/8sync");
         assert_eq!(post[1]["hooks"][0]["asyncRewake"], true, "edits never wait for the check");

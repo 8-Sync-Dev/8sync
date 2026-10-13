@@ -22,9 +22,22 @@ use super::danger::{self, Shell, Verdict};
 
 /// The hook's stdout for a PreToolUse input: a deny/ask decision, or `None` to allow.
 pub(super) fn check(input: &str) -> Option<String> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    check_with(input, &super::grant::dir(&home), now)
+}
+
+/// [`check`] with the ship-grant directory and clock injected (tests).
+pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<String> {
     let v: Value = serde_json::from_str(input).ok()?;
     let tool = v["tool_name"].as_str().unwrap_or_default();
     let ti = &v["tool_input"];
+    // Ship grants are written only by the `ship-grant` hook from the owner's real answer;
+    // a tool call that names the grant store could forge one.
+    let touched = [ti["command"].as_str(), ti["file_path"].as_str(), ti["notebook_path"].as_str(), ti["path"].as_str()];
+    if touched.into_iter().flatten().any(|t| t.contains("8sync/ccc/grants")) {
+        return Some(decision("deny", "the ship-grant store is written only by the kit's hook from the owner's answer to a \"Ship\" question. Ask that question instead."));
+    }
     let verdict = match tool {
         "Bash" | "PowerShell" => {
             let cmd = ti["command"].as_str().unwrap_or_default();
@@ -48,6 +61,12 @@ pub(super) fn check(input: &str) -> Option<String> {
     Some(match verdict {
         Verdict::Deny(r) => decision("deny", &r),
         Verdict::Ask(r) => decision("ask", &r),
+        // The owner approved shipping once for this session (one `Ship` AskUserQuestion).
+        Verdict::Ship { deploy, .. } if super::grant::allows(grants, v["session_id"].as_str(), deploy, now_s) => return None,
+        Verdict::Ship { why, .. } => decision(
+            "ask",
+            &format!("{why} To ship without a prompt per step, ask the owner ONCE with AskUserQuestion (header \"Ship\", list every merge/tag/release/deploy you will do; options \"Duyệt tất cả (Recommended)\", \"Chỉ merge, chưa deploy\", \"Dừng\"), then continue."),
+        ),
     })
 }
 
@@ -312,5 +331,35 @@ mod tests {
     fn other_tools_and_malformed_input_pass() {
         assert!(decide("Read", json!({ "file_path": "/app/.env" })).is_none());
         assert!(check("not json").is_none());
+    }
+
+    #[test]
+    fn a_ship_grant_lets_shipping_steps_through_and_nothing_else() {
+        let d = std::env::temp_dir().join(format!("8sync-guard-grant-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let forge = |tool: &str, input: Value| {
+            check_with(&json!({ "tool_name": tool, "tool_input": input, "cwd": "/tmp", "session_id": "s1" }).to_string(), &d, 1_000)
+                .map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"]["permissionDecision"].as_str().unwrap().to_string())
+        };
+        assert_eq!(forge("Bash", json!({ "command": "echo '{}' > ~/.local/state/8sync/ccc/grants/s1.json" })).as_deref(), Some("deny"));
+        assert_eq!(forge("Write", json!({ "file_path": "/home/u/.local/state/8sync/ccc/grants/s1.json", "content": "{}" })).as_deref(), Some("deny"));
+        let run = |session: &str, cmd: &str| {
+            check_with(&json!({ "tool_name": "Bash", "tool_input": { "command": cmd }, "cwd": "/tmp", "session_id": session }).to_string(), &d, 1_000)
+                .map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"]["permissionDecision"].as_str().unwrap().to_string())
+        };
+        assert_eq!(run("s1", "gh pr merge 4 --merge").as_deref(), Some("ask"), "no grant yet");
+        let answer = json!({
+            "session_id": "s1", "tool_name": "AskUserQuestion",
+            "tool_input": { "questions": [{ "question": "Ship PR 4 and tag v1.2.0?", "header": "Ship" }] },
+            "tool_response": { "answers": { "Ship PR 4 and tag v1.2.0?": "Chỉ merge, chưa deploy" } }
+        });
+        super::super::grant::record(&answer.to_string(), &d, 900).unwrap();
+        assert_eq!(run("s1", "gh pr merge 4 --merge"), None, "granted");
+        assert_eq!(run("s1", "git push origin v1.2.0"), None);
+        assert_eq!(run("s1", "vercel deploy --prod").as_deref(), Some("ask"), "merge-only grant does not cover prod deploys");
+        assert_eq!(run("s2", "gh pr merge 4 --merge").as_deref(), Some("ask"), "per session");
+        assert_eq!(run("s1", "git push --force origin main").as_deref(), Some("deny"), "deny rules ignore grants");
+        assert_eq!(run("s1", "gh pr merge 4; git reset --hard").as_deref(), Some("ask"), "another ask in the command keeps the prompt");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

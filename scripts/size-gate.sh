@@ -84,11 +84,17 @@
 # v0.69.0 6,009,312 B → 6,023,632 B (+14,320; mostly embedded skill text). v0.69.0 musl
 # asset 6,149,072 B, so the next ≈ 6,163,392 B — 3,008 B over 6016 KiB → ceiling 6080 KiB
 # (~63 KiB left). Re-check against the real release asset.
+#
+# 2026-10-13 v0.74.0 release run: the real linux-x86_64 (musl) asset was 6,231,472 B,
+# 5,552 B over 6080 KiB. v0.73.0 asset 6,202,448 -> +29,024 B = taste-skill refresh +
+# 5 embedded `taste-*` variants (~52 KB markdown, compressed) + `ls` last_tool/stalled_error.
+# v0.75.0 adds the ship-grant guard module (~200 lines). Ceiling 6144 KiB (~60 KiB left).
+# v0.74.0 was tagged but not published; v0.75.0 is the release.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-6225920}"   # 6080 KiB (raised 2026-10-13 from 6016 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-6291456}"   # 6144 KiB (raised 2026-10-13 from 6080 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"
