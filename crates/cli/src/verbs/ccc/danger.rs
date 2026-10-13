@@ -1099,7 +1099,12 @@ fn walk(cmd: &str, shell: Shell, ctx: &Ctx, mut cwd: Option<Abs>, place: Place, 
     if lx.unterminated {
         f.ask("the command has an unbalanced quote or bracket, so 8sync cannot tell what runs. Fix the quoting.".into());
     }
-    let vars_ok = shell == Shell::Bash && straight_line(cmd, &lx.toks);
+    // Judge "straight line" on the code only: a data here-doc's text (`cat > f <<'EOF' … for … ()`)
+    // is not shell, and its words used to switch variable resolution off for the whole command.
+    let vars_ok = shell == Shell::Bash && {
+        let code = without_data_heredocs(cmd);
+        if code == cmd { straight_line(cmd, &lx.toks) } else { straight_line(&code, &lex(&code, shell).toks) }
+    };
     let mut subs = lx.subs.into_iter().peekable();
     let n = lx.toks.len();
     let mut toks = lx.toks.into_iter().enumerate();
@@ -2516,6 +2521,19 @@ mod tests {
             assert_eq!(verdict(cmd, *shell, ctx), *want, "{cmd}");
         }
     }
+    #[test]
+    fn variables_still_resolve_before_a_data_heredoc() {
+        // seen live: a subagent's cleanup asked because the report text below used `for` and `()`
+        let cmd = "S=/tmp/claude-1000/-home-u/s/scratchpad; sed -n 1,4p $S/a.log | cut -c1-200; rm -rf $S/target; mkdir -p $S/audit\n\
+                   cat > $S/audit/r.md <<'EOF'\n| row | for each item, see fn() and (x) |\nwhile it lasts; export nothing\nEOF\necho ok";
+        assert_eq!(verdict(cmd, Shell::Bash, &unix()), "pass");
+        // a heredoc fed to a shell is code: still checked
+        let fed = "S=/tmp/x; bash <<'EOF'\nfor d in /home/u/work/app; do rm -rf $d; done\nEOF";
+        assert_ne!(verdict(fed, Shell::Bash, &unix()), "pass");
+        // without a heredoc a real loop still disables resolution
+        assert_eq!(verdict("for S in a b; do :; done; rm -rf $S/target", Shell::Bash, &unix()), "ask");
+    }
+
     #[test]
     fn shipping_asks_the_owner() {
         use Shell::Bash as B;
