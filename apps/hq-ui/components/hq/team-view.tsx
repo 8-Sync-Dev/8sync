@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { messageTargets, sessionLabel, splitStale } from "@/lib/labels";
+import { addressOf, deliveryOf, messageTargets, sessionLabel, splitStale } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
 import type { Hq } from "./use-hq";
@@ -104,7 +104,7 @@ export function TeamView({
         <ConversationScrollButton />
       </Conversation>
       {messageTargets(sessions).length === 0 ? (
-        <StartCta onStartSession={onStartSession} />
+        <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} />
       ) : (
         <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} />
       )}
@@ -159,7 +159,16 @@ function SessionStrip({ sessions }: { sessions: Session[] }) {
   );
 }
 
-function StartCta({ onStartSession }: { onStartSession?: () => void }) {
+function StartCta({ onStartSession, unreachable }: { onStartSession?: () => void; unreachable?: boolean }) {
+  // A live session HQ cannot reach (no tmux pane, no Claude session id yet) is not "no session".
+  if (unreachable)
+    return (
+      <div className="shrink-0 border-t bg-background">
+        <p className="mx-auto w-full max-w-3xl px-4 py-3 text-sm text-muted-foreground sm:px-6">
+          Session này đang chạy nhưng HQ chưa biết session id của nó, nên chưa nhắn được. Id có sau lượt đầu tiên của session.
+        </p>
+      </div>
+    );
   return (
     <div className="shrink-0 border-t bg-background">
       <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
@@ -283,7 +292,8 @@ function Composer({
   const area = useRef<HTMLTextAreaElement>(null);
   const targets = messageTargets(sessions);
   // Default to the first live session until the owner picks one.
-  const current = targets.find((s) => s.name === target) ?? targets[0] ?? null;
+  const current = targets.find((s) => s.name === target || s.session_id === target) ?? targets[0] ?? null;
+  const via = current ? deliveryOf(current) : null;
 
   async function send() {
     const body = text.trim();
@@ -292,10 +302,11 @@ function Composer({
     try {
       const r = await hq.api<{ message: Message; delivery: string; error: string | null }>("/api/messages", {
         method: "POST",
-        body: { session: current.name, text: body },
+        // Sessions started elsewhere are addressed by their Claude session id (inbox delivery).
+        body: { session: addressOf(current), text: body },
       });
       hq.mergeMessages([r.message]);
-      if (r.delivery === "failed") toast.error(`Not delivered to ${shortName(current.name)}: ${r.error}`);
+      if (r.delivery === "failed") toast.error(`Not delivered to ${sessionLabel(current)}: ${r.error}`);
       setText("");
       area.current?.focus();
     } catch (e) {
@@ -315,7 +326,9 @@ function Composer({
   const disabled = targets.length === 0;
   const hint = !current
     ? "Start a session to message it."
-    : current.channel_state === "blocked-by-org"
+    : via === "inbox"
+      ? "Inbox: session nhận tin khi xong lượt đang làm (Stop hook), trả lời hiện ở đây."
+      : current.channel_state === "blocked-by-org"
       ? "Typed into the session's terminal (Channels off for your org)."
       : current.channel_state === "unresponsive"
         ? "Typed into the session's terminal (the channel stopped answering)."
@@ -358,7 +371,7 @@ function Composer({
             disabled={disabled}
             rows={2}
             maxLength={4000}
-            placeholder={current ? `Message ${shortName(current.name)}` : "Message"}
+            placeholder={current ? `Nhắn ${sessionLabel(current)}` : "Message"}
             className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
           <div className="flex items-center gap-2 px-2 pb-2">
@@ -369,8 +382,8 @@ function Composer({
               <SelectContent>
                 {targets.map((s) => (
                   <SelectItem key={s.name} value={s.name} className="font-mono text-xs">
-                    <StatusDot status={s.status} /> {shortName(s.name)}
-                    {s.channel ? " · channel" : ""}
+                    <StatusDot status={s.status} /> {sessionLabel(s)}
+                    {s.channel ? " · channel" : deliveryOf(s) === "inbox" ? " · inbox" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>

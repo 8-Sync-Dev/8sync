@@ -2,10 +2,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-/** Points HOME at a fresh temp dir; every path helper resolves per call. */
+/**
+ * Points the home dir at a fresh temp dir; every path helper resolves per call.
+ * Windows `os.homedir()` reads USERPROFILE, not HOME: set both, or tests write
+ * into the owner's real ~/.local/state/8sync/hq (it happened: tests/setup.ts).
+ */
 export function tempHome(): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hq-ui-test-"));
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   return home;
 }
 

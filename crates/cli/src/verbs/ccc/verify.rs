@@ -79,8 +79,19 @@ pub(super) fn post_tool_use(input: &str) -> i32 {
 /// broken on purpose (or cannot fix it), and blocking again would only loop
 /// to Claude Code's cap of 8 continuations. With the build fine, the native
 /// Stop gate (`gate`) gets its say.
+/// The Stop-hook block carrying the owner's pending HQ messages for this session, if any.
+fn owner_inbox(v: &Value, home: &Path) -> Option<String> {
+    let msg = crate::verbs::hq::take_inbox(home, v["session_id"].as_str()?)?;
+    Some(json!({ "decision": "block", "reason": msg }).to_string())
+}
+
 pub(super) fn stop(input: &str) -> Option<String> {
     let v: Value = serde_json::from_str(input).ok()?;
+    // The owner's messages from `hq ui` first: delivered once (the file is consumed), so even a
+    // second stop in a row (`stop_hook_active`) cannot loop on them.
+    if let Some(out) = dirs::home_dir().and_then(|h| owner_inbox(&v, &h)) {
+        return Some(out);
+    }
     let edited = v["session_id"].as_str().and_then(|id| std::fs::read_to_string(session_file(id)).ok()).unwrap_or_default();
     let mut failures = Vec::new();
     for check in edited.lines().filter_map(|f| plan_check(Path::new(f))) {
@@ -339,5 +350,20 @@ mod tests {
         assert!(stop(&plan).is_some_and(|o| o.contains("\"block\"") && o.contains("announces more work")));
         let done = json!({ "session_id": "no-edits", "last_assistant_message": "Done. All tests pass." }).to_string();
         assert!(stop(&done).is_none());
+    }
+
+    #[test]
+    fn stop_hands_over_the_owner_inbox_even_on_a_second_stop() {
+        let home = temp("inbox");
+        let sid = "77cb0a68-ba5e-424e-bf43-15de95ed35fb";
+        let f = crate::verbs::hq::inbox_file(&home, sid).unwrap();
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(&f, "{\"ts\":1,\"text\":\"dừng lại, review PR #24\"}
+").unwrap();
+        let v = json!({ "session_id": sid, "stop_hook_active": true, "last_assistant_message": "Done." });
+        let out = owner_inbox(&v, &home).unwrap();
+        assert!(out.contains("\"block\"") && out.contains("review PR #24"), "{out}");
+        assert!(owner_inbox(&v, &home).is_none(), "consumed: no loop");
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

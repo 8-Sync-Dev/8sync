@@ -1,0 +1,13 @@
+{
+  "digests": [
+    "b92c65b779b1b030 C3/C10 ui not built",
+    "17486ab439860132 office view not built",
+    "office ui built, uat pass, ci + docs + review left"
+  ],
+  "iter": 3,
+  "max_iter": 11,
+  "max_min": 90,
+  "slug": "hq-office-rooms",
+  "started": 1791931520,
+  "stopped": null
+}

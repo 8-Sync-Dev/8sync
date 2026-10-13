@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { addressOf, messageTargets, sessionLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote, ago, shortName } from "./bits";
 import type { Hq } from "./use-hq";
@@ -81,7 +82,8 @@ function TaskCard({ t }: { t: Task }) {
 }
 
 function NewTask({ hq, sessions }: { hq: Hq; sessions: Session[] }) {
-  const targets = sessions.filter((s) => s.tmux && s.status !== "ended");
+  // Every live session HQ can reach: tmux panes, and sessions started elsewhere through their inbox.
+  const targets = messageTargets(sessions);
   const [session, setSession] = useState<string>("");
   const [subject, setSubject] = useState("");
   const [role, setRole] = useState("");
@@ -96,12 +98,15 @@ function NewTask({ hq, sessions }: { hq: Hq; sessions: Session[] }) {
     try {
       const r = await hq.api<{ task: Task; message: Message; delivery: string; error: string | null }>("/api/tasks", {
         method: "POST",
-        body: { session: target.name, subject: subject.trim(), role: role.trim() || undefined, prio },
+        body: { session: addressOf(target), subject: subject.trim(), role: role.trim() || undefined, prio },
       });
       hq.mergeTasks([r.task]);
       hq.mergeMessages([r.message]);
       if (r.delivery === "failed") toast.error(`Task saved, but not delivered: ${r.error}`);
-      else toast.success(`Sent to ${shortName(target.name)} ${r.delivery === "channel" ? "via channel" : "via terminal"}`);
+      else
+        toast.success(
+          `Đã giao cho ${sessionLabel(target)} ${r.delivery === "channel" ? "qua channel" : r.delivery === "inbox" ? "qua inbox (nhận khi xong lượt)" : "qua terminal"}`,
+        );
       setSubject("");
     } catch (err) {
       toast.error((err as Error).message);
@@ -131,7 +136,7 @@ function NewTask({ hq, sessions }: { hq: Hq; sessions: Session[] }) {
         <SelectContent>
           {targets.map((s) => (
             <SelectItem key={s.name} value={s.name} className="font-mono text-xs">
-              {shortName(s.name)}
+              {sessionLabel(s)}
             </SelectItem>
           ))}
         </SelectContent>

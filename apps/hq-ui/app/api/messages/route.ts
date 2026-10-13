@@ -1,7 +1,8 @@
 import { afterParam, bad, limitParam, json, open, readBody } from "@/lib/server/http";
 import { deliverWatched, SessionWaiting } from "@/lib/server/channel";
 import { capturePlain, sendKeys } from "@/lib/server/proc";
-import { messagesAfter } from "@/lib/server/queries";
+import { isSessionId, queueInbox } from "@/lib/server/inbox";
+import { messagesAfter, ownerMessage } from "@/lib/server/queries";
 import { clampText, isTmuxName } from "@/lib/server/validate";
 
 export const runtime = "nodejs";
@@ -30,9 +31,15 @@ export async function POST(req: Request) {
   if ("res" in o) return o.res;
   const body = await readBody(req);
   if (!body) return bad("JSON body required");
-  if (!isTmuxName(body.session)) return bad("messages can only go to hq-* sessions started here", 422);
   const text = clampText(body.text);
   if (!text.ok) return bad(text.error, 422);
+  // Any other live Claude Code session: queue for its Stop hook (delivered at its next turn end).
+  if (isSessionId(body.session)) {
+    queueInbox(body.session, text.value);
+    const message = ownerMessage(o.db, body.session, text.value, "inbox");
+    return json({ message, delivery: "inbox", error: null }, 201);
+  }
+  if (!isTmuxName(body.session)) return bad("session must be an hq-* session or a Claude session id", 422);
   try {
     const r = await deliverWatched(o.db, body.session, text.value, { sendKeys, capture: capturePlain });
     return json({ message: r.message, delivery: r.delivery, error: r.error }, 201);

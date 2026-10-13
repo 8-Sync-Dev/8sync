@@ -125,6 +125,8 @@ export type FloorRow = Derived & {
   sid?: string | null;
   /** hq session that matched no `8sync ls` row; sorts after matched desks. */
   unmatched?: boolean;
+  /** Context tokens from `8sync ls` (null when unknown). */
+  tokens?: number | null;
 };
 
 export function sortFloor(rows: FloorRow[]): FloorRow[] {

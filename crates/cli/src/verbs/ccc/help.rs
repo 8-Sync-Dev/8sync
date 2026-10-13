@@ -4,11 +4,11 @@
 /// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
 #[cfg(test)]
 pub(super) const VERBS: &[&str] =
-    &["help", "hook", "statusline", "kit", "login-kind", "show", "status", "policy", "loop", "ls", "list", "rm", "new", "compact"];
+    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "ls", "list", "rm", "new", "compact"];
 
 /// Words that look like verbs: never a session name, never a headless claude launch.
 /// Includes hook sub-verbs people type without `hook`.
-pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "loop", "kit", "guard", "hook", "ship-grant"];
+pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "kit", "guard", "hook", "ship-grant"];
 
 pub(super) const TEXT: &str = "\
 8sync ccc — Claude Code + kit của 8 Sync. Mọi lệnh (chạy `8sync ccc <verb>`):
@@ -44,6 +44,7 @@ TỰ ĐỘNG (gõ trong Claude Code)
 
 XEM
   8sync ccc . show <tên> [--json]   tóm tắt một session
+  8sync ccc . report [--json]       token, cost (số Claude Code báo statusline), thời gian, +/- dòng, task xong, cost/task, loop
   8sync hq ui                       dashboard HQ trong trình duyệt
 
 AN TOÀN

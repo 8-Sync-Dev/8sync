@@ -4,7 +4,7 @@ import { sessionLabel } from "../labels";
 import { deriveFloor, type FloorRow, type LsInput } from "../floor";
 import { mergedSessions, run, type SessionView } from "./proc";
 
-type LsRow = LsInput & { name: string; sid?: string | null; title?: string | null; repo?: string | null; engine?: string | null };
+type LsRow = LsInput & { name: string; sid?: string | null; title?: string | null; repo?: string | null; engine?: string | null; tokens?: number | null };
 
 const TTL_MS = 4000;
 let cache: { at: number; rows: FloorRow[] } | null = null;
@@ -120,6 +120,7 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       repo,
       engine,
       sid: sidOf(hq?.session_id, r.name),
+      tokens: typeof r.tokens === "number" ? r.tokens : null,
       ...deriveFloor(r, hq, now),
     };
   });

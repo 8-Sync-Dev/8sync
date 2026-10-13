@@ -4,6 +4,20 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **HQ office: every session is a room.** The "Văn phòng" tab shows one room per running Claude Code session (started in HQ or anywhere else), grouped by the session's git folder and branch. Every room has the same seats (Lead, R&D, Plan, Fullstack, Reviewer, Tester, Quick); a seat lights up while that session's subagent of that kind runs (new `SubagentStart`/`SubagentStop` journal events). When a session messages another, its lead walks into the other room with the message (code-drawn walker sprite; static with reduced motion). The sidebar groups sessions by git folder and branch.
+- **"Chat phòng" vs "Chat nhóm".** Chat phòng is one session's conversation (click a room to open it); Chat nhóm is every room talking to each other.
+- **Message and assign to sessions started outside HQ (inbox).** The composer, Board and "Giao việc" reach any live session: non-tmux sessions (all of Windows) get the message through an owner inbox that the Stop hook hands over at the end of the current turn (`~/.local/state/8sync/hq/inbox/<session id>.jsonl`, 0600, secrets masked).
+- **`8sync ccc . report [--json]` and the "Báo cáo" tab.** Cost, time, lines +/−, context, tasks done/open and $ per finished task per session plus totals, and the `/ship-loop` runs. Numbers come from what Claude Code gives the 8sync status line (snapshot in `~/.local/state/8sync/hq/usage/`, written only when a number moves); unmeasured sessions read "chưa đo", never an estimate, and $/task only counts sessions with a measured cost.
+
+### Fixed
+- **HQ: clicking a running session showed "Start a session".** The composer only counted sessions HQ started in tmux, and scope matched the session name only. Any live session HQ can reach now counts, and a session is matched by name, session id or label; the header counts every live session.
+- **HQ Board offered no session** ("Start a session to hand it tasks") while sessions were running: same tmux-only filter.
+- **HQ tests wrote into the real HQ state on Windows** (`os.homedir()` reads `USERPROFILE`, tests set only `HOME`); a test run could rotate the owner's journal. Tests now isolate both.
+- HQ tab bar overflowed at phone width.
+
+### Security
+- The kit guard denies a session writing the HQ owner inbox or reading the HQ UI token (Bash, PowerShell, Write, Edit), so a session cannot speak as the owner to another session.
 
 ## [0.79.1] — 2026-10-14
 ### Fixed

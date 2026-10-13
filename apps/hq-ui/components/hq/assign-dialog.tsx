@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ROLES, modelShort, type RoleId } from "@/lib/roles";
-import { shortName } from "./bits";
+import { addressOf, messageTargets, sessionLabel } from "@/lib/labels";
 import type { Hq } from "./use-hq";
 import type { Message, Project, Session, Task } from "./types";
 
@@ -33,6 +33,8 @@ type Res = { task: Task; session: string; started: boolean; message: Message; de
 /** Hand a task to a role (reuses or starts a session) or to one specific session. */
 export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defaultRole, defaultSession, defaultProjectId }: AssignDialogProps) {
   const live = sessions.filter((s) => s.tmux && s.status !== "ended");
+  // Any live session HQ can reach (tmux or inbox) can take a task directly.
+  const reach = messageTargets(sessions);
   // A project whose folder is gone cannot host a new session: never offer it.
   const usable = projects.filter((p) => !p.missing);
   const [subject, setSubject] = useState("");
@@ -66,7 +68,11 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defau
       hq.mergeTasks([r.task]);
       if (r.message) hq.mergeMessages([r.message]);
       if (r.delivery === "failed") toast.error(`Đã lưu việc nhưng chưa gửi được: ${r.error}`);
-      else toast.success(`${r.started ? "Đã mở phiên mới và giao cho" : "Đã giao cho"} ${shortName(r.session)}`);
+      else {
+        const s = sessions.find((x) => x.name === r.session || x.session_id === r.session);
+        const who = s ? sessionLabel(s) : r.session.slice(0, 8);
+        toast.success(`${r.started ? "Đã mở phiên mới và giao cho" : "Đã giao cho"} ${who}${r.delivery === "inbox" ? " qua inbox (nhận khi xong lượt)" : ""}`);
+      }
       setSubject("");
       setDetails("");
       onOpenChange(false);
@@ -106,9 +112,10 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defau
                     {r.labelVi} · {modelShort(r.model)}
                   </SelectItem>
                 ))}
-                {live.map((s) => (
-                  <SelectItem key={s.name} value={`session:${s.name}`} className="font-mono text-xs">
-                    Phiên {shortName(s.name)}
+                {reach.map((s) => (
+                  <SelectItem key={s.name} value={`session:${addressOf(s)}`} className="text-xs">
+                    Phiên {sessionLabel(s)}
+                    {s.tmux ? "" : " · inbox"}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    setupFiles: ["tests/setup.ts"],
     // Each file gets its own HOME; DB/token caches are keyed by path.
     pool: "forks",
   },

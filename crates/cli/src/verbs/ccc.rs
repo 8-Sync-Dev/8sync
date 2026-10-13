@@ -29,6 +29,7 @@ mod grant;
 mod guard;
 mod help;
 mod looper;
+pub(crate) mod report;
 mod resume;
 mod statusline;
 mod verify;
@@ -160,6 +161,7 @@ pub fn run(a: Args) -> Result<()> {
         "ls" | "list" => {
             print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
         }
+        "report" => report::run(&env.home, &root, &session_rows_json(&env, &root), rest.iter().any(|a| a == "--json")),
         "rm" => cmd_rm(&env, &root, rest.first().context("usage: 8sync ccc . rm <name>")?),
         "new" => {
             let name = rest.first().context("usage: 8sync ccc . new <name>")?;
@@ -291,24 +293,30 @@ fn sessions(env: &Env, root: &Path) -> Store {
 
 /// `8sync ccc . ls`: per session — running?, last request, last action, task
 /// progress (rendering shared with `8sync . ls` in `session_view.rs`).
-fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
+/// This repo's sessions as `ls --json` rows (also the input of `ccc . report`).
+fn session_rows_json(env: &Env, root: &Path) -> Vec<Value> {
     use super::session_view as view;
     let reg = sessions(env, root).load();
     let rows = view::uuid_rows(env, "ccc", &reg, &view::agent_cmdlines(), false);
     debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry (zip below)");
+    rows.iter()
+        .zip(&reg.sessions)
+        .map(|(r, s)| {
+            let mut v = view::row_json(r);
+            v["id"] = json!(s.conversation_id);
+            v
+        })
+        .collect()
+}
+
+fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
+    use super::session_view as view;
     if json {
-        let arr: Vec<Value> = rows
-            .iter()
-            .zip(&reg.sessions)
-            .map(|(r, s)| {
-                let mut v = view::row_json(r);
-                v["id"] = json!(s.conversation_id);
-                v
-            })
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&arr)?);
+        println!("{}", serde_json::to_string_pretty(&session_rows_json(env, root))?);
         return Ok(());
     }
+    let reg = sessions(env, root).load();
+    let rows = view::uuid_rows(env, "ccc", &reg, &view::agent_cmdlines(), false);
     if rows.is_empty() {
         ui::info("no sessions yet — create one with `8sync ccc . <name>`");
         return Ok(());
@@ -910,7 +918,7 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
     Ok(())
 }
 
-const HQ_EVENTS: [&str; 6] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification", "SessionStart", "SessionEnd"];
+const HQ_EVENTS: [&str; 8] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification", "SessionStart", "SessionEnd", "SubagentStart", "SubagentStop"];
 
 /// Which 8sync hook one hook entry is: `hook verify` / `hook guard` for the
 /// native commands, the first sentence of a gate prompt (`8sync gate: stop`).

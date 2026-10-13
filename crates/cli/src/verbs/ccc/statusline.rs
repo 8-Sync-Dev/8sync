@@ -665,6 +665,11 @@ pub(super) fn run(rest: &[String]) -> Result<()> {
         let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
         agents_lines(&v, ms, v["columns"].as_u64().map_or(cols(), |c| c as usize), color)
     } else {
+        // Keep Claude Code's own cost/usage numbers for `ccc . report` and `hq ui` (ccc/report.rs).
+        if let (Ok(v), Some(home)) = (serde_json::from_str::<Value>(&input), dirs::home_dir()) {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            super::report::write_snapshot(&home, &v, now);
+        }
         statusline(&input)
     };
     let mut out = std::io::stdout().lock();

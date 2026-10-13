@@ -1,6 +1,7 @@
 "use client";
 
-import { sessionLabel } from "@/lib/labels";
+import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
+import { matchesSession } from "@/lib/office";
 import { CircleHelpIcon, MenuIcon, SendIcon } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -10,25 +11,33 @@ import { Toaster } from "@/components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ActivityView } from "./activity-view";
 import { AssignDialog } from "./assign-dialog";
-import { shortName } from "./bits";
+import { shortName, StatusDot } from "./bits";
 import { BoardView } from "./board-view";
-import { FloorView } from "./floor-view";
 import { FirstRun } from "./first-run";
 import { Guide, useGuideFirstRun } from "./guide";
 import { Nav, type Scope } from "./nav";
+import { OfficeView } from "./office-view";
+import { ReportView } from "./report-view";
 import { SessionsView } from "./sessions-view";
 import { TeamThread } from "./team-thread";
 import { TeamView } from "./team-view";
 import { TerminalDrawer } from "./terminal-drawer";
 import { useHq } from "./use-hq";
+import { useOffice, type Room } from "./use-office";
+import type { Session } from "./types";
 
-type Tab = "floor" | "chat" | "team" | "board" | "sessions" | "activity";
+/** office: every session is a room · group: all rooms talking · room: one room's chat. */
+type Tab = "office" | "group" | "room" | "board" | "report" | "sessions" | "activity";
+
+/** Scope by any name a session goes by: hq name, Claude session id, or its label. */
+const isScoped = (s: Session, key: string | null) => matchesSession({ ...s, label: sessionLabel(s) }, key);
 const SESSION_NAME_INPUT = "start-session-name";
 
 export function HqApp({ token }: { token: string }) {
   const hq = useHq(token);
+  const office = useOffice(token);
   const [scope, setScope] = useState<Scope>({ project: null, session: null });
-  const [tab, setTab] = useState<Tab>("floor");
+  const [tab, setTab] = useState<Tab>("office");
   const [target, setTarget] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   // The session whose live terminal is open in the right drawer (hq-* tmux sessions only).
@@ -44,32 +53,43 @@ export function HqApp({ token }: { token: string }) {
   }, []);
 
   // Everything below the header is filtered to the selected project or session.
-  const view = useMemo(() => {
-    const all = hq.sessions.data;
-    const sessions =
-      scope.session != null
-        ? all.filter((s) => s.name === scope.session)
-        : scope.project != null
-          ? all.filter((s) => s.project_id === scope.project)
-          : all;
-    const names = new Set(sessions.flatMap((s) => [s.name, s.session_id].filter(Boolean) as string[]));
-    const scoped = scope.project != null || scope.session != null;
-    const inScope = (...xs: (string | null)[]) => !scoped || xs.some((x) => x != null && names.has(x));
-    return {
-      sessions,
-      messages: hq.messages.data.filter((m) => inScope(m.session, m.from_, m.to_)),
-      tasks: hq.tasks.data.filter((t) => inScope(t.session)),
-    };
-  }, [hq.sessions.data, hq.messages.data, hq.tasks.data, scope]);
+  // `group` ignores the session scope on purpose: Chat nhóm is every room talking.
+  const scopeOf = useCallback(
+    (session: string | null) => {
+      const all = hq.sessions.data;
+      const sessions =
+        session != null
+          ? all.filter((s) => isScoped(s, session))
+          : scope.project != null
+            ? all.filter((s) => s.project_id === scope.project)
+            : all;
+      const names = new Set(sessions.flatMap((s) => [s.name, s.session_id].filter(Boolean) as string[]));
+      const scoped = scope.project != null || session != null;
+      const inScope = (...xs: (string | null)[]) => !scoped || xs.some((x) => x != null && names.has(x));
+      return {
+        sessions,
+        messages: hq.messages.data.filter((m) => inScope(m.session, m.from_, m.to_)),
+        tasks: hq.tasks.data.filter((t) => inScope(t.session)),
+      };
+    },
+    [hq.sessions.data, hq.messages.data, hq.tasks.data, scope.project],
+  );
+  const view = useMemo(() => scopeOf(scope.session), [scopeOf, scope.session]);
+  const group = useMemo(() => scopeOf(null), [scopeOf]);
 
   const project = hq.projects.data.find((p) => p.id === scope.project);
-  const scoped = scope.session ? hq.sessions.data.find((x) => x.name === scope.session || x.session_id === scope.session) : undefined;
+  // Projects come from each session's git folder, not only the folders registered in the sidebar.
+  const officeRooms = office.office?.rooms ?? [];
+  const officeSummary = office.office
+    ? `${new Set(officeRooms.map((r) => r.project?.root ?? r.cwd)).size} dự án · ${officeRooms.length} phòng`
+    : "";
+  const scoped = scope.session ? hq.sessions.data.find((x) => isScoped(x, scope.session)) : undefined;
   const title = scope.session ? (scoped ? sessionLabel(scoped) : shortName(scope.session)) : project ? project.name : "Everything";
   const subtitle = scope.session
     ? (view.sessions[0]?.cwd ?? project?.path ?? "")
     : project
       ? project.path
-      : `${hq.projects.data.length} project${hq.projects.data.length === 1 ? "" : "s"}`;
+      : officeSummary;
   const needsYou = view.sessions.filter((s) => s.status === "needs_input").length;
   const running = view.sessions.filter((s) => s.status !== "ended").length;
 
@@ -82,13 +102,21 @@ export function HqApp({ token }: { token: string }) {
   const loaded = !hq.projects.loading && !hq.sessions.loading;
 
   const drawerSession = drawer ? (hq.sessions.data.find((x) => x.name === drawer) ?? null) : null;
-  /** Open the live terminal when HQ runs the session in tmux; otherwise scope the Team view to it. */
+  /** Open the live terminal when HQ runs the session in tmux; otherwise open that room's chat. */
   const openSession = (name: string) => {
-    const s = hq.sessions.data.find((x) => x.name === name || x.session_id === name);
+    const s = hq.sessions.data.find((x) => isScoped(x, name));
     if (s?.tmux) return setDrawer(s.name);
-    onScope({ project: null, session: name });
-    setTab("team");
+    onScope({ project: null, session: s?.name ?? name });
+    setTab("room");
   };
+  /** A room picked in the office or the report: its chat, addressed by the name the composer knows. */
+  const openRoom = (r: Room) => {
+    const s = hq.sessions.data.find((x) => x.name === r.name || (r.session_id != null && x.session_id === r.session_id));
+    onScope({ project: null, session: s?.name ?? r.session_id ?? r.name });
+    setTarget(s?.name ?? r.name);
+    setTab("room");
+  };
+  const liveRooms = hq.sessions.data.filter((s) => s.status !== "ended");
   const openAssign = (session?: string) => setAssign((a) => ({ open: true, session, n: a.n + 1 }));
   const roleOf = (name: string) => hq.sessions.data.find((x) => x.name === name || x.session_id === name)?.role ?? null;
 
@@ -109,12 +137,12 @@ export function HqApp({ token }: { token: string }) {
     <>
       <div className="grid h-dvh grid-cols-1 grid-rows-1 md:grid-cols-[264px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 border-r border-sidebar-border md:block">
-          <Nav hq={hq} scope={scope} onScope={onScope} />
+          <Nav hq={hq} scope={scope} onScope={onScope} rooms={office.office?.rooms} />
         </aside>
         <Sheet open={navOpen} onOpenChange={setNavOpen}>
           <SheetContent side="left" className="w-72 p-0 md:hidden" showCloseButton={false}>
             <SheetTitle className="sr-only">Projects and sessions</SheetTitle>
-            <Nav hq={hq} scope={scope} onScope={onScope} />
+            <Nav hq={hq} scope={scope} onScope={onScope} rooms={office.office?.rooms} />
           </SheetContent>
         </Sheet>
 
@@ -154,14 +182,15 @@ export function HqApp({ token }: { token: string }) {
                 )}
               </dl>
             </div>
-            <TabsList variant="line" className="mt-2 h-9 gap-4 px-4 sm:px-6">
-              <TabsTrigger value="floor" className="flex-none px-0">Văn phòng</TabsTrigger>
-              <TabsTrigger value="chat" className="flex-none px-0">Chat nhóm</TabsTrigger>
-              <TabsTrigger value="team" className="flex-none px-0">Team</TabsTrigger>
+            <TabsList variant="line" className="mt-2 h-9 w-full max-w-full justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] sm:px-6">
+              <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
+              <TabsTrigger value="group" className="flex-none px-0">Chat nhóm</TabsTrigger>
+              <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
               <TabsTrigger value="board" className="flex-none px-0">
                 Board
                 {view.tasks.length > 0 && <span className="text-xs text-muted-foreground tabular">{view.tasks.filter((t) => t.status !== "done").length}</span>}
               </TabsTrigger>
+              <TabsTrigger value="report" className="flex-none px-0">Báo cáo</TabsTrigger>
               <TabsTrigger value="sessions" className="flex-none px-0">
                 Sessions
                 {needsYou > 0 && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
@@ -171,18 +200,22 @@ export function HqApp({ token }: { token: string }) {
           </header>
 
           <main className="min-h-0 flex-1">
-            <TabsContent value="floor" className="h-full">
-              <FloorView
-                token={token}
-                onSelect={openSession}
-                onStart={focusStartSession}
-                messages={hq.messages.data}
-              />
+            <TabsContent value="office" className="h-full">
+              <OfficeView data={office} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} />
             </TabsContent>
-            <TabsContent value="chat" className="flex h-full min-h-0 flex-col">
-              <TeamThread rows={view.messages} filters={{ roleOf, tasks: view.tasks }} onOpenSession={openSession} />
+            <TabsContent value="group" className="flex h-full min-h-0 flex-col">
+              <TeamThread rows={group.messages} filters={{ roleOf, tasks: group.tasks }} onOpenSession={openSession} />
             </TabsContent>
-            <TabsContent value="team" className="h-full">
+            <TabsContent value="room" className="h-full">
+              {scope.session == null ? (
+                <RoomPicker
+                  sessions={liveRooms}
+                  onPick={(s) => {
+                    onScope({ project: null, session: s.name });
+                    setTarget(s.name);
+                  }}
+                />
+              ) : (
               <TeamView
                 hq={hq}
                 messages={view.messages}
@@ -191,11 +224,15 @@ export function HqApp({ token }: { token: string }) {
                 onTarget={setTarget}
                 onStartSession={focusStartSession}
                 header={
-                  loaded ? (
+                  loaded && !liveRooms.length ? (
                     <FirstRun state={firstRun} onAddProject={focusAddProject} onStartSession={focusStartSession} />
                   ) : null
                 }
               />
+              )}
+            </TabsContent>
+            <TabsContent value="report" className="h-full">
+              <ReportView data={office} onOpen={openRoom} />
             </TabsContent>
             <TabsContent value="board" className="h-full">
               <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} />
@@ -229,7 +266,7 @@ export function HqApp({ token }: { token: string }) {
         onOpenChange={(open) => setAssign((a) => ({ ...a, open }))}
         sessions={hq.sessions.data}
         projects={hq.projects.data}
-        defaultSession={assign.session ?? (scope.session?.startsWith("hq-") ? scope.session : undefined)}
+        defaultSession={assign.session ?? (scoped && deliveryOf(scoped) && scoped.status !== "ended" ? addressOf(scoped) : undefined)}
         defaultProjectId={scope.project}
       />
       <Guide
@@ -241,5 +278,38 @@ export function HqApp({ token }: { token: string }) {
       />
       <Toaster position="bottom-right" />
     </>
+  );
+}
+
+/** Chat phòng with no room picked: choose which session's room to talk to. */
+function RoomPicker({ sessions, onPick }: { sessions: Session[]; onPick: (s: Session) => void }) {
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto w-full max-w-3xl space-y-3 px-4 py-6 sm:px-6">
+        <h2 className="text-sm font-semibold">Chọn phòng để chat</h2>
+        <p className="text-sm text-muted-foreground">
+          Chat phòng chỉ gồm tin của một session và team của nó. Tin giữa mọi phòng nằm ở Chat nhóm.
+        </p>
+        {sessions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Chưa có session nào đang chạy.</p>
+        ) : (
+          <ul className="divide-y rounded-lg border">
+            {sessions.map((s) => (
+              <li key={s.name}>
+                <button
+                  type="button"
+                  onClick={() => onPick(s)}
+                  className="flex h-10 w-full min-w-0 items-center gap-2.5 px-3 text-left text-sm hover:bg-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                >
+                  <StatusDot status={s.status} />
+                  <span className="truncate font-medium">{sessionLabel(s)}</span>
+                  <span className="ml-auto min-w-0 truncate font-mono text-xs text-muted-foreground">{s.cwd}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 }

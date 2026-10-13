@@ -1,0 +1,37 @@
+// Owner -> session messages for sessions HQ cannot type into (not in an hq-* tmux pane:
+// any Claude Code session started in another terminal, every session on Windows).
+// The kit's Stop hook (`8sync ccc hook verify-stop`, crates/cli/src/verbs/hq.rs take_inbox)
+// hands them to Claude when the session ends its current turn: delivered once, masked.
+import fs from "node:fs";
+import path from "node:path";
+import { stateDir } from "./paths";
+
+/** A Claude session id (uuid) as a file name: nothing else is ever accepted. */
+export const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isSessionId(s: unknown): s is string {
+  return typeof s === "string" && SESSION_ID_RE.test(s);
+}
+
+export const inboxDir = () => path.join(stateDir(), "inbox");
+
+export function inboxFile(sessionId: string): string {
+  if (!isSessionId(sessionId)) throw new Error("bad session id");
+  return path.join(inboxDir(), `${sessionId}.jsonl`);
+}
+
+/** Append one message (0600 file in a 0700 dir). */
+export function queueInbox(sessionId: string, text: string, ts = Date.now()): void {
+  const file = inboxFile(sessionId);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.appendFileSync(file, `${JSON.stringify({ ts, text })}\n`, { mode: 0o600 });
+}
+
+/** Messages still waiting for the session's next turn end. */
+export function pendingInbox(sessionId: string): number {
+  try {
+    return fs.readFileSync(inboxFile(sessionId), "utf8").split("\n").filter((l) => l.trim()).length;
+  } catch {
+    return 0;
+  }
+}

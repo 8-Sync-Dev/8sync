@@ -429,3 +429,14 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - failure: HQ journal masked the SendMessage sender because the shared secret masker treats a uuid session id as a token → every handoff showed "***" (fix: own session id bypasses the masker in hq.rs journal_entry; web falls back to row.session). 2026-10-13
 - validated: HQ assign-to-role must pass the task as claude's first positional prompt after `--` when it starts a new session; typing into a booting pane loses it, and the trust dialog holds the prompt until answered (UAT 2026-10-13, hq-fullstack-1).
 - failure (2026-10-14): `8sync hq ui` first-run download on Windows died with curl error 43 — `hq.rs` still used `write-out` (download + Discord `run_curl`) despite the 8.8.0 lesson above. Fixed with `fail` + stderr status and `include` + header status. Test on Windows with `PATH=/c/Windows/System32:$PATH` (Git Bash's mingw curl 8.21 hides the bug; also call `/usr/bin/timeout`, System32 has its own `timeout`). Still on `-w`: `harness/gateway.rs:424`, `harness/local_model.rs:534`.
+- **validated: on Windows, node tests that set only `HOME` still write the real user state.**
+  `os.homedir()` reads `USERPROFILE` on Windows, so `apps/hq-ui` vitest wrote into the owner's real
+  `~/.local/state/8sync/hq` (journal rotated 2790 B -> 657 B, junk DB rows). Fix: a vitest
+  `setupFiles` that points both `HOME` and `USERPROFILE` at a temp dir before any module reads them,
+  plus `tests/isolation.test.ts`; check the real journal size before/after a full run. Lesson: any
+  test helper that fakes the home dir must set both variables (and `dirs`-based Rust code reads the
+  Known Folder API, not `HOME`, so isolate Rust by passing `home` explicitly).
+- **validated: Next 16 allows one `next dev` per app dir** ("Another next dev server is already
+  running"), and an SSE stream keeps `networkidle` from firing. UAT scripts: stop the other dev
+  server, wait on `domcontentloaded` + a selector, and kill the dev tree by port on Windows
+  (`taskkill /T`), or the temp HOME stays locked and the next run talks to the stale server.
