@@ -123,11 +123,13 @@ export type FloorRow = Derived & {
   engine?: string | null;
   /** 8-char session id when one is known. */
   sid?: string | null;
+  /** hq session that matched no `8sync ls` row; sorts after matched desks. */
+  unmatched?: boolean;
 };
 
 export function sortFloor(rows: FloorRow[]): FloorRow[] {
   return [...rows].sort(
-    (a, b) => GROUP_ORDER[a.state] - GROUP_ORDER[b.state] || (b.last_active ?? 0) - (a.last_active ?? 0),
+    (a, b) => GROUP_ORDER[a.state] - GROUP_ORDER[b.state] || Number(!!a.unmatched) - Number(!!b.unmatched) || (b.last_active ?? 0) - (a.last_active ?? 0),
   );
 }
 

@@ -5,6 +5,16 @@ argument-hint: <mô tả task> [--release|--deploy]
 ---
 Task: $ARGUMENTS
 
+Thang tự động (chọn mức theo độ lớn việc):
+| Mức | Lệnh | Dùng khi |
+|---|---|---|
+| 1 | `/do <việc>` | đổi nhỏ ≤3 file, không plan/commit |
+| 2 | `/ship <việc>` (đây) | một feature/bug, tới commit; release khi có `--release` |
+| 3 | `/ship-auto <việc>` | như /ship rồi PR → CI → merge → release sau MỘT câu `Ship` |
+| 4 | `/ship-loop <mục tiêu>` | mục tiêu có tiêu chí kiểm được, lặp tới khi xanh (có cap) |
+| 5 | `/autopilot` | nhiều item từ backlog, không người trông |
+
+
 Trạng thái sống trong file, không chỉ trong hội thoại (sống sót qua /compact, /clear, resume):
 `su-code/ship/<slug>/STATE.md` gồm Goal · Checklist các phase · Evidence (lệnh + output ngắn) · Next; ghi `<slug>` vào `su-code/ship/ACTIVE` để digest đầu phiên/sau /compact nạp lại (xong việc → xoá dòng đó). Repo không có `su-code/` → `.claude/ship/<slug>/` (không được nạp tự động). Cập nhật ở mỗi ranh giới phase. Theo dõi việc bằng TaskCreate/TaskUpdate.
 
