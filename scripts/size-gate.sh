@@ -66,11 +66,16 @@
 # guide ≈ +95.7k, journal/launcher ≈ +12.1k, rest small). Next linux musl asset
 # estimated 5,862,080 + 105,248 ≈ 5,967,328 B → ceiling 5888 KiB (~60 KiB left).
 # Re-check against the real release asset.
+#
+# 2026-10-13 v0.67.0 release run 38338317954: the real linux-x86_64 (musl) asset was
+# 6,030,288 B, 976 B over 5888 KiB — the estimate above predates the shared secret
+# masker + review fixes (+~25 kB local). Ceiling 5952 KiB (~64 KiB left) from the
+# measured asset. v0.67.0 was tagged but not published; v0.67.1 is the release.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-6029312}"   # 5888 KiB (raised 2026-10-13 from 5760 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-6094848}"   # 5952 KiB (raised 2026-10-13 from 5888 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"
