@@ -4,7 +4,17 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.79.0] — 2026-10-13
 ### Added
+- **HQ web team control (`8sync hq ui`).** Everything works from the browser:
+  - **Roles with model routing.** R&D, Plan and Architect use Opus 5.5. Fullstack, AI and Reviewer use Sonnet 5.5. Tester and Quick use Haiku 5.5. The model can be overridden from an allowlist of those three ids. The session starts with `--model` and `EIGHTSYNC_HQ_ROLE`, and the role badge shows on session rows.
+  - **"Giao việc" dialog.** Send a task to a role or to one session. With a role, HQ reuses the least busy running session or starts `hq-<role>-<n>`. A new session gets the task as its first prompt, so a booting pane never loses it. Errors show inside the dialog, and projects whose folder is gone are not offered.
+  - **Live terminal drawer.** Click a desk or a "needs you" card to open the session's tmux screen, refreshed under 1 s. The drawer has a "Gõ cho session" box, dialog keys and a full-screen toggle.
+  - **"Chat nhóm" tab.** One thread with owner messages, replies, handoff cards (A → B), task cards with role, and "needs you" callouts.
+  - **Handoff bubbles.** Desks show "→ B" / "← A" for 4 s when a session messages another. Reduced motion shows a static label.
+  - **"Cách dùng" guide.** Five steps in Vietnamese, opened on first run and from the header.
+  - **`scripts/hq-offline-check.sh`.** It fails on non-local fetch/WebSocket/EventSource targets, remote fonts/CDNs, or key-shaped strings in the UI source.
 - **`8sync ccc compact`**: auto-compact threshold for Claude Code sessions. `compact` shows it (`--json`), `compact --at <10..95>` writes `env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in `~/.claude/settings.json` (atomic + `.bak-8sync`, other keys kept, no-op when unchanged), `compact --reset` removes it. `ccc kit` sets 60 only when the key is absent (an owner value is never overwritten); `kit --remove` drops it only if it still equals 60. Claude Code can only lower the threshold with this variable, and it applies to new sessions (https://code.claude.com/docs/en/env-vars).
 - **`8sync ccc help`**: every ccc verb on one screen (Vietnamese), grouped Session / Kit / Tự động / Xem / An toàn. A unit test reads the dispatcher and fails if a verb is missing from the list.
 - **Statusline reaches every machine**: `8sync ccc kit` now installs the 8sync status line (and subagent line) by default and chains a foreign `statusLine` as the last row (parked as `statusLine_prev`), instead of only printing a hint; our command path is refreshed to the current exe. `8sync ccc statusline --uninstall` records `statusline = false` in `features.toml` so the kit never reinstalls it; `--install` clears that. **Behaviour change** (kit used to keep a foreign statusLine untouched).
@@ -12,6 +22,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - Statusline faster and tidier: branch read from `.git/HEAD` (worktrees and detached HEAD handled, no `git` spawn; one spawn left for the dirty check); model label `Opus 5.5 (1M context)` → `Opus 5.5 · 1M`, effort dim `med/high/low`; row 2 shows the dim folder name outside a git repo.
 
 ### Fixed
+- HQ journal: a `SendMessage` sender that is the session's own uuid was masked to `***`, so every handoff lost its sender. The own session id now bypasses the masker, and the web falls back to the row's session for older rows.
 - `8sync ccc <verb-like word>` (`help`, `compact`, `guard`, `ship-grant`, …) never starts a headless claude session: reserved words route to their handler or print help.
 
 ## [0.78.1] — 2026-10-13

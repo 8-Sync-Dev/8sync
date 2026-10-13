@@ -35,3 +35,19 @@ Two pieces, two directions:
 - **Anthropic.** Claude Code's legal page says "Advertised usage limits for Pro and Max plans assume ordinary, individual usage of Claude Code and the Agent SDK" ([legal-and-compliance](https://code.claude.com/docs/en/legal-and-compliance)). That sentence covers Pro and Max. Team and Enterprise fall under the Commercial Terms, per the same page. The same page says developers building products on the Agent SDK "should use API key authentication through Claude Console" and may not route requests through Free, Pro or Max credentials on behalf of users ([Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview) is the SDK reference). Running a 24/7 fleet on one subscription, or sharing a bot, is therefore not "ordinary, individual usage"; the Console API key or one seat per person rule is 8 Sync policy, not a quoted clause (not verified as a seat rule). Never put your OAuth token on a server. Use `/rules` for the exact clauses.
 - **Discord.** No self-bots. Don't train AI on message content. Keep only the data you need. Personas are labelled as AI.
 - **Before you invite anyone.** Run `/aup-audit` and `/harden`. Anyone who talks to the agents must be told they are AI.
+
+## HQ web: Cách dùng (apps/hq-ui)
+
+Bảng điều khiển web chạy trên máy bạn (127.0.0.1). Nút "Cách dùng" trong app mở cùng nội dung này; lần đầu mở app nó tự hiện.
+
+1. **Chọn dự án và tạo nhân viên theo vai trò.** R&D, Plan, Architect dùng Opus (`claude-opus-5-5`). Fullstack, AI, Reviewer dùng Sonnet (`claude-sonnet-5-5`). Tester, Quick dùng Haiku (`claude-haiku-5-5`). Đúng model cho đúng việc: chất lượng tốt mà tiết kiệm chi phí.
+2. **Giao việc.** Bấm "Giao việc", gõ việc cần làm, chọn một vai trò (hệ thống tìm người rảnh) hoặc một người cụ thể.
+3. **Xem terminal trực tiếp.** Bấm vào bàn hoặc thẻ của một người.
+4. **Chat nhóm.** Xem ai nhắn ai theo thời gian, kèm thẻ bàn giao (handoff) "A → B".
+5. **Cần bạn.** Trả lời câu hỏi hoặc duyệt ngay trên web.
+
+Biểu tượng trạng thái: Đang làm · Cần bạn (chờ bạn) · Chờ review · Xong · Rảnh.
+
+**Mẹo tiết kiệm.** `/do` cho việc nhỏ. `/ship-loop` cho việc chạy dài, luôn đặt giới hạn vòng/phút. Haiku cho test và việc lặp lại.
+
+**Offline.** UI chỉ nói chuyện với 127.0.0.1. Kiểm bằng `bash scripts/hq-offline-check.sh`.

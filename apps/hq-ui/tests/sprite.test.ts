@@ -31,3 +31,11 @@ describe("sprite data", () => {
     expect(SHIRTS).toContain(shirtFor("anything"));
   });
 });
+
+import { HANDOFF_MS } from "@/lib/floor";
+describe("handoff transient", () => {
+  it("is an overlay with a ~4 s lifetime, not a sprite state", () => {
+    expect(HANDOFF_MS).toBe(4000);
+    expect(SPRITE_STATES as readonly string[]).not.toContain("handoff");
+  });
+});
