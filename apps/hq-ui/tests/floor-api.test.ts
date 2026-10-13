@@ -127,6 +127,14 @@ describe("GET /api/floor", () => {
       expect(rows).toHaveLength(3);
     });
 
+    it("paired hq session uuid as name: desk keeps the ls name, id goes to sid", async () => {
+      run.mockResolvedValue(lsOut([{ name: "feats", engine: "ccc", repo: "~/startup/x", sid: UUID, status: "running" }]));
+      merged.mockResolvedValue([hq({ cwd: `${await home()}/startup/x` })]);
+      const rows = (await (await GET(req("/api/floor", { token }))).json()).rows as { name: string; sid: string; hq: boolean }[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ name: "feats", sid: "9f8e7d6c", hq: true });
+    });
+
     it("true unmatched hq session: 8-char label, never the full uuid, ordered last", async () => {
       run.mockResolvedValue(lsOut([{ name: "feats", engine: "ccc", repo: "~/startup/x", status: "running" }]));
       merged.mockResolvedValue([hq({ cwd: "/srv/elsewhere" })]);
