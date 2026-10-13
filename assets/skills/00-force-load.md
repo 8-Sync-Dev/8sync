@@ -1,14 +1,13 @@
 # 00 — Force Load Skills (managed by `8sync harness init`)
 
-## 🔴 RULE #0 — CODE INTELLIGENCE FIRST, ALWAYS (codegraph + codebase-memory-mcp)
+## 🔴 RULE #0 — CODE INTELLIGENCE FIRST, ALWAYS (codegraph CLI first)
 
-Before any other tool call, answer codebase questions with a code-intelligence engine — NOT grep/find/Read. Both are ~99% cheaper than file-by-file exploration:
+Before any other tool call, answer codebase questions with a code-intelligence engine — NOT grep/find/Read. It is ~99% cheaper than file-by-file exploration:
 
 - **codegraph** (local pre-indexed graph): `codegraph index .` once per repo (if `.codegraph/` missing), then `codegraph query/explore/node/callers/callees/impact`. Skill: `~/.omp/skills/codegraph/SKILL.md`.
-- **codebase-memory-mcp** (MCP, always in the tool list — call the REGISTERED names): `mcp__codebase_memory_mcp_search_graph` · `_trace_path` · `_get_architecture` · `_get_code_snippet`; full catalog visible (`query_graph`, `detect_changes`, `manage_adr`, …).
-- **serena** (MCP — symbol-level code intel via LSP; auto-set-up by `8sync harness`): precise symbol find/replace + references; prefer over blind whole-file reads/rewrites.
-- Serena always in the tool list: `mcp__serena_find_symbol` · `mcp__serena_find_referencing_symbols` · `mcp__serena_get_symbols_overview`; edit/rename tools cũng có sẵn. Server khác/mới thêm → 1 lệnh `search_tool_bm25`.
-- **Default to these** for "how does X work / where is X / who calls X / what depends on X", impact analysis, route→handler, dead code, architecture.
+@cbm - **codebase-memory-mcp** (enabled): `mcp__codebase_memory_mcp_search_graph` · `_trace_path` · `_get_architecture` · `_get_code_snippet`.
+@serena - **serena** (enabled): `mcp__serena_find_symbol` · `mcp__serena_find_referencing_symbols` · `mcp__serena_get_symbols_overview`.
+- **Default to codegraph** for "how does X work / where is X / who calls X / what depends on X", impact analysis, route→handler, dead code, architecture.
 - **Nén những gì BẠN phát lại:** báo cáo/prompt subagent/nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token; `headroom_retrieve` giải nén theo hash). omp tự spill tool-output quá dài ra artifact — KHÔNG paste lại blob đã spill.
 - Only `Read` a raw file when you're about to edit it (read-before-edit). Falling back to `rg`/`fd`/`Read` for exploration first is a **violation**.
 
@@ -55,7 +54,7 @@ If inside a project (cwd có `.git` / `Cargo.toml` / `package.json` / …) — �
 
 ## Invariants (no exceptions)
 
-- **NEVER skip code intelligence (codegraph + codebase-memory-mcp) for code exploration.** Grep / Read-all wastes 10–100× tokens.
+- **NEVER skip code intelligence (codegraph CLI) for code exploration.** Grep / Read-all wastes 10–100× tokens.
 - **NEVER skip karpathy or ponytail.** Engineering discipline + YAGNI (do the least that works, delete > add) is non-negotiable.
 - **Building UI / redesign / any frontend?** `impeccable` is THE house design system — mandatory, with `references/house/*` (workflow + clouds-f). Pair with `assp` (brand voice/offer) for copy and `taste` (anti-slop). Shipping UI without impeccable is a violation.
 - **NEVER skip 8sync-cli** when AGENTS.md mentions 8sync — using raw shell instead of `8sync` verbs misses memory + skill auto-load.
@@ -76,4 +75,4 @@ Inspired by Addy Osmani / Boris Cherny "loop engineering" (github.com/cobusgreyl
 - **Procedural memory / playbooks (D)** — quy trình đa bước đã `validated:` → distill thành runbook tái dùng trong `su-code/PLAYBOOKS.md`, index theo dòng **When:** (mô tả tình huống). Lần sau gặp tương tự → retrieve + adapt thay vì suy luận lại (Voyager skill-library). Tầng memory: KNOWLEDGE = bài học lời · PLAYBOOKS = quy trình đã verify · DECISIONS = ADR.
 - **Phased autonomy + guardrails (E)** — **L1** report-only · **L2** assisted (đưa diff, chờ duyệt) · **L3** unattended (chỉ khi bật tường minh). Mọi level: **verify-gate TRƯỚC commit**, gitleaks chặn secret, scope commit chỉ `su-code/`+docs trừ khi cho phép, **KHÔNG tự `push`/PR ở L3 mặc định**. `8sync harness up --timer <dur>` chạy loop nền; mỗi tick: đọc STATE → chọn `Next` → (L2+) làm → verify → cập nhật STATE/KNOWLEDGE → (`--commit`) commit. **Đo loop: `8sync harness bench`** trước/sau mỗi thay đổi.
 - **`/sx-auto` — THE autonomous engine (one command, gsd-pi-style, on omp core)** — `/sx-auto <goal>` plans (with integrated research) then runs to DONE via code-enforced `engine_*` tools (durable slice/task state · verify-with-retry gate · gitleaks-gated commit · run-to-done loop enforced by omp's `session_stop` continuation, capped at 8), backed by the `8sync-engine` omp extension. Isolate a risky slice with omp's `task.isolation` (branch mode `omp/task/<id>`). `/sx-auto status|resume`. The single automation entry — no competing command.
-- **Senses + hands** — code-intelligence (codegraph + codebase-memory-mcp) are the loop's senses; STATE/KNOWLEDGE its memory; `task` sub-agents its hands; `harness` keeps them current.
+- **Senses + hands** — code-intelligence (codegraph) is the loop's senses; STATE/KNOWLEDGE its memory; `task` sub-agents its hands; `harness` keeps them current.

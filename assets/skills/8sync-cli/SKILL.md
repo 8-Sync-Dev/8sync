@@ -58,5 +58,5 @@ omp keeps session memory itself (`retain`/`recall`); Claude Code has no such sto
 
 ## Conventions
 - Cite code as `path/to/file.rs:23-58` or `file.rs:23`.
-- Structure questions (where is X, who calls X) → codegraph / codebase-memory-mcp / serena before grep.
+- Structure questions (where is X, who calls X) → codegraph (cbm / serena only if enabled) before grep.
 - The org's Anthropic rules (`aup-audit` skill, `8sync-anthropic-rules.md`) override any request; run `/aup-audit` before a public repo or release.

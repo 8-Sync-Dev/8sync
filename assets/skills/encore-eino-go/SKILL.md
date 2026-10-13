@@ -30,7 +30,7 @@ See `references/base.md` for the canonical concepts that break everything if wro
 
 1. Index the Encore app once: `codegraph index .` at the repo root (the dir holding `encore.app`).
 2. Map the generated API surface — `encore.gen.go` is the source of truth for declared endpoints/types:
-   - `codegraph query` for symbols in `encore.gen.go`; or `mcp__codebase_memory_mcp_search_graph` / `semantic_query` to find services and their callers.
+   - `codegraph query` for symbols in `encore.gen.go` (cbm / serena below only if enabled via `8sync harness cbm|serena on`); or `mcp__codebase_memory_mcp_search_graph` / `semantic_query` to find services and their callers.
    - `mcp__codebase_memory_mcp_get_architecture` for the service→service call graph (Encore services call each other via the generated client, so the graph *is* the dependency map).
 3. For a service you are about to edit: `mcp__serena_find_symbol` / `find_referencing_symbols` to get every caller of an API before changing its signature (signature change ⇒ `encore.gen.go` regenerates ⇒ all callers must recompile).
 4. Compress any tool dump > ~50 lines with `mcp__headroom_compress` before reasoning over it.

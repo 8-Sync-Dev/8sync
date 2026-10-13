@@ -38,7 +38,7 @@ upgrades a primitive, a step that only references it inherits the upgrade.
 - If `.codegraph/` exists: `codegraph query "<command_or_fn>"` and
   `codegraph context "tauri ipc"` to map commands/events/state. Else
   `codegraph init -i .` once. After edits: `codegraph sync`.
-- Cross-check structure with `mcp__codebase_memory_mcp__search_graph` /
+- If cbm/serena are enabled (opt-in: `8sync harness cbm|serena on`), cross-check structure with `mcp__codebase_memory_mcp__search_graph` /
   `trace_path` (calls) if the project is indexed, and
   `mcp__serena__get_symbols_overview` on the `src-tauri/src/*.rs` file you'll
   touch; `mcp__serena__get_diagnostics_for_file` to see type errors live.

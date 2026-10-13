@@ -69,7 +69,7 @@ mod verify;
                (no-op until `8sync hq setup`)
       also     auto permission mode · medium effort · task list · claude.ai connectors off (each only
                if unset) · build/test commands skip the classifier · deny .env / keys / *.session / *.pkl and force-push ·
-               codebase-memory-mcp + serena from omp's MCP config when their command is on PATH
+               serena / codebase-memory-mcp ONLY if opted in (`8sync harness serena|cbm on`) from omp's MCP config when on PATH
                (serena alwaysLoad=false; failures are reported)
 "})]
 pub struct Args {
@@ -501,7 +501,10 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
 
     let mut kept = Vec::new();
     for (asset, rel) in KIT_FILES {
-        let body = assets::read(asset).with_context(|| format!("asset missing: {asset}"))?;
+        let body = crate::verbs::harness::cbm::gate(
+            &env.home,
+            &assets::read(asset).with_context(|| format!("asset missing: {asset}"))?,
+        );
         let target = dir.join(rel);
         match std::fs::read_to_string(&target) {
             Ok(cur) if cur == body => {}
@@ -542,7 +545,10 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
         ui::info(&format!("kept your edited {} (`8sync ccc kit --force` overwrites)", dir.join(rel).display()));
     }
 
-    let rules = assets::read("claude/CLAUDE.md").context("asset missing: claude/CLAUDE.md")?;
+    let rules = crate::verbs::harness::cbm::gate(
+        &env.home,
+        &assets::read("claude/CLAUDE.md").context("asset missing: claude/CLAUDE.md")?,
+    );
     crate::verbs::harness::memory::upsert_block(&dir.join("CLAUDE.md"), CLAUDE_MD_BEGIN, CLAUDE_MD_END, rules.trim_end())?;
 
     let settings = dir.join("settings.json");
@@ -568,7 +574,7 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
     if let Some(claude) = find_claude() {
         mirror_mcp(env, &claude);
     } else {
-        ui::info("MCP: run `8sync ccc kit` again after `claude` is installed to add codebase-memory-mcp + serena");
+        ui::info("MCP: run `8sync ccc kit` again after `claude` is installed to add opted-in MCP servers (harness serena|cbm on)");
     }
     Ok(())
 }
@@ -945,7 +951,16 @@ fn mirror_mcp(env: &Env, claude: &Path) {
         Some(d) => PathBuf::from(d).join(".claude.json"),
         None => env.home.join(".claude.json"),
     });
+    let cbm_on = crate::verbs::harness::cbm::enabled(&env.home);
     for name in ["codebase-memory-mcp", "serena"] {
+        if name == "serena" && !crate::verbs::harness::serena::enabled(&env.home) {
+            ui::skip("MCP serena", "opt-in, off (8sync harness serena on)");
+            continue;
+        }
+        if name == "codebase-memory-mcp" && !cbm_on {
+            ui::skip("MCP codebase-memory-mcp", "opt-in, off (8sync harness cbm on)");
+            continue;
+        }
         if user["mcpServers"].get(name).is_some() {
             ui::skip(&format!("MCP {name}"), "already in Claude Code");
             continue;

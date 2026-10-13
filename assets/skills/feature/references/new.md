@@ -17,7 +17,7 @@ Scaffold 1 feature lớn mới. Output: `su-code/planning/<slug>/` + 4 file + se
 3. **Knowledge lookup (brownfield — BẮT BUỘC, R7)**:
    - Đọc `AGENTS.md` + `su-code/PROJECT.md` → tổng thể + stack.
    - Đọc `su-code/KNOWLEDGE.md` + `su-code/DECISIONS.md` → nghiệp vụ/quyết định module feature sẽ đụng/dùng lại.
-   - **R10 áp dụng**: khi cần khảo cấu trúc module thật (không chỉ đọc memory), dùng `codegraph query/impact "<module>"` hoặc codebase-memory-mcp `get_architecture` TRƯỚC, KHÔNG grep/Read tràn lan toàn module.
+   - **R10 áp dụng**: khi cần khảo cấu trúc module thật (không chỉ đọc memory), dùng `codegraph query/impact "<module>"` TRƯỚC, KHÔNG grep/Read tràn lan toàn module.
    - Mục đích: PROJECT.md ghi đúng "cắm vào module nào", "KHÔNG đụng gì".
 
 4. **Tạo 4 file** từ `templates/` — thay placeholder:

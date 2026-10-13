@@ -224,16 +224,20 @@ pub(crate) fn build_force_load(home: &Path, root: &Path) -> ForceLoadStats {
         "> ⚠ `codegraph` binary chưa cài. Chạy `8sync harness init` (auto cài) HOẶC `npx -y @colbymchenry/codegraph install` rồi quay lại đọc tiếp.\n\n"
     };
 
+    let mcp_lines = mcp_lines(
+        crate::verbs::harness::cbm::enabled(home),
+        crate::verbs::harness::serena::enabled(home),
+    );
+
     let block = format!(
         "{BEGIN}\n\
-## 🚨 STEP 0 — CODE INTELLIGENCE FIRST (codegraph + codebase-memory-mcp; bắt buộc)\n\
+## 🚨 STEP 0 — CODE INTELLIGENCE FIRST (codegraph CLI trước)\n\
 \n\
 Mọi câu hỏi về code → dùng code-intelligence engine TRƯỚC grep/read (tiết kiệm ~99% token). Bạn (AI) **PHẢI**:\n\
 \n\
 1. **codegraph** (local index): `codegraph index .` 1 lần/session; rồi `codegraph query/explore/node/callers/callees/impact` thay cho `grep`/`rg`/`fd`/`Grep`/`Glob` và `Read` toàn file.\n\
-2. **codebase-memory-mcp** (MCP, LUÔN có trong tool list — gọi đúng tên đăng ký): `mcp__codebase_memory_mcp_search_graph`, `_trace_path`, `_get_architecture`, `_get_code_snippet` — knowledge graph 158 ngôn ngữ, query sub-ms. Full catalog visible (`query_graph`, `detect_changes`, …); server khác/mới thêm → 1 lệnh `search_tool_bm25`.\n\
-3. Tìm/hiểu/định vị code · impact · route→handler · dead code · architecture → ƯU TIÊN 2 engine trên. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit). Serena LUÔN có trong tool list: `mcp__serena_find_symbol` / `mcp__serena_find_referencing_symbols` / `mcp__serena_get_symbols_overview`.\n\
-4. **Nén những gì BẠN phát lại:** báo cáo / subagent prompt / nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill vào context.\n\
+{mcp_lines}\
+3. **Nén những gì BẠN phát lại:** báo cáo / subagent prompt / nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill vào context.\n\
 \n\
 Lý do: 5 query cấu trúc ≈ 3.4k token vs ≈ 412k token grep từng file (−99%). Dump cả file / grep mù = đốt token = bug.\n\
 \n\
@@ -257,7 +261,7 @@ KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Kh
 {ondemand_lines}\n\
 ### Quy tắc bất biến\n\
 \n\
-- **Code-intelligence FIRST** (codegraph + codebase-memory-mcp) cho mọi câu hỏi explore code (Step 0). Bypass = bug.\n\
+- **Code-intelligence FIRST** (codegraph CLI trước) cho mọi câu hỏi explore code (Step 0). Bypass = bug.\n\
 - **Output > ~50 dòng → BẮT BUỘC `headroom_compress`** trước khi vào context — không dump thô.\n\
 - Đọc body **CORE** (codegraph → karpathy → ponytail → 8sync-cli) TRƯỚC tool call đầu tiên. **SPECIALIST** (assp · impeccable · taste · image-routing) đọc body KHI task khớp — `impeccable` bắt buộc ngay khi có việc UI/design.\n\
 - Skill **on-demand**: chỉ mở khi description khớp task hiện tại — đừng đọc thừa.\n\
@@ -274,17 +278,42 @@ KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Kh
     ForceLoadStats { block, core, specialist, ondemand }
 }
 
+/// STEP-0 item 2: codegraph CLI first; cbm / serena lines appear only when enabled.
+fn mcp_lines(cbm: bool, serena: bool) -> String {
+    let mut l = String::from("2. Tìm/hiểu/định vị code · impact · route→handler · dead code · architecture → codegraph CLI trước. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit).\n");
+    if cbm {
+        l.push_str("   - codebase-memory-mcp (đã bật): `mcp__codebase_memory_mcp_search_graph` · `_trace_path` · `_get_architecture` · `_get_code_snippet`.\n");
+    }
+    if serena {
+        l.push_str("   - serena (đã bật): `mcp__serena_find_symbol` · `_find_referencing_symbols` · `_get_symbols_overview`.\n");
+    }
+    l
+}
+
 /// CLAUDE.md's block: a compact pointer (~1 KB). Claude Code loads CLAUDE.md
 /// into every request and already lists skills with descriptions, so the block
 /// does NOT force-read SKILL.md bodies and does NOT claim MCP tools exist.
 /// The full CORE/SPECIALIST block stays in AGENTS.md (omp/Cursor harnesses).
-fn claude_block() -> String {
+fn claude_block(home: &Path) -> String {
+    claude_block_with(
+        crate::verbs::harness::cbm::enabled(home),
+        crate::verbs::harness::serena::enabled(home),
+    )
+}
+
+fn claude_block_with(cbm: bool, serena: bool) -> String {
+    let mcp = match (cbm, serena) {
+        (false, false) => "",
+        (true, false) => "; codebase-memory-mcp đã bật",
+        (false, true) => "; serena đã bật",
+        (true, true) => "; codebase-memory-mcp + serena đã bật",
+    };
     let block = format!(
         "{BEGIN}\n\
 ## 8sync harness — Claude Code\n\
 \n\
 - **Repo:** quy ước, lệnh build/test, kiến trúc nằm trong `AGENTS.md` — xem mục lục (`grep -n '^#' AGENTS.md`), đọc đúng mục cần.\n\
-- **Code intelligence:** nếu có tool `codebase-memory-mcp` / `serena` thì ưu tiên; không thì `codegraph query|explore` qua Bash. Chỉ đọc raw file khi sắp sửa.\n\
+- **Code intelligence:** `codegraph query|explore` qua Bash (nhanh, local){mcp}. Chỉ đọc raw file khi sắp sửa.\n\
 - **Skills nạp theo nhu cầu:** Claude Code đã liệt kê skill kèm mô tả; chỉ mở khi task khớp (UI/design → `impeccable`). Không đọc SKILL.md trước.\n\
 - **Lệnh:** ưu tiên `8sync` (`8sync run test`, `8sync find` …) hơn shell thô.\n\
 - **Memory:** `su-code/STATE.md` đầu phiên; bài học → `su-code/KNOWLEDGE.md`; thay đổi → `CHANGELOG.md`.\n\
@@ -365,7 +394,7 @@ pub(crate) fn inject_agents_md(home: &Path, root: &Path) -> Result<()> {
     let stats = build_force_load(home, root);
     let always_count = stats.core.len() + stats.specialist.len();
     let on_count = stats.ondemand.len();
-    let claude_block = claude_block();
+    let claude_block = claude_block(home);
     let ancestor_dup = ancestor_claude_has_block(home, root);
     let block = stats.block;
 
@@ -647,7 +676,7 @@ mod tests {
 
     #[test]
     fn compact_block_replaces_old_full_block_and_is_small() {
-        let blk = claude_block();
+        let blk = claude_block_with(false, false);
         assert!(blk.len() <= 1100, "block is {} B", blk.len());
         assert!(!blk.contains("ĐỌC NGAY") && !blk.contains("LUÔN có"));
         let old = format!("# T\n\nmine-before\n\n{BEGIN}\n## OLD full block\n{END}\n\nmine-after\n");
@@ -655,5 +684,16 @@ mod tests {
         assert!(!out.contains("OLD full block"));
         assert!(out.contains("mine-before") && out.contains("mine-after"));
         assert_eq!(out.matches(BEGIN).count(), 1);
+    }
+
+    #[test]
+    fn code_intel_text_omits_cbm_serena_when_off() {
+        let off = format!("{}{}", claude_block_with(false, false), mcp_lines(false, false));
+        for w in ["codebase-memory", "codebase_memory", "serena"] {
+            assert!(!off.contains(w), "`{w}` leaked while off");
+        }
+        assert!(off.contains("codegraph"));
+        let on = format!("{}{}", claude_block_with(true, true), mcp_lines(true, true));
+        assert!(on.contains("codebase-memory") && on.contains("serena"));
     }
 }

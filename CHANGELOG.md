@@ -4,6 +4,10 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Changed
+- **codebase-memory-mcp is now strictly opt-in (default off).** Its index worker, one MCP server per Claude Code/omp session and a systemd --user daemon pegged the CPU (one worker ~283% / 847 MB, 1.2 GB cache). `8sync harness`, `harness up/auto` and `8sync ccc kit` no longer install, register or index it unless enabled. Toggle with `8sync harness cbm on|off|status` (stored in `~/.config/8sync/features.toml` as `codebase_memory_mcp`; `EIGHTSYNC_CBM=1|0` overrides). `off` also removes it from Claude Code (user scope) and the 8sync-written entry from `~/.omp/agent/mcp.json` (other entries untouched); it kills nothing, only prints a hint. When on, `auto_index` is set to `false` (index on demand only) instead of `true`. A stub binary (`--version` says "disabled"/"(stub)") counts as not installed and is never registered. Kit CLAUDE.md / injected block no longer tell agents to use it first (codegraph CLI first).
+- **serena MCP is opt-in too (default off).** Python/JS MCP servers cost a process per agent session; 8sync prefers native/Rust tooling (codegraph CLI, Claude Code LSP plugins). `8sync harness serena on|off|status` (`serena` key in `features.toml`, `EIGHTSYNC_SERENA=1|0` overrides); `ccc kit` and `harness up` no longer register it unless enabled; `off` removes it from Claude Code (user scope) and the uvx entry from omp's mcp.json.
+- **Agent guidance is codegraph-first; cbm/serena text is gated on the flags.** Rules, APPEND_SYSTEM, force-load, kit CLAUDE.md, AGENTS/CLAUDE blocks, commands and bashInterceptor messages only mention `mcp__codebase_memory_mcp_*` / `mcp__serena_*` when `harness cbm|serena on` (asset lines prefixed `@cbm ` / `@serena `; `code_intel_available` also requires the flag).
 
 ## [0.68.0] — 2026-10-13
 ### Added

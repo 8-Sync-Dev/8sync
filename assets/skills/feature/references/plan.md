@@ -8,7 +8,7 @@ Discuss + Plan cho phase hiện tại (`active_phase` trong STATE). Output: `M<x
 
 - Đọc PROJECT.md (ràng buộc) + ROADMAP.md (contract phase này) + REQUIREMENTS.md (UC của phase).
 - Trích **Requirement scope** cho phase: liệt kê UC-ID + mô tả từ REQUIREMENTS.md mà phase này chịu trách nhiệm; nếu ROADMAP và REQUIREMENTS lệch phase/UC → sửa/hỏi trước khi plan.
-- Đọc knowledge liên quan: `su-code/KNOWLEDGE.md` + (R10) `codegraph`/codebase-memory-mcp `get_architecture` cho module sẽ đụng.
+- Đọc knowledge liên quan: `su-code/KNOWLEDGE.md` + (R10) `codegraph explore` cho module sẽ đụng.
 - Chốt quyết định triển khai mơ hồ (API nào, schema, pattern). Mơ hồ → dùng `ask` (tương tác). Auto-mode: thay `ask` bằng spawn `task` discuss (xem `auto.md`).
 - Ghi `su-code/planning/<slug>/phases/M<x>-<name>/M<x>-CONTEXT.md`: quyết định riêng phase + Requirement scope (dùng `templates/M-CONTEXT.md`).
 - Append quyết định lớn vào STATE.Decisions + PROJECT Key Decisions table.
@@ -45,7 +45,7 @@ Nếu phase cần khảo nhiều mặt codebase (và `config.workflow.paralleliz
   - "tìm pattern <X> trong codebase"
   - "schema/migration module tương tự"
   - "module tham khảo đã làm <Y>"
-- **Prompt mỗi subagent nhúng chỉ thị R10 literal**: dùng `codegraph query/callers/impact "<query>"` (CLI) hoặc codebase-memory-mcp (`mcp__codebase_memory_mcp_search_graph`/`_trace_path`/`_get_architecture`) / serena (`mcp__serena_find_symbol`) để tìm/hiểu code TRƯỚC grep/Read thô; chỉ Read khi cần xem chi tiết 1 file cụ thể đã định vị; kết quả dài (>50 dòng) sắp đưa vào báo cáo cuối → `mcp__headroom_compress` trước, không dump thô.
+- **Prompt mỗi subagent nhúng chỉ thị R10 literal**: dùng `codegraph query/callers/impact "<query>"` (CLI) (cbm/serena nếu đã bật) để tìm/hiểu code TRƯỚC grep/Read thô; chỉ Read khi cần xem chi tiết 1 file cụ thể đã định vị; kết quả dài (>50 dòng) sắp đưa vào báo cáo cuối → `mcp__headroom_compress` trước, không dump thô.
 - Barrier → tổng hợp ở main thread.
 - Phase nhỏ/pattern đã rõ, hoặc `parallelization === false` → skip, không spawn (chạy tuần tự main thread).
 

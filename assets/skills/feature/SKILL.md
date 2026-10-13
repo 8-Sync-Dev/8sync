@@ -81,7 +81,7 @@ Chi tiết luật + cách spawn subagent discuss: `references/auto.md`.
 ## Neo vào codebase (brownfield) — R7
 
 - Tổng thể dự án: `AGENTS.md` + `su-code/PROJECT.md` — KHÔNG mô tả lại.
-- Nghiệp vụ/kiến trúc module: `su-code/KNOWLEDGE.md` + codebase-memory-mcp `mcp__codebase_memory_mcp_get_architecture`/`_search_graph` — đọc/tra trước khi code.
+- Nghiệp vụ/kiến trúc module: `su-code/KNOWLEDGE.md` + `codegraph explore` — đọc/tra trước khi code.
 - Convention + quyết định: `AGENTS.md` + `su-code/DECISIONS.md` + `su-code/PREFERENCES.md`.
 - Project-local skill: `su-code/skills/<name>/SKILL.md`; global: `~/.omp/skills/<name>/SKILL.md`.
 

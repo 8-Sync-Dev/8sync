@@ -1241,7 +1241,7 @@ fn install_skills(env: &env_detect::Env) -> Result<()> {
     }
     let master = skills_dir.join("00-force-load.md");
     if let Some(c) = assets::read("skills/00-force-load.md") {
-        std::fs::write(&master, crate::brand::render(&c).as_ref())?;
+        std::fs::write(&master, crate::brand::render(&crate::verbs::harness::cbm::gate(&env.home, &c)).as_ref())?;
     }
     ui::ok(&format!("wrote {}", master.display()));
     Ok(())

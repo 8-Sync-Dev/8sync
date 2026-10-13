@@ -22,7 +22,7 @@ Then ground on state (except for `new`, which creates it):
 - `su-code/planning/ACTIVE.md` line 1 → active slug; `su-code/planning/<slug>/STATE.md`
   frontmatter (`status`/`active_phase`/`next_action`); `su-code/planning/config.json`
   (`workflow.*`, `paths.*`). Obey `~/.omp/agent/APPEND_SYSTEM.md` (code-intel first;
-  always-on skills). Explore with **codegraph / codebase-memory-mcp / serena** — never
+  always-on skills). Explore with **codegraph** (codebase-memory-mcp / serena only if enabled) — never
   grep/Read-all; `headroom_compress` any tool output > ~50 lines.
 
 ## 1. Dispatch (`$ARGUMENTS` first word)

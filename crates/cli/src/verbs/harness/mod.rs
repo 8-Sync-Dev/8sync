@@ -23,6 +23,8 @@ mod model;
 mod local_model;
 mod custom_model;
 mod browser;
+pub(crate) mod cbm;
+pub(crate) mod serena;
 mod gateway;
 pub(crate) mod claude_code;
 mod up;
@@ -62,6 +64,8 @@ mod toolstats;
       8sync harness add-local-model list|rm <name>  list / remove registered local models
       8sync harness add-model <provider/model> --url <baseUrl> [--key|--api|--ctx|--max|--vision|--think]  register a REMOTE model omp's catalog lacks
       8sync harness add-model list|rm <provider/model>  list / remove registered remote models
+      8sync harness cbm [on|off|status]  codebase-memory-mcp is OPT-IN (default off; EIGHTSYNC_CBM=1|0 overrides)
+      8sync harness serena [on|off|status]  serena MCP (Python/uvx) is OPT-IN (default off; EIGHTSYNC_SERENA=1|0 overrides)
       8sync harness browser [fix|status|off]  point omp's browser at system Chromium (ungoogled) so it reaches the internet
 
     WHAT init DEPLOYS
@@ -201,6 +205,14 @@ pub fn run(a: Args) -> Result<()> {
             let args: Vec<String> = [v1.clone(), a.value2.clone()].into_iter().flatten().collect();
             browser::harness_browser(&env, &args)
         }
+        Some("cbm") => {
+            let args: Vec<String> = [v1.clone(), a.value2.clone()].into_iter().flatten().collect();
+            cbm::harness_cbm(&env, &args)
+        }
+        Some("serena") => {
+            let args: Vec<String> = [v1.clone(), a.value2.clone()].into_iter().flatten().collect();
+            serena::harness_serena(&env, &args)
+        }
         Some("help") => {
             print_help();
             Ok(())
@@ -254,6 +266,8 @@ fn print_help() {
     println!("{}", crate::brand::render("  8sync harness add-local-model <path> [name]  serve a local GGUF via mistral.rs (Rust) + register as omp `local/<name>`"));
     println!("{}", crate::brand::render("  8sync harness add-model <provider/model> --url <baseUrl>  register a REMOTE model omp's catalog lacks (custom provider)"));
     println!("{}", crate::brand::render("  8sync harness browser [fix|status|off]  point omp's browser at system Chromium (ungoogled) — fixes browser control not reaching the internet"));
+    println!("{}", crate::brand::render("  8sync harness cbm [on|off|status]  codebase-memory-mcp opt-in (default off — it can peg the CPU); off also unregisters it"));
+    println!("{}", crate::brand::render("  8sync harness serena [on|off|status]  serena MCP opt-in (default off); off also unregisters it"));
     #[cfg(feature = "web")]
     println!("{}", crate::brand::render("  8sync harness web [--port N]    local dashboard (axum+Vite): skills/memory/engines/team/submodules"));
     println!("{}", crate::brand::render("  8sync harness toolstats         omp tool-call tracker: optimizer (codegraph/cbm/serena) vs fallback (grep/read) call ratio + fails"));
