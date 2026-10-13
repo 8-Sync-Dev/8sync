@@ -4,6 +4,9 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- Session registry (`index.json` for `forge` / `ccc .`) is now written atomically under an exclusive lock (`index.json.lock`, tmp + rename) through one `update` helper, so concurrent launches no longer lose entries; a corrupt index is kept as `index.json.corrupt-<unix>` and rebuilt instead of silently dropped. On-disk format unchanged.
+
 
 ## [0.76.0] — 2026-10-13
 ### Added
