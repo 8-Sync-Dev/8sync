@@ -61,7 +61,10 @@ fn ensure_slice(home: &Path) -> bool {
     if std::fs::read_to_string(&p).is_ok_and(|s| s == slice_text()) {
         return true;
     }
-    if std::fs::create_dir_all(&dir).is_err() || std::fs::write(&p, slice_text()).is_err() {
+    // tmp + rename: two sessions starting at once never see a half-written unit
+    let tmp = dir.join(format!(".{SLICE}.{}", std::process::id()));
+    if std::fs::create_dir_all(&dir).is_err() || std::fs::write(&tmp, slice_text()).is_err() || std::fs::rename(&tmp, &p).is_err() {
+        let _ = std::fs::remove_file(&tmp);
         return false;
     }
     Command::new("systemctl").args(["--user", "daemon-reload"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
@@ -77,6 +80,23 @@ pub(super) fn wrap(cmd: &Command, home: &Path) -> Option<Command> {
     if !ensure_slice(home) {
         return None;
     }
+    // A scope that cannot start (no cgroup delegation, dbus error) would exit before claude
+    // and look like claude failing: try a no-op scope first, else run unfenced.
+    let ok = Command::new(&run)
+        .args(fence_argv(Path::new("true"), &[]))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if !ok {
+        return None;
+    }
+    Some(mirror(cmd, &run))
+}
+
+/// `cmd` re-targeted at `systemd-run`: same args after `--`, same env changes, same cwd.
+pub(super) fn mirror(cmd: &Command, run: &Path) -> Command {
     let args: Vec<OsString> = cmd.get_args().map(|a| a.to_owned()).collect();
     let mut w = Command::new(run);
     w.args(fence_argv(Path::new(cmd.get_program()), &args));
@@ -89,7 +109,7 @@ pub(super) fn wrap(cmd: &Command, home: &Path) -> Option<Command> {
     if let Some(d) = cmd.get_current_dir() {
         w.current_dir(d);
     }
-    Some(w)
+    w
 }
 
 #[cfg(test)]
@@ -119,13 +139,16 @@ mod tests {
     }
 
     #[test]
-    fn wrap_carries_env_and_cwd() {
+    fn mirror_carries_args_env_and_cwd() {
         let mut c = Command::new("/bin/claude");
-        c.args(["--resume", "x"]).env("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1").current_dir("/tmp");
-        // exercise the copy logic directly (wrap() itself depends on the host's systemd)
-        let args: Vec<OsString> = c.get_args().map(|a| a.to_owned()).collect();
-        assert_eq!(fence_argv(Path::new(c.get_program()), &args).len(), 6 + 3);
-        assert!(c.get_envs().any(|(k, _)| k == "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"));
-        assert_eq!(c.get_current_dir(), Some(Path::new("/tmp")));
+        c.args(["--resume", "x"]).env("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1").env_remove("CLAUDECODE").current_dir("/tmp");
+        let m = mirror(&c, Path::new("/usr/bin/systemd-run"));
+        assert_eq!(m.get_program(), "/usr/bin/systemd-run");
+        let args: Vec<String> = m.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(&args[5..], ["--", "/bin/claude", "--resume", "x"]);
+        let envs: Vec<_> = m.get_envs().map(|(k, v)| (k.to_owned(), v.map(|v| v.to_owned()))).collect();
+        assert!(envs.contains(&("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS".into(), Some("1".into()))));
+        assert!(envs.contains(&("CLAUDECODE".into(), None)), "a removed var stays removed");
+        assert_eq!(m.get_current_dir(), Some(Path::new("/tmp")));
     }
 }

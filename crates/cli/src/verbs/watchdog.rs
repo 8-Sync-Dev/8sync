@@ -129,7 +129,7 @@ pub struct Config {
     pub psi_mem_full_pct: f64,
     pub psi_io_full_pct: f64,
     pub psi_cpu_some_pct: f64,
-    /// Machine GPU (AMD sysfs / NVIDIA): warn above these.
+    /// Machine GPU (AMD sysfs; NVIDIA is measured per process via nvidia-smi): warn above these.
     pub gpu_vram_pct: f64,
     pub gpu_busy_pct: f64,
 }
@@ -211,7 +211,7 @@ renice_cpu_pct = 25.0
 psi_mem_full_pct = 5.0       # /proc/pressure/memory full avg10
 psi_io_full_pct = 20.0       # /proc/pressure/io full avg10
 psi_cpu_some_pct = 70.0      # /proc/pressure/cpu some avg10
-gpu_vram_pct = 90.0          # AMD sysfs / NVIDIA: warn above
+gpu_vram_pct = 90.0          # AMD (sysfs) machine VRAM: warn above
 gpu_busy_pct = 98.0
 watch = [\"node\", \"bun\", \"python\", \"python3\", \"uv\", \"uvx\", \"npx\", \"deno\", \"java\"]
 ";
@@ -402,6 +402,11 @@ fn machine_gpu() -> Option<(f64, f64, String)> {
         }
         let d = e.path().join("device");
         let rd = |f: &str| fs::read_to_string(d.join(f)).unwrap_or_default();
+        // reading a runtime-suspended dGPU's counters can wake it: only read active cards
+        let pm = rd("power/runtime_status");
+        if !pm.is_empty() && pm.trim() != "active" {
+            continue;
+        }
         if let Some((b, v)) = parse_amdgpu(&rd("gpu_busy_percent"), &rd("mem_info_vram_used"), &rd("mem_info_vram_total")) {
             if best.as_ref().is_none_or(|x| b.max(v) > x.0.max(x.1)) {
                 best = Some((b, v, format!("amdgpu {name}")));
@@ -870,8 +875,10 @@ impl Engine {
             let a = self.alert(s, None, "load", "load1", s.load, limit, "warn", msg, "pause heavy work; check `ps -eo pid,pcpu,args --sort=-pcpu | head`.");
             out.alerts.push(a);
         }
-        let psi_over = s.psi_mem >= self.cfg.psi_mem_full_pct || s.psi_io >= self.cfg.psi_io_full_pct || s.psi_cpu >= self.cfg.psi_cpu_some_pct;
-        if self.psi.update(s.now, psi_over, self.cfg.sys_sustain_secs.min(20.0)) {
+        // cpu "some" is high in any parallel build: it only triggers the renice, not an alert
+        let psi_alert = s.psi_mem >= self.cfg.psi_mem_full_pct || s.psi_io >= self.cfg.psi_io_full_pct;
+        let psi_over = psi_alert || s.psi_cpu >= self.cfg.psi_cpu_some_pct;
+        if self.psi.update(s.now, psi_alert, self.cfg.sys_sustain_secs.min(20.0)) {
             let msg = format!("machine pressure (PSI avg10): memory full {:.0}%, io full {:.0}%, cpu some {:.0}%{tops}", s.psi_mem, s.psi_io, s.psi_cpu);
             let a = self.alert(s, None, "pressure", "psi", s.psi_mem.max(s.psi_io).max(s.psi_cpu), self.cfg.psi_mem_full_pct, "warn", msg, THROTTLE);
             out.alerts.push(a);
@@ -888,7 +895,14 @@ impl Engine {
         let pressured = s.avail_pct < self.cfg.mem_avail_pct || s.load > limit || psi_over;
         self.pressure_since = if pressured { self.pressure_since.or(Some(s.now)) } else { None };
         let active = self.pressure_since.is_some_and(|t| s.now - t >= self.cfg.renice_after_secs);
-        if active && self.cfg.auto_renice && !self.dry {
+        if active && self.cfg.auto_renice && self.dry {
+            let fresh: Vec<_> = heavy.iter().filter(|(pid, start, _)| self.reniced.insert((*pid, *start))).map(|(pid, _, n)| format!("{n}({pid})")).collect();
+            if !fresh.is_empty() {
+                let msg = format!("dry-run: would renice {} busy session process(es): {}", fresh.len(), fresh.join(", "));
+                let a = self.alert(s, None, "renice", "procs", fresh.len() as f64, 0.0, "dry-run", msg, THROTTLE);
+                out.alerts.push(a);
+            }
+        } else if active && self.cfg.auto_renice {
             let fresh: Vec<_> = heavy.into_iter().filter(|(pid, start, _)| self.reniced.insert((*pid, *start))).collect();
             if !fresh.is_empty() {
                 let names: Vec<String> = fresh.iter().take(6).map(|(pid, _, n)| format!("{n}({pid})")).collect();
@@ -1187,8 +1201,15 @@ fn renice(pid: u32, start: u64) {
         let q = |c: &mut Command| {
             let _ = c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
         };
-        q(Command::new("renice").args(["-n", "19", "-p", &pid.to_string()]));
-        q(Command::new("ionice").args(["-c", "3", "-p", &pid.to_string()]));
+        // Linux priorities are per thread: touch every task of the process (rustc, ld, node are multithreaded)
+        let mut tids: Vec<String> = fs::read_dir(format!("/proc/{pid}/task")).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|t| t.bytes().all(|b| b.is_ascii_digit())).collect();
+        if tids.is_empty() {
+            tids.push(pid.to_string());
+        }
+        q(Command::new("renice").args(["-n", "19", "-p"]).args(&tids));
+        for t in &tids {
+            q(Command::new("ionice").args(["-c", "3", "-p", t]));
+        }
     }
 }
 
@@ -1413,7 +1434,7 @@ fn status(paths: &Paths) -> Result<()> {
     });
     let amd = machine_gpu().map(|(b, v, l)| format!("{l} busy {b:.0}% VRAM {v:.0}%"));
     let nvs = match (nv_card, nv) {
-        (_, true) => "NVIDIA via nvidia-smi".to_string(),
+        (true, true) => "NVIDIA per-process VRAM via nvidia-smi".to_string(),
         (true, false) => "NVIDIA card present but not measured (no nvidia-smi: install the NVIDIA driver utils)".into(),
         _ => String::new(),
     };
