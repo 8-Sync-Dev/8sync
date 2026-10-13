@@ -376,7 +376,7 @@ pub(crate) fn ensure_claude() -> Result<PathBuf> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 22] = [
+const KIT_FILES: [(&str, &str); 23] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -389,6 +389,7 @@ const KIT_FILES: [(&str, &str); 22] = [
     ("claude/agents/qa.md", "agents/qa.md"),
     ("claude/skills/ship/SKILL.md", "skills/ship/SKILL.md"),
     ("claude/skills/planning/SKILL.md", "skills/planning/SKILL.md"),
+    ("claude/skills/ui-ux/SKILL.md", "skills/ui-ux/SKILL.md"),
     ("claude/skills/remember/SKILL.md", "skills/remember/SKILL.md"),
     ("claude/skills/consolidate/SKILL.md", "skills/consolidate/SKILL.md"),
     ("claude/skills/rules/SKILL.md", "skills/rules/SKILL.md"),
@@ -507,8 +508,8 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
-const CORE_SKILLS: [&str; 10] =
-    ["ship", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
+const CORE_SKILLS: [&str; 11] =
+    ["ship", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {

@@ -346,9 +346,18 @@ fn link_dir(src: &Path, dst: &Path, link: &Path) -> Result<&'static str> {
 /// already exists (a kit file, a user's own skill) is left alone.
 pub(crate) fn link_bundled_skills(home: &Path, skills_dir: &Path) -> Result<usize> {
     let mut linked = 0;
-    for (_, name) in BUNDLED_SKILLS {
-        let (src, dst) = (home.join(".omp/skills").join(name), skills_dir.join(name));
-        if src.is_dir() && std::fs::symlink_metadata(&dst).is_err() {
+    // Every skill folder in ~/.omp/skills, not only the ones 8sync ships: omp
+    // installs more (frontend-ui-engineering, browser-testing-with-devtools…).
+    let omp = home.join(".omp/skills");
+    for e in std::fs::read_dir(&omp).into_iter().flatten().flatten() {
+        let src = e.path();
+        let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
+        if name.starts_with('.') || !src.join("SKILL.md").is_file() {
+            continue;
+        }
+        let dst = skills_dir.join(&name);
+        if std::fs::symlink_metadata(&dst).is_err() {
+            std::fs::create_dir_all(skills_dir)?;
             link_dir(&src, &dst, &src)?;
             linked += 1;
         }
@@ -2126,6 +2135,18 @@ mod skill_library_tests {
     fn skill(lib: &Path, name: &str) {
         std::fs::create_dir_all(lib.join(name)).unwrap();
         std::fs::write(lib.join(name).join("SKILL.md"), format!("---\nname: {name}\ndescription: x\n---\n")).unwrap();
+    }
+
+    #[test]
+    fn every_omp_skill_folder_is_linked() {
+        let home = tmp("omp-home");
+        skill(&home.join(".omp/skills"), "frontend-ui-engineering"); // not in the shipped list
+        std::fs::write(home.join(".omp/skills/00-force-load.md"), "x").unwrap(); // a file, not a skill
+        let skills = home.join(".claude/skills");
+        assert_eq!(link_bundled_skills(&home, &skills).unwrap(), 1);
+        assert!(skills.join("frontend-ui-engineering/SKILL.md").is_file());
+        assert!(!skills.join("00-force-load.md").exists());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
