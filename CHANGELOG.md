@@ -4,11 +4,15 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.76.0] — 2026-10-13
 ### Added
 - **Five graded auto commands for ccc** (all inside official Claude Code; no bypassPermissions): `/do <việc>` (one small change, no plan, no commit, light checks), `/ship` (full process), `/ship-auto` (ship through PR → CI → merge → release → install → monitor with ONE "Ship" question), `/ship-loop <mục tiêu>` (acceptance criteria with check commands, iterate implement → check → fix with evidence in `LOOP.md`, caps `--max-iter 12` / `--max-min 90`, stuck and no-change detection via `8sync ccc loop`; Claude Code's built-in `/goal` can be layered on top by the owner), `/autopilot` (unattended backlog: issues labelled ccc/8sync → STATE Next → KNOWLEDGE failures; one Ship question per batch; respects other sessions' lanes). Levels 3–5 are owner-invoked only (`disable-model-invocation`).
 - `8sync ccc loop <init|tick|status|done|ls>`: bounded-loop state (`su-code/ship/<slug>/loop.json`) with stop rules max-iter, max-min, stuck (same digest twice) and no-change; kit gains the `do`, `ship-auto`, `ship-loop`, `autopilot` skills (`ship-loop`, `autopilot` stay core).
 - `8sync ls --json` rows gain `sid` (Claude session uuid for `claude`/`ccc` engines, `null` otherwise); other fields unchanged.
 
+### Fixed
+- **hq-ui "Văn phòng": a running Claude session no longer shows as two desks.** The floor now joins an hq session to its `8sync ls` row by session id, then by name, then by folder (`~` expanded; an agent working in a subfolder or worktree of the repo still matches when that is unambiguous). Matched sessions are never appended again. A truly unknown hq session still shows, labelled with its 8-char id instead of the full uuid, after the matched desks.
 
 ## [0.75.0] — 2026-10-13
 ### Changed

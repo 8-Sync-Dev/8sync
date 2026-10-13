@@ -1,9 +1,10 @@
 import os from "node:os";
 import type { DatabaseSync } from "node:sqlite";
+import { sessionLabel } from "../labels";
 import { deriveFloor, type FloorRow, type LsInput } from "../floor";
 import { mergedSessions, run, type SessionView } from "./proc";
 
-type LsRow = LsInput & { name: string; title?: string | null; repo?: string | null; engine?: string | null };
+type LsRow = LsInput & { name: string; sid?: string | null; title?: string | null; repo?: string | null; engine?: string | null };
 
 const TTL_MS = 4000;
 let cache: { at: number; rows: FloorRow[] } | null = null;
@@ -26,19 +27,57 @@ export function tilde(p: string | null | undefined, home = os.homedir()): string
 /** hq only tracks Claude Code; omp/feynman/forge rows never join an hq session. */
 const claudeEngine = (e: string | null | undefined) => !e || e === "ccc" || e === "claude";
 
+const trimSlash = (p: string) => p.replace(/\/+$/, "");
+/** Expand "~" so ls `repo` and hq cwd compare as absolute paths. */
+const expand = (p: string, home = os.homedir()) => (p === "~" ? home : p.startsWith("~/") ? home + p.slice(1) : p);
+/** `repo` may also be Claude's dash-encoded project dir. */
+const dashed = (p: string) => p.replace(/[/.]/g, "-");
+
+/** cwd equals the ls repo, or sits inside it (subfolder / worktree). */
+function cwdInRepo(cwd: string | null | undefined, repo: string | null | undefined): "exact" | "inside" | null {
+  if (!cwd || !repo) return null;
+  const c = trimSlash(cwd);
+  const r = trimSlash(expand(repo));
+  if (c === r || dashed(c) === repo) return "exact";
+  return c.startsWith(`${r}/`) || dashed(c).startsWith(`${repo}-`) ? "inside" : null;
+}
+
 /**
- * hq session for an ls row: same name or session id, not already taken, and
- * (when several match) the one whose cwd is the row's repo.
+ * Pair every Claude ls row with at most one hq session. Order: (a) session id,
+ * (b) same name with a compatible cwd, (c) cwd inside the repo when that pairing
+ * is unambiguous. Returns ls index -> hq session.
  */
-function matchHq(r: LsRow, merged: SessionView[], used: Set<string>): SessionView | null {
-  if (!claudeEngine(r.engine)) return null;
-  // `repo` is "~/x", an absolute path, or Claude's dash-encoded project dir.
-  const sameDir = (cwd: string | null | undefined) =>
-    !!cwd && (tilde(cwd) === r.repo || cwd.replace(/\/+$/, "") === r.repo || cwd.replace(/[/.]/g, "-") === r.repo);
-  const hits = merged.filter(
-    (s) => !used.has(s.name) && (s.name === r.name || s.session_id === r.name) && (!r.repo || !s.cwd || sameDir(s.cwd)),
-  );
-  return hits.find((s) => sameDir(s.cwd)) ?? hits[0] ?? null;
+function pairHq(ls: LsRow[], merged: SessionView[]): Map<number, SessionView> {
+  const out = new Map<number, SessionView>();
+  const taken = new Set<SessionView>();
+  const free = (i: number) => !out.has(i) && claudeEngine(ls[i].engine);
+  const give = (i: number, s: SessionView) => {
+    out.set(i, s);
+    taken.add(s);
+  };
+  // (a) session id: ls `sid`, or an unnamed row whose name is the transcript uuid.
+  ls.forEach((r, i) => {
+    if (!free(i)) return;
+    const id = sidOf(r.sid, r.name);
+    const s = id && merged.find((m) => !taken.has(m) && sidOf(m.session_id) === id);
+    if (s) give(i, s);
+  });
+  // (b) name; two sessions called "core" in different repos stay apart by cwd.
+  ls.forEach((r, i) => {
+    if (!free(i)) return;
+    const hits = merged.filter((m) => !taken.has(m) && m.name === r.name && (!r.repo || !m.cwd || cwdInRepo(m.cwd, r.repo)));
+    const s = hits.find((m) => cwdInRepo(m.cwd, r.repo) === "exact") ?? hits[0];
+    if (s) give(i, s);
+  });
+  // (c) cwd only: one free ls row and one free hq session in that folder.
+  for (const s of merged) {
+    if (taken.has(s) || !s.cwd) continue;
+    const rows = ls.map((_, i) => i).filter((i) => free(i) && cwdInRepo(s.cwd, ls[i].repo));
+    if (rows.length !== 1) continue;
+    const rival = merged.filter((m) => !taken.has(m) && m !== s && cwdInRepo(m.cwd, ls[rows[0]].repo));
+    if (!rival.length) give(rows[0], s);
+  }
+  return out;
 }
 
 async function lsRows(): Promise<LsRow[]> {
@@ -63,9 +102,10 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
     ids.add(id);
     return id;
   };
-  const rows: FloorRow[] = ls.map((r) => {
-    const hq = matchHq(r, merged, used);
-    if (hq) used.add(hq.name);
+  const paired = pairHq(ls, merged);
+  for (const s of paired.values()) used.add(s.name);
+  const rows: FloorRow[] = ls.map((r, i) => {
+    const hq = paired.get(i) ?? null;
     const name = hq?.name ?? r.name;
     const title = r.title?.trim() || (hq && hq.label !== hq.name ? hq.label : "") || (hq?.name.startsWith("hq-") ? hq.name : "") || short(r.name);
     const repo = r.repo ?? tilde(hq?.cwd);
@@ -89,7 +129,8 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
     rows.push({
       id: uniq(`ccc:${repo ?? ""}:${s.name}`),
       name: s.name,
-      title: s.label || short(s.name),
+      title: sessionLabel(s),
+      unmatched: true,
       last_active: s.started_at ? Math.floor(s.started_at / 1000) : null,
       hq: true,
       repo,

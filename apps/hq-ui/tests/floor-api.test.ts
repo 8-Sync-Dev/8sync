@@ -88,6 +88,55 @@ describe("GET /api/floor", () => {
     expect(rows[2]).toMatchObject({ state: "waiting", sid: "11112222" });
   });
 
+  describe("dedupe hq against ls", () => {
+    const UUID = "9f8e7d6c-1111-2222-3333-444455556666";
+    const hq = (o: Record<string, unknown>) => ({ name: UUID, label: UUID, session_id: UUID, status: "running", detail: null, started_at: 1000, tmux: false, ...o });
+    const floor = async () => (await (await GET(req("/api/floor", { token }))).json()).rows as { name: string; title: string; hq: boolean; unmatched?: boolean }[];
+    const home = () => import("node:os").then((m) => m.homedir());
+
+    it("agent cwd in a subfolder of the ls repo joins by session id, one desk", async () => {
+      run.mockResolvedValue(lsOut([{ name: "feats", engine: "ccc", repo: "~/startup/x", sid: UUID, status: "running", tasks_done: 11, tasks_total: 12 }]));
+      merged.mockResolvedValue([hq({ cwd: `${await home()}/startup/x/apps/web` })]);
+      const rows = await floor();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ hq: true, title: "feats" });
+    });
+
+    it("`~` repo joins by cwd when it is the only candidate", async () => {
+      run.mockResolvedValue(lsOut([{ name: "feats", engine: "ccc", repo: "~", status: "running" }]));
+      merged.mockResolvedValue([hq({ cwd: await home() })]);
+      const rows = await floor();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].hq).toBe(true);
+    });
+
+    it("joins by name for engine claude even when cwd is a worktree inside the repo", async () => {
+      run.mockResolvedValue(lsOut([{ name: "feats", engine: "claude", repo: "~/startup/x", status: "running" }]));
+      merged.mockResolvedValue([hq({ name: "feats", label: "feats", session_id: null, cwd: `${await home()}/startup/x/.claude/worktrees/w1` })]);
+      const rows = await floor();
+      expect(rows.map((r) => r.name)).toEqual(["feats"]);
+    });
+
+    it("does not guess when several ls rows share the folder", async () => {
+      run.mockResolvedValue(lsOut([
+        { name: "a", engine: "ccc", repo: "~/startup/x", status: "idle" },
+        { name: "b", engine: "ccc", repo: "~/startup/x", status: "idle" },
+      ]));
+      merged.mockResolvedValue([hq({ cwd: `${await home()}/startup/x` })]);
+      const rows = await floor();
+      expect(rows).toHaveLength(3);
+    });
+
+    it("true unmatched hq session: 8-char label, never the full uuid, ordered last", async () => {
+      run.mockResolvedValue(lsOut([{ name: "feats", engine: "ccc", repo: "~/startup/x", status: "running" }]));
+      merged.mockResolvedValue([hq({ cwd: "/srv/elsewhere" })]);
+      const rows = await floor();
+      expect(rows).toHaveLength(2);
+      expect(rows[1]).toMatchObject({ unmatched: true, title: "9f8e7d6c", hq: true });
+      expect(JSON.stringify(rows)).not.toContain(`"title":"${UUID}"`);
+    });
+  });
+
   it("returns [] when 8sync is missing", async () => {
     run.mockResolvedValue({ ok: false, stdout: "", stderr: "ENOENT" });
     const res = await GET(req("/api/floor", { token }));
