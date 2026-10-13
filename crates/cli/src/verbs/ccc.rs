@@ -727,6 +727,16 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             }]
         }),
     );
+    // Watchdog alerts -> additionalContext (shape per https://code.claude.com/docs/en/hooks:
+    // `hookSpecificOutput.{hookEventName, additionalContext}`). Synchronous: it must land before the
+    // next model turn; a no-op (no output) unless `8sync watchdog` wrote something new.
+    for event in ["UserPromptSubmit", "PostToolUse"] {
+        upsert_hook_group(
+            hooks,
+            event,
+            json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "watchdog"], "timeout": 5 }] }),
+        );
+    }
     // Agent-team events -> `8sync hq hook <Event>`. Event names, `async` (background, never
     // blocks) and `timeout` (seconds) per https://code.claude.com/docs/en/hooks (checked
     // 2026-10-12). `hq hook` is a fast no-op until `8sync hq setup`, so always registering is safe.
@@ -1216,6 +1226,8 @@ fn hook(rest: &[String]) -> Result<()> {
             }));
             guard::check(&input)
         }
+        // Fast path: no alerts file / nothing new = no output (sync hook, timeout 5 s).
+        Some("watchdog") => crate::verbs::watchdog::run_hook(&input),
         Some("session-start") => {
             let cwd = serde_json::from_str::<Value>(&input).ok().and_then(|v| v["cwd"].as_str().map(PathBuf::from));
             let start = cwd.or_else(|| std::env::current_dir().ok()).unwrap_or_default();
@@ -1223,7 +1235,7 @@ fn hook(rest: &[String]) -> Result<()> {
             let root = find_state_root(&start, home.as_deref());
             root.map(|r| session_digest(&r)).filter(|d| !d.is_empty())
         }
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|session-start   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -1269,7 +1281,7 @@ mod tests {
         assert!(deny.iter().any(|r| r == "WebFetch") && deny.iter().any(|r| r == "Bash(git push -f*)"));
 
         let post = v["hooks"]["PostToolUse"].as_array().unwrap();
-        assert_eq!(post.len(), 3, "user hook kept, ours replaced in place, hq SendMessage appended");
+        assert_eq!(post.len(), 4, "user hook kept, ours replaced in place, watchdog + hq SendMessage appended");
         assert_eq!(post[0]["hooks"][0]["command"], "prettier");
         assert_eq!(post[1]["hooks"][0]["command"], "/new/8sync");
         assert_eq!(post[1]["hooks"][0]["asyncRewake"], true, "edits never wait for the check");
