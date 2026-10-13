@@ -173,7 +173,127 @@ fn inline_pair(w: &str) -> Option<Result<String, ()>> {
     None
 }
 
+// ── prose passwords: "mật khẩu là X", "sudo pass: X", "password is X" ──────
+
+const TRIGGERS: [&str; 8] = ["pass", "password", "passwd", "pwd", "pin", "otp", "secret", "token"];
+/// Triggers that may be followed directly by a digit-bearing value, no separator.
+const BARE_OK: [&str; 6] = ["pass", "password", "passwd", "pwd", "pin", "otp"];
+
+fn norm(w: &str) -> String {
+    w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()
+}
+
+/// Core of a value word: no surrounding quotes/closers/sentence punctuation.
+fn value_core(w: &str) -> (usize, usize) {
+    let (lead, core, _) = split_value(w);
+    let t = core.trim_end_matches(['.', '!', '?', ':']);
+    (lead.len(), lead.len() + t.len())
+}
+
+/// Mask the value that follows a password-ish trigger word in free prose.
+/// Value must be one token of 4+ chars. After `:`/`=` any token counts; after
+/// `là`/`is` or no separator the token must contain a non-letter (digit/symbol),
+/// so "password is wrong" / "password reset flow" stay readable.
+fn mask_prose(s: &str) -> String {
+    // (is_whitespace, text) segments
+    let mut segs: Vec<(bool, &str)> = Vec::new();
+    let mut i = 0;
+    while i < s.len() {
+        let ws = s[i..].starts_with(char::is_whitespace);
+        let end = s[i..].find(|c: char| c.is_whitespace() != ws).map_or(s.len(), |n| i + n);
+        segs.push((ws, &s[i..end]));
+        i = end;
+    }
+    let words: Vec<usize> = (0..segs.len()).filter(|&k| !segs[k].0).collect();
+    let mut hit: Vec<usize> = Vec::new(); // seg index of values to mask
+    let mut wi = 0;
+    while wi < words.len() {
+        let w = segs[words[wi]].1;
+        let n = norm(w);
+        let next_n = words.get(wi + 1).map(|&k| norm(segs[k].1));
+        // trigger length in words
+        let (tlen, bare_ok, is_sudo) = if TRIGGERS.contains(&n.as_str()) {
+            (1, BARE_OK.contains(&n.as_str()), false)
+        } else if n == "apikey" || n == "sudo" {
+            (1, false, n == "sudo")
+        } else if (n == "api" && next_n.as_deref() == Some("key"))
+            || (n == "mật" && next_n.as_deref() == Some("khẩu"))
+            || (n == "mat" && next_n.as_deref() == Some("khau"))
+        {
+            (2, n != "api", false)
+        } else {
+            wi += 1;
+            continue;
+        };
+        let last = words[wi + tlen - 1];
+        let mut j = wi + tlen; // next word index to inspect
+        let attached = segs[last].1.ends_with([':', '=']);
+        let mut sep = attached;
+        let mut weak = false; // is/là/no separator: need non-letter value
+        if !sep && !is_sudo {
+            // "của tôi": possessive filler
+            if let Some(&k) = words.get(j) {
+                if norm(segs[k].1) == "sudo" && words.get(j + 1).is_some() {
+                    j += 1;
+                } else if matches!(norm(segs[k].1).as_str(), "của" | "cua" | "of" | "my") && words.get(j + 1).is_some() {
+                    j += if norm(segs[k].1) == "my" { 1 } else { 2 };
+                }
+            }
+        }
+        if !sep {
+            if let Some(&k) = words.get(j) {
+                let t = segs[k].1;
+                let t_n = norm(t);
+                if t == ":" || t == "=" {
+                    sep = true;
+                    j += 1;
+                } else if matches!(t_n.as_str(), "là" | "la" | "is") {
+                    sep = true;
+                    weak = true;
+                    j += 1;
+                }
+            }
+        }
+        if !sep && (is_sudo || !bare_ok) {
+            wi += tlen;
+            continue;
+        }
+        if !sep {
+            weak = true;
+        }
+        if let Some(&k) = words.get(j) {
+            let v = segs[k].1;
+            let (a, b) = value_core(v);
+            let core = &v[a..b];
+            let shape_ok = !weak || core.chars().any(|c| !c.is_alphabetic());
+            if core.chars().count() >= 4 && core != MASK && shape_ok && !TRIGGERS.contains(&norm(core).as_str()) {
+                hit.push(k);
+            }
+        }
+        wi = (j + 1).max(wi + tlen);
+    }
+    if hit.is_empty() {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    for (k, (_, t)) in segs.iter().enumerate() {
+        if hit.contains(&k) {
+            let (a, b) = value_core(t);
+            out.push_str(&t[..a]);
+            out.push_str(MASK);
+            out.push_str(&t[b..]);
+        } else {
+            out.push_str(t);
+        }
+    }
+    out
+}
+
 pub fn mask(s: &str) -> String {
+    mask_prose(&mask_basic(s))
+}
+
+fn mask_basic(s: &str) -> String {
     let s = strip_pem(s);
     let mut out = String::with_capacity(s.len());
     let mut pending = false; // previous word was a secret name / Bearer: mask this one
@@ -292,6 +412,60 @@ mod tests {
         assert_eq!(mask("Lưu ý: xong"), "Lưu ý: xong");
         assert!(!mask("tên: sk-ant-api03-abcdefghijklmnopqrstu").contains("sk-ant-api03-abc"));
         assert!(!mask("Kết quả:token=x9y8z7w6v5").contains("x9y8z7w6v5"));
+    }
+
+    #[test]
+    fn prose_passwords_masked() {
+        for (i, o) in [
+            ("1. xóa đi sudo pass: Fake-Pass-1234", "1. xóa đi sudo pass: ***"),
+            ("mật khẩu là hunter2-demo", "mật khẩu là ***"),
+            ("password is Demo#Secret9", "password is ***"),
+            ("sudo password: example123", "sudo password: ***"),
+            ("sudo password của tôi là Fake9876", "sudo password của tôi là ***"),
+            ("MẬT KHẨU: Abc123!x ok", "MẬT KHẨU: *** ok"),
+            ("mat khau la zz9-demo.", "mat khau la ***."),
+            ("pass = tmp4567", "pass = ***"),
+            ("pwd hunter2x", "pwd ***"),
+            ("OTP: 123456, thanks", "OTP: ***, thanks"),
+            ("api key là demo-key-77", "api key là ***"),
+            ("sudo: fake1234 nhé", "sudo: *** nhé"),
+            ("sudo là demo#123", "sudo là ***"),
+            ("secret: \"abcd1234\"", "secret: \"***\""),
+            ("Mật khẩu sudo là Xx9-fake", "Mật khẩu sudo là ***"),
+        ] {
+            assert_eq!(mask(i), o, "{i}");
+        }
+    }
+
+    #[test]
+    fn prose_normal_text_untouched() {
+        for t in [
+            "mật khẩu đã đổi rồi",
+            "password reset flow",
+            "token budget",
+            "secret sauce",
+            "sudo apt install x",
+            "sudo systemctl restart nginx",
+            "password is wrong",
+            "token is expired",
+            "mật khẩu là gì vậy",
+            "pass the test please",
+            "pin the version",
+            "đổi mật khẩu sau khi đăng nhập",
+            "sudo rm -rf build",
+            "pass: ok",
+        ] {
+            assert_eq!(mask(t), t, "{t}");
+        }
+        assert_eq!(mask("pass: ok"), "pass: ok");
+    }
+
+    #[test]
+    fn prose_utf8_safe() {
+        for t in ["mật khẩu: ệệệệ", "mật khẩu là 🙂🙂🙂🙂1", "pass:ệ", "mật", "mật khẩu", "mật khẩu là", "password của", "\"mật khẩu\": \"ưu123\""] {
+            let _ = mask(t);
+        }
+        assert_eq!(mask("mật khẩu: ưư123 xong"), "mật khẩu: *** xong");
     }
 
     #[test]

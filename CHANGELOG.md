@@ -5,6 +5,17 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.77.0] — 2026-10-13
+### Added
+- **`--offline` for `8sync ccc`** (`new <name>`, `<name>`, `.`, `kit`; or `EIGHTSYNC_OFFLINE=1`): no network step runs — no auto-update, no background update probe, no Claude Code installer (`claude` must already be on PATH), no `claude mcp add-json` mirroring. Kit files and local skill linking still install. Each skipped step prints one `skip` line. All of these go through one `net_allowed` gate, covered by unit tests.
+
+### Fixed
+- Security: `8sync ls/show` and the HQ journal printed passwords typed in prose ("sudo password của tôi là …", "mật khẩu: …", "pass: …", "password is …"). The shared masker (`secret_mask.rs`) now masks the value after pass/password/passwd/pwd/pin/otp/secret/token/api key/mật khẩu/sudo triggers; ordinary prose ("password reset flow", "sudo apt install") is left alone.
+- Floor: desk subtitle no longer shows a truncated full session uuid; a paired hq session id goes to `sid` and keeps the ls name (`apps/hq-ui/lib/floor.ts`, `lib/server/floor.ts`).
+- Session registry (`index.json` for `forge` / `ccc .`) is now written atomically under an exclusive lock (`index.json.lock`, tmp + rename) through one `update` helper, so concurrent launches no longer lose entries; a corrupt index is kept as `index.json.corrupt-<unix>` and rebuilt instead of silently dropped. On-disk format unchanged.
+
+
+
 ## [0.76.0] — 2026-10-13
 ### Added
 - **Five graded auto commands for ccc** (all inside official Claude Code; no bypassPermissions): `/do <việc>` (one small change, no plan, no commit, light checks), `/ship` (full process), `/ship-auto` (ship through PR → CI → merge → release → install → monitor with ONE "Ship" question), `/ship-loop <mục tiêu>` (acceptance criteria with check commands, iterate implement → check → fix with evidence in `LOOP.md`, caps `--max-iter 12` / `--max-min 90`, stuck and no-change detection via `8sync ccc loop`; Claude Code's built-in `/goal` can be layered on top by the owner), `/autopilot` (unattended backlog: issues labelled ccc/8sync → STATE Next → KNOWLEDGE failures; one Ship question per batch; respects other sessions' lanes). Levels 3–5 are owner-invoked only (`disable-model-invocation`).

@@ -414,6 +414,10 @@ pub fn auto_check_notice() {
     if std::env::var("SUSYNC_NO_AUTO_CHECK").is_ok() {
         return;
     }
+    // Offline: no detached probe either (it runs curl).
+    if std::env::var("EIGHTSYNC_OFFLINE").is_ok_and(|v| matches!(v.trim(), "1" | "true")) || std::env::args().any(|a| a == "--offline") {
+        return;
+    }
     if std::env::var("CI").is_ok() {
         return;
     }

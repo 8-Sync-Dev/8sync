@@ -1073,6 +1073,17 @@ mod tests {
     }
 
     #[test]
+    fn row_json_masks_prose_password_in_last_user() {
+        let mut d = Digest::default();
+        d.last_users = vec!["sudo password của tôi là Fake9876 nhé".into()];
+        d.title = Some("mật khẩu: Fake9876x".into());
+        let j = row_json(&row(d));
+        assert_eq!(j["last_user"], "sudo password của tôi là *** nhé");
+        assert_eq!(j["title"], "mật khẩu: ***");
+        assert!(!j.to_string().contains("Fake9876"));
+    }
+
+    #[test]
     fn row_json_masks_title_and_unreadable_row_is_idle() {
         let mut r = unreadable("omp", "a", "8sync . a".into(), 5);
         assert_eq!((r.digest.title.as_deref(), r.status), (Some("unreadable"), Status::Idle));
