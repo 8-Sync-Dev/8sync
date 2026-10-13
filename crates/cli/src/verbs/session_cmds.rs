@@ -48,6 +48,7 @@ pub struct LsArgs {
         EXAMPLES
           8sync show core                   details of session 'core' in this repo
           8sync show core --engine ccc      pick the engine when a name exists in several
+          8sync show core --json            machine-readable (schema 1)
 
         SHOWS
           status · repo/branch · last 5 requests · last assistant message (first ~15 lines) ·
@@ -60,6 +61,9 @@ pub struct ShowArgs {
     /// Restrict to one engine: omp | ccc | forge | feynman
     #[arg(long, short = 'e')]
     pub engine: Option<String>,
+    /// Emit JSON (schema 1) instead of text
+    #[arg(long)]
+    pub json: bool,
 }
 
 fn root_and_env() -> Result<(Env, PathBuf)> {
@@ -227,6 +231,10 @@ pub fn run_show(a: ShowArgs) -> Result<()> {
             if names.is_empty() { String::new() } else { format!(" — have: {}", names.join(", ")) }
         );
     };
+    if a.json {
+        println!("{}", serde_json::to_string_pretty(&view::show_json(r))?);
+        return Ok(());
+    }
     print_show(r, &hits[1..], &root);
     Ok(())
 }

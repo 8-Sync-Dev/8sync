@@ -4,10 +4,9 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.78.0] — 2026-10-13
 ### Added
-- **`8sync ccc statusline`: a Claude Code status line.** Row 1: model (+ effort), context bar (green below 50%, yellow 50–80%, red above 80%), 5h and 7d rate limits with reset countdown (`↻ 1h23m`, only when Claude Code sends them), session cost, `+lines/-lines`. Row 2: branch (`*` when dirty; 50 ms git budget), PR `#12 ✓/●/✗` from Claude Code's own `pr` field (no `gh` calls), tasks done/total with the current task, fresh watchdog alert, `ccc loop` iteration, `🚢 grant` while the session holds a ship grant. Respects `COLUMNS`, never fails (falls back to `8sync · <model>`).
-- `8sync ccc statusline --agents` for `subagentStatusLine`: `⚙ 2 running (task 3m12s · reviewer 40s) · 1 idle`.
-- `8sync ccc statusline --install` / `--uninstall`. `ccc kit --remove` also restores your previous statusLine. A foreign `statusLine` is parked as `statusLine_prev` in `~/.config/8sync/features.toml` and chained: it runs with the same stdin and its output becomes the last row. `8sync ccc kit` installs it only when no `statusLine` exists and prints a hint otherwise.
 
 ## [0.77.0] — 2026-10-13
 ### Added
