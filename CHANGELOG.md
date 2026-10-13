@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.79.1] — 2026-10-14
+### Fixed
+- **`8sync hq ui` on Windows**: the first-run download failed with `curl: (43) A libcurl function was given a bad argument`. The stock Windows `curl.exe` (8.8.0, what PowerShell runs) rejects every `--write-out`; the HQ UI download now uses `--fail` and reads the HTTP status from curl's error, and the Discord API calls (`hq setup`/`post`/hooks) read it from the response headers (`include`). Reproduced and verified on this box with `C:\Windows\System32\curl.exe` first on PATH: 0.79.0 fails with error 43, the fix downloads, checks the sha256 and starts the UI.
+
 ## [0.79.0] — 2026-10-13
 ### Added
 - **HQ web team control (`8sync hq ui`).** Everything works from the browser:
