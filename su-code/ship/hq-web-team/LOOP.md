@@ -28,3 +28,4 @@ iter 2 | UAT finding fixed | assign 409 with a deleted project folder showed no 
 - AC1–AC7 green with evidence above; AC8 local green, CI pending on the pushed branch.
 - Not verified: next build (CI package-hq-ui), handoff bubble with a live session_message, Channels mode.
 - Next: CI on PR, then one Ship question for release + install.
+iter 2 | AC8 | gh pr checks 22 | exit 0 | test macos/ubuntu/windows, minimal, hq-ui-test, package-hq-ui all SUCCESS — all criteria green
