@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **hq-ui "Văn phòng": a running Claude session no longer shows as two desks.** The floor now joins an hq session to its `8sync ls` row by session id, then by name, then by folder (`~` expanded; an agent working in a subfolder or worktree of the repo still matches when that is unambiguous). Matched sessions are never appended again. A truly unknown hq session still shows, labelled with its 8-char id instead of the full uuid, after the matched desks.
 
 ## [0.75.0] — 2026-10-13
 ### Changed
