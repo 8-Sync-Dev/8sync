@@ -122,7 +122,7 @@ pub enum Sub {
     Ui {
         #[arg(long, default_value_t = 8740)]
         port: u16,
-        /// hq-ui app directory (else $EIGHTSYNC_HQ_UI_APP or the install location)
+        /// hq-ui app directory for development (else $EIGHTSYNC_HQ_UI_APP, the installed release asset, or a built repo checkout)
         #[arg(long)]
         app: Option<PathBuf>,
         #[arg(long)]
@@ -130,6 +130,9 @@ pub enum Sub {
         /// turn the local event journal off (local = false) and exit
         #[arg(long)]
         off: bool,
+        /// download and install the UI release asset again (ignores the installed copy)
+        #[arg(long)]
+        update: bool,
     },
     /// Delete the local HQ data: events*.jsonl, hq.db*, channel-*.json (asks with no --yes: only lists)
     Purge {
@@ -1816,17 +1819,335 @@ fn append_journal(path: &Path, line: &str, max: u64) -> Result<()> {
 
 // ── ui ──────────────────────────────────────────────────────────────────────
 
-/// Flag > env > `<exe-dir>/../share/8sync/hq-ui` > ~/tools/su-code/apps/hq-ui.
-fn resolve_app(flag: Option<PathBuf>, env: Option<PathBuf>, exe: Option<&Path>, home: &Path) -> Result<PathBuf> {
-    if let Some(p) = flag.or(env) {
-        return if p.is_dir() { Ok(p) } else { bail!("hq-ui app dir not found: {}", p.display()) };
+/// Where the UI comes from.
+#[derive(Debug, PartialEq)]
+enum AppSrc {
+    /// `--app` / env / repo checkout: a Next app dir, run with its `start` script
+    Dev(PathBuf),
+    /// the release asset extracted by `install_hq_ui`: `<dir>/hq-ui/server.js` + `<dir>/hq-channel/server.mjs`
+    Installed(PathBuf),
+}
+
+/// What to run per source. Only the installed release asset has `server.js` next to its static files;
+/// a repo checkout / --app / env dir runs the app's own `start` script (`next start`), because
+/// `.next/standalone/server.js` there has no `.next/static` and would 404 every asset.
+fn ui_argv(src: &AppSrc, have_pnpm: bool) -> (&'static str, Vec<String>) {
+    match src {
+        AppSrc::Installed(dir) => ("node", vec![dir.join("hq-ui/server.js").display().to_string()]),
+        AppSrc::Dev(app) => {
+            let dir = app.display().to_string();
+            if have_pnpm { ("pnpm", vec!["--dir".into(), dir, "start".into()]) } else { ("npm", vec!["--prefix".into(), dir, "start".into()]) }
+        }
     }
-    let share = exe.and_then(|e| e.parent()).map(|d| d.join("../share/8sync/hq-ui"));
-    [share, Some(home.join("tools/su-code/apps/hq-ui"))]
-        .into_iter()
+}
+
+fn hq_ui_installed(dir: &Path) -> bool {
+    dir.join("hq-ui/server.js").is_file() && dir.join("hq-channel/server.mjs").is_file()
+}
+
+/// `--app` > `EIGHTSYNC_HQ_UI_APP` > installed `<dir>` > `~/tools/su-code/apps/hq-ui` (only if built).
+/// `None` = nothing usable: the caller installs the release asset.
+fn resolve_app(flag: Option<PathBuf>, env: Option<PathBuf>, installed: &Path, home: &Path) -> Result<Option<AppSrc>> {
+    if let Some(p) = flag.or(env) {
+        return if p.is_dir() { Ok(Some(AppSrc::Dev(p))) } else { bail!("hq-ui app dir not found: {}", p.display()) };
+    }
+    if hq_ui_installed(installed) {
+        return Ok(Some(AppSrc::Installed(installed.to_path_buf())));
+    }
+    let dev = home.join("tools/su-code/apps/hq-ui");
+    Ok(dev.join(".next").is_dir().then_some(AppSrc::Dev(dev)))
+}
+
+const HQ_UI_REPO: &str = "8-Sync-Dev/su-code";
+
+fn hq_ui_asset(ver: &str) -> String {
+    format!("8sync-hq-ui-v{ver}.tar.gz")
+}
+
+fn hq_ui_url(ver: &str, suffix: &str) -> String {
+    format!("https://github.com/{HQ_UI_REPO}/releases/download/v{ver}/{}{suffix}", hq_ui_asset(ver))
+}
+
+/// `<platform data dir>/8sync/hq-ui` (`~/.local/share/8sync/hq-ui` on Linux).
+fn hq_ui_data_dir() -> Result<PathBuf> {
+    Ok(dirs::data_dir().ok_or_else(|| anyhow!("cannot resolve data directory"))?.join(crate::brand::NS).join("hq-ui"))
+}
+
+/// The hash out of a `sha256sum` file (`<hex>  <name>`); anything but 64 hex chars is None.
+fn parse_sha256_file(text: &str) -> Option<String> {
+    super::selfup::parse_digest(text.split_whitespace().next()?)
+}
+
+/// Refuse unless `tarball`'s sha256 equals the one in `sha_text`. No hasher = refuse (the asset is code we run).
+fn verify_tarball(tarball: &Path, sha_text: &str) -> Result<String> {
+    let want = parse_sha256_file(sha_text).ok_or_else(|| anyhow!("malformed .sha256 file (want sha256sum format)"))?;
+    let got = super::selfup::sha256_file(tarball).ok_or_else(|| anyhow!("no working sha256sum, shasum or certutil: cannot verify, refusing to install"))?;
+    if got != want {
+        bail!("checksum mismatch for {} - refusing to install\n  expected sha256:{want}\n  actual   sha256:{got}", tarball.display());
+    }
+    Ok(got)
+}
+
+/// Map curl's HTTP status to an error (pure, so it is testable without a network).
+fn download_status(code: u16, url: &str, ver: &str) -> Result<()> {
+    match code {
+        200 => Ok(()),
+        404 => bail!("download failed (HTTP 404): {url}\n  the release or asset for v{ver} may not exist yet (a dev or unreleased build?) - use --app <dir> or wait for the release"),
+        _ => bail!("download failed (HTTP {code}): {url}"),
+    }
+}
+
+fn curl_download(url: &str, dest: &Path, ver: &str) -> Result<()> {
+    let cfg = format!(
+        "silent\nshow-error\nlocation\nproto = \"=https\"\ntlsv1.2\nmax-time = 300\nurl = {}\noutput = {}\nwrite-out = \"\\n%{{http_code}}\"\n",
+        cq(url),
+        cq(&dest.display().to_string())
+    );
+    let (code, _) = run_curl(&cfg)?;
+    let r = download_status(code, url, ver);
+    if r.is_err() {
+        let _ = std::fs::remove_file(dest);
+    }
+    r
+}
+
+const INSTALL_LOCK_STALE: Duration = Duration::from_secs(600);
+const INSTALL_LEFTOVER_AGE: Duration = Duration::from_secs(3600);
+
+fn age_of(p: &Path) -> Duration {
+    std::fs::symlink_metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).unwrap_or_default()
+}
+
+/// `<base>/.install.lock` (create_new), stale after 10 min; removed on drop.
+struct InstallLock(PathBuf);
+
+impl InstallLock {
+    fn acquire(base: &Path) -> Result<Self> {
+        let f = base.join(".install.lock");
+        for _ in 0..2 {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&f) {
+                Ok(mut h) => {
+                    let _ = write!(h, "{}", std::process::id());
+                    return Ok(Self(f));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if age_of(&f) < INSTALL_LOCK_STALE {
+                        bail!("another 8sync is installing the HQ UI ({} exists); retry in a minute", f.display());
+                    }
+                    let _ = std::fs::remove_file(&f);
+                }
+                Err(e) => return Err(e).with_context(|| format!("lock {}", f.display())),
+            }
+        }
+        bail!("cannot take {}", f.display())
+    }
+}
+
+impl Drop for InstallLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Remove `.tmp-*` / `.dl-*` / `.old-*` older than 1 h (crashed installs).
+fn cleanup_leftovers(base: &Path) {
+    let Ok(rd) = std::fs::read_dir(base) else { return };
+    for e in rd.flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if [".tmp-", ".dl-", ".old-"].iter().any(|p| n.starts_with(p)) && age_of(&e.path()) >= INSTALL_LEFTOVER_AGE {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
+/// Keep `keep` and the newest other version dir (rollback); delete the rest. Dot-dirs are not versions.
+fn prune_versions(base: &Path, keep: &Path) {
+    let Ok(rd) = std::fs::read_dir(base) else { return };
+    let mut others: Vec<(Duration, PathBuf)> = rd
         .flatten()
-        .find(|p| p.is_dir())
-        .ok_or_else(|| anyhow!("hq-ui app not found; pass --app <dir> or set EIGHTSYNC_HQ_UI_APP"))
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.') && e.path() != keep && e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .map(|e| (age_of(&e.path()), e.path()))
+        .collect();
+    others.sort();
+    for (_, p) in others.into_iter().skip(1) {
+        let _ = std::fs::remove_dir_all(p);
+    }
+}
+
+/// Entry names from `tar -t`: refuse absolute paths and `..` components before extracting anything.
+fn check_entry_names(listing: &str) -> Result<()> {
+    for l in listing.lines() {
+        let p = Path::new(l.trim_end_matches('\r'));
+        if p.is_absolute() || l.starts_with('/') || l.contains(":\\") || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            bail!("unsafe path in tarball (absolute or ..): {l:?}");
+        }
+    }
+    Ok(())
+}
+
+/// `tar -tv` listing: refuse symlink (`l`) and hard-link (`h`) entries.
+fn check_no_links(verbose: &str) -> Result<()> {
+    if let Some(l) = verbose.lines().find(|l| l.starts_with('l') || l.starts_with('h')) {
+        bail!("link entry in the hq-ui tarball (refused): {l:?}");
+    }
+    Ok(())
+}
+
+/// Walk the extracted tree (never following links): any symlink or file whose resolved path
+/// leaves `root` is an error.
+fn check_tree_confined(root: &Path) -> Result<()> {
+    use std::path::Component;
+    let croot = std::fs::canonicalize(root)?;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir)?.flatten() {
+            let p = e.path();
+            let md = std::fs::symlink_metadata(&p)?;
+            if md.file_type().is_symlink() {
+                let tgt = std::fs::read_link(&p)?;
+                let mut lex = dir.clone();
+                if tgt.is_absolute() {
+                    bail!("symlink with absolute target in tarball: {} -> {}", p.display(), tgt.display());
+                }
+                for c in tgt.components() {
+                    match c {
+                        Component::ParentDir => {
+                            lex.pop();
+                        }
+                        Component::Normal(x) => lex.push(x),
+                        _ => {}
+                    }
+                }
+                if !lex.starts_with(root) {
+                    bail!("symlink escapes the install dir: {} -> {}", p.display(), tgt.display());
+                }
+            }
+            // resolved path (follows links, incl. chains); a dangling link has none and passed the lexical check
+            if let Ok(real) = std::fs::canonicalize(&p) {
+                if !real.starts_with(&croot) {
+                    bail!("{} resolves outside the install dir: {}", p.display(), real.display());
+                }
+            }
+            if md.is_dir() {
+                stack.push(p);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Extract a verified tarball into `<base>/.tmp-<pid>`, validate, then swap it into `target`
+/// (`<base>/<ver>`): existing -> `.old-<ver>-<pid>`, tmp -> target, delete old; any failure restores old.
+fn extract_install(tarball: &Path, target: &Path) -> Result<()> {
+    let base = target.parent().ok_or_else(|| anyhow!("bad install path"))?;
+    std::fs::create_dir_all(base)?;
+    let _lock = InstallLock::acquire(base)?;
+    cleanup_leftovers(base);
+    let pid = std::process::id();
+    let ver = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = base.join(format!(".tmp-{pid}"));
+    let old = base.join(format!(".old-{ver}-{pid}"));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&old);
+    std::fs::create_dir_all(&tmp)?;
+    let res = (|| -> Result<()> {
+        let ls = Command::new("tar").arg("-tzf").arg(tarball).output().context("tar not found on PATH")?;
+        if !ls.status.success() {
+            bail!("tar -tzf failed ({})", ls.status);
+        }
+        check_entry_names(&String::from_utf8_lossy(&ls.stdout))?;
+        // The release asset ships no links; refuse them before extraction so a link can't
+        // redirect a later entry's write (check_tree_confined only runs afterwards).
+        let lv = Command::new("tar").arg("-tvzf").arg(tarball).output().context("tar not found on PATH")?;
+        if !lv.status.success() {
+            bail!("tar -tvzf failed ({})", lv.status);
+        }
+        check_no_links(&String::from_utf8_lossy(&lv.stdout))?;
+        let st = Command::new("tar").arg("-xzf").arg(tarball).arg("-C").arg(&tmp).status().context("tar not found on PATH")?;
+        if !st.success() {
+            bail!("tar -xzf failed ({st})");
+        }
+        check_tree_confined(&tmp)?;
+        if !hq_ui_installed(&tmp) {
+            bail!("asset is missing hq-ui/server.js or hq-channel/server.mjs");
+        }
+        let had_old = target.exists();
+        if had_old {
+            std::fs::rename(target, &old).with_context(|| format!("move aside {}", target.display()))?;
+        }
+        if let Err(e) = std::fs::rename(&tmp, target) {
+            if had_old {
+                let _ = std::fs::rename(&old, target);
+            }
+            return Err(e).with_context(|| format!("install {}", target.display()));
+        }
+        let _ = std::fs::remove_dir_all(&old);
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    if res.is_ok() {
+        prune_versions(base, target);
+    }
+    res
+}
+
+/// Optional second check: the digest GitHub's API lists for the asset (same helper selfup uses for the
+/// binary). A listed digest that differs is fatal; none (offline, throttled) is a warning, not a pass.
+fn check_api_digest(got: &str, api: Option<&str>) -> Result<()> {
+    match api {
+        Some(d) if d != got => bail!("checksum mismatch vs the GitHub API asset digest - refusing to install\n  api    sha256:{d}\n  actual sha256:{got}"),
+        Some(_) => Ok(()),
+        None => {
+            ui::warn("GitHub API digest not available: integrity is checked against the release's .sha256 only");
+            Ok(())
+        }
+    }
+}
+
+/// Get the release asset for `ver` (download, or `EIGHTSYNC_HQ_UI_TARBALL` for tests), verify, install into `target`.
+fn install_hq_ui(target: &Path, ver: &str) -> Result<()> {
+    let parent = target.parent().ok_or_else(|| anyhow!("bad install path"))?;
+    std::fs::create_dir_all(parent)?;
+    if let Some(local) = std::env::var_os("EIGHTSYNC_HQ_UI_TARBALL").map(PathBuf::from) {
+        ui::info(&format!("installing hq-ui from {}", local.display()));
+        let mut sha = local.clone().into_os_string();
+        sha.push(".sha256");
+        let sha_text = std::fs::read_to_string(&sha).with_context(|| format!("read {}", PathBuf::from(&sha).display()))?;
+        verify_tarball(&local, &sha_text)?;
+        return extract_install(&local, target);
+    }
+    let dl = parent.join(format!(".dl-{}-{}", std::process::id(), now()));
+    std::fs::create_dir_all(&dl)?;
+    let res = (|| -> Result<()> {
+        let (tgz, sha) = (dl.join(hq_ui_asset(ver)), dl.join("asset.sha256"));
+        ui::info(&format!("downloading the HQ UI (~4 MB, first run only): {}", hq_ui_url(ver, "")));
+        curl_download(&hq_ui_url(ver, ""), &tgz, ver)?;
+        curl_download(&hq_ui_url(ver, ".sha256"), &sha, ver)?;
+        let got = verify_tarball(&tgz, &std::fs::read_to_string(&sha)?)?;
+        check_api_digest(&got, super::selfup::fetch_asset_digest(&format!("v{ver}"), &hq_ui_asset(ver)).as_deref())?;
+        ui::info("checksum ok");
+        extract_install(&tgz, target)
+    })();
+    let _ = std::fs::remove_dir_all(&dl);
+    res
+}
+
+/// The `--mcp-config` file for `claude` (same shape as apps/hq-channel/src/mcp-config.ts).
+fn channel_mcp_json(node: &str, server: &Path) -> Value {
+    json!({"mcpServers": {"8sync-hq": {"command": node, "args": [server.display().to_string()], "env": {"MCP_PROTOCOL_NEGOTIATION": "legacy"}}}})
+}
+
+fn write_channel_mcp(paths: &Paths, server: &Path, node: &str) -> Result<PathBuf> {
+    let f = paths.cfg_dir.join("channel-mcp.json");
+    write_private(&f, format!("{}\n", serde_json::to_string_pretty(&channel_mcp_json(node, server))?).as_bytes())?;
+    Ok(f)
+}
+
+/// Default `HQ_CHANNEL_FLAGS` for the UI process. None when the path would not pass the UI's flag
+/// allow-list (no spaces, plain characters): the UI then falls back to its own default lookup.
+fn channel_flags(cfg: &Path) -> Option<String> {
+    let c = cfg.to_str()?;
+    c.bytes().all(|b| b.is_ascii_alphanumeric() || b"@:/._=,~-".contains(&b)).then(|| format!("--mcp-config {c} --dangerously-load-development-channels server:8sync-hq"))
 }
 
 /// `v22.5.1` -> true when >= 22.5.
@@ -1887,29 +2208,63 @@ fn cmd_purge(yes: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, dry: bool) -> Result<()> {
+fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, dry: bool) -> Result<()> {
     let paths = Paths::new()?;
     let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot resolve home directory"))?;
-    let app = resolve_app(app, std::env::var_os("EIGHTSYNC_HQ_UI_APP").map(PathBuf::from), std::env::current_exe().ok().as_deref(), &home)?;
-    let server = app.join(".next/standalone/server.js");
-    let (prog, args): (&str, Vec<String>) = if server.is_file() {
-        ("node", vec![server.display().to_string()])
-    } else {
-        let pm = if Command::new("pnpm").arg("--version").output().is_ok() { "pnpm" } else { "npm" };
-        let dir = app.display().to_string();
-        (pm, if pm == "pnpm" { vec!["--dir".into(), dir, "start".into()] } else { vec!["--prefix".into(), dir, "start".into()] })
+    let ver = env!("CARGO_PKG_VERSION");
+    let installed = hq_ui_data_dir()?.join(ver);
+    let env_app = std::env::var_os("EIGHTSYNC_HQ_UI_APP").map(PathBuf::from);
+    if !dry {
+        let out = Command::new("node").arg("--version").output().map_err(|_| anyhow!("node not found on PATH (need >= 22.5)"))?;
+        let nv = String::from_utf8_lossy(&out.stdout);
+        if !node_ok(&nv) {
+            bail!("node {} is too old (need >= 22.5)", nv.trim());
+        }
+    }
+    let explicit = app.is_some() || env_app.is_some();
+    let src = if update && !explicit { None } else { resolve_app(app, env_app, &installed, &home)? };
+    let src = match src {
+        Some(s) => s,
+        None if dry => AppSrc::Installed(installed.clone()),
+        None => {
+            install_hq_ui(&installed, ver)?;
+            ui::ok(&format!("HQ UI installed in {}", installed.display()));
+            AppSrc::Installed(installed.clone())
+        }
+    };
+    if update && explicit {
+        ui::warn("--update ignored: --app / EIGHTSYNC_HQ_UI_APP is set, so nothing is downloaded");
+    }
+    let mut flags = None;
+    let (prog, args): (&str, Vec<String>) = match &src {
+        AppSrc::Installed(dir) => {
+            let cfg = paths.cfg_dir.join("channel-mcp.json");
+            if !dry {
+                let node = which::which("node").map(|p| p.display().to_string()).unwrap_or_else(|_| "node".into());
+                write_channel_mcp(&paths, &dir.join("hq-channel/server.mjs"), &node)?;
+            }
+            flags = std::env::var_os("HQ_CHANNEL_FLAGS").is_none().then(|| channel_flags(&cfg)).flatten();
+            ("node", vec![dir.join("hq-ui/server.js").display().to_string()])
+        }
+        AppSrc::Dev(_) => ui_argv(&src, Command::new("pnpm").arg("--version").output().is_ok()),
     };
     let url = format!("http://127.0.0.1:{port}");
     if dry {
+        if let AppSrc::Installed(d) = &src {
+            if !hq_ui_installed(d) || update {
+                println!("download {} (+ .sha256), verify, extract to {}", hq_ui_url(ver, ""), d.display());
+            }
+            println!("write {}", paths.cfg_dir.join("channel-mcp.json").display());
+        }
         println!("set local = true in {}\nHOSTNAME=127.0.0.1 PORT={port} {prog} {}\nopen {url}{}", paths.config().display(), args.join(" "), if no_open { " (skipped)" } else { "" });
         return Ok(());
     }
-    let out = Command::new("node").arg("--version").output().map_err(|_| anyhow!("node not found on PATH (need >= 22.5)"))?;
-    let ver = String::from_utf8_lossy(&out.stdout);
-    if !node_ok(&ver) {
-        bail!("node {} is too old (need >= 22.5)", ver.trim());
+    let mut cmd = Command::new(prog);
+    cmd.args(&args).env("HOSTNAME", "127.0.0.1").env("PORT", port.to_string());
+    if let Some(f) = &flags {
+        cmd.env("HQ_CHANNEL_FLAGS", f);
     }
-    let mut child = Command::new(prog).args(&args).env("HOSTNAME", "127.0.0.1").env("PORT", port.to_string()).spawn().with_context(|| format!("start {prog}"))?;
+    let mut child = cmd.spawn().with_context(|| format!("start {prog}"))?;
     // journal on only once the UI process exists
     let mut cfg = load_config(&paths).unwrap_or_default();
     if !cfg.local {
@@ -2211,7 +2566,7 @@ pub fn run(a: Args) -> Result<()> {
         }
         Sub::Standup => cmd_standup(dry),
         Sub::Ui { off: true, .. } => cmd_ui_off(),
-        Sub::Ui { port, app, no_open, off: false } => cmd_ui(port, app, no_open, dry),
+        Sub::Ui { port, app, no_open, off: false, update } => cmd_ui(port, app, no_open, update, dry),
         Sub::Purge { yes } => cmd_purge(yes),
         Sub::Status => cmd_status(),
         Sub::Up { repo, name, install, now } => cmd_up(repo, &name, install, now),
@@ -2223,7 +2578,10 @@ mod tests {
     use super::*;
 
     fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("hq-test-{tag}-{}-{}", std::process::id(), now()));
+        // unique per call: tests run in parallel and may share a tag within one second
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!("hq-test-{tag}-{}-{}-{n}", std::process::id(), now()));
         let _ = std::fs::remove_dir_all(&d);
         d
     }
@@ -2319,17 +2677,24 @@ mod tests {
     #[test]
     fn ui_app_dir_resolution_and_config() {
         let d = tmp("ui");
-        let (flag, env, share, dev) = (d.join("flag"), d.join("env"), d.join("bin/../share/8sync/hq-ui"), d.join("tools/su-code/apps/hq-ui"));
-        for x in [&flag, &env, &share, &dev] {
+        let (flag, env, inst, dev) = (d.join("flag"), d.join("env"), d.join("inst"), d.join("tools/su-code/apps/hq-ui"));
+        for x in [&flag, &env, &inst.join("hq-ui"), &inst.join("hq-channel")] {
             std::fs::create_dir_all(x).unwrap();
         }
-        let exe = d.join("bin/8sync");
-        assert_eq!(resolve_app(Some(flag.clone()), Some(env.clone()), Some(&exe), &d).unwrap(), flag);
-        assert_eq!(resolve_app(None, Some(env.clone()), Some(&exe), &d).unwrap(), env);
-        assert_eq!(resolve_app(None, None, Some(&exe), &d).unwrap(), share);
-        assert_eq!(resolve_app(None, None, None, &d).unwrap(), dev);
-        assert!(resolve_app(Some(d.join("nope")), None, None, &d).is_err());
-        assert!(resolve_app(None, None, None, &d.join("empty")).is_err());
+        std::fs::create_dir_all(&dev).unwrap();
+        // flag > env
+        assert_eq!(resolve_app(Some(flag.clone()), Some(env.clone()), &inst, &d).unwrap(), Some(AppSrc::Dev(flag.clone())));
+        assert_eq!(resolve_app(None, Some(env.clone()), &inst, &d).unwrap(), Some(AppSrc::Dev(env)));
+        assert!(resolve_app(Some(d.join("nope")), None, &inst, &d).is_err());
+        // half-extracted install does not count; an unbuilt checkout does not count
+        assert_eq!(resolve_app(None, None, &inst, &d).unwrap(), None);
+        std::fs::write(inst.join("hq-ui/server.js"), "").unwrap();
+        std::fs::write(inst.join("hq-channel/server.mjs"), "").unwrap();
+        // installed > repo checkout (even a built one)
+        std::fs::create_dir_all(dev.join(".next")).unwrap();
+        assert_eq!(resolve_app(None, None, &inst, &d).unwrap(), Some(AppSrc::Installed(inst.clone())));
+        assert_eq!(resolve_app(None, None, &d.join("none"), &d).unwrap(), Some(AppSrc::Dev(dev)));
+        assert_eq!(resolve_app(None, None, &d.join("none"), &d.join("empty")).unwrap(), None);
         assert!(node_ok("v22.5.0") && node_ok("v24.1.2\n") && !node_ok("v22.4.9") && !node_ok("v20.0.0"));
         let p = Paths::under(&d);
         let mut c = load_config(&p).unwrap_or_default();
@@ -2340,6 +2705,185 @@ mod tests {
         assert_eq!(mode_of(&p.config()), Some(0o600));
         let _ = std::fs::remove_dir_all(&d);
     }
+
+    #[test]
+    fn hq_ui_asset_naming_and_sha_verify() {
+        assert_eq!(hq_ui_asset("0.67.1"), "8sync-hq-ui-v0.67.1.tar.gz");
+        assert_eq!(hq_ui_url("0.67.1", ".sha256"), "https://github.com/8-Sync-Dev/su-code/releases/download/v0.67.1/8sync-hq-ui-v0.67.1.tar.gz.sha256");
+        let hex = "ab".repeat(32);
+        assert_eq!(parse_sha256_file(&format!("{}  8sync-hq-ui-v1.tar.gz\n", hex.to_uppercase())), Some(hex.clone()));
+        assert_eq!(parse_sha256_file("deadbeef  x"), None);
+        assert_eq!(parse_sha256_file(""), None);
+        let d = tmp("sha");
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("a.tgz");
+        std::fs::write(&f, b"hello\n").unwrap();
+        // sha256("hello\n")
+        let good = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
+        if super::super::selfup::sha256_file(&f).is_none() {
+            return; // no hasher on this box: verify_tarball refuses by design
+        }
+        verify_tarball(&f, &format!("{good}  a.tgz\n")).unwrap();
+        let e = verify_tarball(&f, &format!("{}  a.tgz\n", "0".repeat(64))).unwrap_err().to_string();
+        assert!(e.contains("checksum mismatch") && e.contains("refusing"), "{e}");
+        assert!(verify_tarball(&f, "not a hash").is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ui_argv_per_source() {
+        let inst = AppSrc::Installed(PathBuf::from("/d/0.1.0"));
+        let want = PathBuf::from("/d/0.1.0").join("hq-ui/server.js").display().to_string();
+        assert_eq!(ui_argv(&inst, true), ("node", vec![want]));
+        let dev = AppSrc::Dev(PathBuf::from("/r/apps/hq-ui"));
+        // never standalone/server.js for a checkout: its static assets are not next to it
+        assert_eq!(ui_argv(&dev, true), ("pnpm", vec!["--dir".into(), "/r/apps/hq-ui".into(), "start".into()]));
+        assert_eq!(ui_argv(&dev, false), ("npm", vec!["--prefix".into(), "/r/apps/hq-ui".into(), "start".into()]));
+    }
+
+    #[test]
+    fn download_status_hints() {
+        assert!(download_status(200, "u", "1.2.3").is_ok());
+        let e = download_status(404, "https://x/y", "1.2.3").unwrap_err().to_string();
+        assert!(e.contains("HTTP 404") && e.contains("release or asset for v1.2.3 may not exist yet"), "{e}");
+        assert!(download_status(500, "u", "1").unwrap_err().to_string().contains("HTTP 500"));
+        assert!(check_api_digest("aa", Some("aa")).is_ok() && check_api_digest("aa", None).is_ok());
+        assert!(check_api_digest("aa", Some("bb")).unwrap_err().to_string().contains("API asset digest"));
+    }
+
+    #[test]
+    fn entry_names_refuse_absolute_and_dotdot() {
+        assert!(check_entry_names("hq-ui/server.js\nhq-ui/.next/a..b\nVERSION\n").is_ok());
+        assert!(check_entry_names("/etc/passwd\n").is_err());
+        assert!(check_entry_names("hq-ui/../../x\n").is_err());
+    }
+
+    /// Tarball whose tree is built by `f` in a scratch dir; None when `tar` is missing.
+    fn mk_tar(d: &Path, name: &str, f: impl Fn(&Path)) -> Option<PathBuf> {
+        Command::new("tar").arg("--version").output().ok()?;
+        let src = d.join(format!("src-{name}"));
+        std::fs::create_dir_all(src.join("hq-ui")).unwrap();
+        std::fs::create_dir_all(src.join("hq-channel")).unwrap();
+        f(&src);
+        let out = d.join(format!("{name}.tgz"));
+        assert!(Command::new("tar").arg("-czf").arg(&out).arg("-C").arg(&src).arg(".").status().unwrap().success());
+        Some(out)
+    }
+
+    fn good(src: &Path) {
+        std::fs::write(src.join("hq-ui/server.js"), "// ok").unwrap();
+        std::fs::write(src.join("hq-channel/server.mjs"), "// ok").unwrap();
+        std::fs::write(src.join("VERSION"), "1.0.0").unwrap();
+    }
+
+    fn leftovers(base: &Path) -> Vec<String> {
+        std::fs::read_dir(base).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with(".tmp-") || n.starts_with(".old-") || n == ".install.lock").collect()
+    }
+
+    #[test]
+    fn extract_install_good_and_rejections() {
+        let d = tmp("ext");
+        std::fs::create_dir_all(&d).unwrap();
+        let base = d.join("hq-ui");
+        let target = base.join("1.0.0");
+        let Some(ok) = mk_tar(&d, "ok", good) else { return };
+        extract_install(&ok, &target).unwrap();
+        assert!(hq_ui_installed(&target));
+        assert!(leftovers(&base).is_empty(), "tmp + lock cleaned: {:?}", leftovers(&base));
+
+        // missing server.js -> rejected, existing install survives
+        let bad = mk_tar(&d, "noserver", |s| {
+            good(s);
+            std::fs::remove_file(s.join("hq-ui/server.js")).unwrap();
+        })
+        .unwrap();
+        let e = extract_install(&bad, &target).unwrap_err().to_string();
+        assert!(e.contains("missing hq-ui/server.js"), "{e}");
+        assert!(hq_ui_installed(&target) && leftovers(&base).is_empty());
+
+        // escaping symlink -> rejected, existing install survives, tmp gone
+        #[cfg(unix)]
+        {
+            let esc = mk_tar(&d, "esc", |s| {
+                good(s);
+                std::os::unix::fs::symlink("../../../../etc", s.join("hq-ui/evil")).unwrap();
+            })
+            .unwrap();
+            let e = extract_install(&esc, &target).unwrap_err().to_string();
+            assert!(e.contains("link entry"), "refused before extraction: {e}");
+            assert!(hq_ui_installed(&target) && leftovers(&base).is_empty());
+            // policy: the release asset ships no links at all, so an in-tree link is refused too
+            let inner = mk_tar(&d, "inner", |s| {
+                good(s);
+                std::os::unix::fs::symlink("server.js", s.join("hq-ui/alias.js")).unwrap();
+            })
+            .unwrap();
+            assert!(extract_install(&inner, &target).unwrap_err().to_string().contains("link entry"));
+            assert!(hq_ui_installed(&target) && !target.join("hq-ui/alias.js").exists());
+        }
+
+        // fresh lock blocks, stale lock is taken over
+        std::fs::write(base.join(".install.lock"), "1").unwrap();
+        assert!(extract_install(&ok, &target).unwrap_err().to_string().contains("another 8sync"));
+        let old = std::time::SystemTime::now() - Duration::from_secs(700);
+        std::fs::File::options().write(true).open(base.join(".install.lock")).unwrap().set_modified(old).unwrap();
+        extract_install(&ok, &target).unwrap();
+        assert!(leftovers(&base).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // Unix only: the test back-dates directory mtimes through File::open(dir), which
+    // Windows refuses ("Access is denied"). The pruning code itself only reads mtimes.
+    #[cfg(unix)]
+    #[test]
+    fn install_prunes_old_versions_and_stale_leftovers() {
+        let d = tmp("prune");
+        let base = d.join("hq-ui");
+        let Some(ok) = mk_tar(&d.clone(), "ok", good) else { return };
+        for (v, age) in [("0.1.0", 5000u64), ("0.2.0", 3000), ("0.3.0", 1000)] {
+            std::fs::create_dir_all(base.join(v)).unwrap();
+            std::fs::File::open(base.join(v)).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(age)).unwrap();
+        }
+        let stale = base.join(".tmp-999");
+        let fresh = base.join(".old-x-1");
+        for p in [&stale, &fresh] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        std::fs::File::open(&stale).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(7200)).unwrap();
+        extract_install(&ok, &base.join("0.4.0")).unwrap();
+        assert!(base.join("0.4.0").is_dir() && base.join("0.3.0").is_dir(), "current + previous kept");
+        assert!(!base.join("0.2.0").exists() && !base.join("0.1.0").exists(), "older pruned");
+        assert!(!stale.exists() && fresh.exists(), "only >1h leftovers removed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn channel_mcp_config_shape_perms_and_flags() {
+        let d = tmp("mcp");
+        let p = Paths::under(&d);
+        let server = d.join("share/inst/hq-channel/server.mjs");
+        let f = write_channel_mcp(&p, &server, "/usr/bin/node").unwrap();
+        assert_eq!(f, p.cfg_dir.join("channel-mcp.json"));
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        let s = &v["mcpServers"]["8sync-hq"];
+        assert_eq!(s["command"], "/usr/bin/node");
+        assert_eq!(s["args"][0], server.display().to_string());
+        assert_eq!(s["env"]["MCP_PROTOCOL_NEGOTIATION"], "legacy");
+        #[cfg(unix)]
+        {
+            assert_eq!(mode_of(&f), Some(0o600));
+            assert_eq!(mode_of(&p.cfg_dir), Some(0o700));
+        }
+        // Backslash paths (Windows) fail the allow-list on purpose: the UI then uses its own
+        // default lookup of channel-mcp.json, so only unix gets explicit flags.
+        #[cfg(unix)]
+        assert_eq!(channel_flags(&f).unwrap(), format!("--mcp-config {} --dangerously-load-development-channels server:8sync-hq", f.display()));
+        #[cfg(windows)]
+        assert_eq!(channel_flags(&f), None);
+        assert_eq!(channel_flags(Path::new("/home/a b/x.json")), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
 
     fn cfg_with_tags() -> Config {
         let mut c = Config::default();
@@ -2856,6 +3400,14 @@ mod tests {
         assert!(lacks_team_scope("TaskCompleted", &no_team));
         assert!(!lacks_team_scope("TaskCompleted", &lead));
         assert!(!lacks_team_scope("Notification", &no_team));
+    }
+
+    #[test]
+    fn tarball_link_entries_refused() {
+        let ok = "-rw-r--r-- u/u 12 2026-10-13 00:00 hq-ui/server.js\ndrwxr-xr-x u/u 0 2026-10-13 00:00 hq-ui/\n";
+        assert!(check_no_links(ok).is_ok());
+        assert!(check_no_links("lrwxrwxrwx u/u 0 2026-10-13 00:00 hq-ui/x -> /etc\n").is_err());
+        assert!(check_no_links("hrw-r--r-- u/u 0 2026-10-13 00:00 hq-ui/y link to hq-ui/z\n").is_err());
     }
 
 }

@@ -109,7 +109,7 @@ fn sweep_old_siblings(dst: &Path) {
 /// rather than as a value we would then compare against a sha256 sum. Anything
 /// that is not exactly 64 hex characters is treated as absent, never as a pass,
 /// which is the same length check install.sh applies.
-fn parse_digest(raw: &str) -> Option<String> {
+pub(crate) fn parse_digest(raw: &str) -> Option<String> {
     let hex = match raw.split_once(':') {
         Some(("sha256", h)) => h,
         Some(_) => return None,
@@ -363,6 +363,11 @@ fn tag_from_release_url(url: &str) -> Option<String> {
     let tag = url.trim().rsplit_once("/releases/tag/")?.1.trim_end_matches('/');
     (tag.starts_with('v') && tag[1..].starts_with(|c: char| c.is_ascii_digit()))
         .then(|| tag.to_string())
+}
+
+/// Digest the GitHub API lists for asset `name` of release `tag` (any asset, not only the binary).
+pub(crate) fn fetch_asset_digest(tag: &str, name: &str) -> Option<String> {
+    find_asset(&github_release_json(&format!("tags/{tag}"))?, name)?.1
 }
 
 /// Digest for a pinned tag's asset, read from `releases/tags/<tag>` — the same
