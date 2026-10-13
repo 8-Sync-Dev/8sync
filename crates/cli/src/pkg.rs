@@ -89,7 +89,7 @@ pub fn plan_argv(pkgs: &[&str], states: &[InstallState], noconfirm: bool) -> Vec
         cmd.push("--noconfirm".to_string());
     }
     // `--`: everything after this is a package, never a flag. Defence in depth
-    // behind `reject_option_like`; pacman and dnf both honour it.
+    // behind `reject_option_like`. pacman only — dnf5 rejects `--` outright.
     cmd.push("--".to_string());
     cmd.extend(new_pkgs);
     vec![cmd]
@@ -155,7 +155,8 @@ pub fn plan_dnf_argv(pkgs: &[&str], states: &[InstallState], noconfirm: bool) ->
         if noconfirm {
             cmd.push("-y".to_string());
         }
-        cmd.push("--".to_string());
+        // No `--`: dnf5 (5.4) fails with `Unknown argument "--"`. The
+        // `reject_option_like` guard in `Dnf::install` is the defence here.
         cmd.extend(set);
         out.push(cmd);
     }
@@ -926,8 +927,8 @@ mod tests {
         assert_eq!(
             plan_dnf_argv(&pkgs, &states, true),
             vec![
-                v(&["sudo", "dnf", "install", "-y", "--", "gcc"]),
-                v(&["sudo", "dnf", "upgrade", "-y", "--", "git"]),
+                v(&["sudo", "dnf", "install", "-y", "gcc"]),
+                v(&["sudo", "dnf", "upgrade", "-y", "git"]),
             ]
         );
     }
@@ -959,14 +960,13 @@ mod tests {
         assert!(reject_option_like(&[]).is_ok());
     }
 
-    /// Even if a name slipped past the guard, `--` stops the manager reading it
-    /// as an option. Both layers are asserted so removing either one fails.
+    /// Even if a name slipped past the guard, `--` stops pacman reading it as
+    /// an option. (dnf5 rejects `--`, so dnf relies on the guard alone.)
     #[test]
-    fn every_privileged_planner_emits_end_of_options() {
+    fn every_pacman_planner_emits_end_of_options() {
         let plans = [
             plan_argv(&["git"], &[Missing], true),
             plan_rollback_argv(&["git"], true),
-            plan_dnf_argv(&["git"], &[Missing], true),
         ];
         for plan in plans {
             let cmd = plan.first().expect("planner produced a command");

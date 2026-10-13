@@ -58,11 +58,19 @@
 # `-C link-self-contained=no`) 5,180,360 → 5,294,808 B (+114,448). Published
 # v0.66.0 linux-x86_64 5,747,632 B + 114,448 ≈ 5,862,080 B → ceiling 5760 KiB
 # (~35 KiB left). Re-check against the real release asset.
+#
+# 2026-10-13 (v0.67.0: rich `ccc . ls`/`8sync ls`/`show`/`guide` (session_view.rs,
+# session_cmds.rs), local HQ journal + `hq ui` launcher, Stop/SessionStart/SendMessage
+# hq hooks, guard heredoc fix, `ccc kit --remove`). Local x86_64-unknown-linux-gnu
+# release, same flags: main f7323da 5,760,784 B → 5,866,032 B (+105,248; ls/show/
+# guide ≈ +95.7k, journal/launcher ≈ +12.1k, rest small). Next linux musl asset
+# estimated 5,862,080 + 105,248 ≈ 5,967,328 B → ceiling 5888 KiB (~60 KiB left).
+# Re-check against the real release asset.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-5898240}"   # 5760 KiB (raised 2026-10-12 from 5632 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-6029312}"   # 5888 KiB (raised 2026-10-13 from 5760 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

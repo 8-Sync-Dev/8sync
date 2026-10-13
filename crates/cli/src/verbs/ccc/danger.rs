@@ -126,11 +126,195 @@ const TEXT: [&str; 15] = ["echo", "printf", "write-host", "write-output", "grep"
 
 /// Raw-text pass over every segment between `\n ; | &`.
 fn backstop(cmd: &str, ctx: &Ctx, f: &mut Found) {
+    let cmd = &without_data_heredocs(cmd);
     // Continuations join lines; find's `\;` is an argument, not a separator.
     let joined = cmd.replace("\\\r\n", " ").replace("\\\n", " ").replace("`\r\n", " ").replace("`\n", " ").replace("\\;", " ");
     for seg in joined.split(['\n', ';', '|', '&']) {
         scan(seg, ctx, f, 0);
     }
+}
+
+/// Raw text without the bodies of here-docs that provably stay data: the command line is one
+/// plain writer (`cat`, `tee`, `printf`) whose output goes to a file, so nothing runs the body.
+/// A `rm -rf ~` inside such a note is text, not a command. Anything else (a pipe, a list, a
+/// substitution, `bash`, `python -`, `ssh`, `eval`, a quote the scan cannot close) keeps its
+/// body in the raw text.
+fn without_data_heredocs(cmd: &str) -> String {
+    // `$'…'` / `$"…"` (ANSI-C / locale quoting) and CR line ends are not modelled by `scan_line`:
+    // keep the raw text so the backstop scans everything.
+    if !cmd.contains("<<") || cmd.contains("$'") || cmd.contains("$\"") || cmd.contains('\r') {
+        return cmd.to_string();
+    }
+    let lines: Vec<&str> = cmd.split('\n').collect();
+    let mut out = String::with_capacity(cmd.len());
+    let (mut i, mut quote, mut cont) = (0, None, false);
+    while i < lines.len() {
+        let scan = scan_line(lines[i], quote, cont);
+        out.push_str(lines[i]);
+        out.push('\n');
+        i += 1;
+        (quote, cont) = (scan.quote, scan.cont);
+        for (delim, strip) in &scan.heredocs {
+            while i < lines.len() {
+                let l = lines[i].trim_end_matches('\r');
+                let is_end = (if *strip { l.trim_start_matches('\t') } else { l }) == delim;
+                if !scan.data_writer {
+                    out.push_str(lines[i]);
+                    out.push('\n');
+                }
+                i += 1;
+                if is_end {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// One word or redirection operator of a command line.
+enum LTok {
+    Word(String),
+    Op(&'static str),
+}
+
+/// What `scan_line` learned about one physical line.
+struct LineScan {
+    quote: Option<char>,
+    cont: bool,
+    /// `(delimiter, <<- strips tabs)` of the here-docs opened on the line.
+    heredocs: Vec<(String, bool)>,
+    /// The line is exactly one non-executing writer sending output to a file: no pipe, list,
+    /// group, substitution or second command.
+    data_writer: bool,
+}
+
+fn scan_line(line: &str, quote_in: Option<char>, cont_in: bool) -> LineScan {
+    let c: Vec<char> = line.chars().collect();
+    let (mut q, mut cont, mut bad) = (quote_in, false, false);
+    let mut toks: Vec<LTok> = Vec::new();
+    let (mut w, mut started) = (String::new(), false);
+    let mut i = 0;
+    macro_rules! flush {
+        () => {
+            if started {
+                toks.push(LTok::Word(std::mem::take(&mut w)));
+                #[allow(unused_assignments)] // unread after the last flush
+                {
+                    started = false;
+                }
+            }
+        };
+    }
+    while i < c.len() {
+        let (ch, next) = (c[i], c.get(i + 1).copied());
+        if let Some(qc) = q {
+            if ch == qc {
+                q = None;
+            } else if qc == '"' && ch == '\\' && next.is_some() {
+                i += 1;
+                w.push(c[i]);
+            } else {
+                bad |= qc == '"' && (ch == '`' || (ch == '$' && next == Some('(')));
+                w.push(ch);
+            }
+            i += 1;
+            continue;
+        }
+        match ch {
+            '\'' | '"' => {
+                q = Some(ch);
+                started = true;
+            }
+            '\\' if next.is_some() => {
+                i += 1;
+                w.push(c[i]);
+                started = true;
+            }
+            '\\' => cont = true,
+            x if x.is_whitespace() => flush!(),
+            '#' if !started => break,
+            '`' | '|' | ';' | '&' | '(' | ')' => bad = true,
+            '$' if next == Some('(') => bad = true,
+            '<' => {
+                flush!();
+                let n = c[i..].iter().take_while(|&&x| x == '<').count();
+                bad |= c.get(i + n) == Some(&'(');
+                let strip = n == 2 && c.get(i + 2) == Some(&'-');
+                toks.push(LTok::Op(match (n, strip) {
+                    (1, _) => "<",
+                    (2, false) => "<<",
+                    (2, true) => "<<-",
+                    _ => "<<<",
+                }));
+                i += n - 1 + usize::from(strip);
+            }
+            '>' => {
+                flush!();
+                bad |= next == Some('(');
+                let op = match next {
+                    Some('>') => ">>",
+                    Some('&') => ">&",
+                    Some('|') => ">|",
+                    _ => ">",
+                };
+                toks.push(LTok::Op(op));
+                i += usize::from(op.len() == 2);
+            }
+            _ => {
+                w.push(ch);
+                started = true;
+            }
+        }
+        i += 1;
+    }
+    flush!();
+    let mut s = LineScan { quote: q, cont: cont && q.is_none(), heredocs: Vec::new(), data_writer: false };
+    if q.is_some() || s.cont {
+        return s; // the here-doc body would start after a later line: not provable
+    }
+    let verb = match toks.first() {
+        Some(LTok::Word(v)) if !cont_in && matches!(v.as_str(), "cat" | "tee" | "printf") => v.as_str(),
+        _ => "",
+    };
+    let (mut file_target, mut startup, mut prev) = (false, false, None::<&str>);
+    for t in toks.iter().skip(1) {
+        match t {
+            LTok::Op(op) => prev = Some(op),
+            LTok::Word(x) => {
+                match prev {
+                    Some(op @ ("<<" | "<<-")) => s.heredocs.push((x.clone(), op == "<<-")),
+                    Some(">" | ">>" | ">|") => {
+                        file_target |= !x.starts_with("/dev/");
+                        startup |= is_startup_path(x);
+                    }
+                    Some(_) => {}
+                    None if verb == "tee" && !x.starts_with('-') => {
+                        file_target = true;
+                        startup |= is_startup_path(x);
+                    }
+                    None => {}
+                }
+                prev = None;
+            }
+        }
+    }
+    s.data_writer = !bad && !startup && !cont_in && !verb.is_empty() && file_target && !s.heredocs.is_empty();
+    s
+}
+
+/// A file that something later runs (shell startup, scripts, hooks, autostart, system config):
+/// a here-doc written there is code, so its body stays in the raw text.
+fn is_startup_path(p: &str) -> bool {
+    let p = p.to_lowercase();
+    let name = p.rsplit('/').next().unwrap_or("");
+    const NAMES: [&str; 6] = [".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", "config.fish"];
+    NAMES.contains(&name)
+        || [".sh", ".bash", ".zsh", ".ps1", ".py"].iter().any(|e| name.ends_with(e))
+        || p.contains(".git/hooks/")
+        || p.contains(".config/autostart")
+        || p.starts_with("/etc/")
+        || p.contains("systemd/")
 }
 
 /// Words of a raw segment: quote characters dropped, a quoted space kept inside its word, and
@@ -168,6 +352,8 @@ fn scan(seg: &str, ctx: &Ctx, f: &mut Found, depth: u8) {
     let words = raw_words(seg);
     let head = |w: &str| {
         let w = w.strip_prefix("$(").or_else(|| w.strip_prefix("<(")).unwrap_or(w).trim_start_matches(['(', '{']);
+        // `os.system(rm …)`, `exec(rm …)`: a call in interpreter code runs what follows the paren.
+        let w = w.rsplit_once('(').map_or(w, |(_, t)| t);
         // `cmd=rm …`: the value of an assignment.
         let w = w.split_once('=').filter(|(k, _)| assignment_name(k)).map_or(w, |(_, v)| v);
         verb(w)
@@ -2296,6 +2482,65 @@ mod tests {
                 ("cmd=\"rm -rf ~\"; eval \"$cmd\"", Bash, "deny"),
                 ("find / -name x -delete", Bash, "deny"),
                 ("rm -rf /tmp", Bash, "deny"),
+            ],
+            &unix(),
+        );
+    }
+
+    #[test]
+    fn heredoc_that_only_writes_a_file_is_data_but_one_that_feeds_a_shell_is_not() {
+        // P0-2: the raw-text backstop must not read the body of a file-writing here-doc.
+        table(
+            &[
+                ("echo $'\\''\ncat > f <<EOF\n'; rm -rf ~ #\nEOF", Bash, "deny"),
+                ("echo $\"\\\"\"\ncat > f <<EOF\n\"; rm -rf ~ #\nEOF", Bash, "deny"),
+                ("echo a; echo $'\\'' b\ncat > f <<EOF\n'; rm -rf ~ #\nEOF", Bash, "deny"),
+                ("echo $'\\''\r\ncat > f <<EOF\r\n'; rm -rf ~ #\r\nEOF\r", Bash, "deny"),
+                ("echo \\\r\ncat > f <<EOF\r\nrm -rf ~\r\nEOF\r", Bash, "deny"),
+                ("echo hi \\\ncat > f <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > ~/.bashrc <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat >> ~/.zshrc <<'EOF'\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > run.sh <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("tee setup.py <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > .git/hooks/pre-commit <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > ~/.config/autostart/x.desktop <<EOF\nExec=rm -rf ~\nEOF", Bash, "deny"),
+                ("tee /etc/cron.d/x <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > ~/.config/systemd/user/x.service <<EOF\nExecStart=rm -rf ~\nEOF", Bash, "deny"),
+                ("cat > notes.md <<'EOF'\nnever run rm -rf ~\nEOF", Bash, "pass"),
+                ("cat > notes.md <<EOF\nnever run rm -rf /\nEOF", Bash, "pass"),
+                ("cat >> notes.md <<\"EOF\"\nrm -rf ~\nEOF", Bash, "pass"),
+                ("cat <<'EOF' > notes.md\nrm -rf ~\nEOF", Bash, "pass"),
+                ("tee notes.md <<EOF\nrm -rf ~\nEOF", Bash, "pass"),
+                ("tee -a notes.md <<'EOF' >/dev/null\nrm -rf ~\nEOF", Bash, "pass"),
+                ("printf '%s' > n.md <<EOF\nrm -rf ~\nEOF", Bash, "pass"),
+                ("cat > notes.md <<-EOF\n\trm -rf ~\n\tEOF", Bash, "pass"),
+                ("cat > a.md <<A\nrm -rf ~\nA\ncat > b.md <<B\nrm -rf /\nB", Bash, "pass"),
+                ("cat > a.md <<A <<B\nrm -rf ~\nA\nrm -rf /\nB", Bash, "pass"),
+                ("cat > notes.md <<'EOF'\nit's rm -rf ~\nEOF\ncargo test", Bash, "pass"),
+                // Still denied: the body reaches a shell, an interpreter or a remote.
+                ("cat <<EOF | sh\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat <<'EOF' | bash\nrm -rf /\nEOF", Bash, "deny"),
+                ("bash <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("bash <<'EOF'\nrm -rf ~\nEOF", Bash, "deny"),
+                ("sh -s <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > x.sh <<EOF && bash x.sh\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > x.sh <<EOF; sh x.sh\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > x.sh <<EOF\nrm -rf ~\nEOF\nsh x.sh && rm -rf ~", Bash, "deny"),
+                ("python - <<EOF\nimport os\nos.system('rm -rf ~')\nEOF", Bash, "deny"),
+                ("eval \"$(cat <<EOF\nrm -rf ~\nEOF\n)\"", Bash, "deny"),
+                ("ssh host <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("ssh host <<'EOF'\nrm -rf /\nEOF", Bash, "deny"),
+                ("cat > a.md <<A\nok\nA\nbash <<B\nrm -rf ~\nB", Bash, "deny"),
+                // A writer that also pipes, groups or substitutes is not provably data.
+                ("cat > n.md <<EOF | sh\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > >(sh) <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > \"$(sh)\" <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                ("cat > /dev/stdout <<EOF\nrm -rf ~\nEOF", Bash, "deny"),
+                // An earlier open quote hides the real structure: keep the body.
+                ("echo 'a\ncat > f <<EOF\n'; rm -rf ~\nEOF", Bash, "deny"),
+                // The unquoted body still expands `$(...)`: the parser sees it.
+                ("cat > n.md <<EOF\n$(rm -rf ~)\nEOF", Bash, "deny"),
             ],
             &unix(),
         );
