@@ -45,6 +45,7 @@ const RUNTIMES: [&str; 9] = ["node", "bun", "deno", "python", "python3", "uv", "
       8sync watchdog install           systemd --user service (Linux): Nice=10 CPUQuota=5% MemoryMax=64M
       8sync watchdog uninstall         stop + remove the service
       8sync watchdog status            service, thresholds file, recent alerts, blocked helpers
+      8sync watchdog unblock <name>    allow a quarantined helper again (--all clears the list)
     Config: ~/.config/8sync/watchdog.toml (created with defaults). Alerts: ~/.local/state/8sync/watchdog/alerts.jsonl
     Claude Code sees alerts through the kit hook `8sync ccc hook watchdog` (`8sync ccc kit` registers it).
 "})]
@@ -70,6 +71,14 @@ pub enum Cmd {
     Uninstall,
     /// Service state, recent alerts, blocked helpers
     Status,
+    /// Allow quarantined helpers again (the running service picks it up next tick)
+    Unblock {
+        /// Helper names as listed by `8sync watchdog status`
+        names: Vec<String>,
+        /// Clear the whole blocked list
+        #[arg(long, conflicts_with = "names")]
+        all: bool,
+    },
 }
 
 pub fn run(a: Args) -> Result<()> {
@@ -79,6 +88,7 @@ pub fn run(a: Args) -> Result<()> {
         Cmd::Install => install(&paths),
         Cmd::Uninstall => uninstall(),
         Cmd::Status => status(&paths),
+        Cmd::Unblock { names, all } => unblock(&paths, &names, all),
     }
 }
 
@@ -516,7 +526,15 @@ pub struct Engine {
     last_id: u64,
 }
 
-const SUGGEST_HELPER: &str = "keep that helper off for this task (disable its MCP server / LSP) or work in smaller repos; the watchdog blocks it if it keeps respawning.";
+/// Remedy for a helper alert; 8sync-managed MCP servers get their own off switch.
+pub fn helper_suggest(name: &str) -> String {
+    let off = match name {
+        "codebase-memory-mcp" => "run `8sync harness cbm off` (8sync-managed MCP, default off)",
+        "serena" => "run `8sync harness serena off` (8sync-managed MCP, default off)",
+        _ => "keep that helper off for this task (disable its MCP server / LSP) or work in smaller repos",
+    };
+    format!("{off}; the watchdog blocks it if it keeps respawning (`8sync watchdog unblock <name>` allows it again).")
+}
 
 impl Engine {
     pub fn new(cfg: Config, dry: bool, blocked: BTreeSet<String>) -> Engine {
@@ -534,6 +552,15 @@ impl Engine {
             blocked,
             last_id: 0,
         }
+    }
+
+    /// Adopt the on-disk blocked list (`8sync watchdog unblock` edits it while the
+    /// service runs); an unblocked helper starts with a clean kill history.
+    pub fn set_blocked(&mut self, blocked: BTreeSet<String>) {
+        for gone in self.blocked.difference(&blocked) {
+            self.kills.remove(gone);
+        }
+        self.blocked = blocked;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -582,11 +609,13 @@ impl Engine {
         if n > self.cfg.respawn_limit && self.blocked.insert(p.name.clone()) {
             out.acts.push(Act::Block(self.blocked.iter().cloned().collect()));
             let msg = format!(
-                "{} killed {n}x in {:.0} min → blocked (listed in ~/.config/8sync/watchdog-blocked; remove the line to allow it again)",
+                "{} killed {n}x in {:.0} min → blocked (`8sync watchdog unblock {}` allows it again)",
                 p.name,
-                win / 60.0
+                win / 60.0,
+                p.name
             );
-            let a = self.alert(s, Some(p), "quarantine", "kills", n as f64, self.cfg.respawn_limit as f64, "blocked", msg, SUGGEST_HELPER);
+            let sug = helper_suggest(&p.name);
+            let a = self.alert(s, Some(p), "quarantine", "kills", n as f64, self.cfg.respawn_limit as f64, "blocked", msg, &sug);
             out.alerts.push(a);
         }
         format!("SIGTERM, SIGKILL after {:.0} s", self.cfg.kill_grace_secs)
@@ -615,7 +644,7 @@ impl Engine {
             out.acts.push(Act::Kill(pid, start));
             if let Some(p) = s.procs.iter().find(|p| p.pid == pid && p.start == start) {
                 let msg = format!("{} (pid {pid}) ignored SIGTERM for {grace:.0} s → SIGKILL", p.name);
-                let a = self.alert(s, Some(p), "sigkill", "alive_after_term", grace, grace, "killed", msg, SUGGEST_HELPER);
+                let a = self.alert(s, Some(p), "sigkill", "alive_after_term", grace, grace, "killed", msg, &helper_suggest(&p.name));
                 out.alerts.push(a);
             }
         }
@@ -647,8 +676,8 @@ impl Engine {
                         let verdict = if act_for(self) == "kill" { self.terminate(s, p, &mut out) } else { "warn only".into() };
                         let verb = if verdict.starts_with("SIGTERM") { "killed" } else if verdict.starts_with("dry-run") { "dry-run" } else { "warn" };
                         let msg = format!("{} (pid {}) used {cpu:.0}% CPU for {window:.0} s → {verdict}", p.name, p.pid);
-                        let sug = if helper { SUGGEST_HELPER } else { "check `ps -p <pid> -o args`; not a known helper, so it is not killed." };
-                        let a = self.alert(s, Some(p), "cpu", "cpu_pct", cpu, self.cfg.cpu_pct, verb, msg, sug);
+                        let sug = if helper { helper_suggest(&p.name) } else { "check `ps -p <pid> -o args`; not a known helper, so it is not killed.".into() };
+                        let a = self.alert(s, Some(p), "cpu", "cpu_pct", cpu, self.cfg.cpu_pct, verb, msg, &sug);
                         out.alerts.push(a);
                     }
                     let over = rss_mb > self.cfg.helper_rss_mb;
@@ -656,7 +685,7 @@ impl Engine {
                         let verdict = if act_for(self) == "kill" { self.terminate(s, p, &mut out) } else { "warn only".into() };
                         let verb = if verdict.starts_with("SIGTERM") { "killed" } else if verdict.starts_with("dry-run") { "dry-run" } else { "warn" };
                         let msg = format!("{} (pid {}) holds {rss_mb} MB RAM (limit {} MB) → {verdict}", p.name, p.pid, self.cfg.helper_rss_mb);
-                        let a = self.alert(s, Some(p), "rss", "rss_mb", rss_mb as f64, self.cfg.helper_rss_mb as f64, verb, msg, SUGGEST_HELPER);
+                        let a = self.alert(s, Some(p), "rss", "rss_mb", rss_mb as f64, self.cfg.helper_rss_mb as f64, verb, msg, &helper_suggest(&p.name));
                         out.alerts.push(a);
                     }
                     if p.gpu_mb > 0 && self.gpu.entry(key).or_default().update(s.now, p.gpu_mb > self.cfg.gpu_mem_mb, 0.0) {
@@ -669,7 +698,7 @@ impl Engine {
                         out.acts.push(Act::Term(p.pid, p.start));
                         self.pending.insert(key, s.now);
                         let msg = format!("{} (pid {}) is blocked (respawned after quarantine) → SIGTERM", p.name, p.pid);
-                        let a = self.alert(s, Some(p), "blocked_seen", "blocked", 1.0, 0.0, "killed", msg, SUGGEST_HELPER);
+                        let a = self.alert(s, Some(p), "blocked_seen", "blocked", 1.0, 0.0, "killed", msg, &helper_suggest(&p.name));
                         out.alerts.push(a);
                     }
                 }
@@ -898,6 +927,34 @@ fn write_blocked(paths: &Paths, names: &[String]) {
     let _ = fs::write(&paths.blocked, names.join("\n") + "\n");
 }
 
+/// Removes names from the blocked list; returns (removed, unknown).
+pub fn unblock_names(cur: &BTreeSet<String>, names: &[String], all: bool) -> (BTreeSet<String>, Vec<String>, Vec<String>) {
+    if all {
+        return (BTreeSet::new(), cur.iter().cloned().collect(), Vec::new());
+    }
+    let mut keep = cur.clone();
+    let (mut removed, mut unknown) = (Vec::new(), Vec::new());
+    for n in names {
+        if keep.remove(n) { removed.push(n.clone()) } else { unknown.push(n.clone()) }
+    }
+    (keep, removed, unknown)
+}
+
+fn unblock(paths: &Paths, names: &[String], all: bool) -> Result<()> {
+    if names.is_empty() && !all {
+        bail!("8sync watchdog unblock: name a helper (see `8sync watchdog status`) or pass --all");
+    }
+    let (keep, removed, unknown) = unblock_names(&read_blocked(paths), names, all);
+    if !removed.is_empty() {
+        write_blocked(paths, &keep.into_iter().collect::<Vec<_>>());
+    }
+    println!("unblocked {}", if removed.is_empty() { "nothing".into() } else { removed.join(", ") });
+    if !unknown.is_empty() {
+        println!("not blocked: {}", unknown.join(", "));
+    }
+    Ok(())
+}
+
 fn signal(sig: &str, pid: u32, start: u64) {
     // pid reuse guard: only signal the very process we measured
     let same = parse_stat(&read(format!("/proc/{pid}/stat"))).is_some_and(|s| s.start == start);
@@ -936,6 +993,7 @@ fn run_loop(paths: &Paths, config: Option<&Path>, dry: bool) -> Result<()> {
     loop {
         let t = Instant::now();
         let snap = sampler.sample();
+        engine.set_blocked(read_blocked(paths));
         let out = engine.step(&snap);
         for a in &out.alerts {
             println!("[{}] {} · {}", a.kind, a.msg, a.action);
@@ -1324,6 +1382,33 @@ mod tests {
         let procs = vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(900, 100, "codebase-memory-mcp", Kind::Helper, 0, 10)];
         let o = e.step(&snap(400.0, procs));
         assert_eq!(o.acts, vec![Act::Term(900, 9000)]);
+    }
+
+    #[test]
+    fn unblock_clears_list_and_kill_history() {
+        let set = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<BTreeSet<String>>();
+        let cur = set(&["codebase-memory-mcp", "serena"]);
+        let (keep, rm, unk) = unblock_names(&cur, &["serena".into(), "gopls".into()], false);
+        assert_eq!((keep, rm, unk), (set(&["codebase-memory-mcp"]), vec!["serena".to_string()], vec!["gopls".to_string()]));
+        let (keep, rm, _) = unblock_names(&cur, &[], true);
+        assert!(keep.is_empty() && rm.len() == 2);
+
+        let mut e = Engine::new(Config::default(), false, set(&["serena"]));
+        e.kills.insert("serena".into(), vec![1.0, 2.0, 3.0, 4.0]);
+        e.set_blocked(BTreeSet::new());
+        assert!(e.blocked.is_empty() && !e.kills.contains_key("serena"), "unblocked helper starts clean");
+        // a blocked-again helper keeps nothing stale either; a still-blocked one keeps its history
+        e.kills.insert("gopls".into(), vec![1.0]);
+        e.set_blocked(set(&["gopls"]));
+        assert!(e.kills.contains_key("gopls"));
+    }
+
+    #[test]
+    fn helper_remedy_names_the_8sync_switch() {
+        assert!(helper_suggest("codebase-memory-mcp").contains("8sync harness cbm off"));
+        assert!(helper_suggest("serena").contains("8sync harness serena off"));
+        let other = helper_suggest("gopls");
+        assert!(!other.contains("8sync harness") && other.contains("8sync watchdog unblock"));
     }
 
     #[test]
