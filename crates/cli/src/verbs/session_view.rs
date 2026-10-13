@@ -297,6 +297,27 @@ pub fn scan_file(path: &Path, fmt: Fmt, detail: bool) -> Digest {
     d
 }
 
+/// Scan only the last `max_bytes` of a transcript (cheap, bounded; for per-refresh callers like
+/// the status line). Never fails: an unreadable file yields an empty digest.
+pub fn scan_tail(path: &Path, fmt: Fmt, max_bytes: u64) -> Digest {
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return Digest::default();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let partial = len > max_bytes;
+    if partial {
+        let _ = f.seek(SeekFrom::Start(len - max_bytes));
+    }
+    let mut r = BufReader::with_capacity(64 * 1024, f);
+    if partial {
+        let mut skip = Vec::new();
+        let _ = r.read_until(b'\n', &mut skip); // drop the cut line
+    }
+    let mut d = scan_reader(r, fmt, false);
+    d.partial = partial;
+    d
+}
+
 fn title_of(v: &Value) -> Option<String> {
     (v.get("type")?.as_str()? == "title").then(|| v.get("title")?.as_str().map(str::to_string)).flatten()
 }

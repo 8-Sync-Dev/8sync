@@ -911,6 +911,22 @@ fn strip_kit_hooks(v: &mut Value) -> usize {
     removed
 }
 
+/// Replace `path` with `new` by tmp+rename, after saving `old` (its current content) to
+/// `<name>.bak-8sync`. Keeps the file's permissions; a crash never leaves a half-written file.
+pub(super) fn write_atomic_bak(path: &Path, old: &str, new: &str) -> Result<()> {
+    let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    std::fs::write(path.with_file_name(format!("{name}.bak-8sync")), old).context("write backup")?;
+    let tmp = path.with_file_name(format!("{name}.tmp-8sync"));
+    std::fs::write(&tmp, new)?;
+    if let Ok(m) = std::fs::metadata(path) {
+        let _ = std::fs::set_permissions(&tmp, m.permissions());
+    }
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })?;
+    Ok(())
+}
+
 /// Strip 8sync hooks from the settings file at `path`. Nothing removed: nothing
 /// written. Otherwise the original goes to `settings.json.bak-8sync` and the new
 /// file replaces it by rename (a crash never leaves a half-written settings.json).
@@ -921,16 +937,7 @@ fn remove_kit_hooks_at(path: &Path) -> Result<usize> {
     if n == 0 {
         return Ok(0);
     }
-    let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-    std::fs::write(path.with_file_name(format!("{name}.bak-8sync")), &raw).context("write backup")?;
-    let tmp = path.with_file_name(format!("{name}.tmp-8sync"));
-    std::fs::write(&tmp, serde_json::to_string_pretty(&v)? + "\n")?;
-    if let Ok(m) = std::fs::metadata(path) {
-        let _ = std::fs::set_permissions(&tmp, m.permissions());
-    }
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })?;
+    write_atomic_bak(path, &raw, &(serde_json::to_string_pretty(&v)? + "\n"))?;
     Ok(n)
 }
 
@@ -939,6 +946,10 @@ fn remove_kit_hooks_at(path: &Path) -> Result<usize> {
 /// pointing at a missing binary would block every Bash/Edit call.
 fn remove_kit_hooks(env: &Env) -> Result<()> {
     let path = claude_dir(env).join("settings.json");
+    let (sp, fp) = (path.clone(), statusline::features(&env.home));
+    for m in statusline::uninstall_at(&sp, &fp)? {
+        ui::ok(&m);
+    }
     if !path.is_file() {
         ui::info("no ~/.claude/settings.json — nothing to remove");
         return Ok(());

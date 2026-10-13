@@ -1,26 +1,25 @@
 //! `8sync ccc statusline`: a Claude Code `statusLine` command (1–2 ANSI rows, plus a chained
 //! third row) and `--agents` for `subagentStatusLine`. Reads the stdin JSON Claude Code sends
 //! (https://code.claude.com/docs/en/statusline) plus a few cheap local reads; no network, no `gh`.
-//! The renderer is pure (`render`, `agents_lines`); `gather` does the I/O. It always exits 0 and
-//! falls back to a minimal `8sync · <model>` row, so a broken field never blanks the bar.
+//! The renderer is pure (`render`, `agents_lines`); `gather` does the I/O. Render modes always
+//! exit 0; unparseable stdin prints a bare `8sync` row so the bar is never blank.
 //!
 //! Setup: `--install` / `--uninstall`. A foreign `statusLine` command is parked as
 //! `statusLine_prev` in `~/.config/8sync/features.toml` and chained (same stdin, output appended
-//! as the last row), so e.g. the Orca statusline keeps working. Optional background-work count:
-//! `~/.local/state/8sync/ccc/bg/<session_id>.json` (a JSON array or object; its length is shown).
-//! The watchdog alert shown is the latest line of `alerts.jsonl` younger than 10 minutes (the
+//! as the last row), so e.g. the Orca statusline keeps working. The watchdog alert shown is the latest line of `alerts.jsonl` younger than 10 minutes (the
 //! alerts file has no per-viewer "seen" cursor).
-use crate::verbs::session_view::{scan_file, truncate, Fmt};
+use crate::verbs::session_view::{scan_tail, truncate, Fmt};
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const RST: &str = "\x1b[0m";
 const PREV_KEY: &str = "statusLine_prev";
 const ALERT_FRESH_S: u64 = 600;
+const TAIL_BYTES: u64 = 256 * 1024;
 
 /// Everything `gather` reads from disk or git; `render` only formats it.
 #[derive(Default, Debug)]
@@ -29,7 +28,6 @@ pub(super) struct Extras {
     pub dirty: bool,
     /// (done, total, current task title)
     pub tasks: Option<(usize, usize, Option<String>)>,
-    pub bg: usize,
     pub alert: Option<String>,
     /// (iter, max_iter)
     pub looping: Option<(u64, u64)>,
@@ -162,11 +160,8 @@ fn row2(v: &Value, x: &Extras, color: bool) -> String {
         seg.push(paint(color, code, &format!("{mark}{n}{sym}")));
     }
     if let Some((done, total, cur)) = &x.tasks {
-        let cur = cur.as_deref().map(|t| format!(" ▸ {}", truncate(t, 40))).unwrap_or_default();
+        let cur = cur.as_deref().map(|t| format!(" ▸ {}", truncate(&plain(t), 40))).unwrap_or_default();
         seg.push(format!("tasks {done}/{total}{cur}"));
-    }
-    if x.bg > 0 {
-        seg.push(paint(color, "36", &format!("bg {}", x.bg)));
     }
     if let Some(a) = &x.alert {
         seg.push(paint(color, "1;33", &format!("⚠ {a}")));
@@ -230,44 +225,94 @@ fn now_s() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// Run `cmd`, give it `budget`, kill it after that, return whatever it printed.
-fn run_budget(mut cmd: Command, stdin: Option<&str>, budget: Duration) -> Option<String> {
-    cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::null());
-    let mut c = cmd.spawn().ok()?;
-    if let (Some(inp), Some(mut si)) = (stdin, c.stdin.take()) {
-        let _ = si.write_all(inp.as_bytes());
-    }
-    let end = Instant::now() + budget;
-    loop {
-        match c.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < end => std::thread::sleep(Duration::from_millis(1)),
-            _ => {
-                let _ = c.kill();
-                let _ = c.wait();
-                break;
+/// Drop control characters (a task title or a chained row must not move the cursor or set the
+/// window title). With `keep_sgr`, colour sequences `ESC [ digits/; m` survive.
+fn sanitize(s: &str, keep_sgr: bool) -> String {
+    let c: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < c.len() {
+        if keep_sgr && c[i] == '\x1b' && c.get(i + 1) == Some(&'[') {
+            let mut j = i + 2;
+            while j < c.len() && (c[j].is_ascii_digit() || c[j] == ';') {
+                j += 1;
+            }
+            if c.get(j) == Some(&'m') {
+                out.extend(&c[i..=j]);
+                i = j + 1;
+                continue;
             }
         }
+        if !c[i].is_control() {
+            out.push(c[i]);
+        }
+        i += 1;
     }
-    let mut out = String::new();
-    c.stdout.take()?.read_to_string(&mut out).ok()?;
-    Some(out)
+    out
+}
+
+fn plain(s: &str) -> String {
+    sanitize(s, false)
+}
+
+fn kill_group(pgid: u32) {
+    let _ = Command::new("kill").args(["-KILL", "--", &format!("-{pgid}")]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+}
+
+/// Run `cmd` in its own process group, give it `budget`; on timeout kill the whole group (a
+/// `sh -c 'a | b'` chain included) and return `None`. stdin is fed and stdout drained on threads,
+/// so neither a full pipe nor a child that ignores stdin can stall us past the budget.
+fn run_budget(mut cmd: Command, stdin: Option<&str>, budget: Duration) -> Option<String> {
+    cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::null());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut c = cmd.spawn().ok()?;
+    let pgid = c.id();
+    if let (Some(inp), Some(mut si)) = (stdin, c.stdin.take()) {
+        let inp = inp.to_string();
+        std::thread::spawn(move || {
+            let _ = si.write_all(inp.as_bytes());
+        });
+    }
+    let mut so = c.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = so.read_to_end(&mut b);
+        let _ = tx.send(b);
+    });
+    match rx.recv_timeout(budget) {
+        Ok(b) => {
+            let _ = c.try_wait();
+            Some(String::from_utf8_lossy(&b).into_owned())
+        }
+        Err(_) => {
+            kill_group(pgid);
+            let _ = c.kill();
+            let _ = c.wait();
+            None
+        }
+    }
 }
 
 fn git(cwd: &str, args: &[&str]) -> Option<String> {
     let mut c = Command::new("git");
-    c.arg("-C").arg(cwd).args(args);
+    c.arg("-C").arg(cwd).args(args).env("GIT_OPTIONAL_LOCKS", "0");
     run_budget(c, None, Duration::from_millis(50)).map(|s| s.trim().to_string())
 }
 
 fn ship_active(cwd: &Path) -> Option<(u64, u64)> {
     let dir = cwd.ancestors().map(|d| d.join("su-code/ship")).find(|d| d.is_dir())?;
-    let slug = std::fs::read_to_string(dir.join("ACTIVE")).ok()?.trim().to_string();
-    if slug.is_empty() || slug.starts_with('.') || !slug.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
-        return None;
+    let active = std::fs::read_to_string(dir.join("ACTIVE")).ok()?;
+    for slug in active.lines().map(str::trim) {
+        if slug.is_empty() || slug.starts_with('.') || !slug.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
+            continue;
+        }
+        let Ok(raw) = std::fs::read_to_string(dir.join(slug).join("loop.json")) else { continue };
+        let v: Value = serde_json::from_str(&raw).ok()?;
+        return v["stopped"].is_null().then(|| (v["iter"].as_u64().unwrap_or(0), v["max_iter"].as_u64().unwrap_or(0)));
     }
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(&slug).join("loop.json")).ok()?).ok()?;
-    v["stopped"].is_null().then(|| (v["iter"].as_u64().unwrap_or(0), v["max_iter"].as_u64().unwrap_or(0)))
+    None
 }
 
 fn last_line(p: &Path) -> Option<String> {
@@ -286,13 +331,14 @@ fn fresh_alert(home: &Path, now: u64) -> Option<String> {
     (now.saturating_sub(v["ts"].as_u64()?) <= ALERT_FRESH_S).then(|| v["kind"].as_str().unwrap_or("alert").to_string())
 }
 
-fn features(home: &Path) -> PathBuf {
+pub(super) fn features(home: &Path) -> PathBuf {
     crate::brand::config_dir(home).join("features.toml")
 }
 
 fn prev_cmd(home: &Path) -> Option<String> {
     let t = std::fs::read_to_string(features(home)).ok()?.parse::<toml::Table>().ok()?;
-    t.get(PREV_KEY)?.as_str().map(str::to_string).filter(|c| !c.trim().is_empty() && !is_ours(c))
+    let c = prev_object(t.get(PREV_KEY)?.as_str()?)?["command"].as_str()?.to_string();
+    (!c.trim().is_empty() && !is_ours(&c)).then_some(c)
 }
 
 fn gather(v: &Value, input: &str, home: &Path, now: u64) -> Extras {
@@ -301,17 +347,13 @@ fn gather(v: &Value, input: &str, home: &Path, now: u64) -> Extras {
     let sid = v["session_id"].as_str();
     x.branch = v["worktree"]["branch"].as_str().map(str::to_string).or_else(|| if cwd.is_empty() { None } else { git(cwd, &["symbolic-ref", "--short", "HEAD"]).filter(|b| !b.is_empty()) });
     if x.branch.is_some() && !cwd.is_empty() {
-        x.dirty = git(cwd, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
+        x.dirty = git(cwd, &["status", "--porcelain", "-uno"]).is_some_and(|s| !s.is_empty());
     }
     if let Some(tp) = v["transcript_path"].as_str() {
-        let d = scan_file(Path::new(tp), Fmt::Claude, false);
+        let d = scan_tail(Path::new(tp), Fmt::Claude, TAIL_BYTES);
         if !d.tasks.is_empty() {
             x.tasks = Some((d.tasks_done(), d.tasks.len(), d.current_task().map(|t| t.title.clone())));
         }
-    }
-    if let Some(id) = sid.and_then(crate::verbs::watchdog::safe_id) {
-        let p = home.join(".local/state/8sync/ccc/bg").join(format!("{id}.json"));
-        x.bg = std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).map_or(0, |b| b.as_array().map(Vec::len).or_else(|| b.as_object().map(|o| o.len())).unwrap_or(0));
     }
     x.alert = fresh_alert(home, now);
     if !cwd.is_empty() {
@@ -323,7 +365,7 @@ fn gather(v: &Value, input: &str, home: &Path, now: u64) -> Extras {
             let mut c = Command::new("sh");
             c.arg("-c").arg(prev).env("EIGHTSYNC_STATUSLINE_CHAIN", "1");
             if let Some(out) = run_budget(c, Some(input), Duration::from_millis(400)) {
-                x.chained = out.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).map(str::to_string).collect();
+                x.chained = out.lines().map(|l| sanitize(l, true)).map(|l| l.trim_end().to_string()).filter(|l| !l.trim().is_empty()).collect();
             }
         }
     }
@@ -343,40 +385,53 @@ fn read_stdin() -> String {
 fn statusline(input: &str) -> Vec<String> {
     let color = std::env::var_os("NO_COLOR").is_none();
     let Ok(v) = serde_json::from_str::<Value>(input) else { return vec![paint(color, "1;35", "8sync")] };
-    let r = std::panic::catch_unwind(|| {
-        let (home, now) = (dirs::home_dir().unwrap_or_default(), now_s());
-        render(&v, &gather(&v, input, &home, now), now, cols(), color)
-    });
-    r.unwrap_or_else(|_| {
-        let m = v["model"]["display_name"].as_str().unwrap_or("");
-        vec![format!("8sync · {m}")]
-    })
+    let (home, now) = (dirs::home_dir().unwrap_or_default(), now_s());
+    render(&v, &gather(&v, input, &home, now), now, cols(), color)
 }
 
 // ── install ─────────────────────────────────────────────────────────────────
 
+const CMD_TAIL: &str = " ccc statusline";
+const AGENTS_TAIL: &str = " ccc statusline --agents";
+
+/// Our `statusLine` command: ends with exactly `<exe> ccc statusline` (a foreign command that
+/// merely mentions it, or the `--agents` variant, is not ours).
 pub(super) fn is_ours(cmd: &str) -> bool {
-    cmd.contains("ccc statusline")
+    cmd.trim_end().ends_with(CMD_TAIL)
 }
 
+fn is_agents_ours(cmd: &str) -> bool {
+    cmd.trim_end().ends_with(AGENTS_TAIL)
+}
+
+/// Shell-safe: bare when only safe chars, else single-quoted with `'` written as `'\''`.
 fn quote(exe: &str) -> String {
-    if exe.chars().any(char::is_whitespace) {
-        format!("'{exe}'")
-    } else {
+    if !exe.is_empty() && exe.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+:@%=,".contains(c)) {
         exe.to_string()
+    } else {
+        format!("'{}'", exe.replace('\'', "'\\''"))
     }
 }
 
 fn status_value(exe: &str) -> Value {
-    json!({ "type": "command", "command": format!("{} ccc statusline", quote(exe)), "padding": 0, "refreshInterval": 5 })
+    json!({ "type": "command", "command": format!("{}{CMD_TAIL}", quote(exe)), "padding": 0, "refreshInterval": 5 })
 }
 
 fn agents_value(exe: &str) -> Value {
-    json!({ "type": "command", "command": format!("{} ccc statusline --agents", quote(exe)) })
+    json!({ "type": "command", "command": format!("{}{AGENTS_TAIL}", quote(exe)) })
 }
 
 fn cmd_of(v: &Value) -> Option<&str> {
     v["command"].as_str()
+}
+
+/// The parked previous `statusLine` object (stored JSON-serialized; a bare command string from an
+/// older build is accepted too).
+fn prev_object(stored: &str) -> Option<Value> {
+    match serde_json::from_str::<Value>(stored) {
+        Ok(v) if v.is_object() => Some(v),
+        _ => Some(json!({ "type": "command", "command": stored })).filter(|_| !stored.trim().is_empty()),
+    }
 }
 
 /// Kit side: set both lines when absent, refresh ours, never override another. Returns whether a
@@ -386,7 +441,7 @@ pub(super) fn kit_apply(settings: &mut Value, exe: &str) -> bool {
     if !foreign {
         settings["statusLine"] = status_value(exe);
     }
-    if settings.get("subagentStatusLine").is_none_or(|s| cmd_of(s).is_some_and(is_ours)) {
+    if settings.get("subagentStatusLine").is_none_or(|s| cmd_of(s).is_some_and(is_agents_ours)) {
         settings["subagentStatusLine"] = agents_value(exe);
     }
     foreign
@@ -399,7 +454,7 @@ pub(super) fn install_into(settings: &mut Value, exe: &str, feats: &mut toml::Ta
         Some(old) if cmd_of(&old).is_some_and(|c| !is_ours(c)) => {
             let c = cmd_of(&old).unwrap_or_default().to_string();
             msg.push(format!("statusLine: kept your command as {PREV_KEY} and chained it as the last row ({c})"));
-            feats.insert(PREV_KEY.into(), toml::Value::String(c));
+            feats.insert(PREV_KEY.into(), toml::Value::String(old.to_string()));
         }
         Some(old) if cmd_of(&old).is_none() => {
             msg.push("statusLine: existing entry has no command, left as is".into());
@@ -409,7 +464,7 @@ pub(super) fn install_into(settings: &mut Value, exe: &str, feats: &mut toml::Ta
     }
     settings["statusLine"] = status_value(exe);
     match settings.get("subagentStatusLine") {
-        Some(s) if !cmd_of(s).is_some_and(is_ours) => msg.push("subagentStatusLine: yours kept (not replaced)".into()),
+        Some(s) if !cmd_of(s).is_some_and(is_agents_ours) => msg.push("subagentStatusLine: yours kept (not replaced)".into()),
         _ => {
             settings["subagentStatusLine"] = agents_value(exe);
             msg.push("subagentStatusLine: installed".into());
@@ -418,16 +473,15 @@ pub(super) fn install_into(settings: &mut Value, exe: &str, feats: &mut toml::Ta
     msg
 }
 
-/// `--uninstall`: drop ours, restore `statusLine_prev`.
+/// `--uninstall`: drop ours, restore the whole previous `statusLine` object.
 pub(super) fn uninstall_from(settings: &mut Value, feats: &mut toml::Table) -> Vec<String> {
     let mut msg = Vec::new();
-    let ours = |s: &Value| cmd_of(s).is_some_and(is_ours);
-    if ours(&settings["statusLine"]) {
-        let prev = feats.remove(PREV_KEY).and_then(|p| p.as_str().map(str::to_string));
+    if cmd_of(&settings["statusLine"]).is_some_and(is_ours) {
+        let prev = feats.remove(PREV_KEY).and_then(|p| p.as_str().and_then(prev_object));
         match prev {
             Some(p) => {
-                settings["statusLine"] = json!({ "type": "command", "command": p });
-                msg.push("statusLine: restored your previous command".into());
+                settings["statusLine"] = p;
+                msg.push("statusLine: restored your previous statusLine".into());
             }
             None => {
                 settings.as_object_mut().map(|o| o.remove("statusLine"));
@@ -435,7 +489,7 @@ pub(super) fn uninstall_from(settings: &mut Value, feats: &mut toml::Table) -> V
             }
         }
     }
-    if ours(&settings["subagentStatusLine"]) {
+    if cmd_of(&settings["subagentStatusLine"]).is_some_and(is_agents_ours) {
         settings.as_object_mut().map(|o| o.remove("subagentStatusLine"));
         msg.push("subagentStatusLine: removed".into());
     }
@@ -446,28 +500,67 @@ fn claude_dir(home: &Path) -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".claude"))
 }
 
-fn setup(home: &Path, uninstall: bool) -> Result<()> {
-    let sp = claude_dir(home).join("settings.json");
-    let fp = features(home);
-    let raw = std::fs::read_to_string(&sp).unwrap_or_default();
-    let mut s: Value = if raw.trim().is_empty() { json!({}) } else { serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", sp.display()))? };
-    let fraw = std::fs::read_to_string(&fp).unwrap_or_default();
-    let mut f: toml::Table = fraw.parse().map_err(|e| anyhow::anyhow!("{} is not valid TOML ({e}); fix it first", fp.display()))?;
-    let msgs = if uninstall {
-        uninstall_from(&mut s, &mut f)
+/// Missing file = empty; any other read error aborts (never overwrite what we could not read).
+fn read_or_empty(p: &Path) -> Result<String> {
+    match std::fs::read_to_string(p) {
+        Ok(s) => Ok(s),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e).with_context(|| format!("read {}", p.display())),
+    }
+}
+
+fn write_file(p: &Path, old: &str, new: &str) -> Result<()> {
+    std::fs::create_dir_all(p.parent().context("no parent")?)?;
+    if old.is_empty() {
+        std::fs::write(p, new).with_context(|| format!("write {}", p.display()))
     } else {
-        install_into(&mut s, &super::hook_exe()?, &mut f)
+        super::write_atomic_bak(p, old, new)
+    }
+}
+
+/// Install (`exe = Some`) or uninstall (`None`) against explicit files. Writes only what changed.
+fn setup_at(sp: &Path, fp: &Path, exe: Option<&str>) -> Result<Vec<String>> {
+    let raw = read_or_empty(sp)?;
+    let mut s: Value = if raw.trim().is_empty() { json!({}) } else { serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", sp.display()))? };
+    let fraw = read_or_empty(fp)?;
+    let mut f: toml::Table = fraw.parse().map_err(|e| anyhow::anyhow!("{} is not valid TOML ({e}); fix it first", fp.display()))?;
+    let f0 = f.clone();
+    let msgs = match exe {
+        Some(e) => install_into(&mut s, e, &mut f),
+        None => uninstall_from(&mut s, &mut f),
     };
     let out = serde_json::to_string_pretty(&s)? + "\n";
-    if out != raw {
-        std::fs::create_dir_all(sp.parent().context("no parent")?)?;
-        std::fs::write(&sp, out)?;
+    let write_settings = |s: &Value| -> Result<()> {
+        if out != raw && !(raw.trim().is_empty() && s.as_object().is_some_and(|o| o.is_empty())) {
+            write_file(sp, &raw, &out)?;
+        }
+        Ok(())
+    };
+    let write_feats = || -> Result<()> {
+        if f != f0 {
+            write_file(fp, &fraw, &toml::to_string_pretty(&f)?)?;
+        }
+        Ok(())
+    };
+    // Never lose the parked statusLine: install saves it first, uninstall removes it last.
+    if exe.is_some() {
+        write_feats()?;
+        write_settings(&s)?;
+    } else {
+        write_settings(&s)?;
+        write_feats()?;
     }
-    let fout = toml::to_string_pretty(&f)?;
-    if fout != fraw && (!f.is_empty() || !fraw.is_empty()) {
-        std::fs::create_dir_all(fp.parent().context("no parent")?)?;
-        std::fs::write(&fp, fout)?;
-    }
+    Ok(msgs)
+}
+
+/// `ccc kit --remove` entry: restore the previous statusLine, drop ours.
+pub(super) fn uninstall_at(sp: &Path, fp: &Path) -> Result<Vec<String>> {
+    setup_at(sp, fp, None)
+}
+
+fn setup(home: &Path, uninstall: bool) -> Result<()> {
+    let (sp, fp) = (claude_dir(home).join("settings.json"), features(home));
+    let msgs = if uninstall { uninstall_at(&sp, &fp)? } else { setup_at(&sp, &fp, Some(&super::hook_exe()?))? };
     for m in msgs {
         crate::ui::ok(&m);
     }
@@ -503,6 +596,7 @@ pub(super) fn run(rest: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     fn strip(s: &str) -> String {
         let mut o = String::new();
@@ -534,7 +628,7 @@ mod tests {
     }
 
     fn extras() -> Extras {
-        Extras { branch: Some("feat/x".into()), dirty: true, tasks: Some((2, 5, Some("viết test".into()))), bg: 2, alert: Some("mem".into()), looping: Some((3, 12)), grant: true, chained: vec![] }
+        Extras { branch: Some("feat/x".into()), dirty: true, tasks: Some((2, 5, Some("viết test".into()))), alert: Some("mem".into()), looping: Some((3, 12)), grant: true, chained: vec![] }
     }
 
     #[test]
@@ -543,7 +637,7 @@ mod tests {
         assert_eq!(r.len(), 2);
         let (a, b) = (strip(&r[0]), strip(&r[1]));
         assert_eq!(a, "8sync · Opus 5 (high) · ctx ▓▓▓▓▓░░░░░ 42% · 5h 24% ↻ 1h23m · 7d 85% ↻ 2d4h · $0.01 · +156/-23");
-        assert_eq!(b, "⎇ feat/x* · #12 ✓ · tasks 2/5 ▸ viết test · bg 2 · ⚠ mem · loop 3/12 · 🚢 grant");
+        assert_eq!(b, "⎇ feat/x* · #12 ✓ · tasks 2/5 ▸ viết test · ⚠ mem · loop 3/12 · 🚢 grant");
         assert!(r[0].contains("\x1b[31m85%"), "7d over 80 is red");
     }
 
@@ -601,24 +695,28 @@ mod tests {
 
     #[test]
     fn bad_input_still_prints() {
-        assert!(!statusline("not json").is_empty());
+        for i in ["not json", "", "null", "[]", "42", "{\"model\": 5}"] {
+            assert!(!statusline(i).is_empty(), "{i:?}");
+        }
     }
 
     #[test]
     fn install_uninstall_roundtrip_with_chain() {
-        let mut s = json!({"theme": "dark", "statusLine": {"type": "command", "command": "orca-status --x"}});
+        let prev = json!({"type": "command", "command": "orca-status --x", "padding": 2});
+        let mut s = json!({"theme": "dark", "statusLine": prev});
         let mut f = toml::Table::new();
         f.insert("serena".into(), toml::Value::Boolean(true));
         install_into(&mut s, "/bin/8sync", &mut f);
         assert_eq!(s["statusLine"]["command"], "/bin/8sync ccc statusline");
         assert_eq!(s["statusLine"]["refreshInterval"], 5);
         assert_eq!(s["subagentStatusLine"]["command"], "/bin/8sync ccc statusline --agents");
-        assert_eq!(f[PREV_KEY].as_str(), Some("orca-status --x"));
+        let stored = f[PREV_KEY].as_str().unwrap().to_string();
+        assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), prev);
         // idempotent: a second install must not park our own command as prev
         install_into(&mut s, "/bin/8sync", &mut f);
-        assert_eq!(f[PREV_KEY].as_str(), Some("orca-status --x"));
+        assert_eq!(f[PREV_KEY].as_str(), Some(stored.as_str()));
         uninstall_from(&mut s, &mut f);
-        assert_eq!(s["statusLine"]["command"], "orca-status --x");
+        assert_eq!(s["statusLine"], prev, "whole object restored");
         assert!(s.get("subagentStatusLine").is_none());
         assert!(f.get(PREV_KEY).is_none() && f["serena"].as_bool() == Some(true));
         assert_eq!(s["theme"], "dark");
@@ -635,6 +733,62 @@ mod tests {
         uninstall_from(&mut s, &mut f);
         assert!(s.get("statusLine").is_none());
         assert_eq!(s["subagentStatusLine"]["command"], "mine");
+    }
+
+    #[test]
+    fn quote_and_is_ours() {
+        assert_eq!(quote("/a/it's here/8sync"), "'/a/it'\\''s here/8sync'");
+        assert!(is_ours(&format!("{} ccc statusline", quote("/a/it's/8sync"))));
+        assert!(!is_ours("orca --note 'ccc statusline docs'"));
+        assert!(!is_ours("/bin/8sync ccc statusline --agents"));
+        assert!(is_agents_ours("/bin/8sync ccc statusline --agents"));
+    }
+
+    #[test]
+    fn sanitize_strips_controls_keeps_sgr() {
+        assert_eq!(sanitize("a\x1b[31mred\x1b[0m\x1b]0;title\x07b\r", true), "a\x1b[31mred\x1b[0m]0;titleb");
+        assert_eq!(plain("x\x1b[31m\ny"), "x[31my");
+    }
+
+    #[test]
+    fn chained_timeout_kills_group() {
+        let t = Instant::now();
+        let mut c = Command::new("sh");
+        c.arg("-c").arg("sleep 5 | cat");
+        assert!(run_budget(c, Some("{}"), Duration::from_millis(400)).is_none());
+        assert!(t.elapsed() < Duration::from_millis(1500), "{:?}", t.elapsed());
+        let mut c = Command::new("sh");
+        c.arg("-c").arg("cat");
+        assert_eq!(run_budget(c, Some("hi"), Duration::from_secs(2)).as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn ship_active_takes_first_slug_with_loop_json() {
+        let d = std::env::temp_dir().join(format!("sl-ship-{}", std::process::id()));
+        let ship = d.join("su-code/ship");
+        std::fs::create_dir_all(ship.join("b")).unwrap();
+        std::fs::write(ship.join("ACTIVE"), "ghost\nb\n").unwrap();
+        std::fs::write(ship.join("b/loop.json"), r#"{"iter":2,"max_iter":9}"#).unwrap();
+        assert_eq!(ship_active(&d), Some((2, 9)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn kit_remove_restores_previous_statusline() {
+        let d = std::env::temp_dir().join(format!("sl-rm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let (sp, fp) = (d.join("settings.json"), d.join("features.toml"));
+        let prev = json!({"type": "command", "command": "orca"});
+        std::fs::write(&sp, json!({"statusLine": prev}).to_string()).unwrap();
+        setup_at(&sp, &fp, Some("/bin/8sync")).unwrap();
+        assert!(is_ours(cmd_of(&serde_json::from_str::<Value>(&std::fs::read_to_string(&sp).unwrap()).unwrap()["statusLine"]).unwrap()));
+        assert!(d.join("settings.json.bak-8sync").exists());
+        uninstall_at(&sp, &fp).unwrap();
+        let s: Value = serde_json::from_str(&std::fs::read_to_string(&sp).unwrap()).unwrap();
+        assert_eq!(s["statusLine"], prev);
+        assert!(s.get("subagentStatusLine").is_none());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
