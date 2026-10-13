@@ -1331,18 +1331,18 @@ fn hook(rest: &[String]) -> Result<()> {
         // Fast path: no alerts file / nothing new = no output (sync hook, timeout 5 s).
         Some("watchdog") => crate::verbs::watchdog::run_hook(&input),
         // StopFailure (no decision control): record + notify; resume-note says it once next prompt.
-        Some("stop-failure") => {
-            let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        Some(h @ ("stop-failure" | "resume-note")) => {
+            let home = std::env::var_os("HOME").map(PathBuf::from);
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            if let Some(msg) = resume::record(&input, &resume::state_dir(&home), now) {
-                resume::notify(&msg);
-            }
-            None
-        }
-        Some("resume-note") => {
-            let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            resume::note(&input, &resume::state_dir(&home), now)
+            resume::state_dir(home.as_deref()).and_then(|dir| {
+                if h == "resume-note" {
+                    return resume::note(&input, &dir, now);
+                }
+                if let Some(msg) = resume::record(&input, &dir, now) {
+                    resume::notify(&msg);
+                }
+                None
+            })
         }
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -1677,6 +1677,20 @@ mod tests {
         assert_eq!(pre[0]["hooks"][0]["command"], "my-linter");
         assert!(v["hooks"].get("TaskCreated").is_none(), "empty events dropped");
         assert_eq!(strip_kit_hooks(&mut v), 0, "idempotent");
+    }
+
+    #[test]
+    fn kit_registers_stop_failure_and_resume_note_and_removes_them() {
+        let mut v = json!({});
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap(); // idempotent
+        let args = |ev: &str| -> Vec<Value> { v["hooks"][ev].as_array().unwrap().iter().map(|g| g["hooks"][0]["args"].clone()).collect() };
+        assert_eq!(args("StopFailure"), vec![json!(["ccc", "hook", "stop-failure"])]);
+        let ups = args("UserPromptSubmit");
+        assert!(ups.contains(&json!(["ccc", "hook", "resume-note"])) && ups.contains(&json!(["ccc", "hook", "watchdog"])), "both coexist: {ups:?}");
+        assert_eq!(ups.len(), 2);
+        strip_kit_hooks(&mut v);
+        assert!(v["hooks"].get("StopFailure").is_none() && v["hooks"].get("UserPromptSubmit").is_none());
     }
 
     #[test]

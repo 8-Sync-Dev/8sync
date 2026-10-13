@@ -93,8 +93,10 @@ pub(super) fn check(v: &Value) -> Option<String> {
             "8sync gate: don't stop to ask for routine confirmation (\"{quote}\"). Pick the conservative, conventional option, state the assumption and continue. Ask only for secrets/access, destructive or paid actions, or product decisions."
         ));
     }
-    if tail.tasks_touched && !offer && !risky && !question {
-        let open = open_tasks(path?);
+    // A lead waiting on teammates goes quiet by design, and teammates' completions are
+    // not in this transcript: never block a team session on tasks.
+    if tail.tasks_touched && !tail.team && !offer && !risky && !question {
+        let open = open_tasks(path?, &tail.created);
         if !open.is_empty() {
             let list: Vec<String> = open.iter().take(6).map(|t| format!("\"{}\"", t.chars().take(80).collect::<String>())).collect();
             return Some(format!(
@@ -108,11 +110,22 @@ pub(super) fn check(v: &Value) -> Option<String> {
     None
 }
 
-/// Titles of this session's pending / in-progress tasks (full replay of the transcript's
-/// task calls; tail-only above the size cap).
-fn open_tasks(path: &str) -> Vec<String> {
+/// Open tasks that belong to the current turn: in progress, or created since the owner's
+/// last message. Older pending tasks the owner may have dropped are left alone. Empty when
+/// the transcript was only tail-scanned (task ids would be renumbered wrong). The transcript
+/// can lag the last tool call, so a just-finished task may still look open: that costs one
+/// extra turn at most (`stop_hook_active` ends the next stop).
+fn open_tasks(path: &str, created: &[String]) -> Vec<String> {
     use crate::verbs::session_view::{scan_file, Fmt, TaskState};
-    scan_file(std::path::Path::new(path), Fmt::Claude, false).tasks.into_iter().filter(|t| t.state != TaskState::Done).map(|t| t.title).collect()
+    let d = scan_file(std::path::Path::new(path), Fmt::Claude, false);
+    if d.partial {
+        return Vec::new();
+    }
+    d.tasks
+        .into_iter()
+        .filter(|t| t.state == TaskState::InProgress || (t.state == TaskState::Pending && created.contains(&t.title)))
+        .map(|t| t.title)
+        .collect()
 }
 
 /// Questions the owner must answer: secrets/access, destructive or paid actions, product
@@ -175,6 +188,10 @@ struct Tail {
     user: Option<String>,
     /// A TaskCreate / TaskUpdate / TodoWrite call after that message.
     tasks_touched: bool,
+    /// Subjects of TaskCreate calls after that message.
+    created: Vec<String>,
+    /// TeamCreate / SendMessage anywhere in the tail: an agent-team lead.
+    team: bool,
 }
 
 fn read_tail(path: &str) -> Tail {
@@ -190,11 +207,23 @@ fn read_tail(path: &str) -> Tail {
         return t;
     }
     let text = String::from_utf8_lossy(&buf);
+    // anywhere in the tail, not only this turn: a lead keeps waiting across turns
+    t.team = text.contains(r#""name":"TeamCreate""#) || text.contains(r#""name":"SendMessage""#);
     for line in text.lines().rev() {
         if line.contains(r#""type":"assistant""#)
             && [r#""name":"TaskCreate""#, r#""name":"TaskUpdate""#, r#""name":"TodoWrite""#].iter().any(|n| line.contains(n))
         {
             t.tasks_touched = true;
+            if line.contains(r#""name":"TaskCreate""#) {
+                if let Ok(e) = serde_json::from_str::<Value>(line) {
+                    let parts = e["message"]["content"].as_array().cloned().unwrap_or_default();
+                    for b in parts.iter().filter(|b| b["name"] == "TaskCreate") {
+                        if let Some(sub) = b["input"]["subject"].as_str() {
+                            t.created.push(sub.to_string());
+                        }
+                    }
+                }
+            }
         }
         if let Some(u) = human_text(line) {
             t.user = Some(u);
@@ -284,6 +313,13 @@ mod tests {
         // tasks from an earlier turn, untouched since the owner's new question → no block
         let old = write("old.jsonl", &[create("t1", "a"), create("t2", "b"), human("cái này là gì?")]);
         assert!(check(&input(&old, "Đó là stop gate.", false)).is_none());
+        // an older pending task (before the owner's message) is not this turn's: no block
+        let done2 = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u2","name":"TaskUpdate","input":{"taskId":"2","status":"completed"}}]}}"#;
+        let stale = write("stale.jsonl", &[create("t0", "việc cũ"), human("làm cái khác"), create("t1", "mới"), done2.to_string()]);
+        assert!(check(&input(&stale, "Xong cái mới.", false)).is_none(), "only current-turn tasks count");
+        // agent-team lead waiting on teammates
+        let team = write("team.jsonl", &[human("chia team"), r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"m1","name":"SendMessage","input":{"to":"qa","message":"x"}}]}}"#.to_string(), create("t1", "qa pass")]);
+        assert!(check(&input(&team, "Đang chờ qa.", false)).is_none(), "team sessions are not blocked on tasks");
         // the owner said stop
         let stop = write("stop.jsonl", &[create("t1", "a"), human("dừng lại")]);
         assert!(check(&input(&stop, "Ok.", false)).is_none());
