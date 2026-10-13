@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.80.0] — 2026-10-14
 ### Added
 - **HQ office: every session is a room.** The "Văn phòng" tab shows one room per running Claude Code session (started in HQ or anywhere else), grouped by the session's git folder and branch. Every room has the same seats (Lead, R&D, Plan, Fullstack, Reviewer, Tester, Quick); a seat lights up while that session's subagent of that kind runs (new `SubagentStart`/`SubagentStop` journal events). When a session messages another, its lead walks into the other room with the message (code-drawn walker sprite; static with reduced motion). The sidebar groups sessions by git folder and branch.
 - **"Chat phòng" vs "Chat nhóm".** Chat phòng is one session's conversation (click a room to open it); Chat nhóm is every room talking to each other.
