@@ -5,13 +5,13 @@ Enforced, so NOT restated here: a TTSR rule interrupts `grep`/`glob` on code-str
 the moment they fire. Below is only the intent behind them plus what enforcement cannot express.
 
 ## RULE #0 — code intelligence before native search
-Structure questions (where is X · who calls X · impact · architecture) go cheapest-first:
-`mcp__codebase_memory_mcp_search_graph` / `_trace_path` / `_get_architecture` / `_get_code_snippet` →
-`mcp__serena_find_symbol` and `_find_referencing_symbols` (**the** authority for callers) →
-`codegraph query|explore "<symbol>"` in bash. Plain-text lookup on NON-code (logs, configs, build
+Structure questions (where is X · who calls X · impact · architecture): `codegraph query|explore "<symbol>"` in bash first (local, fast).
+@cbm Also enabled: `mcp__codebase_memory_mcp_search_graph` / `_trace_path` / `_get_architecture` / `_get_code_snippet`.
+@serena Also enabled: `mcp__serena_find_symbol` / `_find_referencing_symbols`.
+Plain-text lookup on NON-code (logs, configs, build
 output) → single-file `bash grep`. `read` a file when you are about to edit it (read-before-edit).
 Under `step0` (default) the `grep`/`glob` TOOLS are not in the session at all; MCP tools are
-orthogonal to that and always present — call them by exact name, never a guessed variant.
+orthogonal to that — call enabled ones by exact name, never a guessed variant.
 
 ## Vision — look first when the model is a native VLM
 Self-check: what model am I? **GLM-5.3 / GLM-5.3-Flash / any `zai/glm-5.3*`** are native

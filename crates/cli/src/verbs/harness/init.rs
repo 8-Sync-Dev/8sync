@@ -49,7 +49,7 @@ pub(crate) fn harness_init(env: &env_detect::Env, force: bool) -> Result<()> {
     let target = env.home.join(".omp/skills/00-force-load.md");
     std::fs::create_dir_all(target.parent().unwrap())?;
     let content = assets::read("skills/00-force-load.md")
-        .map(|c| crate::brand::render(&c).into_owned())
+        .map(|c| crate::brand::render(&crate::verbs::harness::cbm::gate(&env.home, &c)).into_owned())
         .unwrap_or_default();
     std::fs::write(&target, content)?;
 

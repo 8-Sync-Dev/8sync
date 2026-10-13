@@ -162,6 +162,9 @@ enum Cmd {
 
     /// Claude Code CLI with named per-repo sessions + the 8sync kit: 8sync ccc . <name>
     Ccc(verbs::ccc::Args),
+
+    /// Always-on guard: alerts Claude Code + you and SIGTERMs runaway harness helpers (MCP servers, LSPs, index workers)
+    Watchdog(verbs::watchdog::Args),
 }
 
 fn main() -> Result<()> {
@@ -223,6 +226,7 @@ fn main() -> Result<()> {
         Some(Cmd::Hq(a))      => verbs::hq::run(a),
         Some(Cmd::Forge(a))   => verbs::forge::run(a),
         Some(Cmd::Ccc(a))     => verbs::ccc::run(a),
+        Some(Cmd::Watchdog(a)) => verbs::watchdog::run(a),
         Some(Cmd::Ls(a))      => verbs::session_cmds::run_ls(a),
         Some(Cmd::Show(a))    => verbs::session_cmds::run_show(a),
         Some(Cmd::Guide)      => verbs::session_cmds::run_guide(),

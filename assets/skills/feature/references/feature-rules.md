@@ -34,7 +34,7 @@ Mỗi phase có 🎯 Goal + ✅ Acceptance Criteria (AC-NN, đo được) trong 
 ## R7 — Neo vào codebase (brownfield)
 
 - Tổng thể: `AGENTS.md` + `su-code/PROJECT.md` — KHÔNG mô tả lại.
-- Nghiệp vụ/kiến trúc: `su-code/KNOWLEDGE.md` + codebase-memory-mcp (`mcp__codebase_memory_mcp_get_architecture`, `_search_graph`) — tra trước khi code module.
+- Nghiệp vụ/kiến trúc: `su-code/KNOWLEDGE.md` + codegraph — tra trước khi code module.
 - Convention + quyết định: `AGENTS.md` + `su-code/DECISIONS.md` + `su-code/PREFERENCES.md`.
 - Không mô tả lại thứ đã có trong các nguồn trên; trích dẫn (vd "theo `su-code/DECISIONS.md` đã chốt X").
 
@@ -50,12 +50,11 @@ Commit **atomic mỗi task xong** trong `go`, qua `engine_advance {commit:true}`
 Mọi thao tác TÌM/HIỂU/ĐỊNH VỊ code (không phải sắp EDIT ngay) → dùng code-intelligence engine TRƯỚC grep/Read thô, theo đúng RULE #0 (`~/.omp/agent/APPEND_SYSTEM.md`). Áp dụng cho **CẢ main thread LẪN MỌI subagent** (`explore` ở `plan.md` Step 2, `task` executor ở `execute.md`, `reviewer`/`Tester` ở `ship.md`, discuss subagent ở `auto.md`). Ưu tiên:
 
 1. **codegraph** (local graph, CLI) — `codegraph query/explore/node/callers/callees/impact "<symbol|query>"`: source + call path + blast radius. Skill: `~/.omp/skills/codegraph/SKILL.md`.
-2. **codebase-memory-mcp** (MCP, LUÔN có trong tool list — gọi đúng tên đăng ký): `mcp__codebase_memory_mcp_search_graph`, `_trace_path`, `_get_architecture`, `_get_code_snippet`; full catalog visible (`query_graph`, `detect_changes`, …). Server chưa connected → dùng codegraph, KHÔNG loay hoay grep.
-3. **serena** (MCP, LSP, LUÔN có trong tool list): `mcp__serena_find_symbol`, `mcp__serena_find_referencing_symbols`, `mcp__serena_get_symbols_overview` để định vị; edit symbol-level (`replace_symbol_body`, …) cũng có sẵn. Chỉ `Read` raw file khi SẮP SỬA nó (read-before-edit) — KHÔNG dùng Read/grep để survey; tool của server khác/mới → `search_tool_bm25`.
-4. **Nén những gì BẠN phát lại:** báo cáo/subagent prompt/nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill.
+2. **codebase-memory-mcp** / **serena** — OPT-IN, mặc định TẮT (`8sync harness cbm|serena on`); chỉ dùng `mcp__codebase_memory_mcp_*` / `mcp__serena_*` nếu thực sự có trong tool list, không thì codegraph. Chỉ `Read` raw file khi SẮP SỬA nó (read-before-edit) — KHÔNG dùng Read/grep để survey; tool của server khác/mới → `search_tool_bm25`.
+3. **Nén những gì BẠN phát lại:** báo cáo/subagent prompt/nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill.
 
 **Subagent KHÔNG tự biết luật này** (không đọc APPEND_SYSTEM, không kế thừa session context — chỉ thấy prompt bạn soạn, giống R3). Khi spawn BẤT KỲ subagent nào cần tìm/hiểu code, prompt BẮT BUỘC nhúng 2 lớp:
-- (a) **Chỉ thị literal**: "Dùng `codegraph query/explore/callers/impact \"<query>\"` (CLI) hoặc codebase-memory-mcp (`mcp__codebase_memory_mcp_search_graph`/`_trace_path`/`_get_architecture`) / serena (`mcp__serena_find_symbol`) để tìm/hiểu/định vị code TRƯỚC — KHÔNG grep/Read thô để khảo sát. Chỉ Read file khi sắp sửa đổi nó. Kết quả dài (>50 dòng) sắp đưa vào báo cáo cuối → nén qua `mcp__headroom_compress`, không dump thô."
+- (a) **Chỉ thị literal**: "Dùng `codegraph query/explore/callers/impact \"<query>\"` (CLI) (hoặc cbm/serena nếu đã bật) để tìm/hiểu/định vị code TRƯỚC — KHÔNG grep/Read thô để khảo sát. Chỉ Read file khi sắp sửa đổi nó. Kết quả dài (>50 dòng) sắp đưa vào báo cáo cuối → nén qua `mcp__headroom_compress`, không dump thô."
 - (b) Nếu subagent type có quyền đọc skill (đa số có tool Read) → thêm: "Đọc `~/.omp/skills/codegraph/SKILL.md` nếu cần chi tiết cách dùng."
 
 Vi phạm (subagent grep/Read tràn lan để survey thay vì code-intel, hoặc dump log thô >50 dòng vào báo cáo) = lệch quy tắc dự án, không phải style nit — sửa ngay khi phát hiện, không đợi review pass mới bắt.

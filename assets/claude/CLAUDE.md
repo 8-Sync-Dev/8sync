@@ -9,9 +9,14 @@
 - `/rules` (được phép không) · `/aup-audit` (quét repo; khi thêm thu thập dữ liệu, nhắn tin người ngoài, high-risk, trước release) · `/sec` (secret, lỗ hổng) · `/harden` (cấu hình Claude Code).
 
 - Tự chủ: làm đến xong, tự verify, không xin phép từng bước. Chỉ hỏi khi thật sự cần — credential/quyền truy cập, thao tác phá huỷ/không hoàn tác/tốn tiền ngoài repo, hoặc quyết định sản phẩm có các lựa chọn khác hẳn nhau mà code/docs không trả lời được. Còn lại: chọn phương án an toàn, phổ biến, ghi rõ giả định, làm tiếp.
+- Khi phải hỏi: gom MỌI câu vào **một** `AskUserQuestion` (≤4 câu, mỗi câu 2–4 option, option khuyến nghị đứng đầu có "(Recommended)") để owner trả lời một lần rồi Submit. Không hỏi rải rác, không hỏi "tiếp tục không?".
+- Owner nói "tự làm đi" / "auto" / "bạn tự quyết": tự chọn option Recommended cho mọi câu loại sản phẩm/kỹ thuật, ghi giả định vào báo cáo, làm tiếp. Vẫn phải hỏi: secret/credential, và thao tác phá huỷ/không hoàn tác/tốn tiền/deploy prod/push main.
+- Đỡ bị hỏi quyền: chạy lệnh trong thư mục session; dùng `git -C <dir>` / path tuyệt đối thay cho `cd <dir> && …`; worktree đặt trong repo (`EnterWorktree`). Không dùng `bypassPermissions`/`--dangerously-skip-permissions`.
 - Repo có 8sync (`AGENTS.md`, `su-code/`): `CLAUDE.md` của repo chỉ đường tới quy ước, lệnh build/test và memory (`su-code/STATE.md` đọc đầu phiên). Skill của 8sync/omp có sẵn dạng `/<tên>` (vd `/8sync-cli` cho lệnh `8sync`, `/impeccable` cho UI) — mở skill khi task khớp mô tả.
 - Correctness trước, rồi design đơn giản, dễ maintain. Không thêm abstraction chưa cần.
-- Câu hỏi cấu trúc code → MCP `codebase-memory-mcp` / `serena` hoặc `codegraph` trước grep.
+- Câu hỏi cấu trúc code → `codegraph` CLI (nhanh, local) hoặc LSP plugin native của Claude Code trước grep.
+@cbm - codebase-memory-mcp đã bật: `mcp__codebase_memory_mcp_*` cho architecture/trace.
+@serena - serena đã bật: `mcp__serena_find_symbol` / `_find_referencing_symbols`.
 - Chạy build/test/lint của repo trước khi báo "xong". Code mới phải có test. Không sửa test cho pass. Không viết "verified/confirmed/tested" nếu không có lệnh hoặc nguồn chứng minh; chưa kiểm → ghi "not verified". Không bịa số liệu, kết quả hay nguồn.
 - Conventional commits; thay đổi user-facing → cập nhật `CHANGELOG.md`.
 - Task lớn: `explore` → task list → làm từng task + build/test → `reviewer` → commit. Gói sẵn: `/ship <task>`.

@@ -36,7 +36,7 @@ Real, mined shape: `skill://ai-microservice-design/references/patterns.md`.
 
 ### 1. Ground in the EXISTING topology — never design in a vacuum
 
-Map what already runs before adding to it:
+Map what already runs before adding to it (`mcp__codebase_memory_mcp_*` / `mcp__serena_*` only if enabled: `8sync harness cbm|serena on`; else codegraph):
 
 - `codegraph` / `mcp__codebase_memory_mcp_get_architecture` — service graph,
   packages, cross-service calls. Note the **clusters**: which service owns

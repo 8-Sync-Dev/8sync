@@ -19,7 +19,7 @@ Read, in order (token-lean; `headroom_compress` anything > ~50 lines):
 2. **`su-code/KNOWLEDGE.md`** — the most recent `validated:` / `failure:` entries (append-only, at the tail) so I don't repeat a known dead-end.
 3. **`CHANGELOG.md`** `## [Unreleased]` + top released version; **`git log --oneline -5`** to see what just landed.
 4. If a large feature is active: `su-code/planning/ACTIVE.md` → the active slug's `STATE.md`.
-Explore code with **codegraph / codebase-memory-mcp / serena** — never grep/Read-all.
+Explore code with **codegraph** (codebase-memory-mcp / serena only if enabled) — never grep/Read-all.
 
 ## 3. Prepare the workspace (make it actually runnable HERE)
 Follow the handoff's new-machine runbook + per-machine section. Concretely:

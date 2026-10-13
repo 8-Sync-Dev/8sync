@@ -33,7 +33,7 @@ pub(crate) fn global_pass(env: &env_detect::Env) -> Result<()> {
         std::fs::create_dir_all(p)?;
     }
     if let Some(c) = assets::read("skills/00-force-load.md") {
-        std::fs::write(&force_load, crate::brand::render(&c).as_ref())?;
+        std::fs::write(&force_load, crate::brand::render(&crate::verbs::harness::cbm::gate(&env.home, &c)).as_ref())?;
     }
     deploy::install_bundled_global(env)?;
     deploy::ensure_codegraph(env)?;

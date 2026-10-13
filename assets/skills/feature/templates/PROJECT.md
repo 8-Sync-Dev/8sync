@@ -14,7 +14,7 @@
 
 > Dự án đã có sẵn — feature này KHÔNG đứng riêng. Neo vào `AGENTS.md` + `su-code/`.
 
-- **Dùng lại module:** [tên — xem `su-code/KNOWLEDGE.md` / codebase-memory-mcp `get_architecture`]
+- **Dùng lại module:** [tên — xem `su-code/KNOWLEDGE.md` / `codegraph explore`]
 - **Tham khảo:** [`su-code/PROJECT.md` / `su-code/DECISIONS.md` mục liên quan]
 - **Module/thành phần mới:** [tên nếu có]
 - **KHÔNG đụng:** [module cấm sửa — chống lan]

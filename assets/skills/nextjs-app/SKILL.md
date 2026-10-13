@@ -36,7 +36,7 @@ Every step names a real omp tool. Do not improvise alternatives.
 You NEVER open `app/` files hoping. Before editing:
 
 1. **codegraph** (semantic index, ~35% token save vs grep): `codegraph index .` then `codegraph context "route tree, middleware, server actions"`. Locate routes, actions, and the backend client in one call.
-2. If the project is indexed in **codebase-memory**, call `mcp__codebase_memory_mcp_get_architecture` (or `search_graph` for a symbol, `trace_path` for a call chain RSC→action→backend). For per-file symbols use `mcp__serena_get_symbols_overview` on the target file; for diagnostics before/after an edit use `mcp__serena_get_diagnostics_for_file`.
+2. Only if **codebase-memory** is enabled (`8sync harness cbm on`) and the project is indexed, call `mcp__codebase_memory_mcp_get_architecture` (or `search_graph` for a symbol, `trace_path` for a call chain RSC→action→backend). For per-file symbols use `mcp__serena_get_symbols_overview` on the target file; for diagnostics before/after an edit use `mcp__serena_get_diagnostics_for_file`.
 3. Confirm the **App vs Pages** boundary: if `app/` exists, you're here. `src/app/` is the same router (just under `src/`).
 
 ### 1. Place the RSC vs Client boundary correctly

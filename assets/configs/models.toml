@@ -28,7 +28,7 @@ advisor = true
 # step0 = STEP-0 tool-routing enforcement (default ON). 8sync launches omp with a
 # `--config` overlay setting `grep.enabled = false` + `glob.enabled = false`, so
 # the two redundant searchers are gone from the session and code lookup MUST use
-# codegraph (CLI) · codebase-memory-mcp · serena. It names only what to REMOVE,
+# codegraph (CLI) first (cbm / serena only if enabled). It names only what to REMOVE,
 # so every other tool omp ships (MCP/xdev included) survives untouched.
 # `bash rg`/`grep -r` shell escapes on source are also blocked by
 # `bashInterceptor.patterns` — the rules are the `[bashInterceptor]` section at

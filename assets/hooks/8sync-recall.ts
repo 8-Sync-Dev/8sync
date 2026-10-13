@@ -21,7 +21,7 @@ export default function (pi: ExtensionAPI): void {
   function bundle(): string {
     const lines: string[] = [
       "# 8sync recall — obey ~/.omp/agent/APPEND_SYSTEM.md",
-      "Code-intel first (codegraph · codebase-memory-mcp · serena · headroom) BEFORE grep/Read; images → look yourself if GLM-5.3 / 5.3-Flash (native VLM); zai-vision ONLY for text-only GLM-5.2 (never guess a tool name — exact catalog: ~/.omp/capabilities.md); recall before / retain durable facts after; browser to verify web/UI; open a skill's SKILL.md before acting.",
+      "Code-intel first (codegraph CLI; cbm/serena only if enabled · headroom) BEFORE grep/Read; images → look yourself if GLM-5.3 / 5.3-Flash (native VLM); zai-vision ONLY for text-only GLM-5.2 (never guess a tool name — exact catalog: ~/.omp/capabilities.md); recall before / retain durable facts after; browser to verify web/UI; open a skill's SKILL.md before acting.",
     ];
 
     let skills: string[] = [];

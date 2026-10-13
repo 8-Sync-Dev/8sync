@@ -415,33 +415,47 @@ pub(crate) fn ensure_codegraph_init(root: &Path) {
     }
 }
 
-/// Ensure the `codebase-memory-mcp` binary is installed (upstream installer,
-/// binary-only) and registered as an omp MCP server. Mirrors `ensure_codegraph`:
-/// `8sync harness` auto-sets-up code intelligence so the agent gets the graph
-/// tools (search_graph/trace_path/get_architecture/…) with zero manual config.
+/// OPT-IN (see `harness::cbm`): installs the `codebase-memory-mcp` binary and
+/// registers it as an omp MCP server ONLY when the owner enabled it
+/// (`8sync harness cbm on` / `EIGHTSYNC_CBM=1`). Off (default) → one skip line,
+/// nothing installed or registered. A stub binary counts as not installed.
 pub(crate) fn ensure_codebase_memory_mcp(env: &env_detect::Env) -> Result<()> {
-    if which::which("codebase-memory-mcp").is_err() {
-        ui::step("codebase-memory-mcp (binary missing — upstream installer, binary-only)");
-        let url = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh";
-        let st = Command::new("sh")
-            .arg("-c")
-            .arg(format!("curl -fsSL {} | bash -s -- --skip-config", url))
-            .status();
-        match st {
-            Ok(s) if s.success() => ui::ok("codebase-memory-mcp installed"),
-            Ok(s) => ui::warn(&format!("codebase-memory-mcp installer exited {} — continuing", s)),
-            Err(e) => ui::warn(&format!("could not run installer: {} — continuing", e)),
+    use crate::verbs::harness::cbm::{self, Action};
+    let on = cbm::enabled(&env.home);
+    let mut inst = cbm::detect_install();
+    match cbm::decide(on, inst) {
+        Action::Skip => {
+            ui::skip("codebase-memory-mcp", "opt-in, off (enable: 8sync harness cbm on)");
+            return Ok(());
         }
-    } else {
-        let v = env_detect::cmd_version("codebase-memory-mcp", &["--version"]).unwrap_or_default();
-        ui::skip("codebase-memory-mcp", &format!("present ({})", v));
+        Action::Install => {
+            ui::step("codebase-memory-mcp (missing/stub — upstream installer, binary-only)");
+            let url = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh";
+            let st = Command::new("sh")
+                .arg("-c")
+                .arg(format!("curl -fsSL {} | bash -s -- --skip-config", url))
+                .status();
+            match st {
+                Ok(s) if s.success() => ui::ok("codebase-memory-mcp installed"),
+                Ok(s) => ui::warn(&format!("codebase-memory-mcp installer exited {} — continuing", s)),
+                Err(e) => ui::warn(&format!("could not run installer: {} — continuing", e)),
+            }
+            inst = cbm::detect_install();
+        }
+        Action::Register => {
+            let v = env_detect::cmd_version("codebase-memory-mcp", &["--version"]).unwrap_or_default();
+            ui::skip("codebase-memory-mcp", &format!("present ({})", v));
+        }
     }
-    if which::which("codebase-memory-mcp").is_ok() {
-        // Self-index on every MCP connect — no manual reindex needed thereafter.
-        let _ = Command::new("codebase-memory-mcp")
-            .args(["config", "set", "auto_index", "true"])
-            .status();
+    if inst != cbm::Install::Real {
+        ui::warn("codebase-memory-mcp not a real binary — not registering");
+        return Ok(());
     }
+    // Index ON DEMAND only: auto_index=true made every MCP connect (one per agent
+    // session) start an index worker — the CPU/RAM spike that made machines lag.
+    let _ = Command::new("codebase-memory-mcp")
+        .args(["config", "set", "auto_index", "false"])
+        .status();
     register_omp_mcp(&env.home, "codebase-memory-mcp", "codebase-memory-mcp", &[], &[])
 }
 
@@ -549,7 +563,10 @@ fn deregister_omp_mcp(home: &Path, name: &str) -> Result<()> {
 
 /// Best-effort: build/refresh the codebase-memory-mcp knowledge graph for `root`.
 pub(crate) fn index_codebase_memory(root: &Path) {
-    if which::which("codebase-memory-mcp").is_err() {
+    let home = dirs::home_dir().unwrap_or_default();
+    if !crate::verbs::harness::cbm::enabled(&home)
+        || crate::verbs::harness::cbm::detect_install() != crate::verbs::harness::cbm::Install::Real
+    {
         return;
     }
     ui::step("codebase-memory-mcp index (knowledge graph)");
@@ -651,10 +668,13 @@ pub(crate) fn code_intel_available(home: &Path) -> Vec<&'static str> {
     if which::which("codegraph").is_ok() {
         out.push("codegraph");
     }
-    if which::which("codebase-memory-mcp").is_ok() && registered("codebase-memory-mcp") {
+    if crate::verbs::harness::cbm::enabled(home)
+        && which::which("codebase-memory-mcp").is_ok()
+        && registered("codebase-memory-mcp")
+    {
         out.push("codebase-memory-mcp");
     }
-    if which::which("uvx").is_ok() && registered("serena") {
+    if crate::verbs::harness::serena::enabled(home) && which::which("uvx").is_ok() && registered("serena") {
         out.push("serena");
     }
     out
@@ -703,7 +723,13 @@ pub(crate) fn ensure_bash_interceptor(home: &Path) -> Result<()> {
     let bi = &models.bash_interceptor;
     let have = code_intel_available(home);
     let block = (bi.enabled && !bi.patterns.is_empty() && !have.is_empty())
-        .then(|| render_interceptor_block(bi));
+        .then(|| {
+            render_interceptor_block(
+                bi,
+                crate::verbs::harness::cbm::enabled(home),
+                crate::verbs::harness::serena::enabled(home),
+            )
+        });
     let cfg = home.join(".omp/agent/config.yml");
     if let Some(p) = cfg.parent() {
         std::fs::create_dir_all(p)?;
@@ -790,7 +816,7 @@ pub(crate) fn ensure_bash_interceptor(home: &Path) -> Result<()> {
     s.push_str(&block);
     std::fs::write(&cfg, s)?;
     ui::ok(&format!(
-        "bashInterceptor ON (STEP-0): {} rule(s) → codegraph/cbm/serena (present: {})",
+        "bashInterceptor ON (STEP-0): {} rule(s) → code-intel (present: {})",
         bi.patterns.len(),
         have.join(" · ")
     ));
@@ -802,7 +828,7 @@ pub(crate) fn ensure_bash_interceptor(home: &Path) -> Result<()> {
 /// The indented `STEP-0` comment is the OWNERSHIP MARKER: block detection must not
 /// depend on `message` text, which the user is invited to edit, and an indented
 /// line stays inside the block for the column-0 end scan above.
-fn render_interceptor_block(bi: &crate::models::BashInterceptor) -> String {
+fn render_interceptor_block(bi: &crate::models::BashInterceptor, cbm: bool, serena: bool) -> String {
     let mut out = format!(
         "\nbashInterceptor:\n  # {}:STEP-0 guard — generated from models.toml [bashInterceptor]; edits here are overwritten\n  enabled: true\n  patterns:\n",
         crate::brand::NS
@@ -813,7 +839,7 @@ fn render_interceptor_block(bi: &crate::models::BashInterceptor) -> String {
         out.push_str("\n      tool: ");
         out.push_str(&yaml_sq(&r.tool));
         out.push_str("\n      message: ");
-        out.push_str(&yaml_sq(&r.message));
+        out.push_str(&yaml_sq(&crate::verbs::harness::cbm::strip_mcp_mentions(&r.message, cbm, serena)));
         out.push('\n');
     }
     out
@@ -1000,7 +1026,7 @@ pub(crate) fn ensure_append_system(home: &Path) -> Result<()> {
     let Some(body) = assets::read("configs/omp/APPEND_SYSTEM.md") else {
         return Ok(());
     };
-    let body = crate::brand::render(&body).into_owned();
+    let body = crate::brand::render(&crate::verbs::harness::cbm::gate(home, &body)).into_owned();
     let target = home.join(".omp/agent/APPEND_SYSTEM.md");
     if let Some(p) = target.parent() {
         std::fs::create_dir_all(p)?;
@@ -1050,6 +1076,11 @@ pub(crate) fn ensure_mcp_spec(home: &Path) -> Result<()> {
 /// editing `~/.serena/serena_config.yml`) makes it authoritative per-launch —
 /// serena owns that file and rewrites it, so a config edit alone does not stick.
 pub(crate) fn ensure_serena_mcp(env: &env_detect::Env) -> Result<()> {
+    // OPT-IN (default off): `8sync harness serena on` / EIGHTSYNC_SERENA=1.
+    if !crate::verbs::harness::serena::enabled(&env.home) {
+        ui::skip("serena MCP", "opt-in, off (enable: 8sync harness serena on)");
+        return Ok(());
+    }
     if which::which("uvx").is_err() && which::which("uv").is_err() {
         ensure_uv();
     }
@@ -1058,16 +1089,7 @@ pub(crate) fn ensure_serena_mcp(env: &env_detect::Env) -> Result<()> {
             &env.home,
             "serena",
             "uvx",
-            &[
-                "--from",
-                "git+https://github.com/oraios/serena",
-                "serena",
-                "start-mcp-server",
-                "--context",
-                "claude-code",
-                "--enable-web-dashboard",
-                "False",
-            ],
+            &crate::verbs::harness::serena::UVX_ARGS,
             &[],
         )
     } else {
@@ -1341,7 +1363,7 @@ pub(crate) fn ensure_omp_capabilities_snapshot(home: &Path) -> Result<()> {
     }
     out.push_str("\n## Registered MCP servers — EXACT tool catalog\n\n");
     out.push_str(&format!(
-        "`{}` server(s) in `~/.omp/agent/mcp.json`. Use these BEFORE raw grep/read (STEP 0). Callable names are the REGISTERED forms: `mcp__<server-with-underscores>_<tool>` (e.g. `mcp__codebase_memory_mcp_search_graph`, `mcp__serena_find_symbol`; exception: `mcp__headroom_compress` — omp collapses a duplicated server prefix). The four harness servers are kept ALWAYS VISIBLE by `8sync harness` (`mcp.discoveryDefaultServers`) — call their tools directly; only other/newly-added servers' tools need one `search_tool_bm25` call first.\n\n",
+        "`{}` server(s) in `~/.omp/agent/mcp.json`. Use these BEFORE raw grep/read (STEP 0). Callable names are the REGISTERED forms: `mcp__<server-with-underscores>_<tool>` (e.g. `mcp__headroom_compress`; exception: a duplicated server prefix — omp collapses a duplicated server prefix). The four harness servers are kept ALWAYS VISIBLE by `8sync harness` (`mcp.discoveryDefaultServers`) — call their tools directly; only other/newly-added servers' tools need one `search_tool_bm25` call first.\n\n",
         mcp_names_sorted.len()
     ));
     for name in &mcp_names_sorted {
@@ -1432,7 +1454,11 @@ fn deploy_omp_pair(
     let Some(body) = assets::read(asset) else {
         return Ok(());
     };
-    let body = if asset.ends_with(".md") { crate::brand::render(&body).into_owned() } else { body };
+    let body = if asset.ends_with(".md") {
+        crate::brand::render(&crate::verbs::harness::cbm::gate(home, &body)).into_owned()
+    } else {
+        body
+    };
     let global = home.join(global_rel);
     if let Some(p) = global.parent() {
         std::fs::create_dir_all(p)?;
@@ -1767,7 +1793,7 @@ mod tests {
         let bi = crate::models::ModelConfig::default().bash_interceptor;
         assert!(bi.enabled, "embedded models.toml disabled the STEP-0 guard");
         assert_eq!(bi.patterns.len(), 3, "embedded models.toml lost its rules");
-        let block = render_interceptor_block(&bi);
+        let block = render_interceptor_block(&bi, true, true);
         // Ownership marker — `ensure_bash_interceptor` finds its own block by it.
         assert!(block.contains("STEP-0"), "block carries no STEP-0 ownership marker");
         for r in &bi.patterns {

@@ -243,8 +243,8 @@ pub(crate) fn command_md(name: &str, description: &str, argument_hint: &str) -> 
          ## 0. Ground\n\
          \n\
          Read <the state this command depends on> before acting. Obey\n\
-         `~/.omp/agent/APPEND_SYSTEM.md` (code-intel first). Explore with codegraph /\n\
-         codebase-memory-mcp / serena — never grep-everything.\n\
+         `~/.omp/agent/APPEND_SYSTEM.md` (code-intel first). Explore with codegraph\n\
+         (cbm / serena only if enabled) — never grep-everything.\n\
          \n\
          ## 1. Workflow\n\
          \n\

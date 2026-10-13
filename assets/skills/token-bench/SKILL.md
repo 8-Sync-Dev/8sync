@@ -1,6 +1,6 @@
 ---
 name: token-bench
-description: Prove how much the code-intelligence stack (codegraph / codebase-memory-mcp) actually saves on a real codebase — measured token reduction vs naive grep+read, with a correctness check. Use when the user asks "how much token does codegraph save", "benchmark the token optimization", "prove >X% reduction on this repo", or wants evidence the STEP-0 stack is worth it. Runs a real codebase, not a synthetic claim.
+description: Prove how much the code-intelligence stack (codegraph; codebase-memory-mcp if enabled) actually saves on a real codebase — measured token reduction vs naive grep+read, with a correctness check. Use when the user asks "how much token does codegraph save", "benchmark the token optimization", "prove >X% reduction on this repo", or wants evidence the STEP-0 stack is worth it. Runs a real codebase, not a synthetic claim.
 ---
 
 # token-bench — measure code-intel token savings (real codebase, with correctness)

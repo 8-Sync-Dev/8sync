@@ -71,11 +71,18 @@
 # 6,030,288 B, 976 B over 5888 KiB — the estimate above predates the shared secret
 # masker + review fixes (+~25 kB local). Ceiling 5952 KiB (~64 KiB left) from the
 # measured asset. v0.67.0 was tagged but not published; v0.67.1 is the release.
+#
+# 2026-10-13 (after v0.68.0: `8sync watchdog` — std-only /proc monitor, kill/
+# quarantine, systemd unit, `ccc hook watchdog` — plus `harness cbm|serena` opt-in
+# switches). Local x86_64-unknown-linux-gnu release, same flags: v0.68.0 ad9151a
+# 5,917,472 B → 6,004,648 B (+87,176). v0.68.0 musl asset 6,050,768 B, so the next
+# one is ≈ 6,137,944 B → ceiling 6016 KiB (~22 KiB left). Re-check against the real
+# release asset.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-6094848}"   # 5952 KiB (raised 2026-10-13 from 5888 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-6160384}"   # 6016 KiB (raised 2026-10-13 from 5952 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

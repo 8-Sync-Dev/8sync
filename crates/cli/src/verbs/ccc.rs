@@ -69,7 +69,7 @@ mod verify;
                (no-op until `8sync hq setup`)
       also     auto permission mode · medium effort · task list · claude.ai connectors off (each only
                if unset) · build/test commands skip the classifier · deny .env / keys / *.session / *.pkl and force-push ·
-               codebase-memory-mcp + serena from omp's MCP config when their command is on PATH
+               serena / codebase-memory-mcp ONLY if opted in (`8sync harness serena|cbm on`) from omp's MCP config when on PATH
                (serena alwaysLoad=false; failures are reported)
 "})]
 pub struct Args {
@@ -501,7 +501,10 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
 
     let mut kept = Vec::new();
     for (asset, rel) in KIT_FILES {
-        let body = assets::read(asset).with_context(|| format!("asset missing: {asset}"))?;
+        let body = crate::verbs::harness::cbm::gate(
+            &env.home,
+            &assets::read(asset).with_context(|| format!("asset missing: {asset}"))?,
+        );
         let target = dir.join(rel);
         match std::fs::read_to_string(&target) {
             Ok(cur) if cur == body => {}
@@ -542,7 +545,10 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
         ui::info(&format!("kept your edited {} (`8sync ccc kit --force` overwrites)", dir.join(rel).display()));
     }
 
-    let rules = assets::read("claude/CLAUDE.md").context("asset missing: claude/CLAUDE.md")?;
+    let rules = crate::verbs::harness::cbm::gate(
+        &env.home,
+        &assets::read("claude/CLAUDE.md").context("asset missing: claude/CLAUDE.md")?,
+    );
     crate::verbs::harness::memory::upsert_block(&dir.join("CLAUDE.md"), CLAUDE_MD_BEGIN, CLAUDE_MD_END, rules.trim_end())?;
 
     let settings = dir.join("settings.json");
@@ -568,7 +574,7 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
     if let Some(claude) = find_claude() {
         mirror_mcp(env, &claude);
     } else {
-        ui::info("MCP: run `8sync ccc kit` again after `claude` is installed to add codebase-memory-mcp + serena");
+        ui::info("MCP: run `8sync ccc kit` again after `claude` is installed to add opted-in MCP servers (harness serena|cbm on)");
     }
     Ok(())
 }
@@ -721,6 +727,16 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             }]
         }),
     );
+    // Watchdog alerts -> additionalContext (shape per https://code.claude.com/docs/en/hooks:
+    // `hookSpecificOutput.{hookEventName, additionalContext}`). Synchronous: it must land before the
+    // next model turn; a no-op (no output) unless `8sync watchdog` wrote something new.
+    for event in ["UserPromptSubmit", "PostToolUse"] {
+        upsert_hook_group(
+            hooks,
+            event,
+            json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "watchdog"], "timeout": 5 }] }),
+        );
+    }
     // Agent-team events -> `8sync hq hook <Event>`. Event names, `async` (background, never
     // blocks) and `timeout` (seconds) per https://code.claude.com/docs/en/hooks (checked
     // 2026-10-12). `hq hook` is a fast no-op until `8sync hq setup`, so always registering is safe.
@@ -945,7 +961,16 @@ fn mirror_mcp(env: &Env, claude: &Path) {
         Some(d) => PathBuf::from(d).join(".claude.json"),
         None => env.home.join(".claude.json"),
     });
+    let cbm_on = crate::verbs::harness::cbm::enabled(&env.home);
     for name in ["codebase-memory-mcp", "serena"] {
+        if name == "serena" && !crate::verbs::harness::serena::enabled(&env.home) {
+            ui::skip("MCP serena", "opt-in, off (8sync harness serena on)");
+            continue;
+        }
+        if name == "codebase-memory-mcp" && !cbm_on {
+            ui::skip("MCP codebase-memory-mcp", "opt-in, off (8sync harness cbm on)");
+            continue;
+        }
         if user["mcpServers"].get(name).is_some() {
             ui::skip(&format!("MCP {name}"), "already in Claude Code");
             continue;
@@ -1201,6 +1226,8 @@ fn hook(rest: &[String]) -> Result<()> {
             }));
             guard::check(&input)
         }
+        // Fast path: no alerts file / nothing new = no output (sync hook, timeout 5 s).
+        Some("watchdog") => crate::verbs::watchdog::run_hook(&input),
         Some("session-start") => {
             let cwd = serde_json::from_str::<Value>(&input).ok().and_then(|v| v["cwd"].as_str().map(PathBuf::from));
             let start = cwd.or_else(|| std::env::current_dir().ok()).unwrap_or_default();
@@ -1208,7 +1235,7 @@ fn hook(rest: &[String]) -> Result<()> {
             let root = find_state_root(&start, home.as_deref());
             root.map(|r| session_digest(&r)).filter(|d| !d.is_empty())
         }
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|session-start   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -1254,7 +1281,7 @@ mod tests {
         assert!(deny.iter().any(|r| r == "WebFetch") && deny.iter().any(|r| r == "Bash(git push -f*)"));
 
         let post = v["hooks"]["PostToolUse"].as_array().unwrap();
-        assert_eq!(post.len(), 3, "user hook kept, ours replaced in place, hq SendMessage appended");
+        assert_eq!(post.len(), 4, "user hook kept, ours replaced in place, watchdog + hq SendMessage appended");
         assert_eq!(post[0]["hooks"][0]["command"], "prettier");
         assert_eq!(post[1]["hooks"][0]["command"], "/new/8sync");
         assert_eq!(post[1]["hooks"][0]["asyncRewake"], true, "edits never wait for the check");

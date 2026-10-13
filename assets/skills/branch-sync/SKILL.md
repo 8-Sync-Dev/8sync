@@ -29,7 +29,7 @@ Inspect any branch thoroughly before merging to ensure code quality and impact s
 - **Diff Overview:** `git diff main...<branch>` (shows changes introduced by `<branch>`).
 - **Commit History:** `git log main..<branch> --oneline --stat` (shows commit breakdown).
 - **Symbol & Architecture Impact:**
-  - Run `codegraph impact "<symbol>"` or use `mcp__codebase_memory_mcp_detect_changes` to check for breaking exported APIs across the branch boundary.
+  - Run `codegraph impact "<symbol>"` to check for breaking exported APIs across the branch boundary.
 - **Dry-run Conflict Pre-check:**
   ```bash
   # Check if merging <branch> into main will cause conflicts BEFORE doing it

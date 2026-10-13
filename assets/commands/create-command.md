@@ -48,7 +48,7 @@ description: <one sentence; this is what the user sees in the command list>
 
 - Open by saying what `$ARGUMENTS` is.
 - Numbered steps. Each step is a real command or tool call with its exact invocation.
-- Name the tools explicitly (`8sync …`, `mcp__serena_find_symbol`, `codegraph query`). A command
+- Name the tools explicitly (`8sync …`, `codegraph query`). A command
   that says "analyse the code" produces nothing reproducible.
 - State the **acceptance check** — how the user knows it worked.
 - State what the command must NOT do (push, delete, widen scope).
