@@ -29,8 +29,7 @@ pub(crate) fn resolve(env: Option<&str>, file: Option<bool>) -> bool {
 }
 
 fn read_file_flag(home: &Path) -> Option<bool> {
-    let s = std::fs::read_to_string(features_path(home)).ok()?;
-    s.parse::<toml::Table>().ok()?.get(KEY)?.as_bool()
+    read_flag_key(home, KEY)
 }
 
 pub(crate) fn enabled(home: &Path) -> bool {
@@ -49,13 +48,71 @@ pub(crate) fn read_flag_key(home: &Path, key: &str) -> Option<bool> {
 
 pub(crate) fn write_flag_key(home: &Path, key: &str, on: bool) -> Result<()> {
     let p = features_path(home);
-    let mut t = std::fs::read_to_string(&p).ok().and_then(|s| s.parse::<toml::Table>().ok()).unwrap_or_default();
+    let mut t = match std::fs::read_to_string(&p) {
+        // never replace a file we cannot parse: it may hold the owner's other keys
+        Ok(s) => s.parse::<toml::Table>().map_err(|e| anyhow::anyhow!("{} is not valid TOML ({e}); fix it first", p.display()))?,
+        Err(_) => toml::Table::new(),
+    };
     t.insert(key.into(), toml::Value::Boolean(on));
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
     }
     std::fs::write(&p, toml::to_string_pretty(&t)?)?;
     Ok(())
+}
+
+/// Pure: true when an MCP entry launches exactly `cmd args` (other keys such as
+/// `type`/`alwaysLoad`/`env` are ignored; a missing `args` equals `[]`).
+pub(crate) fn same_launcher(e: &Value, cmd: &str, args: &[&str]) -> bool {
+    e["command"] == cmd
+        && match e.get("args") {
+            None | Some(Value::Null) => args.is_empty(),
+            Some(a) => a.as_array().is_some_and(|a| a.len() == args.len() && a.iter().zip(args).all(|(x, y)| x == *y)),
+        }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ClaudeRemoval {
+    Absent,
+    /// The owner's own entry (different launcher): left alone.
+    Foreign,
+    Removed,
+    Failed,
+}
+
+/// Pure decision over `~/.claude.json`: remove only the entry 8sync mirrored.
+pub(crate) fn claude_entry_state(user: &Value, name: &str, managed: impl Fn(&Value) -> bool) -> ClaudeRemoval {
+    match user["mcpServers"].get(name) {
+        None => ClaudeRemoval::Absent,
+        Some(e) if managed(e) => ClaudeRemoval::Removed,
+        Some(_) => ClaudeRemoval::Foreign,
+    }
+}
+
+/// Removes `name` from Claude Code's user scope only when it is the launcher
+/// 8sync mirrors from omp; an owner-added entry under the same name is kept.
+pub(crate) fn remove_from_claude_if(home: &Path, name: &str, managed: impl Fn(&Value) -> bool) -> ClaudeRemoval {
+    let path = match std::env::var_os("CLAUDE_CONFIG_DIR") {
+        Some(d) => PathBuf::from(d).join(".claude.json"),
+        None => home.join(".claude.json"),
+    };
+    let user = std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+    match claude_entry_state(&user, name, managed) {
+        ClaudeRemoval::Removed => {
+            if remove_from_claude_named(name) { ClaudeRemoval::Removed } else { ClaudeRemoval::Failed }
+        }
+        other => other,
+    }
+}
+
+/// Prints the outcome of [`remove_from_claude_if`].
+pub(crate) fn report_claude_removal(name: &str, r: ClaudeRemoval) {
+    match r {
+        ClaudeRemoval::Removed => ui::ok(&format!("removed {name} from Claude Code (user scope)")),
+        ClaudeRemoval::Absent => ui::skip("Claude Code MCP", "not registered"),
+        ClaudeRemoval::Foreign => ui::skip("Claude Code MCP", &format!("`{name}` there is your own entry (not 8sync's launcher) — kept; `claude mcp remove {name} -s user` to drop it")),
+        ClaudeRemoval::Failed => ui::warn(&format!("`claude mcp remove {name} -s user` failed (or `claude` missing)")),
+    }
 }
 
 /// Pure: resolve feature-gated lines in an embedded asset. A line starting with
@@ -109,14 +166,7 @@ pub(crate) fn remove_from_claude_named(name: &str) -> bool {
 }
 
 fn write_flag(home: &Path, on: bool) -> Result<()> {
-    let p = features_path(home);
-    let mut t = std::fs::read_to_string(&p).ok().and_then(|s| s.parse::<toml::Table>().ok()).unwrap_or_default();
-    t.insert(KEY.into(), toml::Value::Boolean(on));
-    if let Some(d) = p.parent() {
-        std::fs::create_dir_all(d)?;
-    }
-    std::fs::write(&p, toml::to_string_pretty(&t)?)?;
-    Ok(())
+    write_flag_key(home, KEY, on)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -189,8 +239,8 @@ fn remove_from_omp(home: &Path) -> Result<bool> {
     Ok(true)
 }
 
-fn remove_from_claude() -> bool {
-    remove_from_claude_named(NAME)
+fn remove_from_claude(home: &Path) -> ClaudeRemoval {
+    remove_from_claude_if(home, NAME, |e| same_launcher(e, NAME, &[]))
 }
 
 pub(crate) fn harness_cbm(env: &env_detect::Env, args: &[String]) -> Result<()> {
@@ -212,11 +262,7 @@ pub(crate) fn harness_cbm(env: &env_detect::Env, args: &[String]) -> Result<()> 
             } else {
                 ui::skip("omp mcp.json", "no 8sync-managed entry");
             }
-            if remove_from_claude() {
-                ui::ok("removed codebase-memory-mcp from Claude Code (user scope)");
-            } else {
-                ui::skip("Claude Code MCP", "not registered (or `claude` missing)");
-            }
+            report_claude_removal(NAME, remove_from_claude(&env.home));
             ui::info("nothing was killed; to stop a running one: `systemctl --user disable --now codebase-memory-mcp` / `pkill -f codebase-memory-mcp`; cache: ~/.cache/codebase-memory-mcp");
             if std::env::var_os("EIGHTSYNC_CBM").is_some() {
                 ui::warn("EIGHTSYNC_CBM is set in this shell and overrides the file");
@@ -313,5 +359,34 @@ mod tests {
         let off = strip_mcp_mentions(m, false, false);
         assert!(!off.contains("mcp__") && off.contains("codegraph query"));
         assert!(strip_mcp_mentions(m, true, true).contains("mcp__serena_find_symbol"));
+    }
+
+    #[test]
+    fn claude_side_removes_only_the_mirrored_launcher() {
+        let m = |e: &Value| same_launcher(e, NAME, &[]);
+        let ours = serde_json::json!({"mcpServers": {NAME: {"type":"stdio","command":NAME,"args":[]}}});
+        assert_eq!(claude_entry_state(&ours, NAME, m), ClaudeRemoval::Removed);
+        let no_args = serde_json::json!({"mcpServers": {NAME: {"type":"stdio","command":NAME}}});
+        assert_eq!(claude_entry_state(&no_args, NAME, m), ClaudeRemoval::Removed);
+        for e in [
+            serde_json::json!({"command": "/opt/cbm/codebase-memory-mcp", "args": []}),
+            serde_json::json!({"command": NAME, "args": ["--repo", "/x"]}),
+            serde_json::json!({"type": "http", "url": "http://127.0.0.1:9000"}),
+        ] {
+            let owner = serde_json::json!({"mcpServers": {NAME: e}});
+            assert_eq!(claude_entry_state(&owner, NAME, m), ClaudeRemoval::Foreign, "{owner}");
+        }
+    }
+
+    #[test]
+    fn unparseable_features_file_is_not_overwritten() {
+        let d = std::env::temp_dir().join(format!("cbm-badtoml-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let p = features_path(&d);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "other = [unclosed\n").unwrap();
+        assert!(write_flag_key(&d, KEY, true).is_err());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "other = [unclosed\n");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -1089,16 +1089,7 @@ pub(crate) fn ensure_serena_mcp(env: &env_detect::Env) -> Result<()> {
             &env.home,
             "serena",
             "uvx",
-            &[
-                "--from",
-                "git+https://github.com/oraios/serena",
-                "serena",
-                "start-mcp-server",
-                "--context",
-                "claude-code",
-                "--enable-web-dashboard",
-                "False",
-            ],
+            &crate::verbs::harness::serena::UVX_ARGS,
             &[],
         )
     } else {

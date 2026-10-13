@@ -117,6 +117,8 @@ pub struct Config {
     pub notify: bool,
     pub roots: Vec<String>,
     pub helpers: Vec<String>,
+    /// Helpers that are legitimately heavy while indexing (LSPs, codegraph): alert, never kill.
+    pub warn_only: Vec<String>,
     pub watch: Vec<String>,
 }
 
@@ -145,6 +147,10 @@ impl Default for Config {
                 "codebase-memory-mcp", "serena", "headroom", "codegraph", "tsserver", "rust-analyzer",
                 "typescript-language-server", "gopls", "pyright-langserver", "basedpyright-langserver",
             ]),
+            warn_only: v(&[
+                "codegraph", "tsserver", "rust-analyzer", "typescript-language-server", "gopls", "pyright-langserver",
+                "basedpyright-langserver",
+            ]),
             watch: v(&["node", "bun", "python", "python3", "uv", "uvx", "npx", "deno", "java"]),
         }
     }
@@ -153,7 +159,8 @@ impl Default for Config {
 const CONFIG_TEMPLATE: &str = "\
 # 8sync watchdog thresholds. Edit and restart: systemctl --user restart 8sync-watchdog
 period_secs = 2.0
-# Known helpers (listed below) are SIGTERMed after the CPU/RSS window; claude/omp never are.
+# Known helpers (listed below) running under a claude/omp session are SIGTERMed after the
+# CPU/RSS window (except warn_only); claude/omp and processes outside a session never are.
 cpu_pct = 150.0              # 100 = one core
 cpu_sustain_secs = 20.0
 watched_cpu_sustain_secs = 60.0   # node/python/... under a session: alert only
@@ -171,6 +178,8 @@ respawn_window_secs = 600.0  # ... within this window = quarantined (~/.config/8
 notify = true
 roots = [\"claude\", \"omp\"]
 helpers = [\"codebase-memory-mcp\", \"serena\", \"headroom\", \"codegraph\", \"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
+# helpers that index heavily by design: alert only, never killed
+warn_only = [\"codegraph\", \"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
 watch = [\"node\", \"bun\", \"python\", \"python3\", \"uv\", \"uvx\", \"npx\", \"deno\", \"java\"]
 ";
 
@@ -216,6 +225,7 @@ impl Config {
         }
         l("roots", &mut c.roots);
         l("helpers", &mut c.helpers);
+        l("warn_only", &mut c.warn_only);
         l("watch", &mut c.watch);
         c
     }
@@ -500,7 +510,7 @@ pub enum Act {
     Term(u32, u64),
     Kill(u32, u64),
     /// the full quarantine list to persist
-    Block(Vec<String>),
+    Block(String),
 }
 
 #[derive(Default)]
@@ -591,7 +601,11 @@ impl Engine {
     }
 
     fn may_kill(&self, s: &Snap, p: &P) -> bool {
-        self.cfg.auto_kill && p.kind == Kind::Helper && p.pid > 1 && !s.protect.contains(&p.pid) && !self.pending.contains_key(&(p.pid, p.start))
+        self.cfg.auto_kill
+            && p.kind == Kind::Helper
+            && p.root.is_some()
+            && !self.cfg.warn_only.contains(&p.name)
+            && p.pid > 1 && !s.protect.contains(&p.pid) && !self.pending.contains_key(&(p.pid, p.start))
     }
 
     /// SIGTERM bookkeeping for one helper; returns the action label and may quarantine.
@@ -607,7 +621,7 @@ impl Engine {
         list.push(s.now);
         let n = list.len();
         if n > self.cfg.respawn_limit && self.blocked.insert(p.name.clone()) {
-            out.acts.push(Act::Block(self.blocked.iter().cloned().collect()));
+            out.acts.push(Act::Block(p.name.clone()));
             let msg = format!(
                 "{} killed {n}x in {:.0} min → blocked (`8sync watchdog unblock {}` allows it again)",
                 p.name,
@@ -916,15 +930,43 @@ pub fn append_alert(paths: &Paths, a: &Alert) -> std::io::Result<()> {
     writeln!(f, "{}", a.to_json())
 }
 
-fn read_blocked(paths: &Paths) -> BTreeSet<String> {
-    fs::read_to_string(&paths.blocked).unwrap_or_default().lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
+fn parse_blocked(s: &str) -> BTreeSet<String> {
+    s.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
 }
 
-fn write_blocked(paths: &Paths, names: &[String]) {
-    if let Some(d) = paths.blocked.parent() {
-        let _ = fs::create_dir_all(d);
+/// `None` on a read error other than "missing", so a transient failure never
+/// clears quarantines.
+fn try_read_blocked(paths: &Paths) -> Option<BTreeSet<String>> {
+    match fs::read_to_string(&paths.blocked) {
+        Ok(s) => Some(parse_blocked(&s)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(BTreeSet::new()),
+        Err(_) => None,
     }
-    let _ = fs::write(&paths.blocked, names.join("\n") + "\n");
+}
+
+fn read_blocked(paths: &Paths) -> BTreeSet<String> {
+    try_read_blocked(paths).unwrap_or_default()
+}
+
+/// Read-modify-write of the blocked list under an exclusive lock, written via
+/// tmp + rename, so the service (`Act::Block`) and `unblock` never lose each
+/// other's change and a reader never sees a half-written file.
+fn update_blocked<T>(paths: &Paths, f: impl FnOnce(&mut BTreeSet<String>) -> T) -> std::io::Result<T> {
+    let dir = paths.blocked.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(dir)?;
+    let lock = fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("watchdog-blocked.lock"))?;
+    lock.lock()?;
+    let mut set = match fs::read_to_string(&paths.blocked) {
+        Ok(s) => parse_blocked(&s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeSet::new(),
+        Err(e) => return Err(e),
+    };
+    let out = f(&mut set);
+    let tmp = paths.blocked.with_extension("tmp");
+    let body: String = set.iter().map(|n| format!("{n}\n")).collect();
+    fs::write(&tmp, body)?;
+    fs::rename(&tmp, &paths.blocked)?;
+    Ok(out)
 }
 
 /// Removes names from the blocked list; returns (removed, unknown).
@@ -944,10 +986,11 @@ fn unblock(paths: &Paths, names: &[String], all: bool) -> Result<()> {
     if names.is_empty() && !all {
         bail!("8sync watchdog unblock: name a helper (see `8sync watchdog status`) or pass --all");
     }
-    let (keep, removed, unknown) = unblock_names(&read_blocked(paths), names, all);
-    if !removed.is_empty() {
-        write_blocked(paths, &keep.into_iter().collect::<Vec<_>>());
-    }
+    let (removed, unknown) = update_blocked(paths, |set| {
+        let (keep, removed, unknown) = unblock_names(set, names, all);
+        *set = keep;
+        (removed, unknown)
+    })?;
     println!("unblocked {}", if removed.is_empty() { "nothing".into() } else { removed.join(", ") });
     if !unknown.is_empty() {
         println!("not blocked: {}", unknown.join(", "));
@@ -993,7 +1036,9 @@ fn run_loop(paths: &Paths, config: Option<&Path>, dry: bool) -> Result<()> {
     loop {
         let t = Instant::now();
         let snap = sampler.sample();
-        engine.set_blocked(read_blocked(paths));
+        if let Some(b) = try_read_blocked(paths) {
+            engine.set_blocked(b);
+        }
         let out = engine.step(&snap);
         for a in &out.alerts {
             println!("[{}] {} · {}", a.kind, a.msg, a.action);
@@ -1003,12 +1048,17 @@ fn run_loop(paths: &Paths, config: Option<&Path>, dry: bool) -> Result<()> {
             }
         }
         for act in out.acts {
+            if dry {
+                continue; // belt and braces: the engine emits no acts in dry-run either
+            }
             match act {
                 Act::Term(pid, start) => signal("-TERM", pid, start),
                 Act::Kill(pid, start) => signal("-KILL", pid, start),
-                Act::Block(names) => {
-                    write_blocked(paths, &names);
-                    println!("blocked helpers: {} — to allow again, edit {}", names.join(", "), paths.blocked.display());
+                Act::Block(name) => {
+                    let _ = update_blocked(paths, |b| {
+                        b.insert(name.clone());
+                    });
+                    println!("blocked helper: {name} — `8sync watchdog unblock {name}` allows it again");
                 }
             }
         }
@@ -1107,7 +1157,7 @@ pub fn run_hook(input: &str) -> Option<String> {
         return None; // nothing was ever alerted: no work
     }
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-    hook_output(input, &paths, now, || my_session_root(&Config::load(&paths.config)))
+    hook_output(input, &paths, now, || my_session_root(&Config::default()))
 }
 
 // ───────────────────────── service ─────────────────────────
@@ -1370,7 +1420,7 @@ mod tests {
                 let o = e.step(&snap(t, procs));
                 kills += o.acts.iter().filter(|a| matches!(a, Act::Term(..))).count();
                 if let Some(Act::Block(n)) = o.acts.iter().find(|a| matches!(a, Act::Block(_))) {
-                    assert_eq!(n, &vec!["codebase-memory-mcp".to_string()]);
+                    assert_eq!(n, "codebase-memory-mcp");
                     assert!(o.alerts.iter().any(|a| a.kind == "quarantine" && a.msg.contains("blocked")));
                     blocked_at = Some(gen);
                     break 'outer;
@@ -1401,6 +1451,66 @@ mod tests {
         e.kills.insert("gopls".into(), vec![1.0]);
         e.set_blocked(set(&["gopls"]));
         assert!(e.kills.contains_key("gopls"));
+    }
+
+    #[test]
+    fn kill_only_inside_a_session_and_never_warn_only() {
+        let burn = |e: &mut Engine, procs: &dyn Fn(u64) -> Vec<P>| {
+            let mut acts = Vec::new();
+            for i in 0..15u64 {
+                let o = e.step(&snap(i as f64 * 2.0, procs(i)));
+                acts.extend(o.acts);
+            }
+            acts
+        };
+        // a helper the owner runs outside any claude/omp tree (editor, terminal)
+        let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+        let outside = burn(&mut e, &|i| vec![proc(300, 1, "codebase-memory-mcp", Kind::Helper, 566 * i, 100)]);
+        assert!(outside.is_empty(), "no session root → alert only: {outside:?}");
+        // an LSP under a session indexes hard by design → alert only
+        let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+        let lsp = burn(&mut e, &|i| vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(301, 100, "rust-analyzer", Kind::Helper, 566 * i, 100)]);
+        assert!(lsp.is_empty(), "warn_only helper is never signalled: {lsp:?}");
+        // the same burn by cbm under a session is killed
+        let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+        let cbm = burn(&mut e, &|i| vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(302, 100, "codebase-memory-mcp", Kind::Helper, 566 * i, 100)]);
+        assert!(cbm.contains(&Act::Term(302, 3020)));
+    }
+
+    #[test]
+    fn blocked_file_updates_are_serialized() {
+        let paths = Paths::at(&tmp("blk"));
+        let hs: Vec<_> = (0..4)
+            .map(|t| {
+                let paths = paths.clone();
+                std::thread::spawn(move || {
+                    for i in 0..25 {
+                        update_blocked(&paths, |b| {
+                            b.insert(format!("h{t}-{i}"));
+                        })
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        hs.into_iter().for_each(|h| h.join().unwrap());
+        assert_eq!(read_blocked(&paths).len(), 100, "no lost update");
+        unblock(&paths, &["h0-0".into()], false).unwrap();
+        assert!(!read_blocked(&paths).contains("h0-0") && read_blocked(&paths).len() == 99);
+        assert_eq!(try_read_blocked(&Paths::at(&tmp("none"))), Some(BTreeSet::new()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn signal_skips_a_reused_pid() {
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = child.id();
+        let start = parse_stat(&read(format!("/proc/{pid}/stat"))).unwrap().start;
+        signal("-TERM", pid, start + 1); // wrong start time = a different process
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(child.try_wait().unwrap().is_none(), "a pid with another start time must not be signalled");
+        signal("-TERM", pid, start);
+        assert!(child.wait().unwrap().code().is_none(), "terminated by signal");
     }
 
     #[test]

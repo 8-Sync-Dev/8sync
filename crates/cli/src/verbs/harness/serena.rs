@@ -6,12 +6,28 @@ use anyhow::Result;
 use serde_json::Value;
 use std::path::Path;
 
-use super::cbm::{flag_enabled, read_flag_key, remove_from_claude_named, write_flag_key};
+use super::cbm::{flag_enabled, read_flag_key, remove_from_claude_if, report_claude_removal, same_launcher, write_flag_key};
 use crate::{env_detect, ui};
 
 pub(crate) const NAME: &str = "serena";
 const KEY: &str = "serena";
 const ENV: &str = "EIGHTSYNC_SERENA";
+/// The exact uvx launcher 8sync registers (`skill::deploy::ensure_serena_mcp`); only
+/// this entry is ever removed by `off`.
+pub(crate) const UVX_ARGS: [&str; 8] = [
+    "--from",
+    "git+https://github.com/oraios/serena",
+    "serena",
+    "start-mcp-server",
+    "--context",
+    "claude-code",
+    "--enable-web-dashboard",
+    "False",
+];
+
+fn managed(e: &Value) -> bool {
+    same_launcher(e, "uvx", &UVX_ARGS)
+}
 
 pub(crate) fn enabled(home: &Path) -> bool {
     flag_enabled(home, KEY, ENV)
@@ -20,13 +36,11 @@ pub(crate) fn enabled(home: &Path) -> bool {
 /// Pure: drop the `serena` entry only if it is the uvx launcher 8sync registers.
 pub(crate) fn strip_omp_entry(root: &mut Value) -> bool {
     let Some(m) = root.get_mut("mcpServers").and_then(Value::as_object_mut) else { return false };
-    let managed = m.get(NAME).is_some_and(|e| {
-        e["command"] == "uvx" && e["args"].as_array().is_some_and(|a| a.iter().any(|x| x == "start-mcp-server"))
-    });
-    if managed {
+    let is_ours = m.get(NAME).is_some_and(managed);
+    if is_ours {
         m.remove(NAME);
     }
-    managed
+    is_ours
 }
 
 fn remove_from_omp(home: &Path) -> Result<bool> {
@@ -56,11 +70,7 @@ pub(crate) fn harness_serena(env: &env_detect::Env, args: &[String]) -> Result<(
             } else {
                 ui::skip("omp mcp.json", "no 8sync-managed serena entry");
             }
-            if remove_from_claude_named(NAME) {
-                ui::ok("removed serena from Claude Code (user scope)");
-            } else {
-                ui::skip("Claude Code MCP", "not registered (or `claude` missing)");
-            }
+            report_claude_removal(NAME, remove_from_claude_if(&env.home, NAME, managed));
             ui::info("nothing was killed; stop running ones: `pkill -f start-mcp-server`");
         }
         _ => {
@@ -93,11 +103,27 @@ mod tests {
     #[test]
     fn strip_only_uvx_serena() {
         let mut v = serde_json::json!({"mcpServers": {
-            "serena": {"type":"stdio","command":"uvx","args":["--from","x","serena","start-mcp-server"]},
+            "serena": {"type":"stdio","command":"uvx","args": UVX_ARGS},
             "headroom": {"command":"headroom"}}});
         assert!(strip_omp_entry(&mut v));
         assert!(v["mcpServers"].get("serena").is_none() && v["mcpServers"].get("headroom").is_some());
         let mut w = serde_json::json!({"mcpServers": {"serena": {"command":"/opt/serena"}}});
         assert!(!strip_omp_entry(&mut w));
+        // same uvx launcher with the owner's own --context is not ours
+        let mut own = UVX_ARGS.to_vec();
+        own[5] = "ide-assistant";
+        let mut x = serde_json::json!({"mcpServers": {"serena": {"command":"uvx","args": own}}});
+        assert!(!strip_omp_entry(&mut x));
+    }
+
+    #[test]
+    fn claude_side_keeps_owner_entries() {
+        use super::super::cbm::{claude_entry_state, ClaudeRemoval};
+        // what `ccc kit` mirrors: the omp spec plus alwaysLoad=false
+        let ours = serde_json::json!({"mcpServers": {"serena": {"type":"stdio","command":"uvx","args": UVX_ARGS, "alwaysLoad": false}}});
+        assert_eq!(claude_entry_state(&ours, NAME, managed), ClaudeRemoval::Removed);
+        let owner = serde_json::json!({"mcpServers": {"serena": {"type":"stdio","command":"serena-mcp-server","args":[]}}});
+        assert_eq!(claude_entry_state(&owner, NAME, managed), ClaudeRemoval::Foreign);
+        assert_eq!(claude_entry_state(&serde_json::Value::Null, NAME, managed), ClaudeRemoval::Absent);
     }
 }
