@@ -1,0 +1,103 @@
+//! `8sync ccc help`: one screen listing every ccc verb. `VERBS` is checked against the
+//! dispatcher's match arms in ccc.rs by a unit test, so a new verb cannot be left out.
+
+/// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
+#[cfg(test)]
+pub(super) const VERBS: &[&str] =
+    &["help", "hook", "statusline", "kit", "login-kind", "show", "status", "policy", "loop", "ls", "list", "rm", "new", "compact"];
+
+/// Words that look like verbs: never a session name, never a headless claude launch.
+/// Includes hook sub-verbs people type without `hook`.
+pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "loop", "kit", "guard", "hook", "ship-grant"];
+
+pub(super) const TEXT: &str = "\
+8sync ccc — Claude Code + kit của 8 Sync. Mọi lệnh (chạy `8sync ccc <verb>`):
+
+SESSION
+  8sync ccc . <tên>            tạo hoặc tiếp tục session <tên> trong repo này (flag sau tên đi thẳng vào claude)
+  8sync ccc .                  tiếp tục session dùng gần nhất
+  8sync ccc . ls [--json]      liệt kê session (alias: list)
+  8sync ccc . new <tên>        tạo session mới (từ chối tên đã có)
+  8sync ccc . rm <tên>         xoá session và transcript
+  8sync ccc . <tên> --team     bật agent teams (thêm --panes: tmux split)
+
+KIT & CẤU HÌNH
+  8sync ccc kit [--force]      cài/làm mới kit vào ~/.claude (--remove gỡ hook; --skills-from <dir>)
+  8sync ccc kit status --json  trạng thái kit dạng JSON
+  8sync ccc status             claude, login, kit, managed settings, MCP, session
+  8sync ccc policy [--org-uuid <u>] [--out <f>] [--strict-hooks] [--lock-mcp]   in managed-settings.json khuyến nghị
+  8sync ccc statusline --install | --uninstall | --agents   status line của Claude Code
+  8sync ccc compact            xem mốc auto-compact (mặc định kit: 60%)
+  8sync ccc compact --at 50    đặt mốc 10..95 (thấp hơn = nén sớm hơn; cần session mới)
+  8sync ccc compact --reset    về mặc định của Claude Code   (--json để máy đọc)
+  8sync ccc login-kind [--json]   kiểu login (claude.ai hay API key; không in token)
+  8sync ccc <verb> --offline   không chạm mạng (cũng EIGHTSYNC_OFFLINE=1)
+
+TỰ ĐỘNG (gõ trong Claude Code)
+  /do <việc>                   đổi nhỏ ≤3 file, không plan/commit
+  /ship <việc>                 một feature/bug tới commit
+  /ship-auto <việc>            như /ship rồi PR → CI → merge → release sau một câu `Ship`
+  /ship-loop <mục tiêu>        lặp tới khi tiêu chí xanh (có cap iter/phút)
+  /autopilot                   nhiều item từ backlog, không người trông
+  8sync ccc loop <init|tick|status|done|ls> <slug>   state vòng lặp cho /ship-loop
+  8sync ccc hook ship-grant    (hook) ghi giấy phép khi owner duyệt câu hỏi `Ship`
+
+XEM
+  8sync ccc . show <tên> [--json]   tóm tắt một session
+  8sync hq ui                       dashboard HQ trong trình duyệt
+
+AN TOÀN
+  8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant>
+                               hook do kit đăng ký, không gõ tay
+  /sec  /rules  /aup-audit  /harden   quét secret · được phép không · repo vs Usage Policy · cấu hình Claude Code
+
+Trợ giúp: `8sync ccc help` · `8sync ccc --help` (đầy đủ ví dụ).
+";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_verb_is_in_the_help_text() {
+        for v in VERBS {
+            assert!(TEXT.contains(&format!("ccc {v}")) || TEXT.contains(&format!("ccc . {v}")) || TEXT.contains(&format!("| {v}")) || *v == "list" || *v == "help", "verb {v} missing from help");
+        }
+        for v in RESERVED {
+            assert!(TEXT.contains(v), "reserved {v} missing from help");
+        }
+    }
+
+    /// Reads the real dispatcher: each `"verb" ... =>` arm of `match verb` must be in VERBS.
+    #[test]
+    fn dispatcher_arms_are_all_listed() {
+        let src = include_str!("../ccc.rs");
+        let body = src.split("match verb {").nth(1).expect("match verb");
+        let mut found = vec![];
+        for l in body.lines().take_while(|l| !l.starts_with("fn ") && !l.starts_with("/// Every launch")) {
+            let t = l.trim_start();
+            if l.starts_with("        \"") && t.starts_with('"') {
+                let arms = t.split("=>").next().unwrap_or("");
+                for w in arms.split('|') {
+                    if let Some(x) = w.trim().strip_prefix('"').and_then(|r| r.split('"').next()) {
+                        if !x.is_empty() {
+                            found.push(x.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        assert!(found.len() >= 8, "parsed too few arms: {found:?}");
+        for v in found {
+            assert!(VERBS.contains(&v.as_str()), "dispatcher verb {v} not in help::VERBS");
+        }
+        for v in ["hook", "statusline"] {
+            assert!(src.contains(&format!("verb == \"{v}\"")) && VERBS.contains(&v));
+        }
+    }
+
+    #[test]
+    fn reserved_words_are_never_session_names() {
+        assert!(RESERVED.contains(&"compact") && RESERVED.contains(&"guard") && RESERVED.contains(&"ship-grant"));
+    }
+}

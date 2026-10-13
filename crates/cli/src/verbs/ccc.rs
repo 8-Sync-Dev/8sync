@@ -21,11 +21,13 @@ use crate::verbs::uuid_sessions::Store;
 use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
+mod compact;
 mod danger;
 mod fence;
 mod gate;
 mod grant;
 mod guard;
+mod help;
 mod looper;
 mod resume;
 mod statusline;
@@ -42,6 +44,8 @@ mod verify;
       8sync ccc . rm <name>          remove a session and its transcript
       8sync ccc . <name> --team      same session with Claude Code agent teams on (lead + teammates; interactive)
       8sync ccc . <name> --team --panes   teammates as tmux split panes (run inside tmux)
+      8sync ccc help                 every ccc verb on one screen (Vietnamese)
+      8sync ccc compact [--at N|--reset|--json]   auto-compact threshold (kit default 60%; needs a new session)
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
       8sync ccc . <name> --offline   no network step at all: no auto-update, installer, `claude mcp add` or download
                                      (also `EIGHTSYNC_OFFLINE=1`; works on `new`, `.`, `kit`; `claude` must already be installed)
@@ -112,6 +116,10 @@ pub fn run(a: Args) -> Result<()> {
     if verb == "statusline" {
         return statusline::run(rest); // before Env::detect: runs every few seconds, must stay fast
     }
+    if verb == "help" {
+        print!("{}", help::TEXT);
+        return Ok(());
+    }
     let env = Env::detect()?;
     let cwd = std::env::current_dir().context("no cwd")?;
     let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd);
@@ -145,6 +153,7 @@ pub fn run(a: Args) -> Result<()> {
             }
             install_kit(&env, rest.iter().any(|a| a == "--force"), offline)
         }
+        "compact" => compact::run(rest, &claude_dir(&env)),
         "status" => status(&env, &root),
         "policy" => policy(rest),
         "loop" => looper::run(rest, &std::env::current_dir().context("no cwd")?),
@@ -174,6 +183,11 @@ pub fn run(a: Args) -> Result<()> {
         _ if verb.starts_with('-') => {
             prepare(&env, &root, offline);
             launch(Command::new(ensure_claude(offline)?).args(args).current_dir(&root))
+        }
+        // Verb-like words never start a claude session (old binaries launched one for unknown verbs).
+        name if help::RESERVED.contains(&name) => {
+            print!("{}", help::TEXT);
+            bail!("`8sync ccc {name}` không phải verb ở dạng này — xem trợ giúp ở trên (hook chạy qua `8sync ccc hook <tên>`)")
         }
         name => {
             prepare(&env, &root, offline);
@@ -258,6 +272,11 @@ fn project_harness(env: &Env, root: &Path) -> Result<()> {
         crate::verbs::skill::inject::claude_skill_overrides(&env.home, root)?;
     }
     crate::verbs::harness::memory::seed_gitignore(root)
+}
+
+/// Whether a kit was ever installed on this machine (what `8sync up` uses to decide on a refresh).
+pub(crate) fn kit_installed() -> bool {
+    Env::detect().is_ok_and(|e| kit_version(&e).is_some())
 }
 
 /// The 8sync version that last wrote the kit (`None` before any kit).
@@ -665,8 +684,8 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<(
     };
     apply_kit_settings(&mut v, &exe, &skills)?;
     apply_lsp_plugins(&mut v, |bin| which::which(bin).is_ok());
-    if statusline::kit_apply(&mut v, &exe)? {
-        ui::info("your own statusLine was kept: `8sync ccc statusline --install` swaps in the 8sync one and chains yours");
+    for m in statusline::kit_apply(&mut v, &exe, &statusline::features(&env.home))? {
+        ui::ok(&m);
     }
     let out = serde_json::to_string_pretty(&v)? + "\n";
     if out != raw {
@@ -730,6 +749,8 @@ fn apply_lsp_plugins(v: &mut Value, on_path: impl Fn(&str) -> bool) {
 /// (a user value wins), `permissions` rules, and 8sync's hooks (replaced in
 /// place on re-run, retired ones removed, so the file only changes when the kit does).
 fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()> {
+    // Auto-compact at 60% unless the owner chose a value (`8sync ccc compact --at N`).
+    compact::kit_default(v)?;
     let obj = v.as_object_mut().context("settings.json is not a JSON object")?;
     if let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() {
         env.entry("CLAUDE_CODE_ENABLE_TODO_TOOLS").or_insert_with(|| json!("1"));
@@ -960,7 +981,8 @@ fn remove_kit_hooks_from(path: &Path, orig: &str) -> Result<usize> {
     let raw = std::fs::read_to_string(path)?;
     let mut v: Value = serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", path.display()))?;
     let n = strip_kit_hooks(&mut v);
-    if n == 0 {
+    let compact = compact::strip_kit_default(&mut v);
+    if n == 0 && !compact {
         return Ok(0);
     }
     write_atomic_bak(path, orig, &(serde_json::to_string_pretty(&v)? + "\n"))?;

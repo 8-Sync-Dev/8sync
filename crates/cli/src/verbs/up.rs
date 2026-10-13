@@ -37,7 +37,25 @@ pub fn run(a: Args) -> Result<()> {
     };
     if updated {
         ui::info("done — re-run any 8sync command to pick up the new binary");
+        refresh_kit();
     }
     ui::info("note: `8sync up` only updates 8sync. For omp run `8sync omp update`; for system pkgs run `paru -Syu`.");
     Ok(())
+}
+
+/// After an update, bring an installed kit (agents, skills, statusline) up to the new binary by
+/// running its `ccc kit`. `EIGHTSYNC_OFFLINE` is inherited, so the kit skips its network steps.
+fn refresh_kit() {
+    if !super::ccc::kit_installed() {
+        return;
+    }
+    let Ok(exe) = selfup::installed_path() else { return };
+    let ok = std::process::Command::new(exe)
+        .args(["ccc", "kit"])
+        .env("SUSYNC_NO_AUTO_UPDATE", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    ui::info(if ok { "kit refreshed with the new binary (statusline included)" } else { "kit refresh failed — run `8sync ccc kit`" });
 }

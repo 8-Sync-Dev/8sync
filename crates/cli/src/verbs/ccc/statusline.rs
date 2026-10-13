@@ -116,11 +116,26 @@ pub(super) fn clip(s: &str, cols: usize) -> String {
     out
 }
 
+/// `Opus 5.5 (1M context)` → `Opus 5.5 · 1M`; names without a trailing `(..)` are kept.
+fn short_model(name: &str) -> String {
+    match name.trim().strip_suffix(')').and_then(|n| n.rsplit_once(" (")) {
+        Some((base, inner)) if !base.is_empty() && !inner.is_empty() => format!("{base} · {}", inner.trim_end_matches(" context")),
+        _ => name.to_string(),
+    }
+}
+
+fn short_effort(e: &str) -> &str {
+    match e {
+        "medium" => "med",
+        other => other,
+    }
+}
+
 fn row1(v: &Value, now: u64, color: bool) -> String {
     let mut seg = vec![paint(color, "1;35", "8sync")];
     if let Some(m) = v["model"]["display_name"].as_str().or_else(|| v["model"]["id"].as_str()) {
-        let eff = v["effort"]["level"].as_str().map(|e| format!(" {}", paint(color, "2", &format!("({e})")))).unwrap_or_default();
-        seg.push(format!("{}{eff}", paint(color, "36", m)));
+        let eff = v["effort"]["level"].as_str().map(|e| format!(" {}", paint(color, "2", short_effort(e)))).unwrap_or_default();
+        seg.push(format!("{}{eff}", paint(color, "36", &short_model(m))));
     }
     if v["context_window"].is_object() {
         let p = pct_of(&v["context_window"]["used_percentage"]).unwrap_or(0);
@@ -147,6 +162,8 @@ fn row2(v: &Value, x: &Extras, color: bool) -> String {
     let mut seg = Vec::new();
     if let Some(b) = &x.branch {
         seg.push(paint(color, "34", &format!("⎇ {b}{}", if x.dirty { "*" } else { "" })));
+    } else if let Some(d) = cwd_of(v).and_then(|c| Path::new(c).file_name()).and_then(|n| n.to_str()) {
+        seg.push(paint(color, "2", &plain(d)));
     }
     if let Some(n) = v["pr"]["number"].as_u64() {
         let mark = if v["pr"]["kind"] == "mr" { "!" } else { "#" };
@@ -301,6 +318,34 @@ fn git(cwd: &str, args: &[&str]) -> Option<String> {
     run_budget(c, None, Duration::from_millis(50)).map(|s| s.trim().to_string())
 }
 
+fn cwd_of(v: &Value) -> Option<&str> {
+    v["workspace"]["current_dir"].as_str().or_else(|| v["cwd"].as_str()).filter(|c| !c.is_empty())
+}
+
+/// Parse the content of a `HEAD` file: branch name, or the first 7 hex chars when detached.
+fn parse_head(head: &str) -> Option<String> {
+    let h = head.trim();
+    if let Some(r) = h.strip_prefix("ref:") {
+        let r = r.trim();
+        return Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string()).filter(|b| !b.is_empty());
+    }
+    (h.len() >= 7 && h.chars().all(|c| c.is_ascii_hexdigit())).then(|| h[..7].to_string())
+}
+
+/// Branch of the repo containing `cwd`, read straight from `.git/HEAD` (no process). A `.git`
+/// file (worktree / submodule) points at the real git dir via `gitdir: <path>`.
+fn read_head(cwd: &Path) -> Option<String> {
+    let dot = cwd.ancestors().map(|d| d.join(".git")).find(|p| p.exists())?;
+    let gitdir = if dot.is_dir() {
+        dot
+    } else {
+        let raw = std::fs::read_to_string(&dot).ok()?;
+        let g = Path::new(raw.trim().strip_prefix("gitdir:")?.trim());
+        if g.is_absolute() { g.to_path_buf() } else { dot.parent()?.join(g) }
+    };
+    parse_head(&std::fs::read_to_string(gitdir.join("HEAD")).ok()?)
+}
+
 fn ship_active(cwd: &Path) -> Option<(u64, u64)> {
     let dir = cwd.ancestors().map(|d| d.join("su-code/ship")).find(|d| d.is_dir())?;
     let active = std::fs::read_to_string(dir.join("ACTIVE")).ok()?;
@@ -346,9 +391,9 @@ fn prev_cmd(home: &Path) -> Option<String> {
 
 fn gather(v: &Value, input: &str, home: &Path, now: u64) -> Extras {
     let mut x = Extras::default();
-    let cwd = v["workspace"]["current_dir"].as_str().or_else(|| v["cwd"].as_str()).unwrap_or("");
+    let cwd = cwd_of(v).unwrap_or("");
     let sid = v["session_id"].as_str();
-    x.branch = v["worktree"]["branch"].as_str().map(str::to_string).or_else(|| if cwd.is_empty() { None } else { git(cwd, &["symbolic-ref", "--short", "HEAD"]).filter(|b| !b.is_empty()) });
+    x.branch = v["worktree"]["branch"].as_str().map(str::to_string).or_else(|| if cwd.is_empty() { None } else { read_head(Path::new(cwd)) });
     if x.branch.is_some() && !cwd.is_empty() {
         x.dirty = git(cwd, &["status", "--porcelain", "-uno"]).is_some_and(|s| !s.is_empty());
     }
@@ -437,18 +482,31 @@ fn prev_object(stored: &str) -> Option<Value> {
     }
 }
 
-/// Kit side: set both lines when absent, refresh ours, never override another. Returns whether a
-/// foreign `statusLine` was left alone (the kit then prints a hint).
-pub(super) fn kit_apply(settings: &mut Value, exe: &str) -> Result<bool> {
+/// `features.toml` key: `statusline = false` records that the user ran `--uninstall`, so the kit
+/// never reinstalls the 8sync status line (`--install` clears it).
+const OPT_OUT_KEY: &str = "statusline";
+
+fn opted_out(f: &toml::Table) -> bool {
+    f.get(OPT_OUT_KEY).and_then(toml::Value::as_bool) == Some(false)
+}
+
+/// Kit side: install the 8sync status lines by default (a foreign `statusLine` is parked and
+/// chained like `--install`), refresh our command to the current exe path, honour the opt-out.
+/// Writes `features.toml` (`fp`) only when it changed; the caller writes `settings`.
+/// Returns human lines — empty when nothing changed.
+pub(super) fn kit_apply(settings: &mut Value, exe: &str, fp: &Path) -> Result<Vec<String>> {
     require_object(settings)?;
-    let foreign = cmd_of(&settings["statusLine"]).is_some_and(|c| !is_ours(c)) || (settings.get("statusLine").is_some() && cmd_of(&settings["statusLine"]).is_none());
-    if !foreign {
-        settings["statusLine"] = status_value(exe);
+    let fraw = read_or_empty(fp)?;
+    let mut f: toml::Table = fraw.parse().map_err(|e| anyhow::anyhow!("{} is not valid TOML ({e}); fix it first", fp.display()))?;
+    if opted_out(&f) {
+        return Ok(vec![]);
     }
-    if settings.get("subagentStatusLine").is_none_or(|s| cmd_of(s).is_some_and(is_agents_ours)) {
-        settings["subagentStatusLine"] = agents_value(exe);
+    let (s0, f0) = (settings.clone(), f.clone());
+    let msgs = install_into(settings, exe, &mut f)?;
+    if f != f0 {
+        write_file(fp, &fraw, &toml::to_string_pretty(&f)?)?;
     }
-    Ok(foreign)
+    Ok(if *settings == s0 && f == f0 { vec![] } else { msgs })
 }
 
 /// Writing into a non-object (array, number, `null`) would panic on indexing; refuse instead.
@@ -464,6 +522,7 @@ fn require_object(settings: &Value) -> Result<()> {
 pub(super) fn install_into(settings: &mut Value, exe: &str, feats: &mut toml::Table) -> Result<Vec<String>> {
     require_object(settings)?;
     let mut msg = Vec::new();
+    feats.remove(OPT_OUT_KEY);
     match settings.get("statusLine").cloned() {
         Some(old) if cmd_of(&old).is_some_and(|c| !is_ours(c)) => {
             let c = cmd_of(&old).unwrap_or_default().to_string();
@@ -533,7 +592,7 @@ fn write_file(p: &Path, old: &str, new: &str) -> Result<()> {
 }
 
 /// Install (`exe = Some`) or uninstall (`None`) against explicit files. Writes only what changed.
-fn setup_at(sp: &Path, fp: &Path, exe: Option<&str>) -> Result<Vec<String>> {
+fn setup_at(sp: &Path, fp: &Path, exe: Option<&str>, opt_out: bool) -> Result<Vec<String>> {
     let raw = read_or_empty(sp)?;
     let mut s: Value = if raw.trim().is_empty() { json!({}) } else { serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", sp.display()))? };
     require_object(&s).with_context(|| sp.display().to_string())?;
@@ -543,7 +602,13 @@ fn setup_at(sp: &Path, fp: &Path, exe: Option<&str>) -> Result<Vec<String>> {
     let f0 = f.clone();
     let msgs = match exe {
         Some(e) => install_into(&mut s, e, &mut f)?,
-        None => uninstall_from(&mut s, &mut f),
+        None => {
+            let m = uninstall_from(&mut s, &mut f);
+            if opt_out {
+                f.insert(OPT_OUT_KEY.into(), toml::Value::Boolean(false));
+            }
+            m
+        }
     };
     // Compare parsed values, not text: a no-op must not rewrite the file (formatting kept) or leave a .bak.
     let write_settings = || -> Result<()> {
@@ -571,12 +636,12 @@ fn setup_at(sp: &Path, fp: &Path, exe: Option<&str>) -> Result<Vec<String>> {
 
 /// `ccc kit --remove` entry: restore the previous statusLine, drop ours.
 pub(super) fn uninstall_at(sp: &Path, fp: &Path) -> Result<Vec<String>> {
-    setup_at(sp, fp, None)
+    setup_at(sp, fp, None, false)
 }
 
 fn setup(home: &Path, uninstall: bool) -> Result<()> {
     let (sp, fp) = (claude_dir(home).join("settings.json"), features(home));
-    let msgs = if uninstall { uninstall_at(&sp, &fp)? } else { setup_at(&sp, &fp, Some(&super::hook_exe()?))? };
+    let msgs = if uninstall { setup_at(&sp, &fp, None, true)? } else { setup_at(&sp, &fp, Some(&super::hook_exe()?), false)? };
     for m in msgs {
         crate::ui::ok(&m);
     }
@@ -652,7 +717,7 @@ mod tests {
         let r = render(&full(), &extras(), NOW, 400, true);
         assert_eq!(r.len(), 2);
         let (a, b) = (strip(&r[0]), strip(&r[1]));
-        assert_eq!(a, "8sync · Opus 5 (high) · ctx ▓▓▓▓▓░░░░░ 42% · 5h 24% ↻ 1h23m · 7d 85% ↻ 2d4h · $0.01 · +156/-23");
+        assert_eq!(a, "8sync · Opus 5 high · ctx ▓▓▓▓▓░░░░░ 42% · 5h 24% ↻ 1h23m · 7d 85% ↻ 2d4h · $0.01 · +156/-23");
         assert_eq!(b, "⎇ feat/x* · #12 ✓ · tasks 2/5 ▸ viết test · ⚠ mem · loop 3/12 · 🚢 grant");
         assert!(r[0].contains("\x1b[31m85%"), "7d over 80 is red");
     }
@@ -797,7 +862,7 @@ mod tests {
         let (sp, fp) = (d.join("settings.json"), d.join("features.toml"));
         let prev = json!({"type": "command", "command": "orca"});
         std::fs::write(&sp, json!({"statusLine": prev}).to_string()).unwrap();
-        setup_at(&sp, &fp, Some("/bin/8sync")).unwrap();
+        setup_at(&sp, &fp, Some("/bin/8sync"), false).unwrap();
         assert!(is_ours(cmd_of(&serde_json::from_str::<Value>(&std::fs::read_to_string(&sp).unwrap()).unwrap()["statusLine"]).unwrap()));
         assert!(d.join("settings.json.bak-8sync").exists());
         uninstall_at(&sp, &fp).unwrap();
@@ -807,14 +872,104 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    fn tmpd(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("sl-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
     #[test]
-    fn kit_never_overrides_foreign() {
+    fn kit_chains_foreign_by_default_and_is_idempotent() {
+        // Behaviour change (was: foreign statusLine kept, hint only).
+        let d = tmpd("kitchain");
+        let fp = d.join("features.toml");
         let mut s = json!({"statusLine": {"type": "command", "command": "orca"}});
-        assert!(kit_apply(&mut s, "/bin/8sync").unwrap());
-        assert_eq!(s["statusLine"]["command"], "orca");
+        assert!(!kit_apply(&mut s, "/bin/8sync", &fp).unwrap().is_empty());
+        assert!(is_ours(s["statusLine"]["command"].as_str().unwrap()));
+        assert!(std::fs::read_to_string(&fp).unwrap().contains("orca"), "parked in features.toml");
+        let raw = std::fs::read_to_string(&fp).unwrap();
+        let s1 = s.clone();
+        assert!(kit_apply(&mut s, "/bin/8sync", &fp).unwrap().is_empty(), "second run is silent");
+        assert_eq!(s, s1);
+        assert_eq!(std::fs::read_to_string(&fp).unwrap(), raw, "features.toml not rewritten");
         let mut e = json!({});
-        assert!(!kit_apply(&mut e, "/bin/8sync").unwrap());
+        kit_apply(&mut e, "/bin/8sync", &d.join("f2.toml")).unwrap();
         assert!(is_ours(e["statusLine"]["command"].as_str().unwrap()));
+        assert!(!d.join("f2.toml").exists(), "no features file when nothing to park");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn kit_refreshes_exe_path() {
+        let d = tmpd("kitpath");
+        let fp = d.join("features.toml");
+        let mut s = json!({});
+        kit_apply(&mut s, "/old/8sync", &fp).unwrap();
+        kit_apply(&mut s, "/new/8sync", &fp).unwrap();
+        assert_eq!(s["statusLine"]["command"], "/new/8sync ccc statusline");
+        assert_eq!(s["subagentStatusLine"]["command"], "/new/8sync ccc statusline --agents");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn uninstall_opts_out_and_install_clears() {
+        let d = tmpd("optout");
+        let (sp, fp) = (d.join("settings.json"), d.join("features.toml"));
+        std::fs::write(&sp, json!({"statusLine": {"type": "command", "command": "orca"}}).to_string()).unwrap();
+        setup_at(&sp, &fp, Some("/bin/8sync"), false).unwrap();
+        setup_at(&sp, &fp, None, true).unwrap();
+        let mut s: Value = serde_json::from_str(&std::fs::read_to_string(&sp).unwrap()).unwrap();
+        assert_eq!(s["statusLine"]["command"], "orca", "previous restored");
+        assert!(kit_apply(&mut s, "/bin/8sync", &fp).unwrap().is_empty());
+        assert_eq!(s["statusLine"]["command"], "orca", "kit respects the opt-out");
+        assert!(s.get("subagentStatusLine").is_none());
+        setup_at(&sp, &fp, Some("/bin/8sync"), false).unwrap();
+        let t: toml::Table = std::fs::read_to_string(&fp).unwrap().parse().unwrap();
+        assert!(!opted_out(&t));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn head_parsing() {
+        assert_eq!(parse_head("ref: refs/heads/feat/x\n").as_deref(), Some("feat/x"));
+        assert_eq!(parse_head("0123456789abcdef0123456789abcdef01234567\n").as_deref(), Some("0123456"));
+        assert_eq!(parse_head("garbage"), None);
+        let d = tmpd("head");
+        std::fs::create_dir_all(d.join("repo/.git")).unwrap();
+        std::fs::create_dir_all(d.join("repo/sub")).unwrap();
+        std::fs::write(d.join("repo/.git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert_eq!(read_head(&d.join("repo/sub")).as_deref(), Some("main"));
+        // worktree: `.git` file → gitdir (relative and absolute)
+        std::fs::create_dir_all(d.join("wt")).unwrap();
+        std::fs::create_dir_all(d.join("gitdirs/wt")).unwrap();
+        std::fs::write(d.join("gitdirs/wt/HEAD"), "ref: refs/heads/topic\n").unwrap();
+        std::fs::write(d.join("wt/.git"), "gitdir: ../gitdirs/wt\n").unwrap();
+        assert_eq!(read_head(&d.join("wt")).as_deref(), Some("topic"));
+        std::fs::write(d.join("wt/.git"), format!("gitdir: {}\n", d.join("gitdirs/wt").display())).unwrap();
+        assert_eq!(read_head(&d.join("wt")).as_deref(), Some("topic"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn model_label_shortened_and_effort_dim() {
+        assert_eq!(short_model("Opus 5.5 (1M context)"), "Opus 5.5 · 1M");
+        assert_eq!(short_model("Opus 5"), "Opus 5");
+        let v = json!({"model": {"display_name": "Opus 5.5 (1M context)"}, "effort": {"level": "medium"}});
+        let r = render(&v, &Extras::default(), NOW, 200, true);
+        assert_eq!(strip(&r[0]), "8sync · Opus 5.5 · 1M med");
+        assert!(r[0].contains("\x1b[2mmed"), "effort is dim");
+    }
+
+    #[test]
+    fn row2_shows_cwd_basename_outside_git_and_no_color_is_plain() {
+        let v = json!({"model": {"display_name": "X"}, "workspace": {"current_dir": "/home/a/proj"}});
+        let x = Extras { grant: true, ..Default::default() };
+        let r = render(&v, &x, NOW, 200, false);
+        assert_eq!(r[1], "proj · 🚢 grant");
+        assert!(r.iter().all(|l| !l.contains('\x1b')), "NO_COLOR: no escapes");
+        let g = render(&v, &Extras { branch: Some("main".into()), ..Default::default() }, NOW, 200, false);
+        assert_eq!(g[1], "⎇ main", "branch wins over basename");
     }
 
     #[test]
@@ -842,7 +997,7 @@ mod tests {
     fn non_object_settings_is_err() {
         let mut s = json!([1, 2]);
         assert!(install_into(&mut s, "/bin/8sync", &mut toml::Table::new()).is_err());
-        assert!(kit_apply(&mut s, "/bin/8sync").is_err());
+        assert!(kit_apply(&mut s, "/bin/8sync", Path::new("/nonexistent/f.toml")).is_err());
         assert_eq!(s, json!([1, 2]), "left untouched");
         let d = std::env::temp_dir().join(format!("sl-nonobj-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -850,7 +1005,7 @@ mod tests {
         let (sp, fp) = (d.join("settings.json"), d.join("features.toml"));
         for raw in ["[]", "42", "null"] {
             std::fs::write(&sp, raw).unwrap();
-            assert!(setup_at(&sp, &fp, Some("/bin/8sync")).is_err(), "{raw}");
+            assert!(setup_at(&sp, &fp, Some("/bin/8sync"), false).is_err(), "{raw}");
             assert!(uninstall_at(&sp, &fp).is_err(), "{raw}");
             assert_eq!(std::fs::read_to_string(&sp).unwrap(), raw);
         }

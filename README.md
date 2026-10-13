@@ -96,6 +96,8 @@ cd <project>
 8sync ccc . ls | new <n> | rm <n>
 8sync ccc kit                  # (re)install the kit; `8sync setup` already did
 8sync ccc status               # claude, login, kit, sessions
+8sync ccc help                 # every ccc verb on one screen
+8sync ccc compact --at 50      # auto-compact threshold (kit default 60%); --reset, --json; new session to apply
 ```
 
 Each name maps to a fixed conversation id per repo, so `8sync ccc . core` tomorrow continues today's thread, next to `8sync forge core` and `8sync . core` for the other agents.
@@ -132,6 +134,8 @@ Ask-gate accuracy on labelled cases (the exact hook prompt sent to the model):
 |---|---|---|
 | Ask | Sonnet 5 | 6 / 6 |
 | Ask | Haiku 4.5 | 4 / 6, so not used |
+
+The kit also installs the 8sync status line (usage, branch, grant, loop, tasks); your own `statusLine` is chained as the last row, `8sync up` refreshes it on every machine, and `8sync ccc statusline --uninstall` opts out for good.
 
 Your edits win: a kit file you changed is kept (`8sync ccc kit --force` overwrites it), and `settings.json` is merged, never replaced.
 
