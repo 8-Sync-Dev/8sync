@@ -2832,6 +2832,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    // Unix only: the test back-dates directory mtimes through File::open(dir), which
+    // Windows refuses ("Access is denied"). The pruning code itself only reads mtimes.
+    #[cfg(unix)]
     #[test]
     fn install_prunes_old_versions_and_stale_leftovers() {
         let d = tmp("prune");
