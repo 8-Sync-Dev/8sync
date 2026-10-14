@@ -124,6 +124,8 @@ pub(super) struct Facts<'a> {
     pub rooms: &'a [(String, usize)],
     /// `Err(reason)` = a rail (lease, budget) says rest now.
     pub gate: Result<(), String>,
+    /// A task this member finished only after `hook task-done` held it back: one lesson to keep.
+    pub learn: Option<&'a str>,
 }
 
 /// The ladder. `me` is the teammate name, `None` for the lead.
@@ -146,6 +148,17 @@ pub(super) fn decide(me: Option<&str>, f: &Facts, mem: &Mem) -> (Step, Mem) {
         Step::Nudge { state, msg }
     };
     let repeat = |m: &Mem, key: &str| m.last == key;
+
+    // Reflex learning first: the member just fixed what the quality gate caught.
+    if let Some(task) = f.learn {
+        let key = format!("learn:{task}");
+        if !repeat(&m, &key) {
+            let msg = format!(
+                "Task {task} chỉ qua sau khi bị gate chất lượng giữ lại: ghi bài học bằng /remember (failure: <vì sao bị giữ> → fix: <đã sửa gì>) trước khi làm tiếp. Không ghi nếu không có gì mới."
+            );
+            return (nudge(&mut m, 0, key, "learn", msg), m);
+        }
+    }
 
     if let Some(me) = me {
         if let Some(t) = f.tasks.iter().find(|t| t.status == "in_progress" && t.owner == me) {
@@ -252,7 +265,7 @@ fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-fn safe(s: &str) -> String {
+pub(super) fn safe(s: &str) -> String {
     s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).take(64).collect()
 }
 
@@ -260,11 +273,11 @@ pub(super) fn state_dir(home: &Path) -> PathBuf {
     home.join(".local/state").join(crate::brand::NS).join("ccc").join("idle")
 }
 
-fn read_json(p: &Path) -> Option<Value> {
+pub(super) fn read_json(p: &Path) -> Option<Value> {
     std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str(&t).ok())
 }
 
-fn write_json(p: &Path, v: &Value) {
+pub(super) fn write_json(p: &Path, v: &Value) {
     if let Some(d) = p.parent() {
         let _ = std::fs::create_dir_all(d);
     }
@@ -274,7 +287,7 @@ fn write_json(p: &Path, v: &Value) {
     }
 }
 
-fn enabled(home: &Path) -> bool {
+pub(super) fn enabled(home: &Path) -> bool {
     crate::verbs::harness::cbm::resolve(std::env::var(ENV).ok().as_deref(), crate::verbs::harness::cbm::read_flag_key(home, KEY))
 }
 
@@ -440,8 +453,10 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
         let tp = if me.is_none() { v["transcript_path"].as_str().map(PathBuf::from) } else { None };
         tp.or_else(|| lead_transcript(home, &team)).and_then(|p| last_human_ts(&p))
     });
-    let facts = Facts { tasks: &tasks, recall: &recall, rooms: &rooms, gate: gate(lease.as_ref(), subscription, spent, now(), owner_seen) };
     let who = me.clone().unwrap_or_else(|| "lead".into());
+    let learn_p = super::taskdone::learn_path(home, &team, &who);
+    let learn = read_json(&learn_p).and_then(|l| l["task"].as_str().map(String::from));
+    let facts = Facts { tasks: &tasks, recall: &recall, rooms: &rooms, gate: gate(lease.as_ref(), subscription, spent, now(), owner_seen), learn: learn.as_deref() };
     let key = format!("{}__{}", safe(&team), safe(&who));
     let mem_path = dir.join("mem").join(format!("{key}.json"));
     let mem = read_json(&mem_path).map(|m| Mem::from_json(&m)).unwrap_or_default();
@@ -451,6 +466,9 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
         Step::Nudge { state, msg } => (*state, msg.lines().next().unwrap_or_default().to_string()),
         Step::Rest(r) => ("rest", r.clone()),
     };
+    if matches!(step, Step::Nudge { state: "learn", .. }) {
+        let _ = std::fs::remove_file(&learn_p); // delivered once
+    }
     // Read by `8sync hq ui` (one file per member, newest wins).
     write_json(&dir.join("status").join(format!("{key}.json")), &json!({ "schema": 1, "team": team, "name": who, "state": state, "detail": detail, "ts": now() }));
     match step {
@@ -459,8 +477,17 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
             eprintln!("8sync không-ai-rảnh: {msg}");
             std::process::exit(2);
         }
-        Step::Nudge { msg, .. } => Some(json!({ "decision": "block", "reason": format!("8sync không-ai-rảnh: {msg}") }).to_string()),
+        // Handing out a task is a must-do (block); learning and offering help to another room are
+        // advice: Stop `additionalContext` continues the turn without a hook-error notice
+        // (https://code.claude.com/docs/en/hooks#stop-decision-control), under the same
+        // `stop_hook_active` / 8-continuation protections.
+        Step::Nudge { state: "working", msg } => Some(json!({ "decision": "block", "reason": format!("8sync không-ai-rảnh: {msg}") }).to_string()),
+        Step::Nudge { msg, .. } => Some(lead_context(&msg)),
     }
+}
+
+fn lead_context(msg: &str) -> String {
+    json!({ "hookSpecificOutput": { "hookEventName": "Stop", "additionalContext": format!("8sync không-ai-rảnh: {msg}") } }).to_string()
 }
 
 /// `8sync ccc idle on [--hours N] [--usd-per-hour X] | off | status [--json]`.
@@ -542,7 +569,7 @@ mod tests {
         Task { id: id.into(), subject: format!("s{id}"), status: status.into(), owner: owner.into(), blocked_by: blocked.iter().map(|s| s.to_string()).collect() }
     }
     fn facts<'a>(tasks: &'a [Task], recall: &'a [String], rooms: &'a [(String, usize)]) -> Facts<'a> {
-        Facts { tasks, recall, rooms, gate: Ok(()) }
+        Facts { tasks, recall, rooms, gate: Ok(()), learn: None }
     }
     fn nudged(s: &Step, state: &str, needle: &str) -> bool {
         matches!(s, Step::Nudge { state: st, msg } if *st == state && msg.contains(needle))
@@ -597,13 +624,35 @@ mod tests {
     }
 
     #[test]
+    fn a_held_then_passed_task_asks_for_one_lesson_first() {
+        let ts = [t("1", "completed", "be", &[]), t("2", "pending", "", &[])];
+        let f = Facts { learn: Some("#1 (fix a)"), ..facts(&ts, &[], &[]) };
+        let (s, m) = decide(Some("be"), &f, &Mem::default());
+        assert!(nudged(&s, "learn", "/remember (failure:"), "{s:?}");
+        let (s, _) = decide(Some("be"), &f, &m);
+        assert!(nudged(&s, "working", "#2"), "asked once, then back to work: {s:?}");
+        let (s, _) = decide(Some("be"), &facts(&ts, &[], &[]), &Mem::default());
+        assert!(nudged(&s, "working", "#2"), "no lesson when nothing was held: {s:?}");
+        let (s, _) = decide(None, &f, &Mem::default());
+        assert!(nudged(&s, "learn", "#1 (fix a)"), "the lead learns too: {s:?}");
+    }
+
+    #[test]
+    fn lead_advice_is_context_and_handing_out_a_task_blocks() {
+        let v: Value = serde_json::from_str(&lead_context("Phòng zus còn 3 task")).unwrap();
+        assert_eq!(v["hookSpecificOutput"]["hookEventName"], "Stop");
+        assert!(v["hookSpecificOutput"]["additionalContext"].as_str().unwrap().contains("zus"));
+        assert!(v.get("decision").is_none(), "advice must not show as a hook error");
+    }
+
+    #[test]
     fn caps_and_gate_force_rest() {
         let ts = [t("1", "pending", "", &[]), t("2", "pending", "", &[])];
         let d = digest(&ts);
         let capped = Mem { digest: d, blocks: MAX_BLOCKS, rung: 1, last: "x".into() };
         let (s, _) = decide(Some("be"), &facts(&ts, &[], &[]), &capped);
         assert!(matches!(s, Step::Rest(r) if r.contains("trần")));
-        let f = Facts { tasks: &ts, recall: &[], rooms: &[], gate: Err("chạm trần $5.00/giờ".into()) };
+        let f = Facts { tasks: &ts, recall: &[], rooms: &[], gate: Err("chạm trần $5.00/giờ".into()), learn: Some("#1") };
         let (s, _) = decide(Some("be"), &f, &Mem::default());
         assert_eq!(s, Step::Rest("chạm trần $5.00/giờ".into()));
     }

@@ -1723,7 +1723,7 @@ fn cmd_hook(event: &str, dry: bool) {
         let v: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
         if cfg.local && !dry {
             let sid = std::env::var("EIGHTSYNC_HQ_SESSION").ok();
-            if let Some(e) = journal_entry(event, &v, sid.as_deref(), now() * 1000) {
+            if let Some(e) = journal_entry(event, &v, sid.as_deref(), now() * 1000, claude_sessions_dir().as_deref()) {
                 if let Err(e) = append_journal(&paths.events(), &e.to_string(), JOURNAL_MAX) {
                     log_err(&paths, &sec, &format!("journal {event}: {e}"));
                 }
@@ -1786,6 +1786,8 @@ pub(crate) fn take_inbox(home: &Path, session_id: &str) -> Option<String> {
 
 const JOURNAL_MAX: u64 = 5 << 20;
 const JOURNAL_TEXT: usize = 4000;
+/// A message to another Claude Code session keeps only this much (its summary or first line).
+const PEER_TEXT: usize = 80;
 
 /// `hq-[a-z0-9][a-z0-9-]{0,31}`
 fn hq_session_ok(s: &str) -> bool {
@@ -1793,11 +1795,44 @@ fn hq_session_ok(s: &str) -> bool {
     s.strip_prefix("hq-").is_some_and(|r| (1..=32).contains(&r.len()) && !r.starts_with('-') && r.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')) && b.len() > 3
 }
 
+/// `~/.claude/sessions` (or under `CLAUDE_CONFIG_DIR`): Claude Code's live-session records.
+fn claude_sessions_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".claude")))?;
+    Some(base.join("sessions"))
+}
+
+/// The (session id, name) a SendMessage `to` points at: a `uds:<socket>` address matched against
+/// `messagingSocketPath`, `id:<session id>` (a session's own name), or a session name used by exactly one record. Reads only `<pid>.json`
+/// records (Claude Code 2.1.299 layout, not documented; never the `.key` files beside them).
+fn resolve_peer(dir: &Path, to: &str) -> Option<(String, String)> {
+    let recs: Vec<Value> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .filter_map(|p| serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok())
+        .collect();
+    let id = |r: &Value| Some((r["sessionId"].as_str().filter(|x| !x.is_empty())?.to_string(), r["name"].as_str().unwrap_or_default().to_string()));
+    if let Some(sid) = to.strip_prefix("id:") {
+        return recs.iter().find(|r| r["sessionId"].as_str() == Some(sid)).and_then(id);
+    }
+    if let Some(sock) = to.strip_prefix("uds:") {
+        return recs.iter().find(|r| r["messagingSocketPath"].as_str() == Some(sock)).and_then(id);
+    }
+    let mut named = recs.iter().filter(|r| r["name"].as_str() == Some(to));
+    match (named.next(), named.next()) {
+        (Some(r), None) => id(r),
+        _ => None,
+    }
+}
+
 /// One journal line for a hook payload, or None for events the UI does not show.
-fn journal_entry(event: &str, v: &Value, session_env: Option<&str>, ts_ms: u64) -> Option<Value> {
+/// `peers`: Claude Code's session records dir (`None` in tests: no lookup).
+fn journal_entry(event: &str, v: &Value, session_env: Option<&str>, ts_ms: u64, peers: Option<&Path>) -> Option<Value> {
     let sess = s(v, "session_id");
     let hq_session = session_env.filter(|x| hq_session_ok(x));
     let (mut subject, mut from, mut to, mut text) = (None, None, None, None);
+    let (mut peer, mut to_name, mut from_name): (Option<String>, Option<String>, Option<String>) = (None, None, None);
     let mut task_id = None;
     let kind = match event.to_lowercase().as_str() {
         k @ ("taskcreated" | "taskcompleted") => {
@@ -1841,7 +1876,21 @@ fn journal_entry(event: &str, v: &Value, session_env: Option<&str>, ts_ms: u64) 
             let i = &v["tool_input"];
             from = session_env.filter(|x| !x.is_empty()).or(Some(sess)).map(String::from);
             to = i["to"].as_str().map(String::from);
+            // A message to another session (`uds:…` address or its name) is filed under that
+            // session's id, so HQ can pair it with the reply and show "answered".
+            from_name = peers.and_then(|d| resolve_peer(d, &format!("id:{sess}"))).map(|(_, n)| n).filter(|n| !n.is_empty());
+            if let Some((sid, name)) = to.as_deref().and_then(|t| resolve_peer(peers?, t)) {
+                peer = Some(sid.clone());
+                to_name = Some(name);
+                to = Some(sid);
+            }
             text = Some(i["message"].as_str().map_or_else(|| i["message"].to_string(), String::from));
+            // Another session may belong to another project or client: keep only its summary (≤80
+            // chars), never the message body (8 Sync data minimisation).
+            if peer.is_some() || to.as_deref().is_some_and(|t| t.starts_with("uds:")) {
+                let sum = i["summary"].as_str().filter(|x| !x.trim().is_empty()).map_or_else(|| text.clone().unwrap_or_default(), String::from);
+                text = Some(sum.lines().next().unwrap_or_default().chars().take(PEER_TEXT).collect());
+            }
             "session_message"
         }
         _ => return None,
@@ -1853,10 +1902,11 @@ fn journal_entry(event: &str, v: &Value, session_env: Option<&str>, ts_ms: u64) 
     let subject = subject.map(|t| secret_mask::mask(&t).chars().take(JOURNAL_TEXT).collect::<String>());
     // The sender is often this session's own id (a uuid, already stored unmasked as session_id): the masker
     // would turn it into "***" and every handoff would lose its sender, so only foreign names are masked.
-    let keep = |t: String| if t == sess { t } else { secret_mask::mask(&t) };
+    let keep = |t: String| if t == sess || peer.as_deref() == Some(t.as_str()) { t } else { secret_mask::mask(&t) };
     let (from, to) = (from.map(keep), to.map(keep));
+    let (to_name, from_name) = (to_name.map(|n| secret_mask::mask(&n)), from_name.map(|n| secret_mask::mask(&n)));
     Some(json!({"v":1,"ts":ts_ms,"kind":kind,"session_id":sess,"hq_session":hq_session,"team":team,"cwd":s(v,"cwd"),
-        "task_id":task_id,"subject":subject,"role":role,"from":from,"to":to,"text":text}))
+        "task_id":task_id,"subject":subject,"role":role,"from":from,"to":to,"from_name":from_name,"to_name":to_name,"text":text}))
 }
 
 /// Append one line (0600, dir 0700); rotate to `events.1.jsonl` once the file reaches `max`.
@@ -2672,7 +2722,7 @@ mod tests {
 
     #[test]
     fn journal_maps_subagent_start_and_stop() {
-        let e = |ev: &str, v: Value| journal_entry(ev, &v, None, 7);
+        let e = |ev: &str, v: Value| journal_entry(ev, &v, None, 7, None);
         let s = e("SubagentStart", json!({"session_id":"s1","cwd":"/r","agent_id":"a3f9c2","agent_type":"reviewer"})).unwrap();
         assert_eq!((s["kind"].as_str(), s["task_id"].as_str(), s["subject"].as_str(), s["session_id"].as_str()), (Some("subagent_start"), Some("a3f9c2"), Some("reviewer"), Some("s1")));
         assert_eq!(e("SubagentStop", json!({"session_id":"s1","agent_id":"a3f9c2","agent_type":"reviewer","last_assistant_message":"secret body"})).unwrap()["kind"], "subagent_stop");
@@ -2703,7 +2753,7 @@ mod tests {
     #[test]
     fn journal_maps_each_event() {
         let ts = 7;
-        let e = |ev: &str, v: Value, env: Option<&str>| journal_entry(ev, &v, env, ts);
+        let e = |ev: &str, v: Value, env: Option<&str>| journal_entry(ev, &v, env, ts, None);
         let c = e("TaskCreated", json!({"session_id":"s1","team_name":"t","cwd":"/r","task_id":"3","task_subject":"[be] x","teammate_name":"backend"}), None).unwrap();
         assert_eq!((c["kind"].as_str(), c["task_id"].as_str(), c["subject"].as_str(), c["team"].as_str(), c["role"].as_str(), c["v"].as_u64()), (Some("task_created"), Some("t:3"), Some("[be] x"), Some("t"), Some("backend"), Some(1)));
         assert_eq!(e("TaskCompleted", json!({"task_id":"3"}), None).unwrap()["kind"], "task_completed");
@@ -2722,6 +2772,31 @@ mod tests {
         let u = e("PostToolUse", json!({"session_id":uuid,"tool_name":"SendMessage","tool_input":{"to":"rd","message":"hi"}}), None).unwrap();
         assert_eq!((u["from"].as_str(), u["to"].as_str()), (Some(uuid), Some("rd")));
         assert!(e("PostToolUse", json!({"tool_name":"Bash"}), None).is_none());
+        // Another session's address resolves to its id + name from Claude Code's session records.
+        let d = std::env::temp_dir().join(format!("8sync-peer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("6063.json"), r#"{"pid":6063,"sessionId":"6de1efc8-68cb-45aa-9999-000000000001","name":"rd","messagingSocketPath":"/run/user/1000/cc-socks/6063.sock"}"#).unwrap();
+        std::fs::write(d.join("6063.abc.key"), "not json, never read").unwrap();
+        std::fs::write(d.join("7000.json"), r#"{"sessionId":"s-7000","name":"twin"}"#).unwrap();
+        std::fs::write(d.join("7001.json"), r#"{"sessionId":"s-7001","name":"twin"}"#).unwrap();
+        let rd = Some(("6de1efc8-68cb-45aa-9999-000000000001".to_string(), "rd".to_string()));
+        assert_eq!(resolve_peer(&d, "uds:/run/user/1000/cc-socks/6063.sock"), rd);
+        assert_eq!(resolve_peer(&d, "rd"), rd);
+        assert_eq!(resolve_peer(&d, "twin"), None, "ambiguous name");
+        assert_eq!(resolve_peer(&d, "uds:/nope.sock"), None);
+        std::fs::write(d.join("5405.json"), r#"{"sessionId":"s9","name":"core"}"#).unwrap();
+        let j = journal_entry("PostToolUse", &json!({"session_id":"s9","tool_name":"SendMessage","tool_input":{"to":"uds:/run/user/1000/cc-socks/6063.sock","message":"giúp?"}}), None, 1, Some(&d)).unwrap();
+        assert_eq!((j["to"].as_str(), j["to_name"].as_str()), (Some("6de1efc8-68cb-45aa-9999-000000000001"), Some("rd")), "peer id survives the masker");
+        assert_eq!(j["from_name"], "core");
+        assert_eq!(j["text"], "giúp?");
+        let long = json!({"session_id":"s9","tool_name":"SendMessage","tool_input":{"to":"uds:/run/user/1000/cc-socks/6063.sock","message":"x".repeat(500)}});
+        assert_eq!(journal_entry("PostToolUse", &long, None, 1, Some(&d)).unwrap()["text"].as_str().unwrap().chars().count(), 80, "body cut to 80");
+        let sum = json!({"session_id":"s9","tool_name":"SendMessage","tool_input":{"to":"rd","summary":"T6 xong","message":"client data …"}});
+        assert_eq!(journal_entry("PostToolUse", &sum, None, 1, Some(&d)).unwrap()["text"], "T6 xong", "summary preferred");
+        let unknown = json!({"session_id":"s9","tool_name":"SendMessage","tool_input":{"to":"uds:/gone.sock","message":"y".repeat(200)}});
+        assert_eq!(journal_entry("PostToolUse", &unknown, None, 1, Some(&d)).unwrap()["text"].as_str().unwrap().len(), 80, "unresolved uds address: still cut");
+        let _ = std::fs::remove_dir_all(&d);
         let long = e("Notification", json!({"message":"é".repeat(5000)}), Some("hq-a")).unwrap();
         assert_eq!(long["text"].as_str().unwrap().chars().count(), 4000);
         let r = e("Stop", json!({"session_id":"s","last_assistant_message":"hi\nkey sk-ant-api03-abcdefgh\nbye"}), Some("hq-a")).unwrap();
@@ -2736,7 +2811,7 @@ mod tests {
 
     #[test]
     fn journal_masks_every_text_field_and_gates_bodies_on_hq_session() {
-        let e = |ev: &str, v: Value, env: Option<&str>| journal_entry(ev, &v, env, 1);
+        let e = |ev: &str, v: Value, env: Option<&str>| journal_entry(ev, &v, env, 1, None);
         // non-hq sessions: no Stop / Notification body at all
         assert!(e("Stop", json!({"last_assistant_message":"hello"}), None).is_none());
         assert!(e("Stop", json!({"last_assistant_message":"hello"}), Some("not-hq")).is_none());

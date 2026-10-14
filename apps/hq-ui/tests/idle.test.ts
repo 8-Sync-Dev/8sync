@@ -46,6 +46,7 @@ describe("idle: state -> label, icon, tone", () => {
   it("maps every state with text, never colour only", () => {
     expect(idleView({ state: "working", detail: "" })).toEqual({ label: "đang làm", icon: "working", tone: "running" });
     expect(idleView({ state: "recall", detail: "" })).toEqual({ label: "đang hồi ức", icon: "recall", tone: "running" });
+    expect(idleView({ state: "learn", detail: "" })).toEqual({ label: "đang ghi bài học", icon: "learn", tone: "running" });
     expect(idleView({ state: "ask_lead", detail: "" })).toEqual({ label: "đang hỏi lead", icon: "ask", tone: "needs" });
     expect(idleView({ state: "rest", detail: "chạm trần $5.00/giờ" })).toEqual({ label: "nghỉ: chạm trần $5.00/giờ", icon: "rest", tone: "idle" });
     expect(idleView({ state: "rest", detail: "" }).label).toBe("nghỉ");

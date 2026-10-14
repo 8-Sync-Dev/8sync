@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightIcon, BellRingIcon, CheckCircle2Icon, CircleDotIcon, PlayIcon, SquareIcon, TerminalSquareIcon } from "lucide-react";
+import { ArrowRightIcon, BellRingIcon, CheckCircle2Icon, CircleDotIcon, HourglassIcon, PlayIcon, ReplyIcon, SquareIcon, TerminalSquareIcon } from "lucide-react";
 import { useMemo } from "react";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent } from "@/components/ai-elements/message";
@@ -49,15 +49,26 @@ function Row({ it, onOpenSession }: { it: ThreadItem; onOpenSession?: (name: str
           </MessageContent>
         </Message>
       );
-    case "handoff":
+    case "handoff": {
+      const from = it.fromName || shortName(it.from);
+      const to = it.toName || shortName(it.to);
       return (
-        <article aria-label={`Chuyển giao từ ${shortName(it.from)} sang ${shortName(it.to)}`} className="w-full max-w-[95%] rounded-lg border border-dashed bg-muted/30 p-3">
+        <article aria-label={`Chuyển giao từ ${from} sang ${to}`} className="w-full max-w-[95%] rounded-lg border border-dashed bg-muted/30 p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <Avatar name={it.from} />
-            <span className="font-medium">{shortName(it.from)}</span>
+            <span className="font-medium">{from}</span>
             <ArrowRightIcon className="size-4 text-muted-foreground" aria-hidden />
             <Avatar name={it.to} />
-            <span className="font-medium">{shortName(it.to)}</span>
+            <span className="font-medium">{to}</span>
+            {it.answered ? (
+              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                <ReplyIcon className="size-3.5" aria-hidden /> đã trả lời
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                <HourglassIcon className="size-3.5" aria-hidden /> chưa trả lời
+              </span>
+            )}
             <span className="ml-auto flex items-center gap-2">
               <Times n={it.count} />
               <Time ts={it.ts} />
@@ -66,6 +77,7 @@ function Row({ it, onOpenSession }: { it: ThreadItem; onOpenSession?: (name: str
           {it.text && <p className="mt-2 line-clamp-3 border-l-2 pl-2 text-sm text-muted-foreground">{it.text}</p>}
         </article>
       );
+    }
     case "task_created":
     case "task_completed": {
       const done = it.kind === "task_completed";

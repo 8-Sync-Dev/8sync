@@ -5,6 +5,25 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.86.0] — 2026-10-14
+### Added
+- **"Không ai rảnh" works like a real department.**
+  - Quality gate: `ccc hook task-done` runs on `TaskCompleted`, sync, with the same `no_idle` switch.
+    - It keeps a task open (exit 2) when the agent's transcript shows a code edit after its last test, lint or build command and the git tree still has uncommitted changes.
+    - At most 2 holds per task, then the task passes.
+    - Only real runners count as a check (`cargo test`, `pnpm run lint`, `pytest`, `8sync run`), not `ls tests`.
+    - A teammate is judged by its own transcript. If that transcript is missing, the task passes.
+  - Learning reflex: a task that was held back and then passed leaves one note. The member's next idle asks it to write the lesson with `/remember` (`failure: … → fix: …`). The hook never writes KNOWLEDGE itself.
+  - The lead's advice (write the lesson, offer help to another session's room) now uses Stop `additionalContext`, which Claude Code shows as feedback, not as a hook error. Handing out an open task still blocks.
+  - Source: https://code.claude.com/docs/en/hooks (TaskCompleted, Stop decision control).
+- **HQ handoff cards across sessions.**
+  - A `SendMessage` to another Claude Code session (a `uds:` address or a session name) is journaled under that session's id, with both session names ("core → rd").
+  - The id is resolved from Claude Code's `~/.claude/sessions/<pid>.json` records. Only the `.json` files are read, never the `.key` files. The layout is not documented.
+  - Only the message summary or its first line, at most 80 characters, is kept for another session, never the body (data minimisation).
+  - The team thread card shows names and "đã trả lời / chưa trả lời" (the recipient wrote back afterwards).
+  - Idle chips gain a "đang ghi bài học" state.
+- `scripts/uat/no-idle-hook.sh`: 15/15 ok on Linux (task-done hold, then pass, then the lesson nudge).
+
 ## [0.85.0] — 2026-10-14
 ### Added
 - **"Không ai rảnh" for agent teams** (`8sync ccc idle on|off|status`, default OFF). The kit registers a sync `ccc hook idle` on `TeammateIdle` and `Stop`; it decides from local files only (team task list `~/.claude/tasks/<team>/`, `su-code/STATE.md` Next, `su-code/KNOWLEDGE.md` `failure:` lines, other sessions' task lists), never calls a model. Teammate ladder: finish own in-progress task → take the next unblocked task via TaskList (Claude Code's file lock settles claims; the hook never assigns) → recall ≤5 lines → rest with a reason (Claude Code already notifies the lead when a teammate idles). Lead's Stop: hand out unowned tasks → when nothing is open, offer help to another session with open tasks → rest. Rails: ≤3 nudges in a row without task progress, the same nudge twice = rest, a $/hour budget from the status-line usage snapshots (default $5/h), and on a subscription login a lease the owner renews while present (`idle on --hours N`, default 2) because unattended automated use belongs on a Console API key. Each member's state is written to `~/.local/state/8sync/ccc/idle/status/` for `8sync hq ui`. Hook semantics: https://code.claude.com/docs/en/hooks (TeammateIdle exit 2), https://code.claude.com/docs/en/agent-teams (task list path).

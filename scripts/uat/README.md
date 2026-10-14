@@ -9,12 +9,16 @@ owner's existing subscription login. Nothing here touches the owner's `~/.claude
 
 `bash scripts/uat/no-idle-hook.sh target/debug/8sync`: sandbox HOME + a fake team task list; checks
 off-by-default, teammate takes the next task (exit 2), loop → rest, lead Stop block, rest, and subscription
-without a lease → rest. Measured 2026-10-14 on Linux: 12/12 ok, PASS (adds other-room offer, busy lead, no `team_name`, path-like team name).
+without a lease → rest, plus the `task-done` gate (an unchecked code edit on a dirty tree holds the task, a test run
+lets it pass, the next idle asks for one `/remember` lesson). Measured 2026-10-14 on Linux: 15/15 ok, PASS.
 
 Live run (owner-run, interactive — agent teams do not spawn under `claude -p`): `8sync ccc idle on --hours 1
 --usd-per-hour 2`, `8sync ccc kit`, open a new `8sync ccc . uat-idle --team`, ask the lead for 2 teammates and
 4 small tasks. Expect: a teammate that finishes takes the next task by itself; the
-lead stops when nothing is open; `8sync ccc idle status` shows each member and the rest reason. On a
+lead stops when nothing is open; `8sync ccc idle status` shows each member and the rest reason. Gate check: ask a
+teammate to edit a `.rs` file and mark its task done without testing → the task stays open with the
+"8sync task-done" reason; the lead editing a file must not hold a teammate's task (the teammate transcript is read
+from `<lead id>/subagents/agent-<agent_id>.jsonl`, a layout seen on disk, not documented: not verified live). On a
 subscription login keep it attended (lease); unattended runs belong on a Console API key. Then `idle off`.
 
 ## compact-window.sh — `CLAUDE_CODE_AUTO_COMPACT_WINDOW` moves the trigger

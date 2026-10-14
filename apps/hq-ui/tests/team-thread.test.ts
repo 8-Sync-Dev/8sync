@@ -60,4 +60,20 @@ describe("masked senders", () => {
     const [h] = buildTeamThread([row(1, 1, "session_message", "a2830544-0719-4d6f-aaa3-644783ddb0b3", { from_: "***", to_: "rd", text: "hi" })]);
     expect(h).toMatchObject({ kind: "handoff", from: "a2830544-0719-4d6f-aaa3-644783ddb0b3", to: "rd" });
   });
+
+  it("marks a handoff answered once the recipient writes back, and shows session names", () => {
+    const a = "a2830544-0719-4d6f-aaa3-644783ddb0b3";
+    const b = "6de1efc8-68cb-45aa-9999-000000000001";
+    const rows: ThreadRow[] = [
+      row(1, 100, "session_message", a, { from_: a, to_: b, text: "giúp T6?", from_name: "core", to_name: "rd" }),
+      row(2, 200, "session_message", a, { from_: a, to_: b, text: "còn PR #31", from_name: "core", to_name: "rd" }),
+      row(3, 300, "session_message", b, { from_: b, to_: a, text: "ok", from_name: "rd", to_name: "core" }),
+    ];
+    const t = buildTeamThread(rows).filter((x) => x.kind === "handoff");
+    expect(t.map((x) => [x.fromName, x.toName, x.answered])).toEqual([
+      ["core", "rd", true],
+      ["core", "rd", true],
+      ["rd", "core", false],
+    ]);
+  });
 });

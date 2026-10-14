@@ -25,6 +25,15 @@ describe("mapEvent", () => {
     expect(m?.message).toMatchObject({ kind: "session_message", from_: "hq-api", to_: "hq-web", text: "API is ready", session: "hq-api" });
     expect(m?.session?.name).toBe("hq-api");
   });
+  it("session_message between Claude sessions carries their names for the handoff card", () => {
+    const m = mapEvent({ kind: "session_message", ts, session_id: "id-a", from: "id-a", to: "id-b", from_name: "core", to_name: "rd", text: "x" });
+    expect(m?.names).toEqual([
+      { session_id: "id-a", name: "core" },
+      { session_id: "id-b", name: "rd" },
+    ]);
+    expect(mapEvent({ kind: "session_message", ts, session_id: "id-a", from: "id-a", to: "id-b", text: "x" })?.names).toBeUndefined();
+  });
+
   it("session_message from a non-hq session falls back to session_id", () => {
     const m = mapEvent({ kind: "session_message", session_id: "uuid-1", from: "implementer", to: "reviewer", text: "x" });
     expect(m?.message?.session).toBe("uuid-1");
