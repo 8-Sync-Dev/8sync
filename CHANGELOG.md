@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.84.0] — 2026-10-14
+### Added
+- `8sync ccc compact --window <100000..1000000>` / `--window-reset`: absolute cap on the auto-compact window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW` in `~/.claude/settings.json` `env`, plain integer only; Claude Code also caps it at the model window and the env var beats `/autocompact`, `--autocompact` and `autoCompactWindow`). `compact` and `compact --json` show percent, window and the effective trigger "≈ pct × window" (8sync does not know the model window). `ccc kit` sets 400000 only when no window is set anywhere (env, `autoCompactWindow`, `modelSettings`), so Opus 1M compacts at ≈ 60 % × 400K = 240K instead of ≈ 580K; `kit --remove` drops it only while it still equals 400000. https://code.claude.com/docs/en/env-vars
+- `scripts/uat/compact-window.sh`: real Haiku 5.5 run with the env var and no `--autocompact` flag. Measured first auto-compaction (override 60): 119,955 tokens = 60.0 % of 200K (US$0.21, token from the first file recalled after compaction); 58,098 at 120K and 50,136 at 100K, i.e. below 60 % at small windows (not verified why; those runs ended in Claude Code's autocompact-thrash stop, about US$0.04 each).
+
 ## [0.83.0] — 2026-10-14
 ### Added
 - **`ccc kit` tool-output budget.** Writes `env.BASH_MAX_OUTPUT_LENGTH=20000` (documented default 30000) and `env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS=15000` (documented default 25,000) into `~/.claude/settings.json` only when absent. An owner value is never overwritten, and `kit --remove` drops a key only while it still equals the kit value. Output past the limit is not lost: Bash saves it to a file and Claude reads the rest on demand, and a long Read returns the first page with a `PARTIAL view` notice. Sources: https://code.claude.com/docs/en/env-vars, https://code.claude.com/docs/en/tools-reference#output-limits.

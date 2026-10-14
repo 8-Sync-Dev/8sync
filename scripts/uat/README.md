@@ -5,6 +5,16 @@ PASS/FAIL per assertion and exits non-zero on failure. No API key is read or set
 owner's existing subscription login. Nothing here touches the owner's `~/.claude/settings.json`,
 `~/.local/bin/8sync` or `~/.config/8sync`. Not run in CI (they spend real tokens / need network).
 
+## compact-window.sh — `CLAUDE_CODE_AUTO_COMPACT_WINDOW` moves the trigger
+
+Run: `scripts/uat/compact-window.sh [WINDOW=200000] [PCT=60] [MODEL=claude-haiku-5-5]`. Same harness as compact.sh but the window comes
+from the env var (what `8sync ccc compact --window` writes), no `--autocompact` flag. A secret token sits in the first file and is asked for at the end.
+Docs ([env-vars](https://code.claude.com/docs/en/env-vars)): "from `100000` to `1000000`. Accepts a plain integer such as `500000` only ... The effective window is also capped at the model's context window. Takes precedence over the `/autocompact` command, the `--autocompact` flag, and the `autoCompactWindow` setting."
+Result (2026-10-14, claude 2.1.296, override 60): window 200000 -> first auto-compaction at 119,955 tokens = 60.0 % (PASS, US$0.21, recall ok);
+window 120000 -> 58,098 (48.4 %, expected ~72K); window 100000 -> 50,136 (50.1 %). The var does move the trigger, but at <=120K it fires below pct x window (cause not verified) and
+those runs stop with "Autocompact is thrashing" (the 34 KB files refill the context), so recall is not reachable there; that is a test-size artefact, not proof of token loss.
+400K (the kit default) was not run (~US$1+): not verified.
+
 ## compact.sh — auto-compaction honours `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`
 
 Run: `scripts/uat/compact.sh [WINDOW=100000] [PCT=60] [MODEL=claude-haiku-5-5]`
