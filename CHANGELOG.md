@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.84.0] — 2026-10-14
 ### Added
 - `8sync ccc compact --window <100000..1000000>` / `--window-reset`: absolute cap on the auto-compact window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW` in `~/.claude/settings.json` `env`, plain integer only; Claude Code also caps it at the model window and the env var beats `/autocompact`, `--autocompact` and `autoCompactWindow`). `compact` and `compact --json` show percent, window and the effective trigger "≈ pct × window" (8sync does not know the model window). `ccc kit` sets 400000 only when no window is set anywhere (env, `autoCompactWindow`, `modelSettings`), so Opus 1M compacts at ≈ 60 % × 400K = 240K instead of ≈ 580K; `kit --remove` drops it only while it still equals 400000. https://code.claude.com/docs/en/env-vars
 - `scripts/uat/compact-window.sh`: real Haiku 5.5 run with the env var and no `--autocompact` flag. Measured first auto-compaction (override 60): 119,955 tokens = 60.0 % of 200K (US$0.21, token from the first file recalled after compaction); 58,098 at 120K and 50,136 at 100K, i.e. below 60 % at small windows (not verified why; those runs ended in Claude Code's autocompact-thrash stop, about US$0.04 each).
