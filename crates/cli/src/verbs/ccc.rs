@@ -29,6 +29,7 @@ mod grant;
 mod guard;
 mod help;
 mod looper;
+mod output_budget;
 pub(crate) mod report;
 mod secret;
 mod resume;
@@ -792,6 +793,8 @@ fn apply_lsp_plugins(v: &mut Value, on_path: impl Fn(&str) -> bool) {
 fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()> {
     // Auto-compact at 60% unless the owner chose a value (`8sync ccc compact --at N`).
     compact::kit_default(v)?;
+    // Tool-output budget (Bash 20k chars, Read 15k tokens), only when absent; see output_budget.rs.
+    output_budget::kit_default(v)?;
     let obj = v.as_object_mut().context("settings.json is not a JSON object")?;
     if let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() {
         env.entry("CLAUDE_CODE_ENABLE_TODO_TOOLS").or_insert_with(|| json!("1"));
@@ -1053,7 +1056,7 @@ fn remove_kit_hooks_from(path: &Path, orig: &str) -> Result<usize> {
     let raw = std::fs::read_to_string(path)?;
     let mut v: Value = serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", path.display()))?;
     let n = strip_kit_hooks(&mut v);
-    let compact = compact::strip_kit_default(&mut v);
+    let compact = compact::strip_kit_default(&mut v) | output_budget::strip_kit_default(&mut v);
     let auto = strip_auto_env(&mut v);
     if n == 0 && !compact && !auto {
         return Ok(0);
