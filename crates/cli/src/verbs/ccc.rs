@@ -48,7 +48,7 @@ mod verify;
       8sync ccc . <name> --team      same session with Claude Code agent teams on (lead + teammates; interactive)
       8sync ccc . <name> --team --panes   teammates as tmux split panes (run inside tmux)
       8sync ccc help                 every ccc verb on one screen (Vietnamese)
-      8sync ccc compact [--at N|--reset|--json]   auto-compact threshold (kit default 60%; needs a new session)
+      8sync ccc compact [--at N|--reset|--window N|--window-reset|--json]   auto-compact threshold (kit default 60% of a 400K window; needs a new session)
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
       8sync ccc . <name> --offline   no network step at all: no auto-update, installer, `claude mcp add` or download
                                      (also `EIGHTSYNC_OFFLINE=1`; works on `new`, `.`, `kit`; `claude` must already be installed)

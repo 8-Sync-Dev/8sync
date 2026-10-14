@@ -97,7 +97,7 @@ cd <project>
 8sync ccc kit                  # (re)install the kit; `8sync setup` already did (also sets a tool-output budget in settings `env`, only when absent: Bash 20k chars, Read 15k tokens)
 8sync ccc status               # claude, login, kit, sessions
 8sync ccc help                 # every ccc verb on one screen
-8sync ccc compact --at 50      # auto-compact threshold (kit default 60%); --reset, --json; new session to apply
+8sync ccc compact --at 50      # auto-compact threshold (kit default 60% of a 400K window); --reset, --json, --window N | --window-reset; new session to apply
 ```
 
 Each name maps to a fixed conversation id per repo, so `8sync ccc . core` tomorrow continues today's thread, next to `8sync forge core` and `8sync . core` for the other agents.

@@ -30,6 +30,8 @@ KIT & CẤU HÌNH
   8sync ccc compact            xem mốc auto-compact (mặc định kit: 60%)
   8sync ccc compact --at 50    đặt mốc 10..95 (thấp hơn = nén sớm hơn; cần session mới)
   8sync ccc compact --reset    về mặc định của Claude Code   (--json để máy đọc)
+  8sync ccc compact --window 400000   trần tuyệt đối 100000..1000000 (kit mặc định 400000; trigger ≈ % × window)
+  8sync ccc compact --window-reset    bỏ trần window
   8sync ccc login-kind [--json]   kiểu login (claude.ai hay API key; không in token)
   8sync ccc <verb> --offline   không chạm mạng (cũng EIGHTSYNC_OFFLINE=1)
 
