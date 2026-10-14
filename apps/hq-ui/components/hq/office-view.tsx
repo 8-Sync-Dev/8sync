@@ -1,14 +1,16 @@
 "use client";
 
-import { GitBranchIcon, InboxIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
+import { GitBranchIcon, InboxIcon, MoonIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isStale, longRestCount, sortMembers, type IdleRecord } from "@/lib/idle";
 import { fmtDuration, fmtTokens, fmtUsd, groupByProject, seatState, SEATS, type Visit } from "@/lib/office";
 import { drawWalker, WALKER_H, WALKER_W } from "@/lib/sprite/walker";
 import { shirtFor } from "@/lib/sprite/frames";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote, StatusDot } from "./bits";
+import { IdleChip } from "./idle-chip";
 import { SpriteCanvas } from "./sprite-canvas";
 import type { OfficeState, Room } from "./use-office";
 
@@ -109,12 +111,17 @@ function RoomCard({
   outgoing,
   selected,
   onOpen,
+  members,
+  now,
 }: {
   room: Room;
   labelOf: (key: string) => string;
   incoming: Visit[];
   outgoing: Visit[];
   selected: boolean;
+  /** Live agent-team members of this session (lead first), from `8sync ccc hook idle`. */
+  members: IdleRecord[];
+  now: number;
   onOpen: (room: Room) => void;
 }) {
   const u = room.usage;
@@ -172,6 +179,13 @@ function RoomCard({
               <Seat key={s.key} seat={s} room={room} />
             ))}
           </ul>
+          {members.length > 0 && (
+            <ul aria-label="Agent team: ai đang làm gì" className="mt-2 flex flex-wrap gap-1.5">
+              {members.map((m) => (
+                <IdleChip key={m.name} r={m} now={now} />
+              ))}
+            </ul>
+          )}
           {(incoming.length > 0 || outgoing.length > 0) && (
             <div className="mt-2 flex flex-col gap-1.5" role="status">
               {incoming.slice(0, 2).map((v) => (
@@ -232,6 +246,15 @@ export function OfficeView({
   const groups = useMemo(() => groupByProject(rooms), [rooms]);
   const labelOf = (key: string) => rooms.find((r) => r.key === key)?.label ?? key.slice(0, 8);
   const visits = office?.visits ?? [];
+  const now = office?.at ?? 0;
+  const idle = useMemo(() => office?.idle ?? [], [office]);
+  const teams = useMemo(() => new Set(rooms.map((r) => r.team).filter(Boolean)), [rooms]);
+  const live = idle.filter((r) => !isStale(r, now));
+  const membersOf = (team: string | null) => (team ? sortMembers(live.filter((r) => r.team === team)) : []);
+  // A team whose lead session is gone still shows its members; only stale records collapse.
+  const orphans = sortMembers(live.filter((r) => !teams.has(r.team)));
+  const old = idle.filter((r) => isStale(r, now));
+  const resting = longRestCount(idle, now);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -253,6 +276,14 @@ export function OfficeView({
             {error && (
               <p role="status" className="text-xs text-muted-foreground">
                 Mất kết nối ({error}), đang thử lại. Dữ liệu dưới đây có thể đã cũ.
+              </p>
+            )}
+            {resting > 0 && (
+              <p role="status" className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <MoonIcon className="size-3.5" aria-hidden />
+                <span>
+                  <span className="font-medium text-foreground tabular">{resting}</span> thành viên team nghỉ hơn 10 phút
+                </span>
               </p>
             )}
             {groups.map((g) => {
@@ -287,6 +318,8 @@ export function OfficeView({
                         outgoing={visits.filter((v) => v.from === r.key)}
                         selected={selected != null && [r.name, r.session_id, r.label].includes(selected)}
                         onOpen={onOpen}
+                        members={membersOf(r.team)}
+                        now={now}
                       />
                     ))}
                   </div>
@@ -295,9 +328,32 @@ export function OfficeView({
             })}
             <p className="text-xs text-muted-foreground">
               Mỗi session là một phòng; ghế giống nhau ở mọi phòng ({SEATS.map((s) => s.label).join(", ")}). Ghế sáng khi agent chuyên gia
-              của session đó đang chạy. Khi session nhắn sang session khác, lead đi sang phòng đó.
+              của session đó đang chạy. Khi session nhắn sang session khác, lead đi sang phòng đó. Dòng dưới ghế là agent team của session: ai đang làm, đang hỏi, hay đang nghỉ.
             </p>
           </>
+        )}
+        {/* Shown even with no live room: resting members never disappear. */}
+        {orphans.length > 0 && (
+          <section aria-labelledby="idle-orphans" className="space-y-2">
+            <h2 id="idle-orphans" className="text-sm font-semibold">Thành viên team không còn phòng</h2>
+            <ul className="flex flex-wrap gap-1.5">
+              {orphans.map((m) => (
+                <IdleChip key={`${m.team}/${m.name}`} r={m} now={now} variant="plain" />
+              ))}
+            </ul>
+          </section>
+        )}
+        {old.length > 0 && (
+          <details className="group/old text-xs text-muted-foreground">
+            <summary className="cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
+              {old.length} trạng thái team cũ (hơn 6 giờ)
+            </summary>
+            <ul className="mt-2 flex flex-wrap gap-1.5">
+              {old.map((m) => (
+                <IdleChip key={`${m.team}/${m.name}`} r={m} now={now} variant="plain" />
+              ))}
+            </ul>
+          </details>
         )}
       </div>
     </div>

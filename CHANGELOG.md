@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.85.0] — 2026-10-14
+### Added
+- **"Không ai rảnh" for agent teams** (`8sync ccc idle on|off|status`, default OFF). The kit registers a sync `ccc hook idle` on `TeammateIdle` and `Stop`; it decides from local files only (team task list `~/.claude/tasks/<team>/`, `su-code/STATE.md` Next, `su-code/KNOWLEDGE.md` `failure:` lines, other sessions' task lists), never calls a model. Teammate ladder: finish own in-progress task → take the next unblocked task via TaskList (Claude Code's file lock settles claims; the hook never assigns) → recall ≤5 lines → rest with a reason (Claude Code already notifies the lead when a teammate idles). Lead's Stop: hand out unowned tasks → when nothing is open, offer help to another session with open tasks → rest. Rails: ≤3 nudges in a row without task progress, the same nudge twice = rest, a $/hour budget from the status-line usage snapshots (default $5/h), and on a subscription login a lease the owner renews while present (`idle on --hours N`, default 2) because unattended automated use belongs on a Console API key. Each member's state is written to `~/.local/state/8sync/ccc/idle/status/` for `8sync hq ui`. Hook semantics: https://code.claude.com/docs/en/hooks (TeammateIdle exit 2), https://code.claude.com/docs/en/agent-teams (task list path).
+- `scripts/uat/no-idle-hook.sh`: free sandbox UAT of the ladder and rails (12/12 ok on Linux).
+
 ## [0.84.0] — 2026-10-14
 ### Added
 - `8sync ccc compact --window <100000..1000000>` / `--window-reset`: absolute cap on the auto-compact window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW` in `~/.claude/settings.json` `env`, plain integer only; Claude Code also caps it at the model window and the env var beats `/autocompact`, `--autocompact` and `autoCompactWindow`). `compact` and `compact --json` show percent, window and the effective trigger "≈ pct × window" (8sync does not know the model window). `ccc kit` sets 400000 only when no window is set anywhere (env, `autoCompactWindow`, `modelSettings`), so Opus 1M compacts at ≈ 60 % × 400K = 240K instead of ≈ 580K; `kit --remove` drops it only while it still equals 400000. https://code.claude.com/docs/en/env-vars

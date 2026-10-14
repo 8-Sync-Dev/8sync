@@ -5,6 +5,18 @@ PASS/FAIL per assertion and exits non-zero on failure. No API key is read or set
 owner's existing subscription login. Nothing here touches the owner's `~/.claude/settings.json`,
 `~/.local/bin/8sync` or `~/.config/8sync`. Not run in CI (they spend real tokens / need network).
 
+## no-idle-hook.sh — "không ai rảnh" ladder and rails (no model, free)
+
+`bash scripts/uat/no-idle-hook.sh target/debug/8sync`: sandbox HOME + a fake team task list; checks
+off-by-default, teammate takes the next task (exit 2), loop → rest, lead Stop block, rest, and subscription
+without a lease → rest. Measured 2026-10-14 on Linux: 12/12 ok, PASS (adds other-room offer, busy lead, no `team_name`, path-like team name).
+
+Live run (owner-run, interactive — agent teams do not spawn under `claude -p`): `8sync ccc idle on --hours 1
+--usd-per-hour 2`, `8sync ccc kit`, open a new `8sync ccc . uat-idle --team`, ask the lead for 2 teammates and
+4 small tasks. Expect: a teammate that finishes takes the next task by itself; the
+lead stops when nothing is open; `8sync ccc idle status` shows each member and the rest reason. On a
+subscription login keep it attended (lease); unattended runs belong on a Console API key. Then `idle off`.
+
 ## compact-window.sh — `CLAUDE_CODE_AUTO_COMPACT_WINDOW` moves the trigger
 
 Run: `scripts/uat/compact-window.sh [WINDOW=200000] [PCT=60] [MODEL=claude-haiku-5-5]`. Same harness as compact.sh but the window comes

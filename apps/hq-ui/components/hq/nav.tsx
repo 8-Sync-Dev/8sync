@@ -242,7 +242,7 @@ function LiveDot({ live }: { live: Live }) {
         aria-hidden
         className={cn(
           "size-1.5 rounded-full",
-          live === "live" ? "bg-st-running" : "animate-pulse bg-st-needs",
+          live === "live" ? "bg-st-running" : "bg-st-needs motion-safe:animate-pulse",
         )}
       />
       {label}

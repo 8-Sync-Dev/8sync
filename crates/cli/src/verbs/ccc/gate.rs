@@ -235,7 +235,7 @@ fn read_tail(path: &str) -> Tail {
 
 /// The owner's text when `line` is a message they typed; `None` for tool results,
 /// meta entries, task notifications and anything else.
-fn human_text(line: &str) -> Option<String> {
+pub(super) fn human_text(line: &str) -> Option<String> {
     let e = serde_json::from_str::<Value>(line).ok()?;
     if e["type"] != "user" || e["isMeta"] == true {
         return None;
