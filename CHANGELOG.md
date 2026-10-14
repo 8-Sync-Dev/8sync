@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- `8sync ccc kit` / `8sync up` / every `ccc` launch now refresh the 8sync block in ancestor CLAUDE.md files up to `$HOME` (exclusive), git repo or not: a stale FULL block becomes the current compact block (only text between the markers; CRLF and user text kept; `.bak-8sync` saved). A su-code memory dir's CLAUDE.md loses the block (a bare 8sync stub is deleted). cbm/serena lines still appear only when `harness cbm|serena on`.
 
 ## [0.81.1] — 2026-10-14
 ### Changed

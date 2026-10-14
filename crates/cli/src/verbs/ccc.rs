@@ -153,7 +153,9 @@ pub fn run(a: Args) -> Result<()> {
                     ui::ok(&format!("skill library registered → {}", dir.display()));
                 }
             }
-            install_kit(&env, rest.iter().any(|a| a == "--force"), offline)
+            let res = install_kit(&env, rest.iter().any(|a| a == "--force"), offline);
+            refresh_ancestor_claude_md(&env, &root);
+            res
         }
         "compact" => compact::run(rest, &claude_dir(&env)),
         "secret" => secret::run(rest),
@@ -217,6 +219,7 @@ fn prepare(env: &Env, root: &Path, offline: bool) {
             ui::warn(&format!("kit refresh failed: {e:#} — `8sync ccc kit` retries"));
         }
     }
+    refresh_ancestor_claude_md(env, root);
     if root.join(".git").exists() {
         if let Err(e) = project_harness(env, root) {
             ui::warn(&format!("project harness: {e:#} — `8sync harness` repairs it"));
@@ -262,6 +265,15 @@ fn update_and_rerun() -> Option<i32> {
     }
     let status = Command::new(&exe).args(std::env::args_os().skip(1)).env("SUSYNC_NO_AUTO_UPDATE", "1").status().ok()?;
     Some(status.code().unwrap_or(1))
+}
+
+/// Bring the 8sync block in CLAUDE.md files above `dir` (up to $HOME, git repo or not) to the
+/// current compact block; a failure is reported, never blocks.
+fn refresh_ancestor_claude_md(env: &Env, dir: &Path) {
+    match crate::verbs::skill::inject::refresh_ancestor_blocks(&env.home, dir) {
+        Ok(files) => files.iter().for_each(|f| ui::ok(&format!("refreshed 8sync block in {} (backup: .bak-8sync)", f.display()))),
+        Err(e) => ui::warn(&format!("ancestor CLAUDE.md refresh: {e:#}")),
+    }
 }
 
 /// The repo side of the harness, the same files `8sync .` gives omp: the

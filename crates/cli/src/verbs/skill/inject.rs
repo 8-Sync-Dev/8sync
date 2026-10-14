@@ -344,6 +344,58 @@ pub(crate) fn ancestor_claude_has_block(home: &Path, root: &Path) -> bool {
         .any(|a| std::fs::read_to_string(a.join("CLAUDE.md")).is_ok_and(|t| find_block(&t).is_some()))
 }
 
+/// Keep the 8sync block in ancestor CLAUDE.md files current, git repo or not.
+/// Claude Code loads every CLAUDE.md up the tree, so a stale FULL block in a plain
+/// folder (e.g. `~/startup`, no `.git`) keeps being injected into every session.
+/// Walks `start` and its ancestors up to `home` (exclusive; nothing above, nothing
+/// when `start` is outside `home`). Only text between the markers is touched:
+/// a block in a normal dir becomes the current compact block, a block in a su-code
+/// MEMORY dir is removed (a bare 8sync stub is deleted with it; the original is
+/// kept as `CLAUDE.md.bak-8sync`). Files without markers are never written.
+/// Returns the files changed.
+pub(crate) fn refresh_ancestor_blocks(home: &Path, start: &Path) -> Result<Vec<PathBuf>> {
+    let mut changed = Vec::new();
+    if !start.starts_with(home) {
+        return Ok(changed);
+    }
+    let block = claude_block(home);
+    for dir in start.ancestors().take_while(|a| *a != home) {
+        let path = dir.join("CLAUDE.md");
+        let Ok(old) = std::fs::read_to_string(&path) else { continue };
+        let Some((b, e, elen)) = find_block(&old) else { continue };
+        let crlf = old[b..e].contains("\r\n");
+        let new = if is_memory_dir(dir) {
+            strip_block(&old, b, e + elen)
+        } else {
+            let blk = if crlf { block.replace('\n', "\r\n") } else { block.clone() };
+            format!("{}{}{}", &old[..b], blk, &old[e + elen..])
+        };
+        if new == old {
+            continue;
+        }
+        if is_memory_dir(dir) && new.trim() == "# CLAUDE.md — guidance for Claude Code" {
+            // Only the stub `inject_agents_md` seeds is left: 8sync made this file.
+            crate::verbs::ccc::write_atomic_bak(&path, &old, &new)?;
+            std::fs::remove_file(&path)?;
+        } else {
+            crate::verbs::ccc::write_atomic_bak(&path, &old, &new)?;
+        }
+        changed.push(path);
+    }
+    Ok(changed)
+}
+
+/// `old` without bytes `b..end` plus the line ending right after, and one blank line
+/// when removal would leave two in a row. Everything else stays byte-for-byte.
+fn strip_block(old: &str, b: usize, end: usize) -> String {
+    let (head, mut tail) = (&old[..b], &old[end..]);
+    tail = tail.strip_prefix("\r\n").or_else(|| tail.strip_prefix('\n')).unwrap_or(tail);
+    if (head.ends_with("\n\n") || head.ends_with("\r\n\r\n")) && (tail.starts_with('\n') || tail.starts_with("\r\n")) {
+        tail = tail.strip_prefix("\r\n").or_else(|| tail.strip_prefix('\n')).unwrap_or(tail);
+    }
+    format!("{head}{tail}")
+}
+
 /// Skills the Claude Code kit installs into `~/.claude/skills`: their
 /// descriptions stay listed whatever tier the project gives them.
 const KIT_SKILLS: [&str; 3] = ["ship", "aup-audit", "deep-research"];
@@ -695,5 +747,89 @@ mod tests {
         assert!(off.contains("codegraph"));
         let on = format!("{}{}", claude_block_with(true, true), mcp_lines(true, true));
         assert!(on.contains("codebase-memory") && on.contains("serena"));
+    }
+
+    const FULL: &str = "## OLD full block\nĐỌC NGAY codebase-memory-mcp LUÔN có\n";
+
+    #[test]
+    fn ancestor_refresh_compacts_full_block_in_non_git_dir_keeping_user_text() {
+        let home = tmp("anc-refresh");
+        let (up, leaf) = (home.join("startup"), home.join("startup/app/deep"));
+        std::fs::create_dir_all(&leaf).unwrap();
+        let old = format!("# Mine\nbefore\n\n{BEGIN}\n{FULL}{END}\n\nafter \u{e9}\n");
+        std::fs::write(up.join("CLAUDE.md"), &old).unwrap();
+        // no markers -> untouched; $HOME itself -> untouched
+        std::fs::write(up.join("app/CLAUDE.md"), "# plain\n").unwrap();
+        std::fs::write(home.join("CLAUDE.md"), &old).unwrap();
+        let ch = refresh_ancestor_blocks(&home, &leaf).unwrap();
+        assert_eq!(ch, vec![up.join("CLAUDE.md")]);
+        let out = std::fs::read_to_string(up.join("CLAUDE.md")).unwrap();
+        assert!(out.starts_with("# Mine\nbefore\n\n") && out.ends_with("\n\nafter \u{e9}\n"));
+        assert!(!out.contains("OLD full block") && out.len() < old.len() + 1100);
+        assert_eq!(out.matches(BEGIN).count(), 1);
+        assert_eq!(std::fs::read_to_string(up.join("CLAUDE.md.bak-8sync")).unwrap(), old);
+        assert_eq!(std::fs::read_to_string(up.join("app/CLAUDE.md")).unwrap(), "# plain\n");
+        assert_eq!(std::fs::read_to_string(home.join("CLAUDE.md")).unwrap(), old, "$HOME untouched");
+        assert!(refresh_ancestor_blocks(&home, &leaf).unwrap().is_empty(), "idempotent");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn ancestor_refresh_never_goes_above_home_or_outside_it() {
+        let root = tmp("above");
+        let (home, outside) = (root.join("home"), root.join("other"));
+        std::fs::create_dir_all(home.join("p")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let old = format!("{BEGIN}\n{FULL}{END}\n");
+        std::fs::write(root.join("CLAUDE.md"), &old).unwrap(); // above $HOME
+        std::fs::write(outside.join("CLAUDE.md"), &old).unwrap();
+        assert!(refresh_ancestor_blocks(&home, &home.join("p")).unwrap().is_empty());
+        assert!(refresh_ancestor_blocks(&home, &outside).unwrap().is_empty());
+        assert_eq!(std::fs::read_to_string(root.join("CLAUDE.md")).unwrap(), old);
+        assert_eq!(std::fs::read_to_string(outside.join("CLAUDE.md")).unwrap(), old);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ancestor_refresh_preserves_crlf_outside_markers() {
+        let home = tmp("crlf");
+        let d = home.join("w");
+        std::fs::create_dir_all(&d).unwrap();
+        let old = format!("# T\r\nmine\r\n{BEGIN}\r\n{}{END}\r\ntail\r\n", FULL.replace('\n', "\r\n"));
+        std::fs::write(d.join("CLAUDE.md"), &old).unwrap();
+        refresh_ancestor_blocks(&home, &d).unwrap();
+        let out = std::fs::read_to_string(d.join("CLAUDE.md")).unwrap();
+        assert!(out.starts_with("# T\r\nmine\r\n") && out.ends_with("\r\ntail\r\n"));
+        assert!(!out.replace("\r\n", "").contains('\n'), "no bare LF left");
+        assert!(!out.contains("OLD full block"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn memory_dir_claude_md_loses_the_block_user_text_kept_stub_deleted() {
+        let home = tmp("mem-strip");
+        let (mem, mem2) = (home.join("startup/su-code"), home.join("proj/su-code"));
+        for m in [&mem, &mem2] {
+            std::fs::create_dir_all(m).unwrap();
+            std::fs::write(m.join("STATE.md"), "s").unwrap();
+        }
+        // stub made by 8sync: h1 + block only -> deleted (backup kept)
+        std::fs::write(mem.join("CLAUDE.md"), format!("# CLAUDE.md — guidance for Claude Code\n\n{BEGIN}\n{FULL}{END}\n")).unwrap();
+        // user text around the block -> kept, file stays
+        std::fs::write(mem2.join("CLAUDE.md"), format!("# Notes\n\nkeep me\n\n{BEGIN}\n{FULL}{END}\n\nand me\n")).unwrap();
+        let ch = refresh_ancestor_blocks(&home, &mem).unwrap();
+        assert_eq!(ch.len(), 1);
+        assert!(!mem.join("CLAUDE.md").exists() && mem.join("CLAUDE.md.bak-8sync").exists());
+        refresh_ancestor_blocks(&home, &mem2).unwrap();
+        assert_eq!(std::fs::read_to_string(mem2.join("CLAUDE.md")).unwrap(), "# Notes\n\nkeep me\n\nand me\n");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn ancestor_block_mentions_cbm_serena_only_when_on() {
+        let off = claude_block_with(false, false);
+        assert!(!off.contains("codebase-memory") && !off.contains("serena"));
+        assert!(claude_block_with(true, false).contains("codebase-memory") && !claude_block_with(true, false).contains("serena"));
+        assert!(claude_block_with(false, true).contains("serena") && !claude_block_with(false, true).contains("codebase-memory"));
     }
 }
