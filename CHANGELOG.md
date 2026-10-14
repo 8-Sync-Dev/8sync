@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.87.0] — 2026-10-14
 ### Added
 - **Long tasks continue after a usage limit.** `8sync ccc kit` sets `autoContinueAtUsageLimit: true` in Claude Code user settings.
   - When a claude.ai usage limit stops a task, the open session waits and continues after the reset (Claude Code v2.1.234+; on by default there, now pinned).
