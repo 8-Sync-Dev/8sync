@@ -95,11 +95,19 @@
 # 46,640 B over 6144 KiB. v0.77.0 asset 6,280,752 → +57,344 B = `ccc statusline`
 # (renderer, install/chain, process-group runner) + ccc JSON surfaces (show/kit status/
 # login-kind). Ceiling 6272 KiB (~84 KiB left). v0.78.0 was tagged, not published.
+#
+# 2026-10-14 v0.81.0 release run 38497187628: linux-x86_64 (musl) asset 6,428,208 B,
+# 5,680 B over 6272 KiB. v0.80.0 asset 6,415,920 → +12,288 B = the `up` kit-refresh fix
+# (path resolved before replace + " (deleted)" strip), the `crates/ccc-core` split
+# (registry/transcript/masker behind a crate boundary) and the longer embedded kit text
+# (cross-platform + sec/rules/aup gates in CLAUDE.md, ship-auto/autopilot/ship-loop/ship
+# skills). v0.79.1 → v0.80.0 had already taken +61,440 B (HQ office rooms, ccc report,
+# secret pipe-through). Ceiling 6400 KiB (~124 KiB left). v0.81.0 was tagged, not published.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-6422528}"   # 6272 KiB (raised 2026-10-13 from 6144 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-6553600}"   # 6400 KiB (raised 2026-10-14 from 6272 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

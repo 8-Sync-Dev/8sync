@@ -5,7 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
-## [0.81.0] — 2026-10-14
+## [0.81.1] — 2026-10-14
+### Changed
+- Release size ceiling 6272 → 6400 KiB, attributed in `scripts/size-gate.sh` (v0.81.0 linux-x86_64 was 6,428,208 B, 5,680 B over; +12,288 B vs v0.80.0). v0.81.0 was tagged but not published; 0.81.1 ships everything listed under 0.81.0.
+
+## [0.81.0] — 2026-10-14 (tagged, not published)
 ### Added
 - **Kit rules: cross-platform and rule gates are mandatory.**
   - Every build and release must work on Windows, macOS and Linux.
