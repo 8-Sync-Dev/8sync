@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.81.0] — 2026-10-14
 ### Added
 - **Kit rules: cross-platform and rule gates are mandatory.**
   - Every build and release must work on Windows, macOS and Linux.

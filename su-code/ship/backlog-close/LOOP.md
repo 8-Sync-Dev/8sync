@@ -21,3 +21,4 @@ iter 1 | C1 | exit 0 | PASS: *** at 58.0 % (accepted band 50..65 % of window)
 gates | sec skill | gitleaks staged: 6 hits = pre-existing #[test] fixtures moved with secret_mask/transcript (same 6 on origin/main) → WARN, no real secret; no sensitive files; cargo audit rc 0 (allowed advisories, pre-existing); kit guard+gates on
 gates | aup-audit | no BLOCK/WARN: UAT uses official claude -p with the owner's login, API key env unset, toy data only; only match = the existing "never bypassPermissions" rule
 iter 1 | C3 | exit 0 | su-code/archive/KNOWLEDGE-1791268148.md
+iter 1 | C7 | exit 0 | SUCCESS

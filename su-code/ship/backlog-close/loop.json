@@ -5,7 +5,8 @@
   "iter": 1,
   "max_iter": 12,
   "max_min": 240,
+  "note": "C1-C7 green (PR #26 CI on win/macos/linux)",
   "slug": "backlog-close",
   "started": 1791940783,
-  "stopped": null
+  "stopped": "done"
 }
