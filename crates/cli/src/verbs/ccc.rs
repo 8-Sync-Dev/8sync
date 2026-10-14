@@ -790,7 +790,7 @@ fn apply_lsp_plugins(v: &mut Value, on_path: impl Fn(&str) -> bool) {
 }
 
 /// Merge the kit into a parsed `settings.json`, leaving everything else as is:
-/// `env`, `defaultMode`, `effortLevel` and `disableClaudeAiConnectors` defaults
+/// `env`, `defaultMode`, `effortLevel`, `disableClaudeAiConnectors` and `autoContinueAtUsageLimit` defaults
 /// (a user value wins), `permissions` rules, and 8sync's hooks (replaced in
 /// place on re-run, retired ones removed, so the file only changes when the kit does).
 fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()> {
@@ -812,6 +812,11 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
     // per request, and mail/drive tools in reach of any prompt injection in the
     // code being read. `false` here brings them back.
     obj.entry("disableClaudeAiConnectors").or_insert_with(|| json!(true));
+    // A claude.ai usage limit mid-task: wait in the open session and continue after the reset
+    // (Claude Code v2.1.234+, on by default; https://code.claude.com/docs/en/interactive-mode
+    // "Wait for a usage limit to reset"). Pinned so a long task never stalls on a changed
+    // default; an owner's `false` (/config) wins. Same account, same plan: no account switching.
+    obj.entry("autoContinueAtUsageLimit").or_insert_with(|| json!(true));
     let Some(perms) = obj.entry("permissions").or_insert_with(|| json!({})).as_object_mut() else {
         bail!("settings.json `permissions` is not an object");
     };
@@ -1821,6 +1826,10 @@ mod tests {
         let mut keep = json!({ "disableClaudeAiConnectors": false });
         apply_kit_settings(&mut keep, "/new/8sync", &[]).unwrap();
         assert_eq!(keep["disableClaudeAiConnectors"], false, "a user choice wins");
+        assert_eq!(v["autoContinueAtUsageLimit"], true, "long tasks continue after a usage-limit reset");
+        let mut off = json!({ "autoContinueAtUsageLimit": false });
+        apply_kit_settings(&mut off, "/new/8sync", &[]).unwrap();
+        assert_eq!(off["autoContinueAtUsageLimit"], false, "an owner who turned it off in /config stays off");
         let allow = v["permissions"]["allow"].as_array().unwrap();
         assert!(allow.iter().any(|r| r == "Bash(make*)") && allow.iter().any(|r| r == "Bash(cargo check*)"));
         assert!(!allow.iter().any(|r| r.as_str().is_some_and(|s| s.contains("git push"))), "pushes stay reviewed");

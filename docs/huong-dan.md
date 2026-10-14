@@ -135,6 +135,7 @@ Dữ liệu nằm ở `~/.local/state/8sync/hq/` (SQLite, quyền 0600), chỉ t
 - **Stop gate**: không cho kết thúc lượt khi còn việc dở hoặc build đang hỏng, nhưng nhường khi anh nói "dừng/stop/chờ".
   - Claude dừng lặng lẽ mà task list còn task chưa xong → bị chặn một lần, kèm danh sách task dở. Claude hỏi anh, hoặc đang chờ thứ chỉ anh cung cấp được, thì vẫn dừng bình thường.
   - Lượt bị đứt vì lỗi API (rate limit, quá tải, lỗi server…) → có popup báo. Anh chỉ cần gõ "tiếp" trong session đó: Claude được nhắc kiểm task list và làm nốt.
+  - Hết hạn mức usage claude.ai giữa chừng → session đang mở tự chờ tới giờ reset rồi làm tiếp (kit bật sẵn `autoContinueAtUsageLimit`; tắt trong `/config` → "Continue automatically at usage limit"). Cần để session mở; không áp dụng cho `-p`, session nền, hay hạn mức tuần reset sau hơn 24 giờ. Muốn làm tiếp ngay: `/usage-credits`. Kit **không** tự đổi sang account khác: dùng nhiều account để né hạn mức là vi phạm Usage Policy.
 - **Verify hook**: tự `cargo check` / `tsc` / `go vet` sau mỗi lần sửa file.
 - **Policy cho org**: `8sync ccc policy --org-uuid <uuid> --out policy.json`, rồi cài bằng lệnh `sudo install` mà lệnh in ra.
 - **Gỡ 8sync**: chạy `8sync ccc kit --remove` trước, nếu không guard (fail-closed) sẽ chặn mọi lệnh. Lệnh chỉ bỏ hook của 8sync (hook của anh giữ nguyên, kể cả khi chung nhóm), không ghi gì nếu không có gì để bỏ, và để bản sao lưu `~/.claude/settings.json.bak-8sync`.
@@ -144,6 +145,7 @@ Dữ liệu nằm ở `~/.local/state/8sync/hq/` (SQLite, quyền 0600), chỉ t
 
 - Subscription (Pro/Max/Team) chỉ dùng **trong Claude Code / claude.ai chính chủ**, cho mức dùng cá nhân thông thường. Tool hay bot khác thì dùng **Console API key**.
 - Không proxy, không giả client, không chia sẻ token, không decompile Claude Code.
+- Nhiều account của chính mình (công việc / cá nhân) thì được: mỗi account một `CLAUDE_CONFIG_DIR`. Xoay account khi hết hạn mức thì **không**.
 - Không dán secret vào chat. Lỡ dán thì **rotate ngay**.
 - Agent nói chuyện với người ngoài phải công bố là AI.
 

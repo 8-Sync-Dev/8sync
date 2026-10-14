@@ -4,6 +4,13 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **Long tasks continue after a usage limit.** `8sync ccc kit` sets `autoContinueAtUsageLimit: true` in Claude Code user settings.
+  - When a claude.ai usage limit stops a task, the open session waits and continues after the reset (Claude Code v2.1.234+; on by default there, now pinned).
+  - An owner who turned it off in `/config` (`false`) stays off.
+  - Limits of the feature (Claude Code's own): interactive sessions only (not `-p` or background sessions), resets within 24 h (not a weekly limit days out), at most 2 re-waits in a row, permission prompts still apply.
+  - Same account, same plan. The kit does not switch accounts when a limit is hit: using several accounts to get around usage limits breaks the Usage Policy ("Do Not Abuse Our Platform"). To keep working before the reset, use `/usage-credits`, a bigger plan, or a Console API key.
+  - Source: https://code.claude.com/docs/en/interactive-mode ("Wait for a usage limit to reset"), https://code.claude.com/docs/en/settings-reference (`autoContinueAtUsageLimit`).
 
 ## [0.86.0] — 2026-10-14
 ### Added
