@@ -5,9 +5,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { teamOf, type IdleRecord } from "../idle";
 import { deliveryOf, sessionLabel } from "../labels";
 import { costPerTask, seatsFor, visitsFrom, type AgentRow, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
 import { loadFloor } from "./floor";
+import { readIdleStatus } from "./idle";
 import { pendingInbox } from "./inbox";
 import { stateDir } from "./paths";
 import { mergedSessions, type SessionView } from "./proc";
@@ -101,6 +103,8 @@ export type Room = {
   cost_per_task: number | null;
   seats: Seat[];
   role: string | null;
+  /** Agent-team name of this session as lead ("session-" + 8 id chars): joins `Office.idle`. */
+  team: string | null;
 };
 
 export type LoopInfo = { project: string; slug: string; iter: number; max_iter: number | null; started: number | null; stopped: string | null };
@@ -137,7 +141,8 @@ export function readLoops(roots: { root: string; name: string }[]): LoopInfo[] {
   return out.sort((a, b) => (b.started ?? 0) - (a.started ?? 0)).slice(0, 30);
 }
 
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; at: number };
+/** `idle`: every agent-team member's "không ai rảnh" status (lib/idle.ts), stale ones included. */
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; at: number };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
@@ -180,6 +185,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       cost_per_task: costPerTask(usage?.cost_usd, done),
       seats: seatsFor(agents, busy, now),
       role: s.role ?? null,
+      team: teamOf(sid),
     };
   });
   const refs: RoomRef[] = rooms.map((r) => ({ key: r.key, ids: [r.name, r.session_id ?? "", r.label].filter(Boolean) }));
@@ -187,5 +193,5 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     .prepare("SELECT kind, ts, session, from_, to_, text FROM messages WHERE kind = 'session_message' AND ts > ? ORDER BY id DESC LIMIT 50")
     .all(now - 120_000) as { kind: string; ts: number; session: string | null; from_: string | null; to_: string | null; text: string | null }[];
   const roots = new Map(rooms.flatMap((r) => (r.project ? [[r.project.root, r.project] as const] : [])));
-  return { rooms, visits: visitsFrom(recent, refs, now), loops: readLoops([...roots.values()]), at: now };
+  return { rooms, visits: visitsFrom(recent, refs, now), loops: readLoops([...roots.values()]), idle: readIdleStatus(), at: now };
 }

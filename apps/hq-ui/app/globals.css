@@ -182,6 +182,8 @@
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    /* An infinite pulse at 0.01ms still loops forever: run it once and stop. */
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
 }

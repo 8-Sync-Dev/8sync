@@ -28,6 +28,7 @@ mod gate;
 mod grant;
 mod guard;
 mod help;
+mod idle;
 mod looper;
 mod output_budget;
 pub(crate) mod report;
@@ -159,6 +160,7 @@ pub fn run(a: Args) -> Result<()> {
             res
         }
         "compact" => compact::run(rest, &claude_dir(&env)),
+        "idle" => idle::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription"),
         "secret" => secret::run(rest),
         "status" => status(&env, &root),
         "policy" => policy(rest),
@@ -943,6 +945,10 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             json!({ "hooks": [{ "type": "command", "command": exe, "args": ["hq", "hook", ev], "async": true, "timeout": 15 }] }),
         );
     }
+    // "Không ai rảnh" (`ccc idle on`): sync, so TeammateIdle exit 2 / Stop block can keep the
+    // team working. A no-op while the feature is off (default). Separate groups from `hq hook`.
+    upsert_hook_group(hooks, "TeammateIdle", json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "idle"], "timeout": 10 }] }));
+    upsert_hook_group(hooks, "Stop", json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "idle"], "timeout": 10 }] }));
     // Terminal-mode replies for the local journal; separate group from `ccc hook verify-stop`.
     upsert_hook_group(
         hooks,
@@ -1556,9 +1562,13 @@ fn login_kind_with(api_key_env_set: bool, claude_json: Option<&Value>) -> LoginK
 }
 
 fn login_kind(env: &Env) -> LoginKind {
+    login_kind_at(&env.home)
+}
+
+fn login_kind_at(home: &Path) -> LoginKind {
     let path = match std::env::var_os("CLAUDE_CONFIG_DIR") {
         Some(d) => PathBuf::from(d).join(".claude.json"),
-        None => env.home.join(".claude.json"),
+        None => home.join(".claude.json"),
     };
     let cfg: Option<Value> = std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok());
     login_kind_with(std::env::var_os("ANTHROPIC_API_KEY").is_some_and(|v| !v.is_empty()), cfg.as_ref())
@@ -1667,12 +1677,18 @@ fn hook(rest: &[String]) -> Result<()> {
                 None
             })
         }
+        // Sync: TeammateIdle exits 2 itself; the lead's Stop gets a block decision on stdout.
+        Some("idle") => {
+            // dirs: $HOME on unix, the profile folder on Windows.
+            let home = dirs::home_dir().filter(|h| h.is_absolute());
+            home.and_then(|h| idle::hook(&input, &h, login_kind_at(&h).kind == "subscription"))
+        }
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -1788,7 +1804,7 @@ mod tests {
         assert_eq!(post[1]["hooks"][0]["command"], "/new/8sync");
         assert_eq!(post[1]["hooks"][0]["asyncRewake"], true, "edits never wait for the check");
         let stop = v["hooks"]["Stop"].as_array().unwrap();
-        assert_eq!(stop.len(), 2, "retired Haiku stop gate removed; verify-stop + hq Stop appended");
+        assert_eq!(stop.len(), 3, "retired Haiku stop gate removed; verify-stop + idle + hq Stop appended");
         assert_eq!(stop[0]["hooks"][0]["args"], json!(["ccc", "hook", "verify-stop"]));
         assert_eq!(v["disableClaudeAiConnectors"], true);
         let mut keep = json!({ "disableClaudeAiConnectors": false });
@@ -1820,7 +1836,7 @@ mod tests {
         apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
         let stop = v["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.iter().filter(|g| g["hooks"][0]["prompt"].is_string()).count(), 0, "Haiku stop gate retired");
-        assert_eq!(stop.len(), 2);
+        assert_eq!(stop.len(), 3);
         assert_eq!(stop[0]["hooks"][0]["args"], json!(["ccc", "hook", "verify-stop"]));
         assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["model"], ASK_GATE_MODEL);
         assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["args"], json!(["ccc", "hook", "session-start"]));
@@ -1853,6 +1869,12 @@ mod tests {
         let stop = v["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", "Stop"]) && g["hooks"][0]["async"] == true).count(), 1, "hq Stop once");
         assert_eq!(stop.iter().filter(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "verify-stop"])).count(), 1, "verify-stop kept");
+        // "không ai rảnh": sync (no `async`) so exit 2 / block can keep the team working.
+        for ev in ["Stop", "TeammateIdle"] {
+            let idle: Vec<&Value> = v["hooks"][ev].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "idle"])).collect();
+            assert_eq!(idle.len(), 1, "{ev} idle hook once");
+            assert!(idle[0]["hooks"][0]["async"].is_null(), "{ev} idle hook is sync");
+        }
         let pt = v["hooks"]["PostToolUse"].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", "PostToolUse"]) && g["matcher"] == "SendMessage").count();
         assert_eq!(pt, 1, "SendMessage hook registered once");
         let tc = &v["hooks"]["TaskCompleted"][0]["hooks"][0];

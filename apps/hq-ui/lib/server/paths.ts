@@ -20,3 +20,6 @@ export const tokenPath = () => path.join(configDir(), "ui-token");
 
 export const channelMcpConfigPath = (home = os.homedir()) =>
   path.join(home, ".config", "8sync", "hq", "channel-mcp.json");
+
+/** `8sync ccc hook idle` status files, one per team member (crates/cli/src/verbs/ccc/idle.rs state_dir). */
+export const idleStatusDir = (home = os.homedir()) => path.join(home, ".local", "state", "8sync", "ccc", "idle", "status");
