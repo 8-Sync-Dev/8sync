@@ -193,6 +193,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ccc-core"
+version = "0.81.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1389,10 +1398,11 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "su-code"
-version = "0.80.0"
+version = "0.81.0"
 dependencies = [
  "anyhow",
  "axum",
+ "ccc-core",
  "clap",
  "dirs",
  "getrandom 0.2.17",

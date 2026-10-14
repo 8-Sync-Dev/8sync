@@ -290,7 +290,7 @@ fn kit_version(env: &Env) -> Option<String> {
 }
 
 fn sessions(env: &Env, root: &Path) -> Store {
-    Store::new(env, root, "claude-sessions", "ccc .")
+    Store::new(&env.xdg_config, root, "claude-sessions", "ccc .")
 }
 
 /// `8sync ccc . ls`: per session — running?, last request, last action, task

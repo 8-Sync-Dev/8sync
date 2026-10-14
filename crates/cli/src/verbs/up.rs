@@ -31,13 +31,16 @@ pub struct Args {
 
 pub fn run(a: Args) -> Result<()> {
     ui::header("8sync up");
+    // Resolve the install path BEFORE the update: once the file is replaced, Linux reports the
+    // running exe as "…/8sync (deleted)" and the kit refresh below could not start it.
+    let installed = selfup::installed_path().ok();
     let updated = match a.to {
         Some(tag) => selfup::install_tag(&tag)?,
         None      => selfup::run_self_update(a.force)?,
     };
     if updated {
         ui::info("done — re-run any 8sync command to pick up the new binary");
-        refresh_kit();
+        refresh_kit(installed);
     }
     ui::info("note: `8sync up` only updates 8sync. For omp run `8sync omp update`; for system pkgs run `paru -Syu`.");
     Ok(())
@@ -45,11 +48,11 @@ pub fn run(a: Args) -> Result<()> {
 
 /// After an update, bring an installed kit (agents, skills, statusline) up to the new binary by
 /// running its `ccc kit`. `EIGHTSYNC_OFFLINE` is inherited, so the kit skips its network steps.
-fn refresh_kit() {
+fn refresh_kit(installed: Option<std::path::PathBuf>) {
     if !super::ccc::kit_installed() {
         return;
     }
-    let Ok(exe) = selfup::installed_path() else { return };
+    let Some(exe) = installed.or_else(|| selfup::installed_path().ok()) else { return };
     let ok = std::process::Command::new(exe)
         .args(["ccc", "kit"])
         .env("SUSYNC_NO_AUTO_UPDATE", "1")

@@ -80,8 +80,18 @@ fn asset_filename(tag: &str) -> String {
 /// bug where a hard-coded extension-less `~/.local/bin/8sync` left an
 /// un-runnable file (Windows then popped an "open with" dialog). Falls back to
 /// the legacy Unix path only if the current exe cannot be resolved.
+/// Linux reads `/proc/self/exe` as `…/8sync (deleted)` once the running file was replaced by an
+/// update; the install path is the same file name without that suffix. No-op elsewhere.
+fn strip_deleted_suffix(p: PathBuf) -> PathBuf {
+    match p.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
+        Some(s) => PathBuf::from(s),
+        None => p,
+    }
+}
+
 pub(crate) fn installed_path() -> Result<PathBuf> {
     if let Ok(p) = std::env::current_exe() {
+        let p = strip_deleted_suffix(p);
         return Ok(std::fs::canonicalize(&p).map(strip_verbatim_drive).unwrap_or(p));
     }
     let name = if platform::os() == platform::Os::Windows { "8sync.exe" } else { "8sync" };
@@ -545,6 +555,14 @@ pub fn install_tag(tag: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn deleted_suffix_is_stripped_only_at_the_end() {
+        use std::path::PathBuf;
+        assert_eq!(super::strip_deleted_suffix(PathBuf::from("/home/u/.local/bin/8sync (deleted)")), PathBuf::from("/home/u/.local/bin/8sync"));
+        assert_eq!(super::strip_deleted_suffix(PathBuf::from("/opt/8sync")), PathBuf::from("/opt/8sync"));
+        assert_eq!(super::strip_deleted_suffix(PathBuf::from(r"C:\Users\u\8sync.exe")), PathBuf::from(r"C:\Users\u\8sync.exe"));
+    }
+
     use super::{check_due, find_asset, first_hex64, is_newer, parse_digest, strip_verbatim_drive, tag_from_release_url};
     use std::path::PathBuf;
 

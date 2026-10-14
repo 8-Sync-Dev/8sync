@@ -371,7 +371,7 @@ bash scripts/bootstrap.sh            # rustup if missing → cargo build --relea
 
 | Topic | Details |
 |---|---|
-| Layout | `crates/cli/src/main.rs` routes; one file per verb in `crates/cli/src/verbs/`. |
+| Layout | `crates/cli/src/main.rs` routes; one file per verb in `crates/cli/src/verbs/`; pure core (session registry, transcript view, secret masker, JSON rows) lives in `crates/ccc-core` (stable surface ZUS pins by git tag). |
 | Embedded assets | Configs, skills and the zsh config in `assets/`, embedded with rust-embed. |
 | Dashboard | Built from `web/` by `build.rs`. |
 | Binary size | `bash scripts/size-report.sh` attributes size; `scripts/size-gate.sh` enforces the ceiling in CI. `--no-default-features` drops the dashboard (3.1 MB). |

@@ -348,6 +348,7 @@ su-code/
 ├── Cargo.toml · rust-toolchain.toml · .cargo/config.toml    workspace + LTO=fat
 ├── README.md · AGENTS.md (file này) · LICENSE
 ├── scripts/bootstrap.sh                                     installer (rustup → cargo build → install)
+├── crates/ccc-core/                                         lib `ccc_core`: registry · transcript view · mask · JSON rows (ZUS pins by git tag)
 ├── crates/cli/                                              binary `8sync`
 │   ├── Cargo.toml
 │   └── src/
