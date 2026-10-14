@@ -9,7 +9,7 @@ owner's existing subscription login. Nothing here touches the owner's `~/.claude
 
 `bash scripts/uat/no-idle-hook.sh target/debug/8sync`: sandbox HOME + a fake team task list; checks
 off-by-default, teammate takes the next task (exit 2), loop → rest, lead Stop block, rest, and subscription
-without a lease → rest. Measured 2026-10-14 on Linux: 8/8 ok, PASS.
+without a lease → rest. Measured 2026-10-14 on Linux: 12/12 ok, PASS (adds other-room offer, busy lead, no `team_name`, path-like team name).
 
 Live run (owner-run, interactive — agent teams do not spawn under `claude -p`): `8sync ccc idle on --hours 1
 --usd-per-hour 2`, `8sync ccc kit`, open a new `8sync ccc . uat-idle --team`, ask the lead for 2 teammates and
