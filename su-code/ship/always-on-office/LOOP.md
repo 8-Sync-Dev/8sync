@@ -18,3 +18,4 @@ iter 0 | C3 | exit 0 | Running unittests src\main.rs (target\debug\deps\8sync-7d
 iter 0 | C6 | exit 0 | (no output)
 iter 0 | C4 | exit 0 | > tsc --noEmit
 iter 0 | C5 | exit 0 | UAT PASS
+iter 0 | C7 | exit 0 | test (windows-latest)	pass	***	https://github.com/8-Sync-Dev/su-code/actions/runs/38656903132/job/116168702455

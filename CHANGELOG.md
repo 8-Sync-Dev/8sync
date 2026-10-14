@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.88.0] — 2026-10-15
 ### Added
 - **R&D researches when idle.** In `ccc hook idle` (still OFF by default, same rails: lease on subscription, $/hour cap, 3 blocks):
   - a teammate named for research (`rd`, `rd2`, `research…`, `explore…`) that runs out of tasks is told to run `/deep-research` on the first STATE `Next` item that has no brief in `su-code/research/` yet;
