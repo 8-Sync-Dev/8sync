@@ -94,7 +94,7 @@ cd <project>
 8sync ccc . core -p "…"        # one-shot; any flag after the name goes to claude
 8sync ccc .                    # the session you used last
 8sync ccc . ls | new <n> | rm <n>
-8sync ccc kit                  # (re)install the kit; `8sync setup` already did
+8sync ccc kit                  # (re)install the kit; `8sync setup` already did (also sets a tool-output budget in settings `env`, only when absent: Bash 20k chars, Read 15k tokens)
 8sync ccc status               # claude, login, kit, sessions
 8sync ccc help                 # every ccc verb on one screen
 8sync ccc compact --at 50      # auto-compact threshold (kit default 60%); --reset, --json; new session to apply

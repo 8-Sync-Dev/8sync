@@ -43,6 +43,20 @@ window with override 60 → PASS (later compactions at 48.6 % and 53.5 % are log
 context, so only the first is judged). Control (`PCT=none`, same window): first auto-compaction at 75,587 tokens = 75.6 % (default threshold is higher
 than 60 %, so the override is what moved it from ~76 % to ~58 %).
 
+## tool-output.sh — the kit's tool-output budget cuts tokens, answer still found
+
+Run: `scripts/uat/tool-output.sh [MODEL=claude-haiku-5-5]` (`KEEP=1` keeps the sandbox). Cost: about US$0.02 per run pair (cap `--max-budget-usd 1` per arm). Needs: `claude`, `jq`, `python3`.
+
+How: two fresh temp dirs with the same generated corpus (`big.txt` ~58 KB, a token on its last line; `gen.py` prints ~27k chars ending in a SUMMARY line with a token).
+`claude -p` with `--setting-sources local --settings <tmp json>` (owner's user settings are NOT read, so the kit env already installed on the machine cannot leak into the baseline).
+Baseline settings = `{}`; kit settings = `env.BASH_MAX_OUTPUT_LENGTH=20000`, `env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS=15000`.
+Tokens = input + cache_creation + cache_read from the JSON `usage`. Pass = both answers contain both tokens AND kit tokens < baseline.
+
+Documented basis (fetched 2026-10-14): env-vars "`BASH_MAX_OUTPUT_LENGTH` ... (default: 30000; maximum: 150000). If you set the `bashOutputMaxChars` setting, Claude Code ignores this variable."; "`CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS` Override the default token limit for file reads, which is 25,000 tokens."
+tools-reference: valid Bash output past the limit becomes "the path of a file saved to the session directory ... plus a preview", and Claude reads the rest when needed; a Read over the limit returns "the first page of the file, with a `PARTIAL view` notice".
+
+Result (2026-10-14, claude 2.1.296, two runs): baseline 171,115 and 171,177 tokens (4 turns); kit 98,897 and 98,863 tokens (5 turns); about -42 %; hidden check passed in all four runs. Caveat: one task; Read and Bash effects are not separated.
+
 ## up-kit.sh — `8sync up` refreshes the kit on another machine
 
 Run: `scripts/uat/up-kit.sh [OLD_TAG=v0.79.1]`   Cost: free (public release download, ~5 MB x2).

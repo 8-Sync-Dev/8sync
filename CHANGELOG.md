@@ -4,6 +4,10 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **`ccc kit` tool-output budget.** Writes `env.BASH_MAX_OUTPUT_LENGTH=20000` (documented default 30000) and `env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS=15000` (documented default 25,000) into `~/.claude/settings.json` only when absent. An owner value is never overwritten, and `kit --remove` drops a key only while it still equals the kit value. Output past the limit is not lost: Bash saves it to a file and Claude reads the rest on demand, and a long Read returns the first page with a `PARTIAL view` notice. Sources: https://code.claude.com/docs/en/env-vars, https://code.claude.com/docs/en/tools-reference#output-limits.
+  - `scripts/uat/tool-output.sh` (real `claude -p`, Haiku 5.5, 2 runs each, cost about US$0.02 per arm): input tokens (input + cache) 171,115 / 171,177 at baseline vs 98,897 / 98,863 with the budget, about -42 %. Both runs still returned both hidden tokens (file end and command end). One task, Read and Bash effects not separated.
+  - Not done: Read dedupe (skip re-reads of an unchanged file) stays a follow-up.
 
 ## [0.82.0] — 2026-10-14
 ### Fixed
