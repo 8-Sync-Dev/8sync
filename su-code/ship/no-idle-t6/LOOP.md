@@ -18,3 +18,4 @@ iter 0 | C3 | exit 0 | clippy-touched-files-clean
 iter 0 | C4 | exit 101 | error: test failed, to rerun pass `-p su-code --bin 8sync`
 iter 0 | C4 | exit 0 | test result: ok. 195 passed; 0 failed; 0 ignored; 0 measured; 227 filtered out; finished in 1.51s
 iter 0 | C1 | exit 0 | test result: ok. 195 passed; 0 failed; 0 ignored; 0 measured; 227 filtered out; finished in 1.52s
+iter 0 | C5 | exit 0 | hq-ui-test pass *** pass *** pass *** (macos-latest) pass;test (ubuntu-latest) pass;test (windows-latest) pass; ALL PASS 3 OS
