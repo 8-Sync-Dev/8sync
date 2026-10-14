@@ -1,6 +1,6 @@
 "use client";
 
-import { HammerIcon, HistoryIcon, MessageCircleQuestionIcon, MoonIcon } from "lucide-react";
+import { GraduationCapIcon, HammerIcon, HistoryIcon, MessageCircleQuestionIcon, MoonIcon } from "lucide-react";
 import { idleView, isStale, type IdleIcon, type IdleRecord } from "@/lib/idle";
 import { fmtDuration } from "@/lib/office";
 import { cn } from "@/lib/utils";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 const ICON: Record<IdleIcon, typeof HammerIcon> = {
   working: HammerIcon,
   recall: HistoryIcon,
+  learn: GraduationCapIcon,
   ask: MessageCircleQuestionIcon,
   rest: MoonIcon,
 };

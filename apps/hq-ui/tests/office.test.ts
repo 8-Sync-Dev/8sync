@@ -10,6 +10,7 @@ import { getDb } from "@/lib/server/db";
 import { inboxFile, isSessionId, pendingInbox } from "@/lib/server/inbox";
 import { applyMapped, mapEvent } from "@/lib/server/ingest";
 import { projectOf, readLoops, readUsage } from "@/lib/server/office";
+import { messagesAfter } from "@/lib/server/queries";
 import { stateDir } from "@/lib/server/paths";
 import {
   SEATS,
@@ -164,6 +165,17 @@ describe("owner message to a session started elsewhere (no tmux, all of Windows)
       expect(r.status, session).toBe(422);
     }
     expect(isSessionId("1eb79553")).toBe(false);
+  });
+});
+
+describe("handoff between Claude sessions (SendMessage journal)", () => {
+  it("files session names and returns them with the messages", () => {
+    const db = getDb();
+    const a = "aaaaaaaa-0719-4d6f-aaa3-644783ddb0b3";
+    const b = "bbbbbbbb-68cb-45aa-9999-000000000001";
+    applyMapped(db, mapEvent({ v: 1, ts: 5, kind: "session_message", session_id: a, from: a, to: b, from_name: "core", to_name: "rd", text: "giúp?" })!);
+    const rows = messagesAfter(db, { kind: "session_message" }).filter((r) => r.from_ === a);
+    expect(rows.map((r) => [r.from_name, r.to_name, r.text])).toEqual([["core", "rd", "giúp?"]]);
   });
 });
 

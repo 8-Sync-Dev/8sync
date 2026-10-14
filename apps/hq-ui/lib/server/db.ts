@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS session_alias (
   session_id TEXT PRIMARY KEY,
   name TEXT NOT NULL
 );
+-- Claude Code session id -> its session name ("rd", "core"), from SendMessage journal rows.
+CREATE TABLE IF NOT EXISTS session_names (
+  session_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL
+);
 -- Sticky delivery facts about a session's channel: 'blocked-by-org' | 'unresponsive'.
 CREATE TABLE IF NOT EXISTS channel_state (
   session TEXT PRIMARY KEY,

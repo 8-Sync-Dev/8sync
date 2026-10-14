@@ -4,6 +4,23 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **"Không ai rảnh" works like a real department.**
+  - Quality gate: `ccc hook task-done` runs on `TaskCompleted`, sync, with the same `no_idle` switch.
+    - It keeps a task open (exit 2) when the agent's transcript shows a code edit after its last test, lint or build command and the git tree still has uncommitted changes.
+    - At most 2 holds per task, then the task passes.
+    - Only real runners count as a check (`cargo test`, `pnpm run lint`, `pytest`, `8sync run`), not `ls tests`.
+    - A teammate is judged by its own transcript. If that transcript is missing, the task passes.
+  - Learning reflex: a task that was held back and then passed leaves one note. The member's next idle asks it to write the lesson with `/remember` (`failure: … → fix: …`). The hook never writes KNOWLEDGE itself.
+  - The lead's advice (write the lesson, offer help to another session's room) now uses Stop `additionalContext`, which Claude Code shows as feedback, not as a hook error. Handing out an open task still blocks.
+  - Source: https://code.claude.com/docs/en/hooks (TaskCompleted, Stop decision control).
+- **HQ handoff cards across sessions.**
+  - A `SendMessage` to another Claude Code session (a `uds:` address or a session name) is journaled under that session's id, with both session names ("core → rd").
+  - The id is resolved from Claude Code's `~/.claude/sessions/<pid>.json` records. Only the `.json` files are read, never the `.key` files. The layout is not documented.
+  - Only the message summary or its first line, at most 80 characters, is kept for another session, never the body (data minimisation).
+  - The team thread card shows names and "đã trả lời / chưa trả lời" (the recipient wrote back afterwards).
+  - Idle chips gain a "đang ghi bài học" state.
+- `scripts/uat/no-idle-hook.sh`: 15/15 ok on Linux (task-done hold, then pass, then the lesson nudge).
 
 ## [0.85.0] — 2026-10-14
 ### Added

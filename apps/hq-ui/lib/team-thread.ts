@@ -10,6 +10,8 @@ export type ThreadRow = {
   from_: string | null;
   to_: string | null;
   text: string | null;
+  from_name?: string | null;
+  to_name?: string | null;
 };
 
 export type ThreadKind =
@@ -36,6 +38,11 @@ export type ThreadItem = {
   count: number;
   /** needs_you only: no owner message to that session since. */
   open?: boolean;
+  /** Session names for display ("rd") when the ids are uuids. */
+  fromName?: string | null;
+  toName?: string | null;
+  /** handoff only: the recipient wrote back to the sender afterwards. */
+  answered?: boolean;
 };
 
 export type ThreadFilters = {
@@ -90,6 +97,7 @@ export function buildTeamThread(rows: ThreadRow[], filters: ThreadFilters = {}):
       text: (r.text ?? "").trim(),
       role,
       count: 1,
+      ...(kind === "handoff" ? { fromName: r.from_name ?? null, toName: r.to_name ?? null } : {}),
     };
     const prev = items.at(-1);
     if (prev && prev.kind === kind && prev.session === item.session && prev.to === item.to && (NOISE.has(kind) || prev.text === item.text)) {
@@ -105,6 +113,12 @@ export function buildTeamThread(rows: ThreadRow[], filters: ThreadFilters = {}):
   const lastOwner = new Map<string, number>();
   for (const it of items) if (it.kind === "owner" && it.session) lastOwner.set(it.session, it.ts);
   for (const it of items) if (it.kind === "needs_you") it.open = !it.session || (lastOwner.get(it.session) ?? -1) < it.ts;
+
+  // A handoff A -> B is answered once B sends a message back to A.
+  for (const it of items) {
+    if (it.kind !== "handoff") continue;
+    it.answered = items.some((x) => x.kind === "handoff" && x.ts > it.ts && x.from === it.to && x.to === it.from);
+  }
 
   const { session, role } = filters;
   return items.filter((it) => {

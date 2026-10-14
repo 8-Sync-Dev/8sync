@@ -23,6 +23,9 @@ export type JournalEvent = {
   status?: string | null;
   from?: string | null;
   to?: string | null;
+  /** SendMessage between sessions: Claude Code session names of the two ids above. */
+  from_name?: string | null;
+  to_name?: string | null;
   text?: string | null;
 };
 
@@ -31,6 +34,8 @@ export type Mapped = {
   sid?: string;
   /** Learned from a row carrying both: rows keyed by `session_id` belong to `name`. */
   alias?: { session_id: string; name: string };
+  /** Session id -> display name ("rd"), for handoff cards. */
+  names?: { session_id: string; name: string }[];
   session?: { name: string; cwd: string | null; status: string | null; ts: number };
   task?: {
     task_id: string;
@@ -147,6 +152,13 @@ export function mapEvent(evt: JournalEvent): Mapped | null {
   }
   if (MESSAGE_KINDS.has(kind)) {
     out.message = base;
+    if (kind === "session_message") {
+      const names = [
+        [base.from_, str(evt.from_name)],
+        [base.to_, str(evt.to_name)],
+      ].flatMap(([id, name]) => (id && name && name.length <= 64 ? [{ session_id: id, name }] : []));
+      if (names.length) out.names = names;
+    }
     return out;
   }
   return null;
@@ -199,6 +211,9 @@ const REPLY_DEDUPE_MS = 120_000;
 
 export function applyMapped(db: DatabaseSync, input: Mapped): void {
   if (input.alias) applyAlias(db, input.alias);
+  for (const n of input.names ?? []) {
+    db.prepare("INSERT INTO session_names(session_id, name) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET name = excluded.name").run(n.session_id, n.name);
+  }
   const m = resolveAlias(db, input);
   if (m.session) {
     const pid = projectIdFor(db, m.session.cwd);

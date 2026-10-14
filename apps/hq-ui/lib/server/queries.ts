@@ -11,6 +11,9 @@ export type MessageRow = {
   text: string | null;
   /** Owner messages only: 'channel' | 'terminal' | 'failed'. */
   delivery?: string | null;
+  /** Session names of from_/to_ when known (listMessages only). */
+  from_name?: string | null;
+  to_name?: string | null;
 };
 
 export type TaskRow = {
@@ -85,7 +88,10 @@ export function messagesAfter(
   // Newest N, returned oldest-first for timelines.
   return db
     .prepare(
-      `SELECT * FROM (SELECT m.* FROM messages m WHERE ${where.join(" AND ")} ORDER BY m.id DESC LIMIT ${limit}) ORDER BY id`,
+      `SELECT * FROM (SELECT m.*, fn.name AS from_name, tn.name AS to_name FROM messages m
+         LEFT JOIN session_names fn ON fn.session_id = m.from_
+         LEFT JOIN session_names tn ON tn.session_id = m.to_
+         WHERE ${where.join(" AND ")} ORDER BY m.id DESC LIMIT ${limit}) ORDER BY id`,
     )
     .all(...args) as MessageRow[];
 }

@@ -44,7 +44,7 @@ TỰ ĐỘNG (gõ trong Claude Code)
   8sync ccc loop <init|tick|ev|status|done|ls> <slug>   state vòng lặp cho /ship-loop; `ev <slug> <nhãn> -- <lệnh>` chạy check + ghi evidence vào LOOP.md
   8sync ccc hook ship-grant    (hook) ghi giấy phép khi owner duyệt câu hỏi `Ship`
   8sync ccc idle on [--hours 2] [--usd-per-hour 5]   không-ai-rảnh cho agent team (mặc định TẮT; subscription = lease khi owner có mặt)
-  8sync ccc idle off | status [--json]
+  8sync ccc idle off | status [--json]                 (bật thêm gate TaskCompleted: task sửa code chưa test thì chưa cho xong)
 
 XEM
   8sync ccc . show <tên> [--json]   tóm tắt một session
@@ -52,7 +52,7 @@ XEM
   8sync hq ui                       dashboard HQ trong trình duyệt
 
 AN TOÀN
-  8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle>
+  8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done>
                                hook do kit đăng ký, không gõ tay
   8sync ccc secret keys <file.env>  tên key trong file (không bao giờ in giá trị)
   8sync ccc secret set <encore|vercel|gh> <TÊN> (--from <file.env> | --generate) --type prod,dev | --env production

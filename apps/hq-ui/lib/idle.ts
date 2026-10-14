@@ -2,7 +2,7 @@
 // member (crates/cli/src/verbs/ccc/idle.rs); the server reader is lib/server/idle.ts.
 // Tested in tests/idle.test.ts.
 
-export const IDLE_STATES = ["working", "recall", "ask_lead", "ask_room", "rest"] as const;
+export const IDLE_STATES = ["working", "recall", "learn", "ask_lead", "ask_room", "rest"] as const;
 export type IdleState = (typeof IDLE_STATES)[number];
 
 export type IdleRecord = {
@@ -51,7 +51,7 @@ export function roomOfDetail(detail: string): string | null {
   return name || null;
 }
 
-export type IdleIcon = "working" | "recall" | "ask" | "rest";
+export type IdleIcon = "working" | "recall" | "learn" | "ask" | "rest";
 export type IdleTone = "running" | "needs" | "idle";
 
 /** Label + icon + tone: the icon and text carry the state, the tone only reinforces it. */
@@ -61,6 +61,8 @@ export function idleView(r: Pick<IdleRecord, "state" | "detail">): { label: stri
       return { label: "đang làm", icon: "working", tone: "running" };
     case "recall":
       return { label: "đang hồi ức", icon: "recall", tone: "running" };
+    case "learn":
+      return { label: "đang ghi bài học", icon: "learn", tone: "running" };
     case "ask_lead":
       return { label: "đang hỏi lead", icon: "ask", tone: "needs" };
     case "ask_room":

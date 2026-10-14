@@ -35,6 +35,7 @@ pub(crate) mod report;
 mod secret;
 mod resume;
 mod statusline;
+mod taskdone;
 mod verify;
 
 #[derive(ClapArgs, Debug)]
@@ -949,6 +950,8 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
     // team working. A no-op while the feature is off (default). Separate groups from `hq hook`.
     upsert_hook_group(hooks, "TeammateIdle", json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "idle"], "timeout": 10 }] }));
     upsert_hook_group(hooks, "Stop", json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "idle"], "timeout": 10 }] }));
+    // Its quality gate: exit 2 keeps a task open when code was edited after the last check.
+    upsert_hook_group(hooks, "TaskCompleted", json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "task-done"], "timeout": 10 }] }));
     // Terminal-mode replies for the local journal; separate group from `ccc hook verify-stop`.
     upsert_hook_group(
         hooks,
@@ -1683,12 +1686,20 @@ fn hook(rest: &[String]) -> Result<()> {
             let home = dirs::home_dir().filter(|h| h.is_absolute());
             home.and_then(|h| idle::hook(&input, &h, login_kind_at(&h).kind == "subscription"))
         }
+        // Sync TaskCompleted quality gate (same switch as idle): exit 2 + stderr keeps the task open.
+        Some("task-done") => {
+            if let Some(msg) = dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| taskdone::hook(&input, &h)) {
+                eprintln!("{msg}");
+                std::process::exit(2);
+            }
+            None
+        }
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -1875,6 +1886,8 @@ mod tests {
             assert_eq!(idle.len(), 1, "{ev} idle hook once");
             assert!(idle[0]["hooks"][0]["async"].is_null(), "{ev} idle hook is sync");
         }
+        let td: Vec<&Value> = v["hooks"]["TaskCompleted"].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "task-done"])).collect();
+        assert!(td.len() == 1 && td[0]["hooks"][0]["async"].is_null(), "task-done gate once, sync");
         let pt = v["hooks"]["PostToolUse"].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", "PostToolUse"]) && g["matcher"] == "SendMessage").count();
         assert_eq!(pt, 1, "SendMessage hook registered once");
         let tc = &v["hooks"]["TaskCompleted"][0]["hooks"][0];
