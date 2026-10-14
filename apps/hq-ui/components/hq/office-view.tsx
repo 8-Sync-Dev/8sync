@@ -1,17 +1,16 @@
 "use client";
 
 import { GitBranchIcon, InboxIcon, MoonIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, type CSSProperties } from "react";
+import { useMemo, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isStale, longRestCount, sortMembers, type IdleRecord } from "@/lib/idle";
 import { fmtDuration, fmtTokens, fmtUsd, groupByProject, seatState, SEATS, type Visit } from "@/lib/office";
-import { drawWalker, WALKER_H, WALKER_W } from "@/lib/sprite/walker";
-import { shirtFor } from "@/lib/sprite/frames";
+import { shirtFor, shirtOf } from "@/lib/sprite/frames";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote, StatusDot } from "./bits";
 import { IdleChip } from "./idle-chip";
-import { SpriteCanvas } from "./sprite-canvas";
+import { SpriteCanvas, WalkerCanvas } from "./sprite-canvas";
 import type { OfficeState, Room } from "./use-office";
 
 /*
@@ -34,56 +33,21 @@ const STATUS_TEXT: Record<Room["status"], string> = {
   ended: "Đã tắt",
 };
 
-/** A specialist walking into this room; walks in once, then stands. Reduced motion: stands. */
-function Walker({ shirtKey, ts }: { shirtKey: string; ts: number }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const c = ref.current;
-    const ctx = c?.getContext("2d");
-    if (!c || !ctx) return;
-    const scale = Math.max(1, Math.floor(2 * (window.devicePixelRatio || 1)));
-    c.width = WALKER_W * scale;
-    c.height = WALKER_H * scale;
-    const shirt = shirtFor(shirtKey);
-    drawWalker(ctx, 0, shirt, scale);
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    let f = 0;
-    const t = setInterval(() => drawWalker(ctx, ++f, shirt, scale), 160);
-    const stop = setTimeout(() => {
-      clearInterval(t);
-      drawWalker(ctx, 0, shirt, scale);
-    }, 1600);
-    return () => {
-      clearInterval(t);
-      clearTimeout(stop);
-    };
-  }, [shirtKey, ts]);
-  return (
-    <canvas
-      key={ts}
-      ref={ref}
-      aria-hidden
-      className="block motion-safe:animate-[hq-walk-in_1.6s_cubic-bezier(0.22,1,0.36,1)_both]"
-      style={{ width: WALKER_W * 2, height: WALKER_H * 2, imageRendering: "pixelated" }}
-    />
-  );
-}
-
 function Seat({ seat, room }: { seat: Room["seats"][number]; room: Room }) {
   const state = seatState(seat, room);
   const who = seat.active.length > 1 ? `${seat.label} ×${seat.active.length}` : seat.label;
   const hint = seat.active.length ? seat.active.join(", ") : seat.recent ? `${seat.recent} vừa xong` : "trống";
   return (
     <li className="flex min-w-0 flex-col items-center gap-1" title={`${seat.label}: ${hint}`}>
-      {state ? (
-        <SpriteCanvas state={state} shirtKey={`${room.key}:${seat.key}`} size={SEAT_PX} />
-      ) : (
-        <span aria-hidden className="relative block" style={{ width: SEAT_PX, height: SEAT_PX }}>
-          {/* Empty desk: the same desk line as the sprites, nobody at it. */}
-          <span className="absolute inset-x-1.5 top-[44px] h-1.5 rounded-sm bg-[oklch(0.5_0.05_60)] opacity-50" />
-          <span className="absolute top-[30px] left-[22px] h-3.5 w-5 rounded-sm bg-[oklch(0.55_0.01_260)] opacity-35" />
-        </span>
-      )}
+      {/* Empty seat: the role's character resting, screen off, dimmed; it still breathes. */}
+      <SpriteCanvas
+        state={state ?? "rest"}
+        role={seat.key}
+        shirt={shirtOf(seat.key, room.key)}
+        seed={`${room.key}:${seat.key}`}
+        size={SEAT_PX}
+        className={cn("block transition-opacity duration-200", !state && "opacity-60")}
+      />
       <span className={cn("max-w-full truncate text-[11px] leading-none", state ? "font-medium text-(--ink)" : "text-(--soft)/70")}>
         {who}
       </span>
@@ -173,8 +137,8 @@ function RoomCard({
           )}
           {room.doing ?? "Chưa có việc ghi nhận"}
         </p>
-        <div className="relative mt-2 border-t-2 border-(--seam) bg-(--floor) px-2 pt-2 pb-2.5">
-          <ul aria-label={`Chuyên gia trong phòng, ${working} đang làm`} className="grid grid-cols-4 gap-y-2 sm:grid-cols-7">
+        <div className="@container relative mt-2 border-t-2 border-(--seam) bg-(--floor) px-2 pt-2 pb-2.5">
+          <ul aria-label={`Chuyên gia trong phòng, ${working} đang làm`} className="grid grid-cols-4 gap-y-3 @[33rem]:grid-cols-8">
             {room.seats.map((s) => (
               <Seat key={s.key} seat={s} room={room} />
             ))}
@@ -190,7 +154,7 @@ function RoomCard({
             <div className="mt-2 flex flex-col gap-1.5" role="status">
               {incoming.slice(0, 2).map((v) => (
                 <div key={`in-${v.ts}-${v.from}`} className="flex min-w-0 items-end gap-2">
-                  <Walker shirtKey={`${v.from}:lead`} ts={v.ts} />
+                  <WalkerCanvas shirt={shirtFor(v.from)} ts={v.ts} />
                   <span className="min-w-0 truncate rounded-md bg-white/10 px-2 py-1 text-xs text-(--ink)">
                     <span className="font-medium">Từ {labelOf(v.from)}</span>
                     {v.text && <span className="text-(--soft)">: {v.text}</span>}

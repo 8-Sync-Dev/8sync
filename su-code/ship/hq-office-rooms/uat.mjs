@@ -1,6 +1,7 @@
 // UAT for hq-office-rooms (C8). Drives a real browser (installed Edge via playwright-core) against
 // an HQ UI dev server and checks what the owner asked for:
-//   - every session is a room with the same seat template, grouped by project folder + branch;
+//   - every session is a room with the same 8-seat template, grouped by project folder + branch;
+//   - every seat draws a sprite; canvases animate, and stay still under prefers-reduced-motion;
 //   - clicking a running session opens its room chat with a composer, never "Start a session";
 //   - Chat nhóm shows messages between rooms; Chat phòng only one room;
 //   - Báo cáo shows cost / $ per task from the status-line snapshot.
@@ -35,7 +36,32 @@ await page.waitForSelector("article", { timeout: 20_000 });
 const rooms = await page.locator("article").count();
 check(rooms > 0, `office shows rooms (${rooms})`);
 const seats = await page.locator("article").first().locator("ul > li").count();
-check(seats === 7, `first room has the 7-seat template (${seats})`);
+check(seats === 8, `first room has the 8-seat template (${seats})`);
+const canvases = await page.locator("article").first().locator("ul > li canvas").count();
+check(canvases === 8, `every seat draws a sprite, empty ones too (${canvases})`);
+
+// C5: the office is alive: canvas pixels change over ~1.5 s; with reduced motion they do not.
+const snap = (p) =>
+  p.evaluate(() =>
+    [...document.querySelectorAll("article ul > li canvas")].map((c) => c.toDataURL()).join("|"),
+  );
+const a0 = await snap(page);
+await page.waitForTimeout(1500);
+const a1 = await snap(page);
+check(a0.length > 0 && a0 !== a1, "office canvases animate (pixels change over 1.5 s)");
+const still = await browser.newPage({ viewport: { width: 1440, height: 1000 }, colorScheme: "dark", reducedMotion: "reduce" });
+still.on("pageerror", (e) => fails.push(`pageerror (reduced motion): ${e.message}`));
+await still.addInitScript((k) => localStorage.setItem(k, "1"), "hq.guide.seen");
+await still.goto(base, { waitUntil: "domcontentloaded" });
+await still.getByRole("tab", { name: "Văn phòng" }).click();
+await still.waitForSelector("article ul > li canvas", { timeout: 20_000 });
+await still.waitForTimeout(800);
+const r0 = await snap(still);
+await still.waitForTimeout(1500);
+const r1 = await snap(still);
+check(r0.length > 0 && r0 === r1, "reduced motion: office canvases stay still");
+await still.screenshot({ path: path.join(out, "1b-office-reduced-motion.png"), fullPage: true });
+await still.close();
 await page.screenshot({ path: path.join(out, "1-office.png"), fullPage: true });
 
 if (mode === "--seeded") {

@@ -11,6 +11,7 @@ export const SEATS = [
   { key: "review", label: "Reviewer", hint: "reviewer · verifier" },
   { key: "qa", label: "Tester", hint: "qa" },
   { key: "quick", label: "Quick", hint: "quick-task" },
+  { key: "critic", label: "Critic", hint: "critic — phê bình, chọn thay owner" },
 ] as const;
 
 export type SeatKey = (typeof SEATS)[number]["key"];
@@ -30,6 +31,7 @@ const BY_TYPE: Record<string, SeatKey> = {
   verifier: "review",
   qa: "qa",
   "quick-task": "quick",
+  critic: "critic",
 };
 
 /** Kit / built-in agent type -> seat. Plugin-scoped names ("plugin:reviewer") use the last part. */

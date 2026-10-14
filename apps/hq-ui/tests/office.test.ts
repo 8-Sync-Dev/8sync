@@ -27,7 +27,7 @@ import {
   seatsFor,
   visitsFrom,
 } from "@/lib/office";
-import { WALKER_FRAMES, WALKER_H, WALKER_PALETTE, WALKER_W } from "@/lib/sprite/walker";
+import { DUST_MS, WALK_MS, WALKER_DUST, WALKER_FRAMES, WALKER_H, WALKER_PALETTE, WALKER_STAND, WALKER_W } from "@/lib/sprite/walker";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const SID = "1eb79553-8369-4a90-b428-2dedb50e18db";
@@ -40,11 +40,13 @@ beforeAll(() => {
 
 describe("seats: the same template in every room", () => {
   it("maps kit and built-in agent types to seats", () => {
-    expect(SEATS.map((s) => s.key)).toEqual(["lead", "rd", "plan", "dev", "review", "qa", "quick"]);
+    expect(SEATS.map((s) => s.key)).toEqual(["lead", "rd", "plan", "dev", "review", "qa", "quick", "critic"]);
     expect([seatOf("explore"), seatOf("researcher"), seatOf("pm"), seatOf("task"), seatOf("reviewer"), seatOf("qa"), seatOf("quick-task")]).toEqual(
       ["rd", "rd", "plan", "dev", "review", "qa", "quick"],
     );
     expect(seatOf("8sync-kit:verifier")).toBe("review");
+    expect([seatOf("critic"), seatOf("8sync-kit:critic"), seatOf("reviewer"), seatOf("verifier")]).toEqual(["critic", "critic", "review", "review"]);
+    expect(SEATS.find((s) => s.key === "critic")).toMatchObject({ label: "Critic", hint: "critic — phê bình, chọn thay owner" });
     expect(seatOf("something-new")).toBe("dev");
     expect(seatOf(null)).toBe("dev");
   });
@@ -258,9 +260,15 @@ describe("ship-loop state per project", () => {
 });
 
 describe("walker sprite", () => {
-  it("two frames of 18 rows x 12 palette chars that differ", () => {
-    expect(WALKER_FRAMES.length).toBe(2);
-    for (const f of WALKER_FRAMES) {
+  it("four walk frames (+ stand and dust) of 18 rows x 12 palette chars that differ", () => {
+    expect(WALKER_FRAMES.length).toBe(4);
+    expect(WALK_MS.length).toBe(WALKER_FRAMES.length);
+    expect(WALK_MS.every((ms) => ms === 150)).toBe(true);
+    expect(WALKER_DUST.length).toBe(DUST_MS.length);
+    expect(WALKER_DUST.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(WALKER_FRAMES.map((f) => f.join())).size).toBe(4);
+    expect(WALKER_DUST[0].join()).not.toBe(WALKER_STAND.join());
+    for (const f of [...WALKER_FRAMES, ...WALKER_DUST, WALKER_STAND]) {
       expect(f.length).toBe(WALKER_H);
       for (const row of f) {
         expect(row.length).toBe(WALKER_W);

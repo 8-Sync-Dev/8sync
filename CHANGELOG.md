@@ -4,6 +4,25 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **R&D researches when idle.** In `ccc hook idle` (still OFF by default, same rails: lease on subscription, $/hour cap, 3 blocks):
+  - a teammate named for research (`rd`, `rd2`, `research…`, `explore…`) that runs out of tasks is told to run `/deep-research` on the first STATE `Next` item that has no brief in `su-code/research/` yet;
+  - after the brief it runs `/planning` and asks the owner ONE AskUserQuestion table with a Recommended option first;
+  - the lead gets the same nudge once the team and every other room are idle.
+- **Critic picks for the owner: `8sync ccc delegate on | off | status`** (OFF by default).
+  - When on, a product or technical AskUserQuestion is sent back to Claude with "have the `critic` agent grade the options (FATAL/MAJOR/MINOR), go with its pick (else the Recommended one), log it in `su-code/DECISIONS.md`, keep working".
+  - The owner still answers the `Ship` question and anything about secrets/credentials/login, deletes or irreversible steps, money, production deploys, merges/releases, and high-risk decisions from the Usage Policy list (legal, medical, finance, credit, insurance, housing, hiring, admissions/grading, welfare).
+  - New kit agent `critic` (read-only, Sonnet) and hook `ccc hook delegate` (PreToolUse on AskUserQuestion, no model call).
+- **Rooms named after sessions.** At session start the kit reads the session's name from `8sync ccc .`'s registry and adds:
+  - "Phòng của bạn": the role the name implies (`rd` → R&D, `qa`, `ui`, `api`, `ops`, `docs`, `sec`, `critic`, `lead`, `core`…; any other name is its own topic) plus up to 5 recall lines on that topic;
+  - "Phòng khác đang làm": the other sessions of the same repo active in the last 2 hours, with their current task and files, so rooms don't edit the same files.
+  - Same repo's registry only, masked, and fitted inside Claude Code's 10,000-char hook limit.
+- **HQ office looks alive.**
+  - 8th seat: Critic.
+  - Every seat has a sprite with its own prop, empty seats included (resting, screen off).
+  - Per-state frame timing, 1 px breathing, random blinks, a "done" flash, and a 4-frame walker with a dust puff.
+  - One shared animation loop with a frame cache. It stops in hidden tabs and shows a still frame under reduced motion.
+- Research brief `su-code/research/2026-10-15-always-on.md` covers Feynman, agent-sprite-forge, XERJ and Rust/wasm, with adopt/trial/skip calls and sources.
 
 ## [0.87.0] — 2026-10-14
 ### Added

@@ -126,6 +126,8 @@ pub(super) struct Facts<'a> {
     pub gate: Result<(), String>,
     /// A task this member finished only after `hook task-done` held it back: one lesson to keep.
     pub learn: Option<&'a str>,
+    /// The next open question for R&D (STATE `Next` item with no brief in `su-code/research/`).
+    pub research: Option<&'a str>,
 }
 
 /// The ladder. `me` is the teammate name, `None` for the lead.
@@ -190,6 +192,9 @@ pub(super) fn decide(me: Option<&str>, f: &Facts, mem: &Mem) -> (Step, Mem) {
                 );
                 return (nudge(&mut m, 2, "recall".into(), "recall", msg), m);
             }
+            if let (true, Some(q)) = (m.rung < 3 && me.is_some_and(is_rd), f.research) {
+                return (nudge(&mut m, 3, "research".into(), "research", research_msg(q, false)), m);
+            }
             // Claude Code tells the lead when a teammate goes idle, with its final answer.
             (Step::Rest("hết việc (lead đã được báo)".into()), m)
         }
@@ -205,9 +210,61 @@ pub(super) fn decide(me: Option<&str>, f: &Facts, mem: &Mem) -> (Step, Mem) {
                     return (nudge(&mut m, 4, format!("room:{room}"), "ask_room", msg), m);
                 }
             }
+            if let (true, Some(q)) = (m.rung < 5, f.research) {
+                return (nudge(&mut m, 5, "research".into(), "research", research_msg(q, true)), m);
+            }
             (Step::Rest("hết việc".into()), m)
         }
     }
+}
+
+/// An R&D member: a teammate named `rd`, `r&d`, `research…` or `explore…` (also `be-rd`, `rd2`).
+fn is_rd(name: &str) -> bool {
+    let low = name.to_lowercase();
+    low.contains("r&d")
+        || low.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| w.strip_prefix("rd").is_some_and(|r| r.bytes().all(|b| b.is_ascii_digit())) || w.starts_with("research") || w.starts_with("explore"))
+}
+
+/// Idle research, Feynman-style (plan → gather → draft → cite → verify → review; files, not chat):
+/// one brief per open question, then a plan and ONE table question for the owner.
+fn research_msg(q: &str, lead: bool) -> String {
+    let who = if lead { "Cả team và các phòng đã hết việc. Giao R&D (teammate rd/researcher, không có thì tự làm): " } else { "Hết task. R&D không nghỉ: " };
+    format!(
+        "{who}/deep-research \"{q}\" (plan → gather → draft → cite → verify → critic chấm FATAL/MAJOR/MINOR), ghi brief su-code/research/<yyyy-mm-dd>-<slug>.md có dòng `Question: {q}` và URL nguồn cho mọi claim. Xong: /planning rồi hỏi owner MỘT AskUserQuestion (≤4 câu, option Recommended đứng đầu; `8sync ccc delegate` bật thì agent critic chọn thay). Không sửa code sản phẩm trong bước này."
+    )
+}
+
+/// First STATE.md `Next` item that no brief in `su-code/research/` names yet (a brief carries
+/// its question line). No model call; `None` when the repo has no `su-code/`.
+pub(super) fn research_question(cwd: &Path) -> Option<String> {
+    let root = cwd.is_absolute().then(|| cwd.ancestors().find(|d| d.join("su-code").is_dir())).flatten()?;
+    let state = std::fs::read_to_string(root.join("su-code/STATE.md")).ok()?;
+    let briefs: String = std::fs::read_dir(root.join("su-code/research"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".md"))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .collect::<Vec<_>>()
+        .join("
+");
+    let mut in_next = false;
+    for l in state.lines() {
+        if l.starts_with('#') {
+            in_next = l.trim_start_matches('#').trim().to_lowercase().starts_with("next");
+            continue;
+        }
+        let it = l.trim().trim_start_matches(['-', '*']).trim();
+        if !in_next || it.is_empty() {
+            continue;
+        }
+        let q: String = it.chars().take(200).collect();
+        let key: String = q.chars().take(60).collect();
+        if !briefs.contains(&key) {
+            return Some(q);
+        }
+    }
+    None
 }
 
 /// ≤5 recall lines from the nearest ancestor holding `su-code/` (teammates often run in a
@@ -456,7 +513,15 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
     let who = me.clone().unwrap_or_else(|| "lead".into());
     let learn_p = super::taskdone::learn_path(home, &team, &who);
     let learn = read_json(&learn_p).and_then(|l| l["task"].as_str().map(String::from));
-    let facts = Facts { tasks: &tasks, recall: &recall, rooms: &rooms, gate: gate(lease.as_ref(), subscription, spent, now(), owner_seen), learn: learn.as_deref() };
+    let research = if me.as_deref().is_none_or(is_rd) { research_question(&cwd) } else { None };
+    let facts = Facts {
+        tasks: &tasks,
+        recall: &recall,
+        rooms: &rooms,
+        gate: gate(lease.as_ref(), subscription, spent, now(), owner_seen),
+        learn: learn.as_deref(),
+        research: research.as_deref(),
+    };
     let key = format!("{}__{}", safe(&team), safe(&who));
     let mem_path = dir.join("mem").join(format!("{key}.json"));
     let mem = read_json(&mem_path).map(|m| Mem::from_json(&m)).unwrap_or_default();
@@ -569,7 +634,7 @@ mod tests {
         Task { id: id.into(), subject: format!("s{id}"), status: status.into(), owner: owner.into(), blocked_by: blocked.iter().map(|s| s.to_string()).collect() }
     }
     fn facts<'a>(tasks: &'a [Task], recall: &'a [String], rooms: &'a [(String, usize)]) -> Facts<'a> {
-        Facts { tasks, recall, rooms, gate: Ok(()), learn: None }
+        Facts { tasks, recall, rooms, gate: Ok(()), learn: None, research: None }
     }
     fn nudged(s: &Step, state: &str, needle: &str) -> bool {
         matches!(s, Step::Nudge { state: st, msg } if *st == state && msg.contains(needle))
@@ -624,6 +689,54 @@ mod tests {
     }
 
     #[test]
+    fn idle_rd_researches_the_next_open_question_once() {
+        let ts = [t("1", "completed", "rd", &[])];
+        let f = Facts { research: Some("hq-ui packaging"), ..facts(&ts, &[], &[]) };
+        // R&D teammate: research instead of resting, once per epoch
+        let (s, m) = decide(Some("rd"), &f, &Mem::default());
+        assert!(nudged(&s, "research", "/deep-research \"hq-ui packaging\""), "{s:?}");
+        assert!(nudged(&s, "research", "AskUserQuestion"), "{s:?}");
+        let (s, _) = decide(Some("rd"), &f, &m);
+        assert!(matches!(s, Step::Rest(_)), "once per epoch: {s:?}");
+        // other teammates still rest
+        let ts2 = [t("1", "completed", "be", &[])];
+        let (s, _) = decide(Some("be"), &Facts { research: Some("q"), ..facts(&ts2, &[], &[]) }, &Mem::default());
+        assert!(matches!(s, Step::Rest(_)), "{s:?}");
+        // lead: other rooms first, then research
+        let rooms = vec![("zus".to_string(), 2)];
+        let f = Facts { research: Some("q1"), ..facts(&ts, &[], &rooms) };
+        let (s, m) = decide(None, &f, &Mem::default());
+        assert!(nudged(&s, "ask_room", "zus"), "{s:?}");
+        let (s, m) = decide(None, &f, &m);
+        assert!(nudged(&s, "research", "Giao R&D"), "{s:?}");
+        let (s, _) = decide(None, &f, &m);
+        assert!(matches!(s, Step::Rest(_)), "{s:?}");
+        // no open question → rest as before
+        let (s, _) = decide(None, &facts(&ts, &[], &[]), &Mem::default());
+        assert!(matches!(s, Step::Rest(r) if r == "hết việc"));
+    }
+
+    #[test]
+    fn rd_names_and_research_question_from_state_minus_briefs() {
+        for n in ["rd", "R&D", "rd2", "be-rd", "researcher", "explore"] {
+            assert!(is_rd(n), "{n}");
+        }
+        for n in ["be", "card", "ordinary", "qa", "lead"] {
+            assert!(!is_rd(n), "{n}");
+        }
+        let d = std::env::temp_dir().join(format!("8sync-rq-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("su-code/research")).unwrap();
+        std::fs::write(d.join("su-code/STATE.md"), "# S\n## Next\n- hq-ui packaging as a release asset\n- eval kit\n## Other\n- x\n").unwrap();
+        assert_eq!(research_question(&d).as_deref(), Some("hq-ui packaging as a release asset"));
+        std::fs::write(d.join("su-code/research/2026-10-15-pkg.md"), "Question: hq-ui packaging as a release asset\n").unwrap();
+        assert_eq!(research_question(&d).as_deref(), Some("eval kit"));
+        std::fs::write(d.join("su-code/research/b.md"), "Question: eval kit").unwrap();
+        assert_eq!(research_question(&d), None);
+        assert_eq!(research_question(Path::new("rel")), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
     fn a_held_then_passed_task_asks_for_one_lesson_first() {
         let ts = [t("1", "completed", "be", &[]), t("2", "pending", "", &[])];
         let f = Facts { learn: Some("#1 (fix a)"), ..facts(&ts, &[], &[]) };
@@ -652,7 +765,7 @@ mod tests {
         let capped = Mem { digest: d, blocks: MAX_BLOCKS, rung: 1, last: "x".into() };
         let (s, _) = decide(Some("be"), &facts(&ts, &[], &[]), &capped);
         assert!(matches!(s, Step::Rest(r) if r.contains("trần")));
-        let f = Facts { tasks: &ts, recall: &[], rooms: &[], gate: Err("chạm trần $5.00/giờ".into()), learn: Some("#1") };
+        let f = Facts { tasks: &ts, recall: &[], rooms: &[], gate: Err("chạm trần $5.00/giờ".into()), learn: Some("#1"), research: Some("q") };
         let (s, _) = decide(Some("be"), &f, &Mem::default());
         assert_eq!(s, Step::Rest("chạm trần $5.00/giờ".into()));
     }

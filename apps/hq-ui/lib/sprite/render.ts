@@ -1,54 +1,29 @@
 // Canvas renderer for the code-drawn sprites. Browser only (call from effects).
-// One shared requestAnimationFrame loop drives every sprite at ~7 fps, and it
-// stops while the tab is hidden or when a sprite is offscreen.
-import { SPRITES, SPRITE_SIZE, paletteFor, type SpriteState } from "./frames";
+// ONE shared requestAnimationFrame loop drives every desk sprite and walker with
+// per-frame durations; a canvas is only redrawn when its frame changes, by blitting a
+// frame pre-rendered once (cache by role/clip/frame/blink/shirt). The loop stops while
+// the tab is hidden; offscreen sprites are skipped; reduced motion draws frame 0 only.
+import type { SeatKey } from "../office";
+import { BLINKS, CLIP_MS, ONE_SHOT, PALETTE, SPRITE_SIZE, spriteFrame, type Clip } from "./frames";
+import { blinker, frameAt, memo, phaseOf } from "./anim";
+import { DUST_MS, WALK_MS, WALKER_DUST, WALKER_FRAMES, WALKER_H, WALKER_PALETTE, WALKER_STAND, WALKER_W } from "./walker";
 
-export const SPRITE_FPS = 7;
+/** The loop wakes at most this often; the shortest frame is 110 ms. */
+const TICK_MS = 33;
 
-export type SpriteHandle = {
-  setState(state: SpriteState): void;
-  dispose(): void;
-};
+type Ticker = { visible: boolean; tick(now: number): void };
 
-type Player = {
-  canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
-  palette: Record<string, string | null>;
-  scale: number;
-  state: SpriteState;
-  frame: number;
-  visible: boolean;
-  step(): void;
-};
-
-const players = new Set<Player>();
+const tickers = new Set<Ticker>();
 let raf = 0;
 let last = 0;
 let hooked = false;
 
-function draw(p: Player) {
-  const rows = SPRITES[p.state];
-  const f = rows[p.frame % rows.length];
-  const { ctx, scale: k } = p;
-  ctx.clearRect(0, 0, SPRITE_SIZE * k, SPRITE_SIZE * k);
-  let cur = "";
-  for (let y = 0; y < SPRITE_SIZE; y++) {
-    const row = f[y];
-    for (let x = 0; x < SPRITE_SIZE; x++) {
-      const color = p.palette[row[x]];
-      if (!color) continue;
-      if (color !== cur) ctx.fillStyle = cur = color;
-      ctx.fillRect(x * k, y * k, k, k);
-    }
-  }
-}
-
 function loop(t: number) {
   raf = 0;
-  if (document.hidden || players.size === 0) return;
-  if (t - last >= 1000 / SPRITE_FPS) {
+  if (document.hidden || tickers.size === 0) return;
+  if (t - last >= TICK_MS) {
     last = t;
-    for (const p of players) if (p.visible) p.step();
+    for (const p of tickers) if (p.visible) p.tick(t);
   }
   raf = requestAnimationFrame(loop);
 }
@@ -58,69 +33,178 @@ function ensureLoop() {
     hooked = true;
     document.addEventListener("visibilitychange", ensureLoop);
   }
-  if (!raf && !document.hidden && players.size > 0) raf = requestAnimationFrame(loop);
+  if (!raf && !document.hidden && tickers.size > 0) raf = requestAnimationFrame(loop);
 }
 
+const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** Paint palette rows once into a 1x canvas; every later draw is a single drawImage. */
+function paint(rows: string[], w: number, h: number, palette: Record<string, string | null>, shirt: string) {
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d");
+  if (!ctx) return c;
+  let cur = "";
+  for (let y = 0; y < h; y++) {
+    const row = rows[y] ?? "";
+    for (let x = 0; x < w; x++) {
+      const ch = row[x];
+      const color = ch === "c" ? shirt : palette[ch];
+      if (!color) continue;
+      if (color !== cur) ctx.fillStyle = cur = color;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+  return c;
+}
+
+const deskCache = memo((key: string) => {
+  const [role, clip, i, blink, shirt] = key.split("|");
+  const rows = spriteFrame(role === "" ? null : (role as SeatKey), clip as Clip, Number(i), blink === "1");
+  return paint(rows, SPRITE_SIZE, SPRITE_SIZE, PALETTE, shirt);
+});
+
+const walkerCache = memo((key: string) => {
+  const [kind, i, shirt] = key.split("|");
+  const rows = kind === "dust" ? WALKER_DUST[Number(i)] : kind === "stand" ? WALKER_STAND : WALKER_FRAMES[Number(i)];
+  return paint(rows, WALKER_W, WALKER_H, WALKER_PALETTE, shirt);
+});
+
+function blit(ctx: CanvasRenderingContext2D, img: HTMLCanvasElement, w: number, h: number) {
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+}
+
+/** Integer backing scale for crisp pixels: floor(css * dpr / art), at least 1. */
+function backing(canvas: HTMLCanvasElement, artW: number, artH: number, cssW: number) {
+  const dpr = window.devicePixelRatio || 1;
+  const k = Math.max(1, Math.floor((cssW * dpr) / artW));
+  canvas.width = artW * k;
+  canvas.height = artH * k;
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${(cssW * artH) / artW}px`;
+  canvas.style.imageRendering = "pixelated";
+}
+
+function watch(canvas: HTMLCanvasElement, t: Ticker) {
+  if (typeof IntersectionObserver === "undefined") return null;
+  const io = new IntersectionObserver((es) => {
+    t.visible = es[es.length - 1]?.isIntersecting ?? true;
+  });
+  io.observe(canvas);
+  return io;
+}
+
+export type SpriteHandle = {
+  setState(clip: Clip): void;
+  dispose(): void;
+};
+
 /**
- * `size` is the CSS pixel width/height. The backing store uses an integer
- * scale (floor(size * dpr / 32), min 1) so pixels stay crisp.
+ * A desk sprite. `size` is the CSS width/height; `seed` (e.g. room:seat) offsets its loop
+ * phase and blink timing so a room never moves in lockstep; `shirt` is its colour.
  */
 export function mountSprite(
   canvas: HTMLCanvasElement,
-  opts: { state: SpriteState; shirtKey: string; size?: number },
+  opts: { state: Clip; role: SeatKey | null; shirt: string; seed: string; size?: number },
 ): SpriteHandle {
+  backing(canvas, SPRITE_SIZE, SPRITE_SIZE, opts.size ?? 96);
   const ctx = canvas.getContext("2d");
-  const size = opts.size ?? 96;
-  const dpr = window.devicePixelRatio || 1;
-  const scale = Math.max(1, Math.floor((size * dpr) / SPRITE_SIZE));
-  canvas.width = canvas.height = SPRITE_SIZE * scale;
-  canvas.style.width = canvas.style.height = `${size}px`;
-  canvas.style.imageRendering = "pixelated";
   if (!ctx) return { setState() {}, dispose() {} };
+  const reduced = reducedMotion();
+  const role = opts.role ?? "";
+  const blinkAt = blinker(opts.seed, performance.now());
+  let clip = opts.state;
+  let t0 = performance.now();
+  let shown = "";
 
-  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const p: Player = {
-    canvas,
-    ctx,
-    palette: paletteFor(opts.shirtKey),
-    scale,
-    state: opts.state,
-    frame: 0,
+  const draw = (key: string) => {
+    if (key === shown) return;
+    shown = key;
+    blit(ctx, deskCache.get(key), canvas.width, canvas.height);
+  };
+  const keyOf = (i: number, blink: boolean) => `${role}|${clip}|${i}|${blink ? 1 : 0}|${opts.shirt}`;
+
+  const p: Ticker = {
     visible: true,
-    step() {
-      this.frame++;
-      // "done" cheers once, then the character sits down again.
-      if (this.state === "done" && this.frame >= SPRITES.done.length) {
-        this.state = "idle";
-        this.frame = 0;
+    tick(now) {
+      const ms = CLIP_MS[clip];
+      const once = ONE_SHOT.has(clip);
+      let i = frameAt(ms, now - t0 + (once ? 0 : phaseOf(opts.seed, ms)), { loop: !once });
+      if (i < 0) {
+        // "done" cheers once, then the character sits down again.
+        clip = "idle";
+        t0 = now;
+        i = frameAt(CLIP_MS.idle, phaseOf(opts.seed, CLIP_MS.idle));
       }
-      draw(this);
+      draw(keyOf(i, BLINKS.has(clip) && blinkAt(now)));
     },
   };
-  draw(p);
+  draw(keyOf(0, false));
 
   let io: IntersectionObserver | null = null;
   if (!reduced) {
-    if (typeof IntersectionObserver !== "undefined") {
-      io = new IntersectionObserver((es) => {
-        p.visible = es[es.length - 1]?.isIntersecting ?? true;
-      });
-      io.observe(canvas);
-    }
-    players.add(p);
+    io = watch(canvas, p);
+    tickers.add(p);
     ensureLoop();
   }
 
   return {
-    setState(state) {
-      if (state === p.state && !(state === "done" && p.frame === 0)) return;
-      p.state = state;
-      p.frame = 0;
-      draw(p);
+    setState(next) {
+      if (next === clip && next !== "done") return;
+      clip = next;
+      t0 = performance.now();
+      if (reduced) draw(keyOf(0, false));
+      else p.tick(t0);
     },
     dispose() {
-      players.delete(p);
+      tickers.delete(p);
       io?.disconnect();
     },
+  };
+}
+
+/** The walk-in lasts as long as the CSS slide (hq-walk-in). */
+export const WALK_IN_MS = 1600;
+
+/**
+ * A specialist walking into a room: 4-frame walk for WALK_IN_MS, a dust puff on arrival,
+ * then it stands and leaves the loop. Reduced motion: stands from the start.
+ */
+export function mountWalker(canvas: HTMLCanvasElement, opts: { shirt: string; size?: number }): () => void {
+  backing(canvas, WALKER_W, WALKER_H, opts.size ?? WALKER_W * 2);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return () => {};
+  let shown = "";
+  const draw = (key: string) => {
+    if (key === shown) return;
+    shown = key;
+    blit(ctx, walkerCache.get(`${key}|${opts.shirt}`), canvas.width, canvas.height);
+  };
+  if (reducedMotion()) {
+    draw("stand|0");
+    return () => {};
+  }
+  draw("walk|0");
+  const t0 = performance.now();
+  const p: Ticker = {
+    visible: true,
+    tick(now) {
+      const t = now - t0;
+      if (t < WALK_IN_MS) return draw(`walk|${frameAt(WALK_MS, t)}`);
+      const d = frameAt(DUST_MS, t - WALK_IN_MS, { loop: false });
+      if (d >= 0) return draw(`dust|${d}`);
+      draw("stand|0");
+      tickers.delete(p);
+    },
+  };
+  const io = watch(canvas, p);
+  tickers.add(p);
+  ensureLoop();
+  return () => {
+    tickers.delete(p);
+    io?.disconnect();
   };
 }
