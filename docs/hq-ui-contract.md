@@ -19,7 +19,7 @@ Local-only team view for Claude Code sessions. Nothing here talks to Claude's AP
 - `notification`: `text` = the notification type plus its message (masked). Written only when `hq_session` is set
 - `session_message`: from PostToolUse on `SendMessage`. `from` is this session, `to` is `tool_input.to`, `text` is `tool_input.message`
 - `session_start`, `session_end` (SessionStart / SessionEnd)
-- `session_reply`: from the async Stop hook (`8sync hq hook Stop`, own group beside `ccc hook verify-stop`). `text` = hook input `last_assistant_message` (docs: https://code.claude.com/docs/en/hooks) after the shared masker (`crates/cli/src/verbs/secret_mask.rs`). Written **only** when `hq_session` is set; non-hq sessions get no row. Skipped when the message is empty
+- `session_reply`: from the async Stop hook (`8sync hq hook Stop`, own group beside `ccc hook verify-stop`). `text` = hook input `last_assistant_message` (docs: https://code.claude.com/docs/en/hooks) after the shared masker (`crates/ccc-core/src/secret_mask.rs`). Written **only** when `hq_session` is set; non-hq sessions get no row. Skipped when the message is empty
 
 `hq_session` is on every row: env `EIGHTSYNC_HQ_SESSION` (hooks inherit the claude process env) when it matches `hq-[a-z0-9][a-z0-9-]{0,31}`, else `null`. The UI should prefer it over the `session_id` uuid. `from` keeps its `session_message` meaning.
 
@@ -62,7 +62,7 @@ Retention: the journal is rotated at 5 MB (`events.1.jsonl` kept, older dropped)
 
 ## 4. ccc JSON surfaces
 
-Machine-readable output for IDE integrations (ZUS Sessions). Every object carries `"schema": 1`; a breaking change bumps it. Arrays (`ls`) put `schema` on each row, so old readers that ignore unknown keys keep working. Free text goes through the shared masker (`secret_mask.rs`); no command prints a token, key or account email.
+Machine-readable output for IDE integrations (ZUS Sessions). Every object carries `"schema": 1`; a breaking change bumps it. Arrays (`ls`) put `schema` on each row, so old readers that ignore unknown keys keep working. Free text goes through the shared masker (`crates/ccc-core/src/secret_mask.rs`); no command prints a token, key or account email.
 
 - `8sync ccc . ls --json`, `8sync ls [--all] --json`: array of rows (`engine, sid, name, status, title, doing, last_user, tasks_done, tasks_total, resume, ...`), each with `schema`.
 - `8sync ccc . show <name> --json` (also `8sync show <name> [--engine ccc] --json`): one row plus `last_users: [str]` (max 5), `last_text: str|null`, `tasks: [{id,title,state}]` (`state` = `pending|in_progress|done`), `files: [str]`.

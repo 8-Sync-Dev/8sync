@@ -682,7 +682,7 @@ fn cmd_rm(env: &Env, root: &Path, name: &str) -> Result<()> {
 }
 
 fn sessions(env: &Env, root: &Path) -> Store {
-    Store::new(env, root, "forge-sessions", "forge")
+    Store::new(&env.xdg_config, root, "forge-sessions", "forge")
 }
 
 fn mask(key: &str) -> String {

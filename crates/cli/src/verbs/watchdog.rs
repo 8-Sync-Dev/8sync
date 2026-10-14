@@ -1301,9 +1301,7 @@ fn my_session_root(cfg: &Config) -> Option<u32> {
     None
 }
 
-pub(crate) fn safe_id(s: &str) -> Option<String> {
-    (!s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then(|| s.to_string())
-}
+pub(crate) use ccc_core::transcript::safe_id;
 
 /// `8sync ccc hook watchdog` (UserPromptSubmit + PostToolUse). Returns the hook JSON
 /// when this session has unseen, relevant alerts. Nothing to say = no output and no

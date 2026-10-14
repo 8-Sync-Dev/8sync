@@ -27,6 +27,7 @@ web = ["dep:axum", "dep:tokio", "dep:tower-http", "dep:scraper"]
 [dependencies]
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
 anyhow = "1.0"
+ccc-core = { path = "../ccc-core" }
 owo-colors = "4.1"
 dirs = "5.0"
 serde = { version = "1", features = ["derive"] }

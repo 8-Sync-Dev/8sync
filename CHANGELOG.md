@@ -4,6 +4,27 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **Kit rules: cross-platform and rule gates are mandatory.**
+  - Every build and release must work on Windows, macOS and Linux.
+  - `/ship`, `/ship-auto`, `/ship-loop` and `/autopilot` merge only when CI is green on all three OSes (tests and release build). An OS without a job reads "not verified: <OS>" and blocks the merge.
+  - Before every commit or Ship, the `sec` skill must be invoked, never replaced by a hand-written grep. `/rules` and `/aup-audit` run when the diff is high-risk, and always before a release.
+- **`scripts/uat/`: real UATs with official `claude -p`.** They run in temp dirs, never touch the owner's config, and are budget-capped.
+  - `compact.sh`: Claude Code auto-compacts at the `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` threshold. It measured 58.0 % of a 100K window with the override at 60, versus 75.6 % without it.
+  - `up-kit.sh`: `8sync up` on an older machine refreshes the kit (stamp, statusline chain, compact env).
+  - `auto-levels.sh`: `/ship-auto` and `/autopilot` on a toy repo with no remote. It checks green tests, conventional commits, a `sec` skill call in the transcript, ship state files, and that nothing was pushed.
+- **`outputs/hq-team-ux.md`: cited UX brief for HQ.** It covers attention-first triage, needs-you, and the inter-agent thread. It has a gap table against v0.80.0 with a code/changelog basis for each row. Provenance is in `outputs/hq-team-ux.provenance.md`.
+
+### Fixed
+- **`8sync up` never refreshed the kit on Linux.** After the binary was replaced, `/proc/self/exe` reads `…/8sync (deleted)`, so `ccc kit` could not be started ("kit refresh failed"). `up` now resolves the install path before replacing the binary, and the path helper strips a trailing ` (deleted)`. A sandbox UAT now shows the kit stamp moving 0.79.1 → 0.80.0 with the fix.
+- **`/ship-auto` and `/autopilot` skipped `/sec` and improvised without a remote.**
+  - Both now must invoke the `sec` skill before every commit.
+  - With no git remote, they commit, record `Ship: n/a (no remote)` and stop without asking Ship.
+  - `/ship-auto` always writes `su-code/ship/<slug>/STATE.md`.
+  - `/autopilot` runs every item, even a small one, through the `/ship-loop` rails (PLAN, `loop init`, `loop ev` evidence).
+
+### Changed
+- **`crates/ccc-core`** (lib `ccc_core`, `publish = false`): the session registry (`registry`, was `uuid_sessions.rs`), transcript scan + `Row`/`Digest` + `row_json`/`show_json` (`transcript`, was the pure half of `session_view.rs`), the secret masker (`secret_mask`) and `SCHEMA = 1` moved out of `crates/cli` into their own crate, with their unit tests. No behaviour change; the CLI keeps rendering/printing and re-exports the crate. ZUS pins it by git tag. Deps: `anyhow`, `serde`, `serde_json` only.
 
 ## [0.80.0] — 2026-10-14
 ### Added
