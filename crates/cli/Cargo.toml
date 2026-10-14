@@ -32,6 +32,8 @@ dirs = "5.0"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 which = "7.0"
+# `8sync ccc secret set --generate`: OS randomness (already in the tree via other crates).
+getrandom = "0.2"
 indoc = "2.0"
 # `compression` (include-flate) shrinks the embedded assets/skills + web/dist tree
 # at compile time, decompressed transparently on `.data` — offsets bundled rusqlite

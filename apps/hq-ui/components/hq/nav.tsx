@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRightIcon, FolderIcon, FolderPlusIcon, FolderXIcon, LayersIcon, MoonIcon, RadioIcon, SunIcon } from "lucide-react";
+import { ChevronRightIcon, FolderGit2Icon, FolderIcon, FolderPlusIcon, FolderXIcon, LayersIcon, MoonIcon, RadioIcon, SunIcon } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useState, useSyncExternalStore, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -9,8 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { splitStale, sessionLabel } from "@/lib/labels";
+import { matchesSession } from "@/lib/office";
 import { ErrorNote, STATUS_LABEL, StatusDot, WaitingBadge } from "./bits";
 import type { Hq, Live } from "./use-hq";
+import type { Room } from "./use-office";
 import type { Project, Session } from "./types";
 
 export type Scope = { project: number | null; session: string | null };
@@ -18,9 +20,10 @@ export type Scope = { project: number | null; session: string | null };
 const item =
   "group flex w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/60 aria-[current=true]:bg-sidebar-accent aria-[current=true]:font-medium";
 
-export function Nav({ hq, scope, onScope }: { hq: Hq; scope: Scope; onScope: (s: Scope) => void }) {
+export function Nav({ hq, scope, onScope, rooms = [] }: { hq: Hq; scope: Scope; onScope: (s: Scope) => void; rooms?: Room[] }) {
   const { projects, sessions } = hq;
   const unassigned = sessions.data.filter((s) => s.project_id == null || !projects.data.some((p) => p.id === s.project_id));
+  const byFolder = folderGroups(unassigned, rooms);
 
   return (
     <nav aria-label="Projects and sessions" className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
@@ -59,14 +62,18 @@ export function Nav({ hq, scope, onScope }: { hq: Hq; scope: Scope; onScope: (s:
           <ProjectList projects={projects.data} sessions={sessions.data} scope={scope} onScope={onScope} />
         )}
 
-        {unassigned.length > 0 && (
-          <>
-            <p className="mt-4 mb-1 px-2 text-xs font-medium text-muted-foreground">Other sessions</p>
+        {byFolder.map((g) => (
+          <div key={g.key} className="mt-4">
+            <p className="mb-1 flex min-w-0 items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground" title={g.title}>
+              {g.branches.length > 0 && <FolderGit2Icon className="size-3.5 shrink-0" aria-hidden />}
+              <span className="max-w-[60%] shrink-0 truncate">{g.name}</span>
+              {g.branches.length > 0 && <span className="min-w-0 truncate font-mono font-normal">⎇ {g.branches.join(", ")}</span>}
+            </p>
             <ul className="space-y-0.5">
-              <SessionList sessions={unassigned} scope={scope} onScope={onScope} />
+              <SessionList sessions={g.sessions} scope={scope} onScope={onScope} />
             </ul>
-          </>
-        )}
+          </div>
+        ))}
       </div>
 
       <AddProject hq={hq} onAdded={(id) => onScope({ project: id, session: null })} />
@@ -159,7 +166,7 @@ function ProjectItem({
 /** Fresh sessions first; idle > 1 day and ended ones sit under a disclosure (kept open if one is selected). */
 function SessionList({ sessions, scope, onScope }: { sessions: Session[]; scope: Scope; onScope: (s: Scope) => void }) {
   const { fresh, stale } = splitStale(sessions);
-  const hasSelected = stale.some((s) => s.name === scope.session);
+  const hasSelected = stale.some((s) => matchesSession({ ...s, label: sessionLabel(s) }, scope.session));
   return (
     <>
       {fresh.map((s) => (
@@ -190,7 +197,7 @@ function SessionItem({ s, scope, onScope }: { s: Session; scope: Scope; onScope:
       <button
         type="button"
         className={cn(item, "h-7", s.status === "ended" && "text-muted-foreground")}
-        aria-current={scope.session === s.name}
+        aria-current={matchesSession({ ...s, label: sessionLabel(s) }, scope.session)}
         onClick={() => onScope({ project: s.project_id, session: s.name })}
         title={`${sessionLabel(s)}: ${s.waiting ? `Claude is waiting for you (${s.waiting})` : STATUS_LABEL[s.status]}${s.channel ? ", channel connected" : s.channel_state === "blocked-by-org" ? ", Channels off by org" : ""}`}
       >
@@ -205,6 +212,21 @@ function SessionItem({ s, scope, onScope }: { s: Session; scope: Scope; onScope:
       </button>
     </li>
   );
+}
+
+/** Sessions outside registered projects, grouped by the git folder (and branches) their room reports. */
+function folderGroups(sessions: Session[], rooms: Room[]) {
+  const map = new Map<string, { key: string; name: string; title: string; branches: string[]; sessions: Session[] }>();
+  for (const s of sessions) {
+    const room = rooms.find((r) => r.name === s.name || (s.session_id != null && r.session_id === s.session_id));
+    const p = room?.project;
+    const key = p ? p.root.toLowerCase() : "~other";
+    if (!map.has(key)) map.set(key, { key, name: p?.name ?? "Session khác", title: p?.root ?? "", branches: [], sessions: [] });
+    const g = map.get(key)!;
+    if (p?.branch && !g.branches.includes(p.branch)) g.branches.push(p.branch);
+    g.sessions.push(s);
+  }
+  return [...map.values()].sort((a, b) => (a.key === "~other" ? 1 : b.key === "~other" ? -1 : a.name.localeCompare(b.name)));
 }
 
 function Count({ n }: { n: number }) {

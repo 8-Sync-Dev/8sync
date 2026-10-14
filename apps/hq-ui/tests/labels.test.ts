@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isStale, messageTargets, sessionLabel, splitStale } from "@/lib/labels";
+import { deliveryOf, isStale, messageTargets, sessionLabel, splitStale } from "@/lib/labels";
 
 const UUID = "3f2b8c1e-9d4a-4e7b-8a21-5c6d7e8f9a0b";
 const base = { label: "", name: "", session_id: null as string | null };
@@ -43,12 +43,20 @@ describe("collapse rules", () => {
 });
 
 describe("messageTargets", () => {
-  it("needs tmux and not ended", () => {
+  const SID = "1eb79553-8369-4a90-b428-2dedb50e18db";
+  it("every live session HQ can reach: hq tmux panes and Claude sessions started elsewhere (inbox)", () => {
     const l = [
-      { tmux: true, status: "running" as const },
-      { tmux: false, status: "running" as const },
-      { tmux: true, status: "ended" as const },
+      { name: "hq-api", session_id: null, tmux: true, status: "running" as const },
+      { name: SID, session_id: SID, tmux: false, status: "idle" as const },
+      { name: "hq-old", session_id: null, tmux: true, status: "ended" as const },
+      { name: "core", session_id: null, tmux: false, status: "running" as const },
     ];
-    expect(messageTargets(l)).toEqual([l[0]]);
+    expect(messageTargets(l)).toEqual([l[0], l[1]]);
+  });
+  it("delivery: terminal for tmux, inbox for a session id, none otherwise", () => {
+    expect(deliveryOf({ tmux: true, name: "hq-a", session_id: null })).toBe("terminal");
+    expect(deliveryOf({ tmux: false, name: SID, session_id: null })).toBe("inbox");
+    expect(deliveryOf({ tmux: false, name: "core", session_id: SID })).toBe("inbox");
+    expect(deliveryOf({ tmux: false, name: "core", session_id: null })).toBeNull();
   });
 });

@@ -5,7 +5,8 @@ import { startHqSession } from "@/lib/server/start";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { deliverWatched, openDialog, SessionWaiting } from "@/lib/server/channel";
 import { capturePlain, listTmux, sendKeys } from "@/lib/server/proc";
-import { tasksFor } from "@/lib/server/queries";
+import { isSessionId, queueInbox } from "@/lib/server/inbox";
+import { ownerMessage, tasksFor } from "@/lib/server/queries";
 import { clampText, isTmuxName, validateProjectPath } from "@/lib/server/validate";
 
 export const runtime = "nodejs";
@@ -27,7 +28,8 @@ export async function POST(req: Request) {
   const body = await readBody(req);
   if (!body) return bad("JSON body required");
   const hasSession = body.session != null && body.session !== "";
-  if (hasSession && !isTmuxName(body.session)) return bad("session must be an hq-* session started here", 422);
+  const inbox = hasSession && isSessionId(body.session);
+  if (hasSession && !inbox && !isTmuxName(body.session)) return bad("session must be an hq-* session or a Claude session id", 422);
   const subject = clampText(body.subject, 300);
   if (!subject.ok) return bad(`subject: ${subject.error}`, 422);
   const details = body.details == null || body.details === "" ? null : clampText(body.details, 2000, true);
@@ -55,6 +57,17 @@ export async function POST(req: Request) {
       session = r.name;
       started = true;
     }
+  }
+  // A session started elsewhere gets the task through its inbox (delivered at its next turn end).
+  if (inbox) {
+    const taskId = `owner:${stamp()}`;
+    db.prepare(
+      "INSERT INTO tasks(session, task_id, subject, role, prio, status, updated_at) VALUES (?, ?, ?, ?, ?, 'todo', ?)",
+    ).run(session, taskId, subject.value, role, prio, stamp());
+    const task = db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(taskId);
+    queueInbox(session, text);
+    const message = ownerMessage(db, session, text, "inbox");
+    return json({ task, session, started: false, message, delivery: "inbox", error: null }, 201);
   }
   // Refuse before the task row exists: nothing is stored while a dialog is open.
   const waiting = started ? null : await openDialog(session, capturePlain);

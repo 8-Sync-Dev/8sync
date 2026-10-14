@@ -29,6 +29,8 @@ mod grant;
 mod guard;
 mod help;
 mod looper;
+pub(crate) mod report;
+mod secret;
 mod resume;
 mod statusline;
 mod verify;
@@ -154,12 +156,14 @@ pub fn run(a: Args) -> Result<()> {
             install_kit(&env, rest.iter().any(|a| a == "--force"), offline)
         }
         "compact" => compact::run(rest, &claude_dir(&env)),
+        "secret" => secret::run(rest),
         "status" => status(&env, &root),
         "policy" => policy(rest),
         "loop" => looper::run(rest, &std::env::current_dir().context("no cwd")?),
         "ls" | "list" => {
             print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
         }
+        "report" => report::run(&env.home, &root, &session_rows_json(&env, &root), rest.iter().any(|a| a == "--json")),
         "rm" => cmd_rm(&env, &root, rest.first().context("usage: 8sync ccc . rm <name>")?),
         "new" => {
             let name = rest.first().context("usage: 8sync ccc . new <name>")?;
@@ -291,24 +295,30 @@ fn sessions(env: &Env, root: &Path) -> Store {
 
 /// `8sync ccc . ls`: per session — running?, last request, last action, task
 /// progress (rendering shared with `8sync . ls` in `session_view.rs`).
-fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
+/// This repo's sessions as `ls --json` rows (also the input of `ccc . report`).
+fn session_rows_json(env: &Env, root: &Path) -> Vec<Value> {
     use super::session_view as view;
     let reg = sessions(env, root).load();
     let rows = view::uuid_rows(env, "ccc", &reg, &view::agent_cmdlines(), false);
     debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry (zip below)");
+    rows.iter()
+        .zip(&reg.sessions)
+        .map(|(r, s)| {
+            let mut v = view::row_json(r);
+            v["id"] = json!(s.conversation_id);
+            v
+        })
+        .collect()
+}
+
+fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
+    use super::session_view as view;
     if json {
-        let arr: Vec<Value> = rows
-            .iter()
-            .zip(&reg.sessions)
-            .map(|(r, s)| {
-                let mut v = view::row_json(r);
-                v["id"] = json!(s.conversation_id);
-                v
-            })
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&arr)?);
+        println!("{}", serde_json::to_string_pretty(&session_rows_json(env, root))?);
         return Ok(());
     }
+    let reg = sessions(env, root).load();
+    let rows = view::uuid_rows(env, "ccc", &reg, &view::agent_cmdlines(), false);
     if rows.is_empty() {
         ui::info("no sessions yet — create one with `8sync ccc . <name>`");
         return Ok(());
@@ -510,11 +520,12 @@ const CLAUDE_MD_END: &str = "<!-- 8sync:kit:end -->";
 /// Rules merged into `permissions.deny` (`**/` covers monorepo sub-packages).
 /// Path rules only work as `Read(...)` / `Edit(...)`: Claude Code accepts a
 /// `Write(...)` path rule but never consults it.
-const DENY: [&str; 16] = [
+/// No `Edit(**/.env*)`: Claude Code applies Edit deny rules to `rm`/`sed`/redirects in Bash,
+/// so it blocked deleting a stray `.env` copy; the guard still denies printing a credential
+/// file and writing a real secret anywhere (see RETIRED_DENY).
+const DENY: [&str; 14] = [
     "Read(**/.env)",
     "Read(**/.env.*)",
-    "Edit(**/.env)",
-    "Edit(**/.env.*)",
     "Read(**/*.pem)",
     "Edit(**/*.pem)",
     "Read(**/id_rsa*)",
@@ -527,6 +538,24 @@ const DENY: [&str; 16] = [
     "Bash(git push -f*)",
     "Bash(git push * --force*)",
     "Bash(git push * -f*)",
+];
+
+/// Deny rules earlier kits wrote and this one takes back (owner decision 2026-10-14).
+const RETIRED_DENY: [&str; 2] = ["Edit(**/.env)", "Edit(**/.env.*)"];
+
+/// Tag on the `autoMode.environment` entries the kit owns: re-running the kit replaces them,
+/// entries the owner wrote are never touched.
+const AUTO_ENV_TAG: &str = "(8sync kit)";
+
+/// What the auto mode classifier should know about 8 Sync's infrastructure
+/// (https://code.claude.com/docs/en/auto-mode-config). Prose, read as rules by the classifier;
+/// `$defaults` keeps Anthropic's built-in entries, and no allow/soft_deny/hard_deny is changed.
+const AUTO_ENV: [&str; 5] = [
+    "Organization (8sync kit): 8 Sync, a small product team. Primary use: software development of its own products (Next.js on Vercel, Encore Go/TypeScript backends on Encore Cloud, Tauri 2 + Rust desktop apps, Postgres).",
+    "Source control (8sync kit): the GitHub orgs github.com/8-Sync-Dev and github.com/8syncdev and every repository under them.",
+    "Trusted internal domains (8sync kit): 8syncdev.com and its subdomains.",
+    "CI/CD deploy targets (8sync kit): the owner's Vercel projects and Encore Cloud apps (a push to the `encore` git remote deploys). Production deploys still need the owner's explicit request in the conversation.",
+    "Secrets management (8sync kit): Encore secrets, Vercel env vars and GitHub Actions secrets are set with `8sync ccc secret set`, which pipes a value from the owner's local env file, or a freshly generated random value, straight into the provider CLI's stdin; the value never appears in the transcript, in argv, in a file the agent writes, or in git. Printing, copying or committing secret values remains forbidden.",
 ];
 
 /// Rules merged into `permissions.allow`: the build/test/lint commands the
@@ -771,6 +800,9 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
     perms.entry("defaultMode").or_insert_with(|| json!("auto"));
     for (key, rules) in [("deny", &DENY[..]), ("allow", &ALLOW[..])] {
         if let Some(list) = perms.entry(key).or_insert_with(|| json!([])).as_array_mut() {
+            if key == "deny" {
+                list.retain(|r| !r.as_str().is_some_and(|s| RETIRED_DENY.contains(&s)));
+            }
             for rule in rules {
                 if !list.iter().any(|r| r == rule) {
                     list.push(json!(rule));
@@ -778,6 +810,7 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             }
         }
     }
+    apply_auto_env(obj);
     // Bundled skills the kit does not rely on load name-only (listing without
     // the body), cutting the per-session prefix. Only missing keys are added.
     let over = obj.entry("skillOverrides").or_insert_with(|| json!({}));
@@ -910,7 +943,7 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
     Ok(())
 }
 
-const HQ_EVENTS: [&str; 6] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification", "SessionStart", "SessionEnd"];
+const HQ_EVENTS: [&str; 8] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification", "SessionStart", "SessionEnd", "SubagentStart", "SubagentStop"];
 
 /// Which 8sync hook one hook entry is: `hook verify` / `hook guard` for the
 /// native commands, the first sentence of a gate prompt (`8sync gate: stop`).
@@ -950,6 +983,33 @@ fn strip_kit_hooks(v: &mut Value) -> usize {
     removed
 }
 
+/// Put the kit's `autoMode.environment` entries in (replacing older kit entries, keeping the
+/// owner's). A list the kit creates starts with `$defaults`; an existing list is never given
+/// `$defaults` by us, since leaving it out was the owner's choice.
+fn apply_auto_env(obj: &mut serde_json::Map<String, Value>) {
+    let Some(auto) = obj.entry("autoMode").or_insert_with(|| json!({})).as_object_mut() else { return };
+    let Some(list) = auto.entry("environment").or_insert_with(|| json!(["$defaults"])).as_array_mut() else { return };
+    list.retain(|e| !e.as_str().is_some_and(|s| s.contains(AUTO_ENV_TAG)));
+    list.extend(AUTO_ENV.iter().map(|e| json!(e)));
+}
+
+/// `kit --remove`: take the kit's environment entries out; an environment left as just
+/// `$defaults` (what the kit created) goes too, so is an empty `autoMode`.
+fn strip_auto_env(v: &mut Value) -> bool {
+    let Some(auto) = v.get_mut("autoMode").and_then(Value::as_object_mut) else { return false };
+    let Some(list) = auto.get_mut("environment").and_then(Value::as_array_mut) else { return false };
+    let before = list.len();
+    list.retain(|e| !e.as_str().is_some_and(|s| s.contains(AUTO_ENV_TAG)));
+    let changed = list.len() != before;
+    if changed && list.iter().all(|e| e == "$defaults") {
+        auto.remove("environment");
+    }
+    if auto.is_empty() {
+        v.as_object_mut().map(|o| o.remove("autoMode"));
+    }
+    changed
+}
+
 /// Replace `path` with `new` by tmp+rename, after saving `old` (its current content) to
 /// `<name>.bak-8sync`. Keeps the file's permissions; a crash never leaves a half-written file.
 pub(super) fn write_atomic_bak(path: &Path, old: &str, new: &str) -> Result<()> {
@@ -982,7 +1042,8 @@ fn remove_kit_hooks_from(path: &Path, orig: &str) -> Result<usize> {
     let mut v: Value = serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", path.display()))?;
     let n = strip_kit_hooks(&mut v);
     let compact = compact::strip_kit_default(&mut v);
-    if n == 0 && !compact {
+    let auto = strip_auto_env(&mut v);
+    if n == 0 && !compact && !auto {
         return Ok(0);
     }
     write_atomic_bak(path, orig, &(serde_json::to_string_pretty(&v)? + "\n"))?;
@@ -1646,6 +1707,33 @@ mod tests {
     }
 
     #[test]
+    fn kit_takes_back_the_env_edit_deny_and_teaches_auto_mode_once() {
+        let mut v = json!({
+            "permissions": { "deny": ["Edit(**/.env)", "Edit(**/.env.*)", "Read(**/.env)", "Bash(rm -rf /)"] },
+            "autoMode": { "environment": ["Source control: my own GitLab", "Old (8sync kit) entry"] }
+        });
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        let once = v.clone();
+        apply_kit_settings(&mut v, "/x/8sync", &[]).unwrap();
+        assert_eq!(v, once, "idempotent");
+        let deny: Vec<&str> = v["permissions"]["deny"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        assert!(!deny.iter().any(|r| r.starts_with("Edit(**/.env")), "{deny:?}");
+        assert!(deny.contains(&"Read(**/.env)") && deny.contains(&"Read(**/.env.*)") && deny.contains(&"Bash(rm -rf /)"));
+        let env: Vec<&str> = v["autoMode"]["environment"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        assert_eq!(env[0], "Source control: my own GitLab", "owner entry kept, no $defaults forced into an owner list");
+        assert!(!env.contains(&"Old (8sync kit) entry"));
+        assert_eq!(env.iter().filter(|e| e.contains(AUTO_ENV_TAG)).count(), AUTO_ENV.len());
+        assert!(v["autoMode"].get("allow").is_none() && v["autoMode"].get("soft_deny").is_none(), "classifier rules untouched");
+
+        let mut fresh = json!({});
+        apply_kit_settings(&mut fresh, "/x/8sync", &[]).unwrap();
+        assert_eq!(fresh["autoMode"]["environment"][0], "$defaults", "a list the kit creates keeps Anthropic's defaults");
+        assert!(strip_auto_env(&mut fresh) && fresh.get("autoMode").is_none(), "kit --remove leaves no autoMode it created");
+        assert!(strip_auto_env(&mut v));
+        assert_eq!(v["autoMode"]["environment"], json!(["Source control: my own GitLab"]));
+    }
+
+    #[test]
     fn kit_settings_merge_keeps_user_config_and_is_idempotent() {
         let mut v = json!({
             "model": "opus",
@@ -1700,7 +1788,7 @@ mod tests {
         assert_eq!(pre[1]["hooks"][0]["command"], "my-linter");
         assert_eq!(pre[2]["hooks"][0]["args"], json!(["ccc", "hook", "guard"]));
         assert_eq!(pre[2]["hooks"][0]["onFailure"], "block", "guard fails closed");
-        assert!(deny.iter().any(|r| r == "Edit(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write("))));
+        assert!(deny.iter().any(|r| r == "Read(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write(") || s.starts_with("Edit(**/.env"))));
         assert_eq!(v["permissions"]["defaultMode"], "auto");
     }
 

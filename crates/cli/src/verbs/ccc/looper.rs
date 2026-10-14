@@ -1,4 +1,4 @@
-//! Bounded-loop state for `/ship-loop` and `/autopilot`: `8sync ccc loop <init|tick|status|done|ls>`.
+//! Bounded-loop state for `/ship-loop` and `/autopilot`: `8sync ccc loop <init|tick|ev|status|done|ls>`.
 //! State lives in `<repo>/su-code/ship/<slug>/loop.json` (no su-code/ ancestor →
 //! `<cwd>/.claude/ship/<slug>/loop.json`). The skill reads stdout; the exit code is 0 for every
 //! decision, so a `stop:*` line is the only stop signal.
@@ -109,7 +109,7 @@ fn run_at(rest: &[String], cwd: &Path, now: u64) -> Result<()> {
     if sub == "ls" {
         return ls(cwd, now, args.iter().any(|a| a == "--json"));
     }
-    let slug = args.first().filter(|a| !a.starts_with('-')).context("usage: 8sync ccc loop <init|tick|status|done|ls> <slug> …")?;
+    let slug = args.first().filter(|a| !a.starts_with('-')).context("usage: 8sync ccc loop <init|tick|ev|status|done|ls> <slug> …")?;
     let p = path(cwd, slug)?;
     let num = |name: &str, default: u64| -> Result<u64> { flag(args, name).map_or(Ok(default), |s| s.parse().with_context(|| format!("{name} needs a number"))) };
     match sub {
@@ -149,6 +149,34 @@ fn run_at(rest: &[String], cwd: &Path, now: u64) -> Result<()> {
                 println!("{}", status_line(&v, now));
             }
         }
+        // `ev <slug> <label> -- <cmd>`: run one acceptance check and append its evidence line
+        // to LOOP.md. Replaces ad-hoc `r(){ bash -c "$2" …}` helpers, which the guard cannot read.
+        "ev" => {
+            let v = load(&p)?;
+            let label = args.get(1).filter(|a| *a != "--").context("usage: 8sync ccc loop ev <slug> <label> -- <command>")?;
+            let cmd = args.iter().position(|a| a == "--").map(|i| &args[i + 1..]).filter(|c| !c.is_empty()).context("usage: 8sync ccc loop ev <slug> <label> -- <command>")?;
+            let mut c = if cmd.len() == 1 {
+                let mut c = std::process::Command::new(shell()?);
+                c.args(["-c", &cmd[0]]);
+                c
+            } else {
+                let mut c = std::process::Command::new(&cmd[0]);
+                c.args(&cmd[1..]);
+                c
+            };
+            let out = c.current_dir(cwd).output().with_context(|| format!("cannot run {}", cmd[0]))?;
+            let text = super::super::secret_mask::mask(&format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
+            let code = out.status.code().map_or("signal".to_string(), |c| c.to_string());
+            let line = format!("iter {} | {label} | exit {code} | {}", v["iter"], evidence_tail(&text));
+            let log = p.with_file_name("LOOP.md");
+            let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&log).with_context(|| format!("cannot write {}", log.display()))?;
+            std::io::Write::write_all(&mut f, format!("{line}\n").as_bytes())?;
+            let lines: Vec<&str> = text.lines().collect();
+            for l in &lines[lines.len().saturating_sub(15)..] {
+                println!("{l}");
+            }
+            println!("{line}");
+        }
         "done" => {
             let mut v = load(&p)?;
             if v["stopped"].as_str().map_or(true, str::is_empty) {
@@ -160,9 +188,31 @@ fn run_at(rest: &[String], cwd: &Path, now: u64) -> Result<()> {
             save(&p, &v)?;
             println!("{}", status_line(&v, now));
         }
-        _ => bail!("usage: 8sync ccc loop <init|tick|status|done|ls> <slug> …"),
+        _ => bail!("usage: 8sync ccc loop <init|tick|ev|status|done|ls> <slug> …"),
     }
     Ok(())
+}
+
+/// The shell for a one-string `ev` command. On Windows, Git Bash: `System32\bash.exe` (and the
+/// WindowsApps alias) is the WSL launcher, which runs nothing without a distro (seen on CI).
+fn shell() -> Result<PathBuf> {
+    if !cfg!(windows) {
+        return Ok(PathBuf::from("sh"));
+    }
+    which::which_all("bash")
+        .into_iter()
+        .flatten()
+        .find(|p| {
+            let s = p.to_string_lossy().to_ascii_lowercase();
+            !s.contains("\\system32\\") && !s.contains("\\windowsapps\\")
+        })
+        .context("no Git Bash on PATH (System32 bash is WSL); pass the command as separate words after --")
+}
+
+/// The last non-empty output line, one line and at most 160 chars (`|` would break the table).
+fn evidence_tail(text: &str) -> String {
+    let last = text.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("(no output)");
+    last.replace('|', "/").chars().take(160).collect()
 }
 
 fn ls(cwd: &Path, now: u64, json_out: bool) -> Result<()> {
@@ -207,6 +257,19 @@ mod tests {
     }
     fn fresh(max_iter: u64, max_min: u64) -> Value {
         json!({"slug":"x","started":1000,"max_iter":max_iter,"max_min":max_min,"iter":0,"digests":[],"stopped":null})
+    }
+
+    #[test]
+    fn ev_runs_the_check_and_appends_one_evidence_line() {
+        let d = tmp("ev");
+        run_at(&s(&["init", "hq"]), &d, 1000).unwrap();
+        run_at(&s(&["ev", "hq", "C1", "--", "echo first; echo 'Tests  3 passed | ok'"]), &d, 1001).unwrap();
+        assert!(run_at(&s(&["ev", "hq", "C2", "--", "exit 3"]), &d, 1002).is_ok(), "a failing check is evidence, not an error");
+        assert!(run_at(&s(&["ev", "hq", "C3"]), &d, 1003).is_err(), "no command");
+        let log = std::fs::read_to_string(d.join("su-code/ship/hq/LOOP.md")).unwrap();
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines, ["iter 0 | C1 | exit 0 | Tests  3 passed / ok", "iter 0 | C2 | exit 3 | (no output)"]);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -185,3 +185,17 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* A specialist walking into another room (office-view Walker); reduced motion skips it above. */
+@keyframes hq-walk-in {
+  from {
+    transform: translateX(-140%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    transform: none;
+  }
+}

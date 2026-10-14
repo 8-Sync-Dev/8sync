@@ -4,11 +4,11 @@
 /// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
 #[cfg(test)]
 pub(super) const VERBS: &[&str] =
-    &["help", "hook", "statusline", "kit", "login-kind", "show", "status", "policy", "loop", "ls", "list", "rm", "new", "compact"];
+    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "ls", "list", "rm", "new", "compact", "secret"];
 
 /// Words that look like verbs: never a session name, never a headless claude launch.
 /// Includes hook sub-verbs people type without `hook`.
-pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "loop", "kit", "guard", "hook", "ship-grant"];
+pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "kit", "guard", "hook", "ship-grant", "secret"];
 
 pub(super) const TEXT: &str = "\
 8sync ccc — Claude Code + kit của 8 Sync. Mọi lệnh (chạy `8sync ccc <verb>`):
@@ -39,16 +39,20 @@ TỰ ĐỘNG (gõ trong Claude Code)
   /ship-auto <việc>            như /ship rồi PR → CI → merge → release sau một câu `Ship`
   /ship-loop <mục tiêu>        lặp tới khi tiêu chí xanh (có cap iter/phút)
   /autopilot                   nhiều item từ backlog, không người trông
-  8sync ccc loop <init|tick|status|done|ls> <slug>   state vòng lặp cho /ship-loop
+  8sync ccc loop <init|tick|ev|status|done|ls> <slug>   state vòng lặp cho /ship-loop; `ev <slug> <nhãn> -- <lệnh>` chạy check + ghi evidence vào LOOP.md
   8sync ccc hook ship-grant    (hook) ghi giấy phép khi owner duyệt câu hỏi `Ship`
 
 XEM
   8sync ccc . show <tên> [--json]   tóm tắt một session
+  8sync ccc . report [--json]       token, cost (số Claude Code báo statusline), thời gian, +/- dòng, task xong, cost/task, loop
   8sync hq ui                       dashboard HQ trong trình duyệt
 
 AN TOÀN
   8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant>
                                hook do kit đăng ký, không gõ tay
+  8sync ccc secret keys <file.env>  tên key trong file (không bao giờ in giá trị)
+  8sync ccc secret set <encore|vercel|gh> <TÊN> (--from <file.env> | --generate) --type prod,dev | --env production
+                               đưa secret thẳng vào Encore/Vercel/GitHub qua stdin, giá trị không vào transcript
   /sec  /rules  /aup-audit  /harden   quét secret · được phép không · repo vs Usage Policy · cấu hình Claude Code
 
 Trợ giúp: `8sync ccc help` · `8sync ccc --help` (đầy đủ ví dụ).

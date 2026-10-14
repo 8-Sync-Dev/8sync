@@ -51,3 +51,13 @@ Biểu tượng trạng thái: Đang làm · Cần bạn (chờ bạn) · Chờ 
 **Mẹo tiết kiệm.** `/do` cho việc nhỏ. `/ship-loop` cho việc chạy dài, luôn đặt giới hạn vòng/phút. Haiku cho test và việc lặp lại.
 
 **Offline.** UI chỉ nói chuyện với 127.0.0.1. Kiểm bằng `bash scripts/hq-offline-check.sh`.
+
+### Văn phòng: mỗi session là một phòng
+
+- **Phòng.** Mỗi session Claude Code đang chạy (mở ở HQ hay ở terminal/IDE khác) là một phòng, xếp theo thư mục git của session và nhánh (`⎇ main`, `⎇ feat/x`). Thanh bên trái cũng nhóm session theo thư mục + nhánh.
+- **Ghế giống nhau ở mọi phòng:** Lead (chính session), R&D, Plan, Fullstack, Reviewer, Tester, Quick. Ghế sáng khi agent chuyên gia (subagent) của session đó đang chạy, ghi "vừa xong" trong 10 phút sau khi xong. Nguồn: hook `SubagentStart`/`SubagentStop` (cài bằng `8sync ccc kit`).
+- **Đi sang phòng khác.** Khi một session nhắn session khác (`SendMessage`), lead của phòng gửi đi bộ sang phòng nhận kèm câu nhắn, trong 2 phút. Bật "giảm chuyển động" thì đứng yên.
+- **Chat phòng** = chỉ tin của một session. **Chat nhóm** = mọi phòng nhắn nhau. Bấm một phòng để mở Chat phòng của nó.
+- **Nhắn hoặc giao việc cho session mở ngoài HQ (inbox).** Session không chạy trong tmux của HQ (mọi session trên Windows) nhận tin qua inbox: tin được xếp vào `~/.local/state/8sync/hq/inbox/<session id>.jsonl` (0600) và hook Stop giao cho session khi nó xong lượt đang làm. Session HQ (`hq-*`) vẫn nhận ngay qua terminal.
+- **Báo cáo** (tab và `8sync ccc . report [--json]`): chi phí, thời gian, số dòng +/−, context, task xong/mở, $/task theo từng phòng và tổng, cùng các vòng `/ship-loop`. Chi phí lấy từ con số Claude Code đưa cho status line của 8sync (`~/.local/state/8sync/hq/usage/<session id>.json`); phòng chưa có số ghi "chưa đo", không ước lượng. $/task chỉ tính trên phòng đã đo chi phí.
+- **An toàn.** Guard của kit chặn session ghi vào inbox hoặc đọc UI token (`~/.config/8sync/hq/ui-token`) qua Bash/PowerShell/Write/Edit, nên một session không giả làm owner được. Giới hạn còn lại: guard không xem tool Read và không phân tích được mọi chương trình tự viết file; inbox và token là file của chính user trên máy.

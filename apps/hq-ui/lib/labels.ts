@@ -38,7 +38,24 @@ export function splitStale<T extends Pick<Session, "status" | "started_at" | "wa
   return { fresh, stale };
 }
 
-/** Sessions the composer can message. Empty means: hide the composer, show the start CTA. */
-export function messageTargets<T extends Pick<Session, "tmux" | "status">>(sessions: T[]): T[] {
-  return sessions.filter((s) => s.tmux && s.status !== "ended");
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * How an owner message reaches a session: typed into its hq-* tmux pane, or queued in its
+ * inbox for the kit's Stop hook (any Claude Code session started elsewhere, all of Windows).
+ */
+export function deliveryOf(s: Pick<Session, "tmux" | "name" | "session_id">): "terminal" | "inbox" | null {
+  if (s.tmux) return "terminal";
+  const id = s.session_id ?? s.name;
+  return id && SESSION_ID.test(id) ? "inbox" : null;
+}
+
+/** What the message/task APIs address a session by: the Claude session id for inbox delivery, else its name. */
+export function addressOf(s: Pick<Session, "tmux" | "name" | "session_id">): string {
+  return deliveryOf(s) === "inbox" ? (s.session_id ?? s.name) : s.name;
+}
+
+/** Sessions the composer can message: every live session HQ can reach. Empty: show the start CTA. */
+export function messageTargets<T extends Pick<Session, "tmux" | "status" | "name" | "session_id">>(sessions: T[]): T[] {
+  return sessions.filter((s) => s.status !== "ended" && deliveryOf(s) !== null);
 }

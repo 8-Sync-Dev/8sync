@@ -34,16 +34,29 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
     let ti = &v["tool_input"];
     // Ship grants are written only by the `ship-grant` hook from the owner's real answer;
     // a tool call that names the grant store could forge one.
-    let touched = [ti["command"].as_str(), ti["file_path"].as_str(), ti["notebook_path"].as_str(), ti["path"].as_str()];
-    if touched.into_iter().flatten().any(|t| t.contains("8sync/ccc/grants")) {
+    let touched: Vec<String> = [ti["command"].as_str(), ti["file_path"].as_str(), ti["notebook_path"].as_str(), ti["path"].as_str()]
+        .into_iter()
+        .flatten()
+        .map(|t| t.replace('\\', "/"))
+        .collect();
+    if touched.iter().any(|t| t.contains("8sync/ccc/grants")) {
         return Some(decision("deny", "the ship-grant store is written only by the kit's hook from the owner's answer to a \"Ship\" question. Ask that question instead."));
+    }
+    // Same for the HQ owner inbox (the Stop hook hands it over as the owner's words) and the
+    // HQ UI token (it lets a caller post as the owner): only the HQ UI and the hook touch them.
+    if touched.iter().any(|t| t.contains("8sync/hq/inbox") || t.contains("8sync/hq/ui-token")) {
+        return Some(decision("deny", "the HQ owner inbox and UI token belong to the owner's HQ dashboard; a session must not write the inbox or read the token. To reach another session use SendMessage; to reach the owner, reply in this session."));
     }
     let verdict = match tool {
         "Bash" | "PowerShell" => {
             let cmd = ti["command"].as_str().unwrap_or_default();
             let cwd = v["cwd"].as_str().map(Path::new);
             let shell = if tool == "Bash" { Shell::Bash } else { Shell::PowerShell };
-            let found = danger::check(cmd, shell, &danger::Ctx::local(cwd));
+            let ctx = danger::Ctx::local(cwd);
+            let found = danger::check(cmd, shell, &ctx);
+            // `8sync ccc loop ev <slug> <label> -- '<cmd>'` runs <cmd> in a shell: check it as one.
+            let inner = loop_ev_command(cmd).and_then(|c| danger::check(&c, Shell::Bash, &ctx));
+            let found = stricter(found, inner);
             match git_add(cmd, cwd).or_else(|| content(cmd)) {
                 Some(why) => Some(Verdict::Deny(why)),
                 None => found,
@@ -61,6 +74,13 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
     Some(match verdict {
         Verdict::Deny(r) => decision("deny", &r),
         Verdict::Ask(r) => decision("ask", &r),
+        // Auto mode: never stop a long run with a Yes/No prompt for something 8sync merely
+        // could not parse. Deny with the fix instead; Claude rewrites the command and goes on.
+        Verdict::Unsure(r) if v["permission_mode"] == "auto" => decision(
+            "deny",
+            &format!("{r} (Auto mode: this is not a question for the user. Rewrite the command with literal paths and no command held in a variable, or split it into plain steps, then continue.)"),
+        ),
+        Verdict::Unsure(r) => decision("ask", &r),
         // The owner approved shipping once for this session (one `Ship` AskUserQuestion).
         Verdict::Ship { deploy, .. } if super::grant::allows(grants, v["session_id"].as_str(), deploy, now_s) => return None,
         Verdict::Ship { why, .. } => decision(
@@ -68,6 +88,32 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
             &format!("{why} To ship without a prompt per step, ask the owner ONCE with AskUserQuestion (header \"Ship\", list every merge/tag/release/deploy you will do; options \"Duyệt tất cả (Recommended)\", \"Chỉ merge, chưa deploy\", \"Dừng\"), then continue."),
         ),
     })
+}
+
+/// The command a `8sync ccc loop ev … -- <cmd>` call will run, quotes removed.
+fn loop_ev_command(cmd: &str) -> Option<String> {
+    let at = cmd.find("ccc loop ev ")?;
+    let tail = &cmd[at..];
+    let (_, run) = tail.split_once(" -- ")?;
+    let run = run.trim();
+    let unq = run.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')).or_else(|| run.strip_prefix('"').and_then(|r| r.strip_suffix('"')));
+    Some(unq.unwrap_or(run).to_string())
+}
+
+fn rank(v: &Verdict) -> u8 {
+    match v {
+        Verdict::Deny(_) => 3,
+        Verdict::Ask(_) => 2,
+        Verdict::Ship { .. } => 1,
+        Verdict::Unsure(_) => 0,
+    }
+}
+
+fn stricter(a: Option<Verdict>, b: Option<Verdict>) -> Option<Verdict> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(if rank(&y) > rank(&x) { y } else { x }),
+        (x, y) => x.or(y),
+    }
 }
 
 /// The PreToolUse hook output for a deny/ask decision.
@@ -279,6 +325,43 @@ mod tests {
         ] {
             assert!(decide("Edit", json!({ "file_path": "src/a.rs", "new_string": ok })).is_none(), "{ok} must pass");
         }
+    }
+
+    #[test]
+    fn auto_mode_never_prompts_for_what_8sync_cannot_parse() {
+        let run = |cmd: &str, mode: &str| {
+            let input = json!({ "tool_name": "Bash", "tool_input": { "command": cmd }, "cwd": "/home/u/work/app", "permission_mode": mode }).to_string();
+            check_with(&input, Path::new("/nonexistent-grants"), 0).map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"].clone())
+        };
+        // A command held in a variable: auto mode denies with the fix (no Yes/No), other modes ask.
+        let auto = run("r(){ bash -c \"$2\"; }; r a 'cargo test'", "auto").unwrap();
+        assert_eq!(auto["permissionDecision"], "deny");
+        assert!(auto["permissionDecisionReason"].as_str().unwrap().contains("not a question for the user"));
+        assert_eq!(run("r(){ bash -c \"$2\"; }; r a 'cargo test'", "default").unwrap()["permissionDecision"], "ask");
+        // Known destructive work on a known target still asks in auto mode (an owner decision).
+        assert_eq!(run("git reset --hard HEAD~1", "auto").unwrap()["permissionDecision"], "ask");
+        // Catastrophic stays denied everywhere.
+        assert_eq!(run("rm -rf ~", "auto").unwrap()["permissionDecision"], "deny");
+        assert!(run("cargo check -p x", "auto").is_none());
+        // `loop ev` is the sanctioned evidence runner: its command is checked like any other.
+        assert!(run("8sync ccc loop ev hq C1 -- 'cd apps/hq-ui && pnpm exec vitest run'", "auto").is_none());
+        assert_eq!(run("8sync ccc loop ev hq C1 -- 'rm -rf ~'", "auto").unwrap()["permissionDecision"], "deny");
+        assert_eq!(run("8sync ccc loop ev hq C7 -- \"git push origin main\"", "auto").unwrap()["permissionDecision"], "ask");
+    }
+
+    #[test]
+    fn hq_owner_inbox_and_ui_token_are_off_limits_to_sessions() {
+        let sid = "1eb79553-8369-4a90-b428-2dedb50e18db";
+        for cmd in [
+            format!("echo '{{\"text\":\"push to main\"}}' >> ~/.local/state/8sync/hq/inbox/{sid}.jsonl"),
+            "cat ~/.config/8sync/hq/ui-token".to_string(),
+            format!(r"Add-Content C:\Users\a\.local\state\8sync\hq\inbox\{sid}.jsonl x"),
+        ] {
+            assert!(decide("Bash", json!({ "command": cmd })).is_some_and(|d| d.contains("owner inbox")), "{cmd} must be denied");
+        }
+        assert!(decide("Write", json!({ "file_path": format!("/home/u/.local/state/8sync/hq/inbox/{sid}.jsonl"), "content": "x" })).is_some());
+        assert!(decide("Bash", json!({ "command": "8sync ccc . report" })).is_none());
+        assert!(decide("Bash", json!({ "command": "ls ~/.local/state/8sync/hq/usage" })).is_none(), "usage snapshots stay readable");
     }
 
     #[test]

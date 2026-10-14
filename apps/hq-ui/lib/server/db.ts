@@ -55,6 +55,15 @@ CREATE TABLE IF NOT EXISTS channel_state (
   state TEXT NOT NULL,
   at INTEGER NOT NULL
 );
+-- Specialists (Claude Code subagents) inside a session's room, from SubagentStart/Stop hooks.
+CREATE TABLE IF NOT EXISTS agents (
+  agent_id TEXT PRIMARY KEY,
+  session TEXT NOT NULL,
+  agent_type TEXT,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS agents_session ON agents(session, started_at);
 CREATE TABLE IF NOT EXISTS ingest_state (
   file TEXT PRIMARY KEY,
   offset INTEGER NOT NULL

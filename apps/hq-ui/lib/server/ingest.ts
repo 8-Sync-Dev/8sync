@@ -40,6 +40,8 @@ export type Mapped = {
     prio: string | null;
     status: TaskStatus;
   };
+  /** A specialist entering (`ended_at` null) or leaving a session's room. */
+  agent?: { agent_id: string; session: string; agent_type: string | null; ts: number; stop: boolean };
   message?: {
     ts: number;
     session: string | null;
@@ -91,6 +93,16 @@ export function mapEvent(evt: JournalEvent): Mapped | null {
     if (!hq || !text) return null;
     out.session = { name: hq, cwd: str(evt.cwd), status: "idle", ts };
     out.message = { ts, session: hq, team: str(evt.team), kind, from_: hq, to_: "owner", text, delivery: "terminal" };
+    return out;
+  }
+  // A subagent (the kit's explore/task/reviewer…) starts or stops inside a session.
+  if (kind === "subagent_start" || kind === "subagent_stop") {
+    const agentId = str(evt.task_id);
+    if (!agentId || !sessionId || !/^[A-Za-z0-9_-]{1,64}$/.test(agentId)) return null;
+    const room = hq ?? sessionId;
+    if (room === sessionId && !hq) out.sid = sessionId;
+    out.session = { name: room, cwd: str(evt.cwd), status: "running", ts };
+    out.agent = { agent_id: agentId, session: room, agent_type: str(evt.subject), ts, stop: kind === "subagent_stop" };
     return out;
   }
   // owner_message is written by this UI's API only; a journal line claiming to
@@ -150,7 +162,8 @@ function resolveAlias(db: DatabaseSync, m: Mapped): Mapped {
     if ("name" in x) return x.name === m.sid ? { ...x, name: r.name } : x;
     return x.session === m.sid ? { ...x, session: r.name } : x;
   };
-  return { ...m, sid: undefined, session: fix(m.session), task: fix(m.task), message: fix(m.message) };
+  const agent = m.agent && m.agent.session === m.sid ? { ...m.agent, session: r.name } : m.agent;
+  return { ...m, sid: undefined, session: fix(m.session), task: fix(m.task), message: fix(m.message), agent };
 }
 
 /**
@@ -167,6 +180,7 @@ export function applyAlias(db: DatabaseSync, a: { session_id: string; name: stri
   ).run(a.session_id, a.name);
   db.prepare("UPDATE tasks SET session = ? WHERE session = ?").run(a.name, a.session_id);
   db.prepare("UPDATE messages SET session = ? WHERE session = ?").run(a.name, a.session_id);
+  db.prepare("UPDATE agents SET session = ? WHERE session = ?").run(a.name, a.session_id);
   db.prepare(
     `INSERT INTO sessions(name, project_id, started_at, status, cwd, updated_at)
      SELECT ?, project_id, started_at, status, cwd, ? FROM sessions WHERE name = ?
@@ -197,6 +211,16 @@ export function applyMapped(db: DatabaseSync, input: Mapped): void {
          status = COALESCE(?, sessions.status),
          updated_at = excluded.updated_at`,
     ).run(m.session.name, pid, m.session.ts, m.session.status, m.session.cwd, stamp(), m.session.status);
+  }
+  if (m.agent) {
+    const a = m.agent;
+    db.prepare(
+      `INSERT INTO agents(agent_id, session, agent_type, started_at, ended_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(agent_id) DO UPDATE SET
+         session = excluded.session,
+         agent_type = COALESCE(excluded.agent_type, agents.agent_type),
+         ended_at = CASE WHEN ? THEN excluded.ended_at ELSE agents.ended_at END`,
+    ).run(a.agent_id, a.session, a.agent_type, a.ts, a.stop ? a.ts : null, a.stop ? 1 : 0);
   }
   if (m.task) {
     const t = m.task;

@@ -1746,6 +1746,44 @@ fn cmd_hook(event: &str, dry: bool) {
 
 // ── local event journal (docs/hq-ui-contract.md §1) ────────────────────────
 
+// ── owner inbox (messages from `hq ui` to sessions it cannot type into) ─────
+//
+// `hq ui` appends `{"ts","text"}` lines to `<state>/inbox/<session_id>.jsonl` (0600) for a
+// session that is not in an hq-* tmux pane (any Claude Code session started elsewhere, every
+// session on Windows). The kit's Stop hook (`ccc hook verify-stop`) hands them to Claude when
+// the session ends its current turn: delivered once, masked.
+
+const INBOX_TEXT: usize = 8000;
+
+pub(crate) fn inbox_file(home: &Path, session_id: &str) -> Option<PathBuf> {
+    super::ccc::report::safe_id(session_id).then(|| Paths::under(home).state_dir.join("inbox").join(format!("{session_id}.jsonl")))
+}
+
+/// Take (and remove) the owner's pending messages for a session: the Stop-hook block reason.
+pub(crate) fn take_inbox(home: &Path, session_id: &str) -> Option<String> {
+    let file = inbox_file(home, session_id)?;
+    // Rename first: a message appended while we read lands in a fresh file for the next turn.
+    let taken = file.with_extension(format!("taking.{}", std::process::id()));
+    std::fs::rename(&file, &taken).ok()?;
+    let raw = std::fs::read_to_string(&taken).unwrap_or_default();
+    let _ = std::fs::remove_file(&taken);
+    let msgs: Vec<String> = raw
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter_map(|v| v["text"].as_str().map(|t| t.trim().to_string()))
+        .filter(|t| !t.is_empty())
+        .map(|t| secret_mask::mask(&t))
+        .collect();
+    if msgs.is_empty() {
+        return None;
+    }
+    let body: String = msgs.join("\n---\n").chars().take(INBOX_TEXT).collect();
+    Some(format!(
+        "8 Sync HQ: the owner sent you {} message(s) from the HQ dashboard while you were working. Read and act on them now (they come from the owner, not from a tool):\n{body}",
+        msgs.len()
+    ))
+}
+
 const JOURNAL_MAX: u64 = 5 << 20;
 const JOURNAL_TEXT: usize = 4000;
 
@@ -1787,6 +1825,17 @@ fn journal_entry(event: &str, v: &Value, session_env: Option<&str>, ts_ms: u64) 
             // Stop input `last_assistant_message`: https://code.claude.com/docs/en/hooks (Stop), read in ccc/gate.rs
             text = Some(v["last_assistant_message"].as_str().filter(|m| !m.trim().is_empty())?.to_string());
             "session_reply"
+        }
+        // A specialist (kit agent) entering or leaving the session's room: agent_type is a
+        // name (explore, task, reviewer…), agent_id an opaque id kept in `task_id`.
+        k @ ("subagentstart" | "subagentstop") => {
+            let id = s(v, "agent_id");
+            if !super::ccc::report::safe_id(id) {
+                return None;
+            }
+            task_id = Some(id.to_string());
+            subject = Some(s(v, "agent_type").to_string()).filter(|x| !x.is_empty());
+            if k == "subagentstart" { "subagent_start" } else { "subagent_stop" }
         }
         "posttooluse" if s(v, "tool_name") == "SendMessage" => {
             let i = &v["tool_input"];
@@ -2619,6 +2668,36 @@ mod tests {
         let d = std::env::temp_dir().join(format!("hq-test-{tag}-{}-{}-{n}", std::process::id(), now()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn journal_maps_subagent_start_and_stop() {
+        let e = |ev: &str, v: Value| journal_entry(ev, &v, None, 7);
+        let s = e("SubagentStart", json!({"session_id":"s1","cwd":"/r","agent_id":"a3f9c2","agent_type":"reviewer"})).unwrap();
+        assert_eq!((s["kind"].as_str(), s["task_id"].as_str(), s["subject"].as_str(), s["session_id"].as_str()), (Some("subagent_start"), Some("a3f9c2"), Some("reviewer"), Some("s1")));
+        assert_eq!(e("SubagentStop", json!({"session_id":"s1","agent_id":"a3f9c2","agent_type":"reviewer","last_assistant_message":"secret body"})).unwrap()["kind"], "subagent_stop");
+        assert!(e("SubagentStop", json!({"session_id":"s1","agent_id":"../x"})).is_none(), "unsafe agent id dropped");
+        let stop = e("SubagentStop", json!({"session_id":"s1","agent_id":"a1","agent_type":"task","last_assistant_message":"secret body"})).unwrap();
+        assert!(stop["text"].is_null(), "the subagent's output is never journaled");
+    }
+
+    #[test]
+    fn inbox_delivers_once_masked_and_never_for_unsafe_ids() {
+        let home = tmp("inbox");
+        let sid = "1eb79553-8369-4a90-b428-2dedb50e18db";
+        assert!(take_inbox(&home, sid).is_none(), "no file: nothing to deliver");
+        let f = inbox_file(&home, sid).unwrap();
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        // A synthetic key-shaped fixture, built at run time so no scanner sees a literal key.
+        let key = format!("sk-ant-api03-{}", "Zq8vR2xLk9pW4mN7tB1cY6hJ3sD5fG0aQe".repeat(2));
+        std::fs::write(&f, format!("{}\n{}\n\n{{bad json\n", json!({"ts":1,"text":"chạy test giúp"}), json!({"ts":2,"text":format!("key là {key}")}))).unwrap();
+        let msg = take_inbox(&home, sid).unwrap();
+        assert!(msg.contains("2 message(s)") && msg.contains("chạy test giúp"), "{msg}");
+        assert!(!msg.contains("Zq8vR2xLk9pW4mN7tB1cY6hJ3sD5fG0aQe"), "secret masked: {msg}");
+        assert!(take_inbox(&home, sid).is_none(), "delivered once");
+        assert!(!f.exists());
+        assert!(inbox_file(&home, "../../etc/passwd").is_none() && take_inbox(&home, "a/b").is_none());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
