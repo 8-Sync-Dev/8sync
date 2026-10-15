@@ -34,6 +34,7 @@ pub mod gen_img;
 pub mod codex_web;
 pub mod forge;
 pub mod ccc;
+pub mod learn;
 pub mod watchdog;
 pub mod uuid_sessions;
 pub mod session_view;

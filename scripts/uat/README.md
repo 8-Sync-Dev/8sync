@@ -5,6 +5,15 @@ PASS/FAIL per assertion and exits non-zero on failure. No API key is read or set
 owner's existing subscription login. Nothing here touches the owner's `~/.claude/settings.json`,
 `~/.local/bin/8sync` or `~/.config/8sync`. Not run in CI (they spend real tokens / need network).
 
+## hook-latency.sh — how long the kit hooks keep Claude waiting (no model, free)
+
+`bash scripts/uat/hook-latency.sh [8sync] [runs]`: sandbox HOME, each hook fed the JSON Claude Code would send,
+median of 7 runs against a budget — guard, wake, watchdog, resume-note ≤ 20 ms; `verify` with a file outside any
+project (its no-op path) ≤ 50 ms. The real verify check (tsc/cargo) runs with `asyncRewake` and never blocks the
+model. Measured 2026-10-15 on Linux (v0.90.0 + this branch): every hook median 3 ms, PASS; the Orca per-event shell
+hook on the same machine ≈ 5 ms. Timing uses bash 5 `EPOCHREALTIME` with a `date +%s%N` fallback — not verified on
+macOS `/bin/bash` 3.2 (run it with Homebrew bash) or Windows.
+
 ## no-idle-hook.sh — "không ai rảnh" ladder and rails (no model, free)
 
 `bash scripts/uat/no-idle-hook.sh target/debug/8sync`: sandbox HOME + a fake team task list; checks

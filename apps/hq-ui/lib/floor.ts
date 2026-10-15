@@ -18,7 +18,12 @@ export type LsInput = {
 export type HqInput = {
   status?: string | null; // needs_input | running | idle | ended
   detail?: string | null; // waitingFor
+  /** Newest `su-code/ship/<slug>/STANDUP.md` under the session's repo (`at` = mtime, unix ms). */
+  standup?: { slug: string; at: number } | null;
 } | null;
+
+/** A standup written less than this long ago puts the room in a sprint meeting. */
+export const MEETING_MS = 2 * 60_000;
 
 export type Derived = {
   state: FloorState;
@@ -55,6 +60,7 @@ export const LABEL: Record<FloorState, string> = {
   waiting: "chờ anh",
   stalled: "kẹt",
   done: "xong",
+  meeting: "họp sprint",
 };
 
 export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now()): Derived {
@@ -76,6 +82,10 @@ export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now())
 
   if (ls?.stalled_error) {
     return make("stalled", typeof ls.stalled_error === "string" ? ls.stalled_error : "Lỗi API, cần xem lại");
+  }
+  // `8sync ccc standup <slug>` just wrote the board: the room is in its sprint meeting for a moment.
+  if (hq?.standup && nowMs - hq.standup.at >= 0 && nowMs - hq.standup.at < MEETING_MS && status !== "idle") {
+    return make("meeting", `Họp sprint ${hq.standup.slug}${text ? `: ${text}` : ""}`);
   }
   // A live process whose transcript has not moved for 5 min is only "stuck" while
   // it still has open work; a session parked at its prompt (no open task, or hq
@@ -105,6 +115,7 @@ export const GROUP_ORDER: Record<FloorState, number> = {
   typing: 2,
   running: 2,
   reading: 2,
+  meeting: 2,
   done: 3,
   idle: 4,
 };
@@ -196,8 +207,8 @@ export type RepoGroup = {
   working: number;
 };
 
-const ACTIVE = new Set<FloorState>(["waiting", "stalled", "typing", "running", "reading"]);
-const WORKING = new Set<FloorState>(["typing", "running", "reading"]);
+const ACTIVE = new Set<FloorState>(["waiting", "stalled", "typing", "running", "reading", "meeting"]);
+const WORKING = new Set<FloorState>(["typing", "running", "reading", "meeting"]);
 
 /** Annotate `who`: identical names inside one repo get a suffix so "core" x3 stays tellable. */
 export function disambiguate(rows: FloorRow[]): DeskRow[] {

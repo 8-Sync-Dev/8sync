@@ -27,7 +27,19 @@ import {
   seatsFor,
   visitsFrom,
 } from "@/lib/office";
-import { DUST_MS, WALK_MS, WALKER_DUST, WALKER_FRAMES, WALKER_H, WALKER_PALETTE, WALKER_STAND, WALKER_W } from "@/lib/sprite/walker";
+import {
+  DUST_MS,
+  WALK_MS,
+  WALKER_CARRY,
+  WALKER_CARRY_DUST,
+  WALKER_CARRY_STAND,
+  WALKER_DUST,
+  WALKER_FRAMES,
+  WALKER_H,
+  WALKER_PALETTE,
+  WALKER_STAND,
+  WALKER_W,
+} from "@/lib/sprite/walker";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const SID = "1eb79553-8369-4a90-b428-2dedb50e18db";
@@ -204,6 +216,7 @@ describe("what each seat shows", () => {
     expect(seatState({ key: "lead", active: [] }, { ...room, waiting: "Trust this folder?" })).toBe("waiting");
     expect(seatState({ key: "lead", active: [] }, { ...room, status: "needs_input" })).toBe("waiting");
     expect(seatState({ key: "lead", active: [] }, { ...room, status: "idle", state: "bogus" })).toBe("idle");
+    expect(seatState({ key: "lead", active: [] }, { ...room, state: "meeting" })).toBe("meeting");
     expect(seatState({ key: "review", active: ["reviewer"] }, room)).toBe("typing");
     expect(seatState({ key: "review", active: [] }, room)).toBeNull();
   });
@@ -276,6 +289,32 @@ describe("walker sprite", () => {
       }
     }
     expect(WALKER_FRAMES[0].join()).not.toBe(WALKER_FRAMES[1].join());
+  });
+  it("carrying a task: same 4-beat walk with a white paper in front, plus its own stand and dust", () => {
+    expect(WALKER_CARRY.length).toBe(WALKER_FRAMES.length);
+    expect(WALKER_CARRY_DUST.length).toBe(DUST_MS.length);
+    for (const f of [...WALKER_CARRY, ...WALKER_CARRY_DUST, WALKER_CARRY_STAND]) {
+      expect(f.length).toBe(WALKER_H);
+      for (const row of f) {
+        expect(row.length).toBe(WALKER_W);
+        for (const ch of row) expect(Object.hasOwn(WALKER_PALETTE, ch), ch).toBe(true);
+      }
+      expect(f.join()).toMatch(/w/);
+    }
+    expect(WALKER_PALETTE.w).toBeTruthy();
+    WALKER_CARRY.forEach((f, i) => {
+      expect(f.join(), `carry#${i}`).not.toBe(WALKER_FRAMES[i].join());
+      // the paper: 2 wide, 3 tall, a line of ink in the middle, at chest height in front (x 10..11)
+      const dy = f[0] === "............" ? 1 : 0;
+      expect(f[8 + dy].slice(10, 12)).toBe("ww");
+      expect(f[9 + dy].slice(10, 12)).toBe("oo");
+      expect(f[10 + dy].slice(10, 12)).toBe("ww");
+      // nothing else changed: same rows outside the paper
+      f.forEach((row, y) => expect(row.slice(0, 10), `carry#${i} row ${y}`).toBe(WALKER_FRAMES[i][y].slice(0, 10)));
+    });
+    expect(new Set(WALKER_CARRY.map((f) => f.join())).size).toBe(4);
+    expect(WALKER_CARRY_STAND.join()).not.toBe(WALKER_STAND.join());
+    expect(WALKER_FRAMES.join()).not.toMatch(/w/);
   });
 });
 

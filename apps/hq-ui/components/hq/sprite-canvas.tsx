@@ -39,10 +39,13 @@ export function SpriteCanvas({
   return <canvas ref={ref} aria-hidden className={className ?? "block"} />;
 }
 
-/** A specialist walking in from another room (shared rAF loop; reduced motion: stands). */
-export function WalkerCanvas({ shirt, ts }: { shirt: string; ts: number }) {
+/**
+ * A specialist walking in from another room (shared rAF loop; reduced motion: stands).
+ * `carry`: holding a task paper, i.e. bringing work into the room.
+ */
+export function WalkerCanvas({ shirt, ts, carry = false }: { shirt: string; ts: number; carry?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => (ref.current ? mountWalker(ref.current, { shirt }) : undefined), [shirt, ts]);
+  useEffect(() => (ref.current ? mountWalker(ref.current, { shirt, carry }) : undefined), [shirt, ts, carry]);
   return (
     <canvas
       key={ts}

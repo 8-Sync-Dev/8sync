@@ -140,6 +140,69 @@ describe("clips and timing", () => {
   });
 });
 
+import { transitionFor } from "@/lib/sprite/render";
+
+describe("meeting state and the stand / sit transitions", () => {
+  it("meeting is a looping state with a wall board instead of the monitor, 2-3 frames ~600 ms, and blinks", () => {
+    expect(SPRITE_STATES).toContain("meeting");
+    expect(CLIPS).toEqual([...SPRITE_STATES, "rest", "stand", "sit"]);
+    expect(ONE_SHOT.has("meeting")).toBe(false);
+    expect(BLINKS.has("meeting")).toBe(true);
+    expect(CLIP_MS.meeting.length).toBeGreaterThanOrEqual(2);
+    expect(CLIP_MS.meeting.length).toBeLessThanOrEqual(3);
+    for (const ms of CLIP_MS.meeting) expect(ms).toBeGreaterThanOrEqual(500);
+    expect(SPRITES.meeting.length).toBe(CLIP_MS.meeting.length);
+    const f = spriteFrame(null, "meeting", 0);
+    expect(sameRows(f)).toBe(true);
+    // no monitor glow / screen-off pixels where the monitor used to be; a white board + cards instead
+    const wall = f.slice(6, 18).map((r) => r.slice(20, 31)).join();
+    expect(wall).not.toMatch(/[kg]/);
+    expect(wall).toMatch(/w/);
+    expect(wall).toMatch(/y/);
+    expect(wall).toMatch(/b/);
+    expect(wall).toMatch(/t/);
+    // eyes turned to the board (shift), speech dots build up frame by frame
+    expect(f[12][10]).toBe("o");
+    expect(f[12][13]).toBe("o");
+    const dotsOf = (i: number) => [...spriteFrame(null, "meeting", i)[4].slice(1, 10)].filter((c) => c === "o").length;
+    expect([dotsOf(0), dotsOf(1), dotsOf(2)]).toEqual([1, 2, 3]);
+    expect(new Set(SPRITES.meeting.map((x) => x.join())).size).toBe(SPRITES.meeting.length);
+  });
+  it("stand and sit are one-shot, >= 3 frames, the head rises 3 px and the hands leave the keyboard", () => {
+    for (const c of ["stand", "sit"] as const) {
+      expect(ONE_SHOT.has(c), c).toBe(true);
+      expect(CLIP_MS[c].length, c).toBeGreaterThanOrEqual(3);
+      for (const ms of CLIP_MS[c]) expect(ms).toBeGreaterThanOrEqual(120);
+      for (let i = 0; i < CLIP_MS[c].length; i++) expect(sameRows(spriteFrame(null, c, i)), `${c}#${i}`).toBe(true);
+    }
+    const idle = spriteFrame(null, "idle", 0);
+    const up = spriteFrame(null, "stand", 2);
+    const headTop = (f: string[]) => f.findIndex((r) => r.slice(7, 15) === ".oooooo.");
+    expect(headTop(idle)).toBe(8);
+    expect(headTop(up)).toBe(5);
+    // hands off the keyboard (row 20 at x 13..14 is torso/outline now, not skin)
+    expect(idle[20].slice(13, 15)).toBe("ss");
+    expect(up[20].slice(13, 15)).not.toBe("ss");
+    // the chair back shows beside the torso
+    expect(up[18][5]).toBe("n");
+    expect(up[18][16]).toBe("n");
+    // sit is the reverse of stand
+    expect(spriteFrame(null, "sit", 0).join()).toBe(spriteFrame(null, "stand", 2).join());
+    expect(spriteFrame(null, "sit", 2).join()).toBe(spriteFrame(null, "stand", 0).join());
+  });
+  it("transitions: seated -> work via stand, work -> idle via sit, everything else direct", () => {
+    expect(transitionFor("idle", "typing")).toBe("stand");
+    expect(transitionFor("rest", "meeting")).toBe("stand");
+    expect(transitionFor("done", "running")).toBe("stand");
+    expect(transitionFor("typing", "idle")).toBe("sit");
+    expect(transitionFor("meeting", "idle")).toBe("sit");
+    expect(transitionFor("typing", "reading")).toBeNull();
+    expect(transitionFor("idle", "stalled")).toBeNull();
+    expect(transitionFor("idle", "done")).toBeNull();
+    expect(transitionFor("typing", "rest")).toBeNull();
+  });
+});
+
 function sameRows(f: string[]) {
   return f.length === SPRITE_SIZE && f.every((r) => r.length === SPRITE_SIZE && [...r].every((ch) => Object.hasOwn(PALETTE, ch)));
 }

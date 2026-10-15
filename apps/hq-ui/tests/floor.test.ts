@@ -35,6 +35,10 @@ describe("deriveFloor", () => {
     ["all done but still running -> keeps working", { status: "running", tasks_done: 3, tasks_total: 3, last_tool: "Bash", last_active: ago(10) }, null, "running", "chạy lệnh"],
     ["total 0 is not done", { status: "idle", tasks_done: 0, tasks_total: 0 }, null, "idle", "nghỉ"],
     ["idle ignores old tool", { status: "idle", last_tool: "Edit", last_active: ago(7200) }, null, "idle", "nghỉ"],
+    ["fresh STANDUP.md -> sprint meeting", { status: "running", last_tool: "Edit", last_active: ago(5) }, { status: "running", standup: { slug: "autowork", at: NOW - 30_000 } }, "meeting", "họp sprint"],
+    ["standup older than 2 min -> back to work", { status: "running", last_tool: "Edit", last_active: ago(5) }, { status: "running", standup: { slug: "autowork", at: NOW - 3 * 60_000 } }, "typing", "đang gõ code"],
+    ["needs_input wins over a meeting", { status: "running", last_tool: "Edit", last_active: ago(5) }, { status: "needs_input", detail: "Ship?", standup: { slug: "a", at: NOW } }, "waiting", "chờ anh"],
+    ["an idle desk does not meet", { status: "idle", last_active: ago(5) }, { status: "idle", standup: { slug: "a", at: NOW } }, "idle", "nghỉ"],
   ];
   it.each(cases)("%s", (_n, ls, hq, state, label) => {
     const d = deriveFloor(ls, hq, NOW);
@@ -136,6 +140,7 @@ describe("grouping by repo", () => {
         r("b2", "fix", "~/b", "waiting", NOW / 1000 - 3000),
         r("c1", "old", "~/c", "idle", NOW / 1000 - 90_000),
         r("n1", "x", null, "running", NOW / 1000 - 1),
+        r("a4", "rd", "~/a", "meeting", NOW / 1000 - 10),
       ],
       NOW,
     );
@@ -145,8 +150,8 @@ describe("grouping by repo", () => {
     expect(b.desks.map((x) => x.id)).toEqual(["b2"]);
     expect(b.rest.map((x) => x.id)).toEqual(["b1"]);
     const a = groups[2];
-    expect(a.working).toBe(1);
-    expect(a.desks.map((x) => x.id)).toEqual(["a1"]);
+    expect(a.working).toBe(2);
+    expect(a.desks.map((x) => x.id)).toEqual(["a1", "a4"]);
     expect(a.rest.map((x) => x.id)).toEqual(["a3", "a2"]);
     expect(groups[1].name).toBe("Khác");
     expect(old.map((x) => x.id)).toEqual(["c1"]);

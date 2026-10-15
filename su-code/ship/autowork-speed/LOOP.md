@@ -1,0 +1,39 @@
+# LOOP — autowork-speed
+
+| # | Lệnh |
+|---|---|
+| C1 | `nice -n 19 ionice -c3 cargo test -q -j2 -p su-code learn_` |
+| C2 | `nice -n 19 ionice -c3 cargo test -q -j2 -p su-code skill_learn` |
+| C3 | `cd apps/hq-ui && nice -n 19 pnpm exec vitest run tests/schedule.test.ts` |
+| C4 | `cd apps/hq-ui && nice -n 19 pnpm exec vitest run tests/sprite.test.ts tests/office.test.ts tests/floor.test.ts` |
+| C5 | `bash scripts/uat/hook-latency.sh` |
+| C6 | `cd apps/hq-ui && nice -n 19 pnpm exec tsc --noEmit && nice -n 19 pnpm exec eslint` |
+| C7 | `! (nice -n 19 ionice -c3 cargo clippy -q -j2 -p su-code --all-targets 2>&1 | grep -E 'crates/cli/src/(verbs/learn.rs|verbs/skill/learn.rs|verbs/skill/mod.rs|main.rs|verbs/mod.rs)')` |
+| C8 | CI on feat/autowork-speed: `gh run watch <id> --exit-status` |
+
+## Evidence
+
+iter 0 | C1 | exit 0 | = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+iter 0 | C2 | exit 0 | = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+iter 0 | C3 | exit 0 | Duration  189ms (setup 27%, transform 21%, import 20%, tests 20%, worker 13%)
+iter 0 | C5 | exit 0 | PASS *** (7 runs each)
+iter 0 | C7 | exit 0 | (no output)
+iter 0 | C4 | exit 0 | Duration  342ms (tests 49%, transform 29%, import 15%, setup 4%, worker 3%)
+iter 0 | C6 | exit 0 | (no output)
+iter 0 | C7 | exit 0 | (no output)
+iter 0 | C8 | exit 0 | success
+iter 0 | C1 | exit 101 | error: test failed, to rerun pass `-p su-code --bin 8sync`
+iter 0 | C2 | exit 0 | test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 464 filtered out; finished in 0.03s
+iter 0 | C1 | exit 0 | test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 457 filtered out; finished in 0.03s
+iter 0 | C3 | exit 0 | Duration  203ms (transform 56%, setup 16%, import 11%, tests 10%, worker 7%)
+iter 0 | C4 | exit 0 | Duration  358ms (tests 40%, transform 36%, import 19%, setup 3%, worker 2%)
+iter 0 | C5 | exit 0 | PASS *** (7 runs each)
+iter 0 | C6 | exit 0 | (no output)
+iter 0 | C7 | exit 0 | (no output)
+iter 0 | C8 | exit 0 | success
+
+## Brief (kết thúc: tất cả xanh, iter 0, ~30 phút)
+- C1–C7 xanh local (evidence trên); C8 xanh CI 3 OS: 91ad7b0 run 38696949028, fc21981 run 38697704416 (ubuntu/windows/macos test + hq-ui-test + minimal + package-hq-ui).
+- Reviewer: 2 BLOCKER + 7 SHOULD → sửa trong fc21981 (meeting state in seatState/groupFloor; skill learn symlink/licence/caps/name; trending cell sanitising; R&D không tự cài skill; hook bench portable).
+- Chưa làm: sprite `mountSprite.setState` test theo thời gian (SHOULD 9); live run `skill learn` ngoài sandbox; not verified Windows/macOS cho hook-latency.sh (CI không chạy script UAT).
+- Không có --release → dừng sau commit; PR/merge/tag chờ owner Ship.

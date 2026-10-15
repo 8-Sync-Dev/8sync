@@ -31,4 +31,13 @@ describe("schedule", () => {
     expect(scheduleLabel({ kind: "every", n: 5, unit: "m" })).toBe("mỗi 5 phút");
     expect(RD_DUTY.schedule).toEqual({ kind: "every", n: 30, unit: "m" });
   });
+  it("R&D duty studies code, web, papers and trending, then hands work to free rooms", () => {
+    const d = RD_DUTY.details;
+    for (const must of ["codegraph", "WebSearch", "arXiv", "8sync learn trending", "8sync skill learn", "KHÔNG tự cài", "8sync ccc . ls", "SendMessage", "≤2 task", "bỏ qua lượt này", "Không sửa code sản phẩm"]) {
+      expect(d, must).toContain(must);
+    }
+    expect(d.length).toBeLessThanOrEqual(2000); // POST /api/tasks clamps details at 2000
+    const p = scheduledPrompt(`New task: ${RD_DUTY.subject}\n${d}`, RD_DUTY.schedule);
+    expect(p).toContain("[8sync:wake] New task: R&D trực");
+  });
 });

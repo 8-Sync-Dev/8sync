@@ -6,11 +6,14 @@ import type { SeatKey } from "../office";
 
 export const SPRITE_SIZE = 32;
 
-export const SPRITE_STATES = ["idle", "typing", "running", "reading", "waiting", "stalled", "done"] as const;
+export const SPRITE_STATES = ["idle", "typing", "running", "reading", "waiting", "stalled", "done", "meeting"] as const;
 export type SpriteState = (typeof SPRITE_STATES)[number];
 
-/** Every clip a desk sprite can play: the session states plus "rest" (empty seat, screen off). */
-export const CLIPS = [...SPRITE_STATES, "rest"] as const;
+/**
+ * Every clip a desk sprite can play: the session states, "rest" (empty seat, screen off) and
+ * the two one-shot transitions "stand" (rise from the chair before work) / "sit" (back to idle).
+ */
+export const CLIPS = [...SPRITE_STATES, "rest", "stand", "sit"] as const;
 export type Clip = (typeof CLIPS)[number];
 
 /** '.' is transparent. 'c' (shirt) is per role / session, see shirtOf(). */
@@ -92,6 +95,7 @@ type Pose = {
   eyes?: Eyes;
   hands?: [number, number][]; // 2x2 skin hands on the keyboard
   armUp?: [number, number][]; // [x, y] of raised hands (2 wide, drawn down to the shoulder)
+  chair?: boolean; // the chair back shows beside the torso (person has risen off it)
 };
 
 /**
@@ -135,15 +139,36 @@ export const PROPS: Record<SeatKey, Prop> = {
   critic: { desk: [0, 14, ["  e  ", "eeeee", "e e e", "e e e", "nnenn", "  e  ", "  e  ", " eee "]] },
 };
 
-function scene(screenOff = false): G {
+/** Sprint board on the wall where the monitor stands: 3 columns of tiny cards (todo / doing / done). */
+function board(g: G, moved: boolean) {
+  rect(g, 19, 5, 13, 14, "o");
+  rect(g, 20, 6, 11, 12, "w");
+  rect(g, 20, 8, 11, 1, "o"); // header rule under the title
+  stamp(g, 21, 6, ["o o o o o"]); // "sprint" title: dashes, too small for letters
+  for (const x of [23, 27]) rect(g, x, 9, 1, 9, "m"); // column rules
+  const cards: [number, number, string][] = [
+    [21, 10, "y"],
+    [21, 13, "y"],
+    [25, 10, "b"],
+    [29, 10, "t"],
+    [29, 13, "t"],
+  ];
+  // one card moves from todo to doing when the meeting "decides"
+  cards.push(moved ? [25, 13, "b"] : [21, 16, "y"]);
+  for (const [x, y, c] of cards) rect(g, x, y, 2, 2, c);
+}
+
+function scene(screenOff = false, noMonitor = false): G {
   const g = blank();
-  // monitor
-  rect(g, 20, 8, 11, 11, "o");
-  rect(g, 21, 9, 9, 9, "m");
-  rect(g, 22, 10, 7, 7, "k");
-  rect(g, 24, 19, 3, 2, "m");
-  rect(g, 23, 21, 5, 1, "m");
-  if (screenOff) px(g, 29, 17, "t"); // standby light
+  if (!noMonitor) {
+    // monitor
+    rect(g, 20, 8, 11, 11, "o");
+    rect(g, 21, 9, 9, 9, "m");
+    rect(g, 22, 10, 7, 7, "k");
+    rect(g, 24, 19, 3, 2, "m");
+    rect(g, 23, 21, 5, 1, "m");
+    if (screenOff) px(g, 29, 17, "t"); // standby light
+  }
   // desk
   rect(g, 0, 22, 32, 1, "o");
   rect(g, 0, 23, 32, 3, "d");
@@ -156,6 +181,11 @@ function scene(screenOff = false): G {
 function person(g: G, p: Pose, prop?: Prop) {
   const hy = p.hy ?? 8;
   const ty = p.torsoTop ?? hy + 8;
+  // chair back behind the torso, 1 px wider on each side so it shows once the person rises
+  if (p.chair) {
+    rect(g, 4, 15, 14, 7, "o");
+    rect(g, 5, 16, 12, 6, "n");
+  }
   // torso (x 6..15) down to the desk
   for (let y = ty; y <= 21; y++) {
     const edge = y === ty;
@@ -210,7 +240,34 @@ function bubble(g: G, kind: "?" | "!", dy: number) {
   glyph.forEach((r, j) => [...r].forEach((c, i) => c === "o" && px(g, 22 + i, dy + 1 + j, ink)));
 }
 
-type Spec = { ms: number[]; pose: (i: number) => Pose; deco?: (g: G, i: number) => void; off?: boolean; loop?: boolean };
+/** Small speech bubble (top left, clear of the board) with 1..3 dots: someone is talking. */
+function dots(g: G, n: number) {
+  rect(g, 0, 1, 11, 6, "o");
+  rect(g, 1, 2, 9, 4, "w");
+  px(g, 8, 7, "o");
+  for (let k = 0; k < n; k++) px(g, 3 + k * 2, 4, "o");
+}
+
+/**
+ * Rising from the chair, frame 0..2: head and torso go up 1 px per frame (3 px in all), the
+ * hands leave the keyboard for the sides on frame 1, and the chair back shows throughout.
+ */
+const risePose = (i: number): Pose => ({
+  hy: 7 - i,
+  torsoTop: 15 - i,
+  chair: true,
+  hands: i === 0 ? [[13, 20], [17, 20]] : [[4, 18 - i], [16, 18 - i]],
+});
+
+type Spec = {
+  ms: number[];
+  pose: (i: number) => Pose;
+  deco?: (g: G, i: number) => void;
+  off?: boolean;
+  loop?: boolean;
+  /** No monitor in the scene (the clip draws a wall board instead). */
+  noMonitor?: boolean;
+};
 
 const idleScreen = (g: G) => lines(g, "g", [3, 2]);
 const typeHands = (i: number): [number, number][] => (i % 2 ? [[13, 21], [17, 20]] : [[13, 20], [17, 21]]);
@@ -281,19 +338,33 @@ const SPECS: Record<Clip, Spec> = {
       for (const [n, [x, y]] of ([[3, 2], [14, 3], [27, 4], [6, 4], [30, 2]] as const).entries()) px(g, x, y, n % 2 ? "y" : "c");
     },
   },
+  // sprint meeting: turned to the board (eyes shift), hands off the keyboard, a point at the
+  // board on frame 1, a card moves to "doing" on frame 2 while the speech dots build up
+  meeting: {
+    ms: [600, 650, 550],
+    noMonitor: true,
+    pose: (i) => ({ eyes: "shift", hands: i === 1 ? [[13, 21]] : [[13, 21], [17, 21]], armUp: i === 1 ? [[17, 11]] : [] }),
+    deco: (g, i) => {
+      board(g, i === 2);
+      dots(g, i + 1);
+    },
+  },
   // empty seat: screen off, settled lower, slow breath
   rest: { ms: [1400, 1100], off: true, pose: (i) => ({ hy: 9 + i, torsoTop: 17 + i, hands: [[13, 21], [16, 21]] }) },
+  // transitions (one-shot): rise before work, sit back down before idle; render.ts chains them
+  stand: { ms: [140, 130, 150], loop: false, pose: risePose, deco: idleScreen },
+  sit: { ms: [150, 130, 140], loop: false, pose: (i) => risePose(2 - i), deco: idleScreen },
 };
 
 /** Per-frame durations of a clip; same length as its frame list. */
 export const CLIP_MS = {} as Record<Clip, readonly number[]>;
 for (const c of CLIPS) CLIP_MS[c] = SPECS[c].ms;
 
-/** Clips that play once and then hand over to idle. */
+/** Clips that play once and then hand over (done/sit -> idle, stand -> the clip it was started for). */
 export const ONE_SHOT: ReadonlySet<Clip> = new Set(CLIPS.filter((c) => SPECS[c].loop === false));
 
 /** Clips where a blink makes sense (eyes are open in the pose). */
-export const BLINKS: ReadonlySet<Clip> = new Set(["idle", "typing", "running", "reading", "waiting", "rest"]);
+export const BLINKS: ReadonlySet<Clip> = new Set(["idle", "typing", "running", "reading", "waiting", "meeting", "rest"]);
 
 const built = new Map<string, string[]>();
 
@@ -304,7 +375,7 @@ export function spriteFrame(role: SeatKey | null, clip: Clip, i: number, blink =
   const key = `${role}|${clip}|${f}|${blink ? 1 : 0}`;
   const hit = built.get(key);
   if (hit) return hit;
-  const g = scene(spec.off);
+  const g = scene(spec.off, spec.noMonitor);
   spec.deco?.(g, f);
   const prop = role ? PROPS[role] : undefined;
   if (prop?.desk) stamp(g, prop.desk[0], prop.desk[1], prop.desk[2]);

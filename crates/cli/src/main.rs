@@ -165,6 +165,9 @@ enum Cmd {
 
     /// Always-on guard: alerts Claude Code + you and SIGTERMs runaway harness helpers (MCP servers, LSPs, index workers)
     Watchdog(verbs::watchdog::Args),
+
+    /// Học từ repo mới nổi trên GitHub (search API chính thức): 8sync learn trending
+    Learn(verbs::learn::Args),
 }
 
 fn main() -> Result<()> {
@@ -227,6 +230,7 @@ fn main() -> Result<()> {
         Some(Cmd::Forge(a))   => verbs::forge::run(a),
         Some(Cmd::Ccc(a))     => verbs::ccc::run(a),
         Some(Cmd::Watchdog(a)) => verbs::watchdog::run(a),
+        Some(Cmd::Learn(a)) => verbs::learn::run(a),
         Some(Cmd::Ls(a))      => verbs::session_cmds::run_ls(a),
         Some(Cmd::Show(a))    => verbs::session_cmds::run_show(a),
         Some(Cmd::Guide)      => verbs::session_cmds::run_guide(),

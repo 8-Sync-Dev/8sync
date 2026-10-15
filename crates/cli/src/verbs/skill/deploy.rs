@@ -1985,8 +1985,6 @@ mod bundled_tests {
 
 #[cfg(test)]
 mod command_prefix_tests {
-    use super::*;
-
     #[test]
     fn prefixing_is_idempotent() {
         assert_eq!(crate::brand::cmd_file("auto.md"), "sx-auto.md");
