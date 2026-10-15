@@ -36,7 +36,7 @@ export const GUIDE_STEPS: GuideStep[] = [
   {
     icon: SendIcon,
     title: "Giao việc",
-    body: "Bấm \"Giao việc\", gõ việc cần làm, rồi chọn một vai trò (hệ thống tìm người rảnh) hoặc một người cụ thể.",
+    body: "Bấm \"Giao việc\", gõ việc cần làm, rồi chọn cách giao: một phiên cụ thể, theo vai trò (HQ tìm phiên đang chạy có vai đó, chưa có thì mở mới) hoặc cả dự án (mọi phiên đang chạy cùng nhận). Dòng cuối dialog nói rõ việc sẽ đi đâu.",
   },
   {
     icon: TerminalIcon,

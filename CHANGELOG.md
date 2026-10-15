@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.92.0] — 2026-10-15
+### Changed
+- **HQ "Giao việc" dialog redesigned.** Owner (2026-10-15): one dropdown mixed roles and sessions, so it was unclear whether a task went to one session, to a role, or to every session of a repo. The dialog now has three explicit ways to hand a task: **Một phiên** (a list of live sessions grouped by project, with status dot, role and terminal/inbox delivery), **Theo vai trò** (role cards showing model and how many sessions of that role are running; "mở mới" + project picker when none) and **Cả dự án** (every live session of one project, or of all projects, each gets its own task row). A summary line above the buttons says exactly where the task will go, e.g. "Giao cho phiên rd qua inbox", "Giao cho phiên R&D rảnh lâu nhất trong 2 phiên: rd-1, rd-2" or "Giao cùng một việc cho 4 phiên trong levels-repo". Priority is a P0–P3 segmented control; "Khi nào" sits beside it; the R&D preset is a text link. Pure rules live in `lib/assign.ts` (tests/assign-ui.test.ts). Dark/light and phone widths checked with a headless browser against a seeded preview (not verified: Windows, macOS browsers).
+
 ## [0.91.1] — 2026-10-15
 ### Fixed
 - `8sync learn trending` run from inside a project's `su-code/` memory directory (which carries its own AGENTS.md) wrote to `su-code/su-code/research/trending/`; the trending dir is now resolved by `trending_dir()`: a `su-code` memory dir without a VCS/manifest of its own belongs to its parent project, a repo that is itself named `su-code` stays a normal root, and any subfolder of the project resolves to `<project>/su-code/research/trending/<date>.md` (test `learn_trending_dir_resolves_from_memory_dir_and_subfolders`; reported by the R&D session in UAT of v0.91.0).
