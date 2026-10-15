@@ -1,11 +1,12 @@
 # CLAUDE.md — guidance for Claude Code
 
 <!-- 8sync:skills:begin -->
-## 8sync harness — Claude Code
+## 8sync harness — Claude Code (bản gọn; bản đầy đủ cho omp/Cursor nằm trong `AGENTS.md`)
 
-- **Repo:** quy ước, lệnh build/test, kiến trúc nằm trong `AGENTS.md` — xem mục lục (`grep -n '^#' AGENTS.md`), đọc đúng mục cần.
-- **Code intelligence:** `codegraph query|explore` qua Bash (nhanh, local). Chỉ đọc raw file khi sắp sửa.
-- **Skills nạp theo nhu cầu:** Claude Code đã liệt kê skill kèm mô tả; chỉ mở khi task khớp (UI/design → `impeccable`). Không đọc SKILL.md trước.
-- **Lệnh:** ưu tiên `8sync` (`8sync run test`, `8sync find` …) hơn shell thô.
-- **Memory:** `su-code/STATE.md` đầu phiên; bài học → `su-code/KNOWLEDGE.md`; thay đổi → `CHANGELOG.md`.
+- **Quy ước repo, lệnh build/test, kiến trúc:** `AGENTS.md` — xem mục lục (`grep -n '^#' AGENTS.md`) rồi đọc đúng mục cần trước khi sửa code.
+- **Code intelligence trước grep:** MCP `codebase-memory-mcp` (search_graph · trace_path · get_code_snippet), `serena` (find_symbol · find_referencing_symbols), hoặc `codegraph query|explore` qua Bash. Chỉ đọc raw file khi sắp sửa nó.
+- **Luôn áp dụng** (`codegraph` · `karpathy-guidelines` · `ponytail` · `8sync-cli`): đọc trước khi viết, bước nhỏ có kiểm chứng, làm ít nhất mà đúng (YAGNI, xoá > thêm), ưu tiên lệnh `8sync` (`8sync run test`, `8sync find` …) hơn shell thô. Chi tiết: `su-code/skills/<tên>/SKILL.md` (hoặc `~/.omp/skills/<tên>/`), chỉ mở khi cần.
+- **Mở SKILL.md khi task khớp:** `assp-skill` · `impeccable` · `taste-skill` · `image-routing` · `locate-anything` — `impeccable` bắt buộc cho mọi việc UI/design.
+- **226 skill on-demand khác:** Claude Code liệt kê theo tên (`/<tên>`, từ `.claude/skills/` → `su-code/skills/`); gọi skill khi tên khớp task, hoặc `ls su-code/skills` rồi đọc `SKILL.md`.
+- **Memory dự án:** đọc `su-code/STATE.md` đầu phiên, cập nhật ở mỗi mốc; bài học → `su-code/KNOWLEDGE.md`; thay đổi → `CHANGELOG.md` (Unreleased).
 <!-- 8sync:skills:end -->
