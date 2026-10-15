@@ -5,6 +5,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.90.0] — 2026-10-15
 ### Added
 - **HQ: giao việc theo lịch.** The "Giao việc" dialog has "Khi nào": now, once at HH:MM, daily at HH:MM, or every 5–30 min / 1–12 h. HQ runs no timer of its own: it hands the session one prompt to book the task with Claude Code's native `CronCreate` (local time, fires between turns while the session is open, recurring jobs expire after 7 days by design and are not silently re-created). The task row reads `… · ⏰ mỗi 30 phút`. Preset **"R&D trực"**: every 30 min the R&D room researches the next backlog item when it has nothing assigned, or says `rest`.
 - **`8sync ccc delegate on --after 1m`.** The critic answers a product/technical question only when the owner has typed nothing in that session for the given time; while the owner is active the question still reaches them. Owner-only topics (Ship, secrets, destructive, money, deploy/merge/release, high-risk) are unchanged. A hook cannot answer a question already on screen, so "no reply for 1 minute" is approximated by "no typing for 1 minute"; an unreadable transcript means the owner is asked.
