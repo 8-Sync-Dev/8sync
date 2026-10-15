@@ -11,6 +11,20 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   - `ls --json` rows come newest first and carry `urgency` (`level`, `note`, `set_at`).
   - Old session indexes load unchanged.
   - The kit's CLAUDE.md and `8sync-cli` skill tell agents to set `high` when blocked on the owner, `med` when waiting on a teammate, and `clear` when resolved.
+- **New kit skill `/sprint` adds a scrum-master cadence so no role sits idle.**
+  - A scale gate runs first: tasks of ≤3 files open no sprint; mid-size tasks pick 2–4 roles; the full roster is for ≥2 independent file groups.
+  - The cadence: sprint planning → roles assigned in waves (rd/plan → dev → review/qa) (R&D, Plan, Fullstack, Reviewer, Tester, Quick, Critic, the same seats as HQ) → a standup at every phase boundary or iteration (done/doing/blocked, backlog, bugs, other rooms) → sprint review → retro into `/remember`.
+  - The roster maps every kit agent and skill to a role.
+  - `/ship`, `/ship-auto`, `/ship-loop`, `/autopilot` and `/planning` now run this cadence.
+  - It keeps token rails: at most 4 writers, real backlog items only (`rest <reason>` instead of busywork), and unattended runs dispatch only on a Console API key.
+  - Measured lead delegation before this change: 237 spawns vs 4,670 own calls (`su-code/research/sprint-delegation.md`).
+- **New verb `8sync ccc standup <slug> [init | set <role> <status> … | --json]` keeps the sprint board.**
+  - The board is `su-code/ship/<slug>/SPRINT.md` and each standup is appended to `STANDUP.md`.
+  - `init --roles` picks the sprint's roles. The verb exits 3 while a role on the board is idle (1 stays "error"), so loops can gate on it. Writes are locked, cells are sanitised on read too, and `--json` does not log.
+  - It lists the other rooms' goals and warns `⚠ trùng file` when a board row's files overlap another room's claim.
+- **New verb `8sync ccc . goal <mục tiêu> [--files a,b] [--session <name>]` (`goal clear` to drop it) sets a session's target and claimed files.**
+  - Other rooms see the goal in `ccc . ls` (a `goal` line and `--json` `goal`), in the SessionStart/compact "Phòng khác đang làm" block, and in `standup`.
+  - The text is one line, with control characters dropped and secrets masked.
 
 ## [0.88.0] — 2026-10-15
 ### Added

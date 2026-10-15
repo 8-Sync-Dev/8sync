@@ -11,7 +11,7 @@ fn now_s() -> u64 {
 }
 
 /// Nearest ancestor holding `su-code/` → `su-code/ship`; otherwise `<cwd>/.claude/ship`.
-fn ship_dir(cwd: &Path) -> PathBuf {
+pub(super) fn ship_dir(cwd: &Path) -> PathBuf {
     for d in cwd.ancestors() {
         if d.join("su-code").is_dir() {
             return d.join("su-code/ship");

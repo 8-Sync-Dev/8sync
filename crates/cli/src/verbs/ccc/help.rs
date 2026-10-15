@@ -4,7 +4,7 @@
 /// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
 #[cfg(test)]
 pub(super) const VERBS: &[&str] =
-    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "ls", "list", "urgent", "rm", "new", "compact", "secret", "idle", "delegate"];
+    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "ls", "list", "urgent", "goal", "standup", "rm", "new", "compact", "secret", "idle", "delegate"];
 
 /// Words that look like verbs: never a session name, never a headless claude launch.
 /// Includes hook sub-verbs people type without `hook`.
@@ -18,6 +18,7 @@ SESSION
   8sync ccc .                  tiếp tục session dùng gần nhất
   8sync ccc . ls [--json]      liệt kê session, mới hoạt động nhất lên đầu, kèm mức urgent (alias: list)
   8sync ccc . urgent <high|med|low|clear> [ghi chú] [--session <tên>]   agent tự đặt mức cần owner chú ý cho session của mình
+  8sync ccc . goal <mục tiêu> [--files a,b] [--session <tên>]   agent ghi mục tiêu + file đang giữ của session (phòng khác thấy, tránh trùng file); goal clear để bỏ
   8sync ccc . new <tên>        tạo session mới (từ chối tên đã có)
   8sync ccc . rm <tên>         xoá session và transcript
   8sync ccc . <tên> --team     bật agent teams (thêm --panes: tmux split)
@@ -42,6 +43,7 @@ TỰ ĐỘNG (gõ trong Claude Code)
   /ship-auto <việc>            như /ship rồi PR → CI → merge → release sau một câu `Ship`
   /ship-loop <mục tiêu>        lặp tới khi tiêu chí xanh (có cap iter/phút)
   /autopilot                   nhiều item từ backlog, không người trông
+  8sync ccc standup <slug> [init|set <role> <status> [--agent a] [--files a,b] [việc]|--json]   bảng sprint 7 role (rd plan dev review qa quick critic): báo done/doing/blocked, exit 3 khi có role ngồi không, cảnh báo trùng file với phòng khác (/sprint)
   8sync ccc loop <init|tick|ev|status|done|ls> <slug>   state vòng lặp cho /ship-loop; `ev <slug> <nhãn> -- <lệnh>` chạy check + ghi evidence vào LOOP.md
   8sync ccc hook ship-grant    (hook) ghi giấy phép khi owner duyệt câu hỏi `Ship`
   8sync ccc idle on [--hours 2] [--usd-per-hour 5]   không-ai-rảnh cho agent team (mặc định TẮT; subscription = lease khi owner có mặt)

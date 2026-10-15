@@ -25,6 +25,19 @@ pub struct Session {
     /// (`8sync ccc . urgent`). Absent in older index files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub urgency: Option<Urgency>,
+    /// What this session is for right now, set by its agent (`8sync ccc . goal`) so the other
+    /// rooms see its target and claimed files. Absent in older index files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<Goal>,
+}
+
+/// A session's current target and the files it claims, shown to the other rooms.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Goal {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    pub set_at: u64,
 }
 
 /// An agent-set attention flag shown by `ccc . ls`.
@@ -105,7 +118,7 @@ impl Store {
                     existing.clone()
                 }
                 None => {
-                    let s = Session { name: name.to_string(), conversation_id: new_uuid(), created: t, last_active: t, urgency: None };
+                    let s = Session { name: name.to_string(), conversation_id: new_uuid(), created: t, last_active: t, urgency: None, goal: None };
                     reg.sessions.push(s.clone());
                     s
                 }
@@ -138,6 +151,17 @@ impl Store {
                 bail!("invalid urgency '{}' (use high, med, low or clear)", u.level);
             }
         }
+        self.edit(name, id, |s| s.urgency = urgency)
+    }
+
+    /// Set (or with `None` clear) the goal of the session picked like [`Store::set_urgency`].
+    pub fn set_goal(&self, name: Option<&str>, id: Option<&str>, goal: Option<Goal>) -> Result<Option<String>> {
+        self.edit(name, id, |s| s.goal = goal)
+    }
+
+    /// Apply `f` to the session named `name` or, when `name` is `None`, the one whose
+    /// conversation id is `id`; returns its name, or `None` when nothing matched.
+    fn edit(&self, name: Option<&str>, id: Option<&str>, f: impl FnOnce(&mut Session)) -> Result<Option<String>> {
         if name.is_none() && id.is_none() {
             return Ok(None);
         }
@@ -147,7 +171,7 @@ impl Store {
                 None => Some(s.conversation_id.as_str()) == id,
             });
             Ok(hit.map(|s| {
-                s.urgency = urgency;
+                f(s);
                 s.name.clone()
             }))
         })
@@ -273,6 +297,20 @@ mod tests {
     }
 
     #[test]
+    fn goal_set_by_name_or_id_and_cleared() {
+        let st = store("goal");
+        let a = st.touch("a", false).unwrap();
+        st.touch("b", false).unwrap();
+        let g = Goal { text: "ship standup".into(), files: vec!["crates/x.rs".into()], set_at: 7 };
+        assert_eq!(st.set_goal(None, Some(&a.conversation_id), Some(g.clone())).unwrap().as_deref(), Some("a"));
+        assert_eq!(st.load().sessions[0].goal, Some(g));
+        assert!(st.load().sessions[1].goal.is_none());
+        assert_eq!(st.set_goal(Some("a"), None, None).unwrap().as_deref(), Some("a"));
+        assert!(!std::fs::read_to_string(st.dir.join("index.json")).unwrap().contains("goal"));
+        assert_eq!(st.set_goal(Some("ghost"), None, None).unwrap(), None);
+    }
+
+    #[test]
     fn cleared_urgency_is_not_written() {
         let st = store("urgw");
         st.touch("a", false).unwrap();
@@ -299,6 +337,7 @@ mod tests {
         assert_eq!(reg.last_used.as_deref(), Some("alpha"));
         assert_eq!(reg.sessions[1].conversation_id, "22222222-2222-4222-8222-222222222222");
         assert!(reg.sessions.iter().all(|s| s.urgency.is_none()), "old index has no urgency field");
+        assert!(reg.sessions.iter().all(|s| s.goal.is_none()), "old index has no goal field");
         assert_eq!(st.touch("beta", false).unwrap().created, 110);
         assert_eq!(st.remove("alpha").unwrap().unwrap().last_active, 200);
         let reg = st.load();
