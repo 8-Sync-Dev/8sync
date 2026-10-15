@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- `8sync learn trending` run from inside a project's `su-code/` memory directory (which carries its own AGENTS.md) wrote to `su-code/su-code/research/trending/`; the trending dir is now resolved by `trending_dir()`: a `su-code` memory dir without a VCS/manifest of its own belongs to its parent project, a repo that is itself named `su-code` stays a normal root, and any subfolder of the project resolves to `<project>/su-code/research/trending/<date>.md` (test `learn_trending_dir_resolves_from_memory_dir_and_subfolders`; reported by the R&D session in UAT of v0.91.0).
 
 ## [0.91.0] — 2026-10-15
 ### Added

@@ -7,7 +7,7 @@
 //! The response is untrusted data: only a few typed fields are parsed and the description is
 //! truncated before it reaches the markdown table.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -83,10 +83,8 @@ fn trending(lang: Option<String>, days: u32, top: u32, json: bool, out: Option<P
     let dir = match out {
         Some(p) => p,
         None => {
-            let root = crate::verbs::skill::discover::detect_current_project_root()
-                .or_else(|| std::env::current_dir().ok())
-                .ok_or_else(|| anyhow!("không xác định được thư mục project"))?;
-            root.join("su-code/research/trending")
+            let cwd = std::env::current_dir().context("không xác định được thư mục hiện tại")?;
+            trending_dir(&cwd)
         }
     };
     let path = dir.join(format!("{today}.md"));
@@ -113,6 +111,33 @@ fn trending(lang: Option<String>, days: u32, top: u32, json: bool, out: Option<P
         println!("{} ⭐{} {}", r.full_name, r.stargazers_count, safe_url(r));
     }
     Ok(())
+}
+
+/// `<project>/su-code/research/trending` for the project that contains `start`.
+///
+/// Walks up from `start`. A `su-code` *memory* directory (STATE.md / KNOWLEDGE.md / skills inside,
+/// but no VCS or manifest of its own, because `8sync .` seeds AGENTS.md there) belongs to its
+/// parent project, so running from inside it must not nest `su-code/su-code`. A repo that is
+/// itself named `su-code` (has `.git` / `Cargo.toml`) is a normal project root.
+pub(crate) fn trending_dir(start: &Path) -> PathBuf {
+    const PROJECT: [&str; 6] = [".git", ".hg", "Cargo.toml", "package.json", "pyproject.toml", "go.mod"];
+    const MEMORY: [&str; 4] = ["STATE.md", "KNOWLEDGE.md", "skills.toml", "skills"];
+    let has = |p: &Path, names: &[&str]| names.iter().any(|n| p.join(n).exists());
+    let mut p = start.to_path_buf();
+    loop {
+        let named_memory = p.file_name().is_some_and(|n| n == "su-code");
+        if named_memory && !has(&p, &PROJECT) && has(&p, &MEMORY) {
+            if let Some(parent) = p.parent() {
+                return parent.join("su-code/research/trending");
+            }
+        }
+        if has(&p, &PROJECT) || p.join("AGENTS.md").exists() || p.join("CLAUDE.md").exists() || has(&p.join("su-code"), &MEMORY) {
+            return p.join("su-code/research/trending");
+        }
+        if !p.pop() {
+            return start.join("su-code/research/trending");
+        }
+    }
 }
 
 /// Repos the R&D session should not be handed (adult content shows up in star-sorted search).
@@ -305,6 +330,33 @@ mod tests {
         assert!(!md.contains("passwd") && !md.contains("with space"));
         assert_eq!(md.lines().count(), 2, "header + the one valid row: {md}");
         assert!(valid_full_name("a-b.c_d/e.f-g_h") && !valid_full_name("a//b") && !valid_full_name("a/b/c") && !valid_full_name("ab"));
+    }
+
+    #[test]
+    fn learn_trending_dir_resolves_from_memory_dir_and_subfolders() {
+        let tmp = std::env::temp_dir().join(format!("8sync-learn-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        // Project seeded by `8sync .`: no VCS, CLAUDE.md at root, memory dir with its own AGENTS.md.
+        let proj = tmp.join("proj");
+        std::fs::create_dir_all(proj.join("su-code")).unwrap();
+        std::fs::write(proj.join("CLAUDE.md"), "#").unwrap();
+        std::fs::write(proj.join("su-code/AGENTS.md"), "#").unwrap();
+        std::fs::write(proj.join("su-code/STATE.md"), "#").unwrap();
+        std::fs::create_dir_all(proj.join("apps/web/src")).unwrap();
+        let want = proj.join("su-code/research/trending");
+        assert_eq!(trending_dir(&proj.join("su-code")), want, "cwd = memory dir must not nest su-code/su-code");
+        assert_eq!(trending_dir(&proj), want);
+        assert_eq!(trending_dir(&proj.join("apps/web/src")), want);
+        // A repo that is itself called su-code (this one) is a normal root.
+        let repo = tmp.join("su-code");
+        std::fs::create_dir_all(repo.join("su-code")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "").unwrap();
+        std::fs::write(repo.join("su-code/STATE.md"), "#").unwrap();
+        assert_eq!(trending_dir(&repo), repo.join("su-code/research/trending"));
+        assert_eq!(trending_dir(&repo.join("su-code")), repo.join("su-code/research/trending"));
+        assert_eq!(trending_dir(&repo.join("crates/cli")), repo.join("su-code/research/trending"));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
