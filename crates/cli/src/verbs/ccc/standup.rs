@@ -253,7 +253,7 @@ fn report_json(b: &Board, peers: &[Peer]) -> serde_json::Value {
 }
 
 /// `YYYY-MM-DDTHH:MMZ` from epoch seconds (UTC, proleptic Gregorian; days→civil by H. Hinnant).
-fn utc_stamp(secs: u64) -> String {
+pub(super) fn utc_stamp(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let z = days + 719_468;

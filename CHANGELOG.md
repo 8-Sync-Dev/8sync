@@ -5,6 +5,19 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.90.0] — 2026-10-15
+### Added
+- **HQ: giao việc theo lịch.** The "Giao việc" dialog has "Khi nào": now, once at HH:MM, daily at HH:MM, or every 5–30 min / 1–12 h. HQ runs no timer of its own: it hands the session one prompt to book the task with Claude Code's native `CronCreate` (local time, fires between turns while the session is open, recurring jobs expire after 7 days by design and are not silently re-created). The task row reads `… · ⏰ mỗi 30 phút`. Preset **"R&D trực"**: every 30 min the R&D room researches the next backlog item when it has nothing assigned, or says `rest`.
+- **`8sync ccc delegate on --after 1m`.** The critic answers a product/technical question only when the owner has typed nothing in that session for the given time; while the owner is active the question still reaches them. Owner-only topics (Ship, secrets, destructive, money, deploy/merge/release, high-risk) are unchanged. A hook cannot answer a question already on screen, so "no reply for 1 minute" is approximated by "no typing for 1 minute"; an unreadable transcript means the owner is asked.
+
+- **`8sync ccc hook wake`** (Rust, UserPromptSubmit, no model call): a scheduled HQ prompt (marked `[8sync:wake]`) is dropped before it reaches Claude — zero tokens — when the session has an `in_progress` task, ran a scheduled prompt < 4 min ago (queued fires collapse), or, on a subscription login, the owner has typed nothing in that session for 30 min (unattended use needs a Console API key). Claude Code runs UserPromptSubmit hooks on cron and `/loop` fires too (https://code.claude.com/docs/en/hooks). Idea after ProactiveAgent's decision engine + minimum interval (github.com/leomariga/ProactiveAgent, BSD-3).
+
+### Changed
+- HQ tab "Chat nhóm" is now **"Chat tổng"**: every room (session) shares one chat.
+
+### Fixed
+- `8sync ccc . goal --help` / `-h` printed nothing and stored "--help" as the goal; it now prints usage and leaves the registry alone, and an unknown `-flag` is an error.
+
 ## [0.89.1] — 2026-10-15
 ### Changed
 - Release size ceiling 6400 → 6592 KiB, attributed in `scripts/size-gate.sh` (v0.89.0 linux-x86_64 was 6,616,688 B, 63,088 B over; +69,664 B vs v0.88.0). v0.89.0 was tagged but not published; 0.89.1 ships everything listed under 0.89.0.

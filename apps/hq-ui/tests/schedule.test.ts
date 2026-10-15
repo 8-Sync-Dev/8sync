@@ -1,0 +1,34 @@
+import { describe, expect, it } from "vitest";
+import { cronOf, parseSchedule, RD_DUTY, scheduleLabel, scheduledPrompt } from "@/lib/schedule";
+
+describe("schedule", () => {
+  it("parses the four shapes and rejects the rest", () => {
+    expect(parseSchedule(undefined)).toEqual({ ok: true, value: null });
+    expect(parseSchedule("")).toEqual({ ok: true, value: null });
+    expect(parseSchedule({ kind: "once", at: "15:42" })).toEqual({ ok: true, value: { kind: "once", at: "15:42" } });
+    expect(parseSchedule({ kind: "daily", at: "09:03" }).ok).toBe(true);
+    expect(parseSchedule({ kind: "every", n: "30", unit: "m" })).toEqual({ ok: true, value: { kind: "every", n: 30, unit: "m" } });
+    for (const bad of [{ kind: "once", at: "24:00" }, { kind: "once", at: "9:3" }, { kind: "every", n: 7, unit: "m" }, { kind: "every", n: 5, unit: "h" }, { kind: "every", n: 1, unit: "s" }, { kind: "cron", cron: "* * * * *" }, "x", { kind: "every", n: 30.5, unit: "m" }, { kind: "every", n: null, unit: "m" }]) {
+      expect(parseSchedule(bad).ok, JSON.stringify(bad)).toBe(false);
+    }
+  });
+  it("maps to local cron, recurring only for daily/every", () => {
+    expect(cronOf({ kind: "once", at: "15:42" })).toEqual({ cron: "42 15 * * *", recurring: false });
+    expect(cronOf({ kind: "daily", at: "09:03" })).toEqual({ cron: "3 9 * * *", recurring: true });
+    expect(cronOf({ kind: "every", n: 15, unit: "m" })).toEqual({ cron: "*/15 * * * *", recurring: true });
+    expect(cronOf({ kind: "every", n: 1, unit: "h" })).toEqual({ cron: "7 * * * *", recurring: true });
+    expect(cronOf({ kind: "every", n: 6, unit: "h" })).toEqual({ cron: "7 */6 * * *", recurring: true });
+  });
+  it("prompt books CronCreate, keeps the 7-day bound and carries the task verbatim", () => {
+    const p = scheduledPrompt("New task: x\nline2", { kind: "every", n: 30, unit: "m" });
+    expect(p).toContain('CronCreate với cron "*/30 * * * *"');
+    expect(p).toContain("recurring: true");
+    expect(p).toContain("7 ngày");
+    expect(p).toContain("không tự tạo lại");
+    expect(p.endsWith("---\n[8sync:wake] New task: x\nline2")).toBe(true);
+    expect(scheduledPrompt("t", { kind: "once", at: "08:05" })).toContain("recurring: false");
+    expect(scheduleLabel({ kind: "every", n: 2, unit: "h" })).toBe("≈mỗi 2 giờ");
+    expect(scheduleLabel({ kind: "every", n: 5, unit: "m" })).toBe("mỗi 5 phút");
+    expect(RD_DUTY.schedule).toEqual({ kind: "every", n: 30, unit: "m" });
+  });
+});

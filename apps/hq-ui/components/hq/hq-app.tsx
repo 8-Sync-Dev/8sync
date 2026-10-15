@@ -53,7 +53,7 @@ export function HqApp({ token }: { token: string }) {
   }, []);
 
   // Everything below the header is filtered to the selected project or session.
-  // `group` ignores the session scope on purpose: Chat nhóm is every room talking.
+  // `group` ignores the session scope on purpose: Chat tổng is every room talking.
   const scopeOf = useCallback(
     (session: string | null) => {
       const all = hq.sessions.data;
@@ -184,7 +184,7 @@ export function HqApp({ token }: { token: string }) {
             </div>
             <TabsList variant="line" className="mt-2 h-9 w-full max-w-full justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] sm:px-6">
               <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
-              <TabsTrigger value="group" className="flex-none px-0">Chat nhóm</TabsTrigger>
+              <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
               <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
               <TabsTrigger value="board" className="flex-none px-0">
                 Board
@@ -288,7 +288,7 @@ function RoomPicker({ sessions, onPick }: { sessions: Session[]; onPick: (s: Ses
       <div className="mx-auto w-full max-w-3xl space-y-3 px-4 py-6 sm:px-6">
         <h2 className="text-sm font-semibold">Chọn phòng để chat</h2>
         <p className="text-sm text-muted-foreground">
-          Chat phòng chỉ gồm tin của một session và team của nó. Tin giữa mọi phòng nằm ở Chat nhóm.
+          Chat phòng chỉ gồm tin của một session và team của nó. Tin giữa mọi phòng nằm ở Chat tổng.
         </p>
         {sessions.length === 0 ? (
           <p className="text-sm text-muted-foreground">Chưa có session nào đang chạy.</p>

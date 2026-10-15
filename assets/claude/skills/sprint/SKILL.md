@@ -61,6 +61,7 @@ keep / drop / try → `/remember`. Sau đó chạy `8sync ccc . goal clear`.
 
 ## Rails
 - Effort scaling (Anthropic): việc đơn giản dùng một agent; so sánh dùng 2–4; multi-agent tốn khoảng 15× token, và code có ít việc thật sự song song hơn research.
+- Phòng `rd` rảnh giữa các sprint: owner giao mẫu "R&D trực" trên HQ (CronCreate mỗi 30 phút, hết hạn sau 7 ngày). Hook `ccc hook wake` bỏ lượt khi phòng đang bận, vừa chạy, hoặc (login subscription) owner không gõ gì 30 phút. Owner đang làm việc khác mà không kịp trả lời: `8sync ccc delegate on --after 1m` (critic chọn; Ship/secret/tiền vẫn chờ owner).
 - Tối đa 4 writer cùng lúc. Watchdog báo áp lực thì không mở thêm agent. Build và test nặng chạy trên CI.
 - **Không người trông** (autopilot, `claude -p`, scheduled): chỉ dispatch subagent khi session chạy bằng API key Console và có `--max-budget-usd`; nếu không thì làm một agent, không dispatch. Login subscription chỉ dùng khi owner có mặt (`skills/aup-audit/8sync-anthropic-rules.md`).
 - Không in secret. Mọi câu "xong/pass" phải kèm lệnh + output; không có thì ghi "not verified".

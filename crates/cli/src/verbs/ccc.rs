@@ -41,6 +41,7 @@ mod taskdone;
 mod urgent;
 mod goal;
 mod standup;
+mod wake;
 mod verify;
 
 #[derive(ClapArgs, Debug)]
@@ -999,6 +1000,13 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
         "UserPromptSubmit",
         json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "resume-note"], "timeout": 5 }] }),
     );
+    // Scheduled HQ prompts (`[8sync:wake]`): skip a fire while the session is busy or just ran one,
+    // before it reaches Claude (UserPromptSubmit also fires on CronCreate / /loop prompts).
+    upsert_hook_group(
+        hooks,
+        "UserPromptSubmit",
+        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "wake"], "timeout": 5 }] }),
+    );
     // Agent-team events -> `8sync hq hook <Event>`. Event names, `async` (background, never
     // blocks) and `timeout` (seconds) per https://code.claude.com/docs/en/hooks (checked
     // 2026-10-12). `hq hook` is a fast no-op until `8sync hq setup`, so always registering is safe.
@@ -1776,13 +1784,20 @@ fn hook(rest: &[String]) -> Result<()> {
             }
             None
         }
+        Some("wake") => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| {
+                let sub = login_kind_at(&h).kind == "subscription";
+                wake::hook(&input, &h, now, sub)
+            })
+        }
         Some("delegate") => dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| delegate::hook(&input, &h)),
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|wake   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -2199,7 +2214,8 @@ mod tests {
         assert_eq!(args("StopFailure"), vec![json!(["ccc", "hook", "stop-failure"])]);
         let ups = args("UserPromptSubmit");
         assert!(ups.contains(&json!(["ccc", "hook", "resume-note"])) && ups.contains(&json!(["ccc", "hook", "watchdog"])), "both coexist: {ups:?}");
-        assert_eq!(ups.len(), 2);
+        assert!(ups.contains(&json!(["ccc", "hook", "wake"])), "scheduled-prompt gate: {ups:?}");
+        assert_eq!(ups.len(), 3);
         strip_kit_hooks(&mut v);
         assert!(v["hooks"].get("StopFailure").is_none() && v["hooks"].get("UserPromptSubmit").is_none());
     }
