@@ -140,6 +140,7 @@ describe("grouping by repo", () => {
         r("b2", "fix", "~/b", "waiting", NOW / 1000 - 3000),
         r("c1", "old", "~/c", "idle", NOW / 1000 - 90_000),
         r("n1", "x", null, "running", NOW / 1000 - 1),
+        r("a4", "rd", "~/a", "meeting", NOW / 1000 - 10),
       ],
       NOW,
     );
@@ -149,8 +150,8 @@ describe("grouping by repo", () => {
     expect(b.desks.map((x) => x.id)).toEqual(["b2"]);
     expect(b.rest.map((x) => x.id)).toEqual(["b1"]);
     const a = groups[2];
-    expect(a.working).toBe(1);
-    expect(a.desks.map((x) => x.id)).toEqual(["a1"]);
+    expect(a.working).toBe(2);
+    expect(a.desks.map((x) => x.id)).toEqual(["a1", "a4"]);
     expect(a.rest.map((x) => x.id)).toEqual(["a3", "a2"]);
     expect(groups[1].name).toBe("Khác");
     expect(old.map((x) => x.id)).toEqual(["c1"]);

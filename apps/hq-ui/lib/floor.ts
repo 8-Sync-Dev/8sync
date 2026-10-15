@@ -207,8 +207,8 @@ export type RepoGroup = {
   working: number;
 };
 
-const ACTIVE = new Set<FloorState>(["waiting", "stalled", "typing", "running", "reading"]);
-const WORKING = new Set<FloorState>(["typing", "running", "reading"]);
+const ACTIVE = new Set<FloorState>(["waiting", "stalled", "typing", "running", "reading", "meeting"]);
+const WORKING = new Set<FloorState>(["typing", "running", "reading", "meeting"]);
 
 /** Annotate `who`: identical names inside one repo get a suffix so "core" x3 stays tellable. */
 export function disambiguate(rows: FloorRow[]): DeskRow[] {

@@ -123,6 +123,13 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
   const now = Date.now();
   const used = new Set<string>();
   const ids = new Set<string>();
+  // One readdir per repo per build, not per session.
+  const standups = new Map<string, ReturnType<typeof newestStandup>>();
+  const standupOf = (repo: string | null | undefined) => {
+    const k = repo ?? "";
+    if (!standups.has(k)) standups.set(k, newestStandup(repo));
+    return standups.get(k) ?? null;
+  };
   const uniq = (base: string) => {
     let id = base;
     for (let n = 2; ids.has(id); n++) id = `${base}#${n}`;
@@ -148,7 +155,7 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       engine,
       sid: sidOf(hq?.session_id, r.name),
       tokens: typeof r.tokens === "number" ? r.tokens : null,
-      ...deriveFloor(r, { ...(hq ?? {}), standup: newestStandup(repo) }, now),
+      ...deriveFloor(r, { ...(hq ?? {}), standup: standupOf(repo) }, now),
     };
   });
   // hq sessions `8sync ls` does not know (fresh tmux panes, `claude agents` only).
@@ -165,7 +172,7 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       repo,
       engine: "ccc",
       sid: sidOf(s.session_id, s.name),
-      ...deriveFloor(null, { ...s, standup: newestStandup(repo) }, now),
+      ...deriveFloor(null, { ...s, standup: standupOf(repo) }, now),
     });
   }
   return rows;

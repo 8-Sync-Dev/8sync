@@ -33,7 +33,7 @@ describe("schedule", () => {
   });
   it("R&D duty studies code, web, papers and trending, then hands work to free rooms", () => {
     const d = RD_DUTY.details;
-    for (const must of ["codegraph", "WebSearch", "arXiv", "8sync learn trending", "8sync skill learn", "8sync ccc . ls", "SendMessage", "≤2 task", "bỏ qua lượt này", "Không sửa code sản phẩm"]) {
+    for (const must of ["codegraph", "WebSearch", "arXiv", "8sync learn trending", "8sync skill learn", "KHÔNG tự cài", "8sync ccc . ls", "SendMessage", "≤2 task", "bỏ qua lượt này", "Không sửa code sản phẩm"]) {
       expect(d, must).toContain(must);
     }
     expect(d.length).toBeLessThanOrEqual(2000); // POST /api/tasks clamps details at 2000

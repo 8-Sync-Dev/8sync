@@ -216,6 +216,7 @@ describe("what each seat shows", () => {
     expect(seatState({ key: "lead", active: [] }, { ...room, waiting: "Trust this folder?" })).toBe("waiting");
     expect(seatState({ key: "lead", active: [] }, { ...room, status: "needs_input" })).toBe("waiting");
     expect(seatState({ key: "lead", active: [] }, { ...room, status: "idle", state: "bogus" })).toBe("idle");
+    expect(seatState({ key: "lead", active: [] }, { ...room, state: "meeting" })).toBe("meeting");
     expect(seatState({ key: "review", active: ["reviewer"] }, room)).toBe("typing");
     expect(seatState({ key: "review", active: [] }, room)).toBeNull();
   });

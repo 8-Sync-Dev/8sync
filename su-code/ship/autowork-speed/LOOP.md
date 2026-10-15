@@ -21,3 +21,12 @@ iter 0 | C7 | exit 0 | (no output)
 iter 0 | C4 | exit 0 | Duration  342ms (tests 49%, transform 29%, import 15%, setup 4%, worker 3%)
 iter 0 | C6 | exit 0 | (no output)
 iter 0 | C7 | exit 0 | (no output)
+iter 0 | C8 | exit 0 | success
+iter 0 | C1 | exit 101 | error: test failed, to rerun pass `-p su-code --bin 8sync`
+iter 0 | C2 | exit 0 | test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 464 filtered out; finished in 0.03s
+iter 0 | C1 | exit 0 | test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 457 filtered out; finished in 0.03s
+iter 0 | C3 | exit 0 | Duration  203ms (transform 56%, setup 16%, import 11%, tests 10%, worker 7%)
+iter 0 | C4 | exit 0 | Duration  358ms (tests 40%, transform 36%, import 19%, setup 3%, worker 2%)
+iter 0 | C5 | exit 0 | PASS *** (7 runs each)
+iter 0 | C6 | exit 0 | (no output)
+iter 0 | C7 | exit 0 | (no output)

@@ -129,10 +129,10 @@ export function groupByProject<T extends { key: string; project: ProjectInfo | n
 export function seatState(
   seat: Pick<Seat, "key" | "active">,
   room: { status: string; state: string | null; waiting: string | null },
-): "idle" | "typing" | "running" | "reading" | "waiting" | "stalled" | "done" | null {
+): "idle" | "typing" | "running" | "reading" | "waiting" | "stalled" | "done" | "meeting" | null {
   if (seat.key !== "lead") return seat.active.length ? "typing" : null;
   if (room.waiting || room.status === "needs_input") return "waiting";
-  const known = ["idle", "typing", "running", "reading", "waiting", "stalled", "done"] as const;
+  const known = ["idle", "typing", "running", "reading", "waiting", "stalled", "done", "meeting"] as const;
   const st = known.find((k) => k === room.state);
   if (st) return st;
   return room.status === "running" ? "typing" : "idle";

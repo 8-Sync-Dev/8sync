@@ -22,6 +22,19 @@ pub(crate) fn classify_licence(text: &str) -> Licence {
     let has = |s: &str| head.contains(s);
     let ref_nc = |why: &str| Licence::Refused(format!("licence cấm dùng thương mại/dẫn xuất ({why}); xin phép tác giả hoặc dùng --force để chỉ lưu ghi chú 1 trang do bạn tự viết"));
     let ok = |id: &str| Licence::Allowed(id.to_string());
+    // Source-available / restricted texts embed OSI wording ("Commons Clause" + MIT, SSPL quotes the AGPL): deny first.
+    for (needle, id) in [
+        ("commons clause", "Commons Clause"),
+        ("server side public license", "SSPL"),
+        ("business source license", "BSL"),
+        ("elastic license", "Elastic License"),
+        ("polyform", "PolyForm"),
+        ("sell the software", "no-sell clause"),
+    ] {
+        if has(needle) {
+            return Licence::Refused(format!("licence {id} hạn chế tái phân phối; xin phép tác giả hoặc dùng --force để chỉ lưu ghi chú 1 trang do bạn tự viết"));
+        }
+    }
     if has("noncommercial") || has("non-commercial") { return ref_nc("NC"); }
     if has("noderivatives") || has("no derivatives") { return ref_nc("ND"); }
     if has("lesser general public") { return ok("LGPL (copyleft; đừng chép code vào sản phẩm)"); }
@@ -44,10 +57,23 @@ pub(crate) fn classify_licence(text: &str) -> Licence {
     Licence::Refused("không nhận diện được licence; xin phép tác giả hoặc dùng --force để chỉ lưu ghi chú 1 trang do bạn tự viết".into())
 }
 
+/// Largest README / LICENSE we read (a distilled index needs no more; keeps hostile repos from filling memory).
+const MAX_SRC_BYTES: u64 = 2 * 1024 * 1024;
+
+fn read_capped(p: &Path) -> Result<String> {
+    let len = std::fs::metadata(p)?.len();
+    if len > MAX_SRC_BYTES {
+        return Err(anyhow!("{} quá lớn ({len} bytes > {MAX_SRC_BYTES})", p.display()));
+    }
+    Ok(std::fs::read_to_string(p)?)
+}
+
 fn find_root_file(dir: &Path, names: &[&str]) -> Option<PathBuf> {
     for e in std::fs::read_dir(dir).ok()?.flatten() {
         let f = e.file_name().to_string_lossy().to_lowercase();
-        if names.contains(&f.as_str()) && e.path().is_file() {
+        // `file_type()` does not follow symlinks: a hostile repo must not pull ~/.ssh/… into a skill.
+        let regular = e.file_type().map(|t| t.is_file()).unwrap_or(false);
+        if names.contains(&f.as_str()) && regular {
             return Some(e.path());
         }
     }
@@ -70,11 +96,16 @@ fn clean(s: &str) -> String {
     let ch: Vec<char> = out.chars().collect();
     let mut r = String::new();
     let mut i = 0;
+    let mut no_close = false; // once no `]` remains, stop scanning for links
     while i < ch.len() {
         let img = ch[i] == '!' && ch.get(i + 1) == Some(&'[');
-        if img || ch[i] == '[' {
+        if !no_close && (img || ch[i] == '[') {
             let st = if img { i + 1 } else { i };
-            if let Some(cb) = (st..ch.len()).find(|&j| ch[j] == ']') {
+            let close = (st..ch.len()).find(|&j| ch[j] == ']');
+            if close.is_none() {
+                no_close = true;
+            }
+            if let Some(cb) = close {
                 if ch.get(cb + 1) == Some(&'(') {
                     if let Some(cp) = (cb + 2..ch.len()).find(|&j| ch[j] == ')') {
                         if !img {
@@ -164,9 +195,15 @@ pub(crate) fn distil(readme: &str, name: &str, source: &str, licence: &str, sha:
         .filter(|c| !matches!(c, '#' | '[' | ']' | '"' | '\\' | '`'))
         .collect();
     let desc = trunc(&desc, 200);
-    let short_src = github_owner_repo(source)
+    let short_src: String = github_owner_repo(source)
         .map(|(o, r)| format!("{o}/{r}"))
-        .unwrap_or_else(|| source.to_string());
+        .unwrap_or_else(|| source.to_string())
+        .chars()
+        .filter(|c| !matches!(c, '"' | '\\' | '\n' | '\r'))
+        .take(120)
+        .collect();
+    let source = trunc(&source.replace(['\n', '\r'], " "), 160);
+    let source = source.as_str();
     let lic_id = licence.split(" (").next().unwrap_or(licence);
     let sha7: String = sha.map(|s| s.chars().take(7).collect()).unwrap_or_else(|| "HEAD".into());
 
@@ -239,11 +276,27 @@ pub(crate) fn distil(readme: &str, name: &str, source: &str, licence: &str, sha:
         out.push_str(&format!("- … (còn {} mục, xem refs/README.md)\n", total - added));
     }
     out.push_str(usage);
+    // Hard ceiling regardless of header length (char boundary).
+    if out.len() > BUDGET {
+        let mut cut = BUDGET;
+        while !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+    }
     out
 }
 
 fn valid_name(n: &str) -> bool {
-    !n.is_empty() && n.chars().all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-'))
+    const RESERVED: [&str; 22] = [
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2",
+        "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    ];
+    !n.is_empty()
+        && n.len() <= 64
+        && n.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && n.chars().all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-'))
+        && !RESERVED.contains(&n)
 }
 
 fn kebab(s: &str) -> String {
@@ -284,7 +337,7 @@ pub(crate) fn learn_into(home: &Path, spec: &str, name: Option<&str>, force: boo
         None => kebab(&default_name),
     };
     if !valid_name(&name) {
-        return Err(anyhow!("tên skill `{name}` không hợp lệ (chỉ [a-z0-9-])"));
+        return Err(anyhow!("tên skill `{name}` không hợp lệ (chỉ [a-z0-9-], bắt đầu bằng chữ/số, ≤64 ký tự, không trùng tên thiết bị Windows)"));
     }
     let target = home.join(".claude/skills").join(&name);
     if target.exists() && !force {
@@ -307,7 +360,7 @@ pub(crate) fn learn_into(home: &Path, spec: &str, name: Option<&str>, force: boo
     };
 
     let lic_file = find_root_file(&root, &["license", "license.md", "license.txt", "copying"]);
-    let lic_text = lic_file.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
+    let lic_text = lic_file.as_ref().and_then(|p| read_capped(p).ok());
     let verdict = match &lic_text {
         Some(t) => classify_licence(t),
         None => Licence::Refused("không có licence = all rights reserved; xin phép tác giả hoặc dùng --force để chỉ lưu ghi chú 1 trang do bạn tự viết".into()),
@@ -331,7 +384,7 @@ pub(crate) fn learn_into(home: &Path, spec: &str, name: Option<&str>, force: boo
 
     let readme_p = find_root_file(&root, &["readme.md", "readme", "readme.markdown", "readme.rst", "readme.txt"])
         .ok_or_else(|| anyhow!("không thấy README ở root repo"))?;
-    let readme = std::fs::read_to_string(&readme_p)?;
+    let readme = read_capped(&readme_p)?;
     let skill = distil(&readme, &name, &url, &licence, sha.as_deref());
 
     if target.exists() {
@@ -357,7 +410,7 @@ pub(crate) fn run(env: &env_detect::Env, args: &[String]) -> Result<()> {
     let mut it = args.iter();
     while let Some(a) = it.next() {
         if a == "--name" {
-            name = it.next().map(|s| s.as_str());
+            name = it.next().map(|s| s.as_str()).filter(|s| !s.starts_with('-'));
         } else if !a.starts_with('-') && spec.is_none() {
             spec = Some(a);
         }
@@ -394,6 +447,59 @@ mod tests {
         assert!(desc.contains("Learn how to design large-scale systems"), "{desc}");
         assert!(!desc.contains('∙'), "{desc}");
         assert!(is_prose("Learn how to design large-scale systems.") && !is_prose("*English ∙ 日本語*"));
+    }
+
+    #[test]
+    fn skill_learn_licence_denylist_beats_allowlist() {
+        let commons = "MIT License with Commons Clause\n\nPermission is hereby granted, free of charge, to any person\n";
+        assert!(matches!(classify_licence(commons), Licence::Refused(w) if w.contains("Commons Clause")));
+        let sspl = "Server Side Public License, VERSION 1\n\nThis License is based on the GNU Affero General Public License\n";
+        assert!(matches!(classify_licence(sspl), Licence::Refused(w) if w.contains("SSPL")));
+        let bsl = "Business Source License 1.1\n";
+        assert!(matches!(classify_licence(bsl), Licence::Refused(_)));
+        assert!(matches!(classify_licence("MIT License\n\nPermission is hereby granted, free of charge\n"), Licence::Allowed(id) if id == "MIT"));
+    }
+
+    #[test]
+    fn skill_learn_name_rules() {
+        for ok in ["a", "sdp", "system-design-primer", "x1-2"] {
+            assert!(valid_name(ok), "{ok}");
+        }
+        for bad in ["", "-force", "--force", "Con", "con", "nul", "com1", "a_b", "a b", &"x".repeat(65)] {
+            assert!(!valid_name(bad), "{bad}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_learn_ignores_symlinked_readme_and_licence() {
+        let tmp = std::env::temp_dir().join(format!("8sync-skill-learn-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let outside = tmp.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "MIT License\nPermission is hereby granted, free of charge\n").unwrap();
+        let repo = tmp.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), repo.join("LICENSE")).unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), repo.join("README.md")).unwrap();
+        assert!(find_root_file(&repo, &["license"]).is_none());
+        assert!(find_root_file(&repo, &["readme.md"]).is_none());
+        let err = learn_into(&tmp.join("home"), &format!("path:{}", repo.display()), Some("sym"), false).unwrap_err();
+        assert!(err.to_string().contains("không có licence"), "{err}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn skill_learn_distil_hard_budget_and_pathological_brackets() {
+        let long_src = format!("https://example.com/{}", "a".repeat(5000));
+        let readme = "# T\n\nA plain description paragraph for this repo here.\n\n## One\n\nx\n";
+        let out = distil(readme, "t", &long_src, "MIT", None);
+        assert!(out.len() <= BUDGET);
+        let brackets = "[".repeat(20_000);
+        let t = std::time::Instant::now();
+        let c = clean(&brackets);
+        assert_eq!(c.len(), 20_000);
+        assert!(t.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[test]
@@ -458,7 +564,8 @@ mod tests {
         };
         assert!(g(&["init", "-q"]) && g(&["add", "."]) && g(&["commit", "-q", "-m", "i"]));
         let home = tmp.join("home");
-        let url = format!("file://{}", repo.display());
+        let p = repo.display().to_string().replace('\\', "/");
+        let url = if p.starts_with('/') { format!("file://{p}") } else { format!("file:///{p}") };
         let (skill, work) = learn_into(&home, &url, None, false).unwrap();
         assert!(!work.join(".git").exists());
         assert!(work.join("README.md").exists());

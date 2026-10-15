@@ -109,8 +109,8 @@ fn trending(lang: Option<String>, days: u32, top: u32, json: bool, out: Option<P
     std::fs::create_dir_all(&dir).with_context(|| format!("tạo {}", dir.display()))?;
     std::fs::write(&path, &md).with_context(|| format!("ghi {}", path.display()))?;
     println!("{}", path.display());
-    for r in items.iter().take(5) {
-        println!("{} ⭐{} {}", r.full_name, r.stargazers_count, r.html_url);
+    for r in items.iter().filter(|r| valid_full_name(&r.full_name)).take(5) {
+        println!("{} ⭐{} {}", r.full_name, r.stargazers_count, safe_url(r));
     }
     Ok(())
 }
@@ -135,6 +135,7 @@ fn enc(s: &str) -> String {
 }
 
 fn query_url(lang: Option<&str>, days: u32, top: u32, today_days: u64) -> String {
+    let days = days.clamp(1, 3650);
     let since = ymd_from_days(today_days as i64 - days as i64);
     let mut q = format!("created:>{since}+stars:>50");
     if let Some(l) = lang.map(str::trim).filter(|l| !l.is_empty()) {
@@ -160,7 +161,7 @@ fn ymd_from_days(days: i64) -> String {
 fn fetch(url: &str) -> Result<Vec<Repo>> {
     let out = Command::new("curl")
         .args([
-            "-s", "--max-time", "12", "-A", "8sync-learn",
+            "-s", "--proto", "=https", "--max-time", "12", "-A", "8sync-learn",
             "-H", "Accept: application/vnd.github+json",
             "-H", "X-GitHub-Api-Version: 2022-11-28",
             url,
@@ -195,8 +196,27 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// `owner/repo` made only of GitHub-legal characters; anything else is dropped as untrusted.
+pub(crate) fn valid_full_name(n: &str) -> bool {
+    let ok = |s: &str| !s.is_empty() && s.len() <= 100 && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    matches!(n.split_once('/'), Some((o, r)) if ok(o) && ok(r))
+}
+
+/// A table cell: no pipes, no link/image/HTML syntax, no control characters (the file is read by an agent).
 fn cell(s: &str) -> String {
-    s.replace('|', "\\|")
+    let flat: String = s
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '[' | ']' | '(' | ')' | '<' | '>' | '!' | '`' | '\\'))
+        .map(|c| if c == '|' { '¦' } else { c })
+        .collect();
+    // No URLs in free text either: renderers auto-link them and the agent would follow.
+    flat.split_whitespace().filter(|w| !w.contains("://") && !w.starts_with("www.")).collect::<Vec<_>>().join(" ")
+}
+
+/// The only link we emit: GitHub's own URL when it is plain, else one rebuilt from the validated name.
+fn safe_url(r: &Repo) -> String {
+    let plain = r.html_url.starts_with("https://github.com/") && r.html_url.chars().all(|c| c.is_ascii_alphanumeric() || "/-_.:".contains(c));
+    if plain { r.html_url.clone() } else { format!("https://github.com/{}", r.full_name) }
 }
 
 pub fn render(items: &[Repo], query_desc: &str, date: &str) -> String {
@@ -205,20 +225,19 @@ pub fn render(items: &[Repo], query_desc: &str, date: &str) -> String {
         "Repo tạo trong {query_desc}, ≥50 sao, sắp theo sao — API search chính thức, không phải trang trending.\n\n"
     ));
     s.push_str("| # | Repo | ⭐ | Licence | Mô tả | Có ích cho 8sync vì |\n|---|---|---|---|---|---|\n");
-    for (i, r) in items.iter().enumerate() {
-        let lic = r.license.as_ref().and_then(|l| l.spdx_id.as_deref()).filter(|l| !l.is_empty()).unwrap_or("—");
-        let d = truncate(r.description.as_deref().unwrap_or(""), 100);
-        // The API answer is data: a link only goes in as a github.com URL made of safe characters.
-        let safe_url = r.html_url.starts_with("https://github.com/") && r.html_url.chars().all(|c| c.is_ascii_alphanumeric() || "/-_.:".contains(c));
-        let url = if safe_url { r.html_url.clone() } else { format!("https://github.com/{}", cell(&r.full_name).replace(['(', ')', ' '], "")) };
+    for (i, r) in items.iter().filter(|r| valid_full_name(&r.full_name)).enumerate() {
+        let lic = cell(r.license.as_ref().and_then(|l| l.spdx_id.as_deref()).filter(|l| !l.is_empty()).unwrap_or("—"));
+        let d = cell(&truncate(r.description.as_deref().unwrap_or(""), 100));
+        // The API answer is data: the only link is a github.com URL made of safe characters.
+        let url = safe_url(r);
         s.push_str(&format!(
             "| {} | [{}]({}) | {} | {} | {} | |\n",
             i + 1,
-            cell(&r.full_name),
+            r.full_name,
             url,
             r.stargazers_count,
-            cell(lic),
-            cell(&d)
+            lic,
+            d
         ));
     }
     s.push_str("\n## Cách dùng: `8sync skill learn <owner/repo>` để chắt lọc thành skill (chỉ repo có licence).\n");
@@ -269,6 +288,23 @@ mod tests {
         items[1].description = Some("NSFW pose pack".into());
         items.retain(|r| !is_noise(r));
         assert_eq!(items.iter().map(|r| r.full_name.as_str()).collect::<Vec<_>>(), ["a/one", "c/three"]);
+    }
+
+    #[test]
+    fn learn_render_neutralises_hostile_fields() {
+        let mut items = parse_response(fixture().as_bytes()).unwrap();
+        items[0].description = Some("see [here](http://evil.test) <img src=x onerror=1> ![i](http://x) `rm` \u{1b}[31m| x".into());
+        items[0].license = Some(License { spdx_id: Some("[MIT](http://evil.test)".into()) });
+        items[1].full_name = "bad name/with space](http://evil.test)".into();
+        items[2].full_name = "../../etc/passwd".into();
+        let full = render(&items, "7 ngày qua", "2026-01-01");
+        let md: String = full.lines().filter(|l| l.starts_with("| ")).collect::<Vec<_>>().join("\n");
+        assert!(!md.contains("evil.test"), "{md}");
+        assert!(!md.contains("<img") && !md.contains("![") && !md.contains('\u{1b}') && !md.contains('`'), "{md}");
+        assert!(md.contains("| 1 | [a/one](https://github.com/a/one) |"), "{md}");
+        assert!(!md.contains("passwd") && !md.contains("with space"));
+        assert_eq!(md.lines().count(), 2, "header + the one valid row: {md}");
+        assert!(valid_full_name("a-b.c_d/e.f-g_h") && !valid_full_name("a//b") && !valid_full_name("a/b/c") && !valid_full_name("ab"));
     }
 
     #[test]
