@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.89.0] — 2026-10-15
 ### Added
 - **`8sync ccc . ls` lists the most recently active session first and shows an urgency flag set by the agent.**
   - New verb `8sync ccc . urgent <high|med|low|clear> [note] [--session <name>]`. With no `--session` it flags the agent's own session, found from `CLAUDE_CODE_SESSION_ID`.
