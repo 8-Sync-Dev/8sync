@@ -103,11 +103,19 @@
 # (cross-platform + sec/rules/aup gates in CLAUDE.md, ship-auto/autopilot/ship-loop/ship
 # skills). v0.79.1 → v0.80.0 had already taken +61,440 B (HQ office rooms, ccc report,
 # secret pipe-through). Ceiling 6400 KiB (~124 KiB left). v0.81.0 was tagged, not published.
+#
+# 2026-10-15 v0.89.0 release run 38683277672: linux-x86_64 (musl) asset 6,616,688 B,
+# 63,088 B over 6400 KiB. v0.88.0 asset 6,547,024 (always-on office; only 6,576 B left)
+# → +69,664 B = `ccc standup` (sprint board: parse/render/lock/overlap, ~450 lines),
+# `ccc . goal` + registry Goal, `ccc . urgent` + newest-first `ls`, goals in the
+# SessionStart room block, and the embedded /sprint skill + longer ship/ship-auto/
+# ship-loop/autopilot/planning text. Ceiling 6592 KiB (~133 KiB left). v0.89.0 was
+# tagged, not published.
 
 set -euo pipefail
 export LC_ALL=C
 
-CEILING="${CEILING:-6553600}"   # 6400 KiB (raised 2026-10-14 from 6272 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+CEILING="${CEILING:-6750208}"   # 6592 KiB (raised 2026-10-15 from 6400 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

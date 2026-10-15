@@ -5,7 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
-## [0.89.0] — 2026-10-15
+## [0.89.1] — 2026-10-15
+### Changed
+- Release size ceiling 6400 → 6592 KiB, attributed in `scripts/size-gate.sh` (v0.89.0 linux-x86_64 was 6,616,688 B, 63,088 B over; +69,664 B vs v0.88.0). v0.89.0 was tagged but not published; 0.89.1 ships everything listed under 0.89.0.
+
+## [0.89.0] — 2026-10-15 (tagged, not published)
 ### Added
 - **`8sync ccc . ls` lists the most recently active session first and shows an urgency flag set by the agent.**
   - New verb `8sync ccc . urgent <high|med|low|clear> [note] [--session <name>]`. With no `--session` it flags the agent's own session, found from `CLAUDE_CODE_SESSION_ID`.
