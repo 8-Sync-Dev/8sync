@@ -45,8 +45,8 @@ export const GUIDE_STEPS: GuideStep[] = [
   },
   {
     icon: MessagesSquareIcon,
-    title: "Chat nhóm",
-    body: "Xem ai nhắn ai theo thời gian. Khi một người chuyển việc cho người khác, bạn sẽ thấy thẻ bàn giao (handoff) \"A → B\".",
+    title: "Chat tổng",
+    body: "Mọi phòng (session) chung một cuộc chat: xem ai nhắn ai theo thời gian. Khi một người chuyển việc cho người khác, bạn sẽ thấy thẻ bàn giao (handoff) \"A → B\".",
   },
   {
     icon: BellRingIcon,

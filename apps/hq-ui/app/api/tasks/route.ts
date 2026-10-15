@@ -8,6 +8,7 @@ import { capturePlain, listTmux, sendKeys } from "@/lib/server/proc";
 import { isSessionId, queueInbox } from "@/lib/server/inbox";
 import { ownerMessage, tasksFor } from "@/lib/server/queries";
 import { clampText, isTmuxName, validateProjectPath } from "@/lib/server/validate";
+import { parseSchedule, scheduleLabel, scheduledPrompt } from "@/lib/schedule";
 
 export const runtime = "nodejs";
 
@@ -41,12 +42,17 @@ export async function POST(req: Request) {
   if (!hasSession && !role) return bad("session or role is required", 422);
   const prio = typeof body.prio === "string" && body.prio ? body.prio.toUpperCase() : null;
   if (prio && !PRIOS.includes(prio)) return bad("prio must be one of P0-P3", 422);
+  const sched = parseSchedule(body.schedule);
+  if (!sched.ok) return bad(`schedule: ${sched.error}`, 422);
 
   const { db } = o;
   let session = hasSession ? (body.session as string) : "";
   let started = false;
   const extra = [role && `role: ${role}`, prio && `prio: ${prio}`].filter(Boolean).join(", ");
-  const text = `New task: ${subject.value}${extra ? ` (${extra})` : ""}${details?.ok ? `\n${details.value}` : ""}`;
+  const plain = `New task: ${subject.value}${extra ? ` (${extra})` : ""}${details?.ok ? `\n${details.value}` : ""}`;
+  // Scheduled: the session books it with its own CronCreate; the task row says when.
+  const text = sched.value ? scheduledPrompt(plain, sched.value) : plain;
+  const title = sched.value ? `${subject.value} · ⏰ ${scheduleLabel(sched.value)} (nhờ phiên lên lịch)` : subject.value;
   if (!hasSession) {
     const picked = await pickByRole(db, role as string);
     if (picked) session = picked;
@@ -63,7 +69,7 @@ export async function POST(req: Request) {
     const taskId = `owner:${stamp()}`;
     db.prepare(
       "INSERT INTO tasks(session, task_id, subject, role, prio, status, updated_at) VALUES (?, ?, ?, ?, ?, 'todo', ?)",
-    ).run(session, taskId, subject.value, role, prio, stamp());
+    ).run(session, taskId, title, role, prio, stamp());
     const task = db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(taskId);
     queueInbox(session, text);
     const message = ownerMessage(db, session, text, "inbox");
@@ -75,7 +81,7 @@ export async function POST(req: Request) {
   const taskId = `owner:${stamp()}`;
   db.prepare(
     "INSERT INTO tasks(session, task_id, subject, role, prio, status, updated_at) VALUES (?, ?, ?, ?, ?, 'todo', ?)",
-  ).run(session, taskId, subject.value, role, prio, stamp());
+  ).run(session, taskId, title, role, prio, stamp());
   const task = db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(taskId);
   if (started) return json({ task, session, started, message: null, delivery: "first-prompt", error: null }, 201);
   let r: Awaited<ReturnType<typeof deliverWatched>>;

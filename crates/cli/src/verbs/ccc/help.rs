@@ -48,7 +48,7 @@ TỰ ĐỘNG (gõ trong Claude Code)
   8sync ccc hook ship-grant    (hook) ghi giấy phép khi owner duyệt câu hỏi `Ship`
   8sync ccc idle on [--hours 2] [--usd-per-hour 5]   không-ai-rảnh cho agent team (mặc định TẮT; subscription = lease khi owner có mặt)
   8sync ccc idle off | status [--json]                 (bật thêm gate TaskCompleted: task sửa code chưa test thì chưa cho xong)
-  8sync ccc delegate on | off | status                 critic chọn thay owner câu hỏi sản phẩm/kỹ thuật (mặc định TẮT; Ship/secret/xoá/tiền vẫn hỏi)
+  8sync ccc delegate on [--after 1m] | off | status    critic chọn thay owner câu hỏi sản phẩm/kỹ thuật (mặc định TẮT; --after: chỉ khi owner không gõ prompt N giây — bấm trả lời dialog không tính; Ship/secret/xoá/tiền vẫn hỏi)
 
 XEM
   8sync ccc . show <tên> [--json]   tóm tắt một session
@@ -56,7 +56,7 @@ XEM
   8sync hq ui                       dashboard HQ trong trình duyệt
 
 AN TOÀN
-  8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate>
+  8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|wake>
                                hook do kit đăng ký, không gõ tay
   8sync ccc secret keys <file.env>  tên key trong file (không bao giờ in giá trị)
   8sync ccc secret set <encore|vercel|gh> <TÊN> (--from <file.env> | --generate) --type prod,dev | --env production

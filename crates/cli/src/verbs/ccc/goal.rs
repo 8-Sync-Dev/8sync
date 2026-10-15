@@ -26,10 +26,12 @@ pub(super) fn run(store: &Store, args: &[String], env_id: Option<&str>, now: u64
                 Some(n) => session = Some(n.clone()),
                 None => bail!("{usage}"),
             },
+            "--help" | "-h" => return Ok(usage.to_string()),
             "--files" => match it.next() {
                 Some(f) => files.extend(f.split(',').map(str::trim).filter(|p| !p.is_empty()).map(|p| clean(p, PATH_MAX))),
                 None => bail!("{usage}"),
             },
+            s if s.starts_with('-') && s.len() > 1 => bail!("unknown flag `{s}`\n{usage}"),
             s => words.push(s),
         }
     }
@@ -120,6 +122,10 @@ mod tests {
         assert!(run(&st, &s(&["x", "--session", "ghost"]), None, 1).unwrap_err().to_string().contains("no session 'ghost'"));
         assert!(run(&st, &s(&["x"]), Some("not-ours"), 1).unwrap_err().to_string().contains("not a named"));
         assert!(run(&st, &s(&["x", "--files"]), None, 1).is_err());
+        assert!(run(&st, &s(&["--help"]), None, 1).unwrap().starts_with("usage:"), "help prints usage");
+        assert!(run(&st, &s(&["-h", "--session", "rd"]), None, 1).unwrap().starts_with("usage:"));
+        assert!(run(&st, &s(&["fix", "--force", "--session", "rd"]), None, 1).unwrap_err().to_string().contains("unknown flag"));
+        assert!(st.load().sessions[0].goal.is_none(), "help / bad flag leave the registry alone");
         run(&st, &s(&["\u{1b}[2Jdọn", "màn", "--session", "rd"]), None, 1).unwrap();
         assert_eq!(st.load().sessions[0].goal.as_ref().unwrap().text, "[2Jdọn màn");
         let key = format!("deploy sk-ant-api03-{}", "A".repeat(40));

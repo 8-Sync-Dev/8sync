@@ -9,11 +9,20 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ROLES, modelShort, type RoleId } from "@/lib/roles";
+import { EVERY_HOURS, EVERY_MINUTES, RD_DUTY, scheduleLabel, type Schedule } from "@/lib/schedule";
 import { addressOf, messageTargets, sessionLabel } from "@/lib/labels";
 import type { Hq } from "./use-hq";
 import type { Message, Project, Session, Task } from "./types";
 
 const PRIOS = ["P0", "P1", "P2", "P3"] as const;
+/** "Khi nào": now, once at HH:MM, daily at HH:MM, or every N minutes/hours (`m:30`, `h:2`). */
+const WHEN_EVERY = [...EVERY_MINUTES.map((n) => `m:${n}`), ...EVERY_HOURS.map((n) => `h:${n}`)];
+
+function toSchedule(when: string, at: string): Schedule | null {
+  if (when === "once" || when === "daily") return { kind: when, at };
+  if (when.startsWith("m:") || when.startsWith("h:")) return { kind: "every", n: Number(when.slice(2)), unit: when[0] as "m" | "h" };
+  return null;
+}
 type Target = `role:${string}` | `session:${string}`;
 
 export type AssignDialogProps = {
@@ -41,6 +50,8 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defau
   const [details, setDetails] = useState("");
   const [target, setTarget] = useState<Target>(defaultSession ? `session:${defaultSession}` : `role:${defaultRole ?? "fullstack"}`);
   const [prio, setPrio] = useState<string>("P2");
+  const [when, setWhen] = useState<string>("now");
+  const [at, setAt] = useState<string>("09:03");
   const [projectId, setProjectId] = useState<string>(
     String(usable.find((p) => p.id === defaultProjectId)?.id ?? usable[0]?.id ?? ""),
   );
@@ -58,7 +69,8 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defau
     setError(null);
     try {
       const [kind, value] = [target.split(":")[0], target.slice(target.indexOf(":") + 1)];
-      const body: Record<string, unknown> = { subject: subject.trim(), details: details.trim() || undefined, prio };
+      const schedule = toSchedule(when, at);
+      const body: Record<string, unknown> = { subject: subject.trim(), details: details.trim() || undefined, prio, schedule: schedule ?? undefined };
       if (kind === "session") body.session = value;
       else {
         body.role = value;
@@ -71,10 +83,12 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defau
       else {
         const s = sessions.find((x) => x.name === r.session || x.session_id === r.session);
         const who = s ? sessionLabel(s) : r.session.slice(0, 8);
-        toast.success(`${r.started ? "Đã mở phiên mới và giao cho" : "Đã giao cho"} ${who}${r.delivery === "inbox" ? " qua inbox (nhận khi xong lượt)" : ""}`);
+        const plan = schedule ? ` · đã nhờ phiên lên lịch ${scheduleLabel(schedule)} (chưa xác nhận: xem câu trả lời của phiên)` : "";
+        toast.success(`${r.started ? "Đã mở phiên mới và giao cho" : "Đã giao cho"} ${who}${r.delivery === "inbox" ? " qua inbox (nhận khi xong lượt)" : ""}${plan}`);
       }
       setSubject("");
       setDetails("");
+      setWhen("now");
       onOpenChange(false);
     } catch (err) {
       // Shown inside the dialog: a toast behind the modal is easy to miss.
@@ -92,6 +106,20 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defau
             <DialogTitle>Giao việc</DialogTitle>
             <DialogDescription>Chọn một vai trò (dùng phiên đang chạy hoặc mở phiên mới) hoặc một phiên cụ thể.</DialogDescription>
           </DialogHeader>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="justify-self-start"
+            onClick={() => {
+              setSubject(RD_DUTY.subject);
+              setDetails(RD_DUTY.details);
+              setTarget("role:rd");
+              setWhen(`m:${RD_DUTY.schedule.n}`);
+            }}
+          >
+            Mẫu: R&amp;D trực (mỗi 30 phút)
+          </Button>
           <div className="grid gap-1.5">
             <Label htmlFor="assign-subject">Việc cần làm</Label>
             <Input id="assign-subject" value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={300} required autoFocus />
@@ -152,6 +180,34 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defau
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="assign-when">Khi nào</Label>
+            <div className="flex gap-2">
+              <Select value={when} onValueChange={setWhen}>
+                <SelectTrigger id="assign-when" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="now">Ngay bây giờ</SelectItem>
+                  <SelectItem value="once">Một lần, lúc…</SelectItem>
+                  <SelectItem value="daily">Hằng ngày, lúc…</SelectItem>
+                  {WHEN_EVERY.map((w) => (
+                    <SelectItem key={w} value={w}>
+                      Lặp mỗi {w.slice(2)} {w[0] === "m" ? "phút" : "giờ"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {(when === "once" || when === "daily") && (
+                <Input aria-label="Giờ (giờ máy)" type="time" value={at} onChange={(e) => setAt(e.target.value)} required className="w-32" />
+              )}
+            </div>
+            {when !== "now" && (
+              <p className="text-xs text-muted-foreground">
+                Phiên tự lên lịch bằng CronCreate của Claude Code, theo giờ của máy chạy phiên: chạy giữa các lượt khi phiên còn mở, lịch lặp trễ tối đa nửa chu kỳ và tự hết hạn sau 7 ngày, giờ đã qua thì chạy ngày mai. Lượt bị bỏ khi phiên đang bận hoặc (login subscription) bạn vắng quá 30 phút.
+              </p>
+            )}
           </div>
           {error && (
             <p role="alert" className="text-sm text-destructive">

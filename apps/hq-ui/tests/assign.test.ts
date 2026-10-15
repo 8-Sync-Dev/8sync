@@ -90,6 +90,30 @@ describe("assign by role", () => {
   });
 });
 
+describe("scheduled assign", () => {
+  it("delivers a CronCreate booking prompt and labels the task row", async () => {
+    const res = await post({ subject: "check CI", session: "hq-abc", schedule: { kind: "every", n: 30, unit: "m" } });
+    expect(res.status).toBe(201);
+    expect(m.sendKeys).toHaveBeenCalledWith("hq-abc", expect.stringContaining('CronCreate với cron "*/30 * * * *"'));
+    expect(m.sendKeys).toHaveBeenCalledWith("hq-abc", expect.stringContaining("New task: check CI"));
+    expect(m.sendKeys).toHaveBeenCalledWith("hq-abc", expect.stringContaining("[8sync:wake] New task: check CI"));
+    expect(getDb().prepare("SELECT subject FROM tasks WHERE session = 'hq-abc'").get()).toEqual({ subject: "check CI · ⏰ ≈mỗi 30 phút (nhờ phiên lên lịch)" });
+  });
+  it("a fresh role session gets the booking prompt as its first prompt", async () => {
+    m.live = [];
+    const res = await post({ subject: "nightly audit", role: "rd", project: pid, schedule: { kind: "daily", at: "02:13" } });
+    const j = await res.json();
+    expect(j).toMatchObject({ started: true, delivery: "first-prompt" });
+    expect(m.startTmux).toHaveBeenCalledWith(j.session, expect.any(String), expect.objectContaining({ prompt: expect.stringContaining('cron "13 2 * * *"') }));
+  });
+  it("rejects a bad schedule before storing anything", async () => {
+    expect((await post({ subject: "x", session: "hq-abc", schedule: { kind: "once", at: "25:00" } })).status).toBe(422);
+    expect((await post({ subject: "x", session: "hq-abc", schedule: { kind: "every", n: 7, unit: "m" } })).status).toBe(422);
+    expect(m.sendKeys).not.toHaveBeenCalled();
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 });
+  });
+});
+
 describe("validation and auth", () => {
   it("rejects bad role, bad model, missing target, bad session", async () => {
     expect((await post({ subject: "x", role: "wizard", project: pid })).status).toBe(422);

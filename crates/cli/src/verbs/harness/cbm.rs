@@ -41,19 +41,29 @@ pub(crate) fn flag_enabled(home: &Path, key: &str, env_var: &str) -> bool {
     resolve(std::env::var(env_var).ok().as_deref(), read_flag_key(home, key))
 }
 
+pub(crate) fn read_int_key(home: &Path, key: &str) -> Option<i64> {
+    let s = std::fs::read_to_string(features_path(home)).ok()?;
+    s.parse::<toml::Table>().ok()?.get(key)?.as_integer()
+}
+
 pub(crate) fn read_flag_key(home: &Path, key: &str) -> Option<bool> {
     let s = std::fs::read_to_string(features_path(home)).ok()?;
     s.parse::<toml::Table>().ok()?.get(key)?.as_bool()
 }
 
 pub(crate) fn write_flag_key(home: &Path, key: &str, on: bool) -> Result<()> {
+    write_key(home, key, toml::Value::Boolean(on))
+}
+
+/// Any value in `features.toml`, keeping the owner's other keys.
+pub(crate) fn write_key(home: &Path, key: &str, value: toml::Value) -> Result<()> {
     let p = features_path(home);
     let mut t = match std::fs::read_to_string(&p) {
         // never replace a file we cannot parse: it may hold the owner's other keys
         Ok(s) => s.parse::<toml::Table>().map_err(|e| anyhow::anyhow!("{} is not valid TOML ({e}); fix it first", p.display()))?,
         Err(_) => toml::Table::new(),
     };
-    t.insert(key.into(), toml::Value::Boolean(on));
+    t.insert(key.into(), value);
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
     }

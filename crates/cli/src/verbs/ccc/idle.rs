@@ -33,7 +33,7 @@ const DEFAULT_HOURS: u64 = 2;
 const DEFAULT_USD_PER_HOUR: f64 = 5.0;
 /// Subscription: lease cap and "owner present" window (last prompt typed by a human).
 const SUB_MAX_HOURS: f64 = 4.0;
-const PRESENT_S: u64 = 30 * 60;
+pub(super) const PRESENT_S: u64 = 30 * 60;
 /// Another session's task list counts as "has work" only when touched this recently.
 const ROOM_FRESH_S: u64 = 2 * 3600;
 
@@ -391,7 +391,7 @@ pub(super) fn gate(lease: Option<&Value>, subscription: bool, spent: f64, now: u
 }
 
 /// "2026-10-14T03:31:00.123Z" → unix seconds (UTC only, as Claude Code writes it).
-fn iso_secs(s: &str) -> Option<u64> {
+pub(super) fn iso_secs(s: &str) -> Option<u64> {
     let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
     let (y, mo, d, h, mi, se) = (n(0..4)?, n(5..7)?, n(8..10)?, n(11..13)?, n(14..16)?, n(17..19)?);
     // days from civil (Howard Hinnant)
@@ -406,7 +406,7 @@ fn iso_secs(s: &str) -> Option<u64> {
 
 /// Time of the last prompt a human typed in a transcript (cross-session and teammate messages
 /// do not count), from its last 1 MiB.
-fn last_human_ts(transcript: &Path) -> Option<u64> {
+pub(super) fn last_human_ts(transcript: &Path) -> Option<u64> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(transcript).ok()?;
     let len = f.metadata().ok()?.len();
