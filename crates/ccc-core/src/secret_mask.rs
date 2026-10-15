@@ -190,10 +190,18 @@ fn value_core(w: &str) -> (usize, usize) {
     (lead.len(), lead.len() + t.len())
 }
 
+/// Weak-trigger value shape: a digit or a symbol other than the identifier
+/// joiners `-`, `_`, `.`, `/`. Keeps "PASS hook-latency" and "pass my_test"
+/// readable while "pwd hunter2x" / "password is Demo#Secret" still mask.
+fn secret_shaped(core: &str) -> bool {
+    core.chars().any(|c| c.is_ascii_digit() || !(c.is_alphabetic() || matches!(c, '-' | '_' | '.' | '/')))
+}
+
 /// Mask the value that follows a password-ish trigger word in free prose.
 /// Value must be one token of 4+ chars. After `:`/`=` any token counts; after
-/// `là`/`is` or no separator the token must contain a non-letter (digit/symbol),
-/// so "password is wrong" / "password reset flow" stay readable.
+/// `là`/`is` or no separator the token must be [`secret_shaped`] (digit or a
+/// non-joiner symbol), so "password is wrong" / "password reset flow" /
+/// "PASS hook-latency" stay readable.
 fn mask_prose(s: &str) -> String {
     // (is_whitespace, text) segments
     let mut segs: Vec<(bool, &str)> = Vec::new();
@@ -265,7 +273,7 @@ fn mask_prose(s: &str) -> String {
             let v = segs[k].1;
             let (a, b) = value_core(v);
             let core = &v[a..b];
-            let shape_ok = !weak || core.chars().any(|c| !c.is_alphabetic());
+            let shape_ok = !weak || secret_shaped(core);
             if core.chars().count() >= 4 && core != MASK && shape_ok && !TRIGGERS.contains(&norm(core).as_str()) {
                 hit.push(k);
             }
@@ -458,6 +466,28 @@ mod tests {
             assert_eq!(mask(t), t, "{t}");
         }
         assert_eq!(mask("pass: ok"), "pass: ok");
+    }
+
+    /// `8sync ccc loop ev` journals check output; a bench line like
+    /// "PASS hook-latency" used to become "PASS ***" (hyphen counted as a
+    /// secret-shaped value after the bare trigger "pass").
+    #[test]
+    fn prose_identifiers_after_bare_trigger_untouched() {
+        for t in [
+            "PASS hook-latency (7 runs each)",
+            "FAIL hook-latency",
+            "hook-latency\nfoo-latency\nhook-x",
+            "pass hook-x",
+            "pass my_test.rs",
+            "password is foo-bar",
+            "token is scripts/uat/hook-latency.sh",
+            "mật khẩu là foo_bar",
+        ] {
+            assert_eq!(mask(t), t, "{t}");
+        }
+        // digits or real symbols after the same triggers still mask
+        assert_eq!(mask("pass hook-1234"), "pass ***");
+        assert_eq!(mask("password is foo#bar"), "password is ***");
     }
 
     #[test]

@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **Secret masker (`ccc_core::secret_mask`)**: a kebab/snake identifier after a bare password-ish word is no longer masked — `8sync ccc loop ev` journaled the bench line `PASS hook-latency (7 runs each)` as `PASS *** (7 runs each)` because "PASS" is a trigger and the hyphen counted as a secret-shaped value. After `pass`/`là`/`is`/no separator the value now needs a digit or a symbol other than `-_./`; `pass hook-1234`, `password is foo#bar` still mask (tests: `prose_identifiers_after_bare_trigger_untouched`).
 
 ## [0.90.0] — 2026-10-15
 ### Added
