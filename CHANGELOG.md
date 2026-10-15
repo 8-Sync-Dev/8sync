@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.92.1] — 2026-10-15
+### Fixed
+- **HQ "Giao việc" › Một phiên** on real data: every session the owner started outside HQ landed under "Phiên khác", and two rooms with the same name (two `rd`, two `web`) were indistinguishable. The list now groups those sessions by the git folder + branch their office room reports, exactly like the sidebar ("su-code ⎇ main"), and a duplicated name gets its first 8 session-id characters ("rd · 1a2b3c4d") in the list, the fan-out chips and the summary line (`groupTargets(sessions, projects, rooms)`, `distinctLabels`; tests in tests/assign-ui.test.ts).
+
 ## [0.92.0] — 2026-10-15
 ### Changed
 - **HQ "Giao việc" dialog redesigned.** Owner (2026-10-15): one dropdown mixed roles and sessions, so it was unclear whether a task went to one session, to a role, or to every session of a repo. The dialog now has three explicit ways to hand a task: **Một phiên** (a list of live sessions grouped by project, with status dot, role and terminal/inbox delivery), **Theo vai trò** (role cards showing model and how many sessions of that role are running; "mở mới" + project picker when none) and **Cả dự án** (every live session of one project, or of all projects, each gets its own task row). A summary line above the buttons says exactly where the task will go, e.g. "Giao cho phiên rd qua inbox", "Giao cho phiên R&D rảnh lâu nhất trong 2 phiên: rd-1, rd-2" or "Giao cùng một việc cho 4 phiên trong levels-repo". Priority is a P0–P3 segmented control; "Khi nào" sits beside it; the R&D preset is a text link. Pure rules live in `lib/assign.ts` (tests/assign-ui.test.ts). Dark/light and phone widths checked with a headless browser against a seeded preview (not verified: Windows, macOS browsers).
