@@ -4,6 +4,13 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **`8sync ccc . ls` lists the most recently active session first and shows an urgency flag set by the agent.**
+  - New verb `8sync ccc . urgent <high|med|low|clear> [note] [--session <name>]`. With no `--session` it flags the agent's own session, found from `CLAUDE_CODE_SESSION_ID`.
+  - `ls` shows the flag as text plus colour: `▲ high` (red), `◆ med` (yellow), `▽ low` (cyan). The note goes on a `flag` line, cut to one line of at most 80 characters, with secrets masked.
+  - `ls --json` rows come newest first and carry `urgency` (`level`, `note`, `set_at`).
+  - Old session indexes load unchanged.
+  - The kit's CLAUDE.md and `8sync-cli` skill tell agents to set `high` when blocked on the owner, `med` when waiting on a teammate, and `clear` when resolved.
 
 ## [0.88.0] — 2026-10-15
 ### Added

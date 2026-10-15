@@ -4,7 +4,7 @@
 /// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
 #[cfg(test)]
 pub(super) const VERBS: &[&str] =
-    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "ls", "list", "rm", "new", "compact", "secret", "idle", "delegate"];
+    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "ls", "list", "urgent", "rm", "new", "compact", "secret", "idle", "delegate"];
 
 /// Words that look like verbs: never a session name, never a headless claude launch.
 /// Includes hook sub-verbs people type without `hook`.
@@ -16,7 +16,8 @@ pub(super) const TEXT: &str = "\
 SESSION
   8sync ccc . <tên>            tạo hoặc tiếp tục session <tên> trong repo này (flag sau tên đi thẳng vào claude)
   8sync ccc .                  tiếp tục session dùng gần nhất
-  8sync ccc . ls [--json]      liệt kê session (alias: list)
+  8sync ccc . ls [--json]      liệt kê session, mới hoạt động nhất lên đầu, kèm mức urgent (alias: list)
+  8sync ccc . urgent <high|med|low|clear> [ghi chú] [--session <tên>]   agent tự đặt mức cần owner chú ý cho session của mình
   8sync ccc . new <tên>        tạo session mới (từ chối tên đã có)
   8sync ccc . rm <tên>         xoá session và transcript
   8sync ccc . <tên> --team     bật agent teams (thêm --panes: tmux split)

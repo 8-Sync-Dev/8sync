@@ -21,7 +21,24 @@ pub struct Session {
     pub conversation_id: String,
     pub created: u64,
     pub last_active: u64,
+    /// How urgently this session needs attention, set by the agent running in it
+    /// (`8sync ccc . urgent`). Absent in older index files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub urgency: Option<Urgency>,
 }
+
+/// An agent-set attention flag shown by `ccc . ls`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Urgency {
+    /// `high` | `med` | `low` (see [`URGENCY_LEVELS`]).
+    pub level: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    pub set_at: u64,
+}
+
+/// Valid urgency levels, most urgent first.
+pub const URGENCY_LEVELS: [&str; 3] = ["high", "med", "low"];
 
 /// One repo's registry for one CLI. `verb` is the user-facing command
 /// (`forge`, `ccc .`) used in messages.
@@ -88,7 +105,7 @@ impl Store {
                     existing.clone()
                 }
                 None => {
-                    let s = Session { name: name.to_string(), conversation_id: new_uuid(), created: t, last_active: t };
+                    let s = Session { name: name.to_string(), conversation_id: new_uuid(), created: t, last_active: t, urgency: None };
                     reg.sessions.push(s.clone());
                     s
                 }
@@ -109,6 +126,30 @@ impl Store {
                 reg.last_used = reg.sessions.last().map(|x| x.name.clone());
             }
             Ok(Some(s))
+        })
+    }
+
+    /// Set (or with `None` clear) the urgency of the session named `name` or, when
+    /// `name` is `None`, the one whose conversation id is `id`. Returns the session
+    /// name it changed, or `None` when nothing matched.
+    pub fn set_urgency(&self, name: Option<&str>, id: Option<&str>, urgency: Option<Urgency>) -> Result<Option<String>> {
+        if let Some(u) = &urgency {
+            if !URGENCY_LEVELS.contains(&u.level.as_str()) {
+                bail!("invalid urgency '{}' (use high, med, low or clear)", u.level);
+            }
+        }
+        if name.is_none() && id.is_none() {
+            return Ok(None);
+        }
+        self.update(|reg| {
+            let hit = reg.sessions.iter_mut().find(|s| match name {
+                Some(n) => s.name == n,
+                None => Some(s.conversation_id.as_str()) == id,
+            });
+            Ok(hit.map(|s| {
+                s.urgency = urgency;
+                s.name.clone()
+            }))
         })
     }
 }
@@ -212,6 +253,37 @@ mod tests {
     }
 
     #[test]
+    fn urgency_set_by_name_or_id_and_cleared() {
+        let st = store("urg");
+        let a = st.touch("a", false).unwrap();
+        st.touch("b", false).unwrap();
+        let u = |l: &str| Urgency { level: l.into(), note: Some("chờ owner".into()), set_at: 5 };
+        assert_eq!(st.set_urgency(Some("b"), None, Some(u("high"))).unwrap().as_deref(), Some("b"));
+        assert_eq!(st.set_urgency(None, Some(&a.conversation_id), Some(u("low"))).unwrap().as_deref(), Some("a"));
+        let reg = st.load();
+        assert_eq!(reg.sessions[1].urgency, Some(u("high")));
+        assert_eq!(reg.sessions[0].urgency.as_ref().map(|x| x.level.as_str()), Some("low"));
+        assert_eq!(st.set_urgency(Some("b"), None, None).unwrap().as_deref(), Some("b"));
+        assert_eq!(st.load().sessions[1].urgency, None);
+        assert_eq!(st.set_urgency(Some("nope"), None, Some(u("med"))).unwrap(), None);
+        assert_eq!(st.set_urgency(None, Some("not-an-id"), Some(u("med"))).unwrap(), None);
+        assert_eq!(st.set_urgency(None, None, Some(u("med"))).unwrap(), None);
+        assert!(st.set_urgency(Some("a"), None, Some(u("urgent"))).is_err());
+        let _ = std::fs::remove_dir_all(&st.dir);
+    }
+
+    #[test]
+    fn cleared_urgency_is_not_written() {
+        let st = store("urgw");
+        st.touch("a", false).unwrap();
+        st.set_urgency(Some("a"), None, Some(Urgency { level: "med".into(), note: None, set_at: 1 })).unwrap();
+        assert!(std::fs::read_to_string(st.dir.join("index.json")).unwrap().contains("\"urgency\""));
+        st.set_urgency(Some("a"), None, None).unwrap();
+        assert!(!std::fs::read_to_string(st.dir.join("index.json")).unwrap().contains("urgency"));
+        let _ = std::fs::remove_dir_all(&st.dir);
+    }
+
+    #[test]
     fn loads_existing_on_disk_format_and_mutates_it() {
         let st = store("fixture");
         std::fs::create_dir_all(&st.dir).unwrap();
@@ -226,6 +298,7 @@ mod tests {
         let reg = st.load();
         assert_eq!(reg.last_used.as_deref(), Some("alpha"));
         assert_eq!(reg.sessions[1].conversation_id, "22222222-2222-4222-8222-222222222222");
+        assert!(reg.sessions.iter().all(|s| s.urgency.is_none()), "old index has no urgency field");
         assert_eq!(st.touch("beta", false).unwrap().created, 110);
         assert_eq!(st.remove("alpha").unwrap().unwrap().last_active, 200);
         let reg = st.load();
