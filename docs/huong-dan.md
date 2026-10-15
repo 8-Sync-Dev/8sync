@@ -13,7 +13,7 @@ curl -fsSL https://8-sync-dev.github.io/su-code/install | sh      # lần đầu
 # Windows PowerShell: irm https://8-sync-dev.github.io/su-code/install.ps1 | iex
 8sync up            # cập nhật 8sync (kiểm sha256)
 8sync ccc kit       # cài hoặc cập nhật kit vào ~/.claude: agents, /ship, hook, guard, stop gate
-8sync ccc status    # kiểm: claude, login, kit 19/19, managed settings, MCP
+8sync ccc status    # kiểm: claude, login, kit 28/28, managed settings, MCP
 ```
 
 Nếu `8sync ccc status` báo thiếu login, chạy `claude` một lần và đăng nhập.
@@ -94,6 +94,9 @@ Agent có sẵn trong kit: `explore`, `task`, `quick-task`, `reviewer`, `designe
   - chi phí tăng theo số teammate, nên dùng 3–5;
   - chia file rõ ràng để teammate không sửa trùng nhau.
 - Khác với **nhiều session** (`8sync ccc . a`, `8sync ccc . b`): các session riêng nhắn nhau qua `SendMessage` và hiện trên `8sync hq ui`. Team thì nằm gọn trong một session.
+- **Tên session là phòng ban.** Đặt tên có nghĩa: `rd`, `qa`, `ui`, `api`, `ops`, `docs`, `sec`, `critic`, `lead`, `core`. Tên khác cũng được, khi đó chính cái tên là chủ đề của phòng. Lúc mở session, kit báo cho Claude ba thứ: vai của phòng, ≤5 dòng memory theo chủ đề tên, và "Phòng khác đang làm" (session khác cùng repo hoạt động trong 2 giờ qua: việc đang làm, file đang sửa) để không sửa trùng file.
+- **Không ai rảnh** (`8sync ccc idle on`, mặc định tắt): teammate R&D (tên `rd`, `research…`, `explore…`) hết việc thì tự `/deep-research` câu hỏi mở đầu tiên trong `su-code/STATE.md` → brief trong `su-code/research/` → plan, rồi hỏi anh MỘT bảng câu hỏi có option Recommended. Trên gói subscription chỉ chạy khi anh có mặt (lease), có trần $/giờ.
+- **Critic chọn thay anh** (`8sync ccc delegate on`, mặc định tắt): câu hỏi sản phẩm/kỹ thuật không tới anh nữa. Agent `critic` chấm option (FATAL/MAJOR/MINOR), chọn một, ghi vào `su-code/DECISIONS.md`. Những câu vẫn hỏi anh: câu `Ship`, secret/đăng nhập, xoá/không hoàn tác, tiền, deploy prod, merge/release, quyết định high-risk. Tắt: `8sync ccc delegate off`.
 
 ## 5. Team trên web local: `8sync hq ui`
 

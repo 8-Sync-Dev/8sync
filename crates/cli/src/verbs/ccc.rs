@@ -23,6 +23,7 @@ use crate::{assets, pkg, ui};
 
 mod compact;
 mod danger;
+mod delegate;
 mod fence;
 mod gate;
 mod grant;
@@ -34,6 +35,7 @@ mod output_budget;
 pub(crate) mod report;
 mod secret;
 mod resume;
+mod room;
 mod statusline;
 mod taskdone;
 mod verify;
@@ -161,6 +163,7 @@ pub fn run(a: Args) -> Result<()> {
             res
         }
         "compact" => compact::run(rest, &claude_dir(&env)),
+        "delegate" => delegate::run(rest, &env.home),
         "idle" => idle::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription"),
         "secret" => secret::run(rest),
         "status" => status(&env, &root),
@@ -488,7 +491,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 27] = [
+const KIT_FILES: [(&str, &str); 28] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -499,6 +502,7 @@ const KIT_FILES: [(&str, &str); 27] = [
     ("claude/agents/pm.md", "agents/pm.md"),
     ("claude/agents/architect.md", "agents/architect.md"),
     ("claude/agents/qa.md", "agents/qa.md"),
+    ("claude/agents/critic.md", "agents/critic.md"),
     ("claude/skills/ship/SKILL.md", "skills/ship/SKILL.md"),
     ("claude/skills/planning/SKILL.md", "skills/planning/SKILL.md"),
     ("claude/skills/ui-ux/SKILL.md", "skills/ui-ux/SKILL.md"),
@@ -892,6 +896,13 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             }]
         }),
     );
+    // Owner-delegated questions (`8sync ccc delegate on`): a no-op unless the owner turned it on;
+    // then product/technical AskUserQuestion calls are denied with "let the critic pick".
+    upsert_hook_group(
+        hooks,
+        "PreToolUse",
+        json!({ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "delegate"], "timeout": 5 }] }),
+    );
     // The guard stays on the broad matcher with no `if`: the hook `if` field takes
     // a single permission rule, and narrowing it would let some commands/edits
     // (e.g. `git add` of secrets, credential paths) skip the check.
@@ -1231,6 +1242,25 @@ fn session_start_output(input: &str, home: Option<&Path>) -> Option<String> {
     let start = v["cwd"].as_str().map(PathBuf::from).or_else(|| std::env::current_dir().ok()).unwrap_or_default();
     let root = find_state_root(&start, home);
     let mut out = root.map(|r| session_digest(&r)).unwrap_or_default();
+    // The room this session is (its registry name → role, recall, what other rooms are doing).
+    if let Some(h) = home {
+        let claude = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| h.join(".claude"));
+        let cfg = dirs::config_dir().unwrap_or_else(|| h.join(".config"));
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        // shared 10,000-char hook limit: the room gets what the digest (and, on compact/resume,
+        // the ~3,000-char thread block) leaves, up to room::CAP
+        let reserve = if matches!(v["source"].as_str(), Some("compact" | "resume")) { 3_200 } else { 200 };
+        let left = 10_000usize.saturating_sub(reserve + out.chars().count() + 2).min(room::CAP);
+        let r = if left >= 300 { room::for_session(&v, &claude, &cfg, now, left) } else { String::new() };
+        if !r.is_empty() {
+            if !out.is_empty() {
+                out.push_str("
+
+");
+            }
+            out.push_str(&r);
+        }
+    }
     // After /compact or on --resume, give back this session's own thread:
     // the owner's latest asks, the task checklist, files touched.
     if matches!(v["source"].as_str(), Some("compact" | "resume")) {
@@ -1699,12 +1729,13 @@ fn hook(rest: &[String]) -> Result<()> {
             }
             None
         }
+        Some("delegate") => dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| delegate::hook(&input, &h)),
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -1834,11 +1865,12 @@ mod tests {
         assert!(allow.iter().any(|r| r == "Bash(make*)") && allow.iter().any(|r| r == "Bash(cargo check*)"));
         assert!(!allow.iter().any(|r| r.as_str().is_some_and(|s| s.contains("git push"))), "pushes stay reviewed");
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
-        assert_eq!(pre.len(), 3, "ask gate replaced in place, user hook kept, guard appended");
+        assert_eq!(pre.len(), 4, "ask gate replaced in place, user hook kept, delegate + guard appended");
         assert_eq!(pre[0]["hooks"][0]["prompt"], format!("{ASK_GATE}{ASK_POLICY}"));
         assert_eq!(pre[1]["hooks"][0]["command"], "my-linter");
-        assert_eq!(pre[2]["hooks"][0]["args"], json!(["ccc", "hook", "guard"]));
-        assert_eq!(pre[2]["hooks"][0]["onFailure"], "block", "guard fails closed");
+        assert_eq!(pre[2]["hooks"][0]["args"], json!(["ccc", "hook", "delegate"]));
+        assert_eq!(pre[3]["hooks"][0]["args"], json!(["ccc", "hook", "guard"]));
+        assert_eq!(pre[3]["hooks"][0]["onFailure"], "block", "guard fails closed");
         assert!(deny.iter().any(|r| r == "Read(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write(") || s.starts_with("Edit(**/.env"))));
         assert_eq!(v["permissions"]["defaultMode"], "auto");
     }
