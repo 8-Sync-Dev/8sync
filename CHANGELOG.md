@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.91.0] — 2026-10-15
 ### Added
 - **`8sync learn trending`** (Rust): the most-starred repos created in the last N days (`--lang`, `--days 7`, `--top 25`, `--json`) through GitHub's official search API — not the trending page, which must not be scraped — written to `su-code/research/trending/<date>.md` with a "Có ích cho 8sync vì" column for the R&D room to fill. Unauthenticated, no token read; adult-content repos are dropped.
 - **`8sync skill learn <owner/repo>`** (Rust): shallow-clone a public repo, delete its `.git`, check the licence (MIT/Apache/BSD/ISC/MPL/CC BY/CC BY-SA/CC0/Unlicense/GPL family allowed; NC/ND/none refused with the reason), and distil the README into a ≤ 6 KB `SKILL.md` (frontmatter, source + licence + attribution, a section index with `refs/README.md:<line>` pointers) beside the untouched `refs/README.md` + `refs/LICENSE` in `~/.claude/skills/<name>` — local only, never committed. First target: donnemartin/system-design-primer (CC BY 4.0; 109,830 B README → 6,042 B skill).
