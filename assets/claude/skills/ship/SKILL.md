@@ -18,6 +18,8 @@ Thang tự động (chọn mức theo độ lớn việc):
 Trạng thái sống trong file, không chỉ trong hội thoại (sống sót qua /compact, /clear, resume):
 `su-code/ship/<slug>/STATE.md` gồm Goal · Checklist các phase · Evidence (lệnh + output ngắn) · Next; ghi `<slug>` vào `su-code/ship/ACTIVE` để digest đầu phiên/sau /compact nạp lại (xong việc → xoá dòng đó). Repo không có `su-code/` → `.claude/ship/<slug>/` (không được nạp tự động). Cập nhật ở mỗi ranh giới phase. Theo dõi việc bằng TaskCreate/TaskUpdate.
 
+**Nhịp scrum (`/sprint <slug>`, đọc `sprint/SKILL.md`)**: chạy cổng quy mô trước (≤3 file → không mở sprint); phase 1 là sprint planning (`8sync ccc . goal` + `8sync ccc standup <slug> init --roles …` theo quy mô, giao theo đợt rd/plan → dev → review/qa); **standup ở mỗi ranh giới phase** (`8sync ccc standup <slug>`, exit 3 = có role ngồi không → giao item thật hoặc `rest <lý do>`; review backlog/done/bug, đồng bộ phòng khác); phase 6 là sprint review; phase 7 kèm retro. Lead điều phối, role làm.
+
 1. **Plan** — làm như `/planning`: goal, acceptance criteria kiểm được, task + file, rủi ro. Câu hỏi thật sự cần → gom MỘT `AskUserQuestion` (≤4 câu, Recommended đầu). Owner đã nói "tự làm đi"/"auto" → chọn Recommended, ghi giả định, đi tiếp.
 2. **R&D** (chỉ khi có ẩn số) — `explore` cho codebase lạ; `researcher` song song cho câu hỏi con (≤10 bullet mỗi agent); lựa chọn lớn → `deep-research`. Không research thứ đã có trong repo.
 3. **Code** — từng task; giao `task`/`quick-task` song song khi file tách bạch. Code mới phải có test. Không sửa test cho pass. Sau mỗi task chạy build/test của repo.

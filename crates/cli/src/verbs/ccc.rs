@@ -38,6 +38,9 @@ mod resume;
 mod room;
 mod statusline;
 mod taskdone;
+mod urgent;
+mod goal;
+mod standup;
 mod verify;
 
 #[derive(ClapArgs, Debug)]
@@ -173,6 +176,36 @@ pub fn run(a: Args) -> Result<()> {
             print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
         }
         "report" => report::run(&env.home, &root, &session_rows_json(&env, &root), rest.iter().any(|a| a == "--json")),
+        "urgent" => {
+            let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
+            ui::ok(&urgent::run(&sessions(&env, &root), rest, id.as_deref(), view_now())?);
+            Ok(())
+        }
+        "goal" => {
+            let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
+            ui::ok(&goal::run(&sessions(&env, &root), rest, id.as_deref(), view_now())?);
+            Ok(())
+        }
+        "standup" => {
+            // Other rooms = every registered session of this repo except the caller's own, with
+            // the goal/files it declared (`ccc . goal`), so the board can flag file overlaps.
+            // Only rooms active within a week (as the SessionStart block): a dead session's old
+            // claim must not raise overlap warnings forever.
+            let me = std::env::var("CLAUDE_CODE_SESSION_ID").unwrap_or_default();
+            let now = view_now();
+            let peers: Vec<standup::Peer> = sessions(&env, &root)
+                .load()
+                .sessions
+                .into_iter()
+                .filter(|s| s.conversation_id != me && now.saturating_sub(s.last_active) < 7 * 86400)
+                .map(|s| standup::Peer { name: s.name, goal: s.goal.as_ref().map(|g| g.text.clone()), files: s.goal.map(|g| g.files).unwrap_or_default() })
+                .collect();
+            // Exit 3 = a role is idle (1 stays "error"), so loops can tell the two apart.
+            if !standup::run(rest, &std::env::current_dir().context("no cwd")?, &peers)? {
+                std::process::exit(3);
+            }
+            Ok(())
+        }
         "rm" => cmd_rm(&env, &root, rest.first().context("usage: 8sync ccc . rm <name>")?),
         "new" => {
             let name = rest.first().context("usage: 8sync ccc . new <name>")?;
@@ -320,14 +353,21 @@ fn session_rows_json(env: &Env, root: &Path) -> Vec<Value> {
     let reg = sessions(env, root).load();
     let rows = view::uuid_rows(env, "ccc", &reg, &view::agent_cmdlines(), false);
     debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry (zip below)");
-    rows.iter()
-        .zip(&reg.sessions)
-        .map(|(r, s)| {
-            let mut v = view::row_json(r);
-            v["id"] = json!(s.conversation_id);
+    let order = urgent::newest_first(&rows.iter().map(|r| r.last_active).collect::<Vec<_>>());
+    order
+        .into_iter()
+        .map(|i| {
+            let mut v = view::row_json(&rows[i]);
+            v["id"] = json!(reg.sessions[i].conversation_id);
+            v["urgency"] = urgent::json(&reg.sessions[i]);
+            v["goal"] = goal::json(reg.sessions[i].goal.as_ref());
             v
         })
         .collect()
+}
+
+fn view_now() -> u64 {
+    super::session_view::now_secs()
 }
 
 fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
@@ -344,12 +384,18 @@ fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
     }
     ui::header(&format!("Claude Code sessions · {}", root.display()));
     let (now, width, color) = (view::now_secs(), view::term_width(), view::use_color());
-    for r in &rows {
-        for l in view::render(r, width, now, color) {
+    debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry");
+    for i in urgent::newest_first(&rows.iter().map(|r| r.last_active).collect::<Vec<_>>()) {
+        let mut lines = view::render(&rows[i], width, now, color);
+        urgent::decorate(&mut lines, reg.sessions[i].urgency.as_ref(), width, now, color);
+        if let Some(g) = &reg.sessions[i].goal {
+            lines.insert(1.min(lines.len()), goal::line(g, width));
+        }
+        for l in lines {
             println!("{l}");
         }
     }
-    println!("\n  8sync ccc . <name> resume  ·  8sync ccc . new <name>  ·  8sync show <name> --engine ccc  ·  8sync ls --all");
+    println!("\n  8sync ccc . <name> resume  ·  8sync ccc . urgent <high|med|low|clear> [note]  ·  8sync ccc . goal <mục tiêu> [--files a,b]  ·  8sync ccc . new <name>  ·  8sync show <name> --engine ccc  ·  8sync ls --all");
     Ok(())
 }
 
@@ -491,7 +537,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 28] = [
+const KIT_FILES: [(&str, &str); 29] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -515,6 +561,7 @@ const KIT_FILES: [(&str, &str); 28] = [
     ("claude/skills/ship-auto/SKILL.md", "skills/ship-auto/SKILL.md"),
     ("claude/skills/ship-loop/SKILL.md", "skills/ship-loop/SKILL.md"),
     ("claude/skills/autopilot/SKILL.md", "skills/autopilot/SKILL.md"),
+    ("claude/skills/sprint/SKILL.md", "skills/sprint/SKILL.md"),
     ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
     ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
     // The org's rules: summarised in the kit's CLAUDE.md block, full text opened on demand (/aup-audit).
@@ -647,8 +694,8 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
-const CORE_SKILLS: [&str; 13] =
-    ["ship", "ship-loop", "autopilot", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
+const CORE_SKILLS: [&str; 14] =
+    ["ship", "ship-loop", "autopilot", "sprint", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool, offline: bool) -> Result<()> {

@@ -23,6 +23,9 @@ omp keeps session memory itself (`retain`/`recall`); Claude Code has no such sto
 |---|---|
 | Resume/create a named omp session for this repo | `8sync .` · `8sync . <name>` · `8sync . ls` · `8sync . new <name> --worktree` · `8sync . merge <name>` |
 | Named Claude Code session (kit + harness refreshed on launch) | `8sync ccc . <name>` · `8sync ccc . ls` · `8sync ccc status` · `8sync ccc kit` |
+| Flag your own session for the owner (`ls` shows it, newest first) | `8sync ccc . urgent high "<why>"` (blocked on owner) · `med` (waiting on a teammate) · `low` (FYI) · `clear` when resolved |
+| Tell other rooms your target + files (shown in `ls`, SessionStart, `standup`) | `8sync ccc . goal "<target>" --files a,b` · `goal clear` when done |
+| Sprint board: no role idle (`/sprint`) | `8sync ccc standup <slug> init [--roles dev,review,qa]` · `set <role> doing --agent <a> --files a,b <item>` · `standup <slug>` (exit 3 = a role on the board is idle) |
 | Named ForgeCode session | `8sync forge <name>` (`--tui`, `-p` one-shot) |
 | Find a file/symbol and open it | `8sync find <kw>` (`-f` filename mode, `--no-open`) |
 | Quick note into memory | `8sync note "msg" [-t tag]` |
