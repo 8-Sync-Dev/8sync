@@ -10,8 +10,10 @@ vi.mock("@/lib/server/proc", async (orig) => ({
 
 import { GET } from "@/app/api/floor/route";
 import { getToken } from "@/lib/server/auth";
-import { resetFloorCache } from "@/lib/server/floor";
+import { newestStandup, resetFloorCache } from "@/lib/server/floor";
 import { req, tempHome } from "./helpers";
+import fs from "node:fs";
+import path from "node:path";
 
 let token = "";
 beforeAll(() => {
@@ -150,5 +152,26 @@ describe("GET /api/floor", () => {
     const res = await GET(req("/api/floor", { token }));
     expect(res.status).toBe(200);
     expect((await res.json()).rows).toEqual([]);
+  });
+});
+
+describe("newestStandup (sprint meeting signal)", () => {
+  it("picks the freshest su-code/ship/<slug>/STANDUP.md under the repo, null otherwise", () => {
+    const home = tempHome();
+    const repo = path.join(home, "proj");
+    for (const [slug, age] of [["old-loop", 60_000], ["autowork", 1_000]] as const) {
+      const d = path.join(repo, "su-code", "ship", slug);
+      fs.mkdirSync(d, { recursive: true });
+      const f = path.join(d, "STANDUP.md");
+      fs.writeFileSync(f, "# standup\n");
+      const t = new Date(Date.now() - age);
+      fs.utimesSync(f, t, t);
+    }
+    fs.mkdirSync(path.join(repo, "su-code", "ship", "no-standup"), { recursive: true });
+    expect(newestStandup("~/proj", home)?.slug).toBe("autowork");
+    expect(newestStandup(repo, home)?.slug).toBe("autowork");
+    expect(newestStandup(path.join(home, "elsewhere"), home)).toBeNull();
+    expect(newestStandup("-home-me-dashed", home)).toBeNull();
+    expect(newestStandup(null, home)).toBeNull();
   });
 });

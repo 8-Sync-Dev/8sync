@@ -4,6 +4,13 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **`8sync learn trending`** (Rust): the most-starred repos created in the last N days (`--lang`, `--days 7`, `--top 25`, `--json`) through GitHub's official search API — not the trending page, which must not be scraped — written to `su-code/research/trending/<date>.md` with a "Có ích cho 8sync vì" column for the R&D room to fill. Unauthenticated, no token read; adult-content repos are dropped.
+- **`8sync skill learn <owner/repo>`** (Rust): shallow-clone a public repo, delete its `.git`, check the licence (MIT/Apache/BSD/ISC/MPL/CC BY/CC BY-SA/CC0/Unlicense/GPL family allowed; NC/ND/none refused with the reason), and distil the README into a ≤ 6 KB `SKILL.md` (frontmatter, source + licence + attribution, a section index with `refs/README.md:<line>` pointers) beside the untouched `refs/README.md` + `refs/LICENSE` in `~/.claude/skills/<name>` — local only, never committed. First target: donnemartin/system-design-primer (CC BY 4.0; 109,830 B README → 6,042 B skill).
+- **HQ office: sprint meeting + standing up/sitting down + carrying a task.** A room whose `su-code/ship/<slug>/STANDUP.md` was written < 2 min ago shows the `meeting` state ("họp sprint"); desks play a `stand` clip when work starts and `sit` when it ends; a walker bringing a task carries a paper. All code-drawn, reduced-motion safe.
+- **`scripts/uat/hook-latency.sh`**: median hook latency with budgets (guard/wake/watchdog/resume-note ≤ 20 ms, verify no-op ≤ 50 ms). Measured on Linux: 3 ms each; the Orca per-event shell hook on this machine adds ≈ 5 ms. The real verify check (tsc/cargo) runs with `asyncRewake` and never blocks the model.
+### Changed
+- **"R&D trực" preset** now studies the codebase (`codegraph`), the web (primary sources), papers (arXiv / Semantic Scholar) and today's trending file, then hands ≤ 2 concrete tasks to the rooms that are free (`8sync ccc . ls` + SendMessage, or HQ Giao việc), instead of only writing a research note.
 
 ## [0.90.0] — 2026-10-15
 ### Added

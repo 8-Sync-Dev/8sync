@@ -26,6 +26,8 @@ const SCENE = {
 } as CSSProperties;
 
 const SEAT_PX = 64;
+/** A visit whose text is the HQ assign prompt (app/api/tasks/route.ts `plain` / scheduledPrompt): someone brings a task in. */
+const bringsTask = (text: string | null | undefined) => /^(New task:|Lên lịch)/.test(text ?? "");
 const STATUS_TEXT: Record<Room["status"], string> = {
   running: "Đang làm",
   idle: "Rảnh",
@@ -92,6 +94,7 @@ function RoomCard({
   const needs = room.status === "needs_input" || !!room.waiting;
   const working = room.seats.reduce((a, s) => a + s.active.length, 0);
   const id = `room-${room.key.replace(/[^\w-]/g, "_")}`;
+  const bringing = room.pending > 0 && !incoming.slice(0, 2).some((v) => bringsTask(v.text));
   return (
     <article
       aria-labelledby={id}
@@ -150,17 +153,26 @@ function RoomCard({
               ))}
             </ul>
           )}
-          {(incoming.length > 0 || outgoing.length > 0) && (
+          {(incoming.length > 0 || outgoing.length > 0 || bringing) && (
             <div className="mt-2 flex flex-col gap-1.5" role="status">
               {incoming.slice(0, 2).map((v) => (
                 <div key={`in-${v.ts}-${v.from}`} className="flex min-w-0 items-end gap-2">
-                  <WalkerCanvas shirt={shirtFor(v.from)} ts={v.ts} />
+                  <WalkerCanvas shirt={shirtFor(v.from)} ts={v.ts} carry={bringsTask(v.text)} />
                   <span className="min-w-0 truncate rounded-md bg-white/10 px-2 py-1 text-xs text-(--ink)">
                     <span className="font-medium">Từ {labelOf(v.from)}</span>
                     {v.text && <span className="text-(--soft)">: {v.text}</span>}
                   </span>
                 </div>
               ))}
+              {/* Queued inbox work: one carrier at the door, unless a visit already shows one. */}
+              {bringing && (
+                <div className="flex min-w-0 items-end gap-2">
+                  <WalkerCanvas shirt={shirtFor("owner")} ts={room.pending} carry />
+                  <span className="min-w-0 truncate rounded-md bg-white/10 px-2 py-1 text-xs text-(--soft)">
+                    Đang mang việc tới · {room.pending} chờ giao
+                  </span>
+                </div>
+              )}
               {outgoing.slice(0, 1).map((v) => (
                 <p key={`out-${v.ts}-${v.to}`} className="truncate text-xs text-(--soft)">
                   Lead đang sang phòng {labelOf(v.to)}

@@ -1,4 +1,6 @@
+import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { sessionLabel } from "../labels";
 import { deriveFloor, type FloorRow, type LsInput } from "../floor";
@@ -91,6 +93,31 @@ async function lsRows(): Promise<LsRow[]> {
   }
 }
 
+/**
+ * Newest `su-code/ship/<slug>/STANDUP.md` under a session's repo ("~/x" or absolute), or null.
+ * `8sync ccc standup <slug>` appends it; a fresh one puts the room in a sprint meeting (lib/floor.ts).
+ */
+export function newestStandup(repo: string | null | undefined, home = os.homedir()): { slug: string; at: number } | null {
+  if (!repo || repo.startsWith("-")) return null;
+  const dir = path.join(expand(repo, home), "su-code", "ship");
+  let best: { slug: string; at: number } | null = null;
+  let slugs: string[];
+  try {
+    slugs = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+  for (const slug of slugs) {
+    try {
+      const at = fs.statSync(path.join(dir, slug, "STANDUP.md")).mtimeMs;
+      if (!best || at > best.at) best = { slug, at };
+    } catch {
+      /* no standup in this ship dir */
+    }
+  }
+  return best;
+}
+
 async function build(db: DatabaseSync): Promise<FloorRow[]> {
   const [ls, merged] = await Promise.all([lsRows(), mergedSessions(db).catch(() => [] as SessionView[])]);
   const now = Date.now();
@@ -121,7 +148,7 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       engine,
       sid: sidOf(hq?.session_id, r.name),
       tokens: typeof r.tokens === "number" ? r.tokens : null,
-      ...deriveFloor(r, hq, now),
+      ...deriveFloor(r, { ...(hq ?? {}), standup: newestStandup(repo) }, now),
     };
   });
   // hq sessions `8sync ls` does not know (fresh tmux panes, `claude agents` only).
@@ -138,7 +165,7 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       repo,
       engine: "ccc",
       sid: sidOf(s.session_id, s.name),
-      ...deriveFloor(null, s, now),
+      ...deriveFloor(null, { ...s, standup: newestStandup(repo) }, now),
     });
   }
   return rows;

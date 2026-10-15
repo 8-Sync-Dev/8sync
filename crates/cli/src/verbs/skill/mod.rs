@@ -15,6 +15,7 @@ pub(crate) mod discover;
 pub(crate) mod gen;
 pub(crate) mod index;
 pub(crate) mod inject;
+pub(crate) mod learn;
 pub(crate) mod list;
 pub(crate) mod meta;
 pub(crate) mod spec;
@@ -39,6 +40,7 @@ pub(crate) use inject::inject_agents_md;
       8sync skill new command ship-notes                               same, bare word; add --force to overwrite
       8sync skill gen 1 2                                        FUSE local skill #1 and #2 into one combined SKILL.md
       8sync skill gen karpathy-guidelines codegraph              same, but by name
+      8sync skill learn donnemartin/system-design-primer         DISTIL a repo README (≤6 KB SKILL.md + refs/, .git dropped) into ~/.claude/skills/ — local only
       8sync skill update [name]                                  re-pull registered skills from their source (git/builtin/path)
 
     NOTE
@@ -78,6 +80,7 @@ pub fn run(a: Args) -> Result<()> {
             let spec = a.args.iter().find(|s| !s.starts_with('-')).map(|s| s.as_str());
             add::add_skill(&env, &skills_toml, spec, force)
         }
+        Some("learn") => learn::run(&env, &a.args),
         Some("new") => create::run_new(&env, &a.args),
         Some("gen") => gen::gen_skill(&env, &a.args),
         Some("update") => update::update_skills(&env, &skills_toml, a.args.first().map(|s| s.as_str())),

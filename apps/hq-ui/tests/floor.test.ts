@@ -35,6 +35,10 @@ describe("deriveFloor", () => {
     ["all done but still running -> keeps working", { status: "running", tasks_done: 3, tasks_total: 3, last_tool: "Bash", last_active: ago(10) }, null, "running", "chạy lệnh"],
     ["total 0 is not done", { status: "idle", tasks_done: 0, tasks_total: 0 }, null, "idle", "nghỉ"],
     ["idle ignores old tool", { status: "idle", last_tool: "Edit", last_active: ago(7200) }, null, "idle", "nghỉ"],
+    ["fresh STANDUP.md -> sprint meeting", { status: "running", last_tool: "Edit", last_active: ago(5) }, { status: "running", standup: { slug: "autowork", at: NOW - 30_000 } }, "meeting", "họp sprint"],
+    ["standup older than 2 min -> back to work", { status: "running", last_tool: "Edit", last_active: ago(5) }, { status: "running", standup: { slug: "autowork", at: NOW - 3 * 60_000 } }, "typing", "đang gõ code"],
+    ["needs_input wins over a meeting", { status: "running", last_tool: "Edit", last_active: ago(5) }, { status: "needs_input", detail: "Ship?", standup: { slug: "a", at: NOW } }, "waiting", "chờ anh"],
+    ["an idle desk does not meet", { status: "idle", last_active: ago(5) }, { status: "idle", standup: { slug: "a", at: NOW } }, "idle", "nghỉ"],
   ];
   it.each(cases)("%s", (_n, ls, hq, state, label) => {
     const d = deriveFloor(ls, hq, NOW);

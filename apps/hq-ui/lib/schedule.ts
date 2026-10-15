@@ -67,12 +67,20 @@ export function scheduledPrompt(task: string, s: Schedule): string {
   ].join("\n");
 }
 
-/** Preset "R&D trực": the R&D room keeps researching when it has nothing assigned. */
+/**
+ * Preset "R&D trực": the R&D room never sits idle — it studies the codebase, the web, papers and
+ * GitHub trending, then hands concrete work to the rooms that are free. Owner (2026-10-15): "R&D
+ * nghiên cứu codebase, internet, học thuật… rồi giao task tất cả session (phòng ban)".
+ */
 export const RD_DUTY = {
-  subject: "R&D trực: không có việc thì nghiên cứu backlog",
-  details:
-    "Nếu phòng đang có việc dở: bỏ qua lượt này. Nếu rảnh: lấy item kế tiếp trong su-code/STATE.md Next / dòng `failure:` trong su-code/KNOWLEDGE.md chưa có ghi chú nghiên cứu, " +
-    "trả lời một câu hỏi của nó theo /deep-research bản gọn (≤5 lần search, nguồn primary), ghi su-code/research/<slug>.md và báo phòng liên quan qua SendMessage. " +
-    "Không còn item: nói 'rest: hết backlog' một dòng. Không sửa code sản phẩm.",
+  subject: "R&D trực: nghiên cứu rồi giao việc cho phòng rảnh",
+  details: [
+    "Nếu phòng đang có việc dở: bỏ qua lượt này.",
+    "1. Backlog: item kế trong su-code/STATE.md Next, dòng `failure:` trong su-code/KNOWLEDGE.md chưa có ghi chú, hoặc dòng còn trống cột 'Có ích cho 8sync vì' trong su-code/research/trending/<hôm nay>.md (chưa có file hôm nay → chạy `8sync learn trending` một lần).",
+    "2. Nghiên cứu (≤5 lần search, nguồn primary, ghi ngày/phiên bản): codebase (`codegraph query`), internet (WebSearch/WebFetch), học thuật (arXiv / Semantic Scholar, trích DOI hoặc arXiv id). Ghi su-code/research/<slug>.md: kết luận trước, bằng chứng, việc đề xuất.",
+    "3. Giao việc: `8sync ccc . ls` xem phòng nào rảnh (không có task in_progress); gửi ≤2 task cụ thể (file/lệnh kiểm/tiêu chí) cho phòng khớp tên bằng SendMessage, ghi 'từ R&D trực, theo research/<slug>.md'. Việc không khớp phòng nào → HQ Giao việc (POST /api/tasks) hoặc ghi vào STATE.md Next.",
+    "Repo đáng học (có licence) → `8sync skill learn <owner/repo>` (clone, bỏ .git, chắt lọc; chỉ lưu local).",
+    "Không còn item: nói 'rest: hết backlog' một dòng. Không sửa code sản phẩm; không tự merge/push/deploy.",
+  ].join("\n"),
   schedule: { kind: "every", n: 30, unit: "m" } as const satisfies Schedule,
 };

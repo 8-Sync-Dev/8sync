@@ -16,6 +16,7 @@ export const WALKER_PALETTE: Record<string, string | null> = {
   b: "oklch(0.2 0.01 260)",
   u: "oklch(0.78 0.03 70)", // dust
   v: "oklch(0.55 0.02 70)", // cooled dust
+  w: "oklch(0.98 0 0)", // paper (a task being carried)
 };
 
 const HEAD = [
@@ -70,9 +71,33 @@ export const WALKER_STAND: string[] = WALKER_FRAMES[2];
 const puff = (rows: string[], spots: [number, number, string][]) =>
   rows.map((r, y) => [...r].map((c, x) => spots.find(([sx, sy]) => sx === x && sy === y)?.[2] ?? c).join(""));
 
-/** Arrival dust: two puffs at the feet that shrink and cool (no alpha fades in pixel art). */
-export const WALKER_DUST: string[][] = [
-  puff(WALKER_STAND, [[1, 16], [2, 16], [1, 15], [9, 16], [10, 16], [10, 15]].map(([x, y]) => [x, y, "u"] as [number, number, string])),
-  puff(WALKER_STAND, [[0, 14], [11, 14]].map(([x, y]) => [x, y, "v"] as [number, number, string])),
+/**
+ * The same walk carrying a task: a 2x3 white paper with one line of "text" held in front at
+ * chest height (x 10..11, the front hand on row 9 of the body already touches it). The pass
+ * frames start with a blank row, so the paper follows the 1 px bob.
+ */
+const PAPER: [number, number, string][] = [
+  [10, 8, "w"],
+  [11, 8, "w"],
+  [10, 9, "o"],
+  [11, 9, "o"],
+  [10, 10, "w"],
+  [11, 10, "w"],
 ];
+const carry = (rows: string[]) => {
+  const dy = rows[0] === BLANK ? 1 : 0;
+  return puff(rows, PAPER.map(([x, y, c]) => [x, y + dy, c]));
+};
+
+export const WALKER_CARRY: string[][] = WALKER_FRAMES.map(carry);
+export const WALKER_CARRY_STAND: string[] = WALKER_CARRY[2];
+
+const dust = (stand: string[]): string[][] => [
+  puff(stand, [[1, 16], [2, 16], [1, 15], [9, 16], [10, 16], [10, 15]].map(([x, y]) => [x, y, "u"] as [number, number, string])),
+  puff(stand, [[0, 14], [11, 14]].map(([x, y]) => [x, y, "v"] as [number, number, string])),
+];
+
+/** Arrival dust: two puffs at the feet that shrink and cool (no alpha fades in pixel art). */
+export const WALKER_DUST: string[][] = dust(WALKER_STAND);
+export const WALKER_CARRY_DUST: string[][] = dust(WALKER_CARRY_STAND);
 export const DUST_MS = [120, 140] as const;

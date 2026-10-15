@@ -207,3 +207,7 @@ Tự động hóa hoàn toàn việc nạp cấu hình Claude Code JSON vào `8s
 
 ## Next
 Commit toàn bộ thay đổi, push lên GitHub remote và tạo tag / release nếu cần.
+
+## autowork-speed (2026-10-15, branch feat/autowork-speed)
+- Done: `8sync learn trending`, `8sync skill learn <owner/repo>` (clone → rm .git → licence gate → ≤6 KB SKILL.md in ~/.claude/skills, local only), RD_DUTY preset that hands ≤2 tasks to free rooms, HQ `meeting` state from a fresh STANDUP.md + stand/sit/carry clips, `scripts/uat/hook-latency.sh` (all hooks 3 ms).
+- Next: measure ccc startup (3.1 s) and the Stop gate against omp with the Console key (T2); R&D session runs `8sync learn trending` daily via RD_DUTY; try `8sync skill learn` on 2–3 more licensed repos and check the distilled index quality.

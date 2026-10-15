@@ -6,7 +6,19 @@
 import type { SeatKey } from "../office";
 import { BLINKS, CLIP_MS, ONE_SHOT, PALETTE, SPRITE_SIZE, spriteFrame, type Clip } from "./frames";
 import { blinker, frameAt, memo, phaseOf } from "./anim";
-import { DUST_MS, WALK_MS, WALKER_DUST, WALKER_FRAMES, WALKER_H, WALKER_PALETTE, WALKER_STAND, WALKER_W } from "./walker";
+import {
+  DUST_MS,
+  WALK_MS,
+  WALKER_CARRY,
+  WALKER_CARRY_DUST,
+  WALKER_CARRY_STAND,
+  WALKER_DUST,
+  WALKER_FRAMES,
+  WALKER_H,
+  WALKER_PALETTE,
+  WALKER_STAND,
+  WALKER_W,
+} from "./walker";
 
 /** The loop wakes at most this often; the shortest frame is 110 ms. */
 const TICK_MS = 33;
@@ -65,9 +77,15 @@ const deskCache = memo((key: string) => {
   return paint(rows, SPRITE_SIZE, SPRITE_SIZE, PALETTE, shirt);
 });
 
+const WALKER_SETS = {
+  plain: { walk: WALKER_FRAMES, dust: WALKER_DUST, stand: WALKER_STAND },
+  carry: { walk: WALKER_CARRY, dust: WALKER_CARRY_DUST, stand: WALKER_CARRY_STAND },
+} as const;
+
 const walkerCache = memo((key: string) => {
-  const [kind, i, shirt] = key.split("|");
-  const rows = kind === "dust" ? WALKER_DUST[Number(i)] : kind === "stand" ? WALKER_STAND : WALKER_FRAMES[Number(i)];
+  const [set, kind, i, shirt] = key.split("|");
+  const s = WALKER_SETS[set === "carry" ? "carry" : "plain"];
+  const rows = kind === "dust" ? s.dust[Number(i)] : kind === "stand" ? s.stand : s.walk[Number(i)];
   return paint(rows, WALKER_W, WALKER_H, WALKER_PALETTE, shirt);
 });
 
@@ -102,6 +120,18 @@ export type SpriteHandle = {
   dispose(): void;
 };
 
+/** Clips where the person is up at the desk working; reached from a seated clip via "stand". */
+const WORKING: ReadonlySet<Clip> = new Set<Clip>(["typing", "running", "reading", "meeting", "waiting"]);
+/** Clips where the person sits back (or the seat is empty); leaving them for work plays "stand". */
+const SEATED: ReadonlySet<Clip> = new Set<Clip>(["idle", "rest", "done"]);
+
+/** The transition to play before `next`, if any: stand up for work, sit down to idle. */
+export function transitionFor(from: Clip, next: Clip): Clip | null {
+  if (SEATED.has(from) && WORKING.has(next)) return "stand";
+  if (WORKING.has(from) && next === "idle") return "sit";
+  return null;
+}
+
 /**
  * A desk sprite. `size` is the CSS width/height; `seed` (e.g. room:seat) offsets its loop
  * phase and blink timing so a room never moves in lockstep; `shirt` is its colour.
@@ -117,6 +147,8 @@ export function mountSprite(
   const role = opts.role ?? "";
   const blinkAt = blinker(opts.seed, performance.now());
   let clip = opts.state;
+  /** What a one-shot hands over to when it ends (stand -> the work clip); null = idle. */
+  let then: Clip | null = null;
   let t0 = performance.now();
   let shown = "";
 
@@ -134,15 +166,19 @@ export function mountSprite(
       const once = ONE_SHOT.has(clip);
       let i = frameAt(ms, now - t0 + (once ? 0 : phaseOf(opts.seed, ms)), { loop: !once });
       if (i < 0) {
-        // "done" cheers once, then the character sits down again.
-        clip = "idle";
+        // A one-shot is over: "stand" hands over to the work clip it was played for,
+        // "done" (cheer) and "sit" to idle.
+        clip = then ?? "idle";
+        then = null;
         t0 = now;
-        i = frameAt(CLIP_MS.idle, phaseOf(opts.seed, CLIP_MS.idle));
+        i = ONE_SHOT.has(clip) ? 0 : frameAt(CLIP_MS[clip], phaseOf(opts.seed, CLIP_MS[clip]));
       }
       draw(keyOf(i, BLINKS.has(clip) && blinkAt(now)));
     },
   };
   draw(keyOf(0, false));
+  /** The state the sprite is in or heading to (a transition counts as its target). */
+  const target = () => then ?? clip;
 
   let io: IntersectionObserver | null = null;
   if (!reduced) {
@@ -153,8 +189,11 @@ export function mountSprite(
 
   return {
     setState(next) {
-      if (next === clip && next !== "done") return;
-      clip = next;
+      if (next === target() && next !== "done") return;
+      // Reduced motion: no transition, just the static frame of the new state.
+      const via = reduced ? null : transitionFor(target(), next);
+      clip = via ?? next;
+      then = via ? next : null;
       t0 = performance.now();
       if (reduced) draw(keyOf(0, false));
       else p.tick(t0);
@@ -171,17 +210,19 @@ export const WALK_IN_MS = 1600;
 
 /**
  * A specialist walking into a room: 4-frame walk for WALK_IN_MS, a dust puff on arrival,
- * then it stands and leaves the loop. Reduced motion: stands from the start.
+ * then it stands and leaves the loop. `carry`: holding a task paper (bringing work in).
+ * Reduced motion: stands from the start.
  */
-export function mountWalker(canvas: HTMLCanvasElement, opts: { shirt: string; size?: number }): () => void {
+export function mountWalker(canvas: HTMLCanvasElement, opts: { shirt: string; carry?: boolean; size?: number }): () => void {
   backing(canvas, WALKER_W, WALKER_H, opts.size ?? WALKER_W * 2);
   const ctx = canvas.getContext("2d");
   if (!ctx) return () => {};
   let shown = "";
+  const set = opts.carry ? "carry" : "plain";
   const draw = (key: string) => {
     if (key === shown) return;
     shown = key;
-    blit(ctx, walkerCache.get(`${key}|${opts.shirt}`), canvas.width, canvas.height);
+    blit(ctx, walkerCache.get(`${set}|${key}|${opts.shirt}`), canvas.width, canvas.height);
   };
   if (reducedMotion()) {
     draw("stand|0");
