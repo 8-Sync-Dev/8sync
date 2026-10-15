@@ -21,3 +21,8 @@ iter 1 | C2 | exit 0 | Running unittests src/main.rs (***)
 iter 1 | C3 | exit 0 | ALL PASS
 iter 1 | C4 | exit 0 | ALL PASS
 iter 1 | C5 | exit 0 | ALL PASS
+iter 1 | C6 | exit 0 | test (windows-latest)	pass	***	https://github.com/8-Sync-Dev/su-code/actions/runs/38676003083/job/116229632688
+
+## Brief (all green, 2026-10-15)
+C1–C5 green locally (iter 1), C6 PR #36 CI run 38676003083 green on ubuntu/macos/windows + hq-ui-test, minimal, package-hq-ui.
+Reviewer 6 SHOULD + critic FATAL/5 MAJOR fixed before commit e5eea2d. Not verified: UAT shell scripts on Windows/macOS; CLAUDE_CODE_SESSION_ID on Windows/macOS; /sprint effect on delegation ratio (re-run q3_measure.py after a week).
