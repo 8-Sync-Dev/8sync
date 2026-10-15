@@ -2,6 +2,6 @@
 | role | agent | status | item | files |
 |---|---|---|---|---|
 | rd |  | rest | phần R&D xong; chờ review |  |
-| dev |  | doing | learn.rs + skill/learn.rs xong (C1,C2 xanh); designer sprite stand/sit/meeting/carry (C4) |  |
-| review |  | doing | reviewer agent trên diff 91ad7b0 |  |
-| qa |  | doing | CI 3 OS run trên feat/autowork-speed + full vitest 291 / cargo 466 xanh local |  |
+| dev |  | rest | fixes fc21981 đã push; C1–C7 xanh |  |
+| review |  | rest | review xong (BLOCKER x2, SHOULD x7 → sửa trong fc21981) |  |
+| qa |  | doing | CI 3 OS run 38697704416 (fc21981) |  |

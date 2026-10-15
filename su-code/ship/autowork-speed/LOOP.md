@@ -30,3 +30,10 @@ iter 0 | C4 | exit 0 | Duration  358ms (tests 40%, transform 36%, import 19%, se
 iter 0 | C5 | exit 0 | PASS *** (7 runs each)
 iter 0 | C6 | exit 0 | (no output)
 iter 0 | C7 | exit 0 | (no output)
+iter 0 | C8 | exit 0 | success
+
+## Brief (kết thúc: tất cả xanh, iter 0, ~30 phút)
+- C1–C7 xanh local (evidence trên); C8 xanh CI 3 OS: 91ad7b0 run 38696949028, fc21981 run 38697704416 (ubuntu/windows/macos test + hq-ui-test + minimal + package-hq-ui).
+- Reviewer: 2 BLOCKER + 7 SHOULD → sửa trong fc21981 (meeting state in seatState/groupFloor; skill learn symlink/licence/caps/name; trending cell sanitising; R&D không tự cài skill; hook bench portable).
+- Chưa làm: sprite `mountSprite.setState` test theo thời gian (SHOULD 9); live run `skill learn` ngoài sandbox; not verified Windows/macOS cho hook-latency.sh (CI không chạy script UAT).
+- Không có --release → dừng sau commit; PR/merge/tag chờ owner Ship.
