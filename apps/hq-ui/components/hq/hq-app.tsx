@@ -266,6 +266,7 @@ export function HqApp({ token }: { token: string }) {
         onOpenChange={(open) => setAssign((a) => ({ ...a, open }))}
         sessions={hq.sessions.data}
         projects={hq.projects.data}
+        rooms={office.office?.rooms}
         defaultSession={assign.session ?? (scoped && deliveryOf(scoped) && scoped.status !== "ended" ? addressOf(scoped) : undefined)}
         defaultProjectId={scope.project}
       />

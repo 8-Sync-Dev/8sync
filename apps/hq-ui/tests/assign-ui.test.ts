@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignSummary, groupTargets, nameList, outsideRole, projectTargets, roleTargets } from "@/lib/assign";
+import { assignSummary, distinctLabels, groupTargets, nameList, outsideRole, projectTargets, roleTargets } from "@/lib/assign";
 
 const SID = "11111111-2222-3333-4444-555555555555";
 const SID2 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -36,6 +36,40 @@ describe("groupTargets", () => {
       ["8sync-startup", ["rd"]],
       ["Phiên khác", ["web", "hq-x"]],
     ]);
+  });
+  it("groups sessions outside registered projects by the git folder their room reports, like the sidebar", () => {
+    const rooms = [
+      { name: "x", session_id: SID, project: { root: "/home/u/startup", name: "startup", branch: "main" } },
+      { name: "y", session_id: SID2, project: { root: "/home/u/Startup", name: "startup", branch: "main" } }, // same folder, different case
+      { name: "hq-x", session_id: null, project: { root: "/home/u/acme", name: "acme", branch: null } },
+    ];
+    const g = groupTargets(
+      [
+        s("x", { tmux: false, session_id: SID, project_id: null }),
+        s("y", { tmux: false, session_id: SID2, project_id: 99 }),
+        s("hq-x", { project_id: null }),
+        s("z", { tmux: false, session_id: "cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee", project_id: null }), // no room: last
+        s("hq-rd-1", { role: "rd" }),
+      ],
+      projects,
+      rooms,
+    );
+    expect(g.map((x) => [x.name, x.sessions.map((y) => y.name)])).toEqual([
+      ["levels-repo", ["hq-rd-1"]],
+      ["acme", ["hq-x"]],
+      ["startup ⎇ main", ["x", "y"]],
+      ["Phiên khác", ["z"]],
+    ]);
+  });
+  it("distinctLabels: duplicate names get the first 8 id chars", () => {
+    const m = distinctLabels([
+      s("rd", { tmux: false, session_id: SID, label: "rd" }),
+      s("rd", { tmux: false, session_id: SID2, label: "rd" }),
+      s("hq-web-1"),
+    ]);
+    expect(m.get(SID)).toBe("rd · 11111111");
+    expect(m.get(SID2)).toBe("rd · aaaaaaaa");
+    expect(m.get("hq-web-1")).toBe("web-1");
   });
   it("is empty when nothing is reachable", () => {
     expect(groupTargets([s("hq-old", { status: "ended" })], projects)).toEqual([]);

@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { assignSummary, groupTargets, outsideRole, projectTargets, roleTargets, type AssignMode } from "@/lib/assign";
+import { assignSummary, distinctLabels, groupTargets, outsideRole, projectTargets, roleTargets, type AssignMode, type RoomLike } from "@/lib/assign";
 import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
 import { ROLES, modelShort, type RoleId } from "@/lib/roles";
 import { EVERY_HOURS, EVERY_MINUTES, RD_DUTY, scheduleLabel, type Schedule } from "@/lib/schedule";
@@ -45,6 +45,8 @@ export type AssignDialogProps = {
   onOpenChange: (open: boolean) => void;
   sessions: Session[];
   projects: Project[];
+  /** Office rooms (`/api/office`): sessions outside registered projects are grouped by the git folder they report. */
+  rooms?: RoomLike[];
   /** Preselect a role, a session, or the project used when a role session must be started. */
   defaultRole?: RoleId;
   defaultSession?: string;
@@ -54,10 +56,12 @@ export type AssignDialogProps = {
 type Res = { task: Task; session: string; started: boolean; message: Message; delivery: string; error: string | null };
 
 /** Hand a task to one session, to whoever has a role (reuse or start a session), or to every session of a project. */
-export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defaultRole, defaultSession, defaultProjectId }: AssignDialogProps) {
+export function AssignDialog({ hq, open, onOpenChange, sessions, projects, rooms, defaultRole, defaultSession, defaultProjectId }: AssignDialogProps) {
   // A project whose folder is gone cannot host a new session: never offer it.
   const usable = projects.filter((p) => !p.missing);
-  const groups = groupTargets(sessions, projects);
+  const groups = groupTargets(sessions, projects, rooms);
+  const labels = distinctLabels(groups.flatMap((g) => g.sessions));
+  const labelOf = (s: Session) => labels.get(addressOf(s)) ?? sessionLabel(s);
   const [subject, setSubject] = useState("");
   const [details, setDetails] = useState("");
   const [mode, setMode] = useState<AssignMode>(defaultSession ? "session" : defaultRole != null || groups.length === 0 ? "role" : "session");
@@ -74,7 +78,9 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defau
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const picked = groups.flatMap((g) => g.sessions).find((s) => addressOf(s) === session) ?? null;
+  const found = groups.flatMap((g) => g.sessions).find((s) => addressOf(s) === session);
+  // The summary names the session the way the list does ("rd · 1a2b3c4d" when two rooms are called rd).
+  const picked = found ? { ...found, label: labelOf(found) } : null;
   const roleLive = roleTargets(role, sessions);
   const project = usable.find((p) => String(p.id) === projectId) ?? null;
   const fan = projects.find((p) => String(p.id) === fanProject) ?? null;
@@ -220,7 +226,7 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defau
                             )}
                           >
                             <StatusDot status={s.status} />
-                            <span className="min-w-0 flex-1 truncate font-medium">{sessionLabel(s)}</span>
+                            <span className="min-w-0 flex-1 truncate font-medium">{labelOf(s)}</span>
                             {s.role && (
                               <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                                 <RoleIcon role={s.role} /> {ROLES.find((r) => r.id === s.role)?.labelVi ?? s.role}
@@ -315,7 +321,7 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, defau
                   <ul className="flex flex-wrap gap-1">
                     {fanOut.map((s) => (
                       <li key={addressOf(s)} className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs">
-                        <StatusDot status={s.status} /> {sessionLabel(s)}
+                        <StatusDot status={s.status} /> {labelOf(s)}
                         {s.role && <RoleIcon role={s.role} className="text-muted-foreground" />}
                       </li>
                     ))}
