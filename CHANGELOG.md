@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.97.0] — 2026-10-16
 ### Added
 - **`8sync ccc auto on --here`** keeps auto to one project. Without the flag, `auto on` still reaches every session of every project on the machine, including sessions opened later, because its state lives under home. With `--here`, the project root of the current folder is stored in `auto.json` as `repo`. The `idle` (Stop/TeammateIdle), `delegate` and `taskdone` hooks then skip any session whose cwd is outside that root; subfolders and in-repo worktrees count as the same project. `auto status` (and `--json` `repo`) shows the scope; a plain `auto on`, `pause` or `off` clears it. If the marker cannot be written, auto is turned back off rather than left running everywhere. Owner (2026-10-16): "bổ sung thêm cờ auto all session trong 1 folder dự án".
 ### Fixed
