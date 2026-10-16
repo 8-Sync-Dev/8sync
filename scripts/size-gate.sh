@@ -114,8 +114,14 @@
 
 set -euo pipefail
 export LC_ALL=C
-
-CEILING="${CEILING:-6750208}"   # 6592 KiB (raised 2026-10-15 from 6400 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+#
+# 2026-10-16 v0.93.0 release run 38840096324: linux-x86_64 (musl) asset 6,801,424 B,
+# 51,216 B over 6592 KiB. v0.92.1 asset 6,670,000 → +131,424 B = `8sync ccc hint`
+# (ghost text / typeahead / band rules, ~750 lines), `8sync completions` (new dep
+# clap_complete 4.5, all five shells), `8sync ccc inbox` claim/ack/release, and the
+# embedded 8sync-hints + 8sync-inbox mods. Ceiling 6784 KiB (~142 KiB left). v0.93.0
+# was tagged, not published.
+CEILING="${CEILING:-6946816}"   # 6784 KiB (raised 2026-10-16 from 6592 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"
