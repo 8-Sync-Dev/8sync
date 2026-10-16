@@ -105,7 +105,7 @@ function NewTask({ hq, sessions }: { hq: Hq; sessions: Session[] }) {
       if (r.delivery === "failed") toast.error(`Task saved, but not delivered: ${r.error}`);
       else
         toast.success(
-          `Đã giao cho ${sessionLabel(target)} ${r.delivery === "channel" ? "qua channel" : r.delivery === "inbox" ? "qua inbox (nhận khi xong lượt)" : "qua terminal"}`,
+          `Đã giao cho ${sessionLabel(target)} ${r.delivery === "channel" ? "qua channel" : r.delivery === "inbox" ? "qua inbox (nhận ngay khi phiên rảnh)" : "qua terminal"}`,
         );
       setSubject("");
     } catch (err) {

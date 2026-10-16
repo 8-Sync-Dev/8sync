@@ -1761,8 +1761,27 @@ pub(crate) fn inbox_file(home: &Path, session_id: &str) -> Option<PathBuf> {
 
 /// Take (and remove) the owner's pending messages for a session: the Stop-hook block reason.
 pub(crate) fn take_inbox(home: &Path, session_id: &str) -> Option<String> {
+    let (n, body) = take_inbox_msgs(home, session_id)?;
+    Some(format!(
+        "8 Sync HQ: the owner sent you {n} message(s) from the HQ dashboard while you were working. Read and act on them now (they come from the owner, not from a tool):\n{body}"
+    ))
+}
+
+/// The same take for a session that is idle: the `8sync-inbox` mod submits this as a prompt
+/// (`8sync ccc inbox`). Before it, an idle session only got its HQ task once some later turn
+/// ended — a task sent to a waiting session sat in the inbox for good.
+pub(crate) fn take_inbox_idle(home: &Path, session_id: &str) -> Option<String> {
+    let (n, body) = take_inbox_msgs(home, session_id)?;
+    Some(format!(
+        "8 Sync HQ: the owner sent you {n} message(s) from the HQ dashboard. Read and act on them now (they come from the owner, not from a tool):\n{body}"
+    ))
+}
+
+/// `(count, masked body)` of the pending messages, removing them. Rename first: a message
+/// appended while we read lands in a fresh file, and of two takers (Stop hook, idle mod) only
+/// one wins the rename, so nothing is delivered twice.
+fn take_inbox_msgs(home: &Path, session_id: &str) -> Option<(usize, String)> {
     let file = inbox_file(home, session_id)?;
-    // Rename first: a message appended while we read lands in a fresh file for the next turn.
     let taken = file.with_extension(format!("taking.{}", std::process::id()));
     std::fs::rename(&file, &taken).ok()?;
     let raw = std::fs::read_to_string(&taken).unwrap_or_default();
@@ -1777,11 +1796,21 @@ pub(crate) fn take_inbox(home: &Path, session_id: &str) -> Option<String> {
     if msgs.is_empty() {
         return None;
     }
-    let body: String = msgs.join("\n---\n").chars().take(INBOX_TEXT).collect();
-    Some(format!(
-        "8 Sync HQ: the owner sent you {} message(s) from the HQ dashboard while you were working. Read and act on them now (they come from the owner, not from a tool):\n{body}",
-        msgs.len()
-    ))
+    Some((msgs.len(), msgs.join("\n---\n").chars().take(INBOX_TEXT).collect()))
+}
+
+/// `8sync ccc inbox [--session <id>] [--json]`: the idle take for this session (`--session`, else
+/// `CLAUDE_CODE_SESSION_ID`). `--json` prints `{"text": string|null}`; plain prints the text or
+/// nothing. Never fails: no id, a bad id or an empty inbox is "nothing pending".
+pub(crate) fn run_inbox(home: &Path, rest: &[String], env_session: Option<&str>) -> Result<()> {
+    let flag = rest.iter().position(|a| a == "--session").and_then(|i| rest.get(i + 1)).map(String::as_str);
+    let text = flag.or(env_session).and_then(|id| take_inbox_idle(home, id));
+    if rest.iter().any(|a| a == "--json") {
+        println!("{}", json!({ "text": text }));
+    } else if let Some(t) = text {
+        println!("{t}");
+    }
+    Ok(())
 }
 
 const JOURNAL_MAX: u64 = 5 << 20;
@@ -2747,6 +2776,30 @@ mod tests {
         assert!(take_inbox(&home, sid).is_none(), "delivered once");
         assert!(!f.exists());
         assert!(inbox_file(&home, "../../etc/passwd").is_none() && take_inbox(&home, "a/b").is_none());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The HQ UI's producer line (`queueInbox`: `{"ts","text"}`) reaches an idle session through
+    /// `take_inbox_idle` exactly once; the Stop hook then finds nothing, and a later message
+    /// goes to whichever taker comes first.
+    #[test]
+    fn inbox_idle_take_delivers_once_and_the_stop_hook_does_not_repeat_it() {
+        let home = tmp("inbox-idle");
+        let sid = "2fc89664-9479-4b01-b539-3eefc61f29ec";
+        assert!(take_inbox_idle(&home, sid).is_none(), "nothing pending");
+        let f = inbox_file(&home, sid).unwrap();
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(&f, format!("{}\n", json!({"ts":1,"text":"New task: sửa nút Giao (prio: P1)"}))).unwrap();
+        let msg = take_inbox_idle(&home, sid).unwrap();
+        assert!(msg.starts_with("8 Sync HQ: the owner sent you 1 message(s) from the HQ dashboard. Read"), "{msg}");
+        assert!(!msg.contains("while you were working"), "idle framing: {msg}");
+        assert!(msg.ends_with("New task: sửa nút Giao (prio: P1)"), "{msg}");
+        assert!(take_inbox(&home, sid).is_none(), "the Stop hook does not deliver it again");
+        assert!(take_inbox_idle(&home, sid).is_none());
+        std::fs::write(&f, format!("{}\n", json!({"ts":2,"text":"thêm một việc"}))).unwrap();
+        assert!(take_inbox(&home, sid).unwrap().contains("while you were working"), "mid-turn: the Stop hook wins");
+        assert!(take_inbox_idle(&home, sid).is_none());
+        assert!(take_inbox_idle(&home, "not-an-id/../x").is_none());
         let _ = std::fs::remove_dir_all(&home);
     }
 

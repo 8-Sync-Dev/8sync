@@ -327,7 +327,7 @@ function Composer({
   const hint = !current
     ? "Start a session to message it."
     : via === "inbox"
-      ? "Inbox: session nhận tin khi xong lượt đang làm (Stop hook), trả lời hiện ở đây."
+      ? "Inbox: session nhận tin ngay khi rảnh (mod 8sync-inbox) hoặc khi xong lượt đang làm (Stop hook), trả lời hiện ở đây."
       : current.channel_state === "blocked-by-org"
       ? "Typed into the session's terminal (Channels off for your org)."
       : current.channel_state === "unresponsive"

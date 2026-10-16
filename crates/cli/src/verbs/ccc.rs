@@ -181,6 +181,10 @@ pub fn run(a: Args) -> Result<()> {
             let cd = claude_dir(&env);
             hint::run(rest, &hint::Ctx { cwd: &cwd, home: &env.home, claude_dir: &cd, registry: Some(&reg), session_id: id.as_deref(), now: view_now(), git: true })
         }
+        "inbox" => {
+            let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
+            crate::verbs::hq::run_inbox(&env.home, rest, id.as_deref())
+        }
         "ls" | "list" => {
             print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
         }
@@ -546,7 +550,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 34] = [
+const KIT_FILES: [(&str, &str); 38] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -584,6 +588,12 @@ const KIT_FILES: [(&str, &str); 34] = [
     ("claude/skills/8sync-hints/hooks/register.tsx", "skills/8sync-hints/hooks/register.tsx"),
     ("claude/skills/8sync-hints/hooks/hint.ts", "skills/8sync-hints/hooks/hint.ts"),
     ("claude/skills/8sync-hints/types/index.d.ts", "skills/8sync-hints/types/index.d.ts"),
+    // Mod `8sync-inbox`: hands the owner's HQ tasks to an idle session (`8sync ccc inbox`); the
+    // Stop hook alone only delivered them when a turn ended, so an idle session never got them.
+    ("claude/skills/8sync-inbox/.claude-plugin/plugin.json", "skills/8sync-inbox/.claude-plugin/plugin.json"),
+    ("claude/skills/8sync-inbox/hooks/hooks.json", "skills/8sync-inbox/hooks/hooks.json"),
+    ("claude/skills/8sync-inbox/hooks/register.ts", "skills/8sync-inbox/hooks/register.ts"),
+    ("claude/skills/8sync-inbox/hooks/inbox.ts", "skills/8sync-inbox/hooks/inbox.ts"),
 ];
 
 /// Files an earlier kit installed and this one dropped: deleted while they are
@@ -2362,6 +2372,25 @@ mod tests {
 
     /// The `8sync-hints` mod ships in the kit: five files under `skills/8sync-hints`, written
     /// byte-for-byte from the repo assets (the cbm gate leaves non-markdown alone).
+    #[test]
+    fn kit_installs_the_inbox_mod() {
+        let mod_files: Vec<&str> = KIT_FILES.iter().map(|(_, r)| *r).filter(|r| r.starts_with("skills/8sync-inbox/")).collect();
+        assert_eq!(mod_files, ["skills/8sync-inbox/.claude-plugin/plugin.json", "skills/8sync-inbox/hooks/hooks.json", "skills/8sync-inbox/hooks/register.ts", "skills/8sync-inbox/hooks/inbox.ts"]);
+        let tmp = std::env::temp_dir().join(format!("8sync-inbox-kit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let home = tmp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let env = Env { home: home.clone(), xdg_config: home.join(".config"), os_id: String::new(), os_id_like: String::new() };
+        let dir = tmp.join("claude");
+        install_kit_at(&env, &dir, false, true).unwrap();
+        let reg = std::fs::read_to_string(dir.join("skills/8sync-inbox/hooks/register.ts")).unwrap();
+        assert_eq!(reg, assets::read("claude/skills/8sync-inbox/hooks/register.ts").unwrap());
+        assert!(reg.contains("'8sync', 'ccc', 'inbox'") && reg.contains("$.prompt.submit"), "the mod takes the inbox and submits it");
+        let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("skills/8sync-inbox/.claude-plugin/plugin.json")).unwrap()).unwrap();
+        assert_eq!(manifest["name"], "8sync-inbox");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn kit_installs_the_hints_mod() {
         let mod_files: Vec<&str> = KIT_FILES.iter().map(|(_, r)| *r).filter(|r| r.starts_with("skills/8sync-hints/")).collect();

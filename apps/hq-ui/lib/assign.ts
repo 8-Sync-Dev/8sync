@@ -99,7 +99,7 @@ export type Summary = {
 export function assignSummary(x: Summary): string {
   if (x.mode === "session") {
     if (!x.session) return "";
-    const via = deliveryOf(x.session) === "inbox" ? "qua inbox (nhận khi xong lượt)" : "vào terminal";
+    const via = deliveryOf(x.session) === "inbox" ? "qua inbox (nhận ngay khi phiên rảnh)" : "vào terminal";
     return `Giao cho phiên ${sessionLabel(x.session)} ${via}`;
   }
   if (x.mode === "role") {

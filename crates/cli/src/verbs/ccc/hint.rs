@@ -37,6 +37,7 @@ pub(super) const CCC_VERBS: &[(&str, &str)] = &[
     ("kit", "cài/làm mới kit (hook, skill, mod) vào ~/.claude"),
     ("status", "guard, gate, mod có đang bật không"),
     ("hint", "gợi ý prompt kế + band + typeahead (mod 8sync-hints gọi)"),
+    ("inbox", "task HQ đang chờ cho phiên rảnh (mod 8sync-inbox gọi)"),
     ("loop", "vòng lặp /ship-loop: init · tick · status · done · ev"),
     ("standup", "bảng sprint: role nào rảnh, việc trùng file"),
     ("ls", "session của repo, mới nhất lên đầu"),

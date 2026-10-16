@@ -128,7 +128,7 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, rooms
         else {
           const s = sessions.find((x) => x.name === r.session || x.session_id === r.session);
           const who = s ? sessionLabel(s) : r.session.slice(0, 8);
-          toast.success(`${r.started ? "Đã mở phiên mới và giao cho" : "Đã giao cho"} ${who}${r.delivery === "inbox" ? " qua inbox (nhận khi xong lượt)" : ""}${plan}`);
+          toast.success(`${r.started ? "Đã mở phiên mới và giao cho" : "Đã giao cho"} ${who}${r.delivery === "inbox" ? " qua inbox (nhận ngay khi phiên rảnh)" : ""}${plan}`);
         }
       }
       setSubject("");
@@ -149,7 +149,7 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, rooms
         <form onSubmit={submit} className="grid gap-5">
           <DialogHeader>
             <DialogTitle>Giao việc</DialogTitle>
-            <DialogDescription>Việc được gõ thẳng vào phiên nhận; phiên mở ngoài HQ nhận qua inbox khi xong lượt.</DialogDescription>
+            <DialogDescription>Việc được gõ thẳng vào phiên nhận; phiên mở ngoài HQ nhận qua inbox: ngay khi rảnh (mod 8sync-inbox), hoặc khi xong lượt đang làm.</DialogDescription>
           </DialogHeader>
 
           <Section title="Việc">
