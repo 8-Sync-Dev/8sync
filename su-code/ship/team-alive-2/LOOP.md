@@ -26,3 +26,11 @@ iter 0 | C3 | exit 0 | Duration  239ms (tests 41%, transform 25%, import 22%, se
 iter 0 | C5 | exit 0 | > eslint
 iter 0 | C6 | exit 0 | (no output)
 iter 0 | review | — | reviewer BLOCKER 1 (status.gate) đã sửa + test; SHOULD 2 (idle map stale sau 3 phút không poll), 3 (auto::running rẻ: marker+flags, không costs/gate), 5 (test đọc tasks/<sid>/ + lead với idle on tay), 6 (toEqual + tick gọi với status), 7 (write-then-rename + test 2 poll song song), 8 (slack 5 s + CHANGELOG: chỉ tick khi tab Văn phòng mở), NIT 9 (allowlist idle), 10 (error cố định "tick failed", chi tiết vào server log), 11 (lead tính một lần); SHOULD 4 = giả định trong PLAN. gitleaks trên diff mới: no leaks
+iter 0 | C7 | exit 0 | View this run on GitHub: https://github.com/8-Sync-Dev/su-code/actions/runs/38869205915
+
+## Brief (iter 0, tất cả xanh, 2026-10-16 15:0x)
+- C1 ship-tick: feat/ship-tick 62da3d9, CI 38867604686 xanh 6/6. C4 hq-stale-ui: feat/hq-up-ui-refresh dbf22a9, CI 38866841389 xanh 6/6.
+- C2 idle ladder standalone + C3 HQ auto-tick: feat/auto-tick fb47994, CI 38869205915 xanh 6/6 (ubuntu/macos/windows + hq-ui-test + package-hq-ui + minimal); local: idle::tests 13/13, vitest 17/17, tsc + eslint 0, clippy touched sạch.
+- Review: 1 BLOCKER (status.gate) + 8 SHOULD/NIT áp dụng; SHOULD 4 = giả định (PLAN). Gates: /sec OK · /rules CONDITIONS · /aup-audit no BLOCK · risk low.
+- Not verified: UAT C3 trên HQ thật (loadOffice mock); Windows/macOS máy thật (chỉ CI).
+- Tiếp: MỘT câu Ship cho 3 nhánh → PR → merge tuần tự (conflict CHANGELOG/route.ts/auto-api.test giữa hq-up-ui-refresh và auto-tick) → v0.95.0 → `8sync up` + kit (size gate còn ~66 KB).
