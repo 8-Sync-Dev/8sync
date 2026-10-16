@@ -11,6 +11,11 @@
 //! `taskdone` hooks then skip sessions whose cwd is outside it ([`in_scope`]); subfolders and
 //! worktrees inside the repo count as the same project.
 //!
+//! `--loop [10m] [--team]` queues one inbox message per room of this project ([`loop_prompt`]):
+//! the room sets up its own recurring `CronCreate` loop, which re-reads [`status`] every tick and
+//! deletes itself once auto is off/paused or the lease/$ gate holds. Started by the owner's own
+//! command, a loop runs for the lease without the per-room 30-minute typing check.
+//!
 //! Rails stay those of `idle` and `delegate`: a subscription login keeps the lease ≤ 4 h and only
 //! runs while the owner types (Consumer Terms; unattended use belongs on a Console API key, see
 //! `assets/skills/aup-audit/8sync-anthropic-rules.md`); Ship, secrets, money, deploys and
@@ -22,8 +27,11 @@ use serde_json::{json, Value};
 
 use super::{delegate, idle};
 
-const USAGE: &str = "usage: 8sync ccc auto on [--here] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json]";
+const USAGE: &str = "usage: 8sync ccc auto on [--here] [--loop [10m]] [--team] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json]";
 const DEFAULT_AFTER_S: u64 = 60;
+const DEFAULT_LOOP_MIN: u64 = 10;
+/// Tag every loop carries, so a room never gets two and `CronList` finds it.
+const LOOP_TAG: &str = "8sync-auto-loop";
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum Mode {
@@ -212,7 +220,62 @@ fn num(rest: &[String], flag: &str) -> Result<Option<String>> {
     }
 }
 
-pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()> {
+/// `--loop` interval in minutes: `10`, `10m`, `2h`; 1 min .. 24 h.
+pub(super) fn parse_every(s: &str) -> Result<u64> {
+    let (n, mul) = match s.strip_suffix('h') {
+        Some(h) => (h, 60),
+        None => (s.strip_suffix('m').unwrap_or(s), 1),
+    };
+    match n.parse::<u64>().ok().map(|n| n * mul) {
+        Some(m @ 1..=1440) => Ok(m),
+        _ => bail!("--loop: 1m..24h (vd 10m, 1h)\n{USAGE}"),
+    }
+}
+
+/// The message `auto on --loop` queues for one room: set up its own recurring loop (what `/loop`
+/// does: `CronCreate`), shaped by the room's role. Every tick re-checks `auto status`, so `off`,
+/// `pause`, the end of the lease or the $/hour cap delete the loop on its next tick.
+pub(super) fn loop_prompt(name: &str, every_min: u64, team: bool) -> String {
+    let (role, duty) = super::room::role(name);
+    let tick = format!(
+        "{LOOP_TAG} {name}: chạy `8sync ccc auto status --json`; nếu on=false, paused=true hoặc gate khác null → CronDelete job {LOOP_TAG} này và dừng. Không thì: su-code/ship/ACTIVE có vòng lặp mở → /ship-tick <slug>; không thì lấy MỘT việc hợp vai {role} từ su-code/STATE.md mục Next (`8sync ccc . goal` giữ file trước, tránh trùng phòng khác) và tự chọn skill theo việc: code → /ship <việc> đủ flow (karpathy-guidelines khi sửa code, test, review, gate /sec + /rules + /aup-audit trước commit), đổi ≤3 file → /do, R&D → /deep-research (ghi su-code/research/), UI → impeccable, thiết kế hệ thống → /sysdesign; rồi `8sync ccc meet --say`. Không merge/push main/tag/deploy; câu hỏi Ship vẫn chờ owner."
+    );
+    let mut s = format!(
+        "8sync auto --loop: owner bật chạy liên tục cho phòng `{name}` (vai {role}: {duty}). CronList trước: đã có job chứa `{LOOP_TAG}` thì không tạo thêm. Không thì CronCreate lặp mỗi {every_min} phút (như `/loop {every_min}m`) với prompt:\n{tick}"
+    );
+    if team {
+        s.push_str("\nCó tool tạo teammate (agent teams) thì lấp ghế trống ngay: rd, qa, reviewer; mỗi người giữ file riêng (`8sync ccc . goal --files`), báo về lead. Không có tool đó thì bỏ qua (cần mở phòng bằng `--team`).");
+    }
+    s
+}
+
+/// Queue [`loop_prompt`] into every room's inbox. `(name, delivered now?)`: a room without the
+/// `8sync-inbox` mod gets it at its next turn end.
+pub(super) fn queue_loops(
+    home: &Path,
+    rooms: &[(String, String)],
+    every_min: u64,
+    team: bool,
+    now: u64,
+) -> Vec<(String, bool)> {
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now);
+    let mut out = Vec::new();
+    for (name, id) in rooms {
+        if crate::verbs::hq::queue_inbox(home, id, &loop_prompt(name, every_min, team), now * 1000)
+            .is_ok()
+        {
+            out.push((name.clone(), crate::verbs::hq::inbox_live(home, id, at)));
+        }
+    }
+    out
+}
+
+pub(super) fn run(
+    rest: &[String],
+    home: &Path,
+    subscription: bool,
+    rooms: impl FnOnce() -> Vec<(String, String)>,
+) -> Result<()> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -220,7 +283,12 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
         let mut it = rest.iter().skip(1);
         while let Some(a) = it.next() {
             match a.as_str() {
-                f @ ("--json" | "--here") if allowed.contains(&f) => {}
+                f @ ("--json" | "--here" | "--team") if allowed.contains(&f) => {}
+                "--loop" if allowed.contains(&"--loop") => {
+                    if it.clone().next().is_some_and(|v| !v.starts_with("--")) {
+                        it.next();
+                    }
+                }
                 f if allowed.contains(&f) => {
                     it.next();
                 }
@@ -229,9 +297,29 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
         }
         Ok(())
     };
+    let mut looped = None;
     let v = match rest.first().map(String::as_str) {
         Some("on") => {
-            known(&["--hours", "--after", "--usd-per-hour", "--here"])?;
+            known(&[
+                "--hours",
+                "--after",
+                "--usd-per-hour",
+                "--here",
+                "--loop",
+                "--team",
+            ])?;
+            let every = match rest.iter().position(|a| a == "--loop") {
+                Some(i) => Some(match rest.get(i + 1).filter(|v| !v.starts_with("--")) {
+                    Some(v) => parse_every(v)?,
+                    None => DEFAULT_LOOP_MIN,
+                }),
+                None => None,
+            };
+            let team = rest.iter().any(|a| a == "--team");
+            if team && every.is_none() {
+                bail!("--team đi cùng --loop\n{USAGE}");
+            }
+            looped = every.map(|e| (e, team));
             let hours = match num(rest, "--hours")? {
                 Some(h) => h
                     .parse::<f64>()
@@ -281,7 +369,18 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
         }
         Some(x) => bail!("không rõ `{x}`\n{USAGE}"),
     };
+    // Only once auto is really on: a loop queued while the rails hold would delete itself anyway.
+    let queued = match looped {
+        Some((every, team)) if v["on"].as_bool() == Some(true) => {
+            Some((every, queue_loops(home, &rooms(), every, team, now)))
+        }
+        _ => None,
+    };
     if rest.iter().any(|a| a == "--json") {
+        let mut v = v;
+        if let Some((every, q)) = &queued {
+            v["loop"] = json!({ "every_min": every, "rooms": q.iter().map(|(n, live)| json!({ "name": n, "now": live })).collect::<Vec<_>>() });
+        }
         println!("{v}");
     } else {
         println!("{}", text(&v));
@@ -292,6 +391,22 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
             }
             if subscription {
                 println!("Login subscription: lease ≤ 4 giờ, chỉ chạy khi owner có mặt. Chạy không người trông → Console API key.");
+            }
+        }
+        if let Some((every, q)) = &queued {
+            if q.is_empty() {
+                println!("--loop: dự án này chưa có phòng nào (`8sync ccc . <tên>` để mở).");
+            }
+            for (name, live) in q {
+                let when = if *live {
+                    "vào ngay khi phòng rảnh"
+                } else {
+                    "vào khi phòng xong lượt kế (chưa nạp mod inbox)"
+                };
+                println!("loop {every} phút → {name}: {when}");
+            }
+            if !q.is_empty() {
+                println!("Loop tự xoá ở nhịp kế khi auto off/pause, hết lease hoặc chạm trần $/giờ. Xoá tay trong phòng: `/loop clear`.");
             }
         }
     }
@@ -373,7 +488,11 @@ mod tests {
         // a real checkout, cwd written the way Claude Code sends it (no `\\?\`, native separators)
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         set(&h, here(crate_dir), false, 3).unwrap();
-        assert!(in_scope(&h, Some(&s(&crate_dir.join("src")))), "{}", status(&h, false, 3));
+        assert!(
+            in_scope(&h, Some(&s(&crate_dir.join("src")))),
+            "{}",
+            status(&h, false, 3)
+        );
         assert!(!in_scope(&h, Some(&s(&repo))));
         // a plain `on` widens it again; `pause` drops it
         set(&h, on(2.0, 60), false, 3).unwrap();
@@ -564,12 +683,86 @@ mod tests {
     fn run_rejects_unknown_arguments() {
         let h = home("args");
         let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        assert!(run(&s(&["on", "--bogus"]), &h, false).is_err());
-        assert!(run(&s(&["on", "--hours"]), &h, false).is_err());
-        assert!(run(&s(&["on", "--after", "0"]), &h, false).is_err());
-        assert!(run(&s(&["wat"]), &h, false).is_err());
-        assert!(run(&s(&["off", "--here"]), &h, false).is_err());
+        assert!(run(&s(&["on", "--bogus"]), &h, false, Vec::new).is_err());
+        assert!(run(&s(&["on", "--hours"]), &h, false, Vec::new).is_err());
+        assert!(run(&s(&["on", "--after", "0"]), &h, false, Vec::new).is_err());
+        assert!(run(&s(&["wat"]), &h, false, Vec::new).is_err());
+        assert!(run(&s(&["off", "--here"]), &h, false, Vec::new).is_err());
+        assert!(
+            run(&s(&["on", "--team"]), &h, false, Vec::new).is_err(),
+            "--team needs --loop"
+        );
+        assert!(run(&s(&["on", "--loop", "0m"]), &h, false, Vec::new).is_err());
         assert!(!marker(&h).exists());
         let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn loop_interval_parses_minutes_and_hours() {
+        assert_eq!(parse_every("10").unwrap(), 10);
+        assert_eq!(parse_every("10m").unwrap(), 10);
+        assert_eq!(parse_every("2h").unwrap(), 120);
+        for bad in ["0", "0m", "25h", "x", "", "-5m"] {
+            assert!(parse_every(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn loop_prompt_sets_one_self_stopping_loop_per_room() {
+        let p = loop_prompt("rd-su-code", 15, false);
+        for want in [
+            LOOP_TAG,
+            "CronList",
+            "CronCreate",
+            "15 phút",
+            "auto status --json",
+            "CronDelete",
+            "Ship",
+            "rd-su-code",
+            "/ship <việc>",
+            "karpathy-guidelines",
+            "/sec + /rules + /aup-audit",
+            "/deep-research",
+        ] {
+            assert!(p.contains(want), "missing {want}: {p}");
+        }
+        assert!(!p.contains("teammate"));
+        assert!(loop_prompt("lead", 10, true).contains("rd, qa, reviewer"));
+    }
+
+    #[test]
+    fn auto_on_loop_queues_one_message_per_room() {
+        let h = home("loop");
+        let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let ids = [
+            "a2830544-0719-4d6f-aaa3-644783ddb0b3",
+            "b2830544-0719-4d6f-aaa3-644783ddb0b4",
+        ];
+        let rooms = || {
+            vec![
+                ("lead".to_string(), ids[0].to_string()),
+                ("rd".to_string(), ids[1].to_string()),
+            ]
+        };
+        run(&s(&["on", "--loop", "5m", "--team"]), &h, false, rooms).unwrap();
+        for (id, name) in ids.iter().zip(["lead", "rd"]) {
+            let f = crate::verbs::hq::inbox_file(&h, id).unwrap();
+            let raw = std::fs::read_to_string(&f).unwrap();
+            assert_eq!(raw.lines().count(), 1);
+            let v: Value = serde_json::from_str(raw.trim()).unwrap();
+            let t = v["text"].as_str().unwrap();
+            assert!(
+                t.contains(&format!("`{name}`"))
+                    && t.contains("5 phút")
+                    && t.contains("rd, qa, reviewer")
+            );
+        }
+        // Off: no loop is queued (a queued loop would only delete itself).
+        let h2 = home("loop-off");
+        run(&s(&["off"]), &h2, false, rooms).unwrap();
+        assert!(!crate::verbs::hq::inbox_file(&h2, ids[0]).unwrap().exists());
+        for d in [h, h2] {
+            let _ = std::fs::remove_dir_all(&d);
+        }
     }
 }

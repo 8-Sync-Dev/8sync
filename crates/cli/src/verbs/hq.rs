@@ -1841,6 +1841,15 @@ pub(crate) fn inbox_line(live: bool) -> &'static str {
     }
 }
 
+/// Append one `{"ts","text"}` line to a session's inbox, as `hq ui` does (lib/server/inbox.ts).
+pub(crate) fn queue_inbox(home: &Path, session_id: &str, text: &str, ts_ms: u64) -> Result<()> {
+    let file = inbox_file(home, session_id).context("session id không hợp lệ")?;
+    touch(&file, SystemTime::now());
+    let mut f = std::fs::OpenOptions::new().append(true).open(&file)?;
+    writeln!(f, "{}", json!({ "ts": ts_ms, "text": text }))?;
+    Ok(())
+}
+
 /// Create `p` (0600, its dir 0700 like every inbox file) when missing and set its mtime
 /// (content untouched: a rewrite would truncate it).
 fn touch(p: &Path, at: SystemTime) {

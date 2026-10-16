@@ -186,7 +186,9 @@ pub fn run(a: Args) -> Result<()> {
             }
             Ok(())
         }
-        "auto" => auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription"),
+        "auto" => auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", || {
+            sessions(&env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect()
+        }),
         "meet" => {
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
             meet::run(&sessions(&env, &root), rest, id.as_deref(), &std::env::current_dir().context("no cwd")?, view_now())
