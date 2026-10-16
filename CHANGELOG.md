@@ -7,7 +7,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Fixed
 - **`auto on --loop` no longer promises that a `/bg` room resumes after a usage limit.** The note now says the next tick after the reset *may* pick the work up again, because the docs only state that background sessions don't wait. On a subscription login, the pointer to Routines now warns that a routine runs "without stopping for approval" and outside the 8sync rails, so the owner should grant only the repos and connectors it needs (https://code.claude.com/docs/en/routines). The same note is in `docs/huong-dan.md`.
 
-## [0.98.0] — 2026-10-16
+## [0.98.1] — 2026-10-16
+### Changed
+- Release size ceiling 6784 → 6912 KiB, attributed in `scripts/size-gate.sh` (v0.98.0 linux-x86_64 was 6,973,520 B, 26,704 B over; +69,632 B vs v0.97.0 from `auto on --loop/--team`, the project target queue and the subscription loop notes; no new dependency). v0.98.0 was tagged but not published; 0.98.1 ships everything listed under 0.98.0.
+
+## [0.98.0] — 2026-10-16 (tagged, not published)
 ### Added
 - **`8sync ccc auto on --loop [10m] [--team]` puts every room of the project on its own loop with one command.** It writes `.claude/loop.md`, the file Claude Code uses as the default prompt for a bare `/loop` and re-reads every iteration. 8sync writes it only when no file is there, so the owner's edits are never overwritten, and it never follows a symlink.
   - Each tick, a room works through `loop.md`. It checks `auto status`, takes one `su-code/STATE.md` item for its role (or a `workflows/*.md` spec written with `/loop-me`) and picks the skill for the job: full `/ship` with karpathy-guidelines, tests, review and the `/sec` + `/rules` + `/aup-audit` gates before commit, or `/do`, `/deep-research`, `impeccable`, `/sysdesign`. Then it posts to the sprint meeting. A job that needs several ticks gets one `/ship` step per tick. A scheduled fire cannot run skills marked `disable-model-invocation`, so `/ship-loop`, `/ship-auto`, `/autopilot`, `/sprint` and `/loop-me` stay owner-typed, and a test keeps the playbook from routing a tick to them.
