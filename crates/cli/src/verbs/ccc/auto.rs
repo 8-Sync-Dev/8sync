@@ -13,8 +13,9 @@
 //!
 //! `--loop [10m] [--team]` queues one inbox message per room of this project ([`loop_prompt`]):
 //! the room sets up its own recurring `CronCreate` loop, which re-reads [`status`] every tick and
-//! deletes itself once auto is off/paused or the lease/$ gate holds. Started by the owner's own
-//! command, a loop runs for the lease without the per-room 30-minute typing check.
+//! deletes itself once auto is off/paused or the $/hour cap holds. The lease does not stop it: the
+//! loop is Claude Code's own scheduler (session-scoped, expires after 7 days,
+//! https://code.claude.com/docs/en/scheduled-tasks), started by the owner's own command.
 //!
 //! Rails stay those of `idle` and `delegate`: a subscription login keeps the lease ≤ 4 h and only
 //! runs while the owner types (Consumer Terms; unattended use belongs on a Console API key, see
@@ -238,7 +239,7 @@ pub(super) fn parse_every(s: &str) -> Result<u64> {
 pub(super) fn loop_prompt(name: &str, every_min: u64, team: bool) -> String {
     let (role, duty) = super::room::role(name);
     let tick = format!(
-        "{LOOP_TAG} {name}: chạy `8sync ccc auto status --json`; nếu on=false, paused=true hoặc gate khác null → CronDelete job {LOOP_TAG} này và dừng. Không thì: su-code/ship/ACTIVE có vòng lặp mở → /ship-tick <slug>; không thì lấy MỘT việc hợp vai {role} từ su-code/STATE.md mục Next (`8sync ccc . goal` giữ file trước, tránh trùng phòng khác) và tự chọn skill theo việc: code → /ship <việc> đủ flow (karpathy-guidelines khi sửa code, test, review, gate /sec + /rules + /aup-audit trước commit), đổi ≤3 file → /do, R&D → /deep-research (ghi su-code/research/), UI → impeccable, thiết kế hệ thống → /sysdesign; rồi `8sync ccc meet --say`. Không merge/push main/tag/deploy; câu hỏi Ship vẫn chờ owner."
+        "{LOOP_TAG} {name}: chạy `8sync ccc auto status --json`; nếu on=false, paused=true hoặc gate bắt đầu bằng \"chạm trần\" → CronDelete job {LOOP_TAG} này và dừng (lease hết hạn không dừng loop; Claude Code tự xoá loop sau 7 ngày). Không thì: su-code/ship/ACTIVE có vòng lặp mở → /ship-tick <slug>; không thì lấy MỘT việc hợp vai {role} từ su-code/STATE.md mục Next (`8sync ccc . goal` giữ file trước, tránh trùng phòng khác) và tự chọn skill theo việc: code → /ship <việc> đủ flow (karpathy-guidelines khi sửa code, test, review, gate /sec + /rules + /aup-audit trước commit), đổi ≤3 file → /do, R&D → /deep-research (ghi su-code/research/), UI → impeccable, thiết kế hệ thống → /sysdesign; rồi `8sync ccc meet --say`. Không merge/push main/tag/deploy; câu hỏi Ship vẫn chờ owner."
     );
     let mut s = format!(
         "8sync auto --loop: owner bật chạy liên tục cho phòng `{name}` (vai {role}: {duty}). CronList trước: đã có job chứa `{LOOP_TAG}` thì không tạo thêm. Không thì CronCreate lặp mỗi {every_min} phút (như `/loop {every_min}m`) với prompt:\n{tick}"
@@ -406,7 +407,7 @@ pub(super) fn run(
                 println!("loop {every} phút → {name}: {when}");
             }
             if !q.is_empty() {
-                println!("Loop tự xoá ở nhịp kế khi auto off/pause, hết lease hoặc chạm trần $/giờ. Xoá tay trong phòng: `/loop clear`.");
+                println!("Loop tự xoá ở nhịp kế khi auto off/pause hoặc chạm trần $/giờ; Claude Code tự xoá sau 7 ngày; chỉ chạy khi phòng còn mở. Xoá tay: bảo phòng \"huỷ job 8sync-auto-loop\" (CronDelete).");
             }
         }
     }
@@ -728,6 +729,16 @@ mod tests {
         }
         assert!(!p.contains("teammate"));
         assert!(loop_prompt("lead", 10, true).contains("rd, qa, reviewer"));
+        // The loop stops on the $/hour cap, matched by the prefix of idle::gate's cap error.
+        assert!(p.contains("gate bắt đầu bằng \"chạm trần\""));
+        let lease = json!({ "on": 0, "until": 10_000, "usd_per_hour": 5.0 });
+        assert!(idle::gate(Some(&lease), true, 99.0, 3600, None)
+            .unwrap_err()
+            .starts_with("chạm trần"));
+        // An expired lease alone is not a stop reason for the loop.
+        assert!(!idle::gate(Some(&lease), true, 0.0, 20_000, None)
+            .unwrap_err()
+            .starts_with("chạm trần"));
     }
 
     #[test]
