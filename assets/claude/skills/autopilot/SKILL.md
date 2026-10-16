@@ -28,4 +28,4 @@ claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permissi
 ## Giới hạn của lập lịch
 Muốn chạy lặp theo giờ bằng `/loop`: tác vụ lặp hết hạn sau 7 ngày, chỉ chạy khi session mở và idle, và `/loop` tự pace không được khôi phục khi `--resume` (https://code.claude.com/docs/en/scheduled-tasks#limitations). Skill có `disable-model-invocation: true` không chạy khi scheduled task dùng nó làm prompt — nên cron/routine phải gọi `claude -p` hoặc owner khởi động. Cần chạy bền không phụ thuộc session → Routines/GitHub Actions.
 
-Rails: không `bypassPermissions`; `/sec` mỗi diff; không in secret; không đụng data client/CRM; không push main. Mọi câu "xong/pass" phải kèm lệnh + output; thiếu → "not verified".
+Rails: không `bypassPermissions`; `8sync ccc risk` rồi `/sec` mỗi diff; owner "dừng"/"huỷ" → `8sync ccc cancel` (loop trong ACTIVE, goal, urgent; fail-closed); không in secret; không đụng data client/CRM; không push main. Mọi câu "xong/pass" phải kèm lệnh + output; thiếu → "not verified".

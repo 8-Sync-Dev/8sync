@@ -106,3 +106,12 @@ that dir (`selfup::installed_path()` = `current_exe()`, so `up` replaces only th
 
 Known failing assertion at time of writing: kit stamp stays at the old version because `refresh_kit` cannot
 re-exec the replaced binary on Linux (root cause in the task report; Rust fix belongs to crates/cli).
+
+## omc-cancel-risk.sh — `8sync ccc risk` on the real diff, `8sync ccc cancel` fail-closed (no model, free)
+
+`bash scripts/uat/omc-cancel-risk.sh [target/debug/8sync]`: `risk --json` on this repo's working tree must name
+`sec` first with a valid level; `risk --paths apps/web/login.ts,CHANGELOG.md` must require `/rules`; then in a
+`mktemp` repo: `cancel` with no session id → exit 1 naming `--session`, an unknown `--session` → exit 1 and ACTIVE
+untouched, a live `loop init` named in ACTIVE + an unregistered session id → cancelled (`"stopped": "cancelled"`),
+ACTIVE removed. Linux/macOS only (`env -u`, `mktemp -t`, python3); Windows is covered by the unit tests
+(`cancel_*`, `risk_*`). Measured 2026-10-16 on Linux (debug build of this branch): PASS.

@@ -39,6 +39,8 @@ pub(super) const CCC_VERBS: &[(&str, &str)] = &[
     ("hint", "gợi ý prompt kế + band + typeahead (mod 8sync-hints gọi)"),
     ("inbox", "task HQ đang chờ cho phiên rảnh (mod 8sync-inbox gọi)"),
     ("loop", "vòng lặp /ship-loop: init · tick · status · done · ev"),
+    ("cancel", "huỷ hết việc session này đặt (goal, urgent, loop); --all xuyên session"),
+    ("risk", "gate bắt buộc cho diff này: /sec, /rules, /aup-audit…"),
     ("standup", "bảng sprint: role nào rảnh, việc trùng file"),
     ("ls", "session của repo, mới nhất lên đầu"),
     ("report", "token, cost, thời gian, loop"),
