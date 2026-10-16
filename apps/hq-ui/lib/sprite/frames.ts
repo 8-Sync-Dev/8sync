@@ -242,11 +242,12 @@ function bubble(g: G, kind: "?" | "!", dy: number) {
 }
 
 /** Small speech bubble (top left, clear of the board) with 1..3 dots: someone is talking. */
+/** Speech dots above the head (which starts on row 5 in the work posture): rows 0..4, tail on row 5. */
 function dots(g: G, n: number) {
-  rect(g, 0, 1, 11, 6, "o");
-  rect(g, 1, 2, 9, 4, "w");
-  px(g, 8, 7, "o");
-  for (let k = 0; k < n; k++) px(g, 3 + k * 2, 4, "o");
+  rect(g, 0, 0, 11, 5, "o");
+  rect(g, 1, 1, 9, 3, "w");
+  px(g, 6, 5, "o");
+  for (let k = 0; k < n; k++) px(g, 3 + k * 2, 2, "o");
 }
 
 /**
@@ -259,6 +260,14 @@ const risePose = (i: number): Pose => ({
   chair: true,
   hands: i === 0 ? [[13, 20], [17, 20]] : [[4, 18 - i], [16, 18 - i]],
 });
+
+/**
+ * Up at the desk, working: the posture "stand" ends in (head row 5, torso from row 13, chair
+ * back showing) so a work clip starts exactly where the transition left off, and "sit" starts
+ * exactly where the work clip is. Raised arms sit 3 px higher to stay beside the head.
+ */
+const UP: Pose = { hy: 5, torsoTop: 13, chair: true };
+const up = (f: (i: number) => Pose) => (i: number): Pose => ({ ...UP, ...f(i) });
 
 type Spec = {
   ms: number[];
@@ -281,12 +290,12 @@ const SPECS: Record<Clip, Spec> = {
   idle: { ms: [900, 700], pose: (i) => (i ? { hy: 9, torsoTop: 17 } : {}), deco: idleScreen },
   typing: {
     ms: [130, 110, 140, 120],
-    pose: (i) => ({ hands: typeHands(i), eyes: "open" }),
+    pose: up((i) => ({ hands: typeHands(i), eyes: "open" })),
     deco: (g, i) => lines(g, "g", [2 + i, 1 + (i % 3), i]),
   },
   running: {
     ms: [150, 150, 150],
-    pose: (i) => ({ hands: typeHands(i === 1 ? 1 : 0) }),
+    pose: up((i) => ({ hands: typeHands(i === 1 ? 1 : 0) })),
     deco: (g, i) => {
       // terminal glow: halo around the monitor + scrolling green lines
       for (let y = 9; y <= 17; y++) {
@@ -300,7 +309,7 @@ const SPECS: Record<Clip, Spec> = {
   },
   reading: {
     ms: [800, 600],
-    pose: (i) => ({ eyes: i ? "shift" : "open", hands: [[13, 21], [17, 21]] }),
+    pose: up((i) => ({ eyes: i ? "shift" : "open", hands: [[13, 21], [17, 21]] })),
     deco: (g, i) => {
       lines(g, "g", [5, 4, 5]);
       rect(g, 22, i ? 14 : 12, 7, 1, "t"); // scan line
@@ -308,7 +317,7 @@ const SPECS: Record<Clip, Spec> = {
   },
   waiting: {
     ms: [450, 450],
-    pose: (i) => ({ armUp: [[4 - i, 10]], hands: [[17, 20], [17, 20]] }),
+    pose: up((i) => ({ armUp: [[4 - i, 7]], hands: [[17, 20], [17, 20]] })),
     deco: (g) => {
       bubble(g, "?", 0);
       lines(g, "g", [2]);
@@ -316,7 +325,7 @@ const SPECS: Record<Clip, Spec> = {
   },
   stalled: {
     ms: [700, 500],
-    pose: () => ({ hy: 11, eyes: "closed", hands: [[13, 21], [17, 21]] }),
+    pose: () => ({ hy: 9, eyes: "closed", hands: [[13, 21], [17, 21]] }),
     deco: (g, i) => {
       bubble(g, "!", i);
       lines(g, "r", [4, 2]);
@@ -346,7 +355,7 @@ const SPECS: Record<Clip, Spec> = {
   meeting: {
     ms: [600, 650, 550],
     noMonitor: true,
-    pose: (i) => ({ eyes: "shift", hands: i === 1 ? [[13, 21]] : [[13, 21], [17, 21]], armUp: i === 1 ? [[17, 11]] : [] }),
+    pose: up((i) => ({ eyes: "shift", hands: i === 1 ? [[13, 21]] : [[13, 21], [17, 21]], armUp: i === 1 ? [[17, 8]] : [] })),
     deco: (g, i) => {
       board(g, i === 2);
       dots(g, i + 1);
@@ -363,9 +372,9 @@ const SPECS: Record<Clip, Spec> = {
       rect(g, 5, 16, 12, 6, "n");
     },
   },
-  // empty seat: screen off, settled lower, slow breath
-  rest: { ms: [1400, 1100], off: true, pose: (i) => ({ hy: 9 + i, torsoTop: 17 + i, hands: [[13, 21], [16, 21]] }) },
-  // transitions (one-shot): rise before work, sit back down before idle; render.ts chains them
+  // dozing at the desk: screen off, hands loose, the idle breath at a slow pace
+  rest: { ms: [1400, 1100], off: true, pose: (i) => ({ hy: 8 + i, torsoTop: 16 + i, hands: [[13, 21], [16, 21]] }) },
+  // transitions (one-shot): rise before work, sit back down before a seated clip; render.ts chains them
   stand: { ms: [140, 130, 150], loop: false, pose: risePose, deco: idleScreen },
   sit: { ms: [150, 130, 140], loop: false, pose: (i) => risePose(2 - i), deco: idleScreen },
 };
