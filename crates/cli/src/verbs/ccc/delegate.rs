@@ -112,7 +112,7 @@ pub(super) fn hook(input: &str, home: &Path) -> Option<String> {
         return None;
     }
     let v: Value = serde_json::from_str(input).ok()?;
-    if v["tool_name"].as_str() != Some("AskUserQuestion") {
+    if v["tool_name"].as_str() != Some("AskUserQuestion") || !super::auto::in_scope(home, v["cwd"].as_str()) {
         return None;
     }
     let after = after_s(home);
