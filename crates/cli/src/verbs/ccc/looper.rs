@@ -20,11 +20,46 @@ pub(super) fn ship_dir(cwd: &Path) -> PathBuf {
     cwd.join(".claude/ship")
 }
 
+/// Letters, digits, `- _ .`, not starting with a dot: one path segment, never `..`.
+pub(super) fn valid_slug(slug: &str) -> bool {
+    !slug.is_empty() && !slug.starts_with('.') && slug.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 fn path(cwd: &Path, slug: &str) -> Result<PathBuf> {
-    if slug.is_empty() || slug.starts_with('.') || !slug.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
+    if !valid_slug(slug) {
         bail!("bad slug {slug:?}: use letters, digits, - _ .");
     }
     Ok(ship_dir(cwd).join(slug).join("loop.json"))
+}
+
+/// Every slug under `ship` that has a loop.json (live, stopped or corrupt), sorted: `cancel --all`
+/// decides per file and reports the corrupt ones as FAILED.
+pub(super) fn loop_slugs(ship: &Path) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(ship)
+        .map(|rd| rd.flatten().filter(|e| e.path().join("loop.json").exists()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+/// Stop a live loop with reason `cancelled` (`8sync ccc cancel`), then read the file back: it is
+/// only "cancelled" when the saved file says so (a concurrent `tick` could write in between).
+/// `Ok(false)`: no loop there or it had already stopped. `Err`: not verified stopped.
+pub(super) fn cancel(p: &Path, now: u64) -> Result<bool> {
+    if !p.exists() {
+        return Ok(false);
+    }
+    let mut v = load(p)?;
+    if !v["stopped"].is_null() {
+        return Ok(false);
+    }
+    v["stopped"] = json!("cancelled");
+    v["note"] = json!(format!("8sync ccc cancel at {now}"));
+    save(p, &v)?;
+    if load(p)?["stopped"].as_str() != Some("cancelled") {
+        bail!("{} was rewritten while cancelling; run cancel again", p.display());
+    }
+    Ok(true)
 }
 
 fn load(p: &Path) -> Result<Value> {
@@ -179,7 +214,7 @@ fn run_at(rest: &[String], cwd: &Path, now: u64) -> Result<()> {
         }
         "done" => {
             let mut v = load(&p)?;
-            if v["stopped"].as_str().map_or(true, str::is_empty) {
+            if v["stopped"].as_str().is_none_or(str::is_empty) {
                 v["stopped"] = json!("done");
             }
             if let Some(r) = flag(args, "--reason") {

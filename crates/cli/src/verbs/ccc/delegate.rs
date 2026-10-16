@@ -41,6 +41,11 @@ const OWNER_ONLY: [&str; 55] = [
     "chấm điểm", "grading", "khách hàng thật",
 ];
 
+/// Flag off (`delegate off`, `ccc cancel --all`); the `--after` value is left as set.
+pub(super) fn off(home: &Path) -> Result<()> {
+    crate::verbs::harness::cbm::write_flag_key(home, KEY, false)
+}
+
 pub(super) fn enabled(home: &Path) -> bool {
     crate::verbs::harness::cbm::resolve(std::env::var(ENV).ok().as_deref(), crate::verbs::harness::cbm::read_flag_key(home, KEY))
 }

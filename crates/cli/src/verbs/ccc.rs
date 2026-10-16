@@ -21,6 +21,7 @@ use crate::verbs::uuid_sessions::Store;
 use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
+mod cancel;
 mod compact;
 mod danger;
 mod delegate;
@@ -34,6 +35,7 @@ mod idle;
 mod looper;
 mod output_budget;
 pub(crate) mod report;
+mod risk;
 mod secret;
 mod resume;
 mod room;
@@ -174,6 +176,15 @@ pub fn run(a: Args) -> Result<()> {
         "status" => status(&env, &root),
         "policy" => policy(rest),
         "loop" => looper::run(rest, &std::env::current_dir().context("no cwd")?),
+        "cancel" => {
+            let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
+            let cwd = std::env::current_dir().context("no cwd")?;
+            if !cancel::run(&sessions(&env, &root), rest, id.as_deref(), &cwd, &env.home, view_now())? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        "risk" => risk::run(rest, &std::env::current_dir().context("no cwd")?),
         "hint" => {
             let cwd = std::env::current_dir().context("no cwd")?;
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();

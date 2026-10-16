@@ -4,11 +4,11 @@
 /// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
 #[cfg(test)]
 pub(super) const VERBS: &[&str] =
-    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "ls", "list", "urgent", "goal", "standup", "rm", "new", "compact", "secret", "idle", "delegate"];
+    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "ls", "list", "urgent", "goal", "standup", "rm", "new", "compact", "secret", "idle", "delegate", "cancel", "risk"];
 
 /// Words that look like verbs: never a session name, never a headless claude launch.
 /// Includes hook sub-verbs people type without `hook`.
-pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate"];
+pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk"];
 
 pub(super) const TEXT: &str = "\
 8sync ccc — Claude Code + kit của 8 Sync. Mọi lệnh (chạy `8sync ccc <verb>`):
@@ -45,6 +45,7 @@ TỰ ĐỘNG (gõ trong Claude Code)
   /autopilot                   nhiều item từ backlog, không người trông
   8sync ccc standup <slug> [init|set <role> <status> [--agent a] [--files a,b] [việc]|--json]   bảng sprint 7 role (rd plan dev review qa quick critic): báo done/doing/blocked, exit 3 khi có role ngồi không, cảnh báo trùng file với phòng khác (/sprint)
   8sync ccc loop <init|tick|ev|status|done|ls> <slug>   state vòng lặp cho /ship-loop; `ev <slug> <nhãn> -- <lệnh>` chạy check + ghi evidence vào LOOP.md
+  8sync ccc cancel [--all] [--session <tên>] [--json]   huỷ hết việc session này đặt: goal, urgent, loop ghi trong su-code/ship/ACTIVE của repo (ACTIVE chung cả repo), rồi ACTIVE; `--all` thêm mọi loop + idle off + delegate off; thiếu session hay huỷ hụt → exit 1 (fail-closed; /loop của Claude Code phải `/loop clear` trong session)
   8sync ccc hook ship-grant    (hook) ghi giấy phép khi owner duyệt câu hỏi `Ship`
   8sync ccc idle on [--hours 2] [--usd-per-hour 5]   không-ai-rảnh cho agent team (mặc định TẮT; subscription = lease khi owner có mặt)
   8sync ccc idle off | status [--json]                 (bật thêm gate TaskCompleted: task sửa code chưa test thì chưa cho xong)
@@ -61,6 +62,7 @@ XEM
 AN TOÀN
   8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|wake>
                                hook do kit đăng ký, không gõ tay
+  8sync ccc risk [--base <ref>] [--paths a,b] [--release] [--json]   gate bắt buộc cho diff này từ tên file đổi (token nguyên từ, không đọc nội dung): /sec luôn; /rules + /aup-audit khi đụng auth · data · messaging · third-party · release · high-risk (+ người review) hoặc có --release; /harden khi đụng .claude/ · settings · hook của kit
   8sync ccc secret keys <file.env>  tên key trong file (không bao giờ in giá trị)
   8sync ccc secret set <encore|vercel|gh> <TÊN> (--from <file.env> | --generate) --type prod,dev | --env production
                                đưa secret thẳng vào Encore/Vercel/GitHub qua stdin, giá trị không vào transcript

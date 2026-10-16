@@ -344,6 +344,16 @@ pub(super) fn write_json(p: &Path, v: &Value) {
     }
 }
 
+/// Flag off and the lease gone (`idle off`, `ccc cancel --all`).
+pub(super) fn off(home: &Path) -> Result<()> {
+    crate::verbs::harness::cbm::write_flag_key(home, KEY, false)?;
+    let lease = state_dir(home).join("lease.json");
+    if lease.exists() {
+        std::fs::remove_file(&lease).with_context(|| format!("cannot remove {}", lease.display()))?;
+    }
+    Ok(())
+}
+
 pub(super) fn enabled(home: &Path) -> bool {
     crate::verbs::harness::cbm::resolve(std::env::var(ENV).ok().as_deref(), crate::verbs::harness::cbm::read_flag_key(home, KEY))
 }
@@ -588,8 +598,7 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
             Ok(())
         }
         Some("off") => {
-            crate::verbs::harness::cbm::write_flag_key(home, KEY, false)?;
-            let _ = std::fs::remove_file(&lease_p);
+            off(home)?;
             println!("không-ai-rảnh: TẮT.");
             Ok(())
         }
