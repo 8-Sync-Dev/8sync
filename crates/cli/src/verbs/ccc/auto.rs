@@ -22,10 +22,13 @@
 //! open target, so every tick works on it until a room proves it met; `add --now` also pushes it
 //! into every room's inbox, the project-wide "ctrl+x ctrl+s to send now".
 //!
-//! Rails stay those of `idle` and `delegate`: a subscription login keeps the lease ≤ 4 h and only
-//! runs while the owner types (Consumer Terms; unattended use belongs on a Console API key, see
-//! `assets/skills/aup-audit/8sync-anthropic-rules.md`); Ship, secrets, money, deploys and
-//! high-risk questions still reach the owner. Validation runs before anything is written.
+//! Rails stay those of `idle` and `delegate`: a subscription login keeps the idle lease ≤ 4 h and
+//! only nudges while the owner types; Ship, secrets, money, deploys and high-risk questions still
+//! reach the owner. `--loop` runs inside rooms the owner opened (ordinary use of Claude Code's own
+//! scheduler); unattended multi-day or 24/7 use belongs on Routines, Desktop scheduled tasks or a
+//! Console API key (https://code.claude.com/docs/en/scheduled-tasks#limitations), and on a
+//! subscription `auto on --loop` says so ([`loop_notes`]; `assets/skills/aup-audit/8sync-anthropic-rules.md`).
+//! Validation runs before anything is written.
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
@@ -370,6 +373,21 @@ fn short(text: &str) -> String {
 }
 
 /// `auto add|queue|done|drop` ([`target`]).
+/// What the owner must know once loops are queued. Usage-limit wait: Claude Code offers it only
+/// in a room open in a terminal, never in a background session, `-p` run or a teammate on its own
+/// (https://code.claude.com/docs/en/interactive-mode#wait-for-a-usage-limit-to-reset).
+fn loop_notes(subscription: bool) -> Vec<&'static str> {
+    let mut v = vec![
+        "Loop tự xoá ở nhịp kế khi auto off/pause; chạm trần $/giờ thì nghỉ nhịp, giữ loop (trần tính trung bình, tự hạ). Claude Code tự xoá sau 7 ngày (chạy lại lệnh này để gia hạn).",
+        "Loop chỉ chạy khi phòng còn mở: gõ /bg trong phòng để chạy nền không cần terminal, Ctrl+T trong agent view để ghim; tắt máy là dừng.",
+        "Hết usage: phòng mở trong terminal tự chờ reset rồi chạy tiếp (autoContinueAtUsageLimit). Phòng /bg và teammate không tự chờ; nhịp loop sau giờ reset sẽ thử lại.",
+    ];
+    if subscription {
+        v.push("Login subscription: loop là scheduler của Claude Code trong phòng anh mở, cho mức dùng thường. Chạy không người trông nhiều ngày hoặc 24/7 → Routines (/schedule, cloud) hoặc Desktop scheduled task (local); tool khác → Console API key. N phòng tiêu quota nhanh gần N lần.");
+    }
+    v
+}
+
 /// The room this command runs in (its conversation id is this Claude Code session), if any.
 /// None = the owner's own terminal.
 fn me(rooms: &[(String, String)]) -> Option<String> {
@@ -748,7 +766,9 @@ pub(super) fn run(
                 println!("loop {every} phút → {name}: {when}");
             }
             if !q.is_empty() {
-                println!("Loop tự xoá ở nhịp kế khi auto off/pause; chạm trần $/giờ thì nghỉ nhịp, giữ loop (trần tính trung bình, tự hạ). Claude Code tự xoá sau 7 ngày (chạy lại lệnh này để gia hạn). Loop chỉ chạy khi phòng còn mở: gõ /bg trong phòng để chạy nền không cần terminal, Ctrl+T trong agent view để ghim. Hết usage: phòng tự chờ reset rồi chạy tiếp (autoContinueAtUsageLimit).");
+                for l in loop_notes(subscription) {
+                    println!("{l}");
+                }
             }
         }
     }
@@ -1074,6 +1094,28 @@ mod tests {
         assert_eq!(cron_expr(10), "*/10 * * * *");
         assert_eq!(cron_expr(120), "0 */2 * * *");
         assert_eq!(cron_expr(1440), "0 0 * * *");
+    }
+
+    #[test]
+    fn loop_notes_tell_bg_from_a_terminal_and_name_the_unattended_route() {
+        let api = loop_notes(false).join("\n");
+        // Claude Code never waits out a usage limit in a background session or for a teammate.
+        assert!(api.contains("Phòng /bg và teammate không tự chờ"), "{api}");
+        assert!(
+            api.contains("phòng mở trong terminal tự chờ reset"),
+            "{api}"
+        );
+        assert!(!api.contains("Login subscription"), "{api}");
+        let sub = loop_notes(true).join("\n");
+        // The unattended routes Claude Code documents (scheduled-tasks#limitations).
+        for want in [
+            "Routines (/schedule",
+            "Desktop scheduled task",
+            "Console API key",
+            "không người trông",
+        ] {
+            assert!(sub.contains(want), "missing {want}: {sub}");
+        }
     }
 
     #[test]
