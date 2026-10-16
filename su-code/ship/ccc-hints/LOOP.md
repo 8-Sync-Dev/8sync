@@ -39,3 +39,7 @@ iter 1 | C6 | exit 0 | PASS: *** loads in claude -p and 8sync ccc hint answers
 iter 1 | C1 | exit 0 | test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 476 filtered out; finished in 0.05s
 iter 1 | C8 | exit 0 | (no output)
 iter 1 | C9 | exit 1 | package-hq-ui: .github#1
+iter 2 | C9 | exit 0 | test (ubuntu-latest): .github#1
+
+## Kết thúc (iter 2, 2026-10-16)
+Tất cả C1–C9 xanh. C9: CI run 38837734481 đỏ trên Windows (git status > 50 ms) → fix 7762610 (GIT_BUDGET 300 ms) → run 38838076659 xanh 3 OS. Reviewer (NOT MERGEABLE → 1 BLOCKER + 8 SHOULD + NIT) và QA UAT (2 FAIL: UTF-8 history, untracked dirty) đã sửa hết. Not verified: dòng `/` trùng menu engine ở đầu ô (đã bỏ start=0); ghost text trong phiên thật cần restart.
