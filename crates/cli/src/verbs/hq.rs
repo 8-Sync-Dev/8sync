@@ -133,6 +133,9 @@ pub enum Sub {
         /// download and install the UI release asset again (ignores the installed copy)
         #[arg(long)]
         update: bool,
+        /// install the UI asset for this binary version when missing, then exit (no server; `8sync up` runs this)
+        #[arg(long)]
+        install: bool,
     },
     /// Delete the local HQ data: events*.jsonl, hq.db*, channel-*.json (asks with no --yes: only lists)
     Purge {
@@ -2210,6 +2213,37 @@ fn hq_ui_data_dir() -> Result<PathBuf> {
     Ok(dirs::data_dir().ok_or_else(|| anyhow!("cannot resolve data directory"))?.join(crate::brand::NS).join("hq-ui"))
 }
 
+/// Version dirs under the HQ UI data dir (dot-dirs are temp/old leftovers, not versions).
+fn installed_versions(base: &Path) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(base) else { return Vec::new() };
+    let mut v: Vec<String> = rd
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().to_str().map(String::from))
+        .filter(|n| !n.starts_with('.'))
+        .collect();
+    v.sort();
+    v
+}
+
+/// The owner has used `8sync hq ui` on this machine (any version unpacked).
+pub(crate) fn hq_ui_installed_any() -> bool {
+    hq_ui_data_dir().map(|d| !installed_versions(&d).is_empty()).unwrap_or(false)
+}
+
+/// Something answers on the HQ UI port (a running `8sync hq ui`, old or new binary).
+pub(crate) fn ui_port_busy(port: u16) -> bool {
+    use std::net::{SocketAddr, TcpStream};
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(300)).is_ok()
+}
+
+/// What to tell the owner when HQ is up but this binary is newer than the UI it may be serving.
+/// The HQ page itself shows the exact running vs installed versions (`/api/auto` → `versions`).
+pub(crate) fn stale_ui_hint(port: u16) -> String {
+    format!("HQ UI is running on port {port} — it keeps the version it started with: Ctrl-C in the `8sync hq ui` terminal, then run `8sync hq ui` again to load UI {}", env!("CARGO_PKG_VERSION"))
+}
+
 /// The hash out of a `sha256sum` file (`<hex>  <name>`); anything but 64 hex chars is None.
 fn parse_sha256_file(text: &str) -> Option<String> {
     super::selfup::parse_digest(text.split_whitespace().next()?)
@@ -2564,13 +2598,13 @@ fn cmd_purge(yes: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, dry: bool) -> Result<()> {
+fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_only: bool, dry: bool) -> Result<()> {
     let paths = Paths::new()?;
     let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot resolve home directory"))?;
     let ver = env!("CARGO_PKG_VERSION");
     let installed = hq_ui_data_dir()?.join(ver);
     let env_app = std::env::var_os("EIGHTSYNC_HQ_UI_APP").map(PathBuf::from);
-    if !dry {
+    if !dry && !install_only {
         let out = Command::new("node").arg("--version").output().map_err(|_| anyhow!("node not found on PATH (need >= 22.5)"))?;
         let nv = String::from_utf8_lossy(&out.stdout);
         if !node_ok(&nv) {
@@ -2590,6 +2624,16 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, dry: boo
     };
     if update && explicit {
         ui::warn("--update ignored: --app / EIGHTSYNC_HQ_UI_APP is set, so nothing is downloaded");
+    }
+    if install_only {
+        // `8sync up` pre-installs the matching UI so the next `8sync hq ui` starts without a download.
+        if let AppSrc::Installed(dir) = &src {
+            ui::info(&format!("HQ UI {ver} ready in {}", dir.display()));
+        }
+        if ui_port_busy(port) {
+            ui::warn(&stale_ui_hint(port));
+        }
+        return Ok(());
     }
     let mut flags = None;
     let (prog, args): (&str, Vec<String>) = match &src {
@@ -2922,7 +2966,7 @@ pub fn run(a: Args) -> Result<()> {
         }
         Sub::Standup => cmd_standup(dry),
         Sub::Ui { off: true, .. } => cmd_ui_off(),
-        Sub::Ui { port, app, no_open, off: false, update } => cmd_ui(port, app, no_open, update, dry),
+        Sub::Ui { port, app, no_open, off: false, update, install } => cmd_ui(port, app, no_open, update, install, dry),
         Sub::Purge { yes } => cmd_purge(yes),
         Sub::Status => cmd_status(),
         Sub::Up { repo, name, install, now } => cmd_up(repo, &name, install, now),
@@ -3372,6 +3416,20 @@ mod tests {
     // Unix only: the test back-dates directory mtimes through File::open(dir), which
     // Windows refuses ("Access is denied"). The pruning code itself only reads mtimes.
     #[cfg(unix)]
+    #[test]
+    fn installed_versions_lists_version_dirs_only() {
+        let d = std::env::temp_dir().join(format!("hq-versions-{}-{}", std::process::id(), now()));
+        std::fs::create_dir_all(&d).unwrap();
+        for n in ["0.93.3", "0.94.0", ".tmp-12", ".old-0.93.1-9"] {
+            std::fs::create_dir(d.join(n)).unwrap();
+        }
+        std::fs::write(d.join("notes.txt"), "x").unwrap();
+        assert_eq!(installed_versions(&d), vec!["0.93.3".to_string(), "0.94.0".to_string()]);
+        assert!(installed_versions(&d.join("missing")).is_empty());
+        assert!(stale_ui_hint(8740).contains("port 8740"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn install_prunes_old_versions_and_stale_leftovers() {
         let d = tmp("prune");
