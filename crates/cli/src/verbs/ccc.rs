@@ -45,6 +45,7 @@ mod statusline;
 mod taskdone;
 mod urgent;
 mod goal;
+mod target;
 mod standup;
 mod wake;
 mod verify;
@@ -186,7 +187,9 @@ pub fn run(a: Args) -> Result<()> {
             }
             Ok(())
         }
-        "auto" => auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription"),
+        "auto" => auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", &root, || {
+            sessions(&env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect()
+        }),
         "meet" => {
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
             meet::run(&sessions(&env, &root), rest, id.as_deref(), &std::env::current_dir().context("no cwd")?, view_now())
@@ -761,14 +764,11 @@ const GATE_MARKER: &str = "8sync gate";
 /// (`PreToolUse:AskUserQuestion hook error: [<prompt>]: <reason>`), so every
 /// extra sentence is noise in the owner's terminal. The native Stop gate
 /// (`gate.rs`) applies the same bar to a turn's last line.
-const ASK_POLICY: &str = "1. Asks for a secret or access (password, API key, token, login, account) → JUSTIFIED; never \
-tell Claude to guess it.\n\
-2. Approval for a destructive, irreversible or paid action (delete data, drop a table, prod deploy or migration, \
-force-push, message people, spend money) → JUSTIFIED.\n\
-3. Product or business direction (pricing, scope, features, UX direction, target users) with materially different \
-outcomes → JUSTIFIED; never decide it for the user.\n\
-4. Anything else (facts in the repo or tools, naming, wording, style, minor technical choices, confirmation to \
-continue routine work) → NOT JUSTIFIED: pick the conservative, conventional option.";
+const ASK_POLICY: &str = "1. Secret or access (key, token, login, account) → JUSTIFIED.\n\
+2. Destructive, irreversible, paid or outward action (delete, prod deploy, force-push, message people, \
+spend money) → JUSTIFIED.\n\
+3. Product direction, scope, or loosening a safety/compliance rail → JUSTIFIED.\n\
+4. Anything else (repo facts, naming, wording, minor technical choice, \"continue?\") → NOT JUSTIFIED.";
 
 /// Hook roles earlier kits installed and this one dropped: (event, role). The
 /// Haiku `Stop` prompt gate re-sent the whole transcript at every turn end
@@ -780,9 +780,8 @@ const RETIRED_HOOKS: [(&str, &str); 1] = [("Stop", "8sync gate: stop")];
 const GUARD_MATCHER: &str = "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit";
 /// Prompt hook on `PreToolUse` for `AskUserQuestion`: unjustified questions are
 /// returned to Claude as a tool error (`continueOnBlock`), so it decides and goes on.
-const ASK_GATE: &str = "8sync gate: ask. Hook input: $ARGUMENTS\n\
-First matching rule decides. Rule 1-3 → reply exactly {\"ok\": true}. Rule 4 → reply {\"ok\": false, \
-\"reason\": \"Don't ask: go with <option> because <why>; state that assumption and continue.\"}\n";
+const ASK_GATE: &str = "8sync gate: ask. Input: $ARGUMENTS\n\
+First match: 1-3 → {\"ok\": true}; 4 → {\"ok\": false, \"reason\": \"Don't ask: go with <option>, <why>.\"}\n";
 
 /// A hook `model` must be a full id — an alias fails as `unrecognized_model` and
 /// the hook then fails open. The ASK gate stays on Sonnet: on the same prompt
@@ -2105,9 +2104,10 @@ mod tests {
         // Claude Code echoes the whole prompt in the hook-error line when the gate denies
         // (owner 2026-10-16: "chữ vỡ"); keep it short enough to read in a terminal.
         let prompt = format!("{ASK_GATE}{ASK_POLICY}");
-        assert!(prompt.len() <= 900, "ask gate prompt is {} bytes (was 1,374)", prompt.len());
+        assert!(prompt.len() <= 520, "ask gate prompt is {} bytes (was 1,374, then ~880)", prompt.len());
         assert!(prompt.starts_with(GATE_MARKER) && prompt.contains("$ARGUMENTS"));
-        for rule in ["1. ", "2. ", "3. ", "4. ", "JUSTIFIED", "NOT JUSTIFIED", "{\"ok\": true}", "{\"ok\": false"] {
+        // Owner 2026-10-16: a question about loosening the owner-present rail was denied as "minor".
+        for rule in ["1. ", "2. ", "3. ", "4. ", "JUSTIFIED", "NOT JUSTIFIED", "{\"ok\": true}", "{\"ok\": false", "compliance rail"] {
             assert!(prompt.contains(rule), "missing {rule}");
         }
         assert_eq!(pre[1]["hooks"][0]["command"], "my-linter");

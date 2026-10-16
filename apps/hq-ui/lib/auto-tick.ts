@@ -9,7 +9,7 @@ export const STALE_MS = 3 * 60_000;
 const PRUNE_MS = 24 * 3600_000;
 
 export const TICK_PROMPT =
-  "8sync auto-tick: phiên này rảnh hơn 1 phút trong lúc HQ đang 'Chạy liên tục'. Nếu đã có /loop hoặc cron riêng đang chạy (CronList) → trả lời 'đã có loop' và không làm gì thêm. Nếu su-code/ship/ACTIVE có vòng lặp mở → /ship-tick <slug>. Không thì làm MỘT việc nhỏ (≤3 file) từ su-code/STATE.md mục Next hợp với phòng của bạn, hoặc R&D cho criterion kế tiếp, rồi `8sync ccc meet --say`. Không merge/push main/tag/deploy; câu hỏi Ship vẫn chờ owner.";
+  "8sync auto-tick: phiên này rảnh hơn 1 phút trong lúc HQ đang 'Chạy liên tục'. Nếu đã có /loop hoặc cron riêng đang chạy (CronList) → trả lời 'đã có loop' và không làm gì thêm. Nếu `8sync ccc auto status --json` có target → làm phần hợp vai cho đích đó (đạt → `8sync ccc auto done <id> --evidence`). Nếu su-code/ship/ACTIVE có vòng lặp mở → /ship-tick <slug>. Không thì làm MỘT nhịp theo .claude/loop.md nếu có; thiếu file thì MỘT việc từ su-code/STATE.md mục Next hợp với phòng của bạn và tự chọn skill (code → /ship, ≤3 file → /do, R&D → /deep-research), rồi `8sync ccc meet --say`. Không merge/push main/tag/deploy; câu hỏi Ship vẫn chờ owner.";
 
 export type TickRoom = { session_id: string | null; status: string; inboxLive: boolean; pending: number; idleSince: number };
 

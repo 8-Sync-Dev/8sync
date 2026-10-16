@@ -255,7 +255,8 @@ pub(super) fn research_question(cwd: &Path) -> Option<String> {
             continue;
         }
         let it = l.trim().trim_start_matches(['-', '*']).trim();
-        if !in_next || it.is_empty() {
+        // An owner-only step (Channels toggle, bot token) is not something a teammate can research.
+        if !in_next || it.is_empty() || it.to_lowercase().starts_with("owner") {
             continue;
         }
         let q: String = it.chars().take(200).collect();
@@ -392,8 +393,15 @@ pub(super) fn gate(lease: Option<&Value>, subscription: bool, spent: f64, now: u
             }
         }
     }
-    let rate = l["usd_per_hour"].as_f64().unwrap_or(DEFAULT_USD_PER_HOUR);
-    let hours = (now.saturating_sub(l["on"].as_u64().unwrap_or(now)) as f64 / 3600.0).max(1.0);
+    cap(l, spent, now)
+}
+
+/// The $/hour rail alone: average spend since the lease started, checked whether or not the lease
+/// is still valid (an `auto --loop` runs past the lease and must still respect it). An average, so
+/// it clears by itself as time passes without spending.
+pub(super) fn cap(lease: &Value, spent: f64, now: u64) -> Result<(), String> {
+    let rate = lease["usd_per_hour"].as_f64().unwrap_or(DEFAULT_USD_PER_HOUR);
+    let hours = (now.saturating_sub(lease["on"].as_u64().unwrap_or(now)) as f64 / 3600.0).max(1.0);
     if spent > rate * hours {
         return Err(format!("chạm trần ${rate:.2}/giờ (đã tiêu ${spent:.2} trong {hours:.1} giờ)"));
     }
@@ -766,7 +774,7 @@ mod tests {
         }
         let d = std::env::temp_dir().join(format!("8sync-rq-{}", std::process::id()));
         std::fs::create_dir_all(d.join("su-code/research")).unwrap();
-        std::fs::write(d.join("su-code/STATE.md"), "# S\n## Next\n- hq-ui packaging as a release asset\n- eval kit\n## Other\n- x\n").unwrap();
+        std::fs::write(d.join("su-code/STATE.md"), "# S\n## Next\n- Owner: enable Channels\n- hq-ui packaging as a release asset\n- eval kit\n## Other\n- x\n").unwrap();
         assert_eq!(research_question(&d).as_deref(), Some("hq-ui packaging as a release asset"));
         std::fs::write(d.join("su-code/research/2026-10-15-pkg.md"), "Question: hq-ui packaging as a release asset\n").unwrap();
         assert_eq!(research_question(&d).as_deref(), Some("eval kit"));
