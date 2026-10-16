@@ -121,7 +121,15 @@ export LC_ALL=C
 # clap_complete 4.5, all five shells), `8sync ccc inbox` claim/ack/release, and the
 # embedded 8sync-hints + 8sync-inbox mods. Ceiling 6784 KiB (~142 KiB left). v0.93.0
 # was tagged, not published.
-CEILING="${CEILING:-6946816}"   # 6784 KiB (raised 2026-10-16 from 6592 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+#
+# 2026-10-16 v0.98.0 release run 38928620962: linux-x86_64 (musl) asset 6,973,520 B,
+# 26,704 B over 6784 KiB. v0.97.0 asset 6,903,888 → +69,632 B = `8sync ccc auto on
+# --loop/--team` (loop.md playbook, per-room cron prompt, team seat fill; auto.rs
+# +773 lines incl. tests), the project target queue `ccc/target.rs` (+413 lines:
+# add/--now/queue/done/drop, lock + atomic rename, text cleaning) and the subscription
+# loop notes. No new dependency. Ceiling 6912 KiB (~102 KiB left). v0.98.0 was tagged,
+# not published.
+CEILING="${CEILING:-7077888}"   # 6912 KiB (raised 2026-10-16 from 6784 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"
