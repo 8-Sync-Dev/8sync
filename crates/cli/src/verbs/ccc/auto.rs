@@ -380,10 +380,10 @@ fn loop_notes(subscription: bool) -> Vec<&'static str> {
     let mut v = vec![
         "Loop tự xoá ở nhịp kế khi auto off/pause; chạm trần $/giờ thì nghỉ nhịp, giữ loop (trần tính trung bình, tự hạ). Claude Code tự xoá sau 7 ngày (chạy lại lệnh này để gia hạn).",
         "Loop chỉ chạy khi phòng còn mở: gõ /bg trong phòng để chạy nền không cần terminal, Ctrl+T trong agent view để ghim; tắt máy là dừng.",
-        "Hết usage: phòng mở trong terminal tự chờ reset rồi chạy tiếp (autoContinueAtUsageLimit). Phòng /bg và teammate không tự chờ; nhịp loop sau giờ reset sẽ thử lại.",
+        "Hết usage: phòng mở trong terminal tự chờ reset rồi chạy tiếp (autoContinueAtUsageLimit). Phòng /bg và teammate không tự chờ; nhịp loop kế sau giờ reset có thể chạy tiếp.",
     ];
     if subscription {
-        v.push("Login subscription: loop là scheduler của Claude Code trong phòng anh mở, cho mức dùng thường. Chạy không người trông nhiều ngày hoặc 24/7 → Routines (/schedule, cloud) hoặc Desktop scheduled task (local); tool khác → Console API key. N phòng tiêu quota nhanh gần N lần.");
+        v.push("Login subscription: loop là scheduler của Claude Code trong phòng anh mở, cho mức dùng thường. Chạy không người trông nhiều ngày hoặc 24/7 → Routines (/schedule, cloud; chạy không hỏi quyền và không có rail của 8sync, chỉ cấp repo/connector cần) hoặc Desktop scheduled task (local); tool khác → Console API key. N phòng tiêu quota nhanh gần N lần.");
     }
     v
 }
@@ -1105,11 +1105,15 @@ mod tests {
             api.contains("phòng mở trong terminal tự chờ reset"),
             "{api}"
         );
+        // A /bg room picking up on the next tick after reset is inferred, not documented: no promise.
+        assert!(api.contains("có thể chạy tiếp") && !api.contains("sẽ thử lại"), "{api}");
         assert!(!api.contains("Login subscription"), "{api}");
         let sub = loop_notes(true).join("\n");
-        // The unattended routes Claude Code documents (scheduled-tasks#limitations).
+        // The unattended routes Claude Code documents (scheduled-tasks#limitations); a routine runs
+        // "without stopping for approval" and outside the 8sync rails (docs/en/routines).
         for want in [
             "Routines (/schedule",
+            "không hỏi quyền",
             "Desktop scheduled task",
             "Console API key",
             "không người trông",
