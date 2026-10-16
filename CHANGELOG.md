@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Tests
+- **hq-ui: `mountSprite.setState` is tested over time** (`tests/sprite-setstate.test.ts`), not only `transitionFor()` as a table. A fake canvas and a hand-run rAF clock drive the real shared loop: stand-up/sit-down before work/rest and the hand-over after the one-shot ends, a repeated target that must not restart a transition, a mid-transition retarget, `done` re-triggering then going idle, reduced motion (frame 0, no loop) and `dispose`. Three mutations of `render.ts` (no transition, no repeated-target guard, one-shot never hands over) each make it fail.
 
 ## [0.98.1] — 2026-10-16
 ### Changed
