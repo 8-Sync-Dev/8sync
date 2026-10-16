@@ -5,7 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
-## [0.93.0] — 2026-10-16
+## [0.93.1] — 2026-10-16
+### Changed
+- Release size ceiling 6592 → 6784 KiB, attributed in `scripts/size-gate.sh` (v0.93.0 linux-x86_64 was 6,801,424 B, 51,216 B over; +131,424 B vs v0.92.1 from `ccc hint`, `completions` with clap_complete, `ccc inbox` and the two embedded mods). v0.93.0 was tagged but not published; 0.93.1 ships everything listed under 0.93.0.
+
+## [0.93.0] — 2026-10-16 (tagged, not published)
 ### Fixed
 - **HQ "Giao việc" to an idle session no longer hangs.** Owner (2026-10-16): "giao task khi ccc còn working nó mới làm, còn khi nó chưa working gửi task nó bị treo". A session HQ did not start (every `8sync ccc` room, every session on Windows) gets tasks through its inbox, and only the kit's Stop hook read it, at the end of a turn; an idle session has no turn to end, so the task waited for good. New mod **`8sync-inbox`** (installed by `8sync ccc kit` into `~/.claude/skills/8sync-inbox`; open sessions need one restart) polls while the main loop is idle (every 5 s for the first minute, then 15 s, then 30 s; a finished turn starts over) and submits pending tasks as a new prompt (`$.prompt.submit`). It calls the new **`8sync ccc inbox [--session <id>] [--ack|--release] [--json]`**, which claims the messages instead of deleting them: the mod acks once the prompt entered the session, appends a refused prompt to the prompt box (the owner's draft stays) with a toast, and releases the claim back to the inbox when neither worked; a claim nobody acks (killed process) is served again after 2 minutes. The Stop hook leaves a claimed message alone, so a task is delivered once and never lost. The HQ API that writes the inbox requires the local HQ token; the text is framed as the owner's message. HQ now says "qua inbox (nhận ngay khi phiên rảnh)". Tests: `inbox_claim_ack_release_and_stale_claims`, `inbox_cmd_parses_flags_and_falls_back_to_the_env_session`, `kit_installs_the_inbox_mod`, `claude plugin test` (9). Not verified until a session restarts with the mod: a task arriving while the owner has a half-typed prompt.
 
