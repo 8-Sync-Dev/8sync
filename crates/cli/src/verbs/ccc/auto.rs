@@ -88,6 +88,15 @@ pub(super) fn mark_paused(home: &Path, now: u64) -> Result<()> {
     )
 }
 
+/// `auto on` is in force (marker on, both flags on, not paused): the idle hook then treats a
+/// session without an agent team as its own lead. Cheap on purpose — it runs at every Stop of
+/// every session — so no cost snapshot and no gate here; the hook applies its own gate.
+pub(super) fn running(home: &Path) -> bool {
+    let m = idle::read_json(&marker(home));
+    let flag = |k: &str| m.as_ref().and_then(|m| m[k].as_bool()).unwrap_or(false);
+    flag("on") && !flag("paused") && idle::enabled(home) && delegate::enabled(home)
+}
+
 /// Pure over files: what is on right now.
 pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
     let m = idle::read_json(&marker(home));

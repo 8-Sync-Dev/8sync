@@ -487,17 +487,28 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
     let v: Value = serde_json::from_str(input).ok()?;
     let event = v["hook_event_name"].as_str().unwrap_or_default();
     let sid = v["session_id"].as_str().unwrap_or_default();
-    let (team, me) = match event {
+    let is_lead = |team: &str| claude_dir(home).join("teams").join(team).join("config.json").is_file();
+    let (team, me, lead) = match event {
         // `team_name` is deprecated in the hook input: fall back to the session-derived name.
         "TeammateIdle" => {
             let team = v["team_name"].as_str().filter(|t| !t.is_empty()).map(String::from).or_else(|| Some(format!("session-{}", sid.get(..8)?)))?;
-            (team, Some(v["teammate_name"].as_str().or(v["agent_id"].as_str()).unwrap_or("teammate").to_string()))
+            (team, Some(v["teammate_name"].as_str().or(v["agent_id"].as_str()).unwrap_or("teammate").to_string()), false)
         }
         "Stop" => {
-            // Only a team lead: its team is named after its session.
+            // A team lead (its team is named after its session), or — while the owner's
+            // `8sync ccc auto on` is running and not paused — any session at all: the owner
+            // wants a session idle for a minute to pick up work by itself, and a session
+            // without an agent team never gets a TeammateIdle, so Stop is its only chance.
+            // Stop fires at every turn end, so the "minute" is bounded by the ladder instead:
+            // at most MAX_BLOCKS nudges while the task list does not change, the owner-present
+            // gate on a subscription, and `auto pause`. HQ's auto-tick covers a session that
+            // is already idle (no Stop ever fires there).
             let team = format!("session-{}", sid.get(..8)?);
-            claude_dir(home).join("teams").join(&team).join("config.json").is_file().then_some(())?;
-            (team, None)
+            let lead = is_lead(&team);
+            if !lead && !super::auto::running(home) {
+                return None;
+            }
+            (team, None, lead)
         }
         _ => return None,
     };
@@ -508,7 +519,10 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
     let dir = state_dir(home);
     let lease = read_json(&dir.join("lease.json"));
     let spent = lease.as_ref().map_or(0.0, |l| spent_since(&l["baseline"], &costs(home)));
-    let tasks = load_tasks(&claude_dir(home).join("tasks").join(&team));
+    // A lead's task list lives under its team name; a standalone session's under its own
+    // session id (`~/.claude/tasks/<session_id>/`, same path shape, never user text).
+    let tasks_dir = if lead || me.is_some() { team.clone() } else { safe_id(sid)?.to_string() };
+    let tasks = load_tasks(&claude_dir(home).join("tasks").join(&tasks_dir));
     let cwd = v["cwd"].as_str().map(PathBuf::from).unwrap_or_default();
     let topic = me.as_deref().and_then(|m| tasks.iter().rev().find(|t| t.status == "completed" && t.owner == m)).map_or("", |t| t.subject.as_str());
     let recall = if me.is_some() { recall_lines(&cwd, topic) } else { Vec::new() };
@@ -559,6 +573,11 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
         Step::Nudge { state: "working", msg } => Some(json!({ "decision": "block", "reason": format!("8sync không-ai-rảnh: {msg}") }).to_string()),
         Step::Nudge { msg, .. } => Some(lead_context(&msg)),
     }
+}
+
+/// A session id as a path segment: uuid characters only, or nothing.
+fn safe_id(sid: &str) -> Option<&str> {
+    (!sid.is_empty() && sid.len() <= 64 && sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')).then_some(sid)
 }
 
 fn lead_context(msg: &str) -> String {
@@ -833,6 +852,53 @@ mod tests {
         let base = json!({ "a": 1.0 });
         let now = vec![("a".to_string(), 3.5), ("b".to_string(), 2.0), ("c".to_string(), 0.0)];
         assert!((spent_since(&base, &now) - 4.5).abs() < 1e-9);
+    }
+
+    /// Owner (2026-10-16): "chờ tôi quá 1 phút không tự làm tiếp" — a session with no agent
+    /// team gets the lead ladder on Stop while `auto on` runs (its own task list under
+    /// `tasks/<session id>/`), nothing when paused/off; a real lead keeps the old behaviour.
+    #[test]
+    fn standalone_session_gets_the_ladder_when_auto_is_on() {
+        let d = std::env::temp_dir().join(format!("8sync-idle-solo-{}-{}", std::process::id(), now()));
+        let _ = std::fs::remove_dir_all(&d);
+        let home = d.join("home");
+        let cwd = d.join("repo");
+        std::fs::create_dir_all(cwd.join("su-code")).unwrap();
+        std::fs::write(cwd.join("su-code/STATE.md"), "# STATE\n## Goal\n- g\n## Next\n- câu hỏi mở về idle\n").unwrap();
+        let sid = "0f0f0f0f-1111-2222-3333-444444444444";
+        let solo_tasks = claude_dir(&home).join("tasks").join(sid);
+        std::fs::create_dir_all(&solo_tasks).unwrap();
+        std::fs::write(solo_tasks.join("1.json"), r#"{"id":"1","subject":"solo-task-xyz","status":"pending"}"#).unwrap();
+        let input = json!({ "hook_event_name": "Stop", "session_id": sid, "cwd": cwd.to_string_lossy(), "transcript_path": "" }).to_string();
+        // Nothing on: silent, as before.
+        assert_eq!(hook(&input, &home, false), None);
+        // `auto on`: the session is its own lead and is handed its own pending task.
+        super::super::auto::set(&home, super::super::auto::Mode::On { hours: 1.0, after: 60, rate: 5.0 }, false, now()).unwrap();
+        let out = hook(&input, &home, false).expect("standalone session nudged");
+        assert!(out.contains("không-ai-rảnh") && out.contains("solo-task-xyz"), "{out}");
+        let status = std::fs::read_dir(state_dir(&home).join("status")).unwrap().count();
+        assert_eq!(status, 1, "one status file for HQ");
+        // A bad session id never becomes a path.
+        let evil = json!({ "hook_event_name": "Stop", "session_id": "../../x", "cwd": cwd.to_string_lossy() }).to_string();
+        assert_eq!(hook(&evil, &home, false), None);
+        assert_eq!(safe_id("ab/cd"), None);
+        // Paused: silent again for the standalone session …
+        super::super::auto::set(&home, super::super::auto::Mode::Pause, false, now()).unwrap();
+        assert_eq!(hook(&input, &home, false), None);
+        // `idle on` by hand without `auto on` (manual): the standalone session stays silent,
+        // while a real lead (team config present) still reads its team's task list, as before.
+        on(&home, 1.0, 5.0, false, true).unwrap();
+        assert_eq!(hook(&input, &home, false), None);
+        let lead_sid = "abababab-1111-2222-3333-444444444444";
+        std::fs::create_dir_all(claude_dir(&home).join("teams/session-abababab")).unwrap();
+        std::fs::write(claude_dir(&home).join("teams/session-abababab/config.json"), "{}").unwrap();
+        let lead_tasks = claude_dir(&home).join("tasks/session-abababab");
+        std::fs::create_dir_all(&lead_tasks).unwrap();
+        std::fs::write(lead_tasks.join("2.json"), r#"{"id":"2","subject":"lead-task-qrs","status":"pending"}"#).unwrap();
+        let lead_input = json!({ "hook_event_name": "Stop", "session_id": lead_sid, "cwd": cwd.to_string_lossy(), "transcript_path": "" }).to_string();
+        let out = hook(&lead_input, &home, false).expect("lead nudged with idle on by hand");
+        assert!(out.contains("lead-task-qrs"), "{out}");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
