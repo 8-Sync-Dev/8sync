@@ -4,6 +4,10 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- `8sync hq ui --install`: download the HQ UI asset for this binary version when missing and exit (no server). `8sync up` runs it after a successful update when HQ has been used on the machine, so the next `8sync hq ui` starts without a download.
+### Changed
+- `8sync up` warns when something is listening on the HQ port (8740): a running `8sync hq ui` keeps the UI it started with, so the owner must Ctrl-C and start it again to see the new version. The HQ page shows the same notice with the exact versions (running UI vs. installed 8sync, from `/api/auto` → `versions`) above the Pause / Run control.
 
 ## [Unreleased]
 ### Added

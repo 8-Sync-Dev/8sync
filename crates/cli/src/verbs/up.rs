@@ -40,10 +40,27 @@ pub fn run(a: Args) -> Result<()> {
     };
     if updated {
         ui::info("done — re-run any 8sync command to pick up the new binary");
-        refresh_kit(installed);
+        refresh_kit(installed.clone());
+        refresh_hq_ui(installed);
     }
     ui::info("note: `8sync up` only updates 8sync. For omp run `8sync omp update`; for system pkgs run `paru -Syu`.");
     Ok(())
+}
+
+/// After an update, pre-install the HQ UI asset that matches the new binary (only when the owner
+/// has used `8sync hq ui` before) and say so when an HQ is still serving the old UI: a running
+/// `8sync hq ui` keeps the version it started with, and the owner otherwise sees no change.
+fn refresh_hq_ui(installed: Option<std::path::PathBuf>) {
+    if !super::hq::hq_ui_installed_any() {
+        return;
+    }
+    let Some(exe) = installed.or_else(|| selfup::installed_path().ok()) else { return };
+    let out = std::process::Command::new(exe).args(["hq", "ui", "--install", "--no-open"]).env("SUSYNC_NO_AUTO_UPDATE", "1").stdin(std::process::Stdio::null()).output();
+    let ok = out.as_ref().is_ok_and(|o| o.status.success());
+    ui::info(if ok { "HQ UI for the new binary downloaded (next `8sync hq ui` starts it)" } else { "HQ UI download failed — `8sync hq ui` fetches it on its next start" });
+    if super::hq::ui_port_busy(8740) {
+        ui::warn(&super::hq::stale_ui_hint(8740));
+    }
 }
 
 /// After an update, bring an installed kit (agents, skills, statusline) up to the new binary by
