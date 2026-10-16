@@ -29,6 +29,7 @@ mod gate;
 mod grant;
 mod guard;
 mod help;
+mod hint;
 mod idle;
 mod looper;
 mod output_budget;
@@ -173,6 +174,13 @@ pub fn run(a: Args) -> Result<()> {
         "status" => status(&env, &root),
         "policy" => policy(rest),
         "loop" => looper::run(rest, &std::env::current_dir().context("no cwd")?),
+        "hint" => {
+            let cwd = std::env::current_dir().context("no cwd")?;
+            let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
+            let reg = sessions(&env, &root).load();
+            let cd = claude_dir(&env);
+            hint::run(rest, &hint::Ctx { cwd: &cwd, home: &env.home, claude_dir: &cd, registry: Some(&reg), session_id: id.as_deref(), now: view_now(), git: true })
+        }
         "ls" | "list" => {
             print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
         }
@@ -538,7 +546,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 29] = [
+const KIT_FILES: [(&str, &str); 34] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -569,6 +577,13 @@ const KIT_FILES: [(&str, &str); 29] = [
     ("skills/aup-audit/8sync-anthropic-rules.md", "skills/aup-audit/8sync-anthropic-rules.md"),
     ("skills/deep-research/SKILL.md", "skills/deep-research/SKILL.md"),
     ("skills/deep-research/references/binary-weight-audit.md", "skills/deep-research/references/binary-weight-audit.md"),
+    // Mod `8sync-hints` (Claude Code function hooks): a plugin folder under ~/.claude/skills is
+    // auto-loaded, so this is all it takes for ghost text + typeahead + the band above the prompt.
+    ("claude/skills/8sync-hints/.claude-plugin/plugin.json", "skills/8sync-hints/.claude-plugin/plugin.json"),
+    ("claude/skills/8sync-hints/hooks/hooks.json", "skills/8sync-hints/hooks/hooks.json"),
+    ("claude/skills/8sync-hints/hooks/register.tsx", "skills/8sync-hints/hooks/register.tsx"),
+    ("claude/skills/8sync-hints/hooks/hint.ts", "skills/8sync-hints/hooks/hint.ts"),
+    ("claude/skills/8sync-hints/types/index.d.ts", "skills/8sync-hints/types/index.d.ts"),
 ];
 
 /// Files an earlier kit installed and this one dropped: deleted while they are
@@ -2342,6 +2357,31 @@ mod tests {
         assert!(dir.join("settings.json").exists() && dir.join("CLAUDE.md").exists());
         assert!(dir.join("agents/explore.md").exists());
         assert!(!home.join(".claude.json").exists(), "offline kit must not touch MCP config");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The `8sync-hints` mod ships in the kit: five files under `skills/8sync-hints`, written
+    /// byte-for-byte from the repo assets (the cbm gate leaves non-markdown alone).
+    #[test]
+    fn kit_installs_the_hints_mod() {
+        let mod_files: Vec<&str> = KIT_FILES.iter().map(|(_, r)| *r).filter(|r| r.starts_with("skills/8sync-hints/")).collect();
+        assert_eq!(mod_files.len(), 5, "{mod_files:?}");
+        for f in ["skills/8sync-hints/.claude-plugin/plugin.json", "skills/8sync-hints/hooks/hooks.json", "skills/8sync-hints/hooks/register.tsx", "skills/8sync-hints/hooks/hint.ts", "skills/8sync-hints/types/index.d.ts"] {
+            assert!(mod_files.contains(&f), "{f}");
+        }
+        let tmp = std::env::temp_dir().join(format!("8sync-hints-kit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let home = tmp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let env = Env { home: home.clone(), xdg_config: home.join(".config"), os_id: String::new(), os_id_like: String::new() };
+        let dir = tmp.join("claude");
+        install_kit_at(&env, &dir, false, true).unwrap();
+        let reg = std::fs::read_to_string(dir.join("skills/8sync-hints/hooks/register.tsx")).unwrap();
+        assert_eq!(reg, assets::read("claude/skills/8sync-hints/hooks/register.tsx").unwrap());
+        assert!(reg.contains("'8sync', 'ccc', 'hint'"), "the mod calls the Rust side");
+        let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("skills/8sync-hints/.claude-plugin/plugin.json")).unwrap()).unwrap();
+        assert_eq!(manifest["name"], "8sync-hints");
+        assert_eq!(manifest["types"], "./types/index.d.ts");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

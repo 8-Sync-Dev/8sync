@@ -279,7 +279,7 @@ fn kill_group(pgid: u32) {
 /// Run `cmd` in its own process group, give it `budget`; on timeout kill the whole group (a
 /// `sh -c 'a | b'` chain included) and return `None`. stdin is fed and stdout drained on threads,
 /// so neither a full pipe nor a child that ignores stdin can stall us past the budget.
-fn run_budget(mut cmd: Command, stdin: Option<&str>, budget: Duration) -> Option<String> {
+pub(super) fn run_budget(mut cmd: Command, stdin: Option<&str>, budget: Duration) -> Option<String> {
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::null());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
