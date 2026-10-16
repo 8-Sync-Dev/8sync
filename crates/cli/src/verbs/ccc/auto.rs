@@ -263,7 +263,8 @@ Mỗi nhịp:
 4. Tự chọn skill theo việc:
    - feature, bug, refactor → `/ship <việc>` đủ flow: karpathy-guidelines khi sửa code, test, review, gate `/sec` + `/rules` + `/aup-audit` trước commit
    - đổi nhỏ ≤ 3 file → `/do`
-   - có tiêu chí kiểm được, cần lặp tới xanh → `/ship-loop`
+   - cần nhiều nhịp mới xanh → mỗi nhịp `/ship` phần kế, ghi tiến độ vào STATE.md
+     (`/ship-loop`, `/ship-auto`, `/autopilot`, `/sprint`, `/loop-me` chỉ owner gõ; nhịp cron không gọi được)
    - câu hỏi mở, R&D → `/deep-research` (brief vào `su-code/research/`)
    - UI → `impeccable` · thiết kế hệ thống → `/sysdesign` · bài học có bằng chứng → `/remember`
 5. Báo phòng họp: `8sync ccc meet --say \"done|doing|blocked: <một dòng>\"`.
@@ -813,7 +814,7 @@ mod tests {
             "karpathy-guidelines",
             "`/sec` + `/rules` + `/aup-audit`",
             "/deep-research",
-            "/ship-loop",
+            "chỉ owner gõ",
             "impeccable",
             "workflows/*.md",
             "8sync ccc meet --say",
@@ -822,6 +823,23 @@ mod tests {
             "Không bao giờ: merge, push main",
         ] {
             assert!(LOOP_MD.contains(want), "loop.md missing {want}");
+        }
+        // A scheduled fire cannot run owner-only skills (disable-model-invocation), so no route
+        // line of the playbook may send a tick to one.
+        for l in LOOP_MD.lines().filter(|l| l.contains('→')) {
+            let route = l.split('→').nth(1).unwrap_or("");
+            for owner_only in [
+                "/ship-loop",
+                "/ship-auto",
+                "/autopilot",
+                "/sprint",
+                "/loop-me",
+            ] {
+                assert!(
+                    !route.contains(&format!("`{owner_only}")),
+                    "tick routed to {owner_only}: {l}"
+                );
+            }
         }
         assert!(!p.contains("teammate"));
         assert!(loop_prompt("lead", 10, true).contains("rd, qa, reviewer"));
