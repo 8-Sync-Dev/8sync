@@ -357,9 +357,11 @@ mod tests {
             ["attendees", "date", "file", "mine", "open", "schema"]
         );
         assert_eq!(v["schema"], 1);
+        // Windows paths use `\`: compare with the separators normalised.
         assert!(v["file"]
             .as_str()
             .unwrap()
+            .replace('\\', "/")
             .ends_with("su-code/standup/2026-10-16.md"));
         assert_eq!(
             v["attendees"][0],
