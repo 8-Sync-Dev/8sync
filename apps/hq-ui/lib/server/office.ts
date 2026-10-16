@@ -10,7 +10,7 @@ import { deliveryOf, sessionLabel } from "../labels";
 import { costPerTask, seatsFor, visitsFrom, type AgentRow, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
 import { loadFloor } from "./floor";
 import { readIdleStatus } from "./idle";
-import { pendingInbox } from "./inbox";
+import { inboxLive, pendingInbox } from "./inbox";
 import { stateDir } from "./paths";
 import { mergedSessions, type SessionView } from "./proc";
 
@@ -93,6 +93,8 @@ export type Room = {
   project: ProjectInfo | null;
   delivery: "terminal" | "inbox" | null;
   pending: number;
+  /** Inbox rooms: the 8sync-inbox mod is polling, so pending work enters as soon as the room is idle. */
+  inboxLive: boolean;
   /** One line: what the session is doing (from `8sync ls`). */
   doing: string | null;
   state: string | null;
@@ -176,6 +178,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       project: projectOf(s.cwd, now),
       delivery: deliveryOf(s),
       pending: sid ? pendingInbox(sid) : 0,
+      inboxLive: sid ? inboxLive(sid) : false,
       doing: f?.caption || s.detail || null,
       state: f?.state ?? null,
       tokens: f?.tokens ?? null,

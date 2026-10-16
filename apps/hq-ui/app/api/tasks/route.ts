@@ -5,7 +5,7 @@ import { startHqSession } from "@/lib/server/start";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { deliverWatched, openDialog, SessionWaiting } from "@/lib/server/channel";
 import { capturePlain, listTmux, sendKeys } from "@/lib/server/proc";
-import { isSessionId, queueInbox } from "@/lib/server/inbox";
+import { inboxLive, isSessionId, queueInbox } from "@/lib/server/inbox";
 import { ownerMessage, tasksFor } from "@/lib/server/queries";
 import { clampText, isTmuxName, validateProjectPath } from "@/lib/server/validate";
 import { parseSchedule, scheduleLabel, scheduledPrompt } from "@/lib/schedule";
@@ -64,7 +64,8 @@ export async function POST(req: Request) {
       started = true;
     }
   }
-  // A session started elsewhere gets the task through its inbox (delivered at its next turn end).
+  // A session started elsewhere gets the task through its inbox: as soon as it is idle when the
+  // 8sync-inbox mod is polling (`live`), else at its next turn end (Stop hook).
   if (inbox) {
     const taskId = `owner:${stamp()}`;
     db.prepare(
@@ -73,7 +74,7 @@ export async function POST(req: Request) {
     const task = db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(taskId);
     queueInbox(session, text);
     const message = ownerMessage(db, session, text, "inbox");
-    return json({ task, session, started: false, message, delivery: "inbox", error: null }, 201);
+    return json({ task, session, started: false, message, delivery: "inbox", live: inboxLive(session), error: null }, 201);
   }
   // Refuse before the task row exists: nothing is stored while a dialog is open.
   const waiting = started ? null : await openDialog(session, capturePlain);

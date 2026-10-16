@@ -21,6 +21,8 @@ export type Session = {
   tmux: boolean;
   source: "tmux" | "claude" | "journal";
   detail: string | null;
+  /** Inbox delivery: the 8sync-inbox mod is loaded and polling, so a task enters as soon as the session is idle. */
+  inbox_live?: boolean;
   channel: boolean;
   channel_beat_at: number | null;
   /** Sticky delivery facts: org policy drops channel events, or the channel went silent. */

@@ -68,6 +68,22 @@ const KIND: Record<string, ThreadKind> = {
 /** Folded when repeated back to back for the same session. */
 const NOISE = new Set<ThreadKind>(["needs_you", "session_start", "session_end"]);
 
+/** `core [ff2607]` → `core`: the ref ListAgents appends to a session name. */
+export const partyKey = (s: string | null | undefined) => (s ?? "").replace(/\s*\[[0-9a-z]+\]$/i, "").trim().toLowerCase();
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Two message parties are the same session. Both resolved to a session id: the ids decide (two
+ * sessions may share a name). Otherwise any of their names/ids lining up is enough.
+ */
+function sameParty(a: string | null, aName: string | null | undefined, b: string | null, bName: string | null | undefined): boolean {
+  if (a && b && UUID.test(a) && UUID.test(b)) return a.toLowerCase() === b.toLowerCase();
+  const keys = (id: string | null, name: string | null | undefined) => [partyKey(id), partyKey(name)].filter(Boolean);
+  const ka = keys(a, aName);
+  return keys(b, bName).some((k) => ka.includes(k));
+}
+
 /** Older journal rows stored the sender as "***" (the masker hid a uuid session id); fall back to the row's session. */
 const sender = (r: ThreadRow) => (r.from_ && r.from_ !== "***" ? r.from_ : r.session);
 
@@ -114,10 +130,13 @@ export function buildTeamThread(rows: ThreadRow[], filters: ThreadFilters = {}):
   for (const it of items) if (it.kind === "owner" && it.session) lastOwner.set(it.session, it.ts);
   for (const it of items) if (it.kind === "needs_you") it.open = !it.session || (lastOwner.get(it.session) ?? -1) < it.ts;
 
-  // A handoff A -> B is answered once B sends a message back to A.
+  // A handoff A -> B is answered once B sends a message back to A. Compared by resolved name
+  // (`from_name`/`to_name`), falling back to the raw address: the journal keeps `to` as the text
+  // SendMessage was given ("core [ff2607]") when it could not resolve it, while the reply's
+  // `from` is a session uuid — raw ids alone never match.
   for (const it of items) {
     if (it.kind !== "handoff") continue;
-    it.answered = items.some((x) => x.kind === "handoff" && x.ts > it.ts && x.from === it.to && x.to === it.from);
+    it.answered = items.some((x) => x.kind === "handoff" && x.ts > it.ts && sameParty(x.from, x.fromName, it.to, it.toName) && sameParty(x.to, x.toName, it.from, it.fromName));
   }
 
   const { session, role } = filters;

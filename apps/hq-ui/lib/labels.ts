@@ -50,6 +50,14 @@ export function deliveryOf(s: Pick<Session, "tmux" | "name" | "session_id">): "t
   return id && SESSION_ID.test(id) ? "inbox" : null;
 }
 
+/** Inbox wording in toasts and summaries: when the task enters depends on whether the mod is loaded. */
+export const INBOX_LIVE_TEXT = "qua inbox (nhận ngay khi phiên rảnh)";
+export const INBOX_STOP_TEXT = "qua inbox (nhận khi xong lượt — gõ /reload-plugins trong phiên để nhận ngay)";
+
+export function inboxText(live: boolean | undefined): string {
+  return live ? INBOX_LIVE_TEXT : INBOX_STOP_TEXT;
+}
+
 /** What the message/task APIs address a session by: the Claude session id for inbox delivery, else its name. */
 export function addressOf(s: Pick<Session, "tmux" | "name" | "session_id">): string {
   return deliveryOf(s) === "inbox" ? (s.session_id ?? s.name) : s.name;

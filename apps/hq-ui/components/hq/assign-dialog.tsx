@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { assignSummary, distinctLabels, groupTargets, outsideRole, projectTargets, roleTargets, type AssignMode, type RoomLike } from "@/lib/assign";
-import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
+import { addressOf, deliveryOf, inboxText, sessionLabel } from "@/lib/labels";
 import { ROLES, modelShort, type RoleId } from "@/lib/roles";
 import { EVERY_HOURS, EVERY_MINUTES, RD_DUTY, scheduleLabel, type Schedule } from "@/lib/schedule";
 import { STATUS_LABEL, StatusDot } from "./bits";
@@ -53,7 +53,7 @@ export type AssignDialogProps = {
   defaultProjectId?: number | null;
 };
 
-type Res = { task: Task; session: string; started: boolean; message: Message; delivery: string; error: string | null };
+type Res = { task: Task; session: string; started: boolean; message: Message; delivery: string; live?: boolean; error: string | null };
 
 /** Hand a task to one session, to whoever has a role (reuse or start a session), or to every session of a project. */
 export function AssignDialog({ hq, open, onOpenChange, sessions, projects, rooms, defaultRole, defaultSession, defaultProjectId }: AssignDialogProps) {
@@ -128,7 +128,7 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, rooms
         else {
           const s = sessions.find((x) => x.name === r.session || x.session_id === r.session);
           const who = s ? sessionLabel(s) : r.session.slice(0, 8);
-          toast.success(`${r.started ? "Đã mở phiên mới và giao cho" : "Đã giao cho"} ${who}${r.delivery === "inbox" ? " qua inbox (nhận ngay khi phiên rảnh)" : ""}${plan}`);
+          toast.success(`${r.started ? "Đã mở phiên mới và giao cho" : "Đã giao cho"} ${who}${r.delivery === "inbox" ? ` ${inboxText(r.live)}` : ""}${plan}`);
         }
       }
       setSubject("");
@@ -234,7 +234,7 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, rooms
                             )}
                             <span className="inline-flex w-20 shrink-0 items-center justify-end gap-1 text-xs text-muted-foreground" title={STATUS_LABEL[s.status]}>
                               {deliveryOf(s) === "inbox" ? <InboxIcon aria-hidden className="size-3" /> : <TerminalSquareIcon aria-hidden className="size-3" />}
-                              {deliveryOf(s) === "inbox" ? "inbox" : "terminal"}
+                              {deliveryOf(s) === "inbox" ? (s.inbox_live ? "inbox · mod" : "inbox · chưa nạp mod") : "terminal"}
                             </span>
                             <CheckIcon aria-hidden className={cn("size-3.5 shrink-0 text-primary", !on && "invisible")} />
                           </button>

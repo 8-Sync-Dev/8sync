@@ -404,6 +404,13 @@ fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
         if let Some(g) = &reg.sessions[i].goal {
             lines.insert(1.min(lines.len()), goal::line(g, width));
         }
+        // Which sessions take HQ work the moment they are idle (mod loaded) vs. at the next turn end:
+        // only sessions HQ can address through an inbox (a session id), active in the last day.
+        let cid = &reg.sessions[i].conversation_id;
+        if now.saturating_sub(rows[i].last_active) < 86_400 && super::hq::inbox_file(&env.home, cid).is_some() {
+            let live = super::hq::inbox_live(&env.home, cid, std::time::SystemTime::now());
+            lines.push(format!("      {}", super::hq::inbox_line(live)));
+        }
         for l in lines {
             println!("{l}");
         }
@@ -604,6 +611,25 @@ const RETIRED: [&str; 1] = ["agents/plan.md"];
 /// Hashes of the files as 8sync last wrote them: a file whose current content
 /// no longer matches was edited by the user and is left alone.
 const KIT_STAMP: &str = ".8sync-kit.json";
+
+/// The kit's Claude Code mods (function-hook plugins): every `skills/<name>/` holding a manifest.
+fn kit_mods() -> Vec<&'static str> {
+    KIT_FILES
+        .iter()
+        .filter_map(|(_, rel)| rel.strip_prefix("skills/")?.strip_suffix("/.claude-plugin/plugin.json"))
+        .collect()
+}
+
+/// A running session loads a mod once, at start: after the kit rewrote any file of a mod, the
+/// owner's open sessions keep the old one until `/reload-plugins` (no restart needed —
+/// code.claude.com/docs/en/plugins/loading). `rewritten`: kit files that existed before and
+/// changed (a first install has no session holding an old copy). None when no mod file changed.
+pub(crate) const RELOAD_HINT: &str = "phiên Claude Code đang mở gõ /reload-plugins để nhận (không cần restart)";
+
+fn reload_hint(rewritten: &[&str]) -> Option<String> {
+    let mods: Vec<&str> = kit_mods().into_iter().filter(|m| rewritten.iter().any(|w| w.starts_with(&format!("skills/{m}/")))).collect();
+    (!mods.is_empty()).then(|| format!("mod {} đổi: {RELOAD_HINT}", mods.join(", ")))
+}
 /// Stamp entry holding the 8sync version that wrote the kit: a launch on a
 /// newer binary refreshes the kit once.
 const KIT_VERSION_KEY: &str = "8sync";
@@ -740,6 +766,7 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<(
         .unwrap_or_default();
 
     let mut kept = Vec::new();
+    let mut rewritten = Vec::new();
     for (asset, rel) in KIT_FILES {
         let body = crate::verbs::harness::cbm::gate(
             &env.home,
@@ -752,12 +779,18 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<(
                 kept.push(rel);
                 continue;
             }
-            _ => {
+            existed => {
                 std::fs::create_dir_all(target.parent().unwrap_or(&dir))?;
                 std::fs::write(&target, &body).with_context(|| format!("write {}", target.display()))?;
+                if existed.is_ok() {
+                    rewritten.push(rel);
+                }
             }
         }
         stamps.insert(rel.to_string(), fnv1a(&body));
+    }
+    if let Some(hint) = reload_hint(&rewritten) {
+        ui::info(&hint);
     }
     for rel in RETIRED {
         let target = dir.join(rel);
@@ -2368,6 +2401,19 @@ mod tests {
         assert!(dir.join("agents/explore.md").exists());
         assert!(!home.join(".claude.json").exists(), "offline kit must not touch MCP config");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Rewriting a mod file tells the owner to `/reload-plugins` in open sessions; other kit
+    /// files (agents, skills without a manifest) do not.
+    #[test]
+    fn kit_reload_hint_names_changed_mods() {
+        assert_eq!(kit_mods(), ["8sync-hints", "8sync-inbox"]);
+        assert_eq!(reload_hint(&[]), None, "nothing rewritten (first install included)");
+        assert_eq!(reload_hint(&["agents/task.md", "skills/ship/SKILL.md"]), None);
+        let h = reload_hint(&["skills/8sync-inbox/hooks/inbox.ts", "agents/task.md"]).unwrap();
+        assert!(h.starts_with("mod 8sync-inbox đổi") && h.contains("/reload-plugins") && h.contains("không cần restart"), "{h}");
+        let both = reload_hint(&["skills/8sync-inbox/hooks/inbox.ts", "skills/8sync-hints/hooks/hint.ts", "skills/8sync-hints/hooks/register.tsx"]).unwrap();
+        assert!(both.starts_with("mod 8sync-hints, 8sync-inbox đổi"), "{both}");
     }
 
     /// The `8sync-inbox` mod ships in the kit: four files under `skills/8sync-inbox`.

@@ -7,7 +7,7 @@ import { POST as tasksPOST } from "@/app/api/tasks/route";
 import { addressOf } from "@/lib/labels";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
-import { inboxFile, isSessionId, pendingInbox } from "@/lib/server/inbox";
+import { inboxFile, inboxLive, isSessionId, LIVE_MS, pendingInbox } from "@/lib/server/inbox";
 import { applyMapped, mapEvent } from "@/lib/server/ingest";
 import { projectOf, readLoops, readUsage } from "@/lib/server/office";
 import { messagesAfter } from "@/lib/server/queries";
@@ -164,6 +164,7 @@ describe("owner message to a session started elsewhere (no tmux, all of Windows)
     expect(r.status).toBe(201);
     const body = await r.json();
     expect(body.delivery).toBe("inbox");
+    expect(body.live).toBe(false);
     expect(body.message).toMatchObject({ session: SID, kind: "owner_message", delivery: "inbox" });
     expect(pendingInbox(SID)).toBe(1);
     const line = JSON.parse(fs.readFileSync(inboxFile(SID), "utf8").trim());
@@ -179,6 +180,27 @@ describe("owner message to a session started elsewhere (no tmux, all of Windows)
       expect(r.status, session).toBe(422);
     }
     expect(isSessionId("1eb79553")).toBe(false);
+  });
+});
+
+describe("the 8sync-inbox mod's live marker", () => {
+  it("a fresh <id>.live means the mod polls (task enters when idle); stale, missing or unsafe ids do not", async () => {
+    const live = path.join(path.dirname(inboxFile(SID)), `${SID}.live`);
+    fs.mkdirSync(path.dirname(live), { recursive: true });
+    fs.writeFileSync(live, "");
+    expect(inboxLive(SID)).toBe(true);
+    const r = await messagesPOST(req("/api/messages", { method: "POST", token, origin: ORIGIN, body: { session: SID, text: "ping" } }));
+    expect((await r.json()).live).toBe(true);
+    const busy = new Date(Date.now() - 3600_000);
+    fs.utimesSync(live, busy, busy);
+    expect(inboxLive(SID)).toBe(true); // a long turn does not poll: still loaded
+    const old = new Date(Date.now() - LIVE_MS - 1000);
+    fs.utimesSync(live, old, old);
+    expect(inboxLive(SID)).toBe(false);
+    expect(inboxLive(SID, old.getTime() + 1000)).toBe(true);
+    expect(inboxLive("../x")).toBe(false);
+    fs.rmSync(live);
+    expect(inboxLive(SID)).toBe(false);
   });
 });
 

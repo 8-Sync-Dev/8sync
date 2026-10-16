@@ -101,7 +101,10 @@ describe("roleTargets / projectTargets", () => {
 describe("assignSummary", () => {
   it("session: names the session and how it is reached", () => {
     expect(assignSummary({ mode: "session", session: s("hq-rd-1") })).toBe("Giao cho phiên rd-1 vào terminal");
-    expect(assignSummary({ mode: "session", session: s("rd", { tmux: false, session_id: SID }) })).toBe("Giao cho phiên rd qua inbox (nhận ngay khi phiên rảnh)");
+    expect(assignSummary({ mode: "session", session: { ...s("rd", { tmux: false, session_id: SID }), inbox_live: true } })).toBe("Giao cho phiên rd qua inbox (nhận ngay khi phiên rảnh)");
+    expect(assignSummary({ mode: "session", session: s("rd", { tmux: false, session_id: SID }) })).toBe(
+      "Giao cho phiên rd qua inbox (nhận khi xong lượt — gõ /reload-plugins trong phiên để nhận ngay)",
+    );
     expect(assignSummary({ mode: "session", session: null })).toBe("");
   });
   it("role: reuse one, pick among many, or start a new session in the project", () => {

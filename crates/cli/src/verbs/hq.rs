@@ -1808,6 +1808,59 @@ fn claim_file(home: &Path, session_id: &str) -> Option<PathBuf> {
     inbox_file(home, session_id).map(|f| f.with_extension("claimed"))
 }
 
+/// `<inbox>/<id>.live`: touched by every claim, and only the `8sync-inbox` mod claims (the Stop
+/// hook takes). Its presence says the mod is loaded in that session (it polls from session start,
+/// then whenever the session is idle), so HQ can tell "nhận ngay khi phiên rảnh" from "nhận khi
+/// xong lượt": a session opened before `8sync ccc kit` wrote the mod has not loaded it until
+/// `/reload-plugins`. Age is not "polling now": a long turn does not poll, and the marker must
+/// not flip to "chưa nạp mod" meanwhile.
+fn live_file(home: &Path, session_id: &str) -> Option<PathBuf> {
+    inbox_file(home, session_id).map(|f| f.with_extension("live"))
+}
+
+/// A marker older than this belongs to a session that is gone (ids are never reused): swept
+/// with the claim orphans, and no longer counts as loaded.
+const LIVE_FOR: Duration = Duration::from_secs(24 * 3600);
+
+/// Whether the `8sync-inbox` mod polled for `session_id` within LIVE_FOR of `now`.
+pub(crate) fn inbox_live(home: &Path, session_id: &str, now: SystemTime) -> bool {
+    live_file(home, session_id)
+        .and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+        .is_some_and(|at| now.duration_since(at).unwrap_or_default() < LIVE_FOR)
+}
+
+/// The `inbox:` line of `8sync ccc . ls` for a session reached through its inbox.
+pub(crate) fn inbox_line(live: bool) -> &'static str {
+    if live {
+        "inbox: mod 8sync-inbox đang nhận — việc từ HQ vào ngay khi phiên rảnh"
+    } else {
+        "inbox: chưa nạp mod — việc từ HQ vào khi xong lượt; gõ /reload-plugins trong phiên để nhận ngay (không cần restart)"
+    }
+}
+
+/// Create `p` (0600, its dir 0700 like every inbox file) when missing and set its mtime
+/// (content untouched: a rewrite would truncate it).
+fn touch(p: &Path, at: SystemTime) {
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    if let Ok(f) = opts.open(p) {
+        let _ = f.set_modified(at);
+    }
+}
+
 /// Claim the pending messages for an idle session (`8sync-inbox` mod) without deleting them: the
 /// mod acks once its prompt entered the session, or releases them when it did not. A fresh claim
 /// means a delivery is in flight (None); a stale one is served again with anything queued since.
@@ -1815,6 +1868,9 @@ pub(crate) fn claim_inbox(home: &Path, session_id: &str, now: SystemTime) -> Opt
     let file = inbox_file(home, session_id)?;
     let claim = file.with_extension("claimed");
     sweep_orphans(&file, now);
+    if let Some(live) = live_file(home, session_id) {
+        touch(&live, now);
+    }
     match std::fs::metadata(&claim).and_then(|m| m.modified()) {
         Ok(at) => {
             if now.duration_since(at).unwrap_or_default() < CLAIM_STALE {
@@ -1861,19 +1917,19 @@ fn stamp(p: &Path, at: SystemTime) {
 }
 
 /// `<id>.taking.<pid>` files older than CLAIM_STALE belong to a taker that died between rename and
-/// remove: hand them back to the inbox.
+/// remove: hand them back to the inbox. `*.live` markers older than LIVE_FOR are dropped.
 fn sweep_orphans(file: &Path, now: SystemTime) {
     let (Some(dir), Some(stem)) = (file.parent(), file.file_stem().and_then(|s| s.to_str())) else { return };
     let prefix = format!("{stem}.taking.");
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let name = e.file_name();
-        if !name.to_str().is_some_and(|n| n.starts_with(&prefix)) {
-            continue;
-        }
-        let old = e.metadata().and_then(|m| m.modified()).is_ok_and(|at| now.duration_since(at).unwrap_or_default() >= CLAIM_STALE);
-        if old {
+        let Some(name) = name.to_str() else { continue };
+        let age = e.metadata().and_then(|m| m.modified()).ok().map(|at| now.duration_since(at).unwrap_or_default());
+        if name.starts_with(&prefix) && age.is_some_and(|a| a >= CLAIM_STALE) {
             append_into(&e.path(), file);
+        } else if name.ends_with(".live") && age.is_some_and(|a| a >= LIVE_FOR) {
+            let _ = std::fs::remove_file(e.path());
         }
     }
 }
@@ -1973,10 +2029,22 @@ fn resolve_peer(dir: &Path, to: &str) -> Option<(String, String)> {
     if let Some(sock) = to.strip_prefix("uds:") {
         return recs.iter().find(|r| r["messagingSocketPath"].as_str() == Some(sock)).and_then(id);
     }
-    let mut named = recs.iter().filter(|r| r["name"].as_str() == Some(to));
-    match (named.next(), named.next()) {
-        (Some(r), None) => id(r),
-        _ => None,
+    // Exact name first; then ListAgents' `name [ref]` form (the ref only matters when two
+    // sessions share a name, and then the name alone is ambiguous anyway).
+    [to, strip_ref(to)].iter().find_map(|name| {
+        let mut named = recs.iter().filter(|r| r["name"].as_str() == Some(name));
+        match (named.next(), named.next()) {
+            (Some(r), None) => id(r),
+            _ => None,
+        }
+    })
+}
+
+/// `core [ff2607]` → `core`: the ` [ref]` suffix ListAgents adds to a peer's name.
+pub(crate) fn strip_ref(name: &str) -> &str {
+    match (name.rfind(" ["), name.ends_with(']')) {
+        (Some(i), true) if i > 0 && name.len() - 1 > i + 2 && name[i + 2..name.len() - 1].chars().all(|c| c.is_ascii_alphanumeric()) => name[..i].trim_end(),
+        _ => name,
     }
 }
 
@@ -2963,6 +3031,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// The `.live` marker: every claim touches it (only the mod claims), the Stop hook's take does
+    /// not, it stays "loaded" through a long turn and is swept (no longer loaded) after a day.
+    #[test]
+    fn inbox_live_marker_follows_the_mod_poll() {
+        let home = std::env::temp_dir().join(format!("8sync-inbox-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let sid = "a2830544-0719-4d6f-aaa3-644783ddb0b3";
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        assert!(!inbox_live(&home, sid, t0), "nothing polled yet");
+        assert!(claim_inbox(&home, sid, t0).is_none(), "empty inbox");
+        let live = live_file(&home, sid).unwrap();
+        assert!(live.is_file(), "an empty poll still marks the mod live (dir created by the poll)");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(live.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(live.parent().unwrap().metadata().unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        assert!(inbox_live(&home, sid, t0 + Duration::from_secs(3600)), "a long turn does not poll: still loaded");
+        assert!(!inbox_live(&home, sid, t0 + LIVE_FOR), "a day without a poll: the session is gone");
+        let other = "b2830544-0719-4d6f-aaa3-644783ddb0b3";
+        assert!(take_inbox(&home, other).is_none());
+        assert!(live_file(&home, other).unwrap().metadata().is_err(), "the Stop hook never marks live");
+        touch(&live_file(&home, other).unwrap(), t0);
+        claim_inbox(&home, sid, t0 + LIVE_FOR);
+        assert!(live_file(&home, other).unwrap().metadata().is_err(), "day-old marker swept");
+        assert!(inbox_live(&home, sid, t0 + LIVE_FOR), "own marker re-touched after the sweep");
+        assert!(live_file(&home, "../x").is_none());
+        assert!(inbox_line(true).contains("ngay khi phiên rảnh") && inbox_line(false).contains("/reload-plugins"));
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
     #[test]
     fn inbox_cmd_parses_flags_and_falls_back_to_the_env_session() {
         let home = tmp("inbox-cmd");
@@ -3016,7 +3116,15 @@ mod tests {
         let rd = Some(("6de1efc8-68cb-45aa-9999-000000000001".to_string(), "rd".to_string()));
         assert_eq!(resolve_peer(&d, "uds:/run/user/1000/cc-socks/6063.sock"), rd);
         assert_eq!(resolve_peer(&d, "rd"), rd);
+        assert_eq!(resolve_peer(&d, "rd [6de1ef]"), rd, "ListAgents' `name [ref]` form");
         assert_eq!(resolve_peer(&d, "twin"), None, "ambiguous name");
+        assert_eq!(strip_ref("core [ff2607]"), "core");
+        assert_eq!(strip_ref("core"), "core");
+        assert_eq!(strip_ref("a [b c]"), "a [b c]", "not a ref");
+        assert_eq!(strip_ref("[x]"), "[x]");
+        assert_eq!(strip_ref("core []"), "core []", "empty ref is not a ref");
+        std::fs::write(d.join("7002.json"), r#"{"sessionId":"s-7002","name":"x [y]"}"#).unwrap();
+        assert_eq!(resolve_peer(&d, "x [y]"), Some(("s-7002".to_string(), "x [y]".to_string())), "exact name wins over stripping");
         assert_eq!(resolve_peer(&d, "uds:/nope.sock"), None);
         std::fs::write(d.join("5405.json"), r#"{"sessionId":"s9","name":"core"}"#).unwrap();
         let j = journal_entry("PostToolUse", &json!({"session_id":"s9","tool_name":"SendMessage","tool_input":{"to":"uds:/run/user/1000/cc-socks/6063.sock","message":"giúp?"}}), None, 1, Some(&d)).unwrap();

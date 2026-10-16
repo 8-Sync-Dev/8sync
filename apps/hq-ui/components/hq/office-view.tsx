@@ -126,7 +126,8 @@ function RoomCard({
               </>
             ) : room.delivery === "inbox" ? (
               <>
-                <InboxIcon className="size-3" aria-hidden /> Inbox{room.pending > 0 && ` · ${room.pending} chờ giao`}
+                <InboxIcon className="size-3" aria-hidden /> Inbox{room.inboxLive ? " · mod" : " · chưa nạp mod"}
+                {room.pending > 0 && ` · ${room.pending} chờ giao`}
               </>
             ) : null}
           </span>
