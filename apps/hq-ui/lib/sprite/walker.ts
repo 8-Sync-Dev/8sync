@@ -101,3 +101,10 @@ const dust = (stand: string[]): string[][] => [
 export const WALKER_DUST: string[][] = dust(WALKER_STAND);
 export const WALKER_CARRY_DUST: string[][] = dust(WALKER_CARRY_STAND);
 export const DUST_MS = [120, 140] as const;
+
+/** Horizontal flip (facing left, for the walk back to the seat); every row keeps its width. */
+export function mirror(rows: string[]): string[] {
+  return rows.map((r) => [...r].reverse().join(""));
+}
+
+export const WALKER_CLIPS = { walk: WALKER_FRAMES, carry: WALKER_CARRY, stand: [WALKER_STAND] } as const;

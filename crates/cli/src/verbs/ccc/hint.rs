@@ -41,6 +41,8 @@ pub(super) const CCC_VERBS: &[(&str, &str)] = &[
     ("loop", "vòng lặp /ship-loop: init · tick · status · done · ev"),
     ("cancel", "huỷ hết việc session này đặt (goal, urgent, loop); --all xuyên session"),
     ("risk", "gate bắt buộc cho diff này: /sec, /rules, /aup-audit…"),
+    ("auto", "team luôn work: on · pause · off · status (idle + delegate)"),
+    ("meet", "họp sprint daily: --say \"done|doing|blocked\" vào su-code/standup"),
     ("standup", "bảng sprint: role nào rảnh, việc trùng file"),
     ("ls", "session của repo, mới nhất lên đầu"),
     ("report", "token, cost, thời gian, loop"),

@@ -53,7 +53,7 @@ fn dir(cwd: &Path, slug: &str) -> Result<PathBuf> {
 }
 
 /// One table cell: sanitised by `goal::clean` (control/format chars, secrets, clip), `|` → `/`.
-fn clean_cell(s: &str, max: usize) -> String {
+pub(super) fn clean_cell(s: &str, max: usize) -> String {
     super::goal::clean(s, max).replace('|', "/").trim().to_string()
 }
 
@@ -162,6 +162,11 @@ fn is_idle(r: &Row) -> bool {
 /// Idle is judged only over rows on the board whose role is in ROSTER (roster order).
 fn idle_roles(b: &Board) -> Vec<String> {
     ROSTER.iter().filter(|r| b.get(r).is_some_and(|row| row.raw.is_none() && is_idle(row))).map(|r| r.to_string()).collect()
+}
+
+/// Idle roster roles of a SPRINT.md text (for the room block).
+pub(super) fn idle_for(text: &str) -> Vec<String> {
+    idle_roles(&parse(text))
 }
 
 fn norm_path(p: &str, fold_case: bool) -> String {

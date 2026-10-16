@@ -7,7 +7,8 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { teamOf, type IdleRecord } from "../idle";
 import { deliveryOf, sessionLabel } from "../labels";
-import { costPerTask, seatsFor, visitsFrom, type AgentRow, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
+import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
+import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
 import { loadFloor } from "./floor";
 import { readIdleStatus } from "./idle";
 import { inboxLive, pendingInbox } from "./inbox";
@@ -107,7 +108,47 @@ export type Room = {
   role: string | null;
   /** Agent-team name of this session as lead ("session-" + 8 id chars): joins `Office.idle`. */
   team: string | null;
+  /** The sprint meeting this room's lead is at (`su-code/standup/<today>.md` row < 30 min old), else null. */
+  meeting: { at: number; phase: WalkPhase } | null;
 };
+
+export type Meeting = { project: string; root: string; date: string; attendees: Attendee[]; until: number };
+
+const MAX_STANDUP_BYTES = 64 * 1024;
+
+/** Today's standup rows of one project root; only `su-code/standup/<UTC date>.md`, ≤ 64 KB, never throws. */
+export function readStandup(root: string, now: number): { date: string; rows: Attendee[] } {
+  const date = new Date(now).toISOString().slice(0, 10);
+  try {
+    const file = path.join(root, "su-code", "standup", `${date}.md`);
+    const st = fs.statSync(file);
+    if (!st.isFile() || st.size > MAX_STANDUP_BYTES) return { date, rows: [] };
+    return { date, rows: parseStandupDay(fs.readFileSync(file, "utf8"), date) };
+  } catch {
+    return { date, rows: [] };
+  }
+}
+
+/** Meetings in progress per project root; stamps `room.meeting` on every room whose label / name / session id an attendee names. */
+export function loadMeetings(rooms: Room[], now: number): Meeting[] {
+  const byRoot = new Map<string, { project: ProjectInfo; rooms: Room[] }>();
+  for (const r of rooms) if (r.project) (byRoot.get(r.project.root) ?? byRoot.set(r.project.root, { project: r.project, rooms: [] }).get(r.project.root)!).rooms.push(r);
+  const out: Meeting[] = [];
+  for (const { project, rooms: rs } of byRoot.values()) {
+    const { date, rows } = readStandup(project.root, now);
+    const attendees = attendeesNow(rows, now);
+    if (!attendees.length) continue;
+    const refs: RoomRef[] = rs.map((r) => ({ key: r.key, ids: [r.name, r.session_id ?? "", r.label].filter(Boolean) }));
+    for (const a of attendees) {
+      const key = roomFor(a.room, refs);
+      const room = rs.find((r) => r.key === key);
+      const phase = walkPhase(a.at, now);
+      if (room && phase && (!room.meeting || a.at >= room.meeting.at)) room.meeting = { at: a.at, phase };
+    }
+    out.push({ project: project.name, root: project.root, date, attendees, until: Math.max(...attendees.map((a) => a.at)) + MEETING_MS });
+  }
+  return out;
+}
 
 export type LoopInfo = { project: string; slug: string; iter: number; max_iter: number | null; started: number | null; stopped: string | null };
 
@@ -144,7 +185,7 @@ export function readLoops(roots: { root: string; name: string }[]): LoopInfo[] {
 }
 
 /** `idle`: every agent-team member's "không ai rảnh" status (lib/idle.ts), stale ones included. */
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; at: number };
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; at: number };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
@@ -189,6 +230,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       seats: seatsFor(agents, busy, now),
       role: s.role ?? null,
       team: teamOf(sid),
+      meeting: null,
     };
   });
   const refs: RoomRef[] = rooms.map((r) => ({ key: r.key, ids: [r.name, r.session_id ?? "", r.label].filter(Boolean) }));
@@ -196,5 +238,5 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     .prepare("SELECT kind, ts, session, from_, to_, text FROM messages WHERE kind = 'session_message' AND ts > ? ORDER BY id DESC LIMIT 50")
     .all(now - 120_000) as { kind: string; ts: number; session: string | null; from_: string | null; to_: string | null; text: string | null }[];
   const roots = new Map(rooms.flatMap((r) => (r.project ? [[r.project.root, r.project] as const] : [])));
-  return { rooms, visits: visitsFrom(recent, refs, now), loops: readLoops([...roots.values()]), idle: readIdleStatus(), at: now };
+  return { rooms, visits: visitsFrom(recent, refs, now), loops: readLoops([...roots.values()]), idle: readIdleStatus(), meetings: loadMeetings(rooms, now), at: now };
 }

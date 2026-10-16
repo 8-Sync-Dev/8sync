@@ -65,6 +65,11 @@ export function seatsFor(agents: AgentRow[], leadBusy: boolean, now: number, rec
   });
 }
 
+/** How many sprites a seat draws: one per active agent of this kind, up to 3 (more show as ×N). */
+export function cloneCount(seat: Pick<Seat, "active">): number {
+  return Math.min(seat.active.length, 3);
+}
+
 export type RoomRef = { key: string; ids: string[] };
 
 /** The room a sender/recipient name points at: session name, Claude session id (or its 8-char prefix), or label. */
@@ -129,8 +134,10 @@ export function groupByProject<T extends { key: string; project: ProjectInfo | n
 export function seatState(
   seat: Pick<Seat, "key" | "active">,
   room: { status: string; state: string | null; waiting: string | null },
+  inMeeting = false,
 ): "idle" | "typing" | "running" | "reading" | "waiting" | "stalled" | "done" | "meeting" | null {
   if (seat.key !== "lead") return seat.active.length ? "typing" : null;
+  if (inMeeting) return null; // the lead left the seat for the sprint meeting
   if (room.waiting || room.status === "needs_input") return "waiting";
   const known = ["idle", "typing", "running", "reading", "waiting", "stalled", "done", "meeting"] as const;
   const st = known.find((k) => k === room.state);
