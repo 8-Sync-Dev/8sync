@@ -32,7 +32,10 @@ describe("GET /api/auto", () => {
     tick.mockClear();
     const res = await GET(req("/api/auto", { token }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ...s, tick: { ticked: [] } });
+    const { versions, ...body } = await res.json();
+    expect(body).toEqual({ ...s, tick: { ticked: [] } });
+    // GET also reports the running UI / installed binary versions (stale-UI notice).
+    expect(Object.keys(versions).sort()).toEqual(["binary", "ui"]);
     expect(tick).toHaveBeenCalledTimes(1);
     expect(tick).toHaveBeenLastCalledWith(s);
   });
@@ -40,7 +43,9 @@ describe("GET /api/auto", () => {
     status.mockResolvedValueOnce({ on: false, paused: false, error: "unknown verb" });
     const res = await GET(req("/api/auto", { token }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ on: false, paused: false, error: "unknown verb", tick: { ticked: [] } });
+    const { versions, ...body } = await res.json();
+    expect(body).toEqual({ on: false, paused: false, error: "unknown verb", tick: { ticked: [] } });
+    expect(Object.keys(versions).sort()).toEqual(["binary", "ui"]);
   });
 });
 

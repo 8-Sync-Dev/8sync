@@ -1,5 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { autoButton, autoText, leaseMs, shouldAutoStart } from "@/lib/auto";
+import { autoButton, autoText, leaseMs, shouldAutoStart, staleText } from "@/lib/auto";
+import { parseBinaryVersion, uiVersion } from "@/lib/server/version";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+describe("stale UI notice", () => {
+  it("says so only when both versions are known and differ", () => {
+    expect(staleText({ on: false, paused: false })).toBeNull();
+    expect(staleText({ on: false, paused: false, versions: { ui: "0.94.0", binary: "0.94.0" } })).toBeNull();
+    expect(staleText({ on: false, paused: false, versions: { ui: null, binary: "0.94.0" } })).toBeNull(); // dev checkout
+    expect(staleText({ on: false, paused: false, versions: { ui: "0.93.3", binary: null } })).toBeNull(); // no 8sync on PATH
+    expect(staleText({ on: true, paused: false, versions: { ui: "0.93.3", binary: "0.94.0" } })).toBe(
+      "HQ đang chạy giao diện 0.93.3, 8sync đã là 0.94.0 — Ctrl-C ở terminal `8sync hq ui` rồi chạy lại để lấy giao diện mới",
+    );
+  });
+  it("parses `8sync --version` and the installed VERSION file, rejecting junk", () => {
+    expect(parseBinaryVersion("8sync 0.94.0\n")).toBe("0.94.0");
+    expect(parseBinaryVersion("8sync v0.94.0-rc1")).toBe("0.94.0-rc1");
+    expect(parseBinaryVersion("")).toBeNull();
+    expect(parseBinaryVersion("command not found")).toBeNull();
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "hq-ver-"));
+    const app = path.join(base, "hq-ui");
+    fs.mkdirSync(app);
+    expect(uiVersion(app)).toBeNull(); // no VERSION next to the app = dev checkout
+    fs.writeFileSync(path.join(base, "VERSION"), "0.93.3\n");
+    expect(uiVersion(app)).toBe("0.93.3");
+    fs.writeFileSync(path.join(base, "VERSION"), "garbage");
+    expect(uiVersion(app)).toBeNull();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+});
 
 describe("auto control model", () => {
   it("lease accepts unix seconds or ms", () => {

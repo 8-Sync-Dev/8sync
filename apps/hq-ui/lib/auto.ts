@@ -11,7 +11,19 @@ export type AutoState = {
   /** Unix seconds (8sync) or ms; both accepted. */
   lease_until?: number | null;
   error?: string;
+  /** Running UI version vs. installed 8sync binary (server-side; null when unknown). */
+  versions?: { ui: string | null; binary: string | null };
 };
+
+/**
+ * The page the owner looks at is older than the binary they just installed: say so, with the one
+ * action that fixes it. A running `8sync hq ui` never swaps its UI by itself.
+ */
+export function staleText(s: AutoState): string | null {
+  const v = s.versions;
+  if (!v?.ui || !v.binary || v.ui === v.binary) return null;
+  return `HQ đang chạy giao diện ${v.ui}, 8sync đã là ${v.binary} — Ctrl-C ở terminal \`8sync hq ui\` rồi chạy lại để lấy giao diện mới`;
+}
 
 /** The lease end in ms, from unix seconds or ms (anything below 1e12 is seconds). */
 export function leaseMs(v: number | null | undefined): number | null {

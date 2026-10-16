@@ -1,6 +1,7 @@
 import { AUTO_ACTIONS, autoSet, autoStatus, type AutoAction } from "@/lib/server/auto";
 import { runAutoTick } from "@/lib/server/auto-tick";
 import { bad, json, open, readBody } from "@/lib/server/http";
+import { versions } from "@/lib/server/version";
 
 export const runtime = "nodejs";
 
@@ -8,9 +9,9 @@ export const runtime = "nodejs";
 export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
-  const status = await autoStatus();
+  const [status, v] = await Promise.all([autoStatus(), versions()]);
   const tick = await runAutoTick(status);
-  return json({ ...status, tick });
+  return json({ ...status, versions: v, tick });
 }
 
 /** {action: "on" | "pause"}: only the fixed action word reaches the command line. */
