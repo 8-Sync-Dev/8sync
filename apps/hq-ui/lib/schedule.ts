@@ -84,3 +84,18 @@ export const RD_DUTY = {
   ].join("\n"),
   schedule: { kind: "every", n: 30, unit: "m" } as const satisfies Schedule,
 };
+
+/**
+ * Preset "Họp sprint daily": every room of a project reports one line, then picks up one open item
+ * of another room (`8sync ccc meet`). The HQ office draws the leads walking to the meeting room
+ * for 30 minutes after their row lands in su-code/standup/<date>.md.
+ */
+export const MEET_DAILY = {
+  subject: "Họp sprint daily (≤30 phút)",
+  details: [
+    '1. Báo cáo: `8sync ccc meet --say "<done>|<doing>|<blocked>"` (mỗi phần ≤100 ký tự, chỉ ghi việc có bằng chứng: commit, test, file). Không có gì mới: vẫn ghi dòng rest ("rest: không có gì mới").',
+    "2. Nhận việc: `8sync ccc meet --json`, lấy MỘT việc đang mở của phòng khác nếu bạn rảnh; không rảnh thì giữ việc của mình. Báo phòng kia bằng SendMessage trước khi sửa file của họ.",
+    "3. Dừng trong 30 phút: không mở việc mới ngoài bước 2, không merge/push/deploy.",
+  ].join("\n"),
+  schedule: { kind: "daily", at: "09:00" } as const satisfies Schedule,
+};

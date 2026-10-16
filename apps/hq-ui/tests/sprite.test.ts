@@ -65,6 +65,14 @@ describe("role sprites", () => {
     expect(shirtOf("rd", "room-a")).toBe(shirtOf("rd", "room-b"));
     expect(shirtOf("lead", "room-a")).toBe(shirtFor("room-a"));
   });
+  it("away: the chair is empty (no skin, no shirt) but the role's desk prop and the chair back stay", () => {
+    const f = spriteFrame("dev", "away", 0);
+    expect(f.join()).not.toMatch(/[sc]/);
+    expect(f[16].slice(6, 17)).toBe("nnnnnnnnnnn"); // chair back (x 5 is under dev's desk prop)
+    expect(f.join()).not.toBe(spriteFrame(null, "away", 0).join()); // dev's desk prop is there
+    expect(f.slice(10, 17).map((r) => r.slice(22, 29)).join()).not.toMatch(/g/); // screen off
+    for (const { key } of SEATS) expect(spriteFrame(key, "away", 1).join(), key).not.toMatch(/[sc]/);
+  });
   it("an empty seat rests with the screen off (no glow lines)", () => {
     const f = spriteFrame("dev", "rest", 0);
     expect(f.slice(10, 17).map((r) => r.slice(22, 29)).join()).not.toMatch(/g/);
@@ -145,7 +153,7 @@ import { transitionFor } from "@/lib/sprite/render";
 describe("meeting state and the stand / sit transitions", () => {
   it("meeting is a looping state with a wall board instead of the monitor, 2-3 frames ~600 ms, and blinks", () => {
     expect(SPRITE_STATES).toContain("meeting");
-    expect(CLIPS).toEqual([...SPRITE_STATES, "rest", "stand", "sit"]);
+    expect(CLIPS).toEqual([...SPRITE_STATES, "rest", "away", "stand", "sit"]);
     expect(ONE_SHOT.has("meeting")).toBe(false);
     expect(BLINKS.has("meeting")).toBe(true);
     expect(CLIP_MS.meeting.length).toBeGreaterThanOrEqual(2);

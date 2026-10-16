@@ -201,3 +201,30 @@
     transform: none;
   }
 }
+
+/* The lead leaving for the sprint meeting (right, fading out) and coming back (from the right). */
+@keyframes hq-walk-out {
+  from {
+    transform: none;
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  to {
+    transform: translateX(140%);
+    opacity: 0;
+  }
+}
+@keyframes hq-walk-back {
+  from {
+    transform: translateX(140%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    transform: none;
+  }
+}

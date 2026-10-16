@@ -29,8 +29,8 @@ use serde_json::{json, Value};
 pub(super) const KEY: &str = "no_idle";
 const ENV: &str = "EIGHTSYNC_NO_IDLE";
 const MAX_BLOCKS: u32 = 3;
-const DEFAULT_HOURS: u64 = 2;
-const DEFAULT_USD_PER_HOUR: f64 = 5.0;
+pub(super) const DEFAULT_HOURS: u64 = 2;
+pub(super) const DEFAULT_USD_PER_HOUR: f64 = 5.0;
 /// Subscription: lease cap and "owner present" window (last prompt typed by a human).
 const SUB_MAX_HOURS: f64 = 4.0;
 pub(super) const PRESENT_S: u64 = 30 * 60;
@@ -359,7 +359,7 @@ pub(super) fn enabled(home: &Path) -> bool {
 }
 
 /// Total of every session's latest `cost_usd` (status-line snapshots), keyed by session.
-fn costs(home: &Path) -> Vec<(String, f64)> {
+pub(super) fn costs(home: &Path) -> Vec<(String, f64)> {
     super::report::load_snapshots(home)
         .iter()
         .filter_map(|s| Some((s["session_id"].as_str()?.to_string(), s["cost_usd"].as_f64()?)))
@@ -565,6 +565,31 @@ fn lead_context(msg: &str) -> String {
     json!({ "hookSpecificOutput": { "hookEventName": "Stop", "additionalContext": format!("8sync không-ai-rảnh: {msg}") } }).to_string()
 }
 
+/// Validate, then turn the flag on and write the lease. Nothing is touched when validation
+/// fails. `quiet` skips the prints (used by `ccc auto on`).
+pub(super) fn on(home: &Path, hours: f64, rate: f64, subscription: bool, quiet: bool) -> Result<()> {
+    if !(0.25..=24.0).contains(&hours) || !(0.1..=1000.0).contains(&rate) {
+        bail!("--hours 0.25..24, --usd-per-hour 0.1..1000");
+    }
+    if subscription && hours > SUB_MAX_HOURS {
+        bail!("login subscription: --hours tối đa {SUB_MAX_HOURS} (owner phải có mặt). Chạy lâu / không người trông → Console API key.");
+    }
+    crate::verbs::harness::cbm::write_flag_key(home, KEY, true)?;
+    let dir = state_dir(home);
+    let t = now();
+    let baseline: serde_json::Map<String, Value> = costs(home).into_iter().map(|(k, c)| (k, json!(c))).collect();
+    write_json(&dir.join("lease.json"), &json!({ "on": t, "until": t + (hours * 3600.0) as u64, "usd_per_hour": rate, "baseline": baseline }));
+    let _ = std::fs::remove_dir_all(dir.join("mem"));
+    if !quiet {
+        println!("không-ai-rảnh: BẬT {hours} giờ, trần ${rate:.2}/giờ, tối đa {MAX_BLOCKS} lần nhắc liên tiếp.");
+        if subscription {
+            println!("Login subscription: chỉ chạy khi owner có mặt; hết {hours} giờ thì tự nghỉ. Chạy không người trông → Console API key.");
+        }
+        println!("Cần hook mới: `8sync ccc kit` rồi mở session mới.");
+    }
+    Ok(())
+}
+
 /// `8sync ccc idle on [--hours N] [--usd-per-hour X] | off | status [--json]`.
 pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()> {
     let dir = state_dir(home);
@@ -579,23 +604,7 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
         Some("on") => {
             let hours = num("--hours")?.unwrap_or(DEFAULT_HOURS as f64);
             let rate = num("--usd-per-hour")?.unwrap_or(DEFAULT_USD_PER_HOUR);
-            if !(0.25..=24.0).contains(&hours) || !(0.1..=1000.0).contains(&rate) {
-                bail!("--hours 0.25..24, --usd-per-hour 0.1..1000");
-            }
-            if subscription && hours > SUB_MAX_HOURS {
-                bail!("login subscription: --hours tối đa {SUB_MAX_HOURS} (owner phải có mặt). Chạy lâu / không người trông → Console API key.");
-            }
-            crate::verbs::harness::cbm::write_flag_key(home, KEY, true)?;
-            let t = now();
-            let baseline: serde_json::Map<String, Value> = costs(home).into_iter().map(|(k, c)| (k, json!(c))).collect();
-            write_json(&lease_p, &json!({ "on": t, "until": t + (hours * 3600.0) as u64, "usd_per_hour": rate, "baseline": baseline }));
-            let _ = std::fs::remove_dir_all(dir.join("mem"));
-            println!("không-ai-rảnh: BẬT {hours} giờ, trần ${rate:.2}/giờ, tối đa {MAX_BLOCKS} lần nhắc liên tiếp.");
-            if subscription {
-                println!("Login subscription: chỉ chạy khi owner có mặt; hết {hours} giờ thì tự nghỉ. Chạy không người trông → Console API key.");
-            }
-            println!("Cần hook mới: `8sync ccc kit` rồi mở session mới.");
-            Ok(())
+            on(home, hours, rate, subscription, false)
         }
         Some("off") => {
             off(home)?;

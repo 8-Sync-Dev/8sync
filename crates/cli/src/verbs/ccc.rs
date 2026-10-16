@@ -21,6 +21,7 @@ use crate::verbs::uuid_sessions::Store;
 use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
+mod auto;
 mod cancel;
 mod compact;
 mod danger;
@@ -33,6 +34,7 @@ mod help;
 mod hint;
 mod idle;
 mod looper;
+mod meet;
 mod output_budget;
 pub(crate) mod report;
 mod risk;
@@ -183,6 +185,11 @@ pub fn run(a: Args) -> Result<()> {
                 std::process::exit(1);
             }
             Ok(())
+        }
+        "auto" => auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription"),
+        "meet" => {
+            let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
+            meet::run(&sessions(&env, &root), rest, id.as_deref(), &std::env::current_dir().context("no cwd")?, view_now())
         }
         "risk" => risk::run(rest, &std::env::current_dir().context("no cwd")?),
         "hint" => {

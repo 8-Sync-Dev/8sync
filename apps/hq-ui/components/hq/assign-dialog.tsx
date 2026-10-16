@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { assignSummary, distinctLabels, groupTargets, outsideRole, projectTargets, roleTargets, type AssignMode, type RoomLike } from "@/lib/assign";
 import { addressOf, deliveryOf, inboxText, sessionLabel } from "@/lib/labels";
 import { ROLES, modelShort, type RoleId } from "@/lib/roles";
-import { EVERY_HOURS, EVERY_MINUTES, RD_DUTY, scheduleLabel, type Schedule } from "@/lib/schedule";
+import { EVERY_HOURS, EVERY_MINUTES, MEET_DAILY, RD_DUTY, scheduleLabel, type Schedule } from "@/lib/schedule";
 import { STATUS_LABEL, StatusDot } from "./bits";
 import { RoleIcon } from "./role-badge";
 import type { Hq } from "./use-hq";
@@ -156,19 +156,34 @@ export function AssignDialog({ hq, open, onOpenChange, sessions, projects, rooms
             <div className="grid gap-1.5">
               <div className="flex items-center justify-between gap-2">
                 <Label htmlFor="assign-subject">Việc cần làm</Label>
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                  onClick={() => {
-                    setSubject(RD_DUTY.subject);
-                    setDetails(RD_DUTY.details);
-                    setMode("role");
-                    setRole("rd");
-                    setWhen(`m:${RD_DUTY.schedule.n}`);
-                  }}
-                >
-                  Dùng mẫu: R&amp;D trực (mỗi 30 phút)
-                </button>
+                <div className="flex flex-wrap justify-end gap-x-3 gap-y-1">
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    onClick={() => {
+                      setSubject(RD_DUTY.subject);
+                      setDetails(RD_DUTY.details);
+                      setMode("role");
+                      setRole("rd");
+                      setWhen(`m:${RD_DUTY.schedule.n}`);
+                    }}
+                  >
+                    Dùng mẫu: R&amp;D trực (mỗi 30 phút)
+                  </button>
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    onClick={() => {
+                      setSubject(MEET_DAILY.subject);
+                      setDetails(MEET_DAILY.details);
+                      setMode("project");
+                      setWhen("daily");
+                      setAt(MEET_DAILY.schedule.at);
+                    }}
+                  >
+                    Dùng mẫu: Họp sprint (09:00 hằng ngày)
+                  </button>
+                </div>
               </div>
               <Input id="assign-subject" value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={300} required autoFocus placeholder="Ví dụ: Viết test cho API /tasks" />
             </div>

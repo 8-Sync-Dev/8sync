@@ -18,6 +18,7 @@ import {
   WALKER_PALETTE,
   WALKER_STAND,
   WALKER_W,
+  mirror,
 } from "./walker";
 
 /** The loop wakes at most this often; the shortest frame is 110 ms. */
@@ -83,10 +84,10 @@ const WALKER_SETS = {
 } as const;
 
 const walkerCache = memo((key: string) => {
-  const [set, kind, i, shirt] = key.split("|");
+  const [set, kind, i, shirt, dir] = key.split("|");
   const s = WALKER_SETS[set === "carry" ? "carry" : "plain"];
   const rows = kind === "dust" ? s.dust[Number(i)] : kind === "stand" ? s.stand : s.walk[Number(i)];
-  return paint(rows, WALKER_W, WALKER_H, WALKER_PALETTE, shirt);
+  return paint(dir === "left" ? mirror(rows) : rows, WALKER_W, WALKER_H, WALKER_PALETTE, shirt);
 });
 
 function blit(ctx: CanvasRenderingContext2D, img: HTMLCanvasElement, w: number, h: number) {
@@ -213,16 +214,17 @@ export const WALK_IN_MS = 1600;
  * then it stands and leaves the loop. `carry`: holding a task paper (bringing work in).
  * Reduced motion: stands from the start.
  */
-export function mountWalker(canvas: HTMLCanvasElement, opts: { shirt: string; carry?: boolean; size?: number }): () => void {
+export function mountWalker(canvas: HTMLCanvasElement, opts: { shirt: string; carry?: boolean; size?: number; dir?: "right" | "left" }): () => void {
   backing(canvas, WALKER_W, WALKER_H, opts.size ?? WALKER_W * 2);
   const ctx = canvas.getContext("2d");
   if (!ctx) return () => {};
   let shown = "";
   const set = opts.carry ? "carry" : "plain";
+  const dir = opts.dir ?? "right";
   const draw = (key: string) => {
     if (key === shown) return;
     shown = key;
-    blit(ctx, walkerCache.get(`${set}|${key}|${opts.shirt}`), canvas.width, canvas.height);
+    blit(ctx, walkerCache.get(`${set}|${key}|${opts.shirt}|${dir}`), canvas.width, canvas.height);
   };
   if (reducedMotion()) {
     draw("stand|0");

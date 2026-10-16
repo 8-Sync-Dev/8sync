@@ -9,11 +9,12 @@ import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { inboxFile, inboxLive, isSessionId, LIVE_MS, pendingInbox } from "@/lib/server/inbox";
 import { applyMapped, mapEvent } from "@/lib/server/ingest";
-import { projectOf, readLoops, readUsage } from "@/lib/server/office";
+import { loadMeetings, projectOf, readLoops, readUsage, type Room } from "@/lib/server/office";
 import { messagesAfter } from "@/lib/server/queries";
 import { stateDir } from "@/lib/server/paths";
 import {
   SEATS,
+  cloneCount,
   costPerTask,
   fmtDuration,
   fmtTokens,
@@ -31,6 +32,7 @@ import {
   DUST_MS,
   WALK_MS,
   WALKER_CARRY,
+  WALKER_CLIPS,
   WALKER_CARRY_DUST,
   WALKER_CARRY_STAND,
   WALKER_DUST,
@@ -39,6 +41,7 @@ import {
   WALKER_PALETTE,
   WALKER_STAND,
   WALKER_W,
+  mirror,
 } from "@/lib/sprite/walker";
 import { ORIGIN, req, tempHome } from "./helpers";
 
@@ -360,5 +363,80 @@ describe("Board / Giao việc to a session started elsewhere", () => {
     expect(addressOf({ tmux: false, name: "core", session_id: SID })).toBe(SID);
     expect(addressOf({ tmux: true, name: "hq-api", session_id: SID })).toBe("hq-api");
     expect(addressOf({ tmux: false, name: SID, session_id: null })).toBe(SID);
+  });
+});
+
+describe("seat state in a meeting + clones", () => {
+  const room = { status: "running", state: null, waiting: null };
+  it("the lead leaves the seat during the meeting; specialists keep working", () => {
+    expect(seatState({ key: "lead", active: ["lead"] }, room)).toBe("typing");
+    expect(seatState({ key: "lead", active: ["lead"] }, room, true)).toBeNull();
+    expect(seatState({ key: "dev", active: ["task"] }, room, true)).toBe("typing");
+  });
+  it("cloneCount = active agents capped at 3", () => {
+    expect(cloneCount({ active: [] })).toBe(0);
+    expect(cloneCount({ active: ["a", "b"] })).toBe(2);
+    expect(cloneCount({ active: ["a", "b", "c", "d", "e"] })).toBe(3);
+  });
+});
+
+describe("sprint meetings per project", () => {
+  const mk = (key: string, label: string, root: string | null, sid: string | null = null): Room =>
+    ({ key, name: key, session_id: sid, label, project: root ? { root, name: path.basename(root), branch: null } : null, meeting: null }) as unknown as Room;
+  it("reads only today's su-code/standup file and stamps matching rooms", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hq-meet-"));
+    const now = Date.parse("2026-10-16T09:10:00Z");
+    fs.mkdirSync(path.join(root, "su-code", "standup"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "su-code", "standup", "2026-10-16.md"),
+      "# Họp sprint 2026-10-16\n\n| Giờ | Phòng | Done | Doing | Blocked |\n|---|---|---|---|---|\n| 09:00 | alpha | d | doing a | - |\n| 09:05 | abcdef12 | d | doing b | - |\n| 09:06 | ghost | d | x | - |\n",
+    );
+    fs.writeFileSync(path.join(root, "su-code", "standup", "2026-10-15.md"), "| 09:00 | gamma | old | old | - |\n");
+    const rooms = [mk("hq-a", "alpha", root), mk("hq-b", "beta", root, "abcdef1234567890"), mk("hq-c", "gamma", root), mk("hq-z", "alpha", null)];
+    const ms = loadMeetings(rooms, now);
+    expect(ms).toHaveLength(1);
+    expect(ms[0]).toMatchObject({ project: path.basename(root), root, date: "2026-10-16", until: Date.parse("2026-10-16T09:36:00Z") });
+    expect(ms[0].attendees.map((a) => a.room)).toEqual(["alpha", "abcdef12", "ghost"]);
+    expect(rooms[0].meeting).toEqual({ at: Date.parse("2026-10-16T09:00:00Z"), phase: "table" });
+    expect(rooms[1].meeting?.phase).toBe("table");
+    expect(rooms[2].meeting).toBeNull();
+    expect(rooms[3].meeting).toBeNull();
+  });
+  it("ignores a missing or oversized file", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hq-meet-"));
+    const now = Date.parse("2026-10-16T09:10:00Z");
+    expect(loadMeetings([mk("a", "alpha", root)], now)).toEqual([]);
+    fs.mkdirSync(path.join(root, "su-code", "standup"), { recursive: true });
+    fs.writeFileSync(path.join(root, "su-code", "standup", "2026-10-16.md"), "| 09:00 | alpha | d | d | - |\n" + "x".repeat(70 * 1024));
+    expect(loadMeetings([mk("a", "alpha", root)], now)).toEqual([]);
+  });
+});
+
+describe("walker sprite pipeline gates", () => {
+  const feet = (f: string[]) => f.map((r) => /[^.]/.test(r)).lastIndexOf(true);
+  it("every walker frame is 12×18, the feet contact row is the same in all contact frames, carry keeps the body unchanged except the paper", () => {
+    const all = [...WALKER_CLIPS.walk, ...WALKER_CLIPS.carry, ...WALKER_CLIPS.stand];
+    for (const f of all) {
+      expect(f.length).toBe(18);
+      for (const r of f) expect(r.length).toBe(12);
+    }
+    const contact = [WALKER_CLIPS.walk[0], WALKER_CLIPS.walk[2], ...WALKER_CLIPS.stand, WALKER_CLIPS.carry[0], WALKER_CLIPS.carry[2]];
+    expect(new Set(contact.map(feet)).size).toBe(1);
+    // no drift: the pass frames keep the feet on the same ground row too
+    expect(new Set(all.map(feet)).size).toBe(1);
+    WALKER_CLIPS.carry.forEach((c, i) => {
+      const changed: [number, number][] = [];
+      c.forEach((row, y) => [...row].forEach((ch, x) => ch !== WALKER_CLIPS.walk[i][y][x] && changed.push([x, y])));
+      expect(changed.length).toBeLessThanOrEqual(6);
+      for (const [x] of changed) expect(x).toBeGreaterThanOrEqual(10);
+    });
+  });
+  it("mirror twice is identity, width unchanged, and really flips", () => {
+    for (const f of WALKER_CLIPS.walk) {
+      expect(mirror(mirror(f))).toEqual(f);
+      expect(mirror(f).every((r) => r.length === WALKER_W)).toBe(true);
+    }
+    expect(mirror(["ab.."])).toEqual(["..ba"]);
+    expect(mirror(WALKER_STAND).join()).not.toBe(WALKER_STAND.join());
   });
 });

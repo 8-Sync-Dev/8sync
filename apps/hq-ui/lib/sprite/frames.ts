@@ -10,10 +10,11 @@ export const SPRITE_STATES = ["idle", "typing", "running", "reading", "waiting",
 export type SpriteState = (typeof SPRITE_STATES)[number];
 
 /**
- * Every clip a desk sprite can play: the session states, "rest" (empty seat, screen off) and
+ * Every clip a desk sprite can play: the session states, "rest" (empty seat, screen off), "away"
+ * (the chair is empty: its person is in the sprint meeting; desk props stay) and
  * the two one-shot transitions "stand" (rise from the chair before work) / "sit" (back to idle).
  */
-export const CLIPS = [...SPRITE_STATES, "rest", "stand", "sit"] as const;
+export const CLIPS = [...SPRITE_STATES, "rest", "away", "stand", "sit"] as const;
 export type Clip = (typeof CLIPS)[number];
 
 /** '.' is transparent. 'c' (shirt) is per role / session, see shirtOf(). */
@@ -267,6 +268,8 @@ type Spec = {
   loop?: boolean;
   /** No monitor in the scene (the clip draws a wall board instead). */
   noMonitor?: boolean;
+  /** Nobody at the desk (the clip draws the empty chair itself). */
+  noPerson?: boolean;
 };
 
 const idleScreen = (g: G) => lines(g, "g", [3, 2]);
@@ -349,6 +352,17 @@ const SPECS: Record<Clip, Spec> = {
       dots(g, i + 1);
     },
   },
+  // the person is away (sprint meeting): screen off, the empty chair back where the torso was
+  away: {
+    ms: [1400, 1100],
+    off: true,
+    noPerson: true,
+    pose: () => ({}),
+    deco: (g) => {
+      rect(g, 4, 15, 14, 7, "o");
+      rect(g, 5, 16, 12, 6, "n");
+    },
+  },
   // empty seat: screen off, settled lower, slow breath
   rest: { ms: [1400, 1100], off: true, pose: (i) => ({ hy: 9 + i, torsoTop: 17 + i, hands: [[13, 21], [16, 21]] }) },
   // transitions (one-shot): rise before work, sit back down before idle; render.ts chains them
@@ -379,8 +393,10 @@ export function spriteFrame(role: SeatKey | null, clip: Clip, i: number, blink =
   spec.deco?.(g, f);
   const prop = role ? PROPS[role] : undefined;
   if (prop?.desk) stamp(g, prop.desk[0], prop.desk[1], prop.desk[2]);
-  const pose = spec.pose(f);
-  person(g, blink ? { ...pose, eyes: "closed" } : pose, prop);
+  if (!spec.noPerson) {
+    const pose = spec.pose(f);
+    person(g, blink ? { ...pose, eyes: "closed" } : pose, prop);
+  }
   const rows = g.map((r) => r.join(""));
   built.set(key, rows);
   return rows;

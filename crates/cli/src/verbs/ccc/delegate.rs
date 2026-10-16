@@ -50,6 +50,15 @@ pub(super) fn enabled(home: &Path) -> bool {
     crate::verbs::harness::cbm::resolve(std::env::var(ENV).ok().as_deref(), crate::verbs::harness::cbm::read_flag_key(home, KEY))
 }
 
+/// Flag on with `delegate_after_s = after_s` (0 = always). Validate with [`parse_after`] first.
+pub(super) fn on(home: &Path, after_s: u64) -> Result<()> {
+    if after_s > AFTER_MAX {
+        bail!("--after: tối đa 1 ngày");
+    }
+    crate::verbs::harness::cbm::write_flag_key(home, KEY, true)?;
+    crate::verbs::harness::cbm::write_key(home, AFTER_KEY, toml::Value::Integer(after_s as i64))
+}
+
 /// Pure: the reason to hand the question back to Claude, or `None` = let the owner see it.
 pub(super) fn decide(tool_input: &Value) -> Option<String> {
     let qs = tool_input["questions"].as_array()?;
@@ -87,7 +96,7 @@ pub(super) fn decide(tool_input: &Value) -> Option<String> {
     )
 }
 
-fn after_s(home: &Path) -> u64 {
+pub(super) fn after_s(home: &Path) -> u64 {
     crate::verbs::harness::cbm::read_int_key(home, AFTER_KEY).map_or(0, |n| (n.max(0) as u64).min(AFTER_MAX))
 }
 
@@ -127,8 +136,12 @@ pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
                 [f, n] if f == "--after" && x == "on" => parse_after(n)?,
                 _ => bail!("usage: 8sync ccc delegate on [--after <giây|1m|5m>] | off | status"),
             };
-            crate::verbs::harness::cbm::write_flag_key(home, KEY, x == "on")?;
-            crate::verbs::harness::cbm::write_key(home, AFTER_KEY, toml::Value::Integer(after as i64))?;
+            if x == "on" {
+                on(home, after)?;
+            } else {
+                off(home)?;
+                crate::verbs::harness::cbm::write_key(home, AFTER_KEY, toml::Value::Integer(0))?;
+            }
             if x == "on" {
                 println!("delegate: BẬT — critic chọn thay owner cho câu hỏi sản phẩm/kỹ thuật, ghi su-code/DECISIONS.md.");
                 if after > 0 {
@@ -153,7 +166,7 @@ pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
 }
 
 /// `60`, `60s`, `1m`, `5m` → seconds, 1..=1 day.
-fn parse_after(s: &str) -> Result<u64> {
+pub(super) fn parse_after(s: &str) -> Result<u64> {
     let t = s.trim().to_ascii_lowercase();
     let (num, mul) = match t.strip_suffix('m') {
         Some(n) => (n, 60),

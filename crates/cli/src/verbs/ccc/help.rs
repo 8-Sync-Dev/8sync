@@ -4,11 +4,11 @@
 /// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
 #[cfg(test)]
 pub(super) const VERBS: &[&str] =
-    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "ls", "list", "urgent", "goal", "standup", "rm", "new", "compact", "secret", "idle", "delegate", "cancel", "risk"];
+    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "ls", "list", "urgent", "goal", "standup", "rm", "new", "compact", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet"];
 
 /// Words that look like verbs: never a session name, never a headless claude launch.
 /// Includes hook sub-verbs people type without `hook`.
-pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk"];
+pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet"];
 
 pub(super) const TEXT: &str = "\
 8sync ccc — Claude Code + kit của 8 Sync. Mọi lệnh (chạy `8sync ccc <verb>`):
@@ -48,6 +48,8 @@ TỰ ĐỘNG (gõ trong Claude Code)
   8sync ccc cancel [--all] [--session <tên>] [--json]   huỷ hết việc session này đặt: goal, urgent, loop ghi trong su-code/ship/ACTIVE của repo (ACTIVE chung cả repo), rồi ACTIVE; `--all` thêm mọi loop + idle off + delegate off; thiếu session hay huỷ hụt → exit 1 (fail-closed; /loop của Claude Code phải `/loop clear` trong session)
   8sync ccc hook ship-grant    (hook) ghi giấy phép khi owner duyệt câu hỏi `Ship`
   8sync ccc idle on [--hours 2] [--usd-per-hour 5]   không-ai-rảnh cho agent team (mặc định TẮT; subscription = lease khi owner có mặt)
+  8sync ccc auto on [--hours 2] [--after 60|1m] | off | pause | status [--json]   một công tắc \"team luôn work\": idle lease + delegate sau 60 s owner không gõ + auto.json cho HQ; `pause` = owner tạm dừng (HQ không tự bật lại), `off` = tắt (HQ có thể bật lại); subscription giữ lease ≤ 4 giờ, chỉ chạy khi owner có mặt
+  8sync ccc meet [--say \"done|doing|blocked\"] [--room <tên>] [--json]   họp sprint daily của các phòng: ghi một dòng vào su-code/standup/<ngày>.md (phòng nói lại trong 30 phút thì thay dòng cũ), đọc dòng của phòng khác; cần su-code/
   8sync ccc idle off | status [--json]                 (bật thêm gate TaskCompleted: task sửa code chưa test thì chưa cho xong)
   8sync ccc delegate on [--after 1m] | off | status    critic chọn thay owner câu hỏi sản phẩm/kỹ thuật (mặc định TẮT; --after: chỉ khi owner không gõ prompt N giây — bấm trả lời dialog không tính; Ship/secret/xoá/tiền vẫn hỏi)
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cronOf, parseSchedule, RD_DUTY, scheduleLabel, scheduledPrompt } from "@/lib/schedule";
+import { cronOf, parseSchedule, MEET_DAILY, RD_DUTY, scheduleLabel, scheduledPrompt } from "@/lib/schedule";
 
 describe("schedule", () => {
   it("parses the four shapes and rejects the rest", () => {
@@ -39,5 +39,21 @@ describe("schedule", () => {
     expect(d.length).toBeLessThanOrEqual(2000); // POST /api/tasks clamps details at 2000
     const p = scheduledPrompt(`New task: ${RD_DUTY.subject}\n${d}`, RD_DUTY.schedule);
     expect(p).toContain("[8sync:wake] New task: R&D trực");
+  });
+});
+
+describe("MEET_DAILY preset", () => {
+  it("daily 09:00, tells each room to report, take one open item, stop within 30 minutes", () => {
+    expect(MEET_DAILY.schedule).toEqual({ kind: "daily", at: "09:00" });
+    expect(parseSchedule(MEET_DAILY.schedule)).toEqual({ ok: true, value: MEET_DAILY.schedule });
+    const d = MEET_DAILY.details;
+    for (const must of ['8sync ccc meet --say "<done>|<doing>|<blocked>"', "≤100 ký tự", "bằng chứng", "8sync ccc meet --json", "MỘT việc", "30 phút", "rest"]) {
+      expect(d, must).toContain(must);
+    }
+    expect(d.length).toBeLessThanOrEqual(2000);
+    expect(MEET_DAILY.subject.length).toBeLessThanOrEqual(300);
+    const p = scheduledPrompt(`New task: ${MEET_DAILY.subject}\n${d}`, MEET_DAILY.schedule);
+    expect(p).toContain('CronCreate với cron "0 9 * * *"');
+    expect(p).toContain("recurring: true");
   });
 });

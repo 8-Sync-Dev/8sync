@@ -197,6 +197,12 @@ pub(super) fn cancel(store: &Store, all: bool, session: Option<&str>, env_id: Op
             Ok(()) => r.done.push("delegate: TẮT".into()),
             Err(e) => r.failed.push(format!("delegate off: {e:#}")),
         }
+        // The owner's off switch: HQ (`ccc auto`) must not turn the pair on again by itself.
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        match super::auto::mark_paused(home, now) {
+            Ok(()) => r.done.push("auto: TẠM DỪNG (HQ không tự bật lại)".into()),
+            Err(e) => r.failed.push(format!("auto pause: {e:#}")),
+        }
     }
     Ok(r)
 }
@@ -282,6 +288,9 @@ mod tests {
         assert_eq!(fx.loop_stopped("done").as_deref(), Some("done"), "a finished loop keeps its reason");
         assert!(!super::super::idle::enabled(&fx.home()) && !super::super::delegate::enabled(&fx.home()));
         assert!(r.done.iter().any(|l| l.starts_with("idle")) && r.done.iter().any(|l| l.starts_with("delegate")), "{r:?}");
+        // HQ reads the auto marker: after cancel --all it must say paused, so the Office tab does not turn the pair on again.
+        assert!(r.done.iter().any(|l| l.starts_with("auto: TẠM DỪNG")), "{r:?}");
+        assert_eq!(super::super::auto::status(&fx.home(), false, 1)["paused"], true);
         let _ = a;
         let j = r.json();
         assert_eq!(j["ok"], true);
