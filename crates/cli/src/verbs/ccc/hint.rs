@@ -2,8 +2,9 @@
 //! Claude Code — a ghost-text suggestion for the next prompt, a ≤2-line band above the prompt,
 //! and typeahead rows for `/skill`, `8sync …`, `ccc …` tokens. Idea ported from omp's predictive
 //! composer (n-gram over the owner's own prompt history); the code is ours. Everything is read
-//! from local files only (no network, no `gh`), one `git status` call with a 50 ms budget, and
-//! the whole call is meant to stay under 50 ms so the mod can poll it while the owner is idle.
+//! from local files only (no network, no `gh`) plus one `git status` call with a [`GIT_BUDGET`]
+//! budget; everything but git stays under 50 ms. The mod runs it beside the prompt, never in
+//! its way, so a slow git (a Windows spawn takes ~100 ms) only delays the band.
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -24,6 +25,8 @@ const MAX_SUGGEST: usize = 120;
 const SKILL_HEAD: usize = 2048;
 /// Tail of `history.jsonl` read per call (the file grows for ever; the bigram needs recent use).
 const HISTORY_TAIL: u64 = 512 * 1024;
+/// `git status` budget. 50 ms was too tight for a Windows spawn (CI run 38837734481: no branch).
+const GIT_BUDGET: Duration = Duration::from_millis(300);
 /// Watchdog alert is "fresh" for this long (same as the statusline).
 const ALERT_FRESH_S: u64 = 600;
 
@@ -419,13 +422,17 @@ fn fresh_alert(home: &Path, now: u64) -> Option<String> {
     (now.saturating_sub(v["ts"].as_u64()?) <= ALERT_FRESH_S).then(|| v["kind"].as_str().unwrap_or("alert").to_string())
 }
 
-/// One `git status --porcelain=v2 --branch` with a 50 ms budget; `Git::default()` when git is
+/// One `git status --porcelain=v2 --branch` within [`GIT_BUDGET`]; `Git::default()` when git is
 /// missing, slow, or `cwd` is not a repo. Untracked files count as dirty (a new file still
 /// needs `/sec` and a commit).
 fn git_status(cwd: &Path) -> Git {
+    git_status_within(cwd, GIT_BUDGET)
+}
+
+fn git_status_within(cwd: &Path, budget: Duration) -> Git {
     let mut c = Command::new("git");
     c.arg("-C").arg(cwd).args(["status", "--porcelain=v2", "--branch"]).env("GIT_OPTIONAL_LOCKS", "0");
-    super::statusline::run_budget(c, None, Duration::from_millis(50)).map(|s| parse_status(&s)).unwrap_or_default()
+    super::statusline::run_budget(c, None, budget).map(|s| parse_status(&s)).unwrap_or_default()
 }
 
 pub(super) fn parse_status(out: &str) -> Git {
@@ -620,14 +627,16 @@ mod tests {
         write(&cwd.join("a.txt"), "1\n");
         git(&cwd, &["add", "."]);
         git(&cwd, &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"]);
-        let mut cx = ctx(&home, &cwd, &cd);
-        cx.git = true;
-        let f = gather(&cx);
+        let cx = ctx(&home, &cwd, &cd);
+        // A generous budget here: this checks what real git says, not how fast a loaded
+        // Windows runner spawns it (the latency test covers the production budget).
+        let slow = Duration::from_secs(20);
+        let f = Facts { git: git_status_within(&cwd, slow), ..gather(&cx) };
         assert_eq!(f.git, Git { branch: Some("main".into()), ahead: 0, dirty: false });
         assert_eq!(suggest(&cx, &f), None);
         assert_eq!(band(&f), vec!["⎇ main".to_string()]);
         write(&cwd.join("b.txt"), "2\n");
-        let f = gather(&cx);
+        let f = Facts { git: git_status_within(&cwd, slow), ..gather(&cx) };
         assert!(f.git.dirty, "untracked file: {f:?}");
         assert_eq!(suggest(&cx, &f).as_deref(), Some("/sec rồi commit theo conventional commits"));
         assert_eq!(band(&f), vec!["⎇ main ✎".to_string()]);
@@ -699,7 +708,8 @@ mod tests {
         assert_eq!(parse_frontmatter("---\nname: blk\ndescription: >\n  folded text\n---\n", "f"), ("blk".into(), String::new()), "block scalar: no marker shown");
     }
 
-    /// The real path: a git repo, 41 skills, a 512 KiB history tail and both outputs.
+    /// The real path: a git repo, 41 skills, a 512 KiB history tail and both outputs. Our own
+    /// work stays under 50 ms; with git on, the call also waits for one `git status`.
     #[test]
     fn hint_latency_under_50ms_on_fixture() {
         let (_t, home, cwd) = fixture();
@@ -722,11 +732,20 @@ mod tests {
         let t0 = Instant::now();
         for _ in 0..5 {
             let v = render_hint(&cx);
-            assert!(v["band"][0].as_str().unwrap().contains("⎇ main"), "{v}");
+            assert!(v["band"][0].as_str().unwrap().starts_with("loop hints 1/4"), "{v}");
             let _ = complete("/s", &cx);
             let _ = complete("8sync ccc ", &cx);
         }
         let per = t0.elapsed() / 5;
-        assert!(per < Duration::from_millis(50), "one hint call took {per:?}");
+        assert!(per < Duration::from_millis(50) + GIT_BUDGET, "one hint call took {per:?}");
+        cx.git = false;
+        let t0 = Instant::now();
+        for _ in 0..5 {
+            let _ = render_hint(&cx);
+            let _ = complete("/s", &cx);
+            let _ = complete("8sync ccc ", &cx);
+        }
+        let per = t0.elapsed() / 5;
+        assert!(per < Duration::from_millis(50), "hint without git took {per:?}");
     }
 }

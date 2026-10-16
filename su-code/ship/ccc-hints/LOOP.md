@@ -38,3 +38,4 @@ iter 1 | C7 | exit 0 | (no output)
 iter 1 | C6 | exit 0 | PASS: *** loads in claude -p and 8sync ccc hint answers
 iter 1 | C1 | exit 0 | test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 476 filtered out; finished in 0.05s
 iter 1 | C8 | exit 0 | (no output)
+iter 1 | C9 | exit 1 | package-hq-ui: .github#1
