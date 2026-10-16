@@ -40,3 +40,4 @@ pub mod uuid_sessions;
 pub mod session_view;
 pub mod session_cmds;
 pub mod secret_mask;
+pub mod completions;

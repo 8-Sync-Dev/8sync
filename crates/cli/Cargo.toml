@@ -26,6 +26,8 @@ web = ["dep:axum", "dep:tokio", "dep:tower-http", "dep:scraper"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
+# `8sync completions <shell>`: tab-completion scripts generated from the same clap tree.
+clap_complete = "4.5"
 anyhow = "1.0"
 ccc-core = { path = "../ccc-core" }
 owo-colors = "4.1"

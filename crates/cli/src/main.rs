@@ -168,6 +168,9 @@ enum Cmd {
 
     /// Học từ repo mới nổi trên GitHub (search API chính thức): 8sync learn trending
     Learn(verbs::learn::Args),
+
+    /// Shell tab-completion script for `8sync`: 8sync completions <bash|zsh|fish|powershell|elvish>
+    Completions(verbs::completions::Args),
 }
 
 fn main() -> Result<()> {
@@ -229,12 +232,20 @@ fn main() -> Result<()> {
         Some(Cmd::Hq(a))      => verbs::hq::run(a),
         Some(Cmd::Forge(a))   => verbs::forge::run(a),
         Some(Cmd::Ccc(a))     => verbs::ccc::run(a),
+        Some(Cmd::Completions(a)) => verbs::completions::run(a),
         Some(Cmd::Watchdog(a)) => verbs::watchdog::run(a),
         Some(Cmd::Learn(a)) => verbs::learn::run(a),
         Some(Cmd::Ls(a))      => verbs::session_cmds::run_ls(a),
         Some(Cmd::Show(a))    => verbs::session_cmds::run_show(a),
         Some(Cmd::Guide)      => verbs::session_cmds::run_guide(),
     }
+}
+
+/// The full `8sync` command tree as the binary parses it (brand-rewritten): shared by shell
+/// completions and the `ccc hint` typeahead so both list exactly what `main` accepts.
+pub(crate) fn command() -> clap::Command {
+    use clap::CommandFactory;
+    rebrand_cmd(Cli::command())
 }
 
 /// Rebrand a clap `Command` tree in place: run `brand::render` over `about`,

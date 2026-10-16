@@ -1,0 +1,11 @@
+{
+  "digests": [
+    "6730cfc5ce80541f C2:mod-missing"
+  ],
+  "iter": 1,
+  "max_iter": 12,
+  "max_min": 90,
+  "slug": "ccc-hints",
+  "started": 1792113750,
+  "stopped": null
+}
