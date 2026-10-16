@@ -4,6 +4,10 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **HQ sprites: no more 3 px jump after "stand"** — the work clips (typing, running, reading, waiting, meeting) now use the risen posture the `stand` transition ends in (head row 5, chair back showing), so stand → work and work → sit connect pixel-exact; `stalled` is the idle exhale pose with closed eyes (seated, reached via `sit` from work), `rest` breathes at the idle rows, and a work clip sits down before any seated clip (idle, rest, done, stalled) instead of only idle. The meeting speech bubble moved above the raised head. Owner (2026-10-16): apply the sprite-pipeline skill rigorously.
+### Added
+- **Sprite-pipeline gates as tests** (`apps/hq-ui/tests/sprite-pipeline.test.ts`): palette/canvas invariants, no anchor drift (desk rows, contact row, keyboard hands), head hair count constant, 1 px per step inside stand/sit, every transition and direct switch connects without a visible jump at any phase, manifest agreement (CLIP_MS/CLIPS/ONE_SHOT), timing caps, walker ground row and mirror involution.
 
 ## [0.95.0] — 2026-10-16
 ### Added
