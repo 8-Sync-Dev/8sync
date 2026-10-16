@@ -575,7 +575,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 38] = [
+const KIT_FILES: [(&str, &str); 39] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -599,6 +599,7 @@ const KIT_FILES: [(&str, &str); 38] = [
     ("claude/skills/ship-auto/SKILL.md", "skills/ship-auto/SKILL.md"),
     ("claude/skills/ship-loop/SKILL.md", "skills/ship-loop/SKILL.md"),
     ("claude/skills/autopilot/SKILL.md", "skills/autopilot/SKILL.md"),
+    ("claude/skills/ship-tick/SKILL.md", "skills/ship-tick/SKILL.md"),
     ("claude/skills/sprint/SKILL.md", "skills/sprint/SKILL.md"),
     ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
     ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
@@ -764,8 +765,8 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
-const CORE_SKILLS: [&str; 14] =
-    ["ship", "ship-loop", "autopilot", "sprint", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
+const CORE_SKILLS: [&str; 15] =
+    ["ship", "ship-loop", "ship-tick", "autopilot", "sprint", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool, offline: bool) -> Result<()> {
@@ -1884,6 +1885,28 @@ fn hook(rest: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `/ship-tick` is the cron prompt the owner-only loops schedule, so it must stay
+    /// model-invocable (a `disable-model-invocation` skill never runs from a scheduled
+    /// task), be a kit file, and every loop skill must schedule and delete it.
+    #[test]
+    fn ship_tick_is_model_invocable_and_scheduled_by_every_loop_skill() {
+        let tick = assets::read("claude/skills/ship-tick/SKILL.md").unwrap();
+        let front = tick.split("---").nth(1).unwrap();
+        assert!(front.contains("name: ship-tick") && !front.contains("disable-model-invocation"), "{front}");
+        assert!(KIT_FILES.iter().any(|(_, rel)| *rel == "skills/ship-tick/SKILL.md"));
+        assert!(CORE_SKILLS.contains(&"ship-tick"));
+        for name in ["ship-loop", "autopilot", "ship-auto", "ship"] {
+            let body = assets::read(&format!("claude/skills/{name}/SKILL.md")).unwrap();
+            assert!(body.contains("`CronCreate`") && body.contains("/ship-tick <slug>"), "{name}: no cron");
+        }
+        for name in ["ship-loop", "autopilot", "ship-auto"] {
+            let body = assets::read(&format!("claude/skills/{name}/SKILL.md")).unwrap();
+            assert!(body.contains("disable-model-invocation: true"), "{name} must stay owner-only");
+            assert!(body.contains("`CronDelete`"), "{name}: never deletes its tick cron");
+        }
+        assert!(help::TEXT.contains("/ship-tick [slug]"));
+    }
 
     #[test]
     fn login_kind_detects_without_values() {
