@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.98.0] — 2026-10-16
 ### Added
 - **`8sync ccc auto on --loop [10m] [--team]` puts every room of the project on its own loop with one command.** It writes `.claude/loop.md`, the file Claude Code uses as the default prompt for a bare `/loop` and re-reads every iteration. 8sync writes it only when no file is there, so the owner's edits are never overwritten, and it never follows a symlink.
   - Each tick, a room works through `loop.md`. It checks `auto status`, takes one `su-code/STATE.md` item for its role (or a `workflows/*.md` spec written with `/loop-me`) and picks the skill for the job: full `/ship` with karpathy-guidelines, tests, review and the `/sec` + `/rules` + `/aup-audit` gates before commit, or `/do`, `/deep-research`, `impeccable`, `/sysdesign`. Then it posts to the sprint meeting. A job that needs several ticks gets one `/ship` step per tick. A scheduled fire cannot run skills marked `disable-model-invocation`, so `/ship-loop`, `/ship-auto`, `/autopilot`, `/sprint` and `/loop-me` stay owner-typed, and a test keeps the playbook from routing a tick to them.
