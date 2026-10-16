@@ -186,7 +186,7 @@ pub fn run(a: Args) -> Result<()> {
             }
             Ok(())
         }
-        "auto" => auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", || {
+        "auto" => auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", &root, || {
             sessions(&env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect()
         }),
         "meet" => {

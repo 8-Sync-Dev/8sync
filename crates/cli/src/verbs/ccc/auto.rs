@@ -221,28 +221,86 @@ fn num(rest: &[String], flag: &str) -> Result<Option<String>> {
     }
 }
 
-/// `--loop` interval in minutes: `10`, `10m`, `2h`; 1 min .. 24 h.
+/// `--loop` interval in minutes: `10`, `10m`, `2h`. 1..59 minutes or whole hours up to 24, the
+/// steps a 5-field cron expression can express ([`cron_expr`]).
 pub(super) fn parse_every(s: &str) -> Result<u64> {
     let (n, mul) = match s.strip_suffix('h') {
         Some(h) => (h, 60),
         None => (s.strip_suffix('m').unwrap_or(s), 1),
     };
     match n.parse::<u64>().ok().map(|n| n * mul) {
-        Some(m @ 1..=1440) => Ok(m),
-        _ => bail!("--loop: 1m..24h (vd 10m, 1h)\n{USAGE}"),
+        Some(m @ 1..=59) => Ok(m),
+        Some(m @ 60..=1440) if m % 60 == 0 => Ok(m),
+        _ => bail!("--loop: 1m..59m hoặc số giờ chẵn 1h..24h (vd 10m, 2h)\n{USAGE}"),
     }
 }
 
+/// The cron expression `CronCreate` gets for an interval from [`parse_every`] (local time).
+pub(super) fn cron_expr(every_min: u64) -> String {
+    match every_min {
+        m if m < 60 => format!("*/{m} * * * *"),
+        1440 => "0 0 * * *".into(),
+        m => format!("0 */{} * * *", m / 60),
+    }
+}
+
+/// `<project>/.claude/loop.md`: Claude Code's default prompt for a bare `/loop`, re-read every
+/// iteration (https://code.claude.com/docs/en/scheduled-tasks), and the playbook every
+/// `--loop` tick follows, so one file steers every room and the owner can edit it live.
+const LOOP_MD: &str = "# Loop của dự án (8sync)
+
+`/loop` không kèm prompt chạy file này; loop do `8sync ccc auto on --loop` đặt cũng đọc file này mỗi nhịp.
+Sửa file là đổi việc của mọi phòng từ nhịp kế. 8sync không ghi đè file đã có.
+
+Mỗi nhịp:
+1. Chạy `8sync ccc auto status --json`. `on` là false, `paused` là true, hoặc `gate` bắt đầu bằng \"chạm trần\"
+   → huỷ loop của phòng này (CronDelete job chứa `8sync-auto-loop`; `/loop` tự canh nhịp thì dừng, không hẹn nhịp kế) rồi dừng.
+2. `su-code/ship/ACTIVE` có vòng lặp mở → `/ship-tick <slug>`.
+3. Không thì lấy MỘT việc hợp vai phòng (vai đọc từ tên session: lead điều phối, rd nghiên cứu, qa test, review…)
+   từ `su-code/STATE.md` mục Next, bỏ mục bắt đầu bằng \"Owner\"; có spec trong `workflows/*.md` (do /loop-me viết) thì làm theo spec.
+   Giữ file trước: `8sync ccc . goal \"<việc>\" --files a,b`. Trùng file phòng khác → nhắn phòng đó, chọn việc khác.
+   Không có STATE.md → tiếp việc dở trong hội thoại, chăm PR của nhánh (review, CI đỏ, conflict), rồi bug hunt/simplify.
+4. Tự chọn skill theo việc:
+   - feature, bug, refactor → `/ship <việc>` đủ flow: karpathy-guidelines khi sửa code, test, review, gate `/sec` + `/rules` + `/aup-audit` trước commit
+   - đổi nhỏ ≤ 3 file → `/do`
+   - có tiêu chí kiểm được, cần lặp tới xanh → `/ship-loop`
+   - câu hỏi mở, R&D → `/deep-research` (brief vào `su-code/research/`)
+   - UI → `impeccable` · thiết kế hệ thống → `/sysdesign` · bài học có bằng chứng → `/remember`
+5. Báo phòng họp: `8sync ccc meet --say \"done|doing|blocked: <một dòng>\"`.
+
+Không bao giờ: merge, push main, tag, release, publish, deploy; đọc hay in secret; xoá dữ liệu; nhắn người ngoài.
+Câu hỏi Ship, secret, tiền, high-risk chờ owner. Không có việc hợp vai → R&D cho mục Next kế tiếp, không ngồi không.
+";
+
+/// Write [`LOOP_MD`] at `<root>/.claude/loop.md` unless something is already there (the owner's
+/// edits win). `create_new` also refuses a dangling symlink, so the write never lands elsewhere.
+pub(super) fn write_loop_md(root: &Path) -> Result<(PathBuf, bool)> {
+    use std::io::Write;
+    let p = root.join(".claude").join("loop.md");
+    if std::fs::symlink_metadata(&p).is_ok() {
+        return Ok((p, false));
+    }
+    std::fs::create_dir_all(root.join(".claude"))?;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&p)?;
+    f.write_all(LOOP_MD.as_bytes())?;
+    Ok((p, true))
+}
+
 /// The message `auto on --loop` queues for one room: set up its own recurring loop (what `/loop`
-/// does: `CronCreate`), shaped by the room's role. Every tick re-checks `auto status`, so `off`,
-/// `pause`, the end of the lease or the $/hour cap delete the loop on its next tick.
+/// does: `CronCreate`) that follows `.claude/loop.md` for the room's role. The stop check stays in
+/// the cron prompt itself, so an edited loop.md cannot drop it: `off`, `pause` or the $/hour cap
+/// delete the loop on its next tick. Re-running the command replaces the job (a fresh 7 days).
 pub(super) fn loop_prompt(name: &str, every_min: u64, team: bool) -> String {
     let (role, duty) = super::room::role(name);
+    let cron = cron_expr(every_min);
     let tick = format!(
-        "{LOOP_TAG} {name}: chạy `8sync ccc auto status --json`; nếu on=false, paused=true hoặc gate bắt đầu bằng \"chạm trần\" → CronDelete job {LOOP_TAG} này và dừng (lease hết hạn không dừng loop; Claude Code tự xoá loop sau 7 ngày). Không thì: su-code/ship/ACTIVE có vòng lặp mở → /ship-tick <slug>; không thì lấy MỘT việc hợp vai {role} từ su-code/STATE.md mục Next (`8sync ccc . goal` giữ file trước, tránh trùng phòng khác) và tự chọn skill theo việc: code → /ship <việc> đủ flow (karpathy-guidelines khi sửa code, test, review, gate /sec + /rules + /aup-audit trước commit), đổi ≤3 file → /do, R&D → /deep-research (ghi su-code/research/), UI → impeccable, thiết kế hệ thống → /sysdesign; rồi `8sync ccc meet --say`. Không merge/push main/tag/deploy; câu hỏi Ship vẫn chờ owner."
+        "{LOOP_TAG} {name} (vai {role}): 1) chạy `8sync ccc auto status --json`; on=false, paused=true hoặc gate bắt đầu bằng \"chạm trần\" → CronDelete job {LOOP_TAG} này và dừng. 2) Không thì làm MỘT nhịp theo .claude/loop.md của dự án cho vai {role} (thiếu file → lấy MỘT việc hợp vai từ su-code/STATE.md mục Next, tự chọn skill: code → /ship, ≤3 file → /do, R&D → /deep-research). Không merge/push main/tag/deploy; câu hỏi Ship vẫn chờ owner."
     );
     let mut s = format!(
-        "8sync auto --loop: owner bật chạy liên tục cho phòng `{name}` (vai {role}: {duty}). CronList trước: đã có job chứa `{LOOP_TAG}` thì không tạo thêm. Không thì CronCreate lặp mỗi {every_min} phút (như `/loop {every_min}m`) với prompt:\n{tick}"
+        "8sync auto --loop: owner bật chạy liên tục cho phòng `{name}` (vai {role}: {duty}). CronList trước: job cũ chứa `{LOOP_TAG}` → CronDelete nó (chạy lại lệnh = gia hạn 7 ngày, đổi nhịp). Rồi CronCreate lặp (recurring) cron `{cron}` (mỗi {every_min} phút, như `/loop {every_min}m`) với prompt:\n{tick}\nTạo xong thì chạy luôn nhịp đầu, không chờ."
     );
     if team {
         s.push_str("\nCó tool tạo teammate (agent teams) thì lấp ghế trống ngay: rd, qa, reviewer; mỗi người giữ file riêng (`8sync ccc . goal --files`), báo về lead. Không có tool đó thì bỏ qua (cần mở phòng bằng `--team`).");
@@ -275,6 +333,7 @@ pub(super) fn run(
     rest: &[String],
     home: &Path,
     subscription: bool,
+    root: &Path,
     rooms: impl FnOnce() -> Vec<(String, String)>,
 ) -> Result<()> {
     let now = std::time::SystemTime::now()
@@ -371,16 +430,24 @@ pub(super) fn run(
         Some(x) => bail!("không rõ `{x}`\n{USAGE}"),
     };
     // Only once auto is really on: a loop queued while the rails hold would delete itself anyway.
+    // loop.md first: the rooms read it on their first tick.
     let queued = match looped {
         Some((every, team)) if v["on"].as_bool() == Some(true) => {
-            Some((every, queue_loops(home, &rooms(), every, team, now)))
+            let md = write_loop_md(root)?;
+            Some((every, md, queue_loops(home, &rooms(), every, team, now)))
         }
         _ => None,
     };
     if rest.iter().any(|a| a == "--json") {
         let mut v = v;
-        if let Some((every, q)) = &queued {
-            v["loop"] = json!({ "every_min": every, "rooms": q.iter().map(|(n, live)| json!({ "name": n, "now": live })).collect::<Vec<_>>() });
+        if let Some((every, (md, written), q)) = &queued {
+            v["loop"] = json!({
+                "every_min": every,
+                "cron": cron_expr(*every),
+                "loop_md": md.to_string_lossy(),
+                "loop_md_written": written,
+                "rooms": q.iter().map(|(n, live)| json!({ "name": n, "now": live })).collect::<Vec<_>>(),
+            });
         }
         println!("{v}");
     } else {
@@ -390,11 +457,19 @@ pub(super) fn run(
             if v["repo"].is_null() {
                 println!("Áp dụng cho mọi session ở mọi dự án trên máy này, kể cả session mở sau. Chỉ một dự án: chạy `8sync ccc auto on --here` trong thư mục dự án đó.");
             }
-            if subscription {
+            if subscription && queued.is_none() {
                 println!("Login subscription: lease ≤ 4 giờ, chỉ chạy khi owner có mặt. Chạy không người trông → Console API key.");
             }
         }
-        if let Some((every, q)) = &queued {
+        if let Some((every, (md, written), q)) = &queued {
+            let md = md.display();
+            if *written {
+                println!(
+                    "đã ghi {md}: playbook mọi phòng đọc mỗi nhịp; sửa file là đổi việc từ nhịp kế"
+                );
+            } else {
+                println!("giữ {md} đang có (không ghi đè)");
+            }
             if q.is_empty() {
                 println!("--loop: dự án này chưa có phòng nào (`8sync ccc . <tên>` để mở).");
             }
@@ -407,7 +482,7 @@ pub(super) fn run(
                 println!("loop {every} phút → {name}: {when}");
             }
             if !q.is_empty() {
-                println!("Loop tự xoá ở nhịp kế khi auto off/pause hoặc chạm trần $/giờ; Claude Code tự xoá sau 7 ngày; chỉ chạy khi phòng còn mở. Xoá tay: bảo phòng \"huỷ job 8sync-auto-loop\" (CronDelete).");
+                println!("Loop tự xoá ở nhịp kế khi auto off/pause hoặc chạm trần $/giờ; Claude Code tự xoá sau 7 ngày (chạy lại lệnh này để gia hạn). Loop chỉ chạy khi phòng còn mở: gõ /bg trong phòng để chạy nền không cần terminal, Ctrl+T trong agent view để ghim. Hết usage: phòng tự chờ reset rồi chạy tiếp (autoContinueAtUsageLimit).");
             }
         }
     }
@@ -684,16 +759,16 @@ mod tests {
     fn run_rejects_unknown_arguments() {
         let h = home("args");
         let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        assert!(run(&s(&["on", "--bogus"]), &h, false, Vec::new).is_err());
-        assert!(run(&s(&["on", "--hours"]), &h, false, Vec::new).is_err());
-        assert!(run(&s(&["on", "--after", "0"]), &h, false, Vec::new).is_err());
-        assert!(run(&s(&["wat"]), &h, false, Vec::new).is_err());
-        assert!(run(&s(&["off", "--here"]), &h, false, Vec::new).is_err());
+        assert!(run(&s(&["on", "--bogus"]), &h, false, &h, Vec::new).is_err());
+        assert!(run(&s(&["on", "--hours"]), &h, false, &h, Vec::new).is_err());
+        assert!(run(&s(&["on", "--after", "0"]), &h, false, &h, Vec::new).is_err());
+        assert!(run(&s(&["wat"]), &h, false, &h, Vec::new).is_err());
+        assert!(run(&s(&["off", "--here"]), &h, false, &h, Vec::new).is_err());
         assert!(
-            run(&s(&["on", "--team"]), &h, false, Vec::new).is_err(),
+            run(&s(&["on", "--team"]), &h, false, &h, Vec::new).is_err(),
             "--team needs --loop"
         );
-        assert!(run(&s(&["on", "--loop", "0m"]), &h, false, Vec::new).is_err());
+        assert!(run(&s(&["on", "--loop", "0m"]), &h, false, &h, Vec::new).is_err());
         assert!(!marker(&h).exists());
         let _ = std::fs::remove_dir_all(&h);
     }
@@ -703,9 +778,15 @@ mod tests {
         assert_eq!(parse_every("10").unwrap(), 10);
         assert_eq!(parse_every("10m").unwrap(), 10);
         assert_eq!(parse_every("2h").unwrap(), 120);
-        for bad in ["0", "0m", "25h", "x", "", "-5m"] {
+        assert_eq!(parse_every("59m").unwrap(), 59);
+        assert_eq!(parse_every("24h").unwrap(), 1440);
+        // 90 minutes has no clean cron step.
+        for bad in ["0", "0m", "25h", "x", "", "-5m", "90m", "90"] {
             assert!(parse_every(bad).is_err(), "{bad}");
         }
+        assert_eq!(cron_expr(10), "*/10 * * * *");
+        assert_eq!(cron_expr(120), "0 */2 * * *");
+        assert_eq!(cron_expr(1440), "0 0 * * *");
     }
 
     #[test]
@@ -715,17 +796,32 @@ mod tests {
             LOOP_TAG,
             "CronList",
             "CronCreate",
+            "*/15 * * * *",
             "15 phút",
             "auto status --json",
             "CronDelete",
             "Ship",
             "rd-su-code",
-            "/ship <việc>",
-            "karpathy-guidelines",
-            "/sec + /rules + /aup-audit",
-            "/deep-research",
+            ".claude/loop.md",
+            "gia hạn 7 ngày",
         ] {
             assert!(p.contains(want), "missing {want}: {p}");
+        }
+        // The playbook every tick follows: skills picked by the job, gates before commit.
+        for want in [
+            "/ship <việc>",
+            "karpathy-guidelines",
+            "`/sec` + `/rules` + `/aup-audit`",
+            "/deep-research",
+            "/ship-loop",
+            "impeccable",
+            "workflows/*.md",
+            "8sync ccc meet --say",
+            "auto status --json",
+            "8sync-auto-loop",
+            "Không bao giờ: merge, push main",
+        ] {
+            assert!(LOOP_MD.contains(want), "loop.md missing {want}");
         }
         assert!(!p.contains("teammate"));
         assert!(loop_prompt("lead", 10, true).contains("rd, qa, reviewer"));
@@ -755,7 +851,7 @@ mod tests {
                 ("rd".to_string(), ids[1].to_string()),
             ]
         };
-        run(&s(&["on", "--loop", "5m", "--team"]), &h, false, rooms).unwrap();
+        run(&s(&["on", "--loop", "5m", "--team"]), &h, false, &h, rooms).unwrap();
         for (id, name) in ids.iter().zip(["lead", "rd"]) {
             let f = crate::verbs::hq::inbox_file(&h, id).unwrap();
             let raw = std::fs::read_to_string(&f).unwrap();
@@ -768,12 +864,41 @@ mod tests {
                     && t.contains("rd, qa, reviewer")
             );
         }
-        // Off: no loop is queued (a queued loop would only delete itself).
+        assert_eq!(
+            std::fs::read_to_string(h.join(".claude/loop.md")).unwrap(),
+            LOOP_MD
+        );
+        // Off: no loop is queued (a queued loop would only delete itself) and no loop.md written.
         let h2 = home("loop-off");
-        run(&s(&["off"]), &h2, false, rooms).unwrap();
+        run(&s(&["off"]), &h2, false, &h2, rooms).unwrap();
         assert!(!crate::verbs::hq::inbox_file(&h2, ids[0]).unwrap().exists());
+        assert!(!h2.join(".claude/loop.md").exists());
         for d in [h, h2] {
             let _ = std::fs::remove_dir_all(&d);
         }
+    }
+
+    #[test]
+    fn loop_md_is_written_once_and_never_overwrites_the_owners_edits() {
+        let h = home("loopmd");
+        let (p, written) = write_loop_md(&h).unwrap();
+        assert!(written && p == h.join(".claude").join("loop.md"));
+        std::fs::write(&p, "owner's own loop").unwrap();
+        let (_, again) = write_loop_md(&h).unwrap();
+        assert!(!again);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "owner's own loop");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loop_md_never_follows_a_dangling_symlink() {
+        let h = home("loopmd-link");
+        std::fs::create_dir_all(h.join(".claude")).unwrap();
+        let target = h.join("elsewhere.md");
+        std::os::unix::fs::symlink(&target, h.join(".claude/loop.md")).unwrap();
+        let (_, written) = write_loop_md(&h).unwrap();
+        assert!(!written && !target.exists());
+        let _ = std::fs::remove_dir_all(&h);
     }
 }
