@@ -2370,8 +2370,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// The `8sync-hints` mod ships in the kit: five files under `skills/8sync-hints`, written
-    /// byte-for-byte from the repo assets (the cbm gate leaves non-markdown alone).
+    /// The `8sync-inbox` mod ships in the kit: four files under `skills/8sync-inbox`.
     #[test]
     fn kit_installs_the_inbox_mod() {
         let mod_files: Vec<&str> = KIT_FILES.iter().map(|(_, r)| *r).filter(|r| r.starts_with("skills/8sync-inbox/")).collect();
@@ -2391,6 +2390,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    /// The `8sync-hints` mod ships in the kit: five files under `skills/8sync-hints`, written
+    /// byte-for-byte from the repo assets (the cbm gate leaves non-markdown alone).
     #[test]
     fn kit_installs_the_hints_mod() {
         let mod_files: Vec<&str> = KIT_FILES.iter().map(|(_, r)| *r).filter(|r| r.starts_with("skills/8sync-hints/")).collect();

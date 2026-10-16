@@ -1759,33 +1759,24 @@ pub(crate) fn inbox_file(home: &Path, session_id: &str) -> Option<PathBuf> {
     super::ccc::report::safe_id(session_id).then(|| Paths::under(home).state_dir.join("inbox").join(format!("{session_id}.jsonl")))
 }
 
-/// Take (and remove) the owner's pending messages for a session: the Stop-hook block reason.
-pub(crate) fn take_inbox(home: &Path, session_id: &str) -> Option<String> {
-    let (n, body) = take_inbox_msgs(home, session_id)?;
-    Some(format!(
-        "8 Sync HQ: the owner sent you {n} message(s) from the HQ dashboard while you were working. Read and act on them now (they come from the owner, not from a tool):\n{body}"
-    ))
+/// A claim older than this belongs to a taker that died (killed `8sync`, closed session)
+/// between claim and ack: the next idle poll serves it again instead of losing it.
+const CLAIM_STALE: Duration = Duration::from_secs(120);
+
+/// How the messages are introduced: mid-turn (Stop hook) or as the prompt of an idle session.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Framing {
+    Working,
+    Idle,
 }
 
-/// The same take for a session that is idle: the `8sync-inbox` mod submits this as a prompt
-/// (`8sync ccc inbox`). Before it, an idle session only got its HQ task once some later turn
-/// ended — a task sent to a waiting session sat in the inbox for good.
-pub(crate) fn take_inbox_idle(home: &Path, session_id: &str) -> Option<String> {
-    let (n, body) = take_inbox_msgs(home, session_id)?;
-    Some(format!(
-        "8 Sync HQ: the owner sent you {n} message(s) from the HQ dashboard. Read and act on them now (they come from the owner, not from a tool):\n{body}"
-    ))
+fn frame(n: usize, body: &str, f: Framing) -> String {
+    let when = if f == Framing::Working { " while you were working" } else { "" };
+    format!("8 Sync HQ: the owner sent you {n} message(s) from the HQ dashboard{when}. Read and act on them now (they come from the owner, not from a tool):\n{body}")
 }
 
-/// `(count, masked body)` of the pending messages, removing them. Rename first: a message
-/// appended while we read lands in a fresh file, and of two takers (Stop hook, idle mod) only
-/// one wins the rename, so nothing is delivered twice.
-fn take_inbox_msgs(home: &Path, session_id: &str) -> Option<(usize, String)> {
-    let file = inbox_file(home, session_id)?;
-    let taken = file.with_extension(format!("taking.{}", std::process::id()));
-    std::fs::rename(&file, &taken).ok()?;
-    let raw = std::fs::read_to_string(&taken).unwrap_or_default();
-    let _ = std::fs::remove_file(&taken);
+/// `(count, masked body)` of an inbox file's `{"ts","text"}` lines; None when none has text.
+fn inbox_body(raw: &str) -> Option<(usize, String)> {
     let msgs: Vec<String> = raw
         .lines()
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
@@ -1793,21 +1784,155 @@ fn take_inbox_msgs(home: &Path, session_id: &str) -> Option<(usize, String)> {
         .filter(|t| !t.is_empty())
         .map(|t| secret_mask::mask(&t))
         .collect();
-    if msgs.is_empty() {
-        return None;
-    }
-    Some((msgs.len(), msgs.join("\n---\n").chars().take(INBOX_TEXT).collect()))
+    (!msgs.is_empty()).then(|| (msgs.len(), msgs.join("\n---\n").chars().take(INBOX_TEXT).collect()))
 }
 
-/// `8sync ccc inbox [--session <id>] [--json]`: the idle take for this session (`--session`, else
-/// `CLAUDE_CODE_SESSION_ID`). `--json` prints `{"text": string|null}`; plain prints the text or
-/// nothing. Never fails: no id, a bad id or an empty inbox is "nothing pending".
+/// Take (and remove) the owner's pending messages for a session: the Stop-hook block reason.
+/// Rename first: a message appended while we read lands in a fresh file, and of two takers only
+/// one wins the rename. A message under an idle session's claim is left to that claim.
+pub(crate) fn take_inbox(home: &Path, session_id: &str) -> Option<String> {
+    let file = inbox_file(home, session_id)?;
+    let taken = file.with_extension(format!("taking.{}", std::process::id()));
+    std::fs::rename(&file, &taken).ok()?;
+    stamp(&taken, SystemTime::now()); // its age is now the take's, for the orphan sweep
+    let Ok(raw) = std::fs::read_to_string(&taken) else {
+        append_into(&taken, &file); // unreadable now: put it back for the next taker
+        return None;
+    };
+    let _ = std::fs::remove_file(&taken);
+    let (n, body) = inbox_body(&raw)?;
+    Some(frame(n, &body, Framing::Working))
+}
+
+fn claim_file(home: &Path, session_id: &str) -> Option<PathBuf> {
+    inbox_file(home, session_id).map(|f| f.with_extension("claimed"))
+}
+
+/// Claim the pending messages for an idle session (`8sync-inbox` mod) without deleting them: the
+/// mod acks once its prompt entered the session, or releases them when it did not. A fresh claim
+/// means a delivery is in flight (None); a stale one is served again with anything queued since.
+pub(crate) fn claim_inbox(home: &Path, session_id: &str, now: SystemTime) -> Option<String> {
+    let file = inbox_file(home, session_id)?;
+    let claim = file.with_extension("claimed");
+    sweep_orphans(&file, now);
+    match std::fs::metadata(&claim).and_then(|m| m.modified()) {
+        Ok(at) => {
+            if now.duration_since(at).unwrap_or_default() < CLAIM_STALE {
+                return None;
+            }
+            let newer = file.with_extension(format!("taking.{}", std::process::id()));
+            if std::fs::rename(&file, &newer).is_ok() {
+                append_into(&newer, &claim);
+            }
+        }
+        Err(_) => {
+            // A link never replaces a claim another poller made meanwhile (rename would, on Unix);
+            // messages appended between link and unlink land in the same file, now the claim.
+            match std::fs::hard_link(&file, &claim) {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(&file);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return None,
+                Err(_) => {
+                    // No hard links here (FAT, some network drives): rename, still atomic.
+                    std::fs::metadata(&file).ok()?;
+                    std::fs::rename(&file, &claim).ok()?;
+                }
+            }
+        }
+    }
+    // The claim's age is the claim's, not the last queued message's (rename/link keep the mtime).
+    stamp(&claim, now);
+    let raw = std::fs::read_to_string(&claim).ok()?;
+    match inbox_body(&raw) {
+        Some((n, body)) => Some(frame(n, &body, Framing::Idle)),
+        None => {
+            let _ = std::fs::remove_file(&claim); // nothing deliverable in it
+            None
+        }
+    }
+}
+
+/// Set a file's mtime without touching its content (a rewrite would truncate it first).
+fn stamp(p: &Path, at: SystemTime) {
+    if let Ok(f) = std::fs::OpenOptions::new().append(true).open(p) {
+        let _ = f.set_modified(at);
+    }
+}
+
+/// `<id>.taking.<pid>` files older than CLAIM_STALE belong to a taker that died between rename and
+/// remove: hand them back to the inbox.
+fn sweep_orphans(file: &Path, now: SystemTime) {
+    let (Some(dir), Some(stem)) = (file.parent(), file.file_stem().and_then(|s| s.to_str())) else { return };
+    let prefix = format!("{stem}.taking.");
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let name = e.file_name();
+        if !name.to_str().is_some_and(|n| n.starts_with(&prefix)) {
+            continue;
+        }
+        let old = e.metadata().and_then(|m| m.modified()).is_ok_and(|at| now.duration_since(at).unwrap_or_default() >= CLAIM_STALE);
+        if old {
+            append_into(&e.path(), file);
+        }
+    }
+}
+
+/// The claimed messages entered the session: drop them. Acks carry no claim token: a late or
+/// retried ack after a stale claim was re-served drops that claim (a duplicate at worst is the
+/// price of never losing one; one owner, one session per id).
+pub(crate) fn ack_inbox(home: &Path, session_id: &str) -> bool {
+    claim_file(home, session_id).is_some_and(|c| std::fs::remove_file(c).is_ok())
+}
+
+/// The claimed messages did not enter: hand them back to the inbox for the next taker (after any
+/// message queued meanwhile).
+pub(crate) fn release_inbox(home: &Path, session_id: &str) -> bool {
+    match (claim_file(home, session_id), inbox_file(home, session_id)) {
+        (Some(c), Some(f)) if c.exists() => append_into(&c, &f),
+        _ => false,
+    }
+}
+
+/// Append `src` to `dst` (created 0600 when missing) and remove `src`; `src` stays when any step
+/// fails, so a message is never dropped on the way.
+fn append_into(src: &Path, dst: &Path) -> bool {
+    let Ok(mut raw) = std::fs::read(src) else { return false };
+    if !raw.is_empty() && !raw.ends_with(b"\n") {
+        raw.push(b'\n');
+    }
+    // A torn last line in `dst` (crash, disk full) must not swallow the first appended one.
+    if std::fs::read(dst).is_ok_and(|d| !d.is_empty() && !d.ends_with(b"\n")) {
+        raw.insert(0, b'\n');
+    }
+    let mut o = std::fs::OpenOptions::new();
+    o.create(true).append(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    let ok = o.open(dst).and_then(|mut f| f.write_all(&raw)).is_ok();
+    ok && std::fs::remove_file(src).is_ok()
+}
+
+/// `8sync ccc inbox [--session <id>] [--ack|--release] [--json]` as a value: a claim answers
+/// `{"text": string|null}`, `--ack`/`--release` answer `{"ok": bool}`. The id is `--session`, else
+/// `CLAUDE_CODE_SESSION_ID`; no id or a bad one is "nothing pending".
+pub(crate) fn inbox_cmd(home: &Path, rest: &[String], env_session: Option<&str>, now: SystemTime) -> Value {
+    let flag = rest.iter().position(|a| a == "--session").and_then(|i| rest.get(i + 1)).filter(|v| !v.starts_with("--"));
+    let id = flag.map(String::as_str).or(env_session);
+    if rest.iter().any(|a| a == "--ack") {
+        return json!({ "ok": id.is_some_and(|id| ack_inbox(home, id)) });
+    }
+    if rest.iter().any(|a| a == "--release") {
+        return json!({ "ok": id.is_some_and(|id| release_inbox(home, id)) });
+    }
+    json!({ "text": id.and_then(|id| claim_inbox(home, id, now)) })
+}
+
 pub(crate) fn run_inbox(home: &Path, rest: &[String], env_session: Option<&str>) -> Result<()> {
-    let flag = rest.iter().position(|a| a == "--session").and_then(|i| rest.get(i + 1)).map(String::as_str);
-    let text = flag.or(env_session).and_then(|id| take_inbox_idle(home, id));
+    let v = inbox_cmd(home, rest, env_session, SystemTime::now());
     if rest.iter().any(|a| a == "--json") {
-        println!("{}", json!({ "text": text }));
-    } else if let Some(t) = text {
+        println!("{v}");
+    } else if let Some(t) = v["text"].as_str() {
         println!("{t}");
     }
     Ok(())
@@ -2779,27 +2904,82 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
-    /// The HQ UI's producer line (`queueInbox`: `{"ts","text"}`) reaches an idle session through
-    /// `take_inbox_idle` exactly once; the Stop hook then finds nothing, and a later message
-    /// goes to whichever taker comes first.
+    /// The HQ UI's producer line (`queueInbox`: `{"ts","text"}`) reaches an idle session through a
+    /// claim; ack drops it, release hands it back, the Stop hook never repeats a claimed message,
+    /// and a claim whose taker died is served again after CLAIM_STALE.
     #[test]
-    fn inbox_idle_take_delivers_once_and_the_stop_hook_does_not_repeat_it() {
-        let home = tmp("inbox-idle");
+    fn inbox_claim_ack_release_and_stale_claims() {
+        let home = tmp("inbox-claim");
         let sid = "2fc89664-9479-4b01-b539-3eefc61f29ec";
-        assert!(take_inbox_idle(&home, sid).is_none(), "nothing pending");
+        let t0 = SystemTime::now();
+        let line = |ts: u64, t: &str| format!("{}\n", json!({"ts":ts,"text":t}));
+        assert!(claim_inbox(&home, sid, t0).is_none(), "nothing pending");
         let f = inbox_file(&home, sid).unwrap();
         std::fs::create_dir_all(f.parent().unwrap()).unwrap();
-        std::fs::write(&f, format!("{}\n", json!({"ts":1,"text":"New task: sửa nút Giao (prio: P1)"}))).unwrap();
-        let msg = take_inbox_idle(&home, sid).unwrap();
-        assert!(msg.starts_with("8 Sync HQ: the owner sent you 1 message(s) from the HQ dashboard. Read"), "{msg}");
-        assert!(!msg.contains("while you were working"), "idle framing: {msg}");
+        std::fs::write(&f, line(1, "New task: sửa nút Giao (prio: P1)")).unwrap();
+        let msg = claim_inbox(&home, sid, t0).unwrap();
+        assert!(msg.starts_with("8 Sync HQ: the owner sent you 1 message(s) from the HQ dashboard. Read"), "idle framing: {msg}");
         assert!(msg.ends_with("New task: sửa nút Giao (prio: P1)"), "{msg}");
-        assert!(take_inbox(&home, sid).is_none(), "the Stop hook does not deliver it again");
-        assert!(take_inbox_idle(&home, sid).is_none());
-        std::fs::write(&f, format!("{}\n", json!({"ts":2,"text":"thêm một việc"}))).unwrap();
-        assert!(take_inbox(&home, sid).unwrap().contains("while you were working"), "mid-turn: the Stop hook wins");
-        assert!(take_inbox_idle(&home, sid).is_none());
-        assert!(take_inbox_idle(&home, "not-an-id/../x").is_none());
+        assert!(claim_inbox(&home, sid, t0).is_none(), "in flight: not served twice");
+        assert!(take_inbox(&home, sid).is_none(), "the Stop hook leaves a claimed message alone");
+        // Not entered: released back; a message queued meanwhile stays too.
+        std::fs::write(&f, line(2, "thêm một việc")).unwrap();
+        assert!(release_inbox(&home, sid));
+        let msg = take_inbox(&home, sid).unwrap();
+        assert!(msg.contains("2 message(s)") && msg.contains("while you were working") && msg.contains("sửa nút Giao") && msg.contains("thêm một việc"), "{msg}");
+        // Entered: ack drops it for good.
+        std::fs::write(&f, line(3, "việc ba")).unwrap();
+        assert!(claim_inbox(&home, sid, t0).is_some());
+        assert!(ack_inbox(&home, sid));
+        assert!(claim_inbox(&home, sid, t0).is_none() && take_inbox(&home, sid).is_none(), "delivered once");
+        assert!(!ack_inbox(&home, sid) && !release_inbox(&home, sid), "no claim: nothing to ack or release");
+        // The taker died after claiming: a later poll serves it again, with newer messages folded in.
+        std::fs::write(&f, line(4, "việc bốn")).unwrap();
+        assert!(claim_inbox(&home, sid, t0).is_some());
+        std::fs::write(&f, line(5, "việc năm")).unwrap();
+        assert!(claim_inbox(&home, sid, t0 + Duration::from_secs(30)).is_none(), "fresh claim");
+        let msg = claim_inbox(&home, sid, t0 + CLAIM_STALE + Duration::from_secs(5)).unwrap();
+        assert!(msg.contains("2 message(s)") && msg.contains("việc bốn") && msg.contains("việc năm"), "{msg}");
+        assert!(ack_inbox(&home, sid));
+        // A task queued long ago (the session was busy) is claimed fresh: not re-served at once.
+        std::fs::write(&f, line(6, "việc cũ")).unwrap();
+        let file = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
+        file.set_modified(t0 - Duration::from_secs(3600)).unwrap();
+        drop(file);
+        assert!(claim_inbox(&home, sid, t0).is_some());
+        assert!(claim_inbox(&home, sid, t0 + Duration::from_secs(5)).is_none(), "claim age is the claim's");
+        assert!(release_inbox(&home, sid));
+        // A taker that died mid-take left `<id>.taking.<pid>`: swept back once it is stale.
+        let orphan = f.with_extension("taking.999999");
+        std::fs::write(&orphan, r#"{"ts":7,"text":"việc mồ côi"}"#).unwrap(); // torn: no newline
+        let file = std::fs::OpenOptions::new().append(true).open(&orphan).unwrap();
+        file.set_modified(t0 - Duration::from_secs(3600)).unwrap();
+        drop(file);
+        let msg = claim_inbox(&home, sid, t0 + CLAIM_STALE * 2).unwrap();
+        assert!(msg.contains("2 message(s)") && msg.contains("việc cũ") && msg.contains("việc mồ côi"), "{msg}");
+        assert!(!orphan.exists());
+        assert!(ack_inbox(&home, sid));
+        assert!(claim_inbox(&home, "not-an-id/../x", t0).is_none());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn inbox_cmd_parses_flags_and_falls_back_to_the_env_session() {
+        let home = tmp("inbox-cmd");
+        let sid = "3ad90775-0000-4b01-b539-3eefc61f29ec";
+        let f = inbox_file(&home, sid).unwrap();
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        let now = SystemTime::now();
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(inbox_cmd(&home, &a(&["--json"]), None, now), json!({ "text": null }), "no id");
+        assert_eq!(inbox_cmd(&home, &a(&["--session", "--json"]), None, now), json!({ "text": null }), "--session without a value");
+        std::fs::write(&f, format!("{}\n", json!({"ts":1,"text":"x"}))).unwrap();
+        let v = inbox_cmd(&home, &a(&["--json"]), Some(sid), now);
+        assert!(v["text"].as_str().unwrap().ends_with("\nx"), "env fallback: {v}");
+        assert_eq!(inbox_cmd(&home, &a(&["--session", sid, "--release", "--json"]), None, now), json!({ "ok": true }));
+        assert!(inbox_cmd(&home, &a(&["--session", sid, "--json"]), None, now)["text"].is_string());
+        assert_eq!(inbox_cmd(&home, &a(&["--session", sid, "--ack"]), None, now), json!({ "ok": true }));
+        assert_eq!(inbox_cmd(&home, &a(&["--session", sid, "--ack"]), None, now), json!({ "ok": false }));
         let _ = std::fs::remove_dir_all(&home);
     }
 

@@ -10,12 +10,14 @@ treo không gửi đi được".
 Phiên `hq-*` (tmux) không bị: HQ gõ thẳng vào pane.
 
 ## Fix
-1. `8sync ccc inbox [--session <id>] [--json]` (Rust): lấy tin đang chờ bằng cùng `take` nguyên tử (rename → read → xoá,
-   masked) như Stop hook, khung câu cho phiên rảnh; `{"text": string|null}`.
-2. Mod `8sync-inbox` (Claude Code function hooks, cài qua kit vào `~/.claude/skills/8sync-inbox`): phiên interactive, khi
-   main loop rảnh (theo `turn.start`/`turn.complete` không `agentId`) cứ 5 s gọi `8sync ccc inbox --session <id> --json`;
-   có tin → `$.prompt.submit({ text })` (mở lượt mới). Prompt bị drop → `$.prompt.fill` + toast, không mất tin. Lỗi → im lặng.
-   Stop hook giữ nguyên cho lúc đang chạy; hai đường dùng chung một `take` → không giao trùng.
+1. `8sync ccc inbox [--session <id>] [--ack|--release] [--json]` (Rust): claim hai pha. Claim = rename `<id>.jsonl` →
+   `<id>.claimed` (masked, khung câu cho phiên rảnh, `{"text"}`); claim còn mới (< 120 s) → null; claim cũ (taker chết)
+   → gộp tin mới vào, phục vụ lại. `--ack` xoá claim; `--release` trả claim về inbox (O_APPEND, 0600). Stop hook không
+   đụng claim, đọc lỗi thì trả file về.
+2. Mod `8sync-inbox` (function hooks, cài qua kit vào `~/.claude/skills/8sync-inbox`): phiên interactive, khi main loop rảnh
+   poll 5 s (1 phút đầu) → 15 s → 30 s, reset khi xong lượt / giao xong; claim → `$.prompt.submit`; bị drop →
+   `$.prompt.fill` mode append (giữ chữ owner gõ dở) + toast; vào được → `--ack`, không → `--release`. Session id đọc mỗi
+   poll (sau `/clear`), lỗi thì giữ id cũ. Review lần 1 (2 BLOCKER: id cũ sau /clear, fill replace làm mất draft/task) đã sửa.
 3. HQ UI: đổi chữ "qua inbox (nhận khi xong lượt)" → "qua inbox (nhận ngay khi phiên rảnh)" (các chỗ hiện chữ + test).
 
 ## Acceptance criteria (exit 0 = pass; cwd /home/alexng/tools/su-code-inbox)
