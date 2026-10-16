@@ -6,6 +6,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [Unreleased]
 ### Added
 - **`8sync ccc auto on --here`** keeps auto to one project. Without the flag, `auto on` still reaches every session of every project on the machine, including sessions opened later, because its state lives under home. With `--here`, the project root of the current folder is stored in `auto.json` as `repo`. The `idle` (Stop/TeammateIdle), `delegate` and `taskdone` hooks then skip any session whose cwd is outside that root; subfolders and in-repo worktrees count as the same project. `auto status` (and `--json` `repo`) shows the scope; a plain `auto on`, `pause` or `off` clears it. If the marker cannot be written, auto is turned back off rather than left running everywhere. Owner (2026-10-16): "bổ sung thêm cờ auto all session trong 1 folder dự án".
+### Fixed
+- **`8sync ccc . rd` no longer opens under a new random name each time.** Claude Code session names are machine-wide, so when a session in another project already goes by `rd`, Claude Code appends a random suffix (`rd-crispy-sutton`), and a different one on every launch until the room has a transcript. In that case a new session now gets the stable name `<name>-<repo dir>` (`rd-su-code`); `8sync ccc . rd` still opens the same room, and the role (R&D, lead…) is still read from the leading name. Sessions that already have a transcript resume under their current title (rename with `/rename`). Owner (2026-10-16): "mỗi lần vô ra 1 tên khác nhau".
 
 ## [0.96.0] — 2026-10-16
 ### Added
