@@ -1,0 +1,11 @@
+{
+  "digests": [
+    "0ada52939b909466 cat: LOOP.md: No such file or directory"
+  ],
+  "iter": 1,
+  "max_iter": 12,
+  "max_min": 90,
+  "slug": "loop-ev-bash",
+  "started": 1792169373,
+  "stopped": null
+}

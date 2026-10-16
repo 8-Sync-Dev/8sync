@@ -195,7 +195,7 @@ fn run_at(rest: &[String], cwd: &Path, now: u64) -> Result<()> {
                 c.args(["-c", &cmd[0]]);
                 c
             } else {
-                let mut c = std::process::Command::new(&cmd[0]);
+                let mut c = std::process::Command::new(program(&cmd[0])?);
                 c.args(&cmd[1..]);
                 c
             };
@@ -241,7 +241,18 @@ fn shell() -> Result<PathBuf> {
             let s = p.to_string_lossy().to_ascii_lowercase();
             !s.contains("\\system32\\") && !s.contains("\\windowsapps\\")
         })
-        .context("no Git Bash on PATH (System32 bash is WSL); pass the command as separate words after --")
+        .context("no Git Bash on PATH (System32 bash is WSL); install Git for Windows, or give bash's full path after --")
+}
+
+/// The program for an argv `ev` command (`-- bash x.sh …`). On Windows a bare name is looked up
+/// in the system directories before PATH, so `bash` would be `System32\bash.exe` (WSL: no `gh`,
+/// exit 127, seen 2026-10-16) even with Git Bash first on PATH; a bare `bash`/`sh` gets Git Bash.
+/// Anything else, or a path, runs as given.
+fn program(name: &str) -> Result<PathBuf> {
+    if cfg!(windows) && matches!(name.to_ascii_lowercase().as_str(), "bash" | "bash.exe" | "sh" | "sh.exe") {
+        return shell();
+    }
+    Ok(PathBuf::from(name))
 }
 
 /// The last non-empty output line, one line and at most 160 chars (`|` would break the table).
@@ -304,6 +315,27 @@ mod tests {
         let log = std::fs::read_to_string(d.join("su-code/ship/hq/LOOP.md")).unwrap();
         let lines: Vec<&str> = log.lines().collect();
         assert_eq!(lines, ["iter 0 | C1 | exit 0 | Tests  3 passed / ok", "iter 0 | C2 | exit 3 | (no output)"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ev_argv_bash_is_git_bash_not_the_wsl_launcher() {
+        let p = program("bash").unwrap();
+        let low = p.to_string_lossy().to_ascii_lowercase();
+        if cfg!(windows) {
+            assert!(p.is_absolute() && !low.contains("\\system32\\") && !low.contains("\\windowsapps\\"), "{low}");
+            assert_eq!(program("SH.exe").unwrap(), p);
+        } else {
+            assert_eq!(p, PathBuf::from("bash"));
+        }
+        assert_eq!(program("grep").unwrap(), PathBuf::from("grep"));
+        assert_eq!(program("C:/x/bash.exe").unwrap(), PathBuf::from("C:/x/bash.exe"), "a path runs as given");
+        // End to end through the argv form (on the Windows CI runner, WSL has no distro and fails).
+        let d = tmp("ev-argv");
+        run_at(&s(&["init", "hq"]), &d, 1000).unwrap();
+        run_at(&s(&["ev", "hq", "C1", "--", "bash", "-c", "echo argv-ok"]), &d, 1001).unwrap();
+        let log = std::fs::read_to_string(d.join("su-code/ship/hq/LOOP.md")).unwrap();
+        assert_eq!(log.lines().collect::<Vec<_>>(), ["iter 0 | C1 | exit 0 | argv-ok"]);
         let _ = std::fs::remove_dir_all(&d);
     }
 

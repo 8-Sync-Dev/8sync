@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **`8sync ccc loop ev <slug> <C#> -- bash x.sh …` runs Git Bash on Windows, not WSL.** In the argv form a bare `bash` was spawned by name, and Windows looks in `System32` before PATH, so it ran the WSL launcher: no `gh`, exit 127, recorded as a failed check (seen 2026-10-16 on an autopilot item; the installed 0.98.1 gives exit 1 for `-- bash -c "command -v gh"`, this fix exit 0). A bare `bash`/`sh` (with or without `.exe`) now gets the same Git Bash the one-string form already used; any other program or full path runs as given, so WSL bash is still reachable by its path. The no-Git-Bash error no longer suggests the argv form as the way out.
 
 ## [0.98.1] — 2026-10-16
 ### Changed
