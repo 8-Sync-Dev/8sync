@@ -6,6 +6,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [Unreleased]
 ### Changed
 - **CI runs the release size gate on every PR.** The new `size-gate` job builds the linux-x86_64 musl release (the largest asset, same steps as `release.yml`) and runs `scripts/size-gate.sh`, plus a self-test that the gate fails over the ceiling. Seven releases (v0.67.0, v0.74.0, v0.78.0, v0.81.0, v0.89.0, v0.93.0, v0.98.0) were tagged and only then failed the gate; now an oversized PR is red before the tag.
+### Fixed
+- **`auto on --loop` no longer promises that a `/bg` room resumes after a usage limit.** The note now says the next tick after the reset *may* pick the work up again, because the docs only state that background sessions don't wait. On a subscription login, the pointer to Routines now warns that a routine runs "without stopping for approval" and outside the 8sync rails, so the owner should grant only the repos and connectors it needs (https://code.claude.com/docs/en/routines). The same note is in `docs/huong-dan.md`.
 
 ## [0.98.1] — 2026-10-16
 ### Changed
