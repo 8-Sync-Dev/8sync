@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.95.0] — 2026-10-16
 ### Added
 - `8sync hq ui --install`: download the HQ UI asset for this binary version when missing and exit (no server). `8sync up` runs it after a successful update when HQ has been used on the machine, so the next `8sync hq ui` starts without a download.
 - **Kit skill `/ship-tick [slug]`** — one iteration of a loop the owner already started. It is model-invocable on purpose: `/ship-loop`, `/autopilot`, `/ship-auto` and `/ship … --release` now add a Claude Code scheduled task (`CronCreate` `*/5 * * * *`, prompt `/ship-tick <slug>`) right after `8sync ccc loop init` or the first push, so the loop continues whenever the session is idle (after a turn ends, after /compact, while CI runs) without the owner typing again: the `/loop 5m` + loop-me pattern built into the ship skills. A tick: standup (`8sync ccc standup`, daily `8sync ccc meet --say` once), red CI first, then the first red criterion, `researcher`/`deep-research` when the same failure repeats, smallest change, `8sync ccc loop ev` evidence, `8sync ccc loop tick`; all green → review + `8sync ccc risk` + sec/rules/aup-audit + CHANGELOG + commit + push + CI; release only after ONE Ship question and only when the parent loop asked for it; done/stop → `loop done`, ACTIVE cleaned, its own cron deleted. Listed in `8sync ccc help`. Owner (2026-10-16): "các command ship-* có full skills khả năng loop + loop-me + scrum skill, /deep-research".
