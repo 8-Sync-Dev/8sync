@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **`auto on --loop` no longer promises that a `/bg` room resumes after a usage limit.** The note now says the next tick after the reset *may* pick the work up again, because the docs only state that background sessions don't wait. On a subscription login, the pointer to Routines now warns that a routine runs "without stopping for approval" and outside the 8sync rails, so the owner should grant only the repos and connectors it needs (https://code.claude.com/docs/en/routines). The same note is in `docs/huong-dan.md`.
 
 ## [0.98.0] — 2026-10-16
 ### Added
