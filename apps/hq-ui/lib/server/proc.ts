@@ -5,6 +5,7 @@ import { isModelId, isRoleId } from "@/lib/roles";
 import { projectIdFor } from "./db";
 import fs from "node:fs";
 import path from "node:path";
+import { inboxLive } from "./inbox";
 import { channelMcpConfigPath } from "./paths";
 import { CHANNEL_FLAGS_RE, TMUX_NAME_RE, hasControlChars, isTmuxName } from "./validate";
 
@@ -76,6 +77,8 @@ export type SessionView = {
   tmux: boolean;
   source: "tmux" | "claude" | "journal";
   detail: string | null;
+  /** Inbox delivery only: the `8sync-inbox` mod polled within LIVE_MS, so a task enters as soon as the session is idle. */
+  inbox_live: boolean;
   /** Team role / model the session was started with (null for sessions started elsewhere). */
   role?: string | null;
   model?: string | null;
@@ -122,6 +125,7 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
       tmux: true,
       source: "tmux",
       detail: agent?.waitingFor ?? null,
+      inbox_live: false,
     });
   }
   for (const a of agents) {
@@ -138,6 +142,7 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
       tmux: false,
       source: "claude",
       detail: a.waitingFor ?? null,
+      inbox_live: inboxLive(a.sessionId),
     });
   }
   for (const r of rows) {
@@ -154,6 +159,7 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
       tmux: false,
       source: "journal",
       detail: null,
+      inbox_live: false,
     });
   }
   return [...out.values()]

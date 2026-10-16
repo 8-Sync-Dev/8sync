@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { addressOf, messageTargets, sessionLabel } from "@/lib/labels";
+import { addressOf, inboxText, messageTargets, sessionLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote, ago, shortName } from "./bits";
 import type { Hq } from "./use-hq";
@@ -96,7 +96,7 @@ function NewTask({ hq, sessions }: { hq: Hq; sessions: Session[] }) {
     if (!target || !subject.trim() || target.waiting) return;
     setBusy(true);
     try {
-      const r = await hq.api<{ task: Task; message: Message; delivery: string; error: string | null }>("/api/tasks", {
+      const r = await hq.api<{ task: Task; message: Message; delivery: string; live?: boolean; error: string | null }>("/api/tasks", {
         method: "POST",
         body: { session: addressOf(target), subject: subject.trim(), role: role.trim() || undefined, prio },
       });
@@ -105,7 +105,7 @@ function NewTask({ hq, sessions }: { hq: Hq; sessions: Session[] }) {
       if (r.delivery === "failed") toast.error(`Task saved, but not delivered: ${r.error}`);
       else
         toast.success(
-          `Đã giao cho ${sessionLabel(target)} ${r.delivery === "channel" ? "qua channel" : r.delivery === "inbox" ? "qua inbox (nhận ngay khi phiên rảnh)" : "qua terminal"}`,
+          `Đã giao cho ${sessionLabel(target)} ${r.delivery === "channel" ? "qua channel" : r.delivery === "inbox" ? inboxText(r.live) : "qua terminal"}`,
         );
       setSubject("");
     } catch (err) {

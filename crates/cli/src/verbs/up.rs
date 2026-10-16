@@ -53,12 +53,14 @@ fn refresh_kit(installed: Option<std::path::PathBuf>) {
         return;
     }
     let Some(exe) = installed.or_else(|| selfup::installed_path().ok()) else { return };
-    let ok = std::process::Command::new(exe)
-        .args(["ccc", "kit"])
-        .env("SUSYNC_NO_AUTO_UPDATE", "1")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
+    let out = std::process::Command::new(exe).args(["ccc", "kit"]).env("SUSYNC_NO_AUTO_UPDATE", "1").stdin(std::process::Stdio::null()).output();
+    let ok = out.as_ref().is_ok_and(|o| o.status.success());
     ui::info(if ok { "kit refreshed with the new binary (statusline included)" } else { "kit refresh failed — run `8sync ccc kit`" });
+    // The kit's output stays quiet except its one line that needs the owner: a rewritten mod
+    // reaches an open session only after `/reload-plugins`.
+    if let Ok(o) = out {
+        for line in String::from_utf8_lossy(&o.stdout).lines().filter(|l| l.contains(super::ccc::RELOAD_HINT)) {
+            ui::info(line.trim_start_matches(|c: char| !c.is_alphanumeric()));
+        }
+    }
 }

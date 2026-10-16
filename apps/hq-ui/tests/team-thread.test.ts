@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTeamThread, type ThreadRow } from "@/lib/team-thread";
+import { buildTeamThread, partyKey, type ThreadRow } from "@/lib/team-thread";
 
 const row = (id: number, ts: number, kind: string, session: string | null, extra: Partial<ThreadRow> = {}): ThreadRow => ({
   id, ts, kind, session, from_: null, to_: null, text: null, ...extra,
@@ -52,6 +52,34 @@ describe("buildTeamThread", () => {
     const rows = [row(1, 1, "notification", "hq-a", { text: "ok?" }), row(2, 2, "owner_message", "hq-a", { to_: "hq-a", text: "yes" }), row(3, 3, "notification", "hq-b")];
     const t = buildTeamThread(rows).filter((x) => x.kind === "needs_you");
     expect(t.map((x) => x.open)).toEqual([false, true]);
+  });
+});
+
+describe("handoff answered by name", () => {
+  it("a handoff addressed as `name [ref]` is answered by a reply whose from_name is that name", () => {
+    const core = "a2830544-0719-4d6f-aaa3-644783ddb0b3";
+    const team = "6de1efc8-68cb-45aa-9999-000000000001";
+    const rows: ThreadRow[] = [
+      // SendMessage(to: "core [ff2607]") that the journal could not resolve: to_ stays the typed text.
+      row(1, 100, "session_message", team, { from_: team, to_: "core [ff2607]", text: "audit xong?", from_name: "team", to_name: null }),
+      row(2, 200, "session_message", core, { from_: core, to_: team, text: "ack", from_name: "core", to_name: "team" }),
+      row(3, 300, "session_message", team, { from_: team, to_: "web [c3b426]", text: "board sync", from_name: "team", to_name: null }),
+    ];
+    const t = buildTeamThread(rows).filter((x) => x.kind === "handoff");
+    expect(t.map((x) => x.answered)).toEqual([true, false, false]);
+    // Two sessions named "core": a resolved handoff is answered only by the one it went to.
+    const core2 = "c2830544-0719-4d6f-aaa3-644783ddb0b3";
+    const twins: ThreadRow[] = [
+      row(1, 100, "session_message", team, { from_: team, to_: core, text: "ping", from_name: "team", to_name: "core" }),
+      row(2, 200, "session_message", core2, { from_: core2, to_: team, text: "pong?", from_name: "core", to_name: "team" }),
+      row(3, 300, "session_message", core, { from_: core, to_: team, text: "pong", from_name: "core", to_name: "team" }),
+    ];
+    const u = buildTeamThread(twins.slice(0, 2)).filter((x) => x.kind === "handoff");
+    expect(u[0].answered).toBe(false);
+    expect(buildTeamThread(twins).filter((x) => x.kind === "handoff")[0].answered).toBe(true);
+    expect(partyKey("Core [FF2607]")).toBe("core");
+    expect(partyKey("core")).toBe("core");
+    expect(partyKey(null)).toBe("");
   });
 });
 

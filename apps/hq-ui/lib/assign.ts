@@ -4,12 +4,12 @@
 // whether a task went to one session, to whoever has a role, or to every session of a repo.
 // The dialog now has three explicit modes and one summary line that says exactly where it goes.
 import type { Project, Session } from "@/components/hq/types";
-import { addressOf, deliveryOf, messageTargets, sessionLabel } from "./labels";
+import { addressOf, deliveryOf, inboxText, messageTargets, sessionLabel } from "./labels";
 import { roleOf, modelShort } from "./roles";
 
 export type AssignMode = "session" | "role" | "project";
 
-type S = Pick<Session, "tmux" | "status" | "name" | "session_id" | "project_id" | "role" | "label">;
+type S = Pick<Session, "tmux" | "status" | "name" | "session_id" | "project_id" | "role" | "label" | "inbox_live">;
 type P = Pick<Project, "id" | "name">;
 /** The office room of a session (`/api/office`): the git folder + branch it reports, like the sidebar uses. */
 export type RoomLike = { name: string; session_id: string | null; project: { root: string; name: string; branch?: string | null } | null };
@@ -99,7 +99,7 @@ export type Summary = {
 export function assignSummary(x: Summary): string {
   if (x.mode === "session") {
     if (!x.session) return "";
-    const via = deliveryOf(x.session) === "inbox" ? "qua inbox (nhận ngay khi phiên rảnh)" : "vào terminal";
+    const via = deliveryOf(x.session) === "inbox" ? inboxText(x.session.inbox_live) : "vào terminal";
     return `Giao cho phiên ${sessionLabel(x.session)} ${via}`;
   }
   if (x.mode === "role") {

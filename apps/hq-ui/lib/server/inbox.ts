@@ -27,6 +27,25 @@ export function queueInbox(sessionId: string, text: string, ts = Date.now()): vo
   fs.appendFileSync(file, `${JSON.stringify({ ts, text })}\n`, { mode: 0o600 });
 }
 
+/**
+ * The `8sync-inbox` mod touches `<id>.live` on every poll (crates/cli/src/verbs/hq.rs claim_inbox),
+ * from session start and whenever the session is idle. A marker from the last day means the
+ * session has the mod loaded, so a queued task enters as soon as it is idle; missing (or a day
+ * old: ids are never reused) means the task waits for the Stop hook (next turn end) until the
+ * owner runs `/reload-plugins` in that session. Age is not "polling now": a long turn does not
+ * poll. Same window as the Rust side (LIVE_FOR).
+ */
+export const LIVE_MS = 24 * 3600_000;
+
+export function inboxLive(sessionId: string, now = Date.now()): boolean {
+  if (!isSessionId(sessionId)) return false;
+  try {
+    return now - fs.statSync(path.join(inboxDir(), `${sessionId}.live`)).mtimeMs < LIVE_MS;
+  } catch {
+    return false;
+  }
+}
+
 /** Messages still waiting for the session's next turn end. */
 export function pendingInbox(sessionId: string): number {
   try {

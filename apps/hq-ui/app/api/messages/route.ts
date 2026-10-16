@@ -1,7 +1,7 @@
 import { afterParam, bad, limitParam, json, open, readBody } from "@/lib/server/http";
 import { deliverWatched, SessionWaiting } from "@/lib/server/channel";
 import { capturePlain, sendKeys } from "@/lib/server/proc";
-import { isSessionId, queueInbox } from "@/lib/server/inbox";
+import { inboxLive, isSessionId, queueInbox } from "@/lib/server/inbox";
 import { messagesAfter, ownerMessage } from "@/lib/server/queries";
 import { clampText, isTmuxName } from "@/lib/server/validate";
 
@@ -33,11 +33,12 @@ export async function POST(req: Request) {
   if (!body) return bad("JSON body required");
   const text = clampText(body.text);
   if (!text.ok) return bad(text.error, 422);
-  // Any other live Claude Code session: queue for its Stop hook (delivered at its next turn end).
+  // Any other live Claude Code session: queue in its inbox. `live`: the 8sync-inbox mod is polling
+  // (enters as soon as the session is idle); otherwise the Stop hook delivers at its next turn end.
   if (isSessionId(body.session)) {
     queueInbox(body.session, text.value);
     const message = ownerMessage(o.db, body.session, text.value, "inbox");
-    return json({ message, delivery: "inbox", error: null }, 201);
+    return json({ message, delivery: "inbox", live: inboxLive(body.session), error: null }, 201);
   }
   if (!isTmuxName(body.session)) return bad("session must be an hq-* session or a Claude session id", 422);
   try {
