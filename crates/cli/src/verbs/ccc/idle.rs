@@ -393,8 +393,15 @@ pub(super) fn gate(lease: Option<&Value>, subscription: bool, spent: f64, now: u
             }
         }
     }
-    let rate = l["usd_per_hour"].as_f64().unwrap_or(DEFAULT_USD_PER_HOUR);
-    let hours = (now.saturating_sub(l["on"].as_u64().unwrap_or(now)) as f64 / 3600.0).max(1.0);
+    cap(l, spent, now)
+}
+
+/// The $/hour rail alone: average spend since the lease started, checked whether or not the lease
+/// is still valid (an `auto --loop` runs past the lease and must still respect it). An average, so
+/// it clears by itself as time passes without spending.
+pub(super) fn cap(lease: &Value, spent: f64, now: u64) -> Result<(), String> {
+    let rate = lease["usd_per_hour"].as_f64().unwrap_or(DEFAULT_USD_PER_HOUR);
+    let hours = (now.saturating_sub(lease["on"].as_u64().unwrap_or(now)) as f64 / 3600.0).max(1.0);
     if spent > rate * hours {
         return Err(format!("chạm trần ${rate:.2}/giờ (đã tiêu ${spent:.2} trong {hours:.1} giờ)"));
     }

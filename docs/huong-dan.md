@@ -143,10 +143,17 @@ Dữ liệu nằm ở `~/.local/state/8sync/hq/` (SQLite, quyền 0600), chỉ t
 - **Mọi phòng chạy liên tục bằng một lệnh**: `8sync ccc auto on --here --loop 10m --team`.
   - Lệnh ghi `.claude/loop.md` (nếu chưa có; không ghi đè bản anh sửa): playbook mỗi nhịp. Nó kiểm `auto status`, lấy một việc hợp vai từ `su-code/STATE.md` (hoặc spec trong `workflows/*.md` do `/loop-me` viết), tự chọn skill (`/ship` đủ flow với karpathy-guidelines, test, review và gate `/sec` + `/rules` + `/aup-audit`; `/do`; `/deep-research`; `impeccable`; `/sysdesign`) rồi `8sync ccc meet --say`. Việc cần nhiều nhịp thì mỗi nhịp `/ship` phần kế. `/ship-loop`, `/ship-auto`, `/autopilot`, `/sprint`, `/loop-me` chỉ anh gõ: nhịp cron không gọi được skill có `disable-model-invocation`. Sửa file là đổi việc của mọi phòng từ nhịp kế; gõ `/loop` không kèm prompt trong phòng nào cũng chạy đúng file này.
   - Rồi gửi vào inbox từng phòng của dự án một yêu cầu tự đặt loop cron (CronCreate, như `/loop 10m`) theo vai phòng. `--team` thêm việc lấp ghế rd, qa, reviewer cho phòng mở bằng `--team`.
-  - Loop tự xoá khi anh `auto off`/`auto pause` hoặc chạm trần $/giờ. Lease không dừng loop. Claude Code tự xoá loop sau 7 ngày: chạy lại lệnh để gia hạn.
+  - Loop tự xoá khi anh `auto off`/`auto pause`. Chạm trần $/giờ (`--usd-per-hour`, mặc định 5, tính trung bình từ lúc bật kể cả khi lease đã hết) thì phòng nghỉ nhịp đó và giữ loop; trần tự hạ khi thời gian trôi. Trên subscription, $ là ước tính cost Claude Code báo, nên đặt trần theo nhịp tiêu quota anh muốn. Lease không dừng loop. Claude Code tự xoá loop sau 7 ngày: chạy lại lệnh để gia hạn.
   - Loop chỉ chạy khi phòng còn sống. Gõ `/bg` trong phòng để chuyển sang chạy nền (không cần terminal; tắt máy là dừng), mở `claude agents` để xem, `Ctrl+T` để ghim.
   - Hết usage: phòng đang mở tự chờ reset rồi chạy tiếp (`autoContinueAtUsageLimit`, tối đa 2 lần liên tiếp; gặp hỏi quyền thì dừng chờ).
   - Phòng chưa nạp mod inbox nhận yêu cầu khi xong lượt kế.
+- **Giao đích cho cả team (hàng chờ như khi gõ lúc agent bận)**:
+  - `8sync ccc auto on --here --loop 10m --team --target "<đích>" --check "<lệnh kiểm>"`: bật auto kèm đích đầu hàng.
+  - `8sync ccc auto add "<việc>" [--check "<lệnh>"]`: thêm vào cuối hàng.
+  - `8sync ccc auto add --now "<việc>"`: giống `ctrl+x ctrl+s` của Claude Code nhưng cho cả dự án. Việc lên đầu hàng và vào inbox mọi phòng; phòng nhận ngay khi rảnh, lượt đang chạy không bị cắt ngang.
+  - Trong phòng nào cũng chỉ cần gõ "đưa vào loop: …" hoặc "làm ngay: …", Claude tự chạy lệnh trên (luật kit).
+  - Mỗi nhịp, mọi phòng làm phần hợp vai cho đích đầu hàng: lead chia việc, dev `/ship`, qa chạy `check`, reviewer review, rd gỡ chỗ kẹt. Đạt (lệnh `check` exit 0, hoặc có bằng chứng chạy được) thì một phòng chạy `8sync ccc auto done <id> --evidence "<lệnh: kết quả>"` và cả team sang đích kế. Hết hàng thì quay về `.claude/loop.md` (`STATE.md` Next).
+  - `8sync ccc auto queue` xem hàng (▶ đang làm, ✓ xong kèm bằng chứng, ✗ đã bỏ). `8sync ccc auto drop <id>` bỏ một đích. `auto status` in đích hiện tại.
 - **Verify hook**: tự `cargo check` / `tsc` / `go vet` sau mỗi lần sửa file.
 - **Policy cho org**: `8sync ccc policy --org-uuid <uuid> --out policy.json`, rồi cài bằng lệnh `sudo install` mà lệnh in ra.
 - **Gỡ 8sync**: chạy `8sync ccc kit --remove` trước, nếu không guard (fail-closed) sẽ chặn mọi lệnh. Lệnh chỉ bỏ hook của 8sync (hook của anh giữ nguyên, kể cả khi chung nhóm), không ghi gì nếu không có gì để bỏ, và để bản sao lưu `~/.claude/settings.json.bak-8sync`.

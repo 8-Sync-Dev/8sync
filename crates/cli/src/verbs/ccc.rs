@@ -45,6 +45,7 @@ mod statusline;
 mod taskdone;
 mod urgent;
 mod goal;
+mod target;
 mod standup;
 mod wake;
 mod verify;
