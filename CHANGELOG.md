@@ -5,6 +5,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 ### Fixed
+- **Idle R&D nudges skip owner-only steps.** `8sync ccc hook idle` picks the first open `Next` item in `su-code/STATE.md` as the research question; items starting with `Owner` (Channels toggle, bot token) are now skipped, so an idle R&D room no longer researches a step only the owner can do. (`crates/cli/src/verbs/ccc/idle.rs`, `research_question`)
 - **The ask gate no longer floods the terminal or blocks questions about safety rails.** When the gate turns a question back, Claude Code prints the gate's whole prompt in the error line, so the prompt is now about 520 bytes instead of about 880, and it puts the rules in four short lines. A question about loosening a safety or compliance rail (for example, how owner presence is counted on a subscription) now always reaches the owner; before, it was turned back as a "minor technical choice". Run `8sync ccc kit` to install the new prompt. Owner (2026-10-16): "hay bị bug … hook error".
 
 ## [0.97.0] — 2026-10-16

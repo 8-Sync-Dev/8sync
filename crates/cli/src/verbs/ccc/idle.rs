@@ -255,7 +255,8 @@ pub(super) fn research_question(cwd: &Path) -> Option<String> {
             continue;
         }
         let it = l.trim().trim_start_matches(['-', '*']).trim();
-        if !in_next || it.is_empty() {
+        // An owner-only step (Channels toggle, bot token) is not something a teammate can research.
+        if !in_next || it.is_empty() || it.to_lowercase().starts_with("owner") {
             continue;
         }
         let q: String = it.chars().take(200).collect();
@@ -766,7 +767,7 @@ mod tests {
         }
         let d = std::env::temp_dir().join(format!("8sync-rq-{}", std::process::id()));
         std::fs::create_dir_all(d.join("su-code/research")).unwrap();
-        std::fs::write(d.join("su-code/STATE.md"), "# S\n## Next\n- hq-ui packaging as a release asset\n- eval kit\n## Other\n- x\n").unwrap();
+        std::fs::write(d.join("su-code/STATE.md"), "# S\n## Next\n- Owner: enable Channels\n- hq-ui packaging as a release asset\n- eval kit\n## Other\n- x\n").unwrap();
         assert_eq!(research_question(&d).as_deref(), Some("hq-ui packaging as a release asset"));
         std::fs::write(d.join("su-code/research/2026-10-15-pkg.md"), "Question: hq-ui packaging as a release asset\n").unwrap();
         assert_eq!(research_question(&d).as_deref(), Some("eval kit"));
