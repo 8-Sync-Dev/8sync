@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **The ask gate no longer floods the terminal or blocks questions about safety rails.** When the gate turns a question back, Claude Code prints the gate's whole prompt in the error line, so the prompt is now about 520 bytes instead of about 880, and it puts the rules in four short lines. A question about loosening a safety or compliance rail (for example, how owner presence is counted on a subscription) now always reaches the owner; before, it was turned back as a "minor technical choice". Run `8sync ccc kit` to install the new prompt. Owner (2026-10-16): "hay bị bug … hook error".
 
 ## [0.97.0] — 2026-10-16
 ### Added
