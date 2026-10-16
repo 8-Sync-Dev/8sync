@@ -170,9 +170,9 @@ describe("meeting state and the stand / sit transitions", () => {
     expect(wall).toMatch(/b/);
     expect(wall).toMatch(/t/);
     // eyes turned to the board (shift), speech dots build up frame by frame
-    expect(f[12][10]).toBe("o");
-    expect(f[12][13]).toBe("o");
-    const dotsOf = (i: number) => [...spriteFrame(null, "meeting", i)[4].slice(1, 10)].filter((c) => c === "o").length;
+    expect(f[9][10]).toBe("o");
+    expect(f[9][13]).toBe("o");
+    const dotsOf = (i: number) => [...spriteFrame(null, "meeting", i)[2].slice(1, 10)].filter((c) => c === "o").length;
     expect([dotsOf(0), dotsOf(1), dotsOf(2)]).toEqual([1, 2, 3]);
     expect(new Set(SPRITES.meeting.map((x) => x.join())).size).toBe(SPRITES.meeting.length);
   });
@@ -207,7 +207,9 @@ describe("meeting state and the stand / sit transitions", () => {
     expect(transitionFor("typing", "reading")).toBeNull();
     expect(transitionFor("idle", "stalled")).toBeNull();
     expect(transitionFor("idle", "done")).toBeNull();
-    expect(transitionFor("typing", "rest")).toBeNull();
+    expect(transitionFor("typing", "rest")).toBe("sit"); // sit down before dozing
+    expect(transitionFor("typing", "stalled")).toBe("sit");
+    expect(transitionFor("stalled", "typing")).toBe("stand");
   });
 });
 

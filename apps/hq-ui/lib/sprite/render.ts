@@ -123,13 +123,13 @@ export type SpriteHandle = {
 
 /** Clips where the person is up at the desk working; reached from a seated clip via "stand". */
 const WORKING: ReadonlySet<Clip> = new Set<Clip>(["typing", "running", "reading", "meeting", "waiting"]);
-/** Clips where the person sits back (or the seat is empty); leaving them for work plays "stand". */
-const SEATED: ReadonlySet<Clip> = new Set<Clip>(["idle", "rest", "done"]);
+/** Clips where the person sits (idle, dozing, cheering, slumped); leaving them for work plays "stand". */
+const SEATED: ReadonlySet<Clip> = new Set<Clip>(["idle", "rest", "done", "stalled"]);
 
-/** The transition to play before `next`, if any: stand up for work, sit down to idle. */
+/** The transition to play before `next`, if any: stand up for work, sit down for a seated clip. */
 export function transitionFor(from: Clip, next: Clip): Clip | null {
   if (SEATED.has(from) && WORKING.has(next)) return "stand";
-  if (WORKING.has(from) && next === "idle") return "sit";
+  if (WORKING.has(from) && SEATED.has(next)) return "sit";
   return null;
 }
 
