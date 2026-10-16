@@ -3,7 +3,8 @@
   "iter": 0,
   "max_iter": 12,
   "max_min": 90,
+  "note": "all green: C1 local, C2-C4 CI run 38932920686",
   "slug": "ci-size-gate",
   "started": 1792168182,
-  "stopped": null
+  "stopped": "done"
 }
