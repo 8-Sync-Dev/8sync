@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 const status = vi.hoisted(() => vi.fn());
 const set = vi.hoisted(() => vi.fn());
+const tick = vi.hoisted(() => vi.fn(async () => ({ ticked: [] })));
+vi.mock("@/lib/server/auto-tick", () => ({ runAutoTick: tick }));
 vi.mock("@/lib/server/auto", async (orig) => ({
   ...(await orig<typeof import("@/lib/server/auto")>()),
   autoStatus: status,
@@ -24,20 +26,26 @@ describe("GET /api/auto", () => {
     expect((await GET(req("/api/auto"))).status).toBe(401);
     expect(status).not.toHaveBeenCalled();
   });
-  it("returns the 8sync status JSON", async () => {
-    status.mockResolvedValueOnce({ schema: 1, on: true, paused: false, lease_until: 1 });
+  it("returns the 8sync status JSON plus the auto-tick result, run on that status", async () => {
+    const s = { schema: 1, on: true, paused: false, lease_until: 1 };
+    status.mockResolvedValueOnce(s);
+    tick.mockClear();
     const res = await GET(req("/api/auto", { token }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ on: true, paused: false });
+    const { versions, ...body } = await res.json();
+    expect(body).toEqual({ ...s, tick: { ticked: [] } });
+    // GET also reports the running UI / installed binary versions (stale-UI notice).
+    expect(Object.keys(versions).sort()).toEqual(["binary", "ui"]);
+    expect(tick).toHaveBeenCalledTimes(1);
+    expect(tick).toHaveBeenLastCalledWith(s);
   });
   it("200 with error when 8sync lacks the command", async () => {
     status.mockResolvedValueOnce({ on: false, paused: false, error: "unknown verb" });
     const res = await GET(req("/api/auto", { token }));
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toMatchObject({ on: false, paused: false, error: "unknown verb" });
-    // GET also reports the running UI / installed binary versions (stale-UI notice).
-    expect(Object.keys(body.versions).sort()).toEqual(["binary", "ui"]);
+    const { versions, ...body } = await res.json();
+    expect(body).toEqual({ on: false, paused: false, error: "unknown verb", tick: { ticked: [] } });
+    expect(Object.keys(versions).sort()).toEqual(["binary", "ui"]);
   });
 });
 
