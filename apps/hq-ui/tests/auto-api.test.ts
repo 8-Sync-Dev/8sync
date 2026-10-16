@@ -34,7 +34,10 @@ describe("GET /api/auto", () => {
     status.mockResolvedValueOnce({ on: false, paused: false, error: "unknown verb" });
     const res = await GET(req("/api/auto", { token }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ on: false, paused: false, error: "unknown verb" });
+    const body = await res.json();
+    expect(body).toMatchObject({ on: false, paused: false, error: "unknown verb" });
+    // GET also reports the running UI / installed binary versions (stale-UI notice).
+    expect(Object.keys(body.versions).sort()).toEqual(["binary", "ui"]);
   });
 });
 

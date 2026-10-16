@@ -5,7 +5,7 @@ import { useMemo, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isStale, longRestCount, sortMembers, type IdleRecord } from "@/lib/idle";
-import { autoButton, autoText } from "@/lib/auto";
+import { autoButton, autoText, staleText } from "@/lib/auto";
 import { attendeesNow, meetingLabel, walkPhase, type Attendee } from "@/lib/meeting";
 import { cloneCount, fmtDuration, fmtTokens, fmtUsd, groupByProject, roomFor, seatState, SEATS, type Visit } from "@/lib/office";
 import { shirtFor, shirtOf } from "@/lib/sprite/frames";
@@ -300,8 +300,14 @@ function AutoBar({ token }: { token: string }) {
   const { status, busy, setAuto } = useAuto(token);
   if (!status) return null;
   const btn = autoButton(status);
+  const stale = staleText(status);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm" role="status">
+      {stale && (
+        <span className="basis-full text-amber-700 dark:text-amber-400" data-testid="ui-stale">
+          {stale}
+        </span>
+      )}
       {btn && (
         <Button type="button" size="sm" variant={btn.action === "pause" ? "outline" : "default"} disabled={busy} onClick={() => void setAuto(btn.action)}>
           {btn.action === "pause" ? <PauseIcon aria-hidden /> : <PlayIcon aria-hidden />}
