@@ -3413,9 +3413,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    // Unix only: the test back-dates directory mtimes through File::open(dir), which
-    // Windows refuses ("Access is denied"). The pruning code itself only reads mtimes.
-    #[cfg(unix)]
     #[test]
     fn installed_versions_lists_version_dirs_only() {
         let d = std::env::temp_dir().join(format!("hq-versions-{}-{}", std::process::id(), now()));
@@ -3430,6 +3427,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    // Unix only: the test back-dates directory mtimes through File::open(dir), which
+    // Windows refuses ("Access is denied"). The pruning code itself only reads mtimes.
+    #[cfg(unix)]
     #[test]
     fn install_prunes_old_versions_and_stale_leftovers() {
         let d = tmp("prune");
