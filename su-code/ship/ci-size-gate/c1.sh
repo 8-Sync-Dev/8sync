@@ -1,0 +1,1 @@
+grep -q 'size-gate:' .github/workflows/ci.yml && grep -q 'cargo build --release --locked --target x86_64-unknown-linux-musl' .github/workflows/ci.yml && grep -q 'bash scripts/size-gate.sh target/x86_64-unknown-linux-musl/release/8sync' .github/workflows/ci.yml && echo C1-ok

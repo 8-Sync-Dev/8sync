@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Changed
+- **CI runs the release size gate on every PR.** The new `size-gate` job builds the linux-x86_64 musl release (the largest asset, same steps as `release.yml`) and runs `scripts/size-gate.sh`, plus a self-test that the gate fails over the ceiling. Seven releases (v0.67.0, v0.74.0, v0.78.0, v0.81.0, v0.89.0, v0.93.0, v0.98.0) were tagged and only then failed the gate; now an oversized PR is red before the tag.
 
 ## [0.98.1] — 2026-10-16
 ### Changed
