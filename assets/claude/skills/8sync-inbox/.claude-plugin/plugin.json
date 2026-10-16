@@ -1,0 +1,6 @@
+{
+  "name": "8sync-inbox",
+  "version": "0.1.0",
+  "description": "Delivers the owner's 8 Sync HQ tasks to this session as soon as it is idle (not only at the next turn end).",
+  "author": { "name": "8 Sync" }
+}
