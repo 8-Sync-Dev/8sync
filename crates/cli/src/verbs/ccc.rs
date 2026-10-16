@@ -1920,17 +1920,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         let rec = |pid: u32, name: &str, cwd: &str| std::fs::write(d.join(format!("{pid}.json")), json!({ "pid": pid, "name": name, "cwd": cwd }).to_string()).unwrap();
-        let root = Path::new(r"C:\Users\Projects\su-code");
+        // Native paths on every OS; records write them the way Claude Code does (the OS separator).
+        let projects = d.join("Projects");
+        let p = |rel: &str| projects.join(rel).to_string_lossy().into_owned();
+        let root = projects.join("su-code");
+        let root = root.as_path();
         assert_eq!(display_name(&d, "rd", root), "rd", "no records");
         assert_eq!(display_name(&d.join("missing"), "rd", root), "rd");
-        rec(1, "rd", r"C:\Users\Projects\su-code\apps");
-        rec(2, "lead", r"C:\Users\Projects\other");
+        rec(1, "rd", &p("su-code/apps"));
+        rec(2, "lead", &p("other"));
         assert_eq!(display_name(&d, "rd", root), "rd", "same project (subfolder) is Claude Code's own duplicate, not ours to rename");
-        rec(3, "rd", r"C:\Users\Projects\tools\content-post-agency");
+        rec(3, "rd", &p("tools/content-post-agency"));
         assert_eq!(display_name(&d, "rd", root), "rd-su-code");
         assert_eq!(display_name(&d, "rd", root), "rd-su-code", "stable across launches");
         assert_eq!(display_name(&d, "lead", root), "lead-su-code");
-        rec(4, "core", "C:/Users/Projects/su-code-2");
+        rec(4, "core", &format!("{}/su-code-2", projects.to_string_lossy()));
         assert_eq!(display_name(&d, "core", root), "core-su-code", "a sibling sharing a prefix is another project");
         std::fs::write(d.join("5.abc.key"), "not json").unwrap();
         assert_eq!(room::role(&display_name(&d, "rd", root)).0, room::role("rd").0, "role survives the suffix");
