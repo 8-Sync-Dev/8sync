@@ -726,20 +726,20 @@ const ALLOW: [&str; 15] = [
 /// The ask gate's prompt starts with this, which is how a re-merge finds it.
 const GATE_MARKER: &str = "8sync gate";
 
-/// The bar for interrupting the user. A checklist, because Haiku given a prose
-/// rule refused credential and pricing questions. The native Stop gate
+/// The bar for interrupting the user. A numbered checklist, because Haiku given a
+/// prose rule refused credential and pricing questions. Kept short on purpose:
+/// when the gate denies, Claude Code prints the WHOLE prompt in the error line
+/// (`PreToolUse:AskUserQuestion hook error: [<prompt>]: <reason>`), so every
+/// extra sentence is noise in the owner's terminal. The native Stop gate
 /// (`gate.rs`) applies the same bar to a turn's last line.
-const ASK_POLICY: &str = "QUESTION POLICY — check in order; the first match decides:\n\
-1. Does it ask the user for a secret or access (password, API key, token, login, account)? → JUSTIFIED. \
-Asking the owner for a secret is correct; never tell Claude to guess or skip it.\n\
-2. Does it ask approval for something destructive, irreversible or paid (deleting data, dropping tables, \
-production deploys or migrations, force-push, messaging people, spending money)? → JUSTIFIED.\n\
-3. Does it ask the user to choose product or business direction (pricing, scope, features, UX direction, \
-target users) where the options lead to materially different outcomes? → JUSTIFIED. Never decide business \
-questions for the user.\n\
-4. Anything else — facts Claude can find in the repo or with its tools, naming, wording, style, minor technical \
-choices, or confirmation to continue routine work → NOT JUSTIFIED: Claude picks the conservative, conventional \
-option, states the assumption and continues.";
+const ASK_POLICY: &str = "1. Asks for a secret or access (password, API key, token, login, account) → JUSTIFIED; never \
+tell Claude to guess it.\n\
+2. Approval for a destructive, irreversible or paid action (delete data, drop a table, prod deploy or migration, \
+force-push, message people, spend money) → JUSTIFIED.\n\
+3. Product or business direction (pricing, scope, features, UX direction, target users) with materially different \
+outcomes → JUSTIFIED; never decide it for the user.\n\
+4. Anything else (facts in the repo or tools, naming, wording, style, minor technical choices, confirmation to \
+continue routine work) → NOT JUSTIFIED: pick the conservative, conventional option.";
 
 /// Hook roles earlier kits installed and this one dropped: (event, role). The
 /// Haiku `Stop` prompt gate re-sent the whole transcript at every turn end
@@ -751,11 +751,9 @@ const RETIRED_HOOKS: [(&str, &str); 1] = [("Stop", "8sync gate: stop")];
 const GUARD_MATCHER: &str = "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit";
 /// Prompt hook on `PreToolUse` for `AskUserQuestion`: unjustified questions are
 /// returned to Claude as a tool error (`continueOnBlock`), so it decides and goes on.
-const ASK_GATE: &str = "8sync gate: ask. Claude wants to interrupt the user with AskUserQuestion. Hook input: \
-$ARGUMENTS\n\nWalk the question policy below from rule 1 to rule 4 and stop at the first rule that matches.\n\
-Rules 1, 2 or 3 → reply exactly {\"ok\": true}.\n\
-Rule 4 only → reply {\"ok\": false, \"reason\": \"Don't ask: go with <the option you would pick> because \
-<one-line why>; state that assumption and continue.\"}\n\n";
+const ASK_GATE: &str = "8sync gate: ask. Hook input: $ARGUMENTS\n\
+First matching rule decides. Rule 1-3 → reply exactly {\"ok\": true}. Rule 4 → reply {\"ok\": false, \
+\"reason\": \"Don't ask: go with <option> because <why>; state that assumption and continue.\"}\n";
 
 /// A hook `model` must be a full id — an alias fails as `unrecognized_model` and
 /// the hook then fails open. The ASK gate stays on Sonnet: on the same prompt
@@ -2048,6 +2046,14 @@ mod tests {
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(pre.len(), 4, "ask gate replaced in place, user hook kept, delegate + guard appended");
         assert_eq!(pre[0]["hooks"][0]["prompt"], format!("{ASK_GATE}{ASK_POLICY}"));
+        // Claude Code echoes the whole prompt in the hook-error line when the gate denies
+        // (owner 2026-10-16: "chữ vỡ"); keep it short enough to read in a terminal.
+        let prompt = format!("{ASK_GATE}{ASK_POLICY}");
+        assert!(prompt.len() <= 900, "ask gate prompt is {} bytes (was 1,374)", prompt.len());
+        assert!(prompt.starts_with(GATE_MARKER) && prompt.contains("$ARGUMENTS"));
+        for rule in ["1. ", "2. ", "3. ", "4. ", "JUSTIFIED", "NOT JUSTIFIED", "{\"ok\": true}", "{\"ok\": false"] {
+            assert!(prompt.contains(rule), "missing {rule}");
+        }
         assert_eq!(pre[1]["hooks"][0]["command"], "my-linter");
         assert_eq!(pre[2]["hooks"][0]["args"], json!(["ccc", "hook", "delegate"]));
         assert_eq!(pre[3]["hooks"][0]["args"], json!(["ccc", "hook", "guard"]));
