@@ -1,10 +1,15 @@
-//! `8sync ccc auto on [--hours N] [--after <60|1m>] [--usd-per-hour X] | off | pause | status [--json]`:
+//! `8sync ccc auto on [--here] [--hours N] [--after <60|1m>] [--usd-per-hour X] | off | pause | status [--json]`:
 //! one switch for "the team never sits idle and the critic answers when the owner is away" =
 //! `idle on` (lease) + `delegate on --after` (default 60 s) + a marker file the HQ office reads.
 //!
 //! Marker: `<state>/ccc/auto.json` (one level above the idle state dir, `idle::state_dir`), schema 1:
-//! `{ "on", "paused", "since", "hours", "after_s" }`. `pause` = the owner pressed pause: HQ must
-//! not turn it on again; `off` = plain off, HQ may turn it on again. Both are idempotent.
+//! `{ "on", "paused", "since", "hours", "after_s", "repo"? }`. `pause` = the owner pressed pause: HQ
+//! must not turn it on again; `off` = plain off, HQ may turn it on again. Both are idempotent.
+//!
+//! The switch is per user (one state dir under home), so it reaches every session of every project.
+//! `--here` stores the project root of the current folder as `repo`: the `idle`, `delegate` and
+//! `taskdone` hooks then skip sessions whose cwd is outside it ([`in_scope`]); subfolders and
+//! worktrees inside the repo count as the same project.
 //!
 //! Rails stay those of `idle` and `delegate`: a subscription login keeps the lease ≤ 4 h and only
 //! runs while the owner types (Consumer Terms; unattended use belongs on a Console API key, see
@@ -17,12 +22,17 @@ use serde_json::{json, Value};
 
 use super::{delegate, idle};
 
-const USAGE: &str = "usage: 8sync ccc auto on [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json]";
+const USAGE: &str = "usage: 8sync ccc auto on [--here] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json]";
 const DEFAULT_AFTER_S: u64 = 60;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum Mode {
-    On { hours: f64, after: u64, rate: f64 },
+    On {
+        hours: f64,
+        after: u64,
+        rate: f64,
+        repo: Option<PathBuf>,
+    },
     Pause,
     Off,
 }
@@ -37,7 +47,12 @@ fn marker(home: &Path) -> PathBuf {
 /// Apply `mode`, then report [`status`]. Fail closed: bad `hours`/`after` → nothing is touched.
 pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Result<Value> {
     match mode {
-        Mode::On { hours, after, rate } => {
+        Mode::On {
+            hours,
+            after,
+            rate,
+            repo,
+        } => {
             if after == 0 || after > 86_400 {
                 bail!("--after: 1..86400 giây");
             }
@@ -48,10 +63,16 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
                 let _ = idle::off(home);
                 return Err(e);
             }
-            write_marker(
-                home,
-                &json!({ "schema": 1, "on": true, "paused": false, "since": now, "hours": hours, "after_s": after }),
-            )?;
+            let mut m = json!({ "schema": 1, "on": true, "paused": false, "since": now, "hours": hours, "after_s": after });
+            if let Some(r) = repo {
+                m["repo"] = json!(canon(&r).to_string_lossy());
+            }
+            if let Err(e) = write_marker(home, &m) {
+                // Without the marker the `--here` scope is lost and auto would run everywhere.
+                let _ = idle::off(home);
+                let _ = delegate::off(home);
+                return Err(e);
+            }
         }
         Mode::Pause | Mode::Off => {
             idle::off(home)?;
@@ -97,6 +118,32 @@ pub(super) fn running(home: &Path) -> bool {
     flag("on") && !flag("paused") && idle::enabled(home) && delegate::enabled(home)
 }
 
+/// Symlinks and `C:\x` vs `\\?\C:\x` resolved, so a hook's cwd and the stored root compare equal.
+fn canon(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// The project root `auto on --here` limited auto to, while the marker is on.
+fn scope(home: &Path) -> Option<PathBuf> {
+    let m = idle::read_json(&marker(home))?;
+    if m["on"].as_bool() != Some(true) {
+        return None;
+    }
+    m["repo"]
+        .as_str()
+        .filter(|r| !r.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Hooks ask this before acting on a session: `true` unless `auto on --here` limited auto to one
+/// project and `cwd` (from the hook input) is missing or outside it.
+pub(super) fn in_scope(home: &Path, cwd: Option<&str>) -> bool {
+    let Some(repo) = scope(home) else { return true };
+    cwd.map(Path::new)
+        .filter(|c| c.is_absolute())
+        .is_some_and(|c| canon(c).starts_with(&repo))
+}
+
 /// Pure over files: what is on right now.
 pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
     let m = idle::read_json(&marker(home));
@@ -122,6 +169,7 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         "lease_until": lease.as_ref().and_then(|l| l["until"].as_u64()),
         "gate": gate,
         "subscription": subscription,
+        "repo": scope(home).map(|r| r.to_string_lossy().into_owned()),
     })
 }
 
@@ -131,8 +179,12 @@ fn text(v: &Value) -> String {
             .as_u64()
             .map(|u| format!(" · lease tới {} UTC", &super::standup::utc_stamp(u)[11..16]))
             .unwrap_or_default();
+        let only = v["repo"]
+            .as_str()
+            .map(|r| format!(" · chỉ dự án {}", r.trim_start_matches(r"\\?\")))
+            .unwrap_or_else(|| " · mọi dự án".into());
         let mut s = format!(
-            "auto: ĐANG CHẠY liên tục{lease} · critic trả lời sau {} s",
+            "auto: ĐANG CHẠY liên tục{lease} · critic trả lời sau {} s{only}",
             v["after_s"].as_u64().unwrap_or(0)
         );
         if let Some(g) = v["gate"].as_str() {
@@ -168,10 +220,10 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
         let mut it = rest.iter().skip(1);
         while let Some(a) = it.next() {
             match a.as_str() {
-                f if allowed.contains(&f) && f != "--json" => {
+                f @ ("--json" | "--here") if allowed.contains(&f) => {}
+                f if allowed.contains(&f) => {
                     it.next();
                 }
-                "--json" if allowed.contains(&"--json") => {}
                 x => bail!("không rõ `{x}`\n{USAGE}"),
             }
         }
@@ -179,7 +231,7 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
     };
     let v = match rest.first().map(String::as_str) {
         Some("on") => {
-            known(&["--hours", "--after", "--usd-per-hour"])?;
+            known(&["--hours", "--after", "--usd-per-hour", "--here"])?;
             let hours = match num(rest, "--hours")? {
                 Some(h) => h
                     .parse::<f64>()
@@ -196,7 +248,23 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
                 Some(a) => delegate::parse_after(&a)?,
                 None => DEFAULT_AFTER_S,
             };
-            set(home, Mode::On { hours, after, rate }, subscription, now)?
+            let repo = if rest.iter().any(|a| a == "--here") {
+                let cwd = std::env::current_dir()?;
+                Some(crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd))
+            } else {
+                None
+            };
+            set(
+                home,
+                Mode::On {
+                    hours,
+                    after,
+                    rate,
+                    repo,
+                },
+                subscription,
+                now,
+            )?
         }
         Some(x @ ("off" | "pause")) => {
             known(&[])?;
@@ -219,6 +287,9 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
         println!("{}", text(&v));
         if rest.first().map(String::as_str) == Some("on") {
             println!("Vẫn hỏi owner: Ship, secret/login, xoá/không hoàn tác, tiền, deploy prod, merge/release, high-risk. Cần hook mới: `8sync ccc kit` rồi mở session mới.");
+            if v["repo"].is_null() {
+                println!("Áp dụng cho mọi session ở mọi dự án trên máy này, kể cả session mở sau. Chỉ một dự án: chạy `8sync ccc auto on --here` trong thư mục dự án đó.");
+            }
             if subscription {
                 println!("Login subscription: lease ≤ 4 giờ, chỉ chạy khi owner có mặt. Chạy không người trông → Console API key.");
             }
@@ -242,7 +313,75 @@ mod tests {
             hours,
             after,
             rate: 5.0,
+            repo: None,
         }
+    }
+
+    #[test]
+    fn here_limits_auto_to_one_project_and_pause_clears_it() {
+        let h = home("here");
+        let repo = h.join("proj");
+        let other = h.join("proj-2");
+        for d in [repo.join("src"), other.clone()] {
+            std::fs::create_dir_all(&d).unwrap();
+        }
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        let here = |r: &Path| Mode::On {
+            hours: 2.0,
+            after: 60,
+            rate: 5.0,
+            repo: Some(r.to_path_buf()),
+        };
+        // nothing on, or on without --here: every project
+        assert!(in_scope(&h, Some(&s(&other))) && in_scope(&h, None));
+        set(&h, on(2.0, 60), false, 1).unwrap();
+        assert!(in_scope(&h, Some(&s(&other))) && status(&h, false, 1)["repo"].is_null());
+        assert!(text(&status(&h, false, 1)).contains("mọi dự án"));
+        let v = set(&h, here(&repo), false, 2).unwrap();
+        assert!(
+            v["repo"].as_str().is_some_and(|r| r.ends_with("proj")),
+            "{v}"
+        );
+        assert!(text(&v).contains("chỉ dự án") && !text(&v).contains(r"\\?\"));
+        assert!(in_scope(&h, Some(&s(&repo))));
+        assert!(
+            in_scope(&h, Some(&s(&repo.join("src")))),
+            "subfolder / worktree in the repo"
+        );
+        assert!(
+            !in_scope(&h, Some(&s(&other))),
+            "sibling sharing a name prefix"
+        );
+        assert!(!in_scope(&h, None) && !in_scope(&h, Some("relative/path")));
+        // the critic answers only in the scoped project (after 60 s: owner silent for years)
+        let tp = h.join("t.jsonl");
+        std::fs::write(&tp, json!({ "type": "user", "timestamp": "2020-01-01T00:00:00Z", "message": { "role": "user", "content": "làm tiếp" } }).to_string() + "\n").unwrap();
+        let ask = |cwd: &Path| {
+            json!({ "tool_name": "AskUserQuestion", "cwd": cwd, "transcript_path": tp,
+            "tool_input": { "questions": [{ "header": "UI", "question": "Màu nút?", "options": [{ "label": "Lime" }, { "label": "Blue" }] }] } }).to_string()
+        };
+        if std::env::var("EIGHTSYNC_DELEGATE").is_err() {
+            assert!(
+                delegate::hook(&ask(&repo), &h).is_some(),
+                "inside the scoped project"
+            );
+        }
+        assert!(
+            delegate::hook(&ask(&other), &h).is_none(),
+            "another project asks its owner"
+        );
+        // a real checkout, cwd written the way Claude Code sends it (no `\\?\`, native separators)
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        set(&h, here(crate_dir), false, 3).unwrap();
+        assert!(in_scope(&h, Some(&s(&crate_dir.join("src")))), "{}", status(&h, false, 3));
+        assert!(!in_scope(&h, Some(&s(&repo))));
+        // a plain `on` widens it again; `pause` drops it
+        set(&h, on(2.0, 60), false, 3).unwrap();
+        assert!(in_scope(&h, Some(&s(&other))));
+        set(&h, here(&repo), false, 4).unwrap();
+        set(&h, Mode::Pause, false, 5).unwrap();
+        assert!(in_scope(&h, Some(&s(&other))) && status(&h, false, 5)["repo"].is_null());
+        let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]
@@ -399,6 +538,7 @@ mod tests {
                 "manual",
                 "on",
                 "paused",
+                "repo",
                 "schema",
                 "subscription"
             ]
@@ -428,6 +568,7 @@ mod tests {
         assert!(run(&s(&["on", "--hours"]), &h, false).is_err());
         assert!(run(&s(&["on", "--after", "0"]), &h, false).is_err());
         assert!(run(&s(&["wat"]), &h, false).is_err());
+        assert!(run(&s(&["off", "--here"]), &h, false).is_err());
         assert!(!marker(&h).exists());
         let _ = std::fs::remove_dir_all(&h);
     }

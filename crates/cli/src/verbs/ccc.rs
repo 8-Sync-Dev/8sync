@@ -478,7 +478,11 @@ fn open(env: &Env, root: &Path, name: &str, refuse_existing: bool, extra: &[Stri
     if transcripts(env, &s.conversation_id).next().is_some() {
         cmd.args(["--resume", &s.conversation_id]);
     } else {
-        cmd.args(["--session-id", &s.conversation_id, "--name", &s.name]);
+        let title = display_name(&claude_dir(env).join("sessions"), &s.name, root);
+        if title != s.name {
+            ui::info(&format!("\"{}\" đang là tên một session ở dự án khác: đặt tên \"{title}\" (cố định, `8sync ccc . {}` vẫn mở đúng phòng này)", s.name, s.name));
+        }
+        cmd.args(["--session-id", &s.conversation_id, "--name", &title]);
     }
     cmd.args(extra).current_dir(root);
     match fence::wrap(&cmd, &env.home) {
@@ -511,6 +515,31 @@ fn cmd_rm(env: &Env, root: &Path, name: &str) -> Result<()> {
 }
 
 /// Claude Code's config dir: `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
+/// Claude Code session names are machine-wide: when a session in another folder already goes by
+/// `name`, Claude Code appends a random suffix ("rd-crispy-sutton"), a different one at every new
+/// launch. Take a stable `<name>-<repo dir>` then (the name stays first, so `room::role` and the
+/// R&D detection still see it). Reads Claude Code's `sessions/<pid>.json` records (undocumented,
+/// 2.1.29x; never the `.key` files beside them); a stale record only costs the stable rename.
+fn display_name(sessions_dir: &Path, name: &str, root: &Path) -> String {
+    let norm = |p: &str| p.replace('\\', "/").trim_end_matches('/').to_lowercase();
+    let here = norm(&root.to_string_lossy());
+    let taken_elsewhere = std::fs::read_dir(sessions_dir).into_iter().flatten().flatten().any(|e| {
+        let p = e.path();
+        p.extension().is_some_and(|x| x == "json")
+            && std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).is_some_and(|r| {
+                let cwd = norm(r["cwd"].as_str().unwrap_or_default());
+                r["name"].as_str() == Some(name) && !(cwd == here || cwd.starts_with(&format!("{here}/")))
+            })
+    });
+    let repo: String = root.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let repo = repo.trim_matches('-');
+    if taken_elsewhere && !repo.is_empty() {
+        format!("{name}-{repo}")
+    } else {
+        name.to_string()
+    }
+}
+
 fn claude_dir(env: &Env) -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| env.home.join(".claude"))
 }
@@ -1884,6 +1913,33 @@ fn hook(rest: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_live_in_another_folder_gets_a_stable_repo_suffix() {
+        let d = std::env::temp_dir().join(format!("8sync-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let rec = |pid: u32, name: &str, cwd: &str| std::fs::write(d.join(format!("{pid}.json")), json!({ "pid": pid, "name": name, "cwd": cwd }).to_string()).unwrap();
+        // Native paths on every OS; records write them the way Claude Code does (the OS separator).
+        let projects = d.join("Projects");
+        let p = |rel: &str| projects.join(rel).to_string_lossy().into_owned();
+        let root = projects.join("su-code");
+        let root = root.as_path();
+        assert_eq!(display_name(&d, "rd", root), "rd", "no records");
+        assert_eq!(display_name(&d.join("missing"), "rd", root), "rd");
+        rec(1, "rd", &p("su-code/apps"));
+        rec(2, "lead", &p("other"));
+        assert_eq!(display_name(&d, "rd", root), "rd", "same project (subfolder) is Claude Code's own duplicate, not ours to rename");
+        rec(3, "rd", &p("tools/content-post-agency"));
+        assert_eq!(display_name(&d, "rd", root), "rd-su-code");
+        assert_eq!(display_name(&d, "rd", root), "rd-su-code", "stable across launches");
+        assert_eq!(display_name(&d, "lead", root), "lead-su-code");
+        rec(4, "core", &format!("{}/su-code-2", projects.to_string_lossy()));
+        assert_eq!(display_name(&d, "core", root), "core-su-code", "a sibling sharing a prefix is another project");
+        std::fs::write(d.join("5.abc.key"), "not json").unwrap();
+        assert_eq!(room::role(&display_name(&d, "rd", root)).0, room::role("rd").0, "role survives the suffix");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     /// `/ship-tick` is the cron prompt the owner-only loops schedule, so it must stay
     /// model-invocable (a `disable-model-invocation` skill never runs from a scheduled

@@ -485,6 +485,9 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
         return None;
     }
     let v: Value = serde_json::from_str(input).ok()?;
+    if !super::auto::in_scope(home, v["cwd"].as_str()) {
+        return None; // `auto on --here` in another project
+    }
     let event = v["hook_event_name"].as_str().unwrap_or_default();
     let sid = v["session_id"].as_str().unwrap_or_default();
     let is_lead = |team: &str| claude_dir(home).join("teams").join(team).join("config.json").is_file();
@@ -873,7 +876,7 @@ mod tests {
         // Nothing on: silent, as before.
         assert_eq!(hook(&input, &home, false), None);
         // `auto on`: the session is its own lead and is handed its own pending task.
-        super::super::auto::set(&home, super::super::auto::Mode::On { hours: 1.0, after: 60, rate: 5.0 }, false, now()).unwrap();
+        super::super::auto::set(&home, super::super::auto::Mode::On { hours: 1.0, after: 60, rate: 5.0, repo: None }, false, now()).unwrap();
         let out = hook(&input, &home, false).expect("standalone session nudged");
         assert!(out.contains("không-ai-rảnh") && out.contains("solo-task-xyz"), "{out}");
         let status = std::fs::read_dir(state_dir(&home).join("status")).unwrap().count();

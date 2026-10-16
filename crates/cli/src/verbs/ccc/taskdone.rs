@@ -164,6 +164,9 @@ pub(super) fn hook(input: &str, home: &Path) -> Option<String> {
         return None;
     }
     let v: Value = serde_json::from_str(input).ok()?;
+    if !super::auto::in_scope(home, v["cwd"].as_str()) {
+        return None;
+    }
     let (team, me) = who(&v)?;
     let task_id = v["task_id"].as_str().unwrap_or_default();
     let subject = v["task_subject"].as_str().unwrap_or_default();
