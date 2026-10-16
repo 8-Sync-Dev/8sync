@@ -233,6 +233,21 @@ fn download_and_replace(asset_url: &str, dst: &Path, expected_digest: Option<&st
     std::fs::create_dir_all(dir)?;
     sweep_old_siblings(dst);
 
+    // No digest from the API (throttled, offline, or still lagging right after
+    // the release was cut): the release also ships `<asset>.sha256` next to the
+    // binary, served by the same non-rate-limited download host.
+    let sidecar;
+    let expected_digest = match expected_digest {
+        Some(d) => Some(d),
+        None => {
+            sidecar = fetch_sidecar_digest(asset_url);
+            if sidecar.is_some() {
+                ui::info("GitHub API digest not available: using the release's .sha256 sidecar");
+            }
+            sidecar.as_deref()
+        }
+    };
+
     let tmp = dir.join(format!(".8sync.new.{}", std::process::id()));
     // `--proto =https --tlsv1.2` matches install.sh: never let the transfer be
     // talked down to plaintext or an obsolete TLS version.
@@ -329,7 +344,8 @@ fn find_asset(release: &serde_json::Value, want_name: &str) -> Option<(String, O
 /// The API is rate-limited to 60 unauthenticated requests per hour per IP, so a
 /// throttled API falls back to the `releases/latest` web redirect — the same
 /// source install.sh/install.ps1 trust. That path has no digest; the download
-/// then reports "checksum NOT VERIFIED" instead of failing.
+/// then reads the `.sha256` sidecar next to the asset and only reports
+/// "checksum NOT VERIFIED" when that is missing too (releases before v0.97.0).
 fn fetch_latest_release() -> Option<(String, String, Option<String>)> {
     if let Some(v) = github_release_json("latest") {
         if let Some(tag) = v.get("tag_name").and_then(|t| t.as_str()) {
@@ -378,6 +394,29 @@ fn tag_from_release_url(url: &str) -> Option<String> {
 /// Digest the GitHub API lists for asset `name` of release `tag` (any asset, not only the binary).
 pub(crate) fn fetch_asset_digest(tag: &str, name: &str) -> Option<String> {
     find_asset(&github_release_json(&format!("tags/{tag}"))?, name)?.1
+}
+
+/// First token of a `sha256sum`-format sidecar (`<hex>  <file>`), as the release
+/// workflow writes it for every binary. GNU sha256sum prefixes the line with `\`
+/// when the file name needed escaping (Git for Windows on a backslash path).
+/// Anything that is not a 64-hex sha256 reads as "absent", never as a digest.
+pub(crate) fn parse_sha256_sidecar(text: &str) -> Option<String> {
+    parse_digest(text.split_whitespace().next()?.trim_start_matches('\\'))
+}
+
+/// Fetch `<asset_url>.sha256` (published since v0.97.0; older releases 404 → None).
+/// Short timeout: this only runs when the API gave no digest, and a missing
+/// sidecar must downgrade to the existing "NOT VERIFIED" warning, not hang.
+fn fetch_sidecar_digest(asset_url: &str) -> Option<String> {
+    let url = format!("{asset_url}.sha256");
+    let out = Command::new("curl")
+        .args(["-fsSL", "--proto", "=https", "--tlsv1.2", "--max-time", "10", &url])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_sha256_sidecar(&String::from_utf8_lossy(&out.stdout))
 }
 
 /// Digest for a pinned tag's asset, read from `releases/tags/<tag>` — the same
@@ -563,7 +602,10 @@ mod tests {
         assert_eq!(super::strip_deleted_suffix(PathBuf::from(r"C:\Users\u\8sync.exe")), PathBuf::from(r"C:\Users\u\8sync.exe"));
     }
 
-    use super::{check_due, find_asset, first_hex64, is_newer, parse_digest, strip_verbatim_drive, tag_from_release_url};
+    use super::{
+        check_due, find_asset, first_hex64, is_newer, parse_digest, parse_sha256_sidecar, strip_verbatim_drive,
+        tag_from_release_url,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -666,6 +708,25 @@ mod tests {
         // No digest anywhere -> None, so the caller warns instead of comparing junk.
         assert_eq!(first_hex64("sha256sum: /tmp/x: No such file or directory\n"), None);
         assert_eq!(first_hex64(""), None);
+    }
+
+    #[test]
+    fn sidecar_parses_sha256sum_format_and_rejects_everything_else() {
+        let hex = "d".repeat(64);
+        // coreutils / shasum -a 256 as the release workflow writes it
+        assert_eq!(parse_sha256_sidecar(&format!("{hex}  8sync-v1.0.0-linux-x86_64\n")), Some(hex.clone()));
+        // GNU escaped form (Git for Windows on a backslash path)
+        assert_eq!(parse_sha256_sidecar(&format!("\\{hex} *8sync-v1.0.0-windows-x86_64.exe\n")), Some(hex.clone()));
+        // Uppercase digest normalises like the API digest does
+        assert_eq!(parse_sha256_sidecar(&format!("{}  x", hex.to_ascii_uppercase())), Some(hex.clone()));
+        // Bare digest with no file name is still a digest
+        assert_eq!(parse_sha256_sidecar(&hex), Some(hex.clone()));
+        // A 404 page, an empty body, a sha512 line, or junk -> None (caller warns)
+        assert_eq!(parse_sha256_sidecar("Not Found"), None);
+        assert_eq!(parse_sha256_sidecar(""), None);
+        assert_eq!(parse_sha256_sidecar(&format!("{}  x", "e".repeat(128))), None);
+        assert_eq!(parse_sha256_sidecar(&format!("sha512:{hex}  x")), None);
+        assert_eq!(parse_sha256_sidecar("  \n\t"), None);
     }
 
     #[test]

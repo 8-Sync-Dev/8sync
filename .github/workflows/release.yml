@@ -159,11 +159,26 @@ jobs:
         shell: bash
         run: bash scripts/size-gate.sh "$ASSET"
 
+      # `<asset>.sha256` (sha256sum format, like the hq-ui tarball) ships next to
+      # every binary so `8sync up` can verify a download when the API's per-asset
+      # `digest` is throttled (60 req/h unauthenticated) or lags the publish.
+      - name: Checksum sidecar
+        shell: bash
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ASSET" > "$ASSET.sha256"
+          else
+            shasum -a 256 "$ASSET" > "$ASSET.sha256"
+          fi
+          cat "$ASSET.sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ASSET }}
-          path: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
           if-no-files-found: error
 
   # The HQ web UI + MCP channel: one platform-independent tarball (Next standalone +

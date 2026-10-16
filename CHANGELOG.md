@@ -4,6 +4,10 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **Release checksums for every binary** — the release workflow now publishes `<asset>.sha256` (sha256sum format, the same sidecar the HQ UI tarball already had) next to each of the five `8sync` binaries.
+### Fixed
+- **`8sync up` "checksum NOT VERIFIED"** right after a release: when the GitHub API lists no per-asset digest yet (it can lag the publish, or the unauthenticated API is throttled and `up` falls back to the web redirect), `8sync up` now reads the `.sha256` sidecar next to the asset and verifies against it. The warning only remains for releases older than this one, which have no sidecar. A sidecar or API digest that does not match is still fatal.
 
 ## [0.96.0] — 2026-10-16
 ### Added
