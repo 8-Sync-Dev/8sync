@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **Kit skill `/sysdesign`** — system design for a real change (new service, storage, queue, cache, scale, AI feature) with The System Design Primer (Donne Martin, CC BY 4.0) as the reading source: a scope gate (when a design is needed at all), a task-question → primer-section map (≤3 sections per task), the primer's 4-step method (use cases/constraints → high level → core components → scale) with mandatory back-of-the-envelope numbers from a named source, an ADR in `docs/adr/` (or `su-code/ship/<slug>/DESIGN.md`) reviewed by the `architect` agent, and a study track (Study guide, one `solutions/system_design/*` exercise a week, Anki decks). The primer is cloned once into `~/.cache/8sync/system-design-primer`; nothing of it is copied into the kit (size gate, licence). Owner (2026-10-16): "System Design Primer … tải thành skills luôn, quy trình đọc". Kit 40 files, `CORE_SKILLS` 16.
 
 ## [0.95.0] — 2026-10-16
 ### Added

@@ -575,7 +575,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 39] = [
+const KIT_FILES: [(&str, &str); 40] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -600,6 +600,7 @@ const KIT_FILES: [(&str, &str); 39] = [
     ("claude/skills/ship-loop/SKILL.md", "skills/ship-loop/SKILL.md"),
     ("claude/skills/autopilot/SKILL.md", "skills/autopilot/SKILL.md"),
     ("claude/skills/ship-tick/SKILL.md", "skills/ship-tick/SKILL.md"),
+    ("claude/skills/sysdesign/SKILL.md", "skills/sysdesign/SKILL.md"),
     ("claude/skills/sprint/SKILL.md", "skills/sprint/SKILL.md"),
     ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
     ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
@@ -765,8 +766,8 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
-const CORE_SKILLS: [&str; 15] =
-    ["ship", "ship-loop", "ship-tick", "autopilot", "sprint", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
+const CORE_SKILLS: [&str; 16] =
+    ["ship", "ship-loop", "ship-tick", "autopilot", "sprint", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "sysdesign", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool, offline: bool) -> Result<()> {
@@ -1906,6 +1907,25 @@ mod tests {
             assert!(body.contains("`CronDelete`"), "{name}: never deletes its tick cron");
         }
         assert!(help::TEXT.contains("/ship-tick [slug]"));
+    }
+
+    /// Owner (2026-10-16): the System Design Primer as a skill "quy trình đọc" — a reading map
+    /// plus the 4-step method, never a copy of the primer (CC BY 4.0, ~110 KB, kit size gate).
+    #[test]
+    fn sysdesign_skill_points_at_the_primer_without_copying_it() {
+        let body = assets::read("claude/skills/sysdesign/SKILL.md").unwrap();
+        let front = body.split("---").nth(1).unwrap();
+        assert!(front.contains("name: sysdesign") && !front.contains("disable-model-invocation"), "{front}");
+        assert!(KIT_FILES.iter().any(|(_, rel)| *rel == "skills/sysdesign/SKILL.md"));
+        assert!(CORE_SKILLS.contains(&"sysdesign"));
+        assert!(body.contains("github.com/donnemartin/system-design-primer") && body.contains("CC BY 4.0"));
+        assert!(body.contains("git clone --depth 1") && body.contains("~/.cache/8sync/system-design-primer"));
+        for step in ["Use cases, constraints, assumptions", "High level design", "Core components", "Scale", "Back-of-the-envelope"] {
+            assert!(body.contains(step), "missing step {step}");
+        }
+        assert!(body.contains("solutions/system_design/") && body.contains("docs/adr/"));
+        assert!(body.len() < 8 * 1024, "keep the skill small: {} bytes", body.len());
+        assert!(help::TEXT.contains("/sysdesign"));
     }
 
     #[test]
