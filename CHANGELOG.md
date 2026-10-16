@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Changed
+- **Ask gate prompt cut from 1,338 to under 800 characters.** When the gate denies an `AskUserQuestion`, Claude Code prints the whole hook prompt in the error line (`PreToolUse:AskUserQuestion hook error: [<prompt>]: <reason>`) and a narrow terminal wraps and cuts it into unreadable fragments (owner 2026-10-16: "check bug … icorrect, worchoices"). The four-rule checklist and the reply format are unchanged in substance; the explanatory sentences moved into a code comment. Re-run `8sync ccc kit` to install it (the gate decision itself was correct: rule 4, Claude picks and continues).
 
 ## [0.95.0] — 2026-10-16
 ### Added
