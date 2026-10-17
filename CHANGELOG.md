@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **The release helper scripts work on Windows as written.** `su-code/handoff/scripts/merge-changelog.py` decoded `git show` with the locale codec, so on Windows (cp1252) a Vietnamese "ờ" in CHANGELOG made it crash with `TypeError … NoneType` unless run with `-X utf8`. It now reads UTF-8. Both scripts write LF instead of CRLF. `bump-version.py` takes the versions as arguments (`<worktree> <old> <new> <date>`) instead of constants edited before each release, and changes nothing when a check fails. CI runs `test-scripts.sh` (a Vietnamese CHANGELOG conflict and a CRLF bump fixture) on all three OSes.
 
 ## [0.98.2] — 2026-10-17
 ### Changed
