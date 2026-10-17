@@ -234,13 +234,13 @@ fn edit<T>(home: &Path, root: &Path, f: impl FnOnce(&mut Project) -> Result<T>) 
     out
 }
 
-/// Every target of the project, open ones first in queue order, then the latest closed ones.
 /// The project the cards of `root` are filed under (a worktree or subfolder shares its repo's).
 /// `auto board --json` prints it so HQ shows one board per project, nested repos included.
 pub(super) fn filed_under(home: &Path, root: &Path) -> Result<String> {
     Ok(key(&read(home)?, root))
 }
 
+/// Every target of the project, open ones first in queue order, then the latest closed ones.
 pub(super) fn list(home: &Path, root: &Path) -> Result<Vec<Target>> {
     let mut book = read(home)?;
     let k = key(&book, root);

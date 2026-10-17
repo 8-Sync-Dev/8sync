@@ -21,7 +21,7 @@ function text(v: unknown, max = MAX_TEXT): string | null {
 }
 
 type Block = { type?: unknown; id?: unknown; name?: unknown; input?: unknown; tool_use_id?: unknown };
-type Row = { type?: unknown; timestamp?: unknown; message?: { content?: unknown } };
+type Row = { type?: unknown; timestamp?: unknown; isMeta?: unknown; message?: { id?: unknown; content?: unknown } };
 
 function questionsOf(input: unknown): AskQuestion[] {
   const qs = (input as { questions?: unknown } | null)?.questions;
@@ -52,10 +52,20 @@ function permissionWhat(name: string, input: unknown): string | null {
   return name === "ExitPlanMode" ? "Duyệt plan để bắt đầu làm" : null;
 }
 
-/** `lines`: transcript JSONL lines, oldest first (a tail read may start mid-line: unparsable lines are skipped). */
+/**
+ * `lines`: transcript JSONL lines, oldest first (a tail read may start mid-line: unparsable lines are skipped).
+ * Claude Code writes each block of one assistant message as its own line (same `message.id`), and the
+ * results of its calls as later `user` lines. Only the newest message with a tool call counts: an open
+ * call in an older message, or one followed by a typed prompt or newer assistant text, is left over
+ * from a crash or a resume, not what the session waits on now.
+ */
 export function pendingAsk(lines: string[]): Ask | null {
   const answered = new Set<string>();
   let fallback: Ask | null = null;
+  /** Message id of the newest call found: older lines count only while they belong to it. */
+  let only: string | null | undefined;
+  /** Message id of assistant text newer than any call (undefined: none seen). */
+  let textAfter: string | null | undefined;
   for (let i = lines.length - 1; i >= 0; i--) {
     let row: Row;
     try {
@@ -63,25 +73,46 @@ export function pendingAsk(lines: string[]): Ask | null {
     } catch {
       continue;
     }
+    if (row?.isMeta === true) continue;
     const content = row?.message?.content;
-    if (!Array.isArray(content)) continue;
-    if (row.type === "user") {
-      for (const b of content as Block[]) if (b?.type === "tool_result" && typeof b.tool_use_id === "string") answered.add(b.tool_use_id);
+    if (row?.type === "user") {
+      // A typed prompt: whatever is older is history.
+      if (typeof content === "string") return fallback;
+      if (!Array.isArray(content)) continue;
+      let results = 0;
+      for (const b of content as Block[]) {
+        if (b?.type === "tool_result" && typeof b.tool_use_id === "string") {
+          answered.add(b.tool_use_id);
+          results++;
+        }
+      }
+      if (!results && (content as Block[]).some((b) => b?.type === "text")) return fallback;
       continue;
     }
-    if (row.type !== "assistant") continue;
+    if (row?.type !== "assistant" || !Array.isArray(content)) continue;
+    const mid = typeof row.message?.id === "string" ? row.message.id : null;
+    if (only !== undefined && (mid == null || mid !== only)) return fallback;
     const calls = (content as Block[]).filter((b) => b?.type === "tool_use" && typeof b.id === "string" && typeof b.name === "string");
-    if (!calls.length) continue;
-    // Everything before an answered call is history: the session moved past it.
+    if (!calls.length) {
+      if (only === undefined && textAfter === undefined && (content as Block[]).some((b) => b?.type === "text")) textAfter = mid;
+      continue;
+    }
+    // The model wrote on in a newer message: this call was abandoned.
+    if (only === undefined && textAfter !== undefined && (textAfter == null || textAfter !== mid)) return null;
+    only = mid;
     const open = calls.filter((b) => !answered.has(b.id as string));
-    if (!open.length) return fallback;
+    if (!open.length) {
+      // A message without an id cannot be followed further back.
+      if (mid == null) return fallback;
+      continue;
+    }
     const at = typeof row.timestamp === "string" ? Date.parse(row.timestamp) || null : null;
     const ask = open.find((b) => b.name === "AskUserQuestion");
     if (ask) {
       const questions = questionsOf(ask.input);
       if (questions.length) return { kind: "question", questions, at };
     }
-    // Parallel calls are separate lines: keep looking for an AskUserQuestion among them.
+    // Parallel calls are separate lines of the same message: keep looking for an AskUserQuestion among them.
     const b = open[open.length - 1];
     fallback ??= { kind: "permission", tool: b.name as string, what: permissionWhat(b.name as string, b.input), at };
   }
@@ -103,6 +134,7 @@ export const TOOL_ASK: Record<string, string> = {
   NotebookEdit: "Xin quyền sửa notebook",
   WebFetch: "Xin quyền mở trang",
   ExitPlanMode: "Chờ anh duyệt plan",
+  EnterWorktree: "Xin quyền tạo worktree",
 };
 
 /** One line for a room card / roster row: the first question, or what permission it asks for. */

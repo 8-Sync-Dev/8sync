@@ -57,8 +57,9 @@ export function readAsk(sessionId: string, cwd: string | null, root = claudeDir(
   try {
     fd = fs.openSync(f, "r");
     const buf = Buffer.alloc(st.size - start);
-    fs.readSync(fd, buf, 0, buf.length, start);
-    body = buf.toString("utf8");
+    // The session may be writing: use what was read, not the whole buffer.
+    const n = fs.readSync(fd, buf, 0, buf.length, start);
+    body = buf.subarray(0, n).toString("utf8");
   } catch {
     return null;
   } finally {

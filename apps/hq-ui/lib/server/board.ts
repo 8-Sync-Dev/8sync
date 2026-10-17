@@ -32,7 +32,13 @@ export async function readBoard(project: ProjectInfo): Promise<ProjectBoard> {
   }
 }
 
-const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+/** Compare paths across `\` and `/`; Rust's canonicalize on Windows adds the `\\?\` prefix to `filed`. */
+const norm = (p: string) =>
+  p
+    .replace(/\\/g, "/")
+    .replace(/^\/\/\?\//, "")
+    .replace(/\/+$/, "")
+    .toLowerCase();
 
 /**
  * One row per board: rooms in a repo and its worktrees read the same board, named after the root it

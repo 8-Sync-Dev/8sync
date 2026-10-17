@@ -16,7 +16,11 @@ export const isTeamAction = (v: unknown): v is TeamAction => v === "up" || v ===
 /** Starting four background sessions takes a while; stopping them is quick. */
 const TIMEOUT_MS = 180_000;
 
-export type TeamResult = { ok: boolean; output: string; error: string | null };
+/** `busy`: another team run is still going in this root (a second tab, a double click). */
+export type TeamResult = { ok: boolean; output: string; error: string | null; busy?: boolean };
+
+/** Roots with a team run in flight: `--clear-ss` deletes sessions, so two runs must never overlap. */
+const inFlight = new Set<string>();
 
 /** The last lines of the CLI's own report, without colour codes. */
 export function tail(text: string, lines = 24): string {
@@ -29,9 +33,16 @@ export function tail(text: string, lines = 24): string {
 }
 
 export async function runTeam(root: string, action: TeamAction): Promise<TeamResult> {
-  const r = await run("8sync", teamArgs(action), TIMEOUT_MS, root);
-  const output = tail(`${r.stdout}\n${r.stderr}`);
-  if (r.ok) return { ok: true, output, error: null };
-  const error = r.killed ? `8sync không trả lời sau ${TIMEOUT_MS / 1000} s; xem lại văn phòng trước khi bấm lần nữa` : tail(r.stderr, 6) || "8sync ccc auto thất bại";
-  return { ok: false, output, error };
+  const key = root.replace(/\\/g, "/").toLowerCase();
+  if (inFlight.has(key)) return { ok: false, output: "", error: "team của dự án này đang mở/dừng, đợi lần trước xong", busy: true };
+  inFlight.add(key);
+  try {
+    const r = await run("8sync", teamArgs(action), TIMEOUT_MS, root);
+    const output = tail(`${r.stdout}\n${r.stderr}`);
+    if (r.ok) return { ok: true, output, error: null };
+    const error = r.killed ? `8sync không trả lời sau ${TIMEOUT_MS / 1000} s; xem lại văn phòng trước khi bấm lần nữa` : tail(r.stderr, 6) || "8sync ccc auto thất bại";
+    return { ok: false, output, error };
+  } finally {
+    inFlight.delete(key);
+  }
 }

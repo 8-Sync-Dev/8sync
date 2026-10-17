@@ -26,5 +26,5 @@ export async function POST(req: Request) {
   const known = [...live, ...added].find((r) => r.toLowerCase() === want);
   if (!known) return bad("thư mục này không có trong HQ: thêm nó ở mục Projects trước", 409);
   const r = await runTeam(known, action);
-  return json(r, r.ok ? 200 : 502);
+  return json(r, r.ok ? 200 : r.busy ? 409 : 502);
 }

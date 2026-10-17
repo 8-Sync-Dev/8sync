@@ -8,7 +8,9 @@ import { terminalLaunchers } from "@/lib/server/attach";
 
 const SID = "04d7c8d5-7473-44e7-bab9-0606b4db5a01";
 
-const assistant = (blocks: unknown[], ts = "2026-10-17T13:44:44.649Z") => JSON.stringify({ type: "assistant", timestamp: ts, message: { content: blocks } });
+// Claude Code writes every block of one assistant message as its own line, sharing `message.id`.
+const assistant = (blocks: unknown[], ts = "2026-10-17T13:44:44.649Z", id?: string) =>
+  JSON.stringify({ type: "assistant", timestamp: ts, message: { ...(id ? { id } : {}), content: blocks } });
 const result = (id: string) => JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
 // The shape Claude Code 2.1.296 wrote for the game lead's Ship question (UAT 2026-10-17).
 const shipAsk = (id = "toolu_ship") => ({
@@ -60,8 +62,26 @@ describe("pendingAsk", () => {
   });
 
   it("prefers the AskUserQuestion among parallel open calls, and skips a cut first line", () => {
-    const lines = ['_use","id":"x"}]}}', assistant([shipAsk("q1")]), assistant([{ type: "tool_use", id: "b1", name: "Bash", input: { description: "list" } }])];
+    const lines = ['_use","id":"x"}]}}', assistant([shipAsk("q1")], undefined, "msg_1"), assistant([{ type: "tool_use", id: "b1", name: "Bash", input: { description: "list" } }], undefined, "msg_1")];
     expect(pendingAsk(lines)?.kind).toBe("question");
+  });
+
+  it("finds an open question even when a sibling call of the same message already has its result", () => {
+    const lines = [assistant([shipAsk("q1")], undefined, "msg_1"), assistant([{ type: "tool_use", id: "b1", name: "Bash", input: {} }], undefined, "msg_1"), result("b1")];
+    expect(pendingAsk(lines)?.kind).toBe("question");
+  });
+
+  it("ignores a call left open by a crash or resume", () => {
+    const bash = { type: "tool_use", id: "b9", name: "Bash", input: { description: "now" } };
+    // An older message's open question is not what a newer permission prompt waits on.
+    expect(pendingAsk([assistant([shipAsk("old")], undefined, "msg_1"), assistant([bash], undefined, "msg_2")])).toMatchObject({ kind: "permission", what: "now" });
+    // A typed prompt after it.
+    expect(pendingAsk([assistant([shipAsk()], undefined, "msg_1"), JSON.stringify({ type: "user", message: { content: "tiếp tục đi" } })])).toBeNull();
+    expect(pendingAsk([assistant([shipAsk()], undefined, "msg_1"), JSON.stringify({ type: "user", message: { content: [{ type: "text", text: "go" }] } })])).toBeNull();
+    // The model wrote on in a newer message.
+    expect(pendingAsk([assistant([shipAsk()], undefined, "msg_1"), assistant([{ type: "text", text: "moving on" }], undefined, "msg_2")])).toBeNull();
+    // Its own text in the same message does not count; injected meta lines are skipped.
+    expect(pendingAsk([assistant([{ type: "text", text: "asking" }], undefined, "msg_1"), assistant([shipAsk()], undefined, "msg_1"), JSON.stringify({ type: "user", isMeta: true, message: { content: [{ type: "text", text: "skill body" }] } })])?.kind).toBe("question");
   });
 
   it("caps long text", () => {

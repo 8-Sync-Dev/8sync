@@ -32,6 +32,12 @@ describe("onePerBoard", () => {
     expect(solo).toMatchObject([{ root: `${repo}\\.claude\\worktrees\\card-5`, name: "game" }]);
   });
 
+  it("matches Rust's canonical \\\\?\\ path on Windows to the room's own root", () => {
+    const repo = "C:\\s\\game";
+    const out = onePerBoard([row(`${repo}\\.claude\\worktrees\\card-5`, "\\\\?\\C:\\s\\game"), row(repo, "\\\\?\\C:\\s\\game")]);
+    expect(out).toMatchObject([{ root: repo, name: "game" }]);
+  });
+
   it("falls back to the outermost root when 8sync does not say where the board is filed", () => {
     const out = onePerBoard([row("/a", null), row("/a/b", null), row("/c", null, "8sync không trả lời")]);
     expect(out.map((b) => b.root)).toEqual(["/a", "/c"]);
@@ -62,5 +68,18 @@ describe("team", () => {
     expect((await post({ root: "C:\\Windows", action: "up" })).status).toBe(409);
     expect((await post({ root: "C:\\repo\\game", action: "rm -rf" })).status).toBe(422);
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("refuses a second run in the same root while one is in flight (a second tab, a double click)", async () => {
+    let finish: (v: unknown) => void = () => {};
+    run.mockImplementationOnce(() => new Promise((r) => (finish = r)) as never);
+    const first = post({ root: "C:\\repo\\game", action: "clean" });
+    await new Promise((r) => setTimeout(r, 10));
+    const second = await post({ root: "C:\\repo\\game", action: "up" });
+    expect(second.status).toBe(409);
+    finish({ ok: true, stdout: "done", stderr: "" });
+    expect((await first).status).toBe(200);
+    run.mockResolvedValueOnce({ ok: true, stdout: "again", stderr: "" });
+    expect((await post({ root: "C:\\repo\\game", action: "up" })).status).toBe(200);
   });
 });

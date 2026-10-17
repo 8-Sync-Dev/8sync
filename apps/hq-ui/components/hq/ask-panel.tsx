@@ -53,7 +53,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
       await makeApi(token)(`/api/sessions/${encodeURIComponent(r.session_id)}/attach`, { method: "POST" });
       toast.success(`Đã mở terminal cho ${r.label}: chọn đáp án rồi Enter`);
     } catch (e) {
-      toast.error(`Không mở được terminal (${(e as Error).message}). Chạy lệnh đã chép trong PowerShell/Terminal.`);
+      toast.error(`Không mở được terminal (${(e as Error).message}). Chạy trong PowerShell/Terminal: ${cmd}`);
       if (cmd) void copy(cmd, false);
     } finally {
       setBusy(false);
