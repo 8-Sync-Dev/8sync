@@ -5,7 +5,7 @@ members = ["crates/cli", "crates/ccc-core"]
 [workspace.package]
 version = "0.98.4"
 edition = "2021"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 authors = ["8sync-dev <8sync.dev.1111@gmail.com>"]
 repository = "https://github.com/8-Sync-Dev/su-code"
 
