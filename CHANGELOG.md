@@ -4,6 +4,10 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **Site: the one-project steps read 1 to 7 again** (they read 2, 4, 6… because the list shared a CSS counter with another list).
+- **Site: shorter steps, plus a reference you can expand,** "Every command and option". It lists every `auto` command with its flags (`--roles`, `--loop`, `--here`, `--now`, `--prio`, `--clear-ss`, `--after`, `--hours`, `--usd-per-hour`, …), grouped as Team / Work and board / Owner away / Sessions. Checked in Edge at 1440 px and 500 px.
+
 ### Added
 - **A room's real terminal opens inside HQ.** "Mở terminal" (room brief, "Anh cần trả lời") now opens a wide panel with the room's live Claude Code screen instead of a separate window. You can type a message, move between answers with the arrow keys and press Enter, and scroll back. Closing the panel leaves the room running in the background. "Mở cửa sổ riêng" still opens a native window.
   - How it works: Claude Code documents no way to send input to a background session from outside, so the new `8sync ccc term <session-id>` runs `claude attach` inside a pseudo-terminal (ConPTY on Windows, crate `portable-pty`, MIT). It relays the screen over stdin/stdout. The HQ web asset stays pure JS, with no native module.
