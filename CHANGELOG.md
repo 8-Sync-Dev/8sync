@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.2] — 2026-10-17
 ### Changed
 - **HQ Văn phòng shows what every room is doing right now.** A new "Đang làm gì" list puts one line per room in attention order (waiting for you, blocked, working, holding a card, waiting for a card, idle): role icon, model, the board card it holds (`#id`, title, lane), its latest note or `8sync ls` line and how long ago. A room with nothing to do for over a minute is marked. Each state is an icon plus words, never colour alone.
   - The room scenes follow that state only: the session's desk types while it runs, raises a hand while Claude waits for you, shows the alert pose when its card is blocked, sits still when idle, and cheers once after it moves its card on. Empty specialist seats are no longer drawn (they dozed in a loop and said nothing); a seat shows only while a subagent runs or just finished. Unmeasured stats ("chưa đo") are hidden.
