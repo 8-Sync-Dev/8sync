@@ -1,4 +1,4 @@
-//! `8sync ccc auto up [--roles lead,dev,qa,review] [--loop 10m] [--hours N] [--usd-per-hour X]`
+//! `8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 10m] [--hours N] [--usd-per-hour X]`
 //! and `auto down`: the whole team in one command, no terminal per room.
 //!
 //! `up` turns `auto on --here` for the project, then makes sure every role room runs as a Claude
@@ -30,7 +30,7 @@ use serde_json::Value;
 
 use super::{auto, idle, room};
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [--roles lead,dev,qa,review] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] | down";
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] | down";
 
 /// `auto up …` / `auto down`: the verbs this module owns.
 pub(super) fn wants(rest: &[String]) -> bool {
@@ -70,6 +70,9 @@ pub(super) struct Team<'a> {
     pub has_transcript: &'a dyn Fn(&str) -> bool,
     /// The display name a new room gets (machine-wide clash → `<name>-<repo>`).
     pub title: &'a dyn Fn(&str) -> String,
+    /// When the kit last wrote Claude Code's settings (ms): a session reads its hooks once at start,
+    /// so a room started before this runs the old hooks until it restarts.
+    pub kit_at: Option<u64>,
 }
 
 /// A session from `claude agents --json`.
@@ -78,6 +81,10 @@ pub(super) struct Live {
     pub id: String,
     pub name: String,
     pub background: bool,
+    /// `startedAt` (ms), 0 when Claude Code did not say.
+    pub started: u64,
+    /// Not `status: idle` (mid-turn, on a prompt, unknown): `--clear-ss` never stops it to reload the kit.
+    pub busy: bool,
 }
 
 pub(super) fn live(json: &str) -> Result<Vec<Live>> {
@@ -94,6 +101,9 @@ pub(super) fn live(json: &str) -> Result<Vec<Live>> {
                 id: id.to_string(),
                 name: a["name"].as_str().unwrap_or_default().to_string(),
                 background: a["kind"].as_str() == Some("background"),
+                started: a["startedAt"].as_u64().unwrap_or(0),
+                // Anything but a plain `idle` (mid-turn, waiting on a prompt, unknown): never stopped to reload.
+                busy: a["status"].as_str() != Some("idle"),
             })
         })
         .collect())
@@ -184,6 +194,7 @@ pub(super) struct Row {
     pub short: String,
 }
 
+#[derive(Clone)]
 pub(super) struct Opts {
     pub roles: Vec<String>,
     pub every: u64,
@@ -201,7 +212,14 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
         match a.as_str() {
             "--roles" => {
                 let mut v: Vec<String> = Vec::new();
-                for r in value()?.split(',').map(str::trim).filter(|r| !r.is_empty()) {
+                let raw = value()?;
+                // Presets: `small` = the default team, `full` = a whole product team (8 rooms, ~8× quota).
+                let list = match raw.trim() {
+                    "small" => room::DEFAULT_TEAM.join(","),
+                    "full" => room::FULL_TEAM.join(","),
+                    _ => raw,
+                };
+                for r in list.split(',').map(str::trim).filter(|r| !r.is_empty()) {
                     if !v.iter().any(|x| x == r) {
                         v.push(r.to_string());
                     }
@@ -318,7 +336,29 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
             Some(lane) => goal_prompt(name, lane, o.every),
             None => auto::loop_prompt(name, o.every, false),
         };
-        let p = plan(&s.conversation_id, &title, &before, &everywhere, (t.has_transcript)(&s.conversation_id));
+        let mut p = plan(&s.conversation_id, &title, &before, &everywhere, (t.has_transcript)(&s.conversation_id));
+        // `--clear-ss` also brings running rooms up to the kit: Claude Code reads hooks once at start,
+        // so a background room started before the kit's last write is stopped and resumed (same
+        // conversation, its goal comes back). Interactive sessions are never touched.
+        let mut reloaded = false;
+        if let Plan::Running(id) = &p {
+            let on_old_kit = o.clear
+                && t.kit_at.is_some_and(|k| before.iter().chain(&everywhere).find(|l| l.id == *id).is_some_and(|l| l.background && !l.busy && l.started > 0 && l.started < k))
+                // Resume needs the conversation on disk; a room mid-turn is left for the next run.
+                && (t.has_transcript)(id);
+            if on_old_kit {
+                if *id != s.conversation_id {
+                    t.store.rebind(name, id)?;
+                }
+                t.claude.run(&["stop".into(), id.chars().take(8).collect()])?;
+                p = Plan::Resume;
+                reloaded = true;
+            }
+        }
+        let conv = match &p {
+            Plan::Resume if reloaded => t.store.load().sessions.iter().find(|x| &x.name == name).map_or(s.conversation_id.clone(), |x| x.conversation_id.clone()),
+            _ => s.conversation_id.clone(),
+        };
         let (state, short) = match &p {
             Plan::Running(id) => {
                 if *id != s.conversation_id {
@@ -329,7 +369,7 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
                 (format!("đang chạy · gửi loop ({when})"), id.chars().take(8).collect())
             }
             _ => {
-                let out = t.claude.run(&argv(&p, &s.conversation_id, &title, model, &prompt))?;
+                let out = t.claude.run(&argv(&p, &conv, &title, model, &prompt))?;
                 if untrusted(&out) {
                     bail!("Claude Code chưa trust thư mục {}: mở `claude` ở đó một lần, chấp nhận câu hỏi trust, rồi chạy lại `8sync ccc auto up` (phòng đã mở vẫn chạy)", t.root.display());
                 }
@@ -339,7 +379,8 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
                 // `--resume <id> --bg` forks a new session id too (seen live on 2.1.296: cd1ecaeb →
                 // b1f0bf3e), so both get the registry pointed at what Claude Code runs.
                 started.push((name.clone(), short.clone()));
-                ((if p == Plan::Resume { "chạy lại nền" } else { "mở nền" }).to_string(), short)
+                let state = if reloaded { "khởi động lại nền (nạp kit mới)" } else if p == Plan::Resume { "chạy lại nền" } else { "mở nền" };
+                (state.to_string(), short)
             }
         };
         rows.push(Row { name: name.clone(), role, model: model.unwrap_or("mặc định").into(), state, short });
@@ -458,7 +499,7 @@ mod tests {
         assert_eq!(short_id("Workspace not trusted. Run `claude` in C:\\x once"), None);
         assert!(untrusted("Workspace not trusted. Run `claude` in C:\\x once and accept the trust prompt"));
         let l = live(&format!("[{},{}]", agent(DEV_BG, "dev", "background"), agent("11111111-1111-4111-8111-111111111111", "core", "interactive"))).unwrap();
-        assert_eq!(l[0], Live { id: DEV_BG.into(), name: "dev".into(), background: true });
+        assert_eq!(l[0], Live { id: DEV_BG.into(), name: "dev".into(), background: true, started: 1, busy: false });
         assert!(!l[1].background);
         assert!(live("error: unknown option '--json'").unwrap_err().to_string().contains("không trả JSON"));
         assert!(live(&format!("[{}]", agent("--discard-unpushed", "x", "background"))).unwrap().is_empty(), "never an id that reads as a flag");
@@ -466,16 +507,16 @@ mod tests {
 
     #[test]
     fn plan_skips_live_rooms_and_resumes_stopped_ones() {
-        let l = vec![Live { id: DEV_BG.into(), name: "dev".into(), background: true }, Live { id: "x".into(), name: "qa".into(), background: false }];
+        let l = vec![Live { id: DEV_BG.into(), name: "dev".into(), background: true, started: 0, busy: false }, Live { id: "x".into(), name: "qa".into(), background: false, started: 0, busy: false }];
         assert_eq!(plan(DEV_BG, "dev", &l, &l, true), Plan::Running(DEV_BG.into()));
         assert_eq!(plan("other", "dev", &l, &l, false), Plan::Running(DEV_BG.into()), "a background room with the name counts");
         assert_eq!(plan("other", "qa", &l, &l, true), Plan::Resume, "an interactive session elsewhere with the same name does not");
         assert_eq!(plan("other", "qa", &l, &l, false), Plan::Start);
         // the room's id open in a terminal in another folder: never resumed a second time
         let rd = "ff3e2a54-0000-4000-8000-000000000001";
-        let elsewhere = vec![Live { id: rd.into(), name: "rd-game".into(), background: false }];
+        let elsewhere = vec![Live { id: rd.into(), name: "rd-game".into(), background: false, started: 0, busy: false }];
         assert_eq!(plan(rd, "rd", &[], &elsewhere, true), Plan::Running(rd.into()));
-        let bg_elsewhere = vec![Live { id: "e1".into(), name: "dev".into(), background: true }];
+        let bg_elsewhere = vec![Live { id: "e1".into(), name: "dev".into(), background: true, started: 0, busy: false }];
         assert_eq!(plan("other", "dev", &[], &bg_elsewhere, false), Plan::Start, "a same-named room of another project is not ours");
         let a = argv(&Plan::Start, "id-1", "dev", Some("sonnet"), "line one\nline  two");
         assert_eq!(a, ["--bg", "--name", "dev", "--permission-mode", "auto", "--model", "sonnet", "line one line two"]);
@@ -485,10 +526,14 @@ mod tests {
     }
 
     #[test]
-    fn options_default_to_the_four_lane_team() {
+    fn options_default_to_the_five_room_team_and_full_opens_eight() {
         let o = parse(&[]).unwrap();
-        assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,dev,qa,review".into(), 10, None));
+        assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,dev,qa,review,rd".into(), 10, None));
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(parse(&v(&["--roles", "full"])).unwrap().roles.join(","), "lead,ba,rd,dev,dev2,ui,qa,review");
+        assert_eq!(parse(&v(&["--roles", "small"])).unwrap().roles.len(), 5);
+        // Every room of the full team has a role.
+        assert!(room::FULL_TEAM.iter().all(|n| room::find(n).is_some()), "{:?}", room::FULL_TEAM);
         let o = parse(&v(&["--roles", "lead, ba,dev,dev2,qc,dev", "--loop", "2m", "--usd-per-hour", "3"])).unwrap();
         assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,ba,dev,dev2,qc".into(), 2, Some(3.0)));
         assert!(parse(&v(&["--roles"])).is_err());
@@ -517,15 +562,15 @@ mod tests {
 
     #[test]
     fn junk_is_every_background_session_no_room_keeps() {
-        let bg = |id: &str, name: &str| Live { id: id.into(), name: name.into(), background: true };
+        let bg = |id: &str, name: &str| Live { id: id.into(), name: name.into(), background: true, started: 0, busy: false };
         let all = vec![
             bg("d1", "dev"),
             bg("d2", "dev"),
-            Live { id: "l1".into(), name: "lead".into(), background: false },
+            Live { id: "l1".into(), name: "lead".into(), background: false, started: 0, busy: false },
             bg("l2", "lead"),
             bg("q1", "qa"),
             bg("u1", "ui"),
-            Live { id: "n1".into(), name: "notes".into(), background: false },
+            Live { id: "n1".into(), name: "notes".into(), background: false, started: 0, busy: false },
         ];
         // dev: registry id gone → first background "dev" kept; lead: registry id is the terminal;
         // qa: registry id itself. Duplicates, other names and nothing interactive are junk.
@@ -533,6 +578,47 @@ mod tests {
         let ids: Vec<&str> = junk(&all, &keep).iter().map(|l| l.id.as_str()).collect();
         assert_eq!(ids, ["d2", "l2", "u1"]);
         assert!(junk(&all[..1], &keep).is_empty());
+    }
+
+    #[test]
+    fn clear_ss_reloads_a_background_room_that_runs_an_older_kit() {
+        // Owner 2026-10-17: after an update, `auto up --clear-ss` should bring the running team onto it.
+        let (h, root) = tmp("reload");
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        let lead = store.touch("lead", false).unwrap();
+        store.touch("dev", false).unwrap();
+        store.rebind("dev", DEV_BG).unwrap();
+        let (l, d) = (agent(&lead.conversation_id, "lead", "interactive"), agent(DEV_BG, "dev", "background"));
+        let forked = agent("5a5a5a5a-0000-4000-8000-000000000009", "dev", "background");
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{forked}]")]), bg: "backgrounded · 3698e3a6 · {name}".into() };
+        // Both sessions started at 1 ms; the kit wrote settings at 1000 ms.
+        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: Some(1000) };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true };
+        let (_, _, rows) = up(&t, &o, 1).unwrap();
+        let calls = fake.calls.borrow();
+        let stops: Vec<_> = calls.iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
+        assert_eq!(stops, [DEV_BG[..8].to_string()], "only the background room; the owner's interactive lead is never touched");
+        assert!(calls.iter().any(|c| c[0] == "--resume" && c[1] == DEV_BG), "same conversation, resumed");
+        assert!(rows[1].state.starts_with("khởi động lại nền"), "{:?}", rows[1]);
+        assert!(rows[0].state.starts_with("đang chạy"));
+        assert_eq!(store.load().sessions.iter().find(|s| s.name == "dev").unwrap().conversation_id, "5a5a5a5a-0000-4000-8000-000000000009", "registry follows the fork");
+        // Without --clear-ss a running room is left alone, old kit or not.
+        drop(calls);
+        fake.calls.borrow_mut().clear();
+        *fake.agents.borrow_mut() = vec![format!("[{l},{forked}]")];
+        let o2 = Opts { clear: false, ..o.clone() };
+        up(&t, &o2, 2).unwrap();
+        assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop"));
+        // Review 2026-10-18: a room mid-turn, or one whose transcript is gone, is never stopped to reload.
+        let busy = agent("5a5a5a5a-0000-4000-8000-000000000009", "dev", "background").replace("\"idle\"", "\"running\"");
+        *fake.agents.borrow_mut() = vec![format!("[{l},{busy}]")];
+        up(&t, &o, 3).unwrap();
+        assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop"), "busy room left running");
+        *fake.agents.borrow_mut() = vec![format!("[{l},{forked}]")];
+        let gone = Team { has_transcript: &|_: &str| false, ..t };
+        up(&gone, &o, 4).unwrap();
+        assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop"), "no transcript: no resume possible, left running");
+        let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]
@@ -561,7 +647,7 @@ mod tests {
             ]),
             bg: String::new(),
         };
-        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
         let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true };
         let (_, gone, rows) = up(&t, &o, 1).unwrap();
         let g: Vec<_> = gone.iter().map(|g| (g.name.as_str(), g.short.as_str(), g.kept.is_some())).collect();
@@ -598,7 +684,7 @@ mod tests {
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![first, after]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
         let qa_id = qa.conversation_id.clone();
         let has = move |id: &str| id == qa_id;
-        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &has, title: &|n: &str| n.to_string() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &has, title: &|n: &str| n.to_string(), kit_at: None };
         let o = Opts { roles: vec!["lead".into(), "dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false };
         let (status, _, rows) = up(&t, &o, 1_000).unwrap();
         assert_eq!(status["on"], true);
@@ -626,7 +712,7 @@ mod tests {
         let (h, root) = tmp("trust");
         let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec!["[]".into()]), bg: "Workspace not trusted. Run `claude` in C:\\proj once and accept the trust prompt".into() };
-        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
         let o = Opts { roles: vec!["dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false };
         let e = up(&t, &o, 1).unwrap_err().to_string();
         assert!(e.contains("chưa trust") && e.contains("8sync ccc auto up"), "{e}");

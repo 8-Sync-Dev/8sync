@@ -27,6 +27,10 @@ export type Card = {
   /** Latest note: what happened last. */
   note: { room: string | null; text: string; at: number } | null;
   added: number;
+  /** Room that queued the card; null = the owner. */
+  from?: string | null;
+  /** 0 (most urgent) .. 3; null = not set, claimed as P2 (target.rs `rank`). */
+  prio?: number | null;
 };
 
 export type Closed = { id: number; text: string; state: "done" | "dropped"; by: string | null; at: number | null };
@@ -38,6 +42,10 @@ const ms = (v: unknown): number | null => {
   const s = num(v);
   return s === null ? null : s * 1000;
 };
+/** `prio` of a card: 0..3, anything else is "not set". */
+export const prioOf = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 3 ? v : null);
+/** What `claim` orders by: the card's own priority, else P2. */
+export const rankOf = (c: Pick<Card, "prio">): number => c.prio ?? 2;
 const isLane = (v: unknown): v is LaneKey => LANES.some((l) => l.key === v);
 
 function card(v: unknown, lane: LaneKey): Card | null {
@@ -61,6 +69,8 @@ function card(v: unknown, lane: LaneKey): Card | null {
     bounces: num(o.bounces) ?? 0,
     note: last && str(last.text) ? { room: str(last.room), text: str(last.text)!, at: ms(last.at) ?? 0 } : null,
     added: ms(o.added) ?? 0,
+    from: str(o.from),
+    prio: prioOf(o.prio),
   };
 }
 

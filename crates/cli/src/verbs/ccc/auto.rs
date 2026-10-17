@@ -38,9 +38,9 @@ use serde_json::{json, Value};
 use super::{delegate, idle, target};
 
 const USAGE: &str = "usage: 8sync ccc auto on [--here] [--loop [10m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json]
-       8sync ccc auto up [--roles lead,dev,qa,review] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] | down
-       8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id>
-       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>] [--timeout 540] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] | note <id> \"…\"   [--json]
+       8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] | down
+       8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--prio P0..P3] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id>
+       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>] [--timeout 540] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
 pub(super) const DEFAULT_AFTER_S: u64 = 60;
 pub(super) const DEFAULT_LOOP_MIN: u64 = 10;
@@ -299,7 +299,7 @@ Mỗi nhịp:
    từ lúc bật) → nghỉ nhịp này, giữ loop: trần tự hạ khi cửa sổ reset hoặc thời gian trôi.
    Board (card theo cột, `8sync ccc auto board`): phòng có cột (lead/ba: backlog · dev/ui/api/core: ready · qa · review)
    chạy `8sync ccc auto claim --json`; có `card` → nhịp này chỉ làm card đó rồi chuyển cột, không card → bước 2.
-   - backlog: viết AC + một lệnh check → `8sync ccc auto move <id> ready --check \"<lệnh>\"`; gỡ card blocked;
+   - backlog: viết AC + một lệnh check → `8sync ccc auto move <id> ready --check \"<lệnh>\"` (gấp: thêm `--prio P0|P1`); gỡ card blocked;
      card approved → MỘT câu hỏi Ship cho owner, duyệt rồi mới `gh pr merge <pr> --squash --match-head-commit <sha>`
    - building: worktree `.claude/worktrees/card-<id>`, nhánh `card-<id>-<slug>`, `/ship` tới commit, push, PR → `move <id> qa --pr <số>`
    - qa: `check` + UAT → `move <id> review`, trượt → `move <id> ready --note \"[qa] …\"`
@@ -350,7 +350,7 @@ pub(super) fn write_loop_md(root: &Path) -> Result<(PathBuf, bool)> {
 /// What a room does with the card `auto claim` gives it, per lane (super-board's lane playbooks).
 pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
-        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"`. Hết card backlog: `8sync ccc auto lint` → gỡ card blocked (`move <id> ready`), card approved → gom MỌI card approved vào MỘT câu hỏi Ship cho owner; owner duyệt → `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`",
+        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: thêm `--prio P0`, quan trọng `--prio P1`; dev nhận card gấp trước).Hết card backlog: `8sync ccc auto lint` → gỡ card blocked (`move <id> ready`), card approved → gom MỌI card approved vào MỘT câu hỏi Ship cho owner; owner duyệt → `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`",
         "ready" => "card building: worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>`, `/ship` card tới commit (test + gate), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>`; làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
         "qa" => "card qa: checkout nhánh PR, chạy `check` + UAT thật → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`",
         "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước) → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
@@ -439,6 +439,9 @@ fn short(text: &str) -> String {
 /// A card for a terminal: the head line (id, label, text, check, holder, PR), then the last notes.
 fn card_lines(t: &target::Target) -> Vec<String> {
     let mut head = format!("#{}", t.id);
+    if let Some(p) = t.prio {
+        head.push_str(&format!(" P{p}"));
+    }
     if let Some(l) = &t.label {
         head.push_str(&format!(" ({l})"));
     }
@@ -492,7 +495,7 @@ fn room_of(rooms: &[(String, String)], sid: Option<&str>) -> Option<String> {
         .map(|(name, _)| name.clone())
 }
 
-/// `auto add|queue|done|drop` and the board verbs `claim|move|note|board|lint` ([`target`]).
+/// `auto add|queue|done|drop` and the board verbs `claim|move|prio|note|board|lint` ([`target`]).
 fn run_target(
     verb: &str,
     args: &[String],
@@ -503,10 +506,11 @@ fn run_target(
 ) -> Result<()> {
     let as_json = args.iter().any(|a| a == "--json");
     let takes: &[&str] = match verb {
-        "add" => &["--check", "--label"],
+        "add" => &["--check", "--label", "--prio"],
         "done" => &["--evidence"],
         "claim" => &["--lane", "--as"],
-        "move" => &["--note", "--check", "--pr", "--sha", "--as"],
+        "move" => &["--note", "--check", "--pr", "--sha", "--as", "--prio"],
+        "prio" => &["--as"],
         "note" => &["--as"],
         _ => &[],
     };
@@ -575,11 +579,28 @@ fn run_target(
                 bail!("move cần <id> <cột>\n{USAGE}");
             };
             let m = target::Move { note: flag("--note"), check: flag("--check"), pr: flag("--pr"), sha: flag("--sha") };
-            let t = target::move_to(home, root, parse_id(i)?, lane, &m, who.as_deref(), now)?;
+            let prio = flag("--prio").map(target::parse_prio).transpose()?;
+            let mut t = target::move_to(home, root, parse_id(i)?, lane, &m, who.as_deref(), now)?;
+            if let Some(p) = prio {
+                if t.state == "open" {
+                    t = target::set_prio(home, root, t.id, p, who.as_deref(), now)?;
+                }
+            }
             if as_json {
                 println!("{}", json!({ "card": t }));
             } else {
                 println!("card #{} → {}: {}", t.id, t.lane, short(&t.text));
+            }
+        }
+        "prio" => {
+            let [i, p] = words.as_slice() else {
+                bail!("prio cần <id> <P0|P1|P2|P3|none>\n{USAGE}");
+            };
+            let t = target::set_prio(home, root, parse_id(i)?, target::parse_prio(p)?, who.as_deref(), now)?;
+            if as_json {
+                println!("{}", json!({ "card": t }));
+            } else {
+                println!("card #{} ưu tiên {}", t.id, t.prio.map_or("mặc định (P2)".to_string(), |n| format!("P{n}")));
             }
         }
         "note" => {
@@ -610,7 +631,9 @@ fn run_target(
             }
             if verb == "board" {
                 for lane in target::LANES {
-                    let in_lane: Vec<_> = cards.iter().filter(|t| t.state == "open" && t.lane == lane).collect();
+                    let mut in_lane: Vec<_> = cards.iter().filter(|t| t.state == "open" && t.lane == lane).collect();
+                    // The order rooms claim in: most urgent first, queue order within a priority.
+                    in_lane.sort_by_key(|t| t.prio.unwrap_or(2));
                     println!("── {lane} ({}) ──", in_lane.len());
                     for t in in_lane {
                         println!("{}", card_lines(t)[0]);
@@ -629,7 +652,9 @@ fn run_target(
         "add" => {
             let from = who;
             let text = words.join(" ");
-            let (t, dup) = target::add(
+            // Checked before anything is written, so a bad value never leaves a half-made card.
+            let prio = flag("--prio").map(target::parse_prio).transpose()?;
+            let (mut t, dup) = target::add(
                 home,
                 root,
                 &text,
@@ -639,6 +664,9 @@ fn run_target(
                 from.as_deref(),
                 now,
             )?;
+            if let Some(p) = prio {
+                t = target::set_prio(home, root, t.id, p, from.as_deref(), now)?;
+            }
             let (_, open) = target::current(home, root)?;
             let sent = if first {
                 queue_all(home, &all, now, |name| target::now_prompt(&t, name))
@@ -856,7 +884,7 @@ pub(super) fn run(
         }
         Ok(())
     };
-    if let Some(verb @ ("add" | "queue" | "done" | "drop" | "claim" | "move" | "note" | "board" | "lint")) = rest.first().map(String::as_str) {
+    if let Some(verb @ ("add" | "queue" | "done" | "drop" | "claim" | "move" | "prio" | "note" | "board" | "lint")) = rest.first().map(String::as_str) {
         return run_target(verb, &rest[1..], home, root, rooms, now);
     }
     if rest.first().map(String::as_str) == Some("wait") {
@@ -1076,6 +1104,27 @@ mod tests {
         std::fs::create_dir_all(&h).unwrap();
         h
     }
+    #[test]
+    fn add_prio_and_the_prio_verb_set_how_urgent_a_card_is() {
+        let h = home("prio-verbs");
+        let root = h.join("proj");
+        std::fs::create_dir_all(&root).unwrap();
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let go = |verb: &str, args: &[&str]| run_target(verb, &a(args), &h, &root, Vec::new, 5);
+        go("add", &["fix", "crash", "--check", "true", "--prio", "P1"]).unwrap();
+        let t = &target::list(&h, &root).unwrap()[0];
+        assert_eq!((t.text.as_str(), t.prio), ("fix crash", Some(1)));
+        // A bad level is refused before the card is written.
+        assert!(go("add", &["other", "--prio", "P7"]).is_err());
+        assert_eq!(target::list(&h, &root).unwrap().len(), 1);
+        go("prio", &["1", "P0"]).unwrap();
+        assert_eq!(target::list(&h, &root).unwrap()[0].prio, Some(0));
+        go("prio", &["1", "none"]).unwrap();
+        assert_eq!(target::list(&h, &root).unwrap()[0].prio, None);
+        assert!(go("prio", &["1"]).is_err(), "needs a level");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
     fn on(hours: f64, after: u64) -> Mode {
         Mode::On {
             hours,
@@ -1468,6 +1517,7 @@ mod tests {
             bounces: 0,
             pr: None,
             sha: None,
+            prio: None,
         };
         let w = Wait { room: "dev".into(), lane: "ready".into(), timeout: 60 };
         let on = json!({ "on": true, "paused": false, "cap": null });

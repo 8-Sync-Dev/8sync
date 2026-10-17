@@ -4,6 +4,72 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **A background room no longer hangs on a "proceed?" prompt nobody sees: after 60 s of silence it carries on by itself.** In the UAT the dev room waited 15 minutes on one. A new `PermissionRequest` hook (`8sync ccc hook permit`, https://code.claude.com/docs/en/hooks#permissionrequest) acts when auto and delegate are on and the owner has not typed in the room for `delegate_after_s` (60 s by default). It posts the request to HQ, where **Anh cần trả lời** shows the tool, its description and the command (secrets masked), with **Cho phép** / **Từ chối** and a countdown that says what silence will do. With no click:
+  - everyday work inside the project proceeds, but only in exact shapes:
+    - shell commands, chained with `&&` only, written with plain characters (no quotes, `$`, backslash, redirects or `~`), and with no free flags (three reviews found a value-taking flag such as `--output`, `-o` or `--upload-pack` in every looser rule):
+      - `cargo build|check|test [-q] [-p <crate>] [--workspace]`;
+      - `go build|test|vet ./...`;
+      - `pnpm|npm|yarn [run] test|lint|build|typecheck|check[:x]` with no other arguments;
+      - `git status|diff|log` with no arguments;
+      - `git push [-u] origin card-<n>-<slug>`, which pushes only a card branch and so never main or HEAD;
+      - `8sync ccc auto board|lint|queue|status [--json]`;
+    - files: edits and writes inside the repo (symlinks resolved). Not allowed:
+      - `.git`, `.claude`, `.github` and other CI files, `.husky`, `.mcp.json`, `.vscode`;
+      - the files that decide what a run executes: `package.json`, `.pnpmfile.cjs`, `Cargo.toml`, `build.rs`, `Makefile`, `.cargo`, `.npmrc`, toolchain files, …;
+      - instruction files later sessions obey (`CLAUDE.md`, `AGENTS.md`, skills);
+      - credential-looking files (`.env*`, `*.pem`, `*.key`, `id_rsa*`, …), which are not read either;
+    - reading docs: `https` pages on a named public host (no IP in any spelling, no port, no wildcard DNS such as `nip.io`), with no query string and no credentials;
+  - anything else is skipped and is left for the owner (the room notes it on its card and does other work). That covers:
+    - `pnpm install`, `git add`, merge, tag, release, any other push, moving cards;
+    - Grep, Glob and Skill (a folder scan could reach `.env`/`.npmrc`, and a skill can start a loop only the owner starts), a subagent with remote isolation or unknown options, edits in `node_modules`, reads or writes of kit config (`.mcp.json`, `.claude/`), and writes to the memory files later sessions read (`su-code/STATE.md`, `KNOWLEDGE.md`, loop files);
+    - `pnpm exec`/`npx`, `gh`, `curl`, inline `python -c`/`node -e`, PowerShell cmdlets;
+    - anything outside the project;
+    - tools 8sync does not know (MCP).
+
+  Limits:
+  - `cargo test`, `go test` and `pnpm test` run code the room wrote, the same as in auto mode with the owner present. A room that edits a source file and then runs the tests can therefore do anything that code does. The allowlist cannot stop that; only a sandbox can. The hook narrows what proceeds unattended but does not guarantee nothing ships.
+  - A URL path can still carry a little data out.
+
+  Every decision made without the owner is logged in `~/.local/state/8sync/ccc/permit/auto.jsonl`. The owner's click always wins, a "Từ chối" included. Claude Code still applies the settings' deny rules after a hook allows. The guard refuses any tool call that names the answers folder, and each request id carries a random part. This blocks a direct attempt to approve itself, but a room that writes and runs its own script is not stopped by it. With the owner present, Claude Code shows its usual prompt.
+- **Cards have a priority, P0 to P3, and rooms take the most urgent first.**
+  - Setting it: `8sync ccc auto add "<việc>" --prio P0`, `auto move <id> ready --prio P1`, `auto prio <id> P0|none`.
+  - Claim order: `claim` and `wait` pick by priority, then queue order. Unset counts as P2.
+  - Text board: `auto board` lists each lane in that order and prints `P0` next to the id.
+  - HQ Board: same order. A card shows a red **P0 · gấp nhất** or amber **P1 · gấp** chip; **Kế tiếp** now marks the card a dev room really takes next. The detail sheet has a P0/P1/P2/P3 picker (new route `POST /api/board/prio`, HQ token required) and the matching command.
+  - The lead room is told to mark a user-blocking bug, or anything the owner calls urgent, P0.
+- **A full product team in one click.** `8sync ccc auto up --roles full` opens 8 rooms: lead, ba, rd, dev, dev2, ui, qa, review. HQ has a **Team đầy đủ** button that warns about quota first: 8 sessions cost about 8 times one, and the whole team pauses at 90% of the 5-hour/7-day window.
+- **"Nhật ký" shows what a room did, live.** Chat phòng lists the room's latest 80 steps from its Claude Code transcript (local file, last 1 MB): what you typed, Claude's replies, each tool call with ok or error (the error's first 200 characters on expand), and subagents it started. The newest step is at the bottom, and the list refreshes every 4 s while the tab is visible. It follows new lines unless you scrolled up. Shell commands are never shown: a call shows its description, or only the program name (`git`, `pnpm`). Every text is passed through a secret masker first, a subset of the CLI's rules plus URL credentials and `--password` flags (known token prefixes, `name=value` secrets, Bearer, PEM blocks, long opaque strings; heuristic, not a guarantee). **Mở log đầy đủ** opens the room's terminal. New route `GET /api/sessions/<id>/activity` (HQ token required).
+
+### Changed
+- **`8sync ccc auto up --clear-ss` now also restarts rooms that run an older kit.** A background room started before the kit's `settings.json` last changed is stopped and resumed on the same conversation, so new hooks load with no manual step. A room in the middle of a turn, or one whose transcript is missing, is left running. The rooms are rebound to their new session ids. This is HQ's **Dọn & mở lại** button.
+- **The default team is 5 rooms: lead, dev, qa, review and rd** (rd on Opus researches what blocks the others). `--roles small` is the same set, and `--roles full` gives the 8-room team.
+- **The critic that picks for the owner runs on Opus** (was Sonnet). It grades product and technical questions while the owner is away.
+- Release size ceiling 6912 → 7040 KiB, attributed in `scripts/size-gate.sh`. The linux-x86_64 binary is 7,104,624 B, 26,736 B over the old ceiling, from the board, headless team, permit hook and priority work in 0.100.x. No new dependency.
+- **HQ sidebar is the list of rooms, and a click opens the room.**
+  - Grouping: each live room sits under its repo. Worktrees (`<repo>/.claude/worktrees/<x>`) fold under the repo instead of showing as separate projects.
+  - Each row: the role icon, the room name and its state in words (Đang làm, Chờ anh, Chờ card, Rảnh, Kẹt, Giữ card). A room waiting on you gets an amber "Chờ anh" badge, and its repo shows the count.
+  - Clicking a room opens Chat phòng with a brief on top:
+    - what it is doing and how long ago;
+    - the card it holds;
+    - what it asks you (a question or a permission request, with the same answer card as the office);
+    - **Mở terminal**: the HQ drawer for tmux rooms, `claude attach` in a new window for background sessions;
+    - the message box to send it work.
+  - Before, a click only changed a filter and the page looked the same.
+- **HQ Board cards read at a glance and open a detail sheet.**
+  - Tags: the leading tags a lead writes (`[#1 v1]` epic/version, `[core]`/`[art-director]`/`[qa]` role) become chips. The label (bug, feature, qa) is a coloured chip. The title is clamped to 3 lines.
+  - Status on the card: who holds it and for how long, its PR, how often it bounced (amber from 2), and "thiếu lệnh check" in red.
+  - Lanes: each has its own restrained colour, a count and its purpose. Approved and Blocked are tinted harder when they hold cards.
+  - Detail sheet: click or Enter on a card opens a right-side sheet with:
+    - the full text, tags and lane;
+    - priority and the check command (copy button);
+    - the latest note and the claim;
+    - the PR (a link when the card stores a pull URL) and the reviewed SHA;
+    - bounces, and when it was added and by whom.
+
+    Esc closes it and focus returns to the card.
+- **The sidebar no longer says "No folders yet" while it lists projects.** Projects with running rooms appear by themselves. Folders added in HQ without a room are listed under "Chưa có team" and open the office's **Mở team** button. The add box is now "Mở team ở repo mới" and says it is only needed for a repo with no room yet.
+- **The site, README and `docs/huong-dan.md` walk through one project in 7 numbered steps.** The steps are: install, open HQ, add the folder, start the team, give it work, answer only what needs you, update or stop. Each step shows the HQ button and the terminal command beside it.
 
 ## [0.100.3] — 2026-10-17
 ### Added

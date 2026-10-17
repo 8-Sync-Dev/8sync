@@ -1,0 +1,83 @@
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+const run = vi.hoisted(() => vi.fn(async () => ({ ok: true, stdout: '{"card":{"id":4,"prio":0}}', stderr: "" })));
+/** The live room's repo: a real temp dir (set in beforeAll), so the test runs the same on every OS. */
+const room = vi.hoisted(() => ({ cwd: "" }));
+vi.mock("@/lib/server/proc", async (orig) => ({
+  ...(await orig<typeof import("@/lib/server/proc")>()),
+  run,
+  mergedSessions: async () => [{ name: "s1", cwd: room.cwd, status: "running" }],
+}));
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { POST } from "@/app/api/board/prio/route";
+import { CardDetail, PrioChip } from "@/components/hq/card-sheet";
+import type { Card } from "@/lib/lanes";
+import { getToken } from "@/lib/server/auth";
+import { parsePrioBody, prioArgs } from "@/lib/server/board";
+import { ORIGIN, req, tempHome } from "./helpers";
+
+const card = (over: Partial<Card>): Card => ({ id: 4, text: "x", lane: "ready", check: "true", label: null, claim: null, pr: null, sha: null, bounces: 0, note: null, added: 0, ...over });
+
+describe("card priority", () => {
+  it("maps to `auto prio <id> P<n>|none --json` and validates the body", () => {
+    expect(prioArgs(4, 0)).toEqual(["ccc", "auto", "prio", "4", "P0", "--json"]);
+    expect(prioArgs(4, null)).toEqual(["ccc", "auto", "prio", "4", "none", "--json"]);
+    expect(parsePrioBody({ root: "/r", id: 4, prio: 1 })).toEqual({ ok: true, value: { root: "/r", id: 4, prio: 1 } });
+    expect(parsePrioBody({ root: "/r", id: 4, prio: null })).toMatchObject({ ok: true });
+    for (const bad of [null, { root: "/r", id: 4 }, { root: "/r", id: 4, prio: 4 }, { root: "/r", id: 4, prio: "P0" }, { root: "/r", id: 0, prio: 1 }, { root: "/r", id: 1.5, prio: 1 }, { root: "", id: 4, prio: 1 }])
+      expect(parsePrioBody(bad as Record<string, unknown> | null).ok).toBe(false);
+  });
+
+  it("chip: P0 red and P1 amber with words, P3 quiet, P2 and unset show nothing", () => {
+    const html = (prio: number | null) => renderToStaticMarkup(createElement(PrioChip, { prio }));
+    expect(html(0)).toContain("P0 · gấp nhất");
+    expect(html(0)).toContain("var(--destructive)");
+    expect(html(1)).toContain("P1 · gấp");
+    expect(html(1)).toContain("var(--st-needs)");
+    expect(html(3)).toContain("P3");
+    expect(html(2)).toBe("");
+    expect(html(null)).toBe("");
+  });
+
+  it("sheet: a picker with the card's level pressed (unset reads as P2) and the command", () => {
+    const html = renderToStaticMarkup(createElement(CardDetail, { c: card({ prio: 1 }), now: 0, next: false, onPrio: async () => {} }));
+    expect(html).toContain('aria-label="Mức ưu tiên"');
+    expect(html).toMatch(/aria-pressed="true"[^>]*>P1</);
+    expect(html).toContain("8sync ccc auto prio 4 P0");
+    const unset = renderToStaticMarkup(createElement(CardDetail, { c: card({}), now: 0, next: false, onPrio: async () => {} }));
+    expect(unset).toMatch(/aria-pressed="true"[^>]*>P2</);
+    expect(unset).toContain("Chưa đặt, tính như P2.");
+  });
+});
+
+describe("POST /api/board/prio", () => {
+  let token = "";
+  beforeAll(() => {
+    tempHome();
+    token = getToken();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hq-prio-"));
+    fs.mkdirSync(path.join(dir, ".git"));
+    fs.writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+    room.cwd = path.resolve(dir);
+  });
+  const post = (body: unknown, auth = true) => POST(req("/api/board/prio", { method: "POST", token: auth ? token : null, origin: ORIGIN, body }));
+
+  it("runs only on a board HQ shows, in that root; refuses bad input before running anything", async () => {
+    expect((await post({ root: room.cwd, id: 4, prio: 0 }, false)).status).toBe(401);
+    expect((await post({ root: room.cwd, id: 4, prio: 9 })).status).toBe(422);
+    expect((await post({ root: path.join(os.tmpdir(), "not-a-project"), id: 4, prio: 0 })).status).toBe(409);
+    expect(run).not.toHaveBeenCalled();
+    const ok = await post({ root: room.cwd.toUpperCase(), id: 4, prio: 0 });
+    expect(ok.status).toBe(200);
+    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "auto", "prio", "4", "P0", "--json"], 8_000, room.cwd);
+    run.mockResolvedValueOnce({ ok: false, stdout: "", stderr: "Error: không có card mở #99" } as never);
+    const gone = await post({ root: room.cwd, id: 99, prio: 1 });
+    expect(gone.status).toBe(502);
+    expect((await gone.json()).error).toBe("không có card mở #99");
+  });
+});

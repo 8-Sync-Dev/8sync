@@ -63,3 +63,27 @@ export function onePerBoard(read: ProjectBoard[]): ProjectBoard[] {
 export async function projectBoards(projects: ProjectInfo[]): Promise<ProjectBoard[]> {
   return onePerBoard(await Promise.all(projects.map((p) => readBoard(p))));
 }
+
+/** argv for `8sync ccc auto prio <id> <P0..P3|none> --json`; null clears it (the card is claimed as P2). */
+export function prioArgs(id: number, prio: number | null): string[] {
+  return ["ccc", "auto", "prio", String(id), prio === null ? "none" : `P${prio}`, "--json"];
+}
+
+export type PrioInput = { root: string; id: number; prio: number | null };
+
+/** `{root, id, prio}`: prio 0..3, or null to clear. */
+export function parsePrioBody(b: Record<string, unknown> | null): { ok: true; value: PrioInput } | { ok: false; error: string } {
+  if (!b) return { ok: false, error: "body must be a JSON object" };
+  if (typeof b.root !== "string" || !b.root || b.root.length > 1024) return { ok: false, error: "root must be a project root" };
+  if (typeof b.id !== "number" || !Number.isInteger(b.id) || b.id < 1 || b.id > 1e9) return { ok: false, error: "id must be a card id" };
+  if (b.prio !== null && !(typeof b.prio === "number" && Number.isInteger(b.prio) && b.prio >= 0 && b.prio <= 3)) return { ok: false, error: "prio must be 0..3 or null" };
+  return { ok: true, value: { root: b.root, id: b.id, prio: b.prio } };
+}
+
+/** Run `auto prio` in the project root; never throws. */
+export async function setCardPrio(root: string, x: Pick<PrioInput, "id" | "prio">): Promise<{ ok: boolean; error: string | null }> {
+  const r = await run("8sync", prioArgs(x.id, x.prio), TIMEOUT_MS, root);
+  if (r.ok) return { ok: true, error: null };
+  const msg = r.killed ? `8sync không trả lời sau ${TIMEOUT_MS / 1000} s` : r.stderr.trim().replace(/^Error:\s*/, "");
+  return { ok: false, error: (msg || "8sync ccc auto prio thất bại (cần 8sync ≥ 0.100.4: `8sync up`)").slice(0, 300) };
+}

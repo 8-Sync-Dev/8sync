@@ -1,11 +1,12 @@
 "use client";
 
-import { CopyIcon, HandIcon, SquareTerminalIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, HandIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { askTitle, attachCommand, type Ask } from "@/lib/ask";
+import { TOOL_ASK, askTitle, attachCommand, type Ask } from "@/lib/ask";
 import { agoVi } from "@/lib/now";
+import type { Permit } from "@/lib/server/permit";
 import { makeApi } from "./use-hq";
 
 export type AskRoom = {
@@ -15,6 +16,8 @@ export type AskRoom = {
   project: string | null;
   waiting: string | null;
   ask: Ask | null;
+  /** A permission request the room's hook holds open for the owner's click (`ccc hook permit`). */
+  permit?: Permit | null;
   /** A tmux room: answered in its live terminal (the drawer), not with `claude attach`. */
   tmux: boolean;
 };
@@ -33,12 +36,73 @@ export function AskPanel({ rooms, now, token, onOpen }: { rooms: AskRoom[]; now:
         <span className="text-sm font-normal text-muted-foreground tabular">{rooms.length} phòng đang dừng chờ anh</span>
       </h2>
       <ul className="space-y-3">
-        {rooms.map((r) => (
-          <AskCard key={r.key} r={r} now={now} token={token} onOpen={onOpen} />
-        ))}
+        {rooms.map((r) =>
+          r.permit && r.session_id ? (
+            <PermitCard key={r.key} r={r} p={r.permit} sid={r.session_id} now={now} token={token} />
+          ) : (
+            <AskCard key={r.key} r={r} now={now} token={token} onOpen={onOpen} />
+          ),
+        )}
       </ul>
     </section>
   );
+}
+
+/**
+ * A permission request while the owner is away: the room's hook waits for this click. When the
+ * countdown ends it goes on by itself: everyday work inside the project proceeds, a ship step, an
+ * upload or a write outside the project is skipped (the room notes the card and does other work).
+ */
+function PermitCard({ r, p, sid, now, token }: { r: AskRoom; p: Permit; sid: string; now: number; token: string }) {
+  const [busy, setBusy] = useState<"allow" | "deny" | null>(null);
+  const left = Math.max(0, Math.round(p.until - now / 1000));
+
+  async function answer(decision: "allow" | "deny") {
+    setBusy(decision);
+    try {
+      await makeApi(token)(`/api/sessions/${encodeURIComponent(sid)}/permit`, { method: "POST", body: { id: p.id, decision } });
+      toast.success(decision === "allow" ? `Đã cho phép ${r.label} chạy tiếp` : `Đã từ chối: ${r.label} sẽ làm cách khác`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <li className="rounded-xl border border-st-needs bg-st-needs/6 px-4 py-3.5">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm">
+            <span className="font-semibold">{r.label}</span>
+            {r.project && <span className="text-muted-foreground"> · {r.project}</span>}
+            <span className="text-muted-foreground"> · {TOOL_ASK[p.tool] ?? `Xin quyền dùng ${p.tool}`}</span>
+          </p>
+          {p.what && <p className="mt-1.5 max-w-[75ch] text-sm break-words">{p.what}</p>}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button type="button" size="sm" disabled={busy != null || left === 0} onClick={() => void answer("allow")} aria-label={`Cho phép ${r.label}`}>
+            <CheckIcon aria-hidden /> Cho phép
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={busy != null || left === 0} onClick={() => void answer("deny")} aria-label={`Từ chối ${r.label}`}>
+            <XIcon aria-hidden /> Từ chối
+          </Button>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground tabular" role="timer" aria-live="off">
+        {silence(p, left)}
+      </p>
+    </li>
+  );
+}
+
+/** What happens if the owner does not click: the hook decided it when it posted the request. */
+export function silence(p: Pick<Permit, "then" | "why">, left: number): string {
+  if (p.then === "allow") {
+    return left > 0 ? `Không bấm thì sau ${left} s phòng tự cho phép và làm tiếp (việc thường trong dự án).` : "Hết giờ: phòng đã tự cho phép và làm tiếp.";
+  }
+  const why = p.why ? ` (${p.why})` : "";
+  return left > 0 ? `Không bấm thì sau ${left} s phòng bỏ bước này${why}, ghi chú lên card rồi làm việc khác.` : `Hết giờ: phòng đã bỏ bước này${why} và làm việc khác.`;
 }
 
 function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: string; onOpen: (key: string) => void }) {

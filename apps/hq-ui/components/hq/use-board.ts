@@ -58,7 +58,16 @@ export function useBoards(api: Hq["api"]) {
     };
   }, [api, nonce]);
 
-  return { boards, error, moves, at, reload: useCallback(() => setNonce((n) => n + 1), []) };
+  /** `auto prio` on one card, then a fresh poll so the lane re-sorts at once. Throws the CLI's error. */
+  const setPrio = useCallback(
+    async (root: string, id: number, prio: number | null) => {
+      await api("/api/board/prio", { method: "POST", body: { root, id, prio } });
+      setNonce((n) => n + 1);
+    },
+    [api],
+  );
+
+  return { boards, error, moves, at, setPrio, reload: useCallback(() => setNonce((n) => n + 1), []) };
 }
 
 export type BoardsState = ReturnType<typeof useBoards>;

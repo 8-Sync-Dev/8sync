@@ -20,9 +20,17 @@ curl -fsSL https://get.8syncdev.com/install | sh            # Windows: irm https
 8sync hq ui                                                 # http://127.0.0.1:8740: the rest is buttons
 ```
 
-In HQ: add the repo folder under **Projects**, press **Mở team** (lead, dev, qa, review start as Claude Code background sessions), then **Giao việc** to put a card on the board. When a room stops on a question, **Anh cần trả lời** at the top of the office shows the question and its options; **Mở terminal để trả lời** opens `claude attach` for that room. **Dừng team** stops the rooms and keeps their conversations.
+One project folder, in order:
 
-The same steps from a terminal: `8sync ccc auto up --clear-ss` · `8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"` · `8sync ccc auto board` · `8sync ccc auto down`.
+| # | Do | In HQ | Or in a terminal |
+|---|---|---|---|
+| 1 | Open HQ (keep that terminal open) | — | `8sync hq ui` |
+| 2 | Add the repo folder; the first time, open `claude` there once and accept the trust question | **Projects** → paste the path | — |
+| 3 | Start the team: lead, dev, qa, review, rd as background sessions | **Mở team** | `cd my-app && 8sync ccc auto up --clear-ss` |
+| 4 | Give it work; done when the check exits 0 | **Giao việc** | `8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"` |
+| 5 | Answer what needs you; silent 60 s → the critic picks, safe work proceeds | **Anh cần trả lời** (top of the office) | `claude attach <id>` |
+| 6 | After `8sync up`: reload the rooms onto the new version, conversations kept | **Dọn & mở lại** | `8sync ccc auto up --clear-ss` |
+| 7 | Stop the team | **Dừng team** | `8sync ccc auto down` |
 
 The lead writes acceptance criteria. Dev builds the card in its own worktree and opens a PR, qa runs the check and a UAT, and review approves the head SHA. Nothing merges until you answer one `Ship` question. `8sync ccc auto down` stops the team. Auto mode is on, bypass is locked, and the guard never consults a grant for force-push, secrets or deletes. More in [The whole team](#the-whole-team-one-command-no-terminal-per-room) and, in Vietnamese, [docs/huong-dan.md](docs/huong-dan.md).
 
@@ -185,6 +193,7 @@ cd my-repo
 8sync hq ui                           # web: rooms, what each does, chat; or: claude agents · 8sync ccc auto board
 8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"   # a card; done when the check exits 0
 8sync ccc auto add "webhook returns 500 on retry" --label bug --now            # front of the queue, every room's inbox
+8sync ccc auto prio 7 P0              # card 7 is urgent: rooms take P0 before anything else (unset = P2)
 8sync ccc auto down                   # stop the background rooms (conversations kept), pause auto
 ```
 
