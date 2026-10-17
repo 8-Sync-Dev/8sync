@@ -36,7 +36,9 @@ export const GUIDE_STEPS: GuideStep[] = [
   {
     icon: SendIcon,
     title: "Giao việc",
-    body: "Bấm \"Giao việc\", gõ việc cần làm, rồi chọn cách giao: một phiên cụ thể, theo vai trò (HQ tìm phiên đang chạy có vai đó, chưa có thì mở mới) hoặc cả dự án (mọi phiên đang chạy cùng nhận). Dòng cuối dialog nói rõ việc sẽ đi đâu.",
+    body:
+      "Cả team cùng nhận một việc: gõ vào ô \"Gửi cho mọi phòng\" ở đáy Văn phòng hoặc Chat tổng, chọn dự án rồi bấm \"Gửi mọi phòng\" hoặc Ctrl+Enter (giống `8sync ccc auto add --now`; bỏ \"Gửi ngay\" thì việc chỉ vào hàng). " +
+      "Một người hoặc một vai: bấm \"Giao việc\" ở góc trên, chọn một phiên hoặc theo vai trò. Dòng dưới ô nhập luôn nói rõ việc sẽ đi đâu.",
   },
   {
     icon: TerminalIcon,
@@ -46,7 +48,7 @@ export const GUIDE_STEPS: GuideStep[] = [
   {
     icon: MessagesSquareIcon,
     title: "Chat tổng",
-    body: "Mọi phòng (session) chung một cuộc chat: xem ai nhắn ai theo thời gian. Khi một người chuyển việc cho người khác, bạn sẽ thấy thẻ bàn giao (handoff) \"A → B\".",
+    body: "Mọi phòng (session) chung một cuộc chat: xem ai nhắn ai theo thời gian. Khi một người chuyển việc cho người khác, bạn sẽ thấy thẻ bàn giao (handoff) \"A → B\". Nhắn riêng một phòng: tab Chat phòng.",
   },
   {
     icon: BellRingIcon,

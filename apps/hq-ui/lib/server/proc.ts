@@ -9,13 +9,14 @@ import { inboxLive } from "./inbox";
 import { channelMcpConfigPath } from "./paths";
 import { CHANNEL_FLAGS_RE, TMUX_NAME_RE, hasControlChars, isTmuxName } from "./validate";
 
-type Run = { ok: boolean; stdout: string; stderr: string };
+/** `killed`: the timeout (or a signal) stopped it, so it may have done part of its work. */
+type Run = { ok: boolean; stdout: string; stderr: string; killed?: boolean };
 
-/** argv-only process runner (never a shell), with a hard timeout. */
-export function run(cmd: string, args: string[], timeoutMs = 4000): Promise<Run> {
+/** argv-only process runner (never a shell), with a hard timeout; `cwd` defaults to the server's. */
+export function run(cmd: string, args: string[], timeoutMs = 4000, cwd?: string): Promise<Run> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, cwd }, (err, stdout, stderr) => {
+      resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), ...(err?.killed ? { killed: true } : {}) });
     });
   });
 }
