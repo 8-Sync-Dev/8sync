@@ -38,6 +38,12 @@ describe("parseLoopMd", () => {
     expect(parseLoopMd("")).toEqual({ last: null, iter: null });
     expect(parseLoopMd("## Evidence\n\n")).toEqual({ last: null, iter: null });
   });
+  it("the evidence line is masked: a check's output may quote a secret", () => {
+    const md = ["## Evidence", "- iter 2 | C1 | exit 1 | psql --password " + "hunter" + "2 -h db"].join("\n");
+    const { last } = parseLoopMd(md);
+    expect(last).toContain("psql --password ***");
+    expect(last).not.toContain("hunter" + "2");
+  });
 });
 
 describe("readProjectLoops + GET /api/loops", () => {

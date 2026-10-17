@@ -4,6 +4,7 @@
 // a file we cannot read is skipped, never an error for the whole list.
 import fs from "node:fs";
 import path from "node:path";
+import { maskSecrets } from "../mask";
 import type { ProjectInfo } from "../office";
 import { mainRoot } from "../preview";
 
@@ -44,7 +45,8 @@ export function parseLoopMd(md: string): { last: string | null; iter: number | n
     const m = /\biter\s*(\d{1,6})\b/i.exec(l);
     if (m) iter = Math.max(iter ?? 0, Number(m[1]));
   }
-  const last = ev.length ? ev[ev.length - 1].replace(/^[-*]\s+/, "").slice(0, 300) : null;
+  // A check's output may quote a secret: mask before cutting (300 shown + 256 so a key across the cut stays whole).
+  const last = ev.length ? maskSecrets(ev[ev.length - 1].replace(/^[-*]\s+/, "").slice(0, 556)).slice(0, 300) : null;
   return { last, iter };
 }
 
