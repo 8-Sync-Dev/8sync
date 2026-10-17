@@ -946,7 +946,7 @@ fn apply_lsp_plugins(v: &mut Value, on_path: impl Fn(&str) -> bool) {
 }
 
 /// Merge the kit into a parsed `settings.json`, leaving everything else as is:
-/// `env`, `defaultMode`, `effortLevel`, `disableClaudeAiConnectors` and `autoContinueAtUsageLimit` defaults
+/// `env`, `defaultMode`, `disableBypassPermissionsMode`, `effortLevel`, `disableClaudeAiConnectors` and `autoContinueAtUsageLimit` defaults
 /// (a user value wins), `permissions` rules, and 8sync's hooks (replaced in
 /// place on re-run, retired ones removed, so the file only changes when the kit does).
 fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()> {
@@ -977,6 +977,11 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
         bail!("settings.json `permissions` is not an object");
     };
     perms.entry("defaultMode").or_insert_with(|| json!("auto"));
+    // A launcher flag beats `defaultMode`: Orca's default args for claude are
+    // `--dangerously-skip-permissions`, so its sessions opened in bypass (owner 2026-10-17).
+    // With this key Claude Code rejects the flag and starts in `defaultMode` (seen on 2.1.296:
+    // `"permissionMode":"auto"`); works from user settings (code.claude.com/docs/en/permissions).
+    perms.entry("disableBypassPermissionsMode").or_insert_with(|| json!("disable"));
     for (key, rules) in [("deny", &DENY[..]), ("allow", &ALLOW[..])] {
         if let Some(list) = perms.entry(key).or_insert_with(|| json!([])).as_array_mut() {
             if key == "deny" {
@@ -2116,6 +2121,7 @@ mod tests {
         assert_eq!(pre[3]["hooks"][0]["onFailure"], "block", "guard fails closed");
         assert!(deny.iter().any(|r| r == "Read(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write(") || s.starts_with("Edit(**/.env"))));
         assert_eq!(v["permissions"]["defaultMode"], "auto");
+        assert_eq!(v["permissions"]["disableBypassPermissionsMode"], "disable", "a launcher's bypass flag must not win");
     }
 
     #[test]
