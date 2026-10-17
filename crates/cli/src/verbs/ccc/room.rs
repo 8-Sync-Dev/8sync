@@ -17,32 +17,63 @@ const MAX_PEERS: usize = 5;
 /// Hard cap for the whole block (the hook output limit is 10,000 chars, shared with the digest).
 pub(super) const CAP: usize = 2500;
 
-/// Role keyword table: any name token starting with a key → (role, what the room does).
-const ROLES: [(&[&str], &str, &str); 10] = [
-    (&["rd", "r&d", "rnd", "research", "explore"], "R&D", "nghiên cứu: /deep-research câu hỏi mở → brief có nguồn trong su-code/research/ → /planning; chưa sửa code sản phẩm khi chưa có plan"),
-    (&["qa", "test", "e2e", "uat"], "QA", "test, repro, UAT; viết test, không sửa code sản phẩm"),
-    (&["ui", "ux", "fe", "frontend", "web", "design", "hq"], "UI/UX", "giao diện (apps/…); /impeccable bắt buộc, kiểm trên trình duyệt"),
-    (&["api", "be", "backend", "server", "encore", "db"], "Backend/API", "API, dữ liệu, migration (migration/xoá dữ liệu vẫn hỏi owner)"),
-    (&["ops", "infra", "ci", "deploy", "release", "devops"], "Ops/CI", "CI 3 OS, release; merge/tag/deploy chỉ sau câu Ship của owner"),
-    (&["doc", "docs", "write", "content", "blog"], "Docs", "tài liệu, CHANGELOG, hướng dẫn; không bịa số liệu"),
-    (&["sec", "security", "audit", "aup"], "Security", "/sec, /aup-audit, /rules; BLOCK → dừng, báo owner"),
-    (&["review", "critic", "qc"], "Review/Critic", "review sâu diff/plan, chấm FATAL/MAJOR/MINOR; không sửa code"),
-    (&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối: chia việc cho phòng khác, giữ STATE.md, hỏi owner một lần"),
-    (&["core", "cli", "rust", "crate", "kit", "ccc"], "Core/Rust", "crates/ (Rust): cargo check/test một module, nice -n 19 -j2"),
+/// What a room name stands for: any name token starting with a key (keys of ≥4 chars match as a
+/// prefix, shorter ones only as the whole token; trailing digits are dropped, so `dev2` is a
+/// second builder) picks the row. `model` is the model `auto up` starts the room with (Claude Code
+/// aliases, so a newer model needs no release); `lane` is the board lane the room claims from
+/// ([`super::target::claim`]).
+pub(super) struct Role {
+    keys: &'static [&'static str],
+    pub name: &'static str,
+    pub duty: &'static str,
+    pub model: Option<&'static str>,
+    pub lane: Option<&'static str>,
+}
+
+const fn r(keys: &'static [&'static str], name: &'static str, duty: &'static str, model: Option<&'static str>, lane: Option<&'static str>) -> Role {
+    Role { keys, name, duty, model, lane }
+}
+
+/// The team `auto up` opens by default: a lead triages, one builder, one tester, one reviewer
+/// (super-board's Builder, Tester and Reviewer lanes plus the orchestrator).
+pub(super) const DEFAULT_TEAM: [&str; 4] = ["lead", "dev", "qa", "review"];
+
+/// In match order. "qc" is a tester here, as Vietnamese teams use the word.
+const ROLES: [Role; 12] = [
+    r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối board: triage backlog (đích của owner) thành card ready có AC + lệnh check, gỡ card blocked, chia việc; merge chỉ sau câu Ship của owner", Some("opus"), Some("backlog")),
+    r(&["ba", "analyst", "spec", "req", "po"], "BA", "viết card: acceptance criteria + đúng một lệnh check, tách việc lớn thành card nhỏ, backlog → ready; không sửa code sản phẩm", Some("opus"), Some("backlog")),
+    r(&["rd", "r&d", "rnd", "research", "explore"], "R&D", "nghiên cứu: /deep-research câu hỏi mở → brief có nguồn trong su-code/research/ → /planning; chưa sửa code sản phẩm khi chưa có plan", Some("opus"), None),
+    r(&["dev", "build", "builder", "code", "coder", "impl"], "Dev/Builder", "nhận card ready: worktree .claude/worktrees/card-<id>, nhánh card-<id>-<slug>, code + test, PR; building → qa; không merge", Some("sonnet"), Some("ready")),
+    r(&["qa", "qc", "test", "tester", "e2e", "uat"], "QA", "chạy check/test/UAT của card trên nhánh PR; đạt → review, lỗi → ready kèm ghi chú [qa]; viết test, không sửa code sản phẩm", Some("haiku"), Some("qa")),
+    r(&["review", "reviewer", "critic"], "Review", "review đối kháng diff của card, chấm FATAL/MAJOR/MINOR, chỉ duyệt khi không còn lỗi mở; duyệt → ghi SHA, chờ Ship; cần sửa → ready [review]; không sửa code", Some("sonnet"), Some("review")),
+    r(&["ui", "ux", "fe", "frontend", "web", "design", "hq"], "UI/UX", "giao diện (apps/…); /impeccable bắt buộc, kiểm trên trình duyệt", None, Some("ready")),
+    r(&["api", "be", "backend", "server", "encore", "db"], "Backend/API", "API, dữ liệu, migration (migration/xoá dữ liệu vẫn hỏi owner)", None, Some("ready")),
+    r(&["ops", "infra", "ci", "deploy", "release", "devops"], "Ops/CI", "CI 3 OS, release; merge/tag/deploy chỉ sau câu Ship của owner", None, None),
+    r(&["doc", "docs", "write", "content", "blog"], "Docs", "tài liệu, CHANGELOG, hướng dẫn; không bịa số liệu", None, None),
+    r(&["sec", "security", "audit", "aup"], "Security", "/sec, /aup-audit, /rules; BLOCK → dừng, báo owner", None, None),
+    r(&["core", "cli", "rust", "crate", "kit", "ccc"], "Core/Rust", "crates/ (Rust): cargo check/test một module, nice -n 19 -j2", None, Some("ready")),
 ];
 
-/// Pure: (role, duty) for a session name; an unknown name is its own topic.
-pub(super) fn role(name: &str) -> (String, String) {
+/// The row a session name picks, if any.
+pub(super) fn find(name: &str) -> Option<&'static Role> {
     let low = name.to_lowercase();
     for tok in low.split(|c: char| !(c.is_alphanumeric() || c == '&')).filter(|t| !t.is_empty()) {
         let tok = tok.trim_end_matches(|c: char| c.is_ascii_digit());
-        for (keys, role, duty) in ROLES {
-            if keys.iter().any(|k| tok == *k || (k.len() >= 4 && tok.starts_with(k))) {
-                return (role.to_string(), duty.to_string());
+        for row in &ROLES {
+            if row.keys.iter().any(|k| tok == *k || (k.len() >= 4 && tok.starts_with(k))) {
+                return Some(row);
             }
         }
     }
-    (format!("\"{name}\""), format!("phòng riêng cho chủ đề \"{name}\": bám việc, memory và quyết định theo đúng tên này"))
+    None
+}
+
+/// Pure: (role, duty) for a session name; an unknown name is its own topic.
+pub(super) fn role(name: &str) -> (String, String) {
+    match find(name) {
+        Some(row) => (row.name.to_string(), row.duty.to_string()),
+        None => (format!("\"{name}\""), format!("phòng riêng cho chủ đề \"{name}\": bám việc, memory và quyết định theo đúng tên này")),
+    }
 }
 
 /// Another room of the same repo, as shown to this one.
@@ -170,15 +201,27 @@ mod tests {
 
     #[test]
     fn names_map_to_roles_and_unknown_names_are_their_own_topic() {
-        for (n, r) in [("rd", "R&D"), ("rd2", "R&D"), ("research-feynman", "R&D"), ("qa", "QA"), ("hq-ui", "UI/UX"), ("api-payos", "Backend/API"),
-            ("ci-fix", "Ops/CI"), ("docs", "Docs"), ("sec", "Security"), ("critic", "Review/Critic"), ("lead", "Lead/PM"), ("core", "Core/Rust")] {
+        for (n, r) in [("rd", "R&D"), ("rd2", "R&D"), ("research-feynman", "R&D"), ("qa", "QA"), ("qc", "QA"), ("tester", "QA"), ("hq-ui", "UI/UX"),
+            ("api-payos", "Backend/API"), ("ci-fix", "Ops/CI"), ("docs", "Docs"), ("sec", "Security"), ("critic", "Review"), ("review", "Review"),
+            ("lead", "Lead/PM"), ("core", "Core/Rust"), ("dev", "Dev/Builder"), ("dev2", "Dev/Builder"), ("builder", "Dev/Builder"), ("ba", "BA"), ("analyst", "BA")] {
             assert_eq!(role(n).0, r, "{n}");
         }
         let (r, duty) = role("acoleads");
         assert_eq!(r, "\"acoleads\"");
         assert!(duty.contains("acoleads"));
-        // short keys match whole tokens only: "uiux" is not "ui", "build" is not "ui"
-        assert_eq!(role("build").0, "\"build\"");
+        // short keys match whole tokens only: "uiux" is not "ui", "bake" is not "ba"
+        assert_eq!(role("uiux").0, "\"uiux\"");
+        assert_eq!(role("bake").0, "\"bake\"");
+    }
+
+    #[test]
+    fn the_default_team_covers_every_lane_with_a_model() {
+        let lanes: Vec<_> = DEFAULT_TEAM.iter().map(|n| find(n).and_then(|r| r.lane)).collect();
+        assert_eq!(lanes, [Some("backlog"), Some("ready"), Some("qa"), Some("review")]);
+        let models: Vec<_> = ["lead", "ba", "rd", "dev", "qa", "review"].iter().map(|n| find(n).and_then(|r| r.model)).collect();
+        assert_eq!(models, [Some("opus"), Some("opus"), Some("opus"), Some("sonnet"), Some("haiku"), Some("sonnet")]);
+        assert!(find("acoleads").is_none());
+        assert!(find("sec").is_some_and(|r| r.lane.is_none() && r.model.is_none()), "security does not take review cards");
     }
 
     #[test]

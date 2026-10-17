@@ -29,10 +29,10 @@ KIT & CẤU HÌNH
   8sync ccc status             claude, login, kit, managed settings, MCP, session
   8sync ccc policy [--org-uuid <u>] [--out <f>] [--strict-hooks] [--lock-mcp]   in managed-settings.json khuyến nghị
   8sync ccc statusline --install | --uninstall | --agents   status line của Claude Code
-  8sync ccc compact            xem mốc auto-compact (mặc định kit: 60%)
+  8sync ccc compact            xem mốc auto-compact (mặc định kit: 65% của window model)
   8sync ccc compact --at 50    đặt mốc 10..95 (thấp hơn = nén sớm hơn; cần session mới)
   8sync ccc compact --reset    về mặc định của Claude Code   (--json để máy đọc)
-  8sync ccc compact --window 400000   trần tuyệt đối 100000..1000000 (kit mặc định 400000; trigger ≈ % × window)
+  8sync ccc compact --window 400000   trần tuyệt đối 100000..1000000 (kit mặc định 1000000 = window model; trigger ≈ % × window)
   8sync ccc compact --window-reset    bỏ trần window
   8sync ccc login-kind [--json]   kiểu login (claude.ai hay API key; không in token)
   8sync ccc <verb> --offline   không chạm mạng (cũng EIGHTSYNC_OFFLINE=1)
@@ -51,7 +51,9 @@ TỰ ĐỘNG (gõ trong Claude Code)
   8sync ccc hook ship-grant    (hook) ghi giấy phép khi owner duyệt câu hỏi `Ship`
   8sync ccc idle on [--hours 2] [--usd-per-hour X]   không-ai-rảnh cho agent team (mặc định TẮT; subscription = lease khi owner có mặt)
   8sync ccc auto on [--here] [--loop [10m]] [--team] [--hours 2] [--after 60|1m] | off | pause | status [--json]   một công tắc \"team luôn work\": idle lease + delegate sau 60 s owner không gõ + auto.json cho HQ; mặc định mọi session ở mọi dự án trên máy, `--here` = chỉ các session của dự án ở thư mục hiện tại; `--loop 10m` = ghi .claude/loop.md (playbook chọn skill, không ghi đè) rồi gửi vào inbox mọi phòng của dự án lệnh tự đặt loop cron (như /loop 10m) theo vai phòng; loop tự xoá khi auto off/pause, chạm trần thì nghỉ nhịp (subscription: cửa sổ 5 giờ/7 ngày ≥ 90%; API key hoặc `--usd-per-hour`: $/giờ trung bình, chỉ tính session của dự án khi `--here`); Claude Code xoá sau 7 ngày (chạy lại = gia hạn); `--team` = phòng mở bằng --team tự lấp ghế rd, qa, reviewer; `--target \"<đích>\" [--check \"<lệnh>\"]` = đích đầu hàng cho cả team; `pause` = owner tạm dừng (HQ không tự bật lại), `off` = tắt (HQ có thể bật lại); subscription giữ lease ≤ 4 giờ, chỉ chạy khi owner có mặt
-  8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id>   hàng đích của dự án: mỗi nhịp loop các phòng làm phần hợp vai cho đích đầu hàng, đạt thì `done` rồi sang đích kế; `--now` = lên đầu hàng + vào inbox mọi phòng ngay (như ctrl+x ctrl+s); trong phòng nói \"đưa vào loop: …\" là đủ
+  8sync ccc auto up [--roles lead,dev,qa,review] [--loop 10m] [--clear-ss] | down   cả team chạy nền (claude --bg) bằng một lệnh, không mở terminal từng phòng: auto on --here + mỗi phòng một session nền đúng vai/model (lead opus, dev sonnet, qa haiku, review sonnet; thêm ba, rd, ui, api, core, ops, docs, sec); phòng đang chạy chỉ nhận loop, phòng đã dừng chạy lại cùng id; `--clear-ss` = xoá trước mọi session nền rác của dự án (trùng phòng, sót từ lần trước), không đụng session interactive; xem tiến độ `8sync hq ui`; `down` = dừng phòng nền + pause
+  8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id>   hàng đích của dự án: mỗi nhịp loop các phòng làm phần hợp vai cho đích đầu hàng, đạt thì `done` rồi sang đích kế; `--now` = lên đầu hàng + vào inbox mọi phòng ngay (như ctrl+x ctrl+s); trong phòng nói \"đưa vào loop: …\" là đủ
+  8sync ccc auto board | lint | claim | move <id> <cột> | note <id> \"…\" [--json]   board kiểu super-board: backlog → ready → building → qa → review → approved (chờ Ship) → done, blocked; phòng `claim` card của cột mình (lead/ba backlog, dev ready, qa qa, review review), `move` chuyển cột có luật (ready cần --check, approved cần --sha), bị trả về quá 2 lần → blocked, claim im 2 giờ → thu hồi
   8sync ccc meet [--say \"done|doing|blocked\"] [--room <tên>] [--json]   họp sprint daily của các phòng: ghi một dòng vào su-code/standup/<ngày>.md (phòng nói lại trong 30 phút thì thay dòng cũ), đọc dòng của phòng khác; cần su-code/
   8sync ccc idle off | status [--json]                 (bật thêm gate TaskCompleted: task sửa code chưa test thì chưa cho xong)
   8sync ccc delegate on [--after 1m] | off | status    critic chọn thay owner câu hỏi sản phẩm/kỹ thuật (mặc định TẮT; --after: chỉ khi owner không gõ prompt N giây — bấm trả lời dialog không tính; Ship/secret/xoá/tiền vẫn hỏi)

@@ -159,6 +159,22 @@ impl Store {
         self.edit(name, id, |s| s.goal = goal)
     }
 
+    /// Point the session `name` at conversation `id`: Claude Code picked its own id (`claude --bg`
+    /// ignores `--session-id`). Name, goal and urgency stay. Refuses an id that is not a UUID or
+    /// that another session of this repo holds. Returns the old id, `None` when `name` is unknown.
+    pub fn rebind(&self, name: &str, id: &str) -> Result<Option<String>> {
+        let uuid = id.len() == 36 && id.chars().enumerate().all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { c == '-' } else { c.is_ascii_hexdigit() });
+        if !uuid {
+            bail!("not a session id: '{id}'");
+        }
+        self.update(|reg| {
+            if let Some(other) = reg.sessions.iter().find(|s| s.conversation_id == id && s.name != name) {
+                bail!("session id {id} already belongs to '{}'", other.name);
+            }
+            Ok(reg.sessions.iter_mut().find(|s| s.name == name).map(|s| std::mem::replace(&mut s.conversation_id, id.to_string())))
+        })
+    }
+
     /// Apply `f` to the session named `name` or, when `name` is `None`, the one whose
     /// conversation id is `id`; returns its name, or `None` when nothing matched.
     fn edit(&self, name: Option<&str>, id: Option<&str>, f: impl FnOnce(&mut Session)) -> Result<Option<String>> {
@@ -308,6 +324,25 @@ mod tests {
         assert_eq!(st.set_goal(Some("a"), None, None).unwrap().as_deref(), Some("a"));
         assert!(!std::fs::read_to_string(st.dir.join("index.json")).unwrap().contains("goal"));
         assert_eq!(st.set_goal(Some("ghost"), None, None).unwrap(), None);
+    }
+
+    #[test]
+    fn rebind_points_a_room_at_the_id_claude_code_picked() {
+        let st = store("rebind");
+        let a = st.touch("dev", false).unwrap();
+        st.touch("qa", false).unwrap();
+        let g = Goal { text: "card 3".into(), files: vec![], set_at: 1 };
+        st.set_goal(Some("dev"), None, Some(g.clone())).unwrap();
+        let bg = "3698e3a6-9b73-4b37-ab3a-368b169d0508";
+        assert_eq!(st.rebind("dev", bg).unwrap(), Some(a.conversation_id));
+        let reg = st.load();
+        assert_eq!((reg.sessions[0].name.as_str(), reg.sessions[0].conversation_id.as_str(), reg.sessions[0].goal.clone()), ("dev", bg, Some(g)));
+        assert_eq!(st.rebind("dev", bg).unwrap().as_deref(), Some(bg), "idempotent");
+        assert!(st.rebind("qa", bg).unwrap_err().to_string().contains("belongs to 'dev'"));
+        assert!(st.rebind("qa", "3698e3a6").is_err(), "a short id is not a session id");
+        assert!(st.rebind("qa", "3698e3a6-9b73-4b37-ab3a-368b169d050z").is_err());
+        assert_eq!(st.rebind("ghost", "11111111-1111-4111-8111-111111111111").unwrap(), None);
+        let _ = std::fs::remove_dir_all(&st.dir);
     }
 
     #[test]

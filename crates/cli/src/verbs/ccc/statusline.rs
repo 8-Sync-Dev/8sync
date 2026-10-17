@@ -33,6 +33,9 @@ pub(super) struct Extras {
     pub looping: Option<(u64, u64)>,
     pub grant: bool,
     pub chained: Vec<String>,
+    /// Where this session auto-compacts, in % of its context window ([`super::compact::point`] over
+    /// the env Claude Code started it with), so `ctx 22%→nén 24%` shows a too-early point at once.
+    pub compact: Option<u64>,
 }
 
 fn paint(color: bool, code: &str, s: &str) -> String {
@@ -131,7 +134,7 @@ fn short_effort(e: &str) -> &str {
     }
 }
 
-fn row1(v: &Value, now: u64, color: bool) -> String {
+fn row1(v: &Value, x: &Extras, now: u64, color: bool) -> String {
     let mut seg = vec![paint(color, "1;35", "8sync")];
     if let Some(m) = v["model"]["display_name"].as_str().or_else(|| v["model"]["id"].as_str()) {
         let eff = v["effort"]["level"].as_str().map(|e| format!(" {}", paint(color, "2", short_effort(e)))).unwrap_or_default();
@@ -139,7 +142,8 @@ fn row1(v: &Value, now: u64, color: bool) -> String {
     }
     if v["context_window"].is_object() {
         let p = pct_of(&v["context_window"]["used_percentage"]).unwrap_or(0);
-        seg.push(format!("ctx {} {}", bar(p, color), paint(color, pct_color(p), &format!("{p}%"))));
+        let at = x.compact.map(|c| paint(color, if c < 50 { "31" } else { "2" }, &format!("→nén {c}%"))).unwrap_or_default();
+        seg.push(format!("ctx {} {}{at}", bar(p, color), paint(color, pct_color(p), &format!("{p}%"))));
     }
     for (key, label) in [("five_hour", "5h"), ("seven_day", "7d")] {
         let w = &v["rate_limits"][key];
@@ -194,7 +198,7 @@ fn row2(v: &Value, x: &Extras, color: bool) -> String {
 
 /// Pure renderer: rows already clipped to `cols`.
 pub(super) fn render(v: &Value, x: &Extras, now: u64, cols: usize, color: bool) -> Vec<String> {
-    let mut rows = vec![row1(v, now, color)];
+    let mut rows = vec![row1(v, x, now, color)];
     let r2 = row2(v, x, color);
     if !r2.is_empty() {
         rows.push(r2);
@@ -408,6 +412,12 @@ fn gather(v: &Value, input: &str, home: &Path, now: u64) -> Extras {
         x.looping = ship_active(Path::new(cwd));
     }
     x.grant = super::grant::allows(&super::grant::dir(home), sid, false, now);
+    // The status line inherits the session's env (settings `env` applied at start), so this is the
+    // point this session uses, not what settings.json says now.
+    let var = |k: &str| std::env::var(k).ok();
+    x.compact = v["context_window"]["context_window_size"]
+        .as_u64()
+        .and_then(|n| super::compact::point(n, var(super::compact::VAR).as_deref(), var(super::compact::WIN_VAR).as_deref()));
     if std::env::var_os("EIGHTSYNC_STATUSLINE_CHAIN").is_none() {
         if let Some(prev) = prev_cmd(home) {
             let mut c = Command::new("sh");
@@ -714,7 +724,7 @@ mod tests {
     }
 
     fn extras() -> Extras {
-        Extras { branch: Some("feat/x".into()), dirty: true, tasks: Some((2, 5, Some("viết test".into()))), alert: Some("mem".into()), looping: Some((3, 12)), grant: true, chained: vec![] }
+        Extras { branch: Some("feat/x".into()), dirty: true, tasks: Some((2, 5, Some("viết test".into()))), alert: Some("mem".into()), looping: Some((3, 12)), grant: true, chained: vec![], compact: Some(65) }
     }
 
     #[test]
@@ -722,9 +732,20 @@ mod tests {
         let r = render(&full(), &extras(), NOW, 400, true);
         assert_eq!(r.len(), 2);
         let (a, b) = (strip(&r[0]), strip(&r[1]));
-        assert_eq!(a, "8sync · Opus 5 high · ctx ▓▓▓▓▓░░░░░ 42% · 5h 24% ↻ 1h23m · 7d 85% ↻ 2d4h · $0.01 · +156/-23");
+        assert_eq!(a, "8sync · Opus 5 high · ctx ▓▓▓▓▓░░░░░ 42%→nén 65% · 5h 24% ↻ 1h23m · 7d 85% ↻ 2d4h · $0.01 · +156/-23");
         assert_eq!(b, "⎇ feat/x* · #12 ✓ · tasks 2/5 ▸ viết test · ⚠ mem · loop 3/12 · 🚢 grant");
         assert!(r[0].contains("\x1b[31m85%"), "7d over 80 is red");
+    }
+
+    #[test]
+    fn an_early_compaction_point_shows_red() {
+        let v = json!({"model": {"display_name": "Opus 5.5 (1M context)"}, "context_window": {"used_percentage": 22, "context_window_size": 1_000_000}});
+        // the old kit pair: 60 % of a 400K window on a 1M model
+        let at = crate::verbs::ccc::compact::point(1_000_000, Some("60"), Some("400000"));
+        assert_eq!(at, Some(24));
+        let r = render(&v, &Extras { compact: at, ..Default::default() }, NOW, 200, true);
+        assert!(r[0].contains("\x1b[31m→nén 24%"), "{:?}", r[0]);
+        assert_eq!(strip(&render(&v, &Extras::default(), NOW, 200, true)[0]), "8sync · Opus 5.5 · 1M · ctx ▓▓▓░░░░░░░ 22%");
     }
 
     #[test]
