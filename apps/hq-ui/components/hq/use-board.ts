@@ -5,8 +5,8 @@ import { cardMoves, type Move } from "@/lib/now";
 import type { ProjectBoard } from "@/lib/server/board";
 import type { Hq } from "./use-hq";
 
-/** Each poll spawns `8sync ccc auto board --json` once per live project: often enough to follow a loop tick. */
-const POLL_MS = 10_000;
+/** Each poll spawns `8sync ccc auto board --json` once per live project (a few ms each): same pace as the office, so a card move shows within seconds. */
+const POLL_MS = 4_000;
 
 /**
  * One board poll for the whole HQ (Văn phòng and Board share it). `moves` holds the cards whose lane

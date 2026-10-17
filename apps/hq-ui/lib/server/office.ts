@@ -5,10 +5,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import type { Ask } from "../ask";
 import { teamOf, type IdleRecord } from "../idle";
 import { deliveryOf, sessionLabel } from "../labels";
 import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
 import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
+import { readAsk } from "./ask";
 import { loadFloor } from "./floor";
 import { readIdleStatus } from "./idle";
 import { inboxLive, pendingInbox } from "./inbox";
@@ -90,6 +92,8 @@ export type Room = {
   label: string;
   status: SessionView["status"];
   waiting: string | null;
+  /** What it asks the owner (its transcript's open AskUserQuestion / permission prompt), only while waiting. */
+  ask: Ask | null;
   cwd: string | null;
   project: ProjectInfo | null;
   delivery: "terminal" | "inbox" | null;
@@ -217,6 +221,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       label: sessionLabel(s),
       status: s.status,
       waiting: (s as SessionView & { waiting?: string | null }).waiting ?? null,
+      ask: s.status === "needs_input" && sid ? readAsk(sid, s.cwd) : null,
       cwd: s.cwd,
       project: projectOf(s.cwd, now),
       delivery: deliveryOf(s),

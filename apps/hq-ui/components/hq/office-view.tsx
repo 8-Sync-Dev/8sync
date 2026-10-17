@@ -8,6 +8,7 @@ import { isStale, longRestCount, sortMembers, type IdleRecord } from "@/lib/idle
 import { autoButton, autoText, staleText } from "@/lib/auto";
 import { LANES } from "@/lib/lanes";
 import { attendeesNow, meetingLabel, walkPhase, type Attendee } from "@/lib/meeting";
+import { askLine } from "@/lib/ask";
 import { NOW_LABEL, agoVi, claimMatches, deskClip, roster, rosterSummary, stateChanges, type RoomNow } from "@/lib/now";
 import { cloneCount, fmtDuration, fmtTokens, fmtUsd, groupByProject, roomFor, SEATS, type Visit } from "@/lib/office";
 import { modelShort } from "@/lib/roles";
@@ -19,6 +20,8 @@ import { NowRoster, type RosterRow } from "./now-roster";
 import { RoleIcon } from "./role-badge";
 import { SpriteCanvas, WalkerCanvas } from "./sprite-canvas";
 import type { BoardsState } from "./use-board";
+import { AskPanel, type AskRoom } from "./ask-panel";
+import { TeamControls, TeamStarter } from "./team-controls";
 import { useAuto, type Office, type OfficeState, type Room } from "./use-office";
 
 /*
@@ -163,7 +166,7 @@ function RoomCard({
           </h3>
           {room.model && <span className="shrink-0 text-[11px] text-(--soft)">{modelShort(room.model)}</span>}
           <span className={cn("ml-auto shrink-0 text-xs font-medium", SCENE_INK[n.state])}>
-            {inMeeting ? "Đi họp" : n.state === "needs" ? (room.waiting ?? NOW_LABEL.needs) : NOW_LABEL[n.state]}
+            {inMeeting ? "Đi họp" : n.state === "needs" ? "Chờ anh trả lời" : NOW_LABEL[n.state]}
           </span>
         </header>
         <p className="truncate px-3.5 pt-1 text-xs text-(--soft)" title={n.card?.text}>
@@ -188,11 +191,18 @@ function RoomCard({
               ))}
             </ul>
             {/* What the screen shows: the live line from `8sync ls`, with how fresh it is. */}
-            {room.doing && (
-              <p className="mb-5 line-clamp-3 min-w-0 flex-1 text-xs leading-snug text-(--soft)" title={room.doing}>
-                {room.doing}
-                {room.last_active != null && <span className="tabular"> · {agoVi(room.last_active, now)}</span>}
+            {n.state === "needs" ? (
+              <p className="mb-5 line-clamp-3 min-w-0 flex-1 text-xs leading-snug text-(--ink)" title={askLine(room.ask) ?? undefined}>
+                {askLine(room.ask) ?? "Đang chờ anh trả lời trong terminal"}
+                <span className="text-(--soft)"> · xem khung “Anh cần trả lời” ở đầu trang</span>
               </p>
+            ) : (
+              room.doing && (
+                <p className="mb-5 line-clamp-3 min-w-0 flex-1 text-xs leading-snug text-(--soft)" title={room.doing}>
+                  {room.doing}
+                  {room.last_active != null && <span className="tabular"> · {agoVi(room.last_active, now)}</span>}
+                </p>
+              )
             )}
           </div>
           {members.length > 0 && (
@@ -350,6 +360,7 @@ export function OfficeView({
   onOpen,
   onStart,
   token,
+  projects = [],
 }: {
   data: OfficeState;
   /** The shared board poll (use-board.ts): which card each room holds, and which cards just moved. */
@@ -360,9 +371,18 @@ export function OfficeView({
   onStart: () => void;
   /** HQ token: the Pause / Run control talks to /api/auto. */
   token: string;
+  /** Folders added in the sidebar: the ones with no room get a "Mở team" button. */
+  projects?: { path: string; name: string; missing?: boolean }[];
 }) {
   const rooms = useMemo(() => office?.rooms ?? [], [office]);
   const groups = useMemo(() => groupByProject(rooms), [rooms]);
+  // After a team button: read the office and the board again now, not at the next poll.
+  const refresh = () => {
+    retry();
+    boards.reload();
+  };
+  const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const idleFolders = projects.filter((p) => !p.missing && !groups.some((g) => slash(g.project.root) === slash(p.path)));
   const labelOf = (key: string) => rooms.find((r) => r.key === key)?.label ?? key.slice(0, 8);
   const visits = office?.visits ?? [];
   const now = office?.at ?? 0;
@@ -377,10 +397,19 @@ export function OfficeView({
   const resting = longRestCount(idle, now);
 
   const rows: RosterRow[] = useMemo(
-    () => roster(rooms, boards.boards ?? [], now).map((r) => ({ ...r, model: r.room.model, waiting: r.room.waiting })),
+    () => roster(rooms, boards.boards ?? [], now).map((r) => ({ ...r, model: r.room.model, waiting: askLine(r.room.ask) ?? r.room.waiting })),
     [rooms, boards.boards, now],
   );
   const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
+  // Rooms stopped on the owner, in roster order (the longest wait is not reordered away).
+  const asking: AskRoom[] = useMemo(
+    () =>
+      rows.flatMap((n) => {
+        const r = n.state === "needs" ? rooms.find((x) => x.key === n.key) : undefined;
+        return r ? [{ key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting: r.waiting, ask: r.ask, tmux: r.delivery === "terminal" }] : [];
+      }),
+    [rows, rooms],
+  );
   // Rooms whose state changed since the previous poll (React's "previous value in state" pattern).
   const sig = useMemo(() => Object.fromEntries(rows.map((r) => [r.key, r.state])), [rows]);
   const [seen, setSeen] = useState<{ sig: Record<string, string> | null; changed: Set<string> }>({ sig: null, changed: new Set() });
@@ -401,9 +430,14 @@ export function OfficeView({
         ) : !office ? (
           <OfficeSkeleton />
         ) : rooms.length === 0 ? (
-          <EmptyState icon={<UsersIcon />} title="Văn phòng đang trống" action={<Button onClick={onStart}>Bắt đầu một session</Button>}>
-            Chưa có session Claude Code nào đang chạy. Mỗi session sẽ thành một phòng; chạy <code className="font-mono">8sync ccc auto up</code> trong repo để mở cả team nền (lead, dev, qa, review).
-          </EmptyState>
+          <>
+            <EmptyState icon={<UsersIcon />} title="Văn phòng đang trống" action={<Button variant="outline" onClick={onStart}>Mở một session lẻ</Button>}>
+              {idleFolders.length
+                ? "Bấm “Mở team” ở dự án bên dưới: HQ mở 4 phòng nền (lead, dev, qa, review) và mọi thứ hiện ở đây."
+                : "Thêm thư mục dự án ở mục Projects bên trái, rồi bấm “Mở team” để mở 4 phòng nền (lead, dev, qa, review)."}
+            </EmptyState>
+            <TeamStarter projects={idleFolders} token={token} after={refresh} />
+          </>
         ) : (
           <>
             {error && (
@@ -411,6 +445,15 @@ export function OfficeView({
                 Mất kết nối ({error}), đang thử lại. Dữ liệu dưới đây có thể đã cũ.
               </p>
             )}
+            <AskPanel
+              rooms={asking}
+              now={now}
+              token={token}
+              onOpen={(key) => {
+                const r = rooms.find((x) => x.key === key);
+                if (r) onOpen(r);
+              }}
+            />
             <NowRoster
               rows={rows}
               now={now}
@@ -449,7 +492,10 @@ export function OfficeView({
                         {b}
                       </span>
                     ))}
-                    <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular">{g.rooms.length} phòng</span>
+                    <span className="text-xs text-muted-foreground tabular">{g.rooms.length} phòng</span>
+                    <span className="ml-auto">
+                      <TeamControls root={g.project.root} name={g.project.name} token={token} after={refresh} />
+                    </span>
                   </header>
                   {meeting && <MeetingRoom attendees={meeting.attendees} rooms={g.rooms} until={meeting.until} now={now} />}
                   <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))]">
@@ -476,6 +522,7 @@ export function OfficeView({
                 </section>
               );
             })}
+            <TeamStarter projects={idleFolders} token={token} after={refresh} />
             <details className="text-xs text-muted-foreground">
               <summary className="w-fit cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60">Cách đọc văn phòng</summary>
               <p className="mt-2 max-w-[75ch] text-pretty">

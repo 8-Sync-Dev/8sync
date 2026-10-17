@@ -13,14 +13,16 @@
 
 ---
 
-## Quick start: a whole team in four commands
+## Quick start: install, then one command
 
 ```bash
 curl -fsSL https://get.8syncdev.com/install | sh            # Windows: irm https://get.8syncdev.com/install.ps1 | iex
-cd my-repo && 8sync ccc auto up --clear-ss                  # lead, dev, qa, review run as Claude Code background sessions
-8sync hq ui                                                 # watch every room and the board in the browser
-8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"   # a card; done when the check exits 0
+8sync hq ui                                                 # http://127.0.0.1:8740: the rest is buttons
 ```
+
+In HQ: add the repo folder under **Projects**, press **Mở team** (lead, dev, qa, review start as Claude Code background sessions), then **Giao việc** to put a card on the board. When a room stops on a question, **Anh cần trả lời** at the top of the office shows the question and its options; **Mở terminal để trả lời** opens `claude attach` for that room. **Dừng team** stops the rooms and keeps their conversations.
+
+The same steps from a terminal: `8sync ccc auto up --clear-ss` · `8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"` · `8sync ccc auto board` · `8sync ccc auto down`.
 
 The lead writes acceptance criteria. Dev builds the card in its own worktree and opens a PR, qa runs the check and a UAT, and review approves the head SHA. Nothing merges until you answer one `Ship` question. `8sync ccc auto down` stops the team. Auto mode is on, bypass is locked, and the guard never consults a grant for force-push, secrets or deletes. More in [The whole team](#the-whole-team-one-command-no-terminal-per-room) and, in Vietnamese, [docs/huong-dan.md](docs/huong-dan.md).
 

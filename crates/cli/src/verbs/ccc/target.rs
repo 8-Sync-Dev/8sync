@@ -235,6 +235,12 @@ fn edit<T>(home: &Path, root: &Path, f: impl FnOnce(&mut Project) -> Result<T>) 
 }
 
 /// Every target of the project, open ones first in queue order, then the latest closed ones.
+/// The project the cards of `root` are filed under (a worktree or subfolder shares its repo's).
+/// `auto board --json` prints it so HQ shows one board per project, nested repos included.
+pub(super) fn filed_under(home: &Path, root: &Path) -> Result<String> {
+    Ok(key(&read(home)?, root))
+}
+
 pub(super) fn list(home: &Path, root: &Path) -> Result<Vec<Target>> {
     let mut book = read(home)?;
     let k = key(&book, root);
@@ -628,6 +634,22 @@ mod tests {
         let (done, _) = close(h, &root, fix.id, Some("gh pr merge 81 --match-head-commit 0123abc: merged"), Some("lead"), 38).unwrap();
         assert_eq!((done.state.as_str(), done.claim), ("done", None));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_nested_repo_keeps_its_own_board_and_its_worktrees_share_it() {
+        // UAT 2026-10-17: ai-game-studio sits inside the 8sync-startup repo; HQ showed only the outer, empty board.
+        let (d, outer) = tmp("nested");
+        let h = d.as_path();
+        let game = outer.join("game");
+        let wt = game.join(".claude/worktrees/card-5");
+        std::fs::create_dir_all(&wt).unwrap();
+        put(h, &game, "concept v1", None, false, None, 1).unwrap();
+        let k = |p: &Path| filed_under(h, p).unwrap();
+        assert_eq!(k(&game), super::super::auto::canon(&game).to_string_lossy());
+        assert_eq!(k(&wt), k(&game), "a worktree files under its repo");
+        assert_ne!(k(&outer), k(&game), "the outer repo is a different board");
+        assert!(list(h, &outer).unwrap().is_empty());
     }
 
     #[test]

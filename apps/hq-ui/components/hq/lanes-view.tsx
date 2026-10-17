@@ -31,8 +31,7 @@ export function LanesView({ state }: { state: BoardsState }) {
   if (boards && !cur) {
     return (
       <EmptyState icon={<LayersIcon />} title="Chưa có phòng nào đang chạy">
-        Trong repo, chạy <code className="font-mono">8sync ccc auto up</code> để mở cả team nền, rồi giao card bằng{" "}
-        <code className="font-mono">8sync ccc auto add &quot;&lt;việc&gt;&quot; --check &quot;&lt;lệnh&gt;&quot;</code>.
+        Ở tab Văn phòng, bấm “Mở team” cạnh dự án (thêm thư mục ở mục Projects nếu chưa có), rồi bấm “Giao việc” ở góc trên để đưa card vào board.
       </EmptyState>
     );
   }

@@ -603,23 +603,22 @@
       <div class="team-grid">
         <div class="term">
           <div class="term-head">
-            <span>terminal, inside the repo</span>
-            <button class="copy" type="button" data-copy="8sync ccc auto up --clear-ss" aria-label="Copy the auto up command">Copy</button>
+            <span>one command, then buttons</span>
+            <button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button>
           </div>
-<pre><code><span class="c"># lead, dev, qa, review as background sessions</span>
+<pre><code><span class="p">$ </span>8sync hq ui
+
+<span class="c"># the rest is a button in HQ (localhost:8740)</span>
+<span class="c"># Mở team          lead, dev, qa, review as background rooms</span>
+<span class="c"># Giao việc        a card, done when its check exits 0</span>
+<span class="c"># Anh cần trả lời  the question a room waits on + Mở terminal</span>
+<span class="c"># Board            cards by lane, what waits for your Ship</span>
+<span class="c"># Dừng team        stop the rooms, keep their conversations</span>
+
+<span class="c"># the same steps from a terminal, if you prefer</span>
 <span class="p">$ </span>8sync ccc auto up --clear-ss
-
-<span class="c"># watch every room in the browser</span>
-<span class="p">$ </span>8sync hq ui
-
-<span class="c"># a card is done when its check exits 0</span>
 <span class="p">$ </span>8sync ccc auto add "fix login refresh" --check "pnpm test auth"
-
-<span class="c"># cards by lane, and what waits for you</span>
 <span class="p">$ </span>8sync ccc auto board
-<span class="p">$ </span>8sync ccc auto lint
-
-<span class="c"># stop the background rooms, keep their conversations</span>
 <span class="p">$ </span>8sync ccc auto down</code></pre>
         </div>
         <div>

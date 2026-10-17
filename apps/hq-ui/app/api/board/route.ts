@@ -1,8 +1,8 @@
-import { readBoard, type ProjectBoard } from "@/lib/server/board";
+import { projectBoards } from "@/lib/server/board";
 import { json, open } from "@/lib/server/http";
 import { projectOf } from "@/lib/server/office";
 import { mergedSessions } from "@/lib/server/proc";
-import { liveProjects, outermost } from "@/lib/server/targets";
+import { liveProjects } from "@/lib/server/targets";
 
 export const runtime = "nodejs";
 
@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
-  const projects = outermost(liveProjects(await mergedSessions(o.db), (cwd) => projectOf(cwd)));
-  const boards: ProjectBoard[] = await Promise.all(projects.map((p) => readBoard(p)));
+  // Every live root, then one row per board 8sync reports (worktrees share; nested repos do not).
+  const boards = await projectBoards(liveProjects(await mergedSessions(o.db), (cwd) => projectOf(cwd)));
   return json({ boards });
 }

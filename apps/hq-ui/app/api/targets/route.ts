@@ -1,7 +1,8 @@
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { projectOf } from "@/lib/server/office";
 import { mergedSessions } from "@/lib/server/proc";
-import { addTarget, liveProjects, outermost, parseTargetBody, type TargetResult } from "@/lib/server/targets";
+import { projectBoards } from "@/lib/server/board";
+import { addTarget, liveProjects, parseTargetBody, type TargetResult } from "@/lib/server/targets";
 
 export const runtime = "nodejs";
 
@@ -17,7 +18,9 @@ export async function POST(req: Request) {
   const projects = liveProjects(await mergedSessions(o.db), (cwd) => projectOf(cwd));
   // Case-insensitive like the office grouping (lib/office.ts groupByProject).
   const want = p.value.root.toLowerCase();
-  const chosen = p.value.root === "all" ? outermost(projects) : projects.filter((x) => x.root.toLowerCase() === want);
+  // "all": once per board (a nested repo has its own; a worktree shares its repo's).
+  const boardRoots = p.value.root === "all" ? new Set((await projectBoards(projects)).map((b) => b.root)) : null;
+  const chosen = boardRoots ? projects.filter((x) => boardRoots.has(x.root)) : projects.filter((x) => x.root.toLowerCase() === want);
   if (chosen.length === 0) {
     return bad(p.value.root === "all" ? "chưa có phòng nào đang chạy" : "dự án này không còn phòng nào đang chạy", 409);
   }
