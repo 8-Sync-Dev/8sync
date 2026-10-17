@@ -200,13 +200,14 @@ fn run_at(rest: &[String], cwd: &Path, now: u64) -> Result<()> {
                 c
             };
             let out = c.current_dir(cwd).output().with_context(|| format!("cannot run {}", cmd[0]))?;
-            let text = super::super::secret_mask::mask(&format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
+            let mask = |b: &[u8]| super::super::secret_mask::mask(&String::from_utf8_lossy(b));
+            let (stdout, stderr) = (mask(&out.stdout), mask(&out.stderr));
             let code = out.status.code().map_or("signal".to_string(), |c| c.to_string());
-            let line = format!("iter {} | {label} | exit {code} | {}", v["iter"], evidence_tail(&text));
+            let line = format!("iter {} | {label} | exit {code} | {}", v["iter"], evidence_line(out.status.success(), &stdout, &stderr));
             let log = p.with_file_name("LOOP.md");
             let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&log).with_context(|| format!("cannot write {}", log.display()))?;
             std::io::Write::write_all(&mut f, format!("{line}\n").as_bytes())?;
-            let lines: Vec<&str> = text.lines().collect();
+            let lines: Vec<&str> = stdout.lines().chain(stderr.lines()).collect();
             for l in &lines[lines.len().saturating_sub(15)..] {
                 println!("{l}");
             }
@@ -253,6 +254,15 @@ fn program(name: &str) -> Result<PathBuf> {
         return shell();
     }
     Ok(PathBuf::from(name))
+}
+
+/// The evidence line comes from the stream that carries the verdict: stdout when the check passed
+/// (libtest's `test result: ok. N passed`, a script's `C1-ok`; cargo's `Running …` and build
+/// warnings land on stderr), stderr when it failed (where errors go). A stream with no line falls
+/// back to the other.
+fn evidence_line(ok: bool, stdout: &str, stderr: &str) -> String {
+    let (first, other) = if ok { (stdout, stderr) } else { (stderr, stdout) };
+    evidence_tail(if first.trim().is_empty() { other } else { first })
 }
 
 /// The last non-empty output line, one line and at most 160 chars (`|` would break the table).
@@ -336,6 +346,24 @@ mod tests {
         run_at(&s(&["ev", "hq", "C1", "--", "bash", "-c", "echo argv-ok"]), &d, 1001).unwrap();
         let log = std::fs::read_to_string(d.join("su-code/ship/hq/LOOP.md")).unwrap();
         assert_eq!(log.lines().collect::<Vec<_>>(), ["iter 0 | C1 | exit 0 | argv-ok"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ev_evidence_is_the_verdict_stream_not_stderr_noise() {
+        // `cargo test`: libtest's verdict on stdout, cargo's `Running …` on stderr.
+        assert_eq!(evidence_line(true, "test result: ok. 9 passed\n\n", "     Running unittests src/main.rs\n"), "test result: ok. 9 passed");
+        assert_eq!(evidence_line(false, "partial\n", "error: boom\n"), "error: boom");
+        assert_eq!(evidence_line(true, "", "only-stderr\n"), "only-stderr");
+        assert_eq!(evidence_line(false, "C1-fail\n", " \n"), "C1-fail");
+        assert_eq!(evidence_line(true, "", ""), "(no output)");
+        // End to end: a build warning after the verdict (seen 2026-10-16) no longer hides it.
+        let d = tmp("ev-stream");
+        run_at(&s(&["init", "hq"]), &d, 1000).unwrap();
+        run_at(&s(&["ev", "hq", "C1", "--", "echo verdict-ok; echo 'warning: noise' >&2"]), &d, 1001).unwrap();
+        run_at(&s(&["ev", "hq", "C2", "--", "echo partial; echo boom >&2; exit 1"]), &d, 1002).unwrap();
+        let log = std::fs::read_to_string(d.join("su-code/ship/hq/LOOP.md")).unwrap();
+        assert_eq!(log.lines().collect::<Vec<_>>(), ["iter 0 | C1 | exit 0 | verdict-ok", "iter 0 | C2 | exit 1 | boom"]);
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -6,6 +6,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [Unreleased]
 ### Fixed
 - **The release helper scripts work on Windows as written.** `su-code/handoff/scripts/merge-changelog.py` decoded `git show` with the locale codec, so on Windows (cp1252) a Vietnamese "ờ" in CHANGELOG made it crash with `TypeError … NoneType` unless run with `-X utf8`. It now reads UTF-8. Both scripts write LF instead of CRLF. `bump-version.py` takes the versions as arguments (`<worktree> <old> <new> <date>`) instead of constants edited before each release, and changes nothing when a check fails. CI runs `test-scripts.sh` (a Vietnamese CHANGELOG conflict and a CRLF bump fixture) on all three OSes.
+- **`8sync ccc loop ev` records the check's verdict, not stderr noise.** The evidence line was the last line of stdout followed by stderr, so a passing `cargo test` showed cargo's `Running unittests …` and a passing script showed a build warning instead of `test result: ok. N passed` or `C1-ok`. A passing check now takes its line from stdout and a failing one from stderr, falling back to the other stream when one is empty. The printed tail no longer merges the last stdout line with the first stderr line.
 
 ## [0.98.2] — 2026-10-17
 ### Changed
