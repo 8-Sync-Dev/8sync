@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **`8sync ccc loop ev` records the check's verdict, not stderr noise.** The evidence line was the last line of stdout followed by stderr, so a passing `cargo test` showed cargo's `Running unittests …` and a passing script showed a build warning instead of `test result: ok. N passed` or `C1-ok`. A passing check now takes its line from stdout and a failing one from stderr, falling back to the other stream when one is empty. The printed tail no longer merges the last stdout line with the first stderr line.
 
 ## [0.98.2] — 2026-10-17
 ### Changed
