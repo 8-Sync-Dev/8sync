@@ -9,6 +9,7 @@ import { mountSprite, mountWalker, type SpriteHandle } from "@/lib/sprite/render
 /** Decorative pixel character; the state is always also written as text next to it. */
 export function SpriteCanvas({
   state,
+  after,
   role = null,
   shirt,
   seed,
@@ -16,6 +17,8 @@ export function SpriteCanvas({
   className,
 }: {
   state: Clip;
+  /** For a one-shot `state` ("done"): the clip it settles into afterwards (default idle). */
+  after?: Clip;
   role?: SeatKey | null;
   shirt: string;
   /** Stable per sprite (e.g. room:seat): offsets its loop phase and blinks. */
@@ -33,8 +36,13 @@ export function SpriteCanvas({
     return () => handle.current?.dispose();
   }, [role, shirt, seed, size]);
 
+  // Read at state change only: a new `after` alone must not replay a one-shot.
+  const afterRef = useRef(after);
   useEffect(() => {
-    handle.current?.setState(state);
+    afterRef.current = after;
+  }, [after]);
+  useEffect(() => {
+    handle.current?.setState(state, afterRef.current);
   }, [state]);
 
   return <canvas ref={ref} aria-hidden className={className ?? "block"} />;

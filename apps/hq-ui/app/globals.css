@@ -228,3 +228,36 @@
     transform: none;
   }
 }
+
+/* A board card that changed lane in the latest poll (lanes-view): one lift + brand tint, then rest. */
+@keyframes hq-card-moved {
+  from {
+    background-color: color-mix(in oklch, var(--brand) 30%, var(--card));
+    transform: translateY(-4px);
+  }
+  to {
+    background-color: var(--card);
+    transform: none;
+  }
+}
+
+/* A roster row whose room changed state (now-roster): one tint that fades. */
+@keyframes hq-row-changed {
+  from {
+    background-color: color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+}
+
+/* The "working" mark: three dots typing while (and only while) the session runs. */
+@keyframes hq-typing {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: none;
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}

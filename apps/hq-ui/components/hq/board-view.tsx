@@ -11,11 +11,12 @@ import { addressOf, inboxText, messageTargets, sessionLabel } from "@/lib/labels
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote, ago, shortName } from "./bits";
 import { LanesView } from "./lanes-view";
+import type { BoardsState } from "./use-board";
 import type { Hq } from "./use-hq";
 import { TASK_COLUMNS, type Message, type Session, type Task } from "./types";
 
 /** Board tab: the project's cards by lane (`8sync ccc auto board`), or the sessions' own tasks. */
-export function BoardView({ hq, tasks, sessions }: { hq: Hq; tasks: Task[]; sessions: Session[] }) {
+export function BoardView({ hq, tasks, sessions, boards }: { hq: Hq; tasks: Task[]; sessions: Session[]; boards: BoardsState }) {
   const [mode, setMode] = useState<"lanes" | "tasks">("lanes");
   const tab = (m: typeof mode, label: string) => (
     <Button type="button" size="sm" variant={mode === m ? "secondary" : "ghost"} aria-pressed={mode === m} onClick={() => setMode(m)}>
@@ -28,7 +29,7 @@ export function BoardView({ hq, tasks, sessions }: { hq: Hq; tasks: Task[]; sess
         {tab("lanes", "Card dự án")}
         {tab("tasks", "Task của session")}
       </div>
-      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView hq={hq} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
+      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView state={boards} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
     </div>
   );
 }
