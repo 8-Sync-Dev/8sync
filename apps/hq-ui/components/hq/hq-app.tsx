@@ -23,6 +23,7 @@ import { SessionsView } from "./sessions-view";
 import { TeamThread } from "./team-thread";
 import { TeamView } from "./team-view";
 import { TerminalDrawer } from "./terminal-drawer";
+import { useBoards } from "./use-board";
 import { useHq } from "./use-hq";
 import { useOffice, type Room } from "./use-office";
 import type { Session } from "./types";
@@ -37,6 +38,8 @@ const SESSION_NAME_INPUT = "start-session-name";
 export function HqApp({ token }: { token: string }) {
   const hq = useHq(token);
   const office = useOffice(token);
+  // One board poll for Văn phòng (who holds which card) and Board (lanes).
+  const boards = useBoards(hq.api);
   const [scope, setScope] = useState<Scope>({ project: null, session: null });
   const [tab, setTab] = useState<Tab>("office");
   const [target, setTarget] = useState<string | null>(null);
@@ -202,7 +205,7 @@ export function HqApp({ token }: { token: string }) {
 
           <main className="min-h-0 flex-1">
             <TabsContent value="office" className="h-full">
-              <OfficeView data={office} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} />
+              <OfficeView data={office} boards={boards} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} />
             </TabsContent>
             <TabsContent value="group" className="flex h-full min-h-0 flex-col">
               <TeamThread rows={group.messages} filters={{ roleOf, tasks: group.tasks }} onOpenSession={openSession} />
@@ -236,7 +239,7 @@ export function HqApp({ token }: { token: string }) {
               <ReportView data={office} onOpen={openRoom} />
             </TabsContent>
             <TabsContent value="board" className="h-full">
-              <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} />
+              <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} />
             </TabsContent>
             <TabsContent value="sessions" className="h-full">
               <SessionsView

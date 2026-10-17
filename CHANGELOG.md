@@ -4,6 +4,11 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Changed
+- **HQ Văn phòng shows what every room is doing right now.** A new "Đang làm gì" list puts one line per room in attention order (waiting for you, blocked, working, holding a card, waiting for a card, idle): role icon, model, the board card it holds (`#id`, title, lane), its latest note or `8sync ls` line and how long ago. A room with nothing to do for over a minute is marked. Each state is an icon plus words, never colour alone.
+  - The room scenes follow that state only: the session's desk types while it runs, raises a hand while Claude waits for you, shows the alert pose when its card is blocked, sits still when idle, and cheers once after it moves its card on. Empty specialist seats are no longer drawn (they dozed in a loop and said nothing); a seat shows only while a subagent runs or just finished. Unmeasured stats ("chưa đo") are hidden.
+  - Board lanes: a card that changed lane in the latest poll gets a ring, a one-time lift and "vừa chuyển từ …"; the toolbar announces the move to screen readers. The seven lanes fit a 1440px screen again and snap one lane at a time on a phone. Claim chips show the room's role icon (it was a blank circle for `lead`/`dev`/`qa`/`review`).
+  - Văn phòng and Board share one board poll (10 s) instead of polling separately. Reduced motion keeps every state frame and the moved-card ring, without the flash, the cheer or the typing dots.
 
 ## [0.100.1] — 2026-10-17
 ### Added

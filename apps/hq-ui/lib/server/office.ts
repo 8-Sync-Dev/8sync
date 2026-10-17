@@ -99,6 +99,8 @@ export type Room = {
   /** One line: what the session is doing (from `8sync ls`). */
   doing: string | null;
   state: string | null;
+  /** Last transcript activity (unix ms) from `8sync ls`; null when unknown (never the start time). */
+  last_active: number | null;
   tokens: number | null;
   model: string | null;
   usage: Usage | null;
@@ -222,6 +224,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       inboxLive: sid ? inboxLive(sid) : false,
       doing: f?.caption || s.detail || null,
       state: f?.state ?? null,
+      last_active: f && !f.unmatched && f.last_active != null ? f.last_active * 1000 : null,
       tokens: f?.tokens ?? null,
       model: usage?.model ?? s.model ?? null,
       usage,

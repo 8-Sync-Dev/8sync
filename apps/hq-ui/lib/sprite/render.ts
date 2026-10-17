@@ -117,7 +117,8 @@ function watch(canvas: HTMLCanvasElement, t: Ticker) {
 }
 
 export type SpriteHandle = {
-  setState(clip: Clip): void;
+  /** `after`: for a one-shot ("done"), the clip it hands over to instead of idle. */
+  setState(clip: Clip, after?: Clip): void;
   dispose(): void;
 };
 
@@ -150,6 +151,8 @@ export function mountSprite(
   let clip = opts.state;
   /** What a one-shot hands over to when it ends (stand -> the work clip); null = idle. */
   let then: Clip | null = null;
+  /** Where a one-shot settles once it is over (setState's `after`); null = idle. */
+  let settle: Clip | null = null;
   let t0 = performance.now();
   let shown = "";
 
@@ -167,10 +170,15 @@ export function mountSprite(
       const once = ONE_SHOT.has(clip);
       let i = frameAt(ms, now - t0 + (once ? 0 : phaseOf(opts.seed, ms)), { loop: !once });
       if (i < 0) {
-        // A one-shot is over: "stand" hands over to the work clip it was played for,
-        // "done" (cheer) and "sit" to idle.
-        clip = then ?? "idle";
-        then = null;
+        // A one-shot is over: "stand"/"sit" hand over to the clip they were played for,
+        // "done" (cheer) to its `after` clip, else idle.
+        if (then) {
+          clip = then;
+          then = null;
+        } else {
+          clip = settle ?? "idle";
+          settle = null;
+        }
         t0 = now;
         i = ONE_SHOT.has(clip) ? 0 : frameAt(CLIP_MS[clip], phaseOf(opts.seed, CLIP_MS[clip]));
       }
@@ -189,12 +197,14 @@ export function mountSprite(
   }
 
   return {
-    setState(next) {
+    setState(next, after) {
       if (next === target() && next !== "done") return;
-      // Reduced motion: no transition, just the static frame of the new state.
+      // Reduced motion: no transition and no one-shot, just the static frame of the state it lands in.
+      if (reduced && ONE_SHOT.has(next) && after) next = after;
       const via = reduced ? null : transitionFor(target(), next);
       clip = via ?? next;
       then = via ? next : null;
+      settle = ONE_SHOT.has(next) ? (after ?? null) : null;
       t0 = performance.now();
       if (reduced) draw(keyOf(0, false));
       else p.tick(t0);

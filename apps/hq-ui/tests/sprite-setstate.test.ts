@@ -139,6 +139,25 @@ describe("mountSprite.setState over time", () => {
     expect(s.last().clip).toBe("idle");
   });
 
+  it("done with `after` hands over to the room's real state, not idle", () => {
+    const s = mount("typing");
+    advance(300);
+    s.h.setState("done", "typing");
+    // typing -> done sits down first (the cheer is seated), then cheers once, then back to work.
+    expect(s.last()).toEqual({ clip: "sit", frame: 0 });
+    advance(SIT + DONE + 150);
+    expect(s.last().clip).toBe("typing");
+    expect(s.clips()).toEqual(["typing", "sit", "done", "typing"]);
+  });
+
+  it("reduced motion: a one-shot with `after` draws the state it lands in, never the cheer", () => {
+    reduced = true;
+    const s = mount("idle");
+    s.h.setState("done", "waiting");
+    expect(s.last()).toEqual({ clip: "waiting", frame: 0 });
+    expect(s.clips()).toEqual(["idle", "waiting"]);
+  });
+
   it("reduced motion: no loop, no transition, the new state's frame 0 at once", () => {
     reduced = true;
     const s = mount("idle");
