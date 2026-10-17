@@ -35,6 +35,11 @@ cd ~/works/du-an
 
 Team mặc định `lead,dev,qa,review`; tự chọn: `--roles lead,ba,dev,dev2,qa,review` (tối đa 8).
 
+**Không phòng nào ngồi rảnh:**
+- Phòng có cột board mở bằng `/goal` chính chủ của Claude Code. Mỗi lượt phòng claim → làm → chuyển cột, rồi tự sang lượt kế, không chờ nhịp loop.
+- Cột trống thì phòng chạy `8sync ccc auto wait`. Lệnh này chặn và không tốn token cho tới khi có card, nên phòng nhận việc gần như ngay.
+- Goal chỉ dừng khi auto tắt, tạm dừng, chạm trần (cửa sổ dùng ≥ 90%), hoặc khi lease subscription hết (≤ 4 giờ).
+
 **Board kiểu [super-board](https://github.com/EricTechPro/super-board):** `backlog → ready → building → qa → review → approved (chờ Ship) → done`, thêm `blocked`. Mỗi phòng `claim` card đầu cột của mình rồi `move` sang cột kế:
 
 - `ready` cần lệnh check, `approved` cần SHA đã review.
