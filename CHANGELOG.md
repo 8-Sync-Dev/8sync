@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.4] — 2026-10-18
 ### Added
 - **A background room no longer hangs on a "proceed?" prompt nobody sees: after 60 s of silence it carries on by itself.** In the UAT the dev room waited 15 minutes on one. A new `PermissionRequest` hook (`8sync ccc hook permit`, https://code.claude.com/docs/en/hooks#permissionrequest) acts when auto and delegate are on and the owner has not typed in the room for `delegate_after_s` (60 s by default). It posts the request to HQ, where **Anh cần trả lời** shows the tool, its description and the command (secrets masked), with **Cho phép** / **Từ chối** and a countdown that says what silence will do. With no click:
   - everyday work inside the project proceeds, but only in exact shapes:
