@@ -16,8 +16,10 @@ wt = sys.argv[1]
 
 
 def show(ref):
+    # UTF-8, not the locale codec: on Windows that is cp1252, which cannot decode "ờ" (0x9D),
+    # and the failed decode left stdout None (TypeError in split, 2026-10-17).
     return subprocess.run(["git", "-C", wt, "show", f"{ref}:CHANGELOG.md"], check=True,
-                          capture_output=True, text=True).stdout
+                          capture_output=True, encoding="utf-8").stdout
 
 
 def split(text):
@@ -63,5 +65,6 @@ out.append(tail.lstrip("\n"))
 result = "\n".join(out)
 assert result.count("## [Unreleased]") == 1
 assert "<<<<<<<" not in result and ">>>>>>>" not in result
-open(f"{wt}/CHANGELOG.md", "w", encoding="utf-8").write(result)
+with open(f"{wt}/CHANGELOG.md", "w", encoding="utf-8", newline="") as f:  # LF on every OS
+    f.write(result)
 print("merged sections:", ", ".join(n[4:] for n in names))

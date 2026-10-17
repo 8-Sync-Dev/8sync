@@ -1,0 +1,11 @@
+{
+  "digests": [
+    "27a05e2ffcf96948 C3-fail: CRLF output passed"
+  ],
+  "iter": 1,
+  "max_iter": 12,
+  "max_min": 90,
+  "slug": "handoff-scripts-utf8",
+  "started": 1792196151,
+  "stopped": "done"
+}
