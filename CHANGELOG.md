@@ -4,6 +4,15 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **HQ: a "Gửi cho mọi phòng" box under Văn phòng and Chat tổng.** It sends one task to every room of a project, the same as `8sync ccc auto add "<việc>" --now`. Before this, Chat tổng only showed the thread and had no input, so it was unclear where to type a task for the whole team. Pick the project (or "Mọi dự án" when several have rooms), keep "Gửi ngay" ticked to push the task into every room's inbox, or untick it to only queue it for the auto loop. "Lệnh kiểm" adds an optional `--check` command. The line under the box names the rooms before you send. After sending it shows, per project, the target id and which rooms take the task as soon as they are idle and which take it after their current turn.
+  - New `POST /api/targets` (token and origin checked) runs `8sync ccc auto add --json [--now] [--check <cmd>] -- <text>` with argv only and the project root as cwd.
+  - It accepts only a root that has a live room right now, never an arbitrary path.
+  - With "Mọi dự án", a worktree inside another project is left to that project's queue; its rooms are not counted as reached, and the line under the box says they take the task on a loop tick.
+  - Ctrl+Enter (Cmd+Enter) sends; Enter alone is a new line, so a stray key never pushes a half-typed task into every room.
+  - If some projects fail, the text stays in the box and the toast names them. A timeout says the task may already be queued (`8sync ccc auto queue`) instead of inviting a duplicate.
+  - The "Lệnh kiểm" command runs in the project, like `--check` from the terminal.
+  - The Cách dùng guide and the empty Chat tổng point at the box.
 
 ## [0.99.0] — 2026-10-17
 ### Changed

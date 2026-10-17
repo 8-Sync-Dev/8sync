@@ -13,6 +13,7 @@ import { ActivityView } from "./activity-view";
 import { AssignDialog } from "./assign-dialog";
 import { shortName, StatusDot } from "./bits";
 import { BoardView } from "./board-view";
+import { BroadcastComposer } from "./broadcast";
 import { FirstRun } from "./first-run";
 import { Guide, useGuideFirstRun } from "./guide";
 import { Nav, type Scope } from "./nav";
@@ -250,6 +251,8 @@ export function HqApp({ token }: { token: string }) {
               <ActivityView hq={hq} messages={view.messages} />
             </TabsContent>
           </main>
+          {/* Văn phòng and Chat tổng show every room, so the box that reaches every room sits under them. */}
+          {(tab === "office" || tab === "group") && <BroadcastComposer hq={hq} rooms={officeRooms} preferRoot={project?.path} />}
         </Tabs>
       </div>
       <TerminalDrawer

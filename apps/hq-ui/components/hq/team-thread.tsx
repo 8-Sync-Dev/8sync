@@ -140,7 +140,7 @@ export function TeamThread({
     <Conversation className="min-h-0 flex-1">
       <ConversationContent className="gap-3">
         {items.length === 0 ? (
-          <ConversationEmptyState title="Chưa có gì trong luồng" description="Tin nhắn, chuyển giao và việc của team sẽ hiện ở đây." />
+          <ConversationEmptyState title="Chưa có gì trong luồng" description="Tin nhắn, chuyển giao và việc của team sẽ hiện ở đây. Giao một việc cho cả team: ô Gửi cho mọi phòng ở dưới cùng." />
         ) : (
           items.map((it) => <Row key={`${it.kind}-${it.key}`} it={it} onOpenSession={onOpenSession} />)
         )}
