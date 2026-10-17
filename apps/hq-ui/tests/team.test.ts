@@ -1,12 +1,17 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 const run = vi.hoisted(() => vi.fn(async () => ({ ok: true, stdout: "\x1b[32m✓\x1b[0m lead mở\n✓ dev mở\n", stderr: "" })));
+/** The live room's repo: a real temp dir (set in beforeAll), so the test runs the same on every OS. */
+const room = vi.hoisted(() => ({ cwd: "" }));
 vi.mock("@/lib/server/proc", async (orig) => ({
   ...(await orig<typeof import("@/lib/server/proc")>()),
   run,
-  mergedSessions: async () => [{ name: "s1", cwd: "C:\\repo\\game", status: "running" }],
+  mergedSessions: async () => [{ name: "s1", cwd: room.cwd, status: "running" }],
 }));
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { POST } from "@/app/api/team/route";
 import { getToken } from "@/lib/server/auth";
 import { onePerBoard, type ProjectBoard } from "@/lib/server/board";
@@ -56,30 +61,36 @@ describe("team", () => {
   beforeAll(() => {
     tempHome();
     token = getToken();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hq-team-"));
+    fs.mkdirSync(path.join(dir, ".git"));
+    fs.writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+    room.cwd = path.resolve(dir);
   });
   const post = (body: unknown) => POST(req("/api/team", { method: "POST", token, origin: ORIGIN, body }));
 
   it("runs only in a project HQ shows, in that root", async () => {
-    const ok = await post({ root: "c:\\REPO\\game", action: "clean" });
+    // Case differs (Windows paths are case-insensitive): the run still uses the room's own spelling.
+    const ok = await post({ root: room.cwd.toUpperCase(), action: "clean" });
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ ok: true, output: "✓ lead mở\n✓ dev mở" });
-    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "auto", "up", "--clear-ss"], 180_000, "C:\\repo\\game");
+    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "auto", "up", "--clear-ss"], 180_000, room.cwd);
     run.mockClear();
-    expect((await post({ root: "C:\\Windows", action: "up" })).status).toBe(409);
-    expect((await post({ root: "C:\\repo\\game", action: "rm -rf" })).status).toBe(422);
+    expect((await post({ root: path.join(os.tmpdir(), "not-a-project"), action: "up" })).status).toBe(409);
+    expect((await post({ root: room.cwd, action: "rm -rf" })).status).toBe(422);
     expect(run).not.toHaveBeenCalled();
   });
 
   it("refuses a second run in the same root while one is in flight (a second tab, a double click)", async () => {
     let finish: (v: unknown) => void = () => {};
     run.mockImplementationOnce(() => new Promise((r) => (finish = r)) as never);
-    const first = post({ root: "C:\\repo\\game", action: "clean" });
+    const first = post({ root: room.cwd, action: "clean" });
     await new Promise((r) => setTimeout(r, 10));
-    const second = await post({ root: "C:\\repo\\game", action: "up" });
+    const second = await post({ root: room.cwd, action: "up" });
     expect(second.status).toBe(409);
+    expect((await second.json()).busy).toBe(true);
     finish({ ok: true, stdout: "done", stderr: "" });
     expect((await first).status).toBe(200);
     run.mockResolvedValueOnce({ ok: true, stdout: "again", stderr: "" });
-    expect((await post({ root: "C:\\repo\\game", action: "up" })).status).toBe(200);
+    expect((await post({ root: room.cwd, action: "up" })).status).toBe(200);
   });
 });

@@ -1,7 +1,6 @@
 // `8sync ccc auto board --json` per project with a live room: the lanes view of HQ. argv only, the
 // project root as cwd. 8sync prints the root the cards are filed under (`root`): a worktree shares
 // its repo's board, a repo nested inside another repo keeps its own.
-import path from "node:path";
 import type { ProjectInfo } from "../office";
 import { parseBoard, type Board } from "../lanes";
 import { run } from "./proc";
@@ -52,7 +51,8 @@ export function onePerBoard(read: ProjectBoard[]): ProjectBoard[] {
     const cur = byFiled.get(k);
     // The room whose root is the filed root speaks for the board, else the shortest root.
     const better = !cur || (norm(cur.root) !== k && (norm(b.root) === k || b.root.length < cur.root.length));
-    if (better) byFiled.set(k, { ...b, name: path.basename(b.filed) || b.name });
+    // Last path segment by either separator: `filed` comes from the OS 8sync runs on, not this one's `path`.
+    if (better) byFiled.set(k, { ...b, name: b.filed.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || b.name });
   }
   const unknown = read.filter((b) => !b.filed);
   const keep = new Set(outermost(unknown.map((b) => ({ root: b.root, name: b.name, branch: null }))).map((p) => p.root));
