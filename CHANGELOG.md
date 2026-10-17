@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.98.4] — 2026-10-17
 ### Fixed
 - **Sessions opened by a launcher start in auto mode, not bypass.** Orca's default arguments for Claude Code are `--dangerously-skip-permissions`, and a launch flag takes precedence over `permissions.defaultMode`, so every Orca session ran in bypass although the kit sets `defaultMode: "auto"`. `8sync ccc kit` (and `8sync up`) now also sets `permissions.disableBypassPermissionsMode: "disable"` in `~/.claude/settings.json`: Claude Code rejects the bypass flag and starts the session in `defaultMode` (checked on Claude Code 2.1.296: a launch with `--dangerously-skip-permissions` reports `"permissionMode":"auto"`). Shift+Tab no longer offers bypass either.
 
