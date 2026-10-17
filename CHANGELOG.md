@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.5] — 2026-10-18
 ### Added
 - **HQ Preview tab: see the product as the team builds it.** HQ lists the screenshots rooms save under `qa/evidence`, `evidence`, `screenshots`, `su-code/shots` and `docs/screenshots` in each live project and its worktrees. It reads 3 folder levels deep, skips files over 15 MB and links that point outside the repo, and shows the newest 120 per project. Shots are grouped by card (`card-<id>` in the file or worktree name), newest first. Click one for a large view with ← →, the full path and **Mở card**, which opens the card on Board. The QA and UI rooms now save UAT shots as `qa/evidence/card-<id>-<slug>.png`. `GET /api/preview` lists them, and `GET /api/preview/file?id=` serves an image only by an id from that list (`nosniff`, `private, max-age=60`).
 - **HQ Flow tab: where every card has been and where it is now.** Each card is one row across Backlog → … → Approved → Done → Blocked, rebuilt from its board notes:
