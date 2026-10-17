@@ -31,6 +31,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo test
         run: cargo test --locked
+      # The release helpers (CHANGELOG merge, version bump) with Vietnamese text: UTF-8 in, LF out.
+      - name: Release helper scripts
+        shell: bash
+        run: bash su-code/handoff/scripts/test-scripts.sh
 
   minimal:
     runs-on: ubuntu-latest
