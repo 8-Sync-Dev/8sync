@@ -4,17 +4,36 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
-### Fixed
-- **Site: the one-project steps read 1 to 7 again** (they read 2, 4, 6… because the list shared a CSS counter with another list).
-- **Site: shorter steps, plus a reference you can expand,** "Every command and option". It lists every `auto` command with its flags (`--roles`, `--loop`, `--here`, `--now`, `--prio`, `--clear-ss`, `--after`, `--hours`, `--usd-per-hour`, …), grouped as Team / Work and board / Owner away / Sessions. Checked in Edge at 1440 px and 500 px.
-
 ### Added
+- **HQ Preview tab: see the product as the team builds it.** HQ lists the screenshots rooms save under `qa/evidence`, `evidence`, `screenshots`, `su-code/shots` and `docs/screenshots` in each live project and its worktrees. It reads 3 folder levels deep, skips files over 15 MB and links that point outside the repo, and shows the newest 120 per project. Shots are grouped by card (`card-<id>` in the file or worktree name), newest first. Click one for a large view with ← →, the full path and **Mở card**, which opens the card on Board. The QA and UI rooms now save UAT shots as `qa/evidence/card-<id>-<slug>.png`. `GET /api/preview` lists them, and `GET /api/preview/file?id=` serves an image only by an id from that list (`nosniff`, `private, max-age=60`).
+- **HQ Flow tab: where every card has been and where it is now.** Each card is one row across Backlog → … → Approved → Done → Blocked, rebuilt from its board notes:
+  - coloured segments for moves forward;
+  - a dashed return arc for a bounce, and a lower arc into or out of Blocked;
+  - the current lane marked with the holding room's role icon;
+  - closed cards ending at Done (✓) or Bỏ (✗).
+
+  The column heads say how many cards sit in each lane and which room holds them. Hover or focus (← → inside a row) shows who moved the card, when, and the note. Click a row to open the card. A **Vòng lặp** panel lists each `/ship-loop` (`su-code/ship/*/LOOP.md`) with its iteration and last evidence line (`GET /api/loops`). The card sheet adds **Lịch sử**, the card's last 12 notes.
+- **HQ Tổng quan tab for wide screens (default at ≥1600 px).** "Anh cần trả lời" is pinned on top, side by side. Below it, each live project gets one block with five panels:
+  - rooms and their current step;
+  - a mini board (lane counts and the first cards with P0/P1);
+  - the latest preview shots;
+  - the cards that just moved;
+  - the latest chat.
+
+  Each panel links to its full tab. On a wide screen Văn phòng also splits into two columns: "Đang làm gì" on the left, the pixel office on the right.
+- **Board shows closed cards in a Done column** between Approved and Blocked. It lists the last 10, one line each, with "xong/bỏ x trước"; widen the column to see the evidence. The header adds "· N đã xong gần đây", so an approved card that was merged and closed is no longer "lost".
+
 - **A room's real terminal opens inside HQ.** "Mở terminal" (room brief, "Anh cần trả lời") now opens a wide panel with the room's live Claude Code screen instead of a separate window. You can type a message, move between answers with the arrow keys and press Enter, and scroll back. Closing the panel leaves the room running in the background. "Mở cửa sổ riêng" still opens a native window.
   - How it works: Claude Code documents no way to send input to a background session from outside, so the new `8sync ccc term <session-id>` runs `claude attach` inside a pseudo-terminal (ConPTY on Windows, crate `portable-pty`, MIT). It relays the screen over stdin/stdout. The HQ web asset stays pure JS, with no native module.
   - Each room has one terminal, shared by every tab. Its last 256 KB of output is replayed to a tab that opens late, and it closes 60 s after the last viewer leaves.
   - New route `GET|POST|DELETE /api/sessions/<id>/term` (HQ token required). It opens only a live background room's own session id.
   - Checked live: the rd room of ai-game-studio was attached through Edge, the screen streamed, and the room was still `background idle` after closing.
+
 ### Fixed
+- **Site: the one-project steps read 1 to 7 again** (they read 2, 4, 6… because the list shared a CSS counter with another list).
+- **Site: shorter steps, plus a reference you can expand,** "Every command and option". It lists every `auto` command with its flags (`--roles`, `--loop`, `--here`, `--now`, `--prio`, `--clear-ss`, `--after`, `--hours`, `--usd-per-hour`, …), grouped as Team / Work and board / Owner away / Sessions. Checked in Edge at 1440 px and 500 px.
+- **Văn phòng groups a room in a worktree under its repo.** `card-14-bakeoff` now shows under `ai-game-studio`, with one header and one set of team buttons, and the room card shows the worktree branch. The meeting room appears only when 2 or more rooms of the repo are present.
+- **A card's last note on Board is one line again.** It had spilled into a tall block.
 - **HQ "Cách dùng" describes the team as it works now:**
   - open the team (5 rooms, or 8 with "Team đầy đủ");
   - hand out cards, with P0 for urgent work;

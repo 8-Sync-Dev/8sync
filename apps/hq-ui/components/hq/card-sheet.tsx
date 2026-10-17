@@ -299,6 +299,30 @@ export function CardDetail({ c, now, next, onPrio }: { c: Card; now: number; nex
           </dd>
         </div>
       </dl>
+
+      {(c.history?.length ?? 0) > 1 && (
+        <section aria-labelledby={`hist-${c.id}`} className="space-y-2">
+          <h3 id={`hist-${c.id}`} className="text-xs font-medium text-muted-foreground">
+            Lịch sử <span className="font-normal">(mới nhất trước, board giữ 12 ghi chú gần nhất)</span>
+          </h3>
+          <ol className="space-y-1.5 text-sm">
+            {[...c.history!].reverse().map((h, i) => (
+              <li key={i} className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-2">
+                <span className="text-xs text-muted-foreground tabular">{h.at > 0 ? agoVi(h.at, now) : ""}</span>
+                <span className="min-w-0 text-pretty">
+                  {h.to && (
+                    <span style={laneTone(h.to)} className={cn("mr-1 font-medium", TONE_INK)}>
+                      {LANE_VI[h.from!]} → {LANE_VI[h.to]}
+                    </span>
+                  )}
+                  {h.room && <span className="font-medium">{h.room}: </span>}
+                  <span className={cn(h.to && "text-muted-foreground")}>{h.to ? h.text.replace(/^\s*[a-z]+\s*(?:→|->)\s*[a-z]+\s*:?\s*/, "") : h.text}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
     </div>
   );
 }

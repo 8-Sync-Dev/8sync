@@ -27,7 +27,20 @@ export type AskRoom = {
  * "Anh cần trả lời": every room that waits for the owner, with the question it asks and the one way
  * Claude Code offers to answer a background session (`claude attach`). Shown first on the office page.
  */
-export function AskPanel({ rooms, now, token, onOpen }: { rooms: AskRoom[]; now: number; token: string; onOpen: (key: string) => void }) {
+export function AskPanel({
+  rooms,
+  now,
+  token,
+  onOpen,
+  wide,
+}: {
+  rooms: AskRoom[];
+  now: number;
+  token: string;
+  onOpen: (key: string) => void;
+  /** Tổng quan: asks side by side so the projects stay above the fold. */
+  wide?: boolean;
+}) {
   if (!rooms.length) return null;
   return (
     <section aria-labelledby="ask-panel" className="space-y-2">
@@ -36,7 +49,8 @@ export function AskPanel({ rooms, now, token, onOpen }: { rooms: AskRoom[]; now:
         Anh cần trả lời
         <span className="text-sm font-normal text-muted-foreground tabular">{rooms.length} phòng đang dừng chờ anh</span>
       </h2>
-      <ul className="space-y-3">
+      {/* Wide: side by side, each ask scrolls inside a capped height (the buttons stay on top). */}
+      <ul className={wide ? "grid items-start gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,34rem),1fr))] [&>li]:max-h-80 [&>li]:overflow-y-auto" : "space-y-3"}>
         {rooms.map((r) =>
           r.permit && r.session_id ? (
             <PermitCard key={r.key} r={r} p={r.permit} sid={r.session_id} now={now} token={token} />

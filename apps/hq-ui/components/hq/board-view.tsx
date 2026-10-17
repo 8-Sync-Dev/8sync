@@ -16,8 +16,27 @@ import type { Hq } from "./use-hq";
 import { TASK_COLUMNS, type Message, type Session, type Task } from "./types";
 
 /** Board tab: the project's cards by lane (`8sync ccc auto board`), or the sessions' own tasks. */
-export function BoardView({ hq, tasks, sessions, boards }: { hq: Hq; tasks: Task[]; sessions: Session[]; boards: BoardsState }) {
+export function BoardView({
+  hq,
+  tasks,
+  sessions,
+  boards,
+  focus,
+}: {
+  hq: Hq;
+  tasks: Task[];
+  sessions: Session[];
+  boards: BoardsState;
+  /** A card another tab asked to open: shows the project cards and opens it. */
+  focus?: { root: string; id: number; n: number } | null;
+}) {
   const [mode, setMode] = useState<"lanes" | "tasks">("lanes");
+  // A new "Mở card" request always lands on the project cards.
+  const [seen, setSeen] = useState(focus?.n ?? 0);
+  if (focus && focus.n !== seen) {
+    setSeen(focus.n);
+    setMode("lanes");
+  }
   const tab = (m: typeof mode, label: string) => (
     <Button type="button" size="sm" variant={mode === m ? "secondary" : "ghost"} aria-pressed={mode === m} onClick={() => setMode(m)}>
       {label}
@@ -29,7 +48,7 @@ export function BoardView({ hq, tasks, sessions, boards }: { hq: Hq; tasks: Task
         {tab("lanes", "Card dự án")}
         {tab("tasks", "Task của session")}
       </div>
-      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView state={boards} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
+      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView state={boards} focus={focus} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
     </div>
   );
 }

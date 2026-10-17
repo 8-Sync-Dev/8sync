@@ -66,7 +66,11 @@ describe("parseBoard", () => {
     expect(c).toMatchObject({ id: 2, label: "bug", bounces: 1, claim: { room: "dev", at: 1_000_000 }, note: { room: "dev", text: "đang viết test", at: 1_000_000 } });
     expect(b.lanes.backlog[0]).toMatchObject({ check: null, claim: null, note: null, bounces: 0, pr: null });
     expect(b.lanes.approved[0]).toMatchObject({ pr: "#81", sha: "0123abc" });
-    expect(b.closed).toEqual([{ id: 9, text: "old", state: "done", by: "lead", at: 70_000 }]);
+    expect(c.history).toEqual([
+      { at: 950_000, room: "dev", text: "ready → building", from: "ready", to: "building" },
+      { at: 1_000_000, room: "dev", text: "đang viết test" },
+    ]);
+    expect(b.closed).toEqual([{ id: 9, text: "old", state: "done", by: "lead", at: 70_000, lane: "review", history: [], evidence: "true: ok", added: 1_000 }]);
     expect(openCount(b)).toBe(4);
   });
 
@@ -81,7 +85,7 @@ describe("parseBoard", () => {
 
   it("summarises the lanes and what waits for Ship; flags a quiet claim", () => {
     const b = parseBoard(BOARD)!;
-    expect(boardSummary(b)).toBe("4 card mở · Backlog 1 · Ready 1 · Building 1 · Approved 1 · 1 chờ Ship");
+    expect(boardSummary(b)).toBe("4 card mở · Backlog 1 · Ready 1 · Building 1 · Approved 1 · 1 chờ Ship · 1 đã xong gần đây");
     expect(boardSummary(parseBoard({ schema: 1, lanes: [], closed: [] })!)).toBe("chưa có card");
     const c = b.lanes.building[0];
     expect(claimStale(c, 1_000_000 + CLAIM_STALE_MS - 1)).toBe(false);
