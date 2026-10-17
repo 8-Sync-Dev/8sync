@@ -378,6 +378,31 @@ fn reap(p: &mut Project, now: u64) {
     }
 }
 
+/// Does free card `t` belong to `lane`'s rooms? `qa` also takes `ready` cards labelled `qa`, which
+/// `ready` skips; a `building` card whose claim went stale counts as `ready` (claim reaps it).
+fn fits(t: &Target, lane: &str, now: u64) -> bool {
+    let stale = t.claim.as_ref().is_some_and(|c| now.saturating_sub(c.at) >= CLAIM_SECS);
+    let at = if t.lane == "building" && stale { "ready" } else { t.lane.as_str() };
+    match lane {
+        "qa" => at == "qa" || (at == "ready" && t.label.as_deref() == Some("qa")),
+        "ready" => at == "ready" && t.label.as_deref() != Some("qa"),
+        l => at == l,
+    }
+}
+
+/// Read-only twin of [`claim`]'s pick: the card `room` would get from `lane` now. `auto wait` polls it.
+pub(super) fn claimable(cards: &[Target], room: &str, lane: &str, now: u64) -> Option<u64> {
+    // the room holding a live (not stale) claim on `t`
+    fn holder(t: &Target, now: u64) -> Option<&str> {
+        t.claim.as_ref().filter(|c| now.saturating_sub(c.at) < CLAIM_SECS).map(|c| c.room.as_str())
+    }
+    let open = cards.iter().filter(|t| t.state == "open");
+    open.clone()
+        .find(|t| holder(t, now) == Some(room))
+        .or_else(|| open.clone().find(|t| holder(t, now).is_none() && fits(t, lane, now)))
+        .map(|t| t.id)
+}
+
 /// `auto claim`: the card room `room` works on this tick. A card it already holds comes back (claim
 /// refreshed); else the first free card of `lane` in queue order. Taking a `ready` card moves it to
 /// `building`; the `qa` lane also takes `ready` cards labelled `qa`, the `ready` lane skips them.
@@ -388,15 +413,7 @@ pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) 
     edit(home, root, |p| {
         reap(p, now);
         let mine = p.items.iter().position(|t| t.state == "open" && t.claim.as_ref().is_some_and(|c| c.room == room));
-        let free = |t: &Target| {
-            t.state == "open"
-                && t.claim.is_none()
-                && match lane {
-                    "qa" => t.lane == "qa" || (t.lane == "ready" && t.label.as_deref() == Some("qa")),
-                    "ready" => t.lane == "ready" && t.label.as_deref() != Some("qa"),
-                    l => t.lane == l,
-                }
-        };
+        let free = |t: &Target| t.state == "open" && t.claim.is_none() && fits(t, lane, now);
         let Some(i) = mine.or_else(|| p.items.iter().position(free)) else { return Ok(None) };
         let t = &mut p.items[i];
         if t.claim.is_none() && t.lane == "ready" {
@@ -610,6 +627,30 @@ mod tests {
         assert_eq!(move_to(h, &root, fix.id, "review", &Move::default(), None, 37).unwrap().sha, None);
         let (done, _) = close(h, &root, fix.id, Some("gh pr merge 81 --match-head-commit 0123abc: merged"), Some("lead"), 38).unwrap();
         assert_eq!((done.state.as_str(), done.claim), ("done", None));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn claimable_matches_what_claim_would_take() {
+        let (d, root) = tmp("claimable");
+        let h = d.as_path();
+        let a = put(h, &root, "a", Some("true"), false, None, 0).unwrap();
+        let (q, _) = add(h, &root, "uat", Some("true"), Some("qa"), false, None, 0).unwrap();
+        put(h, &root, "spec", None, false, None, 0).unwrap();
+        let cards = |now| list(h, &root).map(|c| (c, now)).unwrap();
+        let (c, now) = cards(10);
+        assert_eq!(claimable(&c, "dev", "ready", now), Some(a.id), "ready skips the qa card");
+        assert_eq!(claimable(&c, "qa", "qa", now), Some(q.id));
+        assert_eq!(claimable(&c, "lead", "backlog", now), Some(3));
+        assert_eq!(claimable(&c, "x", "review", now), None);
+        claim(h, &root, "dev", "ready", 10).unwrap();
+        let (c, now) = cards(20);
+        assert_eq!(claimable(&c, "dev", "ready", now), Some(a.id), "a room gets its own card back");
+        assert_eq!(claimable(&c, "dev2", "ready", now), None);
+        // a building card quiet for 2 h is free again in ready, as `claim` would reap it
+        let (c, now) = cards(10 + CLAIM_SECS);
+        assert_eq!(claimable(&c, "dev2", "ready", now), Some(a.id));
+        assert_eq!(claim(h, &root, "dev2", "ready", now).unwrap().map(|t| t.id), Some(a.id));
         let _ = std::fs::remove_dir_all(&d);
     }
 

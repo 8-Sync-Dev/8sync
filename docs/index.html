@@ -565,7 +565,7 @@
     <section class="section" id="team" aria-labelledby="team-title">
       <div class="sec-head">
         <h2 id="team-title">Or run the whole team in the background</h2>
-        <p><code>auto up</code> starts every role room of the repo as a Claude Code background session (<code>claude --bg</code>), each on its role's model, with its loop. You don't open a terminal per room; you follow the work in <code>8sync hq ui</code>. <code>--clear-ss</code> first deletes leftover background sessions and never touches the ones you have open.</p>
+        <p><code>auto up</code> starts every role room of the repo as a Claude Code background session (<code>claude --bg</code>), each on its role's model. Rooms run on Claude Code's own <code>/goal</code>: claim a card, do the lane's job, move it, and wait at <code>auto wait</code> (no tokens) while the lane is empty. You follow the work in <code>8sync hq ui</code>. <code>--clear-ss</code> first deletes leftover background sessions and never touches the ones you have open.</p>
       </div>
 
       <figure class="board" aria-labelledby="board-cap">
