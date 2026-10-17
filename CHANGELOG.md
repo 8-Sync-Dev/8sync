@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.99.0] — 2026-10-17
 ### Changed
 - **The repo is now `8-Sync-Dev/8sync` and the installer lives at `get.8syncdev.com`.** One-liners: `curl -fsSL https://get.8syncdev.com/install | sh` and `irm https://get.8syncdev.com/install.ps1 | iex`. Old links keep working: GitHub redirects `github.com/8-Sync-Dev/su-code` (repo, releases, downloads, API, raw files), and the org site `8-Sync-Dev/8-sync-dev.github.io` keeps `8-sync-dev.github.io/su-code/install` and `install.ps1` as shims that run the new installer (`/su-code/` forwards to the new domain). `8sync up`, `install.sh`, `install.ps1`, the kit's links and the plugin marketplace (`/plugin marketplace add 8-Sync-Dev/8sync`) use the new name; the managed `strictKnownMarketplaces` policy allows both names so machines that added the marketplace before the rename keep working. The per-project memory folder is still `su-code/`.
 - **Plugin `8sync-kit` is ready for the Claude plugin directory.** `claude plugin validate --strict` passes: the plugin has a `displayName`, its own README, the new homepage and license, and the kit's `CLAUDE.md` moved from the plugin root (where Claude Code does not load it) to `assets/configs/claude/CLAUDE.md`. The `8sync-hints` and `8sync-inbox` mods moved out of the plugin folder to `assets/configs/claude/mods/`, so the plugin is Markdown only (agents and skills); `8sync ccc kit` still installs both mods to `~/.claude/skills/`. The README says what the plugin runs and that it sends nothing to 8 Sync. The plugin name stays `8sync-kit`.
