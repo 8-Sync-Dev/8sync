@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.0] — 2026-10-17
 ### Added
 - **`8sync ccc auto up`: the whole team in the background with one command.** Before, every room had to be opened in its own terminal before auto could run. `auto up` turns `auto on --here` on and starts every role room as a Claude Code background session (`claude --bg --name <room> --permission-mode auto --model <role model>`), with the loop prompt as its first message. You follow the work in `8sync hq ui`, `claude agents` or `8sync ccc auto board`. `auto down` stops the background rooms (conversations kept) and pauses auto.
   - Default team `lead,dev,qa,review`; `--roles` picks up to 8 rooms. Roles and models: lead, ba and rd on opus; dev and review on sonnet; qa on haiku. Aliases map to a role (`qc` → QA, `critic` → Review, `pm` → Lead, `analyst` → BA, `builder` → Dev). `ui`, `api`, `core`, `ops`, `docs` and `sec` keep the session's default model.
