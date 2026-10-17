@@ -12,7 +12,13 @@ Role-routed subagents and the delivery skills from [8sync](https://get.8syncdev.
 - **Subagents** (`agents/`): explore, task, quick-task, reviewer, designer, researcher, verifier, pm, architect, qa, critic.
 - **Skills** (`skills/`): `/do`, `/ship`, `/ship-auto`, `/ship-loop`, `/autopilot`, `/ship-tick`, `/sprint`, `/planning`, `/sysdesign`, `/ui-ux`, `/remember`, `/consolidate`, `/rules`, `/sec`, `/harden`.
 
-The plugin does not install hooks or change settings. The guard, verify and stop gates, managed rules and the full skill set come from the `8sync` binary:
+## What it runs and sends
+
+The plugin is Markdown only: no hooks, no MCP servers, no scripts, no settings changes, and no network calls of its own. The skills ask Claude to run commands in your repository with your normal permission prompts: `git`, `gh` (pull requests, CI runs), your project's build, test and lint commands, and `8sync` subcommands when the binary is installed. The researcher and verifier agents read web pages with Claude Code's own web tools. Nothing goes to 8 Sync.
+
+## The full kit
+
+The guard, verify and stop gates, managed rules and the full skill set come from the `8sync` binary:
 
 ```sh
 curl -fsSL https://get.8syncdev.com/install | sh   # Linux, macOS
@@ -23,6 +29,12 @@ curl -fsSL https://get.8syncdev.com/install | sh   # Linux, macOS
 irm https://get.8syncdev.com/install.ps1 | iex     # Windows
 8sync ccc kit
 ```
+
+## Troubleshooting and support
+
+- A skill says `8sync: command not found`: install the binary with the one-liner above, or skip the steps that need it; the agents work without it.
+- Skills or agents missing after install: run `/plugin` and check that `8sync-kit@8sync` is enabled, then start a new session.
+- Bugs and questions: [GitHub issues](https://github.com/8-Sync-Dev/8sync/issues). Security reports and anything private: atus@8syncdev.com.
 
 ## License
 
