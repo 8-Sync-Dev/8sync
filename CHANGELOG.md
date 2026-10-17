@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **`8sync up` no longer names the old version in its HQ UI restart hint.** The hint is printed by the binary being replaced, so after updating 0.100.1 → 0.100.2 it said "load UI 0.100.1". It now says "load the new UI". `8sync hq ui --install` still names the exact version.
 
 ## [0.100.2] — 2026-10-17
 ### Fixed
