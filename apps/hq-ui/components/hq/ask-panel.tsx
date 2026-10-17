@@ -8,6 +8,7 @@ import { TOOL_ASK, askTitle, attachCommand, type Ask } from "@/lib/ask";
 import { agoVi } from "@/lib/now";
 import type { Permit } from "@/lib/server/permit";
 import { makeApi } from "./use-hq";
+import { openWebTerminal } from "./web-terminal-sheet";
 
 export type AskRoom = {
   key: string;
@@ -26,7 +27,20 @@ export type AskRoom = {
  * "Anh cần trả lời": every room that waits for the owner, with the question it asks and the one way
  * Claude Code offers to answer a background session (`claude attach`). Shown first on the office page.
  */
-export function AskPanel({ rooms, now, token, onOpen }: { rooms: AskRoom[]; now: number; token: string; onOpen: (key: string) => void }) {
+export function AskPanel({
+  rooms,
+  now,
+  token,
+  onOpen,
+  wide,
+}: {
+  rooms: AskRoom[];
+  now: number;
+  token: string;
+  onOpen: (key: string) => void;
+  /** Tổng quan: asks side by side so the projects stay above the fold. */
+  wide?: boolean;
+}) {
   if (!rooms.length) return null;
   return (
     <section aria-labelledby="ask-panel" className="space-y-2">
@@ -35,7 +49,8 @@ export function AskPanel({ rooms, now, token, onOpen }: { rooms: AskRoom[]; now:
         Anh cần trả lời
         <span className="text-sm font-normal text-muted-foreground tabular">{rooms.length} phòng đang dừng chờ anh</span>
       </h2>
-      <ul className="space-y-3">
+      {/* Wide: side by side, each ask scrolls inside a capped height (the buttons stay on top). */}
+      <ul className={wide ? "grid items-start gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,34rem),1fr))] [&>li]:max-h-80 [&>li]:overflow-y-auto" : "space-y-3"}>
         {rooms.map((r) =>
           r.permit && r.session_id ? (
             <PermitCard key={r.key} r={r} p={r.permit} sid={r.session_id} now={now} token={token} />
@@ -112,16 +127,21 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
 
   async function openTerminal() {
     if (!r.session_id) return;
-    setBusy(true);
-    try {
-      await makeApi(token)(`/api/sessions/${encodeURIComponent(r.session_id)}/attach`, { method: "POST" });
-      toast.success(`Đã mở terminal cho ${r.label}: chọn đáp án rồi Enter`);
-    } catch (e) {
-      toast.error(`Không mở được terminal (${(e as Error).message}). Chạy trong PowerShell/Terminal: ${cmd}`);
-      if (cmd) void copy(cmd, false);
-    } finally {
-      setBusy(false);
+    // tmux rooms keep their own drawer; a background room's real terminal opens inside HQ.
+    if (r.tmux) {
+      setBusy(true);
+      try {
+        await makeApi(token)(`/api/sessions/${encodeURIComponent(r.session_id)}/attach`, { method: "POST" });
+        toast.success(`Đã mở terminal cho ${r.label}: chọn đáp án rồi Enter`);
+      } catch (e) {
+        toast.error(`Không mở được terminal (${(e as Error).message}). Chạy trong PowerShell/Terminal: ${cmd}`);
+        if (cmd) void copy(cmd, false);
+      } finally {
+        setBusy(false);
+      }
+      return;
     }
+    openWebTerminal(r.session_id, r.label);
   }
 
   return (
@@ -188,8 +208,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
       <p className="mt-3 max-w-[75ch] text-xs text-muted-foreground text-pretty">
         {cmd ? (
           <>
-            Trong terminal: gõ số của đáp án rồi Enter. Trả lời xong, phòng tự làm tiếp và khung này biến mất sau vài giây. Thoát terminal bằng{" "}
-            <kbd className="rounded-sm border px-1 font-mono">←</kbd> hoặc đóng cửa sổ: session vẫn chạy.
+            Terminal mở ngay trong HQ: chọn đáp án bằng mũi tên hoặc gõ số, rồi Enter. Trả lời xong, phòng tự làm tiếp và khung này biến mất sau vài giây. Đóng terminal thì phòng vẫn chạy.
           </>
         ) : (
           "Phòng này chạy trong terminal của HQ: mở phòng, chọn đáp án bằng thanh phím bên dưới màn hình."

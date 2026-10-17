@@ -1,8 +1,6 @@
 "use client";
 
 import { CircleDotIcon, SquareTerminalIcon } from "lucide-react";
-import { useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { attachCommand } from "@/lib/ask";
 import { LANES } from "@/lib/lanes";
@@ -13,8 +11,8 @@ import { AskPanel } from "./ask-panel";
 import { StateTag } from "./now-roster";
 import { RoleIcon } from "./role-badge";
 import { RoomLog } from "./room-log";
-import { makeApi } from "./use-hq";
 import type { Room } from "./use-office";
+import { openWebTerminal } from "./web-terminal-sheet";
 
 const laneLabel = (k: string) => LANES.find((l) => l.key === k)?.label ?? k;
 
@@ -94,23 +92,12 @@ export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: 
  * The room's terminal: HQ's own tmux rooms open in the drawer; a background Claude Code session opens
  * `claude attach` in a new window. `open` is null when there is no way in (no session id).
  */
-function useOpenTerminal(room: Room, tmux: boolean, token: string, onTerminal: () => void) {
-  const [busy, setBusy] = useState(false);
+function useOpenTerminal(room: Room, tmux: boolean, _token: string, onTerminal: () => void) {
   const id = room.session_id;
   if (tmux) return { busy: false, open: onTerminal, title: undefined };
   if (!id) return { busy: false, open: null, title: undefined };
-  async function attach() {
-    setBusy(true);
-    try {
-      await makeApi(token)(`/api/sessions/${encodeURIComponent(id!)}/attach`, { method: "POST" });
-      toast.success(`Đã mở terminal cho ${room.label}. Đóng cửa sổ thì session vẫn chạy.`);
-    } catch (e) {
-      toast.error(`Không mở được terminal (${(e as Error).message}). Chạy trong PowerShell/Terminal: ${attachCommand(id!)}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return { busy, open: () => void attach(), title: attachCommand(id) };
+  // A background room opens its real terminal inside HQ (`8sync ccc term`), no separate window.
+  return { busy: false, open: () => openWebTerminal(id, room.label), title: `Terminal trong HQ (hoặc: ${attachCommand(id)})` };
 }
 
 function OpenTerminal({ term }: { term: ReturnType<typeof useOpenTerminal> }) {

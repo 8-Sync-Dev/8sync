@@ -44,6 +44,9 @@ indoc = "2.0"
 rust-embed = { version = "8.5", features = ["debug-embed", "compression"] }
 serde_json = "1.0"
 urlencoding = "2.1"
+# `8sync ccc term`: `claude attach` inside a pseudo-terminal (ConPTY on Windows), relayed over
+# stdin/stdout so the HQ web terminal stays pure JS (the hq-ui asset ships no native binary).
+portable-pty = "0.9"
 # `8sync harness web` dashboard (axum + tokio) — intentional override of the
 # "avoid tokio" rule in AGENTS.md §8; gated behind the `web` feature.
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "query"], optional = true }

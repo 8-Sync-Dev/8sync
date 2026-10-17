@@ -10,7 +10,9 @@ import { LANES } from "@/lib/lanes";
 import { attendeesNow, meetingLabel, walkPhase, type Attendee } from "@/lib/meeting";
 import { askLine } from "@/lib/ask";
 import { NOW_LABEL, agoVi, claimMatches, deskClip, roster, rosterSummary, stateChanges, type RoomNow } from "@/lib/now";
-import { cloneCount, fmtDuration, fmtTokens, fmtUsd, groupByProject, roomFor, SEATS, type Visit } from "@/lib/office";
+import { cloneCount, fmtDuration, fmtTokens, fmtUsd, roomFor, SEATS, type Visit } from "@/lib/office";
+import { rootKey } from "@/lib/preview";
+import { groupByRepo, meetingShown, worktreeOf } from "@/lib/sidebar";
 import { modelShort } from "@/lib/roles";
 import { shirtFor, shirtOf } from "@/lib/sprite/frames";
 import { cn } from "@/lib/utils";
@@ -108,6 +110,7 @@ function RoomCard({
   members,
   now,
   cheer,
+  canMeet,
 }: {
   room: Room;
   /** What the room is doing (lib/now.ts): drives the label, the card line and the desk sprite. */
@@ -121,11 +124,13 @@ function RoomCard({
   now: number;
   /** The room just moved its card on (latest board poll). */
   cheer: boolean;
+  /** Two or more rooms in this repo: only then does a room walk to a meeting. */
+  canMeet: boolean;
   onOpen: (room: Room) => void;
 }) {
   const u = room.usage;
   const id = `room-${room.key.replace(/[^\w-]/g, "_")}`;
-  const meetPhase = room.meeting ? walkPhase(room.meeting.at, now) : null;
+  const meetPhase = canMeet && room.meeting ? walkPhase(room.meeting.at, now) : null;
   const inMeeting = meetPhase != null;
   const bringing = room.pending > 0 && !incoming.slice(0, 2).some((v) => bringsTask(v.text));
   const seated = room.seats.filter((s) => s.key !== "lead" && (s.active.length > 0 || s.recent > 0));
@@ -165,6 +170,12 @@ function RoomCard({
             </button>
           </h3>
           {room.model && <span className="shrink-0 text-[11px] text-(--soft)">{modelShort(room.model)}</span>}
+          {worktreeOf(room) && (
+            <span className="inline-flex min-w-0 items-center gap-0.5 font-mono text-[11px] text-(--soft)" title={`worktree ${worktreeOf(room)}${room.project?.branch ? ` · nhánh ${room.project.branch}` : ""}`}>
+              <GitBranchIcon aria-hidden className="size-3 shrink-0" />
+              <span className="truncate">{room.project?.branch ?? worktreeOf(room)}</span>
+            </span>
+          )}
           <span className={cn("ml-auto shrink-0 text-xs font-medium", SCENE_INK[n.state])}>
             {inMeeting ? "Đi họp" : n.state === "needs" ? "Chờ anh trả lời" : NOW_LABEL[n.state]}
           </span>
@@ -375,7 +386,8 @@ export function OfficeView({
   projects?: { path: string; name: string; missing?: boolean }[];
 }) {
   const rooms = useMemo(() => office?.rooms ?? [], [office]);
-  const groups = useMemo(() => groupByProject(rooms), [rooms]);
+  // Worktree rooms sit under their repo (lib/sidebar.ts groupByRepo), like the sidebar.
+  const groups = useMemo(() => groupByRepo(rooms), [rooms]);
   // After a team button: read the office and the board again now, not at the next poll.
   const refresh = () => {
     retry();
@@ -422,7 +434,7 @@ export function OfficeView({
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-7xl space-y-7 px-4 py-5 sm:px-6">
+      <div className="mx-auto w-full max-w-7xl min-[1600px]:max-w-none space-y-7 px-4 py-5 sm:px-6">
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <AutoBar token={token} />
           {rows.length > 0 && <p className="text-sm text-muted-foreground">{rosterSummary(rows)}</p>}
@@ -447,93 +459,102 @@ export function OfficeView({
                 Mất kết nối ({error}), đang thử lại. Dữ liệu dưới đây có thể đã cũ.
               </p>
             )}
-            <AskPanel
-              rooms={asking}
-              now={now}
-              token={token}
-              onOpen={(key) => {
-                const r = rooms.find((x) => x.key === key);
-                if (r) onOpen(r);
-              }}
-            />
-            <NowRoster
-              rows={rows}
-              now={now}
-              changed={changed}
-              boardError={boards.error}
-              onOpen={(key) => {
-                const r = rooms.find((x) => x.key === key);
-                if (r) onOpen(r);
-              }}
-            />
-            {resting > 0 && (
-              <p role="status" className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                <MoonIcon className="size-3.5" aria-hidden />
-                <span>
-                  <span className="font-medium text-foreground tabular">{resting}</span> thành viên team nghỉ hơn 10 phút
-                </span>
-              </p>
-            )}
-            {groups.map((g) => {
-              const branches = [...new Set(g.rooms.map((r) => r.project?.branch).filter(Boolean))] as string[];
-              const m = meetings.find((x) => x.root === g.project.root);
-              const here = m ? attendeesNow(m.attendees, now) : [];
-              const meeting = m && here.length ? { attendees: here, until: m.until } : null;
-              const gid = `proj-${g.project.root.replace(/[^\w-]/g, "_")}`;
-              // Same attention order as the roster, so the room that needs the owner is the first scene too.
-              const ordered = [...g.rooms].sort((a, b) => rows.findIndex((r) => r.key === a.key) - rows.findIndex((r) => r.key === b.key));
-              return (
-                <section key={g.project.root} aria-labelledby={gid} className="space-y-3">
-                  <header className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-                    <h2 id={gid} className="text-base font-semibold tracking-tight" title={g.project.root}>
-                      {g.project.name}
-                    </h2>
-                    {branches.map((b) => (
-                      <span key={b} className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground">
-                        <GitBranchIcon className="size-3" aria-hidden />
-                        {b}
-                      </span>
-                    ))}
-                    <span className="text-xs text-muted-foreground tabular">{g.rooms.length} phòng</span>
-                    <span className="ml-auto">
-                      <TeamControls root={g.project.root} name={g.project.name} token={token} after={refresh} />
+            <div className="space-y-7 min-[1600px]:grid min-[1600px]:grid-cols-[minmax(36rem,1fr)_minmax(0,1.35fr)] min-[1600px]:items-start min-[1600px]:gap-8 min-[1600px]:space-y-0">
+              <div className="space-y-7">
+                <AskPanel
+                  rooms={asking}
+                  now={now}
+                  token={token}
+                  onOpen={(key) => {
+                    const r = rooms.find((x) => x.key === key);
+                    if (r) onOpen(r);
+                  }}
+                />
+                <NowRoster
+                  rows={rows}
+                  now={now}
+                  changed={changed}
+                  boardError={boards.error}
+                  onOpen={(key) => {
+                    const r = rooms.find((x) => x.key === key);
+                    if (r) onOpen(r);
+                  }}
+                />
+                {resting > 0 && (
+                  <p role="status" className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <MoonIcon className="size-3.5" aria-hidden />
+                    <span>
+                      <span className="font-medium text-foreground tabular">{resting}</span> thành viên team nghỉ hơn 10 phút
                     </span>
-                  </header>
-                  {meeting && <MeetingRoom attendees={meeting.attendees} rooms={g.rooms} until={meeting.until} now={now} />}
-                  <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))]">
-                    {ordered.map((r) => {
-                      const n = byKey.get(r.key);
-                      if (!n) return null;
-                      return (
-                        <RoomCard
-                          key={r.key}
-                          room={r}
-                          n={n}
-                          labelOf={labelOf}
-                          incoming={visits.filter((v) => v.to === r.key)}
-                          outgoing={visits.filter((v) => v.from === r.key)}
-                          selected={selected != null && [r.name, r.session_id, r.label].includes(selected)}
-                          onOpen={onOpen}
-                          members={membersOf(r.team)}
-                          now={now}
-                          cheer={cheers(r)}
-                        />
-                      );
-                    })}
-                  </div>
-                </section>
-              );
-            })}
-            <TeamStarter projects={idleFolders} token={token} after={refresh} />
-            <details className="text-xs text-muted-foreground">
-              <summary className="w-fit cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60">Cách đọc văn phòng</summary>
-              <p className="mt-2 max-w-[75ch] text-pretty">
-                Mỗi session là một phòng. Người ở bàn chính là chính session: gõ phím khi đang làm, giơ tay khi chờ anh, dấu chấm than khi card bị kẹt, ngồi yên khi rảnh, reo
-                lên một lần khi vừa chuyển card sang cột kế. Bàn phụ chỉ hiện khi agent chuyên gia ({SEATS.slice(1)
-                  .map((s) => s.label)
-                  .join(", ")}) đang chạy hoặc vừa xong. Khi session nhắn sang session khác, người đó đi sang phòng kia.
-              </p>
-            </details>
+                  </p>
+                )}
+              </div>
+              <div className="space-y-7">
+                {groups.map((g) => {
+                  // The repo's branch here; a worktree room shows its own branch on its card.
+                  const branches = [...new Set(g.rooms.filter((r) => !worktreeOf(r)).map((r) => r.project?.branch).filter(Boolean))] as string[];
+                  // A meeting needs two rooms of this repo; its file may sit in the repo or a worktree.
+                  const m = meetingShown(g.rooms.length) ? meetings.find((x) => rootKey(x.root) === rootKey(g.project.root)) : undefined;
+                  const here = m ? attendeesNow(m.attendees, now) : [];
+                  const meeting = m && here.length ? { attendees: here, until: m.until } : null;
+                  const gid = `proj-${g.project.root.replace(/[^\w-]/g, "_")}`;
+                  // Same attention order as the roster, so the room that needs the owner is the first scene too.
+                  const ordered = [...g.rooms].sort((a, b) => rows.findIndex((r) => r.key === a.key) - rows.findIndex((r) => r.key === b.key));
+                  return (
+                    <section key={g.project.root} aria-labelledby={gid} className="space-y-3">
+                      <header className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+                        <h2 id={gid} className="text-base font-semibold tracking-tight" title={g.project.root}>
+                          {g.project.name}
+                        </h2>
+                        {branches.map((b) => (
+                          <span key={b} className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground">
+                            <GitBranchIcon className="size-3" aria-hidden />
+                            {b}
+                          </span>
+                        ))}
+                        <span className="text-xs text-muted-foreground tabular">{g.rooms.length} phòng</span>
+                        <span className="ml-auto">
+                          <TeamControls root={g.project.root} name={g.project.name} token={token} after={refresh} />
+                        </span>
+                      </header>
+                      {meeting && <MeetingRoom attendees={meeting.attendees} rooms={g.rooms} until={meeting.until} now={now} />}
+                      <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))]">
+                        {ordered.map((r) => {
+                          const n = byKey.get(r.key);
+                          if (!n) return null;
+                          return (
+                            <RoomCard
+                              key={r.key}
+                              room={r}
+                              n={n}
+                              labelOf={labelOf}
+                              incoming={visits.filter((v) => v.to === r.key)}
+                              outgoing={visits.filter((v) => v.from === r.key)}
+                              selected={selected != null && [r.name, r.session_id, r.label].includes(selected)}
+                              onOpen={onOpen}
+                              members={membersOf(r.team)}
+                              now={now}
+                              cheer={cheers(r)}
+                          canMeet={meetingShown(g.rooms.length)}
+                            />
+                          );
+                        })}
+                      </div>
+                    </section>
+                  );
+                })}
+                <TeamStarter projects={idleFolders} token={token} after={refresh} />
+                <details className="text-xs text-muted-foreground">
+                  <summary className="w-fit cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60">Cách đọc văn phòng</summary>
+                  <p className="mt-2 max-w-[75ch] text-pretty">
+                    Mỗi session là một phòng. Người ở bàn chính là chính session: gõ phím khi đang làm, giơ tay khi chờ anh, dấu chấm than khi card bị kẹt, ngồi yên khi rảnh, reo
+                    lên một lần khi vừa chuyển card sang cột kế. Bàn phụ chỉ hiện khi agent chuyên gia ({SEATS.slice(1)
+                      .map((s) => s.label)
+                      .join(", ")}) đang chạy hoặc vừa xong. Khi session nhắn sang session khác, người đó đi sang phòng kia.
+                  </p>
+                </details>
+              </div>
+            </div>
           </>
         )}
         {/* Shown even with no live room: resting members never disappear. */}

@@ -26,6 +26,8 @@ export type Card = {
   bounces: number;
   /** Latest note: what happened last. */
   note: { room: string | null; text: string; at: number } | null;
+  /** Every note the board keeps (the CLI keeps the last 12), oldest first; lane moves carry from/to. */
+  history?: Step[];
   added: number;
   /** Room that queued the card; null = the owner. */
   from?: string | null;
@@ -33,7 +35,21 @@ export type Card = {
   prio?: number | null;
 };
 
-export type Closed = { id: number; text: string; state: "done" | "dropped"; by: string | null; at: number | null };
+/** One card note; `from`/`to` when the note is a lane move ("building → qa: …", target.rs `move_to`). */
+export type Step = { at: number; room: string | null; text: string; from?: LaneKey; to?: LaneKey };
+
+export type Closed = {
+  id: number;
+  text: string;
+  state: "done" | "dropped";
+  by: string | null;
+  at: number | null;
+  /** The lane it was in when closed, its notes and the evidence `auto done` took. */
+  lane?: LaneKey | null;
+  history?: Step[];
+  evidence?: string | null;
+  added?: number;
+};
 export type Board = { lanes: Record<LaneKey, Card[]>; closed: Closed[] };
 
 const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
@@ -48,6 +64,26 @@ export const prioOf = (v: unknown): number | null => (typeof v === "number" && N
 export const rankOf = (c: Pick<Card, "prio">): number => c.prio ?? 2;
 const isLane = (v: unknown): v is LaneKey => LANES.some((l) => l.key === v);
 
+/** "building → qa: PR #81" / "qa → blocked (🛡 …)": the two lanes of a move note, else null. */
+export function parseMove(text: string): { from: LaneKey; to: LaneKey } | null {
+  const m = /^\s*([a-z]+)\s*(?:→|->)\s*([a-z]+)\b/.exec(text);
+  return m && isLane(m[1]) && isLane(m[2]) ? { from: m[1], to: m[2] } : null;
+}
+
+/** `notes` of a card → its history, oldest first; malformed notes are skipped. */
+export function parseHistory(v: unknown): Step[] {
+  if (!Array.isArray(v)) return [];
+  const out = v.flatMap((n): Step[] => {
+    const o = n as Record<string, unknown> | null;
+    const text = str(o?.text);
+    if (!o || !text) return [];
+    const mv = parseMove(text);
+    return [{ at: ms(o.at) ?? 0, room: str(o.room), text, ...(mv ?? {}) }];
+  });
+  // The CLI appends in time order; a stable sort only guards against a hand-edited file.
+  return out.sort((a, b) => a.at - b.at);
+}
+
 function card(v: unknown, lane: LaneKey): Card | null {
   const o = v as Record<string, unknown> | null;
   const id = num(o?.id);
@@ -55,8 +91,8 @@ function card(v: unknown, lane: LaneKey): Card | null {
   if (!o || id === null || !text) return null;
   const c = o.claim as Record<string, unknown> | null;
   const claim = c && str(c.room) ? { room: str(c.room)!, at: ms(c.at) ?? 0 } : null;
-  const notes = Array.isArray(o.notes) ? (o.notes as Record<string, unknown>[]) : [];
-  const last = notes.length ? notes[notes.length - 1] : null;
+  const history = parseHistory(o.notes);
+  const last = history.length ? history[history.length - 1] : null;
   return {
     id,
     text,
@@ -67,7 +103,8 @@ function card(v: unknown, lane: LaneKey): Card | null {
     pr: str(o.pr),
     sha: str(o.sha),
     bounces: num(o.bounces) ?? 0,
-    note: last && str(last.text) ? { room: str(last.room), text: str(last.text)!, at: ms(last.at) ?? 0 } : null,
+    note: last ? { room: last.room, text: last.text, at: last.at } : null,
+    history,
     added: ms(o.added) ?? 0,
     from: str(o.from),
     prio: prioOf(o.prio),
@@ -89,7 +126,7 @@ export function parseBoard(v: unknown): Board | null {
     const id = num(x?.id);
     const text = str(x?.text);
     if (id === null || !text || (x.state !== "done" && x.state !== "dropped")) return [];
-    return [{ id, text, state: x.state, by: str(x.by), at: ms(x.closed) }];
+    return [{ id, text, state: x.state, by: str(x.by), at: ms(x.closed), lane: isLane(x.lane) ? x.lane : null, history: parseHistory(x.notes), evidence: str(x.evidence), added: ms(x.added) ?? 0 }];
   });
   return { lanes, closed };
 }
@@ -102,7 +139,9 @@ export function boardSummary(b: Board): string {
   if (open === 0) return b.closed.length ? `hết card mở · ${b.closed.length} đã xong/bỏ gần đây` : "chưa có card";
   const busy = LANES.filter((l) => b.lanes[l.key].length > 0).map((l) => `${l.label} ${b.lanes[l.key].length}`);
   const ship = b.lanes.approved.length;
-  return `${open} card mở · ${busy.join(" · ")}${ship ? ` · ${ship} chờ Ship` : ""}`;
+  // Approved cards leave the board once merged (`auto done`): say where they went.
+  const done = b.closed.filter((c) => c.state === "done").length;
+  return `${open} card mở · ${busy.join(" · ")}${ship ? ` · ${ship} chờ Ship` : ""}${done ? ` · ${done} đã xong gần đây` : ""}`;
 }
 
 /** A claim the CLI takes back after 2 h without a note (target.rs CLAIM_SECS). */

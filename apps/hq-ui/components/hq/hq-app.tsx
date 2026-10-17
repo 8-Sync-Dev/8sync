@@ -4,7 +4,7 @@ import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
 import { roomNow } from "@/lib/now";
 import { matchesSession } from "@/lib/office";
 import { CircleHelpIcon, MenuIcon, SendIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -16,22 +16,38 @@ import { shortName, StatusDot } from "./bits";
 import { BoardView } from "./board-view";
 import { BroadcastComposer } from "./broadcast";
 import { FirstRun } from "./first-run";
+import { FlowView, type LoopsState } from "./flow-view";
 import { Guide, useGuideFirstRun } from "./guide";
 import { Nav, type Scope } from "./nav";
 import { RoomBrief } from "./room-brief";
 import { OfficeView } from "./office-view";
+import { OverviewView } from "./overview-view";
+import { PreviewView, type PreviewState } from "./preview-view";
 import { ReportView } from "./report-view";
 import { SessionsView } from "./sessions-view";
 import { TeamThread } from "./team-thread";
 import { TeamView } from "./team-view";
 import { TerminalDrawer } from "./terminal-drawer";
+import { WebTerminalSheet } from "./web-terminal-sheet";
 import { useBoards } from "./use-board";
 import { useHq } from "./use-hq";
 import { useOffice, type Room } from "./use-office";
+import { usePoll } from "./use-poll";
 import type { Session } from "./types";
 
 /** office: every session is a room · group: all rooms talking · room: one room's chat. */
-type Tab = "office" | "group" | "room" | "board" | "report" | "sessions" | "activity";
+type Tab = "overview" | "office" | "group" | "room" | "board" | "preview" | "flow" | "report" | "sessions" | "activity";
+
+/** Tổng quan is the first screen on a wide monitor; below this the office stays the default. */
+const WIDE_QUERY = "(min-width: 1600px)";
+const subscribeWide = (cb: () => void) => {
+  const m = window.matchMedia(WIDE_QUERY);
+  m.addEventListener("change", cb);
+  return () => m.removeEventListener("change", cb);
+};
+const isWide = () => window.matchMedia(WIDE_QUERY).matches;
+const PREVIEW_POLL_MS = 15_000;
+const LOOPS_POLL_MS = 30_000;
 
 /** Scope by any name a session goes by: hq name, Claude session id, or its label. */
 const isScoped = (s: Session, key: string | null) => matchesSession({ ...s, label: sessionLabel(s) }, key);
@@ -43,13 +59,25 @@ export function HqApp({ token }: { token: string }) {
   // One board poll for Văn phòng (who holds which card) and Board (lanes).
   const boards = useBoards(hq.api);
   const [scope, setScope] = useState<Scope>({ project: null, session: null });
-  const [tab, setTab] = useState<Tab>("office");
+  // null until the owner picks a tab: the default follows the screen (Tổng quan on a wide monitor).
+  const [picked, setTab] = useState<Tab | null>(null);
+  const wide = useSyncExternalStore(subscribeWide, isWide, () => false);
+  const tab: Tab = picked ?? (wide ? "overview" : "office");
   const [target, setTarget] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   // The session whose live terminal is open in the right drawer (hq-* tmux sessions only).
   const [drawer, setDrawer] = useState<string | null>(null);
   const [assign, setAssign] = useState<{ open: boolean; session?: string; n: number }>({ open: false, n: 0 });
   const [firstGuide, dismissGuide] = useGuideFirstRun();
+  // A card another tab asked Board to open ("Mở card"); `n` makes each request new.
+  const [focusCard, setFocusCard] = useState<{ root: string; id: number; n: number } | null>(null);
+  const previews = usePoll<{ projects: NonNullable<PreviewState["data"]>["projects"] }>(hq.api, "/api/preview", PREVIEW_POLL_MS, tab === "preview" || tab === "overview");
+  const loops = usePoll<NonNullable<LoopsState["data"]>>(hq.api, "/api/loops", LOOPS_POLL_MS, tab === "flow");
+
+  const openCard = useCallback((root: string, id: number) => {
+    setFocusCard((f) => ({ root, id, n: (f?.n ?? 0) + 1 }));
+    setTab("board");
+  }, []);
   const [guideOpen, setGuideOpen] = useState(false);
 
   const onScope = useCallback((s: Scope) => {
@@ -205,6 +233,7 @@ export function HqApp({ token }: { token: string }) {
               </dl>
             </div>
             <TabsList variant="line" className="mt-2 h-9 w-full max-w-full justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] sm:px-6">
+              <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
               <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
               <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
               <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
@@ -212,6 +241,8 @@ export function HqApp({ token }: { token: string }) {
                 Board
                 {view.tasks.length > 0 && <span className="text-xs text-muted-foreground tabular">{view.tasks.filter((t) => t.status !== "done").length}</span>}
               </TabsTrigger>
+              <TabsTrigger value="preview" className="flex-none px-0">Preview</TabsTrigger>
+              <TabsTrigger value="flow" className="flex-none px-0">Flow</TabsTrigger>
               <TabsTrigger value="report" className="flex-none px-0">Báo cáo</TabsTrigger>
               <TabsTrigger value="sessions" className="flex-none px-0">
                 Sessions
@@ -222,6 +253,18 @@ export function HqApp({ token }: { token: string }) {
           </header>
 
           <main className="min-h-0 flex-1">
+            <TabsContent value="overview" className="h-full">
+              <OverviewView
+                office={office}
+                boards={boards}
+                previews={previews}
+                messages={hq.messages.data}
+                token={token}
+                onTab={setTab}
+                onOpenRoom={openRoom}
+                onOpenCard={openCard}
+              />
+            </TabsContent>
             <TabsContent value="office" className="h-full">
               <OfficeView data={office} boards={boards} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} projects={hq.projects.data} />
             </TabsContent>
@@ -259,7 +302,13 @@ export function HqApp({ token }: { token: string }) {
               <ReportView data={office} onOpen={openRoom} />
             </TabsContent>
             <TabsContent value="board" className="h-full">
-              <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} />
+              <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} focus={focusCard} />
+            </TabsContent>
+            <TabsContent value="preview" className="h-full">
+              <PreviewView state={previews} boards={boards.boards} token={token} onOpenCard={openCard} />
+            </TabsContent>
+            <TabsContent value="flow" className="h-full">
+              <FlowView state={boards} loops={loops} />
             </TabsContent>
             <TabsContent value="sessions" className="h-full">
               <SessionsView
@@ -275,7 +324,7 @@ export function HqApp({ token }: { token: string }) {
             </TabsContent>
           </main>
           {/* Văn phòng and Chat tổng show every room, so the box that reaches every room sits under them. */}
-          {(tab === "office" || tab === "group") && <BroadcastComposer hq={hq} rooms={officeRooms} preferRoot={project?.path} />}
+          {(tab === "overview" || tab === "office" || tab === "group") && <BroadcastComposer hq={hq} rooms={officeRooms} preferRoot={project?.path} />}
         </Tabs>
       </div>
       <TerminalDrawer
@@ -285,6 +334,7 @@ export function HqApp({ token }: { token: string }) {
         role={drawerSession?.role}
         model={drawerSession?.model}
       />
+      <WebTerminalSheet token={token} />
       <AssignDialog
         key={assign.n}
         hq={hq}

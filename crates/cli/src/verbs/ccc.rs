@@ -37,6 +37,7 @@ mod looper;
 mod meet;
 mod output_budget;
 mod permit;
+mod term;
 pub(crate) mod report;
 mod risk;
 mod secret;
@@ -198,6 +199,7 @@ pub fn run(a: Args) -> Result<()> {
             meet::run(&sessions(&env, &root), rest, id.as_deref(), &std::env::current_dir().context("no cwd")?, view_now())
         }
         "risk" => risk::run(rest, &std::env::current_dir().context("no cwd")?),
+        "term" => term::run(rest),
         "hint" => {
             let cwd = std::env::current_dir().context("no cwd")?;
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();

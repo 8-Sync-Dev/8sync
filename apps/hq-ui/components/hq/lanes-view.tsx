@@ -1,13 +1,14 @@
 "use client";
 
-import { ArrowRightIcon, GitPullRequestIcon, LayersIcon, OctagonAlertIcon, RefreshCwIcon, ShipIcon, Undo2Icon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon, ChevronsLeftIcon, ChevronsRightIcon, GitPullRequestIcon, LayersIcon, OctagonAlertIcon, RefreshCwIcon, ShipIcon, Undo2Icon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cardParts, nextUp, prRef } from "@/lib/card-tags";
-import { LANES, boardSummary, claimStale, openCount, rankOf, type Card, type LaneKey } from "@/lib/lanes";
+import { LANES, boardSummary, claimStale, openCount, rankOf, type Card, type Closed, type LaneKey } from "@/lib/lanes";
 import { agoShort, agoVi, roomRole, type Move } from "@/lib/now";
+import { rootKey } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
 import { CardSheet, LabelChip, PrioChip, TagChips, TONE_INK, laneTone } from "./card-sheet";
@@ -15,12 +16,28 @@ import { RoleIcon } from "./role-badge";
 import type { BoardsState } from "./use-board";
 
 /** The project board (`8sync ccc auto board`): which room holds which card, lane by lane. */
-export function LanesView({ state }: { state: BoardsState }) {
+export function LanesView({ state, focus }: { state: BoardsState; focus?: { root: string; id: number; n: number } | null }) {
   const { boards, error, moves, at: now, reload: load } = state;
   const [pick, setPick] = useState<string | null>(null);
   // The open card by id, so each poll shows its latest state; the snapshot keeps the sheet filled while it closes.
   const [open, setOpen] = useState<{ root: string; card: Card } | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [doneWide, setDoneWide] = useState(false);
+
+  // "Mở card" from another tab (Preview, Tổng quan): pick that project and open the card once the board has it.
+  // Adjusted during render (not in an effect), the React way to react to a changed prop.
+  const [handled, setHandled] = useState(0);
+  if (focus && focus.n !== handled && boards) {
+    const k = rootKey(focus.root);
+    const b = boards.find((x) => rootKey(x.root) === k || (x.filed != null && rootKey(x.filed) === k));
+    const c = b?.board ? LANES.flatMap((l) => b.board!.lanes[l.key]).find((x) => x.id === focus.id) : undefined;
+    setHandled(focus.n);
+    if (b) setPick(b.root);
+    if (b && c) {
+      setOpen({ root: b.root, card: c });
+      setSheetOpen(true);
+    }
+  }
 
   if (error && !boards) {
     return (
@@ -89,10 +106,17 @@ export function LanesView({ state }: { state: BoardsState }) {
         </div>
       ) : (
         <div className="min-h-0 flex-1 snap-x snap-mandatory scroll-px-4 overflow-x-auto overflow-y-hidden md:snap-none">
-          <div className="grid h-full grid-cols-[repeat(7,minmax(min(82vw,16rem),1fr))] gap-2.5 px-4 py-4 sm:px-6 md:grid-cols-[repeat(7,minmax(11rem,1fr))]">
-            {LANES.map((l) => (
-              <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} now={now} next={next} onOpen={onOpenCard} />
-            ))}
+          {/* Done sits between Approved and Blocked: where an approved card goes once merged. Narrow until opened. */}
+          <div
+            className={cn(
+              "grid h-full grid-cols-[repeat(8,minmax(min(82vw,16rem),1fr))] gap-2.5 px-4 py-4 sm:px-6",
+              doneWide ? "md:grid-cols-[repeat(6,minmax(10.5rem,1fr))_minmax(15rem,1.3fr)_minmax(10.5rem,1fr)]" : "md:grid-cols-[repeat(6,minmax(10.5rem,1fr))_8.5rem_minmax(10.5rem,1fr)]",
+            )}
+          >
+            {LANES.flatMap((l) => {
+              const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} now={now} next={next} onOpen={onOpenCard} />;
+              return l.key === "blocked" ? [<DoneLane key="done" closed={cur?.board?.closed ?? null} now={now} wide={doneWide} onWide={setDoneWide} />, lane] : [lane];
+            })}
           </div>
         </div>
       )}
@@ -105,6 +129,66 @@ export function LanesView({ state }: { state: BoardsState }) {
         onPrio={open && shown ? (prio) => state.setPrio(open.root, shown.id, prio) : undefined}
       />
     </div>
+  );
+}
+
+/** Closed cards the board still lists (the CLI keeps the last 10): one line each, evidence on hover or when widened. */
+function DoneLane({ closed, now, wide, onWide }: { closed: Closed[] | null; now: number; wide: boolean; onWide: (v: boolean) => void }) {
+  const done = closed?.filter((c) => c.state === "done").length ?? 0;
+  return (
+    <section aria-labelledby="lane-done" className="flex min-h-0 snap-start flex-col rounded-xl bg-muted/60">
+      <h3 id="lane-done" className="flex items-center gap-1.5 px-3 pt-3 text-[13px] font-semibold">
+        <CheckIcon aria-hidden className="size-3.5 text-st-running" strokeWidth={3} />
+        <span>Done</span>
+        <span className="ml-auto rounded-full bg-background px-1.5 text-[11px] font-semibold text-muted-foreground tabular">
+          {closed ? closed.length : ""}
+          <span className="sr-only"> card</span>
+        </span>
+      </h3>
+      <div className="flex items-center gap-1 px-3 pt-0.5 pb-2">
+        <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{closed?.length ? `${done} xong gần đây` : "đã merge, đã đóng"}</p>
+        <button
+          type="button"
+          onClick={() => onWide(!wide)}
+          aria-expanded={wide}
+          aria-label={wide ? "Thu hẹp cột Done" : "Mở rộng cột Done"}
+          className="hidden size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 md:grid"
+        >
+          {wide ? <ChevronsLeftIcon className="size-3.5" aria-hidden /> : <ChevronsRightIcon className="size-3.5" aria-hidden />}
+        </button>
+      </div>
+      <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1.5 pb-2">
+        {closed === null ? (
+          <li>
+            <Skeleton className="h-10 rounded-md" />
+          </li>
+        ) : closed.length === 0 ? (
+          <li className="px-1.5 py-3 text-center text-[11px] text-muted-foreground">Chưa có</li>
+        ) : (
+          closed.map((c) => {
+            const { title } = cardParts(c.text);
+            const ev = c.evidence ? (c.evidence.length > 60 ? `${c.evidence.slice(0, 60)}…` : c.evidence) : null;
+            const dropped = c.state === "dropped";
+            return (
+              <li
+                key={c.id}
+                title={`#${c.id} ${title}\n${dropped ? "bỏ" : "xong"} ${agoVi(c.at, now)}${c.by ? ` · ${c.by}` : ""}${c.evidence ? `\n${c.evidence}` : ""}`}
+                className={cn("rounded-md px-1.5 py-1 text-[12px] leading-tight hover:bg-background", dropped && "text-muted-foreground")}
+              >
+                <span className="flex min-w-0 items-baseline gap-1">
+                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground">#{c.id}</span>
+                  <span className={cn("truncate", dropped && "line-through decoration-muted-foreground/50")}>{title}</span>
+                </span>
+                <span className="block truncate text-[11px] text-muted-foreground tabular">
+                  {dropped ? "bỏ" : "xong"} {agoShort(c.at, now)}
+                  {wide && ev && <span className="font-mono"> · {ev}</span>}
+                </span>
+              </li>
+            );
+          })
+        )}
+      </ul>
+    </section>
   );
 }
 
@@ -250,7 +334,7 @@ export function CardItem({ c, move, now, next, onOpen }: { c: Card; move?: Move;
           {noCheck && <span className="font-medium text-destructive">thiếu lệnh check</span>}
         </span>
         {c.note && (
-          <span className="mt-1 line-clamp-1 block text-[11px] text-muted-foreground">
+          <span className="mt-1 line-clamp-1 text-[11px] text-muted-foreground">
             {c.note.room && <span className="font-medium text-foreground">{c.note.room}: </span>}
             {c.note.text}
             {c.note.at > 0 && <span className="tabular"> · {agoShort(c.note.at, now)}</span>}
