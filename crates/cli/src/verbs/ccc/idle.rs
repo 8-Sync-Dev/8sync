@@ -31,6 +31,8 @@ const ENV: &str = "EIGHTSYNC_NO_IDLE";
 const MAX_BLOCKS: u32 = 3;
 pub(super) const DEFAULT_HOURS: u64 = 2;
 pub(super) const DEFAULT_USD_PER_HOUR: f64 = 5.0;
+/// Subscription: the loops rest once either usage window is this full.
+pub(super) const SUB_WINDOW_PCT: f64 = 90.0;
 /// Subscription: lease cap and "owner present" window (last prompt typed by a human).
 const SUB_MAX_HOURS: f64 = 4.0;
 pub(super) const PRESENT_S: u64 = 30 * 60;
@@ -359,12 +361,13 @@ pub(super) fn enabled(home: &Path) -> bool {
     crate::verbs::harness::cbm::resolve(std::env::var(ENV).ok().as_deref(), crate::verbs::harness::cbm::read_flag_key(home, KEY))
 }
 
+fn cost_of(s: &Value) -> Option<(String, f64)> {
+    Some((s["session_id"].as_str()?.to_string(), s["cost_usd"].as_f64()?))
+}
+
 /// Total of every session's latest `cost_usd` (status-line snapshots), keyed by session.
 pub(super) fn costs(home: &Path) -> Vec<(String, f64)> {
-    super::report::load_snapshots(home)
-        .iter()
-        .filter_map(|s| Some((s["session_id"].as_str()?.to_string(), s["cost_usd"].as_f64()?)))
-        .collect()
+    super::report::load_snapshots(home).iter().filter_map(cost_of).collect()
 }
 
 /// Spend since the lease started: sessions present at `on` count from their baseline.
@@ -372,10 +375,43 @@ pub(super) fn spent_since(baseline: &Value, now_costs: &[(String, f64)]) -> f64 
     now_costs.iter().map(|(sid, c)| (c - baseline[sid].as_f64().unwrap_or(0.0)).max(0.0)).sum()
 }
 
-/// The rails that do not depend on the task list: lease + owner presence (subscription) and
-/// $/hour. `owner_seen`: `Some(ts of the owner's last typed prompt in the lead session)`, or
-/// `None` when not checked (`idle status`).
-pub(super) fn gate(lease: Option<&Value>, subscription: bool, spent: f64, now: u64, owner_seen: Option<Option<u64>>) -> Result<(), String> {
+/// What the usage rail ([`cap`]) measures, from the status-line snapshots (`ccc report`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(super) struct Usage {
+    /// $ since the lease began; under `auto on --here` only sessions inside that project count.
+    pub spent: f64,
+    /// The account's usage windows in % (Claude Code `rate_limits`), from the newest reading that
+    /// is younger than the window itself; `None` = unknown or stale.
+    pub five_hour: Option<f64>,
+    pub seven_day: Option<f64>,
+}
+
+/// Owner (2026-10-17, `auto on --here --loop 2m --team`): every room rested on "$6.72 in the last
+/// hour against $5/hour" while tasks were open and the window showed 5h 23%. The spend summed every
+/// session on the machine (this repo's own session and other projects' rooms too), and on a
+/// subscription the $ is an API-price estimate: the window is the real limit.
+pub(super) fn usage(home: &Path, lease: Option<&Value>, now: u64) -> Usage {
+    let snaps = super::report::load_snapshots(home); // newest first
+    let mine = super::auto::scoped(home);
+    let costs: Vec<(String, f64)> = snaps.iter().filter(|s| mine(s["cwd"].as_str())).filter_map(cost_of).collect();
+    let window = |key: &str, max_age: u64| {
+        snaps
+            .iter()
+            .find(|s| s[key].is_number())
+            .filter(|s| now.saturating_sub(s["ts"].as_u64().unwrap_or(0)) < max_age)
+            .and_then(|s| s[key].as_f64())
+    };
+    Usage {
+        spent: lease.map_or(0.0, |l| spent_since(&l["baseline"], &costs)),
+        five_hour: window("five_hour_pct", 5 * 3600),
+        seven_day: window("seven_day_pct", 7 * 86_400),
+    }
+}
+
+/// The rails that do not depend on the task list: lease + owner presence (subscription) and the
+/// usage rail ([`cap`]). `owner_seen`: `Some(ts of the owner's last typed prompt in the lead
+/// session)`, or `None` when not checked (`idle status`).
+pub(super) fn gate(lease: Option<&Value>, subscription: bool, u: &Usage, now: u64, owner_seen: Option<Option<u64>>) -> Result<(), String> {
     let Some(l) = lease else {
         return if subscription {
             Err("gói subscription: chưa có lease owner-có-mặt (`8sync ccc idle on`); chạy không người trông dùng Console API key".into())
@@ -393,19 +429,53 @@ pub(super) fn gate(lease: Option<&Value>, subscription: bool, spent: f64, now: u
             }
         }
     }
-    cap(l, spent, now)
+    cap(l, u, subscription, now)
 }
 
-/// The $/hour rail alone: average spend since the lease started, checked whether or not the lease
-/// is still valid (an `auto --loop` runs past the lease and must still respect it). An average, so
-/// it clears by itself as time passes without spending.
-pub(super) fn cap(lease: &Value, spent: f64, now: u64) -> Result<(), String> {
-    let rate = lease["usd_per_hour"].as_f64().unwrap_or(DEFAULT_USD_PER_HOUR);
+/// The usage rail alone, checked whether or not the lease is still valid (an `auto --loop` runs
+/// past the lease and must still respect it).
+/// - Subscription: rest once the 5-hour or 7-day window is [`SUB_WINDOW_PCT`] full (the rest stays
+///   for the owner); the $/hour average applies only when the owner set `--usd-per-hour`, or when
+///   no window reading exists (fail safe: the old $5 default).
+/// - API key: the $/hour average (default $5), real money.
+///
+/// Both clear by themselves: the window resets, the average falls as time passes without spending.
+pub(super) fn cap(lease: &Value, u: &Usage, subscription: bool, now: u64) -> Result<(), String> {
+    let windows = [("5 giờ", u.five_hour), ("7 ngày", u.seven_day)];
+    if subscription {
+        for (label, pct) in windows {
+            if let Some(p) = pct.filter(|p| *p >= SUB_WINDOW_PCT) {
+                return Err(format!(
+                    "chạm trần gói subscription: cửa sổ {label} đã dùng {p:.0}% (nghỉ từ {SUB_WINDOW_PCT:.0}%, phần còn lại để owner dùng); tự chạy lại khi cửa sổ reset"
+                ));
+            }
+        }
+    }
+    let known = windows.iter().any(|(_, p)| p.is_some());
+    let Some(rate) = lease["usd_per_hour"].as_f64().or((!subscription || !known).then_some(DEFAULT_USD_PER_HOUR)) else {
+        return Ok(());
+    };
     let hours = (now.saturating_sub(lease["on"].as_u64().unwrap_or(now)) as f64 / 3600.0).max(1.0);
-    if spent > rate * hours {
-        return Err(format!("chạm trần ${rate:.2}/giờ (đã tiêu ${spent:.2} trong {hours:.1} giờ)"));
+    if u.spent > rate * hours {
+        // A lease from before the window rail (or `--usd-per-hour`) keeps its $ rate: say how to drop it.
+        let hint = if subscription && lease["usd_per_hour"].is_number() {
+            "; muốn chỉ dùng trần cửa sổ 5 giờ/7 ngày của gói subscription: chạy lại `8sync ccc auto on` không kèm --usd-per-hour"
+        } else {
+            ""
+        };
+        return Err(format!("chạm trần ${rate:.2}/giờ (đã tiêu ${:.2} trong {hours:.1} giờ){hint}", u.spent));
     }
     Ok(())
+}
+
+/// The ceiling as the owner reads it in `idle on` / `idle status`.
+fn ceiling(rate: Option<f64>, subscription: bool) -> String {
+    match rate {
+        Some(r) if subscription => format!("trần ${r:.2}/giờ và cửa sổ 5 giờ/7 ngày < {SUB_WINDOW_PCT:.0}%"),
+        Some(r) => format!("trần ${r:.2}/giờ"),
+        None if subscription => format!("trần: cửa sổ 5 giờ/7 ngày < {SUB_WINDOW_PCT:.0}% (gói subscription)"),
+        None => format!("trần ${DEFAULT_USD_PER_HOUR:.2}/giờ"),
+    }
 }
 
 /// "2026-10-14T03:31:00.123Z" → unix seconds (UTC only, as Claude Code writes it).
@@ -529,7 +599,7 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
     }
     let dir = state_dir(home);
     let lease = read_json(&dir.join("lease.json"));
-    let spent = lease.as_ref().map_or(0.0, |l| spent_since(&l["baseline"], &costs(home)));
+    let used = usage(home, lease.as_ref(), now());
     // A lead's task list lives under its team name; a standalone session's under its own
     // session id (`~/.claude/tasks/<session_id>/`, same path shape, never user text).
     let tasks_dir = if lead || me.is_some() { team.clone() } else { safe_id(sid)?.to_string() };
@@ -553,7 +623,7 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
         tasks: &tasks,
         recall: &recall,
         rooms: &rooms,
-        gate: gate(lease.as_ref(), subscription, spent, now(), owner_seen),
+        gate: gate(lease.as_ref(), subscription, &used, now(), owner_seen),
         learn: learn.as_deref(),
         research: research.as_deref(),
     };
@@ -596,11 +666,13 @@ fn lead_context(msg: &str) -> String {
 }
 
 /// Validate, then turn the flag on and write the lease. Nothing is touched when validation
-/// fails. `quiet` skips the prints (used by `ccc auto on`).
-pub(super) fn on(home: &Path, hours: f64, rate: f64, subscription: bool, quiet: bool) -> Result<()> {
-    if !(0.25..=24.0).contains(&hours) || !(0.1..=1000.0).contains(&rate) {
+/// fails. `quiet` skips the prints (used by `ccc auto on`). `rate`: `--usd-per-hour` when given;
+/// without it an API key gets the $5 default and a subscription the usage-window rail ([`cap`]).
+pub(super) fn on(home: &Path, hours: f64, rate: Option<f64>, subscription: bool, quiet: bool) -> Result<()> {
+    if !(0.25..=24.0).contains(&hours) || rate.is_some_and(|r| !(0.1..=1000.0).contains(&r)) {
         bail!("--hours 0.25..24, --usd-per-hour 0.1..1000");
     }
+    let rate = rate.or((!subscription).then_some(DEFAULT_USD_PER_HOUR));
     if subscription && hours > SUB_MAX_HOURS {
         bail!("login subscription: --hours tối đa {SUB_MAX_HOURS} (owner phải có mặt). Chạy lâu / không người trông → Console API key.");
     }
@@ -611,7 +683,7 @@ pub(super) fn on(home: &Path, hours: f64, rate: f64, subscription: bool, quiet: 
     write_json(&dir.join("lease.json"), &json!({ "on": t, "until": t + (hours * 3600.0) as u64, "usd_per_hour": rate, "baseline": baseline }));
     let _ = std::fs::remove_dir_all(dir.join("mem"));
     if !quiet {
-        println!("không-ai-rảnh: BẬT {hours} giờ, trần ${rate:.2}/giờ, tối đa {MAX_BLOCKS} lần nhắc liên tiếp.");
+        println!("không-ai-rảnh: BẬT {hours} giờ, {}, tối đa {MAX_BLOCKS} lần nhắc liên tiếp.", ceiling(rate, subscription));
         if subscription {
             println!("Login subscription: chỉ chạy khi owner có mặt; hết {hours} giờ thì tự nghỉ. Chạy không người trông → Console API key.");
         }
@@ -633,8 +705,7 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
     match rest.first().map(String::as_str) {
         Some("on") => {
             let hours = num("--hours")?.unwrap_or(DEFAULT_HOURS as f64);
-            let rate = num("--usd-per-hour")?.unwrap_or(DEFAULT_USD_PER_HOUR);
-            on(home, hours, rate, subscription, false)
+            on(home, hours, num("--usd-per-hour")?, subscription, false)
         }
         Some("off") => {
             off(home)?;
@@ -643,9 +714,10 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
         }
         Some("status") | None => {
             let lease = read_json(&lease_p);
-            let spent = lease.as_ref().map_or(0.0, |l| spent_since(&l["baseline"], &costs(home)));
+            let used = usage(home, lease.as_ref(), now());
+            let spent = used.spent;
             let on = enabled(home);
-            let g = gate(lease.as_ref(), subscription, spent, now(), None);
+            let g = gate(lease.as_ref(), subscription, &used, now(), None);
             let members: Vec<Value> = std::fs::read_dir(dir.join("status")).into_iter().flatten().flatten().filter_map(|e| read_json(&e.path())).collect();
             if rest.iter().any(|a| a == "--json") {
                 println!("{}", json!({ "schema": 1, "enabled": on, "subscription": subscription, "lease": lease.as_ref().map(|l| json!({"on": l["on"], "until": l["until"], "usd_per_hour": l["usd_per_hour"]})), "spent_usd": spent, "gate": g.as_ref().err(), "members": members }));
@@ -657,7 +729,7 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
             }
             if let Some(l) = &lease {
                 let left = l["until"].as_u64().unwrap_or(0).saturating_sub(now()) / 60;
-                println!("lease: còn {left} phút · trần ${:.2}/giờ · đã tiêu ${spent:.2}", l["usd_per_hour"].as_f64().unwrap_or(DEFAULT_USD_PER_HOUR));
+                println!("lease: còn {left} phút · {} · đã tiêu ${spent:.2}", ceiling(l["usd_per_hour"].as_f64(), subscription));
             }
             if on {
                 if let Err(r) = &g {
@@ -668,6 +740,11 @@ pub(super) fn run(rest: &[String], home: &Path, subscription: bool) -> Result<()
                 println!("  {} / {}: {} — {}", m["team"].as_str().unwrap_or("?"), m["name"].as_str().unwrap_or("?"), m["state"].as_str().unwrap_or("?"), m["detail"].as_str().unwrap_or(""));
             }
             println!("Đổi: `8sync ccc idle on [--hours 2] [--usd-per-hour 5]` · `8sync ccc idle off`");
+            if subscription {
+                if let Some(r) = lease.as_ref().and_then(|l| l["usd_per_hour"].as_f64()) {
+                    println!("Trần ${r:.2}/giờ đang bật trên gói subscription; chỉ giữ trần cửa sổ 5 giờ/7 ngày: chạy lại `8sync ccc auto on` (hoặc `idle on`) không kèm --usd-per-hour.");
+                }
+            }
             Ok(())
         }
         Some(x) => bail!("usage: 8sync ccc idle [on [--hours N] [--usd-per-hour X] | off | status [--json]] (got `{x}`)"),
@@ -821,7 +898,8 @@ mod tests {
     #[test]
     fn gate_lease_and_budget() {
         let lease = json!({ "on": 1000, "until": 1000 + 7200, "usd_per_hour": 5.0 });
-        let g = |l: Option<&Value>, sub: bool, spent: f64, now: u64| gate(l, sub, spent, now, None);
+        let g = |l: Option<&Value>, sub: bool, spent: f64, now: u64| gate(l, sub, &Usage { spent, ..Usage::default() }, now, None);
+        let none = Usage::default();
         assert!(g(None, false, 0.0, 2000).is_ok(), "api key: no lease needed");
         assert!(g(None, true, 0.0, 2000).unwrap_err().contains("subscription"));
         assert!(g(Some(&lease), true, 1.0, 2000).is_ok());
@@ -832,10 +910,10 @@ mod tests {
         assert!(g(Some(&lease), false, 14.0, 1000 + 3 * 3600).is_ok());
         // owner presence (subscription only): last human prompt 45 min ago → rest; 10 min → ok
         let now = 1000 + 3600;
-        assert!(gate(Some(&lease), true, 0.0, now, Some(Some(now - 45 * 60))).unwrap_err().contains("owner vắng"));
-        assert!(gate(Some(&lease), true, 0.0, now, Some(None)).unwrap_err().contains("owner vắng"));
-        assert!(gate(Some(&lease), true, 0.0, now, Some(Some(now - 10 * 60))).is_ok());
-        assert!(gate(Some(&lease), false, 0.0, now, Some(Some(now - 45 * 60))).is_ok(), "api key: no presence needed");
+        assert!(gate(Some(&lease), true, &none, now, Some(Some(now - 45 * 60))).unwrap_err().contains("owner vắng"));
+        assert!(gate(Some(&lease), true, &none, now, Some(None)).unwrap_err().contains("owner vắng"));
+        assert!(gate(Some(&lease), true, &none, now, Some(Some(now - 10 * 60))).is_ok());
+        assert!(gate(Some(&lease), false, &none, now, Some(Some(now - 45 * 60))).is_ok(), "api key: no presence needed");
     }
 
     #[test]
@@ -865,6 +943,85 @@ mod tests {
         assert!((spent_since(&base, &now) - 4.5).abs() < 1e-9);
     }
 
+    fn snap(home: &Path, v: Value) {
+        let d = super::super::report::usage_dir(home);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(format!("{}.json", v["session_id"].as_str().unwrap())), v.to_string()).unwrap();
+    }
+
+    /// Owner (2026-10-17, `auto on --here` in ai-game-studio): rooms rested on "$6.72 in the last
+    /// hour" that was mostly other projects' sessions on the machine.
+    #[test]
+    fn spend_counts_only_this_project() {
+        let d = std::env::temp_dir().join(format!("8sync-idle-scope-{}-{}", std::process::id(), now()));
+        let _ = std::fs::remove_dir_all(&d);
+        let home = d.join("home");
+        let repo = d.join("game");
+        let other = d.join("game-2");
+        for p in [repo.join("src"), other.clone()] {
+            std::fs::create_dir_all(&p).unwrap();
+        }
+        let s = |sid: &str, cwd: Value, cost: f64| snap(&home, json!({ "session_id": sid, "cwd": cwd, "cost_usd": cost, "ts": 1 }));
+        s("in", json!(repo.join("src").to_string_lossy()), 2.0);
+        s("out", json!(other.to_string_lossy()), 50.0);
+        s("relative", json!("game"), 7.0);
+        s("nocwd", Value::Null, 9.0);
+        let empty = json!({ "on": 0, "baseline": {} });
+        assert!((usage(&home, Some(&empty), 3600).spent - 68.0).abs() < 1e-9, "without --here every session counts");
+        let on = super::super::auto::Mode::On { hours: 1.0, after: 60, rate: Some(5.0), repo: Some(repo.clone()) };
+        super::super::auto::set(&home, on, false, now()).unwrap();
+        let lease = read_json(&state_dir(&home).join("lease.json")).unwrap();
+        s("in", json!(repo.join("src").to_string_lossy()), 5.0);
+        s("out", json!(other.to_string_lossy()), 80.0);
+        s("new", json!(repo.to_string_lossy()), 0.5);
+        let u = usage(&home, Some(&lease), now());
+        assert!((u.spent - 3.5).abs() < 1e-9, "only this project, from the baseline: {u:?}");
+        assert!(cap(&lease, &u, false, now()).is_ok(), "the $5 cap holds for the project alone");
+        assert_eq!(usage(&home, None, now()).spent, 0.0, "no lease, nothing spent");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn subscription_rests_on_the_usage_window() {
+        let sub = json!({ "on": 0, "usd_per_hour": null, "baseline": {} });
+        let w = |five: Option<f64>, seven: Option<f64>, spent: f64| Usage { spent, five_hour: five, seven_day: seven };
+        // The owner's case: 5h at 23%, $6.72 in the first hour → keep working.
+        assert!(cap(&sub, &w(Some(23.0), Some(40.0), 6.72), true, 3600).is_ok());
+        assert!(cap(&sub, &w(Some(89.0), None, 500.0), true, 3600).is_ok(), "no $ rail on a subscription by default");
+        let e = cap(&sub, &w(Some(90.0), Some(10.0), 0.0), true, 3600).unwrap_err();
+        assert!(e.contains("5 giờ") && e.contains("90%"), "{e}");
+        assert!(cap(&sub, &w(Some(10.0), Some(95.0), 0.0), true, 3600).unwrap_err().contains("7 ngày"));
+        assert!(cap(&sub, &w(None, Some(50.0), 500.0), true, 3600).is_ok(), "one fresh window is enough to drop the $ rail");
+        // No window reading at all: fail safe, the old $5 default.
+        assert!(cap(&sub, &w(None, None, 6.72), true, 3600).unwrap_err().contains("$5.00/giờ"));
+        // The owner set --usd-per-hour (or an old lease): both rails.
+        let rated = json!({ "on": 0, "usd_per_hour": 30.0 });
+        assert!(cap(&rated, &w(Some(23.0), None, 6.72), true, 3600).is_ok());
+        let e = cap(&rated, &w(Some(23.0), None, 31.0), true, 3600).unwrap_err();
+        assert!(e.contains("$30.00/giờ") && e.contains("không kèm --usd-per-hour"), "says how to drop the $ rate: {e}");
+        assert!(!cap(&rated, &w(None, None, 31.0), false, 3600).unwrap_err().contains("--usd-per-hour"), "api key: no hint");
+        assert!(cap(&rated, &w(Some(91.0), None, 0.0), true, 3600).unwrap_err().contains("subscription"));
+        // API key: real money, the window is not the limit; $5 default as before.
+        assert!(cap(&sub, &w(Some(95.0), None, 1.0), false, 3600).is_ok());
+        assert!(cap(&sub, &w(Some(10.0), None, 6.72), false, 3600).unwrap_err().contains("$5.00/giờ"));
+
+        // Readings: the newest snapshot carrying the field, dropped once older than its window.
+        let d = std::env::temp_dir().join(format!("8sync-idle-window-{}-{}", std::process::id(), now()));
+        let _ = std::fs::remove_dir_all(&d);
+        let t = 1_000_000;
+        snap(&d, json!({ "session_id": "a", "ts": t - 100, "seven_day_pct": 50 }));
+        snap(&d, json!({ "session_id": "b", "ts": t - 200, "five_hour_pct": 95, "seven_day_pct": 60 }));
+        assert_eq!(usage(&d, None, t), w(Some(95.0), Some(50.0), 0.0));
+        assert_eq!(usage(&d, None, t + 5 * 3600), w(None, Some(50.0), 0.0), "a 5-hour reading older than 5 hours is stale");
+        assert_eq!(usage(&d, None, t + 7 * 86_400), w(None, None, 0.0));
+        // `on` without --usd-per-hour: a subscription lease stores no $ rate, an API key lease $5.
+        on(&d, 1.0, None, true, true).unwrap();
+        assert!(read_json(&state_dir(&d).join("lease.json")).unwrap()["usd_per_hour"].is_null());
+        on(&d, 1.0, None, false, true).unwrap();
+        assert_eq!(read_json(&state_dir(&d).join("lease.json")).unwrap()["usd_per_hour"], json!(DEFAULT_USD_PER_HOUR));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     /// Owner (2026-10-16): "chờ tôi quá 1 phút không tự làm tiếp" — a session with no agent
     /// team gets the lead ladder on Stop while `auto on` runs (its own task list under
     /// `tasks/<session id>/`), nothing when paused/off; a real lead keeps the old behaviour.
@@ -884,7 +1041,7 @@ mod tests {
         // Nothing on: silent, as before.
         assert_eq!(hook(&input, &home, false), None);
         // `auto on`: the session is its own lead and is handed its own pending task.
-        super::super::auto::set(&home, super::super::auto::Mode::On { hours: 1.0, after: 60, rate: 5.0, repo: None }, false, now()).unwrap();
+        super::super::auto::set(&home, super::super::auto::Mode::On { hours: 1.0, after: 60, rate: Some(5.0), repo: None }, false, now()).unwrap();
         let out = hook(&input, &home, false).expect("standalone session nudged");
         assert!(out.contains("không-ai-rảnh") && out.contains("solo-task-xyz"), "{out}");
         let status = std::fs::read_dir(state_dir(&home).join("status")).unwrap().count();
@@ -898,7 +1055,7 @@ mod tests {
         assert_eq!(hook(&input, &home, false), None);
         // `idle on` by hand without `auto on` (manual): the standalone session stays silent,
         // while a real lead (team config present) still reads its team's task list, as before.
-        on(&home, 1.0, 5.0, false, true).unwrap();
+        on(&home, 1.0, Some(5.0), false, true).unwrap();
         assert_eq!(hook(&input, &home, false), None);
         let lead_sid = "abababab-1111-2222-3333-444444444444";
         std::fs::create_dir_all(claude_dir(&home).join("teams/session-abababab")).unwrap();

@@ -13,6 +13,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   - If some projects fail, the text stays in the box and the toast names them. A timeout says the task may already be queued (`8sync ccc auto queue`) instead of inviting a duplicate.
   - The "Lệnh kiểm" command runs in the project, like `--check` from the terminal.
   - The Cách dùng guide and the empty Chat tổng point at the box.
+### Fixed
+- **`auto on --loop` no longer rests a busy team on someone else's spend.** With `auto on --here --loop 2m --team`, every room skipped its tick on "$6.72 in the last hour against a $5/hour limit" while tasks were still open and the 5-hour window showed 23%. Two causes: the $/hour cap added up the status-line cost of every session on the machine, not only the project's, and on a subscription that cost is an API-price estimate, not money spent.
+  - Under `--here`, the $/hour cap counts only sessions inside that project (API key logins too: the cap is per project).
+  - On a subscription without `--usd-per-hour`, the cap is the usage window instead: rooms rest once the newest 5-hour or 7-day reading is at 90% or more, leaving the rest for the owner, and pick up again after the window resets. A reading counts only while it is younger than its window. With no fresh reading (status line off, or no session changed for a whole window), the old $5/hour default still applies. `auto status` shows both readings.
+  - `--usd-per-hour X` keeps a $/hour cap on a subscription too, on top of the window. API key logins keep the $5/hour default.
+  - A lease written by an older version keeps its stored $5/hour until `8sync ccc auto on` (or `idle on`) runs again; the rest message and `idle status` say how to drop it.
 
 ## [0.99.0] — 2026-10-17
 ### Changed

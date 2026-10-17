@@ -13,7 +13,8 @@
 //!
 //! `--loop [10m] [--team]` queues one inbox message per room of this project ([`loop_prompt`]):
 //! the room sets up its own recurring `CronCreate` loop, which re-reads [`status`] every tick and
-//! deletes itself once auto is off/paused; while the $/hour `cap` holds it rests. The lease does not stop it: the
+//! deletes itself once auto is off/paused; while the `cap` holds (this project's $/hour, or on a
+//! subscription the 5-hour/7-day usage window at 90%) it rests. The lease does not stop it: the
 //! loop is Claude Code's own scheduler (session-scoped, expires after 7 days,
 //! https://code.claude.com/docs/en/scheduled-tasks), started by the owner's own command.
 //!
@@ -48,7 +49,8 @@ pub(super) enum Mode {
     On {
         hours: f64,
         after: u64,
-        rate: f64,
+        /// `--usd-per-hour`; `None` = the default for the login ([`idle::on`]).
+        rate: Option<f64>,
         repo: Option<PathBuf>,
     },
     Pause,
@@ -156,21 +158,30 @@ fn scope(home: &Path) -> Option<PathBuf> {
 /// Hooks ask this before acting on a session: `true` unless `auto on --here` limited auto to one
 /// project and `cwd` (from the hook input) is missing or outside it.
 pub(super) fn in_scope(home: &Path, cwd: Option<&str>) -> bool {
-    let Some(repo) = scope(home) else { return true };
-    cwd.map(Path::new)
-        .filter(|c| c.is_absolute())
-        .is_some_and(|c| canon(c).starts_with(&repo))
+    scoped(home)(cwd)
+}
+
+/// [`in_scope`] for many cwds, the marker read once (the idle rails count only this project's spend).
+pub(super) fn scoped(home: &Path) -> impl Fn(Option<&str>) -> bool {
+    let repo = scope(home);
+    move |cwd| match &repo {
+        None => true,
+        Some(repo) => cwd
+            .map(Path::new)
+            .filter(|c| c.is_absolute())
+            .is_some_and(|c| canon(c).starts_with(repo)),
+    }
 }
 
 /// Pure over files: what is on right now.
 pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
     let m = idle::read_json(&marker(home));
     let lease = idle::read_json(&idle::state_dir(home).join("lease.json"));
-    let spent = lease.as_ref().map_or(0.0, |l| {
-        idle::spent_since(&l["baseline"], &idle::costs(home))
-    });
-    let gate = idle::gate(lease.as_ref(), subscription, spent, now, None).err();
-    let cap = lease.as_ref().and_then(|l| idle::cap(l, spent, now).err());
+    let used = idle::usage(home, lease.as_ref(), now);
+    let gate = idle::gate(lease.as_ref(), subscription, &used, now, None).err();
+    let cap = lease
+        .as_ref()
+        .and_then(|l| idle::cap(l, &used, subscription, now).err());
     let (i, d) = (idle::enabled(home), delegate::enabled(home));
     let flag = |k: &str| m.as_ref().and_then(|m| m[k].as_bool()).unwrap_or(false);
     // The marker says on but `idle off` / `delegate off` / `cancel --all` ran by hand: that is the
@@ -188,6 +199,9 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         "lease_until": lease.as_ref().and_then(|l| l["until"].as_u64()),
         "gate": gate,
         "cap": cap,
+        // What the subscription rail reads (%, null = no fresh status-line reading).
+        "five_hour_pct": used.five_hour,
+        "seven_day_pct": used.seven_day,
         "subscription": subscription,
         "repo": scope(home).map(|r| r.to_string_lossy().into_owned()),
     })
@@ -203,8 +217,14 @@ fn text(v: &Value) -> String {
             .as_str()
             .map(|r| format!(" · chỉ dự án {}", r.trim_start_matches(r"\\?\")))
             .unwrap_or_else(|| " · mọi dự án".into());
+        let pct = |k: &str| v[k].as_f64().map_or("?".into(), |p| format!("{p:.0}%"));
+        let window = if v["subscription"].as_bool() == Some(true) {
+            format!(" · cửa sổ 5 giờ {} · 7 ngày {}", pct("five_hour_pct"), pct("seven_day_pct"))
+        } else {
+            String::new()
+        };
         let mut s = format!(
-            "auto: ĐANG CHẠY liên tục{lease} · critic trả lời sau {} s{only}",
+            "auto: ĐANG CHẠY liên tục{lease} · critic trả lời sau {} s{only}{window}",
             v["after_s"].as_u64().unwrap_or(0)
         );
         if let Some(g) = v["gate"].as_str() {
@@ -271,8 +291,9 @@ mọi phòng; trong phòng, owner nói \"đưa vào loop: …\" / \"làm ngay: �
 
 Mỗi nhịp:
 1. Chạy `8sync ccc auto status --json`. `on` là false hoặc `paused` là true → huỷ loop của phòng này (CronDelete job
-   chứa `8sync-auto-loop`; `/loop` tự canh nhịp thì dừng, không hẹn nhịp kế) rồi dừng. `cap` khác null (chạm trần $/giờ,
-   tính trung bình từ lúc bật) → nghỉ nhịp này, giữ loop: trần tự hạ khi thời gian trôi.
+   chứa `8sync-auto-loop`; `/loop` tự canh nhịp thì dừng, không hẹn nhịp kế) rồi dừng. `cap` khác null (gói subscription:
+   cửa sổ 5 giờ/7 ngày đã dùng ≥ 90%; API key hoặc có `--usd-per-hour`: chạm trần $/giờ của dự án này, tính trung bình
+   từ lúc bật) → nghỉ nhịp này, giữ loop: trần tự hạ khi cửa sổ reset hoặc thời gian trôi.
 2. `target` khác null → việc của nhịp là phần hợp vai phòng cho đích đó: lead chia việc và giao, dev `/ship` phần mình,
    qa chạy `check`/test, reviewer review, rd gỡ chỗ kẹt. Đạt đích (có `check` thì lệnh đó exit 0 trong nhịp này, không thì
    bằng chứng chạy được) → `8sync ccc auto done <id> --evidence \"<lệnh: kết quả>\"`; nhịp sau cả team sang đích kế.
@@ -314,7 +335,7 @@ pub(super) fn write_loop_md(root: &Path) -> Result<(PathBuf, bool)> {
 /// The message `auto on --loop` queues for one room: set up its own recurring loop (what `/loop`
 /// does: `CronCreate`) that follows `.claude/loop.md` for the room's role. The stop check stays in
 /// the cron prompt itself, so an edited loop.md cannot drop it: `off` or `pause`
-/// delete the loop on its next tick, the $/hour `cap` rests it. Re-running the command replaces the job (a fresh 7 days).
+/// delete the loop on its next tick, the `cap` ([`idle::cap`]) rests it. Re-running the command replaces the job (a fresh 7 days).
 pub(super) fn loop_prompt(name: &str, every_min: u64, team: bool) -> String {
     let (role, duty) = super::room::role(name);
     let cron = cron_expr(every_min);
@@ -378,7 +399,7 @@ fn short(text: &str) -> String {
 /// (https://code.claude.com/docs/en/interactive-mode#wait-for-a-usage-limit-to-reset).
 fn loop_notes(subscription: bool) -> Vec<&'static str> {
     let mut v = vec![
-        "Loop tự xoá ở nhịp kế khi auto off/pause; chạm trần $/giờ thì nghỉ nhịp, giữ loop (trần tính trung bình, tự hạ). Claude Code tự xoá sau 7 ngày (chạy lại lệnh này để gia hạn).",
+        "Loop tự xoá ở nhịp kế khi auto off/pause; chạm trần thì nghỉ nhịp, giữ loop (subscription: cửa sổ 5 giờ/7 ngày ≥ 90%, tự mở khi reset; $/giờ chỉ tính session của dự án, trung bình, tự hạ). Claude Code tự xoá sau 7 ngày (chạy lại lệnh này để gia hạn).",
         "Loop chỉ chạy khi phòng còn mở: gõ /bg trong phòng để chạy nền không cần terminal, Ctrl+T trong agent view để ghim; tắt máy là dừng.",
         "Hết usage: phòng mở trong terminal tự chờ reset rồi chạy tiếp (autoContinueAtUsageLimit). Phòng /bg và teammate không tự chờ; nhịp loop kế sau giờ reset có thể chạy tiếp.",
     ];
@@ -633,10 +654,11 @@ pub(super) fn run(
                 None => idle::DEFAULT_HOURS as f64,
             };
             let rate = match num(rest, "--usd-per-hour")? {
-                Some(r) => r
-                    .parse::<f64>()
-                    .map_err(|_| anyhow::anyhow!("--usd-per-hour cần một số\n{USAGE}"))?,
-                None => idle::DEFAULT_USD_PER_HOUR,
+                Some(r) => Some(
+                    r.parse::<f64>()
+                        .map_err(|_| anyhow::anyhow!("--usd-per-hour cần một số\n{USAGE}"))?,
+                ),
+                None => None,
             };
             let after = match num(rest, "--after")? {
                 Some(a) => delegate::parse_after(&a)?,
@@ -789,7 +811,7 @@ mod tests {
         Mode::On {
             hours,
             after,
-            rate: 5.0,
+            rate: Some(5.0),
             repo: None,
         }
     }
@@ -806,7 +828,7 @@ mod tests {
         let here = |r: &Path| Mode::On {
             hours: 2.0,
             after: 60,
-            rate: 5.0,
+            rate: Some(5.0),
             repo: Some(r.to_path_buf()),
         };
         // nothing on, or on without --here: every project
@@ -1014,6 +1036,7 @@ mod tests {
                 "after_s",
                 "cap",
                 "delegate",
+                "five_hour_pct",
                 "gate",
                 "idle",
                 "lease_until",
@@ -1022,6 +1045,7 @@ mod tests {
                 "paused",
                 "repo",
                 "schema",
+                "seven_day_pct",
                 "subscription"
             ]
         );
@@ -1193,7 +1217,18 @@ mod tests {
         assert!(v["cap"].as_str().unwrap().starts_with("chạm trần"));
         // An average: with time and no new spend the cap clears by itself.
         assert!(status(&h, true, 99 * 3600)["cap"].is_null());
-        assert!(idle::cap(&lease, 0.0, 3600).is_ok());
+        assert!(idle::cap(&lease, &idle::Usage::default(), true, 3600).is_ok());
+        // Subscription without a $ rate: the window reading decides, and status shows it.
+        let sub = json!({ "on": 0, "until": 10_000, "usd_per_hour": null, "baseline": {} });
+        idle::write_json(&idle::state_dir(&h).join("lease.json"), &sub);
+        let t = 50_000;
+        let reading = |pct: u64| json!({ "session_id": "s1", "cost_usd": 99.0, "ts": t - 60, "five_hour_pct": pct }).to_string();
+        std::fs::write(d.join("s1.json"), reading(23)).unwrap();
+        let v = status(&h, true, t);
+        assert!(v["cap"].is_null(), "23% of the window: keep working whatever the $ estimate: {v}");
+        assert_eq!(v["five_hour_pct"], json!(23.0));
+        std::fs::write(d.join("s1.json"), reading(95)).unwrap();
+        assert!(status(&h, true, t)["cap"].as_str().unwrap().contains("cửa sổ 5 giờ"));
         let _ = std::fs::remove_dir_all(&h);
     }
 
