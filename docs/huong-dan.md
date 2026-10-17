@@ -8,15 +8,21 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 
 ## Auto mạnh nhất, bản ngắn
 
-**Cả team chạy nền, một lệnh, xem trên web:**
+**Chỉ cần một lệnh, còn lại bấm nút trên web:**
 
 ```bash
-cd ~/works/du-an
-8sync ccc auto up --clear-ss     # lead, dev, qa, review chạy nền (claude --bg), mỗi phòng đúng vai + model + loop
-8sync hq ui                      # mở web xem phòng nào đang làm gì (hoặc `claude agents`, `8sync ccc auto board`)
-8sync ccc auto add "login sống qua refresh token" --check "pnpm test auth"   # giao card; đạt khi lệnh exit 0
-8sync ccc auto down              # dừng các phòng nền (giữ hội thoại) + tạm dừng auto
+8sync hq ui                      # mở http://127.0.0.1:8740
 ```
+
+| Muốn làm | Trong HQ | Lệnh tương đương |
+|---|---|---|
+| Mở cả team (lead, dev, qa, review chạy nền) | Projects → thêm thư mục → **Mở team** (Văn phòng) | `8sync ccc auto up` |
+| Dọn session rác rồi mở lại | **Dọn & mở lại** cạnh tên dự án | `8sync ccc auto up --clear-ss` |
+| Giao card (đạt khi lệnh check exit 0) | **Giao việc** góc trên | `8sync ccc auto add "<việc>" --check "<lệnh>"` |
+| Xem card theo cột | tab **Board** → Card dự án | `8sync ccc auto board` |
+| Phòng đang hỏi anh | khung **Anh cần trả lời** đầu trang: câu hỏi + các lựa chọn → **Mở terminal để trả lời**, gõ số rồi Enter | `claude attach <id>` |
+| Dừng team (giữ hội thoại) | **Dừng team** | `8sync ccc auto down` |
+| Tạm dừng / chạy tiếp auto | nút **Tạm dừng / Chạy** trên cùng | `8sync ccc auto pause` / `on` |
 
 - `--clear-ss` xoá trước mọi session nền rác của dự án: bản trùng phòng, sót từ lần chạy trước, phòng đã bỏ. Không đụng session interactive anh đang mở; session có commit chưa push thì Claude Code giữ lại và 8sync báo lý do.
 - Phòng đang chạy chỉ nhận loop mới; phòng đã dừng thì chạy lại nền với đúng id cũ. Lần đầu ở repo mới: mở `claude` ở đó một lần và chấp nhận câu hỏi trust.

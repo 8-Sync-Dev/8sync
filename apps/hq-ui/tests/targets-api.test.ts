@@ -55,6 +55,17 @@ beforeEach(() => {
   merged.mockResolvedValue([live("rd", shop), live("web", path.join(shop, "apps", "web")), live("ops", tools), live("old", tools, "ended")]);
 });
 
+/**
+ * `auto board --json` answers with the root its cards are filed under (target.rs filed_under: a
+ * worktree inside shop files under shop); every other call takes the next `adds` reply in order.
+ */
+const boardOr = (adds: unknown[], filed = (cwd: string) => (cwd.startsWith(shop) && cwd !== shop && cwd.includes(".claude") ? shop : cwd)) => {
+  const queue = [...adds];
+  return async (_cmd: string, args: string[], _t: number, cwd: string) =>
+    args.includes("board") ? { ok: true, stdout: JSON.stringify({ schema: 1, lanes: [], closed: [], issues: [], root: filed(cwd) }), stderr: "" } : queue.shift();
+};
+const addCwds = () => run.mock.calls.filter((c) => c[1].includes("add")).map((c) => c[3]).sort();
+
 const post = (body: unknown, t: string | null = token) => POST(req("/api/targets", { method: "POST", token: t, origin: ORIGIN, body }));
 
 describe("POST /api/targets", () => {
@@ -123,12 +134,21 @@ describe("POST /api/targets", () => {
     expect(run.mock.calls[0]).toEqual(["8sync", ["ccc", "auto", "add", "--json", "--check", "pnpm test", "--", "--now rm -rf"], 10_000, tools]);
   });
 
-  it("all: one run per live project, a worktree inside another root is left to the outer queue", async () => {
+  it("all: one run per board, a worktree shares its repo's board", async () => {
     merged.mockResolvedValue([live("rd", shop), live("wt", nested), live("ops", tools)]);
-    run.mockResolvedValueOnce(added(3)).mockResolvedValueOnce(added(9));
+    run.mockImplementation(boardOr([added(3), added(9)]));
     const res = await post({ text: "x", root: "all" });
     expect(res.status).toBe(200);
-    expect(run.mock.calls.map((c) => c[3]).sort()).toEqual([shop, tools].sort());
+    expect(addCwds()).toEqual([shop, tools].sort());
+    expect((await res.json()).results).toHaveLength(2);
+  });
+
+  it("all: a repo nested inside another repo has its own board and gets the card too", async () => {
+    const game = repo(path.join(shop, "game"));
+    merged.mockResolvedValue([live("rd", shop), live("lead", game)]);
+    run.mockImplementation(boardOr([added(1), added(2)], (cwd) => cwd));
+    const res = await post({ text: "x", root: "all" });
+    expect(addCwds()).toEqual([shop, game].sort());
     expect((await res.json()).results).toHaveLength(2);
   });
 
@@ -145,7 +165,7 @@ describe("POST /api/targets", () => {
   });
 
   it("all: one project failing does not hide the ones that took it", async () => {
-    run.mockResolvedValueOnce(added(4, [{ name: "rd", now: true }])).mockResolvedValueOnce({ ok: false, stdout: "", stderr: "Error: boom" });
+    run.mockImplementation(boardOr([added(4, [{ name: "rd", now: true }]), { ok: false, stdout: "", stderr: "Error: boom" }]));
     const { results } = await (await post({ text: "x", root: "all" })).json();
     expect(results.map((r: { ok: boolean }) => r.ok).sort()).toEqual([false, true]);
     expect(results.find((r: { ok: boolean }) => !r.ok).error).toBe("boom");

@@ -59,7 +59,7 @@ fn refresh_hq_ui(installed: Option<std::path::PathBuf>) {
     let ok = out.as_ref().is_ok_and(|o| o.status.success());
     ui::info(if ok { "HQ UI for the new binary downloaded (next `8sync hq ui` starts it)" } else { "HQ UI download failed — `8sync hq ui` fetches it on its next start" });
     if super::hq::ui_port_busy(8740) {
-        ui::warn(&super::hq::stale_ui_hint(8740));
+        ui::warn(&super::hq::stale_ui_hint(8740, None));
     }
 }
 

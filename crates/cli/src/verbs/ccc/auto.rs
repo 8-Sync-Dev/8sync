@@ -602,6 +602,9 @@ fn run_target(
             if as_json {
                 let mut v = if verb == "board" { target::board_json(&cards) } else { json!({}) };
                 v["issues"] = json!(issues);
+                if verb == "board" {
+                    v["root"] = json!(target::filed_under(home, root)?);
+                }
                 println!("{v}");
                 return Ok(());
             }

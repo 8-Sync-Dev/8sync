@@ -767,8 +767,10 @@ const AUTO_ENV: [&str; 5] = [
 /// `cargo check` (5 runs: 14.9 s auto, 12.0 s with an allow rule, 11.4 s
 /// bypass). Narrow prefixes only: Claude Code matches each part of a compound
 /// command (`&&`, `;`, `|`) separately; commits, pushes and anything that
-/// discards work stay reviewed.
-const ALLOW: [&str; 15] = [
+/// discards work stay reviewed. `EnterWorktree`/`ExitWorktree` only add or leave a
+/// worktree inside the repo (room playbook: one per card); in the UAT 2026-10-17 a
+/// background dev room sat on a permission prompt for it until the owner attached.
+const ALLOW: [&str; 17] = [
     "Bash(cargo check*)",
     "Bash(cargo build*)",
     "Bash(cargo test*)",
@@ -784,6 +786,8 @@ const ALLOW: [&str; 15] = [
     "Bash(pnpm typecheck*)",
     "Bash(bun test*)",
     "Bash(git add*)",
+    "EnterWorktree",
+    "ExitWorktree",
 ];
 
 /// The ask gate's prompt starts with this, which is how a re-merge finds it.
@@ -2132,6 +2136,7 @@ mod tests {
         assert_eq!(off["autoContinueAtUsageLimit"], false, "an owner who turned it off in /config stays off");
         let allow = v["permissions"]["allow"].as_array().unwrap();
         assert!(allow.iter().any(|r| r == "Bash(make*)") && allow.iter().any(|r| r == "Bash(cargo check*)"));
+        assert!(allow.iter().any(|r| r == "EnterWorktree"), "rooms open a card worktree without stopping on a prompt");
         assert!(!allow.iter().any(|r| r.as_str().is_some_and(|s| s.contains("git push"))), "pushes stay reviewed");
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(pre.len(), 4, "ask gate replaced in place, user hook kept, delegate + guard appended");

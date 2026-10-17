@@ -5,6 +5,17 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.100.3] — 2026-10-17
+### Added
+- **HQ shows what a room is asking and how to answer it.** In the UAT the game lead waited nearly 2 hours (13:44 → 15:40 UTC in its transcript) on a Ship question while HQ only said "input needed". HQ now reads the open question from the room's Claude Code transcript (local file, last 512 KB). "Anh cần trả lời" at the top of the office lists every waiting room with its questions and numbered options. A permission prompt shows its description, never the raw command. **Mở terminal để trả lời** opens `claude attach <id>` in a new window (Windows `cmd`, macOS Terminal, Linux `x-terminal-emulator`/gnome-terminal/konsole/kitty/alacritty/xterm); **Chép lệnh** copies it.
+- **Team buttons in HQ, so `8sync hq ui` is the only command you need.** Each project in the office has **Mở lại team** (`auto up`), **Dọn & mở lại** (`auto up --clear-ss`, after a confirm) and **Dừng team** (`auto down`, after a confirm). A folder added under Projects with no room running gets **Mở team**. Only a project HQ already shows is accepted. README, the guide and the site now lead with the buttons and keep the commands as the alternative.
+
+### Fixed
+- **The Board dropdown missed a repo nested inside another repo.** ai-game-studio sits inside the 8sync-startup repo, and HQ folded it into the outer, empty board. `8sync ccc auto board --json` now prints the root its cards are filed under. HQ reads every live project and shows one board per root: worktrees share their repo's board, nested repos keep their own. "Giao việc → Mọi dự án" reaches nested repos too.
+- **The board refreshes every 4 s (was 10 s)**, the same as the office, and right after a team button.
+- **Background rooms no longer stop on a permission prompt to open a card worktree.** In the UAT the dev room waited on `EnterWorktree` until the owner attached. The kit now allows `EnterWorktree` and `ExitWorktree`, which only add or leave a worktree inside the repo. `8sync up` refreshes the kit.
+- **`8sync up` no longer names the old version in its HQ UI restart hint.** The hint is printed by the binary being replaced, so after updating 0.100.1 → 0.100.2 it said "load UI 0.100.1". It now says "load the new UI". `8sync hq ui --install` still names the exact version.
+
 ## [0.100.2] — 2026-10-17
 ### Fixed
 - **`auto up` points the registry at a resumed room's new id.** Claude Code runs `--resume <id> --bg` under a forked session id, seen in the UAT as `cd1ecaeb` → `b1f0bf3e`. The registry kept the old, stopped id, so HQ and the inbox looked at a dead session. A room whose saved name differed (`rd-ai-game-studio` vs `rd`) was also resumed a second time on the next `auto up`. Resumed rooms are now rebound like new ones.

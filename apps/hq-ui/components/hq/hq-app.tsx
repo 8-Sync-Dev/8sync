@@ -205,7 +205,7 @@ export function HqApp({ token }: { token: string }) {
 
           <main className="min-h-0 flex-1">
             <TabsContent value="office" className="h-full">
-              <OfficeView data={office} boards={boards} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} />
+              <OfficeView data={office} boards={boards} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} projects={hq.projects.data} />
             </TabsContent>
             <TabsContent value="group" className="flex h-full min-h-0 flex-col">
               <TeamThread rows={group.messages} filters={{ roleOf, tasks: group.tasks }} onOpenSession={openSession} />

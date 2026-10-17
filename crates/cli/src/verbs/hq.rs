@@ -2249,8 +2249,10 @@ pub(crate) fn ui_port_busy(port: u16) -> bool {
 
 /// What to tell the owner when HQ is up but this binary is newer than the UI it may be serving.
 /// The HQ page itself shows the exact running vs installed versions (`/api/auto` → `versions`).
-pub(crate) fn stale_ui_hint(port: u16) -> String {
-    format!("HQ UI is running on port {port} — it keeps the version it started with: Ctrl-C in the `8sync hq ui` terminal, then run `8sync hq ui` again to load UI {}", env!("CARGO_PKG_VERSION"))
+/// `ver` is None when the caller is the old binary (`8sync up`): its own version is the stale one.
+pub(crate) fn stale_ui_hint(port: u16, ver: Option<&str>) -> String {
+    let ui = ver.map_or_else(|| "the new UI".to_string(), |v| format!("UI {v}"));
+    format!("HQ UI is running on port {port} — it keeps the version it started with: Ctrl-C in the `8sync hq ui` terminal, then run `8sync hq ui` again to load {ui}")
 }
 
 /// The hash out of a `sha256sum` file (`<hex>  <name>`); anything but 64 hex chars is None.
@@ -2640,7 +2642,7 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
             ui::info(&format!("HQ UI {ver} ready in {}", dir.display()));
         }
         if ui_port_busy(port) {
-            ui::warn(&stale_ui_hint(port));
+            ui::warn(&stale_ui_hint(port, Some(ver)));
         }
         return Ok(());
     }
@@ -3432,7 +3434,11 @@ mod tests {
         std::fs::write(d.join("notes.txt"), "x").unwrap();
         assert_eq!(installed_versions(&d), vec!["0.93.3".to_string(), "0.94.0".to_string()]);
         assert!(installed_versions(&d.join("missing")).is_empty());
-        assert!(stale_ui_hint(8740).contains("port 8740"));
+        assert!(stale_ui_hint(8740, Some("0.94.0")).contains("port 8740"));
+        assert!(stale_ui_hint(8740, Some("0.94.0")).ends_with("load UI 0.94.0"));
+        // `8sync up` runs as the old binary: it must not name its own (stale) version.
+        let up = stale_ui_hint(8740, None);
+        assert!(up.ends_with("load the new UI") && !up.contains(env!("CARGO_PKG_VERSION")), "{up}");
         let _ = std::fs::remove_dir_all(&d);
     }
 
