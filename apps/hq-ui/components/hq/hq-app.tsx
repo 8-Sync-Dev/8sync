@@ -25,6 +25,7 @@ import { SessionsView } from "./sessions-view";
 import { TeamThread } from "./team-thread";
 import { TeamView } from "./team-view";
 import { TerminalDrawer } from "./terminal-drawer";
+import { WebTerminalSheet } from "./web-terminal-sheet";
 import { useBoards } from "./use-board";
 import { useHq } from "./use-hq";
 import { useOffice, type Room } from "./use-office";
@@ -285,6 +286,7 @@ export function HqApp({ token }: { token: string }) {
         role={drawerSession?.role}
         model={drawerSession?.model}
       />
+      <WebTerminalSheet token={token} />
       <AssignDialog
         key={assign.n}
         hq={hq}

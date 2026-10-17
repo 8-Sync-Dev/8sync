@@ -4,6 +4,12 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **A room's real terminal opens inside HQ.** "Mở terminal" (room brief, "Anh cần trả lời") now opens a wide panel with the room's live Claude Code screen instead of a separate window. You can type a message, move between answers with the arrow keys and press Enter, and scroll back. Closing the panel leaves the room running in the background. "Mở cửa sổ riêng" still opens a native window.
+  - How it works: Claude Code documents no way to send input to a background session from outside, so the new `8sync ccc term <session-id>` runs `claude attach` inside a pseudo-terminal (ConPTY on Windows, crate `portable-pty`, MIT). It relays the screen over stdin/stdout. The HQ web asset stays pure JS, with no native module.
+  - Each room has one terminal, shared by every tab. Its last 256 KB of output is replayed to a tab that opens late, and it closes 60 s after the last viewer leaves.
+  - New route `GET|POST|DELETE /api/sessions/<id>/term` (HQ token required). It opens only a live background room's own session id.
+  - Checked live: the rd room of ai-game-studio was attached through Edge, the screen streamed, and the room was still `background idle` after closing.
 ### Fixed
 - **HQ "Cách dùng" describes the team as it works now:**
   - open the team (5 rooms, or 8 with "Team đầy đủ");

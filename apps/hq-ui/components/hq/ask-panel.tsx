@@ -8,6 +8,7 @@ import { TOOL_ASK, askTitle, attachCommand, type Ask } from "@/lib/ask";
 import { agoVi } from "@/lib/now";
 import type { Permit } from "@/lib/server/permit";
 import { makeApi } from "./use-hq";
+import { openWebTerminal } from "./web-terminal-sheet";
 
 export type AskRoom = {
   key: string;
@@ -112,16 +113,21 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
 
   async function openTerminal() {
     if (!r.session_id) return;
-    setBusy(true);
-    try {
-      await makeApi(token)(`/api/sessions/${encodeURIComponent(r.session_id)}/attach`, { method: "POST" });
-      toast.success(`Đã mở terminal cho ${r.label}: chọn đáp án rồi Enter`);
-    } catch (e) {
-      toast.error(`Không mở được terminal (${(e as Error).message}). Chạy trong PowerShell/Terminal: ${cmd}`);
-      if (cmd) void copy(cmd, false);
-    } finally {
-      setBusy(false);
+    // tmux rooms keep their own drawer; a background room's real terminal opens inside HQ.
+    if (r.tmux) {
+      setBusy(true);
+      try {
+        await makeApi(token)(`/api/sessions/${encodeURIComponent(r.session_id)}/attach`, { method: "POST" });
+        toast.success(`Đã mở terminal cho ${r.label}: chọn đáp án rồi Enter`);
+      } catch (e) {
+        toast.error(`Không mở được terminal (${(e as Error).message}). Chạy trong PowerShell/Terminal: ${cmd}`);
+        if (cmd) void copy(cmd, false);
+      } finally {
+        setBusy(false);
+      }
+      return;
     }
+    openWebTerminal(r.session_id, r.label);
   }
 
   return (
@@ -188,8 +194,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
       <p className="mt-3 max-w-[75ch] text-xs text-muted-foreground text-pretty">
         {cmd ? (
           <>
-            Trong terminal: gõ số của đáp án rồi Enter. Trả lời xong, phòng tự làm tiếp và khung này biến mất sau vài giây. Thoát terminal bằng{" "}
-            <kbd className="rounded-sm border px-1 font-mono">←</kbd> hoặc đóng cửa sổ: session vẫn chạy.
+            Terminal mở ngay trong HQ: chọn đáp án bằng mũi tên hoặc gõ số, rồi Enter. Trả lời xong, phòng tự làm tiếp và khung này biến mất sau vài giây. Đóng terminal thì phòng vẫn chạy.
           </>
         ) : (
           "Phòng này chạy trong terminal của HQ: mở phòng, chọn đáp án bằng thanh phím bên dưới màn hình."
