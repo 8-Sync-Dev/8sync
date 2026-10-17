@@ -46,6 +46,7 @@ mod taskdone;
 mod urgent;
 mod goal;
 mod target;
+mod team;
 mod standup;
 mod wake;
 mod verify;
@@ -62,7 +63,7 @@ mod verify;
       8sync ccc . <name> --team      same session with Claude Code agent teams on (lead + teammates; interactive)
       8sync ccc . <name> --team --panes   teammates as tmux split panes (run inside tmux)
       8sync ccc help                 every ccc verb on one screen (Vietnamese)
-      8sync ccc compact [--at N|--reset|--window N|--window-reset|--json]   auto-compact threshold (kit default 60% of a 400K window; needs a new session)
+      8sync ccc compact [--at N|--reset|--window N|--window-reset|--json]   auto-compact threshold (kit default 65% of the model window; needs a new session)
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
       8sync ccc . <name> --offline   no network step at all: no auto-update, installer, `claude mcp add` or download
                                      (also `EIGHTSYNC_OFFLINE=1`; works on `new`, `.`, `kit`; `claude` must already be installed)
@@ -172,7 +173,7 @@ pub fn run(a: Args) -> Result<()> {
             refresh_ancestor_claude_md(&env, &root);
             res
         }
-        "compact" => compact::run(rest, &claude_dir(&env)),
+        "compact" => compact::run(rest, &claude_dir(&env), &env.home),
         "delegate" => delegate::run(rest, &env.home),
         "idle" => idle::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription"),
         "secret" => secret::run(rest),
@@ -187,6 +188,7 @@ pub fn run(a: Args) -> Result<()> {
             }
             Ok(())
         }
+        "auto" if team::wants(rest) => auto_team(&env, &root, rest),
         "auto" => auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", &root, || {
             sessions(&env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect()
         }),
@@ -457,6 +459,35 @@ fn team_flags(extra: &[String]) -> Result<(bool, bool, Vec<String>)> {
         bail!("--team needs an interactive session: Claude Code spawns no teammates with -p/--print");
     }
     Ok((team || panes, panes, rest))
+}
+
+/// `8sync ccc auto up|down` ([`team`]): the project's role rooms as Claude Code background sessions.
+fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let subscription = login_kind_at(&env.home).kind == "subscription";
+    let store = sessions(env, root);
+    let bin = team::Bin { exe: ensure_claude(true)?, root };
+    let has = |id: &str| transcripts(env, id).next().is_some();
+    let sessions_dir = claude_dir(env).join("sessions");
+    let title = |n: &str| display_name(&sessions_dir, n, root);
+    let t = team::Team { home: &env.home, root, store: &store, subscription, claude: &bin, has_transcript: &has, title: &title };
+    if rest[0] == "down" {
+        if let Some(x) = rest.get(1) {
+            bail!("không rõ `{x}`\n{}", team::USAGE);
+        }
+        let stopped = team::down(&t, now)?;
+        if stopped.is_empty() {
+            println!("không có phòng nền nào của dự án này đang chạy.");
+        } else {
+            println!("đã dừng {} phòng nền: {} (hội thoại giữ nguyên; mở lại: `8sync ccc auto up`).", stopped.len(), stopped.join(", "));
+        }
+        println!("auto: TẠM DỪNG (owner). Phòng mở trong terminal không bị đóng.");
+        return Ok(());
+    }
+    let o = team::parse(&rest[1..])?;
+    let (status, gone, rows) = team::up(&t, &o, now)?;
+    team::print_up(&status, &gone, &rows, o.every, subscription);
+    Ok(())
 }
 
 /// Create-or-resume `name`: a fresh session takes the registry UUID and the
@@ -950,7 +981,7 @@ fn apply_lsp_plugins(v: &mut Value, on_path: impl Fn(&str) -> bool) {
 /// (a user value wins), `permissions` rules, and 8sync's hooks (replaced in
 /// place on re-run, retired ones removed, so the file only changes when the kit does).
 fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()> {
-    // Auto-compact at 60% unless the owner chose a value (`8sync ccc compact --at N`).
+    // Auto-compact at 65% of the model window unless the owner chose a value (`8sync ccc compact --at N`).
     compact::kit_default(v)?;
     // Tool-output budget (Bash 20k chars, Read 15k tokens), only when absent; see output_budget.rs.
     output_budget::kit_default(v)?;

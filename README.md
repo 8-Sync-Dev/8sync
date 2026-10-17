@@ -97,7 +97,7 @@ cd <project>
 8sync ccc kit                  # (re)install the kit; `8sync setup` already did (also sets a tool-output budget in settings `env`, only when absent: Bash 20k chars, Read 15k tokens)
 8sync ccc status               # claude, login, kit, sessions
 8sync ccc help                 # every ccc verb on one screen
-8sync ccc compact --at 50      # auto-compact threshold (kit default 60% of a 400K window); --reset, --json, --window N | --window-reset; new session to apply
+8sync ccc compact --at 50      # auto-compact threshold (kit default 65% of the model window = 65% on the status line); --reset, --json, --window N | --window-reset; new session to apply
 ```
 
 Each name maps to a fixed conversation id per repo, so `8sync ccc . core` tomorrow continues today's thread, next to `8sync forge core` and `8sync . core` for the other agents.
@@ -160,17 +160,40 @@ Type one of these inside Claude Code. Each runs longer before it needs you; leve
 | 4 | `/ship-loop <goal>` | every acceptance check exits 0 (caps: 12 iterations, 90 min, the same failure twice) | a cap, or the release |
 | 5 | `/autopilot` | up to 5 backlog items or 8 h (labelled issues, `su-code/STATE.md` Next, failures without a guard), each its own loop and branch | one `Ship` answer for the batch |
 
-The whole project at once: every session in a repo is a room named for its role (`lead`, `api`, `qa`, `rd`), and one command gives each a loop and a shared target queue.
+#### The whole team, one command, no terminal per room
+
+`auto up` opens every role room of the project as a Claude Code background session (`claude --bg`), each on its role's model, with a loop. Follow the work in the browser.
 
 ```bash
-8sync ccc auto on --here --loop 10m --team     # every room: a 10-minute loop; --team fills rd, qa and reviewer seats
-8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"   # done when the check exits 0
-8sync ccc auto add "webhook returns 500 on retry" --now                         # front of the queue, every room's inbox
-8sync ccc auto queue                           # ▶ working · ✓ done · ✗ dropped
-8sync ccc auto pause                           # or auto off · 8sync ccc cancel
+cd my-repo
+8sync ccc auto up --clear-ss          # lead, dev, qa, review in the background; --clear-ss deletes junk background sessions first
+8sync hq ui                           # web: rooms, what each does, chat; or: claude agents · 8sync ccc auto board
+8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"   # a card; done when the check exits 0
+8sync ccc auto add "webhook returns 500 on retry" --label bug --now            # front of the queue, every room's inbox
+8sync ccc auto down                   # stop the background rooms (conversations kept), pause auto
 ```
 
-Inside a room, "đưa vào loop: …" (add to the loop) or "làm ngay: …" (do it now) is enough. On a subscription, auto holds a lease of at most 4 h and runs while you're around, a $/hour ceiling (default 5) skips ticks, and Claude Code drops a loop after 7 days; for unattended runs over days use Routines (`/schedule`) or a Console API key. Without a terminal:
+| Room (aliases) | Role | Model | Board lane it pulls |
+|---|---|---|---|
+| `lead` (pm, plan) | splits work, writes acceptance + check, asks you `Ship` for approved cards | opus | backlog |
+| `ba` (analyst, spec, po) | requirements and acceptance criteria | opus | backlog |
+| `rd` (research) | unknowns, options, research briefs | opus | none |
+| `dev` (build, coder) | worktree `card-<id>`, `/ship` to a PR | sonnet | ready → building |
+| `qa` (qc, test, uat) | runs the check and a real UAT | haiku | qa |
+| `review` (critic) | adversarial diff review, approves the head SHA | sonnet | review |
+| `ui`, `api`, `core` | specialised builders | default | ready |
+| `ops`, `docs`, `sec` | their area | default | none |
+
+Default team: `lead,dev,qa,review`; `--roles lead,ba,dev,dev2,qa,review` picks your own (up to 8). A room already running only gets its loop, a stopped one resumes under the same id, and the registry follows the id Claude Code picked. `--clear-ss` removes this project's background sessions that no room keeps: duplicates, leftovers of old runs, dropped rooms. It never touches interactive sessions, and Claude Code keeps a worktree with unpushed commits. Rooms run in `--permission-mode auto`, never bypass. The workspace must be trusted once (open `claude` there and accept).
+
+The board follows [super-board](https://github.com/EricTechPro/super-board) (MIT), rebuilt in the Rust CLI with a local JSON store and no GitHub Projects: `backlog → ready → building → qa → review → approved → done`, plus `blocked`. Each room claims the first free card of its lane and moves it on. `ready` needs a check command and `approved` needs the reviewed head SHA. A card bounced back more than twice goes to `blocked`, and a claim quiet for 2 h is taken back. Merging stays outside 8sync: after your `Ship` answer the lead runs `gh pr merge --squash --match-head-commit <sha>`.
+
+```bash
+8sync ccc auto board        # cards by lane · --json for HQ
+8sync ccc auto lint         # what needs the lead or you: no check, no PR, blocked, approved waiting for Ship
+```
+
+Inside a room, "đưa vào loop: …" (add to the loop) or "làm ngay: …" (do it now) is enough. `8sync ccc auto on --here --loop 10m --team` still gives the rooms you opened yourself the same loop. On a subscription, auto holds a lease of at most 4 h and runs while you're around. Rooms rest once the 5-hour or 7-day usage window reaches 90% (`--usd-per-hour X` adds a $/hour ceiling), and Claude Code drops a loop after 7 days. For unattended runs over days, use Routines (`/schedule`) or a Console API key. Without a terminal:
 
 ```bash
 claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20

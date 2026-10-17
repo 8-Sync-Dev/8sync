@@ -8,6 +8,42 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 
 ## Auto mạnh nhất, bản ngắn
 
+**Cả team chạy nền, một lệnh, xem trên web:**
+
+```bash
+cd ~/works/du-an
+8sync ccc auto up --clear-ss     # lead, dev, qa, review chạy nền (claude --bg), mỗi phòng đúng vai + model + loop
+8sync hq ui                      # mở web xem phòng nào đang làm gì (hoặc `claude agents`, `8sync ccc auto board`)
+8sync ccc auto add "login sống qua refresh token" --check "pnpm test auth"   # giao card; đạt khi lệnh exit 0
+8sync ccc auto down              # dừng các phòng nền (giữ hội thoại) + tạm dừng auto
+```
+
+- `--clear-ss` xoá trước mọi session nền rác của dự án: bản trùng phòng, sót từ lần chạy trước, phòng đã bỏ. Không đụng session interactive anh đang mở; session có commit chưa push thì Claude Code giữ lại và 8sync báo lý do.
+- Phòng đang chạy chỉ nhận loop mới; phòng đã dừng thì chạy lại nền với đúng id cũ. Lần đầu ở repo mới: mở `claude` ở đó một lần và chấp nhận câu hỏi trust.
+- Vào xem một phòng: `claude attach <id>` (id 8 ký tự in ra khi `auto up`), log: `claude logs <id>`.
+
+| Phòng (tên khác) | Vai | Model | Cột board kéo card |
+|---|---|---|---|
+| `lead` (pm, plan) | chia việc, viết AC + lệnh check, hỏi anh `Ship` cho card đã duyệt | opus | backlog |
+| `ba` (analyst, spec, po) | yêu cầu, tiêu chí chấp nhận | opus | backlog |
+| `rd` (research) | ẩn số, so sánh phương án, brief nghiên cứu | opus | không |
+| `dev` (build, coder) | worktree `card-<id>`, `/ship` tới PR | sonnet | ready → building |
+| `qa` (qc, test, uat) | chạy check + UAT thật | haiku | qa |
+| `review` (critic) | review đối kháng diff, duyệt SHA head | sonnet | review |
+| `ui`, `api`, `core` | builder chuyên mảng | mặc định | ready |
+| `ops`, `docs`, `sec` | mảng của mình | mặc định | không |
+
+Team mặc định `lead,dev,qa,review`; tự chọn: `--roles lead,ba,dev,dev2,qa,review` (tối đa 8).
+
+**Board kiểu [super-board](https://github.com/EricTechPro/super-board):** `backlog → ready → building → qa → review → approved (chờ Ship) → done`, thêm `blocked`. Mỗi phòng `claim` card đầu cột của mình rồi `move` sang cột kế:
+
+- `ready` cần lệnh check, `approved` cần SHA đã review.
+- Card bị trả về quá 2 lần thì sang `blocked`; claim im 2 giờ thì phòng khác lấy lại.
+- Merge chỉ sau khi anh trả lời `Ship` (lead chạy `gh pr merge --squash --match-head-commit <sha>`).
+- Xem: `8sync ccc auto board`; việc cần lead/anh: `8sync ccc auto lint`.
+
+**Tự mở từng phòng (cách cũ, vẫn dùng được):**
+
 1. **Mở phòng** trong repo, tên theo vai: `8sync ccc . lead` (muốn nhiều phòng thì mở thêm `api`, `qa`, `rd`… ở terminal khác). Từ v0.98.4 session luôn mở ở auto mode: cờ `--dangerously-skip-permissions` của launcher (Orca…) bị Claude Code từ chối.
 2. **Giao việc theo mức**, gõ trong Claude Code:
 
@@ -22,7 +58,9 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
    Mức 3–5 chỉ anh khởi động; agent không tự gõ được.
 3. **Bật cả dự án chạy liên tục**: `8sync ccc auto on --here --loop 10m --team`. Giao đích: `8sync ccc auto add "<việc>" --check "<lệnh kiểm>"` (gấp thì thêm `--now`), hoặc nói trong phòng "đưa vào loop: …" / "làm ngay: …". Xem hàng: `8sync ccc auto queue`. Dừng: `8sync ccc auto pause` (hoặc `auto off`, `8sync ccc cancel`).
 
-Không mở terminal: `claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20`. Chạy headless không trả lời được câu `Ship`, nên dừng trước merge và để lại brief. Trên subscription, auto giữ lease ≤ 4 giờ và chỉ chạy khi anh có mặt; chạy nhiều ngày không người trông thì dùng Routines (`/schedule`) hoặc Console API key. Chi tiết ở mục 4 và 6.
+Không mở terminal: `claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20`. Chạy headless không trả lời được câu `Ship`, nên dừng trước merge và để lại brief. Trên subscription, auto giữ lease ≤ 4 giờ và chỉ chạy khi anh có mặt; phòng nghỉ nhịp khi cửa sổ 5 giờ/7 ngày dùng ≥ 90%. Chạy nhiều ngày không người trông thì dùng Routines (`/schedule`) hoặc Console API key. Chi tiết ở mục 4 và 6.
+
+**Auto-compact:** kit đặt nén ở 65% window của model, nên model 1M nén ở khoảng 650K và model 200K ở khoảng 130K. Status line hiện mốc của từng session, ví dụ `ctx 22%→nén 65%` (đỏ khi dưới 50%). `8sync ccc compact` liệt kê window đo được theo từng model; đổi mốc bằng `--at <N>`.
 
 ## 1. Cài và cập nhật
 

@@ -38,9 +38,12 @@ use serde_json::{json, Value};
 use super::{delegate, idle, target};
 
 const USAGE: &str = "usage: 8sync ccc auto on [--here] [--loop [10m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json]
-       8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id>   [--json]";
-const DEFAULT_AFTER_S: u64 = 60;
-const DEFAULT_LOOP_MIN: u64 = 10;
+       8sync ccc auto up [--roles lead,dev,qa,review] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] | down
+       8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id>
+       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] | note <id> \"…\"   [--json]
+       cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
+pub(super) const DEFAULT_AFTER_S: u64 = 60;
+pub(super) const DEFAULT_LOOP_MIN: u64 = 10;
 /// Tag every loop carries, so a room never gets two and `CronList` finds it.
 const LOOP_TAG: &str = "8sync-auto-loop";
 
@@ -207,7 +210,7 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
     })
 }
 
-fn text(v: &Value) -> String {
+pub(super) fn text(v: &Value) -> String {
     if v["on"].as_bool() == Some(true) {
         let lease = v["lease_until"]
             .as_u64()
@@ -294,6 +297,14 @@ Mỗi nhịp:
    chứa `8sync-auto-loop`; `/loop` tự canh nhịp thì dừng, không hẹn nhịp kế) rồi dừng. `cap` khác null (gói subscription:
    cửa sổ 5 giờ/7 ngày đã dùng ≥ 90%; API key hoặc có `--usd-per-hour`: chạm trần $/giờ của dự án này, tính trung bình
    từ lúc bật) → nghỉ nhịp này, giữ loop: trần tự hạ khi cửa sổ reset hoặc thời gian trôi.
+   Board (card theo cột, `8sync ccc auto board`): phòng có cột (lead/ba: backlog · dev/ui/api/core: ready · qa · review)
+   chạy `8sync ccc auto claim --json`; có `card` → nhịp này chỉ làm card đó rồi chuyển cột, không card → bước 2.
+   - backlog: viết AC + một lệnh check → `8sync ccc auto move <id> ready --check \"<lệnh>\"`; gỡ card blocked;
+     card approved → MỘT câu hỏi Ship cho owner, duyệt rồi mới `gh pr merge <pr> --squash --match-head-commit <sha>`
+   - building: worktree `.claude/worktrees/card-<id>`, nhánh `card-<id>-<slug>`, `/ship` tới commit, push, PR → `move <id> qa --pr <số>`
+   - qa: `check` + UAT → `move <id> review`, trượt → `move <id> ready --note \"[qa] …\"`
+   - review: review đối kháng → `move <id> approved --sha <head>`, lỗi → `move <id> ready --note \"[review] …\"`
+   Card bị trả về ready quá 2 lần tự sang blocked; claim im 2 giờ thì phòng khác lấy lại.
 2. `target` khác null → việc của nhịp là phần hợp vai phòng cho đích đó: lead chia việc và giao, dev `/ship` phần mình,
    qa chạy `check`/test, reviewer review, rd gỡ chỗ kẹt. Đạt đích (có `check` thì lệnh đó exit 0 trong nhịp này, không thì
    bằng chứng chạy được) → `8sync ccc auto done <id> --evidence \"<lệnh: kết quả>\"`; nhịp sau cả team sang đích kế.
@@ -311,7 +322,7 @@ Mỗi nhịp:
    - UI → `impeccable` · thiết kế hệ thống → `/sysdesign` · bài học có bằng chứng → `/remember`
 6. Báo phòng họp: `8sync ccc meet --say \"done|doing|blocked: <một dòng>\"`.
 
-Không bao giờ: merge, push main, tag, release, publish, deploy; đọc hay in secret; xoá dữ liệu; nhắn người ngoài.
+Không bao giờ: merge, push main, tag, release, publish, deploy khi owner chưa trả lời Ship; đọc hay in secret; xoá dữ liệu; nhắn người ngoài.
 Câu hỏi Ship, secret, tiền, high-risk chờ owner. Không có việc hợp vai → R&D cho mục Next kế tiếp, không ngồi không.
 ";
 
@@ -336,11 +347,29 @@ pub(super) fn write_loop_md(root: &Path) -> Result<(PathBuf, bool)> {
 /// does: `CronCreate`) that follows `.claude/loop.md` for the room's role. The stop check stays in
 /// the cron prompt itself, so an edited loop.md cannot drop it: `off` or `pause`
 /// delete the loop on its next tick, the `cap` ([`idle::cap`]) rests it. Re-running the command replaces the job (a fresh 7 days).
+/// What a room does with the card `auto claim` gives it, per lane (super-board's lane playbooks).
+fn lane_playbook(lane: &str) -> &'static str {
+    match lane {
+        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"`. Hết card backlog: `8sync ccc auto lint` → gỡ card blocked (`move <id> ready`), card approved → gom MỌI card approved vào MỘT câu hỏi Ship cho owner; owner duyệt → `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`",
+        "ready" => "card building: worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>`, `/ship` card tới commit (test + gate), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>`; làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
+        "qa" => "card qa: checkout nhánh PR, chạy `check` + UAT thật → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`",
+        "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước) → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
+        _ => "",
+    }
+}
+
 pub(super) fn loop_prompt(name: &str, every_min: u64, team: bool) -> String {
     let (role, duty) = super::room::role(name);
     let cron = cron_expr(every_min);
+    let board = match super::room::find(name).and_then(|r| r.lane) {
+        Some(lane) => format!(
+            "2) `8sync ccc auto claim --json` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {}. Không có card → bước 3. ",
+            lane_playbook(lane)
+        ),
+        None => "2) Vai không giữ cột board: bước 3. ".into(),
+    };
     let tick = format!(
-        "{LOOP_TAG} {name} (vai {role}): 1) chạy `8sync ccc auto status --json`; on=false hoặc paused=true → CronDelete job {LOOP_TAG} này và dừng; `cap` khác null → nghỉ nhịp này (giữ loop). 2) `target` khác null → nhịp này làm phần hợp vai {role} cho đích đó; đạt (có `check` thì lệnh đó exit 0) → `8sync ccc auto done <id> --evidence \"<lệnh: kết quả>\"`. 3) Không có đích thì làm MỘT nhịp theo .claude/loop.md của dự án cho vai {role} (thiếu file → lấy MỘT việc hợp vai từ su-code/STATE.md mục Next, tự chọn skill: code → /ship, ≤3 file → /do, R&D → /deep-research). Không merge/push main/tag/deploy; câu hỏi Ship vẫn chờ owner."
+        "{LOOP_TAG} {name} (vai {role}): 1) chạy `8sync ccc auto status --json`; on=false hoặc paused=true → CronDelete job {LOOP_TAG} này và dừng; `cap` khác null → nghỉ nhịp này (giữ loop). {board}3) `target` khác null → nhịp này làm phần hợp vai {role} cho đích đó; đạt (có `check` thì lệnh đó exit 0) → `8sync ccc auto done <id> --evidence \"<lệnh: kết quả>\"`. 4) Không có đích thì làm MỘT nhịp theo .claude/loop.md của dự án cho vai {role} (thiếu file → lấy MỘT việc hợp vai từ su-code/STATE.md mục Next, tự chọn skill: code → /ship, ≤3 file → /do, R&D → /deep-research). Không merge/push main/tag/deploy khi owner chưa trả lời Ship."
     );
     let mut s = format!(
         "8sync auto --loop: owner bật chạy liên tục cho phòng `{name}` (vai {role}: {duty}). CronList trước: job cũ chứa `{LOOP_TAG}` → CronDelete nó (chạy lại lệnh = gia hạn 7 ngày, đổi nhịp). Rồi CronCreate lặp (recurring) cron `{cron}` (mỗi {every_min} phút, như `/loop {every_min}m`) với prompt:\n{tick}\nTạo xong thì chạy luôn nhịp đầu, không chờ."
@@ -393,11 +422,34 @@ fn short(text: &str) -> String {
     crate::verbs::session_view::truncate(text.lines().next().unwrap_or(""), 80)
 }
 
-/// `auto add|queue|done|drop` ([`target`]).
+/// A card for a terminal: the head line (id, label, text, check, holder, PR), then the last notes.
+fn card_lines(t: &target::Target) -> Vec<String> {
+    let mut head = format!("#{}", t.id);
+    if let Some(l) = &t.label {
+        head.push_str(&format!(" ({l})"));
+    }
+    head.push_str(&format!(" {}", short(&t.text)));
+    if let Some(c) = &t.check {
+        head.push_str(&format!("  [check: {c}]"));
+    }
+    if let Some(c) = &t.claim {
+        head.push_str(&format!(" · {} giữ", c.room));
+    }
+    if let Some(p) = &t.pr {
+        head.push_str(&format!(" · PR {p}"));
+    }
+    if let Some(s) = &t.sha {
+        head.push_str(&format!(" · duyệt {s}"));
+    }
+    let mut v = vec![head];
+    v.extend(t.notes.iter().rev().take(3).map(|n| format!("   {} {}", n.room.as_deref().unwrap_or("owner"), n.text)));
+    v
+}
+
 /// What the owner must know once loops are queued. Usage-limit wait: Claude Code offers it only
 /// in a room open in a terminal, never in a background session, `-p` run or a teammate on its own
 /// (https://code.claude.com/docs/en/interactive-mode#wait-for-a-usage-limit-to-reset).
-fn loop_notes(subscription: bool) -> Vec<&'static str> {
+pub(super) fn loop_notes(subscription: bool) -> Vec<&'static str> {
     let mut v = vec![
         "Loop tự xoá ở nhịp kế khi auto off/pause; chạm trần thì nghỉ nhịp, giữ loop (subscription: cửa sổ 5 giờ/7 ngày ≥ 90%, tự mở khi reset; $/giờ chỉ tính session của dự án, trung bình, tự hạ). Claude Code tự xoá sau 7 ngày (chạy lại lệnh này để gia hạn).",
         "Loop chỉ chạy khi phòng còn mở: gõ /bg trong phòng để chạy nền không cần terminal, Ctrl+T trong agent view để ghim; tắt máy là dừng.",
@@ -426,6 +478,7 @@ fn room_of(rooms: &[(String, String)], sid: Option<&str>) -> Option<String> {
         .map(|(name, _)| name.clone())
 }
 
+/// `auto add|queue|done|drop` and the board verbs `claim|move|note|board|lint` ([`target`]).
 fn run_target(
     verb: &str,
     args: &[String],
@@ -435,48 +488,136 @@ fn run_target(
     now: u64,
 ) -> Result<()> {
     let as_json = args.iter().any(|a| a == "--json");
-    let (mut words, mut check, mut evidence, mut first) = (Vec::new(), None, None, false);
+    let takes: &[&str] = match verb {
+        "add" => &["--check", "--label"],
+        "done" => &["--evidence"],
+        "claim" => &["--lane", "--as"],
+        "move" => &["--note", "--check", "--pr", "--sha", "--as"],
+        "note" => &["--as"],
+        _ => &[],
+    };
+    let (mut words, mut flags, mut first) = (Vec::new(), std::collections::BTreeMap::new(), false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        let mut value = |f: &str| {
-            it.next()
-                .filter(|v| !v.starts_with("--"))
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("{f} cần một giá trị\n{USAGE}"))
-        };
         match a.as_str() {
             "--json" => {}
             "--now" if verb == "add" => first = true,
-            "--check" if verb == "add" => check = Some(value("--check")?),
-            "--evidence" if verb == "done" => evidence = Some(value("--evidence")?),
+            f if takes.contains(&f) => {
+                let v = it
+                    .next()
+                    .filter(|v| !v.starts_with("--"))
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("{f} cần một giá trị\n{USAGE}"))?;
+                flags.insert(f.to_string(), v);
+            }
             // After `--`, everything is text (a target may start with a dash).
             "--" => words.extend(it.by_ref().cloned()),
             f if f.starts_with("--") => bail!("không rõ `{f}`\n{USAGE}"),
             w => words.push(w.to_string()),
         }
     }
+    let flag = |f: &str| flags.get(f).map(String::as_str);
+    let parse_id = |w: &str| -> Result<u64> {
+        w.trim_start_matches('#')
+            .parse()
+            .map_err(|_| anyhow::anyhow!("`{w}` không phải id (`8sync ccc auto board`)\n{USAGE}"))
+    };
     let id = || -> Result<u64> {
         match words.as_slice() {
-            [w] => w.trim_start_matches('#').parse().map_err(|_| {
-                anyhow::anyhow!("`{w}` không phải id (`8sync ccc auto queue`)\n{USAGE}")
-            }),
-            _ => bail!("cần đúng một id (`8sync ccc auto queue`)\n{USAGE}"),
+            [w] => parse_id(w),
+            _ => bail!("cần đúng một id (`8sync ccc auto board`)\n{USAGE}"),
         }
     };
     let next_line = |next: &Option<target::Target>| match next {
         Some(t) => format!("kế: #{} {}", t.id, short(&t.text)),
         None => "hết đích: các phòng quay về .claude/loop.md (STATE.md Next)".into(),
     };
+    let all = rooms();
+    let who = flag("--as").map(str::to_string).or_else(|| me(&all));
     match verb {
+        "claim" => {
+            if !words.is_empty() {
+                bail!("không rõ `{}`\n{USAGE}", words[0]);
+            }
+            let Some(room) = who else {
+                bail!("claim chạy trong một phòng (`8sync ccc auto up`), hoặc thêm --as <phòng>\n{USAGE}");
+            };
+            let lane = match flag("--lane").or_else(|| super::room::find(&room).and_then(|r| r.lane)) {
+                Some(l) => l.to_string(),
+                None => bail!("phòng `{room}` (vai {}) không có cột riêng: thêm --lane backlog|ready|qa|review|blocked", super::room::role(&room).0),
+            };
+            let card = target::claim(home, root, &room, &lane, now)?;
+            if as_json {
+                println!("{}", json!({ "card": card, "lane": lane, "room": room }));
+            } else {
+                match &card {
+                    Some(t) => println!("{}", card_lines(t).join("\n")),
+                    None => println!("cột {lane}: không có card trống cho phòng {room}"),
+                }
+            }
+        }
+        "move" => {
+            let [i, lane] = words.as_slice() else {
+                bail!("move cần <id> <cột>\n{USAGE}");
+            };
+            let m = target::Move { note: flag("--note"), check: flag("--check"), pr: flag("--pr"), sha: flag("--sha") };
+            let t = target::move_to(home, root, parse_id(i)?, lane, &m, who.as_deref(), now)?;
+            if as_json {
+                println!("{}", json!({ "card": t }));
+            } else {
+                println!("card #{} → {}: {}", t.id, t.lane, short(&t.text));
+            }
+        }
+        "note" => {
+            let Some((i, text)) = words.split_first() else {
+                bail!("note cần <id> \"<ghi chú>\"\n{USAGE}");
+            };
+            let t = target::note(home, root, parse_id(i)?, &text.join(" "), who.as_deref(), now)?;
+            if as_json {
+                println!("{}", json!({ "card": t }));
+            } else {
+                println!("ghi chú vào card #{} ({})", t.id, t.lane);
+            }
+        }
+        "board" | "lint" => {
+            if !words.is_empty() {
+                bail!("không rõ `{}`\n{USAGE}", words[0]);
+            }
+            let cards = target::list(home, root)?;
+            let issues = target::lint(&cards, now);
+            if as_json {
+                let mut v = if verb == "board" { target::board_json(&cards) } else { json!({}) };
+                v["issues"] = json!(issues);
+                println!("{v}");
+                return Ok(());
+            }
+            if verb == "board" {
+                for lane in target::LANES {
+                    let in_lane: Vec<_> = cards.iter().filter(|t| t.state == "open" && t.lane == lane).collect();
+                    println!("── {lane} ({}) ──", in_lane.len());
+                    for t in in_lane {
+                        println!("{}", card_lines(t)[0]);
+                    }
+                }
+                let done = cards.iter().filter(|t| t.state == "done").count();
+                println!("── done: {done} gần nhất (`8sync ccc auto queue`) ──");
+            }
+            if issues.is_empty() {
+                println!("lint: board sạch");
+            }
+            for i in issues {
+                println!("lint: {i}");
+            }
+        }
         "add" => {
-            let all = rooms();
-            let from = me(&all);
+            let from = who;
             let text = words.join(" ");
-            let t = target::add(
+            let (t, dup) = target::add(
                 home,
                 root,
                 &text,
-                check.as_deref(),
+                flag("--check"),
+                flag("--label"),
                 first,
                 from.as_deref(),
                 now,
@@ -495,15 +636,23 @@ fn run_target(
                     .collect();
                 println!(
                     "{}",
-                    json!({ "target": t, "position": pos, "open": open, "sent": sent })
+                    json!({ "target": t, "position": pos, "open": open, "sent": sent, "dup": dup })
                 );
                 return Ok(());
             }
-            println!(
-                "đích #{} vào hàng, vị trí {pos}/{open}: {}",
-                t.id,
-                short(&t.text)
-            );
+            if dup {
+                println!("đã có card #{} ({}): ghi thêm một dòng, không tạo trùng", t.id, t.lane);
+            } else {
+                println!(
+                    "đích #{} vào cột {}, vị trí {pos}/{open}: {}",
+                    t.id,
+                    t.lane,
+                    short(&t.text)
+                );
+                if t.lane == "backlog" {
+                    println!("chưa có --check: lead/ba viết AC + một lệnh check rồi chuyển sang ready.");
+                }
+            }
             if first && sent.is_empty() {
                 println!("--now: dự án này chưa có phòng nào (`8sync ccc . <tên>` để mở).");
             }
@@ -523,6 +672,7 @@ fn run_target(
                 println!("{}", json!({ "targets": all }));
                 return Ok(());
             }
+            // `queue` is the history view; `board` shows the lanes.
             if all.is_empty() {
                 println!("hàng đích trống. Thêm: `8sync ccc auto add \"<việc>\"` (--now để gửi ngay mọi phòng).");
             }
@@ -534,7 +684,8 @@ fn run_target(
                     "done" => "✓",
                     _ => "✗",
                 };
-                let mut line = format!("{mark} #{} {}", t.id, short(&t.text));
+                let lane = if t.state == "open" { format!(" [{}]", t.lane) } else { String::new() };
+                let mut line = format!("{mark} #{}{lane} {}", t.id, short(&t.text));
                 if let Some(c) = &t.check {
                     line.push_str(&format!("  [check: {c}]"));
                 }
@@ -552,11 +703,11 @@ fn run_target(
         }
         _ => {
             let id = id()?;
-            let by = me(&rooms());
+            let evidence = flag("--evidence");
             if verb == "done" && evidence.is_none() {
                 bail!("done cần --evidence \"<lệnh: kết quả>\"\n{USAGE}");
             }
-            let (t, next) = target::close(home, root, id, evidence.as_deref(), by.as_deref(), now)?;
+            let (t, next) = target::close(home, root, id, evidence, who.as_deref(), now)?;
             if as_json {
                 println!("{}", json!({ "closed": t, "next": next }));
                 return Ok(());
@@ -605,7 +756,7 @@ pub(super) fn run(
         }
         Ok(())
     };
-    if let Some(verb @ ("add" | "queue" | "done" | "drop")) = rest.first().map(String::as_str) {
+    if let Some(verb @ ("add" | "queue" | "done" | "drop" | "claim" | "move" | "note" | "board" | "lint")) = rest.first().map(String::as_str) {
         return run_target(verb, &rest[1..], home, root, rooms, now);
     }
     let mut looped = None;
@@ -710,6 +861,7 @@ pub(super) fn run(
             root,
             goal,
             check.as_deref(),
+            None,
             true,
             me(&all).as_deref(),
             now,
@@ -1144,6 +1296,29 @@ mod tests {
         ] {
             assert!(sub.contains(want), "missing {want}: {sub}");
         }
+    }
+
+    #[test]
+    fn each_lane_room_claims_its_card_and_moves_it_on() {
+        for (room, lane, next) in [
+            ("lead", "backlog", "move <id> ready --check"),
+            ("ba", "backlog", "--match-head-commit <sha>"),
+            ("dev", "ready", "move <id> qa --pr <số>"),
+            ("qc", "qa", "move <id> review"),
+            ("critic", "review", "move <id> approved --sha"),
+        ] {
+            let p = loop_prompt(room, 10, false);
+            assert!(p.contains(&format!("`8sync ccc auto claim --json` (cột {lane}")), "{room}: {p}");
+            assert!(p.contains(next), "{room} misses {next}: {p}");
+            assert!(p.find("auto claim").unwrap() < p.find("`target` khác null").unwrap(), "card before the queue head");
+            assert!(!p.contains('\n') || p.lines().count() <= 3);
+        }
+        let rd = loop_prompt("rd", 10, false);
+        assert!(rd.contains("Vai không giữ cột board") && !rd.contains("auto claim"));
+        // merging stays behind the owner's Ship answer, in the cron prompt and in loop.md
+        assert!(loop_prompt("lead", 10, false).contains("owner chưa trả lời Ship"));
+        assert!(LOOP_MD.contains("MỘT câu hỏi Ship cho owner, duyệt rồi mới `gh pr merge"));
+        assert!(LOOP_MD.contains("khi owner chưa trả lời Ship"));
     }
 
     #[test]

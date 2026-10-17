@@ -532,44 +532,46 @@
 
     <section class="section" id="team" aria-labelledby="team-title">
       <div class="sec-head">
-        <h2 id="team-title">Or switch on the whole project</h2>
-        <p>Every Claude Code session you open in a repo is a room, and its name is its role: <code>lead</code>, <code>api</code>, <code>qa</code>, <code>rd</code>. One command gives every room a loop and a shared queue of targets.</p>
+        <h2 id="team-title">Or run the whole team in the background</h2>
+        <p><code>auto up</code> starts every role room of the repo as a Claude Code background session (<code>claude --bg</code>), each on its role's model, with its loop. You don't open a terminal per room; you follow the work in <code>8sync hq ui</code>. <code>--clear-ss</code> first deletes leftover background sessions and never touches the ones you have open.</p>
       </div>
       <div class="team-grid">
         <div class="term">
           <div class="term-head">
             <span>terminal, inside the repo</span>
-            <button class="copy" type="button" data-copy="8sync ccc auto on --here --loop 10m --team" aria-label="Copy the auto on command">Copy</button>
+            <button class="copy" type="button" data-copy="8sync ccc auto up --clear-ss" aria-label="Copy the auto up command">Copy</button>
           </div>
-<pre><code><span class="c"># every room gets a 10-minute loop; --team fills rd, qa, reviewer</span>
-<span class="p">$ </span>8sync ccc auto on --here --loop 10m --team
+<pre><code><span class="c"># lead, dev, qa, review as background sessions</span>
+<span class="p">$ </span>8sync ccc auto up --clear-ss
 
-<span class="c"># a target is done when its check exits 0</span>
+<span class="c"># watch every room in the browser</span>
+<span class="p">$ </span>8sync hq ui
+
+<span class="c"># a card is done when its check exits 0</span>
 <span class="p">$ </span>8sync ccc auto add "fix login refresh" --check "pnpm test auth"
 
-<span class="c"># urgent: front of the queue, into every room now</span>
-<span class="p">$ </span>8sync ccc auto add "webhook 500 on retry" --now
+<span class="c"># cards by lane, and what waits for you</span>
+<span class="p">$ </span>8sync ccc auto board
+<span class="p">$ </span>8sync ccc auto lint
 
-<span class="c"># ▶ working · ✓ done · ✗ dropped</span>
-<span class="p">$ </span>8sync ccc auto queue
-
-<span class="c"># stop (or: auto off · 8sync ccc cancel)</span>
-<span class="p">$ </span>8sync ccc auto pause</code></pre>
+<span class="c"># stop the background rooms, keep their conversations</span>
+<span class="p">$ </span>8sync ccc auto down</code></pre>
         </div>
         <div>
-          <ul class="rooms" data-anim="sweep" aria-label="Rooms and what each does on a tick">
-            <li class="room" style="--i:0"><i aria-hidden="true"></i><b>lead</b> splits</li>
-            <li class="room" style="--i:1"><i aria-hidden="true"></i><b>dev</b> ships</li>
-            <li class="room" style="--i:2"><i aria-hidden="true"></i><b>qa</b> checks</li>
-            <li class="room" style="--i:3"><i aria-hidden="true"></i><b>reviewer</b> reviews</li>
-            <li class="room" style="--i:4"><i aria-hidden="true"></i><b>rd</b> unblocks</li>
+          <ul class="rooms" data-anim="sweep" aria-label="Rooms, their model and what each does">
+            <li class="room" style="--i:0"><i aria-hidden="true"></i><b>lead</b> Opus, writes the check</li>
+            <li class="room" style="--i:1"><i aria-hidden="true"></i><b>dev</b> Sonnet, builds</li>
+            <li class="room" style="--i:2"><i aria-hidden="true"></i><b>qa</b> Haiku, tests</li>
+            <li class="room" style="--i:3"><i aria-hidden="true"></i><b>review</b> Sonnet, approves</li>
+            <li class="room" style="--i:4"><i aria-hidden="true"></i><b>rd</b> Opus, researches</li>
           </ul>
-          <ol class="flow">
-            <li><span>On each tick, every room takes the part of the head target that fits its role. Dev work goes through <code>/ship</code>, with tests, review and the security gates.</span></li>
-            <li><span>When the target's check exits 0, a room records <code class="nb">auto done &lt;id&gt;</code> with <code class="nb">--evidence "&lt;command: result&gt;"</code> and the team moves to the next target.</span></li>
-            <li><span>With the queue empty, rooms pick work from <code>.claude/loop.md</code> and the Next list in <code>su-code/STATE.md</code>.</span></li>
+          <ol class="flow" aria-label="A card through the board">
+            <li><span><b>backlog → ready.</b> The lead (or <code>ba</code>) writes acceptance criteria and one check command. A card without a check can't enter <code>ready</code>.</span></li>
+            <li><span><b>building → qa.</b> A dev room claims the card, works in its own worktree <code class="nb">card-&lt;id&gt;</code> through <code>/ship</code>, and opens a PR.</span></li>
+            <li><span><b>qa → review → approved.</b> qa runs the check and a real UAT; review reads the diff adversarially and approves the head SHA. A card bounced back more than twice goes to <code>blocked</code>.</span></li>
+            <li><span><b>approved → done.</b> You answer one Ship question for every approved card; the lead merges with <code class="nb">--match-head-commit</code> and records the evidence.</span></li>
           </ol>
-          <p class="say-it">No command needed inside a room: say <q lang="vi">đưa vào loop: …</q> (add to the loop) or <q lang="vi">làm ngay: …</q> (do it now) and Claude queues it.</p>
+          <p class="say-it">The lanes follow <a href="https://github.com/EricTechPro/super-board">super-board</a> (MIT), rebuilt in the Rust CLI on a local file. Inside a room, say <q lang="vi">đưa vào loop: …</q> (add to the loop) or <q lang="vi">làm ngay: …</q> (do it now) and Claude queues it.</p>
         </div>
       </div>
 
@@ -586,7 +588,7 @@
           <h3>Limits that hold it in check</h3>
           <ul class="cols">
             <li>On a Claude subscription, auto holds a lease of at most 4 hours and runs while you're around. For runs over days, use Claude Code Routines (<code>/schedule</code>) or a Console API key.</li>
-            <li>A spend ceiling (default $5 an hour, from the cost Claude Code reports) skips ticks once it's reached.</li>
+            <li>On a subscription, rooms rest once the 5-hour or 7-day usage window reaches 90%. With an API key, or with <code class="nb">--usd-per-hour</code>, a ceiling on this project's spend (default $5 an hour) skips ticks.</li>
             <li>Claude Code removes a loop after 7 days; run the command again to extend it.</li>
           </ul>
         </div>

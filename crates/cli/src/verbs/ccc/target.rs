@@ -1,16 +1,26 @@
-//! `8sync ccc auto add|queue|done|drop`: the project's target queue for `auto`. Like a prompt typed
-//! while Claude is busy, a target waits in line; `--now` puts it first and pushes it into every
-//! room's inbox (Claude Code's "ctrl+x ctrl+s to send now", for the whole project).
+//! `8sync ccc auto add|queue|done|drop` and the board verbs `claim|move|note|board|lint`: the
+//! project's cards for `auto`. Like a prompt typed while Claude is busy, a card waits in line;
+//! `--now` puts it first and pushes it into every room's inbox (Claude Code's "ctrl+x ctrl+s to
+//! send now", for the whole project).
 //!
-//! Every loop tick reads `auto status --json`, which carries the first open target: each room does
-//! its role's part of it, and a room that proves it met (the `check` command exits 0, or runnable
-//! evidence) runs `auto done <id> --evidence`. The team then moves to the next target; with none
-//! left the loop goes back to `.claude/loop.md` (STATE.md Next).
+//! Board (super-board's columns, MIT, Eric Tech; see THIRD_PARTY_NOTICES.md), local and per project:
+//! `backlog` (no acceptance check yet) → `ready` → `building` → `qa` → `review` → `approved` (head SHA
+//! reviewed, waits for the owner's Ship) → done, plus `blocked`. `add` lands in `ready` with
+//! `--check`, else in `backlog`; label `qa` skips `building`. A room [`claim`]s the first free card
+//! of its role's lane (`room::Role::lane`); taking a `ready` card moves it to `building`. A claim
+//! older than [`CLAIM_SECS`] is reaped (a stranded `building` card goes back to `ready`). [`move_to`]
+//! checks the transition; the third bounce back to `ready` blocks the card (super-board's
+//! `rebuild_cap` 2). Re-adding the text of an open card adds a note instead of a twin.
+//!
+//! Every loop tick reads `auto status --json`, which carries the first open card for rooms without a
+//! lane; a room that proves a card met (the `check` command exits 0 after merge, or runnable
+//! evidence) runs `auto done <id> --evidence`.
 //!
 //! File: `<state>/ccc/targets.json` (next to `auto.json`), schema 1:
 //! `{ "projects": { "<root>": { "next_id", "items": [Target] } } }`. Per user, keyed by the
 //! canonical project root; a room in a subfolder or worktree inside a stored root uses that root.
-//! Writes take `targets.lock` and replace the file atomically; a corrupt file fails closed.
+//! Writes take `targets.lock` and replace the file atomically; a corrupt file fails closed. Cards
+//! written before the board read as `ready`.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -19,13 +29,55 @@ use serde::{Deserialize, Serialize};
 
 use super::idle;
 
-/// Chars kept of a target's text, its check command, and a done evidence line.
+/// Chars kept of a target's text, its check command, an evidence line and a note.
 const TEXT_MAX: usize = 2000;
 const CHECK_MAX: usize = 300;
 const EVIDENCE_MAX: usize = 300;
-/// Open targets per project, and finished ones kept for `auto queue`.
+const NOTE_MAX: usize = 400;
+/// Open targets per project, finished ones kept for `auto queue`, notes kept per card.
 const OPEN_MAX: usize = 50;
 const CLOSED_KEEP: usize = 20;
+const NOTES_KEEP: usize = 12;
+/// A claim not refreshed for this long belongs to a room that stopped (super-board reaps stale locks).
+pub(super) const CLAIM_SECS: u64 = 2 * 3600;
+/// Bounces back to `ready` a card takes before it blocks (super-board `rebuild_cap`).
+const REBUILD_CAP: u32 = 2;
+
+/// Open lanes in board order; `done`/`dropped` live in `state`.
+pub(super) const LANES: [&str; 7] = ["backlog", "ready", "building", "qa", "review", "approved", "blocked"];
+pub(super) const LABELS: [&str; 3] = ["bug", "feature", "qa"];
+
+/// Allowed moves (from → to). Done goes through `auto done`, which needs evidence.
+fn allowed(from: &str, to: &str) -> bool {
+    matches!(
+        (from, to),
+        ("backlog", "ready")
+            | ("ready", "building" | "qa" | "backlog")
+            | ("building", "qa" | "ready")
+            | ("qa", "review" | "ready")
+            | ("review", "approved" | "ready" | "qa")
+            | ("approved", "review" | "ready")
+            | ("blocked", "ready" | "backlog")
+    ) || (to == "blocked" && from != "blocked")
+}
+
+fn lane_ready() -> String {
+    "ready".into()
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(super) struct Claim {
+    pub room: String,
+    pub at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(super) struct Note {
+    pub at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<String>,
+    pub text: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct Target {
@@ -46,6 +98,41 @@ pub(super) struct Target {
     pub evidence: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<String>,
+    /// One of [`LANES`] while open.
+    #[serde(default = "lane_ready")]
+    pub lane: String,
+    /// One of [`LABELS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<Claim>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
+    /// Times sent back to `ready` from qa/review/approved.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub bounces: u32,
+    /// The card's pull request (number or URL), set when it leaves `building`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<String>,
+    /// Head commit the review approved; merge only with `--match-head-commit <sha>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+impl Target {
+    fn note(&mut self, room: Option<&str>, text: &str, now: u64) {
+        let text = clean(text, NOTE_MAX);
+        if text.is_empty() {
+            return;
+        }
+        self.notes.push(Note { at: now, room: room.map(str::to_string), text });
+        let extra = self.notes.len().saturating_sub(NOTES_KEEP);
+        self.notes.drain(..extra);
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -169,22 +256,39 @@ pub(super) fn current(home: &Path, root: &Path) -> Result<(Option<Target>, usize
     Ok((open.first().cloned(), open.len()))
 }
 
-/// Queue a target; `first` puts it ahead of every open one.
+/// Queue a card; `first` puts it ahead of every open one. Lands in `ready` with a check, else in
+/// `backlog`. The text of an open card again → a note on that card (and `first` moves it up);
+/// the bool says it was such a repeat.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn add(
     home: &Path,
     root: &Path,
     text: &str,
     check: Option<&str>,
+    label: Option<&str>,
     first: bool,
     from: Option<&str>,
     now: u64,
-) -> Result<Target> {
+) -> Result<(Target, bool)> {
     let text = clean(text, TEXT_MAX);
     if text.is_empty() {
         bail!("đích rỗng");
     }
+    if let Some(l) = label.filter(|l| !LABELS.contains(l)) {
+        bail!("nhãn `{l}` không hợp lệ: {}", LABELS.join(", "));
+    }
     let check = check.map(|c| clean(c, CHECK_MAX)).filter(|c| !c.is_empty());
     edit(home, root, |p| {
+        let same = |t: &Target| t.state == "open" && t.text.to_lowercase() == text.to_lowercase();
+        if let Some(i) = p.items.iter().position(same) {
+            let mut t = p.items.remove(i);
+            t.note(from, &format!("↺ thêm lại{}", from.map(|f| format!(" bởi {f}")).unwrap_or_default()), now);
+            if t.check.is_none() {
+                t.check = check.clone();
+            }
+            p.items.insert(if first { 0 } else { i }, t.clone());
+            return Ok((t, true));
+        }
         if p.items.iter().filter(|t| t.state == "open").count() >= OPEN_MAX {
             bail!("hàng đã có {OPEN_MAX} đích mở: `auto done`/`auto drop` bớt trước");
         }
@@ -195,6 +299,7 @@ pub(super) fn add(
         let t = Target {
             id: p.next_id,
             text,
+            lane: if check.is_some() { "ready" } else { "backlog" }.into(),
             check,
             added: now,
             from: from.map(str::to_string),
@@ -202,13 +307,19 @@ pub(super) fn add(
             closed: None,
             evidence: None,
             by: None,
+            label: label.map(str::to_string),
+            claim: None,
+            notes: Vec::new(),
+            bounces: 0,
+            pr: None,
+            sha: None,
         };
         if first {
             p.items.insert(0, t.clone());
         } else {
             p.items.push(t.clone());
         }
-        Ok(t)
+        Ok((t, false))
     })
 }
 
@@ -241,6 +352,7 @@ pub(super) fn close(
         t.closed = Some(now);
         t.evidence = evidence;
         t.by = by.map(str::to_string);
+        t.claim = None;
         let closed = t.clone();
         // Closed targets go after the open ones, newest first; only the last CLOSED_KEEP stay.
         let (open, mut shut): (Vec<Target>, Vec<Target>) = std::mem::take(&mut p.items)
@@ -254,11 +366,162 @@ pub(super) fn close(
     })
 }
 
+/// Drop stale claims; a stranded `building` card goes back to `ready` (super-board's reclaim).
+fn reap(p: &mut Project, now: u64) {
+    for t in p.items.iter_mut().filter(|t| t.state == "open") {
+        let Some(c) = t.claim.clone().filter(|c| now.saturating_sub(c.at) >= CLAIM_SECS) else { continue };
+        t.claim = None;
+        if t.lane == "building" {
+            t.lane = "ready".into();
+            t.note(None, &format!("↩ {} không báo gì {} giờ: trả về ready", c.room, CLAIM_SECS / 3600), now);
+        }
+    }
+}
+
+/// `auto claim`: the card room `room` works on this tick. A card it already holds comes back (claim
+/// refreshed); else the first free card of `lane` in queue order. Taking a `ready` card moves it to
+/// `building`; the `qa` lane also takes `ready` cards labelled `qa`, the `ready` lane skips them.
+pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) -> Result<Option<Target>> {
+    if !LANES.contains(&lane) || matches!(lane, "building" | "approved") {
+        bail!("cột `{lane}` không nhận claim: backlog, ready, qa, review, blocked");
+    }
+    edit(home, root, |p| {
+        reap(p, now);
+        let mine = p.items.iter().position(|t| t.state == "open" && t.claim.as_ref().is_some_and(|c| c.room == room));
+        let free = |t: &Target| {
+            t.state == "open"
+                && t.claim.is_none()
+                && match lane {
+                    "qa" => t.lane == "qa" || (t.lane == "ready" && t.label.as_deref() == Some("qa")),
+                    "ready" => t.lane == "ready" && t.label.as_deref() != Some("qa"),
+                    l => t.lane == l,
+                }
+        };
+        let Some(i) = mine.or_else(|| p.items.iter().position(free)) else { return Ok(None) };
+        let t = &mut p.items[i];
+        if t.claim.is_none() && t.lane == "ready" {
+            let to = if lane == "qa" { "qa" } else { "building" };
+            t.note(Some(room), &format!("ready → {to}"), now);
+            t.lane = to.into();
+        }
+        t.claim = Some(Claim { room: room.to_string(), at: now });
+        Ok(Some(t.clone()))
+    })
+}
+
+/// What a move may carry besides the target lane.
+#[derive(Debug, Default)]
+pub(super) struct Move<'a> {
+    pub note: Option<&'a str>,
+    pub check: Option<&'a str>,
+    pub pr: Option<&'a str>,
+    pub sha: Option<&'a str>,
+}
+
+/// `auto move <id> <lane>`: a checked transition that releases the claim (the next lane's room
+/// takes it). `ready` needs a check; `approved` needs the reviewed head SHA; the bounce back to
+/// `ready` past [`REBUILD_CAP`] lands in `blocked` instead.
+pub(super) fn move_to(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option<&str>, now: u64) -> Result<Target> {
+    if !LANES.contains(&to) {
+        bail!("cột `{to}` không có: {} (xong → `auto done <id> --evidence`)", LANES.join(", "));
+    }
+    let sha = m.sha.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(s) = sha.filter(|s| !(7..=40).contains(&s.len()) || !s.chars().all(|c| c.is_ascii_hexdigit())) {
+        bail!("--sha `{s}` không phải commit SHA");
+    }
+    edit(home, root, |p| {
+        let Some(t) = p.items.iter_mut().find(|t| t.id == id && t.state == "open") else {
+            bail!("không có card mở #{id} (`8sync ccc auto board`)");
+        };
+        if !allowed(&t.lane, to) {
+            bail!("card #{id} đang ở {}: không chuyển thẳng sang {to}", t.lane);
+        }
+        if let Some(c) = m.check.map(|c| clean(c, CHECK_MAX)).filter(|c| !c.is_empty()) {
+            t.check = Some(c);
+        }
+        if to == "ready" && t.check.is_none() {
+            bail!("card #{id} cần lệnh check (exit 0 = đạt) trước khi ready: thêm --check \"<lệnh>\"");
+        }
+        if to == "approved" {
+            t.sha = Some(sha.ok_or_else(|| anyhow::anyhow!("approved cần --sha <head commit đã review>"))?.to_string());
+        } else {
+            t.sha = None;
+        }
+        if let Some(pr) = m.pr.map(|x| clean(x, 200)).filter(|x| !x.is_empty()) {
+            t.pr = Some(pr);
+        }
+        let from = std::mem::replace(&mut t.lane, to.to_string());
+        let mut line = format!("{from} → {to}");
+        if to == "ready" && matches!(from.as_str(), "qa" | "review" | "approved") {
+            t.bounces += 1;
+            if t.bounces > REBUILD_CAP {
+                t.lane = "blocked".into();
+                line = format!("{from} → blocked (🛡 bị trả lần {}: lead/owner xem lại card)", t.bounces);
+            }
+        }
+        if let Some(n) = m.note.filter(|n| !n.trim().is_empty()) {
+            line.push_str(&format!(": {n}"));
+        }
+        t.note(room, &line, now);
+        t.claim = None;
+        Ok(t.clone())
+    })
+}
+
+/// `auto note <id> "<text>"`: progress on a card; refreshes the room's own claim.
+pub(super) fn note(home: &Path, root: &Path, id: u64, text: &str, room: Option<&str>, now: u64) -> Result<Target> {
+    if clean(text, NOTE_MAX).is_empty() {
+        bail!("ghi chú rỗng");
+    }
+    edit(home, root, |p| {
+        let Some(t) = p.items.iter_mut().find(|t| t.id == id && t.state == "open") else {
+            bail!("không có card mở #{id} (`8sync ccc auto board`)");
+        };
+        t.note(room, text, now);
+        if let (Some(c), Some(r)) = (t.claim.as_mut(), room) {
+            if c.room == r {
+                c.at = now;
+            }
+        }
+        Ok(t.clone())
+    })
+}
+
+/// `auto lint`: what needs a lead or the owner. Pure over the cards.
+pub(super) fn lint(cards: &[Target], now: u64) -> Vec<String> {
+    let mut out = Vec::new();
+    for t in cards.iter().filter(|t| t.state == "open") {
+        let id = t.id;
+        match t.lane.as_str() {
+            "ready" | "building" | "qa" | "review" if t.check.is_none() => out.push(format!("#{id} ở {} mà chưa có lệnh check", t.lane)),
+            "building" if t.claim.is_none() => out.push(format!("#{id} building không ai giữ: `auto move {id} ready`")),
+            "qa" | "review" if t.pr.is_none() && t.label.as_deref() != Some("qa") => out.push(format!("#{id} ở {} chưa có PR (--pr)", t.lane)),
+            "blocked" => out.push(format!("#{id} blocked: {}", t.notes.last().map_or("(không ghi lý do)", |n| n.text.as_str()))),
+            "approved" => out.push(format!("#{id} đã duyệt {} · chờ Ship của owner", t.sha.as_deref().unwrap_or("?"))),
+            _ => {}
+        }
+        if let Some(c) = t.claim.as_ref().filter(|c| now.saturating_sub(c.at) >= CLAIM_SECS) {
+            out.push(format!("#{id} claim của {} quá {} giờ (claim kế sẽ thu hồi)", c.room, CLAIM_SECS / 3600));
+        }
+    }
+    out
+}
+
+/// `auto board --json`: open cards by lane, then the latest closed ones.
+pub(super) fn board_json(cards: &[Target]) -> serde_json::Value {
+    let lanes: Vec<_> = LANES
+        .iter()
+        .map(|l| serde_json::json!({ "lane": l, "cards": cards.iter().filter(|t| t.state == "open" && t.lane == *l).collect::<Vec<_>>() }))
+        .collect();
+    let closed: Vec<_> = cards.iter().filter(|t| t.state != "open").take(10).collect();
+    serde_json::json!({ "schema": 1, "lanes": lanes, "closed": closed })
+}
+
 /// What `auto status --json` carries for the loop: the current target, without the history.
 pub(super) fn json(t: Option<&Target>) -> serde_json::Value {
     t.map_or(
         serde_json::Value::Null,
-        |t| serde_json::json!({ "id": t.id, "text": t.text, "check": t.check }),
+        |t| serde_json::json!({ "id": t.id, "text": t.text, "check": t.check, "lane": t.lane }),
     )
 }
 
@@ -292,12 +555,132 @@ mod tests {
         (h, root)
     }
 
+    /// `add` without a label, the card only.
+    fn put(h: &Path, root: &Path, text: &str, check: Option<&str>, first: bool, from: Option<&str>, now: u64) -> Result<Target> {
+        add(h, root, text, check, None, first, from, now).map(|(t, _)| t)
+    }
+
+    fn lanes(h: &Path, root: &Path) -> Vec<(u64, String)> {
+        list(h, root).unwrap().into_iter().filter(|t| t.state == "open").map(|t| (t.id, t.lane)).collect()
+    }
+
+    #[test]
+    fn cards_flow_through_the_lanes_and_claims_follow_the_rooms() {
+        let (d, root) = tmp("board");
+        let h = d.as_path();
+        let spec = put(h, &root, "login page", None, false, None, 1).unwrap();
+        let fix = put(h, &root, "fix crash", Some("cargo test -q crash"), false, Some("lead"), 2).unwrap();
+        let (uat, _) = add(h, &root, "UAT checkout 390px", Some("pnpm e2e checkout"), Some("qa"), false, None, 3).unwrap();
+        assert_eq!(lanes(h, &root), [(1, "backlog".into()), (2, "ready".into()), (3, "ready".into())]);
+        assert!(add(h, &root, "x", None, Some("chore"), false, None, 4).is_err(), "unknown label");
+
+        // dev takes the first ready card that is not a qa-only card; it moves to building
+        let c = claim(h, &root, "dev", "ready", 10).unwrap().unwrap();
+        assert_eq!((c.id, c.lane.as_str(), c.claim.as_ref().unwrap().room.as_str()), (fix.id, "building", "dev"));
+        // the same room gets its card back next tick (claim refreshed), another dev gets nothing
+        assert_eq!(claim(h, &root, "dev", "ready", 20).unwrap().unwrap().claim.unwrap().at, 20);
+        assert_eq!(claim(h, &root, "dev2", "ready", 21).unwrap(), None);
+        // qa takes the qa-labelled ready card straight into qa
+        let q = claim(h, &root, "qa", "qa", 22).unwrap().unwrap();
+        assert_eq!((q.id, q.lane.as_str()), (uat.id, "qa"));
+        // lead triages backlog: ready needs a check
+        assert_eq!(claim(h, &root, "lead", "backlog", 23).unwrap().unwrap().id, spec.id);
+        let e = move_to(h, &root, spec.id, "ready", &Move::default(), Some("lead"), 24).unwrap_err().to_string();
+        assert!(e.contains("cần lệnh check"), "{e}");
+        let m = Move { note: Some("AC: form validates email"), check: Some("pnpm test login"), ..Move::default() };
+        let s = move_to(h, &root, spec.id, "ready", &m, Some("lead"), 25).unwrap();
+        assert_eq!((s.lane.as_str(), s.claim, s.check.as_deref()), ("ready", None, Some("pnpm test login")));
+        assert!(s.notes.last().unwrap().text.contains("backlog → ready: AC: form validates email"));
+        // no skipping lanes, no claim on building/approved, unknown lanes refused
+        assert!(move_to(h, &root, fix.id, "approved", &Move { sha: Some("abcdef1"), ..Move::default() }, None, 26).is_err());
+        assert!(move_to(h, &root, fix.id, "done", &Move::default(), None, 26).is_err());
+        assert!(claim(h, &root, "x", "building", 26).is_err() && claim(h, &root, "x", "approved", 26).is_err());
+
+        // building → qa → review → approved, with PR and SHA
+        move_to(h, &root, fix.id, "qa", &Move { pr: Some("#81"), ..Move::default() }, Some("dev"), 30).unwrap();
+        assert_eq!(claim(h, &root, "qa", "qa", 31).unwrap().unwrap().id, uat.id, "qa keeps its own card first");
+        move_to(h, &root, uat.id, "review", &Move::default(), Some("qa"), 32).unwrap();
+        assert_eq!(claim(h, &root, "qa", "qa", 33).unwrap().unwrap().id, fix.id);
+        move_to(h, &root, fix.id, "review", &Move::default(), Some("qa"), 34).unwrap();
+        assert!(move_to(h, &root, fix.id, "approved", &Move::default(), None, 35).unwrap_err().to_string().contains("--sha"));
+        assert!(move_to(h, &root, fix.id, "approved", &Move { sha: Some("not-a-sha"), ..Move::default() }, None, 35).is_err());
+        let a = move_to(h, &root, fix.id, "approved", &Move { sha: Some("0123abc"), ..Move::default() }, Some("review"), 36).unwrap();
+        assert_eq!((a.sha.as_deref(), a.pr.as_deref()), (Some("0123abc"), Some("#81")));
+        // head changed after approval: back to review, SHA dropped
+        assert_eq!(move_to(h, &root, fix.id, "review", &Move::default(), None, 37).unwrap().sha, None);
+        let (done, _) = close(h, &root, fix.id, Some("gh pr merge 81 --match-head-commit 0123abc: merged"), Some("lead"), 38).unwrap();
+        assert_eq!((done.state.as_str(), done.claim), ("done", None));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn stale_claims_are_reaped_and_the_third_bounce_blocks() {
+        let (d, root) = tmp("reap");
+        let h = d.as_path();
+        let c = put(h, &root, "card", Some("true"), false, None, 0).unwrap();
+        claim(h, &root, "dev", "ready", 100).unwrap().unwrap();
+        // within the window nobody else gets it; after it the stranded card is back in ready
+        assert_eq!(claim(h, &root, "dev2", "ready", 100 + CLAIM_SECS - 1).unwrap(), None);
+        let back = claim(h, &root, "dev2", "ready", 100 + CLAIM_SECS).unwrap().unwrap();
+        assert_eq!((back.lane.as_str(), back.claim.unwrap().room.as_str()), ("building", "dev2"));
+        assert!(back.notes.iter().any(|n| n.text.contains("dev không báo gì 2 giờ")));
+        // note refreshes only the holder's claim
+        let t = note(h, &root, c.id, "đang viết test", Some("dev2"), 9_000).unwrap();
+        assert_eq!(t.claim.unwrap().at, 9_000);
+        assert_eq!(note(h, &root, c.id, "x", Some("dev"), 9_001).unwrap().claim.unwrap().at, 9_000);
+        assert!(note(h, &root, c.id, "  ", None, 9_002).is_err());
+
+        let bounce = |n: u64| {
+            move_to(h, &root, c.id, "qa", &Move { pr: Some("1"), ..Move::default() }, None, n).unwrap();
+            move_to(h, &root, c.id, "ready", &Move { note: Some("[qa] lỗi"), ..Move::default() }, None, n + 1).unwrap()
+        };
+        assert_eq!(bounce(10_000).lane, "ready");
+        move_to(h, &root, c.id, "building", &Move::default(), None, 10_002).unwrap();
+        assert_eq!(bounce(10_003).lane, "ready");
+        move_to(h, &root, c.id, "building", &Move::default(), None, 10_005).unwrap();
+        let b = bounce(10_006);
+        assert_eq!((b.lane.as_str(), b.bounces), ("blocked", 3));
+        assert!(b.notes.last().unwrap().text.contains("🛡 bị trả lần 3"));
+        assert!(lint(&list(h, &root).unwrap(), 10_007).iter().any(|l| l.starts_with(&format!("#{} blocked: ", c.id))));
+        assert!(move_to(h, &root, c.id, "ready", &Move::default(), None, 10_008).is_ok(), "lead unblocks");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn repeats_become_notes_and_old_targets_read_as_ready() {
+        let (d, root) = tmp("dup");
+        let h = d.as_path();
+        let (a, dup) = add(h, &root, "Fix login", None, None, false, None, 1).unwrap();
+        put(h, &root, "other", None, false, None, 2).unwrap();
+        assert!(!dup);
+        let (again, dup) = add(h, &root, "fix LOGIN", Some("pnpm t"), Some("bug"), true, Some("qa"), 3).unwrap();
+        assert!(dup);
+        assert_eq!((again.id, again.check.as_deref(), again.notes[0].text.as_str()), (a.id, Some("pnpm t"), "↺ thêm lại bởi qa"));
+        assert_eq!(current(h, &root).unwrap(), (Some(again.clone()), 2), "--now moved it up, no twin");
+        // a file from before the board: no lane field → ready
+        let f = file(h);
+        let old = std::fs::read_to_string(&f).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&old).unwrap();
+        for p in v["projects"].as_object_mut().unwrap().values_mut() {
+            for t in p["items"].as_array_mut().unwrap() {
+                t.as_object_mut().unwrap().remove("lane");
+            }
+        }
+        std::fs::write(&f, v.to_string()).unwrap();
+        assert!(lanes(h, &root).iter().all(|(_, l)| l == "ready"));
+        let b = board_json(&list(h, &root).unwrap());
+        assert_eq!(b["lanes"][1]["lane"], "ready");
+        assert_eq!(b["lanes"][1]["cards"].as_array().unwrap().len(), 2);
+        assert_eq!(b["lanes"].as_array().unwrap().len(), LANES.len());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn targets_queue_in_order_and_now_jumps_the_line() {
         let (d, root) = tmp("queue");
         let h = d.as_path();
         assert_eq!(current(h, &root).unwrap(), (None, 0));
-        let a = add(
+        let a = put(
             h,
             &root,
             "  login page\n",
@@ -307,13 +690,13 @@ mod tests {
             10,
         )
         .unwrap();
-        let b = add(h, &root, "docs", None, false, None, 11).unwrap();
+        let b = put(h, &root, "docs", None, false, None, 11).unwrap();
         assert_eq!(
             (a.id, b.id, a.text.as_str(), a.check.as_deref()),
             (1, 2, "login page", Some("pnpm test"))
         );
         assert_eq!(current(h, &root).unwrap().0.unwrap().id, 1);
-        let c = add(h, &root, "hotfix crash", None, true, Some("qa"), 12).unwrap();
+        let c = put(h, &root, "hotfix crash", None, true, Some("qa"), 12).unwrap();
         let (cur, n) = current(h, &root).unwrap();
         let cur = cur.unwrap();
         assert_eq!(
@@ -327,15 +710,15 @@ mod tests {
         let other = d.join("proj-2");
         std::fs::create_dir_all(&other).unwrap();
         assert_eq!(current(h, &other).unwrap(), (None, 0));
-        assert!(add(h, &root, " \u{200B} ", None, false, None, 13).is_err());
+        assert!(put(h, &root, " \u{200B} ", None, false, None, 13).is_err());
     }
 
     #[test]
     fn done_needs_evidence_moves_the_team_on_and_keeps_history() {
         let (d, root) = tmp("done");
         let h = d.as_path();
-        add(h, &root, "a", None, false, None, 1).unwrap();
-        add(h, &root, "b", None, false, None, 2).unwrap();
+        put(h, &root, "a", None, false, None, 1).unwrap();
+        put(h, &root, "b", None, false, None, 2).unwrap();
         assert!(close(h, &root, 1, Some("  "), None, 3).is_err());
         let (done, next) =
             close(h, &root, 1, Some("cargo test: 12 passed"), Some("dev"), 3).unwrap();
@@ -354,14 +737,14 @@ mod tests {
         let all = list(h, &root).unwrap();
         assert_eq!(all.iter().map(|t| t.id).collect::<Vec<_>>(), vec![2, 1]);
         // Ids never repeat after targets close.
-        assert_eq!(add(h, &root, "c", None, false, None, 6).unwrap().id, 3);
+        assert_eq!(put(h, &root, "c", None, false, None, 6).unwrap().id, 3);
     }
 
     #[test]
     fn a_corrupt_file_fails_closed_and_a_stale_lock_is_taken_over() {
         let (d, root) = tmp("lock");
         let h = d.as_path();
-        add(h, &root, "a", None, false, None, 1).unwrap();
+        put(h, &root, "a", None, false, None, 1).unwrap();
         let f = file(h);
         let lock = f.with_extension("lock");
         std::fs::write(&lock, "").unwrap();
@@ -372,10 +755,10 @@ mod tests {
             .unwrap()
             .set_modified(old)
             .unwrap();
-        assert_eq!(add(h, &root, "b", None, false, None, 2).unwrap().id, 2);
+        assert_eq!(put(h, &root, "b", None, false, None, 2).unwrap().id, 2);
         assert!(!lock.exists());
         std::fs::write(&f, "{not json").unwrap();
-        assert!(add(h, &root, "c", None, false, None, 3)
+        assert!(put(h, &root, "c", None, false, None, 3)
             .unwrap_err()
             .to_string()
             .contains("hỏng"));
@@ -385,17 +768,10 @@ mod tests {
 
     #[test]
     fn now_prompt_names_the_room_role_check_and_rails() {
-        let t = Target {
-            id: 7,
-            text: "fix login".into(),
-            check: Some("pnpm test".into()),
-            added: 0,
-            from: None,
-            state: "open".into(),
-            closed: None,
-            evidence: None,
-            by: None,
-        };
+        let (d, root) = tmp("prompt");
+        let t = put(&d, &root, "fix login", Some("pnpm test"), false, None, 0).unwrap();
+        assert_eq!(t.id, 1);
+        let t = Target { id: 7, ..t };
         let p = now_prompt(&t, "qa-su-code");
         for want in [
             "đích #7",

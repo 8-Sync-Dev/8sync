@@ -4,18 +4,24 @@
 //! (https://code.claude.com/docs/en/env-vars). We store it in `~/.claude/settings.json` `env`.
 //! `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (plain integer 100000..=1000000, capped at the model window, beats
 //! `/autocompact`, `--autocompact` and the `autoCompactWindow` setting) is an absolute cap on that window:
-//! trigger ≈ pct × min(window, model window). 8sync does not know the model window.
+//! trigger ≈ pct × min(window, model window). The model window comes from the status line
+//! (`context_window.context_window_size`, https://code.claude.com/docs/en/statusline): the status
+//! line shows each session's point (`ctx 22%→nén 65%`) and `compact` lists it per model seen.
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::path::Path;
 
 pub(super) const VAR: &str = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE";
-/// What `ccc kit` sets when the key is absent.
-pub(super) const KIT_DEFAULT: u32 = 60;
+/// What `ccc kit` sets when the key is absent (owner, 2026-10-17: compact at 60-70 % of the context, not ~22 %).
+pub(super) const KIT_DEFAULT: u32 = 65;
 const RANGE: std::ops::RangeInclusive<u32> = 10..=95;
 pub(super) const WIN_VAR: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
-/// What `ccc kit` sets when the window is absent everywhere (Opus 1M: 60 % x 400K = 240K).
-pub(super) const KIT_WINDOW: u32 = 400_000;
+/// What `ccc kit` sets when the window is absent everywhere: the top of the range, which Claude Code caps at
+/// the model window, so the trigger is pct x model window and the status line's `ctx` % at compaction is
+/// the pct (65 % = 650K on 1M, 130K on 200K). Measured: override 60 with window 200K → 60.0 % (CHANGELOG 0.84.0).
+pub(super) const KIT_WINDOW: u32 = 1_000_000;
+/// The kit pair before 0.100 (60 % x 400K = 240K, ~24 % on a 1M status line): migrated by the next `ccc kit`.
+const OLD_KIT: (&str, &str) = ("60", "400000");
 const WIN_RANGE: std::ops::RangeInclusive<u32> = 100_000..=1_000_000;
 
 fn current(v: &Value) -> Option<String> {
@@ -63,10 +69,17 @@ fn reset_var(v: &mut Value, var: &str) -> bool {
     had
 }
 
-/// `ccc kit`: default 60, only when the key is absent (an owner value is never touched).
+/// `ccc kit`: defaults only when absent (an owner value is never touched), except the old kit window
+/// 400000, which only the kit wrote: it becomes the model window, and the 60 % paired with it 65 %.
 pub(super) fn kit_default(v: &mut Value) -> Result<()> {
     let obj = v.as_object_mut().context("settings.json is not a JSON object")?;
     if let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() {
+        if env.get(WIN_VAR).and_then(Value::as_str) == Some(OLD_KIT.1) {
+            env.remove(WIN_VAR);
+            if env.get(VAR).and_then(Value::as_str) == Some(OLD_KIT.0) {
+                env.remove(VAR);
+            }
+        }
         env.entry(VAR).or_insert_with(|| json!(KIT_DEFAULT.to_string()));
     }
     if !owner_window(v) {
@@ -90,13 +103,13 @@ fn owner_window(v: &Value) -> bool {
     cur_var(v, WIN_VAR).is_some() || v.get("autoCompactWindow").is_some() || v.get("modelSettings").is_some_and(has_key)
 }
 
-/// `ccc kit --remove`: drop the key only when it still equals the kit default.
+/// `ccc kit --remove`: drop each key only when it still equals a kit default (this one or the old pair).
 pub(super) fn strip_kit_default(v: &mut Value) -> bool {
     let mut changed = false;
-    if current(v).as_deref() == Some(&KIT_DEFAULT.to_string()) {
+    if current(v).is_some_and(|c| c == KIT_DEFAULT.to_string() || c == OLD_KIT.0) {
         changed |= reset(v);
     }
-    if cur_var(v, WIN_VAR).as_deref() == Some(&KIT_WINDOW.to_string()) {
+    if cur_var(v, WIN_VAR).is_some_and(|w| w == KIT_WINDOW.to_string() || w == OLD_KIT.1) {
         changed |= reset_var(v, WIN_VAR);
     }
     changed
@@ -110,6 +123,49 @@ fn parse_window(s: &str) -> Result<u32> {
         bail!("--window {n} ngoài khoảng {lo}..={hi}");
     }
     Ok(n)
+}
+
+/// Where a session auto-compacts, as a % of its context window `size` (the status line's
+/// `context_window.context_window_size`: 200000, or 1000000 with extended context), the scale its
+/// `ctx` % uses: pct × min(window, size) / size. `None` without the override (Claude Code's own
+/// default point is not documented).
+pub(super) fn point(size: u64, pct: Option<&str>, win: Option<&str>) -> Option<u64> {
+    let p = pct?.trim().parse::<u64>().ok().filter(|p| (1..=100).contains(p))?;
+    let w = win
+        .filter(|w| !w.is_empty() && w.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|w| w.parse::<u64>().ok())
+        .filter(|w| (*WIN_RANGE.start() as u64..=*WIN_RANGE.end() as u64).contains(w))
+        .unwrap_or(size);
+    (size > 0).then(|| p * w.min(size) / size)
+}
+
+/// The newest context window the status line saw per model: (model, size), biggest first.
+fn measured(home: &Path) -> Vec<(String, u64)> {
+    let mut best: std::collections::BTreeMap<String, (u64, u64)> = Default::default();
+    for e in std::fs::read_dir(super::report::usage_dir(home)).into_iter().flatten().flatten() {
+        let Some(v) = std::fs::read_to_string(e.path()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { continue };
+        let (Some(m), Some(n)) = (v["model"].as_str(), v["context_size"].as_u64()) else { continue };
+        let ts = v["ts"].as_u64().unwrap_or(0);
+        if best.get(m).is_none_or(|(at, _)| ts >= *at) {
+            best.insert(m.to_string(), (ts, n));
+        }
+    }
+    let mut out: Vec<(String, u64)> = best.into_iter().map(|(m, (_, n))| (m, n)).collect();
+    out.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    out
+}
+
+/// Lines for `compact` status: each measured window and where new sessions will compact in it.
+fn measured_lines(seen: &[(String, u64)], pct: Option<&str>, win: Option<&str>) -> Vec<String> {
+    if seen.is_empty() {
+        return vec!["window của model: chưa đo (status line của 8sync ghi lại khi một session chạy)".into()];
+    }
+    seen.iter()
+        .map(|(m, n)| match point(*n, pct, win) {
+            Some(p) => format!("{m}: window {n} → nén ở ≈ {} token = {p}% ctx{}", n * p / 100, if p < 50 { "  ⚠ sớm: `8sync ccc compact --window 1000000`" } else { "" }),
+            None => format!("{m}: window {n} → nén theo mặc định của Claude Code"),
+        })
+        .collect()
 }
 
 /// Effective trigger ≈ pct × min(window, model window); the model window is not known to 8sync.
@@ -195,6 +251,9 @@ pub(super) fn run_at(rest: &[String], path: &Path) -> Result<String> {
         None => "auto-compact %: mặc định của Claude Code".into(),
     };
     let w = match &win {
+        Some(w) if *w == KIT_WINDOW.to_string() => {
+            format!("window {w} ({WIN_VAR}) = window của model → nén khi ctx trên status line chạm {}%", cur.as_deref().unwrap_or("mặc định"))
+        }
         Some(w) => format!("window {w} ({WIN_VAR})"),
         None => "window: mặc định của model (~967K trên 1M)".into(),
     };
@@ -205,8 +264,16 @@ pub(super) fn run_at(rest: &[String], path: &Path) -> Result<String> {
     Ok(format!("{pct}\n{w}\n{tail}\nĐổi: `8sync ccc compact --at <N>` · `--window <N>` · `--window-reset`"))
 }
 
-pub(super) fn run(rest: &[String], claude_dir: &Path) -> Result<()> {
-    println!("{}", run_at(rest, &claude_dir.join("settings.json"))?);
+pub(super) fn run(rest: &[String], claude_dir: &Path, home: &Path) -> Result<()> {
+    let path = claude_dir.join("settings.json");
+    println!("{}", run_at(rest, &path)?);
+    if rest.iter().all(|a| a == "status") {
+        let v = load(&path)?.1;
+        for l in measured_lines(&measured(home), current(&v).as_deref(), cur_var(&v, WIN_VAR).as_deref()) {
+            println!("{l}");
+        }
+        println!("Status line hiện `ctx N%→nén M%` theo env session đó đang thấy. Chắc chắn nhất: mở lại session (`/exit` rồi `claude --resume`; phòng nền: `8sync ccc auto down` → `auto up`).");
+    }
     Ok(())
 }
 
@@ -286,7 +353,7 @@ mod tests {
     fn kit_default_only_when_absent_and_remove_only_if_default() {
         let mut v = json!({});
         kit_default(&mut v).unwrap();
-        assert_eq!(v["env"][VAR], "60");
+        assert_eq!(v["env"][VAR], "65");
         let mut owner = json!({"env":{VAR:"45"}});
         kit_default(&mut owner).unwrap();
         assert_eq!(owner["env"][VAR], "45");
@@ -336,9 +403,9 @@ mod tests {
     fn kit_window_only_when_owner_has_none() {
         let mut v = json!({});
         kit_default(&mut v).unwrap();
-        assert_eq!(v["env"][WIN_VAR], "400000");
+        assert_eq!(v["env"][WIN_VAR], "1000000");
         kit_default(&mut v).unwrap(); // idempotent
-        assert_eq!(v["env"][WIN_VAR], "400000");
+        assert_eq!(v["env"][WIN_VAR], "1000000");
         for owner in [
             json!({"env":{WIN_VAR:"200000"}}),
             json!({"autoCompactWindow":300000}),
@@ -364,6 +431,61 @@ mod tests {
         assert_eq!(effective(Some("60"), Some("400000")), Some(240_000));
         assert_eq!(effective(Some("60"), Some("120000")), Some(72_000));
         assert_eq!(effective(None, Some("120000")), None);
-        assert_eq!((KIT_WINDOW as u64) * (KIT_DEFAULT as u64) / 100, 240_000);
+        assert_eq!((KIT_WINDOW as u64) * (KIT_DEFAULT as u64) / 100, 650_000);
+    }
+
+    #[test]
+    fn the_point_follows_the_window_the_status_line_reports() {
+        // 1M model: old kit pair → 24 %, new kit → 65 %; 200K model: the 1M cap is the model window
+        assert_eq!(point(1_000_000, Some("60"), Some("400000")), Some(24));
+        assert_eq!(point(1_000_000, Some("65"), Some("1000000")), Some(65));
+        assert_eq!(point(200_000, Some("65"), Some("1000000")), Some(65));
+        assert_eq!(point(200_000, Some("60"), Some("400000")), Some(60));
+        assert_eq!(point(1_000_000, Some("65"), None), Some(65), "no window: the model's");
+        assert_eq!(point(1_000_000, Some("65"), Some("500k")), Some(65), "a value Claude Code would not take counts as none");
+        assert_eq!(point(1_000_000, None, Some("400000")), None, "Claude Code's own default is not documented");
+        assert_eq!(point(0, Some("65"), None), None);
+        assert_eq!(point(1_000_000, Some("0"), None), None);
+
+        let home = std::env::temp_dir().join(format!("compact-seen-{}", std::process::id()));
+        let d = super::super::report::usage_dir(&home);
+        std::fs::create_dir_all(&d).unwrap();
+        for (sid, model, size, ts) in [("a", "claude-opus-5-5", 1_000_000, 5), ("b", "claude-haiku-5-5", 200_000, 6), ("c", "claude-opus-5-5", 1_000_000, 9)] {
+            std::fs::write(d.join(format!("{sid}.json")), json!({"session_id": sid, "model": model, "context_size": size, "ts": ts}).to_string()).unwrap();
+        }
+        std::fs::write(d.join("old.json"), json!({"session_id": "old", "model": "x", "ts": 1}).to_string()).unwrap();
+        let seen = measured(&home);
+        assert_eq!(seen, [("claude-opus-5-5".to_string(), 1_000_000), ("claude-haiku-5-5".to_string(), 200_000)]);
+        let l = measured_lines(&seen, Some("60"), Some("400000"));
+        assert!(l[0].contains("window 1000000 → nén ở ≈ 240000 token = 24% ctx") && l[0].contains("⚠ sớm"), "{l:?}");
+        assert!(l[1].contains("= 60% ctx") && !l[1].contains('⚠'));
+        let l = measured_lines(&seen, Some("65"), Some("1000000"));
+        assert!(l.iter().all(|x| x.contains("= 65% ctx")), "{l:?}");
+        assert!(measured_lines(&[], None, None)[0].contains("chưa đo"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_old_kit_window_moves_to_the_model_window_and_owner_values_stay() {
+        // the pair the kit wrote before: compacted at 240K, ~24 % of a 1M status line
+        let mut old = json!({"env":{VAR:"60", WIN_VAR:"400000", "X":"1"}});
+        kit_default(&mut old).unwrap();
+        assert_eq!(old["env"], json!({VAR:"65", WIN_VAR:"1000000", "X":"1"}));
+        // owner percent with the old kit window: the percent stays
+        let mut pct = json!({"env":{VAR:"45", WIN_VAR:"400000"}});
+        kit_default(&mut pct).unwrap();
+        assert_eq!(pct["env"], json!({VAR:"45", WIN_VAR:"1000000"}));
+        // 60 % with an owner window is the owner's: untouched
+        let mut mine = json!({"env":{VAR:"60", WIN_VAR:"200000"}});
+        kit_default(&mut mine).unwrap();
+        assert_eq!(mine["env"], json!({VAR:"60", WIN_VAR:"200000"}));
+        // remove takes the old pair too
+        let mut gone = json!({"env":{VAR:"60", WIN_VAR:"400000"}});
+        assert!(strip_kit_default(&mut gone));
+        assert_eq!(gone, json!({}));
+        // status says when the compaction lands on the status line
+        let (_d, p) = tmp();
+        std::fs::write(&p, old.to_string()).unwrap();
+        assert!(run_at(&[], &p).unwrap().contains("chạm 65%"));
     }
 }

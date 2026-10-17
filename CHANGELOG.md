@@ -5,6 +5,24 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 ### Added
+- **`8sync ccc auto up`: the whole team in the background with one command.** Before, every room had to be opened in its own terminal before auto could run. `auto up` turns `auto on --here` on and starts every role room as a Claude Code background session (`claude --bg --name <room> --permission-mode auto --model <role model>`), with the loop prompt as its first message. You follow the work in `8sync hq ui`, `claude agents` or `8sync ccc auto board`. `auto down` stops the background rooms (conversations kept) and pauses auto.
+  - Default team `lead,dev,qa,review`; `--roles` picks up to 8 rooms. Roles and models: lead, ba and rd on opus; dev and review on sonnet; qa on haiku. Aliases map to a role (`qc` → QA, `critic` → Review, `pm` → Lead, `analyst` → BA, `builder` → Dev). `ui`, `api`, `core`, `ops`, `docs` and `sec` keep the session's default model.
+  - A room that is already live (by id, or a background session with its name) only gets the loop. A stopped room resumes in the background under the same id. A new room's registry entry is rebound to the id Claude Code picked (`--bg` ignores `--session-id`), so inbox, HQ and hooks find it.
+  - An untrusted workspace stops `up` with the fix: open `claude` there once and accept the trust prompt. Rooms never run in bypass.
+  - `--clear-ss` (alias `--clean`) first deletes this project's junk background sessions with `claude rm`: duplicates of a room, leftovers of old runs, rooms no longer in the team, and finished ones too. The registry entries that pointed at them go with them. Interactive sessions are never touched. Claude Code keeps a worktree with unpushed commits, and `up` prints why each kept session stayed.
+- **Board with lanes, after [super-board](https://github.com/EricTechPro/super-board) (MIT), rebuilt in Rust.** The project's target queue is now a board: `backlog → ready → building → qa → review → approved → done`, plus `blocked`.
+  - `auto add` lands a card in `ready` when it has a check and in `backlog` otherwise. `--label bug|feature|qa` labels it. Adding the same open text again adds a "↺ thêm lại" note instead of a twin.
+  - `auto claim [--lane] [--as]` gives a room the first free card of its lane (lead/ba backlog, dev/ui/api/core ready → building, qa qa, review review), or the card it already holds. A `qa`-labelled card goes straight to qa.
+  - `auto move <id> <lane>` checks the transition. `ready` needs a check, `approved` needs `--sha <reviewed head>`, and `--pr` records the PR. A card bounced back to ready more than twice goes to `blocked`.
+  - A claim quiet for 2 h is taken back, and a stranded building card returns to ready. `auto note` logs progress and keeps the claim.
+  - `auto board` / `auto lint` (`--json`) show the lanes and what needs the lead or you: no check, no PR, blocked, approved waiting for Ship.
+  - Targets written by an older version read as `ready`.
+- **Each room's loop works its lane.** The cron prompt now claims the room's card first and follows that lane's playbook:
+  - lead writes the acceptance criteria and check, unblocks cards, and gathers every approved card into one Ship question.
+  - dev builds in worktree `.claude/worktrees/card-<id>` on branch `card-<id>-<slug>` through `/ship`, then opens a PR.
+  - qa runs the check and a UAT.
+  - review approves the head SHA.
+  - Merging stays a plain `gh pr merge --squash --match-head-commit <sha>` after the owner's Ship answer, which the guard already gates; 8sync has no merge verb. A new `.claude/loop.md` carries the same board section; an existing one is never overwritten.
 - **HQ: a "Gửi cho mọi phòng" box under Văn phòng and Chat tổng.** It sends one task to every room of a project, the same as `8sync ccc auto add "<việc>" --now`. Before this, Chat tổng only showed the thread and had no input, so it was unclear where to type a task for the whole team. Pick the project (or "Mọi dự án" when several have rooms), keep "Gửi ngay" ticked to push the task into every room's inbox, or untick it to only queue it for the auto loop. "Lệnh kiểm" adds an optional `--check` command. The line under the box names the rooms before you send. After sending it shows, per project, the target id and which rooms take the task as soon as they are idle and which take it after their current turn.
   - New `POST /api/targets` (token and origin checked) runs `8sync ccc auto add --json [--now] [--check <cmd>] -- <text>` with argv only and the project root as cwd.
   - It accepts only a root that has a live room right now, never an arbitrary path.
@@ -14,6 +32,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   - The "Lệnh kiểm" command runs in the project, like `--check` from the terminal.
   - The Cách dùng guide and the empty Chat tổng point at the box.
 ### Fixed
+- **Sessions on 1M models no longer auto-compact at about 22% context.** The kit wrote `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=60` with `CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000`, so a 1M session compacted at 60% × 400K = 240K tokens. On the status line, which counts against the full 1M window, that showed as about 22–24%.
+  - The kit now writes 65% and window `1000000`, the top of the range. Claude Code caps the window at the model's own window (https://code.claude.com/docs/en/env-vars), so every model compacts at 65% of its real context: 650K on 1M, 130K on 200K.
+  - `8sync ccc kit` / `8sync up` migrate the old pair. Window 400000 becomes 1000000, and 60% becomes 65% only when it sits next to the old window. A value the owner chose stays as it is.
+  - The status line now shows each session's own point, for example `ctx 22%→nén 65%`, in red below 50%. It is computed from the window Claude Code reports (`context_window.context_window_size`) and the env the session sees.
+  - `8sync ccc compact` lists every model window the status line has seen and where it compacts (`claude-opus-5-5: window 1000000 → nén ở ≈ 650000 token = 65% ctx`), with a warning when the point is early.
+  - To fix a machine right away, without waiting for the release: `8sync ccc compact --window 1000000` and `8sync ccc compact --at 65`.
 - **`auto on --loop` no longer rests a busy team on someone else's spend.** With `auto on --here --loop 2m --team`, every room skipped its tick on "$6.72 in the last hour against a $5/hour limit" while tasks were still open and the 5-hour window showed 23%. Two causes: the $/hour cap added up the status-line cost of every session on the machine, not only the project's, and on a subscription that cost is an API-price estimate, not money spent.
   - Under `--here`, the $/hour cap counts only sessions inside that project (API key logins too: the cap is per project).
   - On a subscription without `--usd-per-hour`, the cap is the usage window instead: rooms rest once the newest 5-hour or 7-day reading is at 90% or more, leaving the rest for the owner, and pick up again after the window resets. A reading counts only while it is younger than its window. With no fresh reading (status line off, or no session changed for a whole window), the old $5/hour default still applies. `auto status` shows both readings.

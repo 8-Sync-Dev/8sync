@@ -38,6 +38,7 @@ pub(super) fn snapshot_of(v: &Value) -> Option<Value> {
         "input_tokens": cw["total_input_tokens"].as_u64(),
         "output_tokens": cw["total_output_tokens"].as_u64(),
         "context_pct": pct(&cw["used_percentage"]),
+        "context_size": cw["context_window_size"].as_u64(),
         "five_hour_pct": pct(&v["rate_limits"]["five_hour"]["used_percentage"]),
         "seven_day_pct": pct(&v["rate_limits"]["seven_day"]["used_percentage"]),
     }))
