@@ -1,6 +1,7 @@
 "use client";
 
 import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
+import { roomNow } from "@/lib/now";
 import { matchesSession } from "@/lib/office";
 import { CircleHelpIcon, MenuIcon, SendIcon } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -17,6 +18,7 @@ import { BroadcastComposer } from "./broadcast";
 import { FirstRun } from "./first-run";
 import { Guide, useGuideFirstRun } from "./guide";
 import { Nav, type Scope } from "./nav";
+import { RoomBrief } from "./room-brief";
 import { OfficeView } from "./office-view";
 import { ReportView } from "./report-view";
 import { SessionsView } from "./sessions-view";
@@ -88,7 +90,7 @@ export function HqApp({ token }: { token: string }) {
     ? `${new Set(officeRooms.map((r) => r.project?.root ?? r.cwd)).size} dự án · ${officeRooms.length} phòng`
     : "";
   const scoped = scope.session ? hq.sessions.data.find((x) => isScoped(x, scope.session)) : undefined;
-  const title = scope.session ? (scoped ? sessionLabel(scoped) : shortName(scope.session)) : project ? project.name : "Everything";
+  const title = scope.session ? (scoped ? sessionLabel(scoped) : shortName(scope.session)) : project ? project.name : "Tất cả phòng";
   const subtitle = scope.session
     ? (view.sessions[0]?.cwd ?? project?.path ?? "")
     : project
@@ -120,6 +122,22 @@ export function HqApp({ token }: { token: string }) {
     setTarget(s?.name ?? r.name);
     setTab("room");
   };
+  const goHome = () => {
+    onScope({ project: null, session: null });
+    setTab("office");
+  };
+  /** A folder with no room yet: the office lists it under "Dự án chưa có team" with its Mở team button. */
+  const openFolder = (id: number) => {
+    onScope({ project: id, session: null });
+    setTab("office");
+  };
+  // The room Chat phòng is about: its office row (doing, card, ask) feeds the brief above the timeline.
+  const room = scope.session ? officeRooms.find((r) => matchesSession(r, scope.session) || (scoped != null && (r.name === scoped.name || (scoped.session_id != null && r.session_id === scoped.session_id)))) : undefined;
+  const roomState = room ? roomNow(room, boards.boards ?? [], office.office?.at ?? 0) : null;
+  const openTerminal = () => {
+    const s = room ? hq.sessions.data.find((x) => x.name === room.name || (room.session_id != null && x.session_id === room.session_id)) : undefined;
+    if (s?.tmux) setDrawer(s.name);
+  };
   const liveRooms = hq.sessions.data.filter((s) => s.status !== "ended");
   const openAssign = (session?: string) => setAssign((a) => ({ open: true, session, n: a.n + 1 }));
   const roleOf = (name: string) => hq.sessions.data.find((x) => x.name === name || x.session_id === name)?.role ?? null;
@@ -141,12 +159,12 @@ export function HqApp({ token }: { token: string }) {
     <>
       <div className="grid h-dvh grid-cols-1 grid-rows-1 md:grid-cols-[264px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 border-r border-sidebar-border md:block">
-          <Nav hq={hq} scope={scope} onScope={onScope} rooms={office.office?.rooms} />
+          <Nav hq={hq} scope={scope} office={office} boards={boards.boards ?? []} onHome={goHome} onOpenRoom={openRoom} onOpenFolder={openFolder} />
         </aside>
         <Sheet open={navOpen} onOpenChange={setNavOpen}>
           <SheetContent side="left" className="w-72 p-0 md:hidden" showCloseButton={false}>
-            <SheetTitle className="sr-only">Projects and sessions</SheetTitle>
-            <Nav hq={hq} scope={scope} onScope={onScope} rooms={office.office?.rooms} />
+            <SheetTitle className="sr-only">Dự án và phòng</SheetTitle>
+            <Nav hq={hq} scope={scope} office={office} boards={boards.boards ?? []} onHome={goHome} onOpenRoom={openRoom} onOpenFolder={openFolder} />
           </SheetContent>
         </Sheet>
 
@@ -228,7 +246,9 @@ export function HqApp({ token }: { token: string }) {
                 onTarget={setTarget}
                 onStartSession={focusStartSession}
                 header={
-                  loaded && !liveRooms.length ? (
+                  room && roomState ? (
+                    <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} />
+                  ) : loaded && !liveRooms.length ? (
                     <FirstRun state={firstRun} onAddProject={focusAddProject} onStartSession={focusStartSession} />
                   ) : null
                 }

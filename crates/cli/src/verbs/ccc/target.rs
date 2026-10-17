@@ -117,10 +117,31 @@ pub(super) struct Target {
     /// Head commit the review approved; merge only with `--match-head-commit <sha>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha: Option<String>,
+    /// Priority 0..=3 (P0 most urgent); none counts as P2. Claims take the most urgent free card
+    /// first, queue order within a priority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prio: Option<u8>,
 }
 
 fn is_zero(n: &u32) -> bool {
     *n == 0
+}
+
+/// The priority a card is claimed by: its own, or P2.
+fn rank(t: &Target) -> u8 {
+    t.prio.unwrap_or(2)
+}
+
+/// `P0`..`P3` (or `0`..`3`); `none`/`-` clears it.
+pub(super) fn parse_prio(s: &str) -> Result<Option<u8>> {
+    let v = s.trim().to_ascii_lowercase();
+    if v == "none" || v == "-" {
+        return Ok(None);
+    }
+    match v.strip_prefix('p').unwrap_or(&v).parse::<u8>() {
+        Ok(n) if n <= 3 => Ok(Some(n)),
+        _ => bail!("--prio: P0 (gấp nhất) | P1 | P2 | P3 | none"),
+    }
 }
 
 impl Target {
@@ -319,6 +340,7 @@ pub(super) fn add(
             bounces: 0,
             pr: None,
             sha: None,
+            prio: None,
         };
         if first {
             p.items.insert(0, t.clone());
@@ -405,7 +427,7 @@ pub(super) fn claimable(cards: &[Target], room: &str, lane: &str, now: u64) -> O
     let open = cards.iter().filter(|t| t.state == "open");
     open.clone()
         .find(|t| holder(t, now) == Some(room))
-        .or_else(|| open.clone().find(|t| holder(t, now).is_none() && fits(t, lane, now)))
+        .or_else(|| open.clone().enumerate().filter(|(_, t)| holder(t, now).is_none() && fits(t, lane, now)).min_by_key(|(i, t)| (rank(t), *i)).map(|(_, t)| t))
         .map(|t| t.id)
 }
 
@@ -420,7 +442,9 @@ pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) 
         reap(p, now);
         let mine = p.items.iter().position(|t| t.state == "open" && t.claim.as_ref().is_some_and(|c| c.room == room));
         let free = |t: &Target| t.state == "open" && t.claim.is_none() && fits(t, lane, now);
-        let Some(i) = mine.or_else(|| p.items.iter().position(free)) else { return Ok(None) };
+        // The most urgent free card, queue order within a priority.
+        let first_free = || p.items.iter().enumerate().filter(|(_, t)| free(t)).min_by_key(|(i, t)| (rank(t), *i)).map(|(i, _)| i);
+        let Some(i) = mine.or_else(first_free) else { return Ok(None) };
         let t = &mut p.items[i];
         if t.claim.is_none() && t.lane == "ready" {
             let to = if lane == "qa" { "qa" } else { "building" };
@@ -487,6 +511,20 @@ pub(super) fn move_to(home: &Path, root: &Path, id: u64, to: &str, m: &Move, roo
         }
         t.note(room, &line, now);
         t.claim = None;
+        Ok(t.clone())
+    })
+}
+
+/// `auto prio <id> P0..P3|none` (also `--prio` on add/move): set how urgent an open card is.
+pub(super) fn set_prio(home: &Path, root: &Path, id: u64, prio: Option<u8>, room: Option<&str>, now: u64) -> Result<Target> {
+    edit(home, root, |p| {
+        let Some(t) = p.items.iter_mut().find(|t| t.id == id && t.state == "open") else {
+            bail!("không có card mở #{id} (`8sync ccc auto board`)");
+        };
+        if t.prio != prio {
+            t.prio = prio;
+            t.note(room, &prio.map_or_else(|| "bỏ mức ưu tiên".to_string(), |n| format!("ưu tiên P{n}")), now);
+        }
         Ok(t.clone())
     })
 }
@@ -674,6 +712,38 @@ mod tests {
         assert_eq!(claimable(&c, "dev2", "ready", now), Some(a.id));
         assert_eq!(claim(h, &root, "dev2", "ready", now).unwrap().map(|t| t.id), Some(a.id));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_urgent_card_is_claimed_before_older_ones() {
+        let (d, root) = tmp("prio");
+        let h = d.as_path();
+        let old = put(h, &root, "old", Some("true"), false, None, 0).unwrap();
+        let low = put(h, &root, "low", Some("true"), false, None, 1).unwrap();
+        let hot = put(h, &root, "hot", Some("true"), false, None, 2).unwrap();
+        set_prio(h, &root, low.id, Some(3), Some("lead"), 3).unwrap();
+        let t = set_prio(h, &root, hot.id, Some(0), Some("lead"), 3).unwrap();
+        assert_eq!((t.prio, t.notes.last().unwrap().text.as_str()), (Some(0), "ưu tiên P0"));
+        // P0 first, then the unset (P2) card, and P3 last, whatever the queue order
+        let order: Vec<u64> = (0..3).filter_map(|i| claim(h, &root, &format!("dev{i}"), "ready", 10).unwrap()).map(|t| t.id).collect();
+        assert_eq!(order, [hot.id, old.id, low.id]);
+        assert_eq!(claimable(&list(h, &root).unwrap(), "dev9", "ready", 10), None);
+        // clearing goes back to P2; a closed or unknown card is refused
+        assert_eq!(set_prio(h, &root, low.id, None, None, 11).unwrap().prio, None);
+        assert!(set_prio(h, &root, 99, Some(1), None, 11).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn prio_accepts_p0_to_p3_and_none() {
+        assert_eq!(parse_prio("P0").unwrap(), Some(0));
+        assert_eq!(parse_prio(" p3 ").unwrap(), Some(3));
+        assert_eq!(parse_prio("1").unwrap(), Some(1));
+        assert_eq!(parse_prio("none").unwrap(), None);
+        assert_eq!(parse_prio("-").unwrap(), None);
+        for bad in ["P4", "high", "", "pp1", "-1"] {
+            assert!(parse_prio(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

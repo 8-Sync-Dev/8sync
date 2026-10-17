@@ -43,6 +43,12 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
     if touched.iter().any(|t| t.contains("8sync/ccc/grants")) {
         return Some(decision("deny", "the ship-grant store is written only by the kit's hook from the owner's answer to a \"Ship\" question. Ask that question instead."));
     }
+    // The owner's HQ clicks on permission requests (`ccc hook permit`): a room that wrote its own
+    // "allow" there would approve itself.
+    // The file name too: `cd …/8sync/ccc; echo {} > permit/x.answer.json` never spells the folder path.
+    if touched.iter().any(|t| t.contains("8sync/ccc/permit") || t.contains(".answer.json")) {
+        return Some(decision("deny", "permission answers are written only by the owner's HQ dashboard. If a step needs the owner, note it on the card and do other work."));
+    }
     // Same for the HQ owner inbox (the Stop hook hands it over as the owner's words) and the
     // HQ UI token (it lets a caller post as the owner): only the HQ UI and the hook touch them.
     if touched.iter().any(|t| t.contains("8sync/hq/inbox") || t.contains("8sync/hq/ui-token")) {
@@ -436,6 +442,10 @@ mod tests {
         };
         assert_eq!(forge("Bash", json!({ "command": "echo '{}' > ~/.local/state/8sync/ccc/grants/s1.json" })).as_deref(), Some("deny"));
         assert_eq!(forge("Write", json!({ "file_path": "/home/u/.local/state/8sync/ccc/grants/s1.json", "content": "{}" })).as_deref(), Some("deny"));
+        // A room must not click "allow" on its own permission request (ccc hook permit).
+        assert_eq!(forge("Write", json!({ "file_path": "C:\\Users\\u\\.local\\state\\8sync\\ccc\\permit\\s1.answer.json", "content": "{}" })).as_deref(), Some("deny"));
+        assert_eq!(forge("PowerShell", json!({ "command": "Set-Content ~/.local/state/8sync/ccc/permit/s1.answer.json '{}'" })).as_deref(), Some("deny"));
+        assert_eq!(forge("Bash", json!({ "command": "cd ~/.local/state/8sync/ccc && echo '{}' > permit/s1.answer.json" })).as_deref(), Some("deny"));
         let tr = std::env::temp_dir().join(format!("8sync-guard-transcript-{}.jsonl", std::process::id()));
         let _ = std::fs::remove_file(&tr);
         let run = |session: &str, cmd: &str| {

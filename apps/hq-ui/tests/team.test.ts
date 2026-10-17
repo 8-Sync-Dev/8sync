@@ -54,6 +54,7 @@ describe("team", () => {
     expect(teamArgs("up")).toEqual(["ccc", "auto", "up"]);
     expect(teamArgs("clean")).toEqual(["ccc", "auto", "up", "--clear-ss"]);
     expect(teamArgs("down")).toEqual(["ccc", "auto", "down"]);
+    expect(teamArgs("full")).toEqual(["ccc", "auto", "up", "--roles", "full"]);
     expect(tail("\x1b[1mone\x1b[0m\n\n two \n")).toBe("one\n two ");
   });
 

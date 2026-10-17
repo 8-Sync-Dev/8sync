@@ -3,15 +3,19 @@
 import { stripAnsi } from "./pane";
 import { run } from "./proc";
 
-export type TeamAction = "up" | "clean" | "down";
+export type TeamAction = "up" | "full" | "clean" | "down";
 
-/** `up` opens or resumes the rooms; `clean` first deletes the background sessions no room keeps. */
+/**
+ * `up` opens or resumes the 5-room team; `full` the 8-room product team (`--roles full`); `clean`
+ * first deletes the background sessions no room keeps and restarts rooms that run an older kit.
+ */
 export function teamArgs(action: TeamAction): string[] {
   if (action === "down") return ["ccc", "auto", "down"];
+  if (action === "full") return ["ccc", "auto", "up", "--roles", "full"];
   return ["ccc", "auto", "up", ...(action === "clean" ? ["--clear-ss"] : [])];
 }
 
-export const isTeamAction = (v: unknown): v is TeamAction => v === "up" || v === "clean" || v === "down";
+export const isTeamAction = (v: unknown): v is TeamAction => v === "up" || v === "full" || v === "clean" || v === "down";
 
 /** Starting four background sessions takes a while; stopping them is quick. */
 const TIMEOUT_MS = 180_000;

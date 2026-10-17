@@ -42,7 +42,7 @@ function WorkingMark() {
   );
 }
 
-function StateTag({ n }: { n: RoomNow }) {
+export function StateTag({ n }: { n: RoomNow }) {
   const Icon = n.state === "working" ? null : STATE_ICON[n.state];
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-1.5 text-[13px] font-medium", STATE_INK[n.state])}>

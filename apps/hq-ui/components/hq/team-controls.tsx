@@ -7,17 +7,28 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { makeApi } from "./use-hq";
 
-type Action = "up" | "clean" | "down";
+type Action = "up" | "full" | "clean" | "down";
 type Result = { ok: boolean; output: string; error: string | null };
 
-const DONE: Record<Action, string> = { up: "Đã mở team", clean: "Đã dọn session rác và mở team", down: "Đã dừng team" };
+const DONE: Record<Action, string> = {
+  up: "Đã mở team",
+  full: "Đã mở team đầy đủ",
+  clean: "Đã dọn session rác, nạp bản mới và mở team",
+  down: "Đã dừng team",
+};
+const OPENING: Record<Action, string> = {
+  up: "lead, dev, qa, review, rd",
+  full: "8 phòng: lead, ba, rd, dev, dev2, ui, qa, review",
+  clean: "dọn rác, khởi động lại phòng chạy bản cũ",
+  down: "",
+};
 
 /** POST /api/team and say what happened; `after` refreshes the office and the board. */
 function useTeam(token: string, after?: () => void) {
   const [busy, setBusy] = useState<Action | null>(null);
   async function act(root: string, name: string, action: Action) {
     setBusy(action);
-    const wait = toast.loading(action === "down" ? `Đang dừng team ${name}…` : `Đang mở team ${name} (lead, dev, qa, review)…`);
+    const wait = toast.loading(action === "down" ? `Đang dừng team ${name}…` : `Đang mở team ${name} (${OPENING[action]})…`);
     try {
       const r = await makeApi(token)<Result>("/api/team", { method: "POST", body: { root, action } });
       toast.success(`${DONE[action]}: ${name}`, { id: wait, description: <pre className="mt-1 max-h-48 overflow-auto text-[11px] leading-snug whitespace-pre-wrap">{r.output}</pre> });
@@ -40,8 +51,11 @@ export function TeamControls({ root, name, token, after }: { root: string; name:
       <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(root, name, "up")} title="Mở phòng còn thiếu, nối lại phòng đã dừng (8sync ccc auto up)">
         <PlayIcon aria-hidden /> Mở lại team
       </Button>
-      <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("clean")} title="Xoá session nền không thuộc phòng nào rồi mở team (auto up --clear-ss)">
+      <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("clean")} title="Xoá session nền rác, khởi động lại phòng đang chạy bản cũ, rồi mở team (auto up --clear-ss)">
         <SparklesIcon aria-hidden /> Dọn & mở lại
+      </Button>
+      <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("full")} title="8 phòng: lead, ba, rd, dev, dev2, ui, qa, review (auto up --roles full)">
+        <UsersIcon aria-hidden /> Team đầy đủ
       </Button>
       <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("down")} title="Dừng các phòng nền, giữ hội thoại (auto down)">
         <SquareIcon aria-hidden /> Dừng team
@@ -49,11 +63,13 @@ export function TeamControls({ root, name, token, after }: { root: string; name:
       <Dialog open={ask != null} onOpenChange={(o) => !o && setAsk(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{ask === "down" ? `Dừng team ${name}?` : `Dọn session rác của ${name}?`}</DialogTitle>
+            <DialogTitle>{ask === "down" ? `Dừng team ${name}?` : ask === "full" ? `Mở team đầy đủ cho ${name}?` : `Dọn và nạp bản mới cho ${name}?`}</DialogTitle>
             <DialogDescription>
               {ask === "down"
-                ? "Các phòng nền (lead, dev, qa, review) dừng lại, hội thoại vẫn giữ. Bấm “Mở lại team” để chạy tiếp từ chỗ cũ."
-                : "Xoá các session nền của dự án mà không phòng nào giữ, rồi mở lại team. Session có worktree còn thay đổi chưa commit được giữ lại, không mất code."}
+                ? "Các phòng nền dừng lại, hội thoại vẫn giữ. Bấm “Mở lại team” để chạy tiếp từ chỗ cũ."
+                : ask === "full"
+                  ? "8 phòng chạy nền: lead và ba viết card, rd nghiên cứu, dev, dev2 và ui làm, qa kiểm, review duyệt. Mỗi phòng là một session riêng nên tốn quota gần gấp 8 lần một session; tới 90% cửa sổ 5 giờ/7 ngày thì cả team tự nghỉ."
+                  : "Xoá session nền của dự án mà không phòng nào giữ, khởi động lại phòng đang chạy bản 8sync cũ (giữ hội thoại), rồi mở team. Session có worktree còn thay đổi chưa commit được giữ lại, không mất code."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -69,7 +85,7 @@ export function TeamControls({ root, name, token, after }: { root: string; name:
                 void act(root, name, a);
               }}
             >
-              {ask === "down" ? "Dừng team" : "Dọn và mở lại"}
+              {ask === "down" ? "Dừng team" : ask === "full" ? "Mở 8 phòng" : "Dọn và mở lại"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -100,10 +116,15 @@ export function TeamStarter({ projects, token, after }: { projects: { path: stri
             <Button type="button" size="sm" disabled={busy != null} onClick={() => void act(p.path, p.name, "up")}>
               <PlayIcon aria-hidden /> Mở team
             </Button>
+            <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(p.path, p.name, "full")} title="8 phòng, tốn quota gần gấp 8 lần một session">
+              <UsersIcon aria-hidden /> Team đầy đủ
+            </Button>
           </li>
         ))}
       </ul>
-      <p className="text-xs text-muted-foreground">Mở 4 phòng nền: lead viết card, dev làm, qa kiểm, review duyệt. Thêm thư mục khác ở mục Projects bên trái.</p>
+      <p className="max-w-[75ch] text-xs text-muted-foreground text-pretty">
+        Mở team: 5 phòng nền (lead viết card, dev làm, qa kiểm, review duyệt, rd nghiên cứu). Team đầy đủ: thêm ba, dev2, ui (8 phòng). Thêm thư mục khác ở mục Projects bên trái.
+      </p>
     </section>
   );
 }

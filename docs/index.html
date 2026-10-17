@@ -296,6 +296,16 @@
     .term pre { margin: 0; padding: 1.1rem 1.2rem 1.25rem; overflow-x: auto; font-family: var(--mono); font-size: 0.8rem; line-height: 1.75; color: var(--ink); tab-size: 2; }
     .term .c { color: var(--ink-3); }
     .term .p { color: var(--violet); user-select: none; }
+    /* One project folder, in order: a real sequence, so the numbers carry the order. */
+    .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+    .step { counter-increment: step; display: grid; grid-template-columns: 2.1rem minmax(0, 1fr); column-gap: 1rem; padding: 1.1rem 0; border-top: 1px solid var(--line-soft); }
+    .step:first-child { border-top: 0; padding-top: 0; }
+    .step::before { content: counter(step); width: 2.1rem; height: 2.1rem; border-radius: 50%; display: grid; place-items: center; background: var(--bg-raised); border: 1px solid var(--line); color: var(--violet); font-family: var(--mono); font-size: 0.85rem; font-weight: 600; }
+    .step h3 { margin: 0.3rem 0 0; font-size: 1.02rem; color: var(--ink); text-wrap: balance; }
+    .step p { margin: 0.45rem 0 0; color: var(--ink-2); font-size: 0.93rem; max-width: 62ch; }
+    .step p.alt { font-size: 0.84rem; color: var(--ink-3); }
+    .step b { color: var(--ink); font-weight: 600; }
+    .step .code-line { margin-top: 0.55rem; }
     .rooms { list-style: none; margin: 0 0 1.75rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
     .room { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.8rem; border: 1px solid var(--line); border-radius: 999px; font-size: 0.9rem; color: var(--ink-2); background: var(--bg-raised); }
     .room b { color: var(--ink); font-family: var(--mono); font-size: 0.85rem; font-weight: 600; }
@@ -601,26 +611,46 @@
       </figure>
 
       <div class="team-grid">
-        <div class="term">
-          <div class="term-head">
-            <span>one command, then buttons</span>
-            <button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button>
-          </div>
-<pre><code><span class="p">$ </span>8sync hq ui
-
-<span class="c"># the rest is a button in HQ (localhost:8740)</span>
-<span class="c"># Mở team          lead, dev, qa, review as background rooms</span>
-<span class="c"># Giao việc        a card, done when its check exits 0</span>
-<span class="c"># Anh cần trả lời  the question a room waits on + Mở terminal</span>
-<span class="c"># Board            cards by lane, what waits for your Ship</span>
-<span class="c"># Dừng team        stop the rooms, keep their conversations</span>
-
-<span class="c"># the same steps from a terminal, if you prefer</span>
-<span class="p">$ </span>8sync ccc auto up --clear-ss
-<span class="p">$ </span>8sync ccc auto add "fix login refresh" --check "pnpm test auth"
-<span class="p">$ </span>8sync ccc auto board
-<span class="p">$ </span>8sync ccc auto down</code></pre>
-        </div>
+        <ol class="steps" aria-label="One project folder, in order">
+          <li class="step"><div>
+            <h3>Install 8sync once</h3>
+            <div class="code-line">
+              <code>curl -fsSL https://get.8syncdev.com/install | sh</code>
+              <button class="copy" type="button" data-copy="curl -fsSL https://get.8syncdev.com/install | sh" aria-label="Copy the install command">Copy</button>
+            </div>
+            <p>Windows PowerShell: <code>irm https://get.8syncdev.com/install.ps1 | iex</code>. Claude Code must be logged in.</p>
+          </div></li>
+          <li class="step"><div>
+            <h3>Open HQ</h3>
+            <div class="code-line">
+              <code>8sync hq ui</code>
+              <button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button>
+            </div>
+            <p>From any folder. Keep that terminal open; the page is <code>127.0.0.1:8740</code>. After <code>8sync up</code>, press Ctrl-C and run it again to load the new page.</p>
+          </div></li>
+          <li class="step"><div>
+            <h3>Add your project folder</h3>
+            <p>In HQ, <b>Projects</b> → paste the repo path, for example <code>C:\code\my-app</code>. One folder is one team and one board. The first time, open <code>claude</code> in that folder once and accept the trust question.</p>
+          </div></li>
+          <li class="step"><div>
+            <h3>Start the team</h3>
+            <p>Press <b lang="vi">Mở team</b> next to the project: lead, dev, qa, review and rd start as background sessions in that folder.</p>
+            <p class="alt">Terminal: <code>cd my-app</code> then <code>8sync ccc auto up --clear-ss</code></p>
+          </div></li>
+          <li class="step"><div>
+            <h3>Give it work</h3>
+            <p>Press <b lang="vi">Giao việc</b>, write the task and the command that proves it done. The lead turns it into cards; the board shows each one moving.</p>
+            <p class="alt">Terminal: <code>8sync ccc auto add "fix login refresh" --check "pnpm test auth"</code></p>
+          </div></li>
+          <li class="step"><div>
+            <h3>Answer only what needs you</h3>
+            <p><b lang="vi">Anh cần trả lời</b> at the top of the office lists every question and permission request. Click an answer, or stay silent: after 60 s product questions get the critic's pick and permission requests proceed when they are safe work inside the folder. Merges, releases, secrets and anything outside the folder always wait for you.</p>
+          </div></li>
+          <li class="step"><div>
+            <h3>Update or stop</h3>
+            <p>After <code>8sync up</code>, press <b lang="vi">Dọn &amp; mở lại</b> (or <code>auto up --clear-ss</code>): running rooms restart on the new version and keep their conversations. <b lang="vi">Dừng team</b> stops them (<code>8sync ccc auto down</code>).</p>
+          </div></li>
+        </ol>
         <div>
           <ul class="rooms" data-anim="sweep" aria-label="Rooms, their model and what each does">
             <li class="room" style="--i:0"><i aria-hidden="true"></i><b>lead</b> Opus, writes the check</li>

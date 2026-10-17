@@ -102,7 +102,7 @@ pub(super) fn after_s(home: &Path) -> u64 {
 
 /// Pure: with a threshold, the owner counts as away only when their last typed prompt is known and
 /// at least `after` seconds old.
-fn owner_away(after: u64, last_human: Option<u64>, now: u64) -> bool {
+pub(super) fn owner_away(after: u64, last_human: Option<u64>, now: u64) -> bool {
     after == 0 || last_human.is_some_and(|t| now.saturating_sub(t) >= after)
 }
 

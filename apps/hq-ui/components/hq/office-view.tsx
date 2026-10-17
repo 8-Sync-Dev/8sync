@@ -401,12 +401,14 @@ export function OfficeView({
     [rooms, boards.boards, now],
   );
   const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
-  // Rooms stopped on the owner, in roster order (the longest wait is not reordered away).
+  // Rooms stopped on the owner, in roster order (the longest wait is not reordered away), plus rooms
+  // whose permission hook is counting down for the owner's click (Claude Code shows them as busy).
   const asking: AskRoom[] = useMemo(
     () =>
       rows.flatMap((n) => {
-        const r = n.state === "needs" ? rooms.find((x) => x.key === n.key) : undefined;
-        return r ? [{ key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting: r.waiting, ask: r.ask, tmux: r.delivery === "terminal" }] : [];
+        const r = rooms.find((x) => x.key === n.key);
+        if (!r || (n.state !== "needs" && !r.permit)) return [];
+        return [{ key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting: r.waiting, ask: r.ask, permit: r.permit, tmux: r.delivery === "terminal" }];
       }),
     [rows, rooms],
   );

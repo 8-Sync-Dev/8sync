@@ -36,6 +36,7 @@ mod idle;
 mod looper;
 mod meet;
 mod output_budget;
+mod permit;
 pub(crate) mod report;
 mod risk;
 mod secret;
@@ -470,7 +471,13 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     let has = |id: &str| transcripts(env, id).next().is_some();
     let sessions_dir = claude_dir(env).join("sessions");
     let title = |n: &str| display_name(&sessions_dir, n, root);
-    let t = team::Team { home: &env.home, root, store: &store, subscription, claude: &bin, has_transcript: &has, title: &title };
+    // The kit writes its hooks into settings.json: rooms that started before that run old hooks.
+    let kit_at = std::fs::metadata(claude_dir(env).join("settings.json"))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64);
+    let t = team::Team { home: &env.home, root, store: &store, subscription, claude: &bin, has_transcript: &has, title: &title, kit_at };
     if rest[0] == "down" {
         if let Some(x) = rest.get(1) {
             bail!("không rõ `{x}`\n{}", team::USAGE);
@@ -1094,6 +1101,13 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
         hooks,
         "PreToolUse",
         json!({ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "delegate"], "timeout": 5 }] }),
+    );
+    // A permission prompt in a room the owner is away from: wait for the owner's HQ click, then deny
+    // with a "skip it, note the card, go on" message. A no-op unless auto + delegate are on.
+    upsert_hook_group(
+        hooks,
+        "PermissionRequest",
+        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "permit"], "timeout": permit::HOOK_TIMEOUT_S }] }),
     );
     // The guard stays on the broad matcher with no `if`: the hook `if` field takes
     // a single permission rule, and narrowing it would let some commands/edits
@@ -1935,12 +1949,14 @@ fn hook(rest: &[String]) -> Result<()> {
             })
         }
         Some("delegate") => dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| delegate::hook(&input, &h)),
+        // PermissionRequest: an away owner's room gets the owner's HQ click, or a deny that keeps it working.
+        Some("permit") => dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| permit::hook(&input, &h)),
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|wake   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|permit|wake   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -2120,6 +2136,10 @@ mod tests {
         let post = v["hooks"]["PostToolUse"].as_array().unwrap();
         assert_eq!(post.len(), 5, "user hook kept, ours replaced in place, watchdog + hq SendMessage + ship-grant appended");
         assert!(post.iter().any(|g| g["matcher"] == "AskUserQuestion" && g["hooks"][0]["args"] == json!(["ccc", "hook", "ship-grant"])));
+        // An away owner's room never sits on a permission prompt; the wait for the HQ click fits the timeout.
+        let permit = &v["hooks"]["PermissionRequest"][0]["hooks"][0];
+        assert_eq!(permit["args"], json!(["ccc", "hook", "permit"]));
+        assert!(permit["timeout"].as_u64().unwrap() > permit::WAIT_MAX_S);
         assert_eq!(post[0]["hooks"][0]["command"], "prettier");
         assert_eq!(post[1]["hooks"][0]["command"], "/new/8sync");
         assert_eq!(post[1]["hooks"][0]["asyncRewake"], true, "edits never wait for the check");

@@ -8,23 +8,22 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 
 ## Auto mạnh nhất, bản ngắn
 
-**Chỉ cần một lệnh, còn lại bấm nút trên web:**
+**Một thư mục dự án, làm theo thứ tự. Chỉ bước 1 cần gõ lệnh, còn lại bấm nút trên web:**
 
-```bash
-8sync hq ui                      # mở http://127.0.0.1:8740
-```
+| # | Làm gì | Trong HQ | Hoặc lệnh trong terminal |
+|---|---|---|---|
+| 1 | Mở HQ (để nguyên terminal đó) | — | `8sync hq ui` → http://127.0.0.1:8740 |
+| 2 | Thêm thư mục repo. Lần đầu: mở `claude` trong thư mục đó một lần, chấp nhận câu hỏi trust | **Projects** → dán đường dẫn | — |
+| 3 | Mở team: lead, dev, qa, review, rd chạy nền trong thư mục đó | **Mở team** (hoặc **Team đầy đủ**: 8 phòng, thêm ba, dev2, ui) | `cd du-an && 8sync ccc auto up` (`--roles full`) |
+| 4 | Giao việc: viết việc + lệnh chứng minh xong (exit 0) | **Giao việc** góc trên | `8sync ccc auto add "<việc>" --check "<lệnh>"` |
+| 5 | Theo dõi card đi qua các cột; việc gấp thì đặt ưu tiên (P0 gấp nhất, phòng nhận trước) | tab **Board** → bấm card → chọn P0/P1/P2/P3 | `8sync ccc auto board` · `8sync ccc auto prio <id> P0` |
+| 6 | Trả lời việc cần anh. Im lặng 60 s: câu sản phẩm/kỹ thuật thì critic (Opus) chọn, xin quyền thì việc an toàn trong repo tự chạy tiếp; merge/release/secret/ngoài repo luôn chờ anh | khung **Anh cần trả lời** đầu trang: chọn đáp án, **Cho phép / Từ chối**, hoặc **Mở terminal để trả lời** | `claude attach <id>` |
+| 7 | Sau `8sync up`: cho cả team chạy bản mới (giữ hội thoại) | **Dọn & mở lại** | `8sync ccc auto up --clear-ss` |
+| 8 | Dừng team (giữ hội thoại) | **Dừng team** | `8sync ccc auto down` |
 
-| Muốn làm | Trong HQ | Lệnh tương đương |
-|---|---|---|
-| Mở cả team (lead, dev, qa, review chạy nền) | Projects → thêm thư mục → **Mở team** (Văn phòng) | `8sync ccc auto up` |
-| Dọn session rác rồi mở lại | **Dọn & mở lại** cạnh tên dự án | `8sync ccc auto up --clear-ss` |
-| Giao card (đạt khi lệnh check exit 0) | **Giao việc** góc trên | `8sync ccc auto add "<việc>" --check "<lệnh>"` |
-| Xem card theo cột | tab **Board** → Card dự án | `8sync ccc auto board` |
-| Phòng đang hỏi anh | khung **Anh cần trả lời** đầu trang: câu hỏi + các lựa chọn → **Mở terminal để trả lời**, gõ số rồi Enter | `claude attach <id>` |
-| Dừng team (giữ hội thoại) | **Dừng team** | `8sync ccc auto down` |
-| Tạm dừng / chạy tiếp auto | nút **Tạm dừng / Chạy** trên cùng | `8sync ccc auto pause` / `on` |
+Tạm dừng / chạy tiếp auto: nút **Tạm dừng / Chạy** trên cùng (`8sync ccc auto pause` / `on`).
 
-- `--clear-ss` xoá trước mọi session nền rác của dự án: bản trùng phòng, sót từ lần chạy trước, phòng đã bỏ. Không đụng session interactive anh đang mở; session có commit chưa push thì Claude Code giữ lại và 8sync báo lý do.
+- `--clear-ss` xoá trước mọi session nền rác của dự án: bản trùng phòng, sót từ lần chạy trước, phòng đã bỏ. Nó cũng khởi động lại phòng nền đang chạy bản kit cũ (Claude Code chỉ đọc hook lúc session mở), giữ nguyên hội thoại. Không đụng session interactive anh đang mở; session có thay đổi chưa commit/push thì Claude Code giữ lại và 8sync báo lý do.
 - Phòng đang chạy chỉ nhận loop mới; phòng đã dừng thì chạy lại nền với đúng id cũ. Lần đầu ở repo mới: mở `claude` ở đó một lần và chấp nhận câu hỏi trust.
 - Vào xem một phòng: `claude attach <id>` (id 8 ký tự in ra khi `auto up`), log: `claude logs <id>`.
 
@@ -223,7 +222,7 @@ Dữ liệu nằm ở `~/.local/state/8sync/hq/` (SQLite, quyền 0600), chỉ t
   - Phòng chưa nạp mod inbox nhận yêu cầu khi xong lượt kế.
 - **Giao đích cho cả team (hàng chờ như khi gõ lúc agent bận)**:
   - `8sync ccc auto on --here --loop 10m --team --target "<đích>" --check "<lệnh kiểm>"`: bật auto kèm đích đầu hàng.
-  - `8sync ccc auto add "<việc>" [--check "<lệnh>"]`: thêm vào cuối hàng.
+  - `8sync ccc auto add "<việc>" [--check "<lệnh>"] [--prio P0..P3]`: thêm vào cuối hàng. Card có `--prio P0` được phòng nhận trước mọi card khác (chưa đặt = P2; đổi sau bằng `8sync ccc auto prio <id> P1`).
   - `8sync ccc auto add --now "<việc>"`: giống `ctrl+x ctrl+s` của Claude Code nhưng cho cả dự án. Việc lên đầu hàng và vào inbox mọi phòng; phòng nhận ngay khi rảnh, lượt đang chạy không bị cắt ngang.
   - Trong phòng nào cũng chỉ cần gõ "đưa vào loop: …" hoặc "làm ngay: …", Claude tự chạy lệnh trên (luật kit).
   - Mỗi nhịp, mọi phòng làm phần hợp vai cho đích đầu hàng: lead chia việc, dev `/ship`, qa chạy `check`, reviewer review, rd gỡ chỗ kẹt. Đạt (lệnh `check` exit 0, hoặc có bằng chứng chạy được) thì một phòng chạy `8sync ccc auto done <id> --evidence "<lệnh: kết quả>"` và cả team sang đích kế. Hết hàng thì quay về `.claude/loop.md` (`STATE.md` Next).

@@ -12,6 +12,7 @@ import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type Project
 import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
 import { readAsk } from "./ask";
 import { loadFloor } from "./floor";
+import { readPermits, type Permit } from "./permit";
 import { readIdleStatus } from "./idle";
 import { inboxLive, pendingInbox } from "./inbox";
 import { stateDir } from "./paths";
@@ -94,6 +95,8 @@ export type Room = {
   waiting: string | null;
   /** What it asks the owner (its transcript's open AskUserQuestion / permission prompt), only while waiting. */
   ask: Ask | null;
+  /** A permission request waiting for the owner's click while the room's hook counts down (`ccc hook permit`). */
+  permit: Permit | null;
   cwd: string | null;
   project: ProjectInfo | null;
   delivery: "terminal" | "inbox" | null;
@@ -200,6 +203,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     "SELECT agent_id, agent_type, started_at, ended_at FROM agents WHERE session IN (?, ?) AND (ended_at IS NULL OR ended_at > ?) ORDER BY started_at DESC LIMIT 40",
   );
   const tasksQ = db.prepare("SELECT status, COUNT(*) AS n FROM tasks WHERE session IN (?, ?) GROUP BY status");
+  const permits = readPermits(now);
   const rooms: Room[] = live.map((s) => {
     const sid = s.session_id ?? (SAFE_ID.test(s.name) && !s.name.startsWith("hq-") ? s.name : null);
     const f =
@@ -222,6 +226,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       status: s.status,
       waiting: (s as SessionView & { waiting?: string | null }).waiting ?? null,
       ask: s.status === "needs_input" && sid ? readAsk(sid, s.cwd) : null,
+      permit: (sid && permits.find((p) => p.session === sid)) || null,
       cwd: s.cwd,
       project: projectOf(s.cwd, now),
       delivery: deliveryOf(s),

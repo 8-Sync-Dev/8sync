@@ -35,8 +35,15 @@ const fn r(keys: &'static [&'static str], name: &'static str, duty: &'static str
 }
 
 /// The team `auto up` opens by default: a lead triages, one builder, one tester, one reviewer
-/// (super-board's Builder, Tester and Reviewer lanes plus the orchestrator).
-pub(super) const DEFAULT_TEAM: [&str; 4] = ["lead", "dev", "qa", "review"];
+/// (super-board's Builder, Tester and Reviewer lanes plus the orchestrator), and an R&D room that
+/// researches what blocks the board (no lane: its loop). The site and README name all five
+/// (owner 2026-10-17: "team nhiều mà team này thấy thiếu").
+pub(super) const DEFAULT_TEAM: [&str; 5] = ["lead", "dev", "qa", "review", "rd"];
+
+/// `auto up --roles full` (HQ "Team đầy đủ"): a whole product team, the 8-room cap. A BA writes
+/// cards beside the lead, two builders and a UI/UX room take ready cards. Each room is its own
+/// Claude Code session, so this spends quota about 8× a single session; the 90% rest still applies.
+pub(super) const FULL_TEAM: [&str; 8] = ["lead", "ba", "rd", "dev", "dev2", "ui", "qa", "review"];
 
 /// In match order. "qc" is a tester here, as Vietnamese teams use the word.
 const ROLES: [Role; 12] = [
@@ -217,7 +224,7 @@ mod tests {
     #[test]
     fn the_default_team_covers_every_lane_with_a_model() {
         let lanes: Vec<_> = DEFAULT_TEAM.iter().map(|n| find(n).and_then(|r| r.lane)).collect();
-        assert_eq!(lanes, [Some("backlog"), Some("ready"), Some("qa"), Some("review")]);
+        assert_eq!(lanes, [Some("backlog"), Some("ready"), Some("qa"), Some("review"), None], "rd researches on its loop, no lane");
         let models: Vec<_> = ["lead", "ba", "rd", "dev", "qa", "review"].iter().map(|n| find(n).and_then(|r| r.model)).collect();
         assert_eq!(models, [Some("opus"), Some("opus"), Some("opus"), Some("sonnet"), Some("haiku"), Some("sonnet")]);
         assert!(find("acoleads").is_none());
