@@ -38,7 +38,7 @@ for k in ship ship-auto ship-loop autopilot; do
 done
 grep -qF '"claude/skills/sprint/SKILL.md"' crates/cli/src/verbs/ccc.rs && ok "kit installs sprint" || bad "sprint not in KIT_FILES"
 grep -A1 '^const CORE_SKILLS' crates/cli/src/verbs/ccc.rs | grep -qF '"sprint"' && ok "sprint is a core skill" || bad "sprint not in CORE_SKILLS"
-grep -qF 'ccc standup' assets/claude/CLAUDE.md && ok "kit CLAUDE.md mentions standup" || bad "kit CLAUDE.md"
+grep -qF 'ccc standup' assets/configs/claude/CLAUDE.md && ok "kit CLAUDE.md mentions standup" || bad "kit CLAUDE.md"
 
 [ $fail = 0 ] && echo "ALL PASS" || echo "SOME FAILED"
 exit $fail

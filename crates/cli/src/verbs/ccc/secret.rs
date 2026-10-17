@@ -213,7 +213,7 @@ mod tests {
         assert!(provider_cmd("encore", "X", &[]).is_err());
         assert_eq!(provider_cmd("vercel", "X", &s(&["--env", "production"])).unwrap().join(" "), "vercel env add X production");
         assert!(provider_cmd("vercel", "X", &s(&["--env", "production,preview"])).is_err());
-        assert_eq!(provider_cmd("gh", "X", &s(&["--repo", "8-Sync-Dev/su-code"])).unwrap().join(" "), "gh secret set X --repo 8-Sync-Dev/su-code");
+        assert_eq!(provider_cmd("gh", "X", &s(&["--repo", "8-Sync-Dev/8sync"])).unwrap().join(" "), "gh secret set X --repo 8-Sync-Dev/8sync");
         assert!(provider_cmd("gh", "X", &s(&["--repo", "a;rm -rf /"])).is_err());
         assert!(provider_cmd("curl", "X", &[]).is_err());
         assert!(!valid_name("A B") && !valid_name("1A") && !valid_name("A;B") && valid_name("PAYOS_API_KEY"));

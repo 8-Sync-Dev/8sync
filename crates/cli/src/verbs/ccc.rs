@@ -642,17 +642,17 @@ const KIT_FILES: [(&str, &str); 40] = [
     ("skills/deep-research/references/binary-weight-audit.md", "skills/deep-research/references/binary-weight-audit.md"),
     // Mod `8sync-hints` (Claude Code function hooks): a plugin folder under ~/.claude/skills is
     // auto-loaded, so this is all it takes for ghost text + typeahead + the band above the prompt.
-    ("claude/skills/8sync-hints/.claude-plugin/plugin.json", "skills/8sync-hints/.claude-plugin/plugin.json"),
-    ("claude/skills/8sync-hints/hooks/hooks.json", "skills/8sync-hints/hooks/hooks.json"),
-    ("claude/skills/8sync-hints/hooks/register.tsx", "skills/8sync-hints/hooks/register.tsx"),
-    ("claude/skills/8sync-hints/hooks/hint.ts", "skills/8sync-hints/hooks/hint.ts"),
-    ("claude/skills/8sync-hints/types/index.d.ts", "skills/8sync-hints/types/index.d.ts"),
+    ("configs/claude/mods/8sync-hints/.claude-plugin/plugin.json", "skills/8sync-hints/.claude-plugin/plugin.json"),
+    ("configs/claude/mods/8sync-hints/hooks/hooks.json", "skills/8sync-hints/hooks/hooks.json"),
+    ("configs/claude/mods/8sync-hints/hooks/register.tsx", "skills/8sync-hints/hooks/register.tsx"),
+    ("configs/claude/mods/8sync-hints/hooks/hint.ts", "skills/8sync-hints/hooks/hint.ts"),
+    ("configs/claude/mods/8sync-hints/types/index.d.ts", "skills/8sync-hints/types/index.d.ts"),
     // Mod `8sync-inbox`: hands the owner's HQ tasks to an idle session (`8sync ccc inbox`); the
     // Stop hook alone only delivered them when a turn ended, so an idle session never got them.
-    ("claude/skills/8sync-inbox/.claude-plugin/plugin.json", "skills/8sync-inbox/.claude-plugin/plugin.json"),
-    ("claude/skills/8sync-inbox/hooks/hooks.json", "skills/8sync-inbox/hooks/hooks.json"),
-    ("claude/skills/8sync-inbox/hooks/register.ts", "skills/8sync-inbox/hooks/register.ts"),
-    ("claude/skills/8sync-inbox/hooks/inbox.ts", "skills/8sync-inbox/hooks/inbox.ts"),
+    ("configs/claude/mods/8sync-inbox/.claude-plugin/plugin.json", "skills/8sync-inbox/.claude-plugin/plugin.json"),
+    ("configs/claude/mods/8sync-inbox/hooks/hooks.json", "skills/8sync-inbox/hooks/hooks.json"),
+    ("configs/claude/mods/8sync-inbox/hooks/register.ts", "skills/8sync-inbox/hooks/register.ts"),
+    ("configs/claude/mods/8sync-inbox/hooks/inbox.ts", "skills/8sync-inbox/hooks/inbox.ts"),
 ];
 
 /// Files an earlier kit installed and this one dropped: deleted while they are
@@ -871,7 +871,7 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<(
 
     let rules = crate::verbs::harness::cbm::gate(
         &env.home,
-        &assets::read("claude/CLAUDE.md").context("asset missing: claude/CLAUDE.md")?,
+        &assets::read("configs/claude/CLAUDE.md").context("asset missing: configs/claude/CLAUDE.md")?,
     );
     crate::verbs::harness::memory::upsert_block(&dir.join("CLAUDE.md"), CLAUDE_MD_BEGIN, CLAUDE_MD_END, rules.trim_end())?;
 
@@ -1562,7 +1562,7 @@ fn fnv1a(s: &str) -> String {
 /// Marketplaces a managed policy lets people add: the official Anthropic one and 8sync's own
 /// (the kit plugin). `github` source shape: settings-reference#strictknownmarketplaces
 /// (https://code.claude.com/docs/en/settings-reference).
-const POLICY_MARKETPLACES: [&str; 2] = ["anthropics/claude-plugins-official", "8-Sync-Dev/su-code"];
+const POLICY_MARKETPLACES: [&str; 3] = ["anthropics/claude-plugins-official", "8-Sync-Dev/8sync", "8-Sync-Dev/su-code"];
 /// MCP servers the kit mirrors from omp's config (see `mirror_mcp`).
 const POLICY_MCP: [&str; 2] = ["codebase-memory-mcp", "serena"];
 
@@ -2344,7 +2344,9 @@ mod tests {
         assert_eq!(p["forceLoginMethod"], "claudeai");
         assert_eq!(p["sandbox"]["enabled"], true);
         assert_eq!(p["channelsEnabled"], true);
-        assert!(p["strictKnownMarketplaces"].as_array().unwrap().iter().any(|m| m["repo"] == "8-Sync-Dev/su-code"));
+        let markets = p["strictKnownMarketplaces"].as_array().unwrap();
+        // The old repo name stays allowed so machines that added the marketplace before the rename keep working.
+        assert!(["8-Sync-Dev/8sync", "8-Sync-Dev/su-code"].iter().all(|r| markets.iter().any(|m| m["repo"] == *r)));
         // Keys that need an opt-in stay out of the default.
         assert!(p.get("allowManagedHooksOnly").is_none() && p.get("hooks").is_none());
         // MCP lock is opt-in so the Discord Channels plugin server is not blocked.
@@ -2558,7 +2560,7 @@ mod tests {
         let dir = tmp.join("claude");
         install_kit_at(&env, &dir, false, true).unwrap();
         let reg = std::fs::read_to_string(dir.join("skills/8sync-inbox/hooks/register.ts")).unwrap();
-        assert_eq!(reg, assets::read("claude/skills/8sync-inbox/hooks/register.ts").unwrap());
+        assert_eq!(reg, assets::read("configs/claude/mods/8sync-inbox/hooks/register.ts").unwrap());
         assert!(reg.contains("'8sync', 'ccc', 'inbox'") && reg.contains("$.prompt.submit"), "the mod takes the inbox and submits it");
         let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("skills/8sync-inbox/.claude-plugin/plugin.json")).unwrap()).unwrap();
         assert_eq!(manifest["name"], "8sync-inbox");
@@ -2582,7 +2584,7 @@ mod tests {
         let dir = tmp.join("claude");
         install_kit_at(&env, &dir, false, true).unwrap();
         let reg = std::fs::read_to_string(dir.join("skills/8sync-hints/hooks/register.tsx")).unwrap();
-        assert_eq!(reg, assets::read("claude/skills/8sync-hints/hooks/register.tsx").unwrap());
+        assert_eq!(reg, assets::read("configs/claude/mods/8sync-hints/hooks/register.tsx").unwrap());
         assert!(reg.contains("'8sync', 'ccc', 'hint'"), "the mod calls the Rust side");
         let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("skills/8sync-hints/.claude-plugin/plugin.json")).unwrap()).unwrap();
         assert_eq!(manifest["name"], "8sync-hints");

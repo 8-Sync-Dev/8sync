@@ -7,12 +7,12 @@ Keep **ccc** (official Claude Code CLI driven by `8sync ccc`: kit, hooks, skills
 
 ## Parts
 1. **Poller** (no AI): finds changes cheaply; starts an agent run only when something changed or the daily heartbeat fires.
-2. **Agent run**: one Claude Code session named `ccc-loop` in a worktree of `8-Sync-Dev/su-code`, following the steps below with the kit's skills (`/ship`, `/sec`, `/rules`, `/aup-audit`, `/deep-research`, `/remember`, `/consolidate`).
+2. **Agent run**: one Claude Code session named `ccc-loop` in a worktree of `8-Sync-Dev/8sync`, following the steps below with the kit's skills (`/ship`, `/sec`, `/rules`, `/aup-audit`, `/deep-research`, `/remember`, `/consolidate`).
 
 ## Trigger (event-driven, 2026-10-13)
 - Poller = `8sync` systemd **user** timer every 5 min (`Nice=19`, `CPUQuota=5%`), plus a daily heartbeat at 08:13 local that runs the agent unconditionally. Until the timer exists, the session-only `/loop 5m` cron in a live session plays this role (expires after 7 days).
 - Each poll, using `gh api` with ETags (304 = no change, no tokens):
-  - `8-Sync-Dev/su-code`: `main` head, open PRs (`updated_at`), Actions runs completed since the last poll;
+  - `8-Sync-Dev/8sync`: `main` head, open PRs (`updated_at`), Actions runs completed since the last poll;
   - issues labelled `ccc` or `8sync`;
   - upstream skills, at most daily: `pbakaus/impeccable` releases, `Leonxlnx/taste-skill`, `anthropics/skills`, `nextlevelbuilder/ui-ux-pro-max-skill` (latest commit or tag);
   - Claude Code CHANGELOG (new hooks, settings or skill features), at most daily;

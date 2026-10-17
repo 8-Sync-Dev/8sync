@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "8sync-kit",
-      "description": "Role-routed subagents (explore, task, quick-task, reviewer, designer, researcher, verifier) and the /ship skill from the 8 Sync kit.",
+      "description": "Eleven role-routed subagents and the /do, /ship, /ship-auto, /ship-loop and /autopilot skills from the 8 Sync kit.",
       "source": "./assets/claude",
       "category": "development"
     }

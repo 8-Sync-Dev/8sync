@@ -27,8 +27,8 @@ Không mở terminal: `claude -p "/autopilot --max-items 5 --hours 8" --permissi
 ## 1. Cài và cập nhật
 
 ```bash
-curl -fsSL https://8-sync-dev.github.io/su-code/install | sh      # lần đầu (Linux/macOS)
-# Windows PowerShell: irm https://8-sync-dev.github.io/su-code/install.ps1 | iex
+curl -fsSL https://get.8syncdev.com/install | sh      # lần đầu (Linux/macOS)
+# Windows PowerShell: irm https://get.8syncdev.com/install.ps1 | iex
 8sync up            # cập nhật 8sync (kiểm sha256)
 8sync ccc kit       # cài hoặc cập nhật kit vào ~/.claude: agents, /ship, hook, guard, stop gate
 8sync ccc status    # kiểm: claude, login, kit đủ file (vd 40/40), managed settings, MCP

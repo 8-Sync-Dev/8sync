@@ -228,7 +228,7 @@ jobs:
           v="${TAG#v}"
           awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {f=1; next} f && /^## \[/ {exit} f' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "See CHANGELOG.md." > notes.md
-          printf '\n---\nInstall or update: `curl -fsSL https://8-sync-dev.github.io/su-code/install | sh` · `8sync up` · then `8sync ccc kit`\n' >> notes.md
+          printf '\n---\nInstall or update: `curl -fsSL https://get.8syncdev.com/install | sh` · `8sync up` · then `8sync ccc kit`\n' >> notes.md
           head -5 notes.md
 
       - name: Publish GitHub Release

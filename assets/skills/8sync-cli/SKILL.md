@@ -5,7 +5,7 @@ description: Use in every session inside a repo with 8sync (AGENTS.md or CLAUDE.
 
 # 8sync-cli — the repo runs inside the 8sync harness
 
-`8sync` is the team's CLI (github.com/8-Sync-Dev/su-code). Prefer its verb when one fits; `8sync help`, `8sync flow` or `8sync <verb> -h` show exact flags. Never invent a verb — if none fits, use the normal tool.
+`8sync` is the team's CLI (github.com/8-Sync-Dev/8sync). Prefer its verb when one fits; `8sync help`, `8sync flow` or `8sync <verb> -h` show exact flags. Never invent a verb — if none fits, use the normal tool.
 
 ## Memory (`su-code/`) — read at session start
 | File | Use |

@@ -2207,7 +2207,7 @@ fn resolve_app(flag: Option<PathBuf>, env: Option<PathBuf>, installed: &Path, ho
     Ok(dev.join(".next").is_dir().then_some(AppSrc::Dev(dev)))
 }
 
-const HQ_UI_REPO: &str = "8-Sync-Dev/su-code";
+const HQ_UI_REPO: &str = "8-Sync-Dev/8sync";
 
 fn hq_ui_asset(ver: &str) -> String {
     format!("8sync-hq-ui-v{ver}.tar.gz")
@@ -3296,7 +3296,7 @@ mod tests {
     #[test]
     fn hq_ui_asset_naming_and_sha_verify() {
         assert_eq!(hq_ui_asset("0.67.1"), "8sync-hq-ui-v0.67.1.tar.gz");
-        assert_eq!(hq_ui_url("0.67.1", ".sha256"), "https://github.com/8-Sync-Dev/su-code/releases/download/v0.67.1/8sync-hq-ui-v0.67.1.tar.gz.sha256");
+        assert_eq!(hq_ui_url("0.67.1", ".sha256"), "https://github.com/8-Sync-Dev/8sync/releases/download/v0.67.1/8sync-hq-ui-v0.67.1.tar.gz.sha256");
         let hex = "ab".repeat(32);
         assert_eq!(parse_sha256_file(&format!("{}  8sync-hq-ui-v1.tar.gz\n", hex.to_uppercase())), Some(hex.clone()));
         assert_eq!(parse_sha256_file("deadbeef  x"), None);

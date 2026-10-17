@@ -6,7 +6,7 @@
 #   UPDATER=<path to a locally built 8sync> scripts/uat/up-kit.sh  — seed the kit with OLD_TAG, then let the
 #   given binary run `up --force` (tests unreleased up.rs code against the latest release).
 set -uo pipefail
-OLD="${1:-v0.79.1}"; REPO=8-Sync-Dev/su-code
+OLD="${1:-v0.79.1}"; REPO=8-Sync-Dev/8sync
 case "$(uname -m)" in x86_64|amd64) ARCH=x86_64;; aarch64|arm64) ARCH=aarch64;; *) echo "unsupported arch"; exit 2;; esac
 [ "$(uname -s)" = Linux ] || { echo "linux only"; exit 2; }
 for c in gh curl jq; do command -v "$c" >/dev/null || { echo "missing $c"; exit 2; }; done

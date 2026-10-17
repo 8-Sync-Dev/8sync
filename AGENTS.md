@@ -300,13 +300,13 @@ Stack: **Rust** (single workspace, 1 binary `8sync` ≈ **4.9 MB stripped**, ho�
 
 ```bash
 # Khuyến nghị — one-liner: binary prebuilt + tự chạy `8sync setup --no-profile` (không cần git/rust/cargo):
-curl -fsSL https://8-sync-dev.github.io/su-code/install | sh          # Linux / macOS
-irm https://8-sync-dev.github.io/su-code/install.ps1 | iex            # Windows PowerShell
+curl -fsSL https://get.8syncdev.com/install | sh          # Linux / macOS
+irm https://get.8syncdev.com/install.ps1 | iex            # Windows PowerShell
 # Chỉ binary, bỏ qua setup: SUSYNC_NO_SETUP=1
 
 # Hoặc build từ source (contributor / arch chưa có prebuilt):
-git clone https://github.com/8-Sync-Dev/su-code.git
-cd su-code
+git clone https://github.com/8-Sync-Dev/8sync.git
+cd 8sync
 bash scripts/bootstrap.sh        # cài rustup (nếu thiếu) + build + install vào ~/.local/bin
 ```
 
@@ -610,4 +610,4 @@ bash scripts/size-gate.sh target/release/8sync   # size ceiling (same gate CI ru
 
 ---
 
-**Maintained by**: 8-Sync-Dev org · https://github.com/8-Sync-Dev/su-code
+**Maintained by**: 8-Sync-Dev org · https://github.com/8-Sync-Dev/8sync

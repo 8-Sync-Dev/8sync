@@ -25,7 +25,7 @@ pub fn print_cheatsheet() {
 
     println!("{}", "FIRST TIME (new machine)".bold().green());
     println!("  {}", "1. clone + bootstrap — installs rustup if missing, builds binary into ~/.local/bin".dimmed());
-    println!("     {}", "git clone https://github.com/8-Sync-Dev/su-code && cd su-code && bash scripts/bootstrap.sh".cyan());
+    println!("     {}", "git clone https://github.com/8-Sync-Dev/8sync && cd 8sync && bash scripts/bootstrap.sh".cyan());
     println!("  {}", "2. install harness + pick community profiles (asks y/N for each)".dimmed());
     println!("     {}", crate::brand::render("8sync setup").cyan());
     println!("  {}", crate::brand::render("3. log in to GitHub (so `8sync ship` can open PRs)").dimmed());
@@ -160,7 +160,7 @@ pub fn print_cheatsheet() {
     println!("  · Every verb has {} and {} with EXAMPLES.", "-h".bold().green(), "--help".bold().green());
     println!("  · Stuck? run {} to verify, or {} for a workflow walkthrough.", crate::brand::render("8sync doctor").cyan(), crate::brand::render("8sync flow").cyan());
     println!("  · Inspect before installing: any setup flag combines with {}.", "--dry-run".bold().green());
-    println!("  · Repo: {}", "https://github.com/8-Sync-Dev/su-code".cyan().underline());
+    println!("  · Repo: {}", "https://github.com/8-Sync-Dev/8sync".cyan().underline());
 }
 
 fn rows(items: &[(&str, &str)]) {

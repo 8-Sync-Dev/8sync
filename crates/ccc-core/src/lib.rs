@@ -1,6 +1,6 @@
 //! `ccc-core` — the pure, dependency-light core of `8sync ccc`, and the stable
 //! surface ZUS links against (pin by git tag, e.g.
-//! `ccc-core = { git = "https://github.com/8-Sync-Dev/su-code", tag = "vX.Y.Z" }`).
+//! `ccc-core = { git = "https://github.com/8-Sync-Dev/8sync", tag = "vX.Y.Z" }`).
 //!
 //! - [`secret_mask`]: [`mask`] — one heuristic masker for anything shown or journaled.
 //! - [`registry`]: [`registry::Store`] — locked, atomic name → UUID session registry.

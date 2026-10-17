@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 use crate::{platform, ui};
 
 const REPO_OWNER: &str = "8-Sync-Dev";
-const REPO_NAME: &str = "su-code";
+const REPO_NAME: &str = "8sync";
 const ASSET_PREFIX: &str = "8sync-";
 const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 3600); // 6h
 
@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn redirect_fallback_only_accepts_a_resolved_release_tag() {
-        let base = "https://github.com/8-Sync-Dev/su-code/releases";
+        let base = "https://github.com/8-Sync-Dev/8sync/releases";
         assert_eq!(tag_from_release_url(&format!("{base}/tag/v0.61.0")), Some("v0.61.0".into()));
         assert_eq!(tag_from_release_url(&format!("{base}/tag/v0.61.0/\n")), Some("v0.61.0".into()));
         // No redirect happened (no releases yet, or an error page): never a tag.

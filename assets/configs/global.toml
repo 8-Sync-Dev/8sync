@@ -10,7 +10,7 @@ tint = 0.85
 # Default terminal/desktop wallpaper. `8sync setup` deploys the bundled
 # assets/wallpapers/default.png if present, else downloads this URL to
 # ~/.config/8sync/wallpaper.png (used as the kitty background_image).
-wallpaper_url = "https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/assets/wallpapers/default.png"
+wallpaper_url = "https://raw.githubusercontent.com/8-Sync-Dev/8sync/main/assets/wallpapers/default.png"
 
 [behavior]
 auto_capture_on_end = true

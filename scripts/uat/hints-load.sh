@@ -2,11 +2,11 @@
 # UAT: the 8sync-hints mod loads in the official `claude` binary. Headless `claude -p` with
 # `--plugin-dir` prints one stderr line naming a plugin whose module failed to load; a clean run
 # prints none. Also checks `8sync ccc hint --json` answers from a repo (the mod's only dependency).
-# Usage: scripts/uat/hints-load.sh [MOD_DIR=assets/claude/skills/8sync-hints]
+# Usage: scripts/uat/hints-load.sh [MOD_DIR=assets/configs/claude/mods/8sync-hints]
 # Exit 0 = pass, 1 = mod failed to load / hint broken, 2 = setup error.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd -P)"
-MOD="${1:-$ROOT/assets/claude/skills/8sync-hints}"
+MOD="${1:-$ROOT/assets/configs/claude/mods/8sync-hints}"
 for c in claude 8sync python3; do command -v "$c" >/dev/null || { echo "missing $c"; exit 2; }; done
 [ -f "$MOD/.claude-plugin/plugin.json" ] || { echo "no mod at $MOD"; exit 2; }
 

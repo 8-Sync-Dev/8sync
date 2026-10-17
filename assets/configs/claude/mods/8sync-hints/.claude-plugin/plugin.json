@@ -1,7 +1,7 @@
 {
   "name": "8sync-hints",
   "version": "0.1.0",
-  "author": { "name": "8 Sync", "url": "https://github.com/8-Sync-Dev/su-code" },
+  "author": { "name": "8 Sync", "url": "https://github.com/8-Sync-Dev/8sync" },
   "description": "Gợi ý realtime trong prompt của Claude Code từ 8sync ccc hint: ghost text (Tab), typeahead /skill · 8sync · ccc, dải trạng thái trên prompt. Local-only.",
   "types": "./types/index.d.ts"
 }

@@ -5,7 +5,7 @@
 # Downloads the prebuilt `8sync` binary from GitHub Releases — no git clone,
 # no Rust toolchain, no cargo build. Ideal for a fresh machine or quick upgrade.
 #
-#   curl -fsSL https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/8-Sync-Dev/8sync/main/install.sh | sh
 #
 # Upgrade:   re-run the same command (atomically replaces the old binary).
 # Uninstall: curl -fsSL .../install.sh | sh -s -- --uninstall
@@ -19,7 +19,7 @@
 #   SUSYNC_NO_SETUP  set to 1 to install the binary only (skip `8sync setup`)
 set -eu
 
-REPO="8-Sync-Dev/su-code"
+REPO="8-Sync-Dev/8sync"
 BIN_DIR="${SUSYNC_BIN_DIR:-$HOME/.local/bin}"
 BIN="$BIN_DIR/8sync"
 
