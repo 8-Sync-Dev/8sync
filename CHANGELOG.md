@@ -5,7 +5,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
-## [0.100.0] — 2026-10-17
+## [0.100.1] — 2026-10-17
 ### Fixed
 - **One `Ship` answer now covers the session, on Windows too.** After the owner approved Ship, every merge and tag push still prompted. There were two causes.
   - On Windows the `ship-grant` hook looked for the grant store under `HOME`. Claude Code's hook process there has no `HOME`, or holds a `/c/Users/…` path that is not absolute, so the grant was never written, while the guard reads the store under the real home directory. Both sides now find the store the same way (`dirs::home_dir`). A store that is not absolute never grants.
@@ -13,6 +13,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Docs
 - **Pages: an animated board.** The team section replays a card crossing `backlog → ready → building → qa → review → approved → done`, with the command each room ran. The static markup is the final state, so it reads the same without JavaScript or with reduced motion. The hero names v0.100.0, and the nav has a Team link.
 - **README: "Quick start: a whole team in four commands"** at the top.
+
+## [0.100.0] — 2026-10-17
 ### Added
 - **`8sync ccc auto up`: the whole team in the background with one command.** Before, every room had to be opened in its own terminal before auto could run. `auto up` turns `auto on --here` on and starts every role room as a Claude Code background session (`claude --bg --name <room> --permission-mode auto --model <role model>`), with the loop prompt as its first message. You follow the work in `8sync hq ui`, `claude agents` or `8sync ccc auto board`. `auto down` stops the background rooms (conversations kept) and pauses auto.
   - Default team `lead,dev,qa,review`; `--roles` picks up to 8 rooms. Roles and models: lead, ba and rd on opus; dev and review on sonnet; qa on haiku. Aliases map to a role (`qc` → QA, `critic` → Review, `pm` → Lead, `analyst` → BA, `builder` → Dev). `ui`, `api`, `core`, `ops`, `docs` and `sec` keep the session's default model.
