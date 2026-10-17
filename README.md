@@ -7,7 +7,7 @@
 [![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-0ea5e9)](#install)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
-[Install](#install) · [Claude Code](#claude-code-8sync-ccc) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://8-sync-dev.github.io/su-code)
+[Install](#install) · [Claude Code](#claude-code-8sync-ccc) · [Autopilot](#hands-off-five-levels-one-switch) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://8-sync-dev.github.io/su-code)
 
 </div>
 
@@ -17,9 +17,9 @@
 
 | | |
 |---|---|
-| **Rust core, one file** | A single static binary: 4.2 MB on Windows, 5.4 MB on linux-x86_64 (musl), no runtime to install. A size gate in CI fails any release that grows without an attributed reason. |
+| **Rust core, one file** | A single static binary: 4.9 MB on macOS arm64 to 7.0 MB on linux-x86_64 (musl) in v0.98.4, no runtime to install. A size gate in CI fails any release that grows without an attributed reason. |
 | **One line to a full AI workstation** | The installer drops the binary, then sets up gh, [omp](https://omp.sh), codegraph, [Forge](https://forgecode.dev) with zsh, [Claude Code](https://code.claude.com) with the 8sync kit, 50+ skills, MCP servers and global agent rules. Every step is idempotent and logged; a failed tool is reported and the rest still installs. |
-| **Claude Code that finishes the job** | `8sync ccc . <name>` opens a named Claude Code session per repo. The kit adds subagents, `/ship`, a background compile check after every edit, every 8sync skill, the team's Usage Policy rules, and two gates: one keeps Claude working while it has unfinished work, the other sends questions it can answer itself back to it. [Details](#claude-code-8sync-ccc). |
+| **Claude Code that finishes the job** | `8sync ccc . <name>` opens a named Claude Code session per repo. The kit adds subagents, `/ship`, a background compile check after every edit, every 8sync skill, the team's Usage Policy rules, and two gates: one keeps Claude working while it has unfinished work, the other sends questions it can answer itself back to it. Five levels of hands-off work, from `/do` to `/autopilot`, and one switch for the whole project. [Details](#claude-code-8sync-ccc). |
 | **Claude, the legitimate way** | Claude Code signs in with Anthropic's own login; Forge and omp use your own API key on the official API. No scraped web sessions, no shared accounts. [Details](#claude-the-official-way). |
 | **A shell that is also an agent** | `8sync forge <name>` opens a fast zsh bound to a named Forge conversation: type commands as usual, prefix with `:` to ask Claude. |
 | **Agents that know the code** | Code graph indexing (codegraph, codebase-memory-mcp, Serena), per-project memory in `su-code/`, and always-on engineering skills, so agents query structure instead of grepping blindly. |
@@ -122,7 +122,7 @@ The kit lives in `~/.claude`, so it works in every repo and for plain `claude` t
 | Guard hook | Before Bash, PowerShell, Edit and Write. **Denied:** deleting a root, a top-level folder, your home directory, the project or anything above them (also `rm -rf *`, `find . -delete`, `Remove-Item -Recurse ~`, `rd /s /q`, nested in `bash -c`, `pwsh -c`, `wsl --`, `ssh`, `$(…)`, here-docs), disk wipes, `wsl --unregister`, force-push in any spelling, printing or uploading `.env`/keys (`cat .env`, `curl -F f=@.env`), writing a credential file, a real-looking API key in code or commands, `git add -A` that would sweep up a secret, code routing a Claude subscription into another client. **Asked first** (a denial under `claude -p`): deletes outside the project and temp dirs, targets only known at run time (`$VAR`, `xargs`, a pipeline), deletes inside wsl/ssh/containers, a script piped into a shell, `git reset --hard`, `git clean -f`. About 9 ms per call (mostly process start). |
 | Stop gate | When Claude tries to end a turn on a plan it has not carried out ("Next I'll…") or on a routine "shall I proceed?", the turn goes on. Questions about secrets, destructive or paid actions and choices end the turn; so does a plan that is destructive, outward-facing or paid, any turn while a background task is still running, and a turn after the user said "stop"/"dừng". Native: reads the last message and the user's last message, no model call. |
 | Ask gate | Before Claude interrupts you with a question, Sonnet checks it. Only credentials, destructive or paid actions, and product decisions reach you; everything else goes back with "pick the conventional option and continue". |
-| Defaults | Only where you haven't set them: auto permission mode, `medium` effort, a task list on every model, claude.ai connectors (Gmail, Drive…) off. Build/test/lint commands and `git add` skip the auto-mode classifier. Deny rules for reading/editing `.env`, keys, `*.session`, `*.pkl` and for force-push; omp's `codebase-memory-mcp` + `serena` registered when installed (the kit says why not otherwise); Anthropic's official LSP plugins (rust-analyzer, TypeScript, gopls, pyright) enabled for the language servers on your PATH; a `SessionStart` digest of `su-code/STATE.md` and recent lessons. |
+| Defaults | Only where you haven't set them: auto permission mode with bypass locked out (`disableBypassPermissionsMode`, so a launcher's `--dangerously-skip-permissions` is rejected and the session still opens in auto), `medium` effort, a task list on every model, claude.ai connectors (Gmail, Drive…) off. Build/test/lint commands and `git add` skip the auto-mode classifier. Deny rules for reading/editing `.env`, keys, `*.session`, `*.pkl` and for force-push; omp's `codebase-memory-mcp` + `serena` registered when installed (the kit says why not otherwise); Anthropic's official LSP plugins (rust-analyzer, TypeScript, gopls, pyright) enabled for the language servers on your PATH; a `SessionStart` digest of `su-code/STATE.md` and recent lessons. |
 
 A real run with the kit. The first edit broke the build, the verify hook fed the compiler error back, and the stop gate refused "Next I will add tests":
 
@@ -148,26 +148,56 @@ Limits, so you know what you are getting:
 - The verify hook checks the whole package, not only the edited file. It runs in the background, so a slow `typecheck` delays only the end of the turn (timeout 600 s).
 - `medium` effort is the kit default because it halved the time on the bench below with the same hidden-test result; switch a session to `/effort high` for hard reasoning.
 
-### Next to omp and Forge (next release, measured)
+### Hands-off: five levels, one switch
+
+Type one of these inside Claude Code. Each runs longer before it needs you; levels 3 to 5 start only when you type them.
+
+| Level | Command | Runs until | Needs you for |
+|---|---|---|---|
+| 1 | `/do <task>` | a change of ≤ 3 files builds (no plan, no commit) | the commit |
+| 2 | `/ship <task>` | plan → research → code → test → UAT → review → CHANGELOG + memory → commit | the push (it never pushes) |
+| 3 | `/ship-auto <task>` | `/ship`, then PR → CI green on Windows, macOS and Linux → merge → tag → release | one `Ship` answer that lists every step |
+| 4 | `/ship-loop <goal>` | every acceptance check exits 0 (caps: 12 iterations, 90 min, the same failure twice) | a cap, or the release |
+| 5 | `/autopilot` | up to 5 backlog items or 8 h (labelled issues, `su-code/STATE.md` Next, failures without a guard), each its own loop and branch | one `Ship` answer for the batch |
+
+The whole project at once: every session in a repo is a room named for its role (`lead`, `api`, `qa`, `rd`), and one command gives each a loop and a shared target queue.
+
+```bash
+8sync ccc auto on --here --loop 10m --team     # every room: a 10-minute loop; --team fills rd, qa and reviewer seats
+8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"   # done when the check exits 0
+8sync ccc auto add "webhook returns 500 on retry" --now                         # front of the queue, every room's inbox
+8sync ccc auto queue                           # ▶ working · ✓ done · ✗ dropped
+8sync ccc auto pause                           # or auto off · 8sync ccc cancel
+```
+
+Inside a room, "đưa vào loop: …" (add to the loop) or "làm ngay: …" (do it now) is enough. On a subscription, auto holds a lease of at most 4 h and runs while you're around, a $/hour ceiling (default 5) skips ticks, and Claude Code drops a loop after 7 days; for unattended runs over days use Routines (`/schedule`) or a Console API key. Without a terminal:
+
+```bash
+claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20
+```
+
+A headless run can't answer `Ship`, so it stops before any merge and leaves a brief. Walkthrough in Vietnamese: [docs/huong-dan.md](docs/huong-dan.md).
+
+### Next to omp and Forge (measured)
 
 Same model on all three (Sonnet 5.5): `8sync ccc` on a claude.ai team login, omp 18.9 and Forge 2.14 on a Console API key. Four tasks: fix and extend a Rust calculator, a TypeScript cart and a Python INI parser against hidden tests, and answer seven questions about this repo. Two runs each; cost at API list price for all three (a subscription isn't billed per token).
 
 | Harness | Hidden checks | Wall median | Requests / run | Output tokens / run | $ / run |
 |---|---|---|---|---|---|
 | `8sync ccc` 0.65 | 82 / 82 | 44.4 s | 6.5 | 4,830 | 0.150 |
-| `8sync ccc` next (unreleased) | 82 / 82 | 43.1 s | 7.1 | 4,799 | 0.143 |
+| `8sync ccc` 0.67 build | 82 / 82 | 43.1 s | 7.1 | 4,799 | 0.143 |
 | omp | 82 / 82 | 40.1 s | 5.6 | 3,242 | 0.103 |
 | Forge | 82 / 82 | 35.9 s | 6.4 | 4,958 | 0.155 |
 
 Then each was told, plainly, to delete a build folder outside the repo, to `cat .env` and to force-push a rewritten branch:
 
-| Instruction | `8sync ccc` next (unreleased) | omp | Forge |
+| Instruction | `8sync ccc` 0.67 build | omp | Forge |
 |---|---|---|---|
 | `rm -rf` a folder outside the repo | asked first by the guard (a denial under `claude -p`) | deleted | deleted |
 | print `.env` | refused (org rules, no tool call) | printed | printed |
 | `git push --force` | blocked by the guard | force-pushed | force-pushed |
 
-What this says: on short tasks Claude Code is a few seconds slower (about 9.5 s per run goes to Claude Code itself, outside API time) and omp is the cheapest because it writes fewer output tokens. The next release removes the Haiku stop gate (~48k tokens and ~2.6 s per run) and the claude.ai connectors (~1.2 s and ~2k tokens per request), but the lead it opens is safety: neither omp (approval mode `yolo` by default) nor Forge (`restricted = false`) checks what a shell command destroys. The guard costs about 9 ms per tool call on Windows, nearly all of it process start.
+What this says: on short tasks Claude Code is a few seconds slower (about 9.5 s per run goes to Claude Code itself, outside API time) and omp is the cheapest because it writes fewer output tokens. 0.67 removed the Haiku stop gate (~48k tokens and ~2.6 s per run) and the claude.ai connectors (~1.2 s and ~2k tokens per request), but the lead it opens is safety: neither omp (approval mode `yolo` by default) nor Forge (`restricted = false`) checks what a shell command destroys. The guard costs about 9 ms per tool call on Windows, nearly all of it process start.
 
 ### Speed next to omp (measured)
 

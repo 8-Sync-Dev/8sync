@@ -4,6 +4,10 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Docs
+- **New GitHub Pages landing** (https://8-sync-dev.github.io/su-code/). It replaces the v0.63-era page and is organised around the five levels of hands-off work (`/do` → `/autopilot`), shown as a staircase. Sections: the rails panel (guard, verify, stop gate, ask gate, Ship grant, no bypass); `auto on --here --loop 10m --team` with the project queue (`auto add … --check`, `--now`, `auto queue`, `auto pause`); the headless command and subscription limits; the bypass lock from v0.98.4; and the safety and bench tables, copied as measured from the README. It also replays a real verify and stop-gate run. Every command was checked against `8sync ccc help` and `claude --help`. Fonts (Archivo, JetBrains Mono) are self-hosted with their OFL licences, and the page works without JavaScript and with reduced motion. `docs/PRODUCT.md` records who the page is for and its design rules.
+- **README:** new "Hands-off: five levels, one switch" section (level table, `auto on/add/queue/pause`, subscription limits, headless command). Binary sizes are now those of v0.98.4 (4.9 MB macOS arm64 to 7.0 MB linux-x86_64). The Defaults row mentions the bypass lock, and the bench rows are labelled "0.67 build".
+- **`docs/huong-dan.md`:** new short section "Auto mạnh nhất, bản ngắn" (open a room, the 5 levels, `auto on` for the whole project, headless). The kit file count and the hq-ui size are corrected.
 
 ## [0.98.4] — 2026-10-17
 ### Fixed

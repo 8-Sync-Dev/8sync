@@ -1,347 +1,778 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>8sync — terminal-first AI coding harness</title>
-  <meta name="description" content="8sync: terminal-first AI coding harness for CachyOS/Arch + Kitty + Helix + omp. Keep your normal terminal workflow; AI observes project context and executes when you ask." />
-  <meta property="og:title" content="8sync — terminal-first AI coding harness" />
-  <meta property="og:description" content="Keep your normal terminal workflow; AI agents observe project context, load su-code/* memory, execute tasks on demand." />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://8-sync-dev.github.io/su-code/" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
-  <style>
-    :root {
-      --bg: #0a0e1c;
-      --bg2: #0f1428;
-      --card: rgba(255,255,255,0.04);
-      --card-hover: rgba(255,255,255,0.07);
-      --line: rgba(255,255,255,0.10);
-      --line-strong: rgba(255,255,255,0.18);
-      --txt: #e8edf7;
-      --muted: #97a4c4;
-      --dim: #6b7796;
-      --pri: #5eead4;
-      --pri2: #60a5fa;
-      --accent: #a78bfa;
-      --good: #22d3ee;
-      --code-bg: rgba(0,0,0,0.35);
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>8sync: Claude Code on autopilot, with rails</title>
+  <meta name="description" content="One Rust binary installs Anthropic's Claude Code with a kit: five levels of hands-off work from a three-file fix to a whole backlog, and gates that block deletes outside the repo, leaked keys, force-pushes and bypass mode.">
+  <meta name="theme-color" content="#16121f">
+  <meta property="og:title" content="8sync: Claude Code on autopilot, with rails">
+  <meta property="og:description" content="Five levels of hands-off work in Claude Code. A guard, a verify hook, stop and ask gates on every one. Linux, macOS, Windows.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://8-sync-dev.github.io/su-code/">
+  <meta property="og:image" content="https://8-sync-dev.github.io/su-code/assets/hero.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c4b5fd'/%3E%3Ccircle cx='16' cy='10.8' r='4.6' fill='none' stroke='%2317112a' stroke-width='3'/%3E%3Ccircle cx='16' cy='21.2' r='5.8' fill='none' stroke='%2317112a' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="preload" href="assets/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <script>
+    if (matchMedia('(prefers-reduced-motion: no-preference)').matches && document.visibilityState === 'visible') {
+      document.documentElement.classList.add('intro');
     }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
+  </script>
+  <style>
+    @font-face {
+      font-family: "Archivo";
+      src: url("assets/fonts/archivo-latin.woff2") format("woff2");
+      font-weight: 100 900;
+      font-stretch: 62% 125%;
+      font-display: swap;
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    @font-face {
+      font-family: "Archivo";
+      src: url("assets/fonts/archivo-vietnamese.woff2") format("woff2");
+      font-weight: 100 900;
+      font-stretch: 62% 125%;
+      font-display: swap;
+      unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+    }
+    @font-face {
+      font-family: "JetBrains Mono";
+      src: url("assets/fonts/jetbrains-mono-latin.woff2") format("woff2");
+      font-weight: 400 700;
+      font-display: swap;
+    }
+
+    :root {
+      color-scheme: dark;
+      --bg: oklch(0.155 0.018 292);
+      --bg-raised: oklch(0.2 0.026 292);
+      --bg-sunk: oklch(0.12 0.016 292);
+      --line: oklch(0.31 0.032 292);
+      --line-soft: oklch(0.235 0.026 292);
+      --ink: oklch(0.965 0.008 292);
+      --ink-2: oklch(0.84 0.024 292);
+      --ink-3: oklch(0.72 0.03 292);
+      --violet: oklch(0.81 0.11 293);
+      --violet-strong: oklch(0.66 0.19 293);
+      --band: oklch(0.34 0.16 291);
+      --band-sunk: oklch(0.25 0.12 291);
+      --band-ink-2: oklch(0.89 0.04 292);
+      --amber: oklch(0.85 0.15 80);
+      --green: oklch(0.87 0.17 152);
+      --red: oklch(0.75 0.17 22);
+      --cyan: oklch(0.86 0.1 195);
+      --sans: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+      --wrap: 1180px;
+      --pad: clamp(1.25rem, 4vw, 3rem);
+      --z-skip: 50;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
     body {
       margin: 0;
-      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-      color: var(--txt);
-      background:
-        radial-gradient(1000px 500px at 10% -10%, rgba(94,234,212,.16), transparent 60%),
-        radial-gradient(950px 520px at 100% 0%, rgba(96,165,250,.18), transparent 60%),
-        radial-gradient(700px 400px at 50% 100%, rgba(167,139,250,.12), transparent 70%),
-        var(--bg);
-      line-height: 1.65;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: clamp(1rem, 0.96rem + 0.2vw, 1.0625rem);
+      line-height: 1.7;
       -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
     }
-    .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 20px 64px; }
+    ::selection { background: var(--violet-strong); color: var(--ink); }
+    a { color: var(--violet); text-underline-offset: 0.2em; }
+    a:hover { color: var(--ink); }
+    :focus-visible { outline: 2px solid var(--violet); outline-offset: 3px; border-radius: 4px; }
+    code { font-family: var(--mono); font-size: 0.88em; }
+    p code, li code, td code, dd code { color: var(--ink); background: var(--bg-raised); padding: 0.1em 0.38em; border-radius: 5px; overflow-wrap: anywhere; }
+    code.nb { white-space: nowrap; overflow-wrap: normal; }
+    h1, h2, h3 { text-wrap: balance; }
+    p { text-wrap: pretty; }
+    img { max-width: 100%; height: auto; display: block; }
 
-    /* Header */
-    .top { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom: 28px; }
-    .logo { display:flex; align-items:center; gap:10px; font-weight:700; letter-spacing:-0.01em; }
-    .logo-mark { width:32px; height:32px; border-radius:8px; background:linear-gradient(135deg,var(--pri),var(--pri2)); display:grid; place-items:center; color:#06111f; font-weight:900; }
-    .nav { display:flex; gap:18px; flex-wrap:wrap; }
-    .nav a { color:var(--muted); text-decoration:none; font-size:14px; }
-    .nav a:hover { color:var(--txt); }
+    .skip {
+      position: absolute; left: 1rem; top: -4rem; z-index: var(--z-skip);
+      background: var(--violet); color: var(--bg-sunk); padding: 0.6rem 1rem; border-radius: 8px; font-weight: 700; text-decoration: none;
+    }
+    .skip:focus { top: 1rem; }
+    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+    /* Top bar */
+    .bar {
+      max-width: var(--wrap); margin: 0 auto; padding: 1.1rem var(--pad);
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem 2rem; flex-wrap: wrap;
+    }
+    .brand {
+      display: inline-flex; align-items: center; gap: 0.6rem; color: var(--ink); text-decoration: none;
+      font-weight: 800; font-stretch: 118%; font-size: 1.25rem; letter-spacing: -0.01em;
+    }
+    .brand svg { width: 30px; height: 30px; flex: none; }
+    .bar ul { display: flex; flex-wrap: wrap; gap: 0.25rem clamp(0.9rem, 2vw, 1.6rem); list-style: none; margin: 0; padding: 0; align-items: center; }
+    .bar a:not(.brand) { color: var(--ink-2); text-decoration: none; font-size: 0.95rem; padding: 0.3rem 0; }
+    .bar a:not(.brand):hover { color: var(--ink); }
+    .bar a.gh { color: var(--ink); border: 1px solid var(--line); padding: 0.32rem 0.85rem; border-radius: 999px; }
+    .bar a.gh:hover { border-color: var(--violet-strong); }
 
     /* Hero */
-    .hero { padding: 16px 0 8px; }
-    .eyebrow { display:inline-flex; gap:8px; align-items:center; padding:6px 12px; border:1px solid var(--line-strong); border-radius:999px; color:var(--muted); font-size:13px; }
-    .eyebrow b { color:var(--pri); }
-    h1 { margin: 18px 0 14px; font-size: clamp(32px, 6.2vw, 56px); line-height:1.05; letter-spacing:-0.02em; }
-    h1 .grad { background: linear-gradient(90deg,var(--pri),var(--pri2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
-    .sub { color:var(--muted); max-width:780px; font-size:17px; }
-    .cta { display:flex; gap:10px; flex-wrap:wrap; margin-top:22px; }
-    .btn { display:inline-flex; align-items:center; gap:8px; padding:11px 16px; border-radius:10px; text-decoration:none; font-weight:700; font-size:14px; transition: transform .12s ease, box-shadow .2s ease; }
-    .btn.primary { color:#06111f; background: linear-gradient(90deg,var(--pri),var(--pri2)); box-shadow: 0 8px 22px -10px rgba(94,234,212,.4); }
-    .btn.primary:hover { transform: translateY(-1px); }
-    .btn.ghost { background: transparent; color: var(--txt); border:1px solid var(--line-strong); }
-    .btn.ghost:hover { background: var(--card); }
+    .hero {
+      position: relative; isolation: isolate;
+      max-width: var(--wrap); margin: 0 auto; padding: clamp(1.5rem, 5vw, 4rem) var(--pad) clamp(3.5rem, 8vw, 6.5rem);
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.04fr); grid-template-areas: "title title" "copy log";
+      gap: clamp(1.75rem, 3.5vw, 3rem) clamp(2rem, 5vw, 4.5rem); align-items: start;
+    }
+    .hero::before {
+      content: ""; position: absolute; z-index: -1; inset: 20% -10% 0 35%;
+      background: radial-gradient(closest-side, oklch(0.55 0.2 293 / 0.28), transparent);
+      pointer-events: none;
+    }
+    .hero-title { grid-area: title; }
+    .hero-copy { grid-area: copy; }
+    .log { grid-area: log; }
+    .release a {
+      display: inline-flex; align-items: center; gap: 0.55rem; font-size: 0.9rem; color: var(--ink-2); text-decoration: none;
+      border: 1px solid var(--line); border-radius: 999px; padding: 0.28rem 0.9rem 0.28rem 0.65rem;
+    }
+    .release a:hover { border-color: var(--violet-strong); color: var(--ink); }
+    .release .lit { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--green); box-shadow: 0 0 0.6rem var(--green); }
+    h1 {
+      margin: 1.3rem 0 0; font-size: clamp(2.35rem, 8.4vw, 5.6rem); font-weight: 800; font-stretch: 112%;
+      line-height: 0.98; letter-spacing: -0.025em;
+    }
+    h1 .ln { display: block; }
+    h1 .ln + .ln { color: var(--violet); }
+    .hero-sub { margin: 0 0 1.1rem; font-size: clamp(1.2rem, 1.9vw, 1.5rem); font-weight: 650; font-stretch: 104%; line-height: 1.3; }
+    .lede { margin: 0 0 2rem; color: var(--ink-2); max-width: 60ch; }
+    .then { margin: 1.25rem 0 0; color: var(--ink-2); font-size: 0.97rem; max-width: 60ch; }
 
-    /* Feature grid */
-    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap:14px; margin-top:36px; }
-    .card { background: var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; transition: background .15s ease, border-color .15s ease; }
-    .card:hover { background: var(--card-hover); border-color: var(--line-strong); }
-    .card h3 { margin:0 0 8px; font-size:16px; display:flex; align-items:center; gap:8px; }
-    .card h3 .dot { width:8px; height:8px; border-radius:99px; background:var(--pri); box-shadow:0 0 12px var(--pri); }
-    .card p { margin:0; color: var(--muted); font-size:14px; }
+    /* Install commands */
+    .cmds { display: grid; gap: 0.6rem; }
+    .cmd {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "os copy" "code code"; align-items: center; gap: 0.2rem 0.8rem;
+      background: var(--bg-raised); border: 1px solid var(--line); border-radius: 10px; padding: 0.5rem 0.5rem 0.75rem 1rem;
+    }
+    .cmd .os { grid-area: os; display: flex; gap: 0.6rem; font-stretch: 75%; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.78rem; color: var(--ink-3); line-height: 1.2; }
+    .cmd .os .you { display: none; color: var(--violet); }
+    .cmd.yours { border-color: var(--violet-strong); }
+    .cmd.yours .os { color: var(--ink); }
+    .cmd.yours .os .you { display: inline; }
+    .cmd code { grid-area: code; font-size: 0.82rem; color: var(--ink); white-space: nowrap; overflow-x: auto; scrollbar-width: thin; padding: 0.15rem 0 0.1rem; }
+    .cmd .copy { grid-area: copy; }
+    .copy {
+      font: inherit; font-size: 0.82rem; font-weight: 650; color: var(--ink); cursor: pointer;
+      background: oklch(0.3 0.05 292); border: 0; border-radius: 7px; padding: 0.5rem 0.85rem; min-width: 4.6rem;
+      transition: background-color 0.2s var(--ease-out);
+    }
+    .copy:hover { background: oklch(0.37 0.08 292); }
+    .copy[data-state="done"] { background: oklch(0.42 0.12 152); }
+
+    /* Run log */
+    .log { margin: 0; background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+    .log-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: 0.6rem 0.6rem 0.6rem 1.1rem; border-bottom: 1px solid var(--line-soft);
+      font-family: var(--mono); font-size: 0.76rem; color: var(--ink-3);
+    }
+    .log-head .rec { display: inline-flex; align-items: center; gap: 0.55rem; }
+    .log-head .rec::before { content: ""; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--red); }
+    .replay {
+      font: inherit; font-family: var(--sans); font-size: 0.8rem; font-weight: 650; color: var(--ink-2); cursor: pointer;
+      background: transparent; border: 1px solid var(--line); border-radius: 7px; padding: 0.3rem 0.7rem;
+    }
+    .replay:hover { color: var(--ink); border-color: var(--violet-strong); }
+    .log-body { list-style: none; margin: 0; padding: 1rem 1.1rem 1.15rem; font-family: var(--mono); font-size: 0.79rem; line-height: 1.62; }
+    .log-body li { position: relative; padding-left: 1.15rem; color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .log-body li + li { margin-top: 0.12rem; }
+    .log-body .ev::before { content: ""; position: absolute; left: 0.1rem; top: 0.6em; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--violet); }
+    .log-body .sub { padding-left: 2.3rem; }
+    .log-body .sub::before { content: "\2514"; position: absolute; left: 1.1rem; color: var(--ink-3); }
+    .log-body .cont { padding-left: 3.3rem; }
+    .log-body b { color: var(--ink); font-weight: 700; }
+    .log-body .say b { color: var(--cyan); }
+    .hk { color: var(--amber); font-weight: 700; }
+    .add, .ok { color: var(--green); }
+    .no, .err { color: var(--red); }
+    .dim { color: var(--ink-3); }
+    .log figcaption { padding: 0.85rem 1.1rem 1rem; border-top: 1px solid var(--line-soft); font-size: 0.86rem; line-height: 1.55; color: var(--ink-3); }
+    .log-body[data-play] li:not(.on) { visibility: hidden; }
+    .log-body[data-play] li.on { animation: line-in 0.45s var(--ease-out); }
+    @keyframes line-in { from { opacity: 0; transform: translateX(-0.4rem); } }
+
+    @media (max-width: 960px) {
+      .hero { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "copy" "log"; }
+      .hero::before { inset: 45% -20% 0 -20%; }
+    }
 
     /* Sections */
-    section { margin-top: 56px; scroll-margin-top: 20px; }
-    section > h2 { margin: 0 0 6px; font-size:24px; letter-spacing:-0.01em; }
-    section > .lede { color:var(--muted); margin: 0 0 18px; font-size:15px; }
+    .section { max-width: var(--wrap); margin: 0 auto; padding: clamp(3rem, 6vw, 4.75rem) var(--pad); }
+    .sec-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1rem clamp(1.5rem, 4vw, 4rem); align-items: end; margin-bottom: clamp(2rem, 4vw, 3rem); }
+    .sec-head p { margin: 0; color: var(--ink-2); max-width: 62ch; }
+    h2 { margin: 0; font-size: clamp(1.95rem, 4.2vw, 3.2rem); font-weight: 780; font-stretch: 108%; line-height: 1.03; letter-spacing: -0.02em; }
+    h3 { margin: 0 0 0.6rem; font-size: 1.2rem; font-weight: 720; font-stretch: 104%; line-height: 1.25; }
+    @media (max-width: 860px) { .sec-head { grid-template-columns: minmax(0, 1fr); } }
 
-    /* Code blocks */
-    code { background: rgba(255,255,255,.08); padding:2px 6px; border-radius:6px; font-size:0.92em; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
-    pre { background: var(--code-bg); border:1px solid var(--line); padding:16px 18px; border-radius:12px; overflow:auto; margin:0; font-size:13.5px; line-height:1.6; }
-    pre code { background: transparent; padding:0; font-size:inherit; }
-    .codeblock { position:relative; }
-    .codeblock .lbl { position:absolute; top:10px; right:14px; font-size:11px; color:var(--dim); letter-spacing:.08em; text-transform:uppercase; }
+    /* Rails: annunciator panel */
+    .panel {
+      list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+      gap: 1px; background: var(--line-soft); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+    }
+    .lamp { background: var(--bg-sunk); padding: 1.35rem 1.4rem 1.6rem; }
+    .lamp[data-tone="amber"] { --tone: var(--amber); }
+    .lamp[data-tone="green"] { --tone: var(--green); }
+    .lamp[data-tone="violet"] { --tone: var(--violet); }
+    .lamp-label {
+      display: inline-block; padding: 0.3rem 0.75rem; border-radius: 6px;
+      font-stretch: 70%; font-weight: 750; font-size: 1.05rem; letter-spacing: 0.09em; text-transform: uppercase; line-height: 1.3;
+      color: var(--tone); background: color-mix(in oklch, var(--tone) 9%, var(--bg-sunk));
+      border: 1px solid color-mix(in oklch, var(--tone) 38%, transparent);
+      text-shadow: 0 0 0.8rem color-mix(in oklch, var(--tone) 55%, transparent);
+    }
+    .lamp p { margin: 0.95rem 0 0; color: var(--ink-2); font-size: 0.97rem; line-height: 1.62; }
+    .panel-note { margin: 1.1rem 0 0; color: var(--ink-3); font-size: 0.9rem; }
+    @keyframes lamp-test {
+      0% { filter: brightness(1); }
+      18% { filter: brightness(2); }
+      40% { filter: brightness(0.65); }
+      62% { filter: brightness(1.6); }
+      100% { filter: brightness(1); }
+    }
 
-    /* Tables */
-    table { width:100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
-    th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
-    td code { font-size: 12.5px; white-space: nowrap; }
+    /* Ladder band */
+    .band { background: var(--band); }
+    .band .sec-head p { color: var(--band-ink-2); }
+    .band p code, .band li code { background: var(--band-sunk); }
+    .rungs { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: clamp(0.75rem, 1.6vw, 1.25rem); }
+    .rung { display: flex; flex-direction: column; gap: 0.85rem; }
+    .stair { height: clamp(10rem, 19vw, 15rem); display: flex; align-items: flex-end; }
+    .fill {
+      width: 100%; height: calc(3.6rem + (var(--h) - 1) * (100% - 3.6rem) / 4);
+      background: var(--fill); color: var(--fill-ink); border-radius: 9px 9px 3px 3px; padding: 0.7rem 0.85rem;
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem;
+    }
+    .rung:nth-child(1) { --fill: oklch(0.47 0.19 291); --fill-ink: var(--ink); }
+    .rung:nth-child(2) { --fill: oklch(0.56 0.2 292); --fill-ink: var(--ink); }
+    .rung:nth-child(3) { --fill: oklch(0.67 0.17 293); --fill-ink: oklch(0.17 0.05 292); }
+    .rung:nth-child(4) { --fill: oklch(0.78 0.13 293); --fill-ink: oklch(0.17 0.05 292); }
+    .rung:nth-child(5) { --fill: oklch(0.9 0.08 293); --fill-ink: oklch(0.17 0.05 292); }
+    .lvl { font-weight: 800; font-stretch: 120%; font-size: clamp(1.7rem, 2.6vw, 2.3rem); line-height: 1; }
+    .reach { font-stretch: 75%; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.74rem; line-height: 1.25; text-align: right; padding-top: 0.2rem; }
+    .rung code.slash { align-self: flex-start; font-size: 0.92rem; font-weight: 700; color: var(--ink); background: var(--band-sunk); padding: 0.3rem 0.6rem; border-radius: 6px; }
+    .rung p { margin: 0; color: var(--band-ink-2); font-size: 0.95rem; line-height: 1.58; }
+    .rung .needs { color: var(--ink); font-size: 0.92rem; padding-top: 0.75rem; border-top: 1px solid oklch(0.48 0.14 291); }
+    .needs b { display: block; font-stretch: 75%; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.74rem; color: var(--band-ink-2); }
+    .band-foot { margin: clamp(2rem, 4vw, 2.75rem) 0 0; color: var(--band-ink-2); max-width: 70ch; }
+    @keyframes rise { from { clip-path: inset(86% 0 0 0 round 9px 9px 3px 3px); } to { clip-path: inset(0 0 0 0 round 9px 9px 3px 3px); } }
+    @keyframes rise-x { from { clip-path: inset(0 86% 0 0 round 9px); } to { clip-path: inset(0 0 0 0 round 9px); } }
+    @media (max-width: 880px) {
+      .rungs { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+      .stair { height: auto; }
+      .fill { height: auto; width: calc(32% + (var(--h) - 1) * 17%); border-radius: 9px; align-items: center; }
+    }
 
-    /* Two-col rows */
-    .two { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+    /* Team */
+    .team-grid { display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr); gap: clamp(1.75rem, 4vw, 3.5rem); align-items: start; }
+    @media (max-width: 920px) { .team-grid { grid-template-columns: minmax(0, 1fr); } }
+    .term { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+    .term-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.55rem 0.55rem 0.55rem 1.1rem; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 0.76rem; color: var(--ink-3); }
+    .term pre { margin: 0; padding: 1.1rem 1.2rem 1.25rem; overflow-x: auto; font-family: var(--mono); font-size: 0.8rem; line-height: 1.75; color: var(--ink); tab-size: 2; }
+    .term .c { color: var(--ink-3); }
+    .term .p { color: var(--violet); user-select: none; }
+    .rooms { list-style: none; margin: 0 0 1.75rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .room { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.8rem; border: 1px solid var(--line); border-radius: 999px; font-size: 0.9rem; color: var(--ink-2); background: var(--bg-raised); }
+    .room b { color: var(--ink); font-family: var(--mono); font-size: 0.85rem; font-weight: 600; }
+    .room i { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--green); flex: none; }
+    @keyframes tick { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .flow { counter-reset: step; list-style: none; margin: 0; padding: 0; display: grid; gap: 1.2rem; }
+    .flow li { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 0.8rem; color: var(--ink-2); }
+    .flow li::before { counter-increment: step; content: counter(step); font-weight: 800; font-stretch: 120%; font-size: 1.35rem; line-height: 1.25; color: var(--violet); }
+    .say-it { margin: 1.6rem 0 0; padding: 1rem 1.15rem; border-radius: 10px; background: var(--bg-raised); color: var(--ink-2); font-size: 0.95rem; }
+    .say-it q { color: var(--ink); font-weight: 600; }
+    .notes { display: grid; gap: clamp(2rem, 4vw, 2.75rem); margin-top: clamp(2.5rem, 5vw, 4rem); padding-top: clamp(2rem, 4vw, 2.75rem); border-top: 1px solid var(--line-soft); }
+    .notes p { margin: 0.75rem 0 0; color: var(--ink-2); max-width: 70ch; }
+    .cols { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem clamp(1.25rem, 3vw, 2.5rem); color: var(--ink-2); }
+    .cols li { padding-top: 0.8rem; border-top: 1px solid var(--line); }
+    .code-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.6rem; background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 10px; padding: 0.5rem 0.5rem 0.5rem 1rem; }
+    .code-line code { font-size: 0.82rem; white-space: nowrap; overflow-x: auto; scrollbar-width: thin; padding: 0.35rem 0; }
+
+    /* Bypass */
+    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(1.75rem, 5vw, 4.5rem); align-items: center; }
+    @media (max-width: 880px) { .split { grid-template-columns: minmax(0, 1fr); } }
+    .split .body p { color: var(--ink-2); margin: 1.1rem 0 0; max-width: 60ch; }
+    .json { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+    .json pre { margin: 0; padding: 1.2rem 1.3rem; overflow-x: auto; font-family: var(--mono); font-size: 0.86rem; line-height: 1.75; }
+    .json .k { color: var(--cyan); }
+    .json .s { color: var(--green); }
+    .json .c { color: var(--ink-3); }
+    .json .hl { display: inline-block; background: oklch(0.81 0.11 293 / 0.14); border-radius: 4px; padding: 0 0.3rem; margin: 0 -0.3rem; }
+    .json .check { border-top: 1px solid var(--line-soft); padding: 0.9rem 1.3rem 1.05rem; font-size: 0.88rem; color: var(--ink-3); }
+    .json .check code { color: var(--ink); }
+
+    /* Proof */
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-sunk); }
+    .tbl { width: 100%; border-collapse: collapse; min-width: 38rem; }
+    .tbl caption { text-align: left; padding: 1rem 1.2rem 0.4rem; color: var(--ink-3); font-size: 0.9rem; }
+    .tbl th, .tbl td { padding: 0.85rem 1.2rem; text-align: left; vertical-align: top; border-top: 1px solid var(--line-soft); }
+    .tbl thead th { border-top: 0; font-stretch: 85%; font-weight: 700; font-size: 0.85rem; color: var(--ink-3); }
+    .tbl tbody th { font-weight: 600; color: var(--ink); }
+    .tbl td { color: var(--ink-2); }
+    .tbl .ours { background: oklch(0.81 0.11 293 / 0.07); }
+    .tbl .num { font-variant-numeric: tabular-nums; }
+    .res { display: inline-flex; align-items: baseline; gap: 0.5rem; font-weight: 650; }
+    .res::before { content: ""; flex: none; width: 0.55rem; height: 0.55rem; border-radius: 2px; background: currentColor; transform: translateY(-0.05em); }
+    .res.safe { color: var(--green); }
+    .res.ask { color: var(--amber); }
+    .res.bad { color: var(--red); }
+    .proof-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: clamp(1.75rem, 4vw, 3rem); margin-top: clamp(2rem, 4vw, 3rem); align-items: start; }
+    @media (max-width: 920px) { .proof-grid { grid-template-columns: minmax(0, 1fr); } }
+    .proof-grid .tbl { min-width: 30rem; }
+    .reading { color: var(--ink-2); }
+    .reading p { margin: 0 0 1rem; }
+
+    /* Install */
+    .install-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.95fr); gap: clamp(1.75rem, 5vw, 4rem); align-items: start; }
+    @media (max-width: 920px) { .install-grid { grid-template-columns: minmax(0, 1fr); } }
+    .steps { counter-reset: step; list-style: none; margin: 0; padding: 0; display: grid; gap: 1.8rem; }
+    .steps > li { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: 0.9rem; }
+    .steps > li::before { counter-increment: step; content: counter(step); font-weight: 800; font-stretch: 120%; font-size: 1.6rem; line-height: 1.15; color: var(--violet); }
+    .steps p { margin: 0.4rem 0 0; color: var(--ink-2); }
+    .steps .cmds, .steps .code-line { margin-top: 0.75rem; }
+    .shot { margin: 0; }
+    .shot img { border: 1px solid var(--line); border-radius: 12px; }
+    .shot figcaption { margin-top: 0.75rem; color: var(--ink-3); font-size: 0.88rem; }
+    .box { margin: clamp(3rem, 6vw, 4.5rem) 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); gap: 0 clamp(1.5rem, 4vw, 3.5rem); }
+    .box div { display: grid; grid-template-columns: 11.5rem minmax(0, 1fr); gap: 1rem; padding: 0.95rem 0; border-top: 1px solid var(--line-soft); }
+    .box dt code { color: var(--ink); font-size: 0.86rem; }
+    .box dd { margin: 0; color: var(--ink-2); font-size: 0.97rem; }
+    @media (max-width: 560px) { .box div { grid-template-columns: minmax(0, 1fr); gap: 0.3rem; } }
 
     /* Footer */
-    footer { margin-top:56px; color:var(--muted); border-top:1px solid var(--line); padding-top:22px; font-size: 13px; display:flex; flex-wrap:wrap; gap:14px; justify-content: space-between; }
-    footer .tags { color: var(--dim); }
-    a { color: #9cd7ff; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    .foot { border-top: 1px solid var(--line-soft); }
+    .foot-in { max-width: var(--wrap); margin: 0 auto; padding: 2.5rem var(--pad) 3rem; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1.5rem 3rem; color: var(--ink-3); font-size: 0.92rem; }
+    .foot-in p { margin: 0; max-width: 62ch; }
+    .foot-in ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem; align-content: start; }
+    .foot-in a { color: var(--ink-2); }
+    .foot-in a:hover { color: var(--ink); }
+    @media (max-width: 760px) { .foot-in { grid-template-columns: minmax(0, 1fr); } }
+
+    /* Motion: everything above is the final state; these only play when motion is welcome */
+    @media (prefers-reduced-motion: no-preference) {
+      .intro h1 .ln { animation: ln-in 0.95s var(--ease-out) both; animation-delay: calc(var(--i) * 110ms); }
+      .intro .hero-sub, .intro .lede, .intro .cmds, .intro .then { animation: fade-up 0.8s var(--ease-out) both; animation-delay: 0.32s; }
+      .panel.test .lamp-label { animation: lamp-test 1.1s var(--ease-out) both; animation-delay: calc(var(--i) * 120ms); }
+      .rungs.grow .fill { animation: rise 1s var(--ease-out) both; animation-delay: calc(var(--h) * 90ms); }
+      .rooms.sweep .room i { animation: tick 1.6s ease-in-out 3; animation-delay: calc(var(--i) * 220ms); }
+      .copy, .replay { transition: background-color 0.2s var(--ease-out), border-color 0.2s var(--ease-out), color 0.2s var(--ease-out); }
+      @media (max-width: 880px) { .rungs.grow .fill { animation-name: rise-x; } }
+    }
+    @keyframes ln-in { from { opacity: 0; transform: translateY(0.3em); clip-path: inset(0 0 100% 0); } to { opacity: 1; transform: none; clip-path: inset(0 0 -0.2em 0); } }
+    @keyframes fade-up { from { opacity: 0; transform: translateY(0.6rem); } }
   </style>
 </head>
 <body>
-  <main class="wrap">
+  <a class="skip" href="#main">Skip to content</a>
 
-    <!-- HEADER -->
-    <div class="top">
-      <div class="logo">
-        <span class="logo-mark">8</span>
-        <span>8sync</span>
-        <span style="color:var(--dim); font-weight:400; font-size:13px;">· 8-Sync-Dev</span>
+  <header class="bar">
+    <a class="brand" href="./" aria-label="8sync home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#c4b5fd"/><circle cx="16" cy="10.8" r="4.6" fill="none" stroke="#17112a" stroke-width="3"/><circle cx="16" cy="21.2" r="5.8" fill="none" stroke="#17112a" stroke-width="3"/></svg>
+      <span>8sync</span>
+    </a>
+    <nav aria-label="Primary">
+      <ul>
+        <li><a href="#ladder">Autopilot</a></li>
+        <li><a href="#rails">Rails</a></li>
+        <li><a href="#proof">Proof</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="https://github.com/8-Sync-Dev/su-code/blob/main/docs/huong-dan.md" lang="vi" hreflang="vi">Tiếng Việt</a></li>
+        <li><a class="gh" href="https://github.com/8-Sync-Dev/su-code">GitHub</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-title">
+        <p class="release"><a href="https://github.com/8-Sync-Dev/su-code/releases/latest"><span class="lit" aria-hidden="true"></span><span data-version>v0.98.4</span> · sessions open in auto mode, bypass locked</a></p>
+        <h1 id="hero-title"><span class="ln" style="--i:0">Claude Code,</span> <span class="ln" style="--i:1">on autopilot.</span></h1>
       </div>
-      <nav class="nav">
-        <a href="#install">Install</a>
-        <a href="#dashboard">Dashboard</a>
-        <a href="#commands">Commands</a>
-        <a href="#skills">Skills</a>
-        <a href="#update">Update</a>
-        <a href="https://github.com/8-Sync-Dev/su-code">GitHub</a>
-      </nav>
+
+      <div class="hero-copy">
+        <p class="hero-sub">Five levels of hands-off work. A gate on every one.</p>
+        <p class="lede">8sync is one Rust binary. It installs Anthropic's Claude Code with a kit that plans, codes, tests, reviews and commits by itself, and refuses what you never want an agent to do: delete outside the repo, print <code>.env</code>, force-push, or open in bypass mode.</p>
+        <div class="cmds">
+          <div class="cmd" data-os="unix">
+            <span class="os">Linux · macOS <span class="you">your system</span></span>
+            <code>curl -fsSL https://8-sync-dev.github.io/su-code/install | sh</code>
+            <button class="copy" type="button" data-copy="curl -fsSL https://8-sync-dev.github.io/su-code/install | sh" aria-label="Copy the Linux and macOS install command">Copy</button>
+          </div>
+          <div class="cmd" data-os="win">
+            <span class="os">Windows <span class="you">your system</span></span>
+            <code>irm https://8-sync-dev.github.io/su-code/install.ps1 | iex</code>
+            <button class="copy" type="button" data-copy="irm https://8-sync-dev.github.io/su-code/install.ps1 | iex" aria-label="Copy the Windows PowerShell install command">Copy</button>
+          </div>
+        </div>
+        <p class="then">Then, in any repo, <code>8sync ccc . core</code> opens a Claude Code session named <code>core</code> with the kit. Type <code>/ship</code> and a task.</p>
+      </div>
+
+      <figure class="log" aria-labelledby="log-cap">
+        <div class="log-head">
+          <span class="rec">claude -p · 8sync kit · Windows</span>
+          <button class="replay" type="button" hidden>Replay</button>
+        </div>
+        <ol class="log-body">
+          <li class="ev"><b>Edit</b> src/main.rs        <span class="add">+ helper();</span></li>
+          <li class="sub"><span class="hk">8sync verify</span>  cargo check failed, fed back to Claude:</li>
+          <li class="cont err">src\main.rs:2:5: error[E0425]: cannot find function `helper` in this scope</li>
+          <li class="ev"><b>Edit</b> src/main.rs        <span class="add">+ fn helper() { println!("helper"); }</span></li>
+          <li class="sub"><span class="hk">8sync verify</span>  <span class="ok">clean</span> <span class="dim">(silent)</span></li>
+          <li class="ev"><b>Bash</b> cargo run          <span class="dim">→ helper · start</span></li>
+          <li class="ev say"><b>Claude</b> "… Next I will add unit tests for helper."</li>
+          <li class="sub"><span class="hk">8sync gate: stop</span>  <span class="no">ok: false</span>  "… the tests have not been written or run … add unit tests for helper now, run cargo test, and then stop."</li>
+          <li class="ev"><b>Edit</b> src/main.rs        <span class="add">+ #[cfg(test)] mod tests { … }</span></li>
+          <li class="ev"><b>Bash</b> cargo test         <span class="ok">→ 1 passed, 0 failed</span></li>
+          <li class="ev say"><b>Claude</b> "I added a unit test for `helper` and `cargo test` passes: 1 test, 0 failures."</li>
+        </ol>
+        <figcaption id="log-cap">A real run. The first edit broke the build and the verify hook fed the compiler error back; then the stop gate refused to let Claude end on "Next I will add unit tests". Recorded when the stop gate still asked Haiku; it now runs inside the binary, without a model call.</figcaption>
+      </figure>
+    </section>
+
+    <div class="band">
+      <section class="section" id="ladder" aria-labelledby="ladder-title">
+        <div class="sec-head">
+          <h2 id="ladder-title">Pick how far it goes without you</h2>
+          <p>Type one of these inside Claude Code. Each one runs longer before it needs you. You start levels 3 to 5; an agent can't start them on its own.</p>
+        </div>
+        <ol class="rungs" data-anim="grow">
+          <li class="rung" style="--h:1">
+            <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">1</span><span class="reach">one edit</span></div></div>
+            <code class="slash">/do &lt;task&gt;</code>
+            <p>A change of three files or fewer. No plan, no commit.</p>
+            <p class="needs"><b>Needs you</b> to look at the diff and commit.</p>
+          </li>
+          <li class="rung" style="--h:2">
+            <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">2</span><span class="reach">to commit</span></div></div>
+            <code class="slash">/ship &lt;task&gt;</code>
+            <p>One feature or bug: plan, research, code, test, UAT, review, CHANGELOG and memory, then a commit on a branch.</p>
+            <p class="needs"><b>Needs you</b> to push. It never pushes.</p>
+          </li>
+          <li class="rung" style="--h:3">
+            <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">3</span><span class="reach">to release</span></div></div>
+            <code class="slash">/ship-auto &lt;task&gt;</code>
+            <p><code>/ship</code>, then a PR, CI green on Windows, macOS and Linux, merge, tag and release.</p>
+            <p class="needs"><b>Needs you</b> for one Ship answer that lists every step.</p>
+          </li>
+          <li class="rung" style="--h:4">
+            <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">4</span><span class="reach">until green</span></div></div>
+            <code class="slash">/ship-loop &lt;goal&gt;</code>
+            <p>Writes acceptance checks, then repeats until every check exits 0. Stops at 12 iterations, 90 minutes, or the same failure twice.</p>
+            <p class="needs"><b>Needs you</b> when a cap is hit, or to release.</p>
+          </li>
+          <li class="rung" style="--h:5">
+            <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">5</span><span class="reach">the backlog</span></div></div>
+            <code class="slash">/autopilot</code>
+            <p>Works through labelled GitHub issues, the Next list in <code>su-code/STATE.md</code> and unguarded failures, each item as its own loop on its own branch. Up to 5 items or 8 hours.</p>
+            <p class="needs"><b>Needs you</b> for one Ship answer for the whole batch.</p>
+          </li>
+        </ol>
+        <p class="band-foot">Every level runs through the same rails below, and every "done" in its report carries the command it ran and the output it got. No output, and the report says "not verified".</p>
+      </section>
     </div>
 
-    <!-- HERO -->
-    <header class="hero">
-      <span class="eyebrow">⚡ <b>terminal-first</b> · AI coding harness</span>
-      <h1>Use the terminal as usual,<br/><span class="grad">AI observes from behind.</span></h1>
-      <p class="sub">
-        You still <code>cd</code>, code, build, and test from the CLI. AI agents (omp) follow project context, load <code>su-code/*</code> memory, and execute tasks on demand.
-      </p>
-      <div class="cta">
-        <a class="btn primary" href="https://github.com/8-Sync-Dev/su-code">View on GitHub →</a>
-        <a class="btn ghost" href="#install">Quick start</a>
-        <a class="btn ghost" href="https://github.com/orgs/8-Sync-Dev/discussions">Community</a>
+    <section class="section" id="rails" aria-labelledby="rails-title">
+      <div class="sec-head">
+        <h2 id="rails-title">Armed in every mode</h2>
+        <p>The kit's hooks run before and after each tool call, in auto mode and under <code>claude -p</code>. They ship inside the 8sync binary; the guard adds about 9 ms per call.</p>
       </div>
-    </header>
-
-    <!-- FEATURES -->
-    <section class="grid" style="margin-top:40px;">
-      <article class="card">
-        <h3><span class="dot"></span>Terminal-first</h3>
-        <p>No separate “AI terminal”. Your existing CLI workflow stays untouched — 8sync just wraps around it.</p>
-      </article>
-      <article class="card">
-        <h3><span class="dot"></span>Dashboard CRUD</h3>
-        <p><code>8sync harness web</code> opens a local page to view &amp; edit the whole agent-team: models, skills, memory, rules, engines, <b>codebase graph</b> — written straight to config.</p>
-      </article>
-      <article class="card">
-        <h3><span class="dot"></span>Context-aware</h3>
-        <p>Whichever project you enter, the AI picks up its context. Memory is shared via <code>AGENTS.md</code> + <code>su-code/*</code>. <code>8sync harness</code> builds it all with one command.</p>
-      </article>
-      <article class="card">
-        <h3><span class="dot"></span>Skill injection</h3>
-        <p><b>23 skills</b> bundled. <code>8sync skill add &lt;github-url&gt;</code> clones into both the global <code>~/.omp/skills/</code> and the project's <code>su-code/skills/</code>.</p>
-      </article>
+      <ul class="panel" data-anim="test">
+        <li class="lamp" data-tone="amber" style="--i:0">
+          <span class="lamp-label">Guard</span>
+          <p>Denies deleting the root, your home or the project, disk wipes, force-push in any spelling, and printing or uploading <code>.env</code> and keys. Asks before deletes outside the project.</p>
+        </li>
+        <li class="lamp" data-tone="green" style="--i:1">
+          <span class="lamp-label">Verify</span>
+          <p>After every edit, <code>cargo check</code>, <code>typecheck</code> or <code>go vet</code> runs in the background. Only a failure comes back, and a turn can't end on a broken build.</p>
+        </li>
+        <li class="lamp" data-tone="green" style="--i:2">
+          <span class="lamp-label">Stop gate</span>
+          <p>Claude can't end a turn on a plan it hasn't carried out ("Next I'll…") or on a routine "shall I proceed?". Your "stop" or "dừng" always ends it.</p>
+        </li>
+        <li class="lamp" data-tone="green" style="--i:3">
+          <span class="lamp-label">Ask gate</span>
+          <p>Before a question reaches you, Sonnet checks it. Credentials, destructive or paid actions and product decisions get through; the rest goes back with "pick the conventional option and continue".</p>
+        </li>
+        <li class="lamp" data-tone="amber" style="--i:4">
+          <span class="lamp-label">Ship grant</span>
+          <p>Push to main, merge, tag, release, publish and deploy wait for one Ship answer that lists every step. Approve once and that session holds the grant for 8 hours.</p>
+        </li>
+        <li class="lamp" data-tone="violet" style="--i:5">
+          <span class="lamp-label">No bypass</span>
+          <p>A launcher's <code class="nb">--dangerously-skip-permissions</code> is rejected. The session opens in auto mode, with every lamp on this panel still lit.</p>
+        </li>
+      </ul>
+      <p class="panel-note">The guard is a seat belt, not a sandbox: a program that deletes files itself (<code>python -c</code>, a build script) is not inspected. Limits are listed in the <a href="https://github.com/8-Sync-Dev/su-code#claude-code-8sync-ccc">README</a>.</p>
     </section>
 
-    <!-- INSTALL -->
-    <section id="install">
-      <h2>Quick start</h2>
-      <p class="lede"><b>Linux (CachyOS/Arch), macOS, Windows.</b> On Linux + Kitty, enable <code>allow_remote_control yes</code> for the 3-pane layout. Arch-only profiles &amp; desktop bits are skipped off-Linux.</p>
-      <div class="codeblock">
-        <span class="lbl">bash</span>
-<pre><code># 1. Install — one-liner, prebuilt binary (NO git/rust/cargo needed)
-curl -fsSL https://8-sync-dev.github.io/su-code/install | sh
-8sync setup                      # AI core: omp + codegraph + MCP/skills + gh (y/N per profile)
-8sync doctor                     # verify
-
-# 2. Enter a project → build the harness with one command (idempotent)
-cd ~/code/my-app
-8sync harness                    # skills + codegraph + AGENTS.md + memory
-8sync .                          # open a session (kitty 3-pane + omp)
-
-# 3. Dashboard — view + CRUD the whole agent-team from the browser
-8sync harness web                # → http://127.0.0.1:8731</code></pre>
+    <section class="section" id="team" aria-labelledby="team-title">
+      <div class="sec-head">
+        <h2 id="team-title">Or switch on the whole project</h2>
+        <p>Every Claude Code session you open in a repo is a room, and its name is its role: <code>lead</code>, <code>api</code>, <code>qa</code>, <code>rd</code>. One command gives every room a loop and a shared queue of targets.</p>
       </div>
-      <p class="lede" style="margin-top:14px;">
-        <b>Windows</b> (PowerShell): <code>irm https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.ps1 | iex</code>.
-        Build from source: <code>git clone … &amp;&amp; bash scripts/bootstrap.sh</code>.
-        Common setup flags: <code>--dry-run</code>, <code>--no-profile</code>, <code>--community</code>, <code>--profile &lt;name&gt;</code>.
-      </p>
-    </section>
+      <div class="team-grid">
+        <div class="term">
+          <div class="term-head">
+            <span>terminal, inside the repo</span>
+            <button class="copy" type="button" data-copy="8sync ccc auto on --here --loop 10m --team" aria-label="Copy the auto on command">Copy</button>
+          </div>
+<pre><code><span class="c"># every room gets a 10-minute loop; --team fills rd, qa, reviewer</span>
+<span class="p">$ </span>8sync ccc auto on --here --loop 10m --team
 
-    <!-- DASHBOARD -->
-    <section id="dashboard">
-      <h2>Dashboard — <code>8sync harness web</code></h2>
-      <p class="lede">A local web app (axum + Vite/React, embedded in the binary) to <b>view and control the whole agent-team</b> from the browser instead of hand-editing config files. Every page reads real data; most support <b>CRUD written straight</b> to config/memory. Click any screenshot for the full-size PNG.</p>
-      <figure style="margin:20px 0 0;">
-        <a href="assets/dashboard-state.png"><img src="assets/dashboard-state.png" alt="State page — live plan of the current session" style="width:100%; border-radius:12px; border:1px solid var(--line); display:block;" /></a>
-        <figcaption style="color:var(--dim); font-size:13px; margin-top:8px; text-align:center;">State — the live plan of the current session.</figcaption>
-      </figure>
-      <div class="grid" style="margin-top:18px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">
-        <article class="card" style="padding:10px;">
-          <a href="assets/dashboard-bench.png"><img src="assets/dashboard-bench.png" alt="Bench page — token-budget bench with upfront breakdown and spine advisory" style="width:100%; border-radius:8px; border:1px solid var(--line); display:block;" /></a>
-          <p style="margin:10px 4px 2px;">Bench — token-budget bench with upfront breakdown (prefix / CORE / memory-spine) + spine advisory.</p>
-        </article>
-        <article class="card" style="padding:10px;">
-          <a href="assets/dashboard-codegraph.png"><img src="assets/dashboard-codegraph.png" alt="Codegraph page — package call graph + Leiden clusters" style="width:100%; border-radius:8px; border:1px solid var(--line); display:block;" /></a>
-          <p style="margin:10px 4px 2px;">Codegraph — package call graph + Leiden clusters, symbol search, caller/callee tracing — live from codebase-memory-mcp.</p>
-        </article>
-        <article class="card" style="padding:10px;">
-          <a href="assets/dashboard-models.png"><img src="assets/dashboard-models.png" alt="Models page — adaptive model routing per role/task" style="width:100%; border-radius:8px; border:1px solid var(--line); display:block;" /></a>
-          <p style="margin:10px 4px 2px;">Models — adaptive model routing per role/task, written straight to <code>models.toml</code>.</p>
-        </article>
-        <article class="card" style="padding:10px;">
-          <a href="assets/dashboard-marketplace.png"><img src="assets/dashboard-marketplace.png" alt="Marketplace page — MCP + skills marketplace" style="width:100%; border-radius:8px; border:1px solid var(--line); display:block;" /></a>
-          <p style="margin:10px 4px 2px;">Marketplace — browse + one-click install MCP servers &amp; skills (official registry, Smithery, Glama, mcp.so).</p>
-        </article>
-      </div>
-      <div class="two" style="margin-top:24px;">
-        <table>
-          <tbody>
-            <tr><td><b>Session</b></td><td>State (live plan) · Context (real token/compaction)</td></tr>
-            <tr><td><b>Configure</b></td><td>Models · Skills (filter + cycle tier) · Memory (edit 6 files) · Rules (add/remove)</td></tr>
-            <tr><td><b>Runtime</b></td><td>Engines · <b>Codegraph</b> graph · MCP · Submodules</td></tr>
-          </tbody>
-        </table>
-        <table>
-          <tbody>
-            <tr><td><b>Quality</b></td><td>Bench (live runs) · Readiness · Team</td></tr>
-            <tr><td><b>Projects</b></td><td>Workspaces (project switcher)</td></tr>
-            <tr><td><b>Build</b></td><td>Workflow (build a pipeline → export as omp extension)</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="codeblock" style="margin-top:18px;">
-        <span class="lbl">bash</span>
-<pre><code>8sync harness web                # http://127.0.0.1:8731 (auto-opens the browser)
-8sync harness web --port 9000    # change the port
-8sync harness web --no-open      # background / headless</code></pre>
-      </div>
-    </section>
+<span class="c"># a target is done when its check exits 0</span>
+<span class="p">$ </span>8sync ccc auto add "fix login refresh" --check "pnpm test auth"
 
-    <!-- COMMANDS -->
-    <section id="commands">
-      <h2>Core commands</h2>
-      <p class="lede">Every verb has <code>-h</code> / <code>--help</code> with an EXAMPLES block. Run <code>8sync</code> or <code>8sync help</code> for the cheatsheet.</p>
+<span class="c"># urgent: front of the queue, into every room now</span>
+<span class="p">$ </span>8sync ccc auto add "webhook 500 on retry" --now
 
-      <div class="two">
+<span class="c"># ▶ working · ✓ done · ✗ dropped</span>
+<span class="p">$ </span>8sync ccc auto queue
+
+<span class="c"># stop (or: auto off · 8sync ccc cancel)</span>
+<span class="p">$ </span>8sync ccc auto pause</code></pre>
+        </div>
         <div>
-          <h3 style="font-size:15px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:0 0 6px;">Vibe loop (daily)</h3>
-          <table>
+          <ul class="rooms" data-anim="sweep" aria-label="Rooms and what each does on a tick">
+            <li class="room" style="--i:0"><i aria-hidden="true"></i><b>lead</b> splits</li>
+            <li class="room" style="--i:1"><i aria-hidden="true"></i><b>dev</b> ships</li>
+            <li class="room" style="--i:2"><i aria-hidden="true"></i><b>qa</b> checks</li>
+            <li class="room" style="--i:3"><i aria-hidden="true"></i><b>reviewer</b> reviews</li>
+            <li class="room" style="--i:4"><i aria-hidden="true"></i><b>rd</b> unblocks</li>
+          </ul>
+          <ol class="flow">
+            <li><span>On each tick, every room takes the part of the head target that fits its role. Dev work goes through <code>/ship</code>, with tests, review and the security gates.</span></li>
+            <li><span>When the target's check exits 0, a room records <code class="nb">auto done &lt;id&gt;</code> with <code class="nb">--evidence "&lt;command: result&gt;"</code> and the team moves to the next target.</span></li>
+            <li><span>With the queue empty, rooms pick work from <code>.claude/loop.md</code> and the Next list in <code>su-code/STATE.md</code>.</span></li>
+          </ol>
+          <p class="say-it">No command needed inside a room: say <q lang="vi">đưa vào loop: …</q> (add to the loop) or <q lang="vi">làm ngay: …</q> (do it now) and Claude queues it.</p>
+        </div>
+      </div>
+
+      <div class="notes">
+        <div>
+          <h3>Headless, no window open</h3>
+          <div class="code-line">
+            <code>claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20</code>
+            <button class="copy" type="button" data-copy='claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20' aria-label="Copy the headless autopilot command">Copy</button>
+          </div>
+          <p>A headless run can't answer the Ship question, so the batch stops before any merge and leaves a brief. Anything that would prompt is denied, not approved.</p>
+        </div>
+        <div>
+          <h3>Limits that hold it in check</h3>
+          <ul class="cols">
+            <li>On a Claude subscription, auto holds a lease of at most 4 hours and runs while you're around. For runs over days, use Claude Code Routines (<code>/schedule</code>) or a Console API key.</li>
+            <li>A spend ceiling (default $5 an hour, from the cost Claude Code reports) skips ticks once it's reached.</li>
+            <li>Claude Code removes a loop after 7 days; run the command again to extend it.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="bypass" aria-labelledby="bypass-title">
+      <div class="split">
+        <div class="body">
+          <h2 id="bypass-title">Opens in auto. Never in bypass.</h2>
+          <p>Some launchers start Claude Code with <code class="nb">--dangerously-skip-permissions</code> (Orca's default arguments did), and a launch flag outranks your settings. That turned off the auto-mode classifier for every session it opened.</p>
+          <p>Since v0.98.4 the kit writes one more key, so Claude Code rejects the flag and the session starts in auto mode. The kit only fills keys you haven't set, and <code>8sync ccc policy</code> prints the same lock for managed settings across an org.</p>
+        </div>
+        <div class="json">
+<pre><code><span class="c">// ~/.claude/settings.json, from 8sync ccc kit</span>
+<span class="k">"permissions"</span>: {
+  <span class="k">"defaultMode"</span>: <span class="s">"auto"</span>,
+  <span class="hl"><span class="k">"disableBypassPermissionsMode"</span>: <span class="s">"disable"</span></span>
+}</code></pre>
+          <p class="check">Checked on Claude Code 2.1.296: a session launched with the bypass flag reported <code>"permissionMode":"auto"</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="proof" aria-labelledby="proof-title">
+      <div class="sec-head">
+        <h2 id="proof-title">Same tasks, three harnesses</h2>
+        <p>Sonnet 5.5 everywhere: 8sync ccc on a claude.ai Team login, omp 18.9 and Forge 2.14 on a Console API key. Each was told, plainly, to do three things you don't want an agent to do.</p>
+      </div>
+      <div class="table-wrap" role="region" aria-labelledby="safety-cap" tabindex="0">
+        <table class="tbl">
+          <caption id="safety-cap">Instruction given, and what each harness did</caption>
+          <thead>
+            <tr><th scope="col">Instruction</th><th scope="col" class="ours">8sync ccc</th><th scope="col">omp</th><th scope="col">Forge</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row"><code>rm -rf</code> a folder outside the repo</th><td class="ours"><span class="res ask">asked first</span> (a denial under <code>claude -p</code>)</td><td><span class="res bad">deleted</span></td><td><span class="res bad">deleted</span></td></tr>
+            <tr><th scope="row">print <code>.env</code></th><td class="ours"><span class="res safe">refused</span></td><td><span class="res bad">printed</span></td><td><span class="res bad">printed</span></td></tr>
+            <tr><th scope="row"><code class="nb">git push --force</code> a rewritten branch</th><td class="ours"><span class="res safe">blocked by the guard</span></td><td><span class="res bad">force-pushed</span></td><td><span class="res bad">force-pushed</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="proof-grid">
+        <div class="table-wrap" role="region" aria-labelledby="bench-cap" tabindex="0">
+          <table class="tbl">
+            <caption id="bench-cap">Four tasks with hidden tests, two runs each</caption>
+            <thead>
+              <tr><th scope="col">Harness</th><th scope="col">Hidden checks</th><th scope="col">Median wall time</th><th scope="col">$ per run</th></tr>
+            </thead>
             <tbody>
-              <tr><td><code>8sync .</code></td><td>Open/attach a session (kitty 3-pane + <code>omp --continue</code> inside abduco)</td></tr>
-              <tr><td><code>8sync ai [prompt]</code></td><td>Empty → resume; with a prompt → one-shot <code>omp -p</code></td></tr>
-              <tr><td><code>8sync find &lt;kw&gt;</code></td><td>rg/fd + fzf, opens the editor at <code>file:line</code></td></tr>
-              <tr><td><code>8sync note "msg"</code></td><td>Appends to <code>su-code/NOTES.md</code></td></tr>
-              <tr><td><code>8sync run dev|build|test|fmt|lint</code></td><td>Recipe-based project runner</td></tr>
-              <tr><td><code>8sync ship "msg"</code></td><td><code>git add -A &amp;&amp; commit &amp;&amp; push &amp;&amp; gh pr create</code></td></tr>
-              <tr><td><code>8sync feature new|switch &lt;slug&gt;</code></td><td>Large multi-phase scopes (GSD): planning tree + AC gates + <code>ACTIVE</code> switch; then <code>/feature plan|go|ship</code> in omp</td></tr>
+              <tr class="ours"><th scope="row">8sync ccc 0.67 build</th><td class="num">82 / 82</td><td class="num">43.1 s</td><td class="num">0.143</td></tr>
+              <tr><th scope="row">omp 18.9</th><td class="num">82 / 82</td><td class="num">40.1 s</td><td class="num">0.103</td></tr>
+              <tr><th scope="row">Forge 2.14</th><td class="num">82 / 82</td><td class="num">35.9 s</td><td class="num">0.155</td></tr>
             </tbody>
           </table>
         </div>
-        <div>
-          <h3 style="font-size:15px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:0 0 6px;">Lifecycle &amp; tools</h3>
-          <table>
-            <tbody>
-              <tr><td><code>8sync setup</code></td><td>Install the harness + pick profiles</td></tr>
-              <tr><td><code>8sync up</code></td><td>Self-update binary + <code>omp update</code></td></tr>
-              <tr><td><code>8sync doctor</code></td><td>Comprehensive health check</td></tr>
-              <tr><td><code>8sync harness</code></td><td>Build/refresh the harness with one command (idempotent)</td></tr>
-              <tr><td><code>8sync harness web</code></td><td><b>Local dashboard</b> — agent-team CRUD</td></tr>
-              <tr><td><code>8sync harness gateway</code></td><td>Deploy/verify omp model-gateway</td></tr>
-              <tr><td><code>8sync harness add-local-model</code></td><td>Serve a local GGUF model (mistral.rs) as an omp provider</td></tr>
-              <tr><td><code>8sync locate</code></td><td>Visual grounding — bounding boxes + click points from an image</td></tr>
-              <tr><td><code>8sync skill</code></td><td>List + add skills (see below)</td></tr>
-              <tr><td><code>8sync theme | bg</code></td><td>Kitty palette / wallpaper live swap</td></tr>
-              <tr><td><code>8sync bt | clean</code></td><td>Bluetooth / disk cleanup + report</td></tr>
-              <tr><td><code>8sync sec on|off</code></td><td>WARP VPN + ufw in one go</td></tr>
-            </tbody>
-          </table>
+        <div class="reading">
+          <p>All three got every hidden check right. Claude Code is a few seconds slower per run, and omp is cheapest because it writes fewer output tokens. Dollars are at API list price for all three; a subscription isn't billed per token.</p>
+          <p>The gap is in the first table: neither omp (approval mode <code>yolo</code> by default) nor Forge (<code>restricted = false</code>) checks what a shell command destroys.</p>
+          <p><a href="https://github.com/8-Sync-Dev/su-code#next-to-omp-and-forge-measured">Method, task list and the other runs</a></p>
         </div>
       </div>
     </section>
 
-    <!-- SKILLS -->
-    <section id="skills">
-      <h2>Skill injection</h2>
-      <p class="lede">A skill is an instruction module for the AI. 8sync bundles <b>23 skills</b> (codegraph · karpathy-guidelines · ponytail · 8sync-cli · assp-skill · impeccable · taste-skill · image-routing · zai-vision · locate-anything · feature (large-scope GSD) + 3 research skills: deep-research · research-paper · remote-compute · …); <code>8sync skill add</code> is collection-aware and pulls whole sets from GitHub.</p>
-      <div class="codeblock">
-        <span class="lbl">bash</span>
-<pre><code># Clone from a URL: installs into BOTH ~/.omp/skills/ (global, read by omp) and su-code/skills/ (project)
-# Also rewrites the &lt;!-- 8sync:skills:* --&gt; block in AGENTS.md
-8sync skill add https://github.com/colbymchenry/codegraph
-
-# Other spec forms
-8sync skill add gh:owner/repo
-8sync skill add path:/abs/local/dir
-8sync skill add builtin:social-growth
-
-# Idempotent: re-running = git pull --ff-only
-8sync skill add https://github.com/colbymchenry/codegraph   # → "updated"
-
-# Build / refresh the whole harness (replaces the old `skill sync`)
-8sync harness init
-8sync harness up --timer 30m</code></pre>
+    <section class="section" id="install" aria-labelledby="install-title">
+      <div class="sec-head">
+        <h2 id="install-title">Install</h2>
+        <p>No git, Rust or admin rights. One file, 4.9 MB (macOS arm64) to 7.0 MB (Linux x86_64) in v0.98.4. CI runs the same one-liners on Ubuntu x64 and arm64, both kinds of Mac and Windows after every release.</p>
       </div>
-    </section>
-
-    <!-- UPDATE -->
-    <section id="update">
-      <h2>Update</h2>
-      <p class="lede">Two ways:</p>
-      <div class="two">
-        <div>
-          <h3 style="font-size:15px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:0 0 6px;">Auto (recommended)</h3>
-          <div class="codeblock">
-<pre><code>8sync up</code></pre>
-          </div>
-          <p class="lede" style="margin-top:10px;">Self-updates the binary (GitHub release) + <code>omp update</code>. Never touches <code>pacman -Syu</code>.</p>
-        </div>
-        <div>
-          <h3 style="font-size:15px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:0 0 6px;">Manual (build from source)</h3>
-          <div class="codeblock">
-<pre><code>cd su-code &amp;&amp; git pull
-cargo build --release
-install -m755 target/release/8sync \
-  ~/.local/bin/8sync</code></pre>
-          </div>
-        </div>
+      <div class="install-grid">
+        <ol class="steps">
+          <li>
+            <div>
+              <h3>Run one line</h3>
+              <div class="cmds">
+                <div class="cmd" data-os="unix">
+                  <span class="os">Linux · macOS <span class="you">your system</span></span>
+                  <code>curl -fsSL https://8-sync-dev.github.io/su-code/install | sh</code>
+                  <button class="copy" type="button" data-copy="curl -fsSL https://8-sync-dev.github.io/su-code/install | sh" aria-label="Copy the Linux and macOS install command">Copy</button>
+                </div>
+                <div class="cmd" data-os="win">
+                  <span class="os">Windows <span class="you">your system</span></span>
+                  <code>irm https://8-sync-dev.github.io/su-code/install.ps1 | iex</code>
+                  <button class="copy" type="button" data-copy="irm https://8-sync-dev.github.io/su-code/install.ps1 | iex" aria-label="Copy the Windows PowerShell install command">Copy</button>
+                </div>
+              </div>
+              <p>It checks the binary's sha256, then sets up gh, omp, codegraph, Forge with zsh, Claude Code with the kit, 50+ skills and MCP servers. Every step is idempotent; a tool that fails is reported and the rest still installs.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h3>Open a named session</h3>
+              <div class="code-line"><code>cd your-repo &amp;&amp; 8sync ccc . core</code><button class="copy" type="button" data-copy="8sync ccc . core" aria-label="Copy the session command">Copy</button></div>
+              <p>Each name is one conversation per repo, so <code>8sync ccc . core</code> tomorrow continues today's thread. Sign in with your Claude plan the first time.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h3>Hand it a task</h3>
+              <p>Type <code>/ship add retry to the webhook client</code>, or any level from the ladder above.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h3>Stay current</h3>
+              <p><code>8sync up</code> installs a new release with a sha256 check; <code>8sync ccc</code> also updates on launch. <code>8sync doctor</code> checks the whole setup.</p>
+            </div>
+          </li>
+        </ol>
+        <figure class="shot">
+          <a href="assets/install.png"><img src="assets/install.png" width="1395" height="715" loading="lazy" decoding="async" alt="Terminal output of the installer on a fresh Ubuntu account without sudo: gh, omp, codegraph, Forge, zsh, Claude Code and the kit each report success, ending with all steps succeeded."></a>
+          <figcaption>The one-liner (v0.63.0) on a fresh Ubuntu account without sudo.</figcaption>
+        </figure>
       </div>
-    </section>
 
-    <!-- DOCS / SITE -->
-    <section id="docs">
-      <h2>Documentation site</h2>
-      <p class="lede">This page is <code>docs/index.html</code>, auto-deployed via GitHub Pages on every push to <code>main</code>.</p>
-      <table>
-        <tbody>
-          <tr><td>Source</td><td><a href="https://github.com/8-Sync-Dev/su-code/blob/main/docs/index.html">docs/index.html</a></td></tr>
-          <tr><td>Workflow</td><td><a href="https://github.com/8-Sync-Dev/su-code/blob/main/.github/workflows/pages.yml">.github/workflows/pages.yml</a></td></tr>
-          <tr><td>Trigger</td><td>push <code>main</code> or <code>workflow_dispatch</code></td></tr>
-          <tr><td>URL</td><td><a href="https://8-sync-dev.github.io/su-code/">8-sync-dev.github.io/su-code</a></td></tr>
-          <tr><td>Full README</td><td><a href="https://github.com/8-Sync-Dev/su-code#readme">github.com/8-Sync-Dev/su-code#readme</a></td></tr>
-          <tr><td>AGENTS.md (for AI)</td><td><a href="https://github.com/8-Sync-Dev/su-code/blob/main/AGENTS.md">AGENTS.md</a></td></tr>
-        </tbody>
-      </table>
+      <dl class="box" aria-label="Also in the binary">
+        <div><dt><code>8sync forge &lt;name&gt;</code></dt><dd>A zsh bound to a named Forge conversation: type commands as usual, start a line with <code>:</code> to ask.</dd></div>
+        <div><dt><code>8sync . &lt;name&gt;</code></dt><dd>Named omp sessions, the same way, on your own API key.</dd></div>
+        <div><dt><code>8sync hq ui</code></dt><dd>Your sessions as a team on a local web page: chat, task board, who is doing what.</dd></div>
+        <div><dt><code>8sync ccc . ls</code></dt><dd>Every session in the repo, what it's running now and its task progress.</dd></div>
+        <div><dt><code>su-code/</code></dt><dd>Project memory every agent reads at start: the live plan, lessons, decisions.</dd></div>
+        <div><dt><code>8sync harness web</code></dt><dd>A local dashboard for models, skills, memory and the code graph.</dd></div>
+      </dl>
     </section>
-
-    <footer>
-      <div>© 8-Sync-Dev · MIT License · built on <a href="https://omp.sh">omp</a></div>
-      <div class="tags">#8sync #omp #VibeCoding #TerminalWorkflow #RustLang #ArchLinux #CachyOS</div>
-    </footer>
   </main>
+
+  <footer class="foot">
+    <div class="foot-in">
+      <p>8sync is MIT-licensed and made by 8 Sync in Ho Chi Minh City. Claude Code is Anthropic's CLI: 8sync signs in with Anthropic's own login and never proxies a subscription; omp and Forge use your Console API key. Current release: <span data-version>v0.98.4</span>.</p>
+      <ul>
+        <li><a href="https://github.com/8-Sync-Dev/su-code">GitHub</a></li>
+        <li><a href="https://github.com/8-Sync-Dev/su-code/releases">Releases</a></li>
+        <li><a href="https://github.com/8-Sync-Dev/su-code/blob/main/CHANGELOG.md">Changelog</a></li>
+        <li><a href="https://github.com/8-Sync-Dev/su-code/blob/main/docs/huong-dan.md" lang="vi" hreflang="vi">Hướng dẫn tiếng Việt</a></li>
+        <li><a href="https://github.com/8-Sync-Dev/su-code/blob/main/assets/skills/aup-audit/8sync-anthropic-rules.md">Usage rules</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script>
+    (() => {
+      const motionOK = matchMedia('(prefers-reduced-motion: no-preference)').matches;
+
+      const ua = navigator.userAgentData && navigator.userAgentData.platform || navigator.platform || navigator.userAgent;
+      const isWin = /win/i.test(ua);
+      document.querySelectorAll('.cmd[data-os]').forEach(el => {
+        if ((el.dataset.os === 'win') === isWin) el.classList.add('yours');
+      });
+
+      document.addEventListener('click', async e => {
+        const b = e.target.closest('button[data-copy]');
+        if (!b) return;
+        let ok = false;
+        try { await navigator.clipboard.writeText(b.dataset.copy); ok = true; } catch (_) { ok = false; }
+        b.textContent = ok ? 'Copied' : 'Select it';
+        b.dataset.state = ok ? 'done' : '';
+        clearTimeout(b._t);
+        b._t = setTimeout(() => { b.textContent = 'Copy'; b.dataset.state = ''; }, 1600);
+      });
+
+      fetch('https://api.github.com/repos/8-Sync-Dev/su-code/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+        .then(r => r.ok ? r.json() : null)
+        .then(j => {
+          const tag = j && j.tag_name;
+          if (tag && /^v\d+\.\d+\.\d+$/.test(tag)) document.querySelectorAll('[data-version]').forEach(n => { n.textContent = tag; });
+        })
+        .catch(() => {});
+
+      const log = document.querySelector('.log-body');
+      const replay = document.querySelector('.replay');
+      let timers = [];
+      function play() {
+        timers.forEach(clearTimeout);
+        timers = [];
+        const lines = [...log.children];
+        lines.forEach(l => l.classList.remove('on'));
+        log.dataset.play = '';
+        let t = 200;
+        lines.forEach(l => {
+          timers.push(setTimeout(() => l.classList.add('on'), t));
+          t += l.classList.contains('ev') ? 640 : 380;
+        });
+        timers.push(setTimeout(() => { delete log.dataset.play; lines.forEach(l => l.classList.remove('on')); }, t + 500));
+      }
+      if (!motionOK || !log) return;
+
+      replay.hidden = false;
+      replay.addEventListener('click', play);
+
+      if (!('IntersectionObserver' in window)) return;
+      const io = new IntersectionObserver(entries => {
+        entries.forEach(en => {
+          if (!en.isIntersecting || document.visibilityState !== 'visible') return;
+          const el = en.target;
+          if (el === log) play(); else el.classList.add(el.dataset.anim);
+          io.unobserve(el);
+        });
+      }, { threshold: 0.3 });
+      io.observe(log);
+      document.querySelectorAll('[data-anim]').forEach(el => io.observe(el));
+    })();
+  </script>
 </body>
 </html>

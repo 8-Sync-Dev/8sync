@@ -6,6 +6,24 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 
 ---
 
+## Auto mạnh nhất, bản ngắn
+
+1. **Mở phòng** trong repo, tên theo vai: `8sync ccc . lead` (muốn nhiều phòng thì mở thêm `api`, `qa`, `rd`… ở terminal khác). Từ v0.98.4 session luôn mở ở auto mode: cờ `--dangerously-skip-permissions` của launcher (Orca…) bị Claude Code từ chối.
+2. **Giao việc theo mức**, gõ trong Claude Code:
+
+| Mức | Gõ | Chạy tới đâu | Còn cần anh |
+|---|---|---|---|
+| 1 | `/do <việc>` | sửa ≤ 3 file, không plan, không commit | xem diff, commit |
+| 2 | `/ship <việc>` | plan → R&D → code → test → UAT → review → CHANGELOG + memory → commit | push (nó không push) |
+| 3 | `/ship-auto <việc>` | như `/ship`, rồi PR → CI xanh 3 OS → merge → tag → release | trả lời một câu `Ship` |
+| 4 | `/ship-loop <mục tiêu>` | lặp tới khi mọi lệnh kiểm exit 0 (trần 12 vòng, 90 phút, hoặc kẹt cùng lỗi 2 lần) | khi chạm trần, hoặc lúc release |
+| 5 | `/autopilot` | tối đa 5 item hoặc 8 giờ từ backlog (issue có label `ccc`/`8sync`, mục Next trong `su-code/STATE.md`, failure chưa có guard), mỗi item một loop + một nhánh | một câu `Ship` cho cả batch |
+
+   Mức 3–5 chỉ anh khởi động; agent không tự gõ được.
+3. **Bật cả dự án chạy liên tục**: `8sync ccc auto on --here --loop 10m --team`. Giao đích: `8sync ccc auto add "<việc>" --check "<lệnh kiểm>"` (gấp thì thêm `--now`), hoặc nói trong phòng "đưa vào loop: …" / "làm ngay: …". Xem hàng: `8sync ccc auto queue`. Dừng: `8sync ccc auto pause` (hoặc `auto off`, `8sync ccc cancel`).
+
+Không mở terminal: `claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20`. Chạy headless không trả lời được câu `Ship`, nên dừng trước merge và để lại brief. Trên subscription, auto giữ lease ≤ 4 giờ và chỉ chạy khi anh có mặt; chạy nhiều ngày không người trông thì dùng Routines (`/schedule`) hoặc Console API key. Chi tiết ở mục 4 và 6.
+
 ## 1. Cài và cập nhật
 
 ```bash
@@ -13,7 +31,7 @@ curl -fsSL https://8-sync-dev.github.io/su-code/install | sh      # lần đầu
 # Windows PowerShell: irm https://8-sync-dev.github.io/su-code/install.ps1 | iex
 8sync up            # cập nhật 8sync (kiểm sha256)
 8sync ccc kit       # cài hoặc cập nhật kit vào ~/.claude: agents, /ship, hook, guard, stop gate
-8sync ccc status    # kiểm: claude, login, kit 28/28, managed settings, MCP
+8sync ccc status    # kiểm: claude, login, kit đủ file (vd 40/40), managed settings, MCP
 ```
 
 Nếu `8sync ccc status` báo thiếu login, chạy `claude` một lần và đăng nhập.
@@ -105,7 +123,7 @@ Agent có sẵn trong kit: `explore`, `task`, `quick-task`, `reviewer`, `designe
 8sync hq ui --update   # tải lại bản UI của đúng phiên bản 8sync đang dùng
 ```
 
-Không cần clone repo, không cần pnpm. Lần chạy đầu 8sync tải `8sync-hq-ui-v<phiên bản>.tar.gz` (~4 MB) từ GitHub Releases, kiểm sha256 (sai là từ chối cài), giải nén vào thư mục data của nền tảng (`~/.local/share/8sync/hq-ui/<phiên bản>/` trên Linux) rồi chạy bằng `node`. Các lần sau dùng bản đã cài, không cần mạng. Cần `curl` và `tar`. Đã kiểm trên Linux; macOS và Windows **chưa kiểm** (Windows 10+ có sẵn `curl`/`tar` nhưng đường cài này chưa chạy thử ở đó). File `.sha256` nằm cùng release với tarball nên chỉ kiểm tính toàn vẹn (file hỏng/thiếu), không phải nguồn tin cậy độc lập; nếu GitHub API có digest của asset thì 8sync đối chiếu thêm. Bản dev: `--app <thư mục>` hoặc `EIGHTSYNC_HQ_UI_APP` (chạy `pnpm start` trong thư mục đó; `--update` bị bỏ qua và có cảnh báo).
+Không cần clone repo, không cần pnpm. Lần chạy đầu 8sync tải `8sync-hq-ui-v<phiên bản>.tar.gz` (~9 MB) từ GitHub Releases, kiểm sha256 (sai là từ chối cài), giải nén vào thư mục data của nền tảng (`~/.local/share/8sync/hq-ui/<phiên bản>/` trên Linux) rồi chạy bằng `node`. Các lần sau dùng bản đã cài, không cần mạng. Cần `curl` và `tar`. Đã kiểm trên Linux; macOS và Windows **chưa kiểm** (Windows 10+ có sẵn `curl`/`tar` nhưng đường cài này chưa chạy thử ở đó). File `.sha256` nằm cùng release với tarball nên chỉ kiểm tính toàn vẹn (file hỏng/thiếu), không phải nguồn tin cậy độc lập; nếu GitHub API có digest của asset thì 8sync đối chiếu thêm. Bản dev: `--app <thư mục>` hoặc `EIGHTSYNC_HQ_UI_APP` (chạy `pnpm start` trong thư mục đó; `--update` bị bỏ qua và có cảnh báo).
 
 1. **Add project folder**: đường dẫn tuyệt đối tới repo.
 2. **Sessions → Start**: đặt tên, ví dụ `api`. UI chạy Claude Code chính chủ trong `tmux` (tên `hq-api`), đúng thư mục dự án.
