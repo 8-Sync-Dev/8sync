@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/cli", "crates/ccc-core"]
 
 [workspace.package]
-version = "0.98.1"
+version = "0.98.2"
 edition = "2021"
 license = "MIT"
 authors = ["8sync-dev <8sync.dev.1111@gmail.com>"]
