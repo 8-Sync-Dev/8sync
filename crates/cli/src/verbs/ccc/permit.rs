@@ -207,7 +207,8 @@ fn path_ok(cwd: &Path, p: &str, write: bool) -> Result<(), String> {
     let parts: Vec<String> = a[r.len()..].split('/').filter(|s| !s.is_empty()).map(|s| s.trim_end_matches(['.', ' ']).to_lowercase()).collect();
     // `file::$DATA` and other `:` after the drive letter (Windows streams); a part ending in `.` or a
     // space, or an 8.3 short name (`PACKAG~1.JSO`), may name a held file another way.
-    let odd = p.replace('\\', "/").split('/').any(|s| s.ends_with([' ']) || (s.ends_with('.') && s != "." ) || s.split('~').skip(1).any(|t| t.starts_with(|c: char| c.is_ascii_digit())));
+    // Only the part inside the project: the root itself may be a short name (CI: `C:\Users\RUNNER~1`).
+    let odd = a[r.len()..].split('/').any(|s| s.ends_with(' ') || (s.ends_with('.') && s != ".") || s.split('~').skip(1).any(|t| t.starts_with(|c: char| c.is_ascii_digit())));
     if odd || a.get(2..).is_some_and(|s| s.contains(':')) {
         return Err(format!("đường dẫn lạ ({p})"));
     }

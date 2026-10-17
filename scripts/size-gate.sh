@@ -129,7 +129,13 @@ export LC_ALL=C
 # add/--now/queue/done/drop, lock + atomic rename, text cleaning) and the subscription
 # loop notes. No new dependency. Ceiling 6912 KiB (~102 KiB left). v0.98.0 was tagged,
 # not published.
-CEILING="${CEILING:-7077888}"   # 6912 KiB (raised 2026-10-16 from 6784 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+#
+# 2026-10-18 PR #85 run 39074148649: linux-x86_64 (musl) 7,104,624 B, 26,736 B over 6912 KiB.
+# v0.100.0..v0.100.4 added the board lanes and claims (`ccc/target.rs`), `auto up` headless
+# rooms and `--clear-ss` reload (`ccc/team.rs`), the PermissionRequest hook with its allowlist
+# (`ccc/permit.rs`), card priority and the `auto wait` poller. No new dependency. Ceiling
+# 7040 KiB (~101 KiB left).
+CEILING="${CEILING:-7208960}"   # 7040 KiB (raised 2026-10-18 from 6912 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

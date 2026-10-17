@@ -45,6 +45,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - **`8sync ccc auto up --clear-ss` now also restarts rooms that run an older kit.** A background room started before the kit's `settings.json` last changed is stopped and resumed on the same conversation, so new hooks load with no manual step. A room in the middle of a turn, or one whose transcript is missing, is left running. The rooms are rebound to their new session ids. This is HQ's **Dọn & mở lại** button.
 - **The default team is 5 rooms: lead, dev, qa, review and rd** (rd on Opus researches what blocks the others). `--roles small` is the same set, and `--roles full` gives the 8-room team.
 - **The critic that picks for the owner runs on Opus** (was Sonnet). It grades product and technical questions while the owner is away.
+- Release size ceiling 6912 → 7040 KiB, attributed in `scripts/size-gate.sh`. The linux-x86_64 binary is 7,104,624 B, 26,736 B over the old ceiling, from the board, headless team, permit hook and priority work in 0.100.x. No new dependency.
 - **HQ sidebar is the list of rooms, and a click opens the room.**
   - Grouping: each live room sits under its repo. Worktrees (`<repo>/.claude/worktrees/<x>`) fold under the repo instead of showing as separate projects.
   - Each row: the role icon, the room name and its state in words (Đang làm, Chờ anh, Chờ card, Rảnh, Kẹt, Giữ card). A room waiting on you gets an amber "Chờ anh" badge, and its repo shows the count.
