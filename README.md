@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/8-Sync-Dev/su-code?label=release&color=7c3aed)](https://github.com/8-Sync-Dev/su-code/releases/latest)
 [![Rust](https://img.shields.io/badge/core-Rust-dea584?logo=rust)](crates/cli)
 [![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-0ea5e9)](#install)
-[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-a78bfa)](COMMERCIAL.md)
 
 [Install](#install) · [Claude Code](#claude-code-8sync-ccc) · [Autopilot](#hands-off-five-levels-one-switch) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://8-sync-dev.github.io/su-code)
 
@@ -412,4 +412,4 @@ bash scripts/bootstrap.sh            # rustup if missing → cargo build --relea
 
 ## License
 
-MIT, see [`LICENSE`](LICENSE). Built by [8 Sync Dev](https://github.com/8-Sync-Dev).
+Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for personal study, hobby projects, research, education, charities and government. Use at or for a company, client work, or a paid product or service needs a commercial license; see [`COMMERCIAL.md`](COMMERCIAL.md). Releases up to and including v0.98.4 stay under MIT. Support the work on [GitHub Sponsors](https://github.com/sponsors/8syncdev). Built by [8 Sync](https://github.com/8-Sync-Dev).

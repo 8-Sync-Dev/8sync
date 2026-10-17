@@ -196,3 +196,7 @@ Dữ liệu nằm ở `~/.local/state/8sync/hq/` (SQLite, quyền 0600), chỉ t
 | Mọi lệnh Bash trong Claude Code bị chặn | Có thể 8sync bị gỡ mà hook còn: cài lại `8sync`, hoặc `8sync ccc kit --remove` |
 | Muốn xem lại hook/kit | `8sync ccc status`, `/harden` |
 | Máy lag / CPU cao do codebase-memory-mcp | `8sync harness cbm off` (gỡ khỏi Claude Code + omp mcp.json, không tự kill; dừng tiến trình: `pkill -f codebase-memory-mcp`). Mặc định đã TẮT; bật lại: `8sync harness cbm on` hoặc `EIGHTSYNC_CBM=1` |
+
+## Bản quyền
+
+8sync là source-available theo PolyForm Noncommercial 1.0.0: học, dự án cá nhân, nghiên cứu, trường học, tổ chức từ thiện, cơ quan nhà nước dùng miễn phí. Dùng ở công ty, làm cho khách hoặc làm sản phẩm/dịch vụ thu tiền cần license thương mại, xem [`COMMERCIAL.md`](../COMMERCIAL.md). Các bản tới v0.98.4 vẫn là MIT. Ủng hộ: https://github.com/sponsors/8syncdev.
