@@ -6,7 +6,8 @@
 //! · <name>`; `claude agents --json` lists it; `attach`/`logs`/`stop` take the short id). A room:
 //! - already live in `claude agents --json --cwd <root>` (by id, or a background session with the
 //!   room's name) only gets the loop message in its inbox, like `auto on --loop`;
-//! - stopped with a transcript resumes in the background under the same id (`--resume <id> --bg`);
+//! - stopped with a transcript resumes in the background (`--resume <id> --bg`), which Claude Code
+//!   runs under a new forked id: the registry is rebound to it like a new room's;
 //! - new starts with `--bg --name <room>`, the room's model ([`super::room::Role::model`]) and the
 //!   loop prompt ([`super::auto::loop_prompt`]) as its first message. `--bg` ignores `--session-id`,
 //!   so the registry is pointed at the id Claude Code picked ([`ccc_core::registry::Store::rebind`]);
@@ -335,9 +336,9 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
                 let Some(short) = short_id(&out) else {
                     bail!("`claude --bg` cho phòng {name} không mở được: {}", crate::verbs::session_view::truncate(out.trim(), 300));
                 };
-                if p == Plan::Start {
-                    started.push((name.clone(), short.clone()));
-                }
+                // `--resume <id> --bg` forks a new session id too (seen live on 2.1.296: cd1ecaeb →
+                // b1f0bf3e), so both get the registry pointed at what Claude Code runs.
+                started.push((name.clone(), short.clone()));
                 ((if p == Plan::Resume { "chạy lại nền" } else { "mở nền" }).to_string(), short)
             }
         };
@@ -426,7 +427,9 @@ mod tests {
             }
             if args.iter().any(|a| a == "--bg") {
                 let name = args.iter().position(|a| a == "--name").map(|i| args[i + 1].clone()).unwrap_or_else(|| "resumed".into());
-                return Ok(self.bg.replace("{name}", &name));
+                // a resumed room gets its own forked id, as Claude Code does
+                let short = if name == "resumed" { "5a5a5a5a" } else { "3698e3a6" };
+                return Ok(self.bg.replace("{name}", &name).replace("3698e3a6", short));
             }
             if args[0] == "rm" {
                 return Ok(format!("cannot remove {}: worktree has unpushed commits\npass --discard-unpushed x@w", args[1]));
@@ -585,7 +588,13 @@ mod tests {
         let qa = store.touch("qa", false).unwrap();
         // lead is live (interactive, owner's terminal); qa stopped with a transcript; dev, review new.
         let first = format!("[{}]", agent(&lead.conversation_id, "lead", "interactive"));
-        let after = format!("[{},{}]", agent(&lead.conversation_id, "lead", "interactive"), agent(DEV_BG, "dev", "background"));
+        let qa_fork = "5a5a5a5a-1111-4111-8111-111111111111";
+        let after = format!(
+            "[{},{},{}]",
+            agent(&lead.conversation_id, "lead", "interactive"),
+            agent(DEV_BG, "dev", "background"),
+            agent(qa_fork, "qa", "background")
+        );
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![first, after]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
         let qa_id = qa.conversation_id.clone();
         let has = move |id: &str| id == qa_id;
@@ -608,7 +617,7 @@ mod tests {
         let id_of = |n: &str| reg.sessions.iter().find(|s| s.name == n).unwrap().conversation_id.clone();
         assert_eq!(id_of("dev"), DEV_BG, "registry follows the id Claude Code picked");
         assert_eq!(id_of("lead"), lead.conversation_id);
-        assert_eq!(id_of("qa"), qa.conversation_id);
+        assert_eq!(id_of("qa"), qa_fork, "a resumed room runs under a forked id: the registry follows it");
         let _ = std::fs::remove_dir_all(&h);
     }
 
