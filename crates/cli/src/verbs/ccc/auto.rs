@@ -363,7 +363,7 @@ fn tick_prompt(name: &str) -> String {
     let (role, _) = super::room::role(name);
     let board = match super::room::find(name).and_then(|r| r.lane) {
         Some(lane) => format!(
-            "2) `8sync ccc auto claim --json` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {}. Không có card → bước 3. ",
+            "2) `8sync ccc auto claim --json --as {name}` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {} (mọi lệnh `auto move|note` thêm `--as {name}`). Không có card → bước 3. ",
             lane_playbook(lane)
         ),
         None => "2) Vai không giữ cột board: bước 3. ".into(),
@@ -1422,7 +1422,9 @@ mod tests {
             ("critic", "review", "move <id> approved --sha"),
         ] {
             let p = loop_prompt(room, 10, false);
-            assert!(p.contains(&format!("`8sync ccc auto claim --json` (cột {lane}")), "{room}: {p}");
+            // the room names itself: inside a card worktree 8sync cannot tell which room is asking
+            assert!(p.contains(&format!("`8sync ccc auto claim --json --as {room}` (cột {lane}")), "{room}: {p}");
+            assert!(p.contains(&format!("`auto move|note` thêm `--as {room}`")), "{room}: {p}");
             assert!(p.contains(next), "{room} misses {next}: {p}");
             assert!(p.find("auto claim").unwrap() < p.find("`target` khác null").unwrap(), "card before the queue head");
             assert!(!p.contains('\n') || p.lines().count() <= 3);

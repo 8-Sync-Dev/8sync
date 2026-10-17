@@ -148,6 +148,7 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
          Lượt đầu, đặt loop dự phòng: {setup} \
          Mỗi lượt: (1) `8sync ccc auto status --json`; (2) `8sync ccc auto claim --json` (cột {lane}); có card thì làm đúng việc cột đó: {playbook}; \
          (3) không có card thì `8sync ccc auto wait --json` (chờ tới khi cột {lane} có card, tối đa 9 phút, không tốn token) rồi quay lại (1). \
+         Mọi lệnh `8sync ccc auto claim|move|note|wait` thêm `--as {name}` (trong worktree 8sync không tự nhận ra phòng). \
          Rail: không merge/push main/tag/deploy khi owner chưa trả lời câu Ship; giữ file trước khi sửa (`8sync ccc . goal \"…\" --files a,b`); \
          `8sync ccc meet --say \"done|doing|blocked: …\"` sau mỗi card. \
          Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on` false hoặc `paused` true hoặc `cap` khác null \
@@ -503,7 +504,7 @@ mod tests {
             assert!(g.starts_with(&format!("/goal Phòng `{name}`")), "{g}");
             assert!(g.chars().count() <= GOAL_MAX, "{name}: {} chars over Claude Code's /goal cap", g.chars().count());
             assert!(!g.contains('\n'), "one line through a .cmd shim");
-            for want in ["auto claim --json", "auto wait --json", "\"wake\":\"off\"", "`cap` khác null", "CronCreate", "câu Ship", &format!("cột {lane}")] {
+            for want in ["auto claim --json", "auto wait --json", "\"wake\":\"off\"", "`cap` khác null", "CronCreate", "câu Ship", &format!("cột {lane}"), &format!("--as {name}")] {
                 assert!(g.contains(want), "{name} misses {want}: {g}");
             }
         }
