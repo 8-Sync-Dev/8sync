@@ -329,8 +329,11 @@ function RoomPicker({ sessions, onPick }: { sessions: Session[]; onPick: (s: Ses
                   className="flex h-10 w-full min-w-0 items-center gap-2.5 px-3 text-left text-sm hover:bg-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 >
                   <StatusDot status={s.status} />
-                  <span className="truncate font-medium">{sessionLabel(s)}</span>
-                  <span className="ml-auto min-w-0 truncate font-mono text-xs text-muted-foreground">{s.cwd}</span>
+                  {/* The name never shrinks (a long worktree path cut it to "r…"); the path is cut from the left instead. */}
+                  <span className="shrink-0 font-medium">{sessionLabel(s)}</span>
+                  <span className="ml-auto min-w-0 truncate font-mono text-xs text-muted-foreground [direction:rtl] text-left" title={s.cwd ?? undefined}>
+                    <bdi>{s.cwd}</bdi>
+                  </span>
                 </button>
               </li>
             ))}

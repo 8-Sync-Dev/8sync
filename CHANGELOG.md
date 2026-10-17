@@ -4,6 +4,16 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **HQ "Cách dùng" describes the team as it works now:**
+  - open the team (5 rooms, or 8 with "Team đầy đủ");
+  - hand out cards, with P0 for urgent work;
+  - follow the Board and each room's Nhật ký;
+  - answer only what needs you (60 s rule, Ship stays with the owner);
+  - "Dọn & mở lại" after an update.
+
+  It no longer tells you to "tạo nhân viên theo vai trò". Checked in Edge against live rooms.
+- **Chat phòng no longer cuts room names to "r…" and "d…"** when a room runs in a long worktree path. The name keeps its width, and the path is cut from the left.
 
 ## [0.100.4] — 2026-10-18
 ### Added

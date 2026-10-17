@@ -27,33 +27,39 @@ export type GuideStep = { icon: LucideIcon; title: string; body: string };
 export const GUIDE_STEPS: GuideStep[] = [
   {
     icon: FolderPlusIcon,
-    title: "Chọn dự án và tạo nhân viên theo vai trò",
+    title: "Mở team cho dự án",
     body:
-      "Chọn dự án, rồi tạo nhân viên theo vai trò. R&D, Plan, Architect dùng Opus (claude-opus-5-5) cho việc cần nghĩ sâu. " +
-      "Fullstack, AI, Reviewer dùng Sonnet (claude-sonnet-5-5) cho việc code hằng ngày. " +
-      "Tester, Quick dùng Haiku (claude-haiku-5-5) cho việc nhanh, lặp lại. Đúng model cho đúng việc thì chất lượng tốt mà vẫn tiết kiệm chi phí.",
+      "Thêm thư mục ở \"Mở team ở repo mới\" bên trái (dự án đã có phòng tự hiện), rồi bấm \"Mở team\": 5 phòng nền chạy liên tục. " +
+      "lead và rd dùng Opus (claude-opus-5-5) để chia việc, nghiên cứu; dev và review dùng Sonnet (claude-sonnet-5-5) để code, duyệt; qa dùng Haiku (claude-haiku-5-5) để kiểm nhanh. " +
+      "\"Team đầy đủ\" mở 8 phòng (thêm ba, dev2, ui), tốn quota gần gấp 8 lần một phòng.",
   },
   {
     icon: SendIcon,
     title: "Giao việc",
     body:
-      "Cả team cùng nhận một việc: gõ vào ô \"Gửi cho mọi phòng\" ở đáy Văn phòng hoặc Chat tổng, chọn dự án rồi bấm \"Gửi mọi phòng\" hoặc Ctrl+Enter (giống `8sync ccc auto add --now`; bỏ \"Gửi ngay\" thì việc chỉ vào hàng). " +
-      "Một người hoặc một vai: bấm \"Giao việc\" ở góc trên, chọn một phiên hoặc theo vai trò. Dòng dưới ô nhập luôn nói rõ việc sẽ đi đâu.",
+      "Bấm \"Giao việc\" hoặc gõ vào ô \"Gửi cho mọi phòng\": việc thành card trên Board. lead viết tiêu chí và lệnh kiểm, dev làm trên nhánh card-<số>, qa kiểm, review duyệt. " +
+      "Việc gấp: mở card, chọn P0 (phòng nhận trước mọi card khác).",
   },
   {
     icon: TerminalIcon,
-    title: "Xem terminal trực tiếp",
-    body: "Bấm vào bàn làm việc hoặc thẻ của một người để mở terminal của họ và xem họ đang làm gì ngay lúc đó.",
-  },
-  {
-    icon: MessagesSquareIcon,
-    title: "Chat tổng",
-    body: "Mọi phòng (session) chung một cuộc chat: xem ai nhắn ai theo thời gian. Khi một người chuyển việc cho người khác, bạn sẽ thấy thẻ bàn giao (handoff) \"A → B\". Nhắn riêng một phòng: tab Chat phòng.",
+    title: "Theo dõi như một ngày làm việc",
+    body:
+      "Văn phòng: mỗi phòng đang làm gì, giữ card nào. Board: card đi Backlog → Ready → Building → QA → Review → Approved; bấm card để xem chi tiết. " +
+      "Bấm tên phòng ở bên trái để xem Nhật ký từng bước nó làm, hoặc mở terminal của phòng.",
   },
   {
     icon: BellRingIcon,
-    title: "Cần bạn",
-    body: "Khi nhân viên hỏi hoặc chờ bạn duyệt, mục \"Cần bạn\" sáng lên. Trả lời hoặc duyệt ngay trên web, không cần mở terminal.",
+    title: "Chỉ trả lời việc cần anh",
+    body:
+      "Khung \"Anh cần trả lời\" hiện câu hỏi và xin quyền của mọi phòng. Im lặng 60 giây: câu hỏi sản phẩm/kỹ thuật thì critic (Opus) chọn; xin quyền thì việc an toàn trong dự án (test, sửa file, đẩy nhánh card) tự chạy, còn merge, release, cài gói, file secret luôn chờ anh. " +
+      "Câu Ship (merge, phát hành) chỉ anh trả lời.",
+  },
+  {
+    icon: MessagesSquareIcon,
+    title: "Cập nhật và dừng",
+    body:
+      "Sau `8sync up`, bấm \"Dọn & mở lại\": phòng rảnh chạy lại trên bản mới, giữ hội thoại; session rác được dọn, worktree còn thay đổi được giữ. Bấm \"Dừng team\" để nghỉ (hội thoại vẫn giữ). " +
+      "Chat tổng xem các phòng nhắn nhau và bàn giao \"A → B\".",
   },
 ];
 
