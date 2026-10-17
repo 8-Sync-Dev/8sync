@@ -7,9 +7,22 @@
 [![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-0ea5e9)](#install)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-a78bfa)](COMMERCIAL.md)
 
-[Install](#install) · [Claude Code](#claude-code-8sync-ccc) · [Autopilot](#hands-off-five-levels-one-switch) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://get.8syncdev.com)
+[Install](#install) · [Claude Code](#claude-code-8sync-ccc) · [Autopilot](#hands-off-five-levels-one-switch) · [Team](#the-whole-team-one-command-no-terminal-per-room) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://get.8syncdev.com)
 
 </div>
+
+---
+
+## Quick start: a whole team in four commands
+
+```bash
+curl -fsSL https://get.8syncdev.com/install | sh            # Windows: irm https://get.8syncdev.com/install.ps1 | iex
+cd my-repo && 8sync ccc auto up --clear-ss                  # lead, dev, qa, review run as Claude Code background sessions
+8sync hq ui                                                 # watch every room and the board in the browser
+8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"   # a card; done when the check exits 0
+```
+
+The lead writes acceptance criteria. Dev builds the card in its own worktree and opens a PR, qa runs the check and a UAT, and review approves the head SHA. Nothing merges until you answer one `Ship` question. `8sync ccc auto down` stops the team. Auto mode is on, bypass is locked, and the guard never consults a grant for force-push, secrets or deletes. More in [The whole team](#the-whole-team-one-command-no-terminal-per-room) and, in Vietnamese, [docs/huong-dan.md](docs/huong-dan.md).
 
 ---
 

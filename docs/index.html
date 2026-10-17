@@ -301,9 +301,6 @@
     .room b { color: var(--ink); font-family: var(--mono); font-size: 0.85rem; font-weight: 600; }
     .room i { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--green); flex: none; }
     @keyframes tick { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-    .flow { counter-reset: step; list-style: none; margin: 0; padding: 0; display: grid; gap: 1.2rem; }
-    .flow li { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 0.8rem; color: var(--ink-2); }
-    .flow li::before { counter-increment: step; content: counter(step); font-weight: 800; font-stretch: 120%; font-size: 1.35rem; line-height: 1.25; color: var(--violet); }
     .say-it { margin: 1.6rem 0 0; padding: 1rem 1.15rem; border-radius: 10px; background: var(--bg-raised); color: var(--ink-2); font-size: 0.95rem; }
     .say-it q { color: var(--ink); font-weight: 600; }
     .notes { display: grid; gap: clamp(2rem, 4vw, 2.75rem); margin-top: clamp(2.5rem, 5vw, 4rem); padding-top: clamp(2rem, 4vw, 2.75rem); border-top: 1px solid var(--line-soft); }
@@ -312,6 +309,40 @@
     .cols li { padding-top: 0.8rem; border-top: 1px solid var(--line); }
     .code-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.6rem; background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 10px; padding: 0.5rem 0.5rem 0.5rem 1rem; }
     .code-line code { font-size: 0.82rem; white-space: nowrap; overflow-x: auto; scrollbar-width: thin; padding: 0.35rem 0; }
+
+    /* Board demo: the static markup is the final state; the script replays how it got there */
+    .board { margin: 0 0 clamp(2.25rem, 4.5vw, 3.25rem); background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+    .board-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.55rem 0.55rem 0.55rem 1.1rem; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 0.76rem; color: var(--ink-3); }
+    .lanes { list-style: none; margin: 0; padding: 1rem; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.6rem; }
+    .lane { display: flex; flex-direction: column; gap: 0.55rem; min-height: 10.5rem; padding: 0.65rem 0.6rem; border-radius: 10px; background: var(--bg); border: 1px solid var(--line-soft); }
+    .lane h3 { margin: 0; font-family: var(--mono); font-size: 0.72rem; font-weight: 600; line-height: 1.3; color: var(--ink-3); }
+    .lane[data-lane="approved"] h3 { color: var(--amber); }
+    .lane[data-lane="done"] h3 { color: var(--green); }
+    .lane ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; align-content: start; }
+    .card { padding: 0.5rem 0.55rem 0.55rem; border-radius: 8px; background: var(--bg-raised); border: 1px solid var(--line); font-size: 0.8rem; line-height: 1.35; color: var(--ink); }
+    .card .id { display: block; font-family: var(--mono); font-size: 0.68rem; color: var(--ink-3); }
+    .card .who { display: flex; width: fit-content; align-items: center; gap: 0.35rem; margin-top: 0.45rem; font-family: var(--mono); font-size: 0.68rem; color: var(--ink-2); }
+    .card .who::before { content: ""; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--room, var(--ink-3)); }
+    .card .who:empty { display: none; }
+    .card[data-room="lead"] { --room: var(--violet); }
+    .card[data-room="dev"] { --room: var(--cyan); }
+    .card[data-room="qa"] { --room: var(--amber); }
+    .card[data-room="review"] { --room: var(--green); }
+    .card[data-room="ship"] { --room: var(--amber); border-color: oklch(0.85 0.15 80 / 0.5); }
+    .lane[data-lane="done"] .card { background: transparent; color: var(--ink-3); }
+    .ticker { list-style: none; margin: 0; padding: 0.9rem 1.1rem 1rem; border-top: 1px solid var(--line-soft); font-family: var(--mono); font-size: 0.78rem; line-height: 1.6; display: grid; gap: 0.2rem; counter-reset: tk; }
+    .ticker li { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 0.6rem; color: var(--ink-3); }
+    .ticker b { color: var(--ink-2); font-weight: 600; }
+    .ticker code { font-size: 1em; color: var(--ink-2); background: none; padding: 0; overflow-wrap: anywhere; }
+    .ticker[data-play] li:not(.on) { visibility: hidden; }
+    .ticker li.now b, .ticker li.now code { color: var(--ink); }
+    .board figcaption { padding: 0.85rem 1.1rem 1rem; border-top: 1px solid var(--line-soft); font-size: 0.86rem; line-height: 1.55; color: var(--ink-3); }
+    @media (max-width: 860px) {
+      .lanes { grid-template-columns: minmax(0, 1fr); }
+      .lane { min-height: 0; display: grid; grid-template-columns: 5.6rem minmax(0, 1fr); align-items: start; }
+      .lane h3 { padding-top: 0.5rem; }
+      .ticker li { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    }
 
     /* Bypass */
     .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(1.75rem, 5vw, 4.5rem); align-items: center; }
@@ -399,6 +430,7 @@
       <ul>
         <li><a href="#ladder">Autopilot</a></li>
         <li><a href="#rails">Rails</a></li>
+        <li><a href="#team">Team</a></li>
         <li><a href="#proof">Proof</a></li>
         <li><a href="#install">Install</a></li>
         <li><a href="https://github.com/8-Sync-Dev/8sync/blob/main/docs/huong-dan.md" lang="vi" hreflang="vi">Tiếng Việt</a></li>
@@ -410,7 +442,7 @@
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-title">
-        <p class="release"><a href="https://github.com/8-Sync-Dev/8sync/releases/latest"><span class="lit" aria-hidden="true"></span><span data-version>v0.98.4</span> · sessions open in auto mode, bypass locked</a></p>
+        <p class="release"><a href="https://github.com/8-Sync-Dev/8sync/releases/latest"><span class="lit" aria-hidden="true"></span><span data-version>v0.100.0</span> · the whole team in the background: <code class="nb">auto up</code></a></p>
         <h1 id="hero-title"><span class="ln" style="--i:0">Claude Code,</span> <span class="ln" style="--i:1">on autopilot.</span></h1>
       </div>
 
@@ -429,7 +461,7 @@
             <button class="copy" type="button" data-copy="irm https://get.8syncdev.com/install.ps1 | iex" aria-label="Copy the Windows PowerShell install command">Copy</button>
           </div>
         </div>
-        <p class="then">Then, in any repo, <code>8sync ccc . core</code> opens a Claude Code session named <code>core</code> with the kit. Type <code>/ship</code> and a task.</p>
+        <p class="then">Then, in any repo, <code>8sync ccc . core</code> opens a Claude Code session named <code>core</code> with the kit; type <code>/ship</code> and a task. Or <code>8sync ccc auto up</code> starts the whole team in the background.</p>
       </div>
 
       <figure class="log" aria-labelledby="log-cap">
@@ -535,6 +567,39 @@
         <h2 id="team-title">Or run the whole team in the background</h2>
         <p><code>auto up</code> starts every role room of the repo as a Claude Code background session (<code>claude --bg</code>), each on its role's model, with its loop. You don't open a terminal per room; you follow the work in <code>8sync hq ui</code>. <code>--clear-ss</code> first deletes leftover background sessions and never touches the ones you have open.</p>
       </div>
+
+      <figure class="board" aria-labelledby="board-cap">
+        <div class="board-head">
+          <span>8sync ccc auto board</span>
+          <button class="replay" id="board-replay" type="button" hidden>Replay</button>
+        </div>
+        <ol class="lanes" id="lanes">
+          <li class="lane" data-lane="backlog"><h3>backlog</h3><ul>
+            <li class="card" id="c43" data-room=""><span class="id">#43</span>Dark mode toggle<span class="who"></span></li>
+          </ul></li>
+          <li class="lane" data-lane="ready"><h3>ready</h3><ul></ul></li>
+          <li class="lane" data-lane="building"><h3>building</h3><ul>
+            <li class="card" id="c42" data-room="dev"><span class="id">#42</span>Webhook returns 500 on retry<span class="who">dev</span></li>
+          </ul></li>
+          <li class="lane" data-lane="qa"><h3>qa</h3><ul></ul></li>
+          <li class="lane" data-lane="review"><h3>review</h3><ul></ul></li>
+          <li class="lane" data-lane="approved"><h3>approved</h3><ul></ul></li>
+          <li class="lane" data-lane="done"><h3>done</h3><ul>
+            <li class="card" id="c41" data-room=""><span class="id">#41</span>Login survives a token refresh<span class="who">merged 9f3c2e1</span></li>
+          </ul></li>
+        </ol>
+        <ol class="ticker" id="ticker" aria-label="What each room ran">
+          <li><b>dev</b><code>auto claim → #41 ready → building, worktree card-41</code></li>
+          <li><b>lead</b><code>auto move 42 ready --check "pnpm test webhook"</code></li>
+          <li><b>dev</b><code>auto move 41 qa --pr 81</code></li>
+          <li><b>qa</b><code>pnpm test auth exit 0, UAT ok → auto move 41 review</code></li>
+          <li><b>dev</b><code>auto claim → #42 ready → building</code></li>
+          <li><b>review</b><code>diff ok → auto move 41 approved --sha 9f3c2e1</code></li>
+          <li><b>you</b><code>Ship ✓ → gh pr merge 81 --squash --match-head-commit 9f3c2e1</code></li>
+        </ol>
+        <figcaption id="board-cap">How a card crosses the board, with example ids. Every step is a real <code>8sync ccc auto</code> command and its rule: a card enters <code>ready</code> only with a check, <code>approved</code> only with the reviewed SHA, a card bounced back more than twice lands in <code>blocked</code>, and nothing merges before your Ship answer.</figcaption>
+      </figure>
+
       <div class="team-grid">
         <div class="term">
           <div class="term-head">
@@ -565,12 +630,6 @@
             <li class="room" style="--i:3"><i aria-hidden="true"></i><b>review</b> Sonnet, approves</li>
             <li class="room" style="--i:4"><i aria-hidden="true"></i><b>rd</b> Opus, researches</li>
           </ul>
-          <ol class="flow" aria-label="A card through the board">
-            <li><span><b>backlog → ready.</b> The lead (or <code>ba</code>) writes acceptance criteria and one check command. A card without a check can't enter <code>ready</code>.</span></li>
-            <li><span><b>building → qa.</b> A dev room claims the card, works in its own worktree <code class="nb">card-&lt;id&gt;</code> through <code>/ship</code>, and opens a PR.</span></li>
-            <li><span><b>qa → review → approved.</b> qa runs the check and a real UAT; review reads the diff adversarially and approves the head SHA. A card bounced back more than twice goes to <code>blocked</code>.</span></li>
-            <li><span><b>approved → done.</b> You answer one Ship question for every approved card; the lead merges with <code class="nb">--match-head-commit</code> and records the evidence.</span></li>
-          </ol>
           <p class="say-it">The lanes follow <a href="https://github.com/EricTechPro/super-board">super-board</a> (MIT), rebuilt in the Rust CLI on a local file. Inside a room, say <q lang="vi">đưa vào loop: …</q> (add to the loop) or <q lang="vi">làm ngay: …</q> (do it now) and Claude queues it.</p>
         </div>
       </div>
@@ -761,7 +820,7 @@
         .catch(() => {});
 
       const log = document.querySelector('.log-body');
-      const replay = document.querySelector('.replay');
+      const replay = document.querySelector('.log .replay');
       let timers = [];
       function play() {
         timers.forEach(clearTimeout);
@@ -776,21 +835,71 @@
         });
         timers.push(setTimeout(() => { delete log.dataset.play; lines.forEach(l => l.classList.remove('on')); }, t + 500));
       }
+      // Board demo: the markup is the state after the last ticker line; replay walks there.
+      const lanes = document.getElementById('lanes');
+      const ticker = document.getElementById('ticker');
+      const boardBtn = document.getElementById('board-replay');
+      const START = [['c41', 'ready', '', ''], ['c42', 'backlog', '', ''], ['c43', 'backlog', '', '']];
+      const STEPS = [
+        ['c41', 'building', 'dev', 'dev'],
+        ['c42', 'ready', 'check ✓', 'lead'],
+        ['c41', 'qa', 'qa · PR #81', 'qa'],
+        ['c41', 'review', 'review', 'review'],
+        ['c42', 'building', 'dev', 'dev'],
+        ['c41', 'approved', 'waits for Ship', 'ship'],
+        ['c41', 'done', 'merged 9f3c2e1', ''],
+      ];
+      let boardTimers = [];
+      function place(id, lane, who, room, animate) {
+        const card = document.getElementById(id);
+        const first = card.getBoundingClientRect();
+        lanes.querySelector('[data-lane="' + lane + '"] ul').appendChild(card);
+        card.dataset.room = room;
+        card.querySelector('.who').textContent = who;
+        if (!animate) return;
+        const last = card.getBoundingClientRect();
+        card.animate([{ transform: 'translate(' + (first.left - last.left) + 'px, ' + (first.top - last.top) + 'px)' }, { transform: 'none' }], { duration: 620, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+      }
+      function playBoard() {
+        boardTimers.forEach(clearTimeout);
+        boardTimers = [];
+        const lines = [...ticker.children];
+        START.forEach(s => place(s[0], s[1], s[2], s[3], false));
+        lines.forEach(l => l.classList.remove('on', 'now'));
+        ticker.dataset.play = '';
+        let t = 600;
+        STEPS.forEach((s, i) => {
+          boardTimers.push(setTimeout(() => {
+            lines.forEach(l => l.classList.remove('now'));
+            lines[i].classList.add('on', 'now');
+            place(s[0], s[1], s[2], s[3], true);
+          }, t));
+          t += 1250;
+        });
+        boardTimers.push(setTimeout(() => { delete ticker.dataset.play; lines.forEach(l => l.classList.remove('on', 'now')); }, t + 900));
+      }
+      const boardOK = lanes && ticker && boardBtn && typeof Element.prototype.animate === 'function';
+
       if (!motionOK || !log) return;
 
       replay.hidden = false;
       replay.addEventListener('click', play);
+      if (boardOK) {
+        boardBtn.hidden = false;
+        boardBtn.addEventListener('click', playBoard);
+      }
 
       if (!('IntersectionObserver' in window)) return;
       const io = new IntersectionObserver(entries => {
         entries.forEach(en => {
           if (!en.isIntersecting || document.visibilityState !== 'visible') return;
           const el = en.target;
-          if (el === log) play(); else el.classList.add(el.dataset.anim);
+          if (el === log) play(); else if (el === lanes) playBoard(); else el.classList.add(el.dataset.anim);
           io.unobserve(el);
         });
       }, { threshold: 0.3 });
       io.observe(log);
+      if (boardOK) io.observe(lanes);
       document.querySelectorAll('[data-anim]').forEach(el => io.observe(el));
     })();
   </script>

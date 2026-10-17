@@ -1890,10 +1890,9 @@ fn hook(rest: &[String]) -> Result<()> {
         // StopFailure (no decision control): record + notify; resume-note says it once next prompt.
         // PostToolUse(AskUserQuestion): the owner's answer to a `Ship` question → session grant.
         Some("ship-grant") => {
-            let home = std::env::var_os("HOME").map(PathBuf::from).filter(|h| h.is_absolute());
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            if let Some(h) = home {
-                let _ = grant::record(&input, &grant::dir(&h), now);
+            if let Some(d) = grant::default_dir() {
+                let _ = grant::record(&input, &d, now);
             }
             None
         }
