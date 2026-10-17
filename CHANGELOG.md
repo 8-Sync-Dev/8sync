@@ -6,7 +6,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [Unreleased]
 
 ## [0.100.1] — 2026-10-17
+### Added
+- **Rooms never sit idle while the board has work: `/goal` plus `auto wait`.** In the first live UAT of `auto up` (5 rooms on a Godot game repo), the lead split an epic into 8 ready cards with checks within minutes. The dev room had already run its first tick on an empty lane, though, so all 5 rooms sat idle until the next 10-minute cron tick.
+  - `auto up` now opens every room that owns a board lane on Claude Code's own `/goal`. Checked live: `claude --bg … "/goal …"` printed "Goal set", then "Goal achieved".
+  - The condition only holds when auto stops (off, paused, or the usage cap). Each turn claims a card, does that lane's job and moves it on.
+  - With the lane empty, the room runs `8sync ccc auto wait`, which blocks without tokens until a card reaches its lane. It returns `{"wake":"card"|"off"|"cap"|"timeout"}` and gives up after at most 9 minutes (under Claude Code's 10-minute Bash cap).
+  - The cron loop is still set up as a fallback. Rooms without a lane (rd, ops, docs, sec) keep the loop message.
+- `8sync ccc auto wait [--lane <cột>] [--as <phòng>] [--timeout 1..590] [--json]`. It sees the same card as `auto claim` would take, a stale claim included.
 ### Fixed
+- **`auto up` no longer resumes a room that is open in a terminal in another folder.** Before, the live check only listed sessions started in the project, so a room's id open elsewhere could be resumed in the background as well, running one conversation in two processes. The room's own id now counts wherever it runs. A background session with the room's name still counts only inside the project.
 - **One `Ship` answer now covers the session, on Windows too.** After the owner approved Ship, every merge and tag push still prompted. There were two causes.
   - On Windows the `ship-grant` hook looked for the grant store under `HOME`. Claude Code's hook process there has no `HOME`, or holds a `/c/Users/…` path that is not absolute, so the grant was never written, while the guard reads the store under the real home directory. Both sides now find the store the same way (`dirs::home_dir`). A store that is not absolute never grants.
   - With a grant, the guard used to stay silent. Auto mode's classifier then still prompted for the merge or tag. The guard now answers `allow` for a ship step covered by the grant, which skips the prompt (https://code.claude.com/docs/en/hooks). Settings deny and ask rules still apply. A command that mixes a ship step with anything the guard asks about still asks, and force-push, secrets and deletes never consult a grant.

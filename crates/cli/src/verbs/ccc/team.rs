@@ -119,8 +119,11 @@ pub(super) enum Plan {
     Start,
 }
 
-pub(super) fn plan(reg_id: &str, title: &str, live: &[Live], has_transcript: bool) -> Plan {
-    if let Some(l) = live.iter().find(|l| l.id == reg_id).or_else(|| live.iter().find(|l| l.background && l.name == title)) {
+/// `here`: live sessions started in this project; `all`: every live session on the machine. The
+/// room's own id counts wherever it runs (a terminal in another folder): resuming it would run
+/// one conversation in two processes. A background session with the room's name only counts here.
+pub(super) fn plan(reg_id: &str, title: &str, here: &[Live], all: &[Live], has_transcript: bool) -> Plan {
+    if let Some(l) = all.iter().chain(here).find(|l| l.id == reg_id).or_else(|| here.iter().find(|l| l.background && l.name == title)) {
         return Plan::Running(l.id.clone());
     }
     if has_transcript {
@@ -128,6 +131,31 @@ pub(super) fn plan(reg_id: &str, title: &str, live: &[Live], has_transcript: boo
     } else {
         Plan::Start
     }
+}
+
+/// Claude Code caps a `/goal` condition at 4,000 characters (https://code.claude.com/docs/en/goal).
+pub(super) const GOAL_MAX: usize = 4000;
+
+/// The first message of a room with a board lane: `/goal <condition>`. Setting a goal starts a turn
+/// with the condition as the directive, and Claude Code's evaluator starts the next turn until the
+/// condition holds (checked live: `claude --bg … "/goal …"` → "Goal set" … "Goal achieved"). The
+/// condition only holds when auto stops, so the room never idles while auto is on: an empty lane
+/// is spent in `auto wait`, which blocks without tokens until a card arrives.
+pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
+    let (role, duty) = room::role(name);
+    let g = format!(
+        "/goal Phòng `{name}` (vai {role}: {duty}) làm việc liên tục cho dự án này qua board `8sync ccc auto`. \
+         Lượt đầu, đặt loop dự phòng: {setup} \
+         Mỗi lượt: (1) `8sync ccc auto status --json`; (2) `8sync ccc auto claim --json` (cột {lane}); có card thì làm đúng việc cột đó: {playbook}; \
+         (3) không có card thì `8sync ccc auto wait --json` (chờ tới khi cột {lane} có card, tối đa 9 phút, không tốn token) rồi quay lại (1). \
+         Rail: không merge/push main/tag/deploy khi owner chưa trả lời câu Ship; giữ file trước khi sửa (`8sync ccc . goal \"…\" --files a,b`); \
+         `8sync ccc meet --say \"done|doing|blocked: …\"` sau mỗi card. \
+         Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on` false hoặc `paused` true hoặc `cap` khác null \
+         hoặc `gate` nhắc tới lease (lease subscription hết hạn/chưa có), hoặc `auto wait --json` trả `\"wake\":\"off\"` hay `\"wake\":\"cap\"`.",
+        setup = auto::loop_setup(name, every_min),
+        playbook = auto::lane_playbook(lane),
+    );
+    g.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// `claude` arguments for a room that is not live. One line: a `.cmd` shim cannot pass newlines.
@@ -270,6 +298,7 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     }
     let gone = if o.clear { clear(t, &o.roles)? } else { Vec::new() };
     let before = agents(t, false)?;
+    let everywhere = live(&t.claude.run(&["agents".into(), "--json".into()])?)?;
     // On first: a room's first tick reads `auto status --json` and drops its loop while auto is off.
     let status = auto::set(t.home, auto::Mode::On { hours: o.hours, after: auto::DEFAULT_AFTER_S, rate: o.rate, repo: Some(t.root.to_path_buf()) }, t.subscription, now)?;
     auto::write_loop_md(t.root)?;
@@ -281,8 +310,13 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
         let r = room::find(name);
         let (role, _) = room::role(name);
         let model = r.and_then(|r| r.model);
-        let prompt = auto::loop_prompt(name, o.every, false);
-        let p = plan(&s.conversation_id, &title, &before, (t.has_transcript)(&s.conversation_id));
+        // A room with a lane opens on Claude Code's own `/goal`: it keeps taking turns (claim → work →
+        // move, `auto wait` while the lane is empty) until auto stops; the others get the loop prompt.
+        let prompt = match r.and_then(|r| r.lane) {
+            Some(lane) => goal_prompt(name, lane, o.every),
+            None => auto::loop_prompt(name, o.every, false),
+        };
+        let p = plan(&s.conversation_id, &title, &before, &everywhere, (t.has_transcript)(&s.conversation_id));
         let (state, short) = match &p {
             Plan::Running(id) => {
                 if *id != s.conversation_id {
@@ -429,10 +463,16 @@ mod tests {
     #[test]
     fn plan_skips_live_rooms_and_resumes_stopped_ones() {
         let l = vec![Live { id: DEV_BG.into(), name: "dev".into(), background: true }, Live { id: "x".into(), name: "qa".into(), background: false }];
-        assert_eq!(plan(DEV_BG, "dev", &l, true), Plan::Running(DEV_BG.into()));
-        assert_eq!(plan("other", "dev", &l, false), Plan::Running(DEV_BG.into()), "a background room with the name counts");
-        assert_eq!(plan("other", "qa", &l, true), Plan::Resume, "an interactive session elsewhere with the same name does not");
-        assert_eq!(plan("other", "qa", &l, false), Plan::Start);
+        assert_eq!(plan(DEV_BG, "dev", &l, &l, true), Plan::Running(DEV_BG.into()));
+        assert_eq!(plan("other", "dev", &l, &l, false), Plan::Running(DEV_BG.into()), "a background room with the name counts");
+        assert_eq!(plan("other", "qa", &l, &l, true), Plan::Resume, "an interactive session elsewhere with the same name does not");
+        assert_eq!(plan("other", "qa", &l, &l, false), Plan::Start);
+        // the room's id open in a terminal in another folder: never resumed a second time
+        let rd = "ff3e2a54-0000-4000-8000-000000000001";
+        let elsewhere = vec![Live { id: rd.into(), name: "rd-game".into(), background: false }];
+        assert_eq!(plan(rd, "rd", &[], &elsewhere, true), Plan::Running(rd.into()));
+        let bg_elsewhere = vec![Live { id: "e1".into(), name: "dev".into(), background: true }];
+        assert_eq!(plan("other", "dev", &[], &bg_elsewhere, false), Plan::Start, "a same-named room of another project is not ours");
         let a = argv(&Plan::Start, "id-1", "dev", Some("sonnet"), "line one\nline  two");
         assert_eq!(a, ["--bg", "--name", "dev", "--permission-mode", "auto", "--model", "sonnet", "line one line two"]);
         let a = argv(&Plan::Resume, "id-1", "dev", None, "p");
@@ -453,6 +493,22 @@ mod tests {
         assert!(parse(&v(&["--team"])).is_err());
         assert!(!o.clear);
         assert!(parse(&v(&["--clear-ss"])).unwrap().clear && parse(&v(&["--clean"])).unwrap().clear);
+    }
+
+    #[test]
+    fn lane_rooms_open_on_a_goal_that_only_ends_when_auto_stops() {
+        for name in ["lead", "ba", "dev", "dev2", "qa", "qc", "review", "critic", "ui", "api", "core"] {
+            let lane = room::find(name).and_then(|r| r.lane).unwrap_or_else(|| panic!("{name} has a lane"));
+            let g = goal_prompt(name, lane, 10);
+            assert!(g.starts_with(&format!("/goal Phòng `{name}`")), "{g}");
+            assert!(g.chars().count() <= GOAL_MAX, "{name}: {} chars over Claude Code's /goal cap", g.chars().count());
+            assert!(!g.contains('\n'), "one line through a .cmd shim");
+            for want in ["auto claim --json", "auto wait --json", "\"wake\":\"off\"", "`cap` khác null", "CronCreate", "câu Ship", &format!("cột {lane}")] {
+                assert!(g.contains(want), "{name} misses {want}: {g}");
+            }
+        }
+        // rooms without a lane keep the loop message, no goal
+        assert!(room::find("rd").and_then(|r| r.lane).is_none());
     }
 
     #[test]
@@ -544,6 +600,7 @@ mod tests {
         let bg: Vec<_> = calls.iter().filter(|c| c.iter().any(|a| a == "--bg")).collect();
         assert_eq!(bg.len(), 2, "lead is live: no second session");
         assert_eq!(&bg[0][..7], ["--bg", "--name", "dev", "--permission-mode", "auto", "--model", "sonnet"]);
+        assert!(bg[0][7].starts_with("/goal Phòng `dev`"), "a lane room opens on /goal: {}", bg[0][7]);
         assert!(bg[0][7].contains("8sync-auto-loop dev (vai Dev/Builder)"), "{}", bg[0][7]);
         assert_eq!(&bg[1][..3], ["--resume", qa.conversation_id.as_str(), "--bg"]);
         let reg = store.load();

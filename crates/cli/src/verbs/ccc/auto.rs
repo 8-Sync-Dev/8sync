@@ -40,7 +40,7 @@ use super::{delegate, idle, target};
 const USAGE: &str = "usage: 8sync ccc auto on [--here] [--loop [10m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json]
        8sync ccc auto up [--roles lead,dev,qa,review] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] | down
        8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id>
-       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] | note <id> \"…\"   [--json]
+       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>] [--timeout 540] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] | note <id> \"…\"   [--json]
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
 pub(super) const DEFAULT_AFTER_S: u64 = 60;
 pub(super) const DEFAULT_LOOP_MIN: u64 = 10;
@@ -348,7 +348,7 @@ pub(super) fn write_loop_md(root: &Path) -> Result<(PathBuf, bool)> {
 /// the cron prompt itself, so an edited loop.md cannot drop it: `off` or `pause`
 /// delete the loop on its next tick, the `cap` ([`idle::cap`]) rests it. Re-running the command replaces the job (a fresh 7 days).
 /// What a room does with the card `auto claim` gives it, per lane (super-board's lane playbooks).
-fn lane_playbook(lane: &str) -> &'static str {
+pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
         "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"`. Hết card backlog: `8sync ccc auto lint` → gỡ card blocked (`move <id> ready`), card approved → gom MỌI card approved vào MỘT câu hỏi Ship cho owner; owner duyệt → `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`",
         "ready" => "card building: worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>`, `/ship` card tới commit (test + gate), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>`; làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
@@ -358,9 +358,9 @@ fn lane_playbook(lane: &str) -> &'static str {
     }
 }
 
-pub(super) fn loop_prompt(name: &str, every_min: u64, team: bool) -> String {
-    let (role, duty) = super::room::role(name);
-    let cron = cron_expr(every_min);
+/// One tick of a room's loop: the recurring cron job's prompt.
+fn tick_prompt(name: &str) -> String {
+    let (role, _) = super::room::role(name);
     let board = match super::room::find(name).and_then(|r| r.lane) {
         Some(lane) => format!(
             "2) `8sync ccc auto claim --json` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {}. Không có card → bước 3. ",
@@ -368,11 +368,25 @@ pub(super) fn loop_prompt(name: &str, every_min: u64, team: bool) -> String {
         ),
         None => "2) Vai không giữ cột board: bước 3. ".into(),
     };
-    let tick = format!(
+    format!(
         "{LOOP_TAG} {name} (vai {role}): 1) chạy `8sync ccc auto status --json`; on=false hoặc paused=true → CronDelete job {LOOP_TAG} này và dừng; `cap` khác null → nghỉ nhịp này (giữ loop). {board}3) `target` khác null → nhịp này làm phần hợp vai {role} cho đích đó; đạt (có `check` thì lệnh đó exit 0) → `8sync ccc auto done <id> --evidence \"<lệnh: kết quả>\"`. 4) Không có đích thì làm MỘT nhịp theo .claude/loop.md của dự án cho vai {role} (thiếu file → lấy MỘT việc hợp vai từ su-code/STATE.md mục Next, tự chọn skill: code → /ship, ≤3 file → /do, R&D → /deep-research). Không merge/push main/tag/deploy khi owner chưa trả lời Ship."
-    );
+    )
+}
+
+/// The cron part of the loop message: replace this room's `8sync-auto-loop` job with a recurring one.
+pub(super) fn loop_setup(name: &str, every_min: u64) -> String {
+    let cron = cron_expr(every_min);
+    format!(
+        "CronList trước: job cũ chứa `{LOOP_TAG}` → CronDelete nó (chạy lại lệnh = gia hạn 7 ngày, đổi nhịp). Rồi CronCreate lặp (recurring) cron `{cron}` (mỗi {every_min} phút, như `/loop {every_min}m`) với prompt:\n{}",
+        tick_prompt(name)
+    )
+}
+
+pub(super) fn loop_prompt(name: &str, every_min: u64, team: bool) -> String {
+    let (role, duty) = super::room::role(name);
     let mut s = format!(
-        "8sync auto --loop: owner bật chạy liên tục cho phòng `{name}` (vai {role}: {duty}). CronList trước: job cũ chứa `{LOOP_TAG}` → CronDelete nó (chạy lại lệnh = gia hạn 7 ngày, đổi nhịp). Rồi CronCreate lặp (recurring) cron `{cron}` (mỗi {every_min} phút, như `/loop {every_min}m`) với prompt:\n{tick}\nTạo xong thì chạy luôn nhịp đầu, không chờ."
+        "8sync auto --loop: owner bật chạy liên tục cho phòng `{name}` (vai {role}: {duty}). {}\nTạo xong thì chạy luôn nhịp đầu, không chờ.",
+        loop_setup(name, every_min)
     );
     if team {
         s.push_str("\nCó tool tạo teammate (agent teams) thì lấp ghế trống ngay: rd, qa, reviewer; mỗi người giữ file riêng (`8sync ccc . goal --files`), báo về lead. Không có tool đó thì bỏ qua (cần mở phòng bằng `--team`).");
@@ -728,6 +742,89 @@ fn run_target(
     Ok(())
 }
 
+/// `auto wait`: a room with an empty lane blocks here (no tokens) until work arrives.
+pub(super) const WAIT_DEFAULT_S: u64 = 540;
+/// Under Claude Code's 10-minute Bash tool ceiling.
+const WAIT_MAX_S: u64 = 590;
+const WAIT_POLL_S: u64 = 2;
+
+#[derive(Debug, PartialEq)]
+struct Wait {
+    room: String,
+    lane: String,
+    timeout: u64,
+}
+
+fn parse_wait(args: &[String], rooms: impl FnOnce() -> Vec<(String, String)>) -> Result<Wait> {
+    let (mut lane, mut who, mut timeout) = (None, None, WAIT_DEFAULT_S);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().filter(|v| !v.starts_with("--")).cloned().ok_or_else(|| anyhow::anyhow!("{a} cần một giá trị\n{USAGE}"));
+        match a.as_str() {
+            "--json" => {}
+            "--lane" => lane = Some(value()?),
+            "--as" => who = Some(value()?),
+            "--timeout" => {
+                timeout = value()?.parse::<u64>().ok().filter(|s| (1..=WAIT_MAX_S).contains(s)).ok_or_else(|| anyhow::anyhow!("--timeout: 1..{WAIT_MAX_S} giây\n{USAGE}"))?
+            }
+            x => bail!("không rõ `{x}`\n{USAGE}"),
+        }
+    }
+    let Some(room) = who.or_else(|| me(&rooms())) else {
+        bail!("wait chạy trong một phòng (`8sync ccc auto up`), hoặc thêm --as <phòng>\n{USAGE}");
+    };
+    let lane = match lane.or_else(|| super::room::find(&room).and_then(|r| r.lane).map(str::to_string)) {
+        Some(l) if target::LANES.contains(&l.as_str()) && !matches!(l.as_str(), "building" | "approved") => l,
+        Some(l) => bail!("cột `{l}` không chờ được: backlog, ready, qa, review, blocked"),
+        None => bail!("phòng `{room}` không có cột riêng: thêm --lane"),
+    };
+    Ok(Wait { room, lane, timeout })
+}
+
+/// Block until the room has a card in its lane, auto stops (off, paused, cap) or the timeout ends.
+/// Clock, sleep and reads are injected so the loop is tested without waiting.
+fn wait_for(
+    w: &Wait,
+    cards: impl Fn() -> Result<Vec<target::Target>>,
+    status: impl Fn(u64) -> Value,
+    now: impl Fn() -> u64,
+    sleep: impl Fn(),
+) -> Result<Value> {
+    let start = now();
+    loop {
+        let t = now();
+        let st = status(t);
+        // A subscription lease that ran out (or never started) ends the room's work like `off`: the
+        // rail is "lease ≤ 4 h, while the owner is around" (idle::gate).
+        let lease_over = st["gate"].as_str().is_some_and(|g| g.contains("lease"));
+        let wake = if st["on"] != true || st["paused"] == true || lease_over {
+            Some(("off", None))
+        } else if !st["cap"].is_null() {
+            Some(("cap", None))
+        } else if let Some(id) = target::claimable(&cards()?, &w.room, &w.lane, t) {
+            Some(("card", Some(id)))
+        } else if t.saturating_sub(start) >= w.timeout {
+            Some(("timeout", None))
+        } else {
+            None
+        };
+        if let Some((why, card)) = wake {
+            return Ok(json!({ "wake": why, "card": card, "room": w.room, "lane": w.lane, "waited_s": t.saturating_sub(start), "cap": st["cap"] }));
+        }
+        sleep();
+    }
+}
+
+fn wait_text(v: &Value) -> String {
+    let lane = v["lane"].as_str().unwrap_or("?");
+    match v["wake"].as_str() {
+        Some("card") => format!("card #{} ở cột {lane}: `8sync ccc auto claim`", v["card"]),
+        Some("off") => "auto đã tắt hoặc tạm dừng: dừng, không claim nữa".into(),
+        Some("cap") => format!("chạm trần ({}): nghỉ, không claim", v["cap"].as_str().unwrap_or("")),
+        _ => format!("cột {lane} vẫn trống sau {} giây: chờ tiếp (`8sync ccc auto wait`)", v["waited_s"]),
+    }
+}
+
 pub(super) fn run(
     rest: &[String],
     home: &Path,
@@ -758,6 +855,23 @@ pub(super) fn run(
     };
     if let Some(verb @ ("add" | "queue" | "done" | "drop" | "claim" | "move" | "note" | "board" | "lint")) = rest.first().map(String::as_str) {
         return run_target(verb, &rest[1..], home, root, rooms, now);
+    }
+    if rest.first().map(String::as_str) == Some("wait") {
+        let w = parse_wait(&rest[1..], rooms)?;
+        let clock = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let v = wait_for(
+            &w,
+            || target::list(home, root),
+            |t| status(home, subscription, t),
+            clock,
+            || std::thread::sleep(std::time::Duration::from_secs(WAIT_POLL_S)),
+        )?;
+        if rest.iter().any(|a| a == "--json") {
+            println!("{v}");
+        } else {
+            println!("{}", wait_text(&v));
+        }
+        return Ok(());
     }
     let mut looped = None;
     let mut aim = None;
@@ -1319,6 +1433,62 @@ mod tests {
         assert!(loop_prompt("lead", 10, false).contains("owner chưa trả lời Ship"));
         assert!(LOOP_MD.contains("MỘT câu hỏi Ship cho owner, duyệt rồi mới `gh pr merge"));
         assert!(LOOP_MD.contains("khi owner chưa trả lời Ship"));
+    }
+
+    #[test]
+    fn wait_blocks_until_a_card_reaches_the_lane_or_auto_stops() {
+        use std::cell::Cell;
+        let a = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let rooms = || vec![("dev".to_string(), "id".to_string())];
+        // lane from the room's role; --as / --lane / --timeout override; bad values refused
+        assert_eq!(parse_wait(&a(&["--as", "dev"]), rooms).unwrap(), Wait { room: "dev".into(), lane: "ready".into(), timeout: WAIT_DEFAULT_S });
+        assert_eq!(parse_wait(&a(&["--as", "x", "--lane", "qa", "--timeout", "30"]), rooms).unwrap().lane, "qa");
+        for bad in [&["--as", "dev", "--timeout", "0"][..], &["--as", "dev", "--timeout", "600"], &["--as", "dev", "--lane", "building"], &["--as", "rd"], &["--as"]] {
+            assert!(parse_wait(&a(bad), rooms).is_err(), "{bad:?}");
+        }
+        let card = |id: u64, lane: &str| target::Target {
+            id,
+            text: "t".into(),
+            check: Some("true".into()),
+            added: 0,
+            from: None,
+            state: "open".into(),
+            closed: None,
+            evidence: None,
+            by: None,
+            lane: lane.into(),
+            label: None,
+            claim: None,
+            notes: vec![],
+            bounces: 0,
+            pr: None,
+            sha: None,
+        };
+        let w = Wait { room: "dev".into(), lane: "ready".into(), timeout: 60 };
+        let on = json!({ "on": true, "paused": false, "cap": null });
+        // the card shows up on the third poll; every poll sleeps once (no real waiting in the test)
+        let (clock, polls) = (Cell::new(1_000u64), Cell::new(0));
+        let cards = || {
+            polls.set(polls.get() + 1);
+            Ok(if polls.get() >= 3 { vec![card(4, "backlog"), card(7, "ready")] } else { vec![card(4, "backlog")] })
+        };
+        let v = wait_for(&w, cards, |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
+        assert_eq!((v["wake"].as_str(), v["card"].as_u64(), v["waited_s"].as_u64()), (Some("card"), Some(7), Some(4)));
+        assert!(wait_text(&v).contains("card #7"));
+        // auto paused or capped: wake at once, never claim
+        let paused = json!({ "on": true, "paused": true, "cap": null });
+        assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| paused.clone(), || 5, || {}).unwrap()["wake"], "off");
+        let expired = json!({ "on": true, "paused": false, "cap": null, "gate": "gói subscription: lease hết hạn (owner vắng) — gia hạn `8sync ccc idle on`" });
+        assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| expired.clone(), || 5, || {}).unwrap()["wake"], "off", "the 4 h lease ends the room's work");
+        let away = json!({ "on": true, "paused": false, "cap": null, "gate": "owner vắng: không có prompt do người gõ trong session lead 20 phút qua" });
+        assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| away.clone(), || 5, || {}).unwrap()["wake"], "card", "owner typing is the idle hook's rail, not the room's");
+        let capped = json!({ "on": true, "paused": false, "cap": "cửa sổ 5 giờ 92%" });
+        assert_eq!(wait_for(&w, || Ok(vec![]), |_| capped.clone(), || 5, || {}).unwrap()["wake"], "cap");
+        // nothing arrives: timeout
+        let clock = Cell::new(0u64);
+        let v = wait_for(&w, || Ok(vec![]), |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
+        assert_eq!((v["wake"].as_str(), v["waited_s"].as_u64()), (Some("timeout"), Some(60)));
+        assert!(wait_text(&v).contains("chờ tiếp"));
     }
 
     #[test]
