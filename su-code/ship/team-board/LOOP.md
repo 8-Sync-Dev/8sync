@@ -4,3 +4,4 @@ iter 0 | C2 | exit 0 | test result: ok. 5 passed; 0 failed; 0 ignored; 0 measure
 iter 0 | C4 | exit 0 | test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 535 filtered out; finished in 0.11s
 iter 0 | C2 | exit 0 | test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 537 filtered out; finished in 0.05s
 iter 0 | C5 | exit 0 | test result: ok. 251 passed; 0 failed; 0 ignored; 0 measured; 296 filtered out; finished in 1.13s
+iter 0 | C6 | exit 1 | ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯

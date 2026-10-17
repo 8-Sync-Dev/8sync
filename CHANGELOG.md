@@ -23,6 +23,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   - qa runs the check and a UAT.
   - review approves the head SHA.
   - Merging stays a plain `gh pr merge --squash --match-head-commit <sha>` after the owner's Ship answer, which the guard already gates; 8sync has no merge verb. A new `.claude/loop.md` carries the same board section; an existing one is never overwritten.
+- **HQ: the board by lane.** The Board tab opens on "Card dự án". There is one column per lane, Backlog → Blocked, for each project with a live room (project picker when there are several).
+  - Each card shows its id and text, label, the room holding it and since when, PR, approved SHA and bounces, plus the last note.
+  - A claim quiet for 2 h shows amber, and Approved turns amber with a Ship icon while cards wait for your answer.
+  - The board refreshes every 15 s while the tab is visible.
+  - "Task của session" keeps the old view of the sessions' own tasks.
+  - New `GET /api/board` (token checked) runs `8sync ccc auto board --json` with argv only, in each live project's root. An 8sync without the board gets an "update with `8sync up`" note.
 - **HQ: a "Gửi cho mọi phòng" box under Văn phòng and Chat tổng.** It sends one task to every room of a project, the same as `8sync ccc auto add "<việc>" --now`. Before this, Chat tổng only showed the thread and had no input, so it was unclear where to type a task for the whole team. Pick the project (or "Mọi dự án" when several have rooms), keep "Gửi ngay" ticked to push the task into every room's inbox, or untick it to only queue it for the auto loop. "Lệnh kiểm" adds an optional `--check` command. The line under the box names the rooms before you send. After sending it shows, per project, the target id and which rooms take the task as soon as they are idle and which take it after their current turn.
   - New `POST /api/targets` (token and origin checked) runs `8sync ccc auto add --json [--now] [--check <cmd>] -- <text>` with argv only and the project root as cwd.
   - It accepts only a root that has a live room right now, never an arbitrary path.

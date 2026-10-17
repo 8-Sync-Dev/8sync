@@ -10,10 +10,30 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { addressOf, inboxText, messageTargets, sessionLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote, ago, shortName } from "./bits";
+import { LanesView } from "./lanes-view";
 import type { Hq } from "./use-hq";
 import { TASK_COLUMNS, type Message, type Session, type Task } from "./types";
 
+/** Board tab: the project's cards by lane (`8sync ccc auto board`), or the sessions' own tasks. */
 export function BoardView({ hq, tasks, sessions }: { hq: Hq; tasks: Task[]; sessions: Session[] }) {
+  const [mode, setMode] = useState<"lanes" | "tasks">("lanes");
+  const tab = (m: typeof mode, label: string) => (
+    <Button type="button" size="sm" variant={mode === m ? "secondary" : "ghost"} aria-pressed={mode === m} onClick={() => setMode(m)}>
+      {label}
+    </Button>
+  );
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div role="group" aria-label="Kiểu board" className="flex shrink-0 items-center gap-1 border-b px-4 py-1.5 sm:px-6">
+        {tab("lanes", "Card dự án")}
+        {tab("tasks", "Task của session")}
+      </div>
+      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView hq={hq} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
+    </div>
+  );
+}
+
+function TaskBoard({ hq, tasks, sessions }: { hq: Hq; tasks: Task[]; sessions: Session[] }) {
   const { loading, error } = hq.tasks;
   const byCol = new Map<string, Task[]>(TASK_COLUMNS.map((c) => [c.key, []]));
   for (const t of tasks) (byCol.get(t.status) ?? byCol.get("todo"))!.push(t);
