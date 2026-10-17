@@ -22,7 +22,7 @@ sudo pacman -Rns caelestia-meta quickshell   # only if you want the pkgs gone
 ## Fresh install (no 8sync yet)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.sh | sh \
+curl -fsSL https://raw.githubusercontent.com/8-Sync-Dev/8sync/main/install.sh | sh \
   && 8sync setup
 ```
 

@@ -15,7 +15,7 @@ import sys
 import urllib.request
 
 OUT = pathlib.Path(__file__).resolve().parent.parent / "docs" / "legal" / "anthropic"
-UA = {"User-Agent": "Mozilla/5.0 (8sync legal-sync; +https://github.com/8-Sync-Dev/su-code)"}
+UA = {"User-Agent": "Mozilla/5.0 (8sync legal-sync; +https://github.com/8-Sync-Dev/8sync)"}
 
 # name -> URL. anthropic.com serves HTML; code.claude.com serves Markdown.
 SOURCES = {

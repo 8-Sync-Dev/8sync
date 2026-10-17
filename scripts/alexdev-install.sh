@@ -28,7 +28,7 @@ c "1/5  8sync binary"
 # ─────────────────────────────────────────────────────────────
 if have 8sync; then ok "8sync $(8sync --version 2>/dev/null) — skip"; else
   wn "tải prebuilt 8sync…"
-  curl -fsSL https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/8-Sync-Dev/8sync/main/install.sh | sh
 fi
 
 # ─────────────────────────────────────────────────────────────

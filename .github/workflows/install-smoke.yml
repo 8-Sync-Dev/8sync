@@ -28,19 +28,46 @@ jobs:
       - name: One-line install (curl … | sh)
         run: |
           set -o pipefail
-          curl -fsSL https://8-sync-dev.github.io/su-code/install | sh 2>&1 | tee install.log
+          curl -fsSL https://get.8syncdev.com/install | sh 2>&1 | tee install.log
       - name: Check
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          latest=$(gh release view --repo 8-Sync-Dev/su-code --json tagName -q .tagName)
+          latest=$(gh release view --repo 8-Sync-Dev/8sync --json tagName -q .tagName)
           got=$(8sync --version)
           echo "installed: $got · latest: $latest"
           [ "$got" = "8sync ${latest#v}" ]
           grep -q "all steps succeeded" install.log || { grep -E "failed|✗|!" install.log | tail -20; exit 1; }
           8sync doctor || true
           8sync ccc status
+
+  # The pre-rename one-liners (repo was 8-Sync-Dev/su-code) are shims on the org
+  # site 8-Sync-Dev/8-sync-dev.github.io that run the installer above.
+  legacy-url:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.runner }}
+    env:
+      SUSYNC_NO_SETUP: "1"
+    steps:
+      - name: Old one-liner (curl … | sh)
+        if: runner.os != 'Windows'
+        run: |
+          set -o pipefail
+          curl -fsSL https://8-sync-dev.github.io/su-code/install | sh
+          "$HOME/.local/bin/8sync" --version
+      - name: Old one-liner (irm … | iex)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          irm https://8-sync-dev.github.io/su-code/install.ps1 | iex
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path
+          8sync --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
   windows:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
@@ -49,14 +76,14 @@ jobs:
       - name: One-line install (irm … | iex)
         shell: powershell
         run: |
-          irm https://8-sync-dev.github.io/su-code/install.ps1 | iex *>&1 | Tee-Object -FilePath install.log
+          irm https://get.8syncdev.com/install.ps1 | iex *>&1 | Tee-Object -FilePath install.log
       - name: Check
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path
-          $latest = gh release view --repo 8-Sync-Dev/su-code --json tagName -q .tagName
+          $latest = gh release view --repo 8-Sync-Dev/8sync --json tagName -q .tagName
           $got = (8sync --version | Out-String).Trim()
           Write-Host "installed: $got · latest: $latest"
           if ($got -ne "8sync $($latest.TrimStart('v'))") { exit 1 }

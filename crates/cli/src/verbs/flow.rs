@@ -5,7 +5,7 @@ pub fn run() -> Result<()> {
     println!("{}\n", crate::brand::render("8sync flow — commands in the order you'll actually use them").bold().cyan());
 
     section("1. FIRST-TIME INSTALL (new machine)", &[
-        ("curl -fsSL https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.sh | sh", "download the prebuilt binary into ~/.local/bin (no git/rust needed)"),
+        ("curl -fsSL https://raw.githubusercontent.com/8-Sync-Dev/8sync/main/install.sh | sh", "download the prebuilt binary into ~/.local/bin (no git/rust needed)"),
         ("8sync setup", "harness (gh + omp + skills + PATH bootstrap) then curated y/N menu (community profiles)"),
         ("# or  8sync setup --community", "unattended: dev-stack + bluetooth"),
         ("# or  8sync setup --profile dev-stack", "just dev-stack (Docker + Node/Bun + Encore)"),

@@ -2,12 +2,12 @@
 
 <img src="docs/assets/hero.png" alt="8sync — the Rust-native AI terminal harness of the 8 Sync team" width="100%">
 
-[![Release](https://img.shields.io/github/v/release/8-Sync-Dev/su-code?label=release&color=7c3aed)](https://github.com/8-Sync-Dev/su-code/releases/latest)
+[![Release](https://img.shields.io/github/v/release/8-Sync-Dev/8sync?label=release&color=7c3aed)](https://github.com/8-Sync-Dev/8sync/releases/latest)
 [![Rust](https://img.shields.io/badge/core-Rust-dea584?logo=rust)](crates/cli)
 [![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-0ea5e9)](#install)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-a78bfa)](COMMERCIAL.md)
 
-[Install](#install) · [Claude Code](#claude-code-8sync-ccc) · [Autopilot](#hands-off-five-levels-one-switch) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://8-sync-dev.github.io/su-code)
+[Install](#install) · [Claude Code](#claude-code-8sync-ccc) · [Autopilot](#hands-off-five-levels-one-switch) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://get.8syncdev.com)
 
 </div>
 
@@ -48,11 +48,11 @@ flowchart LR
 ## Install
 
 ```bash
-curl -fsSL https://8-sync-dev.github.io/su-code/install | sh       # Linux / macOS
+curl -fsSL https://get.8syncdev.com/install | sh       # Linux / macOS
 ```
 
 ```powershell
-irm https://8-sync-dev.github.io/su-code/install.ps1 | iex         # Windows PowerShell
+irm https://get.8syncdev.com/install.ps1 | iex         # Windows PowerShell
 ```
 
 You don't need git, Rust or admin rights. The installer verifies the binary's sha256 against the release, puts it on your PATH, then runs `8sync setup --no-profile`:
@@ -72,7 +72,7 @@ A real run of the v0.63.0 one-liner on a fresh Ubuntu account without sudo:
 ![v0.63.0 installer on Ubuntu without sudo: gh, omp, codegraph, Forge, zsh, Claude Code and the kit, all steps succeeded](docs/assets/install.png)
 
 Options: `SUSYNC_NO_SETUP=1` (binary only) · `SUSYNC_VERSION=v0.63.0` (pin) · `SUSYNC_BIN_DIR=~/bin` · `sh -s -- --uninstall`.
-Run it again any time, or `8sync up`. Fallback URL: `https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.sh`.
+Run it again any time, or `8sync up`. Fallback URL: `https://raw.githubusercontent.com/8-Sync-Dev/8sync/main/install.sh`.
 
 CI runs these exact one-liners on Ubuntu (x64 and arm64), macOS (Apple silicon and Intel) and Windows after every release and every week ([`install-smoke`](.github/workflows/install-smoke.yml)); a run fails unless the installed version is the latest and setup reports "all steps succeeded".
 
@@ -107,7 +107,7 @@ Each name maps to a fixed conversation id per repo, so `8sync ccc . core` tomorr
 Only want the subagents and `/ship`? They are also a Claude Code plugin in this repo's public marketplace (hooks, rules and the full skill set still come from `8sync ccc kit`):
 
 ```
-/plugin marketplace add 8-Sync-Dev/su-code
+/plugin marketplace add 8-Sync-Dev/8sync
 /plugin install 8sync-kit@8sync
 ```
 
@@ -395,7 +395,7 @@ Every verb has `-h` with an `EXAMPLES` block.
 ## Build from source
 
 ```bash
-git clone https://github.com/8-Sync-Dev/su-code && cd su-code
+git clone https://github.com/8-Sync-Dev/8sync && cd 8sync
 bash scripts/bootstrap.sh            # rustup if missing → cargo build --release → ~/.local/bin/8sync
 ```
 

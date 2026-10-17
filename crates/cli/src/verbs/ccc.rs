@@ -871,7 +871,7 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<(
 
     let rules = crate::verbs::harness::cbm::gate(
         &env.home,
-        &assets::read("claude/CLAUDE.md").context("asset missing: claude/CLAUDE.md")?,
+        &assets::read("configs/claude/CLAUDE.md").context("asset missing: configs/claude/CLAUDE.md")?,
     );
     crate::verbs::harness::memory::upsert_block(&dir.join("CLAUDE.md"), CLAUDE_MD_BEGIN, CLAUDE_MD_END, rules.trim_end())?;
 
@@ -1562,7 +1562,7 @@ fn fnv1a(s: &str) -> String {
 /// Marketplaces a managed policy lets people add: the official Anthropic one and 8sync's own
 /// (the kit plugin). `github` source shape: settings-reference#strictknownmarketplaces
 /// (https://code.claude.com/docs/en/settings-reference).
-const POLICY_MARKETPLACES: [&str; 2] = ["anthropics/claude-plugins-official", "8-Sync-Dev/su-code"];
+const POLICY_MARKETPLACES: [&str; 3] = ["anthropics/claude-plugins-official", "8-Sync-Dev/8sync", "8-Sync-Dev/su-code"];
 /// MCP servers the kit mirrors from omp's config (see `mirror_mcp`).
 const POLICY_MCP: [&str; 2] = ["codebase-memory-mcp", "serena"];
 
@@ -2344,7 +2344,9 @@ mod tests {
         assert_eq!(p["forceLoginMethod"], "claudeai");
         assert_eq!(p["sandbox"]["enabled"], true);
         assert_eq!(p["channelsEnabled"], true);
-        assert!(p["strictKnownMarketplaces"].as_array().unwrap().iter().any(|m| m["repo"] == "8-Sync-Dev/su-code"));
+        let markets = p["strictKnownMarketplaces"].as_array().unwrap();
+        // The old repo name stays allowed so machines that added the marketplace before the rename keep working.
+        assert!(["8-Sync-Dev/8sync", "8-Sync-Dev/su-code"].iter().all(|r| markets.iter().any(|m| m["repo"] == *r)));
         // Keys that need an opt-in stay out of the default.
         assert!(p.get("allowManagedHooksOnly").is_none() && p.get("hooks").is_none());
         // MCP lock is opt-in so the Discord Channels plugin server is not blocked.

@@ -1,6 +1,6 @@
 # Rules map for `/aup-audit`
 
-Luật gốc của org: `8sync-anthropic-rules.md` (cùng thư mục) — đọc trước; file này chỉ thêm dấu hiệu để tìm trong code. Nguồn chính thức (Usage Policy hiệu lực 2026-11-12): https://www.anthropic.com/legal/aup · Commercial Terms https://www.anthropic.com/legal/commercial-terms · Consumer Terms https://www.anthropic.com/legal/terms. Snapshot văn bản gốc mới nhất (tự cập nhật hàng tuần): https://github.com/8-Sync-Dev/su-code/tree/main/docs/legal/anthropic. Khi trích dẫn, mở bản gốc.
+Luật gốc của org: `8sync-anthropic-rules.md` (cùng thư mục) — đọc trước; file này chỉ thêm dấu hiệu để tìm trong code. Nguồn chính thức (Usage Policy hiệu lực 2026-11-12): https://www.anthropic.com/legal/aup · Commercial Terms https://www.anthropic.com/legal/commercial-terms · Consumer Terms https://www.anthropic.com/legal/terms. Snapshot văn bản gốc mới nhất (tự cập nhật hàng tuần): https://github.com/8-Sync-Dev/8sync/tree/main/docs/legal/anthropic. Khi trích dẫn, mở bản gốc.
 
 ## Đường truy cập Claude
 | Truy cập qua | Điều khoản | Dấu hiệu sai |

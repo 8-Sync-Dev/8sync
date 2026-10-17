@@ -28,7 +28,7 @@ jobs:
         uses: actions/configure-pages@v5
 
       # Publish the installers at a short, stable URL:
-      #   curl -fsSL https://8-sync-dev.github.io/su-code/install | sh
+      #   curl -fsSL https://get.8syncdev.com/install | sh
       # Copied from the repo root at deploy time rather than committed twice, so
       # `install.sh` stays the single source of truth and the published copy can
       # never drift from it. A file (not an HTML redirect) is required: `curl`

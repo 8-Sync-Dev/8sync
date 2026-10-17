@@ -7,7 +7,7 @@
 //! `critic` agent grade the options (FATAL/MAJOR/MINOR, the reviewer pass of Feynman's deep
 //! research) and go with its pick, logging the decision in `su-code/DECISIONS.md`.
 //!
-//! Rails (8 Sync rules, `assets/claude/CLAUDE.md`): the owner still answers the `Ship` question,
+//! Rails (8 Sync rules, `assets/configs/claude/CLAUDE.md`): the owner still answers the `Ship` question,
 //! anything about secrets/credentials/login, destructive / irreversible / paid steps, production
 //! deploys, merges and releases, and high-risk decisions (legal, medical, hiring, credit). Those
 //! pass through untouched. OFF by default (`delegate = true` in features.toml or

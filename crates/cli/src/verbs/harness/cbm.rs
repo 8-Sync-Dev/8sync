@@ -353,7 +353,7 @@ mod tests {
         assert_eq!(gate_with(raw, true, false), "a\ncbm-line\nz\n");
         assert_eq!(gate_with(raw, false, true), "a\nserena-line\nz\n");
         // every shipped rule/prompt asset renders without cbm/serena mentions when both off
-        for a in ["rules/code-intel-first.md", "configs/omp/APPEND_SYSTEM.md", "skills/00-force-load.md", "claude/CLAUDE.md"] {
+        for a in ["rules/code-intel-first.md", "configs/omp/APPEND_SYSTEM.md", "skills/00-force-load.md", "configs/claude/CLAUDE.md"] {
             let out = gate_with(&crate::assets::read(a).unwrap(), false, false);
             for w in ["codebase_memory", "mcp__serena", "serena enabled"] {
                 assert!(!out.contains(w), "{a} leaks `{w}` while off");

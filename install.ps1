@@ -7,7 +7,7 @@
   no Rust toolchain, no cargo build. Ideal for a fresh machine or quick upgrade.
 
   One-liner:
-    irm https://8-sync-dev.github.io/su-code/install.ps1 | iex
+    irm https://get.8syncdev.com/install.ps1 | iex
 
   After the binary lands, the installer runs `8sync setup --no-profile`: the AI
   harness (gh, omp, codegraph, forge + zsh, configs, skills, `harness global`).
@@ -30,7 +30,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Repo = '8-Sync-Dev/su-code'
+$Repo = '8-Sync-Dev/8sync'
 $BinDir = if ($env:SUSYNC_BIN_DIR) { $env:SUSYNC_BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\8sync' }
 $BinName = '8sync.exe'
 $BinPath = Join-Path $BinDir $BinName
