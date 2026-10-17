@@ -14,6 +14,10 @@ describe("guide", () => {
   it("contains Giao việc", () => {
     expect(text).toContain("Giao việc");
   });
+  it("walks the team flow as it is: open team, cards, priority, 60 s rule, Ship stays with the owner, update", () => {
+    for (const s of ["Mở team", "Team đầy đủ", "Board", "P0", "60 giây", "Ship", "Dọn & mở lại", "Dừng team", "Nhật ký"]) expect(text).toContain(s);
+    expect(text).not.toContain("tạo nhân viên");
+  });
   it("has the 5-status legend and tips", () => {
     expect(GUIDE_LEGEND.map((l) => l.label)).toEqual(["Đang làm", "Cần bạn", "Chờ review", "Xong", "Rảnh"]);
     expect(GUIDE_TIPS.join(" ")).toMatch(/\/do.*\/ship-loop.*Haiku/);
