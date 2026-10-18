@@ -129,6 +129,26 @@ pub(crate) fn parse_digest(raw: &str) -> Option<String> {
     is_hex64(hex).then(|| hex.to_ascii_lowercase())
 }
 
+/// The digest in a `sha256sum`-format line (`<hex>  <file>`), the format of the
+/// release's `<asset>.sha256` files.
+pub(crate) fn parse_sha256_text(text: &str) -> Option<String> {
+    parse_digest(text.split_whitespace().next()?)
+}
+
+/// The release's `<asset>.sha256` next to `asset_url`, read when the API gave no
+/// digest (rate limit, or GitHub not done computing it). A plain download URL, so
+/// it is not API rate-limited. `None` for releases cut before these files existed.
+fn sidecar_digest(asset_url: &str) -> Option<String> {
+    let out = Command::new("curl")
+        .args(["-fsSL", "--proto", "=https", "--tlsv1.2", "--max-time", "15", &format!("{asset_url}.sha256")])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_sha256_text(&String::from_utf8_lossy(&out.stdout))
+}
+
 fn is_hex64(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -197,7 +217,7 @@ pub(crate) fn sha256_file(path: &Path) -> Option<String> {
 /// was not.
 fn verify_download(tmp: &Path, expected: Option<&str>, asset_url: &str) -> Result<()> {
     let Some(want) = expected else {
-        ui::warn("checksum NOT VERIFIED — no sha256 digest published for this asset");
+        ui::warn("checksum NOT VERIFIED — no sha256 digest from the GitHub API and no .sha256 file for this asset");
         return Ok(());
     };
     let Some(got) = sha256_file(tmp) else {
@@ -250,7 +270,9 @@ fn download_and_replace(asset_url: &str, dst: &Path, expected_digest: Option<&st
         let _ = std::fs::remove_file(&tmp);
         bail!("download failed: {}", asset_url);
     }
-    if let Err(e) = verify_download(&tmp, expected_digest, asset_url) {
+    // No API digest → the release's `.sha256` file; only when both are missing is it unverified.
+    let sidecar = if expected_digest.is_none() { sidecar_digest(asset_url) } else { None };
+    if let Err(e) = verify_download(&tmp, expected_digest.or(sidecar.as_deref()), asset_url) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
@@ -563,8 +585,20 @@ mod tests {
         assert_eq!(super::strip_deleted_suffix(PathBuf::from(r"C:\Users\u\8sync.exe")), PathBuf::from(r"C:\Users\u\8sync.exe"));
     }
 
-    use super::{check_due, find_asset, first_hex64, is_newer, parse_digest, strip_verbatim_drive, tag_from_release_url};
+    use super::{check_due, find_asset, first_hex64, is_newer, parse_digest, parse_sha256_text, strip_verbatim_drive, tag_from_release_url};
     use std::path::PathBuf;
+
+    #[test]
+    fn sha256_sidecar_text_is_read_like_sha256sum_output() {
+        let hex = "9e837aee823ba27cee8abe4e1121792583268a41726bfaee067dfe9a5de69f1a";
+        // What `sha256sum "$f" > "$f.sha256"` in release.yml writes, CRLF or not.
+        assert_eq!(parse_sha256_text(&format!("{hex}  8sync-v0.100.7-windows-x86_64.exe\n")).as_deref(), Some(hex));
+        assert_eq!(parse_sha256_text(&format!("{}  x\r\n", hex.to_uppercase())).as_deref(), Some(hex));
+        // A 404 page, an empty body or a short hash never counts as a digest.
+        assert_eq!(parse_sha256_text("Not Found"), None);
+        assert_eq!(parse_sha256_text(""), None);
+        assert_eq!(parse_sha256_text(&hex[..63]), None);
+    }
 
     #[test]
     fn verbatim_drive_paths_are_unwrapped_for_external_hashers() {
