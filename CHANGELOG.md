@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 ### Fixed
+- **A question left on screen goes to the critic after a minute.** Seen live 2026-10-18: questions asked while auto was paused stayed with the owner for an hour, even after auto was back on, because the delegate hook only sees a question as it is asked.
+  - While "Chạy liên tục" is on, HQ takes any background room question that has waited 60 s and checks it with `8sync ccc delegate check`. That command uses the hook's rails: Ship, secrets, money, deploys and high-risk questions stay with the owner.
+  - If the critic may take it, HQ queues the critic route in the room's inbox and closes the dialog with one Esc through the room's terminal bridge. Each question is handled once.
 - `auto up --clear-ss` names a deleted or kept session by its room (`lead`, `rd`), not by the whole `/goal` prompt that older sessions were titled after.
 
 ## [0.100.14] — 2026-10-18

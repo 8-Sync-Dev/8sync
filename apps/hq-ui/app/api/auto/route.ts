@@ -1,5 +1,6 @@
 import { AUTO_ACTIONS, autoSet, autoStatus, type AutoAction } from "@/lib/server/auto";
 import { runAutoTick } from "@/lib/server/auto-tick";
+import { sweepStuckAsks } from "@/lib/server/stuck-asks";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { versions } from "@/lib/server/version";
 
@@ -11,6 +12,8 @@ export async function GET(req: Request) {
   if ("res" in o) return o.res;
   const [status, v] = await Promise.all([autoStatus(), versions()]);
   const tick = await runAutoTick(status);
+  // Not awaited: closing a dialog takes a few seconds per room; the next poll reports nothing new.
+  void sweepStuckAsks(status);
   return json({ ...status, versions: v, tick });
 }
 
