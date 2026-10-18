@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.14] — 2026-10-18
 ### Fixed
 - **One git repo = one team, even when one repo sits inside another.** Seen live 2026-10-18: `ai-game-studio` is a repo inside `8sync-startup`; `auto up` in the outer one took over the game's rooms, and `auto add --now` there pushed a ZUS task into the game rooms.
   - `auto` finds the project by its git repo (a worktree counts as its repo). A subfolder with its own `package.json` (`apps/hq-ui`) no longer opens a second team.
