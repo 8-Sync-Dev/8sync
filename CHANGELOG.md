@@ -4,6 +4,13 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **HQ "Máy" chip: how loaded the machine is while rooms run.** The header shows the busiest of RAM, CPU and GPU. It turns amber from 75 % and red from 90 %. It refreshes every 5 s, and only while the page is visible.
+  - Click it for bars per resource: RAM used / total, CPU across all threads, and per NVIDIA GPU its load, VRAM and temperature (from `nvidia-smi`).
+  - Under the bars: how many Claude Code and Node processes are running and the RAM they hold (`tasklist` on Windows, `ps` elsewhere).
+  - On Linux, **Xem trước** runs `8sync clean --dry-run` and **Dọn an toàn** runs plain `8sync clean`. The page never runs `--deep`, `--ram` or `--timer`. Other OSes get a one-line note instead.
+  - Probes run with argv only and a 4 s timeout. A probe that fails is left out of the panel.
+  - Checked live on Windows. The Linux clean buttons have unit tests only (not verified live).
 
 ## [0.100.6] — 2026-10-18
 ### Added
