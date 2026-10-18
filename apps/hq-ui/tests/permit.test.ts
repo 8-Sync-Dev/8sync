@@ -75,4 +75,15 @@ describe("PermitCard markup", () => {
     // a request from an older 8sync (no `then`) always skipped
     expect(silence({ then: null, why: null }, 5)).toContain("bỏ bước này,");
   });
+
+  it("a Ship question says it waits for the owner only; a prose question says the critic cannot see it", async () => {
+    const { isShip, SHIP_NOTE, PROSE_NOTE } = await import("@/components/hq/ask-panel");
+    expect(isShip({ kind: "question", questions: [{ header: "Ship" }] })).toBe(true);
+    expect(isShip({ kind: "question", questions: [{ header: "Layout" }, { header: " ship " }] })).toBe(true);
+    expect(isShip({ kind: "question", questions: [{ header: "Layout" }] })).toBe(false);
+    expect(isShip({ kind: "permission" })).toBe(false);
+    expect(isShip(null)).toBe(false);
+    expect(SHIP_NOTE).toContain("chỉ anh duyệt");
+    expect(PROSE_NOTE).toContain("critic không trả lời thay");
+  });
 });

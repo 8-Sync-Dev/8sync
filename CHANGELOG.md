@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 ### Fixed
+- **The critic now actually answers for an away owner: rooms ask through AskUserQuestion.** Seen live on 2026-10-18:
+  - `delegate` was on (60 s), yet `su-code/DECISIONS.md` stayed empty. The R&D room had asked about BiRefNet as plain text at the end of a turn and waited. The delegate hook only sees an `AskUserQuestion` call, so the critic never got the question.
+  - Every room's `/goal`, loop tick and new `.claude/loop.md` now say: ask the owner through `AskUserQuestion` (the recommended option first), never in prose before stopping.
+  - Rooms already running pick this up after `8sync ccc auto up --clear-ss`. An existing `.claude/loop.md` is never overwritten; add the two lines from a fresh one by hand if you keep your own.
+- **One Ship question per project.** The BA room shares the backlog lane with the lead and also asked the owner to Ship PR 20. Only the lead asks Ship now.
+- **HQ explains why a Ship question waits.** It shows "Câu Ship (merge, release, deploy): chỉ anh duyệt", meaning the critic never answers it, however long the owner is away. A room waiting on a question typed as plain text is marked as one the critic cannot see. Ship staying with the owner is unchanged and intended.
+### Fixed
 - **The site catches up with v0.100.6–v0.100.10.**
   - HQ's tabs (Tổng quan, Board, Flow, Preview) and the Máy chip are listed under "Open HQ".
   - The full team lists `arch`, with a pill and a short note on what it does (ADR from The System Design Primer before an `arch` card is built, a daily sourced radar, measured scale).
