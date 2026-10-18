@@ -101,16 +101,108 @@ pub(crate) fn installed_path() -> Result<PathBuf> {
         .join(name))
 }
 
+/// The newest `.8sync.old.*` beside `dst`: the binary a Windows update moved aside last.
+fn newest_backup(dst: &Path) -> Option<PathBuf> {
+    let dir = dst.parent()?;
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".8sync.old."))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .max_by_key(|(t, _)| *t)
+        .map(|(_, p)| p)
+}
+
+/// `dst` gone but a moved-aside copy is there (a replace that failed half-way, seen live on
+/// Windows 2026-10-18): put the newest copy back. Copy, not rename: that file may be the image of
+/// a process still running. Returns whether it healed.
+fn heal_missing(dst: &Path) -> bool {
+    if dst.exists() {
+        return false;
+    }
+    match newest_backup(dst) {
+        Some(b) if std::fs::copy(&b, dst).is_ok() => {
+            ui::warn(&format!("{} was missing: restored it from {}", dst.display(), b.display()));
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Best-effort removal of `.8sync.old.*` leftovers from a prior Windows update
 /// (a running .exe can't be deleted, so its predecessor is swept on a later run).
+/// Never while `dst` is missing: those copies are then the only binary left.
 fn sweep_old_siblings(dst: &Path) {
+    if !dst.exists() {
+        return;
+    }
     let Some(dir) = dst.parent() else { return };
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
-        if e.file_name().to_string_lossy().starts_with(".8sync.old.") {
+        let name = e.file_name().to_string_lossy().into_owned();
+        // `.8sync.new.<pid>` older than a day is a download a dead update left behind.
+        let stale_new = name.starts_with(".8sync.new.")
+            && e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age > Duration::from_secs(86_400));
+        if name.starts_with(".8sync.old.") || stale_new {
             let _ = std::fs::remove_file(e.path());
         }
     }
+}
+
+/// One update at a time per install dir. Rooms still running an older image each start their
+/// own update when they see a newer release, all renaming the same `8sync.exe`; the lock makes
+/// the rest wait out (they skip: the next launch is on the new binary anyway).
+pub(crate) struct UpdateLock(PathBuf);
+
+impl Drop for UpdateLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// A lock older than this belongs to an update that died.
+const LOCK_STALE: Duration = Duration::from_secs(600);
+
+pub(crate) fn update_lock(dir: &Path) -> Result<UpdateLock> {
+    let p = dir.join(".8sync.update.lock");
+    for _ in 0..2 {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+            Ok(_) => return Ok(UpdateLock(p)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let stale = std::fs::metadata(&p).ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_none_or(|age| age > LOCK_STALE);
+                if !stale {
+                    bail!("another `8sync up` is updating {} right now; try again in a minute", dir.display());
+                }
+                let _ = std::fs::remove_file(&p);
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    bail!("could not take the update lock in {}", dir.display())
+}
+
+/// Move `dst` aside to `old`, then `tmp` into `dst`. If the second step fails, `dst` must not
+/// stay empty: rename `old` back, and if even that fails, copy it. `mv`/`cp` are injected so the
+/// failure paths are tested on every OS.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn swap_in(
+    dst: &Path,
+    tmp: &Path,
+    old: &Path,
+    mv: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
+    cp: &dyn Fn(&Path, &Path) -> std::io::Result<u64>,
+) -> Result<()> {
+    if dst.exists() {
+        mv(dst, old).map_err(|e| anyhow!("could not move current binary aside ({}): {}", dst.display(), e))?;
+    }
+    if let Err(e) = mv(tmp, dst) {
+        if old.exists() && mv(old, dst).is_err() {
+            let _ = cp(old, dst);
+        }
+        let _ = std::fs::remove_file(tmp);
+        bail!("could not install new binary to {}: {} (the previous binary is back in place)", dst.display(), e);
+    }
+    Ok(())
 }
 
 /// Normalise a release asset's `digest` field. GitHub publishes it as
@@ -251,7 +343,16 @@ fn download_and_replace(asset_url: &str, dst: &Path, expected_digest: Option<&st
         .parent()
         .ok_or_else(|| anyhow!("bad destination path: {}", dst.display()))?;
     std::fs::create_dir_all(dir)?;
+    let _lock = update_lock(dir)?;
+    heal_missing(dst);
     sweep_old_siblings(dst);
+    // Another update (an older room's auto-update) may already have put this exact release in place.
+    if let Some(want) = expected_digest {
+        if dst.exists() && sha256_file(dst).is_some_and(|got| got.eq_ignore_ascii_case(want)) {
+            ui::info(&format!("{} already is this release (sha256:{want})", dst.display()));
+            return Ok(());
+        }
+    }
 
     let tmp = dir.join(format!(".8sync.new.{}", std::process::id()));
     // `--proto =https --tlsv1.2` matches install.sh: never let the transfer be
@@ -284,17 +385,8 @@ fn download_and_replace(asset_url: &str, dst: &Path, expected_digest: Option<&st
 
     #[cfg(windows)]
     {
-        if dst.exists() {
-            let old = dir.join(format!(".8sync.old.{}", std::process::id()));
-            std::fs::rename(dst, &old)
-                .map_err(|e| anyhow!("could not move current binary aside ({}): {}", dst.display(), e))?;
-            if let Err(e) = std::fs::rename(&tmp, dst) {
-                let _ = std::fs::rename(&old, dst); // restore, don't leave headless
-                let _ = std::fs::remove_file(&tmp);
-                bail!("could not install new binary to {}: {}", dst.display(), e);
-            }
-            return Ok(());
-        }
+        let old = dir.join(format!(".8sync.old.{}", std::process::id()));
+        return swap_in(dst, &tmp, &old, &|a, b| std::fs::rename(a, b), &|a, b| std::fs::copy(a, b));
     }
 
     std::fs::rename(&tmp, dst)
@@ -587,6 +679,77 @@ mod tests {
 
     use super::{check_due, find_asset, first_hex64, is_newer, parse_digest, parse_sha256_text, strip_verbatim_drive, tag_from_release_url};
     use std::path::PathBuf;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("8sync-selfup-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_failed_swap_never_leaves_the_binary_missing() {
+        use super::swap_in;
+        let d = tmpdir("swap");
+        let (dst, tmp, old) = (d.join("8sync.exe"), d.join(".8sync.new.1"), d.join(".8sync.old.1"));
+        let reset = || {
+            std::fs::write(&dst, "v1").unwrap();
+            std::fs::write(&tmp, "v2").unwrap();
+            let _ = std::fs::remove_file(&old);
+        };
+        let real_mv = |a: &std::path::Path, b: &std::path::Path| std::fs::rename(a, b);
+        let real_cp = |a: &std::path::Path, b: &std::path::Path| std::fs::copy(a, b);
+        // Happy path: the new binary is in place.
+        reset();
+        swap_in(&dst, &tmp, &old, &real_mv, &real_cp).unwrap();
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "v2");
+        // tmp → dst fails (a scanner holds it): the old binary is renamed back.
+        reset();
+        let fail_tmp = |a: &std::path::Path, b: &std::path::Path| if a == tmp.as_path() { Err(std::io::Error::other("locked")) } else { std::fs::rename(a, b) };
+        assert!(swap_in(&dst, &tmp, &old, &fail_tmp, &real_cp).is_err());
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "v1");
+        // ...and when renaming back fails too, it is copied back (seen live: 8sync.exe gone).
+        reset();
+        let fail_back = |a: &std::path::Path, b: &std::path::Path| if a == tmp.as_path() || a == old.as_path() { Err(std::io::Error::other("locked")) } else { std::fs::rename(a, b) };
+        assert!(swap_in(&dst, &tmp, &old, &fail_back, &real_cp).is_err());
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "v1", "copied back from the moved-aside binary");
+        assert!(!tmp.exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_missing_binary_heals_from_the_newest_backup_and_backups_are_kept_until_then() {
+        use super::{heal_missing, sweep_old_siblings};
+        let d = tmpdir("heal");
+        let dst = d.join("8sync.exe");
+        std::fs::write(d.join(".8sync.old.10"), "older").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(d.join(".8sync.old.11"), "newest").unwrap();
+        // dst missing: the sweep keeps every backup, heal puts the newest back.
+        sweep_old_siblings(&dst);
+        assert!(d.join(".8sync.old.10").exists() && d.join(".8sync.old.11").exists());
+        assert!(heal_missing(&dst));
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "newest");
+        assert!(!heal_missing(&dst), "nothing to heal once it is there");
+        // dst present: old copies are swept.
+        sweep_old_siblings(&dst);
+        assert!(!d.join(".8sync.old.10").exists() && !d.join(".8sync.old.11").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn one_update_at_a_time_and_a_dead_lock_is_taken_over() {
+        use super::update_lock;
+        let d = tmpdir("lock");
+        let first = update_lock(&d).unwrap();
+        let err = update_lock(&d).err().expect("second update refused");
+        assert!(err.to_string().contains("another `8sync up`"), "{err}");
+        drop(first);
+        let again = update_lock(&d).unwrap();
+        drop(again);
+        assert!(!d.join(".8sync.update.lock").exists(), "released on drop");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn sha256_sidecar_text_is_read_like_sha256sum_output() {
