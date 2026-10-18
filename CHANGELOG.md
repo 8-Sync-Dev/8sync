@@ -7,6 +7,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Fixed
 - **A permission prompt after an auto-compact no longer waits on the owner forever.** The permit hook counted Claude Code's post-compaction summary (`isCompactSummary`) as the owner typing. Within 60 s of a compact, every prompt therefore stayed with the owner. Summaries and transcript-only lines no longer count.
 - **A room may move to another card's worktree of its own repo by itself.** `EnterWorktree` into `<repo>/.claude/worktrees/<name>` was refused because it lies outside the room's current worktree (seen live: dev in card-31 entering card-58). It is now allowed for one plain folder name directly under the repo's `.claude/worktrees/`. Anything else still waits for the owner.
+### Added
+- **HQ: "@" inserts a file or folder path** in "Gửi cho mọi phòng" and in the room message box.
+  - Type `@` to list the project's folders and files. Type `@src/` to go one level down, or `@../` to go up and out of the project.
+  - ↑/↓ choose, Enter or Tab picks, Esc closes.
+  - On send, each `@path` that exists becomes an absolute path, so a room in a worktree or another folder opens the same file. Unknown names and e-mail addresses stay as typed.
+  - The listing (`GET /api/fs`) returns names only and sits behind the HQ token.
 
 ## [0.100.15] — 2026-10-18
 ### Fixed
