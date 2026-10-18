@@ -16,6 +16,18 @@ export type AutoState = {
 };
 
 /**
+ * Rooms wait on the owner while the critic is off: auto paused or off, or delegate switched off.
+ * Seen live 2026-10-18: auto was paused, so 7 rooms sat on questions the owner expected the critic
+ * to take. A question already on screen stays with the owner even after the critic is back.
+ */
+export function criticNote(s: (AutoState & { delegate?: boolean }) | null): string | null {
+  if (!s || s.error) return null;
+  if (s.on && s.delegate !== false) return null;
+  const why = s.paused ? "auto đang tạm dừng" : !s.on ? "auto đang tắt" : "critic đang tắt";
+  return `Critic không trả lời thay (${why}). Bấm “Chạy liên tục” ở Văn phòng: câu hỏi mới được trả lời sau 60 s; câu đang hiện ở đây vẫn cần anh chọn.`;
+}
+
+/**
  * The page the owner looks at is older than the binary they just installed: say so, with the one
  * action that fixes it. A running `8sync hq ui` never swaps its UI by itself.
  */

@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { POST } from "@/app/api/targets/route";
 import { getToken } from "@/lib/server/auth";
-import { addArgs, outermost, parseTargetBody } from "@/lib/server/targets";
+import { addArgs, outermost, parseTargetBody, repoProjects } from "@/lib/server/targets";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 /** A git repo dir (projectOf only looks for `.git` + HEAD on disk). */
@@ -181,7 +181,7 @@ describe("POST /api/targets", () => {
 
 describe("lib/server/targets", () => {
   it("parse: CRLF to LF, now defaults to true, empty check is none", () => {
-    expect(parseTargetBody({ text: "a\r\nb", root: "all", check: "" })).toEqual({ ok: true, value: { text: "a\nb", now: true, check: null, root: "all" } });
+    expect(parseTargetBody({ text: "a\r\nb", root: "all", check: "" })).toEqual({ ok: true, value: { text: "a\nb", now: true, check: null, root: "all", files: [] } });
     expect(parseTargetBody(null)).toMatchObject({ ok: false });
   });
   it("addArgs puts every flag before `--`", () => {
@@ -190,5 +190,20 @@ describe("lib/server/targets", () => {
   it("outermost keeps sibling roots and drops nested ones", () => {
     const p = (root: string) => ({ root, name: path.basename(root), branch: null });
     expect(outermost([p(shop), p(nested), p(tools)]).map((x) => x.root)).toEqual([shop, tools]);
+  });
+  it("repoProjects folds worktrees into their repo, keeps the repo's own row and nested repos", () => {
+    const game = String.raw`C:\w\startup\game\ai`;
+    const ps = repoProjects([
+      { root: String.raw`${game}\.claude\worktrees\card-29`, name: "card-29", branch: "card-29" },
+      { root: game, name: "ai", branch: "main" },
+      { root: String.raw`${game}\.claude\worktrees\card-31`, name: "card-31", branch: "card-31" },
+      { root: String.raw`C:\w\startup`, name: "startup", branch: "main" },
+    ]);
+    expect(ps).toEqual([
+      { root: game, name: "ai", branch: "main" },
+      { root: String.raw`C:\w\startup`, name: "startup", branch: "main" },
+    ]);
+    // Only worktrees live: the repo is still a project.
+    expect(repoProjects([{ root: "/w/x/.claude/worktrees/a", name: "a", branch: "a" }])).toEqual([{ root: "/w/x", name: "x", branch: null }]);
   });
 });

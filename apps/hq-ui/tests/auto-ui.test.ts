@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoButton, autoText, leaseMs, shouldAutoStart, staleText } from "@/lib/auto";
+import { autoButton, autoText, criticNote, leaseMs, shouldAutoStart, staleText } from "@/lib/auto";
 import { parseBinaryVersion, uiVersion } from "@/lib/server/version";
 import fs from "node:fs";
 import os from "node:os";
@@ -66,5 +66,17 @@ describe("auto control model", () => {
     expect(autoButton({ on: true, paused: false })).toEqual({ label: "Tạm dừng", action: "pause" });
     expect(autoButton({ on: false, paused: true })).toEqual({ label: "Chạy liên tục", action: "on" });
     expect(autoButton({ on: false, paused: false, error: "e" })).toBeNull();
+  });
+});
+
+describe("critic note in Anh cần trả lời", () => {
+  it("says why rooms wait on the owner while the critic is off (seen live 2026-10-18), silent while it runs", () => {
+    expect(criticNote({ on: true, paused: false, delegate: true })).toBeNull();
+    expect(criticNote({ on: true, paused: false })).toBeNull();
+    expect(criticNote({ on: false, paused: true, delegate: false })).toMatch(/auto đang tạm dừng.*Chạy liên tục.*vẫn cần anh/);
+    expect(criticNote({ on: false, paused: false })).toMatch(/auto đang tắt/);
+    expect(criticNote({ on: true, paused: false, delegate: false })).toMatch(/critic đang tắt/);
+    expect(criticNote({ on: false, paused: false, error: "x" })).toBeNull();
+    expect(criticNote(null)).toBeNull();
   });
 });

@@ -3,8 +3,9 @@
 // Owner (2026-10-17): `8sync ccc auto add "<việc>" --now` works, but in HQ it was unclear where to
 // type to reach every room: Chat tổng only showed the thread. The composer sits under Văn phòng and
 // Chat tổng, and its summary line says which rooms the task reaches before it is sent.
-import { groupByProject, type ProjectInfo } from "./office";
+import { type ProjectInfo } from "./office";
 import { roomLabel } from "./room-label";
+import { groupByRepo } from "./sidebar";
 
 export const ALL_PROJECTS = "all";
 
@@ -18,27 +19,19 @@ export type BroadcastResult = {
   error: string | null;
 };
 
-/** Live rooms grouped by project like the office (git root, else cwd), most rooms first. */
+/**
+ * Live rooms grouped by repo like the sidebar and the office: a room in a worktree counts under its
+ * repo (owner 2026-10-18: "3 phòng" while ai-game-studio ran 8, five of them in worktrees). A repo
+ * nested in another stays its own project. Most rooms first.
+ */
 export function broadcastProjects(rooms: R[]): BroadcastProject[] {
-  return groupByProject(rooms.filter((r) => r.project || r.cwd))
+  return groupByRepo(rooms.filter((r) => r.project || r.cwd))
     .map((g) => ({
       root: g.project.root,
       name: g.project.branch ? `${g.project.name} ⎇ ${g.project.branch}` : g.project.name,
       rooms: g.rooms.map((r) => r.label),
     }))
     .sort((a, b) => b.rooms.length - a.rooms.length || a.name.localeCompare(b.name));
-}
-
-const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-
-/**
- * "Mọi dự án" runs `auto add` once per outermost root (server: lib/server/targets.ts outermost):
- * a worktree inside another root shares that root's queue, and `--now` reaches only the rooms
- * registered at the root it ran in, so worktree rooms take the task from the queue on a loop tick.
- */
-export function outerProjects(projects: BroadcastProject[]): BroadcastProject[] {
-  const roots = projects.map((p) => norm(p.root));
-  return projects.filter((_, i) => !roots.some((o, j) => j !== i && roots[i].startsWith(`${o}/`)));
 }
 
 /** The project in scope when it has rooms, else the one with the most rooms; "" when none. */
@@ -58,9 +51,9 @@ export function resolveChoice(picked: string | null, projects: BroadcastProject[
   return choiceValid(picked, projects) ? picked! : defaultChoice(projects, preferRoot);
 }
 
-/** The projects a choice covers ("all" = every outermost root). */
+/** The projects a choice covers ("all" = every project: worktrees are folded in, nested repos have their own board). */
 export function pickedProjects(choice: string, projects: BroadcastProject[]): BroadcastProject[] {
-  return choice === ALL_PROJECTS ? outerProjects(projects) : projects.filter((p) => p.root === choice);
+  return choice === ALL_PROJECTS ? projects : projects.filter((p) => p.root === choice);
 }
 
 function names(all: string[], n = 4): string {
@@ -77,10 +70,9 @@ export function broadcastSummary(choice: string, projects: BroadcastProject[], n
   const rooms = picked.flatMap((p) => p.rooms);
   if (rooms.length === 0) return "Chưa có phòng nào đang chạy. Mở phòng bằng `8sync ccc . <tên>` trong thư mục dự án.";
   const where = choice === ALL_PROJECTS ? `ở ${picked.length} dự án` : `trong ${picked[0].name}`;
-  const nested = choice === ALL_PROJECTS && picked.length < projects.length ? " Phòng trong worktree nhận qua hàng chung ở nhịp loop." : "";
   return now
-    ? `Gửi ngay cho tối đa ${rooms.length} phòng ${where}: ${names(rooms)}. Phòng mở bằng \`8sync ccc .\` nhận ngay, phòng đang bận nhận khi xong lượt.${nested}`
-    : `Vào hàng đích ${where} (${rooms.length} phòng): các phòng làm khi tới lượt, lúc auto đang chạy.${nested}`;
+    ? `Gửi ngay cho tối đa ${rooms.length} phòng ${where}: ${names(rooms)}. Phòng mở bằng \`8sync ccc .\` nhận ngay, phòng đang bận nhận khi xong lượt.`
+    : `Vào hàng đích ${where} (${rooms.length} phòng): các phòng làm khi tới lượt, lúc auto đang chạy.`;
 }
 
 /** What happened in one project, from `8sync ccc auto add --json`. */

@@ -1,10 +1,11 @@
 "use client";
 
 import { CheckIcon, CopyIcon, HandIcon, SquareTerminalIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { TOOL_ASK, askTitle, attachCommand, type Ask } from "@/lib/ask";
+import { criticNote, type AutoState } from "@/lib/auto";
 import { agoVi } from "@/lib/now";
 import type { Permit } from "@/lib/server/permit";
 import { makeApi } from "./use-hq";
@@ -41,6 +42,7 @@ export function AskPanel({
   /** Tổng quan: asks side by side so the projects stay above the fold. */
   wide?: boolean;
 }) {
+  const critic = useCriticNote(token, rooms.length > 0);
   if (!rooms.length) return null;
   return (
     <section aria-labelledby="ask-panel" className="space-y-2">
@@ -49,6 +51,11 @@ export function AskPanel({
         Anh cần trả lời
         <span className="text-sm font-normal text-muted-foreground tabular">{rooms.length} phòng đang dừng chờ anh</span>
       </h2>
+      {critic && (
+        <p role="status" className="text-sm text-pretty text-[color-mix(in_oklch,var(--st-needs),black_38%)] dark:text-st-needs">
+          {critic}
+        </p>
+      )}
       {/* Wide: side by side, each ask scrolls inside a capped height (the buttons stay on top). */}
       <ul className={wide ? "grid items-start gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,34rem),1fr))] [&>li]:max-h-80 [&>li]:overflow-y-auto" : "space-y-3"}>
         {rooms.map((r) =>
@@ -235,4 +242,29 @@ async function copy(cmd: string, say: boolean) {
   } catch {
     toast.message(`Lệnh: ${cmd}`);
   }
+}
+
+/** Read-only status poll (GET /api/auto) while rooms wait; never turns auto on. */
+function useCriticNote(token: string, active: boolean): string | null {
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!active) return;
+    const ac = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/auto", { headers: { "x-hq-token": token }, cache: "no-store", signal: ac.signal });
+        if (r.ok) setNote(criticNote((await r.json()) as AutoState & { delegate?: boolean }));
+      } catch {
+        /* keep the last note */
+      }
+      if (!ac.signal.aborted) timer = setTimeout(load, 30_000);
+    };
+    void load();
+    return () => {
+      ac.abort();
+      clearTimeout(timer);
+    };
+  }, [token, active]);
+  return active ? note : null;
 }

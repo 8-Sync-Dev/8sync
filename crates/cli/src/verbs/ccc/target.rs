@@ -199,10 +199,13 @@ fn read(home: &Path) -> Result<Book> {
 
 /// The stored root `root` belongs to (longest one that contains it), else `root` itself.
 fn key(book: &Book, root: &Path) -> String {
+    // A board above the repo `root` sits in is another project's: a nested repo with no card yet
+    // must not file under its parent's board.
+    let own = crate::verbs::here::repo_of(root).map(|g| super::auto::canon(&g));
     let root = super::auto::canon(root);
     book.projects
         .keys()
-        .filter(|k| root.starts_with(Path::new(k.as_str())))
+        .filter(|k| root.starts_with(Path::new(k.as_str())) && own.as_ref().is_none_or(|g| Path::new(k.as_str()).starts_with(g)))
         .max_by_key(|k| k.len())
         .cloned()
         .unwrap_or_else(|| root.to_string_lossy().into_owned())

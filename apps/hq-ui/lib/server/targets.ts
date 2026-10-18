@@ -3,7 +3,9 @@
 // run with the project root as cwd; the task text goes after `--` so it is never read as a flag.
 import path from "node:path";
 import { groupByProject, type ProjectInfo } from "../office";
+import { repoOf } from "../sidebar";
 import { hasControlChars } from "./validate";
+import { FILES_PER_TASK, isUploadId } from "./uploads";
 import { run } from "./proc";
 
 /** Same caps as crates/cli/src/verbs/ccc/target.rs (TEXT_MAX, CHECK_MAX). */
@@ -11,7 +13,8 @@ export const TARGET_TEXT_MAX = 2000;
 export const TARGET_CHECK_MAX = 300;
 const TIMEOUT_MS = 10_000;
 
-export type TargetInput = { text: string; now: boolean; check: string | null; root: string };
+/** `files`: staged upload ids (lib/server/uploads.ts), placed in each chosen repo before `auto add`. */
+export type TargetInput = { text: string; now: boolean; check: string | null; root: string; files: string[] };
 export type Sent = { name: string; now: boolean };
 export type TargetResult = {
   root: string;
@@ -45,7 +48,9 @@ export function parseTargetBody(b: Record<string, unknown> | null): { ok: true; 
     if (check?.startsWith("-")) return { ok: false, error: "check must not start with -" };
   }
   if (typeof b.root !== "string" || !b.root || b.root.length > 1024) return { ok: false, error: "root must be a project root or all" };
-  return { ok: true, value: { text, now: b.now !== false, check, root: b.root } };
+  const files = b.files ?? [];
+  if (!Array.isArray(files) || files.length > FILES_PER_TASK || !files.every(isUploadId)) return { ok: false, error: `files: at most ${FILES_PER_TASK} upload ids` };
+  return { ok: true, value: { text, now: b.now !== false, check, root: b.root, files: [...new Set(files as string[])] } };
 }
 
 /** argv for `8sync ccc auto add --json [--now] [--check <cmd>] -- <text>`. */
@@ -68,6 +73,19 @@ export function outermost(projects: ProjectInfo[]): ProjectInfo[] {
     return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
   };
   return projects.filter((p) => !projects.some((o) => o !== p && inside(p.root, o.root)));
+}
+
+/** Projects with worktrees folded into their repo (lib/sidebar.ts repoOf), one entry per repo. */
+export function repoProjects(projects: ProjectInfo[]): ProjectInfo[] {
+  const out = new Map<string, ProjectInfo>();
+  for (const p of projects) {
+    const r = repoOf(p.root);
+    const q = r.worktree ? { root: r.root, name: r.name, branch: null } : p;
+    const k = q.root.toLowerCase();
+    // The repo's own row (with its branch) wins over one made up from a worktree.
+    if (!out.has(k) || !r.worktree) out.set(k, q);
+  }
+  return [...out.values()];
 }
 
 /** Run `auto add` in one project; never throws. */

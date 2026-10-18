@@ -4,6 +4,23 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **One git repo = one team, even when one repo sits inside another.** Seen live 2026-10-18: `ai-game-studio` is a repo inside `8sync-startup`; `auto up` in the outer one took over the game's rooms, and `auto add --now` there pushed a ZUS task into the game rooms.
+  - `auto` finds the project by its git repo (a worktree counts as its repo). A subfolder with its own `package.json` (`apps/hq-ui`) no longer opens a second team.
+  - Rooms running in a nested repo are not this repo's. A registry entry that points at one starts a new room instead of sharing that conversation.
+  - Room names clash only across repos, and the board of a new nested repo no longer files under its parent's board.
+- **`auto down` stops only this repo.** Several repos can run teams at once. `down` takes this repo out of auto and the others keep running; only the last one out pauses auto. It also finds rooms that `up` had not yet rebound, by their title. Nothing is deleted: conversations are kept and `auto up` resumes them.
+- **HQ counts worktree rooms under their repo.** The broadcast box said "3 phòng" while ai-game-studio ran 8; it now says 8 and sends at the repo.
+- **One question per decision.** Seven rooms asked the owner the same question for target #33. Rooms now check `su-code/DECISIONS.md` and the card notes first, and when another room is already asking, they note a proposal on the card instead.
+- The lead's `/goal` fits under Claude Code's 4,000-character cap again: the backup loop inside it points at the lane playbook instead of repeating it.
+
+### Added
+- `8sync ccc auto up "<task>" [--check "<cmd>"]`: the first card goes in with the team, at the head of the queue, before any room starts.
+- HQ: attach images and files in "Gửi cho mọi phòng", with the Đính kèm button or by pasting an image (up to 5 files, 10 MB each). They are copied into the repo at `.claude/hq-uploads/` (git-ignored) and the task lists their absolute paths, so every room opens them with Read.
+- HQ: clicking a project folder in the sidebar opens that project's Tổng quan. The chevron still folds the list.
+- HQ: "Anh cần trả lời" says when the critic is off (auto paused or off), so rooms are waiting on the owner. A question already on screen still needs the owner's click.
+- `--clear-ss` explains why a session was kept (its worktree has commits that were not pushed) and what to do.
+- Site: the steps name the HQ buttons in English, list the ba and ui rooms, and say what `down` and `--clear-ss` keep. The room list stays in view beside the steps.
 
 ## [0.100.13] — 2026-10-18
 ### Fixed

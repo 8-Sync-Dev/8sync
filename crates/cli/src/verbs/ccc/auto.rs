@@ -88,7 +88,16 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
             }
             let mut m = json!({ "schema": 1, "on": true, "paused": false, "since": now, "hours": hours, "after_s": after });
             if let Some(r) = repo {
-                m["repo"] = json!(canon(&r).to_string_lossy());
+                // `--here` adds this project to the ones already on: two repos can run teams at once
+                // (8sync-startup and ai-game-studio, 2026-10-18), and `down` in one leaves the other.
+                let r = canon(&r).to_string_lossy().into_owned();
+                let mut repos = scope(home);
+                if !repos.iter().any(|x| x.to_string_lossy() == r) {
+                    repos.push(PathBuf::from(&r));
+                }
+                let repos: Vec<String> = repos.iter().map(|x| x.to_string_lossy().into_owned()).collect();
+                m["repo"] = json!(repos[0]);
+                m["repos"] = json!(repos);
             }
             if let Err(e) = write_marker(home, &m) {
                 // Without the marker the `--here` scope is lost and auto would run everywhere.
@@ -146,16 +155,38 @@ pub(super) fn canon(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
-/// The project root `auto on --here` limited auto to, while the marker is on.
-fn scope(home: &Path) -> Option<PathBuf> {
-    let m = idle::read_json(&marker(home))?;
+/// The project roots `auto on --here` limited auto to, while the marker is on; empty = every
+/// project. Markers before `repos` carry one `repo`.
+fn scope(home: &Path) -> Vec<PathBuf> {
+    let Some(m) = idle::read_json(&marker(home)) else {
+        return Vec::new();
+    };
     if m["on"].as_bool() != Some(true) {
-        return None;
+        return Vec::new();
     }
-    m["repo"]
-        .as_str()
-        .filter(|r| !r.is_empty())
-        .map(PathBuf::from)
+    let many: Vec<PathBuf> = m["repos"].as_array().into_iter().flatten().filter_map(|r| r.as_str()).filter(|r| !r.is_empty()).map(PathBuf::from).collect();
+    if !many.is_empty() {
+        return many;
+    }
+    m["repo"].as_str().filter(|r| !r.is_empty()).map(PathBuf::from).into_iter().collect()
+}
+
+/// `auto down` in one project: take it out of auto. Other projects still on keep running (their
+/// lease, delegate and rooms untouched); the last one out pauses auto as before.
+pub(super) fn leave(home: &Path, root: &Path, subscription: bool, now: u64) -> Result<Value> {
+    let root = canon(root);
+    let repos = scope(home);
+    let rest: Vec<String> = repos.iter().filter(|r| **r != root).map(|r| r.to_string_lossy().into_owned()).collect();
+    if rest.is_empty() || rest.len() == repos.len() && !running(home) {
+        return set(home, Mode::Pause, subscription, now);
+    }
+    if rest.len() < repos.len() {
+        let mut m = idle::read_json(&marker(home)).unwrap_or_else(|| json!({ "schema": 1 }));
+        m["repo"] = json!(rest[0]);
+        m["repos"] = json!(rest);
+        write_marker(home, &m)?;
+    }
+    Ok(status(home, subscription, now))
 }
 
 /// Hooks ask this before acting on a session: `true` unless `auto on --here` limited auto to one
@@ -166,13 +197,20 @@ pub(super) fn in_scope(home: &Path, cwd: Option<&str>) -> bool {
 
 /// [`in_scope`] for many cwds, the marker read once (the idle rails count only this project's spend).
 pub(super) fn scoped(home: &Path) -> impl Fn(Option<&str>) -> bool {
-    let repo = scope(home);
-    move |cwd| match &repo {
-        None => true,
-        Some(repo) => cwd
-            .map(Path::new)
-            .filter(|c| c.is_absolute())
-            .is_some_and(|c| canon(c).starts_with(repo)),
+    let repos = scope(home);
+    move |cwd| {
+        repos.is_empty()
+            || cwd
+                .map(Path::new)
+                .filter(|c| c.is_absolute())
+                .is_some_and(|c| {
+                    // Inside a stored root and not inside a repo nested in it (ai-game-studio sits
+                    // in 8sync-startup: auto for one is not auto for the other). Worktrees resolve
+                    // to their repo, so they count.
+                    let own = crate::verbs::here::repo_of(c).map(|g| canon(&g));
+                    let c = canon(c);
+                    repos.iter().any(|r| c.starts_with(r) && own.as_ref().is_none_or(|g| r.starts_with(g)))
+                })
     }
 }
 
@@ -206,7 +244,8 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         "five_hour_pct": used.five_hour,
         "seven_day_pct": used.seven_day,
         "subscription": subscription,
-        "repo": scope(home).map(|r| r.to_string_lossy().into_owned()),
+        "repo": scope(home).first().map(|r| r.to_string_lossy().into_owned()),
+        "repos": scope(home).iter().map(|r| r.to_string_lossy().into_owned()).collect::<Vec<_>>(),
     })
 }
 
@@ -356,7 +395,7 @@ pub(super) fn write_loop_md(root: &Path) -> Result<(PathBuf, bool)> {
 /// AskUserQuestion call; a question typed as plain text at the end of a turn just waits, so the critic
 /// never gets it (seen live 2026-10-18: rd asked about BiRefNet in prose and sat). One Ship question
 /// per project: two rooms asking it doubles the owner's work (ba and lead both asked for PR 20).
-pub(super) const ASK_RULE: &str = "Cần owner quyết → gọi tool AskUserQuestion (≤4 câu, option khuyến nghị đứng đầu có \"(Recommended)\"), KHÔNG hỏi bằng chữ ở cuối lượt rồi dừng: owner vắng 60 s thì critic chỉ trả lời thay được câu hỏi qua AskUserQuestion. Câu Ship (merge/release/deploy) chỉ phòng lead hỏi.";
+pub(super) const ASK_RULE: &str = "Cần owner quyết → gọi tool AskUserQuestion (≤4 câu, option khuyến nghị đứng đầu có \"(Recommended)\"), KHÔNG hỏi bằng chữ ở cuối lượt rồi dừng: owner vắng 60 s thì critic chỉ trả lời thay được câu hỏi qua AskUserQuestion. Câu Ship (merge/release/deploy) chỉ phòng lead hỏi. Mỗi quyết định hỏi MỘT lần cả team: có trong su-code/DECISIONS.md hay note card thì theo; phòng khác đang hỏi thì `auto note <id> \"đề xuất: …\"` rồi làm việc khác.";
 
 /// What a room does with the card `auto claim` gives it, per lane (super-board's lane playbooks).
 pub(super) fn lane_playbook(lane: &str) -> &'static str {
@@ -371,8 +410,15 @@ pub(super) fn lane_playbook(lane: &str) -> &'static str {
 
 /// One tick of a room's loop: the recurring cron job's prompt.
 fn tick_prompt(name: &str) -> String {
+    tick(name, false)
+}
+
+/// `brief`: the backup loop inside a room's `/goal`, which already carries the lane playbook; naming
+/// it again kept the lead's goal over Claude Code's 4,000-character cap.
+fn tick(name: &str, brief: bool) -> String {
     let (role, _) = super::room::role(name);
     let board = match super::room::find(name).and_then(|r| r.lane) {
+        Some(lane) if brief => format!("2) `8sync ccc auto claim --json --as {name}` (cột {lane}): có card → làm theo playbook cột đó trong /goal của phòng. Không có card → bước 3. "),
         Some(lane) => format!(
             "2) `8sync ccc auto claim --json --as {name}` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {} (mọi lệnh `auto move|note` thêm `--as {name}`). Không có card → bước 3. ",
             lane_playbook(lane)
@@ -390,10 +436,19 @@ fn tick_prompt(name: &str) -> String {
 
 /// The cron part of the loop message: replace this room's `8sync-auto-loop` job with a recurring one.
 pub(super) fn loop_setup(name: &str, every_min: u64) -> String {
+    setup(name, every_min, false)
+}
+
+/// [`loop_setup`] for the backup loop of a `/goal` room ([`tick`] `brief`).
+pub(super) fn goal_loop_setup(name: &str, every_min: u64) -> String {
+    setup(name, every_min, true)
+}
+
+fn setup(name: &str, every_min: u64, brief: bool) -> String {
     let cron = cron_expr(every_min);
     format!(
         "CronList trước: job cũ chứa `{LOOP_TAG}` → CronDelete nó (chạy lại lệnh = gia hạn 7 ngày, đổi nhịp). Rồi CronCreate lặp (recurring) cron `{cron}` (mỗi {every_min} phút, như `/loop {every_min}m`) với prompt:\n{}",
-        tick_prompt(name)
+        tick(name, brief)
     )
 }
 
@@ -843,7 +898,7 @@ fn wait_for(
         // A subscription lease that ran out (or never started) ends the room's work like `off`: the
         // rail is "lease ≤ 4 h, while the owner is around" (idle::gate).
         let lease_over = st["gate"].as_str().is_some_and(|g| g.contains("lease"));
-        let wake = if st["on"] != true || st["paused"] == true || lease_over {
+        let wake = if st["on"] != true || st["paused"] == true || st["here"] == false || lease_over {
             Some(("off", None))
         } else if !st["cap"].is_null() {
             // Capped: rest here (no tokens) and never claim; report only when the wait is up, so the
@@ -905,13 +960,19 @@ pub(super) fn run(
     if let Some(verb @ ("add" | "queue" | "done" | "drop" | "claim" | "move" | "prio" | "note" | "board" | "lint")) = rest.first().map(String::as_str) {
         return run_target(verb, &rest[1..], home, root, rooms, now);
     }
+    // A room asks for its own project: `down` in another repo must not stop it, `down` here must.
+    let here = scoped(home)(Some(&root.to_string_lossy()));
     if rest.first().map(String::as_str) == Some("wait") {
         let w = parse_wait(&rest[1..], rooms)?;
         let clock = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let v = wait_for(
             &w,
             || target::list(home, root),
-            |t| status(home, subscription, t),
+            |t| {
+                let mut v = status(home, subscription, t);
+                v["here"] = json!(here);
+                v
+            },
             clock,
             || std::thread::sleep(std::time::Duration::from_secs(WAIT_POLL_S)),
         )?;
@@ -979,8 +1040,7 @@ pub(super) fn run(
                 None => DEFAULT_AFTER_S,
             };
             let repo = if rest.iter().any(|a| a == "--here") {
-                let cwd = std::env::current_dir()?;
-                Some(crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd))
+                Some(root.to_path_buf())
             } else {
                 None
             };
@@ -1007,7 +1067,9 @@ pub(super) fn run(
         }
         Some("status") | None => {
             known(&["--json"])?;
-            status(home, subscription, now)
+            let mut v = status(home, subscription, now);
+            v["here"] = json!(here);
+            v
         }
         Some(x) => bail!("không rõ `{x}`\n{USAGE}"),
     };
@@ -1213,7 +1275,8 @@ mod tests {
             "{}",
             status(&h, false, 3)
         );
-        assert!(!in_scope(&h, Some(&s(&repo))));
+        assert!(in_scope(&h, Some(&s(&repo))), "a second project joins; the first keeps running (two teams at once)");
+        assert_eq!(status(&h, false, 3)["repos"].as_array().map(Vec::len), Some(2));
         // a plain `on` widens it again; `pause` drops it
         set(&h, on(2.0, 60), false, 3).unwrap();
         assert!(in_scope(&h, Some(&s(&other))));
@@ -1380,6 +1443,7 @@ mod tests {
                 "on",
                 "paused",
                 "repo",
+                "repos",
                 "schema",
                 "seven_day_pct",
                 "subscription"

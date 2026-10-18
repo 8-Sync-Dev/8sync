@@ -6,7 +6,6 @@ import {
   choiceValid,
   defaultChoice,
   isSendKey,
-  outerProjects,
   pickedProjects,
   resolveChoice,
   resultLine,
@@ -53,13 +52,22 @@ describe("broadcast composer rules", () => {
     expect(resolveChoice("", [])).toBe("");
   });
 
-  it("all: a worktree inside another root is not counted as reached, and the line says why", () => {
-    const ps = broadcastProjects([...rooms, room("wt", "C:\\w\\shop\\.claude\\worktrees\\a"), room("win", "C:\\w\\shop")]);
-    expect(outerProjects(ps).map((p) => p.root).sort()).toEqual(["/tmp/x", "/w/shop", "/w/tools", "C:\\w\\shop"]);
-    expect(pickedProjects(ALL_PROJECTS, ps).flatMap((p) => p.rooms)).not.toContain("wt");
-    expect(broadcastSummary(ALL_PROJECTS, ps, true)).toMatch(/^Gửi ngay cho tối đa 6 phòng ở 4 dự án: .*Phòng trong worktree nhận qua hàng chung ở nhịp loop\.$/);
-    // A sibling whose name only starts the same is not nested.
-    expect(outerProjects(broadcastProjects([room("a", "/w/shop"), room("b", "/w/shop2")]))).toHaveLength(2);
+  it("counts worktree rooms under their repo and a nested repo as its own project (owner 2026-10-18: 3 of 8 rooms)", () => {
+    const game = "/s/startup/game/ai";
+    const ps = broadcastProjects([
+      room("lead", game),
+      room("ba", game),
+      room("arch", `${game}/.claude/worktrees/arch-radar`, "arch-radar"),
+      room("ui", `${game}/.claude/worktrees/card-29`, "card-29"),
+      room("qa", "/s/startup"),
+    ]);
+    expect(ps.map((p) => [p.root, p.rooms.length])).toEqual([
+      [game, 4],
+      ["/s/startup", 1],
+    ]);
+    expect(pickedProjects(ALL_PROJECTS, ps).flatMap((p) => p.rooms)).toHaveLength(5);
+    expect(broadcastSummary(game, ps, true)).toMatch(/^Gửi ngay cho tối đa 4 phòng trong ai ⎇ main: lead, ba, arch, ui\./);
+    expect(broadcastSummary(ALL_PROJECTS, ps, true)).toMatch(/^Gửi ngay cho tối đa 5 phòng ở 2 dự án/);
   });
 
   it("the summary says how many rooms at most, where, and when they take it", () => {

@@ -48,6 +48,8 @@ export function Nav({
   onHome,
   onOpenRoom,
   onOpenFolder,
+  onOpenRepo,
+  repo,
 }: {
   hq: Hq;
   scope: Scope;
@@ -56,6 +58,10 @@ export function Nav({
   onHome: () => void;
   onOpenRoom: (r: Room) => void;
   onOpenFolder: (id: number) => void;
+  /** A repo with rooms: its Tổng quan (that project's block only). */
+  onOpenRepo: (root: string, name: string) => void;
+  /** The repo Tổng quan is focused on, if any. */
+  repo: string | null;
 }) {
   const data = office.office;
   const now = data?.at ?? 0;
@@ -77,7 +83,7 @@ export function Nav({
         <button
           type="button"
           className={cn(item, "h-8")}
-          aria-current={scope.project == null && scope.session == null}
+          aria-current={scope.project == null && scope.session == null && repo == null}
           onClick={onHome}
         >
           <LayersIcon className="size-4 text-muted-foreground" aria-hidden />
@@ -103,7 +109,7 @@ export function Nav({
         ) : (
           <ul className="space-y-1">
             {groups.map((g) => (
-              <RepoGroup key={g.key} g={g} selected={scope.session} onOpen={onOpenRoom} />
+              <RepoGroup key={g.key} g={g} selected={scope.session} current={repo != null && norm(repo) === g.key && scope.session == null} onOpen={onOpenRoom} onOpenRepo={onOpenRepo} />
             ))}
           </ul>
         )}
@@ -125,16 +131,39 @@ export function Nav({
   );
 }
 
-/** One repo, open by default; worktree rooms sit under a `⎇ <worktree>` line after the repo's own rooms. */
-function RepoGroup({ g, selected, onOpen }: { g: SidebarGroup<Room>; selected: string | null; onOpen: (r: Room) => void }) {
+/**
+ * One repo, open by default; worktree rooms sit under a `⎇ <worktree>` line after the repo's own rooms.
+ * The folder opens that project's Tổng quan; the chevron alone folds the list.
+ */
+function RepoGroup({
+  g,
+  selected,
+  current,
+  onOpen,
+  onOpenRepo,
+}: {
+  g: SidebarGroup<Room>;
+  selected: string | null;
+  current: boolean;
+  onOpen: (r: Room) => void;
+  onOpenRepo: (root: string, name: string) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const list = `repo-${g.key.replace(/[^\w-]/g, "_")}`;
   return (
     <li>
-      <details className="group/repo" open>
-        <summary
-          className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md px-2 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/60 [&::-webkit-details-marker]:hidden"
-          title={g.root}
+      <div className="flex items-center">
+        <button
+          type="button"
+          className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/60"
+          aria-expanded={open}
+          aria-controls={list}
+          aria-label={`${open ? "Thu gọn" : "Mở"} ${g.name}`}
+          onClick={() => setOpen((o) => !o)}
         >
-          <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground transition-transform group-open/repo:rotate-90 motion-reduce:transition-none" aria-hidden />
+          <ChevronRightIcon className={cn("size-3 transition-transform motion-reduce:transition-none", open && "rotate-90")} aria-hidden />
+        </button>
+        <button type="button" className={cn(item, "h-8 gap-1.5 pl-1")} aria-current={current} title={`${g.root}: Tổng quan của dự án`} onClick={() => onOpenRepo(g.root, g.name)}>
           <FolderIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           <span className="min-w-0 flex-1 truncate font-medium">{g.name}</span>
           {g.needs > 0 ? (
@@ -146,13 +175,13 @@ function RepoGroup({ g, selected, onOpen }: { g: SidebarGroup<Room>; selected: s
           ) : (
             <Count n={g.rooms.length} />
           )}
-        </summary>
-        <ul className="mt-0.5 ml-[13px] space-y-0.5 border-l border-sidebar-border pl-1.5">
-          {g.rooms.map((x, i) => (
-            <RoomRows key={x.room.key} x={x} first={x.worktree != null && g.rooms[i - 1]?.worktree !== x.worktree} selected={selected} onOpen={onOpen} />
-          ))}
-        </ul>
-      </details>
+        </button>
+      </div>
+      <ul id={list} hidden={!open} className="mt-0.5 ml-[13px] space-y-0.5 border-l border-sidebar-border pl-1.5">
+        {g.rooms.map((x, i) => (
+          <RoomRows key={x.room.key} x={x} first={x.worktree != null && g.rooms[i - 1]?.worktree !== x.worktree} selected={selected} onOpen={onOpen} />
+        ))}
+      </ul>
     </li>
   );
 }
