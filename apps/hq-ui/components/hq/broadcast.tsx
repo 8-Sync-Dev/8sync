@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import {
   ALL_PROJECTS,
   broadcastProjects,
@@ -20,6 +19,7 @@ import {
   type BroadcastResult,
 } from "@/lib/broadcast";
 import { FILE_MAX_MB, FILES_MAX, fileError, toBase64 } from "@/lib/attach";
+import { MentionTextarea } from "./mention-textarea";
 import type { Hq } from "./use-hq";
 import type { Room } from "./use-office";
 
@@ -131,18 +131,20 @@ export function BroadcastComposer({ hq, rooms, preferRoot }: { hq: Hq; rooms: Ro
           <label htmlFor="broadcast" className="sr-only">
             Việc cho mọi phòng
           </label>
-          <Textarea
+          <MentionTextarea
             id="broadcast"
             ref={area}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onValueChange={setText}
+            base={choice && choice !== ALL_PROJECTS ? choice : null}
+            api={hq.api}
             onKeyDown={onKey}
             onPaste={onPaste}
             disabled={disabled}
             rows={2}
             maxLength={2000}
             aria-describedby="broadcast-summary"
-            placeholder="Một việc cho cả team, vd: webhook 500 on retry (Ctrl+Enter để gửi)"
+            placeholder="Một việc cho cả team, vd: webhook 500 on retry · @ để chèn file (Ctrl+Enter để gửi)"
             className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
           {(files.length > 0 || uploading > 0) && (

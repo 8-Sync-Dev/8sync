@@ -19,7 +19,7 @@ import { Message as ChatMessage, MessageContent, MessageResponse } from "@/compo
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
+import { MentionTextarea } from "./mention-textarea";
 import { addressOf, deliveryOf, messageTargets, sessionLabel, splitStale } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
@@ -303,7 +303,7 @@ function Composer({
       const r = await hq.api<{ message: Message; delivery: string; error: string | null }>("/api/messages", {
         method: "POST",
         // Sessions started elsewhere are addressed by their Claude session id (inbox delivery).
-        body: { session: addressOf(current), text: body },
+        body: { session: addressOf(current), text: body, base: current.cwd ?? null },
       });
       hq.mergeMessages([r.message]);
       if (r.delivery === "failed") toast.error(`Not delivered to ${sessionLabel(current)}: ${r.error}`);
@@ -364,16 +364,18 @@ function Composer({
           <label htmlFor="composer" className="sr-only">
             Message
           </label>
-          <Textarea
+          <MentionTextarea
             id="composer"
             ref={area}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onValueChange={setText}
+            base={current?.cwd ?? null}
+            api={hq.api}
             onKeyDown={onKey}
             disabled={disabled}
             rows={2}
             maxLength={4000}
-            placeholder={current ? `Nhắn ${sessionLabel(current)}` : "Message"}
+            placeholder={current ? `Nhắn ${sessionLabel(current)} · @ để chèn file` : "Message"}
             className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
           <div className="flex items-center gap-2 px-2 pb-2">

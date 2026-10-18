@@ -4,6 +4,7 @@ import { capturePlain, sendKeys } from "@/lib/server/proc";
 import { inboxLive, isSessionId, queueInbox } from "@/lib/server/inbox";
 import { messagesAfter, ownerMessage } from "@/lib/server/queries";
 import { clampText, isTmuxName } from "@/lib/server/validate";
+import { expandMentions } from "@/lib/server/fs-list";
 
 export const runtime = "nodejs";
 
@@ -31,7 +32,9 @@ export async function POST(req: Request) {
   if ("res" in o) return o.res;
   const body = await readBody(req);
   if (!body) return bad("JSON body required");
-  const text = clampText(body.text);
+  // "@path" from the composer's picker → absolute, against the room's folder (`base`).
+  const raw = typeof body.text === "string" && typeof body.base === "string" ? expandMentions(body.text, body.base) : body.text;
+  const text = clampText(raw);
   if (!text.ok) return bad(text.error, 422);
   // Any other live Claude Code session: queue in its inbox. `live`: the 8sync-inbox mod is polling
   // (enters as soon as the session is idle); otherwise the Stop hook delivers at its next turn end.
