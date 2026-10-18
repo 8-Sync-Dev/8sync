@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.15] — 2026-10-18
 ### Fixed
 - **A question left on screen goes to the critic after a minute.** Seen live 2026-10-18: questions asked while auto was paused stayed with the owner for an hour, even after auto was back on, because the delegate hook only sees a question as it is asked.
   - While "Chạy liên tục" is on, HQ takes any background room question that has waited 60 s and checks it with `8sync ccc delegate check`. That command uses the hook's rails: Ship, secrets, money, deploys and high-risk questions stay with the owner.
