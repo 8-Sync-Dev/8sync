@@ -4,6 +4,7 @@ import { mergedSessions } from "@/lib/server/proc";
 import { projectBoards } from "@/lib/server/board";
 import { addTarget, liveProjects, parseTargetBody, repoProjects, TARGET_TEXT_MAX, type TargetResult } from "@/lib/server/targets";
 import { placeUploads, withFiles } from "@/lib/server/uploads";
+import { expandMentions } from "@/lib/server/fs-list";
 
 export const runtime = "nodejs";
 
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
   // One project at a time: each run takes the shared targets.lock anyway.
   for (const project of chosen) {
     // Attachments go into this repo first; the task names their paths, so every room can Read them.
-    let text = p.value.text;
+    let text = expandMentions(p.value.text, project.root);
     try {
       text = withFiles(text, placeUploads(p.value.files, project.root));
     } catch (e) {
