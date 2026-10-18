@@ -112,6 +112,15 @@ function PermitCard({ r, p, sid, now, token }: { r: AskRoom; p: Permit; sid: str
 }
 
 /** What happens if the owner does not click: the hook decided it when it posted the request. */
+/** Ship (merge, release, deploy) is the owner's alone: the critic never answers it, however long the owner is away. */
+export const SHIP_NOTE = "Câu Ship (merge, release, deploy): chỉ anh duyệt. Critic không trả lời thay câu này dù anh vắng bao lâu.";
+/** A question typed as text, not through AskUserQuestion: the delegate hook cannot see it. */
+export const PROSE_NOTE = "Phòng hỏi bằng chữ thường nên critic không trả lời thay được.";
+
+export function isShip(a: { kind: string; questions?: { header?: string | null }[] } | null | undefined): boolean {
+  return a?.kind === "question" && (a.questions ?? []).some((q) => (q.header ?? "").trim().toLowerCase() === "ship");
+}
+
 export function silence(p: Pick<Permit, "then" | "why">, left: number): string {
   if (p.then === "allow") {
     return left > 0 ? `Không bấm thì sau ${left} s phòng tự cho phép và làm tiếp (việc thường trong dự án).` : "Hết giờ: phòng đã tự cho phép và làm tiếp.";
@@ -195,6 +204,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
               </ol>
             </div>
           ))}
+          {isShip(a) && <p className="text-xs font-medium text-st-needs">{SHIP_NOTE}</p>}
         </div>
       ) : a?.kind === "permission" ? (
         <p className="mt-2 max-w-[75ch] text-sm">
@@ -202,7 +212,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
           {a.what && <span className="ml-2">{a.what}</span>}
         </p>
       ) : (
-        <p className="mt-2 text-sm text-muted-foreground">{r.waiting ?? "Claude Code đang chờ một câu trả lời"}: mở terminal để xem câu hỏi.</p>
+        <p className="mt-2 text-sm text-muted-foreground">{r.waiting ?? "Claude Code đang chờ một câu trả lời"}: mở terminal để xem câu hỏi. {PROSE_NOTE}</p>
       )}
 
       <p className="mt-3 max-w-[75ch] text-xs text-muted-foreground text-pretty">

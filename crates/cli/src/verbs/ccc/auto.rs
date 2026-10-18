@@ -327,6 +327,8 @@ Mỗi nhịp:
 
 Không bao giờ: merge, push main, tag, release, publish, deploy khi owner chưa trả lời Ship; đọc hay in secret; xoá dữ liệu; nhắn người ngoài.
 Câu hỏi Ship, secret, tiền, high-risk chờ owner. Không có việc hợp vai → R&D cho mục Next kế tiếp, không ngồi không.
+Hỏi owner luôn bằng tool AskUserQuestion (option khuyến nghị đứng đầu), không hỏi bằng chữ cuối lượt rồi dừng: owner vắng 60 s
+thì critic chỉ trả lời thay được câu hỏi qua AskUserQuestion. Câu Ship chỉ phòng lead hỏi.
 ";
 
 /// Write [`LOOP_MD`] at `<root>/.claude/loop.md` unless something is already there (the owner's
@@ -350,10 +352,16 @@ pub(super) fn write_loop_md(root: &Path) -> Result<(PathBuf, bool)> {
 /// does: `CronCreate`) that follows `.claude/loop.md` for the room's role. The stop check stays in
 /// the cron prompt itself, so an edited loop.md cannot drop it: `off` or `pause`
 /// delete the loop on its next tick, the `cap` ([`idle::cap`]) rests it. Re-running the command replaces the job (a fresh 7 days).
+/// How every room asks the owner. The delegate hook (`8sync ccc hook delegate`) only sees an
+/// AskUserQuestion call; a question typed as plain text at the end of a turn just waits, so the critic
+/// never gets it (seen live 2026-10-18: rd asked about BiRefNet in prose and sat). One Ship question
+/// per project: two rooms asking it doubles the owner's work (ba and lead both asked for PR 20).
+pub(super) const ASK_RULE: &str = "Cần owner quyết → gọi tool AskUserQuestion (≤4 câu, option khuyến nghị đứng đầu có \"(Recommended)\"), KHÔNG hỏi bằng chữ ở cuối lượt rồi dừng: owner vắng 60 s thì critic chỉ trả lời thay được câu hỏi qua AskUserQuestion. Câu Ship (merge/release/deploy) chỉ phòng lead hỏi.";
+
 /// What a room does with the card `auto claim` gives it, per lane (super-board's lane playbooks).
 pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
-        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: thêm `--prio P0`, quan trọng `--prio P1`; dev nhận card gấp trước). Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`).Hết card backlog: `8sync ccc auto lint` → gỡ card blocked (`move <id> ready`), card approved → gom MỌI card approved vào MỘT câu hỏi Ship cho owner; owner duyệt → `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`",
+        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: thêm `--prio P0`, quan trọng `--prio P1`; dev nhận card gấp trước). Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`).Hết card backlog: `8sync ccc auto lint` → gỡ card blocked (`move <id> ready`); chỉ phòng lead (BA bỏ qua bước này): card approved → gom MỌI card approved vào MỘT câu hỏi Ship cho owner; owner duyệt → `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`",
         "ready" => "card building: worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>`, `/ship` card tới commit (test + gate), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>`; làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
         "qa" => "card qa: checkout nhánh PR, chạy `check` + UAT thật, ảnh chụp lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`",
         "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước) → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
@@ -376,7 +384,7 @@ fn tick_prompt(name: &str) -> String {
         None => "2) Vai không giữ cột board: bước 3. ".into(),
     };
     format!(
-        "{LOOP_TAG} {name} (vai {role}): 1) chạy `8sync ccc auto status --json`; on=false hoặc paused=true → CronDelete job {LOOP_TAG} này và dừng; `cap` khác null → nghỉ nhịp này (giữ loop). {board}3) `target` khác null → nhịp này làm phần hợp vai {role} cho đích đó; đạt (có `check` thì lệnh đó exit 0) → `8sync ccc auto done <id> --evidence \"<lệnh: kết quả>\"`. 4) Không có đích thì làm MỘT nhịp theo .claude/loop.md của dự án cho vai {role} (thiếu file → lấy MỘT việc hợp vai từ su-code/STATE.md mục Next, tự chọn skill: code → /ship, ≤3 file → /do, R&D → /deep-research). Không merge/push main/tag/deploy khi owner chưa trả lời Ship."
+        "{LOOP_TAG} {name} (vai {role}): 1) chạy `8sync ccc auto status --json`; on=false hoặc paused=true → CronDelete job {LOOP_TAG} này và dừng; `cap` khác null → nghỉ nhịp này (giữ loop). {board}3) `target` khác null → nhịp này làm phần hợp vai {role} cho đích đó; đạt (có `check` thì lệnh đó exit 0) → `8sync ccc auto done <id> --evidence \"<lệnh: kết quả>\"`. 4) Không có đích thì làm MỘT nhịp theo .claude/loop.md của dự án cho vai {role} (thiếu file → lấy MỘT việc hợp vai từ su-code/STATE.md mục Next, tự chọn skill: code → /ship, ≤3 file → /do, R&D → /deep-research). Không merge/push main/tag/deploy khi owner chưa trả lời Ship. {ASK_RULE}"
     )
 }
 
@@ -1677,6 +1685,24 @@ mod tests {
         assert!(!h2.join(".claude/loop.md").exists());
         for d in [h, h2] {
             let _ = std::fs::remove_dir_all(&d);
+        }
+    }
+
+    #[test]
+    fn rooms_ask_the_owner_through_the_tool_and_only_the_lead_asks_ship() {
+        // The delegate hook sees AskUserQuestion only; a question in prose never reaches the critic.
+        for name in ["lead", "rd", "arch", "dev", "qa"] {
+            assert!(tick_prompt(name).contains(ASK_RULE), "{name}");
+        }
+        assert!(ASK_RULE.contains("AskUserQuestion") && ASK_RULE.contains("KHÔNG hỏi bằng chữ") && ASK_RULE.contains("chỉ phòng lead hỏi"));
+        assert!(LOOP_MD.contains("AskUserQuestion") && LOOP_MD.contains("Câu Ship chỉ phòng lead hỏi"));
+        // BA shares the backlog lane but leaves the Ship question to the lead.
+        assert!(lane_playbook("backlog").contains("chỉ phòng lead (BA bỏ qua bước này)"));
+        for (name, lane) in [("lead", "backlog"), ("ba", "backlog"), ("dev", "ready"), ("qa", "qa"), ("review", "review")] {
+            let g = super::super::team::goal_prompt(name, lane, 10);
+            assert!(g.contains(ASK_RULE), "{name}");
+            // Claude Code caps a /goal condition at 4,000 characters (https://code.claude.com/docs/en/goal).
+            assert!(g.chars().count() <= 4000, "{name}: {} chars", g.chars().count());
         }
     }
 
