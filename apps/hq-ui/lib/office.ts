@@ -127,21 +127,36 @@ export type Limits = {
   ts: number | null;
 };
 
+/** "4h 11m" / "38m" / "2d 3h" until `resetsAt` (unix s); null when unknown or past. */
+export function timeLeft(resetsAt: number | null, now = Date.now()): string | null {
+  if (resetsAt == null) return null;
+  const m = Math.floor((resetsAt * 1000 - now) / 60_000);
+  if (m < 0) return null;
+  if (m >= 48 * 60) return `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`;
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+}
+
+/** One plan window for the header meter: % used (0 once its reset passed) and the time left. */
+export type LimitWindow = { label: "5h" | "7d"; pct: number; left: string | null; reset: string | null };
+
 /**
- * Header chips: "5h 42% · reset 14:30" and "7d 18%". A window whose reset time already passed
- * says so instead of showing a percentage from the old window.
+ * Header meter, like Orca's: "▕██░░▏ 42% used 4h 11m · 7d 18%". A window whose reset time already
+ * passed counts as empty (the reading predates the new window). Only status-line numbers: no
+ * per-model weekly windows, those need the OAuth usage endpoint (credentials stay in Claude Code).
  */
-export function limitsText(l: Limits | null | undefined, now = Date.now()): { five: string | null; seven: string | null } {
-  if (!l) return { five: null, seven: null };
-  const over = (s: number | null) => s != null && s * 1000 <= now;
-  const five =
-    l.five_hour_pct == null
-      ? null
-      : over(l.five_hour_resets_at)
-        ? "5h đã reset"
-        : `5h ${Math.round(l.five_hour_pct)}%${l.five_hour_resets_at != null ? ` · reset ${hhmm(l.five_hour_resets_at * 1000)}` : ""}`;
-  const seven = l.seven_day_pct == null ? null : over(l.seven_day_resets_at) ? "7d đã reset" : `7d ${Math.round(l.seven_day_pct)}%`;
-  return { five, seven };
+export function limitsView(l: Limits | null | undefined, now = Date.now()): LimitWindow[] {
+  if (!l) return [];
+  const win = (label: LimitWindow["label"], pct: number | null, at: number | null): LimitWindow | null => {
+    if (pct == null) return null;
+    const past = at != null && at * 1000 <= now;
+    return {
+      label,
+      pct: past ? 0 : Math.min(100, Math.max(0, Math.round(pct))),
+      left: past ? null : timeLeft(at, now),
+      reset: at != null && !past ? hhmm(at * 1000) : null,
+    };
+  };
+  return [win("5h", l.five_hour_pct, l.five_hour_resets_at), win("7d", l.seven_day_pct, l.seven_day_resets_at)].filter((w): w is LimitWindow => w != null);
 }
 
 export type ProjectInfo = { root: string; name: string; branch: string | null };
