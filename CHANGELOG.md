@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.6] — 2026-10-18
 ### Added
 - **A room's terminal opens in Orca, in the room's own worktree.** The HQ terminal panel adds **Mở trong Orca** when [Orca](https://github.com/stablyai/orca) is on the machine. It opens a shell tab in the room's folder (or its repo root when Orca does not know that worktree), types `claude attach <id>` and brings the tab forward.
   - **Luôn mở Orca** makes every "Mở terminal" button go straight to Orca. If Orca fails, the web panel opens instead.
