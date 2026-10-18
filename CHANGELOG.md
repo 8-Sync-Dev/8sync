@@ -5,6 +5,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 ### Fixed
+- `8sync up`: when the GitHub API has no digest, the release's `.sha256` file is tried up to 3 times (2 s apart) before "checksum NOT VERIFIED"; a missing digest still never blocks the install, a wrong one still does.
 - `auto up --clear-ss` names a deleted or kept session by its room (`lead`, `rd`), not by the whole `/goal` prompt that older sessions were titled after.
 
 ## [0.100.14] — 2026-10-18
