@@ -2257,7 +2257,7 @@ pub(crate) fn stale_ui_hint(port: u16, ver: Option<&str>) -> String {
 
 /// The hash out of a `sha256sum` file (`<hex>  <name>`); anything but 64 hex chars is None.
 fn parse_sha256_file(text: &str) -> Option<String> {
-    super::selfup::parse_digest(text.split_whitespace().next()?)
+    super::selfup::parse_sha256_text(text)
 }
 
 /// Refuse unless `tarball`'s sha256 equals the one in `sha_text`. No hasher = refuse (the asset is code we run).

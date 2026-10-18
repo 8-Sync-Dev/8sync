@@ -217,6 +217,19 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # `<binary>.sha256` (sha256sum format) beside each binary: `8sync up` verifies
+      # against it when the GitHub API gives no digest (rate limit, digest not ready).
+      - name: Checksums for the binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          for f in 8sync-v*; do
+            case "$f" in *.sha256) continue ;; esac
+            sha256sum "$f" > "$f.sha256"
+          done
+          cat 8sync-v*.sha256
+
       # Release notes = this version's CHANGELOG section (+ install line); GitHub's
       # generated PR list is appended below it.
       - name: Release notes from CHANGELOG
