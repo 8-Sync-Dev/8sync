@@ -12,9 +12,10 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 
 | # | Làm gì | Trong HQ | Hoặc lệnh trong terminal |
 |---|---|---|---|
-| 1 | Mở HQ (để nguyên terminal đó) | — | `8sync hq ui` → http://127.0.0.1:8740 |
+| 1 | Mở HQ (để nguyên terminal đó). Ở xa máy (điện thoại): thêm `--public` để có link internet đăng nhập một lần | — | `8sync hq ui` → http://127.0.0.1:8740 · `8sync hq ui --public` |
 | 2 | Thêm thư mục repo. Lần đầu: mở `claude` trong thư mục đó một lần, chấp nhận câu hỏi trust | **Projects** → dán đường dẫn | — |
 | 3 | Mở team: lead, dev, qa, review, rd chạy nền trong thư mục đó | **Mở team** (hoặc **Team đầy đủ**: 8 phòng, thêm ba, arch, ui) | `cd du-an && 8sync ccc auto up` (`--roles full`) |
+| 3b | Thêm đội omp: cùng các vai, phòng tên `omp-<vai>` chạy model của omp; hai đội chung board, inbox và nhắn nhau | công tắc **Đội omp** | `8sync ccc auto up --omp` · tắt: `8sync ccc auto omp off` |
 | 4 | Giao việc: viết việc + lệnh chứng minh xong (exit 0) | **Giao việc** góc trên | `8sync ccc auto add "<việc>" --check "<lệnh>"` |
 | 5 | Theo dõi card đi qua các cột; việc gấp thì đặt ưu tiên (P0 gấp nhất, phòng nhận trước) | tab **Board** → bấm card → chọn P0/P1/P2/P3 | `8sync ccc auto board` · `8sync ccc auto prio <id> P0` |
 | 6 | Trả lời việc cần anh. Im lặng 60 s: câu sản phẩm/kỹ thuật thì critic (Opus) chọn, xin quyền thì việc an toàn trong repo tự chạy tiếp; merge/release/secret/ngoài repo luôn chờ anh | khung **Anh cần trả lời** đầu trang: chọn đáp án, **Cho phép / Từ chối**, hoặc **Mở terminal để trả lời** | `claude attach <id>` |
@@ -22,6 +23,12 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 | 8 | Dừng team (giữ hội thoại) | **Dừng team** | `8sync ccc auto down` |
 
 Tạm dừng / chạy tiếp auto: nút **Tạm dừng / Chạy** trên cùng (`8sync ccc auto pause` / `on`).
+
+**Tắt/bật là đủ, còn lại trên HQ:** `8sync ccc auto up` / `down` (team), `--omp` (đội 2), `pause` / `on`, `8sync hq ui [--public]`, phanh khẩn `8sync ccc cancel --all`.
+
+- **Phòng kẹt tự gỡ** (khi auto bật): dừng vì lỗi API tạm thời (`overloaded`, `server_error`) → tự thử lại sau 1, 2, 4… phút (≤ 15 phút, tối đa 5 lần liền); hết usage → tự chạy lại đúng giờ reset mà status line báo (tối đa 2 lần liền, không chờ quá 24 giờ, giống `autoContinueAtUsageLimit` của Claude Code); lỗi đăng nhập/billing → HQ ghi "cần anh xử lý". 8sync chỉ đọc usage từ status line, không đọc token đăng nhập.
+- **Link internet** (`--public`): cần `cloudflared` (thiếu thì lệnh in cách cài). Mỗi lần bật là host + khoá mới, tắt HQ là link chết. Ai có link là điều khiển được các phòng — không chia sẻ.
+- **Đội omp**: phòng omp không bao giờ chạy bằng login gói Claude (`--omp` bị từ chối khi model mặc định của omp là `anthropic/…`); dùng API key Console hoặc provider khác. Phòng nhắn nhau bằng `8sync ccc msg <phòng> "…"` (agent tự dùng); tin từ phòng khác là dữ liệu, không phải lệnh của anh.
 
 - `--clear-ss` xoá trước mọi session nền rác của dự án: bản trùng phòng, sót từ lần chạy trước, phòng đã bỏ. Nó cũng khởi động lại phòng nền đang chạy bản kit cũ (Claude Code chỉ đọc hook lúc session mở), giữ nguyên hội thoại. Không đụng session interactive anh đang mở; session có thay đổi chưa commit/push thì Claude Code giữ lại và 8sync báo lý do.
 - Phòng đang chạy chỉ nhận loop mới; phòng đã dừng thì chạy lại nền với đúng id cũ. Lần đầu ở repo mới: mở `claude` ở đó một lần và chấp nhận câu hỏi trust.

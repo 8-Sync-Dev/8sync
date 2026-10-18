@@ -10,8 +10,11 @@ vi.mock("@/lib/server/auto", async (orig) => ({
   autoSet: set,
 }));
 
+import fs from "node:fs";
+import path from "node:path";
 import { GET, POST } from "@/app/api/auto/route";
 import { getToken } from "@/lib/server/auth";
+import { publicPath } from "@/lib/server/paths";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 let token = "";
@@ -33,7 +36,7 @@ describe("GET /api/auto", () => {
     const res = await GET(req("/api/auto", { token }));
     expect(res.status).toBe(200);
     const { versions, ...body } = await res.json();
-    expect(body).toEqual({ ...s, tick: { ticked: [] } });
+    expect(body).toEqual({ ...s, tick: { ticked: [] }, remote: { host: null } });
     // GET also reports the running UI / installed binary versions (stale-UI notice).
     expect(Object.keys(versions).sort()).toEqual(["binary", "ui"]);
     expect(tick).toHaveBeenCalledTimes(1);
@@ -44,8 +47,18 @@ describe("GET /api/auto", () => {
     const res = await GET(req("/api/auto", { token }));
     expect(res.status).toBe(200);
     const { versions, ...body } = await res.json();
-    expect(body).toEqual({ on: false, paused: false, error: "unknown verb", tick: { ticked: [] } });
+    expect(body).toEqual({ on: false, paused: false, error: "unknown verb", tick: { ticked: [] }, remote: { host: null } });
     expect(Object.keys(versions).sort()).toEqual(["binary", "ui"]);
+  });
+  it("names the public tunnel host while the remote link runs, never its key", async () => {
+    fs.mkdirSync(path.dirname(publicPath()), { recursive: true });
+    const key = "e".repeat(64);
+    fs.writeFileSync(publicPath(), JSON.stringify({ v: 1, host: "calm-river-42.trycloudflare.com", key, since: 1 }));
+    status.mockResolvedValueOnce({ on: true, paused: false });
+    const text = await (await GET(req("/api/auto", { token }))).text();
+    expect(JSON.parse(text).remote).toEqual({ host: "calm-river-42.trycloudflare.com" });
+    expect(text).not.toContain(key);
+    fs.rmSync(publicPath());
   });
 });
 
@@ -63,6 +76,14 @@ describe("POST /api/auto", () => {
     set.mockResolvedValueOnce({ on: false, paused: true });
     expect(await (await post({ action: "pause" })).json()).toEqual({ on: false, paused: true });
     expect(set).toHaveBeenLastCalledWith("pause");
+  });
+  it("omp-on / omp-off reach autoSet as the fixed action words", async () => {
+    set.mockResolvedValue({ on: true, paused: false, teams: ["ccc", "omp"] });
+    expect((await post({ action: "omp-on" })).status).toBe(200);
+    expect(set).toHaveBeenLastCalledWith("omp-on");
+    expect((await post({ action: "omp-off" })).status).toBe(200);
+    expect(set).toHaveBeenLastCalledWith("omp-off");
+    set.mockReset();
   });
   it("422 for any other action or body, nothing runs", async () => {
     set.mockClear();

@@ -174,8 +174,8 @@ fn file(home: &Path) -> PathBuf {
     d.parent().unwrap_or(&d).join("targets.json")
 }
 
-/// Lines kept, hidden characters dropped, secrets masked, at most `max` chars.
-fn clean(s: &str, max: usize) -> String {
+/// Lines kept, hidden characters dropped, secrets masked, at most `max` chars (also `ccc msg`).
+pub(super) fn clean(s: &str, max: usize) -> String {
     let hidden = |c: char| {
         (c.is_control() && c != '\n')
             || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{2028}' | '\u{2029}' | '\u{FEFF}')

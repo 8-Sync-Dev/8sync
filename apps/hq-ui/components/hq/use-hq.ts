@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isLocalHost } from "@/lib/hosts";
 import type { ChannelMode, Message, Project, Session, Task } from "./types";
 
 export class ApiError extends Error {
@@ -35,11 +36,26 @@ export function makeApi(token: string): Api {
 type Load<T> = { data: T; loading: boolean; error: string | null };
 const init = <T,>(data: T): Load<T> => ({ data, loading: true, error: null });
 
-export type Live = "connecting" | "live" | "retrying";
+/** "polling": the page is on the remote link (quick tunnels drop SSE) or the stream went silent. */
+export type Live = "connecting" | "live" | "retrying" | "polling";
+
+/** Poll period when SSE is not usable; the stream itself pings every 5 s, so 10 s of silence means it is buffered or dead. */
+export const POLL_MS = 3000;
+export const SILENT_MS = 10_000;
+/** Every 10th poll reloads the whole timeline + sessions: rows changed in place (what SSE `rewrite` signals). */
+const FULL_EVERY = 10;
+
+const sleep = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => (clearTimeout(t), resolve()), { once: true });
+  });
 
 /**
  * All HQ state in one place: initial loads, then one SSE stream (read with
- * fetch, since EventSource cannot send the token header) for new rows.
+ * fetch, since EventSource cannot send the token header) for new rows. Off
+ * loopback, or once the stream stays silent for SILENT_MS, it polls the same
+ * data every POLL_MS instead.
  */
 export function useHq(token: string) {
   const api = useMemo(() => makeApi(token), [token]);
@@ -115,26 +131,41 @@ export function useHq(token: string) {
     return () => clearInterval(t);
   }, [loadProjects, loadSessions, loadTasks, loadMessages]);
 
-  // SSE over fetch, reconnecting with a short backoff.
+  // SSE over fetch, reconnecting with a short backoff; polling when SSE cannot work.
   useEffect(() => {
     const ac = new AbortController();
     let backoff = 1000;
-    const connect = async () => {
+    /** Resolves "silent" when the stream gave no byte for SILENT_MS (tunnel buffering): switch to polling. */
+    const stream = async (): Promise<"silent" | "aborted"> => {
       while (!ac.signal.aborted) {
+        const conn = new AbortController();
+        const stop = () => conn.abort();
+        ac.signal.addEventListener("abort", stop, { once: true });
+        let silent = false;
+        let dog: ReturnType<typeof setTimeout> | undefined;
+        const fed = () => {
+          clearTimeout(dog);
+          dog = setTimeout(() => {
+            silent = true;
+            conn.abort();
+          }, SILENT_MS);
+        };
+        fed();
         try {
           const res = await fetch(`/api/stream?after=${lastMsg.current}`, {
             headers: { "x-hq-token": token },
-            signal: ac.signal,
+            signal: conn.signal,
             cache: "no-store",
           });
           if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-          setLive("live");
-          backoff = 1000;
           const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
           let buf = "";
           for (;;) {
             const { value, done } = await reader.read();
             if (done) break;
+            fed();
+            setLive("live");
+            backoff = 1000;
             buf += value;
             let i: number;
             while ((i = buf.indexOf("\n\n")) >= 0) {
@@ -157,16 +188,40 @@ export function useHq(token: string) {
             }
           }
         } catch {
-          if (ac.signal.aborted) return;
+          /* reconnect below, or poll when silent */
+        } finally {
+          clearTimeout(dog);
+          ac.signal.removeEventListener("abort", stop);
         }
+        if (ac.signal.aborted) return "aborted";
+        if (silent) return "silent";
         setLive("retrying");
-        await new Promise((r) => setTimeout(r, backoff));
+        await sleep(backoff, ac.signal);
         backoff = Math.min(backoff * 2, 15_000);
       }
+      return "aborted";
     };
-    void connect();
+    const poll = async () => {
+      setLive("polling");
+      for (let n = 1; !ac.signal.aborted; n++) {
+        if (!document.hidden) {
+          try {
+            const r = await api<{ messages: Message[] }>(`/api/messages?after=${lastMsg.current}&limit=1000`, { signal: ac.signal });
+            mergeMessages(r.messages);
+          } catch {
+            /* next round */
+          }
+          await (n % FULL_EVERY === 0 ? Promise.all([loadTasks(), loadMessages(), loadSessions(), loadProjects()]) : loadTasks());
+        }
+        await sleep(POLL_MS, ac.signal);
+      }
+    };
+    void (async () => {
+      if (isLocalHost(window.location.host) && (await stream()) === "aborted") return;
+      if (!ac.signal.aborted) await poll();
+    })();
     return () => ac.abort();
-  }, [token, mergeMessages, mergeTasks, loadSessions, loadProjects, loadMessages, loadTasks]);
+  }, [token, api, mergeMessages, mergeTasks, loadSessions, loadProjects, loadMessages, loadTasks]);
 
   return {
     api,

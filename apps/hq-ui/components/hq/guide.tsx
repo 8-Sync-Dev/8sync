@@ -9,6 +9,7 @@ import {
   FolderPlusIcon,
   HourglassIcon,
   MessagesSquareIcon,
+  PowerIcon,
   SendIcon,
   TerminalIcon,
   type LucideIcon,
@@ -60,6 +61,13 @@ export const GUIDE_STEPS: GuideStep[] = [
     body:
       "Sau `8sync up`, bấm \"Dọn & mở lại\": phòng rảnh chạy lại trên bản mới, giữ hội thoại; session rác được dọn, worktree còn thay đổi được giữ. Bấm \"Dừng team\" để nghỉ (hội thoại vẫn giữ). " +
       "Chat tổng xem các phòng nhắn nhau và bàn giao \"A → B\".",
+  },
+  {
+    icon: PowerIcon,
+    title: "CLI chỉ để bật / tắt",
+    body:
+      "Terminal chỉ cần hai lệnh: `8sync ccc auto on [--omp]` bật chạy liên tục (--omp cho Đội omp làm cạnh Đội ccc) và `8sync hq ui [--public]` mở HQ (--public in link internet để mở từ điện thoại, hết hạn sau 12 giờ). " +
+      "Mọi việc khác làm ở đây: Tạm dừng / Chạy liên tục, công tắc Đội omp, giao việc, trả lời câu hỏi. Phòng dừng vì hết usage hoặc lỗi API tự chạy lại; chỉ phòng ghi \"cần anh xử lý\" mới chờ anh.",
   },
 ];
 

@@ -2,7 +2,7 @@
 
 import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
 import { roomNow } from "@/lib/now";
-import { matchesSession } from "@/lib/office";
+import { limitsText, matchesSession } from "@/lib/office";
 import { CircleHelpIcon, MenuIcon, SendIcon } from "lucide-react";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
@@ -130,6 +130,9 @@ export function HqApp({ token }: { token: string }) {
       : (repo?.root ?? officeSummary);
   const needsYou = view.sessions.filter((s) => s.status === "needs_input").length;
   const running = view.sessions.filter((s) => s.status !== "ended").length;
+  // Plan usage (contract C1): one compact element from the freshest status-line snapshot.
+  const lim = limitsText(office.office?.limits, office.office?.at);
+  const usage = [lim.five, lim.seven].filter(Boolean).join(" · ");
 
   const firstRun = {
     hasProject: hq.projects.data.length > 0,
@@ -234,6 +237,12 @@ export function HqApp({ token }: { token: string }) {
                   <dt>Running</dt>
                   <dd className="text-sm font-medium text-foreground tabular">{running}</dd>
                 </div>
+                {usage && (
+                  <div className="flex items-baseline gap-1.5" title="Hạn mức gói Claude, từ status line của phiên mới nhất">
+                    <dt>Usage</dt>
+                    <dd className="text-foreground tabular">{usage}</dd>
+                  </div>
+                )}
                 {needsYou > 0 && (
                   <div className="flex items-baseline gap-1.5 text-st-needs">
                     <dt>Needs you</dt>

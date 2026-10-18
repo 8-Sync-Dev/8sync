@@ -5,6 +5,19 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 ### Added
+- **Stuck rooms restart by themselves while auto runs.** Owner (2026-10-19): "auto xử lý kẹt … tự kích hoạt chạy lại tiếp khi usage hồi lại biết mấy giờ có lại usage".
+  - The StopFailure record now says when to resume. `rate_limit`: the reset time from the status line (`rate_limits.*.resets_at`; the window ≥ 90 % full, +60 s), at most 2 in a row and never more than 24 h out — the caps of Claude Code's own `autoContinueAtUsageLimit`, which background (`auto up`) rooms do not get. `overloaded` / `server_error` / `unknown`: after 1, 2, 4… min (≤ 15 min, ≤ 5 in a row). `max_output_tokens`: at once (≤ 2). Login, billing and request errors wait for the owner.
+  - The `8sync-inbox` mod hands the room an `[8sync:resume]` prompt when it is idle and the resume is due, at most once per 10 min until it is submitted, only while auto runs for that project and inside the usual rails (subscription lease, usage window, `$`/hour cap).
+  - Usage snapshots keep `five_hour_resets_at` / `seven_day_resets_at`. A window whose reset time has passed counts as empty, so rooms resting at 90 % go on at the reset instead of waiting up to 5 hours for the reading to go stale.
+  - `8sync ccc . ls --json` / `8sync ls --json` add `stalled_resume_at`; a resumed room is no longer shown as stuck. The stop record resolves home like the other hooks, so it also works on Windows without `HOME`.
+  - Usage comes only from the status-line JSON Claude Code produces. 8sync never reads Claude credentials or calls the OAuth usage endpoint (Orca does; not copied).
+- **A second team on omp.** `8sync ccc auto up --omp` opens an `omp-<role>` room per role (tmux on Linux/macOS, a Windows Terminal tab on Windows); `auto omp on|off` (and the HQ switch) toggles the team; omp rooms opened with `8sync . <name>` join too. Refused while omp's default model is `anthropic/…`: a Claude subscription stays in Claude Code.
+  - New omp extension `8sync-team.ts` (installed by `harness global`): HQ inbox messages when the room is idle, target-queue nudges (`8sync ccc auto nudge`, ≤ 1 per 10 min, ≤ 6/h), resume after provider rate-limit/overload errors (1 → 15 min, ≤ 5), and its own `ask` answered from the options while auto runs (owner-only items go to the final answer).
+  - `8sync ccc msg <room|--all> "<text>"`: any room of either team messages another. Room messages reach the inbox framed as data from that room, never as the owner's words, and show in HQ chat. `ls --json` rows gain `inbox_id` (`omp-<fnv64>` for omp rooms); `ccc_core::transcript::Row` gains the public field `inbox_id`.
+- **`8sync hq ui --public`**: a Cloudflare quick tunnel to HQ with a one-time login link `https://<host>/api/login?k=<key>` (cookie HttpOnly/Secure/SameSite=Strict, 12 h; new host and key per start; `public.json` removed on exit). Remote pages poll (quick tunnels drop SSE). No `cloudflared` → install hint and HQ stays local.
+- HQ: stuck captions with the restart time ("Hết usage — tự chạy lại lúc HH:MM"), usage 5h/7d with the reset time, team labels and delivery to omp rooms, Đội omp switch, remote-link status, security headers (no framing, no referrer).
+- Kit deny rules keep the Read tool away from the HQ UI token and the public-link key, and Edit/redirects away from permit answers and the inbox; the guard also denies the public-link key.
+- Website: an "On / off" box (team, omp team, pause, HQ, HQ from the phone, emergency stop), the new rows in the command table, and `docs/huong-dan.md` / `docs/hq.md`.
 - **HQ: "@" inserts a file or folder path** in "Gửi cho mọi phòng" and in the room message box.
   - Type `@` to list the project's folders and files. Type `@src/` to go one level down, or `@../` to go up and out of the project.
   - ↑/↓ choose, Enter or Tab picks, Esc closes.

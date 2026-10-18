@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { hhmm } from "@/lib/auto";
 import {
   ageLabel,
   cleanTitle,
@@ -187,5 +188,23 @@ describe("deriveHandoffs", () => {
   it("latest event wins per desk", () => {
     const m = deriveHandoffs([msg(NOW - 900, "hq-a", "hq-c"), msg(NOW - 100, "hq-a", "hq-b")], 0, NOW);
     expect(m.get("hq-a")?.peer).toBe("hq-b");
+  });
+});
+
+describe("stalled captions (contract C2)", () => {
+  const at = NOW / 1000 + 1800;
+  const when = hhmm(at * 1000);
+  const cap = (stalled_error: string | boolean, stalled_resume_at?: number | null) =>
+    deriveFloor({ status: "running", last_active: ago(5), stalled_error, stalled_resume_at }, null, NOW);
+  it("usage limit with a resume time", () => {
+    expect(cap("rate_limit", at)).toMatchObject({ state: "stalled", caption: `Hết usage — tự chạy lại lúc ${when}` });
+  });
+  it("other API error with a retry time", () => {
+    expect(cap("overloaded", at).caption).toBe(`Lỗi API (overloaded) — tự thử lại lúc ${when}`);
+  });
+  it("no resume time: the owner must act", () => {
+    expect(cap("billing_error", null).caption).toBe("billing_error — cần anh xử lý");
+    expect(cap("rate_limit").caption).toBe("rate_limit — cần anh xử lý");
+    expect(cap(true, null).caption).toBe("Lỗi API — cần anh xử lý");
   });
 });

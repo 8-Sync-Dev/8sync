@@ -30,6 +30,7 @@ function room(over: Partial<Room> & { name: string; root?: string }): Room {
     seats: [],
     role: null,
     team: null,
+    engine: "ccc",
     meeting: null,
     ...over,
   };
@@ -122,6 +123,13 @@ describe("sidebar UI", () => {
     expect(html).not.toContain("No folders yet");
     // A registered folder that already has rooms is not listed again as roomless.
     expect(html.match(/>8sync-startup</g)).toHaveLength(1);
+  });
+
+  it("labels omp rooms with their team", async () => {
+    const html = await nav(office([room({ name: "omp-0123456789abcdef", label: "scout", engine: "omp", status: "running" }), room({ name: "core", status: "running" })]));
+    expect(html).toContain("Đội omp");
+    expect(html).toContain("scout · Đội omp");
+    expect(html).toContain("core · Đội ccc");
   });
 
   it("has loading, empty and error states", async () => {

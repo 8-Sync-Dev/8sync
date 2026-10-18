@@ -123,6 +123,9 @@ pub struct Row {
     /// Command that resumes it.
     pub resume: String,
     pub transcript: Option<PathBuf>,
+    /// Inbox HQ and `ccc msg` deliver to: a Claude Code room's session id, an omp named
+    /// session's [`crate::room_id`]; `None` for every other row.
+    pub inbox_id: Option<String>,
 }
 
 // ── secrets ─────────────────────────────────────────────────────────────────
@@ -673,23 +676,25 @@ pub fn safe_id(s: &str) -> Option<String> {
     (!s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then(|| s.to_string())
 }
 
-/// API error type recorded by the kit's StopFailure hook for a Claude session
-/// (`<dir>/<session_id>.json`, written by `ccc/resume.rs`). Read-only; records older
-/// than 24 h are ignored.
-fn stalled_error_in(dir: &Path, row: &Row, now_s: u64) -> Option<String> {
+/// API error type and planned automatic resume time (`resume_at`, epoch s) recorded by the kit's
+/// StopFailure hook for a Claude session (`<dir>/<session_id>.json`, written by `ccc/resume.rs`).
+/// Read-only; records older than 24 h, or already resumed by 8sync (`resumed_at`), are ignored.
+fn stalled_error_in(dir: &Path, row: &Row, now_s: u64) -> Option<(String, Option<u64>)> {
     if row.engine != "claude" {
         return None;
     }
     let id = safe_id(row.transcript.as_deref()?.file_stem()?.to_str()?)?;
     let rec: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(format!("{id}.json"))).ok()?).ok()?;
-    if now_s.saturating_sub(rec["ts"].as_u64()?) > 24 * 3600 {
+    if now_s.saturating_sub(rec["ts"].as_u64()?) > 24 * 3600 || !rec["resumed_at"].is_null() {
         return None;
     }
-    rec["error"].as_str().map(str::to_string)
+    Some((rec["error"].as_str()?.to_string(), rec["resume_at"].as_u64()))
 }
 
-fn stalled_error(row: &Row) -> Option<String> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+fn stalled_error(row: &Row) -> Option<(String, Option<u64>)> {
+    // Same home as the writer (`8sync ccc hook stop-failure`): `$HOME` on unix, the profile
+    // folder on Windows, where a hook or HQ child often has no HOME.
+    let home = dirs::home_dir();
     let dir = home.filter(|h| h.is_absolute())?.join(".local/state/8sync/ccc/stopfail");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
     stalled_error_in(&dir, row, now)
@@ -706,6 +711,7 @@ fn claude_sid(row: &Row) -> Option<String> {
 /// JSON for one session — the `--json` contract of `ls`.
 pub fn row_json(row: &Row) -> Value {
     let d = &row.digest;
+    let stalled = stalled_error(row);
     serde_json::json!({
         "schema": crate::SCHEMA,
         "engine": row.engine,
@@ -721,7 +727,8 @@ pub fn row_json(row: &Row) -> Value {
         "last_user": d.last_user().map(|u| clean(u, 200)),
         "last_activity": d.last_activity().map(|s| clean(&s, 200)),
         "last_tool": d.last_tool_name.as_deref().map(|s| clean(s, 60)),
-        "stalled_error": stalled_error(row),
+        "stalled_error": stalled.as_ref().map(|s| &s.0),
+        "stalled_resume_at": stalled.as_ref().and_then(|s| s.1),
         "current_task": d.current_task().map(|t| clean(&t.title, 200)),
         "tasks_done": d.tasks_done(),
         "tasks_total": d.tasks.len(),
@@ -729,6 +736,7 @@ pub fn row_json(row: &Row) -> Value {
         "tokens": d.tokens,
         "model": d.model,
         "resume": mask_secrets(&row.resume),
+        "inbox_id": row.inbox_id,
     })
 }
 
@@ -773,6 +781,7 @@ pub fn unreadable(engine: &'static str, name: &str, resume: String, last_active:
         digest: Digest { title: Some("unreadable".into()), ..Default::default() },
         resume,
         transcript: None,
+        inbox_id: None,
     }
 }
 
@@ -793,6 +802,7 @@ mod tests {
             digest,
             resume: "8sync . core".into(),
             transcript: None,
+            inbox_id: None,
         }
     }
 
@@ -975,8 +985,12 @@ mod tests {
         r.transcript = Some(PathBuf::from("/x/abc-123.jsonl"));
         assert_eq!(stalled_error_in(&dir, &r, 1000), None, "absent");
         std::fs::write(dir.join("abc-123.json"), r#"{"error":"rate_limit","ts":1000,"cwd":"/w"}"#).unwrap();
-        assert_eq!(stalled_error_in(&dir, &r, 2000).as_deref(), Some("rate_limit"));
+        assert_eq!(stalled_error_in(&dir, &r, 2000), Some(("rate_limit".into(), None)), "old record shape: no resume time");
         assert_eq!(stalled_error_in(&dir, &r, 1000 + 24 * 3600 + 1), None, "old");
+        std::fs::write(dir.join("abc-123.json"), r#"{"error":"overloaded","ts":1000,"cwd":"/w","auto":0,"resume_at":1060,"resumed_at":null}"#).unwrap();
+        assert_eq!(stalled_error_in(&dir, &r, 2000), Some(("overloaded".into(), Some(1060))));
+        std::fs::write(dir.join("abc-123.json"), r#"{"error":"overloaded","ts":1000,"cwd":"/w","auto":0,"resume_at":1060,"resumed_at":1061}"#).unwrap();
+        assert_eq!(stalled_error_in(&dir, &r, 2000), None, "resumed by 8sync: not stuck");
         assert!(dir.join("abc-123.json").exists(), "never deleted");
         r.engine = "omp";
         assert_eq!(stalled_error_in(&dir, &r, 2000), None, "claude only");

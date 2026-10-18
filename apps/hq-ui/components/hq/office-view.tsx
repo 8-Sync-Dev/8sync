@@ -1,6 +1,6 @@
 "use client";
 
-import { GitBranchIcon, InboxIcon, MoonIcon, PauseIcon, PlayIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
+import { BotIcon, GitBranchIcon, GlobeIcon, InboxIcon, LaptopIcon, MoonIcon, PauseIcon, PlayIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
 import { useMemo, useState, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,6 +16,8 @@ import { groupByRepo, meetingShown, worktreeOf } from "@/lib/sidebar";
 import { modelShort } from "@/lib/roles";
 import { shirtFor, shirtOf } from "@/lib/sprite/frames";
 import { cn } from "@/lib/utils";
+import { isLocalHost } from "@/lib/hosts";
+import { teamLabel } from "@/lib/labels";
 import { EmptyState, ErrorNote } from "./bits";
 import { IdleChip } from "./idle-chip";
 import { NowRoster, type RosterRow } from "./now-roster";
@@ -170,6 +172,7 @@ function RoomCard({
             </button>
           </h3>
           {room.model && <span className="shrink-0 text-[11px] text-(--soft)">{modelShort(room.model)}</span>}
+          <span className="shrink-0 rounded border border-(--soft)/40 px-1 text-[10px] leading-4 text-(--soft)">{teamLabel(room.engine)}</span>
           {worktreeOf(room) && (
             <span className="inline-flex min-w-0 items-center gap-0.5 font-mono text-[11px] text-(--soft)" title={`worktree ${worktreeOf(room)}${room.project?.branch ? ` · nhánh ${room.project.branch}` : ""}`}>
               <GitBranchIcon aria-hidden className="size-3 shrink-0" />
@@ -268,9 +271,17 @@ function RoomCard({
               <TerminalSquareIcon className="size-3" aria-hidden /> Terminal
             </>
           ) : room.delivery === "inbox" ? (
-            <span title={room.inboxLive ? "Mod 8sync-inbox đang nạp: việc vào ngay khi phòng rảnh" : "Mod 8sync-inbox chưa nạp: việc vào ở lượt kế"}>
+            <span
+              title={
+                room.engine === "omp"
+                  ? "Phòng omp đọc inbox khi rảnh"
+                  : room.inboxLive
+                    ? "Mod 8sync-inbox đang nạp: việc vào ngay khi phòng rảnh"
+                    : "Mod 8sync-inbox chưa nạp: việc vào ở lượt kế"
+              }
+            >
               <InboxIcon className="mr-1 inline size-3 align-[-2px]" aria-hidden />
-              Inbox{room.inboxLive ? "" : " · chưa nạp mod"}
+              Inbox{room.inboxLive || room.engine === "omp" ? "" : " · chưa nạp mod"}
               {room.pending > 0 && ` · ${room.pending} chờ giao`}
             </span>
           ) : null}
@@ -327,12 +338,21 @@ function MeetingRoom({ attendees, rooms, until, now }: { attendees: Attendee[]; 
   );
 }
 
-/** Pause / Run: HQ keeps `8sync ccc auto` on by default (useAuto); the owner can pause it. */
+/**
+ * Pause / Run: HQ keeps `8sync ccc auto` on by default (useAuto); the owner can pause it. Next to it
+ * the "Đội omp" switch (`8sync ccc auto omp on|off`) and where HQ can be reached from.
+ */
 function AutoBar({ token }: { token: string }) {
   const { status, busy, setAuto } = useAuto(token);
   if (!status) return <Skeleton className="h-8 w-56" />;
   const btn = autoButton(status);
   const stale = staleText(status);
+  const omp = !!status.teams?.includes("omp");
+  // While blocked (omp on the anthropic provider) 8sync keeps the omp team off and refuses to turn it on.
+  const blocked = status.omp_blocked || null;
+  const host = status.remote?.host;
+  // Status arrives client-side only (useAuto), so `window` is there; the remote view hides where HQ is reachable from.
+  const local = isLocalHost(window.location.host);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm" role="status">
       {stale && (
@@ -347,6 +367,35 @@ function AutoBar({ token }: { token: string }) {
         </Button>
       )}
       <span className="text-muted-foreground">{autoText(status)}</span>
+      {!status.error && (
+        <Button
+          type="button"
+          size="sm"
+          variant={omp ? "secondary" : "outline"}
+          aria-pressed={omp}
+          disabled={busy || (!!blocked && !omp)}
+          title={blocked ? `Đội omp đang bị chặn: ${blocked}` : "Phòng omp làm việc cạnh phòng Claude Code (8sync ccc auto omp on|off)"}
+          onClick={() => void setAuto(omp ? "omp-off" : "omp-on")}
+        >
+          <BotIcon aria-hidden />
+          Đội omp: {omp ? "bật" : "tắt"}
+        </Button>
+      )}
+      {blocked && <span className="text-xs text-muted-foreground">Đội omp bị chặn: {blocked}</span>}
+      {status.omp_error && <span className="text-destructive">{status.omp_error}</span>}
+      {local && (
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          {host ? (
+            <>
+              <GlobeIcon className="size-3.5" aria-hidden /> Link internet: <span className="font-mono">{host}</span>
+            </>
+          ) : (
+            <>
+              <LaptopIcon className="size-3.5" aria-hidden /> chỉ máy này · <code className="font-mono">8sync hq ui --public</code>
+            </>
+          )}
+        </span>
+      )}
     </div>
   );
 }

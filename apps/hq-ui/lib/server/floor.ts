@@ -2,12 +2,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { sessionLabel } from "../labels";
+import { isOmpRoomId, sessionLabel } from "../labels";
 import { roomLabel } from "../room-label";
 import { deriveFloor, type FloorRow, type LsInput } from "../floor";
+import { projectIdFor } from "./db";
+import { inboxLive } from "./inbox";
 import { mergedSessions, run, type SessionView } from "./proc";
 
-type LsRow = LsInput & { name: string; sid?: string | null; title?: string | null; repo?: string | null; engine?: string | null; tokens?: number | null };
+type LsRow = LsInput & {
+  name: string;
+  sid?: string | null;
+  title?: string | null;
+  repo?: string | null;
+  engine?: string | null;
+  tokens?: number | null;
+  inbox_id?: string | null;
+};
 
 const TTL_MS = 4000;
 let cache: { at: number; rows: FloorRow[] } | null = null;
@@ -156,6 +166,8 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       engine,
       sid: sidOf(hq?.session_id, r.name),
       tokens: typeof r.tokens === "number" ? r.tokens : null,
+      inbox_id: typeof r.inbox_id === "string" ? r.inbox_id : null,
+      live: r.status === "running" || r.status === "active",
       ...deriveFloor(r, { ...(hq ?? {}), standup: standupOf(repo) }, now),
     };
   });
@@ -173,10 +185,43 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       repo,
       engine: "ccc",
       sid: sidOf(s.session_id, s.name),
+      inbox_id: s.session_id,
+      live: true,
       ...deriveFloor(null, { ...s, standup: standupOf(repo) }, now),
     });
   }
   return rows;
+}
+
+/** hq has no hook data for omp rooms: the desk state stands in for the session status. */
+const OMP_STATUS: Partial<Record<FloorRow["state"], SessionView["status"]>> = { waiting: "needs_input", idle: "idle", done: "idle" };
+
+/**
+ * The omp team's live rooms as sessions (contract C3/C4). HQ cannot type into them; it queues into
+ * their inbox by `inbox_id`, so they join the room list, "Giao việc" and "Cả dự án" like any inbox room.
+ */
+export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
+  return rows.flatMap((r): SessionView[] => {
+    const id = r.inbox_id;
+    if (r.engine !== "omp" || !r.live || !isOmpRoomId(id)) return [];
+    const cwd = r.repo ? expand(r.repo) : null;
+    return [
+      {
+        name: id,
+        label: r.name,
+        session_id: id,
+        project_id: projectIdFor(db, cwd),
+        status: OMP_STATUS[r.state] ?? "running",
+        started_at: r.last_active ? r.last_active * 1000 : null,
+        cwd,
+        tmux: false,
+        source: "omp",
+        detail: r.caption || null,
+        inbox_live: inboxLive(id),
+        engine: "omp",
+      },
+    ];
+  });
 }
 
 /** 4 s cache; concurrent callers share one in-flight `8sync ls`. */

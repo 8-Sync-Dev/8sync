@@ -203,6 +203,7 @@ name = "ccc-core"
 version = "0.100.15"
 dependencies = [
  "anyhow",
+ "dirs",
  "serde",
  "serde_json",
 ]
