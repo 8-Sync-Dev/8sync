@@ -19,7 +19,7 @@ export type Session = {
   started_at: number | null;
   cwd: string | null;
   tmux: boolean;
-  source: "tmux" | "claude" | "journal";
+  source: "tmux" | "claude" | "journal" | "omp";
   detail: string | null;
   /** Inbox delivery: the 8sync-inbox mod is loaded and polling, so a task enters as soon as the session is idle. */
   inbox_live?: boolean;
@@ -32,6 +32,8 @@ export type Session = {
   /** Team role (lib/roles.ts) and model id, set when HQ started the session with one. */
   role?: string | null;
   model?: string | null;
+  /** Team: absent = Claude Code (Đội ccc); "omp" for omp rooms (reached through their inbox). */
+  engine?: string;
 };
 
 export type Task = {

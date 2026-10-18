@@ -4,11 +4,11 @@
 /// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
 #[cfg(test)]
 pub(super) const VERBS: &[&str] =
-    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "ls", "list", "urgent", "goal", "standup", "rm", "new", "compact", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet"];
+    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "msg", "ls", "list", "urgent", "goal", "standup", "rm", "new", "compact", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet"];
 
 /// Words that look like verbs: never a session name, never a headless claude launch.
 /// Includes hook sub-verbs people type without `hook`.
-pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet"];
+pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "msg", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet"];
 
 pub(super) const TEXT: &str = "\
 8sync ccc — Claude Code + kit của 8 Sync. Mọi lệnh (chạy `8sync ccc <verb>`):
@@ -50,8 +50,11 @@ TỰ ĐỘNG (gõ trong Claude Code)
   8sync ccc cancel [--all] [--session <tên>] [--json]   huỷ hết việc session này đặt: goal, urgent, loop ghi trong su-code/ship/ACTIVE của repo (ACTIVE chung cả repo), rồi ACTIVE; `--all` thêm mọi loop + idle off + delegate off; thiếu session hay huỷ hụt → exit 1 (fail-closed; /loop của Claude Code phải `/loop clear` trong session)
   8sync ccc hook ship-grant    (hook) ghi giấy phép khi owner duyệt câu hỏi `Ship`
   8sync ccc idle on [--hours 2] [--usd-per-hour 5]   không-ai-rảnh cho agent team (mặc định TẮT; subscription = lease khi owner có mặt)
-  8sync ccc auto on [--here] [--loop [10m]] [--team] [--hours 2] [--after 60|1m] | off | pause | status [--json]   một công tắc \"team luôn work\": idle lease + delegate sau 60 s owner không gõ + auto.json cho HQ; mặc định mọi session ở mọi dự án trên máy, `--here` = chỉ các session của dự án ở thư mục hiện tại; `--loop 10m` = ghi .claude/loop.md (playbook chọn skill, không ghi đè) rồi gửi vào inbox mọi phòng của dự án lệnh tự đặt loop cron (như /loop 10m) theo vai phòng; loop tự xoá khi auto off/pause, chạm trần $/giờ (trung bình) thì nghỉ nhịp; Claude Code xoá sau 7 ngày (chạy lại = gia hạn); `--team` = phòng mở bằng --team tự lấp ghế rd, qa, reviewer; `--target \"<đích>\" [--check \"<lệnh>\"]` = đích đầu hàng cho cả team; `pause` = owner tạm dừng (HQ không tự bật lại), `off` = tắt (HQ có thể bật lại); subscription giữ lease ≤ 4 giờ, chỉ chạy khi owner có mặt
+  8sync ccc auto on [--here] [--omp] [--loop [10m]] [--team] [--hours 2] [--after 60|1m] | off | pause | status [--json]   một công tắc \"team luôn work\": idle lease + delegate sau 60 s owner không gõ + auto.json cho HQ; mặc định mọi session ở mọi dự án trên máy, `--here` = chỉ các session của dự án ở thư mục hiện tại; `--omp` = bật cả đội omp; `--loop 10m` = ghi .claude/loop.md (playbook chọn skill, không ghi đè) rồi gửi vào inbox mọi phòng của dự án lệnh tự đặt loop cron (như /loop 10m) theo vai phòng; loop tự xoá khi auto off/pause, chạm trần $/giờ (trung bình) thì nghỉ nhịp; Claude Code xoá sau 7 ngày (chạy lại = gia hạn); `--team` = phòng mở bằng --team tự lấp ghế rd, qa, reviewer; `--target \"<đích>\" [--check \"<lệnh>\"]` = đích đầu hàng cho cả team; `pause` = owner tạm dừng (HQ không tự bật lại), `off` = tắt (HQ có thể bật lại); subscription giữ lease ≤ 4 giờ, chỉ chạy khi owner có mặt
+  8sync ccc auto omp on|off [--json]   đội omp (phòng `8sync . <tên>`) chạy cạnh đội Claude Code: chỉ đổi `teams` trong auto.json, giữ mọi thứ khác; mỗi phòng omp được nhắc đích đầu hàng ≤ 1 lần/10 phút, ≤ 6 lần/giờ; tắt khi model omp là anthropic/… (subscription Claude chỉ dùng trong Claude Code)
+  8sync ccc auto nudge --session <room id> --cwd <dir> [--json]   (extension omp gọi) {\"text\"}: lời nhắc đích hiện tại cho phòng omp, null khi auto tắt/tạm dừng, đội omp tắt, ngoài --here, lease hết, hàng trống hoặc vừa nhắc
   8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id>   hàng đích của dự án: mỗi nhịp loop các phòng làm phần hợp vai cho đích đầu hàng, đạt thì `done` rồi sang đích kế; `--now` = lên đầu hàng + vào inbox mọi phòng ngay (như ctrl+x ctrl+s); trong phòng nói \"đưa vào loop: …\" là đủ
+  8sync ccc msg <phòng> \"<tin>\" [--from <phòng>] | msg --all \"<tin>\"   nhắn phòng khác của dự án này (cả phòng Claude Code `ccc . <tên>` lẫn phòng omp `. <tên>`; trùng tên → gửi theo id hoặc ccc:<tên> / omp:<tên>): vào inbox phòng đó như dữ liệu từ phòng gửi (không phải lệnh của owner) + hiện trong chat HQ; không có phòng khớp → exit 1
   8sync ccc meet [--say \"done|doing|blocked\"] [--room <tên>] [--json]   họp sprint daily của các phòng: ghi một dòng vào su-code/standup/<ngày>.md (phòng nói lại trong 30 phút thì thay dòng cũ), đọc dòng của phòng khác; cần su-code/
   8sync ccc idle off | status [--json]                 (bật thêm gate TaskCompleted: task sửa code chưa test thì chưa cho xong)
   8sync ccc delegate on [--after 1m] | off | status    critic chọn thay owner câu hỏi sản phẩm/kỹ thuật (mặc định TẮT; --after: chỉ khi owner không gõ prompt N giây — bấm trả lời dialog không tính; Ship/secret/xoá/tiền vẫn hỏi)
@@ -65,7 +68,7 @@ XEM
   8sync completions <bash|zsh|fish|powershell|elvish>   script tab-completion cho lệnh 8sync (nguồn vào shell rc)
 
 AN TOÀN
-  8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|wake>
+  8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|permission|wake>
                                hook do kit đăng ký, không gõ tay
   8sync ccc risk [--base <ref>] [--paths a,b] [--release] [--json]   gate bắt buộc cho diff này từ tên file đổi (token nguyên từ, không đọc nội dung): /sec luôn; /rules + /aup-audit khi đụng auth · data · messaging · third-party · release · high-risk (+ người review) hoặc có --release; /harden khi đụng .claude/ · settings · hook của kit
   8sync ccc secret keys <file.env>  tên key trong file (không bao giờ in giá trị)

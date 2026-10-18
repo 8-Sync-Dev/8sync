@@ -40,7 +40,14 @@ pub(super) fn snapshot_of(v: &Value) -> Option<Value> {
         "context_pct": pct(&cw["used_percentage"]),
         "five_hour_pct": pct(&v["rate_limits"]["five_hour"]["used_percentage"]),
         "seven_day_pct": pct(&v["rate_limits"]["seven_day"]["used_percentage"]),
+        "five_hour_resets_at": epoch(&v["rate_limits"]["five_hour"]["resets_at"]),
+        "seven_day_resets_at": epoch(&v["rate_limits"]["seven_day"]["resets_at"]),
     }))
+}
+
+/// Epoch seconds as Claude Code reports them (integer; a float is truncated, junk is `None`).
+fn epoch(x: &Value) -> Option<u64> {
+    x.as_u64().or_else(|| x.as_f64().filter(|f| f.is_finite() && *f > 0.0).map(|f| f as u64))
 }
 
 /// Keep the latest snapshot for the session. Never fails the status line: errors are dropped.
@@ -78,6 +85,12 @@ pub(crate) fn load_snapshots(home: &Path) -> Vec<Value> {
         .collect();
     out.sort_by_key(|v| std::cmp::Reverse(v["ts"].as_u64().unwrap_or(0)));
     out
+}
+
+/// The snapshot the stop-failure policy trusts for `session_id`: its own, else the newest one
+/// (rate limits are per account). `snaps` is [`load_snapshots`] output (newest first).
+pub(crate) fn freshest<'a>(snaps: &'a [Value], session_id: &str) -> Option<&'a Value> {
+    snaps.iter().find(|s| s["session_id"].as_str() == Some(session_id)).or_else(|| snaps.first())
 }
 
 /// One report row: an `ls` row (name, model, branch, tokens, tasks) joined with its usage snapshot.
@@ -220,6 +233,11 @@ mod tests {
         let s = snapshot_of(&sl(1.5)).unwrap();
         assert_eq!((s["cost_usd"].as_f64(), s["context_pct"].as_f64(), s["model"].as_str()), (Some(1.5), Some(42.0), Some("claude-opus-5-5")));
         assert_eq!(s["input_tokens"], 1200);
+        assert!(s["five_hour_resets_at"].is_null(), "no reset time reported: null, not 0");
+        let mut with = sl(1.0);
+        with["rate_limits"] = json!({"five_hour": {"used_percentage": 91.0, "resets_at": 1_800_000_000u64}, "seven_day": {"resets_at": 1_800_400_000u64}});
+        let s = snapshot_of(&with).unwrap();
+        assert_eq!((s["five_hour_resets_at"].as_u64(), s["seven_day_resets_at"].as_u64()), (Some(1_800_000_000), Some(1_800_400_000)));
         assert!(snapshot_of(&json!({"session_id": "../../etc/passwd"})).is_none());
         assert!(snapshot_of(&json!({})).is_none());
     }
@@ -236,6 +254,10 @@ mod tests {
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
         assert_eq!((v["cost_usd"].as_f64(), v["ts"].as_u64()), (Some(2.0), Some(300)));
         assert_eq!(load_snapshots(&home).len(), 1);
+        let snaps = [json!({"session_id": "new", "ts": 9}), json!({"session_id": "own", "ts": 5})];
+        assert_eq!(freshest(&snaps, "own").unwrap()["ts"], 5, "own session first");
+        assert_eq!(freshest(&snaps, "gone").unwrap()["ts"], 9, "else the newest");
+        assert!(freshest(&[], "own").is_none());
         assert!(std::fs::read_dir(usage_dir(&home)).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".tmp")));
         let _ = std::fs::remove_dir_all(&home);
     }

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { splitStale, sessionLabel } from "@/lib/labels";
+import { splitStale, sessionLabel, teamLabel } from "@/lib/labels";
 import { matchesSession } from "@/lib/office";
 import { ErrorNote, STATUS_LABEL, StatusDot, WaitingBadge } from "./bits";
 import type { Hq, Live } from "./use-hq";
@@ -203,6 +203,7 @@ function SessionItem({ s, scope, onScope }: { s: Session; scope: Scope; onScope:
       >
         <StatusDot status={s.status} />
         <span className="flex-1 truncate text-[13px]">{sessionLabel(s)}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">{teamLabel(s.engine)}</span>
         {s.channel && <RadioIcon className="size-3 text-via-channel" aria-label="channel connected" />}
         {s.waiting ? (
           <WaitingBadge what={s.waiting} compact />
@@ -235,14 +236,14 @@ function Count({ n }: { n: number }) {
 }
 
 function LiveDot({ live }: { live: Live }) {
-  const label = live === "live" ? "Live" : live === "connecting" ? "Connecting" : "Reconnecting";
+  const label = live === "live" ? "Live" : live === "polling" ? "Cập nhật 3 giây/lần" : live === "connecting" ? "Connecting" : "Reconnecting";
   return (
     <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
       <span
         aria-hidden
         className={cn(
           "size-1.5 rounded-full",
-          live === "live" ? "bg-st-running" : "bg-st-needs motion-safe:animate-pulse",
+          live === "live" || live === "polling" ? "bg-st-running" : "bg-st-needs motion-safe:animate-pulse",
         )}
       />
       {label}

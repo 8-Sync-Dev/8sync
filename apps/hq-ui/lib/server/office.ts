@@ -7,9 +7,9 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { teamOf, type IdleRecord } from "../idle";
 import { deliveryOf, sessionLabel } from "../labels";
-import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
+import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type Limits, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
 import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
-import { loadFloor } from "./floor";
+import { loadFloor, ompSessions } from "./floor";
 import { readIdleStatus } from "./idle";
 import { inboxLive, pendingInbox } from "./inbox";
 import { stateDir } from "./paths";
@@ -82,6 +82,46 @@ export function readUsage(sessionId: string | null | undefined): Usage | null {
   }
 }
 
+/**
+ * Plan limits from the freshest usage snapshot that carries any (contract C1; Claude Code gives the
+ * status line `rate_limits` only on a subscription). Newest files first, at most 5 read; null when none.
+ */
+export function readLimits(): Limits | null {
+  const dir = path.join(stateDir(), "usage");
+  let files: { f: string; at: number }[];
+  try {
+    files = fs
+      .readdirSync(dir)
+      .filter((n) => n.endsWith(".json") && SAFE_ID.test(n.slice(0, -5)))
+      .flatMap((n) => {
+        try {
+          return [{ f: path.join(dir, n), at: fs.statSync(path.join(dir, n)).mtimeMs }];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return null;
+  }
+  const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+  for (const { f } of files.sort((a, b) => b.at - a.at).slice(0, 5)) {
+    try {
+      const v = JSON.parse(readSafe(f) ?? "");
+      const l: Limits = {
+        five_hour_pct: n(v.five_hour_pct),
+        five_hour_resets_at: n(v.five_hour_resets_at),
+        seven_day_pct: n(v.seven_day_pct),
+        seven_day_resets_at: n(v.seven_day_resets_at),
+        ts: n(v.ts),
+      };
+      if (l.five_hour_pct != null || l.seven_day_pct != null) return l;
+    } catch {
+      /* half-written snapshot: try the next one */
+    }
+  }
+  return null;
+}
+
 export type Room = {
   key: string;
   /** What the composer / API addresses: hq-* name or the Claude session id. */
@@ -108,6 +148,8 @@ export type Room = {
   role: string | null;
   /** Agent-team name of this session as lead ("session-" + 8 id chars): joins `Office.idle`. */
   team: string | null;
+  /** Which team the room belongs to (contract C4): "ccc" (Claude Code) or "omp". */
+  engine: string;
   /** The sprint meeting this room's lead is at (`su-code/standup/<today>.md` row < 30 min old), else null. */
   meeting: { at: number; phase: WalkPhase } | null;
 };
@@ -184,12 +226,13 @@ export function readLoops(roots: { root: string; name: string }[]): LoopInfo[] {
   return out.sort((a, b) => (b.started ?? 0) - (a.started ?? 0)).slice(0, 30);
 }
 
-/** `idle`: every agent-team member's "không ai rảnh" status (lib/idle.ts), stale ones included. */
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; at: number };
+/** `idle`: every agent-team member's "không ai rảnh" status (lib/idle.ts), stale ones included. `limits`: plan usage (header). */
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; at: number };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
-  const live = merged.filter((s) => s.status !== "ended");
+  // Both teams: Claude Code sessions, then the omp rooms `8sync ls` reports live (contract C4).
+  const live = [...merged.filter((s) => s.status !== "ended"), ...ompSessions(db, floor)];
   const agentsQ = db.prepare(
     "SELECT agent_id, agent_type, started_at, ended_at FROM agents WHERE session IN (?, ?) AND (ended_at IS NULL OR ended_at > ?) ORDER BY started_at DESC LIMIT 40",
   );
@@ -197,6 +240,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
   const rooms: Room[] = live.map((s) => {
     const sid = s.session_id ?? (SAFE_ID.test(s.name) && !s.name.startsWith("hq-") ? s.name : null);
     const f =
+      floor.find((r) => r.inbox_id && r.inbox_id === sid) ??
       floor.find((r) => r.sid && sid && sid.startsWith(r.sid)) ??
       floor.find((r) => r.name === s.name || r.title === sessionLabel(s));
     // Agents still flagged running after 6 h lost their SubagentStop (crash, kill): not shown.
@@ -230,6 +274,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       seats: seatsFor(agents, busy, now),
       role: s.role ?? null,
       team: teamOf(sid),
+      engine: s.engine ?? "ccc",
       meeting: null,
     };
   });
@@ -238,5 +283,13 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     .prepare("SELECT kind, ts, session, from_, to_, text FROM messages WHERE kind = 'session_message' AND ts > ? ORDER BY id DESC LIMIT 50")
     .all(now - 120_000) as { kind: string; ts: number; session: string | null; from_: string | null; to_: string | null; text: string | null }[];
   const roots = new Map(rooms.flatMap((r) => (r.project ? [[r.project.root, r.project] as const] : [])));
-  return { rooms, visits: visitsFrom(recent, refs, now), loops: readLoops([...roots.values()]), idle: readIdleStatus(), meetings: loadMeetings(rooms, now), at: now };
+  return {
+    rooms,
+    visits: visitsFrom(recent, refs, now),
+    loops: readLoops([...roots.values()]),
+    idle: readIdleStatus(),
+    meetings: loadMeetings(rooms, now),
+    limits: readLimits(),
+    at: now,
+  };
 }

@@ -6,6 +6,24 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 
 ---
 
+## 0. Đủ dùng hằng ngày: bật/tắt, còn lại ở HQ
+
+```bash
+8sync ccc . <tên>             # mở phòng Claude Code (mỗi việc một phòng, mỗi phòng một tab)
+8sync ccc auto on             # team tự làm (thêm --here: chỉ dự án này; --omp: thêm đội omp)
+8sync hq ui                   # mở HQ trên máy  ·  --public: link internet để điều khiển từ xa
+8sync ccc auto pause | off    # tạm dừng / tắt  ·  phanh khẩn: 8sync ccc cancel --all
+8sync ccc auto omp off        # chỉ tắt đội omp
+```
+
+Khi auto bật:
+- **Câu hỏi**: anh không gõ gì vào phòng 1 phút → câu hỏi lên HQ (mục "Đang chờ anh", có đếm ngược). Anh bấm chọn thì phòng chạy tiếp theo lựa chọn đó; hết 1 phút thì `critic` chọn thay và ghi `su-code/DECISIONS.md`. Câu `Ship`, secret, xoá, tiền, deploy, merge/release, high-risk: hết giờ thì vẫn chờ anh trong terminal.
+- **Hỏi quyền khi anh vắng**: lên HQ với Cho phép / Từ chối; hết giờ thì tự **từ chối** kèm hướng dẫn đi đường khác. 8sync không bao giờ tự cho phép.
+- **Kẹt vì lỗi API / hết usage**: lỗi tạm thời (overloaded, server) tự thử lại sau 1, 2, 4… phút (tối đa 15 phút, 5 lần liền); hết usage thì chạy lại đúng giờ reset đọc từ status line (tối đa 2 lần liền, không chờ quá 24 giờ — như `autoContinueAtUsageLimit` của Claude Code). Lỗi đăng nhập/billing thì chờ anh. HQ ghi "tự chạy lại lúc HH:MM".
+- **Hai đội**: phòng omp (`8sync . <tên>`) nhận việc từ HQ, nhận đích chung (`auto add`), nhắn qua lại với phòng ccc bằng `8sync ccc msg <phòng> "…"` (agent tự dùng). omp không dùng đăng nhập gói Claude.
+
+---
+
 ## 1. Cài và cập nhật
 
 ```bash

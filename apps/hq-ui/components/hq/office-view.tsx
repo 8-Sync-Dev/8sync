@@ -1,6 +1,6 @@
 "use client";
 
-import { GitBranchIcon, InboxIcon, MoonIcon, PauseIcon, PlayIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
+import { BotIcon, GitBranchIcon, GlobeIcon, InboxIcon, LaptopIcon, MoonIcon, PauseIcon, PlayIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
 import { useMemo, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,6 +10,7 @@ import { attendeesNow, meetingLabel, walkPhase, type Attendee } from "@/lib/meet
 import { cloneCount, fmtDuration, fmtTokens, fmtUsd, groupByProject, roomFor, seatState, SEATS, type Visit } from "@/lib/office";
 import { shirtFor, shirtOf } from "@/lib/sprite/frames";
 import { cn } from "@/lib/utils";
+import { teamLabel } from "@/lib/labels";
 import { EmptyState, ErrorNote, StatusDot } from "./bits";
 import { IdleChip } from "./idle-chip";
 import { SpriteCanvas, WalkerCanvas } from "./sprite-canvas";
@@ -147,6 +148,7 @@ function RoomCard({
               {room.label}
             </button>
           </h3>
+          <span className="shrink-0 rounded border border-(--soft)/40 px-1 text-[10px] leading-4 text-(--soft)">{teamLabel(room.engine)}</span>
           <span className={cn("shrink-0 text-xs", needs ? "font-semibold text-st-needs" : "text-(--soft)")}>
             {needs ? (room.waiting ?? "Chờ anh") : STATUS_TEXT[room.status]}
           </span>
@@ -157,7 +159,7 @@ function RoomCard({
               </>
             ) : room.delivery === "inbox" ? (
               <>
-                <InboxIcon className="size-3" aria-hidden /> Inbox{room.inboxLive ? " · mod" : " · chưa nạp mod"}
+                <InboxIcon className="size-3" aria-hidden /> Inbox{room.engine === "omp" ? "" : room.inboxLive ? " · mod" : " · chưa nạp mod"}
                 {room.pending > 0 && ` · ${room.pending} chờ giao`}
               </>
             ) : null}
@@ -295,12 +297,17 @@ function MeetingRoom({
   );
 }
 
-/** Pause / Run: HQ keeps `8sync ccc auto` on by default (useAuto); the owner can pause it. */
+/**
+ * Pause / Run: HQ keeps `8sync ccc auto` on by default (useAuto); the owner can pause it. Next to it
+ * the "Đội omp" switch (`8sync ccc auto omp on|off`) and where HQ can be reached from.
+ */
 function AutoBar({ token }: { token: string }) {
   const { status, busy, setAuto } = useAuto(token);
   if (!status) return null;
   const btn = autoButton(status);
   const stale = staleText(status);
+  const omp = !!status.teams?.includes("omp");
+  const host = status.remote?.host;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm" role="status">
       {stale && (
@@ -315,6 +322,32 @@ function AutoBar({ token }: { token: string }) {
         </Button>
       )}
       <span className="text-muted-foreground">{autoText(status)}</span>
+      {!status.error && (
+        <Button
+          type="button"
+          size="sm"
+          variant={omp ? "secondary" : "outline"}
+          aria-pressed={omp}
+          disabled={busy}
+          title="Phòng omp làm việc cạnh phòng Claude Code; tắt khi omp dùng provider anthropic"
+          onClick={() => void setAuto(omp ? "omp-off" : "omp-on")}
+        >
+          <BotIcon aria-hidden />
+          Đội omp: {omp ? "bật" : "tắt"}
+        </Button>
+      )}
+      {status.omp_error && <span className="text-destructive">{status.omp_error}</span>}
+      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        {host ? (
+          <>
+            <GlobeIcon className="size-3.5" aria-hidden /> Link từ xa đang mở: <span className="font-mono">{host}</span>
+          </>
+        ) : (
+          <>
+            <LaptopIcon className="size-3.5" aria-hidden /> Chỉ máy này · mở link từ xa: <code className="font-mono">8sync hq ui --public</code>
+          </>
+        )}
+      </span>
     </div>
   );
 }

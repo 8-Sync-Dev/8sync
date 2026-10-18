@@ -4,6 +4,7 @@ import { isModelId, isRoleId, roleOf } from "@/lib/roles";
 import { startHqSession } from "@/lib/server/start";
 import { beats, channelStates, isFresh, notePane } from "@/lib/server/channel";
 import { detectPane } from "@/lib/server/pane";
+import { loadFloor, ompSessions } from "@/lib/server/floor";
 import { capturePlain, channelArgs, listTmux, mergedSessions } from "@/lib/server/proc";
 import { toTmuxName, validateProjectPath } from "@/lib/server/validate";
 
@@ -14,7 +15,7 @@ export async function GET(req: Request) {
   if ("res" in o) return o.res;
   const b = beats(o.db);
   const now = Date.now();
-  const merged = await mergedSessions(o.db);
+  const [merged, floor] = await Promise.all([mergedSessions(o.db), loadFloor(o.db)]);
   // One capture per live hq-* pane: org banner -> blocked-by-org, open dialog -> waiting.
   const panes = await Promise.all(merged.map((s) => (s.tmux ? capturePlain(s.name) : Promise.resolve(null))));
   merged.forEach((s, i) => notePane(o.db, s.name, panes[i]));
@@ -25,7 +26,9 @@ export async function GET(req: Request) {
     const waiting = panes[i] ? detectPane(panes[i]).waiting : null;
     return { ...s, channel: isFresh(at, now) && !channel_state, channel_beat_at: at, channel_state, waiting };
   });
-  return json({ sessions, channel_mode: channelMode() });
+  // The omp team's live rooms: inbox delivery only, no channel, no pane.
+  const omp = ompSessions(o.db, floor).map((s) => ({ ...s, channel: false, channel_beat_at: null, channel_state: null, waiting: null }));
+  return json({ sessions: [...sessions, ...omp], channel_mode: channelMode() });
 }
 
 export async function POST(req: Request) {

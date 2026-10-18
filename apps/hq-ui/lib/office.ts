@@ -1,6 +1,7 @@
 // Pure office model (no I/O): every live session is a room; the same specialist seats in
 // every room; specialists walk to another room when its session messages that one.
 // Tested in tests/office.test.ts.
+import { hhmm } from "./auto";
 
 /** The seat template every room has, in display order. */
 export const SEATS = [
@@ -112,6 +113,35 @@ export type Usage = {
 /** cost / finished tasks, only when both are known (never an invented price). */
 export function costPerTask(cost: number | null | undefined, done: number): number | null {
   return cost != null && Number.isFinite(cost) && done > 0 ? cost / done : null;
+}
+
+/**
+ * Plan limits from the freshest status-line snapshot (`STATE/usage/*.json`, contract C1): the only
+ * place these numbers come from. `*_resets_at` are unix seconds; `ts` is the snapshot time (s).
+ */
+export type Limits = {
+  five_hour_pct: number | null;
+  five_hour_resets_at: number | null;
+  seven_day_pct: number | null;
+  seven_day_resets_at: number | null;
+  ts: number | null;
+};
+
+/**
+ * Header chips: "5h 42% · reset 14:30" and "7d 18%". A window whose reset time already passed
+ * says so instead of showing a percentage from the old window.
+ */
+export function limitsText(l: Limits | null | undefined, now = Date.now()): { five: string | null; seven: string | null } {
+  if (!l) return { five: null, seven: null };
+  const over = (s: number | null) => s != null && s * 1000 <= now;
+  const five =
+    l.five_hour_pct == null
+      ? null
+      : over(l.five_hour_resets_at)
+        ? "5h đã reset"
+        : `5h ${Math.round(l.five_hour_pct)}%${l.five_hour_resets_at != null ? ` · reset ${hhmm(l.five_hour_resets_at * 1000)}` : ""}`;
+  const seven = l.seven_day_pct == null ? null : over(l.seven_day_resets_at) ? "7d đã reset" : `7d ${Math.round(l.seven_day_pct)}%`;
+  return { five, seven };
 }
 
 export type ProjectInfo = { root: string; name: string; branch: string | null };

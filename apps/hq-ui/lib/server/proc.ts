@@ -75,13 +75,16 @@ export type SessionView = {
   started_at: number | null;
   cwd: string | null;
   tmux: boolean;
-  source: "tmux" | "claude" | "journal";
+  /** `omp`: an omp-team room from `8sync ls` (lib/server/floor.ts ompSessions), reached only through its inbox. */
+  source: "tmux" | "claude" | "journal" | "omp";
   detail: string | null;
   /** Inbox delivery only: the `8sync-inbox` mod polled within LIVE_MS, so a task enters as soon as the session is idle. */
   inbox_live: boolean;
   /** Team role / model the session was started with (null for sessions started elsewhere). */
   role?: string | null;
   model?: string | null;
+  /** Team (contract C4): absent = Claude Code (ccc); "omp" for omp rooms. */
+  engine?: string;
 };
 
 function agentStatus(s: string | undefined): SessionStatus {

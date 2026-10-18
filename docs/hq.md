@@ -38,13 +38,14 @@ Two pieces, two directions:
 
 ## HQ web: Cách dùng (apps/hq-ui)
 
-Bảng điều khiển web chạy trên máy bạn (127.0.0.1). Nút "Cách dùng" trong app mở cùng nội dung này; lần đầu mở app nó tự hiện.
+Bảng điều khiển web chạy trên máy bạn (127.0.0.1); `8sync hq ui --public` mở thêm link internet (Cloudflare quick tunnel, cần `cloudflared`). Nút "Cách dùng" trong app mở cùng nội dung này; lần đầu mở app nó tự hiện.
 
 1. **Chọn dự án và tạo nhân viên theo vai trò.** R&D, Plan, Architect dùng Opus (`claude-opus-5-5`). Fullstack, AI, Reviewer dùng Sonnet (`claude-sonnet-5-5`). Tester, Quick dùng Haiku (`claude-haiku-5-5`). Đúng model cho đúng việc: chất lượng tốt mà tiết kiệm chi phí.
 2. **Giao việc.** Bấm "Giao việc", gõ việc cần làm, chọn một vai trò (hệ thống tìm người rảnh) hoặc một người cụ thể.
 3. **Xem terminal trực tiếp.** Bấm vào bàn hoặc thẻ của một người.
 4. **Chat nhóm.** Xem ai nhắn ai theo thời gian, kèm thẻ bàn giao (handoff) "A → B".
-5. **Cần bạn.** Trả lời câu hỏi hoặc duyệt ngay trên web.
+5. **Đang chờ anh.** Câu hỏi (`AskUserQuestion`) và yêu cầu quyền của các phòng khi bạn vắng, có đếm ngược. Bấm lựa chọn / Cho phép / Từ chối là phòng chạy tiếp. Hết giờ: câu hỏi thường → `critic` chọn; câu owner-only → chờ trong terminal; quyền → tự từ chối kèm hướng dẫn (không bao giờ tự cho phép).
+6. **Auto · Đội omp.** Nút Chạy / Tạm dừng và công tắc đội omp (= `8sync ccc auto on|pause`, `8sync ccc auto omp on|off`).
 
 Biểu tượng trạng thái: Đang làm · Cần bạn (chờ bạn) · Chờ review · Xong · Rảnh.
 
@@ -61,3 +62,5 @@ Biểu tượng trạng thái: Đang làm · Cần bạn (chờ bạn) · Chờ 
 - **Nhắn hoặc giao việc cho session mở ngoài HQ (inbox).** Session không chạy trong tmux của HQ (mọi session trên Windows) nhận tin qua inbox: tin được xếp vào `~/.local/state/8sync/hq/inbox/<session id>.jsonl` (0600) và hook Stop giao cho session khi nó xong lượt đang làm. Session HQ (`hq-*`) vẫn nhận ngay qua terminal.
 - **Báo cáo** (tab và `8sync ccc . report [--json]`): chi phí, thời gian, số dòng +/−, context, task xong/mở, $/task theo từng phòng và tổng, cùng các vòng `/ship-loop`. Chi phí lấy từ con số Claude Code đưa cho status line của 8sync (`~/.local/state/8sync/hq/usage/<session id>.json`); phòng chưa có số ghi "chưa đo", không ước lượng. $/task chỉ tính trên phòng đã đo chi phí.
 - **An toàn.** Guard của kit chặn session ghi vào inbox hoặc đọc UI token (`~/.config/8sync/hq/ui-token`) qua Bash/PowerShell/Write/Edit, nên một session không giả làm owner được. Giới hạn còn lại: guard không xem tool Read và không phân tích được mọi chương trình tự viết file; inbox và token là file của chính user trên máy.
+- **Link internet (`--public`).** Lệnh in `https://<tên>.trycloudflare.com/api/login?k=<khoá>`; mở link một lần để nhận cookie (HttpOnly, Secure, SameSite=Strict, 12 giờ). Mỗi lần bật là host + khoá mới; tắt `hq ui` là link chết và `~/.config/8sync/hq/public.json` bị xoá. Quick tunnel không có SSE nên UI từ xa tự chuyển sang hỏi định kỳ. Ai có link là điều khiển được các phòng — không chia sẻ. Guard chặn session đọc khoá này và ghi vào `hq/pending/` (câu trả lời chỉ đến từ HQ).
+- **Hai đội.** Phòng omp (`8sync . <tên>`) hiện cạnh phòng Claude Code, nhãn Đội omp; giao việc / gửi mọi phòng tới cả hai đội qua inbox. Phòng nhắn nhau bằng `8sync ccc msg <phòng> "…"`; tin từ phòng khác được đánh dấu là dữ liệu, không phải lệnh của owner. Process cùng user trên máy được coi là tin cậy: phòng omp chạy không hỏi quyền nên đừng giao việc nhạy cảm cho nó.

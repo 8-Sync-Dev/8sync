@@ -36,10 +36,12 @@ mod idle;
 mod looper;
 mod meet;
 mod output_budget;
+mod msg;
+mod pending;
 pub(crate) mod report;
 mod risk;
 mod secret;
-mod resume;
+pub(crate) mod resume;
 mod room;
 mod statusline;
 mod taskdone;
@@ -205,6 +207,11 @@ pub fn run(a: Args) -> Result<()> {
         "inbox" => {
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
             crate::verbs::hq::run_inbox(&env.home, rest, id.as_deref())
+        }
+        "msg" => {
+            let ccc = sessions(&env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
+            let omp = crate::verbs::session::load(&env, &root).sessions.into_iter().map(|s| s.name).collect();
+            msg::run(rest, &env.home, &root, &msg::rooms(&root, ccc, omp))
         }
         "ls" | "list" => {
             print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
@@ -694,7 +701,9 @@ const CLAUDE_MD_END: &str = "<!-- 8sync:kit:end -->";
 /// No `Edit(**/.env*)`: Claude Code applies Edit deny rules to `rm`/`sed`/redirects in Bash,
 /// so it blocked deleting a stray `.env` copy; the guard still denies printing a credential
 /// file and writing a real secret anywhere (see RETIRED_DENY).
-const DENY: [&str; 14] = [
+/// The HQ owner files (UI token, public-link key, pending answers, inbox) back the guard's
+/// Bash/Write check for the Read tool, which the guard does not see.
+const DENY: [&str; 18] = [
     "Read(**/.env)",
     "Read(**/.env.*)",
     "Read(**/*.pem)",
@@ -709,6 +718,10 @@ const DENY: [&str; 14] = [
     "Bash(git push -f*)",
     "Bash(git push * --force*)",
     "Bash(git push * -f*)",
+    "Read(~/.config/8sync/hq/ui-token)",
+    "Read(~/.config/8sync/hq/public.json)",
+    "Edit(~/.local/state/8sync/hq/pending/**)",
+    "Edit(~/.local/state/8sync/hq/inbox/**)",
 ];
 
 /// Deny rules earlier kits wrote and this one takes back (owner decision 2026-10-14).
@@ -1049,11 +1062,17 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
         }),
     );
     // Owner-delegated questions (`8sync ccc delegate on`): a no-op unless the owner turned it on;
-    // then product/technical AskUserQuestion calls are denied with "let the critic pick".
+    // then an away owner's AskUserQuestion is parked for HQ (≤ 540 s), else the critic picks.
     upsert_hook_group(
         hooks,
         "PreToolUse",
-        json!({ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "delegate"], "timeout": 5 }] }),
+        json!({ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "delegate"], "timeout": 600 }] }),
+    );
+    // Same switch: an away owner's permission prompt is parked for HQ; no answer = deny.
+    upsert_hook_group(
+        hooks,
+        "PermissionRequest",
+        json!({ "matcher": "*", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "permission"], "timeout": 600 }] }),
     );
     // The guard stays on the broad matcher with no `if`: the hook `if` field takes
     // a single permission rule, and narrowing it would let some commands/edits
@@ -1862,13 +1881,15 @@ fn hook(rest: &[String]) -> Result<()> {
             None
         }
         Some(h @ ("stop-failure" | "resume-note")) => {
-            let home = std::env::var_os("HOME").map(PathBuf::from);
+            // Same home as `env.home` / `8sync ccc inbox` and ccc-core's reader: `$HOME` on unix,
+            // the profile folder on Windows (hooks there often run without HOME).
+            let home = dirs::home_dir();
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
             resume::state_dir(home.as_deref()).and_then(|dir| {
                 if h == "resume-note" {
                     return resume::note(&input, &dir, now);
                 }
-                if let Some(msg) = resume::record(&input, &dir, now) {
+                if let Some(msg) = resume::record(&input, &dir, home.as_deref(), now) {
                     resume::notify(&msg);
                 }
                 None
@@ -1896,12 +1917,13 @@ fn hook(rest: &[String]) -> Result<()> {
             })
         }
         Some("delegate") => dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| delegate::hook(&input, &h)),
+        Some("permission") => dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| delegate::permission(&input, &h)),
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|wake   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|permission|wake   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -2112,6 +2134,10 @@ mod tests {
         }
         assert_eq!(pre[1]["hooks"][0]["command"], "my-linter");
         assert_eq!(pre[2]["hooks"][0]["args"], json!(["ccc", "hook", "delegate"]));
+        assert_eq!(pre[2]["hooks"][0]["timeout"], 600, "the delegate hook may wait for an HQ answer");
+        let perm = v["hooks"]["PermissionRequest"].as_array().unwrap();
+        assert_eq!(perm.len(), 1, "one permission group, idempotent");
+        assert_eq!((perm[0]["matcher"].as_str(), &perm[0]["hooks"][0]["args"], &perm[0]["hooks"][0]["timeout"]), (Some("*"), &json!(["ccc", "hook", "permission"]), &json!(600)));
         assert_eq!(pre[3]["hooks"][0]["args"], json!(["ccc", "hook", "guard"]));
         assert_eq!(pre[3]["hooks"][0]["onFailure"], "block", "guard fails closed");
         assert!(deny.iter().any(|r| r == "Read(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write(") || s.starts_with("Edit(**/.env"))));

@@ -4,6 +4,19 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **Rooms answer and unstick themselves while `8sync ccc auto on`.** Owner (2026-10-19): "tự động trả lời nếu sau 1p không có ai trả lời … auto xử lý kẹt … tự kích hoạt chạy lại tiếp khi usage hồi lại".
+  - **Questions:** when the owner has not typed in a room for 60 s, an `AskUserQuestion` is posted to HQ ("Đang chờ anh", countdown) and the hook waits up to 60 s. An HQ answer goes back through the documented PreToolUse `allow` + `updatedInput.answers` path; no answer → the `critic` agent picks as before. Owner-only questions (Ship, secrets, delete, money, deploy, merge/release, high-risk) fall back to the terminal dialog, never to the critic.
+  - **Permissions:** new `ccc hook permission` (PermissionRequest). Owner away → HQ shows Cho phép / Từ chối for 60 s; no answer → deny with guidance to take a path that needs no new permission. 8sync never allows on its own.
+  - **API errors / usage limits:** the StopFailure record now carries when to resume. `rate_limit` resumes at the reset time read from the status line (`rate_limits.*.resets_at`, ≥90 % window, +60 s), at most 2 in a row and never more than 24 h away — the caps of Claude Code's own `autoContinueAtUsageLimit`. `overloaded`/`server_error`/`unknown` retry after 1, 2, 4… min (≤15 min, ≤5 in a row); `max_output_tokens` at once (≤2); login/billing/request errors wait for the owner. The `8sync-inbox` mod delivers the `[8sync:resume]` prompt when the room is idle (offered at most once per 10 min until it is submitted). `ccc . ls --json` adds `stalled_resume_at`; HQ shows "Hết usage — tự chạy lại lúc HH:MM". The stop record now resolves home like the other hooks, so it also works on Windows without `HOME`.
+  - Usage snapshots keep `five_hour_resets_at` / `seven_day_resets_at`. 8sync reads usage only from the status-line JSON; it never reads Claude credentials or calls the OAuth usage endpoint (Orca does; not copied).
+- **Team omp next to team ccc.** `8sync ccc auto on --omp` (or the HQ switch; `auto omp on|off`) adds omp rooms opened with `8sync . <name>`. The new omp extension `8sync-team.ts` (installed by `harness global`) takes HQ inbox messages when the room is idle, gets target-queue nudges (`8sync ccc auto nudge`, ≤1 per 10 min, ≤6/h), resumes after provider rate-limit/overload errors (1→15 min backoff, ≤5), and answers its own `ask` from the options while auto is on (owner-only items go to the final report). Refused while omp's default model is `anthropic/…` (subscription logins stay in Claude Code).
+  - `8sync ccc msg <room|--all> "<text>"`: any room of either team messages another. Room messages are framed as data from that room, never as the owner's words. Rows of `8sync ls --json` gain `inbox_id` (`omp-<fnv64>` for omp rooms); `ccc_core::transcript::Row` gains the public field `inbox_id` (struct-literal users must add it).
+- **`8sync hq ui --public`**: a Cloudflare quick tunnel to HQ and a one-time login link `https://<host>/api/login?k=<key>` (cookie HttpOnly/Secure/SameSite=Strict, 12 h; host + key new per start; `public.json` removed on exit). Remote pages poll (quick tunnels drop SSE). Missing `cloudflared` → install hint, HQ stays local.
+- **HQ:** pending answers strip, usage 5h/7d with reset time, team labels and omp delivery, Đội omp switch, remote-link status, security headers (no framing, no referrer).
+### Changed
+- Guard and kit deny rules keep sessions away from `hq/pending/`, `hq/public.json`, the UI token and the inbox (Read/Edit rules cover the Read tool the guard does not see).
+- Website (`docs/index.html`) rewritten in Vietnamese around on/off commands + HQ; `docs/huong-dan.md` §0 and `docs/hq.md` updated.
 
 ## [0.98.1] — 2026-10-16
 ### Changed

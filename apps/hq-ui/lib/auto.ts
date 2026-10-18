@@ -13,6 +13,12 @@ export type AutoState = {
   error?: string;
   /** Running UI version vs. installed 8sync binary (server-side; null when unknown). */
   versions?: { ui: string | null; binary: string | null };
+  /** Teams auto drives (`auto.json` `teams`, contract C4); absent = ["ccc"]. */
+  teams?: string[];
+  /** The last "Đội omp" switch failed (8sync's reason). */
+  omp_error?: string;
+  /** Public tunnel host while `8sync hq ui --public` runs, else null (server-side; the key never leaves the server). */
+  remote?: { host: string | null };
 };
 
 /**
@@ -31,7 +37,8 @@ export function leaseMs(v: number | null | undefined): number | null {
   return v < 1e12 ? v * 1000 : v;
 }
 
-const hhmm = (ms: number) => {
+/** Local "HH:MM" of a unix-ms time. */
+export const hhmm = (ms: number) => {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };

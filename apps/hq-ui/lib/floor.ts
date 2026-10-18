@@ -1,4 +1,5 @@
 // Pure derivation of a floor desk's state from `8sync ls --json` + hq session data.
+import { hhmm } from "./auto";
 import type { SpriteState } from "./sprite/frames";
 
 export type FloorState = SpriteState;
@@ -13,6 +14,8 @@ export type LsInput = {
   current_task?: string | null;
   last_active?: number | null; // unix seconds
   stalled_error?: string | boolean | null;
+  /** Unix seconds when 8sync resumes the stopped turn by itself (contract C2); null = the owner must act; absent = older 8sync. */
+  stalled_resume_at?: number | null;
 };
 
 export type HqInput = {
@@ -81,7 +84,14 @@ export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now())
   if (hq?.status === "needs_input") return make("waiting", hq.detail || "Claude đang chờ anh trả lời");
 
   if (ls?.stalled_error) {
-    return make("stalled", typeof ls.stalled_error === "string" ? ls.stalled_error : "Lỗi API, cần xem lại");
+    const err = typeof ls.stalled_error === "string" ? ls.stalled_error : null;
+    const at = ls.stalled_resume_at;
+    if (typeof at === "number" && Number.isFinite(at)) {
+      const when = hhmm(at * 1000);
+      return make("stalled", err === "rate_limit" ? `Hết usage — tự chạy lại lúc ${when}` : `Lỗi API (${err ?? "không rõ"}) — tự thử lại lúc ${when}`, "chờ tự chạy lại");
+    }
+    if (at === null) return make("stalled", `${err ?? "Lỗi API"} — cần anh xử lý`);
+    return make("stalled", err ?? "Lỗi API, cần xem lại");
   }
   // `8sync ccc standup <slug>` just wrote the board: the room is in its sprint meeting for a moment.
   if (hq?.standup && nowMs - hq.standup.at >= 0 && nowMs - hq.standup.at < MEETING_MS && status !== "idle") {
@@ -138,6 +148,10 @@ export type FloorRow = Derived & {
   unmatched?: boolean;
   /** Context tokens from `8sync ls` (null when unknown). */
   tokens?: number | null;
+  /** Where HQ queues messages for this room (`8sync ls` `inbox_id`, contract C3): Claude session id or `omp-<16 hex>`. */
+  inbox_id?: string | null;
+  /** A process has the session open or its transcript moved in the last 2 min (`8sync ls` status running/active). */
+  live?: boolean;
 };
 
 export function sortFloor(rows: FloorRow[]): FloorRow[] {

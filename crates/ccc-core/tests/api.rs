@@ -54,11 +54,13 @@ fn scan_fixture_to_schema_1_row() {
         digest,
         resume: "8sync ccc . demo".into(),
         transcript: Some(f),
+        inbox_id: Some("s".into()),
     };
     let j = row_json(&row);
     assert_eq!(j["schema"], ccc_core::SCHEMA);
     assert_eq!(j["schema"], 1);
     assert_eq!(j["sid"], "s");
+    assert_eq!(j["inbox_id"], "s");
     assert!(!show_json(&row).to_string().contains("Fake9876x"));
     let _ = std::fs::remove_dir_all(&dir);
 }

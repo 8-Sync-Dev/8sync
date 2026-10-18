@@ -1,19 +1,18 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>8sync — terminal-first AI coding harness</title>
-  <meta name="description" content="8sync: terminal-first AI coding harness for CachyOS/Arch + Kitty + Helix + omp. Keep your normal terminal workflow; AI observes project context and executes when you ask." />
-  <meta property="og:title" content="8sync — terminal-first AI coding harness" />
-  <meta property="og:description" content="Keep your normal terminal workflow; AI agents observe project context, load su-code/* memory, execute tasks on demand." />
+  <title>8sync — bật một lệnh, cả team AI làm, điều khiển ở HQ</title>
+  <meta name="description" content="8sync: Claude Code (ccc) + omp chạy thành team nhiều phòng. CLI chỉ để bật/tắt; giao việc, trả lời câu hỏi, xem tiến độ ở HQ — trên máy hoặc qua link internet." />
+  <meta property="og:title" content="8sync — bật một lệnh, cả team AI làm" />
+  <meta property="og:description" content="CLI chỉ bật/tắt. Mọi thứ còn lại ở HQ: giao việc, trả lời câu hỏi, xem phòng nào kẹt, mở từ xa." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://8-sync-dev.github.io/su-code/" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
   <style>
     :root {
       --bg: #0a0e1c;
-      --bg2: #0f1428;
       --card: rgba(255,255,255,0.04);
       --card-hover: rgba(255,255,255,0.07);
       --line: rgba(255,255,255,0.10);
@@ -23,8 +22,6 @@
       --dim: #6b7796;
       --pri: #5eead4;
       --pri2: #60a5fa;
-      --accent: #a78bfa;
-      --good: #22d3ee;
       --code-bg: rgba(0,0,0,0.35);
     }
     * { box-sizing: border-box; }
@@ -36,68 +33,40 @@
       background:
         radial-gradient(1000px 500px at 10% -10%, rgba(94,234,212,.16), transparent 60%),
         radial-gradient(950px 520px at 100% 0%, rgba(96,165,250,.18), transparent 60%),
-        radial-gradient(700px 400px at 50% 100%, rgba(167,139,250,.12), transparent 70%),
         var(--bg);
       line-height: 1.65;
       -webkit-font-smoothing: antialiased;
     }
-    .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 20px 64px; }
-
-    /* Header */
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 28px 20px 64px; }
     .top { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom: 28px; }
-    .logo { display:flex; align-items:center; gap:10px; font-weight:700; letter-spacing:-0.01em; }
+    .logo { display:flex; align-items:center; gap:10px; font-weight:700; }
     .logo-mark { width:32px; height:32px; border-radius:8px; background:linear-gradient(135deg,var(--pri),var(--pri2)); display:grid; place-items:center; color:#06111f; font-weight:900; }
     .nav { display:flex; gap:18px; flex-wrap:wrap; }
-    .nav a { color:var(--muted); text-decoration:none; font-size:14px; }
-    .nav a:hover { color:var(--txt); }
-
-    /* Hero */
-    .hero { padding: 16px 0 8px; }
-    .eyebrow { display:inline-flex; gap:8px; align-items:center; padding:6px 12px; border:1px solid var(--line-strong); border-radius:999px; color:var(--muted); font-size:13px; }
-    .eyebrow b { color:var(--pri); }
-    h1 { margin: 18px 0 14px; font-size: clamp(32px, 6.2vw, 56px); line-height:1.05; letter-spacing:-0.02em; }
+    .nav a { color:var(--muted); font-size:14px; }
+    .nav a:hover { color:var(--txt); text-decoration:none; }
+    h1 { margin: 18px 0 14px; font-size: clamp(30px, 5.6vw, 50px); line-height:1.08; letter-spacing:-0.02em; }
     h1 .grad { background: linear-gradient(90deg,var(--pri),var(--pri2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
-    .sub { color:var(--muted); max-width:780px; font-size:17px; }
-    .cta { display:flex; gap:10px; flex-wrap:wrap; margin-top:22px; }
-    .btn { display:inline-flex; align-items:center; gap:8px; padding:11px 16px; border-radius:10px; text-decoration:none; font-weight:700; font-size:14px; transition: transform .12s ease, box-shadow .2s ease; }
-    .btn.primary { color:#06111f; background: linear-gradient(90deg,var(--pri),var(--pri2)); box-shadow: 0 8px 22px -10px rgba(94,234,212,.4); }
-    .btn.primary:hover { transform: translateY(-1px); }
-    .btn.ghost { background: transparent; color: var(--txt); border:1px solid var(--line-strong); }
-    .btn.ghost:hover { background: var(--card); }
-
-    /* Feature grid */
-    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap:14px; margin-top:36px; }
-    .card { background: var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; transition: background .15s ease, border-color .15s ease; }
-    .card:hover { background: var(--card-hover); border-color: var(--line-strong); }
-    .card h3 { margin:0 0 8px; font-size:16px; display:flex; align-items:center; gap:8px; }
-    .card h3 .dot { width:8px; height:8px; border-radius:99px; background:var(--pri); box-shadow:0 0 12px var(--pri); }
+    .sub { color:var(--muted); max-width:760px; font-size:17px; margin:0; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+    .card { background: var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; }
+    .card h3 { margin:0 0 8px; font-size:16px; }
     .card p { margin:0; color: var(--muted); font-size:14px; }
-
-    /* Sections */
-    section { margin-top: 56px; scroll-margin-top: 20px; }
+    .step { color:var(--pri); font-weight:800; margin-right:6px; }
+    section { margin-top: 52px; scroll-margin-top: 20px; }
     section > h2 { margin: 0 0 6px; font-size:24px; letter-spacing:-0.01em; }
-    section > .lede { color:var(--muted); margin: 0 0 18px; font-size:15px; }
-
-    /* Code blocks */
+    .lede { color:var(--muted); margin: 0 0 16px; font-size:15px; }
     code { background: rgba(255,255,255,.08); padding:2px 6px; border-radius:6px; font-size:0.92em; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
-    pre { background: var(--code-bg); border:1px solid var(--line); padding:16px 18px; border-radius:12px; overflow:auto; margin:0; font-size:13.5px; line-height:1.6; }
-    pre code { background: transparent; padding:0; font-size:inherit; }
-    .codeblock { position:relative; }
-    .codeblock .lbl { position:absolute; top:10px; right:14px; font-size:11px; color:var(--dim); letter-spacing:.08em; text-transform:uppercase; }
-
-    /* Tables */
-    table { width:100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
+    pre { background: var(--code-bg); border:1px solid var(--line); padding:14px 16px; border-radius:12px; overflow:auto; margin:0; font-size:13.5px; line-height:1.6; }
+    pre code { background: transparent; padding:0; }
+    table { width:100%; border-collapse: collapse; font-size: 14px; }
     th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
     th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
-    td code { font-size: 12.5px; white-space: nowrap; }
-
-    /* Two-col rows */
-    .two { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
-
-    /* Footer */
+    td code { white-space: nowrap; }
+    ul { margin: 0; padding-left: 20px; color: var(--muted); }
+    li { margin: 4px 0; }
+    li b { color: var(--txt); }
+    .note { border-left: 3px solid var(--pri); padding: 8px 14px; background: var(--card); border-radius: 0 10px 10px 0; color: var(--muted); font-size: 14px; margin-top: 14px; }
     footer { margin-top:56px; color:var(--muted); border-top:1px solid var(--line); padding-top:22px; font-size: 13px; display:flex; flex-wrap:wrap; gap:14px; justify-content: space-between; }
-    footer .tags { color: var(--dim); }
     a { color: #9cd7ff; text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
@@ -105,242 +74,113 @@
 <body>
   <main class="wrap">
 
-    <!-- HEADER -->
     <div class="top">
-      <div class="logo">
-        <span class="logo-mark">8</span>
-        <span>8sync</span>
-        <span style="color:var(--dim); font-weight:400; font-size:13px;">· 8-Sync-Dev</span>
-      </div>
+      <div class="logo"><span class="logo-mark">8</span><span>8sync</span></div>
       <nav class="nav">
-        <a href="#install">Install</a>
-        <a href="#dashboard">Dashboard</a>
-        <a href="#commands">Commands</a>
-        <a href="#skills">Skills</a>
-        <a href="#update">Update</a>
+        <a href="#cai">Cài</a>
+        <a href="#bat-tat">Bật / tắt</a>
+        <a href="#hq">HQ</a>
+        <a href="#doi-omp">Đội omp</a>
+        <a href="#an-toan">An toàn</a>
         <a href="https://github.com/8-Sync-Dev/su-code">GitHub</a>
       </nav>
     </div>
 
-    <!-- HERO -->
-    <header class="hero">
-      <span class="eyebrow">⚡ <b>terminal-first</b> · AI coding harness</span>
-      <h1>Use the terminal as usual,<br/><span class="grad">AI observes from behind.</span></h1>
-      <p class="sub">
-        You still <code>cd</code>, code, build, and test from the CLI. AI agents (omp) follow project context, load <code>su-code/*</code> memory, and execute tasks on demand.
-      </p>
-      <div class="cta">
-        <a class="btn primary" href="https://github.com/8-Sync-Dev/su-code">View on GitHub →</a>
-        <a class="btn ghost" href="#install">Quick start</a>
-        <a class="btn ghost" href="https://github.com/orgs/8-Sync-Dev/discussions">Community</a>
-      </div>
+    <header>
+      <h1>Bật một lệnh, cả team AI làm.<br/><span class="grad">Mọi thứ còn lại ở HQ.</span></h1>
+      <p class="sub">Mỗi việc là một <b>phòng</b> (một session Claude Code chính chủ, hoặc omp). Terminal chỉ để bật/tắt. Giao việc, trả lời câu hỏi, xem phòng nào đang làm hay kẹt — mở HQ trên máy, hoặc qua link internet từ điện thoại.</p>
     </header>
 
-    <!-- FEATURES -->
-    <section class="grid" style="margin-top:40px;">
-      <article class="card">
-        <h3><span class="dot"></span>Terminal-first</h3>
-        <p>No separate “AI terminal”. Your existing CLI workflow stays untouched — 8sync just wraps around it.</p>
-      </article>
-      <article class="card">
-        <h3><span class="dot"></span>Dashboard CRUD</h3>
-        <p><code>8sync harness web</code> opens a local page to view &amp; edit the whole agent-team: models, skills, memory, rules, engines, <b>codebase graph</b> — written straight to config.</p>
-      </article>
-      <article class="card">
-        <h3><span class="dot"></span>Context-aware</h3>
-        <p>Whichever project you enter, the AI picks up its context. Memory is shared via <code>AGENTS.md</code> + <code>su-code/*</code>. <code>8sync harness</code> builds it all with one command.</p>
-      </article>
-      <article class="card">
-        <h3><span class="dot"></span>Skill injection</h3>
-        <p><b>23 skills</b> bundled. <code>8sync skill add &lt;github-url&gt;</code> clones into both the global <code>~/.omp/skills/</code> and the project's <code>su-code/skills/</code>.</p>
-      </article>
+    <section class="grid" style="margin-top:32px;">
+      <article class="card"><h3><span class="step">1</span>Cài</h3><p>Một dòng lệnh, có sẵn Claude Code + kit 8sync + omp.</p></article>
+      <article class="card"><h3><span class="step">2</span>Mở phòng</h3><p><code>8sync ccc . dev</code>, <code>8sync ccc . qa</code>… mỗi phòng một tab terminal.</p></article>
+      <article class="card"><h3><span class="step">3</span>Bật</h3><p><code>8sync ccc auto on</code> rồi <code>8sync hq ui</code>. Xong — phần còn lại làm trên HQ.</p></article>
     </section>
 
-    <!-- INSTALL -->
-    <section id="install">
-      <h2>Quick start</h2>
-      <p class="lede"><b>Linux (CachyOS/Arch), macOS, Windows.</b> On Linux + Kitty, enable <code>allow_remote_control yes</code> for the 3-pane layout. Arch-only profiles &amp; desktop bits are skipped off-Linux.</p>
-      <div class="codeblock">
-        <span class="lbl">bash</span>
-<pre><code># 1. Install — one-liner, prebuilt binary (NO git/rust/cargo needed)
+    <section id="cai">
+      <h2>Cài và cập nhật</h2>
+<pre><code># Linux / macOS
 curl -fsSL https://8-sync-dev.github.io/su-code/install | sh
-8sync setup                      # AI core: omp + codegraph + MCP/skills + gh (y/N per profile)
-8sync doctor                     # verify
+# Windows PowerShell
+irm https://8-sync-dev.github.io/su-code/install.ps1 | iex
 
-# 2. Enter a project → build the harness with one command (idempotent)
-cd ~/code/my-app
-8sync harness                    # skills + codegraph + AGENTS.md + memory
-8sync .                          # open a session (kitty 3-pane + omp)
-
-# 3. Dashboard — view + CRUD the whole agent-team from the browser
-8sync harness web                # → http://127.0.0.1:8731</code></pre>
-      </div>
-      <p class="lede" style="margin-top:14px;">
-        <b>Windows</b> (PowerShell): <code>irm https://raw.githubusercontent.com/8-Sync-Dev/su-code/main/install.ps1 | iex</code>.
-        Build from source: <code>git clone … &amp;&amp; bash scripts/bootstrap.sh</code>.
-        Common setup flags: <code>--dry-run</code>, <code>--no-profile</code>, <code>--community</code>, <code>--profile &lt;name&gt;</code>.
-      </p>
+claude auth login     # đăng nhập Claude Code một lần (tài khoản của bạn)
+8sync up              # cập nhật 8sync + kit (chạy khi có bản mới)</code></pre>
     </section>
 
-    <!-- DASHBOARD -->
-    <section id="dashboard">
-      <h2>Dashboard — <code>8sync harness web</code></h2>
-      <p class="lede">A local web app (axum + Vite/React, embedded in the binary) to <b>view and control the whole agent-team</b> from the browser instead of hand-editing config files. Every page reads real data; most support <b>CRUD written straight</b> to config/memory. Click any screenshot for the full-size PNG.</p>
-      <figure style="margin:20px 0 0;">
-        <a href="assets/dashboard-state.png"><img src="assets/dashboard-state.png" alt="State page — live plan of the current session" style="width:100%; border-radius:12px; border:1px solid var(--line); display:block;" /></a>
-        <figcaption style="color:var(--dim); font-size:13px; margin-top:8px; text-align:center;">State — the live plan of the current session.</figcaption>
-      </figure>
-      <div class="grid" style="margin-top:18px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">
-        <article class="card" style="padding:10px;">
-          <a href="assets/dashboard-bench.png"><img src="assets/dashboard-bench.png" alt="Bench page — token-budget bench with upfront breakdown and spine advisory" style="width:100%; border-radius:8px; border:1px solid var(--line); display:block;" /></a>
-          <p style="margin:10px 4px 2px;">Bench — token-budget bench with upfront breakdown (prefix / CORE / memory-spine) + spine advisory.</p>
-        </article>
-        <article class="card" style="padding:10px;">
-          <a href="assets/dashboard-codegraph.png"><img src="assets/dashboard-codegraph.png" alt="Codegraph page — package call graph + Leiden clusters" style="width:100%; border-radius:8px; border:1px solid var(--line); display:block;" /></a>
-          <p style="margin:10px 4px 2px;">Codegraph — package call graph + Leiden clusters, symbol search, caller/callee tracing — live from codebase-memory-mcp.</p>
-        </article>
-        <article class="card" style="padding:10px;">
-          <a href="assets/dashboard-models.png"><img src="assets/dashboard-models.png" alt="Models page — adaptive model routing per role/task" style="width:100%; border-radius:8px; border:1px solid var(--line); display:block;" /></a>
-          <p style="margin:10px 4px 2px;">Models — adaptive model routing per role/task, written straight to <code>models.toml</code>.</p>
-        </article>
-        <article class="card" style="padding:10px;">
-          <a href="assets/dashboard-marketplace.png"><img src="assets/dashboard-marketplace.png" alt="Marketplace page — MCP + skills marketplace" style="width:100%; border-radius:8px; border:1px solid var(--line); display:block;" /></a>
-          <p style="margin:10px 4px 2px;">Marketplace — browse + one-click install MCP servers &amp; skills (official registry, Smithery, Glama, mcp.so).</p>
-        </article>
-      </div>
-      <div class="two" style="margin-top:24px;">
-        <table>
-          <tbody>
-            <tr><td><b>Session</b></td><td>State (live plan) · Context (real token/compaction)</td></tr>
-            <tr><td><b>Configure</b></td><td>Models · Skills (filter + cycle tier) · Memory (edit 6 files) · Rules (add/remove)</td></tr>
-            <tr><td><b>Runtime</b></td><td>Engines · <b>Codegraph</b> graph · MCP · Submodules</td></tr>
-          </tbody>
-        </table>
-        <table>
-          <tbody>
-            <tr><td><b>Quality</b></td><td>Bench (live runs) · Readiness · Team</td></tr>
-            <tr><td><b>Projects</b></td><td>Workspaces (project switcher)</td></tr>
-            <tr><td><b>Build</b></td><td>Workflow (build a pipeline → export as omp extension)</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="codeblock" style="margin-top:18px;">
-        <span class="lbl">bash</span>
-<pre><code>8sync harness web                # http://127.0.0.1:8731 (auto-opens the browser)
-8sync harness web --port 9000    # change the port
-8sync harness web --no-open      # background / headless</code></pre>
-      </div>
-    </section>
-
-    <!-- COMMANDS -->
-    <section id="commands">
-      <h2>Core commands</h2>
-      <p class="lede">Every verb has <code>-h</code> / <code>--help</code> with an EXAMPLES block. Run <code>8sync</code> or <code>8sync help</code> for the cheatsheet.</p>
-
-      <div class="two">
-        <div>
-          <h3 style="font-size:15px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:0 0 6px;">Vibe loop (daily)</h3>
-          <table>
-            <tbody>
-              <tr><td><code>8sync .</code></td><td>Open/attach a session (kitty 3-pane + <code>omp --continue</code> inside abduco)</td></tr>
-              <tr><td><code>8sync ai [prompt]</code></td><td>Empty → resume; with a prompt → one-shot <code>omp -p</code></td></tr>
-              <tr><td><code>8sync find &lt;kw&gt;</code></td><td>rg/fd + fzf, opens the editor at <code>file:line</code></td></tr>
-              <tr><td><code>8sync note "msg"</code></td><td>Appends to <code>su-code/NOTES.md</code></td></tr>
-              <tr><td><code>8sync run dev|build|test|fmt|lint</code></td><td>Recipe-based project runner</td></tr>
-              <tr><td><code>8sync ship "msg"</code></td><td><code>git add -A &amp;&amp; commit &amp;&amp; push &amp;&amp; gh pr create</code></td></tr>
-              <tr><td><code>8sync feature new|switch &lt;slug&gt;</code></td><td>Large multi-phase scopes (GSD): planning tree + AC gates + <code>ACTIVE</code> switch; then <code>/feature plan|go|ship</code> in omp</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div>
-          <h3 style="font-size:15px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:0 0 6px;">Lifecycle &amp; tools</h3>
-          <table>
-            <tbody>
-              <tr><td><code>8sync setup</code></td><td>Install the harness + pick profiles</td></tr>
-              <tr><td><code>8sync up</code></td><td>Self-update binary + <code>omp update</code></td></tr>
-              <tr><td><code>8sync doctor</code></td><td>Comprehensive health check</td></tr>
-              <tr><td><code>8sync harness</code></td><td>Build/refresh the harness with one command (idempotent)</td></tr>
-              <tr><td><code>8sync harness web</code></td><td><b>Local dashboard</b> — agent-team CRUD</td></tr>
-              <tr><td><code>8sync harness gateway</code></td><td>Deploy/verify omp model-gateway</td></tr>
-              <tr><td><code>8sync harness add-local-model</code></td><td>Serve a local GGUF model (mistral.rs) as an omp provider</td></tr>
-              <tr><td><code>8sync locate</code></td><td>Visual grounding — bounding boxes + click points from an image</td></tr>
-              <tr><td><code>8sync skill</code></td><td>List + add skills (see below)</td></tr>
-              <tr><td><code>8sync theme | bg</code></td><td>Kitty palette / wallpaper live swap</td></tr>
-              <tr><td><code>8sync bt | clean</code></td><td>Bluetooth / disk cleanup + report</td></tr>
-              <tr><td><code>8sync sec on|off</code></td><td>WARP VPN + ufw in one go</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- SKILLS -->
-    <section id="skills">
-      <h2>Skill injection</h2>
-      <p class="lede">A skill is an instruction module for the AI. 8sync bundles <b>23 skills</b> (codegraph · karpathy-guidelines · ponytail · 8sync-cli · assp-skill · impeccable · taste-skill · image-routing · zai-vision · locate-anything · feature (large-scope GSD) + 3 research skills: deep-research · research-paper · remote-compute · …); <code>8sync skill add</code> is collection-aware and pulls whole sets from GitHub.</p>
-      <div class="codeblock">
-        <span class="lbl">bash</span>
-<pre><code># Clone from a URL: installs into BOTH ~/.omp/skills/ (global, read by omp) and su-code/skills/ (project)
-# Also rewrites the &lt;!-- 8sync:skills:* --&gt; block in AGENTS.md
-8sync skill add https://github.com/colbymchenry/codegraph
-
-# Other spec forms
-8sync skill add gh:owner/repo
-8sync skill add path:/abs/local/dir
-8sync skill add builtin:social-growth
-
-# Idempotent: re-running = git pull --ff-only
-8sync skill add https://github.com/colbymchenry/codegraph   # → "updated"
-
-# Build / refresh the whole harness (replaces the old `skill sync`)
-8sync harness init
-8sync harness up --timer 30m</code></pre>
-      </div>
-    </section>
-
-    <!-- UPDATE -->
-    <section id="update">
-      <h2>Update</h2>
-      <p class="lede">Two ways:</p>
-      <div class="two">
-        <div>
-          <h3 style="font-size:15px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:0 0 6px;">Auto (recommended)</h3>
-          <div class="codeblock">
-<pre><code>8sync up</code></pre>
-          </div>
-          <p class="lede" style="margin-top:10px;">Self-updates the binary (GitHub release) + <code>omp update</code>. Never touches <code>pacman -Syu</code>.</p>
-        </div>
-        <div>
-          <h3 style="font-size:15px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:0 0 6px;">Manual (build from source)</h3>
-          <div class="codeblock">
-<pre><code>cd su-code &amp;&amp; git pull
-cargo build --release
-install -m755 target/release/8sync \
-  ~/.local/bin/8sync</code></pre>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- DOCS / SITE -->
-    <section id="docs">
-      <h2>Documentation site</h2>
-      <p class="lede">This page is <code>docs/index.html</code>, auto-deployed via GitHub Pages on every push to <code>main</code>.</p>
+    <section id="bat-tat">
+      <h2>Bật / tắt — toàn bộ lệnh cần nhớ</h2>
+      <p class="lede">Chạy trong thư mục dự án. Mọi thứ khác đều có nút trên HQ.</p>
       <table>
+        <thead><tr><th>Việc</th><th>Lệnh</th></tr></thead>
         <tbody>
-          <tr><td>Source</td><td><a href="https://github.com/8-Sync-Dev/su-code/blob/main/docs/index.html">docs/index.html</a></td></tr>
-          <tr><td>Workflow</td><td><a href="https://github.com/8-Sync-Dev/su-code/blob/main/.github/workflows/pages.yml">.github/workflows/pages.yml</a></td></tr>
-          <tr><td>Trigger</td><td>push <code>main</code> or <code>workflow_dispatch</code></td></tr>
-          <tr><td>URL</td><td><a href="https://8-sync-dev.github.io/su-code/">8-sync-dev.github.io/su-code</a></td></tr>
-          <tr><td>Full README</td><td><a href="https://github.com/8-Sync-Dev/su-code#readme">github.com/8-Sync-Dev/su-code#readme</a></td></tr>
-          <tr><td>AGENTS.md (for AI)</td><td><a href="https://github.com/8-Sync-Dev/su-code/blob/main/AGENTS.md">AGENTS.md</a></td></tr>
+          <tr><td>Mở / quay lại một phòng Claude Code</td><td><code>8sync ccc . &lt;tên&gt;</code></td></tr>
+          <tr><td>Bật team tự làm (mọi dự án trên máy)</td><td><code>8sync ccc auto on</code></td></tr>
+          <tr><td>Chỉ dự án ở thư mục này</td><td><code>8sync ccc auto on --here</code></td></tr>
+          <tr><td>Thêm đội omp chạy song song</td><td><code>8sync ccc auto on --omp</code> · tắt đội omp: <code>8sync ccc auto omp off</code></td></tr>
+          <tr><td>Tạm dừng · tắt</td><td><code>8sync ccc auto pause</code> · <code>8sync ccc auto off</code></td></tr>
+          <tr><td>Phanh khẩn (dừng hết việc tự động)</td><td><code>8sync ccc cancel --all</code></td></tr>
+          <tr><td>Mở HQ trên máy</td><td><code>8sync hq ui</code></td></tr>
+          <tr><td>Mở HQ qua internet (điện thoại, máy khác)</td><td><code>8sync hq ui --public</code></td></tr>
+          <tr><td>Tắt nhật ký HQ</td><td><code>8sync hq ui --off</code></td></tr>
         </tbody>
       </table>
+      <div class="note"><b>Khi auto bật</b>, các phòng không đứng chờ:
+        <ul style="margin-top:6px;">
+          <li><b>Câu hỏi không ai trả lời sau 1 phút</b> (bạn không gõ gì vào phòng đó): câu hỏi hiện trên HQ để bạn bấm chọn; hết 1 phút thì agent <i>critic</i> chọn thay và ghi vào <code>su-code/DECISIONS.md</code>.</li>
+          <li><b>Hỏi quyền khi bạn vắng</b>: hiện trên HQ với nút Cho phép / Từ chối; hết giờ thì tự <i>từ chối</i> kèm hướng dẫn để phòng đi đường khác — không bao giờ tự cho phép.</li>
+          <li><b>Kẹt vì lỗi API hay hết usage</b>: phòng tự chạy lại — lỗi tạm thời thì thử lại sau vài phút, hết usage thì chạy lại đúng giờ reset (HQ ghi “tự chạy lại lúc HH:MM”).</li>
+          <li><b>Nhiều phòng, hai đội</b>: các phòng nhận đích chung, họp standup, và nhắn nhau (cả phòng ccc lẫn phòng omp).</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="hq">
+      <h2>HQ — làm mọi thứ khác ở đây</h2>
+      <p class="lede"><code>8sync hq ui</code> mở trình duyệt. Mỗi phòng một bàn làm việc; thấy ngay phòng nào đang làm, chờ bạn, hay kẹt.</p>
+      <table>
+        <tbody>
+          <tr><td><b>Đang chờ anh</b></td><td>Câu hỏi và yêu cầu quyền của các phòng, có đếm ngược. Bấm một lựa chọn là phòng chạy tiếp.</td></tr>
+          <tr><td><b>Giao việc · Gửi mọi phòng</b></td><td>Gõ việc cho một phòng hoặc cả dự án (cả đội ccc và đội omp). Phòng đang rảnh nhận ngay, phòng đang bận nhận khi xong lượt.</td></tr>
+          <tr><td><b>Auto · Đội omp</b></td><td>Nút Chạy / Tạm dừng và công tắc bật đội omp — thay cho gõ lệnh.</td></tr>
+          <tr><td><b>Board · Chat · Báo cáo</b></td><td>Bảng task, tin nhắn giữa các phòng, chi phí và việc đã xong.</td></tr>
+          <tr><td><b>Usage</b></td><td>% usage 5 giờ / 7 ngày và giờ reset (lấy từ status line của Claude Code).</td></tr>
+        </tbody>
+      </table>
+      <div class="note"><b>Link internet</b>: <code>8sync hq ui --public</code> in một link <code>https://…trycloudflare.com/api/login?k=…</code> (cần <code>cloudflared</code>; thiếu thì lệnh in cách cài). Ai có link là điều khiển được các phòng trên máy bạn — đừng chia sẻ. Link chết khi tắt HQ; mỗi lần bật là một link và khoá mới.</div>
+    </section>
+
+    <section id="doi-omp">
+      <h2>Đội omp</h2>
+      <p class="lede">Mặc định chỉ đội Claude Code (ccc). Thêm đội omp khi cần chạy lâu hơn hoặc chia việc cho model khác.</p>
+<pre><code>8sync ccc auto on --omp      # bật cả hai đội
+8sync . rd-omp               # mở một phòng omp (mỗi phòng một tab)
+8sync ccc auto omp off       # chỉ tắt đội omp</code></pre>
+      <ul style="margin-top:14px;">
+        <li>Phòng omp nhận việc từ HQ, nhận đích chung, tự chạy lại khi provider báo hết quota, và nhắn được cho phòng ccc (và ngược lại) qua <code>8sync ccc msg &lt;phòng&gt; "…"</code> — agent tự dùng, bạn không cần gõ.</li>
+        <li>omp dùng model của bên thứ ba (GLM, OpenAI…) hoặc API key Console của Anthropic. Đăng nhập gói Claude (Pro/Max/Team) chỉ dùng trong Claude Code — phòng omp chạy model <code>anthropic</code> theo kiểu đăng nhập gói sẽ không được tự động hoá.</li>
+      </ul>
+    </section>
+
+    <section id="an-toan">
+      <h2>An toàn và luật dùng Claude</h2>
+      <ul>
+        <li><b>Luôn hỏi bạn</b>: câu “Ship” (merge, release, deploy), secret / đăng nhập, xoá / không hoàn tác, tiền, và quyết định rủi ro cao (pháp lý, y tế, tuyển dụng, tín dụng).</li>
+        <li><b>Không bao giờ tự cho phép</b> một yêu cầu quyền; không dùng chế độ bỏ qua quyền. Guard của kit chặn lệnh phá dữ liệu, force-push, in/đẩy <code>.env</code>.</li>
+        <li><b>Usage</b> đọc từ dữ liệu Claude Code gửi cho status line — 8sync không đọc, lưu hay chuyển token đăng nhập Claude.</li>
+        <li>Chạy liên tục nhiều ngày khi vắng máy: dùng Routines của Claude Code, hoặc đội omp với API key — xem <code>/rules</code> trong Claude Code.</li>
+        <li>Trong Claude Code: <code>/rules</code> (được phép không) · <code>/sec</code> (quét secret) · <code>/aup-audit</code> (repo so với Usage Policy).</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Thêm</h2>
+      <p class="lede">Danh sách lệnh đầy đủ: <code>8sync ccc help</code> · <code>8sync help</code>. Hướng dẫn chi tiết: <a href="https://github.com/8-Sync-Dev/su-code/blob/main/docs/huong-dan.md">docs/huong-dan.md</a> · <a href="https://github.com/8-Sync-Dev/su-code#readme">README</a> · cho AI: <a href="https://github.com/8-Sync-Dev/su-code/blob/main/AGENTS.md">AGENTS.md</a>.</p>
     </section>
 
     <footer>
-      <div>© 8-Sync-Dev · MIT License · built on <a href="https://omp.sh">omp</a></div>
-      <div class="tags">#8sync #omp #VibeCoding #TerminalWorkflow #RustLang #ArchLinux #CachyOS</div>
+      <div>© 8-Sync-Dev · MIT License</div>
+      <div><a href="https://github.com/8-Sync-Dev/su-code">github.com/8-Sync-Dev/su-code</a></div>
     </footer>
   </main>
 </body>

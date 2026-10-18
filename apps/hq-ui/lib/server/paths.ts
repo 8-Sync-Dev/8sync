@@ -17,6 +17,10 @@ export const journalFiles = () => ({
 
 export const dbPath = () => path.join(stateDir(), "hq.db");
 export const tokenPath = () => path.join(configDir(), "ui-token");
+/** `8sync hq ui --public` writes the tunnel host + login key here (contract C6); absent = local only. */
+export const publicPath = () => path.join(configDir(), "public.json");
+/** AskUserQuestion / permission requests the kit hook is waiting on (contract C5). */
+export const pendingDir = () => path.join(stateDir(), "pending");
 
 export const channelMcpConfigPath = (home = os.homedir()) =>
   path.join(home, ".config", "8sync", "hq", "channel-mcp.json");

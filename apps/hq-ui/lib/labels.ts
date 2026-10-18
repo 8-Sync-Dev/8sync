@@ -39,16 +39,25 @@ export function splitStale<T extends Pick<Session, "status" | "started_at" | "wa
 }
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** omp room id (contract C3): `omp-` + 16 lowercase hex, made by the Rust `room_id`. */
+const OMP_ROOM_ID = /^omp-[0-9a-f]{16}$/;
+
+export function isOmpRoomId(s: unknown): s is string {
+  return typeof s === "string" && OMP_ROOM_ID.test(s);
+}
 
 /**
  * How an owner message reaches a session: typed into its hq-* tmux pane, or queued in its
- * inbox for the kit's Stop hook (any Claude Code session started elsewhere, all of Windows).
+ * inbox (any Claude Code session started elsewhere, all of Windows, every omp room).
  */
 export function deliveryOf(s: Pick<Session, "tmux" | "name" | "session_id">): "terminal" | "inbox" | null {
   if (s.tmux) return "terminal";
   const id = s.session_id ?? s.name;
-  return id && SESSION_ID.test(id) ? "inbox" : null;
+  return id && (SESSION_ID.test(id) || isOmpRoomId(id)) ? "inbox" : null;
 }
+
+/** Team label of a room: "Đội ccc" / "Đội omp" (absent engine = a Claude Code room). */
+export const teamLabel = (engine: string | null | undefined) => `Đội ${engine === "claude" || !engine ? "ccc" : engine}`;
 
 /** Inbox wording in toasts and summaries: when the task enters depends on whether the mod is loaded. */
 export const INBOX_LIVE_TEXT = "qua inbox (nhận ngay khi phiên rảnh)";

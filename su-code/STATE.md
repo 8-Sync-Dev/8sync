@@ -1,3 +1,28 @@
+# Unreleased — two teams (ccc + omp), rooms never stuck, HQ remote link, on/off CLI
+
+## Goal
+CLI = on/off; everything else from HQ (local or internet link). Unanswered questions answered from HQ within 1 min else critic; permission prompts while owner away → HQ decision or auto-deny with guidance (never auto-allow); API-error / usage-limit stops resume by themselves at the right time; optional omp team (default ccc only) shares inbox, targets, messages with the ccc team. Contract: `su-code/planning/ccc-two-teams/CONTRACT.md`.
+
+## Assumptions (sourced)
+- Status line JSON carries `rate_limits.five_hour|seven_day.used_percentage|resets_at` (epoch s), since Claude Code 2.1.80 (code.claude.com/docs/en/statusline; CHANGELOG). Values come from the session's last API response. We read only this — never OAuth credentials.
+- Orca (stablyai/orca) reads Claude OAuth tokens to poll `api/oauth/usage` (`src/main/rate-limits/claude-oauth-credentials.ts`) → NOT copied (org rule: subscription credentials never leave Claude Code).
+- StopFailure `error` values: rate_limit, overloaded, authentication_failed, oauth_org_not_allowed, account_on_hold, billing_error, invalid_request, model_not_found, server_error, max_output_tokens, cloud_credential_error, unknown; no reset time in hooks (hooks.md).
+- Claude Code itself auto-continues after a claude.ai limit reset in interactive sessions (`autoContinueAtUsageLimit`, ≤2 consecutive, not >24 h, not background/-p) → 8sync mirrors those caps for its own resume.
+- PreToolUse may answer AskUserQuestion: `permissionDecision:"allow"` + `updatedInput` = questions + `answers` map ("collects the answer through your own UI", hooks.md §Tools that require user interaction). PermissionRequest hooks decide allow/deny on behalf of the user; deny rules still apply. Command hook default timeout 600 s.
+- Cloudflare quick tunnels: no account, URL on stderr, testing-only, no SSE, ~200 in-flight cap (developers.cloudflare.com trycloudflare page) → remote HQ polls.
+- omp 18.12.2: extensions `pi.on(agent_end|tool_call|…)`, `pi.sendUserMessage(text,{deliverAs:"followUp"})`, `ctx.isIdle()`, `tool_call` can block (oh-my-pi source via librarian); `omp -p` exists (`omp --help`).
+
+## Checklist
+- [ ] Slices (parallel agents): Unstick (C1/C2/C3 resume) · Pending (C5 HQ answers + PermissionRequest) · Teams (C3/C4 room ids, `auto --omp`, `auto nudge`, `ccc msg`) · PublicLink (C6 `hq ui --public`) · OmpTeam (omp extension) · HqUi (auth/login, pending cards, usage, teams, polling).
+- [ ] Docs: website docs/index.html + huong-dan.md + hq.md (on/off first, rest in HQ); CHANGELOG; kit CLAUDE.md `ccc msg` line (done).
+- [ ] Gate: cargo test (full), hq-ui vitest/tsc/eslint, size gate; reviews ×2 clean; UAT (real Claude Code + omp rooms, HQ via tunnel).
+
+## Current
+Agents building; lead on docs.
+
+## Next
+Integrate, full gate, review, UAT, ship (owner said go; no push/tag unless asked).
+
 # v0.67.1 — rich `ccc . ls`, local team UI (`8sync hq ui`), agent teams (`--team`), guard fixes, dnf5
 
 ## Goal
@@ -19,7 +44,6 @@ Released and installed. Owner-only: enable Channels in claude.ai org settings (O
 
 ## Next
 - Owner: Channels on → re-run the channel UAT (inbox → session → reply tool).
-- `hq-ui` packaging: ship the Next.js standalone build as a release asset so `8sync hq ui` works without the repo checkout.
 - Roadmap outputs/ccc-harness-next.md: P1 /planning, P2 loop breaker / statusline / keep plan across /compact, P3 eval kit.
 - Size: linux asset ~64 KiB under 5952 KiB; next Rust feature needs attribution or trimming (goal 4 MiB).
 
