@@ -471,8 +471,8 @@ mod tests {
             }
             if args.iter().any(|a| a == "--bg") {
                 let name = args.iter().position(|a| a == "--name").map(|i| args[i + 1].clone()).unwrap_or_else(|| "resumed".into());
-                // a resumed room gets its own forked id, as Claude Code does
-                let short = if name == "resumed" { "5a5a5a5a" } else { "3698e3a6" };
+                // a resumed room gets its own forked id, as Claude Code does (a resume carries --name too)
+                let short = if args.iter().any(|a| a == "--resume") { "5a5a5a5a" } else { "3698e3a6" };
                 return Ok(self.bg.replace("{name}", &name).replace("3698e3a6", short));
             }
             if args[0] == "rm" {
