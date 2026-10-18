@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.13] — 2026-10-18
 ### Fixed
 - **A room that hits the usage ceiling rests and comes back, instead of stopping for good.** Seen live 2026-10-18: the ui room hit 97% of the 5-hour window, its `/goal` counted `cap` as a stop condition, and it never resumed after the window reset (HQ showed it "Kẹt").
   - `auto wait` now rests through the whole wait while capped, without claiming a card, and only then reports `cap`.
