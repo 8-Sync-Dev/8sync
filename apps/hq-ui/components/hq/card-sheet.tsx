@@ -30,6 +30,7 @@ const LABEL_TONE: Record<string, { tone: string; ink: string }> = {
   bug: LANE_TONE.blocked,
   feature: LANE_TONE.ready,
   qa: LANE_TONE.qa,
+  arch: LANE_TONE.review,
 };
 
 export const LANE_VI: Record<LaneKey, string> = {
@@ -42,7 +43,7 @@ export const LANE_VI: Record<LaneKey, string> = {
   blocked: "Blocked",
 };
 
-const LABEL_VI: Record<string, string> = { bug: "bug", feature: "feature", qa: "qa" };
+const LABEL_VI: Record<string, string> = { bug: "bug", feature: "feature", qa: "qa", arch: "kiến trúc" };
 
 /** CSS variables a toned element reads: `--tone` for dots and tints, `--tone-ink` for text. */
 export function toneOf(t: { tone: string; ink: string } | undefined): CSSProperties | undefined {

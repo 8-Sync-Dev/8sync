@@ -41,14 +41,21 @@ const fn r(keys: &'static [&'static str], name: &'static str, duty: &'static str
 pub(super) const DEFAULT_TEAM: [&str; 5] = ["lead", "dev", "qa", "review", "rd"];
 
 /// `auto up --roles full` (HQ "Team đầy đủ"): a whole product team, the 8-room cap. A BA writes
-/// cards beside the lead, two builders and a UI/UX room take ready cards. Each room is its own
-/// Claude Code session, so this spends quota about 8× a single session; the 90% rest still applies.
-pub(super) const FULL_TEAM: [&str; 8] = ["lead", "ba", "rd", "dev", "dev2", "ui", "qa", "review"];
+/// cards beside the lead, an architect designs the cards labelled `arch` (owner 2026-10-18: a
+/// solution-architecture room that keeps up with the web and goes deep on system design), a builder
+/// and a UI/UX room take ready cards. Each room is its own Claude Code session, so this spends quota
+/// about 8× a single session; the 90% rest still applies.
+pub(super) const FULL_TEAM: [&str; 8] = ["lead", "ba", "arch", "rd", "dev", "ui", "qa", "review"];
+
+/// What the architect room does each tick instead of a board lane: it owns no lane, so a card
+/// labelled `arch` never waits on a room the team does not have (the lead writes a short ADR then).
+pub(super) const ARCH_PLAYBOOK: &str = "card nhãn `arch` (xem `8sync ccc auto board --json`) chưa có note \"ADR:\" → `/sysdesign` (đọc đúng mục System Design Primer + docs chính thức của stack, số ước lượng) → ADR (≥2 phương án, trade-off, chọn gì, vì sao, nguồn) ghi vào nơi repo đang ghi quyết định (`docs/adr/`, `DECISIONS.md`, `docs/*DECISION*.md`; chưa có → `docs/adr/card-<id>-<slug>.md`), không mở nơi song song → `8sync ccc auto note <id> \"ADR: <path> · chọn <x>\"`; card ở cột review → đọc diff, lệch ADR, vượt ngân sách trong `docs/adr/budgets.md` hay thêm thành phần không cần → `auto note <id> \"[arch] …\"` (review vẫn quyết). Hết việc card, mỗi ngày một lượt mỗi việc: (a) tech radar `/deep-research` (bản mới, breaking change, CVE của đúng stack repo) → `su-code/research/radar-<ngày>.md` có nguồn; (b) sức khoẻ scale: ĐO thật (kích thước bundle/binary, thời gian build/test, query chậm hay N+1, RAM, cold start, chi phí mỗi request) so với `docs/adr/budgets.md` (chưa có → viết bản đầu từ số đo hôm nay), chỗ nghẽn lớn nhất có số → card; giới hạn cứng trong code (concurrency, pool, timeout) đưa vào budgets kèm lý do; (c) lệch tài liệu: quyết định mâu thuẫn nhau hay với code, sơ đồ/danh sách service cũ, `file:line` trôi → một ADR hợp nhất hoặc sửa tài liệu. Mục cần làm → `8sync ccc auto add \"…\" --label arch --check \"<lệnh đo>\"`; không có số đo thì không mở card";
 
 /// In match order. "qc" is a tester here, as Vietnamese teams use the word.
-const ROLES: [Role; 12] = [
+const ROLES: [Role; 13] = [
     r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối board: triage backlog (đích của owner) thành card ready có AC + lệnh check, gỡ card blocked, chia việc; merge chỉ sau câu Ship của owner", Some("opus"), Some("backlog")),
     r(&["ba", "analyst", "spec", "req", "po"], "BA", "viết card: acceptance criteria + đúng một lệnh check, tách việc lớn thành card nhỏ, backlog → ready; không sửa code sản phẩm", Some("opus"), Some("backlog")),
+    r(&["arch", "architect", "architecture", "sa", "solution"], "Architect", "solution architecture suốt vòng đời: ADR cho card nhãn arch trước khi build (/sysdesign theo System Design Primer + docs chính thức), review kiến trúc diff ở cột review, mỗi ngày tech radar có nguồn + đo sức khoẻ scale theo docs/adr/budgets.md; không sửa code sản phẩm", Some("opus"), None),
     r(&["rd", "r&d", "rnd", "research", "explore"], "R&D", "nghiên cứu: /deep-research câu hỏi mở → brief có nguồn trong su-code/research/ → /planning; chưa sửa code sản phẩm khi chưa có plan", Some("opus"), None),
     r(&["dev", "build", "builder", "code", "coder", "impl"], "Dev/Builder", "nhận card ready: worktree .claude/worktrees/card-<id>, nhánh card-<id>-<slug>, code + test, PR; building → qa; không merge", Some("sonnet"), Some("ready")),
     r(&["qa", "qc", "test", "tester", "e2e", "uat"], "QA", "chạy check/test/UAT của card trên nhánh PR; ảnh chụp UAT lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện); đạt → review, lỗi → ready kèm ghi chú [qa]; viết test, không sửa code sản phẩm", Some("haiku"), Some("qa")),
@@ -219,6 +226,21 @@ mod tests {
         // short keys match whole tokens only: "uiux" is not "ui", "bake" is not "ba"
         assert_eq!(role("uiux").0, "\"uiux\"");
         assert_eq!(role("bake").0, "\"bake\"");
+    }
+
+    #[test]
+    fn the_architect_room_designs_without_holding_a_lane() {
+        for n in ["arch", "architect", "sa", "solution-architect", "arch2"] {
+            assert_eq!(role(n).0, "Architect", "{n}");
+        }
+        // "sa" is a whole token only; "sale" is not an architect.
+        assert_eq!(role("sale").0, "\"sale\"");
+        let a = find("arch").unwrap();
+        assert_eq!((a.lane, a.model), (None, Some("opus")), "no lane: an arch card never waits on a room the team lacks");
+        assert!(FULL_TEAM.contains(&"arch") && !DEFAULT_TEAM.contains(&"arch"));
+        for s in ["/sysdesign", "docs/adr/card-<id>", "DECISIONS.md", "không mở nơi song song", "lệch tài liệu", "ADR:", "tech radar", "su-code/research/radar-", "--label arch", "docs/adr/budgets.md", "ĐO thật", "không có số đo thì không mở card"] {
+            assert!(ARCH_PLAYBOOK.contains(s), "{s}");
+        }
     }
 
     #[test]

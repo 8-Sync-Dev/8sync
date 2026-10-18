@@ -18,7 +18,7 @@ const DONE: Record<Action, string> = {
 };
 const OPENING: Record<Action, string> = {
   up: "lead, dev, qa, review, rd",
-  full: "8 phòng: lead, ba, rd, dev, dev2, ui, qa, review",
+  full: "8 phòng: lead, ba, arch, rd, dev, ui, qa, review",
   clean: "dọn rác, khởi động lại phòng chạy bản cũ",
   down: "",
 };
@@ -54,7 +54,7 @@ export function TeamControls({ root, name, token, after }: { root: string; name:
       <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("clean")} title="Xoá session nền rác, khởi động lại phòng đang chạy bản cũ, rồi mở team (auto up --clear-ss)">
         <SparklesIcon aria-hidden /> Dọn & mở lại
       </Button>
-      <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("full")} title="8 phòng: lead, ba, rd, dev, dev2, ui, qa, review (auto up --roles full)">
+      <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("full")} title="8 phòng: lead, ba, arch, rd, dev, ui, qa, review (auto up --roles full)">
         <UsersIcon aria-hidden /> Team đầy đủ
       </Button>
       <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("down")} title="Dừng các phòng nền, giữ hội thoại (auto down)">
@@ -68,7 +68,7 @@ export function TeamControls({ root, name, token, after }: { root: string; name:
               {ask === "down"
                 ? "Các phòng nền dừng lại, hội thoại vẫn giữ. Bấm “Mở lại team” để chạy tiếp từ chỗ cũ."
                 : ask === "full"
-                  ? "8 phòng chạy nền: lead và ba viết card, rd nghiên cứu, dev, dev2 và ui làm, qa kiểm, review duyệt. Mỗi phòng là một session riêng nên tốn quota gần gấp 8 lần một session; tới 90% cửa sổ 5 giờ/7 ngày thì cả team tự nghỉ."
+                  ? "8 phòng chạy nền: lead và ba viết card, arch thiết kế (ADR theo System Design Primer, tech radar mỗi ngày), rd nghiên cứu, dev và ui làm, qa kiểm, review duyệt. Mỗi phòng là một session riêng nên tốn quota gần gấp 8 lần một session; tới 90% cửa sổ 5 giờ/7 ngày thì cả team tự nghỉ."
                   : "Xoá session nền của dự án mà không phòng nào giữ, khởi động lại phòng đang chạy bản 8sync cũ (giữ hội thoại), rồi mở team. Session có worktree còn thay đổi chưa commit được giữ lại, không mất code."}
             </DialogDescription>
           </DialogHeader>
@@ -123,7 +123,7 @@ export function TeamStarter({ projects, token, after }: { projects: { path: stri
         ))}
       </ul>
       <p className="max-w-[75ch] text-xs text-muted-foreground text-pretty">
-        Mở team: 5 phòng nền (lead viết card, dev làm, qa kiểm, review duyệt, rd nghiên cứu). Team đầy đủ: thêm ba, dev2, ui (8 phòng). Thêm thư mục khác ở mục Projects bên trái.
+        Mở team: 5 phòng nền (lead viết card, dev làm, qa kiểm, review duyệt, rd nghiên cứu). Team đầy đủ: thêm ba, arch, ui (8 phòng). Thêm thư mục khác ở mục Projects bên trái.
       </p>
     </section>
   );

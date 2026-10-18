@@ -14,7 +14,7 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 |---|---|---|---|
 | 1 | Mở HQ (để nguyên terminal đó) | — | `8sync hq ui` → http://127.0.0.1:8740 |
 | 2 | Thêm thư mục repo. Lần đầu: mở `claude` trong thư mục đó một lần, chấp nhận câu hỏi trust | **Projects** → dán đường dẫn | — |
-| 3 | Mở team: lead, dev, qa, review, rd chạy nền trong thư mục đó | **Mở team** (hoặc **Team đầy đủ**: 8 phòng, thêm ba, dev2, ui) | `cd du-an && 8sync ccc auto up` (`--roles full`) |
+| 3 | Mở team: lead, dev, qa, review, rd chạy nền trong thư mục đó | **Mở team** (hoặc **Team đầy đủ**: 8 phòng, thêm ba, arch, ui) | `cd du-an && 8sync ccc auto up` (`--roles full`) |
 | 4 | Giao việc: viết việc + lệnh chứng minh xong (exit 0) | **Giao việc** góc trên | `8sync ccc auto add "<việc>" --check "<lệnh>"` |
 | 5 | Theo dõi card đi qua các cột; việc gấp thì đặt ưu tiên (P0 gấp nhất, phòng nhận trước) | tab **Board** → bấm card → chọn P0/P1/P2/P3 | `8sync ccc auto board` · `8sync ccc auto prio <id> P0` |
 | 6 | Trả lời việc cần anh. Im lặng 60 s: câu sản phẩm/kỹ thuật thì critic (Opus) chọn, xin quyền thì việc an toàn trong repo tự chạy tiếp; merge/release/secret/ngoài repo luôn chờ anh | khung **Anh cần trả lời** đầu trang: chọn đáp án, **Cho phép / Từ chối**, hoặc **Mở terminal để trả lời** | `claude attach <id>` |

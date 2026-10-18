@@ -30,6 +30,7 @@ export const IDLE_FLAG_MS = 60_000;
  */
 const ROOM_ROLES: { keys: string[]; role: RoleId; seat: SeatKey; lane: LaneKey | null }[] = [
   { keys: ["pm", "lead", "plan", "boss", "main", "ba", "analyst", "spec", "req", "po"], role: "plan", seat: "lead", lane: "backlog" },
+  { keys: ["arch", "architect", "architecture", "sa", "solution"], role: "architect", seat: "rd", lane: null },
   { keys: ["rd", "r&d", "rnd", "research", "explore"], role: "rd", seat: "rd", lane: null },
   { keys: ["dev", "build", "builder", "code", "coder", "impl", "ui", "ux", "fe", "frontend", "web", "design", "hq", "api", "be", "backend", "server", "encore", "db", "core", "cli", "rust", "crate", "kit", "ccc"], role: "fullstack", seat: "dev", lane: "ready" },
   { keys: ["qa", "qc", "test", "tester", "e2e", "uat"], role: "tester", seat: "qa", lane: "qa" },

@@ -530,7 +530,7 @@ mod tests {
         let o = parse(&[]).unwrap();
         assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,dev,qa,review,rd".into(), 10, None));
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(parse(&v(&["--roles", "full"])).unwrap().roles.join(","), "lead,ba,rd,dev,dev2,ui,qa,review");
+        assert_eq!(parse(&v(&["--roles", "full"])).unwrap().roles.join(","), "lead,ba,arch,rd,dev,ui,qa,review");
         assert_eq!(parse(&v(&["--roles", "small"])).unwrap().roles.len(), 5);
         // Every room of the full team has a role.
         assert!(room::FULL_TEAM.iter().all(|n| room::find(n).is_some()), "{:?}", room::FULL_TEAM);
