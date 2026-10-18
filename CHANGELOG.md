@@ -4,6 +4,13 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **`8sync up` can no longer leave Windows without `8sync.exe`.** Seen live on 2026-10-18: `8sync.exe` was gone, and only `.8sync.old.<pid>` and `.8sync.new.<pid>` were left. The kit's guard hook (fail-closed) then blocked every Claude Code session on the machine until the file was copied back by hand.
+  - **The likely cause:** rooms still running an older image each auto-update when they see a newer release, all renaming the same `8sync.exe` at once.
+  - **One update at a time:** an update lock (`.8sync.update.lock` in the install dir; a lock older than 10 minutes is taken over).
+  - **No double replace:** an update whose release is already in place (same sha256) does nothing.
+  - **No empty slot:** if moving the new binary in fails, the old one is renamed back, and if even that fails it is copied back.
+  - **Self-heal:** when `8sync.exe` is missing, the newest `.8sync.old.*` is copied into place, and those copies are never swept while the binary is missing. A `.8sync.new.*` older than a day is swept.
 
 ## [0.100.11] — 2026-10-18
 ### Fixed
