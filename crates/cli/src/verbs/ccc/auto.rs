@@ -846,7 +846,10 @@ fn wait_for(
         let wake = if st["on"] != true || st["paused"] == true || lease_over {
             Some(("off", None))
         } else if !st["cap"].is_null() {
-            Some(("cap", None))
+            // Capped: rest here (no tokens) and never claim; report only when the wait is up, so the
+            // room waits again instead of ending its /goal (seen live 2026-10-18: ui stopped at 97%
+            // of the 5-hour window and never came back after it reset).
+            (t.saturating_sub(start) >= w.timeout).then_some(("cap", None))
         } else if let Some(id) = target::claimable(&cards()?, &w.room, &w.lane, t) {
             Some(("card", Some(id)))
         } else if t.saturating_sub(start) >= w.timeout {
@@ -866,7 +869,7 @@ fn wait_text(v: &Value) -> String {
     match v["wake"].as_str() {
         Some("card") => format!("card #{} ở cột {lane}: `8sync ccc auto claim`", v["card"]),
         Some("off") => "auto đã tắt hoặc tạm dừng: dừng, không claim nữa".into(),
-        Some("cap") => format!("chạm trần ({}): nghỉ, không claim", v["cap"].as_str().unwrap_or("")),
+        Some("cap") => format!("chạm trần ({}): nghỉ, không claim; chạy lại `8sync ccc auto wait` (chờ cửa sổ hồi)", v["cap"].as_str().unwrap_or("")),
         _ => format!("cột {lane} vẫn trống sau {} giây: chờ tiếp (`8sync ccc auto wait`)", v["waited_s"]),
     }
 }
@@ -1552,8 +1555,12 @@ mod tests {
         assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| expired.clone(), || 5, || {}).unwrap()["wake"], "off", "the 4 h lease ends the room's work");
         let away = json!({ "on": true, "paused": false, "cap": null, "gate": "owner vắng: không có prompt do người gõ trong session lead 20 phút qua" });
         assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| away.clone(), || 5, || {}).unwrap()["wake"], "card", "owner typing is the idle hook's rail, not the room's");
+        // Capped: rest until the wait is up (never claim the ready card), then report `cap`.
         let capped = json!({ "on": true, "paused": false, "cap": "cửa sổ 5 giờ 92%" });
-        assert_eq!(wait_for(&w, || Ok(vec![]), |_| capped.clone(), || 5, || {}).unwrap()["wake"], "cap");
+        let clock = std::cell::Cell::new(0u64);
+        let v = wait_for(&w, || Ok(vec![card(7, "ready")]), |_| capped.clone(), || clock.get(), || clock.set(clock.get() + 30)).unwrap();
+        assert_eq!((v["wake"].as_str(), v["card"].as_u64()), (Some("cap"), None));
+        assert!(v["waited_s"].as_u64().unwrap() >= w.timeout, "rested the whole wait: {v}");
         // nothing arrives: timeout
         let clock = Cell::new(0u64);
         let v = wait_for(&w, || Ok(vec![]), |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();

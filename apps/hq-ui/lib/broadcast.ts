@@ -4,6 +4,7 @@
 // type to reach every room: Chat tổng only showed the thread. The composer sits under Văn phòng and
 // Chat tổng, and its summary line says which rooms the task reaches before it is sent.
 import { groupByProject, type ProjectInfo } from "./office";
+import { roomLabel } from "./room-label";
 
 export const ALL_PROJECTS = "all";
 
@@ -62,7 +63,8 @@ export function pickedProjects(choice: string, projects: BroadcastProject[]): Br
   return choice === ALL_PROJECTS ? outerProjects(projects) : projects.filter((p) => p.root === choice);
 }
 
-function names(rooms: string[], n = 4): string {
+function names(all: string[], n = 4): string {
+  const rooms = all.map((r) => roomLabel(r, "?"));
   return rooms.length <= n ? rooms.join(", ") : `${rooms.slice(0, n).join(", ")} +${rooms.length - n}`;
 }
 

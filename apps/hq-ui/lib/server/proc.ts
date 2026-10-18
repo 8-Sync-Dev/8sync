@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import os from "node:os";
 import type { DatabaseSync } from "node:sqlite";
+import { roomLabel } from "@/lib/room-label";
 import { isModelId, isRoleId } from "@/lib/roles";
 import { projectIdFor } from "./db";
 import fs from "node:fs";
@@ -134,7 +135,7 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
     const row = byName.get(a.sessionId);
     out.set(a.sessionId, {
       name: a.sessionId,
-      label: a.name || a.sessionId.slice(0, 8),
+      label: roomLabel(a.name, a.sessionId.slice(0, 8)),
       session_id: a.sessionId,
       project_id: row?.project_id ?? projectIdFor(db, a.cwd),
       status: agentStatus(a.status),

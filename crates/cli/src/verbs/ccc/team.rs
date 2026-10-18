@@ -162,8 +162,9 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
          Mọi lệnh `8sync ccc auto claim|move|note|wait` thêm `--as {name}` (trong worktree 8sync không tự nhận ra phòng). \
          Rail: không merge/push main/tag/deploy khi owner chưa trả lời câu Ship; giữ file trước khi sửa (`8sync ccc . goal \"…\" --files a,b`); \
          `8sync ccc meet --say \"done|doing|blocked: …\"` sau mỗi card. \
-         Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on` false hoặc `paused` true hoặc `cap` khác null \
-         hoặc `gate` nhắc tới lease (lease subscription hết hạn/chưa có), hoặc `auto wait --json` trả `\"wake\":\"off\"` hay `\"wake\":\"cap\"`.",
+         `cap` khác null hay wait trả cap → không claim, chạy lại `auto wait`. \
+         Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on` false hoặc `paused` true \
+         hoặc `gate` nhắc tới lease, hoặc `auto wait --json` trả `\"wake\":\"off\"`.",
         setup = auto::loop_setup(name, every_min),
         playbook = auto::lane_playbook(lane),
     );
@@ -172,8 +173,10 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
 
 /// `claude` arguments for a room that is not live. One line: a `.cmd` shim cannot pass newlines.
 pub(super) fn argv(plan: &Plan, id: &str, title: &str, model: Option<&str>, prompt: &str) -> Vec<String> {
+    // `--name` on a resume too: without it Claude Code titles the session after the prompt, and the
+    // room showed up as "/goal Phòng `qa` (vai …" in HQ (seen live 2026-10-18).
     let mut a: Vec<String> = match plan {
-        Plan::Resume => vec!["--resume".into(), id.into(), "--bg".into()],
+        Plan::Resume => vec!["--resume".into(), id.into(), "--bg".into(), "--name".into(), title.into()],
         _ => vec!["--bg".into(), "--name".into(), title.into()],
     };
     a.extend(["--permission-mode".into(), "auto".into()]);
@@ -468,8 +471,8 @@ mod tests {
             }
             if args.iter().any(|a| a == "--bg") {
                 let name = args.iter().position(|a| a == "--name").map(|i| args[i + 1].clone()).unwrap_or_else(|| "resumed".into());
-                // a resumed room gets its own forked id, as Claude Code does
-                let short = if name == "resumed" { "5a5a5a5a" } else { "3698e3a6" };
+                // a resumed room gets its own forked id, as Claude Code does (a resume carries --name too)
+                let short = if args.iter().any(|a| a == "--resume") { "5a5a5a5a" } else { "3698e3a6" };
                 return Ok(self.bg.replace("{name}", &name).replace("3698e3a6", short));
             }
             if args[0] == "rm" {
@@ -521,7 +524,8 @@ mod tests {
         let a = argv(&Plan::Start, "id-1", "dev", Some("sonnet"), "line one\nline  two");
         assert_eq!(a, ["--bg", "--name", "dev", "--permission-mode", "auto", "--model", "sonnet", "line one line two"]);
         let a = argv(&Plan::Resume, "id-1", "dev", None, "p");
-        assert_eq!(a, ["--resume", "id-1", "--bg", "--permission-mode", "auto", "p"]);
+        // The room keeps its name on a resume (else Claude Code titles it after the /goal prompt).
+        assert_eq!(a, ["--resume", "id-1", "--bg", "--name", "dev", "--permission-mode", "auto", "p"]);
         assert!(!a.iter().any(|x| x.contains("dangerously") || x == "bypassPermissions"));
     }
 

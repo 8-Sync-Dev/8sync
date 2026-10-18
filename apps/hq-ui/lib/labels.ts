@@ -1,5 +1,6 @@
 // Pure display rules for sessions (no React). Tested in tests/labels.test.ts.
 import type { Session } from "@/components/hq/types";
+import { roomLabel } from "./room-label";
 
 const DAY_MS = 86_400_000;
 const UUIDISH = /^[0-9a-f-]{20,}$/i;
@@ -10,7 +11,7 @@ export function sessionLabel(s: Pick<Session, "label" | "name" | "session_id">):
     const v = raw?.trim();
     if (!v) continue;
     if (UUIDISH.test(v)) continue;
-    return v.startsWith("hq-") ? v.slice(3) : v;
+    return roomLabel(v.startsWith("hq-") ? v.slice(3) : v);
   }
   const id = [s.label, s.name, s.session_id].find((x) => x && UUIDISH.test(x.trim()));
   return id ? id.trim().slice(0, 8) : "unknown";
