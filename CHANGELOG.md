@@ -4,6 +4,16 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Changed
+- **The architect's daily tech radar works from a source catalog, primary sources first.**
+  - **Source catalog:** `su-code/research/radar-sources.md` is built from the repo's manifests (`package.json`, `Cargo.toml`, `go.mod`, `pyproject`). Each main dependency gets its GitHub `releases.atom`, official changelog and registry page. Each source keeps a `last_seen`.
+  - **CVEs:** the stack's local audit tools run first (`pnpm audit --json`, `cargo audit`, `govulncheck ./...`, `pip-audit`), so the dependency list of a private repo is never sent out. Details of each advisory are read with a plain GET of `https://api.osv.dev/v1/vulns/<id>`.
+  - **Primary sources first:** aggregators (HN, newsletters) only flag an item, then the room reads the original.
+  - **No repeats:** items already in an earlier radar are dropped, matched by normalised URL and version.
+  - **Fixed ranking:** a CVE hitting the version the repo uses, then a breaking change that needs code changes, then a release with a measurable gain, then the rest.
+  - **Sourced lines:** every line has version, date, source link and impact on the repo. A version or number not found in the source is not written.
+  - **Failure isolation:** a failing source is logged and the pass goes on.
+  - Checked both endpoints live: a GitHub `releases.atom` feed and an OSV advisory by id both answered 200.
 
 ## [0.100.9] — 2026-10-18
 ### Added
