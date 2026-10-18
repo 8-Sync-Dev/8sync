@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.9] — 2026-10-18
 ### Added
 - **An Architect room (solution architecture) in the full team.** `8sync ccc auto up --roles full` (HQ **Team đầy đủ**) now opens `arch` in place of the second builder. The team stays at 8 rooms.
   - Room names `arch`, `architect`, `solution…` and `sa` map to it. It runs on Opus, on its own loop like `rd`.
