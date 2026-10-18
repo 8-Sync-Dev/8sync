@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.10] — 2026-10-18
 ### Changed
 - **The architect's daily tech radar works from a source catalog, primary sources first.**
   - **Source catalog:** `su-code/research/radar-sources.md` is built from the repo's manifests (`package.json`, `Cargo.toml`, `go.mod`, `pyproject`). Each main dependency gets its GitHub `releases.atom`, official changelog and registry page. Each source keeps a `last_seen`.
