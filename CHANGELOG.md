@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.11] — 2026-10-18
 ### Fixed
 - **The critic now actually answers for an away owner: rooms ask through AskUserQuestion.** Seen live on 2026-10-18:
   - `delegate` was on (60 s), yet `su-code/DECISIONS.md` stayed empty. The R&D room had asked about BiRefNet as plain text at the end of a turn and waited. The delegate hook only sees an `AskUserQuestion` call, so the critic never got the question.
