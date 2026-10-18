@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.8] — 2026-10-18
 ### Fixed
 - **`8sync up` now verifies the checksum even when the GitHub API gives none.** Seen on v0.100.4: the update installed fine, but printed "checksum NOT VERIFIED". The API had been rate-limited (or had not finished the digest), and the fallback had nothing to check against.
   - Each release now carries `<binary>.sha256` (sha256sum format) next to every binary.
