@@ -466,15 +466,31 @@ pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
     Ok(stopped)
 }
 
+/// A session name fit for one report line. Sessions started before rooms got `--name` on a resume are
+/// titled after their prompt (`/goal Phòng `lead` …`, `8sync auto --loop: … phòng `rd` …`): show
+/// the room, not 3 KB of prompt (seen live 2026-10-18).
+pub(super) fn short_name(name: &str) -> String {
+    let n = name.trim();
+    if n.is_empty() {
+        return "(không tên)".into();
+    }
+    if n.starts_with("/goal ") || n.starts_with("8sync auto --loop") {
+        if let Some(room) = n.split('`').nth(1).filter(|r| !r.is_empty() && r.len() <= 40) {
+            return room.to_string();
+        }
+    }
+    crate::verbs::session_view::truncate(n, 40)
+}
+
 pub(super) fn print_up(status: &Value, gone: &[Gone], rows: &[Row], every: u64, subscription: bool) {
     println!("{}", auto::text(status));
     let (kept, deleted): (Vec<&Gone>, Vec<&Gone>) = gone.iter().partition(|g| g.kept.is_some());
     if !deleted.is_empty() {
-        let names: Vec<String> = deleted.iter().map(|g| format!("{} {}", if g.name.is_empty() { "(không tên)" } else { &g.name }, g.short)).collect();
+        let names: Vec<String> = deleted.iter().map(|g| format!("{} {}", short_name(&g.name), g.short)).collect();
         println!("đã xoá {} session nền rác: {}", deleted.len(), names.join(", "));
     }
     for g in &kept {
-        println!("  giữ {} {}: {}", g.name, g.short, g.kept.as_deref().unwrap_or_default());
+        println!("  giữ {} {}: {}", short_name(&g.name), g.short, g.kept.as_deref().unwrap_or_default());
     }
     if !kept.is_empty() {
         // `claude rm` refuses while a worktree holds commits that are not pushed: that is the work.
@@ -863,6 +879,15 @@ mod tests {
         down(&t2, 5).unwrap();
         assert_eq!(auto::status(&h, false, 6)["paused"], true);
         let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn junk_sessions_titled_after_their_prompt_show_the_room_name() {
+        assert_eq!(short_name("/goal Phòng `lead` (vai Lead/PM: điều phối board …) làm việc liên tục"), "lead");
+        assert_eq!(short_name("8sync auto --loop: owner bật chạy liên tục cho phòng `rd` (vai R&D …"), "rd");
+        assert_eq!(short_name("dev"), "dev");
+        assert_eq!(short_name(""), "(không tên)");
+        assert!(short_name(&"x".repeat(300)).chars().count() <= 41);
     }
 
     #[test]
