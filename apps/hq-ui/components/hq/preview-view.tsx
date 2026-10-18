@@ -137,13 +137,7 @@ export function PreviewView({
                       </Button>
                     )}
                   </h2>
-                  <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,13.5rem),1fr))] gap-3">
-                    {g.items.map((i) => (
-                      <li key={i.id}>
-                        <Thumb item={i} token={token} now={now} onOpen={() => setView(i.id)} />
-                      </li>
-                    ))}
-                  </ul>
+                  <ThumbGroup items={g.items} token={token} now={now} onOpen={setView} />
                 </section>
               );
             })}
@@ -204,6 +198,30 @@ function PreviewEmpty({ title }: { title: string }) {
   );
 }
 
+/** A card's screenshots, PAGE at a time: a long QA run no longer loads every image at once. */
+const PAGE = 24;
+
+function ThumbGroup({ items, token, now, onOpen }: { items: PreviewItem[]; token: string; now: number; onOpen: (id: string) => void }) {
+  const [shown, setShown] = useState(PAGE);
+  const rest = items.length - shown;
+  return (
+    <>
+      <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,13.5rem),1fr))] gap-3">
+        {items.slice(0, shown).map((i) => (
+          <li key={i.id}>
+            <Thumb item={i} token={token} now={now} onOpen={() => onOpen(i.id)} />
+          </li>
+        ))}
+      </ul>
+      {rest > 0 && (
+        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setShown((n) => n + PAGE)}>
+          Xem thêm {Math.min(rest, PAGE)} ảnh (còn {rest})
+        </Button>
+      )}
+    </>
+  );
+}
+
 export function ThumbGridSkeleton({ n = 6 }: { n?: number }) {
   return (
     <ul aria-label="Đang tải ảnh" className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,13.5rem),1fr))] gap-3 px-4 py-4 sm:px-6">
@@ -218,9 +236,9 @@ export function ThumbGridSkeleton({ n = 6 }: { n?: number }) {
 }
 
 /** The image itself on a neutral surface; fetched with the token only once it scrolls near view. */
-export function PreviewImage({ id, token, alt, className, eager }: { id: string; token: string; alt: string; className?: string; eager?: boolean }) {
+export function PreviewImage({ id, token, alt, className, eager, version }: { id: string; token: string; alt: string; className?: string; eager?: boolean; version?: number }) {
   const [ref, near] = useNearView<HTMLDivElement>();
-  const { src, failed } = useAuthedImage(token, id, eager || near);
+  const { src, failed } = useAuthedImage(token, id, eager || near, version);
   return (
     <div ref={ref} className={cn("relative grid place-items-center overflow-hidden bg-muted", className)}>
       {src ? (
@@ -251,6 +269,7 @@ function Thumb({ item, token, now, onOpen }: { item: PreviewItem; token: string;
       <PreviewImage
         id={item.id}
         token={token}
+        version={item.mtime}
         alt={name}
         className="aspect-[16/10] w-full rounded-lg border transition-[border-color] duration-150 group-hover:border-foreground/25 motion-reduce:transition-none"
       />
@@ -325,7 +344,7 @@ function Viewer({
               </span>
             </div>
             <div className="relative min-h-0">
-              <PreviewImage key={item.id} id={item.id} token={token} alt={item.rel} eager className="h-[min(72dvh,900px)] w-full rounded-lg" />
+              <PreviewImage key={item.id} id={item.id} token={token} version={item.mtime} alt={item.rel} eager className="h-[min(72dvh,900px)] w-full rounded-lg" />
               {items.length > 1 && (
                 <>
                   <Button type="button" size="icon" variant="secondary" className="absolute top-1/2 left-2 -translate-y-1/2 shadow-sm" onClick={() => go(-1)} aria-label="Ảnh trước (←)">

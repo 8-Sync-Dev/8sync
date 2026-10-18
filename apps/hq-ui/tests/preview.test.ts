@@ -15,7 +15,7 @@ import { GET as list } from "@/app/api/preview/route";
 import { GET as file } from "@/app/api/preview/file/route";
 import { cardOf, groupByCard, mainRoot, rootKey, type PreviewItem } from "@/lib/preview";
 import { getToken } from "@/lib/server/auth";
-import { PREVIEW_MAX_BYTES, previewId, scanProject } from "@/lib/server/preview";
+import { cachedPreview, PREVIEW_MAX_BYTES, previewId, resetPreviewIndex, scanProject } from "@/lib/server/preview";
 import { req, tempHome } from "./helpers";
 
 const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082", "hex");
@@ -143,5 +143,23 @@ describe("GET /api/preview and /api/preview/file", () => {
     ];
     for (const id of ids) expect((await file(req(`/api/preview/file?id=${id}`, { token }))).status).toBe(404);
     expect((await file(req("/api/preview/file", { token }))).status).toBe(404);
+  });
+
+  it("serves from the last listing without a rescan; a versioned URL is cached a day (owner 2026-10-18: Preview slow)", async () => {
+    const r = await list(req("/api/preview", { token }));
+    const item = ((await r.json()) as { projects: { items: PreviewItem[] }[] }).projects[0].items[0];
+    expect(cachedPreview(item.id)?.abs).toBe(path.join(root, "qa", "evidence", "card-7-home.png"));
+    expect(cachedPreview(previewId(path.join(root, "secret.png")))).toBeNull();
+    expect(cachedPreview("../../secret.png")).toBeNull();
+    expect(cachedPreview(item.id, Date.now() + 31_000)).toBeNull();
+    const res = await file(req(`/api/preview/file?id=${item.id}&v=${Math.floor(item.mtime)}`, { token }));
+    expect(res.headers.get("cache-control")).toBe("private, max-age=86400, immutable");
+    const odd = await file(req(`/api/preview/file?id=${item.id}&v=abc`, { token }));
+    expect(odd.headers.get("cache-control")).toBe("private, max-age=60");
+    // A file deleted since the listing is still a 404: the route checks the file before answering.
+    fs.renameSync(path.join(root, "qa", "evidence", "card-7-home.png"), path.join(root, "qa", "gone.png"));
+    expect((await file(req(`/api/preview/file?id=${item.id}`, { token }))).status).toBe(404);
+    fs.renameSync(path.join(root, "qa", "gone.png"), path.join(root, "qa", "evidence", "card-7-home.png"));
+    resetPreviewIndex();
   });
 });

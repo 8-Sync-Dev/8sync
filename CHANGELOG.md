@@ -4,6 +4,12 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **HQ Preview loads fast.** Each screenshot request used to rescan every project and worktree before sending the image.
+  - The last listing now answers for 30 s.
+  - An image URL carries its file's mtime, so the browser keeps it for a day, and a new screenshot gets a new URL.
+  - Images already fetched stay in memory when switching tabs.
+  - Each card shows 24 screenshots, with "Xem thêm" for the rest.
 
 ## [0.100.15] — 2026-10-18
 ### Fixed
