@@ -33,6 +33,7 @@ import { useBoards } from "./use-board";
 import { useHq } from "./use-hq";
 import { useOffice, type Room } from "./use-office";
 import { usePoll } from "./use-poll";
+import { MachineChip } from "./machine-chip";
 import type { Session } from "./types";
 
 /** office: every session is a room · group: all rooms talking · room: one room's chat. */
@@ -231,6 +232,9 @@ export function HqApp({ token }: { token: string }) {
                   </div>
                 )}
               </dl>
+              <div className="hidden shrink-0 sm:block">
+                <MachineChip api={hq.api} />
+              </div>
             </div>
             <TabsList variant="line" className="mt-2 h-9 w-full max-w-full justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] sm:px-6">
               <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
