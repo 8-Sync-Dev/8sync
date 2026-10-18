@@ -4,6 +4,12 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **HQ: "@" inserts a file or folder path** in "Gửi cho mọi phòng" and in the room message box.
+  - Type `@` to list the project's folders and files. Type `@src/` to go one level down, or `@../` to go up and out of the project.
+  - ↑/↓ choose, Enter or Tab picks, Esc closes.
+  - On send, each `@path` that exists becomes an absolute path, so a room in a worktree or another folder opens the same file. Unknown names and e-mail addresses stay as typed.
+  - The listing (`GET /api/fs`) returns names only and sits behind the HQ token.
 
 ## [0.100.15] — 2026-10-18
 ### Fixed
