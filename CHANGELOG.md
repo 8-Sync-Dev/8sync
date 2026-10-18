@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.7] — 2026-10-18
 ### Added
 - **HQ "Máy" chip: how loaded the machine is while rooms run.** The header shows the busiest of RAM, CPU and GPU. It turns amber from 75 % and red from 90 %. It refreshes every 5 s, and only while the page is visible.
   - Click it for bars per resource: RAM used / total, CPU across all threads, and per NVIDIA GPU its load, VRAM and temperature (from `nvidia-smi`).
