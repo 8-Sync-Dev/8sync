@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.100.12] — 2026-10-18
 ### Fixed
 - **`8sync up` can no longer leave Windows without `8sync.exe`.** Seen live on 2026-10-18: `8sync.exe` was gone, and only `.8sync.old.<pid>` and `.8sync.new.<pid>` were left. The kit's guard hook (fail-closed) then blocked every Claude Code session on the machine until the file was copied back by hand.
   - **The likely cause:** rooms still running an older image each auto-update when they see a newer release, all renaming the same `8sync.exe` at once.
