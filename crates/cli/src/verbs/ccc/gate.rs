@@ -237,7 +237,10 @@ fn read_tail(path: &str) -> Tail {
 /// meta entries, task notifications and anything else.
 pub(super) fn human_text(line: &str) -> Option<String> {
     let e = serde_json::from_str::<Value>(line).ok()?;
-    if e["type"] != "user" || e["isMeta"] == true {
+    // Claude Code writes the post-compaction summary as a user line (`isCompactSummary`): it is not
+    // the owner typing (seen live 2026-10-18: a room auto-compacted, the permit hook then thought the
+    // owner was present and left a permission prompt on screen).
+    if e["type"] != "user" || e["isMeta"] == true || e["isCompactSummary"] == true || e["isVisibleInTranscriptOnly"] == true {
         return None;
     }
     if e["origin"].is_object() && e["origin"]["kind"] != "human" {
@@ -280,6 +283,17 @@ fn mentions(text: &str, entry: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_compaction_summary_is_not_the_owner_typing() {
+        // Seen live 2026-10-18: after an auto-compact the permit hook took the summary for the owner.
+        let typed = json!({ "type": "user", "timestamp": "2026-10-18T15:00:00Z", "message": { "role": "user", "content": "làm tiếp" } }).to_string();
+        assert_eq!(human_text(&typed).as_deref(), Some("làm tiếp"));
+        let summary = json!({ "type": "user", "isCompactSummary": true, "isVisibleInTranscriptOnly": true, "message": { "role": "user", "content": "This session is being continued from a previous conversation…" } }).to_string();
+        assert_eq!(human_text(&summary), None);
+        let shown_only = json!({ "type": "user", "isVisibleInTranscriptOnly": true, "message": { "content": "x" } }).to_string();
+        assert_eq!(human_text(&shown_only), None);
+    }
 
     fn blocks(msg: &str) -> bool {
         check(&json!({ "last_assistant_message": msg, "stop_hook_active": false, "background_tasks": [] })).is_some()
