@@ -229,9 +229,12 @@ fn path_ok(cwd: &Path, p: &str, write: bool) -> Result<(), String> {
 /// `.claude/worktrees/` (the repo of `cwd`, a worktree resolving to its repo), no `..`, plain name.
 fn worktree_ok(cwd: &Path, p: &str) -> Result<(), String> {
     let repo = crate::verbs::here::repo_of(cwd).ok_or_else(|| format!("không tìm thấy repo của phòng ({p})"))?;
-    let base = norm(&format!("{}/.claude/worktrees", std::fs::canonicalize(&repo).unwrap_or(repo).to_string_lossy()));
+    // Both sides resolved the same way (deepest existing part canonicalized): macOS /var is
+    // /private/var and a Windows temp root may be an 8.3 short name (CI: RUNNER~1).
+    let real = |x: &Path| x.ancestors().find_map(|a| std::fs::canonicalize(a).ok().map(|c| c.join(x.strip_prefix(a).unwrap_or(Path::new(""))))).unwrap_or_else(|| x.to_path_buf());
+    let base = norm(&real(&repo.join(".claude").join("worktrees")).to_string_lossy());
     let abs = if Path::new(p).is_absolute() { PathBuf::from(p) } else { cwd.join(p) };
-    let a = norm(&abs.to_string_lossy());
+    let a = norm(&real(&abs).to_string_lossy());
     let name = a.strip_prefix(&format!("{base}/")).unwrap_or_default();
     let plain = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) && !name.starts_with('.');
     if p.contains("..") || !plain {
