@@ -56,6 +56,10 @@ describe("roomRole", () => {
     expect(roomRole("reviewer")?.lane).toBe("review");
     expect(roomRole("research-x")?.role).toBe("rd");
     expect(roomRole("rd")?.lane).toBeNull();
+    // The full team's architect: its own icon, no lane (it designs cards labelled arch).
+    expect(roomRole("arch")).toMatchObject({ role: "architect", lane: null });
+    expect(roomRole("solution-architect")?.role).toBe("architect");
+    expect(roomRole("sale")).toBeNull();
     expect(roomRole("zus")).toBeNull();
     expect(roomRole(null)).toBeNull();
   });

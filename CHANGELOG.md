@@ -4,6 +4,19 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **An Architect room (solution architecture) in the full team.** `8sync ccc auto up --roles full` (HQ **Team đầy đủ**) now opens `arch` in place of the second builder. The team stays at 8 rooms.
+  - Room names `arch`, `architect`, `solution…` and `sa` map to it. It runs on Opus, on its own loop like `rd`.
+  - It holds no board lane, so a card labelled `arch` never waits on a room the team lacks.
+  - Cards labelled `arch` (new service, DB, queue, cache, scale, public API) get an ADR before they are built. The room runs `/sysdesign` (sections of The System Design Primer plus the stack's official docs, with back-of-envelope numbers), writes an ADR with at least 2 options and the trade-offs, then notes `ADR: …` on the card. The ADR goes where the repo already records decisions (`docs/adr/`, `DECISIONS.md`, `docs/*DECISION*.md`), else `docs/adr/card-<id>-<slug>.md`, never a parallel place.
+  - The lead moves an `arch` card to ready only after that note. With no `arch` room, the lead writes a short ADR itself.
+  - On cards in review, the room checks the diff against the ADR and `docs/adr/budgets.md`, and leaves an `[arch]` note. Review still decides.
+  - Every day it does three passes:
+    - a sourced tech radar (new versions, breaking changes, CVEs of the repo's own stack), saved to `su-code/research/radar-<date>.md`;
+    - a measured scale-health pass (bundle or binary size, build and test time, slow queries, RAM, cold start, cost per request) against the budgets. Hard-coded limits (concurrency, pools, timeouts) go into the budgets with their reason;
+    - a drift pass: decisions that contradict each other or the code, stale service lists or diagrams, and drifted `file:line` references get one reconciling ADR or a doc fix.
+  - The worst bottleneck becomes an `arch` card with a measuring `--check`. With no measured number, no card is opened.
+  - `auto add --label arch` is accepted. HQ shows an "kiến trúc" chip on those cards and an Architect icon for the room.
 
 ## [0.100.8] — 2026-10-18
 ### Fixed

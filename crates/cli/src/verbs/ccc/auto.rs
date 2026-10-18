@@ -304,6 +304,9 @@ Mỗi nhịp:
    - building: worktree `.claude/worktrees/card-<id>`, nhánh `card-<id>-<slug>`, `/ship` tới commit, push, PR → `move <id> qa --pr <số>`
    - qa: `check` + UAT → `move <id> review`, trượt → `move <id> ready --note \"[qa] …\"`
    - review: review đối kháng → `move <id> approved --sha <head>`, lỗi → `move <id> ready --note \"[review] …\"`
+   - arch (không giữ cột): card nhãn arch → `/sysdesign` → ADR `docs/adr/card-<id>-<slug>.md` → `auto note <id> \"ADR: …\"`
+     (lead chỉ chuyển card nhãn arch sang ready khi có note ADR); mỗi ngày tech radar có nguồn + đo sức khoẻ scale
+     theo `docs/adr/budgets.md`, chỗ nghẽn có số đo → card nhãn arch
    Card bị trả về ready quá 2 lần tự sang blocked; claim im 2 giờ thì phòng khác lấy lại.
 2. `target` khác null → việc của nhịp là phần hợp vai phòng cho đích đó: lead chia việc và giao, dev `/ship` phần mình,
    qa chạy `check`/test, reviewer review, rd gỡ chỗ kẹt. Đạt đích (có `check` thì lệnh đó exit 0 trong nhịp này, không thì
@@ -350,7 +353,7 @@ pub(super) fn write_loop_md(root: &Path) -> Result<(PathBuf, bool)> {
 /// What a room does with the card `auto claim` gives it, per lane (super-board's lane playbooks).
 pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
-        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: thêm `--prio P0`, quan trọng `--prio P1`; dev nhận card gấp trước).Hết card backlog: `8sync ccc auto lint` → gỡ card blocked (`move <id> ready`), card approved → gom MỌI card approved vào MỘT câu hỏi Ship cho owner; owner duyệt → `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`",
+        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: thêm `--prio P0`, quan trọng `--prio P1`; dev nhận card gấp trước). Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`).Hết card backlog: `8sync ccc auto lint` → gỡ card blocked (`move <id> ready`), card approved → gom MỌI card approved vào MỘT câu hỏi Ship cho owner; owner duyệt → `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`",
         "ready" => "card building: worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>`, `/ship` card tới commit (test + gate), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>`; làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
         "qa" => "card qa: checkout nhánh PR, chạy `check` + UAT thật, ảnh chụp lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`",
         "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước) → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
@@ -365,6 +368,10 @@ fn tick_prompt(name: &str) -> String {
         Some(lane) => format!(
             "2) `8sync ccc auto claim --json --as {name}` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {} (mọi lệnh `auto move|note` thêm `--as {name}`). Không có card → bước 3. ",
             lane_playbook(lane)
+        ),
+        None if super::room::find(name).is_some_and(|r| r.name == "Architect") => format!(
+            "2) Vai không giữ cột board; nhịp này: {} (mọi lệnh `auto note|add` thêm `--as {name}`). Không có việc nào trong đó → bước 3. ",
+            super::room::ARCH_PLAYBOOK
         ),
         None => "2) Vai không giữ cột board: bước 3. ".into(),
     };
@@ -1671,6 +1678,17 @@ mod tests {
         for d in [h, h2] {
             let _ = std::fs::remove_dir_all(&d);
         }
+    }
+
+    #[test]
+    fn the_architect_tick_runs_its_playbook_and_the_lead_waits_for_an_adr() {
+        let t = tick_prompt("arch");
+        assert!(t.contains(super::super::room::ARCH_PLAYBOOK) && t.contains("--as arch"), "{t}");
+        assert!(!tick_prompt("rd").contains("/sysdesign"), "rd keeps its own loop");
+        let lead = lane_playbook("backlog");
+        assert!(lead.contains("--label arch") && lead.contains("ADR:") && lead.contains("/sysdesign"), "{lead}");
+        // arch is a card label `auto add` accepts.
+        assert!(target::LABELS.contains(&"arch"));
     }
 
     #[test]

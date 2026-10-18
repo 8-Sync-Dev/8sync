@@ -45,7 +45,8 @@ const REBUILD_CAP: u32 = 2;
 
 /// Open lanes in board order; `done`/`dropped` live in `state`.
 pub(super) const LANES: [&str; 7] = ["backlog", "ready", "building", "qa", "review", "approved", "blocked"];
-pub(super) const LABELS: [&str; 3] = ["bug", "feature", "qa"];
+/// `arch`: needs a design first; the lead moves it to ready only once a note starts with "ADR:".
+pub(super) const LABELS: [&str; 4] = ["bug", "feature", "qa", "arch"];
 
 /// Allowed moves (from → to). Done goes through `auto done`, which needs evidence.
 fn allowed(from: &str, to: &str) -> bool {

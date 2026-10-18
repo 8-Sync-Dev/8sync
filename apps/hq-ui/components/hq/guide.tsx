@@ -31,7 +31,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     body:
       "Thêm thư mục ở \"Mở team ở repo mới\" bên trái (dự án đã có phòng tự hiện), rồi bấm \"Mở team\": 5 phòng nền chạy liên tục. " +
       "lead và rd dùng Opus (claude-opus-5-5) để chia việc, nghiên cứu; dev và review dùng Sonnet (claude-sonnet-5-5) để code, duyệt; qa dùng Haiku (claude-haiku-5-5) để kiểm nhanh. " +
-      "\"Team đầy đủ\" mở 8 phòng (thêm ba, dev2, ui), tốn quota gần gấp 8 lần một phòng.",
+      "\"Team đầy đủ\" mở 8 phòng (thêm ba, arch, ui; arch viết ADR cho card nhãn arch và làm tech radar mỗi ngày), tốn quota gần gấp 8 lần một phòng.",
   },
   {
     icon: SendIcon,
