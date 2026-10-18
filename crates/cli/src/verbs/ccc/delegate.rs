@@ -127,8 +127,29 @@ pub(super) fn hook(input: &str, home: &Path) -> Option<String> {
     Some(json!({ "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason } }).to_string())
 }
 
-/// `8sync ccc delegate on | off | status`.
+/// `8sync ccc delegate check --cwd <dir>` with the AskUserQuestion input (`{"questions": …}`) on
+/// stdin: may the critic take this question for a room in `dir`? Same rails as [`hook`] (delegate on,
+/// auto scope, [`decide`]), minus the owner-typing check: HQ asks this only for a question that has
+/// sat on screen past the owner's 60 s. Prints `{"critic": bool}`.
+pub(super) fn check(input: &str, cwd: Option<&str>, home: &Path) -> Value {
+    let v: Value = serde_json::from_str(input).unwrap_or(Value::Null);
+    let reason = (enabled(home) && super::auto::in_scope(home, cwd)).then(|| decide(&v)).flatten();
+    json!({ "critic": reason.is_some(), "reason": reason })
+}
+
+/// `8sync ccc delegate on | off | status | check`.
 pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
+    if rest.first().map(String::as_str) == Some("check") {
+        let cwd = match rest.get(1..).unwrap_or_default() {
+            [f, d] if f == "--cwd" => Some(d.as_str()),
+            [] => None,
+            _ => bail!("usage: 8sync ccc delegate check [--cwd <dir>]   (stdin: {{\"questions\": …}})"),
+        };
+        let mut input = String::new();
+        std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 256 * 1024), &mut input)?;
+        println!("{}", check(&input, cwd, home));
+        return Ok(());
+    }
     match rest.first().map(String::as_str) {
         Some(x @ ("on" | "off")) => {
             let after = match rest.get(1..).unwrap_or_default() {
@@ -269,6 +290,25 @@ mod tests {
         assert_eq!(out["hookSpecificOutput"]["hookEventName"], "PreToolUse");
         let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "ls" } }).to_string();
         assert!(hook(&bash, &home).is_none());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn check_hands_a_stuck_product_question_to_the_critic_and_keeps_ship_with_the_owner() {
+        // Seen live 2026-10-18: questions asked while auto was paused stayed on screen for an hour.
+        let home = std::env::temp_dir().join(format!("8sync-dlg-check-{}", std::process::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        let q = ask("Tiến hoá", "Sửa lỗi gà ra voi theo hướng nào?", &["Dòng tiến hoá (Recommended)", "Bỏ tiến hoá"]).to_string();
+        if std::env::var(ENV).is_err() {
+            assert_eq!(check(&q, None, &home)["critic"], false, "delegate off: the owner answers");
+        }
+        crate::verbs::harness::cbm::write_flag_key(&home, KEY, true).unwrap();
+        assert_eq!(check(&q, None, &home)["critic"], true);
+        let ship = ask("Ship", "Merge PR 20?", &["Duyệt tất cả (Recommended)", "Dừng"]).to_string();
+        assert_eq!(check(&ship, None, &home)["critic"], false, "Ship stays with the owner");
+        let secret = ask("Key", "Dùng api key nào?", &["A", "B"]).to_string();
+        assert_eq!(check(&secret, None, &home)["critic"], false);
+        assert_eq!(check("not json", None, &home)["critic"], false);
         let _ = std::fs::remove_dir_all(&home);
     }
 }
