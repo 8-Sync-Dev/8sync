@@ -30,7 +30,7 @@ use serde_json::Value;
 
 use super::{auto, idle, room};
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] | down";
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] | down";
 
 /// `auto up …` / `auto down`: the verbs this module owns.
 pub(super) fn wants(rest: &[String]) -> bool {
@@ -85,6 +85,15 @@ pub(super) struct Live {
     pub started: u64,
     /// Not `status: idle` (mid-turn, on a prompt, unknown): `--clear-ss` never stops it to reload the kit.
     pub busy: bool,
+    /// Where it runs; empty when Claude Code did not say.
+    pub cwd: String,
+}
+
+/// `l` runs in the git repo `root` (or one of its worktrees). `claude agents --cwd` also lists the
+/// sessions of a repo nested inside it: without this, `auto up` in 8sync-startup took over
+/// ai-game-studio's rooms (seen live 2026-10-18). A session that did not say where it runs counts.
+pub(super) fn in_repo(l: &Live, root: &Path) -> bool {
+    l.cwd.is_empty() || !Path::new(&l.cwd).is_absolute() || crate::verbs::here::repo_of(Path::new(&l.cwd)).is_some_and(|r| auto::canon(&r) == auto::canon(root))
 }
 
 pub(super) fn live(json: &str) -> Result<Vec<Live>> {
@@ -104,6 +113,7 @@ pub(super) fn live(json: &str) -> Result<Vec<Live>> {
                 started: a["startedAt"].as_u64().unwrap_or(0),
                 // Anything but a plain `idle` (mid-turn, waiting on a prompt, unknown): never stopped to reload.
                 busy: a["status"].as_str() != Some("idle"),
+                cwd: a["cwd"].as_str().unwrap_or_default().to_string(),
             })
         })
         .collect())
@@ -163,9 +173,9 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
          Rail: không merge/push main/tag/deploy khi owner chưa trả lời câu Ship; giữ file trước khi sửa (`8sync ccc . goal \"…\" --files a,b`); \
          `8sync ccc meet --say \"done|doing|blocked: …\"` sau mỗi card. \
          `cap` khác null hay wait trả cap → không claim, chạy lại `auto wait`. \
-         Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on` false hoặc `paused` true \
+         Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on`/`here` false hoặc `paused` true \
          hoặc `gate` nhắc tới lease, hoặc `auto wait --json` trả `\"wake\":\"off\"`.",
-        setup = auto::loop_setup(name, every_min),
+        setup = auto::goal_loop_setup(name, every_min),
         playbook = auto::lane_playbook(lane),
     );
     g.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -205,10 +215,13 @@ pub(super) struct Opts {
     pub rate: Option<f64>,
     /// `--clear-ss`: delete junk background sessions first.
     pub clear: bool,
+    /// `auto up "<việc>" [--check "<lệnh>"]`: the first card, at the head of the queue.
+    pub task: Option<String>,
+    pub check: Option<String>,
 }
 
 pub(super) fn parse(rest: &[String]) -> Result<Opts> {
-    let mut o = Opts { roles: room::DEFAULT_TEAM.iter().map(|s| s.to_string()).collect(), every: auto::DEFAULT_LOOP_MIN, hours: idle::DEFAULT_HOURS as f64, rate: None, clear: false };
+    let mut o = Opts { roles: room::DEFAULT_TEAM.iter().map(|s| s.to_string()).collect(), every: auto::DEFAULT_LOOP_MIN, hours: idle::DEFAULT_HOURS as f64, rate: None, clear: false, task: None, check: None };
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().filter(|v| !v.starts_with("--")).cloned().ok_or_else(|| anyhow::anyhow!("{a} cần một giá trị\n{USAGE}"));
@@ -236,8 +249,22 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
             "--hours" => o.hours = value()?.parse().map_err(|_| anyhow::anyhow!("--hours cần một số\n{USAGE}"))?,
             "--usd-per-hour" => o.rate = Some(value()?.parse().map_err(|_| anyhow::anyhow!("--usd-per-hour cần một số\n{USAGE}"))?),
             "--clear-ss" | "--clean" => o.clear = true,
-            x => bail!("không rõ `{x}`\n{USAGE}"),
+            "--check" => o.check = Some(value()?),
+            x if x.starts_with("--") => bail!("không rõ `{x}`\n{USAGE}"),
+            w => {
+                let t = o.task.get_or_insert_with(String::new);
+                if !t.is_empty() {
+                    t.push(' ');
+                }
+                t.push_str(w);
+            }
         }
+    }
+    if o.check.is_some() && o.task.is_none() {
+        bail!("--check đi cùng \"<việc>\"\n{USAGE}");
+    }
+    if o.task.as_deref().is_some_and(|t| t.trim().is_empty()) {
+        bail!("việc rỗng\n{USAGE}");
     }
     Ok(o)
 }
@@ -249,7 +276,7 @@ fn agents(t: &Team, all: bool) -> Result<Vec<Live>> {
         a.push("--all".into());
     }
     a.extend(["--cwd".into(), t.root.to_string_lossy().into_owned()]);
-    live(&t.claude.run(&a)?)
+    Ok(live(&t.claude.run(&a)?)?.into_iter().filter(|l| in_repo(l, t.root)).collect())
 }
 
 /// The background sessions no room keeps. `keep` is (registry id, title) per team room: a room keeps
@@ -325,6 +352,10 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     // On first: a room's first tick reads `auto status --json` and drops its loop while auto is off.
     let status = auto::set(t.home, auto::Mode::On { hours: o.hours, after: auto::DEFAULT_AFTER_S, rate: o.rate, repo: Some(t.root.to_path_buf()) }, t.subscription, now)?;
     auto::write_loop_md(t.root)?;
+    // Before any room starts, so the lead's first turn already sees it at the head of the queue.
+    if let Some(task) = &o.task {
+        super::target::add(t.home, t.root, task, o.check.as_deref(), None, true, None, now)?;
+    }
     let mut rows = Vec::new();
     let mut started = Vec::new();
     for name in &o.roles {
@@ -339,7 +370,10 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
             Some(lane) => goal_prompt(name, lane, o.every),
             None => auto::loop_prompt(name, o.every, false),
         };
-        let mut p = plan(&s.conversation_id, &title, &before, &everywhere, (t.has_transcript)(&s.conversation_id));
+        // The registry points at a session that runs in another repo (an older `up` took it over):
+        // that conversation is not this room's, so it opens a new one instead of sharing it.
+        let foreign = everywhere.iter().any(|l| l.id == s.conversation_id && !in_repo(l, t.root));
+        let mut p = if foreign { Plan::Start } else { plan(&s.conversation_id, &title, &before, &everywhere, (t.has_transcript)(&s.conversation_id)) };
         // `--clear-ss` also brings running rooms up to the kit: Claude Code reads hooks once at start,
         // so a background room started before the kit's last write is stopped and resumed (same
         // conversation, its goal comes back). Interactive sessions are never touched.
@@ -410,19 +444,25 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     Ok((status, gone, rows))
 }
 
-/// `auto down`: stop this project's background rooms, pause auto. Returns the stopped room names.
+/// `auto down`: stop this project's background rooms (`claude stop` keeps the conversation, `up`
+/// resumes it; nothing is deleted) and take this project out of auto; other projects keep running.
+/// A room counts by its registry id or, when `up` could not rebind yet, by its title.
+/// Returns the stopped room names.
 pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
     let reg = t.store.load();
     let live = agents(t, false)?;
     let mut stopped = Vec::new();
+    let mut done: Vec<&str> = Vec::new();
     for s in &reg.sessions {
-        if live.iter().any(|l| l.background && l.id == s.conversation_id) {
-            let short: String = s.conversation_id.chars().take(8).collect();
-            t.claude.run(&["stop".into(), short])?;
+        let title = (t.title)(&s.name);
+        let hit = live.iter().find(|l| l.background && !done.contains(&l.id.as_str()) && (l.id == s.conversation_id || l.name == title));
+        if let Some(l) = hit {
+            t.claude.run(&["stop".into(), l.id.chars().take(8).collect()])?;
+            done.push(&l.id);
             stopped.push(s.name.clone());
         }
     }
-    auto::set(t.home, auto::Mode::Pause, t.subscription, now)?;
+    auto::leave(t.home, t.root, t.subscription, now)?;
     Ok(stopped)
 }
 
@@ -433,8 +473,12 @@ pub(super) fn print_up(status: &Value, gone: &[Gone], rows: &[Row], every: u64, 
         let names: Vec<String> = deleted.iter().map(|g| format!("{} {}", if g.name.is_empty() { "(không tên)" } else { &g.name }, g.short)).collect();
         println!("đã xoá {} session nền rác: {}", deleted.len(), names.join(", "));
     }
-    for g in kept {
+    for g in &kept {
         println!("  giữ {} {}: {}", g.name, g.short, g.kept.as_deref().unwrap_or_default());
+    }
+    if !kept.is_empty() {
+        // `claude rm` refuses while a worktree holds commits that are not pushed: that is the work.
+        println!("  → giữ vì worktree còn commit chưa push: push nhánh đó (hoặc gỡ worktree nếu bỏ hẳn) rồi chạy lại `--clear-ss`. Phòng có tên của team không bao giờ bị xoá.");
     }
     println!("team: {} phòng · loop {every} phút mỗi phòng", rows.len());
     for r in rows {
@@ -502,7 +546,7 @@ mod tests {
         assert_eq!(short_id("Workspace not trusted. Run `claude` in C:\\x once"), None);
         assert!(untrusted("Workspace not trusted. Run `claude` in C:\\x once and accept the trust prompt"));
         let l = live(&format!("[{},{}]", agent(DEV_BG, "dev", "background"), agent("11111111-1111-4111-8111-111111111111", "core", "interactive"))).unwrap();
-        assert_eq!(l[0], Live { id: DEV_BG.into(), name: "dev".into(), background: true, started: 1, busy: false });
+        assert_eq!(l[0], Live { id: DEV_BG.into(), name: "dev".into(), background: true, started: 1, busy: false, cwd: "x".into() });
         assert!(!l[1].background);
         assert!(live("error: unknown option '--json'").unwrap_err().to_string().contains("không trả JSON"));
         assert!(live(&format!("[{}]", agent("--discard-unpushed", "x", "background"))).unwrap().is_empty(), "never an id that reads as a flag");
@@ -510,16 +554,16 @@ mod tests {
 
     #[test]
     fn plan_skips_live_rooms_and_resumes_stopped_ones() {
-        let l = vec![Live { id: DEV_BG.into(), name: "dev".into(), background: true, started: 0, busy: false }, Live { id: "x".into(), name: "qa".into(), background: false, started: 0, busy: false }];
+        let l = vec![Live { id: DEV_BG.into(), name: "dev".into(), background: true, started: 0, busy: false, cwd: String::new() }, Live { id: "x".into(), name: "qa".into(), background: false, started: 0, busy: false, cwd: String::new() }];
         assert_eq!(plan(DEV_BG, "dev", &l, &l, true), Plan::Running(DEV_BG.into()));
         assert_eq!(plan("other", "dev", &l, &l, false), Plan::Running(DEV_BG.into()), "a background room with the name counts");
         assert_eq!(plan("other", "qa", &l, &l, true), Plan::Resume, "an interactive session elsewhere with the same name does not");
         assert_eq!(plan("other", "qa", &l, &l, false), Plan::Start);
         // the room's id open in a terminal in another folder: never resumed a second time
         let rd = "ff3e2a54-0000-4000-8000-000000000001";
-        let elsewhere = vec![Live { id: rd.into(), name: "rd-game".into(), background: false, started: 0, busy: false }];
+        let elsewhere = vec![Live { id: rd.into(), name: "rd-game".into(), background: false, started: 0, busy: false, cwd: String::new() }];
         assert_eq!(plan(rd, "rd", &[], &elsewhere, true), Plan::Running(rd.into()));
-        let bg_elsewhere = vec![Live { id: "e1".into(), name: "dev".into(), background: true, started: 0, busy: false }];
+        let bg_elsewhere = vec![Live { id: "e1".into(), name: "dev".into(), background: true, started: 0, busy: false, cwd: String::new() }];
         assert_eq!(plan("other", "dev", &[], &bg_elsewhere, false), Plan::Start, "a same-named room of another project is not ours");
         let a = argv(&Plan::Start, "id-1", "dev", Some("sonnet"), "line one\nline  two");
         assert_eq!(a, ["--bg", "--name", "dev", "--permission-mode", "auto", "--model", "sonnet", "line one line two"]);
@@ -566,15 +610,15 @@ mod tests {
 
     #[test]
     fn junk_is_every_background_session_no_room_keeps() {
-        let bg = |id: &str, name: &str| Live { id: id.into(), name: name.into(), background: true, started: 0, busy: false };
+        let bg = |id: &str, name: &str| Live { id: id.into(), name: name.into(), background: true, started: 0, busy: false, cwd: String::new() };
         let all = vec![
             bg("d1", "dev"),
             bg("d2", "dev"),
-            Live { id: "l1".into(), name: "lead".into(), background: false, started: 0, busy: false },
+            Live { id: "l1".into(), name: "lead".into(), background: false, started: 0, busy: false, cwd: String::new() },
             bg("l2", "lead"),
             bg("q1", "qa"),
             bg("u1", "ui"),
-            Live { id: "n1".into(), name: "notes".into(), background: false, started: 0, busy: false },
+            Live { id: "n1".into(), name: "notes".into(), background: false, started: 0, busy: false, cwd: String::new() },
         ];
         // dev: registry id gone → first background "dev" kept; lead: registry id is the terminal;
         // qa: registry id itself. Duplicates, other names and nothing interactive are junk.
@@ -597,7 +641,7 @@ mod tests {
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{forked}]")]), bg: "backgrounded · 3698e3a6 · {name}".into() };
         // Both sessions started at 1 ms; the kit wrote settings at 1000 ms.
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: Some(1000) };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None };
         let (_, _, rows) = up(&t, &o, 1).unwrap();
         let calls = fake.calls.borrow();
         let stops: Vec<_> = calls.iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
@@ -652,7 +696,7 @@ mod tests {
             bg: String::new(),
         };
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None };
         let (_, gone, rows) = up(&t, &o, 1).unwrap();
         let g: Vec<_> = gone.iter().map(|g| (g.name.as_str(), g.short.as_str(), g.kept.is_some())).collect();
         assert_eq!(g, [("dev", "aaaaaaaa", false), ("ui", &ui.conversation_id[..8], false), ("x", "bbbbbbbb", true)]);
@@ -689,7 +733,7 @@ mod tests {
         let qa_id = qa.conversation_id.clone();
         let has = move |id: &str| id == qa_id;
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &has, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false };
+        let o = Opts { roles: vec!["lead".into(), "dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None };
         let (status, _, rows) = up(&t, &o, 1_000).unwrap();
         assert_eq!(status["on"], true);
         assert!(status["repo"].as_str().is_some(), "auto is scoped to the project");
@@ -717,11 +761,11 @@ mod tests {
         let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec!["[]".into()]), bg: "Workspace not trusted. Run `claude` in C:\\proj once and accept the trust prompt".into() };
         let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false };
+        let o = Opts { roles: vec!["dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None };
         let e = up(&t, &o, 1).unwrap_err().to_string();
         assert!(e.contains("chưa trust") && e.contains("8sync ccc auto up"), "{e}");
         assert_eq!(fake.calls.borrow().iter().filter(|c| c.iter().any(|a| a == "--bg")).count(), 1, "stops at the first room");
-        assert!(up(&t, &Opts { roles: vec!["../x".into()], every: 10, hours: 2.0, rate: None, clear: false }, 1).is_err());
+        assert!(up(&t, &Opts { roles: vec!["../x".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None }, 1).is_err());
 
         let dev = store.touch("dev", false).unwrap();
         let mine = store.touch("lead", false).unwrap();
@@ -734,5 +778,99 @@ mod tests {
         assert_eq!(stops, [vec!["stop".to_string(), dev.conversation_id[..8].to_string()]]);
         assert_eq!(auto::status(&h, false, 3)["paused"], true);
         let _ = std::fs::remove_dir_all(&h);
+    }
+
+    fn agent_in(id: &str, name: &str, kind: &str, cwd: &Path) -> String {
+        format!(r#"{{"pid":1,"cwd":{},"kind":"{kind}","sessionId":"{id}","name":"{name}","status":"idle","startedAt":1}}"#, serde_json::json!(cwd.to_string_lossy()))
+    }
+
+    #[test]
+    fn a_nested_repo_and_a_subfolder_are_told_apart() {
+        // Live 2026-10-18: ai-game-studio is a git repo inside 8sync-startup; `auto up` in the outer
+        // one took over the game's rooms, and `auto up` in apps/hq-ui opened a second team.
+        let (h, root) = tmp("nested");
+        let game = root.join("game/ai");
+        std::fs::create_dir_all(game.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("apps/hq-ui")).unwrap();
+        std::fs::write(root.join("apps/hq-ui/package.json"), "{}").unwrap();
+        let wt = game.join(".claude/worktrees/card-26");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: x").unwrap();
+        let repo = |p: &Path| auto::canon(&crate::verbs::here::repo_of(p).unwrap());
+        assert_eq!(repo(&root.join("apps/hq-ui")), auto::canon(&root), "a package.json subfolder is the same repo");
+        assert_eq!(repo(&game), auto::canon(&game), "a nested repo is its own");
+        assert_eq!(repo(&wt), auto::canon(&game), "a Claude Code worktree belongs to its repo");
+        let at = |cwd: &Path| Live { id: "a".into(), name: "lead".into(), background: true, started: 0, busy: false, cwd: cwd.to_string_lossy().into_owned() };
+        assert!(in_repo(&at(&root.join("apps/hq-ui")), &root));
+        assert!(!in_repo(&at(&game), &root));
+        assert!(!in_repo(&at(&wt), &root));
+        assert!(in_repo(&at(&wt), &game));
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn up_never_takes_a_nested_repos_room_and_starts_its_own() {
+        let (h, root) = tmp("takeover");
+        let game = root.join("game/ai");
+        std::fs::create_dir_all(game.join(".git")).unwrap();
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        // An older `up` bound this repo's lead to the game's running lead.
+        let game_lead = "e1a4e6de-0000-4000-8000-000000000001";
+        store.touch("lead", false).unwrap();
+        store.rebind("lead", game_lead).unwrap();
+        let list = format!("[{},{}]", agent_in(game_lead, "lead", "background", &game), agent_in(DEV_BG, "dev", "background", &game));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|id: &str| id == game_lead, title: &|n: &str| n.to_string(), kit_at: None };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("BE AI zus".into()), check: None };
+        let (status, _, rows) = up(&t, &o, 1_000).unwrap();
+        let states: Vec<_> = rows.iter().map(|r| r.state.split(' ').next().unwrap()).collect();
+        assert_eq!(states, ["mở", "mở"], "neither the game's lead nor its dev is ours: {rows:?}");
+        let bg: Vec<_> = fake.calls.borrow().iter().filter(|c| c.iter().any(|a| a == "--bg")).cloned().collect();
+        assert!(bg.iter().all(|c| !c.iter().any(|a| a == "--resume")), "never resumes the game's conversation: {bg:?}");
+        assert!(fake.calls.borrow().iter().all(|c| c[0] != "stop"), "the game's rooms are left alone");
+        // The task given to `up` is the head of this repo's queue before any room starts.
+        let (head, _) = super::super::target::current(&h, &root).unwrap();
+        assert_eq!(head.unwrap().text, "BE AI zus");
+        assert!(super::super::target::list(&h, &game).unwrap().is_empty(), "not on the game's board");
+        assert_eq!(status["on"], true);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn down_stops_rooms_by_title_too_and_leaves_other_projects_on() {
+        let (h, root) = tmp("down2");
+        let other = h.join("other");
+        std::fs::create_dir_all(other.join(".git")).unwrap();
+        // Two projects run teams at once.
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(other.clone()) }, false, 1).unwrap();
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(root.clone()) }, false, 1).unwrap();
+        assert_eq!(auto::status(&h, false, 2)["repos"].as_array().unwrap().len(), 2);
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        store.touch("lead", false).unwrap();
+        // `up` could not rebind yet: the room runs under an id the registry does not know.
+        let list = format!("[{},{}]", agent_in(DEV_BG, "lead", "background", &root), agent_in("33333333-3333-4333-8333-333333333333", "lead", "background", &other));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list]), bg: String::new() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        assert_eq!(down(&t, 3).unwrap(), ["lead"]);
+        let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
+        assert_eq!(stops, [DEV_BG[..8].to_string()], "only this project's lead");
+        let st = auto::status(&h, false, 4);
+        assert_eq!((st["on"].as_bool(), st["paused"].as_bool()), (Some(true), Some(false)), "the other project keeps running");
+        assert!(auto::in_scope(&h, Some(&other.to_string_lossy())));
+        assert!(!auto::in_scope(&h, Some(&root.to_string_lossy())), "this one is out of auto");
+        // The last project out pauses auto, as before.
+        let t2 = Team { root: &other, ..t };
+        down(&t2, 5).unwrap();
+        assert_eq!(auto::status(&h, false, 6)["paused"], true);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn up_takes_a_task_and_its_check() {
+        let o = parse(&["fix".into(), "login".into(), "--check".into(), "pnpm test".into(), "--roles".into(), "full".into()]).unwrap();
+        assert_eq!((o.task.as_deref(), o.check.as_deref(), o.roles.len()), (Some("fix login"), Some("pnpm test"), 8));
+        assert!(parse(&["--check".into(), "x".into()]).is_err(), "a check needs a task");
+        assert!(parse(&["--bogus".into()]).is_err());
+        assert_eq!(parse(&[]).unwrap().task, None);
     }
 }

@@ -138,6 +138,27 @@ pub(crate) fn detect_project_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
+/// The git repo a path belongs to, for `ccc auto` teams: a Claude Code worktree
+/// (`<repo>/.claude/worktrees/<name>`) counts as its repo; otherwise the nearest ancestor holding
+/// `.git`, so a repo nested inside another (`8sync-startup/game/ai-game-studio`) is its own project.
+/// A subfolder with its own `package.json` is not (unlike [`detect_project_root`]).
+pub(crate) fn repo_of(start: &Path) -> Option<PathBuf> {
+    let parts: Vec<_> = start.components().collect();
+    let cut = parts.windows(2).rposition(|w| w[0].as_os_str() == ".claude" && w[1].as_os_str() == "worktrees");
+    let mut p: PathBuf = match cut {
+        Some(i) => parts[..i].iter().collect(),
+        None => start.to_path_buf(),
+    };
+    loop {
+        if p.join(".git").exists() {
+            return Some(p);
+        }
+        if !p.pop() {
+            return None;
+        }
+    }
+}
+
 pub(crate) fn detect_stack(root: &Path) -> Vec<String> {
     let mut s = Vec::new();
     if root.join("Cargo.toml").exists() { s.push("rust".into()); }

@@ -290,6 +290,7 @@
 
     /* Team */
     .team-grid { display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr); gap: clamp(1.75rem, 4vw, 3.5rem); align-items: start; }
+    @media (min-width: 921px) { .team-grid > div:last-child { position: sticky; top: 1.5rem; } }
     @media (max-width: 920px) { .team-grid { grid-template-columns: minmax(0, 1fr); } }
     .term { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
     .term-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.55rem 0.55rem 0.55rem 1.1rem; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 0.76rem; color: var(--ink-3); }
@@ -639,17 +640,17 @@
             </div>
             <p class="alt">Any folder; page at <code>127.0.0.1:8740</code>. <span lang="vi">Tổng quan</span> · Board · Flow · Preview (the team's screenshots) · <span lang="vi">Máy</span> (RAM, CPU, GPU).</p></li>
           <li><h3>Add the folder</h3>
-            <p>Sidebar → paste the repo path. One folder = one team, one board. First time: run <code>claude</code> there once and trust it.</p></li>
+            <p>Sidebar → paste the repo path. One git repo = one team, one board; a repo nested inside another keeps its own. First time: run <code>claude</code> there once and trust it.</p></li>
           <li><h3>Start the team</h3>
-            <p><b lang="vi">Mở team</b>: lead, dev, qa, review, rd in the background. <b lang="vi">Team đầy đủ</b>: 8 rooms, adds ba, arch, ui.</p>
-            <p class="alt"><code>8sync ccc auto up</code> · <code>--roles full</code></p></li>
+            <p>HQ button <b lang="vi">Mở team</b> (start team): lead, dev, qa, review, rd in the background. <b lang="vi">Team đầy đủ</b> (full team): 8 rooms, adds ba, arch, ui. Put the first task in the same command.</p>
+            <p class="alt"><code>8sync ccc auto up "fix login" --roles full</code></p></li>
           <li><h3>Give it work</h3>
-            <p><b lang="vi">Giao việc</b>: the task + a command that proves it done. Urgent: P0 on the card.</p>
+            <p><b lang="vi">Giao việc</b> (assign) or the box under the office: the task + a command that proves it done, screenshots and files attached. Urgent: P0 on the card.</p>
             <p class="alt"><code>8sync ccc auto add "fix login" --check "pnpm test auth" --prio P0</code></p></li>
           <li><h3>Answer only what needs you</h3>
-            <p><b lang="vi">Anh cần trả lời</b>, or the room's terminal: in HQ, in <a href="https://github.com/stablyai/orca">Orca</a> at the room's worktree, or copy <code>claude attach &lt;id&gt;</code>. Silent 60 s: the critic picks, safe in-repo steps proceed. Ship always waits for you.</p></li>
+            <p>The <b lang="vi">Anh cần trả lời</b> (needs you) panel, or the room's terminal: in HQ, in <a href="https://github.com/stablyai/orca">Orca</a> at the room's worktree, or copy <code>claude attach &lt;id&gt;</code>. Silent 60 s: the critic picks, safe in-repo steps proceed. Ship always waits for you.</p></li>
           <li><h3>Update or stop</h3>
-            <p>After <code>8sync up</code>: <b lang="vi">Dọn &amp; mở lại</b>. Stop: <b lang="vi">Dừng team</b>.</p>
+            <p>After <code>8sync up</code>: <b lang="vi">Dọn &amp; mở lại</b> (clean and reopen) deletes only leftover sessions, never a named room. <b lang="vi">Dừng team</b> (stop) keeps every conversation; <code>auto up</code> resumes them. Other projects keep running.</p>
             <p class="alt"><code>auto up --clear-ss</code> · <code>auto down</code></p></li>
         </ol>
         </div>
@@ -660,7 +661,9 @@
             <li class="room" style="--i:2"><i aria-hidden="true"></i><b>qa</b> Haiku, tests</li>
             <li class="room" style="--i:3"><i aria-hidden="true"></i><b>review</b> Sonnet, approves</li>
             <li class="room" style="--i:4"><i aria-hidden="true"></i><b>rd</b> Opus, researches</li>
-            <li class="room" style="--i:5"><i aria-hidden="true"></i><b>arch</b> Opus, designs (full team)</li>
+            <li class="room" style="--i:5"><i aria-hidden="true"></i><b>ba</b> Opus, writes the card (full team)</li>
+            <li class="room" style="--i:6"><i aria-hidden="true"></i><b>arch</b> Opus, designs (full team)</li>
+            <li class="room" style="--i:7"><i aria-hidden="true"></i><b>ui</b> your default model, screens (full team)</li>
           </ul>
           <p class="say-it"><b>arch</b> writes an ADR from <a href="https://github.com/donnemartin/system-design-primer">The System Design Primer</a> before a card labelled <code>arch</code> is built. Every day it also reads a sourced radar of the repo's own stack and measures scale against the repo's budgets.</p>
           <p class="say-it">The lanes follow <a href="https://github.com/EricTechPro/super-board">super-board</a> (MIT), rebuilt in the Rust CLI on a local file. Inside a room, say <q lang="vi">đưa vào loop: …</q> (add to the loop) or <q lang="vi">làm ngay: …</q> (do it now) and Claude queues it.</p>
@@ -672,8 +675,8 @@
           <thead><tr><th scope="col">Command</th><th scope="col">Options</th><th scope="col">What it does</th></tr></thead>
           <tbody>
             <tr><th colspan="3" scope="rowgroup">Team</th></tr>
-            <tr><td><code>auto up</code></td><td><code>--roles small|full|lead,dev,…</code> <code>--loop 10m</code> <code>--hours N</code> <code>--usd-per-hour X</code> <code>--clear-ss</code></td><td>Open or resume the rooms in this folder. <code>--clear-ss</code> deletes junk background sessions and restarts idle rooms on a newer kit; the board is never touched.</td></tr>
-            <tr><td><code>auto down</code></td><td></td><td>Stop the background rooms, keep their conversations.</td></tr>
+            <tr><td><code>auto up ["…"]</code></td><td><code>"task" --check "…"</code> <code>--roles small|full|lead,dev,…</code> <code>--loop 10m</code> <code>--hours N</code> <code>--usd-per-hour X</code> <code>--clear-ss</code></td><td>Open or resume the rooms of this git repo; a task given here is the first card. <code>--clear-ss</code> deletes junk background sessions and restarts idle rooms on a newer kit; the board is never touched.</td></tr>
+            <tr><td><code>auto down</code></td><td></td><td>Stop this repo's background rooms, keep their conversations; other repos keep running.</td></tr>
             <tr><td><code>auto on</code></td><td><code>--here</code> <code>--loop [10m]</code> <code>--team</code> <code>--target "…" --check "…"</code> <code>--hours N</code> <code>--after 60</code> <code>--usd-per-hour X</code></td><td>Keep rooms you opened yourself working on a loop. <code>--here</code>: this folder only. <code>--after</code>: seconds of owner silence before the critic answers.</td></tr>
             <tr><td><code>auto off · pause · status</code></td><td><code>--json</code></td><td>Stop, pause, or show the loop, lease and usage cap.</td></tr>
             <tr><th colspan="3" scope="rowgroup">Work and board</th></tr>

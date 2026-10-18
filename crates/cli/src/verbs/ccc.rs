@@ -190,10 +190,18 @@ pub fn run(a: Args) -> Result<()> {
             }
             Ok(())
         }
-        "auto" if team::wants(rest) => auto_team(&env, &root, rest),
-        "auto" => auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", &root, || {
-            sessions(&env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect()
-        }),
+        // One team per git repo: a subfolder with its own package.json is not a project, a nested
+        // repo is (ai-game-studio inside 8sync-startup), and a worktree belongs to its repo.
+        "auto" => {
+            let repo = std::env::current_dir().ok().and_then(|c| crate::verbs::here::repo_of(&c)).unwrap_or_else(|| root.clone());
+            if team::wants(rest) {
+                auto_team(&env, &repo, rest)
+            } else {
+                auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", &repo, || {
+                    sessions(&env, &repo).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect()
+                })
+            }
+        }
         "meet" => {
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
             meet::run(&sessions(&env, &root), rest, id.as_deref(), &std::env::current_dir().context("no cwd")?, view_now())
@@ -570,8 +578,14 @@ fn display_name(sessions_dir: &Path, name: &str, root: &Path) -> String {
         let p = e.path();
         p.extension().is_some_and(|x| x == "json")
             && std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).is_some_and(|r| {
-                let cwd = norm(r["cwd"].as_str().unwrap_or_default());
-                r["name"].as_str() == Some(name) && !(cwd == here || cwd.starts_with(&format!("{here}/")))
+                // Same repo, not just a path inside it: a nested repo's "lead" is another room.
+                let raw = r["cwd"].as_str().unwrap_or_default();
+                let cwd = norm(raw);
+                let same = match crate::verbs::here::repo_of(Path::new(raw)) {
+                    Some(repo) => norm(&repo.to_string_lossy()) == here,
+                    None => cwd == here || cwd.starts_with(&format!("{here}/")),
+                };
+                r["name"].as_str() == Some(name) && !same
             })
     });
     let repo: String = root.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
@@ -1994,6 +2008,16 @@ mod tests {
         assert_eq!(display_name(&d, "core", root), "core-su-code", "a sibling sharing a prefix is another project");
         std::fs::write(d.join("5.abc.key"), "not json").unwrap();
         assert_eq!(room::role(&display_name(&d, "rd", root)).0, room::role("rd").0, "role survives the suffix");
+        // A repo nested in this one is another project (seen live 2026-10-18: 8sync-startup took
+        // ai-game-studio's "lead"); its worktrees too. A subfolder of this repo is still this one.
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("game/.git")).unwrap();
+        rec(6, "qa", &p("su-code/apps/hq-ui"));
+        assert_eq!(display_name(&d, "qa", root), "qa");
+        rec(7, "ba", &p("su-code/game"));
+        assert_eq!(display_name(&d, "ba", root), "ba-su-code");
+        rec(8, "ui", &p("su-code/game/.claude/worktrees/card-26"));
+        assert_eq!(display_name(&d, "ui", root), "ui-su-code");
         let _ = std::fs::remove_dir_all(&d);
     }
 

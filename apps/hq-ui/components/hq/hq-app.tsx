@@ -60,6 +60,8 @@ export function HqApp({ token }: { token: string }) {
   // One board poll for Văn phòng (who holds which card) and Board (lanes).
   const boards = useBoards(hq.api);
   const [scope, setScope] = useState<Scope>({ project: null, session: null });
+  // The repo the owner opened from the sidebar: Tổng quan shows that project's block only.
+  const [repo, setRepo] = useState<{ root: string; name: string } | null>(null);
   // null until the owner picks a tab: the default follows the screen (Tổng quan on a wide monitor).
   const [picked, setTab] = useState<Tab | null>(null);
   const wide = useSyncExternalStore(subscribeWide, isWide, () => false);
@@ -83,6 +85,7 @@ export function HqApp({ token }: { token: string }) {
 
   const onScope = useCallback((s: Scope) => {
     setScope(s);
+    setRepo(null);
     if (s.session?.startsWith("hq-")) setTarget(s.session);
     setNavOpen(false);
   }, []);
@@ -119,12 +122,12 @@ export function HqApp({ token }: { token: string }) {
     ? `${new Set(officeRooms.map((r) => r.project?.root ?? r.cwd)).size} dự án · ${officeRooms.length} phòng`
     : "";
   const scoped = scope.session ? hq.sessions.data.find((x) => isScoped(x, scope.session)) : undefined;
-  const title = scope.session ? (scoped ? sessionLabel(scoped) : shortName(scope.session)) : project ? project.name : "Tất cả phòng";
+  const title = scope.session ? (scoped ? sessionLabel(scoped) : shortName(scope.session)) : project ? project.name : (repo?.name ?? "Tất cả phòng");
   const subtitle = scope.session
     ? (view.sessions[0]?.cwd ?? project?.path ?? "")
     : project
       ? project.path
-      : officeSummary;
+      : (repo?.root ?? officeSummary);
   const needsYou = view.sessions.filter((s) => s.status === "needs_input").length;
   const running = view.sessions.filter((s) => s.status !== "ended").length;
 
@@ -154,6 +157,12 @@ export function HqApp({ token }: { token: string }) {
   const goHome = () => {
     onScope({ project: null, session: null });
     setTab("office");
+  };
+  /** A repo with rooms, from the sidebar: its Tổng quan. */
+  const openRepo = (root: string, name: string) => {
+    onScope({ project: null, session: null });
+    setRepo({ root, name });
+    setTab("overview");
   };
   /** A folder with no room yet: the office lists it under "Dự án chưa có team" with its Mở team button. */
   const openFolder = (id: number) => {
@@ -188,12 +197,12 @@ export function HqApp({ token }: { token: string }) {
     <>
       <div className="grid h-dvh grid-cols-1 grid-rows-1 md:grid-cols-[264px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 border-r border-sidebar-border md:block">
-          <Nav hq={hq} scope={scope} office={office} boards={boards.boards ?? []} onHome={goHome} onOpenRoom={openRoom} onOpenFolder={openFolder} />
+          <Nav hq={hq} scope={scope} office={office} boards={boards.boards ?? []} onHome={goHome} onOpenRoom={openRoom} onOpenFolder={openFolder} onOpenRepo={openRepo} repo={repo?.root ?? null} />
         </aside>
         <Sheet open={navOpen} onOpenChange={setNavOpen}>
           <SheetContent side="left" className="w-72 p-0 md:hidden" showCloseButton={false}>
             <SheetTitle className="sr-only">Dự án và phòng</SheetTitle>
-            <Nav hq={hq} scope={scope} office={office} boards={boards.boards ?? []} onHome={goHome} onOpenRoom={openRoom} onOpenFolder={openFolder} />
+            <Nav hq={hq} scope={scope} office={office} boards={boards.boards ?? []} onHome={goHome} onOpenRoom={openRoom} onOpenFolder={openFolder} onOpenRepo={openRepo} repo={repo?.root ?? null} />
           </SheetContent>
         </Sheet>
 
@@ -267,6 +276,8 @@ export function HqApp({ token }: { token: string }) {
                 onTab={setTab}
                 onOpenRoom={openRoom}
                 onOpenCard={openCard}
+                focus={repo?.root ?? null}
+                onAll={() => setRepo(null)}
               />
             </TabsContent>
             <TabsContent value="office" className="h-full">

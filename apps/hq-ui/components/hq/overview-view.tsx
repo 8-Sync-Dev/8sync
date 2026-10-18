@@ -42,6 +42,8 @@ export function OverviewView({
   onTab,
   onOpenRoom,
   onOpenCard,
+  focus = null,
+  onAll,
 }: {
   office: OfficeState;
   boards: BoardsState;
@@ -51,6 +53,9 @@ export function OverviewView({
   onTab: (t: OverviewTab) => void;
   onOpenRoom: (r: Room) => void;
   onOpenCard: (root: string, id: number) => void;
+  /** A repo root picked in the sidebar: only its block (and its asks) show. */
+  focus?: string | null;
+  onAll?: () => void;
 }) {
   const rooms = useMemo(() => office.office?.rooms ?? [], [office.office]);
   const now = office.office?.at ?? 0;
@@ -69,7 +74,8 @@ export function OverviewView({
     [rows, rooms],
   );
   // A room in a worktree belongs to its repo's block: same board, same previews.
-  const groups = useMemo(() => groupByRepo(rooms.filter((r) => r.status !== "ended")), [rooms]);
+  const all = useMemo(() => groupByRepo(rooms.filter((r) => r.status !== "ended")), [rooms]);
+  const groups = useMemo(() => (focus ? all.filter((g) => rootKey(g.project.root) === rootKey(focus)) : all), [all, focus]);
   // Words only: session start/end and "needs you" pings are status, the roster already shows them.
   const thread = useMemo(() => buildTeamThread(messages).filter((t) => t.text.trim() && CHAT_KINDS.has(t.kind)), [messages]);
 
@@ -92,9 +98,17 @@ export function OverviewView({
           </EmptyState>
         ) : (
           <>
+            {focus && all.length > 1 && (
+              <p className="text-sm text-muted-foreground">
+                Đang xem một dự án.{" "}
+                <button type="button" className="font-medium text-foreground underline underline-offset-4 hover:no-underline" onClick={onAll}>
+                  Xem cả {all.length} dự án
+                </button>
+              </p>
+            )}
             <AskPanel
               wide
-              rooms={asking}
+              rooms={focus ? asking.filter((a) => groups.some((g) => g.rooms.some((r) => r.key === a.key))) : asking}
               now={now}
               token={token}
               onOpen={(key) => {
