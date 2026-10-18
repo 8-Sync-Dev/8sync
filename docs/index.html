@@ -325,6 +325,7 @@
     @keyframes tick { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
     .say-it { margin: 1.6rem 0 0; padding: 1rem 1.15rem; border-radius: 10px; background: var(--bg-raised); color: var(--ink-2); font-size: 0.95rem; }
     .say-it q { color: var(--ink); font-weight: 600; }
+    .say-it + .say-it { margin-top: 0.75rem; }
     .notes { display: grid; gap: clamp(2rem, 4vw, 2.75rem); margin-top: clamp(2.5rem, 5vw, 4rem); padding-top: clamp(2rem, 4vw, 2.75rem); border-top: 1px solid var(--line-soft); }
     .notes p { margin: 0.75rem 0 0; color: var(--ink-2); max-width: 70ch; }
     .cols { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem clamp(1.25rem, 3vw, 2.5rem); color: var(--ink-2); }
@@ -636,17 +637,17 @@
               <code>8sync hq ui</code>
               <button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button>
             </div>
-            <p class="alt">Any folder; page at <code>127.0.0.1:8740</code>.</p></li>
+            <p class="alt">Any folder; page at <code>127.0.0.1:8740</code>. <span lang="vi">Tổng quan</span> · Board · Flow · Preview (the team's screenshots) · <span lang="vi">Máy</span> (RAM, CPU, GPU).</p></li>
           <li><h3>Add the folder</h3>
             <p>Sidebar → paste the repo path. One folder = one team, one board. First time: run <code>claude</code> there once and trust it.</p></li>
           <li><h3>Start the team</h3>
-            <p><b lang="vi">Mở team</b>: lead, dev, qa, review, rd in the background. <b lang="vi">Team đầy đủ</b>: 8 rooms.</p>
+            <p><b lang="vi">Mở team</b>: lead, dev, qa, review, rd in the background. <b lang="vi">Team đầy đủ</b>: 8 rooms, adds ba, arch, ui.</p>
             <p class="alt"><code>8sync ccc auto up</code> · <code>--roles full</code></p></li>
           <li><h3>Give it work</h3>
             <p><b lang="vi">Giao việc</b>: the task + a command that proves it done. Urgent: P0 on the card.</p>
             <p class="alt"><code>8sync ccc auto add "fix login" --check "pnpm test auth" --prio P0</code></p></li>
           <li><h3>Answer only what needs you</h3>
-            <p><b lang="vi">Anh cần trả lời</b>, or the room's terminal right in HQ. Silent 60 s: the critic picks, safe in-repo steps proceed. Ship always waits for you.</p></li>
+            <p><b lang="vi">Anh cần trả lời</b>, or the room's terminal: in HQ, in <a href="https://github.com/stablyai/orca">Orca</a> at the room's worktree, or copy <code>claude attach &lt;id&gt;</code>. Silent 60 s: the critic picks, safe in-repo steps proceed. Ship always waits for you.</p></li>
           <li><h3>Update or stop</h3>
             <p>After <code>8sync up</code>: <b lang="vi">Dọn &amp; mở lại</b>. Stop: <b lang="vi">Dừng team</b>.</p>
             <p class="alt"><code>auto up --clear-ss</code> · <code>auto down</code></p></li>
@@ -659,7 +660,9 @@
             <li class="room" style="--i:2"><i aria-hidden="true"></i><b>qa</b> Haiku, tests</li>
             <li class="room" style="--i:3"><i aria-hidden="true"></i><b>review</b> Sonnet, approves</li>
             <li class="room" style="--i:4"><i aria-hidden="true"></i><b>rd</b> Opus, researches</li>
+            <li class="room" style="--i:5"><i aria-hidden="true"></i><b>arch</b> Opus, designs (full team)</li>
           </ul>
+          <p class="say-it"><b>arch</b> writes an ADR from <a href="https://github.com/donnemartin/system-design-primer">The System Design Primer</a> before a card labelled <code>arch</code> is built. Every day it also reads a sourced radar of the repo's own stack and measures scale against the repo's budgets.</p>
           <p class="say-it">The lanes follow <a href="https://github.com/EricTechPro/super-board">super-board</a> (MIT), rebuilt in the Rust CLI on a local file. Inside a room, say <q lang="vi">đưa vào loop: …</q> (add to the loop) or <q lang="vi">làm ngay: …</q> (do it now) and Claude queues it.</p>
         </div>
       </div>
@@ -674,7 +677,7 @@
             <tr><td><code>auto on</code></td><td><code>--here</code> <code>--loop [10m]</code> <code>--team</code> <code>--target "…" --check "…"</code> <code>--hours N</code> <code>--after 60</code> <code>--usd-per-hour X</code></td><td>Keep rooms you opened yourself working on a loop. <code>--here</code>: this folder only. <code>--after</code>: seconds of owner silence before the critic answers.</td></tr>
             <tr><td><code>auto off · pause · status</code></td><td><code>--json</code></td><td>Stop, pause, or show the loop, lease and usage cap.</td></tr>
             <tr><th colspan="3" scope="rowgroup">Work and board</th></tr>
-            <tr><td><code>auto add "…"</code></td><td><code>--check "…"</code> <code>--label bug|feature|qa</code> <code>--prio P0..P3</code> <code>--now</code></td><td>A card. <code>--now</code>: front of the queue and every room's inbox. P0 is claimed before anything else.</td></tr>
+            <tr><td><code>auto add "…"</code></td><td><code>--check "…"</code> <code>--label bug|feature|qa|arch</code> <code>--prio P0..P3</code> <code>--now</code></td><td>A card. <code>--now</code>: front of the queue and every room's inbox. P0 is claimed before anything else. <code>arch</code>: needs an ADR before it goes to ready.</td></tr>
             <tr><td><code>auto board · queue · lint</code></td><td><code>--json</code></td><td>Cards by lane, the queue, problems on the board.</td></tr>
             <tr><td><code>auto move &lt;id&gt; &lt;lane&gt;</code></td><td><code>--note</code> <code>--check</code> <code>--pr</code> <code>--sha</code> <code>--prio</code></td><td>Move a card: <code>ready</code> needs a check, <code>approved</code> needs the reviewed SHA.</td></tr>
             <tr><td><code>auto prio &lt;id&gt; P0|…|none</code></td><td></td><td>Change how urgent a card is.</td></tr>

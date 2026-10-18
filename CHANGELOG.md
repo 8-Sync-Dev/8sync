@@ -4,6 +4,13 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **The site catches up with v0.100.6–v0.100.10.**
+  - HQ's tabs (Tổng quan, Board, Flow, Preview) and the Máy chip are listed under "Open HQ".
+  - The full team lists `arch`, with a pill and a short note on what it does (ADR from The System Design Primer before an `arch` card is built, a daily sourced radar, measured scale).
+  - "Answer only what needs you" mentions opening the room's terminal in Orca and copying `claude attach <id>`.
+  - The reference lists `--label arch`.
+  - Checked in Edge at 1440 px and 500 px.
 
 ## [0.100.10] — 2026-10-18
 ### Changed
