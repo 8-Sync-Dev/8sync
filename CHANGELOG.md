@@ -4,6 +4,14 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **A room's terminal opens in Orca, in the room's own worktree.** The HQ terminal panel adds **Mở trong Orca** when [Orca](https://github.com/stablyai/orca) is on the machine. It opens a shell tab in the room's folder (or its repo root when Orca does not know that worktree), types `claude attach <id>` and brings the tab forward.
+  - **Luôn mở Orca** makes every "Mở terminal" button go straight to Orca. If Orca fails, the web panel opens instead.
+  - **Copy lệnh** copies `cd "<room folder>"; claude attach <id>`, which works in bash and PowerShell.
+  - The Orca CLI is found through `ORCA_CLI_COMMAND`, the CLI bundled with the app, or `PATH`. On Linux only `orca-ide` is used, because a bare `orca` there is the GNOME screen reader.
+  - Orca is called with argv only, never through a shell.
+  - Two things Orca does that HQ works around: `terminal create --focus` times out when that worktree is not the one open, and `--command "claude …"` is treated as an agent launch and times out. HQ creates the tab plainly, then uses `terminal send` and `terminal switch`.
+  - Checked live on Windows: the ai-game-studio lead room opened in an Orca tab showing its pending question.
 
 ## [0.100.5] — 2026-10-18
 ### Added
