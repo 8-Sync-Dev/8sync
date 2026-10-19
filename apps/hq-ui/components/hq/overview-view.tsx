@@ -280,7 +280,7 @@ function ProjectBlock({
               {previews.items.slice(0, 4).map((i) => (
                 <li key={i.id}>
                   <button type="button" onClick={() => onTab("preview")} className="block w-full rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-label={`${fileName(i.rel)}, mở tab Preview`}>
-                    <PreviewImage id={i.id} token={token} alt="" className="aspect-[16/10] w-full rounded-md border" />
+                    <PreviewImage id={i.id} token={token} version={i.mtime} alt="" className="aspect-[16/10] w-full rounded-md border" />
                     <span className="mt-0.5 block truncate text-[11px] text-muted-foreground tabular">
                       {i.card != null ? `#${i.card} · ` : ""}
                       {agoShort(i.mtime, now)}

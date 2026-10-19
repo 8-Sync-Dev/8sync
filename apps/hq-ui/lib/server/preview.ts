@@ -145,8 +145,34 @@ export function previewRoots(projects: ProjectInfo[]): { root: string; name: str
   return [...seen.values()];
 }
 
-export function listPreviews(projects: ProjectInfo[]): ProjectPreviews[] {
-  return previewRoots(projects).map((p) => ({ ...p, items: scanProject(p) }));
+/**
+ * id → file from the last listing. A thumbnail grid asks for up to PREVIEW_CAP files, one request
+ * each; re-scanning every project and worktree per image made Preview crawl (owner 2026-10-18).
+ */
+const INDEX_TTL_MS = 30_000;
+let index: { at: number; byId: Map<string, { abs: string; type: string; size: number }> } | null = null;
+
+export function listPreviews(projects: ProjectInfo[], now = Date.now()): ProjectPreviews[] {
+  const out = previewRoots(projects).map((p) => ({ ...p, items: scanProject(p) }));
+  const byId = new Map<string, { abs: string; type: string; size: number }>();
+  for (const p of out) {
+    for (const i of p.items) {
+      const abs = path.join(i.root, ...i.rel.split("/"));
+      byId.set(i.id, { abs, type: PREVIEW_TYPES[path.extname(abs).toLowerCase()] ?? "application/octet-stream", size: i.size });
+    }
+  }
+  index = { at: now, byId };
+  return out;
+}
+
+/** A file the last listing (≤ 30 s old) named; null = ask findPreview, which rescans. */
+export function cachedPreview(id: string | null, now = Date.now()): { abs: string; type: string; size: number } | null {
+  if (!isPreviewId(id) || !index || now - index.at > INDEX_TTL_MS) return null;
+  return index.byId.get(id) ?? null;
+}
+
+export function resetPreviewIndex() {
+  index = null;
 }
 
 /** The file behind an id from the current list, else null (unknown ids and raw paths alike). */

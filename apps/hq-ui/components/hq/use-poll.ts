@@ -52,28 +52,45 @@ export function usePoll<T>(api: Hq["api"], url: string, ms: number, on: boolean)
  * An image the API serves behind `x-hq-token` (an <img src> cannot send the header), as an object
  * URL. Fetched only once `visible` turns true, revoked when the id changes or the view unmounts.
  */
-export function useAuthedImage(token: string, id: string | null, visible: boolean) {
-  // Keyed by id, so a new id shows its own loading state without a reset in the effect.
-  const [st, setSt] = useState<{ id: string; src: string | null; failed: boolean } | null>(null);
+/**
+ * Images already fetched this page load, by id + version: switching tabs or re-rendering a grid does
+ * not fetch them again. Oldest dropped past IMAGE_CACHE_MAX (their object URLs revoked).
+ */
+const IMAGE_CACHE_MAX = 240;
+const images = new Map<string, string>();
+
+function remember(key: string, url: string) {
+  images.set(key, url);
+  while (images.size > IMAGE_CACHE_MAX) {
+    const [old, u] = images.entries().next().value as [string, string];
+    images.delete(old);
+    URL.revokeObjectURL(u);
+  }
+}
+
+export function useAuthedImage(token: string, id: string | null, visible: boolean, version?: number) {
+  const key = id ? `${id}@${version ?? ""}` : null;
+  // Keyed by id + version, so a new image shows its own loading state without a reset in the effect.
+  const [st, setSt] = useState<{ key: string; src: string | null; failed: boolean } | null>(null);
   useEffect(() => {
-    if (!id || !visible) return;
+    if (!id || !key || !visible || images.has(key)) return;
     const ac = new AbortController();
-    let url: string | null = null;
-    fetch(`/api/preview/file?id=${encodeURIComponent(id)}`, { headers: { "x-hq-token": token }, signal: ac.signal })
+    const v = version != null ? `&v=${Math.floor(version)}` : "";
+    fetch(`/api/preview/file?id=${encodeURIComponent(id)}${v}`, { headers: { "x-hq-token": token }, signal: ac.signal })
       .then(async (r) => {
         if (!r.ok) throw new Error(String(r.status));
-        url = URL.createObjectURL(await r.blob());
-        setSt({ id, src: url, failed: false });
+        const url = URL.createObjectURL(await r.blob());
+        remember(key, url);
+        setSt({ key, src: url, failed: false });
       })
       .catch(() => {
-        if (!ac.signal.aborted) setSt({ id, src: null, failed: true });
+        if (!ac.signal.aborted) setSt({ key, src: null, failed: true });
       });
-    return () => {
-      ac.abort();
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [token, id, visible]);
-  return st && st.id === id ? st : { src: null, failed: false };
+    return () => ac.abort();
+  }, [token, id, key, visible, version]);
+  const cached = key ? images.get(key) : undefined;
+  if (cached) return { src: cached, failed: false };
+  return st && st.key === key ? st : { src: null, failed: false };
 }
 
 /** True once the element has scrolled near the viewport (then stays true). */
