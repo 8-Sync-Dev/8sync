@@ -1,0 +1,147 @@
+// Pure rules behind "Dung lượng dự án" (Máy tab): which sizes are abnormal and the cleanup message a
+// room gets for them. No I/O (lib/server/disk.ts measures). Tested in tests/disk.test.ts.
+//
+// Owner (2026-10-19): "xem dung lượng các file dự án phình to … phân tích cảnh báo các thứ bất
+// thường to … gửi tin nhắn cho phòng để dọn/check/clear/optimize luôn".
+import { roomRole } from "./now";
+import { leadOf, roomGroups } from "./room-send";
+
+export const MB = 2 ** 20;
+export const GB = 2 ** 30;
+
+/** Named thresholds; `high` is the second step of the same rule. */
+export const LIMITS = {
+  /** A git-tracked file this big bloats every clone. */
+  trackedFile: 5 * MB,
+  trackedFileHigh: 50 * MB,
+  /** Screenshots / UAT evidence in one preview folder. */
+  evidence: 20 * MB,
+  evidenceHigh: 200 * MB,
+  /** `.claude/worktrees`: count, then size. */
+  worktrees: 10,
+  worktreesBytes: 2 * GB,
+  /** Any one folder (top-level entry, .git, node_modules, build output). */
+  dir: 1 * GB,
+  dirHigh: 10 * GB,
+  /** `.claude/hq-uploads/<id>` older than this is a leftover (rooms read attachments right away). */
+  uploadsAgeMs: 24 * 3600_000,
+} as const;
+
+export type Sized = { path: string; bytes: number };
+
+/** One project's sizes; paths are relative to `root`, with `/`. */
+export type ProjectDisk = {
+  root: string;
+  name: string;
+  total: number;
+  /** Top-level entries, biggest first. */
+  entries: (Sized & { dir: boolean })[];
+  git: number | null;
+  worktrees: { n: number; bytes: number } | null;
+  /** Preview / evidence folders that exist. */
+  evidence: Sized[];
+  /** Outermost node_modules folders, biggest first. */
+  nodeModules: Sized[];
+  /** Build output folders (target, .next, dist…), outside node_modules, biggest first. */
+  build: Sized[];
+  uploads: { n: number; bytes: number; oldest: number | null } | null;
+  /** Git-tracked files over LIMITS.trackedFile, biggest first. */
+  tracked: Sized[];
+  /** The time or entry cap stopped the walk: every size is at least this much. */
+  truncated: boolean;
+  error: string | null;
+  at: number;
+  ms: number;
+};
+
+export type Severity = "high" | "warn";
+export type Finding = { id: string; severity: Severity; path: string; bytes: number; why: string };
+
+/** "dưới 1 KB", "512 KB", "12 MB", "3.2 GB". */
+export function bytes(n: number): string {
+  if (n >= GB) return `${(n / GB).toFixed(n >= 10 * GB ? 0 : 1)} GB`;
+  if (n >= MB) return `${Math.round(n / MB)} MB`;
+  return n < 1024 ? "dưới 1 KB" : `${Math.round(n / 1024)} KB`;
+}
+
+const size = (lim: number, high: number, n: number): Severity | null => (n > high ? "high" : n > lim ? "warn" : null);
+
+/** Every abnormal item of one project, high first, then biggest. */
+export function findings(p: ProjectDisk, now: number): Finding[] {
+  const out: Finding[] = [];
+  for (const t of p.tracked.slice(0, 10)) {
+    const s = size(LIMITS.trackedFile, LIMITS.trackedFileHigh, t.bytes);
+    if (s) out.push({ id: `tracked:${t.path}`, severity: s, path: t.path, bytes: t.bytes, why: `file đã commit lớn hơn ${bytes(s === "high" ? LIMITS.trackedFileHigh : LIMITS.trackedFile)}` });
+  }
+  for (const e of p.evidence) {
+    const s = size(LIMITS.evidence, LIMITS.evidenceHigh, e.bytes);
+    if (s) out.push({ id: `evidence:${e.path}`, severity: s, path: e.path, bytes: e.bytes, why: `ảnh bằng chứng hơn ${bytes(s === "high" ? LIMITS.evidenceHigh : LIMITS.evidence)}` });
+  }
+  const w = p.worktrees;
+  if (w && (w.n > LIMITS.worktrees || w.bytes > LIMITS.worktreesBytes)) {
+    const why = [w.n > LIMITS.worktrees && `${w.n} worktree (ngưỡng ${LIMITS.worktrees})`, w.bytes > LIMITS.worktreesBytes && `chiếm hơn ${bytes(LIMITS.worktreesBytes)}`].filter(Boolean).join(", ");
+    out.push({ id: "worktrees", severity: w.n > 2 * LIMITS.worktrees || w.bytes > 2 * LIMITS.worktreesBytes ? "high" : "warn", path: ".claude/worktrees", bytes: w.bytes, why });
+  }
+  if (p.uploads && p.uploads.n > 0 && p.uploads.oldest != null && now - p.uploads.oldest > LIMITS.uploadsAgeMs) {
+    out.push({ id: "uploads", severity: "warn", path: ".claude/hq-uploads", bytes: p.uploads.bytes, why: `${p.uploads.n} file đính kèm HQ còn sót, cũ hơn 1 ngày` });
+  }
+  const dirs: Sized[] = [...(p.git != null ? [{ path: ".git", bytes: p.git }] : []), ...p.nodeModules, ...p.build];
+  for (const d of dirs) {
+    const s = size(LIMITS.dir, LIMITS.dirHigh, d.bytes);
+    if (s && !out.some((f) => f.path === d.path)) out.push({ id: `dir:${d.path}`, severity: s, path: d.path, bytes: d.bytes, why: `thư mục hơn ${bytes(s === "high" ? LIMITS.dirHigh : LIMITS.dir)}` });
+  }
+  // A top-level folder only when nothing flagged inside it already explains most of its size.
+  for (const e of p.entries.filter((x) => x.dir)) {
+    const s = size(LIMITS.dir, LIMITS.dirHigh, e.bytes);
+    const inside = out.filter((f) => f.path === e.path || f.path.startsWith(`${e.path}/`)).reduce((n, f) => n + f.bytes, 0);
+    if (s && inside < e.bytes / 2) out.push({ id: `dir:${e.path}`, severity: s, path: e.path, bytes: e.bytes, why: `thư mục hơn ${bytes(s === "high" ? LIMITS.dirHigh : LIMITS.dir)}` });
+  }
+  return out.sort((a, b) => (a.severity === b.severity ? b.bytes - a.bytes : a.severity === "high" ? -1 : 1));
+}
+
+/** Same findings, same fingerprint: the loop sends a set once per day, not every 6 h. */
+export const fingerprint = (fs: Finding[]) => fs.map((f) => f.id).sort().join("|");
+
+const MAX_LINES = 12;
+
+/** The prepared message: what was found, what to do, and the rules that keep work safe. */
+export function cleanupText(p: Pick<ProjectDisk, "root" | "name" | "truncated">, fs: Finding[]): string {
+  const sev = (s: Severity) => (s === "high" ? "cao" : "chú ý");
+  const lines = fs.slice(0, MAX_LINES).map((f) => `- [${sev(f.severity)}] ${f.path} ${p.truncated ? "≥ " : ""}${bytes(f.bytes)}: ${f.why}`);
+  if (fs.length > MAX_LINES) lines.push(`- và ${fs.length - MAX_LINES} mục nữa`);
+  return [
+    `Dọn dung lượng dự án ${p.name} (${p.root}). HQ đo thấy:`,
+    ...(lines.length ? lines : ["- không có mục nào vượt ngưỡng; kiểm tra nhanh rồi tối ưu nếu thấy chỗ đáng"]),
+    "",
+    "Kiểm tra từng mục, dọn hoặc tối ưu cái nào đáng, rồi báo lại đã giải phóng bao nhiêu và còn gì để lại vì sao.",
+    "Luật:",
+    "- Không xoá việc chưa commit hoặc chưa push: xem git status và git log @{u}.. trước; worktree còn thay đổi thì để nguyên.",
+    "- Asset hoặc bằng chứng mà dự án ghi là chỉ owner được xoá: hỏi anh bằng AskUserQuestion trước khi xoá.",
+    "- File đã commit: ưu tiên git rm (hoặc nén, chuyển sang LFS) trong một commit qua PR; không viết lại lịch sử git.",
+    "- Thư mục build (target, .next, node_modules): dọn bằng lệnh của công cụ (cargo clean, xoá rồi cài lại) khi không phòng nào đang build.",
+  ].join("\n");
+}
+
+type CleanRoom = Parameters<typeof leadOf>[0][number];
+
+/**
+ * One project folder whatever its slashes, case or `\\?\` prefix. Not folded into its repo (unlike
+ * preview's rootKey): a worktree with its own rooms is its own project in the sidebar.
+ */
+export const diskKey = (p: string) =>
+  p
+    .replace(/\\/g, "/")
+    .replace(/^\/\/\?\//, "")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+
+/** The room a project's cleanup goes to: its live lead room, else a dev room, else any room of it. */
+export function cleanupRoom<T extends CleanRoom>(rooms: T[], root: string): T | null {
+  const rs = projectRooms(rooms, root);
+  return leadOf(rs) ?? rs.find((r) => (roomRole(r.label) ?? roomRole(r.name))?.seat === "dev") ?? rs[0] ?? null;
+}
+
+/** Rooms of that project a cleanup can go to (the picker). */
+export function projectRooms<T extends CleanRoom>(rooms: T[], root: string): T[] {
+  return roomGroups(rooms).find((x) => diskKey(x.root) === diskKey(root))?.rooms ?? [];
+}

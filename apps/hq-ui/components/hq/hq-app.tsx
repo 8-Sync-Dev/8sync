@@ -4,7 +4,7 @@ import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
 import { roomNow } from "@/lib/now";
 import { limitsView, matchesSession } from "@/lib/office";
 import { CircleHelpIcon, MenuIcon, SendIcon, SquareTerminalIcon } from "lucide-react";
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -35,12 +35,13 @@ import { useHq } from "./use-hq";
 import { useReloadOnNewUi } from "./use-ui-version";
 import { useOffice, type Room } from "./use-office";
 import { usePoll } from "./use-poll";
-import { MachineChip } from "./machine-chip";
+import { MachineChip, type MachineView as MachineData } from "./machine-chip";
+import { MachineView } from "./machine-view";
+import { UsageView } from "./usage-view";
 import type { Session } from "./types";
 
-/** office: every session is a room · group: all rooms talking · room: one room's chat. */
-type Tab = "overview" | "office" | "group" | "room" | "board" | "preview" | "flow" | "report" | "sessions" | "activity";
-
+/** office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens. */
+type Tab = "overview" | "office" | "group" | "room" | "board" | "preview" | "flow" | "report" | "usage" | "may" | "sessions" | "activity";
 /** Tổng quan is the first screen on a wide monitor; below this the office stays the default. */
 const WIDE_QUERY = "(min-width: 1600px)";
 const subscribeWide = (cb: () => void) => {
@@ -59,7 +60,8 @@ const subscribeNarrow = (cb: () => void) => {
 const isNarrow = () => window.matchMedia(NARROW_QUERY).matches;
 const PREVIEW_POLL_MS = 15_000;
 const LOOPS_POLL_MS = 30_000;
-
+/** The header chip and the Máy tab share one poll. */
+const MACHINE_POLL_MS = 5_000;
 /** Scope by any name a session goes by: hq name, Claude session id, or its label. */
 const isScoped = (s: Session, key: string | null) => matchesSession({ ...s, label: sessionLabel(s) }, key);
 const SESSION_NAME_INPUT = "start-session-name";
@@ -87,6 +89,13 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   // A card another tab asked Board to open ("Mở card"); `n` makes each request new.
   const [focusCard, setFocusCard] = useState<{ root: string; id: number; n: number } | null>(null);
   const previews = usePoll<{ projects: NonNullable<PreviewState["data"]>["projects"] }>(hq.api, "/api/preview", PREVIEW_POLL_MS, tab === "preview" || tab === "overview");
+  const machine = usePoll<MachineData>(hq.api, "/api/machine", MACHINE_POLL_MS, true);
+  const openMachine = useCallback(() => setTab("may"), []);
+  // Phones scroll the tab row: keep the active tab in view (the Máy chip opens the last ones).
+  const tabRow = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    tabRow.current?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [tab]);
   const loops = usePoll<NonNullable<LoopsState["data"]>>(hq.api, "/api/loops", LOOPS_POLL_MS, tab === "flow");
 
   const openCard = useCallback((root: string, id: number) => {
@@ -285,12 +294,17 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               </dl>
               {!narrow && (
                 <div className="shrink-0">
-                  <MachineChip api={hq.api} />
+                  <MachineChip m={machine.data} onOpen={openMachine} />
                 </div>
               )}
             </div>
             <div className="mt-2 flex items-center">
-              <TabsList variant="line" className="h-9 min-w-0 flex-1 justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] sm:px-6">
+              {/* Phones: 12 tabs scroll; each is a full 44 px tall target, its underline kept inside the scroller. */}
+              <TabsList
+                ref={tabRow}
+                variant="line"
+                className="h-9 min-w-0 flex-1 justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] max-sm:group-data-horizontal/tabs:h-[50px] max-sm:*:data-[slot=tabs-trigger]:h-11 max-sm:*:data-[slot=tabs-trigger]:after:bottom-0 sm:px-6"
+              >
                 <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
                 <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
                 <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
@@ -302,6 +316,8 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 <TabsTrigger value="preview" className="flex-none px-0">Preview</TabsTrigger>
                 <TabsTrigger value="flow" className="flex-none px-0">Flow</TabsTrigger>
                 <TabsTrigger value="report" className="flex-none px-0">Báo cáo</TabsTrigger>
+                <TabsTrigger value="usage" className="flex-none px-0">Hạn mức</TabsTrigger>
+                <TabsTrigger value="may" className="flex-none px-0">Máy</TabsTrigger>
                 <TabsTrigger value="sessions" className="flex-none px-0">
                   Sessions
                   {needsYou > 0 && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
@@ -311,7 +327,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               {/* Phones: the header row has no room left, the tab row scrolls anyway. */}
               {narrow && (
                 <div className="shrink-0 pr-3">
-                  <MachineChip api={hq.api} />
+                  <MachineChip m={machine.data} onOpen={openMachine} />
                 </div>
               )}
             </div>
@@ -368,11 +384,17 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
             <TabsContent value="report" className="h-full">
               <ReportView data={office} onOpen={openRoom} />
             </TabsContent>
+            <TabsContent value="usage" className="h-full">
+              <UsageView token={token} />
+            </TabsContent>
+            <TabsContent value="may" className="h-full">
+              <MachineView m={machine.data} reload={machine.reload} api={hq.api} rooms={officeRooms} active={tab === "may"} />
+            </TabsContent>
             <TabsContent value="board" className="h-full">
               <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} focus={focusCard} />
             </TabsContent>
             <TabsContent value="preview" className="h-full">
-              <PreviewView state={previews} boards={boards.boards} token={token} onOpenCard={openCard} />
+              <PreviewView state={previews} boards={boards.boards} token={token} rooms={officeRooms} onOpenCard={openCard} />
             </TabsContent>
             <TabsContent value="flow" className="h-full">
               <FlowView state={boards} loops={loops} />

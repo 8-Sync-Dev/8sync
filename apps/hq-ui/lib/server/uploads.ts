@@ -1,8 +1,8 @@
-// Files the owner attaches in the "Gửi cho mọi phòng" composer (owner 2026-10-18: "chắc chắn gửi là
-// đọc được"). Two steps: POST /api/uploads stages one file under HQ's state dir; POST /api/targets with
-// `files: [id]` copies each into the chosen repo at `.claude/hq-uploads/<id>/<name>` (a `.gitignore`
-// of `*` there, so it is never committed) and appends the absolute paths to the task, so every room
-// opens them with Claude Code's Read tool (images and PDFs included).
+// Files the owner attaches in HQ's composer (owner 2026-10-18: "chắc chắn gửi là đọc được"). Two
+// steps: POST /api/uploads stages one file under HQ's state dir; POST /api/targets (every room) or
+// POST /api/messages (one room) with `files: [id]` copies each into the repo at
+// `.claude/hq-uploads/<id>/<name>` (a `.gitignore` of `*` there, so it is never committed) and appends
+// the absolute paths to the text, so the rooms open them with Claude Code's Read tool (images and PDFs included).
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -46,7 +46,10 @@ export function saveUpload(name: string, bytes: Buffer, dir = uploadsDir(), now 
   return { id, name: n, size: bytes.length };
 }
 
-/** Copy staged files into `<root>/.claude/hq-uploads/`; returns their absolute paths. Throws on an unknown id. */
+/**
+ * Copy staged files into `<root>/.claude/hq-uploads/`; returns their absolute paths. An id already
+ * placed in this repo (a retried send) is reused, not copied again. Throws on an unknown id.
+ */
 export function placeUploads(ids: string[], root: string, dir = uploadsDir()): string[] {
   if (ids.length === 0) return [];
   const base = path.join(root, ".claude", "hq-uploads");
@@ -55,10 +58,12 @@ export function placeUploads(ids: string[], root: string, dir = uploadsDir()): s
   if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, "# HQ attachments: local only\n*\n");
   return ids.map((id) => {
     if (!ID.test(id)) throw new Error("file đính kèm không hợp lệ");
+    const to = path.join(base, id);
+    const placed = fs.existsSync(to) ? fs.readdirSync(to)[0] : undefined;
+    if (placed) return path.join(to, placed);
     const src = path.join(dir, id);
     const name = fs.existsSync(src) ? fs.readdirSync(src)[0] : undefined;
     if (!name) throw new Error("file đính kèm đã hết hạn, đính kèm lại");
-    const to = path.join(base, id);
     fs.mkdirSync(to, { recursive: true });
     fs.copyFileSync(path.join(src, name), path.join(to, name));
     return path.join(to, name);

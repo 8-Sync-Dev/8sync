@@ -1,0 +1,251 @@
+// "Dung lượng dự án" (Máy tab): how big each HQ project has grown. One bounded walk per project
+// (entry and time caps, symlinks and junctions skipped, never into another repo: a folder with its
+// own `.git` is left out, except the worktrees under `.claude/worktrees`), plus the big git-tracked
+// files from `git ls-tree -r -l HEAD`. On demand, cached ≤ 6 h in memory and in disk.json, so a
+// restarted HQ still has the last result. The rules on what is abnormal live in lib/disk.ts.
+import { execFile } from "node:child_process";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import path from "node:path";
+import type { DatabaseSync } from "node:sqlite";
+import { diskKey, findings, LIMITS, type Finding, type ProjectDisk, type Sized } from "../disk";
+import type { ProjectInfo } from "../office";
+import { withMissing } from "./db";
+import { loadOffice } from "./office";
+import { stateDir } from "./paths";
+import { PREVIEW_DIRS } from "./preview";
+import { repoProjects } from "./targets";
+
+/** Per project: stop after this many directory entries or this long; sizes are then lower bounds. */
+export const WALK_ENTRIES = 400_000;
+export const WALK_MS = 45_000;
+/** A result older than this is scanned again the next time anyone asks. */
+export const DISK_MAX_AGE_MS = 6 * 3600_000;
+/** Build output folder names (outside node_modules and other build output). */
+export const BUILD_DIRS: Record<string, true> = {
+  target: true,
+  ".next": true,
+  dist: true,
+  build: true,
+  out: true,
+  ".turbo": true,
+  coverage: true,
+  ".vite": true,
+  ".svelte-kit": true,
+  ".parcel-cache": true,
+  ".nuxt": true,
+  ".output": true,
+};
+const WORKTREES = ".claude/worktrees";
+const UPLOADS = ".claude/hq-uploads";
+const TOP = 12;
+
+type Budget = { left: number; end: number; cut: boolean };
+type Acc = { sizes: Record<string, number>; rootFiles: Sized[]; nodeModules: Sized[]; build: Sized[] };
+/** `inside`: already under node_modules or build output (not reported again). `own`: a repo or worktree root. */
+type Where = { inside: boolean; own: boolean };
+
+const WATCH: Record<string, true> = Object.fromEntries([".git", WORKTREES, UPLOADS, ...PREVIEW_DIRS].map((p) => [p, true]));
+
+/** Bytes under `abs` (files only, apparent size). */
+async function du(abs: string, rel: string, b: Budget, acc: Acc, at: Where): Promise<number> {
+  if (b.cut) return 0;
+  let ents: fs.Dirent[];
+  try {
+    ents = await fsp.readdir(abs, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  if (!at.own && ents.some((e) => e.name === ".git")) return 0; // another repo: not this project's bytes
+  const files: string[] = [];
+  const dirs: string[] = [];
+  for (const e of ents) {
+    if (--b.left < 0 || Date.now() > b.end) {
+      b.cut = true;
+      break;
+    }
+    // Symlinks (and Windows junctions, which Node reports as links) are never followed.
+    if (e.isSymbolicLink()) continue;
+    if (e.isDirectory()) dirs.push(e.name);
+    else if (e.isFile()) files.push(e.name);
+  }
+  let total = 0;
+  for (let i = 0; i < files.length; i += 64) {
+    const sizes = await Promise.all(files.slice(i, i + 64).map((f) => fsp.lstat(path.join(abs, f)).then((s) => s.size, () => 0)));
+    sizes.forEach((n, j) => {
+      total += n;
+      if (rel === "") acc.rootFiles.push({ path: files[i + j], bytes: n });
+    });
+  }
+  for (const d of dirs) {
+    const r = rel ? `${rel}/${d}` : d;
+    const nm = d === "node_modules";
+    const out = !at.inside && !nm && BUILD_DIRS[d] === true;
+    const n = await du(path.join(abs, d), r, b, acc, { inside: at.inside || nm || out, own: rel === WORKTREES });
+    total += n;
+    if (rel === "" || WATCH[r]) acc.sizes[r] = n;
+    if (!at.inside && nm) acc.nodeModules.push({ path: r, bytes: n });
+    else if (out) acc.build.push({ path: r, bytes: n });
+  }
+  return total;
+}
+
+/** `git ls-tree -r -l -z HEAD`: "<mode> blob <sha> <size>\t<path>\0"; files over the limit, biggest first. */
+export function parseLsTree(out: string, min: number = LIMITS.trackedFile): Sized[] {
+  const big: Sized[] = [];
+  for (const rec of out.split("\0")) {
+    const tab = rec.indexOf("\t");
+    if (tab < 0) continue;
+    const meta = rec.slice(0, tab).trim().split(/\s+/);
+    const n = Number(meta[3]);
+    if (meta[1] === "blob" && Number.isFinite(n) && n > min) big.push({ path: rec.slice(tab + 1), bytes: n });
+  }
+  return big.sort((a, b) => b.bytes - a.bytes).slice(0, 20);
+}
+
+function lsTree(root: string): Promise<string | null> {
+  const { promise, resolve } = Promise.withResolvers<string | null>();
+  execFile("git", ["-C", root, "ls-tree", "-r", "-l", "-z", "HEAD"], { timeout: 20_000, windowsHide: true, maxBuffer: 64 << 20 }, (err, stdout) => resolve(err ? null : String(stdout)));
+  return promise;
+}
+
+const biggest = (xs: Sized[], n = 8) => xs.sort((a, b) => b.bytes - a.bytes).slice(0, n);
+
+/** One project's sizes; never throws (an unreadable root comes back with `error`). */
+export async function scanDisk(p: { root: string; name: string }, now = Date.now()): Promise<ProjectDisk> {
+  const t0 = Date.now();
+  const b: Budget = { left: WALK_ENTRIES, end: t0 + WALK_MS, cut: false };
+  const acc: Acc = { sizes: {}, rootFiles: [], nodeModules: [], build: [] };
+  const empty = { root: p.root, name: p.name, total: 0, entries: [], git: null, worktrees: null, evidence: [], nodeModules: [], build: [], uploads: null, tracked: [], truncated: false, at: now };
+  try {
+    if (!(await fsp.stat(p.root)).isDirectory()) return { ...empty, error: "không phải thư mục", ms: 0 };
+  } catch {
+    return { ...empty, error: "không đọc được thư mục", ms: 0 };
+  }
+  const [total, tree] = await Promise.all([du(p.root, "", b, acc, { inside: false, own: true }), lsTree(p.root)]);
+  // Top-level folders (a nested repo measures 0 and drops out) and files, biggest first.
+  const entries = [...Object.entries(acc.sizes).filter(([k]) => !k.includes("/")).map(([k, n]) => ({ path: k, bytes: n, dir: true })), ...acc.rootFiles.map((f) => ({ ...f, dir: false }))]
+    .filter((e) => e.bytes > 0)
+    .sort((a, c) => c.bytes - a.bytes)
+    .slice(0, TOP);
+  const wtDirs = await fsp.readdir(path.join(p.root, WORKTREES), { withFileTypes: true }).then((es) => es.filter((e) => e.isDirectory()).length, () => null);
+  const up = await fsp.readdir(path.join(p.root, UPLOADS), { withFileTypes: true }).catch(() => null);
+  let uploads: ProjectDisk["uploads"] = null;
+  if (up) {
+    const ids = up.filter((e) => e.isDirectory());
+    const mt = await Promise.all(ids.map((e) => fsp.stat(path.join(p.root, UPLOADS, e.name)).then((s) => s.mtimeMs, () => null)));
+    const ok = mt.filter((m): m is number => m != null);
+    uploads = { n: ids.length, bytes: acc.sizes[UPLOADS] ?? 0, oldest: ok.length ? Math.min(...ok) : null };
+  }
+  return {
+    root: p.root,
+    name: p.name,
+    total,
+    entries,
+    git: acc.sizes[".git"] ?? null,
+    worktrees: wtDirs == null ? null : { n: wtDirs, bytes: acc.sizes[WORKTREES] ?? 0 },
+    evidence: PREVIEW_DIRS.filter((d) => acc.sizes[d] != null).map((d) => ({ path: d, bytes: acc.sizes[d] })),
+    nodeModules: biggest(acc.nodeModules),
+    build: biggest(acc.build),
+    uploads,
+    tracked: tree == null ? [] : parseLsTree(tree),
+    truncated: b.cut,
+    error: null,
+    at: now,
+    ms: Date.now() - t0,
+  };
+}
+
+/**
+ * The same projects the sidebar lists: every repo with a live room (worktrees folded into their
+ * repo) and every folder added in HQ that still exists.
+ */
+export async function diskProjects(db: DatabaseSync): Promise<ProjectInfo[]> {
+  const office = await loadOffice(db).catch(() => null);
+  const live = repoProjects((office?.rooms ?? []).flatMap((r) => (r.project ? [r.project] : [])));
+  const rows = withMissing(db.prepare("SELECT path, name FROM projects ORDER BY added_at").all() as { path: string; name: string }[]).filter((r) => !r.missing);
+  const out = new Map(live.map((p) => [diskKey(p.root), p] as const));
+  for (const r of rows) if (!out.has(diskKey(r.path))) out.set(diskKey(r.path), { root: r.path, name: r.name, branch: null });
+  return [...out.values()];
+}
+
+export type DiskProject = ProjectDisk & { findings: Finding[] };
+/** `at`: when the oldest listed result was measured (each project carries its own `at`). */
+export type DiskState = { projects: DiskProject[]; at: number | null; scanning: boolean };
+/** `queued`: folders (diskKey) a running or waiting scan will measure. */
+type Store = { projects: ProjectDisk[]; scanning: Promise<void> | null; queued: Set<string>; loaded: boolean };
+
+// On globalThis: the cleanup loop (instrumentation bundle) and the routes share one cache and one scan.
+const g = globalThis as unknown as { __hqDisk?: Store };
+const store = (): Store => (g.__hqDisk ??= { projects: [], scanning: null, queued: new Set(), loaded: false });
+const diskFile = () => path.join(stateDir(), "disk.json");
+
+function load(s: Store) {
+  if (s.loaded) return;
+  s.loaded = true;
+  try {
+    const v = JSON.parse(fs.readFileSync(diskFile(), "utf8"));
+    if (v && Array.isArray(v.projects)) s.projects = v.projects.filter((p: ProjectDisk) => p && typeof p.root === "string" && typeof p.at === "number");
+  } catch {
+    // no earlier scan
+  }
+}
+
+function save(projects: ProjectDisk[]) {
+  try {
+    fs.mkdirSync(stateDir(), { recursive: true });
+    fs.writeFileSync(diskFile(), JSON.stringify({ projects }), { mode: 0o600 });
+  } catch (e) {
+    console.error("[hq] disk.json not written", e);
+  }
+}
+
+/**
+ * Measure `projects` (one at a time: the disk, not the CPU, is the limit). Each result replaces
+ * only that project's earlier one, so a scan of a few projects (the loop) keeps everyone else's.
+ * Projects already queued are not measured twice; the rest wait for the running scan.
+ */
+export function startScan(projects: ProjectInfo[]): Promise<void> {
+  const s = store();
+  load(s);
+  const want = projects.filter((p, i) => !s.queued.has(diskKey(p.root)) && projects.findIndex((q) => diskKey(q.root) === diskKey(p.root)) === i);
+  if (!want.length) return s.scanning ?? Promise.resolve();
+  for (const p of want) s.queued.add(diskKey(p.root));
+  const run = (s.scanning ?? Promise.resolve()).then(async () => {
+    for (const p of want) {
+      const d = await scanDisk(p);
+      s.projects = [d, ...s.projects.filter((o) => diskKey(o.root) !== diskKey(d.root))];
+      s.queued.delete(diskKey(p.root));
+    }
+    save(s.projects);
+  });
+  const tracked: Promise<void> = run.finally(() => {
+    for (const p of want) s.queued.delete(diskKey(p.root));
+    if (s.scanning === tracked) s.scanning = null;
+  });
+  s.scanning = tracked;
+  return tracked;
+}
+
+/** The cached results for these projects, findings included; `stale`: one is missing or older than 6 h. */
+export function diskState(projects: ProjectInfo[], now = Date.now()): DiskState & { stale: boolean } {
+  const s = store();
+  load(s);
+  const byKey = new Map(s.projects.map((p) => [diskKey(p.root), p] as const));
+  const list = projects.flatMap((p) => {
+    const d = byKey.get(diskKey(p.root));
+    return d ? [{ ...d, name: p.name, findings: findings(d, now) }] : [];
+  });
+  const stale = list.length < projects.length || list.some((p) => now - p.at > DISK_MAX_AGE_MS);
+  return {
+    projects: list,
+    at: list.length ? Math.min(...list.map((p) => p.at)) : null,
+    scanning: projects.some((p) => s.queued.has(diskKey(p.root))),
+    stale,
+  };
+}
+
+/** Test seam: forget the cache (and whether disk.json was read). */
+export function resetDisk() {
+  delete g.__hqDisk;
+}

@@ -1,7 +1,9 @@
-// "Máy" chip: how loaded this machine is while the rooms run. RAM and CPU from Node; GPU from
+// "Máy" tab: how loaded this machine is while the rooms run. RAM and CPU from Node; GPU from
 // `nvidia-smi` when there is one; how much RAM Claude Code and Node processes hold, from `tasklist`
 // (Windows) or `ps` (macOS, Linux). argv only, short timeouts, a failed probe is just left out.
+// `spec()`: what the machine is (CPU, RAM, GPU, OS), read once per HQ process.
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 
 const TIMEOUT_MS = 4_000;
@@ -141,3 +143,73 @@ export async function clean(dryRun: boolean, run: Exec = exec): Promise<string |
 }
 
 let cleaning: Promise<string | null> | null = null;
+
+export type Spec = {
+  cpu: { model: string; cores: number | null; threads: number };
+  memTotalMb: number;
+  gpus: { name: string; vramMb: number }[] | null;
+  os: { name: string; version: string; arch: string };
+};
+
+/** Windows 11 keeps "Windows 10" in the registry name `os.version()` reads; build 22000+ is 11. */
+export function windowsName(version: string, release: string): string {
+  const build = Number(release.split(".")[2] ?? 0);
+  return build >= 22000 ? version.replace(/^Windows 10\b/, "Windows 11") : version;
+}
+
+/** Physical cores: a number from PowerShell / sysctl, or `lscpu -p=core,socket` rows (unique pairs). */
+export function parseCores(platform: NodeJS.Platform, out: string | null): number | null {
+  if (out == null) return null;
+  if (platform === "linux") {
+    const pairs = new Set(out.split(/\r?\n/).filter((l) => /^\d+,\d+$/.test(l.trim())).map((l) => l.trim()));
+    return pairs.size || null;
+  }
+  const n = Number(out.trim());
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits` */
+export function parseGpuSpec(out: string): { name: string; vramMb: number }[] {
+  return out
+    .split(/\r?\n/)
+    .map((l) => l.split(",").map((s) => s.trim()))
+    .filter((f) => f.length >= 2 && f[0] && /^\d+$/.test(f[1]))
+    .map((f) => ({ name: f[0].slice(0, 60), vramMb: Number(f[1]) }));
+}
+
+function prettyLinux(): string | null {
+  try {
+    return /^PRETTY_NAME="?([^"\n]+)"?/m.exec(fs.readFileSync("/etc/os-release", "utf8"))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function readSpec(platform: NodeJS.Platform, run: Exec): Promise<Spec> {
+  const cpus = os.cpus();
+  const [cores, smi, mac] = await Promise.all([
+    platform === "win32"
+      ? run("powershell", ["-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfCores -Sum).Sum"], 15_000)
+      : platform === "darwin"
+        ? run("sysctl", ["-n", "hw.physicalcpu"])
+        : run("lscpu", ["-p=core,socket"]),
+    run("nvidia-smi", ["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]),
+    platform === "darwin" ? run("sw_vers", ["-productVersion"]) : Promise.resolve(null),
+  ]);
+  const name =
+    platform === "win32" ? windowsName(os.version(), os.release()) : platform === "darwin" ? `macOS ${mac?.trim() ?? ""}`.trim() : (prettyLinux() ?? os.version());
+  return {
+    cpu: { model: (cpus[0]?.model ?? "").replace(/\s+/g, " ").trim(), cores: parseCores(platform, cores), threads: cpus.length },
+    memTotalMb: Math.round(os.totalmem() / 2 ** 20),
+    gpus: smi == null ? null : parseGpuSpec(smi),
+    os: { name, version: os.release(), arch: os.arch() },
+  };
+}
+
+let specOnce: Promise<Spec> | null = null;
+
+/** What this machine is; read once (the hardware doesn't change under a running HQ). */
+export function spec(platform: NodeJS.Platform = process.platform, run: Exec = exec): Promise<Spec> {
+  specOnce ??= readSpec(platform, run);
+  return specOnce;
+}

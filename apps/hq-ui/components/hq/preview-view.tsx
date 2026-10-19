@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeftIcon, ChevronRightIcon, GitBranchIcon, ImageIcon, ImageOffIcon, KanbanSquareIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, GitBranchIcon, ImageIcon, ImageOffIcon, KanbanSquareIcon, MessageSquarePlusIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -14,6 +14,9 @@ import type { ProjectBoard } from "@/lib/server/board";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
 import { LANE_VI, TONE_INK, laneTone } from "./card-sheet";
+import { AskImage } from "./ask-image";
+import { makeApi, type Api } from "./use-hq";
+import type { Room } from "./use-office";
 import { useAuthedImage, useNearView } from "./use-poll";
 
 export type PreviewState = { data: { projects: ProjectPreviews[] } | null; error: string | null; at: number; reload: () => void };
@@ -33,20 +36,25 @@ export function cardInfo(boards: ProjectBoard[] | null, root: string, id: number
   return null;
 }
 
-/** Screenshots rooms saved while they work, grouped by the card they belong to. */
+/** Screenshots rooms saved while they work, grouped by the card they belong to; ask a room about any of them. */
 export function PreviewView({
   state,
   boards,
   token,
+  rooms,
   onOpenCard,
 }: {
   state: PreviewState;
   boards: ProjectBoard[] | null;
   token: string;
+  /** Office rooms: who "Hỏi về ảnh này" can send to. */
+  rooms: Room[];
   onOpenCard: (root: string, id: number) => void;
 }) {
   const [pick, setPick] = useState<string | null>(null);
   const [view, setView] = useState<string | null>(null);
+  const [ask, setAsk] = useState(false);
+  const api = useMemo(() => makeApi(token), [token]);
   const list = useMemo(() => [...(state.data?.projects ?? [])].sort((a, b) => (b.items[0]?.mtime ?? 0) - (a.items[0]?.mtime ?? 0)), [state.data]);
   const cur = list.find((p) => p.root === pick) ?? list[0];
   const groups = useMemo(() => groupByCard(cur?.items ?? []), [cur]);
@@ -139,8 +147,23 @@ export function PreviewView({
                   </h2>
                   <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,13.5rem),1fr))] gap-3">
                     {g.items.map((i) => (
-                      <li key={i.id}>
+                      <li key={i.id} className="group/thumb relative">
                         <Thumb item={i} token={token} now={now} onOpen={() => setView(i.id)} />
+                        <Button
+                          type="button"
+                          size="icon-sm"
+                          variant="secondary"
+                          aria-label={`Hỏi phòng về ảnh ${fileName(i.rel)}`}
+                          title="Hỏi về ảnh này"
+                          aria-haspopup="dialog"
+                          onClick={() => {
+                            setView(i.id);
+                            setAsk(true);
+                          }}
+                          className="absolute top-1.5 right-1.5 shadow-sm transition-opacity duration-150 group-hover/thumb:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none max-sm:size-11 sm:opacity-0 [@media(hover:none)]:opacity-100"
+                        >
+                          <MessageSquarePlusIcon />
+                        </Button>
                       </li>
                     ))}
                   </ul>
@@ -156,11 +179,20 @@ export function PreviewView({
         id={view}
         token={token}
         now={now}
-        onId={setView}
+        onId={(id) => {
+          setView(id);
+          if (!id) setAsk(false);
+        }}
+        ask={ask}
+        onAsk={setAsk}
+        api={api}
+        rooms={rooms}
+        boards={boards}
         cardInfo={(id) => (cur ? cardInfo(boards, cur.root, id) : null)}
         onOpenCard={(id) => {
           if (!cur) return;
           setView(null);
+          setAsk(false);
           onOpenCard(cur.root, id);
         }}
       />
@@ -275,13 +307,18 @@ function BranchChip({ item }: { item: PreviewItem }) {
   );
 }
 
-/** Large view with prev/next (buttons and ← →), the full path and a link to the card. */
+/** Large view with prev/next (buttons and ← →), the full path, a link to the card and "Hỏi về ảnh này". */
 function Viewer({
   items,
   id,
   token,
   now,
   onId,
+  ask,
+  onAsk,
+  api,
+  rooms,
+  boards,
   cardInfo: infoOf,
   onOpenCard,
 }: {
@@ -290,6 +327,12 @@ function Viewer({
   token: string;
   now: number;
   onId: (id: string | null) => void;
+  /** Pins + composer instead of prev/next. */
+  ask: boolean;
+  onAsk: (on: boolean) => void;
+  api: Api;
+  rooms: Room[];
+  boards: ProjectBoard[] | null;
   cardInfo: (id: number) => ReturnType<typeof cardInfo>;
   onOpenCard: (id: number) => void;
 }) {
@@ -300,8 +343,10 @@ function Viewer({
     onId(items[(i + d + items.length) % items.length].id);
   };
   useEffect(() => {
-    if (!item) return;
+    // While asking, arrows belong to the pins and the text boxes.
+    if (!item || ask) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLElement && e.target.closest("input, textarea, [contenteditable]")) return;
       if (e.key === "ArrowRight") go(1);
       else if (e.key === "ArrowLeft") go(-1);
       else return;
@@ -315,8 +360,30 @@ function Viewer({
   const canOpen = !!info && isOpenLane(info.lane);
   return (
     <Dialog open={item != null} onOpenChange={(o) => !o && onId(null)}>
-      <DialogContent className="grid max-h-[94dvh] w-[min(96vw,1400px)] max-w-none grid-rows-[auto_minmax(0,1fr)_auto] gap-3 p-4 sm:max-w-none sm:p-5">
-        {item && (
+      <DialogContent
+        className={cn(
+          "grid max-h-[94dvh] w-[min(96vw,1400px)] max-w-none gap-3 p-4 sm:max-w-none sm:p-5",
+          ask
+            ? // Phones: a bottom sheet that scrolls as one; large screens: image left, pins and composer right.
+              "grid-rows-[auto_auto_minmax(0,1fr)] max-lg:h-[94dvh] max-lg:grid-rows-none max-lg:content-start max-lg:overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:h-[96dvh] max-sm:max-h-[96dvh] max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:overscroll-contain max-sm:rounded-b-none"
+            : "grid-rows-[auto_minmax(0,1fr)_auto]",
+        )}
+      >
+        {item && ask && (
+          <>
+            <div className="flex min-w-0 items-center gap-2 pr-10">
+              <DialogTitle className="min-w-0 truncate text-base font-semibold">Hỏi về {fileName(item.rel)}</DialogTitle>
+              <Button type="button" size="sm" variant="ghost" className="ml-auto shrink-0 max-sm:h-11" onClick={() => onAsk(false)}>
+                <XIcon /> Thôi hỏi
+              </Button>
+            </div>
+            <DialogDescription asChild>
+              <code className="min-w-0 font-mono text-xs break-all text-muted-foreground">{fullPath(item)}</code>
+            </DialogDescription>
+            <AskImage key={item.id} item={item} path={fullPath(item)} token={token} api={api} rooms={rooms} boards={boards} onDone={() => onAsk(false)} />
+          </>
+        )}
+        {item && !ask && (
           <>
             <div className="flex min-w-0 items-baseline gap-2 pr-10">
               <DialogTitle className="min-w-0 truncate text-base font-semibold">{fileName(item.rel)}</DialogTitle>
@@ -328,10 +395,10 @@ function Viewer({
               <PreviewImage key={item.id} id={item.id} token={token} alt={item.rel} eager className="h-[min(72dvh,900px)] w-full rounded-lg" />
               {items.length > 1 && (
                 <>
-                  <Button type="button" size="icon" variant="secondary" className="absolute top-1/2 left-2 -translate-y-1/2 shadow-sm" onClick={() => go(-1)} aria-label="Ảnh trước (←)">
+                  <Button type="button" size="icon" variant="secondary" className="absolute top-1/2 left-2 -translate-y-1/2 shadow-sm max-sm:size-11" onClick={() => go(-1)} aria-label="Ảnh trước (←)">
                     <ChevronLeftIcon />
                   </Button>
-                  <Button type="button" size="icon" variant="secondary" className="absolute top-1/2 right-2 -translate-y-1/2 shadow-sm" onClick={() => go(1)} aria-label="Ảnh sau (→)">
+                  <Button type="button" size="icon" variant="secondary" className="absolute top-1/2 right-2 -translate-y-1/2 shadow-sm max-sm:size-11" onClick={() => go(1)} aria-label="Ảnh sau (→)">
                     <ChevronRightIcon />
                   </Button>
                 </>
@@ -344,11 +411,14 @@ function Viewer({
                 </code>
               </DialogDescription>
               {item.card != null && (
-                <Button type="button" size="sm" variant="outline" onClick={() => onOpenCard(item.card!)} disabled={!canOpen} title={canOpen ? undefined : info ? "Card đã đóng" : "Card không còn trên board"}>
+                <Button type="button" size="sm" variant="outline" className="max-sm:h-11" onClick={() => onOpenCard(item.card!)} disabled={!canOpen} title={canOpen ? undefined : info ? "Card đã đóng" : "Card không còn trên board"}>
                   <KanbanSquareIcon /> Mở card #{item.card}
                   {title && <span className="max-w-56 truncate font-normal text-muted-foreground">{title}</span>}
                 </Button>
               )}
+              <Button type="button" size="sm" className="max-sm:h-11" onClick={() => onAsk(true)}>
+                <MessageSquarePlusIcon /> Hỏi về ảnh này
+              </Button>
             </div>
           </>
         )}
