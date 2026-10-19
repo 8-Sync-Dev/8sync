@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.103.0] — 2026-10-19
+### Added
+- **Điện và tiền điện trong chip "Máy" của HQ.** Owner (2026-10-19): "Trên hq ui xem đc ram cpu gpu điện tiêu thụ chi phí vnd kiểm soát chặt tiêu hao". The chip shows the watts next to the load; its panel shows watts now and ₫/giờ, kWh and ₫ today and this month. CPU package energy is measured (Windows RAPL "Energy Meter" counter through `typeperf`, no admin; Linux powercap `energy_uj` when readable), GPU board power is measured (`nvidia-smi power.draw`), the rest of the box (board, RAM, disks, fans, PSU loss) is an editable estimate, default 60 W. Price default 3.500 ₫/kWh (EVN top household tiers + 8 % VAT), editable. The HQ server counts every 15 s from start (`instrumentation.ts`), with or without a tab open; a gap longer than 90 s (asleep, stalled) counts only the measured CPU energy. Ledger: `~/.local/state/8sync/hq/power.json`, 70 days.
+- **Daily electricity budget.** Set in ₫ from the panel. When today's spend reaches it, HQ pauses the team (`8sync ccc auto pause`) and keeps it paused for the rest of the day: "Chạy liên tục" answers 409 with the reason until the budget is raised or cleared.
+- **"Thức & màn hình"** in the same panel, from the new **`8sync ccc awake status [--json]`** (also `8sync awake status`): screen on/off/dim (Windows console display state), what keeps the screen on (from `powercfg /requests` when HQ runs elevated), minutes since the last mouse/keyboard input, whether anything holds the machine awake (system-wide execution state; Linux: an `8sync` sleep inhibitor), time asleep since boot (Windows unbiased interrupt time; Linux `CLOCK_BOOTTIME − CLOCK_MONOTONIC`), Modern Standby or not, and how many rooms finished a turn since the owner left.
+### Changed
+- The "Máy" chip shows on phones too (it was hidden below 640 px), and its panel is a popover so the settings fields take typing.
+
 ## [0.102.1] — 2026-10-19
 ### Fixed
 - **Typing from a phone.** Owner (2026-10-19): "input hq gửi không được ở link vps". Room and shell terminals get a real input line under the screen (Enter or "Gửi" sends the line + Enter; empty = Enter): a phone keyboard with IME, Vietnamese or autocorrect types into it reliably, where xterm's hidden textarea may drop keys. Write endpoints were checked through both VPS links (`/hq` and `:8443`): they pass HQ's checks.

@@ -139,6 +139,9 @@ pub fn run(a: Args) -> Result<()> {
     if verb == "statusline" {
         return statusline::run(rest); // before Env::detect: runs every few seconds, must stay fast
     }
+    if verb == "awake" && rest.first().map(String::as_str) == Some("status") {
+        return awake::status(&rest[1..]); // before Env::detect: HQ polls it every ~30 s
+    }
     if verb == "help" {
         print!("{}", help::TEXT);
         return Ok(());

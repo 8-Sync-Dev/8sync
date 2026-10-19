@@ -49,6 +49,14 @@ const subscribeWide = (cb: () => void) => {
   return () => m.removeEventListener("change", cb);
 };
 const isWide = () => window.matchMedia(WIDE_QUERY).matches;
+/** Below Tailwind `sm`: the header row is full, the Máy chip moves to the tab row. */
+const NARROW_QUERY = "(max-width: 639px)";
+const subscribeNarrow = (cb: () => void) => {
+  const m = window.matchMedia(NARROW_QUERY);
+  m.addEventListener("change", cb);
+  return () => m.removeEventListener("change", cb);
+};
+const isNarrow = () => window.matchMedia(NARROW_QUERY).matches;
 const PREVIEW_POLL_MS = 15_000;
 const LOOPS_POLL_MS = 30_000;
 
@@ -68,6 +76,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   // null until the owner picks a tab: the default follows the screen (Tổng quan on a wide monitor).
   const [picked, setTab] = useState<Tab | null>(null);
   const wide = useSyncExternalStore(subscribeWide, isWide, () => false);
+  const narrow = useSyncExternalStore(subscribeNarrow, isNarrow, () => false);
   const tab: Tab = picked ?? (wide ? "overview" : "office");
   const [target, setTarget] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -274,28 +283,38 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   </div>
                 )}
               </dl>
-              <div className="hidden shrink-0 sm:block">
-                <MachineChip api={hq.api} />
-              </div>
+              {!narrow && (
+                <div className="shrink-0">
+                  <MachineChip api={hq.api} />
+                </div>
+              )}
             </div>
-            <TabsList variant="line" className="mt-2 h-9 w-full max-w-full justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] sm:px-6">
-              <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
-              <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
-              <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
-              <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
-              <TabsTrigger value="board" className="flex-none px-0">
-                Board
-                {view.tasks.length > 0 && <span className="text-xs text-muted-foreground tabular">{view.tasks.filter((t) => t.status !== "done").length}</span>}
-              </TabsTrigger>
-              <TabsTrigger value="preview" className="flex-none px-0">Preview</TabsTrigger>
-              <TabsTrigger value="flow" className="flex-none px-0">Flow</TabsTrigger>
-              <TabsTrigger value="report" className="flex-none px-0">Báo cáo</TabsTrigger>
-              <TabsTrigger value="sessions" className="flex-none px-0">
-                Sessions
-                {needsYou > 0 && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
-              </TabsTrigger>
-              <TabsTrigger value="activity" className="flex-none px-0">Activity</TabsTrigger>
-            </TabsList>
+            <div className="mt-2 flex items-center">
+              <TabsList variant="line" className="h-9 min-w-0 flex-1 justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] sm:px-6">
+                <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
+                <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
+                <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
+                <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
+                <TabsTrigger value="board" className="flex-none px-0">
+                  Board
+                  {view.tasks.length > 0 && <span className="text-xs text-muted-foreground tabular">{view.tasks.filter((t) => t.status !== "done").length}</span>}
+                </TabsTrigger>
+                <TabsTrigger value="preview" className="flex-none px-0">Preview</TabsTrigger>
+                <TabsTrigger value="flow" className="flex-none px-0">Flow</TabsTrigger>
+                <TabsTrigger value="report" className="flex-none px-0">Báo cáo</TabsTrigger>
+                <TabsTrigger value="sessions" className="flex-none px-0">
+                  Sessions
+                  {needsYou > 0 && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
+                </TabsTrigger>
+                <TabsTrigger value="activity" className="flex-none px-0">Activity</TabsTrigger>
+              </TabsList>
+              {/* Phones: the header row has no room left, the tab row scrolls anyway. */}
+              {narrow && (
+                <div className="shrink-0 pr-3">
+                  <MachineChip api={hq.api} />
+                </div>
+              )}
+            </div>
           </header>
 
           <main className="min-h-0 flex-1">
