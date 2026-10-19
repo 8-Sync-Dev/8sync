@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.104.0] — 2026-10-19
+### Added
+- **`8sync awake` turns the screen off when nobody is at the machine** (Windows). Owner (2026-10-19): "8sync awake --while-rooms fix máy chưa sleep màn hình được". The power plan had the display timeout at 180 min, and apps that reset the display timer (a room's windowed Godot runs with `keep_screen_on`) kept it on all day while rooms worked. The hold loop now checks every minute and turns the screen off (`WM_SYSCOMMAND` / `SC_MONITORPOWER`, posted) after `--screen-off N` minutes without mouse/keyboard input, default 10, `0` leaves it to the power plan. It never does when an app holds the display (video), when the machine has Modern Standby (screen off can pull it into standby), or when any of those readings is unknown. A touch turns it back on; the machine keeps working. Proven live: `--screen-off 1` with nobody at the keyboard, the console display state went from on to off on the first check and stayed off with the hold still in place.
+
 ## [0.103.0] — 2026-10-19
 ### Added
 - **Điện và tiền điện trong chip "Máy" của HQ.** Owner (2026-10-19): "Trên hq ui xem đc ram cpu gpu điện tiêu thụ chi phí vnd kiểm soát chặt tiêu hao". The chip shows the watts next to the load; its panel shows watts now and ₫/giờ, kWh and ₫ today and this month. CPU package energy is measured (Windows RAPL "Energy Meter" counter through `typeperf`, no admin; Linux powercap `energy_uj` when readable), GPU board power is measured (`nvidia-smi power.draw`), the rest of the box (board, RAM, disks, fans, PSU loss) is an editable estimate, default 60 W. Price default 3.500 ₫/kWh (EVN top household tiers + 8 % VAT), editable. The HQ server counts every 15 s from start (`instrumentation.ts`), with or without a tab open; a gap longer than 90 s (asleep, stalled) counts only the measured CPU energy. Ledger: `~/.local/state/8sync/hq/power.json`, 70 days.
