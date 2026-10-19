@@ -1,6 +1,6 @@
 <!-- source: https://www.anthropic.com/sitemap.xml (every /legal/ page) — snapshot by scripts/legal-sync.py; do not edit -->
 
-Snapshot date: 2026-10-12 (UTC)
+Snapshot date: 2026-10-19 (UTC)
 
 - https://www.anthropic.com/legal/acst-disclosure
 - https://www.anthropic.com/legal/aup
@@ -23,5 +23,6 @@ Snapshot date: 2026-10-12 (UTC)
 - https://www.anthropic.com/legal/referral-partner-program-terms
 - https://www.anthropic.com/legal/service-specific-terms
 - https://www.anthropic.com/legal/startup-program-addendum
+- https://www.anthropic.com/legal/supported-regions
 - https://www.anthropic.com/legal/team-plan-for-scientists-terms
 - https://www.anthropic.com/legal/trademark-guidelines
