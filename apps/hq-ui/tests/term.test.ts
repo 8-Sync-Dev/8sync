@@ -112,6 +112,23 @@ describe("web terminal bridge", () => {
     expect(termOpen(ID)).toBe(false);
   });
 
+  it("a replay is marked answered only once the bridge has had input, so a late viewer never re-answers ESC[6n", async () => {
+    const f = fakeSpawn();
+    const t = openTerm(ID, null, { cols: 100, rows: 30 }, f.spawn);
+    f.proc().stdout.write("\x1b[6n");
+    await new Promise((r) => setImmediate(r));
+    const first: (boolean | undefined)[] = [];
+    watch(ID, t, (_b, answered) => first.push(answered))();
+    expect(first).toEqual([false]);
+    expect(poll(ID, t, 0, -1).answered).toBe(false);
+    input(ID, { data: "\x1b[1;1R" });
+    const late: (boolean | undefined)[] = [];
+    watch(ID, t, (_b, answered) => late.push(answered))();
+    expect(late).toEqual([true]);
+    expect(poll(ID, t, 0, -1).answered).toBe(true);
+    expect(poll(ID, t, t.gen, t.total).answered).toBe(false);
+  });
+
   it("the owner's shell is one `8sync ccc term --shell` in the asked folder that outlives a closed panel for 30 min", () => {
     vi.useFakeTimers();
     const f = fakeSpawn();

@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { HqApp } from "@/components/hq/hq-app";
 import { cookieValue, getToken, PUB_COOKIE, readPublic, sideOf, viaTunnel } from "@/lib/server/auth";
+import { uiVersion } from "@/lib/server/version";
 
 export const runtime = "nodejs";
 
@@ -35,5 +36,5 @@ export default async function Page() {
       </main>
     );
   }
-  return <HqApp token={getToken()} />;
+  return <HqApp token={getToken()} ui={uiVersion()} />;
 }
