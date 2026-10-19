@@ -7,7 +7,7 @@ import { awayFrom, parseAwake, parseDisplayHolders } from "@/lib/server/awake";
 import { getToken } from "@/lib/server/auth";
 import type { Exec } from "@/lib/server/machine";
 import { stateDir } from "@/lib/server/paths";
-import { credit, DEFAULTS, dayKey, type Ledger, parseGpuWatts, parseSettings, parseTypeperfWh, power, type Reading, runBlocked, sampleOnce, step, summarize, type TeamCtl } from "@/lib/server/power";
+import { credit, DEFAULTS, dayKey, type Ledger, parseGpuWatts, parseSettings, parseTypeperfWh, power, type Reading, readLedger, runBlocked, sampleOnce, step, summarize, type TeamCtl } from "@/lib/server/power";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const R = (at: number, cpuWh: number | null, gpuW: number | null, cpuWrapWh: number | null = null): Reading => ({ at, cpuWh, gpuW, cpuWrapWh });
@@ -115,6 +115,46 @@ describe("daily budget", () => {
   it("settings route: 401 without the token, 422 out of range", async () => {
     expect((await SETTINGS(req("/api/machine/power", { method: "POST", origin: ORIGIN, body: { otherW: 50 } }))).status).toBe(401);
     expect((await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { otherW: 5000 } }))).status).toBe(422);
+  });
+  it("a budget raised while the team status was being read: no pause", async () => {
+    await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { budgetVnd: 1000 } }));
+    const calls: string[] = [];
+    const ctl: TeamCtl = {
+      status: async () => {
+        calls.push("status");
+        await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { budgetVnd: 9_000_000 } }));
+        return { on: true, paused: false };
+      },
+      pause: async () => (calls.push("pause"), { paused: true }),
+    };
+    await sampleOnce(run, "win32", ctl);
+    expect(calls).toEqual(["status"]);
+  });
+  it("a pause that didn't take is not recorded, and is not retried for 5 minutes", async () => {
+    await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { budgetVnd: 1000 } }));
+    const before = power()!.paused?.at;
+    const calls: string[] = [];
+    const ctl: TeamCtl = { status: async () => (calls.push("status"), { on: true, paused: false }), pause: async () => (calls.push("pause"), { paused: false, error: "8sync missing" }) };
+    await sampleOnce(run, "win32", ctl);
+    await sampleOnce(run, "win32", ctl);
+    expect(calls).toEqual(["status", "pause"]);
+    expect(power()!.paused?.at).toBe(before);
+    await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { budgetVnd: null } }));
+  });
+});
+
+describe("ledger file", () => {
+  it("a corrupt power.json is kept aside as power.json.bad and counting starts over; a missing one is fresh", () => {
+    tempHome();
+    expect(readLedger()!.days).toEqual({});
+    fs.mkdirSync(stateDir(), { recursive: true });
+    fs.writeFileSync(path.join(stateDir(), "power.json"), "{not json");
+    expect(readLedger()).toMatchObject({ days: {}, settings: DEFAULTS });
+    expect(fs.readFileSync(path.join(stateDir(), "power.json.bad"), "utf8")).toBe("{not json");
+    expect(fs.existsSync(path.join(stateDir(), "power.json"))).toBe(false);
+  });
+  it("a CPU counter jump no package could draw is junk, not a day of energy", () => {
+    expect(step(R(0, 0, null), R(15_000, 900, null), 0).add!.cpuWh).toBe(0);
   });
 });
 

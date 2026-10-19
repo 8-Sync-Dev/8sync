@@ -11,6 +11,8 @@ import { exec, type Exec } from "./machine";
 import { stateDir } from "./paths";
 
 export const SAMPLE_MS = 15_000;
+/** More than this from one CPU package is a counter that restarted from junk, not energy. */
+const MAX_CPU_W = 2000;
 /** A longer gap (machine asleep, process stalled): only the measured CPU counter is trusted. */
 export const MAX_GAP_MS = 90_000;
 const KEEP_DAYS = 70;
@@ -60,8 +62,8 @@ export const dayKey = (ms: number) => {
 export function parseTypeperfWh(out: string): number | null {
   for (const line of out.split(/\r?\n/)) {
     const f = [...line.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
-    if (f.length < 2 || !/^\d/.test(f[0])) continue;
-    const v = Number(f[1].replace(",", "."));
+    if (f.length < 2 || !/^\d/.test(f[0]) || !/^\d/.test(f[1].trim())) continue;
+    const v = Number(f[1].trim().replace(",", "."));
     if (Number.isFinite(v) && v >= 0) return v / 1e12;
   }
   return null;
@@ -87,8 +89,9 @@ export function step(prev: Reading | null, cur: Reading, otherW: number): { live
   if (prev && prev.cpuWh != null && cur.cpuWh != null) {
     let d = cur.cpuWh - prev.cpuWh;
     if (d < 0 && cur.cpuWrapWh) d += cur.cpuWrapWh;
-    // A reset (reboot, driver reload) is not negative energy.
-    cpuWh = d >= 0 ? d : null;
+    // A reset (reboot, driver reload) is not negative energy, and a jump no CPU could draw is junk.
+    const most = (Math.max(dt, SAMPLE_MS) / 3_600_000) * MAX_CPU_W;
+    cpuWh = d >= 0 && d <= most ? d : null;
   }
   const cpuW = cpuWh != null && dt > 0 ? (cpuWh * 3_600_000) / dt : null;
   const live: Live = { at: cur.at, cpuW, cpuCounter: cur.cpuWh != null, gpuW: cur.gpuW, otherW, w: (cpuW ?? 0) + (cur.gpuW ?? 0) + otherW };
@@ -161,20 +164,37 @@ function fresh(): Ledger {
   return { schema: 1, settings: { ...DEFAULTS }, days: {}, since: null, paused: null };
 }
 
-export function readLedger(): Ledger {
+/**
+ * The saved ledger; a missing file is a fresh one. Null when the file exists but can't be read
+ * right now (locked by a scanner): the caller retries and never overwrites it with an empty one.
+ * A corrupt file is moved aside to `power.json.bad` and counting starts over.
+ */
+export function readLedger(): Ledger | null {
+  let text: string;
   try {
-    const j = JSON.parse(fs.readFileSync(file(), "utf8"));
-    if (j?.schema !== 1) return fresh();
+    text = fs.readFileSync(file(), "utf8");
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT" ? fresh() : null;
+  }
+  try {
+    const j = JSON.parse(text);
+    if (j?.schema !== 1 || !j.settings || typeof j.settings !== "object" || Array.isArray(j.settings)) throw new Error("not a ledger");
     const settings = parseSettings(j.settings, DEFAULTS) ?? { ...DEFAULTS };
     const days: Record<string, Use> = {};
-    for (const [k, u] of Object.entries(j.days ?? {})) {
-      const x = u as Partial<Use>;
+    for (const [k, u] of Object.entries(j.days && typeof j.days === "object" ? j.days : {})) {
+      const x = (u ?? {}) as Partial<Use>;
       if (/^\d{4}-\d{2}-\d{2}$/.test(k) && [x.wh, x.cpuWh, x.gpuWh, x.vnd].every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0)) days[k] = x as Use;
     }
     const since = typeof j.since === "number" && Number.isFinite(j.since) ? j.since : null;
     const paused = typeof j.paused?.day === "string" && typeof j.paused?.at === "number" ? { day: j.paused.day, at: j.paused.at } : null;
     return { schema: 1, settings, days, since, paused };
   } catch {
+    try {
+      fs.renameSync(file(), `${file()}.bad`);
+    } catch {
+      return null;
+    }
+    console.error("[hq] power: power.json unreadable, kept as power.json.bad; counting starts over");
     return fresh();
   }
 }
@@ -233,19 +253,22 @@ async function readGpu(run: Exec = exec): Promise<number | null> {
   return out == null ? null : parseGpuWatts(out);
 }
 
-type State = { ledger: Ledger | null; prev: Reading | null; live: Live | null; unsaved: number; timer: NodeJS.Timeout | null; busy: boolean };
+type State = { ledger: Ledger | null; prev: Reading | null; live: Live | null; unsaved: number; timer: NodeJS.Timeout | null; busy: boolean; pauseRetryAt: number };
 /** On `globalThis`: instrumentation.ts and the route handlers are separate bundles with their own module copies. */
 const g = globalThis as unknown as { __hqPower?: State };
-const S = (g.__hqPower ??= { ledger: null, prev: null, live: null, unsaved: 0, timer: null, busy: false });
+const S = (g.__hqPower ??= { ledger: null, prev: null, live: null, unsaved: 0, timer: null, busy: false, pauseRetryAt: 0 });
+/** After a pause that didn't take (8sync broken), wait this long before trying again. */
+const PAUSE_RETRY_MS = 300_000;
 
-const getLedger = () => (S.ledger ??= readLedger());
+/** The ledger in memory, read once; null while power.json exists but can't be read. */
+const loaded = (): Ledger | null => (S.ledger ??= readLedger());
 
 function save(): void {
-  S.unsaved = writeLedger(getLedger()) ? 0 : SAVE_EVERY;
+  if (S.ledger) S.unsaved = writeLedger(S.ledger) ? 0 : SAVE_EVERY;
 }
 
 /** How the sampler sees and pauses the team; tests pass fakes so they never touch the real one. */
-export type TeamCtl = { status: () => Promise<{ on: boolean; paused: boolean }>; pause: () => Promise<unknown> };
+export type TeamCtl = { status: () => Promise<{ on: boolean; paused: boolean }>; pause: () => Promise<{ paused: boolean; error?: string }> };
 const realCtl: TeamCtl = { status: autoStatus, pause: () => autoSet("pause") };
 
 /** One sample: read, count, save now and then, hold the team paused while over budget. */
@@ -253,22 +276,31 @@ export async function sampleOnce(run: Exec = exec, platform: NodeJS.Platform = p
   const [cpu, gpuW] = await Promise.all([readCpu(platform, run), readGpu(run)]);
   const cur: Reading = { at: Date.now(), cpuWh: cpu?.wh ?? null, cpuWrapWh: cpu?.wrapWh ?? null, gpuW };
   // No await from here to the credit: a settings change can't be overwritten by a stale copy.
-  const r = step(S.prev, cur, getLedger().settings.otherW);
+  const l = loaded();
+  const r = step(S.prev, cur, (l ?? fresh()).settings.otherW);
   S.prev = cur;
   S.live = r.live;
+  // power.json exists but is locked: count nothing this time rather than overwrite it.
+  if (!l) return;
   const day = dayKey(cur.at);
   if (r.add) {
-    S.ledger = credit(getLedger(), day, r.add, cur.at);
+    S.ledger = credit(l, day, r.add, cur.at);
     S.unsaved += 1;
   }
-  if (overBudget(getLedger(), day)) {
+  if (overBudget(S.ledger!, day) && cur.at >= S.pauseRetryAt) {
     const st = await ctl.status();
-    if (st.on && !st.paused) {
-      await ctl.pause();
-      S.ledger = { ...getLedger(), paused: { day, at: cur.at } };
-      const l = getLedger();
-      console.log(`[hq] power: over the daily budget (${Math.round(l.days[day]?.vnd ?? 0)} ₫ ≥ ${l.settings.budgetVnd} ₫), team paused`);
-      save();
+    // Checked again: the budget may have been raised or cleared while status ran.
+    if (st.on && !st.paused && overBudget(S.ledger!, day)) {
+      const res = await ctl.pause();
+      const now = S.ledger!;
+      if (res.paused) {
+        S.ledger = { ...now, paused: { day, at: cur.at } };
+        console.log(`[hq] power: over the daily budget (${Math.round(now.days[day]?.vnd ?? 0)} ₫ ≥ ${now.settings.budgetVnd} ₫), team paused`);
+        save();
+      } else {
+        S.pauseRetryAt = cur.at + PAUSE_RETRY_MS;
+        console.error(`[hq] power: over the daily budget but the pause failed (${res.error ?? "unknown"}); retrying in 5 min`);
+      }
     }
   }
   if (S.unsaved >= SAVE_EVERY) save();
@@ -293,26 +325,30 @@ export function startPower(): void {
   S.timer.unref();
 }
 
-/** Null until the sampler has run (tests, or an HQ started without instrumentation). */
+/** Null until the sampler has run (tests, or an HQ started without instrumentation), or while power.json is locked. */
 export function power(now = Date.now()): Power | null {
   if (!S.timer && !S.ledger) return null;
-  return summarize(getLedger(), S.live, now);
+  const l = loaded();
+  return l ? summarize(l, S.live, now) : null;
 }
 
-export function setPowerSettings(s: PowerSettings, now = Date.now()): Power {
-  S.ledger = { ...getLedger(), settings: s };
+/** Null when power.json is locked right now (the caller answers "try again"). */
+export function setPowerSettings(s: PowerSettings, now = Date.now()): Power | null {
+  const l = loaded();
+  if (!l) return null;
+  S.ledger = { ...l, settings: s };
   save();
   if (S.live) S.live = { ...S.live, otherW: s.otherW, w: S.live.w - S.live.otherW + s.otherW };
-  return summarize(getLedger(), S.live, now);
+  return summarize(S.ledger, S.live, now);
 }
 
-export const powerSettings = (): PowerSettings => getLedger().settings;
+export const powerSettings = (): PowerSettings => loaded()?.settings ?? DEFAULTS;
 
 /** "Chạy" while today's spend is over the budget: the reason to refuse, else null. */
 export function runBlocked(now = Date.now()): string | null {
-  const l = getLedger();
+  const l = loaded();
   const day = dayKey(now);
-  if (!overBudget(l, day)) return null;
+  if (!l || !overBudget(l, day)) return null;
   const fmt = (n: number) => Math.round(n).toLocaleString("vi-VN");
   return `Hôm nay đã dùng ${fmt(l.days[day]?.vnd ?? 0)} ₫ điện, vượt ngân sách ${fmt(l.settings.budgetVnd ?? 0)} ₫: tăng ngân sách trong "Máy" để chạy tiếp.`;
 }

@@ -398,15 +398,24 @@ mod probe {
         Some(total.saturating_sub(awake) / 10_000_000)
     }
 
-    extern "system" fn on_setting(ctx: *mut c_void, kind: u32, setting: *mut c_void) -> u32 {
+    /// Written by `on_setting`; static, so a callback that lands after unregistering never writes
+    /// into a returned stack frame (Windows doesn't document that unregister waits for it).
+    static DISPLAY_STATE: AtomicI32 = AtomicI32::new(-1);
+
+    /// The subscribe params, static for the same reason; no context, the callback uses DISPLAY_STATE.
+    struct Sub(Subscribe);
+    // SAFETY: the only pointer field is a null context that nothing dereferences.
+    unsafe impl Sync for Sub {}
+    static SUB: Sub = Sub(Subscribe { callback: on_setting, context: std::ptr::null_mut() });
+
+    extern "system" fn on_setting(_ctx: *mut c_void, kind: u32, setting: *mut c_void) -> u32 {
         if kind == PBT_POWERSETTINGCHANGE && !setting.is_null() {
             // SAFETY: for PBT_POWERSETTINGCHANGE `setting` is a POWERBROADCAST_SETTING {GUID(16),
-            // DataLength u32 @16, Data @20}; the display state is one DWORD. `ctx` is the
-            // AtomicI32 owned by `display`, alive until the registration is removed.
+            // DataLength u32 @16, Data @20}; the display state is one DWORD.
             unsafe {
                 let p = setting.cast::<u8>();
                 if p.add(16).cast::<u32>().read_unaligned() >= 4 {
-                    (*ctx.cast::<AtomicI32>()).store(p.add(20).cast::<i32>().read_unaligned(), Ordering::SeqCst);
+                    DISPLAY_STATE.store(p.add(20).cast::<i32>().read_unaligned(), Ordering::SeqCst);
                 }
             }
         }
@@ -416,21 +425,19 @@ mod probe {
     /// The console display state: Windows calls back with the current value right after
     /// registering (0 off, 1 on, 2 dimmed). None if it doesn't within a second.
     pub fn display() -> Option<&'static str> {
-        let state = AtomicI32::new(-1);
-        let sub = Subscribe { callback: on_setting, context: (&state as *const AtomicI32).cast_mut().cast() };
+        DISPLAY_STATE.store(-1, Ordering::SeqCst);
         let mut handle = std::ptr::null_mut();
-        // SAFETY: valid GUID, subscribe params and out-handle; `state` and `sub` outlive the
-        // registration, which is removed below before they drop.
-        if unsafe { PowerSettingRegisterNotification(&CONSOLE_DISPLAY_STATE, DEVICE_NOTIFY_CALLBACK, &sub, &mut handle) } != 0 {
+        // SAFETY: valid GUID, static subscribe params, writable out-handle.
+        if unsafe { PowerSettingRegisterNotification(&CONSOLE_DISPLAY_STATE, DEVICE_NOTIFY_CALLBACK, &SUB.0, &mut handle) } != 0 {
             return None;
         }
         let end = Instant::now() + Duration::from_secs(1);
-        while state.load(Ordering::SeqCst) < 0 && Instant::now() < end {
+        while DISPLAY_STATE.load(Ordering::SeqCst) < 0 && Instant::now() < end {
             std::thread::sleep(Duration::from_millis(10));
         }
         // SAFETY: `handle` came from the successful registration above.
         unsafe { PowerSettingUnregisterNotification(handle) };
-        match state.load(Ordering::SeqCst) {
+        match DISPLAY_STATE.load(Ordering::SeqCst) {
             0 => Some("off"),
             1 => Some("on"),
             2 => Some("dim"),

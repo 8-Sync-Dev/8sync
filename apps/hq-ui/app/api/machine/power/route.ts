@@ -12,5 +12,6 @@ export async function POST(req: Request) {
     const r = (k: keyof typeof LIMITS) => `${LIMITS[k][0]}-${LIMITS[k][1]}`;
     return bad(`vndPerKwh ${r("vndPerKwh")}, otherW ${r("otherW")}, budgetVnd ${r("budgetVnd")} hoặc null`, 422);
   }
-  return json(setPowerSettings(s));
+  const p = setPowerSettings(s);
+  return p ? json(p) : bad("power.json đang bị khoá, thử lại sau vài giây", 503);
 }
