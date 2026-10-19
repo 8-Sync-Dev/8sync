@@ -177,12 +177,10 @@ const GUARDED = [
   "8sync/ccc/permit",
   ".answer.json",
   "8sync/ccc/grants",
-  "8sync/hq/usage/",
-  ".taking.", // inbox claim in flight
-  ".claimed", // claimed inbox message
+  "8sync/hq/usage",
 ];
-/** Common bare names: a hit only when the same call also says `8sync` (e.g. `d=~/.config/8sync/hq; cat $d/ui-token`). */
-const GUARDED_NEAR_8SYNC = ["public.json", "ui-token", "secrets.json"];
+/** Common bare names: a hit only when the same call also says `8sync` (e.g. `d=~/.config/8sync/hq; cat $d/ui-token`); `.taking.`/`.claimed` are the inbox's in-flight files. */
+const GUARDED_NEAR_8SYNC = ["public.json", "ui-token", "secrets.json", ".taking.", ".claimed"];
 /** What write/edit tools carry as file *content*: 8sync's own source and docs may name the files above. */
 const CONTENT_KEYS = ["content", "edits", "new_string", "old_string", "newText", "oldText", "text"];
 const SCAN_DEPTH = 4;

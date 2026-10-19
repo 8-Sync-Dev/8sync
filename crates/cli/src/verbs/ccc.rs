@@ -541,6 +541,10 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     if o.omp && blocked.is_none() {
         auto::set_omp(&env.home, true, now)?;
     }
+    // One resumer at a time: HQ's revive and this `up` must not fork the same dead room twice.
+    let Some(_lock) = team::revive_lock(&env.home, now)? else {
+        bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ ít phút rồi chạy lại");
+    };
     let (status, gone, rows) = team::up(&t, &o, now)?;
     team::print_up(&status, &gone, &rows, o.every, subscription);
     // Team omp: `--omp`, or omp already in auto.json's teams (turned on from HQ).

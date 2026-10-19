@@ -530,39 +530,48 @@ fn set_team_root(home: &Path, root: &Path, on: bool) {
     idle::write_json(&team_roots_file(home), &Value::from(roots));
 }
 
-/// Held while `auto revive` runs (HQ and a boot hook can both call it); the file goes on drop.
-pub(super) struct ReviveLock(PathBuf);
+/// Held while `auto revive` or `auto up` runs (HQ, a boot hook and the owner can all call them);
+/// the file goes on drop, but only while it still holds this run's token (`<time>.<pid>`): a run
+/// that replaced a stale lock is never unlocked by the stale run's late drop.
+pub(super) struct ReviveLock(PathBuf, String);
 
 impl Drop for ReviveLock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        if std::fs::read_to_string(&self.0).is_ok_and(|s| s == self.1) {
+            let _ = std::fs::remove_file(&self.0);
+        }
     }
 }
 
 /// A lock younger than this is a revive still running; an older one was left by a killed run.
 const REVIVE_LOCK_S: u64 = 600;
 
-/// `None`: another revive holds the lock, this one does nothing.
+/// `None`: another revive / up holds the lock, this one does nothing.
 pub(super) fn revive_lock(home: &Path, now: u64) -> Result<Option<ReviveLock>> {
     let dir = idle::state_dir(home);
     std::fs::create_dir_all(&dir)?;
     let p = dir.join("revive.lock");
+    let token = format!("{now}.{}", std::process::id());
     for _ in 0..2 {
         match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
             Ok(mut f) => {
                 use std::io::Write;
-                let _ = write!(f, "{now}");
-                return Ok(Some(ReviveLock(p)));
+                let _ = write!(f, "{token}");
+                return Ok(Some(ReviveLock(p, token)));
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 // The time written in it, else its mtime (a run killed before writing).
-                let at = std::fs::read_to_string(&p).ok().and_then(|s| s.trim().parse::<u64>().ok()).or_else(|| {
+                let held = std::fs::read_to_string(&p).unwrap_or_default();
+                let at = held.split('.').next().and_then(|s| s.trim().parse::<u64>().ok()).or_else(|| {
                     std::fs::metadata(&p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs())
                 });
                 if at.is_some_and(|a| now.saturating_sub(a) < REVIVE_LOCK_S) {
                     return Ok(None);
                 }
-                let _ = std::fs::remove_file(&p);
+                // Stale: take it over only if nobody replaced it meanwhile (same content).
+                if std::fs::read_to_string(&p).unwrap_or_default() == held {
+                    let _ = std::fs::remove_file(&p);
+                }
             }
             Err(e) => return Err(e.into()),
         }

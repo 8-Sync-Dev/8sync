@@ -56,8 +56,8 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
     // --public`) and the Discord secrets: only the HQ UI, the launcher and the hooks touch them.
     // The bare names too, so a `cd ~/.config/8sync/hq; cat public.json` that never spells the
     // folder path is caught — those only beside an `8sync` (an app's own `public.json` is fine).
-    const HQ_OWNER: [&str; 7] = ["8sync/hq/inbox", "8sync/hq/ui-token", "8sync/hq/public.json", "8sync/hq/secrets.json", "hq/inbox/", ".taking.", ".claimed"];
-    const HQ_BARE: [&str; 3] = ["ui-token", "public.json", "secrets.json"];
+    const HQ_OWNER: [&str; 5] = ["8sync/hq/inbox", "8sync/hq/ui-token", "8sync/hq/public.json", "8sync/hq/secrets.json", "hq/inbox/"];
+    const HQ_BARE: [&str; 5] = ["ui-token", "public.json", "secrets.json", ".taking.", ".claimed"];
     if touched.iter().any(|t| HQ_OWNER.iter().any(|p| t.contains(p)) || (t.contains("8sync") && HQ_BARE.iter().any(|p| t.contains(p)))) {
         return Some(decision("deny", "the HQ owner inbox, UI token, public-link key and secrets belong to the owner's HQ dashboard; a session must not write the inbox, or read the token, key or secrets. To reach another session use SendMessage or `8sync ccc msg`; to reach the owner, reply in this session."));
     }

@@ -5,7 +5,9 @@
 
 type Env = Record<string, string | undefined>;
 
-const DROP = ["PORT", "HOSTNAME", "NODE_ENV"];
+// A session identity inherited from whoever started HQ (a Claude Code or omp room) would make the
+// owner's HQ actions (`auto add --now`) look like that room's words.
+const DROP = ["PORT", "HOSTNAME", "NODE_ENV", "CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID"];
 
 /** A copy of `env` without the HQ server's own settings. */
 export function childEnv(env: Env = process.env): NodeJS.ProcessEnv {
