@@ -225,18 +225,18 @@ const ASK_REASON =
 
 /** Run `8sync <args>`; stdout on exit 0, else null. Never throws. */
 function run8sync(args: string[], cwd: string): Promise<string | null> {
-  const { promise, resolve } = Promise.withResolvers<string | null>();
-  try {
-    execFile(
-      BIN,
-      args,
-      { cwd: cwd || undefined, timeout: RUN_TIMEOUT_MS, windowsHide: true, encoding: "utf8", maxBuffer: 1 << 20 },
-      (err, stdout) => resolve(err ? null : String(stdout)),
-    );
-  } catch {
-    resolve(null);
-  }
-  return promise;
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        BIN,
+        args,
+        { cwd: cwd || undefined, timeout: RUN_TIMEOUT_MS, windowsHide: true, encoding: "utf8", maxBuffer: 1 << 20 },
+        (err, stdout) => resolve(err ? null : String(stdout)),
+      );
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 export default function (pi: Pi) {
