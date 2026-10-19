@@ -13,18 +13,16 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - omp 18.12.2: extensions `pi.on(agent_end|tool_call|…)`, `pi.sendUserMessage(text,{deliverAs:"followUp"})`, `ctx.isIdle()`, `tool_call` can block (oh-my-pi source via librarian); `omp -p` exists (`omp --help`).
 
 ## Checklist
-- [x] Merge onto origin/main v0.100.15 (our C5 dropped: upstream permit/delegate covers it).
-- [x] Unstick (resume_at at the status-line reset, ≤2 offers, gated by auto + lease/usage), omp team (`auto up --omp`, extension, `ccc msg`), `hq ui --public` (nonce file, 10-min link, HMAC cookie 12 h), HQ captions/meter/team labels.
-- [x] Owner bug 2026-10-19 (rooms died with the machine, HQ said "Đang làm"): `auto revive` + HQ tick (≤2 min, on Run); `8sync awake --while-rooms` (proven on Windows: `powercfg /requests` lists 8sync.exe under SYSTEM).
-- [x] Reviews round 1 (reviewer + security-reviewer): 4 HIGH (omp guard, room-line rails, owner-frame forgery) + MEDs fixed by RustInbox/HqAuth/OmpHarden; consecutive-resume counter kept (= Claude Code semantics).
-- [x] Gate (Windows): cargo test 604+35 ok; `--no-default-features` builds; hq-ui tsc/eslint clean, vitest 560/563 (3 Windows-only failures identical on origin/main).
-- [ ] v0.101.0: size gate (linux asset 7,198,832 B vs ceiling 7,208,960 — must attribute + raise), CI on branch, merge main, tag, release, `8sync up` on this machine, delete feat branch, revive ai-game-studio rooms.
+- [x] v0.101.0 merged to main (PR #116 squash e9e35f4; branch feat/two-teams deleted), tag v0.101.0 pushed.
+- [x] Reviews: 3 rounds (reviewer + security-reviewer); HIGH/MED fixed; residual = same-user trust (guards advisory), `stuck-asks` owner-voice echo (upstream, open), omp edit-header parsing gaps (LOW).
+- [x] CI 7/7 green on 127606d; size 7,284,880 B under 7168 KiB ceiling.
+- [ ] Release workflow → `8sync up` on this machine → restart HQ → `auto up --roles full` in ai-game-studio (owner asked "apply all now").
 
 ## Current
-Release prep v0.101.0 (version bumped, CHANGELOG cut).
+Release workflow running for v0.101.0.
 
 ## Next
-Size attribution → push → CI green → merge main + tag → install → apply.
+Install, restart HQ on 8740, apply to ai-game-studio; owner-only: stash@{0} (kit-regenerated AGENTS/CLAUDE + STATE/ACTIVE) left untouched.
 
 # v0.67.1 — rich `ccc . ls`, local team UI (`8sync hq ui`), agent teams (`--team`), guard fixes, dnf5
 
