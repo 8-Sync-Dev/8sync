@@ -19,7 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
-Done. Owner stash@{0}: `su-code/ship/ACTIVE` restored into the worktree (autopilot, ci-size-gate); its AGENTS/CLAUDE are already superseded by the regenerated ones; stash kept. Ask cards wrap the room/project title word-by-word at phone width (header shares the row with the two buttons).
+v0.101.2 released + applied (room terminal polls through the quick tunnel; UAT: ba's question renders in the terminal over the link at 400 px; nothing typed). HQ runs `--public` in a visible window. Stuck questions: delegate `decide()` (delegate.rs:63-97) holds any question whose text, header, option labels OR descriptions contain an OWNER_ONLY word ("login", "xoá", "drop", "secret"…), and HQ never says which — owner decision pending on narrowing (skip descriptions; login/account → credential words) and on showing the held word. Owner stash@{0}: `su-code/ship/ACTIVE` restored; stash kept.
 
 ## Next
 - Upstream Windows bug: hq ingest stores NTFS inode > 2^53 in `ingest_state.offset` → RangeError (fix: bigint stat + `setReadBigInts`).
