@@ -32,6 +32,7 @@ import { TerminalDrawer } from "./terminal-drawer";
 import { WebTerminalSheet } from "./web-terminal-sheet";
 import { useBoards } from "./use-board";
 import { useHq } from "./use-hq";
+import { useReloadOnNewUi } from "./use-ui-version";
 import { useOffice, type Room } from "./use-office";
 import { usePoll } from "./use-poll";
 import { MachineChip } from "./machine-chip";
@@ -55,8 +56,9 @@ const LOOPS_POLL_MS = 30_000;
 const isScoped = (s: Session, key: string | null) => matchesSession({ ...s, label: sessionLabel(s) }, key);
 const SESSION_NAME_INPUT = "start-session-name";
 
-export function HqApp({ token }: { token: string }) {
+export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const hq = useHq(token);
+  useReloadOnNewUi(token, ui);
   const office = useOffice(token);
   // One board poll for Văn phòng (who holds which card) and Board (lanes).
   const boards = useBoards(hq.api);

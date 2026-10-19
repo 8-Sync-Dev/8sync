@@ -87,7 +87,7 @@ function parseSse(buf: string): { events: { event: string; data: string }[]; res
 export { parseSse };
 
 /** One poll of the remote terminal (`GET /term?gen=&since=`), `out` in base64. */
-type PollJson = { gen: number; cursor: number; out: string; reset: boolean; ended: boolean };
+type PollJson = { gen: number; cursor: number; out: string; reset: boolean; answered?: boolean; ended: boolean };
 
 function isPoll(v: unknown): v is PollJson {
   return !!v && typeof v === "object" && "gen" in v && typeof v.gen === "number" && "cursor" in v && typeof v.cursor === "number" && "out" in v && typeof v.out === "string" && "reset" in v && "ended" in v;
@@ -116,6 +116,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
   const [state, setState] = useState<State>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const [line, setLine] = useState("");
   const { resolvedTheme } = useTheme();
   const dark = resolvedTheme === "dark";
   const text = TEXT[kind];
@@ -140,7 +141,12 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
       appKeys.current = () => t.modes.applicationCursorKeysMode;
       t.open(el);
       t.focus();
-      t.onData((data) => void post({ data }));
+      // While a replay is written, xterm's answers to the queries in it (ConPTY's `ESC[6n`…) are
+      // dropped: they were answered when the bytes were live, and a second answer types junk.
+      let muted = 0;
+      t.onData((data) => {
+        if (!muted) void post({ data });
+      });
       let last = size;
       ro = new ResizeObserver(() => {
         const s = fit(el, font);
@@ -150,7 +156,12 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
         void post(s);
       });
       ro.observe(el);
-      const write = (b64: string) => t.write(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+      const write = (b64: string, replay = false) => {
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        if (!replay) return t.write(bytes);
+        muted++;
+        t.write(bytes, () => muted--);
+      };
       const end = () => {
         setState("ended");
         onEnded?.();
@@ -184,6 +195,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
             rest = p.rest;
             for (const e of p.events) {
               if (e.event === "out") write(e.data);
+              else if (e.event === "replay") write(e.data, true);
               else if (e.event === "end") end();
             }
           }
@@ -216,7 +228,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
           }
           setState("live");
           if (p.reset) t.reset();
-          if (p.out) write(p.out);
+          if (p.out) write(p.out, p.reset && p.answered);
           gen = p.gen;
           since = p.cursor;
           if (p.ended) return end();
@@ -257,6 +269,32 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
         )}
       </div>
       <div ref={host} className="min-h-[200px] flex-1 overflow-hidden rounded-lg border bg-[#fbfbfa] p-2 dark:bg-[#0b0c0e]" aria-label={text.label} />
+      {/* A phone keyboard (IME, Vietnamese, autocorrect) types reliably into a real input, not into xterm's hidden textarea. */}
+      <form
+        className="flex items-center gap-1.5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          keysRef.current?.(`${line}\r`);
+          setLine("");
+        }}
+      >
+        <input
+          value={line}
+          onChange={(e) => setLine(e.target.value)}
+          disabled={state !== "live"}
+          placeholder={kind === "shell" ? "Gõ lệnh rồi Enter/Gửi (ô trống = Enter)" : "Gõ câu trả lời rồi Enter/Gửi (ô trống = Enter)"}
+          aria-label="Gõ vào terminal"
+          enterKeyHint="send"
+          autoCapitalize="none"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        />
+        <Button type="submit" size="sm" className="h-8" disabled={state !== "live"}>
+          Gửi
+        </Button>
+      </form>
       <div className="flex flex-wrap items-center gap-1" role="toolbar" aria-label="Phím terminal">
         {KEYS.map((k) => (
           <Button

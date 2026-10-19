@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.102.1] — 2026-10-19
+### Fixed
+- **Typing from a phone.** Owner (2026-10-19): "input hq gửi không được ở link vps". Room and shell terminals get a real input line under the screen (Enter or "Gửi" sends the line + Enter; empty = Enter): a phone keyboard with IME, Vietnamese or autocorrect types into it reliably, where xterm's hidden textarea may drop keys. Write endpoints were checked through both VPS links (`/hq` and `:8443`): they pass HQ's checks.
+- A terminal reopened, opened in a second tab, or redrawn on a theme change no longer types junk (`;5R` at a prompt, `R` in vim, a stray key in a Claude dialog): the kept screen a late viewer gets is sent as a `replay` once the bridge has had input, and the page does not answer the queries in it (ConPTY's opening `ESC[6n`, DA…) a second time.
+- After HQ restarts on a new version, an open page reloads itself (`/api/version` checked every minute and when the tab comes back; a build chunk that fails to load reloads once) instead of running the old build against the new server.
+- The self-restart waits while the HQ shell is open (it would kill what runs there) and says so once; it goes ahead when the shell closes. Proven on Windows with a second HQ on another port: replacing its binary restarted it on the other version within 30 s.
+
+
 ## [0.102.0] — 2026-10-19
 ### Added
 - **Shell trên máy, nổi trên mọi view của HQ.** Owner (2026-10-19): "cần 1 float terminal bên ngoài để sài có hint terminal full như orca". Header button "Terminal" (or Ctrl+`) opens a draggable, resizable panel (a bottom sheet on a phone) with a real shell on the PC: `8sync ccc term --shell` runs 8sync's zsh (prompt, completion, autosuggestions — the grey hint, → accepts it) when installed, else PowerShell / `$SHELL`, in the folder in view. One shell, shared by every tab; closing the panel keeps it 30 minutes, "Tắt shell" ends it. Refused through the `--public` quick tunnel (a link key alone never gives a shell); allowed on the PC and behind a proxy that logs in first and hands HQ a loopback request.

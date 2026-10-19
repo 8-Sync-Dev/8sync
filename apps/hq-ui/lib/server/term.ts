@@ -16,7 +16,8 @@ export const SHELL_IDLE_MS = 30 * 60_000;
 const MAX_INPUT = 4096;
 
 type Spawn = (cmd: string, args: string[], opts: { cwd?: string; windowsHide: boolean; env?: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
-export type Term = { proc: ChildProcessWithoutNullStreams; gen: number; chunks: Buffer[]; bytes: number; total: number; viewers: Set<(b: Buffer | null) => void>; idle?: ReturnType<typeof setTimeout>; idleMs: number; ended: boolean };
+/** `typed`: the bridge has had input, so the queries in its kept output (ConPTY's opening `ESC[6n`, DA…) were answered. */
+export type Term = { proc: ChildProcessWithoutNullStreams; gen: number; chunks: Buffer[]; bytes: number; total: number; viewers: Set<(b: Buffer | null, answered?: boolean) => void>; idle?: ReturnType<typeof setTimeout>; idleMs: number; typed: boolean; ended: boolean };
 
 const terms = new Map<string, Term>();
 let gens = 0;
@@ -38,7 +39,7 @@ function start(key: string, args: string[], cwd: string | null, idleMs: number, 
   const cur = terms.get(key);
   if (cur && !cur.ended) return cur;
   const proc = spawn(binFor("8sync"), args, { cwd: cwd ?? undefined, windowsHide: true, env: childEnv() });
-  const t: Term = { proc, gen: ++gens, chunks: [], bytes: 0, total: 0, viewers: new Set(), idleMs, ended: false };
+  const t: Term = { proc, gen: ++gens, chunks: [], bytes: 0, total: 0, viewers: new Set(), idleMs, typed: false, ended: false };
   terms.set(key, t);
   proc.stdout.on("data", (b: Buffer) => {
     t.chunks.push(b);
@@ -70,10 +71,14 @@ export function openShell(cwd: string | null, size: { cols: number; rows: number
   return start(SHELL_KEY, shellArgs(size.cols, size.rows), cwd, SHELL_IDLE_MS, spawn);
 }
 
-/** Replays what the terminal showed so far, then streams; `null` means the terminal closed. */
-export function watch(id: string, t: Term, fn: (b: Buffer | null) => void): () => void {
+/**
+ * Replays what the terminal showed so far, then streams; `null` means the terminal closed. The replay
+ * comes with `answered` = the bridge has had input: its queries were answered already, so a terminal
+ * that answers them again would type junk (`;5R` at a prompt, `R` in vim).
+ */
+export function watch(id: string, t: Term, fn: (b: Buffer | null, answered?: boolean) => void): () => void {
   clearTimeout(t.idle);
-  if (t.chunks.length) fn(Buffer.concat(t.chunks));
+  if (t.chunks.length) fn(Buffer.concat(t.chunks), t.typed);
   if (t.ended) fn(null);
   t.viewers.add(fn);
   return () => {
@@ -82,8 +87,8 @@ export function watch(id: string, t: Term, fn: (b: Buffer | null) => void): () =
   };
 }
 
-/** One poll: bridge `gen`, byte `cursor` to send next, `out` after the asked cursor (all kept output on `reset`). */
-export type TermPoll = { gen: number; cursor: number; out: Buffer; reset: boolean; ended: boolean };
+/** One poll: bridge `gen`, byte `cursor` to send next, `out` after the asked cursor (all kept output on `reset`); `answered` as in [watch], for a `reset` replay. */
+export type TermPoll = { gen: number; cursor: number; out: Buffer; reset: boolean; answered: boolean; ended: boolean };
 
 /**
  * The remote link's view (a Cloudflare quick tunnel holds an event stream back, so the page polls):
@@ -99,14 +104,17 @@ export function poll(id: string, t: Term, gen: number, since: number): TermPoll 
   const first = t.total - t.bytes;
   const reset = gen !== t.gen || !Number.isInteger(since) || since < first || since > t.total;
   const all = Buffer.concat(t.chunks);
-  return { gen: t.gen, cursor: t.total, out: reset ? all : all.subarray(since - first), reset, ended: t.ended };
+  return { gen: t.gen, cursor: t.total, out: reset ? all : all.subarray(since - first), reset, answered: reset && t.typed, ended: t.ended };
 }
 
 /** Keys typed in the browser (xterm's onData), or a new size. */
 export function input(id: string, x: { data?: unknown; cols?: unknown; rows?: unknown }): boolean {
   const t = terms.get(id);
   if (!t || t.ended) return false;
-  if (typeof x.data === "string" && x.data.length > 0 && x.data.length <= MAX_INPUT) send(t, { i: x.data });
+  if (typeof x.data === "string" && x.data.length > 0 && x.data.length <= MAX_INPUT) {
+    send(t, { i: x.data });
+    t.typed = true;
+  }
   if (x.cols !== undefined || x.rows !== undefined) {
     const s = clampSize(x.cols, x.rows);
     send(t, { r: [s.cols, s.rows] });

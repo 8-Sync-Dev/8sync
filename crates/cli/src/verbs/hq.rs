@@ -2486,6 +2486,30 @@ fn relaunch_args() -> Vec<std::ffi::OsString> {
     a
 }
 
+/// Whether the local HQ has the owner's shell open (`GET /api/version` → `"shell":true`). A restart
+/// would kill whatever runs in it, so it waits. Any failure (no token, older UI without the route,
+/// server busy) counts as closed: nothing to protect.
+fn shell_open(port: u16, token_file: &Path) -> bool {
+    use std::io::{Read, Write};
+    let Ok(token) = std::fs::read_to_string(token_file) else { return false };
+    let Ok(mut s) = std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_secs(2)) else {
+        return false;
+    };
+    let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+    let req = format!("GET /api/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nx-hq-token: {}\r\nConnection: close\r\n\r\n", token.trim());
+    if s.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut resp = String::new();
+    let _ = s.take(64 * 1024).read_to_string(&mut resp);
+    shell_flag(&resp)
+}
+
+/// `/api/version` answered 200 with the shell open.
+fn shell_flag(resp: &str) -> bool {
+    resp.lines().next().is_some_and(|l| l.split_whitespace().nth(1) == Some("200")) && resp.contains("\"shell\":true")
+}
+
 /// Hand this terminal to the new binary: Unix replaces the process, Windows runs it and exits with its code.
 fn relaunch(exe: &Path) -> Result<()> {
     let mut cmd = Command::new(exe);
@@ -3112,6 +3136,8 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
             (exe, stamp)
         });
     let mut checked = std::time::Instant::now();
+    let mut told = false;
+    let token_file = paths.cfg_dir.join("ui-token");
     let st = loop {
         match child.try_wait() {
             Ok(Some(s)) => break Ok(s),
@@ -3130,13 +3156,22 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
         }
         // no version yet (the file is still being written): look again next round
         let Some(newv) = probe_version(exe) else { continue };
-        *stamp = now;
-        if newv != ver {
-            ui::info(&format!("8sync {newv} đã cài: HQ khởi động lại trên bản mới"));
-            let _ = child.kill();
-            let _ = child.wait();
-            return relaunch(exe);
+        if newv == ver {
+            *stamp = now;
+            continue;
         }
+        // the stamp stays old, so the next round asks again
+        if shell_open(port, &token_file) {
+            if !told {
+                ui::info(&format!("8sync {newv} đã cài: HQ khởi động lại khi shell trong HQ đóng (đang mở, lệnh trong đó sẽ bị dừng)"));
+                told = true;
+            }
+            continue;
+        }
+        ui::info(&format!("8sync {newv} đã cài: HQ khởi động lại trên bản mới"));
+        let _ = child.kill();
+        let _ = child.wait();
+        return relaunch(exe);
     };
     if public {
         // a tunnel still starting would stay up without this join (cloudflared bounds it to 45 s)
@@ -4009,6 +4044,12 @@ mod tests {
         std::fs::write(&f, "newer").unwrap();
         assert!(before.is_some() && exe_stamp(&f) != before, "a replaced binary is noticed");
         assert_eq!(exe_stamp(&d.join("gone")), None);
+        // The restart waits only for a 200 that says the shell is open; anything else lets it go.
+        assert!(shell_flag("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{\"ui\":\"0.102.1\",\"shell\":true}"));
+        for no in ["HTTP/1.1 200 OK\r\n\r\n{\"ui\":\"0.102.1\",\"shell\":false}", "HTTP/1.1 404 Not Found\r\n\r\n\"shell\":true", "HTTP/1.1 401 Unauthorized\r\n\r\n", ""] {
+            assert!(!shell_flag(no), "{no}");
+        }
+        assert!(!shell_open(1, &d.join("no-token")), "no token file: nothing to protect");
         let _ = std::fs::remove_dir_all(&d);
     }
 
