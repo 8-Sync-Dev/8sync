@@ -1,4 +1,4 @@
-# Unreleased — two teams (ccc + omp), rooms never stuck, HQ remote link, on/off CLI
+# v0.101.1 — two teams (ccc + omp), rooms never stuck, HQ remote link, on/off CLI
 
 ## Goal
 CLI = on/off; everything else from HQ (local or internet link). Rooms never stay stuck: API-error / usage-limit stops resume by themselves at the right time; optional omp team (default ccc only, `auto up --omp`) shares board, inbox and messages with the ccc team; HQ reachable from the phone (`hq ui --public`). Contract: `su-code/planning/ccc-two-teams/CONTRACT.md`. Branch `feat/two-teams` (from origin/main 7d2180c; first built on a stale v0.98.1 base, kept as local branch `wip/two-teams-stale`).
@@ -13,16 +13,18 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - omp 18.12.2: extensions `pi.on(agent_end|tool_call|…)`, `pi.sendUserMessage(text,{deliverAs:"followUp"})`, `ctx.isIdle()`, `tool_call` can block (oh-my-pi source via librarian); `omp -p` exists (`omp --help`).
 
 ## Checklist
-- [x] v0.101.0 merged to main (PR #116 squash e9e35f4; branch feat/two-teams deleted), tag v0.101.0 pushed.
+- [x] v0.101.0 merged (PR #116), released, installed; HQ 8740 restarted; ai-game-studio 8 rooms up; `awake --while-rooms` running.
 - [x] Reviews: 3 rounds (reviewer + security-reviewer); HIGH/MED fixed; residual = same-user trust (guards advisory), `stuck-asks` owner-voice echo (upstream, open), omp edit-header parsing gaps (LOW).
-- [x] CI 7/7 green on 127606d; size 7,284,880 B under 7168 KiB ceiling.
-- [ ] Release workflow → `8sync up` on this machine → restart HQ → `auto up --roles full` in ai-game-studio (owner asked "apply all now").
+- [x] v0.101.1 (PR #117, 8/8 CI incl. new `ts-assets`): past-reset usage reading counts 0% (0.101.0 left teams blocked after a reset when no 7-day reading), loop notes wording, omp provider docs.
+- [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
-Release workflow running for v0.101.0.
+Done. Owner stash@{0}: `su-code/ship/ACTIVE` restored into the worktree (autopilot, ci-size-gate); its AGENTS/CLAUDE are already superseded by the regenerated ones; stash kept. Ask cards wrap the room/project title word-by-word at phone width (header shares the row with the two buttons).
 
 ## Next
-Install, restart HQ on 8740, apply to ai-game-studio; owner-only: stash@{0} (kit-regenerated AGENTS/CLAUDE + STATE/ACTIVE) left untouched.
+- Upstream Windows bug: hq ingest stores NTFS inode > 2^53 in `ingest_state.offset` → RangeError (fix: bigint stat + `setReadBigInts`).
+- omp rooms: `last_used` side effect; `nudge_gate` ties omp to the Claude lease (design call).
+- apps/hq-ui `start` script uses POSIX `${PORT:-…}` (Windows dev only; release asset runs `node server.js`).
 
 # v0.67.1 — rich `ccc . ls`, local team UI (`8sync hq ui`), agent teams (`--team`), guard fixes, dnf5
 
