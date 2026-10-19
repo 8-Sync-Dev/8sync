@@ -152,7 +152,15 @@ export LC_ALL=C
 # kernel32/psapi/PDH/NVML FFI + Linux /proc, usage scan, disk walk), `ccc auto omp on --model`
 # (team model, nudge model gate, `8sync . <name> --model`), lead merge-order prompt text. No new
 # dependency (Cargo.lock: version lines only). Ceiling 7360 KiB (~47 KiB left over the estimate).
-CEILING="${CEILING:-7536640}"   # 7360 KiB (raised 2026-10-19 from 7168 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+#
+# 2026-10-20 v0.108.0 (before tagging): v0.107.0 linux-x86_64 (musl) asset 7,498,000 B left 38,640 B
+# under 7360 KiB. Windows MSVC local release of v0.108.0 = 6,077,440 B vs the v0.107.0 Windows asset
+# 5,994,496 → +82,944 B; at 1.135 the musl asset lands near 7,592,100 B. v0.108.0: `ccc auto merge`
+# (`ccc/merge.rs`), project-scoped merge permission (`grant.rs`) and its guard rule (`guard.rs`), PR
+# base/conflict/head checks + role-aware claims + `reopen` (`target.rs`, `room.rs`), CI health with
+# billing detection (`ccc/ci.rs`, owner alert in `hq.rs`), event-only rooms and longer waits
+# (`auto.rs`, `team.rs`, `idle.rs`). No new dependency. Ceiling 7488 KiB (~74 KiB left over the estimate).
+CEILING="${CEILING:-7667712}"   # 7488 KiB (raised 2026-10-20 from 7360 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

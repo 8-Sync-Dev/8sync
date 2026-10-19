@@ -1,4 +1,4 @@
-//! `8sync ccc auto add|queue|done|drop` and the board verbs `claim|move|note|board|lint`: the
+//! `8sync ccc auto add|queue|done|drop|reopen` and the board verbs `claim|move|note|board|lint`: the
 //! project's cards for `auto`. Like a prompt typed while Claude is busy, a card waits in line;
 //! `--now` puts it first and pushes it into every room's inbox (Claude Code's "ctrl+x ctrl+s to
 //! send now", for the whole project).
@@ -72,7 +72,7 @@ fn allowed(from: &str, to: &str) -> bool {
             | ("qa", "review" | "ready")
             | ("review", "approved" | "ready" | "qa")
             | ("approved", "review" | "ready")
-            | ("blocked", "ready" | "backlog")
+            | ("blocked", "ready" | "backlog" | "qa" | "review")
     ) || (to == "blocked" && from != "blocked")
 }
 
@@ -136,6 +136,10 @@ pub(super) struct Target {
     /// first, queue order within a priority.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prio: Option<u8>,
+    /// Who builds it (`dev`, `ui`, `rd+game-designer`), set by `--role`; none = the role tag the
+    /// title starts with ([`roles`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -145,6 +149,36 @@ fn is_zero(n: &u32) -> bool {
 /// The priority a card is claimed by: its own, or P2.
 fn rank(t: &Target) -> u8 {
     t.prio.unwrap_or(2)
+}
+
+/// The roles a card is for: its `--role`, else the first role tag in the `[…]` run its title
+/// starts with (`[#125][ui] …` → ui, `[rd+game-designer]` → rd and game-designer). Empty =
+/// untagged: any builder takes it. Measured on ai-game-studio (2026-10-19, 71 min): 10 of 33
+/// returns were dev/dev2/ui handing back each other's `[ui]`/`[rd]`/`[game-designer]` cards.
+pub(super) fn roles(t: &Target) -> Vec<String> {
+    if let Some(r) = &t.role {
+        return r.split('+').map(str::to_string).collect();
+    }
+    let mut rest = t.text.trim_start();
+    while let Some(body) = rest.strip_prefix('[') {
+        let Some(end) = body.find(']') else { break };
+        let found: Vec<String> = body[..end].split(['+', '/', ',']).filter_map(super::room::card_role).collect();
+        if !found.is_empty() {
+            return found;
+        }
+        rest = body[end + 1..].trim_start();
+    }
+    Vec::new()
+}
+
+/// `--role <vai>`: one role or several joined by `+`, each a room role (`backend` → dev) or a
+/// hyphenated one no room has (`game-designer`).
+pub(super) fn parse_role(s: &str) -> Result<String> {
+    let parts = s
+        .split('+')
+        .map(|r| super::room::card_role(r).ok_or_else(|| anyhow::anyhow!("--role `{}` không phải vai: dev, ui, qa, review, rd, arch, ba, lead… (nhiều vai nối bằng +, vai không có phòng viết có gạch nối như game-designer)", r.trim())))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(parts.join("+"))
 }
 
 /// `P0`..`P3` (or `0`..`3`); `none`/`-` clears it.
@@ -361,6 +395,7 @@ pub(super) fn add(
             pr: None,
             sha: None,
             prio: None,
+            role: None,
         };
         if first {
             p.items.insert(0, t.clone());
@@ -384,7 +419,10 @@ pub(super) fn close(
     if evidence.as_deref() == Some("") {
         bail!("--evidence rỗng: dán lệnh kiểm + kết quả");
     }
-    edit(home, root, |p| {
+    if let Some(e) = evidence.as_deref().filter(|e| !proves(e)) {
+        bail!("--evidence \"{e}\" không có kết quả kiểm: ghi `<lệnh>: <kết quả>` (vd `cargo test: 12 passed`) hoặc SHA commit đã merge");
+    }
+    let res = edit(home, root, |p| {
         let Some(t) = p.items.iter_mut().find(|t| t.id == id) else {
             bail!("không có đích #{id} trong dự án này (`8sync ccc auto queue`)");
         };
@@ -411,6 +449,86 @@ pub(super) fn close(
         let next = open.first().cloned();
         p.items = open.into_iter().chain(shut).collect();
         Ok((closed, next))
+    });
+    if res.is_ok() {
+        prune_card_worktree(root, id);
+    }
+    res
+}
+
+/// Best-effort cleanup of clean `.claude/worktrees/*card-<id>*` folders when card `<id>` closes,
+/// so finished worktrees do not pile up or clutter HQ Preview. Dirty worktrees are kept.
+fn prune_card_worktree(root: &Path, id: u64) {
+    let wt_dir = root.join(".claude").join("worktrees");
+    let Ok(rd) = std::fs::read_dir(&wt_dir) else { return };
+    let needle = format!("card-{id}");
+    for e in rd.flatten() {
+        let name = e.file_name();
+        let Some(s) = name.to_str() else { continue };
+        let low = s.to_ascii_lowercase();
+        let matches = low.find(&needle).is_some_and(|i| !low[i + needle.len()..].starts_with(|c: char| c.is_ascii_digit()));
+        let p = e.path();
+        if matches && p.join(".git").exists() {
+            let _ = std::process::Command::new("git")
+                .args(["worktree", "remove"])
+                .arg(&p)
+                .current_dir(root)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+}
+
+/// Pure: does a `done` evidence line carry a result: a commit SHA (7–40 hex chars) or the
+/// `<lệnh>: <kết quả>` shape? A probing `done 129 --evidence "chưa"` closed a card on
+/// ai-game-studio (2026-10-19) that then had to be re-made.
+fn proves(e: &str) -> bool {
+    let sha = e.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| (7..=40).contains(&w.len()) && w.chars().all(|c| c.is_ascii_hexdigit()));
+    sha || e.split_once(':').is_some_and(|(cmd, out)| !cmd.trim().is_empty() && !out.trim().is_empty())
+}
+
+/// `auto reopen <id> [--note "…"]`: a card closed by mistake (done or dropped) opens again in the
+/// lane it closed from (`building` → ready, nobody holds it; `approved` without a SHA → review;
+/// `ready` without a check → backlog), history kept, with a note of who reopened it and what the
+/// close said. Only the last [`CLOSED_KEEP`] closed cards are kept.
+pub(super) fn reopen(home: &Path, root: &Path, id: u64, why: Option<&str>, room: Option<&str>, now: u64) -> Result<Target> {
+    edit(home, root, |p| {
+        let Some(i) = p.items.iter().position(|t| t.id == id) else {
+            bail!("không có card #{id} trong dự án này (chỉ {CLOSED_KEEP} card đóng gần nhất còn giữ)");
+        };
+        if p.items[i].state == "open" {
+            bail!("card #{id} đang mở ở {}: không cần mở lại", p.items[i].lane);
+        }
+        if p.items.iter().filter(|t| t.state == "open").count() >= OPEN_MAX {
+            bail!("hàng đã có {OPEN_MAX} đích mở: `auto done`/`auto drop` bớt trước");
+        }
+        let mut t = p.items.remove(i);
+        let mut was = format!("đã {}", t.state);
+        if let Some(b) = &t.by {
+            was.push_str(&format!(" bởi {b}"));
+        }
+        if let Some(e) = &t.evidence {
+            was.push_str(&format!(": {e}"));
+        }
+        let lane = match t.lane.as_str() {
+            "approved" if t.sha.is_none() => "review",
+            "building" => "ready",
+            l if LANES.contains(&l) => l,
+            _ => "ready",
+        };
+        t.lane = if lane == "ready" && t.check.is_none() { "backlog" } else { lane }.to_string();
+        t.state = "open".into();
+        (t.closed, t.evidence, t.by, t.claim) = (None, None, None, None);
+        let mut line = format!("↺ mở lại bởi {} ({was}) → {}", room.unwrap_or("owner"), t.lane);
+        if let Some(n) = why.filter(|n| !n.trim().is_empty()) {
+            line.push_str(&format!(": {n}"));
+        }
+        t.note(room, &line, now);
+        // Behind the open cards, ahead of the closed ones.
+        let at = p.items.iter().position(|t| t.state != "open").unwrap_or(p.items.len());
+        p.items.insert(at, t.clone());
+        Ok(t)
     })
 }
 
@@ -426,14 +544,20 @@ fn reap(p: &mut Project, now: u64) {
     }
 }
 
-/// Does free card `t` belong to `lane`'s rooms? `qa` also takes `ready` cards labelled `qa`, which
-/// `ready` skips; a `building` card whose claim went stale counts as `ready` (claim reaps it).
-fn fits(t: &Target, lane: &str, now: u64) -> bool {
-    let stale = t.claim.as_ref().is_some_and(|c| now.saturating_sub(c.at) >= CLAIM_SECS);
+/// Does free card `t` belong to `lane`'s rooms of role `crew` ([`super::room::crew`])? `qa` also
+/// takes `ready` cards labelled or tagged `qa`, which `ready` skips; `ready` gives a room only cards
+/// of its role or untagged ones (a dev room never gets `[ui]`, `[rd]` or `[game-designer]`), so a
+/// card whose role has no room is never handed out ([`unstaffed`] tells the lead). Triage and
+/// review lanes take every role. A `building` card whose claim went stale or was cleared counts as
+/// `ready` (claim reaps it).
+fn fits(t: &Target, lane: &str, crew: &str, now: u64) -> bool {
+    let stale = t.claim.is_none() || t.claim.as_ref().is_some_and(|c| now.saturating_sub(c.at) >= CLAIM_SECS);
     let at = if t.lane == "building" && stale { "ready" } else { t.lane.as_str() };
+    let roles = roles(t);
+    let for_qa = t.label.as_deref() == Some("qa") || roles.iter().any(|r| r == "qa");
     match lane {
-        "qa" => at == "qa" || (at == "ready" && t.label.as_deref() == Some("qa")),
-        "ready" => at == "ready" && t.label.as_deref() != Some("qa"),
+        "qa" => at == "qa" || (at == "ready" && for_qa),
+        "ready" => at == "ready" && !for_qa && (roles.is_empty() || roles.iter().any(|r| r == crew)),
         l => at == l,
     }
 }
@@ -444,34 +568,39 @@ pub(super) fn claimable(cards: &[Target], room: &str, lane: &str, now: u64) -> O
     fn holder(t: &Target, now: u64) -> Option<&str> {
         t.claim.as_ref().filter(|c| now.saturating_sub(c.at) < CLAIM_SECS).map(|c| c.room.as_str())
     }
+    let crew = super::room::crew(room);
     let open = cards.iter().filter(|t| t.state == "open");
     let ready = ready_count(cards);
     open.clone()
         .find(|t| holder(t, now) == Some(room))
-        .or_else(|| open.clone().enumerate().filter(|(_, t)| holder(t, now).is_none() && fits(t, lane, now) && open_to(t, lane, ready)).min_by_key(|(i, t)| (rank(t), *i)).map(|(_, t)| t))
+        .or_else(|| open.clone().enumerate().filter(|(_, t)| holder(t, now).is_none() && fits(t, lane, &crew, now) && open_to(t, lane, ready)).min_by_key(|(i, t)| (rank(t), *i)).map(|(_, t)| t))
         .map(|t| t.id)
 }
 
 /// `auto claim`: the card room `room` works on this tick. A card it already holds comes back (claim
-/// refreshed); else the first free card of `lane` in queue order. Taking a `ready` card moves it to
-/// `building`; the `qa` lane also takes `ready` cards labelled `qa`, the `ready` lane skips them.
+/// refreshed); else the first free card of `lane` for the room's role in queue order. Taking a
+/// `ready` card moves it to `building`; the `qa` lane also takes `ready` cards labelled `qa`, the
+/// `ready` lane skips them.
 pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) -> Result<Option<Target>> {
     if !LANES.contains(&lane) || matches!(lane, "building" | "approved") {
         bail!("cột `{lane}` không nhận claim: backlog, ready, qa, review, blocked");
     }
+    let crew = super::room::crew(room);
     edit(home, root, |p| {
         reap(p, now);
         let mine = p.items.iter().position(|t| t.state == "open" && t.claim.as_ref().is_some_and(|c| c.room == room));
         let ready = ready_count(&p.items);
-        let free = |t: &Target| t.state == "open" && t.claim.is_none() && fits(t, lane, now) && open_to(t, lane, ready);
+        let free = |t: &Target| t.state == "open" && t.claim.is_none() && fits(t, lane, &crew, now) && open_to(t, lane, ready);
         // The most urgent free card, queue order within a priority.
         let first_free = || p.items.iter().enumerate().filter(|(_, t)| free(t)).min_by_key(|(i, t)| (rank(t), *i)).map(|(i, _)| i);
         let Some(i) = mine.or_else(first_free) else { return Ok(None) };
         let t = &mut p.items[i];
-        if t.claim.is_none() && t.lane == "ready" {
+        if t.claim.is_none() && matches!(t.lane.as_str(), "ready" | "building") {
             let to = if lane == "qa" { "qa" } else { "building" };
-            t.note(Some(room), &format!("ready → {to}"), now);
-            t.lane = to.into();
+            if t.lane != to {
+                t.note(Some(room), &format!("{} → {to}", t.lane), now);
+                t.lane = to.into();
+            }
         }
         t.claim = Some(Claim { room: room.to_string(), at: now });
         Ok(Some(t.clone()))
@@ -487,16 +616,106 @@ pub(super) struct Move<'a> {
     pub sha: Option<&'a str>,
 }
 
+/// `gh pr view <pr> --json baseRefName,mergeable,headRefOid,state` run in `root`, killed after
+/// 20 s: its stdout, or a refusal when gh failed (not installed, not logged in, offline, hung).
+fn gh_pr_view(root: &Path, pr: &str) -> Result<String> {
+    let mut cmd = std::process::Command::new("gh");
+    cmd.args(["pr", "view", pr, "--json", "baseRefName,mergeable,headRefOid,state"])
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let out = crate::verbs::hq_core::agents::run_bounded(cmd, std::time::Duration::from_secs(20))
+        .ok_or_else(|| anyhow::anyhow!("`gh pr view {pr}` lỗi hoặc quá 20 s (cài GitHub CLI, `gh auth login`, kiểm mạng)"))?;
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// Pure: why PR `pr` (gh's JSON `view`) may not move on: not open, stacked on a branch other than
+/// the repo's default branch `main` ([`super::merge::default_branch`], the only base `auto merge`
+/// takes), conflicting, or, given the reviewed `sha` (for `approved`), at another head. Measured on
+/// ai-game-studio (2026-10-19): 25 of 59 open PRs conflicting, 14 on a non-main base.
+fn pr_gate(pr: &str, view: &str, sha: Option<&str>, main: &str) -> Result<()> {
+    let v: serde_json::Value = serde_json::from_str(view).ok().filter(serde_json::Value::is_object).ok_or_else(|| anyhow::anyhow!("gh trả về dữ liệu lạ cho PR {pr}: không chuyển card khi chưa kiểm được PR"))?;
+    let field = |k: &str| v[k].as_str().unwrap_or("").to_string();
+    let (base, state) = (field("baseRefName"), field("state"));
+    if !state.is_empty() && state != "OPEN" {
+        bail!("PR {pr} đã {state}: mở PR mới vào {main} cho card rồi chuyển lại");
+    }
+    if base.is_empty() {
+        bail!("gh không trả base của PR {pr}: không chuyển card khi chưa kiểm được PR");
+    }
+    if base != main {
+        bail!("PR {pr} xếp chồng trên {base}: rebase lên origin/{main} rồi mở PR vào {main}");
+    }
+    if field("mergeable") == "CONFLICTING" {
+        bail!("PR {pr} conflict với {base}: rebase lên origin/{base}, chạy lại check, push rồi chuyển lại");
+    }
+    if let Some(s) = sha {
+        let head = field("headRefOid");
+        if !head.to_ascii_lowercase().starts_with(&s.to_ascii_lowercase()) {
+            let short: String = head.chars().take(12).collect();
+            bail!("PR {pr} đang ở head {short}, không phải --sha {s}: review đúng head mới rồi duyệt lại");
+        }
+    }
+    Ok(())
+}
+
 /// `auto move <id> <lane>`: a checked transition that releases the claim (the next lane's room
 /// takes it). `ready` needs a check; `approved` needs the reviewed head SHA; the bounce back to
-/// `ready` past [`REBUILD_CAP`] lands in `blocked` instead.
+/// `ready` past [`REBUILD_CAP`] lands in `blocked` instead. Into `qa` or `approved`, the card's PR
+/// must be open, based on the default branch and not conflicting (and at the approved SHA), as
+/// `gh` reports it. Out of `blocked` the bounce count stays; `blocked → review` only for a card
+/// that already passed QA ([`passed_qa`]).
 pub(super) fn move_to(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option<&str>, now: u64) -> Result<Target> {
+    move_with(home, root, id, to, m, room, now, &gh_pr_view, &super::merge::default_branch)
+}
+
+/// Did the card pass QA at `head` (its PR head, else its `sha`): a `gate <sha>` note whose SHA
+/// (≥ 7 hex) is a prefix of that head. A pass at an older head, or no known head, does not count.
+fn passed_qa(t: &Target, head: Option<&str>) -> bool {
+    let Some(head) = head.map(str::to_ascii_lowercase).filter(|h| h.len() >= 7) else { return false };
+    t.notes.iter().filter_map(|n| n.text.strip_prefix("gate ")).any(|rest| {
+        let s: String = rest.chars().take_while(char::is_ascii_hexdigit).collect::<String>().to_ascii_lowercase();
+        s.len() >= 7 && (head.starts_with(&s) || s.starts_with(&head))
+    })
+}
+
+/// [`move_to`] with `gh pr view` (`(root, pr) → JSON`) and the default branch (`root → name`) injected.
+#[allow(clippy::too_many_arguments)]
+fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option<&str>, now: u64, gh: &dyn Fn(&Path, &str) -> Result<String>, main: &dyn Fn(&Path) -> Option<String>) -> Result<Target> {
     if !LANES.contains(&to) {
         bail!("cột `{to}` không có: {} (xong → `auto done <id> --evidence`)", LANES.join(", "));
     }
     let sha = m.sha.map(str::trim).filter(|s| !s.is_empty());
     if let Some(s) = sha.filter(|s| !(7..=40).contains(&s.len()) || !s.chars().all(|c| c.is_ascii_hexdigit())) {
         bail!("--sha `{s}` không phải commit SHA");
+    }
+    // The PR checks run before the lock: gh takes seconds, the lock is held for milliseconds.
+    let card = list(home, root)?.into_iter().find(|t| t.id == id && t.state == "open").filter(|t| allowed(&t.lane, to));
+    let unblock = to == "review" && card.as_ref().is_some_and(|t| t.lane == "blocked");
+    // blocked → review: the head QA's `gate <sha>` must match (the PR's, else the card's sha).
+    let mut head = None;
+    if matches!(to, "qa" | "approved") || unblock {
+        if to == "approved" && sha.is_none() {
+            bail!("approved cần --sha <head commit đã review>");
+        }
+        if let Some(pr) = card.as_ref().and_then(|t| m.pr.map(|x| clean(x, 200)).filter(|x| !x.is_empty()).or(t.pr.clone())) {
+            let arg = pr.trim_start_matches('#');
+            if arg.is_empty() || arg.starts_with('-') {
+                bail!("--pr `{pr}` không phải số hay URL của PR");
+            }
+            let name = if arg.chars().all(|c| c.is_ascii_digit()) { format!("#{arg}") } else { arg.to_string() };
+            let view = gh(root, arg).map_err(|e| anyhow::anyhow!("không đọc được PR {name} bằng gh ({e:#}): kiểm `gh auth status` và mạng rồi chạy lại; card #{id} giữ nguyên cột"))?;
+            if unblock {
+                head = serde_json::from_str::<serde_json::Value>(&view).ok().and_then(|v| v["headRefOid"].as_str().map(str::to_string));
+            } else {
+                let base = main(root).ok_or_else(|| anyhow::anyhow!("{}", super::merge::NO_DEFAULT))?;
+                pr_gate(&name, &view, if to == "approved" { sha } else { None }, &base)?;
+            }
+        }
+    }
+    if unblock && head.is_none() {
+        head = card.as_ref().and_then(|t| t.sha.clone());
     }
     edit(home, root, |p| {
         let ready = ready_count(&p.items);
@@ -505,6 +724,9 @@ pub(super) fn move_to(home: &Path, root: &Path, id: u64, to: &str, m: &Move, roo
         };
         if !allowed(&t.lane, to) {
             bail!("card #{id} đang ở {}: không chuyển thẳng sang {to}", t.lane);
+        }
+        if t.lane == "blocked" && to == "review" && !passed_qa(t, head.as_deref()) {
+            bail!("card #{id} chưa qua QA ở head hiện tại (không có note `gate <sha>` khớp head PR): blocked → qa hoặc ready, không thẳng review");
         }
         if t.lane == "backlog" && to == "ready" && ready >= READY_CAP && t.prio != Some(0) {
             bail!("cột ready đầy ({ready}/{READY_CAP} card chờ dev): #{id} ở lại backlog, không tách thêm việc tới khi dev rút bớt (card P0 vẫn qua)");
@@ -536,7 +758,11 @@ pub(super) fn move_to(home: &Path, root: &Path, id: u64, to: &str, m: &Move, roo
             line.push_str(&format!(": {n}"));
         }
         t.note(room, &line, now);
-        t.claim = None;
+        t.claim = if to == "building" {
+            room.map(|r| Claim { room: r.to_string(), at: now })
+        } else {
+            None
+        };
         Ok(t.clone())
     })
 }
@@ -550,6 +776,20 @@ pub(super) fn set_prio(home: &Path, root: &Path, id: u64, prio: Option<u8>, room
         if t.prio != prio {
             t.prio = prio;
             t.note(room, &prio.map_or_else(|| "bỏ mức ưu tiên".to_string(), |n| format!("ưu tiên P{n}")), now);
+        }
+        Ok(t.clone())
+    })
+}
+
+/// `--role <vai>` on add/move ([`parse_role`] first): who builds the card, over its title tag.
+pub(super) fn set_role(home: &Path, root: &Path, id: u64, role: &str, room: Option<&str>, now: u64) -> Result<Target> {
+    edit(home, root, |p| {
+        let Some(t) = p.items.iter_mut().find(|t| t.id == id && t.state == "open") else {
+            bail!("không có card mở #{id} (`8sync ccc auto board`)");
+        };
+        if t.role.as_deref() != Some(role) {
+            t.role = Some(role.to_string());
+            t.note(room, &format!("vai {role}"), now);
         }
         Ok(t.clone())
     })
@@ -592,6 +832,35 @@ pub(super) fn lint(cards: &[Target], now: u64) -> Vec<String> {
         }
     }
     out
+}
+
+/// `auto lint`: open cards not yet past building whose role has no room in `team` (the project's
+/// room names), so no claim hands them out. In `ready`/`building` only a room that claims the lane
+/// counts (a builder, or qa for a `[qa]` card): an `[rd]`, `[arch]`, `[review]`, `[ba]` or
+/// `[lead]` card there waits on a room that never takes ready cards. An empty team (unknown) says
+/// nothing.
+pub(super) fn unstaffed(cards: &[Target], team: &[String]) -> Vec<String> {
+    if team.is_empty() {
+        return Vec::new();
+    }
+    let crews: Vec<String> = team.iter().map(|r| super::room::crew(r)).collect();
+    let builders: Vec<String> = team.iter().filter(|r| super::room::builds(r)).map(|r| super::room::crew(r)).collect();
+    cards
+        .iter()
+        .filter(|t| t.state == "open" && matches!(t.lane.as_str(), "backlog" | "ready" | "building" | "blocked"))
+        .filter_map(|t| {
+            let r = roles(t);
+            if r.is_empty() {
+                return None;
+            }
+            if !r.iter().any(|x| crews.contains(x)) {
+                return Some(format!("card #{} vai [{}] không có phòng: giao lại vai hoặc thêm phòng", t.id, r.join("+")));
+            }
+            let claimed = |x: &String| builders.contains(x) || (x == "qa" && crews.contains(x));
+            (matches!(t.lane.as_str(), "ready" | "building") && !r.iter().any(claimed))
+                .then(|| format!("card #{} vai [{}] ở {} mà phòng vai đó không nhận cột ready: giao vai builder (`--role dev`) hoặc đưa về backlog", t.id, r.join("+"), t.lane))
+        })
+        .collect()
 }
 
 /// `auto board --json`: open cards by lane, then the latest closed ones.
@@ -649,6 +918,174 @@ mod tests {
 
     fn lanes(h: &Path, root: &Path) -> Vec<(u64, String)> {
         list(h, root).unwrap().into_iter().filter(|t| t.state == "open").map(|t| (t.id, t.lane)).collect()
+    }
+
+    /// gh's answer for an open PR on main, mergeable, at head `0123abc…`.
+    const PR_OK: &str = r#"{"baseRefName":"main","mergeable":"MERGEABLE","headRefOid":"0123abcdef0123abcdef0123abcdef0123abcd","state":"OPEN"}"#;
+
+    /// The real `move_to` with `gh` answering [`PR_OK`]: these tests never touch the network.
+    fn move_to(h: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option<&str>, now: u64) -> Result<Target> {
+        move_with(h, root, id, to, m, room, now, &|_, _| Ok(PR_OK.to_string()), &on_main)
+    }
+
+    /// A repo whose default branch is `main`.
+    fn on_main(_: &Path) -> Option<String> {
+        Some("main".into())
+    }
+
+    #[test]
+    fn qa_and_approved_refuse_a_stacked_conflicting_or_moved_pr() {
+        // ai-game-studio 2026-10-19: 25 of 59 open PRs conflicting, 14 on a non-main base.
+        let (d, root) = tmp("prgate");
+        let h = d.as_path();
+        let c = put(h, &root, "fix", Some("true"), false, None, 0).unwrap();
+        claim(h, &root, "dev", "ready", 1).unwrap();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let pr = |json: &'static str| {
+            let asked = &asked;
+            move |_: &Path, n: &str| -> Result<String> {
+                asked.borrow_mut().push(n.to_string());
+                Ok(json.to_string())
+            }
+        };
+        let qa = Move { pr: Some("#81"), ..Move::default() };
+        let err = |to: &str, m: &Move, gh: &dyn Fn(&Path, &str) -> Result<String>| move_with(h, &root, c.id, to, m, Some("dev"), 2, gh, &on_main).unwrap_err().to_string();
+        let stacked = r#"{"baseRefName":"card-x","mergeable":"MERGEABLE","headRefOid":"0123abc","state":"OPEN"}"#;
+        assert_eq!(err("qa", &qa, &pr(stacked)), "PR #81 xếp chồng trên card-x: rebase lên origin/main rồi mở PR vào main");
+        assert_eq!(asked.borrow().as_slice(), ["81"], "gh gets the bare number");
+        let conflict = r#"{"baseRefName":"main","mergeable":"CONFLICTING","headRefOid":"0123abc","state":"OPEN"}"#;
+        assert_eq!(err("qa", &qa, &pr(conflict)), "PR #81 conflict với main: rebase lên origin/main, chạy lại check, push rồi chuyển lại");
+        let merged = r#"{"baseRefName":"main","mergeable":"UNKNOWN","headRefOid":"0123abc","state":"MERGED"}"#;
+        assert!(err("qa", &qa, &pr(merged)).starts_with("PR #81 đã MERGED"));
+        // gh itself failing (offline, logged out) refuses instead of letting the card through
+        let e = err("qa", &qa, &|_, _| anyhow::bail!("error connecting to api.github.com"));
+        assert_eq!(e, "không đọc được PR #81 bằng gh (error connecting to api.github.com): kiểm `gh auth status` và mạng rồi chạy lại; card #1 giữ nguyên cột");
+        assert!(err("qa", &qa, &pr("not json")).contains("dữ liệu lạ"));
+        assert_eq!(lanes(h, &root), [(c.id, "building".into())], "every refusal leaves the card where it was");
+        // on main and mergeable: through; the PR number is kept on the card
+        move_with(h, &root, c.id, "qa", &qa, Some("dev"), 3, &pr(PR_OK), &on_main).unwrap();
+        move_to(h, &root, c.id, "review", &Move::default(), Some("qa"), 4).unwrap();
+        // approved: the card's PR is checked again, and its head must be the reviewed SHA
+        let moved = Move { sha: Some("fedcba9"), ..Move::default() };
+        assert_eq!(err("approved", &moved, &pr(PR_OK)), "PR #81 đang ở head 0123abcdef01, không phải --sha fedcba9: review đúng head mới rồi duyệt lại");
+        assert!(err("approved", &Move { sha: Some("0123abc"), ..Move::default() }, &pr(stacked)).contains("xếp chồng trên card-x"));
+        let ok = Move { sha: Some("0123ABC"), ..Move::default() };
+        assert_eq!(move_with(h, &root, c.id, "approved", &ok, Some("review"), 5, &pr(PR_OK), &on_main).unwrap().lane, "approved");
+        assert_eq!(asked.borrow().last().map(String::as_str), Some("81"));
+        // a card with no PR (a qa-only card) has nothing to ask gh about
+        let (uat, _) = add(h, &root, "UAT", Some("true"), Some("qa"), false, None, 6).unwrap();
+        claim(h, &root, "qa", "qa", 7).unwrap();
+        let n = asked.borrow().len();
+        move_with(h, &root, uat.id, "review", &Move::default(), Some("qa"), 8, &pr(stacked), &on_main).unwrap();
+        move_with(h, &root, uat.id, "approved", &ok, Some("review"), 9, &pr(stacked), &on_main).unwrap();
+        assert_eq!(asked.borrow().len(), n);
+        // a repo on `master`: its PRs pass, a PR into `main` there is stacked
+        let master = PR_OK.replace("\"main\"", "\"master\"");
+        assert!(pr_gate("#81", &master, None, "master").is_ok());
+        assert_eq!(pr_gate("#81", PR_OK, None, "master").unwrap_err().to_string(), "PR #81 xếp chồng trên main: rebase lên origin/master rồi mở PR vào master");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn rooms_claim_only_their_role_and_roleless_cards_go_to_lint() {
+        // ai-game-studio 2026-10-19: dev, dev2 and ui took each other's [ui]/[rd]/[game-designer] cards.
+        let (d, root) = tmp("roles");
+        let h = d.as_path();
+        let card = |text: &str| put(h, &root, text, Some("true"), false, None, 0).unwrap().id;
+        let ui = card("[#125][ui] Bản đồ campaign");
+        let rd = card("[#70][rd] Vòng 3 sprite");
+        let dev = card("[#57][dev] Ánh sáng 2D");
+        let plain = card("[#48 M5] HUD đảo đếm ngược");
+        let gd = card("[#146][game-designer] Spec kinh tế gacha");
+        let both = card("[rd+game-designer] Kho ý tưởng linh thú");
+        let plain2 = card("sửa nút skill");
+        let roles_of = |id: u64| roles(&list(h, &root).unwrap().into_iter().find(|t| t.id == id).unwrap());
+        assert_eq!((roles_of(ui), roles_of(plain), roles_of(both)), (vec!["ui".to_string()], vec![], vec!["rd".to_string(), "game-designer".to_string()]));
+        let cards = list(h, &root).unwrap();
+        assert_eq!(claimable(&cards, "dev2", "ready", 1), Some(dev), "the first card [ui] is not dev's");
+        assert_eq!(claimable(&cards, "ui", "ready", 1), Some(ui));
+        let got = |room: &str| claim(h, &root, room, "ready", 1).unwrap().map(|t| t.id);
+        assert_eq!(got("dev2"), Some(dev));
+        assert_eq!(got("dev"), Some(plain));
+        assert_eq!(got("ui"), Some(ui));
+        assert_eq!(got("ui2"), Some(plain2), "untagged cards go to any builder");
+        assert_eq!(got("backend"), None, "only [rd] and [game-designer] cards are left");
+        assert_eq!(got("core"), None);
+        let team = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let full = team(&["lead", "dev", "dev2", "ui", "qa", "review"]);
+        let lines = unstaffed(&list(h, &root).unwrap(), &full);
+        assert_eq!(lines, [
+            format!("card #{rd} vai [rd] không có phòng: giao lại vai hoặc thêm phòng"),
+            format!("card #{gd} vai [game-designer] không có phòng: giao lại vai hoặc thêm phòng"),
+            format!("card #{both} vai [rd+game-designer] không có phòng: giao lại vai hoặc thêm phòng"),
+        ]);
+        // an R&D room never claims ready: its [rd] cards there are still listed for the lead, and
+        // no builder takes them; an unknown team says nothing
+        let with_rd = unstaffed(&list(h, &root).unwrap(), &team(&["lead", "dev", "ui", "rd2"]));
+        assert_eq!(with_rd, [
+            format!("card #{rd} vai [rd] ở ready mà phòng vai đó không nhận cột ready: giao vai builder (`--role dev`) hoặc đưa về backlog"),
+            format!("card #{gd} vai [game-designer] không có phòng: giao lại vai hoặc thêm phòng"),
+            format!("card #{both} vai [rd+game-designer] ở ready mà phòng vai đó không nhận cột ready: giao vai builder (`--role dev`) hoặc đưa về backlog"),
+        ]);
+        assert!(unstaffed(&list(h, &root).unwrap(), &[]).is_empty());
+        // the game-designer and rd cards are never claimed, whatever builder asks
+        for room in ["dev", "dev3", "ui", "backend", "core", "godot"] {
+            let c = claimable(&list(h, &root).unwrap(), room, "ready", 2);
+            assert!(c != Some(gd) && c != Some(rd), "{room}");
+        }
+        // unknown hyphenated tags are no role (the card counts as untagged); role words still are
+        assert_eq!((super::super::room::card_role("hot-fix"), super::super::room::card_role("follow-up")), (None, None));
+        assert_eq!(super::super::room::card_role("game-designer").as_deref(), Some("game-designer"));
+        assert!(parse_role("hot-fix").is_err());
+        // --role reassigns it (over the title tag): a dev room takes it next
+        assert_eq!(parse_role(" Backend ").unwrap(), "dev");
+        assert_eq!(parse_role("rd+game-designer").unwrap(), "rd+game-designer");
+        assert!(parse_role("bug").is_err() && parse_role("").is_err() && parse_role("#12").is_err());
+        let t = set_role(h, &root, gd, &parse_role("dev").unwrap(), Some("lead"), 3).unwrap();
+        assert_eq!((t.role.as_deref(), t.notes.last().unwrap().text.as_str()), (Some("dev"), "vai dev"));
+        assert_eq!(got("dev3"), Some(gd));
+        // a [qa] card goes to the qa lane, not to builders
+        let uat = card("[#1 v1][qa] Chuẩn bị playtest");
+        assert_eq!(claimable(&list(h, &root).unwrap(), "dev4", "ready", 4), None);
+        assert_eq!(claim(h, &root, "qa", "qa", 4).unwrap().map(|t| (t.id, t.lane)), Some((uat, "qa".into())));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn done_needs_a_result_and_reopen_brings_a_card_back() {
+        let (d, root) = tmp("reopen");
+        let h = d.as_path();
+        let a = put(h, &root, "a", Some("true"), false, None, 0).unwrap();
+        let b = put(h, &root, "b", Some("true"), false, None, 0).unwrap();
+        for weak in ["chưa", "ok", "xong rồi", "cargo test:", ": 12 passed"] {
+            let e = close(h, &root, a.id, Some(weak), Some("lead"), 1).unwrap_err().to_string();
+            assert!(e.contains("không có kết quả kiểm"), "{weak}: {e}");
+        }
+        assert!(close(h, &root, a.id, Some("cargo test: 12 passed"), Some("dev"), 1).is_ok());
+        assert!(close(h, &root, b.id, Some("merged 0123abcd"), Some("lead"), 1).is_ok());
+        let c = put(h, &root, "c", Some("true"), false, None, 0).unwrap();
+        assert!(close(h, &root, c.id, Some("0123abcdef0123abcdef"), None, 1).is_ok());
+        // a card closed from approved comes back there with its SHA; the history stays
+        let (e, _) = add(h, &root, "e", Some("true"), None, false, None, 2).unwrap();
+        claim(h, &root, "dev", "ready", 2).unwrap();
+        for (to, m) in [("qa", Move { pr: Some("9"), ..Move::default() }), ("review", Move::default()), ("approved", Move { sha: Some("0123abc"), ..Move::default() })] {
+            move_to(h, &root, e.id, to, &m, None, 3).unwrap();
+        }
+        close(h, &root, e.id, Some("gh pr merge 9: merged"), Some("lead"), 4).unwrap();
+        let back = reopen(h, &root, e.id, Some("đóng nhầm, PR chưa vào main"), Some("lead"), 5).unwrap();
+        assert_eq!((back.state.as_str(), back.lane.as_str(), back.sha.as_deref(), back.evidence.as_deref(), back.by.as_deref()), ("open", "approved", Some("0123abc"), None, None));
+        assert_eq!(back.notes.last().unwrap().text, "↺ mở lại bởi lead (đã done bởi lead: gh pr merge 9: merged) → approved: đóng nhầm, PR chưa vào main");
+        assert!(back.notes.iter().any(|n| n.text == "review → approved"), "history kept");
+        assert_eq!(current(h, &root).unwrap(), (Some(back), 1));
+        // a dropped card that was being built goes back to ready; an open or unknown card is refused
+        let f = put(h, &root, "f", Some("true"), false, None, 6).unwrap();
+        claim(h, &root, "dev", "ready", 6).unwrap();
+        close(h, &root, f.id, None, Some("lead"), 7).unwrap();
+        assert_eq!(reopen(h, &root, f.id, None, None, 8).unwrap().lane, "ready");
+        assert!(reopen(h, &root, f.id, None, None, 9).unwrap_err().to_string().contains("đang mở"));
+        assert!(reopen(h, &root, 99, None, None, 9).is_err());
+        assert_eq!(super::super::room::crew("dev2"), "dev");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -920,7 +1357,7 @@ mod tests {
             (done.state.as_str(), done.by.as_deref(), next.unwrap().id),
             ("done", Some("dev"), 2)
         );
-        assert!(close(h, &root, 1, Some("again"), None, 4)
+        assert!(close(h, &root, 1, Some("cargo test: ok"), None, 4)
             .unwrap_err()
             .to_string()
             .contains("đã done"));
@@ -980,5 +1417,40 @@ mod tests {
         assert!(!p.contains("owner gửi"), "a room's --now must not claim the owner's voice: {p}");
         assert_eq!(json(Some(&t))["id"], 7);
         assert!(json(None).is_null());
+    }
+
+    #[test]
+    fn leaving_blocked_keeps_bounces_and_review_needs_qa_first() {
+        let (d, root) = tmp("unblock-reclaim");
+        let h = d.as_path();
+        let gh = |_: &Path, _: &str| -> Result<String> { Ok(PR_OK.to_string()) };
+        let mv = |id: u64, to: &str, note: Option<&str>, now: u64| move_with(h, &root, id, to, &Move { note, ..Move::default() }, Some("qa"), now, &gh, &on_main);
+        let (t, _) = add(h, &root, "[dev] fix battle", Some("cargo test"), None, false, None, 1).unwrap();
+        mv(t.id, "building", None, 2).unwrap();
+        // gh could not say the default branch: refuse rather than guess `main`
+        let pr = Move { pr: Some("#5"), ..Move::default() };
+        let e = move_with(h, &root, t.id, "qa", &pr, Some("dev"), 2, &gh, &|_| None).unwrap_err().to_string();
+        assert_eq!(e, super::super::merge::NO_DEFAULT);
+        move_with(h, &root, t.id, "qa", &pr, Some("dev"), 2, &gh, &on_main).unwrap();
+        note(h, &root, t.id, "gate fedcba9: cargo test: ok", Some("qa"), 2).unwrap();
+        assert_eq!(mv(t.id, "ready", Some("[qa] lỗi"), 2).unwrap().bounces, 1);
+        mv(t.id, "blocked", Some("kẹt"), 2).unwrap();
+        // a qa → review in the history and a gate at an older head do not count
+        let e = mv(t.id, "review", Some("QA đã kiểm"), 3).unwrap_err().to_string();
+        assert!(e.contains("chưa qua QA"), "{e}");
+        assert_eq!(lanes(h, &root), [(t.id, "blocked".into())]);
+        note(h, &root, t.id, "gate 0123abc: cargo test: ok", Some("qa"), 3).unwrap();
+        let t = mv(t.id, "review", None, 3).unwrap();
+        assert_eq!((t.lane.as_str(), t.bounces), ("review", 1), "unblocking keeps the bounce count");
+        mv(t.id, "blocked", None, 3).unwrap();
+        assert_eq!(mv(t.id, "backlog", None, 3).unwrap().bounces, 1);
+
+        let m = Move::default();
+        let (t2, _) = add(h, &root, "[dev] fix hud", Some("cargo test"), None, false, None, 4).unwrap();
+        let t2 = move_with(h, &root, t2.id, "building", &m, None, 5, &gh, &on_main).unwrap();
+        assert!(t2.claim.is_none());
+        let claimed = claim(h, &root, "dev", "ready", 6).unwrap().expect("reclaims unclaimed building card");
+        assert_eq!((claimed.id, claimed.lane.as_str()), (t2.id, "building"));
+        assert_eq!(claimed.claim.unwrap().room, "dev");
     }
 }

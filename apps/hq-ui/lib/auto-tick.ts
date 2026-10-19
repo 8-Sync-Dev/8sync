@@ -11,14 +11,15 @@ const PRUNE_MS = 24 * 3600_000;
 export const TICK_PROMPT =
   "8sync auto-tick: phiên này rảnh hơn 1 phút trong lúc HQ đang 'Chạy liên tục'. Nếu đã có /loop hoặc cron riêng đang chạy (CronList) → trả lời 'đã có loop' và không làm gì thêm. Nếu `8sync ccc auto status --json` có target → làm phần hợp vai cho đích đó (đạt → `8sync ccc auto done <id> --evidence`). Nếu su-code/ship/ACTIVE có vòng lặp mở → /ship-tick <slug>. Không thì làm MỘT nhịp theo .claude/loop.md nếu có; thiếu file thì MỘT việc từ su-code/STATE.md mục Next hợp với phòng của bạn và tự chọn skill (code → /ship, ≤3 file → /do, R&D → /deep-research), rồi `8sync ccc meet --say`. Không merge/push main/tag/deploy; câu hỏi Ship vẫn chờ owner.";
 
-export type TickRoom = { session_id: string | null; status: string; inboxLive: boolean; pending: number; idleSince: number };
+/** `noTick`: the room's own Stop hook said it runs a cron loop or holds no board lane (lib/idle.ts `noTick`). */
+export type TickRoom = { session_id: string | null; status: string; inboxLive: boolean; pending: number; idleSince: number; noTick?: boolean };
 
 export function tickTargets(rooms: TickRoom[], ticked: Record<string, number>, now: number): string[] {
   const out: string[] = [];
   for (const r of rooms) {
     const sid = r.session_id;
     // Allowlist: only "idle" (lib/server/proc.ts) — running / needs_input / ended / anything new never ticks.
-    if (!sid || r.status !== "idle" || !r.inboxLive || r.pending !== 0) continue;
+    if (!sid || r.status !== "idle" || !r.inboxLive || r.pending !== 0 || r.noTick) continue;
     if (now - r.idleSince < TICK_IDLE_MS - TICK_SLACK_MS || now - (ticked[sid] ?? 0) < TICK_EVERY_MS) continue;
     if (!out.includes(sid)) out.push(sid);
   }

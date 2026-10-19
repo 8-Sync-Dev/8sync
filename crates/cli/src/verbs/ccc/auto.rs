@@ -11,8 +11,9 @@
 //! `taskdone` hooks then skip sessions whose cwd is outside it ([`in_scope`]); subfolders and
 //! worktrees inside the repo count as the same project.
 //!
-//! `--loop [10m] [--team]` queues one inbox message per room of this project ([`loop_prompt`]):
-//! the room sets up its own recurring `CronCreate` loop, which re-reads [`status`] every tick and
+//! `--loop [30m] [--team]` queues one inbox message per room of this project ([`loop_prompt`]):
+//! the room sets up its own recurring `CronCreate` loop (a room without a board lane gets none,
+//! [`events_only`]), which re-reads [`status`] every tick and
 //! deletes itself once auto is off/paused; while the `cap` holds (this project's $/hour, or on a
 //! subscription the 5-hour/7-day usage window at 90%) it rests. The lease does not stop it: the
 //! loop is Claude Code's own scheduler (session-scoped, expires after 7 days,
@@ -46,15 +47,20 @@ use serde_json::{json, Value};
 
 use super::{delegate, idle, target};
 
-const USAGE: &str = "usage: 8sync ccc auto on [--here] [--omp] [--loop [10m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json]
+const USAGE: &str = "usage: 8sync ccc auto on [--here] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | ci [--json]
        8sync ccc auto omp on [--model <provider/model>]|off [--json] | nudge --session <room id> --cwd <dir> [--model <provider/model>] [--json]
        (on --omp nhận thêm --omp-model <provider/model>: model của đội omp)
-       8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down
-       8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--prio P0..P3] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id>
-       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>] [--timeout 540] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
+       8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down
+       8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--role <vai>] [--prio P0..P3] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id> | reopen <id> [--note \"…\"]
+       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>] [--timeout 1800] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
+       8sync ccc auto merge [--as <phòng>] [--json]   (lead: merge mọi card approved; cần quyền tự merge của owner)
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
 pub(super) const DEFAULT_AFTER_S: u64 = 60;
-pub(super) const DEFAULT_LOOP_MIN: u64 = 10;
+/// The backup cron of a room. 10 min fired 1,050 cron turns in 36 h on ai-game-studio (each a full
+/// context re-read); a lane room already wakes on cards through `auto wait`, so the cron only has to
+/// catch a room that stopped. Shorter loops are refused ([`parse_every`]).
+pub(super) const DEFAULT_LOOP_MIN: u64 = 30;
+const MIN_LOOP_MIN: u64 = 30;
 /// Tag every loop carries, so a room never gets two and `CronList` finds it.
 const LOOP_TAG: &str = "8sync-auto-loop";
 /// An omp room gets at most one nudge per this many seconds, and at most this many per hour.
@@ -129,6 +135,8 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
             )?;
         }
     }
+    // A `no_tick` flag is a session's word for this run of auto only: a resumed auto asks again.
+    idle::clear_no_tick(home);
     Ok(status(home, subscription, now))
 }
 
@@ -197,7 +205,7 @@ pub(super) fn model_provider(model: &str) -> Option<String> {
 pub(super) fn checked_model(flag: &str, model: &str) -> Result<String> {
     match model_provider(model) {
         Some(_) => Ok(model.trim().to_string()),
-        None => bail!("{flag}: cần dạng <provider>/<model> (vd omniroute/<combo>)\n{USAGE}"),
+        None => bail!("{flag}: cần dạng <provider>/<model> (vd zai/glm-5.3)\n{USAGE}"),
     }
 }
 
@@ -249,11 +257,11 @@ pub(super) fn omp_default_blocked(home: &Path) -> Option<String> {
 fn model_verdict(label: &str, provider: Option<&str>) -> Option<String> {
     match provider {
         Some("anthropic") => Some(format!(
-            "đội omp chạy {label} (anthropic) — đội omp tắt (subscription Claude chỉ dùng trong Claude Code); chọn model khác: `8sync ccc auto omp on --model omniroute/<combo>`"
+            "đội omp chạy {label} (anthropic) — đội omp tắt (subscription Claude chỉ dùng trong Claude Code); chọn model khác: `8sync ccc auto omp on --model <provider>/<model>`"
         )),
         Some(_) => None,
         None => Some(format!(
-            "không đọc được provider của {label} (`omp_model` trong auto.json hoặc `modelRoles.default` trong ~/.omp/agent/config.yml) — đội omp tắt cho an toàn; chọn model: `8sync ccc auto omp on --model omniroute/<combo>`"
+            "không đọc được provider của {label} (`omp_model` trong auto.json hoặc `modelRoles.default` trong ~/.omp/agent/config.yml) — đội omp tắt cho an toàn; chọn model: `8sync ccc auto omp on --model <provider>/<model>`"
         )),
     }
 }
@@ -311,6 +319,13 @@ fn scope(home: &Path) -> Vec<PathBuf> {
         return many;
     }
     m["repo"].as_str().filter(|r| !r.is_empty()).map(PathBuf::from).into_iter().collect()
+}
+
+/// Which repo's CI `auto status` reads: the scoped root containing `root` (the deepest when they
+/// nest), else `root` itself. Never just the first scoped repo: auto may cover several projects.
+pub(super) fn ci_repo(scope: &[PathBuf], root: &Path) -> PathBuf {
+    let c = canon(root);
+    scope.iter().filter(|r| c.starts_with(r)).max_by_key(|r| r.components().count()).cloned().unwrap_or_else(|| root.to_path_buf())
 }
 
 /// `auto down` in one project: take it out of auto. Other projects still on keep running (their
@@ -409,11 +424,15 @@ fn omp_line(v: &Value) -> Option<String> {
 }
 
 pub(super) fn text(v: &Value) -> String {
-    let s = state_text(v);
-    match omp_line(v) {
-        Some(l) => format!("{s}\n{l}"),
-        None => s,
+    let mut s = state_text(v);
+    if let Some(l) = omp_line(v) {
+        s = format!("{s}\n{l}");
     }
+    // `auto status` only: one line on the project's GitHub CI ([`super::ci`]).
+    if let Some(ci) = v["ci"].as_str() {
+        s = format!("{s}\n{}", super::ci::line(ci));
+    }
+    s
 }
 
 fn state_text(v: &Value) -> String {
@@ -465,17 +484,17 @@ fn num(rest: &[String], flag: &str) -> Result<Option<String>> {
     }
 }
 
-/// `--loop` interval in minutes: `10`, `10m`, `2h`. 1..59 minutes or whole hours up to 24, the
-/// steps a 5-field cron expression can express ([`cron_expr`]).
+/// `--loop` interval in minutes: `30`, `45m`, `2h`. 30..59 minutes ([`MIN_LOOP_MIN`]) or whole hours
+/// up to 24, the steps a 5-field cron expression can express ([`cron_expr`]).
 pub(super) fn parse_every(s: &str) -> Result<u64> {
     let (n, mul) = match s.strip_suffix('h') {
         Some(h) => (h, 60),
         None => (s.strip_suffix('m').unwrap_or(s), 1),
     };
     match n.parse::<u64>().ok().map(|n| n * mul) {
-        Some(m @ 1..=59) => Ok(m),
+        Some(m @ MIN_LOOP_MIN..=59) => Ok(m),
         Some(m @ 60..=1440) if m % 60 == 0 => Ok(m),
-        _ => bail!("--loop: 1m..59m hoặc số giờ chẵn 1h..24h (vd 10m, 2h)\n{USAGE}"),
+        _ => bail!("--loop: {MIN_LOOP_MIN}m..59m hoặc số giờ chẵn 1h..24h (vd 30m, 2h); loop dày hơn đốt quota, phòng có cột đã tự thức khi có card\n{USAGE}"),
     }
 }
 
@@ -491,12 +510,13 @@ pub(super) fn cron_expr(every_min: u64) -> String {
 /// `<project>/.claude/loop.md`: Claude Code's default prompt for a bare `/loop`, re-read every
 /// iteration (https://code.claude.com/docs/en/scheduled-tasks), and the playbook every
 /// `--loop` tick follows, so one file steers every room and the owner can edit it live.
-const LOOP_MD: &str = "# Loop của dự án (8sync)
+const LOOP_MD: &str = "# Loop của dự án (8sync ⚡ Chế độ Sấm Sét)
 
 `/loop` không kèm prompt chạy file này; loop do `8sync ccc auto on --loop` đặt cũng đọc file này mỗi nhịp.
 Sửa file là đổi việc của mọi phòng từ nhịp kế. 8sync không ghi đè file đã có.
 Owner giao đích cho cả team: `8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"]` (vào hàng), thêm `--now` để gửi ngay
 mọi phòng; trong phòng, owner nói \"đưa vào loop: …\" / \"làm ngay: …\" thì chạy đúng lệnh đó. Xem hàng: `8sync ccc auto queue`.
+⚡ Chuyên gia thực chiến: `codegraph` (Rust native local search) TRƯỚC grep/read · chỉ claim card đúng vai · output súc tích kiểu RTK/Caveman · ảnh UAT chỉ lưu đúng chuẩn `qa/evidence/card-<id>-<slug>.png` (không xả ảnh hàng loạt không gắn `card-<id>` vào `qa/evidence/`).
 
 Mỗi nhịp:
 1. Chạy `8sync ccc auto status --json`. `on` là false hoặc `paused` là true → huỷ loop của phòng này (CronDelete job
@@ -504,12 +524,17 @@ Mỗi nhịp:
    cửa sổ 5 giờ/7 ngày đã dùng ≥ 90%; API key hoặc có `--usd-per-hour`: chạm trần $/giờ của dự án này, tính trung bình
    từ lúc bật) → nghỉ nhịp này, giữ loop: trần tự hạ khi cửa sổ reset hoặc thời gian trôi.
    Board (card theo cột, `8sync ccc auto board`): phòng có cột (lead/ba: backlog · dev/ui/api/core: ready · qa · review)
-   chạy `8sync ccc auto claim --json`; có `card` → nhịp này chỉ làm card đó rồi chuyển cột, không card → bước 2.
+   chạy `8sync ccc auto claim --json --as <phòng>`; có `card` → nhịp này chỉ làm card đó rồi chuyển cột; không card → `target` khác null thì
+   bước 2, không thì `8sync ccc auto wait --json --as <phòng>` (chặn tới khi cột có card, ≤ 9 phút, Bash timeout 600000; phòng mở bằng
+   `auto up` thêm `--timeout 1800`, Bash timeout 1860000): `\"wake\":\"card\"` → claim lại và làm card đó ngay nhịp này,
+   `\"wake\":\"merge\"` → về đầu bước 1 (lead chạy `8sync ccc auto merge`), còn lại → hết nhịp.
+   Phòng không cột (arch, rd, …) không đặt loop: chỉ làm khi có card nhãn của mình, owner hay phòng khác nhắn.
+   `ci` trong status khác `ok` (`billing` = GitHub không chạy job) → không chờ CI; gate local một lần mỗi head SHA.
    - backlog: viết AC + một lệnh check → `8sync ccc auto move <id> ready --check \"<lệnh>\"` (gấp: thêm `--prio P0|P1`); gỡ card blocked;
      card approved → MỘT câu hỏi Ship cho owner, duyệt rồi mới `gh pr merge <pr> --squash --match-head-commit <sha>`
    - building: `git fetch origin`, worktree `.claude/worktrees/card-<id>`, nhánh `card-<id>-<slug>` từ `origin/main` (không chồng nhánh card khác: cần PR chưa merge → `move <id> blocked --note \"chờ PR #n\"`), `/ship` tới commit, push, PR → `move <id> qa --pr <số>`
-   - qa: `check` + UAT → `move <id> review`, trượt → `move <id> ready --note \"[qa] …\"`
-   - review: review đối kháng → `move <id> approved --sha <head>`, lỗi → `move <id> ready --note \"[review] …\"`
+   - qa: gate test của dự án MỘT lần cho head SHA của PR (`gh pr view <pr> --json headRefOid`) + UAT (ảnh kết quả đặt tên `qa/evidence/card-<id>-<slug>.png`, file tạm xuất ra `/tmp`) → `auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"` → `move <id> review`, trượt → `move <id> ready --note \"[qa] …\"`
+   - review: review đối kháng, dùng note `gate <sha>` của qa (SHA đổi mới chạy lại) → `move <id> approved --sha <head>`, lỗi → `move <id> ready --note \"[review] …\"`
    - arch (không giữ cột): card nhãn arch → `/sysdesign` → ADR `docs/adr/card-<id>-<slug>.md` → `auto note <id> \"ADR: …\"`
      (lead chỉ chuyển card nhãn arch sang ready khi có note ADR); mỗi ngày tech radar có nguồn + đo sức khoẻ scale
      theo `docs/adr/budgets.md`, chỗ nghẽn có số đo → card nhãn arch
@@ -523,7 +548,7 @@ Mỗi nhịp:
    Giữ file trước: `8sync ccc . goal \"<việc>\" --files a,b`. Trùng file phòng khác → nhắn phòng đó, chọn việc khác.
    Không có STATE.md → tiếp việc dở trong hội thoại, chăm PR của nhánh (review, CI đỏ, conflict), rồi bug hunt/simplify.
 5. Tự chọn skill theo việc:
-   - feature, bug, refactor → `/ship <việc>` đủ flow: karpathy-guidelines khi sửa code, test, review, gate `/sec` + `/rules` + `/aup-audit` trước commit
+   - feature, bug, refactor → `/ship <việc>` đủ flow: karpathy-guidelines khi sửa code, test, review; gate trước commit: `8sync ccc risk` rồi chỉ gọi skill nó liệt kê (diff chỉ docs → `/sec`; auth/data/messaging/third-party/release → thêm `/rules` + `/aup-audit`)
    - đổi nhỏ ≤ 3 file → `/do`
    - cần nhiều nhịp mới xanh → mỗi nhịp `/ship` phần kế, ghi tiến độ vào STATE.md
      (`/ship-loop`, `/ship-auto`, `/autopilot`, `/sprint`, `/loop-me` chỉ owner gõ; nhịp cron không gọi được)
@@ -570,16 +595,16 @@ pub(super) const ASK_RULE: &str = "Cần owner quyết → gọi tool AskUserQue
 pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
         "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: thêm `--prio P0`, quan trọng `--prio P1`; dev nhận card gấp trước). Một card = một PR nhỏ một dev làm xong trong một phiên; không tách card R&D/audit/ADR riêng cho việc dev tự làm được. Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`). Ready đầy (claim trả `why`, move bị từ chối) → không tách thêm card.",
-        "ready" => "card building: `git fetch origin`, worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>` tạo từ `origin/main` (KHÔNG chồng lên nhánh card khác; cần code của PR chưa merge → `8sync ccc auto move <id> blocked --note \"chờ PR #<số> merge\"` rồi claim card khác), `/ship` card tới commit (test + gate), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>`; làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
-        "qa" => "card qa: checkout nhánh PR, chạy `check` + UAT thật, ảnh chụp lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`",
-        "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước) → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi, hoặc PR chồng nhánh/chứa việc card khác → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
+        "ready" => "card building: `git fetch origin`, worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>` tạo từ `origin/main` (KHÔNG chồng lên nhánh card khác; cần code của PR chưa merge → `8sync ccc auto move <id> blocked --note \"chờ PR #<số> merge\"` rồi claim card khác), `/ship` card tới commit (test của phần sửa; gate: `8sync ccc risk` rồi chỉ gọi skill nó liệt kê — diff chỉ docs → chỉ `/sec`, không mặc định `/rules` + `/aup-audit`), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>` (không chờ CI khi `ci` trong status khác `ok`); làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
+        "qa" => "card qa: checkout nhánh PR; gate test của dự án chạy MỘT lần cho head SHA (`gh pr view <pr> --json headRefOid`): card đã có note `gate <sha>` đúng SHA đó → dùng lại, không thì chạy `check` + suite test rồi `8sync ccc auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"`; UAT thật, ảnh chụp lưu đúng `qa/evidence/card-<id>-<slug>.png` (không lưu ảnh hàng loạt thiếu tiền tố `card-<id>-` vào `qa/evidence/`) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`; CI không xanh (`ci` khác `ok`) → gate local này là bằng chứng, không chờ CI",
+        "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước); test: dùng note `gate <sha>` của qa khi head SHA chưa đổi (không chạy lại suite), SHA đổi → chạy gate một lần và note `gate <sha>: <lệnh>: <kết quả>` mới → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi, hoặc PR chồng nhánh/chứa việc card khác → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
         _ => "",
     }
 }
 
 /// What a backlog room does every turn before it claims: approved cards land first (stacked,
 /// unmerged work is what the owner never sees), then blocked cards whose reason is gone.
-pub(super) const BACKLOG_FIRST: &str = "trước claim: (a) chỉ phòng lead (BA bỏ qua): card approved, cũ trước → owner đã cho tự merge (su-code/DECISIONS.md hoặc note card) thì `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"` (PR có base khác main: không merge vào nhánh đó; PR gốc đã vào main → `gh pr edit <pr> --base main` rồi mới merge, chưa thì merge gốc trước); chưa cho thì gom MỌI card approved vào MỘT câu hỏi Ship cho owner; (b) `8sync ccc auto lint` → gỡ card blocked đã hết lý do (`move <id> ready`, ví dụ PR nó chờ đã merge).";
+pub(super) const BACKLOG_FIRST: &str = "trước claim: (a) chỉ phòng lead (BA bỏ qua): chạy `8sync ccc auto merge` (merge mọi card approved: base main, mergeable, đúng SHA; conflict/SHA đổi → tự về ready; dùng evidence `gate <sha>` của card); báo thiếu quyền → gom MỌI card approved vào MỘT câu hỏi Ship cho owner rồi chạy lại; không tự `gh pr merge`; (b) `8sync ccc auto lint` → gỡ card blocked hết lý do (`move <id> ready`).";
 
 /// One tick of a room's loop: the recurring cron job's prompt.
 fn tick_prompt(name: &str) -> String {
@@ -590,21 +615,47 @@ fn tick_prompt(name: &str) -> String {
 /// it again kept the lead's goal over Claude Code's 4,000-character cap.
 fn tick(name: &str, brief: bool) -> String {
     let (role, _) = super::room::role(name);
+    // An empty lane rests in `auto wait` (no tokens, wakes on a card): the STATE.md fallback below
+    // made every empty tick a full working turn. A card that arrives is worked in this same tick;
+    // a new approval sends the lead back to step 1 (`auto merge`). The plain tick keeps the default
+    // wait under the 10-min Bash cap; `brief` (a team room's `/goal`, Bash cap lifted) defers to the
+    // goal's `--timeout 1800` and stays short for the goal's 4,000-character cap.
+    let empty = format!(
+        "Không có card → `target` khác null thì bước 3, không thì `8sync ccc auto wait --json --as {name}` (≤ {} phút, Bash timeout {BASH_CAP_MS}): `\"wake\":\"card\"` → claim lại và làm card đó ngay nhịp này; `\"wake\":\"merge\"` → quay lại bước 1 (lead chạy `8sync ccc auto merge`); còn lại → hết nhịp, không sang bước 4. ",
+        WAIT_DEFAULT_S / 60
+    );
     let board = match super::room::find(name).and_then(|r| r.lane) {
-        Some(lane) if brief => format!("2) `8sync ccc auto claim --json --as {name}` (cột {lane}): có card → làm theo playbook cột đó trong /goal của phòng. Không có card → bước 3. "),
+        Some(lane) if brief => format!("2) `8sync ccc auto claim --json --as {name}` (cột {lane}): có card → làm theo playbook cột đó trong /goal của phòng. Không có card → `target` khác null thì bước 3, không thì `auto wait` như /goal: `\"wake\":\"card\"` → làm card đó ngay nhịp này, `\"wake\":\"merge\"` → bước 1, còn lại → hết nhịp (không bước 4). "),
         Some(lane) => format!(
-            "2) {}`8sync ccc auto claim --json --as {name}` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {} (mọi lệnh `auto move|note` thêm `--as {name}`). Không có card → bước 3. ",
+            "2) {}`8sync ccc auto claim --json --as {name}` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {} (mọi lệnh `auto move|note` thêm `--as {name}`). {empty}",
             if lane == "backlog" { format!("{BACKLOG_FIRST} Rồi ") } else { String::new() },
             lane_playbook(lane)
-        ),
-        None if super::room::find(name).is_some_and(|r| r.name == "Architect") => format!(
-            "2) Vai không giữ cột board; nhịp này: {} (mọi lệnh `auto note|add` thêm `--as {name}`). Không có việc nào trong đó → bước 3. ",
-            super::room::ARCH_PLAYBOOK
         ),
         None => "2) Vai không giữ cột board: bước 3. ".into(),
     };
     format!(
         "{LOOP_TAG} {name} (vai {role}): 1) chạy `8sync ccc auto status --json`; on=false hoặc paused=true → CronDelete job {LOOP_TAG} này và dừng; `cap` khác null → nghỉ nhịp này (giữ loop). {board}3) `target` khác null → nhịp này làm phần hợp vai {role} cho đích đó; đạt (có `check` thì lệnh đó exit 0) → `8sync ccc auto done <id> --evidence \"<lệnh: kết quả>\"`. 4) Không có đích thì làm MỘT nhịp theo .claude/loop.md của dự án cho vai {role} (thiếu file → lấy MỘT việc hợp vai từ su-code/STATE.md mục Next, tự chọn skill: code → /ship, ≤3 file → /do, R&D → /deep-research). Không merge/push main/tag/deploy khi owner chưa trả lời Ship. {ASK_RULE}"
+    )
+}
+
+/// A known role without a board lane (arch, rd, ops, docs, sec): it owns no queue to poll, so it gets
+/// no cron and no auto-tick and works only when a card, the owner or another room reaches it.
+/// Measured on ai-game-studio (2026-10-19, 71 min): arch and rd took 20 cron + auto-tick turns each
+/// and spent 35–54% of their calls polling.
+pub(super) fn events_only(name: &str) -> bool {
+    super::room::find(name).is_some_and(|r| r.lane.is_none())
+}
+
+/// The first message of an [`events_only`] room: drop any old loop, do the role's pending work once,
+/// then end the turn and wait for a message.
+fn events_prompt(name: &str) -> String {
+    let (role, duty) = super::room::role(name);
+    let work = match super::room::find(name) {
+        Some(r) if r.name == "Architect" => format!("{} (mọi lệnh `auto note|add` thêm `--as {name}`)", super::room::ARCH_PLAYBOOK),
+        _ => format!("`target` khác null hoặc có tin nhắn giao việc → làm phần hợp vai {role}; không có thì thôi"),
+    };
+    format!(
+        "8sync auto: phòng `{name}` (vai {role}: {duty}) không giữ cột board nên KHÔNG đặt loop/cron: CronList → job chứa `{LOOP_TAG}` thì CronDelete. Phòng chỉ làm khi việc tới: owner nhắn, phòng khác nhắn (`8sync ccc msg`), card nhãn của vai này. Lượt này: `8sync ccc auto status --json` (on=false hoặc paused=true → dừng); {work}; xong → `8sync ccc meet --say \"done|doing|blocked: …\"` rồi kết thúc lượt, không tự hẹn nhịp, không `auto wait`. Không merge/push main/tag/deploy khi owner chưa trả lời Ship. {ASK_RULE}"
     )
 }
 
@@ -626,7 +677,11 @@ fn setup(name: &str, every_min: u64, brief: bool) -> String {
     )
 }
 
+/// A room's loop message; an [`events_only`] room gets [`events_prompt`] instead (no cron).
 pub(super) fn loop_prompt(name: &str, every_min: u64, team: bool) -> String {
+    if events_only(name) {
+        return events_prompt(name);
+    }
     let (role, duty) = super::room::role(name);
     let mut s = format!(
         "8sync auto --loop: owner bật chạy liên tục cho phòng `{name}` (vai {role}: {duty}). {}\nTạo xong thì chạy luôn nhịp đầu, không chờ.",
@@ -660,6 +715,21 @@ fn queue_all(
         }
     }
     out
+}
+
+/// After `auto add`/`move` of card `t`: an `arch` card (role or label) gets one inbox line to each
+/// arch room of the team (not the one acting), so the events-only architect wakes for its ADR or
+/// its architecture review. Only when it is due: `labelled` (just added, or `--role` set to arch)
+/// while the card has no "ADR:" note yet, or the card now sits in `review`. Other lane changes
+/// wake nobody. The rooms it reached.
+fn wake_arch(home: &Path, rooms: &[(String, String)], t: &target::Target, labelled: bool, now: u64, from: Option<&str>) -> Vec<(String, bool)> {
+    let arch = t.label.as_deref() == Some("arch") || target::roles(t).iter().any(|r| r == "arch");
+    let needs_adr = labelled && !t.notes.iter().any(|n| n.text.starts_with("ADR:"));
+    if !arch || t.state != "open" || !(needs_adr || t.lane == "review") {
+        return Vec::new();
+    }
+    let to: Vec<(String, String)> = rooms.iter().filter(|(n, _)| super::room::crew(n) == "arch" && Some(n.as_str()) != from).cloned().collect();
+    queue_all(home, &to, now, from, |name| format!("{name}: card #{} nhãn arch ở cột {}: {} — chạy playbook arch cho card này (chưa có note \"ADR:\" → ADR; ở review → review kiến trúc diff)", t.id, t.lane, short(&t.text)))
 }
 
 /// Who `auto add --now` speaks as: the `msg` label of the session it runs in, None from a terminal
@@ -922,14 +992,16 @@ fn run_target(
     home: &Path,
     root: &Path,
     rooms: impl FnOnce() -> Vec<(String, String)>,
+    live: impl FnOnce() -> Vec<String>,
     now: u64,
 ) -> Result<()> {
     let as_json = args.iter().any(|a| a == "--json");
     let takes: &[&str] = match verb {
-        "add" => &["--check", "--label", "--prio"],
+        "add" => &["--check", "--label", "--prio", "--role"],
         "done" => &["--evidence"],
         "claim" => &["--lane", "--as"],
-        "move" => &["--note", "--check", "--pr", "--sha", "--as", "--prio"],
+        "move" => &["--note", "--check", "--pr", "--sha", "--as", "--prio", "--role"],
+        "reopen" => &["--note", "--as"],
         "prio" => &["--as"],
         "note" => &["--as"],
         _ => &[],
@@ -1006,16 +1078,25 @@ fn run_target(
             };
             let m = target::Move { note: flag("--note"), check: flag("--check"), pr: flag("--pr"), sha: flag("--sha") };
             let prio = flag("--prio").map(target::parse_prio).transpose()?;
+            let role = flag("--role").map(target::parse_role).transpose()?;
             let mut t = target::move_to(home, root, parse_id(i)?, lane, &m, who.as_deref(), now)?;
             if let Some(p) = prio {
                 if t.state == "open" {
                     t = target::set_prio(home, root, t.id, p, who.as_deref(), now)?;
                 }
             }
+            if let Some(r) = &role {
+                t = target::set_role(home, root, t.id, r, who.as_deref(), now)?;
+            }
+            let relabelled = role.as_deref().is_some_and(|r| r.split('+').any(|x| x == "arch"));
+            let woke = wake_arch(home, &all, &t, relabelled, now, who.as_deref());
             if as_json {
                 println!("{}", json!({ "card": t }));
             } else {
                 println!("card #{} → {}: {}", t.id, t.lane, short(&t.text));
+                for (name, live) in &woke {
+                    println!("báo arch → {name}: {}", delivery(*live));
+                }
             }
         }
         "prio" => {
@@ -1044,12 +1125,18 @@ fn run_target(
             if !words.is_empty() {
                 bail!("không rõ `{}`\n{USAGE}", words[0]);
             }
+            let team = lint_team(&all, live());
             if as_json && verb == "board" {
-                println!("{}", board_value(home, root, now)?);
+                let mut v = board_value(home, root, now)?;
+                if let Some(issues) = v["issues"].as_array_mut() {
+                    issues.extend(target::unstaffed(&target::list(home, root)?, &team).into_iter().map(Value::from));
+                }
+                println!("{v}");
                 return Ok(());
             }
             let cards = target::list(home, root)?;
-            let issues = target::lint(&cards, now);
+            let mut issues = target::lint(&cards, now);
+            issues.extend(target::unstaffed(&cards, &team));
             if as_json {
                 println!("{}", json!({ "issues": issues }));
                 return Ok(());
@@ -1079,6 +1166,7 @@ fn run_target(
             let text = words.join(" ");
             // Checked before anything is written, so a bad value never leaves a half-made card.
             let prio = flag("--prio").map(target::parse_prio).transpose()?;
+            let role = flag("--role").map(target::parse_role).transpose()?;
             // From a room, --now is that room's line (quoted, held behind the auto rails), not the owner's.
             let sender = if first {
                 let env = |k: &str| std::env::var(k).ok();
@@ -1101,12 +1189,17 @@ fn run_target(
             if let Some(p) = prio {
                 t = target::set_prio(home, root, t.id, p, from.as_deref(), now)?;
             }
+            if let Some(r) = &role {
+                t = target::set_role(home, root, t.id, r, from.as_deref(), now)?;
+            }
             let (_, open) = target::current(home, root)?;
             let sent = if first {
                 queue_all(home, &all, now, sender.as_deref(), |name| target::now_prompt(&t, name))
             } else {
                 Vec::new()
             };
+            // --now already reached every room, the arch one too.
+            let woke = if first || dup { Vec::new() } else { wake_arch(home, &all, &t, true, now, from.as_deref()) };
             let pos = if first { 1 } else { open };
             if as_json {
                 let sent: Vec<Value> = sent
@@ -1137,6 +1230,9 @@ fn run_target(
             }
             for (name, live) in &sent {
                 println!("gửi ngay → {name}: {}", delivery(*live));
+            }
+            for (name, live) in &woke {
+                println!("báo arch → {name}: {}", delivery(*live));
             }
             if !running(home) {
                 println!("auto đang tắt: đích chờ trong hàng tới khi `8sync ccc auto on --here --loop` (hoặc gửi ngay bằng --now).");
@@ -1180,6 +1276,14 @@ fn run_target(
                 println!("{line}");
             }
         }
+        "reopen" => {
+            let t = target::reopen(home, root, id()?, flag("--note"), who.as_deref(), now)?;
+            if as_json {
+                println!("{}", json!({ "card": t }));
+            } else {
+                println!("card #{} mở lại ở cột {}: {}", t.id, t.lane, short(&t.text));
+            }
+        }
         _ => {
             let id = id()?;
             let evidence = flag("--evidence");
@@ -1207,10 +1311,63 @@ fn run_target(
     Ok(())
 }
 
-/// `auto wait`: a room with an empty lane blocks here (no tokens) until work arrives.
+/// The team `lint`/`board` checks roles against: registry rooms plus the live Claude Code sessions
+/// in the project (rooms HQ reopened by forking are only there), each name once.
+fn lint_team(registry: &[(String, String)], live: Vec<String>) -> Vec<String> {
+    let mut team: Vec<String> = registry.iter().map(|(n, _)| n.clone()).collect();
+    for n in live {
+        if !team.contains(&n) {
+            team.push(n);
+        }
+    }
+    team
+}
+
+#[cfg(test)]
+mod lint_team_tests {
+    use super::*;
+
+    struct Agents(String);
+    impl super::super::team::Claude for Agents {
+        fn run(&self, args: &[String]) -> Result<String> {
+            assert_eq!(&args[..2], ["agents", "--json"]);
+            Ok(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn lint_counts_live_forked_rooms_of_this_project() {
+        // ai-game-studio smoke: arch/rd/ba reopened by HQ with --fork-session were not in the registry.
+        let root = crate::verbs::here::repo_of(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let here = root.join("crates").to_string_lossy().replace('\\', "/");
+        let elsewhere = std::env::temp_dir().to_string_lossy().replace('\\', "/");
+        let s = |id: &str, name: &str, cwd: &str| format!(r#"{{"sessionId":"{id}","name":"{name}","kind":"background","status":"idle","cwd":"{cwd}"}}"#);
+        let json = format!("[{},{},{},{}]", s("aaaaaaaa-1", "arch", &here), s("bbbbbbbb-2", "rd", &here), s("cccccccc-3", "dev", &here), s("dddddddd-4", "ba", &elsewhere));
+        let live = super::super::team::live_names(&Agents(json), &root);
+        assert_eq!(live, ["arch", "rd", "dev"], "another project's session is not this team");
+        let registry = vec![("dev".to_string(), "x".to_string()), ("qa".to_string(), "y".to_string())];
+        let team = lint_team(&registry, live);
+        assert_eq!(team, ["dev", "qa", "arch", "rd"]);
+        let h = std::env::temp_dir().join(format!("8sync-linteam-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&h);
+        std::fs::create_dir_all(&h).unwrap();
+        target::add(&h, &h, "[arch] Chọn hàng đợi", None, None, false, None, 1).unwrap();
+        let cards = target::list(&h, &h).unwrap();
+        assert!(target::unstaffed(&cards, &team).is_empty(), "the live arch room staffs #25");
+        assert_eq!(target::unstaffed(&cards, &lint_team(&registry, Vec::new())).len(), 1);
+    }
+}
+
+/// `auto wait`: a room with an empty lane blocks here (no tokens) until work arrives. The default
+/// stays under Claude Code's 10-min Bash cap ([`BASH_CAP_MS`]), so a room without
+/// `BASH_MAX_TIMEOUT_MS` never has its wait killed. Team rooms start with that ceiling raised
+/// ([`super::team::room_settings`]) and are told to pass `--timeout` [`WAIT_MAX_S`]: every return to
+/// an empty lane is a new turn that re-reads the whole context (9 min re-fired dev's `/goal` 44
+/// times in 71 min on ai-game-studio).
 pub(super) const WAIT_DEFAULT_S: u64 = 540;
-/// Under Claude Code's 10-minute Bash tool ceiling.
-const WAIT_MAX_S: u64 = 590;
+pub(super) const WAIT_MAX_S: u64 = 1800;
+/// Claude Code's Bash ceiling without `BASH_MAX_TIMEOUT_MS` (ms).
+pub(super) const BASH_CAP_MS: u64 = 600_000;
 const WAIT_POLL_S: u64 = 2;
 
 #[derive(Debug, PartialEq)]
@@ -1247,6 +1404,9 @@ fn parse_wait(args: &[String], rooms: impl FnOnce() -> Vec<(String, String)>) ->
 }
 
 /// Block until the room has a card in its lane, auto stops (off, paused, cap) or the timeout ends.
+/// The lead also wakes (`merge`) for an approved card it has not seen yet while the owner's
+/// self-merge permission is live (`status`' `self_merge`), so merging follows approvals instead of
+/// the cron; cards already approved when the wait began (a merge that failed) do not wake it again.
 /// Clock, sleep and reads are injected so the loop is tested without waiting.
 fn wait_for(
     w: &Wait,
@@ -1256,6 +1416,8 @@ fn wait_for(
     sleep: impl Fn(),
 ) -> Result<Value> {
     let start = now();
+    let lead = super::room::find(&w.room).is_some_and(|r| r.name == "Lead/PM");
+    let mut seen: Option<Vec<u64>> = None;
     loop {
         let t = now();
         let st = status(t);
@@ -1269,8 +1431,17 @@ fn wait_for(
             // room waits again instead of ending its /goal (seen live 2026-10-18: ui stopped at 97%
             // of the 5-hour window and never came back after it reset).
             (t.saturating_sub(start) >= w.timeout).then_some(("cap", None))
-        } else if let Some(id) = target::claimable(&cards()?, &w.room, &w.lane, t) {
-            Some(("card", Some(id)))
+        } else if let Some((why, id)) = {
+            let cs = cards()?;
+            let live = lead && st["self_merge"].is_object();
+            let approved = || cs.iter().filter(|c| c.state == "open" && c.lane == "approved").map(|c| c.id);
+            let old = seen.get_or_insert_with(|| if live { approved().collect() } else { Vec::new() });
+            live.then(|| approved().find(|id| !old.contains(id)))
+                .flatten()
+                .map(|id| ("merge", id))
+                .or_else(|| target::claimable(&cs, &w.room, &w.lane, t).map(|id| ("card", id)))
+        } {
+            Some((why, Some(id)))
         } else if t.saturating_sub(start) >= w.timeout {
             Some(("timeout", None))
         } else {
@@ -1287,6 +1458,7 @@ fn wait_text(v: &Value) -> String {
     let lane = v["lane"].as_str().unwrap_or("?");
     match v["wake"].as_str() {
         Some("card") => format!("card #{} ở cột {lane}: `8sync ccc auto claim`", v["card"]),
+        Some("merge") => format!("card #{} vừa approved, owner đã cho tự merge: `8sync ccc auto merge`", v["card"]),
         Some("off") => "auto đã tắt hoặc tạm dừng: dừng, không claim nữa".into(),
         Some("cap") => format!("chạm trần ({}): nghỉ, không claim; chạy lại `8sync ccc auto wait` (chờ cửa sổ hồi)", v["cap"].as_str().unwrap_or("")),
         _ => format!("cột {lane} vẫn trống sau {} giây: chờ tiếp (`8sync ccc auto wait`)", v["waited_s"]),
@@ -1321,11 +1493,28 @@ pub(super) fn run(
         }
         Ok(())
     };
-    if let Some(verb @ ("add" | "queue" | "done" | "drop" | "claim" | "move" | "prio" | "note" | "board" | "lint")) = rest.first().map(String::as_str) {
-        return run_target(verb, &rest[1..], home, root, rooms, now);
+    if let Some(verb @ ("add" | "queue" | "done" | "drop" | "reopen" | "claim" | "move" | "prio" | "note" | "board" | "lint")) = rest.first().map(String::as_str) {
+        let live = || super::ensure_claude(true).map(|exe| super::team::live_names(&super::team::Bin { exe, root }, root)).unwrap_or_default();
+        return run_target(verb, &rest[1..], home, root, rooms, live, now);
+    }
+    if rest.first().map(String::as_str) == Some("merge") {
+        let (mut who, mut as_json) = (None, false);
+        let mut it = rest[1..].iter();
+        while let Some(a) = it.next() {
+            match a.as_str() {
+                "--json" => as_json = true,
+                "--as" => who = Some(it.next().filter(|v| !v.starts_with("--")).cloned().ok_or_else(|| anyhow::anyhow!("--as cần một giá trị\n{USAGE}"))?),
+                x => bail!("không rõ `{x}`\n{USAGE}"),
+            }
+        }
+        let who = who.or_else(|| me(&rooms()));
+        return super::merge::run(as_json, home, root, who.as_deref(), now);
     }
     if rest.first().map(String::as_str) == Some("nudge") {
         return run_nudge(&rest[1..], home, subscription, now);
+    }
+    if rest.first().map(String::as_str) == Some("ci") {
+        return super::ci::run(&rest[1..], home, root, now);
     }
     if rest.first().map(String::as_str) == Some("omp") {
         let on = match rest.get(1).map(String::as_str) {
@@ -1366,6 +1555,7 @@ pub(super) fn run(
             |t| {
                 let mut v = status(home, subscription, t);
                 v["here"] = json!(here);
+                v["self_merge"] = super::grant::self_merge_json(&super::grant::dir(home), root, t);
                 v
             },
             clock,
@@ -1481,6 +1671,10 @@ pub(super) fn run(
             known(&["--json"])?;
             let mut v = status(home, subscription, now);
             v["here"] = json!(here);
+            v["self_merge"] = super::grant::self_merge_json(&super::grant::dir(home), root, now);
+            // The project's repo: the scoped root that contains `root` (rooms call from worktrees).
+            let repo = ci_repo(&scope(home), root);
+            v["ci"] = json!(super::ci::status(home, &repo, now).key());
             v
         }
         Some(x) => bail!("không rõ `{x}`\n{USAGE}"),
@@ -1602,7 +1796,7 @@ mod tests {
         let root = h.join("proj");
         std::fs::create_dir_all(&root).unwrap();
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let go = |verb: &str, args: &[&str]| run_target(verb, &a(args), &h, &root, Vec::new, 5);
+        let go = |verb: &str, args: &[&str]| run_target(verb, &a(args), &h, &root, Vec::new, Vec::new, 5);
         go("add", &["fix", "crash", "--check", "true", "--prio", "P1"]).unwrap();
         let t = &target::list(&h, &root).unwrap()[0];
         assert_eq!((t.text.as_str(), t.prio), ("fix crash", Some(1)));
@@ -1921,18 +2115,27 @@ mod tests {
 
     #[test]
     fn loop_interval_parses_minutes_and_hours() {
-        assert_eq!(parse_every("10").unwrap(), 10);
-        assert_eq!(parse_every("10m").unwrap(), 10);
+        assert_eq!(parse_every("30").unwrap(), 30);
+        assert_eq!(parse_every("45m").unwrap(), 45);
         assert_eq!(parse_every("2h").unwrap(), 120);
         assert_eq!(parse_every("59m").unwrap(), 59);
         assert_eq!(parse_every("24h").unwrap(), 1440);
-        // 90 minutes has no clean cron step.
-        for bad in ["0", "0m", "25h", "x", "", "-5m", "90m", "90"] {
+        assert_eq!(DEFAULT_LOOP_MIN, 30);
+        // 90 minutes has no clean cron step; under 30 minutes the backup cron only burns quota.
+        for bad in ["0", "0m", "10", "10m", "29m", "25h", "x", "", "-5m", "90m", "90"] {
             assert!(parse_every(bad).is_err(), "{bad}");
         }
-        assert_eq!(cron_expr(10), "*/10 * * * *");
+        assert_eq!(cron_expr(30), "*/30 * * * *");
         assert_eq!(cron_expr(120), "0 */2 * * *");
         assert_eq!(cron_expr(1440), "0 0 * * *");
+        // Rooms with no lane (arch, rd, ops, docs, sec) get no cron at all; named-by-owner rooms keep theirs.
+        for name in ["arch", "rd", "ops", "docs", "sec"] {
+            let p = loop_prompt(name, DEFAULT_LOOP_MIN, false);
+            assert!(events_only(name) && !p.contains("CronCreate") && p.contains("CronDelete"), "{name}: {p}");
+        }
+        for name in ["lead", "ba", "dev", "qa", "review", "zus"] {
+            assert!(!events_only(name) && loop_prompt(name, DEFAULT_LOOP_MIN, false).contains("CronCreate lặp (recurring) cron `*/30 * * * *`"), "{name}");
+        }
     }
 
     #[test]
@@ -1965,7 +2168,7 @@ mod tests {
     fn each_lane_room_claims_its_card_and_moves_it_on() {
         for (room, lane, next) in [
             ("lead", "backlog", "move <id> ready --check"),
-            ("ba", "backlog", "--match-head-commit <sha>"),
+            ("ba", "backlog", "`8sync ccc auto merge`"),
             ("dev", "ready", "move <id> qa --pr <số>"),
             ("qc", "qa", "move <id> review"),
             ("critic", "review", "move <id> approved --sha"),
@@ -1977,9 +2180,16 @@ mod tests {
             assert!(p.contains(next), "{room} misses {next}: {p}");
             assert!(p.find("auto claim").unwrap() < p.find("`target` khác null").unwrap(), "card before the queue head");
             assert!(!p.contains('\n') || p.lines().count() <= 3);
+            // an empty lane rests in `auto wait` (under the 10-min Bash cap: a cron room has no
+            // BASH_MAX_TIMEOUT_MS) instead of picking STATE.md work; a card it wakes on is worked
+            // in this tick, a new approval loops back to step 1 (`auto merge`)
+            assert!(p.contains(&format!("`8sync ccc auto wait --json --as {room}` (≤ 9 phút, Bash timeout {BASH_CAP_MS})")) && p.contains("không sang bước 4"), "{room}: {p}");
+            assert!(p.contains("`\"wake\":\"card\"` → claim lại và làm card đó ngay nhịp này; `\"wake\":\"merge\"` → quay lại bước 1"), "{room}: {p}");
+            let brief = goal_loop_setup(room, 30);
+            assert!(brief.contains("`\"wake\":\"card\"` → làm card đó ngay nhịp này, `\"wake\":\"merge\"` → bước 1"), "{room}: {brief}");
         }
         let rd = loop_prompt("rd", 10, false);
-        assert!(rd.contains("Vai không giữ cột board") && !rd.contains("auto claim"));
+        assert!(rd.contains("không giữ cột board") && !rd.contains("auto claim") && !rd.contains("auto wait --json"), "{rd}");
         // merging stays behind the owner's Ship answer, in the cron prompt and in loop.md
         assert!(loop_prompt("lead", 10, false).contains("owner chưa trả lời Ship"));
         assert!(LOOP_MD.contains("MỘT câu hỏi Ship cho owner, duyệt rồi mới `gh pr merge"));
@@ -1992,11 +2202,14 @@ mod tests {
         let a = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let rooms = || vec![("dev".to_string(), "id".to_string())];
         // lane from the room's role; --as / --lane / --timeout override; bad values refused
+        assert_eq!(WAIT_DEFAULT_S, 540, "the default wait fits Claude Code's 10-min Bash cap");
+        assert!((WAIT_DEFAULT_S + 60) * 1000 <= BASH_CAP_MS);
         assert_eq!(parse_wait(&a(&["--as", "dev"]), rooms).unwrap(), Wait { room: "dev".into(), lane: "ready".into(), timeout: WAIT_DEFAULT_S });
         assert_eq!(parse_wait(&a(&["--as", "x", "--lane", "qa", "--timeout", "30"]), rooms).unwrap().lane, "qa");
-        for bad in [&["--as", "dev", "--timeout", "0"][..], &["--as", "dev", "--timeout", "600"], &["--as", "dev", "--lane", "building"], &["--as", "rd"], &["--as"]] {
+        for bad in [&["--as", "dev", "--timeout", "0"][..], &["--as", "dev", "--timeout", "1801"], &["--as", "dev", "--lane", "building"], &["--as", "rd"], &["--as"]] {
             assert!(parse_wait(&a(bad), rooms).is_err(), "{bad:?}");
         }
+        assert_eq!(parse_wait(&a(&["--as", "dev", "--timeout", "1800"]), rooms).unwrap().timeout, 1800, "30 min: the empty-lane rest");
         let card = |id: u64, lane: &str| target::Target {
             id,
             text: "t".into(),
@@ -2014,6 +2227,7 @@ mod tests {
             bounces: 0,
             pr: None,
             sha: None,
+            role: None,
             prio: None,
         };
         let w = Wait { room: "dev".into(), lane: "ready".into(), timeout: 60 };
@@ -2048,18 +2262,51 @@ mod tests {
     }
 
     #[test]
+    fn lead_wait_wakes_for_a_new_approved_card_only_while_self_merge_is_live() {
+        use std::cell::Cell;
+        let card = |id: u64, lane: &str| serde_json::from_value::<target::Target>(json!({ "id": id, "text": "t", "added": 0, "state": "open", "lane": lane })).unwrap();
+        let lead = Wait { room: "lead".into(), lane: "backlog".into(), timeout: 60 };
+        let live = json!({ "on": true, "paused": false, "cap": null, "self_merge": { "until": 9_999, "by": "s" } });
+        let none = json!({ "on": true, "paused": false, "cap": null, "self_merge": null });
+        // #5 approved before the wait (a merge that failed) does not wake it; #6 approved later does.
+        let (clock, polls) = (Cell::new(0u64), Cell::new(0));
+        let cards = || {
+            polls.set(polls.get() + 1);
+            Ok(if polls.get() >= 3 { vec![card(5, "approved"), card(6, "approved")] } else { vec![card(5, "approved")] })
+        };
+        let v = wait_for(&lead, cards, |_| live.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
+        assert_eq!((v["wake"].as_str(), v["card"].as_u64()), (Some("merge"), Some(6)));
+        assert!(wait_text(&v).contains("auto merge"));
+        // No permission: approved cards never wake the lead (it times out).
+        let clock = Cell::new(0u64);
+        let v = wait_for(&lead, || Ok(vec![card(6, "approved")]), |_| none.clone(), || clock.get(), || clock.set(clock.get() + 30)).unwrap();
+        assert_eq!(v["wake"], "timeout");
+        // Permission granted during the wait: the cards already approved wake it.
+        let (clock, polls) = (Cell::new(0u64), Cell::new(0));
+        let st = |_: u64| {
+            polls.set(polls.get() + 1);
+            if polls.get() >= 2 { live.clone() } else { none.clone() }
+        };
+        assert_eq!(wait_for(&lead, || Ok(vec![card(6, "approved")]), st, || clock.get(), || clock.set(clock.get() + 2)).unwrap()["card"], 6);
+        // Other rooms never wake for approved cards.
+        let dev = Wait { room: "dev".into(), lane: "ready".into(), timeout: 4 };
+        let clock = Cell::new(0u64);
+        assert_eq!(wait_for(&dev, || Ok(vec![card(6, "approved")]), |_| live.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap()["wake"], "timeout");
+    }
+
+    #[test]
     fn loop_prompt_sets_one_self_stopping_loop_per_room() {
-        let p = loop_prompt("rd-su-code", 15, false);
+        let p = loop_prompt("growth", 45, false);
         for want in [
             LOOP_TAG,
             "CronList",
             "CronCreate",
-            "*/15 * * * *",
-            "15 phút",
+            "*/45 * * * *",
+            "45 phút",
             "auto status --json",
             "CronDelete",
             "Ship",
-            "rd-su-code",
+            "growth",
             ".claude/loop.md",
             "gia hạn 7 ngày",
         ] {
@@ -2069,7 +2316,7 @@ mod tests {
         for want in [
             "/ship <việc>",
             "karpathy-guidelines",
-            "`/sec` + `/rules` + `/aup-audit`",
+            "`8sync ccc risk` rồi chỉ gọi skill nó liệt kê (diff chỉ docs → `/sec`",
             "/deep-research",
             "chỉ owner gõ",
             "impeccable",
@@ -2147,19 +2394,22 @@ mod tests {
                 ("rd".to_string(), ids[1].to_string()),
             ]
         };
-        run(&s(&["on", "--loop", "5m", "--team"]), &h, false, &h, rooms).unwrap();
+        run(&s(&["on", "--loop", "45m", "--team"]), &h, false, &h, rooms).unwrap();
         for (id, name) in ids.iter().zip(["lead", "rd"]) {
             let f = crate::verbs::hq::inbox_file(&h, id).unwrap();
             let raw = std::fs::read_to_string(&f).unwrap();
             assert_eq!(raw.lines().count(), 1);
             let v: Value = serde_json::from_str(raw.trim()).unwrap();
             let t = v["text"].as_str().unwrap();
-            assert!(
-                t.contains(&format!("`{name}`"))
-                    && t.contains("5 phút")
-                    && t.contains("rd, qa, reviewer")
-            );
+            assert!(t.contains(&format!("`{name}`")), "{t}");
+            if name == "lead" {
+                assert!(t.contains("45 phút") && t.contains("rd, qa, reviewer"), "{t}");
+            } else {
+                assert!(!t.contains("CronCreate") && t.contains("KHÔNG đặt loop/cron"), "a room with no lane gets no cron: {t}");
+            }
         }
+        // Under 30 minutes is refused before anything changes.
+        assert!(run(&s(&["on", "--loop", "10m"]), &h, false, &h, rooms).is_err());
         assert_eq!(
             std::fs::read_to_string(h.join(".claude/loop.md")).unwrap(),
             LOOP_MD
@@ -2195,9 +2445,9 @@ mod tests {
 
     #[test]
     fn the_architect_tick_runs_its_playbook_and_the_lead_waits_for_an_adr() {
-        let t = tick_prompt("arch");
-        assert!(t.contains(super::super::room::ARCH_PLAYBOOK) && t.contains("--as arch"), "{t}");
-        assert!(!tick_prompt("rd").contains("/sysdesign"), "rd keeps its own loop");
+        let t = loop_prompt("arch", DEFAULT_LOOP_MIN, false);
+        assert!(t.contains(super::super::room::ARCH_PLAYBOOK) && t.contains("--as arch") && !t.contains("CronCreate"), "{t}");
+        assert!(!loop_prompt("rd", DEFAULT_LOOP_MIN, false).contains("/sysdesign"), "rd has its own role");
         let lead = lane_playbook("backlog");
         assert!(lead.contains("--label arch") && lead.contains("ADR:") && lead.contains("/sysdesign"), "{lead}");
         // arch is a card label `auto add` accepts.
@@ -2287,6 +2537,34 @@ mod tests {
     }
 
     #[test]
+    fn an_arch_card_wakes_the_arch_room_once() {
+        let h = home("wakearch");
+        let root = h.join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        let (arch, dev) = ("0b0e7c9a-1111-4d6f-aaa3-644783ddb0b7", "0b0e7c9a-2222-4d6f-aaa3-644783ddb0b7");
+        let rooms = vec![("arch".to_string(), arch.to_string()), ("dev".to_string(), dev.to_string())];
+        let (t, _) = target::add(&h, &root, "[arch] Chọn hàng đợi job", None, None, false, Some("lead"), 1).unwrap();
+        assert_eq!(wake_arch(&h, &rooms, &t, true, 2, Some("lead")), vec![("arch".to_string(), false)]);
+        let lines = std::fs::read_to_string(crate::verbs::hq::inbox_file(&h, arch).unwrap()).unwrap();
+        assert_eq!(lines.lines().count(), 1, "one message to arch: {lines}");
+        assert!(lines.contains(&format!("card #{}", t.id)));
+        assert!(crate::verbs::hq::inbox_file(&h, dev).is_none_or(|f| !f.exists()), "builders are not woken");
+        // a labelled card too; an untagged one and the arch room's own move wake nobody
+        let (l, _) = target::add(&h, &root, "Tách service", None, Some("arch"), false, None, 3).unwrap();
+        assert_eq!(wake_arch(&h, &rooms, &l, true, 4, None).len(), 1);
+        let (p, _) = target::add(&h, &root, "sửa nút", None, None, false, None, 5).unwrap();
+        assert!(wake_arch(&h, &rooms, &p, true, 6, None).is_empty());
+        assert!(wake_arch(&h, &rooms, &t, true, 7, Some("arch")).is_empty());
+        // a plain lane change wakes nobody; a relabel after the ADR neither; review does
+        assert!(wake_arch(&h, &rooms, &t, false, 8, None).is_empty());
+        let t = target::note(&h, &root, t.id, "ADR: docs/adr/q.md · chọn x", Some("arch"), 8).unwrap();
+        assert!(wake_arch(&h, &rooms, &t, true, 8, None).is_empty());
+        let review = target::Target { lane: "review".into(), ..t };
+        assert_eq!(wake_arch(&h, &rooms, &review, false, 9, None).len(), 1);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
     fn loop_md_is_written_once_and_never_overwrites_the_owners_edits() {
         let h = home("loopmd");
         let (p, written) = write_loop_md(&h).unwrap();
@@ -2329,18 +2607,18 @@ mod tests {
         let v = status(&h, false, 3);
         assert!(v["on"] == true && v["repo"].as_str().is_some_and(|r| r.ends_with("proj")), "omp off touches nothing else: {v}");
         assert_eq!(v["teams"], json!(["ccc"]));
-        set_omp(&h, true, Some("omniroute/llm7/GLM-5.3-Flash"), 4).unwrap();
+        set_omp(&h, true, Some("zai/glm-5.3"), 4).unwrap();
         set(&h, Mode::Pause, false, 5).unwrap();
         mark_paused(&h, 6).unwrap();
         let v = status(&h, false, 6);
         assert_eq!((v["paused"].as_bool(), v["teams"].clone()), (Some(true), json!(["ccc", "omp"])));
-        assert_eq!(v["omp_model"], "omniroute/llm7/GLM-5.3-Flash", "pause keeps the team model");
-        assert!(text(&v).contains("đội omp: BẬT (model omniroute/llm7/GLM-5.3-Flash), chạy khi auto on"), "{}", text(&v));
+        assert_eq!(v["omp_model"], "zai/glm-5.3", "pause keeps the team model");
+        assert!(text(&v).contains("đội omp: BẬT (model zai/glm-5.3), chạy khi auto on"), "{}", text(&v));
         // omp off / on without --model keep paused and the stored model.
         set_omp(&h, false, None, 7).unwrap();
         set_omp(&h, true, None, 8).unwrap();
         let v = status(&h, false, 8);
-        assert_eq!((v["paused"].as_bool(), v["omp_model"].as_str()), (Some(true), Some("omniroute/llm7/GLM-5.3-Flash")));
+        assert_eq!((v["paused"].as_bool(), v["omp_model"].as_str()), (Some(true), Some("zai/glm-5.3")));
         // A marker that does not parse is never rewritten: it may hold the owner's pause.
         std::fs::write(marker(&h), "{bad").unwrap();
         assert!(set_omp(&h, false, None, 9).is_err());
@@ -2371,28 +2649,28 @@ mod tests {
         set_omp(&h, true, None, 1).unwrap();
         let v = status(&h, false, 1);
         assert!(v["omp_blocked"].is_string() && text(&v).contains("đội omp: đang chặn"), "{v}");
-        assert!(v["omp_blocked"].as_str().unwrap().contains("auto omp on --model omniroute/<combo>"), "{v}");
+        assert!(v["omp_blocked"].as_str().unwrap().contains("auto omp on --model <provider>/<model>"), "{v}");
         assert!(omp_on(&h, None, 2).is_err(), "anthropic default: on refused");
         assert!(omp_on(&h, Some("anthropic/claude-x"), 2).is_err(), "anthropic team model: refused");
         assert_eq!(omp_model(&h), None, "a refused model is not stored");
-        // Acceptance: default anthropic + team model omniroute → team runs.
-        omp_on(&h, Some("omniroute/llm7/GLM-5.3-Flash"), 3).unwrap();
+        // Acceptance: default anthropic + a non-Claude team model → team runs.
+        omp_on(&h, Some("zai/glm-5.3"), 3).unwrap();
         let v = status(&h, false, 3);
-        assert_eq!((v["omp_blocked"].clone(), v["omp_model"].clone()), (Value::Null, json!("omniroute/llm7/GLM-5.3-Flash")), "{v}");
+        assert_eq!((v["omp_blocked"].clone(), v["omp_model"].clone()), (Value::Null, json!("zai/glm-5.3")), "{v}");
         // ...but a nudge without --model is still judged by the global default (anthropic).
         assert!(nudge_model_block(&h, None).is_some(), "no --model: global default decides");
-        assert_eq!(nudge_model_block(&h, Some("omniroute/x")), None, "room on omniroute: allowed");
+        assert_eq!(nudge_model_block(&h, Some("zai/x")), None, "room on a non-Claude provider: allowed");
         assert!(nudge_model_block(&h, Some("Anthropic/claude-x")).is_some_and(|r| r.contains("phòng này chạy anthropic")));
         // Team model anthropic stored by hand: blocked even with a non-anthropic default.
         std::fs::write(h.join(".omp/agent/config.yml"), "modelRoles:\n  default: zai/glm-5.3\n").unwrap();
         set_omp(&h, true, Some("anthropic/claude-x"), 4).unwrap();
         assert!(omp_blocked(&h).is_some_and(|w| w.contains("anthropic/claude-x")));
         assert_eq!(nudge_model_block(&h, None), None, "nudge without --model: global default zai");
-        set_omp(&h, true, Some("omniroute/c"), 5).unwrap();
+        set_omp(&h, true, Some("zai/c"), 5).unwrap();
         assert_eq!(omp_blocked(&h), None);
-        assert_eq!(model_provider("omniroute/llm7/GLM"), Some("omniroute".into()));
+        assert_eq!(model_provider("zai/glm-5.3/x"), Some("zai".into()));
         assert_eq!(model_provider("bad provider/x"), None);
-        assert_eq!(model_provider("omniroute/"), None);
+        assert_eq!(model_provider("zai/"), None);
         assert!(checked_model("--model", "glm").is_err());
         let _ = std::fs::remove_dir_all(&h);
     }
@@ -2441,5 +2719,21 @@ mod tests {
         }
         assert!(!s.contains("urgent"), "omp rooms are not ccc sessions: `ccc . urgent` fails there");
         let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn ci_is_read_for_the_scoped_repo_that_holds_the_room() {
+        // Paths that do not exist: `canon` leaves them as they are.
+        let base = std::env::temp_dir().join(format!("8sync-ci-repo-{}", crate::verbs::uuid_sessions::new_uuid()));
+        let (a, b) = (base.join("alpha"), base.join("beta"));
+        let scope = vec![a.clone(), b.clone()];
+        assert_eq!(ci_repo(&scope, &b.join(".claude").join("worktrees").join("card-3")), b, "a worktree of the second repo");
+        assert_eq!(ci_repo(&scope, &a), a);
+        let other = base.join("gamma");
+        assert_eq!(ci_repo(&scope, &other), other, "outside every scoped repo: its own root, not the first");
+        assert_eq!(ci_repo(&[], &other), other);
+        // Nested scoped repos: the deepest one holding the root wins.
+        let nested = vec![base.clone(), b.clone()];
+        assert_eq!(ci_repo(&nested, &b.join("src")), b);
     }
 }

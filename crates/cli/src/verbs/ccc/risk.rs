@@ -191,6 +191,13 @@ pub(super) fn assess(base: &str, files: Vec<String>, release: bool) -> Assessmen
 }
 
 impl Assessment {
+    /// The skills a room invokes for this diff, and only these (`/ship` and the lead's merge read
+    /// this line instead of loading `/sec` + `/rules` + `/aup-audit` on every diff: 1,003 skill
+    /// bodies in 36 h on ai-game-studio). `human-review` is a person, not a skill.
+    pub(super) fn skills(&self) -> Vec<String> {
+        self.gates.iter().filter(|g| g.name != "human-review").map(|g| format!("/{}", g.name)).collect()
+    }
+
     pub(super) fn json(&self) -> Value {
         json!({
             "schema": 1,
@@ -199,6 +206,7 @@ impl Assessment {
             "files": self.files,
             "hits": self.hits.iter().map(|(c, p)| json!({"category": c.key(), "path": p})).collect::<Vec<_>>(),
             "gates": self.gates.iter().map(|g| json!({"gate": g.name, "why": g.why})).collect::<Vec<_>>(),
+            "skills": self.skills(),
         })
     }
 
@@ -214,6 +222,7 @@ impl Assessment {
         for g in &self.gates {
             out.push_str(&format!("  /{:<13}{}\n", g.name, g.why));
         }
+        out.push_str(&format!("chỉ gọi: {}\n", self.skills().join(" ")));
         out.push_str("(chỉ đọc tên file, không đọc nội dung: sàn dưới review, không thay review; trước release thêm --release)\n");
         out
     }
@@ -355,6 +364,19 @@ mod tests {
         // Many hits of one class are elided after three.
         let a = assess("HEAD", v(&["a/auth-1.rs", "a/auth-2.rs", "a/auth-3.rs", "a/auth-4.rs", "a/auth-5.rs"]), false);
         assert_eq!(a.gates[1].why, "auth (a/auth-1.rs, a/auth-2.rs, a/auth-3.rs +2)");
+    }
+
+    /// What `/ship` and the lead's merge invoke (auto.rs lane playbooks point here).
+    #[test]
+    fn risk_skill_list_is_sec_alone_for_docs_and_adds_compliance_for_auth() {
+        let docs = assess("origin/main", v(&["docs/guide.md", "README.md", "CHANGELOG.md", "docs/auth/README.md"]), false);
+        assert_eq!(docs.skills(), ["/sec"]);
+        assert!(docs.text().contains("chỉ gọi: /sec\n"), "{}", docs.text());
+        assert_eq!(docs.json()["skills"], json!(["/sec"]));
+        let auth = assess("origin/main", v(&["apps/web/lib/oauth/callback.ts", "docs/guide.md"]), false);
+        assert_eq!(auth.skills(), ["/sec", "/rules", "/aup-audit"]);
+        let high = assess("HEAD", v(&["services/hiring/rank.go", ".claude/settings.json"]), false);
+        assert_eq!(high.skills(), ["/sec", "/rules", "/aup-audit", "/harden"], "a person reviews high-risk; not a skill");
     }
 
     #[test]

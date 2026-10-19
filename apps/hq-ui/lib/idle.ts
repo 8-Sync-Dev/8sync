@@ -12,6 +12,11 @@ export type IdleRecord = {
   detail: string;
   /** Unix seconds. */
   ts: number;
+  /**
+   * HQ's auto-tick skips the session: `"cron"` it runs its own cron loop (rewritten every turn end, so
+   * it expires when the loop is gone), `"events"` a team room without a board lane (holds).
+   */
+  noTick?: "cron" | "events";
 };
 
 /** Older than this, a record is history, not a live state. */
@@ -31,7 +36,9 @@ export function parseIdleRecord(v: unknown): IdleRecord | null {
   if (typeof o.state !== "string" || !(IDLE_STATES as readonly string[]).includes(o.state)) return null;
   if (typeof o.ts !== "number" || !Number.isFinite(o.ts) || o.ts <= 0) return null;
   const detail = typeof o.detail === "string" ? o.detail.split(/\r?\n/)[0].trim().slice(0, 300) : "";
-  return { team: o.team, name: o.name, state: o.state as IdleState, detail, ts: o.ts };
+  // A bare `true` (written before the reason existed) counts as `"cron"`: it may expire.
+  const noTick = o.no_tick === "events" ? "events" : o.no_tick === "cron" || o.no_tick === true ? "cron" : undefined;
+  return { team: o.team, name: o.name, state: o.state as IdleState, detail, ts: o.ts, ...(noTick ? { noTick } : {}) };
 }
 
 export function isStale(r: Pick<IdleRecord, "ts">, now = Date.now()): boolean {

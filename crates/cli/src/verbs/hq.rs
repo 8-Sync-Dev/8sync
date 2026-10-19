@@ -2342,6 +2342,17 @@ pub(crate) fn journal_room_message(home: &Path, cwd: &str, from: (&str, Option<&
     append_journal(&paths.events(), &e.to_string(), JOURNAL_MAX)
 }
 
+/// One owner alert on HQ's `#alerts` channel, as the `hq` persona with the owner mentioned (the
+/// path a Claude Code "needs input" notification takes). Err while HQ is not set up or posting is
+/// off, so the caller can try again later. Bounded like a hook call.
+pub(crate) fn alert_owner(title: &str, text: &str) -> Result<()> {
+    let env = Env::load(false, true)?;
+    if !env.cfg.enabled {
+        bail!("HQ posting is off");
+    }
+    env.post(Persona::Hq, "alerts", Some(title), text, true).map(|_| ())
+}
+
 // ── ui ──────────────────────────────────────────────────────────────────────
 
 /// Where the UI comes from.

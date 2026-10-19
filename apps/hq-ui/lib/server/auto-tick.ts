@@ -8,12 +8,22 @@ import { isSessionId, queueInbox } from "./inbox";
 import { loadOffice } from "./office";
 import { stateDir } from "./paths";
 import { run } from "./proc";
+import { readIdleStatus } from "./idle";
+import { teamOf } from "../idle";
 
 /** `revived`: when HQ last asked 8sync to bring back team rooms that died (machine restart). */
 type State = { schema: 1; at: number; ticked: Record<string, number>; idle: Record<string, number>; revived: number };
 
 /** At most one `8sync ccc auto revive` per this long, however many tabs poll. */
 export const REVIVE_MS = 120_000;
+
+/**
+ * A `no_tick: "cron"` record older than this is ignored: a session with its own loop rewrites it at
+ * every turn end, and the backup cron fires every 30 min, so one older than that period + 5 min means
+ * the loop is gone (deleted, or the session died) and HQ must wake the session again. `"events"`
+ * (a room without a board lane) holds until `8sync ccc auto on|pause|off` clears it.
+ */
+export const NO_TICK_MS = 35 * 60_000;
 
 const stateFile = () => path.join(stateDir(), "auto-tick.json");
 
@@ -66,11 +76,15 @@ export async function runAutoTick(status: AutoStatus, now = Date.now()): Promise
       void run("8sync", ["ccc", "auto", "revive"], REVIVE_MS);
     }
     const idle: Record<string, number> = {};
+    // Sessions whose own Stop hook says "my cron loop ticks me" or "no board lane: messages only",
+    // while that word is recent (NO_TICK_MS). `8sync ccc auto on|pause|off` also clears the flags.
+    const quiet = new Set(readIdleStatus().filter((r) => r.noTick === "events" || (r.noTick === "cron" && now - r.ts * 1000 <= NO_TICK_MS)).map((r) => r.team));
     const rooms: TickRoom[] = office.rooms.map((r) => {
       const sid = r.session_id;
       const isIdle = r.status === "idle";
       if (sid && isIdle) idle[sid] = state.idle[sid] ?? now;
-      return { session_id: sid, status: r.status, inboxLive: r.inboxLive, pending: r.pending, idleSince: sid && isIdle ? idle[sid] : now };
+      const team = teamOf(sid);
+      return { session_id: sid, status: r.status, inboxLive: r.inboxLive, pending: r.pending, idleSince: sid && isIdle ? idle[sid] : now, noTick: !!team && quiet.has(team) };
     });
     const ticked = pruneTicked(state.ticked, now);
     const targets = tickTargets(rooms, ticked, now).filter(isSessionId);

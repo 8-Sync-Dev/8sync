@@ -590,7 +590,8 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
             // Stop fires at every turn end, so the "minute" is bounded by the ladder instead:
             // at most MAX_BLOCKS nudges while the task list does not change, the owner-present
             // gate on a subscription, and `auto pause`. HQ's auto-tick covers a session that
-            // is already idle (no Stop ever fires there).
+            // is already idle (no Stop ever fires there). A session with its own cron loop, or a
+            // team room without a board lane, is left alone ([`quiet_stop`]).
             let team = format!("session-{}", sid.get(..8)?);
             let lead = is_lead(&team);
             if !lead && !super::auto::running(home) {
@@ -603,6 +604,15 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
     // The team name becomes a path under ~/.claude/tasks: never let it climb out.
     if team.is_empty() || team.len() > 64 || !team.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
         return None;
+    }
+    if !lead && me.is_none() {
+        if let Some((kind, why)) = quiet_stop(&v, || room_name(&v)) {
+            // `no_tick` = why HQ's auto-tick skips this session too (apps/hq-ui lib/server/auto-tick.ts):
+            // `"cron"` expires there once the loop stops rewriting it, `"events"` holds while auto runs.
+            let key = format!("{}__lead", safe(&team));
+            write_json(&state_dir(home).join("status").join(format!("{key}.json")), &json!({ "schema": 1, "team": team, "name": "lead", "state": "rest", "detail": why, "ts": now(), "no_tick": kind }));
+            return None;
+        }
     }
     let dir = state_dir(home);
     let lease = read_json(&dir.join("lease.json"));
@@ -661,6 +671,41 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
         Step::Nudge { state: "working", msg } => Some(json!({ "decision": "block", "reason": format!("8sync không-ai-rảnh: {msg}") }).to_string()),
         Step::Nudge { msg, .. } => Some(lead_context(&msg)),
     }
+}
+
+/// Why a standalone session's Stop gets no nudge, if it gets none: it runs its own cron loop (the
+/// loop ticks it; a nudge on top doubled the turns), or it is a team room without a board lane
+/// ([`super::auto::events_only`]: it works on messages and cards only). `room` is looked up only
+/// when there is no cron.
+pub(super) fn quiet_stop(v: &Value, room: impl FnOnce() -> Option<String>) -> Option<(&'static str, &'static str)> {
+    if v["session_crons"].as_array().is_some_and(|c| !c.is_empty()) {
+        Some(("cron", "có loop cron riêng: không nhắc thêm"))
+    } else if room().is_some_and(|n| super::auto::events_only(&n)) {
+        Some(("events", "phòng không giữ cột board: chỉ chạy khi có tin hoặc card"))
+    } else {
+        None
+    }
+}
+
+/// Drop every `no_tick` status record ([`quiet_stop`]): called whenever auto turns on, resumes,
+/// pauses or goes off, so a flag written in an earlier run never silences a session HQ should wake.
+/// HQ also ignores one older than its cron period (apps/hq-ui lib/server/auto-tick.ts `NO_TICK_MS`).
+pub(super) fn clear_no_tick(home: &Path) {
+    let Ok(rd) = std::fs::read_dir(state_dir(home).join("status")) else { return };
+    for p in rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")) {
+        if read_json(&p).is_some_and(|v| v["no_tick"].is_string() || v["no_tick"] == true) {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+}
+
+/// The `ccc .` room name of the hook's session (registry of the cwd's project), if it is one.
+fn room_name(v: &Value) -> Option<String> {
+    let cwd = Path::new(v["cwd"].as_str()?);
+    let sid = v["session_id"].as_str().filter(|s| !s.is_empty())?;
+    let root = crate::verbs::here::detect_project_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+    let cfg = dirs::config_dir()?;
+    ccc_core::registry::Store::new(&cfg, &root, "claude-sessions", "ccc .").load().sessions.into_iter().find(|s| s.conversation_id == sid).map(|s| s.name)
 }
 
 /// A session id as a path segment: uuid characters only, or nothing.
@@ -1074,12 +1119,29 @@ mod tests {
         assert!(out.contains("không-ai-rảnh") && out.contains("solo-task-xyz"), "{out}");
         let status = std::fs::read_dir(state_dir(&home).join("status")).unwrap().count();
         assert_eq!(status, 1, "one status file for HQ");
+        // The same session with its own cron loop: the loop ticks it, so no nudge, and the status
+        // file tells HQ's auto-tick to skip it.
+        let with_cron = json!({ "hook_event_name": "Stop", "session_id": sid, "cwd": cwd.to_string_lossy(), "transcript_path": "", "session_crons": [{ "id": "c1" }] }).to_string();
+        assert_eq!(hook(&with_cron, &home, false), None);
+        let st = read_json(&state_dir(&home).join("status").join("session-0f0f0f0f__lead.json")).unwrap();
+        assert_eq!((st["no_tick"].as_str(), st["state"].as_str()), (Some("cron"), Some("rest")), "{st}");
+        // A lane-less team room (arch, rd …) rests on Stop; a lane room or an owner's room does not.
+        let plain = json!({});
+        assert_eq!(quiet_stop(&plain, || Some("rd".into())).map(|q| q.0), Some("events"));
+        assert_eq!(quiet_stop(&plain, || Some("arch-2".into())).map(|q| q.0), Some("events"));
+        assert_eq!(quiet_stop(&json!({ "session_crons": [{ "id": "c" }] }), || Some("rd".into())).map(|q| q.0), Some("cron"));
+        assert_eq!(quiet_stop(&plain, || Some("dev".into())), None);
+        assert_eq!(quiet_stop(&plain, || Some("zus".into())), None);
+        assert_eq!(quiet_stop(&plain, || None), None);
+        assert!(quiet_stop(&json!({ "session_crons": [] }), || None).is_none(), "an empty cron list is no loop");
         // A bad session id never becomes a path.
         let evil = json!({ "hook_event_name": "Stop", "session_id": "../../x", "cwd": cwd.to_string_lossy() }).to_string();
         assert_eq!(hook(&evil, &home, false), None);
         assert_eq!(safe_id("ab/cd"), None);
-        // Paused: silent again for the standalone session …
+        // Paused: the `no_tick` flag goes (a resumed auto asks the session again), and the
+        // standalone session is silent again …
         super::super::auto::set(&home, super::super::auto::Mode::Pause, false, now()).unwrap();
+        assert!(!state_dir(&home).join("status").join("session-0f0f0f0f__lead.json").exists(), "no_tick cleared on pause");
         assert_eq!(hook(&input, &home, false), None);
         // `idle on` by hand without `auto on` (manual): the standalone session stays silent,
         // while a real lead (team config present) still reads its team's task list, as before.

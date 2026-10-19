@@ -5,6 +5,51 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.108.0] — 2026-10-20
+Owner (2026-10-20): "quay lại nâng cấp ccc đi uat đi sao mà nó dở quá luôn á auto kém chất lượng kết quả đạt chậm". Measured on ai-game-studio, 71 min after the 0.105.0 relaunch (9 rooms, 1,264 API calls):
+- 14 cards were approved and 2 PRs merged; 15 approved cards waited 3.4–4.8 h.
+- 25 of 59 open PRs conflicted and 14 sat on a branch other than main.
+- 10 of 33 returns were a room getting another role's card.
+- The team ran at 1,068 calls/h, 3.8× the day before. The Claude session limit had stopped every room 3 times in the 36 h before, 191 min in all.
+- GitHub Actions on that repo had failed on billing for 12 h, and nothing told the owner.
+
+### Added
+- **`8sync ccc auto merge`.** It merges approved cards in code, with no model turn. Each card's PR must target the repo's default branch (`gh repo view`, cached a day; when it can't be read, nothing moves), be MERGEABLE, and have the card's SHA as head. It merges with `--squash --delete-branch --match-head-commit` and closes the card with `merged <sha>`. A stacked card runs after its root. A PR whose base branch was already merged is retargeted and sent back to `review`, so its new diff is reviewed before it merges. A conflict, a moved head, or another base sends the card back to `ready` with the reason. The lead runs it first on every turn, and its `auto wait` wakes on a new approved card.
+- **Merge permission per project.** It used to be stored per session, so the 19:40 relaunch dropped it and the merge guard then refused lead's `gh pr merge`. The owner's answer is now stored per project root for at most 8 h in `~/.local/state/8sync/ccc/grants/self-merge.projects.json`, and `auto status --json` shows it as `self_merge`.
+  - **What grants it:** only an option label the owner picked, read back from Claude Code's own transcript under `~/.claude/projects/` every time the permission is used. The label must be "Tự merge…" / "Self-merge…" / "Auto-merge…" on any question, or "Duyệt tất cả" / "Chỉ merge" on a `Ship` question. Free text and labels with a negation (không, chưa, tắt, no, not, off, later, sau) grant nothing.
+  - **Revoking:** any other `Ship` answer revokes it.
+  - **Forgery:** a hand-written store entry grants nothing. The guard also denies writes to the store, including through `..` paths.
+  - **The guard allows exactly** `gh pr merge <number> [--squash|--merge|--rebase] [--delete-branch] --match-head-commit <card sha>`, only for a PR of an approved card whose base is the default branch.
+- **`8sync ccc auto reopen <id> [--note]`.** A card closed by mistake goes back to the lane it came from, keeping its notes, SHA and PR.
+- **`8sync ccc auto ci [--json]` and `ci` in `auto status`:** `ok`, `failing`, `billing` or `unknown`, from the last 5 `gh run` results plus the annotations of the newest failed run. The reading is cached 10 min, and status never runs `gh` itself. `billing` (payments failed or spending limit) shows in HQ's Office header and in status text, sends one owner alert a day, and tells rooms not to wait on CI.
+- `8sync ccc risk` lists the skills to call (`skills`; docs-only diff → `/sec`).
+
+### Changed
+- **The board checks the PR, not just the text.**
+  - Moving a card into `qa` or `approved` reads its PR with `gh pr view` (20 s limit). It refuses a base other than the default branch, a conflicting PR, an already-merged PR, a head different from `--sha`, or a `gh` error.
+  - `done` needs evidence with a SHA or the `<lệnh>: <kết quả>` shape. "chưa" no longer closes a card.
+  - Leaving `blocked` keeps the bounce count. `blocked → review` needs a `gate <sha>` note matching the current head.
+- **Cards go to the right role.** A card's role comes from the tag at the start of its title (`[ui]`, `[dev]`, `[rd]`, …) or `--role` on `add`/`move`.
+  - In `ready`, dev rooms (dev, dev2, backend, core, …) get only `[dev]` or untagged cards, and ui rooms only `[ui]` or untagged.
+  - Cards for a role no building room takes (`[game-designer]`, `[art-director]`, or `[rd]`/`[arch]` sitting in `ready`) are never handed out; `auto lint` and `auto board` list them for the lead. The team is the registered rooms plus the live Claude Code rooms of the project, so rooms HQ reopened count.
+  - Adding or relabelling an `[arch]` card wakes the arch room once, and so does an arch card moving into `review`.
+- **Fewer turns spent polling:**
+  - Rooms started by `auto up`/`revive` wait in `auto wait --timeout 1800` (their settings raise `BASH_MAX_TIMEOUT_MS`). Other rooms keep the 540 s default under Claude Code's 10-min Bash limit. A wake with a card claims it and works on it in the same turn, and a lead woken by `merge` runs `auto merge`.
+  - The cron backup runs every 30 min (was 10), and `--loop` refuses less than 30 min. Rooms without a lane (arch, rd, ops, docs, sec) get no cron and no HQ auto-tick; they work on cards and messages only.
+  - HQ's auto-tick skips a session that has its own cron for 35 min after its last turn, and skips lane-less rooms entirely. `auto on`/`pause`/`off` clears those marks.
+- **Gates run once:**
+  - `/ship` and the lead's merge call `8sync ccc risk` and run only the skills it lists, instead of `/sec` + `/rules` + `/aup-audit` on every PR.
+  - QA runs the test gate once per PR head SHA and records `gate <sha>: <lệnh>: <kết quả>` on the card; review and lead reuse it until the head changes.
+- The QA room runs on Sonnet (was Haiku): it gates visual UAT, and it had bounced cards that review then judged differently.
+
+### Removed
+- **OmniRoute.** Owner (2026-10-20): "xóa sạch omniroute, ảnh github,… all liên quan omniroute cho lành nhé sài ccc chính chủ được rồi". The free providers it could route (LLM7, Gemini Free) never carried one omp turn, and both train on prompts. Gone:
+  - `scripts/vps/omniroute/` and `.github/workflows/omniroute-image.yml`;
+  - on the VPS: the container and its data volume, `/srv/apps/omniroute`, the `/router-ai` Caddy routes and their `import`, the `omniroute-update` and `vps-clean` timers;
+  - on GitHub: the `omniroute-router-ai` GHCR package and its workflow runs; the org's "public packages" setting is back off;
+  - locally: the `omniroute` provider in omp's `models.yml`, the guide and PDF; the LLM7 and Gemini keys made for it were deleted.
+  - `--model` examples in `ccc auto omp` help and errors now read `<provider>/<model>`. The `ccc auto omp on --model` feature itself stays: it works with any non-Claude omp provider.
+
 ## [0.107.0] — 2026-10-19
 ### Added
 - **HQ native core.** `8sync hq ui` now also serves a loopback JSON core (random port + token, handed to the web server as `HQ_CORE` / `HQ_CORE_TOKEN`, never passed on to rooms): the `claude agents` listing behind a fingerprint cache (re-run only when a session/job file changes or a room's pid dies, ≤ 30 s), `8sync ls --all` rows from warm transcript digests (only appended lines are read), boards and the awake probe in process, a 5 s machine sampler (GetSystemTimes, GlobalMemoryStatusEx, Toolhelp working sets, NVML, PDH RAPL energy; Linux /proc + powercap) instead of `tasklist` / `nvidia-smi` / `typeperf` per request, the Hạn mức transcript scan, and the project size walk. Without the core (a `next dev` server) every route keeps its own probe. One client, 60 s: HQ node 5.5 → 4.0 s CPU, RSS 181 → 132 MB (plus ~1.3 s in the core), and no `claude agents` / `tasklist` / `8sync ls` process per poll; office 349 → 87 ms, board 386 → 108 ms, machine 1405 → 546 ms.

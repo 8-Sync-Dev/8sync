@@ -53,7 +53,7 @@ pub struct Args {
     #[arg(long)]
     pub json: bool,
 
-    /// With a bare `<name>`: run omp on this model (`--model <provider/model>`, e.g. omniroute/<combo>).
+    /// With a bare `<name>`: run omp on this model (`--model <provider/model>`, e.g. zai/glm-5.3).
     #[arg(long)]
     pub model: Option<String>,
 }

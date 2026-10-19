@@ -61,6 +61,9 @@ describe("auto control model", () => {
   it("texts and button", () => {
     expect(autoText({ on: true, paused: false, lease_until: 1_800_000_000 })).toMatch(/^Luôn chạy · lease tới \d\d:\d\d$/);
     expect(autoText({ on: true, paused: false })).toBe("Luôn chạy");
+    // CI held by GitHub billing: the header says so (once per poll, no extra fetch); ok/failing stay quiet.
+    expect(autoText({ on: true, paused: false, ci: "billing" })).toBe("Luôn chạy · CI dừng: GitHub billing (Settings → Billing)");
+    expect(autoText({ on: true, paused: false, ci: "failing" })).toBe("Luôn chạy");
     expect(autoText({ on: false, paused: true })).toBe("Tạm dừng (owner)");
     expect(autoText({ on: false, paused: false, error: "usage: 8sync ccc" })).toBe("8sync chưa có lệnh auto — chạy 8sync up");
     expect(autoButton({ on: true, paused: false })).toEqual({ label: "Tạm dừng", action: "pause" });

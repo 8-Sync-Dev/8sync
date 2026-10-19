@@ -30,19 +30,58 @@ pub(super) fn check(input: &str) -> Option<String> {
 
 /// [`check`] with the ship-grant directory and clock injected (tests).
 pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<String> {
+    check_full(input, grants, now_s, &pr_base, &super::merge::default_branch)
+}
+
+/// The base branch of PR `pr`, read with `gh` in `root` (bounded: a hung `gh` must not hang the hook).
+fn pr_base(root: &Path, pr: u64) -> Option<String> {
+    let mut c = Command::new("gh");
+    c.args(["pr", "view", &pr.to_string(), "--json", "baseRefName", "-q", ".baseRefName"])
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .env("GH_PROMPT_DISABLED", "1");
+    let out = crate::verbs::hq_core::agents::run_bounded(c, super::merge::GH_TIMEOUT)?;
+    Some(String::from_utf8_lossy(&out).trim().to_string())
+}
+
+/// `(repo root) → default branch`, None when unknown (injected in tests).
+type DefaultOf<'a> = &'a dyn Fn(&Path) -> Option<String>;
+
+/// The approved card a `gh pr merge` lands under the owner's project self-merge permission: the
+/// whole command is [`super::merge::merge_command`], the PR is an open `approved` card's, the SHA is
+/// the reviewed one and the base is the repo's default branch (unknown → no opinion: the normal
+/// rules decide). Only for the real store (`<home>/…/grants`).
+fn self_merge_card(v: &Value, grants: &Path, now_s: u64, base_of: BaseOf, default_of: DefaultOf) -> Option<u64> {
+    let (pr, sha) = super::merge::merge_command(v["tool_input"]["command"].as_str()?)?;
+    let home = super::grant::home_of(grants)?;
+    let cwd = v["cwd"].as_str().map(Path::new).filter(|c| c.is_absolute())?;
+    let root = crate::verbs::here::repo_of(cwd).unwrap_or_else(|| cwd.to_path_buf());
+    super::grant::self_merge(grants, &root, now_s)?;
+    let cards = super::target::list(home, &root).ok()?;
+    super::merge::approved_merge(pr, &sha, &cards, || Some((base_of(&root, pr)?, default_of(&root)?)))
+}
+
+/// `(repo root, pr) → base branch` (injected in tests).
+type BaseOf<'a> = &'a dyn Fn(&Path, u64) -> Option<String>;
+
+/// [`check_with`] with the PR base and default-branch lookups injected (tests).
+fn check_full(input: &str, grants: &Path, now_s: u64, base_of: BaseOf, default_of: DefaultOf) -> Option<String> {
     let v: Value = serde_json::from_str(input).ok()?;
     let tool = v["tool_name"].as_str().unwrap_or_default();
     let ti = &v["tool_input"];
     // Ship grants are written only by the `ship-grant` hook from the owner's real answer;
     // a tool call that names the grant store could forge one.
     // Normalised ([`norm`]): lowercased (Windows paths are case-insensitive), `\` → `/`, `//` and
-    // `/./` collapsed, so `hq//inbox` or `hq/./inbox` spell the same path.
+    // `/./` collapsed, `x/..` resolved, so `hq//inbox`, `hq/./inbox` or `hq/x/../inbox` spell the same path.
     let touched: Vec<String> = [ti["command"].as_str(), ti["file_path"].as_str(), ti["notebook_path"].as_str(), ti["path"].as_str()]
         .into_iter()
         .flatten()
         .map(norm)
         .collect();
-    if touched.iter().any(|t| t.contains("8sync/ccc/grants")) {
+    // The bare file name too: `cd …/grants; echo {} > self-merge.projects.json`.
+    if touched.iter().any(|t| t.contains("8sync/ccc/grants") || t.contains("self-merge.projects")) {
         return Some(decision("deny", "the ship-grant store is written only by the kit's hook from the owner's answer to a \"Ship\" question. Ask that question instead."));
     }
     // The owner's HQ clicks on permission requests (`ccc hook permit`): a room that wrote its own
@@ -91,6 +130,10 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
         }
         _ => None,
     }?;
+    let merge_card = match &verdict {
+        Verdict::Ship { deploy: false, .. } if matches!(tool, "Bash" | "PowerShell") => self_merge_card(&v, grants, now_s, base_of, default_of),
+        _ => None,
+    };
     Some(match verdict {
         Verdict::Deny(r) => decision("deny", &r),
         Verdict::Ask(r) => decision("ask", &r),
@@ -101,6 +144,13 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
             &format!("{r} (Auto mode: this is not a question for the user. Rewrite the command with literal paths and no command held in a variable, or split it into plain steps, then continue.)"),
         ),
         Verdict::Unsure(r) => decision("ask", &r),
+        // The owner let this project self-merge (any session, 8 h) and the command lands exactly an
+        // approved card's reviewed head into main: allow, so neither auto mode nor the owner-away
+        // permit hook stops it. Anything else falls through to the per-session Ship grant.
+        Verdict::Ship { why, .. } if merge_card.is_some() => decision(
+            "allow",
+            &format!("{why} Card #{} approved: owner đã cho tự merge dự án này, base là nhánh mặc định, --match-head-commit đúng SHA đã review.", merge_card.unwrap_or_default()),
+        ),
         // The owner approved shipping once for this session (one `Ship` AskUserQuestion). Staying
         // silent left the step to auto mode's classifier, which still prompted at every merge and
         // tag; an explicit allow skips that prompt (settings deny/ask rules still apply,
@@ -119,8 +169,8 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
     })
 }
 
-/// Guard matching form of a command or path: lowercased, `\` → `/`, runs of `/` collapsed and
-/// `/./` segments dropped.
+/// Guard matching form of a command or path: lowercased, `\` → `/`, runs of `/` collapsed,
+/// `/./` segments dropped and `seg/../` resolved (a segment ends at `/`, whitespace or a quote).
 fn norm(t: &str) -> String {
     let mut s = String::with_capacity(t.len());
     for c in t.chars().flat_map(char::to_lowercase) {
@@ -132,6 +182,16 @@ fn norm(t: &str) -> String {
     }
     while s.contains("/./") {
         s = s.replace("/./", "/");
+    }
+    let stop = |c: char| c == '/' || c.is_whitespace() || matches!(c, '"' | '\'' | '=');
+    // A `/..` segment: followed by the end, `/` or another segment stop.
+    let dotdot = |s: &str| s.match_indices("/..").map(|(i, _)| i).find(|&i| s[i + 3..].chars().next().is_none_or(stop));
+    while let Some(i) = dotdot(&s) {
+        let end = if s[i + 3..].starts_with('/') { i + 4 } else { i + 3 };
+        let start = s[..i].rfind(stop).map_or(0, |j| j + 1);
+        // Nothing to pop (`/..` at a root or after a quote): just drop the `..`.
+        let start = if start == i { i + 1 } else { start };
+        s.replace_range(start..end, "");
     }
     s
 }
@@ -526,6 +586,12 @@ mod tests {
         assert_eq!(forge("Write", json!({ "file_path": "C:\\Users\\u\\.local\\state\\8sync\\ccc\\permit\\s1.answer.json", "content": "{}" })).as_deref(), Some("deny"));
         assert_eq!(forge("PowerShell", json!({ "command": "Set-Content ~/.local/state/8sync/ccc/permit/s1.answer.json '{}'" })).as_deref(), Some("deny"));
         assert_eq!(forge("Bash", json!({ "command": "cd ~/.local/state/8sync/ccc && echo '{}' > permit/s1.answer.json" })).as_deref(), Some("deny"));
+        // `..` does not hide the store, nor does the bare project-permission file name.
+        assert_eq!(forge("Write", json!({ "file_path": "/home/u/.local/state/8sync/ccc/x/../grants/self-merge.projects.json", "content": "{}" })).as_deref(), Some("deny"));
+        assert_eq!(forge("Bash", json!({ "command": "echo '{}' > ~/.local/state/8sync/ccc/x/y/../../grants/s1.json" })).as_deref(), Some("deny"));
+        assert_eq!(forge("Write", json!({ "file_path": "C:\\Users\\u\\.local\\state\\8sync\\x\\..\\ccc\\grants\\s1.json", "content": "{}" })).as_deref(), Some("deny"));
+        assert_eq!(forge("PowerShell", json!({ "command": "Set-Content Self-Merge.Projects.json '{}'" })).as_deref(), Some("deny"));
+        assert_eq!(norm("a/b/../c \"x/y/..\" /../z"), "a/c \"x/\" /z");
         let tr = std::env::temp_dir().join(format!("8sync-guard-transcript-{}.jsonl", std::process::id()));
         let _ = std::fs::remove_file(&tr);
         let run = |session: &str, cmd: &str| {
@@ -556,5 +622,58 @@ mod tests {
         assert_eq!(run("s1", "gh pr merge 4; git reset --hard").as_deref(), Some("ask"), "another ask in the command keeps the prompt");
         let _ = std::fs::remove_dir_all(&d);
         let _ = std::fs::remove_file(&tr);
+    }
+
+    #[test]
+    fn project_self_merge_allows_only_an_approved_cards_reviewed_head_into_main() {
+        let home = std::env::temp_dir().join(format!("8sync-guard-selfmerge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let root = home.join("game");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let grants = super::super::grant::dir(&home);
+        let head = "0123456789abcdef0123456789abcdef01234567";
+        let card = |id: u64, lane: &str, pr: &str| json!({ "id": id, "text": "x", "added": 0, "state": "open", "lane": lane, "pr": pr, "sha": "0123456" });
+        let key = super::super::auto::canon(&root).to_string_lossy().into_owned();
+        let board = super::super::idle::state_dir(&home).parent().unwrap().join("targets.json");
+        std::fs::create_dir_all(board.parent().unwrap()).unwrap();
+        std::fs::write(&board, json!({ "projects": { key.clone(): { "next_id": 3, "items": [card(1, "approved", "81"), card(2, "review", "82")] } } }).to_string()).unwrap();
+        let base = |_: &Path, pr: u64| Some(if pr == 81 { "main" } else { "card-125-ui" }.to_string());
+        let default = std::cell::RefCell::new(Some("main".to_string()));
+        // A relaunched lead: session "new", the owner answered in session "old".
+        let run = |cmd: &str, now: u64| {
+            let input = json!({ "tool_name": "Bash", "tool_input": { "command": cmd }, "cwd": root.join(".claude/worktrees/card-1"), "session_id": "new", "permission_mode": "auto" });
+            check_full(&input.to_string(), &grants, now, &base, &|_| default.borrow().clone()).map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"]["permissionDecision"].as_str().unwrap().to_string())
+        };
+        let merge = format!("gh pr merge 81 --squash --delete-branch --match-head-commit {head}");
+        assert_eq!(run(&merge, 1_000).as_deref(), Some("ask"), "no permission yet");
+        let q = json!([{ "question": "Tốc độ?", "header": "Tốc độ", "options": [{ "label": "Tự merge khi đủ cổng" }, { "label": "Không, tự merge sau" }] }]);
+        // Claude Code's own transcript lives under `<home>/.claude/projects/`.
+        let tr = home.join(".claude/projects/game/old.jsonl");
+        std::fs::create_dir_all(tr.parent().unwrap()).unwrap();
+        std::fs::write(&tr, format!("{}\n", json!({ "type": "user", "toolUseResult": { "questions": q, "answers": { "Tốc độ?": "Tự merge khi đủ cổng" } } }))).unwrap();
+        let answer = json!({
+            "session_id": "old", "cwd": root, "tool_name": "AskUserQuestion", "transcript_path": tr,
+            "tool_input": { "questions": q },
+            "tool_response": { "answers": { "Tốc độ?": "Tự merge khi đủ cổng" } }
+        });
+        super::super::grant::record(&answer.to_string(), &grants, 900).unwrap_or_default();
+        assert_eq!(run(&merge, 1_000).as_deref(), Some("allow"));
+        assert_eq!(run(&format!("gh pr merge https://github.com/evil/x/pull/81 --squash --match-head-commit {head}"), 1_000).as_deref(), Some("ask"), "URL");
+        assert_eq!(run(&format!("gh pr merge #81 --squash --match-head-commit {head}"), 1_000).as_deref(), Some("ask"), "#81");
+        *default.borrow_mut() = Some("master".into());
+        assert_eq!(run(&merge, 1_000).as_deref(), Some("ask"), "main is not this repo's default branch");
+        *default.borrow_mut() = None;
+        assert_eq!(run(&merge, 1_000).as_deref(), Some("ask"), "default branch unknown: no opinion, the normal rules ask");
+        *default.borrow_mut() = Some("main".into());
+        assert_eq!(run(&format!("gh pr merge 81 --squash --match-head-commit {}", "fedcba9876543210"), 1_000).as_deref(), Some("ask"), "another head");
+        assert_eq!(run("gh pr merge 81 --squash", 1_000).as_deref(), Some("ask"), "no --match-head-commit");
+        assert_eq!(run(&format!("gh pr merge 82 --squash --match-head-commit {head}"), 1_000).as_deref(), Some("ask"), "card in review");
+        assert_eq!(run(&format!("gh pr merge 81 --admin --match-head-commit {head}"), 1_000).as_deref(), Some("ask"));
+        assert_eq!(run(&format!("gh release create v1 && gh pr merge 81 --match-head-commit {head}"), 1_000).as_deref(), Some("ask"));
+        assert_eq!(run(&merge, 900 + 8 * 3600).as_deref(), Some("ask"), "expired");
+        // Stacked on another branch: the guard reads the base and keeps the prompt.
+        std::fs::write(&board, json!({ "projects": { key.clone(): { "next_id": 3, "items": [card(2, "approved", "82")] } } }).to_string()).unwrap();
+        assert_eq!(run(&format!("gh pr merge 82 --match-head-commit {head}"), 1_000).as_deref(), Some("ask"));
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

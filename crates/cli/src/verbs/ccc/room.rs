@@ -55,12 +55,13 @@ pub(super) const ARCH_PLAYBOOK: &str = "card nhãn `arch` (xem `8sync ccc auto b
 
 /// In match order. "qc" is a tester here, as Vietnamese teams use the word.
 const ROLES: [Role; 13] = [
-    r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối board: triage backlog (đích của owner) thành card ready có AC + lệnh check, gỡ card blocked, chia việc; merge chỉ sau câu Ship của owner", Some("opus"), Some("backlog")),
+    r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối board: triage backlog (đích của owner) thành card ready có AC + lệnh check, gỡ card blocked, chia việc; merge bằng `8sync ccc auto merge` (thiếu quyền → MỘT câu Ship cho mọi card approved), không tự `gh pr merge`", Some("opus"), Some("backlog")),
     r(&["ba", "analyst", "spec", "req", "po"], "BA", "viết card: acceptance criteria + đúng một lệnh check, tách việc lớn thành card nhỏ, backlog → ready; không sửa code sản phẩm", Some("opus"), Some("backlog")),
     r(&["arch", "architect", "architecture", "sa", "solution"], "Architect", "solution architecture suốt vòng đời: ADR cho card nhãn arch trước khi build (/sysdesign theo System Design Primer + docs chính thức), review kiến trúc diff ở cột review, mỗi ngày tech radar có nguồn + đo sức khoẻ scale theo docs/adr/budgets.md; không sửa code sản phẩm", Some("opus"), None),
     r(&["rd", "r&d", "rnd", "research", "explore"], "R&D", "nghiên cứu: /deep-research câu hỏi mở → brief có nguồn trong su-code/research/ → /planning; chưa sửa code sản phẩm khi chưa có plan", Some("opus"), None),
     r(&["dev", "build", "builder", "code", "coder", "impl"], "Dev/Builder", "nhận card ready: worktree .claude/worktrees/card-<id>, nhánh card-<id>-<slug>, code + test, PR; building → qa; không merge", Some("sonnet"), Some("ready")),
-    r(&["qa", "qc", "test", "tester", "e2e", "uat"], "QA", "chạy check/test/UAT của card trên nhánh PR; ảnh chụp UAT lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện); đạt → review, lỗi → ready kèm ghi chú [qa]; viết test, không sửa code sản phẩm", Some("haiku"), Some("qa")),
+    // Sonnet, not Haiku: QA gates visual UAT, and on Haiku it bounced 6 cards in 71 min that review then judged otherwise (ai-game-studio, 2026-10-19).
+    r(&["qa", "qc", "test", "tester", "e2e", "uat"], "QA", "chạy check/test/UAT của card trên nhánh PR; ảnh chụp UAT lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện); đạt → review, lỗi → ready kèm ghi chú [qa]; viết test, không sửa code sản phẩm", Some("sonnet"), Some("qa")),
     r(&["review", "reviewer", "critic"], "Review", "review đối kháng diff của card, chấm FATAL/MAJOR/MINOR, chỉ duyệt khi không còn lỗi mở; duyệt → ghi SHA, chờ Ship; cần sửa → ready [review]; không sửa code", Some("sonnet"), Some("review")),
     r(&["ui", "ux", "fe", "frontend", "web", "design", "hq"], "UI/UX", "giao diện (apps/…); /impeccable bắt buộc, kiểm trên trình duyệt, ảnh chụp lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện)", None, Some("ready")),
     r(&["api", "be", "backend", "server", "encore", "db"], "Backend/API", "API, dữ liệu, migration (migration/xoá dữ liệu vẫn hỏi owner)", None, Some("ready")),
@@ -90,6 +91,64 @@ pub(super) fn role(name: &str) -> (String, String) {
         Some(row) => (row.name.to_string(), row.duty.to_string()),
         None => (format!("\"{name}\""), format!("phòng riêng cho chủ đề \"{name}\": bám việc, memory và quyết định theo đúng tên này")),
     }
+}
+
+/// The card role a room of `row` builds (`[dev]`, `[ui]` … in a card title): dev, dev2, backend
+/// and core rooms all take `dev` cards; every other row its own short name.
+fn crew_of(row: &Role) -> &'static str {
+    match row.name {
+        "Dev/Builder" | "Backend/API" | "Core/Rust" => "dev",
+        "UI/UX" => "ui",
+        "QA" => "qa",
+        "Review" => "review",
+        "R&D" => "rd",
+        "Architect" => "arch",
+        "BA" => "ba",
+        "Lead/PM" => "lead",
+        "Ops/CI" => "ops",
+        "Docs" => "docs",
+        "Security" => "sec",
+        other => other,
+    }
+}
+
+/// Pure: the card role room `name` claims ([`super::target::claim`]): its row's, else the name's
+/// first token without trailing digits (a room `godot2` takes `[godot]` cards).
+pub(super) fn crew(name: &str) -> String {
+    match find(name) {
+        Some(row) => crew_of(row).to_string(),
+        None => {
+            let low = name.to_lowercase();
+            let tok = low.split(|c: char| !(c.is_alphanumeric() || c == '&')).find(|t| !t.is_empty()).unwrap_or("");
+            tok.trim_end_matches(|c: char| c.is_ascii_digit()).to_string()
+        }
+    }
+}
+
+/// Pure: does room `name` claim from the `ready` lane (a builder)? A name the table lacks is a
+/// topic room (`godot2`) that builds its own `[godot]` cards.
+pub(super) fn builds(name: &str) -> bool {
+    find(name).is_none_or(|row| row.lane == Some("ready"))
+}
+
+/// Is `word` a key of some role row (`designer` → design)?
+fn known(word: &str) -> bool {
+    ROLES.iter().any(|row| row.keys.iter().any(|k| word == *k || (k.len() >= 4 && word.starts_with(k))))
+}
+
+/// Pure: the role a card tag names, or None when the tag is no role (`#125`, `bug`, `v2`). A
+/// whole-tag key of a room row maps to that row's role (`backend` → dev, `ux` → ui); a hyphenated
+/// tag with a role word in it that the table has no room for (`game-designer`, `qa-lead`) stays
+/// itself, so no room claims it; other hyphenated tags (`hot-fix`, `follow-up`) are no role.
+pub(super) fn card_role(tag: &str) -> Option<String> {
+    let t = tag.trim().to_lowercase();
+    let tok = t.trim_end_matches(|c: char| c.is_ascii_digit());
+    if !tok.is_empty() && tok.chars().all(|c| c.is_alphanumeric() || c == '&') {
+        return ROLES.iter().find(|row| row.keys.iter().any(|k| tok == *k || (k.len() >= 4 && tok.starts_with(k)))).map(|row| crew_of(row).to_string());
+    }
+    let words: Vec<&str> = t.split('-').collect();
+    let hyphenated = words.len() >= 2 && words.iter().all(|w| !w.is_empty() && w.chars().all(char::is_alphabetic));
+    (hyphenated && words.iter().any(|w| known(w))).then_some(t)
 }
 
 /// Another room of the same repo, as shown to this one.
@@ -158,7 +217,7 @@ fn topic(name: &str) -> String {
 /// 8sync session registry.
 pub(super) fn for_session(input: &Value, claude_dir: &Path, config_dir: &Path, now: u64, cap: usize) -> String {
     let Some(cwd) = input["cwd"].as_str().map(Path::new).filter(|c| c.is_absolute()) else { return String::new() };
-    let root = crate::verbs::here::detect_project_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+    let root = crate::verbs::here::repo_of(cwd).or_else(|| crate::verbs::here::detect_project_root(cwd)).unwrap_or_else(|| cwd.to_path_buf());
     let reg = Store::new(config_dir, &root, "claude-sessions", "ccc .").load();
     let me = input["session_id"].as_str().unwrap_or_default();
     let mine = reg.sessions.iter().find(|s| !me.is_empty() && s.conversation_id == me);
@@ -250,9 +309,9 @@ mod tests {
     #[test]
     fn the_default_team_covers_every_lane_with_a_model() {
         let lanes: Vec<_> = DEFAULT_TEAM.iter().map(|n| find(n).and_then(|r| r.lane)).collect();
-        assert_eq!(lanes, [Some("backlog"), Some("ready"), Some("qa"), Some("review"), None], "rd researches on its loop, no lane");
+        assert_eq!(lanes, [Some("backlog"), Some("ready"), Some("qa"), Some("review"), None], "rd has no lane: it works on messages and cards only");
         let models: Vec<_> = ["lead", "ba", "rd", "dev", "qa", "review"].iter().map(|n| find(n).and_then(|r| r.model)).collect();
-        assert_eq!(models, [Some("opus"), Some("opus"), Some("opus"), Some("sonnet"), Some("haiku"), Some("sonnet")]);
+        assert_eq!(models, [Some("opus"), Some("opus"), Some("opus"), Some("sonnet"), Some("sonnet"), Some("sonnet")], "qa gates visual UAT: not haiku");
         assert!(find("acoleads").is_none());
         assert!(find("sec").is_some_and(|r| r.lane.is_none() && r.model.is_none()), "security does not take review cards");
     }
