@@ -311,6 +311,19 @@ impl ModelConfig {
         out
     }
 
+    /// Flags for a session pinned to one model (`8sync . <name> --model <m>`, the omp team): the
+    /// main model and the smol/slow/plan roles all on `m`, and no advisor. The role flags and the
+    /// advisor otherwise follow 8sync's roles and omp's `modelRoles.advisor` (e.g. `opus`), so an
+    /// unattended room on a router model would still send part of its calls to that provider.
+    pub fn pinned_flags(&self, model: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for flag in ["--model", "--smol", "--slow", "--plan"] {
+            push_flag(&mut out, flag, model);
+        }
+        self.push_step0(&mut out);
+        out
+    }
+
     /// STEP-0: hand omp the deny-list overlay. Skipped (with a warning) when the
     /// file cannot be written — never send `--config` at a path omp will reject.
     fn push_step0(&self, out: &mut Vec<String>) {
@@ -438,6 +451,20 @@ mod tests {
             !flags.iter().any(|f| f == "--model"),
             "resume_flags must never emit --model so existing sessions preserve their model: {flags:?}"
         );
+    }
+
+    #[test]
+    fn pinned_flags_keep_every_role_on_the_pinned_model_and_drop_the_advisor() {
+        let mut cfg = ModelConfig::default();
+        cfg.advisor = true;
+        cfg.step0 = false;
+        let flags = cfg.pinned_flags("omniroute/omp-manh");
+        assert!(!flags.iter().any(|f| f == "--advisor"), "advisor runs on omp's own advisor model: {flags:?}");
+        for role in ["--model", "--smol", "--slow", "--plan"] {
+            let at = flags.iter().position(|f| f == role).unwrap_or_else(|| panic!("{role} missing: {flags:?}"));
+            assert_eq!(flags[at + 1], "omniroute/omp-manh", "{role}: {flags:?}");
+        }
+        assert_eq!(flags.iter().filter(|f| f.starts_with("--")).count(), 4, "{flags:?}");
     }
 
     /// Test-private overlay path: these cases WRITE, and the real one is shared

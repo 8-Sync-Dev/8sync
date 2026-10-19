@@ -35,8 +35,10 @@
 //! omp team (rooms `8sync . <tên>`) and touch nothing else; the marker keeps them across on / off /
 //! pause. omp rooms are nudged by their omp extension through `nudge --session <room id> --cwd
 //! <dir>` ([`nudge_gate`]): the queue head, at most every 10 min and 6 times an hour per room.
-//! The omp team stays off while omp's default model is `anthropic/…` or cannot be read
-//! ([`omp_blocked`], fail closed): a Claude subscription belongs in Claude Code only.
+//! The omp team runs on the marker's `omp_model` (`auto omp on --model <provider/model>`), else
+//! omp's default model; it stays off while that model is `anthropic/…` or cannot be read
+//! ([`omp_blocked`], fail closed): a Claude subscription belongs in Claude Code only. A room that
+//! reports its live model (`nudge --model`) is judged by that model instead.
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
@@ -45,8 +47,9 @@ use serde_json::{json, Value};
 use super::{delegate, idle, target};
 
 const USAGE: &str = "usage: 8sync ccc auto on [--here] [--omp] [--loop [10m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json]
-       8sync ccc auto omp on|off [--json] | nudge --session <room id> --cwd <dir> [--json]
-       8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp] | down
+       8sync ccc auto omp on [--model <provider/model>]|off [--json] | nudge --session <room id> --cwd <dir> [--model <provider/model>] [--json]
+       (on --omp nhận thêm --omp-model <provider/model>: model của đội omp)
+       8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down
        8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--prio P0..P3] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id>
        8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>] [--timeout 540] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
@@ -130,17 +133,20 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
 }
 
 /// The marker write must not fail silently: a lost `paused` would let HQ turn auto on again.
-/// A marker written without `teams` keeps the teams of the one it replaces (on / off / pause
-/// never change who is on the team).
+/// A marker written without `teams` / `omp_model` keeps those of the one it replaces (on / off /
+/// pause never change who is on the team or which model team omp runs).
 fn write_marker(home: &Path, v: &Value) -> Result<()> {
     let p = marker(home);
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
     }
     let mut v = v.clone();
-    if v.get("teams").is_none() {
-        if let Some(t) = idle::read_json(&p).and_then(|m| m.get("teams").cloned()) {
-            v["teams"] = t;
+    let old = idle::read_json(&p);
+    for k in ["teams", "omp_model"] {
+        if v.get(k).is_none() {
+            if let Some(t) = old.as_ref().and_then(|m| m.get(k).cloned()) {
+                v[k] = t;
+            }
         }
     }
     let tmp = p.with_extension(format!("{}.tmp", std::process::id()));
@@ -162,9 +168,10 @@ fn teams_of(m: Option<&Value>) -> Vec<&'static str> {
     }
 }
 
-/// `auto omp on|off` (and `on --omp`): only the marker's `teams` changes. A marker that exists but
-/// does not parse is refused: rewriting it could drop the owner's `paused`.
-pub(super) fn set_omp(home: &Path, on: bool, now: u64) -> Result<()> {
+/// `auto omp on|off` (and `on --omp`): only the marker's `teams` (and `omp_model` when `model` is
+/// given) change; a stored `omp_model` stays otherwise. A marker that exists but does not parse is
+/// refused: rewriting it could drop the owner's `paused`.
+pub(super) fn set_omp(home: &Path, on: bool, model: Option<&str>, now: u64) -> Result<()> {
     let p = marker(home);
     let mut m = match idle::read_json(&p) {
         Some(m) => m,
@@ -172,7 +179,31 @@ pub(super) fn set_omp(home: &Path, on: bool, now: u64) -> Result<()> {
         None => json!({ "schema": 1, "on": false, "paused": false, "since": now }),
     };
     m["teams"] = json!(if on { vec!["ccc", "omp"] } else { vec!["ccc"] });
+    if let Some(model) = model {
+        m["omp_model"] = json!(model);
+    }
     write_marker(home, &m)
+}
+
+/// Lowercased provider of a `<provider>/<model>` id; None when it is not that shape.
+pub(super) fn model_provider(model: &str) -> Option<String> {
+    let (p, rest) = model.trim().split_once('/')?;
+    let p = p.trim().to_ascii_lowercase();
+    let ok = !p.is_empty() && !rest.trim().is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    ok.then_some(p)
+}
+
+/// `--model` / `--omp-model` value: `<provider>/<model>` or an error.
+pub(super) fn checked_model(flag: &str, model: &str) -> Result<String> {
+    match model_provider(model) {
+        Some(_) => Ok(model.trim().to_string()),
+        None => bail!("{flag}: cần dạng <provider>/<model> (vd omniroute/<combo>)\n{USAGE}"),
+    }
+}
+
+/// The team model stored by `auto omp on --model`.
+pub(super) fn omp_model(home: &Path) -> Option<String> {
+    idle::read_json(&marker(home))?["omp_model"].as_str().map(str::to_string)
 }
 
 /// Provider of omp's default model (`modelRoles.default: <provider>/<model>` in omp's config.yml),
@@ -191,28 +222,57 @@ fn omp_provider(config_yml: &str) -> Option<String> {
         }
         if let Some(v) = t.strip_prefix("default:").filter(|_| roles) {
             let v = v.split(" #").next().unwrap_or("").trim().trim_matches(|c| c == '"' || c == '\'');
-            let p = v.split_once('/')?.0.trim().to_ascii_lowercase();
-            let ok = !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
-            return ok.then_some(p);
+            return model_provider(v);
         }
     }
     None
 }
 
-/// Why the omp team may not run: omp's default model is served by `anthropic` (a Claude
-/// subscription stays in Claude Code; org rules + Anthropic terms), or its provider cannot be
-/// told (config missing/unreadable/unparsed: fail closed). None = allowed.
-pub(super) fn omp_blocked(home: &Path) -> Option<&'static str> {
-    let cfg = std::fs::read_to_string(home.join(".omp/agent/config.yml")).unwrap_or_default();
-    match omp_provider(&cfg).as_deref() {
-        Some("anthropic") => Some(
-            "model mặc định của omp là anthropic/… — đội omp tắt (subscription Claude chỉ dùng trong Claude Code); đổi model omp (`8sync harness model glm`) rồi bật lại",
-        ),
-        Some(_) => None,
-        None => Some(
-            "không đọc được model mặc định của omp (`modelRoles.default` trong ~/.omp/agent/config.yml) — đội omp tắt cho an toàn; đặt model omp (`8sync harness model glm`) rồi bật lại",
-        ),
+/// Why the omp team may not run: its model (marker `omp_model`, else omp's default) is served by
+/// `anthropic` (a Claude subscription stays in Claude Code; org rules + Anthropic terms), or its
+/// provider cannot be told (config missing/unreadable/unparsed: fail closed). None = allowed.
+pub(super) fn omp_blocked(home: &Path) -> Option<String> {
+    match omp_model(home) {
+        Some(m) => model_verdict(&format!("`{m}`"), model_provider(&m).as_deref()),
+        None => omp_default_blocked(home),
     }
+}
+
+/// [`omp_blocked`] by omp's global default model only (`modelRoles.default`), never the team model:
+/// what a nudge from a room that reports no model is judged by (fail closed).
+pub(super) fn omp_default_blocked(home: &Path) -> Option<String> {
+    let cfg = std::fs::read_to_string(home.join(".omp/agent/config.yml")).unwrap_or_default();
+    model_verdict("model mặc định của omp", omp_provider(&cfg).as_deref())
+}
+
+/// [`omp_blocked`] for one model: `label` names it, `provider` = its provider (None = unknown).
+fn model_verdict(label: &str, provider: Option<&str>) -> Option<String> {
+    match provider {
+        Some("anthropic") => Some(format!(
+            "đội omp chạy {label} (anthropic) — đội omp tắt (subscription Claude chỉ dùng trong Claude Code); chọn model khác: `8sync ccc auto omp on --model omniroute/<combo>`"
+        )),
+        Some(_) => None,
+        None => Some(format!(
+            "không đọc được provider của {label} (`omp_model` trong auto.json hoặc `modelRoles.default` trong ~/.omp/agent/config.yml) — đội omp tắt cho an toàn; chọn model: `8sync ccc auto omp on --model omniroute/<combo>`"
+        )),
+    }
+}
+
+/// Why team omp may not run once `model` (None = keep the current one) is its model.
+pub(super) fn omp_would_block(home: &Path, model: Option<&str>) -> Option<String> {
+    match model {
+        Some(m) => model_verdict(&format!("`{m}`"), model_provider(m).as_deref()),
+        None => omp_blocked(home),
+    }
+}
+
+/// Turn team omp on (`auto omp on`, `up --omp`), with `model` (already checked) as its new model;
+/// refused while the model it would run on is blocked.
+pub(super) fn omp_on(home: &Path, model: Option<&str>, now: u64) -> Result<()> {
+    if let Some(why) = omp_would_block(home, model) {
+        bail!("{why}");
+    }
+    set_omp(home, true, model, now)
 }
 
 /// `ccc cancel --all` pressed the owner's off switch: remember it so HQ does not turn auto on again.
@@ -329,6 +389,7 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         "repo": scope(home).first().map(|r| r.to_string_lossy().into_owned()),
         "repos": scope(home).iter().map(|r| r.to_string_lossy().into_owned()).collect::<Vec<_>>(),
         "teams": teams_of(m.as_ref()),
+        "omp_model": m.as_ref().and_then(|m| m["omp_model"].as_str()),
         "omp_blocked": omp_blocked(home),
     })
 }
@@ -337,10 +398,11 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
 fn omp_line(v: &Value) -> Option<String> {
     let omp = v["teams"].as_array().is_some_and(|a| a.iter().any(|t| t == "omp"));
     let on = v["on"].as_bool() == Some(true);
+    let model = v["omp_model"].as_str().map_or_else(|| "model mặc định của omp".to_string(), |m| format!("model {m}"));
     match (omp, v["omp_blocked"].as_str()) {
         (true, Some(why)) => Some(format!("đội omp: đang chặn — {why}")),
-        (true, None) if on => Some("đội omp: BẬT — phòng `8sync . <tên>` nhận nhắc việc từ hàng đích (mỗi phòng ≤ 1 lần/10 phút)".into()),
-        (true, None) => Some("đội omp: BẬT, chạy khi auto on".into()),
+        (true, None) if on => Some(format!("đội omp: BẬT ({model}) — phòng `8sync . <tên>` nhận nhắc việc từ hàng đích (mỗi phòng ≤ 1 lần/10 phút)")),
+        (true, None) => Some(format!("đội omp: BẬT ({model}), chạy khi auto on")),
         (false, _) if on => Some("đội omp: TẮT (bật: `8sync ccc auto omp on`)".into()),
         (false, _) => None,
     }
@@ -517,7 +579,7 @@ pub(super) fn lane_playbook(lane: &str) -> &'static str {
 
 /// What a backlog room does every turn before it claims: approved cards land first (stacked,
 /// unmerged work is what the owner never sees), then blocked cards whose reason is gone.
-pub(super) const BACKLOG_FIRST: &str = "trước claim: (a) chỉ phòng lead (BA bỏ qua): card approved, cũ trước → owner đã cho tự merge (su-code/DECISIONS.md hoặc note card) thì `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`; chưa cho thì gom MỌI card approved vào MỘT câu hỏi Ship cho owner; (b) `8sync ccc auto lint` → gỡ card blocked đã hết lý do (`move <id> ready`, ví dụ PR nó chờ đã merge).";
+pub(super) const BACKLOG_FIRST: &str = "trước claim: (a) chỉ phòng lead (BA bỏ qua): card approved, cũ trước → owner đã cho tự merge (su-code/DECISIONS.md hoặc note card) thì `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"` (PR có base khác main: không merge vào nhánh đó; PR gốc đã vào main → `gh pr edit <pr> --base main` rồi mới merge, chưa thì merge gốc trước); chưa cho thì gom MỌI card approved vào MỘT câu hỏi Ship cho owner; (b) `8sync ccc auto lint` → gỡ card blocked đã hết lý do (`move <id> ready`, ví dụ PR nó chờ đã merge).";
 
 /// One tick of a room's loop: the recurring cron job's prompt.
 fn tick_prompt(name: &str) -> String {
@@ -696,9 +758,23 @@ fn room_of(rooms: &[(String, String)], sid: Option<&str>) -> Option<String> {
         .map(|(name, _)| name.clone())
 }
 
+/// The model verdict of one nudge: `room_model` = the room's `--model` (its live model), else omp's
+/// GLOBAL default ([`omp_default_blocked`], fail closed) — never the team `omp_model`: every
+/// `8sync . <name>` room (the owner's own too) polls, and an old extension sends no model.
+pub(super) fn nudge_model_block(home: &Path, room_model: Option<&str>) -> Option<&'static str> {
+    match room_model {
+        Some(m) if model_provider(m).as_deref() == Some("anthropic") => {
+            Some("phòng này chạy anthropic/… (subscription Claude chỉ dùng trong Claude Code): không nhắc")
+        }
+        Some(_) => None,
+        None => omp_default_blocked(home).map(|_| "phòng không báo model và model mặc định của omp là anthropic hoặc không rõ: không nhắc"),
+    }
+}
+
 /// Why an omp room gets no nudge now; None = nudge it. `st` = [`status`], `sent` = the room's
-/// earlier nudges (epoch s). Pure: the policy of C4 in one place.
-pub(super) fn nudge_gate(st: &Value, in_scope: bool, has_target: bool, sent: &[u64], now: u64) -> Option<&'static str> {
+/// earlier nudges (epoch s), `model_block` = [`nudge_model_block`] (`st["omp_blocked"]` is the
+/// team's verdict and does not decide a nudge). Pure: the policy of C4 in one place.
+pub(super) fn nudge_gate(st: &Value, model_block: Option<&'static str>, in_scope: bool, has_target: bool, sent: &[u64], now: u64) -> Option<&'static str> {
     let omp = st["teams"].as_array().is_some_and(|a| a.iter().any(|t| t == "omp"));
     let ago = |t: &u64| now.saturating_sub(*t);
     if st["paused"].as_bool() == Some(true) {
@@ -707,8 +783,8 @@ pub(super) fn nudge_gate(st: &Value, in_scope: bool, has_target: bool, sent: &[u
         Some("auto tắt")
     } else if !omp {
         Some("đội omp tắt (`8sync ccc auto omp on`)")
-    } else if !st["omp_blocked"].is_null() {
-        Some("model omp là anthropic: đội omp tắt")
+    } else if model_block.is_some() {
+        model_block
     } else if !in_scope {
         Some("ngoài dự án của `auto on --here`")
     } else if !st["lease_until"].as_u64().is_some_and(|u| u > now) {
@@ -783,19 +859,22 @@ fn omp_room_name(root: &Path, id: &str) -> Option<String> {
         .find(|n| ccc_core::room_id(root, n) == id)
 }
 
-/// `auto nudge --session <room id> --cwd <dir> [--json]` → `{"text": str|null, "reason": str|null}`:
-/// the omp extension asks whether its room should work on the queue head now.
+/// `auto nudge --session <room id> --cwd <dir> [--model <provider/model>] [--json]` →
+/// `{"text": str|null, "reason": str|null}`: the omp extension asks whether its room should work
+/// on the queue head now; `--model` = the room's live model, judged instead of the team model.
 fn run_nudge(args: &[String], home: &Path, subscription: bool, now: u64) -> Result<()> {
-    let (mut session, mut cwd, mut as_json) = (None, None, false);
+    let (mut session, mut cwd, mut model, mut as_json) = (None, None, None, false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => as_json = true,
             "--session" => session = it.next().cloned(),
             "--cwd" => cwd = it.next().cloned(),
+            "--model" => model = Some(checked_model("--model", it.next().map_or("", String::as_str))?),
             x => bail!("không rõ `{x}`\n{USAGE}"),
         }
     }
+    let model_block = nudge_model_block(home, model.as_deref());
     let (Some(id), Some(cwd)) = (session, cwd) else {
         bail!("nudge cần --session <room id> --cwd <dir>\n{USAGE}")
     };
@@ -811,7 +890,7 @@ fn run_nudge(args: &[String], home: &Path, subscription: bool, now: u64) -> Resu
     let sent: Vec<u64> = idle::read_json(&file)
         .and_then(|v| v["sent"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()))
         .unwrap_or_default();
-    let mut why = nudge_gate(&st, in_scope(home, cwd.to_str()), head.is_some(), &sent, now);
+    let mut why = nudge_gate(&st, model_block, in_scope(home, cwd.to_str()), head.is_some(), &sent, now);
     let mut text = None;
     if let (None, Some(t)) = (why, &head) {
         match record_nudge(&file, &sent, now) {
@@ -825,6 +904,15 @@ fn run_nudge(args: &[String], home: &Path, subscription: bool, now: u64) -> Resu
         println!("{}", text.as_deref().or(why).unwrap_or_default());
     }
     Ok(())
+}
+
+/// `auto board --json` in `root`: lanes, lint issues and the root the cards are filed under.
+pub(super) fn board_value(home: &Path, root: &Path, now: u64) -> Result<Value> {
+    let cards = target::list(home, root)?;
+    let mut v = target::board_json(&cards);
+    v["issues"] = json!(target::lint(&cards, now));
+    v["root"] = json!(target::filed_under(home, root)?);
+    Ok(v)
 }
 
 /// `auto add|queue|done|drop` and the board verbs `claim|move|prio|note|board|lint` ([`target`]).
@@ -956,15 +1044,14 @@ fn run_target(
             if !words.is_empty() {
                 bail!("không rõ `{}`\n{USAGE}", words[0]);
             }
+            if as_json && verb == "board" {
+                println!("{}", board_value(home, root, now)?);
+                return Ok(());
+            }
             let cards = target::list(home, root)?;
             let issues = target::lint(&cards, now);
             if as_json {
-                let mut v = if verb == "board" { target::board_json(&cards) } else { json!({}) };
-                v["issues"] = json!(issues);
-                if verb == "board" {
-                    v["root"] = json!(target::filed_under(home, root)?);
-                }
-                println!("{v}");
+                println!("{}", json!({ "issues": issues }));
                 return Ok(());
             }
             if verb == "board" {
@@ -1246,13 +1333,20 @@ pub(super) fn run(
             Some("off") => false,
             _ => bail!("cần `on` hoặc `off`\n{USAGE}"),
         };
-        if let Some(x) = rest[2..].iter().find(|a| *a != "--json") {
-            bail!("không rõ `{x}`\n{USAGE}");
+        let mut model = None;
+        let mut it = rest[2..].iter();
+        while let Some(a) = it.next() {
+            match a.as_str() {
+                "--json" => {}
+                "--model" if on => model = Some(checked_model("--model", it.next().map_or("", String::as_str))?),
+                x => bail!("không rõ `{x}`\n{USAGE}"),
+            }
         }
-        if let Some(why) = omp_blocked(home).filter(|_| on) {
-            bail!("{why}");
+        if on {
+            omp_on(home, model.as_deref(), now)?;
+        } else {
+            set_omp(home, false, None, now)?;
         }
-        set_omp(home, on, now)?;
         let v = status(home, subscription, now);
         if rest.iter().any(|a| a == "--json") {
             println!("{v}");
@@ -1298,6 +1392,7 @@ pub(super) fn run(
                 "--team",
                 "--target",
                 "--check",
+                "--omp-model",
             ])?;
             let goal = num(rest, "--target")?;
             let check = num(rest, "--check")?;
@@ -1347,7 +1442,11 @@ pub(super) fn run(
                 None
             };
             let omp = rest.iter().any(|a| a == "--omp");
-            if let Some(why) = omp_blocked(home).filter(|_| omp) {
+            let team_model = num(rest, "--omp-model")?.map(|m| checked_model("--omp-model", &m)).transpose()?;
+            if team_model.is_some() && !omp {
+                bail!("--omp-model đi cùng --omp\n{USAGE}");
+            }
+            if let Some(why) = omp_would_block(home, team_model.as_deref()).filter(|_| omp) {
                 bail!("--omp: {why}");
             }
             let mut v = set(
@@ -1362,8 +1461,10 @@ pub(super) fn run(
                 now,
             )?;
             if omp {
-                set_omp(home, true, now)?;
+                set_omp(home, true, team_model.as_deref(), now)?;
                 v["teams"] = json!(["ccc", "omp"]);
+                v["omp_model"] = json!(omp_model(home));
+                v["omp_blocked"] = json!(omp_blocked(home));
             }
             v
         }
@@ -1752,6 +1853,7 @@ mod tests {
                 "lease_until",
                 "manual",
                 "omp_blocked",
+                "omp_model",
                 "on",
                 "paused",
                 "repo",
@@ -2215,7 +2317,7 @@ mod tests {
         std::fs::create_dir_all(h.join(".omp/agent")).unwrap();
         std::fs::write(h.join(".omp/agent/config.yml"), "modelRoles:\n  default: zai/glm-5.3\n").unwrap();
         assert_eq!(status(&h, false, 1)["teams"], json!(["ccc"]), "absent = ccc only");
-        set_omp(&h, true, 1).unwrap();
+        set_omp(&h, true, None, 1).unwrap();
         assert_eq!(status(&h, false, 1)["teams"], json!(["ccc", "omp"]));
         assert_eq!(status(&h, false, 1)["on"], false, "turning omp on does not turn auto on");
         let repo = h.join("proj");
@@ -2223,19 +2325,25 @@ mod tests {
         set(&h, Mode::On { hours: 2.0, after: 60, rate: Some(5.0), repo: Some(repo) }, false, 2).unwrap();
         let v = status(&h, false, 2);
         assert_eq!((v["on"].as_bool(), v["teams"].clone()), (Some(true), json!(["ccc", "omp"])), "on keeps the teams");
-        set_omp(&h, false, 3).unwrap();
+        set_omp(&h, false, None, 3).unwrap();
         let v = status(&h, false, 3);
         assert!(v["on"] == true && v["repo"].as_str().is_some_and(|r| r.ends_with("proj")), "omp off touches nothing else: {v}");
         assert_eq!(v["teams"], json!(["ccc"]));
-        set_omp(&h, true, 4).unwrap();
+        set_omp(&h, true, Some("omniroute/llm7/GLM-5.3-Flash"), 4).unwrap();
         set(&h, Mode::Pause, false, 5).unwrap();
         mark_paused(&h, 6).unwrap();
         let v = status(&h, false, 6);
         assert_eq!((v["paused"].as_bool(), v["teams"].clone()), (Some(true), json!(["ccc", "omp"])));
-        assert!(text(&v).contains("đội omp: BẬT, chạy khi auto on"), "{}", text(&v));
+        assert_eq!(v["omp_model"], "omniroute/llm7/GLM-5.3-Flash", "pause keeps the team model");
+        assert!(text(&v).contains("đội omp: BẬT (model omniroute/llm7/GLM-5.3-Flash), chạy khi auto on"), "{}", text(&v));
+        // omp off / on without --model keep paused and the stored model.
+        set_omp(&h, false, None, 7).unwrap();
+        set_omp(&h, true, None, 8).unwrap();
+        let v = status(&h, false, 8);
+        assert_eq!((v["paused"].as_bool(), v["omp_model"].as_str()), (Some(true), Some("omniroute/llm7/GLM-5.3-Flash")));
         // A marker that does not parse is never rewritten: it may hold the owner's pause.
         std::fs::write(marker(&h), "{bad").unwrap();
-        assert!(set_omp(&h, false, 7).is_err());
+        assert!(set_omp(&h, false, None, 9).is_err());
         assert_eq!(std::fs::read_to_string(marker(&h)).unwrap(), "{bad");
         let _ = std::fs::remove_dir_all(&h);
     }
@@ -2260,29 +2368,52 @@ mod tests {
         assert!(omp_blocked(&h).is_none(), "a known non-anthropic provider runs");
         std::fs::write(h.join(".omp/agent/config.yml"), "modelRoles:\n  default: anthropic/claude-sonnet-5-5\n").unwrap();
         assert!(omp_blocked(&h).is_some());
-        set_omp(&h, true, 1).unwrap();
+        set_omp(&h, true, None, 1).unwrap();
         let v = status(&h, false, 1);
         assert!(v["omp_blocked"].is_string() && text(&v).contains("đội omp: đang chặn"), "{v}");
+        assert!(v["omp_blocked"].as_str().unwrap().contains("auto omp on --model omniroute/<combo>"), "{v}");
+        assert!(omp_on(&h, None, 2).is_err(), "anthropic default: on refused");
+        assert!(omp_on(&h, Some("anthropic/claude-x"), 2).is_err(), "anthropic team model: refused");
+        assert_eq!(omp_model(&h), None, "a refused model is not stored");
+        // Acceptance: default anthropic + team model omniroute → team runs.
+        omp_on(&h, Some("omniroute/llm7/GLM-5.3-Flash"), 3).unwrap();
+        let v = status(&h, false, 3);
+        assert_eq!((v["omp_blocked"].clone(), v["omp_model"].clone()), (Value::Null, json!("omniroute/llm7/GLM-5.3-Flash")), "{v}");
+        // ...but a nudge without --model is still judged by the global default (anthropic).
+        assert!(nudge_model_block(&h, None).is_some(), "no --model: global default decides");
+        assert_eq!(nudge_model_block(&h, Some("omniroute/x")), None, "room on omniroute: allowed");
+        assert!(nudge_model_block(&h, Some("Anthropic/claude-x")).is_some_and(|r| r.contains("phòng này chạy anthropic")));
+        // Team model anthropic stored by hand: blocked even with a non-anthropic default.
+        std::fs::write(h.join(".omp/agent/config.yml"), "modelRoles:\n  default: zai/glm-5.3\n").unwrap();
+        set_omp(&h, true, Some("anthropic/claude-x"), 4).unwrap();
+        assert!(omp_blocked(&h).is_some_and(|w| w.contains("anthropic/claude-x")));
+        assert_eq!(nudge_model_block(&h, None), None, "nudge without --model: global default zai");
+        set_omp(&h, true, Some("omniroute/c"), 5).unwrap();
+        assert_eq!(omp_blocked(&h), None);
+        assert_eq!(model_provider("omniroute/llm7/GLM"), Some("omniroute".into()));
+        assert_eq!(model_provider("bad provider/x"), None);
+        assert_eq!(model_provider("omniroute/"), None);
+        assert!(checked_model("--model", "glm").is_err());
         let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]
     fn nudge_gate_follows_every_rail() {
         let now = 100_000;
-        let ok = json!({"on": true, "paused": false, "teams": ["ccc", "omp"], "omp_blocked": null, "lease_until": now + 60});
+        let ok = json!({"on": true, "paused": false, "teams": ["ccc", "omp"], "omp_blocked": "team verdict, not the nudge's", "lease_until": now + 60});
         let with = |k: &str, v: Value| {
             let mut s = ok.clone();
             s[k] = v;
             s
         };
-        let gate = |st: &Value, scope: bool, target: bool, sent: &[u64]| nudge_gate(st, scope, target, sent, now);
+        let gate = |st: &Value, scope: bool, target: bool, sent: &[u64]| nudge_gate(st, None, scope, target, sent, now);
         assert_eq!(gate(&ok, true, true, &[]), None);
         assert_eq!(gate(&ok, true, true, &[now - NUDGE_GAP_S]), None, "exactly 10 min later");
         assert_eq!(gate(&with("on", json!(false)), true, true, &[]), Some("auto tắt"));
         assert_eq!(gate(&with("paused", json!(true)), true, true, &[]), Some("auto tạm dừng (owner)"));
         assert!(gate(&with("teams", json!(["ccc"])), true, true, &[]).is_some_and(|r| r.starts_with("đội omp tắt")));
         assert!(gate(&with("teams", Value::Null), true, true, &[]).is_some(), "absent teams = ccc only");
-        assert!(gate(&with("omp_blocked", json!("anthropic")), true, true, &[]).is_some());
+        assert_eq!(nudge_gate(&ok, Some("phòng này chạy anthropic/…"), true, true, &[], now), Some("phòng này chạy anthropic/…"), "model verdict blocks");
         assert!(gate(&ok, false, true, &[]).is_some_and(|r| r.contains("--here")));
         assert_eq!(gate(&with("lease_until", json!(now)), true, true, &[]), Some("lease hết hạn"));
         assert_eq!(gate(&with("lease_until", Value::Null), true, true, &[]), Some("lease hết hạn"));

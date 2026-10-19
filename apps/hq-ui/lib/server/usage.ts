@@ -11,6 +11,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { sessionLabel } from "../labels";
 import type { Limits, ProjectInfo } from "../office";
 import { claudeDir, projectDirName } from "./ask";
+import { coreGet } from "./core";
 import { projectOf } from "./office";
 import { stateDir } from "./paths";
 
@@ -510,19 +511,49 @@ function names(db: DatabaseSync): Names {
   return { alias, names };
 }
 
+/** One session as the core sums it (same dedupe and order as `rowsFrom`, before the sort). */
+type CoreSession = { session_id: string; cwd: string | null; model: string | null; today: Tokens; window: Tokens; last_at: number | null };
+type CoreScan = { sessions: CoreSession[]; totals: { today: Tokens; window: Tokens }; scan: { files: number; read_bytes: number; pending_bytes: number } };
+
 export async function usageReport(db: DatabaseSync, now = Date.now(), budget = BYTES_PER_REQUEST): Promise<UsageReport> {
   const t0 = performance.now();
   const limits = readLimitSource();
   const day = dayStart(now);
   const win = windowStart(limits, now);
   const keepFrom = Math.min(day, win);
-  const dirs = transcriptDirs(hqRoots(db, now));
-  const scan = await scanTranscripts(dirs, keepFrom, budget);
-  const rows = rowsFrom(scan.states, names(db), day, win, now);
-  const totals = {
-    today: sumAll(scan.states, day),
-    window: sumAll(scan.states, win),
-  };
+  const roots = hqRoots(db, now);
+  // The core keeps the per-file offsets warm and parses in native code; node adds what needs the DB.
+  const viaCore = (await coreGet("/v1/usage", { body: { roots, keep_from: keepFrom, day_start: day, window_start: win, budget }, timeoutMs: 30_000 }))?.v as
+    | CoreScan
+    | undefined;
+  let rows: UsageRow[];
+  let totals: { today: Tokens; window: Tokens };
+  let scan: { files: number; read_bytes: number; pending_bytes: number };
+  if (viaCore?.sessions) {
+    const ids = names(db);
+    rows = viaCore.sessions
+      .map((s) => {
+        const alias = ids.alias.get(s.session_id) ?? null;
+        return {
+          key: alias ?? s.session_id,
+          session_id: s.session_id,
+          label: sessionLabel({ label: ids.names.get(s.session_id) ?? "", name: alias ?? s.session_id, session_id: s.session_id }),
+          project: projectOf(s.cwd, now),
+          model: s.model,
+          today: s.today,
+          window: s.window,
+          last_at: s.last_at,
+        };
+      })
+      .sort((a, b) => totalTokens(b.today) - totalTokens(a.today));
+    totals = viaCore.totals;
+    scan = viaCore.scan;
+  } else {
+    const s = await scanTranscripts(transcriptDirs(roots), keepFrom, budget);
+    rows = rowsFrom(s.states, names(db), day, win, now);
+    totals = { today: sumAll(s.states, day), window: sumAll(s.states, win) };
+    scan = { files: s.states.length, read_bytes: s.read_bytes, pending_bytes: s.pending_bytes };
+  }
   return {
     at: now,
     day_start: day,
@@ -530,7 +561,7 @@ export async function usageReport(db: DatabaseSync, now = Date.now(), budget = B
     limits,
     rows,
     totals,
-    scan: { files: scan.states.length, read_bytes: scan.read_bytes, pending_bytes: scan.pending_bytes, ms: Math.round(performance.now() - t0) },
+    scan: { ...scan, ms: Math.round(performance.now() - t0) },
     rest_pct: REST_PCT,
     context_cap: CONTEXT_CAP,
   };

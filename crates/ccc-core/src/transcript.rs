@@ -313,23 +313,55 @@ fn title_of(v: &Value) -> Option<String> {
 
 /// Core scanner over any line source (unit-tested on fixtures).
 pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
-    let mut d = Digest::default();
+    let mut s = LineScanner::new(fmt, detail);
     let mut buf: Vec<u8> = Vec::new();
-    let mut last_asst: Vec<u8> = Vec::new();
-    let mut last_text: Vec<u8> = Vec::new();
-    let mut last_tool: Vec<u8> = Vec::new();
-    let mut tool_ring: VecDeque<Vec<u8>> = VecDeque::new();
-    let mut next_id = 1usize;
-    let mut change_title: Option<String> = None;
     loop {
         buf.clear();
         match r.read_until(b'\n', &mut buf) {
             Ok(0) | Err(_) => break,
-            Ok(_) => {}
+            Ok(_) => s.feed(&buf),
         }
-        let Ok(line) = std::str::from_utf8(&buf) else { continue };
+    }
+    s.finish()
+}
+
+/// [`scan_reader`]'s state between lines, so a long-running caller can feed only the lines
+/// appended since its last look (`feed` each line with its `\n`, as `read_until` yields it) and
+/// get the same [`Digest`] a full scan would (`clone().finish()`).
+#[derive(Clone, Debug)]
+pub struct LineScanner {
+    fmt: Fmt,
+    detail: bool,
+    d: Digest,
+    last_asst: Vec<u8>,
+    last_text: Vec<u8>,
+    last_tool: Vec<u8>,
+    tool_ring: VecDeque<Vec<u8>>,
+    next_id: usize,
+    change_title: Option<String>,
+}
+
+impl LineScanner {
+    pub fn new(fmt: Fmt, detail: bool) -> Self {
+        LineScanner {
+            fmt,
+            detail,
+            d: Digest::default(),
+            last_asst: Vec::new(),
+            last_text: Vec::new(),
+            last_tool: Vec::new(),
+            tool_ring: VecDeque::new(),
+            next_id: 1,
+            change_title: None,
+        }
+    }
+
+    /// One raw line (trailing `\n` included when the source had one).
+    pub fn feed(&mut self, buf: &[u8]) {
+        let Ok(line) = std::str::from_utf8(buf) else { return };
         let head = &line[..floor_boundary(line, 400)];
-        match fmt {
+        let d = &mut self.d;
+        match self.fmt {
             Fmt::Omp => {
                 if head.starts_with(r#"{"type":"title""#) {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
@@ -337,7 +369,7 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
                     }
                 } else if head.starts_with(r#"{"type":"title_change""#) {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
-                        change_title = v.get("title").and_then(|t| t.as_str()).map(str::to_string);
+                        self.change_title = v.get("title").and_then(|t| t.as_str()).map(str::to_string);
                     }
                 } else if head.starts_with(r#"{"type":"session""#) {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
@@ -352,7 +384,7 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
                 } else if head.contains(r#""role":"user""#) {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
                         if let Some(t) = omp_user_text(&v) {
-                            push_user(&mut d, t);
+                            push_user(d, t);
                         }
                     }
                 } else if head.contains(r#""role":"toolResult""#) && head.contains(r#""toolName":"todo""#) {
@@ -362,15 +394,15 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
                         }
                     }
                 } else if head.contains(r#""role":"assistant""#) {
-                    keep_assistant(line, &buf, r#""type":"toolCall""#, &mut last_asst, &mut last_text, &mut last_tool);
-                    if detail && line.contains(r#""type":"toolCall""#) {
-                        push_ring(&mut tool_ring, &buf);
+                    keep_assistant(line, buf, r#""type":"toolCall""#, &mut self.last_asst, &mut self.last_text, &mut self.last_tool);
+                    if self.detail && line.contains(r#""type":"toolCall""#) {
+                        push_ring(&mut self.tool_ring, buf);
                     }
                 }
             }
             Fmt::Claude => {
                 if line.contains(r#""isSidechain":true"#) {
-                    continue;
+                    return;
                 }
                 if head.starts_with(r#"{"type":"custom-title""#) {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
@@ -379,7 +411,7 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
                 } else if head.starts_with(r#"{"type":"agent-name""#) {
                     if d.title.is_none() {
                         if let Ok(v) = serde_json::from_str::<Value>(line) {
-                            change_title = v.get("agentName").and_then(|c| c.as_str()).map(str::to_string);
+                            self.change_title = v.get("agentName").and_then(|c| c.as_str()).map(str::to_string);
                         }
                     }
                 } else if head.contains(r#""type":"user""#) {
@@ -393,62 +425,67 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
                             }
                         }
                         if let Some(t) = claude_user_text(&v) {
-                            push_user(&mut d, t);
+                            push_user(d, t);
                         }
                     }
                 } else if line.contains(r#""type":"assistant""#) {
-                    keep_assistant(line, &buf, r#""type":"tool_use""#, &mut last_asst, &mut last_text, &mut last_tool);
+                    keep_assistant(line, buf, r#""type":"tool_use""#, &mut self.last_asst, &mut self.last_text, &mut self.last_tool);
                     let has_task = line.contains(r#""name":"TaskCreate""#)
                         || line.contains(r#""name":"TaskUpdate""#)
                         || line.contains(r#""name":"TodoWrite""#);
                     if has_task {
                         if let Ok(v) = serde_json::from_str::<Value>(line) {
-                            apply_claude_tasks(&v, &mut d.tasks, &mut next_id);
+                            apply_claude_tasks(&v, &mut d.tasks, &mut self.next_id);
                         }
                     }
-                    if detail && line.contains(r#""type":"tool_use""#) {
-                        push_ring(&mut tool_ring, &buf);
+                    if self.detail && line.contains(r#""type":"tool_use""#) {
+                        push_ring(&mut self.tool_ring, buf);
                     }
                 }
             }
         }
     }
-    if d.title.is_none() {
-        d.title = change_title;
-    }
-    // Latest assistant line → model + context size.
-    if let Ok(v) = serde_json::from_slice::<Value>(&last_asst) {
-        let m = v.get("message").unwrap_or(&v);
-        if let Some(model) = m.get("model").and_then(|x| x.as_str()) {
-            d.model = Some(model.to_string());
+
+    /// The digest of every line fed so far.
+    pub fn finish(self) -> Digest {
+        let mut d = self.d;
+        if d.title.is_none() {
+            d.title = self.change_title;
         }
-        d.tokens = usage_tokens(m.get("usage"));
-    }
-    if let Ok(v) = serde_json::from_slice::<Value>(&last_text) {
-        d.last_text = blocks(&v).iter().rev().find_map(text_block).map(|t| mask_secrets(&t));
-    }
-    if let Ok(v) = serde_json::from_slice::<Value>(&last_tool) {
-        if let Some((n, a)) = blocks(&v).iter().rev().find_map(tool_block) {
-            d.last_tool = Some(tool_summary(&n, &a));
-            d.last_tool_name = Some(n);
+        // Latest assistant line → model + context size.
+        if let Ok(v) = serde_json::from_slice::<Value>(&self.last_asst) {
+            let m = v.get("message").unwrap_or(&v);
+            if let Some(model) = m.get("model").and_then(|x| x.as_str()) {
+                d.model = Some(model.to_string());
+            }
+            d.tokens = usage_tokens(m.get("usage"));
         }
-    }
-    if detail {
-        let mut seen = std::collections::HashSet::new();
-        for raw in tool_ring.iter().rev() {
-            let Ok(v) = serde_json::from_slice::<Value>(raw) else { continue };
-            for b in blocks(&v).iter().rev() {
-                if let Some((n, a)) = tool_block(b) {
-                    if let Some(p) = touched_file(&n, &a) {
-                        if seen.insert(p.clone()) && d.files.len() < 10 {
-                            d.files.push(p);
+        if let Ok(v) = serde_json::from_slice::<Value>(&self.last_text) {
+            d.last_text = blocks(&v).iter().rev().find_map(text_block).map(|t| mask_secrets(&t));
+        }
+        if let Ok(v) = serde_json::from_slice::<Value>(&self.last_tool) {
+            if let Some((n, a)) = blocks(&v).iter().rev().find_map(tool_block) {
+                d.last_tool = Some(tool_summary(&n, &a));
+                d.last_tool_name = Some(n);
+            }
+        }
+        if self.detail {
+            let mut seen = std::collections::HashSet::new();
+            for raw in self.tool_ring.iter().rev() {
+                let Ok(v) = serde_json::from_slice::<Value>(raw) else { continue };
+                for b in blocks(&v).iter().rev() {
+                    if let Some((n, a)) = tool_block(b) {
+                        if let Some(p) = touched_file(&n, &a) {
+                            if seen.insert(p.clone()) && d.files.len() < 10 {
+                                d.files.push(p);
+                            }
                         }
                     }
                 }
             }
         }
+        d
     }
-    d
 }
 
 fn floor_boundary(s: &str, max: usize) -> usize {

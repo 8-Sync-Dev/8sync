@@ -10,6 +10,7 @@ import { teamOf, type IdleRecord } from "../idle";
 import { deliveryOf, sessionLabel } from "../labels";
 import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type Limits, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
 import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
+import type { HiddenProject } from "../sidebar";
 import { readAsk } from "./ask";
 import { loadFloor, ompSessions } from "./floor";
 import { readPermits, type Permit } from "./permit";
@@ -235,8 +236,11 @@ export function readLoops(roots: { root: string; name: string }[]): LoopInfo[] {
   return out.sort((a, b) => (b.started ?? 0) - (a.started ?? 0)).slice(0, 30);
 }
 
-/** `idle`: every agent-team member's "không ai rảnh" status (lib/idle.ts), stale ones included. `limits`: plan usage (header). */
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; at: number };
+/**
+ * `idle`: every agent-team member's "không ai rảnh" status (lib/idle.ts), stale ones included. `limits`: plan usage (header).
+ * `hidden`: projects the owner closed in the sidebar (lib/sidebar.ts splitClosed decides which still hide).
+ */
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; at: number };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
@@ -303,6 +307,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     idle: readIdleStatus(),
     meetings: loadMeetings(rooms, now),
     limits: readLimits(),
+    hidden: db.prepare("SELECT key, root, name, hidden_at FROM hidden_projects ORDER BY hidden_at DESC").all() as HiddenProject[],
     at: now,
   };
 }

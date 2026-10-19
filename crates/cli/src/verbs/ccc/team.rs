@@ -33,7 +33,7 @@ use serde_json::Value;
 
 use super::{auto, idle, room};
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp] | down | revive";
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down | revive";
 
 /// `auto up …` / `auto down` / `auto revive`: the verbs this module owns.
 pub(super) fn wants(rest: &[String]) -> bool {

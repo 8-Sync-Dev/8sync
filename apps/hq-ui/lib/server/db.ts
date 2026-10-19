@@ -73,14 +73,32 @@ CREATE TABLE IF NOT EXISTS ingest_state (
   file TEXT PRIMARY KEY,
   offset INTEGER NOT NULL
 );
+-- Projects the owner closed in the sidebar; key = lib/sidebar.ts groupKey(root). Shown again on new activity.
+CREATE TABLE IF NOT EXISTS hidden_projects (
+  key TEXT PRIMARY KEY,
+  root TEXT NOT NULL,
+  name TEXT NOT NULL,
+  hidden_at INTEGER NOT NULL
+);
 `;
 
-const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync } };
+const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync; schema: string } };
 
-/** One connection per DB file (HOME can change between tests). */
+/**
+ * One connection per DB file (HOME can change between tests). The connection outlives a code
+ * reload in `next dev`: a newer SCHEMA is applied to it on the next call, not only to a new one.
+ */
 export function getDb(): DatabaseSync {
   const file = dbPath();
-  if (g.__hqDb?.file === file) return g.__hqDb.db;
+  const open = g.__hqDb;
+  if (open?.file === file) {
+    if (open.schema !== SCHEMA) {
+      open.db.exec(SCHEMA);
+      migrate(open.db);
+      open.schema = SCHEMA;
+    }
+    return open.db;
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(file);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 2000;");
@@ -93,7 +111,7 @@ export function getDb(): DatabaseSync {
       /* wal/shm may not exist yet */
     }
   }
-  g.__hqDb = { file, db };
+  g.__hqDb = { file, db, schema: SCHEMA };
   return db;
 }
 

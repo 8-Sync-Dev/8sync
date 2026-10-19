@@ -544,12 +544,26 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         println!("auto: TẠM DỪNG (owner). Phòng mở trong terminal không bị đóng.");
         return Ok(());
     }
-    let o = team::parse(&rest[1..])?;
-    // `--omp` = `auto omp on` first, so `up`'s auto on keeps it in `teams`; refused only for omp.
-    let blocked = auto::omp_blocked(&env.home);
-    if o.omp && blocked.is_none() {
-        auto::set_omp(&env.home, true, now)?;
+    // `--omp-model <provider/model>` (team omp's model) is ours; team::parse sees the rest.
+    let mut args = rest[1..].to_vec();
+    let team_model = match args.iter().position(|a| a == "--omp-model") {
+        Some(i) => {
+            let m = args.get(i + 1).filter(|v| !v.starts_with("--")).cloned().ok_or_else(|| anyhow::anyhow!("--omp-model cần một giá trị\n{}", team::USAGE))?;
+            args.drain(i..i + 2);
+            Some(auto::checked_model("--omp-model", &m)?)
+        }
+        None => None,
+    };
+    let o = team::parse(&args)?;
+    if team_model.is_some() && !o.omp {
+        bail!("--omp-model đi cùng --omp\n{}", team::USAGE);
     }
+    // `--omp` = `auto omp on` first, so `up`'s auto on keeps it in `teams`; refused only for omp.
+    let blocked = if o.omp {
+        auto::omp_on(&env.home, team_model.as_deref(), now).err().map(|e| e.to_string())
+    } else {
+        auto::omp_blocked(&env.home)
+    };
     // One resumer at a time: HQ's revive and this `up` must not fork the same dead room twice.
     let Some(_lock) = team::revive_lock(&env.home, now)? else {
         bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ ít phút rồi chạy lại");
@@ -560,7 +574,10 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     if omp_team::wanted(o.omp, &status) {
         match blocked {
             Some(why) => println!("đội omp: không mở — {why}"),
-            None => omp_team::print_up(&omp_team::up(env, root, &o.roles)),
+            None => {
+                let model = auto::omp_model(&env.home);
+                omp_team::print_up(&omp_team::up(env, root, &o.roles, model.as_deref()), model.as_deref());
+            }
         }
     }
     Ok(())
@@ -654,6 +671,15 @@ fn display_name(sessions_dir: &Path, name: &str, root: &Path) -> String {
     } else {
         name.to_string()
     }
+}
+
+/// `8sync ccc auto board --json` as if run with `cwd` as the working directory (the HQ core's
+/// `/v1/board`): same repo resolution as the `auto` verb, same object.
+pub(crate) fn board_json_at(home: &Path, cwd: &Path) -> Result<serde_json::Value> {
+    let root = crate::verbs::here::detect_project_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+    let repo = crate::verbs::here::repo_of(cwd).unwrap_or(root);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    auto::board_value(home, &repo, now)
 }
 
 fn claude_dir(env: &Env) -> PathBuf {

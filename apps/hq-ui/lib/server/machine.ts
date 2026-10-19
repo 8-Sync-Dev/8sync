@@ -5,6 +5,7 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
+import { coreGet } from "./core";
 
 const TIMEOUT_MS = 4_000;
 /** `8sync clean` can take minutes (package caches, journal). */
@@ -107,8 +108,19 @@ export const exec: Exec = (cmd, args, timeoutMs = TIMEOUT_MS) =>
 
 let last: Times | null = null;
 
-/** One snapshot. CPU is the busy share since the previous call (the first call samples 250 ms). */
+type CoreMachine = Pick<Machine, "cpu" | "gpus" | "procs" | "at"> & { mem: Machine["mem"] | null };
+
+/**
+ * One snapshot. CPU is the busy share since the previous call (the first call samples 250 ms).
+ * With the core: its sampler's reading (Toolhelp + NVML in process, no tasklist / nvidia-smi).
+ */
 export async function machine(platform: NodeJS.Platform = process.platform, run: Exec = exec): Promise<Machine> {
+  const c = (await coreGet("/v1/machine"))?.v as CoreMachine | undefined;
+  if (c?.cpu) {
+    const totalMb = Math.round(os.totalmem() / 2 ** 20);
+    const mem = c.mem ?? { totalMb, usedMb: totalMb - Math.round(os.freemem() / 2 ** 20) };
+    return { platform, mem, cpu: c.cpu, gpus: c.gpus, procs: c.procs, canClean: platform === "linux", at: c.at };
+  }
   let prev = last;
   if (!prev) {
     prev = cpuTimes();

@@ -8,6 +8,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { coreCall } from "./core";
 import { diskKey, findings, LIMITS, type Finding, type ProjectDisk, type Sized } from "../disk";
 import type { ProjectInfo } from "../office";
 import { withMissing } from "./db";
@@ -111,12 +112,29 @@ function lsTree(root: string): Promise<string | null> {
 
 const biggest = (xs: Sized[], n = 8) => xs.sort((a, b) => b.bytes - a.bytes).slice(0, n);
 
-/** One project's sizes; never throws (an unreadable root comes back with `error`). */
+/** While the core answers 409 (it is measuring another project), ask again this often. */
+const CORE_BUSY_RETRY_MS = 2_000;
+
+/**
+ * One project's sizes; never throws (an unreadable root comes back with `error`). The core walks it in
+ * native code (same caps and skips, crates/cli/src/verbs/hq_core/disk.rs); else this walk. A busy core
+ * (409: one walk at a time) means the project is still scanning: wait for it, never walk a second time.
+ */
 export async function scanDisk(p: { root: string; name: string }, now = Date.now()): Promise<ProjectDisk> {
+  const empty = { root: p.root, name: p.name, total: 0, entries: [], git: null, worktrees: null, evidence: [], nodeModules: [], build: [], uploads: null, tracked: [], truncated: false, at: now };
+  const giveUp = Date.now() + 2 * WALK_MS;
+  for (;;) {
+    const r = await coreCall("/v1/disk", { body: { root: p.root, name: p.name, at: now }, timeoutMs: WALK_MS + 30_000 });
+    if (r?.status === 200 && (r.body as ProjectDisk | null)?.root === p.root) return r.body as ProjectDisk;
+    if (r?.status !== 409) break; // no core (or it failed): this walk
+    if (Date.now() >= giveUp) return { ...empty, error: "HQ core vẫn đang đo dự án khác, thử lại sau", ms: 0 };
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, CORE_BUSY_RETRY_MS);
+    await promise;
+  }
   const t0 = Date.now();
   const b: Budget = { left: WALK_ENTRIES, end: t0 + WALK_MS, cut: false };
   const acc: Acc = { sizes: {}, rootFiles: [], nodeModules: [], build: [] };
-  const empty = { root: p.root, name: p.name, total: 0, entries: [], git: null, worktrees: null, evidence: [], nodeModules: [], build: [], uploads: null, tracked: [], truncated: false, at: now };
   try {
     if (!(await fsp.stat(p.root)).isDirectory()) return { ...empty, error: "không phải thư mục", ms: 0 };
   } catch {
