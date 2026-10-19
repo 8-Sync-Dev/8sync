@@ -22,7 +22,7 @@ use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
 mod auto;
-mod awake;
+pub(crate) mod awake;
 mod cancel;
 mod compact;
 mod danger;
@@ -139,8 +139,14 @@ pub fn run(a: Args) -> Result<()> {
     if verb == "statusline" {
         return statusline::run(rest); // before Env::detect: runs every few seconds, must stay fast
     }
-    if verb == "awake" && rest.first().map(String::as_str) == Some("status") {
-        return awake::status(&rest[1..]); // before Env::detect: HQ polls it every ~30 s
+    if verb == "awake" {
+        // Before Env::detect: HQ polls `status` every ~30 s and flips `on`/`off` from its switch.
+        match rest.first().map(String::as_str) {
+            Some("status") => return awake::status(&rest[1..]),
+            Some("on") => return awake::on(&rest[1..], &dirs::home_dir().context("no HOME")?),
+            Some("off") => return awake::off(&dirs::home_dir().context("no HOME")?),
+            _ => {}
+        }
     }
     if verb == "help" {
         print!("{}", help::TEXT);
@@ -228,9 +234,9 @@ pub fn run(a: Args) -> Result<()> {
         "term" => term::run(rest, &env),
         "awake" => {
             let o = awake::parse(rest)?;
-            // `claude` is only needed to watch the rooms.
-            let bin = if o.while_rooms { Some(team::Bin { exe: ensure_claude(true)?, root: &env.home }) } else { None };
-            awake::run(&o, bin.as_ref().map(|b| b as &dyn team::Claude), login_kind_at(&env.home).kind == "subscription")
+            // `claude` is only needed to watch the rooms; never with a console window (a detached hold).
+            let bin = if o.while_rooms { Some(awake::Quiet { exe: ensure_claude(true)?, root: env.home.clone() }) } else { None };
+            awake::run(&o, bin.as_ref().map(|b| b as &dyn team::Claude), login_kind_at(&env.home).kind == "subscription", &env.home)
         }
         "hint" => {
             let cwd = std::env::current_dir().context("no cwd")?;

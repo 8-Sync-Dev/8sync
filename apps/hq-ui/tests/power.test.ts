@@ -168,6 +168,7 @@ describe("awake", () => {
       boot_s: 28800,
       slept_s: 0,
       modern_standby: false,
+      ours: null,
     });
     expect(parseAwake('{"schema":1,"held":"yes","display":"blank","idle_s":-5}')).toMatchObject({ held: null, display: null, idle_s: null });
     expect(parseAwake('{"held":true}')).toBeNull();
