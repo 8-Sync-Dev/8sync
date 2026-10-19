@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Changed
+- `8sync ccc help` and the site's command table list `awake --screen-off` (they still said only "the screen may turn off").
+
 ## [0.104.0] — 2026-10-19
 ### Added
 - **`8sync awake` turns the screen off when nobody is at the machine** (Windows). Owner (2026-10-19): "8sync awake --while-rooms fix máy chưa sleep màn hình được". The power plan had the display timeout at 180 min, and apps that reset the display timer (a room's windowed Godot runs with `keep_screen_on`) kept it on all day while rooms worked. The hold loop now checks every minute and turns the screen off (`WM_SYSCOMMAND` / `SC_MONITORPOWER`, posted) after `--screen-off N` minutes without mouse/keyboard input, default 10, `0` leaves it to the power plan. It never does when an app holds the display (video), when the machine has Modern Standby (screen off can pull it into standby), or when any of those readings is unknown. A touch turns it back on; the machine keeps working. Proven live: `--screen-off 1` with nobody at the keyboard, the console display state went from on to off on the first check and stayed off with the hold still in place.
