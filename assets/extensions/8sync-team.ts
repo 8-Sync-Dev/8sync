@@ -34,7 +34,7 @@ interface Msg {
 interface Ctx {
   cwd: string;
   hasUI: boolean;
-  model?: { provider?: string } | null;
+  model?: { provider?: string; id?: string } | null;
   agent?: { kind?: string };
   isIdle(): boolean;
   hasPendingMessages?(): boolean;
@@ -322,7 +322,11 @@ export default function (pi: Pi) {
 
   async function nudge(c: Ctx): Promise<boolean> {
     if (!(await automationOn(c))) return false;
-    const out = await run8sync(["ccc", "auto", "nudge", "--session", roomId, "--cwd", c.cwd, "--json"], c.cwd);
+    // The room's live model decides the nudge (8sync judges it); unknown → omit, 8sync falls back to omp's default.
+    const p = c.model?.provider?.trim();
+    const id = c.model?.id?.trim();
+    const model = p && id ? ["--model", `${p}/${id}`] : [];
+    const out = await run8sync(["ccc", "auto", "nudge", "--session", roomId, "--cwd", c.cwd, ...model, "--json"], c.cwd);
     const text = parseText(out);
     if (text === null || !idleNow(c)) return false;
     return send(c, text);

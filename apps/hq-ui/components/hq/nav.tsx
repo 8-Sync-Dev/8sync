@@ -11,8 +11,9 @@ import { cn } from "@/lib/utils";
 import { teamLabel } from "@/lib/labels";
 import type { BoardRef, NowState } from "@/lib/now";
 import { matchesSession } from "@/lib/office";
-import { SIDEBAR_WORD, sidebarGroups, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
+import { SIDEBAR_WORD, sidebarGroups, splitClosed, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
 import { ErrorNote } from "./bits";
+import { ClosedProjects, ProjectMenu, RoomEndDialog, RoomMenu, WorktreeDialog, useWorktreeKeys, type Confirm, type RoomAction } from "./nav-actions";
 import { RoleIcon } from "./role-badge";
 import type { Hq, Live } from "./use-hq";
 import type { OfficeState, Room } from "./use-office";
@@ -70,6 +71,38 @@ export function Nav({
   const live = groups.reduce((n, g) => n + g.rooms.length, 0);
   // Folders added in HQ that have no room yet: the only reason to add a folder is to start a team there.
   const roomless = hq.projects.data.filter((p) => !p.missing && !groups.some((g) => g.key === norm(p.path)));
+  const worktrees = useWorktreeKeys(hq.api, groups.map((g) => g.key).join("\n"));
+  // The last close / show, applied until an /api/office newer than it carries the same row.
+  const [overlay, setOverlay] = useState<{ at: number; key: string; row: HiddenProject | null } | null>(null);
+  const { shown, closed } = useMemo(() => {
+    let hidden = data?.hidden ?? [];
+    if (overlay && (data?.at ?? 0) <= overlay.at) hidden = [...hidden.filter((h) => h.key !== overlay.key), ...(overlay.row ? [overlay.row] : [])];
+    return splitClosed(groups, hidden);
+  }, [groups, data, overlay]);
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  // The project whose close / show is in flight: its "⋯" and "Hiện lại" stay disabled meanwhile.
+  const [hiding, setHiding] = useState<string | null>(null);
+
+  function refresh() {
+    office.retry();
+    void hq.reload.sessions();
+    worktrees.reload();
+  }
+
+  async function setHidden(g: SidebarGroup<Room>, hide: boolean) {
+    setHiding(g.key);
+    try {
+      const r = await hq.api<{ hidden?: HiddenProject }>("/api/projects/sidebar", { method: "POST", body: { root: g.root, hidden: hide } });
+      setOverlay({ at: data?.at ?? 0, key: g.key, row: hide ? (r.hidden ?? null) : null });
+      office.retry();
+      if (hide) toast.success(`Đã đóng ${g.name}: tự hiện lại khi có hoạt động mới`, { action: { label: "Hiện lại", onClick: () => void setHidden(g, false) } });
+      else toast.success(`Đã hiện lại ${g.name}`);
+    } catch (e) {
+      toast.error(`Không ${hide ? "đóng" : "hiện lại"} được ${g.name}: ${(e as Error).message}`);
+    } finally {
+      setHiding(null);
+    }
+  }
 
   return (
     <nav aria-label="Dự án và phòng" className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
@@ -108,11 +141,32 @@ export function Nav({
             Chưa có phòng nào chạy. Dự án có phòng đang chạy tự hiện ở đây, kể cả session mở ngoài HQ.
           </p>
         ) : (
-          <ul className="space-y-1">
-            {groups.map((g) => (
-              <RepoGroup key={g.key} g={g} selected={scope.session} current={repo != null && norm(repo) === g.key && scope.session == null} onOpen={onOpenRoom} onOpenRepo={onOpenRepo} />
-            ))}
-          </ul>
+          <>
+            {shown.length === 0 ? (
+              <p className="px-2 py-1 text-xs leading-relaxed text-pretty text-muted-foreground">
+                Mọi dự án đang đóng. Dự án tự hiện lại khi có phòng hoạt động hoặc chờ anh.
+              </p>
+            ) : (
+              <ul className="space-y-1">
+                {shown.map((g) => (
+                  <RepoGroup
+                    key={g.key}
+                    g={g}
+                    selected={scope.session}
+                    current={repo != null && norm(repo) === g.key && scope.session == null}
+                    onOpen={onOpenRoom}
+                    onOpenRepo={onOpenRepo}
+                    worktree={worktrees.worktrees.includes(g.key)}
+                    hiding={hiding === g.key}
+                    onHide={() => void setHidden(g, true)}
+                    onDelete={() => setConfirm({ kind: "worktree", g })}
+                    onRoom={(x, action) => setConfirm({ kind: "room", x, action })}
+                  />
+                ))}
+              </ul>
+            )}
+            <ClosedProjects closed={closed} busy={hiding} onShow={(g) => void setHidden(g, false)} />
+          </>
         )}
 
         {roomless.length > 0 && (
@@ -128,6 +182,31 @@ export function Nav({
       </div>
 
       <AddProject hq={hq} onAdded={onOpenFolder} />
+
+      {confirm?.kind === "room" && (
+        <RoomEndDialog
+          hq={hq}
+          x={confirm.x}
+          action={confirm.action}
+          onCancel={() => setConfirm(null)}
+          onDone={() => {
+            setConfirm(null);
+            refresh();
+          }}
+        />
+      )}
+      {confirm?.kind === "worktree" && (
+        <WorktreeDialog
+          hq={hq}
+          g={confirm.g}
+          onCancel={() => setConfirm(null)}
+          onRoomsClosed={refresh}
+          onDone={() => {
+            setConfirm(null);
+            refresh();
+          }}
+        />
+      )}
     </nav>
   );
 }
@@ -142,18 +221,29 @@ function RepoGroup({
   current,
   onOpen,
   onOpenRepo,
+  worktree,
+  hiding,
+  onHide,
+  onDelete,
+  onRoom,
 }: {
   g: SidebarGroup<Room>;
   selected: string | null;
   current: boolean;
   onOpen: (r: Room) => void;
   onOpenRepo: (root: string, name: string) => void;
+  /** The project folder is a git worktree: "Xóa worktree" shows. */
+  worktree: boolean;
+  hiding: boolean;
+  onHide: () => void;
+  onDelete: () => void;
+  onRoom: (x: SidebarRoom<Room>, action: RoomAction) => void;
 }) {
   const [open, setOpen] = useState(true);
   const list = `repo-${g.key.replace(/[^\w-]/g, "_")}`;
   return (
     <li>
-      <div className="flex items-center">
+      <div className="group/row flex items-center">
         <button
           type="button"
           className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/60"
@@ -164,7 +254,7 @@ function RepoGroup({
         >
           <ChevronRightIcon className={cn("size-3 transition-transform motion-reduce:transition-none", open && "rotate-90")} aria-hidden />
         </button>
-        <button type="button" className={cn(item, "h-8 gap-1.5 pl-1")} aria-current={current} title={`${g.root}: Tổng quan của dự án`} onClick={() => onOpenRepo(g.root, g.name)}>
+        <button type="button" className={cn(item, "h-8 min-w-0 flex-1 gap-1.5 pl-1 max-sm:h-11")} aria-current={current} title={`${g.root}: Tổng quan của dự án`} onClick={() => onOpenRepo(g.root, g.name)}>
           <FolderIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           <span className="min-w-0 flex-1 truncate font-medium">{g.name}</span>
           {g.needs > 0 ? (
@@ -177,17 +267,30 @@ function RepoGroup({
             <Count n={g.rooms.length} />
           )}
         </button>
+        <ProjectMenu g={g} worktree={worktree} busy={hiding} onHide={onHide} onDelete={onDelete} />
       </div>
       <ul id={list} hidden={!open} className="mt-0.5 ml-[13px] space-y-0.5 border-l border-sidebar-border pl-1.5">
         {g.rooms.map((x, i) => (
-          <RoomRows key={x.room.key} x={x} first={x.worktree != null && g.rooms[i - 1]?.worktree !== x.worktree} selected={selected} onOpen={onOpen} />
+          <RoomRows key={x.room.key} x={x} first={x.worktree != null && g.rooms[i - 1]?.worktree !== x.worktree} selected={selected} onOpen={onOpen} onPick={(a) => onRoom(x, a)} />
         ))}
       </ul>
     </li>
   );
 }
 
-function RoomRows({ x, first, selected, onOpen }: { x: SidebarRoom<Room>; first: boolean; selected: string | null; onOpen: (r: Room) => void }) {
+function RoomRows({
+  x,
+  first,
+  selected,
+  onOpen,
+  onPick,
+}: {
+  x: SidebarRoom<Room>;
+  first: boolean;
+  selected: string | null;
+  onOpen: (r: Room) => void;
+  onPick: (a: RoomAction) => void;
+}) {
   const { room, now: n } = x;
   const word = SIDEBAR_WORD[n.state];
   const what = room.ask ? null : (n.last?.text ?? null);
@@ -199,10 +302,10 @@ function RoomRows({ x, first, selected, onOpen }: { x: SidebarRoom<Room>; first:
           <span className="truncate">{x.worktree}</span>
         </li>
       )}
-      <li>
+      <li className="group/row flex items-center">
         <button
           type="button"
-          className={cn(item, "h-8", x.worktree && "pl-3")}
+          className={cn(item, "h-8 min-w-0 flex-1 max-sm:h-11", x.worktree && "pl-3")}
           aria-current={matchesSession(room, selected)}
           aria-label={`${room.label}${x.worktree ? ` (worktree ${x.worktree})` : ""} · ${teamLabel(room.engine)}: ${word}`}
           title={[room.label, word, what].filter(Boolean).join(" · ")}
@@ -220,6 +323,7 @@ function RoomRows({ x, first, selected, onOpen }: { x: SidebarRoom<Room>; first:
             <span className={cn("shrink-0 text-[11px]", WORD_INK[n.state], n.flagged && "font-medium text-foreground")}>{word}</span>
           )}
         </button>
+        <RoomMenu x={x} onPick={onPick} />
       </li>
     </>
   );

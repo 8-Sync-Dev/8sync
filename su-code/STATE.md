@@ -19,7 +19,21 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
-v0.105.0 released + applied (PR #125 → 3ab74b1, 12 assets; CI 8/8; release notes corrected: per-room token shares were first guessed from transcript text, see CHANGELOG Unreleased "Fixed"). Owner: ai-game-studio ran >1 day "chả ra gì". 36 h audit: median API call re-read 305K tokens (64% of input in calls > 300K; kit compacts at 65% × 1M), 2 of 8 rooms building (ui 23%, dev 11% of tokens), 23 cards ready / 1 building, 51 open PRs stuck in stacked chains. Fix: rooms start with `--settings ~/.local/state/8sync/ccc/room-settings.json` (`CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000`, verified on a `--bg` session and in the rooms' command lines), `--roles full` = lead,dev,dev2,ui,qa,review, READY_CAP=6 (claim/move/room-add gated, owner + P0 pass), backlog rooms merge approved first + unblock, builders branch from origin/main (no stacking), `meet --as`. UAT running since T0 = 19:40:41: `auto down` (8 rooms stopped, conversations kept; ba/arch/rd stay stopped) → `auto up --roles full` (lead 66ee5704, dev 6984e3ee, dev2 2e3d70b8 new, ui 2121d994, qa 84b3812a, review a3f58807). Baseline board at T0: ready 23, building 1, qa 1, review 4, approved 1, blocked 15; open PRs 51. In parallel: subagents MachineTab (awake on/off + pidfile, Máy tab, config, project size scan + one-click cleanup send + cleanup loop), Messaging (room-send composer, /api/messages files, Preview pins "Hỏi về ảnh này", Chat tổng room picker + lead suggestion), UsageAgent (Hạn mức tab: 5h/7d windows + tokens per room) → integrate, review, release v0.106.0, verify on the VPS link at 390 px. Owner still to answer: daily budget ₫, budget → let the PC sleep?, guard rule for `shutdown`/`Stop-Computer`, critic rail giữ/nới.
+v0.107.0 release candidate (main tree, uncommitted → release PR). Contents:
+- HQ native core (`hq_core/`) and sidebar Đóng/Xóa phòng, Đóng dự án, Xóa worktree.
+- `ccc auto omp on --model` (team model; nudges judged by the room's own model, else omp's default; `anthropic/…` stays blocked).
+- Lead merges stacked PRs in order.
+- OmniRoute at https://vps.8syncdev.com/router-ai, no port (`scripts/vps/omniroute/`, `.github/workflows/omniroute-image.yml` → ghcr `8-sync-dev/omniroute-router-ai`, public; org now allows public packages):
+  - Referer rule in Caddy; update/clean timers with a shared lock.
+  - Combo `omp-manh`, wired into omp as `omniroute/omp-manh`, runs on one LLM7 free key and hit its daily quota after one omp tool turn. Needs other providers (research: `local://free-llm-providers.md`).
+- Tests (run independently after every change): cargo bin 647 pass (+ pinned-flags test), ccc-core 32+3; `tsconfig.extensions.json` tsc clean; HQ tsc clean; vitest 692 pass + 3 known Windows failures.
+- Smoke with the built binary: `auto omp on --model omniroute/omp-manh` → status `omp_model` set, `omp_blocked` null, "đội omp: BẬT (model omniroute/omp-manh)". The real omp command line carries `--model/--smol/--slow/--plan omniroute/omp-manh` and no `--advisor`. The owner's auto.json was restored afterwards (paused, teams unchanged).
+- Size: Windows MSVC local 5,991,424 B vs the v0.106.0 asset 5,851,648 (+139,776 B). The ceiling was raised to 7360 KiB with attribution in `scripts/size-gate.sh`.
+- Refused (compliance): Claude Code/subscription login in OmniRoute, removing the anthropic block rules.
+- Flagged, not changed:
+  - the owner's omp default is `anthropic/…` on an OAuth credential;
+  - `cloudgo-cc` serves `claude-*` via `ai-gateway.cloudgo.vn`;
+  - `claude-api-8sync` has no `auth: apiKey`, and nobody has verified that its requests carry no Claude Code identity.
 
 ## Next
 - Upstream Windows bug: hq ingest stores NTFS inode > 2^53 in `ingest_state.offset` → RangeError (fix: bigint stat + `setReadBigInts`).

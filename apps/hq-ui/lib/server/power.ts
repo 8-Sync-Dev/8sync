@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { autoSet, autoStatus } from "./auto";
+import { coreGet } from "./core";
 import { exec, type Exec } from "./machine";
 import { stateDir } from "./paths";
 
@@ -271,10 +272,21 @@ function save(): void {
 export type TeamCtl = { status: () => Promise<{ on: boolean; paused: boolean }>; pause: () => Promise<{ paused: boolean; error?: string }> };
 const realCtl: TeamCtl = { status: autoStatus, pause: () => autoSet("pause") };
 
+/** The core's sampler reading (PDH + NVML opened once), or null without a core: then typeperf + nvidia-smi. */
+async function coreReading(): Promise<Reading | null> {
+  const v = (await coreGet("/v1/power"))?.v as Partial<Reading> | undefined;
+  if (typeof v?.at !== "number") return null;
+  const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+  return { at: v.at, cpuWh: n(v.cpuWh), cpuWrapWh: n(v.cpuWrapWh), gpuW: n(v.gpuW) };
+}
+
 /** One sample: read, count, save now and then, hold the team paused while over budget. */
 export async function sampleOnce(run: Exec = exec, platform: NodeJS.Platform = process.platform, ctl: TeamCtl = realCtl): Promise<void> {
-  const [cpu, gpuW] = await Promise.all([readCpu(platform, run), readGpu(run)]);
-  const cur: Reading = { at: Date.now(), cpuWh: cpu?.wh ?? null, cpuWrapWh: cpu?.wrapWh ?? null, gpuW };
+  let cur = await coreReading();
+  if (!cur) {
+    const [cpu, gpuW] = await Promise.all([readCpu(platform, run), readGpu(run)]);
+    cur = { at: Date.now(), cpuWh: cpu?.wh ?? null, cpuWrapWh: cpu?.wrapWh ?? null, gpuW };
+  }
   // No await from here to the credit: a settings change can't be overwritten by a stale copy.
   const l = loaded();
   const r = step(S.prev, cur, (l ?? fresh()).settings.otherW);

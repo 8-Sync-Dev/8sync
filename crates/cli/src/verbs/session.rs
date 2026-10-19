@@ -131,7 +131,8 @@ pub fn save(env: &Env, root: &Path, reg: &Registry) -> Result<()> {
 /// `room` = (project root, session name): exported as `EIGHTSYNC_ROOM` / `EIGHTSYNC_ROOM_ID`
 /// so the omp extension polls this room's inbox and `ccc msg` knows the sender, plus
 /// `EIGHTSYNC_BIN` (this executable) so the extension never resolves `8sync` from PATH/cwd.
-fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str)) -> Result<()> {
+/// `model` = `--model <id>` for omp (`8sync . <name> --model <id>`); None = omp's default.
+fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str), model: Option<&str>) -> Result<()> {
     if which::which("omp").is_err() {
         ui::err("omp not installed. Run `8sync setup` first.");
         return Ok(());
@@ -149,11 +150,11 @@ fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str)) -> R
     if let Ok(exe) = std::env::current_exe() {
         cmd.env("EIGHTSYNC_BIN", exe);
     }
-    cmd.arg("--cwd")
-        .arg(cwd)
-        .arg("--session-dir")
-        .arg(session_dir)
-        .args(cfg.resume_flags());
+    cmd.arg("--cwd").arg(cwd).arg("--session-dir").arg(session_dir);
+    match model {
+        Some(m) => cmd.args(cfg.pinned_flags(m)),
+        None => cmd.args(cfg.resume_flags()),
+    };
     if !fresh {
         cmd.arg("--continue");
     }
@@ -254,7 +255,7 @@ pub fn resume_latest(env: &Env, root: &Path) -> Result<()> {
             let cwd = session_cwd(s, root).to_path_buf();
             ui::ok(&format!("→ resume session '{name}' (latest)"));
             touch(env, root, &mut reg, &name)?;
-            return launch(&cwd, &dir, false, (root, &name));
+            return launch(&cwd, &dir, false, (root, &name), None);
         }
     }
     // No named session yet — legacy behavior: omp's default path-scoped store.
@@ -285,8 +286,8 @@ fn resume_default(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `8sync . <name>` — create-or-resume a named session.
-pub fn resume_named(env: &Env, root: &Path, name: &str) -> Result<()> {
+/// `8sync . <name> [--model <id>]` — create-or-resume a named session.
+pub fn resume_named(env: &Env, root: &Path, name: &str, model: Option<&str>) -> Result<()> {
     if !valid_name(name) {
         bail!("invalid session name '{name}' (use letters, digits, '-', '_', '.'; ≤64 chars)");
     }
@@ -300,7 +301,7 @@ pub fn resume_named(env: &Env, root: &Path, name: &str) -> Result<()> {
         // A session made without a launch (`8sync ccc auto up --omp` creates its rooms first) has
         // no conversation yet: open a fresh one instead of continuing nothing.
         let fresh = crate::verbs::session_view::omp_transcript(&dir).is_none();
-        launch(&cwd, &dir, fresh, (root, name))
+        launch(&cwd, &dir, fresh, (root, name), model)
     } else {
         ui::info(&format!("no session '{name}' yet — creating it"));
         create(env, root, &mut reg, name, false)?;
@@ -308,7 +309,7 @@ pub fn resume_named(env: &Env, root: &Path, name: &str) -> Result<()> {
         let dir = s.session_dir.clone();
         let cwd = session_cwd(s, root).to_path_buf();
         touch(env, root, &mut reg, name)?;
-        launch(&cwd, &dir, true, (root, name))
+        launch(&cwd, &dir, true, (root, name), model)
     }
 }
 
@@ -327,7 +328,7 @@ pub fn cmd_new(env: &Env, root: &Path, name: &str, worktree: bool) -> Result<()>
     let cwd = session_cwd(s, root).to_path_buf();
     ui::ok(&format!("created session '{name}'"));
     touch(env, root, &mut reg, name)?;
-    launch(&cwd, &dir, true, (root, name))
+    launch(&cwd, &dir, true, (root, name), None)
 }
 
 /// The session dir of the named session `name` of this repo, creating the session like

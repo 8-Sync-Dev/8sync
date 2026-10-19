@@ -3059,7 +3059,8 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
     }
     // Only the run that really starts the server drops a previous link (`--install` and a second
     // `hq ui` on a busy port leave a running `--public` link alone).
-    if ui_port_busy(port) {
+    let port_busy = ui_port_busy(port);
+    if port_busy {
         if public {
             // the tunnel would front the other server and overwrite its link
             bail!("{}", stale_ui_hint(port, ver));
@@ -3085,6 +3086,13 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
     }
     if let Some(f) = &flags {
         cmd.env("HQ_CHANNEL_FLAGS", f);
+    }
+    // The native core (verbs/hq_core): warm data on a loopback port this supervisor owns, so node
+    // doesn't start a process per poll. `HQ_*`: node never passes it on to a room. Not on a busy
+    // port: that node exits at once and a second core would only idle beside the running HQ's.
+    cmd.env_remove("HQ_CORE").env_remove("HQ_CORE_TOKEN");
+    if let Some(core) = (!port_busy).then(crate::verbs::hq_core::start).flatten() {
+        cmd.env("HQ_CORE", &core.url).env("HQ_CORE_TOKEN", &core.token);
     }
     let mut child = cmd.spawn().with_context(|| format!("start {prog}"))?;
     // journal on only once the UI process exists

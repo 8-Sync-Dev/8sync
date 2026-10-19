@@ -142,9 +142,8 @@ pub fn run_ls(a: LsArgs) -> Result<()> {
     Ok(())
 }
 
-/// Every repo in every registry: `<kind>/<key>/index.json`. The repo path is
-/// recovered from a transcript's cwd; the registry key is the fallback.
-fn ls_all(env: &Env, procs: &[Vec<u8>], json: bool) -> Result<()> {
+/// Every repo in every registry: `<kind>/<key>/index.json`, grouped by registry key.
+fn all_repos(env: &Env, procs: &[Vec<u8>]) -> BTreeMap<String, Groups> {
     let mut repos: BTreeMap<String, Groups> = BTreeMap::new();
     for (engine, kind) in ENGINES {
         for e in std::fs::read_dir(kind_dir(env, kind)).into_iter().flatten().flatten() {
@@ -157,22 +156,35 @@ fn ls_all(env: &Env, procs: &[Vec<u8>], json: bool) -> Result<()> {
             }
         }
     }
-    if json {
-        let arr: Vec<Value> = repos
-            .iter()
-            .flat_map(|(key, g)| {
-                g.iter().flat_map(move |(_, rows)| {
-                    rows.iter().map(move |r| {
-                        let mut v = view::row_json(r);
-                        v["repo"] = Value::String(repo_label(key, g));
-                        v
-                    })
+    repos
+}
+
+/// What `8sync ls --all --json` prints (one object per session, `repo` added); the HQ core serves
+/// the same array without a process per poll.
+pub fn ls_all_json(env: &Env, procs: &[Vec<u8>]) -> Vec<Value> {
+    let repos = all_repos(env, procs);
+    repos
+        .iter()
+        .flat_map(|(key, g)| {
+            g.iter().flat_map(move |(_, rows)| {
+                rows.iter().map(move |r| {
+                    let mut v = view::row_json(r);
+                    v["repo"] = Value::String(repo_label(key, g));
+                    v
                 })
             })
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&arr)?);
+        })
+        .collect()
+}
+
+/// Every repo in every registry. The repo path is recovered from a transcript's cwd; the
+/// registry key is the fallback.
+fn ls_all(env: &Env, procs: &[Vec<u8>], json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(&ls_all_json(env, procs))?);
         return Ok(());
     }
+    let repos = all_repos(env, procs);
     if repos.is_empty() {
         ui::info("no sessions recorded on this machine yet");
         return Ok(());

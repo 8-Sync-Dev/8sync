@@ -13,7 +13,9 @@
 //! `down` stops only this repo's `omp-<role>` rooms: `tmux kill-session`, or on Windows the omp
 //! processes whose command line carries the room's session dir (that process only: omp's worker
 //! daemons may serve other sessions). The conversation stays in the session dir; `up` continues it.
-//! The team runs on omp's default model; [`super::auto::omp_blocked`] keeps it off on `anthropic/…`.
+//! The team runs on auto.json's `omp_model` (`8sync ccc auto omp on --model <provider/model>`,
+//! passed as `8sync . omp-<role> --model <m>`), else omp's default model;
+//! [`super::auto::omp_blocked`] keeps it off on `anthropic/…`.
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -72,16 +74,17 @@ pub(super) fn host(windows: bool, tmux: Option<PathBuf>, wt: Option<PathBuf>) ->
     }
 }
 
-/// Argv (program first) that starts the room of `role` detached: `<exe> . omp-<role>` in `root`.
-/// None on [`Host::Manual`].
-pub(super) fn spawn_argv(host: &Host, role: &str, sess: &str, root: &Path, exe: &Path) -> Option<Vec<OsString>> {
+/// Argv (program first) that starts the room of `role` detached: `<exe> . omp-<role> [--model <m>]`
+/// in `root`. None on [`Host::Manual`].
+pub(super) fn spawn_argv(host: &Host, role: &str, sess: &str, root: &Path, exe: &Path, model: Option<&str>) -> Option<Vec<OsString>> {
     let room = room_name(role);
     let head: Vec<OsString> = match host {
         Host::Tmux(t) => vec![t.into(), "new-session".into(), "-d".into(), "-s".into(), sess.into(), "-c".into(), root.into()],
         Host::Wt(w) => vec![w.into(), "-w".into(), WT_WINDOW.into(), "new-tab".into(), "--title".into(), room.clone().into(), "-d".into(), root.into()],
         Host::Manual => return None,
     };
-    Some(head.into_iter().chain([exe.into(), ".".into(), room.into()]).collect())
+    let model = model.into_iter().flat_map(|m| [OsString::from("--model"), m.into()]);
+    Some(head.into_iter().chain([exe.into(), ".".into(), room.into()]).chain(model).collect())
 }
 
 /// `tmux <verb> -t =<sess>`: `=` is an exact match (a bare name also matches a longer one).
@@ -95,12 +98,11 @@ pub(super) fn taskkill_argv(pid: u32) -> Vec<OsString> {
 }
 
 /// The command the owner runs for a room when no detached terminal is there (PowerShell on Windows).
-/// Paths are single-quoted (nothing expands inside): PowerShell doubles a `'` (and the smart
-/// quotes U+2018–U+201B, which it also reads as `'`), POSIX closes, escapes and reopens it (`'\''`).
-pub(super) fn manual(windows: bool, root: &Path, exe: &Path, role: &str) -> String {
+/// Paths (and the model) are single-quoted (nothing expands inside): PowerShell doubles a `'` (and
+/// the smart quotes U+2018–U+201B, which it also reads as `'`), POSIX closes, escapes and reopens it (`'\''`).
+pub(super) fn manual(windows: bool, root: &Path, exe: &Path, role: &str, model: Option<&str>) -> String {
     let room = room_name(role);
-    let q = |p: &Path| {
-        let s = p.display().to_string();
+    let q = |s: &str| {
         if windows {
             let mut out = String::with_capacity(s.len() + 2);
             out.push('\'');
@@ -116,10 +118,12 @@ pub(super) fn manual(windows: bool, root: &Path, exe: &Path, role: &str) -> Stri
             format!("'{}'", s.replace('\'', r"'\''"))
         }
     };
+    let (root, exe) = (q(&root.display().to_string()), q(&exe.display().to_string()));
+    let model = model.map(|m| format!(" --model {}", q(m))).unwrap_or_default();
     if windows {
-        format!("cd {}; & {} . {room}", q(root), q(exe))
+        format!("cd {root}; & {exe} . {room}{model}")
     } else {
-        format!("cd {} && {} . {room}", q(root), q(exe))
+        format!("cd {root} && {exe} . {room}{model}")
     }
 }
 
@@ -237,6 +241,7 @@ struct Ctx<'a> {
     windows: bool,
     win: &'a [(u32, String)],
     unix: &'a [Vec<u8>],
+    model: Option<&'a str>,
 }
 
 fn open(c: &Ctx, role: &str) -> Result<String> {
@@ -251,13 +256,13 @@ fn open(c: &Ctx, role: &str) -> Result<String> {
     if running {
         return Ok("đang chạy".into());
     }
-    let Some(argv) = spawn_argv(c.host, role, &sess, c.root, c.exe) else {
-        return Ok(format!("chạy tay: {}", manual(c.windows, c.root, c.exe, role)));
+    let Some(argv) = spawn_argv(c.host, role, &sess, c.root, c.exe, c.model) else {
+        return Ok(format!("chạy tay: {}", manual(c.windows, c.root, c.exe, role, c.model)));
     };
-    if matches!(c.host, Host::Wt(_)) && !wt_safe(c.root, c.exe) {
+    if matches!(c.host, Host::Wt(_)) && !(wt_safe(c.root, c.exe) && !c.model.is_some_and(|m| m.contains(';'))) {
         return Ok(format!(
-            "bỏ qua: đường dẫn có `;` (wt.exe coi là tách lệnh) — chạy tay: {}",
-            manual(c.windows, c.root, c.exe, role)
+            "bỏ qua: đường dẫn/model có `;` (wt.exe coi là tách lệnh) — chạy tay: {}",
+            manual(c.windows, c.root, c.exe, role, c.model)
         ));
     }
     run(&argv)?;
@@ -267,15 +272,15 @@ fn open(c: &Ctx, role: &str) -> Result<String> {
     })
 }
 
-/// `auto up`: every role's omp room of this repo running detached. A room that cannot open is
-/// reported, the others still open.
-pub(super) fn up(env: &Env, root: &Path, roles: &[String]) -> Vec<Row> {
+/// `auto up`: every role's omp room of this repo running detached, on `model` (auto.json's
+/// `omp_model`; None = omp's default). A room that cannot open is reported, the others still open.
+pub(super) fn up(env: &Env, root: &Path, roles: &[String], model: Option<&str>) -> Vec<Row> {
     let windows = cfg!(windows);
     let host = host(windows, which::which("tmux").ok(), if windows { which::which("wt").ok() } else { None });
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("8sync"));
     let win = if windows { win_procs() } else { Vec::new() };
     let unix = if windows { Vec::new() } else { session_view::agent_cmdlines() };
-    let c = Ctx { env, root, exe: &exe, host: &host, windows, win: &win, unix: &unix };
+    let c = Ctx { env, root, exe: &exe, host: &host, windows, win: &win, unix: &unix, model };
     roles
         .iter()
         .map(|role| {
@@ -286,8 +291,9 @@ pub(super) fn up(env: &Env, root: &Path, roles: &[String]) -> Vec<Row> {
         .collect()
 }
 
-pub(super) fn print_up(rows: &[Row]) {
-    println!("đội omp: {} phòng (`8sync . omp-<vai>`, model mặc định của omp; nhắn nhau: `8sync ccc msg <phòng> \"…\"`)", rows.len());
+pub(super) fn print_up(rows: &[Row], model: Option<&str>) {
+    let model = model.map_or_else(|| "model mặc định của omp".to_string(), |m| format!("model {m}"));
+    println!("đội omp: {} phòng (`8sync . omp-<vai>`, {model}; nhắn nhau: `8sync ccc msg <phòng> \"…\"`)", rows.len());
     for r in rows {
         println!("  {:<14} {:<12} {}", r.name, r.role, r.state);
     }
@@ -394,18 +400,23 @@ mod tests {
     #[test]
     fn spawn_argv_per_platform() {
         let (root, exe) = (Path::new("/home/a/my repo"), Path::new("/opt/8sync"));
-        let t = spawn_argv(&Host::Tmux("/usr/bin/tmux".into()), "dev", "8sync-omp-dev-abc123", root, exe).unwrap();
+        let t = spawn_argv(&Host::Tmux("/usr/bin/tmux".into()), "dev", "8sync-omp-dev-abc123", root, exe, None).unwrap();
         assert_eq!(t, os(&["/usr/bin/tmux", "new-session", "-d", "-s", "8sync-omp-dev-abc123", "-c", "/home/a/my repo", "/opt/8sync", ".", "omp-dev"]));
-        let w = spawn_argv(&Host::Wt("wt.exe".into()), "qa", "x", root, exe).unwrap();
+        let w = spawn_argv(&Host::Wt("wt.exe".into()), "qa", "x", root, exe, None).unwrap();
         assert_eq!(w, os(&["wt.exe", "-w", "8sync-omp", "new-tab", "--title", "omp-qa", "-d", "/home/a/my repo", "/opt/8sync", ".", "omp-qa"]));
-        assert_eq!(spawn_argv(&Host::Manual, "qa", "x", root, exe), None);
-        assert_eq!(manual(false, root, exe, "qa"), "cd '/home/a/my repo' && '/opt/8sync' . omp-qa");
-        assert_eq!(manual(true, root, exe, "qa"), "cd '/home/a/my repo'; & '/opt/8sync' . omp-qa");
+        let m = Some("omniroute/llm7/GLM 5");
+        let tm = spawn_argv(&Host::Tmux("tmux".into()), "dev", "s", root, exe, m).unwrap();
+        assert_eq!(tm, os(&["tmux", "new-session", "-d", "-s", "s", "-c", "/home/a/my repo", "/opt/8sync", ".", "omp-dev", "--model", "omniroute/llm7/GLM 5"]));
+        assert_eq!(spawn_argv(&Host::Manual, "qa", "x", root, exe, m), None);
+        assert_eq!(manual(false, root, exe, "qa", None), "cd '/home/a/my repo' && '/opt/8sync' . omp-qa");
+        assert_eq!(manual(true, root, exe, "qa", None), "cd '/home/a/my repo'; & '/opt/8sync' . omp-qa");
+        assert_eq!(manual(false, root, exe, "qa", Some("p/it's")), r"cd '/home/a/my repo' && '/opt/8sync' . omp-qa --model 'p/it'\''s'");
+        assert_eq!(manual(true, root, exe, "qa", Some("p/it's")), "cd '/home/a/my repo'; & '/opt/8sync' . omp-qa --model 'p/it''s'");
         let odd = Path::new("/r/it's $(x) `y`");
-        assert_eq!(manual(false, odd, exe, "qa"), r#"cd '/r/it'\''s $(x) `y`' && '/opt/8sync' . omp-qa"#);
-        assert_eq!(manual(true, odd, exe, "qa"), "cd '/r/it''s $(x) `y`'; & '/opt/8sync' . omp-qa");
+        assert_eq!(manual(false, odd, exe, "qa", None), r#"cd '/r/it'\''s $(x) `y`' && '/opt/8sync' . omp-qa"#);
+        assert_eq!(manual(true, odd, exe, "qa", None), "cd '/r/it''s $(x) `y`'; & '/opt/8sync' . omp-qa");
         let smart = Path::new("C:\\r\\a\u{2019}; calc; \u{2018}b\u{201A}\u{201B}");
-        assert_eq!(manual(true, smart, exe, "qa"), "cd 'C:\\r\\a\u{2019}\u{2019}; calc; \u{2018}\u{2018}b\u{201A}\u{201A}\u{201B}\u{201B}'; & '/opt/8sync' . omp-qa", "PowerShell reads a smart quote as `'`");
+        assert_eq!(manual(true, smart, exe, "qa", None), "cd 'C:\\r\\a\u{2019}\u{2019}; calc; \u{2018}\u{2018}b\u{201A}\u{201A}\u{201B}\u{201B}'; & '/opt/8sync' . omp-qa", "PowerShell reads a smart quote as `'`");
         assert!(wt_safe(root, exe));
         assert!(!wt_safe(Path::new(r"C:\r\a;calc"), exe), "`;` in the root is a wt command separator");
         assert!(!wt_safe(root, Path::new(r"C:\b;x\8sync.exe")));

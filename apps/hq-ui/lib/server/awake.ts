@@ -5,6 +5,7 @@
 // The switch reads `ours` (this 8sync's own hold), never `held`: on Windows `held` is the
 // system-wide aggregate (omp.exe holds SYSTEM too), so it can't say whether the switch is on.
 import { readIdleStatus } from "./idle";
+import { coreGet } from "./core";
 import { run } from "./proc";
 import type { IdleRecord } from "../idle";
 
@@ -95,8 +96,14 @@ const G = globalThis as unknown as { __hqAwake?: State };
 const S = (G.__hqAwake ??= { cache: null, inflight: null, gen: 0, switching: false });
 
 async function probe(now: number): Promise<Probe> {
-  const r = await run("8sync", ["ccc", "awake", "status", "--json"], 5_000);
-  const v = r.ok ? parseAwake(r.stdout) : null;
+  // The core answers in process (same JSON as `8sync ccc awake status --json`); else one process.
+  const viaCore = await coreGet("/v1/awake");
+  let v: AwakeStatus | null;
+  if (viaCore) v = parseAwake(JSON.stringify(viaCore.v));
+  else {
+    const r = await run("8sync", ["ccc", "awake", "status", "--json"], 5_000);
+    v = r.ok ? parseAwake(r.stdout) : null;
+  }
   let displayBy: string[] | null = null;
   if (v?.display_required && process.platform === "win32") {
     const p = await run("powercfg", ["/requests"], 5_000);

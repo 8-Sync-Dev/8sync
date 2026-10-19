@@ -3,6 +3,7 @@
 // its repo's board, a repo nested inside another repo keeps its own.
 import type { ProjectInfo } from "../office";
 import { parseBoard, type Board } from "../lanes";
+import { coreCall } from "./core";
 import { run } from "./proc";
 import { outermost } from "./targets";
 
@@ -13,22 +14,28 @@ export type ProjectBoard = { root: string; name: string; board: Board | null; er
 
 export const BOARD_ARGS = ["ccc", "auto", "board", "--json"];
 
-/** Never throws: a failure is the row's `error`. */
+/** Never throws: a failure is the row's `error`. The core reads the board in process; else one `8sync` per root. */
 export async function readBoard(project: ProjectInfo): Promise<ProjectBoard> {
   const base = { root: project.root, name: project.name };
-  const r = await run("8sync", BOARD_ARGS, TIMEOUT_MS, project.root);
-  if (!r.ok) {
-    const msg = r.killed ? `8sync không trả lời sau ${TIMEOUT_MS / 1000} s` : r.stderr.trim().replace(/^Error:\s*/, "");
-    return { ...base, board: null, error: (msg || "8sync ccc auto board thất bại").slice(0, 300), filed: null };
+  const fail = (msg: string) => ({ ...base, board: null, error: (msg || "8sync ccc auto board thất bại").slice(0, 300), filed: null });
+  let v: unknown;
+  const c = await coreCall(`/v1/board?root=${encodeURIComponent(project.root)}`, { timeoutMs: TIMEOUT_MS });
+  if (c && (c.status === 200 || c.status === 422)) {
+    if (c.status === 422) return fail(String((c.body as { error?: unknown } | null)?.error ?? ""));
+    v = c.body;
+  } else {
+    const r = await run("8sync", BOARD_ARGS, TIMEOUT_MS, project.root);
+    if (!r.ok) return fail(r.killed ? `8sync không trả lời sau ${TIMEOUT_MS / 1000} s` : r.stderr.trim().replace(/^Error:\s*/, ""));
+    try {
+      v = JSON.parse(r.stdout);
+    } catch {
+      return { ...base, board: null, error: "cần 8sync có board (`8sync up`)", filed: null };
+    }
   }
-  try {
-    const v = JSON.parse(r.stdout);
-    const board = parseBoard(v);
-    const filed = typeof v?.root === "string" && v.root ? v.root : null;
-    return board ? { ...base, board, error: null, filed } : { ...base, board: null, error: "cần 8sync có board (`8sync up`)", filed: null };
-  } catch {
-    return { ...base, board: null, error: "cần 8sync có board (`8sync up`)", filed: null };
-  }
+  const board = parseBoard(v);
+  const root = (v as { root?: unknown } | null)?.root;
+  const filed = typeof root === "string" && root ? root : null;
+  return board ? { ...base, board, error: null, filed } : { ...base, board: null, error: "cần 8sync có board (`8sync up`)", filed: null };
 }
 
 /** Compare paths across `\` and `/`; Rust's canonicalize on Windows adds the `\\?\` prefix to `filed`. */

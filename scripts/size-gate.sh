@@ -143,7 +143,16 @@ export LC_ALL=C
 # `ccc/omp_team.rs`), `ccc msg` + room-line gating/quoting (`ccc/msg.rs`, `hq.rs`), the public
 # link (`hq.rs`: cloudflared, nonce), `auto revive` and `awake` (kernel32 FFI, no crate). No new
 # dependency. Ceiling 7168 KiB (~58 KiB left).
-CEILING="${CEILING:-7340032}"   # 7168 KiB (raised 2026-10-19 from 7040 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+#
+# 2026-10-19 v0.107.0 (before tagging): v0.106.0 linux-x86_64 (musl) asset 7,329,936 B left only
+# 10,096 B under 7168 KiB. Windows MSVC local release of v0.107.0 = 5,991,424 B vs the v0.106.0
+# Windows asset 5,851,648 → +139,776 B; at the last measured musl/MSVC ratio (1.135) the musl
+# asset lands near 7,488,600 B. v0.107.0: the HQ native core `hq_core/` (loopback HTTP + token,
+# `claude agents` fingerprint cache, warm transcript digests, 5 s machine sampler over
+# kernel32/psapi/PDH/NVML FFI + Linux /proc, usage scan, disk walk), `ccc auto omp on --model`
+# (team model, nudge model gate, `8sync . <name> --model`), lead merge-order prompt text. No new
+# dependency (Cargo.lock: version lines only). Ceiling 7360 KiB (~47 KiB left over the estimate).
+CEILING="${CEILING:-7536640}"   # 7360 KiB (raised 2026-10-19 from 7168 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

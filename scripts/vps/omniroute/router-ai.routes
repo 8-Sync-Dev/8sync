@@ -1,0 +1,52 @@
+# OmniRoute at https://vps.8syncdev.com/router-ai (/srv/apps/omniroute; the image is built with
+# basePath /router-ai, .github/workflows/omniroute-image.yml). Imported inside the vps.8syncdev.com
+# site by `import /sites/*.routes` (setup.sh adds that line once). No port in any URL.
+# OmniRoute 3.8.51 still sends many browser requests without the basePath even in a /router-ai build:
+# fetch('/api/…') and <img src="/providers/….svg"> (its getDeployBasePath reads process.env
+# dynamically, which is empty in the browser, so the fetch shim never turns on). Those requests
+# carry the dashboard page as Referer: move them under /router-ai before any handle runs.
+# - a page load (login does `location.href = "/dashboard"`) is redirected, so the address bar and
+#   the Referer of everything that page loads stay under /router-ai;
+# - fetches and images are rewritten in place;
+# - /sw.js is left alone: its PWA worker registered from the root would take scope `/` over the
+#   whole site, HQ's root `/_next/*` assets included.
+@omniroute_nav {
+	header Referer https://vps.8syncdev.com/router-ai*
+	header Sec-Fetch-Mode navigate
+	not path /router-ai* /oauth2/* /hq* /healthz /sw.js
+}
+redir @omniroute_nav /router-ai{uri} 302
+@omniroute_page {
+	header Referer https://vps.8syncdev.com/router-ai*
+	not path /router-ai* /oauth2/* /hq* /healthz /sw.js
+}
+rewrite @omniroute_page /router-ai{uri}
+# API for tools: /router-ai/v1/*, no GitHub session; OmniRoute API keys are the lock (REQUIRE_API_KEY=true).
+handle /router-ai/v1/* {
+	reverse_proxy omniroute:20128 {
+		flush_interval -1
+	}
+}
+# Dashboard: the same GitHub gate as the rest of the site (login 8syncdev only), then OmniRoute's own login.
+handle /router-ai* {
+	route {
+		request_header -X-Auth-Request-User
+		request_header -X-Auth-Request-Email
+		forward_auth oauth2-proxy:4180 {
+			uri /oauth2/auth
+			header_up X-Real-IP {remote_host}
+			copy_headers X-Auth-Request-User X-Auth-Request-Email
+			@unauthorized status 401
+			handle_response @unauthorized {
+				redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+			}
+		}
+		@notowner not header X-Auth-Request-User 8syncdev
+		respond @notowner "Chỉ owner được vào." 403
+		reverse_proxy omniroute:20128 {
+			header_up -X-Auth-Request-User
+			header_up -X-Auth-Request-Email
+			flush_interval -1
+		}
+	}
+}

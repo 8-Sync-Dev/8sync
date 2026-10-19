@@ -52,6 +52,10 @@ pub struct Args {
     /// With `ls`/`--list`: emit machine-readable JSON.
     #[arg(long)]
     pub json: bool,
+
+    /// With a bare `<name>`: run omp on this model (`--model <provider/model>`, e.g. omniroute/<combo>).
+    #[arg(long)]
+    pub model: Option<String>,
 }
 
 pub fn run(a: Args) -> Result<()> {
@@ -101,7 +105,7 @@ pub fn run(a: Args) -> Result<()> {
             session::cmd_new(&env, &root, name, a.worktree)
         }
         "" => session::resume_latest(&env, &root),
-        name => session::resume_named(&env, &root, name),
+        name => session::resume_named(&env, &root, name, a.model.as_deref()),
     }
 }
 

@@ -7,6 +7,7 @@ import { projectIdFor } from "./db";
 import fs from "node:fs";
 import path from "node:path";
 import { binFor, childEnv } from "./child-env";
+import { coreGet } from "./core";
 import { inboxLive } from "./inbox";
 import { channelMcpConfigPath } from "./paths";
 import { CHANNEL_FLAGS_RE, TMUX_NAME_RE, hasControlChars, isTmuxName } from "./validate";
@@ -59,8 +60,10 @@ export type ClaudeAgent = {
   waitingFor?: string;
 };
 
-/** null when `claude` is missing or failed: callers then trust the journal. */
+/** null when `claude` is missing or failed: callers then trust the journal. The core keeps this warm. */
 export async function listClaudeAgents(): Promise<ClaudeAgent[] | null> {
+  const viaCore = await coreGet("/v1/agents");
+  if (viaCore) return Array.isArray(viaCore.v) ? (viaCore.v as ClaudeAgent[]) : null;
   const r = await run("claude", ["agents", "--json"], 5000);
   if (!r.ok) return null;
   try {

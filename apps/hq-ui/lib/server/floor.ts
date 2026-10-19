@@ -7,6 +7,7 @@ import { roomLabel } from "../room-label";
 import { autoMayAct, deriveFloor, type FloorRow, type LsInput } from "../floor";
 import { lastAutoStatus } from "./auto";
 import { projectIdFor } from "./db";
+import { coreGet } from "./core";
 import { inboxLive } from "./inbox";
 import { mergedSessions, run, type SessionView } from "./proc";
 
@@ -94,15 +95,19 @@ function pairHq(ls: LsRow[], merged: SessionView[]): Map<number, SessionView> {
   return out;
 }
 
+/** `8sync ls --json --all`: from the core's warm copy when there is one, else one process. */
 async function lsRows(): Promise<LsRow[]> {
-  const r = await run("8sync", ["ls", "--json", "--all"], 8000);
-  if (!r.ok) return []; // 8sync missing or failed
-  try {
-    const v = JSON.parse(r.stdout);
-    return Array.isArray(v) ? (v as LsRow[]).filter((x) => x && typeof x.name === "string") : [];
-  } catch {
-    return [];
+  let v: unknown = (await coreGet("/v1/ls"))?.v;
+  if (v === undefined) {
+    const r = await run("8sync", ["ls", "--json", "--all"], 8000);
+    if (!r.ok) return []; // 8sync missing or failed
+    try {
+      v = JSON.parse(r.stdout);
+    } catch {
+      return [];
+    }
   }
+  return Array.isArray(v) ? (v as LsRow[]).filter((x) => x && typeof x.name === "string") : [];
 }
 
 /**
