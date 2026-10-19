@@ -76,7 +76,7 @@ Team mặc định `lead,dev,qa,review`; tự chọn: `--roles lead,ba,dev,dev2,
 | 5 | `/autopilot` | tối đa 5 item hoặc 8 giờ từ backlog (issue có label `ccc`/`8sync`, mục Next trong `su-code/STATE.md`, failure chưa có guard), mỗi item một loop + một nhánh | một câu `Ship` cho cả batch |
 
    Mức 3–5 chỉ anh khởi động; agent không tự gõ được.
-3. **Bật cả dự án chạy liên tục**: `8sync ccc auto on --here --loop 10m --team`. Giao đích: `8sync ccc auto add "<việc>" --check "<lệnh kiểm>"` (gấp thì thêm `--now`), hoặc nói trong phòng "đưa vào loop: …" / "làm ngay: …". Xem hàng: `8sync ccc auto queue`. Dừng: `8sync ccc auto pause` (hoặc `auto off`, `8sync ccc cancel`).
+3. **Bật cả dự án chạy liên tục**: `8sync ccc auto on --here --loop 30m --team`. Giao đích: `8sync ccc auto add "<việc>" --check "<lệnh kiểm>"` (gấp thì thêm `--now`), hoặc nói trong phòng "đưa vào loop: …" / "làm ngay: …". Xem hàng: `8sync ccc auto queue`. Dừng: `8sync ccc auto pause` (hoặc `auto off`, `8sync ccc cancel`).
 
 Không mở terminal: `claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20`. Chạy headless không trả lời được câu `Ship`, nên dừng trước merge và để lại brief. Trên subscription, auto giữ lease ≤ 4 giờ và chỉ chạy khi anh có mặt; phòng nghỉ nhịp khi cửa sổ 5 giờ/7 ngày dùng ≥ 90%. Chạy nhiều ngày không người trông thì dùng Routines (`/schedule`) hoặc Console API key. Chi tiết ở mục 4 và 6.
 
@@ -219,9 +219,9 @@ Dữ liệu nằm ở `~/.local/state/8sync/hq/` (SQLite, quyền 0600), chỉ t
   - Lượt bị đứt vì lỗi API (rate limit, quá tải, lỗi server…) → có popup báo. Anh chỉ cần gõ "tiếp" trong session đó: Claude được nhắc kiểm task list và làm nốt.
   - Hết hạn mức usage claude.ai giữa chừng → session đang mở tự chờ tới giờ reset rồi làm tiếp (kit bật sẵn `autoContinueAtUsageLimit`; tắt trong `/config` → "Continue automatically at usage limit"). Cần để session mở; không áp dụng cho `-p`, session nền, hay hạn mức tuần reset sau hơn 24 giờ. Muốn làm tiếp ngay: `/usage-credits`. Kit **không** tự đổi sang account khác: dùng nhiều account để né hạn mức là vi phạm Usage Policy.
 - **`8sync ccc auto on` áp dụng cho cả máy**: mọi session ở mọi dự án, kể cả session mở sau, cho tới khi lease hết hạn hoặc `auto pause`/`auto off`. Chỉ muốn một dự án: `cd` vào dự án đó rồi chạy `8sync ccc auto on --here --hours 4`; session ở dự án khác vẫn hỏi anh như thường. Thư mục con và worktree trong repo được tính là cùng dự án. `auto status` cho biết đang chạy "mọi dự án" hay "chỉ dự án …".
-- **Mọi phòng chạy liên tục bằng một lệnh**: `8sync ccc auto on --here --loop 10m --team`.
+- **Mọi phòng chạy liên tục bằng một lệnh**: `8sync ccc auto on --here --loop 30m --team`.
   - Lệnh ghi `.claude/loop.md` (nếu chưa có; không ghi đè bản anh sửa): playbook mỗi nhịp. Nó kiểm `auto status`, lấy một việc hợp vai từ `su-code/STATE.md` (hoặc spec trong `workflows/*.md` do `/loop-me` viết), tự chọn skill (`/ship` đủ flow với karpathy-guidelines, test, review và gate `/sec` + `/rules` + `/aup-audit`; `/do`; `/deep-research`; `impeccable`; `/sysdesign`) rồi `8sync ccc meet --say`. Việc cần nhiều nhịp thì mỗi nhịp `/ship` phần kế. `/ship-loop`, `/ship-auto`, `/autopilot`, `/sprint`, `/loop-me` chỉ anh gõ: nhịp cron không gọi được skill có `disable-model-invocation`. Sửa file là đổi việc của mọi phòng từ nhịp kế; gõ `/loop` không kèm prompt trong phòng nào cũng chạy đúng file này.
-  - Rồi gửi vào inbox từng phòng của dự án một yêu cầu tự đặt loop cron (CronCreate, như `/loop 10m`) theo vai phòng. `--team` thêm việc lấp ghế rd, qa, reviewer cho phòng mở bằng `--team`.
+  - Rồi gửi vào inbox từng phòng của dự án một yêu cầu tự đặt loop cron (CronCreate, như `/loop 30m`) theo vai phòng. `--team` thêm việc lấp ghế rd, qa, reviewer cho phòng mở bằng `--team`.
   - Loop tự xoá khi anh `auto off`/`auto pause`. Chạm trần thì phòng nghỉ nhịp đó và giữ loop:
     - Gói subscription: nghỉ khi cửa sổ 5 giờ hoặc 7 ngày (số ở status line) đã dùng 90%, phần còn lại để anh dùng; tự chạy lại khi cửa sổ reset. $ ở status line trên subscription là giá API ước tính, không phải tiền bị trừ, nên mặc định không có trần $.
     - API key, hoặc anh đặt `--usd-per-hour X`: trần $/giờ (API key mặc định 5), tính trung bình từ lúc bật kể cả khi lease đã hết, tự hạ khi thời gian trôi. Với `--here` chỉ tính session của dự án đó, không cộng session của dự án khác trên máy.
@@ -234,7 +234,7 @@ Dữ liệu nằm ở `~/.local/state/8sync/hq/` (SQLite, quyền 0600), chỉ t
   - Trước khi dùng Routines: run tự động hoàn toàn, không hỏi quyền, dùng mọi connector được thêm kể cả ghi. Run là clone mới trên cloud nên không có rail của 8sync (hàng đích, idle, delegate, các câu vẫn hỏi anh). Viết prompt tự đủ, chỉ chọn repo/connector cần, khoá nhánh bằng branch protection. `/schedule` cần login claude.ai ([routines](https://code.claude.com/docs/en/routines)).
   - Phòng chưa nạp mod inbox nhận yêu cầu khi xong lượt kế.
 - **Giao đích cho cả team (hàng chờ như khi gõ lúc agent bận)**:
-  - `8sync ccc auto on --here --loop 10m --team --target "<đích>" --check "<lệnh kiểm>"`: bật auto kèm đích đầu hàng.
+  - `8sync ccc auto on --here --loop 30m --team --target "<đích>" --check "<lệnh kiểm>"`: bật auto kèm đích đầu hàng.
   - `8sync ccc auto add "<việc>" [--check "<lệnh>"] [--prio P0..P3]`: thêm vào cuối hàng. Card có `--prio P0` được phòng nhận trước mọi card khác (chưa đặt = P2; đổi sau bằng `8sync ccc auto prio <id> P1`).
   - `8sync ccc auto add --now "<việc>"`: giống `ctrl+x ctrl+s` của Claude Code nhưng cho cả dự án. Việc lên đầu hàng và vào inbox mọi phòng; phòng nhận ngay khi rảnh, lượt đang chạy không bị cắt ngang.
   - Trong phòng nào cũng chỉ cần gõ "đưa vào loop: …" hoặc "làm ngay: …", Claude tự chạy lệnh trên (luật kit).

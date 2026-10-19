@@ -458,11 +458,11 @@ mod tests {
         let mut cfg = ModelConfig::default();
         cfg.advisor = true;
         cfg.step0 = false;
-        let flags = cfg.pinned_flags("omniroute/omp-manh");
+        let flags = cfg.pinned_flags("zai/glm-5.3");
         assert!(!flags.iter().any(|f| f == "--advisor"), "advisor runs on omp's own advisor model: {flags:?}");
         for role in ["--model", "--smol", "--slow", "--plan"] {
             let at = flags.iter().position(|f| f == role).unwrap_or_else(|| panic!("{role} missing: {flags:?}"));
-            assert_eq!(flags[at + 1], "omniroute/omp-manh", "{role}: {flags:?}");
+            assert_eq!(flags[at + 1], "zai/glm-5.3", "{role}: {flags:?}");
         }
         assert_eq!(flags.iter().filter(|f| f.starts_with("--")).count(), 4, "{flags:?}");
     }

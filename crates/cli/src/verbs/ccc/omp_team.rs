@@ -404,9 +404,9 @@ mod tests {
         assert_eq!(t, os(&["/usr/bin/tmux", "new-session", "-d", "-s", "8sync-omp-dev-abc123", "-c", "/home/a/my repo", "/opt/8sync", ".", "omp-dev"]));
         let w = spawn_argv(&Host::Wt("wt.exe".into()), "qa", "x", root, exe, None).unwrap();
         assert_eq!(w, os(&["wt.exe", "-w", "8sync-omp", "new-tab", "--title", "omp-qa", "-d", "/home/a/my repo", "/opt/8sync", ".", "omp-qa"]));
-        let m = Some("omniroute/llm7/GLM 5");
+        let m = Some("zai/glm 5");
         let tm = spawn_argv(&Host::Tmux("tmux".into()), "dev", "s", root, exe, m).unwrap();
-        assert_eq!(tm, os(&["tmux", "new-session", "-d", "-s", "s", "-c", "/home/a/my repo", "/opt/8sync", ".", "omp-dev", "--model", "omniroute/llm7/GLM 5"]));
+        assert_eq!(tm, os(&["tmux", "new-session", "-d", "-s", "s", "-c", "/home/a/my repo", "/opt/8sync", ".", "omp-dev", "--model", "zai/glm 5"]));
         assert_eq!(spawn_argv(&Host::Manual, "qa", "x", root, exe, m), None);
         assert_eq!(manual(false, root, exe, "qa", None), "cd '/home/a/my repo' && '/opt/8sync' . omp-qa");
         assert_eq!(manual(true, root, exe, "qa", None), "cd '/home/a/my repo'; & '/opt/8sync' . omp-qa");

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/usage/route";
 import { getToken } from "@/lib/server/auth";
 import { projectDirName } from "@/lib/server/ask";
@@ -225,16 +225,23 @@ describe("plan windows", () => {
 });
 
 describe("GET /api/usage", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("needs the token", async () => {
     expect((await GET(req("/api/usage"))).status).toBe(401);
   });
 
   it("answers windows, rows and totals", async () => {
+    // The route reads the clock; pin it to NOW, the mtime `transcript()` stamps.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
     const dir = path.join(stateDir(), "usage");
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, `${SID}.json`), JSON.stringify({ session_id: SID, cwd: repo, five_hour_pct: 12, seven_day_pct: 3 }));
-    transcript(SID, line("msg_x", Date.now() - 1000, { in: 4, cr: 6, out: 2 }));
-    getDb().prepare("INSERT OR REPLACE INTO sessions(name, cwd, updated_at) VALUES (?, ?, ?)").run(SID, repo, Date.now());
+    transcript(SID, line("msg_x", NOW - 1000, { in: 4, cr: 6, out: 2 }));
+    getDb().prepare("INSERT OR REPLACE INTO sessions(name, cwd, updated_at) VALUES (?, ?, ?)").run(SID, repo, NOW);
     const res = await GET(req("/api/usage", { token: getToken() }));
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
@@ -244,5 +251,31 @@ describe("GET /api/usage", () => {
     expect(v.totals.window.calls).toBe(1);
     expect(v.rest_pct).toBe(90);
     expect(v.scan.pending_bytes).toBe(0);
+  });
+
+  it("starts today at local midnight in a +7 zone (00:45 local, UTC still on the previous day)", async () => {
+    const tz = process.env.TZ;
+    process.env.TZ = "Asia/Ho_Chi_Minh";
+    try {
+      const now = Date.UTC(2026, 9, 19, 17, 45); // 2026-10-20 00:45 +07
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(now);
+      const f = transcript(
+        SID,
+        line("msg_yesterday", Date.UTC(2026, 9, 19, 16, 0), { in: 100 }) + // 23:00 local, the day before
+          line("msg_today", Date.UTC(2026, 9, 19, 17, 30), { in: 7 }), // 00:30 local
+      );
+      fs.utimesSync(f, new Date(now - 1000), new Date(now - 1000));
+      getDb().prepare("INSERT OR REPLACE INTO sessions(name, cwd, updated_at) VALUES (?, ?, ?)").run(SID, repo, now);
+      const v = (await (await GET(req("/api/usage", { token: getToken() }))).json()) as UsageReport;
+      expect(v.day_start).toBe(Date.UTC(2026, 9, 19, 17, 0));
+      expect(v.window_start).toBe(now - FIVE_HOURS);
+      expect(v.rows.map((r) => [r.session_id, r.today.input, r.window.input])).toEqual([[SID, 7, 107]]);
+      expect(v.totals.today.input).toBe(7);
+      expect(v.totals.window.input).toBe(107);
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    }
   });
 });

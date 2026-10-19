@@ -1,4 +1,4 @@
-//! `8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 10m] [--hours N] [--usd-per-hour X] [--omp]`
+//! `8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 30m] [--hours N] [--usd-per-hour X] [--omp]`
 //! and `auto down`: the whole team in one command, no terminal per room.
 //!
 //! `up` turns `auto on --here` for the project, then makes sure every role room runs as a Claude
@@ -33,7 +33,7 @@ use serde_json::Value;
 
 use super::{auto, idle, room};
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down | revive";
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down | revive";
 
 /// `auto up …` / `auto down` / `auto revive`: the verbs this module owns.
 pub(super) fn wants(rest: &[String]) -> bool {
@@ -99,6 +99,15 @@ pub(super) fn in_repo(l: &Live, root: &Path) -> bool {
     l.cwd.is_empty() || !Path::new(&l.cwd).is_absolute() || crate::verbs::here::repo_of(Path::new(&l.cwd)).is_some_and(|r| auto::canon(&r) == auto::canon(root))
 }
 
+/// Names of the live `claude agents --json` sessions running in `root` (rooms HQ reopened with
+/// `--resume --fork-session` are not in the registry). A session with no cwd is not counted; a
+/// failing `claude` gives none.
+pub(super) fn live_names(claude: &dyn Claude, root: &Path) -> Vec<String> {
+    let args = ["agents".to_string(), "--json".into(), "--cwd".into(), root.to_string_lossy().into_owned()];
+    let all = claude.run(&args).ok().and_then(|j| live(&j).ok()).unwrap_or_default();
+    all.into_iter().filter(|l| !l.cwd.is_empty() && !l.name.trim().is_empty() && in_repo(l, root)).map(|l| l.name).collect()
+}
+
 pub(super) fn live(json: &str) -> Result<Vec<Live>> {
     let v: Value = serde_json::from_str(json.trim()).map_err(|_| {
         anyhow::anyhow!("`claude agents --json` không trả JSON ({}): cần Claude Code ≥ 2.1.29x", crate::verbs::session_view::truncate(json.trim(), 120))
@@ -162,9 +171,12 @@ pub(super) const GOAL_MAX: usize = 4000;
 
 /// The first message of a room with a board lane: `/goal <condition>`. Setting a goal starts a turn
 /// with the condition as the directive, and Claude Code's evaluator starts the next turn until the
-/// condition holds (checked live: `claude --bg … "/goal …"` → "Goal set" … "Goal achieved"). The
-/// condition only holds when auto stops, so the room never idles while auto is on: an empty lane
-/// is spent in `auto wait`, which blocks without tokens until a card arrives.
+/// condition holds (checked live: `claude --bg … "/goal …"` → "Goal set" … "Goal achieved"). An empty
+/// lane is spent in `auto wait --timeout 1800` (blocks ≤ 30 min without tokens; [`room_settings`]
+/// lifts the Bash cap over it), so a turn on an empty lane costs one short turn per 30 min. The goal
+/// holds only when auto stops: an "empty lane" exit ended the room's work for good once the backup
+/// cron was gone. A card that wakes the wait is worked in the same turn; a new approval (`merge`)
+/// sends the lead back to (1).
 pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
     let (role, duty) = room::role(name);
     let first = if lane == "backlog" { format!("(1b) {} ", auto::BACKLOG_FIRST) } else { String::new() };
@@ -172,18 +184,26 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
         "/goal Phòng `{name}` (vai {role}: {duty}) làm việc liên tục cho dự án này qua board `8sync ccc auto`. \
          Lượt đầu, đặt loop dự phòng: {setup} \
          Mỗi lượt: (1) `8sync ccc auto status --json`; {first}(2) `8sync ccc auto claim --json` (cột {lane}); có card thì làm đúng việc cột đó: {playbook}; \
-         (3) không có card thì `8sync ccc auto wait --json` (chờ tới khi cột {lane} có card, tối đa 9 phút, không tốn token) rồi quay lại (1). \
+         (3) không có card → `8sync ccc auto wait --json --timeout {wait_s}` (Bash timeout {bash_ms}; chặn ≤ {wait_min} phút, không tốn token): `\"wake\":\"card\"` → claim (2) và làm card đó ngay lượt này; `\"wake\":\"merge\"` → quay lại (1); còn lại → kết thúc lượt. \
          Mọi lệnh `8sync ccc auto claim|move|note|wait` thêm `--as {name}` (trong worktree 8sync không tự nhận ra phòng). \
          Rail: không merge/push main/tag/deploy khi owner chưa trả lời câu Ship (hoặc chưa cho tự merge); giữ file trước khi sửa (`8sync ccc . goal \"…\" --files a,b`); \
          `8sync ccc meet --say \"done|doing|blocked: …\"` sau mỗi card. \
-         `cap` khác null hay wait trả cap → không claim, chạy lại `auto wait`. \
+         `cap` khác null → không claim, chạy `auto wait`. \
          Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on`/`here` false hoặc `paused` true \
          hoặc `gate` nhắc tới lease, hoặc `auto wait --json` trả `\"wake\":\"off\"`.",
         setup = auto::goal_loop_setup(name, every_min),
         playbook = auto::lane_playbook(lane),
+        wait_s = auto::WAIT_MAX_S,
+        bash_ms = BASH_MAX_MS,
+        wait_min = auto::WAIT_MAX_S / 60,
     );
     g.split_whitespace().collect::<Vec<_>>().join(" ")
 }
+
+/// Bash tool ceiling of a room (ms): Claude Code caps a command at 10 min unless
+/// `BASH_MAX_TIMEOUT_MS` says more (https://code.claude.com/docs/en/settings#environment-variables),
+/// and `auto wait` blocks up to [`auto::WAIT_MAX_S`].
+pub(super) const BASH_MAX_MS: u64 = (auto::WAIT_MAX_S + 60) * 1000;
 
 /// Auto-compact window of a team room (tokens). The kit compacts at 65% of the window, and on a 1M
 /// model that let rooms grow to 650K: measured on ai-game-studio (2026-10-19, 36 h, 15K API calls)
@@ -196,7 +216,7 @@ pub(super) const ROOM_WINDOW: u32 = 300_000;
 pub(super) fn room_settings(home: &Path) -> Result<PathBuf> {
     let d = idle::state_dir(home);
     let f = d.parent().unwrap_or(&d).join("room-settings.json");
-    let body = format!("{}\n", serde_json::json!({ "env": { (super::compact::WIN_VAR): ROOM_WINDOW.to_string() } }));
+    let body = format!("{}\n", serde_json::json!({ "env": { (super::compact::WIN_VAR): ROOM_WINDOW.to_string(), "BASH_MAX_TIMEOUT_MS": BASH_MAX_MS.to_string() } }));
     if std::fs::read_to_string(&f).ok().as_deref() != Some(body.as_str()) {
         if let Some(d) = f.parent() {
             std::fs::create_dir_all(d)?;
@@ -636,7 +656,7 @@ pub(super) fn short_name(name: &str) -> String {
     if n.is_empty() {
         return "(không tên)".into();
     }
-    if n.starts_with("/goal ") || n.starts_with("8sync auto --loop") {
+    if n.starts_with("/goal ") || n.starts_with("8sync auto --loop") || n.starts_with("8sync auto: phòng `") {
         if let Some(room) = n.split('`').nth(1).filter(|r| !r.is_empty() && r.len() <= 40) {
             return room.to_string();
         }
@@ -756,14 +776,15 @@ mod tests {
     #[test]
     fn options_default_to_the_five_room_team_and_full_opens_six_builder_heavy() {
         let o = parse(&[]).unwrap();
-        assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,dev,qa,review,rd".into(), 10, None));
+        assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,dev,qa,review,rd".into(), 30, None));
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(parse(&v(&["--roles", "full"])).unwrap().roles.join(","), "lead,dev,dev2,ui,qa,review");
         assert_eq!(parse(&v(&["--roles", "small"])).unwrap().roles.len(), 5);
         // Every room of the full team has a role.
         assert!(room::FULL_TEAM.iter().all(|n| room::find(n).is_some()), "{:?}", room::FULL_TEAM);
-        let o = parse(&v(&["--roles", "lead, ba,dev,dev2,qc,dev", "--loop", "2m", "--usd-per-hour", "3"])).unwrap();
-        assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,ba,dev,dev2,qc".into(), 2, Some(3.0)));
+        let o = parse(&v(&["--roles", "lead, ba,dev,dev2,qc,dev", "--loop", "45m", "--usd-per-hour", "3"])).unwrap();
+        assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,ba,dev,dev2,qc".into(), 45, Some(3.0)));
+        assert!(parse(&v(&["--loop", "10m"])).is_err(), "backup cron under 30 min is refused");
         assert!(parse(&v(&["--roles"])).is_err());
         assert!(parse(&v(&["--roles", ","])).is_err());
         assert!(parse(&v(&["--loop", "90m"])).is_err());
@@ -774,19 +795,37 @@ mod tests {
     }
 
     #[test]
-    fn lane_rooms_open_on_a_goal_that_only_ends_when_auto_stops() {
+    fn lane_rooms_open_on_a_goal_that_ends_only_when_auto_stops() {
         for name in ["lead", "ba", "dev", "dev2", "qa", "qc", "review", "critic", "ui", "api", "core"] {
             let lane = room::find(name).and_then(|r| r.lane).unwrap_or_else(|| panic!("{name} has a lane"));
-            let g = goal_prompt(name, lane, 10);
+            let g = goal_prompt(name, lane, auto::DEFAULT_LOOP_MIN);
             assert!(g.starts_with(&format!("/goal Phòng `{name}`")), "{g}");
             assert!(g.chars().count() <= GOAL_MAX, "{name}: {} chars over Claude Code's /goal cap", g.chars().count());
             assert!(!g.contains('\n'), "one line through a .cmd shim");
             for want in ["auto claim --json", "auto wait --json", "\"wake\":\"off\"", "`cap` khác null", "CronCreate", "câu Ship", &format!("cột {lane}"), &format!("--as {name}")] {
                 assert!(g.contains(want), "{name} misses {want}: {g}");
             }
+            // No empty-lane exit: the goal stays live while auto is on. A card from the wait is
+            // worked in the same turn, a new approval loops the lead back to (1) (`auto merge`).
+            // Team rooms wait the full 30 min: the Bash call (room_settings) outlives it.
+            let cond = &g[g.find("Điều kiện đạt").expect("condition")..];
+            assert!(!cond.contains("không có card") && !cond.contains("chờ xong"), "{name}: {cond}");
+            assert!(g.contains("`\"wake\":\"card\"` → claim (2) và làm card đó ngay lượt này; `\"wake\":\"merge\"` → quay lại (1)"), "{g}");
+            assert!(g.contains(&format!("auto wait --json --timeout {}", auto::WAIT_MAX_S)), "{g}");
+            assert!(g.contains(&format!("Bash timeout {BASH_MAX_MS}")) && BASH_MAX_MS > auto::WAIT_MAX_S * 1000 && auto::WAIT_MAX_S >= 1800);
+            assert!(g.contains("cron `*/30 * * * *`"), "{g}");
         }
-        // rooms without a lane keep the loop message, no goal
+        // rooms without a lane get no goal (and no cron: auto::events_only)
         assert!(room::find("rd").and_then(|r| r.lane).is_none());
+    }
+
+    #[test]
+    fn room_settings_lift_the_bash_ceiling_over_auto_wait() {
+        let h = std::env::temp_dir().join(format!("8sync-room-settings-{}", crate::verbs::uuid_sessions::new_uuid()));
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(room_settings(&h).unwrap()).unwrap()).unwrap();
+        assert_eq!(v["env"]["BASH_MAX_TIMEOUT_MS"], BASH_MAX_MS.to_string());
+        assert_eq!(v["env"][super::super::compact::WIN_VAR], ROOM_WINDOW.to_string());
+        let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]
@@ -974,7 +1013,7 @@ mod tests {
         assert!(status["repo"].as_str().is_some(), "auto is scoped to the project");
         assert!(root.join(".claude/loop.md").is_file());
         let states: Vec<_> = rows.iter().map(|r| (r.name.as_str(), r.model.as_str(), r.state.split(' ').next().unwrap())).collect();
-        assert_eq!(states, [("lead", "opus", "đang"), ("dev", "sonnet", "mở"), ("qa", "haiku", "chạy")]);
+        assert_eq!(states, [("lead", "opus", "đang"), ("dev", "sonnet", "mở"), ("qa", "sonnet", "chạy")]);
         let calls = fake.calls.borrow();
         let bg: Vec<_> = calls.iter().filter(|c| c.iter().any(|a| a == "--bg")).collect();
         assert_eq!(bg.len(), 2, "lead is live: no second session");
@@ -1126,6 +1165,7 @@ mod tests {
     fn junk_sessions_titled_after_their_prompt_show_the_room_name() {
         assert_eq!(short_name("/goal Phòng `lead` (vai Lead/PM: điều phối board …) làm việc liên tục"), "lead");
         assert_eq!(short_name("8sync auto --loop: owner bật chạy liên tục cho phòng `rd` (vai R&D …"), "rd");
+        assert_eq!(short_name("8sync auto: phòng `arch` (vai Architect: …) không giữ cột board"), "arch");
         assert_eq!(short_name("dev"), "dev");
         assert_eq!(short_name(""), "(không tên)");
         assert!(short_name(&"x".repeat(300)).chars().count() <= 41);

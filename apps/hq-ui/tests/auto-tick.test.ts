@@ -10,8 +10,8 @@ vi.mock("@/lib/server/db", () => ({ getDb: () => ({}) }));
 vi.mock("@/lib/server/proc", () => ({ run: proc }));
 
 import { pruneTicked, STALE_MS, TICK_EVERY_MS, TICK_IDLE_MS, TICK_PROMPT, TICK_SLACK_MS, tickTargets, type TickRoom } from "@/lib/auto-tick";
-import { REVIVE_MS, runAutoTick } from "@/lib/server/auto-tick";
-import { stateDir } from "@/lib/server/paths";
+import { NO_TICK_MS, REVIVE_MS, runAutoTick } from "@/lib/server/auto-tick";
+import { idleStatusDir, stateDir } from "@/lib/server/paths";
 import { tempHome } from "./helpers";
 
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -27,7 +27,8 @@ describe("tickTargets", () => {
   it("skips every status but idle (running / needs_input / ended / unknown)", () => {
     for (const status of ["running", "needs_input", "ended", "stale", ""]) expect(tickTargets([room({ status })], {}, NOW)).toEqual([]);
   });
-  it("skips without inboxLive, with pending, or without session_id", () => {
+  it("skips without inboxLive, with pending, without session_id, or with noTick", () => {
+    expect(tickTargets([room({ noTick: true })], {}, NOW)).toEqual([]);
     expect(tickTargets([room({ inboxLive: false })], {}, NOW)).toEqual([]);
     expect(tickTargets([room({ pending: 1 })], {}, NOW)).toEqual([]);
     expect(tickTargets([room({ session_id: null })], {}, NOW)).toEqual([]);
@@ -114,5 +115,45 @@ describe("runAutoTick", () => {
     expect(await runAutoTick({ on: true, paused: false }, NOW)).toEqual({ ticked: [], error: "tick failed" });
     expect(err).toHaveBeenCalledWith("auto-tick:", "boom /home/x/secret");
     err.mockRestore();
+  });
+
+  it("skips a session whose own Stop hook said no_tick (own cron loop, or a team room with no lane)", async () => {
+    const dir = idleStatusDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `session-${SID.slice(0, 8)}__lead.json`);
+    const status = { schema: 1, team: `session-${SID.slice(0, 8)}`, name: "lead", state: "rest", detail: "có loop cron riêng", ts: NOW / 1000, no_tick: "cron" };
+    fs.writeFileSync(file, JSON.stringify(status));
+    const on = { on: true, paused: false };
+    expect((await runAutoTick(on, NOW)).ticked).toEqual([]);
+    expect((await runAutoTick(on, NOW + TICK_IDLE_MS)).ticked).toEqual([]);
+    expect(fs.existsSync(inbox())).toBe(false);
+    // The flag gone (the loop was deleted): ticks again.
+    fs.writeFileSync(file, JSON.stringify({ ...status, no_tick: false, state: "working" }));
+    expect((await runAutoTick(on, NOW + 2 * TICK_IDLE_MS)).ticked).toEqual([SID]);
+  });
+
+  it("ignores a no_tick: cron older than the cron period + 5 min (the loop is gone); events holds", async () => {
+    expect(NO_TICK_MS).toBe(35 * 60_000);
+    const dir = idleStatusDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `session-${SID.slice(0, 8)}__lead.json`);
+    const rec = (no_tick: unknown) => JSON.stringify({ schema: 1, team: `session-${SID.slice(0, 8)}`, name: "lead", state: "rest", detail: "x", ts: NOW / 1000, no_tick });
+    fs.writeFileSync(file, rec("cron"));
+    const on = { on: true, paused: false };
+    const t = NOW + NO_TICK_MS - TICK_IDLE_MS;
+    expect((await runAutoTick(on, t)).ticked).toEqual([]);
+    // Still fresh at exactly 35 min: skipped.
+    expect((await runAutoTick(on, t + TICK_IDLE_MS)).ticked).toEqual([]);
+    // Past 35 min: the flag is stale and the idle session ticks.
+    expect((await runAutoTick(on, t + TICK_IDLE_MS + 1_000)).ticked).toEqual([SID]);
+    // A room without a board lane ("events") stays skipped however old the record is (polls 60 s
+    // apart, past the 10-min re-tick, so only the flag holds it back).
+    fs.writeFileSync(file, rec("events"));
+    const u = t + 2 * TICK_EVERY_MS;
+    expect((await runAutoTick(on, u)).ticked).toEqual([]);
+    expect((await runAutoTick(on, u + TICK_IDLE_MS)).ticked).toEqual([]);
+    // A bare `true` from an older 8sync counts as cron: it expires too.
+    fs.writeFileSync(file, rec(true));
+    expect((await runAutoTick(on, u + 2 * TICK_IDLE_MS)).ticked).toEqual([SID]);
   });
 });
