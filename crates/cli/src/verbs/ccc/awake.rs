@@ -11,26 +11,34 @@
 //!   row with no live Claude Code session.
 //! - Never starts a room and never renews the auto lease; capped at 24 h. A closed laptop lid
 //!   still sleeps, and a shutdown still kills the rooms (`auto revive` brings them back).
+//! - Windows: also turns the screen off after `--screen-off N` minutes (default 10, 0 = leave it
+//!   to the power plan) without mouse/keyboard input, unless an app holds the display (video) or
+//!   the machine has Modern Standby (screen off can pull it into standby there). Owner
+//!   (2026-10-19): with the plan's 180 min and apps resetting the display timer, the screen stayed
+//!   on all day while rooms worked; a touch brings it back.
 //! - `awake status [--json]`: what the OS says right now (held awake?, screen on/off, idle since
 //!   the last mouse/keyboard input, time asleep since boot). HQ polls the JSON every ~30 s.
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 
-pub(super) const USAGE: &str = "usage: 8sync ccc awake [--while-rooms] [--hours N]   (mặc định 8 giờ, tối đa 24)\n       8sync ccc awake status [--json]   (máy có đang thức, màn hình, lần cuối đụng chuột/phím)";
+pub(super) const USAGE: &str = "usage: 8sync ccc awake [--while-rooms] [--hours N] [--screen-off PHÚT]   (mặc định 8 giờ, tối đa 24; tắt màn hình sau 10 phút không ai đụng, 0 = để Windows lo)\n       8sync ccc awake status [--json]   (máy có đang thức, màn hình, lần cuối đụng chuột/phím)";
 
 const DEFAULT_HOURS: f64 = 8.0;
 const MAX_HOURS: f64 = 24.0;
 const EVERY: Duration = Duration::from_secs(60);
+const SCREEN_OFF_MIN: u64 = 10;
 
 #[derive(Debug, PartialEq)]
 pub(super) struct Opts {
     pub while_rooms: bool,
     pub hours: f64,
+    /// Minutes without input before the screen goes off; 0 = the OS power plan decides.
+    pub screen_off: u64,
 }
 
 pub(super) fn parse(rest: &[String]) -> Result<Opts> {
-    let mut o = Opts { while_rooms: false, hours: DEFAULT_HOURS };
+    let mut o = Opts { while_rooms: false, hours: DEFAULT_HOURS, screen_off: SCREEN_OFF_MIN };
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -40,11 +48,27 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
                 let Some(h) = v else { bail!("--hours cần một số > 0\n{USAGE}") };
                 o.hours = h.min(MAX_HOURS);
             }
+            "--screen-off" => {
+                let Some(m) = it.next().and_then(|v| v.parse::<u64>().ok()).filter(|m| *m <= 24 * 60) else {
+                    bail!("--screen-off cần số phút từ 0 tới 1440\n{USAGE}")
+                };
+                o.screen_off = m;
+            }
             "-h" | "--help" => bail!("{USAGE}"),
             x => bail!("không rõ `{x}`\n{USAGE}"),
         }
     }
     Ok(o)
+}
+
+/// Turn the screen off now: nobody has touched the machine for `after_s`, no app holds the display,
+/// and no Modern Standby (unknown fields never blank).
+pub(super) fn should_blank(s: &Status, after_s: u64) -> bool {
+    after_s > 0
+        && s.modern_standby == Some(false)
+        && s.display_required == Some(false)
+        && matches!(s.display, Some("on" | "dim"))
+        && s.idle_s.is_some_and(|i| i >= after_s)
 }
 
 /// The command that holds the machine awake on this OS while process `pid` (8sync itself) lives:
@@ -87,6 +111,23 @@ mod win {
         // SAFETY: as above.
         unsafe {
             SetThreadExecutionState(ES_CONTINUOUS);
+        }
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
+    }
+    const HWND_BROADCAST: isize = 0xFFFF;
+    const WM_SYSCOMMAND: u32 = 0x0112;
+    const SC_MONITORPOWER: usize = 0xF170;
+
+    /// Screen off until the next input (or an app that forces it on). Posted, so a hung window
+    /// can't block the loop.
+    pub fn screen_off() {
+        // SAFETY: constant message to the broadcast handle; no pointers.
+        unsafe {
+            PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2);
         }
     }
 }
@@ -152,7 +193,12 @@ pub(super) fn run(o: &Opts, claude: Option<&dyn super::team::Claude>, subscripti
     }
     let _hold = Hold::take()?;
     let until = if o.while_rooms { "không còn phòng nào chạy" } else { "Ctrl+C" };
-    println!("giữ máy thức (màn hình vẫn tắt được) tới khi hết {} giờ hoặc {until}. Gập nắp laptop / tắt máy thì phòng vẫn dừng (`8sync ccc auto revive` mở lại).", o.hours);
+    let screen = match (o.screen_off, probe().modern_standby) {
+        (m, Some(false)) if m > 0 => format!("màn hình tự tắt sau {m} phút không ai đụng chuột/phím, chạm là sáng lại"),
+        (m, Some(true)) if m > 0 => "máy có Modern Standby nên 8sync không tự tắt màn hình (tắt có thể kéo máy vào ngủ nhẹ)".to_string(),
+        _ => "màn hình tắt theo cài đặt nguồn của máy".to_string(),
+    };
+    println!("giữ máy thức tới khi hết {} giờ hoặc {until}; {screen}. Gập nắp laptop / tắt máy thì phòng vẫn dừng (`8sync ccc auto revive` mở lại).", o.hours);
     if subscription {
         println!("gói subscription: auto vẫn theo lease ≤ 4 giờ khi anh có mặt; chạy không người trông nhiều giờ thì dùng Routines (`/schedule`) hoặc Console API key.");
     }
@@ -170,6 +216,12 @@ pub(super) fn run(o: &Opts, claude: Option<&dyn super::team::Claude>, subscripti
             if empty >= 2 {
                 println!("không còn phòng nào chạy — nhả, máy được ngủ lại.");
                 return Ok(());
+            }
+        }
+        #[cfg(windows)]
+        {
+            if should_blank(&probe(), o.screen_off * 60) {
+                win::screen_off();
             }
         }
     }
@@ -456,11 +508,31 @@ mod tests {
 
     #[test]
     fn parses_flags_and_caps_the_hours() {
-        assert_eq!(parse(&[]).unwrap(), Opts { while_rooms: false, hours: 8.0 });
-        assert_eq!(parse(&args(&["--while-rooms", "--hours", "2.5"])).unwrap(), Opts { while_rooms: true, hours: 2.5 });
+        assert_eq!(parse(&[]).unwrap(), Opts { while_rooms: false, hours: 8.0, screen_off: 10 });
+        assert_eq!(
+            parse(&args(&["--while-rooms", "--hours", "2.5", "--screen-off", "0"])).unwrap(),
+            Opts { while_rooms: true, hours: 2.5, screen_off: 0 },
+            "0 leaves the screen to the power plan"
+        );
         assert_eq!(parse(&args(&["--hours", "100"])).unwrap().hours, 24.0, "never more than a day");
-        for bad in [&["--hours"][..], &["--hours", "0"], &["--hours", "x"], &["--hours", "NaN"], &["--forever"]] {
+        assert_eq!(parse(&args(&["--screen-off", "1440"])).unwrap().screen_off, 1440);
+        for bad in [&["--hours"][..], &["--hours", "0"], &["--hours", "x"], &["--hours", "NaN"], &["--forever"], &["--screen-off"], &["--screen-off", "-1"], &["--screen-off", "1441"], &["--screen-off", "5.5"]] {
             assert!(parse(&args(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn blanks_only_an_idle_screen_nobody_needs() {
+        let idle = Status { schema: 1, held: Some(true), display_required: Some(false), display: Some("on"), idle_s: Some(600), boot_s: Some(9_000), slept_s: Some(0), modern_standby: Some(false) };
+        assert!(should_blank(&idle, 600), "10 min without input, nothing holds the display");
+        assert!(should_blank(&Status { display: Some("dim"), ..idle }, 600));
+        assert!(!should_blank(&Status { idle_s: Some(599), ..idle }, 600), "someone touched it within the window");
+        assert!(!should_blank(&idle, 0), "0 = the power plan decides");
+        assert!(!should_blank(&Status { display: Some("off"), ..idle }, 600), "already off: no repeat");
+        assert!(!should_blank(&Status { display_required: Some(true), ..idle }, 600), "an app holds the screen (video)");
+        assert!(!should_blank(&Status { modern_standby: Some(true), ..idle }, 600), "screen off can pull Modern Standby into sleep");
+        for unknown in [Status { display: None, ..idle }, Status { idle_s: None, ..idle }, Status { display_required: None, ..idle }, Status { modern_standby: None, ..idle }] {
+            assert!(!should_blank(&unknown, 600), "{unknown:?}");
         }
     }
 
