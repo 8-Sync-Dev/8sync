@@ -94,7 +94,7 @@ export function parsePs(out: string) {
 
 export type Exec = (cmd: string, args: string[], timeoutMs?: number) => Promise<string | null>;
 
-const exec: Exec = (cmd, args, timeoutMs = TIMEOUT_MS) =>
+export const exec: Exec = (cmd, args, timeoutMs = TIMEOUT_MS) =>
   new Promise((resolve) => {
     try {
       execFile(cmd, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 4 << 20 }, (err, stdout) => resolve(err ? null : String(stdout)));

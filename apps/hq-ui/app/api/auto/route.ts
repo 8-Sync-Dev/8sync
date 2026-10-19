@@ -3,6 +3,7 @@ import { runAutoTick } from "@/lib/server/auto-tick";
 import { readPublic } from "@/lib/server/auth";
 import { sweepStuckAsks } from "@/lib/server/stuck-asks";
 import { bad, json, open, readBody } from "@/lib/server/http";
+import { runBlocked } from "@/lib/server/power";
 import { versions } from "@/lib/server/version";
 
 export const runtime = "nodejs";
@@ -28,5 +29,8 @@ export async function POST(req: Request) {
   const body = await readBody(req);
   const action = body?.action;
   if (typeof action !== "string" || !(AUTO_ACTIONS as readonly string[]).includes(action)) return bad(`action must be one of ${AUTO_ACTIONS.join(", ")}`, 422);
+  // Over today's electricity budget: the team stays paused (lib/server/power.ts) until the budget is raised.
+  const blocked = action === "on" ? runBlocked() : null;
+  if (blocked) return bad(blocked, 409);
   return json(await autoSet(action as AutoAction));
 }
