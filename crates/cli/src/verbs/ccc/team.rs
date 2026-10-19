@@ -172,11 +172,12 @@ pub(super) const GOAL_MAX: usize = 4000;
 /// The first message of a room with a board lane: `/goal <condition>`. Setting a goal starts a turn
 /// with the condition as the directive, and Claude Code's evaluator starts the next turn until the
 /// condition holds (checked live: `claude --bg … "/goal …"` → "Goal set" … "Goal achieved"). An empty
-/// lane is spent in `auto wait --timeout 1800` (blocks ≤ 30 min without tokens; [`room_settings`]
-/// lifts the Bash cap over it), so a turn on an empty lane costs one short turn per 30 min. The goal
-/// holds only when auto stops: an "empty lane" exit ended the room's work for good once the backup
-/// cron was gone. A card that wakes the wait is worked in the same turn; a new approval (`merge`)
-/// sends the lead back to (1).
+/// lane is spent in `auto wait` (blocks ≤ 30 min without tokens: [`room_settings`] lifts the Bash
+/// cap and `auto wait` reads it, [`auto::wait_default`]), so a turn on an empty lane costs one short
+/// turn per 30 min. The goal holds only when auto stops: an "empty lane" exit ended the room's work
+/// for good once the backup cron was gone. A card that wakes the wait is worked in the same turn; a
+/// new approval (`merge`) sends the lead back to (1). The lead asks the Ship question before it
+/// waits ([`auto::BACKLOG_FIRST`]).
 pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
     let (role, duty) = room::role(name);
     let first = if lane == "backlog" { format!("(1b) {} ", auto::BACKLOG_FIRST) } else { String::new() };
@@ -184,7 +185,7 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
         "/goal Phòng `{name}` (vai {role}: {duty}) làm việc liên tục cho dự án này qua board `8sync ccc auto`. \
          Lượt đầu, đặt loop dự phòng: {setup} \
          Mỗi lượt: (1) `8sync ccc auto status --json`; {first}(2) `8sync ccc auto claim --json` (cột {lane}); có card thì làm đúng việc cột đó: {playbook}; \
-         (3) không có card → `8sync ccc auto wait --json --timeout {wait_s}` (Bash timeout {bash_ms}; chặn ≤ {wait_min} phút, không tốn token): `\"wake\":\"card\"` → claim (2) và làm card đó ngay lượt này; `\"wake\":\"merge\"` → quay lại (1); còn lại → kết thúc lượt. \
+         (3) không có card → `8sync ccc auto wait --json` (Bash timeout {bash_ms}; chặn ≤ {wait_min} phút, không tốn token): `\"wake\":\"card\"` → claim (2) và làm card đó ngay lượt này; `\"wake\":\"merge\"` → quay lại (1); còn lại → kết thúc lượt. \
          Mọi lệnh `8sync ccc auto claim|move|note|wait` thêm `--as {name}` (trong worktree 8sync không tự nhận ra phòng). \
          Rail: không merge/push main/tag/deploy khi owner chưa trả lời câu Ship (hoặc chưa cho tự merge); giữ file trước khi sửa (`8sync ccc . goal \"…\" --files a,b`); \
          `8sync ccc meet --say \"done|doing|blocked: …\"` sau mỗi card. \
@@ -193,7 +194,6 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
          hoặc `gate` nhắc tới lease, hoặc `auto wait --json` trả `\"wake\":\"off\"`.",
         setup = auto::goal_loop_setup(name, every_min),
         playbook = auto::lane_playbook(lane),
-        wait_s = auto::WAIT_MAX_S,
         bash_ms = BASH_MAX_MS,
         wait_min = auto::WAIT_MAX_S / 60,
     );
@@ -811,7 +811,12 @@ mod tests {
             let cond = &g[g.find("Điều kiện đạt").expect("condition")..];
             assert!(!cond.contains("không có card") && !cond.contains("chờ xong"), "{name}: {cond}");
             assert!(g.contains("`\"wake\":\"card\"` → claim (2) và làm card đó ngay lượt này; `\"wake\":\"merge\"` → quay lại (1)"), "{g}");
-            assert!(g.contains(&format!("auto wait --json --timeout {}", auto::WAIT_MAX_S)), "{g}");
+            assert!(g.contains("auto wait --json` (Bash timeout") && !g.contains("--timeout"), "{g}");
+            if lane == "backlog" {
+                // the lead asks the Ship question in the turn auto merge refuses, before it waits
+                let ship = g.find("NGAY lượt này, trước mọi `auto wait`, hỏi MỘT câu AskUserQuestion Ship").unwrap_or_else(|| panic!("{name}: {g}"));
+                assert!(ship < g.find("(3) không có card").unwrap(), "{name}: {g}");
+            }
             assert!(g.contains(&format!("Bash timeout {BASH_MAX_MS}")) && BASH_MAX_MS > auto::WAIT_MAX_S * 1000 && auto::WAIT_MAX_S >= 1800);
             assert!(g.contains("cron `*/30 * * * *`"), "{g}");
         }

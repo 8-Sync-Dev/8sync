@@ -1,6 +1,6 @@
 //! `8sync ccc auto merge [--json]`: lands every `approved` card in code, not tokens. Needs the
-//! owner's project self-merge permission ([`super::grant::self_merge`]); without it, one line tells
-//! the lead to ask the single `Ship` question and the verb exits non-zero.
+//! owner's project self-merge permission ([`super::grant::self_merge`]); without it the refusal
+//! prints the exact `Ship` question for the lead to ask ([`ship_question`]) and exits non-zero.
 //!
 //! Per approved card, in board order: `gh pr view` → base must be the repo's default branch
 //! ([`default_branch`]; a base branch that was already merged is retargeted with `gh pr edit
@@ -72,7 +72,35 @@ fn gh_default_branch(root: &Path) -> Option<String> {
 /// How long a `gh` lookup may take before it counts as failed.
 pub(super) const GH_TIMEOUT: Duration = Duration::from_secs(20);
 
-pub(super) const NO_PERMISSION: &str = "chưa có quyền tự merge cho dự án này (hoặc đã quá 8 giờ): lead hỏi owner MỘT câu AskUserQuestion header \"Ship\" gom MỌI card approved (option \"Duyệt tất cả (Recommended)\" | \"Chỉ merge, chưa deploy\" | \"Dừng\"), rồi chạy lại `8sync ccc auto merge`. Không tự `gh pr merge`.";
+/// The Ship question's options, in the order the lead asks them.
+const SHIP_OPTIONS: [(&str, &str); 3] = [
+    ("Duyệt tất cả (Recommended)", "merge mọi card approved liệt kê ở câu hỏi"),
+    ("Chỉ merge, chưa deploy", "merge các card đó, chưa tag/deploy"),
+    ("Dừng", "không merge; card ở lại approved"),
+];
+
+pub(super) const NO_PERMISSION: &str = "chưa có quyền tự merge cho dự án này (hoặc đã quá 8 giờ): lead hỏi owner MỘT câu AskUserQuestion header \"Ship\" gom MỌI card approved (option \"Duyệt tất cả (Recommended)\" | \"Chỉ merge, chưa deploy\" | \"Dừng\") NGAY lượt này, trước `auto wait`, rồi chạy lại `8sync ccc auto merge`. Không tự `gh pr merge`.";
+
+/// Pure: the refusal without permission, with the exact AskUserQuestion input (header Ship, the
+/// options, every approved card and its PR) for the lead to copy. ai-game-studio 2026-10-20: the
+/// lead waited a tick before asking.
+pub(super) fn ship_question(approved: &[Target]) -> String {
+    let list: Vec<String> = approved.iter().map(|t| format!("#{} ({})", t.id, t.pr.as_deref().and_then(pr_number).map_or_else(|| "chưa có PR".to_string(), |n| format!("PR #{n}")))).collect();
+    let options: Vec<Value> = SHIP_OPTIONS.iter().map(|(label, description)| json!({ "label": label, "description": description })).collect();
+    let q = json!({ "questions": [{
+        "header": "Ship",
+        "question": format!("Merge {} card approved: {}?", approved.len(), list.join(", ")),
+        "multiSelect": false,
+        "options": options,
+    }] });
+    format!("{NO_PERMISSION}\nAskUserQuestion (copy nguyên):\n{q}")
+}
+
+/// Why a PR whose `mergeable` is still `UNKNOWN` (GitHub computes it after a push) did not move:
+/// not a conflict, and no bounce. `pr` as shown (`#116`).
+pub(super) fn computing(pr: &str) -> String {
+    format!("GitHub đang tính mergeable của PR {pr}: thử lại sau 1 phút")
+}
 
 /// A card's PR field (`81`, `#81`, `https://github.com/o/r/pull/81`) as a number.
 pub(super) fn pr_number(s: &str) -> Option<u64> {
@@ -144,8 +172,8 @@ pub(super) enum Step {
     Done(String),
     /// Back to `ready`, with why.
     Back(String),
-    /// Leave it for the next tick (GitHub has not computed mergeable yet).
-    Wait(String),
+    /// Leave it for the next tick: GitHub has not computed mergeable yet ([`computing`]).
+    Computing,
 }
 
 /// Pure: [`Step`] for a card approved at `card_sha` whose PR is `pr`, into the default branch
@@ -165,10 +193,11 @@ pub(super) fn decide(card_sha: &str, pr: &Value, base_merged: bool, main: &str) 
         }
         return Step::Back(format!("PR có base `{base}`, không phải {main}: rebase lên origin/{main}, `gh pr edit --base {main}`, qua qa/review lại"));
     }
+    // Only CONFLICTING is a conflict; UNKNOWN right after a push is GitHub still computing.
     match s("mergeable").as_str() {
         "MERGEABLE" => {}
         "CONFLICTING" => return Step::Back(format!("conflict với {main}: rebase lên origin/{main} rồi qua qa/review lại")),
-        _ => return Step::Wait("GitHub chưa tính xong mergeable: nhịp sau thử lại".into()),
+        _ => return Step::Computing,
     }
     if !same_commit(card_sha, &head) {
         let short = &head[..head.len().min(12)];
@@ -274,7 +303,7 @@ fn land(t: &Target, c: &Ctx, first: bool) -> Outcome {
                 back("review", format!("đổi base sang {main}: review lại diff trên {main}"))?
             }
             Step::Back(why) => back("ready", why)?,
-            Step::Wait(why) => ("wait", None, Some(why)),
+            Step::Computing => ("wait", None, Some(computing(&format!("#{n}")))),
         })
     })();
     match r {
@@ -301,7 +330,12 @@ fn line(o: &Outcome) -> String {
 /// `auto merge [--json]` in `root`; `who` closes and returns cards as that room.
 pub(super) fn run(as_json: bool, home: &Path, root: &Path, who: Option<&str>, now: u64) -> Result<()> {
     if super::grant::self_merge(&super::grant::dir(home), root, now).is_none() {
-        bail!(NO_PERMISSION);
+        let approved: Vec<Target> = target::list(home, root)?.into_iter().filter(|t| t.state == "open" && t.lane == "approved").collect();
+        if approved.is_empty() {
+            println!("không có card approved");
+            return Ok(());
+        }
+        bail!("{}", ship_question(&approved));
     }
     // Never guess `main`: on a master repo that would merge stacked PRs into the wrong branch.
     let Some(main) = default_branch(root) else { bail!(NO_DEFAULT) };
@@ -367,7 +401,9 @@ mod tests {
         assert!(matches!(d("0123456", &pr("card-125-ui", "MERGEABLE", HEAD, "OPEN"), false), Step::Back(w) if w.contains("card-125-ui")));
         assert!(matches!(d("0123456", &pr("main", "CONFLICTING", HEAD, "OPEN"), false), Step::Back(w) if w.contains("conflict")));
         assert!(matches!(d("fedcba9", &pr("main", "MERGEABLE", HEAD, "OPEN"), false), Step::Back(w) if w.contains("chưa được review")));
-        assert!(matches!(d("0123456", &pr("main", "UNKNOWN", HEAD, "OPEN"), false), Step::Wait(_)));
+        assert_eq!(d("0123456", &pr("main", "UNKNOWN", HEAD, "OPEN"), false), Step::Computing, "UNKNOWN is no conflict");
+        assert_eq!(d("0123456", &pr("main", "", HEAD, "OPEN"), false), Step::Computing);
+        assert_eq!(computing("#116"), "GitHub đang tính mergeable của PR #116: thử lại sau 1 phút");
         assert_eq!(d("0123456", &pr("main", "UNKNOWN", HEAD, "MERGED"), false), Step::Done(HEAD.into()));
         assert!(matches!(d("0123456", &pr("card-125-ui", "UNKNOWN", HEAD, "MERGED"), false), Step::Back(w) if w.contains("card-125-ui")));
         assert!(matches!(d("0123456", &pr("main", "MERGEABLE", HEAD, "CLOSED"), false), Step::Back(_)));
@@ -414,6 +450,19 @@ mod tests {
         assert_eq!(approved_merge(81, HEAD, &cards, || None), None, "gh failed");
         assert_eq!(approved_merge(81, HEAD, &cards, || Some(("master".into(), "master".into()))), Some(5), "master repo");
         assert_eq!(approved_merge(81, HEAD, &cards, || Some(("main".into(), "master".into()))), None, "main is not the default");
+    }
+
+    #[test]
+    fn the_ship_refusal_carries_the_exact_question() {
+        let cards = vec![card(5, "approved", "81", "0123456"), card(7, "approved", "https://github.com/o/r/pull/90", "0123456")];
+        let out = ship_question(&cards);
+        assert!(out.starts_with(NO_PERMISSION) && NO_PERMISSION.contains("trước `auto wait`"), "{out}");
+        let q: Value = serde_json::from_str(out.lines().last().unwrap()).unwrap();
+        let q = &q["questions"][0];
+        assert_eq!(q["header"], "Ship");
+        assert_eq!(q["question"], "Merge 2 card approved: #5 (PR #81), #7 (PR #90)?");
+        let labels: Vec<&str> = q["options"].as_array().unwrap().iter().map(|o| o["label"].as_str().unwrap()).collect();
+        assert_eq!(labels, ["Duyệt tất cả (Recommended)", "Chỉ merge, chưa deploy", "Dừng"]);
     }
 
     #[test]

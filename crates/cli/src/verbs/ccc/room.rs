@@ -131,24 +131,27 @@ pub(super) fn builds(name: &str) -> bool {
     find(name).is_none_or(|row| row.lane == Some("ready"))
 }
 
-/// Is `word` a key of some role row (`designer` → design)?
-fn known(word: &str) -> bool {
-    ROLES.iter().any(|row| row.keys.iter().any(|k| word == *k || (k.len() >= 4 && word.starts_with(k))))
-}
+/// Tags that open card titles but name no role (`[hot-fix]`, `[wip]`, `[p1]`).
+const NOT_ROLES: &[&str] = &["hot-fix", "hotfix", "follow-up", "followup", "wip", "bug", "feature", "chore", "p0", "p1", "p2", "p3"];
 
-/// Pure: the role a card tag names, or None when the tag is no role (`#125`, `bug`, `v2`). A
-/// whole-tag key of a room row maps to that row's role (`backend` → dev, `ux` → ui); a hyphenated
-/// tag with a role word in it that the table has no room for (`game-designer`, `qa-lead`) stays
-/// itself, so no room claims it; other hyphenated tags (`hot-fix`, `follow-up`) are no role.
+/// Pure: the role a card tag names, or None when the tag is no role (`#125`, `bug`, `hot-fix`,
+/// `v2`). A whole-tag key of a room row maps to that row's role (`backend` → dev, `ux` → ui,
+/// `dev2` → dev); any other word or hyphenated word of letters (`game-designer`,
+/// `art-director`, `godot`) is a role itself: a role no room row has, so only a room of that name
+/// claims it and `lint`/`board` list it. ai-game-studio 2026-10-20: dev claimed
+/// `[#125][art-director]` while unknown hyphenated tags still counted as untagged.
 pub(super) fn card_role(tag: &str) -> Option<String> {
     let t = tag.trim().to_lowercase();
+    if t.is_empty() || t.starts_with('#') || NOT_ROLES.contains(&t.as_str()) {
+        return None;
+    }
     let tok = t.trim_end_matches(|c: char| c.is_ascii_digit());
     if !tok.is_empty() && tok.chars().all(|c| c.is_alphanumeric() || c == '&') {
-        return ROLES.iter().find(|row| row.keys.iter().any(|k| tok == *k || (k.len() >= 4 && tok.starts_with(k)))).map(|row| crew_of(row).to_string());
+        if let Some(row) = ROLES.iter().find(|row| row.keys.iter().any(|k| tok == *k || (k.len() >= 4 && tok.starts_with(k)))) {
+            return Some(crew_of(row).to_string());
+        }
     }
-    let words: Vec<&str> = t.split('-').collect();
-    let hyphenated = words.len() >= 2 && words.iter().all(|w| !w.is_empty() && w.chars().all(char::is_alphabetic));
-    (hyphenated && words.iter().any(|w| known(w))).then_some(t)
+    t.split('-').all(|w| !w.is_empty() && w.chars().all(char::is_alphabetic)).then_some(t)
 }
 
 /// Another room of the same repo, as shown to this one.

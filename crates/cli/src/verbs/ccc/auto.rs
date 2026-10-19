@@ -52,7 +52,7 @@ const USAGE: &str = "usage: 8sync ccc auto on [--here] [--omp] [--loop [30m]] [-
        (on --omp nhận thêm --omp-model <provider/model>: model của đội omp)
        8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down
        8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--role <vai>] [--prio P0..P3] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id> | reopen <id> [--note \"…\"]
-       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>] [--timeout 1800] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
+       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>] [--timeout <giây ≤1800>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
        8sync ccc auto merge [--as <phòng>] [--json]   (lead: merge mọi card approved; cần quyền tự merge của owner)
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
 pub(super) const DEFAULT_AFTER_S: u64 = 60;
@@ -525,13 +525,13 @@ Mỗi nhịp:
    từ lúc bật) → nghỉ nhịp này, giữ loop: trần tự hạ khi cửa sổ reset hoặc thời gian trôi.
    Board (card theo cột, `8sync ccc auto board`): phòng có cột (lead/ba: backlog · dev/ui/api/core: ready · qa · review)
    chạy `8sync ccc auto claim --json --as <phòng>`; có `card` → nhịp này chỉ làm card đó rồi chuyển cột; không card → `target` khác null thì
-   bước 2, không thì `8sync ccc auto wait --json --as <phòng>` (chặn tới khi cột có card, ≤ 9 phút, Bash timeout 600000; phòng mở bằng
-   `auto up` thêm `--timeout 1800`, Bash timeout 1860000): `\"wake\":\"card\"` → claim lại và làm card đó ngay nhịp này,
+   bước 2, không thì `8sync ccc auto wait --json --as <phòng>` (chặn tới khi cột có card, tự chờ ≤ 9 phút, phòng mở bằng
+   `auto up` ≤ 30 phút; Bash timeout 600000, có BASH_MAX_TIMEOUT_MS thì bằng nó): `\"wake\":\"card\"` → claim lại và làm card đó ngay nhịp này,
    `\"wake\":\"merge\"` → về đầu bước 1 (lead chạy `8sync ccc auto merge`), còn lại → hết nhịp.
    Phòng không cột (arch, rd, …) không đặt loop: chỉ làm khi có card nhãn của mình, owner hay phòng khác nhắn.
    `ci` trong status khác `ok` (`billing` = GitHub không chạy job) → không chờ CI; gate local một lần mỗi head SHA.
    - backlog: viết AC + một lệnh check → `8sync ccc auto move <id> ready --check \"<lệnh>\"` (gấp: thêm `--prio P0|P1`); gỡ card blocked;
-     card approved → MỘT câu hỏi Ship cho owner, duyệt rồi mới `gh pr merge <pr> --squash --match-head-commit <sha>`
+     `8sync ccc auto merge` báo thiếu quyền mà có card approved → hỏi NGAY câu Ship nó in sẵn (MỘT câu AskUserQuestion), trước mọi `auto wait`
    - building: `git fetch origin`, worktree `.claude/worktrees/card-<id>`, nhánh `card-<id>-<slug>` từ `origin/main` (không chồng nhánh card khác: cần PR chưa merge → `move <id> blocked --note \"chờ PR #n\"`), `/ship` tới commit, push, PR → `move <id> qa --pr <số>`
    - qa: gate test của dự án MỘT lần cho head SHA của PR (`gh pr view <pr> --json headRefOid`) + UAT (ảnh kết quả đặt tên `qa/evidence/card-<id>-<slug>.png`, file tạm xuất ra `/tmp`) → `auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"` → `move <id> review`, trượt → `move <id> ready --note \"[qa] …\"`
    - review: review đối kháng, dùng note `gate <sha>` của qa (SHA đổi mới chạy lại) → `move <id> approved --sha <head>`, lỗi → `move <id> ready --note \"[review] …\"`
@@ -603,8 +603,10 @@ pub(super) fn lane_playbook(lane: &str) -> &'static str {
 }
 
 /// What a backlog room does every turn before it claims: approved cards land first (stacked,
-/// unmerged work is what the owner never sees), then blocked cards whose reason is gone.
-pub(super) const BACKLOG_FIRST: &str = "trước claim: (a) chỉ phòng lead (BA bỏ qua): chạy `8sync ccc auto merge` (merge mọi card approved: base main, mergeable, đúng SHA; conflict/SHA đổi → tự về ready; dùng evidence `gate <sha>` của card); báo thiếu quyền → gom MỌI card approved vào MỘT câu hỏi Ship cho owner rồi chạy lại; không tự `gh pr merge`; (b) `8sync ccc auto lint` → gỡ card blocked hết lý do (`move <id> ready`).";
+/// unmerged work is what the owner never sees), then blocked cards whose reason is gone. Without
+/// the self-merge permission the Ship question is asked in that same turn, before any `auto wait`
+/// (ai-game-studio 2026-10-20: the lead waited first and the approved cards sat a tick).
+pub(super) const BACKLOG_FIRST: &str = "trước claim: (a) chỉ phòng lead (BA bỏ qua): chạy `8sync ccc auto merge` (merge mọi card approved: base main, mergeable, đúng SHA; conflict/SHA đổi → tự về ready); báo thiếu quyền mà có card approved → NGAY lượt này, trước mọi `auto wait`, hỏi MỘT câu AskUserQuestion Ship (copy câu lệnh in ra) rồi chạy lại; không tự `gh pr merge`; (b) `8sync ccc auto lint` → gỡ card blocked hết lý do (`move <id> ready`).";
 
 /// One tick of a room's loop: the recurring cron job's prompt.
 fn tick_prompt(name: &str) -> String {
@@ -617,15 +619,18 @@ fn tick(name: &str, brief: bool) -> String {
     let (role, _) = super::room::role(name);
     // An empty lane rests in `auto wait` (no tokens, wakes on a card): the STATE.md fallback below
     // made every empty tick a full working turn. A card that arrives is worked in this same tick;
-    // a new approval sends the lead back to step 1 (`auto merge`). The plain tick keeps the default
-    // wait under the 10-min Bash cap; `brief` (a team room's `/goal`, Bash cap lifted) defers to the
-    // goal's `--timeout 1800` and stays short for the goal's 4,000-character cap.
+    // a new approval sends the lead back to step 1 (`auto merge`). `auto wait` picks its own
+    // timeout from BASH_MAX_TIMEOUT_MS ([`wait_default`]), so no text names one; `brief` (a team
+    // room's `/goal`) stays short for the goal's 4,000-character cap.
     let empty = format!(
-        "Không có card → `target` khác null thì bước 3, không thì `8sync ccc auto wait --json --as {name}` (≤ {} phút, Bash timeout {BASH_CAP_MS}): `\"wake\":\"card\"` → claim lại và làm card đó ngay nhịp này; `\"wake\":\"merge\"` → quay lại bước 1 (lead chạy `8sync ccc auto merge`); còn lại → hết nhịp, không sang bước 4. ",
+        "Không có card → `target` khác null thì bước 3, không thì `8sync ccc auto wait --json --as {name}` (≤ {} phút, Bash timeout {BASH_CAP_MS}; có BASH_MAX_TIMEOUT_MS thì bằng nó): `\"wake\":\"card\"` → claim lại và làm card đó ngay nhịp này; `\"wake\":\"merge\"` → quay lại bước 1 (lead chạy `8sync ccc auto merge`); còn lại → hết nhịp, không sang bước 4. ",
         WAIT_DEFAULT_S / 60
     );
     let board = match super::room::find(name).and_then(|r| r.lane) {
-        Some(lane) if brief => format!("2) `8sync ccc auto claim --json --as {name}` (cột {lane}): có card → làm theo playbook cột đó trong /goal của phòng. Không có card → `target` khác null thì bước 3, không thì `auto wait` như /goal: `\"wake\":\"card\"` → làm card đó ngay nhịp này, `\"wake\":\"merge\"` → bước 1, còn lại → hết nhịp (không bước 4). "),
+        Some(lane) if brief => format!(
+            "2) {}`8sync ccc auto claim --json --as {name}` (cột {lane}): có card → làm theo playbook cột đó trong /goal của phòng. Không có card → `target` khác null thì bước 3, không thì `auto wait` như /goal: `\"wake\":\"card\"` → làm card đó ngay nhịp này, `\"wake\":\"merge\"` → bước 1, còn lại → hết nhịp (không bước 4). ",
+            if lane == "backlog" { "lead: thiếu quyền merge → hỏi Ship trước `auto wait`. " } else { "" }
+        ),
         Some(lane) => format!(
             "2) {}`8sync ccc auto claim --json --as {name}` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {} (mọi lệnh `auto move|note` thêm `--as {name}`). {empty}",
             if lane == "backlog" { format!("{BACKLOG_FIRST} Rồi ") } else { String::new() },
@@ -1358,17 +1363,25 @@ mod lint_team_tests {
     }
 }
 
-/// `auto wait`: a room with an empty lane blocks here (no tokens) until work arrives. The default
-/// stays under Claude Code's 10-min Bash cap ([`BASH_CAP_MS`]), so a room without
-/// `BASH_MAX_TIMEOUT_MS` never has its wait killed. Team rooms start with that ceiling raised
-/// ([`super::team::room_settings`]) and are told to pass `--timeout` [`WAIT_MAX_S`]: every return to
-/// an empty lane is a new turn that re-reads the whole context (9 min re-fired dev's `/goal` 44
-/// times in 71 min on ai-game-studio).
+/// `auto wait`: a room with an empty lane blocks here (no tokens) until work arrives. Without
+/// `--timeout` the wait fits the room's Bash ceiling ([`wait_default`]): under Claude Code's 10-min
+/// cap ([`BASH_CAP_MS`]) by default, up to [`WAIT_MAX_S`] in team rooms, which start with
+/// `BASH_MAX_TIMEOUT_MS` raised ([`super::team::room_settings`]): every return to an empty lane is
+/// a new turn that re-reads the whole context (9 min re-fired dev's `/goal` 44 times in 71 min on
+/// ai-game-studio).
 pub(super) const WAIT_DEFAULT_S: u64 = 540;
 pub(super) const WAIT_MAX_S: u64 = 1800;
 /// Claude Code's Bash ceiling without `BASH_MAX_TIMEOUT_MS` (ms).
 pub(super) const BASH_CAP_MS: u64 = 600_000;
 const WAIT_POLL_S: u64 = 2;
+
+/// Pure: `auto wait`'s timeout when none is passed, from the room's `BASH_MAX_TIMEOUT_MS` (ms):
+/// a minute under that ceiling, at most [`WAIT_MAX_S`]; unset or unreadable → [`WAIT_DEFAULT_S`].
+/// ai-game-studio 2026-10-20: dev rooms passed the lane text's `--timeout 540` in rooms whose Bash
+/// ceiling allowed 30 min.
+pub(super) fn wait_default(bash_max_ms: Option<&str>) -> u64 {
+    bash_max_ms.and_then(|v| v.trim().parse::<u64>().ok()).map_or(WAIT_DEFAULT_S, |ms| (ms / 1000).saturating_sub(60).clamp(1, WAIT_MAX_S))
+}
 
 #[derive(Debug, PartialEq)]
 struct Wait {
@@ -1377,8 +1390,9 @@ struct Wait {
     timeout: u64,
 }
 
-fn parse_wait(args: &[String], rooms: impl FnOnce() -> Vec<(String, String)>) -> Result<Wait> {
-    let (mut lane, mut who, mut timeout) = (None, None, WAIT_DEFAULT_S);
+/// `bash_max_ms`: the room's `BASH_MAX_TIMEOUT_MS`, for the default timeout ([`wait_default`]).
+fn parse_wait(args: &[String], bash_max_ms: Option<&str>, rooms: impl FnOnce() -> Vec<(String, String)>) -> Result<Wait> {
+    let (mut lane, mut who, mut timeout) = (None, None, wait_default(bash_max_ms));
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().filter(|v| !v.starts_with("--")).cloned().ok_or_else(|| anyhow::anyhow!("{a} cần một giá trị\n{USAGE}"));
@@ -1547,7 +1561,7 @@ pub(super) fn run(
     // A room asks for its own project: `down` in another repo must not stop it, `down` here must.
     let here = scoped(home)(Some(&root.to_string_lossy()));
     if rest.first().map(String::as_str) == Some("wait") {
-        let w = parse_wait(&rest[1..], rooms)?;
+        let w = parse_wait(&rest[1..], std::env::var("BASH_MAX_TIMEOUT_MS").ok().as_deref(), rooms)?;
         let clock = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let v = wait_for(
             &w,
@@ -2183,16 +2197,20 @@ mod tests {
             // an empty lane rests in `auto wait` (under the 10-min Bash cap: a cron room has no
             // BASH_MAX_TIMEOUT_MS) instead of picking STATE.md work; a card it wakes on is worked
             // in this tick, a new approval loops back to step 1 (`auto merge`)
-            assert!(p.contains(&format!("`8sync ccc auto wait --json --as {room}` (≤ 9 phút, Bash timeout {BASH_CAP_MS})")) && p.contains("không sang bước 4"), "{room}: {p}");
+            assert!(p.contains(&format!("`8sync ccc auto wait --json --as {room}` (≤ 9 phút, Bash timeout {BASH_CAP_MS}; có BASH_MAX_TIMEOUT_MS thì bằng nó)")) && p.contains("không sang bước 4"), "{room}: {p}");
+            assert!(!p.contains("--timeout"), "auto wait picks its own timeout: {p}");
             assert!(p.contains("`\"wake\":\"card\"` → claim lại và làm card đó ngay nhịp này; `\"wake\":\"merge\"` → quay lại bước 1"), "{room}: {p}");
             let brief = goal_loop_setup(room, 30);
             assert!(brief.contains("`\"wake\":\"card\"` → làm card đó ngay nhịp này, `\"wake\":\"merge\"` → bước 1"), "{room}: {brief}");
+            assert_eq!(brief.contains("hỏi Ship trước `auto wait`"), lane == "backlog", "{room}: {brief}");
         }
         let rd = loop_prompt("rd", 10, false);
         assert!(rd.contains("không giữ cột board") && !rd.contains("auto claim") && !rd.contains("auto wait --json"), "{rd}");
         // merging stays behind the owner's Ship answer, in the cron prompt and in loop.md
         assert!(loop_prompt("lead", 10, false).contains("owner chưa trả lời Ship"));
-        assert!(LOOP_MD.contains("MỘT câu hỏi Ship cho owner, duyệt rồi mới `gh pr merge"));
+        assert!(loop_prompt("lead", 10, false).contains("NGAY lượt này, trước mọi `auto wait`, hỏi MỘT câu AskUserQuestion Ship"));
+        assert!(LOOP_MD.contains("hỏi NGAY câu Ship nó in sẵn (MỘT câu AskUserQuestion), trước mọi `auto wait`"));
+        assert!(!LOOP_MD.contains("--timeout"));
         assert!(LOOP_MD.contains("khi owner chưa trả lời Ship"));
     }
 
@@ -2202,14 +2220,20 @@ mod tests {
         let a = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let rooms = || vec![("dev".to_string(), "id".to_string())];
         // lane from the room's role; --as / --lane / --timeout override; bad values refused
+        // without --timeout the wait fits the room's Bash ceiling (BASH_MAX_TIMEOUT_MS)
         assert_eq!(WAIT_DEFAULT_S, 540, "the default wait fits Claude Code's 10-min Bash cap");
         assert!((WAIT_DEFAULT_S + 60) * 1000 <= BASH_CAP_MS);
-        assert_eq!(parse_wait(&a(&["--as", "dev"]), rooms).unwrap(), Wait { room: "dev".into(), lane: "ready".into(), timeout: WAIT_DEFAULT_S });
-        assert_eq!(parse_wait(&a(&["--as", "x", "--lane", "qa", "--timeout", "30"]), rooms).unwrap().lane, "qa");
+        assert_eq!((wait_default(Some("1860000")), wait_default(None), wait_default(Some("600000"))), (1800, 540, 540));
+        assert_eq!((wait_default(Some("9999999")), wait_default(Some("junk")), wait_default(Some("30000"))), (1800, 540, 1));
+        assert_eq!(wait_default(Some(&super::super::team::BASH_MAX_MS.to_string())), WAIT_MAX_S, "team rooms wait the full 30 min");
+        assert_eq!(parse_wait(&a(&["--as", "dev"]), None, rooms).unwrap(), Wait { room: "dev".into(), lane: "ready".into(), timeout: WAIT_DEFAULT_S });
+        assert_eq!(parse_wait(&a(&["--as", "dev"]), Some("1860000"), rooms).unwrap().timeout, 1800);
+        assert_eq!(parse_wait(&a(&["--as", "x", "--lane", "qa", "--timeout", "30"]), None, rooms).unwrap().lane, "qa");
         for bad in [&["--as", "dev", "--timeout", "0"][..], &["--as", "dev", "--timeout", "1801"], &["--as", "dev", "--lane", "building"], &["--as", "rd"], &["--as"]] {
-            assert!(parse_wait(&a(bad), rooms).is_err(), "{bad:?}");
+            assert!(parse_wait(&a(bad), None, rooms).is_err(), "{bad:?}");
         }
-        assert_eq!(parse_wait(&a(&["--as", "dev", "--timeout", "1800"]), rooms).unwrap().timeout, 1800, "30 min: the empty-lane rest");
+        assert_eq!(parse_wait(&a(&["--as", "dev", "--timeout", "1800"]), None, rooms).unwrap().timeout, 1800, "an explicit --timeout still wins");
+        assert_eq!(parse_wait(&a(&["--as", "dev", "--timeout", "60"]), Some("1860000"), rooms).unwrap().timeout, 60);
         let card = |id: u64, lane: &str| target::Target {
             id,
             text: "t".into(),
