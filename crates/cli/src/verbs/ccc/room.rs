@@ -40,12 +40,13 @@ const fn r(keys: &'static [&'static str], name: &'static str, duty: &'static str
 /// (owner 2026-10-17: "team nhiều mà team này thấy thiếu").
 pub(super) const DEFAULT_TEAM: [&str; 5] = ["lead", "dev", "qa", "review", "rd"];
 
-/// `auto up --roles full` (HQ "Team đầy đủ"): a whole product team, the 8-room cap. A BA writes
-/// cards beside the lead, an architect designs the cards labelled `arch` (owner 2026-10-18: a
-/// solution-architecture room that keeps up with the web and goes deep on system design), a builder
-/// and a UI/UX room take ready cards. Each room is its own Claude Code session, so this spends quota
-/// about 8× a single session; the 90% rest still applies.
-pub(super) const FULL_TEAM: [&str; 8] = ["lead", "ba", "arch", "rd", "dev", "ui", "qa", "review"];
+/// `auto up --roles full` (HQ "Team đầy đủ"): three builders (two devs and a UI/UX room) on the ready
+/// lane, a lead, QA and review. Before 2026-10-19 this was lead, ba, arch, rd, dev, ui, qa, review;
+/// measured on ai-game-studio over 36 h: planning rooms (lead, ba, rd, arch) spent about half the
+/// tokens, the one dev 3%, 23 cards waited in ready with 1 in building. BA, architect and R&D join
+/// on request (`--roles lead,dev,dev2,ui,qa,review,arch`). Each room is its own Claude Code session,
+/// so this spends quota about 6× a single session; the 90% rest still applies.
+pub(super) const FULL_TEAM: [&str; 6] = ["lead", "dev", "dev2", "ui", "qa", "review"];
 
 /// What the architect room does each tick instead of a board lane: it owns no lane, so a card
 /// labelled `arch` never waits on a room the team does not have (the lead writes a short ADR then).
@@ -237,7 +238,9 @@ mod tests {
         assert_eq!(role("sale").0, "\"sale\"");
         let a = find("arch").unwrap();
         assert_eq!((a.lane, a.model), (None, Some("opus")), "no lane: an arch card never waits on a room the team lacks");
-        assert!(FULL_TEAM.contains(&"arch") && !DEFAULT_TEAM.contains(&"arch"));
+        assert!(!FULL_TEAM.contains(&"arch") && !DEFAULT_TEAM.contains(&"arch"), "the architect joins on request");
+        // Builders hold at least half of the full team.
+        assert!(FULL_TEAM.iter().filter(|n| find(n).and_then(|r| r.lane) == Some("ready")).count() * 2 >= FULL_TEAM.len());
         for s in ["/sysdesign", "docs/adr/card-<id>", "DECISIONS.md", "không mở nơi song song", "lệch tài liệu", "ADR:", "tech radar", "su-code/research/radar-", "--label arch", "docs/adr/budgets.md", "ĐO thật", "không có số đo thì không mở card", "radar-sources.md", "releases.atom", "cargo audit", "không gửi danh sách dependency ra ngoài", "api.osv.dev/v1/vulns/<id>", "nguồn gốc trước", "xếp hạng cố định", "không có trong nguồn thì không ghi"] {
             assert!(ARCH_PLAYBOOK.contains(s), "{s}");
         }

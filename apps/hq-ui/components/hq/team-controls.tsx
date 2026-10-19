@@ -18,7 +18,7 @@ const DONE: Record<Action, string> = {
 };
 const OPENING: Record<Action, string> = {
   up: "lead, dev, qa, review, rd",
-  full: "8 phòng: lead, ba, arch, rd, dev, ui, qa, review",
+  full: "6 phòng: lead, dev, dev2, ui, qa, review",
   clean: "dọn rác, khởi động lại phòng chạy bản cũ",
   down: "",
 };
@@ -54,7 +54,7 @@ export function TeamControls({ root, name, token, after }: { root: string; name:
       <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("clean")} title="Xoá session nền rác, khởi động lại phòng đang chạy bản cũ, rồi mở team (auto up --clear-ss)">
         <SparklesIcon aria-hidden /> Dọn & mở lại
       </Button>
-      <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("full")} title="8 phòng: lead, ba, arch, rd, dev, ui, qa, review (auto up --roles full)">
+      <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("full")} title="6 phòng, 3 phòng code: lead, dev, dev2, ui, qa, review (auto up --roles full)">
         <UsersIcon aria-hidden /> Team đầy đủ
       </Button>
       <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("down")} title="Dừng các phòng nền, giữ hội thoại (auto down)">
@@ -68,7 +68,7 @@ export function TeamControls({ root, name, token, after }: { root: string; name:
               {ask === "down"
                 ? "Các phòng nền dừng lại, hội thoại vẫn giữ. Bấm “Mở lại team” để chạy tiếp từ chỗ cũ."
                 : ask === "full"
-                  ? "8 phòng chạy nền: lead và ba viết card, arch thiết kế (ADR theo System Design Primer, tech radar mỗi ngày), rd nghiên cứu, dev và ui làm, qa kiểm, review duyệt. Mỗi phòng là một session riêng nên tốn quota gần gấp 8 lần một session; tới 90% cửa sổ 5 giờ/7 ngày thì cả team tự nghỉ."
+                  ? "6 phòng chạy nền: lead viết card và merge, dev, dev2 và ui làm, qa kiểm, review duyệt. Cột ready đầy 6 card thì lead ngừng tách việc. Mỗi phòng là một session riêng nên tốn quota gần gấp 6 lần một session; tới 90% cửa sổ 5 giờ/7 ngày thì cả team tự nghỉ."
                   : "Xoá session nền của dự án mà không phòng nào giữ, khởi động lại phòng đang chạy bản 8sync cũ (giữ hội thoại), rồi mở team. Session có worktree còn thay đổi chưa commit được giữ lại, không mất code."}
             </DialogDescription>
           </DialogHeader>
@@ -85,7 +85,7 @@ export function TeamControls({ root, name, token, after }: { root: string; name:
                 void act(root, name, a);
               }}
             >
-              {ask === "down" ? "Dừng team" : ask === "full" ? "Mở 8 phòng" : "Dọn và mở lại"}
+              {ask === "down" ? "Dừng team" : ask === "full" ? "Mở 6 phòng" : "Dọn và mở lại"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -116,14 +116,14 @@ export function TeamStarter({ projects, token, after }: { projects: { path: stri
             <Button type="button" size="sm" disabled={busy != null} onClick={() => void act(p.path, p.name, "up")}>
               <PlayIcon aria-hidden /> Mở team
             </Button>
-            <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(p.path, p.name, "full")} title="8 phòng, tốn quota gần gấp 8 lần một session">
+            <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(p.path, p.name, "full")} title="6 phòng, tốn quota gần gấp 6 lần một session">
               <UsersIcon aria-hidden /> Team đầy đủ
             </Button>
           </li>
         ))}
       </ul>
       <p className="max-w-[75ch] text-xs text-muted-foreground text-pretty">
-        Mở team: 5 phòng nền (lead viết card, dev làm, qa kiểm, review duyệt, rd nghiên cứu). Team đầy đủ: thêm ba, arch, ui (8 phòng). Thêm thư mục khác ở mục Projects bên trái.
+        Mở team: 5 phòng nền (lead viết card, dev làm, qa kiểm, review duyệt, rd nghiên cứu). Team đầy đủ: 6 phòng, 3 phòng code (lead, dev, dev2, ui, qa, review). Thêm thư mục khác ở mục Projects bên trái.
       </p>
     </section>
   );

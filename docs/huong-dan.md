@@ -14,7 +14,7 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 |---|---|---|---|
 | 1 | Mở HQ (để nguyên terminal đó). Ở xa máy (điện thoại): thêm `--public` để có link internet đăng nhập một lần | — | `8sync hq ui` → http://127.0.0.1:8740 · `8sync hq ui --public` |
 | 2 | Thêm thư mục repo. Lần đầu: mở `claude` trong thư mục đó một lần, chấp nhận câu hỏi trust | **Projects** → dán đường dẫn | — |
-| 3 | Mở team: lead, dev, qa, review, rd chạy nền trong thư mục đó | **Mở team** (hoặc **Team đầy đủ**: 8 phòng, thêm ba, arch, ui) | `cd du-an && 8sync ccc auto up` (`--roles full`) |
+| 3 | Mở team: lead, dev, qa, review, rd chạy nền trong thư mục đó | **Mở team** (hoặc **Team đầy đủ**: 6 phòng, 3 phòng code: lead, dev, dev2, ui, qa, review) | `cd du-an && 8sync ccc auto up` (`--roles full`) |
 | 3b | Thêm đội omp: cùng các vai, phòng tên `omp-<vai>` chạy model của omp; hai đội chung board, inbox và nhắn nhau | công tắc **Đội omp** | `8sync ccc auto up --omp` · tắt: `8sync ccc auto omp off` |
 | 4 | Giao việc: viết việc + lệnh chứng minh xong (exit 0) | **Giao việc** góc trên | `8sync ccc auto add "<việc>" --check "<lệnh>"` |
 | 5 | Theo dõi card đi qua các cột; việc gấp thì đặt ưu tiên (P0 gấp nhất, phòng nhận trước) | tab **Board** → bấm card → chọn P0/P1/P2/P3 | `8sync ccc auto board` · `8sync ccc auto prio <id> P0` |
