@@ -1,6 +1,6 @@
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { mergedSessions } from "@/lib/server/proc";
-import { TERM_ID, clampSize, closeTerm, input, openTerm, watch } from "@/lib/server/term";
+import { TERM_ID, clampSize, closeTerm, input, openTerm, poll, watch } from "@/lib/server/term";
 
 export const runtime = "nodejs";
 
@@ -14,6 +14,8 @@ async function room(db: Parameters<typeof mergedSessions>[0], id: string) {
 /**
  * The room's terminal as a stream: `event: out` carries base64 terminal bytes, `event: end` when the
  * attach client exits. Read with fetch() + a stream reader (EventSource cannot send the HQ token).
+ * With `?gen=&since=` (the remote link, where the quick tunnel holds a stream back) it answers once
+ * with JSON `{gen, cursor, out, reset, ended}`: the bytes after `since`, `out` in base64.
  */
 export async function GET(req: Request, ctx: RouteContext<"/api/sessions/[name]/term">) {
   const o = open(req);
@@ -31,6 +33,10 @@ export async function GET(req: Request, ctx: RouteContext<"/api/sessions/[name]/
     return bad((e as Error).message, 422);
   }
   const term = t;
+  if (url.searchParams.has("since")) {
+    const p = poll(name, term, Number(url.searchParams.get("gen")), Number(url.searchParams.get("since")));
+    return json({ gen: p.gen, cursor: p.cursor, out: p.out.toString("base64"), reset: p.reset, ended: p.ended });
+  }
   const enc = new TextEncoder();
   let stop: () => void = () => {};
   let beat: ReturnType<typeof setInterval> | undefined;

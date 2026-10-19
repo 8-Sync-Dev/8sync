@@ -517,3 +517,5 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - lesson (2026-10-19): a `task` subagent ran `git stash`/`git stash pop` on the whole tree to check a baseline while siblings were editing — survived, but every parallel brief must say "do not git stash".
 
 - failure: (2026-10-19, v0.101.0) treating a usage reading taken before its `resets_at` as *unknown* re-armed the subscription $5/h fail-safe whenever no 7-day reading exists (this owner's status line has none), so a team that just filled its 5-hour window stayed blocked after the reset. A past-reset reading means the window restarted: count it as 0%. Test with `seven_day` absent. (v0.101.1)
+
+- validated: (2026-10-19) Cloudflare quick tunnels hold an SSE/streamed response back, so anything HQ streams must have a polled path off loopback. Room terminal: `GET /term?gen=&since=` with a monotonic byte cursor (kept output is trimmed, so a plain chunk index breaks) and a per-bridge `gen` so a reopened bridge replays instead of splicing. (v0.101.2)

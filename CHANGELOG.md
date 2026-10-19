@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.101.2] — 2026-10-19
+### Fixed
+- **A room's terminal works through the internet link.** Owner (2026-10-19): "Link public không connect terminal được". The Cloudflare quick tunnel holds the terminal's event stream back, so off loopback HQ now polls `GET /api/sessions/<id>/term?gen=&since=` (bytes after a running byte cursor; a cursor from another bridge or older than the kept 256 KB replays the screen) every 150 ms while the room prints and 600 ms while it is quiet. Keys and resizes were already plain POSTs. A polled terminal closes 60 s after the last poll, like a viewer leaving.
+
 ## [0.101.1] — 2026-10-19
 ### Fixed
 - **A team that hit the 5-hour limit comes back at the reset again.** In 0.101.0 a reading taken before the reset counted as unknown; with no 7-day reading (this machine's status line has none) the subscription `$`/hour fail-safe then judged the spend that filled the window, so resume and revive refused until the lease ran out. A reading whose `resets_at` has passed now counts as 0 % (the window did start over).
