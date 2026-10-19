@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { teamLabel } from "@/lib/labels";
 import type { BoardRef, NowState } from "@/lib/now";
 import { matchesSession } from "@/lib/office";
 import { SIDEBAR_WORD, sidebarGroups, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
@@ -203,12 +204,13 @@ function RoomRows({ x, first, selected, onOpen }: { x: SidebarRoom<Room>; first:
           type="button"
           className={cn(item, "h-8", x.worktree && "pl-3")}
           aria-current={matchesSession(room, selected)}
-          aria-label={`${room.label}${x.worktree ? ` (worktree ${x.worktree})` : ""}: ${word}`}
+          aria-label={`${room.label}${x.worktree ? ` (worktree ${x.worktree})` : ""} · ${teamLabel(room.engine)}: ${word}`}
           title={[room.label, word, what].filter(Boolean).join(" · ")}
           onClick={() => onOpen(room)}
         >
           <RoleIcon role={n.role ?? room.role} className="size-3.5 text-muted-foreground group-aria-[current=true]:text-foreground" />
           <span className="min-w-0 flex-1 truncate text-[13px]">{room.label}</span>
+          {room.engine === "omp" && <span className="shrink-0 text-[10px] text-muted-foreground">{teamLabel(room.engine)}</span>}
           {n.state === "needs" ? (
             <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full bg-st-needs/15 px-1.5 py-px text-[11px] font-semibold", NEEDS_INK)}>
               <span aria-hidden className="size-1.5 rounded-full bg-st-needs motion-safe:animate-pulse" />
@@ -241,14 +243,14 @@ function Count({ n }: { n: number }) {
 }
 
 function LiveDot({ live }: { live: Live }) {
-  const label = live === "live" ? "Live" : live === "connecting" ? "Đang kết nối" : "Đang nối lại";
+  const label = live === "live" ? "Live" : live === "polling" ? "Cập nhật 3 giây/lần" : live === "connecting" ? "Đang kết nối" : "Đang nối lại";
   return (
     <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
       <span
         aria-hidden
         className={cn(
           "size-1.5 rounded-full",
-          live === "live" ? "bg-st-running" : "bg-st-needs motion-safe:animate-pulse",
+          live === "live" || live === "polling" ? "bg-st-running" : "bg-st-needs motion-safe:animate-pulse",
         )}
       />
       {label}

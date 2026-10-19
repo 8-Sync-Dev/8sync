@@ -4,13 +4,14 @@
 // is kept so a tab that opens late sees the screen. Closed 60 s after the last viewer leaves,
 // which stops only the attach client: the room keeps running.
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { binFor, childEnv } from "./child-env";
 
 export const TERM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const KEEP_BYTES = 256 * 1024;
 export const IDLE_CLOSE_MS = 60_000;
 const MAX_INPUT = 4096;
 
-type Spawn = (cmd: string, args: string[], opts: { cwd?: string; windowsHide: boolean }) => ChildProcessWithoutNullStreams;
+type Spawn = (cmd: string, args: string[], opts: { cwd?: string; windowsHide: boolean; env?: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
 type Term = { proc: ChildProcessWithoutNullStreams; chunks: Buffer[]; bytes: number; viewers: Set<(b: Buffer | null) => void>; idle?: ReturnType<typeof setTimeout>; ended: boolean };
 
 const terms = new Map<string, Term>();
@@ -32,7 +33,7 @@ export function openTerm(id: string, cwd: string | null, size: { cols: number; r
   if (!TERM_ID.test(id)) throw new Error("bad session id");
   const cur = terms.get(id);
   if (cur && !cur.ended) return cur;
-  const proc = spawn("8sync", termArgs(id, size.cols, size.rows), { cwd: cwd ?? undefined, windowsHide: true });
+  const proc = spawn(binFor("8sync"), termArgs(id, size.cols, size.rows), { cwd: cwd ?? undefined, windowsHide: true, env: childEnv() });
   const t: Term = { proc, chunks: [], bytes: 0, viewers: new Set(), ended: false };
   terms.set(id, t);
   proc.stdout.on("data", (b: Buffer) => {

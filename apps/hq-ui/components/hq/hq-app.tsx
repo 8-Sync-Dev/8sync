@@ -2,7 +2,7 @@
 
 import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
 import { roomNow } from "@/lib/now";
-import { matchesSession } from "@/lib/office";
+import { limitsView, matchesSession } from "@/lib/office";
 import { CircleHelpIcon, MenuIcon, SendIcon } from "lucide-react";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
@@ -130,6 +130,8 @@ export function HqApp({ token }: { token: string }) {
       : (repo?.root ?? officeSummary);
   const needsYou = view.sessions.filter((s) => s.status === "needs_input").length;
   const running = view.sessions.filter((s) => s.status !== "ended").length;
+  // Plan usage (contract C1): the freshest status-line snapshot, drawn like Orca's meter.
+  const limits = limitsView(office.office?.limits, office.office?.at);
 
   const firstRun = {
     hasProject: hq.projects.data.length > 0,
@@ -234,6 +236,30 @@ export function HqApp({ token }: { token: string }) {
                   <dt>Running</dt>
                   <dd className="text-sm font-medium text-foreground tabular">{running}</dd>
                 </div>
+                {limits.length > 0 && (
+                  <div className="flex items-center gap-2" title="Hạn mức gói Claude (5 giờ / 7 ngày), từ status line của phiên mới nhất; tự chạy lại khi reset">
+                    <dt className="sr-only">Usage</dt>
+                    <dd className="flex items-center gap-2 text-foreground tabular">
+                      {limits.map((w, i) => (
+                        <span key={w.label} className="flex items-center gap-1.5">
+                          {i === 0 && (
+                            <span aria-hidden className="h-1.5 w-12 overflow-hidden rounded-full bg-muted">
+                              <span
+                                className={`block h-full rounded-full ${w.pct >= 90 ? "bg-destructive" : w.pct >= 70 ? "bg-st-needs" : "bg-foreground/70"}`}
+                                style={{ width: `${w.pct}%` }}
+                              />
+                            </span>
+                          )}
+                          {i > 0 && <span aria-hidden className="text-muted-foreground">·</span>}
+                          <span>
+                            {i === 0 ? `${w.pct}% used` : `${w.label} ${w.pct}%`}
+                            {w.left && <span className="text-muted-foreground"> {w.left}</span>}
+                          </span>
+                        </span>
+                      ))}
+                    </dd>
+                  </div>
+                )}
                 {needsYou > 0 && (
                   <div className="flex items-baseline gap-1.5 text-st-needs">
                     <dt>Needs you</dt>

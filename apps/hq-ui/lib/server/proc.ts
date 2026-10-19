@@ -6,6 +6,7 @@ import { isModelId, isRoleId } from "@/lib/roles";
 import { projectIdFor } from "./db";
 import fs from "node:fs";
 import path from "node:path";
+import { binFor, childEnv } from "./child-env";
 import { inboxLive } from "./inbox";
 import { channelMcpConfigPath } from "./paths";
 import { CHANNEL_FLAGS_RE, TMUX_NAME_RE, hasControlChars, isTmuxName } from "./validate";
@@ -13,10 +14,14 @@ import { CHANNEL_FLAGS_RE, TMUX_NAME_RE, hasControlChars, isTmuxName } from "./v
 /** `killed`: the timeout (or a signal) stopped it, so it may have done part of its work. */
 type Run = { ok: boolean; stdout: string; stderr: string; killed?: boolean };
 
-/** argv-only process runner (never a shell), with a hard timeout; `cwd` defaults to the server's. */
+/**
+ * argv-only process runner (never a shell), with a hard timeout; `cwd` defaults to the server's.
+ * The child gets the scrubbed env (no HQ_* / PORT / HOSTNAME / NODE_ENV); `8sync` is the binary that
+ * started this HQ (contract C-E).
+ */
 export function run(cmd: string, args: string[], timeoutMs = 4000, cwd?: string): Promise<Run> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, cwd }, (err, stdout, stderr) => {
+    execFile(binFor(cmd), args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, cwd, env: childEnv() }, (err, stdout, stderr) => {
       resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), ...(err?.killed ? { killed: true } : {}) });
     });
   });
@@ -77,13 +82,16 @@ export type SessionView = {
   started_at: number | null;
   cwd: string | null;
   tmux: boolean;
-  source: "tmux" | "claude" | "journal";
+  /** `omp`: an omp-team room from `8sync ls` (lib/server/floor.ts ompSessions), reached only through its inbox. */
+  source: "tmux" | "claude" | "journal" | "omp";
   detail: string | null;
   /** Inbox delivery only: the `8sync-inbox` mod polled within LIVE_MS, so a task enters as soon as the session is idle. */
   inbox_live: boolean;
   /** Team role / model the session was started with (null for sessions started elsewhere). */
   role?: string | null;
   model?: string | null;
+  /** Team (contract C4): absent = Claude Code (ccc); "omp" for omp rooms. */
+  engine?: string;
 };
 
 function agentStatus(s: string | undefined): SessionStatus {

@@ -5,6 +5,10 @@ import type { Terminal } from "@xterm/xterm";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { isLocalHost } from "@/lib/hosts";
+
+/** Remote link only: no byte for this long means the tunnel holds the stream back. */
+const SILENT_MS = 10_000;
 
 const FONT_SIZE = 13;
 const THEMES = {
@@ -85,18 +89,30 @@ export function LiveTerminal({ sessionId, token, onEnded }: { sessionId: string;
         void post(s);
       });
       ro.observe(el);
+      // Through the remote link (Cloudflare quick tunnel) the event stream is held back: nothing arrives,
+      // not even the screen replay. Off loopback, 10 s of nothing = say so instead of hanging on "connecting".
+      const remote = !isLocalHost(window.location.host);
+      let dead = false;
+      const dog = remote
+        ? setTimeout(() => {
+            dead = true;
+            ac.abort();
+          }, SILENT_MS)
+        : undefined;
       try {
         const res = await fetch(`${url}?cols=${size.cols}&rows=${size.rows}`, { headers: { "x-hq-token": token }, signal: ac.signal });
         if (!res.ok || !res.body) {
           const msg = ((await res.json().catch(() => ({}))) as { error?: string }).error;
           throw new Error(msg || `HTTP ${res.status}`);
         }
-        setState("live");
+        if (!remote) setState("live");
         const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
         let rest = "";
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
+          clearTimeout(dog);
+          setState("live");
           const p = parseSse(rest + value);
           rest = p.rest;
           for (const e of p.events) {
@@ -108,10 +124,15 @@ export function LiveTerminal({ sessionId, token, onEnded }: { sessionId: string;
           }
         }
       } catch (e) {
-        if (!ac.signal.aborted) {
+        if (dead) {
+          setError("link internet (quick tunnel) không truyền luồng terminal. Mở HQ trên máy chạy phòng để dùng terminal");
+          setState("error");
+        } else if (!ac.signal.aborted) {
           setError((e as Error).message);
           setState("error");
         }
+      } finally {
+        clearTimeout(dog);
       }
     })();
 

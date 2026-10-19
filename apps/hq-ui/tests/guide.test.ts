@@ -4,9 +4,12 @@ import { GUIDE_LEGEND, GUIDE_STEPS, GUIDE_TIPS } from "@/components/hq/guide";
 const text = GUIDE_STEPS.map((s) => `${s.title} ${s.body}`).join("\n");
 
 describe("guide", () => {
-  it("has 5 steps with titles and bodies", () => {
-    expect(GUIDE_STEPS).toHaveLength(5);
+  it("has 6 steps with titles and bodies", () => {
+    expect(GUIDE_STEPS).toHaveLength(6);
     for (const s of GUIDE_STEPS) expect(s.title && s.body).toBeTruthy();
+  });
+  it("says the CLI only switches things on and off", () => {
+    for (const s of ["8sync ccc auto on [--omp]", "8sync hq ui [--public]", "Đội omp"]) expect(text).toContain(s);
   });
   it("names every model", () => {
     for (const m of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]) expect(text).toContain(m);

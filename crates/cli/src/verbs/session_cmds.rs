@@ -81,11 +81,12 @@ fn read_json(p: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }
 
-/// Rows of one engine for the registry dir `dir` (`<kind>/<project-key>`).
-pub fn engine_rows(env: &Env, engine: &'static str, dir: &Path, procs: &[Vec<u8>], detail: bool, git: bool) -> Vec<Row> {
+/// Rows of one engine for the registry dir `dir` (`<kind>/<project-key>`). `root`: the repo of
+/// that registry when known (omp rows key their inbox id on it; else the registry's own record).
+pub fn engine_rows(env: &Env, engine: &'static str, dir: &Path, root: Option<&Path>, procs: &[Vec<u8>], detail: bool, git: bool) -> Vec<Row> {
     let Some(v) = read_json(&dir.join("index.json")) else { return Vec::new() };
     match engine {
-        "omp" => serde_json::from_value::<session::Registry>(v).map(|r| view::omp_rows(&r, procs, detail, git)).unwrap_or_default(),
+        "omp" => serde_json::from_value::<session::Registry>(v).map(|r| view::omp_rows(&r, root, procs, detail, git)).unwrap_or_default(),
         "feynman" => view::feynman_rows(&v),
         _ => serde_json::from_value::<uuid_sessions::Registry>(v).map(|r| view::uuid_rows(env, engine, &r, procs, detail)).unwrap_or_default(),
     }
@@ -96,7 +97,7 @@ fn repo_rows(env: &Env, root: &Path, procs: &[Vec<u8>], detail: bool, git: bool)
     let key = session::project_key(root);
     ENGINES
         .iter()
-        .map(|(e, kind)| (*e, engine_rows(env, e, &kind_dir(env, kind).join(&key), procs, detail, git)))
+        .map(|(e, kind)| (*e, engine_rows(env, e, &kind_dir(env, kind).join(&key), Some(root), procs, detail, git)))
         .filter(|(_, r)| !r.is_empty())
         .collect()
 }
@@ -150,7 +151,7 @@ fn ls_all(env: &Env, procs: &[Vec<u8>], json: bool) -> Result<()> {
             if !e.path().is_dir() {
                 continue;
             }
-            let rows = engine_rows(env, engine, &e.path(), procs, false, false);
+            let rows = engine_rows(env, engine, &e.path(), None, procs, false, false);
             if !rows.is_empty() {
                 repos.entry(e.file_name().to_string_lossy().into_owned()).or_default().push((engine, rows));
             }
@@ -398,6 +399,7 @@ mod tests {
             digest: view::Digest { cwd: Some("/srv/app".into()), ..Default::default() },
             resume: String::new(),
             transcript: None,
+            inbox_id: None,
         };
         assert_eq!(repo_label("-srv-app", &[("omp", vec![r])]), "/srv/app");
         assert_eq!(repo_label("-srv-app", &[]), "-srv-app");

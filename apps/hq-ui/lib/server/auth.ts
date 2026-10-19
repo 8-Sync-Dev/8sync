@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { tokenPath } from "./paths";
+import { isLocalHost } from "../hosts";
+import { publicPath, tokenPath } from "./paths";
 
 let cached: { file: string; token: string } | null = null;
 
@@ -24,19 +25,123 @@ export function getToken(): string {
   return token;
 }
 
-const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
-
-/** Host header must be a loopback name (blocks DNS-rebinding). */
-export function isLocalHost(host: string | null): boolean {
-  if (!host) return false;
-  const m = /^(\[[^\]]+\]|[^:]+)(?::(\d{1,5}))?$/.exec(host.toLowerCase());
-  return !!m && LOCAL_HOSTS.has(m[1]);
-}
-
-function safeEqual(a: string, b: string): boolean {
+export function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
   return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+
+/**
+ * The tunnel host and login key `8sync hq ui --public` wrote (contract C6). `since` = when the link
+ * was minted (unix ms); `nonce` ties the file to the HQ process that 8sync started (contract C-C).
+ */
+export type PublicLink = { host: string; key: string; since: number; nonce: string };
+
+export const PUB_COOKIE = "hq_pub";
+const HOST_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const HEX64_RE = /^[0-9a-f]{64}$/;
+/** The login cookie lives 12 h, checked server side (not just Max-Age): a lost phone stops working by itself. */
+export const SESSION_MS = 12 * 3600_000;
+/** The printed `/api/login?k=` link is good for 10 minutes after `8sync hq ui --public` minted it. */
+export const LINK_MS = 10 * 60_000;
+
+let pubCache: { file: string; mtimeMs: number; size: number; link: PublicLink | null } | null = null;
+
+/**
+ * `HQ_PUBLIC_NONCE`, read once at load and then removed from `process.env` so no child process
+ * (8sync, claude, tmux) inherits it. Kept on `globalThis` so every bundled copy of this module in the
+ * same process sees the value the first copy took.
+ */
+const NONCE_KEY = Symbol.for("8sync.hq.publicNonce");
+const nonceStore = globalThis as { [NONCE_KEY]?: string };
+if (nonceStore[NONCE_KEY] === undefined) nonceStore[NONCE_KEY] = process.env.HQ_PUBLIC_NONCE ?? "";
+delete process.env.HQ_PUBLIC_NONCE;
+
+/** Test seam: the nonce this process was started with ("" = not started by `--public`). */
+export function __setNonceForTest(nonce: string): void {
+  nonceStore[NONCE_KEY] = nonce;
+}
+
+/** `since` is unix ms; a seconds value (older writers) is scaled up. */
+const sinceMs = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? (v < 1e12 ? v * 1000 : v) : null);
+
+/**
+ * `~/.config/8sync/hq/public.json`, re-read only when its mtime/size change; null when absent, malformed,
+ * or its `nonce` differs from the `HQ_PUBLIC_NONCE` this process started with (unset = this HQ was not
+ * started by `--public`: local only).
+ */
+export function readPublic(): PublicLink | null {
+  const file = publicPath();
+  let st: fs.Stats;
+  try {
+    st = fs.statSync(file);
+  } catch {
+    pubCache = null;
+    return null;
+  }
+  if (pubCache?.file !== file || pubCache.mtimeMs !== st.mtimeMs || pubCache.size !== st.size) {
+    let link: PublicLink | null = null;
+    try {
+      const v = st.size <= 4096 ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
+      const host = typeof v?.host === "string" ? v.host.trim().toLowerCase() : "";
+      const since = sinceMs(v?.since);
+      if (
+        v?.v === 1 &&
+        HOST_RE.test(host) &&
+        !isLocalHost(host) &&
+        typeof v.key === "string" &&
+        HEX64_RE.test(v.key) &&
+        typeof v.nonce === "string" &&
+        HEX64_RE.test(v.nonce) &&
+        since !== null
+      ) {
+        link = { host, key: v.key, since, nonce: v.nonce };
+      }
+    } catch {
+      /* half-written or junk: local only */
+    }
+    pubCache = { file, mtimeMs: st.mtimeMs, size: st.size, link };
+  }
+  const link = pubCache.link;
+  const nonce = nonceStore[NONCE_KEY] ?? "";
+  return link && nonce && safeEqual(nonce, link.nonce) ? link : null;
+}
+
+const sign = (key: string, issued: number) => crypto.createHmac("sha256", key).update(String(issued)).digest("hex");
+
+/** Login cookie value `<issued_ms>.<hmac_sha256_hex(key, issued_ms)>`: the raw key never leaves the server. */
+export function sessionCookie(key: string, issued: number): string {
+  return `${issued}.${sign(key, issued)}`;
+}
+
+/** True when `value` was signed with `key` and was issued at most 12 h before `now`. */
+export function sessionValid(value: string, key: string, now = Date.now()): boolean {
+  const m = /^(\d{1,15})\.([0-9a-f]{64})$/.exec(value);
+  if (!m) return false;
+  const issued = Number(m[1]);
+  return safeEqual(m[2], sign(key, issued)) && issued <= now && now - issued <= SESSION_MS;
+}
+
+/** One cookie value from a `Cookie` header, or null. */
+export function cookieValue(header: string | null | undefined, name: string): string | null {
+  for (const part of (header ?? "").split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
+  }
+  return null;
+}
+
+/** cloudflared forwards the edge headers: such a request came through the tunnel, whatever its Host says. */
+export const viaTunnel = (h: { get(name: string): string | null }) => h.get("cf-connecting-ip") !== null || h.get("cf-ray") !== null;
+
+/**
+ * Which side a request comes from: "local" (loopback Host, not tunnelled), "remote" (the public tunnel
+ * host with the login cookie), or null (refused: DNS rebinding, lookalike host, no or wrong cookie).
+ */
+export function sideOf(req: Pick<AuthInput, "host" | "cookie" | "tunnel">, pub: PublicLink | null, now = Date.now()): "local" | "remote" | null {
+  if (isLocalHost(req.host) && !req.tunnel) return "local";
+  if (!pub || req.host?.toLowerCase() !== pub.host) return null;
+  return req.cookie && sessionValid(req.cookie, pub.key, now) ? "remote" : null;
 }
 
 export type AuthInput = {
@@ -44,6 +149,10 @@ export type AuthInput = {
   host: string | null;
   origin: string | null;
   token: string | null;
+  /** `hq_pub` cookie value (remote link only). */
+  cookie?: string | null;
+  /** Arrived through the tunnel (Cloudflare edge headers present). */
+  tunnel?: boolean;
 };
 
 export type AuthOptions = {
@@ -56,16 +165,19 @@ export function checkAuth(
   req: AuthInput,
   expectedToken: string,
   opts: AuthOptions = {},
+  pub: PublicLink | null = null,
 ): { status: number; error: string } | null {
-  if (!isLocalHost(req.host)) return { status: 403, error: "forbidden host" };
+  const side = sideOf(req, pub);
+  if (!side) return { status: 403, error: "forbidden host" };
   if (!req.token || !safeEqual(req.token, expectedToken)) {
     return { status: 401, error: "missing or invalid x-hq-token" };
   }
   const mutating = !["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase());
   if (mutating) {
-    const uiOrigin = `http://${req.host}`;
+    const uiOrigin = side === "remote" ? `https://${pub!.host}` : `http://${req.host}`;
     if (req.origin === null) {
-      if (!opts.allowMissingOrigin) return { status: 403, error: "missing Origin" };
+      // Only a local Node process (channel) may omit Origin; a browser through the tunnel always sends it.
+      if (side === "remote" || !opts.allowMissingOrigin) return { status: 403, error: "missing Origin" };
     } else if (req.origin !== uiOrigin) {
       return { status: 403, error: "bad Origin" };
     }

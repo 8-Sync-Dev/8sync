@@ -25,4 +25,21 @@ describe("lib/server/auto", () => {
     expect(await autoSet("pause")).toMatchObject({ on: false, paused: true });
     expect(run.mock.calls[0]).toEqual(["8sync", ["ccc", "auto", "pause"], 5000]);
   });
+  it("Đội omp switch runs `ccc auto omp on|off`; its failure goes to omp_error only", async () => {
+    run.mockResolvedValueOnce({ ok: true, stdout: "", stderr: "" });
+    run.mockResolvedValueOnce({ ok: true, stdout: '{"on":true,"paused":false,"teams":["ccc","omp"],"omp_blocked":null}', stderr: "" });
+    expect(await autoSet("omp-on")).toMatchObject({ on: true, teams: ["ccc", "omp"] });
+    expect(run.mock.calls[0]).toEqual(["8sync", ["ccc", "auto", "omp", "on"], 5000]);
+    run.mockReset();
+    run.mockResolvedValueOnce({ ok: false, stdout: "", stderr: "omp dùng provider anthropic" });
+    run.mockResolvedValueOnce({ ok: true, stdout: '{"on":true,"paused":false,"teams":["ccc"],"omp_blocked":"anthropic"}', stderr: "" });
+    const st = await autoSet("omp-on");
+    expect(st).toMatchObject({ omp_blocked: "anthropic", omp_error: "omp dùng provider anthropic" });
+    expect(st.error).toBeUndefined();
+    run.mockReset();
+    run.mockResolvedValueOnce({ ok: true, stdout: "", stderr: "" });
+    run.mockResolvedValueOnce({ ok: true, stdout: '{"on":true,"paused":false,"teams":["ccc"]}', stderr: "" });
+    await autoSet("omp-off");
+    expect(run.mock.calls[0]).toEqual(["8sync", ["ccc", "auto", "omp", "off"], 5000]);
+  });
 });

@@ -2,6 +2,7 @@
 // dialog in the room's `claude attach` (Esc through the `8sync ccc term` bridge), queue the critic
 // route in the room's inbox. Runs from the GET /api/auto tick, only while auto is on.
 import { spawn as nodeSpawn, execFile } from "node:child_process";
+import { binFor, childEnv } from "./child-env";
 import fs from "node:fs";
 import path from "node:path";
 import { criticMessage, stuckAsks } from "../stuck-asks";
@@ -36,7 +37,7 @@ function writeHandled(h: Record<string, number>): void {
 /** `8sync ccc delegate check`: may the critic take these questions in `cwd`? */
 export function delegateCheck(questions: unknown, cwd: string | null): Promise<{ critic: boolean; reason: string | null }> {
   return new Promise((resolve) => {
-    const child = execFile("8sync", ["ccc", "delegate", "check", ...(cwd ? ["--cwd", cwd] : [])], { timeout: 5000, windowsHide: true }, (err, stdout) => {
+    const child = execFile(binFor("8sync"), ["ccc", "delegate", "check", ...(cwd ? ["--cwd", cwd] : [])], { timeout: 5000, windowsHide: true, env: childEnv() }, (err, stdout) => {
       try {
         const v = err ? null : JSON.parse(String(stdout));
         resolve({ critic: v?.critic === true, reason: typeof v?.reason === "string" ? v.reason : null });
@@ -51,7 +52,7 @@ export function delegateCheck(questions: unknown, cwd: string | null): Promise<{
 /** Esc into the room's dialog through the terminal bridge, then close the bridge (the room keeps running). */
 export function closeDialog(id: string, cwd: string | null, spawn = nodeSpawn): Promise<void> {
   return new Promise((resolve) => {
-    const p = spawn("8sync", termArgs(id, 120, 34), { cwd: cwd ?? undefined, windowsHide: true });
+    const p = spawn(binFor("8sync"), termArgs(id, 120, 34), { cwd: cwd ?? undefined, windowsHide: true, env: childEnv() });
     p.stdout?.resume();
     p.stderr?.resume();
     const done = () => {

@@ -135,7 +135,15 @@ export LC_ALL=C
 # rooms and `--clear-ss` reload (`ccc/team.rs`), the PermissionRequest hook with its allowlist
 # (`ccc/permit.rs`), card priority and the `auto wait` poller. No new dependency. Ceiling
 # 7040 KiB (~101 KiB left).
-CEILING="${CEILING:-7208960}"   # 7040 KiB (raised 2026-10-18 from 6912 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+#
+# 2026-10-19 PR #116 run 39179917755: linux-x86_64 (musl) 7,280,784 B, 71,824 B over 7040 KiB;
+# v0.100.15 asset 7,198,832 → +81,952 B (Windows MSVC local: 5,726,720 → 5,798,912, +72,192 B).
+# v0.101.0: the embedded omp extension `8sync-team.ts` (17,039 B source), stop-failure resume
+# at the status-line reset (`ccc/resume.rs`), team omp + `auto nudge` (`ccc/auto.rs`,
+# `ccc/omp_team.rs`), `ccc msg` + room-line gating/quoting (`ccc/msg.rs`, `hq.rs`), the public
+# link (`hq.rs`: cloudflared, nonce), `auto revive` and `awake` (kernel32 FFI, no crate). No new
+# dependency. Ceiling 7168 KiB (~58 KiB left).
+CEILING="${CEILING:-7340032}"   # 7168 KiB (raised 2026-10-19 from 7040 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

@@ -187,9 +187,12 @@ fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync, fallback: 
 }
 
 /// omp sessions of one repo registry. `detail` keeps the extra tool-call ring
-/// (files touched) that `8sync show` needs.
-pub fn omp_rows(reg: &crate::verbs::session::Registry, procs: &[Vec<u8>], detail: bool, git: bool) -> Vec<Row> {
+/// (files touched) that `8sync show` needs. `root`: the repo the registry belongs to (else the
+/// root the registry recorded); it keys each room's inbox id ([`ccc_core::room_id`]).
+pub fn omp_rows(reg: &crate::verbs::session::Registry, root: Option<&std::path::Path>, procs: &[Vec<u8>], detail: bool, git: bool) -> Vec<Row> {
     let now = now_secs();
+    let root = root.or(reg.root.as_deref());
+    let inbox = |name: &str| root.map(|r| ccc_core::room_id(r, name));
     par_map(&reg.sessions, |s| {
         let tr = omp_transcript(&s.session_dir);
         let digest = tr.as_deref().map(|p| scan_file(p, Fmt::Omp, detail)).unwrap_or_default();
@@ -206,14 +209,17 @@ pub fn omp_rows(reg: &crate::verbs::session::Registry, procs: &[Vec<u8>], detail
             digest,
             resume: format!("8sync . {}", s.name),
             transcript: tr,
+            inbox_id: inbox(&s.name),
         }
-    }, |s| unreadable("omp", &s.name, format!("8sync . {}", s.name), s.last_active))
+    }, |s| Row { inbox_id: inbox(&s.name), ..unreadable("omp", &s.name, format!("8sync . {}", s.name), s.last_active) })
 }
 
 /// Claude Code / Forge sessions (name → UUID registry). Only Claude Code has a
 /// transcript format we read; Forge shows registry data only.
 pub fn uuid_rows(env: &Env, engine: &'static str, reg: &crate::verbs::uuid_sessions::Registry, procs: &[Vec<u8>], detail: bool) -> Vec<Row> {
     let now = now_secs();
+    // A Claude Code room's inbox is its session id; Forge rooms have none.
+    let inbox = |id: &str| (engine == "ccc").then(|| id.to_string());
     par_map(&reg.sessions, |s| {
         let tr = (engine == "ccc").then(|| claude_transcript(&env.home, &s.conversation_id)).flatten();
         let digest = tr.as_deref().map(|p| scan_file(p, Fmt::Claude, detail)).unwrap_or_default();
@@ -230,8 +236,12 @@ pub fn uuid_rows(env: &Env, engine: &'static str, reg: &crate::verbs::uuid_sessi
             digest,
             resume: if engine == "ccc" { format!("8sync ccc . {}", s.name) } else { format!("8sync forge {}", s.name) },
             transcript: tr,
+            inbox_id: inbox(&s.conversation_id),
         }
-    }, |s| unreadable(engine, &s.name, if engine == "ccc" { format!("8sync ccc . {}", s.name) } else { format!("8sync forge {}", s.name) }, s.last_active))
+    }, |s| Row {
+        inbox_id: inbox(&s.conversation_id),
+        ..unreadable(engine, &s.name, if engine == "ccc" { format!("8sync ccc . {}", s.name) } else { format!("8sync forge {}", s.name) }, s.last_active)
+    })
 }
 
 /// Feynman sessions: registry only (Pi's own store has no format we parse).
@@ -255,6 +265,7 @@ pub fn feynman_rows(index: &Value) -> Vec<Row> {
                 resume: format!("8sync feynman {name}"),
                 name,
                 transcript: None,
+                inbox_id: None,
             })
         })
         .collect()
@@ -278,6 +289,7 @@ mod tests {
             digest,
             resume: "8sync . core".into(),
             transcript: None,
+            inbox_id: None,
         }
     }
 

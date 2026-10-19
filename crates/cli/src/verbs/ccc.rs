@@ -22,6 +22,7 @@ use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
 mod auto;
+mod awake;
 mod cancel;
 mod compact;
 mod danger;
@@ -36,12 +37,14 @@ mod idle;
 mod looper;
 mod meet;
 mod output_budget;
+mod msg;
+mod omp_team;
 mod permit;
 mod term;
 pub(crate) mod report;
 mod risk;
 mod secret;
-mod resume;
+pub(crate) mod resume;
 mod room;
 mod statusline;
 mod taskdone;
@@ -194,7 +197,19 @@ pub fn run(a: Args) -> Result<()> {
         // repo is (ai-game-studio inside 8sync-startup), and a worktree belongs to its repo.
         "auto" => {
             let repo = std::env::current_dir().ok().and_then(|c| crate::verbs::here::repo_of(&c)).unwrap_or_else(|| root.clone());
-            if team::wants(rest) {
+            if rest.first().is_some_and(|a| a == "revive") {
+                // Only the roots `auto up` brought a team up in (HQ calls this without a cwd), one
+                // revive at a time (HQ and a boot hook can both fire it).
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                let Some(_lock) = team::revive_lock(&env.home, now)? else { return Ok(()) };
+                for r in team::team_roots(&env.home) {
+                    let r = PathBuf::from(r);
+                    if let Err(e) = auto_team(&env, &r, rest) {
+                        eprintln!("{}: {e:#}", r.display());
+                    }
+                }
+                Ok(())
+            } else if team::wants(rest) {
                 auto_team(&env, &repo, rest)
             } else {
                 auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", &repo, || {
@@ -208,6 +223,12 @@ pub fn run(a: Args) -> Result<()> {
         }
         "risk" => risk::run(rest, &std::env::current_dir().context("no cwd")?),
         "term" => term::run(rest),
+        "awake" => {
+            let o = awake::parse(rest)?;
+            // `claude` is only needed to watch the rooms.
+            let bin = if o.while_rooms { Some(team::Bin { exe: ensure_claude(true)?, root: &env.home }) } else { None };
+            awake::run(&o, bin.as_ref().map(|b| b as &dyn team::Claude), login_kind_at(&env.home).kind == "subscription")
+        }
         "hint" => {
             let cwd = std::env::current_dir().context("no cwd")?;
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
@@ -218,6 +239,11 @@ pub fn run(a: Args) -> Result<()> {
         "inbox" => {
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
             crate::verbs::hq::run_inbox(&env.home, rest, id.as_deref())
+        }
+        "msg" => {
+            let ccc = sessions(&env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
+            let omp = crate::verbs::session::load(&env, &root).sessions.into_iter().map(|s| s.name).collect();
+            msg::run(rest, &env.home, &root, &msg::rooms(&root, ccc, omp))
         }
         "ls" | "list" => {
             print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
@@ -488,6 +514,13 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
     let t = team::Team { home: &env.home, root, store: &store, subscription, claude: &bin, has_transcript: &has, title: &title, kit_at };
+    if rest[0] == "revive" {
+        let rows = team::revive(&t, auto::DEFAULT_LOOP_MIN, now)?;
+        for r in &rows {
+            println!("{} ({}): {} {}", r.name, r.role, r.state, r.short);
+        }
+        return Ok(());
+    }
     if rest[0] == "down" {
         if let Some(x) = rest.get(1) {
             bail!("không rõ `{x}`\n{}", team::USAGE);
@@ -498,12 +531,29 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         } else {
             println!("đã dừng {} phòng nền: {} (hội thoại giữ nguyên; mở lại: `8sync ccc auto up`).", stopped.len(), stopped.join(", "));
         }
+        omp_team::print_down(&omp_team::down(env, root)?);
         println!("auto: TẠM DỪNG (owner). Phòng mở trong terminal không bị đóng.");
         return Ok(());
     }
     let o = team::parse(&rest[1..])?;
+    // `--omp` = `auto omp on` first, so `up`'s auto on keeps it in `teams`; refused only for omp.
+    let blocked = auto::omp_blocked(&env.home);
+    if o.omp && blocked.is_none() {
+        auto::set_omp(&env.home, true, now)?;
+    }
+    // One resumer at a time: HQ's revive and this `up` must not fork the same dead room twice.
+    let Some(_lock) = team::revive_lock(&env.home, now)? else {
+        bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ ít phút rồi chạy lại");
+    };
     let (status, gone, rows) = team::up(&t, &o, now)?;
     team::print_up(&status, &gone, &rows, o.every, subscription);
+    // Team omp: `--omp`, or omp already in auto.json's teams (turned on from HQ).
+    if omp_team::wanted(o.omp, &status) {
+        match blocked {
+            Some(why) => println!("đội omp: không mở — {why}"),
+            None => omp_team::print_up(&omp_team::up(env, root, &o.roles)),
+        }
+    }
     Ok(())
 }
 
@@ -748,7 +798,9 @@ const CLAUDE_MD_END: &str = "<!-- 8sync:kit:end -->";
 /// No `Edit(**/.env*)`: Claude Code applies Edit deny rules to `rm`/`sed`/redirects in Bash,
 /// so it blocked deleting a stray `.env` copy; the guard still denies printing a credential
 /// file and writing a real secret anywhere (see RETIRED_DENY).
-const DENY: [&str; 14] = [
+/// The HQ owner files (UI token, public-link key, Discord secrets, usage snapshots, permit
+/// answers, inbox) back the guard's Bash/Write check for the Read tool, which the guard does not see.
+const DENY: [&str; 22] = [
     "Read(**/.env)",
     "Read(**/.env.*)",
     "Read(**/*.pem)",
@@ -763,6 +815,14 @@ const DENY: [&str; 14] = [
     "Bash(git push -f*)",
     "Bash(git push * --force*)",
     "Bash(git push * -f*)",
+    "Read(~/.config/8sync/hq/ui-token)",
+    "Read(~/.config/8sync/hq/public.json)",
+    "Edit(~/.config/8sync/hq/public.json)",
+    "Read(~/.config/8sync/hq/secrets.json)",
+    "Edit(~/.config/8sync/hq/secrets.json)",
+    "Edit(~/.local/state/8sync/ccc/permit/**)",
+    "Edit(~/.local/state/8sync/hq/inbox/**)",
+    "Edit(~/.local/state/8sync/hq/usage/**)",
 ];
 
 /// Deny rules earlier kits wrote and this one takes back (owner decision 2026-10-14).
@@ -1931,13 +1991,15 @@ fn hook(rest: &[String]) -> Result<()> {
             None
         }
         Some(h @ ("stop-failure" | "resume-note")) => {
-            let home = std::env::var_os("HOME").map(PathBuf::from);
+            // Same home as `env.home` / `8sync ccc inbox` and ccc-core's reader: `$HOME` on unix,
+            // the profile folder on Windows (hooks there often run without HOME).
+            let home = dirs::home_dir();
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
             resume::state_dir(home.as_deref()).and_then(|dir| {
                 if h == "resume-note" {
                     return resume::note(&input, &dir, now);
                 }
-                if let Some(msg) = resume::record(&input, &dir, now) {
+                if let Some(msg) = resume::record(&input, &dir, home.as_deref(), now) {
                     resume::notify(&msg);
                 }
                 None
@@ -2422,6 +2484,9 @@ mod tests {
         assert_eq!(p["permissions"]["disableBypassPermissionsMode"], "disable");
         let deny: Vec<&str> = p["permissions"]["deny"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
         assert!(DENY.iter().all(|r| deny.contains(r)));
+        for r in ["Edit(~/.config/8sync/hq/public.json)", "Read(~/.config/8sync/hq/secrets.json)", "Edit(~/.config/8sync/hq/secrets.json)", "Edit(~/.local/state/8sync/hq/usage/**)"] {
+            assert!(deny.contains(&r), "{r}");
+        }
         assert_eq!(p["forceLoginMethod"], "claudeai");
         assert_eq!(p["sandbox"]["enabled"], true);
         assert_eq!(p["channelsEnabled"], true);

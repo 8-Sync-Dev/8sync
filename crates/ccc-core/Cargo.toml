@@ -16,3 +16,5 @@ path = "src/lib.rs"
 anyhow = "1.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
+# Home dir like the CLI's `env.home` (profile folder on Windows): the stop-failure records.
+dirs = "5.0"

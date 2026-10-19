@@ -7,8 +7,13 @@ import { getDb } from "./db";
 import { isSessionId, queueInbox } from "./inbox";
 import { loadOffice } from "./office";
 import { stateDir } from "./paths";
+import { run } from "./proc";
 
-type State = { schema: 1; at: number; ticked: Record<string, number>; idle: Record<string, number> };
+/** `revived`: when HQ last asked 8sync to bring back team rooms that died (machine restart). */
+type State = { schema: 1; at: number; ticked: Record<string, number>; idle: Record<string, number>; revived: number };
+
+/** At most one `8sync ccc auto revive` per this long, however many tabs poll. */
+export const REVIVE_MS = 120_000;
 
 const stateFile = () => path.join(stateDir(), "auto-tick.json");
 
@@ -26,9 +31,10 @@ function readState(now: number): State {
     const j = JSON.parse(fs.readFileSync(stateFile(), "utf8"));
     const at = typeof j?.at === "number" && Number.isFinite(j.at) ? j.at : 0;
     const stale = now - at > STALE_MS;
-    return { schema: 1, at, ticked: numMap(j?.ticked), idle: stale ? {} : numMap(j?.idle) };
+    const revived = typeof j?.revived === "number" && Number.isFinite(j.revived) ? j.revived : 0;
+    return { schema: 1, at, ticked: numMap(j?.ticked), idle: stale ? {} : numMap(j?.idle), revived };
   } catch {
-    return { schema: 1, at: 0, ticked: {}, idle: {} };
+    return { schema: 1, at: 0, ticked: {}, idle: {}, revived: 0 };
   }
 }
 
@@ -52,6 +58,13 @@ export async function runAutoTick(status: AutoStatus, now = Date.now()): Promise
   try {
     const office = await loadOffice(getDb(), now);
     const state = readState(now);
+    // Rooms whose background session died with the machine: 8sync resumes them inside the same
+    // rails (on, not paused, in scope, lease/usage gate). Fixed argv; not awaited (resumes take seconds).
+    let revived = state.revived;
+    if (now - revived >= REVIVE_MS) {
+      revived = now;
+      void run("8sync", ["ccc", "auto", "revive"], REVIVE_MS);
+    }
     const idle: Record<string, number> = {};
     const rooms: TickRoom[] = office.rooms.map((r) => {
       const sid = r.session_id;
@@ -65,7 +78,7 @@ export async function runAutoTick(status: AutoStatus, now = Date.now()): Promise
       queueInbox(sid, TICK_PROMPT, now);
       ticked[sid] = now;
     }
-    writeState({ schema: 1, at: now, ticked, idle });
+    writeState({ schema: 1, at: now, ticked, idle, revived });
     return { ticked: targets };
   } catch (e) {
     // Detail (may hold paths) stays in the server log; the page only learns that the tick failed.

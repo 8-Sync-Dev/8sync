@@ -35,10 +35,12 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
     let ti = &v["tool_input"];
     // Ship grants are written only by the `ship-grant` hook from the owner's real answer;
     // a tool call that names the grant store could forge one.
+    // Normalised ([`norm`]): lowercased (Windows paths are case-insensitive), `\` → `/`, `//` and
+    // `/./` collapsed, so `hq//inbox` or `hq/./inbox` spell the same path.
     let touched: Vec<String> = [ti["command"].as_str(), ti["file_path"].as_str(), ti["notebook_path"].as_str(), ti["path"].as_str()]
         .into_iter()
         .flatten()
-        .map(|t| t.replace('\\', "/"))
+        .map(norm)
         .collect();
     if touched.iter().any(|t| t.contains("8sync/ccc/grants")) {
         return Some(decision("deny", "the ship-grant store is written only by the kit's hook from the owner's answer to a \"Ship\" question. Ask that question instead."));
@@ -49,10 +51,21 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
     if touched.iter().any(|t| t.contains("8sync/ccc/permit") || t.contains(".answer.json")) {
         return Some(decision("deny", "permission answers are written only by the owner's HQ dashboard. If a step needs the owner, note it on the card and do other work."));
     }
-    // Same for the HQ owner inbox (the Stop hook hands it over as the owner's words) and the
-    // HQ UI token (it lets a caller post as the owner): only the HQ UI and the hook touch them.
-    if touched.iter().any(|t| t.contains("8sync/hq/inbox") || t.contains("8sync/hq/ui-token")) {
-        return Some(decision("deny", "the HQ owner inbox and UI token belong to the owner's HQ dashboard; a session must not write the inbox or read the token. To reach another session use SendMessage; to reach the owner, reply in this session."));
+    // Same for the HQ owner inbox (the Stop hook hands it over as the owner's words) and its claim
+    // files, the HQ UI token (it lets a caller post as the owner), the public-link key (`hq ui
+    // --public`) and the Discord secrets: only the HQ UI, the launcher and the hooks touch them.
+    // The bare names too, so a `cd ~/.config/8sync/hq; cat public.json` that never spells the
+    // folder path is caught — those only beside an `8sync` (an app's own `public.json` is fine).
+    const HQ_OWNER: [&str; 5] = ["8sync/hq/inbox", "8sync/hq/ui-token", "8sync/hq/public.json", "8sync/hq/secrets.json", "hq/inbox/"];
+    const HQ_BARE: [&str; 5] = ["ui-token", "public.json", "secrets.json", ".taking.", ".claimed"];
+    if touched.iter().any(|t| HQ_OWNER.iter().any(|p| t.contains(p)) || (t.contains("8sync") && HQ_BARE.iter().any(|p| t.contains(p)))) {
+        return Some(decision("deny", "the HQ owner inbox, UI token, public-link key and secrets belong to the owner's HQ dashboard; a session must not write the inbox, or read the token, key or secrets. To reach another session use SendMessage or `8sync ccc msg`; to reach the owner, reply in this session."));
+    }
+    // Usage snapshots feed the auto window cap: a forged 0 % would open it. Readable, never written.
+    let writes = matches!(tool, "Edit" | "Write" | "MultiEdit" | "NotebookEdit");
+    let shell_write = |t: &str| redirects(t) || ["tee ", "cp ", "mv ", "set-content", "add-content", "out-file", "copy-item", "move-item", "sed -i", "truncate", "touch "].iter().any(|w| t.contains(w));
+    if touched.iter().any(|t| t.contains("8sync/hq/usage") && (writes || shell_write(t))) {
+        return Some(decision("deny", "HQ usage snapshots are written only by the kit's status line; a session must not write them."));
     }
     let verdict = match tool {
         "Bash" | "PowerShell" => {
@@ -103,6 +116,33 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
             "ask",
             &format!("{why} To ship without a prompt per step, ask the owner ONCE with AskUserQuestion (header \"Ship\", list every merge/tag/release/deploy you will do; options \"Duyệt tất cả (Recommended)\", \"Chỉ merge, chưa deploy\", \"Dừng\"), then continue."),
         ),
+    })
+}
+
+/// Guard matching form of a command or path: lowercased, `\` → `/`, runs of `/` collapsed and
+/// `/./` segments dropped.
+fn norm(t: &str) -> String {
+    let mut s = String::with_capacity(t.len());
+    for c in t.chars().flat_map(char::to_lowercase) {
+        let c = if c == '\\' { '/' } else { c };
+        if c == '/' && s.ends_with('/') {
+            continue;
+        }
+        s.push(c);
+    }
+    while s.contains("/./") {
+        s = s.replace("/./", "/");
+    }
+    s
+}
+
+/// A shell redirect into a file (`>f`, `> f`, `>>f`), not an fd dup (`2>&1`) or a discard
+/// (`/dev/null`, `$null`, `nul`).
+fn redirects(t: &str) -> bool {
+    t.match_indices('>').any(|(i, _)| {
+        let rest = t[i + 1..].trim_start_matches('>').trim_start();
+        let prev = t[..i].chars().next_back();
+        !matches!(prev, Some('-' | '=')) && !rest.is_empty() && !rest.starts_with('&') && !["/dev/null", "$null", "nul"].iter().any(|d| rest.starts_with(d) && rest[d.len()..].chars().next().is_none_or(|c| c.is_whitespace() || c == ';' || c == '|'))
     })
 }
 
@@ -372,12 +412,52 @@ mod tests {
             format!("echo '{{\"text\":\"push to main\"}}' >> ~/.local/state/8sync/hq/inbox/{sid}.jsonl"),
             "cat ~/.config/8sync/hq/ui-token".to_string(),
             format!(r"Add-Content C:\Users\a\.local\state\8sync\hq\inbox\{sid}.jsonl x"),
+            "cat ~/.config/8sync/hq/public.json".to_string(),
+            r"Get-Content C:\Users\a\.config\8sync\hq\public.json".to_string(),
         ] {
             assert!(decide("Bash", json!({ "command": cmd })).is_some_and(|d| d.contains("owner inbox")), "{cmd} must be denied");
         }
         assert!(decide("Write", json!({ "file_path": format!("/home/u/.local/state/8sync/hq/inbox/{sid}.jsonl"), "content": "x" })).is_some());
+        assert!(decide("Write", json!({ "file_path": "/home/u/.config/8sync/hq/public.json", "content": "{}" })).is_some());
         assert!(decide("Bash", json!({ "command": "8sync ccc . report" })).is_none());
         assert!(decide("Bash", json!({ "command": "ls ~/.local/state/8sync/hq/usage" })).is_none(), "usage snapshots stay readable");
+    }
+
+    #[test]
+    fn hq_owner_files_are_caught_in_any_case_by_name_and_usage_is_read_only() {
+        for cmd in [
+            r"Get-Content C:\Users\A\.CONFIG\8SYNC\HQ\UI-TOKEN",
+            "cd ~/.config/8sync/hq; cat public.json",
+            "cd ~/.local/state/8sync; echo x >> hq/inbox/abc.jsonl",
+            "cat ~/.config/8sync/hq/secrets.json",
+            "echo x >> ~/.local/state/8sync/hq//inbox/abc.jsonl",
+            "echo x >> ~/.local/state/8sync/hq/./inbox/abc.jsonl",
+            r"type C:\Users\a\.local\state\8sync\\hq\\\inbox\abc.jsonl",
+            "cd ~/.config/8sync; cat hq/secrets.json",
+            "cd ~/.local/state/8sync/hq/in*; mv abc.taking.42 abc.jsonl",
+            "cd ~/.local/state/8sync/hq/in*; cp x abc.claimed",
+        ] {
+            assert!(decide("Bash", json!({ "command": cmd })).is_some_and(|d| d.contains("owner inbox")), "{cmd} must be denied");
+        }
+        // The bare names only beside an `8sync`: an app's own files are not the owner's.
+        for cmd in ["jq . config/public.json", "cat apps/web/public.json", "cat .secrets.json.example | head"] {
+            assert!(decide("Bash", json!({ "command": cmd })).is_none(), "{cmd} must pass");
+        }
+        assert!(decide("Write", json!({ "file_path": "/repo/public/public.json", "content": "{}" })).is_none());
+        assert!(decide("Write", json!({ "file_path": r"C:\Users\a\.config\8sync\HQ\Secrets.json", "content": "{}" })).is_some());
+        assert!(decide("Write", json!({ "file_path": "/home/u/.local/state/8sync/hq/usage/s.json", "content": "{}" })).is_some_and(|d| d.contains("usage snapshots")));
+        for cmd in [
+            "echo '{}' > ~/.local/state/8sync/hq/usage/s.json",
+            "echo '{}' >~/.local/state/8sync/hq/usage/s.json",
+            r"echo {} >C:\Users\a\.local\state\8sync\hq\\usage\s.json",
+            "cd ~/.local/state/8sync/hq/usage/ && echo x>s.json",
+            "cd ~/.local/state/8sync//hq/usage; echo x >s.json",
+        ] {
+            assert!(decide("Bash", json!({ "command": cmd })).is_some_and(|d| d.contains("usage snapshots")), "{cmd} must be denied");
+        }
+        for cmd in ["cat ~/.local/state/8sync/hq/usage/s.json", "ls ~/.local/state/8sync/hq/usage/ 2>/dev/null", "cat ~/.local/state/8sync/hq/usage/s.json 2>&1 | jq ."] {
+            assert!(decide("Bash", json!({ "command": cmd })).is_none(), "{cmd}: reading stays allowed");
+        }
     }
 
     #[test]

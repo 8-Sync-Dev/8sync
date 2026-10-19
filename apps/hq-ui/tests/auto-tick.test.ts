@@ -3,11 +3,14 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const office = vi.hoisted(() => vi.fn());
+const proc = vi.hoisted(() => vi.fn(async () => ({ ok: true, stdout: "", stderr: "" })));
 vi.mock("@/lib/server/office", () => ({ loadOffice: office }));
 vi.mock("@/lib/server/db", () => ({ getDb: () => ({}) }));
+// Never the real 8sync: `auto revive` would resume the owner's rooms on this machine.
+vi.mock("@/lib/server/proc", () => ({ run: proc }));
 
 import { pruneTicked, STALE_MS, TICK_EVERY_MS, TICK_IDLE_MS, TICK_PROMPT, TICK_SLACK_MS, tickTargets, type TickRoom } from "@/lib/auto-tick";
-import { runAutoTick } from "@/lib/server/auto-tick";
+import { REVIVE_MS, runAutoTick } from "@/lib/server/auto-tick";
 import { stateDir } from "@/lib/server/paths";
 import { tempHome } from "./helpers";
 
@@ -90,6 +93,19 @@ describe("runAutoTick", () => {
     expect(both.flatMap((r) => r.ticked)).toEqual([SID]);
     expect(fs.readFileSync(inbox(), "utf8").trim().split("\n")).toHaveLength(1);
     expect(fs.readdirSync(stateDir()).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("asks 8sync to revive dead team rooms at most once per 2 minutes, never while held", async () => {
+    proc.mockClear();
+    const revives = () => proc.mock.calls.filter((c) => JSON.stringify(c).includes("revive")).length;
+    await runAutoTick({ on: true, paused: false, gate: "lease hết hạn" }, NOW);
+    expect(revives()).toBe(0);
+    await runAutoTick({ on: true, paused: false }, NOW);
+    expect(proc).toHaveBeenCalledWith("8sync", ["ccc", "auto", "revive"], REVIVE_MS);
+    await runAutoTick({ on: true, paused: false }, NOW + REVIVE_MS - 1);
+    expect(revives()).toBe(1);
+    await runAutoTick({ on: true, paused: false }, NOW + REVIVE_MS);
+    expect(revives()).toBe(2);
   });
 
   it("never throws; the detail stays out of the response", async () => {

@@ -1,3 +1,31 @@
+# Unreleased — two teams (ccc + omp), rooms never stuck, HQ remote link, on/off CLI
+
+## Goal
+CLI = on/off; everything else from HQ (local or internet link). Rooms never stay stuck: API-error / usage-limit stops resume by themselves at the right time; optional omp team (default ccc only, `auto up --omp`) shares board, inbox and messages with the ccc team; HQ reachable from the phone (`hq ui --public`). Contract: `su-code/planning/ccc-two-teams/CONTRACT.md`. Branch `feat/two-teams` (from origin/main 7d2180c; first built on a stale v0.98.1 base, kept as local branch `wip/two-teams-stale`).
+
+## Assumptions (sourced)
+- Status line JSON carries `rate_limits.five_hour|seven_day.used_percentage|resets_at` (epoch s), since Claude Code 2.1.80 (code.claude.com/docs/en/statusline; CHANGELOG). Values come from the session's last API response. We read only this — never OAuth credentials.
+- Orca (stablyai/orca) reads Claude OAuth tokens to poll `api/oauth/usage` (`src/main/rate-limits/claude-oauth-credentials.ts`) → NOT copied (org rule: subscription credentials never leave Claude Code).
+- StopFailure `error` values: rate_limit, overloaded, authentication_failed, oauth_org_not_allowed, account_on_hold, billing_error, invalid_request, model_not_found, server_error, max_output_tokens, cloud_credential_error, unknown; no reset time in hooks (hooks.md).
+- Claude Code itself auto-continues after a claude.ai limit reset in interactive sessions (`autoContinueAtUsageLimit`, ≤2 consecutive, not >24 h, not background/-p) → 8sync mirrors those caps for its own resume.
+- PreToolUse may answer AskUserQuestion: `permissionDecision:"allow"` + `updatedInput` = questions + `answers` map ("collects the answer through your own UI", hooks.md §Tools that require user interaction). PermissionRequest hooks decide allow/deny on behalf of the user; deny rules still apply. Command hook default timeout 600 s.
+- Cloudflare quick tunnels: no account, URL on stderr, testing-only, no SSE, ~200 in-flight cap (developers.cloudflare.com trycloudflare page) → remote HQ polls.
+- omp 18.12.2: extensions `pi.on(agent_end|tool_call|…)`, `pi.sendUserMessage(text,{deliverAs:"followUp"})`, `ctx.isIdle()`, `tool_call` can block (oh-my-pi source via librarian); `omp -p` exists (`omp --help`).
+
+## Checklist
+- [x] Merge onto origin/main v0.100.15 (our C5 dropped: upstream permit/delegate covers it).
+- [x] Unstick (resume_at at the status-line reset, ≤2 offers, gated by auto + lease/usage), omp team (`auto up --omp`, extension, `ccc msg`), `hq ui --public` (nonce file, 10-min link, HMAC cookie 12 h), HQ captions/meter/team labels.
+- [x] Owner bug 2026-10-19 (rooms died with the machine, HQ said "Đang làm"): `auto revive` + HQ tick (≤2 min, on Run); `8sync awake --while-rooms` (proven on Windows: `powercfg /requests` lists 8sync.exe under SYSTEM).
+- [x] Reviews round 1 (reviewer + security-reviewer): 4 HIGH (omp guard, room-line rails, owner-frame forgery) + MEDs fixed by RustInbox/HqAuth/OmpHarden; consecutive-resume counter kept (= Claude Code semantics).
+- [x] Gate (Windows): cargo test 604+35 ok; `--no-default-features` builds; hq-ui tsc/eslint clean, vitest 560/563 (3 Windows-only failures identical on origin/main).
+- [ ] v0.101.0: size gate (linux asset 7,198,832 B vs ceiling 7,208,960 — must attribute + raise), CI on branch, merge main, tag, release, `8sync up` on this machine, delete feat branch, revive ai-game-studio rooms.
+
+## Current
+Release prep v0.101.0 (version bumped, CHANGELOG cut).
+
+## Next
+Size attribution → push → CI green → merge main + tag → install → apply.
+
 # v0.67.1 — rich `ccc . ls`, local team UI (`8sync hq ui`), agent teams (`--team`), guard fixes, dnf5
 
 ## Goal
@@ -19,7 +47,6 @@ Released and installed. Owner-only: enable Channels in claude.ai org settings (O
 
 ## Next
 - Owner: Channels on → re-run the channel UAT (inbox → session → reply tool).
-- `hq-ui` packaging: ship the Next.js standalone build as a release asset so `8sync hq ui` works without the repo checkout.
 - Roadmap outputs/ccc-harness-next.md: P1 /planning, P2 loop breaker / statusline / keep plan across /compact, P3 eval kit.
 - Size: linux asset ~64 KiB under 5952 KiB; next Rust feature needs attribution or trimming (goal 4 MiB).
 

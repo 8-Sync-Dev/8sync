@@ -174,8 +174,8 @@ fn file(home: &Path) -> PathBuf {
     d.parent().unwrap_or(&d).join("targets.json")
 }
 
-/// Lines kept, hidden characters dropped, secrets masked, at most `max` chars.
-fn clean(s: &str, max: usize) -> String {
+/// Lines kept, hidden characters dropped, secrets masked, at most `max` chars (also `ccc msg`).
+pub(super) fn clean(s: &str, max: usize) -> String {
     let hidden = |c: char| {
         (c.is_control() && c != '\n')
             || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{2028}' | '\u{2029}' | '\u{FEFF}')
@@ -599,7 +599,7 @@ pub(super) fn now_prompt(t: &Target, room: &str) -> String {
         .map(|c| format!("Đạt khi `{c}` exit 0.\n"))
         .unwrap_or_default();
     format!(
-        "8sync auto --now: owner gửi việc làm NGAY cho cả dự án (đích #{id}, đứng đầu hàng):\n{text}\n{check}\
+        "8sync auto --now: việc làm NGAY cho cả dự án (đích #{id}, đứng đầu hàng):\n{text}\n{check}\
          Xong lượt đang làm thì chuyển sang đích này: phần hợp vai phòng `{room}` (vai {role}); giữ file trước bằng `8sync ccc . goal \"…\" --files a,b`. \
          Đạt (lệnh kiểm + kết quả) → `8sync ccc auto done {id} --evidence \"<lệnh: kết quả>\"`. Không merge/push main/tag/deploy; câu hỏi Ship vẫn chờ owner.",
         id = t.id,
@@ -920,6 +920,7 @@ mod tests {
         ] {
             assert!(p.contains(want), "missing {want}: {p}");
         }
+        assert!(!p.contains("owner gửi"), "a room's --now must not claim the owner's voice: {p}");
         assert_eq!(json(Some(&t))["id"], 7);
         assert!(json(None).is_null());
     }

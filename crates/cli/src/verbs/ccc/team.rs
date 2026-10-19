@@ -1,4 +1,4 @@
-//! `8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 10m] [--hours N] [--usd-per-hour X]`
+//! `8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 10m] [--hours N] [--usd-per-hour X] [--omp]`
 //! and `auto down`: the whole team in one command, no terminal per room.
 //!
 //! `up` turns `auto on --here` for the project, then makes sure every role room runs as a Claude
@@ -22,7 +22,10 @@
 //! ones included): every background session no team room keeps, i.e. duplicates of a room and
 //! leftovers of old runs or dropped rooms, and their registry entries. Interactive sessions (the
 //! owner's terminals) are never touched; `claude rm` keeps a worktree with unpushed commits.
-use std::path::Path;
+//!
+//! `up --omp` (or `up` while auto.json's teams has omp) also brings team omp up: one omp room
+//! `omp-<role>` per role, detached ([`super::omp_team`]); `down` stops those too.
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 use ccc_core::registry::Store;
@@ -30,11 +33,11 @@ use serde_json::Value;
 
 use super::{auto, idle, room};
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] | down";
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full] [--loop 10m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp] | down | revive";
 
-/// `auto up …` / `auto down`: the verbs this module owns.
+/// `auto up …` / `auto down` / `auto revive`: the verbs this module owns.
 pub(super) fn wants(rest: &[String]) -> bool {
-    matches!(rest.first().map(String::as_str), Some("up" | "down"))
+    matches!(rest.first().map(String::as_str), Some("up" | "down" | "revive"))
 }
 
 /// Runs `claude <args>` in the project root and returns stdout + stderr.
@@ -218,10 +221,12 @@ pub(super) struct Opts {
     /// `auto up "<việc>" [--check "<lệnh>"]`: the first card, at the head of the queue.
     pub task: Option<String>,
     pub check: Option<String>,
+    /// `--omp`: team omp too (also turns omp on in auto.json's teams).
+    pub omp: bool,
 }
 
 pub(super) fn parse(rest: &[String]) -> Result<Opts> {
-    let mut o = Opts { roles: room::DEFAULT_TEAM.iter().map(|s| s.to_string()).collect(), every: auto::DEFAULT_LOOP_MIN, hours: idle::DEFAULT_HOURS as f64, rate: None, clear: false, task: None, check: None };
+    let mut o = Opts { roles: room::DEFAULT_TEAM.iter().map(|s| s.to_string()).collect(), every: auto::DEFAULT_LOOP_MIN, hours: idle::DEFAULT_HOURS as f64, rate: None, clear: false, task: None, check: None, omp: false };
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().filter(|v| !v.starts_with("--")).cloned().ok_or_else(|| anyhow::anyhow!("{a} cần một giá trị\n{USAGE}"));
@@ -249,6 +254,7 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
             "--hours" => o.hours = value()?.parse().map_err(|_| anyhow::anyhow!("--hours cần một số\n{USAGE}"))?,
             "--usd-per-hour" => o.rate = Some(value()?.parse().map_err(|_| anyhow::anyhow!("--usd-per-hour cần một số\n{USAGE}"))?),
             "--clear-ss" | "--clean" => o.clear = true,
+            "--omp" => o.omp = true,
             "--check" => o.check = Some(value()?),
             x if x.starts_with("--") => bail!("không rõ `{x}`\n{USAGE}"),
             w => {
@@ -351,6 +357,7 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     let everywhere = live(&t.claude.run(&["agents".into(), "--json".into()])?)?;
     // On first: a room's first tick reads `auto status --json` and drops its loop while auto is off.
     let status = auto::set(t.home, auto::Mode::On { hours: o.hours, after: auto::DEFAULT_AFTER_S, rate: o.rate, repo: Some(t.root.to_path_buf()) }, t.subscription, now)?;
+    set_team_root(t.home, t.root, true);
     auto::write_loop_md(t.root)?;
     // Before any room starts, so the lead's first turn already sees it at the head of the queue.
     if let Some(task) = &o.task {
@@ -444,6 +451,134 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     Ok((status, gone, rows))
 }
 
+/// `auto revive`: bring back this project's team rooms whose background session died (machine
+/// restarted, process killed) while auto still runs here. Owner (2026-10-19): "tắt máy chứ chưa tắt
+/// ccc auto … mở máy lên hiển thị đang làm nhưng mà lại không có làm". A room counts when it is a
+/// known role, its registry id is a background session in `claude agents --all` that is no longer
+/// live, nothing live carries its title, and Claude Code still has the conversation. It resumes the
+/// same way `up` does (same prompt, registry rebound), but never renews the lease, never starts a
+/// room that never ran, and does nothing while auto is off, paused, out of scope or gated (on a
+/// subscription the owner-present lease; usage window; `$`/hour cap).
+pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
+    let root = t.root.to_string_lossy();
+    if !auto::running(t.home) || !auto::in_scope(t.home, Some(&root)) || !auto::status(t.home, t.subscription, now)["gate"].is_null() {
+        return Ok(Vec::new());
+    }
+    let all = agents(t, true)?;
+    let running = agents(t, false)?;
+    // A room's id live anywhere on the machine (a terminal in another folder) is never resumed a
+    // second time, as in `up`.
+    let everywhere = live(&t.claude.run(&["agents".into(), "--json".into()])?)?;
+    let mut rows = Vec::new();
+    let mut started = Vec::new();
+    for s in t.store.load().sessions {
+        let Some(r) = room::find(&s.name) else { continue };
+        let title = (t.title)(&s.name);
+        let died = all.iter().any(|l| l.id == s.conversation_id && l.background)
+            && !running.iter().any(|l| l.id == s.conversation_id || l.name == title)
+            && !everywhere.iter().any(|l| l.id == s.conversation_id);
+        if !died || !(t.has_transcript)(&s.conversation_id) {
+            continue;
+        }
+        let prompt = match r.lane {
+            Some(lane) => goal_prompt(&s.name, lane, every),
+            None => auto::loop_prompt(&s.name, every, false),
+        };
+        let out = t.claude.run(&argv(&Plan::Resume, &s.conversation_id, &title, r.model, &prompt))?;
+        let Some(short) = short_id(&out).filter(|_| !untrusted(&out)) else {
+            rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: format!("không mở lại được: {}", crate::verbs::session_view::truncate(out.trim(), 200)), short: String::new() });
+            continue;
+        };
+        started.push((s.name.clone(), short.clone()));
+        rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: "chạy lại nền (phiên cũ đã chết)".into(), short });
+    }
+    // Same as `up`: point the registry at the forked ids (the list can lag a moment).
+    for attempt in 0..5 {
+        if started.is_empty() {
+            break;
+        }
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+        }
+        let now_live = agents(t, false)?;
+        started.retain(|(name, short)| match now_live.iter().find(|l| l.id.starts_with(short.as_str())) {
+            Some(l) => t.store.rebind(name, &l.id).is_err(),
+            None => true,
+        });
+    }
+    Ok(rows)
+}
+
+/// The file that lists the roots `auto up` brought a team up in (`auto down` drops its root):
+/// `auto revive` walks only these.
+fn team_roots_file(home: &Path) -> PathBuf {
+    idle::state_dir(home).join("team-roots.json")
+}
+
+/// The roots `auto revive` brings back, as `auto up` used them for the registry.
+pub(super) fn team_roots(home: &Path) -> Vec<String> {
+    idle::read_json(&team_roots_file(home)).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+}
+
+fn set_team_root(home: &Path, root: &Path, on: bool) {
+    let r = root.to_string_lossy().into_owned();
+    let mut roots = team_roots(home);
+    roots.retain(|x| *x != r);
+    if on {
+        roots.push(r);
+    }
+    idle::write_json(&team_roots_file(home), &Value::from(roots));
+}
+
+/// Held while `auto revive` or `auto up` runs (HQ, a boot hook and the owner can all call them);
+/// the file goes on drop, but only while it still holds this run's token (`<time>.<pid>`): a run
+/// that replaced a stale lock is never unlocked by the stale run's late drop.
+pub(super) struct ReviveLock(PathBuf, String);
+
+impl Drop for ReviveLock {
+    fn drop(&mut self) {
+        if std::fs::read_to_string(&self.0).is_ok_and(|s| s == self.1) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+}
+
+/// A lock younger than this is a revive still running; an older one was left by a killed run.
+const REVIVE_LOCK_S: u64 = 600;
+
+/// `None`: another revive / up holds the lock, this one does nothing.
+pub(super) fn revive_lock(home: &Path, now: u64) -> Result<Option<ReviveLock>> {
+    let dir = idle::state_dir(home);
+    std::fs::create_dir_all(&dir)?;
+    let p = dir.join("revive.lock");
+    let token = format!("{now}.{}", std::process::id());
+    for _ in 0..2 {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+            Ok(mut f) => {
+                use std::io::Write;
+                let _ = write!(f, "{token}");
+                return Ok(Some(ReviveLock(p, token)));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // The time written in it, else its mtime (a run killed before writing).
+                let held = std::fs::read_to_string(&p).unwrap_or_default();
+                let at = held.split('.').next().and_then(|s| s.trim().parse::<u64>().ok()).or_else(|| {
+                    std::fs::metadata(&p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs())
+                });
+                if at.is_some_and(|a| now.saturating_sub(a) < REVIVE_LOCK_S) {
+                    return Ok(None);
+                }
+                // Stale: take it over only if nobody replaced it meanwhile (same content).
+                if std::fs::read_to_string(&p).unwrap_or_default() == held {
+                    let _ = std::fs::remove_file(&p);
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(None)
+}
+
 /// `auto down`: stop this project's background rooms (`claude stop` keeps the conversation, `up`
 /// resumes it; nothing is deleted) and take this project out of auto; other projects keep running.
 /// A room counts by its registry id or, when `up` could not rebind yet, by its title.
@@ -463,6 +598,7 @@ pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
         }
     }
     auto::leave(t.home, t.root, t.subscription, now)?;
+    set_team_root(t.home, t.root, false);
     Ok(stopped)
 }
 
@@ -606,6 +742,7 @@ mod tests {
         assert!(parse(&v(&["--team"])).is_err());
         assert!(!o.clear);
         assert!(parse(&v(&["--clear-ss"])).unwrap().clear && parse(&v(&["--clean"])).unwrap().clear);
+        assert!(!o.omp && parse(&v(&["--omp", "--roles", "lead,dev"])).unwrap().omp);
     }
 
     #[test]
@@ -657,7 +794,7 @@ mod tests {
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{forked}]")]), bg: "backgrounded · 3698e3a6 · {name}".into() };
         // Both sessions started at 1 ms; the kit wrote settings at 1000 ms.
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: Some(1000) };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, omp: false };
         let (_, _, rows) = up(&t, &o, 1).unwrap();
         let calls = fake.calls.borrow();
         let stops: Vec<_> = calls.iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
@@ -682,6 +819,60 @@ mod tests {
         let gone = Team { has_transcript: &|_: &str| false, ..t };
         up(&gone, &o, 4).unwrap();
         assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop"), "no transcript: no resume possible, left running");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn revive_resumes_only_team_rooms_whose_background_session_died() {
+        // Owner 2026-10-19: the machine was shut down with auto on; after boot HQ said "Đang làm"
+        // but nothing ran until a terminal was opened.
+        let (h, root) = tmp("revive");
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        let qa = store.touch("qa", false).unwrap(); // died with the machine
+        let lead = store.touch("lead", false).unwrap(); // died, but the owner already reopened it under a new id
+        let notes = store.touch("notes", false).unwrap(); // not a role: the owner's own room
+        store.touch("dev", false).unwrap(); // never ran in the background: `up` starts it, revive does not
+        let review = store.touch("review", false).unwrap(); // died here, but the owner opened it in a terminal elsewhere
+        let reopened = "e1056947-0000-4000-8000-000000000001";
+        let forked = "5a5a5a5a-0000-4000-8000-000000000009";
+        let all = format!(
+            "[{},{},{},{},{}]",
+            agent(&qa.conversation_id, "qa", "background"),
+            agent(&lead.conversation_id, "lead", "background"),
+            agent(reopened, "lead", "background"),
+            agent(&notes.conversation_id, "notes", "background"),
+            agent(&review.conversation_id, "review", "background")
+        );
+        let live = format!("[{}]", agent(reopened, "lead", "background"));
+        // Machine-wide: review's own id runs in another folder's terminal.
+        let everywhere = format!("[{},{}]", agent(reopened, "lead", "background"), agent(&review.conversation_id, "notes-elsewhere", "interactive"));
+        let after = format!("[{},{}]", agent(reopened, "lead", "background"), agent(forked, "qa", "background"));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![all.clone(), live.clone(), everywhere.clone(), after]), bg: "backgrounded · 3698e3a6 · {name}".into() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: None };
+        assert!(revive(&t, 10, 1).unwrap().is_empty(), "auto off: nothing");
+        assert!(fake.calls.borrow().is_empty(), "not even a `claude agents` call");
+
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(root.clone()) }, false, 1).unwrap();
+        let rows = revive(&t, 10, 2).unwrap();
+        assert_eq!(rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["qa"]);
+        let calls = fake.calls.borrow();
+        let bg: Vec<_> = calls.iter().filter(|c| c.iter().any(|a| a == "--bg")).collect();
+        assert_eq!(bg.len(), 1, "{bg:?}");
+        assert_eq!(&bg[0][..5], ["--resume", qa.conversation_id.as_str(), "--bg", "--name", "qa"]);
+        assert!(bg[0].iter().any(|a| a == "auto") && !bg[0].iter().any(|a| a.contains("bypass")));
+        assert_eq!(store.load().sessions.iter().find(|s| s.name == "qa").unwrap().conversation_id, forked, "registry follows the fork");
+        drop(calls);
+
+        // Once it runs again a second pass does nothing; and nothing while paused or out of scope.
+        fake.calls.borrow_mut().clear();
+        let running = format!("[{},{}]", agent(reopened, "lead", "background"), agent(forked, "qa", "background"));
+        *fake.agents.borrow_mut() = vec![all.replace(&qa.conversation_id, forked), running, everywhere];
+        assert!(revive(&t, 10, 3).unwrap().is_empty());
+        auto::mark_paused(&h, 4).unwrap();
+        *fake.agents.borrow_mut() = vec![all, live];
+        fake.calls.borrow_mut().clear();
+        assert!(revive(&t, 10, 5).unwrap().is_empty());
+        assert!(fake.calls.borrow().is_empty());
         let _ = std::fs::remove_dir_all(&h);
     }
 
@@ -712,7 +903,7 @@ mod tests {
             bg: String::new(),
         };
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, omp: false };
         let (_, gone, rows) = up(&t, &o, 1).unwrap();
         let g: Vec<_> = gone.iter().map(|g| (g.name.as_str(), g.short.as_str(), g.kept.is_some())).collect();
         assert_eq!(g, [("dev", "aaaaaaaa", false), ("ui", &ui.conversation_id[..8], false), ("x", "bbbbbbbb", true)]);
@@ -749,7 +940,7 @@ mod tests {
         let qa_id = qa.conversation_id.clone();
         let has = move |id: &str| id == qa_id;
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &has, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None };
+        let o = Opts { roles: vec!["lead".into(), "dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false };
         let (status, _, rows) = up(&t, &o, 1_000).unwrap();
         assert_eq!(status["on"], true);
         assert!(status["repo"].as_str().is_some(), "auto is scoped to the project");
@@ -777,11 +968,13 @@ mod tests {
         let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec!["[]".into()]), bg: "Workspace not trusted. Run `claude` in C:\\proj once and accept the trust prompt".into() };
         let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None };
+        let o = Opts { roles: vec!["dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false };
         let e = up(&t, &o, 1).unwrap_err().to_string();
         assert!(e.contains("chưa trust") && e.contains("8sync ccc auto up"), "{e}");
         assert_eq!(fake.calls.borrow().iter().filter(|c| c.iter().any(|a| a == "--bg")).count(), 1, "stops at the first room");
-        assert!(up(&t, &Opts { roles: vec!["../x".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None }, 1).is_err());
+        assert!(up(&t, &Opts { roles: vec!["../x".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false }, 1).is_err());
+        // `auto revive` walks exactly the roots `up` brought a team up in (here only this one, once).
+        assert_eq!(team_roots(&h), [root.to_string_lossy().into_owned()]);
 
         let dev = store.touch("dev", false).unwrap();
         let mine = store.touch("lead", false).unwrap();
@@ -793,6 +986,23 @@ mod tests {
         let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").cloned().collect();
         assert_eq!(stops, [vec!["stop".to_string(), dev.conversation_id[..8].to_string()]]);
         assert_eq!(auto::status(&h, false, 3)["paused"], true);
+        assert!(team_roots(&h).is_empty(), "down takes the root out of revive's list");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn one_revive_at_a_time_and_a_stale_lock_is_replaced() {
+        let (h, _) = tmp("revlock");
+        let held = revive_lock(&h, 1_000).unwrap().expect("first run takes the lock");
+        assert!(revive_lock(&h, 1_100).unwrap().is_none(), "a second revive does nothing");
+        drop(held);
+        assert!(!idle::state_dir(&h).join("revive.lock").exists(), "dropped with the guard");
+        let _left = revive_lock(&h, 2_000).unwrap().expect("free again");
+        std::mem::forget(_left); // a killed run leaves the file behind
+        assert!(revive_lock(&h, 2_000 + REVIVE_LOCK_S - 1).unwrap().is_none());
+        let again = revive_lock(&h, 2_000 + REVIVE_LOCK_S).unwrap();
+        assert!(again.is_some(), "a lock older than {REVIVE_LOCK_S}s is stale");
+        drop(again);
         let _ = std::fs::remove_dir_all(&h);
     }
 
@@ -837,7 +1047,7 @@ mod tests {
         let list = format!("[{},{}]", agent_in(game_lead, "lead", "background", &game), agent_in(DEV_BG, "dev", "background", &game));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|id: &str| id == game_lead, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("BE AI zus".into()), check: None };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("BE AI zus".into()), check: None, omp: false };
         let (status, _, rows) = up(&t, &o, 1_000).unwrap();
         let states: Vec<_> = rows.iter().map(|r| r.state.split(' ').next().unwrap()).collect();
         assert_eq!(states, ["mở", "mở"], "neither the game's lead nor its dev is ours: {rows:?}");

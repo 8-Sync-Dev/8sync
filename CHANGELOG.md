@@ -4,12 +4,35 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.101.0] — 2026-10-19
 ### Added
+- **Stuck rooms restart by themselves while auto runs.** Owner (2026-10-19): "auto xử lý kẹt … tự kích hoạt chạy lại tiếp khi usage hồi lại biết mấy giờ có lại usage".
+  - The StopFailure record now says when to resume. `rate_limit`: the reset time from the status line (`rate_limits.*.resets_at`; the window ≥ 90 % full, +60 s), at most 2 in a row and never more than 24 h out — the caps of Claude Code's own `autoContinueAtUsageLimit`, which background (`auto up`) rooms do not get. `overloaded` / `server_error` / `unknown`: after 1, 2, 4… min (≤ 15 min, ≤ 5 in a row). `max_output_tokens`: at once (≤ 2). Login, billing and request errors wait for the owner.
+  - The `8sync-inbox` mod hands the room an `[8sync:resume]` prompt when it is idle and the resume is due (at most twice per stop, never while another delivery is in flight), only while auto runs for that project and inside the usual rails (subscription lease, usage window, `$`/hour cap).
+  - Usage snapshots keep `five_hour_resets_at` / `seven_day_resets_at`. A reading taken before its window reset counts as unknown, not as 90 %, so rooms resting on it go on at the reset (under the `$`/hour fail-safe until a fresh reading arrives) instead of waiting up to 5 hours for it to go stale.
+  - `8sync ccc . ls --json` / `8sync ls --json` add `stalled_resume_at`; a resumed room is no longer shown as stuck. The stop record resolves home like the other hooks, so it also works on Windows without `HOME`.
+  - Usage comes only from the status-line JSON Claude Code produces. 8sync never reads Claude credentials or calls the OAuth usage endpoint (Orca does; not copied).
+- **Rooms that died with the machine come back.** Owner (2026-10-19): "tắt máy chứ chưa tắt ccc auto … mở máy lên hiển thị đang làm nhưng mà lại không có làm". `auto up` rooms are Claude Code background sessions; a shutdown kills them, and Claude Code's own wait-for-the-reset (`autoContinueAtUsageLimit`) only works in a live interactive session, never in `--bg`.
+  - New `8sync ccc auto revive`: for every project auto runs for, each team room (a known role) whose background session is gone from `claude agents` resumes in the background — same conversation, same prompt as `up`, registry rebound to the forked id. It never renews the lease, never starts a room that never ran, skips a room the owner already reopened, and does nothing while auto is off, paused or gated.
+  - HQ runs it at most every 2 minutes while "Chạy liên tục" is on, and right after the owner presses Chạy (a fresh owner lease after a night off).
+- **`8sync awake --while-rooms`** (also `8sync ccc awake`): keeps the machine from sleeping while rooms run — Windows `SetThreadExecutionState` (no new crate), Linux `systemd-inhibit`, macOS `caffeinate -i`; the screen may still turn off. `--while-rooms` lets go after two checks a minute apart with no live Claude Code session; `--hours N` (default 8, at most 24). Never starts a room or renews the lease; on a subscription it prints where unattended runs belong. Proposed by room `core` after the night the rooms died with the machine.
+- **HQ: plan usage like Orca's meter** — a bar, "N% used", the time left to the 5-hour reset ("4h 11m") and the 7-day percentage, from the status line only. Orca's per-model weekly line ("Fable") comes from the OAuth usage endpoint, which 8sync does not call.
+- **A second team on omp.** `8sync ccc auto up --omp` opens an `omp-<role>` room per role (tmux on Linux/macOS, a Windows Terminal tab on Windows); `auto omp on|off` (and the HQ switch) toggles the team; omp rooms opened with `8sync . <name>` join too. Refused while omp's default model is `anthropic/…`: a Claude subscription stays in Claude Code.
+  - New omp extension `8sync-team.ts` (installed by `harness global`): HQ inbox messages when the room is idle, target-queue nudges (`8sync ccc auto nudge`, ≤ 1 per 10 min, ≤ 6/h), resume after provider rate-limit/overload errors (1 → 15 min, ≤ 5), and its own `ask` answered from the options while auto runs (owner-only items go to the final answer).
+  - `8sync ccc msg <room|--all> "<text>"`: any room of either team messages another. Room messages reach the inbox framed as data from that room, never as the owner's words, and show in HQ chat. `ls --json` rows gain `inbox_id` (`omp-<fnv64>` for omp rooms); `ccc_core::transcript::Row` gains the public field `inbox_id`.
+- **`8sync hq ui --public`**: a Cloudflare quick tunnel to HQ with a login link `https://<host>/api/login?k=<key>` that works for 10 minutes; the session cookie (HttpOnly/Secure/SameSite=Strict) is signed with the key and checked on the server for 12 h. New host and key per start; HQ only accepts the link file written by the launcher that started it (per-run nonce); the file is removed on exit. Remote pages poll (quick tunnels drop SSE). No `cloudflared` → install hint and HQ stays local.
+- HQ: stuck captions with the restart time ("Hết usage — tự chạy lại lúc HH:MM", only while auto can act), team labels and delivery to omp rooms, Đội omp switch, remote-link status, security headers (no framing, no referrer).
+- Guard: room messages are delivered only while auto runs inside its rails, quoted line by line so they cannot pass for the owner's words; the guard and kit deny rules cover the HQ UI token, the public-link file, `secrets.json`, the usage snapshots, permit answers and the inbox (case- and slash-insensitive); omp rooms get the same path block from the `8sync-team` extension, and an omp room on (or with an unknown) `anthropic` provider gets owner messages only.
+- Website: an "On / off" box (team, omp team, pause, HQ, HQ from the phone, emergency stop), the new rows in the command table, and `docs/huong-dan.md` / `docs/hq.md`.
 - **HQ: "@" inserts a file or folder path** in "Gửi cho mọi phòng" and in the room message box.
   - Type `@` to list the project's folders and files. Type `@src/` to go one level down, or `@../` to go up and out of the project.
   - ↑/↓ choose, Enter or Tab picks, Esc closes.
   - On send, each `@path` that exists becomes an absolute path, so a room in a worktree or another folder opens the same file. Unknown names and e-mail addresses stay as typed.
   - The listing (`GET /api/fs`) returns names only and sits behind the HQ token.
+
+### Changed
+- Size ceiling 7040 → 7168 KiB: linux-x86_64 7,280,784 B (+81,952 B over v0.100.15) for the omp extension, resume, omp team, room messages, public link, revive and awake; no new dependency (`scripts/size-gate.sh`).
 
 ## [0.100.15] — 2026-10-18
 ### Fixed
