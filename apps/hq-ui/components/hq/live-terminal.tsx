@@ -7,8 +7,11 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { isLocalHost } from "@/lib/hosts";
 
-/** Remote link only: no byte for this long means the tunnel holds the stream back. */
-const SILENT_MS = 10_000;
+/** Remote link: poll gap while the room prints, and while it is quiet. */
+const POLL_BUSY_MS = 150;
+const POLL_IDLE_MS = 600;
+/** Remote link: polls in a row that may fail (tunnel hiccup) before the terminal says so. */
+const POLL_TRIES = 5;
 
 const FONT_SIZE = 13;
 const THEMES = {
@@ -48,6 +51,21 @@ function parseSse(buf: string): { events: { event: string; data: string }[]; res
   return { events, rest: buf };
 }
 export { parseSse };
+
+/** One poll of the remote terminal (`GET /term?gen=&since=`), `out` in base64. */
+type PollJson = { gen: number; cursor: number; out: string; reset: boolean; ended: boolean };
+
+function isPoll(v: unknown): v is PollJson {
+  return !!v && typeof v === "object" && "gen" in v && typeof v.gen === "number" && "cursor" in v && typeof v.cursor === "number" && "out" in v && typeof v.out === "string" && "reset" in v && "ended" in v;
+}
+
+/** A refusal polling again will not fix (no room, bad token): shown at once. */
+class PollRefused extends Error {}
+
+async function errorOf(res: Response): Promise<string> {
+  const body: unknown = await res.json().catch(() => null);
+  return body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : `HTTP ${res.status}`;
+}
 
 /**
  * A background room's real terminal in the page (`claude attach` through `8sync ccc term`): type,
@@ -89,30 +107,50 @@ export function LiveTerminal({ sessionId, token, onEnded }: { sessionId: string;
         void post(s);
       });
       ro.observe(el);
-      // Through the remote link (Cloudflare quick tunnel) the event stream is held back: nothing arrives,
-      // not even the screen replay. Off loopback, 10 s of nothing = say so instead of hanging on "connecting".
+      // Through the remote link (Cloudflare quick tunnel) an event stream is held back, so off
+      // loopback the page polls `?gen=&since=` instead; keys and sizes go over POST either way.
       const remote = !isLocalHost(window.location.host);
-      let dead = false;
-      const dog = remote
-        ? setTimeout(() => {
-            dead = true;
-            ac.abort();
-          }, SILENT_MS)
-        : undefined;
       try {
-        const res = await fetch(`${url}?cols=${size.cols}&rows=${size.rows}`, { headers: { "x-hq-token": token }, signal: ac.signal });
-        if (!res.ok || !res.body) {
-          const msg = ((await res.json().catch(() => ({}))) as { error?: string }).error;
-          throw new Error(msg || `HTTP ${res.status}`);
+        if (remote) {
+          let gen = 0;
+          let since = -1;
+          let fails = 0;
+          while (!ac.signal.aborted) {
+            let p: PollJson;
+            try {
+              const res = await fetch(`${url}?cols=${last.cols}&rows=${last.rows}&gen=${gen}&since=${since}`, { headers: { "x-hq-token": token }, signal: ac.signal, cache: "no-store" });
+              if (!res.ok) throw res.status < 500 ? new PollRefused(await errorOf(res)) : new Error(await errorOf(res));
+              const body: unknown = await res.json();
+              if (!isPoll(body)) throw new Error("terminal: bad reply");
+              p = body;
+              fails = 0;
+            } catch (e) {
+              if (ac.signal.aborted || e instanceof PollRefused || ++fails >= POLL_TRIES) throw e;
+              await new Promise((r) => setTimeout(r, POLL_IDLE_MS));
+              continue;
+            }
+            setState("live");
+            if (p.reset) term.reset();
+            if (p.out) term.write(Uint8Array.from(atob(p.out), (c) => c.charCodeAt(0)));
+            gen = p.gen;
+            since = p.cursor;
+            if (p.ended) {
+              setState("ended");
+              onEnded?.();
+              return;
+            }
+            await new Promise((r) => setTimeout(r, p.out ? POLL_BUSY_MS : POLL_IDLE_MS));
+          }
+          return;
         }
-        if (!remote) setState("live");
+        const res = await fetch(`${url}?cols=${size.cols}&rows=${size.rows}`, { headers: { "x-hq-token": token }, signal: ac.signal });
+        if (!res.ok || !res.body) throw new Error(await errorOf(res));
+        setState("live");
         const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
         let rest = "";
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
-          clearTimeout(dog);
-          setState("live");
           const p = parseSse(rest + value);
           rest = p.rest;
           for (const e of p.events) {
@@ -124,15 +162,10 @@ export function LiveTerminal({ sessionId, token, onEnded }: { sessionId: string;
           }
         }
       } catch (e) {
-        if (dead) {
-          setError("link internet (quick tunnel) không truyền luồng terminal. Mở HQ trên máy chạy phòng để dùng terminal");
-          setState("error");
-        } else if (!ac.signal.aborted) {
+        if (!ac.signal.aborted) {
           setError((e as Error).message);
           setState("error");
         }
-      } finally {
-        clearTimeout(dog);
       }
     })();
 

@@ -12,9 +12,10 @@ export const IDLE_CLOSE_MS = 60_000;
 const MAX_INPUT = 4096;
 
 type Spawn = (cmd: string, args: string[], opts: { cwd?: string; windowsHide: boolean; env?: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
-type Term = { proc: ChildProcessWithoutNullStreams; chunks: Buffer[]; bytes: number; viewers: Set<(b: Buffer | null) => void>; idle?: ReturnType<typeof setTimeout>; ended: boolean };
+type Term = { proc: ChildProcessWithoutNullStreams; gen: number; chunks: Buffer[]; bytes: number; total: number; viewers: Set<(b: Buffer | null) => void>; idle?: ReturnType<typeof setTimeout>; ended: boolean };
 
 const terms = new Map<string, Term>();
+let gens = 0;
 
 export const termArgs = (id: string, cols: number, rows: number) => ["ccc", "term", id, "--cols", String(cols), "--rows", String(rows)];
 
@@ -34,11 +35,12 @@ export function openTerm(id: string, cwd: string | null, size: { cols: number; r
   const cur = terms.get(id);
   if (cur && !cur.ended) return cur;
   const proc = spawn(binFor("8sync"), termArgs(id, size.cols, size.rows), { cwd: cwd ?? undefined, windowsHide: true, env: childEnv() });
-  const t: Term = { proc, chunks: [], bytes: 0, viewers: new Set(), ended: false };
+  const t: Term = { proc, gen: ++gens, chunks: [], bytes: 0, total: 0, viewers: new Set(), ended: false };
   terms.set(id, t);
   proc.stdout.on("data", (b: Buffer) => {
     t.chunks.push(b);
     t.bytes += b.length;
+    t.total += b.length;
     while (t.bytes > KEEP_BYTES && t.chunks.length > 1) t.bytes -= t.chunks.shift()!.length;
     for (const v of t.viewers) v(b);
   });
@@ -63,6 +65,26 @@ export function watch(id: string, t: Term, fn: (b: Buffer | null) => void): () =
     t.viewers.delete(fn);
     if (t.viewers.size === 0) t.idle = setTimeout(() => closeTerm(id), IDLE_CLOSE_MS);
   };
+}
+
+/** One poll: bridge `gen`, byte `cursor` to send next, `out` after the asked cursor (all kept output on `reset`). */
+export type TermPoll = { gen: number; cursor: number; out: Buffer; reset: boolean; ended: boolean };
+
+/**
+ * The remote link's view (a Cloudflare quick tunnel holds an event stream back, so the page polls):
+ * output after byte `since` of bridge `gen`. Kept output is trimmed and a new bridge starts over, so a
+ * cursor this bridge cannot serve replays everything kept with `reset`. A poll keeps the bridge open
+ * like a viewer that leaves now: it closes IDLE_CLOSE_MS after the last poll.
+ */
+export function poll(id: string, t: Term, gen: number, since: number): TermPoll {
+  if (!t.ended && t.viewers.size === 0) {
+    clearTimeout(t.idle);
+    t.idle = setTimeout(() => closeTerm(id), IDLE_CLOSE_MS);
+  }
+  const first = t.total - t.bytes;
+  const reset = gen !== t.gen || !Number.isInteger(since) || since < first || since > t.total;
+  const all = Buffer.concat(t.chunks);
+  return { gen: t.gen, cursor: t.total, out: reset ? all : all.subarray(since - first), reset, ended: t.ended };
 }
 
 /** Keys typed in the browser (xterm's onData), or a new size. */
