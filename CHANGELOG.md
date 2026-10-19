@@ -5,10 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- The 0.105.0 notes below said planning and checking rooms used ~75% of ai-game-studio's tokens and the dev room 3%. That came from guessing each transcript's room from its text. With the room names Claude Code records (`claude agents --all --json`): ui 23%, rd 14%, dev 11%, qa 10%, arch 7%, review 6%, lead 6%, ba 4%, older forks of rooms 19%. Two of the eight rooms were building; the board still held 23 cards in ready and 1 in building.
+
 ## [0.105.0] — 2026-10-19
 Owner (2026-10-19): ai-game-studio "treo hơn 1 ngày liên tục mà chả ra gì … nghi bị chạy ngắn quá đứt gãy do loop". Measured over the last 36 h of that project (31 transcripts, 565 turns, 15K API calls, board, GitHub). Turns were long, not fragmented (rooms were busy about 220 room-hours); the losses were elsewhere:
 - 64% of input tokens went to calls that re-read over 300K tokens of context (median call 305K, p90 553K): the kit compacts at 65% of a 1M window.
-- Planning and checking rooms (lead, ba, rd, arch, qa, review) used about 75% of the tokens, the dev room 3%. The board held 23 cards in ready and 1 in building.
+- Two of eight rooms were building (ui, dev); the board held 23 cards in ready and 1 in building. (Corrected per-room shares: see Unreleased.)
 - 51 PRs open, merges held up by stacked branch chains (PR 108 on 103 on 99; one PR carrying 5 cards); an owner ask ("nút skill xấu") split into R&D, ADR notes and a UI card that waits on the R&D one.
 - 742 Bash calls were blocked on 18/10 12:00–14:00 because the guard hook itself failed (a few with ENOENT on the `8sync` binary; rooms retried `auto status` hundreds of times), and 178 calls used `meet --as`, which did not exist.
 

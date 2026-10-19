@@ -42,8 +42,9 @@ pub(super) const DEFAULT_TEAM: [&str; 5] = ["lead", "dev", "qa", "review", "rd"]
 
 /// `auto up --roles full` (HQ "Team đầy đủ"): three builders (two devs and a UI/UX room) on the ready
 /// lane, a lead, QA and review. Before 2026-10-19 this was lead, ba, arch, rd, dev, ui, qa, review;
-/// measured on ai-game-studio over 36 h: planning rooms (lead, ba, rd, arch) spent about half the
-/// tokens, the one dev 3%, 23 cards waited in ready with 1 in building. BA, architect and R&D join
+/// measured on ai-game-studio over 36 h: the planning rooms (lead, ba, rd, arch) spent about a third
+/// of the tokens, as much as the two building rooms (ui, dev), and 23 cards waited in ready with 1 in
+/// building. BA, architect and R&D join
 /// on request (`--roles lead,dev,dev2,ui,qa,review,arch`). Each room is its own Claude Code session,
 /// so this spends quota about 6× a single session; the 90% rest still applies.
 pub(super) const FULL_TEAM: [&str; 6] = ["lead", "dev", "dev2", "ui", "qa", "review"];

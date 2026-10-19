@@ -44,8 +44,7 @@ pub(super) const CLAIM_SECS: u64 = 2 * 3600;
 const REBUILD_CAP: u32 = 2;
 /// WIP limit of the pull system: builder cards waiting in `ready`. At the cap, planning rooms take no
 /// new backlog card and backlog → ready is refused, except P0. Measured on ai-game-studio
-/// (2026-10-19, 36 h): 23 cards in ready, 1 in building, planning rooms ~50% of the tokens, the
-/// builder 3%.
+/// (2026-10-19, 36 h): 23 cards in ready, 1 in building, with two of eight rooms building.
 pub(super) const READY_CAP: usize = 6;
 
 /// Open cards waiting for a builder (`ready`, not the qa lane's).
