@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.108.1] — 2026-10-20
+Live UAT of 0.108.0 on ai-game-studio (6 rooms relaunched 01:23 VN, 33 min): 156 calls/h and 15.6M context tokens/h (0.105 window: 1,062/h and 114M/h), wrong-role returns 1 (was 10), conflict returns 0 (was 10), 4 tool errors (was 58). Fixes for what the UAT still showed:
+
+### Fixed
+- **Unknown role tags.** A card tagged `[art-director]` counted as untagged, so a dev room took it (#134). A role tag the team has no room for is now a role with no room: never handed out, listed by `auto lint`/`board`. `[hot-fix]`, `[follow-up]`, `[wip]`, `[bug]`, `[feature]`, `[chore]` and `[p0]`–`[p3]` are not roles.
+- **"Conflict" right after a push.** GitHub reports `mergeable: UNKNOWN` for a few seconds after a push, and the board refused the move as a conflict (#147 passed 45 s later). The board re-reads UNKNOWN up to 3 times, then says GitHub is still computing it (no bounce). Only CONFLICTING is a conflict.
+- **Ship question at once.** The lead went into `auto wait` after `auto merge` refused for missing permission and asked the Ship question 8.7 min later. The refusal now prints the exact question (header Ship, options, every approved card and PR), and the lead asks it in the same turn.
+- **Wait length from the room's own Bash limit.** dev rooms still ran `auto wait --timeout 540`. `auto wait` now defaults to 1800 s when `BASH_MAX_TIMEOUT_MS` allows it (rooms started by `auto up`/`revive`), else 540 s; room texts run plain `auto wait --json`.
+- **`ccc risk` on a stale base.** With an unfetched `origin/main`, PR 116 (84 files) was read as 177 files including `ci.yml`, so every gate skill ran. `ccc risk` fetches the base (20 s limit) and diffs against the merge-base; when the fetch fails it says the base may be stale.
+
 ## [0.108.0] — 2026-10-20
 Owner (2026-10-20): "quay lại nâng cấp ccc đi uat đi sao mà nó dở quá luôn á auto kém chất lượng kết quả đạt chậm". Measured on ai-game-studio, 71 min after the 0.105.0 relaunch (9 rooms, 1,264 API calls):
 - 14 cards were approved and 2 PRs merged; 15 approved cards waited 3.4–4.8 h.

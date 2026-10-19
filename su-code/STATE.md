@@ -19,7 +19,8 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
-v0.108.0 candidate in the clean worktree `C:/Users/Projects/su-code-v108` (branch `feat/auto-flow-v108`). The main tree holds another session's uncommitted edits (danger.rs, looper.rs, permit.rs, preview.ts, ccc.rs root, idle.rs last-human), so they are kept out of this release. v0.107.0 is released and installed, and HQ runs it.
+v0.108.1 (branch `fix/auto-flow-1081`, worktree `C:/Users/Projects/su-code-v1081`). v0.108.0 is released (PR #128, tag on 0e6d099) and installed, and HQ restarted on it. The main tree is on `main` with another session's uncommitted edits (backup `~/.local/state/8sync/backup/foreign-edits-2026-10-20.patch`).
+- Live UAT of v0.108.0 (`local://ags-after.md`, ai-game-studio relaunched 01:23 VN, 33 min): 156 calls/h vs 1,062; wrong-role returns 1 vs 10; conflict returns 0 vs 10. Merges wait on the owner's one Ship answer (lead asked at 01:33). v0.108.1 fixes the 5 gaps the UAT showed: unknown role tags, UNKNOWN mergeable, Ship question in the same turn, wait default from `BASH_MAX_TIMEOUT_MS`, `ccc risk` fetch + merge-base. Tests: cargo bin 676, ccc-core 32+3, vitest 695 + 3 known Windows failures.
 - Diagnosis (`local://ags-diagnosis.md`, ai-game-studio, 71 min after 0.105.0): 14 approvals and 2 merges; 25/59 PRs conflicting; 10/33 returns from role mismatch; 1,068 calls/h; CI dead on GitHub billing for 12 h.
 - Fixes:
   - `auto merge` (code merges) with a merge permission per project that is proven from the transcript;
@@ -30,7 +31,7 @@ v0.108.0 candidate in the clean worktree `C:/Users/Projects/su-code-v108` (branc
   - QA on Sonnet;
   - `ci` health with billing detection and an owner alert.
 - Reviews: round 1 found 16 issues (4 high) and round 2 found N1–N6. All are fixed, with tests, and N1 is now covered: a forged store entry grants nothing and the answer is re-checked in `~/.claude/projects`.
-- Tests (worktree): cargo bin 672 pass, ccc-core 32+3, vitest 695 + 3 known Windows failures, ext tsc clean.
+- Tests (v0.108.0): cargo bin 672 pass, ccc-core 32+3, vitest 695 + 3 known Windows failures, ext tsc clean.
 - Smoke (debug binary, read-only on ai-game-studio):
   - `auto ci` → billing;
   - `auto merge` without permission → one-line Ship instruction;
@@ -38,7 +39,7 @@ v0.108.0 candidate in the clean worktree `C:/Users/Projects/su-code-v108` (branc
   - Two bugs found and fixed in the smoke: the CI cache key under a `\\?\` root, and lint ignoring rooms HQ reopened.
 - Size: Windows local 6,077,440 B (+82,944 vs v0.107.0). The ceiling was raised to 7488 KiB with attribution.
 - OmniRoute removed everywhere (VPS, GHCR, workflow, scripts, omp provider, keys, guide).
-- The ai-game-studio team is running on v0.107.0, started by the owner at 23:54 VN 19/10 for 2 h. Its GitHub Actions billing is broken: the owner must fix payment.
+- The ai-game-studio team runs on v0.108.0 (relaunched 01:23 VN 20/10); its GitHub Actions billing is broken (status `ci: billing`): the owner must fix payment.
 - Gap 2 (owner: "để sau tôi tự chỉnh"), not changed:
   - the owner's omp default/advisor is `anthropic/…` on an OAuth credential; 8sync `models.toml` "opus" roles;
   - `cloudgo-cc`;

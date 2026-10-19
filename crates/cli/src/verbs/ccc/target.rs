@@ -647,8 +647,11 @@ fn pr_gate(pr: &str, view: &str, sha: Option<&str>, main: &str) -> Result<()> {
     if base != main {
         bail!("PR {pr} xếp chồng trên {base}: rebase lên origin/{main} rồi mở PR vào {main}");
     }
-    if field("mergeable") == "CONFLICTING" {
-        bail!("PR {pr} conflict với {base}: rebase lên origin/{base}, chạy lại check, push rồi chuyển lại");
+    match field("mergeable").as_str() {
+        "CONFLICTING" => bail!("PR {pr} conflict với {base}: rebase lên origin/{base}, chạy lại check, push rồi chuyển lại"),
+        "MERGEABLE" => {}
+        // Right after a push GitHub answers UNKNOWN for a while: not a conflict, no bounce.
+        _ => bail!("{}", super::merge::computing(pr)),
     }
     if let Some(s) = sha {
         let head = field("headRefOid");
@@ -680,6 +683,16 @@ fn passed_qa(t: &Target, head: Option<&str>) -> bool {
     })
 }
 
+/// How many times, and how far apart, a PR whose `mergeable` is still `UNKNOWN` is read again.
+/// ai-game-studio 2026-10-20: a move refused right after a push passed 45 s later.
+const UNKNOWN_REREADS: usize = 3;
+const UNKNOWN_PAUSE: std::time::Duration = std::time::Duration::from_secs(if cfg!(test) { 0 } else { 3 });
+
+/// Is gh's `view` an open PR whose `mergeable` GitHub has not computed yet?
+fn still_computing(view: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(view).is_ok_and(|v| v["state"].as_str().is_none_or(|s| s == "OPEN") && v["mergeable"].as_str() == Some("UNKNOWN"))
+}
+
 /// [`move_to`] with `gh pr view` (`(root, pr) → JSON`) and the default branch (`root → name`) injected.
 #[allow(clippy::too_many_arguments)]
 fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option<&str>, now: u64, gh: &dyn Fn(&Path, &str) -> Result<String>, main: &dyn Fn(&Path) -> Option<String>) -> Result<Target> {
@@ -705,7 +718,17 @@ fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option
                 bail!("--pr `{pr}` không phải số hay URL của PR");
             }
             let name = if arg.chars().all(|c| c.is_ascii_digit()) { format!("#{arg}") } else { arg.to_string() };
-            let view = gh(root, arg).map_err(|e| anyhow::anyhow!("không đọc được PR {name} bằng gh ({e:#}): kiểm `gh auth status` và mạng rồi chạy lại; card #{id} giữ nguyên cột"))?;
+            let mut view = gh(root, arg).map_err(|e| anyhow::anyhow!("không đọc được PR {name} bằng gh ({e:#}): kiểm `gh auth status` và mạng rồi chạy lại; card #{id} giữ nguyên cột"))?;
+            for _ in 0..UNKNOWN_REREADS {
+                if unblock || !still_computing(&view) {
+                    break;
+                }
+                std::thread::sleep(UNKNOWN_PAUSE);
+                match gh(root, arg) {
+                    Ok(v) => view = v,
+                    Err(_) => break,
+                }
+            }
             if unblock {
                 head = serde_json::from_str::<serde_json::Value>(&view).ok().and_then(|v| v["headRefOid"].as_str().map(str::to_string));
             } else {
@@ -955,6 +978,11 @@ mod tests {
         assert_eq!(asked.borrow().as_slice(), ["81"], "gh gets the bare number");
         let conflict = r#"{"baseRefName":"main","mergeable":"CONFLICTING","headRefOid":"0123abc","state":"OPEN"}"#;
         assert_eq!(err("qa", &qa, &pr(conflict)), "PR #81 conflict với main: rebase lên origin/main, chạy lại check, push rồi chuyển lại");
+        // UNKNOWN right after a push: read 3 more times, then "đang tính", not "conflict"
+        let unknown = r#"{"baseRefName":"main","mergeable":"UNKNOWN","headRefOid":"0123abc","state":"OPEN"}"#;
+        let n = asked.borrow().len();
+        assert_eq!(err("qa", &qa, &pr(unknown)), "GitHub đang tính mergeable của PR #81: thử lại sau 1 phút");
+        assert_eq!(asked.borrow().len() - n, 4, "the first read and 3 re-reads");
         let merged = r#"{"baseRefName":"main","mergeable":"UNKNOWN","headRefOid":"0123abc","state":"MERGED"}"#;
         assert!(err("qa", &qa, &pr(merged)).starts_with("PR #81 đã MERGED"));
         // gh itself failing (offline, logged out) refuses instead of letting the card through
@@ -983,6 +1011,60 @@ mod tests {
         let master = PR_OK.replace("\"main\"", "\"master\"");
         assert!(pr_gate("#81", &master, None, "master").is_ok());
         assert_eq!(pr_gate("#81", PR_OK, None, "master").unwrap_err().to_string(), "PR #81 xếp chồng trên main: rebase lên origin/master rồi mở PR vào master");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn unknown_mergeable_is_read_again_and_never_a_bounce() {
+        // ai-game-studio 2026-10-20: #147 refused as "conflict" right after a push, passed 45 s later.
+        let (d, root) = tmp("unknown");
+        let h = d.as_path();
+        let c = put(h, &root, "fix", Some("true"), false, None, 0).unwrap();
+        claim(h, &root, "dev", "ready", 1).unwrap();
+        let unknown = r#"{"baseRefName":"main","mergeable":"UNKNOWN","headRefOid":"0123abcdef","state":"OPEN"}"#;
+        let reads = std::cell::Cell::new(0);
+        // UNKNOWN twice, then GitHub has computed it: the move passes
+        let settles = |_: &Path, _: &str| -> Result<String> {
+            reads.set(reads.get() + 1);
+            Ok(if reads.get() <= 2 { unknown } else { PR_OK }.to_string())
+        };
+        let qa = Move { pr: Some("81"), ..Move::default() };
+        assert_eq!(move_with(h, &root, c.id, "qa", &qa, Some("dev"), 2, &settles, &on_main).unwrap().lane, "qa");
+        assert_eq!(reads.get(), 3);
+        move_to(h, &root, c.id, "review", &Move::default(), Some("qa"), 3).unwrap();
+        // still UNKNOWN after the re-reads: refused as "đang tính", the card stays, no bounce
+        let ok = Move { sha: Some("0123abc"), ..Move::default() };
+        let e = move_with(h, &root, c.id, "approved", &ok, Some("review"), 4, &|_, _| Ok(unknown.to_string()), &on_main).unwrap_err().to_string();
+        assert_eq!(e, "GitHub đang tính mergeable của PR #81: thử lại sau 1 phút");
+        let t = list(h, &root).unwrap().into_iter().find(|t| t.id == c.id).unwrap();
+        assert_eq!((t.lane.as_str(), t.bounces), ("review", 0));
+        assert_eq!(move_with(h, &root, c.id, "approved", &ok, Some("review"), 5, &|_, _| Ok(PR_OK.to_string()), &on_main).unwrap().lane, "approved");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_unknown_role_tag_is_a_role_no_room_claims() {
+        // ai-game-studio 2026-10-20: dev claimed #134 `[#125][art-director]`.
+        let (d, root) = tmp("artdir");
+        let h = d.as_path();
+        let card = |text: &str| put(h, &root, text, Some("true"), false, None, 0).unwrap().id;
+        let art = card("[#125][art-director] Bảng màu đảo");
+        let fix = card("[#130][hot-fix] Sửa crash khi mở kho");
+        let cards = list(h, &root).unwrap();
+        let of = |id: u64| roles(cards.iter().find(|t| t.id == id).unwrap());
+        assert_eq!((of(art), of(fix)), (vec!["art-director".to_string()], vec![]));
+        for room in ["dev", "dev2", "ui", "backend", "core"] {
+            assert_eq!(claimable(&cards, room, "ready", 1), Some(fix), "{room}");
+        }
+        assert_eq!(claim(h, &root, "dev", "ready", 1).unwrap().map(|t| t.id), Some(fix));
+        assert_eq!(claim(h, &root, "dev2", "ready", 1).unwrap(), None, "the art-director card is nobody's");
+        let team: Vec<String> = ["lead", "dev", "dev2", "ui", "qa", "review"].iter().map(|n| n.to_string()).collect();
+        assert_eq!(unstaffed(&list(h, &root).unwrap(), &team), [format!("card #{art} vai [art-director] không có phòng: giao lại vai hoặc thêm phòng")]);
+        use super::super::room::card_role;
+        for no in ["hot-fix", "hotfix", "follow-up", "followup", "WIP", "bug", "feature", "chore", "p0", "P3", "#125", "v2", "m5", "a--b", ""] {
+            assert_eq!(card_role(no), None, "{no}");
+        }
+        assert_eq!((card_role("art-director").as_deref(), card_role("godot").as_deref(), card_role("Designer").as_deref()), (Some("art-director"), Some("godot"), Some("ui")));
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -1033,7 +1115,7 @@ mod tests {
             let c = claimable(&list(h, &root).unwrap(), room, "ready", 2);
             assert!(c != Some(gd) && c != Some(rd), "{room}");
         }
-        // unknown hyphenated tags are no role (the card counts as untagged); role words still are
+        // hyphenated non-role words are no role (the card counts as untagged); role words still are
         assert_eq!((super::super::room::card_role("hot-fix"), super::super::room::card_role("follow-up")), (None, None));
         assert_eq!(super::super::room::card_role("game-designer").as_deref(), Some("game-designer"));
         assert!(parse_role("hot-fix").is_err());
