@@ -5,8 +5,20 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.105.0] — 2026-10-19
+Owner (2026-10-19): ai-game-studio "treo hơn 1 ngày liên tục mà chả ra gì … nghi bị chạy ngắn quá đứt gãy do loop". Measured over the last 36 h of that project (31 transcripts, 565 turns, 15K API calls, board, GitHub). Turns were long, not fragmented (rooms were busy about 220 room-hours); the losses were elsewhere:
+- 64% of input tokens went to calls that re-read over 300K tokens of context (median call 305K, p90 553K): the kit compacts at 65% of a 1M window.
+- Planning and checking rooms (lead, ba, rd, arch, qa, review) used about 75% of the tokens, the dev room 3%. The board held 23 cards in ready and 1 in building.
+- 51 PRs open, merges held up by stacked branch chains (PR 108 on 103 on 99; one PR carrying 5 cards); an owner ask ("nút skill xấu") split into R&D, ADR notes and a UI card that waits on the R&D one.
+- 742 Bash calls were blocked on 18/10 12:00–14:00 because the guard hook itself failed (a few with ENOENT on the `8sync` binary; rooms retried `auto status` hundreds of times), and 178 calls used `meet --as`, which did not exist.
+
 ### Changed
-- `8sync ccc help` and the site's command table list `awake --screen-off` (they still said only "the screen may turn off").
+- **Team rooms compact at ~195K, not 650K.** `auto up` and `auto revive` start every room with `--settings <state>/ccc/room-settings.json` (`CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000`; launch-level settings beat the user env, checked live on a `--bg` session). The owner's own sessions keep the kit's window.
+- **`--roles full` (HQ "Team đầy đủ") is builder-heavy:** lead, dev, dev2, ui, qa, review (was lead, ba, arch, rd, dev, ui, qa, review). BA, architect and R&D join on request with `--roles`.
+- **WIP limit on the board:** with 6 or more cards waiting in `ready`, planning rooms get no new backlog card (`claim --json` says why), `move <id> ready` from backlog is refused, and a card a room adds with a check waits in backlog. The owner's own cards and P0 cards pass.
+- **Approved work lands first:** backlog rooms (lead, ba) start every turn by merging approved cards when the owner allowed self-merge (else one Ship question for all of them), then unblocking cards whose reason is gone. Builders branch from `origin/main` and never stack on another card's branch (blocked "chờ PR #n" instead); review sends stacked PRs back. Cards are sized as one PR a dev finishes in one session, without separate R&D/audit/ADR cards for work a dev can do.
+- `8sync ccc meet` takes `--as` like every `auto` verb.
+- `8sync ccc help` and the site's command table list `awake --screen-off`.
 
 ## [0.104.0] — 2026-10-19
 ### Added

@@ -42,6 +42,21 @@ const NOTES_KEEP: usize = 12;
 pub(super) const CLAIM_SECS: u64 = 2 * 3600;
 /// Bounces back to `ready` a card takes before it blocks (super-board `rebuild_cap`).
 const REBUILD_CAP: u32 = 2;
+/// WIP limit of the pull system: builder cards waiting in `ready`. At the cap, planning rooms take no
+/// new backlog card and backlog → ready is refused, except P0. Measured on ai-game-studio
+/// (2026-10-19, 36 h): 23 cards in ready, 1 in building, planning rooms ~50% of the tokens, the
+/// builder 3%.
+pub(super) const READY_CAP: usize = 6;
+
+/// Open cards waiting for a builder (`ready`, not the qa lane's).
+pub(super) fn ready_count(cards: &[Target]) -> usize {
+    cards.iter().filter(|t| t.state == "open" && t.lane == "ready" && t.label.as_deref() != Some("qa")).count()
+}
+
+/// A free card `lane` may take while `ready` holds `ready` cards: a full ready stops new backlog work.
+fn open_to(t: &Target, lane: &str, ready: usize) -> bool {
+    lane != "backlog" || ready < READY_CAP || t.prio == Some(0)
+}
 
 /// Open lanes in board order; `done`/`dropped` live in `state`.
 pub(super) const LANES: [&str; 7] = ["backlog", "ready", "building", "qa", "review", "approved", "blocked"];
@@ -327,10 +342,12 @@ pub(super) fn add(
             .next_id
             .max(p.items.iter().map(|t| t.id).max().unwrap_or(0))
             + 1;
+        // A card a room splits off waits in backlog while ready is full; the owner's go straight in.
+        let to_ready = check.is_some() && (from.is_none() || ready_count(&p.items) < READY_CAP);
         let t = Target {
             id: p.next_id,
             text,
-            lane: if check.is_some() { "ready" } else { "backlog" }.into(),
+            lane: if to_ready { "ready" } else { "backlog" }.into(),
             check,
             added: now,
             from: from.map(str::to_string),
@@ -429,9 +446,10 @@ pub(super) fn claimable(cards: &[Target], room: &str, lane: &str, now: u64) -> O
         t.claim.as_ref().filter(|c| now.saturating_sub(c.at) < CLAIM_SECS).map(|c| c.room.as_str())
     }
     let open = cards.iter().filter(|t| t.state == "open");
+    let ready = ready_count(cards);
     open.clone()
         .find(|t| holder(t, now) == Some(room))
-        .or_else(|| open.clone().enumerate().filter(|(_, t)| holder(t, now).is_none() && fits(t, lane, now)).min_by_key(|(i, t)| (rank(t), *i)).map(|(_, t)| t))
+        .or_else(|| open.clone().enumerate().filter(|(_, t)| holder(t, now).is_none() && fits(t, lane, now) && open_to(t, lane, ready)).min_by_key(|(i, t)| (rank(t), *i)).map(|(_, t)| t))
         .map(|t| t.id)
 }
 
@@ -445,7 +463,8 @@ pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) 
     edit(home, root, |p| {
         reap(p, now);
         let mine = p.items.iter().position(|t| t.state == "open" && t.claim.as_ref().is_some_and(|c| c.room == room));
-        let free = |t: &Target| t.state == "open" && t.claim.is_none() && fits(t, lane, now);
+        let ready = ready_count(&p.items);
+        let free = |t: &Target| t.state == "open" && t.claim.is_none() && fits(t, lane, now) && open_to(t, lane, ready);
         // The most urgent free card, queue order within a priority.
         let first_free = || p.items.iter().enumerate().filter(|(_, t)| free(t)).min_by_key(|(i, t)| (rank(t), *i)).map(|(i, _)| i);
         let Some(i) = mine.or_else(first_free) else { return Ok(None) };
@@ -481,11 +500,15 @@ pub(super) fn move_to(home: &Path, root: &Path, id: u64, to: &str, m: &Move, roo
         bail!("--sha `{s}` không phải commit SHA");
     }
     edit(home, root, |p| {
+        let ready = ready_count(&p.items);
         let Some(t) = p.items.iter_mut().find(|t| t.id == id && t.state == "open") else {
             bail!("không có card mở #{id} (`8sync ccc auto board`)");
         };
         if !allowed(&t.lane, to) {
             bail!("card #{id} đang ở {}: không chuyển thẳng sang {to}", t.lane);
+        }
+        if t.lane == "backlog" && to == "ready" && ready >= READY_CAP && t.prio != Some(0) {
+            bail!("cột ready đầy ({ready}/{READY_CAP} card chờ dev): #{id} ở lại backlog, không tách thêm việc tới khi dev rút bớt (card P0 vẫn qua)");
         }
         if let Some(c) = m.check.map(|c| clean(c, CHECK_MAX)).filter(|c| !c.is_empty()) {
             t.check = Some(c);
@@ -735,6 +758,41 @@ mod tests {
         // clearing goes back to P2; a closed or unknown card is refused
         assert_eq!(set_prio(h, &root, low.id, None, None, 11).unwrap().prio, None);
         assert!(set_prio(h, &root, 99, Some(1), None, 11).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_full_ready_lane_stops_new_backlog_work_except_p0() {
+        // WIP limit: ai-game-studio had 23 cards in ready and one in building (2026-10-19).
+        let (d, root) = tmp("wip");
+        let h = d.as_path();
+        for i in 0..READY_CAP {
+            put(h, &root, &format!("build {i}"), Some("true"), false, None, 0).unwrap();
+        }
+        let spec = put(h, &root, "spec", None, false, None, 1).unwrap();
+        let cards = list(h, &root).unwrap();
+        assert_eq!(ready_count(&cards), READY_CAP);
+        assert_eq!(claimable(&cards, "lead", "backlog", 2), None, "planners wait while ready is full");
+        assert_eq!(claim(h, &root, "lead", "backlog", 2).unwrap(), None);
+        // A room's split waits in backlog; the owner's own card still goes to ready.
+        let (split, _) = add(h, &root, "split", Some("true"), None, false, Some("ba"), 3).unwrap();
+        assert_eq!(split.lane, "backlog");
+        let (own, _) = add(h, &root, "owner ask", Some("true"), None, false, None, 3).unwrap();
+        assert_eq!(own.lane, "ready");
+        let m = Move { check: Some("true"), ..Move::default() };
+        assert!(move_to(h, &root, spec.id, "ready", &m, Some("lead"), 4).is_err(), "backlog → ready refused at the cap");
+        // P0 passes both gates.
+        set_prio(h, &root, spec.id, Some(0), None, 5).unwrap();
+        assert_eq!(claim(h, &root, "lead", "backlog", 6).unwrap().map(|t| t.id), Some(spec.id));
+        assert_eq!(move_to(h, &root, spec.id, "ready", &m, Some("lead"), 7).unwrap().lane, "ready");
+        // Under the cap a room's split goes straight to ready again.
+        for _ in 0..READY_CAP {
+            claim(h, &root, "dev", "ready", 8).unwrap();
+            let held = list(h, &root).unwrap().into_iter().find(|t| t.claim.as_ref().is_some_and(|c| c.room == "dev")).unwrap();
+            move_to(h, &root, held.id, "qa", &Move::default(), Some("dev"), 9).unwrap();
+        }
+        assert!(ready_count(&list(h, &root).unwrap()) < READY_CAP);
+        assert_eq!(add(h, &root, "split 2", Some("true"), None, false, Some("ba"), 10).unwrap().0.lane, "ready");
         let _ = std::fs::remove_dir_all(&d);
     }
 

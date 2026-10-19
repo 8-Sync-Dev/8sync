@@ -6,7 +6,7 @@ import { run } from "./proc";
 export type TeamAction = "up" | "full" | "clean" | "down";
 
 /**
- * `up` opens or resumes the 5-room team; `full` the 8-room product team (`--roles full`); `clean`
+ * `up` opens or resumes the 5-room team; `full` the 6-room builder-heavy team (`--roles full`); `clean`
  * first deletes the background sessions no room keeps and restarts rooms that run an older kit.
  */
 export function teamArgs(action: TeamAction): string[] {

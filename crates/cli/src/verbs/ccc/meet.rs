@@ -216,7 +216,8 @@ pub(super) fn run(
     while let Some(a) = it.next() {
         match a.as_str() {
             "--say" => say = Some(it.next().with_context(|| USAGE.to_string())?.clone()),
-            "--room" => room = Some(it.next().with_context(|| USAGE.to_string())?.clone()),
+            // `--as` is what every `auto` verb takes: rooms reached for it here 178 times in 36 h.
+            "--room" | "--as" => room = Some(it.next().with_context(|| USAGE.to_string())?.clone()),
             "--json" => json_out = true,
             "--help" | "-h" => bail!("{USAGE}"),
             x => bail!("không rõ `{x}`\n{USAGE}"),

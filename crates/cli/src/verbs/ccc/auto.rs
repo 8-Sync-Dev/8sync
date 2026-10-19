@@ -445,7 +445,7 @@ Mỗi nhịp:
    chạy `8sync ccc auto claim --json`; có `card` → nhịp này chỉ làm card đó rồi chuyển cột, không card → bước 2.
    - backlog: viết AC + một lệnh check → `8sync ccc auto move <id> ready --check \"<lệnh>\"` (gấp: thêm `--prio P0|P1`); gỡ card blocked;
      card approved → MỘT câu hỏi Ship cho owner, duyệt rồi mới `gh pr merge <pr> --squash --match-head-commit <sha>`
-   - building: worktree `.claude/worktrees/card-<id>`, nhánh `card-<id>-<slug>`, `/ship` tới commit, push, PR → `move <id> qa --pr <số>`
+   - building: `git fetch origin`, worktree `.claude/worktrees/card-<id>`, nhánh `card-<id>-<slug>` từ `origin/main` (không chồng nhánh card khác: cần PR chưa merge → `move <id> blocked --note \"chờ PR #n\"`), `/ship` tới commit, push, PR → `move <id> qa --pr <số>`
    - qa: `check` + UAT → `move <id> review`, trượt → `move <id> ready --note \"[qa] …\"`
    - review: review đối kháng → `move <id> approved --sha <head>`, lỗi → `move <id> ready --note \"[review] …\"`
    - arch (không giữ cột): card nhãn arch → `/sysdesign` → ADR `docs/adr/card-<id>-<slug>.md` → `auto note <id> \"ADR: …\"`
@@ -503,15 +503,21 @@ pub(super) fn write_loop_md(root: &Path) -> Result<(PathBuf, bool)> {
 pub(super) const ASK_RULE: &str = "Cần owner quyết → gọi tool AskUserQuestion (≤4 câu, option khuyến nghị đứng đầu có \"(Recommended)\"), KHÔNG hỏi bằng chữ ở cuối lượt rồi dừng: owner vắng 60 s thì critic chỉ trả lời thay được câu hỏi qua AskUserQuestion. Câu Ship (merge/release/deploy) chỉ phòng lead hỏi. Mỗi quyết định hỏi MỘT lần cả team: có trong su-code/DECISIONS.md hay note card thì theo; phòng khác đang hỏi thì `auto note <id> \"đề xuất: …\"` rồi làm việc khác.";
 
 /// What a room does with the card `auto claim` gives it, per lane (super-board's lane playbooks).
+/// Measured on ai-game-studio (2026-10-19): 51 open PRs, merges held up by stacked branch chains
+/// (PR 108 on 103 on 99, one PR carrying 5 cards), and an owner ask split into R&D + ADR + UI cards.
 pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
-        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: thêm `--prio P0`, quan trọng `--prio P1`; dev nhận card gấp trước). Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`).Hết card backlog: `8sync ccc auto lint` → gỡ card blocked (`move <id> ready`); chỉ phòng lead (BA bỏ qua bước này): card approved → gom MỌI card approved vào MỘT câu hỏi Ship cho owner; owner duyệt → `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`",
-        "ready" => "card building: worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>`, `/ship` card tới commit (test + gate), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>`; làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
+        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: thêm `--prio P0`, quan trọng `--prio P1`; dev nhận card gấp trước). Một card = một PR nhỏ một dev làm xong trong một phiên; không tách card R&D/audit/ADR riêng cho việc dev tự làm được. Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`). Ready đầy (claim trả `why`, move bị từ chối) → không tách thêm card.",
+        "ready" => "card building: `git fetch origin`, worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>` tạo từ `origin/main` (KHÔNG chồng lên nhánh card khác; cần code của PR chưa merge → `8sync ccc auto move <id> blocked --note \"chờ PR #<số> merge\"` rồi claim card khác), `/ship` card tới commit (test + gate), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>`; làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
         "qa" => "card qa: checkout nhánh PR, chạy `check` + UAT thật, ảnh chụp lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`",
-        "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước) → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
+        "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước) → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi, hoặc PR chồng nhánh/chứa việc card khác → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
         _ => "",
     }
 }
+
+/// What a backlog room does every turn before it claims: approved cards land first (stacked,
+/// unmerged work is what the owner never sees), then blocked cards whose reason is gone.
+pub(super) const BACKLOG_FIRST: &str = "trước claim: (a) chỉ phòng lead (BA bỏ qua): card approved, cũ trước → owner đã cho tự merge (su-code/DECISIONS.md hoặc note card) thì `gh pr merge <pr> --squash --match-head-commit <sha>` → `8sync ccc auto done <id> --evidence \"merged <sha>\"`; chưa cho thì gom MỌI card approved vào MỘT câu hỏi Ship cho owner; (b) `8sync ccc auto lint` → gỡ card blocked đã hết lý do (`move <id> ready`, ví dụ PR nó chờ đã merge).";
 
 /// One tick of a room's loop: the recurring cron job's prompt.
 fn tick_prompt(name: &str) -> String {
@@ -525,7 +531,8 @@ fn tick(name: &str, brief: bool) -> String {
     let board = match super::room::find(name).and_then(|r| r.lane) {
         Some(lane) if brief => format!("2) `8sync ccc auto claim --json --as {name}` (cột {lane}): có card → làm theo playbook cột đó trong /goal của phòng. Không có card → bước 3. "),
         Some(lane) => format!(
-            "2) `8sync ccc auto claim --json --as {name}` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {} (mọi lệnh `auto move|note` thêm `--as {name}`). Không có card → bước 3. ",
+            "2) {}`8sync ccc auto claim --json --as {name}` (cột {lane} của vai {role}): `card` khác null → nhịp này chỉ làm card đó: {} (mọi lệnh `auto move|note` thêm `--as {name}`). Không có card → bước 3. ",
+            if lane == "backlog" { format!("{BACKLOG_FIRST} Rồi ") } else { String::new() },
             lane_playbook(lane)
         ),
         None if super::room::find(name).is_some_and(|r| r.name == "Architect") => format!(
@@ -890,12 +897,18 @@ fn run_target(
                 None => bail!("phòng `{room}` (vai {}) không có cột riêng: thêm --lane backlog|ready|qa|review|blocked", super::room::role(&room).0),
             };
             let card = target::claim(home, root, &room, &lane, now)?;
+            // A planning room that gets nothing because ready is full is told so, not left guessing.
+            let full = (card.is_none() && lane == "backlog")
+                .then(|| target::list(home, root).map(|c| target::ready_count(&c)).unwrap_or(0))
+                .filter(|n| *n >= target::READY_CAP);
+            let why = full.map(|n| format!("cột ready đầy ({n}/{} card chờ dev): không tách thêm card; gỡ blocked, merge card approved hoặc `auto wait`", target::READY_CAP));
             if as_json {
-                println!("{}", json!({ "card": card, "lane": lane, "room": room }));
+                println!("{}", json!({ "card": card, "lane": lane, "room": room, "why": why }));
             } else {
-                match &card {
-                    Some(t) => println!("{}", card_lines(t).join("\n")),
-                    None => println!("cột {lane}: không có card trống cho phòng {room}"),
+                match (&card, &why) {
+                    (Some(t), _) => println!("{}", card_lines(t).join("\n")),
+                    (None, Some(w)) => println!("{w}"),
+                    (None, None) => println!("cột {lane}: không có card trống cho phòng {room}"),
                 }
             }
         }
@@ -2067,8 +2080,9 @@ mod tests {
         }
         assert!(ASK_RULE.contains("AskUserQuestion") && ASK_RULE.contains("KHÔNG hỏi bằng chữ") && ASK_RULE.contains("chỉ phòng lead hỏi"));
         assert!(LOOP_MD.contains("AskUserQuestion") && LOOP_MD.contains("Câu Ship chỉ phòng lead hỏi"));
-        // BA shares the backlog lane but leaves the Ship question to the lead.
-        assert!(lane_playbook("backlog").contains("chỉ phòng lead (BA bỏ qua bước này)"));
+        // BA shares the backlog lane but leaves the Ship question to the lead; both rooms get the step.
+        assert!(BACKLOG_FIRST.contains("chỉ phòng lead (BA bỏ qua)"));
+        assert!(super::super::team::goal_prompt("ba", "backlog", 10).contains(BACKLOG_FIRST) && tick_prompt("lead").contains(BACKLOG_FIRST));
         for (name, lane) in [("lead", "backlog"), ("ba", "backlog"), ("dev", "ready"), ("qa", "qa"), ("review", "review")] {
             let g = super::super::team::goal_prompt(name, lane, 10);
             assert!(g.contains(ASK_RULE), "{name}");

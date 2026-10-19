@@ -167,13 +167,14 @@ pub(super) const GOAL_MAX: usize = 4000;
 /// is spent in `auto wait`, which blocks without tokens until a card arrives.
 pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
     let (role, duty) = room::role(name);
+    let first = if lane == "backlog" { format!("(1b) {} ", auto::BACKLOG_FIRST) } else { String::new() };
     let g = format!(
         "/goal Phòng `{name}` (vai {role}: {duty}) làm việc liên tục cho dự án này qua board `8sync ccc auto`. \
          Lượt đầu, đặt loop dự phòng: {setup} \
-         Mỗi lượt: (1) `8sync ccc auto status --json`; (2) `8sync ccc auto claim --json` (cột {lane}); có card thì làm đúng việc cột đó: {playbook}; \
+         Mỗi lượt: (1) `8sync ccc auto status --json`; {first}(2) `8sync ccc auto claim --json` (cột {lane}); có card thì làm đúng việc cột đó: {playbook}; \
          (3) không có card thì `8sync ccc auto wait --json` (chờ tới khi cột {lane} có card, tối đa 9 phút, không tốn token) rồi quay lại (1). \
          Mọi lệnh `8sync ccc auto claim|move|note|wait` thêm `--as {name}` (trong worktree 8sync không tự nhận ra phòng). \
-         Rail: không merge/push main/tag/deploy khi owner chưa trả lời câu Ship; giữ file trước khi sửa (`8sync ccc . goal \"…\" --files a,b`); \
+         Rail: không merge/push main/tag/deploy khi owner chưa trả lời câu Ship (hoặc chưa cho tự merge); giữ file trước khi sửa (`8sync ccc . goal \"…\" --files a,b`); \
          `8sync ccc meet --say \"done|doing|blocked: …\"` sau mỗi card. \
          `cap` khác null hay wait trả cap → không claim, chạy lại `auto wait`. \
          Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on`/`here` false hoặc `paused` true \
@@ -184,8 +185,29 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
     g.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Auto-compact window of a team room (tokens). The kit compacts at 65% of the window, and on a 1M
+/// model that let rooms grow to 650K: measured on ai-game-studio (2026-10-19, 36 h, 15K API calls)
+/// the median call re-read 305K tokens of context, 64% of all input in calls over 300K. 300K moves
+/// the trigger to ~195K for rooms only; the owner's own sessions keep the kit's window.
+pub(super) const ROOM_WINDOW: u32 = 300_000;
+
+/// The `--settings` file every team room starts with: env that beats the user settings' env for
+/// that launch only (checked live: `claude --bg --settings <this>` → the room sees 300000).
+pub(super) fn room_settings(home: &Path) -> Result<PathBuf> {
+    let d = idle::state_dir(home);
+    let f = d.parent().unwrap_or(&d).join("room-settings.json");
+    let body = format!("{}\n", serde_json::json!({ "env": { (super::compact::WIN_VAR): ROOM_WINDOW.to_string() } }));
+    if std::fs::read_to_string(&f).ok().as_deref() != Some(body.as_str()) {
+        if let Some(d) = f.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        std::fs::write(&f, body)?;
+    }
+    Ok(f)
+}
+
 /// `claude` arguments for a room that is not live. One line: a `.cmd` shim cannot pass newlines.
-pub(super) fn argv(plan: &Plan, id: &str, title: &str, model: Option<&str>, prompt: &str) -> Vec<String> {
+pub(super) fn argv(plan: &Plan, id: &str, title: &str, model: Option<&str>, settings: &Path, prompt: &str) -> Vec<String> {
     // `--name` on a resume too: without it Claude Code titles the session after the prompt, and the
     // room showed up as "/goal Phòng `qa` (vai …" in HQ (seen live 2026-10-18).
     let mut a: Vec<String> = match plan {
@@ -193,6 +215,8 @@ pub(super) fn argv(plan: &Plan, id: &str, title: &str, model: Option<&str>, prom
         _ => vec!["--bg".into(), "--name".into(), title.into()],
     };
     a.extend(["--permission-mode".into(), "auto".into()]);
+    // A file, not inline JSON: a `.cmd` shim mangles the quotes.
+    a.extend(["--settings".into(), settings.to_string_lossy().into_owned()]);
     if let Some(m) = model {
         a.extend(["--model".into(), m.into()]);
     }
@@ -234,7 +258,7 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
             "--roles" => {
                 let mut v: Vec<String> = Vec::new();
                 let raw = value()?;
-                // Presets: `small` = the default team, `full` = a whole product team (8 rooms, ~8× quota).
+                // Presets: `small` = the default team, `full` = 6 rooms, 3 of them builders (~6× quota).
                 let list = match raw.trim() {
                     "small" => room::DEFAULT_TEAM.join(","),
                     "full" => room::FULL_TEAM.join(","),
@@ -365,6 +389,7 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     }
     let mut rows = Vec::new();
     let mut started = Vec::new();
+    let settings = room_settings(t.home)?;
     for name in &o.roles {
         let s = t.store.touch(name, false)?;
         let title = (t.title)(name);
@@ -413,7 +438,7 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
                 (format!("đang chạy · gửi loop ({when})"), id.chars().take(8).collect())
             }
             _ => {
-                let out = t.claude.run(&argv(&p, &conv, &title, model, &prompt))?;
+                let out = t.claude.run(&argv(&p, &conv, &title, model, &settings, &prompt))?;
                 if untrusted(&out) {
                     bail!("Claude Code chưa trust thư mục {}: mở `claude` ở đó một lần, chấp nhận câu hỏi trust, rồi chạy lại `8sync ccc auto up` (phòng đã mở vẫn chạy)", t.root.display());
                 }
@@ -471,6 +496,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let everywhere = live(&t.claude.run(&["agents".into(), "--json".into()])?)?;
     let mut rows = Vec::new();
     let mut started = Vec::new();
+    let settings = room_settings(t.home)?;
     for s in t.store.load().sessions {
         let Some(r) = room::find(&s.name) else { continue };
         let title = (t.title)(&s.name);
@@ -484,7 +510,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             Some(lane) => goal_prompt(&s.name, lane, every),
             None => auto::loop_prompt(&s.name, every, false),
         };
-        let out = t.claude.run(&argv(&Plan::Resume, &s.conversation_id, &title, r.model, &prompt))?;
+        let out = t.claude.run(&argv(&Plan::Resume, &s.conversation_id, &title, r.model, &settings, &prompt))?;
         let Some(short) = short_id(&out).filter(|_| !untrusted(&out)) else {
             rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: format!("không mở lại được: {}", crate::verbs::session_view::truncate(out.trim(), 200)), short: String::new() });
             continue;
@@ -717,20 +743,22 @@ mod tests {
         assert_eq!(plan(rd, "rd", &[], &elsewhere, true), Plan::Running(rd.into()));
         let bg_elsewhere = vec![Live { id: "e1".into(), name: "dev".into(), background: true, started: 0, busy: false, cwd: String::new() }];
         assert_eq!(plan("other", "dev", &[], &bg_elsewhere, false), Plan::Start, "a same-named room of another project is not ours");
-        let a = argv(&Plan::Start, "id-1", "dev", Some("sonnet"), "line one\nline  two");
-        assert_eq!(a, ["--bg", "--name", "dev", "--permission-mode", "auto", "--model", "sonnet", "line one line two"]);
-        let a = argv(&Plan::Resume, "id-1", "dev", None, "p");
-        // The room keeps its name on a resume (else Claude Code titles it after the /goal prompt).
-        assert_eq!(a, ["--resume", "id-1", "--bg", "--name", "dev", "--permission-mode", "auto", "p"]);
+        let s = Path::new("/st/room-settings.json");
+        let a = argv(&Plan::Start, "id-1", "dev", Some("sonnet"), s, "line one\nline  two");
+        assert_eq!(a, ["--bg", "--name", "dev", "--permission-mode", "auto", "--settings", "/st/room-settings.json", "--model", "sonnet", "line one line two"]);
+        let a = argv(&Plan::Resume, "id-1", "dev", None, s, "p");
+        // The room keeps its name on a resume (else Claude Code titles it after the /goal prompt), and
+        // its bounded compaction window.
+        assert_eq!(a, ["--resume", "id-1", "--bg", "--name", "dev", "--permission-mode", "auto", "--settings", "/st/room-settings.json", "p"]);
         assert!(!a.iter().any(|x| x.contains("dangerously") || x == "bypassPermissions"));
     }
 
     #[test]
-    fn options_default_to_the_five_room_team_and_full_opens_eight() {
+    fn options_default_to_the_five_room_team_and_full_opens_six_builder_heavy() {
         let o = parse(&[]).unwrap();
         assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,dev,qa,review,rd".into(), 10, None));
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(parse(&v(&["--roles", "full"])).unwrap().roles.join(","), "lead,ba,arch,rd,dev,ui,qa,review");
+        assert_eq!(parse(&v(&["--roles", "full"])).unwrap().roles.join(","), "lead,dev,dev2,ui,qa,review");
         assert_eq!(parse(&v(&["--roles", "small"])).unwrap().roles.len(), 5);
         // Every room of the full team has a role.
         assert!(room::FULL_TEAM.iter().all(|n| room::find(n).is_some()), "{:?}", room::FULL_TEAM);
@@ -950,9 +978,12 @@ mod tests {
         let calls = fake.calls.borrow();
         let bg: Vec<_> = calls.iter().filter(|c| c.iter().any(|a| a == "--bg")).collect();
         assert_eq!(bg.len(), 2, "lead is live: no second session");
-        assert_eq!(&bg[0][..7], ["--bg", "--name", "dev", "--permission-mode", "auto", "--model", "sonnet"]);
-        assert!(bg[0][7].starts_with("/goal Phòng `dev`"), "a lane room opens on /goal: {}", bg[0][7]);
-        assert!(bg[0][7].contains("8sync-auto-loop dev (vai Dev/Builder)"), "{}", bg[0][7]);
+        assert_eq!(&bg[0][..6], ["--bg", "--name", "dev", "--permission-mode", "auto", "--settings"]);
+        assert!(bg[0][6].ends_with("room-settings.json") && std::fs::read_to_string(&bg[0][6]).unwrap().contains("\"CLAUDE_CODE_AUTO_COMPACT_WINDOW\":\"300000\""), "{}", bg[0][6]);
+        assert_eq!(&bg[0][7..9], ["--model", "sonnet"]);
+        assert!(bg[0][9].starts_with("/goal Phòng `dev`"), "a lane room opens on /goal: {}", bg[0][9]);
+        assert!(bg[0][9].contains("8sync-auto-loop dev (vai Dev/Builder)"), "{}", bg[0][9]);
+        assert!(bg[1].iter().any(|a| a == "--settings"), "a resumed room gets the window too");
         assert_eq!(&bg[1][..3], ["--resume", qa.conversation_id.as_str(), "--bg"]);
         let reg = store.load();
         let id_of = |n: &str| reg.sessions.iter().find(|s| s.name == n).unwrap().conversation_id.clone();
@@ -1103,7 +1134,7 @@ mod tests {
     #[test]
     fn up_takes_a_task_and_its_check() {
         let o = parse(&["fix".into(), "login".into(), "--check".into(), "pnpm test".into(), "--roles".into(), "full".into()]).unwrap();
-        assert_eq!((o.task.as_deref(), o.check.as_deref(), o.roles.len()), (Some("fix login"), Some("pnpm test"), 8));
+        assert_eq!((o.task.as_deref(), o.check.as_deref(), o.roles.len()), (Some("fix login"), Some("pnpm test"), 6));
         assert!(parse(&["--check".into(), "x".into()]).is_err(), "a check needs a task");
         assert!(parse(&["--bogus".into()]).is_err());
         assert_eq!(parse(&[]).unwrap().task, None);
