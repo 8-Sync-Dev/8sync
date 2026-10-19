@@ -2423,12 +2423,84 @@ pub(crate) fn ui_port_busy(port: u16) -> bool {
     TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(300)).is_ok()
 }
 
-/// What to tell the owner when HQ is up but this binary is newer than the UI it may be serving.
+/// Why a `--public` run refuses a busy port: HQ is up, possibly serving an older UI than `ver`.
 /// The HQ page itself shows the exact running vs installed versions (`/api/auto` → `versions`).
-/// `ver` is None when the caller is the old binary (`8sync up`): its own version is the stale one.
-pub(crate) fn stale_ui_hint(port: u16, ver: Option<&str>) -> String {
-    let ui = ver.map_or_else(|| "the new UI".to_string(), |v| format!("UI {v}"));
-    format!("HQ UI is running on port {port} — it keeps the version it started with: Ctrl-C in the `8sync hq ui` terminal, then run `8sync hq ui` again to load {ui}")
+pub(crate) fn stale_ui_hint(port: u16, ver: &str) -> String {
+    format!("HQ UI is running on port {port} — it keeps the version it started with: Ctrl-C in the `8sync hq ui` terminal, then run `8sync hq ui` again to load UI {ver}")
+}
+
+/// First `8sync hq ui` that restarts itself on a newer installed binary (see `cmd_ui`).
+const SELF_RESTART_SINCE: &str = "0.102.0";
+
+/// What `8sync up` says when an HQ is running after an update. It cannot tell which version that
+/// HQ is, so it gives both cases.
+pub(crate) fn up_restart_hint(port: u16) -> String {
+    format!(
+        "HQ đang chạy trên port {port}: HQ từ v{SELF_RESTART_SINCE} trở lên (không `--public`) tự khởi động lại trên bản mới trong ~30 giây; \
+         HQ cũ hơn hoặc `--public`: Ctrl-C trong terminal `8sync hq ui` rồi chạy lại `8sync hq ui`"
+    )
+}
+
+/// (size, mtime) of the running binary's file: `8sync up` replacing it changes one of them.
+fn exe_stamp(exe: &Path) -> Option<(u64, Option<std::time::SystemTime>)> {
+    std::fs::metadata(exe).ok().map(|m| (m.len(), m.modified().ok()))
+}
+
+/// The version in `8sync --version` output (`8sync 0.102.0`); None for anything else.
+fn version_of(out: &str) -> Option<String> {
+    let v = out.lines().next()?.split_whitespace().last()?;
+    let v = v.strip_prefix('v').unwrap_or(v);
+    let ok = v.starts_with(|c: char| c.is_ascii_digit()) && v.contains('.') && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
+    ok.then(|| v.to_string())
+}
+
+/// `<exe> --version`, given at most 10 s.
+fn probe_version(exe: &Path) -> Option<String> {
+    let mut c = Command::new(exe)
+        .arg("--version")
+        .env("SUSYNC_NO_AUTO_UPDATE", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    for _ in 0..100 {
+        if c.try_wait().ok()?.is_some() {
+            let mut out = String::new();
+            std::io::Read::read_to_string(c.stdout.as_mut()?, &mut out).ok()?;
+            return version_of(&out);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = c.kill();
+    let _ = c.wait();
+    None
+}
+
+/// This run's arguments for the new binary; `--no-open` so the restart does not open another tab.
+fn relaunch_args() -> Vec<std::ffi::OsString> {
+    let mut a: Vec<_> = std::env::args_os().skip(1).collect();
+    if !a.iter().any(|x| x == "--no-open") {
+        a.push("--no-open".into());
+    }
+    a
+}
+
+/// Hand this terminal to the new binary: Unix replaces the process, Windows runs it and exits with its code.
+fn relaunch(exe: &Path) -> Result<()> {
+    let mut cmd = Command::new(exe);
+    cmd.args(relaunch_args());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let e = cmd.exec();
+        bail!("could not restart {}: {e}", exe.display())
+    }
+    #[cfg(not(unix))]
+    {
+        let st = cmd.status().with_context(|| format!("could not restart {}", exe.display()))?;
+        std::process::exit(st.code().unwrap_or(1))
+    }
 }
 
 /// The hash out of a `sha256sum` file (`<hex>  <name>`); anything but 64 hex chars is None.
@@ -2933,7 +3005,7 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
             ui::info(&format!("HQ UI {ver} ready in {}", dir.display()));
         }
         if ui_port_busy(port) {
-            ui::warn(&stale_ui_hint(port, Some(ver)));
+            ui::warn(&up_restart_hint(port));
         }
         return Ok(());
     }
@@ -2966,7 +3038,7 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
     if ui_port_busy(port) {
         if public {
             // the tunnel would front the other server and overwrite its link
-            bail!("{}", stale_ui_hint(port, Some(ver)));
+            bail!("{}", stale_ui_hint(port, ver));
         }
     } else {
         let _ = std::fs::remove_file(&public_file);
@@ -3029,7 +3101,43 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
             }
         });
     }
-    let st = child.wait();
+    // An installed, local-only HQ follows `8sync up`: when this binary's file is replaced by another
+    // version, stop the server and start the new binary with the same arguments (owner 2026-10-19:
+    // the old one kept its version until a Ctrl-C). A `--public` run keeps its link and its version.
+    let mut watch = (!public && !explicit && matches!(src, AppSrc::Installed(_)))
+        .then(std::env::current_exe)
+        .and_then(Result::ok)
+        .map(|exe| {
+            let stamp = exe_stamp(&exe);
+            (exe, stamp)
+        });
+    let mut checked = std::time::Instant::now();
+    let st = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break Ok(s),
+            Ok(None) => {}
+            Err(e) => break Err(e),
+        }
+        std::thread::sleep(Duration::from_secs(1));
+        let Some((exe, stamp)) = watch.as_mut() else { continue };
+        if checked.elapsed() < Duration::from_secs(30) {
+            continue;
+        }
+        checked = std::time::Instant::now();
+        let now = exe_stamp(exe);
+        if now == *stamp {
+            continue;
+        }
+        // no version yet (the file is still being written): look again next round
+        let Some(newv) = probe_version(exe) else { continue };
+        *stamp = now;
+        if newv != ver {
+            ui::info(&format!("8sync {newv} đã cài: HQ khởi động lại trên bản mới"));
+            let _ = child.kill();
+            let _ = child.wait();
+            return relaunch(exe);
+        }
+    };
     if public {
         // a tunnel still starting would stay up without this join (cloudflared bounds it to 45 s)
         if let Some(j) = tunnel_job {
@@ -3886,11 +3994,21 @@ mod tests {
         std::fs::write(d.join("notes.txt"), "x").unwrap();
         assert_eq!(installed_versions(&d), vec!["0.93.3".to_string(), "0.94.0".to_string()]);
         assert!(installed_versions(&d.join("missing")).is_empty());
-        assert!(stale_ui_hint(8740, Some("0.94.0")).contains("port 8740"));
-        assert!(stale_ui_hint(8740, Some("0.94.0")).ends_with("load UI 0.94.0"));
-        // `8sync up` runs as the old binary: it must not name its own (stale) version.
-        let up = stale_ui_hint(8740, None);
-        assert!(up.ends_with("load the new UI") && !up.contains(env!("CARGO_PKG_VERSION")), "{up}");
+        assert!(stale_ui_hint(8740, "0.94.0").contains("port 8740"));
+        assert!(stale_ui_hint(8740, "0.94.0").ends_with("load UI 0.94.0"));
+        let up = up_restart_hint(8740);
+        assert!(up.contains("port 8740") && up.contains(SELF_RESTART_SINCE) && up.contains("Ctrl-C"), "{up}");
+        assert_eq!(version_of("8sync 0.102.0\n").as_deref(), Some("0.102.0"));
+        assert_eq!(version_of("v0.103.1-rc.1").as_deref(), Some("0.103.1-rc.1"));
+        for bad in ["", "8sync", "error: oops", "8sync 0.1;rm"] {
+            assert_eq!(version_of(bad), None, "{bad}");
+        }
+        let f = d.join("bin");
+        std::fs::write(&f, "old").unwrap();
+        let before = exe_stamp(&f);
+        std::fs::write(&f, "newer").unwrap();
+        assert!(before.is_some() && exe_stamp(&f) != before, "a replaced binary is noticed");
+        assert_eq!(exe_stamp(&d.join("gone")), None);
         let _ = std::fs::remove_dir_all(&d);
     }
 

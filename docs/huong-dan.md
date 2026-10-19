@@ -188,6 +188,9 @@ Không cần clone repo, không cần pnpm. Lần chạy đầu 8sync tải `8sy
 4. **Team chat**: chọn session rồi nhắn. Tin được gõ vào terminal của session (nhãn "via terminal"). Câu trả lời của Claude hiện lại trong chat ("from terminal").
 5. **Board**: task do Claude tạo (TaskCreate) tự lên cột todo / doing / done, kèm vai `[be]`/`[fe]`/`[qa]`. "Add task" giao việc cho một session.
 6. **Nhiều session giúp nhau**: Claude Code có `SendMessage` giữa các session trên cùng máy. Tin session A → B hiện trong Team chat dạng "A → B".
+7. **Shell trên máy** (nút "Terminal" ở header, hoặc Ctrl+`): một terminal nổi, kéo/đổi cỡ được (trên điện thoại là khung dưới), chạy shell thật trên máy ở thư mục đang xem. Có zsh của 8sync thì có gợi ý xám (→ nhận), Tab hoàn thành, ^R tìm lịch sử; không thì PowerShell / `$SHELL`. Thanh phím Esc · Tab · mũi tên · Enter · ^C ^D ^R ^L cho điện thoại. Đóng khung shell còn 30 phút; "Tắt shell" thoát hẳn. Không mở qua link `--public` (chỉ có khoá link); mở được trên máy và qua proxy có đăng nhập riêng (ví dụ VPS + GitHub).
+
+**Cập nhật:** `8sync up` xong, HQ đang chạy (không `--public`) tự khởi động lại trên bản mới trong khoảng 30 giây, link từ xa thấy bản mới mà không cần ai ở máy. HQ cũ hơn 0.102.0 cần Ctrl-C rồi `8sync hq ui` một lần.
 
 **Về Channels (chat hai chiều không qua terminal):** org Claude Team của anh hiện **chưa bật** Channels. Claude Code báo "Channels are not enabled for your org", và UI tự dùng đường terminal. Owner bật được ở claude.ai → Org settings → Claude Code → Channels. Bật xong, tin đi qua channel `8sync-hq` (nhãn "via channel").
 

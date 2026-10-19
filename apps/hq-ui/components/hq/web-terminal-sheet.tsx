@@ -114,7 +114,7 @@ export function WebTerminalSheet({ token }: { token: string }) {
             <ExternalLinkIcon aria-hidden /> Cửa sổ riêng
           </Button>
         </SheetHeader>
-        {target && <LiveTerminal key={target.id} sessionId={target.id} token={token} />}
+        {target && <LiveTerminal key={target.id} url={`/api/sessions/${encodeURIComponent(target.id)}/term`} token={token} />}
       </SheetContent>
     </Sheet>
   );

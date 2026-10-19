@@ -48,8 +48,8 @@ pub fn run(a: Args) -> Result<()> {
 }
 
 /// After an update, pre-install the HQ UI asset that matches the new binary (only when the owner
-/// has used `8sync hq ui` before) and say so when an HQ is still serving the old UI: a running
-/// `8sync hq ui` keeps the version it started with, and the owner otherwise sees no change.
+/// has used `8sync hq ui` before) and say what a running HQ does: from v0.102.0 a local
+/// `8sync hq ui` restarts itself on the new binary; older ones (and `--public`) need a Ctrl-C.
 fn refresh_hq_ui(installed: Option<std::path::PathBuf>) {
     if !super::hq::hq_ui_installed_any() {
         return;
@@ -59,7 +59,7 @@ fn refresh_hq_ui(installed: Option<std::path::PathBuf>) {
     let ok = out.as_ref().is_ok_and(|o| o.status.success());
     ui::info(if ok { "HQ UI for the new binary downloaded (next `8sync hq ui` starts it)" } else { "HQ UI download failed — `8sync hq ui` fetches it on its next start" });
     if super::hq::ui_port_busy(8740) {
-        ui::warn(&super::hq::stale_ui_hint(8740, None));
+        ui::warn(&super::hq::up_restart_hint(8740));
     }
 }
 

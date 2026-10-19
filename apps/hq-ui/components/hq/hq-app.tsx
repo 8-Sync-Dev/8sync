@@ -3,7 +3,7 @@
 import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
 import { roomNow } from "@/lib/now";
 import { limitsView, matchesSession } from "@/lib/office";
-import { CircleHelpIcon, MenuIcon, SendIcon } from "lucide-react";
+import { CircleHelpIcon, MenuIcon, SendIcon, SquareTerminalIcon } from "lucide-react";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,7 @@ import { OverviewView } from "./overview-view";
 import { PreviewView, type PreviewState } from "./preview-view";
 import { ReportView } from "./report-view";
 import { SessionsView } from "./sessions-view";
+import { FloatShell } from "./float-shell";
 import { TeamThread } from "./team-thread";
 import { TeamView } from "./team-view";
 import { TerminalDrawer } from "./terminal-drawer";
@@ -82,6 +83,7 @@ export function HqApp({ token }: { token: string }) {
     setTab("board");
   }, []);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [shellOpen, setShellOpen] = useState(false);
 
   const onScope = useCallback((s: Scope) => {
     setScope(s);
@@ -230,6 +232,9 @@ export function HqApp({ token }: { token: string }) {
                 <Button size="sm" variant="ghost" onClick={() => setGuideOpen(true)} aria-label="Cách dùng HQ">
                   <CircleHelpIcon /> <span className="hidden lg:inline">Cách dùng</span>
                 </Button>
+                <Button size="sm" variant={shellOpen ? "secondary" : "ghost"} onClick={() => setShellOpen((o) => !o)} aria-label="Shell trên máy (Ctrl+`)" aria-pressed={shellOpen} title="Shell trên máy (Ctrl+`)">
+                  <SquareTerminalIcon /> <span className="hidden lg:inline">Terminal</span>
+                </Button>
               </div>
               <dl className="hidden shrink-0 items-center gap-4 text-xs text-muted-foreground sm:flex">
                 <div className="flex items-baseline gap-1.5">
@@ -376,6 +381,7 @@ export function HqApp({ token }: { token: string }) {
         model={drawerSession?.model}
       />
       <WebTerminalSheet token={token} />
+      <FloatShell token={token} cwd={scope.session ? (view.sessions[0]?.cwd ?? null) : (project?.path ?? repo?.root ?? null)} open={shellOpen} onOpenChange={setShellOpen} />
       <AssignDialog
         key={assign.n}
         hq={hq}

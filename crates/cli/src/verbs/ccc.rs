@@ -222,7 +222,7 @@ pub fn run(a: Args) -> Result<()> {
             meet::run(&sessions(&env, &root), rest, id.as_deref(), &std::env::current_dir().context("no cwd")?, view_now())
         }
         "risk" => risk::run(rest, &std::env::current_dir().context("no cwd")?),
-        "term" => term::run(rest),
+        "term" => term::run(rest, &env),
         "awake" => {
             let o = awake::parse(rest)?;
             // `claude` is only needed to watch the rooms.
