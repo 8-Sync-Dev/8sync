@@ -9,11 +9,17 @@
 //!
 //! When stdin closes (HQ dropped the terminal) only the `claude attach` client is stopped: the room
 //! keeps running in the background, as when its terminal window is closed.
+//!
+//! `--shell` (owner 2026-10-19, "terminal như Orca") runs a plain interactive shell on this PC
+//! instead, in the current dir: 8sync's zsh (its prompt + autosuggestions) when already installed,
+//! else PowerShell on Windows / `$SHELL` elsewhere. Nothing is installed or downloaded here.
+use crate::env_detect::Env;
+use crate::verbs::forge;
 use anyhow::{bail, Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{BufRead, Read, Write};
 
-const USAGE: &str = "usage: 8sync ccc term <session-id> [--cols 120] [--rows 34]   (cho HQ web: stdin JSON {\"i\":…}|{\"r\":[c,r]}, stdout = terminal)";
+const USAGE: &str = "usage: 8sync ccc term (<session-id> | --shell) [--cols 120] [--rows 34]   (cho HQ web: stdin JSON {\"i\":…}|{\"r\":[c,r]}, stdout = terminal; --shell = shell trên máy, cwd hiện tại)";
 
 /// A session id as `claude agents --json` prints it: it goes back to `claude attach` as an argument.
 pub(super) fn valid_id(s: &str) -> bool {
@@ -41,38 +47,88 @@ pub(super) fn parse_line(l: &str) -> Option<Ctl> {
     Some(Ctl::Resize(c, w))
 }
 
-pub(super) fn run(args: &[String]) -> Result<()> {
-    let (mut id, mut cols, mut rows) = (None, 120u16, 34u16);
+#[derive(Debug, PartialEq)]
+pub(super) enum Target {
+    Attach(String),
+    Shell,
+}
+
+/// `<session-id> | --shell`, `--cols N`, `--rows N` — checked before anything starts.
+pub(super) fn parse(args: &[String]) -> Result<(Target, u16, u16)> {
+    let (mut id, mut shell, mut cols, mut rows) = (None, false, 120u64, 34u64);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut num = |what: &str| -> Result<u64> { it.next().and_then(|v| v.parse().ok()).with_context(|| format!("{what} cần một số\n{USAGE}")) };
         match a.as_str() {
-            "--cols" => cols = num("--cols")? as u16,
-            "--rows" => rows = num("--rows")? as u16,
+            "--cols" => cols = num("--cols")?,
+            "--rows" => rows = num("--rows")?,
+            "--shell" => shell = true,
             x if id.is_none() && valid_id(x) => id = Some(x.to_string()),
             x => bail!("không rõ `{x}`\n{USAGE}"),
         }
     }
-    let Some(id) = id else { bail!("cần session id\n{USAGE}") };
-    let (cols, rows) = size_ok(cols.into(), rows.into()).context("--cols 2..500, --rows 2..300")?;
-    let claude = which::which("claude").context("không thấy `claude` trong PATH")?;
+    let target = match (id, shell) {
+        (Some(_), true) => bail!("--shell và session id không đi cùng nhau\n{USAGE}"),
+        (Some(id), false) => Target::Attach(id),
+        (None, true) => Target::Shell,
+        (None, false) => bail!("cần session id hoặc --shell\n{USAGE}"),
+    };
+    let (cols, rows) = size_ok(cols, rows).context("--cols 2..500, --rows 2..300")?;
+    Ok((target, cols, rows))
+}
+
+/// The shell for `--shell`, from what is already installed (see the module doc).
+fn shell_command(env: &Env) -> Result<CommandBuilder> {
+    if let Some(zsh) = forge::installed_zsh() {
+        let zdot = forge::write_shell_zdotdir(env)?;
+        let mut cmd = CommandBuilder::new(&zsh.exe);
+        cmd.arg("-i");
+        cmd.env("PATH", zsh.path_env()?);
+        cmd.env("ZDOTDIR", forge::shell_path(&zdot));
+        if let Some(dir) = forge::zsh_plugins_if_present() {
+            cmd.env("EIGHTSYNC_ZSH_PLUGINS", forge::shell_path(&dir));
+        }
+        return Ok(cmd);
+    }
+    if cfg!(windows) {
+        let exe = which::which("pwsh").or_else(|_| which::which("powershell.exe")).context("không thấy zsh, pwsh hay powershell.exe")?;
+        let mut cmd = CommandBuilder::new(exe);
+        cmd.arg("-NoLogo");
+        return Ok(cmd);
+    }
+    let sh = std::env::var_os("SHELL").filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".into());
+    let mut cmd = CommandBuilder::new(sh);
+    cmd.arg("-i");
+    Ok(cmd)
+}
+
+pub(super) fn run(args: &[String], env: &Env) -> Result<()> {
+    let (target, cols, rows) = parse(args)?;
+    let mut cmd = match &target {
+        Target::Attach(id) => {
+            let mut cmd = CommandBuilder::new(which::which("claude").context("không thấy `claude` trong PATH")?);
+            // `claude attach` matches the job's short id (first 8 hex); the full session uuid says "No job matching" (UAT 2026-10-18).
+            cmd.args(["attach", &id[..8]]);
+            cmd
+        }
+        Target::Shell => shell_command(env)?,
+    };
 
     let pair = native_pty_system()
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| anyhow::anyhow!("không mở được pseudo-terminal: {e}"))?;
-    let mut cmd = CommandBuilder::new(claude);
-    // `claude attach` matches the job's short id (first 8 hex); the full session uuid says "No job matching" (UAT 2026-10-18).
-    cmd.args(["attach", &id[..8]]);
     if let Ok(cwd) = std::env::current_dir() {
         cmd.cwd(cwd);
     }
     cmd.env("TERM", "xterm-256color");
-    let mut child = pair.slave.spawn_command(cmd).map_err(|e| anyhow::anyhow!("không chạy được `claude attach`: {e}"))?;
+    cmd.env("COLORTERM", "truecolor");
+    let mut child = pair.slave.spawn_command(cmd).map_err(|e| anyhow::anyhow!("không chạy được terminal: {e}"))?;
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut writer = pair.master.take_writer().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut killer = child.clone_killer();
 
-    // The terminal's output to HQ; when `claude attach` ends (the owner detached), so does this process.
+    // The terminal's output to HQ; when the child ends (the owner detached / typed `exit`), so does this process.
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         let mut out = std::io::stdout().lock();
@@ -82,6 +138,13 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             }
         }
         std::process::exit(0);
+    });
+    // ConPTY keeps the output pipe open after the child exits, so the reader alone may never see
+    // EOF: when the child ends, let its last bytes drain, then exit.
+    std::thread::spawn(move || {
+        let code = child.wait().map_or(1, |s| s.exit_code() as i32);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        std::process::exit(code);
     });
 
     for line in std::io::stdin().lock().lines() {
@@ -98,8 +161,8 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             None => {}
         }
     }
-    // HQ closed the terminal: stop the attach client only; the background room keeps running.
-    let _ = child.kill();
+    // HQ closed the terminal: stop the client only (an attached room keeps running in the background).
+    let _ = killer.kill();
     Ok(())
 }
 
@@ -121,9 +184,16 @@ mod tests {
     #[test]
     fn bad_arguments_are_refused_before_anything_runs() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert!(run(&a(&[])).is_err());
-        assert!(run(&a(&["not-an-id!"])).is_err());
-        assert!(run(&a(&["3698e3a6-9b73-4b37-ab3a-368b169d0508", "--cols", "0"])).is_err());
-        assert!(run(&a(&["3698e3a6-9b73-4b37-ab3a-368b169d0508", "--rows"])).is_err());
+        let id = "3698e3a6-9b73-4b37-ab3a-368b169d0508";
+        assert!(parse(&a(&[])).is_err());
+        assert!(parse(&a(&["not-an-id!"])).is_err());
+        assert!(parse(&a(&[id, "--cols", "0"])).is_err());
+        assert!(parse(&a(&[id, "--rows"])).is_err());
+        assert!(parse(&a(&[id, "--shell"])).is_err() && parse(&a(&["--shell", id])).is_err());
+        assert!(parse(&a(&["--shell", "--rows", "900"])).is_err());
+        assert!(parse(&a(&["--shell", "--cols", "70000"])).is_err(), "no u16 wrap-around");
+        assert_eq!(parse(&a(&["--shell"])).unwrap(), (Target::Shell, 120, 34));
+        assert_eq!(parse(&a(&["--shell", "--cols", "80", "--rows", "24"])).unwrap(), (Target::Shell, 80, 24));
+        assert_eq!(parse(&a(&[id])).unwrap(), (Target::Attach(id.into()), 120, 34));
     }
 }

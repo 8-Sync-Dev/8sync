@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isLocalHost } from "@/lib/hosts";
 import type { ChannelMode, Message, Project, Session, Task } from "./types";
 
 export class ApiError extends Error {
@@ -36,7 +35,7 @@ export function makeApi(token: string): Api {
 type Load<T> = { data: T; loading: boolean; error: string | null };
 const init = <T,>(data: T): Load<T> => ({ data, loading: true, error: null });
 
-/** "polling": the page is on the remote link (quick tunnels drop SSE) or the stream went silent. */
+/** "polling": the stream went silent (a proxy such as a Cloudflare quick tunnel holds it back). */
 export type Live = "connecting" | "live" | "retrying" | "polling";
 
 /** Poll period when SSE is not usable; the stream itself pings every 5 s, so 10 s of silence means it is buffered or dead. */
@@ -217,7 +216,9 @@ export function useHq(token: string) {
       }
     };
     void (async () => {
-      if (isLocalHost(window.location.host) && (await stream()) === "aborted") return;
+      // Off loopback too: a proxy that passes the stream (the VPS gate) gets it live; one that holds it
+      // back (a Cloudflare quick tunnel) goes silent for SILENT_MS and falls back to polling.
+      if ((await stream()) === "aborted") return;
       if (!ac.signal.aborted) await poll();
     })();
     return () => ac.abort();

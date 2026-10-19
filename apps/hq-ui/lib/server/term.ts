@@ -1,23 +1,28 @@
-// Web terminal of a background room: `8sync ccc term <id>` runs `claude attach <id>` in a
-// pseudo-terminal (crates/cli/src/verbs/ccc/term.rs) and relays it over stdin/stdout, so this
-// server stays pure JS. One bridge per room, shared by every tab looking at it; its recent output
-// is kept so a tab that opens late sees the screen. Closed 60 s after the last viewer leaves,
-// which stops only the attach client: the room keeps running.
+// Web terminals: a background room (`8sync ccc term <id>` runs `claude attach <id>`) or the owner's
+// shell (`8sync ccc term --shell`), each in a pseudo-terminal (crates/cli/src/verbs/ccc/term.rs)
+// relayed over stdin/stdout, so this server stays pure JS. One bridge per room (and one shell),
+// shared by every tab looking at it; its recent output is kept so a tab that opens late sees the
+// screen. A room's bridge closes 60 s after the last viewer leaves (only the attach client stops:
+// the room keeps running); the shell lives 30 min without a viewer, then exits.
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { binFor, childEnv } from "./child-env";
 
 export const TERM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Bridge key of the owner's shell (never a session id). */
+export const SHELL_KEY = "shell";
 const KEEP_BYTES = 256 * 1024;
 export const IDLE_CLOSE_MS = 60_000;
+export const SHELL_IDLE_MS = 30 * 60_000;
 const MAX_INPUT = 4096;
 
 type Spawn = (cmd: string, args: string[], opts: { cwd?: string; windowsHide: boolean; env?: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
-type Term = { proc: ChildProcessWithoutNullStreams; gen: number; chunks: Buffer[]; bytes: number; total: number; viewers: Set<(b: Buffer | null) => void>; idle?: ReturnType<typeof setTimeout>; ended: boolean };
+export type Term = { proc: ChildProcessWithoutNullStreams; gen: number; chunks: Buffer[]; bytes: number; total: number; viewers: Set<(b: Buffer | null) => void>; idle?: ReturnType<typeof setTimeout>; idleMs: number; ended: boolean };
 
 const terms = new Map<string, Term>();
 let gens = 0;
 
 export const termArgs = (id: string, cols: number, rows: number) => ["ccc", "term", id, "--cols", String(cols), "--rows", String(rows)];
+export const shellArgs = (cols: number, rows: number) => ["ccc", "term", "--shell", "--cols", String(cols), "--rows", String(rows)];
 
 /** Terminal size from the browser, clamped to what the bridge accepts. */
 export function clampSize(cols: unknown, rows: unknown): { cols: number; rows: number } {
@@ -29,14 +34,12 @@ function send(t: Term, line: object) {
   if (!t.ended) t.proc.stdin.write(`${JSON.stringify(line)}\n`);
 }
 
-/** The room's bridge, started on first use. */
-export function openTerm(id: string, cwd: string | null, size: { cols: number; rows: number }, spawn: Spawn = nodeSpawn as unknown as Spawn): Term {
-  if (!TERM_ID.test(id)) throw new Error("bad session id");
-  const cur = terms.get(id);
+function start(key: string, args: string[], cwd: string | null, idleMs: number, spawn: Spawn): Term {
+  const cur = terms.get(key);
   if (cur && !cur.ended) return cur;
-  const proc = spawn(binFor("8sync"), termArgs(id, size.cols, size.rows), { cwd: cwd ?? undefined, windowsHide: true, env: childEnv() });
-  const t: Term = { proc, gen: ++gens, chunks: [], bytes: 0, total: 0, viewers: new Set(), ended: false };
-  terms.set(id, t);
+  const proc = spawn(binFor("8sync"), args, { cwd: cwd ?? undefined, windowsHide: true, env: childEnv() });
+  const t: Term = { proc, gen: ++gens, chunks: [], bytes: 0, total: 0, viewers: new Set(), idleMs, ended: false };
+  terms.set(key, t);
   proc.stdout.on("data", (b: Buffer) => {
     t.chunks.push(b);
     t.bytes += b.length;
@@ -47,12 +50,24 @@ export function openTerm(id: string, cwd: string | null, size: { cols: number; r
   const end = () => {
     if (t.ended) return;
     t.ended = true;
-    if (terms.get(id) === t) terms.delete(id);
+    clearTimeout(t.idle);
+    if (terms.get(key) === t) terms.delete(key);
     for (const v of t.viewers) v(null);
   };
   proc.on("exit", end);
   proc.on("error", end);
   return t;
+}
+
+/** The room's bridge, started on first use. */
+export function openTerm(id: string, cwd: string | null, size: { cols: number; rows: number }, spawn: Spawn = nodeSpawn as unknown as Spawn): Term {
+  if (!TERM_ID.test(id)) throw new Error("bad session id");
+  return start(id, termArgs(id, size.cols, size.rows), cwd, IDLE_CLOSE_MS, spawn);
+}
+
+/** The owner's shell, started in `cwd` on first use; later opens join the running one. */
+export function openShell(cwd: string | null, size: { cols: number; rows: number }, spawn: Spawn = nodeSpawn as unknown as Spawn): Term {
+  return start(SHELL_KEY, shellArgs(size.cols, size.rows), cwd, SHELL_IDLE_MS, spawn);
 }
 
 /** Replays what the terminal showed so far, then streams; `null` means the terminal closed. */
@@ -63,7 +78,7 @@ export function watch(id: string, t: Term, fn: (b: Buffer | null) => void): () =
   t.viewers.add(fn);
   return () => {
     t.viewers.delete(fn);
-    if (t.viewers.size === 0) t.idle = setTimeout(() => closeTerm(id), IDLE_CLOSE_MS);
+    if (t.viewers.size === 0 && !t.ended) t.idle = setTimeout(() => closeTerm(id), t.idleMs);
   };
 }
 
@@ -74,12 +89,12 @@ export type TermPoll = { gen: number; cursor: number; out: Buffer; reset: boolea
  * The remote link's view (a Cloudflare quick tunnel holds an event stream back, so the page polls):
  * output after byte `since` of bridge `gen`. Kept output is trimmed and a new bridge starts over, so a
  * cursor this bridge cannot serve replays everything kept with `reset`. A poll keeps the bridge open
- * like a viewer that leaves now: it closes IDLE_CLOSE_MS after the last poll.
+ * like a viewer that leaves now: it closes the bridge's idle time after the last poll.
  */
 export function poll(id: string, t: Term, gen: number, since: number): TermPoll {
   if (!t.ended && t.viewers.size === 0) {
     clearTimeout(t.idle);
-    t.idle = setTimeout(() => closeTerm(id), IDLE_CLOSE_MS);
+    t.idle = setTimeout(() => closeTerm(id), t.idleMs);
   }
   const first = t.total - t.bytes;
   const reset = gen !== t.gen || !Number.isInteger(since) || since < first || since > t.total;

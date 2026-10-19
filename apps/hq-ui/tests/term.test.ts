@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSse } from "@/components/hq/live-terminal";
-import { IDLE_CLOSE_MS, clampSize, closeTerm, input, openTerm, poll, termArgs, termOpen, watch } from "@/lib/server/term";
+import { IDLE_CLOSE_MS, SHELL_IDLE_MS, SHELL_KEY, clampSize, closeTerm, input, openShell, openTerm, poll, shellArgs, termArgs, termOpen, watch } from "@/lib/server/term";
 
 const ID = "3698e3a6-9b73-4b37-ab3a-368b169d0508";
 
@@ -23,6 +23,7 @@ function fakeSpawn() {
 
 afterEach(() => {
   closeTerm(ID);
+  closeTerm(SHELL_KEY);
   vi.useRealTimers();
 });
 
@@ -109,6 +110,22 @@ describe("web terminal bridge", () => {
     expect(termOpen(ID)).toBe(true);
     vi.advanceTimersByTime(2);
     expect(termOpen(ID)).toBe(false);
+  });
+
+  it("the owner's shell is one `8sync ccc term --shell` in the asked folder that outlives a closed panel for 30 min", () => {
+    vi.useFakeTimers();
+    const f = fakeSpawn();
+    const t = openShell("/repo/game", { cols: 90, rows: 25 }, f.spawn);
+    expect(f.calls).toEqual([{ cmd: "8sync", args: shellArgs(90, 25), cwd: "/repo/game" }]);
+    expect(shellArgs(90, 25)).toEqual(["ccc", "term", "--shell", "--cols", "90", "--rows", "25"]);
+    expect(openShell("/elsewhere", { cols: 80, rows: 20 }, f.spawn)).toBe(t);
+    expect(f.calls).toHaveLength(1);
+    expect(input(SHELL_KEY, { data: "ls\r" })).toBe(true);
+    watch(SHELL_KEY, t, () => {})();
+    vi.advanceTimersByTime(IDLE_CLOSE_MS * 2);
+    expect(termOpen(SHELL_KEY)).toBe(true);
+    vi.advanceTimersByTime(SHELL_IDLE_MS);
+    expect(termOpen(SHELL_KEY)).toBe(false);
   });
 
   it("the browser reads SSE blocks split across chunks", () => {

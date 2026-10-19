@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.102.0] — 2026-10-19
+### Added
+- **Shell trên máy, nổi trên mọi view của HQ.** Owner (2026-10-19): "cần 1 float terminal bên ngoài để sài có hint terminal full như orca". Header button "Terminal" (or Ctrl+`) opens a draggable, resizable panel (a bottom sheet on a phone) with a real shell on the PC: `8sync ccc term --shell` runs 8sync's zsh (prompt, completion, autosuggestions — the grey hint, → accepts it) when installed, else PowerShell / `$SHELL`, in the folder in view. One shell, shared by every tab; closing the panel keeps it 30 minutes, "Tắt shell" ends it. Refused through the `--public` quick tunnel (a link key alone never gives a shell); allowed on the PC and behind a proxy that logs in first and hands HQ a loopback request.
+- Room and shell terminals get a key bar for what a phone keyboard lacks (Esc, Tab, arrows in the terminal's cursor-key mode, Enter, ^C ^D ^R ^L) and a one-line hint.
+- **`8sync hq ui` follows `8sync up`.** An HQ started without `--public` from the installed UI checks its binary every 30 s; when a different version is installed it stops the UI and starts again on the new binary (same arguments), so a remote link shows the new HQ without anyone at the PC. HQ older than 0.102.0 still needs one Ctrl-C + `8sync hq ui`.
+### Changed
+- Off loopback, HQ tries the live event stream first (messages, tasks, terminals) and polls only when no byte arrives (a Cloudflare quick tunnel holds streams back; a VPS reverse proxy does not), so a link through such a proxy updates as fast as the local page. Terminal streams ping at once so the page can tell within 4 s.
+
 ## [0.101.2] — 2026-10-19
 ### Fixed
 - **A room's terminal works through the internet link.** Owner (2026-10-19): "Link public không connect terminal được". The Cloudflare quick tunnel holds the terminal's event stream back, so off loopback HQ now polls `GET /api/sessions/<id>/term?gen=&since=` (bytes after a running byte cursor; a cursor from another bridge or older than the kept 256 KB replays the screen) every 150 ms while the room prints and 600 ms while it is quiet. Keys and resizes were already plain POSTs. A polled terminal closes 60 s after the last poll, like a viewer leaving.
