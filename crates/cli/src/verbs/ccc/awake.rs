@@ -4,8 +4,9 @@
 //! làm"); room `core` researched the options and proposed `awake --while-rooms`.
 //!
 //! - Windows: `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` (kernel32, no crate);
-//!   Linux: `systemd-inhibit --what=sleep:idle … sleep infinity`; macOS: `caffeinate -i`. The
-//!   hold ends with this process (Ctrl+C, `--hours`, or no room left).
+//!   Linux: `systemd-inhibit --what=sleep:idle … tail --pid=<8sync> -f /dev/null`; macOS:
+//!   `caffeinate -i -w <8sync>`. Both end with this process even when it is killed; the hold ends
+//!   with Ctrl+C, `--hours`, or no room left.
 //! - `--while-rooms`: checks `claude agents --json` every minute and lets go after two checks in a
 //!   row with no live Claude Code session.
 //! - Never starts a room and never renews the auto lease; capped at 24 h. A closed laptop lid
@@ -44,14 +45,26 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
     Ok(o)
 }
 
-/// The command that holds the machine awake on this OS while it runs; None on Windows (an API
-/// call instead) and where no tool exists.
-pub(super) fn hold_argv(os: &str) -> Option<&'static [&'static str]> {
-    match os {
-        "linux" => Some(&["systemd-inhibit", "--what=sleep:idle", "--who=8sync", "--why=8sync rooms running", "--mode=block", "sleep", "infinity"]),
-        "macos" => Some(&["caffeinate", "-i"]),
-        _ => None,
-    }
+/// The command that holds the machine awake on this OS while process `pid` (8sync itself) lives:
+/// the tool exits with it, even on a kill. None on Windows (an API call instead) and where no tool
+/// exists.
+pub(super) fn hold_argv(os: &str, pid: u32) -> Option<Vec<String>> {
+    let v: Vec<String> = match os {
+        "linux" => vec![
+            "systemd-inhibit".into(),
+            "--what=sleep:idle".into(),
+            "--who=8sync".into(),
+            "--why=8sync rooms running".into(),
+            "--mode=block".into(),
+            "tail".into(),
+            format!("--pid={pid}"),
+            "-f".into(),
+            "/dev/null".into(),
+        ],
+        "macos" => vec!["caffeinate".into(), "-i".into(), "-w".into(), pid.to_string()],
+        _ => return None,
+    };
+    Some(v)
 }
 
 #[cfg(windows)]
@@ -90,12 +103,17 @@ impl Hold {
         }
         #[cfg(not(windows))]
         {
-            let Some(argv) = hold_argv(std::env::consts::OS) else { bail!("chưa hỗ trợ giữ máy thức trên {}", std::env::consts::OS) };
-            let child = std::process::Command::new(argv[0])
+            let Some(argv) = hold_argv(std::env::consts::OS, std::process::id()) else { bail!("chưa hỗ trợ giữ máy thức trên {}", std::env::consts::OS) };
+            let mut child = std::process::Command::new(&argv[0])
                 .args(&argv[1..])
                 .stdin(std::process::Stdio::null())
                 .spawn()
                 .map_err(|e| anyhow::anyhow!("không chạy được `{}`: {e}", argv[0]))?;
+            // A tool that refuses (no logind, bad flag) exits at once: say so instead of a fake hold.
+            std::thread::sleep(Duration::from_millis(300));
+            if child.try_wait()?.is_some() {
+                bail!("không giữ được máy thức: {} thoát ngay", argv[0]);
+            }
             Ok(Hold(Some(child)))
         }
     }
@@ -117,10 +135,18 @@ fn live_rooms(claude: &dyn super::team::Claude) -> Result<usize> {
     Ok(super::team::live(&claude.run(&["agents".into(), "--json".into()])?)?.len())
 }
 
-pub(super) fn run(o: &Opts, claude: &dyn super::team::Claude, subscription: bool) -> Result<()> {
-    if o.while_rooms && live_rooms(claude)? == 0 {
-        println!("không có phòng Claude Code nào đang chạy — không giữ máy thức.");
-        return Ok(());
+/// `claude` is only needed (and only resolved by the caller) with `--while-rooms`.
+pub(super) fn run(o: &Opts, claude: Option<&dyn super::team::Claude>, subscription: bool) -> Result<()> {
+    let watch = match (o.while_rooms, claude) {
+        (true, Some(c)) => Some(c),
+        (true, None) => bail!("--while-rooms cần `claude` để xem phòng nào đang chạy"),
+        (false, _) => None,
+    };
+    if let Some(c) = watch {
+        if live_rooms(c)? == 0 {
+            println!("không có phòng Claude Code nào đang chạy — không giữ máy thức.");
+            return Ok(());
+        }
     }
     let _hold = Hold::take()?;
     let until = if o.while_rooms { "không còn phòng nào chạy" } else { "Ctrl+C" };
@@ -136,9 +162,9 @@ pub(super) fn run(o: &Opts, claude: &dyn super::team::Claude, subscription: bool
             println!("hết {} giờ — nhả, máy được ngủ lại.", o.hours);
             return Ok(());
         }
-        if o.while_rooms {
+        if let Some(c) = watch {
             // A failed `claude agents` call counts as "still running": never let go on a glitch.
-            empty = if live_rooms(claude).unwrap_or(1) == 0 { empty + 1 } else { 0 };
+            empty = if live_rooms(c).unwrap_or(1) == 0 { empty + 1 } else { 0 };
             if empty >= 2 {
                 println!("không còn phòng nào chạy — nhả, máy được ngủ lại.");
                 return Ok(());
@@ -167,10 +193,11 @@ mod tests {
 
     #[test]
     fn holds_with_the_os_tool_and_blocks_sleep_not_the_screen() {
-        let linux = hold_argv("linux").unwrap();
+        let linux = hold_argv("linux", 4242).unwrap();
         assert_eq!(linux[0], "systemd-inhibit");
-        assert!(linux.contains(&"--what=sleep:idle") && !linux.iter().any(|a| a.contains("handle-lid")), "sleep only; the lid is the owner's call");
-        assert_eq!(hold_argv("macos").unwrap(), ["caffeinate", "-i"], "idle sleep only, the display may sleep");
-        assert!(hold_argv("windows").is_none() && hold_argv("freebsd").is_none());
+        assert!(linux.iter().any(|a| a == "--what=sleep:idle") && !linux.iter().any(|a| a.contains("handle-lid")), "sleep only; the lid is the owner's call");
+        assert_eq!(&linux[5..], ["tail", "--pid=4242", "-f", "/dev/null"], "dies with 8sync, even on a kill");
+        assert_eq!(hold_argv("macos", 4242).unwrap(), ["caffeinate", "-i", "-w", "4242"], "idle sleep only, the display may sleep; ends with 8sync");
+        assert!(hold_argv("windows", 1).is_none() && hold_argv("freebsd", 1).is_none());
     }
 }

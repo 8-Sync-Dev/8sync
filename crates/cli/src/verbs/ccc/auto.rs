@@ -570,21 +570,40 @@ pub(super) fn loop_prompt(name: &str, every_min: u64, team: bool) -> String {
 }
 
 /// Queue `prompt(room name)` into every room's inbox. `(name, delivered now?)`: a room without the
-/// `8sync-inbox` mod gets it at its next turn end.
+/// `8sync-inbox` mod gets it at its next turn end. `from` = sent by a room (its `msg` label): a room
+/// line, quoted and held behind the auto rails like `ccc msg`; None = the owner's own terminal.
 fn queue_all(
     home: &Path,
     rooms: &[(String, String)],
     now: u64,
+    from: Option<&str>,
     prompt: impl Fn(&str) -> String,
 ) -> Vec<(String, bool)> {
     let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now);
     let mut out = Vec::new();
     for (name, id) in rooms {
-        if crate::verbs::hq::queue_inbox(home, id, &prompt(name), now * 1000).is_ok() {
+        let queued = match from {
+            Some(f) => crate::verbs::hq::queue_inbox_from(home, id, &prompt(name), f, now * 1000),
+            None => crate::verbs::hq::queue_inbox(home, id, &prompt(name), now * 1000),
+        };
+        if queued.is_ok() {
             out.push((name.clone(), crate::verbs::hq::inbox_live(home, id, at)));
         }
     }
     out
+}
+
+/// Who `auto add --now` speaks as: the `msg` label of the session it runs in, None from a terminal
+/// (no session env). `omp` (the project's omp room names) is asked only when there is a session env.
+fn now_sender(root: &Path, ccc: &[(String, String)], env: &super::msg::SenderEnv, omp: impl FnOnce() -> Vec<String>) -> Result<Option<String>> {
+    let any = [env.room_id, env.room, env.claude_sid].iter().any(|v| v.is_some_and(|s| !s.trim().is_empty()));
+    let rooms = super::msg::rooms(root, ccc.to_vec(), if any { omp() } else { Vec::new() });
+    super::msg::session_label(&rooms, env)
+}
+
+/// The omp room names of the project `root`, from the omp session registry.
+fn omp_rooms(root: &Path) -> Vec<String> {
+    crate::env_detect::Env::detect().map(|e| crate::verbs::session::load(&e, root).sessions.into_iter().map(|s| s.name).collect()).unwrap_or_default()
 }
 
 /// Queue [`loop_prompt`] into every room's inbox.
@@ -595,7 +614,7 @@ pub(super) fn queue_loops(
     team: bool,
     now: u64,
 ) -> Vec<(String, bool)> {
-    queue_all(home, rooms, now, |name| loop_prompt(name, every_min, team))
+    queue_all(home, rooms, now, None, |name| loop_prompt(name, every_min, team))
 }
 
 fn delivery(live: bool) -> &'static str {
@@ -960,6 +979,15 @@ fn run_target(
             let text = words.join(" ");
             // Checked before anything is written, so a bad value never leaves a half-made card.
             let prio = flag("--prio").map(target::parse_prio).transpose()?;
+            // From a room, --now is that room's line (quoted, held behind the auto rails), not the owner's.
+            let sender = if first {
+                let env = |k: &str| std::env::var(k).ok();
+                let (room_id, room, sid) = (env("EIGHTSYNC_ROOM_ID"), env("EIGHTSYNC_ROOM"), env("CLAUDE_CODE_SESSION_ID"));
+                let senv = super::msg::SenderEnv { room_id: room_id.as_deref(), room: room.as_deref(), claude_sid: sid.as_deref() };
+                now_sender(root, &all, &senv, || omp_rooms(root))?
+            } else {
+                None
+            };
             let (mut t, dup) = target::add(
                 home,
                 root,
@@ -975,7 +1003,7 @@ fn run_target(
             }
             let (_, open) = target::current(home, root)?;
             let sent = if first {
-                queue_all(home, &all, now, |name| target::now_prompt(&t, name))
+                queue_all(home, &all, now, sender.as_deref(), |name| target::now_prompt(&t, name))
             } else {
                 Vec::new()
             };
@@ -2111,6 +2139,34 @@ mod tests {
         assert_eq!(room_of(&rooms(), Some(ids[1])), Some("qa".into()));
         assert_eq!(room_of(&rooms(), Some("")), None);
         assert_eq!(room_of(&rooms(), Some("other")), None);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn now_from_a_room_is_that_rooms_quoted_line_and_from_a_terminal_the_owners() {
+        use super::super::msg::SenderEnv;
+        let h = home("now-from");
+        let id = "e2830544-0719-4d6f-aaa3-644783ddb0b7";
+        let rooms = vec![("qa".to_string(), id.to_string())];
+        let no_omp = || -> Vec<String> { panic!("no session env: omp rooms are not loaded") };
+        // A plain terminal: no label, the owner's line as before.
+        assert_eq!(now_sender(&h, &rooms, &SenderEnv::default(), no_omp).unwrap(), None);
+        // From a room: the label `ccc msg` uses (room name, else `phiên-<id>`).
+        let me = SenderEnv { claude_sid: Some(id), ..Default::default() };
+        assert_eq!(now_sender(&h, &rooms, &me, Vec::new).unwrap().as_deref(), Some("qa"));
+        let stranger = SenderEnv { room_id: Some("abcdef0123456789"), ..Default::default() };
+        assert_eq!(now_sender(&h, &rooms, &stranger, Vec::new).unwrap().as_deref(), Some("phiên-abcdef01"));
+        let f = crate::verbs::hq::inbox_file(&h, id).unwrap();
+        let line = |from: Option<&str>| {
+            let _ = std::fs::remove_file(&f);
+            let sent = queue_all(&h, &rooms, 5, from, |n| format!("go {n}"));
+            assert_eq!(sent, vec![("qa".to_string(), false)]);
+            serde_json::from_str::<Value>(std::fs::read_to_string(&f).unwrap().trim()).unwrap()
+        };
+        let room = line(Some("lead"));
+        assert_eq!((room["from"].as_str(), room["text"].as_str()), (Some("lead"), Some("go qa")), "a room line: quoted and gated");
+        let owner = line(None);
+        assert!(owner.get("from").is_none() && owner["text"] == "go qa", "the terminal stays the owner's line");
         let _ = std::fs::remove_dir_all(&h);
     }
 

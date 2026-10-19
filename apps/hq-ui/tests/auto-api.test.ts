@@ -13,7 +13,7 @@ vi.mock("@/lib/server/auto", async (orig) => ({
 import fs from "node:fs";
 import path from "node:path";
 import { GET, POST } from "@/app/api/auto/route";
-import { getToken } from "@/lib/server/auth";
+import { __setNonceForTest, getToken } from "@/lib/server/auth";
 import { publicPath } from "@/lib/server/paths";
 import { ORIGIN, req, tempHome } from "./helpers";
 
@@ -54,7 +54,7 @@ describe("GET /api/auto", () => {
     fs.mkdirSync(path.dirname(publicPath()), { recursive: true });
     const key = "e".repeat(64);
     const nonce = "f".repeat(64);
-    process.env.HQ_PUBLIC_NONCE = nonce;
+    __setNonceForTest(nonce);
     fs.writeFileSync(publicPath(), JSON.stringify({ v: 1, host: "calm-river-42.trycloudflare.com", key, since: 1, nonce }));
     status.mockResolvedValueOnce({ on: true, paused: false });
     const text = await (await GET(req("/api/auto", { token }))).text();
@@ -62,7 +62,7 @@ describe("GET /api/auto", () => {
     expect(text).not.toContain(key);
     expect(text).not.toContain(nonce);
     fs.rmSync(publicPath());
-    delete process.env.HQ_PUBLIC_NONCE;
+    __setNonceForTest("");
   });
 });
 

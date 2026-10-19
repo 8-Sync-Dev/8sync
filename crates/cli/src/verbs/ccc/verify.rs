@@ -81,7 +81,7 @@ pub(super) fn post_tool_use(input: &str) -> i32 {
 /// Stop gate (`gate`) gets its say.
 /// The Stop-hook block carrying the owner's pending HQ messages for this session, if any.
 fn owner_inbox(v: &Value, home: &Path) -> Option<String> {
-    let msg = crate::verbs::hq::take_inbox(home, v["session_id"].as_str()?)?;
+    let msg = crate::verbs::hq::take_inbox(home, v["session_id"].as_str()?, v["cwd"].as_str().filter(|c| !c.is_empty()))?;
     Some(json!({ "decision": "block", "reason": msg }).to_string())
 }
 

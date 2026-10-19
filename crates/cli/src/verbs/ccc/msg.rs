@@ -70,10 +70,19 @@ struct Sender<'a> {
 
 /// Sender env of the process: `EIGHTSYNC_ROOM_ID`, `EIGHTSYNC_ROOM` (omp launch), `CLAUDE_CODE_SESSION_ID`.
 #[derive(Default)]
-struct SenderEnv<'a> {
-    room_id: Option<&'a str>,
-    room: Option<&'a str>,
-    claude_sid: Option<&'a str>,
+pub(super) struct SenderEnv<'a> {
+    pub room_id: Option<&'a str>,
+    pub room: Option<&'a str>,
+    pub claude_sid: Option<&'a str>,
+}
+
+/// The label `msg` would send under from a session (`None` = no session env: a terminal).
+pub(super) fn session_label(rooms: &[Room], env: &SenderEnv) -> Result<Option<String>> {
+    let set = |v: Option<&str>| v.is_some_and(|s| !s.trim().is_empty());
+    if !(set(env.room_id) || set(env.room) || set(env.claude_sid)) {
+        return Ok(None);
+    }
+    sender(rooms, None, env).map(|s| Some(s.label))
 }
 
 /// `--from` must name a room of this project, and only from a terminal (no session env) or for the

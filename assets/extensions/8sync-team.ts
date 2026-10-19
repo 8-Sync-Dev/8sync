@@ -172,30 +172,48 @@ export function providerBlocked(provider: string | null | undefined): boolean {
 const GUARDED = [
   "8sync/hq/inbox",
   "8sync/hq/ui-token",
-  "ui-token",
   "8sync/hq/public.json",
-  "public.json",
   "8sync/hq/secrets.json",
   "8sync/ccc/permit",
   ".answer.json",
   "8sync/ccc/grants",
   "8sync/hq/usage/",
+  ".taking.", // inbox claim in flight
+  ".claimed", // claimed inbox message
 ];
+/** Common bare names: a hit only when the same call also says `8sync` (e.g. `d=~/.config/8sync/hq; cat $d/ui-token`). */
+const GUARDED_NEAR_8SYNC = ["public.json", "ui-token", "secrets.json"];
+/** What write/edit tools carry as file *content*: 8sync's own source and docs may name the files above. */
+const CONTENT_KEYS = ["content", "edits", "new_string", "old_string", "newText", "oldText", "text"];
+const SCAN_DEPTH = 4;
 
-/** The guarded fragment a tool call's command or path fields mention (lowercased, `\` → `/`), else null. */
-export function guardHit(input: unknown): string | null {
-  // Only what runs or what is opened: a command and path-like fields. File *content* that merely
-  // mentions these names (8sync's own source, docs) is not a touch.
-  const o = input && typeof input === "object" ? (input as Record<string, unknown>) : null;
-  const parts = typeof input === "string" ? [input] : o ? ["command", "cmd", "script", "path", "file_path", "paths", "file", "files", "cwd", "dir"].map((k) => o[k]) : [];
-  let s: string;
-  try {
-    s = parts.map((p) => (typeof p === "string" ? p : p == null ? "" : (JSON.stringify(p) ?? ""))).join("\n");
-  } catch {
-    return null;
+function collectStrings(v: unknown, out: string[], depth: number): void {
+  if (typeof v === "string") out.push(v);
+  else if (depth <= 0 || !v || typeof v !== "object") return;
+  else if (Array.isArray(v)) for (const x of v) collectStrings(x, out, depth - 1);
+  else for (const [k, x] of Object.entries(v)) if (!CONTENT_KEYS.includes(k)) collectStrings(x, out, depth - 1);
+}
+
+/**
+ * The guarded fragment a tool call mentions, else null. Every string field of the input is scanned
+ * (nested arrays/objects too) except file content of write/edit tools; omp's hashline `edit` `input`
+ * counts only by its `[PATH#TAG]` headers. Normalised: lowercase, `\` → `/`, `//` → `/`, `/./` → `/`.
+ * Advisory hardening, not a sandbox: same-user processes stay trusted.
+ */
+export function guardHit(input: unknown, toolName?: string): string | null {
+  let v = input;
+  if (toolName === "edit" && v && typeof v === "object" && typeof (v as Record<string, unknown>).input === "string") {
+    const headers = ((v as Record<string, unknown>).input as string).match(/^\[[^\]\n]*\]/gm) ?? [];
+    v = { ...(v as Record<string, unknown>), input: headers.join("\n") };
   }
-  s = s.toLowerCase().replace(/\\+/g, "/");
-  return GUARDED.find((g) => s.includes(g)) ?? null;
+  const parts: string[] = [];
+  collectStrings(v, parts, SCAN_DEPTH);
+  const s = parts
+    .join("\n")
+    .toLowerCase()
+    .replace(/[\\/]+/g, "/")
+    .replace(/\/(?:\.\/)+/g, "/");
+  return GUARDED.find((g) => s.includes(g)) ?? (s.includes("8sync") ? (GUARDED_NEAR_8SYNC.find((g) => s.includes(g)) ?? null) : null);
 }
 
 const ASK_REASON =
@@ -226,7 +244,7 @@ function run8sync(args: string[], cwd: string): Promise<string | null> {
 export default function (pi: Pi) {
   // Every session, room or not, automation on or off: no tool touches 8sync's control files.
   pi.on("tool_call", async (event) => {
-    const hit = guardHit(event?.input);
+    const hit = guardHit(event?.input, event?.toolName);
     if (hit === null) return undefined;
     return {
       block: true,

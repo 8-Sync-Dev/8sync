@@ -31,6 +31,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   - On send, each `@path` that exists becomes an absolute path, so a room in a worktree or another folder opens the same file. Unknown names and e-mail addresses stay as typed.
   - The listing (`GET /api/fs`) returns names only and sits behind the HQ token.
 
+### Changed
+- Size ceiling 7040 → 7168 KiB: linux-x86_64 7,280,784 B (+81,952 B over v0.100.15) for the omp extension, resume, omp team, room messages, public link, revive and awake; no new dependency (`scripts/size-gate.sh`).
+
 ## [0.100.15] — 2026-10-18
 ### Fixed
 - **A question left on screen goes to the critic after a minute.** Seen live 2026-10-18: questions asked while auto was paused stayed with the owner for an hour, even after auto was back on, because the delegate hook only sees a question as it is asked.

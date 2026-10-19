@@ -458,8 +458,8 @@ pub(super) fn cap(lease: &Value, u: &Usage, subscription: bool, now: u64) -> Res
             }
         }
     }
-    let known = windows.iter().any(|(_, p)| p.is_some());
-    let Some(rate) = lease["usd_per_hour"].as_f64().or((!subscription || !known).then_some(DEFAULT_USD_PER_HOUR)) else {
+    // The 5-hour window is the one that moves within a run: without it, the `$` default holds.
+    let Some(rate) = lease["usd_per_hour"].as_f64().or((!subscription || u.five_hour.is_none()).then_some(DEFAULT_USD_PER_HOUR)) else {
         return Ok(());
     };
     let hours = (now.saturating_sub(lease["on"].as_u64().unwrap_or(now)) as f64 / 3600.0).max(1.0);
@@ -998,7 +998,8 @@ mod tests {
         let e = cap(&sub, &w(Some(90.0), Some(10.0), 0.0), true, 3600).unwrap_err();
         assert!(e.contains("5 giờ") && e.contains("90%"), "{e}");
         assert!(cap(&sub, &w(Some(10.0), Some(95.0), 0.0), true, 3600).unwrap_err().contains("7 ngày"));
-        assert!(cap(&sub, &w(None, Some(50.0), 500.0), true, 3600).is_ok(), "one fresh window is enough to drop the $ rail");
+        assert!(cap(&sub, &w(Some(50.0), None, 500.0), true, 3600).is_ok(), "a fresh 5-hour window drops the $ rail");
+        assert!(cap(&sub, &w(None, Some(50.0), 500.0), true, 3600).unwrap_err().contains("$5.00/giờ"), "the 7-day window alone does not");
         // No window reading at all: fail safe, the old $5 default.
         assert!(cap(&sub, &w(None, None, 6.72), true, 3600).unwrap_err().contains("$5.00/giờ"));
         // The owner set --usd-per-hour (or an old lease): both rails.

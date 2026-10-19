@@ -198,12 +198,12 @@ pub fn run(a: Args) -> Result<()> {
         "auto" => {
             let repo = std::env::current_dir().ok().and_then(|c| crate::verbs::here::repo_of(&c)).unwrap_or_else(|| root.clone());
             if rest.first().is_some_and(|a| a == "revive") {
-                // Every project auto runs for (HQ calls this without a cwd); no scope = this repo.
-                let st = auto::status(&env.home, login_kind_at(&env.home).kind == "subscription", 0);
-                // Scope roots are canonical (`\\?\C:\…` on Windows); the registry is keyed by the plain path.
-                let plain = |r: &str| PathBuf::from(r.strip_prefix(r"\\?\").filter(|d| d.as_bytes().get(1) == Some(&b':')).unwrap_or(r));
-                let repos: Vec<PathBuf> = st["repos"].as_array().map(|a| a.iter().filter_map(|r| r.as_str()).map(plain).collect()).unwrap_or_default();
-                for r in if repos.is_empty() { vec![repo] } else { repos } {
+                // Only the roots `auto up` brought a team up in (HQ calls this without a cwd), one
+                // revive at a time (HQ and a boot hook can both fire it).
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                let Some(_lock) = team::revive_lock(&env.home, now)? else { return Ok(()) };
+                for r in team::team_roots(&env.home) {
+                    let r = PathBuf::from(r);
                     if let Err(e) = auto_team(&env, &r, rest) {
                         eprintln!("{}: {e:#}", r.display());
                     }
@@ -225,9 +225,9 @@ pub fn run(a: Args) -> Result<()> {
         "term" => term::run(rest),
         "awake" => {
             let o = awake::parse(rest)?;
-            let home = env.home.clone();
-            let bin = team::Bin { exe: ensure_claude(true)?, root: &home };
-            awake::run(&o, &bin, login_kind_at(&env.home).kind == "subscription")
+            // `claude` is only needed to watch the rooms.
+            let bin = if o.while_rooms { Some(team::Bin { exe: ensure_claude(true)?, root: &env.home }) } else { None };
+            awake::run(&o, bin.as_ref().map(|b| b as &dyn team::Claude), login_kind_at(&env.home).kind == "subscription")
         }
         "hint" => {
             let cwd = std::env::current_dir().context("no cwd")?;

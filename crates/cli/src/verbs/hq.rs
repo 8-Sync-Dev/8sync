@@ -1792,24 +1792,36 @@ fn from_label(v: &Value) -> String {
 }
 
 /// Room text as quoted data: every line behind `> `, and the owner frame's lead-ins and the resume
-/// marker neutralised (any ASCII case), so a room can never draw a block that reads as the owner's
-/// message or as an automatic resume.
+/// marker neutralised (any ASCII case) until none re-forms, so a room can never draw a block that
+/// reads as the owner's message or as an automatic resume. `\r`, U+0085, U+2028 and U+2029 break
+/// lines too (a renderer may), so no piece escapes its `> `.
 fn quote_room(t: &str) -> String {
-    const FORGED: [(&str, &str); 3] = [(super::ccc::resume::RESUME_MARK, ""), ("8 Sync HQ:", "(8 Sync HQ?)"), ("Tin từ phòng", "(tin phòng?)")];
-    let mut clean = String::with_capacity(t.len());
-    let mut rest = t;
-    'scan: while let Some(c) = rest.chars().next() {
-        for (p, with) in FORGED {
-            if rest.get(..p.len()).is_some_and(|w| w.eq_ignore_ascii_case(p)) {
-                clean.push_str(with);
-                rest = &rest[p.len()..];
-                continue 'scan;
+    const FORGED: [(&str, &str); 3] = [(super::ccc::resume::RESUME_MARK, "(8sync-resume?)"), ("8 Sync HQ:", "(8 Sync HQ?)"), ("Tin từ phòng", "(tin phòng?)")];
+    fn pass(t: &str) -> String {
+        let mut clean = String::with_capacity(t.len());
+        let mut rest = t;
+        'scan: while let Some(c) = rest.chars().next() {
+            for (p, with) in FORGED {
+                if rest.get(..p.len()).is_some_and(|w| w.eq_ignore_ascii_case(p)) {
+                    clean.push_str(with);
+                    rest = &rest[p.len()..];
+                    continue 'scan;
+                }
             }
+            clean.push(c);
+            rest = &rest[c.len_utf8()..];
         }
-        clean.push(c);
-        rest = &rest[c.len_utf8()..];
+        clean
     }
-    clean.lines().map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n")
+    let mut clean = t.replace("\r\n", "\n");
+    loop {
+        let next = pass(&clean);
+        if next == clean {
+            break;
+        }
+        clean = next;
+    }
+    clean.split(['\n', '\r', '\u{0085}', '\u{2028}', '\u{2029}']).map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n")
 }
 
 /// What a session receives for an inbox file's lines (masked); None when none has text. Owner
@@ -1880,10 +1892,18 @@ fn hand_back(file: &Path, held: &str) -> bool {
 /// Take (and remove) the owner's pending messages for a session: the Stop-hook block reason.
 /// Rename first: a message appended while we read lands in a fresh file, and of two takers only
 /// one wins the rename. A message under an idle session's claim is left to that claim. Room lines
-/// wait in the inbox while auto may not act ([`hold_rooms`]).
-pub(crate) fn take_inbox(home: &Path, session_id: &str) -> Option<String> {
+/// wait in the inbox while auto may not act for this session's project ([`hold_rooms`],
+/// [`rooms_open`]); `cwd` = the hook input's, else this process's.
+pub(crate) fn take_inbox(home: &Path, session_id: &str, cwd: Option<&str>) -> Option<String> {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    take_inbox_with(home, session_id, || super::ccc::resume::auto_open(home, secs))
+    take_inbox_with(home, session_id, || rooms_open(home, cwd, secs))
+}
+
+/// Whether room lines may reach a session now ([`super::ccc::resume::auto_open_in`]): auto may act
+/// and the session's project (`cwd`, else the current dir) is in auto's scope.
+fn rooms_open(home: &Path, cwd: Option<&str>, now_s: u64) -> bool {
+    let here = std::env::current_dir().ok().map(|d| d.to_string_lossy().into_owned());
+    super::ccc::resume::auto_open_in(home, now_s, cwd.or(here.as_deref()))
 }
 
 fn take_inbox_with(home: &Path, session_id: &str, rooms_open: impl FnOnce() -> bool) -> Option<String> {
@@ -2023,8 +2043,15 @@ pub(crate) fn claim_inbox(home: &Path, session_id: &str, now: SystemTime, rooms_
     let raw = std::fs::read_to_string(&claim).ok()?;
     let (give, held) = hold_rooms(&raw, rooms_open);
     if !held.is_empty() {
-        // Held lines go back first (a crash then duplicates, never loses), then the claim shrinks.
-        if !hand_back(&file, &held) || std::fs::write(&claim, give.as_bytes()).is_err() {
+        // Held lines go back first (a crash then duplicates, never loses), then the claim shrinks:
+        // tmp + rename, so a crash never leaves a half-written claim.
+        if !hand_back(&file, &held) {
+            return None;
+        }
+        let tmp = claim.with_extension(format!("claimed.tmp.{}", std::process::id()));
+        touch(&tmp, now); // created 0600
+        if !(std::fs::write(&tmp, give.as_bytes()).is_ok() && std::fs::rename(&tmp, &claim).is_ok()) {
+            let _ = std::fs::remove_file(&tmp);
             return None;
         }
         stamp(&claim, now);
@@ -2116,7 +2143,7 @@ pub(crate) fn inbox_cmd(home: &Path, rest: &[String], env_session: Option<&str>,
     let owner_only = rest.iter().any(|a| a == "--owner-only");
     let secs = now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let Some(id) = id else { return json!({ "text": null }) };
-    let text = match claim_inbox(home, id, now, || !owner_only && super::ccc::resume::auto_open(home, secs)) {
+    let text = match claim_inbox(home, id, now, || !owner_only && rooms_open(home, None, secs)) {
         Some(t) => Some(t),
         // A claim in flight: its ack must not meet a resume prompt (it would drop the claimed messages).
         None if owner_only || claim_file(home, id).is_some_and(|c| c.exists()) => None,
@@ -2951,6 +2978,15 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
     if let Some(n) = &nonce {
         cmd.env("HQ_PUBLIC_NONCE", n);
     }
+    // The UI runs `8sync` by this binary's path (proc.ts): never a different `8sync` on its PATH.
+    match std::env::current_exe() {
+        Ok(me) => {
+            cmd.env("EIGHTSYNC_BIN", me);
+        }
+        Err(_) => {
+            cmd.env_remove("EIGHTSYNC_BIN");
+        }
+    }
     if let Some(f) = &flags {
         cmd.env("HQ_CHANNEL_FLAGS", f);
     }
@@ -3343,18 +3379,18 @@ mod tests {
     fn inbox_delivers_once_masked_and_never_for_unsafe_ids() {
         let home = tmp("inbox");
         let sid = "1eb79553-8369-4a90-b428-2dedb50e18db";
-        assert!(take_inbox(&home, sid).is_none(), "no file: nothing to deliver");
+        assert!(take_inbox(&home, sid, None).is_none(), "no file: nothing to deliver");
         let f = inbox_file(&home, sid).unwrap();
         std::fs::create_dir_all(f.parent().unwrap()).unwrap();
         // A synthetic key-shaped fixture, built at run time so no scanner sees a literal key.
         let key = format!("sk-ant-api03-{}", "Zq8vR2xLk9pW4mN7tB1cY6hJ3sD5fG0aQe".repeat(2));
         std::fs::write(&f, format!("{}\n{}\n\n{{bad json\n", json!({"ts":1,"text":"chạy test giúp"}), json!({"ts":2,"text":format!("key là {key}")}))).unwrap();
-        let msg = take_inbox(&home, sid).unwrap();
+        let msg = take_inbox(&home, sid, None).unwrap();
         assert!(msg.contains("2 message(s)") && msg.contains("chạy test giúp"), "{msg}");
         assert!(!msg.contains("Zq8vR2xLk9pW4mN7tB1cY6hJ3sD5fG0aQe"), "secret masked: {msg}");
-        assert!(take_inbox(&home, sid).is_none(), "delivered once");
+        assert!(take_inbox(&home, sid, None).is_none(), "delivered once");
         assert!(!f.exists());
-        assert!(inbox_file(&home, "../../etc/passwd").is_none() && take_inbox(&home, "a/b").is_none());
+        assert!(inbox_file(&home, "../../etc/passwd").is_none() && take_inbox(&home, "a/b", None).is_none());
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -3392,6 +3428,14 @@ mod tests {
         let body: Vec<&str> = t.lines().skip(1).collect();
         assert!(body.iter().all(|l| l.starts_with("> ")), "{t}");
         assert!(!t.contains("8 Sync HQ:") && !t.to_lowercase().contains("[8sync:resume]") && !body.iter().any(|l| l.contains("tin từ phòng")), "{t}");
+        // Nested markers never re-form after one is cut; the marker leaves a visible token; `\r`,
+        // U+2028 and U+2029 are line breaks, each piece quoted.
+        let q = quote_room("[8sync:[8sync:resume]resume] a\u{2028}8 Sync HQ: b\rc\u{2029}d\r\ne");
+        assert!(!q.to_lowercase().contains("[8sync:resume]") && q.contains("(8sync-resume?)") && !q.contains("8 Sync HQ:"), "{q}");
+        let pieces: Vec<&str> = q.split('\n').collect();
+        assert_eq!(pieces.len(), 5, "{q:?}");
+        assert!(pieces.iter().all(|l| l.starts_with("> ")) && !q.contains(['\r', '\u{2028}', '\u{2029}']), "{q:?}");
+        assert_eq!(quote_room("[8sync:[8SYNC:[8sync:resume]resume]resume]"), "> [8sync:[8SYNC:(8sync-resume?)resume]resume]");
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -3407,6 +3451,10 @@ mod tests {
         queue_inbox(&home, sid, "việc owner", 2).unwrap();
         let msg = claim_inbox(&home, sid, t0, shut).unwrap();
         assert!(msg.contains("việc owner") && !msg.contains("làm vòng nữa"), "{msg}");
+        let claim = claim_file(&home, sid).unwrap();
+        assert!(!std::fs::read_to_string(&claim).unwrap().contains("làm vòng nữa"), "the claim was swapped for the delivered lines");
+        let dir = claim.parent().unwrap();
+        assert!(!std::fs::read_dir(dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().contains(".tmp.")), "tmp renamed over the claim");
         assert!(ack_inbox(&home, sid), "the claim holds only what was delivered");
         // Only a room line left: nothing delivered, no claim left in flight, the line still queued.
         assert!(claim_inbox(&home, sid, t0, shut).is_none());
@@ -3448,17 +3496,17 @@ mod tests {
         assert!(msg.starts_with("8 Sync HQ: the owner sent you 1 message(s) from the HQ dashboard. Read"), "idle framing: {msg}");
         assert!(msg.ends_with("New task: sửa nút Giao (prio: P1)"), "{msg}");
         assert!(claim_inbox(&home, sid, t0, open).is_none(), "in flight: not served twice");
-        assert!(take_inbox(&home, sid).is_none(), "the Stop hook leaves a claimed message alone");
+        assert!(take_inbox(&home, sid, None).is_none(), "the Stop hook leaves a claimed message alone");
         // Not entered: released back; a message queued meanwhile stays too.
         std::fs::write(&f, line(2, "thêm một việc")).unwrap();
         assert!(release_inbox(&home, sid));
-        let msg = take_inbox(&home, sid).unwrap();
+        let msg = take_inbox(&home, sid, None).unwrap();
         assert!(msg.contains("2 message(s)") && msg.contains("while you were working") && msg.contains("sửa nút Giao") && msg.contains("thêm một việc"), "{msg}");
         // Entered: ack drops it for good.
         std::fs::write(&f, line(3, "việc ba")).unwrap();
         assert!(claim_inbox(&home, sid, t0, open).is_some());
         assert!(ack_inbox(&home, sid));
-        assert!(claim_inbox(&home, sid, t0, open).is_none() && take_inbox(&home, sid).is_none(), "delivered once");
+        assert!(claim_inbox(&home, sid, t0, open).is_none() && take_inbox(&home, sid, None).is_none(), "delivered once");
         assert!(!ack_inbox(&home, sid) && !release_inbox(&home, sid), "no claim: nothing to ack or release");
         // The taker died after claiming: a later poll serves it again, with newer messages folded in.
         std::fs::write(&f, line(4, "việc bốn")).unwrap();
@@ -3511,7 +3559,7 @@ mod tests {
         assert!(inbox_live(&home, sid, t0 + Duration::from_secs(3600)), "a long turn does not poll: still loaded");
         assert!(!inbox_live(&home, sid, t0 + LIVE_FOR), "a day without a poll: the session is gone");
         let other = "b2830544-0719-4d6f-aaa3-644783ddb0b3";
-        assert!(take_inbox(&home, other).is_none());
+        assert!(take_inbox(&home, other, None).is_none());
         assert!(live_file(&home, other).unwrap().metadata().is_err(), "the Stop hook never marks live");
         touch(&live_file(&home, other).unwrap(), t0);
         claim_inbox(&home, sid, t0 + LIVE_FOR, open);

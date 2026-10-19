@@ -95,14 +95,23 @@ pub(super) fn taskkill_argv(pid: u32) -> Vec<OsString> {
 }
 
 /// The command the owner runs for a room when no detached terminal is there (PowerShell on Windows).
-/// Paths are single-quoted (nothing expands inside): PowerShell doubles a `'`, POSIX closes,
-/// escapes and reopens it (`'\''`).
+/// Paths are single-quoted (nothing expands inside): PowerShell doubles a `'` (and the smart
+/// quotes U+2018–U+201B, which it also reads as `'`), POSIX closes, escapes and reopens it (`'\''`).
 pub(super) fn manual(windows: bool, root: &Path, exe: &Path, role: &str) -> String {
     let room = room_name(role);
     let q = |p: &Path| {
         let s = p.display().to_string();
         if windows {
-            format!("'{}'", s.replace('\'', "''"))
+            let mut out = String::with_capacity(s.len() + 2);
+            out.push('\'');
+            for c in s.chars() {
+                if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+                    out.push(c);
+                }
+                out.push(c);
+            }
+            out.push('\'');
+            out
         } else {
             format!("'{}'", s.replace('\'', r"'\''"))
         }
@@ -395,6 +404,8 @@ mod tests {
         let odd = Path::new("/r/it's $(x) `y`");
         assert_eq!(manual(false, odd, exe, "qa"), r#"cd '/r/it'\''s $(x) `y`' && '/opt/8sync' . omp-qa"#);
         assert_eq!(manual(true, odd, exe, "qa"), "cd '/r/it''s $(x) `y`'; & '/opt/8sync' . omp-qa");
+        let smart = Path::new("C:\\r\\a\u{2019}; calc; \u{2018}b\u{201A}\u{201B}");
+        assert_eq!(manual(true, smart, exe, "qa"), "cd 'C:\\r\\a\u{2019}\u{2019}; calc; \u{2018}\u{2018}b\u{201A}\u{201A}\u{201B}\u{201B}'; & '/opt/8sync' . omp-qa", "PowerShell reads a smart quote as `'`");
         assert!(wt_safe(root, exe));
         assert!(!wt_safe(Path::new(r"C:\r\a;calc"), exe), "`;` in the root is a wt command separator");
         assert!(!wt_safe(root, Path::new(r"C:\b;x\8sync.exe")));

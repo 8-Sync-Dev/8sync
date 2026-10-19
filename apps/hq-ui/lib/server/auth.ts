@@ -47,12 +47,28 @@ export const LINK_MS = 10 * 60_000;
 
 let pubCache: { file: string; mtimeMs: number; size: number; link: PublicLink | null } | null = null;
 
+/**
+ * `HQ_PUBLIC_NONCE`, read once at load and then removed from `process.env` so no child process
+ * (8sync, claude, tmux) inherits it. Kept on `globalThis` so every bundled copy of this module in the
+ * same process sees the value the first copy took.
+ */
+const NONCE_KEY = Symbol.for("8sync.hq.publicNonce");
+const nonceStore = globalThis as { [NONCE_KEY]?: string };
+if (nonceStore[NONCE_KEY] === undefined) nonceStore[NONCE_KEY] = process.env.HQ_PUBLIC_NONCE ?? "";
+delete process.env.HQ_PUBLIC_NONCE;
+
+/** Test seam: the nonce this process was started with ("" = not started by `--public`). */
+export function __setNonceForTest(nonce: string): void {
+  nonceStore[NONCE_KEY] = nonce;
+}
+
 /** `since` is unix ms; a seconds value (older writers) is scaled up. */
 const sinceMs = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? (v < 1e12 ? v * 1000 : v) : null);
 
 /**
  * `~/.config/8sync/hq/public.json`, re-read only when its mtime/size change; null when absent, malformed,
- * or its `nonce` differs from `HQ_PUBLIC_NONCE` (unset = this HQ was not started by `--public`: local only).
+ * or its `nonce` differs from the `HQ_PUBLIC_NONCE` this process started with (unset = this HQ was not
+ * started by `--public`: local only).
  */
 export function readPublic(): PublicLink | null {
   const file = publicPath();
@@ -87,7 +103,7 @@ export function readPublic(): PublicLink | null {
     pubCache = { file, mtimeMs: st.mtimeMs, size: st.size, link };
   }
   const link = pubCache.link;
-  const nonce = process.env.HQ_PUBLIC_NONCE ?? "";
+  const nonce = nonceStore[NONCE_KEY] ?? "";
   return link && nonce && safeEqual(nonce, link.nonce) ? link : null;
 }
 

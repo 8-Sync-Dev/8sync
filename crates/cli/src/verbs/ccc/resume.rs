@@ -174,6 +174,12 @@ pub(crate) fn auto_open(home: &Path, now_s: u64) -> bool {
     }
 }
 
+/// [`auto_open`] for a session of the project at `cwd`: also inside auto's scope (`auto on --here`).
+/// Gates room-to-room lines (`hq::take_inbox`, `hq::inbox_cmd`).
+pub(crate) fn auto_open_in(home: &Path, now_s: u64, cwd: Option<&str>) -> bool {
+    auto_open(home, now_s) && super::auto::in_scope(home, cwd)
+}
+
 /// `8sync ccc inbox` claim with nothing queued: the `[8sync:resume]` prompt when this session's
 /// stop-failure record is due and [`auto_open`] holds for the record's project. A resume never
 /// outlives the lease: unattended runs over days belong to Routines or a Console API key (`/rules`).
@@ -214,6 +220,24 @@ mod tests {
         let d = std::env::temp_dir().join(format!("8sync-stopfail-{tag}-{}", crate::verbs::uuid_sessions::new_uuid()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn room_lines_open_only_for_a_session_inside_autos_scope() {
+        use super::super::auto::{set, Mode};
+        let h = tmp("scope");
+        let (repo, other) = (h.join("proj"), h.join("proj-2"));
+        for d in [repo.join("src"), other.clone()] {
+            std::fs::create_dir_all(&d).unwrap();
+        }
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        assert!(!auto_open_in(&h, 1, Some(&s(&repo))), "auto off: closed");
+        set(&h, Mode::On { hours: 2.0, after: 60, rate: Some(5.0), repo: Some(repo.clone()) }, false, 1).unwrap();
+        assert!(auto_open(&h, 1), "auto on, rails open");
+        assert!(auto_open_in(&h, 1, Some(&s(&repo.join("src")))), "a session of the scoped project");
+        assert!(!auto_open_in(&h, 1, Some(&s(&other))), "another project's session: room lines wait");
+        assert!(!auto_open_in(&h, 1, None), "no cwd under --here: closed");
+        let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]

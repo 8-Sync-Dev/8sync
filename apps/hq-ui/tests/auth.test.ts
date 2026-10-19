@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { GET as login } from "@/app/api/login/route";
 import { isLocalHost } from "@/lib/hosts";
-import { checkAuth, getToken, LINK_MS, readPublic, SESSION_MS, sessionCookie, sessionValid } from "@/lib/server/auth";
+import { __setNonceForTest, checkAuth, getToken, LINK_MS, readPublic, SESSION_MS, sessionCookie, sessionValid } from "@/lib/server/auth";
 import { open } from "@/lib/server/http";
 import { publicPath, tokenPath } from "@/lib/server/paths";
 import { tempHome } from "./helpers";
@@ -74,12 +74,12 @@ describe("remote link", () => {
     token = getToken();
   });
   beforeEach(() => {
-    process.env.HQ_PUBLIC_NONCE = NONCE;
+    __setNonceForTest(NONCE);
     writePub({ v: 1, host: HOST, key: KEY, since: Date.now(), nonce: NONCE });
     SESSION = sessionCookie(KEY, Date.now());
   });
   afterAll(() => {
-    delete process.env.HQ_PUBLIC_NONCE;
+    __setNonceForTest("");
   });
 
   it("loopback still works", () => {
@@ -110,14 +110,25 @@ describe("remote link", () => {
 
   it("public.json counts only with the nonce of this HQ process (contract C-C)", () => {
     expect(readPublic()?.host).toBe(HOST);
-    delete process.env.HQ_PUBLIC_NONCE;
+    __setNonceForTest("");
     expect(readPublic()).toBeNull();
     expect(call({ host: HOST, cookie: `hq_pub=${SESSION}` })).toBe(403);
-    process.env.HQ_PUBLIC_NONCE = "f".repeat(64);
+    __setNonceForTest("f".repeat(64));
     expect(readPublic()).toBeNull();
-    process.env.HQ_PUBLIC_NONCE = NONCE;
+    __setNonceForTest(NONCE);
     writePub({ v: 1, host: HOST, key: KEY, since: Date.now() }); // no nonce in the file
     expect(readPublic()).toBeNull();
+  });
+
+  it("the nonce is taken once at load and kept out of process.env (security M-A)", () => {
+    expect(process.env.HQ_PUBLIC_NONCE).toBeUndefined();
+    __setNonceForTest("");
+    process.env.HQ_PUBLIC_NONCE = NONCE; // set after load: ignored
+    try {
+      expect(readPublic()).toBeNull();
+    } finally {
+      delete process.env.HQ_PUBLIC_NONCE;
+    }
   });
 
   it("mutations on the public host need its https Origin", () => {
@@ -178,9 +189,9 @@ describe("remote link", () => {
         expect(res.headers.get("set-cookie")).toBeNull();
         expect(await res.text()).toBe("");
       }
-      delete process.env.HQ_PUBLIC_NONCE;
+      __setNonceForTest("");
       expect((await get(HOST, KEY)).status).toBe(401);
-      process.env.HQ_PUBLIC_NONCE = NONCE;
+      __setNonceForTest(NONCE);
       fs.rmSync(publicPath());
       expect((await get(HOST, KEY)).status).toBe(401);
     });
