@@ -1,5 +1,5 @@
-//! `8sync ccc awake [--while-rooms] [--hours N]` (also `8sync awake …`): keep the machine from
-//! sleeping while rooms work; the screen may still turn off. Owner (2026-10-19): rooms died
+//! `8sync ccc awake [--while-rooms] [--hours N] [--screen-off N]` (also `8sync awake …`): keep the
+//! machine from sleeping while rooms work. Owner (2026-10-19): rooms died
 //! overnight with the machine ("tắt máy … mở máy lên hiển thị đang làm nhưng mà lại không có
 //! làm"); room `core` researched the options and proposed `awake --while-rooms`.
 //!
