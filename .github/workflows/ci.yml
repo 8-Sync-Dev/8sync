@@ -45,6 +45,17 @@ jobs:
       - name: cargo build --no-default-features
         run: cargo build --locked --no-default-features
 
+  # The omp extensions/hooks are typechecked only in release.yml; v0.101.0's first tag failed
+  # there (`Promise.withResolvers` outside the es2023 lib). Same command, before the tag.
+  ts-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Typecheck shipped TypeScript assets
+        run: |
+          npm install --no-audit --no-fund --silent
+          npx tsc --noEmit -p tsconfig.extensions.json
+
   # The release size gate, before the tag: v0.67.0, v0.74.0, v0.78.0, v0.81.0, v0.89.0, v0.93.0
   # and v0.98.0 were tagged and then failed it, because nothing measured the asset earlier. Same toolchain and command
   # as release.yml's linux-x86_64 leg (the largest asset), so the number matches the release.

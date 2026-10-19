@@ -5,12 +5,19 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.101.1] — 2026-10-19
+### Fixed
+- **A team that hit the 5-hour limit comes back at the reset again.** In 0.101.0 a reading taken before the reset counted as unknown; with no 7-day reading (this machine's status line has none) the subscription `$`/hour fail-safe then judged the spend that filled the window, so resume and revive refused until the lease ran out. A reading whose `resets_at` has passed now counts as 0 % (the window did start over).
+- `auto up` / `auto on --loop` notes no longer say background rooms never resume after a usage limit; they point at `[8sync:resume]`, `auto revive` and `8sync awake --while-rooms`.
+- Docs: the omp team runs on another provider (GLM, OpenAI…); `--omp` is refused for any `anthropic/…` default model, Console key included.
+- CI typechecks the shipped omp extensions on every PR (the first v0.101.0 tag failed only in the release job).
+
 ## [0.101.0] — 2026-10-19
 ### Added
 - **Stuck rooms restart by themselves while auto runs.** Owner (2026-10-19): "auto xử lý kẹt … tự kích hoạt chạy lại tiếp khi usage hồi lại biết mấy giờ có lại usage".
   - The StopFailure record now says when to resume. `rate_limit`: the reset time from the status line (`rate_limits.*.resets_at`; the window ≥ 90 % full, +60 s), at most 2 in a row and never more than 24 h out — the caps of Claude Code's own `autoContinueAtUsageLimit`, which background (`auto up`) rooms do not get. `overloaded` / `server_error` / `unknown`: after 1, 2, 4… min (≤ 15 min, ≤ 5 in a row). `max_output_tokens`: at once (≤ 2). Login, billing and request errors wait for the owner.
   - The `8sync-inbox` mod hands the room an `[8sync:resume]` prompt when it is idle and the resume is due (at most twice per stop, never while another delivery is in flight), only while auto runs for that project and inside the usual rails (subscription lease, usage window, `$`/hour cap).
-  - Usage snapshots keep `five_hour_resets_at` / `seven_day_resets_at`. A reading taken before its window reset counts as unknown, not as 90 %, so rooms resting on it go on at the reset (under the `$`/hour fail-safe until a fresh reading arrives) instead of waiting up to 5 hours for it to go stale.
+  - Usage snapshots keep `five_hour_resets_at` / `seven_day_resets_at`, so rooms resting on a reading go on at the reset instead of waiting up to 5 hours for it to go stale (0.101.1 fixes how a past-reset reading counts).
   - `8sync ccc . ls --json` / `8sync ls --json` add `stalled_resume_at`; a resumed room is no longer shown as stuck. The stop record resolves home like the other hooks, so it also works on Windows without `HOME`.
   - Usage comes only from the status-line JSON Claude Code produces. 8sync never reads Claude credentials or calls the OAuth usage endpoint (Orca does; not copied).
 - **Rooms that died with the machine come back.** Owner (2026-10-19): "tắt máy chứ chưa tắt ccc auto … mở máy lên hiển thị đang làm nhưng mà lại không có làm". `auto up` rooms are Claude Code background sessions; a shutdown kills them, and Claude Code's own wait-for-the-reset (`autoContinueAtUsageLimit`) only works in a live interactive session, never in `--bg`.

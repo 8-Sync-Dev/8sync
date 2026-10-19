@@ -737,7 +737,7 @@
             <li>On a subscription, rooms rest once the 5-hour or 7-day usage window reaches 90%. With an API key, or with <code class="nb">--usd-per-hour</code>, a ceiling on this project's spend (default $5 an hour) skips ticks.</li>
             <li>Claude Code removes a loop after 7 days; run the command again to extend it.</li>
             <li>A usage limit restarts a room at most twice in a row and never more than 24 hours out, like Claude Code's own auto-continue. 8sync reads usage only from what Claude Code gives the status line, never from your login.</li>
-            <li>The omp team never runs on a Claude subscription login (it stays in Claude Code): use a Console API key or another provider for omp.</li>
+            <li>Never sign in to a Claude plan (Pro/Max/Team) in omp: the plan stays in Claude Code. The omp team runs on another provider (GLM, OpenAI…); <code>--omp</code> is refused while omp's default model is <code>anthropic/…</code>, Console key or not.</li>
           </ul>
         </div>
       </div>

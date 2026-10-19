@@ -394,19 +394,19 @@ pub(super) fn usage(home: &Path, lease: Option<&Value>, now: u64) -> Usage {
     let snaps = super::report::load_snapshots(home); // newest first
     let mine = super::auto::scoped(home);
     let costs: Vec<(String, f64)> = snaps.iter().filter(|s| mine(s["cwd"].as_str())).filter_map(cost_of).collect();
-    // A reading taken before its window's reset (`<key>_resets_at`, from the status line) no longer
-    // says how full the window is: the window started over, but how full it is now is unknown
-    // (rooms that run on may not refresh the status line), so it counts as no reading and the
-    // `$` fail-safe in [`cap`] applies until a fresh snapshot comes in.
+    // A reading whose window has reset since (`<key>_resets_at`, from the status line) means that
+    // window started over: it counts as 0 %, whatever its age, so a team that rested at 90 % (or
+    // stopped on the limit) goes on at the reset instead of waiting for a fresh status line that
+    // background rooms may never draw. Not None: with no 7-day reading (this owner's status line
+    // has none) an unknown 5-hour window would arm the `$` fail-safe against the spend that filled
+    // the window, and the team would stay down until the lease ran out (review 2026-10-19).
     let window = |key: &str, max_age: u64| {
-        snaps.iter().find(|s| s[key].is_number()).filter(|s| now.saturating_sub(s["ts"].as_u64().unwrap_or(0)) < max_age).and_then(|s| {
-            let reset = key.strip_suffix("_pct").map(|w| format!("{w}_resets_at"));
-            if reset.is_some_and(|r| s[r.as_str()].as_u64().is_some_and(|at| at <= now)) {
-                None
-            } else {
-                s[key].as_f64()
-            }
-        })
+        let s = snaps.iter().find(|s| s[key].is_number())?;
+        let reset = key.strip_suffix("_pct").map(|w| format!("{w}_resets_at"));
+        if reset.is_some_and(|r| s[r.as_str()].as_u64().is_some_and(|at| at <= now)) {
+            return Some(0.0);
+        }
+        s[key].as_f64().filter(|_| now.saturating_sub(s["ts"].as_u64().unwrap_or(0)) < max_age)
     };
     Usage {
         spent: lease.map_or(0.0, |l| spent_since(&l["baseline"], &costs)),
@@ -1022,14 +1022,24 @@ mod tests {
         assert_eq!(usage(&d, None, t), w(Some(95.0), Some(50.0), 0.0));
         assert_eq!(usage(&d, None, t + 5 * 3600), w(None, Some(50.0), 0.0), "a 5-hour reading older than 5 hours is stale");
         assert_eq!(usage(&d, None, t + 7 * 86_400), w(None, None, 0.0));
-        // The status line said when the 5-hour window resets: past that time the old 95% is void,
-        // but the new fill is unknown, so the reading counts as none (not 0%).
+        // The status line said when the 5-hour window resets: past that time the old 100% is void
+        // and the window started over (0%), so the team goes on even after a big spend.
         snap(&d, json!({ "session_id": "c", "ts": t - 50, "five_hour_pct": 100, "five_hour_resets_at": t + 600, "seven_day_pct": 50 }));
         assert_eq!(usage(&d, None, t), w(Some(100.0), Some(50.0), 0.0), "before the reset the window is full");
-        assert_eq!(usage(&d, None, t + 600), w(None, Some(50.0), 0.0), "at the reset it is unknown again");
-        assert!(cap(&sub, &usage(&d, None, t + 600), true, t + 600).is_ok(), "the subscription rail clears at the reset");
+        assert_eq!(usage(&d, None, t + 600), w(Some(0.0), Some(50.0), 0.0), "at the reset it started over");
+        assert_eq!(usage(&d, None, t + 6 * 3600).five_hour, Some(0.0), "a reset reading never turns back into a full one");
+        assert!(cap(&sub, &Usage { spent: 500.0, ..usage(&d, None, t + 600) }, true, t + 600).is_ok(), "the subscription rail clears at the reset");
+        // This owner's status line has no 7-day window: the reset alone must clear the rail.
+        let d7 = std::env::temp_dir().join(format!("8sync-idle-no7d-{}-{}", std::process::id(), now()));
+        let _ = std::fs::remove_dir_all(&d7);
+        snap(&d7, json!({ "session_id": "a", "ts": t - 50, "five_hour_pct": 100, "five_hour_resets_at": t + 600 }));
+        assert!(cap(&sub, &Usage { spent: 500.0, ..usage(&d7, None, t) }, true, t).is_err(), "full before the reset");
+        let after = usage(&d7, None, t + 600);
+        assert_eq!((after.five_hour, after.seven_day), (Some(0.0), None));
+        assert!(cap(&sub, &Usage { spent: 500.0, ..after }, true, t + 600).is_ok(), "no 7-day reading: still back at the reset");
+        let _ = std::fs::remove_dir_all(&d7);
         // With no known window at all the default $ rail applies (spent 0 → ok, over $5/h → rest).
-        let none = Usage { seven_day: None, ..usage(&d, None, t + 600) };
+        let none = Usage::default();
         assert!(cap(&sub, &none, true, t + 600).is_ok(), "spent 0 → ok");
         assert!(cap(&sub, &Usage { spent: 6.72, ..none }, true, 3600).unwrap_err().contains("$5.00/giờ"));
         // `on` without --usd-per-hour: a subscription lease stores no $ rate, an API key lease $5.

@@ -663,8 +663,8 @@ fn card_lines(t: &target::Target) -> Vec<String> {
 pub(super) fn loop_notes(subscription: bool) -> Vec<&'static str> {
     let mut v = vec![
         "Loop tự xoá ở nhịp kế khi auto off/pause; chạm trần thì nghỉ nhịp, giữ loop (subscription: cửa sổ 5 giờ/7 ngày ≥ 90%, tự mở khi reset; $/giờ chỉ tính session của dự án, trung bình, tự hạ). Claude Code tự xoá sau 7 ngày (chạy lại lệnh này để gia hạn).",
-        "Loop chỉ chạy khi phòng còn mở: gõ /bg trong phòng để chạy nền không cần terminal, Ctrl+T trong agent view để ghim; tắt máy là dừng.",
-        "Hết usage: phòng mở trong terminal tự chờ reset rồi chạy tiếp (autoContinueAtUsageLimit). Phòng /bg và teammate không tự chờ; nhịp loop kế sau giờ reset có thể chạy tiếp.",
+        "Loop chỉ chạy khi phòng còn mở: gõ /bg trong phòng để chạy nền không cần terminal, Ctrl+T trong agent view để ghim; tắt máy là phòng chết — HQ tự mở lại (`8sync ccc auto revive`), giữ máy thức: `8sync awake --while-rooms`.",
+        "Hết usage: phòng mở trong terminal tự chờ reset (autoContinueAtUsageLimit). Phòng /bg và teammate thì Claude Code không tự chờ: 8sync ghi giờ reset và đưa `[8sync:resume]` vào phòng đúng giờ (auto bật, lease còn).",
     ];
     if subscription {
         v.push("Login subscription: loop là scheduler của Claude Code trong phòng anh mở, cho mức dùng thường. Chạy không người trông nhiều ngày hoặc 24/7 → Routines (/schedule, cloud; chạy không hỏi quyền và không có rail của 8sync, chỉ cấp repo/connector cần) hoặc Desktop scheduled task (local); tool khác → Console API key. N phòng tiêu quota nhanh gần N lần.");
@@ -1824,13 +1824,13 @@ mod tests {
     fn loop_notes_tell_bg_from_a_terminal_and_name_the_unattended_route() {
         let api = loop_notes(false).join("\n");
         // Claude Code never waits out a usage limit in a background session or for a teammate.
-        assert!(api.contains("Phòng /bg và teammate không tự chờ"), "{api}");
+        assert!(api.contains("Phòng /bg và teammate thì Claude Code không tự chờ: 8sync ghi giờ reset"), "{api}");
         assert!(
             api.contains("phòng mở trong terminal tự chờ reset"),
             "{api}"
         );
-        // A /bg room picking up on the next tick after reset is inferred, not documented: no promise.
-        assert!(api.contains("có thể chạy tiếp") && !api.contains("sẽ thử lại"), "{api}");
+        // 8sync itself resumes /bg rooms at the reset and revives rooms a shutdown killed.
+        assert!(api.contains("[8sync:resume]") && api.contains("auto revive") && api.contains("awake --while-rooms"), "{api}");
         assert!(!api.contains("Login subscription"), "{api}");
         let sub = loop_notes(true).join("\n");
         // The unattended routes Claude Code documents (scheduled-tasks#limitations); a routine runs
