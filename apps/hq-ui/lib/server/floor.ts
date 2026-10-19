@@ -4,7 +4,8 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { isOmpRoomId, sessionLabel } from "../labels";
 import { roomLabel } from "../room-label";
-import { deriveFloor, type FloorRow, type LsInput } from "../floor";
+import { autoMayAct, deriveFloor, type FloorRow, type LsInput } from "../floor";
+import { lastAutoStatus } from "./auto";
 import { projectIdFor } from "./db";
 import { inboxLive } from "./inbox";
 import { mergedSessions, run, type SessionView } from "./proc";
@@ -132,6 +133,9 @@ export function newestStandup(repo: string | null | undefined, home = os.homedir
 async function build(db: DatabaseSync): Promise<FloorRow[]> {
   const [ls, merged] = await Promise.all([lsRows(), mergedSessions(db).catch(() => [] as SessionView[])]);
   const now = Date.now();
+  // "tự chạy lại lúc …" only while auto will actually resume the room (on, not paused, no gate);
+  // the status GET /api/auto last fetched, unknown (no poll yet) = the owner must act.
+  const autoActs = autoMayAct(lastAutoStatus());
   const used = new Set<string>();
   const ids = new Set<string>();
   // One readdir per repo per build, not per session.
@@ -168,7 +172,7 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       tokens: typeof r.tokens === "number" ? r.tokens : null,
       inbox_id: typeof r.inbox_id === "string" ? r.inbox_id : null,
       live: r.status === "running" || r.status === "active",
-      ...deriveFloor(r, { ...(hq ?? {}), standup: standupOf(repo) }, now),
+      ...deriveFloor(r, { ...(hq ?? {}), standup: standupOf(repo) }, now, autoActs),
     };
   });
   // hq sessions `8sync ls` does not know (fresh tmux panes, `claude agents` only).
@@ -187,7 +191,7 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       sid: sidOf(s.session_id, s.name),
       inbox_id: s.session_id,
       live: true,
-      ...deriveFloor(null, { ...s, standup: standupOf(repo) }, now),
+      ...deriveFloor(null, { ...s, standup: standupOf(repo) }, now, autoActs),
     });
   }
   return rows;

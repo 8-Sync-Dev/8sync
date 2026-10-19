@@ -395,20 +395,18 @@ pub(super) fn usage(home: &Path, lease: Option<&Value>, now: u64) -> Usage {
     let mine = super::auto::scoped(home);
     let costs: Vec<(String, f64)> = snaps.iter().filter(|s| mine(s["cwd"].as_str())).filter_map(cost_of).collect();
     // A reading taken before its window's reset (`<key>_resets_at`, from the status line) no longer
-    // says how full the window is: the window started over, so the rooms that rested on it go on.
+    // says how full the window is: the window started over, but how full it is now is unknown
+    // (rooms that run on may not refresh the status line), so it counts as no reading and the
+    // `$` fail-safe in [`cap`] applies until a fresh snapshot comes in.
     let window = |key: &str, max_age: u64| {
-        snaps
-            .iter()
-            .find(|s| s[key].is_number())
-            .filter(|s| now.saturating_sub(s["ts"].as_u64().unwrap_or(0)) < max_age)
-            .and_then(|s| {
-                let reset = key.strip_suffix("_pct").map(|w| format!("{w}_resets_at"));
-                if reset.is_some_and(|r| s[r.as_str()].as_u64().is_some_and(|at| at <= now)) {
-                    Some(0.0)
-                } else {
-                    s[key].as_f64()
-                }
-            })
+        snaps.iter().find(|s| s[key].is_number()).filter(|s| now.saturating_sub(s["ts"].as_u64().unwrap_or(0)) < max_age).and_then(|s| {
+            let reset = key.strip_suffix("_pct").map(|w| format!("{w}_resets_at"));
+            if reset.is_some_and(|r| s[r.as_str()].as_u64().is_some_and(|at| at <= now)) {
+                None
+            } else {
+                s[key].as_f64()
+            }
+        })
     };
     Usage {
         spent: lease.map_or(0.0, |l| spent_since(&l["baseline"], &costs)),
@@ -1023,12 +1021,16 @@ mod tests {
         assert_eq!(usage(&d, None, t), w(Some(95.0), Some(50.0), 0.0));
         assert_eq!(usage(&d, None, t + 5 * 3600), w(None, Some(50.0), 0.0), "a 5-hour reading older than 5 hours is stale");
         assert_eq!(usage(&d, None, t + 7 * 86_400), w(None, None, 0.0));
-        // The status line said when the 5-hour window resets: past that time the old 95% is void, so
-        // rooms resting on it go on at once instead of waiting for the reading to age out.
+        // The status line said when the 5-hour window resets: past that time the old 95% is void,
+        // but the new fill is unknown, so the reading counts as none (not 0%).
         snap(&d, json!({ "session_id": "c", "ts": t - 50, "five_hour_pct": 100, "five_hour_resets_at": t + 600, "seven_day_pct": 50 }));
         assert_eq!(usage(&d, None, t), w(Some(100.0), Some(50.0), 0.0), "before the reset the window is full");
-        assert_eq!(usage(&d, None, t + 600), w(Some(0.0), Some(50.0), 0.0), "at the reset it is empty again");
+        assert_eq!(usage(&d, None, t + 600), w(None, Some(50.0), 0.0), "at the reset it is unknown again");
         assert!(cap(&sub, &usage(&d, None, t + 600), true, t + 600).is_ok(), "the subscription rail clears at the reset");
+        // With no known window at all the default $ rail applies (spent 0 → ok, over $5/h → rest).
+        let none = Usage { seven_day: None, ..usage(&d, None, t + 600) };
+        assert!(cap(&sub, &none, true, t + 600).is_ok(), "spent 0 → ok");
+        assert!(cap(&sub, &Usage { spent: 6.72, ..none }, true, 3600).unwrap_err().contains("$5.00/giờ"));
         // `on` without --usd-per-hour: a subscription lease stores no $ rate, an API key lease $5.
         on(&d, 1.0, None, true, true).unwrap();
         assert!(read_json(&state_dir(&d).join("lease.json")).unwrap()["usd_per_hour"].is_null());

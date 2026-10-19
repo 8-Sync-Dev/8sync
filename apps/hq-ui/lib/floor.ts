@@ -66,7 +66,14 @@ export const LABEL: Record<FloorState, string> = {
   meeting: "họp sprint",
 };
 
-export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now()): Derived {
+/** `8sync ccc auto status` fields that decide whether auto resumes stopped rooms by itself. */
+export type AutoGate = { on?: boolean; paused?: boolean; gate?: string | null } | null;
+
+/** Auto resumes a stopped turn only while it is on, not paused, and no lease/usage gate holds it. */
+export const autoMayAct = (s: AutoGate) => !!s && s.on === true && !s.paused && !s.gate;
+
+/** `autoActs`: auto may resume rooms now (autoMayAct); otherwise a stopped room waits on the owner. */
+export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now(), autoActs = false): Derived {
   const status = ls?.status ?? (hq?.status === "running" ? "running" : "idle");
   const total = ls?.tasks_total ?? 0;
   const doneN = ls?.tasks_done ?? 0;
@@ -86,7 +93,7 @@ export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now())
   if (ls?.stalled_error) {
     const err = typeof ls.stalled_error === "string" ? ls.stalled_error : null;
     const at = ls.stalled_resume_at;
-    if (typeof at === "number" && Number.isFinite(at)) {
+    if (autoActs && typeof at === "number" && Number.isFinite(at) && at * 1000 > nowMs) {
       const when = hhmm(at * 1000);
       return make("stalled", err === "rate_limit" ? `Hết usage — tự chạy lại lúc ${when}` : `Lỗi API (${err ?? "không rõ"}) — tự thử lại lúc ${when}`, "chờ tự chạy lại");
     }

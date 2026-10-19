@@ -22,6 +22,7 @@ use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
 mod auto;
+mod awake;
 mod cancel;
 mod compact;
 mod danger;
@@ -196,7 +197,19 @@ pub fn run(a: Args) -> Result<()> {
         // repo is (ai-game-studio inside 8sync-startup), and a worktree belongs to its repo.
         "auto" => {
             let repo = std::env::current_dir().ok().and_then(|c| crate::verbs::here::repo_of(&c)).unwrap_or_else(|| root.clone());
-            if team::wants(rest) {
+            if rest.first().is_some_and(|a| a == "revive") {
+                // Every project auto runs for (HQ calls this without a cwd); no scope = this repo.
+                let st = auto::status(&env.home, login_kind_at(&env.home).kind == "subscription", 0);
+                // Scope roots are canonical (`\\?\C:\…` on Windows); the registry is keyed by the plain path.
+                let plain = |r: &str| PathBuf::from(r.strip_prefix(r"\\?\").filter(|d| d.as_bytes().get(1) == Some(&b':')).unwrap_or(r));
+                let repos: Vec<PathBuf> = st["repos"].as_array().map(|a| a.iter().filter_map(|r| r.as_str()).map(plain).collect()).unwrap_or_default();
+                for r in if repos.is_empty() { vec![repo] } else { repos } {
+                    if let Err(e) = auto_team(&env, &r, rest) {
+                        eprintln!("{}: {e:#}", r.display());
+                    }
+                }
+                Ok(())
+            } else if team::wants(rest) {
                 auto_team(&env, &repo, rest)
             } else {
                 auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", &repo, || {
@@ -210,6 +223,12 @@ pub fn run(a: Args) -> Result<()> {
         }
         "risk" => risk::run(rest, &std::env::current_dir().context("no cwd")?),
         "term" => term::run(rest),
+        "awake" => {
+            let o = awake::parse(rest)?;
+            let home = env.home.clone();
+            let bin = team::Bin { exe: ensure_claude(true)?, root: &home };
+            awake::run(&o, &bin, login_kind_at(&env.home).kind == "subscription")
+        }
         "hint" => {
             let cwd = std::env::current_dir().context("no cwd")?;
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
@@ -495,6 +514,13 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
     let t = team::Team { home: &env.home, root, store: &store, subscription, claude: &bin, has_transcript: &has, title: &title, kit_at };
+    if rest[0] == "revive" {
+        let rows = team::revive(&t, auto::DEFAULT_LOOP_MIN, now)?;
+        for r in &rows {
+            println!("{} ({}): {} {}", r.name, r.role, r.state, r.short);
+        }
+        return Ok(());
+    }
     if rest[0] == "down" {
         if let Some(x) = rest.get(1) {
             bail!("không rõ `{x}`\n{}", team::USAGE);
@@ -768,9 +794,9 @@ const CLAUDE_MD_END: &str = "<!-- 8sync:kit:end -->";
 /// No `Edit(**/.env*)`: Claude Code applies Edit deny rules to `rm`/`sed`/redirects in Bash,
 /// so it blocked deleting a stray `.env` copy; the guard still denies printing a credential
 /// file and writing a real secret anywhere (see RETIRED_DENY).
-/// The HQ owner files (UI token, public-link key, permit answers, inbox) back the guard's
-/// Bash/Write check for the Read tool, which the guard does not see.
-const DENY: [&str; 18] = [
+/// The HQ owner files (UI token, public-link key, Discord secrets, usage snapshots, permit
+/// answers, inbox) back the guard's Bash/Write check for the Read tool, which the guard does not see.
+const DENY: [&str; 22] = [
     "Read(**/.env)",
     "Read(**/.env.*)",
     "Read(**/*.pem)",
@@ -787,8 +813,12 @@ const DENY: [&str; 18] = [
     "Bash(git push * -f*)",
     "Read(~/.config/8sync/hq/ui-token)",
     "Read(~/.config/8sync/hq/public.json)",
+    "Edit(~/.config/8sync/hq/public.json)",
+    "Read(~/.config/8sync/hq/secrets.json)",
+    "Edit(~/.config/8sync/hq/secrets.json)",
     "Edit(~/.local/state/8sync/ccc/permit/**)",
     "Edit(~/.local/state/8sync/hq/inbox/**)",
+    "Edit(~/.local/state/8sync/hq/usage/**)",
 ];
 
 /// Deny rules earlier kits wrote and this one takes back (owner decision 2026-10-14).
@@ -2450,6 +2480,9 @@ mod tests {
         assert_eq!(p["permissions"]["disableBypassPermissionsMode"], "disable");
         let deny: Vec<&str> = p["permissions"]["deny"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
         assert!(DENY.iter().all(|r| deny.contains(r)));
+        for r in ["Edit(~/.config/8sync/hq/public.json)", "Read(~/.config/8sync/hq/secrets.json)", "Edit(~/.config/8sync/hq/secrets.json)", "Edit(~/.local/state/8sync/hq/usage/**)"] {
+            assert!(deny.contains(&r), "{r}");
+        }
         assert_eq!(p["forceLoginMethod"], "claudeai");
         assert_eq!(p["sandbox"]["enabled"], true);
         assert_eq!(p["channelsEnabled"], true);

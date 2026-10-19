@@ -13,20 +13,18 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - omp 18.12.2: extensions `pi.on(agent_end|tool_call|…)`, `pi.sendUserMessage(text,{deliverAs:"followUp"})`, `ctx.isIdle()`, `tool_call` can block (oh-my-pi source via librarian); `omp -p` exists (`omp --help`).
 
 ## Checklist
-- [x] Built on stale base, then found origin/main 53 commits ahead (v0.100.15): upstream already had the question/permission flow (`ccc hook permit`, `delegate check`, HQ "Anh cần trả lời") → our C5 (pending + `hook permission`) dropped, the rest merged onto upstream.
-- [x] Unstick: stop record `resume_at`/`auto`/`resumed_at`/`offered_at`; `[8sync:resume]` via `ccc inbox`; gated by auto running + scope + `auto status` gate (lease, window, $ cap); usage snapshots keep `*_resets_at`; `idle::usage` treats a window past its reset as empty.
-- [x] omp team: room ids, `inbox_id`, launch env, `auto on --omp`, `auto omp on|off`, `auto nudge`, `ccc msg` (room framing ≠ owner), extension `8sync-team.ts`, `auto up --omp` / `down` (omp_team.rs: tmux / wt tabs).
-- [x] `hq ui --public` (cloudflared) + HQ auth/login/polling/headers + captions/usage/team labels/omp switch.
-- [x] Guard + kit deny rules for public.json, ui-token, permit answers, inbox.
-- [x] Docs: site on/off box + rows, huong-dan §table, hq.md; CHANGELOG.
-- [x] Gate (local, Windows): cargo test 634 ok, `--no-default-features` builds; hq-ui tsc/eslint clean, vitest 550/555 (5 fail identically on origin/main on Windows: POSIX mode, `/` separators, inode > 2^53).
-- [ ] Reviews ×2 clean · UAT (tunnel in browser, resume gate on real binary, omp room inbox) · size gate · /sec /rules /aup-audit.
+- [x] Merge onto origin/main v0.100.15 (our C5 dropped: upstream permit/delegate covers it).
+- [x] Unstick (resume_at at the status-line reset, ≤2 offers, gated by auto + lease/usage), omp team (`auto up --omp`, extension, `ccc msg`), `hq ui --public` (nonce file, 10-min link, HMAC cookie 12 h), HQ captions/meter/team labels.
+- [x] Owner bug 2026-10-19 (rooms died with the machine, HQ said "Đang làm"): `auto revive` + HQ tick (≤2 min, on Run); `8sync awake --while-rooms` (proven on Windows: `powercfg /requests` lists 8sync.exe under SYSTEM).
+- [x] Reviews round 1 (reviewer + security-reviewer): 4 HIGH (omp guard, room-line rails, owner-frame forgery) + MEDs fixed by RustInbox/HqAuth/OmpHarden; consecutive-resume counter kept (= Claude Code semantics).
+- [x] Gate (Windows): cargo test 604+35 ok; `--no-default-features` builds; hq-ui tsc/eslint clean, vitest 560/563 (3 Windows-only failures identical on origin/main).
+- [ ] v0.101.0: size gate (linux asset 7,198,832 B vs ceiling 7,208,960 — must attribute + raise), CI on branch, merge main, tag, release, `8sync up` on this machine, delete feat branch, revive ai-game-studio rooms.
 
 ## Current
-Merge committed locally on feat/two-teams; reviews + UAT next.
+Release prep v0.101.0 (version bumped, CHANGELOG cut).
 
 ## Next
-Reviews, UAT, size estimate; owner decides push/PR/release (not requested).
+Size attribution → push → CI green → merge main + tag → install → apply.
 
 # v0.67.1 — rich `ccc . ls`, local team UI (`8sync hq ui`), agent teams (`--team`), guard fixes, dnf5
 

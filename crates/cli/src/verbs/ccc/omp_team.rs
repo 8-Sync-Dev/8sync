@@ -95,13 +95,29 @@ pub(super) fn taskkill_argv(pid: u32) -> Vec<OsString> {
 }
 
 /// The command the owner runs for a room when no detached terminal is there (PowerShell on Windows).
+/// Paths are single-quoted (nothing expands inside): PowerShell doubles a `'`, POSIX closes,
+/// escapes and reopens it (`'\''`).
 pub(super) fn manual(windows: bool, root: &Path, exe: &Path, role: &str) -> String {
     let room = room_name(role);
+    let q = |p: &Path| {
+        let s = p.display().to_string();
+        if windows {
+            format!("'{}'", s.replace('\'', "''"))
+        } else {
+            format!("'{}'", s.replace('\'', r"'\''"))
+        }
+    };
     if windows {
-        format!("cd \"{}\"; & \"{}\" . {room}", root.display(), exe.display())
+        format!("cd {}; & {} . {room}", q(root), q(exe))
     } else {
-        format!("cd \"{}\" && \"{}\" . {room}", root.display(), exe.display())
+        format!("cd {} && {} . {room}", q(root), q(exe))
     }
+}
+
+/// `wt.exe` splits its whole command line on `;` (its sub-command separator), even inside quotes:
+/// a `;` in the repo root or the exe path would run the rest as another wt command.
+pub(super) fn wt_safe(root: &Path, exe: &Path) -> bool {
+    ![root, exe].iter().any(|p| p.as_os_str().to_string_lossy().contains(';'))
 }
 
 /// A Windows command line split like `CommandLineToArgvW`: 2n backslashes + `"` = n backslashes and
@@ -229,6 +245,12 @@ fn open(c: &Ctx, role: &str) -> Result<String> {
     let Some(argv) = spawn_argv(c.host, role, &sess, c.root, c.exe) else {
         return Ok(format!("chạy tay: {}", manual(c.windows, c.root, c.exe, role)));
     };
+    if matches!(c.host, Host::Wt(_)) && !wt_safe(c.root, c.exe) {
+        return Ok(format!(
+            "bỏ qua: đường dẫn có `;` (wt.exe coi là tách lệnh) — chạy tay: {}",
+            manual(c.windows, c.root, c.exe, role)
+        ));
+    }
     run(&argv)?;
     Ok(match c.host {
         Host::Tmux(_) => format!("mở trong tmux `{sess}` (vào: `tmux attach -t {sess}`)"),
@@ -368,8 +390,14 @@ mod tests {
         let w = spawn_argv(&Host::Wt("wt.exe".into()), "qa", "x", root, exe).unwrap();
         assert_eq!(w, os(&["wt.exe", "-w", "8sync-omp", "new-tab", "--title", "omp-qa", "-d", "/home/a/my repo", "/opt/8sync", ".", "omp-qa"]));
         assert_eq!(spawn_argv(&Host::Manual, "qa", "x", root, exe), None);
-        assert_eq!(manual(false, root, exe, "qa"), "cd \"/home/a/my repo\" && \"/opt/8sync\" . omp-qa");
-        assert_eq!(manual(true, root, exe, "qa"), "cd \"/home/a/my repo\"; & \"/opt/8sync\" . omp-qa");
+        assert_eq!(manual(false, root, exe, "qa"), "cd '/home/a/my repo' && '/opt/8sync' . omp-qa");
+        assert_eq!(manual(true, root, exe, "qa"), "cd '/home/a/my repo'; & '/opt/8sync' . omp-qa");
+        let odd = Path::new("/r/it's $(x) `y`");
+        assert_eq!(manual(false, odd, exe, "qa"), r#"cd '/r/it'\''s $(x) `y`' && '/opt/8sync' . omp-qa"#);
+        assert_eq!(manual(true, odd, exe, "qa"), "cd '/r/it''s $(x) `y`'; & '/opt/8sync' . omp-qa");
+        assert!(wt_safe(root, exe));
+        assert!(!wt_safe(Path::new(r"C:\r\a;calc"), exe), "`;` in the root is a wt command separator");
+        assert!(!wt_safe(root, Path::new(r"C:\b;x\8sync.exe")));
         assert_eq!(tmux_argv(Path::new("tmux"), "kill-session", "8sync-omp-dev-abc123"), os(&["tmux", "kill-session", "-t", "=8sync-omp-dev-abc123"]));
         assert_eq!(taskkill_argv(42), os(&["taskkill", "/PID", "42", "/F"]));
     }

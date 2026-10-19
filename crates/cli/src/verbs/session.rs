@@ -129,7 +129,8 @@ pub fn save(env: &Env, root: &Path, reg: &Registry) -> Result<()> {
 /// conversation (no `--continue`); otherwise it resumes the latest one there.
 /// Reuses `ModelConfig` so STEP-0 tool-routing + advisor survive every launch.
 /// `room` = (project root, session name): exported as `EIGHTSYNC_ROOM` / `EIGHTSYNC_ROOM_ID`
-/// so the omp extension polls this room's inbox and `ccc msg` knows the sender.
+/// so the omp extension polls this room's inbox and `ccc msg` knows the sender, plus
+/// `EIGHTSYNC_BIN` (this executable) so the extension never resolves `8sync` from PATH/cwd.
 fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str)) -> Result<()> {
     if which::which("omp").is_err() {
         ui::err("omp not installed. Run `8sync setup` first.");
@@ -144,8 +145,11 @@ fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str)) -> R
     let mut cmd = Command::new("omp");
     cmd.current_dir(cwd)
         .env("EIGHTSYNC_ROOM", room.1)
-        .env("EIGHTSYNC_ROOM_ID", ccc_core::room_id(room.0, room.1))
-        .arg("--cwd")
+        .env("EIGHTSYNC_ROOM_ID", ccc_core::room_id(room.0, room.1));
+    if let Ok(exe) = std::env::current_exe() {
+        cmd.env("EIGHTSYNC_BIN", exe);
+    }
+    cmd.arg("--cwd")
         .arg(cwd)
         .arg("--session-dir")
         .arg(session_dir)

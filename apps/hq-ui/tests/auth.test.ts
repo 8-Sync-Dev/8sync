@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { GET as login } from "@/app/api/login/route";
 import { isLocalHost } from "@/lib/hosts";
-import { checkAuth, getToken, readPublic } from "@/lib/server/auth";
+import { checkAuth, getToken, LINK_MS, readPublic, SESSION_MS, sessionCookie, sessionValid } from "@/lib/server/auth";
 import { open } from "@/lib/server/http";
 import { publicPath, tokenPath } from "@/lib/server/paths";
 import { tempHome } from "./helpers";
@@ -52,7 +52,9 @@ describe("auth", () => {
 describe("remote link", () => {
   const HOST = "calm-river-42.trycloudflare.com";
   const KEY = "c".repeat(64);
+  const NONCE = "e".repeat(64);
   let token = "";
+  let SESSION = "";
   const writePub = (v: unknown) => {
     fs.mkdirSync(path.dirname(publicPath()), { recursive: true });
     fs.writeFileSync(publicPath(), JSON.stringify(v));
@@ -71,7 +73,14 @@ describe("remote link", () => {
     tempHome();
     token = getToken();
   });
-  beforeEach(() => writePub({ v: 1, host: HOST, key: KEY, since: Date.now() }));
+  beforeEach(() => {
+    process.env.HQ_PUBLIC_NONCE = NONCE;
+    writePub({ v: 1, host: HOST, key: KEY, since: Date.now(), nonce: NONCE });
+    SESSION = sessionCookie(KEY, Date.now());
+  });
+  afterAll(() => {
+    delete process.env.HQ_PUBLIC_NONCE;
+  });
 
   it("loopback still works", () => {
     expect(call({ host: "127.0.0.1:8740" })).toBe(200);
@@ -82,12 +91,37 @@ describe("remote link", () => {
     expect(call({ host: HOST })).toBe(403);
     expect(call({ host: HOST, cookie: `hq_pub=${"d".repeat(64)}` })).toBe(403);
     expect(call({ host: HOST, cookie: "hq_pub=short" })).toBe(403);
-    expect(call({ host: HOST, cookie: `hq_pub=${KEY}`, token: null })).toBe(401);
-    expect(call({ host: HOST, cookie: `other=1; hq_pub=${KEY}`, tunnel: true })).toBe(200);
+    expect(call({ host: HOST, cookie: `hq_pub=${KEY}` })).toBe(403); // the raw key is no longer a session
+    expect(call({ host: HOST, cookie: `hq_pub=${SESSION}`, token: null })).toBe(401);
+    expect(call({ host: HOST, cookie: `other=1; hq_pub=${SESSION}`, tunnel: true })).toBe(200);
+  });
+
+  it("session cookie: HMAC-signed, expires server side after 12 h (security M1)", () => {
+    const now = Date.now();
+    expect(sessionValid(sessionCookie(KEY, now - SESSION_MS + 1000), KEY, now)).toBe(true);
+    expect(sessionValid(sessionCookie(KEY, now - SESSION_MS - 1), KEY, now)).toBe(false);
+    expect(sessionValid(sessionCookie(KEY, now + 60_000), KEY, now)).toBe(false);
+    expect(sessionValid(sessionCookie("d".repeat(64), now), KEY, now)).toBe(false);
+    const [issued, mac] = sessionCookie(KEY, now).split(".");
+    expect(sessionValid(`${Number(issued) + 1}.${mac}`, KEY, now)).toBe(false); // forged issue time
+    expect(sessionValid(KEY, KEY, now)).toBe(false);
+    expect(call({ host: HOST, cookie: `hq_pub=${sessionCookie(KEY, now - SESSION_MS - 1)}` })).toBe(403);
+  });
+
+  it("public.json counts only with the nonce of this HQ process (contract C-C)", () => {
+    expect(readPublic()?.host).toBe(HOST);
+    delete process.env.HQ_PUBLIC_NONCE;
+    expect(readPublic()).toBeNull();
+    expect(call({ host: HOST, cookie: `hq_pub=${SESSION}` })).toBe(403);
+    process.env.HQ_PUBLIC_NONCE = "f".repeat(64);
+    expect(readPublic()).toBeNull();
+    process.env.HQ_PUBLIC_NONCE = NONCE;
+    writePub({ v: 1, host: HOST, key: KEY, since: Date.now() }); // no nonce in the file
+    expect(readPublic()).toBeNull();
   });
 
   it("mutations on the public host need its https Origin", () => {
-    const ok = { host: HOST, cookie: `hq_pub=${KEY}`, method: "POST" };
+    const ok = { host: HOST, cookie: `hq_pub=${SESSION}`, method: "POST" };
     expect(call({ ...ok, origin: `https://${HOST}` })).toBe(200);
     expect(call({ ...ok, origin: `http://${HOST}` })).toBe(403);
     expect(call({ ...ok, origin: "https://evil.test" })).toBe(403);
@@ -95,7 +129,7 @@ describe("remote link", () => {
   });
 
   it("lookalike hosts and tunnelled loopback are refused", () => {
-    const cookie = `hq_pub=${KEY}`;
+    const cookie = `hq_pub=${SESSION}`;
     expect(call({ host: `${HOST}.evil.test`, cookie })).toBe(403);
     expect(call({ host: `x${HOST}`, cookie })).toBe(403);
     expect(call({ host: "trycloudflare.com", cookie })).toBe(403);
@@ -105,21 +139,37 @@ describe("remote link", () => {
   it("no or malformed public.json: every non-loopback host is 403", () => {
     fs.rmSync(publicPath());
     expect(readPublic()).toBeNull();
-    expect(call({ host: HOST, cookie: `hq_pub=${KEY}` })).toBe(403);
-    writePub({ v: 1, host: "127.0.0.1", key: KEY });
+    expect(call({ host: HOST, cookie: `hq_pub=${SESSION}` })).toBe(403);
+    writePub({ v: 1, host: "127.0.0.1", key: KEY, since: Date.now(), nonce: NONCE });
     expect(readPublic()).toBeNull();
-    writePub({ v: 1, host: HOST, key: "not-hex" });
+    writePub({ v: 1, host: HOST, key: "not-hex", since: Date.now(), nonce: NONCE });
     expect(readPublic()).toBeNull();
   });
 
   describe("GET /api/login", () => {
     const get = (host: string, k: string) => login(new Request(`http://${host}/api/login?k=${k}`, { headers: { host } }));
 
-    it("right host + key: HttpOnly cookie and 303 to /", async () => {
+    it("right host + key: signed HttpOnly cookie (not the key) and 303 to /", async () => {
+      const before = Date.now();
       const res = await get(HOST, KEY);
       expect(res.status).toBe(303);
       expect(res.headers.get("location")).toBe("/");
-      expect(res.headers.get("set-cookie")).toBe(`hq_pub=${KEY}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=43200`);
+      const m = /^hq_pub=(\d+\.[0-9a-f]{64}); HttpOnly; Secure; SameSite=Strict; Path=\/; Max-Age=43200$/.exec(res.headers.get("set-cookie") ?? "");
+      expect(m).not.toBeNull();
+      expect(m![1]).not.toContain(KEY);
+      expect(Number(m![1].split(".")[0])).toBeGreaterThanOrEqual(before);
+      expect(sessionValid(m![1], KEY)).toBe(true);
+      expect(call({ host: HOST, cookie: `hq_pub=${m![1]}` })).toBe(200);
+    });
+
+    it("the link expires 10 minutes after `since`", async () => {
+      writePub({ v: 1, host: HOST, key: KEY, since: Date.now() - LINK_MS + 30_000, nonce: NONCE });
+      expect((await get(HOST, KEY)).status).toBe(303);
+      writePub({ v: 1, host: HOST, key: KEY, since: Date.now() - LINK_MS - 1000, nonce: NONCE });
+      const res = await get(HOST, KEY);
+      expect(res.status).toBe(401);
+      expect(res.headers.get("set-cookie")).toBeNull();
+      expect(await res.text()).toBe("");
     });
 
     it("anything else: 401 without detail or cookie", async () => {
@@ -128,6 +178,9 @@ describe("remote link", () => {
         expect(res.headers.get("set-cookie")).toBeNull();
         expect(await res.text()).toBe("");
       }
+      delete process.env.HQ_PUBLIC_NONCE;
+      expect((await get(HOST, KEY)).status).toBe(401);
+      process.env.HQ_PUBLIC_NONCE = NONCE;
       fs.rmSync(publicPath());
       expect((await get(HOST, KEY)).status).toBe(401);
     });

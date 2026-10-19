@@ -31,16 +31,29 @@ export function safeEqual(a: string, b: string): boolean {
   return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
 }
 
-/** The tunnel host and login key `8sync hq ui --public` wrote (contract C6). */
-export type PublicLink = { host: string; key: string };
+/**
+ * The tunnel host and login key `8sync hq ui --public` wrote (contract C6). `since` = when the link
+ * was minted (unix ms); `nonce` ties the file to the HQ process that 8sync started (contract C-C).
+ */
+export type PublicLink = { host: string; key: string; since: number; nonce: string };
 
 export const PUB_COOKIE = "hq_pub";
 const HOST_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
-const KEY_RE = /^[0-9a-f]{64}$/;
+const HEX64_RE = /^[0-9a-f]{64}$/;
+/** The login cookie lives 12 h, checked server side (not just Max-Age): a lost phone stops working by itself. */
+export const SESSION_MS = 12 * 3600_000;
+/** The printed `/api/login?k=` link is good for 10 minutes after `8sync hq ui --public` minted it. */
+export const LINK_MS = 10 * 60_000;
 
 let pubCache: { file: string; mtimeMs: number; size: number; link: PublicLink | null } | null = null;
 
-/** `~/.config/8sync/hq/public.json`, re-read only when its mtime/size change; null when absent or malformed. */
+/** `since` is unix ms; a seconds value (older writers) is scaled up. */
+const sinceMs = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? (v < 1e12 ? v * 1000 : v) : null);
+
+/**
+ * `~/.config/8sync/hq/public.json`, re-read only when its mtime/size change; null when absent, malformed,
+ * or its `nonce` differs from `HQ_PUBLIC_NONCE` (unset = this HQ was not started by `--public`: local only).
+ */
 export function readPublic(): PublicLink | null {
   const file = publicPath();
   let st: fs.Stats;
@@ -50,17 +63,47 @@ export function readPublic(): PublicLink | null {
     pubCache = null;
     return null;
   }
-  if (pubCache?.file === file && pubCache.mtimeMs === st.mtimeMs && pubCache.size === st.size) return pubCache.link;
-  let link: PublicLink | null = null;
-  try {
-    const v = st.size <= 4096 ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
-    const host = typeof v?.host === "string" ? v.host.trim().toLowerCase() : "";
-    if (v?.v === 1 && HOST_RE.test(host) && !isLocalHost(host) && typeof v.key === "string" && KEY_RE.test(v.key)) link = { host, key: v.key };
-  } catch {
-    /* half-written or junk: local only */
+  if (pubCache?.file !== file || pubCache.mtimeMs !== st.mtimeMs || pubCache.size !== st.size) {
+    let link: PublicLink | null = null;
+    try {
+      const v = st.size <= 4096 ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
+      const host = typeof v?.host === "string" ? v.host.trim().toLowerCase() : "";
+      const since = sinceMs(v?.since);
+      if (
+        v?.v === 1 &&
+        HOST_RE.test(host) &&
+        !isLocalHost(host) &&
+        typeof v.key === "string" &&
+        HEX64_RE.test(v.key) &&
+        typeof v.nonce === "string" &&
+        HEX64_RE.test(v.nonce) &&
+        since !== null
+      ) {
+        link = { host, key: v.key, since, nonce: v.nonce };
+      }
+    } catch {
+      /* half-written or junk: local only */
+    }
+    pubCache = { file, mtimeMs: st.mtimeMs, size: st.size, link };
   }
-  pubCache = { file, mtimeMs: st.mtimeMs, size: st.size, link };
-  return link;
+  const link = pubCache.link;
+  const nonce = process.env.HQ_PUBLIC_NONCE ?? "";
+  return link && nonce && safeEqual(nonce, link.nonce) ? link : null;
+}
+
+const sign = (key: string, issued: number) => crypto.createHmac("sha256", key).update(String(issued)).digest("hex");
+
+/** Login cookie value `<issued_ms>.<hmac_sha256_hex(key, issued_ms)>`: the raw key never leaves the server. */
+export function sessionCookie(key: string, issued: number): string {
+  return `${issued}.${sign(key, issued)}`;
+}
+
+/** True when `value` was signed with `key` and was issued at most 12 h before `now`. */
+export function sessionValid(value: string, key: string, now = Date.now()): boolean {
+  const m = /^(\d{1,15})\.([0-9a-f]{64})$/.exec(value);
+  if (!m) return false;
+  const issued = Number(m[1]);
+  return safeEqual(m[2], sign(key, issued)) && issued <= now && now - issued <= SESSION_MS;
 }
 
 /** One cookie value from a `Cookie` header, or null. */
@@ -79,10 +122,10 @@ export const viaTunnel = (h: { get(name: string): string | null }) => h.get("cf-
  * Which side a request comes from: "local" (loopback Host, not tunnelled), "remote" (the public tunnel
  * host with the login cookie), or null (refused: DNS rebinding, lookalike host, no or wrong cookie).
  */
-export function sideOf(req: Pick<AuthInput, "host" | "cookie" | "tunnel">, pub: PublicLink | null): "local" | "remote" | null {
+export function sideOf(req: Pick<AuthInput, "host" | "cookie" | "tunnel">, pub: PublicLink | null, now = Date.now()): "local" | "remote" | null {
   if (isLocalHost(req.host) && !req.tunnel) return "local";
   if (!pub || req.host?.toLowerCase() !== pub.host) return null;
-  return req.cookie && safeEqual(req.cookie, pub.key) ? "remote" : null;
+  return req.cookie && sessionValid(req.cookie, pub.key, now) ? "remote" : null;
 }
 
 export type AuthInput = {

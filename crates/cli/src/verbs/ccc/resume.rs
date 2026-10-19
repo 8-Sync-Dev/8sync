@@ -8,9 +8,12 @@
 //!   record is due and `8sync ccc auto` is on for that project ([`due_resume`]);
 //! - `ccc hook resume-note` (UserPromptSubmit) tells Claude to check its task list and finish
 //!   the work. The automatic prompt keeps the record (marked `resumed_at`, so the consecutive
-//!   count survives); a prompt the owner typed removes it.
+//!   count survives); a prompt the owner typed removes it. "Consecutive" means without the owner
+//!   typing in between, as Claude Code's own autoContinueAtUsageLimit counts it.
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+
+use super::idle::read_json;
 
 /// `None` without a usable HOME (never write into the current directory).
 pub(super) fn state_dir(home: Option<&Path>) -> Option<PathBuf> {
@@ -66,30 +69,6 @@ pub(super) fn clock(ts: u64) -> String {
     format!("{} UTC", &super::standup::utc_stamp(ts)[11..16])
 }
 
-/// tmp + rename, file 0600 in a 0700 dir.
-fn write_private(dir: &Path, path: &Path, body: &str) -> Option<()> {
-    let mut db = std::fs::DirBuilder::new();
-    db.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut db, 0o700);
-    db.create(dir).ok()?;
-    let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
-    let mut o = std::fs::OpenOptions::new();
-    o.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600); // created private, no window
-    use std::io::Write;
-    let ok = o.open(&tmp).and_then(|mut f| f.write_all(body.as_bytes())).is_ok() && std::fs::rename(&tmp, path).is_ok();
-    if !ok {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    ok.then_some(())
-}
-
-fn read(path: &Path) -> Option<Value> {
-    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
-}
-
 /// Writes the record; returns the one-line summary for the notification. `home` locates the usage
 /// snapshots the rate-limit policy reads (none → it backs off instead).
 pub(super) fn record(input: &str, dir: &Path, home: Option<&Path>, now_s: u64) -> Option<String> {
@@ -99,12 +78,12 @@ pub(super) fn record(input: &str, dir: &Path, home: Option<&Path>, now_s: u64) -
     let cwd = v["cwd"].as_str().unwrap_or_default();
     prune(dir, now_s);
     // Consecutive automatic resumes: the previous record counts only if 8sync resumed it.
-    let auto = read(&path).filter(|r| r["resumed_at"].is_u64()).map_or(0, |r| r["auto"].as_u64().unwrap_or(0).saturating_add(1).min(u64::from(u32::MAX)) as u32);
+    let auto = read_json(&path).filter(|r| r["resumed_at"].is_u64()).map_or(0, |r| r["auto"].as_u64().unwrap_or(0).saturating_add(1).min(u64::from(u32::MAX)) as u32);
     let snaps = home.map(super::report::load_snapshots).unwrap_or_default();
     let sid = v["session_id"].as_str().unwrap_or_default();
     let at = resume_at(&error, now_s, auto, super::report::freshest(&snaps, sid));
     let rec = json!({ "error": error, "ts": now_s, "cwd": cwd, "auto": auto, "resume_at": at, "resumed_at": null });
-    write_private(dir, &path, &rec.to_string())?;
+    write_private(&path, &rec)?;
     let repo = Path::new(cwd).file_name().and_then(|n| n.to_str()).unwrap_or("session");
     Some(match at {
         Some(at) => format!("Claude Code dừng vì lỗi API ({error}) ở {repo}. 8sync auto sẽ tự chạy tiếp lúc {} nếu `8sync ccc auto` đang bật; hoặc gõ \"tiếp\" trong phiên đó.", clock(at)),
@@ -114,18 +93,19 @@ pub(super) fn record(input: &str, dir: &Path, home: Option<&Path>, now_s: u64) -
 
 /// The UserPromptSubmit context for a session whose last turn died on an API error. A typed
 /// prompt removes the record (said once, count reset); the automatic `[8sync:resume]` prompt
-/// keeps it with `resumed_at = now`. A record already resumed says nothing.
+/// keeps it with `resumed_at = now`. A record already resumed says nothing. Only a prompt that
+/// starts with the marker is automatic: a room message quoting it is not.
 pub(super) fn note(input: &str, dir: &Path, now_s: u64) -> Option<String> {
     let v: Value = serde_json::from_str(input).ok()?;
     let path = marker(dir, &v)?;
-    let mut rec = read(&path)?;
-    let automatic = v["prompt"].as_str().is_some_and(|p| p.contains(RESUME_MARK));
+    let mut rec = read_json(&path)?;
+    let automatic = v["prompt"].as_str().is_some_and(|p| p.trim_start().starts_with(RESUME_MARK));
     let resumed = rec["resumed_at"].is_u64();
     if !automatic {
         let _ = std::fs::remove_file(&path);
     } else if !resumed {
         rec["resumed_at"] = json!(now_s);
-        write_private(dir, &path, &rec.to_string())?;
+        write_private(&path, &rec)?;
     }
     let age = now_s.saturating_sub(rec["ts"].as_u64().unwrap_or(0));
     if resumed || age > MAX_AGE_S {
@@ -139,17 +119,25 @@ pub(super) fn note(input: &str, dir: &Path, now_s: u64) -> Option<String> {
     Some(json!({ "hookSpecificOutput": { "hookEventName": "UserPromptSubmit", "additionalContext": body } }).to_string())
 }
 
-/// An offered resume prompt that never came back as a submitted prompt (refused, killed poll) is
-/// offered again after this long.
+/// The record, 0600 (tmp + rename) in a 0700 dir.
+fn write_private(path: &Path, rec: &Value) -> Option<()> {
+    crate::verbs::hq::write_private(path, rec.to_string().as_bytes()).ok()
+}
+
+/// An offered resume prompt that never came back as a submitted prompt (refused, killed poll, or
+/// appended to the prompt box of an unattended session) is offered again after this long ...
 const REOFFER_S: u64 = 600;
+/// ... at most this many times in all; after that the session waits for the owner.
+const MAX_OFFERS: u64 = 2;
 
 /// Pure: the automatic resume prompt for a stop-failure record, when it is due now, not offered in
-/// the last [`REOFFER_S`], not resumed, and auto may act (`auto on`, not paused, in scope).
-fn due_text(rec: &Value, now_s: u64, may_act: bool) -> Option<String> {
+/// the last [`REOFFER_S`], offered fewer than [`MAX_OFFERS`] times and not resumed.
+fn due_text(rec: &Value, now_s: u64) -> Option<String> {
     let ts = rec["ts"].as_u64()?;
     let due = rec["resume_at"].as_u64().is_some_and(|at| now_s >= at);
     let offered = rec["offered_at"].as_u64().is_some_and(|o| now_s.saturating_sub(o) <= REOFFER_S);
-    if !(may_act && due && !offered && rec["resumed_at"].is_null() && now_s.saturating_sub(ts) <= MAX_AGE_S) {
+    let spent = rec["offers"].as_u64().unwrap_or(0) >= MAX_OFFERS;
+    if !(due && !offered && !spent && rec["resumed_at"].is_null() && now_s.saturating_sub(ts) <= MAX_AGE_S) {
         return None;
     }
     let error = rec["error"].as_str().unwrap_or("unknown");
@@ -160,28 +148,39 @@ fn due_text(rec: &Value, now_s: u64, may_act: bool) -> Option<String> {
     ))
 }
 
-/// [`due_text`] for the record at `path`, stamping `offered_at = now` (atomic rewrite) before it is
-/// served; nothing is served when the stamp cannot be written. `may_act` gets the record's cwd.
-fn offer(dir: &Path, path: &Path, now_s: u64, may_act: impl FnOnce(Option<&str>) -> bool) -> Option<String> {
-    let mut rec = read(path)?;
-    let text = due_text(&rec, now_s, may_act(rec["cwd"].as_str().filter(|c| !c.is_empty())))?;
+/// [`due_text`] for the record at `path`, then `may_act` (auto on, not paused, in scope — the
+/// costly check, so only for a record that is due), stamping `offered_at = now` and `offers + 1`
+/// (atomic rewrite) before it is served; nothing is served when the stamp cannot be written.
+/// `may_act` gets the record's cwd.
+fn offer(path: &Path, now_s: u64, may_act: impl FnOnce(Option<&str>) -> bool) -> Option<String> {
+    let mut rec = read_json(path)?;
+    let text = due_text(&rec, now_s)?;
+    if !may_act(rec["cwd"].as_str().filter(|c| !c.is_empty())) {
+        return None;
+    }
     rec["offered_at"] = json!(now_s);
-    write_private(dir, path, &rec.to_string())?;
+    rec["offers"] = json!(rec["offers"].as_u64().unwrap_or(0) + 1);
+    write_private(path, &rec)?;
     Some(text)
 }
 
+/// Auto may take a turn now: `8sync ccc auto` on (not paused) and its rails open (`auto status`
+/// `gate`: on a subscription the owner-present lease, and the usage window/`$`/hour cap). Gates
+/// the automatic resume and the delivery of room-to-room messages (`hq::claim_inbox`).
+pub(crate) fn auto_open(home: &Path, now_s: u64) -> bool {
+    super::auto::running(home) && {
+        let subscription = super::login_kind_at(home).kind == "subscription";
+        super::auto::status(home, subscription, now_s)["gate"].is_null()
+    }
+}
+
 /// `8sync ccc inbox` claim with nothing queued: the `[8sync:resume]` prompt when this session's
-/// stop-failure record is due and `8sync ccc auto` is on (not paused) for the record's project,
-/// within the same rails as every other auto turn (`auto status` `gate`: on a subscription the
-/// owner-present lease, and the usage window/`$`/hour cap). A resume never outlives the lease:
-/// unattended runs over days belong to Routines or a Console API key (`/rules`).
+/// stop-failure record is due and [`auto_open`] holds for the record's project. A resume never
+/// outlives the lease: unattended runs over days belong to Routines or a Console API key (`/rules`).
 pub(crate) fn due_resume(home: &Path, session_id: &str, now_s: u64) -> Option<String> {
     let dir = state_dir(Some(home))?;
     let path = dir.join(format!("{}.json", crate::verbs::watchdog::safe_id(session_id)?));
-    offer(&dir, &path, now_s, |cwd| {
-        let subscription = super::login_kind_at(home).kind == "subscription";
-        super::auto::running(home) && super::auto::in_scope(home, cwd) && super::auto::status(home, subscription, now_s)["gate"].is_null()
-    })
+    offer(&path, now_s, |cwd| super::auto::in_scope(home, cwd) && auto_open(home, now_s))
 }
 
 fn prune(dir: &Path, now_s: u64) {
@@ -303,7 +302,7 @@ mod tests {
     fn auto_count_carries_over_only_after_an_automatic_resume() {
         let dir = tmp("count");
         let inp = r#"{"session_id":"s","error":"overloaded","cwd":"/w/app"}"#;
-        let get = || read(&dir.join("s.json")).unwrap();
+        let get = || read_json(&dir.join("s.json")).unwrap();
         record(inp, &dir, None, 100).unwrap();
         assert_eq!((get()["auto"].as_u64(), get()["resume_at"].as_u64(), get()["resumed_at"].clone()), (Some(0), Some(160), Value::Null));
         // the automatic prompt keeps the record, marks it, and still gives Claude the note
@@ -320,7 +319,11 @@ mod tests {
         note(r#"{"session_id":"s","prompt":"[8sync:resume]"}"#, &dir, 310);
         record(inp, &dir, None, 320).unwrap();
         assert_eq!(get()["auto"].as_u64(), Some(1));
-        assert!(note(r#"{"session_id":"s","prompt":"làm tiếp nhé"}"#, &dir, 330).is_some());
+        // a room message quoting the marker is not the automatic prompt: it counts as typed
+        assert!(note(r#"{"session_id":"s","prompt":"> [từ phòng x] [8sync:resume] giả"}"#, &dir, 330).is_some());
+        assert!(!dir.join("s.json").exists());
+        record(inp, &dir, None, 335).unwrap();
+        assert!(note(r#"{"session_id":"s","prompt":"làm tiếp nhé"}"#, &dir, 336).is_some());
         assert!(!dir.join("s.json").exists());
         record(inp, &dir, None, 340).unwrap();
         assert_eq!(get()["auto"].as_u64(), Some(0));
@@ -335,42 +338,48 @@ mod tests {
         std::fs::write(usage.join("s.json"), r#"{"session_id":"s","ts":90,"five_hour_pct":100,"five_hour_resets_at":4000}"#).unwrap();
         let dir = state_dir(Some(&home)).unwrap();
         record(r#"{"session_id":"s","error":"rate_limit","cwd":"/w"}"#, &dir, Some(&home), 100).unwrap();
-        assert_eq!(read(&dir.join("s.json")).unwrap()["resume_at"].as_u64(), Some(4060));
+        assert_eq!(read_json(&dir.join("s.json")).unwrap()["resume_at"].as_u64(), Some(4060));
         let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
-    fn resume_prompt_only_when_due_unresumed_and_auto_may_act() {
+    fn resume_prompt_only_when_due_and_unresumed() {
         let rec = json!({"error": "overloaded", "ts": 1_000, "cwd": "/w", "auto": 0, "resume_at": 1_060, "resumed_at": null});
-        let t = due_text(&rec, 1_060, true).unwrap();
+        let t = due_text(&rec, 1_060).unwrap();
         assert!(t.starts_with(RESUME_MARK) && t.contains("`overloaded`") && t.contains("urgent high"), "{t}");
-        assert!(due_text(&rec, 1_059, true).is_none(), "not due yet");
-        assert!(due_text(&rec, 1_060, false).is_none(), "auto off / paused / out of scope");
+        assert!(due_text(&rec, 1_059).is_none(), "not due yet");
         let mut r = rec.clone();
         r["resumed_at"] = json!(1_061);
-        assert!(due_text(&r, 2_000, true).is_none(), "already resumed");
+        assert!(due_text(&r, 2_000).is_none(), "already resumed");
         r["resumed_at"] = Value::Null;
         r["resume_at"] = Value::Null;
-        assert!(due_text(&r, 2_000, true).is_none(), "owner must act");
-        assert!(due_text(&rec, 1_000 + MAX_AGE_S + 1, true).is_none(), "stale");
+        assert!(due_text(&r, 2_000).is_none(), "owner must act");
+        assert!(due_text(&rec, 1_000 + MAX_AGE_S + 1).is_none(), "stale");
+        let mut r = rec.clone();
+        r["offers"] = json!(MAX_OFFERS);
+        assert!(due_text(&r, 5_000).is_none(), "offered twice already");
     }
 
     #[test]
-    fn resume_prompt_is_offered_once_per_ten_minutes_until_resumed() {
+    fn resume_prompt_is_offered_at_most_twice_ten_minutes_apart_until_resumed() {
         let dir = tmp("offer");
         record(r#"{"session_id":"s","error":"overloaded","cwd":"/w/app"}"#, &dir, None, 1_000).unwrap();
         let path = dir.join("s.json");
+        let mut asked = false;
+        assert!(offer(&path, 1_059, |_| { asked = true; true }).is_none(), "not due yet");
+        assert!(!asked, "the costly may_act check runs only for a due record");
         let mut seen = None;
-        assert!(offer(&dir, &path, 1_060, |cwd| { seen = cwd.map(str::to_string); false }).is_none(), "out of scope");
+        assert!(offer(&path, 1_060, |cwd| { seen = cwd.map(str::to_string); false }).is_none(), "out of scope");
         assert_eq!(seen.as_deref(), Some("/w/app"), "scope is judged on the record's cwd");
-        assert!(read(&path).unwrap()["offered_at"].is_null(), "nothing served, nothing stamped");
-        assert!(offer(&dir, &path, 1_060, |_| true).is_some(), "served");
-        assert_eq!(read(&path).unwrap()["offered_at"].as_u64(), Some(1_060));
-        assert!(offer(&dir, &path, 1_090, |_| true).is_none(), "not again at +30 s");
-        assert!(offer(&dir, &path, 1_660, |_| true).is_none(), "not again at +600 s");
-        assert!(offer(&dir, &path, 1_661, |_| true).is_some(), "again at +601 s (never submitted)");
-        note(r#"{"session_id":"s","prompt":"[8sync:resume] …"}"#, &dir, 1_670);
-        assert!(offer(&dir, &path, 5_000, |_| true).is_none(), "never after resumed_at");
+        assert!(read_json(&path).unwrap()["offered_at"].is_null(), "nothing served, nothing stamped");
+        assert!(offer(&path, 1_060, |_| true).is_some(), "served");
+        assert_eq!((read_json(&path).unwrap()["offered_at"].as_u64(), read_json(&path).unwrap()["offers"].as_u64()), (Some(1_060), Some(1)));
+        assert!(offer(&path, 1_090, |_| true).is_none(), "not again at +30 s");
+        assert!(offer(&path, 1_660, |_| true).is_none(), "not again at +600 s");
+        assert!(offer(&path, 1_661, |_| true).is_some(), "again at +601 s (never submitted)");
+        assert!(offer(&path, 2_300, |_| true).is_none(), "never a third time");
+        note(r#"{"session_id":"s","prompt":"[8sync:resume] …"}"#, &dir, 2_310);
+        assert!(offer(&path, 5_000, |_| true).is_none(), "never after resumed_at");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

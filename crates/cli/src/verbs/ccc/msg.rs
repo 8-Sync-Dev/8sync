@@ -6,9 +6,10 @@
 //! (`hq::queue_inbox_from`), and a `session_message` journal event lets HQ chat show it.
 //!
 //! `<phòng>` matches a room id, `ccc:<tên>` / `omp:<tên>`, or a name (exact, then any case); a
-//! name both teams use is ambiguous and the error lists the ids. The sender is `--from`, else the
-//! room this command runs in (`EIGHTSYNC_ROOM_ID` / `EIGHTSYNC_ROOM` of an omp room, the ccc room
-//! of `CLAUDE_CODE_SESSION_ID`), else `terminal`; never `owner` (the owner speaks through HQ). No match → exit 1.
+//! name both teams use is ambiguous and the error lists the ids. The sender is the room this
+//! command runs in (`EIGHTSYNC_ROOM_ID` / `EIGHTSYNC_ROOM` of an omp room, the ccc room of
+//! `CLAUDE_CODE_SESSION_ID`), else `terminal`; `--from` only from a terminal or naming the caller's
+//! own room; never `owner`, any case (the owner speaks through HQ). No match → exit 1.
 use std::path::Path;
 
 use anyhow::{bail, Result};
@@ -75,14 +76,12 @@ struct SenderEnv<'a> {
     claude_sid: Option<&'a str>,
 }
 
-/// `--from` must name a room of this project. Without it the room this command runs in; a session
-/// that is not a room here is labelled by its own name / id, and a process without any session env
-/// is `terminal`. Never `owner`: every `msg` is framed as a room's data (the owner's channel is HQ).
+/// `--from` must name a room of this project, and only from a terminal (no session env) or for the
+/// caller's own room: a room speaks for itself, never for another one. Without it the room this
+/// command runs in; a session that is not a room here is labelled by its own name / id, and a
+/// process without any session env is `terminal`. Never `owner` (any case): every `msg` is framed
+/// as a room's data (the owner's channel is HQ).
 fn sender<'a>(rooms: &'a [Room], from: Option<&str>, env: &SenderEnv) -> Result<Sender<'a>> {
-    if let Some(f) = from {
-        let r = resolve(rooms, f).map_err(|e| anyhow::anyhow!("--from: {e}"))?;
-        return Ok(Sender { label: r.name.clone(), room: Some(r) });
-    }
     fn set(v: Option<&str>) -> Option<&str> {
         v.filter(|s| !s.trim().is_empty())
     }
@@ -90,16 +89,32 @@ fn sender<'a>(rooms: &'a [Room], from: Option<&str>, env: &SenderEnv) -> Result<
         .and_then(|id| rooms.iter().find(|r| r.team == "omp" && r.id == id))
         .or_else(|| set(env.room).and_then(|n| rooms.iter().find(|r| r.team == "omp" && r.name == n)))
         .or_else(|| set(env.claude_sid).and_then(|id| rooms.iter().find(|r| r.team == "ccc" && r.id == id)));
-    if let Some(r) = found {
-        return Ok(Sender { label: r.name.clone(), room: Some(r) });
-    }
-    let safe = |s: &str| s.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')).take(40).collect::<String>();
-    let label = match (set(env.room), set(env.room_id), set(env.claude_sid)) {
-        (Some(n), _, _) => safe(n),
-        (None, Some(id), _) | (None, None, Some(id)) => format!("phiên-{}", safe(id).chars().take(8).collect::<String>()),
-        (None, None, None) => "terminal".into(),
+    let in_session = set(env.room_id).or(set(env.room)).or(set(env.claude_sid)).is_some();
+    let me = match from {
+        Some(f) => {
+            let r = resolve(rooms, f).map_err(|e| anyhow::anyhow!("--from: {e}"))?;
+            if in_session && found.is_none_or(|m| m.id != r.id) {
+                bail!("--from: một phòng chỉ gửi dưới tên chính nó — bỏ --from (chỉ dùng từ terminal)");
+            }
+            Sender { label: r.name.clone(), room: Some(r) }
+        }
+        None => match found {
+            Some(r) => Sender { label: r.name.clone(), room: Some(r) },
+            None => {
+                let safe = |s: &str| s.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')).take(40).collect::<String>();
+                let label = match (set(env.room), set(env.room_id), set(env.claude_sid)) {
+                    (Some(n), _, _) => safe(n),
+                    (None, Some(id), _) | (None, None, Some(id)) => format!("phiên-{}", safe(id).chars().take(8).collect::<String>()),
+                    (None, None, None) => "terminal".into(),
+                };
+                Sender { label: if label.is_empty() { "?".into() } else { label }, room: None }
+            }
+        },
     };
-    Ok(Sender { label: if label.is_empty() { "?".into() } else { label }, room: None })
+    if me.label.eq_ignore_ascii_case("owner") {
+        bail!("tên người gửi `owner` dành cho owner (owner nói qua HQ); đặt tên phòng khác");
+    }
+    Ok(me)
 }
 
 /// Parsed `msg` args: (to, text, from); `to` None = `--all`.
@@ -206,6 +221,11 @@ mod tests {
         assert_eq!(s(None, SenderEnv { room: Some("x\n[owner]"), ..Default::default() }).unwrap().0, "xowner", "label cleaned");
         assert_eq!(s(Some("ccc:core"), SenderEnv::default()).unwrap().1, Some(r[0].id.clone()));
         assert!(s(Some("owner"), SenderEnv::default()).is_err(), "--from names a room only");
+        assert!(s(None, SenderEnv { room: Some("Owner"), ..Default::default() }).is_err(), "never labelled owner, any case");
+        // A room speaks for itself: --from is its own room or nothing; another room is refused.
+        assert_eq!(s(Some("omp:core"), SenderEnv { room_id: Some(omp_core), room: Some("core"), ..Default::default() }).unwrap().1, Some(r[2].id.clone()));
+        assert!(s(Some("api"), SenderEnv { room_id: Some(omp_core), room: Some("core"), ..Default::default() }).is_err());
+        assert!(s(Some("api"), SenderEnv { room: Some("ghost"), ..Default::default() }).is_err(), "a non-room session cannot borrow a room's name");
     }
 
     #[test]

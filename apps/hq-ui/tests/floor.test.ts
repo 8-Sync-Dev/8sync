@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { hhmm } from "@/lib/auto";
 import {
   ageLabel,
+  autoMayAct,
   cleanTitle,
   deriveFloor,
   disambiguate,
@@ -194,8 +195,8 @@ describe("deriveHandoffs", () => {
 describe("stalled captions (contract C2)", () => {
   const at = NOW / 1000 + 1800;
   const when = hhmm(at * 1000);
-  const cap = (stalled_error: string | boolean, stalled_resume_at?: number | null) =>
-    deriveFloor({ status: "running", last_active: ago(5), stalled_error, stalled_resume_at }, null, NOW);
+  const cap = (stalled_error: string | boolean, stalled_resume_at?: number | null, autoActs = true) =>
+    deriveFloor({ status: "running", last_active: ago(5), stalled_error, stalled_resume_at }, null, NOW, autoActs);
   it("usage limit with a resume time", () => {
     expect(cap("rate_limit", at)).toMatchObject({ state: "stalled", caption: `Hết usage — tự chạy lại lúc ${when}` });
   });
@@ -206,5 +207,18 @@ describe("stalled captions (contract C2)", () => {
     expect(cap("billing_error", null).caption).toBe("billing_error — cần anh xử lý");
     expect(cap("rate_limit").caption).toBe("rate_limit — cần anh xử lý");
     expect(cap(true, null).caption).toBe("Lỗi API — cần anh xử lý");
+  });
+  it("auto off, paused or gated, or a resume time already past: the owner must act (review #9)", () => {
+    expect(cap("rate_limit", at, false).caption).toBe("rate_limit — cần anh xử lý");
+    expect(cap("overloaded", NOW / 1000 - 60).caption).toBe("overloaded — cần anh xử lý");
+    expect(deriveFloor({ status: "running", stalled_error: "rate_limit", stalled_resume_at: at }, null, NOW).caption).toBe("rate_limit — cần anh xử lý");
+  });
+  it("autoMayAct: on, not paused, no gate", () => {
+    expect(autoMayAct({ on: true, paused: false, gate: null })).toBe(true);
+    expect(autoMayAct({ on: true })).toBe(true);
+    expect(autoMayAct({ on: false, paused: false })).toBe(false);
+    expect(autoMayAct({ on: true, paused: true })).toBe(false);
+    expect(autoMayAct({ on: true, paused: false, gate: "lease expired" })).toBe(false);
+    expect(autoMayAct(null)).toBe(false);
   });
 });

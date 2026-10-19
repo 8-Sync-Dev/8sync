@@ -15,10 +15,13 @@
 //   4. ask    — while the owner is away (auto on with the omp team) the `ask` tool is refused
 //      with instructions to decide by risk and log the decision instead of waiting.
 // 2–4 run only when `8sync ccc auto status --json` says on, not paused, "omp" in `teams`, and
-// this cwd is in the auto scope. They are OFF when the session model's provider is `anthropic`:
-// a Claude subscription stays in Claude Code, never automated from omp. Inbox delivery (the
-// owner's own messages) works regardless.
-// Subagent sessions rebind this factory too; they are skipped (the room is the main session).
+// this cwd is in the auto scope (`repos`, else `repo`). They are OFF when the session model's
+// provider is `anthropic` or unknown: a Claude subscription stays in Claude Code, never automated
+// from omp; then the inbox claims only the owner's own messages (`--owner-only`).
+// Every session that loads this file (room or not, subagents too) is refused tool calls that
+// touch 8sync's control files (HQ inbox/token/secrets, permits, grants) — see `guardHit`.
+// `8sync` is `$EIGHTSYNC_BIN` (set by `8sync . <name>`), never a PATH/cwd lookup when set.
+// Subagent sessions rebind this factory too; automation skips them (the room is the main session).
 import { execFile } from "node:child_process";
 
 // Minimal local shapes of the omp extension API (no package type imports).
@@ -49,6 +52,7 @@ interface Ev {
   willContinue?: boolean;
   messages?: unknown;
   toolName?: string;
+  input?: unknown;
 }
 interface Pi {
   on(event: string, handler: (event: Ev | undefined, ctx: Ctx) => unknown): void;
@@ -56,7 +60,7 @@ interface Pi {
   sendUserMessage(text: string, opts?: { deliverAs?: string }): unknown;
 }
 
-const BIN = "8sync";
+const BIN = process.env.EIGHTSYNC_BIN?.trim() || "8sync";
 const RUN_TIMEOUT_MS = 5_000;
 const TICK_MS = 5_000;
 const NUDGE_FIRST_MS = 30_000;
@@ -137,20 +141,61 @@ export function normPath(p: string, win = process.platform === "win32"): string 
   return win ? s.toLowerCase() : s;
 }
 
+/** `cwd` is `root` or inside it (both through `normPath`). */
+function inside(cwd: string, root: string, win: boolean): boolean {
+  const r = normPath(root, win);
+  const here = normPath(cwd, win);
+  return here === r || here.startsWith(r.endsWith("/") ? r : `${r}/`);
+}
+
 /**
  * Is the omp team's automation on for `cwd`, from `8sync ccc auto status --json`:
- * on, not paused, "omp" in `teams` (absent = ccc only), and `cwd` inside `repo` when scoped.
+ * on, not paused, "omp" in `teams` (absent = ccc only), and `cwd` inside one of `repos`
+ * (else `repo`) when scoped.
  */
 export function teamOn(stdout: string | null | undefined, cwd: string, win = process.platform === "win32"): boolean {
   const v = parseObj(stdout);
   if (!v || v.on !== true || v.paused === true) return false;
   if (!Array.isArray(v.teams) || !v.teams.includes("omp")) return false;
-  if (typeof v.repo === "string" && v.repo !== "") {
-    const repo = normPath(v.repo, win);
-    const here = normPath(cwd, win);
-    if (here !== repo && !here.startsWith(repo.endsWith("/") ? repo : `${repo}/`)) return false;
+  const many = Array.isArray(v.repos) ? v.repos.filter((r): r is string => typeof r === "string" && r !== "") : [];
+  const roots = many.length > 0 ? many : typeof v.repo === "string" && v.repo !== "" ? [v.repo] : [];
+  return roots.length === 0 || roots.some((r) => inside(cwd, r, win));
+}
+
+/** Automation and room-to-room delivery stay off unless the provider is known and not `anthropic`. */
+export function providerBlocked(provider: string | null | undefined): boolean {
+  const p = (provider ?? "").trim().toLowerCase();
+  return p === "" || p === "anthropic";
+}
+
+/** 8sync's control files: whoever reads/writes them can forge owner messages, tokens or grants. */
+const GUARDED = [
+  "8sync/hq/inbox",
+  "8sync/hq/ui-token",
+  "ui-token",
+  "8sync/hq/public.json",
+  "public.json",
+  "8sync/hq/secrets.json",
+  "8sync/ccc/permit",
+  ".answer.json",
+  "8sync/ccc/grants",
+  "8sync/hq/usage/",
+];
+
+/** The guarded fragment a tool call's command or path fields mention (lowercased, `\` → `/`), else null. */
+export function guardHit(input: unknown): string | null {
+  // Only what runs or what is opened: a command and path-like fields. File *content* that merely
+  // mentions these names (8sync's own source, docs) is not a touch.
+  const o = input && typeof input === "object" ? (input as Record<string, unknown>) : null;
+  const parts = typeof input === "string" ? [input] : o ? ["command", "cmd", "script", "path", "file_path", "paths", "file", "files", "cwd", "dir"].map((k) => o[k]) : [];
+  let s: string;
+  try {
+    s = parts.map((p) => (typeof p === "string" ? p : p == null ? "" : (JSON.stringify(p) ?? ""))).join("\n");
+  } catch {
+    return null;
   }
-  return true;
+  s = s.toLowerCase().replace(/\\+/g, "/");
+  return GUARDED.find((g) => s.includes(g)) ?? null;
 }
 
 const ASK_REASON =
@@ -179,6 +224,18 @@ function run8sync(args: string[], cwd: string): Promise<string | null> {
 }
 
 export default function (pi: Pi) {
+  // Every session, room or not, automation on or off: no tool touches 8sync's control files.
+  pi.on("tool_call", async (event) => {
+    const hit = guardHit(event?.input);
+    if (hit === null) return undefined;
+    return {
+      block: true,
+      reason:
+        `8sync: chặn — lệnh/đường dẫn chạm file điều khiển của 8sync (\`${hit}\`: inbox/token/secrets/permit/grants của HQ). ` +
+        "Agent không được đọc hay sửa các file này; việc cần owner thì ghi vào báo cáo cho owner.",
+    };
+  });
+
   const envId = process.env.EIGHTSYNC_ROOM_ID?.trim();
   if (!envId) return;
   const roomId: string = envId;
@@ -200,13 +257,13 @@ export default function (pi: Pi) {
   const isMain = (c: Ctx) => c.agent?.kind !== "sub";
   const idleNow = (c: Ctx) => c.isIdle() && !(c.hasPendingMessages?.() ?? false);
 
-  /** Automation (2–4) allowed right now; one notice when blocked by the anthropic provider. */
+  /** Automation (2–4) allowed right now; one notice when the provider is anthropic or unknown. */
   async function automationOn(c: Ctx): Promise<boolean> {
-    if (c.model?.provider === "anthropic") {
+    if (providerBlocked(c.model?.provider)) {
       if (!warned && c.hasUI) {
         warned = true;
         c.ui.notify(
-          "8sync đội omp: model provider là anthropic — tự động (nudge/resume/ask) tắt; gói Claude chỉ dùng trong Claude Code. Inbox vẫn nhận.",
+          "8sync đội omp: model provider là anthropic hoặc không rõ — tự động (nudge/resume/ask, tin giữa các phòng) tắt; gói Claude chỉ dùng trong Claude Code. Inbox vẫn nhận tin của owner.",
           "warning",
         );
       }
@@ -235,7 +292,8 @@ export default function (pi: Pi) {
   }
 
   async function pollInbox(c: Ctx): Promise<boolean> {
-    const base = ["ccc", "inbox", "--session", roomId];
+    // Anthropic/unknown provider: only the owner's own lines; room lines stay queued.
+    const base = ["ccc", "inbox", "--session", roomId, ...(providerBlocked(c.model?.provider) ? ["--owner-only"] : [])];
     const text = parseText(await run8sync([...base, "--json"], c.cwd));
     if (text === null) return false;
     const entered = send(c, text);

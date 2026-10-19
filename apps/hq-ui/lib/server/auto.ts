@@ -33,9 +33,18 @@ const ARGV: Record<AutoAction, string[]> = {
 
 const TIMEOUT_MS = 5000;
 
+let last: AutoStatus | null = null;
+/** The newest status any caller fetched (GET /api/auto polls it); null before the first fetch. Spawns nothing. */
+export const lastAutoStatus = () => last;
+
 /** Current status; `{on:false, paused:false, error}` when 8sync is missing or answers junk (so the UI degrades, never throws). */
 export async function autoStatus(): Promise<AutoStatus> {
   const r = await run("8sync", ["ccc", "auto", "status", "--json"], TIMEOUT_MS);
+  last = parseStatus(r);
+  return last;
+}
+
+function parseStatus(r: { ok: boolean; stdout: string; stderr: string }): AutoStatus {
   if (!r.ok) return { on: false, paused: false, error: (r.stderr.trim() || "8sync ccc auto không chạy được").slice(0, 200) };
   try {
     const v = JSON.parse(r.stdout);
@@ -49,6 +58,8 @@ export async function autoStatus(): Promise<AutoStatus> {
 /** Run the action's fixed argv, then return the fresh status (an error from the command is carried in `error` / `omp_error`). */
 export async function autoSet(action: AutoAction): Promise<AutoStatus> {
   const r = await run("8sync", ARGV[action], TIMEOUT_MS);
+  // Run pressed (a fresh owner lease): rooms that died with the machine come back now, not at the next tick.
+  if (action === "on" && r.ok) void run("8sync", ["ccc", "auto", "revive"], 120_000);
   const st = await autoStatus();
   const err = (r.stderr.trim() || `auto ${action} thất bại`).slice(0, 200);
   if (!r.ok && action.startsWith("omp-")) st.omp_error = err;

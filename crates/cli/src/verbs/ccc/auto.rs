@@ -35,8 +35,8 @@
 //! omp team (rooms `8sync . <tên>`) and touch nothing else; the marker keeps them across on / off /
 //! pause. omp rooms are nudged by their omp extension through `nudge --session <room id> --cwd
 //! <dir>` ([`nudge_gate`]): the queue head, at most every 10 min and 6 times an hour per room.
-//! The omp team stays off while omp's default model is `anthropic/…` ([`omp_blocked`]): a Claude
-//! subscription belongs in Claude Code only.
+//! The omp team stays off while omp's default model is `anthropic/…` or cannot be read
+//! ([`omp_blocked`], fail closed): a Claude subscription belongs in Claude Code only.
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
@@ -175,30 +175,44 @@ pub(super) fn set_omp(home: &Path, on: bool, now: u64) -> Result<()> {
     write_marker(home, &m)
 }
 
-/// Provider of omp's default model (`modelRoles.default: <provider>/<model>` in omp's config.yml).
+/// Provider of omp's default model (`modelRoles.default: <provider>/<model>` in omp's config.yml),
+/// lowercased. None when it cannot be read with certainty: no block-style `modelRoles` with a
+/// `default` (flow style, missing), or a value that is not `<provider>/…`. Comment lines skipped.
 fn omp_provider(config_yml: &str) -> Option<String> {
     let mut roles = false;
     for line in config_yml.lines() {
         let t = line.trim();
-        if !line.starts_with([' ', '\t']) && !t.is_empty() {
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        if !line.starts_with([' ', '\t']) {
             roles = t.starts_with("modelRoles:");
             continue;
         }
         if let Some(v) = t.strip_prefix("default:").filter(|_| roles) {
-            let v = v.trim().trim_matches(|c| c == '"' || c == '\'');
-            return v.split_once('/').map(|(p, _)| p.trim().to_ascii_lowercase());
+            let v = v.split(" #").next().unwrap_or("").trim().trim_matches(|c| c == '"' || c == '\'');
+            let p = v.split_once('/')?.0.trim().to_ascii_lowercase();
+            let ok = !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+            return ok.then_some(p);
         }
     }
     None
 }
 
 /// Why the omp team may not run: omp's default model is served by `anthropic` (a Claude
-/// subscription stays in Claude Code; org rules + Anthropic terms). None = allowed.
+/// subscription stays in Claude Code; org rules + Anthropic terms), or its provider cannot be
+/// told (config missing/unreadable/unparsed: fail closed). None = allowed.
 pub(super) fn omp_blocked(home: &Path) -> Option<&'static str> {
-    let cfg = std::fs::read_to_string(home.join(".omp/agent/config.yml")).ok()?;
-    (omp_provider(&cfg).as_deref() == Some("anthropic")).then_some(
-        "model mặc định của omp là anthropic/… — đội omp tắt (subscription Claude chỉ dùng trong Claude Code); đổi model omp (`8sync harness model glm`) rồi bật lại",
-    )
+    let cfg = std::fs::read_to_string(home.join(".omp/agent/config.yml")).unwrap_or_default();
+    match omp_provider(&cfg).as_deref() {
+        Some("anthropic") => Some(
+            "model mặc định của omp là anthropic/… — đội omp tắt (subscription Claude chỉ dùng trong Claude Code); đổi model omp (`8sync harness model glm`) rồi bật lại",
+        ),
+        Some(_) => None,
+        None => Some(
+            "không đọc được model mặc định của omp (`modelRoles.default` trong ~/.omp/agent/config.yml) — đội omp tắt cho an toàn; đặt model omp (`8sync harness model glm`) rồi bật lại",
+        ),
+    }
 }
 
 /// `ccc cancel --all` pressed the owner's off switch: remember it so HQ does not turn auto on again.
@@ -2127,6 +2141,9 @@ mod tests {
     #[test]
     fn omp_team_toggles_alone_and_survives_on_off_pause() {
         let h = home("teams");
+        // A readable non-anthropic omp default: omp_blocked fails closed without one.
+        std::fs::create_dir_all(h.join(".omp/agent")).unwrap();
+        std::fs::write(h.join(".omp/agent/config.yml"), "modelRoles:\n  default: zai/glm-5.3\n").unwrap();
         assert_eq!(status(&h, false, 1)["teams"], json!(["ccc"]), "absent = ccc only");
         set_omp(&h, true, 1).unwrap();
         assert_eq!(status(&h, false, 1)["teams"], json!(["ccc", "omp"]));
@@ -2160,9 +2177,17 @@ mod tests {
         assert_eq!(p("modelRoles:\n  default: \"Anthropic/claude-x\"\n").as_deref(), Some("anthropic"), "quoted, any case");
         assert_eq!(p("default: anthropic/x\nmodelRoles:\n  default: zai/glm-5.3:max\n").as_deref(), Some("zai"), "only modelRoles.default");
         assert_eq!(p("modelRoles:\n  plan: anthropic/x\nother:\n  default: anthropic/x\n"), None, "default of another block");
+        assert_eq!(p("modelRoles:\n# note\n  # default: zai/glm\n  default: anthropic/x # was zai\n").as_deref(), Some("anthropic"), "comments skipped");
+        assert_eq!(p("modelRoles: {default: zai/glm}\n"), None, "flow style: unknown");
+        assert_eq!(p("modelRoles:\n  default: # anthropic/x\n"), None, "commented-out value: unknown");
+        assert_eq!(p("modelRoles:\n  default: glm-5\n"), None, "no provider: unknown");
         let h = home("omp-anthropic");
-        assert!(omp_blocked(&h).is_none(), "no omp config: not blocked");
+        assert!(omp_blocked(&h).is_some(), "no omp config: blocked (fail closed)");
         std::fs::create_dir_all(h.join(".omp/agent")).unwrap();
+        std::fs::write(h.join(".omp/agent/config.yml"), "modelRoles: {default: zai/glm}\n").unwrap();
+        assert!(omp_blocked(&h).is_some(), "unparsed modelRoles: blocked");
+        std::fs::write(h.join(".omp/agent/config.yml"), "modelRoles:\n  default: zai/glm-5.3:max\n").unwrap();
+        assert!(omp_blocked(&h).is_none(), "a known non-anthropic provider runs");
         std::fs::write(h.join(".omp/agent/config.yml"), "modelRoles:\n  default: anthropic/claude-sonnet-5-5\n").unwrap();
         assert!(omp_blocked(&h).is_some());
         set_omp(&h, true, 1).unwrap();

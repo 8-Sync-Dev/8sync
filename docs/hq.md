@@ -46,7 +46,8 @@ Bảng điều khiển web chạy trên máy bạn (127.0.0.1); `8sync hq ui --p
 4. **Chat nhóm.** Xem ai nhắn ai theo thời gian, kèm thẻ bàn giao (handoff) "A → B".
 5. **Anh cần trả lời.** Câu hỏi và yêu cầu quyền của các phòng, có đếm ngược. Bấm lựa chọn / Cho phép / Từ chối, hoặc mở terminal của phòng ngay trên web. Im lặng 60 s khi auto bật: critic chọn câu hỏi sản phẩm/kỹ thuật; bước an toàn trong dự án tự chạy, bước còn lại bị bỏ qua kèm ghi chú. Câu `Ship`, secret, tiền luôn chờ anh.
 6. **Auto · Đội omp.** Nút Chạy / Tạm dừng và công tắc đội omp (= `8sync ccc auto on|pause`, `8sync ccc auto omp on|off`).
-7. **Kẹt tự gỡ.** Phòng dừng vì lỗi API hay hết usage hiện "Hết usage — tự chạy lại lúc HH:MM" / "Lỗi API (…) — tự thử lại lúc HH:MM" và tự chạy lại đúng giờ khi auto bật; lỗi đăng nhập/billing hiện "cần anh xử lý".
+7. **Kẹt tự gỡ.** Phòng dừng vì lỗi API hay hết usage hiện "Hết usage — tự chạy lại lúc HH:MM" / "Lỗi API (…) — tự thử lại lúc HH:MM" và tự chạy lại đúng giờ khi auto bật; lỗi đăng nhập/billing hiện "cần anh xử lý". Phòng nền chết vì tắt máy: HQ tự mở lại (≤ 2 phút, lease còn hạn) hoặc ngay khi anh bấm Chạy (`8sync ccc auto revive`).
+8. **Usage.** Thanh trên cùng như Orca: "N% used 4h 11m · 7d N%" (cửa sổ 5 giờ, thời gian tới reset, cửa sổ 7 ngày), lấy từ status line.
 
 Biểu tượng trạng thái: Đang làm · Cần bạn (chờ bạn) · Chờ review · Xong · Rảnh.
 
