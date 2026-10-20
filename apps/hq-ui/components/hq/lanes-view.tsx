@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cardParts, nextUp, prRef, splitInto } from "@/lib/card-tags";
+import { cardParts, type Kid, nextUp, prRef, splitInto } from "@/lib/card-tags";
 import { LANES, boardSummary, claimStale, openCount, rankOf, type Card, type Closed, type LaneKey } from "@/lib/lanes";
 import { agoShort, agoVi, roomRole, type Move } from "@/lib/now";
 import { rootKey } from "@/lib/preview";
@@ -230,7 +230,7 @@ function Lane({
   hint: string;
   cards: Card[] | null;
   moveOf: (id: number) => Move | undefined;
-  kidsOf: (id: number) => number[] | undefined;
+  kidsOf: (id: number) => Kid[] | undefined;
   now: number;
   next: number | null;
   onOpen: (c: Card) => void;
@@ -288,7 +288,7 @@ function Lane({
 }
 
 /** One card: its chips, the title in up to 3 lines, who holds it, PR, bounces, the cards split off it, a missing check, the last note. A click opens the sheet. */
-export function CardItem({ c, move, kids, now, next, onOpen }: { c: Card; move?: Move; kids?: number[]; now: number; next: boolean; onOpen: (c: Card) => void }) {
+export function CardItem({ c, move, kids, now, next, onOpen }: { c: Card; move?: Move; kids?: Kid[]; now: number; next: boolean; onOpen: (c: Card) => void }) {
   const stale = claimStale(c, now);
   const who = c.claim ? roomRole(c.claim.room) : null;
   const { title, tags } = cardParts(c.text);
@@ -352,9 +352,14 @@ export function CardItem({ c, move, kids, now, next, onOpen }: { c: Card; move?:
             </span>
           )}
           {kids && kids.length > 0 && (
-            <span className="inline-flex items-center gap-0.5 text-foreground" title="Đang làm qua các card con này; lead nghiệm thu khi chúng xong">
+            // An idea split into cards waits in Backlog on purpose (not stuck): owner 2026-10-20 read
+            // "đang làm qua #64 #65 … #46" as a hung card.
+            <span
+              className="inline-flex items-center gap-0.5 text-foreground"
+              title={`Ý lớn, không treo: team đang làm nó qua ${kids.length} card con ${kids.map((k) => `#${k.id}`).join(" ")}; lead tách tiếp khi ready cạn và nghiệm thu khi chúng xong`}
+            >
               <ListTreeIcon className="size-3" aria-hidden />
-              đang làm qua {kids.map((k) => `#${k}`).join(" ")}
+              {kidsLine(kids)}
             </span>
           )}
           {noCheck && <span className="font-medium text-destructive">thiếu lệnh check</span>}
@@ -369,4 +374,10 @@ export function CardItem({ c, move, kids, now, next, onOpen }: { c: Card; move?:
       </button>
     </li>
   );
+}
+
+/** "13 card con đang mở · 4 đang build/QA" for an idea's open split-off cards. */
+export function kidsLine(kids: Kid[]): string {
+  const active = kids.filter((k) => ["building", "qa", "review", "approved"].includes(k.lane)).length;
+  return `${kids.length} card con đang mở${active ? ` · ${active} đang build/QA` : ""}`;
 }

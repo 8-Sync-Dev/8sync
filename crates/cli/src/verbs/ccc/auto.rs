@@ -641,7 +641,7 @@ pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
         "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: `--prio P0`, quan trọng `--prio P1`). Một card = một PR nhỏ một dev làm xong trong một phiên; không tách card R&D/audit/ADR riêng cho việc dev tự làm được. Ý lớn → card con `auto add \"[#<id>] …\"`, card gốc ở backlog (không blocked). Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`). Ready đầy (claim trả `why`, move bị từ chối) → không tách thêm card.",
         "ready" => "card building: `git fetch origin`, worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>` tạo từ `origin/main` (KHÔNG chồng lên nhánh card khác; cần code của PR chưa merge → `8sync ccc auto move <id> blocked --note \"chờ PR #<số> merge\"` rồi claim card khác; cần main mới → `git merge origin/main`, không rebase/force-push), trong worktree sửa file bằng Edit/Write và mỗi Bash MỘT lệnh đơn, đường dẫn đầy đủ (không heredoc, `sed -i`, `python -`, `git -C`, PowerShell: guard từ chối), `/ship` card tới commit (test của phần sửa; gate: `8sync ccc risk` rồi chỉ gọi skill nó liệt kê — diff chỉ docs → chỉ `/sec`, không mặc định `/rules` + `/aup-audit`; changelog ghi vào file mới `changelog.d/card-<id>.md`, KHÔNG sửa CHANGELOG.md: mỗi merge làm mọi PR khác conflict, gộp lúc release), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>` (không chờ CI khi `ci` trong status khác `ok`); làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
-        "qa" => "card qa: MỘT worktree `.claude/worktrees/qa` dùng lại cho mọi card (`git fetch origin <nhánh PR>` + `git checkout --detach <head sha>`; `npm ci` chỉ khi lockfile đổi); gate test của dự án chạy MỘT lần cho head SHA (`gh pr view <pr> --json headRefOid`): card đã có note `gate <sha>` đúng SHA đó → dùng lại, không thì chạy `check` + suite test rồi `8sync ccc auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"`; UAT thật, `8sync shot` chạy thẳng (không `&` + sleep), ảnh lưu đúng `qa/evidence/card-<id>-<slug>.png` (không lưu ảnh hàng loạt thiếu tiền tố `card-<id>-` vào `qa/evidence/`), server preview/dev tự mở cho UAT → tắt ngay sau khi chụp (KillShell hoặc kill đúng PID; KHÔNG kill theo tên `node.exe`/`chrome.exe`: giết cả HQ) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`; CI không xanh (`ci` khác `ok`) → gate local này là bằng chứng, không chờ CI",
+        "qa" => "card qa: MỘT worktree riêng của phòng `.claude/worktrees/<tên phòng>` (qa → `.claude/worktrees/qa`, qa2 → `.claude/worktrees/qa2`; không dùng chung với phòng qa khác) dùng lại cho mọi card (`git fetch origin <nhánh PR>` + `git checkout --detach <head sha>`; `npm ci` chỉ khi lockfile đổi); gate test của dự án chạy MỘT lần cho head SHA (`gh pr view <pr> --json headRefOid`): card đã có note `gate <sha>` đúng SHA đó → dùng lại, không thì chạy `check` + suite test rồi `8sync ccc auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"`; UAT thật, `8sync shot` chạy thẳng (không `&` + sleep), ảnh lưu đúng `qa/evidence/card-<id>-<slug>.png` (không lưu ảnh hàng loạt thiếu tiền tố `card-<id>-` vào `qa/evidence/`), server preview/dev tự mở cho UAT → tắt ngay sau khi chụp (KillShell hoặc kill đúng PID; KHÔNG kill theo tên `node.exe`/`chrome.exe`: giết cả HQ) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`; CI không xanh (`ci` khác `ok`) → gate local này là bằng chứng, không chờ CI",
         "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước; changelog của card nằm ở `changelog.d/card-<id>.md`, không đòi CHANGELOG.md); test: dùng note `gate <sha>` của qa khi head SHA chưa đổi (không chạy lại suite), SHA đổi → chạy gate một lần và note `gate <sha>: <lệnh>: <kết quả>` mới → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi, hoặc PR chồng nhánh/chứa việc card khác → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
         _ => "",
     }
@@ -1111,11 +1111,22 @@ fn run_target(
                 None => bail!("phòng `{room}` (vai {}) không có cột riêng: thêm --lane backlog|ready|qa|review|blocked", super::room::role(&room).0),
             };
             let card = target::claim(home, root, &room, &lane, now)?;
-            // A planning room that gets nothing because ready is full is told so, not left guessing.
-            let full = (card.is_none() && lane == "backlog")
-                .then(|| target::list(home, root).map(|c| target::ready_count(&c)).unwrap_or(0))
-                .filter(|n| *n >= target::READY_CAP);
-            let why = full.map(|n| format!("cột ready đầy ({n}/{} card chờ dev): không tách thêm card; gỡ blocked, merge card approved hoặc `auto wait`", target::READY_CAP));
+            // A planning room that gets nothing is told why, not left guessing: ready full, or the
+            // board ran dry (ready low, no idea left in backlog) and it is the one to think up more.
+            let cards = if card.is_none() && lane == "backlog" { target::list(home, root)? } else { Vec::new() };
+            let ready = target::ready_count(&cards);
+            let dry = !cards.iter().any(|t| t.state == "open" && t.lane == "backlog");
+            let why = (card.is_none() && lane == "backlog")
+                .then(|| {
+                    if ready >= target::READY_CAP {
+                        Some(format!("cột ready đầy ({ready}/{} card chờ dev): không tách thêm card; gỡ blocked, merge card approved hoặc `auto wait`", target::READY_CAP))
+                    } else if ready < target::READY_LOW && dry && super::room::crew(&room) == "lead" {
+                        Some(format!("backlog hết ý, ready còn {ready}/{}: R&D NGAY — đọc mục tiêu dự án (su-code/PROJECT.md, DECISIONS.md, story/AC các card đã xong, sản phẩm hiện tại trên main) rồi đề xuất 1–2 hướng mở rộng cụ thể, mỗi hướng `8sync ccc auto add \"<ý tưởng>\"` (không check, vào backlog), rồi `auto claim` để tách nó thành card song song", target::READY_CAP))
+                    } else {
+                        None
+                    }
+                })
+                .flatten();
             // A blocked card or an idea whose split-off cards closed: what to do with it, at run time.
             let hint = match &card {
                 Some(t) => target::claim_hint(t, &target::list(home, root)?),
@@ -2400,6 +2411,7 @@ mod tests {
             sha: None,
             role: None,
             prio: None,
+            refill_at: None,
         };
         let w = Wait { room: "dev".into(), lane: "ready".into(), timeout: 60 };
         let on = json!({ "on": true, "paused": false, "cap": null });

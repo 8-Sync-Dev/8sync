@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cardParts, nextUp, parentOf, prRef, splitInto } from "@/lib/card-tags";
+import { kidsLine } from "@/components/hq/lanes-view";
 import { parseBoard, type Card } from "@/lib/lanes";
 
 const NOW = Date.parse("2026-10-17T16:00:00Z");
@@ -84,7 +85,10 @@ describe("parentOf / splitInto", () => {
         { lane: "qa", cards: [{ id: 14, text: "[#10] CSM" }] },
       ],
     })!;
-    expect(splitInto(b.lanes).get(10)).toEqual([17, 14]);
+    const kids = splitInto(b.lanes).get(10)!;
+    expect(kids).toEqual([{ id: 17, lane: "building" }, { id: 14, lane: "qa" }]);
+    expect(kidsLine([...kids, { id: 18, lane: "ready" }])).toBe("3 card con đang mở · 2 đang build/QA");
+    expect(kidsLine([{ id: 18, lane: "ready" }])).toBe("1 card con đang mở");
   });
 });
 

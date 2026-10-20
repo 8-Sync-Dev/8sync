@@ -37,13 +37,16 @@ export function parentOf(c: Pick<Card, "id" | "text">): number | null {
   return null;
 }
 
+/** An open card split off an idea, and the lane it is in. */
+export type Kid = { id: number; lane: string };
+
 /** Open cards split off each card, by its id: an idea that waits in Backlog while these are built. */
-export function splitInto(lanes: Board["lanes"]): Map<number, number[]> {
-  const out = new Map<number, number[]>();
+export function splitInto(lanes: Board["lanes"]): Map<number, Kid[]> {
+  const out = new Map<number, Kid[]>();
   for (const l of LANES) {
     for (const c of lanes[l.key]) {
       const p = parentOf(c);
-      if (p != null) out.set(p, [...(out.get(p) ?? []), c.id]);
+      if (p != null) out.set(p, [...(out.get(p) ?? []), { id: c.id, lane: l.key }]);
     }
   }
   return out;

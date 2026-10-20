@@ -57,6 +57,19 @@ fn open_to(t: &Target, lane: &str, ready: usize) -> bool {
     lane != "backlog" || ready < READY_CAP || t.prio == Some(0)
 }
 
+/// Low-water mark of `ready`: below it a backlog room that finds no free card gets back an idea
+/// still split into open cards, to split its next batch now. 3d-game 2026-10-20: dev sat at "Chờ
+/// card" with ready 0 while ideas #10 and #1 waited on their open pieces; owner: "song song liên tục".
+pub(super) const READY_LOW: usize = 4;
+/// The same idea comes back for a refill at most this often: a lead with nothing left to split is
+/// not woken every `auto wait` tick.
+const REFILL_RETRY: u64 = 900;
+
+/// Idea `t`, split into open cards (`split`), is due a refill while `ready` holds `ready` cards.
+fn refillable(t: &Target, split: &[u64], ready: usize, now: u64) -> bool {
+    ready < READY_LOW && t.state == "open" && t.lane == "backlog" && split.contains(&t.id) && now.saturating_sub(touched(t).max(t.refill_at.unwrap_or(0))) >= REFILL_RETRY
+}
+
 /// Open lanes in board order; `done`/`dropped` live in `state`.
 pub(super) const LANES: [&str; 7] = ["backlog", "ready", "building", "qa", "review", "approved", "blocked"];
 /// `arch`: needs a design first; the lead moves it to ready only once a note starts with "ADR:".
@@ -140,6 +153,10 @@ pub(super) struct Target {
     /// title starts with ([`roles`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// When an idea still split into open cards was last handed back for a refill ([`refillable`]);
+    /// its own field so the idea's last note on the board stays the real one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refill_at: Option<u64>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -215,11 +232,22 @@ pub(super) fn claim_hint(t: &Target, cards: &[Target]) -> Option<String> {
     if t.lane == "blocked" {
         return Some(UNBLOCK.replace("<id>", &t.id.to_string()));
     }
-    let kids: Vec<String> = cards.iter().filter(|c| parent(c) == Some(t.id)).map(|c| format!("#{}", c.id)).collect();
-    (t.lane == "backlog" && !kids.is_empty()).then(|| {
+    let kids: Vec<&Target> = cards.iter().filter(|c| parent(c) == Some(t.id)).collect();
+    let ids = |open: bool| kids.iter().filter(|c| (c.state == "open") == open).map(|c| format!("#{}", c.id)).collect::<Vec<_>>().join(" ");
+    if t.lane != "backlog" || kids.is_empty() {
+        return None;
+    }
+    let open = ids(true);
+    Some(if open.is_empty() {
         format!(
             "card con {} đã đóng: nghiệm thu ý gốc trên main (chạy thật, ảnh): đạt → `8sync ccc auto done {id} --evidence \"<lệnh: kết quả>\"`; chưa → tách đợt kế `8sync ccc auto add \"[#{id}] …\"`, card gốc ở lại backlog",
-            kids.join(" "),
+            ids(false),
+            id = t.id
+        )
+    } else {
+        format!(
+            "ready còn {ready}/{READY_CAP} card, builder đang chờ: tách NGAY đợt kế của ý #{id} — 2–4 card nhỏ làm song song được (khác file/thư mục, không trùng card con đang mở {open}), mỗi card có AC + check: `8sync ccc auto add \"[#{id}] …\" --check \"<lệnh>\"`. Ý đã đủ card → R&D đề xuất hướng mở rộng mới cho dự án (`8sync ccc auto add \"<ý tưởng>\"`, không check, vào backlog) rồi tách nó; card gốc ở lại backlog",
+            ready = ready_count(cards),
             id = t.id
         )
     })
@@ -450,6 +478,7 @@ pub(super) fn add(
             sha: None,
             prio: None,
             role: None,
+            refill_at: None,
         };
         if first {
             p.items.insert(0, t.clone());
@@ -646,6 +675,7 @@ pub(super) fn claimable(cards: &[Target], room: &str, lane: &str, now: u64) -> O
         .find(|t| holder(t, now) == Some(room) && (t.lane != "blocked" || lane == "blocked"))
         .or_else(|| (lane == "backlog").then(|| open.clone().enumerate().filter(|(_, t)| unblockable(t, now)).min_by_key(|(i, t)| (touched(t), *i)).map(|(_, t)| t)).flatten())
         .or_else(|| open.clone().enumerate().filter(|(_, t)| holder(t, now).is_none() && fits(t, lane, &crew, now) && open_to(t, lane, ready)).min_by_key(|(i, t)| (rank(t), *i)).map(|(_, t)| t))
+        .or_else(|| (lane == "backlog").then(|| cards.iter().enumerate().filter(|(_, t)| refillable(t, &split, ready, now)).min_by_key(|(i, t)| (rank(t), *i)).map(|(_, t)| t)).flatten())
         .map(|t| t.id)
 }
 
@@ -654,7 +684,8 @@ pub(super) fn claimable(cards: &[Target], room: &str, lane: &str, now: u64) -> O
 /// `ready` card moves it to `building`; the `qa` lane also takes `ready` cards labelled `qa`, the
 /// `ready` lane skips them. The `backlog` lane first takes the card blocked longest
 /// ([`unblockable`]; it stays in `blocked` until the room moves it), and never an idea still split
-/// into open cards.
+/// into open cards, unless ready ran low ([`READY_LOW`]): then such an idea comes back, at most every
+/// [`REFILL_RETRY`], for its next batch.
 pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) -> Result<Option<Target>> {
     if !LANES.contains(&lane) || matches!(lane, "building" | "approved") {
         bail!("cột `{lane}` không nhận claim: backlog, ready, qa, review, blocked");
@@ -670,8 +701,13 @@ pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) 
         let free = |t: &Target| t.state == "open" && t.claim.is_none() && !(split.contains(&t.id) && lane == "backlog") && fits(t, lane, &crew, now) && open_to(t, lane, ready);
         // The most urgent free card, queue order within a priority.
         let first_free = || p.items.iter().enumerate().filter(|(_, t)| free(t)).min_by_key(|(i, t)| (rank(t), *i)).map(|(i, _)| i);
-        let Some(i) = mine.or_else(blocked).or_else(first_free) else { return Ok(None) };
+        let refill = || (lane == "backlog").then(|| p.items.iter().enumerate().filter(|(_, t)| refillable(t, &split, ready, now)).min_by_key(|(i, t)| (rank(t), *i)).map(|(i, _)| i)).flatten();
+        let Some(i) = mine.or_else(blocked).or_else(first_free).or_else(refill) else { return Ok(None) };
         let t = &mut p.items[i];
+        if refillable(t, &split, ready, now) {
+            // not handed back again for REFILL_RETRY
+            t.refill_at = Some(now);
+        }
         if t.claim.is_none() && matches!(t.lane.as_str(), "ready" | "building") {
             let to = if lane == "qa" { "qa" } else { "building" };
             if t.lane != to {
@@ -1677,6 +1713,37 @@ mod tests {
         assert_eq!(got.id, idea.id);
         let hint = claim_hint(&got, &list(h, &root).unwrap()).unwrap();
         assert!(hint.contains(&format!("#{} ", a.id)) && hint.contains(&format!("#{} ", b.id)) && hint.contains("đã đóng") && hint.contains(&format!("auto done {}", idea.id)), "{hint}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_low_ready_hands_the_lead_a_split_idea_for_its_next_batch() {
+        // 3d-game 2026-10-20: ready 0, dev "Chờ card", while idea #10 waited on its open pieces.
+        let (d, root) = tmp("refill");
+        let h = d.as_path();
+        let idea = put(h, &root, "game 3D realistic", None, false, None, 0).unwrap();
+        assert_eq!(claim(h, &root, "lead", "backlog", 1).unwrap().unwrap().id, idea.id);
+        let a = put(h, &root, &format!("[#{}] PBR", idea.id), Some("npm test"), false, Some("lead"), 2).unwrap();
+        assert!(claim(h, &root, "lead", "backlog", 3).unwrap().is_none(), "just split: no refill yet");
+
+        let t = 3 + REFILL_RETRY;
+        assert_eq!(claimable(&list(h, &root).unwrap(), "lead", "backlog", t), Some(idea.id), "auto wait wakes the lead");
+        let got = claim(h, &root, "lead", "backlog", t).unwrap().unwrap();
+        assert_eq!(got.id, idea.id);
+        assert!(got.notes.is_empty() && got.refill_at == Some(t), "the board keeps the idea's own last note");
+        let hint = claim_hint(&got, &list(h, &root).unwrap()).unwrap();
+        assert!(hint.contains("tách NGAY") && hint.contains(&format!("đang mở #{}", a.id)) && hint.contains(&format!("[#{}]", idea.id)), "{hint}");
+
+        // handed back at most every REFILL_RETRY: a lead with nothing left to split is not woken each tick
+        assert!(claim(h, &root, "lead", "backlog", t + 60).unwrap().is_none());
+        assert_eq!(claimable(&list(h, &root).unwrap(), "lead", "backlog", t + 60), None);
+        // ready back at the low-water mark: no refill even after the retry
+        for i in 0..READY_LOW {
+            put(h, &root, &format!("[#{}] piece {i}", idea.id), Some("true"), false, Some("lead"), t + 70).unwrap();
+        }
+        assert!(claim(h, &root, "lead", "backlog", t + 2 * REFILL_RETRY).unwrap().is_none());
+        // builders are untouched by it
+        assert_ne!(claim(h, &root, "dev", "ready", t + 2 * REFILL_RETRY).unwrap().unwrap().id, idea.id);
         let _ = std::fs::remove_dir_all(&d);
     }
 
