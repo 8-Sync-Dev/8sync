@@ -196,19 +196,26 @@ describe("sidebar UI", () => {
   it("room brief: doing line, card, terminal button; the ask panel replaces it while the room waits", async () => {
     const { createElement } = await import("react");
     const { renderToStaticMarkup } = await import("react-dom/server");
-    const { RoomBrief } = await import("@/components/hq/room-brief");
+    const { RoomBar, RoomBrief } = await import("@/components/hq/room-brief");
     const { roomNow } = await import("@/lib/now");
     const r = room({ name: "dev", session_id: "04d7c8d5-7473-44e7-bab9-0606b4db5a01", status: "running", doing: "Sửa nav.tsx", last_active: NOW - 120_000 });
     const card = { id: 12, text: "Sidebar mở phòng", lane: "building", check: null, label: null, claim: { room: "dev", at: NOW - 60_000 }, pr: null, sha: null, bounces: 0, note: null, added: 0 };
     const empty = { backlog: [], ready: [], building: [], qa: [], review: [], approved: [], blocked: [] };
     const boards = [{ root: "C:\\code\\ai-game-studio", board: { lanes: { ...empty, building: [card] }, closed: [] } }] as unknown as Parameters<typeof roomNow>[1];
-    const html = renderToStaticMarkup(createElement(RoomBrief, { room: r, n: roomNow(r, boards, NOW), now: NOW, token: "t", onTerminal: () => {} }));
-    for (const s of ["dev", "Đang làm", "Sửa nav.tsx", "2 phút trước", "#12", "Sidebar mở phòng", "Building", "Mở terminal"]) expect(html).toContain(s);
+    const n = roomNow(r, boards, NOW);
+    const html = renderToStaticMarkup(createElement(RoomBrief, { room: r, n, now: NOW, token: "t", onTerminal: () => {} }));
+    for (const s of ["Đang làm", "Sửa nav.tsx", "2 phút trước", "#12", "Sidebar mở phòng", "Building"]) expect(html).toContain(s);
+    // The title row and terminal button live in the pinned bar (owner 2026-10-20: lost once the log scrolled).
+    const bar = renderToStaticMarkup(createElement(RoomBar, { room: r, n, token: "t", onTerminal: () => {} }));
+    for (const s of ["dev", "Đang làm", "Mở terminal"]) expect(bar).toContain(s);
+    expect(html).not.toContain("Mở terminal");
     expect(html).not.toContain("Anh cần trả lời");
 
     const w = room({ name: "lead", status: "needs_input", waiting: "input needed", delivery: "terminal" });
     const asking = renderToStaticMarkup(createElement(RoomBrief, { room: w, n: roomNow(w, [], NOW), now: NOW, token: "t", onTerminal: () => {} }));
     expect(asking).toContain("Anh cần trả lời");
+    const askingBar = renderToStaticMarkup(createElement(RoomBar, { room: w, n: roomNow(w, [], NOW), token: "t", onTerminal: () => {} }));
+    expect(askingBar).not.toContain("Mở terminal");
     expect(asking).toContain("Không giữ card nào.");
   });
 });

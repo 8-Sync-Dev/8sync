@@ -19,7 +19,7 @@ import { FirstRun } from "./first-run";
 import { FlowView, type LoopsState } from "./flow-view";
 import { Guide, useGuideFirstRun } from "./guide";
 import { Nav, type Scope } from "./nav";
-import { RoomBrief } from "./room-brief";
+import { RoomBar, RoomBrief } from "./room-brief";
 import { OfficeView } from "./office-view";
 import { OverviewView } from "./overview-view";
 import { PreviewView, type PreviewState } from "./preview-view";
@@ -384,6 +384,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 target={target}
                 onTarget={setTarget}
                 onStartSession={focusStartSession}
+                bar={room && roomState ? <RoomBar room={room} n={roomState} token={token} onTerminal={openTerminal} /> : null}
                 header={
                   room && roomState ? (
                     <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} />
