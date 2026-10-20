@@ -152,7 +152,8 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Vec<Row> {
 /// editor or agent (any other image) and stays — and whose command line names `root`
 /// (case-insensitive for a Windows path, `\` = `/`) and that is
 /// - a dev/preview server ([`kind`]: `vite` but never `vitest`, `next dev|start`, `webpack serve`,
-///   `http-server`, `serve -s`, `live-server`) at least `server_age` old ([`SERVER_AGE_S`],
+///   `http-server`, `serve -s`, `live-server`) in a room worktree `<root>/.claude/worktrees/<dir>`,
+///   at least `server_age` old ([`SERVER_AGE_S`],
 ///   [`PRESSURE_SERVER_AGE_S`] under RAM pressure), or
 /// - `tsserver` / `typescript-language-server` of `<root>/.claude/worktrees/<dir>` where `<dir>` is
 ///   gone (`exists` false) or that is at least [`TS_AGE_S`] old.
@@ -196,8 +197,11 @@ pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u
             continue;
         }
         let age = now.saturating_sub(p.started);
+        // A room's server runs in its card worktree; one in the repo itself may be the owner's own
+        // window (`start cmd /k npm run dev` from a launcher that exited) or a service (pm2,
+        // systemd: ppid 1) and is never taken.
         let stale = if kind(&p.cmd).is_some() {
-            age >= server_age
+            age >= server_age && worktree(&c, rootn).is_some()
         } else if c.contains("tsserver") || c.contains("typescript-language-server") {
             worktree(&c, rootn).is_some_and(|dir| age >= TS_AGE_S || !exists(&root.join(".claude").join("worktrees").join(dir)))
         } else {
@@ -503,12 +507,12 @@ mod tests {
             // HQ: runs `auto revive` (me = 2), its own next start in hq-ui.
             p(1, 0, 900, r#""C:\Program Files\nodejs\node.exe" C:\Users\Admin\AppData\Local\8sync\hq-ui\server.js"#),
             p(3, 0, 900, r#"node C:\users\projects\startup\8sync-startup\game\3d-game\node_modules\next\dist\bin\next start"#),
-            // old vite preview in the root, path cased and slashed differently: picked.
+            // old detached vite preview in the repo itself (the owner's launcher window): kept.
             p(10, 0, 130, r#""C:\Program Files\nodejs\node.exe" "c:/users/projects/startup/8sync-startup/game/3D-GAME/node_modules/vite/bin/vite.js" preview --port 4197 --strictPort"#),
             // old vite in a card worktree: picked.
             p(11, 0, 45, r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\.claude\worktrees\card-46\node_modules\vite\bin\vite.js preview --port 4120"#),
-            // young vite: kept.
-            p(12, 0, 10, r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\node_modules\vite\bin\vite.js preview --port 4121"#),
+            // young vite in a worktree, path cased and slashed differently: kept (taken under pressure).
+            p(12, 0, 10, r#""C:\Program Files\nodejs\node.exe" "c:/users/projects/startup/8sync-startup/game/3D-GAME/.claude/worktrees/card-47/node_modules/vite/bin/vite.js" preview --port 4121"#),
             // vitest worker: kept.
             p(13, 0, 300, r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\node_modules\vitest\dist\workers\forks.js"#),
             // old vite of another project (and a sibling sharing the prefix): kept.
@@ -528,9 +532,9 @@ mod tests {
         let me_tree = vec![Proc { pid: 2, ppid: 3, started: NOW, rss: 0, node: true, shell: false, cmd: String::new() }];
         let procs: Vec<Proc> = procs.into_iter().chain(me_tree).collect();
         let exists = |d: &Path| !d.to_string_lossy().contains("card-12");
-        assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 2, &exists), vec![10, 11, 16, 19]);
-        // Under RAM pressure the 10-min-old vite goes too; nothing else changes.
-        assert_eq!(pick(&procs, &root, NOW, PRESSURE_SERVER_AGE_S, 2, &exists), vec![10, 11, 12, 16, 19]);
+        assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 2, &exists), vec![11, 16, 19]);
+        // Under RAM pressure the 10-min-old worktree vite goes too; nothing else changes.
+        assert_eq!(pick(&procs, &root, NOW, PRESSURE_SERVER_AGE_S, 2, &exists), vec![11, 12, 16, 19]);
         assert_eq!(describe(&procs[2], NOW), "vite preview :4197 (2h 10m, 120 MB)");
     }
 
@@ -538,14 +542,14 @@ mod tests {
     fn unix_paths_are_case_sensitive_and_a_child_goes_with_its_server() {
         let root = PathBuf::from("/home/dev/game");
         let procs = vec![
-            p(30, 1, 200, "node /home/dev/game/node_modules/.bin/next dev -p 3000"),
-            p(31, 30, 200, "node /home/dev/game/node_modules/next/dist/server/lib/start-server.js /home/dev/game/node_modules/vite/bin/vite.js"),
+            p(30, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/.bin/next dev -p 3000"),
+            p(31, 30, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/next/dist/server/lib/start-server.js /home/dev/game/.claude/worktrees/c1/node_modules/vite/bin/vite.js"),
             p(32, 1, 200, "node /home/dev/Game/node_modules/vite/bin/vite.js"),
-            p(33, 1, 200, "node /home/dev/game/node_modules/http-server/bin/http-server dist -p 8080"),
-            p(34, 1, 200, "node /home/dev/game/node_modules/serve/build/main.js -s dist"),
-            p(35, 1, 200, "node /home/dev/game/node_modules/webpack-cli/bin/cli.js serve --port=9000"),
-            p(36, 1, 200, "node /home/dev/game/node_modules/vite/bin/vite.js build --watch"),
-            p(37, 1, 200, "node /home/dev/game/node_modules/live-server/live-server.js"),
+            p(33, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/http-server/bin/http-server dist -p 8080"),
+            p(34, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/serve/build/main.js -s dist"),
+            p(35, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/webpack-cli/bin/cli.js serve --port=9000"),
+            p(36, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/vite/bin/vite.js build --watch"),
+            p(37, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/live-server/live-server.js"),
         ];
         // 31 is under a live 30: never picked itself, killed in 30's tree.
         assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 99, &all_exist), vec![30, 33, 34, 35, 37]);
@@ -573,7 +577,7 @@ mod tests {
     #[test]
     fn only_orphans_go_and_their_tree_never_follows_recycled_links() {
         let root = PathBuf::from(r"C:\w\game");
-        let vite = r"node C:\w\game\node_modules\vite\bin\vite.js preview --port 4200";
+        let vite = r"node C:\w\game\.claude\worktrees\card-3\node_modules\vite\bin\vite.js preview --port 4200";
         let procs = vec![
             // The owner's `npm run dev` under a live terminal: kept.
             other(50, 0, 300),
