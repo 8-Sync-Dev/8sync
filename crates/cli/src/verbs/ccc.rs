@@ -156,7 +156,7 @@ pub fn run(a: Args) -> Result<()> {
     }
     let env = Env::detect()?;
     let cwd = std::env::current_dir().context("no cwd")?;
-    let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd);
+    let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or_else(|| cwd.clone());
     match verb {
         "kit" if rest.iter().any(|a| a == "--remove") => remove_kit_hooks(&env),
         "kit" if rest.first().map(String::as_str) == Some("status") => {
@@ -207,7 +207,10 @@ pub fn run(a: Args) -> Result<()> {
         // One team per git repo: a subfolder with its own package.json is not a project, a nested
         // repo is (ai-game-studio inside 8sync-startup), and a worktree belongs to its repo.
         "auto" => {
-            let repo = std::env::current_dir().ok().and_then(|c| crate::verbs::here::repo_of(&c)).unwrap_or_else(|| root.clone());
+            if matches!(rest.first().map(String::as_str), Some("up" | "add")) {
+                adopt_here(&cwd, true);
+            }
+            let repo = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
             if rest.first().is_some_and(|a| a == "revive") {
                 // Only the roots `auto up` brought a team up in (HQ calls this without a cwd), one
                 // revive at a time (HQ and a boot hook can both fire it).
@@ -293,10 +296,12 @@ pub fn run(a: Args) -> Result<()> {
         "rm" => cmd_rm(&env, &root, rest.first().context("usage: 8sync ccc . rm <name>")?),
         "new" => {
             let name = rest.first().context("usage: 8sync ccc . new <name>")?;
+            let root = adopt_here(&cwd, false).unwrap_or(root);
             prepare(&env, &root, offline);
             open(&env, &root, name, true, &rest[1..], offline)
         }
         "" => {
+            let root = adopt_here(&cwd, false).unwrap_or(root);
             prepare(&env, &root, offline);
             match sessions(&env, &root).load().last_used {
                 Some(name) => open(&env, &root, &name, false, &[], offline),
@@ -304,6 +309,7 @@ pub fn run(a: Args) -> Result<()> {
             }
         }
         _ if verb.starts_with('-') && args.iter().any(|a| a == "--team" || a == "--panes") => {
+            let root = adopt_here(&cwd, false).unwrap_or(root);
             prepare(&env, &root, offline);
             match sessions(&env, &root).load().last_used {
                 Some(name) => open(&env, &root, &name, false, args, offline),
@@ -311,6 +317,7 @@ pub fn run(a: Args) -> Result<()> {
             }
         }
         _ if verb.starts_with('-') => {
+            let root = adopt_here(&cwd, false).unwrap_or(root);
             prepare(&env, &root, offline);
             launch(Command::new(ensure_claude(offline)?).args(args).current_dir(&root))
         }
@@ -320,10 +327,32 @@ pub fn run(a: Args) -> Result<()> {
             bail!("`8sync ccc {name}` không phải verb ở dạng này — xem trợ giúp ở trên (hook chạy qua `8sync ccc hook <tên>`)")
         }
         name => {
+            let root = adopt_here(&cwd, false).unwrap_or(root);
             prepare(&env, &root, offline);
             open(&env, &root, name, false, rest, offline)
         }
     }
+}
+
+/// Commands that create work or open rooms first give an untracked folder inside another repo its
+/// own repo ([`crate::verbs::here::adopt_untracked`]), so its board, rooms and sessions are its own.
+/// A team (`auto up`/`add`) needs its own repo, so any untracked folder qualifies (a cluster repo
+/// often ignores its project folders: 8sync-startup has `/game/*`). A single session only adopts an
+/// EMPTY folder (`mkdir x; cd x`): an untracked folder with files may be new code of the parent
+/// (`crates/new/` before its first commit), and a nested repo would hide it from the parent.
+/// Read-only verbs never call this.
+fn adopt_here(cwd: &Path, team: bool) -> Option<PathBuf> {
+    if !team && std::fs::read_dir(cwd).map_or(true, |mut d| d.next().is_some()) {
+        return None;
+    }
+    let parent = crate::verbs::here::repo_of(cwd)?;
+    let dir = crate::verbs::here::adopt_untracked(cwd)?;
+    let name = dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned());
+    ui::ok(&format!(
+        "{name} chưa có git repo riêng (repo cha {} không theo dõi thư mục này) → đã `git init`: board, phòng và phiên của thư mục này ở đây",
+        parent.display()
+    ));
+    Some(dir)
 }
 
 /// Every launch brings the environment up to date, with no network on the

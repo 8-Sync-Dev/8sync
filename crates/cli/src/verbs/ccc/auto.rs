@@ -441,10 +441,10 @@ fn state_text(v: &Value) -> String {
             .as_u64()
             .map(|u| format!(" · lease tới {} UTC", &super::standup::utc_stamp(u)[11..16]))
             .unwrap_or_default();
-        let only = v["repo"]
-            .as_str()
-            .map(|r| format!(" · chỉ dự án {}", r.trim_start_matches(r"\\?\")))
-            .unwrap_or_else(|| " · mọi dự án".into());
+        // Every project `auto on --here` holds, not just the first: with two teams the owner must
+        // see both (3d-game ran next to ai-game-studio and the line named only ai-game-studio).
+        let repos: Vec<&str> = v["repos"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|r| r.trim_start_matches(r"\\?\")).collect();
+        let only = if repos.is_empty() { " · mọi dự án".into() } else { format!(" · chỉ dự án {}", repos.join(" + ")) };
         let pct = |k: &str| v[k].as_f64().map_or("?".into(), |p| format!("{p:.0}%"));
         let window = if v["subscription"].as_bool() == Some(true) {
             format!(" · cửa sổ 5 giờ {} · 7 ngày {}", pct("five_hour_pct"), pct("seven_day_pct"))
@@ -1897,6 +1897,10 @@ mod tests {
         );
         assert!(in_scope(&h, Some(&s(&repo))), "a second project joins; the first keeps running (two teams at once)");
         assert_eq!(status(&h, false, 3)["repos"].as_array().map(Vec::len), Some(2));
+        let v = status(&h, false, 3);
+        let line = text(&v);
+        let repos: Vec<&str> = v["repos"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        assert!(repos.iter().all(|r| line.contains(r.trim_start_matches(r"\\?\"))), "the status line names both running projects: {line}");
         // a plain `on` widens it again; `pause` drops it
         set(&h, on(2.0, 60), false, 3).unwrap();
         assert!(in_scope(&h, Some(&s(&other))));

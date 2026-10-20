@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.108.2] — 2026-10-20
+Owner (2026-10-20): "sao nó cứ mở nhầm folder cần làm không vậy 3d-game mà sao vô sai". He ran `mkdir 3d-game; cd 3d-game; 8sync ccc auto up "…"` inside the cluster repo `8sync-startup`. The folder had no `.git`, so the project root resolved to `8sync-startup`: the card went onto 8sync-startup's board, the rooms opened there, and the `lead` name resumed an older ai-game-studio conversation in which the owner then typed messages meant for 3d-game.
+
+### Fixed
+- **New folder inside a repo = its own project.** `ccc auto up`, `auto add` and session opens (`8sync ccc . <name>`, `new`, bare `.`) in a folder the enclosing repo does not track (no tracked file, no submodule entry under it) now run `git init -b main` there plus an empty first commit, and say so. Board, rooms and sessions then belong to that folder. Subfolders the parent tracks (`apps/x`), uninitialised submodules, Claude Code worktrees and read-only verbs are untouched.
+- **`auto status` names every running project.** With two teams on (`auto on --here` in two repos), the line said "chỉ dự án <first>" only. It now lists all of them.
+
 ## [0.108.1] — 2026-10-20
 Live UAT of 0.108.0 on ai-game-studio (6 rooms relaunched 01:23 VN, 33 min): 156 calls/h and 15.6M context tokens/h (0.105 window: 1,062/h and 114M/h), wrong-role returns 1 (was 10), conflict returns 0 (was 10), 4 tool errors (was 58). Fixes for what the UAT still showed:
 
