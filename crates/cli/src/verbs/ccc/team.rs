@@ -215,8 +215,8 @@ pub(super) fn eye_prompt(name: &str) -> String {
         "/goal Phòng `{name}` (vai {role}: {duty}) soi ảnh preview cho dự án này, thay owner đi comment. \
          Mỗi lượt: (1) `8sync ccc auto status --json`; (2) `8sync ccc auto wait --json --mail --as {name}` (Bash timeout {bash_ms}; chặn ≤ {wait_min} phút, không tốn token): \
          `\"wake\":\"msg\"` → làm từng tin trong `messages` rồi quay lại (1); `\"wake\":\"off\"` → dừng; còn lại → kết thúc lượt. \
-         Chỉ làm tin bắt đầu bằng `[ảnh mới]`; tin khác bỏ qua, không trả lời. \
-         Mỗi tin `[ảnh mới] card #N …`: (a) `8sync ccc auto board --json` → đọc card #N HIỆN TẠI: text, AC/check, mọi note (note của owner mới hơn thắng AC cũ), cột; card đã đóng hoặc không còn trên board → bỏ tin; \
+         Chỉ làm tin CÓ `[ảnh mới] card #` (đứng sau nhãn người gửi như `[từ phòng terminal]`); tin khác bỏ qua, không trả lời. \
+         Mỗi tin đó (card #N …): (a) `8sync ccc auto board --json` → đọc card #N HIỆN TẠI: text, AC/check, mọi note (note của owner mới hơn thắng AC cũ), cột; card đã đóng hoặc không còn trên board → bỏ tin; \
          (b) Read từng ảnh trong tin (đường dẫn tuyệt đối), không bỏ ảnh nào; \
          (c) so khách quan với AC + ý owner mới nhất: chỉ ghi điều THẤY trong ảnh, dẫn tên file ảnh, không khen, không đoán ngoài ảnh; ảnh không cho thấy được một ý → ghi \"không đủ để kết luận\" cho ý đó; \
          (d) ghi MỘT note (≤ 400 ký tự): `8sync ccc auto note N \"[soi ảnh] Đạt: … · Lệch AC: … · Đề xuất: …\" --as {name}`; \
@@ -447,6 +447,25 @@ fn clear(t: &Team, roles: &[String]) -> Result<Vec<Gone>> {
     Ok(gone)
 }
 
+/// `--add` goes only into a team that runs here: auto on and scoped to this project, its team root.
+pub(super) fn check_add(t: &Team) -> Result<()> {
+    if !(auto::running(t.home) && auto::in_scope(t.home, Some(&t.root.to_string_lossy())) && team_roots(t.home).iter().any(|r| auto::canon(Path::new(r)) == auto::canon(t.root))) {
+        bail!("team của dự án này chưa chạy: bật team trước (`8sync ccc auto up`), rồi mới thêm phòng");
+    }
+    Ok(())
+}
+
+/// `auto up` under the revive lock: `nested` stops the teams of repos around or inside this one,
+/// then [`up`]. `--add` stops nothing: it refuses first unless this project's team runs here.
+pub(super) fn up_locked(t: &Team, o: &Opts, now: u64, nested: impl FnOnce() -> Result<()>) -> Result<(Value, Vec<Gone>, Vec<Row>)> {
+    if o.add {
+        check_add(t)?;
+    } else {
+        nested()?;
+    }
+    up(t, o, now)
+}
+
 /// `auto up`: auto on for this project, then every room live. Fails on the first room Claude Code
 /// refuses (untrusted workspace, not logged in): what started stays up, a re-run picks up the rest.
 pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<Row>)> {
@@ -457,9 +476,8 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
         }
     }
     let gone = if o.clear { clear(t, &o.roles)? } else { Vec::new() };
-    // `--add`: only into a team that runs here; auto's settings and lease are the owner's, untouched.
-    if o.add && !(auto::running(t.home) && auto::in_scope(t.home, Some(&t.root.to_string_lossy())) && team_roots(t.home).iter().any(|r| auto::canon(Path::new(r)) == auto::canon(t.root))) {
-        bail!("team của dự án này chưa chạy: bật team trước (`8sync ccc auto up`), rồi mới thêm phòng");
+    if o.add {
+        check_add(t)?;
     }
     let before = agents(t, false)?;
     let everywhere = live(&t.claude.run(&["agents".into(), "--json".into()])?)?;
@@ -833,7 +851,11 @@ pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
 /// `auto down --only <room>`: stop that one background room and drop it from the registry, so
 /// `auto revive` never brings it back; auto and every other room keep running (HQ "Tự soi ảnh" off
 /// stops `eye`). True when a live session was stopped.
-pub(super) fn down_only(t: &Team, name: &str) -> Result<bool> {
+pub(super) fn down_only(t: &Team, name: &str, now: u64) -> Result<bool> {
+    // Under the revive lock: a revive mid-run must not resume the room this drops, untracked.
+    let Some(_lock) = revive_lock(t.home, now)? else {
+        bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ ít phút rồi chạy lại `8sync ccc auto down --only {name}`");
+    };
     let reg = t.store.load();
     let Some(s) = reg.sessions.iter().find(|s| s.name == name) else {
         return Ok(false);
@@ -1452,7 +1474,8 @@ mod tests {
         assert!(g.chars().count() <= GOAL_MAX, "eye: {} chars over Claude Code's /goal cap", g.chars().count());
         assert!(!g.contains('\n'), "one line through a .cmd shim");
         for want in [
-            "`[ảnh mới]`",
+            "CÓ `[ảnh mới] card #`",
+            "`[từ phòng terminal]`",
             "tin khác bỏ qua",
             "`8sync ccc auto board --json`",
             "card #N HIỆN TẠI",
@@ -1502,17 +1525,23 @@ mod tests {
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![team.clone(), team, with_eye.clone()]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
         let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
 
-        // No team here yet: refused before any `claude` call, nothing turned on.
-        let e = up(&t, &o, 1_000).unwrap_err().to_string();
+        // No team here yet: refused before nested teams are stopped or any `claude` call, nothing on.
+        let nested = std::cell::Cell::new(0);
+        let e = up_locked(&t, &o, 1_000, || Ok(nested.set(nested.get() + 1))).unwrap_err().to_string();
         assert!(e.contains("chưa chạy"), "{e}");
+        assert_eq!(nested.get(), 0, "`--add` never stops a nested team");
         assert!(fake.calls.borrow().is_empty());
         assert!(!auto::running(&h));
+        // A whole-team `up` does stop them first (and here stops at that error, nothing started).
+        let whole = Opts { add: false, ..parse(&[]).unwrap() };
+        assert!(up_locked(&t, &whole, 1_000, || anyhow::bail!("nested down failed")).is_err());
+        assert!(fake.calls.borrow().is_empty() && !auto::running(&h));
 
         // The team runs here with the owner's own lease and cap: `--add eye` leaves both as they are.
         auto::set(&h, auto::Mode::On { hours: 8.0, after: 60, rate: Some(3.0), repo: Some(root.clone()) }, false, 900).unwrap();
         set_team_root(&h, &root, true);
         let before = auto::status(&h, false, 1_000);
-        let (status, gone, rows) = up(&t, &o, 1_000).unwrap();
+        let (status, gone, rows) = up_locked(&t, &o, 1_000, || panic!("`--add` never stops a nested team")).unwrap();
         assert_eq!(status, before, "auto untouched");
         assert_eq!(auto::status(&h, false, 1_000), before);
         assert!(gone.is_empty());
@@ -1535,17 +1564,24 @@ mod tests {
         assert_eq!(rows[0].state, "đang chạy");
         assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop" || c.iter().any(|a| a == "--bg")));
 
-        // Off: only the eye stops and leaves the registry (revive never brings it back); auto runs on.
+        // Off: refused while a revive holds the lock (it could resume the eye it drops, untracked).
         fake.calls.borrow_mut().clear();
         *fake.agents.borrow_mut() = vec![with_eye];
-        assert!(down_only(&t, "eye").unwrap());
+        let held = revive_lock(&h, 1_002).unwrap().unwrap();
+        let e = down_only(&t, "eye", 1_003).unwrap_err().to_string();
+        assert!(e.contains("auto revive") && e.contains("down --only eye"), "{e}");
+        assert!(fake.calls.borrow().is_empty() && store.load().sessions.iter().any(|s| s.name == "eye"), "nothing stopped, nothing dropped");
+        drop(held);
+        // Free: only the eye stops and leaves the registry (revive never brings it back); auto runs on.
+        assert!(down_only(&t, "eye", 1_004).unwrap());
         let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
         assert_eq!(stops, [eye_id[..8].to_string()]);
         let names: Vec<_> = store.load().sessions.iter().map(|s| s.name.clone()).collect();
         assert_eq!(names, ["lead", "dev"]);
         assert!(auto::running(&h) && auto::in_scope(&h, Some(&root.to_string_lossy())) && team_roots(&h).len() == 1);
+        assert!(revive_lock(&h, 1_005).unwrap().is_some(), "the lock is released");
         fake.calls.borrow_mut().clear();
-        assert!(!down_only(&t, "eye").unwrap(), "already gone: nothing to stop");
+        assert!(!down_only(&t, "eye", 1_006).unwrap(), "already gone: nothing to stop");
         assert!(fake.calls.borrow().is_empty());
         let _ = std::fs::remove_dir_all(&h);
     }

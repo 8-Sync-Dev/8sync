@@ -16,12 +16,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { POST } from "@/app/api/preview/eye/route";
 import { EyeNoteBox } from "@/components/hq/preview-view";
-import { EYE_DEBOUNCE_MS, eyeMessage, eyeNote, eyePlan, imageKey, type EyePending } from "@/lib/eye";
+import { EYE_DEBOUNCE_MS, eyeDue, eyeMessage, eyeNote, eyeSend, imageKey, type EyePending } from "@/lib/eye";
 import { LANES, type Board, type Card, type Closed } from "@/lib/lanes";
 import { rootKey, type PreviewItem, type ProjectPreviews } from "@/lib/preview";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
-import { eyeArgs, eyeAutoTick, eyeSince, eyeTick, setEye } from "@/lib/server/eye";
+import { EYE_BACKOFF_MS, eyeArgs, eyeAutoTick, eyeSince, eyeTick, setEye } from "@/lib/server/eye";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const ROOT = "/repo";
@@ -45,39 +45,48 @@ const board = (open: Card[], closed: Closed[] = []): Board => ({
   closed,
 });
 
-describe("eyePlan", () => {
+describe("eyeDue + eyeSend", () => {
   const SINCE = 1_000;
+  const plan = (b: Board, a: Parameters<typeof eyeDue>[0]) => eyeDue(a).flatMap((d) => eyeSend(d, b) ?? []);
   it("waits until a card has had no new image for the debounce, then one message per card with ≤ 6 newest paths", () => {
     const b = board([card({ id: 4 }), card({ id: 5, lane: "building", text: "Menu" })]);
     const pending: EyePending = new Map();
     const sent = new Set<string>();
     const items = [img(4, "a.png", 2_000), img(5, "m.png", 2_100)];
-    expect(eyePlan({ items, board: b, since: SINCE, sent, pending, now: 10_000 })).toEqual([]);
+    expect(plan(b, { items, since: SINCE, sent, pending, now: 10_000 })).toEqual([]);
     // A second shot of #4 restarts its clock; #5 goes out alone.
     const more = [img(4, "b.png", 3_000), ...items];
-    const at = (now: number) => eyePlan({ items: more, board: b, since: SINCE, sent, pending, now }).map((s) => s.card);
+    const at = (now: number) => plan(b, { items: more, since: SINCE, sent, pending, now }).map((s) => s.card);
     expect(at(10_000 + EYE_DEBOUNCE_MS - 1)).toEqual([]);
     expect(at(10_000 + EYE_DEBOUNCE_MS)).toEqual([5]);
     expect(at(10_000 + 2 * EYE_DEBOUNCE_MS - 2)).toEqual([5]);
     expect(at(10_000 + 2 * EYE_DEBOUNCE_MS - 1)).toEqual([4, 5]);
+    // Eight new: the six newest go out and only those count as sent; the two older follow later.
     const eight = Array.from({ length: 8 }, (_, i) => img(4, `s${i}.png`, 5_000 + i));
     const p2: EyePending = new Map();
-    eyePlan({ items: eight, board: b, since: SINCE, sent, pending: p2, now: 0 });
-    const [s] = eyePlan({ items: eight, board: b, since: SINCE, sent, pending: p2, now: EYE_DEBOUNCE_MS });
-    expect(s.keys).toHaveLength(8);
+    plan(b, { items: eight, since: SINCE, sent, pending: p2, now: 0 });
+    const [s] = plan(b, { items: eight, since: SINCE, sent, pending: p2, now: EYE_DEBOUNCE_MS });
+    expect(s.keys).toEqual(eight.slice(2).reverse().map(imageKey));
     expect(s.text.startsWith('[ảnh mới] card #4 (lane qa): "Ghost toggle" · ảnh: /repo/.claude/worktrees/card-4/qa/evidence/s7.png, ')).toBe(true);
     expect(s.text.split(", ")).toHaveLength(6);
     expect(s.text).not.toContain("s1.png");
+    for (const k of s.keys) sent.add(k);
+    p2.delete(4);
+    plan(b, { items: eight, since: SINCE, sent, pending: p2, now: 2 * EYE_DEBOUNCE_MS });
+    const [rest] = plan(b, { items: eight, since: SINCE, sent, pending: p2, now: 3 * EYE_DEBOUNCE_MS });
+    expect(rest.keys).toEqual([imageKey(eight[1]), imageKey(eight[0])]);
   });
 
-  it("never sends closed cards, pre-switch images, images only in a ref, or ones already sent", () => {
+  it("never sends closed or gone cards, pre-switch images, images only in a ref, ones already sent or backing off", () => {
     const b = board([card({ id: 4 })], [{ id: 9, text: "done", state: "done", by: null, at: 1 }]);
     const pending: EyePending = new Map();
-    const items = [img(9, "closed.png", 2_000), img(4, "old.png", 500), img(4, "main.png", 2_000, { ref: "origin/main" }), img(4, "sent.png", 2_000), img(7, "gone.png", 2_000), img(null, "x.png", 2_000)];
+    const items = [img(9, "closed.png", 2_000), img(4, "old.png", 500), img(4, "main.png", 2_000, { ref: "origin/main" }), img(4, "sent.png", 2_000), img(7, "gone.png", 2_000), img(null, "x.png", 2_000), img(8, "wait.png", 2_000)];
     const sent = new Set([imageKey(items[3])]);
-    eyePlan({ items, board: b, since: 1_000, sent, pending, now: 0 });
-    expect(eyePlan({ items, board: b, since: 1_000, sent, pending, now: 10 * EYE_DEBOUNCE_MS })).toEqual([]);
-    expect(pending.size).toBe(0);
+    const a = { items, since: 1_000, sent, pending, skip: (c: number) => c === 8 };
+    eyeDue({ ...a, now: 0 });
+    const due = eyeDue({ ...a, now: 10 * EYE_DEBOUNCE_MS });
+    expect(due.map((d) => d.card).sort()).toEqual([7, 9]);
+    expect(due.map((d) => eyeSend(d, b))).toEqual([null, null]);
   });
 
   it("clips a long title to one line", () => {
@@ -170,13 +179,34 @@ describe("switch + tick", () => {
     expect(reads).not.toHaveBeenCalled();
     expect(run).toHaveBeenCalledTimes(1);
 
-    // A failed send is retried on a later poll, not marked sent.
+    // A failed send backs that card off for EYE_BACKOFF_MS (no retry every poll), never marked sent.
     const next = [img(4, "c.png", 20_000_000), ...shots];
+    const T = 20_000_000;
+    await eyeTick(db, proj(next), T, reads);
     run.mockResolvedValueOnce({ ok: false, stdout: "", stderr: "x" });
-    await eyeTick(db, proj(next), 20_000_000, reads);
-    expect(await eyeTick(db, proj(next), 20_000_000 + EYE_DEBOUNCE_MS, reads)).toEqual([]);
-    expect(await eyeTick(db, proj(next), 20_000_000 + EYE_DEBOUNCE_MS + 1, reads)).toEqual([{ root: ROOT, card: 4 }]);
+    expect(await eyeTick(db, proj(next), T + EYE_DEBOUNCE_MS, reads)).toEqual([]);
+    expect(run).toHaveBeenCalledTimes(2);
+    reads.mockClear();
+    for (const now of [T + EYE_DEBOUNCE_MS + 1, T + EYE_DEBOUNCE_MS + EYE_BACKOFF_MS - 1]) expect(await eyeTick(db, proj(next), now, reads)).toEqual([]);
+    expect([reads.mock.calls.length, run.mock.calls.length]).toEqual([0, 2]);
+    // Backoff over: the debounce runs again, then it goes out.
+    const back = T + EYE_DEBOUNCE_MS + EYE_BACKOFF_MS;
+    expect(await eyeTick(db, proj(next), back, reads)).toEqual([]);
+    expect(await eyeTick(db, proj(next), back + EYE_DEBOUNCE_MS, reads)).toEqual([{ root: ROOT, card: 4 }]);
     expect((run.mock.calls.at(-1) as unknown as [string, string[]])[1][3]).not.toContain("a.png");
+  });
+
+  it("a closed card's new images read the board once, then back off instead of every poll", async () => {
+    const db = getDb();
+    (globalThis as { __hqEye?: unknown }).__hqEye = undefined;
+    const b = board([], [{ id: 9, text: "done", state: "done", by: null, at: 1 }]);
+    const reads = vi.fn(async (p: { root: string; name: string }) => ({ ...p, board: b, error: null }));
+    const items = [img(9, "late.png", 30_000_000)];
+    const proj: ProjectPreviews[] = [{ root: ROOT, name: "repo", main: null, items }];
+    const T = 30_000_000;
+    for (const now of [T, T + EYE_DEBOUNCE_MS, T + EYE_DEBOUNCE_MS + 1, T + EYE_DEBOUNCE_MS + EYE_BACKOFF_MS - 1]) expect(await eyeTick(db, proj, now, reads)).toEqual([]);
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled();
   });
 });
 

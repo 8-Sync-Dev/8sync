@@ -58,36 +58,40 @@ export function eyeMessage(card: number, lane: LaneKey, text: string, paths: str
   return `[ảnh mới] card #${card} (lane ${lane}): "${title}" · ảnh: ${paths.join(", ")}`;
 }
 
+/** A card whose new images had no newer one for EYE_DEBOUNCE_MS. */
+export type EyeDue = { card: number; items: PreviewItem[] };
+
 /**
- * What to send now. An image counts when it belongs to an OPEN card, is newer than the switch
- * (`since`), has a file on disk and was never sent; a card goes out EYE_DEBOUNCE_MS after HQ first
- * saw its newest such image. `pending` is updated in place; the caller marks `keys` sent.
+ * Cards due now, no board needed. An image counts when it has a card, is newer than the switch
+ * (`since`), has a file on disk and was never sent; a card is due EYE_DEBOUNCE_MS after HQ first saw
+ * its newest such image. `skip`: cards backing off (closed, a failed send). `pending` is updated in place.
  */
-export function eyePlan(p: { items: PreviewItem[]; board: Board; since: number; sent: Set<string>; pending: EyePending; now: number }): EyeSend[] {
+export function eyeDue(p: { items: PreviewItem[]; since: number; sent: Set<string>; pending: EyePending; now: number; skip?: (card: number) => boolean }): EyeDue[] {
   const byCard = new Map<number, PreviewItem[]>();
   for (const i of p.items) {
-    if (i.card == null || i.at < p.since || !shotPath(i) || p.sent.has(imageKey(i))) continue;
+    if (i.card == null || i.at < p.since || !shotPath(i) || p.sent.has(imageKey(i)) || p.skip?.(i.card)) continue;
     const list = byCard.get(i.card) ?? [];
     if (!list.some((x) => imageKey(x) === imageKey(i))) list.push(i);
     byCard.set(i.card, list);
   }
   for (const id of [...p.pending.keys()]) if (!byCard.has(id)) p.pending.delete(id);
-  const out: EyeSend[] = [];
-  for (const [id, list] of byCard) {
-    const hit = boardCard(p.board, id);
-    if (!hit?.lane) {
-      p.pending.delete(id);
-      continue;
-    }
-    const seen = p.pending.get(id) ?? { last: p.now, keys: new Set<string>() };
+  const out: EyeDue[] = [];
+  for (const [card, list] of byCard) {
+    const seen = p.pending.get(card) ?? { last: p.now, keys: new Set<string>() };
     if (list.some((i) => !seen.keys.has(imageKey(i)))) {
       seen.last = p.now;
       for (const i of list) seen.keys.add(imageKey(i));
     }
-    p.pending.set(id, seen);
-    if (p.now - seen.last < EYE_DEBOUNCE_MS) continue;
-    const shots = [...list].sort((a, b) => b.at - a.at).slice(0, EYE_SHOTS);
-    out.push({ card: id, lane: hit.lane, text: eyeMessage(id, hit.lane, hit.card.text, shots.map((i) => shotPath(i)!)), keys: list.map(imageKey) });
+    p.pending.set(card, seen);
+    if (p.now - seen.last >= EYE_DEBOUNCE_MS) out.push({ card, items: list });
   }
   return out;
+}
+
+/** The one message for a due card, with its ≤ EYE_SHOTS newest images (`keys`: those only); null when the card is not open. */
+export function eyeSend(d: EyeDue, board: Board): EyeSend | null {
+  const hit = boardCard(board, d.card);
+  if (!hit?.lane) return null;
+  const shots = [...d.items].sort((a, b) => b.at - a.at).slice(0, EYE_SHOTS);
+  return { card: d.card, lane: hit.lane, text: eyeMessage(d.card, hit.lane, hit.card.text, shots.map((i) => shotPath(i)!)), keys: shots.map(imageKey) };
 }

@@ -624,7 +624,7 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         // `down --only <room>`: that room alone (HQ "Tự soi ảnh" off); auto and the other rooms run on.
         if let [_, flag, name] = rest {
             if flag == "--only" && !name.starts_with("--") {
-                let state = if team::down_only(&t, name)? { "đã dừng" } else { "không có phiên nền đang chạy của" };
+                let state = if team::down_only(&t, name, now)? { "đã dừng" } else { "không có phiên nền đang chạy của" };
                 println!("{state} phòng {name} (đã bỏ khỏi team; thêm lại: `8sync ccc auto up --add {name}`). Các phòng khác vẫn chạy.");
                 return Ok(());
             }
@@ -659,6 +659,10 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         None => None,
     };
     let o = team::parse(&args)?;
+    // `--add` joins the team running here, else is refused before anything is touched.
+    if o.add {
+        team::check_add(&t)?;
+    }
     if team_model.is_some() && !o.omp {
         bail!("--omp-model đi cùng --omp\n{}", team::USAGE);
     }
@@ -686,11 +690,10 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         waited += 3;
     };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs());
-    // Under the lock (no revive re-opens what this stops), before anything here starts.
-    if !args.iter().any(|a| a == "-h" || a == "--help") {
-        down_nested(env, root)?;
-    }
-    let (status, gone, rows) = team::up(&t, &o, now)?;
+    // Under the lock (no revive re-opens what this stops), before anything here starts; `--add`
+    // stops nothing (up_locked).
+    let help = args.iter().any(|a| a == "-h" || a == "--help");
+    let (status, gone, rows) = team::up_locked(&t, &o, now, || if help { Ok(()) } else { down_nested(env, root) })?;
     team::print_up(&status, &gone, &rows, o.every, subscription);
     // Team omp: `--omp`, or omp already in auto.json's teams (turned on from HQ); never for `--add`.
     if !o.add && omp_team::wanted(o.omp, &status) {

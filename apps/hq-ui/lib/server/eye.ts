@@ -1,8 +1,8 @@
 // "Tự soi ảnh": the switch (one `eye` room added to / stopped in a running team, argv only) and the
 // tick GET /api/preview runs after each scan: new images of open cards go to the eye room through
-// `8sync ccc msg eye` (its inbox), one message per card (lib/eye.ts eyePlan).
+// `8sync ccc msg eye` (its inbox), one message per card (lib/eye.ts eyeDue, eyeSend).
 import type { DatabaseSync } from "node:sqlite";
-import { EYE_ROOM, eyePlan, imageKey, type EyePending } from "../eye";
+import { EYE_ROOM, eyeDue, eyeSend, type EyePending } from "../eye";
 import { rootKey, type ProjectPreviews } from "../preview";
 import { readBoard, type ProjectBoard } from "./board";
 import { tx } from "./db";
@@ -42,40 +42,57 @@ export async function setEye(db: DatabaseSync, root: string, on: boolean, now = 
   }
 }
 
-const g = globalThis as unknown as { __hqEye?: { pending: Map<string, EyePending>; busy: Set<string> } };
+/** A card whose message cannot go out now (closed or gone from the board, board unreadable, `ccc msg` failed) waits this long. */
+export const EYE_BACKOFF_MS = 10 * 60_000;
 
-/** One pass over the projects whose switch is on. Never throws; returns the cards it messaged. */
+/** Per project: cards waiting out their debounce, cards backing off (card → until, ms). Memory only. */
+type Mem = { pending: EyePending; backoff: Map<number, number> };
+const g = globalThis as unknown as { __hqEye?: { projects: Map<string, Mem>; busy: Set<string> } };
+
+/**
+ * One pass over the projects whose switch is on. The board is read only when a card is due (no
+ * process while images wait out their debounce or back off). Never throws; returns the cards it messaged.
+ */
 export async function eyeTick(db: DatabaseSync, projects: ProjectPreviews[], now = Date.now(), board: (p: { root: string; name: string }) => Promise<ProjectBoard> = (p) => readBoard({ ...p, branch: null })): Promise<{ root: string; card: number }[]> {
   const sent: { root: string; card: number }[] = [];
-  const m = (g.__hqEye ??= { pending: new Map(), busy: new Set() });
+  const m = (g.__hqEye ??= { projects: new Map(), busy: new Set() });
   for (const p of projects) {
     const key = rootKey(p.root);
     const since = eyeSince(db, p.root);
     if (since == null) {
-      m.pending.delete(key);
+      m.projects.delete(key);
       continue;
     }
     if (m.busy.has(key)) continue;
+    const mem = m.projects.get(key) ?? { pending: new Map(), backoff: new Map() };
+    m.projects.set(key, mem);
+    for (const [card, until] of mem.backoff) if (until <= now) mem.backoff.delete(card);
     const done = new Set((db.prepare("SELECT image FROM eye_sent WHERE key = ?").all(key) as { image: string }[]).map((r) => r.image));
-    // No board read (a process) unless an image could go out.
-    if (!p.items.some((i) => i.card != null && i.at >= since && !done.has(imageKey(i)))) {
-      m.pending.delete(key);
-      continue;
-    }
+    const due = eyeDue({ items: p.items, since, sent: done, pending: mem.pending, now, skip: (c) => mem.backoff.has(c) });
+    if (!due.length) continue;
+    const wait = (card: number) => {
+      mem.pending.delete(card);
+      mem.backoff.set(card, now + EYE_BACKOFF_MS);
+    };
     m.busy.add(key);
     try {
       const b = await board(p);
-      if (!b.board) continue;
-      const pending = m.pending.get(key) ?? new Map();
-      m.pending.set(key, pending);
-      for (const s of eyePlan({ items: p.items, board: b.board, since, sent: done, pending, now })) {
+      for (const d of due) {
+        const s = b.board ? eyeSend(d, b.board) : null;
+        if (!s) {
+          wait(d.card);
+          continue;
+        }
         const r = await run("8sync", ["ccc", "msg", EYE_ROOM, s.text], 30_000, p.root);
-        if (!r.ok) continue;
+        if (!r.ok) {
+          wait(d.card);
+          continue;
+        }
         tx(db, () => {
           const ins = db.prepare("INSERT OR IGNORE INTO eye_sent(key, image, at) VALUES (?, ?, ?)");
           for (const k of s.keys) ins.run(key, k, now);
         });
-        pending.delete(s.card);
+        mem.pending.delete(s.card);
         sent.push({ root: p.root, card: s.card });
       }
     } catch {
