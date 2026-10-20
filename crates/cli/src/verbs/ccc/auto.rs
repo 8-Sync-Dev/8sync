@@ -1250,7 +1250,8 @@ fn run_target(
             // once, like `--now`. A room's card keeps its place.
             // Owner = no room identified AND not inside any Claude Code session (a room in a worktree
             // that forgot `--as` is not the owner).
-            let owner = from.is_none() && std::env::var("CLAUDE_CODE_SESSION_ID").map_or(true, |s| s.trim().is_empty());
+            let unset = |k: &str| std::env::var(k).map_or(true, |s| s.trim().is_empty());
+            let owner = from.is_none() && ["CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID"].iter().all(|k| unset(k));
             let first = first || (owner && board_team(home, root));
             let text = words.join(" ");
             // Checked before anything is written, so a bad value never leaves a half-made card.
@@ -2771,7 +2772,7 @@ mod tests {
         assert_eq!((lines(ids[0]), lines(ids[1])), (lead_before + 1, qa_before), "the lead hears it, qa keeps its card");
         // The owner's card on a board team is always looked at now: first in queue, the lead told.
         // (Run inside a Claude Code session the caller is not the owner: that half is skipped.)
-        let owner_terminal = std::env::var("CLAUDE_CODE_SESSION_ID").map_or(true, |s| s.trim().is_empty());
+        let owner_terminal = ["CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID"].iter().all(|k| std::env::var(k).map_or(true, |s| s.trim().is_empty()));
         run(&s(&["add", "camera", "shake"]), &h, false, &h, rooms).unwrap();
         let lead_before = if owner_terminal {
             assert_eq!(cur().0.unwrap().text, "camera shake", "head of the queue without --now");

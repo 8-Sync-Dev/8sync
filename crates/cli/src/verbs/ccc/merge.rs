@@ -368,9 +368,16 @@ pub(super) fn background(home: &Path, root: &Path, now: u64) -> Result<Vec<Strin
     let gh = |args: &[&str]| gh(root, args);
     let c = Ctx { home, root, who: Some("lead"), now, main: &main, gh: &gh };
     // One card per pass: HQ kills a revive that runs past 120 s, and each card is several gh calls.
-    let Some(t) = target::list(home, root)?.into_iter().filter(|t| t.state == "open" && t.lane == "approved").min_by_key(|t| t.prio.unwrap_or(2)) else { return Ok(Vec::new()) };
-    let o = land(&t, &c, false);
-    Ok((o.action != "wait").then(|| format!("merge nền: {}", line(&o))).into_iter().collect())
+    // A card stacked on an approved card not landed yet is deferred, not bounced: try the next.
+    let mut cards: Vec<Target> = target::list(home, root)?.into_iter().filter(|t| t.state == "open" && t.lane == "approved").collect();
+    cards.sort_by_key(|t| t.prio.unwrap_or(2));
+    for t in &cards {
+        let o = land(t, &c, true);
+        if o.action != "deferred" {
+            return Ok((o.action != "wait").then(|| format!("merge nền: {}", line(&o))).into_iter().collect());
+        }
+    }
+    Ok(Vec::new())
 }
 
 /// Every approved card, most urgent first; one whose base is still landing goes after the rest.
