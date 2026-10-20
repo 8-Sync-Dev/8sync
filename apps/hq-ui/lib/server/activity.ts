@@ -1,6 +1,7 @@
-// "Nhật ký": what a room did, from the tail of its Claude Code transcript (local file only). One event
-// per typed prompt, reply text, tool call (with its result) and subagent start, newest last. Commands
-// are never shown: a shell call shows its `description`, else only the program name.
+// "Nhật ký": what a room did, from the tail of its transcript (local file only): a Claude Code session's,
+// or an omp room's (`8sync ls` `transcript`). One event per typed prompt, reply text, tool call (with its
+// result) and subagent start, newest last. Commands are never shown: a shell call shows its
+// description / intent, else only the program name.
 import fs from "node:fs";
 import { maskSecrets } from "../mask";
 import { claudeDir, transcriptOf } from "./ask";
@@ -11,7 +12,7 @@ const PROMPT_MAX = 200;
 const ERROR_MAX = 200;
 
 export type ActivityEvent = {
-  /** prompt: the owner (or a channel) typed · text: Claude's reply · tool: a tool call · agent: a subagent started. */
+  /** prompt: the owner (or a channel) typed · text: the agent's reply · tool: a tool call · agent: a subagent started. */
   kind: "prompt" | "text" | "tool" | "agent";
   /** ms; null when the line has no timestamp. */
   at: number | null;
@@ -124,12 +125,77 @@ export function activityFrom(lines: string[], limit = 80): ActivityEvent[] {
   return out.slice(-limit);
 }
 
+/** omp tools that run code: like a shell, only their intent (or for `bash` the program) is shown. */
+const OMP_CODE = new Set(["bash", "eval", "python", "ssh"]);
+
+type OmpBlock = { type?: string; text?: unknown; id?: unknown; name?: unknown; arguments?: unknown; intent?: unknown };
+
+/** What an omp tool call is about: its intent, else a file, a URL host; code tools never show their code. */
+export function ompToolSummary(name: string, args: unknown, intent: unknown): string {
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const why = str(intent) ?? str(a.i) ?? str(a.description) ?? str(a.title);
+  if (OMP_CODE.has(name)) return clip(why ?? (name === "bash" && str(a.command) ? program(a.command as string) : ""), 160);
+  const file = str(a.path) ?? str(a.file_path);
+  const url = str(a.url);
+  return clip(why ?? file ?? (url ? (host(url) ?? "") : "") ?? "", 160);
+}
+
+/**
+ * omp session JSONL lines → events (oldest first, at most `limit`). Only `message` lines count: user
+ * text (not `<system-reminder>`-style injections), assistant text and `toolCall` blocks (`task` = subagents),
+ * `toolResult` closing its call by `toolCallId`. Thinking, custom, developer and bookkeeping lines are skipped.
+ */
+export function ompActivityFrom(lines: string[], limit = 80): ActivityEvent[] {
+  const out: ActivityEvent[] = [];
+  const byId = new Map<string, ActivityEvent>();
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let o: { type?: string; timestamp?: unknown; message?: { role?: string; content?: unknown; toolCallId?: unknown; isError?: unknown } };
+    try {
+      o = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const m = o?.type === "message" ? o.message : null;
+    if (!m) continue;
+    const t = typeof o.timestamp === "string" ? Date.parse(o.timestamp) : NaN;
+    const at = Number.isFinite(t) ? t : null;
+    if (m.role === "toolResult") {
+      const ev = typeof m.toolCallId === "string" ? byId.get(m.toolCallId) : undefined;
+      if (!ev) continue;
+      ev.status = m.isError === true ? "error" : "ok";
+      if (m.isError === true) ev.error = clip(blockText(m.content), ERROR_MAX);
+      continue;
+    }
+    if (!Array.isArray(m.content)) continue;
+    if (m.role === "user") {
+      const text = blockText(m.content);
+      if (text.trim() && !text.trimStart().startsWith("<")) out.push({ kind: "prompt", at, text: clip(text, PROMPT_MAX) });
+      continue;
+    }
+    if (m.role !== "assistant") continue;
+    for (const b of m.content as OmpBlock[]) {
+      if (b?.type === "text" && typeof b.text === "string" && b.text.trim()) {
+        out.push({ kind: "text", at, text: clip(b.text, TEXT_MAX) });
+      } else if (b?.type === "toolCall" && typeof b.name === "string") {
+        const args = (b.arguments && typeof b.arguments === "object" ? b.arguments : {}) as Record<string, unknown>;
+        const first = Array.isArray(args.tasks) ? (args.tasks[0] as Record<string, unknown> | undefined) : undefined;
+        const ev: ActivityEvent =
+          b.name === "task"
+            ? { kind: "agent", at, tool: str(args.agent) ?? str(first?.agent) ?? "task", text: clip(str(b.intent) ?? str(args.i) ?? "", 160), status: "pending" }
+            : { kind: "tool", at, tool: b.name, text: ompToolSummary(b.name, args, b.intent), status: "pending" };
+        out.push(ev);
+        if (typeof b.id === "string") byId.set(b.id, ev);
+      }
+    }
+  }
+  return out.slice(-limit);
+}
+
 const cache = new Map<string, { size: number; mtime: number; limit: number; events: ActivityEvent[] }>();
 
-/** The last `limit` events of a session; [] when its transcript is not found. Never throws. */
-export function readActivity(sessionId: string, cwd: string | null, limit = 80, root = claudeDir()): ActivityEvent[] {
-  const f = transcriptOf(sessionId, cwd, root);
-  if (!f) return [];
+/** The last `limit` events of a transcript file (its last 1 MB), cached by size and mtime; [] when unreadable. */
+function readTail(f: string, limit: number, parse: (lines: string[], limit: number) => ActivityEvent[]): ActivityEvent[] {
   let st: fs.Stats;
   try {
     st = fs.statSync(f);
@@ -154,7 +220,18 @@ export function readActivity(sessionId: string, cwd: string | null, limit = 80, 
   }
   const lines = body.split("\n");
   // A tail read starts mid-line: drop that first partial line.
-  const events = activityFrom(start > 0 ? lines.slice(1) : lines, limit);
+  const events = parse(start > 0 ? lines.slice(1) : lines, limit);
   cache.set(f, { size: st.size, mtime: st.mtimeMs, limit, events });
   return events;
+}
+
+/** The last `limit` events of a Claude Code session; [] when its transcript is not found. Never throws. */
+export function readActivity(sessionId: string, cwd: string | null, limit = 80, root = claudeDir()): ActivityEvent[] {
+  const f = transcriptOf(sessionId, cwd, root);
+  return f ? readTail(f, limit, activityFrom) : [];
+}
+
+/** The last `limit` events of an omp room's transcript file (path from `8sync ls`, never a client). Never throws. */
+export function readOmpActivity(file: string, limit = 80): ActivityEvent[] {
+  return readTail(file, limit, ompActivityFrom);
 }

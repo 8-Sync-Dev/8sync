@@ -175,22 +175,38 @@ pub fn ago(secs: u64, now: u64) -> String {
 // ── status detection (pure) ─────────────────────────────────────────────────
 
 /// True when some omp/claude process has `needle` (a session dir or id) as an
-/// argument. `cmdlines` are raw `/proc/<pid>/cmdline` buffers (NUL-separated).
-/// The process must itself look like omp/claude so an editor or `grep <id>`
-/// doesn't count.
+/// argument, or a `*.jsonl` file directly inside it (`omp --resume <session-dir>/<file>.jsonl`).
+/// `cmdlines` are NUL-separated argv buffers ([`agent_cmdlines`]). The process must itself look
+/// like omp/claude so an editor or `grep <id>` doesn't count. On Windows a path compares in any
+/// case and slash direction.
 pub fn proc_matches(cmdlines: &[Vec<u8>], needle: &str) -> bool {
     if needle.is_empty() {
         return false;
     }
+    let want = path_key(needle);
+    let sep = if cfg!(windows) { '\\' } else { '/' };
     cmdlines.iter().any(|raw| {
-        let args: Vec<&[u8]> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).collect();
+        let args: Vec<String> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
         let is_agent = args.iter().take(3).any(|a| {
-            let base = a.rsplit(|b| *b == b'/').next().unwrap_or(a);
-            let base = String::from_utf8_lossy(base).to_ascii_lowercase();
-            base == "omp" || base == "claude" || base.starts_with("claude") || base == "omp.js"
+            let base = a.rsplit(['/', '\\']).next().unwrap_or(a).to_ascii_lowercase();
+            let base = base.strip_suffix(".exe").unwrap_or(&base);
+            base == "omp" || base.starts_with("claude") || base == "omp.js"
         });
-        is_agent && args.iter().skip(1).any(|a| *a == needle.as_bytes())
+        is_agent
+            && args.iter().skip(1).any(|a| {
+                let a = path_key(a);
+                a == want || (a.ends_with(".jsonl") && a.rsplit_once(sep).is_some_and(|(dir, _)| dir == want))
+            })
     })
+}
+
+/// An argument as a path to compare: no trailing separator; on Windows also lower case with `\`.
+fn path_key(s: &str) -> String {
+    if cfg!(windows) {
+        s.replace('/', "\\").trim_end_matches('\\').to_lowercase()
+    } else {
+        s.trim_end_matches('/').to_string()
+    }
 }
 
 pub fn classify(proc_hit: bool, mtime: Option<u64>, now: u64) -> Status {
@@ -203,7 +219,9 @@ pub fn classify(proc_hit: bool, mtime: Option<u64>, now: u64) -> Status {
     }
 }
 
-/// Cmdlines of live omp/claude processes (Linux `/proc`; empty elsewhere).
+/// Argv of live agent processes, NUL-separated. Linux: omp/claude from `/proc`. Windows: `omp.exe`
+/// only (Claude Code rooms reach HQ through its hooks and `claude agents`), its command line split
+/// like `CommandLineToArgvW`. Empty elsewhere.
 pub fn agent_cmdlines() -> Vec<Vec<u8>> {
     #[cfg(target_os = "linux")]
     {
@@ -222,9 +240,165 @@ pub fn agent_cmdlines() -> Vec<Vec<u8>> {
         }
         out
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        win::command_lines("omp.exe").iter().map(|c| win_args(c).join("\0").into_bytes()).collect()
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         Vec::new()
+    }
+}
+
+/// A Windows command line split like `CommandLineToArgvW`: 2n backslashes + `"` = n backslashes and
+/// a quote toggle, 2n+1 = n backslashes and a literal quote, other backslashes are literal.
+pub fn win_args(cmdline: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let (mut cur, mut quoted, mut started, mut slashes) = (String::new(), false, false, 0usize);
+    for c in cmdline.chars() {
+        if c == '\\' {
+            slashes += 1;
+            started = true;
+            continue;
+        }
+        if c == '"' {
+            cur.push_str(&"\\".repeat(slashes / 2));
+            if slashes % 2 == 1 {
+                cur.push('"');
+            } else {
+                quoted = !quoted;
+            }
+            started = true;
+        } else if c.is_whitespace() && !quoted {
+            cur.push_str(&"\\".repeat(slashes));
+            if started {
+                out.push(std::mem::take(&mut cur));
+                started = false;
+            }
+        } else {
+            cur.push_str(&"\\".repeat(slashes));
+            cur.push(c);
+            started = true;
+        }
+        slashes = 0;
+    }
+    cur.push_str(&"\\".repeat(slashes));
+    if started {
+        out.push(cur);
+    }
+    out
+}
+
+/// Command lines of running processes by image name, read in-process (Toolhelp snapshot +
+/// `NtQueryInformationProcess(ProcessCommandLineInformation)`): no PowerShell per `8sync ls`.
+#[cfg(windows)]
+mod win {
+    use std::ffi::c_void;
+
+    type Handle = *mut c_void;
+    const TH32CS_SNAPPROCESS: u32 = 0x2;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const PROCESS_COMMAND_LINE_INFORMATION: u32 = 60;
+    const MAX_CMDLINE: u32 = 1 << 20;
+
+    #[repr(C)]
+    struct ProcessEntry32W {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_process_id: u32,
+        th32_default_heap_id: usize,
+        th32_module_id: u32,
+        cnt_threads: u32,
+        th32_parent_process_id: u32,
+        pc_pri_class_base: i32,
+        dw_flags: u32,
+        sz_exe_file: [u16; 260],
+    }
+
+    #[repr(C)]
+    struct UnicodeString {
+        length: u16,
+        maximum_length: u16,
+        buffer: *const u16,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> Handle;
+        fn Process32FirstW(snap: Handle, entry: *mut ProcessEntry32W) -> i32;
+        fn Process32NextW(snap: Handle, entry: *mut ProcessEntry32W) -> i32;
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+        fn CloseHandle(h: Handle) -> i32;
+        fn GetModuleHandleW(name: *const u16) -> Handle;
+        fn GetProcAddress(module: Handle, name: *const u8) -> *const c_void;
+    }
+
+    type NtQueryInformationProcess = unsafe extern "system" fn(Handle, u32, *mut c_void, u32, *mut u32) -> i32;
+
+    fn nt_query() -> Option<NtQueryInformationProcess> {
+        let name: Vec<u16> = "ntdll.dll".encode_utf16().chain([0]).collect();
+        // SAFETY: ntdll is mapped in every process; the symbol has this signature on every Windows.
+        unsafe {
+            let m = GetModuleHandleW(name.as_ptr());
+            if m.is_null() {
+                return None;
+            }
+            let f = GetProcAddress(m, c"NtQueryInformationProcess".as_ptr().cast());
+            (!f.is_null()).then(|| std::mem::transmute::<*const c_void, NtQueryInformationProcess>(f))
+        }
+    }
+
+    /// Command line of `pid`; None when the process is gone or not ours to read.
+    fn command_line(query: NtQueryInformationProcess, pid: u32) -> Option<String> {
+        // SAFETY: the handle is closed below; the buffer is u64-aligned and `need` bytes long, and
+        // the UNICODE_STRING it returns is only read after checking it points inside that buffer.
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None;
+            }
+            let mut need = 0u32;
+            query(h, PROCESS_COMMAND_LINE_INFORMATION, std::ptr::null_mut(), 0, &mut need);
+            let mut out = None;
+            if need as usize >= std::mem::size_of::<UnicodeString>() && need <= MAX_CMDLINE {
+                let mut buf = vec![0u64; (need as usize).div_ceil(8)];
+                if query(h, PROCESS_COMMAND_LINE_INFORMATION, buf.as_mut_ptr().cast(), need, &mut need) >= 0 {
+                    let us = &*(buf.as_ptr() as *const UnicodeString);
+                    let (start, len) = (buf.as_ptr() as usize, buf.len() * 8);
+                    let (at, bytes) = (us.buffer as usize, us.length as usize);
+                    if at >= start && at + bytes <= start + len {
+                        out = Some(String::from_utf16_lossy(std::slice::from_raw_parts(us.buffer, bytes / 2)));
+                    }
+                }
+            }
+            CloseHandle(h);
+            out
+        }
+    }
+
+    /// Command lines of every process whose image is `exe` (any case).
+    pub(super) fn command_lines(exe: &str) -> Vec<String> {
+        let Some(query) = nt_query() else { return Vec::new() };
+        let mut out = Vec::new();
+        // SAFETY: plain Toolhelp walk; the entry is sized as the API requires and the snapshot is closed.
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snap.is_null() || snap as isize == -1 {
+                return out;
+            }
+            let mut e: ProcessEntry32W = std::mem::zeroed();
+            e.dw_size = std::mem::size_of::<ProcessEntry32W>() as u32;
+            let mut more = Process32FirstW(snap, &mut e) != 0;
+            while more {
+                let n = e.sz_exe_file.iter().position(|c| *c == 0).unwrap_or(e.sz_exe_file.len());
+                if String::from_utf16_lossy(&e.sz_exe_file[..n]).eq_ignore_ascii_case(exe) {
+                    out.extend(command_line(query, e.th32_process_id));
+                }
+                more = Process32NextW(snap, &mut e) != 0;
+            }
+            CloseHandle(snap);
+        }
+        out
     }
 }
 
@@ -774,6 +948,8 @@ pub fn row_json(row: &Row) -> Value {
         "model": d.model,
         "resume": mask_secrets(&row.resume),
         "inbox_id": row.inbox_id,
+        // Local transcript file: HQ reads an omp room's "Nhật ký" from it (server side only).
+        "transcript": row.transcript.as_deref().map(|p| p.to_string_lossy()),
     })
 }
 
@@ -868,6 +1044,53 @@ mod tests {
         assert_eq!(classify(false, Some(950), 1000), Status::Active);
         assert_eq!(classify(false, Some(100), 1000), Status::Idle);
         assert_eq!(classify(false, None, 1000), Status::Idle);
+    }
+
+    #[test]
+    fn omp_resumed_by_transcript_file_counts_for_its_session_dir() {
+        let procs = vec![
+            b"/usr/bin/omp.exe\0--extension\0x.ts\0--resume\0/s/web/2026-10-07_01a1.jsonl\0".to_vec(),
+            b"omp\0/s/notes/readme.md\0".to_vec(),
+        ];
+        assert!(proc_matches(&procs, "/s/web"));
+        assert!(proc_matches(&procs, "/s/web/"), "trailing separator");
+        assert!(!proc_matches(&procs, "/s"), "only the file's own dir");
+        assert!(!proc_matches(&procs, "/s/web/sub"));
+        assert!(!proc_matches(&procs, "/s/notes"), "a non-transcript file is not a session");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_lines_match_in_any_case_and_slash() {
+        let argv = |c: &str| win_args(c).join("\0").into_bytes();
+        let procs = vec![
+            argv(r#""omp" --cwd C:\r --session-dir C:\Users\A\8sync\sessions\K\core --continue"#),
+            argv(r#""C:\Users\A\AppData\Local\omp\omp.exe" --resume C:\Users\A\8sync\sessions\K2\core\2026-10-07T03_01a1.jsonl"#),
+            argv(r#"C:\Windows\notepad.exe C:\Users\A\8sync\sessions\K3\core"#),
+        ];
+        assert!(proc_matches(&procs, "C:/users/a/8sync/sessions/k/CORE/"));
+        assert!(proc_matches(&procs, r"C:\Users\A\8sync\sessions\K2\core"));
+        assert!(!proc_matches(&procs, r"C:\Users\A\8sync\sessions\K3\core"), "an editor is not an agent");
+        assert!(!proc_matches(&procs, r"C:\Users\A\8sync\sessions\K\core2"));
+    }
+
+    #[test]
+    fn win_args_splits_like_command_line_to_argv() {
+        assert_eq!(win_args(r#""omp" --cwd C:\r --session-dir C:\s\omp-lead --continue"#), ["omp", "--cwd", r"C:\r", "--session-dir", r"C:\s\omp-lead", "--continue"]);
+        assert_eq!(win_args(r#""C:\a b\omp.exe"  "C:\x y\" a\\\"b"#), [r"C:\a b\omp.exe", r#"C:\x y" a\"b"#]);
+        assert_eq!(win_args(r#"x "" y"#), ["x", "", "y"]);
+        assert!(win_args("   ").is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_scan_reads_real_command_lines() {
+        // The test binary itself is a running process: its own command line must come back whole.
+        let exe = std::env::current_exe().unwrap();
+        let name = exe.file_name().unwrap().to_string_lossy().into_owned();
+        let lines = win::command_lines(&name);
+        let me = name.to_lowercase();
+        assert!(lines.iter().any(|l| win_args(l).first().is_some_and(|a| a.to_lowercase().ends_with(&me))), "{lines:?}");
     }
 
     #[test]

@@ -14,7 +14,7 @@ const POLL_MS = 4000;
 const FOLD = 140;
 
 const KIND_ICON: Record<ActivityEvent["kind"], LucideIcon> = { prompt: MessageSquareIcon, text: BotIcon, tool: WrenchIcon, agent: UsersIcon };
-const KIND_VI: Record<ActivityEvent["kind"], string> = { prompt: "Lời nhắn", text: "Claude", tool: "Công cụ", agent: "Subagent" };
+const KIND_VI: Record<ActivityEvent["kind"], string> = { prompt: "Lời nhắn", text: "Trả lời", tool: "Công cụ", agent: "Subagent" };
 
 /** GET the room's activity every 4 s while the tab is visible. */
 function useActivity(token: string, sessionId: string) {

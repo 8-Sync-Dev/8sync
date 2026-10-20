@@ -158,6 +158,8 @@ export type FloorRow = Derived & {
   inbox_id?: string | null;
   /** A process has the session open or its transcript moved in the last 2 min (`8sync ls` status running/active). */
   live?: boolean;
+  /** Model the session last answered with (`8sync ls` `model`), null when unknown. */
+  model?: string | null;
 };
 
 export function sortFloor(rows: FloorRow[]): FloorRow[] {
