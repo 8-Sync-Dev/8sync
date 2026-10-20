@@ -67,7 +67,7 @@ const REFILL_RETRY: u64 = 900;
 
 /// Idea `t`, split into open cards (`split`), is due a refill while `ready` holds `ready` cards.
 fn refillable(t: &Target, split: &[u64], ready: usize, now: u64) -> bool {
-    ready < READY_LOW && t.state == "open" && t.lane == "backlog" && split.contains(&t.id) && now.saturating_sub(touched(t)) >= REFILL_RETRY
+    ready < READY_LOW && t.state == "open" && t.lane == "backlog" && split.contains(&t.id) && now.saturating_sub(touched(t).max(t.refill_at.unwrap_or(0))) >= REFILL_RETRY
 }
 
 /// Open lanes in board order; `done`/`dropped` live in `state`.
@@ -153,6 +153,10 @@ pub(super) struct Target {
     /// title starts with ([`roles`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// When an idea still split into open cards was last handed back for a refill ([`refillable`]);
+    /// its own field so the idea's last note on the board stays the real one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refill_at: Option<u64>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -242,7 +246,7 @@ pub(super) fn claim_hint(t: &Target, cards: &[Target]) -> Option<String> {
         )
     } else {
         format!(
-            "ready còn {ready}/{READY_CAP} card, builder đang chờ: tách NGAY đợt kế của ý #{id} — 2–4 card nhỏ làm song song được (khác file/thư mục, không trùng card con đang mở {open}), mỗi card có AC + check: `8sync ccc auto add \"[#{id}] …\" --check \"<lệnh>\"`. Ý đã đủ card → R&D đề xuất hướng mở rộng mới cho game (`8sync ccc auto add \"<ý tưởng>\"`, không check, vào backlog) rồi tách nó; card gốc ở lại backlog",
+            "ready còn {ready}/{READY_CAP} card, builder đang chờ: tách NGAY đợt kế của ý #{id} — 2–4 card nhỏ làm song song được (khác file/thư mục, không trùng card con đang mở {open}), mỗi card có AC + check: `8sync ccc auto add \"[#{id}] …\" --check \"<lệnh>\"`. Ý đã đủ card → R&D đề xuất hướng mở rộng mới cho dự án (`8sync ccc auto add \"<ý tưởng>\"`, không check, vào backlog) rồi tách nó; card gốc ở lại backlog",
             ready = ready_count(cards),
             id = t.id
         )
@@ -474,6 +478,7 @@ pub(super) fn add(
             sha: None,
             prio: None,
             role: None,
+            refill_at: None,
         };
         if first {
             p.items.insert(0, t.clone());
@@ -700,8 +705,8 @@ pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) 
         let Some(i) = mine.or_else(blocked).or_else(first_free).or_else(refill) else { return Ok(None) };
         let t = &mut p.items[i];
         if refillable(t, &split, ready, now) {
-            // the note dates the refill: the idea is not handed back again for REFILL_RETRY
-            t.note(Some(room), &format!("ready {ready}/{READY_CAP}: tách đợt kế"), now);
+            // not handed back again for REFILL_RETRY
+            t.refill_at = Some(now);
         }
         if t.claim.is_none() && matches!(t.lane.as_str(), "ready" | "building") {
             let to = if lane == "qa" { "qa" } else { "building" };
@@ -1725,6 +1730,7 @@ mod tests {
         assert_eq!(claimable(&list(h, &root).unwrap(), "lead", "backlog", t), Some(idea.id), "auto wait wakes the lead");
         let got = claim(h, &root, "lead", "backlog", t).unwrap().unwrap();
         assert_eq!(got.id, idea.id);
+        assert!(got.notes.is_empty() && got.refill_at == Some(t), "the board keeps the idea's own last note");
         let hint = claim_hint(&got, &list(h, &root).unwrap()).unwrap();
         assert!(hint.contains("tách NGAY") && hint.contains(&format!("đang mở #{}", a.id)) && hint.contains(&format!("[#{}]", idea.id)), "{hint}");
 

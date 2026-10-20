@@ -376,8 +376,8 @@ export function CardItem({ c, move, kids, now, next, onOpen }: { c: Card; move?:
   );
 }
 
-/** "13 card con đang chạy · 4 đang build/QA" for an idea's open split-off cards. */
+/** "13 card con đang mở · 4 đang build/QA" for an idea's open split-off cards. */
 export function kidsLine(kids: Kid[]): string {
   const active = kids.filter((k) => ["building", "qa", "review", "approved"].includes(k.lane)).length;
-  return `${kids.length} card con đang chạy${active ? ` · ${active} đang build/QA` : ""}`;
+  return `${kids.length} card con đang mở${active ? ` · ${active} đang build/QA` : ""}`;
 }

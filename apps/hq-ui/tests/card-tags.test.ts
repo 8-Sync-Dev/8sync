@@ -87,8 +87,8 @@ describe("parentOf / splitInto", () => {
     })!;
     const kids = splitInto(b.lanes).get(10)!;
     expect(kids).toEqual([{ id: 17, lane: "building" }, { id: 14, lane: "qa" }]);
-    expect(kidsLine([...kids, { id: 18, lane: "ready" }])).toBe("3 card con đang chạy · 2 đang build/QA");
-    expect(kidsLine([{ id: 18, lane: "ready" }])).toBe("1 card con đang chạy");
+    expect(kidsLine([...kids, { id: 18, lane: "ready" }])).toBe("3 card con đang mở · 2 đang build/QA");
+    expect(kidsLine([{ id: 18, lane: "ready" }])).toBe("1 card con đang mở");
   });
 });
 

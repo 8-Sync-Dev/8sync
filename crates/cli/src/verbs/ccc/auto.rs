@@ -1120,8 +1120,8 @@ fn run_target(
                 .then(|| {
                     if ready >= target::READY_CAP {
                         Some(format!("cột ready đầy ({ready}/{} card chờ dev): không tách thêm card; gỡ blocked, merge card approved hoặc `auto wait`", target::READY_CAP))
-                    } else if ready < target::READY_LOW && dry {
-                        Some(format!("backlog hết ý, ready còn {ready}/{}: R&D NGAY — đọc mục tiêu dự án (su-code/PROJECT.md, DECISIONS.md, story/AC các card đã xong, game hiện tại trên main) rồi đề xuất 1–2 hướng mở rộng cụ thể, mỗi hướng `8sync ccc auto add \"<ý tưởng>\"` (không check, vào backlog), rồi `auto claim` để tách nó thành card song song", target::READY_CAP))
+                    } else if ready < target::READY_LOW && dry && super::room::crew(&room) == "lead" {
+                        Some(format!("backlog hết ý, ready còn {ready}/{}: R&D NGAY — đọc mục tiêu dự án (su-code/PROJECT.md, DECISIONS.md, story/AC các card đã xong, sản phẩm hiện tại trên main) rồi đề xuất 1–2 hướng mở rộng cụ thể, mỗi hướng `8sync ccc auto add \"<ý tưởng>\"` (không check, vào backlog), rồi `auto claim` để tách nó thành card song song", target::READY_CAP))
                     } else {
                         None
                     }
@@ -2411,6 +2411,7 @@ mod tests {
             sha: None,
             role: None,
             prio: None,
+            refill_at: None,
         };
         let w = Wait { room: "dev".into(), lane: "ready".into(), timeout: 60 };
         let on = json!({ "on": true, "paused": false, "cap": null });
