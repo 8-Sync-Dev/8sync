@@ -47,7 +47,7 @@ function Panel({ id, title, aside, children, className }: { id: string; title: s
 }
 
 /** An on/off switch with a 44 px hit area on phones; `busy` while the change is on its way. */
-function Switch({ on, busy, label, onChange }: { on: boolean; busy?: boolean; label: string; onChange: (on: boolean) => void }) {
+export function Switch({ on, busy, label, onChange }: { on: boolean; busy?: boolean; label: string; onChange: (on: boolean) => void }) {
   return (
     <button
       type="button"

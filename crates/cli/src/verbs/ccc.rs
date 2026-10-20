@@ -621,6 +621,14 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         return Ok(());
     }
     if rest[0] == "down" {
+        // `down --only <room>`: that room alone (HQ "Tự soi ảnh" off); auto and the other rooms run on.
+        if let [_, flag, name] = rest {
+            if flag == "--only" && !name.starts_with("--") {
+                let state = if team::down_only(&t, name)? { "đã dừng" } else { "không có phiên nền đang chạy của" };
+                println!("{state} phòng {name} (đã bỏ khỏi team; thêm lại: `8sync ccc auto up --add {name}`). Các phòng khác vẫn chạy.");
+                return Ok(());
+            }
+        }
         if let Some(x) = rest.get(1) {
             bail!("không rõ `{x}`\n{}", team::USAGE);
         }
@@ -684,8 +692,8 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     }
     let (status, gone, rows) = team::up(&t, &o, now)?;
     team::print_up(&status, &gone, &rows, o.every, subscription);
-    // Team omp: `--omp`, or omp already in auto.json's teams (turned on from HQ).
-    if omp_team::wanted(o.omp, &status) {
+    // Team omp: `--omp`, or omp already in auto.json's teams (turned on from HQ); never for `--add`.
+    if !o.add && omp_team::wanted(o.omp, &status) {
         match blocked {
             Some(why) => println!("đội omp: không mở — {why}"),
             None => {

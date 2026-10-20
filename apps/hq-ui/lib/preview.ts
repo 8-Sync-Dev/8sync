@@ -24,7 +24,8 @@ export type PreviewItem = {
 /** The newest main branch tip the repo knows (local or `origin`). */
 export type MainHead = { ref: string; sha: string; at: number; subject: string };
 
-export type ProjectPreviews = { root: string; name: string; main: MainHead | null; items: PreviewItem[] };
+/** `eye`: when "Tự soi ảnh" went on for this project (lib/server/eye.ts), null/absent = off. */
+export type ProjectPreviews = { root: string; name: string; main: MainHead | null; items: PreviewItem[]; eye?: number | null };
 
 const CARD_RE = /(?:^|[^a-z0-9])card[-_]?(\d{1,9})(?!\d)/i;
 

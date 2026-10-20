@@ -36,7 +36,7 @@ use super::{auto, idle, room};
 /// Rooms one `auto up` starts at most (the `boost` preset is the largest team).
 const MAX_ROOMS: usize = 14;
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full|boost] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down | revive";
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full|boost] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | up --add <phòng> | down [--only <phòng>] | revive";
 
 /// `auto up …` / `auto down` / `auto revive`: the verbs this module owns.
 pub(super) fn wants(rest: &[String]) -> bool {
@@ -203,6 +203,48 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
     g.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// The first message of the "Soi ảnh" room ([`room::EYE`]): a `/goal` like a lane room's, but its
+/// queue is its inbox. HQ's "Tự soi ảnh" switch sends one `[ảnh mới] card #N …` message per card
+/// with new screenshots (apps/hq-ui lib/server/eye.ts); the room blocks in `auto wait --mail`
+/// between them (no tokens), reads the card's current AC and notes on the board, looks at every
+/// image and writes ONE objective `[soi ảnh]` note (a card note keeps 400 characters); a clear miss
+/// also goes to the lead. No cron: [`revive`] brings an idle eye back on its goal like a lane room.
+pub(super) fn eye_prompt(name: &str) -> String {
+    let (role, duty) = room::role(name);
+    let g = format!(
+        "/goal Phòng `{name}` (vai {role}: {duty}) soi ảnh preview cho dự án này, thay owner đi comment. \
+         Mỗi lượt: (1) `8sync ccc auto status --json`; (2) `8sync ccc auto wait --json --mail --as {name}` (Bash timeout {bash_ms}; chặn ≤ {wait_min} phút, không tốn token): \
+         `\"wake\":\"msg\"` → làm từng tin trong `messages` rồi quay lại (1); `\"wake\":\"off\"` → dừng; còn lại → kết thúc lượt. \
+         Chỉ làm tin bắt đầu bằng `[ảnh mới]`; tin khác bỏ qua, không trả lời. \
+         Mỗi tin `[ảnh mới] card #N …`: (a) `8sync ccc auto board --json` → đọc card #N HIỆN TẠI: text, AC/check, mọi note (note của owner mới hơn thắng AC cũ), cột; card đã đóng hoặc không còn trên board → bỏ tin; \
+         (b) Read từng ảnh trong tin (đường dẫn tuyệt đối), không bỏ ảnh nào; \
+         (c) so khách quan với AC + ý owner mới nhất: chỉ ghi điều THẤY trong ảnh, dẫn tên file ảnh, không khen, không đoán ngoài ảnh; ảnh không cho thấy được một ý → ghi \"không đủ để kết luận\" cho ý đó; \
+         (d) ghi MỘT note (≤ 400 ký tự): `8sync ccc auto note N \"[soi ảnh] Đạt: … · Lệch AC: … · Đề xuất: …\" --as {name}`; \
+         (e) lệch AC rõ hoặc lỗi hình thấy được (vỡ layout, chữ tràn/cắt, ảnh trắng, sai dữ liệu) → thêm `8sync ccc msg lead \"card #N: <một dòng lỗi> (xem note [soi ảnh])\" --from {name}`. \
+         Rail: không sửa file, không git, không `auto claim|move|add|done`, không chạy server/test/build, không hỏi owner. \
+         Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on`/`here` false hoặc `paused` true \
+         hoặc `gate` nhắc tới lease, hoặc `auto wait --json` trả `\"wake\":\"off\"`.",
+        bash_ms = BASH_MAX_MS,
+        wait_min = auto::WAIT_MAX_S / 60,
+    );
+    g.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The first message a room starts or resumes with: a lane room's or the eye's `/goal`, else the
+/// loop message ([`auto::loop_prompt`]).
+fn first_prompt(name: &str, lane: Option<&str>, every: u64) -> String {
+    match lane {
+        Some(lane) => goal_prompt(name, lane, every),
+        None if room::is_eye(name) => eye_prompt(name),
+        None => auto::loop_prompt(name, every, false),
+    }
+}
+
+/// A room that lives on a `/goal`: every lane room and the eye.
+fn on_goal(name: &str) -> bool {
+    room::find(name).is_some_and(|r| r.lane.is_some()) || room::is_eye(name)
+}
+
 /// Bash tool ceiling of a room (ms): Claude Code caps a command at 10 min unless
 /// `BASH_MAX_TIMEOUT_MS` says more (https://code.claude.com/docs/en/settings#environment-variables),
 /// and `auto wait` blocks up to [`auto::WAIT_MAX_S`].
@@ -270,10 +312,23 @@ pub(super) struct Opts {
     pub check: Option<String>,
     /// `--omp`: team omp too (also turns omp on in auto.json's teams).
     pub omp: bool,
+    /// `--add <room>`: open one more room in a team already running here; auto's lease, hours and
+    /// `$`/hour cap stay as they are and no other room is touched (HQ "Tự soi ảnh" adds `eye`).
+    pub add: bool,
 }
 
 pub(super) fn parse(rest: &[String]) -> Result<Opts> {
-    let mut o = Opts { roles: room::DEFAULT_TEAM.iter().map(|s| s.to_string()).collect(), every: auto::DEFAULT_LOOP_MIN, hours: idle::DEFAULT_HOURS as f64, rate: None, clear: false, task: None, check: None, omp: false };
+    let mut o = Opts { roles: room::DEFAULT_TEAM.iter().map(|s| s.to_string()).collect(), every: auto::DEFAULT_LOOP_MIN, hours: idle::DEFAULT_HOURS as f64, rate: None, clear: false, task: None, check: None, omp: false, add: false };
+    // `--add <room>` stands alone: the other options set up a whole team (lease, hours, cap, task).
+    if rest.first().map(String::as_str) == Some("--add") {
+        let [_, name] = rest else { bail!("--add <phòng> đi một mình, vd `8sync ccc auto up --add eye`\n{USAGE}") };
+        if name.starts_with("--") {
+            bail!("--add cần tên phòng\n{USAGE}");
+        }
+        o.roles = vec![name.clone()];
+        o.add = true;
+        return Ok(o);
+    }
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().filter(|v| !v.starts_with("--")).cloned().ok_or_else(|| anyhow::anyhow!("{a} cần một giá trị\n{USAGE}"));
@@ -402,16 +457,25 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
         }
     }
     let gone = if o.clear { clear(t, &o.roles)? } else { Vec::new() };
+    // `--add`: only into a team that runs here; auto's settings and lease are the owner's, untouched.
+    if o.add && !(auto::running(t.home) && auto::in_scope(t.home, Some(&t.root.to_string_lossy())) && team_roots(t.home).iter().any(|r| auto::canon(Path::new(r)) == auto::canon(t.root))) {
+        bail!("team của dự án này chưa chạy: bật team trước (`8sync ccc auto up`), rồi mới thêm phòng");
+    }
     let before = agents(t, false)?;
     let everywhere = live(&t.claude.run(&["agents".into(), "--json".into()])?)?;
-    // On first: a room's first tick reads `auto status --json` and drops its loop while auto is off.
-    let status = auto::set(t.home, auto::Mode::On { hours: o.hours, after: auto::DEFAULT_AFTER_S, rate: o.rate, repo: Some(t.root.to_path_buf()) }, t.subscription, now)?;
-    set_team_root(t.home, t.root, true);
-    auto::write_loop_md(t.root)?;
-    // Before any room starts, so the lead's first turn already sees it at the head of the queue.
-    if let Some(task) = &o.task {
-        super::target::add(t.home, t.root, task, o.check.as_deref(), None, true, None, now)?;
-    }
+    let status = if o.add {
+        auto::status(t.home, t.subscription, now)
+    } else {
+        // On first: a room's first tick reads `auto status --json` and drops its loop while auto is off.
+        let status = auto::set(t.home, auto::Mode::On { hours: o.hours, after: auto::DEFAULT_AFTER_S, rate: o.rate, repo: Some(t.root.to_path_buf()) }, t.subscription, now)?;
+        set_team_root(t.home, t.root, true);
+        auto::write_loop_md(t.root)?;
+        // Before any room starts, so the lead's first turn already sees it at the head of the queue.
+        if let Some(task) = &o.task {
+            super::target::add(t.home, t.root, task, o.check.as_deref(), None, true, None, now)?;
+        }
+        status
+    };
     let mut rows = Vec::new();
     let mut started = Vec::new();
     let settings = room_settings(t.home)?;
@@ -422,11 +486,9 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
         let (role, _) = room::role(name);
         let model = r.and_then(|r| r.model);
         // A room with a lane opens on Claude Code's own `/goal`: it keeps taking turns (claim → work →
-        // move, `auto wait` while the lane is empty) until auto stops; the others get the loop prompt.
-        let prompt = match r.and_then(|r| r.lane) {
-            Some(lane) => goal_prompt(name, lane, o.every),
-            None => auto::loop_prompt(name, o.every, false),
-        };
+        // move, `auto wait` while the lane is empty) until auto stops; so does the eye on its inbox;
+        // the others get the loop prompt.
+        let prompt = first_prompt(name, r.and_then(|r| r.lane), o.every);
         // The registry points at a session that runs in another repo (an older `up` took it over):
         // that conversation is not this room's, so it opens a new one instead of sharing it.
         let foreign = everywhere.iter().any(|l| l.id == s.conversation_id && !in_repo(l, t.root));
@@ -438,9 +500,9 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
         if let Plan::Running(id) = &p {
             let bg_idle = before.iter().chain(&everywhere).find(|l| l.id == *id).filter(|l| l.background && !l.busy);
             let on_old_kit = o.clear && t.kit_at.is_some_and(|k| bg_idle.is_some_and(|l| l.started > 0 && l.started < k));
-            // A lane room idle in the background has lost its `/goal` ([`lost_goal`]): a loop prompt
-            // would give it one turn, the goal keeps it claiming.
-            let goal_gone = bg_idle.is_some_and(|l| lost_goal(r.and_then(|r| r.lane), l)) && !pending_inbox(t.home, id);
+            // A lane room (or the eye) idle in the background has lost its `/goal` ([`lost_goal`]): a
+            // loop prompt would give it one turn, the goal keeps it claiming.
+            let goal_gone = bg_idle.is_some_and(|l| lost_goal(on_goal(name), l)) && !pending_inbox(t.home, id);
             // Resume needs the conversation on disk; a room mid-turn is left for the next run.
             if (on_old_kit || goal_gone) && (t.has_transcript)(id) {
                 if *id != s.conversation_id {
@@ -460,9 +522,14 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
                 if *id != s.conversation_id {
                     t.store.rebind(name, id)?;
                 }
-                let sent = auto::queue_loops(t.home, &[(name.clone(), id.clone())], o.every, false, now);
-                let when = if sent.first().is_some_and(|(_, l)| *l) { "vào ngay" } else { "vào khi xong lượt" };
-                (format!("đang chạy · gửi loop ({when})"), id.chars().take(8).collect())
+                // The eye has no loop: a live one is already on its goal (an idle one was resumed above).
+                if room::is_eye(name) {
+                    ("đang chạy".to_string(), id.chars().take(8).collect())
+                } else {
+                    let sent = auto::queue_loops(t.home, &[(name.clone(), id.clone())], o.every, false, now);
+                    let when = if sent.first().is_some_and(|(_, l)| *l) { "vào ngay" } else { "vào khi xong lượt" };
+                    (format!("đang chạy · gửi loop ({when})"), id.chars().take(8).collect())
+                }
             }
             _ => {
                 let out = t.claude.run(&argv(&p, &conv, &title, model, &settings, &prompt))?;
@@ -503,13 +570,13 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     Ok((status, gone, rows))
 }
 
-/// A lane room on its `/goal` is never idle: between cards it blocks in `auto wait`. Idle in the
-/// background means the goal ended, which it does when the lease gate shows (its stop condition),
-/// and a renewed lease does not bring it back: 3d-game 2026-10-20, rooms re-armed after the lease
-/// worked only when their 30-minute backup cron fired (the lead sat 28 min with nothing to do,
-/// then approved cards waited for it).
-fn lost_goal(lane: Option<&str>, l: &Live) -> bool {
-    lane.is_some() && l.background && !l.busy
+/// A lane room on its `/goal` is never idle: between cards it blocks in `auto wait` (the eye in
+/// `auto wait --mail`). Idle in the background means the goal ended, which it does when the lease
+/// gate shows (its stop condition), and a renewed lease does not bring it back: 3d-game 2026-10-20,
+/// rooms re-armed after the lease worked only when their 30-minute backup cron fired (the lead sat
+/// 28 min with nothing to do, then approved cards waited for it). `goal`: [`on_goal`].
+fn lost_goal(goal: bool, l: &Live) -> bool {
+    goal && l.background && !l.busy
 }
 
 /// A lane room must be seen idle at two `revive` runs at least this far apart (HQ runs it every
@@ -560,9 +627,8 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let mut seen = idle::read_json(&file).filter(Value::is_object).unwrap_or_else(|| json!({}));
     let mut stalled = Vec::new();
     for s in &sessions {
-        let lane = room::find(&s.name).and_then(|r| r.lane);
         let key = format!("{root}|{}", s.name);
-        let idle = running.iter().any(|l| l.id == s.conversation_id && lost_goal(lane, l));
+        let idle = running.iter().any(|l| l.id == s.conversation_id && lost_goal(on_goal(&s.name), l));
         if !idle {
             if let Some(o) = seen.get_mut(&key).and_then(Value::as_object_mut) {
                 o.remove("seen");
@@ -598,16 +664,13 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
         }
         if idle {
             // The list above is a few calls old: a room woken since (inbox, cron) is mid-turn now.
-            if !agents(t, false)?.iter().any(|l| l.id == s.conversation_id && lost_goal(r.lane, l)) {
+            if !agents(t, false)?.iter().any(|l| l.id == s.conversation_id && lost_goal(on_goal(&s.name), l)) {
                 continue;
             }
             t.claude.run(&["stop".into(), s.conversation_id.chars().take(8).collect()])?;
             seen[format!("{root}|{}", s.name)] = json!({ "revived": now });
         }
-        let prompt = match r.lane {
-            Some(lane) => goal_prompt(&s.name, lane, every),
-            None => auto::loop_prompt(&s.name, every, false),
-        };
+        let prompt = first_prompt(&s.name, r.lane, every);
         let out = t.claude.run(&argv(&Plan::Resume, &s.conversation_id, &title, r.model, &settings, &prompt))?;
         let Some(short) = short_id(&out).filter(|_| !untrusted(&out)) else {
             rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: format!("không mở lại được: {}", crate::verbs::session_view::truncate(out.trim(), 200)), short: String::new() });
@@ -765,6 +828,23 @@ pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
     auto::leave(t.home, t.root, t.subscription, now)?;
     set_team_root(t.home, t.root, false);
     Ok(stopped)
+}
+
+/// `auto down --only <room>`: stop that one background room and drop it from the registry, so
+/// `auto revive` never brings it back; auto and every other room keep running (HQ "Tự soi ảnh" off
+/// stops `eye`). True when a live session was stopped.
+pub(super) fn down_only(t: &Team, name: &str) -> Result<bool> {
+    let reg = t.store.load();
+    let Some(s) = reg.sessions.iter().find(|s| s.name == name) else {
+        return Ok(false);
+    };
+    let title = (t.title)(name);
+    let hit = agents(t, false)?.into_iter().find(|l| l.background && (l.id == s.conversation_id || l.name == title));
+    if let Some(l) = &hit {
+        t.claude.run(&["stop".into(), l.id.chars().take(8).collect()])?;
+    }
+    t.store.remove(name)?;
+    Ok(hit.is_some())
 }
 
 /// A session name fit for one report line. Sessions started before rooms got `--name` on a resume are
@@ -988,7 +1068,7 @@ mod tests {
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{forked}]")]), bg: "backgrounded · 3698e3a6 · {name}".into() };
         // Both sessions started at 1 ms; the kit wrote settings at 1000 ms.
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: Some(1000) };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, omp: false };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, omp: false, add: false };
         let (_, _, rows) = up(&t, &o, 1).unwrap();
         let calls = fake.calls.borrow();
         let stops: Vec<_> = calls.iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
@@ -1132,7 +1212,7 @@ mod tests {
             bg: String::new(),
         };
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, omp: false };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, omp: false, add: false };
         let (_, gone, rows) = up(&t, &o, 1).unwrap();
         let g: Vec<_> = gone.iter().map(|g| (g.name.as_str(), g.short.as_str(), g.kept.is_some())).collect();
         assert_eq!(g, [("dev", "aaaaaaaa", false), ("ui", &ui.conversation_id[..8], false), ("x", "bbbbbbbb", true)]);
@@ -1169,7 +1249,7 @@ mod tests {
         let qa_id = qa.conversation_id.clone();
         let has = move |id: &str| id == qa_id;
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &has, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false };
+        let o = Opts { roles: vec!["lead".into(), "dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false, add: false };
         let (status, _, rows) = up(&t, &o, 1_000).unwrap();
         assert_eq!(status["on"], true);
         assert!(status["repo"].as_str().is_some(), "auto is scoped to the project");
@@ -1200,11 +1280,11 @@ mod tests {
         let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec!["[]".into()]), bg: "Workspace not trusted. Run `claude` in C:\\proj once and accept the trust prompt".into() };
         let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false };
+        let o = Opts { roles: vec!["dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false, add: false };
         let e = up(&t, &o, 1).unwrap_err().to_string();
         assert!(e.contains("chưa trust") && e.contains("8sync ccc auto up"), "{e}");
         assert_eq!(fake.calls.borrow().iter().filter(|c| c.iter().any(|a| a == "--bg")).count(), 1, "stops at the first room");
-        assert!(up(&t, &Opts { roles: vec!["../x".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false }, 1).is_err());
+        assert!(up(&t, &Opts { roles: vec!["../x".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false, add: false }, 1).is_err());
         // `auto revive` walks exactly the roots `up` brought a team up in (here only this one, once).
         assert_eq!(team_roots(&h), [root.to_string_lossy().into_owned()]);
 
@@ -1301,7 +1381,7 @@ mod tests {
         let list = format!("[{},{}]", agent_in(game_lead, "lead", "background", &game), agent_in(DEV_BG, "dev", "background", &game));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|id: &str| id == game_lead, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("BE AI zus".into()), check: None, omp: false };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("BE AI zus".into()), check: None, omp: false, add: false };
         let (status, _, rows) = up(&t, &o, 1_000).unwrap();
         let states: Vec<_> = rows.iter().map(|r| r.state.split(' ').next().unwrap()).collect();
         assert_eq!(states, ["mở", "mở"], "neither the game's lead nor its dev is ours: {rows:?}");
@@ -1362,5 +1442,111 @@ mod tests {
         assert!(parse(&["--check".into(), "x".into()]).is_err(), "a check needs a task");
         assert!(parse(&["--bogus".into()]).is_err());
         assert_eq!(parse(&[]).unwrap().task, None);
+    }
+
+    #[test]
+    fn the_eye_opens_on_a_goal_that_waits_for_image_messages_only() {
+        let g = first_prompt("eye", None, auto::DEFAULT_LOOP_MIN);
+        assert_eq!(g, eye_prompt("eye"));
+        assert!(g.starts_with("/goal Phòng `eye` (vai Soi ảnh"), "{g}");
+        assert!(g.chars().count() <= GOAL_MAX, "eye: {} chars over Claude Code's /goal cap", g.chars().count());
+        assert!(!g.contains('\n'), "one line through a .cmd shim");
+        for want in [
+            "`[ảnh mới]`",
+            "tin khác bỏ qua",
+            "`8sync ccc auto board --json`",
+            "card #N HIỆN TẠI",
+            "note của owner mới hơn thắng AC cũ",
+            "Read từng ảnh",
+            "dẫn tên file ảnh",
+            "không khen",
+            "\"không đủ để kết luận\"",
+            "`8sync ccc auto note N \"[soi ảnh] Đạt: … · Lệch AC: … · Đề xuất: …\" --as eye`",
+            "≤ 400 ký tự",
+            "`8sync ccc msg lead",
+            "--from eye",
+            "`8sync ccc auto wait --json --mail --as eye`",
+            "\"wake\":\"off\"",
+            "không sửa file",
+            "không `auto claim|move|add|done`",
+        ] {
+            assert!(g.contains(want), "eye misses {want}: {g}");
+        }
+        assert!(!g.contains("auto claim --json") && !g.contains("CronCreate"), "no lane, no cron: {g}");
+        assert!(g.contains(&format!("Bash timeout {BASH_MAX_MS}")));
+        // Revive and up treat an idle eye like an idle lane room (its goal ended); rd stays events-only.
+        let idle = Live { id: "e".into(), name: "eye".into(), background: true, started: 0, busy: false, cwd: String::new() };
+        assert!(lost_goal(on_goal("eye"), &idle) && !lost_goal(on_goal("rd"), &idle));
+        assert!(first_prompt("rd", None, 30).starts_with("8sync auto: phòng `rd`"));
+    }
+
+    #[test]
+    fn add_opens_one_room_in_a_running_team_and_down_only_stops_just_that_room() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let o = parse(&v(&["--add", "eye"])).unwrap();
+        assert_eq!((o.roles.join(","), o.add, o.clear, o.omp, o.task.clone()), ("eye".to_string(), true, false, false, None));
+        for bad in [&["--add"][..], &["--add", "eye", "--roles", "full"], &["--add", "--roles"], &["--roles", "lead", "--add", "eye"], &["--add", "eye", "--hours", "8"]] {
+            assert!(parse(&v(bad)).is_err(), "{bad:?}");
+        }
+
+        let (h, root) = tmp("add");
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        let lead = store.touch("lead", false).unwrap();
+        store.touch("dev", false).unwrap();
+        // The fake opens rooms as 3698e3a6: the dev must not share that prefix with the new eye.
+        let dev_id = "bbbbbbbb-9b73-4b37-ab3a-368b169d0508";
+        store.rebind("dev", dev_id).unwrap();
+        let team = format!("[{},{}]", agent_in(&lead.conversation_id, "lead", "background", &root), agent_in(dev_id, "dev", "background", &root));
+        let eye_id = "3698e3a6-0000-4000-8000-00000000e7e0";
+        let with_eye = format!("[{},{},{}]", agent_in(&lead.conversation_id, "lead", "background", &root), agent_in(dev_id, "dev", "background", &root), agent_in(eye_id, "eye", "background", &root));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![team.clone(), team, with_eye.clone()]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+
+        // No team here yet: refused before any `claude` call, nothing turned on.
+        let e = up(&t, &o, 1_000).unwrap_err().to_string();
+        assert!(e.contains("chưa chạy"), "{e}");
+        assert!(fake.calls.borrow().is_empty());
+        assert!(!auto::running(&h));
+
+        // The team runs here with the owner's own lease and cap: `--add eye` leaves both as they are.
+        auto::set(&h, auto::Mode::On { hours: 8.0, after: 60, rate: Some(3.0), repo: Some(root.clone()) }, false, 900).unwrap();
+        set_team_root(&h, &root, true);
+        let before = auto::status(&h, false, 1_000);
+        let (status, gone, rows) = up(&t, &o, 1_000).unwrap();
+        assert_eq!(status, before, "auto untouched");
+        assert_eq!(auto::status(&h, false, 1_000), before);
+        assert!(gone.is_empty());
+        assert_eq!(rows.iter().map(|r| (r.name.as_str(), r.model.as_str(), r.state.as_str())).collect::<Vec<_>>(), [("eye", "sonnet", "mở nền")]);
+        let calls = fake.calls.borrow();
+        assert!(!calls.iter().any(|c| c[0] == "stop"), "no other room is stopped or restarted: {calls:?}");
+        let bg: Vec<_> = calls.iter().filter(|c| c.iter().any(|a| a == "--bg")).collect();
+        assert_eq!(bg.len(), 1, "only the eye opens: {bg:?}");
+        assert_eq!(&bg[0][..3], ["--bg", "--name", "eye"]);
+        assert!(bg[0].windows(2).any(|w| w[0] == "--model" && w[1] == "sonnet"));
+        assert!(bg[0].last().unwrap().starts_with("/goal Phòng `eye`"), "{:?}", bg[0].last());
+        drop(calls);
+        assert_eq!(store.load().sessions.iter().find(|s| s.name == "eye").unwrap().conversation_id, eye_id, "registry follows the id Claude Code picked");
+        assert_eq!(team_roots(&h).len(), 1);
+
+        // Running already: a second `--add eye` sends nothing (no loop message to a /goal room).
+        fake.calls.borrow_mut().clear();
+        *fake.agents.borrow_mut() = vec![with_eye.replace(r#""name":"eye","status":"idle""#, r#""name":"eye","status":"running""#)];
+        let (_, _, rows) = up(&t, &o, 1_001).unwrap();
+        assert_eq!(rows[0].state, "đang chạy");
+        assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop" || c.iter().any(|a| a == "--bg")));
+
+        // Off: only the eye stops and leaves the registry (revive never brings it back); auto runs on.
+        fake.calls.borrow_mut().clear();
+        *fake.agents.borrow_mut() = vec![with_eye];
+        assert!(down_only(&t, "eye").unwrap());
+        let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
+        assert_eq!(stops, [eye_id[..8].to_string()]);
+        let names: Vec<_> = store.load().sessions.iter().map(|s| s.name.clone()).collect();
+        assert_eq!(names, ["lead", "dev"]);
+        assert!(auto::running(&h) && auto::in_scope(&h, Some(&root.to_string_lossy())) && team_roots(&h).len() == 1);
+        fake.calls.borrow_mut().clear();
+        assert!(!down_only(&t, "eye").unwrap(), "already gone: nothing to stop");
+        assert!(fake.calls.borrow().is_empty());
+        let _ = std::fs::remove_dir_all(&h);
     }
 }
