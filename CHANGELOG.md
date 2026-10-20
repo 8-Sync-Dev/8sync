@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.109.1] — 2026-10-20
+### Fixed
+- **`auto wait` hands a room its messages instead of asking it to end the turn.** UAT of 0.109.0 on 3d-game: rooms that were idle got the owner's message in 16–18 s (was 30 min – 5 h), but dev2 and review woke with `"wake":"msg"` and carried on in the same turn (status, claim, wait again), so their Stop hook never ran and the message never arrived. On a `msg` wake, `auto wait` now takes the deliverable lines from the room's inbox exactly as the Stop hook does and returns them in `messages` (and in the text output).
+
 ## [0.109.0] — 2026-10-20
 Measured on the live 3d-game team (6 rooms, 07:24–15:33): 1,893 API calls, 206 M context tokens (~$109), 35 PRs of which 14 closed unmerged, 98 tool errors. The fixes below target the biggest measured losses.
 ### Fixed
