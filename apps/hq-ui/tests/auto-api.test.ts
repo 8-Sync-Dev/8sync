@@ -4,6 +4,12 @@ const status = vi.hoisted(() => vi.fn());
 const set = vi.hoisted(() => vi.fn());
 const tick = vi.hoisted(() => vi.fn(async () => ({ ticked: [] })));
 vi.mock("@/lib/server/auto-tick", () => ({ runAutoTick: tick }));
+/** A live room's repo (a real temp dir, set in beforeAll): the only root `/api/auto` accepts. */
+const room = vi.hoisted(() => ({ cwd: "" }));
+vi.mock("@/lib/server/proc", async (orig) => ({
+  ...(await orig<typeof import("@/lib/server/proc")>()),
+  mergedSessions: async () => (room.cwd ? [{ name: "s1", cwd: room.cwd, status: "running" }] : []),
+}));
 vi.mock("@/lib/server/auto", async (orig) => ({
   ...(await orig<typeof import("@/lib/server/auto")>()),
   autoStatus: status,
@@ -11,6 +17,7 @@ vi.mock("@/lib/server/auto", async (orig) => ({
 }));
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { GET, POST } from "@/app/api/auto/route";
 import { __setNonceForTest, getToken } from "@/lib/server/auth";
@@ -21,6 +28,10 @@ let token = "";
 beforeAll(() => {
   tempHome();
   token = getToken();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hq-auto-root-"));
+  fs.mkdirSync(path.join(dir, ".git"));
+  fs.writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+  room.cwd = path.resolve(dir);
 });
 
 describe("GET /api/auto", () => {
@@ -102,5 +113,13 @@ describe("POST /api/auto", () => {
     expect((await post({ action: "on", root: 7 })).status).toBe(422);
     expect((await post({ action: "on", root: "C:/not/a/live/project" })).status).toBe(409);
     expect(set).not.toHaveBeenCalled();
+  });
+  it("root of a live project: `on` there, with HQ's own spelling of the root, not the client's", async () => {
+    set.mockReset();
+    set.mockResolvedValueOnce({ on: true, paused: false });
+    const res = await post({ action: "on", root: room.cwd.toUpperCase() });
+    expect(res.status).toBe(200);
+    expect(set).toHaveBeenCalledTimes(1);
+    expect(set).toHaveBeenLastCalledWith("on", room.cwd);
   });
 });
