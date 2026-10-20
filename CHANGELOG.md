@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.108.5] — 2026-10-20
+### Fixed
+- **`8sync shot` no longer pins the CPU on a 3D page.** QA screenshots of the 3d-game WebGL scene kept 14 of the machine's 32 threads busy for minutes per shot (HQ "Máy 80%"). The cause was `--disable-gpu`, which forced WebGL onto a software renderer (WARP). Shots now render on the GPU: the same game frame took 2.8 s and 4.1 CPU-seconds, at 94 FPS. In addition:
+  - Chromium runs below normal priority.
+  - A run that does not finish within `--wait` plus 60 s is killed together with its helper processes.
+  - Each shot uses its own temporary profile and calls the real Chromium behind scoop's shim. Before, a second shot taken while another one ran exited with code 21 ("profile in use") and wrote no PNG.
+
 ## [0.108.4] — 2026-10-20
 ### Fixed
 - **The owner's ideas no longer sit in Blocked; the lead clears blocked cards.** On 3d-game the lead split the owner's ideas into `[#10] …` cards, then parked the ideas themselves in Blocked as "epic". Another card waited on a PR that was already closed. A third waited for the owner to send images. Meanwhile the lead slept in `auto wait`. The board now handles these cases:
