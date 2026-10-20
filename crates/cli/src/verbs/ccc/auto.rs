@@ -51,9 +51,9 @@ use super::{delegate, idle, target};
 const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | ci [local|github] [--json]
        8sync ccc auto omp on [--model <provider/model>]|off [--json] | nudge --session <room id> --cwd <dir> [--model <provider/model>] [--json]
        (on --omp nhận thêm --omp-model <provider/model>: model của đội omp)
-       8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down
+       8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | up --add <phòng> | down [--only <phòng>]
        8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--role <vai>] [--prio P0..P3] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id> | reopen <id> [--note \"…\"]
-       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>] [--timeout <giây ≤1800>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
+       8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>|--mail] [--timeout <giây ≤1800>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
        8sync ccc auto merge [--as <phòng>] [--json]   (lead: merge mọi card approved; cần quyền tự merge của owner)
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
 pub(super) const DEFAULT_AFTER_S: u64 = 60;
@@ -1514,18 +1514,20 @@ pub(super) fn wait_default(bash_max_ms: Option<&str>) -> u64 {
 #[derive(Debug, PartialEq)]
 struct Wait {
     room: String,
-    lane: String,
+    /// None: `--mail`, a room without a lane (eye) waits for messages only.
+    lane: Option<String>,
     timeout: u64,
 }
 
 /// `bash_max_ms`: the room's `BASH_MAX_TIMEOUT_MS`, for the default timeout ([`wait_default`]).
 fn parse_wait(args: &[String], bash_max_ms: Option<&str>, rooms: impl FnOnce() -> Vec<(String, String)>) -> Result<Wait> {
-    let (mut lane, mut who, mut timeout) = (None, None, wait_default(bash_max_ms));
+    let (mut lane, mut who, mut timeout, mut mail) = (None, None, wait_default(bash_max_ms), false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().filter(|v| !v.starts_with("--")).cloned().ok_or_else(|| anyhow::anyhow!("{a} cần một giá trị\n{USAGE}"));
         match a.as_str() {
             "--json" => {}
+            "--mail" => mail = true,
             "--lane" => lane = Some(value()?),
             "--as" => who = Some(value()?),
             "--timeout" => {
@@ -1537,12 +1539,18 @@ fn parse_wait(args: &[String], bash_max_ms: Option<&str>, rooms: impl FnOnce() -
     let Some(room) = who.or_else(|| me(&rooms())) else {
         bail!("wait chạy trong một phòng (`8sync ccc auto up`), hoặc thêm --as <phòng>\n{USAGE}");
     };
+    if mail {
+        if lane.is_some() {
+            bail!("--mail chờ tin nhắn, không chờ cột: bỏ --lane\n{USAGE}");
+        }
+        return Ok(Wait { room, lane: None, timeout });
+    }
     let lane = match lane.or_else(|| super::room::find(&room).and_then(|r| r.lane).map(str::to_string)) {
         Some(l) if target::LANES.contains(&l.as_str()) && !matches!(l.as_str(), "building" | "approved") => l,
         Some(l) => bail!("cột `{l}` không chờ được: backlog, ready, qa, review, blocked"),
-        None => bail!("phòng `{room}` không có cột riêng: thêm --lane"),
+        None => bail!("phòng `{room}` không có cột riêng: thêm --lane (hoặc --mail: chỉ chờ tin nhắn)"),
     };
-    Ok(Wait { room, lane, timeout })
+    Ok(Wait { room, lane: Some(lane), timeout })
 }
 
 /// Block until the room has a card in its lane, a message in its HQ inbox (`status`' `mail`,
@@ -1576,15 +1584,18 @@ fn wait_for(
             (t.saturating_sub(start) >= w.timeout).then_some(("cap", None))
         } else if st["mail"].is_u64() {
             Some(("msg", None))
-        } else if let Some((why, id)) = {
-            let cs = cards()?;
-            let live = lead && st["self_merge"].is_object();
-            let approved = || cs.iter().filter(|c| c.state == "open" && c.lane == "approved").map(|c| c.id);
-            let old = seen.get_or_insert_with(|| if live { approved().collect() } else { Vec::new() });
-            live.then(|| approved().find(|id| !old.contains(id)))
-                .flatten()
-                .map(|id| ("merge", id))
-                .or_else(|| target::claimable(&cs, &w.room, &w.lane, t).map(|id| ("card", id)))
+        } else if let Some((why, id)) = match &w.lane {
+            None => None,
+            Some(lane) => {
+                let cs = cards()?;
+                let live = lead && st["self_merge"].is_object();
+                let approved = || cs.iter().filter(|c| c.state == "open" && c.lane == "approved").map(|c| c.id);
+                let old = seen.get_or_insert_with(|| if live { approved().collect() } else { Vec::new() });
+                live.then(|| approved().find(|id| !old.contains(id)))
+                    .flatten()
+                    .map(|id| ("merge", id))
+                    .or_else(|| target::claimable(&cs, &w.room, lane, t).map(|id| ("card", id)))
+            }
         } {
             Some((why, Some(id)))
         } else if t.saturating_sub(start) >= w.timeout {
@@ -1635,6 +1646,7 @@ fn wait_text(v: &Value) -> String {
         Some("merge") => format!("card #{} vừa approved, owner đã cho tự merge: `8sync ccc auto merge`", v["card"]),
         Some("off") => "auto đã tắt hoặc tạm dừng: dừng, không claim nữa".into(),
         Some("cap") => format!("chạm trần ({}): nghỉ, không claim; chạy lại `8sync ccc auto wait` (chờ cửa sổ hồi)", v["cap"].as_str().unwrap_or("")),
+        _ if v["lane"].is_null() => format!("chưa có tin nhắn sau {} giây: chờ tiếp (`8sync ccc auto wait --mail`)", v["waited_s"]),
         _ => format!("cột {lane} vẫn trống sau {} giây: chờ tiếp (`8sync ccc auto wait`)", v["waited_s"]),
     }
 }
@@ -2467,9 +2479,12 @@ mod tests {
         assert_eq!((wait_default(Some("1860000")), wait_default(None), wait_default(Some("600000"))), (1800, 540, 540));
         assert_eq!((wait_default(Some("9999999")), wait_default(Some("junk")), wait_default(Some("30000"))), (1800, 540, 1));
         assert_eq!(wait_default(Some(&super::super::team::BASH_MAX_MS.to_string())), WAIT_MAX_S, "team rooms wait the full 30 min");
-        assert_eq!(parse_wait(&a(&["--as", "dev"]), None, rooms).unwrap(), Wait { room: "dev".into(), lane: "ready".into(), timeout: WAIT_DEFAULT_S });
+        assert_eq!(parse_wait(&a(&["--as", "dev"]), None, rooms).unwrap(), Wait { room: "dev".into(), lane: Some("ready".into()), timeout: WAIT_DEFAULT_S });
         assert_eq!(parse_wait(&a(&["--as", "dev"]), Some("1860000"), rooms).unwrap().timeout, 1800);
-        assert_eq!(parse_wait(&a(&["--as", "x", "--lane", "qa", "--timeout", "30"]), None, rooms).unwrap().lane, "qa");
+        assert_eq!(parse_wait(&a(&["--as", "x", "--lane", "qa", "--timeout", "30"]), None, rooms).unwrap().lane.as_deref(), Some("qa"));
+        // A room without a lane (eye) waits for its messages only.
+        assert_eq!(parse_wait(&a(&["--as", "eye", "--mail"]), None, rooms).unwrap(), Wait { room: "eye".into(), lane: None, timeout: WAIT_DEFAULT_S });
+        assert!(parse_wait(&a(&["--as", "eye", "--mail", "--lane", "qa"]), None, rooms).is_err(), "a lane and --mail is one too many");
         for bad in [&["--as", "dev", "--timeout", "0"][..], &["--as", "dev", "--timeout", "1801"], &["--as", "dev", "--lane", "building"], &["--as", "rd"], &["--as"]] {
             assert!(parse_wait(&a(bad), None, rooms).is_err(), "{bad:?}");
         }
@@ -2496,7 +2511,7 @@ mod tests {
             prio: None,
             refill_at: None,
         };
-        let w = Wait { room: "dev".into(), lane: "ready".into(), timeout: 60 };
+        let w = Wait { room: "dev".into(), lane: Some("ready".into()), timeout: 60 };
         let on = json!({ "on": true, "paused": false, "cap": null });
         // the card shows up on the third poll; every poll sleeps once (no real waiting in the test)
         let (clock, polls) = (Cell::new(1_000u64), Cell::new(0));
@@ -2537,6 +2552,13 @@ mod tests {
         let v = wait_for(&w, || Ok(vec![]), |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
         assert_eq!((v["wake"].as_str(), v["waited_s"].as_u64()), (Some("timeout"), Some(60)));
         assert!(wait_text(&v).contains("chờ tiếp"));
+        // --mail (the eye room): a ready card never wakes it, a message does, nothing → timeout.
+        let eye = Wait { room: "eye".into(), lane: None, timeout: 4 };
+        let clock = Cell::new(0u64);
+        let v = wait_for(&eye, || panic!("a mail-only wait never reads the board"), |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
+        assert_eq!((v["wake"].as_str(), v["lane"].is_null()), (Some("timeout"), true));
+        assert!(wait_text(&v).contains("auto wait --mail"), "{}", wait_text(&v));
+        assert_eq!(wait_for(&eye, || Ok(vec![card(7, "ready")]), |_| mail.clone(), || 5, || {}).unwrap()["wake"], "msg");
     }
 
     #[test]
@@ -2590,7 +2612,7 @@ mod tests {
     fn lead_wait_wakes_for_a_new_approved_card_only_while_self_merge_is_live() {
         use std::cell::Cell;
         let card = |id: u64, lane: &str| serde_json::from_value::<target::Target>(json!({ "id": id, "text": "t", "added": 0, "state": "open", "lane": lane })).unwrap();
-        let lead = Wait { room: "lead".into(), lane: "backlog".into(), timeout: 60 };
+        let lead = Wait { room: "lead".into(), lane: Some("backlog".into()), timeout: 60 };
         let live = json!({ "on": true, "paused": false, "cap": null, "self_merge": { "until": 9_999, "by": "s" } });
         let none = json!({ "on": true, "paused": false, "cap": null, "self_merge": null });
         // #5 approved before the wait (a merge that failed) does not wake it; #6 approved later does.
@@ -2614,7 +2636,7 @@ mod tests {
         };
         assert_eq!(wait_for(&lead, || Ok(vec![card(6, "approved")]), st, || clock.get(), || clock.set(clock.get() + 2)).unwrap()["card"], 6);
         // Other rooms never wake for approved cards.
-        let dev = Wait { room: "dev".into(), lane: "ready".into(), timeout: 4 };
+        let dev = Wait { room: "dev".into(), lane: Some("ready".into()), timeout: 4 };
         let clock = Cell::new(0u64);
         assert_eq!(wait_for(&dev, || Ok(vec![card(6, "approved")]), |_| live.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap()["wake"], "timeout");
     }

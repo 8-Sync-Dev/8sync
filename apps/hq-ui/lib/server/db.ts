@@ -80,6 +80,19 @@ CREATE TABLE IF NOT EXISTS hidden_projects (
   name TEXT NOT NULL,
   hidden_at INTEGER NOT NULL
 );
+-- "Tự soi ảnh" switch per project (lib/server/eye.ts); key = lib/preview.ts rootKey(root), since = when it went on.
+CREATE TABLE IF NOT EXISTS eye_on (
+  key TEXT PRIMARY KEY,
+  root TEXT NOT NULL,
+  since INTEGER NOT NULL
+);
+-- Images already handed to a project's eye room (lib/eye.ts imageKey): never sent twice, across restarts.
+CREATE TABLE IF NOT EXISTS eye_sent (
+  key TEXT NOT NULL,
+  image TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (key, image)
+);
 `;
 
 const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync; schema: string } };

@@ -1,6 +1,7 @@
 import { AUTO_ACTIONS, autoSet, autoStatus, type AutoAction } from "@/lib/server/auto";
 import { runAutoTick } from "@/lib/server/auto-tick";
 import { readPublic } from "@/lib/server/auth";
+import { eyeAutoTick } from "@/lib/server/eye";
 import { sweepStuckAsks } from "@/lib/server/stuck-asks";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { projectOf } from "@/lib/server/office";
@@ -22,6 +23,8 @@ export async function GET(req: Request) {
   const tick = await runAutoTick(status);
   // Not awaited: closing a dialog takes a few seconds per room; the next poll reports nothing new.
   void sweepStuckAsks(status);
+  // "Tự soi ảnh" whatever tab is open; returns at once when no project has it on.
+  void eyeAutoTick(o.db);
   return json({ ...status, versions: v, tick, remote: { host: readPublic()?.host ?? null } });
 }
 

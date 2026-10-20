@@ -61,8 +61,13 @@ pub(super) const BOOST_TEAM: [&str; 13] = ["lead", "ba", "dev", "dev2", "dev3", 
 /// labelled `arch` never waits on a room the team does not have (the lead writes a short ADR then).
 pub(super) const ARCH_PLAYBOOK: &str = "card nhãn `arch` (xem `8sync ccc auto board --json`) chưa có note \"ADR:\" → `/sysdesign` (đọc đúng mục System Design Primer + docs chính thức của stack, số ước lượng) → ADR (≥2 phương án, trade-off, chọn gì, vì sao, nguồn) ghi vào nơi repo đang ghi quyết định (`docs/adr/`, `DECISIONS.md`, `docs/*DECISION*.md`; chưa có → `docs/adr/card-<id>-<slug>.md`), không mở nơi song song → `8sync ccc auto note <id> \"ADR: <path> · chọn <x>\"`; card ở cột review → đọc diff, lệch ADR, vượt ngân sách trong `docs/adr/budgets.md` hay thêm thành phần không cần → `auto note <id> \"[arch] …\"` (review vẫn quyết). Hết việc card, mỗi ngày một lượt mỗi việc: (a) tech radar theo danh mục `su-code/research/radar-sources.md` (chưa có → lập từ manifest của repo: package.json, Cargo.toml, go.mod, pyproject; mỗi dependency chính: GitHub `releases.atom`, changelog chính thức, registry npm/crates.io/PyPI; CVE: công cụ audit local của stack trước (`pnpm audit --json`, `cargo audit`, `govulncheck ./...`, `pip-audit`; không gửi danh sách dependency ra ngoài), chi tiết từng mã đọc `https://api.osv.dev/v1/vulns/<id>`; blog/RSS chính thức của stack; mỗi nguồn ghi `last_seen`): nguồn gốc trước, tin tổng hợp (HN, newsletter) chỉ để phát hiện rồi đọc bản gốc; bỏ mục đã có ở radar trước (URL chuẩn hoá, cùng version); xếp hạng cố định: CVE trúng version repo đang dùng > breaking change phải đổi code > bản mới có lợi đo được > còn lại; mỗi dòng: version, ngày, link nguồn, ảnh hưởng tới repo; version hay số không có trong nguồn thì không ghi; nguồn lỗi ghi lại rồi đi tiếp → `su-code/research/radar-<ngày>.md`; (b) sức khoẻ scale: ĐO thật (kích thước bundle/binary, thời gian build/test, query chậm hay N+1, RAM, cold start, chi phí mỗi request) so với `docs/adr/budgets.md` (chưa có → viết bản đầu từ số đo hôm nay), chỗ nghẽn lớn nhất có số → card; giới hạn cứng trong code (concurrency, pool, timeout) đưa vào budgets kèm lý do; (c) lệch tài liệu: quyết định mâu thuẫn nhau hay với code, sơ đồ/danh sách service cũ, `file:line` trôi → một ADR hợp nhất hoặc sửa tài liệu. Mục cần làm → `8sync ccc auto add \"…\" --label arch --check \"<lệnh đo>\"`; không có số đo thì không mở card";
 
+/// The "Soi ảnh" room (`eye`): HQ's "Tự soi ảnh" switch adds it to a running team
+/// (`auto up --add eye`) and sends it one `[ảnh mới]` message per card with new screenshots; it
+/// waits for those messages only ([`super::team::eye_prompt`], `auto wait --mail`).
+pub(super) const EYE: &str = "Soi ảnh";
+
 /// In match order. "qc" is a tester here, as Vietnamese teams use the word.
-const ROLES: [Role; 13] = [
+const ROLES: [Role; 14] = [
     r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối board: triage backlog (đích của owner) thành card ready có AC + lệnh check, gỡ card blocked, chia việc; merge: `8sync ccc auto merge` một lần, không sleep chờ, không `gh pr merge` (thiếu quyền → MỘT câu Ship)", Some("opus"), Some("backlog")),
     r(&["ba", "analyst", "spec", "req", "po"], "BA", "viết card: acceptance criteria + đúng một lệnh check, tách việc lớn thành card nhỏ, backlog → ready; không sửa code sản phẩm", Some("opus"), Some("backlog")),
     r(&["arch", "architect", "architecture", "sa", "solution"], "Architect", "solution architecture suốt vòng đời: ADR cho card nhãn arch trước khi build (/sysdesign theo System Design Primer + docs chính thức), review kiến trúc diff ở cột review, mỗi ngày tech radar có nguồn + đo sức khoẻ scale theo docs/adr/budgets.md; không sửa code sản phẩm", Some("opus"), None),
@@ -77,6 +82,7 @@ const ROLES: [Role; 13] = [
     r(&["doc", "docs", "write", "content", "blog"], "Docs", "tài liệu, CHANGELOG, hướng dẫn; không bịa số liệu", None, None),
     r(&["sec", "security", "audit", "aup"], "Security", "/sec, /aup-audit, /rules; BLOCK → dừng, báo owner", None, None),
     r(&["core", "cli", "rust", "crate", "kit", "ccc"], "Core/Rust", "crates/ (Rust): cargo check/test một module, nice -n 19 -j2", None, Some("ready")),
+    r(&["eye"], EYE, "soi ảnh mới của card (tin `[ảnh mới]` từ HQ) so với AC + ý owner mới nhất trên board, ghi MỘT note [soi ảnh] khách quan, lệch AC/lỗi hình → báo lead; không sửa code, không move card", Some("sonnet"), None),
 ];
 
 /// The row a session name picks, if any.
@@ -111,6 +117,7 @@ fn crew_of(row: &Role) -> &'static str {
         "Review" => "review",
         "R&D" => "rd",
         "Architect" => "arch",
+        EYE => "eye",
         "BA" => "ba",
         "Lead/PM" => "lead",
         "Ops/CI" => "ops",
@@ -137,6 +144,11 @@ pub(super) fn crew(name: &str) -> String {
 /// topic room (`godot2`) that builds its own `[godot]` cards.
 pub(super) fn builds(name: &str) -> bool {
     find(name).is_none_or(|row| row.lane == Some("ready"))
+}
+
+/// Pure: is room `name` the "Soi ảnh" room ([`EYE`])?
+pub(super) fn is_eye(name: &str) -> bool {
+    find(name).is_some_and(|row| row.name == EYE)
 }
 
 /// Tags that open card titles but name no role (`[hot-fix]`, `[wip]`, `[p1]`).
@@ -325,6 +337,16 @@ mod tests {
         assert_eq!(models, [Some("opus"), Some("opus"), Some("opus"), Some("sonnet"), Some("sonnet"), Some("sonnet")], "qa gates visual UAT: not haiku");
         assert!(find("acoleads").is_none());
         assert!(find("sec").is_some_and(|r| r.lane.is_none() && r.model.is_none()), "security does not take review cards");
+    }
+
+    #[test]
+    fn the_eye_room_reviews_images_without_a_lane_or_a_crew() {
+        let e = find("eye").unwrap();
+        assert_eq!((e.name, e.lane, e.model), (EYE, None, Some("sonnet")));
+        assert!(is_eye("eye") && is_eye("eye-3d-game") && !is_eye("eyes") && !is_eye("rd"), "whole token only");
+        assert_eq!(crew("eye"), "eye");
+        assert!(!builds("eye"), "never claims ready cards");
+        assert!(!DEFAULT_TEAM.contains(&"eye") && !FULL_TEAM.contains(&"eye") && !BOOST_TEAM.contains(&"eye"), "joins by HQ's switch only");
     }
 
     #[test]

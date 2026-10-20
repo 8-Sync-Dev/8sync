@@ -21,14 +21,17 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cardParts, prRef } from "@/lib/card-tags";
-import { LANES, type Board, type LaneKey } from "@/lib/lanes";
+import { LANES, type Board, type LaneKey, type Step } from "@/lib/lanes";
 import { agoShort, agoVi } from "@/lib/now";
 import { fileName, lastActivity, previewSections, rootKey, type PreviewItem, type ProjectPreviews } from "@/lib/preview";
 import type { ProjectBoard } from "@/lib/server/board";
+import { boardCard, eyeNote } from "@/lib/eye";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import { EmptyState, ErrorNote } from "./bits";
 import { LANE_VI, TONE_INK, laneTone } from "./card-sheet";
 import { AskImage } from "./ask-image";
+import { Switch } from "./machine-view";
 import { PlayButton } from "./play-view";
 import { makeApi, type Api } from "./use-hq";
 import type { Room } from "./use-office";
@@ -134,6 +137,7 @@ export function PreviewView({
           <Skeleton className="h-4 w-32" />
         )}
         <div className="ml-auto flex items-center gap-2">
+          {cur && <EyeToggle key={cur.root} root={cur.root} since={cur.eye ?? null} api={api} onChanged={state.reload} />}
           {cur && <PlayButton key={cur.root} root={cur.root} name={cur.name} token={token} />}
           <Button type="button" variant="ghost" size="icon-sm" onClick={state.reload} aria-label="Tải lại ảnh">
             <RefreshCwIcon />
@@ -611,6 +615,8 @@ function Viewer({
   });
   const info = item?.card != null ? infoOf(item.card) : null;
   const canOpen = !!info && isOpenLane(info.lane);
+  // The eye room's latest `[soi ảnh]` note on this card, from the board HQ already reads.
+  const note = item?.card != null ? eyeNote(boardCard(boardOf(boards, item.root), item.card)?.card) : null;
   return (
     <Dialog open={item != null} onOpenChange={(o) => !o && onId(null)}>
       <DialogContent
@@ -672,6 +678,7 @@ function Viewer({
               )}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+              {note && <EyeNoteBox step={note} now={now} />}
               <DialogDescription asChild>
                 <code className="min-w-0 flex-1 font-mono text-xs break-all text-muted-foreground max-sm:basis-full">{fullPath(item)}</code>
               </DialogDescription>
@@ -688,5 +695,50 @@ function Viewer({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The eye room's `[soi ảnh]` note on the open image's card: who, when, the note itself. */
+export function EyeNoteBox({ step, now }: { step: Step; now: number }) {
+  return (
+    <p role="note" aria-label="Nhận xét soi ảnh" className="max-h-28 basis-full overflow-y-auto rounded-md bg-muted/60 px-2.5 py-1.5 text-xs leading-snug break-words whitespace-pre-wrap">
+      <span className="text-muted-foreground">
+        {step.room ?? "owner"} · <span className="tabular">{agoShort(step.at, now)}</span> ·{" "}
+      </span>
+      {step.text}
+    </p>
+  );
+}
+
+/**
+ * "Tự soi ảnh" for this project: on adds the `eye` room to the running team (`auto up --add eye`),
+ * which reviews each card's new screenshots; off stops that room only. `since`: when it went on.
+ */
+function EyeToggle({ root, since, api, onChanged }: { root: string; since: number | null; api: Api; onChanged: () => void }) {
+  // The state asked for, while the poll still shows the `since` it was asked from.
+  const [want, setWant] = useState<{ on: boolean; from: number | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const on = want && want.from === since ? want.on : since != null;
+
+  async function flip(next: boolean) {
+    setBusy(true);
+    setWant({ on: next, from: since });
+    try {
+      await api("/api/preview/eye", { method: "POST", body: { root, on: next } });
+      toast.success(next ? "Đã bật tự soi ảnh" : "Đã tắt tự soi ảnh", { description: next ? "Phòng eye soi ảnh mới của card đang mở, ghi note [soi ảnh] và báo lead khi lệch AC." : "Đã dừng riêng phòng eye; các phòng khác vẫn chạy." });
+      onChanged();
+    } catch (e) {
+      setWant(null);
+      toast.error(next ? "Chưa bật được tự soi ảnh" : "Chưa tắt được tự soi ảnh", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 text-xs" title="Phòng eye soi ảnh mới của card đang mở so với AC và ghi note [soi ảnh]">
+      <span className={cn(on ? "text-foreground" : "text-muted-foreground")}>Tự soi ảnh: {on ? "bật" : "tắt"}</span>
+      <Switch on={on} busy={busy} label="Tự soi ảnh" onChange={(v) => void flip(v)} />
+    </span>
   );
 }
