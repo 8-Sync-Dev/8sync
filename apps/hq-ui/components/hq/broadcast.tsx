@@ -19,7 +19,7 @@ export function BroadcastComposer({ hq, rooms, preferRoot }: { hq: Hq; rooms: Ro
         preferRoot={preferRoot}
         onMessage={(m) => hq.mergeMessages([m])}
         placeholder="Một việc cho cả team hay một phòng, vd: webhook 500 on retry · @ để chèn file (Ctrl+Enter để gửi)"
-        className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6"
+        className="mx-auto w-full max-w-3xl px-4 py-3 max-sm:py-2 sm:px-6"
       />
     </div>
   );

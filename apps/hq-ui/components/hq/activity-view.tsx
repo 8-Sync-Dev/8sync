@@ -40,7 +40,7 @@ export function ActivityView({ hq, messages }: { hq: Hq; messages: Message[] }) 
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div role="radiogroup" aria-label="Filter activity" className="flex shrink-0 gap-1 overflow-x-auto border-b px-4 py-2 sm:px-6">
+      <div role="radiogroup" aria-label="Filter activity" className="relative flex shrink-0 gap-1 overflow-x-auto border-b px-4 py-2 sm:px-6">
         {FILTERS.map((f) => (
           <button
             key={f.key}

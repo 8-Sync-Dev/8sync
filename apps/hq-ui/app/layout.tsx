@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Be_Vietnam_Pro, Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
@@ -17,6 +17,9 @@ export const metadata: Metadata = {
   description: "Local team view for your Claude Code sessions",
   icons: { icon: "/8sync-mark.svg" },
 };
+
+/** cover: the app pads itself with env(safe-area-inset-*) (hq-app root, bottom sheets), so a phone's notch and home indicator never sit on a control. */
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (

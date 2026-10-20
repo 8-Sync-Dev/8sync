@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRightIcon, CheckIcon, ChevronsLeftIcon, ChevronsRightIcon, GitPullRequestIcon, LayersIcon, ListTreeIcon, OctagonAlertIcon, RefreshCwIcon, ShipIcon, Undo2Icon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
 import { CardSheet, LabelChip, PrioChip, TagChips, TONE_INK, laneTone } from "./card-sheet";
 import { RoleIcon } from "./role-badge";
+import { LaneStrip } from "./scroll-strip";
 import type { BoardsState } from "./use-board";
 
 /** The project board (`8sync ccc auto board`): which room holds which card, lane by lane. */
@@ -23,6 +24,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
   const [open, setOpen] = useState<{ root: string; card: Card } | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [doneWide, setDoneWide] = useState(false);
+  const lanesRef = useRef<HTMLDivElement>(null);
 
   // "Mở card" from another tab (Preview, Tổng quan): pick that project and open the card once the board has it.
   // Adjusted during render (not in an effect), the React way to react to a changed prop.
@@ -73,10 +75,10 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b px-4 py-2.5 sm:px-6">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b px-4 py-2.5 max-md:py-1.5 sm:px-6">
         {list.length > 1 ? (
           <Select value={cur?.root ?? ""} onValueChange={setPick}>
-            <SelectTrigger size="sm" className="max-w-64 text-xs" aria-label="Dự án">
+            <SelectTrigger size="sm" className="max-w-64 text-xs max-md:min-w-0 max-md:flex-1 max-sm:h-11" aria-label="Dự án">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -92,12 +94,13 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
         ) : (
           <Skeleton className="h-4 w-32" />
         )}
-        <span className="text-xs text-muted-foreground">{cur?.board ? boardSummary(cur.board) : (cur?.error ?? "")}</span>
+        {/* Phones: project and reload share the first line, the summary takes the next (order-last + basis-full). */}
+        <span className="text-xs text-muted-foreground max-md:order-last max-md:basis-full">{cur?.board ? boardSummary(cur.board) : (cur?.error ?? "")}</span>
         {/* Announced once per poll that moved a card; the moved cards carry the same text. */}
-        <span role="status" className="min-w-0 truncate text-xs font-medium text-brand-ink">
+        <span role="status" className="min-w-0 truncate text-xs font-medium text-brand-ink max-md:order-last max-md:basis-full max-md:empty:hidden">
           {movedHere.length > 0 && `Vừa chuyển: ${movedHere.map((m) => `#${m.id} ${laneLabel(m.from)} → ${laneLabel(m.to)}`).join(" · ")}`}
         </span>
-        <Button type="button" variant="ghost" size="icon-sm" className="ml-auto" onClick={() => void load()} aria-label="Tải lại board">
+        <Button type="button" variant="ghost" size="icon-sm" className="ml-auto max-sm:size-11 max-sm:-mr-2" onClick={() => void load()} aria-label="Tải lại board">
           <RefreshCwIcon />
         </Button>
       </div>
@@ -106,20 +109,33 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
           <ErrorNote what={`board của ${cur.name}`} error={cur.error} onRetry={load} />
         </div>
       ) : (
-        <div className="min-h-0 flex-1 snap-x snap-mandatory scroll-px-4 overflow-x-auto overflow-y-hidden md:snap-none">
-          {/* Done sits between Approved and Blocked: where an approved card goes once merged. Narrow until opened. */}
-          <div
-            className={cn(
-              "grid h-full grid-cols-[repeat(8,minmax(min(82vw,16rem),1fr))] gap-2.5 px-4 py-4 sm:px-6",
-              doneWide ? "md:grid-cols-[repeat(6,minmax(10.5rem,1fr))_minmax(15rem,1.3fr)_minmax(10.5rem,1fr)]" : "md:grid-cols-[repeat(6,minmax(10.5rem,1fr))_8.5rem_minmax(10.5rem,1fr)]",
-            )}
-          >
-            {LANES.flatMap((l) => {
-              const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} kidsOf={(id) => kids?.get(id)} now={now} next={next} onOpen={onOpenCard} />;
-              return l.key === "blocked" ? [<DoneLane key="done" closed={cur?.board?.closed ?? null} now={now} wide={doneWide} onWide={setDoneWide} />, lane] : [lane];
+        <>
+          {/* Phones: one lane per screen; the strip names every lane with its count and jumps to it. */}
+          <LaneStrip
+            scroller={lanesRef}
+            label="Cột board"
+            className="border-b md:hidden"
+            items={LANES.flatMap((l) => {
+              const item = { key: l.key, label: l.label, count: cur?.board ? cur.board.lanes[l.key].length : null, style: laneTone(l.key) };
+              return l.key === "blocked" ? [{ key: "done", label: "Done", count: cur?.board?.closed ? cur.board.closed.length : null }, item] : [item];
             })}
+          />
+          <div ref={lanesRef} className="relative min-h-0 flex-1 snap-x snap-mandatory scroll-px-4 overflow-x-auto overflow-y-hidden md:snap-none">
+            {/* Done sits between Approved and Blocked: where an approved card goes once merged. Narrow until opened. */}
+            {/* Phones: a lane is 88vw so the next one peeks in; 640-767 px (no sidebar yet): two lanes side by side. */}
+            <div
+              className={cn(
+                "grid h-full grid-cols-[repeat(8,88vw)] gap-2.5 px-4 py-3 sm:grid-cols-[repeat(8,minmax(17rem,1fr))] sm:px-6 md:py-4",
+                doneWide ? "md:grid-cols-[repeat(6,minmax(10.5rem,1fr))_minmax(15rem,1.3fr)_minmax(10.5rem,1fr)]" : "md:grid-cols-[repeat(6,minmax(10.5rem,1fr))_8.5rem_minmax(10.5rem,1fr)]",
+              )}
+            >
+              {LANES.flatMap((l) => {
+                const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} kidsOf={(id) => kids?.get(id)} now={now} next={next} onOpen={onOpenCard} />;
+                return l.key === "blocked" ? [<DoneLane key="done" closed={cur?.board?.closed ?? null} now={now} wide={doneWide} onWide={setDoneWide} />, lane] : [lane];
+              })}
+            </div>
           </div>
-        </div>
+        </>
       )}
       <CardSheet
         c={shown}
@@ -137,7 +153,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
 function DoneLane({ closed, now, wide, onWide }: { closed: Closed[] | null; now: number; wide: boolean; onWide: (v: boolean) => void }) {
   const done = closed?.filter((c) => c.state === "done").length ?? 0;
   return (
-    <section aria-labelledby="lane-done" className="flex min-h-0 snap-start flex-col rounded-xl bg-muted/60">
+    <section aria-labelledby="lane-done" data-lane="done" className="flex min-h-0 snap-start flex-col rounded-xl bg-muted/60">
       <h3 id="lane-done" className="flex items-center gap-1.5 px-3 pt-3 text-[13px] font-semibold">
         <CheckIcon aria-hidden className="size-3.5 text-st-running" strokeWidth={3} />
         <span>Done</span>
@@ -225,6 +241,7 @@ function Lane({
   return (
     <section
       aria-labelledby={`lane-${lane}`}
+      data-lane={lane}
       style={laneTone(lane)}
       className={cn(
         "flex min-h-0 snap-start flex-col rounded-xl",

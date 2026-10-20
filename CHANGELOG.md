@@ -5,6 +5,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.1] — 2026-10-20
+### Fixed
+- **Guard: a room may clean its own Claude Code scratch dir `~/.claude/jobs/<id>/tmp/<…>` without asking.** 3d-game, 18:55–19:31: the qa room exported each PR head there with `rm -rf … && mkdir -p … && git archive …`, the guard asked ("deletes outside the project"), and a background room cannot answer: qa sat 35 min on the prompt while five cards waited in qa. The `tmp` dir itself, the job dir and `~/.claude/jobs` still ask.
+- **HQ on a phone (`hq ui --public`): every tab fits and every lane is reachable.** Owner report from a 360 px phone: tabs cut off on both sides with the Máy chip crowding them, Board showing only Backlog.
+  - Tab row: the edge that still hides tabs fades out, tabs snap; on phones the Máy chip is a compact `41% / 103 W` set apart by a rule. Header buttons are 44 px targets and the title still fits at 360 px.
+  - Board (Card dự án and Task của session): one 88vw lane per screen with the next one peeking, snapping, and a strip naming every lane with its count that jumps to it and marks the one in view. The project picker and reload share one line.
+  - The page no longer scrolls sideways: an `sr-only` count inside a horizontal scroller escaped it (Board pushed the page to 2116 px at 360, Sessions to 482). Tablets (768 px): the Running/usage/Needs-you strip shows from 1280 px up, it pushed the page to 925 px.
+  - Flow and Báo cáo keep the card / room names pinned while the lanes and numbers scroll sideways. Composer: shorter send label, 2-line hints on phones. Inputs are 16 px on phones (no iOS zoom); `viewport-fit=cover` with safe-area insets on the app frame, sheets and bottom sheets.
+
 ## [0.110.0] — 2026-10-20
 ### Added
 - **CI/CD on the release machine, GitHub only stores the code: `8sync ccc auto ci local`.** It turns GitHub Actions off for the repo (`gh api -X PUT repos/{owner}/{repo}/actions/permissions -F enabled=false`); `auto ci github` turns it back on. A repo with Actions off reads `ci: local` in `auto status` before any old run is looked at, so rooms take the local gate per head SHA as CI and never wait on GitHub. Owner ask after the billing hold on 3d-game and ai-game-studio (every run failed in seconds).

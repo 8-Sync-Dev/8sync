@@ -320,7 +320,7 @@ function place(r: UsageRow): string {
 function RoomTable({ rows, period, sort, setSort, cap }: ListProps) {
   const cols = SORTS.filter((c) => c.key !== "total");
   return (
-    <div className="hidden overflow-x-auto rounded-lg border md:block">
+    <div className="relative hidden overflow-x-auto rounded-lg border md:block">
       <table className="w-full min-w-[52rem] text-sm">
         <caption className="sr-only">Token theo phòng, sắp theo {SORTS.find((c) => c.key === sort)?.label}</caption>
         <thead className="border-b bg-muted/50 text-xs text-muted-foreground">

@@ -175,6 +175,25 @@
   }
 }
 
+/* A horizontal scroller that hides content: the edge with more to see fades out (useEdgeFade sets the attributes). */
+.hq-fade-x {
+  --fade-s: 0px;
+  --fade-e: 0px;
+  mask-image: linear-gradient(to right, transparent, #000 var(--fade-s), #000 calc(100% - var(--fade-e)), transparent);
+}
+.hq-fade-x[data-fade-start] {
+  --fade-s: 2rem;
+}
+.hq-fade-x[data-fade-end] {
+  --fade-e: 2rem;
+}
+
+/* viewport-fit=cover: full-height and bottom sheets keep their last row (key bars, nav footer) above the home indicator.
+   A border in the sheet's own colour, so each sheet's padding classes stay as they are; 0 wide where there is no inset. */
+[data-slot="sheet-content"]:not([data-side="top"]) {
+  border-bottom: env(safe-area-inset-bottom) solid var(--popover);
+}
+
 /* The read-only terminal fills its drawer; xterm sizes its own canvas. */
 .hq-term .xterm {
   height: 100%;

@@ -79,7 +79,7 @@ export function FloatShell({ token, cwd, open, onOpenChange }: { token: string; 
       className={cn(
         "fixed z-50 flex flex-col gap-2 border bg-background p-3 shadow-2xl",
         !wide
-          ? "inset-x-0 bottom-0 h-[78dvh] rounded-t-xl"
+          ? "inset-x-0 bottom-0 h-[78dvh] rounded-t-xl pb-[max(0.75rem,env(safe-area-inset-bottom))]"
           : big
             ? "inset-4 rounded-xl"
             : "right-4 bottom-4 h-[460px] w-[760px] min-h-[260px] min-w-[420px] resize overflow-hidden rounded-xl",

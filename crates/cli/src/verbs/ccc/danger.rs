@@ -2559,7 +2559,16 @@ fn target(t: &str, mode: Mode, ctx: &Ctx, cwd: Option<&Abs>, place: Place, f: &m
         return;
     }
     let inside = |root: &Abs| if mode == Mode::Below { p.under_or_eq(root) } else { p.under(root) };
-    if temps.iter().any(inside) || project.is_some_and(inside) {
+    // Claude Code's scratch dir of a background session, `~/.claude/jobs/<id>/tmp/<anything>`: rooms
+    // export a PR head there for a clean gate (3d-game qa, 2026-10-20: 35 min waiting on this ask
+    // while five cards queued for qa). The `tmp` dir itself and the job dir still ask.
+    let job_tmp = home.as_ref().is_some_and(|h| {
+        p.under(h) && {
+            let rest = &p.parts[h.parts.len()..];
+            rest.len() >= 5 && rest[0] == ".claude" && rest[1] == "jobs" && rest[3] == "tmp"
+        }
+    });
+    if temps.iter().any(inside) || project.is_some_and(inside) || job_tmp {
         return;
     }
     f.ask(format!(
@@ -3148,9 +3157,16 @@ mod tests {
                 ("rsync -av --exclude .env ./ host:/srv/app", Bash, "pass"),
                 ("rsync -a --delete src/ build/", Bash, "pass"),
                 ("mv ~/Downloads/data.zip .", Bash, "pass"),
+                ("rm -rf /home/u/.claude/jobs/e2edff85/tmp/g30b && mkdir -p /home/u/.claude/jobs/e2edff85/tmp/g30b", Bash, "pass"),
+                ("rm -rf ~/.claude/jobs/e2edff85/tmp/g33", Bash, "pass"),
             ],
             &unix(),
         );
+        // The room's scratch dir itself, the job dir and the jobs dir are not scratch.
+        for cmd in ["rm -rf /home/u/.claude/jobs/e2edff85/tmp", "rm -rf /home/u/.claude/jobs/e2edff85", "rm -rf ~/.claude/jobs", "rm -rf /home/u/.claude/jobs/x/state/tmp/y"] {
+            assert_eq!(verdict(cmd, Bash, &unix()), "ask", "{cmd}");
+        }
+        assert_eq!(verdict("rm -rf C:/Users/U/.claude/jobs/e2edff85/tmp/g30b", Bash, &win()), "pass", "the path qa used");
         let app1 = Ctx { cwd: Some("/app".into()), ..unix() };
         assert_eq!(verdict("rm -rf node_modules", Bash, &app1), "pass", "one-level container workdir");
         let spaced = Ctx { cwd: Some(r"D:\My Projects\app".into()), ..win() };

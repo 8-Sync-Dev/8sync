@@ -28,6 +28,7 @@ import { SessionsView } from "./sessions-view";
 import { FloatShell } from "./float-shell";
 import { TeamThread } from "./team-thread";
 import { TeamView } from "./team-view";
+import { useEdgeFade } from "./scroll-strip";
 import { TerminalDrawer } from "./terminal-drawer";
 import { WebTerminalSheet } from "./web-terminal-sheet";
 import { useBoards } from "./use-board";
@@ -92,9 +93,16 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const machine = usePoll<MachineData>(hq.api, "/api/machine", MACHINE_POLL_MS, true);
   const openMachine = useCallback(() => setTab("may"), []);
   // Phones scroll the tab row: keep the active tab in view (the Máy chip opens the last ones).
+  // The row is scrolled itself (scrollIntoView would also nudge the page).
   const tabRow = useRef<HTMLDivElement>(null);
+  useEdgeFade(tabRow);
   useEffect(() => {
-    tabRow.current?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const row = tabRow.current;
+    const t = row?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+    if (!row || !t) return;
+    const pad = 16;
+    if (t.offsetLeft - pad < row.scrollLeft) row.scrollTo({ left: t.offsetLeft - pad });
+    else if (t.offsetLeft + t.offsetWidth + pad > row.scrollLeft + row.clientWidth) row.scrollTo({ left: t.offsetLeft + t.offsetWidth + pad - row.clientWidth });
   }, [tab]);
   const loops = usePoll<NonNullable<LoopsState["data"]>>(hq.api, "/api/loops", LOOPS_POLL_MS, tab === "flow");
 
@@ -219,7 +227,8 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
 
   return (
     <>
-      <div className="grid h-dvh grid-cols-1 grid-rows-1 md:grid-cols-[264px_minmax(0,1fr)]">
+      {/* viewport-fit=cover (layout.tsx): the notch side in landscape stays clear. */}
+      <div className="grid h-dvh grid-cols-1 grid-rows-1 pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] md:grid-cols-[264px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 border-r border-sidebar-border md:block">
           <Nav hq={hq} scope={scope} office={office} boards={boards.boards ?? []} onHome={goHome} onOpenRoom={openRoom} onOpenFolder={openFolder} onOpenRepo={openRepo} repo={repo?.root ?? null} />
         </aside>
@@ -230,10 +239,12 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
           </SheetContent>
         </Sheet>
 
-        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex min-h-0 flex-col gap-0">
-          <header className="shrink-0 border-b">
-            <div className="flex items-center gap-3 px-4 pt-3 sm:px-6">
-              <Button size="icon-sm" variant="ghost" className="-ml-1 md:hidden" onClick={() => setNavOpen(true)} aria-label="Open projects">
+        {/* The composers and board lanes end at the bottom edge: keep them above a phone's home indicator. */}
+        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex min-h-0 flex-col gap-0 pb-[env(safe-area-inset-bottom)]">
+          <header className="shrink-0 border-b pt-[env(safe-area-inset-top)]">
+            {/* Phones: 44 px targets; px-3 and gap-2 leave the title room at 360 px. */}
+            <div className="flex items-center gap-2 px-3 pt-2 sm:gap-3 sm:px-6 sm:pt-3">
+              <Button size="icon-sm" variant="ghost" className="-ml-1 max-sm:size-11 md:hidden" onClick={() => setNavOpen(true)} aria-label="Open projects">
                 <MenuIcon />
               </Button>
               <div className="min-w-0 flex-1">
@@ -245,18 +256,20 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   {subtitle || " "}
                 </p>
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <Button size="sm" onClick={() => openAssign()} disabled={!hq.projects.data.length && !running}>
-                  <SendIcon /> Giao việc
+              <div className="flex shrink-0 items-center gap-1.5 max-sm:gap-0.5">
+                <Button size="sm" className="max-sm:h-11 max-sm:px-3" onClick={() => openAssign()} disabled={!hq.projects.data.length && !running}>
+                  {/* Under 390 px the icon goes so the title keeps its room. */}
+                  <SendIcon className="max-[389px]:hidden" /> Giao việc
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => setGuideOpen(true)} aria-label="Cách dùng HQ">
+                <Button size="sm" variant="ghost" className="max-sm:size-11 max-sm:px-0" onClick={() => setGuideOpen(true)} aria-label="Cách dùng HQ">
                   <CircleHelpIcon /> <span className="hidden lg:inline">Cách dùng</span>
                 </Button>
-                <Button size="sm" variant={shellOpen ? "secondary" : "ghost"} onClick={() => setShellOpen((o) => !o)} aria-label="Shell trên máy (Ctrl+`)" aria-pressed={shellOpen} title="Shell trên máy (Ctrl+`)">
+                <Button size="sm" variant={shellOpen ? "secondary" : "ghost"} className="-mr-1 max-sm:size-11 max-sm:px-0 sm:mr-0" onClick={() => setShellOpen((o) => !o)} aria-label="Shell trên máy (Ctrl+`)" aria-pressed={shellOpen} title="Shell trên máy (Ctrl+`)">
                   <SquareTerminalIcon /> <span className="hidden lg:inline">Terminal</span>
                 </Button>
               </div>
-              <dl className="hidden shrink-0 items-center gap-4 text-xs text-muted-foreground sm:flex">
+              {/* Below xl the header has no room for these (they pushed the page wider than a tablet); Hạn mức and Sessions carry the same numbers. */}
+              <dl className="hidden shrink-0 items-center gap-4 text-xs text-muted-foreground xl:flex">
                 <div className="flex items-baseline gap-1.5">
                   <dt>Running</dt>
                   <dd className="text-sm font-medium text-foreground tabular">{running}</dd>
@@ -298,12 +311,12 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 </div>
               )}
             </div>
-            <div className="mt-2 flex items-center">
-              {/* Phones: 12 tabs scroll; each is a full 44 px tall target, its underline kept inside the scroller. */}
+            <div className="mt-1 flex items-center sm:mt-2">
+              {/* Phones: 12 tabs scroll (edges fade while more are hidden, snapping to a tab); each is a full 44 px tall target, its underline kept inside the scroller. */}
               <TabsList
                 ref={tabRow}
                 variant="line"
-                className="h-9 min-w-0 flex-1 justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] max-sm:group-data-horizontal/tabs:h-[50px] max-sm:*:data-[slot=tabs-trigger]:h-11 max-sm:*:data-[slot=tabs-trigger]:after:bottom-0 sm:px-6"
+                className="hq-fade-x relative h-9 min-w-0 flex-1 snap-x snap-proximity scroll-px-4 justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] max-sm:gap-5 max-sm:group-data-horizontal/tabs:h-[50px] max-sm:*:data-[slot=tabs-trigger]:h-11 max-sm:*:data-[slot=tabs-trigger]:snap-start max-sm:*:data-[slot=tabs-trigger]:after:bottom-0 sm:px-6"
               >
                 <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
                 <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
@@ -324,10 +337,10 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 </TabsTrigger>
                 <TabsTrigger value="activity" className="flex-none px-0">Activity</TabsTrigger>
               </TabsList>
-              {/* Phones: the header row has no room left, the tab row scrolls anyway. */}
+              {/* Phones: the header row has no room left, so the chip ends the tab row, compact and set apart by a rule. */}
               {narrow && (
-                <div className="shrink-0 pr-3">
-                  <MachineChip m={machine.data} onOpen={openMachine} />
+                <div className="shrink-0 border-l pr-1.5 pl-1">
+                  <MachineChip m={machine.data} onOpen={openMachine} compact />
                 </div>
               )}
             </div>

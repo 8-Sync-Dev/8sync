@@ -204,7 +204,7 @@ export function RoomSend({
       {showSug && (
         <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-muted/60 px-2 py-1.5 text-xs">
           <LightbulbIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="min-w-0 flex-1 max-sm:line-clamp-3">
+          <span className="min-w-0 flex-1 max-sm:line-clamp-2">
             <span className="font-medium">Tiết kiệm token: gửi cho {sug.label.toLowerCase() === "lead" ? "lead" : `lead ${sug.label}`}.</span>{" "}
             <span className="text-muted-foreground">{sug.line}</span>
           </span>
@@ -265,7 +265,7 @@ export function RoomSend({
               onChange={(e) => setCheck(e.target.value)}
               maxLength={300}
               placeholder="Lệnh kiểm, các phòng chạy trong dự án (exit 0 = đạt), vd: pnpm test"
-              className="h-7 font-mono text-xs max-sm:h-11"
+              className="h-7 font-mono text-xs max-sm:h-11 max-sm:text-base"
             />
           </div>
         )}
@@ -351,11 +351,22 @@ export function RoomSend({
           </Button>
           <Button type="submit" size="sm" className={cn("ml-auto", TOUCH, "max-sm:px-4")} disabled={disabled || busy || uploading > 0 || (!text.trim() && !allowEmpty)} aria-busy={busy}>
             {busy ? <Loader2Icon className="animate-spin motion-reduce:animate-none" aria-hidden /> : room ? <SendIcon aria-hidden /> : <UsersIcon aria-hidden />}
-            {busy ? "Đang gửi…" : room ? `Gửi ${room.label}` : "Gửi mọi phòng"}
+            {/* Phones: a short visible label keeps the send button on the row with the other controls; the full name stays the accessible one. */}
+            {busy ? (
+              "Đang gửi…"
+            ) : (
+              <>
+                <span aria-hidden className="sm:hidden">
+                  Gửi
+                </span>
+                <span className="max-sm:sr-only">{room ? `Gửi ${room.label}` : "Gửi mọi phòng"}</span>
+              </>
+            )}
           </Button>
         </div>
       </div>
-      <p id={`${id}-summary`} className="mt-1.5 text-xs text-muted-foreground">
+      {/* Phones: two lines; screen readers still get it whole (aria-describedby). */}
+      <p id={`${id}-summary`} className="mt-1.5 text-xs text-muted-foreground max-sm:line-clamp-2">
         {summary}
         {room && sug?.room === room.key && ` Lead đọc một lần rồi chia việc cho ${sug.rooms - 1} phòng còn lại bằng \`8sync ccc msg\`.`}
       </p>
