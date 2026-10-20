@@ -87,7 +87,8 @@ pub(crate) fn project_key(root: &Path) -> String {
     format!("h{:016x}", h.finish())
 }
 
-fn key_dir(env: &Env, root: &Path) -> PathBuf {
+/// This repo's 8sync session registry and its omp session dirs (`<config>/8sync/sessions/<key>`).
+pub(crate) fn key_dir(env: &Env, root: &Path) -> PathBuf {
     env.xdg_config.join("8sync").join("sessions").join(project_key(root))
 }
 

@@ -14,7 +14,7 @@ import { matchesSession } from "@/lib/office";
 import { SIDEBAR_WORD, sidebarGroups, splitClosed, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
 import { ErrorNote } from "./bits";
 import { BrandMark } from "./brand-mark";
-import { ClosedProjects, ProjectMenu, RoomEndDialog, RoomMenu, WorktreeDialog, useWorktreeKeys, type Confirm, type RoomAction } from "./nav-actions";
+import { CloseDialog, ClosedProjects, ProjectMenu, RoomEndDialog, RoomMenu, WorktreeDialog, useWorktreeKeys, type Confirm, type RoomAction } from "./nav-actions";
 import { RoleIcon } from "./role-badge";
 import type { Hq, Live } from "./use-hq";
 import type { OfficeState, Room } from "./use-office";
@@ -83,7 +83,7 @@ export function Nav({
     return splitClosed(groups, hidden);
   }, [groups, data, overlay]);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
-  // The project whose close / show is in flight: its "⋯" and "Hiện lại" stay disabled meanwhile.
+  // The project whose "Hiện lại" is in flight: its "⋯" and "Hiện lại" stay disabled meanwhile.
   const [hiding, setHiding] = useState<string | null>(null);
 
   function refresh() {
@@ -92,16 +92,15 @@ export function Nav({
     worktrees.reload();
   }
 
-  async function setHidden(g: SidebarGroup<Room>, hide: boolean) {
+  async function show(g: SidebarGroup<Room>) {
     setHiding(g.key);
     try {
-      const r = await hq.api<{ hidden?: HiddenProject }>("/api/projects/sidebar", { method: "POST", body: { root: g.root, hidden: hide } });
-      setOverlay({ at: data?.at ?? 0, key: g.key, row: hide ? (r.hidden ?? null) : null });
+      await hq.api("/api/projects/sidebar", { method: "POST", body: { root: g.root, hidden: false } });
+      setOverlay({ at: data?.at ?? 0, key: g.key, row: null });
       office.retry();
-      if (hide) toast.success(`Đã đóng ${g.name}: tự hiện lại khi có hoạt động mới`, { action: { label: "Hiện lại", onClick: () => void setHidden(g, false) } });
-      else toast.success(`Đã hiện lại ${g.name}`);
+      toast.success(`Đã hiện lại ${g.name}`);
     } catch (e) {
-      toast.error(`Không ${hide ? "đóng" : "hiện lại"} được ${g.name}: ${(e as Error).message}`);
+      toast.error(`Không hiện lại được ${g.name}: ${(e as Error).message}`);
     } finally {
       setHiding(null);
     }
@@ -160,14 +159,14 @@ export function Nav({
                     onOpenRepo={onOpenRepo}
                     worktree={worktrees.worktrees.includes(g.key)}
                     hiding={hiding === g.key}
-                    onHide={() => void setHidden(g, true)}
+                    onClose={() => setConfirm({ kind: "close", g })}
                     onDelete={() => setConfirm({ kind: "worktree", g })}
                     onRoom={(x, action) => setConfirm({ kind: "room", x, action })}
                   />
                 ))}
               </ul>
             )}
-            <ClosedProjects closed={closed} busy={hiding} onShow={(g) => void setHidden(g, false)} />
+            <ClosedProjects closed={closed} busy={hiding} onShow={(g) => void show(g)} />
           </>
         )}
 
@@ -209,6 +208,18 @@ export function Nav({
           }}
         />
       )}
+      {confirm?.kind === "close" && (
+        <CloseDialog
+          hq={hq}
+          g={confirm.g}
+          onCancel={() => setConfirm(null)}
+          onHidden={(row) => {
+            setOverlay({ at: data?.at ?? 0, key: confirm.g.key, row });
+            setConfirm(null);
+            refresh();
+          }}
+        />
+      )}
     </nav>
   );
 }
@@ -225,7 +236,7 @@ function RepoGroup({
   onOpenRepo,
   worktree,
   hiding,
-  onHide,
+  onClose,
   onDelete,
   onRoom,
 }: {
@@ -237,7 +248,7 @@ function RepoGroup({
   /** The project folder is a git worktree: "Xóa worktree" shows. */
   worktree: boolean;
   hiding: boolean;
-  onHide: () => void;
+  onClose: () => void;
   onDelete: () => void;
   onRoom: (x: SidebarRoom<Room>, action: RoomAction) => void;
 }) {
@@ -269,7 +280,7 @@ function RepoGroup({
             <Count n={g.rooms.length} />
           )}
         </button>
-        <ProjectMenu g={g} worktree={worktree} busy={hiding} onHide={onHide} onDelete={onDelete} />
+        <ProjectMenu g={g} worktree={worktree} busy={hiding} onClose={onClose} onDelete={onDelete} />
       </div>
       <ul id={list} hidden={!open} className="mt-0.5 ml-[13px] space-y-0.5 border-l border-sidebar-border pl-1.5">
         {g.rooms.map((x, i) => (

@@ -24,6 +24,7 @@ use crate::{assets, pkg, ui};
 mod auto;
 pub(crate) mod awake;
 mod cancel;
+mod close;
 mod ci;
 mod compact;
 mod danger;
@@ -591,7 +592,8 @@ fn down_nested(env: &Env, root: &Path) -> Result<()> {
 /// How long `auto up` waits for a running revive / up to finish.
 const UP_LOCK_WAIT_S: u64 = 150;
 
-/// `8sync ccc auto up|down` ([`team`]): the project's role rooms as Claude Code background sessions.
+/// `8sync ccc auto up|down|close` ([`team`], [`close`]): the project's role rooms as Claude Code
+/// background sessions; `close` stops everything of the project.
 fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let subscription = login_kind_at(&env.home).kind == "subscription";
@@ -620,6 +622,9 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
             }
         }
         return Ok(());
+    }
+    if rest[0] == "close" {
+        return close::run(env, &t, &rest[1..], now);
     }
     if rest[0] == "down" {
         // `down --only <room,room…>`: those rooms alone (HQ "Tự soi ảnh" off, "Tắt Sấm Sét");

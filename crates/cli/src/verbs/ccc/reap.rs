@@ -35,11 +35,13 @@ pub(super) struct Proc {
     pub started: u64,
     /// Resident memory (bytes), 0 when unknown.
     pub rss: u64,
-    /// The image is node: nothing else is ever picked or killed.
+    /// The image is node: nothing else is ever picked or killed here (`auto close` takes more).
     pub node: bool,
     /// The image is a shell (bash, sh, zsh, cmd, pwsh…): what a room's background tool call leaves.
     pub shell: bool,
-    /// Command line; empty for a non-node image (only node lines are read).
+    /// Image name, lower case, without `.exe` (`node`, `omp`, `python3`, `msedge`).
+    pub image: String,
+    /// Command line; empty when the OS did not give it.
     pub cmd: String,
 }
 
@@ -163,17 +165,12 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Vec<Row> {
 pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u32, exists: &dyn Fn(&Path) -> bool) -> Vec<u32> {
     let root_s = root.to_string_lossy();
     let fold = windows_path(&root_s);
-    let rootn = norm(&root_s, fold);
-    let rootn = rootn.strip_prefix("//?/").unwrap_or(&rootn).trim_end_matches('/');
+    let rootn = norm_root(&root_s);
+    let rootn = rootn.as_str();
     if rootn.is_empty() {
         return Vec::new();
     }
-    let mut keep = vec![me];
-    let mut cur = me;
-    while let Some(p) = procs.iter().find(|p| p.pid == cur && p.ppid != 0 && !keep.contains(&p.ppid)) {
-        keep.push(p.ppid);
-        cur = p.ppid;
-    }
+    let keep = lineage(procs, me);
     // A parent of unknown start time (0) counts as a live host: kept rather than guessed. pid 1 is
     // unix init adopting an orphan.
     let detached = |p: &Proc| {
@@ -193,7 +190,7 @@ pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u
             continue;
         }
         let c = norm(&p.cmd, fold);
-        if c.contains("hq-ui") || c.contains("hq-channel") || !names(&c, rootn) {
+        if is_hq(&c) || !names(&c, rootn) {
             continue;
         }
         let age = now.saturating_sub(p.started);
@@ -220,27 +217,52 @@ pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u
 /// parent (a `ParentProcessId` naming a recycled pid is never followed); a non-node child is walked
 /// through but never returned, so nothing but node is ever killed.
 fn tree(procs: &[Proc], pid: u32) -> Vec<u32> {
+    descendants(procs, pid, &|_| false).into_iter().filter(|p| *p == pid || procs.iter().any(|q| q.pid == *p && q.node)).collect()
+}
+
+/// `pid` then every descendant of any image, parents before children; a child counts only when it
+/// started no earlier than its parent (a recycled pid is never followed). A child `skip` holds is
+/// neither returned nor walked into.
+pub(super) fn descendants(procs: &[Proc], pid: u32, skip: &dyn Fn(&Proc) -> bool) -> Vec<u32> {
     let mut walk = vec![pid];
     let mut i = 0;
     while let Some(&cur) = walk.get(i) {
         i += 1;
         let Some(parent) = procs.iter().find(|p| p.pid == cur) else { continue };
         for c in procs {
-            if c.ppid == cur && c.started != 0 && c.started >= parent.started && !walk.contains(&c.pid) {
+            if c.ppid == cur && c.started != 0 && c.started >= parent.started && !walk.contains(&c.pid) && !skip(c) {
                 walk.push(c.pid);
             }
         }
     }
-    walk.into_iter().filter(|p| *p == pid || procs.iter().any(|q| q.pid == *p && q.node)).collect()
+    walk
+}
+
+/// `me` and its ancestors: never killed (HQ runs `auto revive` and `auto close`; an agent may run
+/// `auto close` from a session of the project).
+pub(super) fn lineage(procs: &[Proc], me: u32) -> Vec<u32> {
+    let mut keep = vec![me];
+    let mut cur = me;
+    while let Some(p) = procs.iter().find(|p| p.pid == cur && p.ppid != 0 && !keep.contains(&p.ppid)) {
+        keep.push(p.ppid);
+        cur = p.ppid;
+    }
+    keep
+}
+
+/// HQ's own app: never killed.
+pub(super) fn is_hq(cmd_norm: &str) -> bool {
+    cmd_norm.contains("hq-ui") || cmd_norm.contains("hq-channel")
 }
 
 /// `C:\…` / `c:/…`: matched case-insensitively.
-fn windows_path(s: &str) -> bool {
+pub(super) fn windows_path(s: &str) -> bool {
     let b = s.trim_start_matches(r"\\?\").as_bytes();
     b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }
 
-fn norm(s: &str, fold: bool) -> String {
+/// `\` = `/`; a Windows path also in lower case.
+pub(super) fn norm(s: &str, fold: bool) -> String {
     let s = s.replace('\\', "/");
     if fold {
         s.to_lowercase()
@@ -249,8 +271,14 @@ fn norm(s: &str, fold: bool) -> String {
     }
 }
 
+/// `root` as [`names`] looks for it in a normalized command line: no `\\?\`, no trailing `/`.
+pub(super) fn norm_root(root: &str) -> String {
+    let n = norm(root, windows_path(root));
+    n.strip_prefix("//?/").unwrap_or(&n).trim_end_matches('/').to_string()
+}
+
 /// `c` names `root` as a whole path (not `<root>-2`, not `/x<root>`).
-fn names(c: &str, root: &str) -> bool {
+pub(super) fn names(c: &str, root: &str) -> bool {
     c.match_indices(root).any(|(i, _)| {
         let before = c[..i].chars().next_back();
         let after = c[i + root.len()..].chars().next();
@@ -301,7 +329,7 @@ pub(super) fn kind(cmd: &str) -> Option<String> {
 }
 
 /// `--port 4197` / `--port=4197` / `-p 4197`.
-fn port(cmd: &str) -> Option<&str> {
+pub(super) fn port(cmd: &str) -> Option<&str> {
     let toks: Vec<&str> = cmd.split_whitespace().map(|t| t.trim_matches(['"', '\''])).collect();
     toks.iter().enumerate().find_map(|(i, t)| {
         let v = t.strip_prefix("--port=").or_else(|| matches!(*t, "--port" | "-p").then(|| toks.get(i + 1).copied()).flatten())?;
@@ -321,7 +349,7 @@ fn describe(p: &Proc, now: u64) -> String {
 
 /// Kills each pid alone (`taskkill /F` without `/T`, which would follow stale parent links);
 /// `true` where the kill went through. Never by image name.
-fn kill(pids: &[u32]) -> Vec<bool> {
+pub(super) fn kill(pids: &[u32]) -> Vec<bool> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -357,13 +385,15 @@ fn kill(pids: &[u32]) -> Vec<bool> {
     }
 }
 
-/// Every process on this machine (empty when the OS listing fails).
-fn list(now: u64) -> Vec<Proc> {
+/// Every process on this machine with its command line (empty when the OS listing fails).
+pub(super) fn list(now: u64) -> Vec<Proc> {
     #[cfg(windows)]
     {
         let _ = now;
         use std::os::windows::process::CommandExt;
-        let ps = "Get-CimInstance Win32_Process | Select ProcessId,ParentProcessId,Name,WorkingSetSize,@{n='CommandLine';e={if($_.Name -eq 'node.exe'){$_.CommandLine}}},@{n='Started';e={if($_.CreationDate){([DateTimeOffset]$_.CreationDate).ToUnixTimeSeconds()}else{0}}} | ConvertTo-Json -Compress";
+        // UTF-8 out: in the console code page a room's Vietnamese prompt in a command line turns
+        // into control bytes (`→` → 0x1A) and the whole JSON fails to parse.
+        let ps = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Select ProcessId,ParentProcessId,Name,WorkingSetSize,CommandLine,@{n='Started';e={if($_.CreationDate){([DateTimeOffset]$_.CreationDate).ToUnixTimeSeconds()}else{0}}} | ConvertTo-Json -Compress";
         let mut c = std::process::Command::new("powershell");
         c.args(["-NoProfile", "-NonInteractive", "-Command", ps])
             .stdin(std::process::Stdio::null())
@@ -417,7 +447,8 @@ fn parse_windows(s: &str) -> Vec<Proc> {
                 rss: r["WorkingSetSize"].as_u64().unwrap_or(0),
                 node,
                 shell: is_shell(name),
-                cmd: if node { r["CommandLine"].as_str().unwrap_or_default().to_string() } else { String::new() },
+                image: image_of(name),
+                cmd: r["CommandLine"].as_str().unwrap_or_default().to_string(),
             })
         })
         .collect()
@@ -425,9 +456,13 @@ fn parse_windows(s: &str) -> Vec<Proc> {
 
 /// `bash.exe`, `/bin/zsh`, `-bash` (login shell): an image a tool call runs its command through.
 fn is_shell(arg0: &str) -> bool {
+    matches!(image_of(arg0).as_str(), "bash" | "sh" | "zsh" | "dash" | "fish" | "cmd" | "pwsh" | "powershell")
+}
+
+/// `C:\…\Node.EXE`, `/usr/bin/python3`, `-zsh` → `node`, `python3`, `zsh`.
+fn image_of(arg0: &str) -> String {
     let base = arg0.rsplit(['/', '\\']).next().unwrap_or(arg0).trim_start_matches('-').to_ascii_lowercase();
-    let base = base.strip_suffix(".exe").unwrap_or(&base);
-    matches!(base, "bash" | "sh" | "zsh" | "dash" | "fish" | "cmd" | "pwsh" | "powershell")
+    base.strip_suffix(".exe").unwrap_or(&base).to_string()
 }
 
 /// `ps -axo pid=,ppid=,etime=,rss=,command=` (macOS: `etime` is `[[dd-]hh:]mm:ss`, `rss` KB).
@@ -441,11 +476,12 @@ fn parse_ps(s: &str, now: u64) -> Vec<Proc> {
             let etime = f.next()?;
             let rss: u64 = f.next()?.parse().ok()?;
             let cmd = f.collect::<Vec<_>>().join(" ");
-            let node = cmd.split_whitespace().next().and_then(|a| a.rsplit('/').next()).is_some_and(|b| b.starts_with("node"));
+            let arg0 = cmd.split_whitespace().next().unwrap_or_default();
+            let node = arg0.rsplit('/').next().is_some_and(|b| b.starts_with("node"));
             let (days, hms) = etime.split_once('-').map_or((0, etime), |(d, r)| (d.parse().unwrap_or(0), r));
             let secs = hms.split(':').try_fold(0u64, |acc, x| x.parse::<u64>().ok().map(|n| acc * 60 + n))?;
-            let shell = cmd.split_whitespace().next().is_some_and(is_shell);
-            Some(Proc { pid, ppid, started: now.saturating_sub(days * 86_400 + secs), rss: rss * 1024, node, shell, cmd: if node { cmd } else { String::new() } })
+            let (shell, image) = (is_shell(arg0), image_of(arg0));
+            Some(Proc { pid, ppid, started: now.saturating_sub(days * 86_400 + secs), rss: rss * 1024, node, shell, image, cmd })
         })
         .collect()
 }
@@ -475,7 +511,8 @@ fn list_linux() -> Vec<Proc> {
                 .and_then(|s| s.split_whitespace().nth(1).and_then(|x| x.parse::<u64>().ok()))
                 .map_or(0, |pages| pages * 4096);
             let shell = argv.first().is_some_and(|a| is_shell(a));
-            Some(Proc { pid, ppid, started: btime + ticks / 100, rss, node, shell, cmd: if node { argv.join(" ") } else { String::new() } })
+            let image = argv.first().map(|a| image_of(a)).unwrap_or_default();
+            Some(Proc { pid, ppid, started: btime + ticks / 100, rss, node, shell, image, cmd: argv.join(" ") })
         })
         .collect()
 }
@@ -488,12 +525,12 @@ mod tests {
     const NOW: u64 = 1_000_000;
 
     fn p(pid: u32, ppid: u32, age_min: u64, cmd: &str) -> Proc {
-        Proc { pid, ppid, started: NOW - age_min * 60, rss: 120 * 1024 * 1024, node: true, shell: false, cmd: cmd.into() }
+        Proc { pid, ppid, started: NOW - age_min * 60, rss: 120 * 1024 * 1024, node: true, shell: false, image: "node".into(), cmd: cmd.into() }
     }
 
     /// A process of another image (shell, terminal, claude.exe).
     fn other(pid: u32, ppid: u32, age_min: u64) -> Proc {
-        Proc { node: false, cmd: String::new(), ..p(pid, ppid, age_min, "") }
+        Proc { node: false, image: "other".into(), cmd: String::new(), ..p(pid, ppid, age_min, "") }
     }
 
     fn all_exist(_: &Path) -> bool {
@@ -527,9 +564,9 @@ mod tests {
             // a node script in the root that is no server: kept.
             p(20, 0, 900, r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\scripts\watch-assets.js"#),
             // no start time: kept.
-            Proc { pid: 21, ppid: 0, started: 0, rss: 0, node: true, shell: false, cmd: r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\node_modules\vite\bin\vite.js"#.into() },
+            Proc { started: 0, rss: 0, ..p(21, 0, 0, r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\node_modules\vite\bin\vite.js"#) },
         ];
-        let me_tree = vec![Proc { pid: 2, ppid: 3, started: NOW, rss: 0, node: true, shell: false, cmd: String::new() }];
+        let me_tree = vec![Proc { started: NOW, rss: 0, ..p(2, 3, 0, "") }];
         let procs: Vec<Proc> = procs.into_iter().chain(me_tree).collect();
         let exists = |d: &Path| !d.to_string_lossy().contains("card-12");
         assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 2, &exists), vec![11, 16, 19]);
@@ -561,16 +598,19 @@ mod tests {
     #[test]
     fn parses_the_os_listings() {
         let one = r#"{"ProcessId":7,"ParentProcessId":1,"Name":"node.exe","WorkingSetSize":2048,"CommandLine":"node a.js","Started":123}"#;
-        assert_eq!(parse_windows(one), vec![Proc { pid: 7, ppid: 1, started: 123, rss: 2048, node: true, shell: false, cmd: "node a.js".into() }]);
-        let many = r#"[{"ProcessId":7,"ParentProcessId":1,"Name":"cmd.exe","WorkingSetSize":1,"CommandLine":null,"Started":3},{"ProcessId":8,"ParentProcessId":7,"Name":"NODE.EXE","WorkingSetSize":1,"CommandLine":"node b","Started":5},{"ParentProcessId":7}]"#;
+        assert_eq!(parse_windows(one), vec![Proc { pid: 7, ppid: 1, started: 123, rss: 2048, node: true, shell: false, image: "node".into(), cmd: "node a.js".into() }]);
+        let many = r#"[{"ProcessId":7,"ParentProcessId":1,"Name":"cmd.exe","WorkingSetSize":1,"CommandLine":null,"Started":3},{"ProcessId":8,"ParentProcessId":7,"Name":"NODE.EXE","WorkingSetSize":1,"CommandLine":"node b","Started":5},{"ProcessId":9,"ParentProcessId":1,"Name":"omp.exe","CommandLine":"omp --session-dir x","Started":6},{"ParentProcessId":7}]"#;
         let got = parse_windows(many);
-        assert_eq!(got.iter().map(|p| (p.pid, p.node, p.shell, p.cmd.as_str())).collect::<Vec<_>>(), vec![(7, false, true, ""), (8, true, false, "node b")]);
+        assert_eq!(
+            got.iter().map(|p| (p.pid, p.node, p.shell, p.image.as_str(), p.cmd.as_str())).collect::<Vec<_>>(),
+            vec![(7, false, true, "cmd", ""), (8, true, false, "node", "node b"), (9, false, false, "omp", "omp --session-dir x")]
+        );
         assert!(parse_windows("").is_empty());
         let ps = "  41     1 1-02:03:04  2048 /usr/local/bin/node /x/vite.js preview\n  42 1 05:06 10 /bin/zsh -l\n 43 1 07 1 node y.js\n";
         let got = parse_ps(ps, NOW);
         assert_eq!(got.len(), 3);
-        assert_eq!(got[0], Proc { pid: 41, ppid: 1, started: NOW - (86_400 + 2 * 3600 + 3 * 60 + 4), rss: 2048 * 1024, node: true, shell: false, cmd: "/usr/local/bin/node /x/vite.js preview".into() });
-        assert_eq!((got[1].node, got[1].shell, got[1].cmd.as_str(), got[1].started), (false, true, "", NOW - 306));
+        assert_eq!(got[0], Proc { pid: 41, ppid: 1, started: NOW - (86_400 + 2 * 3600 + 3 * 60 + 4), rss: 2048 * 1024, node: true, shell: false, image: "node".into(), cmd: "/usr/local/bin/node /x/vite.js preview".into() });
+        assert_eq!((got[1].node, got[1].shell, got[1].image.as_str(), got[1].cmd.as_str(), got[1].started), (false, true, "zsh", "/bin/zsh -l", NOW - 306));
         assert_eq!(got[2].started, NOW - 7);
     }
 
