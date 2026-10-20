@@ -13,13 +13,16 @@
 //! `--shell` (owner 2026-10-19, "terminal như Orca") runs a plain interactive shell on this PC
 //! instead, in the current dir: 8sync's zsh (its prompt + autosuggestions) when already installed,
 //! else PowerShell on Windows / `$SHELL` elsewhere. Nothing is installed or downloaded here.
+//!
+//! An omp room id (`omp-<16 hex>`, owner 2026-10-21 "omp vẫn sài được chứ"): omp has no attach, so
+//! the room's omp runs in a detachable host and this relays it with the same protocol (omp_term.rs).
 use crate::env_detect::Env;
 use crate::verbs::forge;
 use anyhow::{bail, Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{BufRead, Read, Write};
 
-const USAGE: &str = "usage: 8sync ccc term (<session-id> | --shell) [--cols 120] [--rows 34]   (cho HQ web: stdin JSON {\"i\":…}|{\"r\":[c,r]}, stdout = terminal; --shell = shell trên máy, cwd hiện tại)";
+const USAGE: &str = "usage: 8sync ccc term (<session-id> | <omp-room-id> [--takeover] | --shell) [--cols 120] [--rows 34]   (cho HQ web: stdin JSON {\"i\":…}|{\"r\":[c,r]}, stdout = terminal; --shell = shell trên máy, cwd hiện tại; --takeover = đóng omp đang mở phiên này ở terminal khác rồi mở tiếp ở đây)";
 
 /// A session id as `claude agents --json` prints it: it goes back to `claude attach` as an argument.
 pub(super) fn valid_id(s: &str) -> bool {
@@ -32,7 +35,7 @@ pub(super) enum Ctl {
     Resize(u16, u16),
 }
 
-fn size_ok(cols: u64, rows: u64) -> Option<(u16, u16)> {
+pub(super) fn size_ok(cols: u64, rows: u64) -> Option<(u16, u16)> {
     ((2..=500).contains(&cols) && (2..=300).contains(&rows)).then_some((cols as u16, rows as u16))
 }
 
@@ -51,11 +54,16 @@ pub(super) fn parse_line(l: &str) -> Option<Ctl> {
 pub(super) enum Target {
     Attach(String),
     Shell,
+    /// An omp room: relay its host, starting it (or taking the session over) first.
+    Omp { id: String, takeover: bool },
+    /// Internal (`--host <omp-room-id> [--restore]`): run the room's omp for [`Target::Omp`] clients.
+    Host { id: String, restore: bool },
 }
 
-/// `<session-id> | --shell`, `--cols N`, `--rows N` — checked before anything starts.
+/// `<session-id> | <omp-room-id> [--takeover] | --shell`, `--cols N`, `--rows N` — checked before anything starts.
 pub(super) fn parse(args: &[String]) -> Result<(Target, u16, u16)> {
     let (mut id, mut shell, mut cols, mut rows) = (None, false, 120u64, 34u64);
+    let (mut takeover, mut host, mut restore) = (false, false, false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut num = |what: &str| -> Result<u64> { it.next().and_then(|v| v.parse().ok()).with_context(|| format!("{what} cần một số\n{USAGE}")) };
@@ -63,12 +71,24 @@ pub(super) fn parse(args: &[String]) -> Result<(Target, u16, u16)> {
             "--cols" => cols = num("--cols")?,
             "--rows" => rows = num("--rows")?,
             "--shell" => shell = true,
-            x if id.is_none() && valid_id(x) => id = Some(x.to_string()),
+            "--takeover" => takeover = true,
+            "--host" => host = true,
+            "--restore" => restore = true,
+            x if id.is_none() && (valid_id(x) || super::omp_term::valid_room_id(x)) => id = Some(x.to_string()),
             x => bail!("không rõ `{x}`\n{USAGE}"),
         }
     }
+    let omp = id.as_deref().is_some_and(super::omp_term::valid_room_id);
+    if (takeover || host || restore) && !omp {
+        bail!("--takeover/--host/--restore chỉ dùng với id phòng omp\n{USAGE}");
+    }
+    if host && takeover || restore && !host {
+        bail!("--restore chỉ đi với --host, --takeover không đi với --host\n{USAGE}");
+    }
     let target = match (id, shell) {
         (Some(_), true) => bail!("--shell và session id không đi cùng nhau\n{USAGE}"),
+        (Some(id), false) if host => Target::Host { id, restore },
+        (Some(id), false) if omp => Target::Omp { id, takeover },
         (Some(id), false) => Target::Attach(id),
         (None, true) => Target::Shell,
         (None, false) => bail!("cần session id hoặc --shell\n{USAGE}"),
@@ -102,9 +122,38 @@ fn shell_command(env: &Env) -> Result<CommandBuilder> {
     Ok(cmd)
 }
 
+/// A child in a pseudo-terminal (ConPTY on Windows): its output, its input, and the size knob.
+pub(super) struct Pty {
+    pub master: Box<dyn portable_pty::MasterPty + Send>,
+    pub child: Box<dyn portable_pty::Child + Send + Sync>,
+    pub reader: Box<dyn Read + Send>,
+    pub writer: Box<dyn Write + Send>,
+}
+
+impl Pty {
+    /// Runs `cmd` (in the current dir unless it has its own) in a `cols`×`rows` terminal.
+    pub(super) fn spawn(mut cmd: CommandBuilder, cols: u16, rows: u16) -> Result<Pty> {
+        let pair = native_pty_system()
+            .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+            .map_err(|e| anyhow::anyhow!("không mở được pseudo-terminal: {e}"))?;
+        if cmd.get_cwd().is_none() {
+            if let Ok(cwd) = std::env::current_dir() {
+                cmd.cwd(cwd);
+            }
+        }
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        let child = pair.slave.spawn_command(cmd).map_err(|e| anyhow::anyhow!("không chạy được terminal: {e}"))?;
+        drop(pair.slave);
+        let reader = pair.master.try_clone_reader().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let writer = pair.master.take_writer().map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(Pty { master: pair.master, child, reader, writer })
+    }
+}
+
 pub(super) fn run(args: &[String], env: &Env) -> Result<()> {
     let (target, cols, rows) = parse(args)?;
-    let mut cmd = match &target {
+    let cmd = match &target {
         Target::Attach(id) => {
             let mut cmd = CommandBuilder::new(which::which("claude").context("không thấy `claude` trong PATH")?);
             // `claude attach` matches the job's short id (first 8 hex); the full session uuid says "No job matching" (UAT 2026-10-18).
@@ -112,22 +161,20 @@ pub(super) fn run(args: &[String], env: &Env) -> Result<()> {
             cmd
         }
         Target::Shell => shell_command(env)?,
+        Target::Omp { id, takeover } => {
+            // HQ shows only stdout: the reason goes into the terminal too.
+            let r = super::omp_term::client(env, id, cols, rows, *takeover);
+            if let Err(e) = &r {
+                print!("\r\nKhông mở được phiên omp: {e:#}\r\n");
+                let _ = std::io::stdout().flush();
+            }
+            return r;
+        }
+        Target::Host { id, restore } => return super::omp_term::host_logged(env, id, *restore, cols, rows),
     };
 
-    let pair = native_pty_system()
-        .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
-        .map_err(|e| anyhow::anyhow!("không mở được pseudo-terminal: {e}"))?;
-    if let Ok(cwd) = std::env::current_dir() {
-        cmd.cwd(cwd);
-    }
-    cmd.env("TERM", "xterm-256color");
-    cmd.env("COLORTERM", "truecolor");
-    let mut child = pair.slave.spawn_command(cmd).map_err(|e| anyhow::anyhow!("không chạy được terminal: {e}"))?;
-    drop(pair.slave);
-    let mut reader = pair.master.try_clone_reader().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let mut writer = pair.master.take_writer().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let Pty { master, mut child, mut reader, mut writer } = Pty::spawn(cmd, cols, rows)?;
     let mut killer = child.clone_killer();
-
     // The terminal's output to HQ; when the child ends (the owner detached / typed `exit`), so does this process.
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
@@ -156,7 +203,7 @@ pub(super) fn run(args: &[String], env: &Env) -> Result<()> {
                 }
             }
             Some(Ctl::Resize(c, r)) => {
-                let _ = pair.master.resize(PtySize { rows: r, cols: c, pixel_width: 0, pixel_height: 0 });
+                let _ = master.resize(PtySize { rows: r, cols: c, pixel_width: 0, pixel_height: 0 });
             }
             None => {}
         }

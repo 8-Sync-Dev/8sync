@@ -372,7 +372,7 @@ pub(super) fn on_argv(o: &Opts) -> Vec<String> {
 /// Null stdio (or Node's execFile waits on the inherited pipe), no console, its own process group,
 /// and out of the caller's job when the job allows it (a kill-on-close job would end the hold
 /// with HQ); a job that forbids breakaway gets a plain detached spawn.
-fn spawn_detached(exe: &Path, args: &[String]) -> Result<std::process::Child> {
+pub(super) fn spawn_detached(exe: &Path, args: &[String]) -> Result<std::process::Child> {
     use std::process::{Command, Stdio};
     let mk = || {
         let mut c = Command::new(exe);

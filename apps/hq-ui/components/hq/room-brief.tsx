@@ -101,15 +101,17 @@ export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: 
 }
 
 /**
- * The room's terminal: HQ's own tmux rooms open in the drawer; a background Claude Code session opens
- * `claude attach` in a new window. `open` is null when there is no way in (no session id).
+ * The room's terminal: HQ's own tmux rooms open in the drawer; a background Claude Code session
+ * (`claude attach`) or an omp room (its omp, kept running by a host) opens inside HQ. `open` is null
+ * when there is no way in (no session id).
  */
 function useOpenTerminal(room: Room, tmux: boolean, _token: string, onTerminal: () => void) {
   const id = room.session_id;
   if (tmux) return { busy: false, open: onTerminal, title: undefined };
   if (!id) return { busy: false, open: null, title: undefined };
   // A background room opens its real terminal inside HQ (`8sync ccc term`), no separate window.
-  return { busy: false, open: () => openWebTerminal(id, room.label), title: `Terminal trong HQ (hoặc: ${attachCommand(id)})` };
+  const other = room.engine === "omp" ? `8sync . ${room.label} trong repo` : attachCommand(id);
+  return { busy: false, open: () => openWebTerminal(id, room.label), title: `Terminal trong HQ (hoặc: ${other})` };
 }
 
 function OpenTerminal({ term }: { term: ReturnType<typeof useOpenTerminal> }) {

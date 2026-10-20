@@ -180,24 +180,27 @@ pub fn ago(secs: u64, now: u64) -> String {
 /// like omp/claude so an editor or `grep <id>` doesn't count. On Windows a path compares in any
 /// case and slash direction.
 pub fn proc_matches(cmdlines: &[Vec<u8>], needle: &str) -> bool {
+    cmdlines.iter().any(|raw| proc_match(raw, needle))
+}
+
+/// [`proc_matches`] for one NUL-separated argv buffer.
+pub fn proc_match(raw: &[u8], needle: &str) -> bool {
     if needle.is_empty() {
         return false;
     }
     let want = path_key(needle);
     let sep = if cfg!(windows) { '\\' } else { '/' };
-    cmdlines.iter().any(|raw| {
-        let args: Vec<String> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
-        let is_agent = args.iter().take(3).any(|a| {
-            let base = a.rsplit(['/', '\\']).next().unwrap_or(a).to_ascii_lowercase();
-            let base = base.strip_suffix(".exe").unwrap_or(&base);
-            base == "omp" || base.starts_with("claude") || base == "omp.js"
-        });
-        is_agent
-            && args.iter().skip(1).any(|a| {
-                let a = path_key(a);
-                a == want || (a.ends_with(".jsonl") && a.rsplit_once(sep).is_some_and(|(dir, _)| dir == want))
-            })
-    })
+    let args: Vec<String> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+    let is_agent = args.iter().take(3).any(|a| {
+        let base = a.rsplit(['/', '\\']).next().unwrap_or(a).to_ascii_lowercase();
+        let base = base.strip_suffix(".exe").unwrap_or(&base);
+        base == "omp" || base.starts_with("claude") || base == "omp.js"
+    });
+    is_agent
+        && args.iter().skip(1).any(|a| {
+            let a = path_key(a);
+            a == want || (a.ends_with(".jsonl") && a.rsplit_once(sep).is_some_and(|(dir, _)| dir == want))
+        })
 }
 
 /// An argument as a path to compare: no trailing separator; on Windows also lower case with `\`.
@@ -223,18 +226,20 @@ pub fn classify(proc_hit: bool, mtime: Option<u64>, now: u64) -> Status {
 /// only (Claude Code rooms reach HQ through its hooks and `claude agents`), its command line split
 /// like `CommandLineToArgvW`. Empty elsewhere.
 pub fn agent_cmdlines() -> Vec<Vec<u8>> {
+    agent_procs().into_iter().map(|(_, c)| c).collect()
+}
+
+/// [`agent_cmdlines`] with each process id.
+pub fn agent_procs() -> Vec<(u32, Vec<u8>)> {
     #[cfg(target_os = "linux")]
     {
         let mut out = Vec::new();
         for e in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
-            let name = e.file_name();
-            if !name.to_string_lossy().bytes().all(|b| b.is_ascii_digit()) {
-                continue;
-            }
+            let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
             if let Ok(raw) = std::fs::read(e.path().join("cmdline")) {
                 let head = String::from_utf8_lossy(&raw[..raw.len().min(512)]).to_ascii_lowercase();
                 if head.contains("omp") || head.contains("claude") {
-                    out.push(raw);
+                    out.push((pid, raw));
                 }
             }
         }
@@ -242,7 +247,7 @@ pub fn agent_cmdlines() -> Vec<Vec<u8>> {
     }
     #[cfg(windows)]
     {
-        win::command_lines("omp.exe").iter().map(|c| win_args(c).join("\0").into_bytes()).collect()
+        win::command_lines("omp.exe").into_iter().map(|(pid, c)| (pid, win_args(&c).join("\0").into_bytes())).collect()
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
@@ -376,8 +381,8 @@ mod win {
         }
     }
 
-    /// Command lines of every process whose image is `exe` (any case).
-    pub(super) fn command_lines(exe: &str) -> Vec<String> {
+    /// Pid and command line of every process whose image is `exe` (any case).
+    pub(super) fn command_lines(exe: &str) -> Vec<(u32, String)> {
         let Some(query) = nt_query() else { return Vec::new() };
         let mut out = Vec::new();
         // SAFETY: plain Toolhelp walk; the entry is sized as the API requires and the snapshot is closed.
@@ -392,7 +397,7 @@ mod win {
             while more {
                 let n = e.sz_exe_file.iter().position(|c| *c == 0).unwrap_or(e.sz_exe_file.len());
                 if String::from_utf16_lossy(&e.sz_exe_file[..n]).eq_ignore_ascii_case(exe) {
-                    out.extend(command_line(query, e.th32_process_id));
+                    out.extend(command_line(query, e.th32_process_id).map(|c| (e.th32_process_id, c)));
                 }
                 more = Process32NextW(snap, &mut e) != 0;
             }
@@ -1090,7 +1095,7 @@ mod tests {
         let name = exe.file_name().unwrap().to_string_lossy().into_owned();
         let lines = win::command_lines(&name);
         let me = name.to_lowercase();
-        assert!(lines.iter().any(|l| win_args(l).first().is_some_and(|a| a.to_lowercase().ends_with(&me))), "{lines:?}");
+        assert!(lines.iter().any(|(pid, l)| *pid == std::process::id() && win_args(l).first().is_some_and(|a| a.to_lowercase().ends_with(&me))), "{lines:?}");
     }
 
     #[test]

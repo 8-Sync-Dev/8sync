@@ -19,7 +19,7 @@ import { ORIGIN, req, tempHome } from "./helpers";
 
 // Fake, but shaped like a real token: it must never reach the log. Built at runtime for secret scanners.
 const FAKE_SECRET = ["gh", "p_", "FAKE".repeat(9)].join("");
-const ROOM = "omp-83bf7fc460598f10";
+const ROOM = "omp-00000000000000a1";
 
 const ts = (s: number) => `2026-10-20T15:00:${String(s).padStart(2, "0")}.000Z`;
 const usage = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };

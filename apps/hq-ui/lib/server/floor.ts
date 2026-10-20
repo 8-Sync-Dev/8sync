@@ -46,8 +46,8 @@ export function tilde(p: string | null | undefined, home = os.homedir()): string
 const claudeEngine = (e: string | null | undefined) => !e || e === "ccc" || e === "claude";
 
 const trimSlash = (p: string) => p.replace(/\/+$/, "");
-/** Expand "~" so ls `repo` and hq cwd compare as absolute paths. */
-const expand = (p: string, home = os.homedir()) => (p === "~" ? home : p.startsWith("~/") ? home + p.slice(1) : p);
+/** Expand "~" so ls `repo` and hq cwd compare as absolute paths (`8sync ls` on Windows prints `~\x`). */
+const expand = (p: string, home = os.homedir()) => (p === "~" ? home : p.startsWith("~/") || p.startsWith("~\\") ? home + p.slice(1) : p);
 /** `repo` may also be Claude's dash-encoded project dir. */
 const dashed = (p: string) => p.replace(/[/.]/g, "-");
 
@@ -263,6 +263,13 @@ export async function ompTranscript(db: DatabaseSync, id: string): Promise<strin
   if (!isOmpRoomId(id)) return null;
   await loadFloor(db);
   return cache?.transcripts.get(id) ?? null;
+}
+
+/** The omp room `id` as `8sync ls` lists it (any status: its terminal can start it), or null. `cwd`: its repo. */
+export async function ompRoom(db: DatabaseSync, id: string): Promise<{ cwd: string | null } | null> {
+  if (!isOmpRoomId(id)) return null;
+  const r = (await loadFloor(db)).find((x) => x.engine === "omp" && x.inbox_id === id);
+  return r ? { cwd: r.repo ? expand(r.repo) : null } : null;
 }
 
 export function resetFloorCache() {

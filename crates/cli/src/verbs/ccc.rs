@@ -41,6 +41,7 @@ mod merge;
 mod output_budget;
 mod msg;
 mod omp_team;
+mod omp_term;
 mod permit;
 mod term;
 pub(crate) mod report;
