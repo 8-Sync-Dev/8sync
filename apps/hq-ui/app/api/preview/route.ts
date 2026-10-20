@@ -6,10 +6,10 @@ import { liveProjects } from "@/lib/server/targets";
 
 export const runtime = "nodejs";
 
-/** Screenshots under the preview folders of every live project and its worktrees, newest first. */
+/** Screenshots of every live project (root, worktrees, main tree) by true time, plus its main tip. */
 export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
-  const projects = listPreviews(liveProjects(await mergedSessions(o.db), (cwd) => projectOf(cwd)));
+  const projects = await listPreviews(liveProjects(await mergedSessions(o.db), (cwd) => projectOf(cwd)));
   return json({ projects, at: Date.now() });
 }
