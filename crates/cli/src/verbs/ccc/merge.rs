@@ -400,7 +400,9 @@ pub(super) fn background(home: &Path, root: &Path, now: u64) -> Result<Vec<Strin
 }
 
 /// How long one background pass keeps starting cards.
-const BACKGROUND_BUDGET: std::time::Duration = std::time::Duration::from_secs(40);
+// Revive runs reap (≤ 15 s) and room checks first and a started card can take several gh calls:
+// 20 s keeps the whole run inside HQ's 120 s revive timeout.
+const BACKGROUND_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Every approved card, most urgent first; one whose base is still landing goes after the rest.
 fn land_all(c: &Ctx) -> Result<Vec<Outcome>> {
