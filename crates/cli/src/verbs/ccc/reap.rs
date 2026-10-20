@@ -26,7 +26,7 @@ const PRESSURE_EVERY_S: u64 = 120;
 /// … taking dev/preview servers from this age.
 const PRESSURE_SERVER_AGE_S: u64 = 10 * 60;
 
-/// A node process as the OS lists it.
+/// A process as the OS lists it (every image: a parent must be seen to tell an orphan).
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Proc {
     pub pid: u32,
@@ -35,6 +35,9 @@ pub(super) struct Proc {
     pub started: u64,
     /// Resident memory (bytes), 0 when unknown.
     pub rss: u64,
+    /// The image is node: nothing else is ever picked or killed.
+    pub node: bool,
+    /// Command line; empty for a non-node image (only node lines are read).
     pub cmd: String,
 }
 
@@ -95,8 +98,13 @@ fn pct_after(mem: (u64, u64), freed: u64) -> Option<u32> {
 }
 
 /// `auto revive`'s pass for `root`: a machine row, then one row per leftover server killed
-/// ([`pick`]); under RAM pressure also a summary row. Nothing when the sweep is not [`due`].
+/// ([`pick`], with its node children: [`tree`]); under RAM pressure also a summary row. Nothing
+/// while auto does not run for `root` (the owner's machine without a team is never swept) or when
+/// the sweep is not [`due`].
 pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Vec<Row> {
+    if !super::auto::running(home) || !super::auto::in_scope(home, Some(&root.to_string_lossy())) {
+        return Vec::new();
+    }
     let sample = Sampler::new().map(|s| s.get(std::time::Duration::ZERO));
     let ram = sample.as_ref().and_then(|s| ram_pct(s.mem));
     let file = idle::state_dir(home).join("reap.json");
@@ -113,16 +121,20 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Vec<Row> {
     if let Some(line) = sample.as_ref().map(machine_line).filter(|l| !l.is_empty()) {
         rows.push(row("trạng thái".into(), line));
     }
-    let picked = stale_servers(root, now, sweep.server_age());
-    let pids: Vec<u32> = picked.iter().map(|p| p.pid).collect();
+    let procs = list(now);
     let mut freed = (0, 0u64);
-    for (p, ok) in picked.iter().zip(kill(&pids)) {
-        let what = describe(p, now);
+    for pid in pick(&procs, root, now, sweep.server_age(), std::process::id(), &|p| p.exists()) {
+        let Some(p) = procs.iter().find(|p| p.pid == pid) else { continue };
+        let pids = tree(&procs, pid);
+        let rss = procs.iter().filter(|q| pids.contains(&q.pid)).map(|q| q.rss).sum();
+        let what = describe(&Proc { rss, ..p.clone() }, now);
+        // The server itself is first in the tree: its kill is the one that counts.
+        let ok = kill(&pids).first().copied().unwrap_or(false);
         if ok {
-            freed = (freed.0 + 1, freed.1 + p.rss);
+            freed = (freed.0 + 1, freed.1 + rss);
         }
         let state = if ok { format!("dọn server cũ: {what}") } else { format!("không dọn được server cũ: {what}") };
-        rows.push(row(format!("pid {}", p.pid), state));
+        rows.push(row(format!("pid {pid}"), state));
     }
     if let (Sweep::Pressure, Some(r), Some(mem)) = (sweep, ram, sample.and_then(|s| s.mem)) {
         let after = pct_after(mem, freed.1).unwrap_or(r);
@@ -131,14 +143,9 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Vec<Row> {
     rows
 }
 
-/// `root`'s leftover servers on this machine right now ([`pick`] over the OS listing).
-pub(super) fn stale_servers(root: &Path, now: u64, server_age: u64) -> Vec<Proc> {
-    let procs = list(now);
-    let pids = pick(&procs, root, now, server_age, std::process::id(), &|p| p.exists());
-    procs.into_iter().filter(|p| pids.contains(&p.pid)).collect()
-}
-
-/// Which of `procs` to kill for `root` at `now`: a node process whose command line names `root`
+/// Which of `procs` to kill for `root` at `now`: an ORPHANED node process (its parent is gone, or
+/// the pid it names was reused by a process started after it — a server still under a live shell,
+/// terminal or npm/npx is the owner's or a room's and stays) whose command line names `root`
 /// (case-insensitive for a Windows path, `\` = `/`) and that is
 /// - a dev/preview server ([`kind`]: `vite` but never `vitest`, `next dev|start`, `webpack serve`,
 ///   `http-server`, `serve -s`, `live-server`) at least `server_age` old ([`SERVER_AGE_S`],
@@ -147,7 +154,7 @@ pub(super) fn stale_servers(root: &Path, now: u64, server_age: u64) -> Vec<Proc>
 ///   gone (`exists` false) or that is at least [`TS_AGE_S`] old.
 ///
 /// Never `me` or its ancestors (HQ runs `auto revive`), never HQ's own app (`hq-ui`, `hq-channel`),
-/// never a process with no start time; a pick whose ancestor is also picked is left to the tree kill.
+/// never a process with no start time.
 pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u32, exists: &dyn Fn(&Path) -> bool) -> Vec<u32> {
     let root_s = root.to_string_lossy();
     let fold = windows_path(&root_s);
@@ -162,9 +169,11 @@ pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u
         keep.push(p.ppid);
         cur = p.ppid;
     }
+    // A parent of unknown start time (0) counts as live: kept rather than guessed.
+    let owned = |p: &Proc| p.ppid != 0 && procs.iter().any(|q| q.pid == p.ppid && q.started <= p.started);
     let mut out = Vec::new();
     for p in procs {
-        if keep.contains(&p.pid) || p.started == 0 {
+        if !p.node || keep.contains(&p.pid) || p.started == 0 || owned(p) {
             continue;
         }
         let c = norm(&p.cmd, fold);
@@ -183,22 +192,25 @@ pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u
             out.push(p.pid);
         }
     }
-    // `taskkill /T` on a parent takes its children: killing them again would only fail.
-    let parent_of = |pid: u32| procs.iter().find(|p| p.pid == pid).map(|p| p.ppid);
-    let picked = out.clone();
-    out.retain(|&pid| {
-        let mut seen = vec![pid];
-        let mut cur = pid;
-        while let Some(pp) = parent_of(cur).filter(|pp| *pp != 0 && !seen.contains(pp)) {
-            if picked.contains(&pp) {
-                return false;
-            }
-            seen.push(pp);
-            cur = pp;
-        }
-        true
-    });
     out
+}
+
+/// `pid` then its node descendants: a child counts only when it started no earlier than its
+/// parent (a `ParentProcessId` naming a recycled pid is never followed); a non-node child is walked
+/// through but never returned, so nothing but node is ever killed.
+fn tree(procs: &[Proc], pid: u32) -> Vec<u32> {
+    let mut walk = vec![pid];
+    let mut i = 0;
+    while let Some(&cur) = walk.get(i) {
+        i += 1;
+        let Some(parent) = procs.iter().find(|p| p.pid == cur) else { continue };
+        for c in procs {
+            if c.ppid == cur && c.started != 0 && c.started >= parent.started && !walk.contains(&c.pid) {
+                walk.push(c.pid);
+            }
+        }
+    }
+    walk.into_iter().filter(|p| *p == pid || procs.iter().any(|q| q.pid == *p && q.node)).collect()
 }
 
 /// `C:\…` / `c:/…`: matched case-insensitively.
@@ -286,7 +298,8 @@ fn describe(p: &Proc, now: u64) -> String {
     format!("{what}{port} ({age}{mem})")
 }
 
-/// Kills each pid with its tree; `true` where the kill went through. Never by image name.
+/// Kills each pid alone (`taskkill /F` without `/T`, which would follow stale parent links);
+/// `true` where the kill went through. Never by image name.
 fn kill(pids: &[u32]) -> Vec<bool> {
     #[cfg(windows)]
     {
@@ -294,7 +307,7 @@ fn kill(pids: &[u32]) -> Vec<bool> {
         pids.iter()
             .map(|pid| {
                 std::process::Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .args(["/PID", &pid.to_string(), "/F"])
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
@@ -323,13 +336,13 @@ fn kill(pids: &[u32]) -> Vec<bool> {
     }
 }
 
-/// Node processes on this machine (empty when the OS listing fails).
+/// Every process on this machine (empty when the OS listing fails).
 fn list(now: u64) -> Vec<Proc> {
     #[cfg(windows)]
     {
         let _ = now;
         use std::os::windows::process::CommandExt;
-        let ps = "Get-CimInstance Win32_Process -Filter 'Name=''node.exe''' | Select ProcessId,ParentProcessId,WorkingSetSize,CommandLine,@{n='Started';e={if($_.CreationDate){([DateTimeOffset]$_.CreationDate).ToUnixTimeSeconds()}else{0}}} | ConvertTo-Json -Compress";
+        let ps = "Get-CimInstance Win32_Process | Select ProcessId,ParentProcessId,Name,WorkingSetSize,@{n='CommandLine';e={if($_.Name -eq 'node.exe'){$_.CommandLine}}},@{n='Started';e={if($_.CreationDate){([DateTimeOffset]$_.CreationDate).ToUnixTimeSeconds()}else{0}}} | ConvertTo-Json -Compress";
         let mut c = std::process::Command::new("powershell");
         c.args(["-NoProfile", "-NonInteractive", "-Command", ps])
             .stdin(std::process::Stdio::null())
@@ -374,19 +387,20 @@ fn parse_windows(s: &str) -> Vec<Proc> {
     };
     rows.iter()
         .filter_map(|r| {
+            let node = r["Name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case("node.exe"));
             Some(Proc {
                 pid: u32::try_from(r["ProcessId"].as_u64()?).ok()?,
                 ppid: r["ParentProcessId"].as_u64().and_then(|x| u32::try_from(x).ok()).unwrap_or(0),
                 started: r["Started"].as_u64().unwrap_or(0),
                 rss: r["WorkingSetSize"].as_u64().unwrap_or(0),
-                cmd: r["CommandLine"].as_str()?.to_string(),
+                node,
+                cmd: if node { r["CommandLine"].as_str().unwrap_or_default().to_string() } else { String::new() },
             })
         })
         .collect()
 }
 
-/// `ps -axo pid=,ppid=,etime=,rss=,command=` (macOS: `etime` is `[[dd-]hh:]mm:ss`, `rss` KB),
-/// node processes only.
+/// `ps -axo pid=,ppid=,etime=,rss=,command=` (macOS: `etime` is `[[dd-]hh:]mm:ss`, `rss` KB).
 #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 fn parse_ps(s: &str, now: u64) -> Vec<Proc> {
     s.lines()
@@ -397,18 +411,15 @@ fn parse_ps(s: &str, now: u64) -> Vec<Proc> {
             let etime = f.next()?;
             let rss: u64 = f.next()?.parse().ok()?;
             let cmd = f.collect::<Vec<_>>().join(" ");
-            let argv0 = cmd.split_whitespace().next()?;
-            if !argv0.rsplit('/').next()?.starts_with("node") {
-                return None;
-            }
+            let node = cmd.split_whitespace().next().and_then(|a| a.rsplit('/').next()).is_some_and(|b| b.starts_with("node"));
             let (days, hms) = etime.split_once('-').map_or((0, etime), |(d, r)| (d.parse().unwrap_or(0), r));
             let secs = hms.split(':').try_fold(0u64, |acc, x| x.parse::<u64>().ok().map(|n| acc * 60 + n))?;
-            Some(Proc { pid, ppid, started: now.saturating_sub(days * 86_400 + secs), rss: rss * 1024, cmd })
+            Some(Proc { pid, ppid, started: now.saturating_sub(days * 86_400 + secs), rss: rss * 1024, node, cmd: if node { cmd } else { String::new() } })
         })
         .collect()
 }
 
-/// `/proc/<pid>/{cmdline,stat,statm}` of node processes; start = boot time + field 22 (USER_HZ 100).
+/// `/proc/<pid>/{cmdline,stat,statm}`; start = boot time + field 22 (USER_HZ 100).
 #[cfg(target_os = "linux")]
 fn list_linux() -> Vec<Proc> {
     let Some(btime) = std::fs::read_to_string("/proc/stat")
@@ -423,9 +434,7 @@ fn list_linux() -> Vec<Proc> {
             let pid: u32 = e.file_name().to_str()?.parse().ok()?;
             let raw = std::fs::read(e.path().join("cmdline")).ok()?;
             let argv: Vec<String> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
-            if !argv.first()?.rsplit('/').next()?.starts_with("node") {
-                return None;
-            }
+            let node = argv.first().and_then(|a| a.rsplit('/').next()).is_some_and(|b| b.starts_with("node"));
             let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
             let f: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
             let ppid = f.get(1)?.parse().ok()?;
@@ -434,7 +443,7 @@ fn list_linux() -> Vec<Proc> {
                 .ok()
                 .and_then(|s| s.split_whitespace().nth(1).and_then(|x| x.parse::<u64>().ok()))
                 .map_or(0, |pages| pages * 4096);
-            Some(Proc { pid, ppid, started: btime + ticks / 100, rss, cmd: argv.join(" ") })
+            Some(Proc { pid, ppid, started: btime + ticks / 100, rss, node, cmd: if node { argv.join(" ") } else { String::new() } })
         })
         .collect()
 }
@@ -447,7 +456,12 @@ mod tests {
     const NOW: u64 = 1_000_000;
 
     fn p(pid: u32, ppid: u32, age_min: u64, cmd: &str) -> Proc {
-        Proc { pid, ppid, started: NOW - age_min * 60, rss: 120 * 1024 * 1024, cmd: cmd.into() }
+        Proc { pid, ppid, started: NOW - age_min * 60, rss: 120 * 1024 * 1024, node: true, cmd: cmd.into() }
+    }
+
+    /// A process of another image (shell, terminal, claude.exe).
+    fn other(pid: u32, ppid: u32, age_min: u64) -> Proc {
+        Proc { node: false, cmd: String::new(), ..p(pid, ppid, age_min, "") }
     }
 
     fn all_exist(_: &Path) -> bool {
@@ -481,9 +495,9 @@ mod tests {
             // a node script in the root that is no server: kept.
             p(20, 0, 900, r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\scripts\watch-assets.js"#),
             // no start time: kept.
-            Proc { pid: 21, ppid: 0, started: 0, rss: 0, cmd: r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\node_modules\vite\bin\vite.js"#.into() },
+            Proc { pid: 21, ppid: 0, started: 0, rss: 0, node: true, cmd: r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\node_modules\vite\bin\vite.js"#.into() },
         ];
-        let me_tree = vec![Proc { pid: 2, ppid: 3, started: NOW, rss: 0, cmd: String::new() }];
+        let me_tree = vec![Proc { pid: 2, ppid: 3, started: NOW, rss: 0, node: true, cmd: String::new() }];
         let procs: Vec<Proc> = procs.into_iter().chain(me_tree).collect();
         let exists = |d: &Path| !d.to_string_lossy().contains("card-12");
         assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 2, &exists), vec![10, 11, 16, 19]);
@@ -493,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn unix_paths_are_case_sensitive_and_children_go_with_their_parent() {
+    fn unix_paths_are_case_sensitive_and_a_child_goes_with_its_server() {
         let root = PathBuf::from("/home/dev/game");
         let procs = vec![
             p(30, 1, 200, "node /home/dev/game/node_modules/.bin/next dev -p 3000"),
@@ -505,23 +519,66 @@ mod tests {
             p(36, 1, 200, "node /home/dev/game/node_modules/vite/bin/vite.js build --watch"),
             p(37, 1, 200, "node /home/dev/game/node_modules/live-server/live-server.js"),
         ];
+        // 31 is under a live 30: never picked itself, killed in 30's tree.
         assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 99, &all_exist), vec![30, 33, 34, 35, 37]);
+        assert_eq!(tree(&procs, 30), vec![30, 31]);
         assert_eq!(describe(&procs[0], NOW), "next dev :3000 (3h 20m, 120 MB)");
         assert_eq!(describe(&procs[5], NOW).split(' ').take(3).collect::<Vec<_>>(), ["webpack", "serve", ":9000"]);
     }
 
     #[test]
     fn parses_the_os_listings() {
-        let one = r#"{"ProcessId":7,"ParentProcessId":1,"WorkingSetSize":2048,"CommandLine":"node a.js","Started":123}"#;
-        assert_eq!(parse_windows(one), vec![Proc { pid: 7, ppid: 1, started: 123, rss: 2048, cmd: "node a.js".into() }]);
-        let many = r#"[{"ProcessId":7,"ParentProcessId":1,"WorkingSetSize":1,"CommandLine":null,"Started":0},{"ProcessId":8,"ParentProcessId":7,"WorkingSetSize":1,"CommandLine":"node b","Started":5}]"#;
-        assert_eq!(parse_windows(many).iter().map(|p| p.pid).collect::<Vec<_>>(), vec![8]);
+        let one = r#"{"ProcessId":7,"ParentProcessId":1,"Name":"node.exe","WorkingSetSize":2048,"CommandLine":"node a.js","Started":123}"#;
+        assert_eq!(parse_windows(one), vec![Proc { pid: 7, ppid: 1, started: 123, rss: 2048, node: true, cmd: "node a.js".into() }]);
+        let many = r#"[{"ProcessId":7,"ParentProcessId":1,"Name":"cmd.exe","WorkingSetSize":1,"CommandLine":null,"Started":3},{"ProcessId":8,"ParentProcessId":7,"Name":"NODE.EXE","WorkingSetSize":1,"CommandLine":"node b","Started":5},{"ParentProcessId":7}]"#;
+        let got = parse_windows(many);
+        assert_eq!(got.iter().map(|p| (p.pid, p.node, p.cmd.as_str())).collect::<Vec<_>>(), vec![(7, false, ""), (8, true, "node b")]);
         assert!(parse_windows("").is_empty());
         let ps = "  41     1 1-02:03:04  2048 /usr/local/bin/node /x/vite.js preview\n  42 1 05:06 10 /bin/zsh -l\n 43 1 07 1 node y.js\n";
         let got = parse_ps(ps, NOW);
-        assert_eq!(got.len(), 2);
-        assert_eq!(got[0], Proc { pid: 41, ppid: 1, started: NOW - (86_400 + 2 * 3600 + 3 * 60 + 4), rss: 2048 * 1024, cmd: "/usr/local/bin/node /x/vite.js preview".into() });
-        assert_eq!(got[1].started, NOW - 7);
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0], Proc { pid: 41, ppid: 1, started: NOW - (86_400 + 2 * 3600 + 3 * 60 + 4), rss: 2048 * 1024, node: true, cmd: "/usr/local/bin/node /x/vite.js preview".into() });
+        assert_eq!((got[1].node, got[1].cmd.as_str(), got[1].started), (false, "", NOW - 306));
+        assert_eq!(got[2].started, NOW - 7);
+    }
+
+    #[test]
+    fn only_orphans_go_and_their_tree_never_follows_recycled_links() {
+        let root = PathBuf::from(r"C:\w\game");
+        let vite = r"node C:\w\game\node_modules\vite\bin\vite.js preview --port 4200";
+        let procs = vec![
+            // The owner's `npm run dev` under a live terminal: kept.
+            other(50, 0, 300),
+            p(51, 50, 200, vite),
+            // Parent pid now names a process started after the server (pid reused): orphan, picked.
+            other(53, 0, 10),
+            p(52, 53, 200, vite),
+            // Parent gone: orphan, picked.
+            p(60, 4242, 200, vite),
+            // A non-node image whose line mentions the root: never picked.
+            Proc { cmd: vite.into(), ..other(61, 0, 200) },
+            // 52's real children: a node worker (killed), esbuild.exe (walked, never killed) and its
+            // node child (killed).
+            p(56, 52, 199, "node worker.js"),
+            other(55, 52, 199),
+            p(59, 55, 198, "node inner.js"),
+            // A room's claude.exe older than 52 that names it as parent (stale link): not followed,
+            // nor is its node child.
+            other(57, 52, 500),
+            p(58, 57, 400, "node mcp.js"),
+        ];
+        assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 1, &all_exist), vec![52, 60]);
+        assert_eq!(tree(&procs, 52), vec![52, 56, 59]);
+        assert_eq!(tree(&procs, 60), vec![60]);
+    }
+
+    #[test]
+    fn nothing_while_auto_does_not_run_for_the_project() {
+        let home = std::env::temp_dir().join(format!("reap-off-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        assert!(tick(&home, Path::new(r"C:\w\game"), NOW).is_empty());
+        assert!(!idle::state_dir(&home).join("reap.json").exists(), "no sweep, no stamp");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

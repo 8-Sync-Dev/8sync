@@ -3,7 +3,7 @@
 // answers ConPTY's cursor query, reads the screen, and only types the allowlisted keys while the
 // screen still shows the dialog the owner saw; then the bridge is closed (the room keeps running).
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { permissionOnScreen, questionOnScreen, renderScreen } from "../screen";
+import { flatText, permissionOnScreen, questionOnScreen, renderScreen } from "../screen";
 import { binFor, childEnv } from "./child-env";
 import { termArgs } from "./term";
 
@@ -36,20 +36,28 @@ export function dialogOnScreen(lines: string[], expect: Expect): Dialog | null {
   return text ? { kind: "question", text } : null;
 }
 
-/** Keys that fit the dialog: Enter only on a highlighted Yes; a number only within the options, then Enter. */
+/**
+ * Keys that fit the dialog: Enter only for a permission prompt (the cursor must sit on "1. Yes"), Esc
+ * anywhere, an option number alone for a question (Claude Code's AskUserQuestion submits on the
+ * digit: an Enter after it would land on whatever shows next).
+ */
 export function keysFit(keys: string[], expect: Expect): boolean {
-  if (!keys.length || keys.some((k) => !ANSWER_KEYS.includes(k))) return false;
-  if (keys.length === 1) return keys[0] === "\u001b" || (expect.kind === "permission" && keys[0] === "\r");
-  return expect.kind === "question" && keys.length === 2 && keys[1] === "\r" && Number(keys[0]) >= 1 && Number(keys[0]) <= expect.options.length;
+  if (keys.length !== 1 || !ANSWER_KEYS.includes(keys[0])) return false;
+  const k = keys[0];
+  if (k === "\u001b") return true;
+  if (expect.kind === "permission") return k === "\r";
+  return k !== "\r" && Number(k) >= 1 && Number(k) <= expect.options.length;
 }
 
 const busy = new Set<string>();
 
 /**
- * Reads the room's screen; with `keys`, types them only if `expect` still shows (Enter on a
- * permission prompt also needs the cursor on "1. Yes"). No keys: a read-only peek.
+ * Reads the room's screen; with `keys`, types them only if `expect` still shows AND its text is the
+ * very text the owner was shown (`shown`, compared after flatText): a new dialog in the same room,
+ * even of the same kind, never takes the click. Enter on a permission prompt also needs the cursor on
+ * "1. Yes". No keys: a read-only peek.
  */
-export function answerRoom(sid: string, cwd: string | null, expect: Expect, keys: string[], spawn: Spawn = nodeSpawn as unknown as Spawn): Promise<AnswerResult> {
+export function answerRoom(sid: string, cwd: string | null, expect: Expect, keys: string[], shown: string | null, spawn: Spawn = nodeSpawn as unknown as Spawn): Promise<AnswerResult> {
   // 429, not 409: busy is no proof the screen moved on.
   if (busy.has(sid)) return Promise.resolve({ ok: false, status: 429, error: "đang đọc màn hình phòng này, thử lại sau vài giây" });
   busy.add(sid);
@@ -108,7 +116,8 @@ export function answerRoom(sid: string, cwd: string | null, expect: Expect, keys
         return;
       }
       const dialog = dialogOnScreen(renderScreen(out, COLS, ROWS), expect);
-      if (!dialog || (keys[0] === "\r" && keys.length === 1 && dialog.kind === "permission" && !dialog.yes)) {
+      const stale = keys.length > 0 && (!shown || !dialog || flatText(dialog.text) !== flatText(shown));
+      if (!dialog || stale || (keys[0] === "\r" && dialog.kind === "permission" && !dialog.yes)) {
         finish({ ok: false, status: 409, error: MOVED });
         return;
       }

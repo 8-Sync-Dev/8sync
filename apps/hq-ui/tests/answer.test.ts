@@ -59,6 +59,8 @@ const ASK: Ask = {
   at: 1,
   questions: [{ header: "Ship", question: "Merge card-46 vào main bây giờ hay đợi QA lần nữa?", multi: false, options: [{ label: "Merge ngay", description: "Card đã qua QA và review" }, { label: "Đợi QA lần nữa", description: null }] }],
 };
+/** What the owner was shown for PERMISSION: the peek's dialog text. */
+const SHOWN = permissionOnScreen(renderScreen(draw(PERMISSION)))!.text;
 
 describe("renderScreen + dialog checks", () => {
   it("renders cursor moves, erases and colours to plain lines", () => {
@@ -85,14 +87,16 @@ describe("renderScreen + dialog checks", () => {
     expect(questionOnScreen(lines, q!.question, ["Merge ngay", "Bỏ card"])).toBeNull();
   });
 
-  it("keys: an allowlist, and only what fits the dialog", () => {
+  it("keys: one allowlisted key that fits the dialog; a question takes the digit alone (it submits)", () => {
     const perm = { kind: "permission" } as const;
     const quest = { kind: "question", question: "q", options: ["a", "b"] } as const;
     expect(keysFit(["\r"], perm)).toBe(true);
     expect(keysFit(["\u001b"], perm)).toBe(true);
-    expect(keysFit(["1", "\r"], perm)).toBe(false);
-    expect(keysFit(["2", "\r"], quest)).toBe(true);
-    expect(keysFit(["3", "\r"], quest)).toBe(false);
+    expect(keysFit(["1"], perm)).toBe(false);
+    expect(keysFit(["2"], quest)).toBe(true);
+    expect(keysFit(["\u001b"], quest)).toBe(true);
+    expect(keysFit(["2", "\r"], quest)).toBe(false);
+    expect(keysFit(["3"], quest)).toBe(false);
     expect(keysFit(["\r"], quest)).toBe(false);
     for (const bad of [["y"], ["\u0003"], ["\r\n"], ["rm -rf /\r"], ["1", "1"], []]) expect(keysFit(bad, quest)).toBe(false);
   });
@@ -118,16 +122,17 @@ describe("POST /api/sessions/:id/answer", () => {
     } as never);
   const typed = () => bridge.writes.map((w) => JSON.parse(w).i);
 
-  it("refuses no token, a foreign or missing Origin, a bad session id, bad keys: nothing is spawned", async () => {
-    const body = { kind: "permission", keys: ["\r"] };
+  it("refuses no token, a foreign or missing Origin, a bad session id, bad keys, no shown text: nothing is spawned", async () => {
+    const body = { kind: "permission", keys: ["\r"], text: SHOWN };
     expect((await post(SID, body, { token: null })).status).toBe(401);
     expect((await post(SID, body, { origin: "http://evil.test" })).status).toBe(403);
     expect((await post(SID, body, { origin: null })).status).toBe(403);
     expect((await post("--help", body)).status).toBe(422);
     expect((await post("hq-dev", body)).status).toBe(422);
-    expect((await post(SID, { kind: "permission", keys: ["y"] })).status).toBe(422);
-    expect((await post(SID, { kind: "permission", keys: ["\r", "\r", "\r"] })).status).toBe(422);
-    expect((await post(SID, { kind: "permission", keys: ["1", "\r"] })).status).toBe(422);
+    expect((await post(SID, { kind: "permission", keys: ["y"], text: SHOWN })).status).toBe(422);
+    expect((await post(SID, { kind: "permission", keys: ["\r", "\r"], text: SHOWN })).status).toBe(422);
+    expect((await post(SID, { kind: "permission", keys: ["1"], text: SHOWN })).status).toBe(422);
+    expect((await post(SID, { kind: "permission", keys: ["\r"] })).status).toBe(422);
     expect((await post(SID, { kind: "bash", keys: [] })).status).toBe(422);
     expect(bridge.spawned).toEqual([]);
   });
@@ -145,39 +150,52 @@ describe("POST /api/sessions/:id/answer", () => {
     expect(bridge.killed).toBeGreaterThan(0);
   });
 
-  it("Cho phép sends exactly Enter after the cursor reply; Từ chối exactly Esc", async () => {
+  it("Cho phép sends exactly Enter after the cursor reply; Từ chối exactly Esc (with the shown text)", async () => {
     bridge.screen = draw(PERMISSION);
-    expect((await post(SID, { kind: "permission", keys: ["\r"] })).status).toBe(200);
+    expect((await post(SID, { kind: "permission", keys: ["\r"], text: SHOWN })).status).toBe(200);
     expect(typed()).toEqual([CURSOR_REPLY, "\r"]);
     bridge.writes = [];
-    expect((await post(SID, { kind: "permission", keys: ["\u001b"] })).status).toBe(200);
+    expect((await post(SID, { kind: "permission", keys: ["\u001b"], text: SHOWN })).status).toBe(200);
     expect(typed()).toEqual([CURSOR_REPLY, "\u001b"]);
   });
 
   it("409 when the screen no longer shows the dialog (or Yes is not highlighted): no key goes in", async () => {
     bridge.screen = draw(["> ", "? for shortcuts"]);
-    const res = await post(SID, { kind: "permission", keys: ["\r"] });
+    const res = await post(SID, { kind: "permission", keys: ["\r"], text: SHOWN });
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("màn hình đã đổi, mở terminal");
     expect(typed()).toEqual([CURSOR_REPLY]);
     bridge.writes = [];
     bridge.screen = draw(PERMISSION.map((l) => l.replace("❯ 1. Yes", "  1. Yes").replace("  2. Yes,", "❯ 2. Yes,")));
-    expect((await post(SID, { kind: "permission", keys: ["\r"] })).status).toBe(409);
+    expect((await post(SID, { kind: "permission", keys: ["\r"], text: SHOWN })).status).toBe(409);
     expect(typed()).toEqual([CURSOR_REPLY]);
   });
 
-  it("a question option: its number then Enter, checked against the room's own transcript question", async () => {
+  it("409 when a NEW permission prompt replaced the one the owner saw: the click never approves it", async () => {
+    bridge.screen = draw(PERMISSION.map((l) => l.replace("pnpm vite preview --port 4173 --strictPort", "rm -rf ../../ --no-preserve-root       ")));
+    const res = await post(SID, { kind: "permission", keys: ["\r"], text: SHOWN });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("màn hình đã đổi, mở terminal");
+    expect(typed()).toEqual([CURSOR_REPLY]);
+  });
+
+  it("a question option: its digit only (no Enter), checked against the transcript question and the shown text", async () => {
     ask.value = ASK;
     bridge.screen = draw(QUESTION);
-    expect((await post(SID, { kind: "question", keys: ["2", "\r"] })).status).toBe(200);
-    expect(typed()).toEqual([CURSOR_REPLY, "2", "\r"]);
+    const shownQ = "Merge card-46 vào main bây giờ hay đợi QA lần nữa?";
+    expect((await post(SID, { kind: "question", keys: ["2"], text: shownQ })).status).toBe(200);
+    expect(typed()).toEqual([CURSOR_REPLY, "2"]);
     bridge.writes = [];
-    expect((await post(SID, { kind: "question", keys: ["3", "\r"] })).status).toBe(422);
+    expect((await post(SID, { kind: "question", keys: ["2", "\r"], text: shownQ })).status).toBe(422);
+    expect((await post(SID, { kind: "question", keys: ["3"], text: shownQ })).status).toBe(422);
+    expect((await post(SID, { kind: "question", keys: ["1"], text: "Một câu khác?" })).status).toBe(409);
+    expect(typed()).toEqual([CURSOR_REPLY]);
+    bridge.writes = [];
     bridge.screen = draw(PERMISSION);
-    expect((await post(SID, { kind: "question", keys: ["1", "\r"] })).status).toBe(409);
+    expect((await post(SID, { kind: "question", keys: ["1"], text: shownQ })).status).toBe(409);
     expect(typed()).toEqual([CURSOR_REPLY]);
     ask.value = null;
-    expect((await post(SID, { kind: "question", keys: ["1", "\r"] })).status).toBe(409);
+    expect((await post(SID, { kind: "question", keys: ["1"], text: shownQ })).status).toBe(409);
   });
 });
 

@@ -367,7 +367,10 @@ pub(super) fn background(home: &Path, root: &Path, now: u64) -> Result<Vec<Strin
     let Some(main) = default_branch(root) else { return Ok(Vec::new()) };
     let gh = |args: &[&str]| gh(root, args);
     let c = Ctx { home, root, who: Some("lead"), now, main: &main, gh: &gh };
-    Ok(land_all(&c)?.iter().filter(|o| o.action != "wait").map(|o| format!("merge nền: {}", line(o))).collect())
+    // One card per pass: HQ kills a revive that runs past 120 s, and each card is several gh calls.
+    let Some(t) = target::list(home, root)?.into_iter().filter(|t| t.state == "open" && t.lane == "approved").min_by_key(|t| t.prio.unwrap_or(2)) else { return Ok(Vec::new()) };
+    let o = land(&t, &c, false);
+    Ok((o.action != "wait").then(|| format!("merge nền: {}", line(&o))).into_iter().collect())
 }
 
 /// Every approved card, most urgent first; one whose base is still landing goes after the rest.

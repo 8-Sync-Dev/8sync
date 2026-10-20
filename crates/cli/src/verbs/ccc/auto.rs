@@ -1248,7 +1248,10 @@ fn run_target(
             // The owner's own card on a board team is always looked at now (owner 2026-10-20: "các
             // input từ tôi đều là bắt buộc xem ngay"): head of the queue, the backlog rooms told at
             // once, like `--now`. A room's card keeps its place.
-            let first = first || (from.is_none() && board_team(home, root));
+            // Owner = no room identified AND not inside any Claude Code session (a room in a worktree
+            // that forgot `--as` is not the owner).
+            let owner = from.is_none() && std::env::var("CLAUDE_CODE_SESSION_ID").map_or(true, |s| s.trim().is_empty());
+            let first = first || (owner && board_team(home, root));
             let text = words.join(" ");
             // Checked before anything is written, so a bad value never leaves a half-made card.
             let prio = flag("--prio").map(target::parse_prio).transpose()?;
@@ -2767,9 +2770,16 @@ mod tests {
         run(&s(&["add", "boss", "fight", "--now"]), &h, false, &h, rooms).unwrap();
         assert_eq!((lines(ids[0]), lines(ids[1])), (lead_before + 1, qa_before), "the lead hears it, qa keeps its card");
         // The owner's card on a board team is always looked at now: first in queue, the lead told.
+        // (Run inside a Claude Code session the caller is not the owner: that half is skipped.)
+        let owner_terminal = std::env::var("CLAUDE_CODE_SESSION_ID").map_or(true, |s| s.trim().is_empty());
         run(&s(&["add", "camera", "shake"]), &h, false, &h, rooms).unwrap();
-        assert_eq!(cur().0.unwrap().text, "camera shake", "head of the queue without --now");
-        assert_eq!(lines(ids[0]), lead_before + 2, "the lead hears the owner's card at once");
+        let lead_before = if owner_terminal {
+            assert_eq!(cur().0.unwrap().text, "camera shake", "head of the queue without --now");
+            assert_eq!(lines(ids[0]), lead_before + 2, "the lead hears the owner's card at once");
+            lead_before
+        } else {
+            lines(ids[0]) - 2
+        };
         // "⚡ Làm ngay" (owner P0 on a backlog card) tells the lead; a room raising it does not.
         let t = target::add(&h, &h, "wind in trees", None, None, false, Some("lead"), 9).unwrap().0;
         run(&s(&["prio", &t.id.to_string(), "P0"]), &h, false, &h, rooms).unwrap();

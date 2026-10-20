@@ -266,7 +266,10 @@ export function oneTapKind(r: Pick<AskRoom, "ask" | "waiting" | "tmux" | "sessio
 }
 
 type Screen = { text: string; yes: boolean };
-/** One screen read per dialog, shared by every mount (a tab switch, React's dev double effect): two reads would race for the room. */
+/**
+ * Screen reads in flight, shared by mounts that overlap (React's dev double effect): two reads would
+ * race for the room. Dropped once settled, so a later mount reads the screen again, never an old one.
+ */
 const peeks = new Map<string, Promise<Screen>>();
 
 const ENTER = "\r";
@@ -275,7 +278,8 @@ const ESC = "\u001b";
 /**
  * One-tap answers through the room's terminal bridge (POST /api/sessions/<id>/answer). The screen is
  * read first and shown as is (the exact command or question), so the owner approves what the room
- * really asks; the server types the keys only if that dialog still shows.
+ * really asks; the click sends that text back and the server types the key only if the screen still
+ * shows exactly it (a new dialog in the same room, even another permission prompt, never takes it).
  */
 export function OneTap({ r, sid, kind, token, onTerminal }: { r: AskRoom; sid: string; kind: "permission" | "question"; token: string; onTerminal: () => void }) {
   const key = `${sid}:${r.ask?.at ?? r.waiting ?? ""}`;
@@ -291,7 +295,8 @@ export function OneTap({ r, sid, kind, token, onTerminal }: { r: AskRoom; sid: s
         yes: d.dialog.yes !== false,
       }));
       peeks.set(key, p);
-      p.catch(() => peeks.delete(key));
+      const done = () => peeks.delete(key);
+      p.then(done, done);
     }
     p.then((s) => live && setScreen(s)).catch((e) => live && setScreen(e instanceof ApiError && e.status === 409 ? "moved" : "error"));
     return () => {
@@ -300,14 +305,13 @@ export function OneTap({ r, sid, kind, token, onTerminal }: { r: AskRoom; sid: s
   }, [key, sid, kind, token]);
 
   async function send(keys: string[], done: string) {
+    if (typeof screen !== "object") return;
     setBusy(keys.join(""));
     try {
-      await makeApi(token)(`/api/sessions/${encodeURIComponent(sid)}/answer`, { method: "POST", body: { kind, keys } });
-      peeks.delete(key);
+      await makeApi(token)(`/api/sessions/${encodeURIComponent(sid)}/answer`, { method: "POST", body: { kind, keys, text: screen.text } });
       toast.success(done);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
-        peeks.delete(key);
         setScreen("moved");
         toast.error(`${r.label}: màn hình đã đổi, mở terminal`);
       } else toast.error((e as Error).message);
@@ -361,7 +365,7 @@ export function OneTap({ r, sid, kind, token, onTerminal }: { r: AskRoom; sid: s
               variant="outline"
               className="h-auto min-h-7 max-w-full items-start justify-start py-1.5 text-left whitespace-normal"
               disabled={off}
-              onClick={() => void send([String(oi + 1), ENTER], `Đã chọn “${o.label}” cho ${r.label}`)}
+              onClick={() => void send([String(oi + 1)], `Đã chọn “${o.label}” cho ${r.label}`)}
             >
               <span className="font-mono text-xs leading-5 opacity-70 tabular">{oi + 1}.</span>
               <span className="min-w-0">

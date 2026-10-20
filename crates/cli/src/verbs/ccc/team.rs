@@ -189,7 +189,7 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
          Lượt đầu, đặt loop dự phòng: {setup} \
          Mỗi lượt: (1) `8sync ccc auto status --json`; {first}(2) `8sync ccc auto claim --json` (cột {lane}); có card thì làm đúng việc cột đó: {playbook}; \
          (3) không có card → `8sync ccc auto wait --json` (Bash timeout {bash_ms}; chặn ≤ {wait_min} phút, không tốn token): `\"wake\":\"card\"` → claim (2) và làm card đó ngay lượt này; `\"wake\":\"merge\"` → quay lại (1); còn lại → kết thúc lượt. \
-         Mọi lệnh `8sync ccc auto claim|move|note|wait` thêm `--as {name}` (trong worktree 8sync không tự nhận ra phòng). \
+         Mọi lệnh `8sync ccc auto claim|move|note|wait|add` thêm `--as {name}` (trong worktree 8sync không tự nhận ra phòng). \
          Rail: không merge/push main/tag/deploy khi owner chưa trả lời câu Ship (hoặc chưa cho tự merge); giữ file trước khi sửa (`8sync ccc . goal \"…\" --files a,b`); \
          `8sync ccc meet --say \"done|doing|blocked: …\"` sau mỗi card. \
          `cap` khác null → không claim, chạy `auto wait`. \
