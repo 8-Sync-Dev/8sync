@@ -27,12 +27,11 @@ import {
   KEY_RE,
   npmCommand,
   parseStamp,
-  PLAY_COOKIE,
-  playAllowed,
-  playCookie,
   playSecret,
   playSig,
   playSigValid,
+  playUrl,
+  SIG_RE,
   playDir,
   playKey,
   playSegments,
@@ -46,6 +45,7 @@ import {
   waitPlayBuild,
 } from "@/lib/server/play";
 import nextConfig from "../next.config";
+import { PLAY_HEADERS, PLAY_SANDBOX } from "@/lib/play-headers";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -232,22 +232,10 @@ describe("argv: fixed, the root is one element, never a shell", () => {
   });
 });
 
-describe("auth", () => {
-  const headers = (h: Record<string, string>) => new Headers({ host: "127.0.0.1:8740", ...h });
+describe("auth: the signature in the path is the only lock", () => {
   const A = "game-a-0123456789";
   const B = "game-b-abcdefabcd";
-  const valueOf = (setCookie: string) => setCookie.split(";")[0].slice(PLAY_COOKIE.length + 1);
-  it("the play cookie is scoped to one project's play path: HttpOnly, Lax, Secure on https, never the token", () => {
-    const c = playCookie(A, true, 1000);
-    expect(c).toContain(`Path=/api/play/${A}/;`);
-    expect(c).toContain("HttpOnly");
-    expect(c).toContain("SameSite=Lax");
-    expect(c).toContain("Secure");
-    expect(c).toContain(`Max-Age=${12 * 3600}`);
-    expect(c).not.toContain(token);
-    expect(playCookie(A, false)).not.toContain("Secure");
-  });
-  it("its own secret: random, 0600 file, not the UI token", () => {
+  it("its own secret: random, 0600 file, not the UI token, shared on globalThis, re-read on change", () => {
     const s = playSecret();
     expect(s).toMatch(/^[0-9a-f]{64}$/);
     expect(s).not.toBe(token);
@@ -255,38 +243,44 @@ describe("auth", () => {
     if (process.platform !== "win32") expect(fs.statSync(playSecretPath()).mode & 0o777).toBe(0o600);
     // A signature keyed by the UI token is refused: the token is not the play key.
     expect(playSigValid(playSig(A, Date.now() + 60_000, token), A)).toBe(false);
+    // Rotated on disk (another bundle, or the owner revoking): the next call signs with the new key.
+    const next = "c".repeat(64);
+    fs.writeFileSync(playSecretPath(), next + "\n");
+    fs.utimesSync(playSecretPath(), new Date(), new Date(Date.now() + 5000));
+    expect(playSecret()).toBe(next);
+    // Gone: made again with `wx`, and every old signature stops working.
+    const old = playSig(A, Date.now() + 60_000);
+    fs.rmSync(playSecretPath());
+    expect(playSecret()).not.toBe(next);
+    expect(playSigValid(old, A)).toBe(false);
   });
-  it("signatures: per key, until expiry, at most 12 h ahead, forged ones refused", () => {
+  it("signatures: exact format, per key, until expiry, at most 12 h ahead, forged ones refused", () => {
     const now = Date.now();
     const sig = playSig(A, now + 60_000);
+    expect(sig).toMatch(SIG_RE);
     expect(playSigValid(sig, A, now)).toBe(true);
     expect(playSigValid(sig, B, now)).toBe(false);
     expect(playSigValid(sig, A, now + 60_001)).toBe(false);
     expect(playSigValid(playSig(A, now - 1), A, now)).toBe(false);
-    expect(playSigValid(playSig(A, now + 13 * 3600_000), A, now)).toBe(false);
+    expect(playSigValid(playSig(A, now + 12 * 3600_000 + 1), A, now)).toBe(false);
     const [exp, mac] = sig.split(".");
     expect(playSigValid(`${Number(exp) + 1}.${mac}`, A, now)).toBe(false);
     expect(playSigValid(`${exp}.${mac.slice(0, -1)}${mac.endsWith("0") ? "1" : "0"}`, A, now)).toBe(false);
-    for (const junk of ["", "1", `${exp}.`, `.${mac}`, `${exp}.${mac}x`, `-1.${mac}`, `${exp}.${mac.toUpperCase()}`]) expect(playSigValid(junk, A, now), junk).toBe(false);
+    for (const junk of ["", "1", `${exp}.`, `.${mac}`, `${exp}.${mac}x`, `-1.${mac}`, `0${exp}.${mac}`, `${exp}.${mac.toUpperCase()}`]) expect(playSigValid(junk, A, now), junk).toBe(false);
   });
-  it("the gate: right key, valid signature, loopback Host", () => {
-    const v = valueOf(playCookie(A, false));
-    const ck = `${PLAY_COOKIE}=${v}`;
-    expect(playAllowed(headers({ cookie: ck }), A)).toBe(true);
-    expect(playAllowed(headers({ cookie: ck }), B)).toBe(false);
-    // Another project's (or a stale) hq_play cookie sent first does not shadow the right one.
-    expect(playAllowed(headers({ cookie: `${PLAY_COOKIE}=${valueOf(playCookie(B, false))}; ${ck}` }), A)).toBe(true);
-    expect(playAllowed(headers({ cookie: `${PLAY_COOKIE}=${valueOf(playCookie(B, false))}` }), A)).toBe(false);
-    expect(playAllowed(headers({}), A)).toBe(false);
-    expect(playAllowed(headers({}), A, undefined, v)).toBe(true);
-    expect(playAllowed(headers({ cookie: `${PLAY_COOKIE}=1.${"0".repeat(64)}` }), A)).toBe(false);
-    expect(playAllowed(headers({ cookie: ck, host: "evil.test" }), A)).toBe(false);
-    expect(playAllowed(headers({ cookie: ck, "cf-ray": "x" }), A)).toBe(false);
-    const old = valueOf(playCookie(A, false, Date.now() - 13 * 3600_000));
-    expect(playAllowed(headers({ cookie: `${PLAY_COOKIE}=${old}` }), A)).toBe(false);
+  it("playUrl: signed, 11-12 h, the same URL for a whole hour", () => {
+    const t = Date.UTC(2026, 9, 20, 10, 5);
+    const u = playUrl(A, t);
+    const m = new RegExp(`^/api/play/${A}/(\\d{13}\\.[0-9a-f]{64})/index\\.html$`).exec(u);
+    expect(m).not.toBeNull();
+    const exp = Number(m![1].split(".")[0]);
+    expect(exp - t).toBeGreaterThanOrEqual(11 * 3600_000);
+    expect(exp - t).toBeLessThanOrEqual(12 * 3600_000);
+    expect(playUrl(A, t + 50 * 60_000)).toBe(u);
+    expect(playSigValid(m![1], A, t)).toBe(true);
   });
-  it("every other HQ route refuses a request that only carries the play cookie", async () => {
-    const ck = `${PLAY_COOKIE}=${valueOf(playCookie(A, false))}`;
+  it("every other HQ route still refuses a request without the token (old play cookie or not)", async () => {
+    const ck = `hq_play=${playSig(A, Date.now() + 60_000)}`;
     const only = (p: string, method = "GET") =>
       new Request(ORIGIN + p, { method, headers: { host: "127.0.0.1:8740", origin: ORIGIN, cookie: ck, ...(method === "GET" ? {} : { "content-type": "application/json" }) }, body: method === "GET" ? undefined : "{}" });
     for (const [name, fn] of [
@@ -301,13 +295,15 @@ describe("auth", () => {
       expect((await fn()).status, name).toBe(401);
     }
   });
-  it("play files may be framed by HQ itself; everything else stays DENY", async () => {
+  it("play files: sandboxed opaque origin, framed by HQ only; everything else stays DENY", async () => {
+    expect(PLAY_HEADERS["Content-Security-Policy"]).toBe("sandbox allow-scripts allow-pointer-lock allow-popups allow-forms; frame-ancestors 'self'");
+    expect(PLAY_HEADERS["Content-Security-Policy"]).not.toContain("allow-same-origin");
+    expect(PLAY_SANDBOX).not.toContain("allow-same-origin");
     const rules = await nextConfig.headers!();
     expect(rules[0].source).toBe("/:path*");
+    expect(Object.fromEntries(rules[0].headers.map((x) => [x.key, x.value]))["X-Frame-Options"]).toBe("DENY");
     const play = rules.find((r) => r.source === "/api/play/:key/:path+");
-    const h = Object.fromEntries(play!.headers.map((x) => [x.key, x.value]));
-    expect(h["Content-Security-Policy"]).toBe("frame-ancestors 'self'");
-    expect(h["X-Frame-Options"]).toBe("SAMEORIGIN");
+    expect(Object.fromEntries(play!.headers.map((x) => [x.key, x.value]))).toEqual(PLAY_HEADERS);
     // Later than the global rule, so it overrides it (Next: the last matching key wins).
     expect(rules.indexOf(play!)).toBeGreaterThan(0);
   });
@@ -351,7 +347,8 @@ describe("build end to end (real git + npm, temp repos)", () => {
     await waitPlayBuild(key, 120_000);
     const s = await playStatus(root);
     expect(s.log.join("\n")).not.toContain("không chạy được");
-    expect(s).toMatchObject({ key, state: "ready", stale: false, buildable: true, url: `/api/play/${key}/index.html` });
+    expect(s).toMatchObject({ key, state: "ready", stale: false, buildable: true });
+    expect(s.url).toMatch(new RegExp(`^/api/play/${key}/\\d{13}\\.[0-9a-f]{64}/index\\.html$`));
     expect(s.sha).toBe(git(root, "rev-parse", "origin/main").trim());
     const dir = playDir(key);
     expect(fs.readFileSync(path.join(dir, "dist", "index.html"), "utf8")).toContain("<!----base ./-->");
@@ -410,7 +407,11 @@ describe("build end to end (real git + npm, temp repos)", () => {
 
   describe("routes", () => {
     const addProject = (p: string) => getDb().prepare("INSERT OR IGNORE INTO projects(path, name, added_at) VALUES (?, ?, ?)").run(p, path.basename(p), Date.now());
-    const fileReq = (p: string, cookie?: string, host = "127.0.0.1:8740") => new Request(ORIGIN + p, { headers: { host, ...(cookie ? { cookie } : {}) } });
+    const fileReq = (p: string, h: Record<string, string> = {}, method = "GET") => new Request(ORIGIN + p, { method, headers: { host: "127.0.0.1:8740", ...h } });
+    const expectPlayHeaders = (r: Response, what: string) => {
+      for (const [k, v] of Object.entries(PLAY_HEADERS)) expect(r.headers.get(k), `${what}: ${k}`).toBe(v);
+      expect(r.headers.get("set-cookie"), `${what}: no cookie`).toBeNull();
+    };
 
     it("status and build need the token, a loopback Host and (POST) the UI Origin", async () => {
       addProject(root);
@@ -423,56 +424,72 @@ describe("build end to end (real git + npm, temp repos)", () => {
       expect((await playRoute.POST(req("/api/play", { method: "POST", token, origin: ORIGIN, body: { root: 7 } }))).status).toBe(422);
     });
 
-    it("serves dist behind the cookie the status call sets", async () => {
+    it("serves dist under the signed path only, sandboxed, no cookie, no token", async () => {
       const res = await playRoute.GET(req(`/api/play?root=${encodeURIComponent(root)}`, { token }));
       expect(res.status).toBe(200);
+      expect(res.headers.get("set-cookie")).toBeNull();
       const { status } = await res.json();
-      const cookie = res.headers.get("set-cookie")!.split(";")[0];
-      expect(cookie.startsWith(`${PLAY_COOKIE}=`)).toBe(true);
       const key = status.key as string;
+      const url = status.url as string;
+      const at = url.replace(/index\.html$/, "");
+      const sig = at.split("/")[4];
 
-      expect((await fileRoute.GET(fileReq(`/api/play/${key}/index.html`))).status).toBe(401);
-      expect((await fileRoute.GET(fileReq(`/api/play/${key}/index.html`, cookie, "evil.test"))).status).toBe(401);
-
-      const page = await fileRoute.GET(fileReq(`/api/play/${key}/index.html`, cookie));
-      expect(page.status).toBe(200);
-      expect(page.headers.get("content-type")).toBe("text/html; charset=utf-8");
-      expect(page.headers.get("cache-control")).toBe("no-store");
-      expect(await page.text()).toContain("./assets/a.js");
-
-      expect(res.headers.get("set-cookie")).toContain(`Path=/api/play/${key}/;`);
-
-      // Demo link: `?k=` alone (no cookie) serves the page and hands out the cookie; a forged or old k does not.
-      expect(status.shareUrl).toMatch(new RegExp(`^/api/play/${key}/index\\.html\\?k=\\d+\\.[0-9a-f]{64}$`));
-      const link = await fileRoute.GET(fileReq(status.shareUrl));
-      expect(link.status).toBe(200);
-      expect(link.headers.get("set-cookie")).toContain(`${PLAY_COOKIE}=`);
-      expect(link.headers.get("set-cookie")).toContain(`Path=/api/play/${key}/;`);
-      expect((await fileRoute.GET(fileReq(status.shareUrl, undefined, "evil.test"))).status).toBe(401);
-      expect((await fileRoute.GET(fileReq(`/api/play/${key}/index.html?k=1.${"0".repeat(64)}`))).status).toBe(401);
-      expect((await fileRoute.GET(fileReq(`/api/play/${key}/index.html?k=${playSig(key, Date.now() - 1)}`))).status).toBe(401);
-
-      // Project A's link or cookie never opens project B.
-      const other = playKey(path.join(base, "other"));
-      const kA = new URL(ORIGIN + status.shareUrl).searchParams.get("k");
-      expect((await fileRoute.GET(fileReq(`/api/play/${other}/index.html?k=${kA}`))).status).toBe(401);
-      expect((await fileRoute.GET(fileReq(`/api/play/${other}/index.html`, cookie))).status).toBe(401);
-      expect((await fileRoute.GET(fileReq(`/api/play/${key}/index.html`, `${PLAY_COOKIE}=${playSig(other, Date.now() + 60_000)}`))).status).toBe(401);
-
-      const js = await fileRoute.GET(fileReq(`/api/play/${key}/assets/a.js`, cookie));
+      // No token, no Host rule, no Origin check: a sandboxed page sends `Origin: null`; another host (the VPS
+      // without the GitHub gate on /api/play) works too. The signature is the lock.
+      for (const h of [{}, { origin: "null" }, { host: "vps.example" }, { "cf-ray": "x" }] as Record<string, string>[]) {
+        const page = await fileRoute.GET(fileReq(url, h));
+        expect(page.status, JSON.stringify(h)).toBe(200);
+        expectPlayHeaders(page, "index.html");
+        expect(page.headers.get("content-type")).toBe("text/html; charset=utf-8");
+        expect(page.headers.get("cache-control")).toBe("no-store");
+        expect(await page.text()).toContain("./assets/a.js");
+      }
+      const js = await fileRoute.GET(fileReq(`${at}assets/a.js`, { origin: "null" }));
+      expect(js.status).toBe(200);
+      expectPlayHeaders(js, "a.js");
       expect(js.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
       const etag = js.headers.get("etag")!;
-      expect((await fileRoute.GET(new Request(ORIGIN + `/api/play/${key}/assets/a.js`, { headers: { host: "127.0.0.1:8740", cookie, "if-none-match": etag } }))).status).toBe(304);
+      const notModified = await fileRoute.GET(fileReq(`${at}assets/a.js`, { "if-none-match": etag }));
+      expect(notModified.status).toBe(304);
+      expectPlayHeaders(notModified, "304");
+      const head = await fileRoute.HEAD(fileReq(url, {}, "HEAD"));
+      expect(head.status).toBe(200);
+      expect(head.body).toBeNull();
+      expectPlayHeaders(head, "HEAD");
 
-      const bare = await fileRoute.GET(fileReq(`/api/play/${key}`, cookie));
+      const bare = await fileRoute.GET(fileReq(`/api/play/${key}/${sig}`));
       expect(bare.status).toBe(307);
-      expect(bare.headers.get("location")).toBe(`${key}/index.html`);
+      expect(bare.headers.get("location")).toBe(`${sig}/index.html`);
 
-      for (const p of [`/api/play/${key}/..%2F..%2Fpackage.json`, `/api/play/${key}/..%5Cpackage.json`, `/api/play/${key}/assets`, `/api/play/${key}/nope.js`, `/api/play/..%2F/index.html`]) {
-        expect((await fileRoute.GET(fileReq(p, cookie))).status, p).toBe(404);
+      // Forged, expired, more than 12 h ahead, project A's signature on project B, old formats: refused,
+      // and still sandboxed.
+      const other = playKey(path.join(base, "other"));
+      const now = Date.now();
+      for (const p of [
+        `/api/play/${key}/1.${"0".repeat(64)}/index.html`,
+        `/api/play/${key}/${sig.slice(0, -1)}${sig.endsWith("0") ? "1" : "0"}/index.html`,
+        `/api/play/${key}/${playSig(key, now - 1)}/index.html`,
+        `/api/play/${key}/${playSig(key, now + 12 * 3600_000 + 60_000)}/index.html`,
+        `/api/play/${other}/${sig}/index.html`,
+        `/api/play/${key}/index.html`,
+        `/api/play/${key}/index.html?k=${sig}`,
+        `/api/play/${key}/assets/a.js`,
+      ]) {
+        const r = await fileRoute.GET(fileReq(p));
+        expect(r.status, p).toBe(401);
+        expectPlayHeaders(r, p);
+      }
+      // An old `hq_play` cookie or `?k=` alone opens nothing.
+      const oldCookie = await fileRoute.GET(fileReq(`/api/play/${key}/index.html`, { cookie: `hq_play=${sig}` }));
+      expect(oldCookie.status).toBe(401);
+
+      for (const p of [`${at}..%2F..%2Fpackage.json`, `${at}..%5Cpackage.json`, `${at}assets`, `${at}nope.js`, `/api/play/..%2F/${sig}/index.html`, `/api/play/${key}/${sig}/${encodeURIComponent("..")}/build.js`]) {
+        const r = await fileRoute.GET(fileReq(p));
+        expect([401, 404], p).toContain(r.status);
+        expectPlayHeaders(r, p);
       }
       // The worktree's own files next to dist/ are never served.
-      expect((await fileRoute.GET(fileReq(`/api/play/${key}/${encodeURIComponent("..")}/build.js`, cookie))).status).toBe(404);
+      expect((await fileRoute.GET(fileReq(`${at}${encodeURIComponent("..")}/build.js`))).status).not.toBe(200);
     });
   });
 });

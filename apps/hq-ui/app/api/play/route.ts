@@ -1,17 +1,9 @@
-import { bad, open, readBody } from "@/lib/server/http";
-import { playCookie, playStatus, startPlayBuild, viaHttps, type PlayStatus } from "@/lib/server/play";
+import { bad, json, open, readBody } from "@/lib/server/http";
+import { playStatus, startPlayBuild } from "@/lib/server/play";
 import { projectRoots } from "@/lib/server/project-ops";
 import { groupKey } from "@/lib/sidebar";
 
 export const runtime = "nodejs";
-
-/**
- * The status answer also (re)sets the `hq_play` cookie the file route checks: the play viewer always
- * asks for status before it shows the iframe. `Secure` when the page came over https (VPS proxy, tunnel).
- */
-function answer(req: Request, status: PlayStatus, code = 200): Response {
-  return Response.json({ status }, { status: code, headers: { "cache-control": "no-store", "set-cookie": playCookie(status.key, viaHttps(req.headers)) } });
-}
 
 /** A root HQ knows (rooms it has seen, folders added in the sidebar), never a path taken on trust. */
 async function knownRoot(db: Parameters<typeof projectRoots>[0], root: unknown): Promise<string | Response> {
@@ -27,7 +19,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const root = await knownRoot(o.db, url.searchParams.get("root"));
   if (root instanceof Response) return root;
-  return answer(req, await playStatus(root, { fresh: url.searchParams.get("fresh") === "1" }));
+  return json({ status: await playStatus(root, { fresh: url.searchParams.get("fresh") === "1" }) });
 }
 
 /** `{root}`: build origin/main of that project in its play worktree. 409 while one already runs. */
@@ -39,5 +31,5 @@ export async function POST(req: Request) {
   if (root instanceof Response) return root;
   const r = startPlayBuild(root);
   if (!r.ok) return bad(r.error, 409);
-  return answer(req, await playStatus(root), 202);
+  return json({ status: await playStatus(root) }, 202);
 }

@@ -2,15 +2,16 @@
 // play viewer, or its own tab). One detached git worktree per project, kept OUTSIDE the repo under the
 // platform data dir (paths.ts playRootDir), so Preview never scans it and the repo stays clean. Every
 // command is a fixed argv (no shell); the only outside value in it is a project root HQ already knows.
-// Files are served only from `<worktree>/dist`, by real path, to a browser holding the `hq_play` cookie
-// that an authed status call set (an iframe cannot send the `x-hq-token` header).
+// Files are served only from `<worktree>/dist`, by real path, under `/api/play/<key>/<exp>.<hmac>/`:
+// the signature in the path is the only lock (no cookie, no token), and every response sandboxes the
+// page into an opaque origin (lib/play-headers.ts), so game code can never reach HQ's page or API.
 import { execFile, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { groupKey } from "../sidebar";
-import { cookieValue, PUB_COOKIE, readPublic, safeEqual, SESSION_MS, sideOf, viaTunnel } from "./auth";
+import { safeEqual } from "./auth";
 import { childEnv } from "./child-env";
 import { playRootDir, playSecretPath } from "./paths";
 
@@ -19,7 +20,10 @@ export const LOG_LINES = 200;
 const LINE_MAX = 400;
 /** In the worktree: what the last good install/build was. */
 export const STAMP = ".hq-play.json";
-export const PLAY_COOKIE = "hq_play";
+/** How long a play URL (iframe src, demo link) stays good. */
+export const PLAY_LINK_MS = 12 * 3600_000;
+/** `<expiry ms>.<hmac hex>`: exactly the signature segment of a play URL. */
+export const SIG_RE = /^(\d{13})\.[0-9a-f]{64}$/;
 /** `<slug>-<10 hex>`: a folder name and a URL segment, never a path. */
 export const KEY_RE = /^[a-z0-9][a-z0-9-]{0,40}-[0-9a-f]{10}$/;
 /** `git fetch` on a status call with `fresh`: at most this often per project. */
@@ -29,10 +33,12 @@ export type PlayStep = "fetch" | "checkout" | "install" | "build";
 export type PlayState = "none" | "building" | "ready" | "failed";
 export type PlayStatus = {
   key: string;
-  /** Root-relative play URL (the iframe src and "Mở tab mới"). */
+  /**
+   * Root-relative signed play URL `/api/play/<key>/<exp>.<hmac>/index.html`: the iframe src, "Mở tab
+   * mới" and the demo link ("Copy link demo" makes it absolute). Good for 11 to 12 h, the same URL for a
+   * whole hour so status polls never reload the iframe.
+   */
   url: string;
-  /** Root-relative demo link (`url?k=…`, 12 h): "Copy link demo" makes it absolute on the page's origin. */
-  shareUrl: string;
   state: PlayState;
   /** Commit the served `dist/` was built from. */
   sha: string | null;
@@ -60,13 +66,18 @@ const reg = (G.__hqPlay ??= { jobs: new Map(), roots: new Map(), fetched: new Ma
 
 /** `3d-game-1a2b3c4d5e`: the folder name under hq-play and the URL segment for one project root. */
 export function playKey(root: string): string {
-  const base = path.basename(root.replace(/[\\/]+$/, "")).toLowerCase();
+  // Last segment on either separator: path.basename on Linux keeps a whole `C:\\…` root (CI caught it).
+  const base = (root.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "").toLowerCase();
   const slug = base.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "") || "p";
   return `${slug}-${crypto.createHash("sha1").update(groupKey(root)).digest("hex").slice(0, 10)}`;
 }
 
 export const playDir = (key: string, base = playRootDir()) => path.join(base, key);
-export const playUrl = (key: string) => `/api/play/${key}/index.html`;
+/** The signed play URL of one key; the expiry is the next full hour + 11 h, so it is stable for an hour. */
+export function playUrl(key: string, now = Date.now()): string {
+  const hour = 3600_000;
+  return `/api/play/${key}/${playSig(key, Math.ceil(now / hour) * hour + PLAY_LINK_MS - hour)}/index.html`;
+}
 
 /** Remember which root a key belongs to, so file requests resolve without listing projects. */
 export function rememberRoot(root: string): string {
@@ -220,25 +231,42 @@ export function resolvePlayFile(dist: string, segments: string[]): { abs: string
   }
 }
 
-// ---- auth for the file route -----------------------------------------------------------------
+// ---- the path signature ----------------------------------------------------------------------
 
-let secretCache: { file: string; secret: string } | null = null;
+const SECRET_RE = /^[0-9a-f]{64}$/;
+// On globalThis like the job registry: every route bundle signs and checks with the same key.
+const S = globalThis as { __hqPlaySecret?: { file: string; mtimeMs: number; secret: string } };
 
 /**
- * The HMAC key of play cookies and demo links: 32 random bytes in `~/.config/8sync/hq/play-secret`
- * (0600, made on first use). Not the UI token and not derived from it, so a play link can never be
- * turned into API access; deleting the file revokes every link and cookie.
+ * The HMAC key of play URLs: 32 random bytes in `~/.config/8sync/hq/play-secret` (0600). Not the UI
+ * token and not derived from it, so a play URL can never be turned into API access. Created with
+ * `wx` (two bundles racing on first use both end up reading the one file that won), re-read when its
+ * mtime changes; deleting the file revokes every play URL.
  */
 export function playSecret(): string {
   const file = playSecretPath();
-  if (secretCache?.file === file) return secretCache.secret;
+  const mtimeMs = (() => {
+    try {
+      return fs.statSync(file).mtimeMs;
+    } catch {
+      return -1;
+    }
+  })();
+  const c = S.__hqPlaySecret;
+  if (c && c.file === file && c.mtimeMs === mtimeMs && mtimeMs >= 0) return c.secret;
   let secret = readText(file)?.trim() ?? "";
-  if (!/^[0-9a-f]{64}$/.test(secret)) {
+  if (!SECRET_RE.test(secret)) {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    secret = crypto.randomBytes(32).toString("hex");
-    fs.writeFileSync(file, secret + "\n", { mode: 0o600 });
+    if (mtimeMs >= 0) fs.rmSync(file, { force: true }); // junk in the file: start over
+    try {
+      fs.writeFileSync(file, crypto.randomBytes(32).toString("hex") + "\n", { mode: 0o600, flag: "wx" });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    secret = readText(file)?.trim() ?? "";
+    if (!SECRET_RE.test(secret)) throw new Error("play-secret unreadable");
   }
-  secretCache = { file, secret };
+  S.__hqPlaySecret = { file, mtimeMs: fs.statSync(file).mtimeMs, secret };
   return secret;
 }
 
@@ -247,46 +275,12 @@ export function playSig(key: string, expiry: number, secret = playSecret()): str
   return `${expiry}.${crypto.createHmac("sha256", secret).update(`${key}.${expiry}`).digest("hex")}`;
 }
 
-/** True for a signature of exactly this key, not expired, at most 12 h ahead; compared in constant time. */
+/** True for a signature of exactly this key, exact format, not expired, at most 12 h ahead; constant-time compare. */
 export function playSigValid(value: string, key: string, now = Date.now(), secret = playSecret()): boolean {
-  const m = /^(\d{1,15})\.[0-9a-f]{64}$/.exec(value);
+  const m = SIG_RE.exec(value);
   if (!m) return false;
   const expiry = Number(m[1]);
-  return expiry > now && expiry <= now + SESSION_MS && safeEqual(value, playSig(key, expiry, secret));
-}
-
-/** The page came over https (VPS proxy `X-Forwarded-Proto`, Cloudflare tunnel): the cookie gets `Secure`. */
-export const viaHttps = (h: Headers) => h.get("x-forwarded-proto") === "https" || viaTunnel(h);
-
-/**
- * `Set-Cookie` for one project's play files: 12 h, HttpOnly, SameSite=Lax (a demo link opened from
- * another app still loads its assets), sent only under `/api/play/<key>/`, so it reaches no other HQ
- * route and no other project. The routes under `/api/*` never read it: they want the token header.
- */
-export function playCookie(key: string, secure: boolean, now = Date.now()): string {
-  return `${PLAY_COOKIE}=${playSig(key, now + SESSION_MS)}; HttpOnly; SameSite=Lax; Path=/api/play/${key}/; Max-Age=${SESSION_MS / 1000}${secure ? "; Secure" : ""}`;
-}
-
-/**
- * "Copy link demo": the play URL with `?k=` (the cookie's signature, 12 h, this project only). The
- * file route trades it for the cookie, so someone who can already reach this HQ (the owner's other
- * device, a GitHub user the VPS gate lets in) plays without opening HQ first. Never the token.
- */
-export const playShareUrl = (key: string, now = Date.now()) => `${playUrl(key)}?k=${playSig(key, now + SESSION_MS)}`;
-
-/**
- * The file route's gate: the same Host rule as every HQ route (loopback, or the public tunnel host with
- * its login cookie; a proxy that rewrites Host to loopback counts as local, as for the rest of HQ), plus
- * a valid signature for this `key`: an `hq_play` cookie (in place of the header an iframe cannot send;
- * every one sent is tried, so a stale or broader-path one never shadows the right one), or `link` (a
- * demo link's `k`).
- */
-export function playAllowed(h: Headers, key: string, now = Date.now(), link?: string): boolean {
-  const side = sideOf({ host: h.get("host"), cookie: cookieValue(h.get("cookie"), PUB_COOKIE), tunnel: viaTunnel(h) }, readPublic(), now);
-  if (!side) return false;
-  if (link !== undefined) return playSigValid(link, key, now);
-  const prefix = `${PLAY_COOKIE}=`;
-  return (h.get("cookie") ?? "").split(";").some((p) => p.trim().startsWith(prefix) && playSigValid(p.trim().slice(prefix.length), key, now));
+  return expiry > now && expiry <= now + PLAY_LINK_MS && safeEqual(value, playSig(key, expiry, secret));
 }
 
 // ---- processes -------------------------------------------------------------------------------
@@ -413,7 +407,7 @@ export async function playStatus(root: string, opts: { fresh?: boolean; base?: s
   const facts = await mainFacts(root);
   const stamp = parseStamp(readText(path.join(dir, STAMP)));
   const distOk = fs.existsSync(path.join(dir, "dist", "index.html"));
-  return { key, url: playUrl(key), shareUrl: playShareUrl(key), ...facts, ...playState({ job, stamp, distOk, mainSha: facts.mainSha }) };
+  return { key, url: playUrl(key), ...facts, ...playState({ job, stamp, distOk, mainSha: facts.mainSha }) };
 }
 
 /**

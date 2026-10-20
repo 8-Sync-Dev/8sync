@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { agoVi } from "@/lib/now";
+import { PLAY_SANDBOX } from "@/lib/play-headers";
 import type { PlayStatus, PlayStep } from "@/lib/server/play";
 import { cn } from "@/lib/utils";
 import { makeApi, type Api } from "./use-hq";
@@ -22,12 +23,13 @@ const short = (sha: string | null) => sha?.slice(0, 7) ?? "";
 const statusOf = (api: Api, root: string, fresh: boolean) => api<{ status: PlayStatus }>(`/api/play?root=${encodeURIComponent(root)}${fresh ? "&fresh=1" : ""}`).then((r) => r.status);
 
 /**
- * The demo link on this page's own origin: the VPS link (https://vps.8syncdev.com…, behind its
- * GitHub gate) when HQ is opened there, 127.0.0.1 locally. The path is root-absolute (`/api/play/…`),
- * which the proxy forwards at its root also when HQ itself is mounted under `/hq`.
+ * The demo link: the signed play URL (`/api/play/<key>/<exp>.<hmac>/index.html`, good for 11 to 12 h,
+ * this one project only) on this page's own origin: the https://vps.8syncdev.com… link when HQ is
+ * opened there, 127.0.0.1 locally. The path is root-absolute, which the proxy forwards at its root
+ * also when HQ itself is mounted under `/hq`.
  */
-async function copyDemo(shareUrl: string) {
-  const link = new URL(shareUrl, window.location.href).href;
+async function copyDemo(url: string) {
+  const link = new URL(url, window.location.href).href;
   try {
     await navigator.clipboard.writeText(link);
     toast.success("Đã copy link demo, sống 12 giờ");
@@ -181,7 +183,7 @@ function PlayViewer({ root, name, api, onClose }: { root: string; name: string; 
           )}
           {ready && (
             <>
-              <Button type="button" size="sm" variant="outline" className="shrink-0 max-sm:size-11 max-sm:px-0" onClick={() => void copyDemo(st.shareUrl)} aria-label="Copy link demo, sống 12 giờ">
+              <Button type="button" size="sm" variant="outline" className="shrink-0 max-sm:size-11 max-sm:px-0" onClick={() => void copyDemo(st.url)} aria-label="Copy link demo, sống 12 giờ">
                 <LinkIcon />
                 <span className="max-sm:sr-only">Copy link demo</span>
               </Button>
@@ -202,15 +204,16 @@ function PlayViewer({ root, name, api, onClose }: { root: string; name: string; 
 
         {ready ? (
           <div className="relative min-h-0 bg-black">
+            {/* Opaque origin (no allow-same-origin), like the server's CSP sandbox: game code never reaches HQ's page. */}
             <iframe
               key={st.sha}
               ref={frame}
               src={st.url}
               title={`${name}: bản chơi thử của main ${short(st.sha)}`}
               className="absolute inset-0 size-full border-0"
-              allow="fullscreen; autoplay; gamepad; xr-spatial-tracking"
-              allowFullScreen
-              // Keys go to the game as soon as it loads.
+              sandbox={PLAY_SANDBOX}
+              allow="fullscreen; gamepad; autoplay"
+              // Keys go to the game as soon as it loads (focus() is allowed across origins).
               onLoad={() => frame.current?.contentWindow?.focus()}
             />
           </div>
