@@ -34,7 +34,7 @@ Tạm dừng / chạy tiếp auto: nút **Tạm dừng / Chạy** trên cùng (`
 - **Đội omp**: không đăng nhập gói Claude (Pro/Max/Team) trong omp — gói chỉ dùng trong Claude Code. Đội omp chạy bằng provider khác (GLM, OpenAI…); `--omp` bị từ chối khi model mặc định của omp là `anthropic/…` (kể cả Console API key, vì 8sync không phân biệt được). Phòng nhắn nhau bằng `8sync ccc msg <phòng> "…"` (agent tự dùng); tin từ phòng khác là dữ liệu, không phải lệnh của anh.
 
 - `--clear-ss` xoá trước mọi session nền rác của dự án: bản trùng phòng, sót từ lần chạy trước, phòng đã bỏ. Nó cũng khởi động lại phòng nền đang chạy bản kit cũ (Claude Code chỉ đọc hook lúc session mở), giữ nguyên hội thoại. Không đụng session interactive anh đang mở; session có thay đổi chưa commit/push thì Claude Code giữ lại và 8sync báo lý do.
-- Phòng đang chạy chỉ nhận loop mới; phòng đã dừng thì chạy lại nền với đúng id cũ. Lần đầu ở repo mới: mở `claude` ở đó một lần và chấp nhận câu hỏi trust.
+- Phòng đang làm (bận) chỉ nhận loop mới; phòng có cột đang nằm không (goal đã dừng, ví dụ khi lease hết) thì dừng và chạy lại nền đúng hội thoại cũ kèm `/goal`; phòng đã dừng thì chạy lại nền với đúng id cũ. Lần đầu ở repo mới: mở `claude` ở đó một lần và chấp nhận câu hỏi trust.
 - Vào xem một phòng: `claude attach <id>` (id 8 ký tự in ra khi `auto up`), log: `claude logs <id>`.
 
 | Phòng (tên khác) | Vai | Model | Cột board kéo card |
@@ -53,7 +53,7 @@ Team mặc định `lead,dev,qa,review`; tự chọn: `--roles lead,ba,dev,dev2,
 **Không phòng nào ngồi rảnh:**
 - Phòng có cột board mở bằng `/goal` chính chủ của Claude Code. Mỗi lượt phòng claim → làm → chuyển cột, rồi tự sang lượt kế, không chờ nhịp loop.
 - Cột trống thì phòng chạy `8sync ccc auto wait`. Lệnh này chặn và không tốn token cho tới khi có card, nên phòng nhận việc gần như ngay.
-- Goal chỉ dừng khi auto tắt, tạm dừng, chạm trần (cửa sổ dùng ≥ 90%), hoặc khi lease subscription hết (≤ 4 giờ).
+- Goal chỉ dừng khi auto tắt, tạm dừng, chạm trần (cửa sổ dùng ≥ 90%), hoặc khi lease subscription hết (≤ 4 giờ). Anh bấm **Chạy liên tục** lại thì trong ≤ 2 phút HQ (`auto revive`) chạy lại `/goal` cho phòng có cột còn nằm không (phải thấy nằm không ở hai lần kiểm cách nhau ≥ 1 phút, inbox trống).
 
 **Board kiểu [super-board](https://github.com/EricTechPro/super-board):** `backlog → ready → building → qa → review → approved (chờ Ship) → done`, thêm `blocked`. Mỗi phòng `claim` card đầu cột của mình rồi `move` sang cột kế:
 

@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.2] — 2026-10-20
+### Fixed
+- **A renewed lease brings the team back to work, not to a 30-minute cron.** A lane room's `/goal` ends when the lease gate shows, and nothing gave it back: on 3d-game after the owner pressed "Chạy liên tục" the rooms took a turn only when their backup cron fired (the lead sat idle 28 min, then three approved cards waited for it). `auto revive` (HQ calls it every 2 min while a tab is open, and on "Chạy liên tục") now stops a lane room that was idle in the background at two of its runs at least 60 s apart, and is still idle right before the stop, then resumes the same conversation with its goal (no sleep inside revive: HQ kills it after 120 s). It skips a room with messages waiting in its inbox (the inbox mod wakes it; a resume forks a new id that would never read them) and a room it resumed in the last 10 min. `auto up` re-goals idle lane rooms the same way instead of sending a one-turn loop prompt. Busy rooms, rooms waiting on a prompt, interactive sessions and rooms without a transcript are left alone. A resumed room starts at the project root, not its card worktree.
+- **HQ Chat phòng: the room's title row stays pinned.** Name, state, project · branch · model and "Mở terminal" stay at the top while the log and the chat scroll (owner: switching model/effort or opening the terminal meant scrolling back up). It sits above the scroller (opaque, nothing shows through), and only the current day's separator stays pinned (older ones no longer pile up).
+
 ## [0.110.1] — 2026-10-20
 ### Fixed
 - **Guard: a room may clean its own Claude Code scratch dir `~/.claude/jobs/<id>/tmp/<…>` without asking.** 3d-game, 18:55–19:31: the qa room exported each PR head there with `rm -rf … && mkdir -p … && git archive …`, the guard asked ("deletes outside the project"), and a background room cannot answer: qa sat 35 min on the prompt while five cards waited in qa. The `tmp` dir itself, the job dir and `~/.claude/jobs` still ask.

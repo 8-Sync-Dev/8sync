@@ -12,7 +12,7 @@ import {
   SendHorizontalIcon,
   SquareIcon,
 } from "lucide-react";
-import { Fragment, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message as ChatMessage, MessageContent, MessageResponse } from "@/components/ai-elements/message";
@@ -35,6 +35,7 @@ export function TeamView({
   target,
   onTarget,
   header,
+  bar,
   onStartSession,
 }: {
   hq: Hq;
@@ -43,6 +44,8 @@ export function TeamView({
   target: string | null;
   onTarget: (s: string) => void;
   header?: ReactNode;
+  /** Pinned above the scrolling log and chat, outside the scroller (Chat phòng: the room's title row and terminal button). */
+  bar?: ReactNode;
   /** Opens the start-session form (hq-app: focusStartSession). Without it the CTA is text only. */
   onStartSession?: () => void;
 }) {
@@ -69,6 +72,12 @@ export function TeamView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
+      {bar && (
+        <div className="shrink-0 border-b bg-background">
+          <div className="mx-auto w-full max-w-3xl px-4 py-2 sm:px-6">{bar}</div>
+        </div>
+      )}
       <Conversation className="min-h-0 flex-1">
         <ConversationContent className="mx-auto w-full max-w-3xl gap-0 px-4 py-4 sm:px-6">
           {header && <div className="mb-6">{header}</div>}
@@ -85,8 +94,9 @@ export function TeamView({
             />
           ) : (
             <div aria-label="Team timeline" className="pb-2">
+              {/* One section per day: its separator sticks only while that day is in view, then the next day's pushes it out (no stacked separators). */}
               {groups.map((g) => (
-                <Fragment key={g.day + g.rows[0].id}>
+                <section key={g.day + g.rows[0].id}>
                   <div
                     aria-hidden
                     className="sticky top-0 z-10 -mx-2 bg-background/95 px-2 pt-3 pb-1.5 text-xs font-medium text-muted-foreground backdrop-blur-[2px]"
@@ -96,7 +106,7 @@ export function TeamView({
                   {g.rows.map((m, i) => (
                     <Row key={m.id} m={m} prev={g.rows[i - 1]} who={who} />
                   ))}
-                </Fragment>
+                </section>
               ))}
             </div>
           )}
