@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.9] — 2026-10-20
+### Fixed
+- **Approved cards land without waiting on GitHub's `mergeable`.** After each merge to main GitHub recomputes the other PRs lazily (UNKNOWN for ~1 min), so 6 approved 3d-game cards waited on one merge per 2-min tick. On UNKNOWN the merge itself is tried at the reviewed head (`--match-head-commit`; a conflict is refused by GitHub and the card waits for the verdict); a background pass keeps starting cards for up to 20 s.
+- **The reaper now catches servers rooms leave behind.** 0.110.7 took only a server whose own parent was gone, but a room's server sits under `cmd < npx < bash < bash` and only the top bash loses its parent when the turn ends: 37 vite servers (3.3 GB) on 3d-game were all "owned". A server in a room worktree (`<root>/.claude/worktrees/<dir>`) now goes when walking up through node and shell parents ends at a process whose parent is gone; a chain that reaches any other live image (a terminal, an editor, claude/omp) stays, and a server in the repo itself is never taken (the owner's `start cmd /k npm run dev` window, pm2/systemd). A worker under another picked server is left to that server's tree kill. Live dry run on 3d-game: 9 room servers ≥ 30 min picked, nothing else.
+
 ## [0.110.8] — 2026-10-20
 ### Fixed
 - **omp sessions show in HQ while in use.** On Windows `8sync ls` saw no processes (`agent_cmdlines` read only `/proc`), so an omp session counted as live only while its transcript changed in the last 2 min and dropped out of HQ whenever the owner paused to read or type (8sync-startup `core` was missing). `ls` now reads running `omp.exe` command lines in-process (Toolhelp + `NtQueryInformationProcess`, no PowerShell, ~30–90 ms), matches Windows paths in any case/slash and a session resumed by its transcript file (`omp --resume <dir>\<file>.jsonl`); the live rule is unchanged, so old sessions do not flood the sidebar.

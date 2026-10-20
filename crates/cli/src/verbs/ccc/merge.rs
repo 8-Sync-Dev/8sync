@@ -308,7 +308,20 @@ fn land(t: &Target, c: &Ctx, first: bool) -> Outcome {
                 back("review", format!("đổi base sang {main}: review lại diff trên {main}"))?
             }
             Step::Back(why) => back("ready", why)?,
-            Step::Computing => ("wait", None, Some(computing(&format!("#{n}")))),
+            // GitHub computes `mergeable` lazily after every merge to main, so each landing left the
+            // other approved cards on UNKNOWN for a minute (3d-game: 6 approved waited on 1 merge per
+            // 2-min tick). The merge call itself decides: still the reviewed head (`--match-head-commit`)
+            // and no conflict → it lands; otherwise GitHub refuses and the card waits for the verdict.
+            Step::Computing => {
+                let head = v["headRefOid"].as_str().unwrap_or_default().to_string();
+                let tried = same_commit(&sha, &head) && v["isDraft"] != true && gh(&["pr", "merge", &n, "--squash", "--delete-branch", "--match-head-commit", &head]).is_ok();
+                if tried || view(gh, &n).ok().is_some_and(|v| v["state"] == "MERGED") {
+                    target::close(c.home, c.root, t.id, Some(&evidence(&head)), c.who, c.now)?;
+                    ("merged", Some(head), None)
+                } else {
+                    ("wait", None, Some(computing(&format!("#{n}"))))
+                }
+            }
         })
     })();
     match r {
@@ -367,18 +380,29 @@ pub(super) fn background(home: &Path, root: &Path, now: u64) -> Result<Vec<Strin
     let Some(main) = default_branch(root) else { return Ok(Vec::new()) };
     let gh = |args: &[&str]| gh(root, args);
     let c = Ctx { home, root, who: Some("lead"), now, main: &main, gh: &gh };
-    // One card per pass: HQ kills a revive that runs past 120 s, and each card is several gh calls.
-    // A card stacked on an approved card not landed yet is deferred, not bounced: try the next.
+    // HQ kills a revive that runs past 120 s and each card is several gh calls (≤ 20 s each): start
+    // no card after [`BACKGROUND_BUDGET`]. A card stacked on an approved card not landed yet is
+    // deferred, not bounced: try the next.
     let mut cards: Vec<Target> = target::list(home, root)?.into_iter().filter(|t| t.state == "open" && t.lane == "approved").collect();
     cards.sort_by_key(|t| t.prio.unwrap_or(2));
+    let started = std::time::Instant::now();
+    let mut out = Vec::new();
     for t in &cards {
+        if started.elapsed() > BACKGROUND_BUDGET {
+            break;
+        }
         let o = land(t, &c, true);
-        if o.action != "deferred" {
-            return Ok((o.action != "wait").then(|| format!("merge nền: {}", line(&o))).into_iter().collect());
+        if o.action != "deferred" && o.action != "wait" {
+            out.push(format!("merge nền: {}", line(&o)));
         }
     }
-    Ok(Vec::new())
+    Ok(out)
 }
+
+/// How long one background pass keeps starting cards.
+// Revive runs reap (≤ 15 s) and room checks first and a started card can take several gh calls:
+// 20 s keeps the whole run inside HQ's 120 s revive timeout.
+const BACKGROUND_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Every approved card, most urgent first; one whose base is still landing goes after the rest.
 fn land_all(c: &Ctx) -> Result<Vec<Outcome>> {

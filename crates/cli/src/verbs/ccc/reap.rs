@@ -37,6 +37,8 @@ pub(super) struct Proc {
     pub rss: u64,
     /// The image is node: nothing else is ever picked or killed.
     pub node: bool,
+    /// The image is a shell (bash, sh, zsh, cmd, pwsh…): what a room's background tool call leaves.
+    pub shell: bool,
     /// Command line; empty for a non-node image (only node lines are read).
     pub cmd: String,
 }
@@ -143,12 +145,15 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Vec<Row> {
     rows
 }
 
-/// Which of `procs` to kill for `root` at `now`: an ORPHANED node process (its parent is gone, or
-/// the pid it names was reused by a process started after it — a server still under a live shell,
-/// terminal or npm/npx is the owner's or a room's and stays) whose command line names `root`
+/// Which of `procs` to kill for `root` at `now`: a DETACHED node process — walking up through node
+/// and shell parents ends at one whose parent is gone (or names a pid reused by a later process).
+/// 3d-game 2026-10-20: 37 room servers each sat under `cmd < npx < bash < bash` whose top bash had
+/// lost its parent (the room's turn ended); the owner's `npm run dev` ends at a live terminal,
+/// editor or agent (any other image) and stays — and whose command line names `root`
 /// (case-insensitive for a Windows path, `\` = `/`) and that is
 /// - a dev/preview server ([`kind`]: `vite` but never `vitest`, `next dev|start`, `webpack serve`,
-///   `http-server`, `serve -s`, `live-server`) at least `server_age` old ([`SERVER_AGE_S`],
+///   `http-server`, `serve -s`, `live-server`) in a room worktree `<root>/.claude/worktrees/<dir>`,
+///   at least `server_age` old ([`SERVER_AGE_S`],
 ///   [`PRESSURE_SERVER_AGE_S`] under RAM pressure), or
 /// - `tsserver` / `typescript-language-server` of `<root>/.claude/worktrees/<dir>` where `<dir>` is
 ///   gone (`exists` false) or that is at least [`TS_AGE_S`] old.
@@ -169,11 +174,22 @@ pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u
         keep.push(p.ppid);
         cur = p.ppid;
     }
-    // A parent of unknown start time (0) counts as live: kept rather than guessed.
-    let owned = |p: &Proc| p.ppid != 0 && procs.iter().any(|q| q.pid == p.ppid && q.started <= p.started);
+    // A parent of unknown start time (0) counts as a live host: kept rather than guessed. pid 1 is
+    // unix init adopting an orphan.
+    let detached = |p: &Proc| {
+        let mut cur = p;
+        for _ in 0..32 {
+            match procs.iter().find(|q| cur.ppid > 1 && q.pid == cur.ppid && q.started <= cur.started) {
+                None => return true,
+                Some(q) if q.started != 0 && (q.node || q.shell) => cur = q,
+                Some(_) => return false,
+            }
+        }
+        false
+    };
     let mut out = Vec::new();
     for p in procs {
-        if !p.node || keep.contains(&p.pid) || p.started == 0 || owned(p) {
+        if !p.node || keep.contains(&p.pid) || p.started == 0 || !detached(p) {
             continue;
         }
         let c = norm(&p.cmd, fold);
@@ -181,8 +197,11 @@ pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u
             continue;
         }
         let age = now.saturating_sub(p.started);
+        // A room's server runs in its card worktree; one in the repo itself may be the owner's own
+        // window (`start cmd /k npm run dev` from a launcher that exited) or a service (pm2,
+        // systemd: ppid 1) and is never taken.
         let stale = if kind(&p.cmd).is_some() {
-            age >= server_age
+            age >= server_age && worktree(&c, rootn).is_some()
         } else if c.contains("tsserver") || c.contains("typescript-language-server") {
             worktree(&c, rootn).is_some_and(|dir| age >= TS_AGE_S || !exists(&root.join(".claude").join("worktrees").join(dir)))
         } else {
@@ -192,7 +211,9 @@ pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u
             out.push(p.pid);
         }
     }
-    out
+    // A server under another picked one (next dev's worker) goes with that one's tree kill.
+    let trees: Vec<Vec<u32>> = out.iter().map(|&pid| tree(procs, pid)).collect();
+    out.iter().copied().filter(|pid| !trees.iter().any(|t| t[0] != *pid && t.contains(pid))).collect()
 }
 
 /// `pid` then its node descendants: a child counts only when it started no earlier than its
@@ -387,17 +408,26 @@ fn parse_windows(s: &str) -> Vec<Proc> {
     };
     rows.iter()
         .filter_map(|r| {
-            let node = r["Name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case("node.exe"));
+            let name = r["Name"].as_str().unwrap_or_default();
+            let node = name.eq_ignore_ascii_case("node.exe");
             Some(Proc {
                 pid: u32::try_from(r["ProcessId"].as_u64()?).ok()?,
                 ppid: r["ParentProcessId"].as_u64().and_then(|x| u32::try_from(x).ok()).unwrap_or(0),
                 started: r["Started"].as_u64().unwrap_or(0),
                 rss: r["WorkingSetSize"].as_u64().unwrap_or(0),
                 node,
+                shell: is_shell(name),
                 cmd: if node { r["CommandLine"].as_str().unwrap_or_default().to_string() } else { String::new() },
             })
         })
         .collect()
+}
+
+/// `bash.exe`, `/bin/zsh`, `-bash` (login shell): an image a tool call runs its command through.
+fn is_shell(arg0: &str) -> bool {
+    let base = arg0.rsplit(['/', '\\']).next().unwrap_or(arg0).trim_start_matches('-').to_ascii_lowercase();
+    let base = base.strip_suffix(".exe").unwrap_or(&base);
+    matches!(base, "bash" | "sh" | "zsh" | "dash" | "fish" | "cmd" | "pwsh" | "powershell")
 }
 
 /// `ps -axo pid=,ppid=,etime=,rss=,command=` (macOS: `etime` is `[[dd-]hh:]mm:ss`, `rss` KB).
@@ -414,7 +444,8 @@ fn parse_ps(s: &str, now: u64) -> Vec<Proc> {
             let node = cmd.split_whitespace().next().and_then(|a| a.rsplit('/').next()).is_some_and(|b| b.starts_with("node"));
             let (days, hms) = etime.split_once('-').map_or((0, etime), |(d, r)| (d.parse().unwrap_or(0), r));
             let secs = hms.split(':').try_fold(0u64, |acc, x| x.parse::<u64>().ok().map(|n| acc * 60 + n))?;
-            Some(Proc { pid, ppid, started: now.saturating_sub(days * 86_400 + secs), rss: rss * 1024, node, cmd: if node { cmd } else { String::new() } })
+            let shell = cmd.split_whitespace().next().is_some_and(is_shell);
+            Some(Proc { pid, ppid, started: now.saturating_sub(days * 86_400 + secs), rss: rss * 1024, node, shell, cmd: if node { cmd } else { String::new() } })
         })
         .collect()
 }
@@ -443,7 +474,8 @@ fn list_linux() -> Vec<Proc> {
                 .ok()
                 .and_then(|s| s.split_whitespace().nth(1).and_then(|x| x.parse::<u64>().ok()))
                 .map_or(0, |pages| pages * 4096);
-            Some(Proc { pid, ppid, started: btime + ticks / 100, rss, node, cmd: if node { argv.join(" ") } else { String::new() } })
+            let shell = argv.first().is_some_and(|a| is_shell(a));
+            Some(Proc { pid, ppid, started: btime + ticks / 100, rss, node, shell, cmd: if node { argv.join(" ") } else { String::new() } })
         })
         .collect()
 }
@@ -456,7 +488,7 @@ mod tests {
     const NOW: u64 = 1_000_000;
 
     fn p(pid: u32, ppid: u32, age_min: u64, cmd: &str) -> Proc {
-        Proc { pid, ppid, started: NOW - age_min * 60, rss: 120 * 1024 * 1024, node: true, cmd: cmd.into() }
+        Proc { pid, ppid, started: NOW - age_min * 60, rss: 120 * 1024 * 1024, node: true, shell: false, cmd: cmd.into() }
     }
 
     /// A process of another image (shell, terminal, claude.exe).
@@ -475,12 +507,12 @@ mod tests {
             // HQ: runs `auto revive` (me = 2), its own next start in hq-ui.
             p(1, 0, 900, r#""C:\Program Files\nodejs\node.exe" C:\Users\Admin\AppData\Local\8sync\hq-ui\server.js"#),
             p(3, 0, 900, r#"node C:\users\projects\startup\8sync-startup\game\3d-game\node_modules\next\dist\bin\next start"#),
-            // old vite preview in the root, path cased and slashed differently: picked.
+            // old detached vite preview in the repo itself (the owner's launcher window): kept.
             p(10, 0, 130, r#""C:\Program Files\nodejs\node.exe" "c:/users/projects/startup/8sync-startup/game/3D-GAME/node_modules/vite/bin/vite.js" preview --port 4197 --strictPort"#),
             // old vite in a card worktree: picked.
             p(11, 0, 45, r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\.claude\worktrees\card-46\node_modules\vite\bin\vite.js preview --port 4120"#),
-            // young vite: kept.
-            p(12, 0, 10, r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\node_modules\vite\bin\vite.js preview --port 4121"#),
+            // young vite in a worktree, path cased and slashed differently: kept (taken under pressure).
+            p(12, 0, 10, r#""C:\Program Files\nodejs\node.exe" "c:/users/projects/startup/8sync-startup/game/3D-GAME/.claude/worktrees/card-47/node_modules/vite/bin/vite.js" preview --port 4121"#),
             // vitest worker: kept.
             p(13, 0, 300, r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\node_modules\vitest\dist\workers\forks.js"#),
             // old vite of another project (and a sibling sharing the prefix): kept.
@@ -495,14 +527,14 @@ mod tests {
             // a node script in the root that is no server: kept.
             p(20, 0, 900, r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\scripts\watch-assets.js"#),
             // no start time: kept.
-            Proc { pid: 21, ppid: 0, started: 0, rss: 0, node: true, cmd: r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\node_modules\vite\bin\vite.js"#.into() },
+            Proc { pid: 21, ppid: 0, started: 0, rss: 0, node: true, shell: false, cmd: r#"node C:\Users\Projects\startup\8sync-startup\game\3d-game\node_modules\vite\bin\vite.js"#.into() },
         ];
-        let me_tree = vec![Proc { pid: 2, ppid: 3, started: NOW, rss: 0, node: true, cmd: String::new() }];
+        let me_tree = vec![Proc { pid: 2, ppid: 3, started: NOW, rss: 0, node: true, shell: false, cmd: String::new() }];
         let procs: Vec<Proc> = procs.into_iter().chain(me_tree).collect();
         let exists = |d: &Path| !d.to_string_lossy().contains("card-12");
-        assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 2, &exists), vec![10, 11, 16, 19]);
-        // Under RAM pressure the 10-min-old vite goes too; nothing else changes.
-        assert_eq!(pick(&procs, &root, NOW, PRESSURE_SERVER_AGE_S, 2, &exists), vec![10, 11, 12, 16, 19]);
+        assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 2, &exists), vec![11, 16, 19]);
+        // Under RAM pressure the 10-min-old worktree vite goes too; nothing else changes.
+        assert_eq!(pick(&procs, &root, NOW, PRESSURE_SERVER_AGE_S, 2, &exists), vec![11, 12, 16, 19]);
         assert_eq!(describe(&procs[2], NOW), "vite preview :4197 (2h 10m, 120 MB)");
     }
 
@@ -510,14 +542,14 @@ mod tests {
     fn unix_paths_are_case_sensitive_and_a_child_goes_with_its_server() {
         let root = PathBuf::from("/home/dev/game");
         let procs = vec![
-            p(30, 1, 200, "node /home/dev/game/node_modules/.bin/next dev -p 3000"),
-            p(31, 30, 200, "node /home/dev/game/node_modules/next/dist/server/lib/start-server.js /home/dev/game/node_modules/vite/bin/vite.js"),
+            p(30, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/.bin/next dev -p 3000"),
+            p(31, 30, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/next/dist/server/lib/start-server.js /home/dev/game/.claude/worktrees/c1/node_modules/vite/bin/vite.js"),
             p(32, 1, 200, "node /home/dev/Game/node_modules/vite/bin/vite.js"),
-            p(33, 1, 200, "node /home/dev/game/node_modules/http-server/bin/http-server dist -p 8080"),
-            p(34, 1, 200, "node /home/dev/game/node_modules/serve/build/main.js -s dist"),
-            p(35, 1, 200, "node /home/dev/game/node_modules/webpack-cli/bin/cli.js serve --port=9000"),
-            p(36, 1, 200, "node /home/dev/game/node_modules/vite/bin/vite.js build --watch"),
-            p(37, 1, 200, "node /home/dev/game/node_modules/live-server/live-server.js"),
+            p(33, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/http-server/bin/http-server dist -p 8080"),
+            p(34, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/serve/build/main.js -s dist"),
+            p(35, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/webpack-cli/bin/cli.js serve --port=9000"),
+            p(36, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/vite/bin/vite.js build --watch"),
+            p(37, 1, 200, "node /home/dev/game/.claude/worktrees/c1/node_modules/live-server/live-server.js"),
         ];
         // 31 is under a live 30: never picked itself, killed in 30's tree.
         assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 99, &all_exist), vec![30, 33, 34, 35, 37]);
@@ -529,23 +561,23 @@ mod tests {
     #[test]
     fn parses_the_os_listings() {
         let one = r#"{"ProcessId":7,"ParentProcessId":1,"Name":"node.exe","WorkingSetSize":2048,"CommandLine":"node a.js","Started":123}"#;
-        assert_eq!(parse_windows(one), vec![Proc { pid: 7, ppid: 1, started: 123, rss: 2048, node: true, cmd: "node a.js".into() }]);
+        assert_eq!(parse_windows(one), vec![Proc { pid: 7, ppid: 1, started: 123, rss: 2048, node: true, shell: false, cmd: "node a.js".into() }]);
         let many = r#"[{"ProcessId":7,"ParentProcessId":1,"Name":"cmd.exe","WorkingSetSize":1,"CommandLine":null,"Started":3},{"ProcessId":8,"ParentProcessId":7,"Name":"NODE.EXE","WorkingSetSize":1,"CommandLine":"node b","Started":5},{"ParentProcessId":7}]"#;
         let got = parse_windows(many);
-        assert_eq!(got.iter().map(|p| (p.pid, p.node, p.cmd.as_str())).collect::<Vec<_>>(), vec![(7, false, ""), (8, true, "node b")]);
+        assert_eq!(got.iter().map(|p| (p.pid, p.node, p.shell, p.cmd.as_str())).collect::<Vec<_>>(), vec![(7, false, true, ""), (8, true, false, "node b")]);
         assert!(parse_windows("").is_empty());
         let ps = "  41     1 1-02:03:04  2048 /usr/local/bin/node /x/vite.js preview\n  42 1 05:06 10 /bin/zsh -l\n 43 1 07 1 node y.js\n";
         let got = parse_ps(ps, NOW);
         assert_eq!(got.len(), 3);
-        assert_eq!(got[0], Proc { pid: 41, ppid: 1, started: NOW - (86_400 + 2 * 3600 + 3 * 60 + 4), rss: 2048 * 1024, node: true, cmd: "/usr/local/bin/node /x/vite.js preview".into() });
-        assert_eq!((got[1].node, got[1].cmd.as_str(), got[1].started), (false, "", NOW - 306));
+        assert_eq!(got[0], Proc { pid: 41, ppid: 1, started: NOW - (86_400 + 2 * 3600 + 3 * 60 + 4), rss: 2048 * 1024, node: true, shell: false, cmd: "/usr/local/bin/node /x/vite.js preview".into() });
+        assert_eq!((got[1].node, got[1].shell, got[1].cmd.as_str(), got[1].started), (false, true, "", NOW - 306));
         assert_eq!(got[2].started, NOW - 7);
     }
 
     #[test]
     fn only_orphans_go_and_their_tree_never_follows_recycled_links() {
         let root = PathBuf::from(r"C:\w\game");
-        let vite = r"node C:\w\game\node_modules\vite\bin\vite.js preview --port 4200";
+        let vite = r"node C:\w\game\.claude\worktrees\card-3\node_modules\vite\bin\vite.js preview --port 4200";
         let procs = vec![
             // The owner's `npm run dev` under a live terminal: kept.
             other(50, 0, 300),
@@ -570,6 +602,32 @@ mod tests {
         assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 1, &all_exist), vec![52, 60]);
         assert_eq!(tree(&procs, 52), vec![52, 56, 59]);
         assert_eq!(tree(&procs, 60), vec![60]);
+    }
+
+    #[test]
+    fn a_server_left_by_a_finished_tool_call_goes_one_under_a_live_host_stays() {
+        let root = PathBuf::from(r"C:\w\game");
+        let vite = r"node C:\w\game\.claude\worktrees\card-9\node_modules\vite\bin\vite.js preview --port 4300";
+        let sh = |pid, ppid, age| Proc { shell: true, ..other(pid, ppid, age) };
+        let procs = vec![
+            // A room's background call: vite < cmd < npx (node) < bash < bash, the top bash's parent gone.
+            sh(70, 4343, 100),
+            sh(71, 70, 100),
+            p(72, 71, 100, "node npx-cli.js vite preview"),
+            sh(73, 72, 100),
+            p(74, 73, 100, vite),
+            // The same chain under a live non-shell host (a terminal, an editor, claude.exe): kept.
+            other(80, 0, 900),
+            sh(81, 80, 100),
+            p(82, 81, 100, "node npx-cli.js vite preview"),
+            sh(83, 82, 100),
+            p(84, 83, 100, vite),
+            // A shell parent of unknown start time is not walked through: kept.
+            Proc { started: 0, ..sh(90, 4343, 100) },
+            p(91, 90, 100, vite),
+        ];
+        assert_eq!(pick(&procs, &root, NOW, SERVER_AGE_S, 1, &all_exist), vec![74]);
+        assert!(is_shell(r"C:\Program Files\Git\usr\bin\bash.exe") && is_shell("-zsh") && is_shell("CMD.EXE") && !is_shell("claude.exe") && !is_shell("node"));
     }
 
     #[test]
