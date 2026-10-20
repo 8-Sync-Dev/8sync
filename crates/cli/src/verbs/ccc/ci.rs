@@ -264,6 +264,9 @@ pub(super) fn run(rest: &[String], home: &Path, root: &Path, repo: &Path, now: u
     }
     let gh = gh_in(root);
     if let Some(on) = set {
+        // Hold the refresh lock across the switch: a status call meanwhile must not start a
+        // background reading that sees Actions still on and stores it as newer than this one.
+        super::idle::write_json(&cache_file(home, repo).with_extension("lock"), &json!({ "at": now }));
         set_actions(&gh, on)?;
     }
     let ci = refresh(home, repo, now, &gh, crate::verbs::hq::alert_owner);
