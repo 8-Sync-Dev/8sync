@@ -63,7 +63,7 @@ const ROLES: [Role; 13] = [
     // Sonnet, not Haiku: QA gates visual UAT, and on Haiku it bounced 6 cards in 71 min that review then judged otherwise (ai-game-studio, 2026-10-19).
     r(&["qa", "qc", "test", "tester", "e2e", "uat"], "QA", "chạy check/test/UAT của card trên nhánh PR; ảnh chụp UAT lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện); đạt → review, lỗi → ready kèm ghi chú [qa]; viết test, không sửa code sản phẩm", Some("sonnet"), Some("qa")),
     r(&["review", "reviewer", "critic"], "Review", "review đối kháng diff của card, chấm FATAL/MAJOR/MINOR, chỉ duyệt khi không còn lỗi mở; duyệt → ghi SHA, chờ Ship; cần sửa → ready [review]; không sửa code", Some("sonnet"), Some("review")),
-    r(&["ui", "ux", "fe", "frontend", "web", "design", "hq"], "UI/UX", "giao diện (apps/…); /impeccable bắt buộc, kiểm trên trình duyệt, ảnh chụp lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện)", None, Some("ready")),
+    r(&["ui", "ux", "fe", "frontend", "web", "design", "hq"], "UI/UX", "giao diện (apps/…); /impeccable bắt buộc, kiểm trên trình duyệt, ảnh chụp lưu `qa/evidence/card-<id>-<slug>.png` (HQ Preview hiện); server preview/dev tự mở → tắt sau khi chụp", None, Some("ready")),
     r(&["api", "be", "backend", "server", "encore", "db"], "Backend/API", "API, dữ liệu, migration (migration/xoá dữ liệu vẫn hỏi owner)", None, Some("ready")),
     r(&["ops", "infra", "ci", "deploy", "release", "devops"], "Ops/CI", "CI 3 OS, release; merge/tag/deploy chỉ sau câu Ship của owner", None, None),
     r(&["doc", "docs", "write", "content", "blog"], "Docs", "tài liệu, CHANGELOG, hướng dẫn; không bịa số liệu", None, None),

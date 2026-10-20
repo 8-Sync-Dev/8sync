@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use crate::ui;
 
@@ -56,7 +57,7 @@ fn find_chromium() -> Option<PathBuf> {
         "chrome",
     ] {
         if let Ok(p) = which::which(bin) {
-            return Some(p);
+            return Some(unshim(p));
         }
     }
     let base = dirs::home_dir()?.join(".omp/puppeteer/chrome");
@@ -67,6 +68,19 @@ fn find_chromium() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The program behind a scoop shim (`chromium.exe` + `chromium.shim`: `path = "…\chrome.exe"`). The
+/// shim also adds scoop's shared `--user-data-dir`, which Chromium takes over a later one, so a
+/// second shot exited 21 (profile in use) while another ran (3d-game QA, 2026-10-20).
+fn unshim(p: PathBuf) -> PathBuf {
+    let real = std::fs::read_to_string(p.with_extension("shim")).ok().and_then(|s| {
+        s.lines()
+            .find_map(|l| l.trim().strip_prefix("path").map(|r| r.trim_start().trim_start_matches('=').trim().trim_matches('"').to_string()))
+            .map(PathBuf::from)
+            .filter(|r| r.is_file())
+    });
+    real.unwrap_or(p)
 }
 
 pub fn run(a: Args) -> Result<()> {
@@ -94,21 +108,50 @@ pub fn run(a: Args) -> Result<()> {
         "shot {} → {} ({}×{})",
         a.target, a.output, a.width, a.height
     ));
-    let status = Command::new(&chrome)
-        .args([
-            "--headless".into(),
-            "--no-sandbox".into(),
-            "--disable-gpu".into(),
-            "--hide-scrollbars".into(),
-            format!("--screenshot={}", a.output),
-            format!("--window-size={},{}", a.width, a.height),
-            format!("--virtual-time-budget={}", a.wait),
-            target,
-        ])
-        .status()
-        .context("failed to launch Chromium")?;
-    if !status.success() {
-        ui::warn("Chromium exited non-zero — screenshot may be incomplete");
+    // No `--disable-gpu`: it put WebGL on WARP/SwiftShader, so a 3D game page burned ~14 of 32
+    // threads for minutes per shot (3d-game QA, 2026-10-20). Measured on the same box, a WebGL
+    // shader page: 28 CPU-s with the flag, 3.6 CPU-s without.
+    // Its own profile: a second shot on a shared one (scoop's shim passes one) hands its job to the
+    // Chromium already running and exits without a PNG, so two rooms could not shoot at once. A
+    // `--user-data-dir` given later on the command line wins over the shim's.
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+    let profile = std::env::temp_dir().join(format!("8sync-shot-{}-{nanos}", std::process::id()));
+    let mut cmd = low_priority(&chrome);
+    cmd.args([
+        "--headless".into(),
+        "--no-sandbox".into(),
+        "--hide-scrollbars".into(),
+        "--no-first-run".into(),
+        format!("--user-data-dir={}", profile.display()),
+        format!("--screenshot={}", a.output),
+        format!("--window-size={},{}", a.width, a.height),
+        format!("--virtual-time-budget={}", a.wait),
+        target,
+    ]);
+    let mut child = cmd.spawn().context("failed to launch Chromium")?;
+    // A page that never settles must not keep Chromium busy: the render budget plus a minute.
+    let end = Instant::now() + Duration::from_millis(u64::from(a.wait)) + Duration::from_secs(60);
+    let status = loop {
+        if let Some(s) = child.try_wait()? {
+            break Some(s);
+        }
+        if Instant::now() >= end {
+            kill_tree(&mut child);
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    match status {
+        Some(s) if !s.success() => ui::warn("Chromium exited non-zero — screenshot may be incomplete"),
+        None => ui::warn(&format!("Chromium did not finish within --wait + 60 s: killed (target {})", a.output)),
+        _ => {}
+    }
+    // Chromium's helpers may hold the profile a moment after the browser exits.
+    for _ in 0..10 {
+        if std::fs::remove_dir_all(&profile).is_ok() || !profile.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(300));
     }
 
     match std::fs::metadata(&a.output) {
@@ -126,4 +169,61 @@ pub fn run(a: Args) -> Result<()> {
         _ => ui::err("screenshot not produced — does the target render headless?"),
     }
     Ok(())
+}
+
+/// Chromium below normal priority, so a heavy page never starves the rooms and the desktop.
+/// Windows: its children (GPU, renderer) inherit the class; elsewhere: `nice -n 10` when present.
+fn low_priority(chrome: &std::path::Path) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+        let mut c = Command::new(chrome);
+        c.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+        c
+    }
+    #[cfg(not(windows))]
+    match which::which("nice") {
+        Ok(nice) => {
+            let mut c = Command::new(nice);
+            c.args(["-n", "10"]).arg(chrome);
+            c
+        }
+        Err(_) => Command::new(chrome),
+    }
+}
+
+/// Kill Chromium with its helper processes (GPU, renderers), so none keeps rendering.
+fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_scoop_shim_resolves_to_the_program_it_wraps() {
+        let d = std::env::temp_dir().join(format!("8sync-unshim-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("app")).unwrap();
+        let real = d.join("app").join("chrome.exe");
+        std::fs::write(&real, b"").unwrap();
+        let shim = d.join("chromium.exe");
+        std::fs::write(d.join("chromium.shim"), format!("path = \"{}\"\nargs = --user-data-dir=\"x\"\n", real.display())).unwrap();
+        assert_eq!(unshim(shim.clone()), real);
+        // no shim file, or one naming a missing program: the binary found on PATH stays
+        assert_eq!(unshim(d.join("chrome.exe")), d.join("chrome.exe"));
+        std::fs::write(d.join("chromium.shim"), "path = \"C:\\nope\\chrome.exe\"\n").unwrap();
+        assert_eq!(unshim(shim.clone()), shim);
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
