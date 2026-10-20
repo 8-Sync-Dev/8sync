@@ -567,7 +567,8 @@ Mỗi nhịp:
    `\"wake\":\"merge\"` → về đầu bước 1 (lead chạy `8sync ccc auto merge`), còn lại → hết nhịp.
    Phòng không cột (arch, rd, …) không đặt loop: chỉ làm khi có card nhãn của mình, owner hay phòng khác nhắn.
    `ci` trong status khác `ok` (`billing` = GitHub không chạy job) → không chờ CI; gate local một lần mỗi head SHA.
-   - backlog: viết AC + một lệnh check → `8sync ccc auto move <id> ready --check \"<lệnh>\"` (gấp: thêm `--prio P0|P1`); gỡ card blocked;
+   - backlog: viết AC + một lệnh check → `8sync ccc auto move <id> ready --check \"<lệnh>\"` (gấp: thêm `--prio P0|P1`); ý lớn → card con
+     `auto add \"[#<id>] …\"`, card gốc ở backlog (không blocked); claim đưa card blocked trước: gỡ ngay theo `hint`, chỉ Ship/secret/tiền chờ owner;
      `8sync ccc auto merge` báo thiếu quyền mà có card approved → hỏi NGAY câu Ship nó in sẵn (MỘT câu AskUserQuestion), trước mọi `auto wait`
    - building: `git fetch origin`, worktree `.claude/worktrees/card-<id>`, nhánh `card-<id>-<slug>` từ `origin/main` (không chồng nhánh card khác: cần PR chưa merge → `move <id> blocked --note \"chờ PR #n\"`), `/ship` tới commit, push, PR → `move <id> qa --pr <số>`
    - qa: gate test của dự án MỘT lần cho head SHA của PR (`gh pr view <pr> --json headRefOid`) + UAT (ảnh kết quả đặt tên `qa/evidence/card-<id>-<slug>.png`, file tạm xuất ra `/tmp`) → `auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"` → `move <id> review`, trượt → `move <id> ready --note \"[qa] …\"`
@@ -631,7 +632,7 @@ pub(super) const ASK_RULE: &str = "Cần owner quyết → gọi tool AskUserQue
 /// (PR 108 on 103 on 99, one PR carrying 5 cards), and an owner ask split into R&D + ADR + UI cards.
 pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
-        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: thêm `--prio P0`, quan trọng `--prio P1`; dev nhận card gấp trước). Một card = một PR nhỏ một dev làm xong trong một phiên; không tách card R&D/audit/ADR riêng cho việc dev tự làm được. Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`). Ready đầy (claim trả `why`, move bị từ chối) → không tách thêm card.",
+        "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: `--prio P0`, quan trọng `--prio P1`). Một card = một PR nhỏ một dev làm xong trong một phiên; không tách card R&D/audit/ADR riêng cho việc dev tự làm được. Ý lớn → card con `auto add \"[#<id>] …\"`, card gốc ở backlog (không blocked). Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`). Ready đầy (claim trả `why`, move bị từ chối) → không tách thêm card.",
         "ready" => "card building: `git fetch origin`, worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>` tạo từ `origin/main` (KHÔNG chồng lên nhánh card khác; cần code của PR chưa merge → `8sync ccc auto move <id> blocked --note \"chờ PR #<số> merge\"` rồi claim card khác), `/ship` card tới commit (test của phần sửa; gate: `8sync ccc risk` rồi chỉ gọi skill nó liệt kê — diff chỉ docs → chỉ `/sec`, không mặc định `/rules` + `/aup-audit`), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>` (không chờ CI khi `ci` trong status khác `ok`); làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
         "qa" => "card qa: checkout nhánh PR; gate test của dự án chạy MỘT lần cho head SHA (`gh pr view <pr> --json headRefOid`): card đã có note `gate <sha>` đúng SHA đó → dùng lại, không thì chạy `check` + suite test rồi `8sync ccc auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"`; UAT thật, ảnh chụp lưu đúng `qa/evidence/card-<id>-<slug>.png` (không lưu ảnh hàng loạt thiếu tiền tố `card-<id>-` vào `qa/evidence/`) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`; CI không xanh (`ci` khác `ok`) → gate local này là bằng chứng, không chờ CI",
         "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước); test: dùng note `gate <sha>` của qa khi head SHA chưa đổi (không chạy lại suite), SHA đổi → chạy gate một lần và note `gate <sha>: <lệnh>: <kết quả>` mới → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi, hoặc PR chồng nhánh/chứa việc card khác → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
@@ -640,10 +641,11 @@ pub(super) fn lane_playbook(lane: &str) -> &'static str {
 }
 
 /// What a backlog room does every turn before it claims: approved cards land first (stacked,
-/// unmerged work is what the owner never sees), then blocked cards whose reason is gone. Without
-/// the self-merge permission the Ship question is asked in that same turn, before any `auto wait`
-/// (ai-game-studio 2026-10-20: the lead waited first and the approved cards sat a tick).
-pub(super) const BACKLOG_FIRST: &str = "trước claim: (a) chỉ phòng lead (BA bỏ qua): chạy `8sync ccc auto merge` (merge mọi card approved: base main, mergeable, đúng SHA; conflict/SHA đổi → tự về ready); báo thiếu quyền mà có card approved → NGAY lượt này, trước mọi `auto wait`, hỏi MỘT câu AskUserQuestion Ship (copy câu lệnh in ra) rồi chạy lại; không tự `gh pr merge`; (b) `8sync ccc auto lint` → gỡ card blocked hết lý do (`move <id> ready`).";
+/// unmerged work is what the owner never sees). Without the self-merge permission the Ship question
+/// is asked in that same turn, before any `auto wait` (ai-game-studio 2026-10-20: the lead waited
+/// first and the approved cards sat a tick). Blocked cards come back through `claim`, ahead of new
+/// backlog work ([`target::claim`]): the room clears them, only Ship, secrets and money wait on the owner.
+pub(super) const BACKLOG_FIRST: &str = "trước claim: (a) chỉ phòng lead (BA bỏ qua): chạy `8sync ccc auto merge` (merge mọi card approved: base main, mergeable, đúng SHA; conflict/SHA đổi → tự về ready); báo thiếu quyền mà có card approved → NGAY lượt này, trước mọi `auto wait`, hỏi MỘT câu AskUserQuestion Ship (copy câu lệnh in ra) rồi chạy lại; không tự `gh pr merge`; (b) claim đưa card blocked ra trước: gỡ ngay theo `hint`.";
 
 /// One tick of a room's loop: the recurring cron job's prompt.
 fn tick_prompt(name: &str) -> String {
@@ -1104,13 +1106,21 @@ fn run_target(
                 .then(|| target::list(home, root).map(|c| target::ready_count(&c)).unwrap_or(0))
                 .filter(|n| *n >= target::READY_CAP);
             let why = full.map(|n| format!("cột ready đầy ({n}/{} card chờ dev): không tách thêm card; gỡ blocked, merge card approved hoặc `auto wait`", target::READY_CAP));
+            // A blocked card or an idea whose split-off cards closed: what to do with it, at run time.
+            let hint = match &card {
+                Some(t) => target::claim_hint(t, &target::list(home, root)?),
+                None => None,
+            };
             if as_json {
-                println!("{}", json!({ "card": card, "lane": lane, "room": room, "why": why }));
+                println!("{}", json!({ "card": card, "lane": lane, "room": room, "why": why, "hint": hint }));
             } else {
                 match (&card, &why) {
                     (Some(t), _) => println!("{}", card_lines(t).join("\n")),
                     (None, Some(w)) => println!("{w}"),
                     (None, None) => println!("cột {lane}: không có card trống cho phòng {room}"),
+                }
+                if let Some(h) = &hint {
+                    println!("→ {h}");
                 }
             }
         }

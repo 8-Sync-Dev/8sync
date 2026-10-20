@@ -248,7 +248,7 @@ function FlowRowItem({ r, now, onOpen }: { r: FlowRow; now: number; onOpen?: (r:
               <span className="truncate">{r.room}</span>
             </span>
           ) : (
-            <span>{r.lane === "approved" ? "chờ anh Ship" : r.lane === "blocked" ? "chờ lead/anh gỡ" : "chờ phòng nhận"}</span>
+            <span>{r.lane === "approved" ? "chờ anh Ship" : r.lane === "blocked" ? "chờ lead gỡ" : "chờ phòng nhận"}</span>
           )
         ) : (
           <span className={cn("font-medium", r.state === "done" ? "text-st-running" : "")}>{r.state === "done" ? "xong" : "bỏ"}</span>

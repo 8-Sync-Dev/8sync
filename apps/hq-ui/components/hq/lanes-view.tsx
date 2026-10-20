@@ -1,11 +1,11 @@
 "use client";
 
-import { ArrowRightIcon, CheckIcon, ChevronsLeftIcon, ChevronsRightIcon, GitPullRequestIcon, LayersIcon, OctagonAlertIcon, RefreshCwIcon, ShipIcon, Undo2Icon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon, ChevronsLeftIcon, ChevronsRightIcon, GitPullRequestIcon, LayersIcon, ListTreeIcon, OctagonAlertIcon, RefreshCwIcon, ShipIcon, Undo2Icon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cardParts, nextUp, prRef } from "@/lib/card-tags";
+import { cardParts, nextUp, prRef, splitInto } from "@/lib/card-tags";
 import { LANES, boardSummary, claimStale, openCount, rankOf, type Card, type Closed, type LaneKey } from "@/lib/lanes";
 import { agoShort, agoVi, roomRole, type Move } from "@/lib/now";
 import { rootKey } from "@/lib/preview";
@@ -62,6 +62,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
   const movedHere = prefix ? [...moves].filter(([k]) => k.startsWith(prefix)).map(([k, m]) => ({ id: k.slice(prefix.length), ...m })) : [];
   const moveOf = (id: number) => (prefix ? moves.get(`${prefix}${id}`) : undefined);
   const next = cur?.board ? nextUp(cur.board.lanes.ready) : null;
+  const kids = cur?.board ? splitInto(cur.board.lanes) : null;
   const live = open ? boards?.find((b) => b.root === open.root)?.board : null;
   const shown = open ? ((live ? LANES.flatMap((l) => live.lanes[l.key]).find((c) => c.id === open.card.id) : undefined) ?? open.card) : null;
   const onOpenCard = (c: Card) => {
@@ -114,7 +115,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
             )}
           >
             {LANES.flatMap((l) => {
-              const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} now={now} next={next} onOpen={onOpenCard} />;
+              const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} kidsOf={(id) => kids?.get(id)} now={now} next={next} onOpen={onOpenCard} />;
               return l.key === "blocked" ? [<DoneLane key="done" closed={cur?.board?.closed ?? null} now={now} wide={doneWide} onWide={setDoneWide} />, lane] : [lane];
             })}
           </div>
@@ -203,6 +204,7 @@ function Lane({
   hint,
   cards,
   moveOf,
+  kidsOf,
   now,
   next,
   onOpen,
@@ -212,12 +214,13 @@ function Lane({
   hint: string;
   cards: Card[] | null;
   moveOf: (id: number) => Move | undefined;
+  kidsOf: (id: number) => number[] | undefined;
   now: number;
   next: number | null;
   onOpen: (c: Card) => void;
 }) {
   const n = cards?.length ?? 0;
-  // Ship and Blocked wait on the owner: their lane is tinted harder and says so in its header.
+  // Ship waits on the owner, Blocked on the lead (it clears them first): both are tinted harder and say so in the header.
   const loud = (lane === "approved" || lane === "blocked") && n > 0;
   return (
     <section
@@ -259,7 +262,7 @@ function Lane({
           // Keyed on the move too: the highlight replays only when the card changes lane again.
           [...cards].sort((a, b) => rankOf(a) - rankOf(b)).map((c) => {
             const m = moveOf(c.id);
-            return <CardItem key={m ? `${c.id}:${m.from}` : c.id} c={c} move={m} now={now} next={c.id === next && lane === "ready"} onOpen={onOpen} />;
+            return <CardItem key={m ? `${c.id}:${m.from}` : c.id} c={c} move={m} kids={kidsOf(c.id)} now={now} next={c.id === next && lane === "ready"} onOpen={onOpen} />;
           })
         )}
       </ul>
@@ -267,8 +270,8 @@ function Lane({
   );
 }
 
-/** One card: its chips, the title in up to 3 lines, who holds it, PR, bounces, a missing check, the last note. A click opens the sheet. */
-export function CardItem({ c, move, now, next, onOpen }: { c: Card; move?: Move; now: number; next: boolean; onOpen: (c: Card) => void }) {
+/** One card: its chips, the title in up to 3 lines, who holds it, PR, bounces, the cards split off it, a missing check, the last note. A click opens the sheet. */
+export function CardItem({ c, move, kids, now, next, onOpen }: { c: Card; move?: Move; kids?: number[]; now: number; next: boolean; onOpen: (c: Card) => void }) {
   const stale = claimStale(c, now);
   const who = c.claim ? roomRole(c.claim.room) : null;
   const { title, tags } = cardParts(c.text);
@@ -329,6 +332,12 @@ export function CardItem({ c, move, now, next, onOpen }: { c: Card; move?: Move;
               <Undo2Icon className="size-3" aria-hidden />
               {c.bounces}
               <span className="sr-only"> lần bị trả về</span>
+            </span>
+          )}
+          {kids && kids.length > 0 && (
+            <span className="inline-flex items-center gap-0.5 text-foreground" title="Đang làm qua các card con này; lead nghiệm thu khi chúng xong">
+              <ListTreeIcon className="size-3" aria-hidden />
+              đang làm qua {kids.map((k) => `#${k}`).join(" ")}
             </span>
           )}
           {noCheck && <span className="font-medium text-destructive">thiếu lệnh check</span>}

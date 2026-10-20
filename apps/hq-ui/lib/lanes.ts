@@ -8,7 +8,7 @@ export const LANES = [
   { key: "qa", label: "QA", hint: "qa chạy check + UAT" },
   { key: "review", label: "Review", hint: "review đối kháng diff" },
   { key: "approved", label: "Approved", hint: "chờ anh trả lời Ship" },
-  { key: "blocked", label: "Blocked", hint: "lead hoặc anh gỡ" },
+  { key: "blocked", label: "Blocked", hint: "lead gỡ ngay" },
 ] as const;
 
 export type LaneKey = (typeof LANES)[number]["key"];

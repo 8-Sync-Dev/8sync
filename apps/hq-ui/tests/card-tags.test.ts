@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardParts, nextUp, prRef } from "@/lib/card-tags";
+import { cardParts, nextUp, parentOf, prRef, splitInto } from "@/lib/card-tags";
 import { parseBoard, type Card } from "@/lib/lanes";
 
 const NOW = Date.parse("2026-10-17T16:00:00Z");
@@ -68,6 +68,23 @@ describe("nextUp / prRef / from", () => {
   it("reads who queued the card (null = the owner)", () => {
     const b = parseBoard({ schema: 1, lanes: [{ lane: "ready", cards: [{ id: 1, text: "a", from: "lead" }, { id: 2, text: "b" }] }] })!;
     expect(b.lanes.ready.map((c) => c.from)).toEqual(["lead", null]);
+  });
+});
+
+describe("parentOf / splitInto", () => {
+  it("reads the idea a card was split off, as target.rs `parent` does (3d-game #10)", () => {
+    const of = (text: string) => parentOf({ id: 7, text });
+    expect(["[#10] player", "[ui][#1 v2] hud", "[#125][ui] art"].map(of)).toEqual([10, 1, 125]);
+    expect(["[dev] fix #5", "x #5", "[#7] itself"].map(of)).toEqual([null, null, null]);
+    const b = parseBoard({
+      schema: 1,
+      lanes: [
+        { lane: "backlog", cards: [{ id: 10, text: "realistic 4K" }] },
+        { lane: "building", cards: [{ id: 17, text: "[#10] player" }] },
+        { lane: "qa", cards: [{ id: 14, text: "[#10] CSM" }] },
+      ],
+    })!;
+    expect(splitInto(b.lanes).get(10)).toEqual([17, 14]);
   });
 });
 
