@@ -848,13 +848,29 @@ pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
     Ok(stopped)
 }
 
+/// How long `auto down --only` waits for a revive in flight.
+const DOWN_ONLY_WAIT_S: u64 = 45;
+
 /// `auto down --only <room>`: stop that one background room and drop it from the registry, so
 /// `auto revive` never brings it back; auto and every other room keep running (HQ "Tự soi ảnh" off
 /// stops `eye`). True when a live session was stopped.
 pub(super) fn down_only(t: &Team, name: &str, now: u64) -> Result<bool> {
     // Under the revive lock: a revive mid-run must not resume the room this drops, untracked.
-    let Some(_lock) = revive_lock(t.home, now)? else {
-        bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ ít phút rồi chạy lại `8sync ccc auto down --only {name}`");
+    // HQ revives every 2 min: wait for one in flight (≤ 45 s, inside HQ's 60 s switch-off call).
+    let mut waited = 0;
+    let _lock = loop {
+        if let Some(l) = revive_lock(t.home, now + waited)? {
+            break l;
+        }
+        if waited >= DOWN_ONLY_WAIT_S {
+            bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ ít phút rồi chạy lại `8sync ccc auto down --only {name}`");
+        }
+        if cfg!(test) {
+            waited = DOWN_ONLY_WAIT_S;
+        } else {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            waited += 3;
+        }
     };
     let reg = t.store.load();
     let Some(s) = reg.sessions.iter().find(|s| s.name == name) else {
