@@ -48,7 +48,7 @@ Tạm dừng / chạy tiếp auto: nút **Tạm dừng / Chạy** trên cùng (`
 | `ui`, `api`, `core` | builder chuyên mảng | mặc định | ready |
 | `ops`, `docs`, `sec` | mảng của mình | mặc định | không |
 
-Team mặc định `lead,dev,qa,review`; tự chọn: `--roles lead,ba,dev,dev2,qa,review` (tối đa 8).
+Team mặc định `lead,dev,qa,review`; tự chọn: `--roles lead,ba,dev,dev2,qa,review` (tối đa 9). **⚡ Sấm Sét** `--roles boost`: 9 phòng — lead, 5 phòng code (dev…dev4, ui), 2 phòng QA (qa, qa2), review; tốn quota ~9× một phiên.
 
 **Không phòng nào ngồi rảnh:**
 - Phòng có cột board mở bằng `/goal` chính chủ của Claude Code. Mỗi lượt phòng claim → làm → chuyển cột, rồi tự sang lượt kế, không chờ nhịp loop.

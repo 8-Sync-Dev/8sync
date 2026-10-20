@@ -33,7 +33,10 @@ use serde_json::{json, Value};
 
 use super::{auto, idle, room};
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down | revive";
+/// Rooms one `auto up` starts at most (the `boost` preset is the largest team).
+const MAX_ROOMS: usize = 9;
+
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full|boost] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down | revive";
 
 /// `auto up …` / `auto down` / `auto revive`: the verbs this module owns.
 pub(super) fn wants(rest: &[String]) -> bool {
@@ -278,10 +281,12 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
             "--roles" => {
                 let mut v: Vec<String> = Vec::new();
                 let raw = value()?;
-                // Presets: `small` = the default team, `full` = 6 rooms, 3 of them builders (~6× quota).
+                // Presets: `small` = the default team, `full` = 6 rooms, 3 of them builders (~6× quota),
+                // `boost` = 9 rooms, 5 builders and 2 QA (HQ "⚡ Sấm Sét", ~9× quota).
                 let list = match raw.trim() {
                     "small" => room::DEFAULT_TEAM.join(","),
                     "full" => room::FULL_TEAM.join(","),
+                    "boost" => room::BOOST_TEAM.join(","),
                     _ => raw,
                 };
                 for r in list.split(',').map(str::trim).filter(|r| !r.is_empty()) {
@@ -289,8 +294,8 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
                         v.push(r.to_string());
                     }
                 }
-                if v.is_empty() || v.len() > 8 {
-                    bail!("--roles: 1..8 phòng, vd lead,dev,qa,review\n{USAGE}");
+                if v.is_empty() || v.len() > MAX_ROOMS {
+                    bail!("--roles: 1..{MAX_ROOMS} phòng, vd lead,dev,qa,review\n{USAGE}");
                 }
                 o.roles = v;
             }
@@ -852,6 +857,9 @@ mod tests {
         assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,dev,qa,review,rd".into(), 30, None));
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(parse(&v(&["--roles", "full"])).unwrap().roles.join(","), "lead,dev,dev2,ui,qa,review");
+        let boost = parse(&v(&["--roles", "boost"])).unwrap().roles;
+        assert!(boost.len() == room::BOOST_TEAM.len() && boost.iter().all(|n| room::find(n).is_some()), "{boost:?}");
+        assert_eq!(boost.iter().filter(|n| room::find(n).and_then(|r| r.lane) == Some("qa")).count(), 2, "two rooms gate");
         assert_eq!(parse(&v(&["--roles", "small"])).unwrap().roles.len(), 5);
         // Every room of the full team has a role.
         assert!(room::FULL_TEAM.iter().all(|n| room::find(n).is_some()), "{:?}", room::FULL_TEAM);

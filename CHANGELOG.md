@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.3] — 2026-10-20
+### Added
+- **`8sync ccc auto up --roles boost`: 9 rooms — lead, five builders (dev, dev2, dev3, dev4, ui) and two QA rooms (qa, qa2) plus review.** Owner: the team felt sequential. On 3d-game qa was the busiest room (90% busy, five cards queued for it) while a builder waited at "Chờ card". About 9× a single session's quota; the room cap is now 9. Each QA room keeps its own worktree `.claude/worktrees/<room>` (it was one shared `.claude/worktrees/qa`, so a second QA room would have checked another PR out under the first one's tests).
+### Fixed
+- **The lead refills `ready` before builders run dry.** An idea split into open cards was never handed back to the lead until all its pieces closed, so on 3d-game ready hit 0 with ideas #10 and #1 in backlog and dev at "Chờ card". Below 4 cards in ready (`READY_LOW`) `auto claim`/`auto wait` hand the lead such an idea again (at most every 15 min per idea), with the hint: split the next batch now, 2–4 small cards that can run in parallel (different files), each with AC + check, not repeating the open pieces; when the idea is used up, propose a new direction. With no idea left in backlog and ready low, the lead's empty `claim` says: R&D now, add 1–2 concrete ideas to backlog, then split them.
+- **HQ Board: an idea in Backlog shows "13 card con đang chạy · 4 đang build/QA" instead of a list of ids.** The owner read "đang làm qua #64 #65 … #46" as a card stuck after leaving Blocked; the ids stay in the tooltip.
+
 ## [0.110.2] — 2026-10-20
 ### Fixed
 - **A renewed lease brings the team back to work, not to a 30-minute cron.** A lane room's `/goal` ends when the lease gate shows, and nothing gave it back: on 3d-game after the owner pressed "Chạy liên tục" the rooms took a turn only when their backup cron fired (the lead sat idle 28 min, then three approved cards waited for it). `auto revive` (HQ calls it every 2 min while a tab is open, and on "Chạy liên tục") now stops a lane room that was idle in the background at two of its runs at least 60 s apart, and is still idle right before the stop, then resumes the same conversation with its goal (no sleep inside revive: HQ kills it after 120 s). It skips a room with messages waiting in its inbox (the inbox mod wakes it; a resume forks a new id that would never read them) and a room it resumed in the last 10 min. `auto up` re-goals idle lane rooms the same way instead of sending a one-turn loop prompt. Busy rooms, rooms waiting on a prompt, interactive sessions and rooms without a transcript are left alone. A resumed room starts at the project root, not its card worktree.
