@@ -236,9 +236,9 @@ Dữ liệu nằm ở `~/.local/state/8sync/hq/` (SQLite, quyền 0600), chỉ t
 - **Giao đích cho cả team (hàng chờ như khi gõ lúc agent bận)**:
   - `8sync ccc auto on --here --loop 30m --team --target "<đích>" --check "<lệnh kiểm>"`: bật auto kèm đích đầu hàng.
   - `8sync ccc auto add "<việc>" [--check "<lệnh>"] [--prio P0..P3]`: thêm vào cuối hàng. Card có `--prio P0` được phòng nhận trước mọi card khác (chưa đặt = P2; đổi sau bằng `8sync ccc auto prio <id> P1`).
-  - `8sync ccc auto add --now "<việc>"`: giống `ctrl+x ctrl+s` của Claude Code nhưng cho cả dự án. Việc lên đầu hàng và vào inbox mọi phòng; phòng nhận ngay khi rảnh, lượt đang chạy không bị cắt ngang.
+  - `8sync ccc auto add --now "<việc>"`: giống `ctrl+x ctrl+s` của Claude Code nhưng cho cả dự án. Việc lên đầu hàng và vào inbox của lead/ba (dự án chưa có team: mọi phòng); phòng nhận ngay khi rảnh, phòng đang `auto wait` thức dậy nhận trong vài giây, lượt đang chạy không bị cắt ngang.
   - Trong phòng nào cũng chỉ cần gõ "đưa vào loop: …" hoặc "làm ngay: …", Claude tự chạy lệnh trên (luật kit).
-  - Mỗi nhịp, mọi phòng làm phần hợp vai cho đích đầu hàng: lead chia việc, dev `/ship`, qa chạy `check`, reviewer review, rd gỡ chỗ kẹt. Đạt (lệnh `check` exit 0, hoặc có bằng chứng chạy được) thì một phòng chạy `8sync ccc auto done <id> --evidence "<lệnh: kết quả>"` và cả team sang đích kế. Hết hàng thì quay về `.claude/loop.md` (`STATE.md` Next).
+  - Có team (`auto up`): lead/ba tách đích thành card, mỗi phòng chỉ làm card claim được đúng vai. Không team: mỗi nhịp mọi phòng làm phần hợp vai cho đích đầu hàng: lead chia việc, dev `/ship`, qa chạy `check`, reviewer review, rd gỡ chỗ kẹt. Đạt (lệnh `check` exit 0, hoặc có bằng chứng chạy được) thì một phòng chạy `8sync ccc auto done <id> --evidence "<lệnh: kết quả>"` và cả team sang đích kế (ý của owner chỉ lead/ba nghiệm thu). Hết hàng thì quay về `.claude/loop.md` (`STATE.md` Next).
   - `8sync ccc auto queue` xem hàng (▶ đang làm, ✓ xong kèm bằng chứng, ✗ đã bỏ). `8sync ccc auto drop <id>` bỏ một đích. `auto status` in đích hiện tại.
 - **Verify hook**: tự `cargo check` / `tsc` / `go vet` sau mỗi lần sửa file.
 - **Policy cho org**: `8sync ccc policy --org-uuid <uuid> --out policy.json`, rồi cài bằng lệnh `sudo install` mà lệnh in ra.

@@ -191,12 +191,12 @@ pub(super) fn decide(card_sha: &str, pr: &Value, base_merged: bool, main: &str) 
         if base_merged {
             return Step::Retarget;
         }
-        return Step::Back(format!("PR có base `{base}`, không phải {main}: rebase lên origin/{main}, `gh pr edit --base {main}`, qua qa/review lại"));
+        return Step::Back(format!("PR có base `{base}`, không phải {main}: `gh pr edit --base {main}`, `git merge origin/{main}` vào nhánh, {}, qua qa/review lại", target::KEEP_PR));
     }
     // Only CONFLICTING is a conflict; UNKNOWN right after a push is GitHub still computing.
     match s("mergeable").as_str() {
         "MERGEABLE" => {}
-        "CONFLICTING" => return Step::Back(format!("conflict với {main}: rebase lên origin/{main} rồi qua qa/review lại")),
+        "CONFLICTING" => return Step::Back(format!("conflict với {main}: `git merge origin/{main}` vào nhánh, sửa conflict (CHANGELOG: giữ cả hai mục), {}, qua qa/review lại", target::KEEP_PR)),
         _ => return Step::Computing,
     }
     if !same_commit(card_sha, &head) {
@@ -234,7 +234,7 @@ fn gh(root: &Path, args: &[&str]) -> Result<String> {
 type Gh<'a> = &'a dyn Fn(&[&str]) -> Result<String>;
 
 fn view(gh: Gh, pr: &str) -> Result<Value> {
-    serde_json::from_str(&gh(&["pr", "view", pr, "--json", "baseRefName,mergeable,headRefOid,state"])?).context("gh pr view: JSON lạ")
+    serde_json::from_str(&gh(&["pr", "view", pr, "--json", "baseRefName,mergeable,headRefOid,state,isDraft"])?).context("gh pr view: JSON lạ")
 }
 
 /// A branch that was the head of a merged PR (a stack root already landed).
@@ -283,6 +283,11 @@ fn land(t: &Target, c: &Ctx, first: bool) -> Outcome {
         let evidence = |head: &str| format!("merged {}", head.chars().take(12).collect::<String>());
         Ok(match decide(&sha, &v, base_merged, main) {
             Step::Merge(head) => {
+                // GitHub refuses to merge a draft; review already approved this head (4 failed
+                // merges on 3d-game, 2026-10-20).
+                if v["isDraft"] == true {
+                    gh(&["pr", "ready", &n])?;
+                }
                 if let Err(e) = gh(&["pr", "merge", &n, "--squash", "--delete-branch", "--match-head-commit", &head]) {
                     // gh merges remotely, then may fail deleting a local branch a worktree holds.
                     if view(gh, &n).ok().is_none_or(|v| v["state"] != "MERGED") {
@@ -329,6 +334,11 @@ fn line(o: &Outcome) -> String {
 
 /// `auto merge [--json]` in `root`; `who` closes and returns cards as that room.
 pub(super) fn run(as_json: bool, home: &Path, root: &Path, who: Option<&str>, now: u64) -> Result<()> {
+    // Landing is the lead's (it asks Ship). A lane room would merge on GitHub and then be refused
+    // closing an owner card ([`target::close`]), leaving the card in approved for good.
+    if let Some(lane) = who.and_then(super::room::find).and_then(|r| r.lane).filter(|l| *l != "backlog") {
+        bail!("`auto merge` là việc của phòng lead, không phải phòng cột {lane}");
+    }
     if super::grant::self_merge(&super::grant::dir(home), root, now).is_none() {
         let approved: Vec<Target> = target::list(home, root)?.into_iter().filter(|t| t.state == "open" && t.lane == "approved").collect();
         if approved.is_empty() {
@@ -484,9 +494,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// A board in a temp home with one approved card (PR 81 at 0123456) and a `gh` stub.
+    /// [`landed_pr`] with a mergeable, non-draft PR on `base`.
     fn landed(base: &str, main: &str) -> (Vec<String>, Target) {
-        let home = std::env::temp_dir().join(format!("8sync-merge-land-{}-{base}-{main}", std::process::id()));
+        landed_pr(pr(base, "MERGEABLE", HEAD, "OPEN"), main)
+    }
+
+    /// A board in a temp home with one approved card (PR 81 at 0123456), `gh pr view` answering `view`.
+    fn landed_pr(view: Value, main: &str) -> (Vec<String>, Target) {
+        let tag = format!("{}-{}-{main}", view["baseRefName"].as_str().unwrap_or(""), view["isDraft"]);
+        let home = std::env::temp_dir().join(format!("8sync-merge-land-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         let root = home.join("game");
         std::fs::create_dir_all(root.join(".git")).unwrap();
@@ -499,7 +515,7 @@ mod tests {
         let gh = |args: &[&str]| -> Result<String> {
             calls.borrow_mut().push(args.join(" "));
             Ok(match args[..2] {
-                ["pr", "view"] => pr(base, "MERGEABLE", HEAD, "OPEN").to_string(),
+                ["pr", "view"] => view.to_string(),
                 ["pr", "list"] => "[{\"number\":80}]".into(),
                 _ => String::new(),
             })
@@ -528,5 +544,26 @@ mod tests {
         let (calls, card) = landed("main", "master");
         assert!(!calls.iter().any(|c| c.starts_with("pr merge")) && calls.iter().any(|c| c == "pr edit 81 --base master"), "{calls:?}");
         assert_eq!(card.lane, "review");
+    }
+
+    #[test]
+    fn an_approved_draft_is_marked_ready_before_the_merge() {
+        let mut draft = pr("main", "MERGEABLE", HEAD, "OPEN");
+        draft["isDraft"] = json!(true);
+        let (calls, card) = landed_pr(draft, "main");
+        let at = |p: &str| calls.iter().position(|c| c.starts_with(p));
+        assert!(at("pr ready 81").is_some() && at("pr ready 81") < at("pr merge 81"), "{calls:?}");
+        assert_eq!(card.state, "done");
+        let (calls, _) = landed("main", "main");
+        assert!(!calls.iter().any(|c| c.starts_with("pr ready")) && calls.iter().any(|c| c.starts_with("pr merge 81")), "a ready PR is merged as is: {calls:?}");
+    }
+
+    #[test]
+    fn only_the_backlog_rooms_land_cards() {
+        let d = std::env::temp_dir().join(format!("8sync-merge-who-{}", std::process::id()));
+        for who in ["review", "dev2", "qa"] {
+            let e = run(false, &d, &d, Some(who), 0).unwrap_err().to_string();
+            assert!(e.contains("phòng lead"), "{who}: {e}");
+        }
     }
 }
