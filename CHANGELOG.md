@@ -8,7 +8,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [0.110.11] — 2026-10-21
 ### Fixed
 - **`auto up` no longer fails for 10 min on a dead revive's lock.** The revive lock was held until it aged out (600 s) even when the process that took it was gone (a run killed by HQ's timeout), so the owner's `8sync ccc auto up --roles full --clear-ss` said "đang có `auto revive` / `auto up` khác mở phòng". A lock whose process no longer runs is now free at once, and `auto up` waits up to 150 s for a live revive to finish instead of failing.
-- **A folder that only groups repos is refused, not resolved to the parent.** `auto up` / `auto add` / `auto on --here` in `8sync-startup/zus` (a folder of the parent repo holding the submodules admin, ide, models, web) started the PARENT repo's team — and, with one team per folder tree, would have stopped the 3d-game team nested in it. It now stops with the list of repos inside and `cd` into the one to work on.
+- **A folder that only groups repos is refused, not resolved to the parent.** `auto up` / `auto add` / `auto on --here` in `8sync-startup/zus` (a folder of the parent repo holding the submodules admin, ide, models, web) started the PARENT repo's team — and, with one team per folder tree, would have stopped the 3d-game team nested in it. It now stops with the list of repos inside and `cd` into the one to work on; the check runs before an untracked folder is `git init`ed, and a folder holding repos (8sync-startup/game holds 3d-game) is never made a repo itself.
 
 ## [0.110.10] — 2026-10-21
 ### Fixed

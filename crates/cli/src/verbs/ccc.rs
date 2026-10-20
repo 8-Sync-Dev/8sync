@@ -208,15 +208,14 @@ pub fn run(a: Args) -> Result<()> {
         // One team per git repo: a subfolder with its own package.json is not a project, a nested
         // repo is (ai-game-studio inside 8sync-startup), and a worktree belongs to its repo.
         "auto" => {
-            if matches!(rest.first().map(String::as_str), Some("up" | "add")) {
-                adopt_here(&cwd, true);
-            }
-            let repo = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
             // A folder that only groups repos (8sync-startup/zus holds the submodules admin, ide,
-            // models, web) is no project: `up` there used to start the PARENT repo's team.
+            // models, web; 8sync-startup/game holds 3d-game) is no project: `up` there started the
+            // PARENT repo's team. Checked before an untracked folder is `git init`ed.
             let first = rest.first().map(String::as_str);
             let starts = matches!(first, Some("up" | "add")) || first == Some("on") && rest.iter().any(|a| a == "--here");
-            if let Some(kids) = grouping_folder(&cwd, &repo).filter(|_| starts) {
+            let before = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
+            if let Some(kids) = grouping_folder(&cwd, &before).filter(|_| starts) {
+                let repo = before;
                 bail!(
                     "{} không phải repo riêng: nó là thư mục của repo {} và chứa repo con: {}.\nTeam, board và phòng chạy theo repo → `cd` vào repo muốn làm rồi chạy lại (vd `cd {}`), hoặc chạy ở {} nếu thật sự muốn team cho cả repo cha.",
                     cwd.display(),
@@ -226,6 +225,10 @@ pub fn run(a: Args) -> Result<()> {
                     repo.display()
                 );
             }
+            if matches!(first, Some("up" | "add")) {
+                adopt_here(&cwd, true);
+            }
+            let repo = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
             // `up` does it under its lock (auto_team); `on --here` once its arguments passed and the
             // scope moved here (the nested repo is out of auto by then, revive no longer opens it).
             let here = rest.first().is_some_and(|a| a == "on") && rest.iter().any(|a| a == "--here");
@@ -674,6 +677,7 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(3));
         waited += 3;
     };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs());
     // Under the lock (no revive re-opens what this stops), before anything here starts.
     if !args.iter().any(|a| a == "-h" || a == "--help") {
         down_nested(env, root)?;

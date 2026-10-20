@@ -175,6 +175,10 @@ pub(crate) fn adopt_untracked(dir: &Path) -> Option<PathBuf> {
     if dir.join(".git").exists() {
         return None;
     }
+    // A folder holding repos (8sync-startup/game holds 3d-game) groups projects; it is none itself.
+    if std::fs::read_dir(dir).ok()?.flatten().any(|e| e.path().join(".git").exists()) {
+        return None;
+    }
     let parts: Vec<_> = dir.components().collect();
     if parts.windows(2).any(|w| w[0].as_os_str() == ".claude" && w[1].as_os_str() == "worktrees") {
         return None;
@@ -338,6 +342,9 @@ mod tests {
         let nested = root.join("game/own");
         std::fs::create_dir_all(nested.join(".git")).unwrap();
         assert_eq!(adopt_untracked(&nested), None, "a nested repo stays as it is");
+        let group = root.join("game");
+        assert_eq!(adopt_untracked(&group), None, "a folder holding repos (game/new, game/own) is never made a repo");
+        assert!(!group.join(".git").exists());
 
         let wt = root.join(".claude/worktrees/w");
         std::fs::create_dir_all(&wt).unwrap();
