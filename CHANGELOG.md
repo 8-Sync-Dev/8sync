@@ -10,6 +10,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - **CI/CD on the release machine, GitHub only stores the code: `8sync ccc auto ci local`.** It turns GitHub Actions off for the repo (`gh api -X PUT repos/{owner}/{repo}/actions/permissions -F enabled=false`); `auto ci github` turns it back on. A repo with Actions off reads `ci: local` in `auto status` before any old run is looked at, so rooms take the local gate per head SHA as CI and never wait on GitHub. Owner ask after the billing hold on 3d-game and ai-game-studio (every run failed in seconds).
 ### Changed
 - **Team cards write their changelog entry to `changelog.d/card-<id>.md`, not `CHANGELOG.md`.** 3d-game, 12:30–17:37: 20 bounces back to `ready` over 22 cards, most of them a `CHANGELOG.md` conflict after another PR merged; each bounce costs a builder turn, a qa gate and a review. The entries are folded into `CHANGELOG.md` at release.
+### Fixed
+- **`8sync ccc auto add -h` prints the usage instead of queueing a card titled "-h".** (`--help` already errored; any text starting with a dash still goes after `--`.)
 
 ## [0.109.1] — 2026-10-20
 ### Fixed

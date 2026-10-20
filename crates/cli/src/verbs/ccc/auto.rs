@@ -1063,6 +1063,8 @@ fn run_target(
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => {}
+            // `auto add -h` once queued a card titled "-h" on a live board.
+            "-h" | "--help" => bail!("{USAGE}"),
             "--now" if verb == "add" => first = true,
             f if takes.contains(&f) => {
                 let v = it
@@ -2250,6 +2252,10 @@ mod tests {
         );
         assert!(run(&s(&["on", "--target", " "]), &h, false, &h, Vec::new).is_err());
         assert!(run(&s(&["add"]), &h, false, &h, Vec::new).is_err());
+        for help in ["-h", "--help"] {
+            assert!(run(&s(&["add", help]), &h, false, &h, Vec::new).is_err(), "{help} is not a card");
+        }
+        assert!(target::list(&h, &h).unwrap().is_empty(), "nothing queued by a help flag");
         assert!(run(
             &s(&["add", "x", "--evidence", "y"]),
             &h,
