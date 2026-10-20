@@ -20,9 +20,10 @@
 //! https://code.claude.com/docs/en/scheduled-tasks), started by the owner's own command.
 //!
 //! `on --target "<đích>" [--check "<lệnh>"]`, `add [--now]`, `queue`, `done <id> --evidence`,
-//! `drop <id>`: the project's target queue ([`super::target`]). `status --json` carries the first
-//! open target, so every tick works on it until a room proves it met; `add --now` also pushes it
-//! into every room's inbox, the project-wide "ctrl+x ctrl+s to send now".
+//! `drop <id>`: the project's target queue ([`super::target`]). Without a board team `status
+//! --json` carries the first open target, so every tick works on it until a room proves it met
+//! (a team works through `claim`); `add --now` also pushes it into every room's inbox (a board
+//! team: its lead/ba rooms), the project-wide "ctrl+x ctrl+s to send now".
 //!
 //! Rails stay those of `idle` and `delegate`: a subscription login keeps the idle lease ≤ 4 h and
 //! only nudges while the owner types; Ship, secrets, money, deploys and high-risk questions still
@@ -318,6 +319,12 @@ pub(super) fn canon(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
+/// A team runs on `root`'s board (`auto up` listed its root; a worktree inside it counts).
+fn board_team(home: &Path, root: &Path) -> bool {
+    let r = canon(root);
+    super::team::team_roots(home).iter().any(|t| r.starts_with(canon(Path::new(t))))
+}
+
 /// The project roots `auto on --here` limited auto to, while the marker is on; empty = every
 /// project. Markers before `repos` carry one `repo`.
 fn scope(home: &Path) -> Vec<PathBuf> {
@@ -552,7 +559,7 @@ const LOOP_MD: &str = "# Loop của dự án (8sync ⚡ Chế độ Sấm Sét)
 `/loop` không kèm prompt chạy file này; loop do `8sync ccc auto on --loop` đặt cũng đọc file này mỗi nhịp.
 Sửa file là đổi việc của mọi phòng từ nhịp kế. 8sync không ghi đè file đã có.
 Owner giao đích cho cả team: `8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"]` (vào hàng), thêm `--now` để gửi ngay
-mọi phòng; trong phòng, owner nói \"đưa vào loop: …\" / \"làm ngay: …\" thì chạy đúng lệnh đó. Xem hàng: `8sync ccc auto queue`.
+(có team board: tới lead/ba; không team: mọi phòng); trong phòng, owner nói \"đưa vào loop: …\" / \"làm ngay: …\" thì chạy đúng lệnh đó. Xem hàng: `8sync ccc auto queue`.
 ⚡ Chuyên gia thực chiến: `codegraph` (Rust native local search) TRƯỚC grep/read · chỉ claim card đúng vai · output súc tích kiểu RTK/Caveman · ảnh UAT chỉ lưu đúng chuẩn `qa/evidence/card-<id>-<slug>.png` (không xả ảnh hàng loạt không gắn `card-<id>` vào `qa/evidence/`).
 
 Mỗi nhịp:
@@ -633,8 +640,8 @@ pub(super) const ASK_RULE: &str = "Cần owner quyết → gọi tool AskUserQue
 pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
         "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: `--prio P0`, quan trọng `--prio P1`). Một card = một PR nhỏ một dev làm xong trong một phiên; không tách card R&D/audit/ADR riêng cho việc dev tự làm được. Ý lớn → card con `auto add \"[#<id>] …\"`, card gốc ở backlog (không blocked). Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`). Ready đầy (claim trả `why`, move bị từ chối) → không tách thêm card.",
-        "ready" => "card building: `git fetch origin`, worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>` tạo từ `origin/main` (KHÔNG chồng lên nhánh card khác; cần code của PR chưa merge → `8sync ccc auto move <id> blocked --note \"chờ PR #<số> merge\"` rồi claim card khác), `/ship` card tới commit (test của phần sửa; gate: `8sync ccc risk` rồi chỉ gọi skill nó liệt kê — diff chỉ docs → chỉ `/sec`, không mặc định `/rules` + `/aup-audit`), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>` (không chờ CI khi `ci` trong status khác `ok`); làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
-        "qa" => "card qa: checkout nhánh PR; gate test của dự án chạy MỘT lần cho head SHA (`gh pr view <pr> --json headRefOid`): card đã có note `gate <sha>` đúng SHA đó → dùng lại, không thì chạy `check` + suite test rồi `8sync ccc auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"`; UAT thật, ảnh chụp lưu đúng `qa/evidence/card-<id>-<slug>.png` (không lưu ảnh hàng loạt thiếu tiền tố `card-<id>-` vào `qa/evidence/`), server preview/dev tự mở cho UAT → tắt ngay sau khi chụp (KillShell hoặc kill PID) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`; CI không xanh (`ci` khác `ok`) → gate local này là bằng chứng, không chờ CI",
+        "ready" => "card building: `git fetch origin`, worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>` tạo từ `origin/main` (KHÔNG chồng lên nhánh card khác; cần code của PR chưa merge → `8sync ccc auto move <id> blocked --note \"chờ PR #<số> merge\"` rồi claim card khác; cần main mới → `git merge origin/main`, không rebase/force-push), trong worktree sửa file bằng Edit/Write và mỗi Bash MỘT lệnh đơn, đường dẫn đầy đủ (không heredoc, `sed -i`, `python -`, `git -C`, PowerShell: guard từ chối), `/ship` card tới commit (test của phần sửa; gate: `8sync ccc risk` rồi chỉ gọi skill nó liệt kê — diff chỉ docs → chỉ `/sec`, không mặc định `/rules` + `/aup-audit`), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>` (không chờ CI khi `ci` trong status khác `ok`); làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
+        "qa" => "card qa: MỘT worktree `.claude/worktrees/qa` dùng lại cho mọi card (`git fetch origin <nhánh PR>` + `git checkout --detach <head sha>`; `npm ci` chỉ khi lockfile đổi); gate test của dự án chạy MỘT lần cho head SHA (`gh pr view <pr> --json headRefOid`): card đã có note `gate <sha>` đúng SHA đó → dùng lại, không thì chạy `check` + suite test rồi `8sync ccc auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"`; UAT thật, `8sync shot` chạy thẳng (không `&` + sleep), ảnh lưu đúng `qa/evidence/card-<id>-<slug>.png` (không lưu ảnh hàng loạt thiếu tiền tố `card-<id>-` vào `qa/evidence/`), server preview/dev tự mở cho UAT → tắt ngay sau khi chụp (KillShell hoặc kill đúng PID; KHÔNG kill theo tên `node.exe`/`chrome.exe`: giết cả HQ) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`; CI không xanh (`ci` khác `ok`) → gate local này là bằng chứng, không chờ CI",
         "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước); test: dùng note `gate <sha>` của qa khi head SHA chưa đổi (không chạy lại suite), SHA đổi → chạy gate một lần và note `gate <sha>: <lệnh>: <kết quả>` mới → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi, hoặc PR chồng nhánh/chứa việc card khác → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
         _ => "",
     }
@@ -1245,13 +1252,22 @@ fn run_target(
                 t = target::set_role(home, root, t.id, r, from.as_deref(), now)?;
             }
             let (_, open) = target::current(home, root)?;
-            let sent = if first {
-                queue_all(home, &all, now, sender.as_deref(), |name| target::now_prompt(&t, name))
+            // A board team hears --now through its backlog rooms, which split it and hand the pieces
+            // out: every room dropping its card for it cost 214 calls / 21.6 Mtok on 3d-game
+            // (2026-10-20). No backlog room (or no team): every room, as before.
+            let backlog: Vec<(String, String)> = if board_team(home, root) {
+                all.iter().filter(|(n, _)| super::room::find(n).and_then(|r| r.lane) == Some("backlog")).cloned().collect()
             } else {
                 Vec::new()
             };
-            // --now already reached every room, the arch one too.
-            let woke = if first || dup { Vec::new() } else { wake_arch(home, &all, &t, true, now, from.as_deref()) };
+            let to = if backlog.is_empty() { &all } else { &backlog };
+            let sent = if first {
+                queue_all(home, to, now, sender.as_deref(), |name| target::now_prompt(&t, name))
+            } else {
+                Vec::new()
+            };
+            // --now to every room already reached the arch one too.
+            let woke = if dup || (first && backlog.is_empty()) { Vec::new() } else { wake_arch(home, &all, &t, true, now, from.as_deref()) };
             let pos = if first { 1 } else { open };
             if as_json {
                 let sent: Vec<Value> = sent
@@ -1301,7 +1317,7 @@ fn run_target(
             }
             // `queue` is the history view; `board` shows the lanes.
             if all.is_empty() {
-                println!("hàng đích trống. Thêm: `8sync ccc auto add \"<việc>\"` (--now để gửi ngay mọi phòng).");
+                println!("hàng đích trống. Thêm: `8sync ccc auto add \"<việc>\"` (--now để gửi ngay: lead/ba của team, không team thì mọi phòng).");
             }
             let mut first_open = true;
             for t in &all {
@@ -1464,11 +1480,12 @@ fn parse_wait(args: &[String], bash_max_ms: Option<&str>, rooms: impl FnOnce() -
     Ok(Wait { room, lane, timeout })
 }
 
-/// Block until the room has a card in its lane, auto stops (off, paused, cap) or the timeout ends.
-/// The lead also wakes (`merge`) for an approved card it has not seen yet while the owner's
-/// self-merge permission is live (`status`' `self_merge`), so merging follows approvals instead of
-/// the cron; cards already approved when the wait began (a merge that failed) do not wake it again.
-/// Clock, sleep and reads are injected so the loop is tested without waiting.
+/// Block until the room has a card in its lane, a message in its HQ inbox (`status`' `mail`,
+/// [`unseen_mail`]), auto stops (off, paused, cap) or the timeout ends. The lead also wakes
+/// (`merge`) for an approved card it has not seen yet while the owner's self-merge permission is
+/// live (`status`' `self_merge`), so merging follows approvals instead of the cron; cards already
+/// approved when the wait began (a merge that failed) do not wake it again. Clock, sleep and
+/// reads are injected so the loop is tested without waiting.
 fn wait_for(
     w: &Wait,
     cards: impl Fn() -> Result<Vec<target::Target>>,
@@ -1492,6 +1509,8 @@ fn wait_for(
             // room waits again instead of ending its /goal (seen live 2026-10-18: ui stopped at 97%
             // of the 5-hour window and never came back after it reset).
             (t.saturating_sub(start) >= w.timeout).then_some(("cap", None))
+        } else if st["mail"].is_u64() {
+            Some(("msg", None))
         } else if let Some((why, id)) = {
             let cs = cards()?;
             let live = lead && st["self_merge"].is_object();
@@ -1509,15 +1528,41 @@ fn wait_for(
             None
         };
         if let Some((why, card)) = wake {
-            return Ok(json!({ "wake": why, "card": card, "room": w.room, "lane": w.lane, "waited_s": t.saturating_sub(start), "cap": st["cap"] }));
+            return Ok(json!({ "wake": why, "card": card, "room": w.room, "lane": w.lane, "waited_s": t.saturating_sub(start), "cap": st["cap"], "mail": st["mail"] }));
         }
         sleep();
     }
 }
 
+/// Messages reach a session only when its turn ends (Stop hook) or while it sits idle (the
+/// `8sync-inbox` mod), and `auto wait` is one long turn: owner messages waited 30 min to 5 h on
+/// 3d-game (2026-10-20). Some(mtime in ms) when the room's inbox holds lines it was not woken for
+/// yet ([`mail_mark`]), so an inbox no hook takes wakes the room once, not every poll.
+fn unseen_mail(home: &Path, sid: &str) -> Option<u64> {
+    let file = crate::verbs::hq::inbox_file(home, sid)?;
+    let meta = std::fs::metadata(file).ok().filter(|m| m.len() > 0)?;
+    let at = u64::try_from(meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis()).ok()?;
+    let woke = std::fs::read_to_string(mail_mark(home, sid)).ok().and_then(|s| s.trim().parse::<u64>().ok());
+    (woke != Some(at)).then_some(at)
+}
+
+/// The inbox mtime a room's last `msg` wake was for (`sid` passed [`unseen_mail`]'s id check).
+fn mail_mark(home: &Path, sid: &str) -> PathBuf {
+    super::idle::state_dir(home).join("mail-woke").join(sid)
+}
+
+fn mark_mail(home: &Path, sid: &str, at: u64) {
+    let mark = mail_mark(home, sid);
+    if let Some(dir) = mark.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(mark, at.to_string());
+}
+
 fn wait_text(v: &Value) -> String {
     let lane = v["lane"].as_str().unwrap_or("?");
     match v["wake"].as_str() {
+        Some("msg") => "có tin nhắn mới cho phòng này (owner hoặc phòng khác): KẾT THÚC lượt ngay, không chạy thêm lệnh — tin vào phiên khi lượt xong; làm theo tin rồi quay lại `8sync ccc auto wait`".into(),
         Some("card") => format!("card #{} ở cột {lane}: `8sync ccc auto claim`", v["card"]),
         Some("merge") => format!("card #{} vừa approved, owner đã cho tự merge: `8sync ccc auto merge`", v["card"]),
         Some("off") => "auto đã tắt hoặc tạm dừng: dừng, không claim nữa".into(),
@@ -1608,7 +1653,10 @@ pub(super) fn run(
     // A room asks for its own project: `down` in another repo must not stop it, `down` here must.
     let here = scoped(home)(Some(&root.to_string_lossy()));
     if rest.first().map(String::as_str) == Some("wait") {
-        let w = parse_wait(&rest[1..], std::env::var("BASH_MAX_TIMEOUT_MS").ok().as_deref(), rooms)?;
+        let all = rooms();
+        let w = parse_wait(&rest[1..], std::env::var("BASH_MAX_TIMEOUT_MS").ok().as_deref(), || all.clone())?;
+        // The room's own session: its registry id, else the session this command runs in.
+        let sid = all.iter().find(|(n, _)| n == &w.room).map(|(_, s)| s.clone()).or_else(|| std::env::var("CLAUDE_CODE_SESSION_ID").ok());
         let clock = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let v = wait_for(
             &w,
@@ -1617,11 +1665,15 @@ pub(super) fn run(
                 let mut v = status(home, subscription, t);
                 v["here"] = json!(here);
                 v["self_merge"] = super::grant::self_merge_json(&super::grant::dir(home), root, t);
+                v["mail"] = json!(sid.as_deref().and_then(|s| unseen_mail(home, s)));
                 v
             },
             clock,
             || std::thread::sleep(std::time::Duration::from_secs(WAIT_POLL_S)),
         )?;
+        if let (Some("msg"), Some(at), Some(s)) = (v["wake"].as_str(), v["mail"].as_u64(), sid.as_deref()) {
+            mark_mail(home, s, at);
+        }
         if rest.iter().any(|a| a == "--json") {
             println!("{v}");
         } else {
@@ -1770,7 +1822,10 @@ pub(super) fn run(
     // A broken targets.json must not break the stop check every tick runs on this output.
     match target::current(home, root) {
         Ok((t, open)) => {
-            v["target"] = target::json(t.as_ref());
+            // A board team works through `claim`: its first open card is usually an owner idea the
+            // lead splits, and a builder that took it as `target` built the whole idea beside its
+            // pieces (3d-game PR 25, 2026-10-20).
+            v["target"] = if board_team(home, root) { Value::Null } else { target::json(t.as_ref()) };
             v["queue"] = json!(open);
         }
         Err(e) => {
@@ -2348,6 +2403,14 @@ mod tests {
         assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| expired.clone(), || 5, || {}).unwrap()["wake"], "off", "the 4 h lease ends the room's work");
         let away = json!({ "on": true, "paused": false, "cap": null, "gate": "owner vắng: không có prompt do người gõ trong session lead 20 phút qua" });
         assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| away.clone(), || 5, || {}).unwrap()["wake"], "card", "owner typing is the idle hook's rail, not the room's");
+        // A message waits in the room's inbox: end the turn so the Stop hook hands it over; off and
+        // capped still win, and an empty inbox keeps waiting.
+        let mail = json!({ "on": true, "paused": false, "cap": null, "mail": 1_700_000_000_123u64 });
+        let v = wait_for(&w, || Ok(vec![]), |_| mail.clone(), || 5, || {}).unwrap();
+        assert_eq!((v["wake"].as_str(), v["mail"].as_u64()), (Some("msg"), Some(1_700_000_000_123)));
+        assert!(wait_text(&v).contains("KẾT THÚC lượt"));
+        let mail_off = json!({ "on": true, "paused": true, "cap": null, "mail": 1u64 });
+        assert_eq!(wait_for(&w, || Ok(vec![]), |_| mail_off.clone(), || 5, || {}).unwrap()["wake"], "off");
         // Capped: rest until the wait is up (never claim the ready card), then report `cap`.
         let capped = json!({ "on": true, "paused": false, "cap": "cửa sổ 5 giờ 92%" });
         let clock = std::cell::Cell::new(0u64);
@@ -2359,6 +2422,43 @@ mod tests {
         let v = wait_for(&w, || Ok(vec![]), |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
         assert_eq!((v["wake"].as_str(), v["waited_s"].as_u64()), (Some("timeout"), Some(60)));
         assert!(wait_text(&v).contains("chờ tiếp"));
+    }
+
+    #[test]
+    fn a_board_team_covers_its_root_and_the_worktrees_inside() {
+        let h = std::env::temp_dir().join(format!("8sync-boardteam-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&h);
+        let (game, wt, other) = (h.join("game"), h.join("game/.claude/worktrees/card-3"), h.join("other"));
+        for d in [&wt, &other] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        assert!(!board_team(&h, &game), "no team anywhere: the legacy target stays");
+        idle::write_json(&idle::state_dir(&h).join("team-roots.json"), &json!([game.to_string_lossy()]));
+        assert!(board_team(&h, &game) && board_team(&h, &wt));
+        assert!(!board_team(&h, &other));
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn unseen_mail_wakes_once_per_batch_of_messages() {
+        let h = std::env::temp_dir().join(format!("8sync-mail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&h);
+        let sid = "7946c2ae-d565-4ecf-9161-5d2001c375e4";
+        assert_eq!(unseen_mail(&h, sid), None, "no inbox");
+        crate::verbs::hq::queue_inbox(&h, sid, "sửa nút Play", 1).unwrap();
+        let file = crate::verbs::hq::inbox_file(&h, sid).unwrap();
+        let set = |ms: u64| std::fs::File::options().append(true).open(&file).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)).unwrap();
+        set(5_000);
+        assert_eq!(unseen_mail(&h, sid), Some(5_000));
+        mark_mail(&h, sid, 5_000);
+        assert_eq!(unseen_mail(&h, sid), None, "an inbox no hook took wakes the room once");
+        crate::verbs::hq::queue_inbox(&h, sid, "và nút Back", 2).unwrap();
+        set(9_000);
+        assert_eq!(unseen_mail(&h, sid), Some(9_000), "a new message wakes it again");
+        std::fs::write(&file, "").unwrap();
+        assert_eq!(unseen_mail(&h, sid), None, "taken by the Stop hook");
+        assert_eq!(unseen_mail(&h, "../x"), None);
+        let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]
@@ -2605,6 +2705,12 @@ mod tests {
         assert_eq!(room_of(&rooms(), Some(ids[1])), Some("qa".into()));
         assert_eq!(room_of(&rooms(), Some("")), None);
         assert_eq!(room_of(&rooms(), Some("other")), None);
+        // A board team: --now goes to the backlog rooms only (they split it), not every builder.
+        idle::write_json(&idle::state_dir(&h).join("team-roots.json"), &json!([h.to_string_lossy()]));
+        let lines = |id: &str| std::fs::read_to_string(crate::verbs::hq::inbox_file(&h, id).unwrap()).unwrap_or_default().lines().count();
+        let (lead_before, qa_before) = (lines(ids[0]), lines(ids[1]));
+        run(&s(&["add", "boss", "fight", "--now"]), &h, false, &h, rooms).unwrap();
+        assert_eq!((lines(ids[0]), lines(ids[1])), (lead_before + 1, qa_before), "the lead hears it, qa keeps its card");
         let _ = std::fs::remove_dir_all(&h);
     }
 

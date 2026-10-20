@@ -207,7 +207,7 @@ fn touched(t: &Target) -> u64 {
     t.notes.last().map_or(t.added, |n| n.at)
 }
 
-const UNBLOCK: &str = "card #<id> blocked: gỡ NGAY lượt này, không để chờ. Lý do đã hết (PR được chờ MERGED/CLOSED theo `gh pr view <số> --json state`, PR chồng trên nhánh cũ) → rebase lên origin/main, PR vào main, `8sync ccc auto move <id> ready --note \"…\"`; thiếu quyết định hay tài nguyên → tự quyết theo su-code/DECISIONS.md + mục tiêu dự án hoặc tìm cách thay, note rồi `move <id> ready`; ý lớn đã tách card con → `move <id> backlog`. Chỉ Ship, secret, tiền mới hỏi owner (AskUserQuestion), rồi `8sync ccc auto note <id> \"chờ owner: …\"` và làm việc khác.";
+const UNBLOCK: &str = "card #<id> blocked: gỡ NGAY lượt này, không để chờ. Lý do đã hết (PR được chờ MERGED/CLOSED theo `gh pr view <số> --json state`, PR chồng trên nhánh cũ) → `gh pr edit <số> --base main`, `git merge origin/main` vào nhánh, push thường (không rebase/force-push), `8sync ccc auto move <id> ready --note \"…\"`; thiếu quyết định hay tài nguyên → tự quyết theo su-code/DECISIONS.md + mục tiêu dự án hoặc tìm cách thay, note rồi `move <id> ready`; ý lớn đã tách card con → `move <id> backlog`. Chỉ Ship, secret, tiền mới hỏi owner (AskUserQuestion), rồi `8sync ccc auto note <id> \"chờ owner: …\"` và làm việc khác.";
 
 /// What a backlog room does with the card `claim` gave it when the lane alone does not say: a
 /// blocked card to clear now, or an idea whose split-off cards all closed, to accept or split again.
@@ -483,6 +483,11 @@ pub(super) fn close(
         if t.state != "open" {
             bail!("đích #{id} đã {}", t.state);
         }
+        // An owner idea (no `from`) is accepted by the backlog rooms that split it, not by a lane
+        // room working one piece: dev2 closed owner cards #7 and #8 on 3d-game (2026-10-20).
+        if t.from.is_none() && by.and_then(super::room::find).and_then(|r| r.lane).is_some_and(|l| l != "backlog") {
+            bail!("card #{id} là ý owner: chỉ lead/ba nghiệm thu hoặc bỏ — `8sync ccc auto note {id} \"…\"` kết quả của bạn rồi để lead quyết");
+        }
         t.state = if evidence.is_some() {
             "done"
         } else {
@@ -701,6 +706,11 @@ fn gh_pr_view(root: &Path, pr: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&out).into_owned())
 }
 
+/// How a branch catches up with main. Rebasing needs a force-push, which the guard blocks, so
+/// builders opened a new PR each time: 10 replacement PRs for 18 merges on 3d-game (2026-10-20),
+/// every named conflict in CHANGELOG.md.
+pub(super) const KEEP_PR: &str = "push thường (không rebase, không force-push: PR giữ nguyên số)";
+
 /// Pure: why PR `pr` (gh's JSON `view`) may not move on: not open, stacked on a branch other than
 /// the repo's default branch `main` ([`super::merge::default_branch`], the only base `auto merge`
 /// takes), conflicting, or, given the reviewed `sha` (for `approved`), at another head. Measured on
@@ -716,10 +726,11 @@ fn pr_gate(pr: &str, view: &str, sha: Option<&str>, main: &str) -> Result<()> {
         bail!("gh không trả base của PR {pr}: không chuyển card khi chưa kiểm được PR");
     }
     if base != main {
-        bail!("PR {pr} xếp chồng trên {base}: rebase lên origin/{main} rồi mở PR vào {main}");
+        let n = pr.trim_start_matches('#');
+        bail!("PR {pr} xếp chồng trên {base}: `gh pr edit {n} --base {main}`, `git merge origin/{main}` vào nhánh, {KEEP_PR} rồi chuyển lại");
     }
     match field("mergeable").as_str() {
-        "CONFLICTING" => bail!("PR {pr} conflict với {base}: rebase lên origin/{base}, chạy lại check, push rồi chuyển lại"),
+        "CONFLICTING" => bail!("PR {pr} conflict với {base}: `git merge origin/{base}` vào nhánh, sửa conflict (CHANGELOG: giữ cả hai mục), chạy lại check, {KEEP_PR} rồi chuyển lại"),
         "MERGEABLE" => {}
         // Right after a push GitHub answers UNKNOWN for a while: not a conflict, no bounce.
         _ => bail!("{}", super::merge::computing(pr)),
@@ -1049,10 +1060,12 @@ mod tests {
         let qa = Move { pr: Some("#81"), ..Move::default() };
         let err = |to: &str, m: &Move, gh: &dyn Fn(&Path, &str) -> Result<String>| move_with(h, &root, c.id, to, m, Some("dev"), 2, gh, &on_main).unwrap_err().to_string();
         let stacked = r#"{"baseRefName":"card-x","mergeable":"MERGEABLE","headRefOid":"0123abc","state":"OPEN"}"#;
-        assert_eq!(err("qa", &qa, &pr(stacked)), "PR #81 xếp chồng trên card-x: rebase lên origin/main rồi mở PR vào main");
+        let e = err("qa", &qa, &pr(stacked));
+        assert!(e.starts_with("PR #81 xếp chồng trên card-x") && e.contains("`gh pr edit 81 --base main`") && e.contains("`git merge origin/main`") && !e.contains("rebase lên"), "{e}");
         assert_eq!(asked.borrow().as_slice(), ["81"], "gh gets the bare number");
         let conflict = r#"{"baseRefName":"main","mergeable":"CONFLICTING","headRefOid":"0123abc","state":"OPEN"}"#;
-        assert_eq!(err("qa", &qa, &pr(conflict)), "PR #81 conflict với main: rebase lên origin/main, chạy lại check, push rồi chuyển lại");
+        let e = err("qa", &qa, &pr(conflict));
+        assert!(e.starts_with("PR #81 conflict với main") && e.contains("`git merge origin/main`") && e.contains("không force-push"), "{e}");
         // UNKNOWN right after a push: read 3 more times, then "đang tính", not "conflict"
         let unknown = r#"{"baseRefName":"main","mergeable":"UNKNOWN","headRefOid":"0123abc","state":"OPEN"}"#;
         let n = asked.borrow().len();
@@ -1085,7 +1098,8 @@ mod tests {
         // a repo on `master`: its PRs pass, a PR into `main` there is stacked
         let master = PR_OK.replace("\"main\"", "\"master\"");
         assert!(pr_gate("#81", &master, None, "master").is_ok());
-        assert_eq!(pr_gate("#81", PR_OK, None, "master").unwrap_err().to_string(), "PR #81 xếp chồng trên main: rebase lên origin/master rồi mở PR vào master");
+        let e = pr_gate("#81", PR_OK, None, "master").unwrap_err().to_string();
+        assert!(e.starts_with("PR #81 xếp chồng trên main") && e.contains("--base master") && e.contains("`git merge origin/master`"), "{e}");
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -1218,7 +1232,14 @@ mod tests {
             let e = close(h, &root, a.id, Some(weak), Some("lead"), 1).unwrap_err().to_string();
             assert!(e.contains("không có kết quả kiểm"), "{weak}: {e}");
         }
-        assert!(close(h, &root, a.id, Some("cargo test: 12 passed"), Some("dev"), 1).is_ok());
+        // `a` is the owner's (no `from`): a builder may not close it, the backlog rooms may.
+        for builder in ["dev", "qa", "ui"] {
+            let e = close(h, &root, a.id, Some("cargo test: 12 passed"), Some(builder), 1).unwrap_err().to_string();
+            assert!(e.contains("ý owner"), "{builder}: {e}");
+        }
+        assert!(close(h, &root, a.id, Some("cargo test: 12 passed"), Some("ba"), 1).is_ok());
+        let lead_made = put(h, &root, "x", Some("true"), false, Some("lead"), 0).unwrap();
+        assert!(close(h, &root, lead_made.id, Some("cargo test: 12 passed"), Some("dev"), 1).is_ok(), "a split card closes from its builder");
         assert!(close(h, &root, b.id, Some("merged 0123abcd"), Some("lead"), 1).is_ok());
         let c = put(h, &root, "c", Some("true"), false, None, 0).unwrap();
         assert!(close(h, &root, c.id, Some("0123abcdef0123abcdef"), None, 1).is_ok());
@@ -1505,8 +1526,8 @@ mod tests {
     fn done_needs_evidence_moves_the_team_on_and_keeps_history() {
         let (d, root) = tmp("done");
         let h = d.as_path();
-        put(h, &root, "a", None, false, None, 1).unwrap();
-        put(h, &root, "b", None, false, None, 2).unwrap();
+        put(h, &root, "a", None, false, Some("lead"), 1).unwrap();
+        put(h, &root, "b", None, false, Some("lead"), 2).unwrap();
         assert!(close(h, &root, 1, Some("  "), None, 3).is_err());
         let (done, next) =
             close(h, &root, 1, Some("cargo test: 12 passed"), Some("dev"), 3).unwrap();

@@ -192,7 +192,7 @@ cd my-repo
 8sync ccc auto up --clear-ss          # lead, dev, qa, review in the background; --clear-ss deletes junk background sessions first
 8sync hq ui                           # web: rooms, what each does, chat; or: claude agents · 8sync ccc auto board
 8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"   # a card; done when the check exits 0
-8sync ccc auto add "webhook returns 500 on retry" --label bug --now            # front of the queue, every room's inbox
+8sync ccc auto add "webhook returns 500 on retry" --label bug --now            # front of the queue, straight to lead/ba (no team: every room)
 8sync ccc auto prio 7 P0              # card 7 is urgent: rooms take P0 before anything else (unset = P2)
 8sync ccc auto down                   # stop the background rooms (conversations kept), pause auto
 ```
