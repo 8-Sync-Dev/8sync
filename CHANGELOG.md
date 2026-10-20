@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.6] — 2026-10-20
+### Fixed
+- **QA rooms no longer stall on a guard prompt before every gate.** A QA room rebuilds its gate checkout (`.claude/worktrees/qa`, `qa2`, …) from each PR head, and the guard asked "discards uncommitted changes" on its `git checkout -- .` / `git clean -fdq` every time: on 3d-game qa2 sat waiting on it twice in 30 min while cards queued. `git checkout` (detached or paths; not `-b/-B/--orphan/--ignore-other-worktrees`), `git restore` and `git clean` now pass when git works in such a checkout (cwd after `cd`, or `git -C`) and nothing in the command points git elsewhere (`GIT_DIR`, `GIT_WORK_TREE`, `core.worktree`, `--work-tree`, … in any form or segment). `reset` and `switch` still ask there (they move branches every worktree shares); everywhere else nothing changed. Residual: a `core.worktree` saved into the qa checkout's config by an earlier, separately approved command is not seen.
+
 ## [0.110.5] — 2026-10-20
 ### Changed
 - **HQ Preview shows where the project really is, newest truth first.** Owner (2026-10-20): "Game cứ hiện card cũ lên preview khó nắm tình hình". Root cause: images were ranked by file mtime across the repo root and every `.claude/worktrees/*`, and each checkout rewrites mtimes, so a 7-hour-old shot of card #6 showed as "1 phút trước" in every new worktree.
