@@ -67,6 +67,9 @@ describe("playSegments: only plain relative file paths", () => {
     expect(playSegments("")).toEqual(["index.html"]);
     expect(playSegments("assets/index-B2x.js")).toEqual(["assets", "index-B2x.js"]);
     expect(playSegments("models/tree%20big.glb")).toEqual(["models", "tree big.glb"]);
+    // public demo links never hand out source maps (the repo's source)
+    expect(playSegments("assets/index-B2x.js.map")).toBeNull();
+    expect(playSegments("assets/index-B2x.js.MAP")).toBeNull();
   });
   it.each([
     "..",

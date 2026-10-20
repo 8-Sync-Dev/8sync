@@ -212,6 +212,8 @@ export function playSegments(rest: string): string[] | null {
     if (!s || /[/\\:\x00-\x1f\x7f]/.test(s) || /[. ]$/.test(s)) return null;
     out.push(s);
   }
+  // A demo link is public: source maps would hand out the (private) source, so they are never served.
+  if (/\.map$/i.test(out[out.length - 1])) return null;
   return out;
 }
 
