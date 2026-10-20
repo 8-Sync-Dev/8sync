@@ -99,7 +99,7 @@ export function LaneStrip({ scroller, items, label, className }: { scroller: Ref
           aria-current={i === active ? "true" : undefined}
           onClick={() => go(i)}
           className={cn(
-            "flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs whitespace-nowrap text-muted-foreground outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none",
+            "flex h-9 max-sm:h-11 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs whitespace-nowrap text-muted-foreground outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none",
             i === active ? "bg-secondary font-semibold text-foreground" : "hover:bg-muted hover:text-foreground",
           )}
         >

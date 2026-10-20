@@ -97,7 +97,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
         {/* Phones: project and reload share the first line, the summary takes the next (order-last + basis-full). */}
         <span className="text-xs text-muted-foreground max-md:order-last max-md:basis-full">{cur?.board ? boardSummary(cur.board) : (cur?.error ?? "")}</span>
         {/* Announced once per poll that moved a card; the moved cards carry the same text. */}
-        <span role="status" className="min-w-0 truncate text-xs font-medium text-brand-ink max-md:order-last max-md:basis-full max-md:empty:hidden">
+        <span role="status" className="min-w-0 truncate text-xs font-medium text-brand-ink max-md:order-last max-md:basis-full max-md:empty:sr-only">
           {movedHere.length > 0 && `Vừa chuyển: ${movedHere.map((m) => `#${m.id} ${laneLabel(m.from)} → ${laneLabel(m.to)}`).join(" · ")}`}
         </span>
         <Button type="button" variant="ghost" size="icon-sm" className="ml-auto max-sm:size-11 max-sm:-mr-2" onClick={() => void load()} aria-label="Tải lại board">

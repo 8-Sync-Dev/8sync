@@ -193,6 +193,13 @@
 [data-slot="sheet-content"]:not([data-side="top"]) {
   border-bottom: env(safe-area-inset-bottom) solid var(--popover);
 }
+/* Side sheets keep their content out of the notch in landscape (same border trick, per side). */
+[data-slot="sheet-content"][data-side="left"] {
+  border-left: env(safe-area-inset-left) solid var(--popover);
+}
+[data-slot="sheet-content"][data-side="right"] {
+  border-right: env(safe-area-inset-right) solid var(--popover);
+}
 
 /* The read-only terminal fills its drawer; xterm sizes its own canvas. */
 .hq-term .xterm {
