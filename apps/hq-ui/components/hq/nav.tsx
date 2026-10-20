@@ -13,6 +13,7 @@ import type { BoardRef, NowState } from "@/lib/now";
 import { matchesSession } from "@/lib/office";
 import { SIDEBAR_WORD, sidebarGroups, splitClosed, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
 import { ErrorNote } from "./bits";
+import { BrandMark } from "./brand-mark";
 import { ClosedProjects, ProjectMenu, RoomEndDialog, RoomMenu, WorktreeDialog, useWorktreeKeys, type Confirm, type RoomAction } from "./nav-actions";
 import { RoleIcon } from "./role-badge";
 import type { Hq, Live } from "./use-hq";
@@ -21,8 +22,10 @@ import type { Project } from "./types";
 
 export type Scope = { project: number | null; session: string | null };
 
+/** Hover stays neutral; only the current item takes the accent (a brand wash and hairline, like the ZUS IDE selection).
+ *  10 %, not more: the small "Đang làm" status text on it keeps 4.56:1 in the light theme. */
 const item =
-  "group flex w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/60 aria-[current=true]:bg-sidebar-accent aria-[current=true]:font-medium";
+  "group flex w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/60 aria-[current=true]:bg-primary/10 aria-[current=true]:font-medium aria-[current=true]:ring-1 aria-[current=true]:ring-primary/30";
 
 /** Amber that passes AA as text on light surfaces (same mix as now-roster / idle-chip). */
 const NEEDS_INK = "text-[color-mix(in_oklch,var(--st-needs),black_38%)] dark:text-st-needs";
@@ -107,8 +110,7 @@ export function Nav({
   return (
     <nav aria-label="Dự án và phòng" className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border px-3">
-        {/* eslint-disable-next-line @next/next/no-img-element -- local 4 KB svg, no optimizer needed */}
-        <img src="/8sync-mark.svg" alt="" width={24} height={24} className="size-6 shrink-0 rounded-md" />
+        <BrandMark className="h-6 w-4 shrink-0 text-primary dark:drop-shadow-[0_0_6px_color-mix(in_oklch,var(--brand)_45%,transparent)]" />
         <span className="text-[15px] font-semibold tracking-tight">8 Sync HQ</span>
         <LiveDot live={hq.live} />
       </div>
@@ -354,7 +356,7 @@ function LiveDot({ live }: { live: Live }) {
         aria-hidden
         className={cn(
           "size-1.5 rounded-full",
-          live === "live" || live === "polling" ? "bg-st-running" : "bg-st-needs motion-safe:animate-pulse",
+          live === "live" || live === "polling" ? "bg-st-running shadow-glow-dot" : "bg-st-needs motion-safe:animate-pulse",
         )}
       />
       {label}

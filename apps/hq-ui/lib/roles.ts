@@ -7,11 +7,13 @@ export type CostTier = "high" | "mid" | "low";
 export const ROLE_IDS = ["rd", "plan", "architect", "fullstack", "ai", "tester", "reviewer", "quick"] as const;
 export type RoleId = (typeof ROLE_IDS)[number];
 
+/** lucide-react icon names a role may use; components/hq/role-badge.tsx maps each one to its component. */
+export type RoleIconName = "FlaskConical" | "ClipboardList" | "Blocks" | "Code" | "Sparkles" | "FlaskRound" | "ScanSearch" | "Zap";
+
 export type Role = {
   id: RoleId;
   labelVi: string;
-  /** lucide-react icon name */
-  icon: string;
+  icon: RoleIconName;
   model: ModelId;
   /** 8sync kit agent that does this work */
   agentHint: "researcher" | "pm" | "architect" | "task" | "qa" | "reviewer" | "quick-task";
