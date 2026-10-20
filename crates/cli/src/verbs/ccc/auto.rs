@@ -113,6 +113,10 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
                 // (8sync-startup and ai-game-studio, 2026-10-18), and `down` in one leaves the other.
                 let r = canon(&r).to_string_lossy().into_owned();
                 let mut repos = scope(home);
+                // One team per folder tree: a repo nested in this one, or the one this sits in, goes
+                // out (3d-game inside 8sync-startup, 2026-10-20: a plain `on` resumed the parent's 6
+                // rooms beside the child's 13 and the PC ran out of RAM).
+                repos.retain(|x| !nested(x, Path::new(&r)));
                 if !repos.iter().any(|x| x.to_string_lossy() == r) {
                     repos.push(PathBuf::from(&r));
                 }
@@ -123,7 +127,7 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
                 // A plain `on` (HQ's "Chạy liên tục") resumes the projects auto last held, on or
                 // paused: live 2026-10-20 it widened auto from ai-game-studio + 3d-game to every
                 // project on the machine. `on --all` forgets them first.
-                let keep = remembered(home);
+                let keep = deepest(remembered(home));
                 if let Some(first) = keep.first() {
                     m["repo"] = json!(first);
                     m["repos"] = json!(keep);
@@ -341,6 +345,11 @@ fn scope(home: &Path) -> Vec<PathBuf> {
     m["repo"].as_str().filter(|r| !r.is_empty()).map(PathBuf::from).into_iter().collect()
 }
 
+/// [`remembered`] for other modules.
+pub(super) fn remembered_roots(home: &Path) -> Vec<String> {
+    remembered(home)
+}
+
 /// The projects the marker names, on or paused (what a plain `on` resumes); `scope` is the live view.
 fn remembered(home: &Path) -> Vec<String> {
     let Some(m) = idle::read_json(&marker(home)) else {
@@ -351,6 +360,31 @@ fn remembered(home: &Path) -> Vec<String> {
         return many;
     }
     m["repo"].as_str().filter(|r| !r.is_empty()).map(str::to_owned).into_iter().collect()
+}
+
+/// Two project roots one inside the other (a repo nested in another: 3d-game in 8sync-startup).
+pub(super) fn nested(a: &Path, b: &Path) -> bool {
+    let (a, b) = (canon(a), canon(b));
+    a != b && (a.starts_with(&b) || b.starts_with(&a))
+}
+
+/// Of roots that nest, only the deepest stays; duplicates (`\\?\` or not) count once. State written
+/// before nested roots were refused can hold a parent and its child repo: neither a plain `on` nor
+/// the scope check may bring the parent's team back with the child's.
+pub(super) fn deepest(roots: Vec<String>) -> Vec<String> {
+    let mut seen: Vec<(String, PathBuf)> = Vec::new();
+    for r in roots {
+        let c = canon(Path::new(&r));
+        if !seen.iter().any(|(_, o)| *o == c) {
+            seen.push((r, c));
+        }
+    }
+    seen.iter().filter(|(_, c)| !seen.iter().any(|(_, o)| o != c && o.starts_with(c))).map(|(r, _)| r.clone()).collect()
+}
+
+/// [`scope`] as auto acts on it: [`deepest`] roots only.
+fn live_scope(home: &Path) -> Vec<PathBuf> {
+    deepest(scope(home).iter().map(|r| r.to_string_lossy().into_owned()).collect()).iter().map(|r| canon(Path::new(r))).collect()
 }
 
 /// `auto on --all`: drop the remembered projects so this `on` covers every project.
@@ -398,7 +432,7 @@ pub(super) fn in_scope(home: &Path, cwd: Option<&str>) -> bool {
 
 /// [`in_scope`] for many cwds, the marker read once (the idle rails count only this project's spend).
 pub(super) fn scoped(home: &Path) -> impl Fn(Option<&str>) -> bool {
-    let repos = scope(home);
+    let repos = live_scope(home);
     move |cwd| {
         repos.is_empty()
             || cwd
@@ -445,8 +479,8 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         "five_hour_pct": used.five_hour,
         "seven_day_pct": used.seven_day,
         "subscription": subscription,
-        "repo": scope(home).first().map(|r| r.to_string_lossy().into_owned()),
-        "repos": scope(home).iter().map(|r| r.to_string_lossy().into_owned()).collect::<Vec<_>>(),
+        "repo": live_scope(home).first().map(|r| r.to_string_lossy().into_owned()),
+        "repos": live_scope(home).iter().map(|r| r.to_string_lossy().into_owned()).collect::<Vec<_>>(),
         "teams": teams_of(m.as_ref()),
         "omp_model": m.as_ref().and_then(|m| m["omp_model"].as_str()),
         "omp_blocked": omp_blocked(home),
@@ -1982,6 +2016,38 @@ mod tests {
             rate: Some(5.0),
             repo: None,
         }
+    }
+
+    #[test]
+    fn nested_projects_never_share_auto_the_newest_wins_and_old_state_keeps_the_child() {
+        let h = home("nested");
+        let parent = h.join("startup");
+        let child = parent.join("game").join("3d-game");
+        let sib = h.join("other");
+        for d in [child.join("src"), sib.clone()] {
+            std::fs::create_dir_all(&d).unwrap();
+        }
+        let here = |r: &Path| Mode::On { hours: 2.0, after: 60, rate: Some(5.0), repo: Some(r.to_path_buf()) };
+        let raw = || -> Vec<PathBuf> { idle::read_json(&marker(&h)).unwrap()["repos"].as_array().unwrap().iter().filter_map(Value::as_str).map(|r| canon(Path::new(r))).collect() };
+        let live = |at| -> Vec<PathBuf> { status(&h, false, at)["repos"].as_array().unwrap().iter().filter_map(Value::as_str).map(|r| canon(Path::new(r))).collect() };
+        let (p, c, o) = (canon(&parent), canon(&child), canon(&sib));
+        assert!(nested(&parent, &child) && nested(&child, &parent) && !nested(&parent, &parent) && !nested(&sib, &parent));
+        // The repo turned on last wins over the one it sits in; an unrelated project keeps running.
+        set(&h, here(&parent), false, 1).unwrap();
+        set(&h, here(&sib), false, 2).unwrap();
+        set(&h, here(&child), false, 3).unwrap();
+        assert_eq!(raw(), vec![o.clone(), c.clone()]);
+        set(&h, here(&parent), false, 4).unwrap();
+        assert_eq!(raw(), vec![o.clone(), p.clone()], "and back: the child goes");
+        // State written before this rule held both: the scope and a plain `on` keep only the child.
+        let s = |x: &Path| x.to_string_lossy().into_owned();
+        write_marker(&h, &json!({ "schema": 1, "on": true, "paused": false, "since": 5, "hours": 2.0, "after_s": 60, "repo": s(&p), "repos": [s(&p), s(&child), s(&sib)] })).unwrap();
+        assert_eq!(live(5), vec![c.clone(), o.clone()]);
+        assert!(!in_scope(&h, Some(&s(&parent.join("docs")))), "the parent's sessions are out of auto");
+        assert!(in_scope(&h, Some(&s(&child.join("src")))));
+        set(&h, on(2.0, 60), false, 6).unwrap();
+        assert_eq!(raw(), vec![c, o], "a plain on drops the parent for good");
+        let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]

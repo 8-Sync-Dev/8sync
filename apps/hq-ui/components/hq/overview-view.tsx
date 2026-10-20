@@ -160,10 +160,11 @@ export function OverviewView({
 
 /**
  * "Gỡ kẹt ngay" (owner 2026-10-20): shown while a room of the project waits on the owner or is stuck.
- * Brings the "Anh cần trả lời" panel into view, then asks for the same thing as "Chạy liên tục"
- * (POST /api/auto `on`: a fresh lease, then `8sync ccc auto revive` brings back rooms that died).
+ * Brings the "Anh cần trả lời" panel into view, then renews THIS project (POST /api/auto `on` with its
+ * root = `auto on --here`: a fresh lease, then `8sync ccc auto revive` brings back rooms that died).
+ * Never a plain `on`: that resumed every remembered project, a parent repo's team included.
  */
-export function UnstickButton({ token, stuck }: { token: string; stuck: number }) {
+export function UnstickButton({ token, stuck, root }: { token: string; stuck: number; root: string }) {
   const [busy, setBusy] = useState(false);
   async function unstick() {
     const panel = document.getElementById("ask-panel");
@@ -174,7 +175,7 @@ export function UnstickButton({ token, stuck }: { token: string; stuck: number }
     }
     setBusy(true);
     try {
-      const st = await makeApi(token)<{ error?: string }>("/api/auto", { method: "POST", body: { action: "on" } });
+      const st = await makeApi(token)<{ error?: string }>("/api/auto", { method: "POST", body: { action: "on", root } });
       if (st.error) toast.error(`Chưa gỡ được: ${st.error}`);
       else toast.success(panel ? "Đang mở lại phòng chết. Câu hỏi đang chờ anh ở khung trên." : "Đang mở lại phòng chết và đẩy team chạy tiếp.");
     } catch (e) {
@@ -299,7 +300,7 @@ function ProjectBlock({
         ))}
         <span className="text-xs text-muted-foreground tabular">{rows.length ? rosterSummary(rows) : `${rooms.length} phòng`}</span>
         <span className="ml-auto flex flex-wrap items-center gap-2 self-center">
-          {stuck > 0 && <UnstickButton token={token} stuck={stuck} />}
+          {stuck > 0 && <UnstickButton token={token} stuck={stuck} root={root} />}
           <PlayButton root={root} name={name} token={token} />
           <BoostButton root={root} name={name} token={token} active={boostOn(rooms)} />
         </span>

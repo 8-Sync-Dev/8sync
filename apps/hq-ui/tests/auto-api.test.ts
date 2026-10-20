@@ -96,4 +96,11 @@ describe("POST /api/auto", () => {
     }
     expect(set).not.toHaveBeenCalled();
   });
+  it("root: only with on, only a project HQ shows; nothing runs otherwise", async () => {
+    set.mockClear();
+    expect((await post({ action: "pause", root: "C:/w/game" })).status).toBe(422);
+    expect((await post({ action: "on", root: 7 })).status).toBe(422);
+    expect((await post({ action: "on", root: "C:/not/a/live/project" })).status).toBe(409);
+    expect(set).not.toHaveBeenCalled();
+  });
 });

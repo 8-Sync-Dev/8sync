@@ -212,6 +212,18 @@ pub fn run(a: Args) -> Result<()> {
                 adopt_here(&cwd, true);
             }
             let repo = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
+            // One team per folder tree: `up` / `on --here` here stops the team of a repo this one
+            // sits in or holds (owner 2026-10-21: "vào đúng folder rồi mở ccc auto cứ bị dính ccc
+            // auto ở folder cha").
+            let here = rest.first().is_some_and(|a| a == "up") || rest.first().is_some_and(|a| a == "on") && rest.iter().any(|a| a == "--here");
+            if here && !rest.iter().any(|a| a == "-h" || a == "--help") {
+                for n in team::nested_teams(&env.home, &repo) {
+                    println!("{} lồng với {}: tắt team ở đó trước (mỗi cây thư mục một team)", n.display(), repo.display());
+                    if let Err(e) = auto_team(&env, &n, &["down".to_string()]) {
+                        eprintln!("{}: {e:#}", n.display());
+                    }
+                }
+            }
             if rest.first().is_some_and(|a| a == "revive") {
                 // Only the roots `auto up` brought a team up in (HQ calls this without a cwd), one
                 // revive at a time (HQ and a boot hook can both fire it).
@@ -580,7 +592,13 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
             println!("đã dừng {} phòng nền: {} (hội thoại giữ nguyên; mở lại: `8sync ccc auto up`).", stopped.len(), stopped.join(", "));
         }
         omp_team::print_down(&omp_team::down(env, root)?);
-        println!("auto: TẠM DỪNG (owner). Phòng mở trong terminal không bị đóng.");
+        let st = auto::status(&env.home, subscription, now);
+        let left: Vec<&str> = st["repos"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|r| r.trim_start_matches(r"\\?\")).collect();
+        if st["on"] == true && !left.is_empty() {
+            println!("auto vẫn chạy cho: {}. Phòng mở trong terminal không bị đóng.", left.join(" + "));
+        } else {
+            println!("auto: TẠM DỪNG (owner). Phòng mở trong terminal không bị đóng.");
+        }
         return Ok(());
     }
     // `--omp-model <provider/model>` (team omp's model) is ours; team::parse sees the rest.

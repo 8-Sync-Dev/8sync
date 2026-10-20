@@ -641,6 +641,19 @@ fn team_roots_file(home: &Path) -> PathBuf {
     idle::state_dir(home).join("team-roots.json")
 }
 
+/// Team roots (and auto's remembered projects) one inside `root` or holding it: `auto up` /
+/// `auto on --here` in `root` stops their teams first — one team per folder tree.
+pub(super) fn nested_teams(home: &Path, root: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for r in team_roots(home).into_iter().chain(auto::remembered_roots(home)) {
+        let p = PathBuf::from(r.trim_start_matches(r"\\?\"));
+        if auto::nested(&p, root) && !out.iter().any(|o| auto::canon(o) == auto::canon(&p)) {
+            out.push(p);
+        }
+    }
+    out
+}
+
 /// The roots `auto revive` brings back, as `auto up` used them for the registry.
 pub(super) fn team_roots(home: &Path) -> Vec<String> {
     idle::read_json(&team_roots_file(home)).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
@@ -649,7 +662,7 @@ pub(super) fn team_roots(home: &Path) -> Vec<String> {
 fn set_team_root(home: &Path, root: &Path, on: bool) {
     let r = root.to_string_lossy().into_owned();
     let mut roots = team_roots(home);
-    roots.retain(|x| *x != r);
+    roots.retain(|x| *x != r && !(on && auto::nested(Path::new(x), root)));
     if on {
         roots.push(r);
     }
@@ -1181,6 +1194,21 @@ mod tests {
         assert_eq!(auto::status(&h, false, 3)["paused"], true);
         assert!(team_roots(&h).is_empty(), "down takes the root out of revive's list");
         let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn a_team_root_never_sits_in_another() {
+        let (h, root) = tmp("nested-roots");
+        let child = root.join("game").join("3d-game");
+        std::fs::create_dir_all(&child).unwrap();
+        set_team_root(&h, &root, true);
+        set_team_root(&h, &child, true);
+        assert_eq!(team_roots(&h), vec![child.to_string_lossy().into_owned()], "the parent's team is not revived beside the child's");
+        // auto's remembered projects count too: `up` here stops the team of the repo it sits in.
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(root.clone()) }, false, 1).unwrap();
+        let found: Vec<PathBuf> = nested_teams(&h, &child).iter().map(|p| auto::canon(p)).collect();
+        assert_eq!(found, vec![auto::canon(&root)]);
+        assert!(nested_teams(&h, &h.join("elsewhere")).is_empty());
     }
 
     #[test]
