@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.12] — 2026-10-21
+### Added
+- **Auto image review ("Tự soi ảnh", per project, off by default).** HQ Preview gets a switch; on, it adds an `eye` room (Soi ảnh, sonnet, no lane) to the running team and sends it each open card's new evidence images (one `[ảnh mới] card #N (lane X): "…" · ảnh: …` message per card, ~90 s after its last new image, ≤ 6 images, never re-sent — survives HQ restarts; closed cards and images older than the switch never go). The room reads the card's CURRENT text, AC/check and notes on the board (owner notes win), looks at every image and writes one objective note `[soi ảnh] Đạt · Lệch AC · Đề xuất` (only what is visible, file names cited, "không đủ để kết luận" when an image can't show it); a clear AC miss or visual bug also goes to the lead. The lightbox shows the card's latest `[soi ảnh]` note under the image. Sends run from the Preview poll and from the auto poll every HQ tab makes, so any open tab drives it; nothing runs while no project has the switch on.
+- `8sync ccc auto up --add <room>` / `auto down --only <room>`: add or stop ONE room of a running team without touching the lease, the cap or the other rooms. `auto wait --mail`: a lane-less room waits for a message only.
+- `auto up --add` never stops a nested team and refuses before anything else when no team runs; `auto down --only` takes the revive lock. Tự soi ảnh: only the ≤ 6 images sent are marked; the board is read only when a card is due; a closed card or a failed send waits 10 min.
+
 ## [0.110.11] — 2026-10-21
 ### Fixed
 - **`auto up` no longer fails for 10 min on a dead revive's lock.** The revive lock was held until it aged out (600 s) even when the process that took it was gone (a run killed by HQ's timeout), so the owner's `8sync ccc auto up --roles full --clear-ss` said "đang có `auto revive` / `auto up` khác mở phòng". A lock whose process no longer runs is now free at once, and `auto up` waits up to 150 s for a live revive to finish instead of failing.
