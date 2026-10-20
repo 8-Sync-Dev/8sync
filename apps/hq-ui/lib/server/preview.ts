@@ -358,7 +358,7 @@ async function scan(p: { root: string; name: string }): Promise<Scan> {
       key: `${f.sub}|${f.size}`,
       target: { kind: "blob", root: p.root, oid: f.oid, type: typeOf(f.sub) },
       item: {
-        id: previewId(`git:${realRoot}:${f.oid}`),
+        id: previewId(`git:${realRoot}:${f.sub}:${f.oid}`), // same bytes under two names: two items, two ids
         project: p.name,
         root: p.root,
         rel: f.sub,
@@ -414,8 +414,13 @@ export async function listPreviews(projects: ProjectInfo[]): Promise<ProjectPrev
 async function targetOf(id: string, projects: ProjectInfo[]): Promise<Target | null> {
   for (const p of previewRoots(projects)) {
     const cached = scans.get(rootKey(p.root));
-    const hit = cached && Date.now() - cached.at < SCAN_TTL_MS ? cached.targets.get(id) : undefined;
-    if (hit) return hit;
+    // A fresh scan of another project that lacks the id is trusted: rescanning it per image request
+    // walked every checkout of every earlier project.
+    if (cached && Date.now() - cached.at < SCAN_TTL_MS) {
+      const hit = cached.targets.get(id);
+      if (hit) return hit;
+      continue;
+    }
     const fresh = (await scan(p)).targets.get(id);
     if (fresh) return fresh;
   }
