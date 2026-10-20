@@ -483,9 +483,10 @@ pub(super) fn close(
         if t.state != "open" {
             bail!("đích #{id} đã {}", t.state);
         }
-        // An owner idea (no `from`) is accepted by the backlog rooms that split it, not by a lane
-        // room working one piece: dev2 closed owner cards #7 and #8 on 3d-game (2026-10-20).
-        if t.from.is_none() && by.and_then(super::room::find).and_then(|r| r.lane).is_some_and(|l| l != "backlog") {
+        // In a board team an owner idea (no `from`) is accepted by the backlog rooms that split it,
+        // not by a lane room working one piece: dev2 closed owner cards #7 and #8 on 3d-game
+        // (2026-10-20). Without a team every room works the owner's target and closes it.
+        if t.from.is_none() && by.and_then(super::room::find).and_then(|r| r.lane).is_some_and(|l| l != "backlog") && super::auto::board_team(home, root) {
             bail!("card #{id} là ý owner: chỉ lead/ba nghiệm thu hoặc bỏ — `8sync ccc auto note {id} \"…\"` kết quả của bạn rồi để lead quyết");
         }
         t.state = if evidence.is_some() {
@@ -1232,7 +1233,12 @@ mod tests {
             let e = close(h, &root, a.id, Some(weak), Some("lead"), 1).unwrap_err().to_string();
             assert!(e.contains("không có kết quả kiểm"), "{weak}: {e}");
         }
-        // `a` is the owner's (no `from`): a builder may not close it, the backlog rooms may.
+        // Owner cards (no `from`): without a team any room closes the owner's target; in a board
+        // team a builder may not, the backlog rooms may, and split cards close from their builder.
+        let n = put(h, &root, "n", Some("true"), false, None, 0).unwrap();
+        assert!(close(h, &root, n.id, Some("cargo test: 12 passed"), Some("dev"), 1).is_ok(), "no team");
+        let roots = super::super::idle::state_dir(h).join("team-roots.json");
+        super::super::idle::write_json(&roots, &serde_json::json!([root.to_string_lossy()]));
         for builder in ["dev", "qa", "ui"] {
             let e = close(h, &root, a.id, Some("cargo test: 12 passed"), Some(builder), 1).unwrap_err().to_string();
             assert!(e.contains("ý owner"), "{builder}: {e}");
@@ -1240,6 +1246,7 @@ mod tests {
         assert!(close(h, &root, a.id, Some("cargo test: 12 passed"), Some("ba"), 1).is_ok());
         let lead_made = put(h, &root, "x", Some("true"), false, Some("lead"), 0).unwrap();
         assert!(close(h, &root, lead_made.id, Some("cargo test: 12 passed"), Some("dev"), 1).is_ok(), "a split card closes from its builder");
+        super::super::idle::write_json(&roots, &serde_json::json!([]));
         assert!(close(h, &root, b.id, Some("merged 0123abcd"), Some("lead"), 1).is_ok());
         let c = put(h, &root, "c", Some("true"), false, None, 0).unwrap();
         assert!(close(h, &root, c.id, Some("0123abcdef0123abcdef"), None, 1).is_ok());
@@ -1526,8 +1533,8 @@ mod tests {
     fn done_needs_evidence_moves_the_team_on_and_keeps_history() {
         let (d, root) = tmp("done");
         let h = d.as_path();
-        put(h, &root, "a", None, false, Some("lead"), 1).unwrap();
-        put(h, &root, "b", None, false, Some("lead"), 2).unwrap();
+        put(h, &root, "a", None, false, None, 1).unwrap();
+        put(h, &root, "b", None, false, None, 2).unwrap();
         assert!(close(h, &root, 1, Some("  "), None, 3).is_err());
         let (done, next) =
             close(h, &root, 1, Some("cargo test: 12 passed"), Some("dev"), 3).unwrap();

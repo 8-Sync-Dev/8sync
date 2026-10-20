@@ -320,7 +320,7 @@ pub(super) fn canon(p: &Path) -> PathBuf {
 }
 
 /// A team runs on `root`'s board (`auto up` listed its root; a worktree inside it counts).
-fn board_team(home: &Path, root: &Path) -> bool {
+pub(super) fn board_team(home: &Path, root: &Path) -> bool {
     let r = canon(root);
     super::team::team_roots(home).iter().any(|t| r.starts_with(canon(Path::new(t))))
 }
@@ -1005,8 +1005,9 @@ fn run_nudge(args: &[String], home: &Path, subscription: bool, now: u64) -> Resu
     let cwd = PathBuf::from(cwd);
     let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or_else(|| cwd.clone());
     let st = status(home, subscription, now);
-    // A broken targets.json means no target to hand out, not a failed poll.
-    let head = target::current(home, &root).ok().and_then(|(t, _)| t);
+    // A broken targets.json means no target to hand out, not a failed poll. A board team's rooms
+    // work through `claim`, as in `status`.
+    let head = if board_team(home, &root) { None } else { target::current(home, &root).ok().and_then(|(t, _)| t) };
     let file = nudge_file(home, &id);
     let sent: Vec<u64> = idle::read_json(&file)
         .and_then(|v| v["sent"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()))
@@ -1536,17 +1537,16 @@ fn wait_for(
 
 /// Messages reach a session only when its turn ends (Stop hook) or while it sits idle (the
 /// `8sync-inbox` mod), and `auto wait` is one long turn: owner messages waited 30 min to 5 h on
-/// 3d-game (2026-10-20). Some(mtime in ms) when the room's inbox holds lines it was not woken for
-/// yet ([`mail_mark`]), so an inbox no hook takes wakes the room once, not every poll.
-fn unseen_mail(home: &Path, sid: &str) -> Option<u64> {
-    let file = crate::verbs::hq::inbox_file(home, sid)?;
-    let meta = std::fs::metadata(file).ok().filter(|m| m.len() > 0)?;
-    let at = u64::try_from(meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis()).ok()?;
+/// 3d-game (2026-10-20). Some(newest `ts`) when the room's inbox holds a line the Stop hook would
+/// deliver now ([`crate::verbs::hq::deliverable_ts`]) and newer than the last wake ([`mail_mark`]):
+/// an inbox no hook takes wakes the room once, not every turn. `cwd`: the project the room works in.
+fn unseen_mail(home: &Path, sid: &str, cwd: &str, now_s: u64) -> Option<u64> {
+    let ts = crate::verbs::hq::deliverable_ts(home, sid, Some(cwd), now_s)?;
     let woke = std::fs::read_to_string(mail_mark(home, sid)).ok().and_then(|s| s.trim().parse::<u64>().ok());
-    (woke != Some(at)).then_some(at)
+    (woke != Some(ts)).then_some(ts)
 }
 
-/// The inbox mtime a room's last `msg` wake was for (`sid` passed [`unseen_mail`]'s id check).
+/// The newest message `ts` a room's last `msg` wake was for (`sid` passed the inbox id check).
 fn mail_mark(home: &Path, sid: &str) -> PathBuf {
     super::idle::state_dir(home).join("mail-woke").join(sid)
 }
@@ -1657,6 +1657,7 @@ pub(super) fn run(
         let w = parse_wait(&rest[1..], std::env::var("BASH_MAX_TIMEOUT_MS").ok().as_deref(), || all.clone())?;
         // The room's own session: its registry id, else the session this command runs in.
         let sid = all.iter().find(|(n, _)| n == &w.room).map(|(_, s)| s.clone()).or_else(|| std::env::var("CLAUDE_CODE_SESSION_ID").ok());
+        let cwd = root.to_string_lossy();
         let clock = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let v = wait_for(
             &w,
@@ -1665,7 +1666,7 @@ pub(super) fn run(
                 let mut v = status(home, subscription, t);
                 v["here"] = json!(here);
                 v["self_merge"] = super::grant::self_merge_json(&super::grant::dir(home), root, t);
-                v["mail"] = json!(sid.as_deref().and_then(|s| unseen_mail(home, s)));
+                v["mail"] = json!(sid.as_deref().and_then(|s| unseen_mail(home, s, &cwd, t)));
                 v
             },
             clock,
@@ -2440,24 +2441,27 @@ mod tests {
     }
 
     #[test]
-    fn unseen_mail_wakes_once_per_batch_of_messages() {
+    fn unseen_mail_wakes_once_per_batch_of_deliverable_messages() {
         let h = std::env::temp_dir().join(format!("8sync-mail-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&h);
-        let sid = "7946c2ae-d565-4ecf-9161-5d2001c375e4";
-        assert_eq!(unseen_mail(&h, sid), None, "no inbox");
-        crate::verbs::hq::queue_inbox(&h, sid, "sửa nút Play", 1).unwrap();
-        let file = crate::verbs::hq::inbox_file(&h, sid).unwrap();
-        let set = |ms: u64| std::fs::File::options().append(true).open(&file).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)).unwrap();
-        set(5_000);
-        assert_eq!(unseen_mail(&h, sid), Some(5_000));
+        std::fs::create_dir_all(&h).unwrap();
+        let (sid, cwd) = ("7946c2ae-d565-4ecf-9161-5d2001c375e4", h.to_string_lossy().into_owned());
+        let mail = || unseen_mail(&h, sid, &cwd, 10);
+        assert_eq!(mail(), None, "no inbox");
+        crate::verbs::hq::queue_inbox(&h, sid, "sửa nút Play", 5_000).unwrap();
+        assert_eq!(mail(), Some(5_000));
         mark_mail(&h, sid, 5_000);
-        assert_eq!(unseen_mail(&h, sid), None, "an inbox no hook took wakes the room once");
-        crate::verbs::hq::queue_inbox(&h, sid, "và nút Back", 2).unwrap();
-        set(9_000);
-        assert_eq!(unseen_mail(&h, sid), Some(9_000), "a new message wakes it again");
+        assert_eq!(mail(), None, "an inbox no hook took wakes the room once");
+        crate::verbs::hq::queue_inbox(&h, sid, "và nút Back", 9_000).unwrap();
+        assert_eq!(mail(), Some(9_000), "a new message wakes it again");
+        // A room's line while auto may not act here (off in this home) goes back into the inbox at
+        // every take: it must never wake the room, or the room would spin a turn per take.
+        let file = crate::verbs::hq::inbox_file(&h, sid).unwrap();
         std::fs::write(&file, "").unwrap();
-        assert_eq!(unseen_mail(&h, sid), None, "taken by the Stop hook");
-        assert_eq!(unseen_mail(&h, "../x"), None);
+        assert_eq!(mail(), None, "taken by the Stop hook");
+        crate::verbs::hq::queue_inbox_from(&h, sid, "dev xong #3", "lead", 12_000).unwrap();
+        assert_eq!(mail(), None, "held room line");
+        assert_eq!(unseen_mail(&h, "../x", &cwd, 10), None);
         let _ = std::fs::remove_dir_all(&h);
     }
 

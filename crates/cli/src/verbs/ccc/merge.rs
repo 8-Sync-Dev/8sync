@@ -334,6 +334,11 @@ fn line(o: &Outcome) -> String {
 
 /// `auto merge [--json]` in `root`; `who` closes and returns cards as that room.
 pub(super) fn run(as_json: bool, home: &Path, root: &Path, who: Option<&str>, now: u64) -> Result<()> {
+    // Landing is the lead's (it asks Ship). A lane room would merge on GitHub and then be refused
+    // closing an owner card ([`target::close`]), leaving the card in approved for good.
+    if let Some(lane) = who.and_then(super::room::find).and_then(|r| r.lane).filter(|l| *l != "backlog") {
+        bail!("`auto merge` là việc của phòng lead, không phải phòng cột {lane}");
+    }
     if super::grant::self_merge(&super::grant::dir(home), root, now).is_none() {
         let approved: Vec<Target> = target::list(home, root)?.into_iter().filter(|t| t.state == "open" && t.lane == "approved").collect();
         if approved.is_empty() {
@@ -551,5 +556,14 @@ mod tests {
         assert_eq!(card.state, "done");
         let (calls, _) = landed("main", "main");
         assert!(!calls.iter().any(|c| c.starts_with("pr ready")) && calls.iter().any(|c| c.starts_with("pr merge 81")), "a ready PR is merged as is: {calls:?}");
+    }
+
+    #[test]
+    fn only_the_backlog_rooms_land_cards() {
+        let d = std::env::temp_dir().join(format!("8sync-merge-who-{}", std::process::id()));
+        for who in ["review", "dev2", "qa"] {
+            let e = run(false, &d, &d, Some(who), 0).unwrap_err().to_string();
+            assert!(e.contains("phòng lead"), "{who}: {e}");
+        }
     }
 }

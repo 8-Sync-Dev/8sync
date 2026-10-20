@@ -1906,6 +1906,15 @@ fn rooms_open(home: &Path, cwd: Option<&str>, now_s: u64) -> bool {
     super::ccc::resume::auto_open_in(home, now_s, cwd.or(here.as_deref()))
 }
 
+/// The newest `ts` among the lines the Stop hook would hand `session_id` now: owner lines always,
+/// room lines only while [`rooms_open`] for `cwd` (held lines go back into the inbox at every take,
+/// so they must not count or `ccc auto wait` would wake the room each turn). None = nothing to deliver.
+pub(crate) fn deliverable_ts(home: &Path, session_id: &str, cwd: Option<&str>, now_s: u64) -> Option<u64> {
+    let raw = std::fs::read_to_string(inbox_file(home, session_id)?).ok()?;
+    let (give, _) = hold_rooms(&raw, || rooms_open(home, cwd, now_s));
+    give.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).map(|v| v["ts"].as_u64().unwrap_or(0)).max()
+}
+
 fn take_inbox_with(home: &Path, session_id: &str, rooms_open: impl FnOnce() -> bool) -> Option<String> {
     let file = inbox_file(home, session_id)?;
     let taken = file.with_extension(format!("taking.{}", std::process::id()));
