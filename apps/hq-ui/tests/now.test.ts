@@ -93,9 +93,14 @@ describe("roomNow", () => {
     expect(roomNow(room({ label: "qa", waiting: "Trust this folder?" }), BOARDS, NOW).state).toBe("needs");
   });
 
-  it("is blocked when its card sits in Blocked or its claim went stale (2 h)", () => {
-    expect(roomNow(room({ label: "dev2", status: "running" }), BOARDS, NOW).state).toBe("blocked");
+  it("is blocked when a quiet room's card sits in Blocked, or any claim went stale (2 h)", () => {
+    expect(roomNow(room({ label: "dev2" }), BOARDS, NOW).state).toBe("blocked");
     expect(roomNow(room({ label: "review", status: "running" }), BOARDS, NOW).state).toBe("blocked");
+    expect(roomNow(room({ label: "review" }), BOARDS, NOW).state).toBe("blocked");
+  });
+
+  it("a running room is working even while its claimed card sits in Blocked (no false Kẹt)", () => {
+    expect(roomNow(room({ label: "dev2", status: "running" }), BOARDS, NOW).state).toBe("working");
   });
 
   it("working / holding / waiting / idle from the session status and the claim", () => {

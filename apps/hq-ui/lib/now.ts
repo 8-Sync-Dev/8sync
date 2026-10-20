@@ -5,7 +5,7 @@ import { LANES, claimStale, type Board, type Card, type LaneKey } from "./lanes"
 import type { SeatKey } from "./office";
 import type { RoleId } from "./roles";
 
-/** needs: Claude waits for the owner · blocked: its card is in Blocked (or the claim went stale) ·
+/** needs: Claude waits for the owner · blocked: a quiet room whose card is in Blocked, or any room whose claim went stale ·
  * working: the session is running · holding: idle between loop ticks with a card in hand ·
  * waiting: an auto room with nothing to claim (`auto wait`) · idle: any other quiet room. */
 export const NOW_STATES = ["needs", "blocked", "working", "holding", "waiting", "idle"] as const;
@@ -106,7 +106,9 @@ export function roomNow(room: NowRoom, boards: BoardRef[], now: number): RoomNow
   const card = heldCard(room, boards);
   let state: NowState;
   if (room.status === "needs_input" || room.waiting) state = "needs";
-  else if (card && (card.lane === "blocked" || claimStale(card, now))) state = "blocked";
+  // A running room is working even when its card sits in Blocked: that claim is only the board's retry
+  // timer (the lead's card waiting on an owner decision), not the room being stuck.
+  else if (card && (claimStale(card, now) || (card.lane === "blocked" && room.status !== "running"))) state = "blocked";
   else if (room.status === "running") state = "working";
   else if (card) state = "holding";
   else if (named?.lane) state = "waiting";

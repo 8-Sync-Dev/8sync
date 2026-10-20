@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { TOOL_ASK, askTitle, attachCommand, type Ask } from "@/lib/ask";
 import { criticNote, type AutoState } from "@/lib/auto";
 import { agoVi } from "@/lib/now";
+import { flatText } from "@/lib/screen";
 import type { Permit } from "@/lib/server/permit";
-import { makeApi } from "./use-hq";
+import { ApiError, makeApi } from "./use-hq";
+import type { Room } from "./use-office";
 import { openWebTerminal } from "./web-terminal-sheet";
 
 export type AskRoom = {
@@ -139,6 +141,7 @@ export function silence(p: Pick<Permit, "then" | "why">, left: number): string {
 function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: string; onOpen: (key: string) => void }) {
   const [busy, setBusy] = useState(false);
   const cmd = r.session_id && !r.tmux ? attachCommand(r.session_id) : null;
+  const tap = oneTapKind(r);
   const a = r.ask;
 
   async function openTerminal() {
@@ -163,7 +166,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
   return (
     <li className="rounded-xl border border-st-needs bg-st-needs/6 px-4 py-3.5">
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-56">
           <p className="text-sm">
             <span className="font-semibold">{r.label}</span>
             {r.project && <span className="text-muted-foreground"> · {r.project}</span>}
@@ -174,7 +177,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
         <div className="flex shrink-0 items-center gap-2">
           {cmd ? (
             <>
-              <Button type="button" size="sm" disabled={busy} onClick={() => void openTerminal()}>
+              <Button type="button" size="sm" variant={tap ? "outline" : "default"} disabled={busy} onClick={() => void openTerminal()}>
                 <SquareTerminalIcon aria-hidden /> Mở terminal để trả lời
               </Button>
               <Button type="button" size="sm" variant="outline" onClick={() => void copy(cmd, true)} title={cmd}>
@@ -198,32 +201,41 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
                 {q.question}
                 {q.multi && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(chọn được nhiều)</span>}
               </p>
-              <ol className="space-y-1">
-                {q.options.map((o, oi) => (
-                  <li key={oi} className="flex max-w-[75ch] gap-2 text-sm">
-                    <span className="w-4 shrink-0 text-right font-mono text-xs leading-5 text-muted-foreground tabular">{oi + 1}.</span>
-                    <span className="min-w-0">
-                      <span className="font-medium">{o.label}</span>
-                      {o.description && <span className="text-muted-foreground">: {o.description}</span>}
-                    </span>
-                  </li>
-                ))}
-              </ol>
+              {/* With one-tap answers the options are the buttons below (label and description). */}
+              {!tap && (
+                <ol className="space-y-1">
+                  {q.options.map((o, oi) => (
+                    <li key={oi} className="flex max-w-[75ch] gap-2 text-sm">
+                      <span className="w-4 shrink-0 text-right font-mono text-xs leading-5 text-muted-foreground tabular">{oi + 1}.</span>
+                      <span className="min-w-0">
+                        <span className="font-medium">{o.label}</span>
+                        {o.description && <span className="text-muted-foreground">: {o.description}</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
             </div>
           ))}
           {isShip(a) && <p className="text-xs font-medium text-st-needs">{SHIP_NOTE}</p>}
         </div>
-      ) : a?.kind === "permission" ? (
+      ) : null}
+
+      {tap && r.session_id && <OneTap r={r} sid={r.session_id} kind={tap} token={token} onTerminal={() => void openTerminal()} />}
+
+      {a?.kind === "permission" ? (
         <p className="mt-2 max-w-[75ch] text-sm">
           <span className="font-mono text-xs text-muted-foreground">{a.tool}</span>
           {a.what && <span className="ml-2">{a.what}</span>}
         </p>
-      ) : (
+      ) : !a && !tap ? (
         <p className="mt-2 text-sm text-muted-foreground">{r.waiting ?? "Claude Code đang chờ một câu trả lời"}: mở terminal để xem câu hỏi. {PROSE_NOTE}</p>
-      )}
+      ) : null}
 
       <p className="mt-3 max-w-[75ch] text-xs text-muted-foreground text-pretty">
-        {cmd ? (
+        {cmd && tap ? (
+          "Bấm một nút: HQ đọc lại màn hình của phòng rồi mới gửi phím, màn hình đã đổi thì không gửi gì. Muốn trả lời khác: mở terminal ngay trong HQ."
+        ) : cmd ? (
           <>
             Terminal mở ngay trong HQ: chọn đáp án bằng mũi tên hoặc gõ số, rồi Enter. Trả lời xong, phòng tự làm tiếp và khung này biến mất sau vài giây. Đóng terminal thì phòng vẫn chạy.
           </>
@@ -232,6 +244,135 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
         )}
       </p>
     </li>
+  );
+}
+
+/** The panel's view of an office room. `claude agents` reports a background room's dialog ("permission prompt") as its `doing` line. */
+export function askRoomOf(r: Room): AskRoom {
+  const waiting = r.waiting ?? (r.status === "needs_input" ? r.doing : null);
+  return { key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting, ask: r.ask, permit: r.permit, tmux: r.delivery === "terminal" };
+}
+
+/**
+ * Which dialogs one tap may answer in a background room: a permission prompt (from the transcript or
+ * `claude agents` "permission prompt"), or one single-choice question. Anything else: the terminal.
+ */
+export function oneTapKind(r: Pick<AskRoom, "ask" | "waiting" | "tmux" | "session_id">): "permission" | "question" | null {
+  if (r.tmux || !r.session_id) return null;
+  const a = r.ask;
+  if (a?.kind === "question") return a.questions.length === 1 && !a.questions[0].multi && a.questions[0].options.length > 0 ? "question" : null;
+  if (a?.kind === "permission" || /permission/i.test(r.waiting ?? "")) return "permission";
+  return null;
+}
+
+type Screen = { text: string; yes: boolean };
+/** One screen read per dialog, shared by every mount (a tab switch, React's dev double effect): two reads would race for the room. */
+const peeks = new Map<string, Promise<Screen>>();
+
+const ENTER = "\r";
+const ESC = "\u001b";
+
+/**
+ * One-tap answers through the room's terminal bridge (POST /api/sessions/<id>/answer). The screen is
+ * read first and shown as is (the exact command or question), so the owner approves what the room
+ * really asks; the server types the keys only if that dialog still shows.
+ */
+export function OneTap({ r, sid, kind, token, onTerminal }: { r: AskRoom; sid: string; kind: "permission" | "question"; token: string; onTerminal: () => void }) {
+  const key = `${sid}:${r.ask?.at ?? r.waiting ?? ""}`;
+  const [screen, setScreen] = useState<Screen | "reading" | "moved" | "error">("reading");
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    let p = peeks.get(key);
+    if (!p) {
+      p = makeApi(token)<{ dialog: { text: string; yes?: boolean } }>(`/api/sessions/${encodeURIComponent(sid)}/answer`, { method: "POST", body: { kind, keys: [] } }).then((d) => ({
+        text: d.dialog.text,
+        yes: d.dialog.yes !== false,
+      }));
+      peeks.set(key, p);
+      p.catch(() => peeks.delete(key));
+    }
+    p.then((s) => live && setScreen(s)).catch((e) => live && setScreen(e instanceof ApiError && e.status === 409 ? "moved" : "error"));
+    return () => {
+      live = false;
+    };
+  }, [key, sid, kind, token]);
+
+  async function send(keys: string[], done: string) {
+    setBusy(keys.join(""));
+    try {
+      await makeApi(token)(`/api/sessions/${encodeURIComponent(sid)}/answer`, { method: "POST", body: { kind, keys } });
+      peeks.delete(key);
+      toast.success(done);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        peeks.delete(key);
+        setScreen("moved");
+        toast.error(`${r.label}: màn hình đã đổi, mở terminal`);
+      } else toast.error((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const ready = typeof screen === "object";
+  const off = !ready || busy != null;
+  const q = r.ask?.kind === "question" ? r.ask.questions[0] : null;
+  return (
+    <div className="mt-3 space-y-2" aria-live="polite">
+      {screen === "reading" ? (
+        <p className="text-xs text-muted-foreground">Đang đọc màn hình của phòng…</p>
+      ) : screen === "moved" || screen === "error" ? (
+        <p className="text-xs text-muted-foreground">
+          {screen === "moved" ? "Màn hình đã đổi, " : "Không đọc được màn hình, "}
+          <button type="button" className="font-medium text-foreground underline underline-offset-4 hover:no-underline" onClick={onTerminal}>
+            mở terminal
+          </button>
+          .
+        </p>
+      ) : q && flatText(screen.text) === flatText(q.question) ? (
+        // The question already shows above, word for word: confirm instead of repeating it.
+        <p className="flex items-center gap-1 text-xs text-muted-foreground">
+          <CheckIcon aria-hidden className="size-3.5 text-st-running" /> Màn hình phòng đang hiện đúng câu này. Chọn một đáp án:
+        </p>
+      ) : (
+        <figure>
+          <figcaption className="text-xs text-muted-foreground">Phòng đang hỏi đúng như sau</figcaption>
+          <pre className="mt-1 max-h-40 max-w-[90ch] overflow-auto rounded-md border bg-background px-2.5 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">{screen.text}</pre>
+        </figure>
+      )}
+      <div className="flex flex-wrap gap-2" role="group" aria-label={`Trả lời nhanh cho ${r.label}`}>
+        {kind === "permission" ? (
+          <>
+            <Button type="button" size="sm" disabled={off || (ready && !screen.yes)} onClick={() => void send([ENTER], `Đã cho phép ${r.label} chạy tiếp`)}>
+              <CheckIcon aria-hidden /> Cho phép
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={off} onClick={() => void send([ESC], `Đã từ chối: ${r.label} sẽ làm cách khác`)}>
+              <XIcon aria-hidden /> Từ chối
+            </Button>
+          </>
+        ) : (
+          q?.options.map((o, oi) => (
+            <Button
+              key={oi}
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-auto min-h-7 max-w-full items-start justify-start py-1.5 text-left whitespace-normal"
+              disabled={off}
+              onClick={() => void send([String(oi + 1), ENTER], `Đã chọn “${o.label}” cho ${r.label}`)}
+            >
+              <span className="font-mono text-xs leading-5 opacity-70 tabular">{oi + 1}.</span>
+              <span className="min-w-0">
+                <span className="block leading-5">{o.label}</span>
+                {o.description && <span className="block text-xs font-normal text-muted-foreground">{o.description}</span>}
+              </span>
+            </Button>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 

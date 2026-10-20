@@ -45,7 +45,7 @@ const REBUILD_CAP: u32 = 2;
 /// WIP limit of the pull system: builder cards waiting in `ready`. At the cap, planning rooms take no
 /// new backlog card and backlog → ready is refused, except P0. Measured on ai-game-studio
 /// (2026-10-19, 36 h): 23 cards in ready, 1 in building, with two of eight rooms building.
-pub(super) const READY_CAP: usize = 6;
+pub(super) const READY_CAP: usize = 8;
 
 /// Open cards waiting for a builder (`ready`, not the qa lane's).
 pub(super) fn ready_count(cards: &[Target]) -> usize {
@@ -60,7 +60,7 @@ fn open_to(t: &Target, lane: &str, ready: usize) -> bool {
 /// Low-water mark of `ready`: below it a backlog room that finds no free card gets back an idea
 /// still split into open cards, to split its next batch now. 3d-game 2026-10-20: dev sat at "Chờ
 /// card" with ready 0 while ideas #10 and #1 waited on their open pieces; owner: "song song liên tục".
-pub(super) const READY_LOW: usize = 4;
+pub(super) const READY_LOW: usize = 6;
 /// The same idea comes back for a refill at most this often: a lead with nothing left to split is
 /// not woken every `auto wait` tick.
 const REFILL_RETRY: u64 = 900;

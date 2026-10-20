@@ -353,9 +353,26 @@ pub(super) fn run(as_json: bool, home: &Path, root: &Path, who: Option<&str>, no
     run_with(as_json, &Ctx { home, root, who, now, main: &main, gh: &gh })
 }
 
-fn run_with(as_json: bool, c: &Ctx) -> Result<()> {
+/// HQ's revive tick (every 2 min): land approved cards in code while the owner's self-merge grant
+/// holds, so the lead does not poll GitHub. 3d-game 2026-10-20: the lead looped `auto merge; sleep
+/// 70` up to 16 times waiting on "mergeable UNKNOWN", splitting no card meanwhile. Without the grant,
+/// or with nothing approved, nothing runs (no gh call). Lines for what happened, `wait` ones left out.
+pub(super) fn background(home: &Path, root: &Path, now: u64) -> Result<Vec<String>> {
+    if super::grant::self_merge(&super::grant::dir(home), root, now).is_none() {
+        return Ok(Vec::new());
+    }
+    if !target::list(home, root)?.iter().any(|t| t.state == "open" && t.lane == "approved") {
+        return Ok(Vec::new());
+    }
+    let Some(main) = default_branch(root) else { return Ok(Vec::new()) };
+    let gh = |args: &[&str]| gh(root, args);
+    let c = Ctx { home, root, who: Some("lead"), now, main: &main, gh: &gh };
+    Ok(land_all(&c)?.iter().filter(|o| o.action != "wait").map(|o| format!("merge nền: {}", line(o))).collect())
+}
+
+/// Every approved card, most urgent first; one whose base is still landing goes after the rest.
+fn land_all(c: &Ctx) -> Result<Vec<Outcome>> {
     let mut cards: Vec<Target> = target::list(c.home, c.root)?.into_iter().filter(|t| t.state == "open" && t.lane == "approved").collect();
-    // Board order: most urgent first, queue order within a priority.
     cards.sort_by_key(|t| t.prio.unwrap_or(2));
     let mut done = Vec::new();
     let mut later = Vec::new();
@@ -370,21 +387,27 @@ fn run_with(as_json: bool, c: &Ctx) -> Result<()> {
     for t in later {
         done.push(land(t, c, false));
     }
+    Ok(done)
+}
+
+fn run_with(as_json: bool, c: &Ctx) -> Result<()> {
+    let approved = target::list(c.home, c.root)?.into_iter().filter(|t| t.state == "open" && t.lane == "approved").count();
+    let done = land_all(c)?;
     let count = |a: &str| done.iter().filter(|o| o.action == a).count();
     let (merged, back) = (count("merged") + count("done"), count("ready") + count("blocked") + count("review"));
     if as_json {
         let list: Vec<Value> = done.iter().map(|o| json!({ "id": o.id, "pr": o.pr, "action": o.action, "sha": o.sha, "why": o.why })).collect();
-        println!("{}", json!({ "cards": list, "merged": merged, "returned": back, "approved": cards.len() }));
+        println!("{}", json!({ "cards": list, "merged": merged, "returned": back, "approved": approved }));
         return Ok(());
     }
-    if cards.is_empty() {
+    if approved == 0 {
         println!("không có card approved");
         return Ok(());
     }
     for o in &done {
         println!("{}", line(o));
     }
-    println!("merge {merged}/{} card approved · {back} về ready/review · {} chờ/lỗi", cards.len(), cards.len() - merged - back);
+    println!("merge {merged}/{approved} card approved · {back} về ready/review · {} chờ/lỗi", approved - merged - back);
     Ok(())
 }
 

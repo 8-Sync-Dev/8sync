@@ -101,12 +101,12 @@ describe("team", () => {
 
   it("Sấm Sét runs exactly `auto up --roles boost --hours 2` in the project root, then revives", async () => {
     run.mockClear();
-    run.mockResolvedValueOnce({ ok: true, stdout: "✓ dev4 mở\n✓ qa2 mở\nboost: 9 phòng · lease tới 18:00 UTC\n", stderr: "" });
+    run.mockResolvedValueOnce({ ok: true, stdout: "✓ dev6 mở\n✓ review2 mở\nboost: 13 phòng · lease tới 18:00 UTC\n", stderr: "" });
     const ok = await post({ root: room.cwd.toUpperCase(), action: "boost" });
     expect(ok.status).toBe(200);
-    expect((await ok.json()).output.split("\n").at(-1)).toBe("boost: 9 phòng · lease tới 18:00 UTC");
+    expect((await ok.json()).output.split("\n").at(-1)).toBe("boost: 13 phòng · lease tới 18:00 UTC");
     expect(run.mock.calls).toEqual([
-      ["8sync", ["ccc", "auto", "up", "--roles", "boost", "--hours", "2"], 420_000, room.cwd],
+      ["8sync", ["ccc", "auto", "up", "--roles", "boost", "--hours", "2"], 660_000, room.cwd],
       ["8sync", ["ccc", "auto", "revive"], 120_000],
     ]);
     // A failed boost reports the CLI's own error and revives nothing.
@@ -130,7 +130,7 @@ describe("team", () => {
   it("UI: the Sấm Sét button asks first, shows the live boost team as active, and sits in the team controls", () => {
     const p = { root: room.cwd, name: "3d-game", token: "t" };
     const off = renderToStaticMarkup(createElement(BoostButton, { ...p, active: false }));
-    for (const s of ["Sấm Sét", "9 phòng", "5 builder", "2 QA", "9 lần một phiên", "lease 2 giờ"]) expect(off).toContain(s);
+    for (const s of ["Sấm Sét", "13 phòng", "lead, ba", "7 builder", "2 QA", "2 review", "13 lần một phiên", "lease 2 giờ"]) expect(off).toContain(s);
     expect(off).not.toContain("Đang Sấm Sét");
     const on = renderToStaticMarkup(createElement(BoostButton, { ...p, active: true }));
     for (const s of ["Đang Sấm Sét", "gia hạn lease thêm 2 giờ", "bg-brand/25"]) expect(on).toContain(s);
@@ -138,13 +138,15 @@ describe("team", () => {
     for (const s of ["Đang Sấm Sét", "Mở lại team", "Team đầy đủ", "Dừng team"]) expect(bar).toContain(s);
 
     const rooms = (names: string[], status = "running") => names.map((n) => ({ name: n, label: n, status }));
-    const boost = ["lead", "dev", "dev2", "dev3", "dev4", "ui", "qa", "qa2", "review"];
+    const boost = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"];
     expect(boostOn(rooms(boost))).toBe(true);
     // `auto up` titles a clashing room `<name>-<repo>`; HQ rooms are `hq-<repo>-<name>`, labelled `<repo> · <name>`.
     expect(boostOn(rooms(boost.map((n) => `${n}-3d-game`)))).toBe(true);
     expect(boostOn(boost.map((n) => ({ name: `hq-3d-game-${n}`, label: `3d-game · ${n}`, status: "idle" })))).toBe(true);
     expect(boostOn(rooms(["lead", "dev", "dev2", "ui", "qa", "review"]))).toBe(false);
-    expect(boostOn(rooms(boost.filter((n) => n !== "qa2").concat("rd")))).toBe(false);
-    expect(boostOn([...rooms(boost.slice(0, 8)), ...rooms(["review"], "ended")])).toBe(false);
+    // The old 9-room boost team is not the 13-room one.
+    expect(boostOn(rooms(["lead", "dev", "dev2", "dev3", "dev4", "ui", "qa", "qa2", "review"]))).toBe(false);
+    for (const only of ["dev6", "qa2", "review2"]) expect(boostOn(rooms(boost.filter((n) => n !== only).concat("rd")))).toBe(false);
+    expect(boostOn([...rooms(boost.slice(0, 12)), ...rooms(["review2"], "ended")])).toBe(false);
   });
 });

@@ -49,11 +49,13 @@ pub(super) const DEFAULT_TEAM: [&str; 5] = ["lead", "dev", "qa", "review", "rd"]
 /// so this spends quota about 6× a single session; the 90% rest still applies.
 pub(super) const FULL_TEAM: [&str; 6] = ["lead", "dev", "dev2", "ui", "qa", "review"];
 
-/// `auto up --roles boost` (HQ "⚡ Sấm Sét"): five builders (four devs and UI/UX) and two QA rooms,
-/// so five cards build and two gate at once. 3d-game 2026-10-20: qa was the busiest room (90%, 117
-/// calls/h) with five cards queued for it, and a builder sat at "Chờ card"; the lead keeps ready
-/// filled ([`super::target::READY_LOW`]). About 9× a single session's quota.
-pub(super) const BOOST_TEAM: [&str; 9] = ["lead", "dev", "dev2", "dev3", "dev4", "ui", "qa", "qa2", "review"];
+/// `auto up --roles boost` (HQ "⚡ Sấm Sét"): two planners (lead + BA split backlog in parallel),
+/// seven builders (six devs and UI/UX), two QA and two review rooms. 3d-game 2026-10-20: with 9 rooms
+/// the team used 4% of the 5-hour window in 30 min (RAM 63%, CPU 57%, GPU 3%) while builders waited
+/// on one lead that split cards and polled merges; the lead keeps ready filled
+/// ([`super::target::READY_LOW`]) and HQ merges approved cards in the background. About 13× a single
+/// session's quota.
+pub(super) const BOOST_TEAM: [&str; 13] = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"];
 
 /// What the architect room does each tick instead of a board lane: it owns no lane, so a card
 /// labelled `arch` never waits on a room the team does not have (the lead writes a short ADR then).
@@ -61,7 +63,7 @@ pub(super) const ARCH_PLAYBOOK: &str = "card nhãn `arch` (xem `8sync ccc auto b
 
 /// In match order. "qc" is a tester here, as Vietnamese teams use the word.
 const ROLES: [Role; 13] = [
-    r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối board: triage backlog (đích của owner) thành card ready có AC + lệnh check, gỡ card blocked, chia việc; merge bằng `8sync ccc auto merge` (thiếu quyền → MỘT câu Ship cho mọi card approved), không tự `gh pr merge`", Some("opus"), Some("backlog")),
+    r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối board: triage backlog (đích của owner) thành card ready có AC + lệnh check, gỡ card blocked, chia việc; merge: `8sync ccc auto merge` một lần, không sleep chờ, không `gh pr merge` (thiếu quyền → MỘT câu Ship)", Some("opus"), Some("backlog")),
     r(&["ba", "analyst", "spec", "req", "po"], "BA", "viết card: acceptance criteria + đúng một lệnh check, tách việc lớn thành card nhỏ, backlog → ready; không sửa code sản phẩm", Some("opus"), Some("backlog")),
     r(&["arch", "architect", "architecture", "sa", "solution"], "Architect", "solution architecture suốt vòng đời: ADR cho card nhãn arch trước khi build (/sysdesign theo System Design Primer + docs chính thức), review kiến trúc diff ở cột review, mỗi ngày tech radar có nguồn + đo sức khoẻ scale theo docs/adr/budgets.md; không sửa code sản phẩm", Some("opus"), None),
     r(&["rd", "r&d", "rnd", "research", "explore"], "R&D", "nghiên cứu: /deep-research câu hỏi mở → brief có nguồn trong su-code/research/ → /planning; chưa sửa code sản phẩm khi chưa có plan", Some("opus"), None),

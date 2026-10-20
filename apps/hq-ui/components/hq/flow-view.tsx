@@ -143,7 +143,15 @@ export function FlowView({ state, loops }: { state: BoardsState; loops: LoopsSta
             </div>
           </div>
         )}
-        <CardSheet c={shown} open={sheetOpen} now={now} next={false} onClose={() => setSheetOpen(false)} onPrio={open && shown ? (prio) => state.setPrio(open.root, shown.id, prio) : undefined} />
+        <CardSheet
+          c={shown}
+          open={sheetOpen}
+          now={now}
+          next={false}
+          onClose={() => setSheetOpen(false)}
+          onPrio={open && shown ? (prio) => state.setPrio(open.root, shown.id, prio) : undefined}
+          onForce={open && shown ? () => state.force(open.root, shown) : undefined}
+        />
       </div>
     </TooltipProvider>
   );

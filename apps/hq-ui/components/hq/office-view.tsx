@@ -24,7 +24,7 @@ import { NowRoster, type RosterRow } from "./now-roster";
 import { RoleIcon } from "./role-badge";
 import { SpriteCanvas, WalkerCanvas } from "./sprite-canvas";
 import type { BoardsState } from "./use-board";
-import { AskPanel, type AskRoom } from "./ask-panel";
+import { AskPanel, askRoomOf, type AskRoom } from "./ask-panel";
 import { boostOn, TeamControls, TeamStarter } from "./team-controls";
 import { useAuto, type Office, type OfficeState, type Room } from "./use-office";
 
@@ -469,7 +469,7 @@ export function OfficeView({
       rows.flatMap((n) => {
         const r = rooms.find((x) => x.key === n.key);
         if (!r || (n.state !== "needs" && !r.permit)) return [];
-        return [{ key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting: r.waiting, ask: r.ask, permit: r.permit, tmux: r.delivery === "terminal" }];
+        return [askRoomOf(r)];
       }),
     [rows, rooms],
   );

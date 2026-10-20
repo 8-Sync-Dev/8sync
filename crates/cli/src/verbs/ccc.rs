@@ -47,6 +47,7 @@ pub(crate) mod report;
 mod risk;
 mod secret;
 pub(crate) mod resume;
+mod reap;
 mod room;
 mod statusline;
 mod taskdone;
@@ -558,6 +559,13 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         let rows = team::revive(&t, auto::DEFAULT_LOOP_MIN, now)?;
         for r in &rows {
             println!("{} ({}): {} {}", r.name, r.role, r.state, r.short);
+        }
+        // Approved cards land here, in code, while the owner's self-merge grant holds.
+        if auto::running(&env.home) && auto::in_scope(&env.home, Some(&root.to_string_lossy())) && auto::status(&env.home, subscription, now)["gate"].is_null() {
+            match merge::background(&env.home, root, now) {
+                Ok(lines) => lines.iter().for_each(|l| println!("{l}")),
+                Err(e) => println!("merge nền: lỗi — {e:#}"),
+            }
         }
         return Ok(());
     }
