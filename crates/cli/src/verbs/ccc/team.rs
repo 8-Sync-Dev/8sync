@@ -1574,7 +1574,7 @@ mod tests {
         assert!(!g.contains("auto claim --json") && !g.contains("CronCreate"), "no lane, no cron: {g}");
         assert!(g.contains(&format!("Bash timeout {BASH_MAX_MS}")));
         // Revive and up treat an idle eye like an idle lane room (its goal ended); rd stays events-only.
-        let idle = Live { id: "e".into(), name: "eye".into(), background: true, started: 0, busy: false, cwd: String::new() };
+        let idle = Live { id: "e".into(), name: "eye".into(), background: true, started: 0, busy: false, cwd: String::new(), pid: 0 };
         assert!(lost_goal(on_goal("eye"), &idle) && !lost_goal(on_goal("rd"), &idle));
         assert!(first_prompt("rd", None, 30).starts_with("8sync auto: phòng `rd`"));
     }
