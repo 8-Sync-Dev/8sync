@@ -11,6 +11,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   - Chromium runs below normal priority.
   - A run that does not finish within `--wait` plus 60 s is killed together with its helper processes.
   - Each shot uses its own temporary profile and calls the real Chromium behind scoop's shim. Before, a second shot taken while another one ran exited with code 21 ("profile in use") and wrote no PNG.
+- **QA and UI rooms stop the preview servers they start.** Each UAT left a `vite preview` running, and over 6 hours 16 of them held 2.7 GB of RAM on the owner's machine. The `qa` playbook and the `ui` role now say to stop the server right after the screenshot.
 
 ## [0.108.4] — 2026-10-20
 ### Fixed
