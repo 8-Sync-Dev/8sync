@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.8] — 2026-10-20
+### Fixed
+- **omp sessions show in HQ while in use.** On Windows `8sync ls` saw no processes (`agent_cmdlines` read only `/proc`), so an omp session counted as live only while its transcript changed in the last 2 min and dropped out of HQ whenever the owner paused to read or type (8sync-startup `core` was missing). `ls` now reads running `omp.exe` command lines in-process (Toolhelp + `NtQueryInformationProcess`, no PowerShell, ~30–90 ms), matches Windows paths in any case/slash and a session resumed by its transcript file (`omp --resume <dir>\<file>.jsonl`); the live rule is unchanged, so old sessions do not flood the sidebar.
+- **omp rows without an inbox id** (registries written before they stored their root) recover the root from the transcript's working directory.
+- **Nhật ký for omp rooms:** reads the omp transcript (path kept server-side, keyed by room id) into the same events as Claude rooms — prompts, replies, tools by intent only (code tools never show the command), subagents; secrets masked. Omp rooms also show their model.
+
 ## [0.110.7] — 2026-10-20
 ### Added
 - **HQ force buttons.** Board: "⚡ Làm ngay" on Backlog/Ready cards (P0; an owner P0 on a card still waiting for its AC tells the lead at once) and "⚡ Gỡ block ngay" on Blocked cards (back to Backlog as P0, lead told now); Tổng quan: "N card blocked · Gỡ hết ngay" and "Gỡ kẹt ngay" (opens the questions, runs auto on + revive).

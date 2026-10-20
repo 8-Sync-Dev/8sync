@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.8: omp sessions visible in HQ on Windows (in-process omp.exe cmdline scan, transcript-file resume match, inbox id root recovery) + omp Nhật ký parser.
 v0.110.7: force buttons (Làm ngay / Gỡ block ngay / Gỡ kẹt ngay), one-tap answers for room prompts, reaper of leftover dev servers + RAM pressure trigger in revive, background merge in revive, owner cards always --now, boost 13 rooms, no false Kẹt.
 v0.110.6: guard lets QA rooms reset their own gate checkout (`.claude/worktrees/qa*`) without a prompt (qa2 stalled twice), no pass when the command names any git redirect; reset/switch still ask.
 v0.110.5: HQ Preview rebuilt (true time = last commit for tracked images, mtime only for untracked/modified; card ownership from path; Đang làm / Xong gần đây / Khác; lightbox) + HQ UI install waits on `.install.lock` (restart racing `8sync up` killed HQ). HQ was restarted by hand at 21:12 as a detached omp service `hq-ui-8740` (the logon task still starts it after reboot).

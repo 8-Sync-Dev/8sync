@@ -19,10 +19,13 @@ type LsRow = LsInput & {
   engine?: string | null;
   tokens?: number | null;
   inbox_id?: string | null;
+  model?: string | null;
+  /** Local transcript file (`8sync ls`): kept server side, never sent to the browser. */
+  transcript?: string | null;
 };
 
 const TTL_MS = 4000;
-let cache: { at: number; rows: FloorRow[] } | null = null;
+let cache: { at: number; rows: FloorRow[]; transcripts: Map<string, string> } | null = null;
 let inflight: Promise<FloorRow[]> | null = null;
 
 const UUID_ISH = /^[0-9a-f]{8}(-[0-9a-f]{4}){0,4}/i;
@@ -135,8 +138,13 @@ export function newestStandup(repo: string | null | undefined, home = os.homedir
   return best;
 }
 
-async function build(db: DatabaseSync): Promise<FloorRow[]> {
+async function build(db: DatabaseSync): Promise<{ rows: FloorRow[]; transcripts: Map<string, string> }> {
   const [ls, merged] = await Promise.all([lsRows(), mergedSessions(db).catch(() => [] as SessionView[])]);
+  // omp room id -> its transcript, for "Nhật ký" (readOmpActivity). Only absolute `.jsonl` paths.
+  const transcripts = new Map<string, string>();
+  for (const r of ls) {
+    if (r.engine === "omp" && isOmpRoomId(r.inbox_id) && typeof r.transcript === "string" && path.isAbsolute(r.transcript) && r.transcript.endsWith(".jsonl")) transcripts.set(r.inbox_id, r.transcript);
+  }
   const now = Date.now();
   // "tự chạy lại lúc …" only while auto will actually resume the room (on, not paused, no gate);
   // the status GET /api/auto last fetched, unknown (no poll yet) = the owner must act.
@@ -177,6 +185,7 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       tokens: typeof r.tokens === "number" ? r.tokens : null,
       inbox_id: typeof r.inbox_id === "string" ? r.inbox_id : null,
       live: r.status === "running" || r.status === "active",
+      model: typeof r.model === "string" ? r.model : null,
       ...deriveFloor(r, { ...(hq ?? {}), standup: standupOf(repo) }, now, autoActs),
     };
   });
@@ -199,7 +208,7 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       ...deriveFloor(null, { ...s, standup: standupOf(repo) }, now, autoActs),
     });
   }
-  return rows;
+  return { rows, transcripts };
 }
 
 /** hq has no hook data for omp rooms: the desk state stands in for the session status. */
@@ -228,6 +237,7 @@ export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
         detail: r.caption || null,
         inbox_live: inboxLive(id),
         engine: "omp",
+        model: r.model ?? null,
       },
     ];
   });
@@ -237,8 +247,8 @@ export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
 export function loadFloor(db: DatabaseSync): Promise<FloorRow[]> {
   if (cache && Date.now() - cache.at < TTL_MS) return Promise.resolve(cache.rows);
   inflight ??= build(db)
-    .then((rows) => {
-      cache = { at: Date.now(), rows };
+    .then(({ rows, transcripts }) => {
+      cache = { at: Date.now(), rows, transcripts };
       return rows;
     })
     .catch(() => [] as FloorRow[])
@@ -246,6 +256,13 @@ export function loadFloor(db: DatabaseSync): Promise<FloorRow[]> {
       inflight = null;
     });
   return inflight;
+}
+
+/** Transcript file of the omp room `id` (from `8sync ls`, never from a client), or null. */
+export async function ompTranscript(db: DatabaseSync, id: string): Promise<string | null> {
+  if (!isOmpRoomId(id)) return null;
+  await loadFloor(db);
+  return cache?.transcripts.get(id) ?? null;
 }
 
 export function resetFloorCache() {

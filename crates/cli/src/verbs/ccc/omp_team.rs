@@ -133,52 +133,13 @@ pub(super) fn wt_safe(root: &Path, exe: &Path) -> bool {
     ![root, exe].iter().any(|p| p.as_os_str().to_string_lossy().contains(';'))
 }
 
-/// A Windows command line split like `CommandLineToArgvW`: 2n backslashes + `"` = n backslashes and
-/// a quote toggle, 2n+1 = n backslashes and a literal quote, other backslashes are literal.
-pub(super) fn win_args(cmdline: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let (mut cur, mut quoted, mut started, mut slashes) = (String::new(), false, false, 0usize);
-    for c in cmdline.chars() {
-        if c == '\\' {
-            slashes += 1;
-            started = true;
-            continue;
-        }
-        if c == '"' {
-            cur.push_str(&"\\".repeat(slashes / 2));
-            if slashes % 2 == 1 {
-                cur.push('"');
-            } else {
-                quoted = !quoted;
-            }
-            started = true;
-        } else if c.is_whitespace() && !quoted {
-            cur.push_str(&"\\".repeat(slashes));
-            if started {
-                out.push(std::mem::take(&mut cur));
-                started = false;
-            }
-        } else {
-            cur.push_str(&"\\".repeat(slashes));
-            cur.push(c);
-            started = true;
-        }
-        slashes = 0;
-    }
-    cur.push_str(&"\\".repeat(slashes));
-    if started {
-        out.push(cur);
-    }
-    out
-}
-
 /// `cmdline` is omp itself (`omp`, `…\omp.exe`) with an argument that is exactly `session_dir`
 /// (any case and slash direction, as Windows paths): `omp-lead2` is not `omp-lead`, and an editor,
 /// `grep` or the `8sync . omp-lead` parent never counts.
 pub(super) fn carries(cmdline: &str, session_dir: &Path) -> bool {
     let norm = |s: &str| s.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase();
     let want = norm(&session_dir.to_string_lossy());
-    let args = win_args(cmdline);
+    let args = session_view::win_args(cmdline);
     let Some((first, rest)) = args.split_first() else {
         return false;
     };
@@ -422,14 +383,6 @@ mod tests {
         assert!(!wt_safe(root, Path::new(r"C:\b;x\8sync.exe")));
         assert_eq!(tmux_argv(Path::new("tmux"), "kill-session", "8sync-omp-dev-abc123"), os(&["tmux", "kill-session", "-t", "=8sync-omp-dev-abc123"]));
         assert_eq!(taskkill_argv(42), os(&["taskkill", "/PID", "42", "/F"]));
-    }
-
-    #[test]
-    fn windows_command_lines_split_like_argv() {
-        assert_eq!(win_args(r#""omp" --cwd C:\r --session-dir C:\s\omp-lead --continue"#), ["omp", "--cwd", r"C:\r", "--session-dir", r"C:\s\omp-lead", "--continue"]);
-        assert_eq!(win_args(r#""C:\a b\omp.exe"  "C:\x y\" a\\\"b"#), [r"C:\a b\omp.exe", r#"C:\x y" a\"b"#]);
-        assert_eq!(win_args(r#"x "" y"#), ["x", "", "y"]);
-        assert!(win_args("   ").is_empty());
     }
 
     #[test]
