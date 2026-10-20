@@ -47,7 +47,7 @@ use serde_json::{json, Value};
 
 use super::{delegate, idle, target};
 
-const USAGE: &str = "usage: 8sync ccc auto on [--here] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | ci [--json]
+const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | ci [--json]
        8sync ccc auto omp on [--model <provider/model>]|off [--json] | nudge --session <room id> --cwd <dir> [--model <provider/model>] [--json]
        (on --omp nhận thêm --omp-model <provider/model>: model của đội omp)
        8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down
@@ -118,6 +118,15 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
                 let repos: Vec<String> = repos.iter().map(|x| x.to_string_lossy().into_owned()).collect();
                 m["repo"] = json!(repos[0]);
                 m["repos"] = json!(repos);
+            } else {
+                // A plain `on` (HQ's "Chạy liên tục") resumes the projects auto last held, on or
+                // paused: live 2026-10-20 it widened auto from ai-game-studio + 3d-game to every
+                // project on the machine. `on --all` forgets them first.
+                let keep = remembered(home);
+                if let Some(first) = keep.first() {
+                    m["repo"] = json!(first);
+                    m["repos"] = json!(keep);
+                }
             }
             if let Err(e) = write_marker(home, &m) {
                 // Without the marker the `--here` scope is lost and auto would run everywhere.
@@ -129,10 +138,14 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
         Mode::Pause | Mode::Off => {
             idle::off(home)?;
             delegate::off(home)?;
-            write_marker(
-                home,
-                &json!({ "schema": 1, "on": false, "paused": mode == Mode::Pause, "since": now }),
-            )?;
+            // Pause remembers the scope for the next plain `on`; off forgets it.
+            let mut m = json!({ "schema": 1, "on": false, "paused": mode == Mode::Pause, "since": now });
+            let keep = remembered(home);
+            if mode == Mode::Pause && !keep.is_empty() {
+                m["repo"] = json!(keep[0]);
+                m["repos"] = json!(keep);
+            }
+            write_marker(home, &m)?;
         }
     }
     // A `no_tick` flag is a session's word for this run of auto only: a resumed auto asks again.
@@ -319,6 +332,30 @@ fn scope(home: &Path) -> Vec<PathBuf> {
         return many;
     }
     m["repo"].as_str().filter(|r| !r.is_empty()).map(PathBuf::from).into_iter().collect()
+}
+
+/// The projects the marker names, on or paused (what a plain `on` resumes); `scope` is the live view.
+fn remembered(home: &Path) -> Vec<String> {
+    let Some(m) = idle::read_json(&marker(home)) else {
+        return Vec::new();
+    };
+    let many: Vec<String> = m["repos"].as_array().into_iter().flatten().filter_map(|r| r.as_str()).filter(|r| !r.is_empty()).map(str::to_owned).collect();
+    if !many.is_empty() {
+        return many;
+    }
+    m["repo"].as_str().filter(|r| !r.is_empty()).map(str::to_owned).into_iter().collect()
+}
+
+/// `auto on --all`: drop the remembered projects so this `on` covers every project.
+fn forget_scope(home: &Path) -> Result<()> {
+    let Some(mut m) = idle::read_json(&marker(home)) else {
+        return Ok(());
+    };
+    if let Some(o) = m.as_object_mut() {
+        o.remove("repo");
+        o.remove("repos");
+    }
+    write_marker(home, &m)
 }
 
 /// Which repo's CI `auto status` reads: the scoped root containing `root` (the deepest when they
@@ -1591,6 +1628,7 @@ pub(super) fn run(
                 "--after",
                 "--usd-per-hour",
                 "--here",
+                "--all",
                 "--omp",
                 "--loop",
                 "--team",
@@ -1640,7 +1678,11 @@ pub(super) fn run(
                 Some(a) => delegate::parse_after(&a)?,
                 None => DEFAULT_AFTER_S,
             };
+            let all = rest.iter().any(|a| a == "--all");
             let repo = if rest.iter().any(|a| a == "--here") {
+                if all {
+                    bail!("--here và --all không đi cùng nhau\n{USAGE}");
+                }
                 Some(root.to_path_buf())
             } else {
                 None
@@ -1652,6 +1694,9 @@ pub(super) fn run(
             }
             if let Some(why) = omp_would_block(home, team_model.as_deref()).filter(|_| omp) {
                 bail!("--omp: {why}");
+            }
+            if all {
+                forget_scope(home)?;
             }
             let mut v = set(
                 home,
@@ -1758,7 +1803,7 @@ pub(super) fn run(
         if rest.first().map(String::as_str) == Some("on") {
             println!("Vẫn hỏi owner: Ship, secret/login, xoá/không hoàn tác, tiền, deploy prod, merge/release, high-risk. Cần hook mới: `8sync ccc kit` rồi mở session mới.");
             if v["repo"].is_null() {
-                println!("Áp dụng cho mọi session ở mọi dự án trên máy này, kể cả session mở sau. Chỉ một dự án: chạy `8sync ccc auto on --here` trong thư mục dự án đó.");
+                println!("Áp dụng cho mọi session ở mọi dự án trên máy này, kể cả session mở sau. Chỉ một dự án: chạy `8sync ccc auto on --here` trong thư mục dự án đó (`on` không cờ giữ các dự án lần trước; `--all` mới mở cho mọi dự án).");
             }
             if subscription && queued.is_none() {
                 println!("Login subscription: lease ≤ 4 giờ, chỉ chạy khi owner có mặt. Chạy không người trông → Console API key.");
@@ -1901,12 +1946,29 @@ mod tests {
         let line = text(&v);
         let repos: Vec<&str> = v["repos"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
         assert!(repos.iter().all(|r| line.contains(r.trim_start_matches(r"\\?\"))), "the status line names both running projects: {line}");
-        // a plain `on` widens it again; `pause` drops it
+        // A plain `on` (HQ's "Chạy liên tục") keeps the projects; pause remembers them for the next
+        // plain `on`; `--all` widens; off forgets.
         set(&h, on(2.0, 60), false, 3).unwrap();
-        assert!(in_scope(&h, Some(&s(&other))));
-        set(&h, here(&repo), false, 4).unwrap();
-        set(&h, Mode::Pause, false, 5).unwrap();
-        assert!(in_scope(&h, Some(&s(&other))) && status(&h, false, 5)["repo"].is_null());
+        assert!(!in_scope(&h, Some(&s(&other))), "plain on keeps the scope: {}", status(&h, false, 3));
+        assert_eq!(status(&h, false, 3)["repos"].as_array().map(Vec::len), Some(2));
+        set(&h, Mode::Pause, false, 4).unwrap();
+        assert!(in_scope(&h, Some(&s(&other))) && status(&h, false, 4)["repo"].is_null(), "paused: nothing is scoped live");
+        set(&h, on(2.0, 60), false, 5).unwrap();
+        assert_eq!(status(&h, false, 5)["repos"].as_array().map(Vec::len), Some(2), "on after pause resumes the same projects");
+        forget_scope(&h).unwrap();
+        set(&h, on(2.0, 60), false, 6).unwrap();
+        assert!(in_scope(&h, Some(&s(&other))) && status(&h, false, 6)["repo"].is_null(), "--all widens");
+        set(&h, here(&repo), false, 7).unwrap();
+        set(&h, Mode::Off, false, 8).unwrap();
+        set(&h, on(2.0, 60), false, 9).unwrap();
+        assert!(in_scope(&h, Some(&s(&other))), "off forgets the projects");
+        // the CLI: `--here` and `--all` are exclusive; `on --all` drops the remembered projects
+        let argv = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+        set(&h, here(&repo), false, 10).unwrap();
+        assert!(run(&argv(&["on", "--here", "--all"]), &h, false, &repo, Vec::new).is_err());
+        set(&h, Mode::Pause, false, 11).unwrap();
+        run(&argv(&["on", "--all"]), &h, false, &repo, Vec::new).unwrap();
+        assert!(in_scope(&h, Some(&s(&other))) && status(&h, false, 12)["repo"].is_null(), "`on --all` covers every project");
         let _ = std::fs::remove_dir_all(&h);
     }
 
