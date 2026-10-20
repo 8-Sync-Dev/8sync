@@ -2605,6 +2605,10 @@ fn curl_download(url: &str, dest: &Path, ver: &str) -> Result<()> {
 }
 
 const INSTALL_LOCK_STALE: Duration = Duration::from_secs(600);
+/// How long an install waits for another one holding a fresh lock. 2026-10-20: `8sync up` was
+/// installing 0.110.4's UI while the running HQ restarted onto it; the restart hit the lock, exited
+/// with "retry in a minute", and the owner's HQ stayed down until started by hand.
+const INSTALL_LOCK_WAIT: Duration = if cfg!(test) { Duration::from_millis(1500) } else { Duration::from_secs(180) };
 const INSTALL_LEFTOVER_AGE: Duration = Duration::from_secs(3600);
 
 fn age_of(p: &Path) -> Duration {
@@ -2615,24 +2619,29 @@ fn age_of(p: &Path) -> Duration {
 struct InstallLock(PathBuf);
 
 impl InstallLock {
+    /// Waits up to [`INSTALL_LOCK_WAIT`] for another install to finish; a lock older than
+    /// [`INSTALL_LOCK_STALE`] belongs to a crashed one and is taken over.
     fn acquire(base: &Path) -> Result<Self> {
         let f = base.join(".install.lock");
-        for _ in 0..2 {
+        let start = std::time::Instant::now();
+        loop {
             match std::fs::OpenOptions::new().write(true).create_new(true).open(&f) {
                 Ok(mut h) => {
                     let _ = write!(h, "{}", std::process::id());
                     return Ok(Self(f));
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if age_of(&f) < INSTALL_LOCK_STALE {
+                    if age_of(&f) >= INSTALL_LOCK_STALE {
+                        let _ = std::fs::remove_file(&f);
+                    } else if start.elapsed() >= INSTALL_LOCK_WAIT {
                         bail!("another 8sync is installing the HQ UI ({} exists); retry in a minute", f.display());
+                    } else {
+                        std::thread::sleep(Duration::from_millis(250));
                     }
-                    let _ = std::fs::remove_file(&f);
                 }
                 Err(e) => return Err(e).with_context(|| format!("lock {}", f.display())),
             }
         }
-        bail!("cannot take {}", f.display())
     }
 }
 
@@ -2734,7 +2743,12 @@ fn check_tree_confined(root: &Path) -> Result<()> {
 fn extract_install(tarball: &Path, target: &Path) -> Result<()> {
     let base = target.parent().ok_or_else(|| anyhow!("bad install path"))?;
     std::fs::create_dir_all(base)?;
+    let had = hq_ui_installed(target);
     let _lock = InstallLock::acquire(base)?;
+    if !had && hq_ui_installed(target) {
+        // the install we waited for put this very version in place
+        return Ok(());
+    }
     cleanup_leftovers(base);
     let pid = std::process::id();
     let ver = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -4037,9 +4051,23 @@ mod tests {
             assert!(hq_ui_installed(&target) && !target.join("hq-ui/alias.js").exists());
         }
 
-        // fresh lock blocks, stale lock is taken over
+        // a fresh lock held past INSTALL_LOCK_WAIT blocks, stale lock is taken over
         std::fs::write(base.join(".install.lock"), "1").unwrap();
         assert!(extract_install(&ok, &target).unwrap_err().to_string().contains("another 8sync"));
+        // a lock released while waiting: the install goes ahead (HQ restart racing `8sync up`)
+        let lock = base.join(".install.lock");
+        let release = std::thread::spawn({
+            let lock = lock.clone();
+            move || {
+                std::thread::sleep(Duration::from_millis(400));
+                std::fs::remove_file(&lock).unwrap();
+            }
+        });
+        let other = base.join("2.0.0");
+        extract_install(&ok, &other).unwrap();
+        release.join().unwrap();
+        assert!(hq_ui_installed(&other));
+        std::fs::write(&lock, "1").unwrap();
         let old = std::time::SystemTime::now() - Duration::from_secs(700);
         std::fs::File::options().write(true).open(base.join(".install.lock")).unwrap().set_modified(old).unwrap();
         extract_install(&ok, &target).unwrap();

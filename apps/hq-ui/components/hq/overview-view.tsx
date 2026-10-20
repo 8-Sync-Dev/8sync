@@ -289,7 +289,7 @@ function ProjectBlock({
                     <PreviewImage id={i.id} token={token} alt="" className="aspect-[16/10] w-full rounded-md border" />
                     <span className="mt-0.5 block truncate text-[11px] text-muted-foreground tabular">
                       {i.card != null ? `#${i.card} · ` : ""}
-                      {agoShort(i.mtime, now)}
+                      {agoShort(i.at, now)}
                     </span>
                   </button>
                 </li>

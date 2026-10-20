@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.5] — 2026-10-20
+### Changed
+- **HQ Preview shows where the project really is, newest truth first.** Owner (2026-10-20): "Game cứ hiện card cũ lên preview khó nắm tình hình". Root cause: images were ranked by file mtime across the repo root and every `.claude/worktrees/*`, and each checkout rewrites mtimes, so a 7-hour-old shot of card #6 showed as "1 phút trước" in every new worktree.
+  - True time: an image's time is the commit that last touched it when git tracks it unmodified in that checkout (one bounded `git log -n 400 --name-only` + one `git status --porcelain -z --ignored=matching` per checkout, fixed argv, at most 6 git at once, cached until HEAD/ref/index or the files change); the file mtime only when it is untracked or modified. Touching or re-checking-out a tracked file never moves it.
+  - Ownership: `card-<n>`/`card<n>`/folder `card-<n>` in the image path. A card worktree (its branch's `card-<n>`, else its folder name; folders get reused) contributes only card n's images plus its new untracked ones. The same image across checkouts (same path + size) is listed once, a commit time beating a copy's mtime.
+  - The newest `origin/main`/`main` tip is read too: images only main has (merged cards whose worktree is gone) are listed and served from the git blob by id; the header shows `main <sha> · <n> card đang chạy · <m> xong 24h`.
+  - Layout: **Đang làm** (open cards in Building/QA/Review/Approved, lane by lane, most recent activity first: lane, room, PR, last note, newest 3 shots or "chưa có ảnh"), **Xong gần đây** (done cards by close time with their evidence, 6 then "Xem thêm"), **Khác** (unassigned images and cards in neither list, collapsed). Lazy thumbs in fixed 16:10 boxes; the lightbox walks one card's images (buttons, ← →, swipe; swipe down or Esc closes) and shows file, card, true time ("commit …" / "tệp chưa commit, …") and source checkout.
+### Fixed
+- **HQ no longer dies when it restarts onto a new version while `8sync up` installs that version's UI.** The restart found `.install.lock` held by `8sync up` and exited with "retry in a minute"; on 2026-10-20 the owner's HQ (and the VPS link) stayed down until started by hand. An install now waits up to 3 min for the other one, and when that one put the same version in place it uses it instead of extracting again; a lock older than 10 min is still taken over.
+
 ## [0.110.4] — 2026-10-20
 
 ### Added
