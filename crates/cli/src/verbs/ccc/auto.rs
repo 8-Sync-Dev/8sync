@@ -1562,7 +1562,11 @@ fn mark_mail(home: &Path, sid: &str, at: u64) {
 fn wait_text(v: &Value) -> String {
     let lane = v["lane"].as_str().unwrap_or("?");
     match v["wake"].as_str() {
-        Some("msg") => "có tin nhắn mới cho phòng này (owner hoặc phòng khác): KẾT THÚC lượt ngay, không chạy thêm lệnh — tin vào phiên khi lượt xong; làm theo tin rồi quay lại `8sync ccc auto wait`".into(),
+        // Owner and room messages come framed by the hub ([`crate::verbs::hq::take_inbox`]).
+        Some("msg") => match v["messages"].as_str() {
+            Some(m) => format!("tin nhắn mới cho phòng này (đã lấy khỏi inbox): đọc và làm theo trước khi claim, rồi quay lại `8sync ccc auto wait`\n{m}"),
+            None => "có tin nhắn mới cho phòng này (owner hoặc phòng khác): KẾT THÚC lượt ngay, không chạy thêm lệnh — tin vào phiên khi lượt xong; làm theo tin rồi quay lại `8sync ccc auto wait`".into(),
+        },
         Some("card") => format!("card #{} ở cột {lane}: `8sync ccc auto claim`", v["card"]),
         Some("merge") => format!("card #{} vừa approved, owner đã cho tự merge: `8sync ccc auto merge`", v["card"]),
         Some("off") => "auto đã tắt hoặc tạm dừng: dừng, không claim nữa".into(),
@@ -1659,7 +1663,7 @@ pub(super) fn run(
         let sid = all.iter().find(|(n, _)| n == &w.room).map(|(_, s)| s.clone()).or_else(|| std::env::var("CLAUDE_CODE_SESSION_ID").ok());
         let cwd = root.to_string_lossy();
         let clock = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        let v = wait_for(
+        let mut v = wait_for(
             &w,
             || target::list(home, root),
             |t| {
@@ -1672,8 +1676,13 @@ pub(super) fn run(
             clock,
             || std::thread::sleep(std::time::Duration::from_secs(WAIT_POLL_S)),
         )?;
-        if let (Some("msg"), Some(at), Some(s)) = (v["wake"].as_str(), v["mail"].as_u64(), sid.as_deref()) {
+        let mail_at = if v["wake"] == "msg" { v["mail"].as_u64() } else { None };
+        if let (Some(at), Some(s)) = (mail_at, sid.as_deref()) {
             mark_mail(home, s, at);
+            // Rooms keep working in the same turn after a wake (live 2026-10-20: dev2 and review ran
+            // status and wait again, so their Stop hook never ran and the owner's message never came):
+            // take the messages here, exactly as the Stop hook takes them, and hand them over.
+            v["messages"] = json!(crate::verbs::hq::take_inbox(home, s, Some(cwd.as_ref())));
         }
         if rest.iter().any(|a| a == "--json") {
             println!("{v}");
@@ -2409,7 +2418,11 @@ mod tests {
         let mail = json!({ "on": true, "paused": false, "cap": null, "mail": 1_700_000_000_123u64 });
         let v = wait_for(&w, || Ok(vec![]), |_| mail.clone(), || 5, || {}).unwrap();
         assert_eq!((v["wake"].as_str(), v["mail"].as_u64()), (Some("msg"), Some(1_700_000_000_123)));
-        assert!(wait_text(&v).contains("KẾT THÚC lượt"));
+        assert!(wait_text(&v).contains("KẾT THÚC lượt"), "nothing taken: end the turn so the Stop hook delivers");
+        let mut got = v.clone();
+        got["messages"] = json!("8 Sync HQ: the owner sent you 1 message(s) from the HQ dashboard while you were working. …:\nđổi màu nút Play");
+        let t = wait_text(&got);
+        assert!(t.contains("đổi màu nút Play") && t.contains("trước khi claim") && !t.contains("KẾT THÚC"), "{t}");
         let mail_off = json!({ "on": true, "paused": true, "cap": null, "mail": 1u64 });
         assert_eq!(wait_for(&w, || Ok(vec![]), |_| mail_off.clone(), || 5, || {}).unwrap()["wake"], "off");
         // Capped: rest until the wait is up (never claim the ready card), then report `cap`.
@@ -2462,6 +2475,13 @@ mod tests {
         crate::verbs::hq::queue_inbox_from(&h, sid, "dev xong #3", "lead", 12_000).unwrap();
         assert_eq!(mail(), None, "held room line");
         assert_eq!(unseen_mail(&h, "../x", &cwd, 10), None);
+        // What `auto wait` does on a msg wake: take the deliverable lines, as the Stop hook would.
+        std::fs::write(&file, "").unwrap();
+        crate::verbs::hq::queue_inbox(&h, sid, "đổi màu nút Play", 20_000).unwrap();
+        assert_eq!(mail(), Some(20_000));
+        let taken = crate::verbs::hq::take_inbox(&h, sid, Some(&cwd)).unwrap();
+        assert!(taken.contains("đổi màu nút Play"), "{taken}");
+        assert_eq!(mail(), None, "taken: nothing left to wake for");
         let _ = std::fs::remove_dir_all(&h);
     }
 
