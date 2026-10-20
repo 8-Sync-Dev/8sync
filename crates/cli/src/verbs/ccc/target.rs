@@ -171,6 +171,60 @@ pub(super) fn roles(t: &Target) -> Vec<String> {
     Vec::new()
 }
 
+/// The card this one was split off: the first `[#N]` tag of the `[…]` run its title starts with
+/// (`[#10] player …`, `[#125][ui] …`, `[ui][#1 v2] …`). Leads split an owner's idea this way.
+pub(super) fn parent(t: &Target) -> Option<u64> {
+    let mut rest = t.text.trim_start();
+    while let Some(body) = rest.strip_prefix('[') {
+        let end = body.find(']')?;
+        let digits: String = body[..end].trim().strip_prefix('#').unwrap_or("").chars().take_while(char::is_ascii_digit).collect();
+        if let Ok(id) = digits.parse::<u64>() {
+            return (id != t.id).then_some(id);
+        }
+        rest = body[end + 1..].trim_start();
+    }
+    None
+}
+
+/// Cards with an open card split off them: their work runs in those cards, so no room claims them
+/// and they never wait in `blocked`.
+fn split_ids(cards: &[Target]) -> Vec<u64> {
+    cards.iter().filter(|t| t.state == "open").filter_map(parent).collect()
+}
+
+/// A blocked card is the backlog rooms' (lead, ba) to clear: `claim` hands it to them before new
+/// backlog work, then again every [`BLOCKED_RETRY`] while it really waits on the owner (Ship,
+/// secret, money). Owner 2026-10-20 ("ý kiến tôi cứ bị block"): his ideas sat in Blocked as
+/// "epic", a card waited on a closed PR, another on "owner cấp ảnh", while the lead slept in `auto wait`.
+pub(super) const BLOCKED_RETRY: u64 = 3600;
+
+fn unblockable(t: &Target, now: u64) -> bool {
+    t.state == "open" && t.lane == "blocked" && t.claim.as_ref().is_none_or(|c| now.saturating_sub(c.at) >= BLOCKED_RETRY)
+}
+
+/// When a card last changed: the one blocked longest is cleared first.
+fn touched(t: &Target) -> u64 {
+    t.notes.last().map_or(t.added, |n| n.at)
+}
+
+const UNBLOCK: &str = "card #<id> blocked: gỡ NGAY lượt này, không để chờ. Lý do đã hết (PR được chờ MERGED/CLOSED theo `gh pr view <số> --json state`, PR chồng trên nhánh cũ) → rebase lên origin/main, PR vào main, `8sync ccc auto move <id> ready --note \"…\"`; thiếu quyết định hay tài nguyên → tự quyết theo su-code/DECISIONS.md + mục tiêu dự án hoặc tìm cách thay, note rồi `move <id> ready`; ý lớn đã tách card con → `move <id> backlog`. Chỉ Ship, secret, tiền mới hỏi owner (AskUserQuestion), rồi `8sync ccc auto note <id> \"chờ owner: …\"` và làm việc khác.";
+
+/// What a backlog room does with the card `claim` gave it when the lane alone does not say: a
+/// blocked card to clear now, or an idea whose split-off cards all closed, to accept or split again.
+pub(super) fn claim_hint(t: &Target, cards: &[Target]) -> Option<String> {
+    if t.lane == "blocked" {
+        return Some(UNBLOCK.replace("<id>", &t.id.to_string()));
+    }
+    let kids: Vec<String> = cards.iter().filter(|c| parent(c) == Some(t.id)).map(|c| format!("#{}", c.id)).collect();
+    (t.lane == "backlog" && !kids.is_empty()).then(|| {
+        format!(
+            "card con {} đã đóng: nghiệm thu ý gốc trên main (chạy thật, ảnh): đạt → `8sync ccc auto done {id} --evidence \"<lệnh: kết quả>\"`; chưa → tách đợt kế `8sync ccc auto add \"[#{id}] …\"`, card gốc ở lại backlog",
+            kids.join(" "),
+            id = t.id
+        )
+    })
+}
+
 /// `--role <vai>`: one role or several joined by `+`, each a room role (`backend` → dev) or a
 /// hyphenated one no room has (`game-designer`).
 pub(super) fn parse_role(s: &str) -> Result<String> {
@@ -532,9 +586,19 @@ pub(super) fn reopen(home: &Path, root: &Path, id: u64, why: Option<&str>, room:
     })
 }
 
-/// Drop stale claims; a stranded `building` card goes back to `ready` (super-board's reclaim).
+/// Drop stale claims; a stranded `building` card goes back to `ready` (super-board's reclaim). An
+/// idea split into open cards waits for them in `backlog`, held by nobody, never in `blocked`.
 fn reap(p: &mut Project, now: u64) {
+    let split = split_ids(&p.items);
     for t in p.items.iter_mut().filter(|t| t.state == "open") {
+        if split.contains(&t.id) && matches!(t.lane.as_str(), "backlog" | "blocked") {
+            t.claim = None;
+            if t.lane == "blocked" {
+                t.lane = "backlog".into();
+                t.note(None, "blocked → backlog: đang làm qua card con, không chờ ở blocked; lead nghiệm thu khi card con đóng", now);
+            }
+            continue;
+        }
         let Some(c) = t.claim.clone().filter(|c| now.saturating_sub(c.at) >= CLAIM_SECS) else { continue };
         t.claim = None;
         if t.lane == "building" {
@@ -569,10 +633,12 @@ pub(super) fn claimable(cards: &[Target], room: &str, lane: &str, now: u64) -> O
         t.claim.as_ref().filter(|c| now.saturating_sub(c.at) < CLAIM_SECS).map(|c| c.room.as_str())
     }
     let crew = super::room::crew(room);
-    let open = cards.iter().filter(|t| t.state == "open");
+    let split = split_ids(cards);
+    let open = cards.iter().filter(|t| t.state == "open" && !(split.contains(&t.id) && lane == "backlog"));
     let ready = ready_count(cards);
     open.clone()
-        .find(|t| holder(t, now) == Some(room))
+        .find(|t| holder(t, now) == Some(room) && (t.lane != "blocked" || lane == "blocked"))
+        .or_else(|| (lane == "backlog").then(|| open.clone().enumerate().filter(|(_, t)| unblockable(t, now)).min_by_key(|(i, t)| (touched(t), *i)).map(|(_, t)| t)).flatten())
         .or_else(|| open.clone().enumerate().filter(|(_, t)| holder(t, now).is_none() && fits(t, lane, &crew, now) && open_to(t, lane, ready)).min_by_key(|(i, t)| (rank(t), *i)).map(|(_, t)| t))
         .map(|t| t.id)
 }
@@ -580,7 +646,9 @@ pub(super) fn claimable(cards: &[Target], room: &str, lane: &str, now: u64) -> O
 /// `auto claim`: the card room `room` works on this tick. A card it already holds comes back (claim
 /// refreshed); else the first free card of `lane` for the room's role in queue order. Taking a
 /// `ready` card moves it to `building`; the `qa` lane also takes `ready` cards labelled `qa`, the
-/// `ready` lane skips them.
+/// `ready` lane skips them. The `backlog` lane first takes the card blocked longest
+/// ([`unblockable`]; it stays in `blocked` until the room moves it), and never an idea still split
+/// into open cards.
 pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) -> Result<Option<Target>> {
     if !LANES.contains(&lane) || matches!(lane, "building" | "approved") {
         bail!("cột `{lane}` không nhận claim: backlog, ready, qa, review, blocked");
@@ -588,12 +656,15 @@ pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) 
     let crew = super::room::crew(room);
     edit(home, root, |p| {
         reap(p, now);
-        let mine = p.items.iter().position(|t| t.state == "open" && t.claim.as_ref().is_some_and(|c| c.room == room));
+        // A blocked card it took last time is not held over: one it cannot clear must not pin the room.
+        let mine = p.items.iter().position(|t| t.state == "open" && t.claim.as_ref().is_some_and(|c| c.room == room) && (t.lane != "blocked" || lane == "blocked"));
+        let blocked = || (lane == "backlog").then(|| p.items.iter().enumerate().filter(|(_, t)| unblockable(t, now)).min_by_key(|(i, t)| (touched(t), *i)).map(|(i, _)| i)).flatten();
         let ready = ready_count(&p.items);
-        let free = |t: &Target| t.state == "open" && t.claim.is_none() && fits(t, lane, &crew, now) && open_to(t, lane, ready);
+        let split = split_ids(&p.items);
+        let free = |t: &Target| t.state == "open" && t.claim.is_none() && !(split.contains(&t.id) && lane == "backlog") && fits(t, lane, &crew, now) && open_to(t, lane, ready);
         // The most urgent free card, queue order within a priority.
         let first_free = || p.items.iter().enumerate().filter(|(_, t)| free(t)).min_by_key(|(i, t)| (rank(t), *i)).map(|(i, _)| i);
-        let Some(i) = mine.or_else(first_free) else { return Ok(None) };
+        let Some(i) = mine.or_else(blocked).or_else(first_free) else { return Ok(None) };
         let t = &mut p.items[i];
         if t.claim.is_none() && matches!(t.lane.as_str(), "ready" | "building") {
             let to = if lane == "qa" { "qa" } else { "building" };
@@ -742,6 +813,7 @@ fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option
     }
     edit(home, root, |p| {
         let ready = ready_count(&p.items);
+        let kids: Vec<String> = p.items.iter().filter(|c| c.state == "open" && parent(c) == Some(id)).map(|c| format!("#{}", c.id)).collect();
         let Some(t) = p.items.iter_mut().find(|t| t.id == id && t.state == "open") else {
             bail!("không có card mở #{id} (`8sync ccc auto board`)");
         };
@@ -750,6 +822,9 @@ fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option
         }
         if t.lane == "blocked" && to == "review" && !passed_qa(t, head.as_deref()) {
             bail!("card #{id} chưa qua QA ở head hiện tại (không có note `gate <sha>` khớp head PR): blocked → qa hoặc ready, không thẳng review");
+        }
+        if t.lane == "backlog" && to == "blocked" && !kids.is_empty() {
+            bail!("card #{id} đang làm qua card con {}: để ở backlog (không phòng nào claim nó tới khi card con đóng, rồi lead nghiệm thu), không blocked", kids.join(" "));
         }
         if t.lane == "backlog" && to == "ready" && ready >= READY_CAP && t.prio != Some(0) {
             bail!("cột ready đầy ({ready}/{READY_CAP} card chờ dev): #{id} ở lại backlog, không tách thêm việc tới khi dev rút bớt (card P0 vẫn qua)");
@@ -1534,5 +1609,66 @@ mod tests {
         let claimed = claim(h, &root, "dev", "ready", 6).unwrap().expect("reclaims unclaimed building card");
         assert_eq!((claimed.id, claimed.lane.as_str()), (t2.id, "building"));
         assert_eq!(claimed.claim.unwrap().room, "dev");
+    }
+
+    #[test]
+    fn an_idea_split_into_cards_waits_in_backlog_and_comes_back_when_they_close() {
+        // 3d-game 2026-10-20: the lead parked the owner's ideas #1 and #10 in Blocked as "epic".
+        let (d, root) = tmp("split");
+        let h = d.as_path();
+        let base = put(h, &root, "x", None, false, None, 0).unwrap();
+        let tagged = |text: &str| Target { id: 7, text: text.into(), ..base.clone() };
+        assert_eq!(["[#10] player", "[ui][#1 v2] hud", "[#125][ui] art"].map(|s| parent(&tagged(s))), [Some(10), Some(1), Some(125)]);
+        assert_eq!(["[dev] fix #5", "x #5", "[#7] itself"].map(|s| parent(&tagged(s))), [None, None, None]);
+        close(h, &root, base.id, None, None, 0).unwrap();
+
+        let idea = put(h, &root, "game 3D realistic như Argon", None, false, None, 1).unwrap();
+        assert_eq!(claim(h, &root, "lead", "backlog", 2).unwrap().unwrap().id, idea.id);
+        let a = put(h, &root, &format!("[#{}] PBR", idea.id), Some("npm test"), false, Some("lead"), 3).unwrap();
+        let b = put(h, &root, &format!("[#{}] terrain", idea.id), Some("npm test"), false, Some("lead"), 3).unwrap();
+        let e = move_to(h, &root, idea.id, "blocked", &Move { note: Some("epic"), ..Move::default() }, Some("lead"), 4).unwrap_err().to_string();
+        assert!(e.contains(&format!("card con #{} #{}", a.id, b.id)) && e.contains("không blocked"), "{e}");
+        // nobody claims it while a split-off card is open, and it does not wake a waiting lead
+        assert!(claim(h, &root, "lead", "backlog", 5).unwrap().is_none());
+        assert_eq!(claimable(&list(h, &root).unwrap(), "lead", "backlog", 5), None);
+        assert!(list(h, &root).unwrap().iter().all(|t| t.id != idea.id || t.claim.is_none()), "the lead's claim on it is dropped");
+
+        // an idea parked in blocked before this rule goes back to backlog on the next claim
+        let old = put(h, &root, "ý cũ", None, false, None, 6).unwrap();
+        move_to(h, &root, old.id, "blocked", &Move { note: Some("epic: tách"), ..Move::default() }, Some("lead"), 6).unwrap();
+        put(h, &root, &format!("[#{}] con", old.id), Some("true"), false, Some("lead"), 6).unwrap();
+        claim(h, &root, "dev", "ready", 7).unwrap();
+        let back = list(h, &root).unwrap().into_iter().find(|t| t.id == old.id).unwrap();
+        assert_eq!(back.lane, "backlog");
+        assert!(back.notes.last().unwrap().text.starts_with("blocked → backlog"), "{:?}", back.notes);
+
+        // every split-off card closed: the lead gets the idea back to accept it or split again
+        close(h, &root, a.id, Some("npm test: 12 passed"), Some("lead"), 8).unwrap();
+        close(h, &root, b.id, None, Some("lead"), 8).unwrap();
+        let got = claim(h, &root, "lead", "backlog", 9).unwrap().unwrap();
+        assert_eq!(got.id, idea.id);
+        let hint = claim_hint(&got, &list(h, &root).unwrap()).unwrap();
+        assert!(hint.contains(&format!("#{} ", a.id)) && hint.contains(&format!("#{} ", b.id)) && hint.contains("đã đóng") && hint.contains(&format!("auto done {}", idea.id)), "{hint}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn backlog_rooms_take_blocked_cards_first_and_again_after_an_hour() {
+        // 3d-game 2026-10-20: #16 waited on a closed PR while the lead slept in `auto wait`.
+        let (d, root) = tmp("unblock");
+        let h = d.as_path();
+        let new = put(h, &root, "việc mới", None, false, None, 1).unwrap();
+        let stuck = put(h, &root, "[dev] so sánh Argon", Some("true"), false, None, 1).unwrap();
+        claim(h, &root, "dev", "ready", 2).unwrap();
+        move_to(h, &root, stuck.id, "blocked", &Move { note: Some("chờ PR #4 merge"), ..Move::default() }, Some("dev"), 3).unwrap();
+        assert_eq!(claimable(&list(h, &root).unwrap(), "lead", "backlog", 3), Some(stuck.id), "a new blocked card wakes the lead");
+        let got = claim(h, &root, "lead", "backlog", 4).unwrap().unwrap();
+        assert_eq!((got.id, got.lane.as_str()), (stuck.id, "blocked"), "blocked first, and it stays blocked until moved");
+        assert!(claim_hint(&got, &[]).unwrap().contains("gỡ NGAY"));
+        // one it cannot clear does not pin the room: next claim gives the backlog card
+        assert_eq!(claim(h, &root, "lead", "backlog", 5).unwrap().unwrap().id, new.id);
+        assert_eq!(claim(h, &root, "ba", "backlog", 5).unwrap(), None, "the other backlog room does not take it either");
+        assert_eq!(claimable(&list(h, &root).unwrap(), "ba", "backlog", 4 + BLOCKED_RETRY), Some(stuck.id), "an hour later it comes back");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

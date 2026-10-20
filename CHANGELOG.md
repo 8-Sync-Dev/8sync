@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.108.4] — 2026-10-20
+### Fixed
+- **The owner's ideas no longer sit in Blocked; the lead clears blocked cards.** On 3d-game the lead split the owner's ideas into `[#10] …` cards, then parked the ideas themselves in Blocked as "epic". Another card waited on a PR that was already closed. A third waited for the owner to send images. Meanwhile the lead slept in `auto wait`. The board now handles these cases:
+  - **A split idea stays in Backlog.** An idea with an open card split off it (its first `[#N]` tag) stays in Backlog. No room claims it, and `move <id> blocked` is refused while those cards are open. An idea already parked in Blocked goes back to Backlog on the next claim. Once every split-off card has closed, `claim` gives the idea back to the lead with a hint: accept it with `auto done`, or split the next round.
+  - **The backlog lane takes blocked cards first.** `auto claim` and `auto wait` for that lane return the card blocked longest before any new backlog work, together with a `hint`: if the reason is gone (the PR merged or closed, or the branch is stacked), rebase and move the card to ready; if a decision or a resource is missing, decide from `DECISIONS.md` and the project's goal, or find a substitute. Only Ship, secrets and money wait on the owner.
+  - **A card the lead cannot clear does not hold it up.** The lead's next claim gives it other work, and the card comes back after an hour.
+- **HQ shows who clears Blocked.** The Blocked column now says "lead gỡ ngay" instead of "lead hoặc anh gỡ". An idea card lists the cards being built for it ("đang làm qua #14 #17").
+
 ## [0.108.3] — 2026-10-20
 ### Fixed
 - **HQ "Chạy liên tục" no longer widens auto to every project.** HQ's button runs a plain `8sync ccc auto on`, which used to drop the `--here` projects. Live, it turned "ai-game-studio + 3d-game" into "mọi dự án", so auto's lease, critic and nudges covered sessions in every folder on the machine. A plain `on` now resumes the projects auto last held, also after `pause`; the first `on` ever still covers every project. `auto on --all` widens on purpose, and `off` forgets the list.
