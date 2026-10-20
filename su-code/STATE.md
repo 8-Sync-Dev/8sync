@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.10: one team per folder tree (nested repos never share auto/revive; HQ Gỡ kẹt ngay = `auto on --here`). In flight: OmpTerm (omp terminal host, su-code-term), Guard (60% resource guard, su-code-guard), HqEye2 (auto image review, su-code-eye).
 v0.110.9: reaper walks node/shell parent chains (room servers under orphaned bash are reaped).
 v0.110.8: omp sessions visible in HQ on Windows (in-process omp.exe cmdline scan, transcript-file resume match, inbox id root recovery) + omp Nhật ký parser.
 v0.110.7: force buttons (Làm ngay / Gỡ block ngay / Gỡ kẹt ngay), one-tap answers for room prompts, reaper of leftover dev servers + RAM pressure trigger in revive, background merge in revive, owner cards always --now, boost 13 rooms, no false Kẹt.

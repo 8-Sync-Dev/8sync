@@ -55,9 +55,14 @@ function parseStatus(r: { ok: boolean; stdout: string; stderr: string }): AutoSt
   }
 }
 
-/** Run the action's fixed argv, then return the fresh status (an error from the command is carried in `error` / `omp_error`). */
-export async function autoSet(action: AutoAction): Promise<AutoStatus> {
-  const r = await run("8sync", ARGV[action], TIMEOUT_MS);
+/**
+ * Run the action's fixed argv, then return the fresh status (an error from the command is carried in `error` / `omp_error`).
+ * `root` (a project HQ shows, checked by the route): `on` becomes `auto on --here` in that repo, so a
+ * project's button renews that project only — a plain `on` resumes every remembered project.
+ */
+export async function autoSet(action: AutoAction, root?: string): Promise<AutoStatus> {
+  // `on --here` in a repo also stops the team of a repo nested with it (CLI): more than 5 s.
+  const r = action === "on" && root != null ? await run("8sync", [...ARGV.on, "--here"], 30_000, root) : await run("8sync", ARGV[action], TIMEOUT_MS);
   // Run pressed (a fresh owner lease): rooms that died with the machine come back now, not at the next tick.
   if (action === "on" && r.ok) void run("8sync", ["ccc", "auto", "revive"], 120_000);
   const st = await autoStatus();

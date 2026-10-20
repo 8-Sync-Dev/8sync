@@ -70,7 +70,7 @@ describe("force buttons on a card", () => {
     expect(all).toContain("2 card blocked");
     expect(all).toContain("Gỡ hết ngay");
     expect(renderToStaticMarkup(createElement(UnblockAll, { cards: [], onUnblock: noop }))).toBe("");
-    const unstick = renderToStaticMarkup(createElement(UnstickButton, { token: "t", stuck: 3 }));
+    const unstick = renderToStaticMarkup(createElement(UnstickButton, { token: "t", stuck: 3, root: "C:/w/game" }));
     expect(unstick).toContain("Gỡ kẹt ngay");
     expect(unstick).toContain(">3<");
   });

@@ -212,6 +212,9 @@ pub fn run(a: Args) -> Result<()> {
                 adopt_here(&cwd, true);
             }
             let repo = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
+            // `up` does it under its lock (auto_team); `on --here` once its arguments passed and the
+            // scope moved here (the nested repo is out of auto by then, revive no longer opens it).
+            let here = rest.first().is_some_and(|a| a == "on") && rest.iter().any(|a| a == "--here");
             if rest.first().is_some_and(|a| a == "revive") {
                 // Only the roots `auto up` brought a team up in (HQ calls this without a cwd), one
                 // revive at a time (HQ and a boot hook can both fire it).
@@ -229,7 +232,11 @@ pub fn run(a: Args) -> Result<()> {
             } else {
                 auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", &repo, || {
                     sessions(&env, &repo).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect()
-                })
+                })?;
+                if here {
+                    down_nested(&env, &repo)?;
+                }
+                Ok(())
             }
         }
         "meet" => {
@@ -539,6 +546,17 @@ fn team_flags(extra: &[String]) -> Result<(bool, bool, Vec<String>)> {
     Ok((team || panes, panes, rest))
 }
 
+/// One team per folder tree: `up` / `on --here` in `root` first stops the team of a repo it sits in
+/// or holds (owner 2026-10-21: "vào đúng folder rồi mở ccc auto cứ bị dính ccc auto ở folder cha").
+/// A team that would not stop is an error: its rooms would run on with nothing tracking them.
+fn down_nested(env: &Env, root: &Path) -> Result<()> {
+    for n in team::nested_teams(&env.home, root) {
+        println!("{} lồng với {}: tắt team ở đó (mỗi cây thư mục một team)", n.display(), root.display());
+        auto_team(env, &n, &["down".to_string()]).with_context(|| format!("không tắt được team ở {} — chạy `8sync ccc auto down` ở đó rồi thử lại", n.display()))?;
+    }
+    Ok(())
+}
+
 /// `8sync ccc auto up|down` ([`team`]): the project's role rooms as Claude Code background sessions.
 fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -580,7 +598,13 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
             println!("đã dừng {} phòng nền: {} (hội thoại giữ nguyên; mở lại: `8sync ccc auto up`).", stopped.len(), stopped.join(", "));
         }
         omp_team::print_down(&omp_team::down(env, root)?);
-        println!("auto: TẠM DỪNG (owner). Phòng mở trong terminal không bị đóng.");
+        let st = auto::status(&env.home, subscription, now);
+        let left: Vec<&str> = st["repos"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|r| r.trim_start_matches(r"\\?\")).collect();
+        if st["on"] == true && !left.is_empty() {
+            println!("auto vẫn chạy cho: {}. Phòng mở trong terminal không bị đóng.", left.join(" + "));
+        } else {
+            println!("auto: TẠM DỪNG (owner). Phòng mở trong terminal không bị đóng.");
+        }
         return Ok(());
     }
     // `--omp-model <provider/model>` (team omp's model) is ours; team::parse sees the rest.
@@ -607,6 +631,10 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     let Some(_lock) = team::revive_lock(&env.home, now)? else {
         bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ ít phút rồi chạy lại");
     };
+    // Under the lock (no revive re-opens what this stops), before anything here starts.
+    if !args.iter().any(|a| a == "-h" || a == "--help") {
+        down_nested(env, root)?;
+    }
     let (status, gone, rows) = team::up(&t, &o, now)?;
     team::print_up(&status, &gone, &rows, o.every, subscription);
     // Team omp: `--omp`, or omp already in auto.json's teams (turned on from HQ).

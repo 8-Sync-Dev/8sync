@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.10] — 2026-10-21
+### Fixed
+- **One team per folder tree: auto in a repo no longer drags the team of the repo it sits in.** Auto's projects (`auto.json` `repos`) and `team-roots.json` accumulated: once the parent repo (8sync-startup) had been on, every plain `auto on` — HQ "Chạy liên tục" and the new per-project "Gỡ kẹt ngay" — resumed it, and revive brought its 6 old rooms back beside 3d-game's 13 (2026-10-20 16:09 UTC; the PC hit 100% RAM). Now `auto up` / `auto on --here` in a repo stops the team of any repo nested with it (parent or child; unrelated projects keep running) and takes it out of auto and revive; old state holding both keeps only the deepest repo (status, scope check, plain `on`).
+- **HQ "Gỡ kẹt ngay" acts on its project only** (`auto on --here` in that root, then revive) instead of a plain `on` for every remembered project; the route accepts `root` only with `on` and only for a project with a live room.
+- `auto down` no longer prints "auto: TẠM DỪNG" while auto still runs for another project; it names those projects.
+
 ## [0.110.9] — 2026-10-20
 ### Fixed
 - **Approved cards land without waiting on GitHub's `mergeable`.** After each merge to main GitHub recomputes the other PRs lazily (UNKNOWN for ~1 min), so 6 approved 3d-game cards waited on one merge per 2-min tick. On UNKNOWN the merge itself is tried at the reviewed head (`--match-head-commit`; a conflict is refused by GitHub and the card waits for the verdict); a background pass keeps starting cards for up to 20 s.
