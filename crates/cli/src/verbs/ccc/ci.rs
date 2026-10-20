@@ -175,6 +175,12 @@ pub(super) fn cached(home: &Path, repo: &Path, now: u64, refresh: impl FnOnce())
 pub(super) fn refresh(home: &Path, repo: &Path, now: u64, gh: &dyn Fn(&[&str]) -> Option<String>, alert: impl FnOnce(&str, &str) -> Result<()>) -> Ci {
     let ci = read(gh);
     let f = cache_file(home, repo);
+    // A reading stored after this one started is newer (`auto ci local` while a background refresh
+    // was still reading the old runs): keep it, and no alert from this stale reading.
+    if let Some(newer) = super::idle::read_json(&f).filter(|c| c["at"].as_u64().is_some_and(|a| a > now)) {
+        let _ = std::fs::remove_file(f.with_extension("lock"));
+        return newer["ci"].as_str().and_then(Ci::parse).unwrap_or(ci);
+    }
     super::idle::write_json(&f, &json!({ "schema": 1, "at": now, "ci": ci.key(), "repo": repo.to_string_lossy() }));
     let _ = std::fs::remove_file(f.with_extension("lock"));
     if ci == Ci::Billing {
@@ -245,8 +251,8 @@ fn set_actions(gh: &dyn Fn(&[&str]) -> Option<String>, on: bool) -> Result<()> {
 }
 
 /// `8sync ccc auto ci [local|github] [--json]`: switch where CI runs (optional), then read CI of the
-/// project at `root` now (and store it for `status`).
-pub(super) fn run(rest: &[String], home: &Path, root: &Path, now: u64) -> Result<()> {
+/// project at `root` now and store it under `repo`, the repo `auto status` reads ([`super::auto::ci_repo`]).
+pub(super) fn run(rest: &[String], home: &Path, root: &Path, repo: &Path, now: u64) -> Result<()> {
     let mut set = None;
     for a in rest {
         match a.as_str() {
@@ -260,7 +266,7 @@ pub(super) fn run(rest: &[String], home: &Path, root: &Path, now: u64) -> Result
     if let Some(on) = set {
         set_actions(&gh, on)?;
     }
-    let ci = refresh(home, root, now, &gh, crate::verbs::hq::alert_owner);
+    let ci = refresh(home, repo, now, &gh, crate::verbs::hq::alert_owner);
     if rest.iter().any(|a| a == "--json") {
         println!("{}", json!({ "schema": 1, "ci": ci.key(), "repo": root.to_string_lossy(), "at": now }));
     } else {
@@ -407,6 +413,13 @@ mod tests {
         let _ = refresh(&h, &other, t, &bill, |_: &str, _: &str| anyhow::bail!("HQ not configured"));
         let _ = refresh(&h, &other, t + FRESH_S, &bill, alert);
         assert_eq!(alerts.get(), 3);
+        // `auto ci local` stored its reading while an older background refresh was still reading the
+        // billing-held runs: the older one keeps the newer reading and sends no alert.
+        let third = h.join("third");
+        std::fs::write(cache_file(&h, &third), json!({ "schema": 1, "at": t + 5, "ci": "local" }).to_string()).unwrap();
+        assert_eq!(refresh(&h, &third, t, &bill, alert), Ci::Local);
+        assert_eq!(alerts.get(), 3, "no alert from the stale reading");
+        assert_eq!(cached(&h, &third, t + 6, || panic!("fresh: no refresh")), Ci::Local);
         let _ = std::fs::remove_dir_all(&h);
     }
 }

@@ -21,7 +21,7 @@ export type AutoState = {
   omp_error?: string;
   /** Public tunnel host while `8sync hq ui --public` runs, else null (server-side; the key never leaves the server). */
   remote?: { host: string | null };
-  /** GitHub CI of the project (`8sync ccc auto ci`): "ok" | "failing" | "billing" | "unknown". */
+  /** GitHub CI of the project (`8sync ccc auto ci`): "ok" | "failing" | "billing" | "local" | "unknown". */
   ci?: string;
 };
 
@@ -78,7 +78,13 @@ export function autoText(s: AutoState): string {
     const t = leaseMs(s.lease_until);
     if (s.gate) return t && t < Date.now() ? "Lease hết hạn — bấm Chạy liên tục để gia hạn" : `Đang nghỉ: ${s.gate}`;
     // GitHub stopped running jobs for the account: the owner has to fix billing; rooms already gate locally.
-    const ci = s.ci === "billing" ? " · CI dừng: GitHub billing (Settings → Billing)" : "";
+    // `local`: the owner moved CI/CD to the release machine (`8sync ccc auto ci local`).
+    const ci =
+      s.ci === "billing"
+        ? " · CI dừng: GitHub billing (Settings → Billing)"
+        : s.ci === "local"
+          ? " · CI: máy release (GitHub chỉ lưu code)"
+          : "";
     return `${t ? `Luôn chạy · lease tới ${hhmm(t)}` : "Luôn chạy"}${ci}`;
   }
   if (s.manual) return "Idle/delegate bật tay — Chạy liên tục sẽ ghi đè";

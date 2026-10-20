@@ -731,7 +731,7 @@ fn pr_gate(pr: &str, view: &str, sha: Option<&str>, main: &str) -> Result<()> {
         bail!("PR {pr} xếp chồng trên {base}: `gh pr edit {n} --base {main}`, `git merge origin/{main}` vào nhánh, {KEEP_PR} rồi chuyển lại");
     }
     match field("mergeable").as_str() {
-        "CONFLICTING" => bail!("PR {pr} conflict với {base}: `git merge origin/{base}` vào nhánh, sửa conflict (CHANGELOG: giữ cả hai mục), chạy lại check, {KEEP_PR} rồi chuyển lại"),
+        "CONFLICTING" => bail!("PR {pr} conflict với {base}: `git merge origin/{base}` vào nhánh, sửa conflict (CHANGELOG.md: giữ cả hai mục và chuyển mục của card sang `changelog.d/card-<id>.md`), chạy lại check, {KEEP_PR} rồi chuyển lại"),
         "MERGEABLE" => {}
         // Right after a push GitHub answers UNKNOWN for a while: not a conflict, no bounce.
         _ => bail!("{}", super::merge::computing(pr)),
