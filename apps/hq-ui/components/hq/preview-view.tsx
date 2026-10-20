@@ -365,7 +365,7 @@ function Viewer({
           "grid max-h-[94dvh] w-[min(96vw,1400px)] max-w-none gap-3 p-4 sm:max-w-none sm:p-5",
           ask
             ? // Phones: a bottom sheet that scrolls as one; large screens: image left, pins and composer right.
-              "grid-rows-[auto_auto_minmax(0,1fr)] max-lg:h-[94dvh] max-lg:grid-rows-none max-lg:content-start max-lg:overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:h-[96dvh] max-sm:max-h-[96dvh] max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:overscroll-contain max-sm:rounded-b-none"
+              "grid-rows-[auto_auto_minmax(0,1fr)] max-lg:h-[94dvh] max-lg:grid-rows-none max-lg:content-start max-lg:overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:h-[96dvh] max-sm:max-h-[96dvh] max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:overscroll-contain max-sm:rounded-b-none max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]"
             : "grid-rows-[auto_minmax(0,1fr)_auto]",
         )}
       >

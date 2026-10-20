@@ -74,8 +74,11 @@ export function worstLoad(m: Machine): { ram: number; gpu: number | null; worst:
   return { ram, gpu, worst: Math.max(ram, m.cpu.pct ?? 0, gpu ?? 0) };
 }
 
-/** Header chip "Máy": the busiest of RAM / CPU / GPU and the watts at a glance; a tap opens the Máy tab. */
-export function MachineChip({ m, onOpen }: { m: MachineView | null; onOpen: () => void }) {
+/**
+ * Header chip "Máy": the busiest of RAM / CPU / GPU and the watts at a glance; a tap opens the Máy tab.
+ * `compact` (phones, end of the tab row): the load over the watts, without the word, ~44 px wide.
+ */
+export function MachineChip({ m, onOpen, compact }: { m: MachineView | null; onOpen: () => void; compact?: boolean }) {
   if (!m) return null;
   const { ram, gpu, worst } = worstLoad(m);
   const l = level(worst);
@@ -84,12 +87,16 @@ export function MachineChip({ m, onOpen }: { m: MachineView | null; onOpen: () =
     <button
       type="button"
       onClick={onOpen}
-      className="flex min-h-11 items-center gap-1.5 rounded-md px-1.5 text-xs whitespace-nowrap text-muted-foreground outline-none transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:bg-muted/70 sm:min-h-8 motion-reduce:transition-none"
+      title={compact ? "Máy" : undefined}
+      className={cn(
+        "flex min-h-11 items-center rounded-md px-1.5 text-xs whitespace-nowrap text-muted-foreground outline-none transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:bg-muted/70 sm:min-h-8 motion-reduce:transition-none",
+        compact ? "min-w-11 flex-col justify-center gap-0 leading-tight" : "gap-1.5",
+      )}
       aria-label={`Máy: RAM ${ram}%, CPU ${m.cpu.pct ?? "…"}%${gpu != null ? `, GPU ${gpu}%` : ""}${w != null ? `, ${w} W` : ""}${m.power?.over ? ", vượt ngân sách điện" : ""}. Mở tab Máy`}
     >
-      <span>Máy</span>
+      {!compact && <span>Máy</span>}
       <span className={cn("text-sm font-medium tabular", text[l])}>{worst}%</span>
-      {w != null && <span className={cn("tabular", m.power?.over ? "text-destructive" : "text-foreground")}>{w} W</span>}
+      {w != null && <span className={cn("tabular", compact && "text-[11px]", m.power?.over ? "text-destructive" : "text-foreground")}>{w} W</span>}
     </button>
   );
 }

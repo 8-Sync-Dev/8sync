@@ -56,12 +56,13 @@ export function ReportView({ data: { office, error, retry }, onOpen }: { data: O
               ))}
             </dl>
 
-            <div className="overflow-x-auto rounded-lg border">
+            <div className="relative overflow-x-auto rounded-lg border">
               <table className="w-full min-w-[46rem] text-sm">
                 <caption className="sr-only">Số liệu theo phòng</caption>
                 <thead className="border-b bg-muted/50 text-xs text-muted-foreground">
                   <tr>
-                    <th scope="col" className="px-3 py-2 text-left font-medium">Phòng</th>
+                    {/* Sticky: on a phone the numbers scroll sideways under the room names (opaque mixes of the same tints). */}
+                    <th scope="col" className="sticky left-0 bg-[color-mix(in_oklch,var(--muted)_50%,var(--background))] px-3 py-2 text-left font-medium">Phòng</th>
                     <th scope="col" className="px-3 py-2 text-left font-medium">Dự án · nhánh</th>
                     <th scope="col" className="px-3 py-2 text-left font-medium">Model</th>
                     <th scope="col" className="px-3 py-2 text-right font-medium">Context</th>
@@ -76,8 +77,8 @@ export function ReportView({ data: { office, error, retry }, onOpen }: { data: O
                   {[...rooms]
                     .sort((a, b) => (b.usage?.cost_usd ?? -1) - (a.usage?.cost_usd ?? -1))
                     .map((r) => (
-                      <tr key={r.key} className="hover:bg-muted/40">
-                        <th scope="row" className="max-w-56 px-3 py-2 text-left font-medium">
+                      <tr key={r.key} className="group/row hover:bg-muted/40">
+                        <th scope="row" className="sticky left-0 max-w-56 bg-background px-3 py-2 text-left font-medium group-hover/row:bg-[color-mix(in_oklch,var(--muted)_40%,var(--background))]">
                           <button
                             type="button"
                             onClick={() => onOpen(r)}

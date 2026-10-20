@@ -56,7 +56,7 @@ export function SessionsView({
             show up once their hooks report in.
           </EmptyState>
         ) : (
-          <div className="overflow-x-auto rounded-xl border">
+          <div className="relative overflow-x-auto rounded-xl border">
             <table className="w-full min-w-[640px] text-sm">
               <caption className="sr-only">Sessions</caption>
               <thead className="text-left text-xs text-muted-foreground">
@@ -260,7 +260,8 @@ function StartSession({
           <label htmlFor={inputId} className="block text-xs font-medium text-muted-foreground">
             Session name
           </label>
-          <div className="flex h-7 items-center rounded-md border border-input bg-transparent font-mono text-[13px] focus-within:ring-2 focus-within:ring-ring/50 dark:bg-input/30">
+          {/* Phones: 16 px so iOS does not zoom on focus. */}
+          <div className="flex h-7 items-center rounded-md border border-input bg-transparent font-mono text-[13px] focus-within:ring-2 focus-within:ring-ring/50 max-sm:h-11 max-sm:text-base dark:bg-input/30">
             <span className="pl-2 text-muted-foreground select-none">hq-</span>
             <input
               id={inputId}

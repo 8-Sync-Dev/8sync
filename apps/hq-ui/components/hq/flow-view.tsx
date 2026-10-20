@@ -28,6 +28,7 @@ const colIndex = (k: Col) => COLS.indexOf(k);
 /** Centre of a column in the track's 0..800 viewBox (100 per column). */
 const X = (k: Col) => colIndex(k) * 100 + 50;
 const GRID = "grid grid-cols-[minmax(12rem,16rem)_repeat(8,minmax(5.25rem,1fr))]";
+const STICKY = "sticky left-0 z-[3] self-stretch justify-center bg-background group-hover/row:bg-[color-mix(in_oklch,var(--muted)_40%,var(--background))]";
 const ROW_H = 44;
 const MID = ROW_H / 2;
 
@@ -105,11 +106,11 @@ export function FlowView({ state, loops }: { state: BoardsState; loops: LoopsSta
             <ErrorNote what={`board của ${cur.name}`} error={cur.error} onRetry={reload} />
           </div>
         ) : (
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div className="relative min-h-0 flex-1 overflow-auto">
             <div className="min-w-[57rem] px-4 pb-6 sm:px-6">
               {/* "Đang ở đâu": the column heads are the live summary, so a row's dots line up under them. */}
               <div className={cn(GRID, "sticky top-0 z-10 border-b bg-background pt-3 pb-2")} role="group" aria-label="Đang ở đâu">
-                <div className="self-end pr-3 pb-0.5 text-xs font-medium text-muted-foreground">Đang ở đâu</div>
+                <div className="sticky left-0 z-[3] self-end bg-background pr-3 pb-0.5 text-xs font-medium text-muted-foreground">Đang ở đâu</div>
                 {COLS.map((k) =>
                   k === "done" ? (
                     <DoneHead key={k} n={cur?.board ? cur.board.closed.length : null} done={cur?.board?.closed.filter((c) => c.state === "done").length ?? 0} />
@@ -266,17 +267,18 @@ function FlowRowItem({ r, now, onOpen }: { r: FlowRow; now: number; onOpen?: (r:
   );
   return (
     <li className={cn(GRID, "group/row items-center hover:bg-muted/40")}>
+      {/* Sticky: on a phone the lanes scroll sideways under the card names. The opaque mix matches the row's hover tint. */}
       {clickable ? (
         <button
           type="button"
           onClick={() => onOpen!(r)}
           aria-haspopup="dialog"
-          className="flex min-w-0 flex-col gap-0.5 rounded-md py-1.5 pr-3 pl-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          className={cn("flex min-w-0 flex-col gap-0.5 rounded-md py-1.5 pr-3 pl-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60", STICKY)}
         >
           {label}
         </button>
       ) : (
-        <div className="flex min-w-0 flex-col gap-0.5 py-1.5 pr-3 pl-1">{label}</div>
+        <div className={cn("flex min-w-0 flex-col gap-0.5 py-1.5 pr-3 pl-1", STICKY)}>{label}</div>
       )}
       <Track r={r} now={now} />
     </li>
