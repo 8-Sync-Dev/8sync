@@ -212,17 +212,10 @@ pub fn run(a: Args) -> Result<()> {
                 adopt_here(&cwd, true);
             }
             let repo = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
-            // One team per folder tree: `up` / `on --here` here stops the team of a repo this one
-            // sits in or holds (owner 2026-10-21: "vào đúng folder rồi mở ccc auto cứ bị dính ccc
-            // auto ở folder cha").
-            let here = rest.first().is_some_and(|a| a == "up") || rest.first().is_some_and(|a| a == "on") && rest.iter().any(|a| a == "--here");
-            if here && !rest.iter().any(|a| a == "-h" || a == "--help") {
-                for n in team::nested_teams(&env.home, &repo) {
-                    println!("{} lồng với {}: tắt team ở đó trước (mỗi cây thư mục một team)", n.display(), repo.display());
-                    if let Err(e) = auto_team(&env, &n, &["down".to_string()]) {
-                        eprintln!("{}: {e:#}", n.display());
-                    }
-                }
+            // `up` does it after its own argument check (auto_team).
+            let here = rest.first().is_some_and(|a| a == "on") && rest.iter().any(|a| a == "--here") && !rest.iter().any(|a| matches!(a.as_str(), "--all" | "-h" | "--help"));
+            if here {
+                down_nested(&env, &repo);
             }
             if rest.first().is_some_and(|a| a == "revive") {
                 // Only the roots `auto up` brought a team up in (HQ calls this without a cwd), one
@@ -551,6 +544,17 @@ fn team_flags(extra: &[String]) -> Result<(bool, bool, Vec<String>)> {
     Ok((team || panes, panes, rest))
 }
 
+/// One team per folder tree: `up` / `on --here` in `root` first stops the team of a repo it sits in
+/// or holds (owner 2026-10-21: "vào đúng folder rồi mở ccc auto cứ bị dính ccc auto ở folder cha").
+fn down_nested(env: &Env, root: &Path) {
+    for n in team::nested_teams(&env.home, root) {
+        println!("{} lồng với {}: tắt team ở đó trước (mỗi cây thư mục một team)", n.display(), root.display());
+        if let Err(e) = auto_team(env, &n, &["down".to_string()]) {
+            eprintln!("{}: {e:#}", n.display());
+        }
+    }
+}
+
 /// `8sync ccc auto up|down` ([`team`]): the project's role rooms as Claude Code background sessions.
 fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -615,6 +619,7 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     if team_model.is_some() && !o.omp {
         bail!("--omp-model đi cùng --omp\n{}", team::USAGE);
     }
+    down_nested(env, root);
     // `--omp` = `auto omp on` first, so `up`'s auto on keeps it in `teams`; refused only for omp.
     let blocked = if o.omp {
         auto::omp_on(&env.home, team_model.as_deref(), now).err().map(|e| e.to_string())
