@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.2] — 2026-10-20
+### Fixed
+- **A renewed lease brings the team back to work, not to a 30-minute cron.** A lane room's `/goal` ends when the lease gate shows, and nothing gave it back: on 3d-game after the owner pressed "Chạy liên tục" the rooms took a turn only when their backup cron fired (the lead sat idle 28 min, then three approved cards waited for it). `auto revive` (HQ calls it every 2 min while a tab is open, and on "Chạy liên tục") now stops a lane room that stays idle in the background (checked twice, 20 s apart) and resumes the same conversation with its goal; `auto up` does the same for idle lane rooms instead of sending a one-turn loop prompt. Busy rooms, rooms waiting on a prompt, interactive sessions and rooms without a transcript are left alone.
+
 ## [0.110.1] — 2026-10-20
 ### Fixed
 - **Guard: a room may clean its own Claude Code scratch dir `~/.claude/jobs/<id>/tmp/<…>` without asking.** 3d-game, 18:55–19:31: the qa room exported each PR head there with `rm -rf … && mkdir -p … && git archive …`, the guard asked ("deletes outside the project"), and a background room cannot answer: qa sat 35 min on the prompt while five cards waited in qa. The `tmp` dir itself, the job dir and `~/.claude/jobs` still ask.

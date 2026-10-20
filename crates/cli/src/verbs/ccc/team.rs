@@ -431,11 +431,13 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
         // conversation, its goal comes back). Interactive sessions are never touched.
         let mut reloaded = false;
         if let Plan::Running(id) = &p {
-            let on_old_kit = o.clear
-                && t.kit_at.is_some_and(|k| before.iter().chain(&everywhere).find(|l| l.id == *id).is_some_and(|l| l.background && !l.busy && l.started > 0 && l.started < k))
-                // Resume needs the conversation on disk; a room mid-turn is left for the next run.
-                && (t.has_transcript)(id);
-            if on_old_kit {
+            let bg_idle = before.iter().chain(&everywhere).find(|l| l.id == *id).filter(|l| l.background && !l.busy);
+            let on_old_kit = o.clear && t.kit_at.is_some_and(|k| bg_idle.is_some_and(|l| l.started > 0 && l.started < k));
+            // A lane room idle in the background has lost its `/goal` ([`lost_goal`]): a loop prompt
+            // would give it one turn, the goal keeps it claiming.
+            let goal_gone = bg_idle.is_some_and(|l| lost_goal(r.and_then(|r| r.lane), l));
+            // Resume needs the conversation on disk; a room mid-turn is left for the next run.
+            if (on_old_kit || goal_gone) && (t.has_transcript)(id) {
                 if *id != s.conversation_id {
                     t.store.rebind(name, id)?;
                 }
@@ -468,7 +470,7 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
                 // `--resume <id> --bg` forks a new session id too (seen live on 2.1.296: cd1ecaeb →
                 // b1f0bf3e), so both get the registry pointed at what Claude Code runs.
                 started.push((name.clone(), short.clone()));
-                let state = if reloaded { "khởi động lại nền (nạp kit mới)" } else if p == Plan::Resume { "chạy lại nền" } else { "mở nền" };
+                let state = if reloaded { "khởi động lại nền (nạp kit mới, chạy lại /goal)" } else if p == Plan::Resume { "chạy lại nền" } else { "mở nền" };
                 (state.to_string(), short)
             }
         };
@@ -496,6 +498,19 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     Ok((status, gone, rows))
 }
 
+/// A lane room on its `/goal` is never idle: between cards it blocks in `auto wait`. Idle in the
+/// background means the goal ended, which it does when the lease gate shows (its stop condition),
+/// and a renewed lease does not bring it back: 3d-game 2026-10-20, rooms re-armed after the lease
+/// worked only when their 30-minute backup cron fired (the lead sat 28 min with nothing to do,
+/// then approved cards waited for it).
+fn lost_goal(lane: Option<&str>, l: &Live) -> bool {
+    lane.is_some() && l.background && !l.busy
+}
+
+/// How long a lane room must stay idle before `revive` resumes it with its goal: a room between two
+/// turns of its goal shows idle for a moment.
+const IDLE_CONFIRM: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// `auto revive`: bring back this project's team rooms whose background session died (machine
 /// restarted, process killed) while auto still runs here. Owner (2026-10-19): "tắt máy chứ chưa tắt
 /// ccc auto … mở máy lên hiển thị đang làm nhưng mà lại không có làm". A room counts when it is a
@@ -503,7 +518,8 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
 /// live, nothing live carries its title, and Claude Code still has the conversation. It resumes the
 /// same way `up` does (same prompt, registry rebound), but never renews the lease, never starts a
 /// room that never ran, and does nothing while auto is off, paused, out of scope or gated (on a
-/// subscription the owner-present lease; usage window; `$`/hour cap).
+/// subscription the owner-present lease; usage window; `$`/hour cap). A live lane room that stays
+/// idle ([`lost_goal`], checked twice [`IDLE_CONFIRM`] apart) is stopped and resumed with its goal.
 pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let root = t.root.to_string_lossy();
     if !auto::running(t.home) || !auto::in_scope(t.home, Some(&root)) || !auto::status(t.home, t.subscription, now)["gate"].is_null() {
@@ -514,17 +530,37 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     // A room's id live anywhere on the machine (a terminal in another folder) is never resumed a
     // second time, as in `up`.
     let everywhere = live(&t.claude.run(&["agents".into(), "--json".into()])?)?;
+    let sessions = t.store.load().sessions;
+    let idle_ids = |run: &[Live]| -> Vec<String> {
+        sessions
+            .iter()
+            .filter(|s| run.iter().any(|l| l.id == s.conversation_id && lost_goal(room::find(&s.name).and_then(|r| r.lane), l)))
+            .map(|s| s.conversation_id.clone())
+            .collect()
+    };
+    let mut stalled = idle_ids(&running);
+    if !stalled.is_empty() {
+        if !cfg!(test) {
+            std::thread::sleep(IDLE_CONFIRM);
+        }
+        let again = idle_ids(&agents(t, false)?);
+        stalled.retain(|id| again.contains(id));
+    }
     let mut rows = Vec::new();
     let mut started = Vec::new();
     let settings = room_settings(t.home)?;
-    for s in t.store.load().sessions {
+    for s in sessions {
         let Some(r) = room::find(&s.name) else { continue };
         let title = (t.title)(&s.name);
         let died = all.iter().any(|l| l.id == s.conversation_id && l.background)
             && !running.iter().any(|l| l.id == s.conversation_id || l.name == title)
             && !everywhere.iter().any(|l| l.id == s.conversation_id);
-        if !died || !(t.has_transcript)(&s.conversation_id) {
+        let idle = stalled.contains(&s.conversation_id);
+        if !(died || idle) || !(t.has_transcript)(&s.conversation_id) {
             continue;
+        }
+        if idle {
+            t.claude.run(&["stop".into(), s.conversation_id.chars().take(8).collect()])?;
         }
         let prompt = match r.lane {
             Some(lane) => goal_prompt(&s.name, lane, every),
@@ -536,7 +572,8 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             continue;
         };
         started.push((s.name.clone(), short.clone()));
-        rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: "chạy lại nền (phiên cũ đã chết)".into(), short });
+        let state = if idle { "chạy lại /goal (phòng đứng không việc)" } else { "chạy lại nền (phiên cũ đã chết)" };
+        rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: state.into(), short });
     }
     // Same as `up`: point the registry at the forked ids (the list can lag a moment).
     for attempt in 0..5 {
@@ -875,13 +912,16 @@ mod tests {
         assert!(rows[1].state.starts_with("khởi động lại nền"), "{:?}", rows[1]);
         assert!(rows[0].state.starts_with("đang chạy"));
         assert_eq!(store.load().sessions.iter().find(|s| s.name == "dev").unwrap().conversation_id, "5a5a5a5a-0000-4000-8000-000000000009", "registry follows the fork");
-        // Without --clear-ss a running room is left alone, old kit or not.
+        // Without --clear-ss an idle background lane room is resumed too: idle means its /goal ended
+        // (3d-game 2026-10-20, rooms re-armed after the lease ran only on their 30-min cron).
         drop(calls);
         fake.calls.borrow_mut().clear();
         *fake.agents.borrow_mut() = vec![format!("[{l},{forked}]")];
         let o2 = Opts { clear: false, ..o.clone() };
         up(&t, &o2, 2).unwrap();
-        assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop"));
+        let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
+        assert_eq!(stops, ["5a5a5a5a"], "the idle dev room; the owner's interactive lead is never touched");
+        fake.calls.borrow_mut().clear();
         // Review 2026-10-18: a room mid-turn, or one whose transcript is gone, is never stopped to reload.
         let busy = agent("5a5a5a5a-0000-4000-8000-000000000009", "dev", "background").replace("\"idle\"", "\"running\"");
         *fake.agents.borrow_mut() = vec![format!("[{l},{busy}]")];
@@ -935,11 +975,28 @@ mod tests {
         assert_eq!(store.load().sessions.iter().find(|s| s.name == "qa").unwrap().conversation_id, forked, "registry follows the fork");
         drop(calls);
 
-        // Once it runs again a second pass does nothing; and nothing while paused or out of scope.
+        // Once it runs again (busy: on its goal) a second pass does nothing; and nothing while paused or out of scope.
         fake.calls.borrow_mut().clear();
-        let running = format!("[{},{}]", agent(reopened, "lead", "background"), agent(forked, "qa", "background"));
-        *fake.agents.borrow_mut() = vec![all.replace(&qa.conversation_id, forked), running, everywhere];
+        let running = format!("[{},{}]", agent(reopened, "lead", "background"), agent(forked, "qa", "background").replace("\"idle\"", "\"running\""));
+        *fake.agents.borrow_mut() = vec![all.replace(&qa.conversation_id, forked), running, everywhere.clone()];
         assert!(revive(&t, 10, 3).unwrap().is_empty());
+        // Live but idle: its goal ended with the last lease. Busy again on the second look (between
+        // two goal turns) → left alone; still idle → stopped and resumed with its goal.
+        let idle_qa = format!("[{},{}]", agent(reopened, "lead", "background"), agent(forked, "qa", "background"));
+        let busy_qa = format!("[{},{}]", agent(reopened, "lead", "background"), agent(forked, "qa", "background").replace("\"idle\"", "\"running\""));
+        fake.calls.borrow_mut().clear();
+        *fake.agents.borrow_mut() = vec![all.replace(&qa.conversation_id, forked), idle_qa.clone(), everywhere.clone(), busy_qa];
+        assert!(revive(&t, 10, 3).unwrap().is_empty(), "busy again on the second look");
+        assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop"));
+        *fake.agents.borrow_mut() = vec![all.replace(&qa.conversation_id, forked), idle_qa.clone(), everywhere.clone(), idle_qa];
+        let rows = revive(&t, 10, 3).unwrap();
+        assert_eq!(rows.iter().map(|r| (r.name.as_str(), r.state.as_str())).collect::<Vec<_>>(), [("qa", "chạy lại /goal (phòng đứng không việc)")]);
+        let calls = fake.calls.borrow();
+        assert!(calls.iter().any(|c| c[..] == ["stop".to_string(), forked[..8].to_string()]), "{calls:?}");
+        let bg: Vec<_> = calls.iter().filter(|c| c.iter().any(|a| a == "--bg")).collect();
+        assert_eq!(&bg[0][..2], ["--resume", forked]);
+        assert!(bg[0].iter().any(|a| a.starts_with("/goal")), "resumed with its goal: {:?}", bg[0]);
+        drop(calls);
         auto::mark_paused(&h, 4).unwrap();
         *fake.agents.borrow_mut() = vec![all, live];
         fake.calls.borrow_mut().clear();
