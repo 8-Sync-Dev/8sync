@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.4: HQ "▶ Chơi thử" (build origin/main outside the repo, serve dist under /api/play/<key>/, in-app viewer + 12 h signed "Copy link demo"), "⚡ Sấm Sét" button (`auto up --roles boost --hours 2` via /api/team), official 8 Sync mark + ZUS neon palette, first-load JS 2.48 → 1.74 MB.
 v0.110.3: lead refills `ready` (below 4 → split idea handed back every 15 min; dry backlog → R&D ideas), `--roles boost` (9 rooms, 5 builders + qa/qa2, per-room QA worktree), HQ Board epic line "N card con đang chạy". Next: HQ "⚡ Sấm Sét" button (worktree su-code-boost, agent HqBoost), HQ Play (su-code-play, HqPlay), brand/neon (su-code-brand, HqBrand).
 v0.110.2: `auto revive` (HQ, every 2 min) and `auto up` resume idle lane rooms with their `/goal` (goal ends at lease expiry; rooms then ran only on the 30-min cron).
 v0.110.1: HQ mobile layout (no sideways page scroll at 360/390/768, lane switcher on Board, tab strip fade, 44 px targets) + guard lets rooms clean `~/.claude/jobs/<id>/tmp/<…>`. 3d-game 19:00: rooms re-armed with `auto up` (+dev3); qa was the bottleneck (35 min on a guard prompt, 5 cards queued).

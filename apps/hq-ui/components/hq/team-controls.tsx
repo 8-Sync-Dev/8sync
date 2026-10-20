@@ -1,27 +1,43 @@
 "use client";
 
-import { PlayIcon, SquareIcon, SparklesIcon, UsersIcon } from "lucide-react";
+import { PlayIcon, SquareIcon, SparklesIcon, UsersIcon, ZapIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 import { makeApi } from "./use-hq";
 
-type Action = "up" | "full" | "clean" | "down";
+type Action = "up" | "full" | "boost" | "clean" | "down";
 type Result = { ok: boolean; output: string; error: string | null };
 
 const DONE: Record<Action, string> = {
   up: "Đã mở team",
   full: "Đã mở team đầy đủ",
+  boost: "Đã bật Sấm Sét",
   clean: "Đã dọn session rác, nạp bản mới và mở team",
   down: "Đã dừng team",
 };
 const OPENING: Record<Action, string> = {
   up: "lead, dev, qa, review, rd",
   full: "6 phòng: lead, dev, dev2, ui, qa, review",
+  boost: "Sấm Sét, 9 phòng mở lần lượt, có thể mất tới 7 phút",
   clean: "dọn rác, khởi động lại phòng chạy bản cũ",
   down: "",
 };
+
+/** What the confirm dialog of Sấm Sét says, in one sentence (also the button's tooltip). */
+const BOOST_COST = "9 phòng chạy song song: lead, 5 builder (dev, dev2, dev3, dev4, ui), 2 QA (qa, qa2) và review; tốn quota khoảng 9 lần một phiên, lease 2 giờ.";
+
+/**
+ * The project's live team is already the boost team: 9+ rooms that include the rooms only boost opens
+ * (qa2, dev4). Any name token counts: `auto up` titles a clashing room `<name>-<repo>`, HQ rooms are `hq-<repo>-<name>`.
+ */
+export function boostOn(rooms: { name: string; label: string; status: string }[]): boolean {
+  const live = rooms.filter((r) => r.status !== "ended");
+  const tokens = new Set(live.flatMap((r) => `${r.label} ${r.name}`.toLowerCase().split(/[^\p{L}\p{N}]+/u)));
+  return live.length >= 9 && tokens.has("qa2") && tokens.has("dev4");
+}
 
 /** POST /api/team and say what happened; `after` refreshes the office and the board. */
 function useTeam(token: string, after?: () => void) {
@@ -31,7 +47,9 @@ function useTeam(token: string, after?: () => void) {
     const wait = toast.loading(action === "down" ? `Đang dừng team ${name}…` : `Đang mở team ${name} (${OPENING[action]})…`);
     try {
       const r = await makeApi(token)<Result>("/api/team", { method: "POST", body: { root, action } });
-      toast.success(`${DONE[action]}: ${name}`, { id: wait, description: <pre className="mt-1 max-h-48 overflow-auto text-[11px] leading-snug whitespace-pre-wrap">{r.output}</pre> });
+      // Boost: the CLI's own summary (its last line); the other actions show the whole report.
+      const description = action === "boost" ? r.output.split("\n").at(-1) : <pre className="mt-1 max-h-48 overflow-auto text-[11px] leading-snug whitespace-pre-wrap">{r.output}</pre>;
+      toast.success(`${DONE[action]}: ${name}`, { id: wait, description });
     } catch (e) {
       toast.error(`Không ${action === "down" ? "dừng" : "mở"} được team ${name}`, { id: wait, description: (e as Error).message });
     } finally {
@@ -42,12 +60,65 @@ function useTeam(token: string, after?: () => void) {
   return { busy, act };
 }
 
-/** Header buttons of a project that already has rooms: resume / clean and reopen / stop. */
-export function TeamControls({ root, name, token, after }: { root: string; name: string; token: string; after?: () => void }) {
+/**
+ * "⚡ Sấm Sét": the 9-room boost team of one project (`auto up --roles boost --hours 2`). Off: asks first
+ * (the quota cost). On (`active`, see boostOn): the click renews the 2-hour lease with the same command.
+ */
+export function BoostButton({ root, name, token, active, after, className }: { root: string; name: string; token: string; active: boolean; after?: () => void; className?: string }) {
+  const { busy, act } = useTeam(token, after);
+  const [ask, setAsk] = useState(false);
+  return (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={busy != null}
+        aria-busy={busy != null}
+        onClick={() => (active ? void act(root, name, "boost") : setAsk(true))}
+        title={active ? "Team đang chạy 9 phòng. Bấm để gia hạn lease thêm 2 giờ (auto up --roles boost --hours 2)" : `${BOOST_COST} (auto up --roles boost --hours 2)`}
+        className={cn(
+          "font-semibold",
+          active && "border-brand-ink/40 bg-brand/25 text-brand-ink hover:bg-brand/40 hover:text-brand-ink dark:border-brand/40 dark:bg-brand/15 dark:text-brand",
+          className,
+        )}
+      >
+        <ZapIcon aria-hidden className={cn(!active && "text-brand-ink dark:text-brand", busy != null && "motion-safe:animate-pulse")} />
+        {busy != null ? "Đang bật…" : active ? "Đang Sấm Sét" : "Sấm Sét"}
+      </Button>
+      <Dialog open={ask} onOpenChange={setAsk}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Bật Sấm Sét cho {name}?</DialogTitle>
+            <DialogDescription>{BOOST_COST}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setAsk(false)}>
+              Thôi
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setAsk(false);
+                void act(root, name, "boost");
+              }}
+            >
+              <ZapIcon aria-hidden /> Mở 9 phòng
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/** Header buttons of a project that already has rooms: boost / resume / clean and reopen / stop. */
+export function TeamControls({ root, name, token, boost = false, after }: { root: string; name: string; token: string; boost?: boolean; after?: () => void }) {
   const { busy, act } = useTeam(token, after);
   const [ask, setAsk] = useState<Action | null>(null);
   return (
-    <div className="flex shrink-0 items-center gap-1.5">
+    <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+      <BoostButton root={root} name={name} token={token} active={boost} after={after} />
       <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(root, name, "up")} title="Mở phòng còn thiếu, nối lại phòng đã dừng (8sync ccc auto up)">
         <PlayIcon aria-hidden /> Mở lại team
       </Button>

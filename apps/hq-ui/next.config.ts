@@ -8,6 +8,12 @@ export const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
 ];
 
+/** "Chơi thử" files (app/api/play/[key]): framed by HQ's own page only. A later entry overrides an earlier one for the same key. */
+export const playFrameHeaders = [
+  { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+];
+
 const nextConfig: NextConfig = {
   // Self-contained server.js + traced node_modules: shipped as the hq-ui release asset (scripts/package-hq-ui.sh).
   output: "standalone",
@@ -24,7 +30,10 @@ const nextConfig: NextConfig = {
     },
   },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      { source: "/api/play/:key/:path+", headers: playFrameHeaders },
+    ];
   },
 };
 

@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
 import { LANE_VI, TONE_INK, laneTone } from "./card-sheet";
 import { AskImage } from "./ask-image";
+import { PlayButton } from "./play-view";
 import { makeApi, type Api } from "./use-hq";
 import type { Room } from "./use-office";
 import { useAuthedImage, useNearView } from "./use-poll";
@@ -102,9 +103,12 @@ export function PreviewView({
             {cur.items[0] && ` · mới nhất ${agoVi(cur.items[0].mtime, now)}`}
           </span>
         )}
-        <Button type="button" variant="ghost" size="icon-sm" className="ml-auto" onClick={state.reload} aria-label="Tải lại ảnh">
-          <RefreshCwIcon />
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          {cur && <PlayButton key={cur.root} root={cur.root} name={cur.name} token={token} />}
+          <Button type="button" variant="ghost" size="icon-sm" onClick={state.reload} aria-label="Tải lại ảnh">
+            <RefreshCwIcon />
+          </Button>
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">

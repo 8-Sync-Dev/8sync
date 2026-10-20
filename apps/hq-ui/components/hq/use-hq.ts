@@ -122,11 +122,13 @@ export function useHq(token: string) {
     });
   }, []);
 
-  // Initial loads, then the session list every 10 s (channel beats age out).
+  // Initial loads, then the session list every 10 s (channel beats age out) while the tab is visible.
   useEffect(() => {
     // Async loaders set state after their fetch resolves, not synchronously.
     void Promise.all([loadProjects(), loadSessions(), loadTasks(), loadMessages()]);
-    const t = setInterval(loadSessions, 10_000);
+    const t = setInterval(() => {
+      if (!document.hidden) void loadSessions();
+    }, 10_000);
     return () => clearInterval(t);
   }, [loadProjects, loadSessions, loadTasks, loadMessages]);
 

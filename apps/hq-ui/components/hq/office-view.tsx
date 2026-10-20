@@ -25,7 +25,7 @@ import { RoleIcon } from "./role-badge";
 import { SpriteCanvas, WalkerCanvas } from "./sprite-canvas";
 import type { BoardsState } from "./use-board";
 import { AskPanel, type AskRoom } from "./ask-panel";
-import { TeamControls, TeamStarter } from "./team-controls";
+import { boostOn, TeamControls, TeamStarter } from "./team-controls";
 import { useAuto, type Office, type OfficeState, type Room } from "./use-office";
 
 /*
@@ -563,7 +563,7 @@ export function OfficeView({
                         ))}
                         <span className="text-xs text-muted-foreground tabular">{g.rooms.length} phòng</span>
                         <span className="ml-auto">
-                          <TeamControls root={g.project.root} name={g.project.name} token={token} after={refresh} />
+                          <TeamControls root={g.project.root} name={g.project.name} token={token} boost={boostOn(g.rooms)} after={refresh} />
                         </span>
                       </header>
                       {meeting && <MeetingRoom attendees={meeting.attendees} rooms={g.rooms} until={meeting.until} now={now} />}

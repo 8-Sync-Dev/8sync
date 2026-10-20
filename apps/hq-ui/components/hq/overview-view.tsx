@@ -16,10 +16,12 @@ import { cn } from "@/lib/utils";
 import { AskPanel, type AskRoom } from "./ask-panel";
 import { EmptyState, ErrorNote, shortName } from "./bits";
 import { LANE_VI, TONE_INK, laneTone } from "./card-sheet";
+import { PlayButton } from "./play-view";
 import { PreviewImage } from "./preview-view";
 import { StateTag, type RosterRow } from "./now-roster";
 import { RoleIcon } from "./role-badge";
 import type { Message } from "./types";
+import { BoostButton, boostOn } from "./team-controls";
 import type { BoardsState } from "./use-board";
 import type { OfficeState, Room } from "./use-office";
 import type { PreviewState } from "./preview-view";
@@ -213,6 +215,10 @@ function ProjectBlock({
           </span>
         ))}
         <span className="text-xs text-muted-foreground tabular">{rows.length ? rosterSummary(rows) : `${rooms.length} phòng`}</span>
+        <span className="ml-auto flex flex-wrap items-center gap-2 self-center">
+          <PlayButton root={root} name={name} token={token} />
+          <BoostButton root={root} name={name} token={token} active={boostOn(rooms)} />
+        </span>
       </header>
       {/* Hairlines between panels: each panel draws its right and bottom edge, the outer ones are clipped. */}
       <div className="overflow-hidden rounded-b-xl">
