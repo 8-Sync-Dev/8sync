@@ -514,6 +514,8 @@ const IDLE_CONFIRM_S: u64 = 60;
 /// A room resumed with its goal less than this long ago is left idle (a goal that keeps ending,
 /// e.g. Claude Code's own usage limit before 8sync's gate, would otherwise fork it every 2 min).
 const REGOAL_BACKOFF_S: u64 = 600;
+/// The previous idle sighting counts only this long (a bit over two HQ revive intervals).
+const IDLE_STALE_S: u64 = 300;
 
 /// Messages queued for `sid` and not taken yet: the inbox mod hands them to an idle room by itself,
 /// and a resume forks a new id that would never read this file.
@@ -553,20 +555,25 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
         let lane = room::find(&s.name).and_then(|r| r.lane);
         let key = format!("{root}|{}", s.name);
         let idle = running.iter().any(|l| l.id == s.conversation_id && lost_goal(lane, l));
-        let e = &mut seen[&key];
         if !idle {
-            if let Some(o) = e.as_object_mut() {
+            if let Some(o) = seen.get_mut(&key).and_then(Value::as_object_mut) {
                 o.remove("seen");
             }
             continue;
         }
+        let e = &mut seen[&key];
         if e["revived"].as_u64().is_some_and(|r| now.saturating_sub(r) < REGOAL_BACKOFF_S) {
             continue;
         }
-        match e["seen"].as_u64() {
-            None => e["seen"] = json!(now),
-            Some(at) if now.saturating_sub(at) >= IDLE_CONFIRM_S && !pending_inbox(t.home, &s.conversation_id) => stalled.push(s.conversation_id.clone()),
-            Some(_) => {}
+        // A sighting older than IDLE_STALE_S (HQ closed, lease gap) says nothing about now: count again.
+        match e["seen"].as_u64().map(|at| now.saturating_sub(at)) {
+            Some(age) if age < IDLE_CONFIRM_S => {}
+            Some(age) if age <= IDLE_STALE_S => {
+                if !pending_inbox(t.home, &s.conversation_id) {
+                    stalled.push(s.conversation_id.clone());
+                }
+            }
+            _ => e["seen"] = json!(now),
         }
     }
     let mut rows = Vec::new();
@@ -1037,6 +1044,10 @@ mod tests {
         assert!(bg[0].iter().any(|a| a.starts_with("/goal")), "resumed with its goal: {:?}", bg[0]);
         drop(calls);
         assert!(pass(100, Some(&idle_qa)).is_empty() && !stopped(), "resumed 10 s ago: backed off");
+        // After the backoff: a first sighting again; one far older than IDLE_STALE_S restarts the count.
+        assert!(pass(700, Some(&idle_qa)).is_empty() && !stopped(), "first sighting after the backoff");
+        assert!(pass(1100, Some(&idle_qa)).is_empty() && !stopped(), "400 s old sighting: stale, counted again");
+        assert_eq!(pass(1170, Some(&idle_qa)).len(), 1, "70 s after a fresh sighting: resumed");
         auto::mark_paused(&h, 4).unwrap();
         *fake.agents.borrow_mut() = vec![all, live];
         fake.calls.borrow_mut().clear();
