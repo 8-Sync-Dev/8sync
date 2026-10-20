@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Card } from "@/lib/lanes";
 import { cardMoves, type Move } from "@/lib/now";
 import type { ProjectBoard } from "@/lib/server/board";
 import type { Hq } from "./use-hq";
@@ -66,8 +67,24 @@ export function useBoards(api: Hq["api"]) {
     },
     [api],
   );
+  /** The card's force button, then a fresh poll. Throws the CLI's error. */
+  const force = useCallback(
+    async (root: string, c: Pick<Card, "id" | "lane">) => {
+      await forceCall(api, root, c);
+      setNonce((n) => n + 1);
+    },
+    [api],
+  );
 
-  return { boards, error, moves, at, setPrio, reload: useCallback(() => setNonce((n) => n + 1), []) };
+  return { boards, error, moves, at, setPrio, force, reload: useCallback(() => setNonce((n) => n + 1), []) };
 }
 
 export type BoardsState = ReturnType<typeof useBoards>;
+
+/**
+ * The card's force button (card-sheet forceKind) as one API call: a Blocked card is unblocked
+ * (POST /api/board/unblock: Backlog + the owner's note, then P0), a waiting one goes to P0.
+ */
+export function forceCall(api: Hq["api"], root: string, c: Pick<Card, "id" | "lane">): Promise<unknown> {
+  return c.lane === "blocked" ? api("/api/board/unblock", { method: "POST", body: { root, id: c.id } }) : api("/api/board/prio", { method: "POST", body: { root, id: c.id, prio: 0 } });
+}

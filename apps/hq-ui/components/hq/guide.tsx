@@ -33,14 +33,14 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Thêm thư mục ở \"Mở team ở repo mới\" bên trái (dự án đã có phòng tự hiện), rồi bấm \"Mở team\": 5 phòng nền chạy liên tục. " +
       "lead và rd dùng Opus (claude-opus-5-5) để chia việc, nghiên cứu; dev và review dùng Sonnet (claude-sonnet-5-5) để code, duyệt; qa dùng Haiku (claude-haiku-5-5) để kiểm nhanh. " +
       "\"Team đầy đủ\" mở 6 phòng, 3 phòng code (lead, dev, dev2, ui, qa, review), tốn quota gần gấp 6 lần một phòng. " +
-      "\"Sấm Sét\" (đầu dự án ở Tổng quan và Văn phòng) mở 9 phòng: 5 builder, 2 QA, lease 2 giờ, tốn quota khoảng 9 lần; đang chạy thì bấm lại để gia hạn. Phòng ba, arch, rd chỉ mở khi cần (`--roles`).",
+      "\"Sấm Sét\" (đầu dự án ở Tổng quan và Văn phòng) mở 13 phòng: lead + ba, 7 builder, 2 QA, 2 review, lease 2 giờ, tốn quota khoảng 13 lần; đang chạy thì bấm lại để gia hạn. Phòng arch, rd chỉ mở khi cần (`--roles`).",
   },
   {
     icon: SendIcon,
     title: "Giao việc",
     body:
       "Bấm \"Giao việc\" hoặc gõ vào ô \"Gửi cho mọi phòng\": việc thành card trên Board. lead viết tiêu chí và lệnh kiểm, dev làm trên nhánh card-<số>, qa kiểm, review duyệt. " +
-      "Việc gấp: mở card, chọn P0 (phòng nhận trước mọi card khác).",
+      "Việc gấp: bấm \"⚡ Làm ngay\" trên card Backlog/Ready (P0, lead nhận ngay); card Blocked có \"⚡ Gỡ block ngay\".",
   },
   {
     icon: TerminalIcon,

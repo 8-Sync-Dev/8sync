@@ -7,7 +7,7 @@ export type TeamAction = "up" | "full" | "boost" | "clean" | "down";
 
 /**
  * `up` opens or resumes the 5-room team; `full` the 6-room builder-heavy team (`--roles full`); `boost`
- * (HQ "Sấm Sét") the 9-room team with a 2-hour lease (renews it when already running); `clean` first
+ * (HQ "Sấm Sét") the 13-room team with a 2-hour lease (renews it when already running); `clean` first
  * deletes the background sessions no room keeps and restarts rooms that run an older kit.
  */
 export function teamArgs(action: TeamAction): string[] {
@@ -39,9 +39,9 @@ export async function runTeam(root: string, action: TeamAction): Promise<TeamRes
   const key = root.replace(/\\/g, "/").toLowerCase();
   if (inFlight.has(key)) return { ok: false, output: "", error: "team của dự án này đang mở/dừng, đợi lần trước xong", busy: true };
   inFlight.add(key);
-  // Starting four background sessions takes a while; boost starts nine `claude --bg` rooms one by one
-  // (minutes on Windows). Stopping is quick.
-  const ms = action === "boost" ? 420_000 : 180_000;
+  // Starting four background sessions takes a while; boost starts thirteen `claude --bg` rooms one by
+  // one (up to ~10 minutes on Windows). Stopping is quick.
+  const ms = action === "boost" ? 660_000 : 180_000;
   try {
     const r = await run("8sync", teamArgs(action), ms, root);
     const output = tail(`${r.stdout}\n${r.stderr}`);

@@ -21,22 +21,22 @@ const DONE: Record<Action, string> = {
 const OPENING: Record<Action, string> = {
   up: "lead, dev, qa, review, rd",
   full: "6 phòng: lead, dev, dev2, ui, qa, review",
-  boost: "Sấm Sét, 9 phòng mở lần lượt, có thể mất tới 7 phút",
+  boost: "Sấm Sét, 13 phòng mở lần lượt, có thể mất tới 10 phút",
   clean: "dọn rác, khởi động lại phòng chạy bản cũ",
   down: "",
 };
 
 /** What the confirm dialog of Sấm Sét says, in one sentence (also the button's tooltip). */
-const BOOST_COST = "9 phòng chạy song song: lead, 5 builder (dev, dev2, dev3, dev4, ui), 2 QA (qa, qa2) và review; tốn quota khoảng 9 lần một phiên, lease 2 giờ.";
+const BOOST_COST = "13 phòng chạy song song: 2 lập kế hoạch (lead, ba), 7 builder (dev, dev2, dev3, dev4, dev5, dev6, ui), 2 QA (qa, qa2), 2 review (review, review2); tốn quota khoảng 13 lần một phiên, lease 2 giờ.";
 
 /**
- * The project's live team is already the boost team: 9+ rooms that include the rooms only boost opens
- * (qa2, dev4). Any name token counts: `auto up` titles a clashing room `<name>-<repo>`, HQ rooms are `hq-<repo>-<name>`.
+ * The project's live team is already the boost team: 13+ rooms that include the rooms only boost opens
+ * (dev6, qa2, review2). Any name token counts: `auto up` titles a clashing room `<name>-<repo>`, HQ rooms are `hq-<repo>-<name>`.
  */
 export function boostOn(rooms: { name: string; label: string; status: string }[]): boolean {
   const live = rooms.filter((r) => r.status !== "ended");
   const tokens = new Set(live.flatMap((r) => `${r.label} ${r.name}`.toLowerCase().split(/[^\p{L}\p{N}]+/u)));
-  return live.length >= 9 && tokens.has("qa2") && tokens.has("dev4");
+  return live.length >= 13 && tokens.has("dev6") && tokens.has("qa2") && tokens.has("review2");
 }
 
 /** POST /api/team and say what happened; `after` refreshes the office and the board. */
@@ -61,7 +61,7 @@ function useTeam(token: string, after?: () => void) {
 }
 
 /**
- * "⚡ Sấm Sét": the 9-room boost team of one project (`auto up --roles boost --hours 2`). Off: asks first
+ * "⚡ Sấm Sét": the 13-room boost team of one project (`auto up --roles boost --hours 2`). Off: asks first
  * (the quota cost). On (`active`, see boostOn): the click renews the 2-hour lease with the same command.
  */
 export function BoostButton({ root, name, token, active, after, className }: { root: string; name: string; token: string; active: boolean; after?: () => void; className?: string }) {
@@ -76,7 +76,7 @@ export function BoostButton({ root, name, token, active, after, className }: { r
         disabled={busy != null}
         aria-busy={busy != null}
         onClick={() => (active ? void act(root, name, "boost") : setAsk(true))}
-        title={active ? "Team đang chạy 9 phòng. Bấm để gia hạn lease thêm 2 giờ (auto up --roles boost --hours 2)" : `${BOOST_COST} (auto up --roles boost --hours 2)`}
+        title={active ? "Team đang chạy 13 phòng. Bấm để gia hạn lease thêm 2 giờ (auto up --roles boost --hours 2)" : `${BOOST_COST} (auto up --roles boost --hours 2)`}
         className={cn(
           "font-semibold",
           active && "border-brand-ink/40 bg-brand/25 text-brand-ink hover:bg-brand/40 hover:text-brand-ink dark:border-brand/40 dark:bg-brand/15 dark:text-brand",
@@ -103,7 +103,7 @@ export function BoostButton({ root, name, token, active, after, className }: { r
                 void act(root, name, "boost");
               }}
             >
-              <ZapIcon aria-hidden /> Mở 9 phòng
+              <ZapIcon aria-hidden /> Mở 13 phòng
             </Button>
           </DialogFooter>
         </DialogContent>

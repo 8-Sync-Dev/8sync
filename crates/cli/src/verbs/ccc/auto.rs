@@ -1177,10 +1177,19 @@ fn run_target(
                 bail!("prio cần <id> <P0|P1|P2|P3|none>\n{USAGE}");
             };
             let t = target::set_prio(home, root, parse_id(i)?, target::parse_prio(p)?, who.as_deref(), now)?;
+            // HQ "⚡ Làm ngay": the owner raising a card still waiting for its AC to P0 tells the
+            // backlog rooms now instead of at their next tick; a ready card is simply claimed first.
+            let urgent = t.prio == Some(0) && who.is_none() && t.state == "open" && matches!(t.lane.as_str(), "backlog" | "blocked") && board_team(home, root);
+            let backlog: Vec<(String, String)> = all.iter().filter(|(n, _)| super::room::find(n).and_then(|r| r.lane) == Some("backlog")).cloned().collect();
+            let sent = if urgent { queue_all(home, &backlog, now, None, |name| target::now_prompt(&t, name)) } else { Vec::new() };
             if as_json {
-                println!("{}", json!({ "card": t }));
+                let sent: Vec<Value> = sent.iter().map(|(n, live)| json!({ "name": n, "now": live })).collect();
+                println!("{}", json!({ "card": t, "sent": sent }));
             } else {
                 println!("card #{} ưu tiên {}", t.id, t.prio.map_or("mặc định (P2)".to_string(), |n| format!("P{n}")));
+                for (name, live) in &sent {
+                    println!("báo {name}: {}", delivery(*live));
+                }
             }
         }
         "note" => {
@@ -1236,6 +1245,14 @@ fn run_target(
         }
         "add" => {
             let from = who;
+            // The owner's own card on a board team is always looked at now (owner 2026-10-20: "các
+            // input từ tôi đều là bắt buộc xem ngay"): head of the queue, the backlog rooms told at
+            // once, like `--now`. A room's card keeps its place.
+            // Owner = no room identified AND not inside any Claude Code session (a room in a worktree
+            // that forgot `--as` is not the owner).
+            let unset = |k: &str| std::env::var(k).map_or(true, |s| s.trim().is_empty());
+            let owner = from.is_none() && ["CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID"].iter().all(|k| unset(k));
+            let first = first || (owner && board_team(home, root));
             let text = words.join(" ");
             // Checked before anything is written, so a bad value never leaves a half-made card.
             let prio = flag("--prio").map(target::parse_prio).transpose()?;
@@ -2753,6 +2770,23 @@ mod tests {
         let (lead_before, qa_before) = (lines(ids[0]), lines(ids[1]));
         run(&s(&["add", "boss", "fight", "--now"]), &h, false, &h, rooms).unwrap();
         assert_eq!((lines(ids[0]), lines(ids[1])), (lead_before + 1, qa_before), "the lead hears it, qa keeps its card");
+        // The owner's card on a board team is always looked at now: first in queue, the lead told.
+        // (Run inside a Claude Code session the caller is not the owner: that half is skipped.)
+        let owner_terminal = ["CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID"].iter().all(|k| std::env::var(k).map_or(true, |s| s.trim().is_empty()));
+        run(&s(&["add", "camera", "shake"]), &h, false, &h, rooms).unwrap();
+        let lead_before = if owner_terminal {
+            assert_eq!(cur().0.unwrap().text, "camera shake", "head of the queue without --now");
+            assert_eq!(lines(ids[0]), lead_before + 2, "the lead hears the owner's card at once");
+            lead_before
+        } else {
+            lines(ids[0]) - 2
+        };
+        // "⚡ Làm ngay" (owner P0 on a backlog card) tells the lead; a room raising it does not.
+        let t = target::add(&h, &h, "wind in trees", None, None, false, Some("lead"), 9).unwrap().0;
+        run(&s(&["prio", &t.id.to_string(), "P0"]), &h, false, &h, rooms).unwrap();
+        assert_eq!(lines(ids[0]), lead_before + 3);
+        run(&s(&["prio", &t.id.to_string(), "P0", "--as", "qa"]), &h, false, &h, rooms).unwrap();
+        assert_eq!(lines(ids[0]), lead_before + 3, "only the owner's P0 wakes the lead");
         let _ = std::fs::remove_dir_all(&h);
     }
 

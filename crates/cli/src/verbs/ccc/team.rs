@@ -34,7 +34,7 @@ use serde_json::{json, Value};
 use super::{auto, idle, room};
 
 /// Rooms one `auto up` starts at most (the `boost` preset is the largest team).
-const MAX_ROOMS: usize = 9;
+const MAX_ROOMS: usize = 14;
 
 pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full|boost] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down | revive";
 
@@ -189,7 +189,7 @@ pub(super) fn goal_prompt(name: &str, lane: &str, every_min: u64) -> String {
          Lượt đầu, đặt loop dự phòng: {setup} \
          Mỗi lượt: (1) `8sync ccc auto status --json`; {first}(2) `8sync ccc auto claim --json` (cột {lane}); có card thì làm đúng việc cột đó: {playbook}; \
          (3) không có card → `8sync ccc auto wait --json` (Bash timeout {bash_ms}; chặn ≤ {wait_min} phút, không tốn token): `\"wake\":\"card\"` → claim (2) và làm card đó ngay lượt này; `\"wake\":\"merge\"` → quay lại (1); còn lại → kết thúc lượt. \
-         Mọi lệnh `8sync ccc auto claim|move|note|wait` thêm `--as {name}` (trong worktree 8sync không tự nhận ra phòng). \
+         Mọi lệnh `8sync ccc auto claim|move|note|wait|add` thêm `--as {name}` (trong worktree 8sync không tự nhận ra phòng). \
          Rail: không merge/push main/tag/deploy khi owner chưa trả lời câu Ship (hoặc chưa cho tự merge); giữ file trước khi sửa (`8sync ccc . goal \"…\" --files a,b`); \
          `8sync ccc meet --say \"done|doing|blocked: …\"` sau mỗi card. \
          `cap` khác null → không claim, chạy `auto wait`. \
@@ -282,7 +282,7 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
                 let mut v: Vec<String> = Vec::new();
                 let raw = value()?;
                 // Presets: `small` = the default team, `full` = 6 rooms, 3 of them builders (~6× quota),
-                // `boost` = 9 rooms, 5 builders and 2 QA (HQ "⚡ Sấm Sét", ~9× quota).
+                // `boost` = 13 rooms: lead + BA, 7 builders, 2 QA, 2 review (HQ "⚡ Sấm Sét", ~13× quota).
                 let list = match raw.trim() {
                     "small" => room::DEFAULT_TEAM.join(","),
                     "full" => room::FULL_TEAM.join(","),
@@ -544,8 +544,11 @@ fn regoal_file(home: &Path) -> PathBuf {
 /// [`REGOAL_BACKOFF_S`], and still idle right before the stop, is stopped and resumed with its goal.
 pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let root = t.root.to_string_lossy();
+    // Leftover dev/preview servers go whether or not auto runs (never from a test build: it lists
+    // and kills real processes).
+    let mut rows = if cfg!(test) { Vec::new() } else { super::reap::tick(t.home, t.root, now) };
     if !auto::running(t.home) || !auto::in_scope(t.home, Some(&root)) || !auto::status(t.home, t.subscription, now)["gate"].is_null() {
-        return Ok(Vec::new());
+        return Ok(rows);
     }
     let all = agents(t, true)?;
     let running = agents(t, false)?;
@@ -581,7 +584,6 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             _ => e["seen"] = json!(now),
         }
     }
-    let mut rows = Vec::new();
     let mut started = Vec::new();
     let settings = room_settings(t.home)?;
     for s in sessions {

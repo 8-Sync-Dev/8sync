@@ -11,7 +11,7 @@ import { agoShort, agoVi, roomRole, type Move } from "@/lib/now";
 import { rootKey } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
-import { CardSheet, LabelChip, PrioChip, TagChips, TONE_INK, laneTone } from "./card-sheet";
+import { CardSheet, ForceButton, LabelChip, PrioChip, TagChips, TONE_INK, forceKind, laneTone } from "./card-sheet";
 import { RoleIcon } from "./role-badge";
 import { LaneStrip } from "./scroll-strip";
 import type { BoardsState } from "./use-board";
@@ -67,6 +67,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
   const kids = cur?.board ? splitInto(cur.board.lanes) : null;
   const live = open ? boards?.find((b) => b.root === open.root)?.board : null;
   const shown = open ? ((live ? LANES.flatMap((l) => live.lanes[l.key]).find((c) => c.id === open.card.id) : undefined) ?? open.card) : null;
+  const onForce = cur ? (c: Card) => state.force(cur.root, c) : undefined;
   const onOpenCard = (c: Card) => {
     if (!cur) return;
     setOpen({ root: cur.root, card: c });
@@ -130,7 +131,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
               )}
             >
               {LANES.flatMap((l) => {
-                const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} kidsOf={(id) => kids?.get(id)} now={now} next={next} onOpen={onOpenCard} />;
+                const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} kidsOf={(id) => kids?.get(id)} now={now} next={next} onOpen={onOpenCard} onForce={onForce} />;
                 return l.key === "blocked" ? [<DoneLane key="done" closed={cur?.board?.closed ?? null} now={now} wide={doneWide} onWide={setDoneWide} />, lane] : [lane];
               })}
             </div>
@@ -144,6 +145,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
         next={shown != null && shown.id === next && shown.lane === "ready"}
         onClose={() => setSheetOpen(false)}
         onPrio={open && shown ? (prio) => state.setPrio(open.root, shown.id, prio) : undefined}
+        onForce={open && shown ? () => state.force(open.root, shown) : undefined}
       />
     </div>
   );
@@ -224,6 +226,7 @@ function Lane({
   now,
   next,
   onOpen,
+  onForce,
 }: {
   lane: LaneKey;
   label: string;
@@ -234,6 +237,7 @@ function Lane({
   now: number;
   next: number | null;
   onOpen: (c: Card) => void;
+  onForce?: (c: Card) => Promise<void>;
 }) {
   const n = cards?.length ?? 0;
   // Ship waits on the owner, Blocked on the lead (it clears them first): both are tinted harder and say so in the header.
@@ -279,7 +283,7 @@ function Lane({
           // Keyed on the move too: the highlight replays only when the card changes lane again.
           [...cards].sort((a, b) => rankOf(a) - rankOf(b)).map((c) => {
             const m = moveOf(c.id);
-            return <CardItem key={m ? `${c.id}:${m.from}` : c.id} c={c} move={m} kids={kidsOf(c.id)} now={now} next={c.id === next && lane === "ready"} onOpen={onOpen} />;
+            return <CardItem key={m ? `${c.id}:${m.from}` : c.id} c={c} move={m} kids={kidsOf(c.id)} now={now} next={c.id === next && lane === "ready"} onOpen={onOpen} onForce={onForce} />;
           })
         )}
       </ul>
@@ -287,14 +291,20 @@ function Lane({
   );
 }
 
-/** One card: its chips, the title in up to 3 lines, who holds it, PR, bounces, the cards split off it, a missing check, the last note. A click opens the sheet. */
-export function CardItem({ c, move, kids, now, next, onOpen }: { c: Card; move?: Move; kids?: Kid[]; now: number; next: boolean; onOpen: (c: Card) => void }) {
+/**
+ * One card: its chips, the title in up to 3 lines, who holds it, PR, bounces, the cards split off it, a missing check, the last note. A click opens the sheet.
+ * A Blocked card carries "⚡ Gỡ block ngay", a waiting one (Backlog/Ready, not P0) "⚡ Làm ngay", at the bottom right: a sibling of the card button (never nested).
+ */
+export function CardItem({ c, move, kids, now, next, onOpen, onForce }: { c: Card; move?: Move; kids?: Kid[]; now: number; next: boolean; onOpen: (c: Card) => void; onForce?: (c: Card) => Promise<void> }) {
   const stale = claimStale(c, now);
   const who = c.claim ? roomRole(c.claim.room) : null;
   const { title, tags } = cardParts(c.text);
   const noCheck = !c.check && c.lane !== "backlog";
+  // Room on the right of the last row for the button ("Gỡ block ngay" is the wider label).
+  const kind = onForce ? forceKind(c) : null;
+  const pad = kind === "unblock" ? "pr-32" : kind ? "pr-24" : null;
   return (
-    <li data-moved={move ? "" : undefined}>
+    <li data-moved={move ? "" : undefined} className={cn(kind && "relative")}>
       <button
         type="button"
         onClick={() => onOpen(c)}
@@ -327,7 +337,7 @@ export function CardItem({ c, move, kids, now, next, onOpen }: { c: Card; move?:
           <span className="mr-1 font-mono text-[11px] font-normal text-muted-foreground">#{c.id}</span>
           {title}
         </span>
-        <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+        <span className={cn("mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground", pad, pad && !c.note && "min-h-6")}>
           {c.claim && (
             <span
               className={cn("inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 whitespace-nowrap text-foreground", stale && "bg-st-needs/15")}
@@ -365,13 +375,14 @@ export function CardItem({ c, move, kids, now, next, onOpen }: { c: Card; move?:
           {noCheck && <span className="font-medium text-destructive">thiếu lệnh check</span>}
         </span>
         {c.note && (
-          <span className="mt-1 line-clamp-1 text-[11px] text-muted-foreground">
+          <span className={cn("mt-1 line-clamp-1 text-[11px] text-muted-foreground", pad)}>
             {c.note.room && <span className="font-medium text-foreground">{c.note.room}: </span>}
             {c.note.text}
             {c.note.at > 0 && <span className="tabular"> · {agoShort(c.note.at, now)}</span>}
           </span>
         )}
       </button>
+      {kind && onForce && <ForceButton c={c} run={() => onForce(c)} className="absolute right-1.5 bottom-1.5" />}
     </li>
   );
 }
