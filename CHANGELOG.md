@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.108.3] — 2026-10-20
+### Fixed
+- **HQ "Chạy liên tục" no longer widens auto to every project.** HQ's button runs a plain `8sync ccc auto on`, which used to drop the `--here` projects. Live, it turned "ai-game-studio + 3d-game" into "mọi dự án", so auto's lease, critic and nudges covered sessions in every folder on the machine. A plain `on` now resumes the projects auto last held, also after `pause`; the first `on` ever still covers every project. `auto on --all` widens on purpose, and `off` forgets the list.
+
 ## [0.108.2] — 2026-10-20
 Owner (2026-10-20): "sao nó cứ mở nhầm folder cần làm không vậy 3d-game mà sao vô sai". He ran `mkdir 3d-game; cd 3d-game; 8sync ccc auto up "…"` inside the cluster repo `8sync-startup`. The folder had no `.git`, so the project root resolved to `8sync-startup`: the card went onto 8sync-startup's board, the rooms opened there, and the `lead` name resumed an older ai-game-studio conversation in which the owner then typed messages meant for 3d-game.
 
