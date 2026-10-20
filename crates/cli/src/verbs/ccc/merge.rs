@@ -196,7 +196,7 @@ pub(super) fn decide(card_sha: &str, pr: &Value, base_merged: bool, main: &str) 
     // Only CONFLICTING is a conflict; UNKNOWN right after a push is GitHub still computing.
     match s("mergeable").as_str() {
         "MERGEABLE" => {}
-        "CONFLICTING" => return Step::Back(format!("conflict với {main}: `git merge origin/{main}` vào nhánh, sửa conflict (CHANGELOG: giữ cả hai mục), {}, qua qa/review lại", target::KEEP_PR)),
+        "CONFLICTING" => return Step::Back(format!("conflict với {main}: `git merge origin/{main}` vào nhánh, sửa conflict (CHANGELOG.md: giữ cả hai mục và chuyển mục của card sang `changelog.d/card-<id>.md`), {}, qua qa/review lại", target::KEEP_PR)),
         _ => return Step::Computing,
     }
     if !same_commit(card_sha, &head) {

@@ -48,7 +48,7 @@ use serde_json::{json, Value};
 
 use super::{delegate, idle, target};
 
-const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | ci [--json]
+const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | ci [local|github] [--json]
        8sync ccc auto omp on [--model <provider/model>]|off [--json] | nudge --session <room id> --cwd <dir> [--model <provider/model>] [--json]
        (on --omp nhận thêm --omp-model <provider/model>: model của đội omp)
        8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | down
@@ -573,7 +573,7 @@ Mỗi nhịp:
    `auto up` ≤ 30 phút; Bash timeout 600000, có BASH_MAX_TIMEOUT_MS thì bằng nó): `\"wake\":\"card\"` → claim lại và làm card đó ngay nhịp này,
    `\"wake\":\"merge\"` → về đầu bước 1 (lead chạy `8sync ccc auto merge`), còn lại → hết nhịp.
    Phòng không cột (arch, rd, …) không đặt loop: chỉ làm khi có card nhãn của mình, owner hay phòng khác nhắn.
-   `ci` trong status khác `ok` (`billing` = GitHub không chạy job) → không chờ CI; gate local một lần mỗi head SHA.
+   `ci` trong status khác `ok` (`billing` = GitHub không chạy job; `local` = GitHub chỉ lưu code, CI/CD chạy trên máy) → không chờ CI; gate local một lần mỗi head SHA.
    - backlog: viết AC + một lệnh check → `8sync ccc auto move <id> ready --check \"<lệnh>\"` (gấp: thêm `--prio P0|P1`); ý lớn → card con
      `auto add \"[#<id>] …\"`, card gốc ở backlog (không blocked); claim đưa card blocked trước: gỡ ngay theo `hint`, chỉ Ship/secret/tiền chờ owner;
      `8sync ccc auto merge` báo thiếu quyền mà có card approved → hỏi NGAY câu Ship nó in sẵn (MỘT câu AskUserQuestion), trước mọi `auto wait`
@@ -640,9 +640,9 @@ pub(super) const ASK_RULE: &str = "Cần owner quyết → gọi tool AskUserQue
 pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
         "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: `--prio P0`, quan trọng `--prio P1`). Một card = một PR nhỏ một dev làm xong trong một phiên; không tách card R&D/audit/ADR riêng cho việc dev tự làm được. Ý lớn → card con `auto add \"[#<id>] …\"`, card gốc ở backlog (không blocked). Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`). Ready đầy (claim trả `why`, move bị từ chối) → không tách thêm card.",
-        "ready" => "card building: `git fetch origin`, worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>` tạo từ `origin/main` (KHÔNG chồng lên nhánh card khác; cần code của PR chưa merge → `8sync ccc auto move <id> blocked --note \"chờ PR #<số> merge\"` rồi claim card khác; cần main mới → `git merge origin/main`, không rebase/force-push), trong worktree sửa file bằng Edit/Write và mỗi Bash MỘT lệnh đơn, đường dẫn đầy đủ (không heredoc, `sed -i`, `python -`, `git -C`, PowerShell: guard từ chối), `/ship` card tới commit (test của phần sửa; gate: `8sync ccc risk` rồi chỉ gọi skill nó liệt kê — diff chỉ docs → chỉ `/sec`, không mặc định `/rules` + `/aup-audit`), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>` (không chờ CI khi `ci` trong status khác `ok`); làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
+        "ready" => "card building: `git fetch origin`, worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>` tạo từ `origin/main` (KHÔNG chồng lên nhánh card khác; cần code của PR chưa merge → `8sync ccc auto move <id> blocked --note \"chờ PR #<số> merge\"` rồi claim card khác; cần main mới → `git merge origin/main`, không rebase/force-push), trong worktree sửa file bằng Edit/Write và mỗi Bash MỘT lệnh đơn, đường dẫn đầy đủ (không heredoc, `sed -i`, `python -`, `git -C`, PowerShell: guard từ chối), `/ship` card tới commit (test của phần sửa; gate: `8sync ccc risk` rồi chỉ gọi skill nó liệt kê — diff chỉ docs → chỉ `/sec`, không mặc định `/rules` + `/aup-audit`; changelog ghi vào file mới `changelog.d/card-<id>.md`, KHÔNG sửa CHANGELOG.md: mỗi merge làm mọi PR khác conflict, gộp lúc release), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>` (không chờ CI khi `ci` trong status khác `ok`); làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
         "qa" => "card qa: MỘT worktree `.claude/worktrees/qa` dùng lại cho mọi card (`git fetch origin <nhánh PR>` + `git checkout --detach <head sha>`; `npm ci` chỉ khi lockfile đổi); gate test của dự án chạy MỘT lần cho head SHA (`gh pr view <pr> --json headRefOid`): card đã có note `gate <sha>` đúng SHA đó → dùng lại, không thì chạy `check` + suite test rồi `8sync ccc auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"`; UAT thật, `8sync shot` chạy thẳng (không `&` + sleep), ảnh lưu đúng `qa/evidence/card-<id>-<slug>.png` (không lưu ảnh hàng loạt thiếu tiền tố `card-<id>-` vào `qa/evidence/`), server preview/dev tự mở cho UAT → tắt ngay sau khi chụp (KillShell hoặc kill đúng PID; KHÔNG kill theo tên `node.exe`/`chrome.exe`: giết cả HQ) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`; CI không xanh (`ci` khác `ok`) → gate local này là bằng chứng, không chờ CI",
-        "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước); test: dùng note `gate <sha>` của qa khi head SHA chưa đổi (không chạy lại suite), SHA đổi → chạy gate một lần và note `gate <sha>: <lệnh>: <kết quả>` mới → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi, hoặc PR chồng nhánh/chứa việc card khác → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
+        "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước; changelog của card nằm ở `changelog.d/card-<id>.md`, không đòi CHANGELOG.md); test: dùng note `gate <sha>` của qa khi head SHA chưa đổi (không chạy lại suite), SHA đổi → chạy gate một lần và note `gate <sha>: <lệnh>: <kết quả>` mới → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi, hoặc PR chồng nhánh/chứa việc card khác → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
         _ => "",
     }
 }
@@ -1063,6 +1063,8 @@ fn run_target(
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => {}
+            // `auto add -h` once queued a card titled "-h" on a live board.
+            "-h" | "--help" => bail!("{USAGE}"),
             "--now" if verb == "add" => first = true,
             f if takes.contains(&f) => {
                 let v = it
@@ -1624,7 +1626,7 @@ pub(super) fn run(
         return run_nudge(&rest[1..], home, subscription, now);
     }
     if rest.first().map(String::as_str) == Some("ci") {
-        return super::ci::run(&rest[1..], home, root, now);
+        return super::ci::run(&rest[1..], home, root, &ci_repo(&scope(home), root), now);
     }
     if rest.first().map(String::as_str) == Some("omp") {
         let on = match rest.get(1).map(String::as_str) {
@@ -2250,6 +2252,10 @@ mod tests {
         );
         assert!(run(&s(&["on", "--target", " "]), &h, false, &h, Vec::new).is_err());
         assert!(run(&s(&["add"]), &h, false, &h, Vec::new).is_err());
+        for help in ["-h", "--help"] {
+            assert!(run(&s(&["add", help]), &h, false, &h, Vec::new).is_err(), "{help} is not a card");
+        }
+        assert!(target::list(&h, &h).unwrap().is_empty(), "nothing queued by a help flag");
         assert!(run(
             &s(&["add", "x", "--evidence", "y"]),
             &h,

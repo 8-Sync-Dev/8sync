@@ -1,10 +1,16 @@
-//! `8sync ccc auto ci [--json]` and the `ci` field of `auto status --json`: is the project's GitHub
-//! CI usable right now? `ok` · `failing` · `billing` · `unknown`. Measured on ai-game-studio
+//! `8sync ccc auto ci [local|github] [--json]` and the `ci` field of `auto status --json`: is the
+//! project's GitHub CI usable right now? `ok` · `failing` · `billing` · `local` · `unknown`. Measured on ai-game-studio
 //! (2026-10-19): 375 of 379 runs failed in 3–7 s for 12 h on a billing hold ("The job was not
 //! started because recent account payments have failed or your spending limit needs to be
 //! increased") and no room told the owner; every room kept waiting on or re-running CI.
 //!
-//! Reading: `gh run list --limit 5 --json databaseId,status,conclusion` in the repo, then, for the
+//! `local`: the owner runs CI/CD on the release machine and GitHub only stores the code
+//! (2026-10-20, after the billing hold on 3d-game and ai-game-studio). `auto ci local` turns GitHub
+//! Actions off for the repo (`PUT repos/{owner}/{repo}/actions/permissions enabled=false`),
+//! `auto ci github` back on; a repo with Actions off reads `local` before any run is looked at, so
+//! old runs never make rooms wait on a CI that will not run.
+//! Reading: `gh api repos/{owner}/{repo}/actions/permissions` (`enabled` false → `local`), then
+//! `gh run list --limit 5 --json databaseId,status,conclusion` in the repo, then, for the
 //! newest failed run, `gh run view <id> --json jobs` and the job annotations
 //! `gh api repos/{owner}/{repo}/check-runs/<job id>/annotations` (`[].message`). GitHub puts the
 //! billing reason only there: the run and job conclusions just say `failure`.
@@ -29,6 +35,7 @@ const DAY_S: u64 = 86_400;
 const BILLING: [&str; 3] = ["recent account payments have failed", "spending limit needs to be increased", "job was not started because"];
 /// Every `gh` call is killed after this long: a hung one (network, auth prompt) never piles up.
 const GH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const PERMISSIONS: &str = "repos/{owner}/{repo}/actions/permissions";
 const BAD: [&str; 4] = ["failure", "startup_failure", "timed_out", "action_required"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +43,7 @@ pub(super) enum Ci {
     Ok,
     Failing,
     Billing,
+    Local,
     Unknown,
 }
 
@@ -45,12 +53,13 @@ impl Ci {
             Ci::Ok => "ok",
             Ci::Failing => "failing",
             Ci::Billing => "billing",
+            Ci::Local => "local",
             Ci::Unknown => "unknown",
         }
     }
 
     fn parse(s: &str) -> Option<Ci> {
-        [Ci::Ok, Ci::Failing, Ci::Billing, Ci::Unknown].into_iter().find(|c| c.key() == s)
+        [Ci::Ok, Ci::Failing, Ci::Billing, Ci::Local, Ci::Unknown].into_iter().find(|c| c.key() == s)
     }
 }
 
@@ -59,7 +68,8 @@ pub(super) fn line(ci: &str) -> String {
     match ci {
         "ok" => "CI: xanh (5 run gần nhất)".into(),
         "failing" => "CI: đỏ — có run fail trong 5 run gần nhất (`gh run list`)".into(),
-        "billing" => "CI: DỪNG — GitHub không chạy job (thanh toán/spending limit của account); không chờ CI, gate local một lần mỗi head SHA; owner gỡ ở GitHub Billing".into(),
+        "billing" => "CI: DỪNG — GitHub không chạy job (thanh toán/spending limit của account); không chờ CI, gate local một lần mỗi head SHA; owner gỡ ở GitHub Billing, hoặc chạy CI/CD trên máy release: `8sync ccc auto ci local`".into(),
+        "local" => "CI: local — GitHub chỉ lưu code (Actions tắt): gate local một lần mỗi head SHA là CI, build/release chạy trên máy release; bật lại Actions: `8sync ccc auto ci github`".into(),
         _ => "CI: chưa rõ (gh thiếu, chưa login hoặc offline)".into(),
     }
 }
@@ -97,6 +107,10 @@ pub(super) fn classify(runs: &Value, notes: &[String]) -> Ci {
 
 /// IO through `gh` (args → stdout, None on any error): the reading described in the module doc.
 pub(super) fn read(gh: &dyn Fn(&[&str]) -> Option<String>) -> Ci {
+    let actions = gh(&["api", PERMISSIONS]).and_then(|o| serde_json::from_str::<Value>(&o).ok());
+    if actions.is_some_and(|a| a["enabled"] == false) {
+        return Ci::Local;
+    }
     let Some(runs) = gh(&["run", "list", "--limit", "5", "--json", "databaseId,status,conclusion"]).and_then(|o| serde_json::from_str::<Value>(&o).ok()) else {
         return Ci::Unknown;
     };
@@ -161,6 +175,12 @@ pub(super) fn cached(home: &Path, repo: &Path, now: u64, refresh: impl FnOnce())
 pub(super) fn refresh(home: &Path, repo: &Path, now: u64, gh: &dyn Fn(&[&str]) -> Option<String>, alert: impl FnOnce(&str, &str) -> Result<()>) -> Ci {
     let ci = read(gh);
     let f = cache_file(home, repo);
+    // A reading stored after this one started is newer (`auto ci local` while a background refresh
+    // was still reading the old runs): keep it, and no alert from this stale reading.
+    if let Some(newer) = super::idle::read_json(&f).filter(|c| c["at"].as_u64().is_some_and(|a| a > now)) {
+        let _ = std::fs::remove_file(f.with_extension("lock"));
+        return newer["ci"].as_str().and_then(Ci::parse).unwrap_or(ci);
+    }
     super::idle::write_json(&f, &json!({ "schema": 1, "at": now, "ci": ci.key(), "repo": repo.to_string_lossy() }));
     let _ = std::fs::remove_file(f.with_extension("lock"));
     if ci == Ci::Billing {
@@ -221,12 +241,35 @@ pub(super) fn status(home: &Path, repo: &Path, now: u64) -> Ci {
     })
 }
 
-/// `8sync ccc auto ci [--json]`: read CI of the project at `root` now (and store it for `status`).
-pub(super) fn run(rest: &[String], home: &Path, root: &Path, now: u64) -> Result<()> {
-    if let Some(x) = rest.iter().find(|a| *a != "--json") {
-        anyhow::bail!("không rõ `{x}`\nusage: 8sync ccc auto ci [--json]");
+/// Turn GitHub Actions of the repo off (`local`: CI/CD on the release machine, GitHub only stores
+/// the code) or back on (`github`). PUT answers 204 with no body, so any exit 0 is done.
+fn set_actions(gh: &dyn Fn(&[&str]) -> Option<String>, on: bool) -> Result<()> {
+    let enabled = format!("enabled={on}");
+    gh(&["api", "-X", "PUT", PERMISSIONS, "-F", &enabled])
+        .map(drop)
+        .ok_or_else(|| anyhow::anyhow!("gh không đổi được GitHub Actions của repo (cần `gh` đã login với quyền admin repo)"))
+}
+
+/// `8sync ccc auto ci [local|github] [--json]`: switch where CI runs (optional), then read CI of the
+/// project at `root` now and store it under `repo`, the repo `auto status` reads ([`super::auto::ci_repo`]).
+pub(super) fn run(rest: &[String], home: &Path, root: &Path, repo: &Path, now: u64) -> Result<()> {
+    let mut set = None;
+    for a in rest {
+        match a.as_str() {
+            "--json" => {}
+            "local" if set.is_none() => set = Some(false),
+            "github" if set.is_none() => set = Some(true),
+            x => anyhow::bail!("không rõ `{x}`\nusage: 8sync ccc auto ci [local|github] [--json]"),
+        }
     }
-    let ci = refresh(home, root, now, &gh_in(root), crate::verbs::hq::alert_owner);
+    let gh = gh_in(root);
+    if let Some(on) = set {
+        // Hold the refresh lock across the switch: a status call meanwhile must not start a
+        // background reading that sees Actions still on and stores it as newer than this one.
+        super::idle::write_json(&cache_file(home, repo).with_extension("lock"), &json!({ "at": now }));
+        set_actions(&gh, on)?;
+    }
+    let ci = refresh(home, repo, now, &gh, crate::verbs::hq::alert_owner);
     if rest.iter().any(|a| a == "--json") {
         println!("{}", json!({ "schema": 1, "ci": ci.key(), "repo": root.to_string_lossy(), "at": now }));
     } else {
@@ -266,10 +309,45 @@ mod tests {
             })
         };
         assert_eq!(read(&gh), Ci::Billing);
-        assert_eq!(calls.borrow()[1], "run view 100 --json jobs");
-        assert_eq!(calls.borrow()[2], "api repos/{owner}/{repo}/check-runs/7/annotations");
+        assert_eq!(calls.borrow()[0], "api repos/{owner}/{repo}/actions/permissions");
+        assert_eq!(calls.borrow()[2], "run view 100 --json jobs");
+        assert_eq!(calls.borrow()[3], "api repos/{owner}/{repo}/check-runs/7/annotations");
         let green = |a: &[&str]| (a[..2] == ["run", "list"]).then(|| runs(&["success"]).to_string());
         assert_eq!(read(&green), Ci::Ok, "all green: no annotation call needed");
+    }
+
+    #[test]
+    fn actions_off_reads_local_whatever_the_old_runs_say() {
+        // 3d-game 2026-10-20: every run failed on a billing hold; the owner moved CI/CD to the
+        // release machine. Old runs (red or green) must not make rooms wait on GitHub.
+        for old in [runs(&["failure"]), runs(&["success"])] {
+            let gh = |a: &[&str]| {
+                Some(match a {
+                    ["api", p] if *p == PERMISSIONS => json!({ "enabled": false }).to_string(),
+                    ["run", "list", ..] => old.to_string(),
+                    _ => panic!("no more calls once Actions is off: {a:?}"),
+                })
+            };
+            assert_eq!(read(&gh), Ci::Local);
+        }
+        let on = |a: &[&str]| match a {
+            ["api", p] if *p == PERMISSIONS => Some(json!({ "enabled": true, "allowed_actions": "all" }).to_string()),
+            ["run", "list", ..] => Some(runs(&["success"]).to_string()),
+            _ => None,
+        };
+        assert_eq!(read(&on), Ci::Ok);
+        assert_eq!(Ci::parse(Ci::Local.key()), Some(Ci::Local), "the cached reading round-trips");
+        assert!(line("local").contains("GitHub chỉ lưu code"));
+        // The switch: one PUT, `-F` so GitHub gets a boolean; a failed gh call is an error.
+        let calls = RefCell::new(Vec::<String>::new());
+        let put = |a: &[&str]| {
+            calls.borrow_mut().push(a.join(" "));
+            Some(String::new())
+        };
+        set_actions(&put, false).unwrap();
+        set_actions(&put, true).unwrap();
+        assert_eq!(*calls.borrow(), ["api -X PUT repos/{owner}/{repo}/actions/permissions -F enabled=false", "api -X PUT repos/{owner}/{repo}/actions/permissions -F enabled=true"]);
+        assert!(set_actions(&|_: &[&str]| None, false).is_err());
     }
 
     #[test]
@@ -338,6 +416,13 @@ mod tests {
         let _ = refresh(&h, &other, t, &bill, |_: &str, _: &str| anyhow::bail!("HQ not configured"));
         let _ = refresh(&h, &other, t + FRESH_S, &bill, alert);
         assert_eq!(alerts.get(), 3);
+        // `auto ci local` stored its reading while an older background refresh was still reading the
+        // billing-held runs: the older one keeps the newer reading and sends no alert.
+        let third = h.join("third");
+        std::fs::write(cache_file(&h, &third), json!({ "schema": 1, "at": t + 5, "ci": "local" }).to_string()).unwrap();
+        assert_eq!(refresh(&h, &third, t, &bill, alert), Ci::Local);
+        assert_eq!(alerts.get(), 3, "no alert from the stale reading");
+        assert_eq!(cached(&h, &third, t + 6, || panic!("fresh: no refresh")), Ci::Local);
         let _ = std::fs::remove_dir_all(&h);
     }
 }

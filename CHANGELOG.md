@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.0] — 2026-10-20
+### Added
+- **CI/CD on the release machine, GitHub only stores the code: `8sync ccc auto ci local`.** It turns GitHub Actions off for the repo (`gh api -X PUT repos/{owner}/{repo}/actions/permissions -F enabled=false`); `auto ci github` turns it back on. A repo with Actions off reads `ci: local` in `auto status` before any old run is looked at, so rooms take the local gate per head SHA as CI and never wait on GitHub. Owner ask after the billing hold on 3d-game and ai-game-studio (every run failed in seconds).
+  - HQ shows `CI: máy release (GitHub chỉ lưu code)`. `/ship` and `/ship-auto` take the local test + build as CI in such a repo (other OSes "not verified") instead of waiting on `gh pr checks`.
+  - A background CI refresh that started before `auto ci local` no longer overwrites the newer `local` reading or sends a billing alert; the reading is stored where `auto status` reads it, also for a repo nested in a scoped one.
+### Changed
+- **Team cards write their changelog entry to `changelog.d/card-<id>.md`, not `CHANGELOG.md`.** 3d-game, 12:30–17:37: 20 bounces back to `ready` over 22 cards, most of them a `CHANGELOG.md` conflict after another PR merged; each bounce costs a builder turn, a qa gate and a review. The entries are folded into `CHANGELOG.md` at release (`/ship` and `/ship-auto` release steps); the review lane, the reviewer agent and the conflict hints of `auto merge`/`auto move` know the rule, so a card is not sent back for a missing `CHANGELOG.md` line.
+### Fixed
+- **`8sync ccc auto add -h` prints the usage instead of queueing a card titled "-h".** (`--help` already errored; any text starting with a dash still goes after `--`.)
+
 ## [0.109.1] — 2026-10-20
 ### Fixed
 - **`auto wait` hands a room its messages instead of asking it to end the turn.** UAT of 0.109.0 on 3d-game: rooms that were idle got the owner's message in 16–18 s (was 30 min – 5 h), but dev2 and review woke with `"wake":"msg"` and carried on in the same turn (status, claim, wait again), so their Stop hook never ran and the message never arrived. On a `msg` wake, `auto wait` now takes the deliverable lines from the room's inbox exactly as the Stop hook does and returns them in `messages` (and in the text output).
