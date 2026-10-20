@@ -160,7 +160,15 @@ export LC_ALL=C
 # base/conflict/head checks + role-aware claims + `reopen` (`target.rs`, `room.rs`), CI health with
 # billing detection (`ccc/ci.rs`, owner alert in `hq.rs`), event-only rooms and longer waits
 # (`auto.rs`, `team.rs`, `idle.rs`). No new dependency. Ceiling 7488 KiB (~74 KiB left over the estimate).
-CEILING="${CEILING:-7667712}"   # 7488 KiB (raised 2026-10-20 from 7360 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+#
+# 2026-10-21 v0.110.11: v0.108.0 → v0.110.10 used the 74 KiB headroom (CI musl asset of this PR
+# 7,670,032 B, 2,320 B over). Grown by: reap.rs (machine guard of leftover dev servers, process
+# tree walk), merge.rs background landing, one-tap answers + boost/force verbs (auto.rs, team.rs),
+# ccc-core Windows omp process scan (Toolhelp + NtQueryInformationProcess FFI), nested-scope +
+# revive-lock liveness (`tasklist`) + grouping-folder refusal. No new dependency. In flight next:
+# eye room, resource guard (EcoQoS/priority/lean rooms), project close, omp terminal host.
+# Ceiling 7744 KiB (~60 KiB left over this asset; re-attribute with size-report before the next raise).
+CEILING="${CEILING:-7929856}"   # 7744 KiB (raised 2026-10-21 from 7488 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"
