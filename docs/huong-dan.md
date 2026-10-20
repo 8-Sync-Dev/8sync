@@ -53,7 +53,7 @@ Team mặc định `lead,dev,qa,review`; tự chọn: `--roles lead,ba,dev,dev2,
 **Không phòng nào ngồi rảnh:**
 - Phòng có cột board mở bằng `/goal` chính chủ của Claude Code. Mỗi lượt phòng claim → làm → chuyển cột, rồi tự sang lượt kế, không chờ nhịp loop.
 - Cột trống thì phòng chạy `8sync ccc auto wait`. Lệnh này chặn và không tốn token cho tới khi có card, nên phòng nhận việc gần như ngay.
-- Goal chỉ dừng khi auto tắt, tạm dừng, chạm trần (cửa sổ dùng ≥ 90%), hoặc khi lease subscription hết (≤ 4 giờ). Anh bấm **Chạy liên tục** lại thì trong ≤ 2 phút HQ (`auto revive`) chạy lại `/goal` cho phòng có cột còn nằm không (nằm không 20 giây liền mới tính).
+- Goal chỉ dừng khi auto tắt, tạm dừng, chạm trần (cửa sổ dùng ≥ 90%), hoặc khi lease subscription hết (≤ 4 giờ). Anh bấm **Chạy liên tục** lại thì trong ≤ 2 phút HQ (`auto revive`) chạy lại `/goal` cho phòng có cột còn nằm không (phải thấy nằm không ở hai lần kiểm cách nhau ≥ 1 phút, inbox trống).
 
 **Board kiểu [super-board](https://github.com/EricTechPro/super-board):** `backlog → ready → building → qa → review → approved (chờ Ship) → done`, thêm `blocked`. Mỗi phòng `claim` card đầu cột của mình rồi `move` sang cột kế:
 
