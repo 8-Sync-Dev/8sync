@@ -212,6 +212,20 @@ pub fn run(a: Args) -> Result<()> {
                 adopt_here(&cwd, true);
             }
             let repo = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
+            // A folder that only groups repos (8sync-startup/zus holds the submodules admin, ide,
+            // models, web) is no project: `up` there used to start the PARENT repo's team.
+            let first = rest.first().map(String::as_str);
+            let starts = matches!(first, Some("up" | "add")) || first == Some("on") && rest.iter().any(|a| a == "--here");
+            if let Some(kids) = grouping_folder(&cwd, &repo).filter(|_| starts) {
+                bail!(
+                    "{} không phải repo riêng: nó là thư mục của repo {} và chứa repo con: {}.\nTeam, board và phòng chạy theo repo → `cd` vào repo muốn làm rồi chạy lại (vd `cd {}`), hoặc chạy ở {} nếu thật sự muốn team cho cả repo cha.",
+                    cwd.display(),
+                    repo.display(),
+                    kids.join(", "),
+                    cwd.join(&kids[0]).display(),
+                    repo.display()
+                );
+            }
             // `up` does it under its lock (auto_team); `on --here` once its arguments passed and the
             // scope moved here (the nested repo is out of auto by then, revive no longer opens it).
             let here = rest.first().is_some_and(|a| a == "on") && rest.iter().any(|a| a == "--here");
@@ -546,6 +560,19 @@ fn team_flags(extra: &[String]) -> Result<(bool, bool, Vec<String>)> {
     Ok((team || panes, panes, rest))
 }
 
+/// `cwd` inside `repo` (not its root, not a card worktree) holding repos of its own (submodules,
+/// nested repos) one level down: their names, sorted.
+fn grouping_folder(cwd: &Path, repo: &Path) -> Option<Vec<String>> {
+    let (c, r) = (auto::canon(cwd), auto::canon(repo));
+    let rel = c.strip_prefix(&r).ok().filter(|rel| !rel.as_os_str().is_empty())?;
+    if rel.starts_with(Path::new(".claude").join("worktrees")) {
+        return None;
+    }
+    let mut kids: Vec<String> = std::fs::read_dir(cwd).ok()?.flatten().filter(|e| e.path().join(".git").exists()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    kids.sort();
+    (!kids.is_empty()).then_some(kids)
+}
+
 /// One team per folder tree: `up` / `on --here` in `root` first stops the team of a repo it sits in
 /// or holds (owner 2026-10-21: "vào đúng folder rồi mở ccc auto cứ bị dính ccc auto ở folder cha").
 /// A team that would not stop is an error: its rooms would run on with nothing tracking them.
@@ -556,6 +583,9 @@ fn down_nested(env: &Env, root: &Path) -> Result<()> {
     }
     Ok(())
 }
+
+/// How long `auto up` waits for a running revive / up to finish.
+const UP_LOCK_WAIT_S: u64 = 150;
 
 /// `8sync ccc auto up|down` ([`team`]): the project's role rooms as Claude Code background sessions.
 fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
@@ -628,8 +658,21 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         auto::omp_blocked(&env.home)
     };
     // One resumer at a time: HQ's revive and this `up` must not fork the same dead room twice.
-    let Some(_lock) = team::revive_lock(&env.home, now)? else {
-        bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ ít phút rồi chạy lại");
+    // HQ's revive (every 2 min) holds this while it reopens rooms: wait for it rather than fail.
+    let mut waited = 0;
+    let _lock = loop {
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs());
+        if let Some(l) = team::revive_lock(&env.home, at)? {
+            break l;
+        }
+        if waited >= UP_LOCK_WAIT_S {
+            bail!("`auto revive` / `auto up` khác vẫn đang mở phòng sau {UP_LOCK_WAIT_S} giây — chạy lại sau ít phút");
+        }
+        if waited == 0 {
+            println!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ tối đa {UP_LOCK_WAIT_S} giây…");
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        waited += 3;
     };
     // Under the lock (no revive re-opens what this stops), before anything here starts.
     if !args.iter().any(|a| a == "-h" || a == "--help") {
@@ -2839,4 +2882,23 @@ mod tests {
         assert_eq!(manifest["types"], "./types/index.d.ts");
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn a_folder_that_only_groups_repos_is_not_a_project() {
+        let base = std::env::temp_dir().join(format!("8sync-group-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("startup");
+        for d in [repo.join(".git"), repo.join("zus").join("web"), repo.join("src"), repo.join(".claude").join("worktrees").join("card-1").join("game")] {
+            std::fs::create_dir_all(&d).unwrap();
+        }
+        std::fs::create_dir_all(repo.join("zus").join("ide").join(".git")).unwrap();
+        std::fs::write(repo.join("zus").join("web").join(".git"), "gitdir: ../../.git/modules/web").unwrap();
+        std::fs::create_dir_all(repo.join(".claude").join("worktrees").join("card-1").join("game").join(".git")).unwrap();
+        assert_eq!(grouping_folder(&repo.join("zus"), &repo), Some(vec!["ide".to_string(), "web".to_string()]), "submodule (.git file) and nested repo");
+        assert_eq!(grouping_folder(&repo, &repo), None, "the repo itself");
+        assert_eq!(grouping_folder(&repo.join("src"), &repo), None, "a plain subfolder is its repo");
+        assert_eq!(grouping_folder(&repo.join(".claude").join("worktrees").join("card-1"), &repo), None, "a card worktree");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
 }

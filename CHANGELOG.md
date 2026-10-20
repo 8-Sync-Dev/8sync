@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.11] — 2026-10-21
+### Fixed
+- **`auto up` no longer fails for 10 min on a dead revive's lock.** The revive lock was held until it aged out (600 s) even when the process that took it was gone (a run killed by HQ's timeout), so the owner's `8sync ccc auto up --roles full --clear-ss` said "đang có `auto revive` / `auto up` khác mở phòng". A lock whose process no longer runs is now free at once, and `auto up` waits up to 150 s for a live revive to finish instead of failing.
+- **A folder that only groups repos is refused, not resolved to the parent.** `auto up` / `auto add` / `auto on --here` in `8sync-startup/zus` (a folder of the parent repo holding the submodules admin, ide, models, web) started the PARENT repo's team — and, with one team per folder tree, would have stopped the 3d-game team nested in it. It now stops with the list of repos inside and `cd` into the one to work on.
+
 ## [0.110.10] — 2026-10-21
 ### Fixed
 - **One team per folder tree: auto in a repo no longer drags the team of the repo it sits in.** Auto's projects (`auto.json` `repos`) and `team-roots.json` accumulated: once the parent repo (8sync-startup) had been on, every plain `auto on` — HQ "Chạy liên tục" and the new per-project "Gỡ kẹt ngay" — resumed it, and revive brought its 6 old rooms back beside 3d-game's 13 (2026-10-20 16:09 UTC; the PC hit 100% RAM). Now `auto up` / `auto on --here` in a repo stops the team of any repo nested with it (parent or child; unrelated projects keep running) and takes it out of auto and revive; old state holding both keeps only the deepest repo (status, scope check, plain `on`).

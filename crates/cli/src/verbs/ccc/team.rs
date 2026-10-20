@@ -685,6 +685,29 @@ impl Drop for ReviveLock {
 /// A lock younger than this is a revive still running; an older one was left by a killed run.
 const REVIVE_LOCK_S: u64 = 600;
 
+/// Whether process `pid` runs; when that cannot be told, it does (a lock is kept, never stolen).
+fn pid_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .output();
+        out.map_or(true, |o| !o.status.success() || String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Path::new("/proc").join(pid.to_string()).exists()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        std::process::Command::new("kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).status().map_or(true, |s| s.success())
+    }
+}
+
 /// `None`: another revive / up holds the lock, this one does nothing.
 pub(super) fn revive_lock(home: &Path, now: u64) -> Result<Option<ReviveLock>> {
     let dir = idle::state_dir(home);
@@ -704,7 +727,10 @@ pub(super) fn revive_lock(home: &Path, now: u64) -> Result<Option<ReviveLock>> {
                 let at = held.split('.').next().and_then(|s| s.trim().parse::<u64>().ok()).or_else(|| {
                     std::fs::metadata(&p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs())
                 });
-                if at.is_some_and(|a| now.saturating_sub(a) < REVIVE_LOCK_S) {
+                // A holder that is gone (killed by a timeout, 2026-10-21: the owner's `auto up` was
+                // refused for 10 min by a dead revive's lock) frees it at once.
+                let gone = held.split('.').nth(1).and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|pid| pid != std::process::id() && !pid_alive(pid));
+                if !gone && at.is_some_and(|a| now.saturating_sub(a) < REVIVE_LOCK_S) {
                     return Ok(None);
                 }
                 // Stale: take it over only if nobody replaced it meanwhile (same content).
@@ -1224,6 +1250,13 @@ mod tests {
         let again = revive_lock(&h, 2_000 + REVIVE_LOCK_S).unwrap();
         assert!(again.is_some(), "a lock older than {REVIVE_LOCK_S}s is stale");
         drop(again);
+        // A fresh lock whose process is gone is free at once.
+        let mut done = if cfg!(windows) { std::process::Command::new("cmd").args(["/c", "exit"]).spawn().unwrap() } else { std::process::Command::new("true").spawn().unwrap() };
+        let dead = done.id();
+        done.wait().unwrap();
+        assert!(!pid_alive(dead) && pid_alive(std::process::id()));
+        std::fs::write(idle::state_dir(&h).join("revive.lock"), format!("3000.{dead}")).unwrap();
+        assert!(revive_lock(&h, 3_001).unwrap().is_some(), "its holder died: taken over");
         let _ = std::fs::remove_dir_all(&h);
     }
 
