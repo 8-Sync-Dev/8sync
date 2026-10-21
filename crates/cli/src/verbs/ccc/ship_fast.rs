@@ -114,6 +114,49 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Option<String> {
     Some(format!("ship-fast hết: {title}"))
 }
 
+/// The board's approved cards waiting for the owner's Ship.
+fn approved_cards(home: &Path, root: &Path) -> Vec<target::Target> {
+    target::list(home, root).unwrap_or_default().into_iter().filter(|t| t.state == "open" && t.lane == "approved").collect()
+}
+
+/// `auto ship-ask` and the revive tick's watch: the lead is told to ask the owner's one-tap Ship
+/// (owner 2026-10-21: "bảng approve bị kẹt nhiều quá … nên có nút để tiện bấm ship"). Only when
+/// cards wait and no self-merge grant holds (with one, `merge::background` is already landing
+/// them); at most once every [`NUDGE_S`] per project. Returns the line for the report, None when
+/// nothing to do.
+pub(super) fn ask_ship(home: &Path, root: &Path, registry: &[(String, String)], now: u64) -> Option<String> {
+    const NUDGE_S: u64 = 30 * 60;
+    let approved = approved_cards(home, root);
+    if approved.is_empty() || super::grant::self_merge(&super::grant::dir(home), root, now).is_some() {
+        return None;
+    }
+    let k = key(root);
+    let mut due = false;
+    super::team::update_json(&file(home), |v| {
+        due = v[&k]["nudge"].as_u64().is_none_or(|at| now.saturating_sub(at) >= NUDGE_S);
+        if due {
+            v[&k]["nudge"] = json!(now);
+        }
+    });
+    if !due {
+        return None;
+    }
+    let leads: Vec<(String, String)> = registry.iter().filter(|(n, _)| super::room::crew(n) == "lead").cloned().collect();
+    if leads.is_empty() {
+        return None;
+    }
+    let text = format!(
+        "[🚀 owner] {} card approved đang chờ Ship: hỏi owner MỘT câu AskUserQuestion header \"Ship\" gom mọi card approved (option \"Duyệt tất cả (Recommended)\" | \"Chỉ merge, chưa deploy\" | \"Dừng\") NGAY lượt này, trước `auto wait`; owner duyệt xong `8sync ccc auto merge` tự land.",
+        approved.len()
+    );
+    let sent: Vec<String> = leads.iter().filter(|(_, id)| crate::verbs::hq::queue_inbox(home, id, &text, now * 1000).is_ok()).map(|(n, _)| n.clone()).collect();
+    if sent.is_empty() {
+        return None;
+    }
+    super::team::ask_wake(home, root, &sent, now);
+    Some(format!("ship-ask: {} card approved → {}", approved.len(), sent.join(", ")))
+}
+
 /// Whether builders of `root` hold off fresh feature cards ([`HOLD_AT`] or more waiting in
 /// qa/review/approved). Read by `target::claim`.
 pub(super) fn holding(home: &Path, root: &Path, now: u64) -> bool {
@@ -146,6 +189,22 @@ pub(super) fn run(args: &[String], home: &Path, root: &Path, owner: bool, now: u
             } else {
                 println!("Ship tốc độ cao: BẬT, {} phút", (until - now) / 60);
                 println!("{brief}");
+            }
+        }
+        Some((&"ship-ask", []) | (&"ask", [])) => {
+            if !owner {
+                bail!("chỉ owner yêu cầu Ship (nút HQ)");
+            }
+            // The verb reports and leaves the mailing to the next revive tick (it has the registry);
+            // force it due now so that tick is the very next one.
+            super::team::update_json(&file(home), |v| {
+                v[key(root)]["nudge"] = json!(0);
+            });
+            let line = None::<String>;
+            if as_json {
+                println!("{}", json!({ "asked": line.is_some(), "line": line }));
+            } else {
+                println!("{}", line.unwrap_or_else(|| "không có card approved đang chờ (hoặc lead đã được nhắc gần đây)".into()));
             }
         }
         Some((&"off", [])) => {
@@ -206,6 +265,28 @@ mod tests {
         assert!(run(&["off".into()], &h, &root, false, 100).is_err(), "a room cannot stop it");
         assert!(off(&h, &root));
         assert!(get(&h, &root).is_none());
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// Approved cards pile up → the lead is told to ask the owner's Ship, at most every 30 min.
+    #[test]
+    fn approved_pile_up_nudges_the_lead_once_per_half_hour() {
+        let (h, root) = tmp("ask");
+        let reg = vec![("lead".to_string(), "11111111-1111-4111-8111-111111111111".to_string())];
+        assert!(ask_ship(&h, &root, &reg, 100).is_none(), "nothing approved");
+        let a = card(&h, &root, "done thing", "ready", 100);
+        for (step, m) in [
+            ("building", target::Move::default()),
+            ("qa", target::Move::default()),
+            ("review", target::Move::default()),
+            ("approved", target::Move { sha: Some("0d596904e5cbf53f94fbc8198fcd9b0f9848866e"), ..Default::default() }),
+        ] {
+            target::move_to(&h, &root, a, step, &m, None, 150).unwrap();
+        }
+        let line = ask_ship(&h, &root, &reg, 200).expect("nudged");
+        assert!(line.contains("1 card approved") && line.contains("lead"), "{line}");
+        assert!(ask_ship(&h, &root, &reg, 300).is_none(), "debounced");
+        assert!(ask_ship(&h, &root, &reg, 200 + 31 * 60).is_some(), "half an hour later it asks again");
         let _ = std::fs::remove_dir_all(&h);
     }
 

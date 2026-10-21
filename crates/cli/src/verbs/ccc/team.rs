@@ -903,6 +903,11 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     if let Some(line) = super::ship_fast::tick(t.home, t.root, now) {
         rows.push(Row { name: "lead".into(), role: room::role("lead").0, model: String::new(), state: line, short: String::new() });
     }
+    // Approved cards piling up: the lead asks the owner's one-tap Ship (debounced; owner
+    // 2026-10-21: "lead agent nên xem board thường xuyên hơn, kẹt để còn approve").
+    if let Some(line) = super::ship_fast::ask_ship(t.home, t.root, &registry, now) {
+        rows.push(Row { name: "lead".into(), role: room::role("lead").0, model: String::new(), state: line, short: String::new() });
+    }
     let all = agents(t, true)?;
     let running = agents(t, false)?;
     let listed_at = std::time::Instant::now();

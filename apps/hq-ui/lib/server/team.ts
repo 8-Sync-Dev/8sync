@@ -3,7 +3,7 @@
 import { stripAnsi } from "./pane";
 import { run } from "./proc";
 
-export type TeamAction = "up" | "full" | "boost" | "unboost" | "clean" | "down" | "ship-fast" | "ship-fast-off";
+export type TeamAction = "up" | "full" | "boost" | "unboost" | "clean" | "down" | "ship-fast" | "ship-fast-off" | "ship-ask";
 
 /** The CLI's `room::FULL_TEAM` and `room::BOOST_TEAM` (crates/cli/src/verbs/ccc/room.rs; tests/team.test.ts pins them). */
 export const FULL_TEAM = ["lead", "dev", "dev2", "ui", "qa", "review"] as const;
@@ -19,6 +19,7 @@ export const BOOST_ONLY: string[] = BOOST_TEAM.filter((r) => !(FULL_TEAM as read
  */
 export function teamArgs(action: TeamAction): string[] {
   if (action === "ship-fast") return ["ccc", "auto", "ship-fast", "on", "--json"];
+  if (action === "ship-ask") return ["ccc", "auto", "ship-fast", "ship-ask", "--json"];
   if (action === "ship-fast-off") return ["ccc", "auto", "ship-fast", "off", "--json"];
   if (action === "down") return ["ccc", "auto", "down"];
   if (action === "unboost") return ["ccc", "auto", "down", "--only", BOOST_ONLY.join(",")];
@@ -27,7 +28,7 @@ export function teamArgs(action: TeamAction): string[] {
   return ["ccc", "auto", "up", ...(action === "clean" ? ["--clear-ss"] : [])];
 }
 
-const ACTIONS: readonly unknown[] = ["up", "full", "boost", "unboost", "clean", "down", "ship-fast", "ship-fast-off"] satisfies TeamAction[];
+const ACTIONS: readonly unknown[] = ["up", "full", "boost", "unboost", "clean", "down", "ship-fast", "ship-fast-off", "ship-ask"] satisfies TeamAction[];
 export const isTeamAction = (v: unknown): v is TeamAction => ACTIONS.includes(v);
 
 /** `busy`: another team run is still going in this root (a second tab, a double click). */
