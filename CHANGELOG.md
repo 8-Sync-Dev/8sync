@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.39] — 2026-10-22
+### Changed
+- **Tổng quan gọn lại** (owner 2026-10-22: "ui ux loạn quá"): câu hỏi dài trong khung "Anh cần trả lời" (danh sách 19 card merge của lead) gập còn 3 dòng, bấm vào mở đủ; bỏ dòng "Màn hình phòng đang hiện đúng câu này" và dòng nhắc Ship khi đã có nút đáp án; cột Preview ẩn khi chưa có ảnh (tab Preview vẫn chỉ chỗ lưu ảnh).
+### Fixed
+- **HQ quét câu hỏi kẹt theo đúng độ trễ của 8sync.** Bản .38 cho critic trả lời ngay (`after_s` 0) nhưng HQ vẫn đợi 60 giây mới đóng hộp hỏi cho phòng không có hook: giờ ngưỡng quét = `after_s` của `auto status` (sàn 5 giây để anh kịp đọc; 8sync cũ không báo thì vẫn 60 giây). Hướng dẫn trong HQ nói đúng "critic chọn ngay (mặc định bật)". Test stuck-asks +1.
+
 ## [0.110.38] — 2026-10-22
 ### Changed
 - **Critic trả lời ngay, không chờ 60 giây** (owner: "tôi nghĩ bây giờ không cần sau 1p auto trả lời"): `auto on` đặt delegate `--after 0` (trả lời ngay trong phòng, ghi DECISIONS.md); `--after <s>` vẫn đưa lại chế độ chờ owner nếu anh muốn. Rails không đổi: Ship, secret/tiền, xoá/không hoàn tác, deploy prod, high-risk vẫn chờ anh.

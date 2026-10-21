@@ -196,11 +196,14 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
         <div className="mt-3 space-y-3">
           {a.questions.map((q, qi) => (
             <div key={qi} className="space-y-1.5">
-              <p className="max-w-[75ch] text-[15px] leading-snug font-medium text-pretty">
-                {q.header && <span className="mr-2 rounded-sm bg-muted px-1.5 py-px align-[1px] text-[11px] font-semibold text-muted-foreground">{q.header}</span>}
-                {q.question}
-                {q.multi && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(chọn được nhiều)</span>}
-              </p>
+              {/* Long questions (a lead's 19-card merge list) fold to three lines; the whole text is one tap away. Owner 2026-10-22: "loạn quá". */}
+              <details className="group max-w-[75ch]">
+                <summary className="cursor-pointer list-none text-[15px] leading-snug font-medium text-pretty [&::-webkit-details-marker]:hidden">
+                  {q.header && <span className="mr-2 rounded-sm bg-muted px-1.5 py-px align-[1px] text-[11px] font-semibold text-muted-foreground">{q.header}</span>}
+                  <span className="line-clamp-3 group-open:line-clamp-none">{q.question}</span>
+                  {q.multi && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(chọn được nhiều)</span>}
+                </summary>
+              </details>
               {/* With one-tap answers the options are the buttons below (label and description). */}
               {!tap && (
                 <ol className="space-y-1">
@@ -217,7 +220,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
               )}
             </div>
           ))}
-          {isShip(a) && <p className="text-xs font-medium text-st-needs">{SHIP_NOTE}</p>}
+          {isShip(a) && !tap && <p className="text-xs font-medium text-st-needs">{SHIP_NOTE}</p>}
         </div>
       ) : null}
 
@@ -335,12 +338,7 @@ export function OneTap({ r, sid, kind, token, onTerminal }: { r: AskRoom; sid: s
           </button>
           .
         </p>
-      ) : q && flatText(screen.text) === flatText(q.question) ? (
-        // The question already shows above, word for word: confirm instead of repeating it.
-        <p className="flex items-center gap-1 text-xs text-muted-foreground">
-          <CheckIcon aria-hidden className="size-3.5 text-st-running" /> Màn hình phòng đang hiện đúng câu này. Chọn một đáp án:
-        </p>
-      ) : (
+      ) : q && flatText(screen.text) === flatText(q.question) ? null : ( // the question already shows above, word for word: the buttons are the answer (owner 2026-10-22: "loạn quá")
         <figure>
           <figcaption className="text-xs text-muted-foreground">Phòng đang hỏi đúng như sau</figcaption>
           <pre className="mt-1 max-h-40 max-w-[90ch] overflow-auto rounded-md border bg-background px-2.5 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">{screen.text}</pre>

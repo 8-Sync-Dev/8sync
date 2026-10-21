@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import type { Ask } from "@/lib/ask";
 import { closeDialog } from "@/lib/server/stuck-asks";
-import { criticMessage, STUCK_AFTER_MS, stuckAsks, type StuckRoom } from "@/lib/stuck-asks";
+import { criticMessage, STUCK_AFTER_MS, STUCK_MIN_MS, stuckAfterMs, stuckAsks, type StuckRoom } from "@/lib/stuck-asks";
 
 const q = (at: number | null): Ask => ({
   kind: "question",
@@ -26,6 +26,19 @@ describe("stuck questions go to the critic (seen live 2026-10-18: 7 rooms waited
     // Already handed over: never twice for the same question.
     expect(stuckAsks(rooms, { a: now - STUCK_AFTER_MS - 1 }, now)).toEqual([]);
     expect(stuckAsks([room("a", q(now - 200_000))], { a: now - STUCK_AFTER_MS - 1 }, now)).toHaveLength(1);
+  });
+
+  it("the threshold follows 8sync's `after_s` (owner 2026-10-22: answer at once, not after a minute), floored at 5 s, the old minute without it", () => {
+    expect(stuckAfterMs(0)).toBe(STUCK_MIN_MS); // v0.110.38 default: "trả lời ngay"
+    expect(stuckAfterMs(5)).toBe(5_000);
+    expect(stuckAfterMs(1)).toBe(STUCK_MIN_MS);
+    expect(stuckAfterMs(120)).toBe(120_000);
+    expect(stuckAfterMs(null)).toBe(STUCK_AFTER_MS);
+    expect(stuckAfterMs(undefined)).toBe(STUCK_AFTER_MS);
+    // A 6 s old question is stuck at the 5 s threshold, not at the minute.
+    const rooms = [room("a", q(now - 6_000))];
+    expect(stuckAsks(rooms, {}, now, stuckAfterMs(5))).toHaveLength(1);
+    expect(stuckAsks(rooms, {}, now)).toHaveLength(0);
   });
 
   it("the room's message names the questions and carries the critic route", () => {
