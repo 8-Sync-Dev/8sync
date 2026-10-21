@@ -22,7 +22,7 @@ import type { Room } from "./use-office";
 export type Upload = { id: string; name: string; size: number };
 
 /** Phones: every control in the toolbar is a 44 px touch target; desktop keeps the dense row. */
-const TOUCH = "max-sm:h-11 max-sm:min-w-11";
+export const TOUCH = "max-sm:h-11 max-sm:min-w-11";
 
 /**
  * The composer every "send to rooms" surface shares (Chat tổng, Preview "Hỏi về ảnh này"): one
