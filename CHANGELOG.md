@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.30] — 2026-10-21
+
 ### Fixed
 - **`/sec` và `/aup-audit` không quét cả git history nữa.** Owner 2026-10-21 ("sao toàn bị vượt"): RAM 85% khi ngưỡng guard là 60%, nhưng các phòng chỉ dùng ~6 GB; 4 tiến trình `gitleaks.exe` chiếm 3,2–4,1 GB mỗi cái (~14 GB, 28% CPU) — là `gitleaks detect` quét toàn bộ history mà gate `/sec`/`/aup-audit` của mỗi phòng chạy trước commit trên repo lớn, guard đếm vào "app khác" nên không trim được. Hai skill giờ chỉ quét commit của nhánh (`--log-opts=origin/main..HEAD`, 194 ms trên repo này) cộng phần staged (`gitleaks protect --staged`), có `--max-target-megabytes 5`; quét cả history chỉ khi `repo` / sắp public repo, chạy một mình. Cập nhật kit: `8sync ccc kit`.
 
