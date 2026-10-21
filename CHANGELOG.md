@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.13] — 2026-10-21
+### Fixed
+- **HQ "⚡ Sấm Sét" can be turned off.** Owner 2026-10-21: "bật sao không tắt được" — while it ran, a click only renewed the lease. Now it asks: **Tắt Sấm Sét** (back to the 6-room full team: stops ba, dev3–dev6, qa2, review2; the cards they held go back to the board) or **Gia hạn 2 giờ** (renews the lease, as before).
+- `8sync ccc auto down --only <a,b,c>` takes a comma list under one revive lock (same ≤ 45 s wait). A typo is refused before anything stops. The stopped rooms' card claims are released at once instead of after 2 h: `building` → `ready`, qa/review cards stay in their lane unclaimed, each with a `↩ <room> tắt (down --only): trả về <lane>` note.
+
 ## [0.110.12] — 2026-10-21
 ### Added
 - **Auto image review ("Tự soi ảnh", per project, off by default).** HQ Preview gets a switch; on, it adds an `eye` room (Soi ảnh, sonnet, no lane) to the running team and sends it each open card's new evidence images (one `[ảnh mới] card #N (lane X): "…" · ảnh: …` message per card, ~90 s after its last new image, ≤ 6 images, never re-sent — survives HQ restarts; closed cards and images older than the switch never go). The room reads the card's CURRENT text, AC/check and notes on the board (owner notes win), looks at every image and writes one objective note `[soi ảnh] Đạt · Lệch AC · Đề xuất` (only what is visible, file names cited, "không đủ để kết luận" when an image can't show it); a clear AC miss or visual bug also goes to the lead. The lightbox shows the card's latest `[soi ảnh]` note under the image. Sends run from the Preview poll and from the auto poll every HQ tab makes, so any open tab drives it; nothing runs while no project has the switch on.

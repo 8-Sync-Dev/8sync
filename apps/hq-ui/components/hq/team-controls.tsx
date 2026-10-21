@@ -1,6 +1,6 @@
 "use client";
 
-import { PlayIcon, SquareIcon, SparklesIcon, UsersIcon, ZapIcon } from "lucide-react";
+import { PlayIcon, PowerOffIcon, RefreshCwIcon, SquareIcon, SparklesIcon, UsersIcon, ZapIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,13 +8,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from "@/lib/utils";
 import { makeApi } from "./use-hq";
 
-type Action = "up" | "full" | "boost" | "clean" | "down";
+type Action = "up" | "full" | "boost" | "unboost" | "clean" | "down";
 type Result = { ok: boolean; output: string; error: string | null };
 
 const DONE: Record<Action, string> = {
   up: "Đã mở team",
   full: "Đã mở team đầy đủ",
   boost: "Đã bật Sấm Sét",
+  unboost: "Đã tắt Sấm Sét, về team 6 phòng",
   clean: "Đã dọn session rác, nạp bản mới và mở team",
   down: "Đã dừng team",
 };
@@ -22,12 +23,18 @@ const OPENING: Record<Action, string> = {
   up: "lead, dev, qa, review, rd",
   full: "6 phòng: lead, dev, dev2, ui, qa, review",
   boost: "Sấm Sét, 13 phòng mở lần lượt, có thể mất tới 10 phút",
+  unboost: "",
   clean: "dọn rác, khởi động lại phòng chạy bản cũ",
   down: "",
 };
+const WAITING = (action: Action, name: string) =>
+  action === "down" ? `Đang dừng team ${name}…` : action === "unboost" ? `Đang tắt Sấm Sét của ${name} (dừng 7 phòng thêm, card đang giữ trả về cột)…` : `Đang mở team ${name} (${OPENING[action]})…`;
+const FAILED = (action: Action, name: string) => (action === "down" ? `Không dừng được team ${name}` : action === "unboost" ? `Không tắt được Sấm Sét của ${name}` : `Không mở được team ${name}`);
 
 /** What the confirm dialog of Sấm Sét says, in one sentence (also the button's tooltip). */
 const BOOST_COST = "13 phòng chạy song song: 2 lập kế hoạch (lead, ba), 7 builder (dev, dev2, dev3, dev4, dev5, dev6, ui), 2 QA (qa, qa2), 2 review (review, review2); tốn quota khoảng 13 lần một phiên, lease 2 giờ.";
+/** What "Tắt Sấm Sét" does (`auto down --only ba,dev3,dev4,dev5,dev6,qa2,review2`, lib/server/team.ts BOOST_ONLY). */
+const UNBOOST_INFO = "Tắt Sấm Sét: về team 6 phòng (lead, dev, dev2, ui, qa, review); dừng ba, dev3–dev6, qa2, review2; card các phòng đó đang giữ trả về cột (building → ready, qa/review ở lại cột, bỏ claim). Lease giữ nguyên: hết giờ Sấm Sét thì cả team dừng như cũ (muốn chạy tiếp: Team đầy đủ). Gia hạn 2 giờ: giữ 13 phòng thêm 2 giờ.";
 
 /**
  * The project's live team is already the boost team: 13+ rooms that include the rooms only boost opens
@@ -44,14 +51,14 @@ function useTeam(token: string, after?: () => void) {
   const [busy, setBusy] = useState<Action | null>(null);
   async function act(root: string, name: string, action: Action) {
     setBusy(action);
-    const wait = toast.loading(action === "down" ? `Đang dừng team ${name}…` : `Đang mở team ${name} (${OPENING[action]})…`);
+    const wait = toast.loading(WAITING(action, name));
     try {
       const r = await makeApi(token)<Result>("/api/team", { method: "POST", body: { root, action } });
       // Boost: the CLI's own summary (its last line); the other actions show the whole report.
       const description = action === "boost" ? r.output.split("\n").at(-1) : <pre className="mt-1 max-h-48 overflow-auto text-[11px] leading-snug whitespace-pre-wrap">{r.output}</pre>;
       toast.success(`${DONE[action]}: ${name}`, { id: wait, description });
     } catch (e) {
-      toast.error(`Không ${action === "down" ? "dừng" : "mở"} được team ${name}`, { id: wait, description: (e as Error).message });
+      toast.error(FAILED(action, name), { id: wait, description: (e as Error).message });
     } finally {
       setBusy(null);
       after?.();
@@ -60,13 +67,35 @@ function useTeam(token: string, after?: () => void) {
   return { busy, act };
 }
 
+/** The choices of an active Sấm Sét: turn it off (back to the 6-room team), renew the lease, or nothing. */
+export function BoostChoices({ onOff, onRenew, onCancel }: { onOff: () => void; onRenew: () => void; onCancel: () => void }) {
+  return (
+    <DialogFooter>
+      <Button type="button" variant="ghost" onClick={onCancel}>
+        Thôi
+      </Button>
+      <Button type="button" variant="outline" onClick={onRenew} title="Giữ 13 phòng thêm 2 giờ (auto up --roles boost --hours 2)">
+        <RefreshCwIcon aria-hidden /> Gia hạn 2 giờ
+      </Button>
+      <Button type="button" onClick={onOff} title="Về team 6 phòng (auto down --only ba,dev3,dev4,dev5,dev6,qa2,review2)">
+        <PowerOffIcon aria-hidden /> Tắt Sấm Sét
+      </Button>
+    </DialogFooter>
+  );
+}
+
 /**
  * "⚡ Sấm Sét": the 13-room boost team of one project (`auto up --roles boost --hours 2`). Off: asks first
- * (the quota cost). On (`active`, see boostOn): the click renews the 2-hour lease with the same command.
+ * (the quota cost). On (`active`, see boostOn): asks to turn it off (`unboost`, back to the 6-room team)
+ * or renew the 2-hour lease with the same command.
  */
 export function BoostButton({ root, name, token, active, after, className }: { root: string; name: string; token: string; active: boolean; after?: () => void; className?: string }) {
   const { busy, act } = useTeam(token, after);
   const [ask, setAsk] = useState(false);
+  const choose = (action: Action) => {
+    setAsk(false);
+    void act(root, name, action);
+  };
   return (
     <>
       <Button
@@ -75,8 +104,8 @@ export function BoostButton({ root, name, token, active, after, className }: { r
         variant="outline"
         disabled={busy != null}
         aria-busy={busy != null}
-        onClick={() => (active ? void act(root, name, "boost") : setAsk(true))}
-        title={active ? "Team đang chạy 13 phòng. Bấm để gia hạn lease thêm 2 giờ (auto up --roles boost --hours 2)" : `${BOOST_COST} (auto up --roles boost --hours 2)`}
+        onClick={() => setAsk(true)}
+        title={active ? "Sấm Sét đang chạy 13 phòng. Bấm để gia hạn thêm 2 giờ hoặc tắt (về team 6 phòng)" : `${BOOST_COST} (auto up --roles boost --hours 2)`}
         className={cn(
           "font-semibold",
           active && "border-brand-ink/40 bg-brand/25 text-brand-ink hover:bg-brand/40 hover:text-brand-ink dark:border-brand/40 dark:bg-brand/15 dark:text-brand",
@@ -84,28 +113,26 @@ export function BoostButton({ root, name, token, active, after, className }: { r
         )}
       >
         <ZapIcon aria-hidden className={cn(!active && "text-brand-ink dark:text-brand", busy != null && "motion-safe:animate-pulse")} />
-        {busy != null ? "Đang bật…" : active ? "Đang Sấm Sét" : "Sấm Sét"}
+        {busy === "unboost" ? "Đang tắt…" : busy != null ? "Đang bật…" : active ? "Đang Sấm Sét" : "Sấm Sét"}
       </Button>
       <Dialog open={ask} onOpenChange={setAsk}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Bật Sấm Sét cho {name}?</DialogTitle>
-            <DialogDescription>{BOOST_COST}</DialogDescription>
+            <DialogTitle>{active ? "Sấm Sét đang chạy 13 phòng" : `Bật Sấm Sét cho ${name}?`}</DialogTitle>
+            <DialogDescription>{active ? UNBOOST_INFO : BOOST_COST}</DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setAsk(false)}>
-              Thôi
-            </Button>
-            <Button
-              type="button"
-              onClick={() => {
-                setAsk(false);
-                void act(root, name, "boost");
-              }}
-            >
-              <ZapIcon aria-hidden /> Mở 13 phòng
-            </Button>
-          </DialogFooter>
+          {active ? (
+            <BoostChoices onOff={() => choose("unboost")} onRenew={() => choose("boost")} onCancel={() => setAsk(false)} />
+          ) : (
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAsk(false)}>
+                Thôi
+              </Button>
+              <Button type="button" onClick={() => choose("boost")}>
+                <ZapIcon aria-hidden /> Mở 13 phòng
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </>
