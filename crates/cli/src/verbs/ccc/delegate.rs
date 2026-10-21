@@ -187,6 +187,89 @@ pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
 }
 
 /// `60`, `60s`, `1m`, `5m` → seconds, 1..=1 day.
+/// A pending, unanswered question at the end of a Claude Code transcript: the room's turn ended on
+/// an `AskUserQuestion` that still waits on a human. The critic ([`hook`]) answers product and
+/// technical questions inside the room; what is left (rails: Ship, secrets, money, destructive…
+/// and questions from before the kit) sits on screen until someone looks. Only the last
+/// [`ASK_TAIL`] bytes are read, newest line first: the first meaningful event must be that
+/// tool_use, with no user line (the answer, or a tool_result) after it. `None` = not stuck.
+pub(super) fn pending_ask(path: &Path) -> Option<String> {
+    /// How much of the tail is scanned: a question is the room's last word, a few lines back.
+    const ASK_TAIL: u64 = 64 * 1024;
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(ASK_TAIL))).ok()?;
+    let mut buf = String::new();
+    f.take(ASK_TAIL).read_to_string(&mut buf).ok()?;
+    for line in buf.lines().rev() {
+        if line.contains(r#""isSidechain":true"#)
+            || line.starts_with(r#"{"type":"summary""#)
+            || line.starts_with(r#"{"type":"custom-title""#)
+            || line.starts_with(r#"{"type":"agent-name""#)
+        {
+            continue;
+        }
+        if line.contains(r#""type":"user""#) {
+            return None; // answered (a tool_result or the owner's reply comes as a user line)
+        }
+        if line.contains(r#""type":"assistant""#) && line.contains(r#""name":"AskUserQuestion""#) {
+            let v: Value = serde_json::from_str(line).ok()?;
+            let q = v["message"]["content"].as_array()?
+                .iter()
+                .find(|b| b["type"] == "tool_use" && b["name"] == "AskUserQuestion")?;
+            let one = q["input"]["questions"][0].as_object()?;
+            let head = one.get("header").and_then(Value::as_str).unwrap_or("hỏi");
+            let text = one.get("question").and_then(Value::as_str).unwrap_or_default();
+            let first = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+            return Some(format!("{head}: {}", ccc_core::secret_mask::mask(&ccc_core::transcript::truncate(first, 90))));
+        }
+        if line.contains(r#""type":"assistant""#) {
+            return None; // the room went on talking after its question
+        }
+    }
+    None
+}
+
+/// Revive's stuck-question relay (owner 2026-10-22: "khi ccc đang code bị dính hỏi, auto phải gọi
+/// agent lead trả lời ngay làm tiếp"): every lane room whose turn ended on an unanswered
+/// [`AskUserQuestion`] ([`pending_ask`]) is handed to the lead — it answers the room over HQ
+/// (`8sync ccc msg`, per DECISIONS.md) or, for owner-only rails, asks the owner ONE AskUserQuestion
+/// — and the lead is woken now. At most once every [`RELAY_S`] per room, so a slow owner is not
+/// spammed. Returns the line for the revive report, None when there is nothing to do.
+pub(super) fn relay_stuck(home: &Path, root: &Path, registry: &[(String, String)], stuck: &[(String, String)], now: u64) -> Option<String> {
+    /// One relay per room this often (the lead gets every due room in one message).
+    const RELAY_S: u64 = 600;
+    let leads: Vec<(String, String)> = registry.iter().filter(|(n, _)| super::room::crew(n) == "lead").cloned().collect();
+    if leads.is_empty() {
+        return None;
+    }
+    let k = |room: &str| format!("{}|{room}", super::auto::canon(root).to_string_lossy());
+    let mut due: Vec<&(String, String)> = Vec::new();
+    super::team::update_json(&super::idle::state_dir(home).join("relay.json"), |v| {
+        for pair in stuck {
+            let key = k(&pair.0);
+            if v[&key].as_u64().is_none_or(|at| now.saturating_sub(at) >= RELAY_S) {
+                v[&key] = json!(now);
+                due.push(pair);
+            }
+        }
+    });
+    if due.is_empty() {
+        return None;
+    }
+    let list = due.iter().map(|(n, q)| format!("{n} hỏi \"{q}\"")).collect::<Vec<_>>().join(" · ");
+    let text = format!(
+        "[❓ phòng dừng chờ trả lời] {list}. Trả lời NGAY lượt này, từng phòng một qua `8sync ccc msg <phòng> \"<đáp>\"`: câu sản phẩm/kỹ thuật tự quyết theo su-code/DECISIONS.md (không cần owner); câu Ship/secret/tiền/xoá/high-risk gom MỘT câu AskUserQuestion hỏi owner. Phòng đang chờ đang chặn cột của nó."
+    );
+    let sent: Vec<String> = leads.iter().filter(|(_, id)| crate::verbs::hq::queue_inbox(home, id, &text, now * 1000).is_ok()).map(|(n, _)| n.clone()).collect();
+    if sent.is_empty() {
+        return None;
+    }
+    super::team::ask_wake(home, root, &sent, now);
+    Some(format!("stuck-ask: {} → {}", due.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>().join(", "), sent.join(", ")))
+}
+
 pub(super) fn parse_after(s: &str) -> Result<u64> {
     let t = s.trim().to_ascii_lowercase();
     let (num, mul) = match t.strip_suffix('m') {
@@ -309,6 +392,64 @@ mod tests {
         let secret = ask("Key", "Dùng api key nào?", &["A", "B"]).to_string();
         assert_eq!(check(&secret, None, &home)["critic"], false);
         assert_eq!(check("not json", None, &home)["critic"], false);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A Claude Code transcript fixture: `lines` are raw jsonl entries.
+    fn transcript(name: &str, lines: &[String]) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("8sync-dlg-ask-{}-{name}", std::process::id()));
+        std::fs::write(&p, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+        p
+    }
+
+    fn ask_line(q: &str) -> String {
+        json!({ "type": "assistant", "message": { "content": [
+            { "type": "tool_use", "name": "AskUserQuestion", "input": { "questions": [
+                { "header": "API", "question": q, "options": [{ "label": "A", "description": "" }] }
+            ] } }
+        ] } }).to_string()
+    }
+
+    #[test]
+    fn pending_ask_spots_an_unanswered_question_and_its_answer() {
+        let user = json!({ "type": "user", "message": { "content": [{ "type": "text", "text": "làm tiếp" }] } }).to_string();
+        let talk = json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "đã xong phần đó" }] } }).to_string();
+        // Last event = the question, nobody replied → stuck, with the header and one masked line.
+        let p = transcript("stuck", &[talk.clone(), ask_line("Đổi tên endpoint thành gì\n(chọn một)?")]);
+        let q = pending_ask(&p).expect("stuck on the question");
+        assert!(q.starts_with("API: ") && q.contains("endpoint"), "{q}");
+        // The owner answered (a user line after it) → not stuck.
+        let p = transcript("answered", &[talk.clone(), ask_line("Đổi tên endpoint?"), user]);
+        assert!(pending_ask(&p).is_none());
+        // The room went on after its question (another assistant line) → not stuck.
+        let p = transcript("wenton", &[ask_line("Đổi tên endpoint?"), talk]);
+        assert!(pending_ask(&p).is_none());
+        for p in ["stuck", "answered", "wenton"] {
+            let _ = std::fs::remove_file(transcript(p, &[]));
+        }
+    }
+
+    /// A stuck room is handed to the lead once per 10 min (owner 2026-10-22: "auto phải gọi agent
+    /// lead trả lời ngay làm tiếp"), the lead is woken, and its inbox names the room.
+    #[test]
+    fn relay_stuck_hands_pending_questions_to_the_lead_debounced() {
+        let home = std::env::temp_dir().join(format!("8sync-dlg-relay-{}", std::process::id()));
+        let root = home.join("r");
+        std::fs::create_dir_all(&root).unwrap();
+        let lead = ("lead".to_string(), "22222222-2222-4222-8222-222222222222".to_string());
+        let reg = vec![lead.clone(), ("dev1".to_string(), "33333333-3333-4333-8333-333333333333".to_string())];
+        let stuck = vec![("dev1".to_string(), "API: đổi endpoint?".to_string())];
+        let line = relay_stuck(&home, &root, &reg, &stuck, 100).expect("relayed");
+        assert!(line.contains("dev1") && line.contains("lead"), "{line}");
+        let inbox = crate::verbs::hq::inbox_file(&home, &lead.1).unwrap();
+        let text = std::fs::read_to_string(&inbox).unwrap();
+        assert!(text.contains("dev1 hỏi") && text.contains("8sync ccc msg"), "{text}");
+        assert!(relay_stuck(&home, &root, &reg, &stuck, 200).is_none(), "debounced");
+        let second = vec![("qa1".to_string(), "Ship: merge PR 9?".to_string())];
+        assert!(relay_stuck(&home, &root, &reg, &second, 300).unwrap().contains("qa1"), "another room is due at once");
+        assert!(relay_stuck(&home, &root, &reg, &stuck, 100 + 601).is_some(), "ten minutes later it asks again");
+        let no_lead = vec![];
+        assert!(relay_stuck(&home, &root, &no_lead, &stuck, 5000).is_none(), "no lead: nothing to do");
         let _ = std::fs::remove_dir_all(&home);
     }
 }
