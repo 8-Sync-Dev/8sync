@@ -2,14 +2,13 @@
 
 
 <!-- 8sync:skills:begin -->
-## 🚨 STEP 0 — CODE INTELLIGENCE FIRST (codegraph + codebase-memory-mcp; bắt buộc)
+## 🚨 STEP 0 — CODE INTELLIGENCE FIRST (codegraph CLI trước)
 
 Mọi câu hỏi về code → dùng code-intelligence engine TRƯỚC grep/read (tiết kiệm ~99% token). Bạn (AI) **PHẢI**:
 
 1. **codegraph** (local index): `codegraph index .` 1 lần/session; rồi `codegraph query/explore/node/callers/callees/impact` thay cho `grep`/`rg`/`fd`/`Grep`/`Glob` và `Read` toàn file.
-2. **codebase-memory-mcp** (MCP, LUÔN có trong tool list — gọi đúng tên đăng ký): `mcp__codebase_memory_mcp_search_graph`, `_trace_path`, `_get_architecture`, `_get_code_snippet` — knowledge graph 158 ngôn ngữ, query sub-ms. Full catalog visible (`query_graph`, `detect_changes`, …); server khác/mới thêm → 1 lệnh `search_tool_bm25`.
-3. Tìm/hiểu/định vị code · impact · route→handler · dead code · architecture → ƯU TIÊN 2 engine trên. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit). Serena LUÔN có trong tool list: `mcp__serena_find_symbol` / `mcp__serena_find_referencing_symbols` / `mcp__serena_get_symbols_overview`.
-4. **Nén những gì BẠN phát lại:** báo cáo / subagent prompt / nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill vào context.
+2. Tìm/hiểu/định vị code · impact · route→handler · dead code · architecture → codegraph CLI trước. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit).
+3. **Nén những gì BẠN phát lại:** báo cáo / subagent prompt / nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill vào context.
 
 Lý do: 5 query cấu trúc ≈ 3.4k token vs ≈ 412k token grep từng file (−99%). Dump cả file / grep mù = đốt token = bug.
 
@@ -38,236 +37,63 @@ KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Kh
 
 ### 🔎 On-demand — tên = trigger; mở `SKILL.md` của skill khi task khớp (mô tả ở frontmatter, KHÔNG nhồi ở đây)
 
-- `academic-paper` — `su-code/skills/academic-paper/SKILL.md`
-- `accessibility` — `su-code/skills/accessibility/SKILL.md`
-- `agent-browser` — `su-code/skills/agent-browser/SKILL.md`
 - `ai-microservice-design` — `su-code/skills/ai-microservice-design/SKILL.md`
-- `alpha-research` — `su-code/skills/alpha-research/SKILL.md`
-- `anthropic-compliance` — `su-code/skills/anthropic-compliance/SKILL.md`
 - `api-and-interface-design` — `su-code/skills/api-and-interface-design/SKILL.md`
-- `ask-matt` — `su-code/skills/ask-matt/SKILL.md`
 - `aup-audit` — `su-code/skills/aup-audit/SKILL.md`
-- `autoresearch` — `su-code/skills/autoresearch/SKILL.md`
-- `best-practices` — `su-code/skills/best-practices/SKILL.md`
 - `branch-sync` — `su-code/skills/branch-sync/SKILL.md`
-- `brand-logo-kit` — `su-code/skills/brand-logo-kit/SKILL.md`
-- `browser-profile-control` — `su-code/skills/browser-profile-control/SKILL.md`
 - `browser-testing-with-devtools` — `su-code/skills/browser-testing-with-devtools/SKILL.md`
-- `business-brief` — `su-code/skills/business-brief/SKILL.md`
-- `campaign-plan` — `su-code/skills/campaign-plan/SKILL.md`
-- `chief-of-staff` — `su-code/skills/chief-of-staff/SKILL.md`
 - `ci-cd-and-automation` — `su-code/skills/ci-cd-and-automation/SKILL.md`
-- `claude-handoff` — `su-code/skills/claude-handoff/SKILL.md`
-- `clean-code-javascript` — `su-code/skills/clean-code-javascript/SKILL.md`
-- `clouds-f` — `su-code/skills/clouds-f/SKILL.md`
-- `clouds-rust` — `su-code/skills/clouds-rust/SKILL.md`
-- `clouds-tauri` — `su-code/skills/clouds-tauri/SKILL.md`
-- `code-optimizer` — `su-code/skills/code-optimizer/SKILL.md`
-- `code-review` — `su-code/skills/code-review/SKILL.md`
 - `code-review-and-quality` — `su-code/skills/code-review-and-quality/SKILL.md`
 - `code-simplification` — `su-code/skills/code-simplification/SKILL.md`
-- `codebase-design` — `su-code/skills/codebase-design/SKILL.md`
-- `coding-standards` — `su-code/skills/coding-standards/SKILL.md`
-- `competitive-brief` — `su-code/skills/competitive-brief/SKILL.md`
-- `competitor-video-analysis` — `su-code/skills/competitor-video-analysis/SKILL.md`
-- `vercel-composition-patterns` — `su-code/skills/composition-patterns/SKILL.md`
-- `computer-architecture-researcher` — `su-code/skills/computer-architecture-researcher/SKILL.md`
-- `constant-time-analysis` — `su-code/skills/constant-time-analysis/SKILL.md`
+- `constraint-driven-development` — `su-code/skills/constraint-driven-development/SKILL.md`
 - `context-engineering` — `su-code/skills/context-engineering/SKILL.md`
-- `contributing` — `su-code/skills/contributing/SKILL.md`
-- `core-web-vitals` — `su-code/skills/core-web-vitals/SKILL.md`
-- `cryptographer` — `su-code/skills/cryptographer/SKILL.md`
-- `debug-like-expert` — `su-code/skills/debug-like-expert/SKILL.md`
-- `debug-verify` — `su-code/skills/debug-verify/SKILL.md`
 - `debugging-and-error-recovery` — `su-code/skills/debugging-and-error-recovery/SKILL.md`
 - `deep-research` — `su-code/skills/deep-research/SKILL.md`
-- `defensible-cv` — `su-code/skills/defensible-cv/SKILL.md`
 - `deprecation-and-migration` — `su-code/skills/deprecation-and-migration/SKILL.md`
-- `diagnosing-bugs` — `su-code/skills/diagnosing-bugs/SKILL.md`
-- `discord-ops` — `su-code/skills/discord-ops/SKILL.md`
-- `docker` — `su-code/skills/docker/SKILL.md`
 - `documentation-and-adrs` — `su-code/skills/documentation-and-adrs/SKILL.md`
-- `domain-modeling` — `su-code/skills/domain-modeling/SKILL.md`
 - `doubt-driven-development` — `su-code/skills/doubt-driven-development/SKILL.md`
-- `draft-content` — `su-code/skills/draft-content/SKILL.md`
-- `eino-examples` — `su-code/skills/eino-examples/SKILL.md`
-- `eino-first` — `su-code/skills/eino-first/SKILL.md`
-- `eli5` — `su-code/skills/eli5/SKILL.md`
 - `encore-eino-go` — `su-code/skills/encore-eino-go/SKILL.md`
-- `encore-go-api` — `su-code/skills/encore-go-api/SKILL.md`
-- `encore-go-auth` — `su-code/skills/encore-go-auth/SKILL.md`
-- `encore-go-code-review` — `su-code/skills/encore-go-code-review/SKILL.md`
-- `encore-go-cron` — `su-code/skills/encore-go-cron/SKILL.md`
-- `encore-go-database` — `su-code/skills/encore-go-database/SKILL.md`
-- `encore-go-pubsub` — `su-code/skills/encore-go-pubsub/SKILL.md`
-- `encore-go-secret` — `su-code/skills/encore-go-secret/SKILL.md`
-- `encore-go-service` — `su-code/skills/encore-go-service/SKILL.md`
-- `encore-go-testing` — `su-code/skills/encore-go-testing/SKILL.md`
-- `encore-go-webhook` — `su-code/skills/encore-go-webhook/SKILL.md`
-- `encore-migrations` — `su-code/skills/encore-migrations/SKILL.md`
-- `exercise-forge` — `su-code/skills/exercise-forge/SKILL.md`
-- `Explore Codebase` — `su-code/skills/explore-codebase/SKILL.md`
-- `fb-group-growth` — `su-code/skills/fb-group-growth/SKILL.md`
 - `feature` — `su-code/skills/feature/SKILL.md`
-- `feature-ship` — `su-code/skills/feature-ship/SKILL.md`
-- `frontend-design` — `su-code/skills/frontend-design/SKILL.md`
-- `frontend-patterns` — `su-code/skills/frontend-patterns/SKILL.md`
 - `frontend-ui-engineering` — `su-code/skills/frontend-ui-engineering/SKILL.md`
 - `full-flow` — `su-code/skills/full-flow/SKILL.md`
-- `git-guardrails-claude-code` — `su-code/skills/git-guardrails-claude-code/SKILL.md`
 - `git-workflow-and-versioning` — `su-code/skills/git-workflow-and-versioning/SKILL.md`
-- `grill-me` — `su-code/skills/grill-me/SKILL.md`
-- `grill-with-docs` — `su-code/skills/grill-with-docs/SKILL.md`
-- `grilling` — `su-code/skills/grilling/SKILL.md`
-- `gsap-core` — `su-code/skills/gsap-core/SKILL.md`
-- `gsap-react` — `su-code/skills/gsap-react/SKILL.md`
-- `gsap-scrolltrigger` — `su-code/skills/gsap-scrolltrigger/SKILL.md`
-- `handoff` — `su-code/skills/handoff/SKILL.md`
 - `idea-refine` — `su-code/skills/idea-refine/SKILL.md`
 - `image-gen` — `su-code/skills/image-gen/SKILL.md`
-- `immersive-3d-web` — `su-code/skills/immersive-3d-web/SKILL.md`
-- `implement` — `su-code/skills/implement/SKILL.md`
-- `implement-spec` — `su-code/skills/implement-spec/SKILL.md`
-- `improve-codebase-architecture` — `su-code/skills/improve-codebase-architecture/SKILL.md`
 - `incremental-implementation` — `su-code/skills/incremental-implementation/SKILL.md`
 - `interview-me` — `su-code/skills/interview-me/SKILL.md`
-- `issue-history` — `su-code/skills/issue-history/SKILL.md`
-- `issue-master-flow` — `su-code/skills/issue-master-flow/SKILL.md`
-- `javascript-cheatsheet` — `su-code/skills/javascript-cheatsheet/SKILL.md`
-- `javascript-refactoring` — `su-code/skills/javascript-refactoring/SKILL.md`
-- `jobs` — `su-code/skills/jobs/SKILL.md`
-- `lark-base-ops` — `su-code/skills/lark-base-ops/SKILL.md`
-- `lark-review-digest` — `su-code/skills/lark-review-digest/SKILL.md`
 - `last30days` — `su-code/skills/last30days/SKILL.md`
-- `lib-docs-fetch` — `su-code/skills/lib-docs-fetch/SKILL.md`
-- `linkedin-cv-sync` — `su-code/skills/linkedin-cv-sync/SKILL.md`
-- `lint` — `su-code/skills/lint/SKILL.md`
-- `literature-review` — `su-code/skills/literature-review/SKILL.md`
-- `live-verify` — `su-code/skills/live-verify/SKILL.md`
-- `loop-me` — `su-code/skills/loop-me/SKILL.md`
-- `migrate-to-shoehorn` — `su-code/skills/migrate-to-shoehorn/SKILL.md`
-- `mining-hashrate-lab` — `su-code/skills/mining-hashrate-lab/SKILL.md`
-- `ml-training-recipe` — `su-code/skills/ml-training-recipe/SKILL.md`
-- `modal-compute` — `su-code/skills/modal-compute/SKILL.md`
-- `modern-javascript-patterns` — `su-code/skills/modern-javascript-patterns/SKILL.md`
-- `modern-javascript-tutorial` — `su-code/skills/modern-javascript-tutorial/SKILL.md`
-- `ncu-report-skill` — `su-code/skills/ncu-report-skill/SKILL.md`
 - `nextjs-app` — `su-code/skills/nextjs-app/SKILL.md`
 - `observability-and-instrumentation` — `su-code/skills/observability-and-instrumentation/SKILL.md`
-- `org-social-ops` — `su-code/skills/org-social-ops/SKILL.md`
-- `paper-code-audit` — `su-code/skills/paper-code-audit/SKILL.md`
-- `paper-writing` — `su-code/skills/paper-writing/SKILL.md`
-- `peer-review` — `su-code/skills/peer-review/SKILL.md`
-- `perf-nsight-compute-analysis` — `su-code/skills/perf-nsight-compute-analysis/SKILL.md`
 - `performance-optimization` — `su-code/skills/performance-optimization/SKILL.md`
-- `performance-patterns` — `su-code/skills/performance-patterns/SKILL.md`
-- `performance-report` — `su-code/skills/performance-report/SKILL.md`
 - `planning-and-task-breakdown` — `su-code/skills/planning-and-task-breakdown/SKILL.md`
 - `ponytail-audit` — `su-code/skills/ponytail-audit/SKILL.md`
 - `ponytail-debt` — `su-code/skills/ponytail-debt/SKILL.md`
 - `ponytail-gain` — `su-code/skills/ponytail-gain/SKILL.md`
 - `ponytail-help` — `su-code/skills/ponytail-help/SKILL.md`
 - `ponytail-review` — `su-code/skills/ponytail-review/SKILL.md`
-- `post-all` — `su-code/skills/post-all/SKILL.md`
-- `pr` — `su-code/skills/pr/SKILL.md`
-- `preview` — `su-code/skills/preview/SKILL.md`
-- `product-handoff` — `su-code/skills/product-handoff/SKILL.md`
-- `prompt-context-harness-loop` — `su-code/skills/prompt-context-harness-loop/SKILL.md`
-- `prompt-optimizer` — `su-code/skills/prompt-optimizer/SKILL.md`
-- `prototype` — `su-code/skills/prototype/SKILL.md`
-- `react` — `su-code/skills/react/SKILL.md`
-- `vercel-react-best-practices` — `su-code/skills/react-best-practices/SKILL.md`
-- `vercel-react-native-skills` — `su-code/skills/react-native-skills/SKILL.md`
-- `react-state-management` — `su-code/skills/react-state-management/SKILL.md`
-- `react-three-fiber` — `su-code/skills/react-three-fiber/SKILL.md`
-- `vercel-react-view-transitions` — `su-code/skills/react-view-transitions/SKILL.md`
-- `redesign-existing-projects` — `su-code/skills/redesign-skill/SKILL.md`
-- `Refactor Safely` — `su-code/skills/refactor-safely/SKILL.md`
 - `remote-compute` — `su-code/skills/remote-compute/SKILL.md`
-- `remote-job-scan` — `su-code/skills/remote-job-scan/SKILL.md`
-- `replication` — `su-code/skills/replication/SKILL.md`
-- `research` — `su-code/skills/research/SKILL.md`
 - `research-paper` — `su-code/skills/research-paper/SKILL.md`
-- `research-review` — `su-code/skills/research-review/SKILL.md`
-- `responsive-design` — `su-code/skills/responsive-design/SKILL.md`
-- `responsive-web-design` — `su-code/skills/responsive-web-design/SKILL.md`
-- `retro` — `su-code/skills/retro/SKILL.md`
-- `review-mr` — `su-code/skills/review-mr/SKILL.md`
-- `review-status` — `su-code/skills/review-status/SKILL.md`
-- `runpod-compute` — `su-code/skills/runpod-compute/SKILL.md`
-- `scaffold-exercises` — `su-code/skills/scaffold-exercises/SKILL.md`
-- `scroll-driven-3d` — `su-code/skills/scroll-driven-3d/SKILL.md`
 - `security-and-hardening` — `su-code/skills/security-and-hardening/SKILL.md`
-- `security-audit` — `su-code/skills/security-audit/SKILL.md`
 - `senior-frontend` — `su-code/skills/senior-frontend/SKILL.md`
 - `senior-security` — `su-code/skills/senior-security/SKILL.md`
-- `seo` — `su-code/skills/seo/SKILL.md`
-- `seo-audit` — `su-code/skills/seo-audit/SKILL.md`
-- `session-log` — `su-code/skills/session-log/SKILL.md`
-- `session-search` — `su-code/skills/session-search/SKILL.md`
-- `setup-matt-pocock-skills` — `su-code/skills/setup-matt-pocock-skills/SKILL.md`
-- `setup-pre-commit` — `su-code/skills/setup-pre-commit/SKILL.md`
-- `setup-ts-deep-modules` — `su-code/skills/setup-ts-deep-modules/SKILL.md`
-- `shadcn` — `su-code/skills/shadcn/SKILL.md`
 - `shipping-and-launch` — `su-code/skills/shipping-and-launch/SKILL.md`
-- `site-ux-audit` — `su-code/skills/site-ux-audit/SKILL.md`
-- `social-growth` — `su-code/skills/social-growth/SKILL.md`
-- `source-comparison` — `su-code/skills/source-comparison/SKILL.md`
 - `source-driven-development` — `su-code/skills/source-driven-development/SKILL.md`
 - `spec-driven-development` — `su-code/skills/spec-driven-development/SKILL.md`
-- `spline-interactive` — `su-code/skills/spline-interactive/SKILL.md`
 - `super-pdf` — `su-code/skills/super-pdf/SKILL.md`
-- `tailwind-design-system` — `su-code/skills/tailwind-design-system/SKILL.md`
-- `tanstack-query` — `su-code/skills/tanstack-query/SKILL.md`
-- `tanstack-table` — `su-code/skills/tanstack-table/SKILL.md`
-- `tanstack-virtual` — `su-code/skills/tanstack-virtual/SKILL.md`
-- `tauri-ui-test` — `su-code/skills/tauri-ui-test/SKILL.md`
+- `taste-brutalist` — `su-code/skills/taste-brutalist/SKILL.md`
+- `taste-minimalist` — `su-code/skills/taste-minimalist/SKILL.md`
+- `taste-output` — `su-code/skills/taste-output/SKILL.md`
+- `taste-redesign` — `su-code/skills/taste-redesign/SKILL.md`
+- `taste-soft` — `su-code/skills/taste-soft/SKILL.md`
 - `tauri-v2` — `su-code/skills/tauri-v2/SKILL.md`
-- `tdd` — `su-code/skills/tdd/SKILL.md`
-- `teach` — `su-code/skills/teach/SKILL.md`
 - `test-driven-development` — `su-code/skills/test-driven-development/SKILL.md`
-- `threejs-addons-api` — `su-code/skills/threejs-addons-api/SKILL.md`
-- `threejs-agents-model-optimizer` — `su-code/skills/threejs-agents-model-optimizer/SKILL.md`
-- `threejs-bloom` — `su-code/skills/threejs-bloom/SKILL.md`
-- `threejs-core-renderer` — `su-code/skills/threejs-core-renderer/SKILL.md`
-- `threejs-errors-performance` — `su-code/skills/threejs-errors-performance/SKILL.md`
-- `threejs-impl-drei` — `su-code/skills/threejs-impl-drei/SKILL.md`
-- `threejs-impl-post-processing` — `su-code/skills/threejs-impl-post-processing/SKILL.md`
-- `threejs-impl-webgpu` — `su-code/skills/threejs-impl-webgpu/SKILL.md`
-- `threejs-procedural-vfx` — `su-code/skills/threejs-procedural-vfx/SKILL.md`
-- `threejs-syntax-shaders` — `su-code/skills/threejs-syntax-shaders/SKILL.md`
-- `to-questionnaire` — `su-code/skills/to-questionnaire/SKILL.md`
-- `to-spec` — `su-code/skills/to-spec/SKILL.md`
-- `to-tickets` — `su-code/skills/to-tickets/SKILL.md`
 - `token-bench` — `su-code/skills/token-bench/SKILL.md`
-- `triage` — `su-code/skills/triage/SKILL.md`
-- `ts-pattern` — `su-code/skills/ts-pattern/SKILL.md`
-- `typescript-advanced-types` — `su-code/skills/typescript-advanced-types/SKILL.md`
 - `using-agent-skills` — `su-code/skills/using-agent-skills/SKILL.md`
-- `vn-contract-docs` — `su-code/skills/vn-contract-docs/SKILL.md`
-- `vn-crm-pronoun` — `su-code/skills/vn-crm-pronoun/SKILL.md`
-- `vue` — `su-code/skills/vue/SKILL.md`
-- `wait-what` — `su-code/skills/wait-what/SKILL.md`
-- `watch` — `su-code/skills/watch/SKILL.md`
-- `wayfinder` — `su-code/skills/wayfinder/SKILL.md`
-- `web-component-design` — `su-code/skills/web-component-design/SKILL.md`
-- `web-design-guidelines` — `su-code/skills/web-design-guidelines/SKILL.md`
-- `web-quality-audit` — `su-code/skills/web-quality-audit/SKILL.md`
-- `wizard` — `su-code/skills/wizard/SKILL.md`
-- `workspace-surface-audit` — `su-code/skills/workspace-surface-audit/SKILL.md`
-- `write-docs` — `su-code/skills/write-docs/SKILL.md`
-- `write-paper` — `su-code/skills/write-paper/SKILL.md`
-- `writing-beats` — `su-code/skills/writing-beats/SKILL.md`
-- `writing-for-agents` — `su-code/skills/writing-for-agents/SKILL.md`
-- `writing-fragments` — `su-code/skills/writing-fragments/SKILL.md`
-- `writing-shape` — `su-code/skills/writing-shape/SKILL.md`
-- `writing-skill` — `su-code/skills/writing-skill/SKILL.md`
 - `zai-vision` — `su-code/skills/zai-vision/SKILL.md`
-- `zus-release` — `su-code/skills/zus-release/SKILL.md`
 
 ### Quy tắc bất biến
 
-- **Code-intelligence FIRST** (codegraph + codebase-memory-mcp) cho mọi câu hỏi explore code (Step 0). Bypass = bug.
+- **Code-intelligence FIRST** (codegraph CLI trước) cho mọi câu hỏi explore code (Step 0). Bypass = bug.
 - **Output > ~50 dòng → BẮT BUỘC `headroom_compress`** trước khi vào context — không dump thô.
 - Đọc body **CORE** (codegraph → karpathy → ponytail → 8sync-cli) TRƯỚC tool call đầu tiên. **SPECIALIST** (assp · impeccable · taste · image-routing) đọc body KHI task khớp — `impeccable` bắt buộc ngay khi có việc UI/design.
 - Skill **on-demand**: chỉ mở khi description khớp task hiện tại — đừng đọc thừa.
