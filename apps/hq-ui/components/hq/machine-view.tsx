@@ -16,6 +16,7 @@ import type { LoopState } from "@/lib/server/cleanup-loop";
 import type { DiskProject, DiskState } from "@/lib/server/disk";
 import type { Power, PowerSettings } from "@/lib/server/power";
 import type { Spec } from "@/lib/server/machine";
+import type { SweepProject } from "@/lib/server/sweep";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
 import { Bar, dayTime, energy, gb, hhmm, level, Meter, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
@@ -295,8 +296,8 @@ const RECENT_S = 600;
 /** %TEMP% QA copies worth a line from this size. */
 const TEMP_QA_MB = 500;
 
-/** "Bảo vệ máy": the ccc auto resource guard. `at`: the poll's sample time (ms), the "now" for relative times. */
-function GuardPanel({ g, at, api, onChanged }: { g: GuardView; at: number; api: Hq["api"]; onChanged: () => void }) {
+/** "Bảo vệ máy": the ccc auto resource guard, and per running team its "Dọn máy tự động" switch. `at`: the poll's sample time (ms), the "now" for relative times. */
+function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: SweepProject[]; at: number; api: Hq["api"]; onChanged: () => void }) {
   const [busy, setBusy] = useState<number | "off" | "eco" | null>(null);
   const now = at / 1000;
   const ago = (t: number) => (now - t < 60 ? `${Math.max(0, Math.round(now - t))} giây trước` : `${span(now - t)} trước`);
@@ -345,6 +346,17 @@ function GuardPanel({ g, at, api, onChanged }: { g: GuardView; at: number; api: 
             <p className="text-xs leading-snug text-muted-foreground">Phòng chạy ở chế độ Efficiency (EcoQoS), ưu tiên dưới bình thường.</p>
           </div>
           <Switch on={g.eco} busy={busy === "eco"} label="Tiết kiệm điện" onChange={(v) => void send("eco", { eco: v }, v ? "Đã bật tiết kiệm điện" : "Đã tắt tiết kiệm điện")} />
+        </div>
+      )}
+      {sweep.length > 0 && (
+        <div className="space-y-1.5 border-t pt-2.5">
+          <div>
+            <p className="text-sm font-medium">Dọn máy tự động</p>
+            <p className="text-xs leading-snug text-muted-foreground">Mỗi team đang chạy có phòng sweep: quét RAM/CPU/GPU và rác đĩa, chỉ dọn thứ chắc chắn an toàn, nhắn đúng phòng gây tải, báo lead.</p>
+          </div>
+          {sweep.map((p) => (
+            <SweepRow key={p.root} p={p} at={at} api={api} onChanged={onChanged} />
+          ))}
         </div>
       )}
       {(g.running || recent || wait) && (
@@ -446,6 +458,45 @@ function GuardPanel({ g, at, api, onChanged }: { g: GuardView; at: number; api: 
         </div>
       ))}
     </Panel>
+  );
+}
+
+/** One running team's sweep switch: on = HQ keeps a `sweep` room in it (`auto up --add sweep`), off = `auto down --only sweep`. */
+function SweepRow({ p, at, api, onChanged }: { p: SweepProject; at: number; api: Hq["api"]; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  async function flip(next: boolean) {
+    setBusy(true);
+    try {
+      await api("/api/machine/sweep", { method: "POST", body: { root: p.root, on: next } });
+      toast.success(next ? `Đã bật dọn máy tự động cho ${p.name}` : `Đã tắt dọn máy tự động cho ${p.name}`, {
+        description: next ? "Phòng sweep quét máy mỗi 15 phút và khi HQ báo quá tải." : "Đã dừng riêng phòng sweep; các phòng khác vẫn chạy.",
+      });
+      onChanged();
+    } catch (e) {
+      toast.error("Chưa đổi được dọn máy tự động", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+  const state = !p.on
+    ? "tắt"
+    : p.live
+      ? "phòng sweep đang chạy"
+      : p.error
+        ? `chưa mở được: ${p.error}${p.retryAt ? ` · thử lại ${span(Math.max(0, (p.retryAt - at) / 1000))} nữa` : ""}`
+        : p.busy
+          ? "đang mở phòng sweep…"
+          : "sẽ mở phòng sweep trong vòng 1 phút";
+  return (
+    <div className="flex items-center gap-3">
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-mono text-xs" title={p.root}>
+          {p.name}
+        </p>
+        <p className={cn("text-[11px] leading-snug", p.on && p.error ? NEEDS_INK : "text-muted-foreground")}>{state}</p>
+      </div>
+      <Switch on={p.on} busy={busy || p.busy} label={`Dọn máy tự động ${p.name}`} onChange={(v) => void flip(v)} />
+    </div>
   );
 }
 
@@ -865,7 +916,7 @@ export function MachineView({ m, reload, api, rooms, active }: { m: MachineData 
           </Panel>
           {m.power && <PowerPanel p={m.power} api={api} onSaved={reload} />}
           {m.awake && <AwakePanel a={m.awake} api={api} onChanged={reload} />}
-          {m.guard && <GuardPanel g={m.guard} at={m.at} api={api} onChanged={reload} />}
+          {m.guard && <GuardPanel g={m.guard} sweep={m.sweep ?? []} at={m.at} api={api} onChanged={reload} />}
           {m.spec && <SpecPanel s={m.spec} />}
         </div>
         <DiskPanel api={api} rooms={rooms} active={active} />

@@ -4,11 +4,14 @@
 // runs and the guard is on. One run at a time, at least 20 s between starts; the streaks restart
 // after each run. A run that changed nothing (or yielded to a revive, or printed junk) doubles the
 // gap up to 5 min; a run that acted, or a sample with nothing over, puts it back to 20 s.
-// Started once per process from instrumentation.ts.
+// Each run also mails the project's `sweep` room one `[máy] …` line (lib/server/sweep.ts sweepAlert,
+// ≤ 1 per 5 min per project) so it analyses at once. Started once per process from instrumentation.ts.
 import { autoStatus, lastAutoStatus } from "./auto";
+import { getDb } from "./db";
 import type { Guard } from "./guard";
 import { machine, type Machine } from "./machine";
 import { run } from "./proc";
+import { sweepAlert } from "./sweep";
 
 export const SAMPLE_MS = 5_000;
 export const MIN_GAP_MS = 20_000;
@@ -117,7 +120,8 @@ async function sampleOnce(): Promise<void> {
     S.t.cpu = S.t.ram = S.t.vram = 0;
     return;
   }
-  void step(S.t, loadOf(await machine(process.platform, undefined, false)), pct, Date.now(), realNow);
+  const started = step(S.t, loadOf(await machine(process.platform, undefined, false)), pct, Date.now(), realNow);
+  if (started && S.t.running) void sweepAlert(getDb(), S.t.running);
 }
 
 /** Starts the 5 s loop once per process (instrumentation.ts). */

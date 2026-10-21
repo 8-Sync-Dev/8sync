@@ -14,6 +14,8 @@ export type AutoStatus = {
   subscription?: unknown;
   /** Teams auto drives (contract C4); absent = ["ccc"]. */
   teams?: string[];
+  /** Repos whose team `auto up` brought up; absent on an older 8sync (unvalidated: read via lib/server/sweep.ts runningTeams). */
+  team_roots?: unknown;
   /** Why 8sync keeps the omp team off (e.g. omp's default model is `anthropic/…`); null when not blocked. */
   omp_blocked?: string | null;
   error?: string;

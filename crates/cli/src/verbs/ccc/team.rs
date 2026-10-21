@@ -239,19 +239,60 @@ pub(super) fn eye_prompt(name: &str) -> String {
     g.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The first message a room starts or resumes with: a lane room's or the eye's `/goal`, else the
-/// loop message ([`auto::loop_prompt`]).
+/// How long the sweep's `auto wait --mail` blocks: it scans on every wake and at least this often.
+pub(super) const SWEEP_EVERY_S: u64 = 900;
+
+/// The first message of the "Dọn máy" room ([`room::SWEEP`]): the project's machine and disk
+/// cleaner. Like the eye it waits on its inbox (`auto wait --mail`, no tokens), but wakes at least
+/// every [`SWEEP_EVERY_S`] to scan: the guard's dry run, worktrees against merged PRs, build dirs,
+/// big untracked files and %TEMP% copies. HQ mails it `[máy]` breaches (lib/server/guard-trigger.ts)
+/// and disk findings (lib/server/cleanup-loop.ts). Strict rules: only provably safe cleanups, never
+/// uncommitted or unpushed work, never another project; it tells each affected room exactly what
+/// (PID/port/path) and the lead what it freed and kept.
+pub(super) fn sweep_prompt(name: &str) -> String {
+    let (role, duty) = room::role(name);
+    let g = format!(
+        "/goal Phòng `{name}` (vai {role}: {duty}) là super agent giữ máy nhẹ cho RIÊNG dự án này: CPU không bao giờ chạm 60%, RAM/GPU/điện thấp, đĩa không phình rác. \
+         Cực nghiêm: chỉ làm điều chắc chắn an toàn; không chắc → để nguyên và báo lead. \
+         Mỗi lượt: (1) `8sync ccc auto status --json`; (2) `8sync ccc auto wait --json --mail --timeout {every} --as {name}` (Bash timeout {bash_ms}; chặn ≤ {every_min} phút, không tốn token): \
+         `\"wake\":\"off\"` → dừng; `\"wake\":\"msg\"` (tin `[máy]`/`Dọn dung lượng` của HQ, tin phòng khác) hoặc hết giờ → (3) quét, (4) xử lý, (5) báo, rồi quay lại (1): quét mỗi lần thức và ít nhất mỗi {every_min} phút. \
+         (3) Quét: `8sync ccc auto guard --dry-run` (RAM/CPU, phòng và tiến trình ăn nhiều, Defender); `git fetch origin`; `git worktree list`; mỗi worktree `.claude/worktrees/*`: `git -C <wt> status --porcelain`, `git -C <wt> log @{{u}}.. --oneline` (không có upstream = chưa push), `gh pr list --state merged --head <nhánh> --json number,headRefOid`; \
+         số lượng + dung lượng `.claude/worktrees`, `target`, `node_modules`, `.next`, `dist`, file lớn chưa track (`git ls-files --others --exclude-standard`), bản sao trong %TEMP% mang tên card của dự án này (`qa-card-*`, `qa-fetch*`). \
+         (4) Luật xử lý: KHÔNG BAO GIỜ xoá việc chưa commit hoặc chưa push. \
+         Worktree chỉ gỡ khi: sạch VÀ HEAD = headRefOid của một PR đã MERGED (hoặc `git merge-base --is-ancestor <HEAD> origin/main`) VÀ không phòng nào đang chạy/giữ card trong đó → `git worktree remove <wt>` (không --force). \
+         Thư mục build (target/.next/node_modules/dist) chỉ dọn bằng lệnh của công cụ (`cargo clean` đúng thư mục đó…) và chỉ khi không tiến trình phòng nào chạy trong worktree đó. \
+         File đã commit: chỉ qua một PR riêng `git rm` (nhánh mới từ origin/main), không viết lại lịch sử, không tự merge. \
+         Asset/bằng chứng dự án ghi chỉ owner được xoá → hỏi owner bằng AskUserQuestion, không tự xoá. \
+         Không kill tiến trình, trừ server/watcher còn sót (vite, next dev, cargo watch…) chạy trong worktree của dự án này, sống > 5 phút, không phòng nào dùng: nhắn phòng đó trước; lượt sau vẫn còn → dừng đúng PID đó (không kill theo tên). \
+         Không đụng dự án khác hay thư mục ngoài repo (trừ bản sao %TEMP% mang tên card của dự án này); không đổi cài đặt guard. \
+         (5) Báo: mỗi phòng bị ảnh hưởng MỘT tin ngắn `8sync ccc msg <phòng> \"…\" --from {name}` có đúng PID/port/đường dẫn + việc cần làm; \
+         lượt có dọn hoặc có giữ lại → `8sync ccc msg lead \"[dọn máy] giải phóng <MB/GB>: …; giữ: … vì …\" --from {name}`; \
+         `8sync ccc msg --all \"…\" --from {name}` chỉ cho luật cả team (không copy repo/node_modules ra %TEMP%, tắt vite/server khi xong card, `cargo build -j2`), mỗi luật một lần, nhắc lại chỉ khi tái phạm. \
+         Rail: không viết code cho card, không `auto claim|add|done`, không move card trừ trả claim của phòng đã dừng (`8sync ccc auto move <id> ready --note \"[dọn máy] trả claim: phòng <x> đã dừng\" --as {name}`); \
+         không merge/push main/tag/deploy; không `git reset|clean -f|checkout|stash` trong worktree; không chạy build/test. \
+         Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on`/`here` false hoặc `paused` true \
+         hoặc `gate` nhắc tới lease, hoặc `auto wait --json` trả `\"wake\":\"off\"`.",
+        every = SWEEP_EVERY_S,
+        every_min = SWEEP_EVERY_S / 60,
+        bash_ms = BASH_MAX_MS,
+    );
+    g.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The first message a room starts or resumes with: a lane room's, the eye's or the sweep's
+/// `/goal`, else the loop message ([`auto::loop_prompt`]).
 fn first_prompt(name: &str, lane: Option<&str>, every: u64) -> String {
     match lane {
         Some(lane) => goal_prompt(name, lane, every),
         None if room::is_eye(name) => eye_prompt(name),
+        None if room::is_sweep(name) => sweep_prompt(name),
         None => auto::loop_prompt(name, every, false),
     }
 }
 
-/// A room that lives on a `/goal`: every lane room and the eye.
+/// A room that lives on a `/goal`: every lane room, the eye and the sweep.
 fn on_goal(name: &str) -> bool {
-    room::find(name).is_some_and(|r| r.lane.is_some()) || room::is_eye(name)
+    room::find(name).is_some_and(|r| r.lane.is_some()) || room::mail_only(name)
 }
 
 /// Bash tool ceiling of a room (ms): Claude Code caps a command at 10 min unless
@@ -577,8 +618,8 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
                 if *id != s.conversation_id {
                     t.store.rebind(name, id)?;
                 }
-                // The eye has no loop: a live one is already on its goal (an idle one was resumed above).
-                if room::is_eye(name) {
+                // The eye and the sweep have no loop: a live one is already on its goal (an idle one was resumed above).
+                if room::mail_only(name) {
                     ("đang chạy".to_string(), id.chars().take(8).collect())
                 } else {
                     let sent = auto::queue_loops(t.home, &[(name.clone(), id.clone())], o.every, false, now);
@@ -1784,6 +1825,105 @@ mod tests {
         let idle = Live { id: "e".into(), name: "eye".into(), background: true, started: 0, busy: false, cwd: String::new(), pid: 0 };
         assert!(lost_goal(on_goal("eye"), &idle) && !lost_goal(on_goal("rd"), &idle));
         assert!(first_prompt("rd", None, 30).starts_with("8sync auto: phòng `rd`"));
+    }
+
+    #[test]
+    fn the_sweep_opens_on_a_strict_goal_that_scans_on_mail_and_every_15_minutes() {
+        let g = first_prompt("sweep", None, auto::DEFAULT_LOOP_MIN);
+        assert_eq!(g, sweep_prompt("sweep"));
+        assert!(g.starts_with("/goal Phòng `sweep` (vai Dọn máy"), "{g}");
+        assert!(g.chars().count() <= GOAL_MAX, "sweep: {} chars over Claude Code's /goal cap", g.chars().count());
+        assert!(!g.contains('\n'), "one line through a .cmd shim");
+        for want in [
+            "`8sync ccc auto wait --json --mail --timeout 900 --as sweep`",
+            "ít nhất mỗi 15 phút",
+            "`8sync ccc auto guard --dry-run`",
+            "`8sync ccc auto status --json`",
+            "`git worktree list`",
+            "`git -C <wt> status --porcelain`",
+            "`git -C <wt> log @{u}.. --oneline`",
+            "`gh pr list --state merged --head <nhánh>",
+            "`.claude/worktrees`",
+            "`node_modules`",
+            "`.next`",
+            "file lớn chưa track",
+            "%TEMP% mang tên card",
+            "KHÔNG BAO GIỜ xoá việc chưa commit hoặc chưa push",
+            "sạch VÀ HEAD = headRefOid của một PR đã MERGED",
+            "`git merge-base --is-ancestor <HEAD> origin/main`",
+            "`git worktree remove <wt>` (không --force)",
+            "chỉ dọn bằng lệnh của công cụ",
+            "không tiến trình phòng nào chạy trong worktree đó",
+            "PR riêng `git rm`",
+            "AskUserQuestion",
+            "sống > 5 phút",
+            "nhắn phòng đó trước",
+            "không kill theo tên",
+            "Không đụng dự án khác",
+            "`8sync ccc msg <phòng> \"…\" --from sweep`",
+            "PID/port/đường dẫn",
+            "`8sync ccc msg lead \"[dọn máy] giải phóng <MB/GB>",
+            "giữ: … vì …",
+            "`8sync ccc msg --all \"…\" --from sweep`",
+            "không copy repo/node_modules ra %TEMP%",
+            "tắt vite/server khi xong card",
+            "`cargo build -j2`",
+            "không viết code cho card",
+            "không `auto claim|add|done`",
+            "trả claim của phòng đã dừng",
+            "\"wake\":\"off\"",
+        ] {
+            assert!(g.contains(want), "sweep misses {want}: {g}");
+        }
+        assert!(!g.contains("auto claim --json") && !g.contains("CronCreate"), "no lane, no cron: {g}");
+        assert!(g.contains(&format!("Bash timeout {BASH_MAX_MS}")));
+        assert!(SWEEP_EVERY_S <= auto::WAIT_MAX_S, "auto wait accepts the timeout");
+        let idle = Live { id: "s".into(), name: "sweep".into(), background: true, started: 0, busy: false, cwd: String::new(), pid: 0 };
+        assert!(lost_goal(on_goal("sweep"), &idle), "an idle sweep is brought back on its goal");
+    }
+
+    #[test]
+    fn add_sweep_opens_it_lean_on_sonnet_and_down_only_sweep_stops_just_it() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let o = parse(&v(&["--add", "sweep"])).unwrap();
+        assert_eq!((o.roles.join(","), o.add), ("sweep".to_string(), true));
+        let (h, root) = tmp("add-sweep");
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        let lead = store.touch("lead", false).unwrap();
+        let team = format!("[{}]", agent_in(&lead.conversation_id, "lead", "background", &root));
+        let sweep_id = "3698e3a6-0000-4000-8000-000000005eef";
+        let with_sweep = format!("[{},{}]", agent_in(&lead.conversation_id, "lead", "background", &root), agent_in(sweep_id, "sweep", "background", &root));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![team.clone(), team, with_sweep.clone()]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        assert!(up_locked(&t, &o, 1_000, || Ok(())).unwrap_err().to_string().contains("chưa chạy"), "only into a running team");
+        auto::set(&h, auto::Mode::On { hours: 8.0, after: 60, rate: None, repo: Some(root.clone()) }, false, 900).unwrap();
+        set_team_root(&h, &root, true);
+        let (_, _, rows) = up_locked(&t, &o, 1_000, || panic!("`--add` never stops a nested team")).unwrap();
+        assert_eq!(rows.iter().map(|r| (r.name.as_str(), r.model.as_str())).collect::<Vec<_>>(), [("sweep", "sonnet")]);
+        let calls = fake.calls.borrow();
+        let bg: Vec<_> = calls.iter().filter(|c| c.iter().any(|a| a == "--bg")).collect();
+        assert_eq!(bg.len(), 1, "only the sweep opens: {bg:?}");
+        assert_eq!(&bg[0][..3], ["--bg", "--name", "sweep"]);
+        let settings = bg[0].windows(2).find(|w| w[0] == "--settings").map(|w| w[1].clone()).unwrap();
+        assert!(settings.ends_with("room-settings-lean.json"), "lean: no LSP plugins, no indexing MCP: {settings}");
+        assert!(bg[0].last().unwrap().starts_with("/goal Phòng `sweep`"), "{:?}", bg[0].last());
+        drop(calls);
+        // Running already: a second `--add sweep` sends nothing (no loop message to a /goal room).
+        fake.calls.borrow_mut().clear();
+        *fake.agents.borrow_mut() = vec![with_sweep.replace(r#""name":"sweep","status":"idle""#, r#""name":"sweep","status":"running""#)];
+        let (_, _, rows) = up(&t, &o, 1_001).unwrap();
+        assert_eq!(rows[0].state, "đang chạy");
+        assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop" || c.iter().any(|a| a == "--bg")));
+        // Off: only the sweep stops and leaves the registry; the lead and auto run on.
+        fake.calls.borrow_mut().clear();
+        *fake.agents.borrow_mut() = vec![with_sweep];
+        let r = down_only(&t, &["sweep"], 1_004).unwrap();
+        assert_eq!(r.rooms, vec![("sweep".to_string(), true)]);
+        let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
+        assert_eq!(stops, [sweep_id[..8].to_string()]);
+        assert_eq!(store.load().sessions.iter().map(|s| s.name.clone()).collect::<Vec<_>>(), ["lead"]);
+        assert!(auto::running(&h));
+        let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]

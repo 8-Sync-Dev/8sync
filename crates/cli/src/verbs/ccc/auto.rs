@@ -595,6 +595,8 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         // Projects `auto close` took out: never in scope, even with no list (every project).
         "out": out_roots(home).iter().map(|r| r.to_string_lossy().into_owned()).collect::<Vec<_>>(),
         "teams": teams_of(m.as_ref()),
+        // Repos whose team `auto up` brought up (HQ adds the sweep room to each, lib/server/sweep.ts).
+        "team_roots": super::team::team_roots(home),
         "omp_model": m.as_ref().and_then(|m| m["omp_model"].as_str()),
         "omp_blocked": omp_blocked(home),
         "guard": super::pressure::status_json(home, guard_pct(home)),
@@ -2492,6 +2494,7 @@ mod tests {
                 "schema",
                 "seven_day_pct",
                 "subscription",
+                "team_roots",
                 "teams"
             ]
         );

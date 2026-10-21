@@ -82,9 +82,15 @@ const CALM_S: u64 = 600;
 const DEFENDER_PCT: u32 = 3;
 const DEFENDER_EVERY_S: u64 = 3600;
 const ACTIONS_KEEP: usize = 10;
-/// Rooms L3 pauses first. Never lead, dev or qa; a room not listed goes after these.
+/// Rooms L3 pauses first. Never lead, dev, qa or the sweep ([`kept`]); a room not listed goes after these.
 pub(super) const DROP_ORDER: [&str; 12] = ["review2", "dev6", "dev5", "qa2", "ba", "dev4", "dev3", "review", "dev2", "ui", "rd", "arch"];
 const CORE: [&str; 3] = ["lead", "dev", "qa"];
+
+/// Rooms L3 never pauses: the core rooms, and the sweep ([`room::SWEEP`]) that cleans the machine
+/// while it is overloaded (it starts lean, [`lean`], and idles in `auto wait --mail`).
+fn kept(name: &str) -> bool {
+    CORE.contains(&name) || room::is_sweep(name)
+}
 const MIB: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -652,10 +658,10 @@ pub(super) fn keep_count(loads: &[u64], used: u64, budget: u64, core: usize) -> 
 }
 
 /// Which of `live` to pause so `keep` stay: [`DROP_ORDER`] first, then other non-core rooms;
-/// never lead, dev or qa.
+/// never lead, dev, qa or the sweep ([`kept`]).
 pub(super) fn to_pause(live: &[String], keep: usize) -> Vec<String> {
     let extra = live.len().saturating_sub(keep);
-    let mut order: Vec<&String> = live.iter().filter(|n| !CORE.contains(&n.as_str())).collect();
+    let mut order: Vec<&String> = live.iter().filter(|n| !kept(n)).collect();
     order.sort_by_key(|n| DROP_ORDER.iter().position(|d| d == n).unwrap_or(DROP_ORDER.len()));
     order.into_iter().take(extra).cloned().collect()
 }
@@ -842,10 +848,11 @@ fn lean_role(name: &str) -> bool {
     !room::builds(name) || room::crew(name) == "eye"
 }
 
-/// Room `name` starts lean ([`lean_plugins`] and [`lean_mcp`] off) while the guard is on: always
-/// for a non-builder, for every room while the project's guard is at L2 or more.
+/// Room `name` starts lean ([`lean_plugins`] and [`lean_mcp`] off): the sweep always (it reads
+/// sizes and processes, never code), others while the guard is on: always for a non-builder, for
+/// every room while the project's guard is at L2 or more.
 pub(super) fn lean(home: &Path, root: &Path, name: &str) -> bool {
-    auto::guard_pct(home).is_some() && (lean_role(name) || level_of(home, root) >= Level::Restart)
+    room::is_sweep(name) || (auto::guard_pct(home).is_some() && (lean_role(name) || level_of(home, root) >= Level::Restart))
 }
 
 /// Claude Code's config dir (`CLAUDE_CONFIG_DIR`, else `~/.claude`).
@@ -1391,7 +1398,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         }
         let names_live: Vec<String> = loads.iter().map(|l| l.name.clone()).collect();
         let n_live = names_live.len();
-        let core = names_live.iter().filter(|n| CORE.contains(&n.as_str())).count();
+        let core = names_live.iter().filter(|n| kept(n)).count();
         // RAM: rooms at their measured MiB; CPU: at their share of the tick (0.1 %).
         let keep_ram = match sample.mem.filter(|_| ram >= pct + 15) {
             Some((total, used)) => keep_count(&loads.iter().map(|l| l.total / MIB).collect::<Vec<_>>(), used, total * u64::from(pct) / 100, core),
@@ -1858,6 +1865,10 @@ mod tests {
         assert_eq!(to_pause(&live, 11), ["review2", "dev6"]);
         assert_eq!(to_pause(&["lead".into(), "dev".into(), "qa".into(), "custom".into(), "review2".into()], 3), ["review2", "custom"]);
         assert!(to_pause(&["lead".into(), "dev".into()], 0).is_empty());
+        // The sweep cleans the overloaded machine: never paused, and it counts as kept.
+        let with_sweep: Vec<String> = ["lead", "dev", "qa", "sweep", "review2", "rd"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(to_pause(&with_sweep, 0), ["review2", "rd"]);
+        assert!(kept("sweep") && kept("sweep-zus") && !kept("eye"));
         // Back the other way: the last paused (most needed) first, only after 10 minutes in which one
         // more room fit under the threshold — with the owner's own load counted as it is.
         let paused = vec!["review2".to_string(), "dev6".to_string()];
@@ -1883,9 +1894,10 @@ mod tests {
         let cj = json!({ "mcpServers": { "serena-dev": {}, "codegraph": {}, "headroom": {}, "playwright": {} } });
         assert_eq!(lean_mcp(&cj), ["codebase-memory-mcp", "codegraph", "serena", "serena-dev"], "indexers only; the rest stay");
         assert_eq!(lean_mcp(&Value::Null), ["codebase-memory-mcp", "serena"]);
-        for n in ["lead", "ba", "qa", "qa2", "review", "review2", "rd", "eye"] {
+        for n in ["lead", "ba", "qa", "qa2", "review", "review2", "rd", "eye", "sweep"] {
             assert!(lean_role(n), "{n}");
         }
+        assert!(lean(Path::new("/no/such/home"), Path::new("/no/such/repo"), "sweep"), "the sweep starts lean whatever the guard");
         for n in ["dev", "dev3", "ui", "core"] {
             assert!(!lean_role(n), "{n}");
         }

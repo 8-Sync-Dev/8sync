@@ -5,6 +5,7 @@
 // thường to … gửi tin nhắn cho phòng để dọn/check/clear/optimize luôn".
 import { roomRole } from "./now";
 import { leadOf, roomGroups } from "./room-send";
+import { isSweepRoom } from "./sweep";
 
 export const MB = 2 ** 20;
 export const GB = 2 ** 30;
@@ -135,10 +136,10 @@ export const diskKey = (p: string) =>
     .replace(/\/+$/, "")
     .toLowerCase();
 
-/** The room a project's cleanup goes to: its live lead room, else a dev room, else any room of it. */
+/** The room a project's cleanup goes to: its live sweep room (lib/sweep.ts), else its lead, else a dev room, else any room of it. */
 export function cleanupRoom<T extends CleanRoom>(rooms: T[], root: string): T | null {
   const rs = projectRooms(rooms, root);
-  return leadOf(rs) ?? rs.find((r) => (roomRole(r.label) ?? roomRole(r.name))?.seat === "dev") ?? rs[0] ?? null;
+  return rs.find((r) => isSweepRoom(r.label)) ?? leadOf(rs) ?? rs.find((r) => (roomRole(r.label) ?? roomRole(r.name))?.seat === "dev") ?? rs[0] ?? null;
 }
 
 /** Rooms of that project a cleanup can go to (the picker). */
