@@ -17,9 +17,14 @@ describe("guide", () => {
   it("contains Giao việc", () => {
     expect(text).toContain("Giao việc");
   });
+<<<<<<< HEAD
   it("walks the team flow as it is: open team, cards, priority, critic answers at once, Ship stays with the owner, update", () => {
     for (const s of ["Mở team", "Team đầy đủ", "Board", "P0", "critic (Opus) chọn ngay", "Ship", "Dọn & mở lại", "Dừng team", "Nhật ký"]) expect(text).toContain(s);
-    expect(text).not.toContain("60 giây");
+    expect(text).not.toContain("vài giây");
+=======
+  it("walks the team flow as it is: open team, cards, priority, 60 s rule, Ship stays with the owner, update", () => {
+    for (const s of ["Mở team", "Team đầy đủ", "Board", "P0", "vài giây", "Ship", "Dọn & mở lại", "Dừng team", "Nhật ký"]) expect(text).toContain(s);
+>>>>>>> 9d8c8ca (test: the guide says 5 s since v0.110.38 (follows the guide.tsx copy))
     expect(text).not.toContain("tạo nhân viên");
   });
   it("has the 5-status legend and tips", () => {
