@@ -200,11 +200,7 @@ dependencies = [
 
 [[package]]
 name = "ccc-core"
-<<<<<<< HEAD
 version = "0.110.33"
-=======
-version = "0.110.31"
->>>>>>> 5a74a6c (fix: v0.110.31 — auto down leaves auto first, verifies every stop against a fresh session list, reports the rooms that survive)
 dependencies = [
  "anyhow",
  "dirs",
@@ -1507,11 +1503,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "su-code"
-<<<<<<< HEAD
 version = "0.110.33"
-=======
-version = "0.110.31"
->>>>>>> 5a74a6c (fix: v0.110.31 — auto down leaves auto first, verifies every stop against a fresh session list, reports the rooms that survive)
 dependencies = [
  "anyhow",
  "axum",
