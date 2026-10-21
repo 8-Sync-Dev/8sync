@@ -66,9 +66,28 @@ export function onePerBoard(read: ProjectBoard[]): ProjectBoard[] {
   return [...byFiled.values(), ...unknown.filter((b) => keep.has(b.root))];
 }
 
-/** Every board the live projects read, once each. */
-export async function projectBoards(projects: ProjectInfo[]): Promise<ProjectBoard[]> {
-  return onePerBoard(await Promise.all(projects.map((p) => readBoard(p))));
+/** The office (every poll, auto-tick, …) and the board route ask for the same boards: one read per root serves them all for this long. */
+const BOARDS_TTL_MS = 3_000;
+const memo = new Map<string, { at: number; board: Promise<ProjectBoard> }>();
+
+/** Forget the memoised boards: after a write (prio, unblock) the next read is fresh. */
+export function resetBoards(): void {
+  memo.clear();
+}
+
+function memoBoard(p: ProjectInfo, now: number): Promise<ProjectBoard> {
+  const hit = memo.get(p.root);
+  if (hit && now - hit.at < BOARDS_TTL_MS) return hit.board;
+  const board = readBoard(p);
+  // A rejected read (never expected: readBoard answers an error row) is not served for 3 s.
+  board.catch(() => memo.delete(p.root));
+  memo.set(p.root, { at: now, board });
+  return board;
+}
+
+/** Every board the live projects read, once each (at most once per BOARDS_TTL_MS per root). */
+export function projectBoards(projects: ProjectInfo[], now = Date.now()): Promise<ProjectBoard[]> {
+  return Promise.all(projects.map((p) => memoBoard(p, now))).then(onePerBoard);
 }
 
 /** argv for `8sync ccc auto prio <id> <P0..P3|none> --json`; null clears it (the card is claimed as P2). */
@@ -114,7 +133,10 @@ export function rushLine(stdout: string, id: number): string | null {
 /** Run `auto prio` in the project root; never throws. `woke`: [rushLine]. */
 export async function setCardPrio(root: string, x: Pick<PrioInput, "id" | "prio">): Promise<{ ok: boolean; error: string | null; woke: string | null }> {
   const r = await run("8sync", prioArgs(x.id, x.prio), TIMEOUT_MS, root);
-  if (r.ok) return { ok: true, error: null, woke: rushLine(r.stdout, x.id) };
+  if (r.ok) {
+    resetBoards();
+    return { ok: true, error: null, woke: rushLine(r.stdout, x.id) };
+  }
   const msg = r.killed ? `8sync không trả lời sau ${TIMEOUT_MS / 1000} s` : r.stderr.trim().replace(/^Error:\s*/, "");
   return { ok: false, error: (msg || "8sync ccc auto prio thất bại (cần 8sync ≥ 0.100.4: `8sync up`)").slice(0, 300), woke: null };
 }
@@ -137,5 +159,6 @@ export async function unblockCard(root: string, id: number): Promise<{ ok: boole
     const msg = r.killed ? `8sync không trả lời sau ${TIMEOUT_MS / 1000} s` : r.stderr.trim().replace(/^Error:\s*/, "");
     return { ok: false, error: (msg || "8sync ccc auto move thất bại").slice(0, 300), woke: null };
   }
+  resetBoards();
   return setCardPrio(root, { id, prio: 0 });
 }

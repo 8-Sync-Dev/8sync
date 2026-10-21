@@ -229,14 +229,17 @@ function save(projects: ProjectDisk[]) {
 }
 
 /**
- * What is in use (disk-clean.ts): live rooms' folders and every process's command line. Throws when
- * either cannot be read, so nothing is removed (loadOffice would read a failed session list as none).
+ * What is in use (disk-clean.ts): the folders of rooms in a turn right now and every process's command
+ * line. A room that waits for a card or an answer builds nothing: dev-ide (2026-10-21) stood "Chờ card"
+ * in card-15's worktree for 13 h and kept its 44 GB target out of every pass. A build it starts later
+ * shows as a process. Throws when either cannot be read, so nothing is removed (loadOffice would read a
+ * failed session list as none).
  */
 async function inUse(): Promise<string[]> {
   const db = getDb();
   const [merged, floor, procs] = await Promise.all([mergedSessions(db), loadFloor(db), processPaths()]);
   if (!procs) throw new Error("process list unreadable");
-  const rooms = [...merged.filter((s) => s.status !== "ended"), ...ompSessions(db, floor)];
+  const rooms = [...merged, ...ompSessions(db, floor)].filter((s) => s.status === "running");
   return [...rooms.flatMap((r) => (r.cwd ? [r.cwd] : [])), ...procs];
 }
 

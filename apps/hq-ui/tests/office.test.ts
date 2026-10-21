@@ -9,7 +9,7 @@ import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { inboxFile, inboxLive, isSessionId, LIVE_MS, pendingInbox } from "@/lib/server/inbox";
 import { applyMapped, mapEvent } from "@/lib/server/ingest";
-import { loadMeetings, projectOf, readLoops, readUsage, type Room } from "@/lib/server/office";
+import { loadMeetings, projectOf, readLoops, readTranscriptStats, readUsage, type Room } from "@/lib/server/office";
 import { messagesAfter } from "@/lib/server/queries";
 import { stateDir } from "@/lib/server/paths";
 import {
@@ -127,6 +127,27 @@ describe("measurement", () => {
     expect(readUsage(SID)).toMatchObject({ cost_usd: 1.25, lines_added: 9, model: "claude-opus-5-5", duration_ms: null });
     expect(readUsage("../x")).toBeNull();
     expect(readUsage(SID2)).toBeNull();
+  });
+  it("rooms without a status line: model and first→last time from the transcript, re-read only when the file moves", () => {
+    const cwd = "C:/work/proj";
+    const dir = path.join(os.homedir(), ".claude", "projects", "C--work-proj");
+    fs.mkdirSync(dir, { recursive: true });
+    const f = path.join(dir, `${SID2}.jsonl`);
+    const line = (o: unknown) => `${JSON.stringify(o)}\n`;
+    fs.writeFileSync(
+      f,
+      line({ type: "custom-title", customTitle: "dev2", sessionId: SID2 }) +
+        line({ type: "file-history-snapshot", snapshot: { timestamp: "2026-10-21T09:00:00.000Z" } }) +
+        line({ type: "user", timestamp: "2026-10-21T09:00:01.000Z", message: { role: "user", content: 'ghi "model":"x" trong tool result' } }) +
+        line({ type: "assistant", timestamp: "2026-10-21T09:05:00.000Z", message: { model: "claude-sonnet-5-5", role: "assistant", usage: { input_tokens: 5 } } }),
+    );
+    const a = readTranscriptStats(SID2, cwd);
+    expect(a).toMatchObject({ model: "claude-sonnet-5-5", first: Date.parse("2026-10-21T09:00:00.000Z"), last: Date.parse("2026-10-21T09:05:00.000Z") });
+    expect(readTranscriptStats(SID2, cwd)).toBe(a); // same size + mtime: the cached object
+    fs.appendFileSync(f, line({ type: "assistant", timestamp: "2026-10-21T10:00:00.000Z", message: { model: "claude-opus-5-5", role: "assistant" } }));
+    expect(readTranscriptStats(SID2, cwd)).toMatchObject({ model: "claude-opus-5-5", first: Date.parse("2026-10-21T09:00:00.000Z"), last: Date.parse("2026-10-21T10:00:00.000Z") });
+    expect(readTranscriptStats(SID, cwd)).toBeNull();
+    expect(readTranscriptStats("hq-dev", cwd)).toBeNull();
   });
 });
 

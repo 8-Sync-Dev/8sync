@@ -10,7 +10,11 @@
 //! - destructive shell commands (see `danger`): deleting a root, home, the project or
 //!   an ancestor, disk wipes, force-pushes. Riskier-than-usual deletes (outside the
 //!   project, run-time targets, other environments) and `git reset --hard` / `git clean -f`
-//!   get `ask` instead: a prompt in a session, a denial under `claude -p`.
+//!   get `ask` instead: a prompt in a session, a denial under `claude -p`;
+//! - a shell sleep of [`SLEEP_MAX_S`] or more (`sleep 900`, `Start-Sleep 600`, `timeout /t 300`):
+//!   dev2 on zus/ide (2026-10-21) spent 2 h 45 min on a verify card sleeping 15–20 min at a time
+//!   for a command Claude Code had moved to the background — which it reports by itself once the
+//!   turn ends. A room waits for cards and mail with `8sync ccc auto wait`, never with `sleep`.
 //!
 //! Pure string scanning in-process; only `git add -A` spawns `git status`.
 use std::path::Path;
@@ -116,7 +120,7 @@ fn check_full(input: &str, grants: &Path, now_s: u64, base_of: BaseOf, default_o
             // `8sync ccc loop ev <slug> <label> -- '<cmd>'` runs <cmd> in a shell: check it as one.
             let inner = loop_ev_command(cmd).and_then(|c| danger::check(&c, Shell::Bash, &ctx));
             let found = stricter(found, inner);
-            match git_add(cmd, cwd).or_else(|| content(cmd)) {
+            match git_add(cmd, cwd).or_else(|| content(cmd)).or_else(|| sleeping(cmd, ti["run_in_background"] == true)) {
                 Some(why) => Some(Verdict::Deny(why)),
                 None => found,
             }
@@ -385,6 +389,139 @@ fn git_add(cmd: &str, cwd: Option<&Path>) -> Option<String> {
     None
 }
 
+/// A shell sleep of [`SLEEP_MAX_S`] seconds or more makes a turn idle: no tokens spent, nothing
+/// learnt, and the background-command report Claude Code would have delivered waits behind it.
+/// Seconds from `sleep N[s|m|h]` (bash: a bare `N`, GNU suffixes; `inf`/`infinity` = forever),
+/// `Start-Sleep [-s|-Seconds] N` / `-Milliseconds N`, `timeout /t N` (cmd; `-1` = forever). Only a
+/// sleep that runs in this shell: the first word of a command (after `nohup`, `do`, `then`, `(`,
+/// `{` and env assignments), outside quotes and data heredocs (a commit message or a script written
+/// to a file may say "sleep 900"), not backgrounded (`… &`, or the tool's `run_in_background`), and
+/// not handed to `docker` / `kubectl` / `ssh` / `wsl`. The whole chain counts: `sleep 60; sleep 60`.
+pub(super) const SLEEP_MAX_S: u64 = 120;
+fn sleeping(cmd: &str, background: bool) -> Option<String> {
+    if background {
+        return None;
+    }
+    let text = unquoted(&danger::without_data_heredocs(cmd));
+    let mut total = 0u64;
+    for (seg, bg) in segments(&text) {
+        if bg {
+            continue;
+        }
+        let words: Vec<&str> = seg.split_whitespace().collect();
+        let skip = |w: &str| matches!(w, "nohup" | "do" | "then" | "else" | "(" | "{") || w.starts_with('(') || w.starts_with('{') || (w.contains('=') && !w.starts_with('-'));
+        let Some(at) = words.iter().position(|w| !skip(w)) else { continue };
+        let head = words[at].trim_start_matches(['(', '{']).to_ascii_lowercase();
+        let rest = &words[at + 1..];
+        let secs = match head.as_str() {
+            "sleep" => rest.first().and_then(|n| seconds(n)),
+            "start-sleep" => match rest.first().map(|f| f.to_ascii_lowercase()) {
+                Some(f) if f.starts_with("-m") => rest.get(1).and_then(|n| n.parse::<u64>().ok()).map(|ms| ms / 1000),
+                Some(f) if f.starts_with('-') => rest.get(1).and_then(|n| seconds(n)),
+                _ => rest.first().and_then(|n| seconds(n)),
+            },
+            "timeout" => match rest.first().map(|f| f.to_ascii_lowercase()) {
+                Some(f) if f == "/t" => rest.get(1).and_then(|n| if n.starts_with('-') { Some(u64::MAX) } else { seconds(n) }),
+                _ => None,
+            },
+            _ => None,
+        };
+        total = total.saturating_add(secs.unwrap_or(0));
+    }
+    (total >= SLEEP_MAX_S).then(|| {
+        let shown = if total == u64::MAX { "forever".to_string() } else { format!("{total} s") };
+        format!(
+            "this command sleeps {shown}; a turn must not idle {SLEEP_MAX_S} s or more. A command Claude Code moved to the background is reported to you when it finishes: end the turn instead of sleeping. Waiting for a card or a message: `8sync ccc auto wait` (returns the moment one arrives). Polling something else: one check now, then end the turn."
+        )
+    })
+}
+
+/// The text with every `'…'` / `"…"` span blanked (quotes kept), so words inside strings are not commands.
+fn unquoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut quote: Option<char> = None;
+    let mut esc = false;
+    for c in s.chars() {
+        match quote {
+            Some(q) => {
+                if esc {
+                    esc = false;
+                } else if c == '\\' && q == '"' {
+                    esc = true;
+                } else if c == q {
+                    quote = None;
+                    out.push(c);
+                    continue;
+                }
+                out.push(if c == '\n' { '\n' } else { ' ' });
+            }
+            None => {
+                if esc {
+                    esc = false;
+                } else if c == '\\' {
+                    esc = true;
+                } else if c == '\'' || c == '"' {
+                    quote = Some(c);
+                }
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
+/// Simple commands of a shell line with whether each runs in the background (ends at a lone `&`).
+/// Splits at `;`, newlines, `|`, `||`, `&&`, `&`; a `docker` / `kubectl` / `ssh` / `wsl` command
+/// runs its sleep elsewhere and is dropped.
+fn segments(text: &str) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut it = text.chars().peekable();
+    let mut push = |cur: &mut String, bg: bool| {
+        let s = std::mem::take(cur);
+        let first = s.split_whitespace().next().unwrap_or_default().to_ascii_lowercase();
+        if !s.trim().is_empty() && !matches!(first.as_str(), "docker" | "kubectl" | "ssh" | "wsl" | "wsl.exe") {
+            out.push((s, bg));
+        }
+    };
+    while let Some(c) = it.next() {
+        match c {
+            ';' | '\n' | '|' => {
+                if c == '|' && it.peek() == Some(&'|') {
+                    it.next();
+                }
+                push(&mut cur, false);
+            }
+            '&' => {
+                if it.peek() == Some(&'&') {
+                    it.next();
+                    push(&mut cur, false);
+                } else if it.peek().is_some_and(|n| *n == '>' || *n == '<') {
+                    cur.push(c);
+                } else {
+                    push(&mut cur, true);
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    push(&mut cur, false);
+    out
+}
+
+/// `90`, `90s`, `15m`, `1h`, `1.5` → seconds; `inf` / `infinity` → forever.
+fn seconds(n: &str) -> Option<u64> {
+    let n = n.to_ascii_lowercase();
+    if n == "inf" || n == "infinity" {
+        return Some(u64::MAX);
+    }
+    let (num, mul) = match n.strip_suffix('s').or_else(|| n.strip_suffix('m')).or_else(|| n.strip_suffix('h')).or_else(|| n.strip_suffix('d')) {
+        Some(body) => (body, match n.chars().last() { Some('m') => 60, Some('h') => 3600, Some('d') => 86_400, _ => 1 }),
+        None => (n.as_str(), 1),
+    };
+    num.parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0).map(|v| (v * mul as f64) as u64)
+}
+
 /// Untracked or modified, not ignored, credential files under `cwd`'s repo.
 fn pending_credentials(cwd: &Path) -> Vec<String> {
     let Ok(out) = Command::new("git")
@@ -526,6 +663,37 @@ mod tests {
         assert!(decide("Bash", json!({ "command": "git add src/ .env.example" })).is_none());
         assert!(decide("Bash", json!({ "command": "echo add .env" })).is_none());
         assert!(decide("Bash", json!({ "command": "git add src/ ':!config/.env'" })).is_none(), "an exclusion is not an add");
+    }
+
+    #[test]
+    fn long_sleeps_are_denied_short_ones_pass() {
+        for cmd in ["sleep 900; tail -5 log.txt", "sleep 15m", "Start-Sleep -Seconds 600", "Start-Sleep 300", "Start-Sleep -Milliseconds 180000", "timeout /t 300 /nobreak", "sleep 60 && sleep 60"] {
+            let r = decide("Bash", json!({ "command": cmd }));
+            assert!(r.as_deref().is_some_and(|r| r.contains("sleeps")), "{cmd} must be denied: {r:?}");
+        }
+        for cmd in ["sleep infinity", "timeout /t -1", "sleep inf; echo x", "while true; do sleep 300; done", "N=1 nohup sleep 900"] {
+            assert!(decide("Bash", json!({ "command": cmd })).is_some(), "{cmd} must be denied");
+        }
+        for cmd in [
+            "sleep 5; curl -s x",
+            "Start-Sleep -Seconds 30",
+            "timeout 600 cargo test",
+            "sleep",
+            "8sync ccc auto wait --timeout 900",
+            "git log --since='sleep 900'",
+            "git commit -m \"guard: deny sleep 900\"",
+            "grep -rn \"sleep 600\" . && gh pr create --body 'sleep 900 is denied'",
+            "cat > notes.md <<'EOF'\nsleep 600\nEOF",
+            "docker run -d alpine sleep 3600",
+            "kubectl run x --image=alpine -- sleep 3600",
+            "ssh box 'sleep 900'",
+            "sleep 300 &",
+            "nohup sleep 600 & echo started",
+            "echo sleep 900",
+        ] {
+            assert!(decide("Bash", json!({ "command": cmd })).is_none(), "{cmd} must pass");
+        }
+        assert!(check(&json!({ "tool_name": "Bash", "tool_input": { "command": "sleep 900", "run_in_background": true }, "cwd": "." }).to_string()).is_none(), "backgrounded by the tool");
     }
 
     #[test]
