@@ -34,6 +34,9 @@ export type AutoState = {
   /** Usage tight and projects pinned: only those work. */
   focus?: boolean;
   pins?: string[];
+  /** Auto's scope (`auto on --here`): repo roots whose teams run; none = every project. `out`: projects `auto close` took out. Unvalidated JSON. */
+  repos?: unknown;
+  out?: unknown;
   /** The last "Lease liên tục" switch failed (8sync's reason). */
   lease_error?: string;
 };
@@ -133,6 +136,22 @@ export function leaseText(s: AutoState): string | null {
   if (s.subscription === true) return `tự gia hạn mỗi lần anh dùng HQ (gói subscription: cần anh có mặt)${focus}`;
   const rate = typeof s.usd_per_hour === "number" ? s.usd_per_hour : 5;
   return `tự gia hạn · ngân sách $${Number.isInteger(rate) ? rate : rate.toFixed(2)}/h${focus}`;
+}
+
+const roots = (v: unknown): string[] => (Array.isArray(v) ? v.filter((r): r is string => typeof r === "string" && r.length > 0 && r.length <= 1024) : []);
+const inside = (k: string, dir: string) => k === groupKey(dir) || k.startsWith(`${groupKey(dir)}/`);
+
+/**
+ * A room in `root` belongs to a project auto drives: inside one of `repos` (`auto on --here`; none =
+ * every project) and not inside one `auto close` took out (`out`). Same rule as lib/server/sweep.ts
+ * runningTeams. Owner 2026-10-21: `auto on --here` in one project, and the server tick still woke the
+ * other project's idle rooms through their inboxes ("dự khác dính inbox tin nhắn theo").
+ */
+export function inAutoScope(s: Pick<AutoState, "repos" | "out">, root: string | null | undefined): boolean {
+  if (!root) return true;
+  const k = groupKey(root);
+  const repos = roots(s.repos);
+  return (repos.length === 0 || repos.some((r) => inside(k, r))) && !roots(s.out).some((r) => inside(k, r));
 }
 
 /** A room in `root` rests to leave the usage to the pinned projects (same rule as 8sync's `focus_rest`). */
