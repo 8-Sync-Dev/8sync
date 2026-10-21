@@ -237,7 +237,7 @@ function Lane({
   now: number;
   next: number | null;
   onOpen: (c: Card) => void;
-  onForce?: (c: Card) => Promise<void>;
+  onForce?: (c: Card) => Promise<unknown>;
 }) {
   const n = cards?.length ?? 0;
   // Ship waits on the owner, Blocked on the lead (it clears them first): both are tinted harder and say so in the header.
@@ -295,7 +295,7 @@ function Lane({
  * One card: its chips, the title in up to 3 lines, who holds it, PR, bounces, the cards split off it, a missing check, the last note. A click opens the sheet.
  * A Blocked card carries "⚡ Gỡ block ngay", a waiting one (Backlog/Ready, not P0) "⚡ Làm ngay", at the bottom right: a sibling of the card button (never nested).
  */
-export function CardItem({ c, move, kids, now, next, onOpen, onForce }: { c: Card; move?: Move; kids?: Kid[]; now: number; next: boolean; onOpen: (c: Card) => void; onForce?: (c: Card) => Promise<void> }) {
+export function CardItem({ c, move, kids, now, next, onOpen, onForce }: { c: Card; move?: Move; kids?: Kid[]; now: number; next: boolean; onOpen: (c: Card) => void; onForce?: (c: Card) => Promise<unknown> }) {
   const stale = claimStale(c, now);
   const who = c.claim ? roomRole(c.claim.room) : null;
   const { title, tags } = cardParts(c.text);

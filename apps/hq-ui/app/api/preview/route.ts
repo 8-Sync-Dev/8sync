@@ -1,9 +1,7 @@
 import { eyeSince, eyeTick } from "@/lib/server/eye";
 import { json, open } from "@/lib/server/http";
-import { projectOf } from "@/lib/server/office";
+import { projectsInView } from "@/lib/server/in-view";
 import { listPreviews } from "@/lib/server/preview";
-import { mergedSessions } from "@/lib/server/proc";
-import { liveProjects } from "@/lib/server/targets";
 
 export const runtime = "nodejs";
 
@@ -15,7 +13,7 @@ export const runtime = "nodejs";
 export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
-  const projects = (await listPreviews(liveProjects(await mergedSessions(o.db), (cwd) => projectOf(cwd)))).map((p) => ({ ...p, eye: eyeSince(o.db, p.root) }));
+  const projects = (await listPreviews(await projectsInView(o.db))).map((p) => ({ ...p, eye: eyeSince(o.db, p.root) }));
   void eyeTick(o.db, projects);
   return json({ projects, at: Date.now() });
 }

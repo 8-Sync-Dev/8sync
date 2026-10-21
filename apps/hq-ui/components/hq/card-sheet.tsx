@@ -170,7 +170,7 @@ export function forceKind(c: Pick<Card, "lane" | "prio">): "rush" | "unblock" | 
 }
 
 const FORCE = {
-  rush: { label: "Làm ngay", done: (id: number) => `#${id} lên P0 — lead nhận ngay`, title: "Đặt P0: lead và phòng rảnh kế tiếp nhận card này trước" },
+  rush: { label: "Làm ngay", done: (id: number) => `#${id} lên P0`, title: "Đặt P0, báo lead và gọi phòng rảnh của cột nhận card này ngay" },
   unblock: {
     label: "Gỡ block ngay",
     done: (id: number) => `#${id} ra khỏi Blocked, P0 — lead xử lý ngay`,
@@ -180,9 +180,11 @@ const FORCE = {
 
 /**
  * "⚡ Làm ngay" (P0 through `auto prio`) or "⚡ Gỡ block ngay" (POST /api/board/unblock: Backlog with
- * the owner's note, then P0): either way the lead takes the card at once. `run` does the call.
+ * the owner's note, then P0): the lead hears it and the free rooms of the card's lane are called.
+ * `run` does the call; a string it resolves to (the CLI's "Đã gọi dev nhận #21 ngay · đã báo lead",
+ * lib/server/board.ts rushLine) is the toast's second line.
  */
-export function ForceButton({ c, run, className }: { c: Card; run: () => Promise<void>; className?: string }) {
+export function ForceButton({ c, run, className }: { c: Card; run: () => Promise<unknown>; className?: string }) {
   const [busy, setBusy] = useState(false);
   const kind = forceKind(c);
   if (!kind) return null;
@@ -190,8 +192,8 @@ export function ForceButton({ c, run, className }: { c: Card; run: () => Promise
   async function force() {
     setBusy(true);
     try {
-      await run();
-      toast.success(f.done(c.id));
+      const woke = await run();
+      toast.success(f.done(c.id), typeof woke === "string" ? { description: woke } : undefined);
     } catch (e) {
       toast.error(`${f.label} #${c.id} thất bại: ${(e as Error).message}`);
     } finally {
@@ -215,7 +217,7 @@ async function copy(text: string, what: string) {
 }
 
 /** Everything the board knows about one card. Rendered inside the sheet; kept separate so tests can render it. */
-export function CardDetail({ c, now, next, onPrio, onForce }: { c: Card; now: number; next: boolean; onPrio?: (prio: number | null) => Promise<void>; onForce?: () => Promise<void> }) {
+export function CardDetail({ c, now, next, onPrio, onForce }: { c: Card; now: number; next: boolean; onPrio?: (prio: number | null) => Promise<void>; onForce?: () => Promise<unknown> }) {
   const { title, tags } = cardParts(c.text);
   const lane = LANES.find((l) => l.key === c.lane);
   const stale = claimStale(c, now);
@@ -390,7 +392,7 @@ export function CardSheet({
   next: boolean;
   onClose: () => void;
   onPrio?: (prio: number | null) => Promise<void>;
-  onForce?: () => Promise<void>;
+  onForce?: () => Promise<unknown>;
 }) {
   const title = c ? cardParts(c.text).title : "";
   return (

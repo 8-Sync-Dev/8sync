@@ -209,7 +209,7 @@ function OverviewSkeleton() {
  * "N card blocked · Gỡ hết ngay": "⚡ Gỡ block ngay" on every Blocked card of the board, one after
  * the other (same route as the card button), then one toast with what went through.
  */
-export function UnblockAll({ cards, onUnblock }: { cards: Card[]; onUnblock: (c: Card) => Promise<void> }) {
+export function UnblockAll({ cards, onUnblock }: { cards: Card[]; onUnblock: (c: Card) => Promise<unknown> }) {
   const [busy, setBusy] = useState<number | null>(null);
   if (!cards.length) return null;
   async function all() {
@@ -282,7 +282,7 @@ function ProjectBlock({
   onOpenRoom: (r: Room) => void;
   onOpenCard: (id: number) => void;
   /** "Gỡ block ngay" on one Blocked card of this board (useBoards.force). */
-  onUnblock: (c: Card) => Promise<void>;
+  onUnblock: (c: Card) => Promise<unknown>;
 }) {
   const id = `ov-${root.replace(/[^\w-]/g, "_")}`;
   const stuck = rows.filter((n) => n.state === "needs" || n.state === "blocked").length;

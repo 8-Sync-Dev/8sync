@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.21] — 2026-10-21
+### Fixed
+- **HQ "⚡ Đang Sấm Sét" no longer sticks, and "Running N" counts only live rooms.** Owner 2026-10-21: "bật sao không tắt được" (same screenshot four times). When `claude agents` failed or timed out (the machine was crawling), HQ fell back to its journal and every stopped room (3d-game's dev6, review2, qa2…) came back as running, so the stopped 13-room team still read as boosted. A journal-only session is now always ended; only tmux or `claude agents` (its last good answer for 120 s) prove a room alive. Boards and ⚡ buttons stay available for auto's team roots during such an outage instead of answering 409.
+- **⚡ Làm ngay acts at once.** Owner: "bấm làm ngay không ăn". It only set P0: zus/ide #20/#21 sat at P0 in Ready for 3 h while `dev` idled. Now the owner's `auto prio <id> P0` (no room env, the same owner check as `auto add`) also mails the lead `[⚡ owner] Làm ngay #N …` (once per card per 10 min) and calls the rooms that can take the card (its lane, not holding another card); an idle room whose goal ended is re-armed by a background revive (at most one a minute) — only with an empty inbox and two idle looks ≥ 5 s apart. The toast says who was called or who holds the card.
+
 ## [0.110.20] — 2026-10-21
 ### Added
 - **HQ Terminal sends images.** Owner 2026-10-21: "Terminal thiếu gửi ảnh". A room terminal has an "Ảnh" button (phone photo picker) and takes a pasted image. The image goes into the room's repo like a chat attachment (`.claude/hq-uploads`), and its path lands in the input line, so the owner adds a question and sends. `POST /api/sessions/<id>/term {files}` places the uploads; the room is resolved server side.

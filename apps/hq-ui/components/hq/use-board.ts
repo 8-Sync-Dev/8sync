@@ -67,11 +67,12 @@ export function useBoards(api: Hq["api"]) {
     },
     [api],
   );
-  /** The card's force button, then a fresh poll. Throws the CLI's error. */
+  /** The card's force button, then a fresh poll. Throws the CLI's error; resolves to who was called (or null). */
   const force = useCallback(
-    async (root: string, c: Pick<Card, "id" | "lane">) => {
-      await forceCall(api, root, c);
+    async (root: string, c: Pick<Card, "id" | "lane">): Promise<string | null> => {
+      const r = await forceCall(api, root, c);
       setNonce((n) => n + 1);
+      return r.woke ?? null;
     },
     [api],
   );
@@ -84,7 +85,10 @@ export type BoardsState = ReturnType<typeof useBoards>;
 /**
  * The card's force button (card-sheet forceKind) as one API call: a Blocked card is unblocked
  * (POST /api/board/unblock: Backlog + the owner's note, then P0), a waiting one goes to P0.
+ * `woke`: the rooms the owner's P0 called (lib/server/board.ts rushLine).
  */
-export function forceCall(api: Hq["api"], root: string, c: Pick<Card, "id" | "lane">): Promise<unknown> {
-  return c.lane === "blocked" ? api("/api/board/unblock", { method: "POST", body: { root, id: c.id } }) : api("/api/board/prio", { method: "POST", body: { root, id: c.id, prio: 0 } });
+export function forceCall(api: Hq["api"], root: string, c: Pick<Card, "id" | "lane">): Promise<{ woke?: string | null }> {
+  return c.lane === "blocked"
+    ? api<{ woke?: string | null }>("/api/board/unblock", { method: "POST", body: { root, id: c.id } })
+    : api<{ woke?: string | null }>("/api/board/prio", { method: "POST", body: { root, id: c.id, prio: 0 } });
 }

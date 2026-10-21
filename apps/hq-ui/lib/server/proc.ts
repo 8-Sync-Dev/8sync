@@ -60,7 +60,7 @@ export type ClaudeAgent = {
   waitingFor?: string;
 };
 
-/** null when `claude` is missing or failed: callers then trust the journal. The core keeps this warm. */
+/** null when `claude` is missing or failed (past AGENTS_KEEP_MS): no session is known alive then; journal rows stay ended. The core keeps this warm. */
 /** A listing this young answers every caller (all routes and clients poll together). */
 const AGENTS_FRESH_MS = 2_000;
 /** A failed probe answers with the last good listing while it is this young: a slow `claude` under
@@ -143,9 +143,11 @@ function normStatus(s: string | null | undefined): SessionStatus {
  * Merges three sources: tmux `hq-*` sessions, `claude agents --json`, and the
  * journal-derived sessions table. A tmux pane's pid is the claude pid (tmux's
  * shell execs `env`, which execs `claude`), which links the first two.
+ * Only tmux and `claude agents` prove a session alive: journal-only rows are always "ended".
  */
 export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
   const [tmux, listed] = await Promise.all([listTmux(), listClaudeAgents()]);
+  // Past AGENTS_KEEP_MS without an answer nothing is known alive: journal rows stay ended (below).
   const agents = listed ?? [];
   const rows = db
     .prepare("SELECT name, project_id, started_at, status, cwd, role, model FROM sessions")
@@ -197,8 +199,8 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
       label: TMUX_NAME_RE.test(r.name) ? r.name : r.name.slice(0, 8),
       session_id: TMUX_NAME_RE.test(r.name) ? null : r.name,
       project_id: r.project_id ?? projectIdFor(db, r.cwd),
-      // Not alive in tmux or `claude agents`: it is gone. Without `claude`, trust the journal.
-      status: listed ? "ended" : normStatus(r.status),
+      // Not alive in tmux or `claude agents` (or its last good answer): it is gone, whatever the journal says.
+      status: "ended",
       started_at: r.started_at,
       cwd: r.cwd,
       tmux: false,
