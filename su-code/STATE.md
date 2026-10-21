@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.26: Ship tốc độ cao button + approved one-tap Ship nudge.
 v0.110.25: auto-ship tops the queue (round when backlog/ready < 2).
 v0.110.24: HQ slash commands + endless auto-ship loop + terminal input as composer card.
 v0.110.23: strict CPU cap (room trees pinned to top-N CPUs, tighten/loosen stepwise without cycling, exact restore), CPU/RAM thresholds split (55/60), measured CPU window.
