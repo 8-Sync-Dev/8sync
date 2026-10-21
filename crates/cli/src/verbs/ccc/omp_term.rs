@@ -869,6 +869,8 @@ mod tests {
         assert!(sent.is_empty() && lock(&wrong.0).is_empty(), "a wrong token gets no byte and types nothing");
     }
 
+    // Needs a process snapshot with parents and images: Windows and Linux only (macOS has no host trust).
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn a_client_joins_a_live_host_and_a_dead_record_is_not_a_host() {
         let dir = std::env::temp_dir().join(format!("omp-term-conn-{}", std::process::id()));
@@ -993,6 +995,8 @@ mod tests {
         assert!(kill_order(&cycle, 18480).len() <= cycle.len(), "a parent loop ends");
     }
 
+    // Needs a process snapshot with parents and images: Windows and Linux only (macOS has no host trust).
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn after_8sync_up_renames_the_running_exe_the_host_is_still_known_by_its_name_and_its_omp_child() {
         let bin = std::env::temp_dir().join("bin");
