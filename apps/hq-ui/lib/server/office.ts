@@ -10,13 +10,13 @@ import { teamOf, type IdleRecord } from "../idle";
 import { deliveryOf, sessionLabel } from "../labels";
 import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type Limits, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
 import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
-import type { HiddenProject } from "../sidebar";
+import { parsePins, type HiddenProject, type Pin } from "../sidebar";
 import { readAsk } from "./ask";
 import { loadFloor, ompSessions } from "./floor";
 import { readPermits, type Permit } from "./permit";
 import { readIdleStatus } from "./idle";
 import { inboxLive, pendingInbox } from "./inbox";
-import { stateDir } from "./paths";
+import { pinnedRootsPath, stateDir } from "./paths";
 import { mergedSessions, type SessionView } from "./proc";
 
 const projectCache = new Map<string, { at: number; v: ProjectInfo | null }>();
@@ -236,11 +236,21 @@ export function readLoops(roots: { root: string; name: string }[]): LoopInfo[] {
   return out.sort((a, b) => (b.started ?? 0) - (a.started ?? 0)).slice(0, 30);
 }
 
+/** `pinned-roots.json` (`8sync ccc auto pin`), oldest pin first, without Rust's `\\?\` prefix; [] when absent or unreadable. */
+export function readPins(file = pinnedRootsPath()): Pin[] {
+  try {
+    return parsePins(JSON.parse(fs.readFileSync(file, "utf8"))).map((p) => ({ ...p, root: p.root.replace(/^\\\\\?\\/, "") }));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * `idle`: every agent-team member's "không ai rảnh" status (lib/idle.ts), stale ones included. `limits`: plan usage (header).
  * `hidden`: projects the owner closed in the sidebar (lib/sidebar.ts splitClosed decides which still hide).
+ * `pins`: projects the owner pinned (sidebar "Ghim", lib/sidebar.ts pinSidebar).
  */
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; at: number };
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; pins: Pin[]; at: number };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
@@ -308,6 +318,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     meetings: loadMeetings(rooms, now),
     limits: readLimits(),
     hidden: db.prepare("SELECT key, root, name, hidden_at FROM hidden_projects ORDER BY hidden_at DESC").all() as HiddenProject[],
+    pins: readPins(),
     at: now,
   };
 }

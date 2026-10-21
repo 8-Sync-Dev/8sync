@@ -109,6 +109,28 @@ describe("runAutoTick", () => {
     expect(revives()).toBe(2);
   });
 
+  it("with Lease liên tục on, still asks revive while gated (its lease tick, its wake after the usage window) but wakes nobody itself", async () => {
+    proc.mockClear();
+    const revives = () => proc.mock.calls.filter((c) => JSON.stringify(c).includes("revive")).length;
+    const held = { on: true, paused: false, gate: "chạm trần gói subscription", lease_auto: true };
+    expect((await runAutoTick(held, NOW)).ticked).toEqual([]);
+    expect(revives()).toBe(1);
+    expect((await runAutoTick(held, NOW + TICK_IDLE_MS)).ticked).toEqual([]);
+    expect(fs.existsSync(inbox())).toBe(false);
+  });
+
+  it("tight usage with pins: the unpinned project's idle room gets no tick", async () => {
+    office.mockResolvedValue({ rooms: [{ ...live, cwd: "C:\\code\\other", project: null }] });
+    const tight = { on: true, paused: false, focus: true, pins: ["C:\\code\\pinned"] };
+    expect((await runAutoTick(tight, NOW)).ticked).toEqual([]);
+    expect((await runAutoTick(tight, NOW + TICK_IDLE_MS)).ticked).toEqual([]);
+    expect(fs.existsSync(inbox())).toBe(false);
+    // The same room once its project is pinned: ticked as before (first sighting, then the idle wait).
+    const pinned = { ...tight, pins: ["C:\\code\\other"] };
+    expect((await runAutoTick(pinned, NOW + TICK_IDLE_MS)).ticked).toEqual([]);
+    expect((await runAutoTick(pinned, NOW + 2 * TICK_IDLE_MS)).ticked).toEqual([SID]);
+  });
+
   it("never throws; the detail stays out of the response", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     office.mockRejectedValue(new Error("boom /home/x/secret"));

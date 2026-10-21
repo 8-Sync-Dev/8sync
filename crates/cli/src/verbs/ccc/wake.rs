@@ -62,7 +62,7 @@ fn stamp_path(home: &Path, sid: &str) -> PathBuf {
 }
 
 /// Last prompt typed by a human in a transcript (last 1 MiB), ignoring marked scheduled prompts.
-fn owner_seen(transcript: &Path) -> Option<u64> {
+pub(super) fn owner_seen(transcript: &Path) -> Option<u64> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(transcript).ok()?;
     let len = f.metadata().ok()?.len();

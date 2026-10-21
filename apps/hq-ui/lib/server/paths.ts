@@ -29,6 +29,8 @@ export const channelMcpConfigPath = (home = os.homedir()) =>
 export const idleStatusDir = (home = os.homedir()) => path.join(home, ".local", "state", "8sync", "ccc", "idle", "status");
 /** The roots `auto up` brought a team up in, `auto down` drops (crates/cli/src/verbs/ccc/team.rs team_roots_file). */
 export const teamRootsPath = (home = os.homedir()) => path.join(home, ".local", "state", "8sync", "ccc", "idle", "team-roots.json");
+/** Projects the owner pinned (`8sync ccc auto pin`): `{ "<root>": <pinned at, unix s> }` (crates/cli/src/verbs/ccc/lease.rs pins_file). */
+export const pinnedRootsPath = (home = os.homedir()) => path.join(home, ".local", "state", "8sync", "ccc", "idle", "pinned-roots.json");
 
 /**
  * `<platform data dir>/8sync/hq-play`: the "Chơi thử" worktrees, one per project, outside every repo

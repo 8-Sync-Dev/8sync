@@ -34,7 +34,7 @@ pub(super) const DEFAULT_USD_PER_HOUR: f64 = 5.0;
 /// Subscription: the loops rest once either usage window is this full.
 pub(super) const SUB_WINDOW_PCT: f64 = 90.0;
 /// Subscription: lease cap and "owner present" window (last prompt typed by a human).
-const SUB_MAX_HOURS: f64 = 4.0;
+pub(super) const SUB_MAX_HOURS: f64 = 4.0;
 pub(super) const PRESENT_S: u64 = 30 * 60;
 /// Another session's task list counts as "has work" only when touched this recently.
 const ROOM_FRESH_S: u64 = 2 * 3600;
@@ -640,7 +640,11 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
         tasks: &tasks,
         recall: &recall,
         rooms: &rooms,
-        gate: gate(lease.as_ref(), subscription, &used, now(), owner_seen),
+        // Tight usage with other projects pinned: this one rests ([`super::lease::focus_rest`]).
+        gate: gate(lease.as_ref(), subscription, &used, now(), owner_seen).and_then(|()| match cwd.as_os_str().is_empty() {
+            true => Ok(()),
+            false => super::lease::focus_rest(home, &cwd, now()).map_or(Ok(()), Err),
+        }),
         learn: learn.as_deref(),
         research: research.as_deref(),
     };

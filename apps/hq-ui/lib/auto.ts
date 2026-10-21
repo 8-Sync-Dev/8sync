@@ -1,5 +1,6 @@
 // Pure helpers for the Pause / Run control (`8sync ccc auto status --json`, served by /api/auto).
 // Tested in tests/auto-ui.test.ts.
+import { groupKey } from "./sidebar";
 
 export type AutoState = {
   on: boolean;
@@ -23,7 +24,22 @@ export type AutoState = {
   remote?: { host: string | null };
   /** GitHub CI of the project (`8sync ccc auto ci`): "ok" | "failing" | "billing" | "local" | "unknown". */
   ci?: string;
+  /** "Lease liên tục" on (`8sync ccc auto lease auto on`); absent on an older 8sync. */
+  lease_auto?: boolean;
+  /** Why auto rests and until when (unix s); null while it runs. */
+  lease_rest?: LeaseRest | null;
+  subscription?: unknown;
+  /** The lease's $/hour budget (API key). */
+  usd_per_hour?: number | null;
+  /** Usage tight and projects pinned: only those work. */
+  focus?: boolean;
+  pins?: string[];
+  /** The last "Lease liên tục" switch failed (8sync's reason). */
+  lease_error?: string;
 };
+
+/** `lease_rest` of `8sync ccc auto status --json`. */
+export type LeaseRest = { kind: "usage" | "budget" | "lease"; text: string; window?: "5h" | "7d"; pct?: number; until?: number | null };
 
 /**
  * Rooms wait on the owner while the critic is off: auto paused or off, or delegate switched off.
@@ -76,7 +92,10 @@ export function autoText(s: AutoState): string {
   if (s.paused) return "Tạm dừng (owner)";
   if (s.on) {
     const t = leaseMs(s.lease_until);
-    if (s.gate) return t && t < Date.now() ? "Lease hết hạn — bấm Chạy liên tục để gia hạn" : `Đang nghỉ: ${s.gate}`;
+    if (s.gate) {
+      if (s.lease_rest?.kind === "usage") return restText(s.lease_rest);
+      return t && t < Date.now() ? "Lease hết hạn — bấm Chạy liên tục để gia hạn" : `Đang nghỉ: ${s.gate}`;
+    }
     // GitHub stopped running jobs for the account: the owner has to fix billing; rooms already gate locally.
     // `local`: the owner moved CI/CD to the release machine (`8sync ccc auto ci local`).
     const ci =
@@ -97,4 +116,28 @@ export function autoButton(s: AutoState): { label: string; action: "on" | "pause
   // An expired lease is "on" on disk but resting: offer to run again (a fresh `auto on`).
   if (s.on && s.gate) return { label: "Chạy liên tục", action: "on" };
   return s.on ? { label: "Tạm dừng", action: "pause" } : { label: "Chạy liên tục", action: "on" };
+}
+
+/** "nghỉ: usage 5h 91% · chạy lại khi reset 16:30" (local time), "· chờ usage" when the reset time is unknown. */
+export function restText(r: LeaseRest): string {
+  if (r.kind !== "usage") return `nghỉ: ${r.text}`;
+  const at = leaseMs(r.until ?? null);
+  return `nghỉ: usage ${r.window ?? "5h"} ${Math.round(r.pct ?? 0)}% · ${at ? `chạy lại khi reset ${hhmm(at)}` : "chờ usage"}`;
+}
+
+/** The line beside the "Lease liên tục" switch; null while it is off (or 8sync has no such switch). */
+export function leaseText(s: AutoState): string | null {
+  if (s.error || !s.lease_auto) return null;
+  if (s.lease_rest?.kind === "usage") return restText(s.lease_rest);
+  const focus = s.focus ? " · usage chặt: chỉ dự án ghim chạy" : "";
+  if (s.subscription === true) return `tự gia hạn mỗi lần anh dùng HQ (gói subscription: cần anh có mặt)${focus}`;
+  const rate = typeof s.usd_per_hour === "number" ? s.usd_per_hour : 5;
+  return `tự gia hạn · ngân sách $${Number.isInteger(rate) ? rate : rate.toFixed(2)}/h${focus}`;
+}
+
+/** A room in `root` rests to leave the usage to the pinned projects (same rule as 8sync's `focus_rest`). */
+export function focusRests(s: Pick<AutoState, "focus" | "pins">, root: string | null | undefined): boolean {
+  if (!s.focus || !s.pins?.length || !root) return false;
+  const k = groupKey(root);
+  return !s.pins.some((p) => groupKey(p) === k);
 }

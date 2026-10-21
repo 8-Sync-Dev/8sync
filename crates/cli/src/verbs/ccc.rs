@@ -36,6 +36,7 @@ mod guard;
 mod help;
 mod hint;
 mod idle;
+mod lease;
 mod looper;
 mod meet;
 mod merge;
@@ -260,7 +261,14 @@ pub fn run(a: Args) -> Result<()> {
                     lock = team::revive_lock(&env.home, now)?;
                 }
                 let Some(_lock) = lock else { return Ok(()) };
-                for r in team::team_roots(&env.home) {
+                // Lease liên tục ([`lease::tick`]): API key within the $/hour budget; a subscription
+                // only on a prompt the owner typed in the last 30 min.
+                let subscription = login_kind_at(&env.home).kind == "subscription";
+                if let Some(l) = lease::tick(&env.home, subscription, now, || lease::presence(&claude_dir(&env), now)) {
+                    println!("{l}");
+                }
+                // Pinned projects first: rooms past this run's deadline open at the next tick.
+                for r in lease::revive_order(&env.home, team::team_roots(&env.home)) {
                     let r = PathBuf::from(r);
                     if let Err(e) = auto_team(&env, &r, rest) {
                         eprintln!("{}: {e:#}", r.display());

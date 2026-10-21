@@ -112,14 +112,16 @@ describe("team", () => {
     expect((await post({ root: room.cwd, action: "up" })).status).toBe(200);
   });
 
-  it("Sấm Sét runs exactly `auto up --roles boost --hours 2` in the project root, then revives", async () => {
+  it("Sấm Sét runs exactly `auto up --roles boost --hours 2` in the project root, turns on the ship sprint, then revives", async () => {
     run.mockClear();
     run.mockResolvedValueOnce({ ok: true, stdout: "✓ dev6 mở\n✓ review2 mở\nboost: 13 phòng · lease tới 18:00 UTC\n", stderr: "" });
     const ok = await post({ root: room.cwd.toUpperCase(), action: "boost" });
     expect(ok.status).toBe(200);
     expect((await ok.json()).output.split("\n").at(-1)).toBe("boost: 13 phòng · lease tới 18:00 UTC");
+    await new Promise((r) => setTimeout(r, 0));
     expect(run.mock.calls).toEqual([
       ["8sync", ["ccc", "auto", "up", "--roles", "boost", "--hours", "2"], 660_000, room.cwd],
+      ["8sync", ["ccc", "auto", "ship-fast", "on", "--hours", "2", "--json"], 60_000, room.cwd],
       ["8sync", ["ccc", "auto", "revive"], 120_000],
     ]);
     // A failed boost reports the CLI's own error and revives nothing.

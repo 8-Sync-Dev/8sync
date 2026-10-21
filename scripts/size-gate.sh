@@ -179,7 +179,10 @@ export LC_ALL=C
 # 2026-10-21 v0.110.26: `ccc/ship_fast.rs` (the owner's Ship-tốc-độ-cao sprint: brief delivery,
 # approved watch, claim hold) + the lease/pin groundwork — CI musl asset 8,005,936 B (+~85 KB over
 # v0.110.24, 10,544 B over the 7808 KiB ceiling). No new dependency. Ceiling 7840 KiB (~20 KiB left).
-CEILING="${CEILING:-8026112}"   # 7840 KiB (raised 2026-10-21 from 7808 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+# 2026-10-21 v0.110.27: `ccc/lease.rs` (Lease liên tục: API-key renew within budget, subscription
+# renew on owner presence; pinned projects + usage-tight focus) — CI musl asset 8,038,704 B
+# (+32,768 B over v0.110.26). No new dependency. Ceiling 7872 KiB (~20 KiB left).
+CEILING="${CEILING:-8060928}"   # 7872 KiB (raised 2026-10-21 from 7840 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"
