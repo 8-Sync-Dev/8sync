@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.38] — 2026-10-22
+### Changed
+- **Critic trả lời ngay, không chờ 60 giây** (owner: "tôi nghĩ bây giờ không cần sau 1p auto trả lời"): `auto on` đặt delegate `--after 0` (trả lời ngay trong phòng, ghi DECISIONS.md); `--after <s>` vẫn đưa lại chế độ chờ owner nếu anh muốn. Rails không đổi: Ship, secret/tiền, xoá/không hoàn tác, deploy prod, high-risk vẫn chờ anh.
+### Added
+- **Nút "Critic trả lời ngay" ở Văn phòng** (owner: "luôn có nút bật auto mặc định luôn bật"): công tắc bật/tắt critic (`8sync ccc delegate on|off`), mặc định BẬT từ bản này; 8sync cũ hơn không hiện nút.
+- **Lead kẹt câu hỏi → báo thẳng anh** (owner: "lỡ mà lead bị dính câu hỏi phải tìm agent trả lời… không thể nào mà không có agent nào"): revive phát hiện phòng LEAD dừng chờ câu hỏi (thường là rails: Ship/secret — không agent nào được trả lời thay anh) → banner HQ cho anh MỘT câu, giãn 10 phút. Phòng thường kẹt → lead trả lời ngay (bản .36).
 ## [0.110.37] — 2026-10-22
 
 ### Fixed

@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, GitBranchIcon, GlobeIcon, InboxIcon, LaptopIcon, MoonIcon, PauseIcon, PlayIcon, RefreshCwIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
+import { BotIcon, GitBranchIcon, GlobeIcon, InboxIcon, LaptopIcon, MoonIcon, PauseIcon, PlayIcon, RefreshCwIcon, SparklesIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
 import { useMemo, useState, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -368,6 +368,23 @@ function AutoBar({ token }: { token: string }) {
         </Button>
       )}
       <span className="text-muted-foreground">{autoText(status)}</span>
+      {/* "Critic trả lời ngay": on by default since v0.110.37 — a room's product/technical question
+          is answered in-room at once (owner 2026-10-22: "không cần sau 1p auto trả lời, mặc định
+          luôn bật"); Ship/secret/money still wait for the owner. Older 8sync: no switch. */}
+      {!status.error && typeof status.delegate === "boolean" && (
+        <Button
+          type="button"
+          size="sm"
+          variant={status.delegate ? "secondary" : "outline"}
+          aria-pressed={status.delegate}
+          disabled={busy}
+          title="Critic chọn thay owner cho câu hỏi sản phẩm/kỹ thuật của phòng (8sync ccc delegate on|off). Ship, secret, tiền, deploy vẫn chờ anh."
+          onClick={() => void setAuto(status.delegate ? "critic-off" : "critic-on")}
+        >
+          <SparklesIcon aria-hidden />
+          Critic trả lời ngay: {status.delegate ? "bật" : "tắt"}
+        </Button>
+      )}
       {/* "Lease liên tục": absent on an older 8sync (no `lease_auto` in the status), so no switch there. */}
       {!status.error && typeof status.lease_auto === "boolean" && (
         <>

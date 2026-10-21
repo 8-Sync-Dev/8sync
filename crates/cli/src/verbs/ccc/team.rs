@@ -933,7 +933,6 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     // tiếp"). The critic answers most questions in-room; the lead gets what still waits, now.
     let stuck: Vec<(String, String)> = sessions
         .iter()
-        .filter(|s| room::crew(&s.name) != "lead")
         .filter(|s| running.iter().any(|l| l.id == s.conversation_id && lost_goal(on_goal(&s.name), l)))
         .filter_map(|s| (t.pending_ask)(&s.conversation_id).map(|q| (s.name.clone(), q)))
         .collect();
