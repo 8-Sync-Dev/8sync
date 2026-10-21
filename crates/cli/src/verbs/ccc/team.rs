@@ -80,6 +80,10 @@ pub(super) struct Team<'a> {
     pub claude: &'a dyn Claude,
     /// Claude Code has a transcript for this conversation id.
     pub has_transcript: &'a dyn Fn(&str) -> bool,
+    /// The pending question of a room: its transcript's last event is an unanswered AskUserQuestion
+    /// (the room stalls its lane until a human replies; [`super::delegate::relay_stuck`] hands it to
+    /// the lead). None = not stuck.
+    pub pending_ask: &'a dyn Fn(&str) -> Option<String>,
     /// The display name a new room gets (machine-wide clash → `<name>-<repo>`).
     pub title: &'a dyn Fn(&str) -> String,
     /// When the kit last wrote Claude Code's settings (ms): a session reads its hooks once at start,
@@ -924,6 +928,20 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let mut stalled = Vec::new();
     let wake = woken(t.home, t.root, sessions.iter().map(|s| s.name.clone()), now);
     let cards = target::list(t.home, t.root).unwrap_or_default();
+    // A room whose turn ended on an unanswered question stalls its lane until a human replies
+    // (owner 2026-10-22: "khi ccc đang code bị dính hỏi, auto phải gọi agent lead trả lời ngay làm
+    // tiếp"). The critic answers most questions in-room; the lead gets what still waits, now.
+    let stuck: Vec<(String, String)> = sessions
+        .iter()
+        .filter(|s| room::crew(&s.name) != "lead")
+        .filter(|s| running.iter().any(|l| l.id == s.conversation_id && lost_goal(on_goal(&s.name), l)))
+        .filter_map(|s| (t.pending_ask)(&s.conversation_id).map(|q| (s.name.clone(), q)))
+        .collect();
+    if !stuck.is_empty() {
+        if let Some(line) = super::delegate::relay_stuck(t.home, t.root, &registry, &stuck, now) {
+            rows.push(Row { name: "lead".into(), role: room::role("lead").0, model: String::new(), state: line, short: String::new() });
+        }
+    }
     let mut called = Vec::new();
     let mut rearmed = Vec::new();
     for s in &sessions {
@@ -1568,7 +1586,7 @@ mod tests {
         let forked = agent("5a5a5a5a-0000-4000-8000-000000000009", "dev", "background");
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{forked}]")]), bg: "backgrounded · 3698e3a6 · {name}".into() };
         // Both sessions started at 1 ms; the kit wrote settings at 1000 ms.
-        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: Some(1000) };
+        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| true, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: Some(1000) };
         let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, omp: false, add: false };
         let (_, _, rows) = up(&t, &o, 1).unwrap();
         let calls = fake.calls.borrow();
@@ -1594,7 +1612,7 @@ mod tests {
         up(&t, &o, 3).unwrap();
         assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop"), "busy room left running");
         *fake.agents.borrow_mut() = vec![format!("[{l},{forked}]")];
-        let gone = Team { has_transcript: &|_: &str| false, ..t };
+        let gone = Team { has_transcript: &|_: &str| false, pending_ask: &|_| None, ..t };
         up(&gone, &o, 4).unwrap();
         assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop"), "no transcript: no resume possible, left running");
         let _ = std::fs::remove_dir_all(&h);
@@ -1626,7 +1644,7 @@ mod tests {
         let everywhere = format!("[{},{}]", agent(reopened, "lead", "background"), agent(&review.conversation_id, "notes-elsewhere", "interactive"));
         let after = format!("[{},{}]", agent(reopened, "lead", "background"), agent(forked, "qa", "background"));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![all.clone(), live.clone(), everywhere.clone(), after]), bg: "backgrounded · 3698e3a6 · {name}".into() };
-        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| true, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
         assert!(revive(&t, 10, 1).unwrap().is_empty(), "auto off: nothing");
         assert!(fake.calls.borrow().is_empty(), "not even a `claude agents` call");
 
@@ -1741,7 +1759,7 @@ mod tests {
         let after = format!("[{}]", agent("5a5a5a5a-0000-4000-8000-000000000009", "qa", "background"));
         // all, running, everywhere, dev's re-check right before its stop, then the rebind.
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![all, running.clone(), running.clone(), running, after]), bg: "backgrounded · 3698e3a6 · {name}".into() };
-        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| true, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
         let rows = revive(&t, 10, 2).unwrap();
         let mut got: Vec<(&str, &str)> = rows.iter().map(|r| (r.name.as_str(), r.state.as_str())).collect();
         got.sort();
@@ -1771,7 +1789,7 @@ mod tests {
         let k = root.to_string_lossy().into_owned();
         let ask = || idle::write_json(&idle::state_dir(&h).join("guard.json"), &json!({ k.clone(): { "level": 2, "restart": [{ "name": "dev", "waiting": false, "pid": 1 }] } }));
         let t_with = |fake: &Fake| -> Vec<(String, String)> {
-            let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: None };
+            let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: fake, has_transcript: &|_: &str| true, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
             revive(&t, 10, 2).unwrap().into_iter().map(|r| (r.name, r.state)).collect()
         };
         let idle_dev = format!("[{}]", agent(&dev.conversation_id, "dev", "background"));
@@ -1820,7 +1838,7 @@ mod tests {
             ]),
             bg: String::new(),
         };
-        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| false, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
         let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, omp: false, add: false };
         let (_, gone, rows) = up(&t, &o, 1).unwrap();
         let g: Vec<_> = gone.iter().map(|g| (g.name.as_str(), g.short.as_str(), g.kept.is_some())).collect();
@@ -1857,7 +1875,7 @@ mod tests {
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![first, after]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
         let qa_id = qa.conversation_id.clone();
         let has = move |id: &str| id == qa_id;
-        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &has, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &has, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
         let o = Opts { roles: vec!["lead".into(), "dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false, add: false };
         let (status, _, rows) = up(&t, &o, 1_000).unwrap();
         assert_eq!(status["on"], true);
@@ -1888,7 +1906,7 @@ mod tests {
         let (h, root) = tmp("trust");
         let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec!["[]".into()]), bg: "Workspace not trusted. Run `claude` in C:\\proj once and accept the trust prompt".into() };
-        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
         let o = Opts { roles: vec!["dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false, add: false };
         let e = up(&t, &o, 1).unwrap_err().to_string();
         assert!(e.contains("chưa trust") && e.contains("8sync ccc auto up"), "{e}");
@@ -1923,7 +1941,7 @@ mod tests {
         // keeps both rooms alive no matter how many stops and listings happen.
         let alive = format!("[{},{}]", agent(&dev.conversation_id, "dev", "background"), agent(&qa.conversation_id, "qa", "background"));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![alive]), bg: String::new() };
-        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
         let e = down(&t, 2).unwrap_err().to_string();
         assert!(e.contains("không dừng được") && e.contains("dev") && e.contains("qa") && e.contains("8sync ccc term"), "{e}");
         assert_eq!(fake.calls.borrow().iter().filter(|c| c[0] == "stop").count(), 4, "two stops per stuck room");
@@ -2011,7 +2029,7 @@ mod tests {
         store.rebind("lead", game_lead).unwrap();
         let list = format!("[{},{}]", agent_in(game_lead, "lead", "background", &game), agent_in(DEV_BG, "dev", "background", &game));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
-        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|id: &str| id == game_lead, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|id: &str| id == game_lead, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
         let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("BE AI zus".into()), check: None, omp: false, add: false };
         let (status, _, rows) = up(&t, &o, 1_000).unwrap();
         let states: Vec<_> = rows.iter().map(|r| r.state.split(' ').next().unwrap()).collect();
@@ -2048,7 +2066,7 @@ mod tests {
         let after = format!("[{}]", agent_in("33333333-3333-4333-8333-333333333333", "lead", "background", &other));
         // The second `down` (the other project) then stops that lead too: its listing is empty.
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list, after, "[]".to_string()]), bg: String::new() };
-        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
         assert_eq!(down(&t, 3).unwrap(), ["lead"]);
         assert!(super::super::ship_loop::get(&h, &root).is_none() && super::super::ship_loop::get(&h, &other).is_some(), "only this project's loop ends");
         let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
@@ -2194,7 +2212,7 @@ mod tests {
         let sweep_id = "3698e3a6-0000-4000-8000-000000005eef";
         let with_sweep = format!("[{},{}]", agent_in(&lead.conversation_id, "lead", "background", &root), agent_in(sweep_id, "sweep", "background", &root));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![team.clone(), team, with_sweep.clone()]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
-        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
         assert!(up_locked(&t, &o, 1_000, || Ok(())).unwrap_err().to_string().contains("chưa chạy"), "only into a running team");
         auto::set(&h, auto::Mode::On { hours: 8.0, after: 60, rate: None, repo: Some(root.clone()) }, false, 900).unwrap();
         set_team_root(&h, &root, true);
@@ -2246,7 +2264,7 @@ mod tests {
         let eye_id = "3698e3a6-0000-4000-8000-00000000e7e0";
         let with_eye = format!("[{},{},{}]", agent_in(&lead.conversation_id, "lead", "background", &root), agent_in(dev_id, "dev", "background", &root), agent_in(eye_id, "eye", "background", &root));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![team.clone(), team, with_eye.clone()]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
-        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
 
         // No team here yet: refused before nested teams are stopped or any `claude` call, nothing on.
         let nested = std::cell::Cell::new(0);
@@ -2335,7 +2353,7 @@ mod tests {
         }
         let live = format!("[{},{},{}]", agent_in(ids[0], "dev", "background", &root), agent_in(ids[1], "dev3", "background", &root), agent_in(ids[2], "qa2", "background", &root));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![live]), bg: String::new() };
-        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
 
         // dev3 and dev each build a card; qa2 holds a qa card.
         use super::super::target;
@@ -2393,7 +2411,7 @@ mod tests {
         let qa = store.load().sessions.into_iter().find(|s| s.name == "qa").unwrap().conversation_id;
         let all = format!("[{}]", agent(&qa, "qa", "background"));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![all, "[]".into(), "[]".into(), "[]".into()]), bg: "backgrounded · 3698e3a6 · {name}".into() };
-        let t = Team { home: t_home, root, store, subscription, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: None };
+        let t = Team { home: t_home, root, store, subscription, claude: &fake, has_transcript: &|_: &str| true, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
         revive(&t, 10, now).unwrap();
         let n = fake.calls.borrow().iter().filter(|c| c.iter().any(|a| a == "--bg")).count();
         n == 1
