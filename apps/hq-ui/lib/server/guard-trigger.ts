@@ -1,6 +1,6 @@
 // Fast trigger for the ccc auto resource guard: the guard's own tick is slow, so HQ samples the
 // machine every 5 s (server side, no tab needed) and runs `8sync ccc auto guard now --json` as soon
-// as a breach holds: CPU ≥ pct for 3 samples, RAM ≥ pct for 2, or VRAM ≥ 90 % for 2. Only while auto
+// as a breach holds: CPU ≥ the CPU threshold for 3 samples, RAM ≥ the RAM threshold for 2, or VRAM ≥ 90 % for 2. Only while auto
 // runs and the guard is on. One run at a time, at least 20 s between starts; the streaks restart
 // after each run. A run that changed nothing (or yielded to a revive, or printed junk) doubles the
 // gap up to 5 min; a run that acted, or a sample with nothing over, puts it back to 20 s.
@@ -17,7 +17,7 @@ export const SAMPLE_MS = 5_000;
 export const MIN_GAP_MS = 20_000;
 export const MAX_GAP_MS = 300_000;
 const RUN_TIMEOUT_MS = 60_000;
-/** The auto status (on / paused / guard pct) is re-read at least this often without a tab polling it. */
+/** The auto status (on / paused / guard thresholds) is re-read at least this often without a tab polling it. */
 const STATUS_EVERY_MS = 60_000;
 const CPU_SAMPLES = 3;
 const RAM_SAMPLES = 2;
@@ -26,6 +26,10 @@ const VRAM_PCT = 90;
 
 /** One sample: CPU, RAM and the fullest GPU's VRAM, % (null = not measured). */
 export type Load = { cpu: number | null; ram: number | null; vram: number | null };
+/** The guard's two thresholds, %: `guard <pct>` (RAM) and `guard cpu <pct>` (CPU). */
+export type Limits = { ram: number; cpu: number };
+/** An 8sync without `cpu_pct` used one threshold for both. */
+export const limitsOf = (g: Pick<Guard, "pct" | "cpuPct"> | null | undefined): Limits | null => (g?.pct == null ? null : { ram: g.pct, cpu: g.cpuPct ?? g.pct });
 /** `at` unix s (like the guard's own times); `why` e.g. "CPU 97% ×3" or "revive đang chạy"; `acted`: the pass changed something. */
 export type GuardRun = { at: number; ok: boolean; why: string; acted: boolean };
 /**
@@ -60,9 +64,9 @@ export function parseGuardNow(r: { ok: boolean; stdout: string }): GuardNowResul
  * the current gap ago, start `now()` and return its promise (streaks restart). Else null. Synchronous
  * up to the start, so two samples can never both start a run.
  */
-export function step(t: Trigger, l: Load, pct: number, nowMs: number, now: GuardNow): Promise<void> | null {
-  t.cpu = l.cpu != null && l.cpu >= pct ? t.cpu + 1 : 0;
-  t.ram = l.ram != null && l.ram >= pct ? t.ram + 1 : 0;
+export function step(t: Trigger, l: Load, lim: Limits, nowMs: number, now: GuardNow): Promise<void> | null {
+  t.cpu = l.cpu != null && l.cpu >= lim.cpu ? t.cpu + 1 : 0;
+  t.ram = l.ram != null && l.ram >= lim.ram ? t.ram + 1 : 0;
   t.vram = l.vram != null && l.vram >= VRAM_PCT ? t.vram + 1 : 0;
   // The breach cleared for 2 samples in a row (one quiet sample of a noisy load is not a clear):
   // the next one starts from the short gap.
@@ -115,12 +119,12 @@ async function sampleOnce(): Promise<void> {
     await autoStatus();
   }
   const st = lastAutoStatus();
-  const pct = st?.guard?.pct;
-  if (!st?.on || st.paused || pct == null) {
+  const lim = limitsOf(st?.guard);
+  if (!st?.on || st.paused || lim == null) {
     S.t.cpu = S.t.ram = S.t.vram = 0;
     return;
   }
-  const started = step(S.t, loadOf(await machine(process.platform, undefined, false)), pct, Date.now(), realNow);
+  const started = step(S.t, loadOf(await machine(process.platform, undefined, false)), lim, Date.now(), realNow);
   if (started && S.t.running) void sweepAlert(getDb(), S.t.running);
 }
 

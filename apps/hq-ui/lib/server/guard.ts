@@ -1,6 +1,6 @@
 // "Bảo vệ máy" in the Máy tab: the ccc auto resource guard. Read from the `guard` field of
 // `8sync ccc auto status --json` (validated strictly, anything off → null); set with the fixed argv
-// `8sync ccc auto guard <30..95>|off|eco on|off`. Only a validated integer or a literal reaches argv.
+// `8sync ccc auto guard <30..95>|off|cap <10..90>|off|eco on|off`. Only a validated integer or a literal reaches argv.
 import { run } from "./proc";
 
 export type GuardAction = { at: number; text: string };
@@ -32,8 +32,23 @@ export type GuardRoom = { name: string; mb: number; cpu: number | null };
 export type GuardBreach = { ram: number | null; ram_hi: number | null; cpu: number | null; cpu_max: number | null };
 /** Size of %TEMP%\qa-card-* / qa-fetch* (full repo copies QA rooms extracted); `partial`: the count stopped early. */
 export type TempQa = { mb: number; dirs: number; partial: boolean; at: number };
-/** `pct` null = guard off. `eco`: rooms run in Efficiency mode + below-normal priority; null on an 8sync without it. */
-export type Guard = { pct: number | null; eco: boolean | null; projects: GuardProject[]; temp_qa: TempQa | null };
+/**
+ * `pct` null = guard off; it is the RAM threshold, `cpuPct` the CPU one (null on an 8sync with one threshold for both).
+ * `eco`: rooms run in Efficiency mode + below-normal priority; null on an 8sync without it.
+ * `cap`: rooms + Claude Code daemon pinned to `capN` of `cpus` logical CPUs (null = off or an 8sync without it);
+ * `capTight`: halved while CPU is over the CPU threshold.
+ */
+export type Guard = {
+  pct: number | null;
+  cpuPct: number | null;
+  eco: boolean | null;
+  cap: number | null;
+  capN: number | null;
+  cpus: number | null;
+  capTight: boolean;
+  projects: GuardProject[];
+  temp_qa: TempQa | null;
+};
 
 const STR_MAX = 300;
 const PROJECTS_MAX = 50;
@@ -44,6 +59,8 @@ const NAME_MAX = 64;
 const TOP_MAX = 3;
 export const GUARD_MIN = 30;
 export const GUARD_MAX = 95;
+export const CAP_MIN = 10;
+export const CAP_MAX = 90;
 
 const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const str = (v: unknown) => (typeof v === "string" ? v.slice(0, STR_MAX) : null);
@@ -104,16 +121,39 @@ export function parseGuard(v: unknown): Guard | null {
     if (!g) return null;
     projects.push(g);
   }
-  return { pct: (v.pct as number | null) ?? null, eco: typeof v.eco === "boolean" ? v.eco : null, projects, temp_qa: parseTempQa(v.temp_qa) };
+  const int = (x: unknown, lo: number, hi: number) => (Number.isInteger(x) && (x as number) >= lo && (x as number) <= hi ? (x as number) : null);
+  return {
+    pct: (v.pct as number | null) ?? null,
+    cpuPct: v.pct == null ? null : int(v.cpu_pct, GUARD_MIN, GUARD_MAX),
+    eco: typeof v.eco === "boolean" ? v.eco : null,
+    cap: int(v.cap, CAP_MIN, CAP_MAX),
+    capN: int(v.cap_n, 1, 64),
+    cpus: int(v.cpus, 1, 64),
+    capTight: v.cap_tight === true,
+    projects,
+    temp_qa: parseTempQa(v.temp_qa),
+  };
 }
 
 /**
- * Request body → argv; null when invalid. Exactly one of `pct` (an integer 30..95, or null = off) or
- * `eco` (boolean). Only a validated integer or a literal reaches argv.
+ * Request body → argv; null when invalid. Exactly one of `pct` (RAM threshold: an integer 30..95, or null = off),
+ * `cpu` (CPU threshold: an integer 30..95), `cap` (an integer 10..90, or null = off) or `eco` (boolean). Only a
+ * validated integer or a literal reaches argv.
  */
 export function guardArgv(body: unknown): string[] | null {
-  if (!obj(body) || "pct" in body === "eco" in body) return null;
+  if (!obj(body) || ["pct", "cpu", "cap", "eco"].filter((k) => k in body).length !== 1) return null;
   if ("eco" in body) return typeof body.eco === "boolean" ? ["ccc", "auto", "guard", "eco", body.eco ? "on" : "off"] : null;
+  if ("cpu" in body) {
+    const c = body.cpu;
+    if (!Number.isInteger(c) || (c as number) < GUARD_MIN || (c as number) > GUARD_MAX) return null;
+    return ["ccc", "auto", "guard", "cpu", String(c)];
+  }
+  if ("cap" in body) {
+    const c = body.cap;
+    if (c === null) return ["ccc", "auto", "guard", "cap", "off"];
+    if (!Number.isInteger(c) || (c as number) < CAP_MIN || (c as number) > CAP_MAX) return null;
+    return ["ccc", "auto", "guard", "cap", String(c)];
+  }
   const p = body.pct;
   if (p === null) return ["ccc", "auto", "guard", "off"];
   if (!Number.isInteger(p) || (p as number) < GUARD_MIN || (p as number) > GUARD_MAX) return null;

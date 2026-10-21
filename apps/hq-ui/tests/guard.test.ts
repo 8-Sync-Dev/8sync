@@ -30,11 +30,15 @@ const tempQa = { mb: 4200, dirs: 7, partial: true, at: 1792400000 };
 
 describe("parseGuard", () => {
   it("accepts the contract shape", () => {
-    expect(parseGuard({ pct: 60, eco: true, projects: [project], temp_qa: tempQa })).toEqual({ pct: 60, eco: true, projects: [project], temp_qa: tempQa });
+    const none = { cpuPct: null, cap: null, capN: null, cpus: null, capTight: false };
+    expect(parseGuard({ pct: 60, eco: true, projects: [project], temp_qa: tempQa })).toEqual({ pct: 60, eco: true, ...none, projects: [project], temp_qa: tempQa });
+    expect(parseGuard({ pct: 60, cpu_pct: 55, eco: true, cap: 37, cap_n: 6, cpus: 32, cap_tight: true, projects: [] })).toMatchObject({ pct: 60, cpuPct: 55, cap: 37, capN: 6, cpus: 32, capTight: true });
+    expect(parseGuard({ pct: null, cpu_pct: 55, projects: [] })?.cpuPct).toBeNull();
+    for (const bad of [9, 91, 37.5, "37", -1]) expect(parseGuard({ pct: 55, cpu_pct: typeof bad === "number" && bad >= 30 ? 96 : bad, cap: bad, cap_n: 0, cpus: 65, cap_tight: "yes", projects: [] })).toMatchObject(none);
     // An older 8sync without eco/rooms/top/breach/last/temp_qa: the switch hides, the lists are empty.
     const old: Record<string, unknown> = { ...project };
     for (const k of ["rooms", "top", "breach", "last"]) delete old[k];
-    expect(parseGuard({ pct: 60, projects: [old] })).toEqual({ pct: 60, eco: null, projects: [{ ...project, rooms: [], top: [], breach: null, last: null }], temp_qa: null });
+    expect(parseGuard({ pct: 60, projects: [old] })).toEqual({ pct: 60, eco: null, ...none, projects: [{ ...project, rooms: [], top: [], breach: null, last: null }], temp_qa: null });
     expect(parseGuard({ pct: null, projects: [{ ...project, at: null, ram: null, defender: null }] })?.projects[0]).toMatchObject({ at: null, ram: null, defender: null });
   });
   it("breach, last and temp_qa: strict, a bad value → null (the guard stays)", () => {
@@ -89,23 +93,30 @@ describe("parseGuard", () => {
   });
   it("auto status carries guard, null when absent", async () => {
     run.mockResolvedValueOnce({ ok: true, stdout: JSON.stringify({ on: true, paused: false, guard: { pct: 70, projects: [] } }), stderr: "" });
-    expect((await autoStatus()).guard).toEqual({ pct: 70, eco: null, projects: [], temp_qa: null });
+    expect((await autoStatus()).guard).toEqual({ pct: 70, cpuPct: null, eco: null, cap: null, capN: null, cpus: null, capTight: false, projects: [], temp_qa: null });
     run.mockResolvedValueOnce({ ok: true, stdout: '{"on":true,"paused":false}', stderr: "" });
     expect((await autoStatus()).guard).toBeNull();
   });
 });
 
 describe("guardArgv", () => {
-  it("exactly one of pct (30..95 integer or null) or eco (boolean) reaches argv", () => {
+  it("exactly one of pct (30..95 integer or null), cpu (30..95 integer), cap (10..90 integer or null) or eco (boolean) reaches argv", () => {
     expect(guardArgv({ pct: 60 })).toEqual(["ccc", "auto", "guard", "60"]);
     expect(guardArgv({ pct: 30 })).toEqual(["ccc", "auto", "guard", "30"]);
     expect(guardArgv({ pct: 95 })).toEqual(["ccc", "auto", "guard", "95"]);
     expect(guardArgv({ pct: null })).toEqual(["ccc", "auto", "guard", "off"]);
     expect(guardArgv({ eco: true })).toEqual(["ccc", "auto", "guard", "eco", "on"]);
     expect(guardArgv({ eco: false })).toEqual(["ccc", "auto", "guard", "eco", "off"]);
+    expect(guardArgv({ cap: 37 })).toEqual(["ccc", "auto", "guard", "cap", "37"]);
+    expect(guardArgv({ cap: 10 })).toEqual(["ccc", "auto", "guard", "cap", "10"]);
+    expect(guardArgv({ cap: 90 })).toEqual(["ccc", "auto", "guard", "cap", "90"]);
+    expect(guardArgv({ cap: null })).toEqual(["ccc", "auto", "guard", "cap", "off"]);
+    expect(guardArgv({ cpu: 55 })).toEqual(["ccc", "auto", "guard", "cpu", "55"]);
+    for (const bad of [29, 96, 55.5, "55", null, "off", undefined, NaN, "55; rm -rf /", [55]]) expect(guardArgv({ cpu: bad })).toBeNull();
+    for (const bad of [9, 91, 37.5, "37", "off", undefined, NaN, "37; rm -rf /", [37]]) expect(guardArgv({ cap: bad })).toBeNull();
     for (const bad of [29, 96, 60.5, "60", "off", undefined, NaN, Infinity, "60; rm -rf /", [60]]) expect(guardArgv({ pct: bad })).toBeNull();
     for (const bad of ["on", 1, null, undefined]) expect(guardArgv({ eco: bad })).toBeNull();
-    for (const body of [null, undefined, {}, [], "pct", { pct: 60, eco: true }, { pct: null, eco: false }]) expect(guardArgv(body)).toBeNull();
+    for (const body of [null, undefined, {}, [], "pct", { pct: 60, eco: true }, { pct: null, eco: false }, { pct: 60, cap: 37 }, { cap: 37, eco: true }, { pct: 60, cpu: 55 }, { cpu: 55, cap: 37 }]) expect(guardArgv(body)).toBeNull();
   });
   it("setGuard runs the argv with a 15 s timeout and returns the first line", async () => {
     run.mockResolvedValueOnce({ ok: true, stdout: "guard: 70%\nmore", stderr: "" });
