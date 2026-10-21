@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.27] — 2026-10-21
+### Added
+- **Ghim dự án** (owner: "nút ghim dự án quan trọng cần lease tập trung vào đó; nút thêm vào sidebar"): nút ghim trên mọi dự án ở sidebar, kể cả thư mục chưa có phòng (`8sync ccc auto pin|unpin|pins`); dự án ghim nằm đầu sidebar dưới "Ghim". Usage chặt (5 giờ ≥ 70% hoặc 7 ngày ≥ 80%): chỉ dự án ghim chạy và nhận card; usage thoáng: mọi dự án chạy, dự án ghim mở trước.
+- **Lease liên tục** (owner: "có nút auto lease liên tục biết usage có là chạy đi không đợi"): công tắc ở Văn phòng (`8sync ccc auto lease auto on|off`). API key: tự gia hạn khi còn < 30 phút, dừng khi chạm ngân sách $/giờ. Gói subscription: gia hạn (tối đa 4 giờ) mỗi lần anh dùng HQ hoặc gõ prompt trong 30 phút qua (luật Anthropic: gói subscription cần người có mặt). Cửa sổ usage đầy thì phòng nghỉ và tự chạy lại khi reset.
+### Changed
+- **Sấm Sét = tăng nhân lực + Ship tốc độ cao** (owner: "nút sấm sét có hợp nhất nút ship không… tự apply hướng tốt nhất"): bấm Sấm Sét mở 13 phòng VÀ bật sprint ship 2 giờ — thêm người mà không ai land thì card chỉ dồn ở qa/review. Nút Ship tốc độ cao riêng vẫn giữ cho lúc quota chặt (không thêm phòng).
+- **Phòng rảnh có việc swarm lại sau 1 phút** (owner: "thời gian nghỉ quá rảnh quá lâu, sau 1p phải swarm lại"): phòng idle có card chờ ở cột mình được đánh thức lại sau 60 s (trước 10 phút); HQ chạy revive mỗi 60 s (trước 120 s). Phòng không có việc vẫn nghỉ lâu để không tốn lượt.
+
 ## [0.110.26] — 2026-10-21
 ### Added
 - **Ship tốc độ cao** (owner 2026-10-21: "nút mà all members in room đẩy nhanh tốc độ push, merge, build, check test, release sản phẩm nhanh nhất ít lỗi; Sấm Sét chỉ là mở rộng nhân lực"): nút 🚀 cạnh Sấm Sét (`8sync ccc auto ship-fast on [--hours 0.5..4] | off | status`, chỉ owner). Bật: brief tới MỌI phòng + đánh thức như ⚡ — card gần xong trước (approved → review → qa → building), review/qa dọn cột mình trước, builder không lấy card tính năng mới khi ≥ 3 card đang chờ qa/review (card approved chờ anh bấm nên không đếm), PR nhỏ, chạy lệnh kiểm + test trước khi push, CI xanh mới merge. Hết card/hết giờ: 8sync tự báo anh một phát. Chip "Ship nhanh · còn N′" đọc từ status (sống qua reload), có nút Tắt. Không bỏ cổng nào: chỉ đổi thứ tự và bỏ chỗ đứng chết.
