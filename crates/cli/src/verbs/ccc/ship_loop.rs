@@ -27,9 +27,13 @@ use super::{auto, idle, target};
 
 /// Least time between two rounds (and between `on` and the first round the loop starts itself).
 pub(super) const ROUND_GAP_S: u64 = 20 * 60;
-/// Lanes holding work in flight: the next round waits until none has a card (approved waits for
-/// its merge, blocked for the owner — a new round on top would only pile up).
-const BUSY_LANES: [&str; 6] = ["ready", "building", "qa", "review", "approved", "blocked"];
+/// The R&D pipeline stays ahead of the builders (owner 2026-10-21: "phải lên task backlog ready
+/// nhiều lên … R&D và lead phải làm việc tự lên task liên tục"): a round tops the queue up whenever
+/// fewer than [`TOP_UP`] cards wait in backlog/ready. Building/qa/review/approved/blocked never
+/// block a round — that is the team working, not a reason to stop finding work.
+const TOP_UP: usize = 2;
+/// Lanes that wait for the team to pick up (a card here means the queue is topped up).
+const QUEUE_LANES: [&str; 2] = ["backlog", "ready"];
 /// Rounds in a row that added no card before the loop parks.
 pub(super) const PARK_AFTER: u64 = 2;
 const LOG_KEEP: usize = 10;
@@ -85,9 +89,9 @@ fn ids_of(l: &Value) -> Vec<String> {
     l["leads"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
 }
 
-/// Whether a card is still in flight ([`BUSY_LANES`]).
+/// Whether the queue is topped up ([`QUEUE_LANES`] holds at least [`TOP_UP`] open cards).
 fn in_flight(cards: &[target::Target]) -> bool {
-    cards.iter().any(|t| t.state == "open" && BUSY_LANES.contains(&t.lane.as_str()))
+    cards.iter().filter(|t| t.state == "open" && QUEUE_LANES.contains(&t.lane.as_str())).count() >= TOP_UP
 }
 
 /// Every loop by root for `auto status --json` `ship_loops`: `{on, focus, round, since, last,
@@ -196,7 +200,8 @@ pub(super) fn off(home: &Path, root: &Path) -> bool {
 pub(super) fn brief(focus: Option<&str>, round: u64) -> String {
     let focus = focus.map(|f| format!(" · trọng tâm: {f}")).unwrap_or_default();
     format!(
-        "{HEAD} Vòng {round}{focus}. Board đã cạn (không còn card ready/building/qa/review/approved/blocked): lead mở vòng mới.\n\
+        "{HEAD} Vòng {round}{focus}. Hàng việc sắp cạn (backlog/ready < {TOP_UP} card): lead mở vòng mới.\n\
+         Tự lên việc LIÊN TỤC, không đợi owner: mỗi vòng thêm 3–6 card nhỏ (P0–P2), giữ ready luôn ≥ 3 card để team không chờ việc; building/qa/review đang chạy không phải lý do ngưng tìm việc.\n\
          1. R&D: còn thiếu gì / làm tốt hơn gì so với công cụ tương tự, docs.\n\
          2. Optimize: hiệu năng, kích thước, token.\n\
          3. Nâng cấp: deps/toolchain, chỉ bản an toàn.\n\
@@ -248,6 +253,9 @@ pub(super) fn tick(home: &Path, root: &Path, rooms: &[(String, String)], resting
     if sent.is_empty() {
         return None;
     }
+    // An idle lead is re-armed by the next revive (the same mark ⚡ Làm ngay leaves), so a round
+    // does not sit unread until the owner happens to write (owner 2026-10-21: "không có đợi tôi").
+    super::team::ask_wake(home, root, &sent.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(), now);
     let m = mark(home, root, now);
     super::team::update_json(&file(home), |v| {
         // Turned off meanwhile: stays off.
@@ -409,41 +417,52 @@ mod tests {
         running(&h, &root);
         assert!(tick(&h, &root, &rooms, false, false, 1000 + ROUND_GAP_S - 1).is_none(), "under 20 min since on");
         assert_eq!(why(false, false, 1000 + ROUND_GAP_S - 1), Some("gap"));
-        // Cards in flight, approved and blocked included: the round waits.
+        // The queue topped up (≥ TOP_UP in backlog/ready) waits; the team working does not (owner
+        // 2026-10-21: "phải lên task backlog ready nhiều lên … tự lên task liên tục").
         let (t, _) = target::add(&h, &root, "fix crash", Some("true"), None, false, None, 1000).unwrap();
-        assert!(tick(&h, &root, &rooms, false, false, 1000 + ROUND_GAP_S).is_none(), "a ready card");
-        assert_eq!(shown(false, 1000 + ROUND_GAP_S), json!("board"));
+        assert!(tick(&h, &root, &rooms, false, false, 1000 + ROUND_GAP_S).is_some(), "one ready card: still under TOP_UP, the round goes out");
+        let (t2, _) = target::add(&h, &root, "second", Some("true"), None, false, None, 1000).unwrap();
+        assert!(tick(&h, &root, &rooms, false, false, 1000 + ROUND_GAP_S + ROUND_GAP_S).is_none(), "two waiting: the queue is topped up");
+        assert_eq!(shown(false, 1000 + ROUND_GAP_S + ROUND_GAP_S), json!("board"));
         let mut cards = target::list(&h, &root).unwrap();
-        for (lane, busy) in [("approved", true), ("blocked", true), ("building", true), ("backlog", false)] {
+        for (lane, busy) in [("approved", false), ("blocked", false), ("building", false), ("review", false)] {
             cards[0].lane = lane.into();
-            assert_eq!(in_flight(&cards), busy, "{lane}");
+            cards[1].lane = lane.into();
+            assert_eq!(in_flight(&cards), busy, "{lane} is the team working, not a stop");
         }
+        cards[0].lane = "ready".into();
+        cards[1].lane = "backlog".into();
+        assert!(in_flight(&cards), "ready + backlog count");
         target::close(&h, &root, t.id, Some("cargo test: ok"), None, 1000).unwrap();
-        // Usage resting or the guard holding: skipped, not cancelled — the loop stays on.
-        assert!(tick(&h, &root, &rooms, true, false, 1000 + ROUND_GAP_S).is_none(), "usage rests");
-        assert_eq!(shown(true, 1000 + ROUND_GAP_S), json!("usage"));
-        assert!(tick(&h, &root, &rooms, false, true, 1000 + ROUND_GAP_S).is_none(), "the guard holds the project");
-        assert_eq!(why(false, true, 1000 + ROUND_GAP_S), Some("guard"));
-        assert!(get(&h, &root).is_some(), "still on");
-        assert_eq!(shown(false, 1000 + ROUND_GAP_S), Value::Null, "due");
-        let line = tick(&h, &root, &rooms, false, false, 1000 + ROUND_GAP_S).unwrap();
-        assert_eq!(line, "auto-ship vòng 2 → lead (vòng 1: +1 card, 1 merge)");
+        target::close(&h, &root, t2.id, Some("cargo test: ok"), None, 1000).unwrap();
+        // Round 2 went out at 1000 + ROUND_GAP_S (one ready card is still under TOP_UP).
+        assert_eq!(get(&h, &root).unwrap()["round"].as_u64(), Some(2));
+        // The idle lead is re-armed like ⚡ Làm ngay does (wake-now mark).
+        let marks = idle::read_json(&idle::state_dir(&h).join("wake-now.json")).unwrap();
+        assert!(marks[format!("{}|lead", auto::canon(&root).to_string_lossy())].as_u64().is_some(), "the lead is woken");
         assert!(inbox(&h, LEAD).contains("[HQ /hq-auto-ship] Vòng 2 · trọng tâm: perf"), "{}", inbox(&h, LEAD));
         assert!(inbox(&h, &rooms[1].1).is_empty(), "only the lead");
-        let l = get(&h, &root).unwrap();
-        assert_eq!((l["round"].as_u64(), l["leads"].clone(), l["log"][0].clone()), (Some(2), json!([LEAD]), json!({"round": 1, "added": 1, "merged": 1})));
-        assert!(tick(&h, &root, &rooms, false, false, 1000 + ROUND_GAP_S + 60).is_none(), "debounced");
+        assert_eq!((get(&h, &root).unwrap()["leads"].clone(), get(&h, &root).unwrap()["log"][0].clone()), (json!([LEAD]), json!({"round": 1, "added": 1, "merged": 0})));
+        // Usage resting or the guard holding: skipped, not cancelled — the loop stays on.
+        let t3 = 1000 + 3 * ROUND_GAP_S;
+        assert!(tick(&h, &root, &rooms, true, false, t3).is_none(), "usage rests");
+        assert_eq!(shown(true, t3), json!("usage"));
+        assert!(tick(&h, &root, &rooms, false, true, t3).is_none(), "the guard holds the project");
+        assert_eq!(why(false, true, t3), Some("guard"));
+        assert!(get(&h, &root).is_some(), "still on");
         // The lead has not read the brief: the next round waits for it (round/last unchanged).
-        ship_card(&h, &root, 1000 + ROUND_GAP_S + 100);
-        assert!(tick(&h, &root, &rooms, false, false, 1000 + 2 * ROUND_GAP_S).is_none(), "brief unread");
-        assert_eq!(shown(false, 1000 + 2 * ROUND_GAP_S), json!("lead"));
+        assert!(tick(&h, &root, &rooms, false, false, t3).is_none(), "brief unread");
+        assert_eq!(shown(false, t3), json!("lead"));
         assert_eq!(get(&h, &root).unwrap()["round"].as_u64(), Some(2));
         // No round limit: it keeps going as long as the rounds find work.
+        let mut at = t3;
         for n in 3..8u64 {
             read_inbox(&h);
-            let at = 1000 + (n - 1) * ROUND_GAP_S;
-            assert_eq!(tick(&h, &root, &rooms, false, false, at).unwrap(), format!("auto-ship vòng {n} → lead (vòng {}: +1 card, 1 merge)", n - 1));
             ship_card(&h, &root, at + 100);
+            at += ROUND_GAP_S;
+            // Round 3 counts the card round 2's own send left behind (t2) plus this ship_card.
+            let yield_n = if n == 3 { "+2 card, 1 merge" } else { "+1 card, 1 merge" };
+            assert_eq!(tick(&h, &root, &rooms, false, false, at).unwrap(), format!("auto-ship vòng {n} → lead (vòng {}: {yield_n})", n - 1), "at {at}");
         }
         assert_eq!(get(&h, &root).unwrap()["log"].as_array().unwrap().len(), 6);
         read_inbox(&h);

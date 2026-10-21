@@ -62,7 +62,7 @@ export const PRESETS: readonly Preset[] = [
       "5. Check sec: secret, audit deps, OWASP trên diff gần đây.\n" +
       "6. Check thiếu: test, docs, đường lỗi, tính năng làm dở.\n" +
       `${CARD}\n` +
-      "Hết card một vòng thì thôi: 8sync tự gửi vòng kế khi board cạn (≥ 20 phút một vòng, chờ khi usage hay guard đang nghỉ; 2 vòng liền không ra card thì nghỉ tới khi owner nhắn).\n" +
+      "Tự lên việc liên tục không đợi owner: mỗi vòng thêm 3–6 card nhỏ, giữ ready ≥ 3 card; 8sync tự gửi vòng kế khi backlog/ready sắp cạn (≥ 20 phút một vòng, chờ khi usage hay guard đang nghỉ; 2 vòng liền không ra card thì nghỉ tới khi owner nhắn).\n" +
       `${RULES}\nDừng: owner nói "dừng" hoặc /hq-stop.`,
   },
   { cmd: "hq-rnd", desc: "Một vòng R&D: thiếu gì, làm tốt hơn gì so với công cụ tương tự", brief: round("hq-rnd", "Một vòng R&D", "So với công cụ tương tự còn thiếu gì, làm tốt hơn được gì; đọc docs chính thức, ghi nguồn. Vòng này không sửa code.") },
@@ -199,7 +199,7 @@ export function loopWait(next: string | null): string | null {
     : next === "scope" ? "ngoài phạm vi auto"
     : next === "idle" ? `nghỉ — 2 vòng không ra việc`
     : next === "lead" ? "chờ lead đọc brief trước"
-    : next === "board" ? "còn card đang làm"
+    : next === "board" ? "backlog/ready đã đủ"
     : next === "gap" ? "chờ nhịp vòng"
     : null
   );
