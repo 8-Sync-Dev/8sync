@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.14: omp rooms in HQ terminal (detached ConPTY host + read-only live view + takeover that spares omp's worker broker).
 v0.110.13: HQ "Tắt Sấm Sét" (unboost → 6-room team) + `auto down --only a,b,c` releases the stopped rooms' cards at once.
 v0.110.12: eye room + HQ "Tự soi ảnh" switch (auto image review), `auto up --add` / `down --only`.
 v0.110.11: dead-holder revive lock freed at once + `auto up` waits ≤ 150 s; grouping folders (zus) refused instead of resolving to the parent repo.
