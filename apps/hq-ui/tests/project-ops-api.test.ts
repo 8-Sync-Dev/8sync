@@ -78,7 +78,6 @@ const plan = (root: string, dry: boolean, extra: Record<string, unknown> = {}) =
     rooms: [{ label: "lead", pid: 11, kind: "background", own: false, pids: [] }],
     claude: [],
     omp: [{ label: "core", pid: 12, kind: "process", own: true, pids: [12] }],
-    omp_rooms: [],
     procs: [{ label: "vite preview :4120", pid: 13, kind: "process", own: false, pids: [13, 14] }],
     skipped: [],
     counts: { rooms: 1, claude: 0, omp: 1, procs: 1 },
@@ -174,6 +173,18 @@ describe("/api/projects/sidebar", () => {
     eight.answer = { ok: false, stdout: "", stderr: "", killed: true };
     const slow = await post(sidebarPOST, "/api/projects/sidebar", { root: wt, hidden: true, kill: true });
     expect((await slow.json()).error).toContain("120 giây");
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM hidden_projects").get()).toEqual({ n: 0 });
+  });
+
+  it("a plan for another root (a subfolder resolving to its parent repo) is never shown or hidden as this one", async () => {
+    eight.answer = { ok: true, stdout: plan(base, true), stderr: "" };
+    const dry = await sidebarGET(req(`/api/projects/sidebar?root=${encodeURIComponent(wt)}`, { token }));
+    expect(dry.status).toBe(502);
+    expect((await dry.json()).error).toContain(`không phải ${wt}`);
+    eight.answer = { ok: true, stdout: plan(base, false), stderr: "" };
+    const real = await post(sidebarPOST, "/api/projects/sidebar", { root: wt, hidden: true, kill: true });
+    expect(real.status).toBe(502);
+    expect((await real.json()).close).toBeNull();
     expect(getDb().prepare("SELECT COUNT(*) AS n FROM hidden_projects").get()).toEqual({ n: 0 });
   });
 });

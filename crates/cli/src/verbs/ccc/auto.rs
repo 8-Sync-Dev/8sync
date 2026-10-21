@@ -131,6 +131,9 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
                 if let Some(first) = keep.first() {
                     m["repo"] = json!(first);
                     m["repos"] = json!(keep);
+                } else {
+                    // Every project again, minus those `auto close` took out.
+                    carry_out(home, &mut m);
                 }
             }
             if let Err(e) = write_marker(home, &m) {
@@ -149,6 +152,8 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
             if mode == Mode::Pause && !keep.is_empty() {
                 m["repo"] = json!(keep[0]);
                 m["repos"] = json!(keep);
+            } else if mode == Mode::Pause {
+                carry_out(home, &mut m);
             }
             write_marker(home, &m)?;
         }
@@ -395,6 +400,7 @@ fn forget_scope(home: &Path) -> Result<()> {
     if let Some(o) = m.as_object_mut() {
         o.remove("repo");
         o.remove("repos");
+        o.remove("out");
     }
     write_marker(home, &m)
 }
@@ -424,6 +430,53 @@ pub(super) fn leave(home: &Path, root: &Path, subscription: bool, now: u64) -> R
     Ok(status(home, subscription, now))
 }
 
+/// The projects `auto close` took out while auto covers every project (marker `out`, canonical).
+fn out_roots(home: &Path) -> Vec<PathBuf> {
+    idle::read_json(&marker(home)).map_or_else(Vec::new, |m| m["out"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|r| canon(Path::new(r))).collect())
+}
+
+/// A plain `on` / `pause` over every project keeps `auto close`'s `out` list.
+fn carry_out(home: &Path, m: &mut Value) {
+    if let Some(o) = idle::read_json(&marker(home)).and_then(|old| old.get("out").cloned()) {
+        m["out"] = o;
+    }
+}
+
+/// `auto close` in one project: take it out of auto, never touching any other project. A listed
+/// project leaves the list, on or paused (a later plain `on` does not bring it back); the last one
+/// out pauses auto, which then held only it. Auto on for every project (no list): `root` goes on the
+/// marker's `out` list, which [`scoped`] honours — never a pause of every project as [`leave`]
+/// would. `true` when auto changed.
+pub(super) fn close_out(home: &Path, root: &Path, subscription: bool, now: u64) -> Result<bool> {
+    let c = canon(root);
+    let Some(mut m) = idle::read_json(&marker(home)) else { return Ok(false) };
+    let repos = remembered(home);
+    let rest: Vec<String> = repos.iter().filter(|r| canon(Path::new(r.trim_start_matches(r"\\?\"))) != c).cloned().collect();
+    if rest.len() < repos.len() {
+        if rest.is_empty() {
+            // Auto held only this project: pause it. Pause remembers the list, [root] rather than
+            // empty, which would mean "every project" for the next plain `on`.
+            if !running(home) {
+                return Ok(false);
+            }
+            set(home, Mode::Pause, subscription, now)?;
+        } else {
+            m["repo"] = json!(rest[0]);
+            m["repos"] = json!(rest);
+            write_marker(home, &m)?;
+        }
+        return Ok(true);
+    }
+    if !repos.is_empty() || !running(home) || out_roots(home).contains(&c) {
+        return Ok(false);
+    }
+    let mut out: Vec<Value> = m["out"].as_array().cloned().unwrap_or_default();
+    out.push(json!(c.to_string_lossy()));
+    m["out"] = Value::Array(out);
+    write_marker(home, &m)?;
+    Ok(true)
+}
+
 /// Hooks ask this before acting on a session: `true` unless `auto on --here` limited auto to one
 /// project and `cwd` (from the hook input) is missing or outside it.
 pub(super) fn in_scope(home: &Path, cwd: Option<&str>) -> bool {
@@ -433,19 +486,20 @@ pub(super) fn in_scope(home: &Path, cwd: Option<&str>) -> bool {
 /// [`in_scope`] for many cwds, the marker read once (the idle rails count only this project's spend).
 pub(super) fn scoped(home: &Path) -> impl Fn(Option<&str>) -> bool {
     let repos = live_scope(home);
+    let out = out_roots(home);
     move |cwd| {
+        let c = cwd.map(Path::new).filter(|c| c.is_absolute());
+        // The repo `cwd` belongs to: worktrees resolve to their repo, a repo nested in a stored root
+        // is its own (ai-game-studio sits in 8sync-startup: auto for one is not auto for the other).
+        let own = c.filter(|_| !repos.is_empty() || !out.is_empty()).and_then(crate::verbs::here::repo_of).map(|g| canon(&g));
+        if own.as_ref().is_some_and(|g| out.contains(g)) {
+            return false;
+        }
         repos.is_empty()
-            || cwd
-                .map(Path::new)
-                .filter(|c| c.is_absolute())
-                .is_some_and(|c| {
-                    // Inside a stored root and not inside a repo nested in it (ai-game-studio sits
-                    // in 8sync-startup: auto for one is not auto for the other). Worktrees resolve
-                    // to their repo, so they count.
-                    let own = crate::verbs::here::repo_of(c).map(|g| canon(&g));
-                    let c = canon(c);
-                    repos.iter().any(|r| c.starts_with(r) && own.as_ref().is_none_or(|g| r.starts_with(g)))
-                })
+            || c.is_some_and(|c| {
+                let c = canon(c);
+                repos.iter().any(|r| c.starts_with(r) && own.as_ref().is_none_or(|g| r.starts_with(g)))
+            })
     }
 }
 

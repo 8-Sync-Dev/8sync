@@ -215,6 +215,11 @@ pub fn run(a: Args) -> Result<()> {
             // PARENT repo's team. Checked before an untracked folder is `git init`ed.
             let first = rest.first().map(String::as_str);
             let starts = matches!(first, Some("up" | "add")) || first == Some("on") && rest.iter().any(|a| a == "--here");
+            // `close` only where the cwd is the repo itself: from a subfolder or a grouping folder
+            // (HQ can list one added by hand) it would close the whole parent repo.
+            if first == Some("close") {
+                return auto_team(&env, &close::close_root(&cwd)?, rest);
+            }
             let before = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
             if let Some(kids) = grouping_folder(&cwd, &before).filter(|_| starts) {
                 let repo = before;

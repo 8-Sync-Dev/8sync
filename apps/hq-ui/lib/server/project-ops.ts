@@ -65,6 +65,11 @@ export async function closeProject(root: string, dry: boolean): Promise<CloseRes
   try {
     const r = await run("8sync", ["ccc", "auto", "close", ...(dry ? ["--dry-run"] : []), "--json"], dry ? 60_000 : CLOSE_MS, root);
     const plan = parseClosePlan(r.stdout);
+    // 8sync resolves the repo from the folder it runs in: a plan for another root (a subfolder
+    // resolving to its parent repo) is never shown as this project's, nor hidden as done.
+    if (plan && groupKey(plan.root) !== key) {
+      return { ok: false, error: `8sync ${dry ? "định đóng" : "đã chạy cho"} ${plan.root}, không phải ${root}: HQ không ${dry ? "đóng" : "ẩn"} dự án này.`, plan: null };
+    }
     if (r.ok && plan) return { ok: true, plan };
     const error = r.killed
       ? `8sync không trả lời sau ${(dry ? 60_000 : CLOSE_MS) / 1000} giây: ${dry ? "thử lại" : "một phần có thể đã dừng, mở lại hộp này để xem còn gì"}.`

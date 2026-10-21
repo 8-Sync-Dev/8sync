@@ -397,7 +397,8 @@ export function CloseDialog({ hq, g, onHidden, onCancel }: { hq: Hq; g: SidebarG
         </DialogHeader>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
           <dt className="text-muted-foreground">Thư mục</dt>
-          <dd className="font-mono break-all">{g.root}</dd>
+          {/* The folder 8sync resolved and will close (HQ refuses a plan for another root). */}
+          <dd className="font-mono break-all">{plan?.root ?? g.root}</dd>
         </dl>
         <div aria-live="polite" className="min-h-24">
           {loadError ? (

@@ -9,7 +9,6 @@ const plan = (over: Partial<ClosePlan> = {}): ClosePlan => ({
   rooms: [item("lead"), item("dev")],
   claude: [],
   omp: [item("omp-lead"), item("core", true)],
-  omp_rooms: [],
   procs: [item("vite preview :4120"), item("node tsserver.js"), item("python3 serve.py")],
   skipped: [],
   counts: { rooms: 2, claude: 0, omp: 2, procs: 3 },

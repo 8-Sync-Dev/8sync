@@ -10,10 +10,8 @@ export type ClosePlan = {
   rooms: CloseItem[];
   /** Other Claude Code sessions in the repo or its worktrees. */
   claude: CloseItem[];
-  /** omp sessions; `own`: no team room, most likely the owner's own terminal. */
+  /** omp sessions, team omp rooms included; `own`: no team room, most likely the owner's own terminal. */
   omp: CloseItem[];
-  /** Team omp rooms `auto down` stopped (after a real close). */
-  omp_rooms: string[];
   /** Leftover node / python / uv / browser processes of the project. */
   procs: CloseItem[];
   skipped: { label: string; why: string }[];
@@ -35,7 +33,7 @@ export function parseClosePlan(stdout: string): ClosePlan | null {
   try {
     const v = JSON.parse(line) as Partial<ClosePlan>;
     if (typeof v.root !== "string" || typeof v.dry_run !== "boolean" || !v.counts || KINDS.some((k) => !Array.isArray(v[k]))) return null;
-    return { omp_rooms: [], skipped: [], auto: null, ok: true, ...v } as ClosePlan;
+    return { skipped: [], auto: null, ok: true, ...v } as ClosePlan;
   } catch {
     return null;
   }

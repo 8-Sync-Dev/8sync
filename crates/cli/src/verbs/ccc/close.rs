@@ -1,27 +1,29 @@
 //! `8sync ccc auto close [--dry-run] [--json]` (HQ's "Đóng dự án", owner 2026-10-21: "kill hẳn luôn
-//! không phải ẩn"): stop everything of a project for real, in its root (the root `auto down` uses):
-//! 1. what `auto down` does: the team rooms (`claude stop`), team omp, the project out of auto and
-//!    team-roots. Auto is left alone when the project was never in it: `down` there pauses auto for
-//!    every project;
+//! không phải ẩn"): stop everything of a project for real. Run in the repo root itself
+//! ([`close_root`]: never a subfolder or a folder grouping repos, which would close the parent):
+//! 1. what `auto down` does: the team rooms (`claude stop`), the project out of auto
+//!    ([`super::auto::close_out`]: never auto of other projects, even when auto covers every
+//!    project) and team-roots, under the revive lock;
 //! 2. every other Claude Code session running in the repo or one of its worktrees (`claude agents
 //!    --json`): `claude stop <id8>` for a background one, the process tree of an interactive one;
-//! 3. the project's omp sessions: omp whose command line names a session dir of one of the project's
-//!    8sync registries (`<config>/8sync/sessions/<key>/…`) or runs with `--cwd` in it — process tree,
-//!    never omp's worker daemon broker (it serves other sessions);
+//! 3. the project's omp sessions, team omp rooms included: omp whose command line names a session
+//!    dir of one of the project's 8sync registries (`<config>/8sync/sessions/<key>/…`) or runs with
+//!    `--cwd` in it — process tree, never omp's worker daemon broker (it serves other sessions);
 //! 4. leftovers of any age: node / python / uv whose command line names the repo (dev and preview
 //!    servers, vitest, tsserver, MCP servers) and browsers with `--user-data-dir` in it.
 //!
 //! A path in a repo nested inside the root is that repo's, never this project's. Never this process
-//! or its ancestors, never HQ (`hq-ui`, `hq-channel`), never by image name: each pid alone
-//! ([`reap::kill`]). Conversations and transcripts stay (`8sync . <name>`, `8sync ccc auto up`).
+//! or its ancestors, nor a session (room, Claude Code, omp) among them or the processes under it;
+//! never HQ (`hq-ui`, `hq-channel`), never by image name: each pid alone ([`reap::kill`]).
+//! Conversations and transcripts stay (`8sync . <name>`, `8sync ccc auto up`).
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 
+use super::auto;
 use super::reap::{self, Proc};
 use super::team::{self, Live, Team};
-use super::{auto, omp_team};
 use crate::env_detect::Env;
 use crate::verbs::{session, session_view};
 
@@ -52,6 +54,8 @@ pub(super) struct Plan {
     pub procs: Vec<Item>,
     /// (what, why) left running.
     pub skipped: Vec<(String, String)>,
+    /// Pids of the sessions left running (the caller's own): nothing under them is killed.
+    pub spared: Vec<u32>,
 }
 
 /// How a project's processes are told from the rest.
@@ -60,12 +64,13 @@ pub(super) struct Scope<'a> {
     fold: bool,
     /// Normalized session dirs of the project's 8sync registries.
     dirs: Vec<String>,
-    /// The path sits in a repo nested inside the root (another project).
-    nested: &'a dyn Fn(&Path) -> bool,
+    /// `rest` (normalized `/…` after the root, as far as the text goes) lies in a repo nested inside
+    /// the root (another project).
+    nested: &'a dyn Fn(&str) -> bool,
 }
 
 impl<'a> Scope<'a> {
-    pub(super) fn new(root: &Path, dirs: &[PathBuf], nested: &'a dyn Fn(&Path) -> bool) -> Self {
+    pub(super) fn new(root: &Path, dirs: &[PathBuf], nested: &'a dyn Fn(&str) -> bool) -> Self {
         let r = root.to_string_lossy();
         let fold = reap::windows_path(&r);
         let dirs = dirs.iter().map(|d| reap::norm_root(&d.to_string_lossy())).filter(|d| !d.is_empty()).collect();
@@ -76,7 +81,8 @@ impl<'a> Scope<'a> {
         reap::norm(s, self.fold)
     }
 
-    /// `c` (normalized) names the root, or a path in it outside any nested repo.
+    /// `c` (normalized) names the root, or a path in it outside any nested repo. The path runs to
+    /// the next quote: [`in_nested_repo`] finds where it ends, so `my game` is never cut short.
     fn owns(&self, c: &str) -> bool {
         let r = self.rootn.as_str();
         !r.is_empty()
@@ -87,7 +93,7 @@ impl<'a> Scope<'a> {
                 let rest = &c[i + r.len()..];
                 match rest.chars().next() {
                     None | Some('"' | '\'' | ' ' | '\t') => true,
-                    Some('/') => !(self.nested)(Path::new(&format!("{r}{}", rest.split(['"', '\'', ' ', '\t']).next().unwrap_or("")))),
+                    Some('/') => !(self.nested)(rest.split(['"', '\'']).next().unwrap_or("")),
                     _ => false,
                 }
             })
@@ -167,18 +173,32 @@ fn describe(p: &Proc) -> String {
     format!("{what}{port}")
 }
 
-/// What `close` stops for `live` sessions (rooms by `room_ids`) and `procs`; `me` and its ancestors
-/// are never taken.
+/// The note on a session that runs this very command (or sits under one that does).
+const RUNS_THIS: &str = "phiên đang chạy lệnh này";
+
+/// What `close` stops for `live` sessions (`rooms` stop like `auto down`'s) and `procs`; `me`, its
+/// ancestors and any session among them (with everything under it) are never taken.
 pub(super) fn plan(s: &Scope, procs: &[Proc], live: &[Live], rooms: &[(String, &Live)], me: u32) -> Plan {
     let keep = reap::lineage(procs, me);
-    let mut out = Plan { rooms: rooms.iter().map(|(n, l)| room_item(n, l)).collect(), ..Plan::default() };
+    let mine = |pid: u32| pid != 0 && keep.contains(&pid);
+    let mut out = Plan::default();
+    for (name, l) in rooms {
+        if mine(l.pid) {
+            out.skipped.push((name.clone(), RUNS_THIS.into()));
+            out.spared.push(l.pid);
+        } else {
+            out.rooms.push(room_item(name, l));
+        }
+    }
     for l in live {
-        if l.cwd.is_empty() || rooms.iter().any(|(_, r)| r.id == l.id) || !s.owns(&s.norm(&l.cwd)) {
+        // `cwd` is a bare path: matched whole, never cut at a space (`game/my game`).
+        if l.cwd.is_empty() || rooms.iter().any(|(_, r)| r.id == l.id) || !s.owns(&reap::norm_root(&l.cwd)) {
             continue;
         }
         let label = team::short_name(&l.name);
-        if l.pid != 0 && keep.contains(&l.pid) {
-            out.skipped.push((label, "phiên đang chạy lệnh này".into()));
+        if mine(l.pid) {
+            out.skipped.push((label, RUNS_THIS.into()));
+            out.spared.push(l.pid);
         } else if l.background {
             out.claude.push(Item { label, pid: l.pid, stop: Some(l.id.chars().take(8).collect()), pids: Vec::new(), own: false });
         } else if l.pid == 0 {
@@ -196,14 +216,24 @@ pub(super) fn plan(s: &Scope, procs: &[Proc], live: &[Live], rooms: &[(String, &
         }
         let Some(name) = s.omp_session(&s.norm(&p.cmd), &args_of(&p.cmd)) else { continue };
         if keep.contains(&p.pid) {
-            out.skipped.push((name, "phiên đang chạy lệnh này".into()));
+            out.skipped.push((name, RUNS_THIS.into()));
+            out.spared.push(p.pid);
             continue;
         }
-        let own = omp_team::role_of(&name).is_none();
+        let own = super::omp_team::role_of(&name).is_none();
         out.omp.push(Item { label: name, pid: p.pid, stop: None, pids: s.tree(procs, p.pid, &keep), own });
     }
     let taken: Vec<u32> = out.claude.iter().chain(&out.omp).flat_map(|i| i.pids.iter().copied()).collect();
-    out.procs = leftovers(s, procs, &keep, &taken);
+    out.procs = leftovers(s, procs, &spare(procs, &keep, &out.spared), &taken);
+    out
+}
+
+/// `keep` plus every process under a spared session: its language and MCP servers stay with it.
+fn spare(procs: &[Proc], keep: &[u32], spared: &[u32]) -> Vec<u32> {
+    let mut out = keep.to_vec();
+    for &pid in spared {
+        out.extend(reap::descendants(procs, pid, &|_| false));
+    }
     out
 }
 
@@ -240,25 +270,80 @@ pub(super) fn session_dirs(base: &Path, own: &Path, s: &Scope) -> Vec<PathBuf> {
             continue;
         }
         let root = std::fs::read_to_string(d.join("index.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["root"].as_str().map(str::to_string));
-        if root.is_some_and(|r| s.owns(&s.norm(&r))) {
+        if root.is_some_and(|r| s.owns(&reap::norm_root(&r))) {
             out.push(d);
         }
     }
     out
 }
 
-/// `p` lies in a git repo nested inside `root` (that repo is its own project).
-fn in_nested_repo(root: &Path, p: &Path) -> bool {
-    crate::verbs::here::repo_of(p).is_some_and(|r| {
-        let (r, root) = (auto::canon(&r), auto::canon(root));
-        r != root && r.starts_with(&root)
+/// `rest` (`/…` after `root`, normalized, as far as the text goes: a command line may run on past
+/// the path) lies in a git repo nested inside `root`, by `here::repo_of`'s rule (a Claude Code
+/// worktree belongs to the folder holding `.claude/worktrees`). The path is walked one existing
+/// folder at a time; a part is taken whole, else cut at its last fitting space, so `game/my game`
+/// stays one folder and `sub && npm run dev` ends at `sub`.
+fn in_nested_repo(root: &Path, rest: &str) -> bool {
+    let mut dir = root.to_path_buf();
+    let mut parts: Vec<&str> = Vec::new();
+    let mut tail = rest.trim_start_matches('/');
+    while let Some(seg) = tail.split('/').next().filter(|s| !s.is_empty()) {
+        let cuts = std::iter::once(seg.len()).chain(seg.char_indices().rev().filter(|(_, c)| c.is_whitespace()).map(|(i, _)| i));
+        let Some(n) = cuts.filter(|&n| n > 0).find(|&n| dir.join(&seg[..n]).is_dir()) else { break };
+        dir.push(&seg[..n]);
+        parts.push(&seg[..n]);
+        if n < seg.len() {
+            break;
+        }
+        tail = tail[seg.len()..].trim_start_matches('/');
+    }
+    let cut = parts.windows(2).rposition(|w| w[0] == ".claude" && w[1] == "worktrees").unwrap_or(parts.len());
+    let mut p = root.to_path_buf();
+    parts[..cut].iter().any(|part| {
+        p.push(part);
+        p.join(".git").exists()
     })
 }
 
-/// The project ever was in auto: listed (on or paused) or a team root.
+/// The root `close` runs on: the cwd, only when it is a repo root itself. A subfolder or a folder
+/// grouping repos (`8sync-startup/game`) resolves to the PARENT repo, and closing that from a folder
+/// added in HQ's sidebar would stop the whole parent project.
+pub(super) fn close_root(cwd: &Path) -> Result<PathBuf> {
+    match crate::verbs::here::repo_of(cwd) {
+        Some(r) if auto::canon(&r) == auto::canon(cwd) => Ok(r),
+        Some(r) => bail!(
+            "{} không phải gốc repo (nó nằm trong repo {}): `auto close` chỉ chạy ở gốc repo, để không đóng nhầm cả repo cha — chạy ở {} nếu thật sự muốn đóng repo đó",
+            cwd.display(),
+            r.display(),
+            r.display()
+        ),
+        None => bail!("{} không nằm trong repo git nào: không có dự án để đóng", cwd.display()),
+    }
+}
+
+/// The project is a team root or listed in auto: `auto revive` may act on it.
 fn in_auto(home: &Path, root: &Path) -> bool {
     let r = auto::canon(root);
     auto::remembered_roots(home).into_iter().chain(team::team_roots(home)).any(|x| auto::canon(Path::new(x.trim_start_matches(r"\\?\"))) == r)
+}
+
+/// How long `close` waits for an `auto revive` / `auto up` in flight (HQ allows the close 120 s).
+const LOCK_WAIT_S: u64 = 45;
+
+/// The revive lock, waiting up to `wait_s` for a revive / up in flight (the clock read again on each
+/// try, so a lock left by a killed run goes stale meanwhile); an error when it stays held — a revive
+/// past its scope check would resume the rooms this stops.
+fn revive_lock(home: &Path, wait_s: u64) -> Result<team::ReviveLock> {
+    let start = std::time::Instant::now();
+    loop {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        if let Some(l) = team::revive_lock(home, now)? {
+            return Ok(l);
+        }
+        if start.elapsed().as_secs() >= wait_s {
+            bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chưa dừng gì; chờ ít phút rồi đóng lại");
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
 }
 
 /// `claude stop` / kill, then whether it went through.
@@ -279,7 +364,7 @@ pub(super) fn run(env: &Env, t: &Team, rest: &[String], now: u64) -> Result<()> 
         }
     }
     let root = PathBuf::from(t.root.to_string_lossy().trim_start_matches(r"\\?\"));
-    let nested = |p: &Path| in_nested_repo(&root, p);
+    let nested = |rest: &str| in_nested_repo(&root, rest);
     let base = env.xdg_config.join("8sync").join("sessions");
     let dirs = session_dirs(&base, &session::key_dir(env, &root), &Scope::new(&root, &[], &nested));
     let s = Scope::new(&root, &dirs, &nested);
@@ -291,31 +376,19 @@ pub(super) fn run(env: &Env, t: &Team, rest: &[String], now: u64) -> Result<()> 
         let p = plan(&s, &reap::list(now), &all(t)?, &rooms, me);
         return report(&root, &p, None, None, as_json);
     }
-    // A project in auto: no `auto revive` reopens a room while this runs (one waits up to 20 s),
-    // and the next one skips it. A project never in auto has nothing revive would touch.
-    let left = in_auto(&env.home, &root);
-    let mut lock = None;
-    if left {
-        for n in 0..=20 {
-            lock = team::revive_lock(&env.home, now)?;
-            if lock.is_some() || n == 20 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-        auto::leave(&env.home, t.root, t.subscription, now)?;
+    // A project `auto revive` may act on: it must not reopen a room this stops. Nothing has stopped
+    // yet when the lock stays held.
+    let lock = if in_auto(&env.home, &root) { Some(revive_lock(&env.home, LOCK_WAIT_S)?) } else { None };
+    let team_root = team::team_roots(&env.home).iter().any(|r| auto::canon(Path::new(r.trim_start_matches(r"\\?\"))) == auto::canon(&root));
+    if team_root {
         team::set_team_root(&env.home, t.root, false);
     }
-    // `auto down` first: the team rooms, then team omp.
+    let left = auto::close_out(&env.home, t.root, t.subscription, now)? || team_root;
     let here = team::agents(t, false)?;
     let rooms = team::rooms(t, &here);
-    let mut done: Vec<Done> = Vec::new();
-    for (i, (name, l)) in rooms.iter().enumerate() {
-        done.push(("rooms", i, stop(t, &room_item(name, l)), l.pid));
-    }
-    let omp_down = omp_team::down(env, t.root)?;
     let mut p = plan(&s, &reap::list(now), &all(t)?, &rooms, me);
-    for (kind, items) in [("claude", &p.claude), ("omp", &p.omp)] {
+    let mut done: Vec<Done> = Vec::new();
+    for (kind, items) in [("rooms", &p.rooms), ("claude", &p.claude), ("omp", &p.omp)] {
         for (i, x) in items.iter().enumerate() {
             done.push((kind, i, stop(t, x), x.pid));
         }
@@ -327,12 +400,12 @@ pub(super) fn run(env: &Env, t: &Team, rest: &[String], now: u64) -> Result<()> 
     for d in done.iter_mut().filter(|d| !d.2 && d.3 != 0 && d.0 != "rooms") {
         d.2 = !procs.iter().any(|q| q.pid == d.3);
     }
-    p.procs = leftovers(&s, &procs, &reap::lineage(&procs, me), &[]);
+    p.procs = leftovers(&s, &procs, &spare(&procs, &reap::lineage(&procs, me), &p.spared), &[]);
     for (i, x) in p.procs.iter().enumerate() {
         done.push(("procs", i, stop(t, x), x.pid));
     }
     drop(lock);
-    report(&root, &p, Some((done.as_slice(), omp_down.stopped.as_slice())), Some(left), as_json)?;
+    report(&root, &p, Some(done.as_slice()), Some(left), as_json)?;
     let failed: Vec<String> = done
         .iter()
         .filter(|d| !d.2)
@@ -362,9 +435,8 @@ fn item_json(i: &Item, ok: Option<bool>) -> Value {
 }
 
 /// The plan (dry run) or what was done: `--json` for HQ, else a summary per kind.
-fn report(root: &Path, p: &Plan, done: Option<(&[Done], &[String])>, left: Option<bool>, as_json: bool) -> Result<()> {
-    let ok = |kind: &str, i: usize| done.map(|(d, _)| d.iter().any(|x| x.0 == kind && x.1 == i && x.2));
-    let omp_team_rooms: &[String] = done.map_or(&[], |(_, o)| o);
+fn report(root: &Path, p: &Plan, done: Option<&[Done]>, left: Option<bool>, as_json: bool) -> Result<()> {
+    let ok = |kind: &str, i: usize| done.map(|d| d.iter().any(|x| x.0 == kind && x.1 == i && x.2));
     let list = |kind: &'static str, items: &[Item]| -> Vec<Value> { items.iter().enumerate().map(|(n, i)| item_json(i, ok(kind, n))).collect() };
     let v = json!({
         "root": root,
@@ -372,12 +444,11 @@ fn report(root: &Path, p: &Plan, done: Option<(&[Done], &[String])>, left: Optio
         "rooms": list("rooms", &p.rooms),
         "claude": list("claude", &p.claude),
         "omp": list("omp", &p.omp),
-        "omp_rooms": omp_team_rooms,
         "procs": list("procs", &p.procs),
         "skipped": p.skipped.iter().map(|(l, w)| json!({ "label": l, "why": w })).collect::<Vec<_>>(),
-        "counts": counts(p, omp_team_rooms.len()),
+        "counts": counts(p),
         "auto": left.map(|l| if l { "left" } else { "untouched" }),
-        "ok": done.is_none_or(|(d, _)| d.iter().all(|x| x.2)),
+        "ok": done.is_none_or(|d| d.iter().all(|x| x.2)),
     });
     if as_json {
         println!("{}", serde_json::to_string(&v)?);
@@ -387,8 +458,8 @@ fn report(root: &Path, p: &Plan, done: Option<(&[Done], &[String])>, left: Optio
     Ok(())
 }
 
-pub(super) fn counts(p: &Plan, omp_team_rooms: usize) -> Value {
-    json!({ "rooms": p.rooms.len(), "claude": p.claude.len(), "omp": p.omp.len() + omp_team_rooms, "procs": p.procs.len() })
+pub(super) fn counts(p: &Plan) -> Value {
+    json!({ "rooms": p.rooms.len(), "claude": p.claude.len(), "omp": p.omp.len(), "procs": p.procs.len() })
 }
 
 fn text(root: &Path, p: &Plan, v: &Value) -> String {
@@ -421,9 +492,6 @@ fn text(root: &Path, p: &Plan, v: &Value) -> String {
     row(&v["rooms"], "phòng team", &mut out);
     row(&v["claude"], "session Claude Code khác", &mut out);
     row(&v["omp"], "phiên omp", &mut out);
-    if let Some(o) = v["omp_rooms"].as_array().filter(|a| !a.is_empty()) {
-        out.push_str(&format!("  phòng omp của team (auto down): {}\n", o.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")));
-    }
     row(&v["procs"], "tiến trình sót", &mut out);
     for (l, w) in &p.skipped {
         out.push_str(&format!("  bỏ qua {l}: {w}\n"));
@@ -458,8 +526,8 @@ mod tests {
     const CFG: &str = r"C:\Users\a\AppData\Roaming\8sync\sessions";
 
     /// `C:\w\game` with a nested repo `C:\w\game\sub`; `C:\w\game-2` and `C:\w\other` are other projects.
-    fn nested(p: &Path) -> bool {
-        p.to_string_lossy().starts_with("c:/w/game/sub")
+    fn nested(rest: &str) -> bool {
+        rest == "/sub" || rest.starts_with("/sub/") || rest.starts_with("/sub ")
     }
 
     #[test]
@@ -504,6 +572,8 @@ mod tests {
             // An interactive Claude Code session in a worktree with a node child naming the repo.
             img("claude", 300, 1, "claude"),
             node(301, 300, r"node C:\w\game\node_modules\typescript\lib\tsserver.js"),
+            // The caller's own session (3) runs a language server too: it stays with its session.
+            node(302, 3, r"node C:\w\game\node_modules\typescript\lib\tsserver.js --stdio"),
         ];
         let lead = live("aaaaaaaa-0000-4000-8000-000000000001", "lead", true, r"C:\w\game", 400);
         let sessions = vec![
@@ -535,7 +605,135 @@ mod tests {
                 ("stale".into(), "pid không còn là Claude Code".into())
             ]
         );
-        assert_eq!(counts(&p, 0), json!({ "rooms": 1, "claude": 2, "omp": 4, "procs": 5 }));
+        assert_eq!(p.spared, [3]);
+        assert_eq!(counts(&p), json!({ "rooms": 1, "claude": 2, "omp": 4, "procs": 5 }));
+    }
+
+    #[test]
+    fn the_callers_own_room_or_omp_session_and_what_runs_under_it_stay() {
+        let root = PathBuf::from(r"C:\w\game");
+        let dirs = [PathBuf::from(format!(r"{CFG}\C--w-game"))];
+        let s = Scope::new(&root, &dirs, &nested);
+        // `auto close` run by the team room `rd` (5) through bash (4); `lead` (9) is another room.
+        let procs = vec![
+            img("8sync", 2, 4, "8sync ccc auto close"),
+            img("bash", 4, 5, "bash -c 8sync ccc auto close"),
+            img("claude", 5, 1, "claude"),
+            node(6, 5, r"node C:\w\game\node_modules\typescript\lib\tsserver.js"),
+            img("claude", 9, 1, "claude"),
+            node(10, 9, r"node C:\w\game\.claude\worktrees\c\node_modules\vite\bin\vite.js"),
+        ];
+        let (rd, lead) = (live("aaaaaaaa-0000-4000-8000-000000000001", "rd", true, r"C:\w\game", 5), live("bbbbbbbb-0000-4000-8000-000000000002", "lead", true, r"C:\w\game", 9));
+        let p = plan(&s, &procs, &[rd.clone(), lead.clone()], &[("rd".into(), &rd), ("lead".into(), &lead)], 2);
+        assert_eq!(p.rooms.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["lead"], "never `claude stop` the room running this");
+        assert_eq!(p.skipped, [("rd".to_string(), RUNS_THIS.to_string())]);
+        assert_eq!(p.procs.iter().map(|i| i.pid).collect::<Vec<_>>(), [10], "rd's tsserver stays, lead's vite goes");
+        // The same from the owner's omp session `core` (7): neither it nor its MCP server is taken.
+        let procs = vec![
+            img("8sync", 2, 7, "8sync ccc auto close"),
+            img("omp", 7, 1, &format!(r"omp --resume {CFG}\C--w-game\core\1")),
+            node(8, 7, r"node C:\w\game\tools\mcp.js"),
+            img("omp", 11, 1, &format!(r"omp --session-dir {CFG}\C--w-game\omp-lead")),
+        ];
+        let p = plan(&s, &procs, &[], &[], 2);
+        assert_eq!(p.omp.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["omp-lead"]);
+        assert_eq!(p.skipped, [("core".to_string(), RUNS_THIS.to_string())]);
+        assert!(p.procs.is_empty(), "{:?}", p.procs);
+    }
+
+    #[test]
+    fn a_nested_repo_with_a_space_in_its_path_is_never_this_project() {
+        let base = std::env::temp_dir().join(format!("8sync-close-space-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("proj");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let game = root.join("game").join("my game");
+        std::fs::create_dir_all(game.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("game").join("my")).unwrap();
+        let wt = root.join(".claude").join("worktrees").join("card 1");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: x").unwrap();
+        let n = |rest: &str| in_nested_repo(&root, rest);
+        let s = Scope::new(&root, &[], &n);
+        let c = |x: &str| s.norm(&x.replace("<root>", &root.to_string_lossy()));
+        assert!(!s.owns(&c(r#"node "<root>\game\my game\server.js" --port 3000"#)), "quoted");
+        assert!(!s.owns(&c(r"node <root>\game\my game\server.js --port 3000")), "unquoted: the folder is found whole");
+        assert!(!s.owns(&c(r"cmd /c cd <root>\game\my game && npm run dev")));
+        assert!(s.owns(&c(r"node <root>\game\my\x.js")), "`my` is a plain folder of this repo");
+        assert!(s.owns(&c(r"node <root>\game\x.js")));
+        assert!(s.owns(&c(r#"node "<root>\.claude\worktrees\card 1\node_modules\vite\bin\vite.js""#)), "a worktree is the repo's");
+        let procs = vec![img("claude", 40, 1, "claude"), img("claude", 41, 1, "claude")];
+        let sessions = [
+            live("aaaaaaaa-0000-4000-8000-000000000001", "game", false, &game.to_string_lossy(), 40),
+            live("bbbbbbbb-0000-4000-8000-000000000002", "wt", false, &wt.to_string_lossy(), 41),
+        ];
+        let p = plan(&s, &procs, &sessions, &[], 99);
+        assert_eq!(p.claude.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["wt"], "the nested repo's session is never taken");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn close_runs_only_in_a_repo_root() {
+        let base = std::env::temp_dir().join(format!("8sync-close-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("apps")).unwrap();
+        std::fs::create_dir_all(repo.join("game").join("3d").join(".git")).unwrap();
+        let wt = repo.join(".claude").join("worktrees").join("card-1");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: x").unwrap();
+        assert_eq!(auto::canon(&close_root(&repo).unwrap()), auto::canon(&repo));
+        assert_eq!(auto::canon(&close_root(&repo.join("game").join("3d")).unwrap()), auto::canon(&repo.join("game").join("3d")));
+        for sub in [repo.join("apps"), repo.join("game"), wt] {
+            let e = close_root(&sub).unwrap_err().to_string();
+            assert!(e.contains("không phải gốc repo"), "{}: {e}", sub.display());
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn close_stops_nothing_while_a_revive_holds_the_lock() {
+        let home = std::env::temp_dir().join(format!("8sync-close-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let held = team::revive_lock(&home, now).unwrap().unwrap();
+        let Err(e) = revive_lock(&home, 0) else { panic!("took a held lock") };
+        assert!(e.to_string().contains("chưa dừng gì"));
+        drop(held);
+        assert!(revive_lock(&home, 0).is_ok());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn close_takes_only_this_project_out_of_auto() {
+        let h = std::env::temp_dir().join(format!("8sync-close-auto-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&h);
+        let (a, b) = (h.join("a"), h.join("b"));
+        for r in [&a, &b] {
+            std::fs::create_dir_all(r.join(".git")).unwrap();
+        }
+        let inside = |r: &Path| auto::in_scope(&h, Some(&r.to_string_lossy()));
+        // Auto on for every project (no list): `a` goes out, auto stays on for the rest.
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: None }, false, 1).unwrap();
+        assert!(auto::close_out(&h, &a, false, 2).unwrap());
+        let st = auto::status(&h, false, 3);
+        assert_eq!((st["on"].as_bool(), st["paused"].as_bool()), (Some(true), Some(false)), "never a pause of every project");
+        assert!(!inside(&a) && !inside(&a.join("src")) && inside(&b));
+        assert!(!auto::close_out(&h, &a, false, 4).unwrap(), "already out");
+        // A plain `on` (HQ's Chạy liên tục) keeps it out; `on --here` there brings it back.
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: None }, false, 5).unwrap();
+        assert!(!inside(&a) && inside(&b));
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(a.clone()) }, false, 6).unwrap();
+        assert!(inside(&a));
+        // Listed projects: only `a` leaves, `b` keeps running.
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(b.clone()) }, false, 7).unwrap();
+        assert!(auto::close_out(&h, &a, false, 8).unwrap());
+        let st = auto::status(&h, false, 9);
+        assert_eq!(st["on"].as_bool(), Some(true));
+        assert!(!inside(&a) && inside(&b));
+        assert!(!auto::remembered_roots(&h).iter().any(|r| auto::canon(Path::new(r)) == auto::canon(&a)), "a plain `on` will not bring it back");
+        let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]
@@ -575,7 +773,7 @@ mod tests {
         mk("sibling", Some(&base.join("proj-2")));
         mk("nested", Some(&root.join("game")));
         mk("plain", None);
-        let n = |p: &Path| in_nested_repo(&root, p);
+        let n = |rest: &str| in_nested_repo(&root, rest);
         let s = Scope::new(&root, &[], &n);
         let mut got = session_dirs(&reg, &own, &s);
         got.sort();
@@ -594,7 +792,7 @@ mod tests {
             procs: vec![Item { label: "vite preview :4120".into(), pid: 9, stop: None, pids: vec![9], own: false }],
             ..Plan::default()
         };
-        let v = json!({ "dry_run": true, "rooms": [item_json(&p.rooms[0], None)], "claude": [], "omp": [item_json(&p.omp[0], None)], "omp_rooms": [], "procs": [item_json(&p.procs[0], Some(false))], "auto": null });
+        let v = json!({ "dry_run": true, "rooms": [item_json(&p.rooms[0], None)], "claude": [], "omp": [item_json(&p.omp[0], None)], "procs": [item_json(&p.procs[0], Some(false))], "auto": null });
         let t = text(&root, &p, &v);
         assert!(t.contains("chạy thử, chưa dừng gì"), "{t}");
         assert!(t.contains("phòng team: 1 — lead (pid 1)"), "{t}");
