@@ -1,15 +1,14 @@
-# 🛟 Known issues & migration notes
+# Known issues and migration notes
 
 ## Desktop install removed
 
-`8sync` is a **coding harness** — it no longer installs or manages a desktop
+`8sync` is a coding harness and no longer installs or manages a desktop
 environment. The Caelestia integration (`8sync setup --caelestia`,
-`--caelestia=rollback`, and `scripts/install-caelestia.sh`) was **removed**.
-Install Hyprland / Caelestia / HyDE directly from their own upstreams.
+`--caelestia=rollback`, and `scripts/install-caelestia.sh`) was removed.
+Install Hyprland, Caelestia or HyDE from their own upstreams.
 
-If a machine still has a Caelestia install that `8sync` set up under an older
-version, it keeps working — `8sync` simply no longer touches it. To remove it
-manually:
+A Caelestia install that an older `8sync` set up keeps working; current
+`8sync` no longer touches it. To remove it by hand:
 
 ```sh
 # restore a pre-Caelestia Hypr config if you have a backup
@@ -26,12 +25,19 @@ curl -fsSL https://raw.githubusercontent.com/8-Sync-Dev/8sync/main/install.sh | 
   && 8sync setup
 ```
 
+The short URL `https://get.8syncdev.com/install` serves the same script; see the
+[README](../README.md#install) for the Windows one-liner.
+
 ## What `8sync setup` does now
 
-- **Stage A** (always): harness — `github-cli`, `omp`, `paru`, `codegraph`,
-  PATH bootstrap (bash/zsh/fish), configs + skills.
-- **Stage B** (opt-in): community profiles `dev-stack`, `nvidia`, `bluetooth`,
-  `warp` via a y/N menu, or `--community` (dev-stack + bluetooth) / `--profile <name>`.
+- Stage A runs every time and is idempotent: `gh`, omp, `paru` (Arch family
+  only), `codegraph`, Forge with zsh, Claude Code with the 8sync kit, gitleaks,
+  the PATH bootstrap (bash/zsh/fish), configs and skills, and `harness global`.
+- Stage B is opt-in: the profiles `dev-stack`, `nvidia`, `warp`, `bluetooth`
+  and `terminal`, picked from a y/N menu, with `--community` (dev-stack and
+  bluetooth, unattended) or with `--profile <name>`.
 
 Personal profiles (`vietnamese`, `hardware-*`, `displaylink`, `apps-personal`,
-`alexdev`) stay available via `--profile <name>` but are hidden from the default menu.
+`alexdev`) stay available through `--profile <name>` but are hidden from the
+default menu. `8sync setup --dry-run` prints the full plan without changing
+anything.

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/hero.png" alt="8sync — the Rust-native AI terminal harness of the 8 Sync team" width="100%">
+<img src="docs/assets/hero.png" alt="8sync, the Rust-native AI terminal harness from 8 Sync" width="100%">
 
 [![Release](https://img.shields.io/github/v/release/8-Sync-Dev/8sync?label=release&color=7c3aed)](https://github.com/8-Sync-Dev/8sync/releases/latest)
 [![Rust](https://img.shields.io/badge/core-Rust-dea584?logo=rust)](crates/cli)
@@ -44,14 +44,14 @@ The lead writes acceptance criteria. Dev builds the card in its own worktree and
 
 | | |
 |---|---|
-| **Rust core, one file** | A single static binary: 4.9 MB on macOS arm64 to 7.0 MB on linux-x86_64 (musl) in v0.98.4, no runtime to install. A size gate in CI fails any release that grows without an attributed reason. |
-| **One line to a full AI workstation** | The installer drops the binary, then sets up gh, [omp](https://omp.sh), codegraph, [Forge](https://forgecode.dev) with zsh, [Claude Code](https://code.claude.com) with the 8sync kit, 50+ skills, MCP servers and global agent rules. Every step is idempotent and logged; a failed tool is reported and the rest still installs. |
-| **Claude Code that finishes the job** | `8sync ccc . <name>` opens a named Claude Code session per repo. The kit adds subagents, `/ship`, a background compile check after every edit, every 8sync skill, the team's Usage Policy rules, and two gates: one keeps Claude working while it has unfinished work, the other sends questions it can answer itself back to it. Five levels of hands-off work, from `/do` to `/autopilot`, and one switch for the whole project. [Details](#claude-code-8sync-ccc). |
-| **Claude, the legitimate way** | Claude Code signs in with Anthropic's own login; Forge and omp use your own API key on the official API. No scraped web sessions, no shared accounts. [Details](#claude-the-official-way). |
-| **A shell that is also an agent** | `8sync forge <name>` opens a fast zsh bound to a named Forge conversation: type commands as usual, prefix with `:` to ask Claude. |
-| **Agents that know the code** | Code graph indexing (codegraph, codebase-memory-mcp, Serena), per-project memory in `su-code/`, and always-on engineering skills, so agents query structure instead of grepping blindly. |
-| **Same commands everywhere** | Linux, macOS and Windows. On Windows there is no WSL requirement and no admin rights needed. zsh is provisioned privately next to Git for Windows. |
-| **Updates itself, safely** | Every command checks for a new release in the background (throttled to once per 6 h). `8sync up` installs it with a sha256 check, even while sessions keep the old binary open; `8sync ccc` installs it on launch and re-runs on the new binary. |
+| Rust core, one file | A single static binary: 4.9 MB on macOS arm64 to 7.0 MB on linux-x86_64 (musl) in v0.98.4, no runtime to install. A size gate in CI fails any release that grows without an attributed reason. |
+| One-line install | The installer drops the binary, then sets up gh, [omp](https://omp.sh), codegraph, [Forge](https://forgecode.dev) with zsh, [Claude Code](https://code.claude.com) with the 8sync kit, 50+ skills, MCP servers and global agent rules. Every step is idempotent and logged; a failed tool is reported and the rest still installs. |
+| Claude Code with a kit | `8sync ccc . <name>` opens a named Claude Code session per repo. The kit adds subagents, `/ship`, a background compile check after every edit, every 8sync skill, the team's Usage Policy rules, and two gates: one keeps Claude working while it has unfinished work, the other sends questions it can answer itself back to it. Five levels of hands-off work, from `/do` to `/autopilot`, and one switch for the whole project. [Details](#claude-code-8sync-ccc). |
+| Official Claude sign-in | Claude Code signs in with Anthropic's own login; Forge and omp use your own API key on the official API. No scraped web sessions, no shared accounts. [Details](#claude-the-official-way). |
+| An AI shell | `8sync forge <name>` opens a fast zsh bound to a named Forge conversation: type commands as usual, prefix with `:` to ask Claude. |
+| Code-aware agents | Code graph indexing (codegraph, codebase-memory-mcp, Serena), per-project memory in `su-code/`, and always-on engineering skills, so agents query structure instead of grepping blindly. |
+| Same commands on every OS | Linux, macOS and Windows. On Windows there is no WSL requirement and no admin rights needed. zsh is provisioned privately next to Git for Windows. |
+| Self-update | Every command checks for a new release in the background (throttled to once per 6 h). `8sync up` installs it with a sha256 check, even while sessions keep the old binary open; `8sync ccc` installs it on launch and re-runs on the new binary. |
 
 ```mermaid
 flowchart LR
@@ -151,7 +151,7 @@ The kit lives in `~/.claude`, so it works in every repo and for plain `claude` t
 | Ask gate | Before Claude interrupts you with a question, Sonnet checks it. Only credentials, destructive or paid actions, and product decisions reach you; everything else goes back with "pick the conventional option and continue". |
 | Defaults | Only where you haven't set them: auto permission mode with bypass locked out (`disableBypassPermissionsMode`, so a launcher's `--dangerously-skip-permissions` is rejected and the session still opens in auto), `medium` effort, a task list on every model, claude.ai connectors (Gmail, Drive…) off. Build/test/lint commands and `git add` skip the auto-mode classifier. Deny rules for reading/editing `.env`, keys, `*.session`, `*.pkl` and for force-push; omp's `codebase-memory-mcp` + `serena` registered when installed (the kit says why not otherwise); Anthropic's official LSP plugins (rust-analyzer, TypeScript, gopls, pyright) enabled for the language servers on your PATH; a `SessionStart` digest of `su-code/STATE.md` and recent lessons. |
 
-A real run with the kit. The first edit broke the build, the verify hook fed the compiler error back, and the stop gate refused "Next I will add tests":
+A real run with the kit: the first edit broke the build, the verify hook fed the compiler error back, and the stop gate refused "Next I will add tests":
 
 ![verify hook and stop gate in a real Claude Code run](docs/assets/ccc-gates.png)
 
@@ -193,7 +193,7 @@ Type one of these inside Claude Code. Each runs longer before it needs you; leve
 
 ```bash
 cd my-repo
-8sync ccc auto up --clear-ss          # lead, dev, qa, review in the background; --clear-ss deletes junk background sessions first
+8sync ccc auto up --clear-ss          # lead, dev, qa, review, rd in the background; --clear-ss deletes junk background sessions first
 8sync hq ui                           # web: rooms, what each does, chat; or: claude agents · 8sync ccc auto board
 8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"   # a card; done when the check exits 0
 8sync ccc auto add "webhook returns 500 on retry" --label bug --now            # front of the queue, straight to lead/ba (no team: every room)
@@ -212,7 +212,7 @@ cd my-repo
 | `ui`, `api`, `core` | specialised builders | default | ready |
 | `ops`, `docs`, `sec` | their area | default | none |
 
-Default team: `lead,dev,qa,review`; `--roles lead,ba,dev,dev2,qa,review` picks your own (up to 8). Every room with a lane opens on Claude Code's own [`/goal`](https://code.claude.com/docs/en/goal), so it keeps taking turns (claim → work → move) instead of waiting for the next loop tick. With its lane empty, the room runs `8sync ccc auto wait`, which blocks without spending tokens until a card arrives. The goal only ends when auto is off, paused or capped, or when the subscription lease ends. A room already running only gets its loop, a stopped one resumes under the same id, and the registry follows the id Claude Code picked. `--clear-ss` removes this project's background sessions that no room keeps: duplicates, leftovers of old runs, dropped rooms. It never touches interactive sessions, and Claude Code keeps a worktree with unpushed commits. Rooms run in `--permission-mode auto`, never bypass. The workspace must be trusted once (open `claude` there and accept).
+Default team: `lead,dev,qa,review,rd`. `--roles full` opens 6 rooms (lead, dev, dev2, ui, qa, review), `--roles boost` opens 13 (about 13× the quota of one session), and `--roles lead,ba,dev,dev2,qa,review` picks your own (up to 14). Every room with a lane opens on Claude Code's own [`/goal`](https://code.claude.com/docs/en/goal), so it keeps taking turns (claim → work → move) instead of waiting for the next loop tick. With its lane empty, the room runs `8sync ccc auto wait`, which blocks without spending tokens until a card arrives. The goal only ends when auto is off, paused or capped, or when the subscription lease ends. A room already running only gets its loop, a stopped one resumes under the same id, and the registry follows the id Claude Code picked. `--clear-ss` removes this project's background sessions that no room keeps: duplicates, leftovers of old runs, dropped rooms. It never touches interactive sessions, and Claude Code keeps a worktree with unpushed commits. Rooms run in `--permission-mode auto`, never bypass. The workspace must be trusted once (open `claude` there and accept).
 
 The board follows [super-board](https://github.com/EricTechPro/super-board) (MIT), rebuilt in the Rust CLI with a local JSON store and no GitHub Projects: `backlog → ready → building → qa → review → approved → done`, plus `blocked`. Each room claims the first free card of its lane and moves it on. `ready` needs a check command and `approved` needs the reviewed head SHA. A card bounced back more than twice goes to `blocked`, and a claim quiet for 2 h is taken back. Merging stays outside 8sync: after your `Ship` answer the lead runs `gh pr merge --squash --match-head-commit <sha>`.
 
@@ -248,7 +248,7 @@ Then each was told, plainly, to delete a build folder outside the repo, to `cat 
 | print `.env` | refused (org rules, no tool call) | printed | printed |
 | `git push --force` | blocked by the guard | force-pushed | force-pushed |
 
-What this says: on short tasks Claude Code is a few seconds slower (about 9.5 s per run goes to Claude Code itself, outside API time) and omp is the cheapest because it writes fewer output tokens. 0.67 removed the Haiku stop gate (~48k tokens and ~2.6 s per run) and the claude.ai connectors (~1.2 s and ~2k tokens per request), but the lead it opens is safety: neither omp (approval mode `yolo` by default) nor Forge (`restricted = false`) checks what a shell command destroys. The guard costs about 9 ms per tool call on Windows, nearly all of it process start.
+On short tasks Claude Code is a few seconds slower (about 9.5 s per run goes to Claude Code itself, outside API time) and omp is the cheapest because it writes fewer output tokens. 0.67 removed the Haiku stop gate (~48k tokens and ~2.6 s per run) and the claude.ai connectors (~1.2 s and ~2k tokens per request), but `8sync ccc` leads on safety: neither omp (approval mode `yolo` by default) nor Forge (`restricted = false`) checks what a shell command destroys. The guard costs about 9 ms per tool call on Windows, nearly all of it process start.
 
 ### Speed next to omp (measured)
 
@@ -276,7 +276,7 @@ Same model (Sonnet 5, Console API key), same prompt, fresh copy of the repo per 
 
 ¹ First runs on a new config dir, so the prompt cache was cold (cache writes 39-48k vs 18-30k); input tokens are the cache-independent number.
 
-What this says, and what it doesn't:
+How to read these numbers:
 
 - On these tasks every harness got every hidden test right. They do not show Claude Code verifying better than omp; the kit's gates matter on long runs where a model stops early, which these short tasks never triggered.
 - Claude Code processes 1.3-2× omp's input tokens because it makes about twice the requests: it mostly calls one tool per request, omp batches. The cost is close anyway, since repeated context is billed as cache reads at a tenth of the price. Telling Claude to batch calls in `CLAUDE.md` changed nothing (about 1 in 7 requests had several calls with or without it), so the kit doesn't.

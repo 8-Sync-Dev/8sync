@@ -1,6 +1,6 @@
 # Licensing 8sync
 
-8sync is **source-available** under the [PolyForm Noncommercial License 1.0.0](LICENSE). You can read, build, change and share the code; what you may use it for depends on who you are.
+8sync is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). You can read, build, change and share the code; what you may use it for depends on who you are.
 
 | You are | License |
 |---|---|
@@ -8,11 +8,11 @@
 | A charity, school or university, public research, health or safety body, or government institution | Free under PolyForm Noncommercial |
 | A developer using it at work, a company (any size), a freelancer on client work, or anyone building a paid product or service with it | **Commercial license required** |
 
-Releases up to and including **v0.98.4** were published under the MIT License and stay under it. The noncommercial terms apply from the release after v0.98.4.
+Releases up to and including v0.98.4 were published under the MIT License and stay under it. The noncommercial terms apply from the release after v0.98.4.
 
 ## Commercial license
 
-Email **atus@8syncdev.com** with your company name, how many developers will use 8sync and what for. You get a written license from 8 Sync covering your team.
+Email atus@8syncdev.com with your company name, how many developers will use 8sync and what for. You get a written license from 8 Sync covering your team.
 
 ## Support the project
 
