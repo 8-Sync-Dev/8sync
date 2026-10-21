@@ -16,7 +16,8 @@ export type ClosePlan = {
   procs: CloseItem[];
   skipped: { label: string; why: string }[];
   counts: { rooms: number; claude: number; omp: number; procs: number };
-  auto: "left" | "untouched" | null;
+  /** `left`: was in auto, out now; `out`: auto was not running, the project stays out when it comes back. */
+  auto: "left" | "out" | "untouched" | null;
   ok: boolean;
 };
 

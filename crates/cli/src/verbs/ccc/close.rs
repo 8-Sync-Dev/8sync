@@ -383,7 +383,7 @@ pub(super) fn run(env: &Env, t: &Team, rest: &[String], now: u64) -> Result<()> 
     if team_root {
         team::set_team_root(&env.home, t.root, false);
     }
-    let left = auto::close_out(&env.home, t.root, t.subscription, now)? || team_root;
+    let left = auto::close_out(&env.home, t.root, t.subscription, now)?.or(team_root.then_some("left")).unwrap_or("untouched");
     let here = team::agents(t, false)?;
     let rooms = team::rooms(t, &here);
     let mut p = plan(&s, &reap::list(now), &all(t)?, &rooms, me);
@@ -435,7 +435,8 @@ fn item_json(i: &Item, ok: Option<bool>) -> Value {
 }
 
 /// The plan (dry run) or what was done: `--json` for HQ, else a summary per kind.
-fn report(root: &Path, p: &Plan, done: Option<&[Done]>, left: Option<bool>, as_json: bool) -> Result<()> {
+/// `auto`: what [`auto::close_out`] did (`left`, `out`, `untouched`); None on a dry run.
+fn report(root: &Path, p: &Plan, done: Option<&[Done]>, auto: Option<&str>, as_json: bool) -> Result<()> {
     let ok = |kind: &str, i: usize| done.map(|d| d.iter().any(|x| x.0 == kind && x.1 == i && x.2));
     let list = |kind: &'static str, items: &[Item]| -> Vec<Value> { items.iter().enumerate().map(|(n, i)| item_json(i, ok(kind, n))).collect() };
     let v = json!({
@@ -447,7 +448,7 @@ fn report(root: &Path, p: &Plan, done: Option<&[Done]>, left: Option<bool>, as_j
         "procs": list("procs", &p.procs),
         "skipped": p.skipped.iter().map(|(l, w)| json!({ "label": l, "why": w })).collect::<Vec<_>>(),
         "counts": counts(p),
-        "auto": left.map(|l| if l { "left" } else { "untouched" }),
+        "auto": auto,
         "ok": done.is_none_or(|d| d.iter().all(|x| x.2)),
     });
     if as_json {
@@ -497,7 +498,8 @@ fn text(root: &Path, p: &Plan, v: &Value) -> String {
         out.push_str(&format!("  bỏ qua {l}: {w}\n"));
     }
     match v["auto"].as_str() {
-        Some("left") => out.push_str("auto: đã bỏ dự án khỏi auto và khỏi danh sách team.\n"),
+        Some("left") => out.push_str("auto: đã bỏ dự án khỏi auto và khỏi danh sách team (auto của dự án khác vẫn chạy).\n"),
+        Some("out") => out.push_str("auto: đang không chạy; dự án sẽ không vào lại khi bật auto (`8sync ccc auto up` ở đây đưa lại).\n"),
         Some(_) => out.push_str("auto: không đổi (dự án không có trong auto).\n"),
         None => {}
     }
@@ -716,11 +718,12 @@ mod tests {
         let inside = |r: &Path| auto::in_scope(&h, Some(&r.to_string_lossy()));
         // Auto on for every project (no list): `a` goes out, auto stays on for the rest.
         auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: None }, false, 1).unwrap();
-        assert!(auto::close_out(&h, &a, false, 2).unwrap());
+        assert_eq!(auto::close_out(&h, &a, false, 2).unwrap(), Some("left"));
         let st = auto::status(&h, false, 3);
         assert_eq!((st["on"].as_bool(), st["paused"].as_bool()), (Some(true), Some(false)), "never a pause of every project");
         assert!(!inside(&a) && !inside(&a.join("src")) && inside(&b));
-        assert!(!auto::close_out(&h, &a, false, 4).unwrap(), "already out");
+        assert_eq!(auto::close_out(&h, &a, false, 4).unwrap(), None, "already out");
+        assert!(auto::text(&auto::status(&h, false, 4)).contains("mọi dự án trừ "), "status names it");
         // A plain `on` (HQ's Chạy liên tục) keeps it out; `on --here` there brings it back.
         auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: None }, false, 5).unwrap();
         assert!(!inside(&a) && inside(&b));
@@ -728,11 +731,59 @@ mod tests {
         assert!(inside(&a));
         // Listed projects: only `a` leaves, `b` keeps running.
         auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(b.clone()) }, false, 7).unwrap();
-        assert!(auto::close_out(&h, &a, false, 8).unwrap());
+        assert_eq!(auto::close_out(&h, &a, false, 8).unwrap(), Some("left"));
         let st = auto::status(&h, false, 9);
         assert_eq!(st["on"].as_bool(), Some(true));
         assert!(!inside(&a) && inside(&b));
         assert!(!auto::remembered_roots(&h).iter().any(|r| auto::canon(Path::new(r)) == auto::canon(&a)), "a plain `on` will not bring it back");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn close_while_auto_is_paused_keeps_the_project_out_when_auto_comes_back() {
+        let h = std::env::temp_dir().join(format!("8sync-close-paused-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&h);
+        let (a, b) = (h.join("a"), h.join("b"));
+        for r in [&a, &b] {
+            std::fs::create_dir_all(r.join(".git")).unwrap();
+        }
+        let inside = |r: &Path| auto::in_scope(&h, Some(&r.to_string_lossy()));
+        let on = |repo: Option<&PathBuf>, at| auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: repo.cloned() }, false, at).unwrap();
+        let pause = |at| auto::set(&h, auto::Mode::Pause, false, at).unwrap();
+        let off = |at| auto::set(&h, auto::Mode::Off, false, at).unwrap();
+        // Every project, paused: `a` goes on `out`; the next plain `on` covers every project but `a`.
+        on(None, 1);
+        pause(2);
+        assert_eq!(auto::close_out(&h, &a, false, 3).unwrap(), Some("out"));
+        assert_eq!(auto::status(&h, false, 3)["paused"], true, "close never turns auto on or off");
+        on(None, 4);
+        assert!(!inside(&a) && inside(&b));
+        off(5);
+        // Paused with only `a` listed: the list is not emptied (that would be every project), `a`
+        // is out — the next plain `on` runs nothing rather than `a` or every other project.
+        on(Some(&a), 6);
+        pause(7);
+        assert_eq!(auto::close_out(&h, &a, false, 8).unwrap(), Some("out"));
+        on(None, 9);
+        assert!(!inside(&a) && !inside(&b), "neither back nor widened");
+        assert!(auto::text(&auto::status(&h, false, 9)).contains("không dự án nào"));
+        off(10);
+        // Running with only `a` listed: auto pauses (it held only `a`) and `a` stays out after.
+        on(Some(&a), 11);
+        assert_eq!(auto::close_out(&h, &a, false, 12).unwrap(), Some("left"));
+        assert_eq!(auto::status(&h, false, 12)["paused"], true);
+        on(None, 13);
+        assert!(!inside(&a));
+        off(14);
+        // Paused with `a` and `b` listed: `a` leaves the list, `b` comes back with a plain `on`.
+        on(Some(&a), 15);
+        on(Some(&b), 16);
+        pause(17);
+        assert_eq!(auto::close_out(&h, &a, false, 18).unwrap(), Some("out"));
+        on(None, 19);
+        assert!(!inside(&a) && inside(&b));
+        // Not in auto at all: nothing changes.
+        assert_eq!(auto::close_out(&h, &h.join("c"), false, 20).unwrap(), None);
         let _ = std::fs::remove_dir_all(&h);
     }
 
