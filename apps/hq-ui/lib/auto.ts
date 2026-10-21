@@ -26,6 +26,8 @@ export type AutoState = {
   ci?: string;
   /** "Lease liên tục" on (`8sync ccc auto lease auto on`); absent on an older 8sync. */
   lease_auto?: boolean;
+  /** Critic answers a room's product/technical questions in-room (`8sync ccc delegate on`); absent on an older 8sync. */
+  delegate?: boolean;
   /** Why auto rests and until when (unix s); null while it runs. */
   lease_rest?: LeaseRest | null;
   subscription?: unknown;
@@ -49,11 +51,11 @@ export type LeaseRest = { kind: "usage" | "budget" | "lease"; text: string; wind
  * Seen live 2026-10-18: auto was paused, so 7 rooms sat on questions the owner expected the critic
  * to take. A question already on screen stays with the owner even after the critic is back.
  */
-export function criticNote(s: (AutoState & { delegate?: boolean }) | null): string | null {
+export function criticNote(s: AutoState | null): string | null {
   if (!s || s.error) return null;
   if (s.on && s.delegate !== false) return null;
   const why = s.paused ? "auto đang tạm dừng" : !s.on ? "auto đang tắt" : "critic đang tắt";
-  return `Critic không trả lời thay (${why}). Bấm “Chạy liên tục” ở Văn phòng: câu hỏi mới được trả lời sau 60 s; câu đang hiện ở đây vẫn cần anh chọn.`;
+  return `Critic không trả lời thay (${why}). Bấm “Chạy liên tục” ở Văn phòng: câu hỏi mới được trả lời ngay; câu đang hiện ở đây vẫn cần anh chọn.`;
 }
 
 /**

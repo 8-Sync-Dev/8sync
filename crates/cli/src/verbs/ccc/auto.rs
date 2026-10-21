@@ -61,7 +61,9 @@ const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30
        8sync ccc auto ship-fast on [--hours 0.5..4] | off | ship-ask | status [--json]   (Ship tốc độ cao: cả team land card gần xong trước, builder không lấy card mới khi qa/review còn ≥ 3, lead hỏi Ship một chạm; chỉ owner)   (vòng auto-ship: lead nhận brief vòng kế khi board cạn, ≥ 20 phút một vòng; 2 vòng không ra card thì nghỉ; chỉ owner)
        8sync ccc auto guard now   (một lượt bảo vệ ngay cho mọi dự án đang auto; HQ tự gọi khi RAM/CPU vượt ngưỡng)
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
-pub(super) const DEFAULT_AFTER_S: u64 = 60;
+/// Owner 2026-10-22: "tôi nghĩ bây giờ không cần sau 1p auto trả lời" — the critic answers at once;
+/// `--after <s>` still brings the "owner treo" grace back.
+pub(super) const DEFAULT_AFTER_S: u64 = 0;
 /// The backup cron of a room. 10 min fired 1,050 cron turns in 36 h on ai-game-studio (each a full
 /// context re-read); a lane room already wakes on cards through `auto wait`, so the cron only has to
 /// catch a room that stopped. Shorter loops are refused ([`parse_every`]).
@@ -102,8 +104,8 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
             rate,
             repo,
         } => {
-            if after == 0 || after > 86_400 {
-                bail!("--after: 1..86400 giây");
+            if after > 86_400 {
+                bail!("--after: tối đa 86400 giây (0 = critic trả lời ngay)");
             }
             // idle::on validates (hours, rate, subscription cap) before writing anything.
             idle::on(home, hours, rate, subscription, true)?;
@@ -797,9 +799,10 @@ fn state_text(v: &Value) -> String {
         } else {
             String::new()
         };
+        let after_s = v["after_s"].as_u64().unwrap_or(0);
         let mut s = format!(
-            "auto: ĐANG CHẠY liên tục{lease} · critic trả lời sau {} s{only}{window}",
-            v["after_s"].as_u64().unwrap_or(0)
+            "auto: ĐANG CHẠY liên tục{lease} · critic {}{only}{window}",
+            if after_s == 0 { "trả lời ngay".to_string() } else { format!("trả lời sau {after_s} s") }
         );
         if let Some(g) = v["gate"].as_str() {
             s.push_str(&format!("\nđang cho nghỉ: {g}"));
@@ -2771,7 +2774,7 @@ mod tests {
     #[test]
     fn invalid_input_bails_and_leaves_nothing() {
         let h = home("bad");
-        for (hours, after) in [(0.0, 60), (25.0, 60), (2.0, 0), (2.0, 90_000)] {
+        for (hours, after) in [(0.0, 60), (25.0, 60), (2.0, 90_000)] {
             assert!(
                 set(&h, on(hours, after), false, 1).is_err(),
                 "{hours} {after}"
