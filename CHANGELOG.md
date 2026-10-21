@@ -12,6 +12,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - **Separate CPU and RAM thresholds.** `8sync ccc auto guard cpu <30..95>` (default 55) next to `guard <pct>` (RAM, default 60). A CPU breach tightens the cap, idles room builds and can pause rooms on CPU timing; a RAM breach takes the RAM path (clean, lean restart, pause). An old single threshold keeps meaning CPU (RAM then at least 60) until either one is set. HQ Máy › Bảo vệ máy: RAM row, CPU row, cap row ("đang siết" while tightened); the 5 s trigger compares each to its own threshold. `auto status --json` adds `cpu_pct`, `cap`, `cap_n`, `cpus`, `cap_tight`.
 ### Fixed
 - The guard's CPU figures used a fixed 5 s window although two listings plus the sleep span ~7–8 s (dry run printed machine "CPU 5 s 1 %" while one rustc showed 9 %). Each listing is now stamped with the machine's CPU times (`GetSystemTimes`, `/proc/stat` first 8 fields) and shares are divided by the measured interval.
+### Changed
+- Size gate ceiling 7744 → 7808 KiB, attributed in `scripts/size-gate.sh` (+40,960 B musl for the CPU cap and the split thresholds; no new dependency).
 
 ## [0.110.22] — 2026-10-21
 ### Fixed

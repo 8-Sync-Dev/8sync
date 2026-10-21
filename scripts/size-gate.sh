@@ -168,7 +168,15 @@ export LC_ALL=C
 # revive-lock liveness (`tasklist`) + grouping-folder refusal. No new dependency. In flight next:
 # eye room, resource guard (EcoQoS/priority/lean rooms), project close, omp terminal host.
 # Ceiling 7744 KiB (~60 KiB left over this asset; re-attribute with size-report before the next raise).
-CEILING="${CEILING:-7929856}"   # 7744 KiB (raised 2026-10-21 from 7488 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+#
+# 2026-10-21 v0.110.23: v0.110.11 → v0.110.22 used the headroom down to 9,936 B (main 2e5aea9 CI
+# musl asset 7,919,920 B: eye room, resource guard, project close, omp terminal host, sweep room,
+# live-room checks). This PR's CI musl asset 7,960,880 B (+40,960 B, 31,024 B over): the strict
+# CPU cap in `ccc/pressure.rs` — affinity FFI (Set/GetProcessAffinityMask, GetProcessTimes,
+# GetSystemTimes), Linux /proc/stat + Cpus_allowed parsing and `taskset`, pin records with exact
+# restore, the stepwise tighten/loosen decision — plus the split CPU/RAM thresholds (`auto.rs`).
+# No new dependency. Ceiling 7808 KiB (~34 KiB left over this asset).
+CEILING="${CEILING:-7995392}"   # 7808 KiB (raised 2026-10-21 from 7744 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"
