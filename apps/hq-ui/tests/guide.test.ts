@@ -18,7 +18,7 @@ describe("guide", () => {
     expect(text).toContain("Giao việc");
   });
   it("walks the team flow as it is: open team, cards, priority, 60 s rule, Ship stays with the owner, update", () => {
-    for (const s of ["Mở team", "Team đầy đủ", "Board", "P0", "60 giây", "Ship", "Dọn & mở lại", "Dừng team", "Nhật ký"]) expect(text).toContain(s);
+    for (const s of ["Mở team", "Team đầy đủ", "Board", "P0", "5 giây", "Ship", "Dọn & mở lại", "Dừng team", "Nhật ký"]) expect(text).toContain(s);
     expect(text).not.toContain("tạo nhân viên");
   });
   it("has the 5-status legend and tips", () => {
