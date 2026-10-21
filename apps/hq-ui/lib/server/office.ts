@@ -9,9 +9,11 @@ import type { Ask } from "../ask";
 import { teamOf, type IdleRecord } from "../idle";
 import { deliveryOf, sessionLabel } from "../labels";
 import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type Limits, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
+import { boardTasks } from "../now";
 import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
 import { parsePins, type HiddenProject, type Pin } from "../sidebar";
-import { readAsk } from "./ask";
+import { readAsk, transcriptOf } from "./ask";
+import { projectBoards, type ProjectBoard } from "./board";
 import { loadFloor, ompSessions } from "./floor";
 import { readPermits, type Permit } from "./permit";
 import { readIdleStatus } from "./idle";
@@ -83,6 +85,72 @@ export function readUsage(sessionId: string | null | undefined): Usage | null {
     };
   } catch {
     return null;
+  }
+}
+
+/** The head holds the session's first timestamps; the tail its latest assistant line, even after a long tool result. */
+const HEAD_BYTES = 64 * 1024;
+const TAIL_BYTES = 256 * 1024;
+const TS_RE = /"timestamp":"([^"]{10,40})"/g;
+const MODEL_RE = /"model":"([^"<]+)"/;
+
+export type TranscriptStats = { model: string | null; first: number | null; last: number | null };
+type Measured = TranscriptStats & { size: number; mtime: number };
+const measured = new Map<string, Measured>();
+
+/** Timestamps (ms) found in `buf`, in file order, and the last model an assistant line names. */
+function scanLines(buf: Buffer): { ts: number[]; model: string | null } {
+  const ts: number[] = [];
+  let model: string | null = null;
+  for (const line of buf.toString("utf8").split("\n")) {
+    for (const m of line.matchAll(TS_RE)) {
+      const t = Date.parse(m[1]);
+      if (Number.isFinite(t)) ts.push(t);
+    }
+    if (line.includes('"type":"assistant"')) model = MODEL_RE.exec(line)?.[1] ?? model;
+  }
+  return { ts, model };
+}
+
+/**
+ * Model and first / last timestamp of a room's Claude Code transcript, for rooms that run no status
+ * line. Re-read only when the file's size or mtime moved: the head once, the tail (≤ 256 KB) per change.
+ */
+export function readTranscriptStats(sessionId: string | null | undefined, cwd: string | null, root?: string): TranscriptStats | null {
+  const f = sessionId ? transcriptOf(sessionId, cwd, root) : null;
+  if (!f) return null;
+  let st: fs.Stats;
+  try {
+    st = fs.statSync(f);
+  } catch {
+    return null;
+  }
+  const hit = measured.get(f);
+  if (hit && hit.size === st.size && hit.mtime === st.mtimeMs) return hit;
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(f, "r");
+    const read = (at: number, len: number) => {
+      const buf = Buffer.alloc(len);
+      return buf.subarray(0, fs.readSync(fd!, buf, 0, len, at));
+    };
+    const first = hit?.first ?? (scanLines(read(0, Math.min(HEAD_BYTES, st.size))).ts[0] ?? null);
+    const tailAt = Math.max(0, st.size - TAIL_BYTES);
+    const tail = scanLines(read(tailAt, st.size - tailAt));
+    const out: Measured = {
+      size: st.size,
+      mtime: st.mtimeMs,
+      first,
+      // A tail that is one huge tool result names no time: the write time stands in.
+      last: tail.ts.length ? Math.max(...tail.ts) : hit?.last ?? Math.round(st.mtimeMs),
+      model: tail.model ?? hit?.model ?? null,
+    };
+    measured.set(f, out);
+    return out;
+  } catch {
+    return hit ?? null;
+  } finally {
+    if (fd != null) fs.closeSync(fd);
   }
 }
 
@@ -261,6 +329,14 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
   );
   const tasksQ = db.prepare("SELECT status, COUNT(*) AS n FROM tasks WHERE session IN (?, ?) GROUP BY status");
   const permits = readPermits(now);
+  const projects = new Map(
+    live.flatMap((s) => {
+      const p = projectOf(s.cwd, now);
+      return p ? [[p.root, p] as const] : [];
+    }),
+  );
+  // Tasks come from the project boards (cards a room moved on / holds); the HQ task journal only when no board is readable.
+  const boards = await projectBoards([...projects.values()]).catch(() => [] as ProjectBoard[]);
   const rooms: Room[] = live.map((s) => {
     const sid = s.session_id ?? (SAFE_ID.test(s.name) && !s.name.startsWith("hq-") ? s.name : null);
     const f =
@@ -272,15 +348,32 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       (a) => a.ended_at != null || now - a.started_at < 6 * 3600_000,
     );
     const counts = tasksQ.all(s.name, sid ?? s.name) as { status: string; n: number }[];
-    const done = counts.filter((c) => c.status === "done").reduce((a, c) => a + Number(c.n), 0);
-    const open = counts.filter((c) => c.status !== "done").reduce((a, c) => a + Number(c.n), 0);
-    const usage = readUsage(sid);
+    const journal = {
+      done: counts.filter((c) => c.status === "done").reduce((a, c) => a + Number(c.n), 0),
+      open: counts.filter((c) => c.status !== "done").reduce((a, c) => a + Number(c.n), 0),
+    };
+    const label = sessionLabel(s);
+    const tasks = boardTasks({ label, cwd: s.cwd, started_at: s.started_at }, boards) ?? journal;
+    // The status-line snapshot (cost, lines) when the room writes one; model and time from its transcript otherwise.
+    const snap = readUsage(sid);
+    const tr = s.engine === "omp" ? null : readTranscriptStats(sid, s.cwd);
+    const usage: Usage | null =
+      snap || tr
+        ? {
+            cost_usd: snap?.cost_usd ?? null,
+            duration_ms: snap?.duration_ms ?? (tr?.first != null && tr.last != null ? Math.max(0, tr.last - tr.first) : null),
+            lines_added: snap?.lines_added ?? null,
+            lines_removed: snap?.lines_removed ?? null,
+            context_pct: snap?.context_pct ?? null,
+            model: snap?.model ?? tr?.model ?? null,
+          }
+        : null;
     const busy = s.status === "running" || s.status === "needs_input";
     return {
       key: s.name,
       name: s.name,
       session_id: sid,
-      label: sessionLabel(s),
+      label,
       status: s.status,
       waiting: (s as SessionView & { waiting?: string | null }).waiting ?? null,
       ask: s.status === "needs_input" && sid ? readAsk(sid, s.cwd) : null,
@@ -296,8 +389,8 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       tokens: f?.tokens ?? null,
       model: usage?.model ?? s.model ?? null,
       usage,
-      tasks: { done, open },
-      cost_per_task: costPerTask(usage?.cost_usd, done),
+      tasks,
+      cost_per_task: costPerTask(usage?.cost_usd, tasks.done),
       seats: seatsFor(agents, busy, now),
       role: s.role ?? null,
       team: teamOf(sid),
@@ -309,11 +402,10 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
   const recent = db
     .prepare("SELECT kind, ts, session, from_, to_, text FROM messages WHERE kind = 'session_message' AND ts > ? ORDER BY id DESC LIMIT 50")
     .all(now - 120_000) as { kind: string; ts: number; session: string | null; from_: string | null; to_: string | null; text: string | null }[];
-  const roots = new Map(rooms.flatMap((r) => (r.project ? [[r.project.root, r.project] as const] : [])));
   return {
     rooms,
     visits: visitsFrom(recent, refs, now),
-    loops: readLoops([...roots.values()]),
+    loops: readLoops([...projects.values()]),
     idle: readIdleStatus(),
     meetings: loadMeetings(rooms, now),
     limits: readLimits(),

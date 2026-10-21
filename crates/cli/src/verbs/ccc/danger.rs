@@ -215,7 +215,7 @@ fn split_unquoted(s: &str) -> Vec<String> {
 /// A `rm -rf ~` inside such a note is text, not a command. Anything else (a pipe, a list, a
 /// substitution, `bash`, `python -`, `ssh`, `eval`, a quote the scan cannot close) keeps its
 /// body in the raw text.
-fn without_data_heredocs(cmd: &str) -> String {
+pub(super) fn without_data_heredocs(cmd: &str) -> String {
     // `$'…'` / `$"…"` (ANSI-C / locale quoting) and CR line ends are not modelled by `scan_line`:
     // keep the raw text so the backstop scans everything.
     if !cmd.contains("<<") || cmd.contains("$'") || cmd.contains("$\"") || cmd.contains('\r') {

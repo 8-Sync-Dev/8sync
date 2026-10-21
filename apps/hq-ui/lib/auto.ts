@@ -87,14 +87,14 @@ export function shouldAutoStart(s: AutoState, started = false): boolean {
 /** 8sync has no `auto` verb (older binary) vs. any other failure (401, timeout, …). */
 const noVerb = (e: string) => /không rõ|unknown|usage:|ENOENT|not found/i.test(e);
 
-export function autoText(s: AutoState): string {
+export function autoText(s: AutoState, now = Date.now()): string {
   if (s.error) return noVerb(s.error) ? "8sync chưa có lệnh auto — chạy 8sync up" : `Không đọc được trạng thái auto: ${s.error}`;
   if (s.paused) return "Tạm dừng (owner)";
   if (s.on) {
     const t = leaseMs(s.lease_until);
     if (s.gate) {
       if (s.lease_rest?.kind === "usage") return restText(s.lease_rest);
-      return t && t < Date.now() ? "Lease hết hạn — bấm Chạy liên tục để gia hạn" : `Đang nghỉ: ${s.gate}`;
+      return t && t < now ? "Lease hết hạn — bấm Chạy liên tục để gia hạn" : `Đang nghỉ: ${s.gate}`;
     }
     // GitHub stopped running jobs for the account: the owner has to fix billing; rooms already gate locally.
     // `local`: the owner moved CI/CD to the release machine (`8sync ccc auto ci local`).

@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.28] — 2026-10-21
+
+### Fixed
+- **Phòng không còn ngủ chờ lệnh.** Owner 2026-10-21: "1 room quá yếu kém". dev2 trên zus/ide mất 2 giờ 45 phút cho card #12 (một việc verify): `encore test` treo vì daemon Encore chết, Claude Code đẩy lệnh ra nền, rồi phòng `sleep 1200`, `sleep 900`… ngủ 15–20 phút mỗi lượt để chờ. Guard (`8sync ccc hook guard`) giờ chặn lệnh ngủ tổng ≥ 120 giây (`sleep 900`, `sleep 15m`, `Start-Sleep -Seconds 600`, `timeout /t 300`) kèm lời dặn: lệnh nền Claude Code tự báo khi xong — kết thúc lượt; chờ card/tin nhắn dùng `8sync ccc auto wait`. Lời dặn không vào `/goal` được (lead đã 3.999/4.000 ký tự).
+- **Dọn đĩa: phòng chờ card không giữ thư mục nữa.** dev-ide đứng "Chờ card" 13 giờ trong worktree card-15 và giữ `target` 44 GB khỏi mọi lượt dọn ("đang có phòng hoặc tiến trình dùng"). Thư mục của phòng chỉ tính là đang dùng khi phòng đang trong một lượt (`running`); build phòng khởi chạy sau đó hiện ra là tiến trình.
+- **Báo cáo đo thật cho mọi phòng.** 22/23 phòng hiện "chưa đo": số liệu chỉ đọc từ snapshot status line (`~/.local/state/8sync/hq/usage/<sid>.json`) mà chỉ dev-ide ghi; task đếm từ journal TaskCreate mà phòng team không dùng. Giờ model + thời gian đọc từ transcript (đầu 64 KB một lần, đuôi ≤ 256 KB khi file đổi, cache theo size/mtime; lần 2 28 ms), task xong/mở lấy từ board (thẻ phòng đã chuyển sang QA/Review/Approved, thẻ đang giữ); board đọc 1 lần/3 giây cho cả office và /api/board. Chi phí vẫn "chưa đo" khi không có snapshot (repo không có bảng giá).
+- Test `lease-pin` (v0.110.27) đỏ từ 17:00 21/10 trên mọi nhánh: mốc `lease_until` cố định 10:00Z so với giờ thật. `autoText` nhận `now` (mặc định `Date.now()`), test truyền mốc.
+
 ## [0.110.27] — 2026-10-21
 ### Added
 - **Ghim dự án** (owner: "nút ghim dự án quan trọng cần lease tập trung vào đó; nút thêm vào sidebar"): nút ghim trên mọi dự án ở sidebar, kể cả thư mục chưa có phòng (`8sync ccc auto pin|unpin|pins`); dự án ghim nằm đầu sidebar dưới "Ghim". Usage chặt (5 giờ ≥ 70% hoặc 7 ngày ≥ 80%): chỉ dự án ghim chạy và nhận card; usage thoáng: mọi dự án chạy, dự án ghim mở trước.

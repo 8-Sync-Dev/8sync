@@ -59,7 +59,8 @@ describe("lease liên tục text", () => {
     expect(leaseText({ ...on, lease_auto: true, subscription: true, lease_rest: rest })).toBe(restText(rest));
     // The bar's main line names the window too, not the raw gate sentence.
     expect(autoText({ ...on, gate: "chạm trần gói subscription", lease_rest: rest })).toBe(restText(rest));
-    expect(autoText({ ...on, gate: "chạm trần $5.00/giờ", lease_rest: { kind: "budget", text: "chạm trần $5.00/giờ" } })).toBe("Đang nghỉ: chạm trần $5.00/giờ");
+    expect(autoText({ ...on, gate: "chạm trần $5.00/giờ", lease_rest: { kind: "budget", text: "chạm trần $5.00/giờ" } }, NOW)).toBe("Đang nghỉ: chạm trần $5.00/giờ");
+    expect(autoText({ ...on, gate: "chạm trần $5.00/giờ" }, NOW + 2 * 3600_000)).toBe("Lease hết hạn — bấm Chạy liên tục để gia hạn");
   });
 });
 

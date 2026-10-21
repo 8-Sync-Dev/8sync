@@ -126,9 +126,10 @@ export function ReportView({ data: { office, error, retry }, onOpen }: { data: O
             )}
 
             <p className="max-w-[70ch] text-xs text-muted-foreground">
-              Nguồn: chi phí, thời gian và số dòng là con số Claude Code đưa cho status line của 8sync (lưu ở{" "}
-              <code className="font-mono">~/.local/state/8sync/hq/usage</code>); context từ <code className="font-mono">8sync ls</code>; task
-              từ journal HQ. Phòng chưa chạy status line mới ghi &quot;chưa đo&quot;, không ước lượng. $/task chỉ tính trên phòng đã đo chi phí.
+              Nguồn: chi phí và số dòng là con số Claude Code đưa cho status line của 8sync (lưu ở{" "}
+              <code className="font-mono">~/.local/state/8sync/hq/usage</code>); model và thời gian đọc từ transcript của phòng khi chưa có
+              status line; context từ <code className="font-mono">8sync ls</code>; task xong = thẻ phòng đã chuyển sang QA/Review/Approved trên
+              board, task mở = thẻ đang giữ. Chưa có số thật thì ghi &quot;chưa đo&quot;, không ước lượng. $/task chỉ tính trên phòng đã đo chi phí.
               Trong terminal: <code className="font-mono">8sync ccc . report</code>.
             </p>
           </>
