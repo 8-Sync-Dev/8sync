@@ -225,6 +225,24 @@ fn path_ok(cwd: &Path, p: &str, write: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// An `EnterWorktree` path a room may take alone: one folder directly under its repo's
+/// `.claude/worktrees/` (the repo of `cwd`, a worktree resolving to its repo), no `..`, plain name.
+fn worktree_ok(cwd: &Path, p: &str) -> Result<(), String> {
+    let repo = crate::verbs::here::repo_of(cwd).ok_or_else(|| format!("không tìm thấy repo của phòng ({p})"))?;
+    // Both sides resolved the same way (deepest existing part canonicalized): macOS /var is
+    // /private/var and a Windows temp root may be an 8.3 short name (CI: RUNNER~1).
+    let real = |x: &Path| x.ancestors().find_map(|a| std::fs::canonicalize(a).ok().map(|c| c.join(x.strip_prefix(a).unwrap_or(Path::new(""))))).unwrap_or_else(|| x.to_path_buf());
+    let base = norm(&real(&repo.join(".claude").join("worktrees")).to_string_lossy());
+    let abs = if Path::new(p).is_absolute() { PathBuf::from(p) } else { cwd.join(p) };
+    let a = norm(&real(&abs).to_string_lossy());
+    let name = a.strip_prefix(&format!("{base}/")).unwrap_or_default();
+    let plain = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) && !name.starts_with('.');
+    if p.contains("..") || !plain {
+        return Err(format!("worktree ngoài .claude/worktrees của repo ({p})"));
+    }
+    Ok(())
+}
+
 /// A page a room may read alone: https to a named public host (letters-only top label, so no IP in
 /// any spelling, no trailing dot), no query, credentials, backslash or port, a short path.
 /// Not closed: a path can still carry a little data out (CHANGELOG says so).
@@ -269,6 +287,14 @@ pub(super) fn may_proceed(input: &Value) -> Result<(), String> {
         "Bash" | "PowerShell" => shell_ok(ti["command"].as_str().unwrap_or_default())?,
         "WebFetch" => url_ok(ti["url"].as_str().unwrap_or_default())?,
         _ => {}
+    }
+    // A room in one card's worktree moving to another card's worktree of the same repo: the target
+    // sits under `<repo>/.claude/worktrees/`, outside the current worktree, which the file rule below
+    // would refuse (seen live 2026-10-18: dev in card-31 entering card-58 waited on the owner).
+    if tool == "EnterWorktree" {
+        if let Some(p) = ti["path"].as_str() {
+            return worktree_ok(cwd, p);
+        }
     }
     let write = matches!(tool, "Edit" | "Write" | "MultiEdit" | "NotebookEdit");
     for key in ["file_path", "notebook_path", "path"] {
@@ -680,5 +706,21 @@ mod tests {
         let input = json!({ "session_id": "../../etc", "tool_name": "Bash", "tool_input": {}, "cwd": "/tmp" });
         assert!(wait_for_owner(&d, &input, 1, &mut now, &mut sleep).is_none());
         assert!(!d.exists());
+    }
+
+    #[test]
+    fn a_room_may_move_to_another_card_worktree_of_its_repo_and_nowhere_else() {
+        // Seen live 2026-10-18: dev in card-31 entering card-58 waited on the owner.
+        let r = repo("wt-move");
+        let here = r.join(".claude/worktrees/card-31");
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::write(here.join(".git"), "gitdir: x").unwrap();
+        let go = |p: String| may_proceed(&req(&here, "EnterWorktree", json!({ "path": p })));
+        assert!(go(r.join(".claude/worktrees/card-58").to_string_lossy().into_owned()).is_ok());
+        assert!(go(r.join("src").to_string_lossy().into_owned()).is_err(), "not a worktree folder");
+        assert!(go(r.join(".claude/worktrees/card-58/../../../x").to_string_lossy().into_owned()).is_err());
+        assert!(go(r.join(".claude/worktrees/a/b").to_string_lossy().into_owned()).is_err(), "one level only");
+        assert!(go(r.parent().unwrap().join("other/.claude/worktrees/card-1").to_string_lossy().into_owned()).is_err(), "another repo");
+        assert!(may_proceed(&req(&here, "EnterWorktree", json!({ "name": "card-59" }))).is_ok(), "a name stays allowed");
     }
 }
