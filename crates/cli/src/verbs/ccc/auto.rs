@@ -56,6 +56,7 @@ const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30
        8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>|--mail] [--timeout <giây ≤1800>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
        8sync ccc auto merge [--as <phòng>] [--json]   (lead: merge mọi card approved; cần quyền tự merge của owner)
        8sync ccc auto guard [<30..95>|off] [cpu <30..95>] [cap <10..90>|off] [eco on|off] [--dry-run] [--json]   (tự dọn máy khi RAM ≥ ngưỡng (mặc định 60%) hoặc CPU ≥ ngưỡng CPU (mặc định 55%); cap: phòng + daemon Claude Code chỉ chạy trên N luồng CPU cao nhất, mặc định 37%, tự siết nửa khi CPU vượt ngưỡng; eco: phòng chạy chế độ tiết kiệm điện, mặc định bật)
+       8sync ccc auto loop on [trọng tâm] | off | status [--json]   (vòng auto-ship: lead nhận brief vòng kế khi board cạn, ≥ 20 phút một vòng; bật/tắt chỉ owner)
        8sync ccc auto guard now   (một lượt bảo vệ ngay cho mọi dự án đang auto; HQ tự gọi khi RAM/CPU vượt ngưỡng)
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
 pub(super) const DEFAULT_AFTER_S: u64 = 60;
@@ -679,6 +680,8 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         "omp_model": m.as_ref().and_then(|m| m["omp_model"].as_str()),
         "omp_blocked": omp_blocked(home),
         "guard": super::pressure::status_json(home, guard_pct(home)),
+        // `auto loop` per project root (HQ "Auto-ship: vòng N" chip, [`super::ship_loop::view`]).
+        "ship_loops": super::ship_loop::view(home, gate.is_some() || cap.is_some(), now),
     })
 }
 
@@ -1105,7 +1108,7 @@ fn rush(home: &Path, root: &Path, rooms: &[(String, String)], t: &target::Target
 /// The owner's own terminal (or HQ, which drops the room env: apps/hq-ui lib/server/child-env.ts):
 /// no room named (`--as`) and no room env at all. A room in a worktree that forgot `--as`, an omp
 /// room, or a room whose forked id is not rebound yet is not the owner.
-fn owner(who: Option<&str>, env: impl Fn(&str) -> Option<String>) -> bool {
+pub(super) fn owner(who: Option<&str>, env: impl Fn(&str) -> Option<String>) -> bool {
     who.is_none() && ["CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID"].iter().all(|k| env(k).map_or(true, |s| s.trim().is_empty()))
 }
 
@@ -1978,6 +1981,9 @@ pub(super) fn run(
         }
         Ok(())
     };
+    if rest.first().map(String::as_str) == Some("loop") {
+        return super::ship_loop::run(&rest[1..], home, root, owner(None, |k| std::env::var(k).ok()), now);
+    }
     if let Some(verb @ ("add" | "queue" | "done" | "drop" | "reopen" | "claim" | "move" | "prio" | "note" | "board" | "lint")) = rest.first().map(String::as_str) {
         let live = || super::ensure_claude(true).map(|exe| super::team::live_names(&super::team::Bin { exe, root }, root)).unwrap_or_default();
         return run_target(verb, &rest[1..], home, root, rooms, live, now);
@@ -2751,6 +2757,7 @@ mod tests {
                 "repos",
                 "schema",
                 "seven_day_pct",
+                "ship_loops",
                 "subscription",
                 "team_roots",
                 "teams"

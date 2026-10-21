@@ -880,7 +880,8 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     if !auto::running(t.home) || !auto::in_scope(t.home, Some(&root)) {
         return Ok(rows);
     }
-    let gated = !auto::status(t.home, t.subscription, now)["gate"].is_null();
+    let st = auto::status(t.home, t.subscription, now);
+    let gated = !st["gate"].is_null();
     // The resource guard ([`super::pressure`]): cleans, warns rooms, pauses rooms that do not fit
     // (also while gated) and leaves the rooms to restart lean for the loop below.
     if !cfg!(test) {
@@ -892,6 +893,12 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     }
     let restarts = super::pressure::restarts(t.home, t.root);
     let paused = super::pressure::paused(t.home, t.root);
+    // The auto-ship loop ([`super::ship_loop::tick`]): the lead gets the next round once the board
+    // drained; it waits (never ends) while the $/hour cap rests or the guard holds the project.
+    let registry: Vec<(String, String)> = t.store.load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
+    if let Some(line) = super::ship_loop::tick(t.home, t.root, &registry, !st["cap"].is_null(), super::pressure::holds(t.home, t.root), now) {
+        rows.push(Row { name: "lead".into(), role: room::role("lead").0, model: String::new(), state: line, short: String::new() });
+    }
     let all = agents(t, true)?;
     let running = agents(t, false)?;
     let listed_at = std::time::Instant::now();

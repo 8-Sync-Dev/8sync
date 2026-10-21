@@ -10,10 +10,12 @@ import { FILE_MAX_MB, FILES_MAX, fileError, toBase64 } from "@/lib/attach";
 import { ALL_PROJECTS, broadcastProjects, broadcastSummary, choiceValid, isSendKey, resolveChoice, resultLine, sendOutcome, type BroadcastResult } from "@/lib/broadcast";
 import { inboxText } from "@/lib/labels";
 import { leadOf, parseTarget, roomGroups, suggestion, targetValue, type SendTarget } from "@/lib/room-send";
+import { parseSlash, slashSend, type SlashRoom } from "@/lib/slash";
 import { groupKey } from "@/lib/sidebar";
 import type { Message } from "./types";
 import { cn } from "@/lib/utils";
 import { MentionTextarea } from "./mention-textarea";
+import { shipLoopsChanged } from "./ship-loop-chip";
 import { ApiError, type Api } from "./use-hq";
 import type { Room } from "./use-office";
 
@@ -83,16 +85,23 @@ export function RoomSend({
   // The owner's pick while it still exists; else the preferred room; else every room of the project in scope.
   // A pick whose room or project went away is forgotten, so it never snaps back unseen.
   if (picked && !valid(picked)) setPicked(null);
-  const target: SendTarget = valid(picked) ? picked : byKey(preferRoom) ? { kind: "room", key: preferRoom! } : { kind: "all", root: resolveChoice(null, projects, preferRoot) };
-  const room = target.kind === "room" ? byKey(target.key) : null;
-  const group = room
-    ? groups.find((g) => g.rooms.includes(room))
+  const chosen: SendTarget = valid(picked) ? picked : byKey(preferRoom) ? { kind: "room", key: preferRoom! } : { kind: "all", root: resolveChoice(null, projects, preferRoot) };
+  const chosenRoom = chosen.kind === "room" ? byKey(chosen.key) : null;
+  // The project in view: its rooms are what "/" offers, its lead takes the /hq-* presets.
+  const group = chosenRoom
+    ? groups.find((g) => g.rooms.includes(chosenRoom))
     : groups.find((g) => {
-        const want = target.kind === "all" && target.root !== ALL_PROJECTS ? target.root : preferRoot;
+        const want = chosen.kind === "all" && chosen.root !== ALL_PROJECTS ? chosen.root : preferRoot;
         return want != null && groupKey(g.root) === groupKey(want);
       }) ?? null;
+  const slashRooms: SlashRoom[] = useMemo(() => (group?.rooms ?? []).map((r) => ({ key: r.key, name: r.name, label: r.label })), [group]);
+  // A "/…" command overrides the target for this send only (lib/slash.ts).
+  const slash = parseSlash(text, slashRooms);
+  const plan = slashSend(slash, { target: chosen, root: group?.root ?? null, lead: group ? leadOf(group.rooms) : null });
+  const target: SendTarget = plan.ok ? plan.target : chosen;
+  const room = target.kind === "room" ? byKey(target.key) : null;
   const sug = group ? suggestion(group.rooms) : null;
-  const showSug = sug && !(room && room.key === sug.room);
+  const showSug = sug && !(room && room.key === sug.room) && slash.kind === "none";
   const allRoot = target.kind === "all" ? target.root : null;
   const total = room ? 1 : (allRoot === ALL_PROJECTS ? projects : projects.filter((p) => p.root === allRoot)).reduce((n, p) => n + p.rooms.length, 0);
   const disabled = total === 0;
@@ -134,13 +143,30 @@ export function RoomSend({
     area.current?.focus();
   }
 
+  /** `/hq-auto-ship` / `/hq-stop`: the project's loop (POST /api/auto/loop → `8sync ccc auto loop on|off`); its result line. */
+  async function switchLoop(l: { on: boolean; root: string; focus: string | null }): Promise<{ ok: boolean; text: string }> {
+    try {
+      const r = await api<{ line: string }>("/api/auto/loop", { method: "POST", body: l });
+      shipLoopsChanged();
+      return { ok: true, text: r.line };
+    } catch (e) {
+      return { ok: false, text: `Auto-ship: chưa ${l.on ? "bật" : "tắt"} được (${(e as Error).message})` };
+    }
+  }
+
   async function send() {
-    const typed = text.trim();
+    if (!plan.ok) {
+      setLast([{ ok: false, text: plan.error }]);
+      toast.error(plan.error);
+      return;
+    }
+    const typed = plan.text.trim();
     if ((!typed && !allowEmpty) || disabled || busy || uploading > 0) return;
     setBusy(true);
     try {
       const made = prepare ? await prepare(typed) : { text: typed, files: [] };
       const ids = [...files, ...made.files].map((f) => f.id);
+      const loop = plan.loop;
       if (room) {
         const r = await api<{ message: Message; delivery: string; live?: boolean; error: string | null }>("/api/messages", {
           method: "POST",
@@ -153,7 +179,7 @@ export function RoomSend({
           return;
         }
         const how = r.delivery === "inbox" ? inboxText(r.live) : "đã gõ vào terminal";
-        setLast([{ ok: true, text: `${room.label}: ${how}` }]);
+        setLast([{ ok: true, text: `${room.label}: ${how}` }, ...(loop ? [await switchLoop(loop)] : [])]);
         toast.success(`Đã gửi cho ${room.label}`);
         done();
         return;
@@ -162,8 +188,9 @@ export function RoomSend({
         method: "POST",
         body: { text: made.text, now, check: showCheck ? check.trim() || null : null, root: allRoot, files: ids },
       });
-      setLast(r.results.map((x) => ({ ok: x.ok, text: resultLine(x, now) })));
+      const lines = r.results.map((x) => ({ ok: x.ok, text: resultLine(x, now) }));
       const out = sendOutcome(r.results);
+      setLast(out.clear && loop ? [...lines, await switchLoop(loop)] : lines);
       if (out.clear) {
         toast.success(now ? `Đã gửi việc cho ${out.sent} phòng` : "Việc đã vào hàng đích");
         done();
@@ -188,6 +215,14 @@ export function RoomSend({
   const summary = room
     ? `Chỉ ${room.label}${group ? ` (${group.name})` : ""} nhận, ${room.delivery === "inbox" ? inboxText(room.inboxLive) : "gõ thẳng vào terminal của phòng"}.${room.waiting ? " Phòng đang chờ anh trả lời, trả lời trước rồi gửi." : ""}`
     : broadcastSummary(allRoot ?? "", projects, now);
+  // What the "/…" command resolved to, before sending (or why it cannot be sent).
+  const slashNote = !plan.ok
+    ? plan.error
+    : slash.kind === "preset"
+      ? `/${slash.preset.cmd} → ${room ? room.label : "mọi phòng"}: gửi brief [HQ /${slash.preset.cmd}]${slash.preset.loop === "on" ? " và bật vòng auto-ship (8sync gửi lead vòng kế khi board cạn)" : slash.preset.loop === "off" ? " và tắt vòng auto-ship" : ""}.`
+      : slash.kind === "all" || slash.kind === "room"
+        ? `/${slash.kind === "all" ? "all" : slash.room.label}: chỉ cho lần gửi này.`
+        : null;
   const titleId = `${id}-title`;
   const allTotal = projects.reduce((n, p) => n + p.rooms.length, 0);
 
@@ -228,12 +263,13 @@ export function RoomSend({
           onValueChange={setText}
           base={room ? room.cwd : allRoot && allRoot !== ALL_PROJECTS ? allRoot : null}
           api={api}
+          slashRooms={slashRooms}
           onKeyDown={onKey}
           onPaste={onPaste}
           disabled={disabled}
           rows={2}
           maxLength={2000}
-          aria-describedby={`${id}-summary`}
+          aria-describedby={slashNote ? `${id}-slash ${id}-summary` : `${id}-summary`}
           placeholder={placeholder}
           className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
@@ -369,6 +405,11 @@ export function RoomSend({
           </Button>
         </div>
       </div>
+      {slashNote && (
+        <p id={`${id}-slash`} role={plan.ok ? undefined : "alert"} className={cn("mt-1.5 text-xs font-medium", plan.ok ? "text-foreground" : "text-destructive")}>
+          {slashNote}
+        </p>
+      )}
       {/* Phones: two lines; screen readers still get it whole (aria-describedby). */}
       <p id={`${id}-summary`} className="mt-1.5 text-xs text-muted-foreground max-sm:line-clamp-2">
         {summary}

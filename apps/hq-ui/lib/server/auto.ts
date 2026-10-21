@@ -25,6 +25,8 @@ export type AutoStatus = {
   omp_error?: string;
   /** The ccc auto resource guard (`guard` in status JSON); null when absent/invalid (older 8sync). */
   guard?: Guard | null;
+  /** `auto loop` per project root (`{round, focus, since, last}`); read via lib/slash.ts shipLoops. */
+  ship_loops?: unknown;
 };
 
 export const AUTO_ACTIONS = ["on", "pause", "omp-on", "omp-off"] as const;
@@ -78,4 +80,17 @@ export async function autoSet(action: AutoAction, root?: string): Promise<AutoSt
   if (!r.ok && action.startsWith("omp-")) st.omp_error = err;
   else if (!r.ok && !st.error) st.error = err;
   return st;
+}
+
+/**
+ * `/hq-auto-ship` / `/hq-stop` (lib/slash.ts): `8sync ccc auto loop on [-- <trọng tâm>] | off` in a
+ * project root the route checked; the focus is one argv word after `--`, never shell text.
+ * Refreshes the status cache so the "Auto-ship: vòng N" chip shows at the next poll.
+ */
+export async function loopSet(root: string, on: boolean, focus: string | null): Promise<{ ok: boolean; line: string; error: string | null }> {
+  const argv = ["ccc", "auto", "loop", on ? "on" : "off", "--json", ...(on && focus ? ["--", focus] : [])];
+  const r = await run("8sync", argv, TIMEOUT_MS, root);
+  await autoStatus();
+  if (!r.ok) return { ok: false, line: "", error: (r.stderr.trim().replace(/^Error:\s*/, "") || "8sync ccc auto loop thất bại (cần 8sync có `auto loop`)").slice(0, 300) };
+  return { ok: true, line: on ? "Auto-ship: BẬT — 8sync gửi lead vòng kế khi board cạn (≥ 20 phút một vòng)" : "Auto-ship: TẮT — các card đang làm vẫn xong theo luồng thường", error: null };
 }
