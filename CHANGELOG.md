@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.31] — 2026-10-21
+
+### Fixed
+- **Guard: app của owner không còn làm cả team đứng.** Owner 2026-10-21 ("treo 1 ngày", "sao toàn bị vượt"): app của owner chiếm 52% RAM (32 GB/61,6 GB) so với ngưỡng 60%, phòng chỉ 6 GB; mỗi lần RAM vượt (gitleaks của gate /sec, xem 0.110.30), L3 tạm dừng thêm vài phòng (platform: 11/15 phòng dừng, trả card #113 #114 #115 #49) và phòng chỉ được mở lại khi *máy* xuống dưới ngưỡng — không bao giờ, vì app của owner đã trên ngưỡng. Giờ cả team luôn được giữ **10% máy** (RAM và CPU, `ROOMS_FLOOR_PCT`) chừng nào máy dưới **92%** (`HARD_PCT`): `keep_count` chỉ dừng phần phòng dùng *trên* sàn (app owner là phần vượt thì không dừng ai), `room_fits` mở lại phòng khi team + 1 phòng còn trong sàn và máy dưới 92%; chờ yên **3 phút** thay vì 10 (11 phòng về trong ~35 phút thay vì ~2 giờ; chống rung đã có L3 cần ngưỡng + 15). Dòng L3/mở lại ghi rõ luật mới. Test: 24 pressure.
+
 ## [0.110.30] — 2026-10-21
 
 ### Fixed
