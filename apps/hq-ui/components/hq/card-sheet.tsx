@@ -1,12 +1,12 @@
 "use client";
 
-import { ChevronsDownIcon, ChevronsUpIcon, CopyIcon, ExternalLinkIcon, FlameIcon, GitPullRequestIcon, TagIcon, Undo2Icon, ZapIcon } from "lucide-react";
+import { ChevronsDownIcon, ChevronsUpIcon, CopyIcon, ExternalLinkIcon, FlameIcon, GitMergeIcon, GitPullRequestIcon, TagIcon, Undo2Icon, ZapIcon } from "lucide-react";
 import { useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cardParts, prRef, type CardTag } from "@/lib/card-tags";
-import { LANES, claimStale, type Card, type LaneKey } from "@/lib/lanes";
+import { LANES, claimStale, type Card, type Closed, type LaneKey, type Step } from "@/lib/lanes";
 import { agoVi, roomRole } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import { RoleIcon } from "./role-badge";
@@ -349,30 +349,187 @@ export function CardDetail({ c, now, next, onPrio, onForce }: { c: Card; now: nu
         </div>
       </dl>
 
-      {(c.history?.length ?? 0) > 1 && (
-        <section aria-labelledby={`hist-${c.id}`} className="space-y-2">
-          <h3 id={`hist-${c.id}`} className="text-xs font-medium text-muted-foreground">
-            Lịch sử <span className="font-normal">(mới nhất trước, board giữ 12 ghi chú gần nhất)</span>
-          </h3>
-          <ol className="space-y-1.5 text-sm">
-            {[...c.history!].reverse().map((h, i) => (
-              <li key={i} className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-2">
-                <span className="text-xs text-muted-foreground tabular">{h.at > 0 ? agoVi(h.at, now) : ""}</span>
-                <span className="min-w-0 text-pretty">
-                  {h.to && (
-                    <span style={laneTone(h.to)} className={cn("mr-1 font-medium", TONE_INK)}>
-                      {LANE_VI[h.from!]} → {LANE_VI[h.to]}
-                    </span>
-                  )}
-                  {h.room && <span className="font-medium">{h.room}: </span>}
-                  <span className={cn(h.to && "text-muted-foreground")}>{h.to ? h.text.replace(/^\s*[a-z]+\s*(?:→|->)\s*[a-z]+\s*:?\s*/, "") : h.text}</span>
-                </span>
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
+      {(c.history?.length ?? 0) > 1 && <History id={c.id} steps={c.history!} now={now} />}
     </div>
+  );
+}
+
+/** A card's notes, newest first, lane moves in the lane's tone. Shared by the open-card and Done sheets. */
+function History({ id, steps, now }: { id: number; steps: Step[]; now: number }) {
+  return (
+    <section aria-labelledby={`hist-${id}`} className="space-y-2">
+      <h3 id={`hist-${id}`} className="text-xs font-medium text-muted-foreground">
+        Lịch sử <span className="font-normal">(mới nhất trước, board giữ 12 ghi chú gần nhất)</span>
+      </h3>
+      <ol className="space-y-1.5 text-sm">
+        {[...steps].reverse().map((h, i) => (
+          <li key={i} className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-2">
+            <span className="text-xs text-muted-foreground tabular">{h.at > 0 ? agoVi(h.at, now) : ""}</span>
+            <span className="min-w-0 text-pretty">
+              {h.to && (
+                <span style={laneTone(h.to)} className={cn("mr-1 font-medium", TONE_INK)}>
+                  {LANE_VI[h.from!]} → {LANE_VI[h.to]}
+                </span>
+              )}
+              {h.room && <span className="font-medium">{h.room}: </span>}
+              <span className={cn(h.to && "text-muted-foreground")}>{h.to ? h.text.replace(/^\s*[a-z]+\s*(?:→|->)\s*[a-z]+\s*:?\s*/, "") : h.text}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+/** `merged zus-backend#8 @abc1234` / `v1.7.3` / a GitHub URL inside the evidence `auto done` recorded: shown as release facts, not just a line of text. */
+export function evidenceFacts(evidence: string): { merged: string | null; tag: string | null; links: string[] } {
+  const merged = /\bmerged\s+((?:[\w.-]+(?:\/[\w.-]+)?)?#\d+)(?:\s*@\s*([0-9a-f]{7,40}))?/i.exec(evidence);
+  const tag = /\bv\d+\.\d+\.\d+(?:[-.][\w.]+)?\b/.exec(evidence);
+  const links = Array.from(evidence.matchAll(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|releases\/tag|actions\/runs|commit)\/[\w.%-]+/g), (m) => m[0]);
+  return { merged: merged ? `${merged[1]}${merged[2] ? ` @${merged[2].slice(0, 12)}` : ""}` : null, tag: tag ? tag[0] : null, links: [...new Set(links)] };
+}
+
+/**
+ * The Done column's sheet (owner 2026-10-21: "có sheet để xem chi tiết … public rồi release thì sheet
+ * tổng hợp hiển thị"): what the card closed with, its PR and approved SHA, the evidence `auto done`
+ * took (merge, tag, links pulled out), the check, and the whole note history.
+ */
+export function ClosedSheet({ c, open, now, onClose }: { c: Closed | null; open: boolean; now: number; onClose: () => void }) {
+  const title = c ? cardParts(c.text).title : "";
+  const tags = c ? cardParts(c.text).tags : [];
+  const pr = c?.pr ? prRef(c.pr) : null;
+  const facts = c?.evidence ? evidenceFacts(c.evidence) : null;
+  const dropped = c?.state === "dropped";
+  const row = "grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-3 py-2.5";
+  return (
+    <Sheet open={open && c != null} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="right" className="w-full gap-0 overflow-y-auto sm:max-w-md">
+        <SheetHeader className="pr-12">
+          <SheetTitle className="text-base leading-snug font-semibold text-pretty">
+            <span className="mr-1.5 font-mono text-sm font-normal text-muted-foreground">#{c?.id}</span>
+            {title}
+          </SheetTitle>
+          <SheetDescription className="sr-only">Chi tiết card đã {dropped ? "bỏ" : "xong"}</SheetDescription>
+        </SheetHeader>
+        {c && (
+          <div className="space-y-5 px-4 pb-6">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={cn(CHIP, dropped ? "bg-muted text-muted-foreground" : "bg-[color-mix(in_oklch,var(--st-running)_16%,transparent)] text-[color-mix(in_oklch,var(--st-running),black_30%)] dark:text-st-running")}>
+                <span aria-hidden className={cn("size-1.5 rounded-full", dropped ? "bg-muted-foreground" : "bg-st-running")} />
+                {dropped ? "Bỏ" : "Xong"}
+              </span>
+              {c.lane && (
+                <span style={laneTone(c.lane)} className={cn(CHIP, "bg-[color-mix(in_oklch,var(--tone)_14%,transparent)]", TONE_INK)}>
+                  từ {LANE_VI[c.lane]}
+                </span>
+              )}
+              {c.label && <LabelChip label={c.label} />}
+              <TagChips tags={tags} />
+            </div>
+
+            {title !== c.text.trim() && (
+              <div className="space-y-1">
+                <h3 className="text-xs font-medium text-muted-foreground">Toàn văn</h3>
+                <p className="text-sm leading-relaxed whitespace-pre-wrap text-pretty">{c.text}</p>
+              </div>
+            )}
+
+            <dl className="divide-y border-y text-sm">
+              <div className={row}>
+                <dt className="text-muted-foreground">{dropped ? "Bỏ" : "Xong"}</dt>
+                <dd>
+                  {c.at ? agoVi(c.at, now) : "Không rõ lúc nào"}
+                  {c.by && <span className="text-muted-foreground"> · {c.by}</span>}
+                </dd>
+              </div>
+              {(pr || c.sha) && (
+                <div className={row}>
+                  <dt className="text-muted-foreground">Pull request</dt>
+                  <dd className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                    {pr &&
+                      (pr.href ? (
+                        <a href={pr.href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+                          <GitPullRequestIcon aria-hidden className="size-3.5" />
+                          {c.prRepo ? `${c.prRepo}${pr.text}` : pr.text}
+                          <ExternalLinkIcon aria-hidden className="size-3" />
+                          <span className="sr-only">(mở tab mới)</span>
+                        </a>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 font-medium">
+                          <GitPullRequestIcon aria-hidden className="size-3.5" />
+                          {c.prRepo ? `${c.prRepo}${pr.text}` : pr.text}
+                        </span>
+                      ))}
+                    {c.sha && (
+                      <span className="font-mono text-xs text-muted-foreground" title="Commit review đã duyệt">
+                        duyệt ở {c.sha.slice(0, 12)}
+                      </span>
+                    )}
+                  </dd>
+                </div>
+              )}
+              <div className={row}>
+                <dt className="text-muted-foreground">Bằng chứng</dt>
+                <dd className="min-w-0 space-y-1.5">
+                  {c.evidence ? (
+                    <>
+                      {facts && (facts.merged || facts.tag || facts.links.length > 0) && (
+                        <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          {facts.merged && (
+                            <span className="inline-flex items-center gap-1 font-medium">
+                              <GitMergeIcon aria-hidden className="size-3.5 text-st-running" />
+                              merged {facts.merged}
+                            </span>
+                          )}
+                          {facts.tag && (
+                            <span className="inline-flex items-center gap-1 font-medium">
+                              <TagIcon aria-hidden className="size-3.5" />
+                              {facts.tag}
+                            </span>
+                          )}
+                          {facts.links.map((l) => (
+                            <a key={l} href={l} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+                              {l.replace(/^https:\/\/github\.com\//, "")}
+                              <ExternalLinkIcon aria-hidden className="size-3" />
+                              <span className="sr-only">(mở tab mới)</span>
+                            </a>
+                          ))}
+                        </p>
+                      )}
+                      <div className="flex items-start gap-1.5">
+                        <code className="min-w-0 flex-1 rounded-md bg-muted px-2 py-1 font-mono text-xs break-all whitespace-pre-wrap">{c.evidence}</code>
+                        <Button type="button" size="icon-sm" variant="ghost" aria-label="Chép bằng chứng" onClick={() => void copy(c.evidence!, "bằng chứng")}>
+                          <CopyIcon />
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">{dropped ? "Bỏ không ghi bằng chứng." : "`auto done` không kèm --evidence."}</span>
+                  )}
+                </dd>
+              </div>
+              {c.check && (
+                <div className={row}>
+                  <dt className="text-muted-foreground">Lệnh check</dt>
+                  <dd className="min-w-0">
+                    <code className="block rounded-md bg-muted px-2 py-1 font-mono text-xs break-all">{c.check}</code>
+                  </dd>
+                </div>
+              )}
+              <div className={row}>
+                <dt className="text-muted-foreground">Thêm vào</dt>
+                <dd>
+                  {c.added ? agoVi(c.added, now) : "Không rõ"}
+                  <span className="text-muted-foreground"> · {c.from ? `bởi phòng ${c.from}` : "anh giao"}</span>
+                </dd>
+              </div>
+            </dl>
+
+            {(c.history?.length ?? 0) > 0 && <History id={c.id} steps={c.history!} now={now} />}
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 

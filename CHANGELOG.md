@@ -4,6 +4,10 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+### Added
+- **Board: card Done có sheet chi tiết.** Owner 2026-10-21 ("cũng có sheet để xem chi tiết … public rồi release thì sheet tổng hợp hiển thị có ở đó"): bấm một card ở cột Done mở sheet như card đang mở: trạng thái (Xong/Bỏ, từ cột nào), toàn văn, lúc đóng và ai đóng, PR (cả repo khác: `zus-backend#8`) và SHA đã duyệt, **bằng chứng** của `auto done --evidence` với phần merge / tag release / link GitHub tách ra thành dòng riêng (`merged zus-backend#8 @sha`, `v1.7.3`, link PR / release / run), lệnh check, và toàn bộ lịch sử ghi chú. Dòng card trong cột Done ghi thêm số PR. `auto board --json` trả 30 card đã đóng gần nhất thay vì 10.
+
 ### Fixed
 - **A permission prompt after an auto-compact no longer waits on the owner forever.** The permit hook counted Claude Code's post-compaction summary (`isCompactSummary`) as the owner typing. Within 60 s of a compact, every prompt therefore stayed with the owner. Summaries and transcript-only lines no longer count.
 - **A room may move to another card's worktree of its own repo by itself.** `EnterWorktree` into `<repo>/.claude/worktrees/<name>` was refused because it lies outside the room's current worktree (seen live: dev in card-31 entering card-58). It is now allowed for one plain folder name directly under the repo's `.claude/worktrees/`. Anything else still waits for the owner.
