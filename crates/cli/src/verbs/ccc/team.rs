@@ -654,6 +654,8 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
         };
         rows.push(Row { name: name.clone(), role, model: model.unwrap_or("mặc định").into(), state, short });
     }
+    // New rooms go under the CPU cap at once ([`super::pressure::cap_now`]).
+    let opened = !started.is_empty();
     // Point the registry at the ids Claude Code picked for new rooms (the list can lag a moment).
     for attempt in 0..5 {
         if started.is_empty() {
@@ -672,6 +674,10 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
         if let Some(row) = rows.iter_mut().find(|r| &r.name == name) {
             row.state.push_str(" (chưa thấy trong `claude agents`: inbox/HQ chưa nối, chạy lại `auto up`)");
         }
+    }
+    if opened && !cfg!(test) {
+        let registry: Vec<(String, String)> = t.store.load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
+        super::pressure::cap_now(t.home, t.root, t.claude, &registry, now);
     }
     Ok((status, gone, rows))
 }
@@ -1008,6 +1014,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
         };
         rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: state.into(), short });
     }
+    let opened = !started.is_empty();
     // Same as `up`: point the registry at the forked ids (the list can lag a moment).
     for attempt in 0..5 {
         // Past the deadline only the first look runs: the next revive rebinds what lags.
@@ -1025,6 +1032,10 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     }
     idle::write_json(&file, &seen);
     wake_done(t.home, t.root, &rearmed);
+    if opened && !cfg!(test) {
+        let registry: Vec<(String, String)> = t.store.load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
+        super::pressure::cap_now(t.home, t.root, t.claude, &registry, now);
+    }
     Ok(rows)
 }
 

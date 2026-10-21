@@ -288,6 +288,8 @@ function AwakePanel({ a, api, onChanged }: { a: Awake; api: Hq["api"]; onChanged
 }
 
 const GUARD_CHOICES = [50, 60, 70, 80] as const;
+const CPU_CHOICES = [45, 50, 55, 60] as const;
+const CAP_CHOICES = [25, 37, 50] as const;
 const GUARD_LEVELS = ["bình thường", "dọn mạnh", "khởi động lại phòng nặng", "tạm dừng bớt phòng"] as const;
 /** Defender eating at least this share of the machine's CPU is worth the owner's attention. */
 const DEFENDER_HOT_PCT = 3;
@@ -298,7 +300,7 @@ const TEMP_QA_MB = 500;
 
 /** "Bảo vệ máy": the ccc auto resource guard, and per running team its "Dọn máy tự động" switch. `at`: the poll's sample time (ms), the "now" for relative times. */
 function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: SweepProject[]; at: number; api: Hq["api"]; onChanged: () => void }) {
-  const [busy, setBusy] = useState<number | "off" | "eco" | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const now = at / 1000;
   const ago = (t: number) => (now - t < 60 ? `${Math.max(0, Math.round(now - t))} giây trước` : `${span(now - t)} trước`);
   const last = g.projects.reduce<{ at: number; text: string } | null>((a, p) => (p.last && (!a || p.last.at > a.at) ? p.last : a), null);
@@ -306,7 +308,7 @@ function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: Swe
   // Runs that changed nothing back the trigger off (40 s … 5 min between runs).
   const wait = g.lastRun && g.nextGapS > 20 ? ` · chờ ${g.nextGapS}s` : "";
 
-  async function send(key: number | "off" | "eco", body: { pct: number | null } | { eco: boolean }, done: string) {
+  async function send(key: string, body: { pct: number | null } | { cpu: number } | { cap: number | null } | { eco: boolean }, done: string) {
     setBusy(key);
     try {
       const r = await api<{ message: string }>("/api/machine/guard", { method: "POST", body });
@@ -319,26 +321,58 @@ function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: Swe
     }
   }
 
-  const choice = (key: number | "off", label: string, pct: number | null) => (
-    <Button
-      key={key}
-      type="button"
-      size="sm"
-      variant={g.pct === pct ? "default" : "outline"}
-      className={cn("h-7 px-2.5", TOUCH)}
-      aria-pressed={g.pct === pct}
-      disabled={busy != null}
-      onClick={() => void send(key, { pct }, pct == null ? "Đã tắt tự dọn" : `Tự dọn khi RAM ≥ ${pct}%`)}
-    >
-      {busy === key && <Loader2Icon className="animate-spin motion-reduce:animate-none" />} {label}
-    </Button>
-  );
+  /** One selector button: `kind` the POST field, `value` what it sets (null = off), `on` whether it is the current setting. */
+  const pick = (kind: "pct" | "cpu" | "cap", value: number | null, on: boolean, done: string) => {
+    const key = `${kind}-${value ?? "off"}`;
+    return (
+      <Button
+        key={key}
+        type="button"
+        size="sm"
+        variant={on ? "default" : "outline"}
+        className={cn("h-7 px-2.5", TOUCH)}
+        aria-pressed={on}
+        disabled={busy != null}
+        onClick={() => void send(key, kind === "cpu" ? { cpu: value ?? 0 } : kind === "cap" ? { cap: value } : { pct: value }, done)}
+      >
+        {busy === key && <Loader2Icon className="animate-spin motion-reduce:animate-none" />} {value == null ? "Tắt" : `${value}%`}
+      </Button>
+    );
+  };
   return (
-    <Panel id="may-guard" title="Bảo vệ máy" aside={<span className="text-xs text-muted-foreground">{g.pct == null ? "Tự dọn: tắt" : `Tự dọn khi RAM ≥ ${g.pct}%`}</span>}>
-      <div role="group" aria-label="Ngưỡng RAM tự dọn" className="flex flex-wrap gap-1.5">
-        {GUARD_CHOICES.map((p) => choice(p, `${p}%`, p))}
-        {choice("off", "Tắt", null)}
+    <Panel
+      id="may-guard"
+      title="Bảo vệ máy"
+      aside={<span className="text-xs text-muted-foreground">{g.pct == null ? "Tự dọn: tắt" : `Tự dọn khi RAM ≥ ${g.pct}%${g.cpuPct != null ? ` · CPU ≥ ${g.cpuPct}%` : ""}`}</span>}
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="w-10 text-xs text-muted-foreground">RAM</span>
+        <div role="group" aria-label="Ngưỡng RAM tự dọn" className="flex flex-wrap gap-1.5">
+          {GUARD_CHOICES.map((p) => pick("pct", p, g.pct === p, `Tự dọn khi RAM ≥ ${p}%`))}
+          {pick("pct", null, g.pct == null, "Đã tắt tự dọn")}
+        </div>
       </div>
+      {g.pct != null && g.cpuPct != null && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="w-10 text-xs text-muted-foreground">CPU</span>
+          <div role="group" aria-label="Ngưỡng CPU tự dọn" className="flex flex-wrap gap-1.5">
+            {CPU_CHOICES.map((c) => pick("cpu", c, g.cpuPct === c, `Tự dọn khi CPU ≥ ${c}%`))}
+          </div>
+        </div>
+      )}
+      {/* `cpus` only comes from an 8sync with the cap: an older one shows no row (its POST would fail). */}
+      {g.pct != null && g.cpus != null && (
+        <div className="space-y-1.5">
+          <p className="text-sm font-medium">
+            {g.cap == null ? "CPU phòng: không giới hạn" : `CPU phòng tối đa ${g.cap}%${g.capN != null && g.cpus != null ? ` (${g.capN}/${g.cpus} luồng)` : ""}`}
+            {g.capTight && <span className={cn("ml-1 text-xs font-normal", NEEDS_INK)}>· đang siết (CPU vượt ngưỡng)</span>}
+          </p>
+          <div role="group" aria-label="Giới hạn CPU của phòng" className="flex flex-wrap gap-1.5">
+            {pick("cap", null, g.cap == null, "Đã bỏ giới hạn CPU phòng")}
+            {CAP_CHOICES.map((c) => pick("cap", c, g.cap === c, `CPU phòng tối đa ${c}%`))}
+          </div>
+        </div>
+      )}
       {g.eco != null && (
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">

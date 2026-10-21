@@ -55,7 +55,7 @@ const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30
        8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--role <vai>] [--prio P0..P3] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id> | reopen <id> [--note \"…\"]
        8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>|--mail] [--timeout <giây ≤1800>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
        8sync ccc auto merge [--as <phòng>] [--json]   (lead: merge mọi card approved; cần quyền tự merge của owner)
-       8sync ccc auto guard [<30..95>|off] [eco on|off] [--dry-run] [--json]   (tự dọn máy khi RAM/CPU ≥ ngưỡng, mặc định 60%; eco: phòng chạy chế độ tiết kiệm điện, mặc định bật)
+       8sync ccc auto guard [<30..95>|off] [cpu <30..95>] [cap <10..90>|off] [eco on|off] [--dry-run] [--json]   (tự dọn máy khi RAM ≥ ngưỡng (mặc định 60%) hoặc CPU ≥ ngưỡng CPU (mặc định 55%); cap: phòng + daemon Claude Code chỉ chạy trên N luồng CPU cao nhất, mặc định 37%, tự siết nửa khi CPU vượt ngưỡng; eco: phòng chạy chế độ tiết kiệm điện, mặc định bật)
        8sync ccc auto guard now   (một lượt bảo vệ ngay cho mọi dự án đang auto; HQ tự gọi khi RAM/CPU vượt ngưỡng)
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
 pub(super) const DEFAULT_AFTER_S: u64 = 60;
@@ -160,6 +160,11 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
             write_marker(home, &m)?;
         }
     }
+    // Auto off/paused, or a project out of the new scope: the CPU cap's pins there go back (never in
+    // tests: it would touch this machine's processes).
+    if !cfg!(test) {
+        super::pressure::uncap_stale(home, &|| super::reap::list(now));
+    }
     // A `no_tick` flag is a session's word for this run of auto only: a resumed auto asks again.
     idle::clear_no_tick(home);
     Ok(status(home, subscription, now))
@@ -175,7 +180,7 @@ fn write_marker(home: &Path, v: &Value) -> Result<()> {
     }
     let mut v = v.clone();
     let old = idle::read_json(&p);
-    for k in ["teams", "omp_model", "guard", "eco"] {
+    for k in ["teams", "omp_model", "guard", "eco", "cap", "cpu"] {
         if v.get(k).is_none() {
             if let Some(t) = old.as_ref().and_then(|m| m.get(k).cloned()) {
                 v[k] = t;
@@ -222,12 +227,26 @@ pub(super) fn set_omp(home: &Path, on: bool, model: Option<&str>, now: u64) -> R
 /// number, or `"off"`; absent = [`super::pressure::DEFAULT_PCT`] (owner 2026-10-21: "ngưỡng 60%").
 pub(super) fn guard_pct(home: &Path) -> Option<u32> {
     let m = idle::read_json(&marker(home));
+    if let Some(n) = m.as_ref().and_then(legacy_guard) {
+        return Some(n.max(super::pressure::DEFAULT_PCT));
+    }
     match m.as_ref().map(|m| &m["guard"]) {
         Some(Value::String(s)) if s == "off" => None,
         Some(Value::Bool(false)) => None,
         Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| super::pressure::PCT_RANGE.contains(n)).or(Some(super::pressure::DEFAULT_PCT)),
         None => Some(super::pressure::DEFAULT_PCT),
     }
+}
+
+/// A marker written before CPU had its own threshold: a numeric `guard` and no `cpu`. That one
+/// number was set for CPU (owner 2026-10-21: "never cpu go to 60%", HQ set 50), so it stays the CPU
+/// threshold and RAM takes at least [`super::pressure::DEFAULT_PCT`]; read only, never rewritten
+/// until the owner sets either threshold (then both keys are written).
+fn legacy_guard(m: &Value) -> Option<u32> {
+    if !m["cpu"].is_null() {
+        return None;
+    }
+    m["guard"].as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| super::pressure::PCT_RANGE.contains(n))
 }
 
 /// `auto guard <pct>|off`: only the marker's `guard` changes. A marker that does not parse is refused
@@ -237,9 +256,20 @@ pub(super) fn set_guard(home: &Path, pct: Option<u32>, now: u64) -> Result<()> {
     if let Some(n) = pct.filter(|n| !super::pressure::PCT_RANGE.contains(n)) {
         bail!("ngưỡng {n}%: cần {}..{}\n{USAGE}", super::pressure::PCT_RANGE.start(), super::pressure::PCT_RANGE.end());
     }
+    // A numeric `guard` without `cpu` reads as the legacy single threshold: write the CPU one it
+    // stands for (legacy value, else the default) first, so this RAM value means RAM.
+    if pct.is_some() && idle::read_json(&marker(home)).is_none_or(|m| m["cpu"].is_null()) {
+        let c = guard_cpu(home).unwrap_or(super::pressure::DEFAULT_CPU);
+        set_marker_key(home, "cpu", json!(c), now)?;
+    }
     set_marker_key(home, "guard", pct.map_or_else(|| json!("off"), |n| json!(n)), now)?;
     if pct.is_none() {
         super::pressure::clear_all(home);
+        // The cap ends with the guard: the daemon and the rooms back on every CPU (never in tests:
+        // it would touch this machine's live rooms).
+        if !cfg!(test) {
+            super::pressure::uncap(home, now);
+        }
     }
     Ok(())
 }
@@ -253,6 +283,55 @@ pub(super) fn guard_eco(home: &Path) -> bool {
 /// `auto guard eco on|off`.
 pub(super) fn set_guard_eco(home: &Path, on: bool, now: u64) -> Result<()> {
     set_marker_key(home, "eco", json!(on), now)
+}
+
+/// The guard's CPU threshold (%), None while the guard is off; marker `cpu`, absent or out of range
+/// = [`super::pressure::DEFAULT_CPU`]. The RAM threshold stays [`guard_pct`].
+pub(super) fn guard_cpu(home: &Path) -> Option<u32> {
+    guard_pct(home)?;
+    let m = idle::read_json(&marker(home));
+    if let Some(n) = m.as_ref().and_then(legacy_guard) {
+        return Some(n.min(super::pressure::DEFAULT_CPU));
+    }
+    Some(m.and_then(|m| m["cpu"].as_u64()).and_then(|n| u32::try_from(n).ok()).filter(|n| super::pressure::PCT_RANGE.contains(n)).unwrap_or(super::pressure::DEFAULT_CPU))
+}
+
+/// `auto guard cpu <30..95>`.
+pub(super) fn set_guard_cpu(home: &Path, pct: u32, now: u64) -> Result<()> {
+    if !super::pressure::PCT_RANGE.contains(&pct) {
+        bail!("ngưỡng CPU {pct}%: cần {}..{}\n{USAGE}", super::pressure::PCT_RANGE.start(), super::pressure::PCT_RANGE.end());
+    }
+    // Out of the legacy single threshold: the RAM one it now means is written first.
+    if idle::read_json(&marker(home)).is_none_or(|m| legacy_guard(&m).is_some() || m["guard"].is_null()) {
+        if let Some(r) = guard_pct(home) {
+            set_marker_key(home, "guard", json!(r), now)?;
+        }
+    }
+    set_marker_key(home, "cpu", json!(pct), now)
+}
+
+/// The rooms' CPU cap (% of the logical CPUs, [`super::pressure::cap_mask`]), None when the owner
+/// turned it off. Marker `cap`: a number, or `"off"`; absent = [`super::pressure::DEFAULT_CAP`].
+pub(super) fn guard_cap(home: &Path) -> Option<u32> {
+    let m = idle::read_json(&marker(home));
+    match m.as_ref().map(|m| &m["cap"]) {
+        Some(Value::String(s)) if s == "off" => None,
+        Some(Value::Bool(false)) => None,
+        Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| super::pressure::CAP_RANGE.contains(n)).or(Some(super::pressure::DEFAULT_CAP)),
+        None => Some(super::pressure::DEFAULT_CAP),
+    }
+}
+
+/// `auto guard cap <10..90>|off`; off puts the daemon and the rooms back on every CPU.
+pub(super) fn set_guard_cap(home: &Path, cap: Option<u32>, now: u64) -> Result<()> {
+    if let Some(n) = cap.filter(|n| !super::pressure::CAP_RANGE.contains(n)) {
+        bail!("cap {n}%: cần {}..{}\n{USAGE}", super::pressure::CAP_RANGE.start(), super::pressure::CAP_RANGE.end());
+    }
+    set_marker_key(home, "cap", cap.map_or_else(|| json!("off"), |n| json!(n)), now)?;
+    if cap.is_none() && !cfg!(test) {
+        super::pressure::uncap(home, now);
+    }
+    Ok(())
 }
 
 /// One key of the marker changes, the rest stays; a marker that does not parse is refused.
@@ -1923,7 +2002,7 @@ pub(super) fn run(
         return super::ci::run(&rest[1..], home, root, &ci_repo(&scope(home), root), now);
     }
     if rest.first().map(String::as_str) == Some("guard") {
-        let (mut set, mut dry, mut eco) = (None, false, None);
+        let (mut set, mut dry, mut eco, mut cap, mut cpu) = (None, false, None, None, None);
         let mut it = rest[1..].iter();
         while let Some(a) = it.next() {
             match a.as_str() {
@@ -1936,6 +2015,19 @@ pub(super) fn run(
                         _ => bail!("eco cần `on` hoặc `off`\n{USAGE}"),
                     })
                 }
+                "cap" if cap.is_none() => {
+                    cap = Some(match it.next().map(|s| s.trim_end_matches('%')) {
+                        Some("off") => None,
+                        Some(n) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => Some(n.parse::<u32>().map_err(|_| anyhow::anyhow!("cap không hợp lệ: `{n}`\n{USAGE}"))?),
+                        _ => bail!("cap cần <10..90> hoặc `off`\n{USAGE}"),
+                    })
+                }
+                "cpu" if cpu.is_none() => {
+                    cpu = Some(match it.next().map(|s| s.trim_end_matches('%')) {
+                        Some(n) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => n.parse::<u32>().map_err(|_| anyhow::anyhow!("ngưỡng CPU không hợp lệ: `{n}`\n{USAGE}"))?,
+                        _ => bail!("cpu cần <30..95>\n{USAGE}"),
+                    })
+                }
                 "off" if set.is_none() => set = Some(None),
                 n if set.is_none() && !n.is_empty() && n.trim_end_matches('%').chars().all(|c| c.is_ascii_digit()) => {
                     set = Some(Some(n.trim_end_matches('%').parse::<u32>().map_err(|_| anyhow::anyhow!("ngưỡng không hợp lệ: `{n}`\n{USAGE}"))?));
@@ -1945,6 +2037,12 @@ pub(super) fn run(
         }
         if let Some(on) = eco {
             set_guard_eco(home, on, now)?;
+        }
+        if let Some(c) = cpu {
+            set_guard_cpu(home, c, now)?;
+        }
+        if let Some(c) = cap {
+            set_guard_cap(home, c, now)?;
         }
         if dry {
             // Read-only: what a pass would kill and each live room's load, nothing killed or sent.
@@ -2675,12 +2773,62 @@ mod tests {
         let _ = std::fs::remove_dir_all(&h);
     }
 
+    /// 2026-10-21: the owner had set the one threshold to 50 from HQ (for CPU) before CPU got its
+    /// own. That marker keeps CPU at 50 and RAM at ≥ 60 (his baseline RAM is 50–61%), until he sets
+    /// either threshold; then both keys are written and mean what they say.
     #[test]
-    fn guard_threshold_defaults_to_60_and_survives_on_pause_off() {
+    fn a_legacy_single_threshold_stays_the_cpu_one_and_ram_takes_at_least_60() {
+        let h = home("guard-legacy");
+        let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        run(&s(&["guard", "50"]), &h, false, &h, Vec::new).unwrap();
+        // `guard 50` written before `cpu` existed: drop the `cpu` key it now also writes.
+        let mut m = idle::read_json(&marker(&h)).unwrap();
+        m.as_object_mut().unwrap().remove("cpu");
+        idle::write_json(&marker(&h), &m);
+        assert_eq!((guard_pct(&h), guard_cpu(&h)), (Some(60), Some(50)), "legacy 50 = CPU; RAM ≥ 60");
+        let mut m = idle::read_json(&marker(&h)).unwrap();
+        m["guard"] = json!(70);
+        idle::write_json(&marker(&h), &m);
+        assert_eq!((guard_pct(&h), guard_cpu(&h)), (Some(70), Some(55)), "a loose legacy value never loosens CPU past 55");
+        m["guard"] = json!(50);
+        idle::write_json(&marker(&h), &m);
+        // Setting CPU keeps RAM at what it meant (60), not the legacy 50.
+        run(&s(&["guard", "cpu", "45"]), &h, false, &h, Vec::new).unwrap();
+        assert_eq!((guard_pct(&h), guard_cpu(&h)), (Some(60), Some(45)));
+        // From a fresh legacy marker, setting RAM keeps CPU at the legacy 50.
+        let mut m = idle::read_json(&marker(&h)).unwrap();
+        m["guard"] = json!(50);
+        m.as_object_mut().unwrap().remove("cpu");
+        idle::write_json(&marker(&h), &m);
+        run(&s(&["guard", "65"]), &h, false, &h, Vec::new).unwrap();
+        assert_eq!((guard_pct(&h), guard_cpu(&h)), (Some(65), Some(50)));
+        // Guard off, then RAM 70: CPU is the default 55, never RAM's 70.
+        let mut m = idle::read_json(&marker(&h)).unwrap();
+        m["guard"] = json!("off");
+        m.as_object_mut().unwrap().remove("cpu");
+        idle::write_json(&marker(&h), &m);
+        run(&s(&["guard", "70"]), &h, false, &h, Vec::new).unwrap();
+        assert_eq!((guard_pct(&h), guard_cpu(&h)), (Some(70), Some(55)));
+        assert_eq!(idle::read_json(&marker(&h)).unwrap()["cpu"], json!(55), "every set leaves `cpu` written");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn guard_thresholds_ram_60_cpu_55_survive_on_pause_off() {
         let h = home("guard");
         assert_eq!(guard_pct(&h), Some(super::super::pressure::DEFAULT_PCT));
+        assert_eq!((guard_pct(&h), guard_cpu(&h)), (Some(60), Some(55)), "RAM 60, CPU 55 (owner: never ≥ 60% CPU)");
+        assert_eq!(guard_cap(&h), Some(37), "cap on by default: 12 of 32 CPUs");
+        let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        run(&s(&["guard", "cpu", "50%"]), &h, false, &h, Vec::new).unwrap();
+        assert_eq!((guard_pct(&h), guard_cpu(&h)), (Some(60), Some(50)), "the CPU threshold leaves RAM's alone");
+        assert_eq!(status(&h, false, 1)["guard"]["cpu_pct"], 50);
+        for bad in ["29", "96", "x", ""] {
+            assert!(run(&s(&["guard", "cpu", bad]), &h, false, &h, Vec::new).is_err(), "{bad}");
+        }
+        assert!(run(&s(&["guard", "cpu", "off"]), &h, false, &h, Vec::new).is_err(), "off is the whole guard's");
         set_guard(&h, Some(70), 1).unwrap();
-        assert_eq!(guard_pct(&h), Some(70));
+        assert_eq!((guard_pct(&h), guard_cpu(&h)), (Some(70), Some(50)), "the RAM threshold leaves CPU's alone");
         set(&h, on(2.0, 60), false, 2).unwrap();
         set(&h, Mode::Pause, false, 3).unwrap();
         mark_paused(&h, 4).unwrap();
@@ -2702,6 +2850,19 @@ mod tests {
         run(&s(&["guard", "65%"]), &h, false, &h, Vec::new).unwrap();
         assert_eq!(guard_pct(&h), Some(65));
         assert!(run(&s(&["guard", "lots"]), &h, false, &h, Vec::new).is_err());
+        run(&s(&["guard", "cap", "50%"]), &h, false, &h, Vec::new).unwrap();
+        assert_eq!(guard_cap(&h), Some(50));
+        assert_eq!(status(&h, false, 9)["guard"]["cap"], 50);
+        set(&h, on(2.0, 60), false, 9).unwrap();
+        assert_eq!(guard_cap(&h), Some(50), "the cap survives on/pause");
+        for bad in ["9", "91", "lots", ""] {
+            assert!(run(&s(&["guard", "cap", bad]), &h, false, &h, Vec::new).is_err(), "{bad}");
+        }
+        assert!(run(&s(&["guard", "cap"]), &h, false, &h, Vec::new).is_err());
+        assert_eq!(guard_cap(&h), Some(50), "a refused cap changes nothing");
+        run(&s(&["guard", "cap", "off"]), &h, false, &h, Vec::new).unwrap();
+        assert_eq!(guard_cap(&h), None);
+        assert!(status(&h, false, 10)["guard"]["cap"].is_null());
         let _ = std::fs::remove_dir_all(&h);
     }
 

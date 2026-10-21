@@ -116,8 +116,24 @@ fn pct_after(mem: (u64, u64), freed: u64) -> Option<u32> {
 /// resource guard ([`super::pressure`]); what one of them killed is left out for the other.
 pub(super) struct Listing {
     now: u64,
-    procs: std::cell::OnceCell<Vec<Proc>>,
+    procs: std::cell::OnceCell<(Vec<Proc>, Stamp)>,
     killed: std::cell::RefCell<Vec<u32>>,
+}
+
+/// When a listing was taken (unix ms, read right after it) and the machine's CPU times then
+/// ([`super::pressure::system_times`]): per-process CPU deltas between two listings are divided
+/// by the time between them, not by the gap between the passes that asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Stamp {
+    pub ms: u64,
+    pub sys: Option<(u64, u64)>,
+}
+
+impl Stamp {
+    pub(super) fn now() -> Stamp {
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        Stamp { ms, sys: super::pressure::system_times() }
+    }
 }
 
 impl Listing {
@@ -125,10 +141,22 @@ impl Listing {
         Listing { now, procs: std::cell::OnceCell::new(), killed: std::cell::RefCell::new(Vec::new()) }
     }
 
+    fn get(&self) -> &(Vec<Proc>, Stamp) {
+        self.procs.get_or_init(|| {
+            let p = list(self.now);
+            (p, Stamp::now())
+        })
+    }
+
     /// The processes, minus the ones killed through [`Listing::killed`].
     pub(super) fn procs(&self) -> Vec<Proc> {
         let k = self.killed.borrow();
-        self.procs.get_or_init(|| list(self.now)).iter().filter(|p| !k.contains(&p.pid)).cloned().collect()
+        self.get().0.iter().filter(|p| !k.contains(&p.pid)).cloned().collect()
+    }
+
+    /// When the listing was taken ([`Stamp`]); takes it if not yet.
+    pub(super) fn stamp(&self) -> Stamp {
+        self.get().1
     }
 
     pub(super) fn killed(&self, pids: &[u32]) {

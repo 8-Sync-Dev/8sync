@@ -27,6 +27,16 @@
 //!   rooms that do not fit ([`keep_count`], [`DROP_ORDER`]); their cards go back to the lane. They
 //!   come back one per pass once one more room has fit under the threshold ([`room_fits`]) for
 //!   [`CALM_S`]. Turning the guard off brings them all back.
+//! - CPU cap — every pass, and right after `auto up`/`revive` open rooms ([`cap_now`]): every
+//!   room's process tree runs on [`cap_mask`] (the highest-numbered N logical CPUs, N = cap% of
+//!   the machine, default [`DEFAULT_CAP`]%), never the Claude Code daemon (what it spawns later
+//!   would inherit the mask, rooms or not). While the rooms are the load and CPU holds ≥ the CPU
+//!   threshold the cap halves one step; it loosens one step only when CPU with the looser cap
+//!   still stays under ([`cap_step`]). What it pinned is recorded and put back exactly when the
+//!   cap, the guard or auto ends for that project ([`uncap`], [`uncap_stale`]). Owner
+//!   2026-10-21: "never cpu go to 60%".
+//!   Affinity, not a job-object rate cap: node puts its children in its own job (measured 55% with a
+//!   10% hard cap), while an affinity mask is inherited (16 burners on 8 CPUs: +32% not +50%).
 //!
 //! Native: a process listing, priority changes, kills, `claude stop`, inbox messages. No tokens.
 use std::path::{Path, PathBuf};
@@ -37,8 +47,23 @@ use super::reap::{self, Proc};
 use super::team::{Claude, Row};
 use super::{auto, idle, room, target};
 
-/// The owner's number (2026-10-21).
+/// The owner's RAM number (2026-10-21).
 pub(super) const DEFAULT_PCT: u32 = 60;
+/// The CPU threshold apart from RAM (owner 2026-10-21: "never cpu go to 60%"; the owner's own
+/// RAM baseline is 50–61%, so one number for both kept the guard busy on load the rooms did not
+/// cause), `auto guard cpu <30..95>`.
+pub(super) const DEFAULT_CPU: u32 = 55;
+/// Rooms' share of the machine's logical CPUs (37% = 12 of 32), `auto guard cap <n>|off`.
+pub(super) const DEFAULT_CAP: u32 = 37;
+/// Caps `auto guard cap` takes.
+pub(super) const CAP_RANGE: std::ops::RangeInclusive<u32> = 10..=90;
+/// A cap tightened by [`cap_step`] loosens one step only when CPU with the looser cap (the rooms
+/// filling the CPUs it gives back) still stays this many points under the CPU threshold.
+const CAP_CALM: u32 = 5;
+/// At most one tighten/loosen decision per this many seconds, machine-wide.
+const CAP_EVERY_S: u64 = 20;
+/// The cap tightens only while the rooms are the load: their share of the machine (0.1 %).
+const ROOMS_LOAD: u64 = 150;
 /// Thresholds `auto guard` takes.
 pub(super) const PCT_RANGE: std::ops::RangeInclusive<u32> = 30..=95;
 /// One guard pass per project at most this often from `auto revive` (HQ ticks every 120 s)…
@@ -125,6 +150,15 @@ impl Level {
     }
 }
 
+/// The guard's two thresholds (%): RAM (`auto guard <pct>`) drives L1/L2/L3 on RAM, CPU (`auto
+/// guard cpu <pct>`) drives L1, the tightened cap, idle builds and L3 on CPU. A RAM breach never
+/// tightens the cap; a CPU breach never restarts rooms lean (L2 is RAM only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Limits {
+    pub ram: u32,
+    pub cpu: u32,
+}
+
 /// Since when (unix s) each breach has held without a break: RAM ≥ threshold, RAM ≥ threshold +
 /// 15, CPU ≥ threshold, CPU ≥ [`CPU_MAX`]. Kept in the guard state so back-to-back passes
 /// (`auto guard now` from HQ every ~20 s, `auto revive` every 2 min) escalate on time held.
@@ -148,13 +182,13 @@ impl Breach {
 
     /// This pass's runs: a run still breached goes on when the last pass was at most
     /// [`CONTINUOUS_S`] ago (`gap`), else it starts now; one not breached ends.
-    fn next(self, ram: u32, cpu: Option<u32>, pct: u32, gap: Option<u64>, now: u64) -> Breach {
+    fn next(self, ram: u32, cpu: Option<u32>, t: Limits, gap: Option<u64>, now: u64) -> Breach {
         let on = gap.is_some_and(|g| g <= CONTINUOUS_S);
         let run = |was: Option<u64>, hot: bool| hot.then(|| if on { was.unwrap_or(now) } else { now });
         Breach {
-            ram: run(self.ram, ram >= pct),
-            ram_hi: run(self.ram_hi, ram >= pct + 15),
-            cpu: run(self.cpu, cpu.is_some_and(|c| c >= pct)),
+            ram: run(self.ram, ram >= t.ram),
+            ram_hi: run(self.ram_hi, ram >= t.ram + 15),
+            cpu: run(self.cpu, cpu.is_some_and(|c| c >= t.cpu)),
             cpu_max: run(self.cpu_max, cpu.is_some_and(|c| c >= CPU_MAX)),
         }
     }
@@ -166,16 +200,16 @@ impl Breach {
 }
 
 /// This pass's level, at once on a breach (owner 2026-10-21: "bị cao là auto xử lý liền luôn"):
-/// L1 RAM or CPU ≥ the threshold, or VRAM ≥ [`VRAM_HOT`]%; L2 RAM ≥ threshold + 15, or over the
-/// threshold for [`L2_RAM_S`] (L1 did not bring it down); L3 CPU ≥ [`CPU_MAX`]% for
-/// [`L3_CPU_S`] or RAM ≥ threshold + 15 for [`L3_RAM_S`].
-pub(super) fn level(ram: u32, vram: Option<u32>, cpu: Option<u32>, pct: u32, b: &Breach, now: u64) -> Level {
+/// L1 RAM ≥ the RAM threshold, CPU ≥ the CPU threshold, or VRAM ≥ [`VRAM_HOT`]%; L2 RAM ≥ RAM
+/// threshold + 15, or over it for [`L2_RAM_S`] (L1 did not bring it down); L3 CPU ≥ [`CPU_MAX`]%
+/// for [`L3_CPU_S`] or RAM ≥ RAM threshold + 15 for [`L3_RAM_S`].
+pub(super) fn level(ram: u32, vram: Option<u32>, cpu: Option<u32>, t: Limits, b: &Breach, now: u64) -> Level {
     let held = |since: Option<u64>, s: u64| since.is_some_and(|t| now.saturating_sub(t) >= s);
     if b.cpu_shrink(now) || held(b.ram_hi, L3_RAM_S) {
         Level::Shrink
-    } else if ram >= pct + 15 || held(b.ram, L2_RAM_S) {
+    } else if ram >= t.ram + 15 || held(b.ram, L2_RAM_S) {
         Level::Restart
-    } else if ram >= pct || cpu.is_some_and(|c| c >= pct) || vram.is_some_and(|v| v >= VRAM_HOT) {
+    } else if ram >= t.ram || cpu.is_some_and(|c| c >= t.cpu) || vram.is_some_and(|v| v >= VRAM_HOT) {
         Level::Clean
     } else {
         Level::Calm
@@ -204,11 +238,40 @@ pub(super) fn cpu_deltas(procs: &[Proc], prev: &Value) -> Vec<(u32, u64)> {
         .collect()
 }
 
-/// The machine's CPU (%) over `secs` from the idle time of pid 0 (Windows), None without it.
-fn tick_cpu(deltas: &[(u32, u64)], procs: &[Proc], secs: u64, cores: usize) -> Option<u32> {
+/// The machine's CPU (%) over `ms` from the idle time of pid 0 (Windows), None without it. The
+/// fallback when [`machine_cpu`] has no system times.
+fn tick_cpu(deltas: &[(u32, u64)], procs: &[Proc], ms: u64, cores: usize) -> Option<u32> {
     procs.iter().find(|p| p.pid == 0 && p.cpu > 0)?;
     let idle = deltas.iter().find(|(pid, _)| *pid == 0).map_or(0, |(_, d)| *d);
-    (secs > 0).then(|| 100u32.saturating_sub(cpu_share(idle, secs, cores)))
+    (ms > 0).then(|| 100u32.saturating_sub(cpu_share(idle, ms, cores)))
+}
+
+/// The machine's CPU (%) between two [`system_times`] readings (idle, total), None when either is
+/// missing or no time passed.
+pub(super) fn machine_cpu(prev: Option<(u64, u64)>, cur: Option<(u64, u64)>) -> Option<u32> {
+    let ((i0, t0), (i1, t1)) = (prev?, cur?);
+    let (di, dt) = (i1.checked_sub(i0)?, t1.checked_sub(t0)?);
+    (dt > 0).then(|| (100.0 - di.min(dt) as f64 * 100.0 / dt as f64).round() as u32)
+}
+
+/// The machine's (idle, total) CPU time so far: Windows `GetSystemTimes` (100 ns; kernel includes
+/// idle), Linux `/proc/stat` (ticks; idle + iowait over the first 8 fields: guest and guest_nice
+/// are already inside user and nice). None elsewhere.
+pub(super) fn system_times() -> Option<(u64, u64)> {
+    #[cfg(windows)]
+    {
+        win::system_times()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let s = std::fs::read_to_string("/proc/stat").ok()?;
+        let v: Vec<u64> = s.lines().next()?.split_whitespace().skip(1).filter_map(|x| x.parse().ok()).collect();
+        (v.len() >= 5).then(|| (v[3] + v[4], v.iter().take(8).sum()))
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        None
+    }
 }
 
 /// The room `pid` belongs to (its claude.exe or a descendant), from each room's tree.
@@ -218,7 +281,7 @@ fn owner<'a>(trees: &'a [(String, Vec<u32>)], pid: u32) -> Option<&'a str> {
 
 /// The top 3 CPU users of the tick, by kind and owning room: `codebase-memory-mcp 12% (dev2)`,
 /// `MsMpEng 4% (máy)`; processes of one kind and owner add up.
-pub(super) fn cpu_top(procs: &[Proc], deltas: &[(u32, u64)], trees: &[(String, Vec<u32>)], secs: u64, cores: usize) -> Vec<String> {
+pub(super) fn cpu_top(procs: &[Proc], deltas: &[(u32, u64)], trees: &[(String, Vec<u32>)], ms: u64, cores: usize) -> Vec<String> {
     let mut by: Vec<((String, String), u64)> = Vec::new();
     for (pid, d) in deltas.iter().filter(|(pid, _)| *pid != 0) {
         let Some(p) = procs.iter().find(|p| p.pid == *pid) else { continue };
@@ -230,7 +293,7 @@ pub(super) fn cpu_top(procs: &[Proc], deltas: &[(u32, u64)], trees: &[(String, V
         }
     }
     by.sort_by(|a, b| b.1.cmp(&a.1));
-    by.into_iter().take(3).map(|((k, o), d)| format!("{k} {}% ({o})", cpu_share(d, secs, cores))).collect()
+    by.into_iter().take(3).map(|((k, o), d)| format!("{k} {}% ({o})", cpu_share(d, ms, cores))).collect()
 }
 
 // ── what L1 takes ───────────────────────────────────────────────────────────────────────────
@@ -701,6 +764,11 @@ mod win {
         fn SetPriorityClass(h: Handle, class: u32) -> i32;
         fn SetProcessInformation(h: Handle, class: i32, info: *const std::ffi::c_void, size: u32) -> i32;
         fn GetProcessInformation(h: Handle, class: i32, info: *mut std::ffi::c_void, size: u32) -> i32;
+        fn GetProcessAffinityMask(h: Handle, process: *mut usize, system: *mut usize) -> i32;
+        fn SetProcessAffinityMask(h: Handle, mask: usize) -> i32;
+        fn GetCurrentProcess() -> Handle;
+        fn GetSystemTimes(idle: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
+        fn GetProcessTimes(h: Handle, creation: *mut u64, exit: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
     }
     const PROCESS_SET_INFORMATION: u32 = 0x0200;
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
@@ -721,6 +789,52 @@ mod win {
             CloseHandle(h);
             Some(out)
         }
+    }
+
+    /// The open process is the one listed: its creation time (unix s) is within 2 s of `started`
+    /// (0 = the listing did not say: no check). A pid reused since the listing is never touched.
+    fn same(h: Handle, started: u64) -> bool {
+        if started == 0 {
+            return true;
+        }
+        let (mut c, mut e, mut k, mut u) = (0u64, 0u64, 0u64, 0u64);
+        // SAFETY: four out-pointers to live u64s (FILETIME layout); `h` is a live handle.
+        let ok = unsafe { GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u) != 0 };
+        // FILETIME counts 100 ns since 1601-01-01.
+        ok && (c / 10_000_000).checked_sub(11_644_473_600).is_some_and(|s| s.abs_diff(started) <= 2)
+    }
+
+    /// `pid`'s affinity mask (its first group), None when unreadable or no longer the process
+    /// started at `started`.
+    pub fn affinity(pid: u32, started: u64) -> Option<u64> {
+        let (mut p, mut s) = (0usize, 0usize);
+        // SAFETY: two out-pointers to live usizes.
+        let ok = with(pid, PROCESS_QUERY_LIMITED_INFORMATION, |h| same(h, started) && unsafe { GetProcessAffinityMask(h, &mut p, &mut s) != 0 })?;
+        (ok && p != 0).then_some(p as u64)
+    }
+
+    /// https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-setprocessaffinitymask:
+    /// inherited by the children the process starts after. Only when it is still the process
+    /// started at `started`.
+    pub fn set_affinity(pid: u32, started: u64, mask: u64) -> bool {
+        // SAFETY: `h` is a live handle with PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION.
+        with(pid, PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION, |h| same(h, started) && unsafe { SetProcessAffinityMask(h, mask as usize) != 0 }).unwrap_or(false)
+    }
+
+    /// (idle, kernel + user) 100-ns times of the whole machine (kernel includes idle).
+    pub fn system_times() -> Option<(u64, u64)> {
+        let (mut i, mut k, mut u) = (0u64, 0u64, 0u64);
+        // SAFETY: three out-pointers to live u64s (FILETIME is two u32s, same layout).
+        let ok = unsafe { GetSystemTimes(&mut i, &mut k, &mut u) != 0 };
+        ok.then_some((i, k + u))
+    }
+
+    /// Logical CPUs of the system mask (first group), whatever this process is pinned to.
+    pub fn system_cpus() -> Option<usize> {
+        let (mut p, mut s) = (0usize, 0usize);
+        // SAFETY: the pseudo handle needs no close; two out-pointers to live usizes.
+        let ok = unsafe { GetProcessAffinityMask(GetCurrentProcess(), &mut p, &mut s) != 0 };
+        (ok && s != 0).then_some(s.count_ones() as usize)
     }
 
     pub fn set_class(pid: u32, class: u32) -> bool {
@@ -787,6 +901,381 @@ pub(super) fn eco(pids: &[u32], on: bool) -> usize {
     }
 }
 
+// ── CPU cap (affinity) ──────────────────────────────────────────────────────────────────────
+
+/// Every logical CPU of the first processor group (≤ 64).
+fn full_mask(cpus: usize) -> u64 {
+    let n = cpus.clamp(1, 64);
+    u64::MAX >> (64 - n)
+}
+
+/// A recorded original mask that means "every CPU" (Linux over 64 CPUs: does not fit 64 bits).
+const ALL_CPUS: u64 = u64::MAX;
+
+/// The rooms' CPUs at tightening `step` (0 = the cap itself): N = cap × cpus / 100 rounded (37%
+/// of 32 = 12), at least 2, halved per step (at least 2); never more than the first group's 64.
+pub(super) fn cap_n(cap: u32, cpus: usize, step: u32) -> u32 {
+    let cpus = cpus.clamp(1, 64);
+    let mut n = ((cap as usize * cpus + 50) / 100).max(2);
+    for _ in 0..step {
+        n = (n / 2).max(2);
+    }
+    n.min(cpus) as u32
+}
+
+/// The affinity mask of [`cap_n`]: the highest-numbered CPUs (on AMD X3D the V-Cache CCD is CPUs
+/// 0..15: left to the owner), within the first 64.
+pub(super) fn cap_mask(cap: u32, cpus: usize, step: u32) -> u64 {
+    let full = full_mask(cpus);
+    full & !full.checked_shr(cap_n(cap, cpus, step)).unwrap_or(0)
+}
+
+/// A process the cap pinned: its start (pid reuse) and project, and the mask it had before.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Pin {
+    pub pid: u32,
+    pub started: u64,
+    pub root: String,
+    pub orig: u64,
+}
+
+/// The machine-wide cap state (`guard-machine.json` `cap`): tightening step, when it last changed,
+/// the last CPU reading (unix s, %), what is pinned, and how many pins failed last time.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(super) struct CapState {
+    pub step: u32,
+    pub at: Option<u64>,
+    pub seen: Option<(u64, u32)>,
+    pub pinned: Vec<Pin>,
+    pub failed: u64,
+}
+
+impl CapState {
+    fn of(c: &Value) -> CapState {
+        let pinned = c["pinned"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| Some(Pin { pid: u32::try_from(v[0].as_u64()?).ok()?, started: v[1].as_u64()?, root: v[2].as_str()?.to_string(), orig: v[3].as_u64()? }))
+            .collect();
+        let seen = c["seen"].as_array().and_then(|a| Some((a.first()?.as_u64()?, u32::try_from(a.get(1)?.as_u64()?).ok()?)));
+        CapState { step: c["step"].as_u64().and_then(|s| u32::try_from(s).ok()).unwrap_or(0), at: c["at"].as_u64(), seen, pinned, failed: c["failed"].as_u64().unwrap_or(0) }
+    }
+
+    fn json(&self) -> Value {
+        let pinned: Vec<Value> = self.pinned.iter().map(|p| json!([p.pid, p.started, p.root, p.orig])).collect();
+        json!({ "step": self.step, "at": self.at, "seen": self.seen.map(|(a, c)| json!([a, c])), "pinned": pinned, "failed": self.failed })
+    }
+}
+
+fn cap_state(home: &Path) -> CapState {
+    CapState::of(&idle::read_json(&machine_file(home)).unwrap_or(Value::Null)["cap"])
+}
+
+/// Read-modify-write of the cap state under the state file's lock ([`super::team::update_json`]):
+/// `cap_now`, `guard now` and revive never drop each other's pins or step.
+fn update_cap(home: &Path, f: impl FnOnce(&mut CapState)) {
+    super::team::update_json(&machine_file(home), |m| {
+        let mut s = CapState::of(&m["cap"]);
+        f(&mut s);
+        m["cap"] = s.json();
+    });
+}
+
+/// This pass's tightening step from `s`, machine-wide, at most one change per [`CAP_EVERY_S`] and
+/// only on two readings in a row (`s.seen` within [`CONTINUOUS_S`], then `cpu`): a first or stale
+/// pass never acts on one glimpse. Tighten one step (halve) while both are ≥ the CPU threshold
+/// `cpu_t` and the rooms are the load (`rooms`, 0.1 % of the machine, ≥ [`ROOMS_LOAD`]): the
+/// owner's own load never halves the rooms. Loosen one step only when CPU plus what the looser
+/// cap gives back (rooms filling those CPUs) plus [`CAP_CALM`] stays ≤ `cpu_t`: a loosened cap
+/// never lands over the line, so it never flips back and forth.
+pub(super) fn cap_step(s: &CapState, cpu: u32, rooms: Option<u64>, cpu_t: u32, cap: u32, cpus: usize, now: u64) -> u32 {
+    let Some(prev) = s.seen.filter(|(at, _)| *at < now && now - at <= CONTINUOUS_S).map(|(_, c)| c) else { return s.step };
+    if s.at.is_some_and(|a| now.saturating_sub(a) < CAP_EVERY_S) {
+        return s.step;
+    }
+    let n = |step: u32| cap_n(cap, cpus, step);
+    if cpu.min(prev) >= cpu_t && rooms.is_some_and(|r| r >= ROOMS_LOAD) && n(s.step + 1) < n(s.step) {
+        return s.step + 1;
+    }
+    if s.step > 0 {
+        let back = ((n(s.step - 1) - n(s.step)) as usize * 100).div_ceil(cpus.clamp(1, 64)) as u32;
+        if cpu.max(prev) + back + CAP_CALM <= cpu_t {
+            return s.step - 1;
+        }
+    }
+    s.step
+}
+
+/// What the cap pins: every process of the rooms' trees (pid, start), once each. Never the Claude
+/// Code daemon or pty host: their mask would pass to every session they start later, the owner's
+/// and other projects' included. New rooms are pinned right after they open ([`cap_now`]).
+pub(super) fn cap_targets(procs: &[Proc], trees: &[(String, Vec<u32>)]) -> Vec<(u32, u64)> {
+    let mut v = in_rooms(trees);
+    v.sort_unstable();
+    v.dedup();
+    v.into_iter().filter_map(|pid| procs.iter().find(|p| p.pid == pid).map(|p| (pid, p.started))).collect()
+}
+
+/// Of `targets`, (pid, start, mask now) of those whose mask (`get`) is readable.
+pub(super) fn masks(targets: &[(u32, u64)], get: &dyn Fn(u32, u64) -> Option<u64>) -> Vec<(u32, u64, u64)> {
+    targets.iter().filter_map(|&(pid, s)| get(pid, s).map(|m| (pid, s, m))).collect()
+}
+
+/// The mask a process had before the cap: its nearest recorded ancestor's (a child started under
+/// a pinned process inherited the cap's mask, never its own), else what it has now unless that is
+/// already `mask` (inherited from something the cap did not record: every CPU).
+fn orig_of(procs: &[Proc], pinned: &[Pin], pid: u32, now_mask: u64, mask: u64) -> u64 {
+    let mut cur = procs.iter().find(|p| p.pid == pid);
+    for _ in 0..64 {
+        let Some(c) = cur else { break };
+        let parent = procs.iter().find(|q| c.ppid > 1 && q.pid == c.ppid && q.started <= c.started);
+        if let Some(r) = parent.and_then(|q| pinned.iter().find(|r| r.pid == q.pid && r.started == q.started)) {
+            return r.orig;
+        }
+        cur = parent;
+    }
+    if on_a_cap(now_mask, mask) {
+        ALL_CPUS
+    } else {
+        now_mask
+    }
+}
+
+/// `m` looks like one of our caps for the current `mask` (any step, any cap %): a non-empty run of
+/// contiguous CPUs ending at the same top CPU, without CPU 0 (caps take the highest CPUs, [`cap_mask`]). A process
+/// whose record was lost on an older step's mask is then still restored to every CPU.
+fn on_a_cap(m: u64, mask: u64) -> bool {
+    // A cap leaves CPU 0 to the owner; a mask holding it is the machine's (or the owner's own).
+    if m == 0 || mask == 0 || m & 1 == 1 {
+        return false;
+    }
+    let low = m & m.wrapping_neg();
+    let contiguous = m.wrapping_add(low) & m == 0;
+    contiguous && m.leading_zeros() == mask.leading_zeros()
+}
+
+/// The records after this pin for `root`: every target now on `mask` (`on`: pid, start, mask
+/// before — pinned now, or already there by inheritance) not recorded yet joins, oldest first so a
+/// parent is recorded before its children, with [`orig_of`]; a recorded process keeps its first
+/// `orig`; processes no longer in `procs` go.
+pub(super) fn record(pinned: &[Pin], on: &[(u32, u64, u64)], root: &str, procs: &[Proc], mask: u64) -> Vec<Pin> {
+    let mut v: Vec<Pin> = pinned.iter().filter(|p| procs.iter().any(|q| q.pid == p.pid && q.started == p.started)).cloned().collect();
+    let mut on = on.to_vec();
+    on.sort_by_key(|&(pid, started, _)| (started, pid));
+    for (pid, started, before) in on {
+        if !v.iter().any(|p| p.pid == pid && p.started == started) {
+            let orig = orig_of(procs, &v, pid, before, mask);
+            v.push(Pin { pid, started, root: root.to_string(), orig });
+        }
+    }
+    v
+}
+
+/// Split the records: those `uncap` puts back (project `which`, still alive with the same start)
+/// and those that stay; records of processes gone are dropped.
+pub(super) fn to_unpin(pinned: &[Pin], alive: &[(u32, u64)], which: &dyn Fn(&str) -> bool) -> (Vec<Pin>, Vec<Pin>) {
+    pinned.iter().filter(|p| alive.contains(&(p.pid, p.started))).cloned().partition(|p| which(&p.root))
+}
+
+/// The machine's logical CPUs: Windows the system mask's first group (not this process's), Linux
+/// the `cpuN` lines of `/proc/stat` (not this process's affinity or cgroup quota).
+pub(super) fn logical_cpus() -> usize {
+    #[cfg(windows)]
+    if let Some(n) = win::system_cpus() {
+        return n;
+    }
+    #[cfg(target_os = "linux")]
+    if let Ok(s) = std::fs::read_to_string("/proc/stat") {
+        let n = s.lines().filter(|l| l.strip_prefix("cpu").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))).count();
+        if n > 0 {
+            return n;
+        }
+    }
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+/// Linux: the start (unix s) of `pid` as the listing computes it (btime + start ticks / 100).
+#[cfg(target_os = "linux")]
+fn linux_started(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let ticks: u64 = stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()?;
+    let btime: u64 = std::fs::read_to_string("/proc/stat").ok()?.lines().find_map(|l| l.strip_prefix("btime ")?.trim().parse().ok())?;
+    Some(btime + ticks / 100)
+}
+
+/// Linux: still the process started at `started` (0 = no check), within 2 s.
+#[cfg(target_os = "linux")]
+fn linux_same(pid: u32, started: u64) -> bool {
+    started == 0 || linux_started(pid).is_some_and(|s| s.abs_diff(started) <= 2)
+}
+
+/// Linux `Cpus_allowed` (hex, comma groups): the first 64 CPUs' bits, or [`ALL_CPUS`] when any CPU
+/// past 64 is allowed (never equal to a cap mask, so it gets pinned; restored as every CPU).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(super) fn parse_cpus_allowed(hex: &str) -> Option<u64> {
+    let h: String = hex.trim().chars().filter(|c| *c != ',').collect();
+    let (hi, lo) = h.split_at(h.len().saturating_sub(16));
+    if hi.chars().any(|c| c != '0') {
+        return Some(ALL_CPUS);
+    }
+    u64::from_str_radix(lo, 16).ok()
+}
+
+/// `pid`'s affinity mask (first 64 CPUs); None when unreadable, gone, no longer the process started
+/// at `started`, or on macOS. Linux reads `/proc/<pid>/status` (no spawn).
+pub(super) fn affinity_of(pid: u32, started: u64) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        win::affinity(pid, started)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let s = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+        let m = parse_cpus_allowed(s.lines().find_map(|l| l.strip_prefix("Cpus_allowed:"))?)?;
+        linux_same(pid, started).then_some(m)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = (pid, started);
+        None
+    }
+}
+
+/// Pin `pid` (only while it is the process started at `started`) to `mask`, [`ALL_CPUS`] = every
+/// CPU: Windows `SetProcessAffinityMask`, Linux `taskset -a` (every thread), spawned only for a
+/// change. Only ever called for [`cap_targets`] and recorded [`Pin`]s.
+pub(super) fn set_affinity(pid: u32, started: u64, mask: u64) -> bool {
+    #[cfg(windows)]
+    {
+        win::set_affinity(pid, started, if mask == ALL_CPUS { full_mask(logical_cpus()) } else { mask })
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if !linux_same(pid, started) {
+            return false;
+        }
+        let mut cmd = std::process::Command::new("taskset");
+        if mask == ALL_CPUS {
+            cmd.args(["-a", "-c", "-p", &format!("0-{}", logical_cpus().saturating_sub(1)), &pid.to_string()]);
+        } else {
+            cmd.args(["-a", "-p", &format!("{mask:x}"), &pid.to_string()]);
+        }
+        cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = (pid, started, mask);
+        false
+    }
+}
+
+/// Pin the rooms' trees of `root` to the cap's mask at `step` and record every room process on it
+/// (pinned now or already there by inheritance, [`record`]) under the state lock: (changed,
+/// failed). None while the guard or the cap is off.
+fn enforce(home: &Path, root: &Path, procs: &[Proc], trees: &[(String, Vec<u32>)], step: u32) -> Option<(usize, usize)> {
+    auto::guard_pct(home)?;
+    let cap = auto::guard_cap(home)?;
+    let mask = cap_mask(cap, logical_cpus(), step);
+    let (mut on, mut changed, mut failed) = (Vec::new(), 0, 0);
+    for (pid, started, m) in masks(&cap_targets(procs, trees), &affinity_of) {
+        if m == mask {
+            on.push((pid, started, m));
+        } else if set_affinity(pid, started, mask) {
+            on.push((pid, started, m));
+            changed += 1;
+        } else {
+            failed += 1;
+        }
+    }
+    update_cap(home, |s| {
+        s.pinned = record(&s.pinned, &on, &key(root), procs, mask);
+        s.failed = failed as u64;
+    });
+    Some((changed, failed))
+}
+
+/// Right after `auto up` / `revive` open rooms: the new trees go under the cap at once. How many
+/// changed.
+pub(super) fn cap_now(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, String)], now: u64) -> usize {
+    if auto::guard_pct(home).is_none() || auto::guard_cap(home).is_none() {
+        return 0;
+    }
+    let procs = reap::list(now);
+    let live = claude
+        .run(&["agents".into(), "--json".into(), "--cwd".into(), root.to_string_lossy().into_owned()])
+        .map(|j| live_rooms(&j, registry, &records(home)))
+        .unwrap_or_default();
+    let trees = room_trees(&procs, &live);
+    enforce(home, root, &procs, &trees, cap_state(home).step).map_or(0, |(n, _)| n)
+}
+
+/// Put back exactly what the cap pinned for the projects `which` takes (still alive, same start)
+/// and forget those records; `reset` also loosens the step. `procs` lists the processes, called
+/// only when something is to be put back. How many changed.
+fn uncap_where(home: &Path, procs: &dyn Fn() -> Vec<Proc>, which: &dyn Fn(&str) -> bool, reset: bool) -> usize {
+    let s = cap_state(home);
+    let todo = s.pinned.iter().any(|p| which(&p.root));
+    if !todo && !(reset && (s.step != 0 || s.at.is_some())) {
+        return 0;
+    }
+    let n = if todo {
+        let alive: Vec<(u32, u64)> = procs().iter().map(|p| (p.pid, p.started)).collect();
+        to_unpin(&s.pinned, &alive, which).0.iter().filter(|p| set_affinity(p.pid, p.started, p.orig)).count()
+    } else {
+        0
+    };
+    update_cap(home, |s| {
+        s.pinned.retain(|p| !which(&p.root));
+        if reset {
+            s.step = 0;
+            s.at = None;
+        }
+    });
+    n
+}
+
+/// `cap off` / `guard off`: every process the cap pinned goes back to its own mask; the cap is
+/// loose again.
+pub(super) fn uncap(home: &Path, now: u64) -> usize {
+    uncap_where(home, &|| reap::list(now), &|_| true, true)
+}
+
+/// Auto stopped, paused, or a project left its scope: that project's pins go back (all of them
+/// and the step once no team runs anywhere). The scope is read once; `procs` is called only when
+/// something is to be put back.
+pub(super) fn uncap_stale(home: &Path, procs: &dyn Fn() -> Vec<Proc>) -> usize {
+    if !auto::running(home) {
+        return uncap_where(home, procs, &|_| true, true);
+    }
+    let scoped = auto::scoped(home);
+    uncap_where(home, procs, &|root| !scoped(Some(root)), false)
+}
+
+/// The rooms' share of the machine (0.1 %) over the tick, machine-wide: this project's trees plus
+/// every process the cap recorded (every project's rooms), once each.
+pub(super) fn rooms_load(deltas: &[(u32, u64)], procs: &[Proc], trees: &[(String, Vec<u32>)], pinned: &[Pin], ms: u64, cores: usize) -> u64 {
+    let mine = in_rooms(trees);
+    let d: u64 = deltas
+        .iter()
+        .filter(|(pid, _)| mine.contains(pid) || procs.iter().any(|p| p.pid == *pid && pinned.iter().any(|r| r.pid == p.pid && r.started == p.started)))
+        .map(|(_, d)| d)
+        .sum();
+    cpu_permille(d, ms, cores)
+}
+
+/// The cap's text: `CPU phòng tối đa 37% (12/32 luồng)`, `· đang siết` while tightened.
+fn cap_text(cap: u32, cpus: usize, step: u32) -> String {
+    let n = cap_n(cap, cpus, step);
+    let cpus = cpus.clamp(1, 64);
+    format!("CPU phòng tối đa {cap}% ({n}/{cpus} luồng){}", if step > 0 { " · đang siết (CPU vượt ngưỡng)" } else { "" })
+}
+
+/// Each live room's process tree (its claude.exe first).
+fn room_trees(procs: &[Proc], live: &[LiveRoom]) -> Vec<(String, Vec<u32>)> {
+    live.iter().filter(|r| procs.iter().any(|p| p.pid == r.pid)).map(|r| (r.name.clone(), reap::tree_of(procs, r.pid, &|_| true))).collect()
+}
+
 /// Every process of the rooms' trees.
 fn in_rooms(trees: &[(String, Vec<u32>)]) -> Vec<u32> {
     trees.iter().flat_map(|(_, t)| t.iter().copied()).collect()
@@ -826,7 +1315,7 @@ pub(super) fn settle(home: &Path, budget: &mut std::time::Duration) {
     if cfg!(test) || budget.is_zero() {
         return;
     }
-    let Some(pct) = auto::guard_pct(home) else { return };
+    let Some(pct) = auto::guard_cpu(home) else { return };
     let Some(s) = crate::verbs::hq_core::sampler::Sampler::new() else { return };
     s.get(Duration::ZERO);
     let start = Instant::now();
@@ -1050,16 +1539,28 @@ pub(super) fn status_json(home: &Path, pct: Option<u32>) -> Value {
         })
         .collect();
     let temp_qa = idle::read_json(&machine_file(home)).map(|m| m["temp_qa"].clone()).filter(Value::is_object);
-    json!({ "pct": pct, "eco": auto::guard_eco(home), "projects": projects, "temp_qa": temp_qa })
+    let s = cap_state(home);
+    let cpus = logical_cpus();
+    let cap = auto::guard_cap(home);
+    let cap_n = cap.map(|c| cap_n(c, cpus, s.step));
+    json!({ "pct": pct, "cpu_pct": pct.and(auto::guard_cpu(home)), "eco": auto::guard_eco(home), "cap": cap, "cap_n": cap_n, "cpus": cpus.min(64), "cap_step": s.step, "cap_tight": s.step > 0, "cap_pinned": s.pinned.len(), "cap_failed": s.failed, "projects": projects, "temp_qa": temp_qa })
 }
 
 /// The text lines of a `guard` status object.
 pub(super) fn lines(g: &Value) -> Vec<String> {
     let Some(pct) = g["pct"].as_u64() else {
-        return vec!["máy: tự dọn TẮT (bật: `8sync ccc auto guard 60`)".into()];
+        return vec![format!("máy: tự dọn TẮT (bật: `8sync ccc auto guard {DEFAULT_PCT}`)")];
     };
     let eco = if g["eco"].as_bool() == Some(false) { "TẮT" } else { "BẬT" };
-    let mut out = vec![format!("máy: tự dọn khi RAM/CPU ≥ {pct}% · tiết kiệm điện (EcoQoS) {eco} (đổi: `8sync ccc auto guard <30..95>|off|eco on|off`)")];
+    let cap = match g["cap"].as_u64().and_then(|c| u32::try_from(c).ok()) {
+        Some(c) => {
+            let failed = g["cap_failed"].as_u64().filter(|f| *f > 0).map(|f| format!(" · {f} tiến trình không ghim được")).unwrap_or_default();
+            cap_text(c, g["cpus"].as_u64().unwrap_or(1) as usize, g["cap_step"].as_u64().map_or(u32::from(g["cap_tight"].as_bool() == Some(true)), |s| s as u32)) + &failed
+        }
+        None => "CPU phòng: không giới hạn".into(),
+    };
+    let cpu_t = g["cpu_pct"].as_u64().unwrap_or(u64::from(DEFAULT_CPU));
+    let mut out = vec![format!("máy: tự dọn khi RAM ≥ {pct}% · CPU ≥ {cpu_t}% · {cap} · tiết kiệm điện (EcoQoS) {eco} (đổi: `8sync ccc auto guard <30..95>|off|cpu <30..95>|cap <10..90>|off|eco on|off`)")];
     for p in g["projects"].as_array().into_iter().flatten() {
         let lvl = p["level"].as_u64().unwrap_or(0);
         let paused = names(&p["paused"]);
@@ -1127,12 +1628,12 @@ fn records(home: &Path) -> Vec<(String, u32)> {
         .collect()
 }
 
-/// Whole-machine CPU share (%) of `cpu` 100-ns units used over `secs` seconds on `cores` threads.
-fn cpu_share(delta_100ns: u64, secs: u64, cores: usize) -> u32 {
-    if secs == 0 || cores == 0 {
+/// Whole-machine CPU share (%) of `cpu` 100-ns units used over `ms` milliseconds on `cores` threads.
+fn cpu_share(delta_100ns: u64, ms: u64, cores: usize) -> u32 {
+    if ms == 0 || cores == 0 {
         return 0;
     }
-    (delta_100ns as f64 / (secs as f64 * 1e7 * cores as f64) * 100.0).round() as u32
+    (delta_100ns as f64 / (ms as f64 * 1e4 * cores as f64) * 100.0).round() as u32
 }
 
 fn row(role: &str, state: String) -> Row {
@@ -1140,11 +1641,11 @@ fn row(role: &str, state: String) -> Row {
 }
 
 /// CPU share in 0.1 % of the machine (the unit [`keep_count`] and [`room_fits`] take for CPU).
-fn cpu_permille(delta_100ns: u64, secs: u64, cores: usize) -> u64 {
-    if secs == 0 || cores == 0 {
+fn cpu_permille(delta_100ns: u64, ms: u64, cores: usize) -> u64 {
+    if ms == 0 || cores == 0 {
         return 0;
     }
-    (delta_100ns as f64 / (secs as f64 * 1e7 * cores as f64) * 1000.0).round() as u64
+    (delta_100ns as f64 / (ms as f64 * 1e4 * cores as f64) * 1000.0).round() as u64
 }
 
 /// Pids holding GPU memory (`nvidia-smi --query-compute-apps`): a VRAM breach is the rooms' only
@@ -1178,6 +1679,13 @@ pub(super) fn tick(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(S
 #[allow(clippy::too_many_arguments)]
 fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, String)], gated: bool, now: u64, min_gap: u64, listing: &reap::Listing, acted: &mut bool) -> Vec<Row> {
     let Some(pct) = auto::guard_pct(home) else { return Vec::new() };
+    let lim = Limits { ram: pct, cpu: auto::guard_cpu(home).unwrap_or(DEFAULT_CPU) };
+    let cpu_t = lim.cpu;
+    // Auto ended or this project left its scope: what the cap pinned goes back (never in tests:
+    // it would touch this machine's processes).
+    if !cfg!(test) {
+        uncap_stale(home, &|| listing.procs());
+    }
     if !auto::running(home) || !auto::in_scope(home, Some(&root.to_string_lossy())) {
         return Vec::new();
     }
@@ -1193,11 +1701,12 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
     let Some(ram) = reap::ram_pct(sample.mem) else { return Vec::new() };
     let vram = sample.gpus.iter().flatten().filter(|g| g.mem_total > 0).map(|g| (g.mem_used * 100 / g.mem_total) as u32).max();
     let procs = listing.procs();
-    // CPU over the whole tick (not a 250 ms glimpse): per-process time since the last pass.
-    let secs = since.filter(|_| fresh).unwrap_or(0);
+    // CPU over the time between this listing and the last pass's (both stamped when taken), not
+    // between the passes' starts: a short `guard now` gap or a slow listing would skew it.
+    let (ms, sys_cpu) = if fresh { window(&st, listing.stamp(), since.unwrap_or(0) * 1000) } else { (0, None) };
     let deltas = if fresh { cpu_deltas(&procs, &st["procs"]) } else { Vec::new() };
-    let cpu = tick_cpu(&deltas, &procs, secs, sample.cores).or(sample.cpu_pct);
-    let breach = Breach::of(&st).next(ram, cpu, pct, since, now);
+    let cpu = sys_cpu.or_else(|| tick_cpu(&deltas, &procs, ms, sample.cores)).or(sample.cpu_pct);
+    let breach = Breach::of(&st).next(ram, cpu, lim, since, now);
     let mut rows = Vec::new();
     let mut said: Vec<String> = Vec::new();
     let cpu_s = cpu.map_or("?".into(), |c| format!("{c}%"));
@@ -1216,7 +1725,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         let mine = in_rooms(&trees);
         vram_pids().iter().any(|p| mine.contains(p))
     };
-    let lvl = level(ram, vram.filter(|_| vram_rooms), cpu, pct, &breach, now);
+    let lvl = level(ram, vram.filter(|_| vram_rooms), cpu, lim, &breach, now);
     if lvl.n() != st["level"].as_u64().unwrap_or(0) {
         *acted = true;
     }
@@ -1229,7 +1738,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         .map(|(name, t)| {
             let mb = procs.iter().filter(|p| t.contains(&p.pid)).map(|p| p.rss).sum::<u64>() / MIB;
             let d: u64 = deltas.iter().filter(|(pid, _)| t.contains(pid)).map(|(_, d)| d).sum();
-            (name.clone(), mb, fresh.then(|| cpu_permille(d, secs, sample.cores)))
+            (name.clone(), mb, fresh.then(|| cpu_permille(d, ms, sample.cores)))
         })
         .collect();
     stats.sort_by(|a, b| b.1.cmp(&a.1));
@@ -1240,7 +1749,8 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
     // calm again, they go back to below normal.
     let low = to_lower(&procs, &trees);
     let n = if low.is_empty() { 0 } else { lower(&low, false) };
-    let (idle_now, back) = if lvl >= Level::Clean || vram_hot { (to_idle(&procs, &trees), Vec::new()) } else { (Vec::new(), to_restore(&procs, &trees)) };
+    // Builds drop to idle on a CPU breach (or a full GPU), never for RAM alone.
+    let (idle_now, back) = if breach.cpu.is_some() || vram_hot { (to_idle(&procs, &trees), Vec::new()) } else { (Vec::new(), to_restore(&procs, &trees)) };
     let i = if idle_now.is_empty() { 0 } else { lower(&idle_now, true) };
     let b = if back.is_empty() { 0 } else { lower(&back, false) };
     let eco_on = auto::guard_eco(home);
@@ -1265,10 +1775,48 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         }
     }
 
+    // CPU cap: the rooms' trees on the cap's CPUs; one machine-wide step decision ([`cap_step`]).
+    if let Some(cap) = auto::guard_cap(home) {
+        let cpus = logical_cpus();
+        // The rooms' load machine-wide: this project's trees and every project's recorded pins.
+        let rooms = fresh.then(|| rooms_load(&deltas, &procs, &trees, &cap_state(home).pinned, ms, sample.cores));
+        let (mut step_now, mut moved) = (0, None);
+        update_cap(home, |s| {
+            if let Some(c) = cpu {
+                let step = cap_step(s, c, rooms, cpu_t, cap, cpus, now);
+                if s.seen.is_none_or(|(at, _)| at < now) {
+                    s.seen = Some((now, c));
+                }
+                if step != s.step {
+                    moved = Some((s.step, step));
+                    s.step = step;
+                    s.at = Some(now);
+                }
+            }
+            step_now = s.step;
+        });
+        if let Some((from, to)) = moved {
+            let text = if to > from {
+                format!("CPU {cpu_s} ≥ ngưỡng CPU {cpu_t}% (phòng ăn {}%): siết {}", rooms.unwrap_or(0) / 10, cap_text(cap, cpus, to))
+            } else {
+                format!("CPU {cpu_s}: nới cả bước vẫn dưới ngưỡng {cpu_t}%: {}", cap_text(cap, cpus, to))
+            };
+            *acted = true;
+            rows.push(row("CPU cap", text.clone()));
+            log(&mut st, now, &text);
+        }
+        if let Some((k, failed)) = enforce(home, root, &procs, &trees, step_now) {
+            if k > 0 || failed > 0 {
+                let bad = if failed > 0 { format!(" · {failed} không ghim được") } else { String::new() };
+                rows.push(row("CPU cap", format!("ghim {k} tiến trình của phòng · {}{bad}", cap_text(cap, cpus, step_now))));
+            }
+        }
+    }
+
     // Defender scanning the worktrees: its share is shown, the exclusion only suggested, never run.
     if procs.iter().any(|p| p.name == "msmpeng.exe") {
         let cmd = format!("Add-MpPreference -ExclusionPath '{}'", root.join(".claude").join("worktrees").display());
-        let share = fresh.then(|| cpu_share(deltas.iter().filter(|(pid, _)| procs.iter().any(|p| p.pid == *pid && p.name == "msmpeng.exe")).map(|(_, d)| d).sum(), secs, sample.cores));
+        let share = fresh.then(|| cpu_share(deltas.iter().filter(|(pid, _)| procs.iter().any(|p| p.pid == *pid && p.name == "msmpeng.exe")).map(|(_, d)| d).sum(), ms, sample.cores));
         st["defender"] = json!(cmd);
         st["defender_cpu"] = json!(share);
         if let Some(share) = share.filter(|s| *s >= DEFENDER_PCT) {
@@ -1290,8 +1838,8 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
     let mut killed: Vec<u32> = Vec::new();
     let mut loads = Vec::new();
     if lvl >= Level::Clean {
-        rows.push(row(&format!("L{}", lvl.n()), format!("{} · CPU cả tick {cpu_s} · ngưỡng {pct}%: {}", reap::machine_line(&sample), Level::label(lvl.n()))));
-        let top = cpu_top(&procs, &deltas, &trees, secs, sample.cores);
+        rows.push(row(&format!("L{}", lvl.n()), format!("{} · CPU cả tick {cpu_s} · ngưỡng RAM {pct}% · CPU {cpu_t}%: {}", reap::machine_line(&sample), Level::label(lvl.n()))));
+        let top = cpu_top(&procs, &deltas, &trees, ms, sample.cores);
         if !top.is_empty() {
             rows.push(row("CPU", format!("ăn CPU nhất trong tick: {}", top.join(", "))));
         }
@@ -1383,7 +1931,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
     let avg_mb = avg(stats.iter().map(|s| s.1).collect(), "room_mb", &mut st);
     let avg_cpu = avg(stats.iter().filter_map(|s| s.2).collect(), "room_cpu", &mut st);
     let fits = sample.mem.is_some_and(|(total, used)| room_fits(used, avg_mb, total * u64::from(pct) / 100, total * RESUME_MARGIN / 100))
-        && cpu.is_none_or(|c| room_fits(u64::from(c) * 10, avg_cpu, u64::from(pct) * 10, RESUME_MARGIN * 10));
+        && cpu.is_none_or(|c| room_fits(u64::from(c) * 10, avg_cpu, u64::from(cpu_t) * 10, RESUME_MARGIN * 10));
     if fits {
         if st["calm_since"].as_u64().is_none() {
             st["calm_since"] = json!(now);
@@ -1404,10 +1952,10 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
             Some((total, used)) => keep_count(&loads.iter().map(|l| l.total / MIB).collect::<Vec<_>>(), used, total * u64::from(pct) / 100, core),
             None => n_live,
         };
-        let keep_cpu = match cpu.filter(|_| breach.cpu_shrink(now) && secs > 0) {
+        let keep_cpu = match cpu.filter(|_| breach.cpu_shrink(now) && ms > 0) {
             Some(c) => {
                 let share = |name: &str| stats.iter().find(|s| s.0 == name).and_then(|s| s.2).unwrap_or(0);
-                keep_count(&names_live.iter().map(|n| share(n)).collect::<Vec<_>>(), u64::from(c) * 10, u64::from(pct) * 10, core)
+                keep_count(&names_live.iter().map(|n| share(n)).collect::<Vec<_>>(), u64::from(c) * 10, u64::from(cpu_t) * 10, core)
             }
             None => n_live,
         };
@@ -1428,7 +1976,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         }
         if !gone.is_empty() {
             *acted = true;
-            let text = format!("L3 RAM {ram}% CPU {cpu_s} (ngưỡng {pct}%): vừa đủ {keep}/{n_live} phòng, tạm dừng {}; mở lại từng phòng khi đủ chỗ thêm 1 phòng dưới ngưỡng suốt 10 phút", gone.join(", "));
+            let text = format!("L3 RAM {ram}% CPU {cpu_s} (ngưỡng RAM {pct}% · CPU {cpu_t}%): vừa đủ {keep}/{n_live} phòng, tạm dừng {}; mở lại từng phòng khi đủ chỗ thêm 1 phòng dưới ngưỡng suốt 10 phút", gone.join(", "));
             rows.push(row("L3", text.clone()));
             log(&mut st, now, &text);
             said.push(text);
@@ -1439,7 +1987,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
             *acted = true;
             // The next room waits its own 10 minutes with this one running.
             st["calm_since"] = Value::Null;
-            let text = format!("RAM {ram}% CPU {cpu_s}: đủ chỗ thêm 1 phòng dưới ngưỡng {pct}% suốt 10 phút: mở lại phòng {n}");
+            let text = format!("RAM {ram}% CPU {cpu_s}: đủ chỗ thêm 1 phòng dưới ngưỡng (RAM {pct}% · CPU {cpu_t}%) suốt 10 phút: mở lại phòng {n}");
             rows.push(row("mở lại", text.clone()));
             log(&mut st, now, &text);
         }
@@ -1464,21 +2012,31 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         o.remove("cpu_max");
     }
     st["procs"] = cpu_snapshot(&procs);
+    let stamp = listing.stamp();
+    st["procs_ms"] = json!(stamp.ms);
+    st["sys"] = json!(stamp.sys.map(|(i, t)| [i, t]));
     // `%TEMP%` QA copies (machine-wide, shown in HQ, never deleted): measured at most every 30 min.
-    let mfile = machine_file(home);
-    let mut m = idle::read_json(&mfile).filter(Value::is_object).unwrap_or_else(|| json!({}));
-    if m["temp_qa"]["at"].as_u64().is_none_or(|at| now.saturating_sub(at) >= TEMP_QA_EVERY_S) {
+    let due = idle::read_json(&machine_file(home)).is_none_or(|m| m["temp_qa"]["at"].as_u64().is_none_or(|at| now.saturating_sub(at) >= TEMP_QA_EVERY_S));
+    if due {
         let mut t = temp_qa(&std::env::temp_dir(), std::time::Duration::from_secs(2));
         t["at"] = json!(now);
-        m["temp_qa"] = t;
-        idle::write_json(&mfile, &m);
+        super::team::update_json(&machine_file(home), |m| m["temp_qa"] = t);
     }
     // What HQ shows: each room's RAM and CPU (%) of the tick, heaviest first, and the machine's top CPU users.
     st["rooms"] = Value::from(stats.iter().map(|(name, mb, c)| json!({ "name": name, "mb": mb, "cpu": c.map(|c| (c + 5) / 10) })).collect::<Vec<_>>());
-    st["top"] = json!(cpu_top(&procs, &deltas, &trees, secs, sample.cores));
+    st["top"] = json!(cpu_top(&procs, &deltas, &trees, ms, sample.cores));
     all[&k] = st;
     idle::write_json(&file(home), &all);
     rows
+}
+
+/// The window of this pass's CPU figures: ms between the last pass's listing and this one's
+/// (`now`, both stamped when taken; `fallback_ms` for a state from before stamps), and the
+/// machine's CPU over it from the system times stored with each.
+fn window(st: &Value, now: reap::Stamp, fallback_ms: u64) -> (u64, Option<u32>) {
+    let ms = st["procs_ms"].as_u64().map_or(fallback_ms, |at| now.ms.saturating_sub(at));
+    let prev = st["sys"].as_array().and_then(|a| Some((a.first()?.as_u64()?, a.get(1)?.as_u64()?)));
+    (ms, machine_cpu(prev, now.sys))
 }
 
 /// `8sync ccc auto guard --dry-run`: what a pass would see right now for `root`, read-only (no
@@ -1486,29 +2044,48 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
 /// the L1 picks, the room processes still at normal priority and each live room's load.
 pub(super) fn dry_run(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, String)], now: u64) -> Vec<String> {
     let pct = auto::guard_pct(home);
+    let lim = pct.map(|p| Limits { ram: p, cpu: auto::guard_cpu(home).unwrap_or(DEFAULT_CPU) });
     let mut out = Vec::new();
     let sample = crate::verbs::hq_core::sampler::Sampler::new().map(|s| s.get(std::time::Duration::ZERO));
     let ram = sample.as_ref().and_then(|s| reap::ram_pct(s.mem));
     let cores = sample.as_ref().map_or(1, |s| s.cores);
-    let before = cpu_snapshot(&reap::list(now));
+    let first = reap::Listing::new(now);
+    let before = cpu_snapshot(&first.procs());
+    let s0 = first.stamp();
     std::thread::sleep(std::time::Duration::from_secs(5));
-    let procs = reap::list(now);
+    let second = reap::Listing::new(now);
+    let procs = second.procs();
+    let s1 = second.stamp();
+    let ms = s1.ms.saturating_sub(s0.ms);
     let deltas = cpu_deltas(&procs, &before);
-    let cpu = tick_cpu(&deltas, &procs, 5, cores);
+    let cpu = machine_cpu(s0.sys, s1.sys).or_else(|| tick_cpu(&deltas, &procs, ms, cores));
     out.push(format!(
-        "máy: {} · CPU 5 s {} · ngưỡng {} · mức nếu chạy bây giờ: L{}",
+        "máy: {} · CPU {:.1} s {} · ngưỡng {} · mức nếu chạy bây giờ: L{}",
         sample.as_ref().map(reap::machine_line).unwrap_or_default(),
+        ms as f64 / 1000.0,
         cpu.map_or("?".into(), |c| format!("{c}%")),
-        pct.map_or("TẮT".into(), |p| format!("{p}%")),
-        pct.zip(ram).map_or(0, |(p, r)| level(r, None, cpu, p, &Breach::default(), now).n())
+        lim.map_or("TẮT".into(), |l| format!("RAM ≥ {}% · CPU ≥ {}%", l.ram, l.cpu)),
+        lim.zip(ram).map_or(0, |(l, r)| level(r, None, cpu, l, &Breach::default(), now).n())
     ));
     let live = claude
         .run(&["agents".into(), "--json".into(), "--cwd".into(), root.to_string_lossy().into_owned()])
         .map(|j| live_rooms(&j, registry, &records(home)))
         .unwrap_or_default();
     let trees: Vec<(String, Vec<u32>)> = live.iter().filter(|r| procs.iter().any(|p| p.pid == r.pid)).map(|r| (r.name.clone(), reap::tree_of(&procs, r.pid, &|_| true))).collect();
-    out.push(format!("ăn CPU nhất 5 s: {}", cpu_top(&procs, &deltas, &trees, 5, cores).join(", ")));
+    out.push(format!("ăn CPU nhất {:.1} s: {}", ms as f64 / 1000.0, cpu_top(&procs, &deltas, &trees, ms, cores).join(", ")));
     out.push(format!("sẽ hạ ưu tiên {} tiến trình của phòng còn ở mức bình thường", to_lower(&procs, &trees).len()));
+    match auto::guard_cap(home).filter(|_| pct.is_some()) {
+        Some(cap) => {
+            let s = cap_state(home);
+            let mask = cap_mask(cap, logical_cpus(), s.step);
+            let targets = cap_targets(&procs, &trees);
+            let unread = targets.iter().filter(|(p, st)| affinity_of(*p, *st).is_none()).count();
+            let k = masks(&targets, &affinity_of).iter().filter(|(_, _, m)| *m != mask).count();
+            let bad = if unread > 0 { format!(" · {unread} không đọc được mask") } else { String::new() };
+            out.push(format!("{} · mask {mask:#x} · sẽ ghim {k}/{} tiến trình của phòng (không ghim daemon){bad} · đang ghi nhớ {}", cap_text(cap, logical_cpus(), s.step), targets.len(), s.pinned.len()));
+        }
+        None => out.push("CPU phòng: không giới hạn (bật: `8sync ccc auto guard cap 37`)".into()),
+    }
     let cards = target::list(home, root).unwrap_or_default();
     let closed = |dir: &str| {
         let low = dir.to_ascii_lowercase();
@@ -1557,7 +2134,7 @@ mod tests {
 
     #[test]
     fn breaches_act_at_once_and_escalate_on_time_held() {
-        let t = 60;
+        let t = Limits { ram: 60, cpu: 60 };
         let none = Breach::default();
         assert_eq!(level(59, None, Some(50), t, &none, NOW), Level::Calm);
         assert_eq!(level(60, None, None, t, &none, NOW), Level::Clean, "RAM at the threshold: L1 at once");
@@ -1623,16 +2200,35 @@ mod tests {
         let d = cpu_deltas(&procs, &prev);
         assert_eq!(d.iter().find(|(p, _)| *p == 300).map(|x| x.1), Some(8 * s));
         assert_eq!(d.iter().find(|(p, _)| *p == 400).map(|x| x.1), Some(5 * s));
-        assert_eq!(tick_cpu(&d, &procs, 100, 4), Some(40));
-        assert_eq!(tick_cpu(&d, &procs[1..], 100, 4), None, "no idle counter: none");
+        assert_eq!(tick_cpu(&d, &procs, 100_000, 4), Some(40));
+        assert_eq!(tick_cpu(&d, &procs[1..], 100_000, 4), None, "no idle counter: none");
         let trees = vec![("dev2".to_string(), vec![100, 101])];
-        assert_eq!(cpu_top(&procs, &d, &trees, 100, 4), ["MCP codebase-memory 24% (dev2)", "msmpeng 10% (máy)", "node 3% (máy)"]);
+        assert_eq!(cpu_top(&procs, &d, &trees, 100_000, 4), ["MCP codebase-memory 24% (dev2)", "msmpeng 10% (máy)", "node 3% (máy)"]);
         // only room trees still at normal priority are lowered (idempotent: below-normal ones stay out)
         let mut norm = procs.clone();
         norm[1].normal = true;
         norm[2].normal = false;
         norm[3].normal = true;
         assert_eq!(to_lower(&norm, &trees), [100], "the owner's/system processes are never touched");
+    }
+
+    #[test]
+    fn cpu_window_is_the_time_between_the_listings_not_the_nominal_gap() {
+        // The last pass's listing at 1.0 s, this one's at 8.5 s: a "5 s" wait whose two listings
+        // took 2.5 s more. A process that used 7.5 CPU-seconds ran one core flat out.
+        let st = json!({ "procs_ms": 1_000, "sys": [1_000, 10_000] });
+        let now = reap::Stamp { ms: 8_500, sys: Some((1_000 + 45_000, 10_000 + 60_000)) };
+        let (ms, machine) = window(&st, now, 5_000);
+        assert_eq!(ms, 7_500, "divided by 7.5 s, not 5");
+        assert_eq!(cpu_share(75_000_000, ms, 1), 100);
+        assert_eq!(cpu_share(75_000_000, 5_000, 1), 150, "the old skew");
+        assert_eq!(cpu_permille(75_000_000, ms, 4), 250);
+        assert_eq!(machine, Some(25), "machine CPU from the system times: 45 of 60 idle");
+        // A state from before stamps: the pass gap; no system times: none (tick_cpu then).
+        assert_eq!(window(&json!({}), now, 5_000), (5_000, None));
+        assert_eq!(machine_cpu(Some((5, 10)), Some((4, 20))), None, "a counter going back says nothing");
+        assert_eq!(machine_cpu(Some((5, 10)), Some((5, 10))), None);
+        assert_eq!(machine_cpu(Some((0, 0)), Some((0, 100))), Some(100));
     }
 
     #[test]
@@ -1920,7 +2516,7 @@ mod tests {
             "the owner's interactive lead and sessions of no room are left out"
         );
         assert!(live_rooms("not json", &reg, &[]).is_empty());
-        assert_eq!(cpu_share(32 * 10_000_000, 10, 32), 10);
+        assert_eq!(cpu_share(32 * 10_000_000, 10_000, 32), 10);
     }
 
     #[test]
@@ -1941,7 +2537,7 @@ mod tests {
         let g = status_json(&home, Some(60));
         assert_eq!((g["pct"].as_u64(), g["projects"][0]["level"].as_u64(), g["projects"][0]["paused"][1].as_str()), (Some(60), Some(3), Some("dev6")));
         let l = lines(&g);
-        assert!(l[0].contains("RAM/CPU ≥ 60%") && l[0].contains("EcoQoS) BẬT") && l[1].contains("L3 tạm dừng bớt phòng · RAM 88% · CPU 71% · tạm dừng: review2, dev6 · gần nhất: L3 …") && l[2].contains("Defender ăn CPU 5%"), "{l:?}");
+        assert!(l[0].contains("RAM ≥ 60% · CPU ≥ 55% · CPU phòng tối đa 37%") && l[0].contains("EcoQoS) BẬT") && l[1].contains("L3 tạm dừng bớt phòng · RAM 88% · CPU 71% · tạm dừng: review2, dev6 · gần nhất: L3 …") && l[2].contains("Defender ăn CPU 5%"), "{l:?}");
         assert!(lines(&status_json(&home, None))[0].contains("TẮT"));
         assert_eq!(status_json(&home, None)["projects"][0]["paused"], json!([]), "guard off: HQ shows no pause");
         clear_paused(&home, root);
@@ -1959,4 +2555,225 @@ mod tests {
         assert_eq!((st["actions"].as_array().unwrap().len(), st["actions"][0]["text"].as_str()), (ACTIONS_KEEP, Some("a2")));
         let _ = std::fs::remove_dir_all(&home);
     }
+
+    #[test]
+    fn a_process_on_any_steps_cap_mask_is_restored_to_every_cpu() {
+        let (m0, m2) = (cap_mask(37, 32, 0), cap_mask(37, 32, 2));
+        assert!(on_a_cap(m0, m2) && on_a_cap(m2, m0), "older or newer step of the same cap");
+        assert!(on_a_cap(cap_mask(50, 32, 0), m0), "another cap %");
+        assert!(!on_a_cap(0x0000_FFFF, m0), "the low CPUs are not a cap");
+        assert!(!on_a_cap(0xF0F0_0000, m0), "not contiguous");
+        assert!(!on_a_cap(ALL_CPUS, m0));
+        assert!(!on_a_cap(0xFFFF_FFFF, m0), "the whole machine is not a cap");
+    }
+
+    #[test]
+    fn cap_mask_takes_the_highest_cpus_at_least_two_first_group_only() {
+        assert_eq!(cap_mask(37, 32, 0), 0xFFF0_0000, "12 of 32, high CPUs (V-Cache CCD left alone)");
+        assert_eq!(cap_mask(37, 32, 1), 0xFC00_0000, "one step: halved to 6");
+        assert_eq!((cap_n(37, 32, 2), cap_n(37, 32, 3), cap_n(37, 32, 9)), (3, 2, 2), "halving stops at 2");
+        assert_eq!(cap_mask(25, 32, 0).count_ones(), 8);
+        assert_eq!(cap_mask(50, 16, 0), 0xFF00);
+        assert_eq!(cap_mask(10, 4, 0), 0b1100, "min 2");
+        assert_eq!(cap_mask(10, 4, 1), 0b1100, "tight never under 2");
+        assert_eq!(cap_mask(90, 2, 0), 0b11);
+        assert_eq!(cap_mask(90, 1, 0), 0b1, "never more CPUs than there are");
+        assert_eq!(cap_mask(50, 128, 0), 0xFFFF_FFFF_0000_0000, "> 64 CPUs: within the first 64");
+        assert_eq!(cap_mask(90, 64, 0).count_ones(), 58);
+        assert_eq!(full_mask(32), 0xFFFF_FFFF);
+        assert_eq!(full_mask(200), u64::MAX);
+        assert_eq!(parse_cpus_allowed("ffff\n"), Some(0xFFFF));
+        assert_eq!(parse_cpus_allowed("00000000,fff00000"), Some(0xFFF0_0000), "comma groups");
+        assert_eq!(parse_cpus_allowed("00000001,00000000,00000000"), Some(ALL_CPUS), "a CPU past 64 allowed: never equal to a cap mask");
+        assert_eq!(parse_cpus_allowed("00000000,ffffffff,ffffffff"), Some(u64::MAX));
+    }
+
+    /// Passes every 20 s with the rooms filling every CPU the cap gives them on 32 CPUs, plus the
+    /// owner's own load `owner` (%): the machine CPU each pass and the steps taken.
+    fn run_cap(owner: u32, rooms_busy: bool, passes: u64) -> (Vec<u32>, Vec<u32>) {
+        let (cap, cpus, cpu_t) = (37, 32, 55);
+        let mut s = CapState::default();
+        let (mut cpu_seen, mut steps) = (Vec::new(), Vec::new());
+        for i in 0..passes {
+            let now = NOW + i * 20;
+            let rooms = if rooms_busy { u64::from(cap_n(cap, cpus, s.step)) * 1000 / 32 } else { 20 };
+            let cpu = owner + (rooms / 10) as u32;
+            let step = cap_step(&s, cpu, Some(rooms), cpu_t, cap, cpus, now);
+            s.seen = Some((now, cpu));
+            if step != s.step {
+                s.step = step;
+                s.at = Some(now);
+            }
+            cpu_seen.push(cpu);
+            steps.push(s.step);
+        }
+        (cpu_seen, steps)
+    }
+
+    #[test]
+    fn the_cap_never_cycles_over_the_line_at_owner_load_22_to_26() {
+        for owner in 22..=26 {
+            let (cpu, steps) = run_cap(owner, true, 60);
+            let flips = steps.windows(2).filter(|w| w[0] != w[1]).count();
+            assert_eq!(flips, 1, "owner {owner}%: one tighten, never back and forth: {steps:?}");
+            // The two readings it needs at the start, then under the line for good.
+            assert!(cpu[3..].iter().all(|c| *c < 55), "owner {owner}%: {cpu:?}");
+        }
+        // Light owner load: rooms at the full cap stay under, nothing moves.
+        let (cpu, steps) = run_cap(10, true, 30);
+        assert!(steps.iter().all(|s| *s == 0) && cpu.iter().all(|c| *c < 55));
+        // Tightened earlier, the owner's load fell to 5%: loosens one step, lands under, stays.
+        let mut s = CapState { step: 1, at: Some(NOW - 100), seen: Some((NOW - 20, 5 + 18)), ..Default::default() };
+        assert_eq!(cap_step(&s, 5 + 18, Some(180), 55, 37, 32, NOW), 0, "23 + 19 back + 5 ≤ 55");
+        s.seen = Some((NOW - 20, 40));
+        assert_eq!(cap_step(&s, 40, Some(180), 55, 37, 32, NOW), 1, "40 + 19 + 5 > 55: would land over the line, stays");
+        // Two steps down: loosens one step at a time.
+        let s = CapState { step: 2, at: Some(NOW - 100), seen: Some((NOW - 20, 15)), ..Default::default() };
+        assert_eq!(cap_step(&s, 15, Some(90), 55, 37, 32, NOW), 1);
+    }
+
+    #[test]
+    fn the_cap_needs_two_readings_one_decision_per_20s_and_the_rooms_as_the_load() {
+        let hot = CapState { seen: Some((NOW - 20, 70)), ..Default::default() };
+        assert_eq!(cap_step(&hot, 70, Some(300), 55, 37, 32, NOW), 1, "two hot readings, rooms 30%: tighten");
+        // A first or stale pass: one glimpse never tightens.
+        assert_eq!(cap_step(&CapState::default(), 90, Some(300), 55, 37, 32, NOW), 0);
+        let stale = CapState { seen: Some((NOW - CONTINUOUS_S - 1, 90)), ..Default::default() };
+        assert_eq!(cap_step(&stale, 90, Some(300), 55, 37, 32, NOW), 0);
+        assert_eq!(cap_step(&CapState { seen: Some((NOW - 20, 40)), ..Default::default() }, 90, Some(300), 55, 37, 32, NOW), 0, "the previous reading was calm");
+        // Another project's pass in the same second, or within 20 s of the last change: no decision.
+        assert_eq!(cap_step(&CapState { seen: Some((NOW, 70)), ..Default::default() }, 70, Some(300), 55, 37, 32, NOW), 0);
+        assert_eq!(cap_step(&CapState { at: Some(NOW - 10), ..hot.clone() }, 70, Some(300), 55, 37, 32, NOW), 0);
+        // The owner's own load: rooms at 5% (or unknown) never halve.
+        assert_eq!(cap_step(&hot, 70, Some(50), 55, 37, 32, NOW), 0, "owner-only load never halves the rooms");
+        assert_eq!(cap_step(&hot, 70, None, 55, 37, 32, NOW), 0);
+        let (_, steps) = run_cap(70, false, 30);
+        assert!(steps.iter().all(|s| *s == 0));
+        // At the floor (2 CPUs) there is nothing to halve.
+        let floor = CapState { step: 3, seen: Some((NOW - 20, 90)), ..Default::default() };
+        assert_eq!(cap_step(&floor, 90, Some(300), 55, 37, 32, NOW), 3);
+        // The state round-trips.
+        let s = CapState { step: 2, at: Some(5), seen: Some((6, 70)), pinned: vec![Pin { pid: 7, started: 8, root: "C:\\r".into(), orig: 0xFF }], failed: 1 };
+        assert_eq!(CapState::of(&s.json()), s);
+    }
+
+    #[test]
+    fn ram_and_cpu_thresholds_are_apart_ram_never_tightens_cpu_never_restarts() {
+        let t = Limits { ram: 60, cpu: 55 };
+        let none = Breach::default();
+        // The owner's own RAM at 62%, CPU calm: L1 on RAM, the CPU breach run stays empty → the cap
+        // stays as it is and builds are not idled.
+        let b = none.next(62, Some(30), t, None, NOW);
+        assert_eq!((b.ram, b.cpu), (Some(NOW), None));
+        assert_eq!(level(62, None, Some(30), t, &b, NOW), Level::Clean);
+        assert_eq!(cap_step(&CapState { seen: Some((NOW - 20, 30)), ..Default::default() }, 30, Some(300), t.cpu, 37, 32, NOW), 0, "a RAM-only breach never tightens the cap");
+        // CPU 57% (over 55, under the RAM 60) for a long time, RAM low: L1 every pass, never L2.
+        let mut b = none;
+        for i in 0..20u64 {
+            b = b.next(40, Some(57), t, (i > 0).then_some(20), NOW + i * 20);
+            assert_eq!(level(40, None, Some(57), t, &b, NOW + i * 20), Level::Clean, "a CPU-only breach never lean-restarts rooms");
+        }
+        assert_eq!((b.cpu, b.ram), (Some(NOW), None));
+        assert_eq!(cap_step(&CapState { seen: Some((NOW - 20, 57)), ..Default::default() }, 57, Some(300), t.cpu, 37, 32, NOW), 1, "the CPU breach tightens the cap");
+        // 57% CPU is under one shared 60 threshold: the split is what catches it.
+        assert_eq!(level(40, None, Some(57), Limits { ram: 60, cpu: 60 }, &none, NOW), Level::Calm);
+        let g = json!({ "pct": 60, "cpu_pct": 55, "cap": 37, "cpus": 32, "cap_step": 0, "projects": [] });
+        assert!(lines(&g)[0].starts_with("máy: tự dọn khi RAM ≥ 60% · CPU ≥ 55% · CPU phòng tối đa 37% (12/32 luồng)"), "{:?}", lines(&g));
+    }
+
+    #[test]
+    fn cap_text_names_the_cpus() {
+        assert_eq!(cap_text(37, 32, 0), "CPU phòng tối đa 37% (12/32 luồng)");
+        assert!(cap_text(37, 32, 1).starts_with("CPU phòng tối đa 37% (6/32 luồng) · đang siết"));
+        let g = json!({ "pct": 60, "cpu_pct": 55, "cap": 37, "cpus": 32, "cap_step": 1, "cap_failed": 2, "projects": [] });
+        assert!(lines(&g)[0].contains("(6/32 luồng) · đang siết (CPU vượt ngưỡng) · 2 tiến trình không ghim được"), "{:?}", lines(&g));
+    }
+
+    #[test]
+    fn cap_pins_only_room_trees_never_the_daemon_and_off_restores_exactly_what_it_pinned() {
+        let procs = vec![
+            p(10, 1, 60, "claude.exe", "C:\\x\\claude.exe daemon", 100),
+            p(11, 10, 60, "claude.exe", "C:\\x\\claude.exe --bg-pty-host 123", 50),
+            p(20, 11, 30, "claude.exe", "claude --bg --resume abc", 300), // room dev
+            p(21, 20, 10, "node.exe", "node vite", 100),
+            p(30, 11, 30, "claude.exe", "claude --bg --resume def", 300), // background session, not a room
+            p(40, 1, 90, "claude.exe", "claude \"why does the daemon crash\"", 300), // owner's interactive claude
+            p(41, 1, 5, "node.exe", "node C:\\r\\.claude\\worktrees\\card-46\\node_modules\\nx\\bin\\nx.js daemon", 100),
+            p(50, 1, 90, "omp.exe", "omp", 100),
+            p(60, 1, 90, "8sync.exe", "8sync ccc auto guard now", 10),
+            p(70, 1, 90, "node.exe", "node C:\\npm\\claude-code\\cli.js daemon", 100), // npm daemon
+        ];
+        let trees = vec![("dev".to_string(), vec![20, 21])];
+        let started = |pid: u32| procs.iter().find(|p| p.pid == pid).unwrap().started;
+        let targets = cap_targets(&procs, &trees);
+        assert_eq!(targets, vec![(20, started(20)), (21, started(21))], "room trees only: no daemon, pty host, other sessions, the owner's claude, worktree daemons, omp, 8sync");
+        let mask = cap_mask(37, 32, 0);
+        let get = |pid: u32, _s: u64| match pid {
+            21 => None,
+            _ => Some(0xFFFF_FFFF),
+        };
+        assert_eq!(masks(&targets, &get), vec![(20, started(20), 0xFFFF_FFFF)], "unreadable skipped");
+        // Records: the mask before the first pin stays through a re-pin (tighten); the dead go.
+        let r1 = record(&[], &[(20, started(20), 0xFFFF_FFFF), (21, started(21), 0x0FFF_0000)], "C:\\a", &procs, mask);
+        assert_eq!(r1.iter().map(|p| (p.pid, p.orig)).collect::<Vec<_>>(), [(20, 0xFFFF_FFFF), (21, 0xFFFF_FFFF)], "the child is the room's: its parent's mask before the cap");
+        let r2 = record(&r1, &[(20, started(20), mask)], "C:\\a", &procs, cap_mask(37, 32, 1));
+        assert_eq!(r2, r1, "re-pinned: the original mask is kept");
+        let r3 = record(&[r1.clone(), vec![Pin { pid: 99, started: 1, root: "C:\\b".into(), orig: 1 }]].concat(), &[], "C:\\a", &procs, mask);
+        assert_eq!(r3, r1, "a process gone is forgotten");
+        let alive: Vec<(u32, u64)> = procs.iter().map(|p| (p.pid, p.started)).collect();
+        // Off for project a only (out of scope): its live pins go back with their own masks; a pid
+        // reused since (another start) is never touched.
+        let pins = vec![
+            Pin { pid: 20, started: started(20), root: "C:\\a".into(), orig: 0xFFFF_FFFF },
+            Pin { pid: 21, started: started(21) + 999, root: "C:\\a".into(), orig: 0xF },
+            Pin { pid: 30, started: started(30), root: "C:\\b".into(), orig: 0xFFFF_FFFF },
+        ];
+        let (back, keep) = to_unpin(&pins, &alive, &|root| root == "C:\\a");
+        assert_eq!(back, vec![pins[0].clone()]);
+        assert_eq!(keep, vec![pins[2].clone()], "the in-scope project keeps its pins; the reused pid's record is dropped");
+        let (back, keep) = to_unpin(&pins, &alive, &|_| true);
+        assert_eq!((back.len(), keep.len()), (2, 0), "auto off: every live pin back");
+    }
+
+    #[test]
+    fn children_inherit_the_cap_and_are_recorded_with_their_rooms_mask_before_it() {
+        let mask = cap_mask(37, 32, 0);
+        let procs = vec![
+            p(11, 1, 60, "claude.exe", "claude --bg-pty-host", 50),
+            p(20, 11, 30, "claude.exe", "claude --bg --resume abc", 300),
+            p(21, 20, 10, "node.exe", "node vite", 100),
+            p(22, 21, 5, "esbuild.exe", "esbuild --service", 50),
+            p(30, 11, 20, "claude.exe", "claude --bg --resume def", 300),
+        ];
+        let s = |pid: u32| procs.iter().find(|p| p.pid == pid).unwrap().started;
+        // The room was pinned from every CPU; later its vite and esbuild came up already on the cap.
+        let r = record(&[], &[(20, s(20), 0xFFFF_FFFF)], "C:\\a", &procs, mask);
+        let r = record(&r, &[(21, s(21), mask), (22, s(22), mask)], "C:\\a", &procs, mask);
+        assert_eq!(r.iter().map(|p| (p.pid, p.orig)).collect::<Vec<_>>(), [(20, 0xFFFF_FFFF), (21, 0xFFFF_FFFF), (22, 0xFFFF_FFFF)], "never their capped mask: off restores every room process");
+        // On the cap with no recorded ancestor (inherited from something the cap did not pin):
+        // restored to every CPU; off the cap: its own mask.
+        assert_eq!(record(&[], &[(30, s(30), mask)], "C:\\a", &procs, mask)[0].orig, ALL_CPUS);
+        assert_eq!(record(&[], &[(30, s(30), 0x0FFF_0000)], "C:\\a", &procs, mask)[0].orig, 0x0FFF_0000);
+        // A tightened child (it holds the old cap mask) still gets the room's original.
+        let r2 = record(&r, &[], "C:\\a", &procs, cap_mask(37, 32, 1));
+        assert_eq!(r2, r);
+    }
+
+    #[test]
+    fn the_rooms_load_counts_every_projects_rooms() {
+        let procs = vec![p(20, 1, 30, "claude.exe", "", 1), p(30, 1, 30, "claude.exe", "", 1), p(40, 1, 30, "claude.exe", "", 1), p(50, 1, 30, "game.exe", "", 1)];
+        let s = |pid: u32| procs.iter().find(|p| p.pid == pid).unwrap().started;
+        // 20 s on 32 CPUs: 12% of the machine each for three projects' rooms, 25% the owner's game.
+        let pct = |x: u64| x * 20_000 * 10_000 * 32 / 100;
+        let deltas = vec![(20, pct(12)), (30, pct(12)), (40, pct(12)), (50, pct(25))];
+        let trees = vec![("dev".to_string(), vec![20])];
+        let pinned = vec![Pin { pid: 30, started: s(30), root: "C:\\b".into(), orig: 1 }, Pin { pid: 40, started: s(40), root: "C:\\c".into(), orig: 1 }, Pin { pid: 50, started: s(50) + 9, root: "C:\\d".into(), orig: 1 }];
+        assert_eq!(rooms_load(&deltas, &procs, &trees, &[], 20_000, 32), 120, "this project's rooms alone: under the rooms-are-the-load line");
+        let all = rooms_load(&deltas, &procs, &trees, &pinned, 20_000, 32);
+        assert_eq!(all, 360, "three projects' rooms; a reused pid (the owner's game) never counts");
+        let st = CapState { seen: Some((NOW - 20, 61)), ..Default::default() };
+        assert_eq!(cap_step(&st, 61, Some(all), 55, 37, 32, NOW), 1, "3 projects × 12% + owner 25%: tightens");
+        assert_eq!(cap_step(&st, 61, Some(120), 55, 37, 32, NOW), 0);
+    }
+
 }
