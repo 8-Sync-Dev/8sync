@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.25] — 2026-10-21
+### Changed
+- **Auto-ship tự lên việc liên tục** (owner 2026-10-21: "phải lên task backlog ready nhiều lên… R&D và lead phải làm việc tự lên task liên tục"): vòng mới chạy khi **backlog/ready < 2 card** — building/qa/review/approved đang chạy không bao giờ chặn R&D; brief mỗi vòng yêu cầu 3–6 card nhỏ, giữ ready ≥ 3 card để team không chờ việc; lead đang idle được đánh thức như ⚡ Làm ngay (không đợi owner nhắn mới đọc brief).
+
 ## [0.110.24] — 2026-10-21
 ### Added
 - **Lệnh `/` trong ô chat HQ** (owner 2026-10-21: "nên nghĩ thêm command cho input chat to all phòng hoặc 1 phòng nên có command \"/\"… ví hq-* auto-ship là auto rnd, optimize, nâng cấp, cải tiến, check sec, check thiếu, loop làm liên tục"). Gõ `/` mở menu lệnh (giống menu @: ↑↓/chạm): `/all <tin>` và `/<phòng> <tin>` chọn đích chỉ cho lần gửi đó; `/hq-auto-ship`, `/hq-rnd`, `/hq-optimize`, `/hq-upgrade`, `/hq-improve`, `/hq-sec`, `/hq-gaps`, `/hq-stop` mở rộng thành brief `[HQ /hq-…]` gửi lead (không có lead thì gửi message tới từng phòng, không thành card); không bao giờ gửi dấu `/` đầu dòng vào terminal Claude Code.
