@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { bytes, cleanupRoom, cleanupText, diskKey, projectRooms, type Finding, type Severity } from "@/lib/disk";
 import { inboxText } from "@/lib/labels";
 import type { Awake } from "@/lib/server/awake";
+import type { GuardView } from "@/lib/server/guard-trigger";
 import type { LoopState } from "@/lib/server/cleanup-loop";
 import type { DiskProject, DiskState } from "@/lib/server/disk";
 import type { Power, PowerSettings } from "@/lib/server/power";
@@ -281,6 +282,169 @@ function AwakePanel({ a, api, onChanged }: { a: Awake; api: Hq["api"]; onChanged
             : "Không có Modern Standby: tắt màn hình không làm máy ngủ, phòng vẫn chạy như lúc màn hình bật."}
         </p>
       )}
+    </Panel>
+  );
+}
+
+const GUARD_CHOICES = [50, 60, 70, 80] as const;
+const GUARD_LEVELS = ["bình thường", "dọn mạnh", "khởi động lại phòng nặng", "tạm dừng bớt phòng"] as const;
+/** Defender eating at least this share of the machine's CPU is worth the owner's attention. */
+const DEFENDER_HOT_PCT = 3;
+/** The "vừa xử lý" line shows the latest action this long. */
+const RECENT_S = 600;
+/** %TEMP% QA copies worth a line from this size. */
+const TEMP_QA_MB = 500;
+
+/** "Bảo vệ máy": the ccc auto resource guard. `at`: the poll's sample time (ms), the "now" for relative times. */
+function GuardPanel({ g, at, api, onChanged }: { g: GuardView; at: number; api: Hq["api"]; onChanged: () => void }) {
+  const [busy, setBusy] = useState<number | "off" | "eco" | null>(null);
+  const now = at / 1000;
+  const ago = (t: number) => (now - t < 60 ? `${Math.max(0, Math.round(now - t))} giây trước` : `${span(now - t)} trước`);
+  const last = g.projects.reduce<{ at: number; text: string } | null>((a, p) => (p.last && (!a || p.last.at > a.at) ? p.last : a), null);
+  const recent = last && now - last.at <= RECENT_S ? last : null;
+  // Runs that changed nothing back the trigger off (40 s … 5 min between runs).
+  const wait = g.lastRun && g.nextGapS > 20 ? ` · chờ ${g.nextGapS}s` : "";
+
+  async function send(key: number | "off" | "eco", body: { pct: number | null } | { eco: boolean }, done: string) {
+    setBusy(key);
+    try {
+      const r = await api<{ message: string }>("/api/machine/guard", { method: "POST", body });
+      toast.success(done, { description: r.message });
+      onChanged();
+    } catch (e) {
+      toast.error("Chưa đổi được bảo vệ máy", { description: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const choice = (key: number | "off", label: string, pct: number | null) => (
+    <Button
+      key={key}
+      type="button"
+      size="sm"
+      variant={g.pct === pct ? "default" : "outline"}
+      className={cn("h-7 px-2.5", TOUCH)}
+      aria-pressed={g.pct === pct}
+      disabled={busy != null}
+      onClick={() => void send(key, { pct }, pct == null ? "Đã tắt tự dọn" : `Tự dọn khi RAM ≥ ${pct}%`)}
+    >
+      {busy === key && <Loader2Icon className="animate-spin motion-reduce:animate-none" />} {label}
+    </Button>
+  );
+  return (
+    <Panel id="may-guard" title="Bảo vệ máy" aside={<span className="text-xs text-muted-foreground">{g.pct == null ? "Tự dọn: tắt" : `Tự dọn khi RAM ≥ ${g.pct}%`}</span>}>
+      <div role="group" aria-label="Ngưỡng RAM tự dọn" className="flex flex-wrap gap-1.5">
+        {GUARD_CHOICES.map((p) => choice(p, `${p}%`, p))}
+        {choice("off", "Tắt", null)}
+      </div>
+      {g.eco != null && (
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">Tiết kiệm điện</p>
+            <p className="text-xs leading-snug text-muted-foreground">Phòng chạy ở chế độ Efficiency (EcoQoS), ưu tiên dưới bình thường.</p>
+          </div>
+          <Switch on={g.eco} busy={busy === "eco"} label="Tiết kiệm điện" onChange={(v) => void send("eco", { eco: v }, v ? "Đã bật tiết kiệm điện" : "Đã tắt tiết kiệm điện")} />
+        </div>
+      )}
+      {(g.running || recent || wait) && (
+        <p role="status" className={cn("text-xs", g.running ? NEEDS_INK : "text-muted-foreground")}>
+          {g.running ? (
+            <>
+              <Loader2Icon className="mr-1 inline size-3 animate-spin align-[-2px] motion-reduce:animate-none" />
+              đang xử lý: {g.runningWhy}…
+            </>
+          ) : recent ? (
+            <>
+              vừa xử lý: <span className="text-foreground">{recent.text}</span> · {ago(recent.at)}
+              {wait}
+            </>
+          ) : (
+            <>
+              {g.lastRun!.why === "revive đang chạy"
+                ? "bỏ qua lượt xử lý: revive đang chạy"
+                : g.lastRun!.ok
+                  ? `vừa kiểm tra (${g.lastRun!.why}): không cần đổi gì`
+                  : `chưa chạy được guard now (${g.lastRun!.why})`}{" "}
+              · {ago(g.lastRun!.at)}
+              {wait}
+            </>
+          )}
+        </p>
+      )}
+      {g.temp_qa && g.temp_qa.mb >= TEMP_QA_MB && (
+        <p className={cn("text-[11px] leading-snug", NEEDS_INK)}>
+          Thư mục tạm QA (%TEMP%\qa-card-*, qa-fetch*): {g.temp_qa.partial ? "≥ " : ""}
+          {gb(Math.round(g.temp_qa.mb))} / {g.temp_qa.dirs} mục — Defender quét liên tục; xoá tay khi xong
+        </p>
+      )}
+      {g.projects.map((p) => (
+        <div key={p.root} className="space-y-1 border-t pt-2.5">
+          <p className="truncate font-mono text-xs" title={p.root}>
+            {p.root.split(/[\\/]/).filter(Boolean).pop() ?? p.root}
+          </p>
+          <dl className="space-y-1">
+            <Row k="Mức" warn={p.level > 0}>
+              {p.level} · {GUARD_LEVELS[p.level]}
+              {p.ram != null && <span className="text-muted-foreground"> · RAM {p.ram}%</span>}
+              {p.cpu != null && <span className="text-muted-foreground"> · CPU {Math.round(p.cpu)}%</span>}
+              {p.at != null && <span className="text-muted-foreground"> · {ago(p.at)}</span>}
+            </Row>
+            {p.rooms.length > 0 && (
+              <Row k="Phòng ăn nhiều nhất">
+                {[...p.rooms]
+                  .sort((a, b) => b.mb - a.mb)
+                  .slice(0, 3)
+                  .map((r) => `${r.name} ${gb(Math.round(r.mb))}${r.cpu != null ? ` · ${Math.round(r.cpu)}%` : ""}`)
+                  .join(", ")}
+              </Row>
+            )}
+            {p.top.length > 0 && <Row k="Ăn CPU nhất">{p.top.join(", ")}</Row>}
+            {p.paused.length > 0 && <Row k="Phòng tạm dừng">{p.paused.join(", ")}</Row>}
+            {p.defender_cpu != null && (
+              <Row k="Defender" warn={p.defender_cpu >= DEFENDER_HOT_PCT}>
+                Defender (MsMpEng) ăn CPU {Math.round(p.defender_cpu)}% máy
+              </Row>
+            )}
+          </dl>
+          {p.actions.length > 0 && (
+            <ul className="space-y-0.5 text-xs text-muted-foreground">
+              {p.actions
+                .slice(-5)
+                .reverse()
+                .map((a, i) => (
+                  <li key={i}>
+                    <span className="tabular-nums">{ago(a.at)}</span> · <span className="text-foreground">{a.text}</span>
+                  </li>
+                ))}
+            </ul>
+          )}
+          {p.defender && (
+            <div className="space-y-1">
+              <p className={cn("text-[11px] leading-snug", (p.defender_cpu ?? 0) >= DEFENDER_HOT_PCT ? NEEDS_INK : "text-muted-foreground")}>
+                Loại trừ Defender: chạy PowerShell admin (HQ không tự chạy)
+              </p>
+              <div className="flex items-start gap-1.5">
+                <pre className="min-w-0 flex-1 overflow-x-auto rounded bg-muted p-2 font-mono text-[11px] leading-snug">{p.defender}</pre>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className={TOUCH}
+                  onClick={() =>
+                    void navigator.clipboard.writeText(p.defender!).then(
+                      () => toast.success("Đã chép lệnh"),
+                      () => toast.error("Không chép được, hãy chọn và chép tay"),
+                    )
+                  }
+                >
+                  Chép
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
     </Panel>
   );
 }
@@ -701,6 +865,7 @@ export function MachineView({ m, reload, api, rooms, active }: { m: MachineData 
           </Panel>
           {m.power && <PowerPanel p={m.power} api={api} onSaved={reload} />}
           {m.awake && <AwakePanel a={m.awake} api={api} onChanged={reload} />}
+          {m.guard && <GuardPanel g={m.guard} at={m.at} api={api} onChanged={reload} />}
           {m.spec && <SpecPanel s={m.spec} />}
         </div>
         <DiskPanel api={api} rooms={rooms} active={active} />

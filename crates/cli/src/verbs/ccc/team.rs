@@ -57,11 +57,16 @@ pub(super) struct Bin<'a> {
 
 impl Claude for Bin<'_> {
     fn run(&self, args: &[String]) -> Result<String> {
-        let out = std::process::Command::new(&self.exe)
-            .args(args)
-            .current_dir(self.root)
-            .stdin(std::process::Stdio::null())
-            .output()?;
+        let mut c = std::process::Command::new(&self.exe);
+        c.args(args).current_dir(self.root).stdin(std::process::Stdio::null());
+        // A room starts below normal priority (its builds, servers and indexers inherit it where it
+        // is our child; the resource guard lowers the rest every tick: super::pressure::lower).
+        #[cfg(windows)]
+        if args.iter().any(|a| a == "--bg") {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x0000_4000); // BELOW_NORMAL_PRIORITY_CLASS
+        }
+        let out = c.output()?;
         Ok(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
     }
 }
@@ -261,11 +266,29 @@ pub(super) const BASH_MAX_MS: u64 = (auto::WAIT_MAX_S + 60) * 1000;
 pub(super) const ROOM_WINDOW: u32 = 300_000;
 
 /// The `--settings` file every team room starts with: env that beats the user settings' env for
-/// that launch only (checked live: `claude --bg --settings <this>` → the room sees 300000).
-pub(super) fn room_settings(home: &Path) -> Result<PathBuf> {
+/// that launch only (checked live: `claude --bg --settings <this>` → the room sees 300000). A `lean`
+/// room ([`super::pressure::lean`]) also turns the user's LSP plugins off
+/// ([`super::pressure::lean_plugins`]) and denies the indexing MCP servers
+/// ([`super::pressure::lean_mcp`]): `room-settings-lean.json`.
+pub(super) fn room_settings(home: &Path, lean: bool) -> Result<PathBuf> {
+    let (plugins, mcp) = if lean { super::pressure::lean_of(home) } else { (Vec::new(), Vec::new()) };
+    room_settings_with(home, &plugins, &mcp)
+}
+
+/// [`room_settings`] with the plugins to turn off and the MCP servers to deny given (none = the
+/// plain file).
+pub(super) fn room_settings_with(home: &Path, plugins: &[String], mcp: &[String]) -> Result<PathBuf> {
     let d = idle::state_dir(home);
-    let f = d.parent().unwrap_or(&d).join("room-settings.json");
-    let body = format!("{}\n", serde_json::json!({ "env": { (super::compact::WIN_VAR): ROOM_WINDOW.to_string(), "BASH_MAX_TIMEOUT_MS": BASH_MAX_MS.to_string() } }));
+    let name = if plugins.is_empty() && mcp.is_empty() { "room-settings.json" } else { "room-settings-lean.json" };
+    let f = d.parent().unwrap_or(&d).join(name);
+    let mut v = serde_json::json!({ "env": { (super::compact::WIN_VAR): ROOM_WINDOW.to_string(), "BASH_MAX_TIMEOUT_MS": BASH_MAX_MS.to_string() } });
+    if !plugins.is_empty() {
+        v["enabledPlugins"] = plugins.iter().map(|p| (p.clone(), Value::Bool(false))).collect::<serde_json::Map<_, _>>().into();
+    }
+    if !mcp.is_empty() {
+        v["deniedMcpServers"] = mcp.iter().map(|m| json!({ "serverName": m })).collect::<Vec<_>>().into();
+    }
+    let body = format!("{v}\n");
     if std::fs::read_to_string(&f).ok().as_deref() != Some(body.as_str()) {
         if let Some(d) = f.parent() {
             std::fs::create_dir_all(d)?;
@@ -500,7 +523,17 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     };
     let mut rows = Vec::new();
     let mut started = Vec::new();
-    let settings = room_settings(t.home)?;
+    // The owner brings the whole team up: rooms the resource guard paused come back too. `--add`
+    // (HQ "Tự soi ảnh" → `up --add eye`) brings back only what it adds.
+    if o.add {
+        super::pressure::unpause(t.home, t.root, &o.roles);
+    } else {
+        super::pressure::clear_paused(t.home, t.root);
+    }
+    // Staggered start: a room's first minutes index the repo (codebase-memory, tsserver); with the
+    // guard on, each next room waits for the CPU to settle, this long at most in total — less what
+    // this run already spent waiting for the lock ([`up_stagger`]).
+    let mut stagger = up_stagger();
     for name in &o.roles {
         let s = t.store.touch(name, false)?;
         let title = (t.title)(name);
@@ -554,6 +587,10 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
                 }
             }
             _ => {
+                if !started.is_empty() {
+                    super::pressure::settle(t.home, &mut stagger);
+                }
+                let settings = room_settings(t.home, super::pressure::lean(t.home, t.root, name))?;
                 let out = t.claude.run(&argv(&p, &conv, &title, model, &settings, &prompt))?;
                 if untrusted(&out) {
                     bail!("Claude Code chưa trust thư mục {}: mở `claude` ở đó một lần, chấp nhận câu hỏi trust, rồi chạy lại `8sync ccc auto up` (phòng đã mở vẫn chạy)", t.root.display());
@@ -610,10 +647,43 @@ const IDLE_CONFIRM_S: u64 = 60;
 const REGOAL_BACKOFF_S: u64 = 600;
 /// The previous idle sighting counts only this long (a bit over two HQ revive intervals).
 const IDLE_STALE_S: u64 = 300;
+/// Total wait `auto up` spends letting the CPU settle between room starts
+/// ([`super::pressure::settle`]), at most.
+const UP_STAGGER_S: u64 = 90;
+/// HQ gives `up` 300 s (boost 660 s); this much of it stays for the launches and the rebind.
+const UP_TOTAL_S: u64 = 300;
+const UP_LAUNCH_S: u64 = 90;
+/// One `revive` process (all team roots) stops opening, restarting and merging this long after it
+/// started: HQ kills it at 120 s, and a killed run left its lock behind.
+const REVIVE_DEADLINE_S: u64 = 90;
+/// A room is opened only with at least this much of the deadline left (`claude --bg`, rebind).
+const LAUNCH_RESERVE_S: u64 = 20;
+
+static RUN_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// `8sync ccc auto revive` / `up` start their clock once, before the lock wait and the first root.
+pub(super) fn run_clock_start() {
+    RUN_START.get_or_init(std::time::Instant::now);
+}
+
+fn run_elapsed() -> std::time::Duration {
+    RUN_START.get().map_or(std::time::Duration::ZERO, |s| s.elapsed())
+}
+
+/// What is left of this revive process's [`REVIVE_DEADLINE_S`] (all of it when no clock runs).
+pub(super) fn revive_left() -> std::time::Duration {
+    std::time::Duration::from_secs(REVIVE_DEADLINE_S).saturating_sub(run_elapsed())
+}
+
+/// `up`'s stagger budget: [`UP_STAGGER_S`], cut so the lock wait already spent plus the stagger
+/// plus [`UP_LAUNCH_S`] stay inside HQ's [`UP_TOTAL_S`].
+fn up_stagger() -> std::time::Duration {
+    std::time::Duration::from_secs(UP_STAGGER_S).min(std::time::Duration::from_secs(UP_TOTAL_S - UP_LAUNCH_S).saturating_sub(run_elapsed()))
+}
 
 /// Messages queued for `sid` and not taken yet: the inbox mod hands them to an idle room by itself,
 /// and a resume forks a new id that would never read this file.
-fn pending_inbox(home: &Path, sid: &str) -> bool {
+pub(super) fn pending_inbox(home: &Path, sid: &str) -> bool {
     crate::verbs::hq::inbox_file(home, sid).and_then(|f| std::fs::metadata(f).ok()).is_some_and(|m| m.len() > 0)
 }
 
@@ -631,14 +701,29 @@ fn regoal_file(home: &Path) -> PathBuf {
 /// subscription the owner-present lease; usage window; `$`/hour cap). A live lane room idle
 /// ([`lost_goal`]) at two runs [`IDLE_CONFIRM_S`] apart, with an empty inbox, not resumed in the last
 /// [`REGOAL_BACKOFF_S`], and still idle right before the stop, is stopped and resumed with its goal.
+/// The resource guard ([`super::pressure::tick`]) runs first (also while gated); a room it paused
+/// is not revived, a room it asked to restart is stopped and resumed lean, and rooms open
+/// staggered ([`super::pressure::settle`]).
 pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let root = t.root.to_string_lossy();
-    // Leftover dev/preview servers go whether or not auto runs (never from a test build: it lists
-    // and kills real processes).
-    let mut rows = if cfg!(test) { Vec::new() } else { super::reap::tick(t.home, t.root, now) };
-    if !auto::running(t.home) || !auto::in_scope(t.home, Some(&root)) || !auto::status(t.home, t.subscription, now)["gate"].is_null() {
+    // One process listing for the reaper and the guard (never from a test build).
+    let listing = super::reap::Listing::new(now);
+    let mut rows = if cfg!(test) { Vec::new() } else { super::reap::tick(t.home, t.root, now, &listing) };
+    if !auto::running(t.home) || !auto::in_scope(t.home, Some(&root)) {
         return Ok(rows);
     }
+    let gated = !auto::status(t.home, t.subscription, now)["gate"].is_null();
+    // The resource guard ([`super::pressure`]): cleans, warns rooms, pauses rooms that do not fit
+    // (also while gated) and leaves the rooms to restart lean for the loop below.
+    if !cfg!(test) {
+        let registry: Vec<(String, String)> = t.store.load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
+        rows.extend(super::pressure::tick(t.home, t.root, t.claude, &registry, gated, now, super::pressure::TICK_S, &listing).0);
+    }
+    if gated {
+        return Ok(rows);
+    }
+    let restarts = super::pressure::restarts(t.home, t.root);
+    let paused = super::pressure::paused(t.home, t.root);
     let all = agents(t, true)?;
     let running = agents(t, false)?;
     // A room's id live anywhere on the machine (a terminal in another folder) is never resumed a
@@ -673,15 +758,30 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
         }
     }
     let mut started = Vec::new();
-    let settings = room_settings(t.home)?;
+    let reserve = std::time::Duration::from_secs(LAUNCH_RESERVE_S);
     for s in sessions {
         let Some(r) = room::find(&s.name) else { continue };
         let title = (t.title)(&s.name);
+        // A room the guard paused stays down until the guard (or `auto up`) brings it back.
         let died = all.iter().any(|l| l.id == s.conversation_id && l.background)
             && !running.iter().any(|l| l.id == s.conversation_id || l.name == title)
-            && !everywhere.iter().any(|l| l.id == s.conversation_id);
+            && !everywhere.iter().any(|l| l.id == s.conversation_id)
+            && !paused.contains(&s.name);
         let idle = stalled.contains(&s.conversation_id);
-        if !(died || idle) || !(t.has_transcript)(&s.conversation_id) {
+        let queued = restarts.iter().find(|q| q.name == s.name);
+        let lean_restart = !idle && queued.is_some() && running.iter().any(|l| l.id == s.conversation_id && l.background);
+        if !(died || idle || lean_restart) || !(t.has_transcript)(&s.conversation_id) {
+            continue;
+        }
+        // One deadline for this whole revive process ([`revive_left`]): rooms past it open on the
+        // next tick (a lean restart stays queued), and between rooms the CPU settles ([`up`]).
+        let defer = |rows: &mut Vec<Row>| rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: "mở ở lượt revive sau (giãn khởi động cho CPU)".into(), short: String::new() });
+        if !started.is_empty() && revive_left() > reserve {
+            let mut wait = revive_left().saturating_sub(reserve);
+            super::pressure::settle(t.home, &mut wait);
+        }
+        if revive_left() <= reserve {
+            defer(&mut rows);
             continue;
         }
         if idle {
@@ -691,7 +791,18 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             }
             t.claude.run(&["stop".into(), s.conversation_id.chars().take(8).collect()])?;
             seen[format!("{root}|{}", s.name)] = json!({ "revived": now });
+        } else if let (true, Some(q)) = (lean_restart, queued) {
+            // Right before the stop: still not mid-turn (idle, or blocked in `auto wait`) and no
+            // message waiting (a resume forks an id that never reads the old inbox).
+            let now_live = agents(t, false)?;
+            let idle_now = now_live.iter().any(|l| l.id == s.conversation_id && l.background && !l.busy) || (q.waiting && super::pressure::still_waiting(&listing.procs(), q.pid));
+            if !idle_now || pending_inbox(t.home, &s.conversation_id) {
+                rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: "chưa khởi động lại gọn nhẹ: phòng đang làm hoặc còn tin chưa đọc (thử lượt sau)".into(), short: String::new() });
+                continue;
+            }
+            t.claude.run(&["stop".into(), s.conversation_id.chars().take(8).collect()])?;
         }
+        let settings = room_settings(t.home, super::pressure::lean(t.home, t.root, &s.name))?;
         let prompt = first_prompt(&s.name, r.lane, every);
         let out = t.claude.run(&argv(&Plan::Resume, &s.conversation_id, &title, r.model, &settings, &prompt))?;
         let Some(short) = short_id(&out).filter(|_| !untrusted(&out)) else {
@@ -699,12 +810,22 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             continue;
         };
         started.push((s.name.clone(), short.clone()));
-        let state = if idle { "chạy lại /goal (phòng đứng không việc)" } else { "chạy lại nền (phiên cũ đã chết)" };
+        if lean_restart {
+            super::pressure::restart_done(t.home, t.root, &s.name, now);
+        }
+        let state = if lean_restart {
+            "khởi động lại gọn nhẹ (máy quá tải: tắt LSP + MCP index, cùng hội thoại)"
+        } else if idle {
+            "chạy lại /goal (phòng đứng không việc)"
+        } else {
+            "chạy lại nền (phiên cũ đã chết)"
+        };
         rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: state.into(), short });
     }
     // Same as `up`: point the registry at the forked ids (the list can lag a moment).
     for attempt in 0..5 {
-        if started.is_empty() {
+        // Past the deadline only the first look runs: the next revive rebinds what lags.
+        if started.is_empty() || (attempt > 0 && revive_left() < std::time::Duration::from_secs(3)) {
             break;
         }
         if attempt > 0 {
@@ -939,6 +1060,8 @@ pub(super) fn down_only(t: &Team, names: &[&str], now: u64) -> Result<DownOnly> 
     }
     let done: Vec<&str> = rooms.iter().map(|(n, _)| n.as_str()).collect();
     let freed = super::target::release(t.home, t.root, &done, "tắt (down --only)", now)?;
+    // Dropped from the team: not the guard's paused rooms any more either.
+    super::pressure::unpause(t.home, t.root, &rooms.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>());
     if let Some(e) = failed {
         return Err(e);
     }
@@ -1127,9 +1250,22 @@ mod tests {
     #[test]
     fn room_settings_lift_the_bash_ceiling_over_auto_wait() {
         let h = std::env::temp_dir().join(format!("8sync-room-settings-{}", crate::verbs::uuid_sessions::new_uuid()));
-        let v: Value = serde_json::from_str(&std::fs::read_to_string(room_settings(&h).unwrap()).unwrap()).unwrap();
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(room_settings(&h, false).unwrap()).unwrap()).unwrap();
         assert_eq!(v["env"]["BASH_MAX_TIMEOUT_MS"], BASH_MAX_MS.to_string());
         assert_eq!(v["env"][super::super::compact::WIN_VAR], ROOM_WINDOW.to_string());
+        assert!(v.get("enabledPlugins").is_none());
+        // A lean room: same env, the user's LSP plugins off (the rest of the user's plugins stay on).
+        let off = ["typescript-lsp@claude-plugins-official".to_string()];
+        let deny = ["codebase-memory-mcp".to_string(), "serena".to_string()];
+        let lean = room_settings_with(&h, &off, &deny).unwrap();
+        assert!(lean.ends_with("room-settings-lean.json"));
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(lean).unwrap()).unwrap();
+        assert_eq!(v["env"]["BASH_MAX_TIMEOUT_MS"], BASH_MAX_MS.to_string());
+        assert_eq!(v["enabledPlugins"], json!({ "typescript-lsp@claude-plugins-official": false }));
+        assert_eq!(v["deniedMcpServers"], json!([{ "serverName": "codebase-memory-mcp" }, { "serverName": "serena" }]));
+        assert!(room_settings_with(&h, &[], &[]).unwrap().ends_with("room-settings.json"), "nothing to turn off: the plain file");
+        // A lean room always denies the indexers, so it always gets the lean file.
+        assert!(room_settings(&h, true).unwrap().ends_with("room-settings-lean.json"));
         let _ = std::fs::remove_dir_all(&h);
     }
 
@@ -1280,6 +1416,74 @@ mod tests {
         fake.calls.borrow_mut().clear();
         assert!(revive(&t, 10, 5).unwrap().is_empty());
         assert!(fake.calls.borrow().is_empty());
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn revive_keeps_guard_paused_rooms_down_and_restarts_heavy_rooms_lean() {
+        let (h, root) = tmp("guard");
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        let qa = store.touch("qa", false).unwrap(); // died: resumed
+        let review2 = store.touch("review2", false).unwrap(); // paused by the guard: stays down
+        let dev = store.touch("dev", false).unwrap(); // live, idle, heavy: the guard asked for a lean restart
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(root.clone()) }, false, 1).unwrap();
+        let k = root.to_string_lossy().into_owned();
+        idle::write_json(&idle::state_dir(&h).join("guard.json"), &json!({ k: { "level": 2, "paused": ["review2"], "restart": [{ "name": "dev", "waiting": false, "pid": 1 }] } }));
+        let all = format!("[{},{},{}]", agent(&qa.conversation_id, "qa", "background"), agent(&review2.conversation_id, "review2", "background"), agent(&dev.conversation_id, "dev", "background"));
+        let running = format!("[{}]", agent(&dev.conversation_id, "dev", "background"));
+        let after = format!("[{}]", agent("5a5a5a5a-0000-4000-8000-000000000009", "qa", "background"));
+        // all, running, everywhere, dev's re-check right before its stop, then the rebind.
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![all, running.clone(), running.clone(), running, after]), bg: "backgrounded · 3698e3a6 · {name}".into() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: None };
+        let rows = revive(&t, 10, 2).unwrap();
+        let mut got: Vec<(&str, &str)> = rows.iter().map(|r| (r.name.as_str(), r.state.as_str())).collect();
+        got.sort();
+        assert_eq!(got, [("dev", "khởi động lại gọn nhẹ (máy quá tải: tắt LSP + MCP index, cùng hội thoại)"), ("qa", "chạy lại nền (phiên cũ đã chết)")]);
+        let calls = fake.calls.borrow();
+        let stops: Vec<_> = calls.iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
+        assert_eq!(stops, [dev.conversation_id[..8].to_string()], "only the room to restart is stopped");
+        let bg: Vec<_> = calls.iter().filter(|c| c.iter().any(|a| a == "--bg")).collect();
+        assert!(!bg.iter().any(|c| c[1] == review2.conversation_id), "a paused room is not revived");
+        let lean = "room-settings-lean.json";
+        for c in &bg {
+            let s = c.iter().position(|a| a == "--settings").map(|i| c[i + 1].clone()).unwrap();
+            assert!(s.ends_with(lean), "dev at L2 and qa (no builder) start lean: {s}");
+        }
+        drop(calls);
+        assert_eq!(super::super::pressure::paused(&h, &root), ["review2"]);
+        assert!(super::super::pressure::restarts(&h, &root).is_empty(), "done: no longer asked");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn a_lean_restart_waits_while_the_room_works_or_has_mail() {
+        let (h, root) = tmp("guard-busy");
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        let dev = store.touch("dev", false).unwrap();
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(root.clone()) }, false, 1).unwrap();
+        let k = root.to_string_lossy().into_owned();
+        let ask = || idle::write_json(&idle::state_dir(&h).join("guard.json"), &json!({ k.clone(): { "level": 2, "restart": [{ "name": "dev", "waiting": false, "pid": 1 }] } }));
+        let t_with = |fake: &Fake| -> Vec<(String, String)> {
+            let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: None };
+            revive(&t, 10, 2).unwrap().into_iter().map(|r| (r.name, r.state)).collect()
+        };
+        let idle_dev = format!("[{}]", agent(&dev.conversation_id, "dev", "background"));
+        let busy_dev = idle_dev.replace("\"idle\"", "\"running\"");
+        // Idle when the guard picked it, mid-turn by the stop: not stopped, still asked.
+        ask();
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![idle_dev.clone(), idle_dev.clone(), idle_dev.clone(), busy_dev]), bg: "backgrounded · 3698e3a6 · {name}".into() };
+        let rows = t_with(&fake);
+        assert_eq!(rows, [("dev".to_string(), "chưa khởi động lại gọn nhẹ: phòng đang làm hoặc còn tin chưa đọc (thử lượt sau)".to_string())]);
+        assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop" || c.iter().any(|a| a == "--bg")));
+        assert_eq!(super::super::pressure::restarts(&h, &root).len(), 1, "retried next tick");
+        // Idle but a message waits in its inbox: a resume would fork an id that never reads it.
+        let inbox = crate::verbs::hq::inbox_file(&h, &dev.conversation_id).unwrap();
+        std::fs::create_dir_all(inbox.parent().unwrap()).unwrap();
+        std::fs::write(&inbox, "{\"text\":\"x\"}\n").unwrap();
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![idle_dev]), bg: "backgrounded · 3698e3a6 · {name}".into() };
+        let rows = t_with(&fake);
+        assert_eq!(rows.len(), 1);
+        assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop"), "never stopped with mail waiting");
         let _ = std::fs::remove_dir_all(&h);
     }
 
@@ -1617,9 +1821,18 @@ mod tests {
         auto::set(&h, auto::Mode::On { hours: 8.0, after: 60, rate: Some(3.0), repo: Some(root.clone()) }, false, 900).unwrap();
         set_team_root(&h, &root, true);
         let before = auto::status(&h, false, 1_000);
+        // The guard paused review2 (and an older eye): `--add eye` ends only the eye's pause.
+        let guard = idle::state_dir(&h).join("guard.json");
+        let k = root.to_string_lossy().into_owned();
+        idle::write_json(&guard, &json!({ k.clone(): { "paused": ["review2", "eye"] } }));
         let (status, gone, rows) = up_locked(&t, &o, 1_000, || panic!("`--add` never stops a nested team")).unwrap();
-        assert_eq!(status, before, "auto untouched");
-        assert_eq!(auto::status(&h, false, 1_000), before);
+        assert_eq!(super::super::pressure::paused(&h, &root), ["review2"], "`up --add` is not a whole-team up");
+        let strip = |mut v: Value| {
+            v.as_object_mut().map(|o| o.remove("guard"));
+            v
+        };
+        assert_eq!(strip(status), strip(before.clone()), "auto untouched");
+        assert_eq!(strip(auto::status(&h, false, 1_000)), strip(before));
         assert!(gone.is_empty());
         assert_eq!(rows.iter().map(|r| (r.name.as_str(), r.model.as_str(), r.state.as_str())).collect::<Vec<_>>(), [("eye", "sonnet", "mở nền")]);
         let calls = fake.calls.borrow();
@@ -1649,8 +1862,10 @@ mod tests {
         assert!(fake.calls.borrow().is_empty() && store.load().sessions.iter().any(|s| s.name == "eye"), "nothing stopped, nothing dropped");
         drop(held);
         // Free: only the eye stops and leaves the registry (revive never brings it back); auto runs on.
+        idle::write_json(&guard, &json!({ k.clone(): { "paused": ["review2", "eye"] } }));
         let r = down_only(&t, &["eye"], 1_004).unwrap();
         assert_eq!((r.rooms, r.freed), (vec![("eye".to_string(), true)], vec![]));
+        assert_eq!(super::super::pressure::paused(&h, &root), ["review2"], "a dropped room leaves the paused list");
         let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
         assert_eq!(stops, [eye_id[..8].to_string()]);
         let names: Vec<_> = store.load().sessions.iter().map(|s| s.name.clone()).collect();

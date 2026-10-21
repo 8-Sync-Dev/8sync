@@ -1,4 +1,5 @@
 // `8sync ccc auto` bridge: the HQ Pause / Run button and the "Đội omp" switch. Fixed argv only, never user-supplied text.
+import { parseGuard, type Guard } from "./guard";
 import { run } from "./proc";
 
 export type AutoStatus = {
@@ -18,6 +19,8 @@ export type AutoStatus = {
   error?: string;
   /** Why the last "Đội omp" switch failed (e.g. omp runs on the anthropic provider); the Pause / Run state is unaffected. */
   omp_error?: string;
+  /** The ccc auto resource guard (`guard` in status JSON); null when absent/invalid (older 8sync). */
+  guard?: Guard | null;
 };
 
 export const AUTO_ACTIONS = ["on", "pause", "omp-on", "omp-off"] as const;
@@ -33,15 +36,16 @@ const ARGV: Record<AutoAction, string[]> = {
 
 const TIMEOUT_MS = 5000;
 
-let last: AutoStatus | null = null;
+// On globalThis: route bundles may carry their own module copies; the newest status is shared.
+const S = globalThis as typeof globalThis & { __hqAutoLast?: AutoStatus | null };
 /** The newest status any caller fetched (GET /api/auto polls it); null before the first fetch. Spawns nothing. */
-export const lastAutoStatus = () => last;
+export const lastAutoStatus = () => S.__hqAutoLast ?? null;
 
 /** Current status; `{on:false, paused:false, error}` when 8sync is missing or answers junk (so the UI degrades, never throws). */
 export async function autoStatus(): Promise<AutoStatus> {
   const r = await run("8sync", ["ccc", "auto", "status", "--json"], TIMEOUT_MS);
-  last = parseStatus(r);
-  return last;
+  S.__hqAutoLast = parseStatus(r);
+  return S.__hqAutoLast;
 }
 
 function parseStatus(r: { ok: boolean; stdout: string; stderr: string }): AutoStatus {
@@ -49,7 +53,7 @@ function parseStatus(r: { ok: boolean; stdout: string; stderr: string }): AutoSt
   try {
     const v = JSON.parse(r.stdout);
     if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("not an object");
-    return { ...v, on: v.on === true, paused: v.paused === true };
+    return { ...v, on: v.on === true, paused: v.paused === true, guard: parseGuard(v.guard) };
   } catch {
     return { on: false, paused: false, error: "8sync ccc auto status trả JSON không hợp lệ" };
   }
