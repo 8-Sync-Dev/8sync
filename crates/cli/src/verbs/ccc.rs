@@ -24,6 +24,7 @@ use crate::{assets, pkg, ui};
 mod auto;
 pub(crate) mod awake;
 mod cancel;
+mod close;
 mod ci;
 mod compact;
 mod danger;
@@ -214,6 +215,11 @@ pub fn run(a: Args) -> Result<()> {
             // PARENT repo's team. Checked before an untracked folder is `git init`ed.
             let first = rest.first().map(String::as_str);
             let starts = matches!(first, Some("up" | "add")) || first == Some("on") && rest.iter().any(|a| a == "--here");
+            // `close` only where the cwd is the repo itself: from a subfolder or a grouping folder
+            // (HQ can list one added by hand) it would close the whole parent repo.
+            if first == Some("close") {
+                return auto_team(&env, &close::close_root(&cwd)?, rest);
+            }
             let before = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
             if let Some(kids) = grouping_folder(&cwd, &before).filter(|_| starts) {
                 let repo = before;
@@ -591,7 +597,8 @@ fn down_nested(env: &Env, root: &Path) -> Result<()> {
 /// How long `auto up` waits for a running revive / up to finish.
 const UP_LOCK_WAIT_S: u64 = 150;
 
-/// `8sync ccc auto up|down` ([`team`]): the project's role rooms as Claude Code background sessions.
+/// `8sync ccc auto up|down|close` ([`team`], [`close`]): the project's role rooms as Claude Code
+/// background sessions; `close` stops everything of the project.
 fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let subscription = login_kind_at(&env.home).kind == "subscription";
@@ -620,6 +627,9 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
             }
         }
         return Ok(());
+    }
+    if rest[0] == "close" {
+        return close::run(env, &t, &rest[1..], now);
     }
     if rest[0] == "down" {
         // `down --only <room,room…>`: those rooms alone (HQ "Tự soi ảnh" off, "Tắt Sấm Sét");

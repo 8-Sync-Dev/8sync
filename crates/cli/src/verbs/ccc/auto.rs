@@ -132,6 +132,8 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
                     m["repo"] = json!(first);
                     m["repos"] = json!(keep);
                 }
+                // Minus the projects `auto close` took out.
+                carry_out(home, &mut m);
             }
             if let Err(e) = write_marker(home, &m) {
                 // Without the marker the `--here` scope is lost and auto would run everywhere.
@@ -149,6 +151,9 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
             if mode == Mode::Pause && !keep.is_empty() {
                 m["repo"] = json!(keep[0]);
                 m["repos"] = json!(keep);
+            }
+            if mode == Mode::Pause {
+                carry_out(home, &mut m);
             }
             write_marker(home, &m)?;
         }
@@ -395,6 +400,7 @@ fn forget_scope(home: &Path) -> Result<()> {
     if let Some(o) = m.as_object_mut() {
         o.remove("repo");
         o.remove("repos");
+        o.remove("out");
     }
     write_marker(home, &m)
 }
@@ -424,6 +430,59 @@ pub(super) fn leave(home: &Path, root: &Path, subscription: bool, now: u64) -> R
     Ok(status(home, subscription, now))
 }
 
+/// The projects `auto close` took out (marker `out`, canonical): never in scope, whatever the list.
+fn out_roots(home: &Path) -> Vec<PathBuf> {
+    idle::read_json(&marker(home)).map_or_else(Vec::new, |m| m["out"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|r| canon(Path::new(r))).collect())
+}
+
+/// A plain `on` / `pause` keeps `auto close`'s `out` list (`on --here`, `off`, `on --all` drop it).
+fn carry_out(home: &Path, m: &mut Value) {
+    if let Some(o) = idle::read_json(&marker(home)).and_then(|old| old.get("out").cloned()) {
+        m["out"] = o;
+    }
+}
+
+/// `auto close` in one project: take it out of auto for good, never touching any other project.
+/// - Listed with others: it leaves the list, on or paused.
+/// - Listed alone: auto pauses if it runs (it held only this project) and the project goes on the
+///   marker's `out` list. The list stays [root]: emptied, it would mean "every project" for the next
+///   plain `on`, widening auto (the bug of 2026-10-20).
+/// - Auto for every project, on, paused or off (no list): on the `out` list, never a pause of every
+///   project as [`leave`] would.
+///
+/// [`scoped`] honours `out`, so a later plain `on` never brings the project back; `on --here` /
+/// `up` there do. `Some("left")`: it was in auto and is out now; `Some("out")`: auto was not
+/// running, it only stays out when auto comes back; None: nothing changed.
+pub(super) fn close_out(home: &Path, root: &Path, subscription: bool, now: u64) -> Result<Option<&'static str>> {
+    let c = canon(root);
+    let repos = remembered(home);
+    let rest: Vec<String> = repos.iter().filter(|r| canon(Path::new(r.trim_start_matches(r"\\?\"))) != c).cloned().collect();
+    let running = running(home);
+    if !repos.is_empty() && rest.len() == repos.len() {
+        return Ok(None);
+    }
+    if !rest.is_empty() {
+        let mut m = idle::read_json(&marker(home)).unwrap_or_else(|| json!({ "schema": 1 }));
+        m["repo"] = json!(rest[0]);
+        m["repos"] = json!(rest);
+        write_marker(home, &m)?;
+        return Ok(Some(if running { "left" } else { "out" }));
+    }
+    let paused_now = !repos.is_empty() && running;
+    if paused_now {
+        set(home, Mode::Pause, subscription, now)?;
+    }
+    if out_roots(home).contains(&c) {
+        return Ok(paused_now.then_some("left"));
+    }
+    let mut m = idle::read_json(&marker(home)).unwrap_or_else(|| json!({ "schema": 1 }));
+    let mut out: Vec<Value> = m["out"].as_array().cloned().unwrap_or_default();
+    out.push(json!(c.to_string_lossy()));
+    m["out"] = Value::Array(out);
+    write_marker(home, &m)?;
+    Ok(Some(if running { "left" } else { "out" }))
+}
+
 /// Hooks ask this before acting on a session: `true` unless `auto on --here` limited auto to one
 /// project and `cwd` (from the hook input) is missing or outside it.
 pub(super) fn in_scope(home: &Path, cwd: Option<&str>) -> bool {
@@ -433,19 +492,20 @@ pub(super) fn in_scope(home: &Path, cwd: Option<&str>) -> bool {
 /// [`in_scope`] for many cwds, the marker read once (the idle rails count only this project's spend).
 pub(super) fn scoped(home: &Path) -> impl Fn(Option<&str>) -> bool {
     let repos = live_scope(home);
+    let out = out_roots(home);
     move |cwd| {
+        let c = cwd.map(Path::new).filter(|c| c.is_absolute());
+        // The repo `cwd` belongs to: worktrees resolve to their repo, a repo nested in a stored root
+        // is its own (ai-game-studio sits in 8sync-startup: auto for one is not auto for the other).
+        let own = c.filter(|_| !repos.is_empty() || !out.is_empty()).and_then(crate::verbs::here::repo_of).map(|g| canon(&g));
+        if own.as_ref().is_some_and(|g| out.contains(g)) {
+            return false;
+        }
         repos.is_empty()
-            || cwd
-                .map(Path::new)
-                .filter(|c| c.is_absolute())
-                .is_some_and(|c| {
-                    // Inside a stored root and not inside a repo nested in it (ai-game-studio sits
-                    // in 8sync-startup: auto for one is not auto for the other). Worktrees resolve
-                    // to their repo, so they count.
-                    let own = crate::verbs::here::repo_of(c).map(|g| canon(&g));
-                    let c = canon(c);
-                    repos.iter().any(|r| c.starts_with(r) && own.as_ref().is_none_or(|g| r.starts_with(g)))
-                })
+            || c.is_some_and(|c| {
+                let c = canon(c);
+                repos.iter().any(|r| c.starts_with(r) && own.as_ref().is_none_or(|g| r.starts_with(g)))
+            })
     }
 }
 
@@ -481,6 +541,8 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         "subscription": subscription,
         "repo": live_scope(home).first().map(|r| r.to_string_lossy().into_owned()),
         "repos": live_scope(home).iter().map(|r| r.to_string_lossy().into_owned()).collect::<Vec<_>>(),
+        // Projects `auto close` took out: never in scope, even with no list (every project).
+        "out": out_roots(home).iter().map(|r| r.to_string_lossy().into_owned()).collect::<Vec<_>>(),
         "teams": teams_of(m.as_ref()),
         "omp_model": m.as_ref().and_then(|m| m["omp_model"].as_str()),
         "omp_blocked": omp_blocked(home),
@@ -521,8 +583,17 @@ fn state_text(v: &Value) -> String {
             .unwrap_or_default();
         // Every project `auto on --here` holds, not just the first: with two teams the owner must
         // see both (3d-game ran next to ai-game-studio and the line named only ai-game-studio).
-        let repos: Vec<&str> = v["repos"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|r| r.trim_start_matches(r"\\?\")).collect();
-        let only = if repos.is_empty() { " · mọi dự án".into() } else { format!(" · chỉ dự án {}", repos.join(" + ")) };
+        let paths = |k: &str| -> Vec<&str> { v[k].as_array().into_iter().flatten().filter_map(Value::as_str).map(|r| r.trim_start_matches(r"\\?\")).collect() };
+        let (out, repos) = (paths("out"), paths("repos"));
+        // A listed project `auto close` took out is not running either.
+        let repos: Vec<&str> = repos.into_iter().filter(|r| !out.contains(r)).collect();
+        let closed = if out.is_empty() { String::new() } else { format!(" (đã đóng, không chạy: {})", out.join(" + ")) };
+        let only = match (repos.is_empty(), v["repos"].as_array().is_none_or(Vec::is_empty)) {
+            (true, true) if !out.is_empty() => format!(" · mọi dự án trừ {}", out.join(" + ")),
+            (true, true) => " · mọi dự án".into(),
+            (true, false) => format!(" · không dự án nào{closed}"),
+            (false, _) => format!(" · chỉ dự án {}{closed}", repos.join(" + ")),
+        };
         let pct = |k: &str| v[k].as_f64().map_or("?".into(), |p| format!("{p:.0}%"));
         let window = if v["subscription"].as_bool() == Some(true) {
             format!(" · cửa sổ 5 giờ {} · 7 ngày {}", pct("five_hour_pct"), pct("seven_day_pct"))
@@ -2312,6 +2383,7 @@ mod tests {
                 "omp_blocked",
                 "omp_model",
                 "on",
+                "out",
                 "paused",
                 "repo",
                 "repos",

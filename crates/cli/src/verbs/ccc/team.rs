@@ -36,11 +36,12 @@ use super::{auto, idle, room};
 /// Rooms one `auto up` starts at most (the `boost` preset is the largest team).
 const MAX_ROOMS: usize = 14;
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full|boost] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | up --add <phòng> | down [--only <phòng>[,<phòng>…]] | revive";
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full|boost] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | up --add <phòng> | down [--only <phòng>[,<phòng>…]] | close [--dry-run] [--json] | revive";
 
-/// `auto up …` / `auto down` / `auto revive`: the verbs this module owns.
+/// `auto up …` / `auto down` / `auto close` / `auto revive`: the verbs this module (and
+/// [`super::close`]) owns.
 pub(super) fn wants(rest: &[String]) -> bool {
-    matches!(rest.first().map(String::as_str), Some("up" | "down" | "revive"))
+    matches!(rest.first().map(String::as_str), Some("up" | "down" | "close" | "revive"))
 }
 
 /// Runs `claude <args>` in the project root and returns stdout + stderr.
@@ -93,6 +94,8 @@ pub(super) struct Live {
     pub busy: bool,
     /// Where it runs; empty when Claude Code did not say.
     pub cwd: String,
+    /// Its process, 0 when Claude Code did not say.
+    pub pid: u32,
 }
 
 /// `l` runs in the git repo `root` (or one of its worktrees). `claude agents --cwd` also lists the
@@ -129,6 +132,7 @@ pub(super) fn live(json: &str) -> Result<Vec<Live>> {
                 // Anything but a plain `idle` (mid-turn, waiting on a prompt, unknown): never stopped to reload.
                 busy: a["status"].as_str() != Some("idle"),
                 cwd: a["cwd"].as_str().unwrap_or_default().to_string(),
+                pid: a["pid"].as_u64().and_then(|p| u32::try_from(p).ok()).unwrap_or(0),
             })
         })
         .collect())
@@ -380,7 +384,7 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
 }
 
 /// This project's sessions in `claude agents --json`; `all` adds finished background ones.
-fn agents(t: &Team, all: bool) -> Result<Vec<Live>> {
+pub(super) fn agents(t: &Team, all: bool) -> Result<Vec<Live>> {
     let mut a: Vec<String> = vec!["agents".into(), "--json".into()];
     if all {
         a.push("--all".into());
@@ -740,7 +744,7 @@ pub(super) fn team_roots(home: &Path) -> Vec<String> {
     idle::read_json(&team_roots_file(home)).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
 }
 
-fn set_team_root(home: &Path, root: &Path, on: bool) {
+pub(super) fn set_team_root(home: &Path, root: &Path, on: bool) {
     let r = root.to_string_lossy().into_owned();
     let mut roots = team_roots(home);
     roots.retain(|x| *x != r && !(on && auto::nested(Path::new(x), root)));
@@ -825,23 +829,29 @@ pub(super) fn revive_lock(home: &Path, now: u64) -> Result<Option<ReviveLock>> {
     Ok(None)
 }
 
-/// `auto down`: stop this project's background rooms (`claude stop` keeps the conversation, `up`
-/// resumes it; nothing is deleted) and take this project out of auto; other projects keep running.
-/// A room counts by its registry id or, when `up` could not rebind yet, by its title.
-/// Returns the stopped room names.
-pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
+/// The team rooms `auto down` stops, as (room name, its live background session): a room counts by
+/// its registry id or, when `up` could not rebind yet, by its title.
+pub(super) fn rooms<'a>(t: &Team, live: &'a [Live]) -> Vec<(String, &'a Live)> {
     let reg = t.store.load();
-    let live = agents(t, false)?;
-    let mut stopped = Vec::new();
-    let mut done: Vec<&str> = Vec::new();
+    let mut out: Vec<(String, &Live)> = Vec::new();
     for s in &reg.sessions {
         let title = (t.title)(&s.name);
-        let hit = live.iter().find(|l| l.background && !done.contains(&l.id.as_str()) && (l.id == s.conversation_id || l.name == title));
-        if let Some(l) = hit {
-            t.claude.run(&["stop".into(), l.id.chars().take(8).collect()])?;
-            done.push(&l.id);
-            stopped.push(s.name.clone());
+        if let Some(l) = live.iter().find(|l| l.background && !out.iter().any(|(_, d)| d.id == l.id) && (l.id == s.conversation_id || l.name == title)) {
+            out.push((s.name.clone(), l));
         }
+    }
+    out
+}
+
+/// `auto down`: stop this project's background rooms (`claude stop` keeps the conversation, `up`
+/// resumes it; nothing is deleted) and take this project out of auto; other projects keep running.
+/// Returns the stopped room names.
+pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
+    let live = agents(t, false)?;
+    let mut stopped = Vec::new();
+    for (name, l) in rooms(t, &live) {
+        t.claude.run(&["stop".into(), l.id.chars().take(8).collect()])?;
+        stopped.push(name);
     }
     auto::leave(t.home, t.root, t.subscription, now)?;
     set_team_root(t.home, t.root, false);
@@ -1031,7 +1041,7 @@ mod tests {
         assert_eq!(short_id("Workspace not trusted. Run `claude` in C:\\x once"), None);
         assert!(untrusted("Workspace not trusted. Run `claude` in C:\\x once and accept the trust prompt"));
         let l = live(&format!("[{},{}]", agent(DEV_BG, "dev", "background"), agent("11111111-1111-4111-8111-111111111111", "core", "interactive"))).unwrap();
-        assert_eq!(l[0], Live { id: DEV_BG.into(), name: "dev".into(), background: true, started: 1, busy: false, cwd: "x".into() });
+        assert_eq!(l[0], Live { id: DEV_BG.into(), name: "dev".into(), background: true, started: 1, busy: false, cwd: "x".into(), pid: 1 });
         assert!(!l[1].background);
         assert!(live("error: unknown option '--json'").unwrap_err().to_string().contains("không trả JSON"));
         assert!(live(&format!("[{}]", agent("--discard-unpushed", "x", "background"))).unwrap().is_empty(), "never an id that reads as a flag");
@@ -1039,16 +1049,16 @@ mod tests {
 
     #[test]
     fn plan_skips_live_rooms_and_resumes_stopped_ones() {
-        let l = vec![Live { id: DEV_BG.into(), name: "dev".into(), background: true, started: 0, busy: false, cwd: String::new() }, Live { id: "x".into(), name: "qa".into(), background: false, started: 0, busy: false, cwd: String::new() }];
+        let l = vec![Live { id: DEV_BG.into(), name: "dev".into(), background: true, started: 0, busy: false, cwd: String::new(), pid: 0 }, Live { id: "x".into(), name: "qa".into(), background: false, started: 0, busy: false, cwd: String::new(), pid: 0 }];
         assert_eq!(plan(DEV_BG, "dev", &l, &l, true), Plan::Running(DEV_BG.into()));
         assert_eq!(plan("other", "dev", &l, &l, false), Plan::Running(DEV_BG.into()), "a background room with the name counts");
         assert_eq!(plan("other", "qa", &l, &l, true), Plan::Resume, "an interactive session elsewhere with the same name does not");
         assert_eq!(plan("other", "qa", &l, &l, false), Plan::Start);
         // the room's id open in a terminal in another folder: never resumed a second time
         let rd = "ff3e2a54-0000-4000-8000-000000000001";
-        let elsewhere = vec![Live { id: rd.into(), name: "rd-game".into(), background: false, started: 0, busy: false, cwd: String::new() }];
+        let elsewhere = vec![Live { id: rd.into(), name: "rd-game".into(), background: false, started: 0, busy: false, cwd: String::new(), pid: 0 }];
         assert_eq!(plan(rd, "rd", &[], &elsewhere, true), Plan::Running(rd.into()));
-        let bg_elsewhere = vec![Live { id: "e1".into(), name: "dev".into(), background: true, started: 0, busy: false, cwd: String::new() }];
+        let bg_elsewhere = vec![Live { id: "e1".into(), name: "dev".into(), background: true, started: 0, busy: false, cwd: String::new(), pid: 0 }];
         assert_eq!(plan("other", "dev", &[], &bg_elsewhere, false), Plan::Start, "a same-named room of another project is not ours");
         let s = Path::new("/st/room-settings.json");
         let a = argv(&Plan::Start, "id-1", "dev", Some("sonnet"), s, "line one\nline  two");
@@ -1125,15 +1135,15 @@ mod tests {
 
     #[test]
     fn junk_is_every_background_session_no_room_keeps() {
-        let bg = |id: &str, name: &str| Live { id: id.into(), name: name.into(), background: true, started: 0, busy: false, cwd: String::new() };
+        let bg = |id: &str, name: &str| Live { id: id.into(), name: name.into(), background: true, started: 0, busy: false, cwd: String::new(), pid: 0 };
         let all = vec![
             bg("d1", "dev"),
             bg("d2", "dev"),
-            Live { id: "l1".into(), name: "lead".into(), background: false, started: 0, busy: false, cwd: String::new() },
+            Live { id: "l1".into(), name: "lead".into(), background: false, started: 0, busy: false, cwd: String::new(), pid: 0 },
             bg("l2", "lead"),
             bg("q1", "qa"),
             bg("u1", "ui"),
-            Live { id: "n1".into(), name: "notes".into(), background: false, started: 0, busy: false, cwd: String::new() },
+            Live { id: "n1".into(), name: "notes".into(), background: false, started: 0, busy: false, cwd: String::new(), pid: 0 },
         ];
         // dev: registry id gone → first background "dev" kept; lead: registry id is the terminal;
         // qa: registry id itself. Duplicates, other names and nothing interactive are junk.
@@ -1448,7 +1458,7 @@ mod tests {
         assert_eq!(repo(&root.join("apps/hq-ui")), auto::canon(&root), "a package.json subfolder is the same repo");
         assert_eq!(repo(&game), auto::canon(&game), "a nested repo is its own");
         assert_eq!(repo(&wt), auto::canon(&game), "a Claude Code worktree belongs to its repo");
-        let at = |cwd: &Path| Live { id: "a".into(), name: "lead".into(), background: true, started: 0, busy: false, cwd: cwd.to_string_lossy().into_owned() };
+        let at = |cwd: &Path| Live { id: "a".into(), name: "lead".into(), background: true, started: 0, busy: false, cwd: cwd.to_string_lossy().into_owned(), pid: 0 };
         assert!(in_repo(&at(&root.join("apps/hq-ui")), &root));
         assert!(!in_repo(&at(&game), &root));
         assert!(!in_repo(&at(&wt), &root));
@@ -1564,7 +1574,7 @@ mod tests {
         assert!(!g.contains("auto claim --json") && !g.contains("CronCreate"), "no lane, no cron: {g}");
         assert!(g.contains(&format!("Bash timeout {BASH_MAX_MS}")));
         // Revive and up treat an idle eye like an idle lane room (its goal ended); rd stays events-only.
-        let idle = Live { id: "e".into(), name: "eye".into(), background: true, started: 0, busy: false, cwd: String::new() };
+        let idle = Live { id: "e".into(), name: "eye".into(), background: true, started: 0, busy: false, cwd: String::new(), pid: 0 };
         assert!(lost_goal(on_goal("eye"), &idle) && !lost_goal(on_goal("rd"), &idle));
         assert!(first_prompt("rd", None, 30).starts_with("8sync auto: phòng `rd`"));
     }

@@ -6,18 +6,19 @@
 import { AlertTriangleIcon, ChevronRightIcon, EllipsisIcon, EyeIcon, EyeOffIcon, FolderIcon, PowerIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { closeDoneText, closeLines, closeTotal, ownWarning, type ClosePlan } from "@/lib/close-plan";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { SIDEBAR_WORD, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
+import { SIDEBAR_WORD, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
 import type { WorktreeFacts, WorktreeVerdict } from "@/lib/worktree";
 import type { Hq } from "./use-hq";
 import type { Room } from "./use-office";
 
 export type RoomAction = "close" | "delete";
-export type Confirm = { kind: "room"; x: SidebarRoom<Room>; action: RoomAction } | { kind: "worktree"; g: SidebarGroup<Room> };
+export type Confirm = { kind: "room"; x: SidebarRoom<Room>; action: RoomAction } | { kind: "worktree"; g: SidebarGroup<Room> } | { kind: "close"; g: SidebarGroup<Room> };
 
 /** Row-end "⋯": on a mouse it shows on hover / keyboard focus / open menu; always on a phone or touch screen. */
 const TRIGGER =
@@ -43,19 +44,19 @@ export function useWorktreeKeys(api: Hq["api"], keys: string) {
   return { worktrees: data, reload: useCallback(() => setNonce((n) => n + 1), []) };
 }
 
-export function ProjectMenu({ g, worktree, busy, onHide, onDelete }: { g: SidebarGroup<Room>; worktree: boolean; busy: boolean; onHide: () => void; onDelete: () => void }) {
+export function ProjectMenu({ g, worktree, busy, onClose, onDelete }: { g: SidebarGroup<Room>; worktree: boolean; busy: boolean; onClose: () => void; onDelete: () => void }) {
   return (
     // Non-modal: the item opens a dialog, and a modal menu would hand focus back over it.
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger className={TRIGGER} aria-label={`Thao tác với dự án ${g.name}`} disabled={busy}>
         <EllipsisIcon className="size-4" aria-hidden />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
-        <DropdownMenuItem className={ITEM} onSelect={onHide}>
-          <EyeOffIcon aria-hidden />
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuItem className={ITEM} onSelect={onClose}>
+          <PowerIcon aria-hidden />
           <span className="flex flex-col">
             Đóng dự án
-            <span className="text-xs text-muted-foreground">Ẩn khỏi danh sách, tự hiện lại khi có hoạt động mới</span>
+            <span className="text-xs text-muted-foreground">Dừng hẳn mọi phòng, phiên và tiến trình của dự án rồi ẩn</span>
           </span>
         </DropdownMenuItem>
         {worktree && (
@@ -326,6 +327,141 @@ export function WorktreeDialog({ hq, g, onDone, onCancel, onRoomsClosed }: { hq:
           </Button>
           <Button type="button" variant="destructive" className="max-sm:h-11" onClick={remove} disabled={!v?.ok || busy != null}>
             {busy === "remove" ? "Đang xóa…" : `Xóa worktree ${g.name}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * "Đóng dự án": lists what stops (GET /api/projects/sidebar?root= runs `8sync ccc auto close
+ * --dry-run`), then stops it all and hides the project. A close that fails hides nothing: the error
+ * stays in the dialog with "Chỉ ẩn" (the old hide-only close) as the way out.
+ */
+export function CloseDialog({ hq, g, onHidden, onCancel }: { hq: Hq; g: SidebarGroup<Room>; onHidden: (row: HiddenProject | null) => void; onCancel: () => void }) {
+  const [plan, setPlan] = useState<ClosePlan | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+  const [busy, setBusy] = useState<"close" | "hide" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    hq.api<{ plan: ClosePlan }>(`/api/projects/sidebar?root=${encodeURIComponent(g.root)}`, { signal: ac.signal })
+      .then((r) => {
+        setPlan(r.plan);
+        setLoadError(null);
+      })
+      .catch((e: Error) => {
+        if (!ac.signal.aborted) setLoadError(e.message);
+      });
+    return () => ac.abort();
+  }, [hq, g.root, nonce]);
+
+  const recheck = () => {
+    setPlan(null);
+    setLoadError(null);
+    setNonce((n) => n + 1);
+  };
+
+  async function submit(kill: boolean) {
+    setBusy(kill ? "close" : "hide");
+    setError(null);
+    try {
+      const r = await hq.api<{ hidden?: HiddenProject; close?: ClosePlan }>("/api/projects/sidebar", { method: "POST", body: { root: g.root, hidden: true, ...(kill ? { kill: true } : {}) } });
+      toast.success(kill ? closeDoneText(g.name, r.close ?? null) : `Đã ẩn ${g.name} (không dừng gì): tự hiện lại khi có hoạt động mới`);
+      onHidden(r.hidden ?? null);
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      toast.error(`Không ${kill ? "đóng" : "ẩn"} được ${g.name}: ${msg}`);
+      // Part of it may have stopped: show what still runs.
+      if (kill) recheck();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const warn = plan && ownWarning(plan);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onCancel()}>
+      <DialogContent className="sm:max-w-md" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Đóng dự án {g.name}?</DialogTitle>
+          <DialogDescription className="text-pretty">
+            Dừng hẳn mọi thứ của dự án đang chạy trên máy rồi ẩn khỏi danh sách (tự hiện lại khi có hoạt động mới). Hội thoại vẫn giữ: mở lại bằng “Mở team” hoặc{" "}
+            <code className="font-mono text-xs whitespace-nowrap">8sync . &lt;tên&gt;</code>.
+          </DialogDescription>
+        </DialogHeader>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+          <dt className="text-muted-foreground">Thư mục</dt>
+          {/* The folder 8sync resolved and will close (HQ refuses a plan for another root). */}
+          <dd className="font-mono break-all">{plan?.root ?? g.root}</dd>
+        </dl>
+        <div aria-live="polite" className="min-h-24">
+          {loadError ? (
+            <div role="alert" className="flex items-center gap-2 text-xs text-destructive">
+              <span className="min-w-0 flex-1">Không xem được những gì sẽ dừng: {loadError}</span>
+              <Button size="sm" variant="outline" className="max-sm:h-11" onClick={recheck}>
+                Kiểm tra lại
+              </Button>
+            </div>
+          ) : !plan ? (
+            <div className="space-y-1.5" aria-busy="true" aria-label="Đang xem những gì sẽ dừng">
+              <Skeleton className="h-3.5 w-3/4" />
+              <Skeleton className="h-3.5 w-2/3" />
+              <Skeleton className="h-3.5 w-1/2" />
+              <Skeleton className="h-3.5 w-3/5" />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs font-medium">{closeTotal(plan) > 0 ? "Sẽ dừng:" : "Không còn gì chạy: chỉ bỏ dự án khỏi auto (nếu có) rồi ẩn."}</p>
+              <ul className="space-y-1 text-xs">
+                {closeLines(plan).map((l) => (
+                  <li key={l.key} className={cn("flex items-baseline gap-2", l.n === 0 && "text-muted-foreground")}>
+                    <span className="w-6 shrink-0 text-right font-semibold tabular">{l.n}</span>
+                    <span className="shrink-0">{l.label}</span>
+                    {l.detail && (
+                      <span className="min-w-0 truncate font-mono text-muted-foreground" title={l.detail}>
+                        {l.detail}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {plan.skipped.length > 0 && <p className="text-xs text-pretty text-muted-foreground">Không đụng: {plan.skipped.map((s) => `${s.label} (${s.why})`).join(", ")}.</p>}
+            </div>
+          )}
+        </div>
+        {warn && (
+          <p className="flex items-start gap-2 rounded-lg bg-st-needs/15 px-2.5 py-2 text-xs text-[color-mix(in_oklch,var(--st-needs),black_45%)] dark:text-st-needs">
+            <AlertTriangleIcon className="mt-px size-3.5 shrink-0" aria-hidden />
+            {warn}
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="text-xs text-pretty text-destructive">
+            {error}
+          </p>
+        )}
+        {(error || loadError) && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="min-w-0 flex-1 text-pretty">Không dừng được: vẫn có thể chỉ ẩn dự án, mọi thứ tiếp tục chạy.</span>
+            <Button size="sm" variant="outline" className="max-sm:h-11" onClick={() => void submit(false)} disabled={busy != null}>
+              <EyeOffIcon />
+              {busy === "hide" ? "Đang ẩn…" : "Chỉ ẩn"}
+            </Button>
+          </div>
+        )}
+        <DialogFooter>
+          <Button type="button" variant="outline" className="max-sm:h-11" onClick={onCancel} disabled={busy != null}>
+            Huỷ
+          </Button>
+          <Button type="button" variant="destructive" className="max-sm:h-11" onClick={() => void submit(true)} disabled={!plan || busy != null}>
+            <PowerIcon />
+            {busy === "close" ? "Đang dừng…" : "Dừng hẳn & đóng"}
           </Button>
         </DialogFooter>
       </DialogContent>

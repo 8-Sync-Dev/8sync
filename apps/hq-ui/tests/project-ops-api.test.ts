@@ -1,7 +1,21 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as Proc from "@/lib/server/proc";
 
 const merged = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/server/proc", async (orig) => ({ ...(await orig<typeof import("@/lib/server/proc")>()), mergedSessions: merged }));
+/** `8sync` calls (argv, cwd) and the answer each gets; git runs for real. */
+const eight = vi.hoisted(() => ({ calls: [] as { args: string[]; cwd?: string; ms: number }[], answer: { ok: true, stdout: "", stderr: "" } as { ok: boolean; stdout: string; stderr: string; killed?: boolean } }));
+vi.mock("@/lib/server/proc", async (orig) => {
+  const real = await orig<typeof Proc>();
+  return {
+    ...real,
+    mergedSessions: merged,
+    run: async (cmd: string, args: string[], ms?: number, cwd?: string) => {
+      if (cmd !== "8sync") return real.run(cmd, args, ms, cwd);
+      eight.calls.push({ args, cwd, ms: ms ?? 0 });
+      return eight.answer;
+    },
+  };
+});
 vi.mock("@/lib/server/floor", async (orig) => ({ ...(await orig<typeof import("@/lib/server/floor")>()), loadFloor: async () => [] }));
 
 import { execFileSync } from "node:child_process";
@@ -52,7 +66,25 @@ beforeEach(() => {
   // The rooms ran there and are closed now: HQ still knows their projects.
   merged.mockResolvedValue([room("dev", nested, "ended"), room("core", main, "ended"), room("qa", solo, "ended")]);
   getDb().exec("DELETE FROM hidden_projects");
+  eight.calls = [];
+  eight.answer = { ok: true, stdout: "", stderr: "" };
 });
+
+/** What `8sync ccc auto close --json` prints for `root`. */
+const plan = (root: string, dry: boolean, extra: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    root,
+    dry_run: dry,
+    rooms: [{ label: "lead", pid: 11, kind: "background", own: false, pids: [] }],
+    claude: [],
+    omp: [{ label: "core", pid: 12, kind: "process", own: true, pids: [12] }],
+    procs: [{ label: "vite preview :4120", pid: 13, kind: "process", own: false, pids: [13, 14] }],
+    skipped: [],
+    counts: { rooms: 1, claude: 0, omp: 1, procs: 1 },
+    auto: dry ? null : "left",
+    ok: true,
+    ...extra,
+  });
 
 const post = (fn: (r: Request) => Promise<Response>, url: string, body: unknown, t: string | null = token, origin: string | null = ORIGIN) =>
   fn(req(url, { method: "POST", token: t, origin, body }));
@@ -88,6 +120,71 @@ describe("/api/projects/sidebar", () => {
     expect(getDb().prepare("SELECT root FROM hidden_projects").all()).toEqual([{ root: wt }]);
     const shown = await post(sidebarPOST, "/api/projects/sidebar", { root: wt, hidden: false });
     expect(await shown.json()).toEqual({ ok: true, shown: true });
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM hidden_projects").get()).toEqual({ n: 0 });
+  });
+
+  it("kill: the same token + Origin gate, a fixed argv, nothing runs for a bad or unknown request", async () => {
+    expect((await post(sidebarPOST, "/api/projects/sidebar", { root: wt, hidden: true, kill: true }, null)).status).toBe(401);
+    expect((await post(sidebarPOST, "/api/projects/sidebar", { root: wt, hidden: true, kill: true }, token, "https://evil.example")).status).toBe(403);
+    for (const b of [{ root: wt, hidden: true, kill: "yes" }, { root: wt, hidden: false, kill: true }, { root: wt, kill: true }]) {
+      expect((await post(sidebarPOST, "/api/projects/sidebar", b)).status, JSON.stringify(b)).toBe(422);
+    }
+    expect((await post(sidebarPOST, "/api/projects/sidebar", { root: base, hidden: true, kill: true })).status).toBe(409);
+    expect((await sidebarGET(req(`/api/projects/sidebar?root=${encodeURIComponent(wt)}`, { token: null }))).status).toBe(401);
+    expect((await sidebarGET(req(`/api/projects/sidebar?root=${encodeURIComponent(base)}`, { token }))).status).toBe(409);
+    expect((await sidebarGET(req("/api/projects/sidebar?root=", { token }))).status).toBe(422);
+    expect(eight.calls).toEqual([]);
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM hidden_projects").get()).toEqual({ n: 0 });
+  });
+
+  it("?root= lists what the close would stop: a dry run in the root HQ knows", async () => {
+    eight.answer = { ok: true, stdout: plan(wt, true), stderr: "" };
+    const res = await sidebarGET(req(`/api/projects/sidebar?root=${encodeURIComponent(wt.toUpperCase())}`, { token }));
+    expect(res.status).toBe(200);
+    const { plan: got } = await res.json();
+    expect(got).toMatchObject({ dry_run: true, counts: { rooms: 1, claude: 0, omp: 1, procs: 1 } });
+    expect(eight.calls).toEqual([{ args: ["ccc", "auto", "close", "--dry-run", "--json"], cwd: wt, ms: 60_000 }]);
+    // An 8sync without `auto close` answers no plan: an error, never an empty list.
+    eight.answer = { ok: false, stdout: "", stderr: "error: không rõ `close`" };
+    const old = await sidebarGET(req(`/api/projects/sidebar?root=${encodeURIComponent(wt)}`, { token }));
+    expect(old.status).toBe(502);
+    expect((await old.json()).error).toContain("không rõ `close`");
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM hidden_projects").get()).toEqual({ n: 0 });
+  });
+
+  it("kill: runs `auto close` in the root, then hides it with what stopped", async () => {
+    eight.answer = { ok: true, stdout: plan(wt, false), stderr: "" };
+    const res = await post(sidebarPOST, "/api/projects/sidebar", { root: wt, hidden: true, kill: true });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.hidden).toMatchObject({ key: groupKey(wt), root: wt });
+    expect(body.close).toMatchObject({ dry_run: false, auto: "left", counts: { procs: 1 } });
+    expect(eight.calls).toEqual([{ args: ["ccc", "auto", "close", "--json"], cwd: wt, ms: 120_000 }]);
+    expect(getDb().prepare("SELECT root FROM hidden_projects").all()).toEqual([{ root: wt }]);
+  });
+
+  it("kill: a close that fails hides nothing and says what did not stop", async () => {
+    eight.answer = { ok: false, stdout: plan(wt, false, { ok: false }), stderr: "Error: không dừng được: core (pid 12)\n" };
+    const res = await post(sidebarPOST, "/api/projects/sidebar", { root: wt, hidden: true, kill: true });
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error).toContain("không dừng được: core (pid 12)");
+    expect(body.close).toMatchObject({ ok: false });
+    eight.answer = { ok: false, stdout: "", stderr: "", killed: true };
+    const slow = await post(sidebarPOST, "/api/projects/sidebar", { root: wt, hidden: true, kill: true });
+    expect((await slow.json()).error).toContain("120 giây");
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM hidden_projects").get()).toEqual({ n: 0 });
+  });
+
+  it("a plan for another root (a subfolder resolving to its parent repo) is never shown or hidden as this one", async () => {
+    eight.answer = { ok: true, stdout: plan(base, true), stderr: "" };
+    const dry = await sidebarGET(req(`/api/projects/sidebar?root=${encodeURIComponent(wt)}`, { token }));
+    expect(dry.status).toBe(502);
+    expect((await dry.json()).error).toContain(`không phải ${wt}`);
+    eight.answer = { ok: true, stdout: plan(base, false), stderr: "" };
+    const real = await post(sidebarPOST, "/api/projects/sidebar", { root: wt, hidden: true, kill: true });
+    expect(real.status).toBe(502);
+    expect((await real.json()).close).toBeNull();
     expect(getDb().prepare("SELECT COUNT(*) AS n FROM hidden_projects").get()).toEqual({ n: 0 });
   });
 });
