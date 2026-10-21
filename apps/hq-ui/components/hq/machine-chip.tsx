@@ -5,10 +5,11 @@ import type { Awake } from "@/lib/server/awake";
 import type { GuardView } from "@/lib/server/guard-trigger";
 import type { Machine, Spec } from "@/lib/server/machine";
 import type { Power } from "@/lib/server/power";
+import type { SweepProject } from "@/lib/server/sweep";
 import { cn } from "@/lib/utils";
 
-/** GET /api/machine: the load snapshot plus power (null before the sampler runs), awake and guard (null on an older 8sync) and what the machine is. */
-export type MachineView = Machine & { power: Power | null; awake: Awake | null; spec: Spec | null; guard: GuardView | null };
+/** GET /api/machine: the load snapshot plus power (null before the sampler runs), awake and guard (null on an older 8sync), what the machine is, and each running team's "Dọn máy tự động" (absent on an older HQ). */
+export type MachineView = Machine & { power: Power | null; awake: Awake | null; spec: Spec | null; guard: GuardView | null; sweep?: SweepProject[] };
 
 export const gb = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
 export const pctOf = (used: number, total: number) => (total > 0 ? Math.round((100 * used) / total) : 0);

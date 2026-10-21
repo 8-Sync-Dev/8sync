@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.19] — 2026-10-21
+### Added
+- **`sweep` room ("Dọn máy"): each running project's own machine and disk cleaner, kept by HQ.** Owner 2026-10-21: "khi hq ui bật lên mỗi dự án đang chạy đều nên có 1 super agent chuyên quét phân tích sâu để clean dọn rác ram, cpu, gpu chống ăn điện cao và dung lượng rác cao cực strictly giao tiếp all rooms/roles".
+  - Sonnet, always lean (no LSP plugins, no serena/codebase-memory), never paused by the guard, no lane, not in any preset team. Event-driven: it sleeps in `auto wait --mail` and spends nothing until a `[máy]` alert, an HQ disk message or the owner writes; a timeout or the usage cap just ends the turn.
+  - `[máy]` → reads processes once (`guard --dry-run`) and messages the room causing the load with the exact PID/port/path; disk → handles only the items HQ listed. It removes a worktree only when `git status --porcelain --ignored` shows nothing outside build dirs, the branch has its own commits equal to a merged PR head and no room uses it; build dirs only by tool commands; kills only leftovers re-checked (pid, image, command line, cwd, start) right before; never commits, moves or releases cards, never deletes %TEMP% copies (reported only), never touches other projects. The lead hears only what was actually freed, once per item.
+  - HQ: Máy › Bảo vệ máy has "Dọn máy tự động" per running team (on by default). While HQ runs it keeps one `sweep` in every running team in auto's scope (checked every 60 s, one at a time, back-off on failure); switching off stops the room first and is remembered only if that worked. The guard trigger mails `[máy] …` only to projects whose own rooms are among the top CPU users (≤ 1 per 5 min), and "Dung lượng dự án" cleanups go to the sweep before the lead.
+  - `auto status --json` adds `team_roots`.
+### Fixed
+- HQ "Dung lượng dự án" no longer flags pnpm/bun `node_modules` that deleting would not free: under `node_modules` a file with more than one hard link counts 0 (its other name is the package store), elsewhere a file counts size ÷ links. su-code's root `node_modules` showed 1.6 GB; ~0.3 GB is reclaimable.
+
 ## [0.110.18] — 2026-10-21
 ### Fixed
 - **HQ "Gửi cho mọi phòng" sends to the project you are looking at.** Owner 2026-10-21: "Dự án platform mà tại sao lead của ide". A repo picked in the sidebar that is not a registered HQ folder set only the page's repo, so the box under Tổng quan / Văn phòng / Chat tổng defaulted to the busiest project (ide) and suggested its lead. It now follows the repo in view, and project roots compare the same however they are written (slashes, case, trailing slash, `\\?\\`).

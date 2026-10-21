@@ -239,19 +239,66 @@ pub(super) fn eye_prompt(name: &str) -> String {
     g.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The first message a room starts or resumes with: a lane room's or the eye's `/goal`, else the
-/// loop message ([`auto::loop_prompt`]).
+/// Where the sweep remembers what it already told a room or the lead, inside the repo's git dir
+/// (`git rev-parse --git-common-dir`): one per project, shared by its worktrees, never committed.
+pub(super) const SWEEP_SENT: &str = "8sync-sweep-sent.txt";
+
+/// The first message of the "Dọn máy" room ([`room::SWEEP`]): the project's machine and disk
+/// cleaner. Event-driven like the eye: it blocks in `auto wait --mail` (no tokens) and a timeout or
+/// a cap only ends the turn. It acts on three messages only: HQ's `[máy]` breach (processes only,
+/// one `guard --dry-run`; lib/server/guard-trigger.ts), HQ's disk findings (only the items listed,
+/// sizes already reclaimable; lib/server/cleanup-loop.ts) and the owner's. Strict rules: only
+/// provably safe cleanups, never uncommitted or unpushed work, never another project, %TEMP%
+/// copies reported only; each room and the lead hear a thing once ([`SWEEP_SENT`]), the lead only
+/// when something was freed.
+pub(super) fn sweep_prompt(name: &str) -> String {
+    let (role, duty) = room::role(name);
+    let g = format!(
+        "/goal Phòng `{name}` (vai {role}: {duty}) giữ máy nhẹ cho RIÊNG dự án này: CPU không chạm 60%, RAM/GPU/điện thấp, đĩa không phình rác. \
+         Chỉ làm khi có tin, không tự quét định kỳ. Cực nghiêm: chỉ làm điều chắc chắn an toàn; không chắc → để nguyên. \
+         Mỗi lượt: (1) `8sync ccc auto status --json`; `cap` khác null → chỉ chạy (2); (2) `8sync ccc auto wait --json --mail --as {name}` (Bash timeout {bash_ms}; chặn ≤ {wait_min} phút, không tốn token): \
+         `\"wake\":\"off\"` → dừng; `\"wake\":\"msg\"` → xử lý từng tin trong `messages` theo (3) rồi quay lại (1); còn lại (hết giờ, `\"wake\":\"cap\"`) → kết thúc lượt, không quét gì. \
+         (3) Chỉ làm ba loại tin: \
+         (a) `[máy] …` của HQ: chỉ xem tiến trình, `8sync ccc auto guard --dry-run` tối đa MỘT lần mỗi lần thức; không git fetch, không gh, không đo đĩa; tiến trình gây tải thuộc phòng/worktree dự án này → nhắn đúng phòng đó. \
+         (b) `Dọn dung lượng dự án …` của HQ: chỉ xét đúng các mục tin liệt kê; số trong tin đã là phần xoá lấy lại được (HQ đo 6 giờ/lần), không tự du/đo lại node_modules/target; node_modules của pnpm/bun là hardlink vào store: xoá gần như không lấy lại chỗ → đừng xoá chỉ để lấy chỗ. \
+         (c) tin của owner (không phải từ phòng khác): làm trong luật (4). \
+         Tin khác (phòng trả lời tin của bạn…) → không quét, không trả lời. \
+         (4) Luật: KHÔNG BAO GIỜ xoá việc chưa commit hoặc chưa push. \
+         Worktree chỉ gỡ khi đủ cả ba: `git -C <wt> status --porcelain --ignored` không có gì ngoài target/.next/node_modules/dist; nhánh có commit riêng và HEAD = headRefOid của một PR đã MERGED (`gh pr list --state merged --head <nhánh> --json number,headRefOid`); không phòng nào chạy/giữ card trong đó → `git worktree remove <wt>` (không --force). \
+         Thư mục build (target/.next/node_modules/dist) chỉ dọn bằng lệnh của công cụ (`cargo clean` đúng thư mục đó…) và chỉ khi không tiến trình phòng nào chạy trong worktree đó. \
+         File đã commit lớn: không tự sửa, báo lead đề xuất card `git rm`. \
+         Asset/bằng chứng dự án ghi chỉ owner được xoá → hỏi owner bằng AskUserQuestion, không tự xoá. \
+         Bản sao trong %TEMP% (`qa-card-*`, `qa-fetch*`) không mang tên dự án: chỉ báo dung lượng, không xoá. \
+         Không kill tiến trình, trừ server/watcher còn sót (vite, next dev, cargo watch…) chạy trong worktree của dự án này, sống > 5 phút, không phòng nào dùng: nhắn phòng đó trước; lần thức sau vẫn còn → ngay trước khi dừng kiểm lại cùng PID, tên ảnh, dòng lệnh, cwd trong worktree đó và giờ bắt đầu như lần trước → dừng đúng PID đó (không kill theo tên); khác → không dừng. \
+         Không đụng dự án khác; không đổi cài đặt guard. \
+         (5) Báo một lần: mỗi điều đã báo ghi một dòng `<phòng>|<mục>` vào `<git-common-dir>/{sent}` (`git rev-parse --git-common-dir`, không commit); dòng đã có → không báo lại. \
+         Mỗi phòng bị ảnh hưởng MỘT tin ngắn `8sync ccc msg <phòng> \"…\" --from {name}` có đúng PID/port/đường dẫn + việc cần làm; \
+         lead chỉ khi THẬT đã giải phóng chỗ, mỗi mục một lần: `8sync ccc msg lead \"[dọn máy] giải phóng <MB/GB>: …; giữ: … vì …\" --from {name}`; \
+         `8sync ccc msg --all \"…\" --from {name}` chỉ cho luật cả team (không copy repo/node_modules ra %TEMP%, tắt vite/server khi xong card, `cargo build -j2`), mỗi luật một lần, nhắc lại chỉ khi tái phạm. \
+         Rail: không viết code, không `auto claim|move|add|done`, không move card; không merge/push/tag/deploy; không `git commit|reset|clean -f|checkout|stash`; không chạy build/test. \
+         Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on`/`here` false hoặc `paused` true \
+         hoặc `gate` nhắc tới lease, hoặc `auto wait --json` trả `\"wake\":\"off\"`.",
+        sent = SWEEP_SENT,
+        bash_ms = BASH_MAX_MS,
+        wait_min = auto::WAIT_MAX_S / 60,
+    );
+    g.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The first message a room starts or resumes with: a lane room's, the eye's or the sweep's
+/// `/goal`, else the loop message ([`auto::loop_prompt`]).
 fn first_prompt(name: &str, lane: Option<&str>, every: u64) -> String {
     match lane {
         Some(lane) => goal_prompt(name, lane, every),
         None if room::is_eye(name) => eye_prompt(name),
+        None if room::is_sweep(name) => sweep_prompt(name),
         None => auto::loop_prompt(name, every, false),
     }
 }
 
-/// A room that lives on a `/goal`: every lane room and the eye.
+/// A room that lives on a `/goal`: every lane room, the eye and the sweep.
 fn on_goal(name: &str) -> bool {
-    room::find(name).is_some_and(|r| r.lane.is_some()) || room::is_eye(name)
+    room::find(name).is_some_and(|r| r.lane.is_some()) || room::mail_only(name)
 }
 
 /// Bash tool ceiling of a room (ms): Claude Code caps a command at 10 min unless
@@ -577,8 +624,8 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
                 if *id != s.conversation_id {
                     t.store.rebind(name, id)?;
                 }
-                // The eye has no loop: a live one is already on its goal (an idle one was resumed above).
-                if room::is_eye(name) {
+                // The eye and the sweep have no loop: a live one is already on its goal (an idle one was resumed above).
+                if room::mail_only(name) {
                     ("đang chạy".to_string(), id.chars().take(8).collect())
                 } else {
                     let sent = auto::queue_loops(t.home, &[(name.clone(), id.clone())], o.every, false, now);
@@ -1784,6 +1831,112 @@ mod tests {
         let idle = Live { id: "e".into(), name: "eye".into(), background: true, started: 0, busy: false, cwd: String::new(), pid: 0 };
         assert!(lost_goal(on_goal("eye"), &idle) && !lost_goal(on_goal("rd"), &idle));
         assert!(first_prompt("rd", None, 30).starts_with("8sync auto: phòng `rd`"));
+    }
+
+    #[test]
+    fn the_sweep_opens_on_a_strict_event_driven_goal() {
+        let g = first_prompt("sweep", None, auto::DEFAULT_LOOP_MIN);
+        assert_eq!(g, sweep_prompt("sweep"));
+        assert!(g.starts_with("/goal Phòng `sweep` (vai Dọn máy"), "{g}");
+        assert!(g.chars().count() <= GOAL_MAX, "sweep: {} chars over Claude Code's /goal cap", g.chars().count());
+        assert!(!g.contains('\n'), "one line through a .cmd shim");
+        for want in [
+            // Events only: a timeout or a cap ends the turn, other rooms' replies never start a scan.
+            "`8sync ccc auto wait --json --mail --as sweep`",
+            "không tự quét định kỳ",
+            "còn lại (hết giờ, `\"wake\":\"cap\"`) → kết thúc lượt, không quét gì",
+            "`cap` khác null → chỉ chạy (2)",
+            "Tin khác (phòng trả lời tin của bạn…) → không quét, không trả lời",
+            "\"wake\":\"off\"",
+            // `[máy]`: processes only, one dry run, no network or disk.
+            "`[máy] …` của HQ: chỉ xem tiến trình, `8sync ccc auto guard --dry-run` tối đa MỘT lần mỗi lần thức; không git fetch, không gh, không đo đĩa",
+            // Disk: HQ's listed items, sizes already reclaimable.
+            "chỉ xét đúng các mục tin liệt kê",
+            "không tự du/đo lại node_modules/target",
+            "node_modules của pnpm/bun là hardlink vào store: xoá gần như không lấy lại chỗ",
+            "KHÔNG BAO GIỜ xoá việc chưa commit hoặc chưa push",
+            "`git -C <wt> status --porcelain --ignored` không có gì ngoài target/.next/node_modules/dist",
+            "nhánh có commit riêng và HEAD = headRefOid của một PR đã MERGED",
+            "`gh pr list --state merged --head <nhánh>",
+            "`git worktree remove <wt>` (không --force)",
+            "chỉ dọn bằng lệnh của công cụ",
+            "không tiến trình phòng nào chạy trong worktree đó",
+            "File đã commit lớn: không tự sửa, báo lead",
+            "AskUserQuestion",
+            "chỉ báo dung lượng, không xoá",
+            "sống > 5 phút",
+            "nhắn phòng đó trước",
+            "kiểm lại cùng PID, tên ảnh, dòng lệnh, cwd trong worktree đó và giờ bắt đầu",
+            "không kill theo tên",
+            "Không đụng dự án khác",
+            // Told once; the lead only when something was freed.
+            "`<git-common-dir>/8sync-sweep-sent.txt`",
+            "dòng đã có → không báo lại",
+            "`8sync ccc msg <phòng> \"…\" --from sweep`",
+            "PID/port/đường dẫn",
+            "lead chỉ khi THẬT đã giải phóng chỗ, mỗi mục một lần",
+            "`8sync ccc msg lead \"[dọn máy] giải phóng <MB/GB>",
+            "`8sync ccc msg --all \"…\" --from sweep`",
+            "không copy repo/node_modules ra %TEMP%",
+            "tắt vite/server khi xong card",
+            "`cargo build -j2`",
+            "không viết code",
+            "không `auto claim|move|add|done`, không move card",
+            "không `git commit|reset|clean -f|checkout|stash`",
+        ] {
+            assert!(g.contains(want), "sweep misses {want}: {g}");
+        }
+        for gone in ["--timeout", "git fetch origin`", "--is-ancestor", "trả claim", "PR riêng", "trừ bản sao %TEMP%"] {
+            assert!(!g.contains(gone), "sweep still has {gone}: {g}");
+        }
+        assert!(!g.contains("auto claim --json") && !g.contains("CronCreate"), "no lane, no cron: {g}");
+        assert!(g.contains(&format!("Bash timeout {BASH_MAX_MS}")));
+        let idle = Live { id: "s".into(), name: "sweep".into(), background: true, started: 0, busy: false, cwd: String::new(), pid: 0 };
+        assert!(lost_goal(on_goal("sweep"), &idle), "an idle sweep is brought back on its goal");
+    }
+
+    #[test]
+    fn add_sweep_opens_it_lean_on_sonnet_and_down_only_sweep_stops_just_it() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let o = parse(&v(&["--add", "sweep"])).unwrap();
+        assert_eq!((o.roles.join(","), o.add), ("sweep".to_string(), true));
+        let (h, root) = tmp("add-sweep");
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        let lead = store.touch("lead", false).unwrap();
+        let team = format!("[{}]", agent_in(&lead.conversation_id, "lead", "background", &root));
+        let sweep_id = "3698e3a6-0000-4000-8000-000000005eef";
+        let with_sweep = format!("[{},{}]", agent_in(&lead.conversation_id, "lead", "background", &root), agent_in(sweep_id, "sweep", "background", &root));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![team.clone(), team, with_sweep.clone()]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        assert!(up_locked(&t, &o, 1_000, || Ok(())).unwrap_err().to_string().contains("chưa chạy"), "only into a running team");
+        auto::set(&h, auto::Mode::On { hours: 8.0, after: 60, rate: None, repo: Some(root.clone()) }, false, 900).unwrap();
+        set_team_root(&h, &root, true);
+        let (_, _, rows) = up_locked(&t, &o, 1_000, || panic!("`--add` never stops a nested team")).unwrap();
+        assert_eq!(rows.iter().map(|r| (r.name.as_str(), r.model.as_str())).collect::<Vec<_>>(), [("sweep", "sonnet")]);
+        let calls = fake.calls.borrow();
+        let bg: Vec<_> = calls.iter().filter(|c| c.iter().any(|a| a == "--bg")).collect();
+        assert_eq!(bg.len(), 1, "only the sweep opens: {bg:?}");
+        assert_eq!(&bg[0][..3], ["--bg", "--name", "sweep"]);
+        let settings = bg[0].windows(2).find(|w| w[0] == "--settings").map(|w| w[1].clone()).unwrap();
+        assert!(settings.ends_with("room-settings-lean.json"), "lean: no LSP plugins, no indexing MCP: {settings}");
+        assert!(bg[0].last().unwrap().starts_with("/goal Phòng `sweep`"), "{:?}", bg[0].last());
+        drop(calls);
+        // Running already: a second `--add sweep` sends nothing (no loop message to a /goal room).
+        fake.calls.borrow_mut().clear();
+        *fake.agents.borrow_mut() = vec![with_sweep.replace(r#""name":"sweep","status":"idle""#, r#""name":"sweep","status":"running""#)];
+        let (_, _, rows) = up(&t, &o, 1_001).unwrap();
+        assert_eq!(rows[0].state, "đang chạy");
+        assert!(!fake.calls.borrow().iter().any(|c| c[0] == "stop" || c.iter().any(|a| a == "--bg")));
+        // Off: only the sweep stops and leaves the registry; the lead and auto run on.
+        fake.calls.borrow_mut().clear();
+        *fake.agents.borrow_mut() = vec![with_sweep];
+        let r = down_only(&t, &["sweep"], 1_004).unwrap();
+        assert_eq!(r.rooms, vec![("sweep".to_string(), true)]);
+        let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
+        assert_eq!(stops, [sweep_id[..8].to_string()]);
+        assert_eq!(store.load().sessions.iter().map(|s| s.name.clone()).collect::<Vec<_>>(), ["lead"]);
+        assert!(auto::running(&h));
+        let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]

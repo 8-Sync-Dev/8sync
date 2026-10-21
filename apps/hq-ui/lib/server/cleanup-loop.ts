@@ -24,7 +24,7 @@ export const RESEND_MS = 24 * 3600_000;
 /** After an HQ start, the first run waits this long (a restart loop must not send in a burst). */
 export const FIRST_DELAY_MS = 10 * 60_000;
 
-/** `room`: the room key the owner picked; null = the project's lead room, else dev. */
+/** `room`: the room key the owner picked; null = the project's sweep room, else its lead, else dev (lib/disk.ts cleanupRoom). */
 export type LoopProject = { on: boolean; room: string | null };
 /** A send that reached the room (only these hold back a resend for 24 h). */
 export type LoopSent = { fp: string; at: number; room: string; n: number; delivery: string };

@@ -93,6 +93,14 @@ CREATE TABLE IF NOT EXISTS eye_sent (
   at INTEGER NOT NULL,
   PRIMARY KEY (key, image)
 );
+-- "Dọn máy tự động" switch the owner flipped per project (lib/server/sweep.ts); no row = on.
+-- key = lib/disk.ts diskKey(root), enabled = 0|1, at = when flipped.
+CREATE TABLE IF NOT EXISTS sweep_switch (
+  key TEXT PRIMARY KEY,
+  root TEXT NOT NULL,
+  enabled INTEGER NOT NULL,
+  at INTEGER NOT NULL
+);
 `;
 
 const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync; schema: string } };

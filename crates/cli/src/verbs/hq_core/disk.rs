@@ -2,7 +2,8 @@
 //! `apps/hq-ui/lib/server/disk.ts` `scanDisk` in native code (same caps, same skips, same JSON
 //! `ProjectDisk` without `findings`, which node derives in `lib/disk.ts`). Symlinks and junctions
 //! are never followed; a folder with its own `.git` is another repo and counts 0, except the
-//! worktrees under `.claude/worktrees`.
+//! worktrees under `.claude/worktrees`. Sizes are reclaimable bytes ([`reclaim`]): a pnpm/bun store
+//! link under node_modules counts 0, other hard links (cargo's `target`) size ÷ names.
 
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -42,9 +43,28 @@ fn watched(rel: &str) -> bool {
     rel == ".git" || rel == WORKTREES || rel == UPLOADS || PREVIEW_DIRS.contains(&rel)
 }
 
-/// Bytes under `abs` (files only, apparent size). `inside`: already under node_modules or build
-/// output (not reported again); `own`: a repo or worktree root.
-fn du(abs: &Path, rel: &str, b: &mut Budget, acc: &mut Acc, inside: bool, own: bool) -> u64 {
+/// Where a walk is: in the project, under an outermost node_modules, or under build output.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Under {
+    Project,
+    Modules,
+    Build,
+}
+
+/// What deleting one name of a `len`-byte file with `links` names frees. Under node_modules a
+/// linked file is a pnpm/bun store link (its other name lives in the store, outside): nothing.
+/// Elsewhere the names sit side by side (cargo's `target/debug/x` and `deps/x-<hash>`), so each
+/// counts its share and the folder still sums to what `cargo clean` frees.
+fn reclaim(len: u64, links: u64, under: Under) -> u64 {
+    match under {
+        Under::Modules if links > 1 => 0,
+        _ => len / links.max(1),
+    }
+}
+
+/// Reclaimable bytes under `abs` (files only: [`reclaim`], [`links`]). `under`: already under
+/// node_modules or build output (not reported again); `own`: a repo or worktree root.
+fn du(abs: &Path, rel: &str, b: &mut Budget, acc: &mut Acc, under: Under, own: bool) -> u64 {
     if b.cut {
         return 0;
     }
@@ -73,8 +93,9 @@ fn du(abs: &Path, rel: &str, b: &mut Budget, acc: &mut Acc, inside: bool, own: b
     }
     let mut total = 0;
     for f in files {
-        // Apparent size of the entry itself (Windows: from the directory listing, no extra call).
-        let n = f.metadata().map_or(0, |m| m.len());
+        // Apparent size of the entry itself (Windows: from the directory listing, no extra call),
+        // less what other names of the same file keep.
+        let n = f.metadata().map_or(0, |m| reclaim(m.len(), links(&f.path(), &m, under != Under::Project), under));
         total += n;
         if rel.is_empty() {
             acc.root_files.push((f.file_name().to_string_lossy().into_owned(), n));
@@ -84,19 +105,74 @@ fn du(abs: &Path, rel: &str, b: &mut Budget, acc: &mut Acc, inside: bool, own: b
         let name = d.file_name().to_string_lossy().into_owned();
         let r = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
         let nm = name == "node_modules";
-        let out = !inside && !nm && BUILD_DIRS.contains(&name.as_str());
-        let n = du(&d.path(), &r, b, acc, inside || nm || out, rel == WORKTREES);
+        let out = under == Under::Project && !nm && BUILD_DIRS.contains(&name.as_str());
+        let child = match under {
+            Under::Project if nm => Under::Modules,
+            Under::Project if out => Under::Build,
+            u => u,
+        };
+        let n = du(&d.path(), &r, b, acc, child, rel == WORKTREES);
         total += n;
         if rel.is_empty() || watched(&r) {
             acc.sizes.push((r.clone(), n));
         }
-        if !inside && nm {
+        if under == Under::Project && nm {
             acc.node_modules.push((r, n));
         } else if out {
             acc.build.push((r, n));
         }
     }
     total
+}
+
+/// How many names file `p` has (≥ 1). pnpm and bun install node_modules as hard links into one
+/// store and cargo hard-links its binaries, so the apparent size overstates what deleting frees:
+/// measured 2026-10-21 on su-code's root node_modules (1.6 GB apparent, 45k files): 220 files with
+/// one name = 0.30 GB, the rest store links. Unix: `st_nlink` from the stat the walk already made.
+#[cfg(unix)]
+fn links(_p: &Path, m: &std::fs::Metadata, _inside: bool) -> u64 {
+    std::os::unix::fs::MetadataExt::nlink(m).max(1)
+}
+
+/// Windows: the directory listing has no link count, so it costs one handle per file
+/// (`GetFileInformationByHandle` `nNumberOfLinks`, opened for no data access: no read, no Defender
+/// scan; ≈ 50 µs a file, 45k files in 2.4 s); only under node_modules and build output (`inside`).
+#[cfg(windows)]
+fn links(p: &Path, _m: &std::fs::Metadata, inside: bool) -> u64 {
+    if !inside {
+        return 1;
+    }
+    win::links(p).unwrap_or(1).max(1)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn links(_p: &Path, _m: &std::fs::Metadata, _inside: bool) -> u64 {
+    1
+}
+
+#[cfg(windows)]
+mod win {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::Path;
+
+    const FILE_SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    /// `BY_HANDLE_FILE_INFORMATION` as 13 DWORDs; `nNumberOfLinks` is the 11th.
+    const LINKS_AT: usize = 10;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetFileInformationByHandle(file: *mut std::ffi::c_void, info: *mut [u32; 13]) -> i32;
+    }
+
+    pub(super) fn links(p: &Path) -> Option<u64> {
+        let f = std::fs::OpenOptions::new().access_mode(0).share_mode(FILE_SHARE_ALL).custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT).open(p).ok()?;
+        let mut info = [0u32; 13];
+        // SAFETY: a live handle owned by `f` and a buffer of BY_HANDLE_FILE_INFORMATION's size.
+        (unsafe { GetFileInformationByHandle(f.as_raw_handle().cast(), &mut info) } != 0).then(|| u64::from(info[LINKS_AT]))
+    }
 }
 
 /// `git ls-tree -r -l -z HEAD`: "<mode> blob <sha> <size>\t<path>\0"; blobs over 5 MiB, biggest first, ≤ 20.
@@ -167,7 +243,7 @@ pub fn scan(root: &str, name: &str, at: u64) -> Value {
     };
     let mut b = Budget { left: WALK_ENTRIES, end: t0 + WALK_TIME, cut: false };
     let mut acc = Acc::default();
-    let total = du(&rootp, "", &mut b, &mut acc, false, true);
+    let total = du(&rootp, "", &mut b, &mut acc, Under::Project, true);
     let tree = tree.join().ok().flatten();
     // Top-level folders (a nested repo measures 0 and drops out) and files, biggest first.
     let mut top: Vec<(String, u64)> = acc.sizes.iter().filter(|(k, _)| !k.contains('/')).cloned().collect();
@@ -255,6 +331,32 @@ mod tests {
         assert_eq!(v["truncated"], json!(false));
         let _ = std::fs::remove_dir_all(&d);
         assert_eq!(scan(&d.to_string_lossy(), "gone", 1)["error"], json!("không đọc được thư mục"));
+    }
+
+    #[test]
+    fn hard_links_count_what_deleting_frees() {
+        let d = std::env::temp_dir().join(format!("hq-core-disk-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let link = |from: &str, to: &str| {
+            std::fs::create_dir_all(d.join(to).parent().unwrap()).unwrap();
+            std::fs::hard_link(d.join(from), d.join(to)).unwrap();
+        };
+        // A pnpm-style store: one 9000-byte file linked twice into node_modules, plus a plain file.
+        put(&d.join("store/blob"), 9000);
+        link("store/blob", "web/node_modules/.pnpm/a@1/node_modules/a/i.js");
+        link("store/blob", "web/node_modules/b/x.js");
+        put(&d.join("web/node_modules/c/own.js"), 600);
+        // Cargo: one binary under two names inside target, both go with `cargo clean`.
+        put(&d.join("target/debug/deps/app-1a2b"), 4000);
+        link("target/debug/deps/app-1a2b", "target/debug/app");
+        let v = scan(&d.to_string_lossy(), "linked", 1);
+        assert_eq!(v["nodeModules"], json!([{ "path": "web/node_modules", "bytes": 600 }]), "store links free nothing");
+        assert_eq!(v["build"], json!([{ "path": "target", "bytes": 4000 }]), "links inside target: the whole file once");
+        // Outside node_modules/build output Windows never asks (whole size); Unix shares it by 3.
+        let store = if cfg!(windows) { 9000 } else { 3000 };
+        assert_eq!(v["total"], json!(store + 600 + 4000));
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!((reclaim(10, 1, Under::Modules), reclaim(10, 2, Under::Modules), reclaim(10, 2, Under::Build), reclaim(9, 3, Under::Project)), (10, 0, 5, 3));
     }
 
     #[test]

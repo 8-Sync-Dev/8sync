@@ -66,8 +66,14 @@ pub(super) const ARCH_PLAYBOOK: &str = "card nhãn `arch` (xem `8sync ccc auto b
 /// waits for those messages only ([`super::team::eye_prompt`], `auto wait --mail`).
 pub(super) const EYE: &str = "Soi ảnh";
 
+/// The "Dọn máy" room (`sweep`): the project's machine and disk cleaner. HQ adds it to every running
+/// team whose "Dọn máy tự động" switch is on (`auto up --add sweep`, apps/hq-ui lib/server/sweep.ts)
+/// and mails it guard breaches and disk findings; it waits on its inbox ([`super::team::sweep_prompt`],
+/// `auto wait --mail`), starts lean and is never paused by the guard ([`super::pressure`]).
+pub(super) const SWEEP: &str = "Dọn máy";
+
 /// In match order. "qc" is a tester here, as Vietnamese teams use the word.
-const ROLES: [Role; 14] = [
+const ROLES: [Role; 15] = [
     r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối board: triage backlog (đích của owner) thành card ready có AC + lệnh check, gỡ card blocked, chia việc; merge: `8sync ccc auto merge` một lần, không sleep chờ, không `gh pr merge` (thiếu quyền → MỘT câu Ship)", Some("opus"), Some("backlog")),
     r(&["ba", "analyst", "spec", "req", "po"], "BA", "viết card: acceptance criteria + đúng một lệnh check, tách việc lớn thành card nhỏ, backlog → ready; không sửa code sản phẩm", Some("opus"), Some("backlog")),
     r(&["arch", "architect", "architecture", "sa", "solution"], "Architect", "solution architecture suốt vòng đời: ADR cho card nhãn arch trước khi build (/sysdesign theo System Design Primer + docs chính thức), review kiến trúc diff ở cột review, mỗi ngày tech radar có nguồn + đo sức khoẻ scale theo docs/adr/budgets.md; không sửa code sản phẩm", Some("opus"), None),
@@ -83,6 +89,7 @@ const ROLES: [Role; 14] = [
     r(&["sec", "security", "audit", "aup"], "Security", "/sec, /aup-audit, /rules; BLOCK → dừng, báo owner", None, None),
     r(&["core", "cli", "rust", "crate", "kit", "ccc"], "Core/Rust", "crates/ (Rust): cargo check/test một module, nice -n 19 -j2", None, Some("ready")),
     r(&["eye"], EYE, "soi ảnh mới của card (tin `[ảnh mới]` từ HQ) so với AC + ý owner mới nhất trên board, ghi MỘT note [soi ảnh] khách quan, lệch AC/lỗi hình → báo lead; không sửa code, không move card", Some("sonnet"), None),
+    r(&["sweep"], SWEEP, "dọn RAM/CPU/GPU/đĩa của dự án này: đo, dọn rác chắc chắn an toàn, nhắn đúng phòng đang gây tải; không code card, không claim card", Some("sonnet"), None),
 ];
 
 /// The row a session name picks, if any.
@@ -118,6 +125,7 @@ fn crew_of(row: &Role) -> &'static str {
         "R&D" => "rd",
         "Architect" => "arch",
         EYE => "eye",
+        SWEEP => "sweep",
         "BA" => "ba",
         "Lead/PM" => "lead",
         "Ops/CI" => "ops",
@@ -149,6 +157,17 @@ pub(super) fn builds(name: &str) -> bool {
 /// Pure: is room `name` the "Soi ảnh" room ([`EYE`])?
 pub(super) fn is_eye(name: &str) -> bool {
     find(name).is_some_and(|row| row.name == EYE)
+}
+
+/// Pure: is room `name` the "Dọn máy" room ([`SWEEP`])?
+pub(super) fn is_sweep(name: &str) -> bool {
+    find(name).is_some_and(|row| row.name == SWEEP)
+}
+
+/// Pure: a room without a lane that lives on a `/goal` over its inbox (`auto wait --mail`): the eye
+/// and the sweep.
+pub(super) fn mail_only(name: &str) -> bool {
+    is_eye(name) || is_sweep(name)
 }
 
 /// Tags that open card titles but name no role (`[hot-fix]`, `[wip]`, `[p1]`).
@@ -347,6 +366,17 @@ mod tests {
         assert_eq!(crew("eye"), "eye");
         assert!(!builds("eye"), "never claims ready cards");
         assert!(!DEFAULT_TEAM.contains(&"eye") && !FULL_TEAM.contains(&"eye") && !BOOST_TEAM.contains(&"eye"), "joins by HQ's switch only");
+    }
+
+    #[test]
+    fn the_sweep_room_cleans_without_a_lane_or_a_crew() {
+        let s = find("sweep").unwrap();
+        assert_eq!((s.name, s.lane, s.model), (SWEEP, None, Some("sonnet")));
+        assert!(is_sweep("sweep") && is_sweep("sweep-zus") && is_sweep("sweeper") && !is_sweep("sw") && !is_sweep("eye"));
+        assert!(mail_only("sweep") && mail_only("eye") && !mail_only("rd") && !mail_only("lead"));
+        assert_eq!(crew("sweep"), "sweep");
+        assert!(!builds("sweep"), "never claims ready cards");
+        assert!(!DEFAULT_TEAM.contains(&"sweep") && !FULL_TEAM.contains(&"sweep") && !BOOST_TEAM.contains(&"sweep"), "joins by HQ's switch only");
     }
 
     #[test]

@@ -43,12 +43,19 @@ const TOP = 12;
 
 type Budget = { left: number; end: number; cut: boolean };
 type Acc = { sizes: Record<string, number>; rootFiles: Sized[]; nodeModules: Sized[]; build: Sized[] };
-/** `inside`: already under node_modules or build output (not reported again). `own`: a repo or worktree root. */
-type Where = { inside: boolean; own: boolean };
+/** `inside`: already under node_modules or build output (not reported again); `modules`: under node_modules. `own`: a repo or worktree root. */
+type Where = { inside: boolean; modules: boolean; own: boolean };
+
+/**
+ * What deleting one name of a file frees (crates/cli/src/verbs/hq_core/disk.rs `reclaim`): under
+ * node_modules a hard-linked file is a pnpm/bun store link (nothing), elsewhere (cargo's target)
+ * each name counts its share.
+ */
+export const reclaim = (size: number, nlink: number, modules: boolean) => (modules && nlink > 1 ? 0 : Math.floor(size / Math.max(1, nlink)));
 
 const WATCH: Record<string, true> = Object.fromEntries([".git", WORKTREES, UPLOADS, ...PREVIEW_DIRS].map((p) => [p, true]));
 
-/** Bytes under `abs` (files only, apparent size). */
+/** Reclaimable bytes under `abs` (files only, [`reclaim`]; Node's lstat reads the link count on Windows too). */
 async function du(abs: string, rel: string, b: Budget, acc: Acc, at: Where): Promise<number> {
   if (b.cut) return 0;
   let ents: fs.Dirent[];
@@ -72,7 +79,7 @@ async function du(abs: string, rel: string, b: Budget, acc: Acc, at: Where): Pro
   }
   let total = 0;
   for (let i = 0; i < files.length; i += 64) {
-    const sizes = await Promise.all(files.slice(i, i + 64).map((f) => fsp.lstat(path.join(abs, f)).then((s) => s.size, () => 0)));
+    const sizes = await Promise.all(files.slice(i, i + 64).map((f) => fsp.lstat(path.join(abs, f)).then((s) => reclaim(s.size, s.nlink, at.modules), () => 0)));
     sizes.forEach((n, j) => {
       total += n;
       if (rel === "") acc.rootFiles.push({ path: files[i + j], bytes: n });
@@ -82,7 +89,7 @@ async function du(abs: string, rel: string, b: Budget, acc: Acc, at: Where): Pro
     const r = rel ? `${rel}/${d}` : d;
     const nm = d === "node_modules";
     const out = !at.inside && !nm && BUILD_DIRS[d] === true;
-    const n = await du(path.join(abs, d), r, b, acc, { inside: at.inside || nm || out, own: rel === WORKTREES });
+    const n = await du(path.join(abs, d), r, b, acc, { inside: at.inside || nm || out, modules: at.modules || nm, own: rel === WORKTREES });
     total += n;
     if (rel === "" || WATCH[r]) acc.sizes[r] = n;
     if (!at.inside && nm) acc.nodeModules.push({ path: r, bytes: n });
@@ -140,7 +147,7 @@ export async function scanDisk(p: { root: string; name: string }, now = Date.now
   } catch {
     return { ...empty, error: "không đọc được thư mục", ms: 0 };
   }
-  const [total, tree] = await Promise.all([du(p.root, "", b, acc, { inside: false, own: true }), lsTree(p.root)]);
+  const [total, tree] = await Promise.all([du(p.root, "", b, acc, { inside: false, modules: false, own: true }), lsTree(p.root)]);
   // Top-level folders (a nested repo measures 0 and drops out) and files, biggest first.
   const entries = [...Object.entries(acc.sizes).filter(([k]) => !k.includes("/")).map(([k, n]) => ({ path: k, bytes: n, dir: true })), ...acc.rootFiles.map((f) => ({ ...f, dir: false }))]
     .filter((e) => e.bytes > 0)

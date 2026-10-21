@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { bytes, cleanupRoom, cleanupText, diskKey, findings, fingerprint, GB, LIMITS, MB, type ProjectDisk } from "@/lib/disk";
-import { diskState, parseLsTree, resetDisk, scanDisk, startScan } from "@/lib/server/disk";
+import { diskState, parseLsTree, reclaim, resetDisk, scanDisk, startScan } from "@/lib/server/disk";
 
 const NOW = 1_800_000_000_000;
 
@@ -120,6 +120,12 @@ describe("cleanupRoom: lead, else dev, else any room of the project", () => {
     expect(cleanupRoom([room("hq-qa", "qa")], "C:/p/shop")?.key).toBe("hq-qa");
     expect(cleanupRoom(rooms, "C:/p/none")).toBeNull();
   });
+  it("the project's sweep room gets it first when one runs (worktrees cleaned by the machine cleaner, not the lead)", () => {
+    const rooms = [room("hq-lead", "lead"), room("hq-dev", "dev"), room("hq-sw", "sweep-shop"), room("hq-sw2", "sweep", "C:/p/other")];
+    expect(cleanupRoom(rooms, "C:/p/shop")?.key).toBe("hq-sw");
+    expect(cleanupRoom(rooms.filter((r) => r.key !== "hq-sw"), "C:/p/shop")?.key).toBe("hq-lead");
+    expect(cleanupRoom([room("hq-lead", "lead"), { ...room("hq-sw", "sweep"), delivery: null }], "C:/p/shop")?.key).toBe("hq-lead");
+  });
   it("a worktree with its own rooms is its own project (sidebar grouping), slashes and case aside", () => {
     const wt = "C:/p/shop/.claude/worktrees/card-91";
     const rooms = [room("hq-lead", "lead"), room("hq-dev", "dev", `${wt}/.claude/worktrees/card-113`)];
@@ -222,6 +228,29 @@ describe("scan", () => {
     expect(d.total).toBe(3000 + 100 + 5000 + 1000 + 400 + 140 + 50 + 10);
     expect(d.truncated).toBe(false);
     expect(d.tracked).toEqual([]); // not a real git repo
+  });
+
+  it("hard links count what deleting frees: pnpm store links 0, links inside target their share", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hq-disk-links-"));
+    const put = (rel: string, n: number) => {
+      fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      fs.writeFileSync(path.join(root, rel), Buffer.alloc(n));
+    };
+    const link = (from: string, to: string) => {
+      fs.mkdirSync(path.dirname(path.join(root, to)), { recursive: true });
+      fs.linkSync(path.join(root, from), path.join(root, to));
+    };
+    put("store/blob", 9000);
+    link("store/blob", "web/node_modules/.pnpm/a@1/node_modules/a/i.js");
+    link("store/blob", "web/node_modules/b/x.js");
+    put("web/node_modules/c/own.js", 600);
+    put("target/debug/deps/app-1a2b", 4000);
+    link("target/debug/deps/app-1a2b", "target/debug/app");
+    const d = await scanDisk({ root, name: "linked" }, NOW);
+    expect(d.nodeModules).toEqual([{ path: "web/node_modules", bytes: 600 }]);
+    expect(d.build).toEqual([{ path: "target", bytes: 4000 }]);
+    expect(d.total).toBe(3000 + 600 + 4000);
+    expect([reclaim(10, 1, true), reclaim(10, 2, true), reclaim(10, 2, false)]).toEqual([10, 0, 5]);
   });
 
   it("a missing root is an error, not a throw", async () => {
