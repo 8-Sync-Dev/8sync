@@ -75,3 +75,31 @@ export function withFiles(text: string, paths: string[]): string {
   if (paths.length === 0) return text;
   return `${text}\n\nFile đính kèm (mở bằng Read trước khi làm):\n${paths.map((p) => `- ${p}`).join("\n")}`;
 }
+
+/** Content types the file route serves; other attachments stay text in the chat. */
+const IMAGE_TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" };
+
+/**
+ * The image an upload id names: the staged copy (composer, before sending) or the copy placed in one of
+ * `roots` (`<root>/.claude/hq-uploads/<id>/`). Only the id picks the folder; the file inside is whatever
+ * `saveUpload` wrote there. Null for a bad id, an unknown id, or a non-image.
+ */
+export function findUpload(id: unknown, roots: string[], dir = uploadsDir()): { path: string; type: string; size: number } | null {
+  if (!isUploadId(id)) return null;
+  for (const base of [dir, ...roots.map((r) => path.join(r, ".claude", "hq-uploads"))]) {
+    const folder = path.join(base, id);
+    let name: string | undefined;
+    try {
+      name = fs.readdirSync(folder)[0];
+    } catch {
+      continue;
+    }
+    if (!name) continue;
+    const type = IMAGE_TYPES[path.extname(name).toLowerCase()];
+    if (!type) return null;
+    const p = path.join(folder, name);
+    const st = fs.statSync(p);
+    return st.isFile() ? { path: p, type, size: st.size } : null;
+  }
+  return null;
+}

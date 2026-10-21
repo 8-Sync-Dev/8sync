@@ -1,9 +1,10 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AUTO_IDLE_MS, autoCandidates, findings, GB, MB, sendable, withoutDirs, type Finding, type ProjectDisk } from "@/lib/disk";
-import { cleanIdleBuild, names, purgeTrash, trashDir } from "@/lib/server/disk-clean";
+import { AUTO_IDLE_MS, autoCandidates, findings, GB, keptText, MB, PRUNE_IDLE_MS, sendable, withoutDirs, type Finding, type ProjectDisk } from "@/lib/disk";
+import { cleanIdleBuild, names, parseWorktrees, pruneWorktrees, purgeTrash, trashDir } from "@/lib/server/disk-clean";
 
 const disk = (o: Partial<ProjectDisk> = {}): ProjectDisk => ({
   root: "C:/p/shop",
@@ -59,6 +60,12 @@ describe("autoCandidates: a card worktree's flagged target/.next, at any depth",
     expect(after.worktrees).toEqual({ n: 3, bytes: 3 * GB });
     expect(findings(after, 0).map((f) => f.path)).not.toContain(".claude/worktrees/card-15/target");
     expect(findings(after, 0).map((f) => f.path)).toContain("target");
+  });
+
+  it("the worktrees finding says why HQ kept what it did not prune", () => {
+    const p = disk({ worktrees: { n: 21, bytes: GB }, wtKept: { n: 21, busy: 5, recent: 0, open: 14, dirty: 2, failed: 0 } });
+    expect(findings(p, 0).find((f) => f.id === "worktrees")?.why).toBe("21 worktree (ngưỡng 10) · HQ giữ 21: 5 đang dùng, 14 chưa merge/đóng, 2 chưa commit");
+    expect(keptText({ n: 3, busy: 0, recent: 0, open: 0, dirty: 0, failed: 0 })).toBe("");
   });
 });
 
@@ -144,6 +151,103 @@ describe("cleanIdleBuild on a real folder", () => {
       expect(fs.existsSync(served)).toBe(true);
       expect(fs.existsSync(source)).toBe(true);
       await purgeTrash(root);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("pruneWorktrees on a real repo", () => {
+  const NOW = Date.now();
+  const old = (NOW - 2 * PRUNE_IDLE_MS) / 1000;
+  const sh = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@x", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@x" } }).toString();
+  const wtOf = (root: string, name: string) => path.join(root, ".claude", "worktrees", name);
+
+  /** A card worktree on its own branch off main, with `commits` extra commits, every top-level entry last written `at`. */
+  function worktree(root: string, name: string, at: number, commits = 0): string {
+    const wt = wtOf(root, name);
+    sh(root, "worktree", "add", "-b", `${name}-work`, wt, "main");
+    for (let i = 0; i < commits; i++) {
+      fs.writeFileSync(path.join(wt, `${name}-${i}.txt`), "x");
+      sh(wt, "add", "-A");
+      sh(wt, "commit", "-q", "-m", `${name} ${i}`);
+    }
+    for (const e of [wt, ...fs.readdirSync(wt).map((n) => path.join(wt, n))]) fs.utimesSync(e, at, at);
+    return wt;
+  }
+
+  it("parses `worktree list --porcelain`, branch or detached", () => {
+    const out = "worktree C:/p/repo\nHEAD aaa\nbranch refs/heads/main\n\nworktree C:/p/repo/.claude/worktrees/card-1\nHEAD bbb\ndetached\n\nworktree C:/p/repo/.claude/worktrees/card-2\nHEAD ccc\nbranch refs/heads/card-2-x\nprunable gitdir file points to non-existent location\n";
+    expect(parseWorktrees(out)).toEqual([
+      { path: "C:/p/repo", head: "aaa", branch: "main" },
+      { path: "C:/p/repo/.claude/worktrees/card-1", head: "bbb", branch: null },
+      { path: "C:/p/repo/.claude/worktrees/card-2", head: "ccc", branch: "card-2-x" },
+    ]);
+  });
+
+  it("removes a merged, clean, idle, unused worktree (and its branch); keeps dirty, busy, recent and unmerged ones; prunes a missing one", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hq-prune-"));
+    try {
+      sh(root, "init", "-q", "-b", "main");
+      fs.writeFileSync(path.join(root, "README.md"), "x");
+      sh(root, "add", "-A");
+      sh(root, "commit", "-q", "-m", "init");
+      const merged = worktree(root, "card-1", old, 1);
+      sh(root, "merge", "-q", "--ff-only", "card-1-work");
+      fs.mkdirSync(path.join(merged, "su-code", "standup"), { recursive: true }); // 8sync's meet note: not the card's work
+      fs.writeFileSync(path.join(merged, "su-code", "standup", "2026-10-21.md"), "- dev: done");
+      for (const e of [merged, path.join(merged, "su-code")]) fs.utimesSync(e, old, old);
+      const dirty = worktree(root, "card-2", old);
+      fs.writeFileSync(path.join(dirty, "scratch.txt"), "wip");
+      for (const e of [dirty, path.join(dirty, "scratch.txt")]) fs.utimesSync(e, old, old);
+      const busy = worktree(root, "card-3", old);
+      const recent = worktree(root, "card-4", old);
+      fs.utimesSync(path.join(recent, "README.md"), NOW / 1000, NOW / 1000);
+      const missing = worktree(root, "card-5", old);
+      fs.rmSync(missing, { recursive: true, force: true });
+      const open = worktree(root, "card-6", old, 1);
+      // Squash-merged: the branch's commit is no ancestor of main, but main's commit names the card.
+      const squashed = worktree(root, "card-7", old, 1);
+      fs.writeFileSync(path.join(root, "seven.txt"), "x");
+      sh(root, "add", "-A");
+      sh(root, "commit", "-q", "-m", "feat(x): seven (card #7) (#9)");
+      const used = async () => [`node ${path.join(busy, "node_modules", ".bin", "next")} dev`];
+      const r = await pruneWorktrees({ root }, used, NOW, async () => new Set<number>());
+      expect([r.kept, r.pruned]).toEqual([{ n: 7, busy: 1, recent: 1, open: 1, dirty: 1, failed: 0 }, { at: NOW, n: 3, names: ["card-1", "card-5", "card-7"] }]);
+      expect(r.kept).toEqual({ n: 7, busy: 1, recent: 1, open: 1, dirty: 1, failed: 0 });
+      expect(fs.existsSync(merged)).toBe(false);
+      expect(fs.existsSync(squashed)).toBe(false);
+      expect(sh(root, "branch", "--list", "card-7-work").trim()).not.toBe(""); // squash-merged: never -D
+      expect(sh(root, "branch", "--list", "card-1-work").trim()).toBe(""); // merged: branch gone
+      expect(sh(root, "branch", "--list", "card-5-work").trim()).not.toBe(""); // only the registration went
+      for (const wt of [dirty, busy, recent, open]) expect(fs.existsSync(wt)).toBe(true);
+      expect(parseWorktrees(sh(root, "worktree", "list", "--porcelain")).map((w) => path.basename(w.path))).toEqual([path.basename(root), "card-2", "card-3", "card-4", "card-6"]);
+      // The board closed card-6: its unmerged work goes, the branch stays (never -D).
+      const r2 = await pruneWorktrees({ root }, used, NOW, async () => new Set([6]));
+      expect(r2.pruned).toEqual({ at: NOW, n: 1, names: ["card-6"] });
+      expect(fs.existsSync(open)).toBe(false);
+      expect(sh(root, "branch", "--list", "card-6-work").trim()).not.toBe("");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes nothing when the room folders cannot be read, and nothing outside .claude/worktrees", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hq-prune-"));
+    try {
+      sh(root, "init", "-q", "-b", "main");
+      fs.writeFileSync(path.join(root, "README.md"), "x");
+      sh(root, "add", "-A");
+      sh(root, "commit", "-q", "-m", "init");
+      const wt = worktree(root, "card-1", old);
+      const elsewhere = path.join(root, "play-1");
+      sh(root, "worktree", "add", "-q", "--detach", elsewhere, "main");
+      const r = await pruneWorktrees({ root }, () => Promise.reject(new Error("no office")), NOW, async () => new Set<number>());
+      expect(r).toEqual({ pruned: null, kept: null });
+      expect(fs.existsSync(wt)).toBe(true);
+      const r2 = await pruneWorktrees({ root }, async () => [], NOW, async () => new Set<number>());
+      expect(r2.pruned?.names).toEqual(["card-1"]);
+      expect(fs.existsSync(elsewhere)).toBe(true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

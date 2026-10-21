@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use super::target::{self, Target};
 
-/// How long a cached default branch is trusted.
+/// How long a cached default branch or repo name is trusted.
 const DEFAULT_TTL_S: u64 = 24 * 3600;
 
 /// Why nothing moved when [`default_branch`] is None.
@@ -29,26 +29,55 @@ pub(super) const NO_DEFAULT: &str = "không đọc được nhánh mặc định
 /// The repo's default branch (`gh repo view --json defaultBranchRef`, 20 s timeout), cached per
 /// repo in the state dir for a day; None when gh cannot tell (callers stop rather than guess).
 pub fn default_branch(root: &Path) -> Option<String> {
-    let cache = dirs::home_dir().filter(|h| h.is_absolute()).map(|h| super::idle::state_dir(&h).join("default-branch.json"));
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    default_branch_with(root, cache.as_deref(), now, &gh_default_branch)
+    default_branch_of(root, None)
+}
+
+/// [`default_branch`] of this repo (`repo` None) or of another repo `owner/repo` of the org
+/// (`gh repo view owner/repo`), cached under that name.
+pub(super) fn default_branch_of(root: &Path, repo: Option<&str>) -> Option<String> {
+    let key = repo.map_or_else(|| super::auto::canon(root).to_string_lossy().into_owned(), str::to_string);
+    cached(cache_file("default-branch.json").as_deref(), &key, now_s(), &valid_branch, &|| gh_repo_field(root, repo, "defaultBranchRef", ".defaultBranchRef.name"))
+}
+
+/// This repo's `owner/repo` on GitHub (`gh repo view --json nameWithOwner`), cached like the
+/// default branch; None when gh cannot tell.
+pub(super) fn origin_repo(root: &Path) -> Option<String> {
+    let key = super::auto::canon(root).to_string_lossy().into_owned();
+    cached(cache_file("origin-repo.json").as_deref(), &key, now_s(), &|r| valid_repo(r).is_some(), &|| gh_repo_field(root, None, "nameWithOwner", ".nameWithOwner"))
+}
+
+fn cache_file(name: &str) -> Option<std::path::PathBuf> {
+    dirs::home_dir().filter(|h| h.is_absolute()).map(|h| super::idle::state_dir(&h).join(name))
+}
+
+fn now_s() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 fn valid_branch(b: &str) -> bool {
     !b.is_empty() && b.len() <= 200 && !b.starts_with('-') && !b.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
-/// [`default_branch`] with the cache file, clock and lookup injected (tests).
-fn default_branch_with(root: &Path, cache: Option<&Path>, now: u64, fetch: &dyn Fn(&Path) -> Option<String>) -> Option<String> {
-    let key = super::auto::canon(root).to_string_lossy().into_owned();
+/// `owner/repo` as GitHub names it (letters, digits, `.`, `_`, `-`; neither part empty or
+/// starting with `-`), or None.
+pub(super) fn valid_repo(s: &str) -> Option<&str> {
+    let s = s.trim();
+    let (o, r) = s.split_once('/')?;
+    let part = |p: &str| !p.is_empty() && p.len() <= 100 && !p.starts_with('-') && p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    (part(o) && part(r)).then_some(s)
+}
+
+/// A gh answer for `key`, read from `cache` (one JSON object per key, `{ value, at }`) when
+/// younger than [`DEFAULT_TTL_S`] and `valid`, else fetched and stored (injected in tests).
+fn cached(cache: Option<&Path>, key: &str, now: u64, valid: &dyn Fn(&str) -> bool, fetch: &dyn Fn() -> Option<String>) -> Option<String> {
     let mut all = cache.and_then(|c| std::fs::read_to_string(c).ok()).and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
-    let hit = &all[&key];
-    if let Some(b) = hit["branch"].as_str().filter(|b| valid_branch(b) && hit["at"].as_u64().is_some_and(|at| now < at + DEFAULT_TTL_S)) {
+    let hit = &all[key];
+    if let Some(b) = hit["value"].as_str().filter(|b| valid(b) && hit["at"].as_u64().is_some_and(|at| now < at + DEFAULT_TTL_S)) {
         return Some(b.to_string());
     }
-    let b = fetch(root).map(|b| b.trim().to_string()).filter(|b| valid_branch(b))?;
+    let b = fetch().map(|b| b.trim().to_string()).filter(|b| valid(b))?;
     if let (Some(c), Some(map)) = (cache, all.as_object_mut()) {
-        map.insert(key, json!({ "branch": b, "at": now }));
+        map.insert(key.to_string(), json!({ "value": b, "at": now }));
         if let Some(d) = c.parent() {
             let _ = std::fs::create_dir_all(d);
         }
@@ -57,9 +86,14 @@ fn default_branch_with(root: &Path, cache: Option<&Path>, now: u64, fetch: &dyn 
     Some(b)
 }
 
-fn gh_default_branch(root: &Path) -> Option<String> {
+/// `gh repo view [owner/repo] --json <field> -q <jq>` in `root`, trimmed; None when gh fails or hangs.
+fn gh_repo_field(root: &Path, repo: Option<&str>, field: &str, jq: &str) -> Option<String> {
     let mut c = Command::new("gh");
-    c.args(["repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"])
+    c.args(["repo", "view"]);
+    if let Some(r) = repo {
+        c.arg(r);
+    }
+    c.args(["--json", field, "-q", jq])
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -85,7 +119,7 @@ pub(super) const NO_PERMISSION: &str = "chưa có quyền tự merge cho dự á
 /// options, every approved card and its PR) for the lead to copy. ai-game-studio 2026-10-20: the
 /// lead waited a tick before asking.
 pub(super) fn ship_question(approved: &[Target]) -> String {
-    let list: Vec<String> = approved.iter().map(|t| format!("#{} ({})", t.id, t.pr.as_deref().and_then(pr_number).map_or_else(|| "chưa có PR".to_string(), |n| format!("PR #{n}")))).collect();
+    let list: Vec<String> = approved.iter().map(|t| format!("#{} ({})", t.id, t.pr.as_deref().and_then(pr_number).map_or_else(|| "chưa có PR".to_string(), |n| format!("PR {}", target::pr_label(&n.to_string(), t.pr_repo.as_deref()))))).collect();
     let options: Vec<Value> = SHIP_OPTIONS.iter().map(|(label, description)| json!({ "label": label, "description": description })).collect();
     let q = json!({ "questions": [{
         "header": "Ship",
@@ -122,11 +156,11 @@ fn same_commit(card_sha: &str, head: &str) -> bool {
     c.len() >= 7 && c.chars().all(|ch| ch.is_ascii_hexdigit()) && head.trim().to_ascii_lowercase().starts_with(&c)
 }
 
-/// The whole command is one `gh pr merge <n> [--squash|--merge|--rebase] [--delete-branch]
-/// --match-head-commit <sha>`: (pr, sha). `<n>` is a bare number (no URL, no `#`: a URL could name
-/// another repo). Other flags (`--admin`, `--repo`, `--auto`…), chaining, substitution, redirects
-/// or a `#` anywhere → None.
-pub(super) fn merge_command(cmd: &str) -> Option<(u64, String)> {
+/// The whole command is one `gh pr merge <n> [--repo owner/repo] [--squash|--merge|--rebase]
+/// [--delete-branch] --match-head-commit <sha>`: (pr, repo, sha). `<n>` is a bare number (no URL,
+/// no `#`); the repo (`-R`/`--repo`, once) names a card's PR in another repo of the org. Other
+/// flags (`--admin`, `--auto`…), chaining, substitution, redirects or a `#` anywhere → None.
+pub(super) fn merge_command(cmd: &str) -> Option<(u64, Option<String>, String)> {
     if cmd.chars().any(|c| matches!(c, ';' | '&' | '|' | '\n' | '\r' | '$' | '`' | '<' | '>' | '(' | ')' | '{' | '}' | '#')) {
         return None;
     }
@@ -135,26 +169,34 @@ pub(super) fn merge_command(cmd: &str) -> Option<(u64, String)> {
     if !gh.eq_ignore_ascii_case("gh") && !gh.eq_ignore_ascii_case("gh.exe") {
         return None;
     }
-    let (mut pr, mut sha) = (None, None);
+    let (mut pr, mut sha, mut repo) = (None, None, None);
     let mut it = rest.iter();
     while let Some(&t) = it.next() {
         match t {
             "--squash" | "-s" | "--merge" | "-m" | "--rebase" | "-r" | "--delete-branch" | "-d" => {}
             "--match-head-commit" if sha.is_none() => sha = Some(*it.next()?),
             _ if t.starts_with("--match-head-commit=") && sha.is_none() => sha = t.split_once('=').map(|(_, v)| v),
+            "--repo" | "-R" if repo.is_none() => repo = Some(valid_repo(it.next()?)?),
+            _ if t.starts_with("--repo=") && repo.is_none() => repo = Some(valid_repo(t.split_once('=').map_or("", |(_, v)| v))?),
             _ if pr.is_none() && !t.starts_with('-') => pr = Some(bare_number(t)?),
             _ => return None,
         }
     }
     let sha = sha.filter(|s| (7..=40).contains(&s.len()) && s.chars().all(|c| c.is_ascii_hexdigit()))?;
-    Some((pr?, sha.to_ascii_lowercase()))
+    Some((pr?, repo.map(str::to_string), sha.to_ascii_lowercase()))
 }
 
 /// Guard side: the approved card a self-merge command (see [`merge_command`]) lands, when its PR
-/// belongs to an open `approved` card, the SHA is the reviewed one and `bases` (read only then:
-/// the PR's base, the repo's default branch) agree. The caller checks the permission.
-pub(super) fn approved_merge(pr: u64, sha: &str, cards: &[Target], bases: impl FnOnce() -> Option<(String, String)>) -> Option<u64> {
-    let card = cards.iter().find(|t| t.state == "open" && t.lane == "approved" && t.pr.as_deref().and_then(pr_number) == Some(pr))?;
+/// (number, and the same repo: this one when `repo` is None) belongs to an open `approved` card,
+/// the SHA is the reviewed one and `bases` (read only then: the PR's base, that repo's default
+/// branch) agree. The caller checks the permission.
+pub(super) fn approved_merge(pr: u64, repo: Option<&str>, sha: &str, cards: &[Target], bases: impl FnOnce() -> Option<(String, String)>) -> Option<u64> {
+    let same_repo = |t: &Target| match (t.pr_repo.as_deref(), repo) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+        _ => false,
+    };
+    let card = cards.iter().find(|t| t.state == "open" && t.lane == "approved" && same_repo(t) && t.pr.as_deref().and_then(pr_number) == Some(pr))?;
     same_commit(card.sha.as_deref()?, sha).then_some(())?;
     let (base, main) = bases()?;
     (base.trim() == main.trim() && !main.trim().is_empty()).then_some(card.id)
@@ -211,6 +253,8 @@ pub(super) fn decide(card_sha: &str, pr: &Value, base_merged: bool, main: &str) 
 struct Outcome {
     id: u64,
     pr: Option<u64>,
+    /// `owner/repo` when the PR is in another repo of the org.
+    repo: Option<String>,
     /// `merged`, `done`, `ready`, `review`, `blocked`, `wait`, `deferred` (first pass only) or `failed`.
     action: &'static str,
     sha: Option<String>,
@@ -243,7 +287,6 @@ fn merged_branch(gh: Gh, branch: &str) -> Result<bool> {
     Ok(v.as_array().is_some_and(|a| !a.is_empty()))
 }
 
-/// Where one card lands.
 struct Ctx<'a> {
     home: &'a Path,
     root: &'a Path,
@@ -251,20 +294,46 @@ struct Ctx<'a> {
     now: u64,
     /// The repo's default branch ([`default_branch`]).
     main: &'a str,
+    /// Another repo's default branch, by `owner/repo` ([`default_branch_of`]).
+    main_of: &'a dyn Fn(&str) -> Option<String>,
     gh: Gh<'a>,
 }
 
-/// Land one card; `first` defers a card stacked on a branch that is not merged yet.
+/// Land one card; `first` defers a card stacked on a branch that is not merged yet. A card whose
+/// PR is in another repo of the org (`pr_repo`) runs every `gh pr …` with `--repo` and lands into
+/// that repo's default branch.
 fn land(t: &Target, c: &Ctx, first: bool) -> Outcome {
-    let (gh, main) = (c.gh, c.main);
     let pr = t.pr.as_deref().and_then(pr_number);
-    let mut out = Outcome { id: t.id, pr, action: "failed", sha: None, why: None };
+    let repo = t.pr_repo.as_deref();
+    let mut out = Outcome { id: t.id, pr, repo: t.pr_repo.clone(), action: "failed", sha: None, why: None };
     let Some(n) = pr else {
         out.action = "wait";
         out.why = Some("card không có PR: lead xem (`auto note`)".into());
         return out;
     };
+    let main = match repo {
+        None => c.main.to_string(),
+        Some(r) => match (c.main_of)(r) {
+            Some(m) => m,
+            None => {
+                out.action = "wait";
+                out.why = Some(format!("không đọc được nhánh mặc định của {r} (gh): chạy lại sau"));
+                return out;
+            }
+        },
+    };
+    let main = main.as_str();
+    // Every gh call for a cross-repo PR names the repo.
+    let gh = |args: &[&str]| -> Result<String> {
+        let mut all: Vec<&str> = args.to_vec();
+        if let Some(r) = repo {
+            all.extend(["--repo", r]);
+        }
+        (c.gh)(&all)
+    };
+    let gh = &gh;
     let n = n.to_string();
+    let label = target::pr_label(&n, repo);
     let sha = t.sha.clone().unwrap_or_default();
     let back = |lane: &str, why: String| -> Result<(&'static str, Option<String>, Option<String>)> {
         let note = format!("[merge] {why}");
@@ -280,7 +349,13 @@ fn land(t: &Target, c: &Ctx, first: bool) -> Outcome {
             return Ok(("deferred", None, None));
         }
         // A full 40-hex SHA reads as a token to the board's secret mask; 12 chars still prove it.
-        let evidence = |head: &str| format!("merged {}", head.chars().take(12).collect::<String>());
+        let evidence = |head: &str| {
+            let short: String = head.chars().take(12).collect();
+            match repo {
+                Some(_) => format!("merged {label} @{short}"),
+                None => format!("merged {short}"),
+            }
+        };
         Ok(match decide(&sha, &v, base_merged, main) {
             Step::Merge(head) => {
                 // GitHub refuses to merge a draft; review already approved this head (4 failed
@@ -319,7 +394,7 @@ fn land(t: &Target, c: &Ctx, first: bool) -> Outcome {
                     target::close(c.home, c.root, t.id, Some(&evidence(&head)), c.who, c.now)?;
                     ("merged", Some(head), None)
                 } else {
-                    ("wait", None, Some(computing(&format!("#{n}"))))
+                    ("wait", None, Some(computing(&label)))
                 }
             }
         })
@@ -332,7 +407,7 @@ fn land(t: &Target, c: &Ctx, first: bool) -> Outcome {
 }
 
 fn line(o: &Outcome) -> String {
-    let pr = o.pr.map_or_else(|| "-".to_string(), |n| format!("PR {n}"));
+    let pr = o.pr.map_or_else(|| "-".to_string(), |n| format!("PR {}", target::pr_label(&n.to_string(), o.repo.as_deref()).trim_start_matches('#')));
     let why = o.why.as_deref().unwrap_or_default();
     match o.action {
         "merged" => format!("#{} {pr}: merged {}", o.id, o.sha.as_deref().map_or("", |s| &s[..s.len().min(12)])),
@@ -363,7 +438,8 @@ pub(super) fn run(as_json: bool, home: &Path, root: &Path, who: Option<&str>, no
     // Never guess `main`: on a master repo that would merge stacked PRs into the wrong branch.
     let Some(main) = default_branch(root) else { bail!(NO_DEFAULT) };
     let gh = |args: &[&str]| gh(root, args);
-    run_with(as_json, &Ctx { home, root, who, now, main: &main, gh: &gh })
+    let main_of = |repo: &str| default_branch_of(root, Some(repo));
+    run_with(as_json, &Ctx { home, root, who, now, main: &main, main_of: &main_of, gh: &gh })
 }
 
 /// HQ's revive tick (every 2 min): land approved cards in code while the owner's self-merge grant
@@ -379,7 +455,8 @@ pub(super) fn background(home: &Path, root: &Path, now: u64) -> Result<Vec<Strin
     }
     let Some(main) = default_branch(root) else { return Ok(Vec::new()) };
     let gh = |args: &[&str]| gh(root, args);
-    let c = Ctx { home, root, who: Some("lead"), now, main: &main, gh: &gh };
+    let main_of = |repo: &str| default_branch_of(root, Some(repo));
+    let c = Ctx { home, root, who: Some("lead"), now, main: &main, main_of: &main_of, gh: &gh };
     // HQ kills a revive that runs past 120 s and each card is several gh calls (≤ 20 s each): start
     // no card after [`BACKGROUND_BUDGET`]. A card stacked on an approved card not landed yet is
     // deferred, not bounced: try the next.
@@ -430,7 +507,7 @@ fn run_with(as_json: bool, c: &Ctx) -> Result<()> {
     let count = |a: &str| done.iter().filter(|o| o.action == a).count();
     let (merged, back) = (count("merged") + count("done"), count("ready") + count("blocked") + count("review"));
     if as_json {
-        let list: Vec<Value> = done.iter().map(|o| json!({ "id": o.id, "pr": o.pr, "action": o.action, "sha": o.sha, "why": o.why })).collect();
+        let list: Vec<Value> = done.iter().map(|o| json!({ "id": o.id, "pr": o.pr, "pr_repo": o.repo, "action": o.action, "sha": o.sha, "why": o.why })).collect();
         println!("{}", json!({ "cards": list, "merged": merged, "returned": back, "approved": approved }));
         return Ok(());
     }
@@ -481,19 +558,25 @@ mod tests {
 
     #[test]
     fn only_a_plain_match_head_merge_command_parses() {
-        assert_eq!(merge_command(&format!("gh pr merge 81 --squash --delete-branch --match-head-commit {HEAD}")), Some((81, HEAD.into())));
+        assert_eq!(merge_command(&format!("gh pr merge 81 --squash --delete-branch --match-head-commit {HEAD}")), Some((81, None, HEAD.into())));
+        let cross = Some((8, Some("8-Sync-Dev/zus-backend".to_string()), HEAD.to_string()));
+        assert_eq!(merge_command(&format!("gh pr merge 8 --repo 8-Sync-Dev/zus-backend --squash --delete-branch --match-head-commit {HEAD}")), cross);
+        assert_eq!(merge_command(&format!("gh pr merge 8 -R 8-Sync-Dev/zus-backend --match-head-commit {HEAD}")), cross);
+        assert_eq!(merge_command(&format!("gh pr merge 8 --repo=8-Sync-Dev/zus-backend --match-head-commit {HEAD}")), cross);
         for bad in [
             format!("gh pr merge #81 --match-head-commit {HEAD}"),
             format!("gh pr merge https://github.com/evil/x/pull/81 --match-head-commit {HEAD}"),
             format!("gh pr merge 81 --match-head-commit {HEAD} # note"),
             format!("gh pr merge 81x --match-head-commit {HEAD}"),
+            format!("gh pr merge 8 --repo zus-backend --match-head-commit {HEAD}"),
+            format!("gh pr merge 8 --repo o/r --repo o/x --match-head-commit {HEAD}"),
+            format!("gh pr merge 8 --repo --match-head-commit {HEAD}"),
         ] {
             assert_eq!(merge_command(&bad), None, "{bad}");
         }
         for bad in [
             "gh pr merge 81 --squash".to_string(),
             format!("gh pr merge 81 --admin --match-head-commit {HEAD}"),
-            format!("gh pr merge 81 --repo o/x --match-head-commit {HEAD}"),
             format!("gh pr merge 81 --match-head-commit {HEAD} && git push"),
             format!("gh pr merge 81 82 --match-head-commit {HEAD}"),
             "gh pr merge 81 --match-head-commit HEAD".to_string(),
@@ -509,25 +592,39 @@ mod tests {
     fn the_guard_path_needs_an_approved_card_its_sha_and_base_main() {
         let cards = vec![card(5, "approved", "81", "0123456"), card(6, "review", "82", "0123456")];
         let main = || Some(("main\n".to_string(), "main".to_string()));
-        assert_eq!(approved_merge(81, HEAD, &cards, main), Some(5));
-        assert_eq!(approved_merge(81, "fedcba9876", &cards, main), None, "another commit");
-        assert_eq!(approved_merge(82, HEAD, &cards, main), None, "not approved");
-        assert_eq!(approved_merge(83, HEAD, &cards, main), None, "no card");
-        assert_eq!(approved_merge(81, HEAD, &cards, || Some(("card-125-ui".into(), "main".into()))), None, "stacked base");
-        assert_eq!(approved_merge(81, HEAD, &cards, || None), None, "gh failed");
-        assert_eq!(approved_merge(81, HEAD, &cards, || Some(("master".into(), "master".into()))), Some(5), "master repo");
-        assert_eq!(approved_merge(81, HEAD, &cards, || Some(("main".into(), "master".into()))), None, "main is not the default");
+        assert_eq!(approved_merge(81, None, HEAD, &cards, main), Some(5));
+        assert_eq!(approved_merge(81, None, "fedcba9876", &cards, main), None, "another commit");
+        assert_eq!(approved_merge(82, None, HEAD, &cards, main), None, "not approved");
+        assert_eq!(approved_merge(83, None, HEAD, &cards, main), None, "no card");
+        assert_eq!(approved_merge(81, Some("o/x"), HEAD, &cards, main), None, "another repo than the card's");
+        assert_eq!(approved_merge(81, None, HEAD, &cards, || Some(("card-125-ui".into(), "main".into()))), None, "stacked base");
+        assert_eq!(approved_merge(81, None, HEAD, &cards, || None), None, "gh failed");
+        assert_eq!(approved_merge(81, None, HEAD, &cards, || Some(("master".into(), "master".into()))), Some(5), "master repo");
+        assert_eq!(approved_merge(81, None, HEAD, &cards, || Some(("main".into(), "master".into()))), None, "main is not the default");
+        // A card whose PR lives in another repo of the org: only that repo, number and SHA.
+        let mut cross = card(9, "approved", "8", "0123456");
+        cross.pr_repo = Some("8-Sync-Dev/zus-backend".into());
+        let cards = vec![cross];
+        let develop = || Some(("develop".to_string(), "develop".to_string()));
+        assert_eq!(approved_merge(8, Some("8-Sync-Dev/zus-backend"), HEAD, &cards, develop), Some(9));
+        assert_eq!(approved_merge(8, Some("8-sync-dev/ZUS-backend"), HEAD, &cards, develop), Some(9), "GitHub names are case-insensitive");
+        assert_eq!(approved_merge(8, None, HEAD, &cards, develop), None, "same number in this repo is another PR");
+        assert_eq!(approved_merge(8, Some("8-Sync-Dev/other"), HEAD, &cards, develop), None);
+        assert_eq!(approved_merge(8, Some("8-Sync-Dev/zus-backend"), "fedcba9876", &cards, develop), None, "another commit");
+        assert_eq!(approved_merge(8, Some("8-Sync-Dev/zus-backend"), HEAD, &cards, || Some(("main".into(), "develop".into()))), None, "not that repo's default branch");
     }
 
     #[test]
     fn the_ship_refusal_carries_the_exact_question() {
-        let cards = vec![card(5, "approved", "81", "0123456"), card(7, "approved", "https://github.com/o/r/pull/90", "0123456")];
+        let mut other = card(7, "approved", "https://github.com/o/r/pull/90", "0123456");
+        other.pr_repo = Some("o/zus-backend".into());
+        let cards = vec![card(5, "approved", "81", "0123456"), other];
         let out = ship_question(&cards);
         assert!(out.starts_with(NO_PERMISSION) && NO_PERMISSION.contains("trước `auto wait`"), "{out}");
         let q: Value = serde_json::from_str(out.lines().last().unwrap()).unwrap();
         let q = &q["questions"][0];
         assert_eq!(q["header"], "Ship");
-        assert_eq!(q["question"], "Merge 2 card approved: #5 (PR #81), #7 (PR #90)?");
+        assert_eq!(q["question"], "Merge 2 card approved: #5 (PR #81), #7 (PR zus-backend#90)?");
         let labels: Vec<&str> = q["options"].as_array().unwrap().iter().map(|o| o["label"].as_str().unwrap()).collect();
         assert_eq!(labels, ["Duyệt tất cả (Recommended)", "Chỉ merge, chưa deploy", "Dừng"]);
     }
@@ -539,15 +636,21 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         let cache = d.join("state/default-branch.json");
         let calls = std::cell::Cell::new(0);
-        let master = |_: &Path| {
+        let master = || {
             calls.set(calls.get() + 1);
             Some("master\n".to_string())
         };
-        assert_eq!(default_branch_with(&d, Some(&cache), 100, &master).as_deref(), Some("master"));
-        assert_eq!(default_branch_with(&d, Some(&cache), 200, &master).as_deref(), Some("master"));
+        assert_eq!(cached(Some(&cache), "k", 100, &valid_branch, &master).as_deref(), Some("master"));
+        assert_eq!(cached(Some(&cache), "k", 200, &valid_branch, &master).as_deref(), Some("master"));
         assert_eq!(calls.get(), 1, "cached");
-        assert_eq!(default_branch_with(&d, Some(&cache), 100 + DEFAULT_TTL_S, &|_| None), None, "stale cache, gh down: no guess");
-        assert_eq!(default_branch_with(&d, None, 0, &|_| Some("--evil".into())), None);
+        assert_eq!(cached(Some(&cache), "8-Sync-Dev/zus-backend", 200, &valid_branch, &|| Some("develop".into())).as_deref(), Some("develop"), "another repo, its own key");
+        assert_eq!(cached(Some(&cache), "k", 200, &valid_branch, &|| None).as_deref(), Some("master"), "the first key is untouched");
+        assert_eq!(cached(Some(&cache), "k", 100 + DEFAULT_TTL_S, &valid_branch, &|| None), None, "stale cache, gh down: no guess");
+        assert_eq!(cached(None, "k", 0, &valid_branch, &|| Some("--evil".into())), None);
+        assert_eq!(valid_repo(" 8-Sync-Dev/zus-backend "), Some("8-Sync-Dev/zus-backend"));
+        for bad in ["zus-backend", "a/b/c", "-a/b", "a/-b", "a/b c", "/b", "a/"] {
+            assert_eq!(valid_repo(bad), None, "{bad}");
+        }
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -558,7 +661,12 @@ mod tests {
 
     /// A board in a temp home with one approved card (PR 81 at 0123456), `gh pr view` answering `view`.
     fn landed_pr(view: Value, main: &str) -> (Vec<String>, Target) {
-        let tag = format!("{}-{}-{main}", view["baseRefName"].as_str().unwrap_or(""), view["isDraft"]);
+        landed_in(view, main, None)
+    }
+
+    /// [`landed_pr`] whose card's PR is `pr_repo` (number 8 there; default branch `develop`).
+    fn landed_in(view: Value, main: &str, pr_repo: Option<&str>) -> (Vec<String>, Target) {
+        let tag = format!("{}-{}-{main}-{}", view["baseRefName"].as_str().unwrap_or(""), view["isDraft"], pr_repo.is_some());
         let home = std::env::temp_dir().join(format!("8sync-merge-land-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         let root = home.join("game");
@@ -566,7 +674,11 @@ mod tests {
         let key = super::super::auto::canon(&root).to_string_lossy().into_owned();
         let board = super::super::idle::state_dir(&home).parent().unwrap().join("targets.json");
         std::fs::create_dir_all(board.parent().unwrap()).unwrap();
-        let c = json!({ "id": 1, "text": "x", "added": 0, "state": "open", "lane": "approved", "pr": "81", "sha": "0123456", "check": "true" });
+        let mut c = json!({ "id": 1, "text": "x", "added": 0, "state": "open", "lane": "approved", "pr": "81", "sha": "0123456", "check": "true" });
+        if let Some(r) = pr_repo {
+            c["pr"] = json!("8");
+            c["pr_repo"] = json!(r);
+        }
         std::fs::write(&board, json!({ "projects": { key: { "next_id": 2, "items": [c] } } }).to_string()).unwrap();
         let calls = std::cell::RefCell::new(Vec::new());
         let gh = |args: &[&str]| -> Result<String> {
@@ -577,11 +689,29 @@ mod tests {
                 _ => String::new(),
             })
         };
-        let ctx = Ctx { home: &home, root: &root, who: None, now: 1_000, main, gh: &gh };
+        let main_of = |r: &str| (r == "8-Sync-Dev/zus-backend").then(|| "develop".to_string());
+        let ctx = Ctx { home: &home, root: &root, who: None, now: 1_000, main, main_of: &main_of, gh: &gh };
         run_with(true, &ctx).unwrap();
         let card = target::list(&home, &root).unwrap().into_iter().find(|t| t.id == 1).unwrap();
         let _ = std::fs::remove_dir_all(&home);
         (calls.into_inner(), card)
+    }
+
+    #[test]
+    fn a_cross_repo_card_merges_in_that_repo_into_its_default_branch() {
+        let (calls, card) = landed_in(pr("develop", "MERGEABLE", HEAD, "OPEN"), "main", Some("8-Sync-Dev/zus-backend"));
+        assert_eq!(calls[0], "pr view 8 --json baseRefName,mergeable,headRefOid,state,isDraft --repo 8-Sync-Dev/zus-backend");
+        assert!(calls.iter().any(|c| c == &format!("pr merge 8 --squash --delete-branch --match-head-commit {HEAD} --repo 8-Sync-Dev/zus-backend")), "{calls:?}");
+        assert_eq!(card.state, "done");
+        assert_eq!(card.evidence.as_deref(), Some("merged zus-backend#8 @0123456789ab"));
+        // Into this repo's main instead: a stacked PR there, retargeted to develop with --repo.
+        let (calls, card) = landed_in(pr("main", "MERGEABLE", HEAD, "OPEN"), "main", Some("8-Sync-Dev/zus-backend"));
+        assert!(!calls.iter().any(|c| c.starts_with("pr merge")) && calls.iter().any(|c| c == "pr edit 8 --base develop --repo 8-Sync-Dev/zus-backend"), "{calls:?}");
+        assert_eq!(card.lane, "review");
+        // That repo's default branch unknown: the card waits, no gh pr call.
+        let (calls, card) = landed_in(pr("main", "MERGEABLE", HEAD, "OPEN"), "main", Some("8-Sync-Dev/other"));
+        assert!(calls.is_empty(), "{calls:?}");
+        assert_eq!((card.state.as_str(), card.lane.as_str()), ("open", "approved"));
     }
 
     #[test]

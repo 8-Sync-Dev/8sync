@@ -449,6 +449,8 @@ export function OfficeView({
   onStart,
   token,
   projects = [],
+  repo = null,
+  onAll,
 }: {
   data: OfficeState;
   /** The shared board poll (use-board.ts): which card each room holds, and which cards just moved. */
@@ -461,17 +463,22 @@ export function OfficeView({
   token: string;
   /** Folders added in the sidebar: the ones with no room get a "Mở team" button. */
   projects?: { path: string; name: string; missing?: boolean }[];
+  /** The repo picked in the sidebar: only its rooms show (owner 2026-10-21: "mở dự án nào nó phải đúng cái đó"). */
+  repo?: string | null;
+  onAll?: () => void;
 }) {
-  const rooms = useMemo(() => office?.rooms ?? [], [office]);
+  const allRooms = useMemo(() => office?.rooms ?? [], [office]);
   // Worktree rooms sit under their repo (lib/sidebar.ts groupByRepo), like the sidebar.
-  const groups = useMemo(() => groupByRepo(rooms), [rooms]);
+  const allGroups = useMemo(() => groupByRepo(allRooms), [allRooms]);
+  const groups = useMemo(() => (repo ? allGroups.filter((g) => rootKey(g.project.root) === rootKey(repo)) : allGroups), [allGroups, repo]);
+  const rooms = useMemo(() => (repo ? groups.flatMap((g) => g.rooms) : allRooms), [repo, groups, allRooms]);
   // After a team button: read the office and the board again now, not at the next poll.
   const refresh = () => {
     retry();
     boards.reload();
   };
   const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const idleFolders = projects.filter((p) => !p.missing && !groups.some((g) => slash(g.project.root) === slash(p.path)));
+  const idleFolders = projects.filter((p) => !p.missing && !allGroups.some((g) => slash(g.project.root) === slash(p.path)) && (!repo || slash(p.path) === slash(repo)));
   const labelOf = (key: string) => rooms.find((r) => r.key === key)?.label ?? key.slice(0, 8);
   const visits = office?.visits ?? [];
   const now = office?.at ?? 0;
@@ -534,6 +541,14 @@ export function OfficeView({
             {error && (
               <p role="status" className="text-xs text-muted-foreground">
                 Mất kết nối ({error}), đang thử lại. Dữ liệu dưới đây có thể đã cũ.
+              </p>
+            )}
+            {repo && allGroups.length > 1 && (
+              <p className="text-sm text-muted-foreground">
+                Đang xem một dự án.{" "}
+                <button type="button" className="font-medium text-foreground underline underline-offset-4 hover:no-underline" onClick={onAll}>
+                  Xem cả {allGroups.length} dự án
+                </button>
               </p>
             )}
             <div className="space-y-7 min-[1600px]:grid min-[1600px]:grid-cols-[minmax(36rem,1fr)_minmax(0,1.35fr)] min-[1600px]:items-start min-[1600px]:gap-8 min-[1600px]:space-y-0">

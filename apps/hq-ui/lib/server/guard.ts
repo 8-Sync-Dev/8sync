@@ -27,8 +27,12 @@ export type GuardProject = {
   breach: GuardBreach | null;
   /** The latest action. */
   last: GuardAction | null;
+  /** Where the RAM was at the last pass over the threshold (null under it or on an 8sync without it). */
+  ram_split: GuardRamSplit | null;
 };
 export type GuardRoom = { name: string; mb: number; cpu: number | null };
+/** MB: every room tree (all projects), omp/8sync outside them, everything else with its ≤ 4 heaviest apps; `stuck`: rooms + omp under the overshoot, cleaning them cannot reach the threshold. */
+export type GuardRamSplit = { rooms_mb: number; omp_mb: number; other_mb: number; top: { name: string; mb: number }[]; stuck: boolean };
 export type GuardBreach = { ram: number | null; ram_hi: number | null; cpu: number | null; cpu_max: number | null };
 /** Size of %TEMP%\qa-card-* / qa-fetch* (full repo copies QA rooms extracted); `partial`: the count stopped early. */
 export type TempQa = { mb: number; dirs: number; partial: boolean; at: number };
@@ -57,6 +61,7 @@ const ACTIONS_MAX = 10;
 const ROOMS_MAX = 20;
 const NAME_MAX = 64;
 const TOP_MAX = 3;
+const RAM_TOP_MAX = 4;
 export const GUARD_MIN = 30;
 export const GUARD_MAX = 95;
 export const CAP_MIN = 10;
@@ -72,6 +77,12 @@ const action = (a: unknown): GuardAction | null => (obj(a) && num(a.at) && typeo
 
 function parseBreach(b: unknown): GuardBreach | null {
   return obj(b) ? { ram: time(b.ram), ram_hi: time(b.ram_hi), cpu: time(b.cpu), cpu_max: time(b.cpu_max) } : null;
+}
+
+function parseRamSplit(r: unknown): GuardRamSplit | null {
+  if (!obj(r) || !num(r.rooms_mb) || !num(r.omp_mb) || !num(r.other_mb) || r.rooms_mb < 0 || r.omp_mb < 0 || r.other_mb < 0) return null;
+  const top = (Array.isArray(r.top) ? r.top : []).flatMap((t) => (obj(t) && typeof t.name === "string" && t.name && num(t.mb) && t.mb >= 0 ? [{ name: t.name.slice(0, NAME_MAX), mb: t.mb }] : [])).slice(0, RAM_TOP_MAX);
+  return { rooms_mb: r.rooms_mb, omp_mb: r.omp_mb, other_mb: r.other_mb, top, stuck: r.stuck === true };
 }
 
 function parseTempQa(t: unknown): TempQa | null {
@@ -108,6 +119,7 @@ function parseProject(p: unknown): GuardProject | null {
     top,
     breach: parseBreach(p.breach),
     last: action(p.last),
+    ram_split: parseRamSplit(p.ram_split),
   };
 }
 

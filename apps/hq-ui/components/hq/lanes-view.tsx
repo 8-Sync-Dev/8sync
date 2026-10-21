@@ -2,6 +2,7 @@
 
 import { ArrowRightIcon, CheckIcon, ChevronsLeftIcon, ChevronsRightIcon, GitPullRequestIcon, LayersIcon, ListTreeIcon, OctagonAlertIcon, RefreshCwIcon, ShipIcon, Undo2Icon } from "lucide-react";
 import { useRef, useState } from "react";
+import { entryFor, useFollowRepo } from "@/lib/follow-repo";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,9 +18,10 @@ import { LaneStrip } from "./scroll-strip";
 import type { BoardsState } from "./use-board";
 
 /** The project board (`8sync ccc auto board`): which room holds which card, lane by lane. */
-export function LanesView({ state, focus }: { state: BoardsState; focus?: { root: string; id: number; n: number } | null }) {
+export function LanesView({ state, focus, repo = null }: { state: BoardsState; focus?: { root: string; id: number; n: number } | null; repo?: string | null }) {
   const { boards, error, moves, at: now, reload: load } = state;
-  const [pick, setPick] = useState<string | null>(null);
+  const [pick, setPick] = useState<string | null>(repo);
+  useFollowRepo(repo, setPick);
   // The open card by id, so each poll shows its latest state; the snapshot keeps the sheet filled while it closes.
   const [open, setOpen] = useState<{ root: string; card: Card } | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -50,7 +52,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
   }
   // Busiest project first; the owner's pick wins while it still has a live room.
   const list = [...(boards ?? [])].sort((a, b) => (b.board ? openCount(b.board) : -1) - (a.board ? openCount(a.board) : -1));
-  const cur = list.find((b) => b.root === pick) ?? list[0];
+  const cur = (pick ? entryFor(list, pick) : undefined) ?? list[0];
 
   if (boards && !cur) {
     return (

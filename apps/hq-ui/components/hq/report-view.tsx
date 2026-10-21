@@ -1,5 +1,7 @@
 "use client";
 
+import { rootKey } from "@/lib/preview";
+import { repoOf } from "@/lib/sidebar";
 import { BarChart3Icon } from "lucide-react";
 import { useMemo } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,8 +15,14 @@ function Num({ v, className }: { v: string; className?: string }) {
 }
 
 /** Cost, context, time, lines and tasks per room (session), with totals. Same numbers as `8sync ccc . report`. */
-export function ReportView({ data: { office, error, retry }, onOpen }: { data: OfficeState; onOpen: (room: Room) => void }) {
-  const rooms = useMemo(() => office?.rooms ?? [], [office]);
+export function ReportView({ data: { office, error, retry }, onOpen, repo = null }: { data: OfficeState; onOpen: (room: Room) => void; repo?: string | null }) {
+  // The sidebar's repo: only its rooms (worktree rooms count under their repo, like the sidebar).
+  const rooms = useMemo(() => {
+    const all = office?.rooms ?? [];
+    if (!repo) return all;
+    const k = rootKey(repo);
+    return all.filter((r) => rootKey(repoOf(r.project?.root ?? r.cwd ?? "").root) === k);
+  }, [office, repo]);
   const t = useMemo(() => officeTotals(rooms), [rooms]);
 
   if (error && !office)

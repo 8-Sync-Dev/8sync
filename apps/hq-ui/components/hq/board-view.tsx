@@ -23,6 +23,7 @@ export function BoardView({
   sessions,
   boards,
   focus,
+  repo = null,
 }: {
   hq: Hq;
   tasks: Task[];
@@ -30,6 +31,7 @@ export function BoardView({
   boards: BoardsState;
   /** A card another tab asked to open: shows the project cards and opens it. */
   focus?: { root: string; id: number; n: number } | null;
+  repo?: string | null;
 }) {
   const [mode, setMode] = useState<"lanes" | "tasks">("lanes");
   // A new "Mở card" request always lands on the project cards.
@@ -49,7 +51,7 @@ export function BoardView({
         {tab("lanes", "Card dự án")}
         {tab("tasks", "Task của session")}
       </div>
-      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView state={boards} focus={focus} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
+      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView state={boards} focus={focus} repo={repo} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
     </div>
   );
 }

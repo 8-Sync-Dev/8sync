@@ -38,14 +38,16 @@ export async function projectsInView(db: DatabaseSync): Promise<ProjectInfo[]> {
   return out;
 }
 
-/**
- * The root an action names, when HQ shows it (projectsInView, or a folder added in the sidebar,
- * as `/api/team` accepts), in its own spelling; null for any other path.
- */
-export async function knownRoot(db: DatabaseSync, root: string): Promise<string | null> {
+/** Every root HQ shows or the owner added in the sidebar (as `/api/team` accepts), each in its own spelling. */
+export async function knownRoots(db: DatabaseSync): Promise<string[]> {
   const added = withMissing(db.prepare("SELECT id, path, name, added_at FROM projects").all() as ProjectRow[])
     .filter((p) => !p.missing)
     .map((p) => p.path);
+  return [...(await projectsInView(db)).map((p) => p.root), ...added];
+}
+
+/** The root an action names, when HQ knows it (`knownRoots`), in its own spelling; null for any other path. */
+export async function knownRoot(db: DatabaseSync, root: string): Promise<string | null> {
   const want = key(root);
-  return [...(await projectsInView(db)).map((p) => p.root), ...added].find((r) => key(r) === want) ?? null;
+  return (await knownRoots(db)).find((r) => key(r) === want) ?? null;
 }

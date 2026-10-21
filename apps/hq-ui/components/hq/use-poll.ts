@@ -50,31 +50,34 @@ export function usePoll<T>(api: Hq["api"], url: string, ms: number, on: boolean)
 
 /**
  * An image the API serves behind `x-hq-token` (an <img src> cannot send the header), as an object
- * URL. Fetched only once `visible` turns true, revoked when the id changes or the view unmounts.
+ * URL. Fetched only once `visible` turns true, revoked when the url changes or the view unmounts.
  */
-export function useAuthedImage(token: string, id: string | null, visible: boolean) {
-  // Keyed by id, so a new id shows its own loading state without a reset in the effect.
-  const [st, setSt] = useState<{ id: string; src: string | null; failed: boolean } | null>(null);
+export function useAuthedImage(token: string, url: string | null, visible: boolean) {
+  // Keyed by url, so a new one shows its own loading state without a reset in the effect.
+  const [st, setSt] = useState<{ url: string; src: string | null; failed: boolean } | null>(null);
   useEffect(() => {
-    if (!id || !visible) return;
+    if (!url || !visible) return;
     const ac = new AbortController();
-    let url: string | null = null;
-    fetch(`/api/preview/file?id=${encodeURIComponent(id)}`, { headers: { "x-hq-token": token }, signal: ac.signal })
+    let obj: string | null = null;
+    fetch(url, { headers: { "x-hq-token": token }, signal: ac.signal })
       .then(async (r) => {
         if (!r.ok) throw new Error(String(r.status));
-        url = URL.createObjectURL(await r.blob());
-        setSt({ id, src: url, failed: false });
+        obj = URL.createObjectURL(await r.blob());
+        setSt({ url, src: obj, failed: false });
       })
       .catch(() => {
-        if (!ac.signal.aborted) setSt({ id, src: null, failed: true });
+        if (!ac.signal.aborted) setSt({ url, src: null, failed: true });
       });
     return () => {
       ac.abort();
-      if (url) URL.revokeObjectURL(url);
+      if (obj) URL.revokeObjectURL(obj);
     };
-  }, [token, id, visible]);
-  return st && st.id === id ? st : { src: null, failed: false };
+  }, [token, url, visible]);
+  return st && st.url === url ? st : { src: null, failed: false };
 }
+
+/** `/api/preview/file` for one preview id (lib/server/preview.ts). */
+export const previewFileUrl = (id: string) => `/api/preview/file?id=${encodeURIComponent(id)}`;
 
 /** True once the element has scrolled near the viewport (then stays true). */
 export function useNearView<T extends Element>(margin = "200px") {

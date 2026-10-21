@@ -19,7 +19,7 @@ import type { Spec } from "@/lib/server/machine";
 import type { SweepProject } from "@/lib/server/sweep";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
-import { Bar, dayTime, energy, gb, hhmm, level, Meter, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
+import { Bar, dayTime, energy, gb, hhmm, level, Meter, ramSplitText, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
 import type { Hq } from "./use-hq";
 import type { Room } from "./use-office";
 import { usePoll } from "./use-poll";
@@ -305,6 +305,8 @@ function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: Swe
   const ago = (t: number) => (now - t < 60 ? `${Math.max(0, Math.round(now - t))} giây trước` : `${span(now - t)} trước`);
   const last = g.projects.reduce<{ at: number; text: string } | null>((a, p) => (p.last && (!a || p.last.at > a.at) ? p.last : a), null);
   const recent = last && now - last.at <= RECENT_S ? last : null;
+  // Over the threshold with nothing to kill: the newest pass says where the RAM is instead of "không cần đổi gì".
+  const ramSplit = g.projects.reduce<{ at: number; text: string } | null>((a, p) => (p.ram_split && p.at != null && (!a || p.at > a.at) ? { at: p.at, text: ramSplitText(p.ram_split) } : a), null);
   // Runs that changed nothing back the trigger off (40 s … 5 min between runs).
   const wait = g.lastRun && g.nextGapS > 20 ? ` · chờ ${g.nextGapS}s` : "";
 
@@ -410,7 +412,7 @@ function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: Swe
               {g.lastRun!.why === "revive đang chạy"
                 ? "bỏ qua lượt xử lý: revive đang chạy"
                 : g.lastRun!.ok
-                  ? `vừa kiểm tra (${g.lastRun!.why}): không cần đổi gì`
+                  ? `vừa kiểm tra (${g.lastRun!.why}): ${ramSplit ? ramSplit.text : "không cần đổi gì"}`
                   : `chưa chạy được guard now (${g.lastRun!.why})`}{" "}
               · {ago(g.lastRun!.at)}
               {wait}
@@ -717,6 +719,11 @@ function ProjectDiskRow({
       {p.cleaned && (
         <p className="text-xs text-muted-foreground">
           HQ tự dọn {dayTime(p.cleaned.at)}: xoá {bytes(p.cleaned.bytes)} build của worktree rảnh ({p.cleaned.dirs.map((d) => d.replace(/^\.claude\/worktrees\//, "")).join(", ")})
+        </p>
+      )}
+      {p.pruned && (
+        <p className="text-xs text-muted-foreground">
+          HQ xoá {p.pruned.n} worktree rảnh đã merge/đóng {dayTime(p.pruned.at)}: {p.pruned.names.join(", ")}
         </p>
       )}
       {sent && (

@@ -2,6 +2,7 @@
 
 import { CheckIcon, RefreshCwIcon, RepeatIcon, Undo2Icon, WorkflowIcon, XIcon } from "lucide-react";
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { entryFor, useFollowRepo } from "@/lib/follow-repo";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,13 +34,14 @@ const ROW_H = 44;
 const MID = ROW_H / 2;
 
 /** Every card's path through the lanes, rebuilt from its notes, plus where each lane stands now. */
-export function FlowView({ state, loops }: { state: BoardsState; loops: LoopsState }) {
+export function FlowView({ state, loops, repo = null }: { state: BoardsState; loops: LoopsState; repo?: string | null }) {
   const { boards, error, at: now, reload } = state;
-  const [pick, setPick] = useState<string | null>(null);
+  const [pick, setPick] = useState<string | null>(repo);
+  useFollowRepo(repo, setPick);
   const [open, setOpen] = useState<{ root: string; id: number; card: Card } | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const list = useMemo(() => [...(boards ?? [])].sort((a, b) => (b.board ? openCount(b.board) : -1) - (a.board ? openCount(a.board) : -1)), [boards]);
-  const cur = list.find((b) => b.root === pick) ?? list[0];
+  const cur = (pick ? entryFor(list, pick) : undefined) ?? list[0];
   const rows = useMemo(() => (cur?.board ? flowRows(cur.board) : []), [cur]);
   const lanes = useMemo(() => (cur?.board ? laneNow(cur.board) : null), [cur]);
   const curLoops = useMemo(() => {

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { shirtFor } from "@/lib/sprite/frames";
 import { buildTeamThread, type ThreadFilters, type ThreadItem, type ThreadRow } from "@/lib/team-thread";
 import { ago, shortName } from "./bits";
+import { MessageText } from "./attachments";
 
 /** Tiny coloured initial, same shirt colour as the session's desk sprite. */
 function Avatar({ name }: { name: string | null }) {
@@ -30,7 +31,7 @@ const Time = ({ ts }: { ts: number }) => (
 );
 const Times = ({ n }: { n: number }) => (n > 1 ? <span className="text-[11px] text-muted-foreground">×{n}</span> : null);
 
-function Row({ it, onOpenSession }: { it: ThreadItem; onOpenSession?: (name: string) => void }) {
+function Row({ it, token, onOpenSession }: { it: ThreadItem; token: string; onOpenSession?: (name: string) => void }) {
   switch (it.kind) {
     case "owner":
     case "reply":
@@ -45,7 +46,7 @@ function Row({ it, onOpenSession }: { it: ThreadItem; onOpenSession?: (name: str
             <Times n={it.count} />
           </div>
           <MessageContent>
-            <p className="whitespace-pre-wrap">{it.text}</p>
+            <MessageText text={it.text} token={token} className="whitespace-pre-wrap" />
           </MessageContent>
         </Message>
       );
@@ -129,10 +130,13 @@ function Row({ it, onOpenSession }: { it: ThreadItem; onOpenSession?: (name: str
 export function TeamThread({
   rows,
   filters,
+  token,
   onOpenSession,
 }: {
   rows: ThreadRow[];
   filters?: ThreadFilters;
+  /** For the attachment thumbnails (an <img> cannot send the header). */
+  token: string;
   onOpenSession?: (name: string) => void;
 }) {
   const items = useMemo(() => buildTeamThread(rows, filters), [rows, filters]);
@@ -142,7 +146,7 @@ export function TeamThread({
         {items.length === 0 ? (
           <ConversationEmptyState title="Chưa có gì trong luồng" description="Tin nhắn, chuyển giao và việc của team sẽ hiện ở đây. Giao một việc cho cả team: ô Gửi cho mọi phòng ở dưới cùng." />
         ) : (
-          items.map((it) => <Row key={`${it.kind}-${it.key}`} it={it} onOpenSession={onOpenSession} />)
+          items.map((it) => <Row key={`${it.kind}-${it.key}`} it={it} token={token} onOpenSession={onOpenSession} />)
         )}
       </ConversationContent>
       <ConversationScrollButton />

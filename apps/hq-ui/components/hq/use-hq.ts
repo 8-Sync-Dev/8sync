@@ -267,6 +267,7 @@ export function useHq(token: string) {
   }, [token, api, mergeMessages, mergeTasks, loadSessions, loadProjects, loadMessages, loadTasks]);
 
   return {
+    token,
     api,
     live,
     projects,

@@ -20,6 +20,12 @@
 //!   ([`l1_pick`], PID trees, never by image name; stale `<room>-scratch` entries: [`stale_scratch`])
 //!   and each room holding ≥ 1 GB outside its own claude.exe hears what it holds ([`attribute`], one
 //!   message per 15 min). A row names the top CPU users ([`cpu_top`]).
+//!   On a RAM breach, every room not mid-turn for [`TRIM_IDLE_S`] gives its tree's working set
+//!   back ([`trim_pick`], [`trim`]: `K32EmptyWorkingSet`, once per room per [`TRIM_EVERY_S`]), and
+//!   when nothing was killed, restarted or paused a row says where the RAM is ([`ram_split`]:
+//!   rooms · omp/8sync · the owner's apps) and whether cleaning rooms can reach the threshold at
+//!   all (owner 2026-10-21: RAM 69% with 23 rooms at 12 GB and the owner's own apps at 20 GB,
+//!   the guard said "không cần đổi gì").
 //! - L2 — RAM ≥ threshold + 15, or over the threshold for [`L2_RAM_S`]: restart up to [`RESTARTS`]
 //!   idle heavy rooms (same conversation) lean ([`lean`]): LSP plugins and indexing MCP servers off.
 //!   A room is restarted once per high-RAM spell; `revive` re-checks it right before the stop.
@@ -95,6 +101,13 @@ const WARN_EVERY_S: u64 = 900;
 const RESTARTS: usize = 2;
 /// A room restarted lean is not restarted again before this, whatever the spell.
 const RESTART_AGAIN_S: u64 = 1800;
+/// RAM breach: a room not mid-turn (rảnh / chờ card) this long has its whole tree's working set
+/// emptied ([`trim`]), at most once per room per [`TRIM_EVERY_S`]. Owner 2026-10-21: 23 rooms,
+/// RAM 69% over the 60% guard, `claude.exe` ×41 = 12.3 GB, no orphan to kill, "nothing frees RAM".
+const TRIM_IDLE_S: u64 = 120;
+const TRIM_EVERY_S: u64 = 600;
+/// The RAM attribution row names at most this many of the owner's own apps.
+const RAM_TOP: usize = 4;
 /// Entries walked at most to date a scratch entry ([`newest_mtime`]).
 const SCRATCH_WALK: usize = 20_000;
 /// RAM and CPU (% of the machine) a paused room must leave free under the threshold to come back.
@@ -769,9 +782,12 @@ mod win {
         fn GetCurrentProcess() -> Handle;
         fn GetSystemTimes(idle: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
         fn GetProcessTimes(h: Handle, creation: *mut u64, exit: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
+        fn K32EmptyWorkingSet(h: Handle) -> i32;
     }
     const PROCESS_SET_INFORMATION: u32 = 0x0200;
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const PROCESS_QUERY_INFORMATION: u32 = 0x0400;
+    const PROCESS_SET_QUOTA: u32 = 0x0100;
     pub const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x4000;
     pub const IDLE_PRIORITY_CLASS: u32 = 0x40;
     const PROCESS_POWER_THROTTLING: i32 = 4;
@@ -856,6 +872,15 @@ mod win {
         // SAFETY: `t` is a PROCESS_POWER_THROTTLING_STATE, its size passed.
         with(pid, PROCESS_SET_INFORMATION, |h| unsafe { SetProcessInformation(h, PROCESS_POWER_THROTTLING, &t as *const Throttle as *const _, std::mem::size_of::<Throttle>() as u32) != 0 }).unwrap_or(false)
     }
+
+    /// Empties `pid`'s working set (`K32EmptyWorkingSet`, kernel32 since Windows 7,
+    /// https://learn.microsoft.com/windows/win32/api/psapi/nf-psapi-emptyworkingset): its resident
+    /// pages go to the standby list, so RAM in use drops now; what it touches next faults back in
+    /// (soft faults from standby, no disk). Only the process started at `started`.
+    pub fn empty_working_set(pid: u32, started: u64) -> bool {
+        // SAFETY: `h` is a live handle with PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA.
+        with(pid, PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA, |h| same(h, started) && unsafe { K32EmptyWorkingSet(h) != 0 }).unwrap_or(false)
+    }
 }
 
 /// Below-normal priority for `pids` (Windows `SetPriorityClass`, unix `renice +10`), or idle
@@ -899,6 +924,165 @@ pub(super) fn eco(pids: &[u32], on: bool) -> usize {
         let _ = (pids, on);
         0
     }
+}
+
+// ── working-set trim and RAM attribution ────────────────────────────────────────────────────
+
+/// Empties the working set of `pids` (Windows [`win::empty_working_set`]; a no-op elsewhere): how
+/// many were trimmed and their resident bytes before, from `procs`.
+pub(super) fn trim(procs: &[Proc], pids: &[u32]) -> (usize, u64) {
+    #[cfg(windows)]
+    {
+        procs.iter().filter(|p| pids.contains(&p.pid) && win::empty_working_set(p.pid, p.started)).fold((0, 0), |(n, b), p| (n + 1, b + p.rss))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (procs, pids);
+        (0, 0)
+    }
+}
+
+/// Since when each live room has not been mid-turn (`working` false: rảnh, or blocked in `auto
+/// wait`): the earlier `prev` (room → since) kept, a room now working dropped.
+fn idle_rooms(prev: &Value, live: &[LiveRoom], working: &dyn Fn(&str) -> bool, now: u64) -> Vec<(String, u64)> {
+    live.iter().filter(|r| !working(&r.name)).map(|r| (r.name.clone(), prev[&r.name].as_u64().unwrap_or(now))).collect()
+}
+
+/// RAM breach: the room trees to trim, (room, pids): rooms not mid-turn (`idle`: room → since)
+/// for [`TRIM_IDLE_S`], not trimmed (`last_trim`: room → when) in the last [`TRIM_EVERY_S`]; a
+/// room `đang làm` never (its pages would fault straight back). Only pids `procs` lists with a
+/// resident size.
+pub(super) fn trim_pick(procs: &[Proc], trees: &[(String, Vec<u32>)], idle: &[(String, u64)], last_trim: &Value, now: u64) -> Vec<(String, Vec<u32>)> {
+    trees
+        .iter()
+        .filter(|(name, _)| idle.iter().any(|(r, since)| r == name && now.saturating_sub(*since) >= TRIM_IDLE_S))
+        .filter(|(name, _)| last_trim[name].as_u64().is_none_or(|at| now.saturating_sub(at) >= TRIM_EVERY_S))
+        .map(|(name, t)| (name.clone(), t.iter().copied().filter(|pid| procs.iter().any(|p| p.pid == *pid && p.rss > 0)).collect::<Vec<u32>>()))
+        .filter(|(_, t)| !t.is_empty())
+        .collect()
+}
+
+/// Where the machine's resident memory is (bytes). Owner 2026-10-21: the guard said "không cần
+/// đổi gì" at RAM 69% while the rooms held 12 GB and the owner's own apps 20 GB.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct RamSplit {
+    /// Every room tree (all projects when the cap recorded them).
+    pub rooms: u64,
+    /// `omp` and `8sync` outside the rooms, with their trees.
+    pub omp: u64,
+    /// Everything else…
+    pub other: u64,
+    /// …by app, heaviest first, at most [`RAM_TOP`]: `Edge 2.8 GB`.
+    pub top: Vec<(String, u64)>,
+}
+
+impl RamSplit {
+    /// `RAM: phòng 12.3 GB · omp/8sync 2.8 GB · app khác 20.1 GB (Edge 2.8 · ChatGPT 2.2)`.
+    fn text(&self) -> String {
+        let top: Vec<String> = self.top.iter().map(|(n, b)| format!("{n} {}", gb(*b))).collect();
+        format!("RAM: phòng {} GB · omp/8sync {} GB · app khác {} GB ({})", gb(self.rooms), gb(self.omp), gb(self.other), top.join(" · "))
+    }
+
+    /// Cleaning every room and omp away would still leave the machine at or over the threshold
+    /// (`mem`: total, used MiB; `pct`): the breach is the owner's own apps.
+    fn stuck(&self, mem: (u64, u64), pct: u32) -> bool {
+        let (total, used) = mem;
+        used.saturating_sub((self.rooms + self.omp) / MIB) >= total * u64::from(pct) / 100
+    }
+
+    fn json(&self) -> Value {
+        json!({ "rooms_mb": self.rooms / MIB, "omp_mb": self.omp / MIB, "other_mb": self.other / MIB, "top": self.top.iter().map(|(n, b)| json!({ "name": n, "mb": b / MIB })).collect::<Vec<_>>() })
+    }
+}
+
+fn gb(bytes: u64) -> String {
+    format!("{:.1}", bytes as f64 / (1u64 << 30) as f64)
+}
+
+/// The status line of a stored `ram_split` ([`RamSplit::json`] + `stuck`); None when absent.
+fn ram_split_text(v: &Value) -> Option<String> {
+    let mb = |k: &str| v[k].as_u64().map(|m| m * MIB);
+    let s = RamSplit {
+        rooms: mb("rooms_mb")?,
+        omp: mb("omp_mb")?,
+        other: mb("other_mb")?,
+        top: v["top"].as_array().into_iter().flatten().filter_map(|t| Some((t["name"].as_str()?.to_string(), t["mb"].as_u64()? * MIB))).collect(),
+    };
+    let hint = if v["stuck"].as_bool() == Some(true) { " · ngưỡng không đạt được bằng dọn phòng — hạ app khác hoặc nâng ngưỡng" } else { "" };
+    Some(s.text() + hint)
+}
+
+/// Images a process chain is not followed above when naming its app: the shell and service hosts
+/// every app descends from.
+const APP_ROOTS: [&str; 16] = ["explorer", "services", "svchost", "wininit", "winlogon", "userinit", "system", "smss", "csrss", "sihost", "runtimebroker", "taskhostw", "dwm", "init", "systemd", "launchd"];
+
+/// The owner-facing name of an app's root image.
+fn app_label(image: &str) -> String {
+    match image {
+        "msedge" | "msedgewebview2" => "Edge".into(),
+        "chrome" => "Chrome".into(),
+        "chatgpt" => "ChatGPT".into(),
+        "vmmemwsl" => "WSL".into(),
+        "vmmem" => "Hyper-V".into(),
+        "code" => "VS Code".into(),
+        "msmpeng" => "Defender".into(),
+        "memcompression" => "Memory Compression".into(),
+        _ => {
+            let mut c = image.chars();
+            c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+        }
+    }
+}
+
+/// `procs` split into the rooms (`rooms`: every room tree's pids, all projects), omp/8sync
+/// outside them (each `omp`/`8sync` image with its tree), and the rest by app: a process counts
+/// under its topmost ancestor below an [`APP_ROOTS`] image (Orca and its 47 pwsh: one app), a
+/// recycled pid never followed ([`reap::descendants`]' rule).
+pub(super) fn ram_split(procs: &[Proc], rooms: &[u32]) -> RamSplit {
+    let is_omp = |p: &Proc| p.image == "omp" || p.image.starts_with("8sync");
+    let mut omp: Vec<u32> = Vec::new();
+    for p in procs.iter().filter(|p| is_omp(p) && !rooms.contains(&p.pid)) {
+        for pid in reap::tree_of(procs, p.pid, &|_| true) {
+            if !rooms.contains(&pid) && !omp.contains(&pid) {
+                omp.push(pid);
+            }
+        }
+    }
+    let mut s = RamSplit::default();
+    let mut apps: Vec<(String, u64)> = Vec::new();
+    for p in procs.iter().filter(|p| p.rss > 0) {
+        if rooms.contains(&p.pid) {
+            s.rooms += p.rss;
+            continue;
+        }
+        if omp.contains(&p.pid) {
+            s.omp += p.rss;
+            continue;
+        }
+        s.other += p.rss;
+        let mut cur = p;
+        for _ in 0..64 {
+            let Some(up) = procs.iter().find(|u| u.pid == cur.ppid && u.pid != cur.pid && u.started <= cur.started && !APP_ROOTS.contains(&u.image.as_str())) else { break };
+            cur = up;
+        }
+        let label = app_label(&cur.image);
+        match apps.iter_mut().find(|(n, _)| *n == label) {
+            Some((_, b)) => *b += p.rss,
+            None => apps.push((label, p.rss)),
+        }
+    }
+    apps.sort_by(|a, b| b.1.cmp(&a.1));
+    s.top = apps.into_iter().take(RAM_TOP).collect();
+    s
+}
+
+/// Every room tree's pids machine-wide: this project's `trees` plus every process the cap
+/// recorded for any project (`pinned`), still the process it recorded.
+fn all_rooms(procs: &[Proc], trees: &[(String, Vec<u32>)], pinned: &[Pin]) -> Vec<u32> {
+    let mut all = in_rooms(trees);
+    let more: Vec<u32> = procs.iter().filter(|p| !all.contains(&p.pid) && pinned.iter().any(|r| r.pid == p.pid && r.started == p.started)).map(|p| p.pid).collect();
+    all.extend(more);
+    all
 }
 
 // ── CPU cap (affinity) ──────────────────────────────────────────────────────────────────────
@@ -1541,6 +1725,7 @@ pub(super) fn status_json(home: &Path, pct: Option<u32>) -> Value {
                 "top": st["top"].as_array().cloned().unwrap_or_default(),
                 "breach": Breach::of(st).json(),
                 "last": st["actions"].as_array().and_then(|a| a.last()).cloned(),
+                "ram_split": st["ram_split"].clone(),
             })
         })
         .collect();
@@ -1576,6 +1761,9 @@ pub(super) fn lines(g: &Value) -> Vec<String> {
             let pz = if paused.is_empty() { String::new() } else { format!(" · tạm dừng: {}", paused.join(", ")) };
             let last = p["actions"].as_array().and_then(|a| a.last()).and_then(|a| a["text"].as_str()).map(|t| format!(" · gần nhất: {t}")).unwrap_or_default();
             out.push(format!("  {name}: L{lvl} {}{ram}{pz}{last}", Level::label(lvl)));
+            if let Some(t) = ram_split_text(&p["ram_split"]) {
+                out.push(format!("  {name}: {t}"));
+            }
         }
         if let Some(d) = p["defender"].as_str().filter(|_| p["defender_cpu"].as_u64().is_some_and(|c| c >= u64::from(DEFENDER_PCT))) {
             out.push(format!("  {name}: Defender ăn CPU {}% — PowerShell admin (8sync không tự chạy): {d}", p["defender_cpu"].as_u64().unwrap_or(0)));
@@ -1843,6 +2031,13 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
     }
     let mut killed: Vec<u32> = Vec::new();
     let mut loads = Vec::new();
+    // Whether a room is mid-turn (blocked in `auto wait` is not working); since when each is not,
+    // remembered across passes for the trim.
+    let working = |room: &str| live.iter().any(|r| r.name.eq_ignore_ascii_case(room) && r.busy && !still_waiting(&procs, r.pid));
+    let idle = idle_rooms(&st["idle_since"], &live, &working, now);
+    st["idle_since"] = Value::Object(idle.iter().map(|(n, s)| (n.clone(), json!(s))).collect());
+    // Whether this pass freed RAM the hard way (kill, restart, pause): else the RAM row says where it is.
+    let mut freed_any = false;
     if lvl >= Level::Clean {
         rows.push(row(&format!("L{}", lvl.n()), format!("{} · CPU cả tick {cpu_s} · ngưỡng RAM {pct}% · CPU {cpu_t}%: {}", reap::machine_line(&sample), Level::label(lvl.n()))));
         let top = cpu_top(&procs, &deltas, &trees, ms, sample.cores);
@@ -1873,11 +2068,11 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         }
         if n > 0 {
             *acted = true;
+            freed_any = true;
             log(&mut st, now, &format!("L1 RAM {ram}% CPU {cpu_s}: dọn {n} tiến trình bỏ lại ({} MB)", freed / MIB));
         }
         // Scratch rooms left in their `<room>-scratch` dirs: an hour untouched anywhere inside,
-        // named by no process, its room not mid-turn (blocked in `auto wait` is not working).
-        let working = |room: &str| live.iter().any(|r| r.name.eq_ignore_ascii_case(room) && r.busy && !still_waiting(&procs, r.pid));
+        // named by no process, its room not mid-turn.
         let stale = stale_scratch(root, &procs, now, &working, &|p| newest_mtime(p, SCRATCH_WALK));
         let gone = stale.iter().filter(|p| remove_entry(p)).count();
         if !stale.is_empty() {
@@ -1888,6 +2083,28 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         }
         let left: Vec<Proc> = procs.iter().filter(|p| !killed.contains(&p.pid)).cloned().collect();
         loads = attribute(&left, &pairs, now);
+        // RAM breach: the idle rooms give their working sets back ([`trim`]), each tree once per
+        // [`TRIM_EVERY_S`] (`trimmed`: room → when, live rooms only).
+        if ram >= pct {
+            let mut trimmed = st["trimmed"].as_object().cloned().unwrap_or_default();
+            trimmed.retain(|k, _| live.iter().any(|r| &r.name == k));
+            let (mut tn, mut tb) = (0usize, 0u64);
+            for (name, pids) in trim_pick(&left, &trees, &idle, &Value::Object(trimmed.clone()), now) {
+                let (n, b) = trim(&left, &pids);
+                if n > 0 {
+                    tn += 1;
+                    tb += b;
+                    trimmed.insert(name, json!(now));
+                }
+            }
+            if tn > 0 {
+                *acted = true;
+                let text = format!("trim RAM phòng rảnh: {tn} phòng, ~{} MB", tb / MIB);
+                rows.push(row("trim", text.clone()));
+                log(&mut st, now, &format!("RAM {ram}%: {text}"));
+            }
+            st["trimmed"] = Value::Object(trimmed);
+        }
 
         // L2 before the room messages: a room picked for a restart is not messaged this tick (the
         // message would start a turn the stop cuts, or wait in an inbox the resumed id never reads).
@@ -1901,6 +2118,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
             st["restart"] = Value::from(asked.iter().map(|l| json!({ "name": l.name, "waiting": l.waiting, "pid": l.pid })).collect::<Vec<_>>());
             if !asked.is_empty() {
                 *acted = true;
+                freed_any = true;
                 let heavy: Vec<String> = asked.iter().map(|l| format!("{} ({} MB)", l.name, l.total / MIB)).collect();
                 let text = format!("L2 RAM {ram}% (ngưỡng {pct}%): khởi động lại gọn nhẹ (tắt LSP + MCP index, cùng hội thoại) {}", heavy.join(", "));
                 rows.push(row("L2", text.clone()));
@@ -1982,6 +2200,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         }
         if !gone.is_empty() {
             *acted = true;
+            freed_any = true;
             let text = format!("L3 RAM {ram}% CPU {cpu_s} (ngưỡng RAM {pct}% · CPU {cpu_t}%): vừa đủ {keep}/{n_live} phòng, tạm dừng {}; mở lại từng phòng khi đủ chỗ thêm 1 phòng dưới ngưỡng suốt 10 phút", gone.join(", "));
             rows.push(row("L3", text.clone()));
             log(&mut st, now, &text);
@@ -1999,6 +2218,24 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         }
     }
     st["paused"] = json!(paused);
+
+    // Over the RAM threshold: where the RAM is (HQ shows it instead of "không cần đổi gì"); when
+    // the rooms and omp together are under the overshoot, no cleaning of theirs reaches the
+    // threshold and the row says so (owner 2026-10-21: 23 rooms 12 GB, the owner's apps 20 GB).
+    st["ram_split"] = Value::Null;
+    if ram >= pct {
+        let split = ram_split(&procs, &all_rooms(&procs, &trees, &cap_state(home).pinned));
+        let stuck = sample.mem.is_some_and(|m| split.stuck(m, pct));
+        if !freed_any {
+            rows.push(row("RAM", split.text()));
+            if stuck {
+                rows.push(row("RAM", "ngưỡng không đạt được bằng dọn phòng — hạ app khác hoặc nâng ngưỡng".into()));
+            }
+        }
+        let mut j = split.json();
+        j["stuck"] = json!(stuck);
+        st["ram_split"] = j;
+    }
 
     // The lead hears about restarts and pauses (what and why, numbers).
     if !said.is_empty() {
@@ -2099,7 +2336,8 @@ pub(super) fn dry_run(home: &Path, root: &Path, claude: &dyn Claude, registry: &
         id.is_some_and(|id| cards.iter().any(|t| t.id == id && t.state != "open"))
     };
     let pids: Vec<u32> = live.iter().map(|r| r.pid).collect();
-    let owned = owned_of(&load(home)[key(root)]);
+    let st = load(home)[key(root)].clone();
+    let owned = owned_of(&st);
     let picks = l1_pick(&procs, root, now, std::process::id(), &pids, &owned, &|p| p.exists(), &closed);
     out.push(format!("L1 sẽ dọn {} tiến trình ({} tiến trình trên máy):", picks.len(), procs.len()));
     for pk in &picks {
@@ -2108,6 +2346,16 @@ pub(super) fn dry_run(home: &Path, root: &Path, claude: &dyn Claude, registry: &
             out.push(format!("  {} · cây {:?}", describe(p, rss, now), pk.tree));
         }
     }
+    // The trim as a pass now would do it: a room not mid-turn counts as idle since the state
+    // says, else (no pass recorded it yet) as idle long enough.
+    let working = |room: &str| live.iter().any(|r| r.name.eq_ignore_ascii_case(room) && r.busy && !still_waiting(&procs, r.pid));
+    let idle = idle_rooms(&st["idle_since"], &live, &working, now.saturating_sub(TRIM_IDLE_S));
+    let to_trim = trim_pick(&procs, &trees, &idle, &st["trimmed"], now);
+    let trim_mb: u64 = to_trim.iter().flat_map(|(_, t)| t).filter_map(|pid| procs.iter().find(|p| p.pid == *pid)).map(|p| p.rss).sum::<u64>() / MIB;
+    out.push(format!("sẽ trim working set của {} phòng rảnh (~{trim_mb} MB): {}", to_trim.len(), to_trim.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")));
+    let split = ram_split(&procs, &all_rooms(&procs, &trees, &cap_state(home).pinned));
+    let stuck = lim.zip(sample.as_ref().and_then(|s| s.mem)).is_some_and(|(l, m)| split.stuck(m, l.ram));
+    out.push(split.text() + if stuck { " · ngưỡng không đạt được bằng dọn phòng — hạ app khác hoặc nâng ngưỡng" } else { "" });
     let pairs: Vec<(String, u32)> = live.iter().map(|r| (r.name.clone(), r.pid)).collect();
     let loads = attribute(&procs, &pairs, now);
     out.push(format!("phòng nền đang chạy: {}", loads.len()));
@@ -2782,4 +3030,72 @@ mod tests {
         assert_eq!(cap_step(&st, 61, Some(120), 55, 37, 32, NOW), 0);
     }
 
+    #[test]
+    fn trim_picks_idle_room_trees_never_a_working_room_nor_twice_in_ten_minutes() {
+        let procs = vec![
+            p(20, 1, 30, "claude.exe", "claude --bg --resume dev", 300),
+            p(21, 20, 10, "gopls.exe", "gopls", 300),
+            p(30, 1, 30, "claude.exe", "claude --bg --resume qa", 300),
+            p(31, 30, 5, "8sync.exe", "8sync ccc auto wait --mail", 10),
+            p(40, 1, 30, "claude.exe", "claude --bg --resume lead", 300),
+            p(41, 40, 5, "node.exe", "node vite", 0),
+        ];
+        let trees = vec![("dev".to_string(), vec![20, 21]), ("qa".to_string(), vec![30, 31]), ("lead".to_string(), vec![40, 41])];
+        let live = |busy: &[bool]| vec![
+            LiveRoom { name: "dev".into(), sid: "a".into(), pid: 20, busy: busy[0] },
+            LiveRoom { name: "qa".into(), sid: "b".into(), pid: 30, busy: busy[1] },
+            LiveRoom { name: "lead".into(), sid: "c".into(), pid: 40, busy: busy[2] },
+        ];
+        // Mid-turn means busy and not blocked in `auto wait`: qa is "chờ card", dev "rảnh", lead "đang làm".
+        let working = |room: &str| live(&[false, true, true]).iter().any(|r| r.name == room && r.busy && !still_waiting(&procs, r.pid));
+        let idle = idle_rooms(&json!({ "dev": NOW - 500, "lead": NOW - 500 }), &live(&[false, true, true]), &working, NOW);
+        assert_eq!(idle, vec![("dev".to_string(), NOW - 500), ("qa".to_string(), NOW)], "dev keeps its since, qa (auto wait) starts now, lead (working) is dropped");
+        // The first pass that sees qa idle does not trim it yet; dev, idle 500 s, goes; lead never.
+        assert_eq!(trim_pick(&procs, &trees, &idle, &json!({}), NOW), vec![("dev".to_string(), vec![20, 21])]);
+        let picks = trim_pick(&procs, &trees, &idle, &json!({}), NOW + TRIM_IDLE_S);
+        assert_eq!(picks.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["dev", "qa"], "qa idle 120 s: picked; lead working: never");
+        // Trimmed 599 s ago: not again; 600 s: again. A tree with no resident process is skipped.
+        assert!(trim_pick(&procs, &trees, &idle, &json!({ "dev": NOW - TRIM_EVERY_S + 1 }), NOW).is_empty());
+        assert_eq!(trim_pick(&procs, &trees, &idle, &json!({ "dev": NOW - TRIM_EVERY_S }), NOW).len(), 1);
+        let lead_idle = vec![("lead".to_string(), NOW - 500)];
+        assert_eq!(trim_pick(&procs, &trees, &lead_idle, &json!({}), NOW), vec![("lead".to_string(), vec![40])], "vite with rss 0 is not listed");
+    }
+
+    #[test]
+    fn ram_is_split_into_rooms_omp_and_the_owners_apps_by_launcher() {
+        let procs = vec![
+            p(1, 0, 900, "system", "", 100),
+            p(4, 1, 900, "explorer.exe", "", 200),
+            p(10, 4, 100, "claude.exe", "claude --bg-pty-host", 50),
+            p(20, 10, 30, "claude.exe", "claude --bg --resume dev", 300),
+            p(21, 20, 10, "gopls.exe", "gopls", 300),
+            p(30, 10, 30, "claude.exe", "claude --bg --resume other-project", 400),
+            p(50, 4, 200, "orca.exe", "orca", 500),
+            p(51, 50, 150, "pwsh.exe", "pwsh", 100),
+            p(52, 51, 120, "omp.exe", "omp", 800),
+            p(53, 52, 110, "8sync.exe", "8sync ccc auto up", 20),
+            p(54, 51, 100, "pwsh.exe", "pwsh", 100),
+            p(60, 4, 300, "msedge.exe", "", 1000),
+            p(61, 60, 290, "msedge.exe", "--type=renderer", 1500),
+            p(70, 4, 300, "chatgpt.exe", "", 600),
+            p(80, 1, 300, "vmmemwsl", "", 3000),
+            // a recycled pid: its "parent" started after it
+            p(90, 60, 500, "steam.exe", "", 700),
+        ];
+        let trees = vec![("dev".to_string(), vec![20, 21])];
+        let pinned = vec![Pin { pid: 30, started: NOW - 30 * 60, root: "C:\\b".into(), orig: 1 }];
+        let s = ram_split(&procs, &all_rooms(&procs, &trees, &pinned));
+        assert_eq!(s.rooms, 1000 * MB, "this project's tree and the other project's pinned room");
+        assert_eq!(s.omp, 820 * MB, "omp with its 8sync child, not the pwsh around them");
+        assert_eq!(s.other, (100 + 200 + 50 + 500 + 100 + 100 + 1000 + 1500 + 600 + 3000 + 700) * MB);
+        assert_eq!(s.top, vec![("WSL".to_string(), 3000 * MB), ("Edge".to_string(), 2500 * MB), ("Orca".to_string(), 700 * MB), ("Steam".to_string(), 700 * MB)], "Orca with its two pwsh; the recycled pid is its own app");
+        assert_eq!(s.text(), "RAM: phòng 1.0 GB · omp/8sync 0.8 GB · app khác 7.7 GB (WSL 2.9 · Edge 2.4 · Orca 0.7 · Steam 0.7)");
+        // 16 GiB machine, 12 GiB used, threshold 60% = 9830 MiB: rooms + omp (1820 MiB) cannot bring it under.
+        assert!(s.stuck((16 * 1024, 12 * 1024), 60));
+        assert!(!s.stuck((16 * 1024, 11 * 1024), 60), "11264 - 1820 = 9444 < 9830: cleaning rooms reaches the threshold");
+        let mut j = s.json();
+        j["stuck"] = json!(true);
+        assert_eq!(ram_split_text(&j).as_deref(), Some("RAM: phòng 1.0 GB · omp/8sync 0.8 GB · app khác 7.7 GB (WSL 2.9 · Edge 2.4 · Orca 0.7 · Steam 0.7) · ngưỡng không đạt được bằng dọn phòng — hạ app khác hoặc nâng ngưỡng"));
+        assert_eq!(ram_split_text(&Value::Null), None);
+    }
 }
