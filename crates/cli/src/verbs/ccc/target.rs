@@ -343,7 +343,7 @@ fn key(book: &Book, root: &Path) -> String {
 
 /// Read, change and write the book under `targets.lock`. Another writer holds the lock for
 /// milliseconds; a lock older than 10 s is a crashed writer's and is taken over.
-fn edit<T>(home: &Path, root: &Path, f: impl FnOnce(&mut Project) -> Result<T>) -> Result<T> {
+pub(super) fn edit<T>(home: &Path, root: &Path, f: impl FnOnce(&mut Project) -> Result<T>) -> Result<T> {
     let p = file(home);
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
@@ -728,7 +728,10 @@ pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) 
         let blocked = || (lane == "backlog").then(|| p.items.iter().enumerate().filter(|(_, t)| unblockable(t, now)).min_by_key(|(i, t)| (touched(t), *i)).map(|(i, _)| i)).flatten();
         let ready = ready_count(&p.items);
         let split = split_ids(&p.items);
-        let free = |t: &Target| t.state == "open" && t.claim.is_none() && !(split.contains(&t.id) && lane == "backlog") && fits(t, lane, &crew, now) && open_to(t, lane, ready);
+        // Ship tốc độ cao: while enough cards wait in qa/review/approved, a room pulling fresh work
+        // from `ready` (builders) holds off — the near-done cards go first.
+        let hold_fresh = lane == "ready" && super::ship_fast::holding(home, root, &p.items);
+        let free = |t: &Target| t.state == "open" && t.claim.is_none() && !(split.contains(&t.id) && lane == "backlog") && !(hold_fresh && t.lane == "ready") && fits(t, lane, &crew, now) && open_to(t, lane, ready);
         // The most urgent free card, queue order within a priority.
         let first_free = || p.items.iter().enumerate().filter(|(_, t)| free(t)).min_by_key(|(i, t)| (rank(t), *i)).map(|(i, _)| i);
         let refill = || (lane == "backlog").then(|| p.items.iter().enumerate().filter(|(_, t)| refillable(t, &split, ready, now)).min_by_key(|(i, t)| (rank(t), *i)).map(|(i, _)| i)).flatten();

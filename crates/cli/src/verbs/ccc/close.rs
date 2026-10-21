@@ -385,6 +385,7 @@ pub(super) fn run(env: &Env, t: &Team, rest: &[String], now: u64) -> Result<()> 
     }
     // The project leaves auto: its auto-ship loop too ([`super::ship_loop`]).
     super::ship_loop::off(&env.home, t.root);
+    super::ship_fast::off(&env.home, t.root);
     let left = auto::close_out(&env.home, t.root, t.subscription, now)?.or(team_root.then_some("left")).unwrap_or("untouched");
     let here = team::agents(t, false)?;
     let rooms = team::rooms(t, &here);

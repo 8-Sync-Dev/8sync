@@ -27,6 +27,8 @@ export type AutoStatus = {
   guard?: Guard | null;
   /** `auto loop` per project root (`{round, focus, since, last}`); read via lib/slash.ts shipLoops. */
   ship_loops?: unknown;
+  /** `ship_fast` per project root (`{on, since, until}`); the live "Ship tốc độ cao" sprints. */
+  ship_fast?: unknown;
 };
 
 export const AUTO_ACTIONS = ["on", "pause", "omp-on", "omp-off"] as const;

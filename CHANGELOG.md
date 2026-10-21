@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.26] — 2026-10-21
+### Added
+- **Ship tốc độ cao** (owner 2026-10-21: "nút mà all members in room đẩy nhanh tốc độ push, merge, build, check test, release sản phẩm nhanh nhất ít lỗi; Sấm Sét chỉ là mở rộng nhân lực"): nút 🚀 cạnh Sấm Sét (`8sync ccc auto ship-fast on [--hours 0.5..4] | off | status`, chỉ owner). Bật: brief tới MỌI phòng + đánh thức như ⚡ — card gần xong trước (approved → review → qa → building), review/qa dọn cột mình trước, builder không lấy card tính năng mới khi ≥ 3 card đang chờ qa/review (card approved chờ anh bấm nên không đếm), PR nhỏ, chạy lệnh kiểm + test trước khi push, CI xanh mới merge. Hết card/hết giờ: 8sync tự báo anh một phát. Chip "Ship nhanh · còn N′" đọc từ status (sống qua reload), có nút Tắt. Không bỏ cổng nào: chỉ đổi thứ tự và bỏ chỗ đứng chết.
+- **Ship card approved một chạm** (owner 2026-10-21: "bảng approve bị kẹt nhiều quá… nên có nút để tiện bấm ship"): nút "Ship card approved" nhắc lead hỏi anh câu Ship (Duyệt tất cả / Chỉ merge / Dừng) ngay lượt đó — anh bấm một phát là `auto merge` land hết; board bị kẹt approved (≥ 1 card, chưa có quyền merge) thì mỗi 30 phút 8sync tự nhắc lead hỏi Ship.
+### Changed
+- Size gate ceiling 7808 → 7840 KiB, attributed in `scripts/size-gate.sh` (ship_fast module; no new dependency).
+- Sấm Sét ghi rõ vai trò: tooltip/guide nói "tăng nhân lực (13 phòng)", muốn đẩy nhanh land/release dùng Ship tốc độ cao.
+
 ## [0.110.25] — 2026-10-21
 ### Changed
 - **Auto-ship tự lên việc liên tục** (owner 2026-10-21: "phải lên task backlog ready nhiều lên… R&D và lead phải làm việc tự lên task liên tục"): vòng mới chạy khi **backlog/ready < 2 card** — building/qa/review/approved đang chạy không bao giờ chặn R&D; brief mỗi vòng yêu cầu 3–6 card nhỏ, giữ ready ≥ 3 card để team không chờ việc; lead đang idle được đánh thức như ⚡ Làm ngay (không đợi owner nhắn mới đọc brief).
