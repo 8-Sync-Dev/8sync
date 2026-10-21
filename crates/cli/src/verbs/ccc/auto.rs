@@ -57,6 +57,7 @@ const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30
        8sync ccc auto merge [--as <phòng>] [--json]   (lead: merge mọi card approved; cần quyền tự merge của owner)
        8sync ccc auto guard [<30..95>|off] [cpu <30..95>] [cap <10..90>|off] [eco on|off] [--dry-run] [--json]   (tự dọn máy khi RAM ≥ ngưỡng (mặc định 60%) hoặc CPU ≥ ngưỡng CPU (mặc định 55%); cap: phòng + daemon Claude Code chỉ chạy trên N luồng CPU cao nhất, mặc định 37%, tự siết nửa khi CPU vượt ngưỡng; eco: phòng chạy chế độ tiết kiệm điện, mặc định bật)
        8sync ccc auto loop on [trọng tâm] | off | wake | status [--json]   (vòng auto-ship: lead nhận brief vòng kế khi board cạn, ≥ 20 phút một vòng; 2 vòng không ra card thì nghỉ; chỉ owner)
+       8sync ccc auto ship-fast on [--hours 0.5..4] | off | status [--json]   (Ship tốc độ cao: cả team land card gần xong trước, builder không lấy card mới khi qa/review/approved còn ≥ 3, lead hỏi Ship một chạm; chỉ owner)   (vòng auto-ship: lead nhận brief vòng kế khi board cạn, ≥ 20 phút một vòng; 2 vòng không ra card thì nghỉ; chỉ owner)
        8sync ccc auto guard now   (một lượt bảo vệ ngay cho mọi dự án đang auto; HQ tự gọi khi RAM/CPU vượt ngưỡng)
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
 pub(super) const DEFAULT_AFTER_S: u64 = 60;
@@ -682,6 +683,7 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         "guard": super::pressure::status_json(home, guard_pct(home)),
         // `auto loop` per project root (HQ "Auto-ship: vòng N" chip, [`super::ship_loop::view`]).
         "ship_loops": super::ship_loop::view(home, gate.is_some() || cap.is_some(), now),
+        "ship_fast": super::ship_fast::view(home, now),
     })
 }
 
@@ -1984,6 +1986,9 @@ pub(super) fn run(
     if rest.first().map(String::as_str) == Some("loop") {
         return super::ship_loop::run(&rest[1..], home, root, owner(None, |k| std::env::var(k).ok()), now);
     }
+    if rest.first().map(String::as_str) == Some("ship-fast") {
+        return super::ship_fast::run(&rest[1..], home, root, owner(None, |k| std::env::var(k).ok()), now);
+    }
     if let Some(verb @ ("add" | "queue" | "done" | "drop" | "reopen" | "claim" | "move" | "prio" | "note" | "board" | "lint")) = rest.first().map(String::as_str) {
         let live = || super::ensure_claude(true).map(|exe| super::team::live_names(&super::team::Bin { exe, root }, root)).unwrap_or_default();
         return run_target(verb, &rest[1..], home, root, rooms, live, now);
@@ -2757,6 +2762,7 @@ mod tests {
                 "repos",
                 "schema",
                 "seven_day_pct",
+                "ship_fast",
                 "ship_loops",
                 "subscription",
                 "team_roots",

@@ -899,6 +899,10 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     if let Some(line) = super::ship_loop::tick(t.home, t.root, &registry, !st["cap"].is_null(), super::pressure::holds(t.home, t.root), now) {
         rows.push(Row { name: "lead".into(), role: room::role("lead").0, model: String::new(), state: line, short: String::new() });
     }
+    // Ship tốc độ cao: ends by itself when the team is done or time is up, and tells the owner once.
+    if let Some(line) = super::ship_fast::tick(t.home, t.root, now) {
+        rows.push(Row { name: "lead".into(), role: room::role("lead").0, model: String::new(), state: line, short: String::new() });
+    }
     let all = agents(t, true)?;
     let running = agents(t, false)?;
     let listed_at = std::time::Instant::now();
