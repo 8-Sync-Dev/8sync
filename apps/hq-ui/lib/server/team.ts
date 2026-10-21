@@ -60,7 +60,12 @@ export async function runTeam(root: string, action: TeamAction): Promise<TeamRes
     const output = tail(`${r.stdout}\n${r.stderr}`);
     if (r.ok) {
       // Boost sets a fresh owner lease, like the Run button: rooms that died with the machine come back now.
-      if (action === "boost") void run("8sync", ["ccc", "auto", "revive"], 120_000);
+      // Sấm Sét = more rooms AND the ship sprint (owner 2026-10-21: "nút sấm sét có hợp nhất nút ship
+      // không"): 13 rooms with nobody landing only piles cards in qa/review; the sprint makes the
+      // extra hands land nearest-done first. Ship tốc độ cao alone stays for a tight quota.
+      if (action === "boost") {
+        void run("8sync", ["ccc", "auto", "ship-fast", "on", "--hours", "2", "--json"], 60_000, root).then(() => run("8sync", ["ccc", "auto", "revive"], 120_000));
+      }
       return { ok: true, output, error: null };
     }
     const error = r.killed ? `8sync không trả lời sau ${ms / 1000} s; xem lại văn phòng trước khi bấm lần nữa` : tail(r.stderr, 6) || "8sync ccc auto thất bại";

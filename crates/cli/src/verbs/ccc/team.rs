@@ -31,7 +31,7 @@ use anyhow::{bail, Result};
 use ccc_core::registry::Store;
 use serde_json::{json, Value};
 
-use super::{auto, idle, room};
+use super::{auto, idle, room, target};
 
 /// Rooms one `auto up` starts at most (the `boost` preset is the largest team).
 const MAX_ROOMS: usize = 14;

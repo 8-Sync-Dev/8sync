@@ -50,7 +50,7 @@ const WAITING = (action: Action, name: string) =>
 const FAILED = (action: Action, name: string) => action === "down" ? `Không dừng được team ${name}` : action === "unboost" ? `Không tắt được Sấm Sét của ${name}` : action === "ship-fast" ? `Không bật được Ship tốc độ cao cho ${name}` : action === "ship-fast-off" ? `Không tắt được Ship tốc độ cao của ${name}` : `Không mở được team ${name}`;
 
 /** What the confirm dialog of Sấm Sét says, in one sentence (also the button's tooltip). */
-const BOOST_COST = "13 phòng chạy song song: 2 lập kế hoạch (lead, ba), 7 builder (dev, dev2, dev3, dev4, dev5, dev6, ui), 2 QA (qa, qa2), 2 review (review, review2); tốn quota khoảng 13 lần một phiên, lease 2 giờ.";
+const BOOST_COST = "Sấm Sét = tăng nhân lực + Ship tốc độ cao 2 giờ (cả team land card gần xong trước). 13 phòng chạy song song: 2 lập kế hoạch (lead, ba), 7 builder (dev, dev2, dev3, dev4, dev5, dev6, ui), 2 QA (qa, qa2), 2 review (review, review2); tốn quota khoảng 13 lần một phiên, lease 2 giờ.";
 /** What "Tắt Sấm Sét" does (`auto down --only ba,dev3,dev4,dev5,dev6,qa2,review2`, lib/server/team.ts BOOST_ONLY). */
 const UNBOOST_INFO = "Tắt Sấm Sét: về team 6 phòng (lead, dev, dev2, ui, qa, review); dừng ba, dev3–dev6, qa2, review2; card các phòng đó đang giữ trả về cột (building → ready, qa/review ở lại cột, bỏ claim). Lease giữ nguyên: hết giờ Sấm Sét thì cả team dừng như cũ (muốn chạy tiếp: Team đầy đủ). Gia hạn 2 giờ: giữ 13 phòng thêm 2 giờ.";
 
