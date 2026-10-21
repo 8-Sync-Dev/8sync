@@ -12,4 +12,6 @@ export async function register() {
   startSweepLoop();
   const { startAutoTickLoop } = await import("./lib/server/auto-tick");
   startAutoTickLoop();
+  const { startHistory } = await import("./lib/server/history");
+  startHistory();
 }

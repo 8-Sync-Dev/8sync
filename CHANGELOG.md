@@ -4,14 +4,24 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
-### Fixed
-- **A permission prompt after an auto-compact no longer waits on the owner forever.** The permit hook counted Claude Code's post-compaction summary (`isCompactSummary`) as the owner typing. Within 60 s of a compact, every prompt therefore stayed with the owner. Summaries and transcript-only lines no longer count.
-- **A room may move to another card's worktree of its own repo by itself.** `EnterWorktree` into `<repo>/.claude/worktrees/<name>` was refused because it lies outside the room's current worktree (seen live: dev in card-31 entering card-58). It is now allowed for one plain folder name directly under the repo's `.claude/worktrees/`. Anything else still waits for the owner.
+
+## [0.110.34] — 2026-10-21
 
 ### Fixed
-- `8sync up`: when the GitHub API has no digest, the release's `.sha256` file is tried up to 3 times (2 s apart) before "checksum NOT VERIFIED"; a missing digest still never blocks the install, a wrong one still does.
+- **Câu Ship của lead không còn bị từ chối sau 60 s.** Owner 2026-10-21 ("kẹt hoài vậy lead không auto check ship done hả"): lead-ide đã hỏi Ship 5 lần cho 8 card approved; mỗi lần hook permit chờ owner bấm trên HQ 60 giây rồi *từ chối* AskUserQuestion ("tool 8sync không tự duyệt") và dặn "đừng hỏi lại", nên owner không bao giờ thấy câu hỏi và card nằm Approved 9 giờ. Giờ AskUserQuestion có header `Ship` đi thẳng qua hook (không chờ, không từ chối): câu hỏi đứng trên màn hình phòng như prompt thường, HQ (ask panel) hiện cho owner trả lời lúc nào cũng được, critic không bao giờ trả lời thay (delegate), grant đọc từ transcript như cũ. Test permit 8.
+
+### Added
+- **Máy: đồ thị tải 30 phút.** Owner 2026-10-21 ("chưa có đồ thị"): mục Tải máy có đường RAM và CPU (một thang 0–100 %), nét đứt là ngưỡng RAM của guard, chú thích khoảng RAM / CPU / W; server lấy mẫu 30 giây một lần từ lúc HQ chạy (`lib/server/history.ts`, 60 mẫu) nên đồ thị đầy dù không mở tab; `/api/machine` thêm `history`. Test history 4.
 
 ## [0.110.33] — 2026-10-21
+
+### Fixed
+- **"Dừng team" giờ dừng thật.** Owner: "lệnh dừng chương trình ở HQ không work khi có task bị chờ". Ba lỗi chồng nhau: `auto down` dừng ở phòng đầu tiên lỗi rồi BỎ qua bước rời auto → HQ revive mở lại phòng mỗi phút; `claude stop` thoát 0 ngay cả khi không dừng được (id sai in usage, exit 0; phòng đang chờ prompt có thể từ chối lặng lẽ) nên HQ báo "đã dừng"; không phòng nào được kiểm tra lại. Giờ: rời auto + tắt loop/ship-fast TRƯỚC, stop từng phòng, **đối chiếu danh sách session lại** (chỉ tính dừng khi phòng biến mất, theo id), phòng còn sống stop lần 2 rồi báo rõ tên + `8sync ccc term <id>` để xem tay; card của phòng đã dừng trả về board.
+- **A permission prompt after an auto-compact no longer waits on the owner forever.** The permit hook counted Claude Code's post-compaction summary (`isCompactSummary`) as the owner typing. Within 60 s of a compact, every prompt therefore stayed with the owner. Summaries and transcript-only lines no longer count.
+- **A room may move to another card's worktree of its own repo by itself.** `EnterWorktree` into `<repo>/.claude/worktrees/<name>` was refused because it lies outside the room's current worktree (seen live: dev in card-31 entering card-58). It is now allowed for one plain folder name directly under the repo's `.claude/worktrees/`. Anything else still waits for the owner.
+- `8sync up`: when the GitHub API has no digest, the release's `.sha256` file is tried up to 3 times (2 s apart) before "checksum NOT VERIFIED"; a missing digest still never blocks the install, a wrong one still does.
+
+## [0.110.32] — 2026-10-21
 
 ### Fixed
 - **Tick của HQ chỉ đánh thức phòng của dự án đang auto.** Owner 2026-10-21 ("chạy dự nào mà dự khác dính inbox tin nhắn theo luôn"): `auto on --here` ở một dự án, nhưng vòng tick server 60 s (0.110.29) vẫn xếp lời nhắc tick vào inbox mọi phòng rảnh của *mọi* dự án. Giờ tick đọc `repos`/`out` của `auto status` như sweep (`inAutoScope`): phòng ngoài phạm vi (kể cả dự án `auto close` đã bỏ) không nhận gì; `repos` rỗng = mọi dự án như trước. Test auto-tick 17.
@@ -20,10 +30,6 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Fixed
 - **Guard: app của owner không còn làm cả team đứng.** Owner 2026-10-21 ("treo 1 ngày", "sao toàn bị vượt"): app của owner chiếm 52% RAM (32 GB/61,6 GB) so với ngưỡng 60%, phòng chỉ 6 GB; mỗi lần RAM vượt (gitleaks của gate /sec, xem 0.110.30), L3 tạm dừng thêm vài phòng (platform: 11/15 phòng dừng, trả card #113 #114 #115 #49) và phòng chỉ được mở lại khi *máy* xuống dưới ngưỡng — không bao giờ, vì app của owner đã trên ngưỡng. Giờ cả team luôn được giữ **10% máy** (RAM và CPU, `ROOMS_FLOOR_PCT`) chừng nào máy dưới **92%** (`HARD_PCT`): `keep_count` chỉ dừng phần phòng dùng *trên* sàn (app owner là phần vượt thì không dừng ai), `room_fits` mở lại phòng khi team + 1 phòng còn trong sàn và máy dưới 92%; chờ yên **3 phút** thay vì 10 (11 phòng về trong ~35 phút thay vì ~2 giờ; chống rung đã có L3 cần ngưỡng + 15). Dòng L3/mở lại ghi rõ luật mới. Test: 24 pressure.
-## [0.110.33] — 2026-10-21
-
-### Fixed
-- **"Dừng team" giờ dừng thật.** Owner: "lệnh dừng chương trình ở HQ không work khi có task bị chờ". Ba lỗi chồng nhau: `auto down` dừng ở phòng đầu tiên lỗi rồi BỎ qua bước rời auto → HQ revive mở lại phòng mỗi phút; `claude stop` thoát 0 ngay cả khi không dừng được (id sai in usage, exit 0; phòng đang chờ prompt có thể từ chối lặng lẽ) nên HQ báo "đã dừng"; không phòng nào được kiểm tra lại. Giờ: rời auto + tắt loop/ship-fast TRƯỚC, stop từng phòng, **đối chiếu danh sách session lại** (chỉ tính dừng khi phòng biến mất, theo id), phòng còn sống stop lần 2 rồi báo rõ tên + `8sync ccc term <id>` để xem tay; card của phòng đã dừng trả về board.
 
 ## [0.110.30] — 2026-10-21
 
