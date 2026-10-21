@@ -33,6 +33,17 @@ describe("broadcast composer rules", () => {
   it("defaults to the project in scope, else the busiest; nothing when no room", () => {
     const ps = broadcastProjects(rooms);
     expect(defaultChoice(ps, "/W/TOOLS")).toBe("/w/tools");
+    expect(defaultChoice(ps, "/w/tools/")).toBe("/w/tools");
+    // A Windows repo picked in the sidebar is written with backslashes / `\\?\\` (2026-10-21: the
+    // box under "platform" offered the busiest project, ide, and its lead).
+    const win = broadcastProjects([
+      { key: "a", label: "lead-ide", cwd: null, project: { root: "C:/Users/P/startup/zus/ide", name: "ide", branch: "zus-work" } },
+      { key: "b", label: "dev-ide", cwd: null, project: { root: "C:/Users/P/startup/zus/ide", name: "ide", branch: "zus-work" } },
+      { key: "c", label: "lead", cwd: null, project: { root: "C:\\Users\\P\\startup\\8sync\\platform", name: "platform", branch: "main" } },
+    ]);
+    expect(defaultChoice(win, "C:\\Users\\P\\startup\\8sync\\platform")).toBe("C:\\Users\\P\\startup\\8sync\\platform");
+    expect(defaultChoice(win, "\\\\?\\c:\\users\\p\\startup\\8sync\\platform\\")).toBe("C:\\Users\\P\\startup\\8sync\\platform");
+    expect(defaultChoice(win, "c:/users/p/startup/8sync/platform")).toBe("C:\\Users\\P\\startup\\8sync\\platform");
     expect(defaultChoice(ps, "/nowhere")).toBe("/w/shop");
     expect(defaultChoice(ps)).toBe("/w/shop");
     expect(defaultChoice([])).toBe("");

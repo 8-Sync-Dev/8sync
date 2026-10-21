@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.18: HQ broadcast box defaults to the repo in view (was the busiest project) + root compare normalised.
 v0.110.17: HQ lag/ids fix (core serves one `claude agents` listing per 3 s + keeps last good; node single-flight probe) + HQ at normal CPU/memory/I/O priority.
 v0.110.16: resource guard (HQ 5 s trigger → `guard now`; L1 clean / L2 lean restart / L3 pause + auto-resume; below-normal + EcoQoS + idle builds; QA scratch rule).
 v0.110.15: `auto close` + HQ Đóng dự án = Dừng hẳn & đóng (rooms, Claude/omp sessions, leftovers; repo root only; `out` list keeps other projects' auto).

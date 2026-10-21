@@ -427,7 +427,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
             </TabsContent>
           </main>
           {/* Văn phòng and Chat tổng show every room, so the box that reaches every room sits under them. */}
-          {(tab === "overview" || tab === "office" || tab === "group") && <BroadcastComposer hq={hq} rooms={officeRooms} preferRoot={project?.path} />}
+          {(tab === "overview" || tab === "office" || tab === "group") && <BroadcastComposer hq={hq} rooms={officeRooms} preferRoot={project?.path ?? repo?.root ?? null} />}
         </Tabs>
       </div>
       <TerminalDrawer
