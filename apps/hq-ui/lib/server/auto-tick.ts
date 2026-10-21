@@ -4,7 +4,7 @@
 // open nothing was woken or revived (owner 2026-10-21: "tự lên task chậm").
 import fs from "node:fs";
 import path from "node:path";
-import { focusRests } from "../auto";
+import { focusRests, inAutoScope } from "../auto";
 import { pruneTicked, STALE_MS, TICK_PROMPT, tickTargets, type TickRoom } from "../auto-tick";
 import { repoOf } from "../sidebar";
 import type { AutoStatus } from "./auto";
@@ -133,8 +133,10 @@ async function tickOnce(status: AutoStatus, now: number): Promise<TickResult> {
     // Sessions whose own Stop hook says "my cron loop ticks me" or "no board lane: messages only",
     // while that word is recent (NO_TICK_MS). `8sync ccc auto on|pause|off` also clears the flags.
     const quiet = new Set(readIdleStatus().filter((r) => r.noTick === "events" || (r.noTick === "cron" && now - r.ts * 1000 <= NO_TICK_MS)).map((r) => r.team));
-    // Usage tight with projects pinned: the other projects' rooms rest (8sync `focus_rest`).
-    const rooms: TickRoom[] = office.rooms.filter((r) => !focusRests(status, repoOf(r.project?.root ?? r.cwd ?? "").root)).map((r) => {
+    // Only projects auto drives (`repos` minus `out`); with usage tight and projects pinned, the
+    // other projects' rooms rest too (8sync `focus_rest`).
+    const roomRepo = (r: { project?: { root: string } | null; cwd?: string | null }) => repoOf(r.project?.root ?? r.cwd ?? "").root;
+    const rooms: TickRoom[] = office.rooms.filter((r) => inAutoScope(status, roomRepo(r)) && !focusRests(status, roomRepo(r))).map((r) => {
       const sid = r.session_id;
       const isIdle = r.status === "idle";
       if (sid && isIdle) idle[sid] = state.idle[sid] ?? now;
