@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.22: VPS login lapse → HQ reloads into sign-in (redirect: manual); auto-clean nested target/.next with evidence, in-use dirs kept out of mails; play builds below normal.
 v0.110.21: rooms count only when alive (stale journal never resurrected: Sấm Sét/Running correct); ⚡ Làm ngay mails the lead and wakes the rooms that can take the card.
 v0.110.19: `sweep` room (Dọn máy) per running project kept by HQ, event-driven, strict cleanup rules; disk sizes count pnpm/bun hardlinks as 0.
 v0.110.20: HQ terminal image button/paste; hourly scan of every project auto-removes idle card-worktree target/.next (rename guard + 1 h idle + room cwd).

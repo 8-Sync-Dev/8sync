@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AUTO_IDLE_MS, autoCandidates, findings, GB, MB, withoutDirs, type ProjectDisk } from "@/lib/disk";
+import { AUTO_IDLE_MS, autoCandidates, findings, GB, MB, sendable, withoutDirs, type Finding, type ProjectDisk } from "@/lib/disk";
 import { cleanIdleBuild, names, purgeTrash, trashDir } from "@/lib/server/disk-clean";
 
 const disk = (o: Partial<ProjectDisk> = {}): ProjectDisk => ({
@@ -24,7 +24,7 @@ const disk = (o: Partial<ProjectDisk> = {}): ProjectDisk => ({
   ...o,
 });
 
-describe("autoCandidates: only a card worktree's flagged target/.next", () => {
+describe("autoCandidates: a card worktree's flagged target/.next, at any depth", () => {
   it("leaves the repo's own build output, other build dirs and small ones to a room", () => {
     const p = disk({
       build: [
@@ -36,7 +36,14 @@ describe("autoCandidates: only a card worktree's flagged target/.next", () => {
         { path: "target", bytes: 30 * GB },
       ],
     });
-    expect(autoCandidates(p).map((b) => b.path)).toEqual([".claude/worktrees/card-15/target", ".claude/worktrees/card-2/.next"]);
+    expect(autoCandidates(p).map((b) => b.path)).toEqual([".claude/worktrees/card-15/target", ".claude/worktrees/card-2/.next", ".claude/worktrees/card-5/apps/web/.next"]);
+  });
+
+  it("the cleanup mail leaves out the build dirs HQ kept as in use", () => {
+    const f = (path: string): Finding => ({ id: `dir:${path}`, severity: "high", path, bytes: 49 * GB, why: "x" });
+    const p = { findings: [f(".claude/worktrees/card-15/target"), f(".git")], inUse: [".claude/worktrees/card-15/target"] };
+    expect(sendable(p).map((x) => x.path)).toEqual([".git"]);
+    expect(sendable({ findings: p.findings }).map((x) => x.path)).toHaveLength(2);
   });
 
   it("withoutDirs drops what went from the sizes, so its findings go too", () => {
@@ -59,12 +66,13 @@ describe("cleanIdleBuild on a real folder", () => {
   const NOW = Date.now();
   const old = (NOW - 2 * AUTO_IDLE_MS) / 1000;
 
-  /** `<root>/.claude/worktrees/<wt>/target/debug/deps/x`, every folder last written `at` (seconds). */
-  function target(root: string, wt: string, at: number): string {
-    const t = path.join(root, ".claude", "worktrees", wt, "target");
+  /** `<root>/.claude/worktrees/<wt>/<sub>/target/debug/deps/x` beside a Cargo.toml, every folder last written `at` (seconds). */
+  function target(root: string, wt: string, at: number, sub = "", cargo = true): string {
+    const t = path.join(root, ".claude", "worktrees", wt, sub, "target");
     const deps = path.join(t, "debug", "deps");
     fs.mkdirSync(deps, { recursive: true });
     fs.writeFileSync(path.join(deps, "libx.rlib"), "x");
+    if (cargo) fs.writeFileSync(path.join(path.dirname(t), "Cargo.toml"), "[package]\n");
     for (const d of [deps, path.dirname(deps), t]) fs.utimesSync(d, at, at);
     return t;
   }
@@ -89,7 +97,8 @@ describe("cleanIdleBuild on a real folder", () => {
       const procIn = target(root, "card-17", old);
       const busy = async () => [path.join(root, ".claude", "worktrees", "card-16", "crates"), `node ${path.join(root, ".claude", "worktrees", "card-17", "node_modules", "vite", "bin", "vite.js")} preview`];
       const r = await cleanIdleBuild({ root, build: [big("card-13"), big("card-15"), big("card-16"), big("card-17")] }, busy, NOW);
-      expect(r?.cleaned).toEqual({ at: NOW, bytes: 5 * GB, dirs: [".claude/worktrees/card-13/target"] });
+      expect(r.cleaned).toEqual({ at: NOW, bytes: 5 * GB, dirs: [".claude/worktrees/card-13/target"] });
+      expect(r.kept).toEqual([".claude/worktrees/card-15/target", ".claude/worktrees/card-16/target", ".claude/worktrees/card-17/target"]);
       expect(fs.existsSync(idle)).toBe(false);
       expect(fs.existsSync(recent)).toBe(true);
       expect(fs.existsSync(roomIn)).toBe(true);
@@ -108,8 +117,33 @@ describe("cleanIdleBuild on a real folder", () => {
     try {
       const idle = target(root, "card-13", old);
       const r = await cleanIdleBuild({ root, build: [{ path: ".claude/worktrees/card-13/target", bytes: 5 * GB }] }, () => Promise.reject(new Error("no office")), NOW);
-      expect(r).toBeNull();
+      expect(r.cleaned).toBeNull();
+      expect(r.kept).toEqual([".claude/worktrees/card-13/target"]); // unknown use: not mailed to a room either
       expect(fs.existsSync(idle)).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("a nested target (src-tauri) goes; a process at the worktree root keeps it; a source folder named target never goes", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hq-clean-"));
+    try {
+      const tauri = target(root, "card-3", old, "src-tauri");
+      const served = target(root, "card-4", old, "src-tauri");
+      const source = target(root, "card-6", old, path.join("src", "compiler"), false);
+      const busy = async () => [`node ${path.join(root, ".claude", "worktrees", "card-4", "node_modules", ".bin", "tauri")} dev`];
+      const big = (p: string) => ({ path: p, bytes: 5 * GB });
+      const r = await cleanIdleBuild(
+        { root, build: [big(".claude/worktrees/card-3/src-tauri/target"), big(".claude/worktrees/card-4/src-tauri/target"), big(".claude/worktrees/card-6/src/compiler/target")] },
+        busy,
+        NOW,
+      );
+      expect(r.cleaned?.dirs).toEqual([".claude/worktrees/card-3/src-tauri/target"]);
+      expect(r.kept).toEqual([".claude/worktrees/card-4/src-tauri/target"]);
+      expect(fs.existsSync(tauri)).toBe(false);
+      expect(fs.existsSync(served)).toBe(true);
+      expect(fs.existsSync(source)).toBe(true);
+      await purgeTrash(root);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

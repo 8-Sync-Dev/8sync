@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.22] — 2026-10-21
+### Fixed
+- **HQ through the VPS link recovers by itself when the login lapses.** Owner 2026-10-21: "check gấp ovh web chưa vô được hq ui". The VPS gate (oauth2-proxy, 12 h cookie) answers a lapsed session with a redirect to GitHub that fetch cannot follow, so an open HQ tab failed every poll until a manual reload: the owner's previous login lapsed at 05:38 UTC, when he reported it. HQ's API never redirects, so the client now asks for redirects by hand and reloads into the sign-in when it gets one (at most once per 30 s).
+- **HQ auto-clean reaches nested build output and no longer mails what it kept.** `src-tauri/target` and `apps/web/.next` in a card worktree count (they need a Cargo.toml or CACHEDIR.TAG, or a package.json, beside or inside, so a source folder named `target` never goes). The in-use check covers the whole worktree. A build dir HQ keeps because a room or process uses it, or a build wrote to it within the hour, is left out of the cleanup mail, so a room is never told to delete it. Process command lines are read as UTF-8.
+- **▶ Chơi thử builds run below normal priority.** HQ itself runs at normal priority since v0.110.17; its play builds (`npm ci`, `npm run build`) do not, so they do not compete with the owner's foreground work.
+
 ## [0.110.21] — 2026-10-21
 ### Fixed
 - **HQ "⚡ Đang Sấm Sét" no longer sticks, and "Running N" counts only live rooms.** Owner 2026-10-21: "bật sao không tắt được" (same screenshot four times). When `claude agents` failed or timed out (the machine was crawling), HQ fell back to its journal and every stopped room (3d-game's dev6, review2, qa2…) came back as running, so the stopped 13-room team still read as boosted. A journal-only session is now always ended; only tmux or `claude agents` (its last good answer for 120 s) prove a room alive. Boards and ⚡ buttons stay available for auto's team roots during such an outage instead of answering 409.

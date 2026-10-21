@@ -55,19 +55,29 @@ export type ProjectDisk = {
   ms: number;
   /** HQ's last auto clean of idle worktree build output (lib/server/disk-clean.ts), kept across scans. */
   cleaned?: Cleaned | null;
+  /** Candidate build dirs HQ left because something uses them: never sent to a room to delete. */
+  inUse?: string[];
 };
 
 /** What one HQ auto clean removed. */
 export type Cleaned = { at: number; bytes: number; dirs: string[] };
 
-/** Build output HQ removes by itself: `target` / `.next` of an agent's card worktree (the next build makes it again). */
-const AUTO_DIR = /^\.claude\/worktrees\/[^/]+\/(target|\.next)$/;
+/**
+ * Build output HQ removes by itself: `target` / `.next` anywhere in an agent's card worktree
+ * (`src-tauri/target`, `apps/web/.next`); the next build makes it again. Group 1: the worktree.
+ */
+export const AUTO_DIR = /^(\.claude\/worktrees\/[^/]+)\/(?:[^/]+\/)*(?:target|\.next)$/;
 /** A build dir written this recently belongs to work in progress: left alone. */
 export const AUTO_IDLE_MS = 3600_000;
 
 /** Flagged build dirs (over LIMITS.dir) HQ may remove without asking a room. */
 export function autoCandidates(p: Pick<ProjectDisk, "build">): Sized[] {
   return p.build.filter((b) => b.bytes > LIMITS.dir && AUTO_DIR.test(b.path));
+}
+
+/** What the cleanup mail lists: the findings minus the build dirs HQ kept because they are in use. */
+export function sendable(p: { findings: Finding[]; inUse?: string[] }): Finding[] {
+  return p.inUse?.length ? p.findings.filter((f) => !p.inUse!.includes(f.path)) : p.findings;
 }
 
 /** The scan result once `gone` (from autoCandidates) is deleted, without walking again. */

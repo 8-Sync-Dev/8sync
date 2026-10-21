@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { cleanupRoom, cleanupText, diskKey, fingerprint, projectRooms, type Finding } from "../disk";
+import { cleanupRoom, cleanupText, diskKey, fingerprint, projectRooms, sendable, type Finding } from "../disk";
 import { deliverWatched, SessionWaiting } from "./channel";
 import { getDb } from "./db";
 import { diskProjects, diskState, startScan } from "./disk";
@@ -112,16 +112,18 @@ export async function runLoop(now = Date.now(), db: DatabaseSync = getDb()): Pro
     const rooms = (await loadOffice(db)).rooms;
     for (const p of diskState(projects, now).projects) {
       const k = diskKey(p.root);
-      if (!shouldSend(p.findings, s.sent[k], now)) continue;
+      // A build dir HQ kept because a room or process uses it is not the room's to delete.
+      const items = sendable(p);
+      if (!shouldSend(items, s.sent[k], now)) continue;
       const picked = s.projects[k]?.room;
       const room = (picked && projectRooms(rooms, p.root).find((r) => r.key === picked)) || cleanupRoom(rooms, p.root);
       if (!room) {
         errors[k] = { at: now, room: null, error: "dự án chưa có phòng nào chạy" };
         continue;
       }
-      const r = await deliverTo(db, room, cleanupText(p, p.findings));
+      const r = await deliverTo(db, room, cleanupText(p, items));
       if (r.error == null && r.delivery != null && r.delivery !== "failed") {
-        sent[k] = { fp: fingerprint(p.findings), at: now, room: room.label, n: p.findings.length, delivery: r.delivery };
+        sent[k] = { fp: fingerprint(items), at: now, room: room.label, n: items.length, delivery: r.delivery };
         errors[k] = null;
       } else {
         // Not recorded as sent: the next run tries again instead of waiting 24 h.
