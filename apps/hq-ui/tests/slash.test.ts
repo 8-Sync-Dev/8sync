@@ -119,7 +119,7 @@ describe("loopWait: why the next round waits", () => {
     expect(loopWait("scope")).toBe("ngoài phạm vi auto");
     expect(loopWait("idle")).toBe("nghỉ — 2 vòng không ra việc");
     expect(loopWait("lead")).toBe("chờ lead đọc brief trước");
-    expect(loopWait("board")).toBe("còn card đang làm");
+    expect(loopWait("board")).toBe("backlog/ready đã đủ");
     expect(loopWait("gap")).toBe("chờ nhịp vòng");
     expect(loopWait(null)).toBeNull();
   });
@@ -134,7 +134,7 @@ describe("ship loops from auto status", () => {
     ]);
     expect(loopWait("usage")).toBe("chờ usage");
     expect(loopWait("guard")).toBe("chờ máy rảnh");
-    expect(loopWait("board")).toBe("còn card đang làm");
+    expect(loopWait("board")).toBe("backlog/ready đã đủ");
     expect(loopWait(null)).toBeNull();
     expect(loopFor(loops, "C:/users/me/ide")?.round).toBe(3);
     expect(loopFor(loops, "/y")).toBeNull();
