@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { ShipLoopChip } from "./ship-loop-chip";
 import { makeApi } from "./use-hq";
 
 type Action = "up" | "full" | "boost" | "unboost" | "clean" | "down";
@@ -145,6 +146,7 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
   const [ask, setAsk] = useState<Action | null>(null);
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+      <ShipLoopChip root={root} token={token} />
       <BoostButton root={root} name={name} token={token} active={boost} after={after} />
       <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(root, name, "up")} title="Mở phòng còn thiếu, nối lại phòng đã dừng (8sync ccc auto up)">
         <PlayIcon aria-hidden /> Mở lại team

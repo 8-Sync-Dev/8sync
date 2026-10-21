@@ -1421,6 +1421,12 @@ fn level_of(home: &Path, root: &Path) -> Level {
     Level::of(load(home)[key(root)]["level"].as_u64().unwrap_or(0))
 }
 
+/// The guard holds `root` back: at L2 or more, or rooms it paused. No new work goes out then
+/// (the auto-ship loop's next round, [`super::ship_loop::tick`]).
+pub(super) fn holds(home: &Path, root: &Path) -> bool {
+    level_of(home, root) >= Level::Restart || !paused(home, root).is_empty()
+}
+
 /// Rooms the guard paused in `root`: `auto revive` does not bring them back. None while the guard
 /// is off (its pauses end with it).
 pub(super) fn paused(home: &Path, root: &Path) -> Vec<String> {

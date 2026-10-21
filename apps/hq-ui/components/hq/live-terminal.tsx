@@ -4,8 +4,12 @@ import "@xterm/xterm/css/xterm.css";
 import type { Terminal } from "@xterm/xterm";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
-import { ImageIcon } from "lucide-react";
+import { ImageIcon, SendIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { lineBytes } from "@/lib/term-input";
+import { cn } from "@/lib/utils";
+import { TOUCH } from "./room-send";
 import { FILES_MAX, fileError, toBase64 } from "@/lib/attach";
 import { isLocalHost } from "@/lib/hosts";
 import type { ActivityEvent } from "@/lib/server/activity";
@@ -389,18 +393,24 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
         </div>
       )}
       <div ref={host} className="min-h-[200px] flex-1 overflow-hidden rounded-lg border bg-[#fbfbfa] p-2 dark:bg-[#0b0c0e]" aria-label={text.label} />
-      {/* A phone keyboard (IME, Vietnamese, autocorrect) types reliably into a real input, not into xterm's hidden textarea. */}
+      {/* A phone keyboard (IME, Vietnamese, autocorrect) types reliably into a real textarea, not into xterm's hidden one. */}
       <form
-        className="flex items-center gap-1.5"
+        className="rounded-xl border bg-card transition-shadow duration-150 focus-within:ring-2 focus-within:ring-ring/40 motion-reduce:transition-none"
         onSubmit={(e) => {
           e.preventDefault();
-          keysRef.current?.(`${line}\r`);
+          keysRef.current?.(lineBytes(line, view.current?.modes.bracketedPasteMode === true));
           setLine("");
         }}
       >
-        <input
+        <Textarea
           value={line}
           onChange={(e) => setLine(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter sends, Shift+Enter breaks the line; never while an IME (Vietnamese) is composing.
+            if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing || e.keyCode === 229) return;
+            e.preventDefault();
+            e.currentTarget.form?.requestSubmit();
+          }}
           onPaste={(e) => {
             const files = Array.from(e.clipboardData.files);
             if (kind === "room" && files.length) {
@@ -409,6 +419,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
             }
           }}
           disabled={state !== "live"}
+          rows={1}
           placeholder={kind === "shell" ? "Gõ lệnh rồi Enter/Gửi (ô trống = Enter)" : "Gõ câu trả lời rồi Enter/Gửi (ô trống = Enter)"}
           aria-label="Gõ vào terminal"
           enterKeyHint="send"
@@ -416,63 +427,65 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
-          className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className={cn("max-h-36 min-h-10 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 disabled:bg-transparent dark:bg-transparent dark:disabled:bg-transparent", kind === "shell" && "font-mono")}
         />
-        {kind === "room" && (
-          <>
-            <input
-              ref={picker}
-              type="file"
-              accept="image/*"
-              multiple
-              hidden
-              onChange={(e) => {
-                const files = Array.from(e.target.files ?? []);
-                e.target.value = "";
-                if (files.length) void attach(files);
-              }}
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 px-2"
-              aria-label="Gửi ảnh vào phòng"
-              title="Gửi ảnh: ảnh vào repo của phòng, đường dẫn hiện trong ô gõ"
-              disabled={state !== "live" || note?.busy === true}
-              aria-busy={note?.busy === true}
-              onClick={() => picker.current?.click()}
-            >
-              <ImageIcon aria-hidden />
-              Ảnh
-            </Button>
-          </>
-        )}
-        <Button type="submit" size="sm" className="h-8" disabled={state !== "live"}>
-          Gửi
-        </Button>
+        <div className="flex items-center gap-1.5 px-2 pb-2">
+          {/* Phones: one line that scrolls sideways instead of several rows of keys. */}
+          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]" role="toolbar" aria-label="Phím terminal">
+            {KEYS.map((k) => (
+              <Button
+                key={k.label}
+                type="button"
+                size="sm"
+                variant="ghost"
+                className={cn("h-7 min-w-8 shrink-0 bg-muted/60 px-2 font-mono text-xs text-muted-foreground hover:text-foreground", TOUCH)}
+                aria-label={k.aria}
+                disabled={state !== "live"}
+                onClick={() => keysRef.current?.(typeof k.seq === "string" ? k.seq : k.seq(appKeys.current()))}
+              >
+                {k.label}
+              </Button>
+            ))}
+          </div>
+          {kind === "room" && (
+            <>
+              <input
+                ref={picker}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  e.target.value = "";
+                  if (files.length) void attach(files);
+                }}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className={cn("h-7 shrink-0 text-xs", TOUCH)}
+                aria-label="Gửi ảnh vào phòng"
+                title="Gửi ảnh: ảnh vào repo của phòng, đường dẫn hiện trong ô gõ"
+                disabled={state !== "live" || note?.busy === true}
+                aria-busy={note?.busy === true}
+                onClick={() => picker.current?.click()}
+              >
+                <ImageIcon aria-hidden /> <span className="max-sm:sr-only">Ảnh</span>
+              </Button>
+            </>
+          )}
+          <Button type="submit" size="sm" className={cn("shrink-0", TOUCH, "max-sm:px-4")} disabled={state !== "live"}>
+            <SendIcon aria-hidden /> <span className="max-sm:sr-only">Gửi</span>
+          </Button>
+        </div>
       </form>
       {note && (
         <p role="status" className={note.busy ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
           {note.text}
         </p>
       )}
-      <div className="flex flex-wrap items-center gap-1" role="toolbar" aria-label="Phím terminal">
-        {KEYS.map((k) => (
-          <Button
-            key={k.label}
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-7 min-w-9 px-2 font-mono text-xs"
-            aria-label={k.aria}
-            disabled={state !== "live"}
-            onClick={() => keysRef.current?.(typeof k.seq === "string" ? k.seq : k.seq(appKeys.current()))}
-          >
-            {k.label}
-          </Button>
-        ))}
-      </div>
       <p className="text-[11px] text-muted-foreground">{text.hint}</p>
     </div>
   );
