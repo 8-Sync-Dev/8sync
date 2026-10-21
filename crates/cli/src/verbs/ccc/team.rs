@@ -36,7 +36,7 @@ use super::{auto, idle, room};
 /// Rooms one `auto up` starts at most (the `boost` preset is the largest team).
 const MAX_ROOMS: usize = 14;
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full|boost] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | up --add <phòng> | down [--only <phòng>] | revive";
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full|boost] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | up --add <phòng> | down [--only <phòng>[,<phòng>…]] | revive";
 
 /// `auto up …` / `auto down` / `auto revive`: the verbs this module owns.
 pub(super) fn wants(rest: &[String]) -> bool {
@@ -848,14 +848,43 @@ pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
     Ok(stopped)
 }
 
+/// The rooms of `--only a,b,c`: trimmed, empty and repeated names dropped, order kept.
+pub(super) fn only_list(raw: &str) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    for n in raw.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
 /// How long `auto down --only` waits for a revive in flight.
 const DOWN_ONLY_WAIT_S: u64 = 45;
 
-/// `auto down --only <room>`: stop that one background room and drop it from the registry, so
-/// `auto revive` never brings it back; auto and every other room keep running (HQ "Tự soi ảnh" off
-/// stops `eye`). True when a live session was stopped.
-pub(super) fn down_only(t: &Team, name: &str, now: u64) -> Result<bool> {
-    // Under the revive lock: a revive mid-run must not resume the room this drops, untracked.
+/// What `auto down --only` did: per room whether a live session was stopped, and the cards whose
+/// claims went back to the board (`(card, room, lane)`).
+#[derive(Debug)]
+pub(super) struct DownOnly {
+    pub(super) rooms: Vec<(String, bool)>,
+    pub(super) freed: Vec<(u64, String, String)>,
+}
+
+/// `auto down --only <room,room…>`: stop those background rooms and drop them from the registry, so
+/// `auto revive` never brings them back; auto and every other room keep running (HQ "Tự soi ảnh"
+/// off stops `eye`, "Tắt Sấm Sét" the boost-only rooms). Cards they held go back to the board now.
+pub(super) fn down_only(t: &Team, names: &[&str], now: u64) -> Result<DownOnly> {
+    if names.is_empty() {
+        bail!("`--only` cần tên phòng, vd `--only eye` hoặc `--only dev3,dev4`");
+    }
+    // A room is a role row (dev3, qa2, eye…) or a room this project registered (a custom topic):
+    // a typo is refused before anything stops.
+    let registered = t.store.load();
+    if let Some(bad) = names.iter().find(|n| room::find(n).is_none() && !registered.sessions.iter().any(|s| s.name == **n)) {
+        bail!("không có phòng `{bad}` (vd: {})", room::BOOST_TEAM.join(", "));
+    }
+    let list = names.join(",");
+    // Under the revive lock: a revive mid-run must not resume a room this drops, untracked.
     // HQ revives every 2 min: wait for one in flight (≤ 45 s, inside HQ's 60 s switch-off call).
     let mut waited = 0;
     let _lock = loop {
@@ -863,7 +892,7 @@ pub(super) fn down_only(t: &Team, name: &str, now: u64) -> Result<bool> {
             break l;
         }
         if waited >= DOWN_ONLY_WAIT_S {
-            bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ ít phút rồi chạy lại `8sync ccc auto down --only {name}`");
+            bail!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ ít phút rồi chạy lại `8sync ccc auto down --only {list}`");
         }
         if cfg!(test) {
             waited = DOWN_ONLY_WAIT_S;
@@ -873,16 +902,24 @@ pub(super) fn down_only(t: &Team, name: &str, now: u64) -> Result<bool> {
         }
     };
     let reg = t.store.load();
-    let Some(s) = reg.sessions.iter().find(|s| s.name == name) else {
-        return Ok(false);
-    };
-    let title = (t.title)(name);
-    let hit = agents(t, false)?.into_iter().find(|l| l.background && (l.id == s.conversation_id || l.name == title));
-    if let Some(l) = &hit {
-        t.claude.run(&["stop".into(), l.id.chars().take(8).collect()])?;
+    // Ask Claude Code for its sessions only when there is a room to stop.
+    let live = if names.iter().any(|n| reg.sessions.iter().any(|s| s.name == *n)) { agents(t, false)? } else { Vec::new() };
+    let mut rooms = Vec::new();
+    for &name in names {
+        let Some(s) = reg.sessions.iter().find(|s| s.name == name) else {
+            rooms.push((name.to_string(), false));
+            continue;
+        };
+        let title = (t.title)(name);
+        let hit = live.iter().find(|l| l.background && (l.id == s.conversation_id || l.name == title));
+        if let Some(l) = hit {
+            t.claude.run(&["stop".into(), l.id.chars().take(8).collect()])?;
+        }
+        t.store.remove(name)?;
+        rooms.push((name.to_string(), hit.is_some()));
     }
-    t.store.remove(name)?;
-    Ok(hit.is_some())
+    let freed = super::target::release(t.home, t.root, names, "tắt (down --only)", now)?;
+    Ok(DownOnly { rooms, freed })
 }
 
 /// A session name fit for one report line. Sessions started before rooms got `--name` on a resume are
@@ -1584,12 +1621,13 @@ mod tests {
         fake.calls.borrow_mut().clear();
         *fake.agents.borrow_mut() = vec![with_eye];
         let held = revive_lock(&h, 1_002).unwrap().unwrap();
-        let e = down_only(&t, "eye", 1_003).unwrap_err().to_string();
+        let e = down_only(&t, &["eye"], 1_003).unwrap_err().to_string();
         assert!(e.contains("auto revive") && e.contains("down --only eye"), "{e}");
         assert!(fake.calls.borrow().is_empty() && store.load().sessions.iter().any(|s| s.name == "eye"), "nothing stopped, nothing dropped");
         drop(held);
         // Free: only the eye stops and leaves the registry (revive never brings it back); auto runs on.
-        assert!(down_only(&t, "eye", 1_004).unwrap());
+        let r = down_only(&t, &["eye"], 1_004).unwrap();
+        assert_eq!((r.rooms, r.freed), (vec![("eye".to_string(), true)], vec![]));
         let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
         assert_eq!(stops, [eye_id[..8].to_string()]);
         let names: Vec<_> = store.load().sessions.iter().map(|s| s.name.clone()).collect();
@@ -1597,8 +1635,63 @@ mod tests {
         assert!(auto::running(&h) && auto::in_scope(&h, Some(&root.to_string_lossy())) && team_roots(&h).len() == 1);
         assert!(revive_lock(&h, 1_005).unwrap().is_some(), "the lock is released");
         fake.calls.borrow_mut().clear();
-        assert!(!down_only(&t, "eye", 1_006).unwrap(), "already gone: nothing to stop");
+        assert_eq!(down_only(&t, &["eye"], 1_006).unwrap().rooms, [("eye".to_string(), false)], "already gone: nothing to stop");
         assert!(fake.calls.borrow().is_empty());
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn down_only_a_room_list_stops_them_under_one_lock_and_frees_only_their_cards() {
+        assert_eq!(only_list(" ba, dev3,,dev3 ,qa2"), ["ba", "dev3", "qa2"]);
+        assert!(only_list(" , ").is_empty());
+
+        let (h, root) = tmp("down-only-list");
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        let ids = ["aaaaaaaa-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002", "cccccccc-0000-4000-8000-000000000003"];
+        for (n, id) in ["dev", "dev3", "qa2"].iter().zip(ids) {
+            store.touch(n, false).unwrap();
+            store.rebind(n, id).unwrap();
+        }
+        let live = format!("[{},{},{}]", agent_in(ids[0], "dev", "background", &root), agent_in(ids[1], "dev3", "background", &root), agent_in(ids[2], "qa2", "background", &root));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![live]), bg: String::new() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+
+        // dev3 and dev each build a card; qa2 holds a qa card.
+        use super::super::target;
+        let a = target::add(&h, &root, "a", Some("true"), None, false, None, 0).unwrap().0;
+        let b = target::add(&h, &root, "b", Some("true"), None, false, None, 0).unwrap().0;
+        let q = target::add(&h, &root, "uat", Some("true"), Some("qa"), false, None, 0).unwrap().0;
+        assert_eq!(target::claim(&h, &root, "dev3", "ready", 10).unwrap().map(|c| c.id), Some(a.id));
+        assert_eq!(target::claim(&h, &root, "dev", "ready", 10).unwrap().map(|c| c.id), Some(b.id));
+        assert_eq!(target::claim(&h, &root, "qa2", "qa", 10).unwrap().map(|c| c.id), Some(q.id));
+
+        // A typo (no role row, not registered) is refused before the lock or any `claude` call.
+        let e = down_only(&t, &["dev3", "dve3"], 20).unwrap_err().to_string();
+        assert!(e.contains("dve3"), "{e}");
+        assert!(fake.calls.borrow().is_empty() && store.load().sessions.len() == 3);
+
+        // Held lock: refused as a whole, the retry names the whole list.
+        let held = revive_lock(&h, 20).unwrap().unwrap();
+        let e = down_only(&t, &["dev3", "qa2"], 21).unwrap_err().to_string();
+        assert!(e.contains("down --only dev3,qa2"), "{e}");
+        assert!(fake.calls.borrow().is_empty());
+        drop(held);
+
+        let r = down_only(&t, &["dev3", "qa2"], 30).unwrap();
+        assert_eq!(r.rooms, [("dev3".to_string(), true), ("qa2".to_string(), true)]);
+        let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
+        assert_eq!(stops, [ids[1][..8].to_string(), ids[2][..8].to_string()]);
+        assert_eq!(fake.calls.borrow().iter().filter(|c| c[0] == "agents").count(), 1, "one look at the live rooms");
+        assert_eq!(store.load().sessions.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["dev"]);
+        assert!(revive_lock(&h, 31).unwrap().is_some(), "the lock is released");
+        assert_eq!(r.freed, [(a.id, "dev3".to_string(), "ready".to_string()), (q.id, "qa2".to_string(), "qa".to_string())]);
+        let cards = target::list(&h, &root).unwrap();
+        let card = |id| cards.iter().find(|c| c.id == id).unwrap();
+        assert_eq!((card(a.id).lane.as_str(), card(a.id).claim.is_none()), ("ready", true), "building → ready");
+        assert!(card(a.id).notes.iter().any(|n| n.text == "↩ dev3 tắt (down --only): trả về ready"));
+        assert_eq!((card(q.id).lane.as_str(), card(q.id).claim.is_none()), ("qa", true), "qa stays in qa, unclaimed");
+        assert!(card(q.id).notes.iter().any(|n| n.text == "↩ qa2 tắt (down --only): trả về qa"));
+        assert_eq!((card(b.id).lane.as_str(), card(b.id).claim.as_ref().map(|c| c.room.as_str())), ("building", Some("dev")), "the staying room keeps its card");
         let _ = std::fs::remove_dir_all(&h);
     }
 }

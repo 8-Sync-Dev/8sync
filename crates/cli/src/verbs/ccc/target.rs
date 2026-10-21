@@ -635,12 +635,42 @@ fn reap(p: &mut Project, now: u64) {
             continue;
         }
         let Some(c) = t.claim.clone().filter(|c| now.saturating_sub(c.at) >= CLAIM_SECS) else { continue };
-        t.claim = None;
-        if t.lane == "building" {
-            t.lane = "ready".into();
-            t.note(None, &format!("↩ {} không báo gì {} giờ: trả về ready", c.room, CLAIM_SECS / 3600), now);
-        }
+        unclaim(t, &format!("{} không báo gì {} giờ", c.room, CLAIM_SECS / 3600), now);
     }
+}
+
+/// Free a claimed card: a `building` card goes back to `ready` with a `↩ <why>: trả về ready`
+/// note; a card in any other lane (qa, review…) stays there, unclaimed. Returns the lane it is in.
+fn unclaim(t: &mut Target, why: &str, now: u64) -> String {
+    t.claim = None;
+    if t.lane == "building" {
+        t.lane = "ready".into();
+        t.note(None, &format!("↩ {why}: trả về ready"), now);
+    }
+    t.lane.clone()
+}
+
+/// `auto down --only <rooms>`: the stopped rooms' claims go back to the board now instead of after
+/// [`CLAIM_SECS`] — `building` → `ready`, a qa/review card stays in its lane for the next room.
+/// Returns `(card, room, lane)` per freed card. Writes nothing when no listed room holds a card.
+pub(super) fn release(home: &Path, root: &Path, rooms: &[&str], why: &str, now: u64) -> Result<Vec<(u64, String, String)>> {
+    let held = |t: &Target| t.state == "open" && t.claim.as_ref().is_some_and(|c| rooms.contains(&c.room.as_str()));
+    if !list(home, root)?.iter().any(held) {
+        return Ok(Vec::new());
+    }
+    edit(home, root, |p| {
+        let mut out = Vec::new();
+        for t in p.items.iter_mut().filter(|t| held(t)) {
+            let room = t.claim.as_ref().map(|c| c.room.clone()).unwrap_or_default();
+            let was_building = t.lane == "building";
+            let lane = unclaim(t, &format!("{room} {why}"), now);
+            if !was_building {
+                t.note(None, &format!("↩ {room} {why}: trả về {lane}"), now);
+            }
+            out.push((t.id, room, lane));
+        }
+        Ok(out)
+    })
 }
 
 /// Does free card `t` belong to `lane`'s rooms of role `crew` ([`super::room::crew`])? `qa` also

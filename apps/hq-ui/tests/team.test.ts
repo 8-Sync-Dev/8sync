@@ -15,10 +15,10 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { POST } from "@/app/api/team/route";
-import { BoostButton, boostOn, TeamControls } from "@/components/hq/team-controls";
+import { BoostButton, BoostChoices, boostOn, TeamControls } from "@/components/hq/team-controls";
 import { getToken } from "@/lib/server/auth";
 import { onePerBoard, type ProjectBoard } from "@/lib/server/board";
-import { tail, teamArgs } from "@/lib/server/team";
+import { BOOST_ONLY, BOOST_TEAM, FULL_TEAM, tail, teamArgs } from "@/lib/server/team";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const empty = { lanes: { backlog: [], ready: [], building: [], qa: [], review: [], approved: [], blocked: [] }, closed: [] } as unknown as ProjectBoard["board"];
@@ -59,7 +59,20 @@ describe("team", () => {
     expect(teamArgs("down")).toEqual(["ccc", "auto", "down"]);
     expect(teamArgs("full")).toEqual(["ccc", "auto", "up", "--roles", "full"]);
     expect(teamArgs("boost")).toEqual(["ccc", "auto", "up", "--roles", "boost", "--hours", "2"]);
+    expect(teamArgs("unboost")).toEqual(["ccc", "auto", "down", "--only", "ba,dev3,dev4,dev5,dev6,qa2,review2"]);
     expect(tail("\x1b[1mone\x1b[0m\n\n two \n")).toBe("one\n two ");
+  });
+
+  it("knows the CLI's own full and boost teams (room.rs), so Tắt Sấm Sét stops exactly the boost-only rooms", () => {
+    const rs = fs.readFileSync(path.join(import.meta.dirname, "../../../crates/cli/src/verbs/ccc/room.rs"), "utf8");
+    const team = (name: string) => JSON.parse(rs.match(new RegExp(`const ${name}: \\[&str; \\d+\\] = (\\[[^\\]]*\\]);`))![1]) as string[];
+    expect([...FULL_TEAM]).toEqual(team("FULL_TEAM"));
+    expect([...BOOST_TEAM]).toEqual(team("BOOST_TEAM"));
+    expect(BOOST_ONLY).toEqual(["ba", "dev3", "dev4", "dev5", "dev6", "qa2", "review2"]);
+    // What stays after Tắt Sấm Sét is the full team, and boostOn flips off.
+    const rooms = BOOST_TEAM.filter((r) => !BOOST_ONLY.includes(r)).map((n) => ({ name: n, label: n, status: "running" }));
+    expect(rooms.map((r) => r.name)).toEqual([...FULL_TEAM]);
+    expect(boostOn(rooms)).toBe(false);
   });
 
   let token = "";
@@ -127,13 +140,31 @@ describe("team", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("Tắt Sấm Sét runs exactly `auto down --only <boost-only rooms>` in the project root, and nothing else", async () => {
+    run.mockClear();
+    run.mockResolvedValueOnce({ ok: true, stdout: "đã dừng phòng dev3\ncard #4 của dev3 trả về cột ready.\nCác phòng khác vẫn chạy.\n", stderr: "" });
+    const ok = await post({ root: room.cwd.toUpperCase(), action: "unboost" });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).output).toContain("card #4 của dev3 trả về cột ready.");
+    expect(run.mock.calls).toEqual([["8sync", ["ccc", "auto", "down", "--only", "ba,dev3,dev4,dev5,dev6,qa2,review2"], 180_000, room.cwd]]);
+    run.mockClear();
+    const body = { root: room.cwd, action: "unboost" };
+    expect((await POST(req("/api/team", { method: "POST", origin: ORIGIN, body }))).status).toBe(401);
+    expect((await POST(req("/api/team", { method: "POST", token, origin: "http://evil.test", body }))).status).toBe(403);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("UI: the Sấm Sét button asks first, shows the live boost team as active, and sits in the team controls", () => {
     const p = { root: room.cwd, name: "3d-game", token: "t" };
     const off = renderToStaticMarkup(createElement(BoostButton, { ...p, active: false }));
     for (const s of ["Sấm Sét", "13 phòng", "lead, ba", "7 builder", "2 QA", "2 review", "13 lần một phiên", "lease 2 giờ"]) expect(off).toContain(s);
     expect(off).not.toContain("Đang Sấm Sét");
     const on = renderToStaticMarkup(createElement(BoostButton, { ...p, active: true }));
-    for (const s of ["Đang Sấm Sét", "gia hạn lease thêm 2 giờ", "bg-brand/25"]) expect(on).toContain(s);
+    for (const s of ["Đang Sấm Sét", "gia hạn thêm 2 giờ hoặc tắt", "bg-brand/25"]) expect(on).toContain(s);
+    // Active: the dialog offers both, turning off first.
+    const noop = () => {};
+    const choices = renderToStaticMarkup(createElement(BoostChoices, { onOff: noop, onRenew: noop, onCancel: noop }));
+    for (const s of ["Tắt Sấm Sét", "Gia hạn 2 giờ", "Thôi", "auto down --only ba,dev3,dev4,dev5,dev6,qa2,review2", "auto up --roles boost --hours 2"]) expect(choices).toContain(s);
     const bar = renderToStaticMarkup(createElement(TeamControls, { ...p, boost: true }));
     for (const s of ["Đang Sấm Sét", "Mở lại team", "Team đầy đủ", "Dừng team"]) expect(bar).toContain(s);
 

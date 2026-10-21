@@ -621,11 +621,20 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         return Ok(());
     }
     if rest[0] == "down" {
-        // `down --only <room>`: that room alone (HQ "Tự soi ảnh" off); auto and the other rooms run on.
-        if let [_, flag, name] = rest {
-            if flag == "--only" && !name.starts_with("--") {
-                let state = if team::down_only(&t, name, now)? { "đã dừng" } else { "không có phiên nền đang chạy của" };
-                println!("{state} phòng {name} (đã bỏ khỏi team; thêm lại: `8sync ccc auto up --add {name}`). Các phòng khác vẫn chạy.");
+        // `down --only <room,room…>`: those rooms alone (HQ "Tự soi ảnh" off, "Tắt Sấm Sét");
+        // auto and the other rooms run on.
+        if let [_, flag, list] = rest {
+            if flag == "--only" && !list.starts_with("--") {
+                let names = team::only_list(list);
+                let r = team::down_only(&t, &names, now)?;
+                for (name, stopped) in &r.rooms {
+                    let state = if *stopped { "đã dừng" } else { "không có phiên nền đang chạy của" };
+                    println!("{state} phòng {name} (đã bỏ khỏi team; thêm lại: `8sync ccc auto up --add {name}`).");
+                }
+                for (id, room, lane) in &r.freed {
+                    println!("card #{id} của {room} trả về cột {lane}.");
+                }
+                println!("Các phòng khác vẫn chạy.");
                 return Ok(());
             }
         }

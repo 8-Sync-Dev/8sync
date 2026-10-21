@@ -3,21 +3,30 @@
 import { stripAnsi } from "./pane";
 import { run } from "./proc";
 
-export type TeamAction = "up" | "full" | "boost" | "clean" | "down";
+export type TeamAction = "up" | "full" | "boost" | "unboost" | "clean" | "down";
+
+/** The CLI's `room::FULL_TEAM` and `room::BOOST_TEAM` (crates/cli/src/verbs/ccc/room.rs; tests/team.test.ts pins them). */
+export const FULL_TEAM = ["lead", "dev", "dev2", "ui", "qa", "review"] as const;
+export const BOOST_TEAM = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"] as const;
+/** The rooms only Sấm Sét opens: "Tắt Sấm Sét" stops these and the full team runs on. */
+export const BOOST_ONLY: string[] = BOOST_TEAM.filter((r) => !(FULL_TEAM as readonly string[]).includes(r));
 
 /**
  * `up` opens or resumes the 5-room team; `full` the 6-room builder-heavy team (`--roles full`); `boost`
- * (HQ "Sấm Sét") the 13-room team with a 2-hour lease (renews it when already running); `clean` first
- * deletes the background sessions no room keeps and restarts rooms that run an older kit.
+ * (HQ "Sấm Sét") the 13-room team with a 2-hour lease (renews it when already running); `unboost`
+ * ("Tắt Sấm Sét") stops the boost-only rooms and frees their cards, back to the 6-room team; `clean`
+ * first deletes the background sessions no room keeps and restarts rooms that run an older kit.
  */
 export function teamArgs(action: TeamAction): string[] {
   if (action === "down") return ["ccc", "auto", "down"];
+  if (action === "unboost") return ["ccc", "auto", "down", "--only", BOOST_ONLY.join(",")];
   if (action === "full") return ["ccc", "auto", "up", "--roles", "full"];
   if (action === "boost") return ["ccc", "auto", "up", "--roles", "boost", "--hours", "2"];
   return ["ccc", "auto", "up", ...(action === "clean" ? ["--clear-ss"] : [])];
 }
 
-export const isTeamAction = (v: unknown): v is TeamAction => v === "up" || v === "full" || v === "boost" || v === "clean" || v === "down";
+const ACTIONS: readonly unknown[] = ["up", "full", "boost", "unboost", "clean", "down"] satisfies TeamAction[];
+export const isTeamAction = (v: unknown): v is TeamAction => ACTIONS.includes(v);
 
 /** `busy`: another team run is still going in this root (a second tab, a double click). */
 export type TeamResult = { ok: boolean; output: string; error: string | null; busy?: boolean };

@@ -9,7 +9,8 @@ import { isTeamAction, runTeam } from "@/lib/server/team";
 export const runtime = "nodejs";
 
 /**
- * {root, action: "up" | "full" | "boost" | "clean" | "down"}: the team of one project (`8sync ccc auto up|down`).
+ * {root, action: "up" | "full" | "boost" | "unboost" | "clean" | "down"}: the team of one project
+ * (`8sync ccc auto up|down`; unboost = `auto down --only <boost-only rooms>`).
  * Only a root HQ shows (a project with a live room, or a folder added in the sidebar), never an arbitrary path.
  */
 export async function POST(req: Request) {
@@ -18,7 +19,7 @@ export async function POST(req: Request) {
   const body = await readBody(req);
   const root = typeof body?.root === "string" ? body.root : "";
   const action = body?.action;
-  if (!root || !isTeamAction(action)) return bad("cần {root, action: up | full | boost | clean | down}", 422);
+  if (!root || !isTeamAction(action)) return bad("cần {root, action: up | full | boost | unboost | clean | down}", 422);
   // Boost renews the owner lease like Run: over today's electricity budget it stays off (lib/server/power.ts).
   const blocked = action === "boost" ? runBlocked() : null;
   if (blocked) return bad(blocked, 409);
