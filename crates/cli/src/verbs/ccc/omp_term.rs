@@ -9,17 +9,20 @@
 //!   and relays it with term.rs's protocol: raw terminal bytes out, JSON lines in. Its exit only
 //!   disconnects: omp keeps running in the host.
 //! - The session open in another omp (the owner's own terminal): one line, exit [`ELSEWHERE`].
-//!   `--takeover` ends exactly that process tree (matched by the session dir, never by image name),
-//!   then starts the host with `--restore`.
+//!   `--takeover` starts the host with `--restore`: the host itself ends exactly the omp processes
+//!   that have that session open (matched by the session dir, never by image name) and their own
+//!   children, one pid at a time, leaving omp's shared worker daemons alone ([`kill_order`]).
 use super::term::{parse_line, size_ok, Ctl, Pty};
 use crate::env_detect::Env;
 use anyhow::{bail, Context, Result};
 use portable_pty::{CommandBuilder, PtySize};
 use serde::{Deserialize, Serialize};
+use ccc_core::transcript::ProcEntry;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -32,6 +35,8 @@ const ACK: &[u8] = b"8sync-term ok\n";
 const HELLO_WAIT: Duration = Duration::from_secs(5);
 const START_WAIT: Duration = Duration::from_secs(20);
 const EXIT_WAIT: Duration = Duration::from_secs(15);
+/// A start lock older than this was left by a start that died (a takeover takes up to EXIT_WAIT + START_WAIT).
+const LOCK_STALE: Duration = Duration::from_secs(START_WAIT.as_secs() + EXIT_WAIT.as_secs() + 10);
 
 /// `omp-` + 16 lowercase hex, as `ccc_core::room_id` makes and `8sync ls` prints (`inbox_id`).
 pub(super) fn valid_room_id(s: &str) -> bool {
@@ -178,33 +183,72 @@ fn query_end(b: &[u8], i: usize) -> Option<usize> {
     }
 }
 
+/// Where a viewer's bytes go. Never blocks (the hub calls it under its lock); `false` drops the viewer.
+pub(super) trait Viewer {
+    fn send(&self, b: Arc<[u8]>) -> bool;
+}
+
+impl<T: Viewer + ?Sized> Viewer for Box<T> {
+    fn send(&self, b: Arc<[u8]>) -> bool {
+        (**self).send(b)
+    }
+}
+
+/// Chunks a socket viewer may fall behind before it is dropped.
+const QUEUE: usize = 512;
+
+/// A socket viewer: its own thread writes a bounded queue out, so a slow client never holds the
+/// hub (another client's ACK, the terminal's output) while its socket is full.
+pub(super) struct Queue(SyncSender<Arc<[u8]>>);
+
+impl Queue {
+    pub(super) fn spawn<W: Write + Send + 'static>(mut w: W) -> Queue {
+        let (tx, rx) = sync_channel::<Arc<[u8]>>(QUEUE);
+        std::thread::spawn(move || {
+            for b in rx {
+                if w.write_all(&b).and_then(|_| w.flush()).is_err() {
+                    break;
+                }
+            }
+        });
+        Queue(tx)
+    }
+}
+
+impl Viewer for Queue {
+    fn send(&self, b: Arc<[u8]>) -> bool {
+        self.0.try_send(b).is_ok()
+    }
+}
+
 /// Output of the room's terminal: the last [`KEEP`] bytes, and the viewers it streams to.
-pub(super) struct Hub<W> {
+pub(super) struct Hub<V> {
     kept: VecDeque<u8>,
-    viewers: Vec<(u64, W)>,
+    viewers: Vec<(u64, V)>,
     next: u64,
 }
 
-impl<W: Write> Hub<W> {
+impl<V: Viewer> Hub<V> {
     pub(super) fn new() -> Self {
         Hub { kept: VecDeque::new(), viewers: Vec::new(), next: 0 }
     }
 
-    /// New output: kept, and sent to every viewer; one that cannot take it is dropped.
+    /// New output: kept, and queued to every viewer; one that cannot take it is dropped.
     pub(super) fn push(&mut self, b: &[u8]) {
         self.kept.extend(b);
         let over = self.kept.len().saturating_sub(KEEP);
         self.kept.drain(..over);
-        self.viewers.retain_mut(|(_, w)| w.write_all(b).and_then(|_| w.flush()).is_ok());
+        let chunk: Arc<[u8]> = b.into();
+        self.viewers.retain(|(_, v)| v.send(chunk.clone()));
     }
 
     /// A viewer gets [`ACK`], then the kept screen without its queries, then live output.
-    pub(super) fn join(&mut self, mut w: W) -> Option<u64> {
+    pub(super) fn join(&mut self, v: V) -> Option<u64> {
         let (a, b) = self.kept.as_slices();
         let replay = strip_queries(&[a, b].concat());
-        w.write_all(ACK).and_then(|_| w.write_all(&replay)).and_then(|_| w.flush()).ok()?;
+        (v.send(ACK.into()) && v.send(replay.into())).then_some(())?;
         self.next += 1;
-        self.viewers.push((self.next, w));
+        self.viewers.push((self.next, v));
         Some(self.next)
     }
 
@@ -217,9 +261,9 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// One client connection (`reader`/`viewer` are its halves): the hello (token + size), then its
-/// control lines into the terminal until it disconnects. A wrong token gets nothing at all.
-pub(super) fn serve<R: Read, W: Write>(reader: R, viewer: W, token: &str, hub: &Mutex<Hub<W>>, after_hello: impl FnOnce(), mut to_term: impl FnMut(Ctl)) {
+/// One client connection (`reader` and its `viewer`): the hello (token + size), then its control
+/// lines into the terminal until it disconnects. A wrong token gets nothing at all.
+pub(super) fn serve<R: Read, V: Viewer>(reader: R, viewer: V, token: &str, hub: &Mutex<Hub<V>>, after_hello: impl FnOnce(), mut to_term: impl FnMut(Ctl)) {
     let mut rd = BufReader::new(reader);
     let mut first = String::new();
     if (&mut rd).take(4096).read_line(&mut first).is_err() {
@@ -266,21 +310,25 @@ const SECOND_STAGE: &str = "EIGHTSYNC_TERM_HOST";
 /// [`host`], its error kept next to the record (the host has no console to print it on). The first
 /// stage only starts a detached copy of itself and exits, so the host is out of the process tree of
 /// the client that started it (a tree kill of HQ, `taskkill /T`, must not take omp with it).
+/// From the client's spawn on, the host owns the client's [`StartLock`]: it goes once the host is
+/// up or has failed, also when the client was killed meanwhile.
 pub(super) fn host_logged(env: &Env, id: &str, restore: bool, cols: u16, rows: u16) -> Result<()> {
-    if std::env::var_os(SECOND_STAGE).is_none() {
+    let r = if std::env::var_os(SECOND_STAGE).is_none() {
         std::env::set_var(SECOND_STAGE, "1");
-        let exe = std::env::current_exe().context("không thấy đường dẫn 8sync")?;
-        super::awake::spawn_detached(&exe, &std::env::args().skip(1).collect::<Vec<_>>())?;
-        return Ok(());
-    }
-    std::env::remove_var(SECOND_STAGE);
-    let r = host(env, id, restore, cols, rows);
+        std::env::current_exe()
+            .context("không thấy đường dẫn 8sync")
+            .and_then(|exe| super::awake::spawn_detached(&exe, &std::env::args().skip(1).collect::<Vec<_>>()).map(drop))
+    } else {
+        std::env::remove_var(SECOND_STAGE);
+        host(env, id, restore, cols, rows)
+    };
     if let Err(e) = &r {
-        let log = state_path(&env.home, id).with_extension("log");
-        if let Some(dir) = log.parent() {
+        let state = state_path(&env.home, id);
+        if let Some(dir) = state.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let _ = std::fs::write(log, format!("{e:#}\n"));
+        let _ = std::fs::write(state.with_extension("log"), format!("{e:#}\n"));
+        let _ = std::fs::remove_file(lock_path(&state));
     }
     r
 }
@@ -289,8 +337,13 @@ pub(super) fn host_logged(env: &Env, id: &str, restore: bool, cols: u16, rows: u
 /// is answered: the host answers it, so omp starts with no viewer and no viewer answers it twice.
 const OPENING_QUERY: &[u8] = b"\x1b[6n";
 
+/// `restore` (a takeover): first end the omp that has the session open elsewhere, here in the
+/// detached host, so a client killed meanwhile never leaves the room without omp.
 fn host(env: &Env, id: &str, restore: bool, cols: u16, rows: u16) -> Result<()> {
     let room = resolve(env, id)?;
+    if restore {
+        end_session(&room.session_dir)?;
+    }
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).context("không mở được cổng trên 127.0.0.1")?;
     let port = listener.local_addr()?.port();
     let token = new_token()?;
@@ -305,7 +358,8 @@ fn host(env: &Env, id: &str, restore: bool, cols: u16, rows: u16) -> Result<()> 
         let _ = child.kill();
         return Err(e);
     }
-    let hub: Arc<Mutex<Hub<TcpStream>>> = Arc::new(Mutex::new(Hub::new()));
+    let _ = std::fs::remove_file(lock_path(&state));
+    let hub: Arc<Mutex<Hub<Queue>>> = Arc::new(Mutex::new(Hub::new()));
     let writer = Arc::new(Mutex::new(writer));
     let master = Arc::new(Mutex::new(master));
 
@@ -354,11 +408,11 @@ fn host(env: &Env, id: &str, restore: bool, cols: u16, rows: u16) -> Result<()> 
             // Socket timeouts are per handle on Windows (a `try_clone` does not follow a later change):
             // the hello is read from `s` itself, whose timeout `after_hello` clears.
             let _ = s.set_read_timeout(Some(HELLO_WAIT));
-            let Ok(viewer) = s.try_clone() else { return };
-            let _ = viewer.set_write_timeout(Some(Duration::from_secs(2)));
+            let Ok(out) = s.try_clone() else { return };
+            let _ = out.set_write_timeout(Some(Duration::from_secs(10)));
             serve(
                 &s,
-                viewer,
+                Queue::spawn(out),
                 &token,
                 &hub,
                 || {
@@ -382,19 +436,26 @@ fn host(env: &Env, id: &str, restore: bool, cols: u16, rows: u16) -> Result<()> 
 
 // ── client ──────────────────────────────────────────────────────────────────
 
-/// What a client does when no host answers: start one, or not while another omp has the session.
+/// What a client does when no host answers: start one, wait for ours, or not while another omp has the session.
 #[derive(Debug, PartialEq)]
 pub(super) enum Plan {
     Start,
+    /// The session's omp is our own host's (busy, or still starting): connect again, never report or take it over.
+    Wait,
     Elsewhere(u32),
-    Takeover(Vec<u32>),
+    Takeover,
 }
 
-pub(super) fn plan(live: &[u32], takeover: bool) -> Plan {
+/// `live`: omp pids that have the session open; `host_omp`: the omp of this room's host record
+/// (only from a host that is alive and runs this 8sync, see [`host_is_ours`]).
+pub(super) fn plan(live: &[u32], host_omp: Option<u32>, takeover: bool) -> Plan {
+    if host_omp.is_some_and(|p| live.contains(&p)) {
+        return Plan::Wait;
+    }
     match (live.first(), takeover) {
         (None, _) => Plan::Start,
         (Some(&p), false) => Plan::Elsewhere(p),
-        (Some(_), true) => Plan::Takeover(live.to_vec()),
+        (Some(_), true) => Plan::Takeover,
     }
 }
 
@@ -404,9 +465,20 @@ pub(super) fn session_pids(procs: &[(u32, Vec<u8>)], session_dir: &Path) -> Vec<
     procs.iter().filter(|(_, argv)| ccc_core::transcript::proc_match(argv, &dir)).map(|(p, _)| *p).collect()
 }
 
-/// The live host of room `id` (its record, its port, its token taken), the hello sent.
+/// `pid` is alive and runs this very 8sync executable: a host record's process, not whatever got its pid.
+fn host_is_ours(pid: u32) -> bool {
+    let (Some(img), Ok(me)) = (ccc_core::transcript::process_image(pid), std::env::current_exe()) else { return false };
+    matches!((std::fs::canonicalize(img), std::fs::canonicalize(me)), (Ok(a), Ok(b)) if a == b)
+}
+
+/// The live host of room `id`, the hello sent. A record whose host is gone (or whose pid now runs
+/// another program) is deleted unread: its token never goes to whatever listens on that port now.
 fn connect(state: &Path, id: &str, cols: u16, rows: u16) -> Option<TcpStream> {
     let s = read_state(state, id)?;
+    if !host_is_ours(s.pid) {
+        let _ = std::fs::remove_file(state);
+        return None;
+    }
     let mut c = TcpStream::connect_timeout(&SocketAddr::from((Ipv4Addr::LOCALHOST, s.port)), Duration::from_secs(2)).ok()?;
     c.set_read_timeout(Some(Duration::from_secs(3))).ok()?;
     c.write_all(hello(&s.token, cols, rows).as_bytes()).ok()?;
@@ -417,17 +489,21 @@ fn connect(state: &Path, id: &str, cols: u16, rows: u16) -> Option<TcpStream> {
     (ack == ACK).then_some(c)
 }
 
-fn wait_host(state: &Path, id: &str, cols: u16, rows: u16) -> Result<TcpStream> {
-    let until = Instant::now() + START_WAIT;
+fn wait_host(state: &Path, id: &str, cols: u16, rows: u16, wait: Duration) -> Result<TcpStream> {
+    let until = Instant::now() + wait;
     loop {
         if let Some(c) = connect(state, id, cols, rows) {
             return Ok(c);
         }
         if Instant::now() > until {
-            bail!("omp chưa lên sau {} s (xem {})", START_WAIT.as_secs(), state.with_extension("log").display());
+            bail!("omp chưa lên sau {} s (xem {})", wait.as_secs(), state.with_extension("log").display());
         }
         std::thread::sleep(Duration::from_millis(150));
     }
+}
+
+fn lock_path(state: &Path) -> PathBuf {
+    state.with_extension("lock")
 }
 
 /// Held while a client starts the host, so two clients never start two.
@@ -442,7 +518,7 @@ impl StartLock {
                 Ok(_) => return Ok(Some(StartLock(p.to_path_buf()))),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     let age = std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
-                    if age.is_some_and(|a| a < START_WAIT + EXIT_WAIT) {
+                    if age.is_some_and(|a| a < LOCK_STALE) {
                         return Ok(None);
                     }
                     let _ = std::fs::remove_file(p);
@@ -460,13 +536,37 @@ impl Drop for StartLock {
     }
 }
 
-/// Ends `pid` with its tree (never by image name).
-fn kill_tree(pid: u32) {
+/// Takeover kill order for `root` (an omp that has the session open): its descendants in `procs`,
+/// children before parents, then `root`. omp's shared worker daemons (`omp __omp_worker_daemon…`,
+/// which the owner's other omp sessions use too) and everything under them are left alone. A
+/// "child" started before its parent is not one (its dead parent's pid was reused) and is skipped.
+pub(super) fn kill_order(procs: &[ProcEntry], root: u32) -> Vec<ProcEntry> {
+    fn daemon(p: &ProcEntry) -> bool {
+        p.argv.get(1).is_some_and(|a| a.starts_with("__omp_worker_daemon"))
+    }
+    fn walk(procs: &[ProcEntry], p: &ProcEntry, seen: &mut Vec<u32>, out: &mut Vec<ProcEntry>) {
+        seen.push(p.pid);
+        for c in procs.iter().filter(|c| c.ppid == p.pid && c.started != 0 && c.started >= p.started && !daemon(c)) {
+            if !seen.contains(&c.pid) {
+                walk(procs, c, seen, out);
+            }
+        }
+        out.push(p.clone());
+    }
+    let mut out = Vec::new();
+    if let Some(r) = procs.iter().find(|p| p.pid == root).filter(|r| !daemon(r)) {
+        walk(procs, r, &mut Vec::new(), &mut out);
+    }
+    out
+}
+
+/// Ends one process, never its tree and never by image name.
+fn kill_pid(pid: u32) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .args(["/PID", &pid.to_string(), "/F"])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -479,10 +579,24 @@ fn kill_tree(pid: u32) {
     }
 }
 
-/// Takeover: ends the processes that hold the session and waits until none is left.
-fn end_session(pids: &[u32], session_dir: &Path) -> Result<()> {
-    for &p in pids {
-        kill_tree(p);
+/// Takeover (in the host, before its own omp starts): ends every omp that has the session open,
+/// with its own children ([`kill_order`]), one pid at a time, each only while a fresh snapshot still
+/// shows that very process (same pid, parent, start time and argv); then waits until none is left.
+fn end_session(session_dir: &Path) -> Result<()> {
+    let live = session_pids(&ccc_core::transcript::agent_procs(), session_dir);
+    let snap = ccc_core::transcript::processes();
+    let mut order: Vec<ProcEntry> = Vec::new();
+    for &root in &live {
+        for p in kill_order(&snap, root) {
+            if !order.iter().any(|q| q.pid == p.pid) {
+                order.push(p);
+            }
+        }
+    }
+    for p in &order {
+        if ccc_core::transcript::processes().contains(p) {
+            kill_pid(p.pid);
+        }
     }
     let until = Instant::now() + EXIT_WAIT;
     loop {
@@ -531,16 +645,21 @@ pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool) 
     if let Some(s) = connect(&state, id, cols, rows) {
         return relay(s);
     }
-    let Some(lock) = StartLock::take(&state.with_extension("lock"))? else {
-        return relay(wait_host(&state, id, cols, rows)?);
+    let Some(lock) = StartLock::take(&lock_path(&state))? else {
+        return relay(wait_host(&state, id, cols, rows, LOCK_STALE)?);
     };
     if let Some(s) = connect(&state, id, cols, rows) {
         drop(lock);
         return relay(s);
     }
-    let _ = std::fs::remove_file(&state);
+    // `connect` already dropped a record whose host is gone; one left is a live host of ours that did not answer in time.
+    let host_omp = read_state(&state, id).and_then(|r| r.omp_pid);
     let live = session_pids(&ccc_core::transcript::agent_procs(), &room.session_dir);
-    let restore = match plan(&live, takeover) {
+    let restore = match plan(&live, host_omp, takeover) {
+        Plan::Wait => {
+            drop(lock);
+            return relay(wait_host(&state, id, cols, rows, START_WAIT)?);
+        }
         Plan::Start => false,
         Plan::Elsewhere(pid) => {
             drop(lock);
@@ -549,20 +668,19 @@ pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool) 
             let _ = out.flush();
             std::process::exit(ELSEWHERE);
         }
-        Plan::Takeover(pids) => {
-            end_session(&pids, &room.session_dir)?;
-            true
-        }
+        // The host ends the other omp itself (see [`host`]).
+        Plan::Takeover => true,
     };
+    let _ = std::fs::remove_file(&state);
     let exe = std::env::current_exe().context("không thấy đường dẫn 8sync")?;
     let mut args: Vec<String> = ["ccc", "term", "--host", id, "--cols", &cols.to_string(), "--rows", &rows.to_string()].map(String::from).to_vec();
     if restore {
         args.push("--restore".into());
     }
     super::awake::spawn_detached(&exe, &args).context("không chạy được host terminal omp")?;
-    let s = wait_host(&state, id, cols, rows)?;
-    drop(lock);
-    relay(s)
+    // From here the host owns the lock (see [`host_logged`]), also if this client is killed.
+    std::mem::forget(lock);
+    relay(wait_host(&state, id, cols, rows, LOCK_STALE)?)
 }
 
 #[cfg(test)]
@@ -575,24 +693,34 @@ mod tests {
     /// A viewer whose bytes the test reads after `serve` moved it into the hub.
     #[derive(Clone, Default)]
     struct Seen(Arc<Mutex<Vec<u8>>>);
-    impl Write for Seen {
-        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-            lock(&self.0).extend_from_slice(b);
-            Ok(b.len())
+    impl Viewer for Seen {
+        fn send(&self, b: Arc<[u8]>) -> bool {
+            lock(&self.0).extend_from_slice(&b);
+            true
+        }
+    }
+
+    struct Broken;
+    impl Viewer for Broken {
+        fn send(&self, _: Arc<[u8]>) -> bool {
+            false
+        }
+    }
+
+    /// A socket that never takes a byte (a client that stopped reading).
+    struct Stuck(std::sync::mpsc::Receiver<()>);
+    impl Write for Stuck {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            let _ = self.0.recv();
+            Err(std::io::ErrorKind::BrokenPipe.into())
         }
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
     }
 
-    struct Broken;
-    impl Write for Broken {
-        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-            Err(std::io::ErrorKind::BrokenPipe.into())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
+    fn proc(pid: u32, ppid: u32, started: u64, argv: &[&str]) -> ProcEntry {
+        ProcEntry { pid, ppid, started, argv: argv.iter().map(|s| s.to_string()).collect() }
     }
 
     #[test]
@@ -647,7 +775,7 @@ mod tests {
 
     #[test]
     fn the_hub_keeps_256_kb_and_drops_a_viewer_that_cannot_keep_up() {
-        let mut hub: Hub<Box<dyn Write>> = Hub::new();
+        let mut hub: Hub<Box<dyn Viewer>> = Hub::new();
         hub.push(&vec![b'x'; KEEP + 10]);
         assert_eq!(hub.kept.len(), KEEP);
         let seen = Seen::default();
@@ -657,6 +785,22 @@ mod tests {
         assert_eq!(lock(&seen.0).len(), ACK.len() + KEEP);
         hub.push(b"live");
         assert!(lock(&seen.0).ends_with(b"live"));
+    }
+
+    #[test]
+    fn a_stuck_client_never_holds_the_hub_and_another_client_still_gets_its_ack_at_once() {
+        let (_hold, rx) = std::sync::mpsc::channel();
+        let mut hub: Hub<Box<dyn Viewer>> = Hub::new();
+        hub.join(Box::new(Queue::spawn(Stuck(rx)))).unwrap();
+        let t = Instant::now();
+        for _ in 0..QUEUE + 4 {
+            hub.push(b"chunk");
+        }
+        assert!(t.elapsed() < Duration::from_secs(1), "pushing never waits on a socket");
+        assert!(hub.viewers.is_empty(), "the stuck client is dropped once its queue is full");
+        let seen = Seen::default();
+        hub.join(Box::new(seen.clone())).unwrap();
+        assert!(lock(&seen.0).starts_with(ACK));
     }
 
     #[test]
@@ -686,14 +830,15 @@ mod tests {
         let p = state_path(&dir, id);
         let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = l.local_addr().unwrap().port();
-        write_state(&p, &HostState { pid: 1, omp_pid: None, port, token: TOKEN.into(), room: id.into() }).unwrap();
+        // This test binary is its own "8sync": a record of a live process running this executable.
+        write_state(&p, &HostState { pid: std::process::id(), omp_pid: None, port, token: TOKEN.into(), room: id.into() }).unwrap();
         let fake = std::thread::spawn(move || {
             for _ in 0..2 {
                 let (s, _) = l.accept().unwrap();
-                let hub: Mutex<Hub<TcpStream>> = Mutex::new(Hub::new());
+                let hub: Mutex<Hub<Queue>> = Mutex::new(Hub::new());
                 lock(&hub).push(b"omp ready");
                 let mut got = Vec::new();
-                serve(s.try_clone().unwrap(), s.try_clone().unwrap(), TOKEN, &hub, || {}, |c| got.push(c));
+                serve(s.try_clone().unwrap(), Queue::spawn(s.try_clone().unwrap()), TOKEN, &hub, || {}, |c| got.push(c));
                 assert_eq!(got.first(), Some(&Ctl::Resize(80, 24)));
             }
         });
@@ -706,12 +851,47 @@ mod tests {
         assert!(connect(&p, id, 80, 24).is_some());
         fake.join().unwrap();
         assert!(connect(&p, id, 80, 24).is_none(), "nothing listens any more");
+        assert!(p.exists(), "a host of ours that does not answer keeps its record (it may be busy)");
         assert!(connect(&p, "omp-0000000000000004", 80, 24).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn a_session_open_elsewhere_is_reported_and_only_its_own_processes_are_taken_over() {
+    fn a_record_whose_pid_is_gone_or_runs_another_program_gets_no_token_and_is_deleted() {
+        let dir = std::env::temp_dir().join(format!("omp-term-stale-{}", std::process::id()));
+        let id = "omp-0000000000000005";
+        let p = state_path(&dir, id);
+        let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        l.set_nonblocking(true).unwrap();
+        let port = l.local_addr().unwrap().port();
+        let quiet = |c: &mut std::process::Command| {
+            c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        };
+        let mut gone = if cfg!(windows) { std::process::Command::new("cmd") } else { std::process::Command::new("true") };
+        if cfg!(windows) {
+            gone.args(["/c", "exit"]);
+        }
+        quiet(&mut gone);
+        let mut gone = gone.spawn().unwrap();
+        let gone_pid = gone.id();
+        gone.wait().unwrap();
+        let mut other = if cfg!(windows) { std::process::Command::new("ping") } else { std::process::Command::new("sleep") };
+        other.args(if cfg!(windows) { ["-n", "30", "127.0.0.1"].as_slice() } else { ["30"].as_slice() });
+        quiet(&mut other);
+        let mut other = other.spawn().unwrap();
+        for pid in [gone_pid, other.id()] {
+            write_state(&p, &HostState { pid, omp_pid: Some(pid), port, token: TOKEN.into(), room: id.into() }).unwrap();
+            assert!(connect(&p, id, 80, 24).is_none(), "pid {pid}");
+            assert!(!p.exists(), "the stale record is deleted");
+            assert!(l.accept().is_err(), "nothing connected to the port, so no token was sent");
+        }
+        let _ = other.kill();
+        let _ = other.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_session_open_elsewhere_is_reported_and_our_own_busy_host_is_waited_for() {
         let sd = if cfg!(windows) { r"C:\Users\A\.config\8sync\sessions\C--r\core" } else { "/home/a/.config/8sync/sessions/-r/core" };
         let argv = |v: &[&str]| v.join("\0").into_bytes();
         let jsonl = format!("{sd}{}2026_x.jsonl", std::path::MAIN_SEPARATOR);
@@ -724,10 +904,41 @@ mod tests {
         ];
         let live = session_pids(&procs, Path::new(sd));
         assert_eq!(live, [10, 11]);
-        assert_eq!(plan(&live, false), Plan::Elsewhere(10));
-        assert_eq!(plan(&live, true), Plan::Takeover(vec![10, 11]));
-        assert_eq!(plan(&[], false), Plan::Start, "idle: the host starts");
-        assert_eq!(plan(&[], true), Plan::Start, "a takeover with nothing to take over just starts");
+        assert_eq!(plan(&live, None, false), Plan::Elsewhere(10));
+        assert_eq!(plan(&live, None, true), Plan::Takeover);
+        assert_eq!(plan(&[], None, false), Plan::Start, "idle: the host starts");
+        assert_eq!(plan(&[], None, true), Plan::Start, "a takeover with nothing to take over just starts");
+        // The omp holding the session is our own host's (it did not answer in time): wait for it, never report or kill it.
+        assert_eq!(plan(&[11], Some(11), false), Plan::Wait);
+        assert_eq!(plan(&[11], Some(11), true), Plan::Wait);
+        assert_eq!(plan(&[10], Some(11), false), Plan::Elsewhere(10), "a record whose omp is gone does not count");
+    }
+
+    #[test]
+    fn a_takeover_kills_the_sessions_omp_and_its_own_children_but_never_the_shared_worker_daemons() {
+        let procs = vec![
+            proc(1, 0, 1, &["explorer.exe"]),
+            proc(5, 1, 50, &["pwsh.exe"]),
+            proc(18480, 5, 100, &["omp", "--resume", "core.jsonl"]),
+            proc(34212, 18480, 110, &["omp.exe", "__omp_worker_daemon_broker"]),
+            proc(37764, 34212, 120, &["omp.exe", "__omp_worker_text_predict"]),
+            proc(39676, 18480, 130, &["omp.exe", "__omp_worker_js_eval_process"]),
+            proc(40000, 39676, 140, &["node.exe", "tool.js"]),
+            proc(41000, 18480, 150, &["bash.exe", "-c", "cargo test"]),
+            // Started before omp: its dead parent had omp's pid (reused), so it is not omp's child.
+            proc(222, 18480, 90, &["sshd.exe"]),
+            proc(31884, 5, 160, &["omp", "--resume", "other.jsonl"]),
+        ];
+        let order: Vec<u32> = kill_order(&procs, 18480).iter().map(|p| p.pid).collect();
+        assert_eq!(order, [40000, 39676, 41000, 18480], "children before parents, the root last");
+        for spared in [34212, 37764, 222, 31884, 5, 1] {
+            assert!(!order.contains(&spared), "{spared}");
+        }
+        assert!(kill_order(&procs, 34212).is_empty(), "a worker daemon is never a takeover root");
+        assert!(kill_order(&procs, 99).is_empty(), "a pid that is gone");
+        let mut cycle = procs.clone();
+        cycle.push(proc(18480, 41000, 100, &["omp"]));
+        assert!(kill_order(&cycle, 18480).len() <= cycle.len(), "a parent loop ends");
     }
 
     #[test]

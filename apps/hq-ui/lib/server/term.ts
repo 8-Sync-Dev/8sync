@@ -80,13 +80,19 @@ export function openTerm(id: string, cwd: string | null, size: { cols: number; r
 }
 
 /**
- * "Chuyển sang HQ": an omp room whose session is open in another terminal. The bridge ends that
- * process (only that session's, matched by the CLI) and opens the session here; a bridge already
- * connected has nothing to take over and is returned as is.
+ * "Chuyển sang HQ": an omp room whose session is open in another terminal. The bridge's detached
+ * host ends that process (only that session's, matched by the CLI) and opens the session here; a
+ * bridge already connected has nothing to take over and is returned as is. Until a viewer joins it
+ * closes like an unwatched one (a page that never reconnects must not keep it forever).
  */
 export function takeoverTerm(id: string, cwd: string | null, size: { cols: number; rows: number }, spawn: Spawn = nodeSpawn as unknown as Spawn): Term {
   if (!isOmpRoomId(id)) throw new Error("only an omp room is taken over");
-  return start(id, termArgs(id, size.cols, size.rows, true), cwd, IDLE_CLOSE_MS, spawn);
+  const t = start(id, termArgs(id, size.cols, size.rows, true), cwd, IDLE_CLOSE_MS, spawn);
+  if (t.viewers.size === 0) {
+    clearTimeout(t.idle);
+    t.idle = setTimeout(() => closeTerm(id), t.idleMs);
+  }
+  return t;
 }
 
 /** The owner's shell, started in `cwd` on first use; later opens join the running one. */

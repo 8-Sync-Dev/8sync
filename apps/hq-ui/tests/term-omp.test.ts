@@ -23,7 +23,7 @@ vi.mock("node:child_process", async (orig) => ({
 import { DELETE, GET, POST } from "@/app/api/sessions/[name]/term/route";
 import { getToken } from "@/lib/server/auth";
 import { resetFloorCache } from "@/lib/server/floor";
-import { ELSEWHERE_EXIT, closeTerm, openTerm, poll, takeoverTerm, termArgs, termOpen, watch } from "@/lib/server/term";
+import { ELSEWHERE_EXIT, IDLE_CLOSE_MS, closeTerm, openTerm, poll, takeoverTerm, termArgs, termOpen, watch } from "@/lib/server/term";
 import { activityScreen } from "@/lib/term-activity";
 import { ORIGIN, req, tempHome } from "./helpers";
 
@@ -108,6 +108,22 @@ describe("an omp room's terminal", () => {
     run.mockResolvedValue(lsOut([{ ...ompRow, repo: "~\\w\\app" }]));
     await GET(req(`/api/sessions/${ROOM}/term?gen=0&since=-1`, { token }), params(ROOM));
     expect(spawned.map((s) => s.cwd)).toEqual([`${os.homedir()}\\w\\app`]);
+  });
+
+  it("a takeover bridge no page reconnects to closes after the idle time; a viewer keeps it", () => {
+    vi.useFakeTimers();
+    try {
+      takeoverTerm(ROOM, null, { cols: 80, rows: 24 });
+      vi.advanceTimersByTime(IDLE_CLOSE_MS + 1);
+      expect(termOpen(ROOM)).toBe(false);
+      const t = takeoverTerm(ROOM, null, { cols: 80, rows: 24 });
+      const stop = watch(ROOM, t, () => {});
+      vi.advanceTimersByTime(IDLE_CLOSE_MS * 2);
+      expect(termOpen(ROOM)).toBe(true);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("closing the drawer only ends the bridge (the connection to the omp host)", async () => {

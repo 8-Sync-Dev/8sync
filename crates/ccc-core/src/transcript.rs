@@ -381,9 +381,8 @@ mod win {
         }
     }
 
-    /// Pid and command line of every process whose image is `exe` (any case).
-    pub(super) fn command_lines(exe: &str) -> Vec<(u32, String)> {
-        let Some(query) = nt_query() else { return Vec::new() };
+    /// Pid, parent pid and image name of every running process (Toolhelp walk).
+    fn snapshot() -> Vec<(u32, u32, String)> {
         let mut out = Vec::new();
         // SAFETY: plain Toolhelp walk; the entry is sized as the API requires and the snapshot is closed.
         unsafe {
@@ -396,14 +395,129 @@ mod win {
             let mut more = Process32FirstW(snap, &mut e) != 0;
             while more {
                 let n = e.sz_exe_file.iter().position(|c| *c == 0).unwrap_or(e.sz_exe_file.len());
-                if String::from_utf16_lossy(&e.sz_exe_file[..n]).eq_ignore_ascii_case(exe) {
-                    out.extend(command_line(query, e.th32_process_id).map(|c| (e.th32_process_id, c)));
-                }
+                out.push((e.th32_process_id, e.th32_parent_process_id, String::from_utf16_lossy(&e.sz_exe_file[..n])));
                 more = Process32NextW(snap, &mut e) != 0;
             }
             CloseHandle(snap);
         }
         out
+    }
+
+    /// Pid and command line of every process whose image is `exe` (any case).
+    pub(super) fn command_lines(exe: &str) -> Vec<(u32, String)> {
+        let Some(query) = nt_query() else { return Vec::new() };
+        snapshot().into_iter().filter(|(_, _, name)| name.eq_ignore_ascii_case(exe)).filter_map(|(pid, _, _)| command_line(query, pid).map(|c| (pid, c))).collect()
+    }
+
+    /// Creation time (FILETIME) of `pid`, 0 when it is gone or not ours to read.
+    fn created(pid: u32) -> u64 {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetProcessTimes(h: Handle, created: *mut u64, exited: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
+        }
+        // SAFETY: the handle is checked and closed once; every out-pointer is a writable u64 (FILETIME).
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return 0;
+            }
+            let (mut c, mut x) = (0u64, 0u64);
+            let ok = GetProcessTimes(h, &mut c, &mut x, &mut x, &mut x) != 0;
+            CloseHandle(h);
+            if ok {
+                c
+            } else {
+                0
+            }
+        }
+    }
+
+    /// Every process, its argv split like `CommandLineToArgvW` (just the image name when its command line is not ours to read).
+    pub(super) fn processes() -> Vec<super::ProcEntry> {
+        let query = nt_query();
+        snapshot()
+            .into_iter()
+            .map(|(pid, ppid, name)| {
+                let argv = query.and_then(|q| command_line(q, pid)).map(|c| super::win_args(&c)).filter(|a| !a.is_empty()).unwrap_or_else(|| vec![name]);
+                super::ProcEntry { pid, ppid, started: created(pid), argv }
+            })
+            .collect()
+    }
+
+    /// Full path of the image `pid` runs; None when it is gone or not ours to read.
+    pub(super) fn image(pid: u32) -> Option<std::path::PathBuf> {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn QueryFullProcessImageNameW(h: Handle, flags: u32, name: *mut u16, len: *mut u32) -> i32;
+        }
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        // SAFETY: the handle is checked and closed once; `buf`/`len` are a writable buffer and its length.
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None;
+            }
+            let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0;
+            CloseHandle(h);
+            ok.then(|| String::from_utf16_lossy(&buf[..len as usize]).into())
+        }
+    }
+}
+
+/// One running process for a takeover's tree walk ([`processes`]). `started`: its creation time
+/// (Windows FILETIME, Linux clock ticks since boot; 0 = unknown), which tells a real child from a
+/// process whose dead parent's pid was reused.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProcEntry {
+    pub pid: u32,
+    pub ppid: u32,
+    pub started: u64,
+    pub argv: Vec<String>,
+}
+
+/// Every running process with its parent and argv. Linux: `/proc`; Windows: Toolhelp + command
+/// lines read in-process. Empty elsewhere.
+pub fn processes() -> Vec<ProcEntry> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut out = Vec::new();
+        for e in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+            let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+            // `pid (comm) state ppid … starttime(22) …`: comm may hold spaces and parens, so read after the last `)`.
+            let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { continue };
+            let rest: Vec<&str> = stat.rsplit_once(')').map(|(_, r)| r.split_whitespace().collect()).unwrap_or_default();
+            let Some(ppid) = rest.get(1).and_then(|s| s.parse().ok()) else { continue };
+            let started = rest.get(19).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let argv = std::fs::read(e.path().join("cmdline")).unwrap_or_default().split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+            out.push(ProcEntry { pid, ppid, started, argv });
+        }
+        out
+    }
+    #[cfg(windows)]
+    {
+        win::processes()
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        Vec::new()
+    }
+}
+
+/// Full path of the program `pid` runs, None when it is gone or unreadable.
+pub fn process_image(pid: u32) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_link(format!("/proc/{pid}/exe")).ok()
+    }
+    #[cfg(windows)]
+    {
+        win::image(pid)
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = pid;
+        None
     }
 }
 
