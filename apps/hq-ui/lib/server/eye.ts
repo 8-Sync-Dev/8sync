@@ -6,10 +6,9 @@ import { EYE_ROOM, eyeDue, eyeSend, type EyePending } from "../eye";
 import { rootKey, type ProjectPreviews } from "../preview";
 import { readBoard, type ProjectBoard } from "./board";
 import { tx } from "./db";
-import { mergedSessions, run } from "./proc";
-import { projectOf } from "./office";
+import { run } from "./proc";
+import { projectsInView } from "./in-view";
 import { listPreviews } from "./preview";
-import { liveProjects } from "./targets";
 import { tail } from "./team";
 
 export const eyeArgs = (on: boolean) => (on ? ["ccc", "auto", "up", "--add", EYE_ROOM] : ["ccc", "auto", "down", "--only", EYE_ROOM]);
@@ -114,7 +113,7 @@ export async function eyeAutoTick(db: DatabaseSync): Promise<{ root: string; car
   if (autoRun || !db.prepare("SELECT 1 FROM eye_on LIMIT 1").get()) return [];
   const on = new Set((db.prepare("SELECT key FROM eye_on").all() as { key: string }[]).map((r) => r.key));
   const job = (async () => {
-    const live = liveProjects(await mergedSessions(db), (cwd) => projectOf(cwd)).filter((p) => on.has(rootKey(p.root)));
+    const live = (await projectsInView(db)).filter((p) => on.has(rootKey(p.root)));
     return live.length ? eyeTick(db, await listPreviews(live)) : [];
   })();
   autoRun = job;

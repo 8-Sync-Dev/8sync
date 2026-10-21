@@ -79,7 +79,11 @@ function markEnded(db: DatabaseSync, s: SessionView): void {
 export async function endRoom(db: DatabaseSync, name: string, action: RoomAction): Promise<EndResult> {
   if (isOmpRoomId(name)) return fail(409, "Phòng omp: dừng cả đội bằng “Dừng team” của dự án.");
   const s = (await mergedSessions(db)).find((x) => x.name === name);
-  if (!s || (action === "close" && s.status === "ended")) return fail(404, "Phòng này không còn chạy.");
+  if (!s || (action === "close" && s.status === "ended")) {
+    // Without `claude agents` nothing is known alive: say so instead of "it stopped" (it may still run).
+    if (!(await listClaudeAgents())) return fail(502, "Không gọi được `claude agents`: chưa biết phòng còn chạy không, thử lại sau.");
+    return fail(404, "Phòng này không còn chạy.");
+  }
 
   if (s.source === "tmux") {
     const r = await stopTmux(s.name);

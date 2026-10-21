@@ -94,6 +94,15 @@ describe("POST /api/sessions/[name]/end", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("`claude agents` down: a room HQ cannot see is not called stopped (502, try again), nothing runs", async () => {
+    merged.mockResolvedValue([session({ source: "journal", status: "ended" })]);
+    agents.mockResolvedValue(null);
+    const res = await post(SID, { action: "close" });
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toContain("claude agents");
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("close: `claude stop <short id>` only; the conversation is kept and HQ marks the room ended", async () => {
     const res = await post(SID, { action: "close" });
     expect(res.status).toBe(200);

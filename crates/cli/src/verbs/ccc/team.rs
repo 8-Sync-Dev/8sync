@@ -746,16 +746,45 @@ fn wake_key(root: &Path, name: &str) -> String {
     format!("{}|{name}", auto::canon(root).to_string_lossy())
 }
 
-/// HQ "⚡ Làm ngay" (`auto prio <id> P0` from the owner): the rooms of `root` called to take the
-/// card. The next `revive` re-arms each one it finds idle in the background with its goal ended at
-/// once (no second sighting, no backoff); a mark older than [`IDLE_STALE_S`] says nothing.
-pub(super) fn ask_wake(home: &Path, root: &Path, names: &[String], now: u64) {
-    let file = wake_file(home);
-    let mut v = idle::read_json(&file).filter(Value::is_object).unwrap_or_else(|| json!({}));
-    for n in names {
-        v[wake_key(root, n)] = json!(now);
+/// Read-modify-write of a small JSON state file two processes touch (`auto prio` and `revive`),
+/// under `<file>.lock` (create-new, retried for about a second; a lock older than 10 s belongs to a
+/// dead writer and is taken over). Past the retries it writes anyway: a lost mark costs one tick.
+pub(super) fn update_json(file: &Path, f: impl FnOnce(&mut Value)) {
+    let lock = file.with_extension("lock");
+    if let Some(d) = file.parent() {
+        let _ = std::fs::create_dir_all(d);
     }
-    idle::write_json(&file, &v);
+    let mut held = false;
+    for _ in 0..40 {
+        if std::fs::OpenOptions::new().write(true).create_new(true).open(&lock).is_ok() {
+            held = true;
+            break;
+        }
+        let stale = std::fs::metadata(&lock).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a.as_secs() >= 10);
+        if stale {
+            let _ = std::fs::remove_file(&lock);
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+    let mut v = idle::read_json(file).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    f(&mut v);
+    idle::write_json(file, &v);
+    if held {
+        let _ = std::fs::remove_file(&lock);
+    }
+}
+
+/// HQ "⚡ Làm ngay" (`auto prio <id> P0` from the owner): the rooms of `root` called to take the
+/// card. The next `revive` re-arms each one it finds idle in the background with its goal ended
+/// without the [`IDLE_CONFIRM_S`] wait or the backoff (a second fresh look [`WAKE_LOOK_GAP`] later
+/// still has to show it idle, with an empty inbox); a mark older than [`IDLE_STALE_S`] says nothing.
+pub(super) fn ask_wake(home: &Path, root: &Path, names: &[String], now: u64) {
+    update_json(&wake_file(home), |v| {
+        for n in names {
+            v[wake_key(root, n)] = json!(now);
+        }
+    });
 }
 
 /// The rooms of `root` with a fresh [`ask_wake`] mark.
@@ -764,14 +793,63 @@ fn woken(home: &Path, root: &Path, names: impl Iterator<Item = String>, now: u64
     names.filter(|n| v[wake_key(root, n)].as_u64().is_some_and(|at| now.saturating_sub(at) <= IDLE_STALE_S)).collect()
 }
 
+/// Spends the marks of rooms re-armed for real; one deferred, busy or failed keeps its mark.
 fn wake_done(home: &Path, root: &Path, names: &[String]) {
-    let file = wake_file(home);
-    if let Some(mut v) = idle::read_json(&file).filter(Value::is_object) {
-        for n in names {
-            v.as_object_mut().map(|o| o.remove(&wake_key(root, n)));
-        }
-        idle::write_json(&file, &v);
+    if names.is_empty() {
+        return;
     }
+    update_json(&wake_file(home), |v| {
+        if let Some(o) = v.as_object_mut() {
+            for n in names {
+                o.remove(&wake_key(root, n));
+            }
+        }
+    });
+}
+
+/// Between the sighting of a called room and the fresh look right before its stop: a room between
+/// two turns of its goal shows idle for a moment (the normal path waits [`IDLE_CONFIRM_S`]).
+const WAKE_LOOK_GAP: std::time::Duration = std::time::Duration::from_secs(if cfg!(test) { 0 } else { 5 });
+/// ⚡ Làm ngay mails the lead once per card this often (picking P0 again does not mail again).
+const RUSH_MAIL_S: u64 = 600;
+/// ⚡ Làm ngay starts a background `revive` at most this often.
+const RUSH_SPAWN_S: u64 = 60;
+
+fn rush_file(home: &Path) -> PathBuf {
+    idle::state_dir(home).join("rush.json")
+}
+
+/// Whether ⚡ Làm ngay on card `id` of `root` mails the lead now (none in the last [`RUSH_MAIL_S`]);
+/// true stamps it.
+pub(super) fn rush_mail_due(home: &Path, root: &Path, id: u64, now: u64) -> bool {
+    let key = format!("{}|{id}", auto::canon(root).to_string_lossy());
+    let mut due = false;
+    update_json(&rush_file(home), |v| {
+        due = !v["lead"][&key].as_u64().is_some_and(|at| now.saturating_sub(at) < RUSH_MAIL_S);
+        if due {
+            if !v["lead"].is_object() {
+                v["lead"] = json!({});
+            }
+            v["lead"][&key] = json!(now);
+        }
+    });
+    due
+}
+
+/// Whether ⚡ Làm ngay starts a background `revive` now: not when one started less than
+/// [`RUSH_SPAWN_S`] ago or a live revive / up holds the lock (its next run takes the marks). True stamps it.
+pub(super) fn rush_spawn_due(home: &Path, now: u64) -> bool {
+    if revive_running(home, now) {
+        return false;
+    }
+    let mut due = false;
+    update_json(&rush_file(home), |v| {
+        due = !v["spawn"].as_u64().is_some_and(|at| now.saturating_sub(at) < RUSH_SPAWN_S);
+        if due {
+            v["spawn"] = json!(now);
+        }
+    });
+    due
 }
 
 /// `auto revive`: bring back this project's team rooms whose background session died (machine
@@ -810,6 +888,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let paused = super::pressure::paused(t.home, t.root);
     let all = agents(t, true)?;
     let running = agents(t, false)?;
+    let listed_at = std::time::Instant::now();
     // A room's id live anywhere on the machine (a terminal in another folder) is never resumed a
     // second time, as in `up`.
     let everywhere = live(&t.claude.run(&["agents".into(), "--json".into()])?)?;
@@ -818,6 +897,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let mut seen = idle::read_json(&file).filter(Value::is_object).unwrap_or_else(|| json!({}));
     let mut stalled = Vec::new();
     let wake = woken(t.home, t.root, sessions.iter().map(|s| s.name.clone()), now);
+    let mut called = Vec::new();
     let mut rearmed = Vec::new();
     for s in &sessions {
         let key = format!("{root}|{}", s.name);
@@ -828,12 +908,13 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             }
             continue;
         }
-        // The owner's ⚡ Làm ngay: re-arm now, unless the inbox mod is about to hand the room its message.
+        // The owner's ⚡ Làm ngay: no IDLE_CONFIRM_S wait and no backoff (the fresh look below, at
+        // least WAKE_LOOK_GAP later, still has to show it idle). Never with messages waiting: the
+        // inbox mod hands them over, and a resume forks an id that would never read them.
         if wake.contains(&s.name) {
-            let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now);
-            if !(pending_inbox(t.home, &s.conversation_id) && crate::verbs::hq::inbox_live(t.home, &s.conversation_id, at)) {
+            if !pending_inbox(t.home, &s.conversation_id) {
                 stalled.push(s.conversation_id.clone());
-                rearmed.push(s.name.clone());
+                called.push(s.name.clone());
             }
             continue;
         }
@@ -852,7 +933,6 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             _ => e["seen"] = json!(now),
         }
     }
-    wake_done(t.home, t.root, &rearmed);
     let mut started = Vec::new();
     let reserve = std::time::Duration::from_secs(LAUNCH_RESERVE_S);
     for s in sessions {
@@ -881,8 +961,12 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             continue;
         }
         if idle {
+            let call = called.contains(&s.name);
+            if call {
+                std::thread::sleep(WAKE_LOOK_GAP.saturating_sub(listed_at.elapsed()));
+            }
             // The list above is a few calls old: a room woken since (inbox, cron) is mid-turn now.
-            if !agents(t, false)?.iter().any(|l| l.id == s.conversation_id && lost_goal(on_goal(&s.name), l)) {
+            if !agents(t, false)?.iter().any(|l| l.id == s.conversation_id && lost_goal(on_goal(&s.name), l)) || (call && pending_inbox(t.home, &s.conversation_id)) {
                 continue;
             }
             t.claude.run(&["stop".into(), s.conversation_id.chars().take(8).collect()])?;
@@ -909,6 +993,9 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             continue;
         };
         started.push((s.name.clone(), short.clone()));
+        if idle && called.contains(&s.name) {
+            rearmed.push(s.name.clone());
+        }
         if lean_restart {
             super::pressure::restart_done(t.home, t.root, &s.name, now);
         }
@@ -937,6 +1024,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
         });
     }
     idle::write_json(&file, &seen);
+    wake_done(t.home, t.root, &rearmed);
     Ok(rows)
 }
 
@@ -1013,6 +1101,23 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// The revive lock `p` with content `held` still stands: younger than [`REVIVE_LOCK_S`] (the time
+/// written in it, else its mtime: a run killed before writing) and its holder is not gone (killed by
+/// a timeout, 2026-10-21: the owner's `auto up` was refused for 10 min by a dead revive's lock).
+fn lock_live(p: &Path, held: &str, now: u64) -> bool {
+    let at = held.split('.').next().and_then(|s| s.trim().parse::<u64>().ok()).or_else(|| {
+        std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs())
+    });
+    let gone = held.split('.').nth(1).and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|pid| pid != std::process::id() && !pid_alive(pid));
+    !gone && at.is_some_and(|a| now.saturating_sub(a) < REVIVE_LOCK_S)
+}
+
+/// A revive / up holds the lock right now.
+pub(super) fn revive_running(home: &Path, now: u64) -> bool {
+    let p = idle::state_dir(home).join("revive.lock");
+    std::fs::read_to_string(&p).is_ok_and(|held| lock_live(&p, &held, now))
+}
+
 /// `None`: another revive / up holds the lock, this one does nothing.
 pub(super) fn revive_lock(home: &Path, now: u64) -> Result<Option<ReviveLock>> {
     let dir = idle::state_dir(home);
@@ -1027,15 +1132,8 @@ pub(super) fn revive_lock(home: &Path, now: u64) -> Result<Option<ReviveLock>> {
                 return Ok(Some(ReviveLock(p, token)));
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                // The time written in it, else its mtime (a run killed before writing).
                 let held = std::fs::read_to_string(&p).unwrap_or_default();
-                let at = held.split('.').next().and_then(|s| s.trim().parse::<u64>().ok()).or_else(|| {
-                    std::fs::metadata(&p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs())
-                });
-                // A holder that is gone (killed by a timeout, 2026-10-21: the owner's `auto up` was
-                // refused for 10 min by a dead revive's lock) frees it at once.
-                let gone = held.split('.').nth(1).and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|pid| pid != std::process::id() && !pid_alive(pid));
-                if !gone && at.is_some_and(|a| now.saturating_sub(a) < REVIVE_LOCK_S) {
+                if lock_live(&p, &held, now) {
                     return Ok(None);
                 }
                 // Stale: take it over only if nobody replaced it meanwhile (same content).
@@ -1510,15 +1608,51 @@ mod tests {
         assert!(pass(700, Some(&idle_qa)).is_empty() && !stopped(), "first sighting after the backoff");
         assert!(pass(1100, Some(&idle_qa)).is_empty() && !stopped(), "400 s old sighting: stale, counted again");
         assert_eq!(pass(1170, Some(&idle_qa)).len(), 1, "70 s after a fresh sighting: resumed");
-        // The owner's ⚡ Làm ngay called qa: re-armed at the first idle sighting, backoff or not, once.
+        // The owner's ⚡ Làm ngay called qa: no 60 s wait and no backoff, but never with a message
+        // waiting and only when the fresh look right before the stop still shows it idle. The mark
+        // is spent by a real re-arm only.
         ask_wake(&h, &root, &["qa".to_string()], 1180);
-        assert_eq!(pass(1185, Some(&idle_qa)).len(), 1, "called: resumed with its goal at once");
+        let marked = || woken(&h, &root, ["qa".to_string()].into_iter(), 1186) == ["qa"];
+        std::fs::write(&inbox, "{\"ts\":1,\"text\":\"owner\"}\n").unwrap();
+        assert!(pass(1182, Some(&idle_qa)).is_empty() && !stopped(), "a message waiting: the inbox mod hands it over first");
+        assert!(marked(), "kept while a message waits");
+        std::fs::remove_file(&inbox).unwrap();
+        assert!(pass(1183, Some(&busy_qa)).is_empty() && !stopped(), "between two turns: the fresh look shows it busy");
+        assert!(marked(), "kept when the room was busy");
+        assert_eq!(pass(1185, Some(&idle_qa)).len(), 1, "idle at both looks: resumed with its goal at once");
+        assert!(!marked(), "spent by the re-arm");
         assert!(pass(1190, Some(&idle_qa)).is_empty() && !stopped(), "the call is spent: backed off again");
         auto::mark_paused(&h, 4).unwrap();
         *fake.agents.borrow_mut() = vec![all, live];
         fake.calls.borrow_mut().clear();
         assert!(revive(&t, 10, 5).unwrap().is_empty());
         assert!(fake.calls.borrow().is_empty());
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// ⚡ Làm ngay starts at most one background revive a minute, none while one holds the lock,
+    /// and mails the lead once per card per 10 min.
+    #[test]
+    fn rush_spawns_revive_and_mails_the_lead_with_a_debounce() {
+        let (h, root) = tmp("rush-debounce");
+        assert!(rush_spawn_due(&h, 100));
+        assert!(!rush_spawn_due(&h, 159), "spawned 59 s ago");
+        assert!(rush_spawn_due(&h, 160));
+        let lock = revive_lock(&h, 300).unwrap().unwrap();
+        assert!(!rush_spawn_due(&h, 300), "a live revive holds the lock: its next run takes the marks");
+        drop(lock);
+        assert!(rush_spawn_due(&h, 300));
+        assert!(rush_mail_due(&h, &root, 21, 1000));
+        assert!(!rush_mail_due(&h, &root, 21, 1599));
+        assert!(rush_mail_due(&h, &root, 20, 1599), "per card");
+        assert!(rush_mail_due(&h, &root, 21, 1600));
+        // Marks written while another writer holds the file lock still land (it waits, then writes).
+        let lock = wake_file(&h).with_extension("lock");
+        std::fs::write(&lock, "").unwrap();
+        let t0 = std::time::Instant::now();
+        ask_wake(&h, &root, &["dev".to_string()], 5);
+        assert!(t0.elapsed() >= std::time::Duration::from_millis(500), "waited for the holder");
+        assert_eq!(woken(&h, &root, ["dev".to_string()].into_iter(), 5), ["dev"]);
         let _ = std::fs::remove_dir_all(&h);
     }
 

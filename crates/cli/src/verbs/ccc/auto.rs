@@ -947,15 +947,27 @@ fn wake_arch(home: &Path, rooms: &[(String, String)], t: &target::Target, labell
     queue_all(home, &to, now, from, |name| format!("{name}: card #{} nhãn arch ở cột {}: {} — chạy playbook arch cho card này (chưa có note \"ADR:\" → ADR; ở review → review kiến trúc diff)", t.id, t.lane, short(&t.text)))
 }
 
+/// What [`rush`] did: rooms told with delivery, and why the lead or the takers may be missing.
+#[derive(Default)]
+struct Rush {
+    lead: Vec<(String, bool)>,
+    /// The lead was already told about this card in the last 10 min (`team::rush_mail_due`).
+    lead_recent: bool,
+    woke: Vec<(String, bool)>,
+    /// Nobody could take it: the room holding the card, if any.
+    held: Option<String>,
+}
+
 /// HQ "⚡ Làm ngay" (the owner's P0 on open card `t` of a board team). Setting P0 alone changed
 /// nothing for 3 hours (zus/ide 2026-10-21: #20 and #21 sat in ready while `dev` idled with its goal
-/// ended). Now the lead gets `[⚡ owner] Làm ngay #N …` and every room that would take the card now
-/// gets one inbox line to claim it: a backlog/blocked card goes to the backlog rooms (as before),
-/// any other to the lane rooms whose [`target::claimable`] pick is this card (so a room holding
-/// another card is left alone). A room blocked in `auto wait` wakes on that mail, an idle one gets
-/// it from the inbox mod, and one idle in the background with its goal ended is re-armed by
-/// `auto revive` ([`super::team::ask_wake`]), started now. `(lead, takers)` with delivery.
-fn rush(home: &Path, root: &Path, rooms: &[(String, String)], t: &target::Target, now: u64) -> Result<(Vec<(String, bool)>, Vec<(String, bool)>)> {
+/// ended). Now the lead gets `[⚡ owner] Làm ngay #N …` (once per card per 10 min) and every room that
+/// would take the card now gets one inbox line to claim it: a backlog/blocked card goes to the
+/// backlog rooms (as before), any other to the lane rooms whose [`target::claimable`] pick is this
+/// card (so a room holding another card is left alone). A room blocked in `auto wait` wakes on that
+/// mail, an idle one gets it from the inbox mod, and one idle in the background with its goal ended
+/// is re-armed by `auto revive` ([`super::team::ask_wake`]), started now unless one started in the
+/// last minute or runs ([`super::team::rush_spawn_due`]).
+fn rush(home: &Path, root: &Path, rooms: &[(String, String)], t: &target::Target, now: u64) -> Result<Rush> {
     let cards = target::list(home, root)?;
     let early = matches!(t.lane.as_str(), "backlog" | "blocked");
     let lane_of = |n: &str| super::room::find(n).and_then(|r| r.lane);
@@ -963,23 +975,30 @@ fn rush(home: &Path, root: &Path, rooms: &[(String, String)], t: &target::Target
         .iter()
         .filter(|(n, _)| match lane_of(n) {
             Some("backlog") => early,
-            Some(lane) => !early && target::claimable(&cards, n, lane, now) == Some(t.id),
+            // The room holding the card is on it already: never called to claim it again.
+            Some(lane) => !early && target::claimable(&cards, n, lane, now) == Some(t.id) && t.claim.as_ref().is_none_or(|c| &c.room != n),
             None => false,
         })
         .cloned()
         .collect();
     let names: Vec<String> = takers.iter().map(|(n, _)| n.clone()).collect();
+    let held = if names.is_empty() { t.claim.as_ref().map(|c| c.room.clone()) } else { None };
     let head = format!("[⚡ owner] Làm ngay #{} (P0, cột {}): {}", t.id, t.lane, short(&t.text));
-    let called = match (&names[..], &t.claim) {
-        ([], Some(c)) => format!("{} đang giữ card", c.room),
+    let called = match (&names[..], &held) {
+        ([], Some(r)) => format!("{r} đang giữ #{}", t.id),
         ([], None) => "chưa phòng nào nhận được ngay: xếp người cho card này lượt này (claim/move)".to_string(),
         (n, _) => format!("đã gọi {} nhận ngay", n.join(", ")),
     };
     let is_lead = |n: &str| super::room::crew(n) == "lead";
     let leads: Vec<(String, String)> = rooms.iter().filter(|(n, _)| is_lead(n)).cloned().collect();
-    let lead = queue_all(home, &leads, now, None, |name| {
-        if early { format!("{head} — {called}\n{}", target::now_prompt(t, name)) } else { format!("{head} — {called}") }
-    });
+    let mail_lead = leads.is_empty() || super::team::rush_mail_due(home, root, t.id, now);
+    let lead = if mail_lead {
+        queue_all(home, &leads, now, None, |name| {
+            if early { format!("{head} — {called}\n{}", target::now_prompt(t, name)) } else { format!("{head} — {called}") }
+        })
+    } else {
+        Vec::new()
+    };
     let others: Vec<(String, String)> = takers.into_iter().filter(|(n, _)| !is_lead(n)).collect();
     let woke = queue_all(home, &others, now, None, |name| {
         if early {
@@ -994,15 +1013,21 @@ fn rush(home: &Path, root: &Path, rooms: &[(String, String)], t: &target::Target
     });
     if !names.is_empty() {
         super::team::ask_wake(home, root, &names, now);
-        // A detached `auto revive` re-arms an idle room now instead of at HQ's next tick (≤ 2 min);
-        // it takes the revive lock, so one already running keeps the marker for its next run.
-        if !cfg!(test) {
+        // A detached `auto revive` re-arms an idle room now instead of at HQ's next tick (≤ 2 min).
+        if super::team::rush_spawn_due(home, now) && !cfg!(test) {
             if let Ok(exe) = std::env::current_exe() {
                 let _ = super::awake::spawn_detached(&exe, &["ccc".into(), "auto".into(), "revive".into()]);
             }
         }
     }
-    Ok((lead, woke))
+    Ok(Rush { lead, lead_recent: !mail_lead, woke, held })
+}
+
+/// The owner's own terminal (or HQ, which drops the room env: apps/hq-ui lib/server/child-env.ts):
+/// no room named (`--as`) and no room env at all. A room in a worktree that forgot `--as`, an omp
+/// room, or a room whose forked id is not rebound yet is not the owner.
+fn owner(who: Option<&str>, env: impl Fn(&str) -> Option<String>) -> bool {
+    who.is_none() && ["CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID"].iter().all(|k| env(k).map_or(true, |s| s.trim().is_empty()))
 }
 
 /// Who `auto add --now` speaks as: the `msg` label of the session it runs in, None from a terminal
@@ -1400,22 +1425,27 @@ fn run_target(
             };
             let t = target::set_prio(home, root, parse_id(i)?, target::parse_prio(p)?, who.as_deref(), now)?;
             // HQ "⚡ Làm ngay": the owner's P0 on a board team reaches the lead and the rooms that take
-            // the card now ([`rush`]); a room raising a card wakes nobody.
-            let rushing = t.prio == Some(0) && who.is_none() && t.state == "open" && board_team(home, root);
-            let (lead, woke) = if rushing { rush(home, root, &all, &t, now)? } else { Default::default() };
+            // the card now ([`rush`]); a room raising a card (or any session env) wakes nobody.
+            let rushing = t.prio == Some(0) && owner(who.as_deref(), |k| std::env::var(k).ok()) && t.state == "open" && board_team(home, root);
+            let r = if rushing { rush(home, root, &all, &t, now)? } else { Rush::default() };
             if as_json {
                 let rows = |v: &[(String, bool)]| v.iter().map(|(n, live)| json!({ "name": n, "now": live })).collect::<Vec<Value>>();
-                println!("{}", json!({ "card": t, "rushed": rushing, "lead": rows(&lead), "woke": rows(&woke) }));
+                println!("{}", json!({ "card": t, "rushed": rushing, "lead": rows(&r.lead), "lead_recent": r.lead_recent, "woke": rows(&r.woke), "held": r.held }));
             } else {
                 println!("card #{} ưu tiên {}", t.id, t.prio.map_or("mặc định (P2)".to_string(), |n| format!("P{n}")));
-                for (name, live) in &lead {
+                for (name, live) in &r.lead {
                     println!("⚡ báo lead → {name}: {}", delivery(*live));
                 }
-                for (name, live) in &woke {
+                if r.lead_recent {
+                    println!("⚡ lead đã được báo #{} trong 10 phút qua: không nhắn lại", t.id);
+                }
+                for (name, live) in &r.woke {
                     println!("⚡ gọi {name} nhận #{}: {}", t.id, delivery(*live));
                 }
-                if rushing && woke.is_empty() {
-                    println!("⚡ chưa phòng nào nhận được #{} ngay (phòng cột {} đang giữ card khác, hoặc team không có phòng cho cột này): lead xếp người", t.id, t.lane);
+                match (&r.held, rushing && r.woke.is_empty()) {
+                    (Some(h), true) => println!("⚡ {h} đang giữ #{}", t.id),
+                    (None, true) => println!("⚡ chưa phòng nào nhận được #{} ngay (phòng cột {} đang giữ card khác, hoặc team không có phòng cho cột này): lead xếp người", t.id, t.lane),
+                    _ => {}
                 }
             }
         }
@@ -1475,10 +1505,7 @@ fn run_target(
             // The owner's own card on a board team is always looked at now (owner 2026-10-20: "các
             // input từ tôi đều là bắt buộc xem ngay"): head of the queue, the backlog rooms told at
             // once, like `--now`. A room's card keeps its place.
-            // Owner = no room identified AND not inside any Claude Code session (a room in a worktree
-            // that forgot `--as` is not the owner).
-            let unset = |k: &str| std::env::var(k).map_or(true, |s| s.trim().is_empty());
-            let owner = from.is_none() && ["CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID"].iter().all(|k| unset(k));
+            let owner = owner(from.as_deref(), |k| std::env::var(k).ok());
             let first = first || (owner && board_team(home, root));
             let text = words.join(" ");
             // Checked before anything is written, so a bad value never leaves a half-made card.
@@ -2284,21 +2311,46 @@ mod tests {
         // A room raising a card wakes nobody.
         go(&["prio", &c21.id.to_string(), "P0", "--as", "qa"]).unwrap();
         assert!(names.iter().all(|n| inbox(n).is_empty()));
-        go(&["prio", &c21.id.to_string(), "none"]).unwrap();
-        // The owner's ⚡ Làm ngay.
-        go(&["prio", &c21.id.to_string(), "P0"]).unwrap();
+        // The owner's ⚡ Làm ngay (`auto prio` decides who the owner is: [`owner`]).
+        let t = target::list(&h, &root).unwrap().into_iter().find(|t| t.id == c21.id).unwrap();
+        let r = rush(&h, &root, &rooms, &t, 100).unwrap();
+        assert_eq!((r.lead.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), r.lead_recent, r.held.as_deref()), (vec!["lead"], false, None));
+        assert_eq!(r.woke.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["dev"]);
         assert!(inbox("lead").contains(&format!("[⚡ owner] Làm ngay #{}", c21.id)), "{}", inbox("lead"));
         assert!(inbox("lead").contains("đã gọi dev nhận ngay"), "{}", inbox("lead"));
         assert!(inbox("dev").contains(&format!("#{} P0", c21.id)) && inbox("dev").contains("auto claim"), "{}", inbox("dev"));
         for n in ["dev2", "qa", "review"] {
             assert!(inbox(n).is_empty(), "{n} holds #{} or works another lane: {}", held.id, inbox(n));
         }
-        // `revive` re-arms dev at its first idle sighting (no second look, no backoff).
+        // `revive` re-arms dev without the 60 s wait or the backoff ([`super::super::team::ask_wake`]).
         let marks = idle::read_json(&idle::state_dir(&h).join("wake-now.json")).unwrap();
         assert_eq!(marks.as_object().unwrap().keys().map(|k| k.rsplit('|').next().unwrap()).collect::<Vec<_>>(), ["dev"]);
         // The claim takes it before the older ready card.
         assert_eq!(target::claimable(&target::list(&h, &root).unwrap(), "dev", "ready", 100), Some(c21.id));
+        // Pressed again within 10 min: the lead is not mailed twice; after that it is.
+        let lead_lines = || inbox("lead").lines().count();
+        let before = lead_lines();
+        let again = rush(&h, &root, &rooms, &t, 400).unwrap();
+        assert_eq!((again.lead.len(), again.lead_recent, lead_lines()), (0, true, before));
+        assert_eq!(rush(&h, &root, &rooms, &t, 701).unwrap().lead.len(), 1);
+        // A card a room holds: nobody else is called, the lead hears who holds it.
+        let c15 = target::list(&h, &root).unwrap().into_iter().find(|t| t.id == held.id).unwrap();
+        let r = rush(&h, &root, &rooms, &c15, 800).unwrap();
+        assert_eq!((r.woke.len(), r.held.as_deref()), (0, Some("dev2")));
+        assert!(inbox("lead").contains(&format!("dev2 đang giữ #{}", c15.id)), "{}", inbox("lead"));
         let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// `auto prio` and `auto add` share one owner check: no `--as` and no room env at all.
+    #[test]
+    fn the_owner_is_a_terminal_without_any_room_env() {
+        let env = |set: &'static [(&'static str, &'static str)]| move |k: &str| set.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
+        assert!(owner(None, env(&[])));
+        assert!(owner(None, env(&[("EIGHTSYNC_ROOM", "  ")])), "blank counts as unset");
+        assert!(!owner(Some("qa"), env(&[])), "--as names a room");
+        assert!(!owner(None, env(&[("CLAUDE_CODE_SESSION_ID", "e2830544")])), "a Claude Code session (unrebound fork)");
+        assert!(!owner(None, env(&[("EIGHTSYNC_ROOM", "dev")])), "an omp room");
+        assert!(!owner(None, env(&[("EIGHTSYNC_ROOM_ID", "omp-0123456789abcdef")])));
     }
 
     fn on(hours: f64, after: u64) -> Mode {
@@ -3182,12 +3234,14 @@ mod tests {
         } else {
             lines(ids[0]) - 2
         };
-        // "⚡ Làm ngay" (owner P0 on a backlog card) tells the lead; a room raising it does not.
+        // "⚡ Làm ngay" (owner P0 on a backlog card) tells the lead; a room raising it does not
+        // (inside a session env neither is the owner: no line).
         let t = target::add(&h, &h, "wind in trees", None, None, false, Some("lead"), 9).unwrap().0;
+        let told = lead_before + if owner_terminal { 3 } else { 2 };
         run(&s(&["prio", &t.id.to_string(), "P0"]), &h, false, &h, rooms).unwrap();
-        assert_eq!(lines(ids[0]), lead_before + 3);
+        assert_eq!(lines(ids[0]), told);
         run(&s(&["prio", &t.id.to_string(), "P0", "--as", "qa"]), &h, false, &h, rooms).unwrap();
-        assert_eq!(lines(ids[0]), lead_before + 3, "only the owner's P0 wakes the lead");
+        assert_eq!(lines(ids[0]), told, "only the owner's P0 wakes the lead");
         let _ = std::fs::remove_dir_all(&h);
     }
 

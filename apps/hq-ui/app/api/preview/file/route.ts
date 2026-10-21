@@ -1,8 +1,6 @@
 import { bad, open } from "@/lib/server/http";
-import { projectOf } from "@/lib/server/office";
+import { projectsInView } from "@/lib/server/in-view";
 import { openPreview } from "@/lib/server/preview";
-import { mergedSessions } from "@/lib/server/proc";
-import { liveProjects } from "@/lib/server/targets";
 
 export const runtime = "nodejs";
 
@@ -11,7 +9,7 @@ export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
   const id = new URL(req.url).searchParams.get("id");
-  const hit = await openPreview(id, liveProjects(await mergedSessions(o.db), (cwd) => projectOf(cwd)));
+  const hit = await openPreview(id, await projectsInView(o.db));
   if (!hit) return bad("not found", 404);
   return new Response(hit.body, {
     headers: {

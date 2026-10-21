@@ -1,9 +1,7 @@
 import { setEye } from "@/lib/server/eye";
 import { bad, json, open, readBody } from "@/lib/server/http";
-import { projectOf } from "@/lib/server/office";
+import { projectsInView } from "@/lib/server/in-view";
 import { previewRoots } from "@/lib/server/preview";
-import { mergedSessions } from "@/lib/server/proc";
-import { liveProjects } from "@/lib/server/targets";
 
 export const runtime = "nodejs";
 
@@ -14,7 +12,7 @@ export async function POST(req: Request) {
   const body = await readBody(req);
   if (typeof body?.root !== "string" || !body.root || typeof body.on !== "boolean") return bad("cần {root, on: true|false}", 422);
   const want = body.root.toLowerCase();
-  const root = previewRoots(liveProjects(await mergedSessions(o.db), (cwd) => projectOf(cwd))).find((x) => x.root.toLowerCase() === want)?.root;
+  const root = previewRoots(await projectsInView(o.db)).find((x) => x.root.toLowerCase() === want)?.root;
   if (!root) return bad("dự án này không có phòng nào đang chạy", 409);
   const r = await setEye(o.db, root, body.on);
   return json(r, r.ok ? 200 : 502);

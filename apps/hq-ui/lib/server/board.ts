@@ -88,12 +88,12 @@ export function parsePrioBody(b: Record<string, unknown> | null): { ok: true; va
 }
 
 /**
- * One line for the "⚡ Làm ngay" toast from `auto prio --json` (`rushed`, `lead`, `woke`: the owner's
- * P0 on a board team mails the lead and calls the rooms that take the card now); null when nobody
- * was told (a lower level, no team, an older 8sync).
+ * One line for the "⚡ Làm ngay" toast from `auto prio --json` (`rushed`, `lead`, `lead_recent`,
+ * `woke`, `held`: the owner's P0 on a board team mails the lead, once per card per 10 min, and calls
+ * the rooms that take the card now); null when nobody was told (a lower level, no team, an older 8sync).
  */
 export function rushLine(stdout: string, id: number): string | null {
-  let v: { rushed?: unknown; lead?: unknown; woke?: unknown };
+  let v: { rushed?: unknown; lead?: unknown; lead_recent?: unknown; woke?: unknown; held?: unknown };
   try {
     v = JSON.parse(stdout);
   } catch {
@@ -102,8 +102,13 @@ export function rushLine(stdout: string, id: number): string | null {
   if (v?.rushed !== true) return null;
   const names = (x: unknown) => (Array.isArray(x) ? x.map((r) => (r && typeof r.name === "string" ? r.name : null)).filter((n): n is string => !!n) : []);
   const woke = names(v.woke);
-  const lead = names(v.lead).length > 0 ? "đã báo lead" : "team không có phòng lead";
-  return woke.length ? `Đã gọi ${woke.join(", ")} nhận #${id} ngay · ${lead}` : `Chưa phòng nào rảnh nhận #${id} · ${lead} xếp người`;
+  const lead = names(v.lead).length > 0 ? "đã báo lead" : v.lead_recent === true ? "lead đã được báo" : null;
+  const head = woke.length
+    ? `Đã gọi ${woke.join(", ")} nhận #${id} ngay`
+    : typeof v.held === "string" && v.held
+      ? `${v.held} đang giữ #${id}`
+      : `Chưa phòng nào rảnh nhận #${id}`;
+  return lead ? `${head} · ${lead}` : head;
 }
 
 /** Run `auto prio` in the project root; never throws. `woke`: [rushLine]. */
