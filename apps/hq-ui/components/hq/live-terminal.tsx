@@ -141,7 +141,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
    * the input line, so the owner adds a question and sends, and the room opens them with Read.
    */
   async function attach(list: File[]) {
-    if (uploading.current) return;
+    if (uploading.current) return setNote({ busy: true, text: "Đang tải ảnh trước: xong rồi chọn hoặc dán lại ảnh này" });
     const files = list.filter((f) => f.type.startsWith("image/")).slice(0, FILES_MAX);
     if (!files.length) return setNote({ busy: false, text: "Chỉ gửi được ảnh" });
     const why = files.map(fileError).find(Boolean);
