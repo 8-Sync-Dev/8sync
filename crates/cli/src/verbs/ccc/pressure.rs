@@ -2392,12 +2392,4 @@ mod tests {
         assert!(!is_daemon(&p(1, 0, 1, "claude.exe", "claude --resume daemon-notes", 1)));
     }
 
-    #[test]
-    #[ignore]
-    fn live_pin_tmp() {
-        let pids: Vec<u32> = std::env::var("CAP_PIDS").unwrap().trim().split(',').map(|s| s.parse().unwrap()).collect();
-        let mask = cap_mask(6, logical_cpus(), false);
-        let n = pin(&to_pin(&pids, mask, &affinity_of), mask);
-        println!("PIN cpus {} mask {mask:#x} pinned {n} now {:?}", logical_cpus(), pids.iter().map(|p| affinity_of(*p).map(|m| format!("{m:#x}"))).collect::<Vec<_>>());
-    }
 }
