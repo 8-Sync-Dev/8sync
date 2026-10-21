@@ -43,7 +43,7 @@ export type AutoStatus = {
   lease_error?: string;
 };
 
-export const AUTO_ACTIONS = ["on", "pause", "omp-on", "omp-off", "lease-auto-on", "lease-auto-off"] as const;
+export const AUTO_ACTIONS = ["on", "pause", "omp-on", "omp-off", "lease-auto-on", "lease-auto-off", "critic-on", "critic-off"] as const;
 export type AutoAction = (typeof AUTO_ACTIONS)[number];
 
 /** The only argv each action may run. */
@@ -54,6 +54,8 @@ const ARGV: Record<AutoAction, string[]> = {
   "omp-off": ["ccc", "auto", "omp", "off"],
   "lease-auto-on": ["ccc", "auto", "lease", "auto", "on"],
   "lease-auto-off": ["ccc", "auto", "lease", "auto", "off"],
+  "critic-on": ["ccc", "delegate", "on"],
+  "critic-off": ["ccc", "delegate", "off"],
 };
 
 const TIMEOUT_MS = 5000;

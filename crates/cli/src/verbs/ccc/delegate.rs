@@ -246,17 +246,31 @@ pub(super) fn relay_stuck(home: &Path, root: &Path, registry: &[(String, String)
     }
     let k = |room: &str| format!("{}|{room}", super::auto::canon(root).to_string_lossy());
     let mut due: Vec<&(String, String)> = Vec::new();
+    let mut lead_q: Vec<&(String, String)> = Vec::new();
     super::team::update_json(&super::idle::state_dir(home).join("relay.json"), |v| {
         for pair in stuck {
             let key = k(&pair.0);
             if v[&key].as_u64().is_none_or(|at| now.saturating_sub(at) >= RELAY_S) {
                 v[&key] = json!(now);
-                due.push(pair);
+                // The lead's own pending question is owner-only rails (Ship/secret/money: no agent
+                // may answer it) or a question nobody relayed: straight to the owner's HQ banner.
+                if super::room::crew(&pair.0) == "lead" {
+                    lead_q.push(pair);
+                } else {
+                    due.push(pair);
+                }
             }
         }
     });
+    let mut lines: Vec<String> = Vec::new();
+    if !lead_q.is_empty() {
+        let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let qs = lead_q.iter().map(|(_, q)| q.clone()).collect::<Vec<_>>().join(" · ");
+        let _ = crate::verbs::hq::alert_owner(&format!("Phòng lead {name} dừng chờ trả lời"), &format!("{qs} — trả lời trên HQ để team chạy tiếp (critic không được trả lời câu rails thay anh)."));
+        lines.push(format!("stuck-ask (lead): {}", lead_q.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>().join(", ")));
+    }
     if due.is_empty() {
-        return None;
+        return if lines.is_empty() { None } else { Some(lines.join("; ")) };
     }
     let list = due.iter().map(|(n, q)| format!("{n} hỏi \"{q}\"")).collect::<Vec<_>>().join(" · ");
     let text = format!(
@@ -267,7 +281,8 @@ pub(super) fn relay_stuck(home: &Path, root: &Path, registry: &[(String, String)
         return None;
     }
     super::team::ask_wake(home, root, &sent, now);
-    Some(format!("stuck-ask: {} → {}", due.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>().join(", "), sent.join(", ")))
+    lines.push(format!("stuck-ask: {} → {}", due.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>().join(", "), sent.join(", ")));
+    Some(lines.join("; "))
 }
 
 pub(super) fn parse_after(s: &str) -> Result<u64> {
@@ -450,6 +465,14 @@ mod tests {
         assert!(relay_stuck(&home, &root, &reg, &stuck, 100 + 601).is_some(), "ten minutes later it asks again");
         let no_lead = vec![];
         assert!(relay_stuck(&home, &root, &no_lead, &stuck, 5000).is_none(), "no lead: nothing to do");
+        // A stuck LEAD never mails itself: the owner is alerted (rails no agent may answer).
+        let lead_stuck = vec![("lead".to_string(), "Ship: merge PR 12?".to_string())];
+        let line = relay_stuck(&home, &root, &reg, &lead_stuck, 6000).expect("lead relayed");
+        assert!(line.contains("stuck-ask (lead): lead"), "{line}");
+        let lead_inbox = crate::verbs::hq::inbox_file(&home, &lead.1).unwrap();
+        let before = std::fs::read_to_string(&lead_inbox).unwrap().lines().count();
+        relay_stuck(&home, &root, &reg, &lead_stuck, 6100);
+        assert_eq!(std::fs::read_to_string(&lead_inbox).unwrap().lines().count(), before, "the lead is not mailed its own question");
         let _ = std::fs::remove_dir_all(&home);
     }
 }
