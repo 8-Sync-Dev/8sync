@@ -128,24 +128,36 @@ describe("measurement", () => {
     expect(readUsage("../x")).toBeNull();
     expect(readUsage(SID2)).toBeNull();
   });
-  it("rooms without a status line: model and first→last time from the transcript, re-read only when the file moves", () => {
+  it("rooms without a status line: model, first→last time and lines +/- from the transcript, read incrementally", () => {
     const cwd = "C:/work/proj";
     const dir = path.join(os.homedir(), ".claude", "projects", "C--work-proj");
     fs.mkdirSync(dir, { recursive: true });
     const f = path.join(dir, `${SID2}.jsonl`);
     const line = (o: unknown) => `${JSON.stringify(o)}\n`;
+    const call = (name: string, input: unknown, ts = "2026-10-21T09:05:00.000Z", model = "claude-sonnet-5-5") =>
+      line({ type: "assistant", timestamp: ts, message: { model, role: "assistant", content: [{ type: "tool_use", id: "t", name, input }] } });
     fs.writeFileSync(
       f,
       line({ type: "custom-title", customTitle: "dev2", sessionId: SID2 }) +
         line({ type: "file-history-snapshot", snapshot: { timestamp: "2026-10-21T09:00:00.000Z" } }) +
-        line({ type: "user", timestamp: "2026-10-21T09:00:01.000Z", message: { role: "user", content: 'ghi "model":"x" trong tool result' } }) +
-        line({ type: "assistant", timestamp: "2026-10-21T09:05:00.000Z", message: { model: "claude-sonnet-5-5", role: "assistant", usage: { input_tokens: 5 } } }),
+        line({ type: "user", timestamp: "2026-10-21T09:00:01.000Z", message: { role: "user", content: 'ghi "model":"x" "name":"Write" trong tool result' } }) +
+        call("Write", { file_path: "a.ts", content: "1\n2\n3\n" }) + // +3
+        call("Write", { file_path: "a.ts", content: "1\n2\n3\n4" }) + // +4 −3 (rewrite of a.ts)
+        call("Edit", { file_path: "b.ts", old_string: "x\ny", new_string: "z", replace_all: true }) + // +1 −2
+        call("MultiEdit", { file_path: "c.ts", edits: [{ old_string: "a", new_string: "b\nc" }, { old_string: "", new_string: "d" }] }) + // +3 −1
+        call("NotebookEdit", { notebook_path: "n.ipynb", new_source: "p\nq" }), // +2
     );
     const a = readTranscriptStats(SID2, cwd);
-    expect(a).toMatchObject({ model: "claude-sonnet-5-5", first: Date.parse("2026-10-21T09:00:00.000Z"), last: Date.parse("2026-10-21T09:05:00.000Z") });
+    expect(a).toMatchObject({ model: "claude-sonnet-5-5", first: Date.parse("2026-10-21T09:00:00.000Z"), last: Date.parse("2026-10-21T09:05:00.000Z"), lines_added: 13, lines_removed: 6 });
+    expect(a!.offset).toBe(fs.statSync(f).size);
     expect(readTranscriptStats(SID2, cwd)).toBe(a); // same size + mtime: the cached object
-    fs.appendFileSync(f, line({ type: "assistant", timestamp: "2026-10-21T10:00:00.000Z", message: { model: "claude-opus-5-5", role: "assistant" } }));
-    expect(readTranscriptStats(SID2, cwd)).toMatchObject({ model: "claude-opus-5-5", first: Date.parse("2026-10-21T09:00:00.000Z"), last: Date.parse("2026-10-21T10:00:00.000Z") });
+    const before = a!.offset;
+    const tail = call("Edit", { file_path: "b.ts", old_string: "1\n2\n3", new_string: "9" }, "2026-10-21T10:00:00.000Z", "claude-opus-5-5");
+    fs.appendFileSync(f, tail);
+    const b = readTranscriptStats(SID2, cwd);
+    // Only the appended edit was parsed: +1 −3 on top, and the offset advanced by exactly its bytes.
+    expect(b).toMatchObject({ model: "claude-opus-5-5", first: Date.parse("2026-10-21T09:00:00.000Z"), last: Date.parse("2026-10-21T10:00:00.000Z"), lines_added: 14, lines_removed: 9 });
+    expect(b!.offset - before).toBe(Buffer.byteLength(tail));
     expect(readTranscriptStats(SID, cwd)).toBeNull();
     expect(readTranscriptStats("hq-dev", cwd)).toBeNull();
   });

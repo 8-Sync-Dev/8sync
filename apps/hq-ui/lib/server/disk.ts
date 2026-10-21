@@ -15,7 +15,10 @@ import { loadFloor, ompSessions } from "./floor";
 import { mergedSessions } from "./proc";
 import type { ProjectInfo } from "../office";
 import { getDb, withMissing } from "./db";
-import { loadOffice } from "./office";
+import { loadOffice, projectOf } from "./office";
+import { projectBoards } from "./board";
+import { heldCard, type BoardRef } from "../now";
+import { sessionLabel } from "../labels";
 import { stateDir } from "./paths";
 import { PREVIEW_DIRS } from "./preview";
 import { repoProjects } from "./targets";
@@ -229,18 +232,25 @@ function save(projects: ProjectDisk[]) {
 }
 
 /**
- * What is in use (disk-clean.ts): the folders of rooms in a turn right now and every process's command
- * line. A room that waits for a card or an answer builds nothing: dev-ide (2026-10-21) stood "Chờ card"
- * in card-15's worktree for 13 h and kept its 44 GB target out of every pass. A build it starts later
- * shows as a process. Throws when either cannot be read, so nothing is removed (loadOffice would read a
- * failed session list as none).
+ * What is in use (disk-clean.ts): the folders of rooms in a turn, waiting on the owner, or holding a
+ * card (between ticks, its next build would start cold), and every process's command line. A room with
+ * no card builds nothing: dev-ide (2026-10-21) stood "Chờ card" in card-15's worktree for 13 h and kept
+ * its 44 GB target out of every pass. Throws when the sessions or processes cannot be read, so nothing
+ * is removed (loadOffice would read a failed session list as none); unreadable boards count as no card.
  */
 async function inUse(): Promise<string[]> {
   const db = getDb();
   const [merged, floor, procs] = await Promise.all([mergedSessions(db), loadFloor(db), processPaths()]);
   if (!procs) throw new Error("process list unreadable");
-  const rooms = [...merged, ...ompSessions(db, floor)].filter((s) => s.status === "running");
-  return [...rooms.flatMap((r) => (r.cwd ? [r.cwd] : [])), ...procs];
+  const rooms = [...merged, ...ompSessions(db, floor)].filter((s) => s.status !== "ended");
+  const projects = new Map<string, ProjectInfo>();
+  for (const r of rooms) {
+    const p = projectOf(r.cwd);
+    if (p) projects.set(p.root, p);
+  }
+  const boards = await projectBoards([...projects.values()]).catch(() => [] as BoardRef[]);
+  const busy = rooms.filter((r) => r.status === "running" || r.status === "needs_input" || heldCard({ ...r, label: sessionLabel(r) }, boards) != null);
+  return [...busy.flatMap((r) => (r.cwd ? [r.cwd] : [])), ...procs];
 }
 
 /**
