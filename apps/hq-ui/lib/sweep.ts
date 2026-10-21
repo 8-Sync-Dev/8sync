@@ -34,13 +34,13 @@ export function alertText(why: string, top: readonly string[]): string {
 }
 
 /**
- * The guard's last pass for one project shows the load is that project's own: its level is up, or
- * one of its top CPU users (pressure.rs `cpu_top`: "node 24% (dev2)", owner "máy" = not a room)
- * belongs to one of its rooms at ≥ 1 %. Only those projects' sweeps get a `[máy]` alert.
+ * The guard's last pass for one project shows the load is that project's own: one of its top CPU
+ * users (pressure.rs `cpu_top`: "node 24% (dev2)", owner "máy" = not a room) belongs to one of its
+ * rooms at ≥ 1 %. The level does not count: it is machine-wide, the same in every project's pass.
+ * Only those projects' sweeps get a `[máy]` alert.
  */
 export function loadIsTheirs(p: { level: number; top: readonly string[] } | null | undefined): boolean {
   if (!p) return false;
-  if (p.level > 0) return true;
   return p.top.some((t) => {
     const m = /(\d+(?:\.\d+)?)% \(([^()]+)\)\s*$/.exec(t);
     return m != null && Number(m[1]) >= 1 && m[2] !== "máy";

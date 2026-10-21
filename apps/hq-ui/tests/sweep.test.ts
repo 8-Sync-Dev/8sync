@@ -53,9 +53,11 @@ describe("pure rules", () => {
     expect(runningTeams({ on: true, paused: false, team_roots: roots, repos: [], out: ["C:/p/b"] })).toEqual(["C:/p/a", "C:/p/c"]);
     expect(runningTeams({ on: true, paused: false, team_roots: ["C:/p/a/sub"], repos: ["C:/p/a"] })).toEqual(["C:/p/a/sub"]);
     expect(runningTeams({ on: true, paused: false, team_roots: ["C:/p/ab"], repos: ["C:/p/a"] })).toEqual([]);
-    // The load is the project's own: level up, or a top CPU user in one of its rooms.
+    // The load is the project's own only when a top CPU user is one of its rooms; the guard level is
+    // machine-wide (every project's pass is up during any breach), so it alone alerts nobody.
     expect(loadIsTheirs({ level: 0, top: ["MCP codebase-memory 24% (dev2)"] })).toBe(true);
-    expect(loadIsTheirs({ level: 2, top: [] })).toBe(true);
+    expect(loadIsTheirs({ level: 2, top: [] })).toBe(false);
+    expect(loadIsTheirs({ level: 2, top: ["rustc 30% (máy)"] })).toBe(false);
     expect(loadIsTheirs({ level: 0, top: ["chrome 40% (máy)", "node 0% (dev)"] })).toBe(false);
     expect(loadIsTheirs({ level: 0, top: [] })).toBe(false);
     expect(loadIsTheirs(undefined)).toBe(false);
