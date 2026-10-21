@@ -60,7 +60,7 @@ export type ClaudeAgent = {
   waitingFor?: string;
 };
 
-/** null when `claude` is missing or failed: callers then trust the journal. The core keeps this warm. */
+/** null when `claude` is missing or failed (past AGENTS_KEEP_MS): no session is known alive then; journal rows stay ended. The core keeps this warm. */
 /** A listing this young answers every caller (all routes and clients poll together). */
 const AGENTS_FRESH_MS = 2_000;
 /** A failed probe answers with the last good listing while it is this young: a slow `claude` under
