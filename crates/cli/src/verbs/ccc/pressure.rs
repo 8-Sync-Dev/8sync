@@ -972,11 +972,14 @@ fn cap_state(home: &Path) -> CapState {
     CapState::of(&idle::read_json(&machine_file(home)).unwrap_or(Value::Null)["cap"])
 }
 
-fn save_cap(home: &Path, s: &CapState) {
-    let mfile = machine_file(home);
-    let mut m = idle::read_json(&mfile).filter(Value::is_object).unwrap_or_else(|| json!({}));
-    m["cap"] = s.json();
-    idle::write_json(&mfile, &m);
+/// Read-modify-write of the cap state under the state file's lock ([`super::team::update_json`]):
+/// `cap_now`, `guard now` and revive never drop each other's pins or step.
+fn update_cap(home: &Path, f: impl FnOnce(&mut CapState)) {
+    super::team::update_json(&machine_file(home), |m| {
+        let mut s = CapState::of(&m["cap"]);
+        f(&mut s);
+        m["cap"] = s.json();
+    });
 }
 
 /// This pass's tightening step from `s`, machine-wide, at most one change per [`CAP_EVERY_S`] and
@@ -1014,17 +1017,42 @@ pub(super) fn cap_targets(procs: &[Proc], trees: &[(String, Vec<u32>)]) -> Vec<(
     v.into_iter().filter_map(|pid| procs.iter().find(|p| p.pid == pid).map(|p| (pid, p.started))).collect()
 }
 
-/// Of `targets`, those whose mask (`get`) is readable and not `mask` yet, with the mask they have.
-pub(super) fn to_pin(targets: &[(u32, u64)], mask: u64, get: &dyn Fn(u32, u64) -> Option<u64>) -> Vec<(u32, u64, u64)> {
-    targets.iter().filter_map(|&(pid, s)| get(pid, s).filter(|m| *m != mask).map(|m| (pid, s, m))).collect()
+/// Of `targets`, (pid, start, mask now) of those whose mask (`get`) is readable.
+pub(super) fn masks(targets: &[(u32, u64)], get: &dyn Fn(u32, u64) -> Option<u64>) -> Vec<(u32, u64, u64)> {
+    targets.iter().filter_map(|&(pid, s)| get(pid, s).map(|m| (pid, s, m))).collect()
 }
 
-/// The records after pinning `done` (pid, start, mask before) for `root`: a process pinned again
-/// keeps the mask it had before the first pin; processes no longer `alive` (pid, start) go.
-pub(super) fn record(pinned: &[Pin], done: &[(u32, u64, u64)], root: &str, alive: &[(u32, u64)]) -> Vec<Pin> {
-    let mut v: Vec<Pin> = pinned.iter().filter(|p| alive.contains(&(p.pid, p.started))).cloned().collect();
-    for &(pid, started, orig) in done {
+/// The mask a process had before the cap: its nearest recorded ancestor's (a child started under
+/// a pinned process inherited the cap's mask, never its own), else what it has now unless that is
+/// already `mask` (inherited from something the cap did not record: every CPU).
+fn orig_of(procs: &[Proc], pinned: &[Pin], pid: u32, now_mask: u64, mask: u64) -> u64 {
+    let mut cur = procs.iter().find(|p| p.pid == pid);
+    for _ in 0..64 {
+        let Some(c) = cur else { break };
+        let parent = procs.iter().find(|q| c.ppid > 1 && q.pid == c.ppid && q.started <= c.started);
+        if let Some(r) = parent.and_then(|q| pinned.iter().find(|r| r.pid == q.pid && r.started == q.started)) {
+            return r.orig;
+        }
+        cur = parent;
+    }
+    if now_mask == mask {
+        ALL_CPUS
+    } else {
+        now_mask
+    }
+}
+
+/// The records after this pin for `root`: every target now on `mask` (`on`: pid, start, mask
+/// before — pinned now, or already there by inheritance) not recorded yet joins, oldest first so a
+/// parent is recorded before its children, with [`orig_of`]; a recorded process keeps its first
+/// `orig`; processes no longer in `procs` go.
+pub(super) fn record(pinned: &[Pin], on: &[(u32, u64, u64)], root: &str, procs: &[Proc], mask: u64) -> Vec<Pin> {
+    let mut v: Vec<Pin> = pinned.iter().filter(|p| procs.iter().any(|q| q.pid == p.pid && q.started == p.started)).cloned().collect();
+    let mut on = on.to_vec();
+    on.sort_by_key(|&(pid, started, _)| (started, pid));
+    for (pid, started, before) in on {
         if !v.iter().any(|p| p.pid == pid && p.started == started) {
+            let orig = orig_of(procs, &v, pid, before, mask);
             v.push(Pin { pid, started, root: root.to_string(), orig });
         }
     }
@@ -1129,18 +1157,29 @@ pub(super) fn set_affinity(pid: u32, started: u64, mask: u64) -> bool {
     }
 }
 
-/// Pin the rooms' trees of `root` to the cap's mask at `s.step` and record it in `s`: (changed,
+/// Pin the rooms' trees of `root` to the cap's mask at `step` and record every room process on it
+/// (pinned now or already there by inheritance, [`record`]) under the state lock: (changed,
 /// failed). None while the guard or the cap is off.
-fn enforce(home: &Path, root: &Path, procs: &[Proc], trees: &[(String, Vec<u32>)], s: &mut CapState) -> Option<(usize, usize)> {
+fn enforce(home: &Path, root: &Path, procs: &[Proc], trees: &[(String, Vec<u32>)], step: u32) -> Option<(usize, usize)> {
     auto::guard_pct(home)?;
     let cap = auto::guard_cap(home)?;
-    let mask = cap_mask(cap, logical_cpus(), s.step);
-    let plan = to_pin(&cap_targets(procs, trees), mask, &affinity_of);
-    let done: Vec<(u32, u64, u64)> = plan.iter().copied().filter(|&(pid, started, _)| set_affinity(pid, started, mask)).collect();
-    let alive: Vec<(u32, u64)> = procs.iter().map(|p| (p.pid, p.started)).collect();
-    s.pinned = record(&s.pinned, &done, &key(root), &alive);
-    s.failed = (plan.len() - done.len()) as u64;
-    Some((done.len(), plan.len() - done.len()))
+    let mask = cap_mask(cap, logical_cpus(), step);
+    let (mut on, mut changed, mut failed) = (Vec::new(), 0, 0);
+    for (pid, started, m) in masks(&cap_targets(procs, trees), &affinity_of) {
+        if m == mask {
+            on.push((pid, started, m));
+        } else if set_affinity(pid, started, mask) {
+            on.push((pid, started, m));
+            changed += 1;
+        } else {
+            failed += 1;
+        }
+    }
+    update_cap(home, |s| {
+        s.pinned = record(&s.pinned, &on, &key(root), procs, mask);
+        s.failed = failed as u64;
+    });
+    Some((changed, failed))
 }
 
 /// Right after `auto up` / `revive` open rooms: the new trees go under the cap at once. How many
@@ -1155,47 +1194,61 @@ pub(super) fn cap_now(home: &Path, root: &Path, claude: &dyn Claude, registry: &
         .map(|j| live_rooms(&j, registry, &records(home)))
         .unwrap_or_default();
     let trees = room_trees(&procs, &live);
-    let mut s = cap_state(home);
-    let n = enforce(home, root, &procs, &trees, &mut s).map_or(0, |(n, _)| n);
-    save_cap(home, &s);
-    n
+    enforce(home, root, &procs, &trees, cap_state(home).step).map_or(0, |(n, _)| n)
 }
 
-/// Put back exactly what the cap pinned for the projects `which` takes (still alive, same start):
-/// how many. Nothing listed when nothing is recorded.
-fn uncap_where(home: &Path, now: u64, which: &dyn Fn(&str) -> bool) -> usize {
-    let mut s = cap_state(home);
-    if s.pinned.is_empty() {
+/// Put back exactly what the cap pinned for the projects `which` takes (still alive, same start)
+/// and forget those records; `reset` also loosens the step. `procs` lists the processes, called
+/// only when something is to be put back. How many changed.
+fn uncap_where(home: &Path, procs: &dyn Fn() -> Vec<Proc>, which: &dyn Fn(&str) -> bool, reset: bool) -> usize {
+    let s = cap_state(home);
+    let todo = s.pinned.iter().any(|p| which(&p.root));
+    if !todo && !(reset && (s.step != 0 || s.at.is_some())) {
         return 0;
     }
-    let alive: Vec<(u32, u64)> = reap::list(now).iter().map(|p| (p.pid, p.started)).collect();
-    let (back, keep) = to_unpin(&s.pinned, &alive, which);
-    let n = back.iter().filter(|p| set_affinity(p.pid, p.started, p.orig)).count();
-    s.pinned = keep;
-    save_cap(home, &s);
+    let n = if todo {
+        let alive: Vec<(u32, u64)> = procs().iter().map(|p| (p.pid, p.started)).collect();
+        to_unpin(&s.pinned, &alive, which).0.iter().filter(|p| set_affinity(p.pid, p.started, p.orig)).count()
+    } else {
+        0
+    };
+    update_cap(home, |s| {
+        s.pinned.retain(|p| !which(&p.root));
+        if reset {
+            s.step = 0;
+            s.at = None;
+        }
+    });
     n
 }
 
 /// `cap off` / `guard off`: every process the cap pinned goes back to its own mask; the cap is
 /// loose again.
 pub(super) fn uncap(home: &Path, now: u64) -> usize {
-    let n = uncap_where(home, now, &|_| true);
-    let mut s = cap_state(home);
-    if s.step != 0 || s.at.is_some() {
-        s.step = 0;
-        s.at = None;
-        save_cap(home, &s);
-    }
-    n
+    uncap_where(home, &|| reap::list(now), &|_| true, true)
 }
 
 /// Auto stopped, paused, or a project left its scope: that project's pins go back (all of them
-/// once no team runs anywhere, the step too).
-pub(super) fn uncap_stale(home: &Path, now: u64) -> usize {
+/// and the step once no team runs anywhere). The scope is read once; `procs` is called only when
+/// something is to be put back.
+pub(super) fn uncap_stale(home: &Path, procs: &dyn Fn() -> Vec<Proc>) -> usize {
     if !auto::running(home) {
-        return uncap(home, now);
+        return uncap_where(home, procs, &|_| true, true);
     }
-    uncap_where(home, now, &|root| !auto::in_scope(home, Some(root)))
+    let scoped = auto::scoped(home);
+    uncap_where(home, procs, &|root| !scoped(Some(root)), false)
+}
+
+/// The rooms' share of the machine (0.1 %) over the tick, machine-wide: this project's trees plus
+/// every process the cap recorded (every project's rooms), once each.
+pub(super) fn rooms_load(deltas: &[(u32, u64)], procs: &[Proc], trees: &[(String, Vec<u32>)], pinned: &[Pin], ms: u64, cores: usize) -> u64 {
+    let mine = in_rooms(trees);
+    let d: u64 = deltas
+        .iter()
+        .filter(|(pid, _)| mine.contains(pid) || procs.iter().any(|p| p.pid == *pid && pinned.iter().any(|r| r.pid == p.pid && r.started == p.started)))
+        .map(|(_, d)| d)
+        .sum();
+    cpu_permille(d, ms, cores)
 }
 
 /// The cap's text: `CPU phòng tối đa 37% (12/32 luồng)`, `· đang siết` while tightened.
@@ -1618,7 +1671,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
     // Auto ended or this project left its scope: what the cap pinned goes back (never in tests:
     // it would touch this machine's processes).
     if !cfg!(test) {
-        uncap_stale(home, now);
+        uncap_stale(home, &|| listing.procs());
     }
     if !auto::running(home) || !auto::in_scope(home, Some(&root.to_string_lossy())) {
         return Vec::new();
@@ -1712,33 +1765,39 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
     // CPU cap: the rooms' trees on the cap's CPUs; one machine-wide step decision ([`cap_step`]).
     if let Some(cap) = auto::guard_cap(home) {
         let cpus = logical_cpus();
-        let mut s = cap_state(home);
-        if let Some(c) = cpu {
-            let rooms_load = fresh.then(|| stats.iter().filter_map(|s| s.2).sum::<u64>());
-            let step = cap_step(&s, c, rooms_load, cpu_t, cap, cpus, now);
-            if s.seen.is_none_or(|(at, _)| at < now) {
-                s.seen = Some((now, c));
+        // The rooms' load machine-wide: this project's trees and every project's recorded pins.
+        let rooms = fresh.then(|| rooms_load(&deltas, &procs, &trees, &cap_state(home).pinned, ms, sample.cores));
+        let (mut step_now, mut moved) = (0, None);
+        update_cap(home, |s| {
+            if let Some(c) = cpu {
+                let step = cap_step(s, c, rooms, cpu_t, cap, cpus, now);
+                if s.seen.is_none_or(|(at, _)| at < now) {
+                    s.seen = Some((now, c));
+                }
+                if step != s.step {
+                    moved = Some((s.step, step));
+                    s.step = step;
+                    s.at = Some(now);
+                }
             }
-            if step != s.step {
-                let text = if step > s.step {
-                    format!("CPU {cpu_s} ≥ ngưỡng CPU {cpu_t}% (phòng ăn {}%): siết {}", rooms_load.unwrap_or(0) / 10, cap_text(cap, cpus, step))
-                } else {
-                    format!("CPU {cpu_s}: nới cả bước vẫn dưới ngưỡng {cpu_t}%: {}", cap_text(cap, cpus, step))
-                };
-                s.step = step;
-                s.at = Some(now);
-                *acted = true;
-                rows.push(row("CPU cap", text.clone()));
-                log(&mut st, now, &text);
-            }
+            step_now = s.step;
+        });
+        if let Some((from, to)) = moved {
+            let text = if to > from {
+                format!("CPU {cpu_s} ≥ ngưỡng CPU {cpu_t}% (phòng ăn {}%): siết {}", rooms.unwrap_or(0) / 10, cap_text(cap, cpus, to))
+            } else {
+                format!("CPU {cpu_s}: nới cả bước vẫn dưới ngưỡng {cpu_t}%: {}", cap_text(cap, cpus, to))
+            };
+            *acted = true;
+            rows.push(row("CPU cap", text.clone()));
+            log(&mut st, now, &text);
         }
-        if let Some((k, failed)) = enforce(home, root, &procs, &trees, &mut s) {
+        if let Some((k, failed)) = enforce(home, root, &procs, &trees, step_now) {
             if k > 0 || failed > 0 {
                 let bad = if failed > 0 { format!(" · {failed} không ghim được") } else { String::new() };
-                rows.push(row("CPU cap", format!("ghim {k} tiến trình của phòng · {}{bad}", cap_text(cap, cpus, s.step))));
+                rows.push(row("CPU cap", format!("ghim {k} tiến trình của phòng · {}{bad}", cap_text(cap, cpus, step_now))));
             }
         }
-        save_cap(home, &s);
     }
 
     // Defender scanning the worktrees: its share is shown, the exclusion only suggested, never run.
@@ -1944,13 +2003,11 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
     st["procs_ms"] = json!(stamp.ms);
     st["sys"] = json!(stamp.sys.map(|(i, t)| [i, t]));
     // `%TEMP%` QA copies (machine-wide, shown in HQ, never deleted): measured at most every 30 min.
-    let mfile = machine_file(home);
-    let mut m = idle::read_json(&mfile).filter(Value::is_object).unwrap_or_else(|| json!({}));
-    if m["temp_qa"]["at"].as_u64().is_none_or(|at| now.saturating_sub(at) >= TEMP_QA_EVERY_S) {
+    let due = idle::read_json(&machine_file(home)).is_none_or(|m| m["temp_qa"]["at"].as_u64().is_none_or(|at| now.saturating_sub(at) >= TEMP_QA_EVERY_S));
+    if due {
         let mut t = temp_qa(&std::env::temp_dir(), std::time::Duration::from_secs(2));
         t["at"] = json!(now);
-        m["temp_qa"] = t;
-        idle::write_json(&mfile, &m);
+        super::team::update_json(&machine_file(home), |m| m["temp_qa"] = t);
     }
     // What HQ shows: each room's RAM and CPU (%) of the tick, heaviest first, and the machine's top CPU users.
     st["rooms"] = Value::from(stats.iter().map(|(name, mb, c)| json!({ "name": name, "mb": mb, "cpu": c.map(|c| (c + 5) / 10) })).collect::<Vec<_>>());
@@ -2010,7 +2067,7 @@ pub(super) fn dry_run(home: &Path, root: &Path, claude: &dyn Claude, registry: &
             let mask = cap_mask(cap, logical_cpus(), s.step);
             let targets = cap_targets(&procs, &trees);
             let unread = targets.iter().filter(|(p, st)| affinity_of(*p, *st).is_none()).count();
-            let k = to_pin(&targets, mask, &affinity_of).len();
+            let k = masks(&targets, &affinity_of).iter().filter(|(_, _, m)| *m != mask).count();
             let bad = if unread > 0 { format!(" · {unread} không đọc được mask") } else { String::new() };
             out.push(format!("{} · mask {mask:#x} · sẽ ghim {k}/{} tiến trình của phòng (không ghim daemon){bad} · đang ghi nhớ {}", cap_text(cap, logical_cpus(), s.step), targets.len(), s.pinned.len()));
         }
@@ -2631,15 +2688,15 @@ mod tests {
             21 => None,
             _ => Some(0xFFFF_FFFF),
         };
-        assert_eq!(to_pin(&targets, mask, &get), vec![(20, started(20), 0xFFFF_FFFF)], "unreadable skipped");
-        assert!(to_pin(&targets, mask, &|_, _| Some(mask)).is_empty(), "already pinned: no call");
+        assert_eq!(masks(&targets, &get), vec![(20, started(20), 0xFFFF_FFFF)], "unreadable skipped");
         // Records: the mask before the first pin stays through a re-pin (tighten); the dead go.
-        let alive: Vec<(u32, u64)> = procs.iter().map(|p| (p.pid, p.started)).collect();
-        let r1 = record(&[], &[(20, started(20), 0xFFFF_FFFF), (21, started(21), 0x0FFF_0000)], "C:\\a", &alive);
-        let r2 = record(&r1, &[(20, started(20), mask)], "C:\\a", &alive);
+        let r1 = record(&[], &[(20, started(20), 0xFFFF_FFFF), (21, started(21), 0x0FFF_0000)], "C:\\a", &procs, mask);
+        assert_eq!(r1.iter().map(|p| (p.pid, p.orig)).collect::<Vec<_>>(), [(20, 0xFFFF_FFFF), (21, 0xFFFF_FFFF)], "the child is the room's: its parent's mask before the cap");
+        let r2 = record(&r1, &[(20, started(20), mask)], "C:\\a", &procs, cap_mask(37, 32, 1));
         assert_eq!(r2, r1, "re-pinned: the original mask is kept");
-        let r3 = record(&[r1.clone(), vec![Pin { pid: 99, started: 1, root: "C:\\b".into(), orig: 1 }]].concat(), &[], "C:\\a", &alive);
+        let r3 = record(&[r1.clone(), vec![Pin { pid: 99, started: 1, root: "C:\\b".into(), orig: 1 }]].concat(), &[], "C:\\a", &procs, mask);
         assert_eq!(r3, r1, "a process gone is forgotten");
+        let alive: Vec<(u32, u64)> = procs.iter().map(|p| (p.pid, p.started)).collect();
         // Off for project a only (out of scope): its live pins go back with their own masks; a pid
         // reused since (another start) is never touched.
         let pins = vec![
@@ -2652,6 +2709,47 @@ mod tests {
         assert_eq!(keep, vec![pins[2].clone()], "the in-scope project keeps its pins; the reused pid's record is dropped");
         let (back, keep) = to_unpin(&pins, &alive, &|_| true);
         assert_eq!((back.len(), keep.len()), (2, 0), "auto off: every live pin back");
+    }
+
+    #[test]
+    fn children_inherit_the_cap_and_are_recorded_with_their_rooms_mask_before_it() {
+        let mask = cap_mask(37, 32, 0);
+        let procs = vec![
+            p(11, 1, 60, "claude.exe", "claude --bg-pty-host", 50),
+            p(20, 11, 30, "claude.exe", "claude --bg --resume abc", 300),
+            p(21, 20, 10, "node.exe", "node vite", 100),
+            p(22, 21, 5, "esbuild.exe", "esbuild --service", 50),
+            p(30, 11, 20, "claude.exe", "claude --bg --resume def", 300),
+        ];
+        let s = |pid: u32| procs.iter().find(|p| p.pid == pid).unwrap().started;
+        // The room was pinned from every CPU; later its vite and esbuild came up already on the cap.
+        let r = record(&[], &[(20, s(20), 0xFFFF_FFFF)], "C:\\a", &procs, mask);
+        let r = record(&r, &[(21, s(21), mask), (22, s(22), mask)], "C:\\a", &procs, mask);
+        assert_eq!(r.iter().map(|p| (p.pid, p.orig)).collect::<Vec<_>>(), [(20, 0xFFFF_FFFF), (21, 0xFFFF_FFFF), (22, 0xFFFF_FFFF)], "never their capped mask: off restores every room process");
+        // On the cap with no recorded ancestor (inherited from something the cap did not pin):
+        // restored to every CPU; off the cap: its own mask.
+        assert_eq!(record(&[], &[(30, s(30), mask)], "C:\\a", &procs, mask)[0].orig, ALL_CPUS);
+        assert_eq!(record(&[], &[(30, s(30), 0x0FFF_0000)], "C:\\a", &procs, mask)[0].orig, 0x0FFF_0000);
+        // A tightened child (it holds the old cap mask) still gets the room's original.
+        let r2 = record(&r, &[], "C:\\a", &procs, cap_mask(37, 32, 1));
+        assert_eq!(r2, r);
+    }
+
+    #[test]
+    fn the_rooms_load_counts_every_projects_rooms() {
+        let procs = vec![p(20, 1, 30, "claude.exe", "", 1), p(30, 1, 30, "claude.exe", "", 1), p(40, 1, 30, "claude.exe", "", 1), p(50, 1, 30, "game.exe", "", 1)];
+        let s = |pid: u32| procs.iter().find(|p| p.pid == pid).unwrap().started;
+        // 20 s on 32 CPUs: 12% of the machine each for three projects' rooms, 25% the owner's game.
+        let pct = |x: u64| x * 20_000 * 10_000 * 32 / 100;
+        let deltas = vec![(20, pct(12)), (30, pct(12)), (40, pct(12)), (50, pct(25))];
+        let trees = vec![("dev".to_string(), vec![20])];
+        let pinned = vec![Pin { pid: 30, started: s(30), root: "C:\\b".into(), orig: 1 }, Pin { pid: 40, started: s(40), root: "C:\\c".into(), orig: 1 }, Pin { pid: 50, started: s(50) + 9, root: "C:\\d".into(), orig: 1 }];
+        assert_eq!(rooms_load(&deltas, &procs, &trees, &[], 20_000, 32), 120, "this project's rooms alone: under the rooms-are-the-load line");
+        let all = rooms_load(&deltas, &procs, &trees, &pinned, 20_000, 32);
+        assert_eq!(all, 360, "three projects' rooms; a reused pid (the owner's game) never counts");
+        let st = CapState { seen: Some((NOW - 20, 61)), ..Default::default() };
+        assert_eq!(cap_step(&st, 61, Some(all), 55, 37, 32, NOW), 1, "3 projects × 12% + owner 25%: tightens");
+        assert_eq!(cap_step(&st, 61, Some(120), 55, 37, 32, NOW), 0);
     }
 
 }

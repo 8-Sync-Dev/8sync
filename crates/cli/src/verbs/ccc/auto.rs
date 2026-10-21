@@ -163,7 +163,7 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
     // Auto off/paused, or a project out of the new scope: the CPU cap's pins there go back (never in
     // tests: it would touch this machine's processes).
     if !cfg!(test) {
-        super::pressure::uncap_stale(home, now);
+        super::pressure::uncap_stale(home, &|| super::reap::list(now));
     }
     // A `no_tick` flag is a session's word for this run of auto only: a resumed auto asks again.
     idle::clear_no_tick(home);
