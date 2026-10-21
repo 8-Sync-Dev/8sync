@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.36] — 2026-10-22
+
+### Fixed
+- **`auto merge` land được card chưa có trường PR nếu ghi chú review nêu PR.** Owner 2026-10-22 (ide): 8 card Approved nằm 9 giờ dù Ship đã duyệt ("Duyệt tất cả", grant còn hiệu lực): PR của chúng ở zus-backend, review trước 0.110.30 chỉ ghi `[review] OK zus-backend#19 @b6d1e81` vào note, card không có `pr`/`pr_repo`, nên merge nền báo "card không có PR" mãi. Giờ `merge.rs` `infer_pr` đọc `repo#N @sha` / `owner/repo#N` / `#N` từ ghi chú (mới nhất trước; có SHA đã duyệt thì SHA trong note phải khớp; repo khác org bị bỏ qua, cùng org qua `pr_repo_for`) rồi land như card có `--pr`. Dòng chờ ghi rõ cách đặt tay khi note cũng không có.
+
 ## [0.110.35] — 2026-10-21
 
 ### Added
