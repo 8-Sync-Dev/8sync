@@ -360,7 +360,8 @@ function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: Swe
           </div>
         </div>
       )}
-      {g.pct != null && (
+      {/* `cpus` only comes from an 8sync with the cap: an older one shows no row (its POST would fail). */}
+      {g.pct != null && g.cpus != null && (
         <div className="space-y-1.5">
           <p className="text-sm font-medium">
             {g.cap == null ? "CPU phòng: không giới hạn" : `CPU phòng tối đa ${g.cap}%${g.capN != null && g.cpus != null ? ` (${g.capN}/${g.cpus} luồng)` : ""}`}

@@ -27,10 +27,14 @@
 //!   rooms that do not fit ([`keep_count`], [`DROP_ORDER`]); their cards go back to the lane. They
 //!   come back one per pass once one more room has fit under the threshold ([`room_fits`]) for
 //!   [`CALM_S`]. Turning the guard off brings them all back.
-//! - CPU cap — every pass, and right after `auto up`/`revive` open rooms ([`cap_now`]): the Claude
-//!   Code daemon and every room's tree run on [`cap_mask`] (the highest-numbered N logical CPUs, N
-//!   = cap% of the machine, default [`DEFAULT_CAP`]%); halved while CPU ≥ the threshold until it
-//!   is back [`CAP_CALM`] points under ([`cap_tight`]). Owner 2026-10-21: "never cpu go to 60%".
+//! - CPU cap — every pass, and right after `auto up`/`revive` open rooms ([`cap_now`]): every
+//!   room's process tree runs on [`cap_mask`] (the highest-numbered N logical CPUs, N = cap% of
+//!   the machine, default [`DEFAULT_CAP`]%), never the Claude Code daemon (what it spawns later
+//!   would inherit the mask, rooms or not). While the rooms are the load and CPU holds ≥ the CPU
+//!   threshold the cap halves one step; it loosens one step only when CPU with the looser cap
+//!   still stays under ([`cap_step`]). What it pinned is recorded and put back exactly when the
+//!   cap, the guard or auto ends for that project ([`uncap`], [`uncap_stale`]). Owner
+//!   2026-10-21: "never cpu go to 60%".
 //!   Affinity, not a job-object rate cap: node puts its children in its own job (measured 55% with a
 //!   10% hard cap), while an affinity mask is inherited (16 burners on 8 CPUs: +32% not +50%).
 //!
@@ -53,8 +57,13 @@ pub(super) const DEFAULT_CPU: u32 = 55;
 pub(super) const DEFAULT_CAP: u32 = 37;
 /// Caps `auto guard cap` takes.
 pub(super) const CAP_RANGE: std::ops::RangeInclusive<u32> = 10..=90;
-/// A tightened cap ([`cap_tight`]) lets go once CPU is this many points under the threshold.
-const CAP_CALM: u32 = 10;
+/// A cap tightened by [`cap_step`] loosens one step only when CPU with the looser cap (the rooms
+/// filling the CPUs it gives back) still stays this many points under the CPU threshold.
+const CAP_CALM: u32 = 5;
+/// At most one tighten/loosen decision per this many seconds, machine-wide.
+const CAP_EVERY_S: u64 = 20;
+/// The cap tightens only while the rooms are the load: their share of the machine (0.1 %).
+const ROOMS_LOAD: u64 = 150;
 /// Thresholds `auto guard` takes.
 pub(super) const PCT_RANGE: std::ops::RangeInclusive<u32> = 30..=95;
 /// One guard pass per project at most this often from `auto revive` (HQ ticks every 120 s)…
@@ -246,7 +255,8 @@ pub(super) fn machine_cpu(prev: Option<(u64, u64)>, cur: Option<(u64, u64)>) -> 
 }
 
 /// The machine's (idle, total) CPU time so far: Windows `GetSystemTimes` (100 ns; kernel includes
-/// idle), Linux `/proc/stat` (ticks; idle + iowait). None elsewhere.
+/// idle), Linux `/proc/stat` (ticks; idle + iowait over the first 8 fields: guest and guest_nice
+/// are already inside user and nice). None elsewhere.
 pub(super) fn system_times() -> Option<(u64, u64)> {
     #[cfg(windows)]
     {
@@ -256,7 +266,7 @@ pub(super) fn system_times() -> Option<(u64, u64)> {
     {
         let s = std::fs::read_to_string("/proc/stat").ok()?;
         let v: Vec<u64> = s.lines().next()?.split_whitespace().skip(1).filter_map(|x| x.parse().ok()).collect();
-        (v.len() >= 5).then(|| (v[3] + v[4], v.iter().sum()))
+        (v.len() >= 5).then(|| (v[3] + v[4], v.iter().take(8).sum()))
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
@@ -758,6 +768,7 @@ mod win {
         fn SetProcessAffinityMask(h: Handle, mask: usize) -> i32;
         fn GetCurrentProcess() -> Handle;
         fn GetSystemTimes(idle: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
+        fn GetProcessTimes(h: Handle, creation: *mut u64, exit: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
     }
     const PROCESS_SET_INFORMATION: u32 = 0x0200;
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
@@ -780,19 +791,34 @@ mod win {
         }
     }
 
-    /// `pid`'s affinity mask (its first group), None when unreadable.
-    pub fn affinity(pid: u32) -> Option<u64> {
+    /// The open process is the one listed: its creation time (unix s) is within 2 s of `started`
+    /// (0 = the listing did not say: no check). A pid reused since the listing is never touched.
+    fn same(h: Handle, started: u64) -> bool {
+        if started == 0 {
+            return true;
+        }
+        let (mut c, mut e, mut k, mut u) = (0u64, 0u64, 0u64, 0u64);
+        // SAFETY: four out-pointers to live u64s (FILETIME layout); `h` is a live handle.
+        let ok = unsafe { GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u) != 0 };
+        // FILETIME counts 100 ns since 1601-01-01.
+        ok && (c / 10_000_000).checked_sub(11_644_473_600).is_some_and(|s| s.abs_diff(started) <= 2)
+    }
+
+    /// `pid`'s affinity mask (its first group), None when unreadable or no longer the process
+    /// started at `started`.
+    pub fn affinity(pid: u32, started: u64) -> Option<u64> {
         let (mut p, mut s) = (0usize, 0usize);
         // SAFETY: two out-pointers to live usizes.
-        let ok = with(pid, PROCESS_QUERY_LIMITED_INFORMATION, |h| unsafe { GetProcessAffinityMask(h, &mut p, &mut s) != 0 })?;
+        let ok = with(pid, PROCESS_QUERY_LIMITED_INFORMATION, |h| same(h, started) && unsafe { GetProcessAffinityMask(h, &mut p, &mut s) != 0 })?;
         (ok && p != 0).then_some(p as u64)
     }
 
     /// https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-setprocessaffinitymask:
-    /// inherited by the children the process starts after.
-    pub fn set_affinity(pid: u32, mask: u64) -> bool {
+    /// inherited by the children the process starts after. Only when it is still the process
+    /// started at `started`.
+    pub fn set_affinity(pid: u32, started: u64, mask: u64) -> bool {
         // SAFETY: `h` is a live handle with PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION.
-        with(pid, PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION, |h| unsafe { SetProcessAffinityMask(h, mask as usize) != 0 }).unwrap_or(false)
+        with(pid, PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION, |h| same(h, started) && unsafe { SetProcessAffinityMask(h, mask as usize) != 0 }).unwrap_or(false)
     }
 
     /// (idle, kernel + user) 100-ns times of the whole machine (kernel includes idle).
@@ -883,136 +909,242 @@ fn full_mask(cpus: usize) -> u64 {
     u64::MAX >> (64 - n)
 }
 
-/// The affinity mask for a `cap`% of `cpus` logical CPUs: N = cap × cpus / 100 rounded (37% of 32
-/// = 12, the 12 CPUs the owner pinned by hand), at least
-/// 2, halved (at least 2) while `tight`, the highest-numbered first (on AMD X3D the V-Cache CCD is
-/// CPUs 0..15: left to the owner). Over 64 CPUs only the first group counts.
-pub(super) fn cap_mask(cap: u32, cpus: usize, tight: bool) -> u64 {
+/// A recorded original mask that means "every CPU" (Linux over 64 CPUs: does not fit 64 bits).
+const ALL_CPUS: u64 = u64::MAX;
+
+/// The rooms' CPUs at tightening `step` (0 = the cap itself): N = cap × cpus / 100 rounded (37%
+/// of 32 = 12), at least 2, halved per step (at least 2); never more than the first group's 64.
+pub(super) fn cap_n(cap: u32, cpus: usize, step: u32) -> u32 {
     let cpus = cpus.clamp(1, 64);
     let mut n = ((cap as usize * cpus + 50) / 100).max(2);
-    if tight {
+    for _ in 0..step {
         n = (n / 2).max(2);
     }
-    let n = n.min(cpus) as u32;
-    let full = full_mask(cpus);
-    full & !full.checked_shr(n).unwrap_or(0)
+    n.min(cpus) as u32
 }
 
-/// The cap tightens while the machine's CPU is ≥ the threshold and lets go once it is
-/// [`CAP_CALM`] points under; in between (or unknown) it stays as it was.
-pub(super) fn cap_tight(was: bool, cpu: Option<u32>, pct: u32) -> bool {
-    match cpu {
-        Some(c) if c >= pct => true,
-        Some(c) if c + CAP_CALM <= pct => false,
-        _ => was,
+/// The affinity mask of [`cap_n`]: the highest-numbered CPUs (on AMD X3D the V-Cache CCD is CPUs
+/// 0..15: left to the owner), within the first 64.
+pub(super) fn cap_mask(cap: u32, cpus: usize, step: u32) -> u64 {
+    let full = full_mask(cpus);
+    full & !full.checked_shr(cap_n(cap, cpus, step)).unwrap_or(0)
+}
+
+/// A process the cap pinned: its start (pid reuse) and project, and the mask it had before.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Pin {
+    pub pid: u32,
+    pub started: u64,
+    pub root: String,
+    pub orig: u64,
+}
+
+/// The machine-wide cap state (`guard-machine.json` `cap`): tightening step, when it last changed,
+/// the last CPU reading (unix s, %), what is pinned, and how many pins failed last time.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(super) struct CapState {
+    pub step: u32,
+    pub at: Option<u64>,
+    pub seen: Option<(u64, u32)>,
+    pub pinned: Vec<Pin>,
+    pub failed: u64,
+}
+
+impl CapState {
+    fn of(c: &Value) -> CapState {
+        let pinned = c["pinned"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| Some(Pin { pid: u32::try_from(v[0].as_u64()?).ok()?, started: v[1].as_u64()?, root: v[2].as_str()?.to_string(), orig: v[3].as_u64()? }))
+            .collect();
+        let seen = c["seen"].as_array().and_then(|a| Some((a.first()?.as_u64()?, u32::try_from(a.get(1)?.as_u64()?).ok()?)));
+        CapState { step: c["step"].as_u64().and_then(|s| u32::try_from(s).ok()).unwrap_or(0), at: c["at"].as_u64(), seen, pinned, failed: c["failed"].as_u64().unwrap_or(0) }
+    }
+
+    fn json(&self) -> Value {
+        let pinned: Vec<Value> = self.pinned.iter().map(|p| json!([p.pid, p.started, p.root, p.orig])).collect();
+        json!({ "step": self.step, "at": self.at, "seen": self.seen.map(|(a, c)| json!([a, c])), "pinned": pinned, "failed": self.failed })
     }
 }
 
-/// Claude Code's background daemon (`claude daemon`) or its pty host (`--bg-pty-host`): rooms are
-/// spawned under it, so its mask covers rooms not open yet. Never the owner's interactive claude.
-pub(super) fn is_daemon(p: &Proc) -> bool {
-    let claude = p.image == "claude" || (p.node && p.cmd.to_lowercase().contains("claude"));
-    claude && (p.cmd.contains("--bg-pty-host") || p.cmd.split_whitespace().skip(1).any(|t| t == "daemon"))
+fn cap_state(home: &Path) -> CapState {
+    CapState::of(&idle::read_json(&machine_file(home)).unwrap_or(Value::Null)["cap"])
 }
 
-/// What the cap pins: every process of the rooms' trees and the daemon(s), once each.
-pub(super) fn cap_targets(procs: &[Proc], trees: &[(String, Vec<u32>)]) -> Vec<u32> {
+fn save_cap(home: &Path, s: &CapState) {
+    let mfile = machine_file(home);
+    let mut m = idle::read_json(&mfile).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    m["cap"] = s.json();
+    idle::write_json(&mfile, &m);
+}
+
+/// This pass's tightening step from `s`, machine-wide, at most one change per [`CAP_EVERY_S`] and
+/// only on two readings in a row (`s.seen` within [`CONTINUOUS_S`], then `cpu`): a first or stale
+/// pass never acts on one glimpse. Tighten one step (halve) while both are ≥ the CPU threshold
+/// `cpu_t` and the rooms are the load (`rooms`, 0.1 % of the machine, ≥ [`ROOMS_LOAD`]): the
+/// owner's own load never halves the rooms. Loosen one step only when CPU plus what the looser
+/// cap gives back (rooms filling those CPUs) plus [`CAP_CALM`] stays ≤ `cpu_t`: a loosened cap
+/// never lands over the line, so it never flips back and forth.
+pub(super) fn cap_step(s: &CapState, cpu: u32, rooms: Option<u64>, cpu_t: u32, cap: u32, cpus: usize, now: u64) -> u32 {
+    let Some(prev) = s.seen.filter(|(at, _)| *at < now && now - at <= CONTINUOUS_S).map(|(_, c)| c) else { return s.step };
+    if s.at.is_some_and(|a| now.saturating_sub(a) < CAP_EVERY_S) {
+        return s.step;
+    }
+    let n = |step: u32| cap_n(cap, cpus, step);
+    if cpu.min(prev) >= cpu_t && rooms.is_some_and(|r| r >= ROOMS_LOAD) && n(s.step + 1) < n(s.step) {
+        return s.step + 1;
+    }
+    if s.step > 0 {
+        let back = ((n(s.step - 1) - n(s.step)) as usize * 100).div_ceil(cpus.clamp(1, 64)) as u32;
+        if cpu.max(prev) + back + CAP_CALM <= cpu_t {
+            return s.step - 1;
+        }
+    }
+    s.step
+}
+
+/// What the cap pins: every process of the rooms' trees (pid, start), once each. Never the Claude
+/// Code daemon or pty host: their mask would pass to every session they start later, the owner's
+/// and other projects' included. New rooms are pinned right after they open ([`cap_now`]).
+pub(super) fn cap_targets(procs: &[Proc], trees: &[(String, Vec<u32>)]) -> Vec<(u32, u64)> {
     let mut v = in_rooms(trees);
-    v.extend(procs.iter().filter(|p| is_daemon(p)).map(|p| p.pid));
     v.sort_unstable();
     v.dedup();
-    v.retain(|pid| procs.iter().any(|p| p.pid == *pid));
+    v.into_iter().filter_map(|pid| procs.iter().find(|p| p.pid == pid).map(|p| (pid, p.started))).collect()
+}
+
+/// Of `targets`, those whose mask (`get`) is readable and not `mask` yet, with the mask they have.
+pub(super) fn to_pin(targets: &[(u32, u64)], mask: u64, get: &dyn Fn(u32, u64) -> Option<u64>) -> Vec<(u32, u64, u64)> {
+    targets.iter().filter_map(|&(pid, s)| get(pid, s).filter(|m| *m != mask).map(|m| (pid, s, m))).collect()
+}
+
+/// The records after pinning `done` (pid, start, mask before) for `root`: a process pinned again
+/// keeps the mask it had before the first pin; processes no longer `alive` (pid, start) go.
+pub(super) fn record(pinned: &[Pin], done: &[(u32, u64, u64)], root: &str, alive: &[(u32, u64)]) -> Vec<Pin> {
+    let mut v: Vec<Pin> = pinned.iter().filter(|p| alive.contains(&(p.pid, p.started))).cloned().collect();
+    for &(pid, started, orig) in done {
+        if !v.iter().any(|p| p.pid == pid && p.started == started) {
+            v.push(Pin { pid, started, root: root.to_string(), orig });
+        }
+    }
     v
 }
 
-/// What `cap off` / `guard off` puts back on every CPU: the daemons and all they spawned (the rooms
-/// and their trees, whatever project), nothing else.
-pub(super) fn uncap_targets(procs: &[Proc]) -> Vec<u32> {
-    let mut v: Vec<u32> = procs.iter().filter(|p| is_daemon(p)).flat_map(|p| reap::tree_of(procs, p.pid, &|_| true)).collect();
-    v.sort_unstable();
-    v.dedup();
-    v
+/// Split the records: those `uncap` puts back (project `which`, still alive with the same start)
+/// and those that stay; records of processes gone are dropped.
+pub(super) fn to_unpin(pinned: &[Pin], alive: &[(u32, u64)], which: &dyn Fn(&str) -> bool) -> (Vec<Pin>, Vec<Pin>) {
+    pinned.iter().filter(|p| alive.contains(&(p.pid, p.started))).cloned().partition(|p| which(&p.root))
 }
 
-/// Of `pids`, those whose current mask (`get`) is readable and not `mask` yet.
-pub(super) fn to_pin(pids: &[u32], mask: u64, get: &dyn Fn(u32) -> Option<u64>) -> Vec<u32> {
-    pids.iter().copied().filter(|&pid| get(pid).is_some_and(|m| m != mask)).collect()
-}
-
-/// Logical CPUs of the machine's first group: Windows the system mask (not this process's), else
-/// what std reports.
+/// The machine's logical CPUs: Windows the system mask's first group (not this process's), Linux
+/// the `cpuN` lines of `/proc/stat` (not this process's affinity or cgroup quota).
 pub(super) fn logical_cpus() -> usize {
     #[cfg(windows)]
     if let Some(n) = win::system_cpus() {
         return n;
     }
-    std::thread::available_parallelism().map_or(1, |n| n.get()).min(64)
+    #[cfg(target_os = "linux")]
+    if let Ok(s) = std::fs::read_to_string("/proc/stat") {
+        let n = s.lines().filter(|l| l.strip_prefix("cpu").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))).count();
+        if n > 0 {
+            return n;
+        }
+    }
+    std::thread::available_parallelism().map_or(1, |n| n.get())
 }
 
-/// `pid`'s affinity mask; None when unreadable (gone, not ours, macOS).
-pub(super) fn affinity_of(pid: u32) -> Option<u64> {
+/// Linux: the start (unix s) of `pid` as the listing computes it (btime + start ticks / 100).
+#[cfg(target_os = "linux")]
+fn linux_started(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let ticks: u64 = stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()?;
+    let btime: u64 = std::fs::read_to_string("/proc/stat").ok()?.lines().find_map(|l| l.strip_prefix("btime ")?.trim().parse().ok())?;
+    Some(btime + ticks / 100)
+}
+
+/// Linux: still the process started at `started` (0 = no check), within 2 s.
+#[cfg(target_os = "linux")]
+fn linux_same(pid: u32, started: u64) -> bool {
+    started == 0 || linux_started(pid).is_some_and(|s| s.abs_diff(started) <= 2)
+}
+
+/// Linux `Cpus_allowed` (hex, comma groups): the first 64 CPUs' bits, or [`ALL_CPUS`] when any CPU
+/// past 64 is allowed (never equal to a cap mask, so it gets pinned; restored as every CPU).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(super) fn parse_cpus_allowed(hex: &str) -> Option<u64> {
+    let h: String = hex.trim().chars().filter(|c| *c != ',').collect();
+    let (hi, lo) = h.split_at(h.len().saturating_sub(16));
+    if hi.chars().any(|c| c != '0') {
+        return Some(ALL_CPUS);
+    }
+    u64::from_str_radix(lo, 16).ok()
+}
+
+/// `pid`'s affinity mask (first 64 CPUs); None when unreadable, gone, no longer the process started
+/// at `started`, or on macOS. Linux reads `/proc/<pid>/status` (no spawn).
+pub(super) fn affinity_of(pid: u32, started: u64) -> Option<u64> {
     #[cfg(windows)]
     {
-        win::affinity(pid)
+        win::affinity(pid, started)
     }
     #[cfg(target_os = "linux")]
     {
-        let out = std::process::Command::new("taskset").args(["-p", &pid.to_string()]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
-        let s = String::from_utf8_lossy(&out.stdout);
-        u64::from_str_radix(s.trim().rsplit(' ').next()?.trim(), 16).ok()
+        let s = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+        let m = parse_cpus_allowed(s.lines().find_map(|l| l.strip_prefix("Cpus_allowed:"))?)?;
+        linux_same(pid, started).then_some(m)
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
-        let _ = pid;
+        let _ = (pid, started);
         None
     }
 }
 
-/// Pin `pids` to `mask` one by one (Windows `SetProcessAffinityMask`, Linux `taskset -a -p` for
-/// every thread); how many changed. Only ever called with [`cap_targets`] / [`uncap_targets`].
-pub(super) fn pin(pids: &[u32], mask: u64) -> usize {
+/// Pin `pid` (only while it is the process started at `started`) to `mask`, [`ALL_CPUS`] = every
+/// CPU: Windows `SetProcessAffinityMask`, Linux `taskset -a` (every thread), spawned only for a
+/// change. Only ever called for [`cap_targets`] and recorded [`Pin`]s.
+pub(super) fn set_affinity(pid: u32, started: u64, mask: u64) -> bool {
     #[cfg(windows)]
     {
-        pids.iter().filter(|&&pid| win::set_affinity(pid, mask)).count()
+        win::set_affinity(pid, started, if mask == ALL_CPUS { full_mask(logical_cpus()) } else { mask })
     }
     #[cfg(target_os = "linux")]
     {
-        pids.iter()
-            .filter(|pid| {
-                std::process::Command::new("taskset")
-                    .args(["-a", "-p", &format!("{mask:x}"), &pid.to_string()])
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .is_ok_and(|s| s.success())
-            })
-            .count()
+        if !linux_same(pid, started) {
+            return false;
+        }
+        let mut cmd = std::process::Command::new("taskset");
+        if mask == ALL_CPUS {
+            cmd.args(["-a", "-c", "-p", &format!("0-{}", logical_cpus().saturating_sub(1)), &pid.to_string()]);
+        } else {
+            cmd.args(["-a", "-p", &format!("{mask:x}"), &pid.to_string()]);
+        }
+        cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
-        let _ = (pids, mask);
-        0
+        let _ = (pid, started, mask);
+        false
     }
 }
 
-/// Whether the cap is tightened now (machine-wide: the daemon is shared by every project).
-fn tight_now(home: &Path) -> bool {
-    idle::read_json(&machine_file(home)).and_then(|m| m["cap_tight"].as_bool()).unwrap_or(false)
-}
-
-/// Pin the daemon and the rooms' trees to the cap's mask; how many changed. None while the guard
-/// or the cap is off.
-fn enforce(home: &Path, procs: &[Proc], trees: &[(String, Vec<u32>)], tight: bool) -> Option<usize> {
+/// Pin the rooms' trees of `root` to the cap's mask at `s.step` and record it in `s`: (changed,
+/// failed). None while the guard or the cap is off.
+fn enforce(home: &Path, root: &Path, procs: &[Proc], trees: &[(String, Vec<u32>)], s: &mut CapState) -> Option<(usize, usize)> {
     auto::guard_pct(home)?;
     let cap = auto::guard_cap(home)?;
-    let mask = cap_mask(cap, logical_cpus(), tight);
-    let pins = to_pin(&cap_targets(procs, trees), mask, &affinity_of);
-    Some(if pins.is_empty() { 0 } else { pin(&pins, mask) })
+    let mask = cap_mask(cap, logical_cpus(), s.step);
+    let plan = to_pin(&cap_targets(procs, trees), mask, &affinity_of);
+    let done: Vec<(u32, u64, u64)> = plan.iter().copied().filter(|&(pid, started, _)| set_affinity(pid, started, mask)).collect();
+    let alive: Vec<(u32, u64)> = procs.iter().map(|p| (p.pid, p.started)).collect();
+    s.pinned = record(&s.pinned, &done, &key(root), &alive);
+    s.failed = (plan.len() - done.len()) as u64;
+    Some((done.len(), plan.len() - done.len()))
 }
 
-/// Right after `auto up` / `revive` open rooms: the new trees go under the cap at once (the
-/// daemon's mask covers them already unless Claude Code restarted it). How many changed.
+/// Right after `auto up` / `revive` open rooms: the new trees go under the cap at once. How many
+/// changed.
 pub(super) fn cap_now(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, String)], now: u64) -> usize {
     if auto::guard_pct(home).is_none() || auto::guard_cap(home).is_none() {
         return 0;
@@ -1023,32 +1155,54 @@ pub(super) fn cap_now(home: &Path, root: &Path, claude: &dyn Claude, registry: &
         .map(|j| live_rooms(&j, registry, &records(home)))
         .unwrap_or_default();
     let trees = room_trees(&procs, &live);
-    enforce(home, &procs, &trees, tight_now(home)).unwrap_or(0)
+    let mut s = cap_state(home);
+    let n = enforce(home, root, &procs, &trees, &mut s).map_or(0, |(n, _)| n);
+    save_cap(home, &s);
+    n
 }
 
-/// `cap off` / `guard off`: the daemons and everything under them back on every CPU; how many
-/// changed. The tightened state ends.
+/// Put back exactly what the cap pinned for the projects `which` takes (still alive, same start):
+/// how many. Nothing listed when nothing is recorded.
+fn uncap_where(home: &Path, now: u64, which: &dyn Fn(&str) -> bool) -> usize {
+    let mut s = cap_state(home);
+    if s.pinned.is_empty() {
+        return 0;
+    }
+    let alive: Vec<(u32, u64)> = reap::list(now).iter().map(|p| (p.pid, p.started)).collect();
+    let (back, keep) = to_unpin(&s.pinned, &alive, which);
+    let n = back.iter().filter(|p| set_affinity(p.pid, p.started, p.orig)).count();
+    s.pinned = keep;
+    save_cap(home, &s);
+    n
+}
+
+/// `cap off` / `guard off`: every process the cap pinned goes back to its own mask; the cap is
+/// loose again.
 pub(super) fn uncap(home: &Path, now: u64) -> usize {
-    let mfile = machine_file(home);
-    if let Some(mut m) = idle::read_json(&mfile).filter(|m| m["cap_tight"].as_bool() == Some(true)) {
-        m["cap_tight"] = json!(false);
-        idle::write_json(&mfile, &m);
+    let n = uncap_where(home, now, &|_| true);
+    let mut s = cap_state(home);
+    if s.step != 0 || s.at.is_some() {
+        s.step = 0;
+        s.at = None;
+        save_cap(home, &s);
     }
-    let procs = reap::list(now);
-    let full = full_mask(logical_cpus());
-    let pins = to_pin(&uncap_targets(&procs), full, &affinity_of);
-    if pins.is_empty() {
-        0
-    } else {
-        pin(&pins, full)
+    n
+}
+
+/// Auto stopped, paused, or a project left its scope: that project's pins go back (all of them
+/// once no team runs anywhere, the step too).
+pub(super) fn uncap_stale(home: &Path, now: u64) -> usize {
+    if !auto::running(home) {
+        return uncap(home, now);
     }
+    uncap_where(home, now, &|root| !auto::in_scope(home, Some(root)))
 }
 
 /// The cap's text: `CPU phòng tối đa 37% (12/32 luồng)`, `· đang siết` while tightened.
-fn cap_text(cap: u32, cpus: usize, tight: bool) -> String {
-    let n = cap_mask(cap, cpus, tight).count_ones();
+fn cap_text(cap: u32, cpus: usize, step: u32) -> String {
+    let n = cap_n(cap, cpus, step);
     let cpus = cpus.clamp(1, 64);
-    format!("CPU phòng tối đa {cap}% ({n}/{cpus} luồng){}", if tight { " · đang siết (CPU vượt ngưỡng)" } else { "" })
+    format!("CPU phòng tối đa {cap}% ({n}/{cpus} luồng){}", if step > 0 { " · đang siết (CPU vượt ngưỡng)" } else { "" })
 }
 
 /// Each live room's process tree (its claude.exe first).
@@ -1319,11 +1473,11 @@ pub(super) fn status_json(home: &Path, pct: Option<u32>) -> Value {
         })
         .collect();
     let temp_qa = idle::read_json(&machine_file(home)).map(|m| m["temp_qa"].clone()).filter(Value::is_object);
-    let tight = idle::read_json(&machine_file(home)).and_then(|m| m["cap_tight"].as_bool()).unwrap_or(false);
+    let s = cap_state(home);
     let cpus = logical_cpus();
     let cap = auto::guard_cap(home);
-    let cap_n = cap.map(|c| cap_mask(c, cpus, tight).count_ones());
-    json!({ "pct": pct, "cpu_pct": pct.and(auto::guard_cpu(home)), "eco": auto::guard_eco(home), "cap": cap, "cap_n": cap_n, "cpus": cpus.min(64), "cap_tight": tight, "projects": projects, "temp_qa": temp_qa })
+    let cap_n = cap.map(|c| cap_n(c, cpus, s.step));
+    json!({ "pct": pct, "cpu_pct": pct.and(auto::guard_cpu(home)), "eco": auto::guard_eco(home), "cap": cap, "cap_n": cap_n, "cpus": cpus.min(64), "cap_step": s.step, "cap_tight": s.step > 0, "cap_pinned": s.pinned.len(), "cap_failed": s.failed, "projects": projects, "temp_qa": temp_qa })
 }
 
 /// The text lines of a `guard` status object.
@@ -1333,7 +1487,10 @@ pub(super) fn lines(g: &Value) -> Vec<String> {
     };
     let eco = if g["eco"].as_bool() == Some(false) { "TẮT" } else { "BẬT" };
     let cap = match g["cap"].as_u64().and_then(|c| u32::try_from(c).ok()) {
-        Some(c) => cap_text(c, g["cpus"].as_u64().unwrap_or(1) as usize, g["cap_tight"].as_bool() == Some(true)),
+        Some(c) => {
+            let failed = g["cap_failed"].as_u64().filter(|f| *f > 0).map(|f| format!(" · {f} tiến trình không ghim được")).unwrap_or_default();
+            cap_text(c, g["cpus"].as_u64().unwrap_or(1) as usize, g["cap_step"].as_u64().map_or(u32::from(g["cap_tight"].as_bool() == Some(true)), |s| s as u32)) + &failed
+        }
         None => "CPU phòng: không giới hạn".into(),
     };
     let cpu_t = g["cpu_pct"].as_u64().unwrap_or(u64::from(DEFAULT_CPU));
@@ -1458,6 +1615,11 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
     let Some(pct) = auto::guard_pct(home) else { return Vec::new() };
     let lim = Limits { ram: pct, cpu: auto::guard_cpu(home).unwrap_or(DEFAULT_CPU) };
     let cpu_t = lim.cpu;
+    // Auto ended or this project left its scope: what the cap pinned goes back (never in tests:
+    // it would touch this machine's processes).
+    if !cfg!(test) {
+        uncap_stale(home, now);
+    }
     if !auto::running(home) || !auto::in_scope(home, Some(&root.to_string_lossy())) {
         return Vec::new();
     }
@@ -1547,25 +1709,36 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         }
     }
 
-    // CPU cap: the daemon and the rooms' trees on the cap's CPUs, fewer while CPU is over the
-    // threshold (machine-wide state: the daemon is shared by every project).
+    // CPU cap: the rooms' trees on the cap's CPUs; one machine-wide step decision ([`cap_step`]).
     if let Some(cap) = auto::guard_cap(home) {
-        let mfile = machine_file(home);
-        let mut m = idle::read_json(&mfile).filter(Value::is_object).unwrap_or_else(|| json!({}));
-        let was = m["cap_tight"].as_bool().unwrap_or(false);
-        let tight = cap_tight(was, cpu, cpu_t);
-        if tight != was {
-            m["cap_tight"] = json!(tight);
-            idle::write_json(&mfile, &m);
-            *acted = true;
-            let text = if tight { format!("CPU {cpu_s} ≥ ngưỡng CPU {cpu_t}%: siết {}", cap_text(cap, logical_cpus(), true)) } else { format!("CPU {cpu_s} đã dịu: nới về {}", cap_text(cap, logical_cpus(), false)) };
-            rows.push(row("CPU cap", text.clone()));
-            log(&mut st, now, &text);
+        let cpus = logical_cpus();
+        let mut s = cap_state(home);
+        if let Some(c) = cpu {
+            let rooms_load = fresh.then(|| stats.iter().filter_map(|s| s.2).sum::<u64>());
+            let step = cap_step(&s, c, rooms_load, cpu_t, cap, cpus, now);
+            if s.seen.is_none_or(|(at, _)| at < now) {
+                s.seen = Some((now, c));
+            }
+            if step != s.step {
+                let text = if step > s.step {
+                    format!("CPU {cpu_s} ≥ ngưỡng CPU {cpu_t}% (phòng ăn {}%): siết {}", rooms_load.unwrap_or(0) / 10, cap_text(cap, cpus, step))
+                } else {
+                    format!("CPU {cpu_s}: nới cả bước vẫn dưới ngưỡng {cpu_t}%: {}", cap_text(cap, cpus, step))
+                };
+                s.step = step;
+                s.at = Some(now);
+                *acted = true;
+                rows.push(row("CPU cap", text.clone()));
+                log(&mut st, now, &text);
+            }
         }
-        let k = enforce(home, &procs, &trees, tight).unwrap_or(0);
-        if k > 0 {
-            rows.push(row("CPU cap", format!("ghim {k} tiến trình (daemon + cây phòng) · {}", cap_text(cap, logical_cpus(), tight))));
+        if let Some((k, failed)) = enforce(home, root, &procs, &trees, &mut s) {
+            if k > 0 || failed > 0 {
+                let bad = if failed > 0 { format!(" · {failed} không ghim được") } else { String::new() };
+                rows.push(row("CPU cap", format!("ghim {k} tiến trình của phòng · {}{bad}", cap_text(cap, cpus, s.step))));
+            }
         }
+        save_cap(home, &s);
     }
 
     // Defender scanning the worktrees: its share is shown, the exclusion only suggested, never run.
@@ -1833,11 +2006,13 @@ pub(super) fn dry_run(home: &Path, root: &Path, claude: &dyn Claude, registry: &
     out.push(format!("sẽ hạ ưu tiên {} tiến trình của phòng còn ở mức bình thường", to_lower(&procs, &trees).len()));
     match auto::guard_cap(home).filter(|_| pct.is_some()) {
         Some(cap) => {
-            let tight = tight_now(home);
-            let mask = cap_mask(cap, logical_cpus(), tight);
+            let s = cap_state(home);
+            let mask = cap_mask(cap, logical_cpus(), s.step);
             let targets = cap_targets(&procs, &trees);
+            let unread = targets.iter().filter(|(p, st)| affinity_of(*p, *st).is_none()).count();
             let k = to_pin(&targets, mask, &affinity_of).len();
-            out.push(format!("{} · mask {mask:#x} · sẽ ghim {k}/{} tiến trình (daemon + cây phòng)", cap_text(cap, logical_cpus(), tight), targets.len()));
+            let bad = if unread > 0 { format!(" · {unread} không đọc được mask") } else { String::new() };
+            out.push(format!("{} · mask {mask:#x} · sẽ ghim {k}/{} tiến trình của phòng (không ghim daemon){bad} · đang ghi nhớ {}", cap_text(cap, logical_cpus(), s.step), targets.len(), s.pinned.len()));
         }
         None => out.push("CPU phòng: không giới hạn (bật: `8sync ccc auto guard cap 37`)".into()),
     }
@@ -2313,18 +2488,92 @@ mod tests {
 
     #[test]
     fn cap_mask_takes_the_highest_cpus_at_least_two_first_group_only() {
-        assert_eq!(cap_mask(37, 32, false), 0xFFF0_0000, "12 of 32, high CPUs (V-Cache CCD left alone)");
-        assert_eq!(cap_mask(37, 32, true), 0xFC00_0000, "tight: halved to 6");
-        assert_eq!(cap_mask(25, 32, false).count_ones(), 8);
-        assert_eq!(cap_mask(50, 16, false), 0xFF00);
-        assert_eq!(cap_mask(10, 4, false), 0b1100, "min 2");
-        assert_eq!(cap_mask(10, 4, true), 0b1100, "tight never under 2");
-        assert_eq!(cap_mask(90, 2, false), 0b11);
-        assert_eq!(cap_mask(90, 1, false), 0b1, "never more CPUs than there are");
-        assert_eq!(cap_mask(50, 128, false), 0xFFFF_FFFF_0000_0000, "> 64 CPUs: first group only");
-        assert_eq!(cap_mask(90, 64, false).count_ones(), 58);
+        assert_eq!(cap_mask(37, 32, 0), 0xFFF0_0000, "12 of 32, high CPUs (V-Cache CCD left alone)");
+        assert_eq!(cap_mask(37, 32, 1), 0xFC00_0000, "one step: halved to 6");
+        assert_eq!((cap_n(37, 32, 2), cap_n(37, 32, 3), cap_n(37, 32, 9)), (3, 2, 2), "halving stops at 2");
+        assert_eq!(cap_mask(25, 32, 0).count_ones(), 8);
+        assert_eq!(cap_mask(50, 16, 0), 0xFF00);
+        assert_eq!(cap_mask(10, 4, 0), 0b1100, "min 2");
+        assert_eq!(cap_mask(10, 4, 1), 0b1100, "tight never under 2");
+        assert_eq!(cap_mask(90, 2, 0), 0b11);
+        assert_eq!(cap_mask(90, 1, 0), 0b1, "never more CPUs than there are");
+        assert_eq!(cap_mask(50, 128, 0), 0xFFFF_FFFF_0000_0000, "> 64 CPUs: within the first 64");
+        assert_eq!(cap_mask(90, 64, 0).count_ones(), 58);
         assert_eq!(full_mask(32), 0xFFFF_FFFF);
         assert_eq!(full_mask(200), u64::MAX);
+        assert_eq!(parse_cpus_allowed("ffff\n"), Some(0xFFFF));
+        assert_eq!(parse_cpus_allowed("00000000,fff00000"), Some(0xFFF0_0000), "comma groups");
+        assert_eq!(parse_cpus_allowed("00000001,00000000,00000000"), Some(ALL_CPUS), "a CPU past 64 allowed: never equal to a cap mask");
+        assert_eq!(parse_cpus_allowed("00000000,ffffffff,ffffffff"), Some(u64::MAX));
+    }
+
+    /// Passes every 20 s with the rooms filling every CPU the cap gives them on 32 CPUs, plus the
+    /// owner's own load `owner` (%): the machine CPU each pass and the steps taken.
+    fn run_cap(owner: u32, rooms_busy: bool, passes: u64) -> (Vec<u32>, Vec<u32>) {
+        let (cap, cpus, cpu_t) = (37, 32, 55);
+        let mut s = CapState::default();
+        let (mut cpu_seen, mut steps) = (Vec::new(), Vec::new());
+        for i in 0..passes {
+            let now = NOW + i * 20;
+            let rooms = if rooms_busy { u64::from(cap_n(cap, cpus, s.step)) * 1000 / 32 } else { 20 };
+            let cpu = owner + (rooms / 10) as u32;
+            let step = cap_step(&s, cpu, Some(rooms), cpu_t, cap, cpus, now);
+            s.seen = Some((now, cpu));
+            if step != s.step {
+                s.step = step;
+                s.at = Some(now);
+            }
+            cpu_seen.push(cpu);
+            steps.push(s.step);
+        }
+        (cpu_seen, steps)
+    }
+
+    #[test]
+    fn the_cap_never_cycles_over_the_line_at_owner_load_22_to_26() {
+        for owner in 22..=26 {
+            let (cpu, steps) = run_cap(owner, true, 60);
+            let flips = steps.windows(2).filter(|w| w[0] != w[1]).count();
+            assert_eq!(flips, 1, "owner {owner}%: one tighten, never back and forth: {steps:?}");
+            // The two readings it needs at the start, then under the line for good.
+            assert!(cpu[3..].iter().all(|c| *c < 55), "owner {owner}%: {cpu:?}");
+        }
+        // Light owner load: rooms at the full cap stay under, nothing moves.
+        let (cpu, steps) = run_cap(10, true, 30);
+        assert!(steps.iter().all(|s| *s == 0) && cpu.iter().all(|c| *c < 55));
+        // Tightened earlier, the owner's load fell to 5%: loosens one step, lands under, stays.
+        let mut s = CapState { step: 1, at: Some(NOW - 100), seen: Some((NOW - 20, 5 + 18)), ..Default::default() };
+        assert_eq!(cap_step(&s, 5 + 18, Some(180), 55, 37, 32, NOW), 0, "23 + 19 back + 5 ≤ 55");
+        s.seen = Some((NOW - 20, 40));
+        assert_eq!(cap_step(&s, 40, Some(180), 55, 37, 32, NOW), 1, "40 + 19 + 5 > 55: would land over the line, stays");
+        // Two steps down: loosens one step at a time.
+        let s = CapState { step: 2, at: Some(NOW - 100), seen: Some((NOW - 20, 15)), ..Default::default() };
+        assert_eq!(cap_step(&s, 15, Some(90), 55, 37, 32, NOW), 1);
+    }
+
+    #[test]
+    fn the_cap_needs_two_readings_one_decision_per_20s_and_the_rooms_as_the_load() {
+        let hot = CapState { seen: Some((NOW - 20, 70)), ..Default::default() };
+        assert_eq!(cap_step(&hot, 70, Some(300), 55, 37, 32, NOW), 1, "two hot readings, rooms 30%: tighten");
+        // A first or stale pass: one glimpse never tightens.
+        assert_eq!(cap_step(&CapState::default(), 90, Some(300), 55, 37, 32, NOW), 0);
+        let stale = CapState { seen: Some((NOW - CONTINUOUS_S - 1, 90)), ..Default::default() };
+        assert_eq!(cap_step(&stale, 90, Some(300), 55, 37, 32, NOW), 0);
+        assert_eq!(cap_step(&CapState { seen: Some((NOW - 20, 40)), ..Default::default() }, 90, Some(300), 55, 37, 32, NOW), 0, "the previous reading was calm");
+        // Another project's pass in the same second, or within 20 s of the last change: no decision.
+        assert_eq!(cap_step(&CapState { seen: Some((NOW, 70)), ..Default::default() }, 70, Some(300), 55, 37, 32, NOW), 0);
+        assert_eq!(cap_step(&CapState { at: Some(NOW - 10), ..hot.clone() }, 70, Some(300), 55, 37, 32, NOW), 0);
+        // The owner's own load: rooms at 5% (or unknown) never halve.
+        assert_eq!(cap_step(&hot, 70, Some(50), 55, 37, 32, NOW), 0, "owner-only load never halves the rooms");
+        assert_eq!(cap_step(&hot, 70, None, 55, 37, 32, NOW), 0);
+        let (_, steps) = run_cap(70, false, 30);
+        assert!(steps.iter().all(|s| *s == 0));
+        // At the floor (2 CPUs) there is nothing to halve.
+        let floor = CapState { step: 3, seen: Some((NOW - 20, 90)), ..Default::default() };
+        assert_eq!(cap_step(&floor, 90, Some(300), 55, 37, 32, NOW), 3);
+        // The state round-trips.
+        let s = CapState { step: 2, at: Some(5), seen: Some((6, 70)), pinned: vec![Pin { pid: 7, started: 8, root: "C:\\r".into(), orig: 0xFF }], failed: 1 };
+        assert_eq!(CapState::of(&s.json()), s);
     }
 
     #[test]
@@ -2336,7 +2585,7 @@ mod tests {
         let b = none.next(62, Some(30), t, None, NOW);
         assert_eq!((b.ram, b.cpu), (Some(NOW), None));
         assert_eq!(level(62, None, Some(30), t, &b, NOW), Level::Clean);
-        assert!(!cap_tight(false, Some(30), t.cpu), "a RAM-only breach never tightens the cap");
+        assert_eq!(cap_step(&CapState { seen: Some((NOW - 20, 30)), ..Default::default() }, 30, Some(300), t.cpu, 37, 32, NOW), 0, "a RAM-only breach never tightens the cap");
         // CPU 57% (over 55, under the RAM 60) for a long time, RAM low: L1 every pass, never L2.
         let mut b = none;
         for i in 0..20u64 {
@@ -2344,52 +2593,65 @@ mod tests {
             assert_eq!(level(40, None, Some(57), t, &b, NOW + i * 20), Level::Clean, "a CPU-only breach never lean-restarts rooms");
         }
         assert_eq!((b.cpu, b.ram), (Some(NOW), None));
-        assert!(cap_tight(false, Some(57), t.cpu), "the CPU breach tightens the cap");
+        assert_eq!(cap_step(&CapState { seen: Some((NOW - 20, 57)), ..Default::default() }, 57, Some(300), t.cpu, 37, 32, NOW), 1, "the CPU breach tightens the cap");
         // 57% CPU is under one shared 60 threshold: the split is what catches it.
         assert_eq!(level(40, None, Some(57), Limits { ram: 60, cpu: 60 }, &none, NOW), Level::Calm);
-        let g = json!({ "pct": 60, "cpu_pct": 55, "cap": 37, "cpus": 32, "cap_tight": false, "projects": [] });
+        let g = json!({ "pct": 60, "cpu_pct": 55, "cap": 37, "cpus": 32, "cap_step": 0, "projects": [] });
         assert!(lines(&g)[0].starts_with("máy: tự dọn khi RAM ≥ 60% · CPU ≥ 55% · CPU phòng tối đa 37% (12/32 luồng)"), "{:?}", lines(&g));
     }
 
     #[test]
-    fn cap_tightens_on_a_cpu_breach_and_lets_go_once_calm() {
-        assert!(cap_tight(false, Some(55), 55), "at the threshold");
-        assert!(cap_tight(true, Some(50), 55), "just under: still tight");
-        assert!(!cap_tight(true, Some(45), 55), "10 points under: back");
-        assert!(cap_tight(true, None, 55), "unknown CPU keeps the state");
-        assert!(!cap_tight(false, Some(50), 55));
-        assert_eq!(cap_text(37, 32, false), "CPU phòng tối đa 37% (12/32 luồng)");
-        assert!(cap_text(37, 32, true).starts_with("CPU phòng tối đa 37% (6/32 luồng) · đang siết"));
+    fn cap_text_names_the_cpus() {
+        assert_eq!(cap_text(37, 32, 0), "CPU phòng tối đa 37% (12/32 luồng)");
+        assert!(cap_text(37, 32, 1).starts_with("CPU phòng tối đa 37% (6/32 luồng) · đang siết"));
+        let g = json!({ "pct": 60, "cpu_pct": 55, "cap": 37, "cpus": 32, "cap_step": 1, "cap_failed": 2, "projects": [] });
+        assert!(lines(&g)[0].contains("(6/32 luồng) · đang siết (CPU vượt ngưỡng) · 2 tiến trình không ghim được"), "{:?}", lines(&g));
     }
 
     #[test]
-    fn cap_pins_only_room_trees_and_the_daemon_and_off_restores_them() {
+    fn cap_pins_only_room_trees_never_the_daemon_and_off_restores_exactly_what_it_pinned() {
         let procs = vec![
             p(10, 1, 60, "claude.exe", "C:\\x\\claude.exe daemon", 100),
             p(11, 10, 60, "claude.exe", "C:\\x\\claude.exe --bg-pty-host 123", 50),
             p(20, 11, 30, "claude.exe", "claude --bg --resume abc", 300), // room dev
             p(21, 20, 10, "node.exe", "node vite", 100),
-            p(30, 11, 30, "claude.exe", "claude --bg --resume def", 300), // background session not a room here
-            p(40, 1, 90, "claude.exe", "claude", 300),                    // owner's interactive claude
-            p(41, 40, 5, "node.exe", "node build", 100),
+            p(30, 11, 30, "claude.exe", "claude --bg --resume def", 300), // background session, not a room
+            p(40, 1, 90, "claude.exe", "claude \"why does the daemon crash\"", 300), // owner's interactive claude
+            p(41, 1, 5, "node.exe", "node C:\\r\\.claude\\worktrees\\card-46\\node_modules\\nx\\bin\\nx.js daemon", 100),
             p(50, 1, 90, "omp.exe", "omp", 100),
             p(60, 1, 90, "8sync.exe", "8sync ccc auto guard now", 10),
             p(70, 1, 90, "node.exe", "node C:\\npm\\claude-code\\cli.js daemon", 100), // npm daemon
         ];
         let trees = vec![("dev".to_string(), vec![20, 21])];
-        assert_eq!(cap_targets(&procs, &trees), vec![10, 11, 20, 21, 70]);
-        let mask = cap_mask(37, 32, false);
-        let get = |pid: u32| match pid {
-            11 => Some(mask),
+        let started = |pid: u32| procs.iter().find(|p| p.pid == pid).unwrap().started;
+        let targets = cap_targets(&procs, &trees);
+        assert_eq!(targets, vec![(20, started(20)), (21, started(21))], "room trees only: no daemon, pty host, other sessions, the owner's claude, worktree daemons, omp, 8sync");
+        let mask = cap_mask(37, 32, 0);
+        let get = |pid: u32, _s: u64| match pid {
             21 => None,
             _ => Some(0xFFFF_FFFF),
         };
-        assert_eq!(to_pin(&cap_targets(&procs, &trees), mask, &get), vec![10, 20, 70], "already pinned and unreadable skipped");
-        let off = uncap_targets(&procs);
-        assert_eq!(off, vec![10, 11, 20, 21, 30, 70], "daemons and all they spawned, never the owner's claude, omp, 8sync");
-        let get_off = |pid: u32| Some(if pid == 30 { 0xFFFF_FFFF } else { mask });
-        assert_eq!(to_pin(&off, full_mask(32), &get_off), vec![10, 11, 20, 21, 70]);
-        assert!(!is_daemon(&p(1, 0, 1, "claude.exe", "claude --resume daemon-notes", 1)));
+        assert_eq!(to_pin(&targets, mask, &get), vec![(20, started(20), 0xFFFF_FFFF)], "unreadable skipped");
+        assert!(to_pin(&targets, mask, &|_, _| Some(mask)).is_empty(), "already pinned: no call");
+        // Records: the mask before the first pin stays through a re-pin (tighten); the dead go.
+        let alive: Vec<(u32, u64)> = procs.iter().map(|p| (p.pid, p.started)).collect();
+        let r1 = record(&[], &[(20, started(20), 0xFFFF_FFFF), (21, started(21), 0x0FFF_0000)], "C:\\a", &alive);
+        let r2 = record(&r1, &[(20, started(20), mask)], "C:\\a", &alive);
+        assert_eq!(r2, r1, "re-pinned: the original mask is kept");
+        let r3 = record(&[r1.clone(), vec![Pin { pid: 99, started: 1, root: "C:\\b".into(), orig: 1 }]].concat(), &[], "C:\\a", &alive);
+        assert_eq!(r3, r1, "a process gone is forgotten");
+        // Off for project a only (out of scope): its live pins go back with their own masks; a pid
+        // reused since (another start) is never touched.
+        let pins = vec![
+            Pin { pid: 20, started: started(20), root: "C:\\a".into(), orig: 0xFFFF_FFFF },
+            Pin { pid: 21, started: started(21) + 999, root: "C:\\a".into(), orig: 0xF },
+            Pin { pid: 30, started: started(30), root: "C:\\b".into(), orig: 0xFFFF_FFFF },
+        ];
+        let (back, keep) = to_unpin(&pins, &alive, &|root| root == "C:\\a");
+        assert_eq!(back, vec![pins[0].clone()]);
+        assert_eq!(keep, vec![pins[2].clone()], "the in-scope project keeps its pins; the reused pid's record is dropped");
+        let (back, keep) = to_unpin(&pins, &alive, &|_| true);
+        assert_eq!((back.len(), keep.len()), (2, 0), "auto off: every live pin back");
     }
 
 }

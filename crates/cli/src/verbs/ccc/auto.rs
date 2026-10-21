@@ -160,6 +160,11 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
             write_marker(home, &m)?;
         }
     }
+    // Auto off/paused, or a project out of the new scope: the CPU cap's pins there go back (never in
+    // tests: it would touch this machine's processes).
+    if !cfg!(test) {
+        super::pressure::uncap_stale(home, now);
+    }
     // A `no_tick` flag is a session's word for this run of auto only: a resumed auto asks again.
     idle::clear_no_tick(home);
     Ok(status(home, subscription, now))
@@ -253,7 +258,7 @@ pub(super) fn set_guard(home: &Path, pct: Option<u32>, now: u64) -> Result<()> {
     }
     // A numeric `guard` without `cpu` reads as the legacy single threshold: write the CPU one it
     // stands for (legacy value, else the default) first, so this RAM value means RAM.
-    if pct.is_some() && idle::read_json(&marker(home)).map_or(true, |m| m["cpu"].is_null()) {
+    if pct.is_some() && idle::read_json(&marker(home)).is_none_or(|m| m["cpu"].is_null()) {
         let c = guard_cpu(home).unwrap_or(super::pressure::DEFAULT_CPU);
         set_marker_key(home, "cpu", json!(c), now)?;
     }
@@ -297,7 +302,7 @@ pub(super) fn set_guard_cpu(home: &Path, pct: u32, now: u64) -> Result<()> {
         bail!("ngưỡng CPU {pct}%: cần {}..{}\n{USAGE}", super::pressure::PCT_RANGE.start(), super::pressure::PCT_RANGE.end());
     }
     // Out of the legacy single threshold: the RAM one it now means is written first.
-    if idle::read_json(&marker(home)).map_or(true, |m| legacy_guard(&m).is_some() || m["guard"].is_null()) {
+    if idle::read_json(&marker(home)).is_none_or(|m| legacy_guard(&m).is_some() || m["guard"].is_null()) {
         if let Some(r) = guard_pct(home) {
             set_marker_key(home, "guard", json!(r), now)?;
         }
