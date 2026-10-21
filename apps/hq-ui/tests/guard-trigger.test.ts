@@ -114,17 +114,20 @@ describe("guard trigger", () => {
     expect(t.gapMs).toBe(MIN_GAP_MS);
     expect(t.lastRun).toMatchObject({ acted: true, at: 305 });
   });
-  it("back-off resets to 20 s on a sample with nothing over (the breach cleared)", async () => {
+  it("back-off resets to 20 s after 2 samples with nothing over (the breach cleared), not after one quiet sample", async () => {
     const t = newTrigger();
     await starts(t, () => IDLE, 45_000);
     expect(t.gapMs).toBe(4 * MIN_GAP_MS);
     // Still over: the gap holds.
     step(t, ram, 60, 50_000, async () => IDLE);
     expect(t.gapMs).toBe(4 * MIN_GAP_MS);
+    // One quiet sample of a noisy load: the gap holds.
     step(t, low, 60, 55_000, async () => IDLE);
+    expect(t.gapMs).toBe(4 * MIN_GAP_MS);
+    step(t, low, 60, 60_000, async () => IDLE);
     expect(t.gapMs).toBe(MIN_GAP_MS);
-    // A new breach runs 20 s after the last start (45 s): at 65 s, its 2nd sample.
-    expect(await starts(t, () => IDLE, 70_000, 60_000)).toEqual([65]);
+    // A new breach runs 20 s after the last start (45 s): at 70 s, its 2nd sample.
+    expect(await starts(t, () => IDLE, 75_000, 65_000)).toEqual([70]);
   });
   it("a skipped run (revive held the lock) counts as not acted and reads 'revive đang chạy'", async () => {
     const t = newTrigger();

@@ -795,7 +795,10 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             // Right before the stop: still not mid-turn (idle, or blocked in `auto wait`) and no
             // message waiting (a resume forks an id that never reads the old inbox).
             let now_live = agents(t, false)?;
-            let idle_now = now_live.iter().any(|l| l.id == s.conversation_id && l.background && !l.busy) || (q.waiting && super::pressure::still_waiting(&listing.procs(), q.pid));
+            // A room blocked in `auto wait` shows busy in `agents`: only a FRESH listing proves it is
+            // still waiting (the shared one is up to ~70 s old; a card landing meanwhile starts a turn).
+            let idle_now = now_live.iter().any(|l| l.id == s.conversation_id && l.background && !l.busy)
+                || (q.waiting && revive_left() > reserve && super::pressure::still_waiting(&super::reap::list(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs())), q.pid));
             if !idle_now || pending_inbox(t.home, &s.conversation_id) {
                 rows.push(Row { name: s.name.clone(), role: room::role(&s.name).0, model: r.model.unwrap_or("mặc định").into(), state: "chưa khởi động lại gọn nhẹ: phòng đang làm hoặc còn tin chưa đọc (thử lượt sau)".into(), short: String::new() });
                 continue;

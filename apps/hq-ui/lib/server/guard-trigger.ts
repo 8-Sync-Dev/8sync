@@ -31,8 +31,8 @@ export type GuardRun = { at: number; ok: boolean; why: string; acted: boolean };
  */
 export type GuardView = Guard & { running: boolean; runningWhy: string | null; lastRun: GuardRun | null; nextGapS: number };
 
-export type Trigger = { cpu: number; ram: number; vram: number; running: string | null; startedAt: number; gapMs: number; lastRun: GuardRun | null };
-export const newTrigger = (): Trigger => ({ cpu: 0, ram: 0, vram: 0, running: null, startedAt: -Infinity, gapMs: MIN_GAP_MS, lastRun: null });
+export type Trigger = { cpu: number; ram: number; vram: number; calm: number; running: string | null; startedAt: number; gapMs: number; lastRun: GuardRun | null };
+export const newTrigger = (): Trigger => ({ cpu: 0, ram: 0, vram: 0, calm: 0, running: null, startedAt: -Infinity, gapMs: MIN_GAP_MS, lastRun: null });
 
 /** One `guard now` pass; `skipped`: a revive held the lock and the pass yielded. */
 export type GuardNowResult = { ok: boolean; acted: boolean; skipped: boolean };
@@ -61,8 +61,10 @@ export function step(t: Trigger, l: Load, pct: number, nowMs: number, now: Guard
   t.cpu = l.cpu != null && l.cpu >= pct ? t.cpu + 1 : 0;
   t.ram = l.ram != null && l.ram >= pct ? t.ram + 1 : 0;
   t.vram = l.vram != null && l.vram >= VRAM_PCT ? t.vram + 1 : 0;
-  // The breach cleared: the next one starts from the short gap.
-  if (t.cpu + t.ram + t.vram === 0) t.gapMs = MIN_GAP_MS;
+  // The breach cleared for 2 samples in a row (one quiet sample of a noisy load is not a clear):
+  // the next one starts from the short gap.
+  t.calm = t.cpu + t.ram + t.vram === 0 ? t.calm + 1 : 0;
+  if (t.calm >= 2) t.gapMs = MIN_GAP_MS;
   const why =
     t.cpu >= CPU_SAMPLES
       ? `CPU ${Math.round(l.cpu!)}% ×${t.cpu}`
