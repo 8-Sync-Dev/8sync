@@ -30,9 +30,11 @@
 //!   idle heavy rooms (same conversation) lean ([`lean`]): LSP plugins and indexing MCP servers off.
 //!   A room is restarted once per high-RAM spell; `revive` re-checks it right before the stop.
 //! - L3 — CPU ≥ [`CPU_MAX`]% for [`L3_CPU_S`], or RAM ≥ threshold + 15 for [`L3_RAM_S`]: pause the
-//!   rooms that do not fit ([`keep_count`], [`DROP_ORDER`]); their cards go back to the lane. They
-//!   come back one per pass once one more room has fit under the threshold ([`room_fits`]) for
-//!   [`CALM_S`]. Turning the guard off brings them all back.
+//!   rooms that do not fit ([`keep_count`], [`DROP_ORDER`]); their cards go back to the lane. The
+//!   rooms together always keep [`ROOMS_FLOOR_PCT`] of the machine while it stays under
+//!   [`HARD_PCT`]: the owner's own apps over the threshold never pause the team down to the core.
+//!   They come back one per pass once one more room has fit ([`room_fits`]: under the threshold,
+//!   or inside the floor) for [`CALM_S`]. Turning the guard off brings them all back.
 //! - CPU cap — every pass, and right after `auto up`/`revive` open rooms ([`cap_now`]): every
 //!   room's process tree runs on [`cap_mask`] (the highest-numbered N logical CPUs, N = cap% of
 //!   the machine, default [`DEFAULT_CAP`]%), never the Claude Code daemon (what it spawns later
@@ -112,9 +114,18 @@ const RAM_TOP: usize = 4;
 const SCRATCH_WALK: usize = 20_000;
 /// RAM and CPU (% of the machine) a paused room must leave free under the threshold to come back.
 const RESUME_MARGIN: u64 = 5;
+/// What the rooms together always get to use (% of the machine: RAM and CPU alike), whatever the
+/// owner's own apps take, as long as the whole machine stays under [`HARD_PCT`]. Owner 2026-10-21:
+/// their apps alone held 52% of 61.6 GB against a 60% guard; the rooms (6 GB) were paused down to
+/// the core and never came back ("treo 1 ngày"), since a room only came back under the threshold.
+const ROOMS_FLOOR_PCT: u64 = 10;
+/// Above this the machine is in danger (swap, stalls): rooms give way whatever the floor says.
+const HARD_PCT: u64 = 92;
 /// Room-owned MCP servers and headless browsers remembered (pid, start) for L1.
 const OWNED_KEEP: usize = 300;
-const CALM_S: u64 = 600;
+/// How long one more room must have fit before a paused one comes back (one per pass). 10 min
+/// brought 11 paused rooms back in ~2 h; thrash is already held off by L3 needing threshold + 15.
+const CALM_S: u64 = 180;
 /// MsMpEng CPU share (whole machine, %) from which the Defender hint row shows, at most hourly
 /// (measured 2026-10-21 with 6 rooms starting: 4.2%, the top process of the machine).
 const DEFENDER_PCT: u32 = 3;
@@ -716,19 +727,19 @@ pub(super) fn restart_pick(loads: &[Load], busy: &dyn Fn(&str) -> bool, pending:
 }
 
 /// L3: how many rooms to keep so `used` drops under `budget` (RAM MiB, or CPU in 0.1 %). `loads`
-/// = each live room's share in the same unit; each paused room frees their average. When what is
-/// not a room is over `budget` on its own, the rooms only give up their share of the overshoot
-/// (rooms / used): pausing them all would not bring it under anyway. Never fewer than the core
-/// rooms (`core`), never more than run.
-pub(super) fn keep_count(loads: &[u64], used: u64, budget: u64, core: usize) -> usize {
+/// = each live room's share in the same unit; each paused room frees their average. The rooms
+/// never give up more than what they use above `floor` ([`ROOMS_FLOOR_PCT`] of the machine): when
+/// the owner's own apps are the overshoot, pausing rooms would not bring it under anyway and the
+/// team would stall. Only `used` over `hard` ([`HARD_PCT`]) cuts into the floor. Never fewer than
+/// the core rooms (`core`), never more than run.
+pub(super) fn keep_count(loads: &[u64], used: u64, budget: u64, floor: u64, hard: u64, core: usize) -> usize {
     let n = loads.len();
     if n == 0 {
         return 0;
     }
     let rooms = loads.iter().sum::<u64>();
     let avg = (rooms / n as u64).max(1);
-    let over = used.saturating_sub(budget);
-    let need = if used.saturating_sub(rooms) >= budget { over * rooms / used.max(1) } else { over };
+    let need = used.saturating_sub(budget).min(rooms.saturating_sub(floor)).max(used.saturating_sub(hard));
     let drop = need.div_ceil(avg) as usize;
     n.saturating_sub(drop).clamp(core.min(n), n)
 }
@@ -743,10 +754,12 @@ pub(super) fn to_pause(live: &[String], keep: usize) -> Vec<String> {
 }
 
 /// One more room at the rooms' average share `avg` fits: `used + avg` stays under `budget` with
-/// `margin` to spare (one unit: RAM MiB, or CPU in 0.1 %). What the owner runs counts as it is; a
-/// paused room comes back as soon as there is room for it, not only on an idle machine.
-fn room_fits(used: u64, avg: u64, budget: u64, margin: u64) -> bool {
-    used + avg + margin <= budget
+/// `margin` to spare (one unit: RAM MiB, or CPU in 0.1 %), or the rooms (`rooms` of `used`) with
+/// one more still sit inside their `floor` and the machine under `hard` — the mirror of
+/// [`keep_count`], so what the owner's own apps take never keeps the team paused. A paused room
+/// comes back as soon as there is room for it, not only on an idle machine.
+fn room_fits(used: u64, rooms: u64, avg: u64, budget: u64, margin: u64, floor: u64, hard: u64) -> bool {
+    used + avg + margin <= budget || (rooms + avg <= floor && used + avg + margin <= hard)
 }
 
 /// The paused room to bring back now: the last one paused (the most needed), once one more room
@@ -2154,8 +2167,10 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
     };
     let avg_mb = avg(stats.iter().map(|s| s.1).collect(), "room_mb", &mut st);
     let avg_cpu = avg(stats.iter().filter_map(|s| s.2).collect(), "room_cpu", &mut st);
-    let fits = sample.mem.is_some_and(|(total, used)| room_fits(used, avg_mb, total * u64::from(pct) / 100, total * RESUME_MARGIN / 100))
-        && cpu.is_none_or(|c| room_fits(u64::from(c) * 10, avg_cpu, u64::from(cpu_t) * 10, RESUME_MARGIN * 10));
+    let rooms_mb = stats.iter().map(|s| s.1).sum::<u64>();
+    let rooms_cpu = stats.iter().filter_map(|s| s.2).sum::<u64>();
+    let fits = sample.mem.is_some_and(|(total, used)| room_fits(used, rooms_mb, avg_mb, total * u64::from(pct) / 100, total * RESUME_MARGIN / 100, total * ROOMS_FLOOR_PCT / 100, total * HARD_PCT / 100))
+        && cpu.is_none_or(|c| room_fits(u64::from(c) * 10, rooms_cpu, avg_cpu, u64::from(cpu_t) * 10, RESUME_MARGIN * 10, ROOMS_FLOOR_PCT * 10, HARD_PCT * 10));
     if fits {
         if st["calm_since"].as_u64().is_none() {
             st["calm_since"] = json!(now);
@@ -2173,13 +2188,13 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         let core = names_live.iter().filter(|n| kept(n)).count();
         // RAM: rooms at their measured MiB; CPU: at their share of the tick (0.1 %).
         let keep_ram = match sample.mem.filter(|_| ram >= pct + 15) {
-            Some((total, used)) => keep_count(&loads.iter().map(|l| l.total / MIB).collect::<Vec<_>>(), used, total * u64::from(pct) / 100, core),
+            Some((total, used)) => keep_count(&loads.iter().map(|l| l.total / MIB).collect::<Vec<_>>(), used, total * u64::from(pct) / 100, total * ROOMS_FLOOR_PCT / 100, total * HARD_PCT / 100, core),
             None => n_live,
         };
         let keep_cpu = match cpu.filter(|_| breach.cpu_shrink(now) && ms > 0) {
             Some(c) => {
                 let share = |name: &str| stats.iter().find(|s| s.0 == name).and_then(|s| s.2).unwrap_or(0);
-                keep_count(&names_live.iter().map(|n| share(n)).collect::<Vec<_>>(), u64::from(c) * 10, u64::from(cpu_t) * 10, core)
+                keep_count(&names_live.iter().map(|n| share(n)).collect::<Vec<_>>(), u64::from(c) * 10, u64::from(cpu_t) * 10, ROOMS_FLOOR_PCT * 10, HARD_PCT * 10, core)
             }
             None => n_live,
         };
@@ -2201,7 +2216,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
         if !gone.is_empty() {
             *acted = true;
             freed_any = true;
-            let text = format!("L3 RAM {ram}% CPU {cpu_s} (ngưỡng RAM {pct}% · CPU {cpu_t}%): vừa đủ {keep}/{n_live} phòng, tạm dừng {}; mở lại từng phòng khi đủ chỗ thêm 1 phòng dưới ngưỡng suốt 10 phút", gone.join(", "));
+            let text = format!("L3 RAM {ram}% CPU {cpu_s} (ngưỡng RAM {pct}% · CPU {cpu_t}%): vừa đủ {keep}/{n_live} phòng, tạm dừng {}; mở lại từng phòng khi đủ chỗ thêm 1 phòng (dưới ngưỡng, hoặc cả team dưới {ROOMS_FLOOR_PCT}% máy và máy dưới {HARD_PCT}%) suốt {} phút", gone.join(", "), CALM_S / 60);
             rows.push(row("L3", text.clone()));
             log(&mut st, now, &text);
             said.push(text);
@@ -2212,7 +2227,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
             *acted = true;
             // The next room waits its own 10 minutes with this one running.
             st["calm_since"] = Value::Null;
-            let text = format!("RAM {ram}% CPU {cpu_s}: đủ chỗ thêm 1 phòng dưới ngưỡng (RAM {pct}% · CPU {cpu_t}%) suốt 10 phút: mở lại phòng {n}");
+            let text = format!("RAM {ram}% CPU {cpu_s}: đủ chỗ thêm 1 phòng (ngưỡng RAM {pct}% · CPU {cpu_t}%, hoặc team dưới {ROOMS_FLOOR_PCT}% máy) suốt {} phút: mở lại phòng {n}", CALM_S / 60);
             rows.push(row("mở lại", text.clone()));
             log(&mut st, now, &text);
         }
@@ -2697,17 +2712,26 @@ mod tests {
         // 64 GB box at 90%: 13 rooms × 2 GB = 26 GB, 31.6 GB other. Budget at 60% = 39.3 GB → 7.7 GB
         // for rooms → 3 rooms of 2 GB fit.
         let totals = vec![2048u64; 13];
-        assert_eq!(keep_count(&totals, 58_982, 39_321, 3), 3);
-        assert_eq!(keep_count(&totals, 30_000, 39_321, 3), 13, "everything fits");
-        assert_eq!(keep_count(&totals, 65_000, 19_660, 3), 3, "never under the core");
-        assert_eq!(keep_count(&[], 65_000, 39_321, 0), 0);
+        // 64 GB box: floor 10% = 6 553 MiB, hard 92% = 60 293 MiB.
+        let (floor, hard) = (6_553, 60_293);
+        assert_eq!(keep_count(&totals, 58_982, 39_321, floor, hard, 3), 3);
+        assert_eq!(keep_count(&totals, 30_000, 39_321, floor, hard, 3), 13, "everything fits");
+        assert_eq!(keep_count(&totals, 65_000, 19_660, floor, hard, 3), 3, "never under the core");
+        assert_eq!(keep_count(&[], 65_000, 39_321, floor, hard, 0), 0);
         // CPU (0.1 %): 13 rooms at 6% each = 78% of a 95% machine, threshold 60% → 17% other, 43% for
         // rooms → 7 rooms.
-        assert_eq!(keep_count(&[60; 13], 950, 600, 3), 7);
-        // The owner's own load alone is over the budget (50 GB of 64, rooms 13 × 100 MB): the rooms
-        // give up only their share of the overshoot (4 rooms), not everything down to the core (3).
-        assert_eq!(keep_count(&[100; 13], 51_300, 39_321, 3), 9);
-        assert_eq!(keep_count(&[10; 13], 950, 600, 3), 8, "CPU: the owner's build, rooms nearly idle");
+        assert_eq!(keep_count(&[60; 13], 950, 600, 100, 920, 3), 7);
+        // The owner's own load alone is over the budget (50 GB of 64, rooms 13 × 100 MB = 1.3 GB):
+        // the rooms sit inside their 10% floor and the machine is under 92% → nobody is paused.
+        // Owner 2026-10-21: their apps at 52% kept 11 rooms paused for hours under the old rule.
+        assert_eq!(keep_count(&[100; 13], 51_300, 39_321, floor, hard, 3), 13);
+        // Same owner load, rooms at 13 × 1 GB = 13 GB: they give up down to the floor (6 rooms stay).
+        assert_eq!(keep_count(&[1024; 13], 51_300, 39_321, floor, hard, 3), 6);
+        // Machine at 95%: the floor no longer protects, rooms give up the overshoot over 92%.
+        assert_eq!(keep_count(&[100; 13], 62_259, 39_321, floor, hard, 3), 3);
+        // CPU: the owner's build at 82%, rooms 13 × 1% = 13%: rooms keep their 10% floor, and the
+        // machine at 95% is over the 92% hard line by 3% → 3 rooms give way.
+        assert_eq!(keep_count(&[10; 13], 950, 600, 100, 920, 3), 10);
         let live: Vec<String> = room::BOOST_TEAM.iter().map(|s| s.to_string()).collect();
         let p = to_pause(&live, 3);
         assert_eq!(p, ["review2", "dev6", "dev5", "qa2", "ba", "dev4", "dev3", "review", "dev2", "ui"]);
@@ -2722,15 +2746,23 @@ mod tests {
         // Back the other way: the last paused (most needed) first, only after 10 minutes in which one
         // more room fit under the threshold — with the owner's own load counted as it is.
         let paused = vec!["review2".to_string(), "dev6".to_string()];
-        assert_eq!(resume_pick(&paused, Some(NOW - 700), NOW).as_deref(), Some("dev6"));
-        assert_eq!(resume_pick(&paused, Some(NOW - 300), NOW), None, "fit only 5 min");
+        assert_eq!(resume_pick(&paused, Some(NOW - CALM_S - 10), NOW).as_deref(), Some("dev6"));
+        assert_eq!(resume_pick(&paused, Some(NOW - CALM_S / 2), NOW), None, "fit only half the calm window");
         assert_eq!(resume_pick(&paused, None, NOW), None);
         assert_eq!(resume_pick(&[], Some(0), NOW), None);
         // 64 GB at 60% = 39 321 MiB budget, 5% margin = 3 276: the owner's apps at 33.9 GB leave room
         // for one 2 GB room (33 900 + 2 048 + 3 276 ≤ 39 321), at 35 GB not.
-        assert!(room_fits(33_900, 2_048, 39_321, 3_276));
-        assert!(!room_fits(35_000, 2_048, 39_321, 3_276));
-        assert!(room_fits(480, 60, 600, 50) && !room_fits(500, 60, 600, 50), "CPU in 0.1 %: 48% + one room at 6% + 5% margin fits 60%");
+        assert!(room_fits(33_900, 0, 2_048, 39_321, 3_276, floor, hard));
+        assert!(room_fits(35_000, 0, 2_048, 39_321, 3_276, floor, hard), "over the budget, but the team (0) + 2 GB sits inside its floor");
+        assert!(!room_fits(35_000 + 6_553, 6_553, 2_048, 39_321, 3_276, floor, hard), "over the budget and the team already at its floor");
+        // The owner's apps at 36 GB (over the budget alone) with the team at 5.5 GB: one more 512 MB
+        // room keeps the team inside its 6.5 GB floor (5 632 + 512 ≤ 6 553) and the machine under
+        // 92% → fits; a 2 GB room would take the team past the floor → not.
+        assert!(room_fits(36_000 + 5_632, 5_632, 512, 39_321, 3_276, floor, hard));
+        assert!(!room_fits(36_000 + 5_632, 5_632, 2_048, 39_321, 3_276, floor, hard));
+        // Inside the floor but the machine at 90%: 512 + 5% margin would pass 92% → not.
+        assert!(!room_fits(59_000, 3_000, 512, 39_321, 3_276, floor, hard));
+        assert!(room_fits(480, 0, 60, 600, 50, 100, 920) && !room_fits(500, 100, 60, 600, 50, 100, 920), "CPU in 0.1 %: 48% + one room at 6% + 5% margin fits 60%; at 50% with the team already at its 10% floor, not");
     }
 
     #[test]
