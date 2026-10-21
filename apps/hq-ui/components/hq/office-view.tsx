@@ -1,11 +1,11 @@
 "use client";
 
-import { BotIcon, GitBranchIcon, GlobeIcon, InboxIcon, LaptopIcon, MoonIcon, PauseIcon, PlayIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
+import { BotIcon, GitBranchIcon, GlobeIcon, InboxIcon, LaptopIcon, MoonIcon, PauseIcon, PlayIcon, RefreshCwIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
 import { useMemo, useState, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isStale, longRestCount, sortMembers, type IdleRecord } from "@/lib/idle";
-import { autoButton, autoText, staleText } from "@/lib/auto";
+import { autoButton, autoText, leaseText, staleText } from "@/lib/auto";
 import { LANES } from "@/lib/lanes";
 import { attendeesNow, meetingLabel, walkPhase, type Attendee } from "@/lib/meeting";
 import { askLine } from "@/lib/ask";
@@ -347,6 +347,7 @@ function AutoBar({ token }: { token: string }) {
   if (!status) return <Skeleton className="h-8 w-56" />;
   const btn = autoButton(status);
   const stale = staleText(status);
+  const lease = leaseText(status);
   const omp = !!status.teams?.includes("omp");
   // While blocked (omp on the anthropic provider) 8sync keeps the omp team off and refuses to turn it on.
   const blocked = status.omp_blocked || null;
@@ -367,6 +368,33 @@ function AutoBar({ token }: { token: string }) {
         </Button>
       )}
       <span className="text-muted-foreground">{autoText(status)}</span>
+      {/* "Lease liên tục": absent on an older 8sync (no `lease_auto` in the status), so no switch there. */}
+      {!status.error && typeof status.lease_auto === "boolean" && (
+        <>
+          <Button
+            type="button"
+            size="sm"
+            variant={status.lease_auto ? "secondary" : "outline"}
+            aria-pressed={status.lease_auto}
+            disabled={busy}
+            title={
+              status.subscription === true
+                ? "Tự gia hạn lease (tối đa 4 giờ) mỗi lần anh dùng HQ hoặc gõ prompt; gói subscription cần anh có mặt (8sync ccc auto lease auto on|off)"
+                : "Tự gia hạn lease khi còn < 30 phút, dừng khi chạm ngân sách $/giờ (8sync ccc auto lease auto on|off)"
+            }
+            onClick={() => void setAuto(status.lease_auto ? "lease-auto-off" : "lease-auto-on")}
+          >
+            <RefreshCwIcon aria-hidden />
+            Lease liên tục: {status.lease_auto ? "bật" : "tắt"}
+          </Button>
+          {lease && (
+            <span className="text-xs text-muted-foreground" data-testid="lease-text">
+              {lease}
+            </span>
+          )}
+          {status.lease_error && <span className="text-destructive">{status.lease_error}</span>}
+        </>
+      )}
       {!status.error && (
         <Button
           type="button"

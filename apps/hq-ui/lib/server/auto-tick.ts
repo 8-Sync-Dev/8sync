@@ -1,7 +1,9 @@
 // Server side of "Chạy liên tục": called from GET /api/auto (the Office tab polls it every 60 s).
 import fs from "node:fs";
 import path from "node:path";
+import { focusRests } from "../auto";
 import { pruneTicked, STALE_MS, TICK_PROMPT, tickTargets, type TickRoom } from "../auto-tick";
+import { repoOf } from "../sidebar";
 import type { AutoStatus } from "./auto";
 import { getDb } from "./db";
 import { isSessionId, queueInbox } from "./inbox";
@@ -15,7 +17,7 @@ import { teamOf } from "../idle";
 type State = { schema: 1; at: number; ticked: Record<string, number>; idle: Record<string, number>; revived: number };
 
 /** At most one `8sync ccc auto revive` per this long, however many tabs poll. */
-export const REVIVE_MS = 120_000;
+export const REVIVE_MS = 60_000;
 
 /**
  * A `no_tick: "cron"` record older than this is ignored: a session with its own loop rewrites it at
@@ -64,9 +66,12 @@ function writeState(s: State): void {
  */
 export async function runAutoTick(status: AutoStatus, now = Date.now()): Promise<{ ticked: string[]; error?: string }> {
   // Off, paused, or the lease gate is holding (expired / over budget / owner away): never wake anyone.
-  if (!status.on || status.paused || status.gate) return { ticked: [] };
+  // With "Lease liên tục" on, `8sync ccc auto revive` still runs while gated: its lease tick renews on
+  // the owner's presence, and it wakes the rooms by itself once the usage window drops.
+  if (!status.on || status.paused || (status.gate && !status.lease_auto)) return { ticked: [] };
   try {
-    const office = await loadOffice(getDb(), now);
+    // Read after the office load (concurrent polls must see each other's state, never an older one).
+    const office = status.gate ? null : await loadOffice(getDb(), now);
     const state = readState(now);
     // Rooms whose background session died with the machine: 8sync resumes them inside the same
     // rails (on, not paused, in scope, lease/usage gate). Fixed argv; not awaited (resumes take seconds).
@@ -75,11 +80,16 @@ export async function runAutoTick(status: AutoStatus, now = Date.now()): Promise
       revived = now;
       void run("8sync", ["ccc", "auto", "revive"], REVIVE_MS);
     }
+    if (!office) {
+      writeState({ ...state, at: now, revived });
+      return { ticked: [] };
+    }
     const idle: Record<string, number> = {};
     // Sessions whose own Stop hook says "my cron loop ticks me" or "no board lane: messages only",
     // while that word is recent (NO_TICK_MS). `8sync ccc auto on|pause|off` also clears the flags.
     const quiet = new Set(readIdleStatus().filter((r) => r.noTick === "events" || (r.noTick === "cron" && now - r.ts * 1000 <= NO_TICK_MS)).map((r) => r.team));
-    const rooms: TickRoom[] = office.rooms.map((r) => {
+    // Usage tight with projects pinned: the other projects' rooms rest (8sync `focus_rest`).
+    const rooms: TickRoom[] = office.rooms.filter((r) => !focusRests(status, repoOf(r.project?.root ?? r.cwd ?? "").root)).map((r) => {
       const sid = r.session_id;
       const isIdle = r.status === "idle";
       if (sid && isIdle) idle[sid] = state.idle[sid] ?? now;

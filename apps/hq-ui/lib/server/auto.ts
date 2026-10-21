@@ -1,4 +1,5 @@
-// `8sync ccc auto` bridge: the HQ Pause / Run button and the "Đội omp" switch. Fixed argv only, never user-supplied text.
+// `8sync ccc auto` bridge: the HQ Pause / Run button, the "Đội omp" and "Lease liên tục" switches. Fixed argv only, never user-supplied text.
+import type { LeaseRest } from "../auto";
 import { parseGuard, type Guard } from "./guard";
 import { run } from "./proc";
 
@@ -29,9 +30,20 @@ export type AutoStatus = {
   ship_loops?: unknown;
   /** `ship_fast` per project root (`{on, since, until}`); the live "Ship tốc độ cao" sprints. */
   ship_fast?: unknown;
+  /** "Lease liên tục" (`8sync ccc auto lease auto on|off`), its last renewal (unix s) and why auto rests; absent on an older 8sync. */
+  lease_auto?: boolean;
+  lease_renewed_at?: number | null;
+  lease_rest?: LeaseRest | null;
+  /** The $/hour budget of the lease (API key: always set). */
+  usd_per_hour?: number | null;
+  /** Usage is tight and projects are pinned: only pinned projects work. `pins`: pinned roots, oldest first. */
+  focus?: boolean;
+  pins?: string[];
+  /** Why the last "Lease liên tục" switch failed; the Pause / Run state is unaffected. */
+  lease_error?: string;
 };
 
-export const AUTO_ACTIONS = ["on", "pause", "omp-on", "omp-off"] as const;
+export const AUTO_ACTIONS = ["on", "pause", "omp-on", "omp-off", "lease-auto-on", "lease-auto-off"] as const;
 export type AutoAction = (typeof AUTO_ACTIONS)[number];
 
 /** The only argv each action may run. */
@@ -40,6 +52,8 @@ const ARGV: Record<AutoAction, string[]> = {
   pause: ["ccc", "auto", "pause"],
   "omp-on": ["ccc", "auto", "omp", "on"],
   "omp-off": ["ccc", "auto", "omp", "off"],
+  "lease-auto-on": ["ccc", "auto", "lease", "auto", "on"],
+  "lease-auto-off": ["ccc", "auto", "lease", "auto", "off"],
 };
 
 const TIMEOUT_MS = 5000;
@@ -80,6 +94,7 @@ export async function autoSet(action: AutoAction, root?: string): Promise<AutoSt
   const st = await autoStatus();
   const err = (r.stderr.trim() || `auto ${action} thất bại`).slice(0, 200);
   if (!r.ok && action.startsWith("omp-")) st.omp_error = err;
+  else if (!r.ok && action.startsWith("lease-")) st.lease_error = err;
   else if (!r.ok && !st.error) st.error = err;
   return st;
 }

@@ -700,6 +700,8 @@ const IDLE_CONFIRM_S: u64 = 60;
 const REGOAL_BACKOFF_S: u64 = 600;
 /// The previous idle sighting counts only this long (a bit over two HQ revive intervals).
 const IDLE_STALE_S: u64 = 300;
+/// Backoff between re-arms of an idle room that has a card waiting in its lane.
+const WORK_BACKOFF_S: u64 = 60;
 /// Total wait `auto up` spends letting the CPU settle between room starts
 /// ([`super::pressure::settle`]), at most.
 const UP_STAGGER_S: u64 = 90;
@@ -881,7 +883,9 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
         return Ok(rows);
     }
     let st = auto::status(t.home, t.subscription, now);
-    let gated = !st["gate"].is_null();
+    // Tight usage with other projects pinned ([`super::lease::focus_rest`]): this project rests like
+    // on any gate; with usage loose it runs (pinned roots come first in revive's order).
+    let gated = !st["gate"].is_null() || super::lease::focus_rest(t.home, t.root, now).is_some();
     // The resource guard ([`super::pressure`]): cleans, warns rooms, pauses rooms that do not fit
     // (also while gated) and leaves the rooms to restart lean for the loop below.
     if !cfg!(test) {
@@ -919,6 +923,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let mut seen = idle::read_json(&file).filter(Value::is_object).unwrap_or_else(|| json!({}));
     let mut stalled = Vec::new();
     let wake = woken(t.home, t.root, sessions.iter().map(|s| s.name.clone()), now);
+    let cards = target::list(t.home, t.root).unwrap_or_default();
     let mut called = Vec::new();
     let mut rearmed = Vec::new();
     for s in &sessions {
@@ -941,7 +946,12 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             continue;
         }
         let e = &mut seen[&key];
-        if e["revived"].as_u64().is_some_and(|r| now.saturating_sub(r) < REGOAL_BACKOFF_S) {
+        // A room with a card waiting in its lane is re-armed after a minute (owner 2026-10-21:
+        // "thời gian nghỉ quá lâu, sau 1p phải swarm lại"); one with nothing to take keeps the long
+        // backoff so idling costs no turns.
+        let has_work = room::find(&s.name).and_then(|r| r.lane).is_some_and(|lane| target::claimable(&cards, &s.name, lane, now).is_some());
+        let backoff = if has_work { WORK_BACKOFF_S } else { REGOAL_BACKOFF_S };
+        if e["revived"].as_u64().is_some_and(|r| now.saturating_sub(r) < backoff) {
             continue;
         }
         // A sighting older than IDLE_STALE_S (HQ closed, lease gap) says nothing about now: count again.
@@ -2310,6 +2320,65 @@ mod tests {
         assert_eq!((card(q.id).lane.as_str(), card(q.id).claim.is_none()), ("qa", true), "qa stays in qa, unclaimed");
         assert!(card(q.id).notes.iter().any(|n| n.text == "↩ qa2 tắt (down --only): trả về qa"));
         assert_eq!((card(b.id).lane.as_str(), card(b.id).claim.as_ref().map(|c| c.room.as_str())), ("building", Some("dev")), "the staying room keeps its card");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    fn usage_snap(home: &Path, five: f64, ts: u64) {
+        let d = super::super::report::usage_dir(home);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("s.json"), json!({ "session_id": "s", "ts": ts, "five_hour_pct": five }).to_string()).unwrap();
+    }
+
+    /// One project with a `qa` room whose background session died; `revive` either resumes it or not.
+    fn died_qa(h: &Path, root: &Path) -> Store {
+        let store = Store::new(&h.join("cfg").join(root.file_name().unwrap()), root, "claude-sessions", "ccc .");
+        store.touch("qa", false).unwrap();
+        store
+    }
+
+    fn resumed(t_home: &Path, root: &Path, store: &Store, subscription: bool, now: u64) -> bool {
+        let qa = store.load().sessions.into_iter().find(|s| s.name == "qa").unwrap().conversation_id;
+        let all = format!("[{}]", agent(&qa, "qa", "background"));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![all, "[]".into(), "[]".into(), "[]".into()]), bg: "backgrounded · 3698e3a6 · {name}".into() };
+        let t = Team { home: t_home, root, store, subscription, claude: &fake, has_transcript: &|_: &str| true, title: &|n: &str| n.to_string(), kit_at: None };
+        revive(&t, 10, now).unwrap();
+        let n = fake.calls.borrow().iter().filter(|c| c.iter().any(|a| a == "--bg")).count();
+        n == 1
+    }
+
+    #[test]
+    fn revive_rests_at_the_usage_window_and_wakes_by_itself_when_it_drops() {
+        let (h, root) = tmp("window");
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let store = died_qa(&h, &root);
+        auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(root.clone()) }, true, now).unwrap();
+        usage_snap(&h, 91.0, now);
+        assert!(!resumed(&h, &root, &store, true, now), "5-hour window at 91%: the team rests");
+        assert_eq!(auto::status(&h, true, now)["lease_rest"]["kind"], "usage");
+        usage_snap(&h, 40.0, now + 60);
+        assert!(resumed(&h, &root, &store, true, now + 60), "the window dropped while the lease holds: woken without the owner");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn tight_usage_wakes_only_pinned_projects_and_no_pins_changes_nothing() {
+        let (h, a) = tmp("focus");
+        let b = h.join("other");
+        std::fs::create_dir_all(b.join(".git")).unwrap();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let (sa, sb) = (died_qa(&h, &a), died_qa(&h, &b));
+        for r in [&a, &b] {
+            auto::set(&h, auto::Mode::On { hours: 2.0, after: 60, rate: None, repo: Some(r.clone()) }, false, now).unwrap();
+        }
+        usage_snap(&h, 75.0, now);
+        // Nothing pinned: tight usage changes nothing.
+        assert!(resumed(&h, &b, &sb, false, now));
+        super::super::lease::set_pin(&h, &a, true, now);
+        assert!(!resumed(&h, &b, &sb, false, now), "tight: the unpinned project rests");
+        assert!(super::super::lease::focus_rest(&h, &b, now).unwrap().contains("nhường usage cho dự án ghim"));
+        assert!(resumed(&h, &a, &sa, false, now), "the pinned one wakes");
+        usage_snap(&h, 30.0, now);
+        assert!(resumed(&h, &b, &sb, false, now), "usage loose: everything runs");
         let _ = std::fs::remove_dir_all(&h);
     }
 }

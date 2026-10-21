@@ -55,6 +55,7 @@ const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30
        8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--role <vai>] [--prio P0..P3] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id> | reopen <id> [--note \"…\"]
        8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>|--mail] [--timeout <giây ≤1800>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
        8sync ccc auto merge [--as <phòng>] [--json]   (lead: merge mọi card approved; cần quyền tự merge của owner)
+       8sync ccc auto lease auto on|off | lease renew [--json] | pin [<thư mục>] | unpin [<thư mục>] | pins [--json]   (owner: lease liên tục — API key tự gia hạn trong ngân sách $/giờ, subscription chỉ khi owner có mặt; ghim dự án: usage chặt thì chỉ dự án ghim chạy)
        8sync ccc auto guard [<30..95>|off] [cpu <30..95>] [cap <10..90>|off] [eco on|off] [--dry-run] [--json]   (tự dọn máy khi RAM ≥ ngưỡng (mặc định 60%) hoặc CPU ≥ ngưỡng CPU (mặc định 55%); cap: phòng + daemon Claude Code chỉ chạy trên N luồng CPU cao nhất, mặc định 37%, tự siết nửa khi CPU vượt ngưỡng; eco: phòng chạy chế độ tiết kiệm điện, mặc định bật)
        8sync ccc auto loop on [trọng tâm] | off | wake | status [--json]   (vòng auto-ship: lead nhận brief vòng kế khi board cạn, ≥ 20 phút một vòng; 2 vòng không ra card thì nghỉ; chỉ owner)
        8sync ccc auto ship-fast on [--hours 0.5..4] | off | ship-ask | status [--json]   (Ship tốc độ cao: cả team land card gần xong trước, builder không lấy card mới khi qa/review còn ≥ 3, lead hỏi Ship một chạm; chỉ owner)   (vòng auto-ship: lead nhận brief vòng kế khi board cạn, ≥ 20 phút một vòng; 2 vòng không ra card thì nghỉ; chỉ owner)
@@ -173,8 +174,9 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
 }
 
 /// The marker write must not fail silently: a lost `paused` would let HQ turn auto on again.
-/// A marker written without `teams` / `omp_model` / `guard` keeps those of the one it replaces (on /
-/// off / pause never change who is on the team, which model team omp runs or the guard threshold).
+/// A marker written without `teams` / `omp_model` / `guard` / `lease_auto` keeps those of the one it
+/// replaces (on / off / pause never change who is on the team, which model team omp runs, the guard
+/// threshold or the owner's "lease liên tục" switch).
 fn write_marker(home: &Path, v: &Value) -> Result<()> {
     let p = marker(home);
     if let Some(d) = p.parent() {
@@ -182,7 +184,7 @@ fn write_marker(home: &Path, v: &Value) -> Result<()> {
     }
     let mut v = v.clone();
     let old = idle::read_json(&p);
-    for k in ["teams", "omp_model", "guard", "eco", "cap", "cpu"] {
+    for k in ["teams", "omp_model", "guard", "eco", "cap", "cpu", "lease_auto"] {
         if v.get(k).is_none() {
             if let Some(t) = old.as_ref().and_then(|m| m.get(k).cloned()) {
                 v[k] = t;
@@ -285,6 +287,21 @@ pub(super) fn guard_eco(home: &Path) -> bool {
 /// `auto guard eco on|off`.
 pub(super) fn set_guard_eco(home: &Path, on: bool, now: u64) -> Result<()> {
     set_marker_key(home, "eco", json!(on), now)
+}
+
+/// Lease liên tục ([`super::lease`]): marker `lease_auto`, default off.
+pub(super) fn lease_auto(home: &Path) -> bool {
+    idle::read_json(&marker(home)).and_then(|m| m["lease_auto"].as_bool()).unwrap_or(false)
+}
+
+/// `auto lease auto on|off`.
+pub(super) fn set_lease_auto(home: &Path, on: bool, now: u64) -> Result<()> {
+    set_marker_key(home, "lease_auto", json!(on), now)
+}
+
+/// The hours of the last `auto on` (marker `hours`), what an API-key lease is renewed by.
+pub(super) fn marker_hours(home: &Path) -> f64 {
+    idle::read_json(&marker(home)).and_then(|m| m["hours"].as_f64()).filter(|h| (0.25..=24.0).contains(h)).unwrap_or(idle::DEFAULT_HOURS as f64)
 }
 
 /// The guard's CPU threshold (%), None while the guard is off; marker `cpu`, absent or out of range
@@ -656,7 +673,7 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
     // owner's off switch, so HQ must treat it as paused. Flags on without the marker (`idle on
     // --hours 8` by hand): "manual" — HQ must not clobber that lease with its own defaults.
     let on = i && d && flag("on");
-    json!({
+    let mut v = json!({
         "schema": 1,
         "on": on,
         "paused": flag("paused") || (flag("on") && !on),
@@ -684,7 +701,26 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         // `auto loop` per project root (HQ "Auto-ship: vòng N" chip, [`super::ship_loop::view`]).
         "ship_loops": super::ship_loop::view(home, gate.is_some() || cap.is_some(), now),
         "ship_fast": super::ship_fast::view(home, now),
-    })
+    });
+    // Lease liên tục and the pins ([`super::lease`]): `lease_auto`, `lease_renewed_at`, `lease_rest`
+    // (why it rests, until when), `usd_per_hour`, `focus` (tight usage with pins), `pins`.
+    if let (Some(o), Value::Object(extra)) = (v.as_object_mut(), super::lease::status_fields(home, lease.as_ref(), gate.as_deref(), &used, subscription, now)) {
+        o.extend(extra);
+    }
+    v
+}
+
+/// [`status`] as the rooms of `root` read it: while usage is tight and other projects are pinned
+/// ([`super::lease::focus_rest`]), `cap` says so, so loops and `auto wait` rest like on any cap.
+fn focused(mut v: Value, home: &Path, root: &Path, now: u64) -> Value {
+    let why = super::lease::focus_rest(home, root, now);
+    if v["cap"].is_null() {
+        if let Some(w) = &why {
+            v["cap"] = json!(w);
+        }
+    }
+    v["focus_rest"] = json!(why);
+    v
 }
 
 /// The omp team's line of the text status; None while auto is off and omp was never turned on.
@@ -705,6 +741,24 @@ pub(super) fn text(v: &Value) -> String {
     let mut s = state_text(v);
     if let Some(l) = omp_line(v) {
         s = format!("{s}\n{l}");
+    }
+    if v["lease_auto"].as_bool() == Some(true) {
+        let how = if v["subscription"].as_bool() == Some(true) {
+            "tự gia hạn mỗi lần owner dùng HQ hoặc gõ prompt (gói subscription: cần owner có mặt)".to_string()
+        } else {
+            format!("tự gia hạn · ngân sách ${:.2}/giờ", v["usd_per_hour"].as_f64().unwrap_or(idle::DEFAULT_USD_PER_HOUR))
+        };
+        s = format!("{s}\nlease liên tục: BẬT — {how}");
+    }
+    if let Some(u) = v["lease_rest"]["until"].as_u64().filter(|_| v["lease_rest"]["kind"] == "usage") {
+        s = format!("{s}\nnghỉ vì usage {} {:.0}% · chạy lại khi reset {} UTC", v["lease_rest"]["window"].as_str().unwrap_or("?"), v["lease_rest"]["pct"].as_f64().unwrap_or(0.0), &super::standup::utc_stamp(u)[11..16]);
+    }
+    let pins: Vec<&str> = v["pins"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    if !pins.is_empty() {
+        s = format!("{s}\nghim: {}", pins.join(" + "));
+    }
+    if let Some(f) = v["focus_rest"].as_str() {
+        s = format!("{s}\ndự án này đang nghỉ: {f}");
     }
     // `auto status` only: one line on the project's GitHub CI ([`super::ci`]).
     if let Some(ci) = v["ci"].as_str() {
@@ -1441,7 +1495,9 @@ fn run_target(
                 Some(l) => l.to_string(),
                 None => bail!("phòng `{room}` (vai {}) không có cột riêng: thêm --lane backlog|ready|qa|review|blocked", super::room::role(&room).0),
             };
-            let card = target::claim(home, root, &room, &lane, now)?;
+            // Tight usage with other projects pinned: no card here ([`super::lease::focus_rest`]).
+            let focus = super::lease::focus_rest(home, root, now);
+            let card = if focus.is_some() { None } else { target::claim(home, root, &room, &lane, now)? };
             // A planning room that gets nothing is told why, not left guessing: ready full, or the
             // board ran dry (ready low, no idea left in backlog) and it is the one to think up more.
             let cards = if card.is_none() && lane == "backlog" { target::list(home, root)? } else { Vec::new() };
@@ -1457,7 +1513,8 @@ fn run_target(
                         None
                     }
                 })
-                .flatten();
+                .flatten()
+                .or(focus);
             // A blocked card or an idea whose split-off cards closed: what to do with it, at run time.
             let hint = match &card {
                 Some(t) => target::claim_hint(t, &target::list(home, root)?),
@@ -2006,6 +2063,12 @@ pub(super) fn run(
         let who = who.or_else(|| me(&rooms()));
         return super::merge::run(as_json, home, root, who.as_deref(), now);
     }
+    if let Some("lease" | "pin" | "unpin" | "pins") = rest.first().map(String::as_str) {
+        // `--as <phòng>` names a room: never the owner ([`owner`]).
+        let at = rest.iter().position(|a| a == "--as");
+        let args: Vec<String> = rest.iter().enumerate().filter(|(i, _)| at.is_none_or(|p| *i != p && *i != p + 1)).map(|(_, a)| a.clone()).collect();
+        return super::lease::run(&args, home, subscription, root, owner(at.map(|_| "--as"), |k| std::env::var(k).ok()), now);
+    }
     if rest.first().map(String::as_str) == Some("nudge") {
         return run_nudge(&rest[1..], home, subscription, now);
     }
@@ -2116,7 +2179,7 @@ pub(super) fn run(
             &w,
             || target::list(home, root),
             |t| {
-                let mut v = status(home, subscription, t);
+                let mut v = focused(status(home, subscription, t), home, root, t);
                 v["here"] = json!(here);
                 v["self_merge"] = super::grant::self_merge_json(&super::grant::dir(home), root, t);
                 v["mail"] = json!(sid.as_deref().and_then(|s| unseen_mail(home, s, &cwd, t)));
@@ -2249,7 +2312,7 @@ pub(super) fn run(
         }
         Some("status") | None => {
             known(&["--json"])?;
-            let mut v = status(home, subscription, now);
+            let mut v = focused(status(home, subscription, now), home, root, now);
             v["here"] = json!(here);
             v["self_merge"] = super::grant::self_merge_json(&super::grant::dir(home), root, now);
             // The project's repo: the scoped root that contains `root` (rooms call from worktrees).
@@ -2748,9 +2811,13 @@ mod tests {
                 "cap",
                 "delegate",
                 "five_hour_pct",
+                "focus",
                 "gate",
                 "guard",
                 "idle",
+                "lease_auto",
+                "lease_renewed_at",
+                "lease_rest",
                 "lease_until",
                 "manual",
                 "omp_blocked",
@@ -2758,6 +2825,7 @@ mod tests {
                 "on",
                 "out",
                 "paused",
+                "pins",
                 "repo",
                 "repos",
                 "schema",
@@ -2766,7 +2834,8 @@ mod tests {
                 "ship_loops",
                 "subscription",
                 "team_roots",
-                "teams"
+                "teams",
+                "usd_per_hour"
             ]
         );
         assert_eq!(

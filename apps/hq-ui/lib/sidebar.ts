@@ -110,3 +110,47 @@ export function splitClosed<T extends { last_active?: number | null }>(
   return { shown, closed };
 }
 
+/** A project the owner pinned (`8sync ccc auto pin`, HQ's pin button); `at` = unix seconds. */
+export type Pin = { root: string; at: number };
+
+/** `pinned-roots.json` (`{ "<root>": <at> }`) → pins, oldest first; anything else → none. */
+export function parsePins(v: unknown): Pin[] {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return [];
+  return Object.entries(v)
+    .filter(([root, at]) => root.length > 0 && root.length <= 4096 && typeof at === "number" && Number.isFinite(at))
+    .map(([root, at]) => ({ root, at: at as number }))
+    .sort((a, b) => a.at - b.at || a.root.localeCompare(b.root));
+}
+
+/** One pinned project in the sidebar: its live group, else its added folder, else just the root (0 rooms). */
+export type PinnedEntry<T, F> = { key: string; root: string; name: string; group: SidebarGroup<T> | null; folder: F | null };
+
+/**
+ * Pinned projects first, under their own header, in pin order: each takes its live group (closed or
+ * not: a pinned project stays visible) or its added folder, or stands alone with 0 rooms. The rest
+ * keep their order; `closed` loses the pinned ones too.
+ */
+export function pinSidebar<T, F extends { path: string; name: string }>(
+  pins: Pin[],
+  shown: SidebarGroup<T>[],
+  closed: SidebarGroup<T>[],
+  folders: F[],
+): { pinned: PinnedEntry<T, F>[]; shown: SidebarGroup<T>[]; closed: SidebarGroup<T>[]; folders: F[] } {
+  const keys = new Set<string>();
+  const pinned: PinnedEntry<T, F>[] = [];
+  for (const p of pins) {
+    const key = groupKey(p.root);
+    if (!key || keys.has(key)) continue;
+    keys.add(key);
+    const group = shown.find((g) => g.key === key) ?? closed.find((g) => g.key === key) ?? null;
+    const folder = folders.find((f) => groupKey(f.path) === key) ?? null;
+    pinned.push({ key, root: group?.root ?? folder?.path ?? p.root, name: group?.name ?? folder?.name ?? repoOf(p.root).name, group, folder });
+  }
+  return {
+    pinned,
+    shown: shown.filter((g) => !keys.has(g.key)),
+    closed: closed.filter((g) => !keys.has(g.key)),
+    folders: folders.filter((f) => !keys.has(groupKey(f.path))),
+  };
+}
+
