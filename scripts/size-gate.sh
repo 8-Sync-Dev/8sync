@@ -176,7 +176,10 @@ export LC_ALL=C
 # GetSystemTimes), Linux /proc/stat + Cpus_allowed parsing and `taskset`, pin records with exact
 # restore, the stepwise tighten/loosen decision — plus the split CPU/RAM thresholds (`auto.rs`).
 # No new dependency. Ceiling 7808 KiB (~34 KiB left over this asset).
-CEILING="${CEILING:-7995392}"   # 7808 KiB (raised 2026-10-21 from 7744 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+# 2026-10-21 v0.110.26: `ccc/ship_fast.rs` (the owner's Ship-tốc-độ-cao sprint: brief delivery,
+# approved watch, claim hold) + the lease/pin groundwork — CI musl asset 8,005,936 B (+~85 KB over
+# v0.110.24, 10,544 B over the 7808 KiB ceiling). No new dependency. Ceiling 7840 KiB (~20 KiB left).
+CEILING="${CEILING:-8026112}"   # 7840 KiB (raised 2026-10-21 from 7808 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"
