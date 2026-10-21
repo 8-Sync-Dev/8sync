@@ -12,7 +12,7 @@ import { agoShort, agoVi, roomRole, type Move } from "@/lib/now";
 import { rootKey } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
-import { CardSheet, ForceButton, LabelChip, PrioChip, TagChips, TONE_INK, forceKind, laneTone } from "./card-sheet";
+import { CardSheet, ClosedSheet, ForceButton, LabelChip, PrioChip, TagChips, TONE_INK, forceKind, laneTone } from "./card-sheet";
 import { RoleIcon } from "./role-badge";
 import { LaneStrip } from "./scroll-strip";
 import type { BoardsState } from "./use-board";
@@ -26,6 +26,9 @@ export function LanesView({ state, focus, repo = null }: { state: BoardsState; f
   const [open, setOpen] = useState<{ root: string; card: Card } | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [doneWide, setDoneWide] = useState(false);
+  // A Done card's sheet: the snapshot keeps it filled while the sheet closes, like the open card's.
+  const [closed, setClosed] = useState<Closed | null>(null);
+  const [closedOpen, setClosedOpen] = useState(false);
   const lanesRef = useRef<HTMLDivElement>(null);
 
   // "Mở card" from another tab (Preview, Tổng quan): pick that project and open the card once the board has it.
@@ -134,7 +137,22 @@ export function LanesView({ state, focus, repo = null }: { state: BoardsState; f
             >
               {LANES.flatMap((l) => {
                 const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} kidsOf={(id) => kids?.get(id)} now={now} next={next} onOpen={onOpenCard} onForce={onForce} />;
-                return l.key === "blocked" ? [<DoneLane key="done" closed={cur?.board?.closed ?? null} now={now} wide={doneWide} onWide={setDoneWide} />, lane] : [lane];
+                return l.key === "blocked"
+                  ? [
+                      <DoneLane
+                        key="done"
+                        closed={cur?.board?.closed ?? null}
+                        now={now}
+                        wide={doneWide}
+                        onWide={setDoneWide}
+                        onOpen={(c) => {
+                          setClosed(c);
+                          setClosedOpen(true);
+                        }}
+                      />,
+                      lane,
+                    ]
+                  : [lane];
               })}
             </div>
           </div>
@@ -149,12 +167,13 @@ export function LanesView({ state, focus, repo = null }: { state: BoardsState; f
         onPrio={open && shown ? (prio) => state.setPrio(open.root, shown.id, prio) : undefined}
         onForce={open && shown ? () => state.force(open.root, shown) : undefined}
       />
+      <ClosedSheet c={closed} open={closedOpen} now={now} onClose={() => setClosedOpen(false)} />
     </div>
   );
 }
 
-/** Closed cards the board still lists (the CLI keeps the last 10): one line each, evidence on hover or when widened. */
-function DoneLane({ closed, now, wide, onWide }: { closed: Closed[] | null; now: number; wide: boolean; onWide: (v: boolean) => void }) {
+/** Closed cards the board still lists (the CLI keeps the last 30): one line each, evidence on hover or when widened; a tap opens the card's sheet. */
+function DoneLane({ closed, now, wide, onWide, onOpen }: { closed: Closed[] | null; now: number; wide: boolean; onWide: (v: boolean) => void; onOpen: (c: Closed) => void }) {
   const done = closed?.filter((c) => c.state === "done").length ?? 0;
   return (
     <section aria-labelledby="lane-done" data-lane="done" className="flex min-h-0 snap-start flex-col rounded-xl bg-muted/60">
@@ -191,19 +210,23 @@ function DoneLane({ closed, now, wide, onWide }: { closed: Closed[] | null; now:
             const ev = c.evidence ? (c.evidence.length > 60 ? `${c.evidence.slice(0, 60)}…` : c.evidence) : null;
             const dropped = c.state === "dropped";
             return (
-              <li
-                key={c.id}
-                title={`#${c.id} ${title}\n${dropped ? "bỏ" : "xong"} ${agoVi(c.at, now)}${c.by ? ` · ${c.by}` : ""}${c.evidence ? `\n${c.evidence}` : ""}`}
-                className={cn("rounded-md px-1.5 py-1 text-[12px] leading-tight hover:bg-background", dropped && "text-muted-foreground")}
-              >
-                <span className="flex min-w-0 items-baseline gap-1">
-                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground">#{c.id}</span>
-                  <span className={cn("truncate", dropped && "line-through decoration-muted-foreground/50")}>{title}</span>
-                </span>
-                <span className="block truncate text-[11px] text-muted-foreground tabular">
-                  {dropped ? "bỏ" : "xong"} {agoShort(c.at, now)}
-                  {wide && ev && <span className="font-mono"> · {ev}</span>}
-                </span>
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(c)}
+                  title={`#${c.id} ${title}\n${dropped ? "bỏ" : "xong"} ${agoVi(c.at, now)}${c.by ? ` · ${c.by}` : ""}${c.evidence ? `\n${c.evidence}` : ""}`}
+                  className={cn("block w-full rounded-md px-1.5 py-1 text-left text-[12px] leading-tight outline-none hover:bg-background focus-visible:ring-2 focus-visible:ring-ring/60", dropped && "text-muted-foreground")}
+                >
+                  <span className="flex min-w-0 items-baseline gap-1">
+                    <span className="shrink-0 font-mono text-[10px] text-muted-foreground">#{c.id}</span>
+                    <span className={cn("truncate", dropped && "line-through decoration-muted-foreground/50")}>{title}</span>
+                  </span>
+                  <span className="block truncate text-[11px] text-muted-foreground tabular">
+                    {dropped ? "bỏ" : "xong"} {agoShort(c.at, now)}
+                    {c.pr && <span> · PR {c.prRepo ? `${c.prRepo}#` : "#"}{c.pr.replace(/^#/, "").replace(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\//i, "")}</span>}
+                    {wide && ev && <span className="font-mono"> · {ev}</span>}
+                  </span>
+                </button>
               </li>
             );
           })

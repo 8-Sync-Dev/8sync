@@ -1127,7 +1127,8 @@ pub(super) fn board_json(cards: &[Target]) -> serde_json::Value {
         .iter()
         .map(|l| serde_json::json!({ "lane": l, "cards": cards.iter().filter(|t| t.state == "open" && t.lane == *l).collect::<Vec<_>>() }))
         .collect();
-    let closed: Vec<_> = cards.iter().filter(|t| t.state != "open").take(10).collect();
+    // 30, not 10: HQ's Done column opens a sheet per card (owner 2026-10-21), a day's worth of closes.
+    let closed: Vec<_> = cards.iter().filter(|t| t.state != "open").take(30).collect();
     serde_json::json!({ "schema": 1, "lanes": lanes, "closed": closed })
 }
 

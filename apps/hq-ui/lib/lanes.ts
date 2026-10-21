@@ -49,6 +49,13 @@ export type Closed = {
   history?: Step[];
   evidence?: string | null;
   added?: number;
+  /** What the card carried when it closed (the Done sheet, owner 2026-10-21): PR (and its repo when not this project's), the approved SHA, label, check, who queued it. */
+  pr?: string | null;
+  prRepo?: string | null;
+  sha?: string | null;
+  label?: string | null;
+  check?: string | null;
+  from?: string | null;
 };
 export type Board = { lanes: Record<LaneKey, Card[]>; closed: Closed[] };
 
@@ -126,7 +133,25 @@ export function parseBoard(v: unknown): Board | null {
     const id = num(x?.id);
     const text = str(x?.text);
     if (id === null || !text || (x.state !== "done" && x.state !== "dropped")) return [];
-    return [{ id, text, state: x.state, by: str(x.by), at: ms(x.closed), lane: isLane(x.lane) ? x.lane : null, history: parseHistory(x.notes), evidence: str(x.evidence), added: ms(x.added) ?? 0 }];
+    return [
+      {
+        id,
+        text,
+        state: x.state,
+        by: str(x.by),
+        at: ms(x.closed),
+        lane: isLane(x.lane) ? x.lane : null,
+        history: parseHistory(x.notes),
+        evidence: str(x.evidence),
+        added: ms(x.added) ?? 0,
+        pr: str(x.pr),
+        prRepo: str(x.pr_repo),
+        sha: str(x.sha),
+        label: str(x.label),
+        check: str(x.check),
+        from: str(x.from),
+      },
+    ];
   });
   return { lanes, closed };
 }

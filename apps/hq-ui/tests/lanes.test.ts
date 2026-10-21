@@ -70,7 +70,10 @@ describe("parseBoard", () => {
       { at: 950_000, room: "dev", text: "ready → building", from: "ready", to: "building" },
       { at: 1_000_000, room: "dev", text: "đang viết test" },
     ]);
-    expect(b.closed).toEqual([{ id: 9, text: "old", state: "done", by: "lead", at: 70_000, lane: "review", history: [], evidence: "true: ok", added: 1_000 }]);
+    expect(b.closed).toEqual([{ id: 9, text: "old", state: "done", by: "lead", at: 70_000, lane: "review", history: [], evidence: "true: ok", added: 1_000, pr: null, prRepo: null, sha: null, label: null, check: null, from: null }]);
+    // What the Done sheet shows (owner 2026-10-21): the PR (and its repo when cross-repo), the approved SHA, label, check, who queued it.
+    const rich = parseBoard({ ...BOARD, closed: [{ ...BOARD.closed[0], pr: "8", pr_repo: "8-Sync-Dev/zus-backend", sha: "0123abc", label: "bug", check: "pnpm test", from: "lead" }] })!;
+    expect(rich.closed[0]).toMatchObject({ pr: "8", prRepo: "8-Sync-Dev/zus-backend", sha: "0123abc", label: "bug", check: "pnpm test", from: "lead" });
     expect(openCount(b)).toBe(4);
   });
 
