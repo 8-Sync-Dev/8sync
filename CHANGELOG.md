@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.32] — 2026-10-21
+
+### Fixed
+- **Tick của HQ chỉ đánh thức phòng của dự án đang auto.** Owner 2026-10-21 ("chạy dự nào mà dự khác dính inbox tin nhắn theo luôn"): `auto on --here` ở một dự án, nhưng vòng tick server 60 s (0.110.29) vẫn xếp lời nhắc tick vào inbox mọi phòng rảnh của *mọi* dự án. Giờ tick đọc `repos`/`out` của `auto status` như sweep (`inAutoScope`): phòng ngoài phạm vi (kể cả dự án `auto close` đã bỏ) không nhận gì; `repos` rỗng = mọi dự án như trước. Test auto-tick 17.
+
 ## [0.110.31] — 2026-10-21
 
 ### Fixed

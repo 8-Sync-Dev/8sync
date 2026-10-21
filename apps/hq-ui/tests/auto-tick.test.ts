@@ -131,6 +131,21 @@ describe("runAutoTick", () => {
     expect((await runAutoTick(pinned, NOW + 2 * TICK_IDLE_MS)).ticked).toEqual([SID]);
   });
 
+  it("auto on --here in one project: the other project's idle room gets no tick (owner 2026-10-21: inbox leak)", async () => {
+    office.mockResolvedValue({ rooms: [{ ...live, cwd: "C:\\code\\other", project: { root: "C:\\code\\other", name: "other", branch: null } }] });
+    const scoped = { on: true, paused: false, repos: ["\\\\?\\C:\\code\\ide"], out: [] };
+    expect((await runAutoTick(scoped, NOW)).ticked).toEqual([]);
+    expect((await runAutoTick(scoped, NOW + TICK_IDLE_MS)).ticked).toEqual([]);
+    expect((await runAutoTick(scoped, NOW + 2 * TICK_IDLE_MS)).ticked).toEqual([]);
+    expect(fs.existsSync(inbox())).toBe(false);
+    // The same room once its project is in scope (a worktree of it counts), unless `auto close` took it out.
+    const inScope = { ...scoped, repos: ["\\\\?\\C:\\code\\ide", "C:/code/OTHER"] };
+    expect((await runAutoTick(inScope, NOW + 3 * TICK_IDLE_MS)).ticked).toEqual([]);
+    expect((await runAutoTick(inScope, NOW + 4 * TICK_IDLE_MS)).ticked).toEqual([SID]);
+    const closed = { ...inScope, out: ["C:\\code\\other"] };
+    expect((await runAutoTick(closed, NOW + 5 * TICK_IDLE_MS)).ticked).toEqual([]);
+  });
+
   it("never throws; the detail stays out of the response", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     office.mockRejectedValue(new Error("boom /home/x/secret"));
