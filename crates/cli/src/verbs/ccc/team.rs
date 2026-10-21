@@ -1198,23 +1198,52 @@ pub(super) fn rooms<'a>(t: &Team, live: &'a [Live]) -> Vec<(String, &'a Live)> {
     out
 }
 
-/// `auto down`: stop this project's background rooms (`claude stop` keeps the conversation, `up`
-/// resumes it; nothing is deleted) and take this project out of auto; other projects keep running.
-/// Returns the stopped room names.
+/// `auto down`: take this project out of auto first, then stop its background rooms (`claude stop`
+/// keeps the conversation, `up` resumes it; nothing is deleted); other projects keep running.
+///
+/// Out of auto BEFORE any stop (owner 2026-10-21: "Dừng team không work, không đóng dự án được"):
+/// the old code returned at the first room whose stop failed, leaving the project in auto, so HQ's
+/// revive pass brought the stopped rooms back a minute later. `claude stop` also exits 0 while
+/// doing nothing (a bad id prints usage, exit 0 — observed 2026-10-21), so a stop counts only once
+/// the room is gone from a fresh listing; a room still alive is stopped once more and, if it
+/// survives that, named in the error with the reason to check by hand. Returns the stopped rooms.
 pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
-    let live = agents(t, false)?;
-    let mut stopped = Vec::new();
-    for (name, l) in rooms(t, &live) {
-        t.claude.run(&["stop".into(), l.id.chars().take(8).collect()])?;
-        stopped.push(name);
-    }
     auto::leave(t.home, t.root, t.subscription, now)?;
     set_team_root(t.home, t.root, false);
     // No team, no rounds: a loop left on would mail a lead that is gone ([`super::ship_loop`]);
     // a sprint left on would hold builders off fresh cards.
     super::ship_loop::off(t.home, t.root);
     super::ship_fast::off(t.home, t.root);
-    Ok(stopped)
+    let live = agents(t, false)?;
+    let wanted = rooms(t, &live);
+    let mut stopped = Vec::new();
+    let mut stuck: Vec<String> = Vec::new();
+    for (name, l) in &wanted {
+        let id: String = l.id.chars().take(8).collect();
+        if t.claude.run(&["stop".into(), id.clone()]).is_err() {
+            stuck.push(format!("{name} (lỗi stop)"));
+            continue;
+        }
+        // Exit 0 is not proof: only a listing without the room is (a refused stop, a session
+        // waiting on a prompt, a bad id — all print something and return 0). By id, not name:
+        // another project may run a room of the same title ([`rooms`] matches titles too).
+        let gone = agents(t, false).map(|now| !now.iter().any(|x| x.id == l.id)).unwrap_or(false);
+        if gone {
+            stopped.push(name.clone());
+        } else if t.claude.run(&["stop".into(), id.clone()]).is_ok() && agents(t, false).map(|now| !now.iter().any(|x| x.id == l.id)).unwrap_or(false) {
+            stopped.push(name.clone());
+        } else {
+            stuck.push(format!("{name} (vẫn chạy sau 2 lần stop — xem `8sync ccc term {id}`)"));
+        }
+    }
+    if !wanted.is_empty() && !stopped.is_empty() {
+        let done: Vec<&str> = stopped.iter().map(String::as_str).collect();
+        super::target::release(t.home, t.root, &done, "tắt (down)", now)?;
+    }
+    if stuck.is_empty() {
+        return Ok(stopped);
+    }
+    bail!("đã dừng {} phòng, không dừng được: {} — phòng đã rời auto, không tự mở lại; xem terminal của phòng", stopped.len(), stuck.join(", "))
 }
 
 /// The rooms of `--only a,b,c`: trimmed, empty and repeated names dropped, order kept.
@@ -1872,13 +1901,35 @@ mod tests {
         let mine = store.touch("lead", false).unwrap();
         let other = "22222222-2222-4222-8222-222222222222";
         let list = format!("[{},{},{}]", agent(&dev.conversation_id, "dev", "background"), agent(&mine.conversation_id, "lead", "interactive"), agent(other, "x", "background"));
-        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list]), bg: String::new() };
+        // The listing after the stop no longer has dev: only that proves it stopped.
+        let after = format!("[{},{}]", agent(&mine.conversation_id, "lead", "interactive"), agent(other, "x", "background"));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list, after]), bg: String::new() };
         let t = Team { claude: &fake, ..t };
         assert_eq!(down(&t, 2).unwrap(), ["dev"]);
         let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").cloned().collect();
         assert_eq!(stops, [vec!["stop".to_string(), dev.conversation_id[..8].to_string()]]);
         assert_eq!(auto::status(&h, false, 3)["paused"], true);
         assert!(team_roots(&h).is_empty(), "down takes the root out of revive's list");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn down_reports_a_room_that_survives_two_stops_and_leaves_anyway() {
+        let (h, root) = tmp("down-stuck");
+        let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
+        let dev = store.touch("dev", false).unwrap();
+        let qa = store.touch("qa", false).unwrap();
+        // `claude stop` exits 0 while doing nothing (a session waiting on a prompt); the listing
+        // keeps both rooms alive no matter how many stops and listings happen.
+        let alive = format!("[{},{}]", agent(&dev.conversation_id, "dev", "background"), agent(&qa.conversation_id, "qa", "background"));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![alive]), bg: String::new() };
+        let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
+        let e = down(&t, 2).unwrap_err().to_string();
+        assert!(e.contains("không dừng được") && e.contains("dev") && e.contains("qa") && e.contains("8sync ccc term"), "{e}");
+        assert_eq!(fake.calls.borrow().iter().filter(|c| c[0] == "stop").count(), 4, "two stops per stuck room");
+        // Auto was left first: revive never brings them back while they sit stopped.
+        assert_eq!(auto::status(&h, false, 3)["paused"], true);
+        assert!(team_roots(&h).is_empty());
         let _ = std::fs::remove_dir_all(&h);
     }
 
@@ -1994,7 +2045,9 @@ mod tests {
         }
         // `up` could not rebind yet: the room runs under an id the registry does not know.
         let list = format!("[{},{}]", agent_in(DEV_BG, "lead", "background", &root), agent_in("33333333-3333-4333-8333-333333333333", "lead", "background", &other));
-        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list]), bg: String::new() };
+        let after = format!("[{}]", agent_in("33333333-3333-4333-8333-333333333333", "lead", "background", &other));
+        // The second `down` (the other project) then stops that lead too: its listing is empty.
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list, after, "[]".to_string()]), bg: String::new() };
         let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
         assert_eq!(down(&t, 3).unwrap(), ["lead"]);
         assert!(super::super::ship_loop::get(&h, &root).is_none() && super::super::ship_loop::get(&h, &other).is_some(), "only this project's loop ends");
