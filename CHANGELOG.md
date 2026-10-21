@@ -5,13 +5,21 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
-## [0.110.33] — 2026-10-21
+## [0.110.34] — 2026-10-21
 
 ### Fixed
 - **Câu Ship của lead không còn bị từ chối sau 60 s.** Owner 2026-10-21 ("kẹt hoài vậy lead không auto check ship done hả"): lead-ide đã hỏi Ship 5 lần cho 8 card approved; mỗi lần hook permit chờ owner bấm trên HQ 60 giây rồi *từ chối* AskUserQuestion ("tool 8sync không tự duyệt") và dặn "đừng hỏi lại", nên owner không bao giờ thấy câu hỏi và card nằm Approved 9 giờ. Giờ AskUserQuestion có header `Ship` đi thẳng qua hook (không chờ, không từ chối): câu hỏi đứng trên màn hình phòng như prompt thường, HQ (ask panel) hiện cho owner trả lời lúc nào cũng được, critic không bao giờ trả lời thay (delegate), grant đọc từ transcript như cũ. Test permit 8.
 
 ### Added
 - **Máy: đồ thị tải 30 phút.** Owner 2026-10-21 ("chưa có đồ thị"): mục Tải máy có đường RAM và CPU (một thang 0–100 %), nét đứt là ngưỡng RAM của guard, chú thích khoảng RAM / CPU / W; server lấy mẫu 30 giây một lần từ lúc HQ chạy (`lib/server/history.ts`, 60 mẫu) nên đồ thị đầy dù không mở tab; `/api/machine` thêm `history`. Test history 4.
+
+## [0.110.33] — 2026-10-21
+
+### Fixed
+- **"Dừng team" giờ dừng thật.** Owner: "lệnh dừng chương trình ở HQ không work khi có task bị chờ". Ba lỗi chồng nhau: `auto down` dừng ở phòng đầu tiên lỗi rồi BỎ qua bước rời auto → HQ revive mở lại phòng mỗi phút; `claude stop` thoát 0 ngay cả khi không dừng được (id sai in usage, exit 0; phòng đang chờ prompt có thể từ chối lặng lẽ) nên HQ báo "đã dừng"; không phòng nào được kiểm tra lại. Giờ: rời auto + tắt loop/ship-fast TRƯỚC, stop từng phòng, **đối chiếu danh sách session lại** (chỉ tính dừng khi phòng biến mất, theo id), phòng còn sống stop lần 2 rồi báo rõ tên + `8sync ccc term <id>` để xem tay; card của phòng đã dừng trả về board.
+- **A permission prompt after an auto-compact no longer waits on the owner forever.** The permit hook counted Claude Code's post-compaction summary (`isCompactSummary`) as the owner typing. Within 60 s of a compact, every prompt therefore stayed with the owner. Summaries and transcript-only lines no longer count.
+- **A room may move to another card's worktree of its own repo by itself.** `EnterWorktree` into `<repo>/.claude/worktrees/<name>` was refused because it lies outside the room's current worktree (seen live: dev in card-31 entering card-58). It is now allowed for one plain folder name directly under the repo's `.claude/worktrees/`. Anything else still waits for the owner.
+- `8sync up`: when the GitHub API has no digest, the release's `.sha256` file is tried up to 3 times (2 s apart) before "checksum NOT VERIFIED"; a missing digest still never blocks the install, a wrong one still does.
 
 ## [0.110.32] — 2026-10-21
 
