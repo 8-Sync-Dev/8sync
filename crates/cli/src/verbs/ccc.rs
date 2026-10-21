@@ -693,7 +693,8 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
-    let t = team::Team { home: &env.home, root, store: &store, subscription, claude: &bin, has_transcript: &has, title: &title, kit_at };
+    let pending_ask = |id: &str| transcripts(env, id).find_map(|p| delegate::pending_ask(&p));
+    let t = team::Team { home: &env.home, root, store: &store, subscription, claude: &bin, has_transcript: &has, pending_ask: &pending_ask, title: &title, kit_at };
     if rest[0] == "revive" {
         let rows = team::revive(&t, auto::DEFAULT_LOOP_MIN, now)?;
         for r in &rows {
