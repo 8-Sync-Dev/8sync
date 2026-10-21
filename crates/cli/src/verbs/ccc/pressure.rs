@@ -1035,11 +1035,24 @@ fn orig_of(procs: &[Proc], pinned: &[Pin], pid: u32, now_mask: u64, mask: u64) -
         }
         cur = parent;
     }
-    if now_mask == mask {
+    if on_a_cap(now_mask, mask) {
         ALL_CPUS
     } else {
         now_mask
     }
+}
+
+/// `m` looks like one of our caps for the current `mask` (any step, any cap %): a non-empty run of
+/// contiguous CPUs ending at the same top CPU, without CPU 0 (caps take the highest CPUs, [`cap_mask`]). A process
+/// whose record was lost on an older step's mask is then still restored to every CPU.
+fn on_a_cap(m: u64, mask: u64) -> bool {
+    // A cap leaves CPU 0 to the owner; a mask holding it is the machine's (or the owner's own).
+    if m == 0 || mask == 0 || m & 1 == 1 {
+        return false;
+    }
+    let low = m & m.wrapping_neg();
+    let contiguous = m.wrapping_add(low) & m == 0;
+    contiguous && m.leading_zeros() == mask.leading_zeros()
 }
 
 /// The records after this pin for `root`: every target now on `mask` (`on`: pid, start, mask
@@ -2541,6 +2554,17 @@ mod tests {
         }
         assert_eq!((st["actions"].as_array().unwrap().len(), st["actions"][0]["text"].as_str()), (ACTIONS_KEEP, Some("a2")));
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_process_on_any_steps_cap_mask_is_restored_to_every_cpu() {
+        let (m0, m2) = (cap_mask(37, 32, 0), cap_mask(37, 32, 2));
+        assert!(on_a_cap(m0, m2) && on_a_cap(m2, m0), "older or newer step of the same cap");
+        assert!(on_a_cap(cap_mask(50, 32, 0), m0), "another cap %");
+        assert!(!on_a_cap(0x0000_FFFF, m0), "the low CPUs are not a cap");
+        assert!(!on_a_cap(0xF0F0_0000, m0), "not contiguous");
+        assert!(!on_a_cap(ALL_CPUS, m0));
+        assert!(!on_a_cap(0xFFFF_FFFF, m0), "the whole machine is not a cap");
     }
 
     #[test]
