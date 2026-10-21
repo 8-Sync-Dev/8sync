@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.33] — 2026-10-21
+
+### Fixed
+- **Câu Ship của lead không còn bị từ chối sau 60 s.** Owner 2026-10-21 ("kẹt hoài vậy lead không auto check ship done hả"): lead-ide đã hỏi Ship 5 lần cho 8 card approved; mỗi lần hook permit chờ owner bấm trên HQ 60 giây rồi *từ chối* AskUserQuestion ("tool 8sync không tự duyệt") và dặn "đừng hỏi lại", nên owner không bao giờ thấy câu hỏi và card nằm Approved 9 giờ. Giờ AskUserQuestion có header `Ship` đi thẳng qua hook (không chờ, không từ chối): câu hỏi đứng trên màn hình phòng như prompt thường, HQ (ask panel) hiện cho owner trả lời lúc nào cũng được, critic không bao giờ trả lời thay (delegate), grant đọc từ transcript như cũ. Test permit 8.
+
+### Added
+- **Máy: đồ thị tải 30 phút.** Owner 2026-10-21 ("chưa có đồ thị"): mục Tải máy có đường RAM và CPU (một thang 0–100 %), nét đứt là ngưỡng RAM của guard, chú thích khoảng RAM / CPU / W; server lấy mẫu 30 giây một lần từ lúc HQ chạy (`lib/server/history.ts`, 60 mẫu) nên đồ thị đầy dù không mở tab; `/api/machine` thêm `history`. Test history 4.
+
 ## [0.110.32] — 2026-10-21
 
 ### Fixed
