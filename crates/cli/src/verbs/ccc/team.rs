@@ -1191,6 +1191,8 @@ pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
     }
     auto::leave(t.home, t.root, t.subscription, now)?;
     set_team_root(t.home, t.root, false);
+    // No team, no rounds: a loop left on would mail a lead that is gone ([`super::ship_loop`]).
+    super::ship_loop::off(t.home, t.root);
     Ok(stopped)
 }
 
@@ -1964,11 +1966,17 @@ mod tests {
         assert_eq!(auto::status(&h, false, 2)["repos"].as_array().unwrap().len(), 2);
         let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
         store.touch("lead", false).unwrap();
+        // Both run an auto-ship loop: `down` ends this project's only.
+        for r in [&root, &other] {
+            set_team_root(&h, r, true);
+            super::super::ship_loop::on(&h, r, None, 1).unwrap();
+        }
         // `up` could not rebind yet: the room runs under an id the registry does not know.
         let list = format!("[{},{}]", agent_in(DEV_BG, "lead", "background", &root), agent_in("33333333-3333-4333-8333-333333333333", "lead", "background", &other));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list]), bg: String::new() };
         let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, title: &|n: &str| n.to_string(), kit_at: None };
         assert_eq!(down(&t, 3).unwrap(), ["lead"]);
+        assert!(super::super::ship_loop::get(&h, &root).is_none() && super::super::ship_loop::get(&h, &other).is_some(), "only this project's loop ends");
         let stops: Vec<_> = fake.calls.borrow().iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
         assert_eq!(stops, [DEV_BG[..8].to_string()], "only this project's lead");
         let st = auto::status(&h, false, 4);

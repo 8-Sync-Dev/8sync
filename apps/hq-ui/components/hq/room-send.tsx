@@ -97,7 +97,7 @@ export function RoomSend({
   const slashRooms: SlashRoom[] = useMemo(() => (group?.rooms ?? []).map((r) => ({ key: r.key, name: r.name, label: r.label })), [group]);
   // A "/…" command overrides the target for this send only (lib/slash.ts).
   const slash = parseSlash(text, slashRooms);
-  const plan = slashSend(slash, { target: chosen, root: group?.root ?? null, lead: group ? leadOf(group.rooms) : null });
+  const plan = slashSend(slash, { target: chosen, root: group?.root ?? null, lead: group ? leadOf(group.rooms) : null, rooms: slashRooms });
   const target: SendTarget = plan.ok ? plan.target : chosen;
   const room = target.kind === "room" ? byKey(target.key) : null;
   const sug = group ? suggestion(group.rooms) : null;
@@ -143,6 +143,17 @@ export function RoomSend({
     area.current?.focus();
   }
 
+  /** The owner wrote to the project: a parked auto-ship loop runs again (`auto loop wake`, a no-op otherwise). */
+  async function wakeLoop(root: string | null): Promise<void> {
+    if (!root) return;
+    try {
+      await api("/api/auto/loop", { method: "POST", body: { root, wake: true } });
+      shipLoopsChanged();
+    } catch {
+      /* older 8sync or no loop: nothing to wake */
+    }
+  }
+
   /** `/hq-auto-ship` / `/hq-stop`: the project's loop (POST /api/auto/loop → `8sync ccc auto loop on|off`); its result line. */
   async function switchLoop(l: { on: boolean; root: string; focus: string | null }): Promise<{ ok: boolean; text: string }> {
     try {
@@ -167,6 +178,25 @@ export function RoomSend({
       const made = prepare ? await prepare(typed) : { text: typed, files: [] };
       const ids = [...files, ...made.files].map((f) => f.id);
       const loop = plan.loop;
+      if (plan.fan) {
+        // No lead: the brief goes to each room of the project as a message, never a card.
+        const out: { ok: boolean; text: string }[] = [];
+        for (const key of plan.fan) {
+          const r = byKey(key);
+          if (!r) continue;
+          try {
+            const m = await api<{ message: Message; delivery: string; live?: boolean; error: string | null }>("/api/messages", { method: "POST", body: { session: r.name, text: made.text, base: r.cwd, files: ids } });
+            out.push({ ok: m.delivery !== "failed", text: `${r.label}: ${m.delivery === "inbox" ? inboxText(m.live) : "đã gõ vào terminal"}` });
+          } catch (e) {
+            out.push({ ok: false, text: `${r.label}: chưa gửi được (${(e as Error).message})` });
+          }
+        }
+        setLast([...out, ...(loop ? [await switchLoop(loop)] : [])]);
+        toast.success(`Đã gửi brief cho ${out.filter((x) => x.ok).length} phòng`);
+        done();
+        void wakeLoop(group?.root ?? null);
+        return;
+      }
       if (room) {
         const r = await api<{ message: Message; delivery: string; live?: boolean; error: string | null }>("/api/messages", {
           method: "POST",
@@ -182,6 +212,7 @@ export function RoomSend({
         setLast([{ ok: true, text: `${room.label}: ${how}` }, ...(loop ? [await switchLoop(loop)] : [])]);
         toast.success(`Đã gửi cho ${room.label}`);
         done();
+        void wakeLoop(group?.root ?? null);
         return;
       }
       const r = await api<{ results: BroadcastResult[] }>("/api/targets", {
@@ -194,6 +225,7 @@ export function RoomSend({
       if (out.clear) {
         toast.success(now ? `Đã gửi việc cho ${out.sent} phòng` : "Việc đã vào hàng đích");
         done();
+        void wakeLoop(allRoot && allRoot !== ALL_PROJECTS ? allRoot : group?.root ?? null);
       } else if (out.failed.length === r.results.length) toast.error("Chưa gửi được việc nào");
       // Some projects took it: keep the text so the owner can pick a failed project and send again.
       else toast.warning(`Chưa gửi được tới: ${out.failed.join(", ")} (xem dòng đỏ bên dưới)`);
@@ -219,7 +251,7 @@ export function RoomSend({
   const slashNote = !plan.ok
     ? plan.error
     : slash.kind === "preset"
-      ? `/${slash.preset.cmd} → ${room ? room.label : "mọi phòng"}: gửi brief [HQ /${slash.preset.cmd}]${slash.preset.loop === "on" ? " và bật vòng auto-ship (8sync gửi lead vòng kế khi board cạn)" : slash.preset.loop === "off" ? " và tắt vòng auto-ship" : ""}.`
+      ? `/${slash.preset.cmd} → ${room ? room.label : `mọi phòng (${plan.fan?.length ?? 0}, không có lead)`}: gửi brief [HQ /${slash.preset.cmd}]${slash.preset.loop === "on" ? " và bật vòng auto-ship (8sync gửi lead vòng kế khi board cạn)" : slash.preset.loop === "off" ? " và tắt vòng auto-ship" : ""}.`
       : slash.kind === "all" || slash.kind === "room"
         ? `/${slash.kind === "all" ? "all" : slash.room.label}: chỉ cho lần gửi này.`
         : null;

@@ -56,7 +56,7 @@ const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30
        8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>|--mail] [--timeout <giây ≤1800>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
        8sync ccc auto merge [--as <phòng>] [--json]   (lead: merge mọi card approved; cần quyền tự merge của owner)
        8sync ccc auto guard [<30..95>|off] [cpu <30..95>] [cap <10..90>|off] [eco on|off] [--dry-run] [--json]   (tự dọn máy khi RAM ≥ ngưỡng (mặc định 60%) hoặc CPU ≥ ngưỡng CPU (mặc định 55%); cap: phòng + daemon Claude Code chỉ chạy trên N luồng CPU cao nhất, mặc định 37%, tự siết nửa khi CPU vượt ngưỡng; eco: phòng chạy chế độ tiết kiệm điện, mặc định bật)
-       8sync ccc auto loop on [trọng tâm] | off | status [--json]   (vòng auto-ship: lead nhận brief vòng kế khi board cạn, ≥ 20 phút một vòng; bật/tắt chỉ owner)
+       8sync ccc auto loop on [trọng tâm] | off | wake | status [--json]   (vòng auto-ship: lead nhận brief vòng kế khi board cạn, ≥ 20 phút một vòng; 2 vòng không ra card thì nghỉ; chỉ owner)
        8sync ccc auto guard now   (một lượt bảo vệ ngay cho mọi dự án đang auto; HQ tự gọi khi RAM/CPU vượt ngưỡng)
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
 pub(super) const DEFAULT_AFTER_S: u64 = 60;

@@ -2,17 +2,34 @@
 // to all phòng hoặc 1 phòng nên có command /… ví như hq-auto-ship là auto rnd, optimize, nâng cấp, cải
 // tiến, check sec, check thiếu, loop làm liên tục". Pure rules, tested in tests/slash.test.ts.
 //
-// - `/all <tin>`: every room of the project in view, `/<phòng> <tin>`: one room, for this send only.
+// - `/all <tin>`: every room of the project in view (with "Tất cả dự án" picked: every project, as that
+//   target does), `/<phòng> <tin>`: one room, for this send only. A room is offered and matched by a
+//   slug-safe token (its label, else its name); a room with neither is not offered.
 // - `/hq-*` presets expand here into a brief headed `[HQ /hq-…]`: a leading "/" never reaches a Claude
 //   Code terminal (it would run Claude Code's own command). They go to the project's lead room when
-//   there is one. `/hq-auto-ship` also turns on the project's loop (`8sync ccc auto loop on`, whose
-//   revive tick sends the lead each next round: crates/cli/src/verbs/ccc/ship_loop.rs); `/hq-stop` turns it off.
+//   there is one, else as a message to each room of the project (never an owner card). `/hq-auto-ship`
+//   also turns on the project's loop first (`8sync ccc auto loop on`, whose revive tick sends the lead
+//   each next round: crates/cli/src/verbs/ccc/ship_loop.rs); `/hq-stop` turns it off.
 // - `//text` sends "/text" as typed.
 
+import { ALL_PROJECTS } from "./broadcast";
 import { rootKey } from "./preview";
 import type { SendTarget } from "./room-send";
 
 export type SlashRoom = { key: string; name: string; label: string };
+
+const WORD = /^[\p{L}\p{N}][\p{L}\p{N}_-]*$/u;
+
+/** The "/word" a room answers to: its label, else its name, when slug-safe and unique in the project; null = not offered. */
+export function roomToken(r: SlashRoom, rooms: SlashRoom[]): string | null {
+  return tokensOf(r, rooms)[0] ?? null;
+}
+
+/** Every "/word" that resolves to `r` (its label and its session name, when slug-safe and unique). */
+function tokensOf(r: SlashRoom, rooms: SlashRoom[]): string[] {
+  const unique = (w: string) => rooms.filter((x) => x.label.toLowerCase() === w.toLowerCase() || x.name.toLowerCase() === w.toLowerCase()).length === 1;
+  return [r.label, r.name].filter((w) => WORD.test(w) && unique(w));
+}
 
 export type Preset = {
   cmd: string;
@@ -45,7 +62,7 @@ export const PRESETS: readonly Preset[] = [
       "5. Check sec: secret, audit deps, OWASP trên diff gần đây.\n" +
       "6. Check thiếu: test, docs, đường lỗi, tính năng làm dở.\n" +
       `${CARD}\n` +
-      "Hết card một vòng thì thôi: 8sync tự gửi vòng kế khi board cạn (≥ 20 phút một vòng, không gửi khi guard đang giữ máy).\n" +
+      "Hết card một vòng thì thôi: 8sync tự gửi vòng kế khi board cạn (≥ 20 phút một vòng, chờ khi usage hay guard đang nghỉ; 2 vòng liền không ra card thì nghỉ tới khi owner nhắn).\n" +
       `${RULES}\nDừng: owner nói "dừng" hoặc /hq-stop.`,
   },
   { cmd: "hq-rnd", desc: "Một vòng R&D: thiếu gì, làm tốt hơn gì so với công cụ tương tự", brief: round("hq-rnd", "Một vòng R&D", "So với công cụ tương tự còn thiếu gì, làm tốt hơn được gì; đọc docs chính thức, ghi nguồn. Vòng này không sửa code.") },
@@ -74,9 +91,13 @@ export function slashAt(text: string, caret: number): { prefix: string; end: num
 /** Menu rows for `prefix` (case-insensitive prefix): `/all`, the project's rooms, then the presets. */
 export function slashMenu(prefix: string, rooms: SlashRoom[], max = 14): MenuRow[] {
   const p = prefix.toLowerCase();
+  const named = rooms.flatMap((r) => {
+    const t = roomToken(r, rooms);
+    return t ? [{ cmd: t, desc: `Chỉ phòng ${r.label}, lần gửi này`, kind: "room" as const }] : [];
+  });
   const rows: MenuRow[] = [
     ...(rooms.length ? [{ cmd: "all", desc: `Mọi phòng của dự án (${rooms.length} phòng), chỉ lần gửi này`, kind: "all" as const }] : []),
-    ...rooms.map((r) => ({ cmd: r.label, desc: `Chỉ phòng ${r.label}, lần gửi này`, kind: "room" as const })),
+    ...named,
     ...PRESETS.map((x) => ({ cmd: x.cmd, desc: x.desc, kind: "preset" as const })),
   ];
   return rows.filter((r) => r.cmd.toLowerCase().startsWith(p)).slice(0, max);
@@ -107,34 +128,46 @@ export function parseSlash(text: string, rooms: SlashRoom[]): Slash {
   const preset = PRESETS.find((p) => p.cmd === cmd);
   if (preset) return { kind: "preset", preset, focus: body || null };
   if (cmd === "all") return body ? { kind: "all", body } : { kind: "error", error: "/all cần nội dung tin sau lệnh" };
-  const room = rooms.find((r) => r.label.toLowerCase() === cmd) ?? rooms.find((r) => r.name.toLowerCase() === cmd);
+  const room = rooms.find((r) => tokensOf(r, rooms).some((w) => w.toLowerCase() === cmd));
   if (!room) return { kind: "error", error: `Không có lệnh hay phòng /${m[1]} trong dự án này: gõ / để xem danh sách (//… để gửi nguyên dấu /)` };
   return body ? { kind: "room", room, body } : { kind: "error", error: `/${m[1]} cần nội dung tin sau tên phòng` };
 }
 
 export type SlashSend =
-  | { ok: true; target: SendTarget; text: string; loop: { on: boolean; root: string; focus: string | null } | null }
+  | {
+      ok: true;
+      target: SendTarget;
+      text: string;
+      loop: { on: boolean; root: string; focus: string | null } | null;
+      /** A preset in a project without a lead: sent as a message to each of these rooms (keys). */
+      fan: string[] | null;
+    }
   | { ok: false; error: string };
 
 /**
- * Where and what a parsed command sends: `/all` → every room of the project in view (`root`), a room
- * command → that room, a preset → the project's lead room, else the composer's own target.
- * `none` keeps the composer's target and text.
+ * Where and what a parsed command sends: `/all` → every room of the project in view (`root`), or of
+ * every project when the composer targets them all; a room command → that room; a preset → the
+ * project's lead room, else a message to each of its rooms (`fan`). `none` keeps the composer's
+ * target and text.
  */
-export function slashSend(s: Slash, ctx: { target: SendTarget; root: string | null; lead: SlashRoom | null }): SlashSend {
+export function slashSend(s: Slash, ctx: { target: SendTarget; root: string | null; lead: SlashRoom | null; rooms: SlashRoom[] }): SlashSend {
   switch (s.kind) {
     case "error":
       return { ok: false, error: s.error };
     case "none":
-      return { ok: true, target: ctx.target, text: s.text, loop: null };
+      return { ok: true, target: ctx.target, text: s.text, loop: null, fan: null };
     case "all":
-      return ctx.root ? { ok: true, target: { kind: "all", root: ctx.root }, text: s.body, loop: null } : { ok: false, error: "/all: chọn một dự án trước (ô Gửi tới)" };
+      if (ctx.root) return { ok: true, target: { kind: "all", root: ctx.root }, text: s.body, loop: null, fan: null };
+      if (ctx.target.kind === "all" && ctx.target.root === ALL_PROJECTS) return { ok: true, target: ctx.target, text: s.body, loop: null, fan: null };
+      return { ok: false, error: "/all: chọn một dự án trước (ô Gửi tới)" };
     case "room":
-      return { ok: true, target: { kind: "room", key: s.room.key }, text: s.body, loop: null };
+      return { ok: true, target: { kind: "room", key: s.room.key }, text: s.body, loop: null, fan: null };
     case "preset": {
-      if (s.preset.loop && !ctx.root) return { ok: false, error: `/${s.preset.cmd}: chọn một dự án trước (ô Gửi tới)` };
-      const loop = s.preset.loop && ctx.root ? { on: s.preset.loop === "on", root: ctx.root, focus: s.focus } : null;
-      return { ok: true, target: ctx.lead ? { kind: "room", key: ctx.lead.key } : ctx.target, text: s.preset.brief(s.focus), loop };
+      if (!ctx.root || ctx.rooms.length === 0) return { ok: false, error: `/${s.preset.cmd}: chọn một dự án có phòng đang chạy trước (ô Gửi tới)` };
+      const loop = s.preset.loop ? { on: s.preset.loop === "on", root: ctx.root, focus: s.focus } : null;
+      const text = s.preset.brief(s.focus);
+      if (ctx.lead) return { ok: true, target: { kind: "room", key: ctx.lead.key }, text, loop, fan: null };
+      return { ok: true, target: { kind: "all", root: ctx.root }, text, loop, fan: ctx.rooms.map((r) => r.key) };
     }
   }
 }
@@ -159,7 +192,17 @@ export function shipLoops(v: unknown): ShipLoop[] {
 
 /** The chip's wait words for a resting loop (it goes on by itself once that clears); null = nothing to say. */
 export function loopWait(next: string | null): string | null {
-  return next === "usage" ? "chờ usage" : next === "guard" ? "chờ máy rảnh" : next === "auto" ? "auto đang dừng" : null;
+  return (
+    next === "usage" ? "chờ usage"
+    : next === "guard" ? "chờ máy rảnh"
+    : next === "auto" ? "auto đang dừng"
+    : next === "scope" ? "ngoài phạm vi auto"
+    : next === "idle" ? `nghỉ — 2 vòng không ra việc`
+    : next === "lead" ? "chờ lead đọc brief trước"
+    : next === "board" ? "còn card đang làm"
+    : next === "gap" ? "chờ nhịp vòng"
+    : null
+  );
 }
 
 /** The loop of project `root` (`\` vs `/`, case and Rust's `\\?\` prefix ignored), or null. */

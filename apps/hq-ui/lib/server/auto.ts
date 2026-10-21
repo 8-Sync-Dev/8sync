@@ -87,10 +87,11 @@ export async function autoSet(action: AutoAction, root?: string): Promise<AutoSt
  * project root the route checked; the focus is one argv word after `--`, never shell text.
  * Refreshes the status cache so the "Auto-ship: vòng N" chip shows at the next poll.
  */
-export async function loopSet(root: string, on: boolean, focus: string | null): Promise<{ ok: boolean; line: string; error: string | null }> {
-  const argv = ["ccc", "auto", "loop", on ? "on" : "off", "--json", ...(on && focus ? ["--", focus] : [])];
+export async function loopSet(root: string, on: boolean, focus: string | null, wake = false): Promise<{ ok: boolean; line: string; error: string | null }> {
+  const argv = wake ? ["ccc", "auto", "loop", "wake", "--json"] : ["ccc", "auto", "loop", on ? "on" : "off", "--json", ...(on && focus ? ["--", focus] : [])];
   const r = await run("8sync", argv, TIMEOUT_MS, root);
   await autoStatus();
   if (!r.ok) return { ok: false, line: "", error: (r.stderr.trim().replace(/^Error:\s*/, "") || "8sync ccc auto loop thất bại (cần 8sync có `auto loop`)").slice(0, 300) };
+  if (wake) return { ok: true, line: "Auto-ship: chạy lại", error: null };
   return { ok: true, line: on ? "Auto-ship: BẬT — 8sync gửi lead vòng kế khi board cạn (≥ 20 phút một vòng)" : "Auto-ship: TẮT — các card đang làm vẫn xong theo luồng thường", error: null };
 }

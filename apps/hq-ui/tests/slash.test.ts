@@ -57,23 +57,27 @@ describe("presets expand in HQ", () => {
 
 describe("slashSend: target and text", () => {
   const lead = rooms[0];
-  it("a preset goes to the project's lead, else the composer's target; loop presets switch the loop", () => {
+  it("a preset goes to the project's lead, else as a message to each room (never a card); loop presets switch the loop", () => {
     const s = parseSlash("/hq-auto-ship perf", rooms);
-    const r = slashSend(s, { target: ALL, root: "/r/ide", lead });
-    expect(r).toMatchObject({ ok: true, target: { kind: "room", key: "k-lead" }, loop: { on: true, root: "/r/ide", focus: "perf" } });
+    const r = slashSend(s, { target: ALL, root: "/r/ide", lead, rooms });
+    expect(r).toMatchObject({ ok: true, target: { kind: "room", key: "k-lead" }, loop: { on: true, root: "/r/ide", focus: "perf" }, fan: null });
     expect(r.ok && r.text.startsWith("[HQ /hq-auto-ship]")).toBe(true);
-    expect(slashSend(s, { target: ALL, root: "/r/ide", lead: null })).toMatchObject({ ok: true, target: ALL });
-    expect(slashSend(parseSlash("/hq-stop", rooms), { target: ALL, root: "/r/ide", lead })).toMatchObject({ ok: true, loop: { on: false } });
-    expect(slashSend(parseSlash("/hq-rnd", rooms), { target: ALL, root: "/r/ide", lead })).toMatchObject({ ok: true, loop: null });
-    expect(slashSend(s, { target: { kind: "all", root: "__all__" }, root: null, lead: null })).toMatchObject({ ok: false });
+    expect(slashSend(s, { target: ALL, root: "/r/ide", lead: null, rooms })).toMatchObject({ ok: true, target: ALL, fan: rooms.map((x) => x.key) });
+    expect(slashSend(parseSlash("/hq-stop", rooms), { target: ALL, root: "/r/ide", lead, rooms })).toMatchObject({ ok: true, loop: { on: false } });
+    expect(slashSend(parseSlash("/hq-rnd", rooms), { target: ALL, root: "/r/ide", lead, rooms })).toMatchObject({ ok: true, loop: null });
+    expect(slashSend(s, { target: { kind: "all", root: "all" }, root: null, lead: null, rooms })).toMatchObject({ ok: false });
   });
 
   it("/all and /<room> override the target for this send; plain text keeps it", () => {
     const one = { kind: "room", key: "k-qa" } as const;
-    expect(slashSend(parseSlash("/all x", rooms), { target: one, root: "/r/ide", lead })).toEqual({ ok: true, target: ALL, text: "x", loop: null });
-    expect(slashSend(parseSlash("/dev2 x", rooms), { target: ALL, root: "/r/ide", lead })).toEqual({ ok: true, target: { kind: "room", key: "k-dev2" }, text: "x", loop: null });
-    expect(slashSend(parseSlash("hello", rooms), { target: one, root: "/r/ide", lead })).toEqual({ ok: true, target: one, text: "hello", loop: null });
-    expect(slashSend(parseSlash("/dev9 x", rooms), { target: one, root: "/r/ide", lead })).toMatchObject({ ok: false });
+    expect(slashSend(parseSlash("/all x", rooms), { target: one, root: "/r/ide", lead, rooms })).toEqual({ ok: true, target: ALL, text: "x", loop: null, fan: null });
+    expect(slashSend(parseSlash("/dev2 x", rooms), { target: ALL, root: "/r/ide", lead, rooms })).toEqual({ ok: true, target: { kind: "room", key: "k-dev2" }, text: "x", loop: null, fan: null });
+    expect(slashSend(parseSlash("hello", rooms), { target: one, root: "/r/ide", lead, rooms })).toEqual({ ok: true, target: one, text: "hello", loop: null, fan: null });
+    expect(slashSend(parseSlash("/dev9 x", rooms), { target: one, root: "/r/ide", lead, rooms })).toMatchObject({ ok: false });
+    // "Tất cả dự án" picked: /all fans out exactly like that target; a preset needs one project.
+    const every = { kind: "all", root: "all" } as const;
+    expect(slashSend(parseSlash("/all x", rooms), { target: every, root: null, lead: null, rooms })).toEqual({ ok: true, target: every, text: "x", loop: null, fan: null });
+    expect(slashSend(parseSlash("/hq-sec", rooms), { target: every, root: null, lead: null, rooms })).toMatchObject({ ok: false });
   });
 });
 
@@ -85,6 +89,12 @@ describe("menu", () => {
     expect(slashAt("xem /de", 7)).toBeNull();
     expect(slashAt("//x", 2)).toBeNull();
     expect(slashAt("/home/me", 5)).toEqual({ prefix: "home", end: 5 });
+  });
+
+  it("a room is offered only by a slug-safe, unique label/name — a titled room with spaces is not", () => {
+    const titled = [...rooms, { key: "k-t", name: "fix webhook retry", label: "Fix webhook retry…" }];
+    expect(slashMenu("", titled).map((r) => r.cmd)).toEqual(["all", "lead", "dev2", "qa", ...PRESETS.map((p) => p.cmd)]);
+    expect(parseSlash("/fix webhook x", titled).kind).toBe("error");
   });
 
   it("rows: /all, the rooms, the presets, filtered by prefix (case-insensitive)", () => {
@@ -101,6 +111,20 @@ describe("menu", () => {
   });
 });
 
+describe("loopWait: why the next round waits", () => {
+  it("every reason has a short Vietnamese label", () => {
+    expect(loopWait("usage")).toBe("chờ usage");
+    expect(loopWait("guard")).toBe("chờ máy rảnh");
+    expect(loopWait("auto")).toBe("auto đang dừng");
+    expect(loopWait("scope")).toBe("ngoài phạm vi auto");
+    expect(loopWait("idle")).toBe("nghỉ — 2 vòng không ra việc");
+    expect(loopWait("lead")).toBe("chờ lead đọc brief trước");
+    expect(loopWait("board")).toBe("còn card đang làm");
+    expect(loopWait("gap")).toBe("chờ nhịp vòng");
+    expect(loopWait(null)).toBeNull();
+  });
+});
+
 describe("ship loops from auto status", () => {
   it("parses `ship_loops` and finds a project's loop across spellings", () => {
     const loops = shipLoops({ "\\\\?\\C:\\Users\\me\\ide": { round: 3, focus: "perf", since: 10, next_reason: "usage" }, "/x": { round: "junk", next_reason: null }, bad: null });
@@ -110,7 +134,7 @@ describe("ship loops from auto status", () => {
     ]);
     expect(loopWait("usage")).toBe("chờ usage");
     expect(loopWait("guard")).toBe("chờ máy rảnh");
-    expect(loopWait("board")).toBeNull();
+    expect(loopWait("board")).toBe("còn card đang làm");
     expect(loopWait(null)).toBeNull();
     expect(loopFor(loops, "C:/users/me/ide")?.round).toBe(3);
     expect(loopFor(loops, "/y")).toBeNull();
