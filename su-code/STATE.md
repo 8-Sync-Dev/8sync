@@ -20,6 +20,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 
 ## Current
 v0.110.19: `sweep` room (Dọn máy) per running project kept by HQ, event-driven, strict cleanup rules; disk sizes count pnpm/bun hardlinks as 0.
+v0.110.20: HQ terminal image button/paste; hourly scan of every project auto-removes idle card-worktree target/.next (rename guard + 1 h idle + room cwd).
 v0.110.18: HQ broadcast box defaults to the repo in view (was the busiest project) + root compare normalised.
 v0.110.17: HQ lag/ids fix (core serves one `claude agents` listing per 3 s + keeps last good; node single-flight probe) + HQ at normal CPU/memory/I/O priority.
 v0.110.16: resource guard (HQ 5 s trigger → `guard now`; L1 clean / L2 lean restart / L3 pause + auto-resume; below-normal + EcoQoS + idle builds; QA scratch rule).

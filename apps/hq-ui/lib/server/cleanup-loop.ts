@@ -18,11 +18,12 @@ import { capturePlain, sendKeys } from "./proc";
 import { ownerMessage } from "./queries";
 import { isTmuxName } from "./validate";
 
-export const LOOP_EVERY_MS = 6 * 3600_000;
-/** The same findings go out at most once a day. */
+/** Every project is measured this often; each scan auto-cleans idle worktree build output (disk-clean.ts). */
+export const LOOP_EVERY_MS = 3600_000;
+/** The same findings go out to a room at most once a day. */
 export const RESEND_MS = 24 * 3600_000;
 /** After an HQ start, the first run waits this long (a restart loop must not send in a burst). */
-export const FIRST_DELAY_MS = 10 * 60_000;
+export const FIRST_DELAY_MS = 3 * 60_000;
 
 /** `room`: the room key the owner picked; null = the project's sweep room, else its lead, else dev (lib/disk.ts cleanupRoom). */
 export type LoopProject = { on: boolean; room: string | null };
@@ -95,15 +96,19 @@ export async function deliverTo(db: DatabaseSync, room: Pick<Room, "name">, text
   }
 }
 
-/** One pass over the projects that have the loop on. */
+/**
+ * One pass: measure the projects with card worktrees (the scan auto-cleans their idle build output)
+ * and those with the loop on, then message the rooms of the latter.
+ */
 export async function runLoop(now = Date.now(), db: DatabaseSync = getDb()): Promise<void> {
   const s = readLoop();
   const sent: Record<string, LoopSent> = {};
   // null: a send went through, the old error goes.
   const errors: Record<string, LoopError | null> = {};
-  if (Object.values(s.projects).some((p) => p.on)) {
-    const projects = (await diskProjects(db)).filter((p) => s.projects[diskKey(p.root)]?.on);
-    await startScan(projects);
+  const all = await diskProjects(db);
+  const projects = all.filter((p) => s.projects[diskKey(p.root)]?.on);
+  await startScan(all.filter((p) => s.projects[diskKey(p.root)]?.on || fs.existsSync(path.join(p.root, ".claude", "worktrees"))));
+  if (projects.length) {
     const rooms = (await loadOffice(db)).rooms;
     for (const p of diskState(projects, now).projects) {
       const k = diskKey(p.root);
@@ -134,7 +139,7 @@ export async function runLoop(now = Date.now(), db: DatabaseSync = getDb()): Pro
   writeLoop({ ...fresh, sent: { ...fresh.sent, ...sent }, lastError, lastRun: now });
 }
 
-/** Starts the 6-hourly loop once per process (instrumentation.ts). */
+/** Starts the hourly loop once per process (instrumentation.ts). */
 export function startCleanupLoop(now = Date.now()): void {
   const st = S();
   if (st.timer) return;
