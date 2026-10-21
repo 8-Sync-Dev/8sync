@@ -496,9 +496,11 @@ pub(super) fn hosts_its_omp(procs: &[ProcEntry], rec: &HostState) -> bool {
     rec.omp_pid.is_some_and(|o| procs.iter().any(|p| p.pid == o && p.ppid == rec.pid && p.started >= host.started))
 }
 
-/// `rec`'s process is our host, not whatever got its pid: an 8sync image, or the parent of its omp.
+/// `rec`'s process is our host, not whatever got its pid: the live parent of the record's omp
+/// ([`hosts_its_omp`]) and an 8sync image. A name alone never suffices (any 8sync that got a dead
+/// host's pid, with anything listening on the old port, would get the token and the keys).
 fn host_is_ours(rec: &HostState) -> bool {
-    ccc_core::transcript::process_image(rec.pid).is_some_and(|i| eightsync_image(&i)) || hosts_its_omp(&ccc_core::transcript::processes(), rec)
+    ccc_core::transcript::process_image(rec.pid).is_some_and(|i| eightsync_image(&i)) && hosts_its_omp(&ccc_core::transcript::processes(), rec)
 }
 
 /// The live host of room `id`, the hello sent. A record whose host is gone (or whose pid now runs
@@ -874,8 +876,11 @@ mod tests {
         let p = state_path(&dir, id);
         let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = l.local_addr().unwrap().port();
-        // This test binary is its own "8sync": a record of a live process running this executable.
-        write_state(&p, &HostState { pid: std::process::id(), omp_pid: None, port, token: TOKEN.into(), room: id.into() }).unwrap();
+        // This test binary is its own "8sync" host, and a child it starts is its omp.
+        let mut omp = if cfg!(windows) { std::process::Command::new("ping") } else { std::process::Command::new("sleep") };
+        omp.args(if cfg!(windows) { ["-n", "30", "127.0.0.1"].as_slice() } else { ["30"].as_slice() });
+        let mut omp = omp.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap();
+        write_state(&p, &HostState { pid: std::process::id(), omp_pid: Some(omp.id()), port, token: TOKEN.into(), room: id.into() }).unwrap();
         let fake = std::thread::spawn(move || {
             for _ in 0..2 {
                 let (s, _) = l.accept().unwrap();
@@ -897,6 +902,8 @@ mod tests {
         assert!(connect(&p, id, &dir, 80, 24).is_none(), "nothing listens any more");
         assert!(p.exists(), "a host of ours that does not answer keeps its record (it may be busy)");
         assert!(connect(&p, "omp-0000000000000004", &dir, 80, 24).is_none());
+        let _ = omp.kill();
+        let _ = omp.wait();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -923,10 +930,11 @@ mod tests {
         other.args(if cfg!(windows) { ["-n", "30", "127.0.0.1"].as_slice() } else { ["30"].as_slice() });
         quiet(&mut other);
         let mut other = other.spawn().unwrap();
-        for pid in [gone_pid, other.id()] {
-            write_state(&p, &HostState { pid, omp_pid: Some(pid), port, token: TOKEN.into(), room: id.into() }).unwrap();
+        // Gone, another program, and an 8sync image (this test binary) whose record's omp is not its live child.
+        for (pid, omp) in [(gone_pid, Some(gone_pid)), (other.id(), Some(other.id())), (std::process::id(), Some(gone_pid)), (std::process::id(), None)] {
+            write_state(&p, &HostState { pid, omp_pid: omp, port, token: TOKEN.into(), room: id.into() }).unwrap();
             assert!(connect(&p, id, &dir, 80, 24).is_none(), "pid {pid}");
-            assert!(!p.exists(), "the stale record is deleted");
+            assert!(!p.exists(), "the stale record is deleted (its omp does not have the session open)");
             assert!(l.accept().is_err(), "nothing connected to the port, so no token was sent");
         }
         let _ = other.kill();
