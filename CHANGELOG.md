@@ -5,6 +5,17 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.15] — 2026-10-21
+### Added
+- **HQ "Đóng dự án" stops the project for real (`8sync ccc auto close [--dry-run] [--json]`).** Owner 2026-10-21: "kill hẳn luôn không phải ẩn". The project "⋯" item opens a confirm dialog listing what will stop (from `auto close --dry-run --json`): team rooms, other Claude Code sessions, omp sessions (warning when one is probably the owner's own open terminal) and leftover processes, under the repo root it resolved. "Dừng hẳn & đóng" runs the close in that root through `POST /api/projects/sidebar {root, hidden: true, kill: true}` (token + Origin gate, fixed argv), then hides the project; a close that fails, or that resolves to another root, hides nothing and offers "Chỉ ẩn". The CLI:
+  - runs only in a repo root (a subfolder, a folder grouping repos or a card worktree is refused, naming the repo);
+  - stops the team rooms (releasing nothing it can't stop), every other Claude Code session in the repo or its worktrees (`claude stop` for background ones, the process tree for interactive ones), the project's omp sessions PID by PID (never omp's shared `__omp_worker_daemon*` broker), and leftover node/python/uv processes naming the repo plus browsers with `--user-data-dir` inside it;
+  - never touches a nested repo's processes (paths with spaces included), HQ, or the session running it and everything under that session;
+  - takes the revive lock (≤ 45 s) and fails before stopping anything if a revive still holds it;
+  - takes only this project out of auto: in every-project mode it goes on a new `out` list in `auto.json` (kept by plain `on`/`pause`, cleared by `on --here`/`up` there, `on --all`, `off`), never pausing auto for other projects. `auto status` names the closed projects.
+### Fixed
+- The Windows process listing (leftover-server sweep) returned nothing whenever a command line held Vietnamese text (console code page); it is read as UTF-8.
+
 ## [0.110.14] — 2026-10-21
 ### Added
 - **omp rooms open in HQ's terminal ("Mở terminal").** Owner: "vẫn chưa vô xem được omp đang làm gì". `8sync ccc term <omp-room-id>` runs the room's omp in a detached host (ConPTY, resumes its transcript, keeps 256 KB of screen, 127.0.0.1 + random token, record in `~/.local/state/8sync/ccc/term/`). Closing the drawer only disconnects; omp keeps running and reopening replays the screen. A client sends the token only to a host whose recorded omp is still its own child.
