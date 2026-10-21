@@ -1,12 +1,13 @@
 "use client";
 
 import { LightbulbIcon, ListChecksIcon, Loader2Icon, PaperclipIcon, SendIcon, UsersIcon, XIcon } from "lucide-react";
-import { useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FILE_MAX_MB, FILES_MAX, fileError, toBase64 } from "@/lib/attach";
+import { isImageName } from "@/lib/attachments";
 import { ALL_PROJECTS, broadcastProjects, broadcastSummary, choiceValid, isSendKey, resolveChoice, resultLine, sendOutcome, type BroadcastResult } from "@/lib/broadcast";
 import { inboxText } from "@/lib/labels";
 import { leadOf, parseTarget, roomGroups, suggestion, targetValue, type SendTarget } from "@/lib/room-send";
@@ -14,6 +15,7 @@ import { parseSlash, slashSend, type SlashRoom } from "@/lib/slash";
 import { groupKey } from "@/lib/sidebar";
 import type { Message } from "./types";
 import { cn } from "@/lib/utils";
+import { Lightbox, UploadThumb, type Shown } from "./attachments";
 import { MentionTextarea } from "./mention-textarea";
 import { shipLoopsChanged } from "./ship-loop-chip";
 import { ApiError, type Api } from "./use-hq";
@@ -31,6 +33,7 @@ export const TOUCH = "max-sm:h-11 max-sm:min-w-11";
  */
 export function RoomSend({
   api,
+  token,
   rooms,
   id,
   preferRoot,
@@ -41,10 +44,13 @@ export function RoomSend({
   reserve = 0,
   onMessage,
   onSent,
+  onDraft,
   className,
   children,
 }: {
   api: Api;
+  /** The HQ token, for the attachment thumbnails (an <img> cannot send the header). */
+  token: string;
   rooms: Room[];
   /** DOM id prefix (two composers can be mounted at once). */
   id: string;
@@ -62,6 +68,8 @@ export function RoomSend({
   /** The stored owner message of a one-room send, for the timeline. */
   onMessage?: (m: Message) => void;
   onSent?: () => void;
+  /** Whether the box holds unsent text or files (the phone's floating button shows a dot). */
+  onDraft?: (has: boolean) => void;
   className?: string;
   /** Above the box (Preview: the pin list). */
   children?: ReactNode;
@@ -79,6 +87,9 @@ export function RoomSend({
   const picker = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<Upload[]>([]);
   const [uploading, setUploading] = useState(0);
+  const [shown, setShown] = useState<Shown | null>(null);
+  const draft = text.trim().length > 0 || files.length > 0;
+  useEffect(() => onDraft?.(draft), [draft, onDraft]);
 
   const byKey = (k: string | null | undefined) => (k ? groups.flatMap((g) => g.rooms).find((r) => r.key === k) ?? null : null);
   const valid = (t: SendTarget | null): t is SendTarget => (t?.kind === "room" ? !!byKey(t.key) : !!t && choiceValid(t.root, projects));
@@ -306,26 +317,42 @@ export function RoomSend({
           className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
         {(files.length > 0 || uploading > 0) && (
-          <ul className="flex flex-wrap gap-1.5 px-2 pb-2" aria-label="File đính kèm">
-            {files.map((f) => (
-              <li key={f.id} className="inline-flex max-w-56 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs">
-                <PaperclipIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="truncate" title={f.name}>
-                  {f.name}
-                </span>
-                <button
-                  type="button"
-                  className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-8"
-                  aria-label={`Bỏ ${f.name}`}
-                  onClick={() => setFiles((xs) => xs.filter((x) => x.id !== f.id))}
-                >
-                  <XIcon className="size-3" aria-hidden />
-                </button>
-              </li>
-            ))}
+          <ul className="flex flex-wrap items-center gap-2 px-2 pt-1 pb-2" aria-label="File đính kèm">
+            {files.map((f) =>
+              isImageName(f.name) ? (
+                <li key={f.id}>
+                  <UploadThumb token={token} file={f} onOpen={setShown} className="size-16">
+                    <button
+                      type="button"
+                      className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full border bg-background text-muted-foreground shadow-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-7"
+                      aria-label={`Bỏ ${f.name}`}
+                      onClick={() => setFiles((xs) => xs.filter((x) => x.id !== f.id))}
+                    >
+                      <XIcon className="size-3" aria-hidden />
+                    </button>
+                  </UploadThumb>
+                </li>
+              ) : (
+                <li key={f.id} className="inline-flex max-w-56 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs">
+                  <PaperclipIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="truncate" title={f.name}>
+                    {f.name}
+                  </span>
+                  <button
+                    type="button"
+                    className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-8"
+                    aria-label={`Bỏ ${f.name}`}
+                    onClick={() => setFiles((xs) => xs.filter((x) => x.id !== f.id))}
+                  >
+                    <XIcon className="size-3" aria-hidden />
+                  </button>
+                </li>
+              ),
+            )}
             {uploading > 0 && <li className="px-1.5 py-0.5 text-xs text-muted-foreground">Đang tải {uploading} file…</li>}
           </ul>
         )}
+        <Lightbox token={token} shown={shown} onClose={() => setShown(null)} />
         {showCheck && !room && (
           <div className="px-2 pb-2">
             <label htmlFor={`${id}-check`} className="sr-only">

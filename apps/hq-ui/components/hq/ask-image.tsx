@@ -13,7 +13,7 @@ import type { ProjectBoard } from "@/lib/server/board";
 import { RoomSend, type Upload } from "./room-send";
 import type { Api } from "./use-hq";
 import type { Room } from "./use-office";
-import { useAuthedImage } from "./use-poll";
+import { previewFileUrl, useAuthedImage } from "./use-poll";
 
 const PINS_MAX = 20;
 /** A pointer that moved more than this between down and up was a pan or scroll, not a pin. */
@@ -136,6 +136,7 @@ export function AskImage({ item, path, token, api, rooms, boards, onDone }: { it
         <RoomSend
           key={item.id}
           api={api}
+          token={token}
           rooms={rooms}
           id="ask-image"
           preferRoom={preferRoom}
@@ -178,7 +179,7 @@ function PinSurface({
   onPick: (n: number) => void;
   markers: { current: (HTMLButtonElement | null)[] };
 }) {
-  const { src, failed } = useAuthedImage(token, item.id, true);
+  const { src, failed } = useAuthedImage(token, previewFileUrl(item.id), true);
   const box = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<Size | null>(null);
   const down = useRef<{ x: number; y: number; id: number } | null>(null);

@@ -89,9 +89,29 @@ fn ids_of(l: &Value) -> Vec<String> {
     l["leads"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
 }
 
-/// Whether the queue is topped up ([`QUEUE_LANES`] holds at least [`TOP_UP`] open cards).
+/// Whether the queue is topped up ([`QUEUE_LANES`] holds at least [`TOP_UP`] open cards the team
+/// can take). A card waiting on the owner does not count — platform 2026-10-21: three backlog cards
+/// ("chờ owner: Actions tắt cấp repo", a parent whose only open children were blocked on the same
+/// answer) held round 3 back for 5 h while 13 rooms sat with nothing to claim.
 fn in_flight(cards: &[target::Target]) -> bool {
-    cards.iter().filter(|t| t.state == "open" && QUEUE_LANES.contains(&t.lane.as_str())).count() >= TOP_UP
+    cards.iter().filter(|t| t.state == "open" && QUEUE_LANES.contains(&t.lane.as_str()) && !owner_gated(t, cards)).count() >= TOP_UP
+}
+
+/// Waits on the owner: its last note says so (`chờ owner:` / `cần owner`, the convention the rooms
+/// write), or every open card split off it (`[#id] …`) is blocked or gated itself.
+fn owner_gated(t: &target::Target, cards: &[target::Target]) -> bool {
+    // "lead: chờ owner …", "chờ owner: …", "cần owner duyệt …" — the rooms' wording varies; a note
+    // that mentions waiting on the owner anywhere in its last line is one.
+    let said = |n: &str| {
+        let n = n.to_lowercase();
+        n.contains("chờ owner") || n.contains("cần owner")
+    };
+    if t.notes.last().is_some_and(|n| said(&n.text)) {
+        return true;
+    }
+    let tag = format!("[#{}]", t.id);
+    let kids: Vec<&target::Target> = cards.iter().filter(|c| c.state == "open" && c.id != t.id && c.text.starts_with(&tag)).collect();
+    !kids.is_empty() && kids.iter().all(|k| k.lane == "blocked" || k.notes.last().is_some_and(|n| said(&n.text)))
 }
 
 /// Every loop by root for `auto status --json` `ship_loops`: `{on, focus, round, since, last,
@@ -433,6 +453,16 @@ mod tests {
         cards[0].lane = "ready".into();
         cards[1].lane = "backlog".into();
         assert!(in_flight(&cards), "ready + backlog count");
+        // Waiting on the owner is not a queue: a note, or a parent whose open children all wait.
+        cards[1].notes.push(target::Note { at: 1000, room: Some("lead".into()), text: "chờ owner: bật Actions".into() });
+        assert!(!in_flight(&cards), "a card waiting on the owner does not top the queue up");
+        cards[1].notes.pop();
+        let kid = target::Target { id: 99, text: format!("[#{}] con", cards[1].id), lane: "blocked".into(), ..cards[1].clone() };
+        let with_kid = [cards.clone(), vec![kid]].concat();
+        assert!(!in_flight(&with_kid), "a parent whose only open child is blocked waits with it");
+        let mut kid_ready = with_kid.clone();
+        kid_ready[2].lane = "ready".into();
+        assert!(in_flight(&kid_ready), "a child in ready: the parent counts again, and so does the child");
         target::close(&h, &root, t.id, Some("cargo test: ok"), None, 1000).unwrap();
         target::close(&h, &root, t2.id, Some("cargo test: ok"), None, 1000).unwrap();
         // Round 2 went out at 1000 + ROUND_GAP_S (one ready card is still under TOP_UP).

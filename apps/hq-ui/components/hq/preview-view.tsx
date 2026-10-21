@@ -24,6 +24,7 @@ import { cardParts, prRef } from "@/lib/card-tags";
 import { LANES, type Board, type LaneKey, type Step } from "@/lib/lanes";
 import { agoShort, agoVi } from "@/lib/now";
 import { fileName, lastActivity, previewSections, rootKey, type PreviewItem, type ProjectPreviews } from "@/lib/preview";
+import { entryFor, useFollowRepo } from "@/lib/follow-repo";
 import type { ProjectBoard } from "@/lib/server/board";
 import { boardCard, eyeNote } from "@/lib/eye";
 import { cn } from "@/lib/utils";
@@ -35,7 +36,7 @@ import { Switch } from "./machine-view";
 import { PlayButton } from "./play-view";
 import { makeApi, type Api } from "./use-hq";
 import type { Room } from "./use-office";
-import { useAuthedImage, useNearView } from "./use-poll";
+import { previewFileUrl, useAuthedImage, useNearView } from "./use-poll";
 
 export type PreviewState = { data: { projects: ProjectPreviews[] } | null; error: string | null; at: number; reload: () => void };
 
@@ -76,6 +77,7 @@ export function PreviewView({
   token,
   rooms,
   onOpenCard,
+  repo = null,
 }: {
   state: PreviewState;
   boards: ProjectBoard[] | null;
@@ -83,8 +85,11 @@ export function PreviewView({
   /** Office rooms: who "Hỏi về ảnh này" can send to. */
   rooms: Room[];
   onOpenCard: (root: string, id: number) => void;
+  /** The repo picked in the sidebar: the picker follows it. */
+  repo?: string | null;
 }) {
-  const [pick, setPick] = useState<string | null>(null);
+  const [pick, setPick] = useState<string | null>(repo);
+  useFollowRepo(repo, setPick);
   /** The open image and the list prev/next walks: one card's images, or "other". */
   const [view, setView] = useState<{ scope: number | "other"; id: string } | null>(null);
   const [ask, setAsk] = useState(false);
@@ -92,7 +97,7 @@ export function PreviewView({
   const [otherOpen, setOtherOpen] = useState<boolean | null>(null);
   const api = useMemo(() => makeApi(token), [token]);
   const list = useMemo(() => [...(state.data?.projects ?? [])].sort((a, b) => (b.items[0]?.at ?? 0) - (a.items[0]?.at ?? 0)), [state.data]);
-  const cur = list.find((p) => p.root === pick) ?? list[0];
+  const cur = (pick ? entryFor(list, pick) : undefined) ?? list[0];
   // The poll clock: relative times move with each answer, never with a render.
   const now = state.at;
   const board = cur ? boardOf(boards, cur.root) : null;
@@ -478,7 +483,7 @@ function RowsSkeleton() {
 /** The image itself on a neutral surface; fetched with the token only once it scrolls near view. */
 export function PreviewImage({ id, token, alt, className, eager }: { id: string; token: string; alt: string; className?: string; eager?: boolean }) {
   const [ref, near] = useNearView<HTMLDivElement>();
-  const { src, failed } = useAuthedImage(token, id, eager || near);
+  const { src, failed } = useAuthedImage(token, previewFileUrl(id), eager || near);
   return (
     <div ref={ref} className={cn("relative grid place-items-center overflow-hidden bg-muted", className)}>
       {src ? (

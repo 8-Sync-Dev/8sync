@@ -139,9 +139,13 @@ pub(super) struct Target {
     /// Times sent back to `ready` from qa/review/approved.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub bounces: u32,
-    /// The card's pull request (number or URL), set when it leaves `building`.
+    /// The card's pull request number (`81`; older boards: `#81` or a URL), set when it leaves
+    /// `building`. In `pr_repo` when the PR lives in another repo of the same GitHub org.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr: Option<String>,
+    /// `owner/repo` of the PR when it is not this project's repo (`--pr owner/repo#N`); None = here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_repo: Option<String>,
     /// Head commit the review approved; merge only with `--match-head-commit <sha>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha: Option<String>,
@@ -475,6 +479,7 @@ pub(super) fn add(
             notes: Vec::new(),
             bounces: 0,
             pr: None,
+            pr_repo: None,
             sha: None,
             prio: None,
             role: None,
@@ -762,11 +767,16 @@ pub(super) struct Move<'a> {
     pub sha: Option<&'a str>,
 }
 
-/// `gh pr view <pr> --json baseRefName,mergeable,headRefOid,state` run in `root`, killed after
-/// 20 s: its stdout, or a refusal when gh failed (not installed, not logged in, offline, hung).
-fn gh_pr_view(root: &Path, pr: &str) -> Result<String> {
+/// `gh pr view <pr> [--repo owner/repo] --json baseRefName,mergeable,headRefOid,state` run in
+/// `root`, killed after 20 s: its stdout, or a refusal when gh failed (not installed, not logged
+/// in, offline, hung).
+fn gh_pr_view(root: &Path, pr: &str, repo: Option<&str>) -> Result<String> {
     let mut cmd = std::process::Command::new("gh");
-    cmd.args(["pr", "view", pr, "--json", "baseRefName,mergeable,headRefOid,state"])
+    cmd.args(["pr", "view", pr]);
+    if let Some(r) = repo {
+        cmd.args(["--repo", r]);
+    }
+    cmd.args(["--json", "baseRefName,mergeable,headRefOid,state"])
         .current_dir(root)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -774,6 +784,58 @@ fn gh_pr_view(root: &Path, pr: &str) -> Result<String> {
     let out = crate::verbs::hq_core::agents::run_bounded(cmd, std::time::Duration::from_secs(20))
         .ok_or_else(|| anyhow::anyhow!("`gh pr view {pr}` lỗi hoặc quá 20 s (cài GitHub CLI, `gh auth login`, kiểm mạng)"))?;
     Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// Pure: a `--pr` value as (number, repo): `81`, `#81`, `owner/repo#81` or a GitHub PR URL
+/// (`https://github.com/owner/repo/pull/81`). The repo is None for the bare forms.
+pub(super) fn parse_pr(s: &str) -> Result<(u64, Option<String>)> {
+    let s = s.trim();
+    let bad = || anyhow::anyhow!("--pr `{s}` không phải số, `owner/repo#số` hay URL của PR");
+    let num = |d: &str| -> Result<u64> { (!d.is_empty() && d.len() <= 10 && d.bytes().all(|b| b.is_ascii_digit())).then(|| d.parse().ok()).flatten().ok_or_else(bad) };
+    if let Some(rest) = s.strip_prefix("https://github.com/").or_else(|| s.strip_prefix("http://github.com/")).or_else(|| s.strip_prefix("github.com/")) {
+        let (repo, tail) = rest.split_once("/pull/").ok_or_else(bad)?;
+        let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
+        if !tail[digits.len()..].is_empty() && !tail[digits.len()..].starts_with(['/', '?', '#']) {
+            return Err(bad());
+        }
+        return Ok((num(&digits)?, Some(super::merge::valid_repo(repo).ok_or_else(bad)?.to_string())));
+    }
+    if let Some((repo, n)) = s.split_once('#').filter(|(r, _)| !r.is_empty()) {
+        return Ok((num(n)?, Some(super::merge::valid_repo(repo).ok_or_else(bad)?.to_string())));
+    }
+    Ok((num(s.trim_start_matches('#'))?, None))
+}
+
+/// Pure: where a `--pr` repo lands given this project's `origin` (`owner/repo`): None when it is
+/// the project's own repo, `Some(owner/repo)` for another repo of the same owner/org, a refusal
+/// for another org (the owner's self-merge grant covers this project's cards, not other orgs).
+pub(super) fn pr_repo_for(repo: &str, origin: &str) -> Result<Option<String>> {
+    if repo.eq_ignore_ascii_case(origin) {
+        return Ok(None);
+    }
+    let owner = |r: &str| r.split('/').next().unwrap_or_default().to_ascii_lowercase();
+    if owner(repo) != owner(origin) {
+        bail!("PR ở `{repo}` thuộc org khác ({} ≠ {}): quyền tự merge chỉ phủ PR cùng org với {origin}", owner(repo), owner(origin));
+    }
+    Ok(Some(repo.to_string()))
+}
+
+/// How a card's PR is shown: `#81`, or `zus-backend#8` for one in another repo.
+pub(super) fn pr_label(pr: &str, repo: Option<&str>) -> String {
+    let n = pr.trim_start_matches('#');
+    match repo {
+        Some(r) => format!("{}#{n}", r.rsplit('/').next().unwrap_or(r)),
+        None => format!("#{n}"),
+    }
+}
+
+/// GitHub lookups a move needs (injected in tests): `view(root, pr, repo)` = `gh pr view` JSON,
+/// `main(root, repo)` = the default branch of this repo (None) or of `owner/repo`,
+/// `origin(root)` = this project's `owner/repo`.
+pub(super) struct Lookups<'a> {
+    pub view: &'a dyn Fn(&Path, &str, Option<&str>) -> Result<String>,
+    pub main: &'a dyn Fn(&Path, Option<&str>) -> Option<String>,
+    pub origin: &'a dyn Fn(&Path) -> Option<String>,
 }
 
 /// How a branch catches up with main. Rebasing needs a force-push, which the guard blocks, so
@@ -785,7 +847,7 @@ pub(super) const KEEP_PR: &str = "push thường (không rebase, không force-pu
 /// the repo's default branch `main` ([`super::merge::default_branch`], the only base `auto merge`
 /// takes), conflicting, or, given the reviewed `sha` (for `approved`), at another head. Measured on
 /// ai-game-studio (2026-10-19): 25 of 59 open PRs conflicting, 14 on a non-main base.
-fn pr_gate(pr: &str, view: &str, sha: Option<&str>, main: &str) -> Result<()> {
+fn pr_gate(pr: &str, repo: Option<&str>, view: &str, sha: Option<&str>, main: &str) -> Result<()> {
     let v: serde_json::Value = serde_json::from_str(view).ok().filter(serde_json::Value::is_object).ok_or_else(|| anyhow::anyhow!("gh trả về dữ liệu lạ cho PR {pr}: không chuyển card khi chưa kiểm được PR"))?;
     let field = |k: &str| v[k].as_str().unwrap_or("").to_string();
     let (base, state) = (field("baseRefName"), field("state"));
@@ -796,8 +858,9 @@ fn pr_gate(pr: &str, view: &str, sha: Option<&str>, main: &str) -> Result<()> {
         bail!("gh không trả base của PR {pr}: không chuyển card khi chưa kiểm được PR");
     }
     if base != main {
-        let n = pr.trim_start_matches('#');
-        bail!("PR {pr} xếp chồng trên {base}: `gh pr edit {n} --base {main}`, `git merge origin/{main}` vào nhánh, {KEEP_PR} rồi chuyển lại");
+        let n = pr.rsplit('#').next().unwrap_or(pr);
+        let at = repo.map(|r| format!(" --repo {r}")).unwrap_or_default();
+        bail!("PR {pr} xếp chồng trên {base}: `gh pr edit {n}{at} --base {main}`, `git merge origin/{main}` vào nhánh, {KEEP_PR} rồi chuyển lại");
     }
     match field("mergeable").as_str() {
         "CONFLICTING" => bail!("PR {pr} conflict với {base}: `git merge origin/{base}` vào nhánh, sửa conflict (CHANGELOG.md: giữ cả hai mục và chuyển mục của card sang `changelog.d/card-<id>.md`), chạy lại check, {KEEP_PR} rồi chuyển lại"),
@@ -822,7 +885,8 @@ fn pr_gate(pr: &str, view: &str, sha: Option<&str>, main: &str) -> Result<()> {
 /// `gh` reports it. Out of `blocked` the bounce count stays; `blocked → review` only for a card
 /// that already passed QA ([`passed_qa`]).
 pub(super) fn move_to(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option<&str>, now: u64) -> Result<Target> {
-    move_with(home, root, id, to, m, room, now, &gh_pr_view, &super::merge::default_branch)
+    let main = |root: &Path, repo: Option<&str>| super::merge::default_branch_of(root, repo);
+    move_with(home, root, id, to, m, room, now, &Lookups { view: &gh_pr_view, main: &main, origin: &super::merge::origin_repo })
 }
 
 /// Did the card pass QA at `head` (its PR head, else its `sha`): a `gate <sha>` note whose SHA
@@ -845,9 +909,12 @@ fn still_computing(view: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(view).is_ok_and(|v| v["state"].as_str().is_none_or(|s| s == "OPEN") && v["mergeable"].as_str() == Some("UNKNOWN"))
 }
 
-/// [`move_to`] with `gh pr view` (`(root, pr) → JSON`) and the default branch (`root → name`) injected.
+/// Why a `--pr owner/repo#N` cannot be checked: the project's own repo is unknown.
+const NO_ORIGIN: &str = "không đọc được repo của dự án (`gh repo view`): chạy lại sau";
+
+/// [`move_to`] with the GitHub lookups injected ([`Lookups`]).
 #[allow(clippy::too_many_arguments)]
-fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option<&str>, now: u64, gh: &dyn Fn(&Path, &str) -> Result<String>, main: &dyn Fn(&Path) -> Option<String>) -> Result<Target> {
+fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option<&str>, now: u64, lk: &Lookups) -> Result<Target> {
     if !LANES.contains(&to) {
         bail!("cột `{to}` không có: {} (xong → `auto done <id> --evidence`)", LANES.join(", "));
     }
@@ -855,6 +922,18 @@ fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option
     if let Some(s) = sha.filter(|s| !(7..=40).contains(&s.len()) || !s.chars().all(|c| c.is_ascii_hexdigit())) {
         bail!("--sha `{s}` không phải commit SHA");
     }
+    // `--pr` is parsed up front (number, repo); a repo is checked against the project's origin.
+    let given = match m.pr.map(|x| clean(x, 200)).filter(|x| !x.is_empty()) {
+        Some(x) => {
+            let (n, repo) = parse_pr(&x)?;
+            let repo = match repo {
+                Some(r) => pr_repo_for(&r, &(lk.origin)(root).ok_or_else(|| anyhow::anyhow!(NO_ORIGIN))?)?,
+                None => None,
+            };
+            Some((n.to_string(), repo))
+        }
+        None => None,
+    };
     // The PR checks run before the lock: gh takes seconds, the lock is held for milliseconds.
     let card = list(home, root)?.into_iter().find(|t| t.id == id && t.state == "open").filter(|t| allowed(&t.lane, to));
     let unblock = to == "review" && card.as_ref().is_some_and(|t| t.lane == "blocked");
@@ -864,19 +943,18 @@ fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option
         if to == "approved" && sha.is_none() {
             bail!("approved cần --sha <head commit đã review>");
         }
-        if let Some(pr) = card.as_ref().and_then(|t| m.pr.map(|x| clean(x, 200)).filter(|x| !x.is_empty()).or(t.pr.clone())) {
-            let arg = pr.trim_start_matches('#');
-            if arg.is_empty() || arg.starts_with('-') {
-                bail!("--pr `{pr}` không phải số hay URL của PR");
-            }
-            let name = if arg.chars().all(|c| c.is_ascii_digit()) { format!("#{arg}") } else { arg.to_string() };
-            let mut view = gh(root, arg).map_err(|e| anyhow::anyhow!("không đọc được PR {name} bằng gh ({e:#}): kiểm `gh auth status` và mạng rồi chạy lại; card #{id} giữ nguyên cột"))?;
+        // An older board may hold `#81` or a URL in `pr`; gh takes both as they are.
+        let own = |t: &Target| t.pr.as_ref().map(|p| (p.trim_start_matches('#').to_string(), t.pr_repo.clone()));
+        if let Some((n, repo)) = card.as_ref().and_then(|t| given.clone().or_else(|| own(t))) {
+            let repo = repo.as_deref();
+            let name = pr_label(&n, repo);
+            let mut view = (lk.view)(root, &n, repo).map_err(|e| anyhow::anyhow!("không đọc được PR {name} bằng gh ({e:#}): kiểm `gh auth status` và mạng rồi chạy lại; card #{id} giữ nguyên cột"))?;
             for _ in 0..UNKNOWN_REREADS {
                 if unblock || !still_computing(&view) {
                     break;
                 }
                 std::thread::sleep(UNKNOWN_PAUSE);
-                match gh(root, arg) {
+                match (lk.view)(root, &n, repo) {
                     Ok(v) => view = v,
                     Err(_) => break,
                 }
@@ -884,8 +962,8 @@ fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option
             if unblock {
                 head = serde_json::from_str::<serde_json::Value>(&view).ok().and_then(|v| v["headRefOid"].as_str().map(str::to_string));
             } else {
-                let base = main(root).ok_or_else(|| anyhow::anyhow!("{}", super::merge::NO_DEFAULT))?;
-                pr_gate(&name, &view, if to == "approved" { sha } else { None }, &base)?;
+                let base = (lk.main)(root, repo).ok_or_else(|| anyhow::anyhow!("{}", super::merge::NO_DEFAULT))?;
+                pr_gate(&name, repo, &view, if to == "approved" { sha } else { None }, &base)?;
             }
         }
     }
@@ -921,8 +999,9 @@ fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option
         } else {
             t.sha = None;
         }
-        if let Some(pr) = m.pr.map(|x| clean(x, 200)).filter(|x| !x.is_empty()) {
-            t.pr = Some(pr);
+        if let Some((n, repo)) = &given {
+            t.pr = Some(n.clone());
+            t.pr_repo = repo.clone();
         }
         let from = std::mem::replace(&mut t.lane, to.to_string());
         let mut line = format!("{from} → {to}");
@@ -1107,9 +1186,78 @@ mod tests {
         move_with(h, root, id, to, m, room, now, &|_, _| Ok(PR_OK.to_string()), &on_main)
     }
 
+    /// This project's repo on GitHub.
+    const ORIGIN: &str = "8-Sync-Dev/game";
+
+    /// [`super::move_with`] for a same-repo PR: `gh(root, pr)` and `main(root)` injected, origin [`ORIGIN`].
+    #[allow(clippy::too_many_arguments)]
+    fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option<&str>, now: u64, gh: &dyn Fn(&Path, &str) -> Result<String>, main: &dyn Fn(&Path) -> Option<String>) -> Result<Target> {
+        let view = |r: &Path, n: &str, _: Option<&str>| gh(r, n);
+        let main = |r: &Path, repo: Option<&str>| if repo.is_none() { main(r) } else { None };
+        super::move_with(home, root, id, to, m, room, now, &Lookups { view: &view, main: &main, origin: &|_| Some(ORIGIN.into()) })
+    }
+
     /// A repo whose default branch is `main`.
     fn on_main(_: &Path) -> Option<String> {
         Some("main".into())
+    }
+
+    #[test]
+    fn pr_takes_a_number_a_repo_hash_number_or_a_url() {
+        let p = |s: &str| parse_pr(s).map_err(|e| e.to_string());
+        assert_eq!(p("81"), Ok((81, None)));
+        assert_eq!(p(" #81 "), Ok((81, None)));
+        assert_eq!(p("8-Sync-Dev/zus-backend#8"), Ok((8, Some("8-Sync-Dev/zus-backend".into()))));
+        assert_eq!(p("https://github.com/8-Sync-Dev/zus-backend/pull/8"), Ok((8, Some("8-Sync-Dev/zus-backend".into()))));
+        assert_eq!(p("https://github.com/8-Sync-Dev/zus-backend/pull/8/files?x=1"), Ok((8, Some("8-Sync-Dev/zus-backend".into()))));
+        for bad in ["", "-1", "8x", "#", "zus-backend#8", "a/b/c#8", "https://github.com/o/r/issues/8", "https://gitlab.com/o/r/pull/8", "o/r#8x", "-o/r#8"] {
+            assert!(p(bad).is_err(), "{bad}");
+        }
+        assert_eq!(pr_repo_for("8-Sync-Dev/zus-backend", ORIGIN).unwrap().as_deref(), Some("8-Sync-Dev/zus-backend"));
+        assert_eq!(pr_repo_for("8-sync-dev/GAME", ORIGIN).unwrap(), None, "own repo, any case");
+        let e = pr_repo_for("evil/zus-backend", ORIGIN).unwrap_err().to_string();
+        assert!(e.contains("org khác") && e.contains("evil ≠ 8-sync-dev"), "{e}");
+        assert_eq!(pr_label("8", Some("8-Sync-Dev/zus-backend")), "zus-backend#8");
+        assert_eq!(pr_label("81", None), "#81");
+    }
+
+    #[test]
+    fn a_cross_repo_pr_is_checked_in_that_repo_against_its_default_branch() {
+        let (d, root) = tmp("crossrepo");
+        let h = d.as_path();
+        let c = put(h, &root, "fix", Some("true"), false, None, 0).unwrap();
+        claim(h, &root, "dev", "ready", 1).unwrap();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let view = |_: &Path, n: &str, repo: Option<&str>| -> Result<String> {
+            asked.borrow_mut().push(format!("{n} {}", repo.unwrap_or("-")));
+            Ok(r#"{"baseRefName":"develop","mergeable":"MERGEABLE","headRefOid":"0123abcdef0123abcdef0123abcdef0123abcd","state":"OPEN"}"#.to_string())
+        };
+        // zus-backend's default branch is develop; this repo's is main.
+        let main = |_: &Path, repo: Option<&str>| Some(if repo == Some("8-Sync-Dev/zus-backend") { "develop" } else { "main" }.to_string());
+        let origin = std::cell::RefCell::new(Some(ORIGIN.to_string()));
+        let origin_of = |_: &Path| origin.borrow().clone();
+        let lk = Lookups { view: &view, main: &main, origin: &origin_of };
+        let m = Move { pr: Some("8-Sync-Dev/zus-backend#8"), ..Move::default() };
+        let t = super::move_with(h, &root, c.id, "qa", &m, Some("dev"), 2, &lk).unwrap();
+        assert_eq!((t.pr.as_deref(), t.pr_repo.as_deref()), (Some("8"), Some("8-Sync-Dev/zus-backend")));
+        assert_eq!(asked.borrow().as_slice(), ["8 8-Sync-Dev/zus-backend"], "gh pr view runs with --repo");
+        // The stored repo carries into the next gate without --pr; the URL form stores the same.
+        super::move_with(h, &root, c.id, "review", &Move::default(), Some("qa"), 3, &lk).unwrap();
+        let ok = Move { sha: Some("0123abc"), ..Move::default() };
+        let a = super::move_with(h, &root, c.id, "approved", &ok, Some("review"), 4, &lk).unwrap();
+        assert_eq!((a.pr_repo.as_deref(), a.sha.as_deref()), (Some("8-Sync-Dev/zus-backend"), Some("0123abc")));
+        assert_eq!(asked.borrow().len(), 2);
+        // Another org is refused; an unknown origin refuses rather than guesses; own-repo URL stores no repo.
+        let bad = Move { pr: Some("evil/zus-backend#8"), ..Move::default() };
+        let e = super::move_with(h, &root, c.id, "review", &bad, None, 5, &lk).unwrap_err().to_string();
+        assert!(e.contains("org khác"), "{e}");
+        *origin.borrow_mut() = None;
+        assert_eq!(super::move_with(h, &root, c.id, "review", &m, None, 5, &lk).unwrap_err().to_string(), NO_ORIGIN);
+        *origin.borrow_mut() = Some(ORIGIN.into());
+        let own = Move { pr: Some("https://github.com/8-Sync-Dev/game/pull/81"), ..Move::default() };
+        let t = super::move_with(h, &root, c.id, "review", &own, None, 6, &lk).unwrap();
+        assert_eq!((t.pr.as_deref(), t.pr_repo), (Some("81"), None));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -1167,9 +1315,11 @@ mod tests {
         assert_eq!(asked.borrow().len(), n);
         // a repo on `master`: its PRs pass, a PR into `main` there is stacked
         let master = PR_OK.replace("\"main\"", "\"master\"");
-        assert!(pr_gate("#81", &master, None, "master").is_ok());
-        let e = pr_gate("#81", PR_OK, None, "master").unwrap_err().to_string();
-        assert!(e.starts_with("PR #81 xếp chồng trên main") && e.contains("--base master") && e.contains("`git merge origin/master`"), "{e}");
+        assert!(pr_gate("#81", None, &master, None, "master").is_ok());
+        let e = pr_gate("#81", None, PR_OK, None, "master").unwrap_err().to_string();
+        assert!(e.starts_with("PR #81 xếp chồng trên main") && e.contains("`gh pr edit 81 --base master`") && e.contains("`git merge origin/master`"), "{e}");
+        let e = pr_gate("zus-backend#8", Some("8-Sync-Dev/zus-backend"), PR_OK, None, "develop").unwrap_err().to_string();
+        assert!(e.starts_with("PR zus-backend#8 xếp chồng trên main") && e.contains("`gh pr edit 8 --repo 8-Sync-Dev/zus-backend --base develop`"), "{e}");
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -1383,7 +1533,7 @@ mod tests {
         assert!(move_to(h, &root, fix.id, "approved", &Move::default(), None, 35).unwrap_err().to_string().contains("--sha"));
         assert!(move_to(h, &root, fix.id, "approved", &Move { sha: Some("not-a-sha"), ..Move::default() }, None, 35).is_err());
         let a = move_to(h, &root, fix.id, "approved", &Move { sha: Some("0123abc"), ..Move::default() }, Some("review"), 36).unwrap();
-        assert_eq!((a.sha.as_deref(), a.pr.as_deref()), (Some("0123abc"), Some("#81")));
+        assert_eq!((a.sha.as_deref(), a.pr.as_deref()), (Some("0123abc"), Some("81")), "--pr #81 is stored as its number");
         // head changed after approval: back to review, SHA dropped
         assert_eq!(move_to(h, &root, fix.id, "review", &Move::default(), None, 37).unwrap().sha, None);
         let (done, _) = close(h, &root, fix.id, Some("gh pr merge 81 --match-head-commit 0123abc: merged"), Some("lead"), 38).unwrap();

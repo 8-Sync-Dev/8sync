@@ -57,10 +57,33 @@ export type ProjectDisk = {
   cleaned?: Cleaned | null;
   /** Candidate build dirs HQ left because something uses them: never sent to a room to delete. */
   inUse?: string[];
+  /** HQ's last removal of idle merged/closed card worktrees (lib/server/disk-clean.ts pruneWorktrees), kept across scans. */
+  pruned?: Pruned | null;
+  /** Why the card worktrees left after the last pass stayed (null: not evaluated). */
+  wtKept?: WtKept | null;
 };
 
 /** What one HQ auto clean removed. */
 export type Cleaned = { at: number; bytes: number; dirs: string[] };
+/** What one HQ worktree prune removed (`names`: folder names under `.claude/worktrees`). */
+export type Pruned = { at: number; n: number; names: string[] };
+/** The worktrees a prune pass kept, by its first reason; `n`: how many it looked at. */
+export type WtKept = { n: number; busy: number; recent: number; open: number; dirty: number; failed: number };
+/** A card worktree written this recently belongs to work in progress: left alone. */
+export const PRUNE_IDLE_MS = 3600_000;
+
+/** "giữ 5: 2 đang dùng, 3 chưa merge/đóng" for the worktrees finding; "" when nothing was kept. */
+export function keptText(k: WtKept): string {
+  const why = [
+    [k.busy, "đang dùng"],
+    [k.recent, "mới sửa"],
+    [k.open, "chưa merge/đóng"],
+    [k.dirty, "chưa commit"],
+    [k.failed, "git không xoá được"],
+  ] as const;
+  const kept = why.reduce((n, [c]) => n + c, 0);
+  return kept ? `giữ ${kept}: ${why.filter(([c]) => c > 0).map(([c, t]) => `${c} ${t}`).join(", ")}` : "";
+}
 
 /**
  * Build output HQ removes by itself: `target` / `.next` anywhere in an agent's card worktree
@@ -121,7 +144,9 @@ export function findings(p: ProjectDisk, now: number): Finding[] {
   const w = p.worktrees;
   if (w && (w.n > LIMITS.worktrees || w.bytes > LIMITS.worktreesBytes)) {
     const why = [w.n > LIMITS.worktrees && `${w.n} worktree (ngưỡng ${LIMITS.worktrees})`, w.bytes > LIMITS.worktreesBytes && `chiếm hơn ${bytes(LIMITS.worktreesBytes)}`].filter(Boolean).join(", ");
-    out.push({ id: "worktrees", severity: w.n > 2 * LIMITS.worktrees || w.bytes > 2 * LIMITS.worktreesBytes ? "high" : "warn", path: ".claude/worktrees", bytes: w.bytes, why });
+    // What HQ's own prune could not take (pruneWorktrees): the room gets told why, not just "too many".
+    const kept = p.wtKept ? keptText(p.wtKept) : "";
+    out.push({ id: "worktrees", severity: w.n > 2 * LIMITS.worktrees || w.bytes > 2 * LIMITS.worktreesBytes ? "high" : "warn", path: ".claude/worktrees", bytes: w.bytes, why: kept ? `${why} · HQ ${kept}` : why });
   }
   if (p.uploads && p.uploads.n > 0 && p.uploads.oldest != null && now - p.uploads.oldest > LIMITS.uploadsAgeMs) {
     out.push({ id: "uploads", severity: "warn", path: ".claude/hq-uploads", bytes: p.uploads.bytes, why: `${p.uploads.n} file đính kèm HQ còn sót, cũ hơn 1 ngày` });

@@ -19,6 +19,8 @@ import { Message as ChatMessage, MessageContent, MessageResponse } from "@/compo
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MessageText } from "./attachments";
+import { ComposerDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
 import { addressOf, deliveryOf, messageTargets, sessionLabel, splitStale } from "@/lib/labels";
 import { cn } from "@/lib/utils";
@@ -104,7 +106,7 @@ export function TeamView({
                     {g.day}
                   </div>
                   {g.rows.map((m, i) => (
-                    <Row key={m.id} m={m} prev={g.rows[i - 1]} who={who} />
+                    <Row key={m.id} m={m} prev={g.rows[i - 1]} who={who} token={hq.token} />
                   ))}
                 </section>
               ))}
@@ -197,7 +199,7 @@ function StartCta({ onStartSession, unreachable }: { onStartSession?: () => void
 
 type Who = (name: string | null | undefined) => string;
 
-function Row({ m, prev, who }: { m: Message; prev?: Message; who: Who }) {
+function Row({ m, prev, who, token }: { m: Message; prev?: Message; who: Who; token: string }) {
   if (!CHAT_KINDS.has(m.kind)) return <EventRow m={m} who={who} />;
   const owner = m.kind === "owner_message";
   const from = owner ? "You" : who(m.from_ ?? m.session);
@@ -223,7 +225,7 @@ function Row({ m, prev, who }: { m: Message; prev?: Message; who: Who }) {
       )}
       <ChatMessage from={owner ? "user" : "assistant"}>
         <MessageContent className={cn(!owner && "rounded-lg border bg-card px-3 py-2")}>
-          {owner ? <span className="break-words whitespace-pre-wrap">{m.text}</span> : <MessageResponse>{m.text ?? ""}</MessageResponse>}
+          {owner ? <MessageText text={m.text} token={token} className="break-words whitespace-pre-wrap" /> : <MessageResponse>{m.text ?? ""}</MessageResponse>}
         </MessageContent>
       </ChatMessage>
       {owner && m.delivery && (
@@ -300,6 +302,8 @@ function Composer({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
+  /** Folds the phone's bottom sheet after a send (ComposerDock); a no-op on desktop. */
+  const closeDock = useRef<() => void>(() => {});
   const targets = messageTargets(sessions);
   // Default to the first live session until the owner picks one.
   const current = targets.find((s) => s.name === target || s.session_id === target) ?? targets[0] ?? null;
@@ -318,6 +322,7 @@ function Composer({
       hq.mergeMessages([r.message]);
       if (r.delivery === "failed") toast.error(`Not delivered to ${sessionLabel(current)}: ${r.error}`);
       setText("");
+      closeDock.current();
       area.current?.focus();
     } catch (e) {
       toast.error((e as Error).message);
@@ -351,65 +356,72 @@ function Composer({
         : "Typed into the session's terminal until its channel connects.";
 
   return (
-    <div className="shrink-0 border-t bg-background">
-      <form
-        className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-      >
-        {current && (current.channel_state || current.waiting) && (
-          <div className="mb-2 space-y-1.5">
-            {current.waiting && (
-              <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <WaitingBadge what={current.waiting} />
-                {current.waiting} — Claude is waiting for you in the terminal — answer it first (Open terminal).
-              </p>
-            )}
-            <ChannelNotice state={current.channel_state} />
+    <ComposerDock id="room" draft={text.trim().length > 0} label={current ? `Nhắn ${sessionLabel(current)}` : "Nhắn phòng"}>
+      {({ close }) => {
+        closeDock.current = close;
+        return (
+          <div className="shrink-0 border-t bg-background">
+            <form
+              className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void send();
+              }}
+            >
+              {current && (current.channel_state || current.waiting) && (
+                <div className="mb-2 space-y-1.5">
+                  {current.waiting && (
+                    <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <WaitingBadge what={current.waiting} />
+                      {current.waiting} — Claude is waiting for you in the terminal — answer it first (Open terminal).
+                    </p>
+                  )}
+                  <ChannelNotice state={current.channel_state} />
+                </div>
+              )}
+              <div className="rounded-xl border bg-card focus-within:ring-2 focus-within:ring-ring/40">
+                <label htmlFor="composer" className="sr-only">
+                  Message
+                </label>
+                <MentionTextarea
+                  id="composer"
+                  ref={area}
+                  value={text}
+                  onValueChange={setText}
+                  base={current?.cwd ?? null}
+                  api={hq.api}
+                  onKeyDown={onKey}
+                  disabled={disabled}
+                  rows={2}
+                  maxLength={4000}
+                  placeholder={current ? `Nhắn ${sessionLabel(current)} · @ để chèn file` : "Message"}
+                  className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
+                />
+                <div className="flex items-center gap-2 px-2 pb-2">
+                  <Select value={current?.name ?? ""} onValueChange={onTarget} disabled={disabled}>
+                    <SelectTrigger size="sm" className="h-7 max-w-[55%] gap-1.5 border-0 bg-muted/60 font-mono text-xs" aria-label="Send to session">
+                      <SelectValue placeholder="Pick a session" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {targets.map((s) => (
+                        <SelectItem key={s.name} value={s.name} className="font-mono text-xs">
+                          <StatusDot status={s.status} /> {sessionLabel(s)}
+                          {s.channel ? " · channel" : deliveryOf(s) === "inbox" ? " · inbox" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">{hint}</p>
+                  <Button type="submit" size="sm" className="ml-auto" disabled={disabled || busy || !text.trim() || !!current?.waiting}
+                    title={current?.waiting ? "Claude is waiting for you in the terminal — answer it first (Open terminal)" : undefined}>
+                    <SendHorizontalIcon /> Send
+                  </Button>
+                </div>
+              </div>
+            </form>
           </div>
-        )}
-        <div className="rounded-xl border bg-card focus-within:ring-2 focus-within:ring-ring/40">
-          <label htmlFor="composer" className="sr-only">
-            Message
-          </label>
-          <MentionTextarea
-            id="composer"
-            ref={area}
-            value={text}
-            onValueChange={setText}
-            base={current?.cwd ?? null}
-            api={hq.api}
-            onKeyDown={onKey}
-            disabled={disabled}
-            rows={2}
-            maxLength={4000}
-            placeholder={current ? `Nhắn ${sessionLabel(current)} · @ để chèn file` : "Message"}
-            className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
-          />
-          <div className="flex items-center gap-2 px-2 pb-2">
-            <Select value={current?.name ?? ""} onValueChange={onTarget} disabled={disabled}>
-              <SelectTrigger size="sm" className="h-7 max-w-[55%] gap-1.5 border-0 bg-muted/60 font-mono text-xs" aria-label="Send to session">
-                <SelectValue placeholder="Pick a session" />
-              </SelectTrigger>
-              <SelectContent>
-                {targets.map((s) => (
-                  <SelectItem key={s.name} value={s.name} className="font-mono text-xs">
-                    <StatusDot status={s.status} /> {sessionLabel(s)}
-                    {s.channel ? " · channel" : deliveryOf(s) === "inbox" ? " · inbox" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">{hint}</p>
-            <Button type="submit" size="sm" className="ml-auto" disabled={disabled || busy || !text.trim() || !!current?.waiting}
-              title={current?.waiting ? "Claude is waiting for you in the terminal — answer it first (Open terminal)" : undefined}>
-              <SendHorizontalIcon /> Send
-            </Button>
-          </div>
-        </div>
-      </form>
-    </div>
+        );
+      }}
+    </ComposerDock>
   );
 }

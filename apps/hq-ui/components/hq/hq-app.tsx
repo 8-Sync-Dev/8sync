@@ -5,6 +5,7 @@ import { roomNow } from "@/lib/now";
 import { limitsView, matchesSession } from "@/lib/office";
 import { CircleHelpIcon, MenuIcon, SendIcon, SquareTerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useNarrow } from "@/hooks/use-narrow";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -51,14 +52,6 @@ const subscribeWide = (cb: () => void) => {
   return () => m.removeEventListener("change", cb);
 };
 const isWide = () => window.matchMedia(WIDE_QUERY).matches;
-/** Below Tailwind `sm`: the header row is full, the Máy chip moves to the tab row. */
-const NARROW_QUERY = "(max-width: 639px)";
-const subscribeNarrow = (cb: () => void) => {
-  const m = window.matchMedia(NARROW_QUERY);
-  m.addEventListener("change", cb);
-  return () => m.removeEventListener("change", cb);
-};
-const isNarrow = () => window.matchMedia(NARROW_QUERY).matches;
 const PREVIEW_POLL_MS = 15_000;
 const LOOPS_POLL_MS = 30_000;
 /** The header chip and the Máy tab share one poll. */
@@ -79,7 +72,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   // null until the owner picks a tab: the default follows the screen (Tổng quan on a wide monitor).
   const [picked, setTab] = useState<Tab | null>(null);
   const wide = useSyncExternalStore(subscribeWide, isWide, () => false);
-  const narrow = useSyncExternalStore(subscribeNarrow, isNarrow, () => false);
+  const narrow = useNarrow();
   const tab: Tab = picked ?? (wide ? "overview" : "office");
   const [target, setTarget] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -362,10 +355,10 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               />
             </TabsContent>
             <TabsContent value="office" className="h-full">
-              <OfficeView data={office} boards={boards} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} projects={hq.projects.data} />
+              <OfficeView data={office} boards={boards} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} projects={hq.projects.data} repo={repo?.root ?? null} onAll={() => setRepo(null)} />
             </TabsContent>
             <TabsContent value="group" className="flex h-full min-h-0 flex-col">
-              <TeamThread rows={group.messages} filters={{ roleOf, tasks: group.tasks }} onOpenSession={openSession} />
+              <TeamThread rows={group.messages} filters={{ roleOf, tasks: group.tasks }} token={token} onOpenSession={openSession} />
             </TabsContent>
             <TabsContent value="room" className="h-full">
               {scope.session == null ? (
@@ -396,7 +389,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               )}
             </TabsContent>
             <TabsContent value="report" className="h-full">
-              <ReportView data={office} onOpen={openRoom} />
+              <ReportView data={office} onOpen={openRoom} repo={repo?.root ?? null} />
             </TabsContent>
             <TabsContent value="usage" className="h-full">
               <UsageView token={token} />
@@ -405,13 +398,13 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               <MachineView m={machine.data} reload={machine.reload} api={hq.api} rooms={officeRooms} active={tab === "may"} />
             </TabsContent>
             <TabsContent value="board" className="h-full">
-              <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} focus={focusCard} />
+              <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} focus={focusCard} repo={repo?.root ?? null} />
             </TabsContent>
             <TabsContent value="preview" className="h-full">
-              <PreviewView state={previews} boards={boards.boards} token={token} rooms={officeRooms} onOpenCard={openCard} />
+              <PreviewView state={previews} boards={boards.boards} token={token} rooms={officeRooms} onOpenCard={openCard} repo={repo?.root ?? null} />
             </TabsContent>
             <TabsContent value="flow" className="h-full">
-              <FlowView state={boards} loops={loops} />
+              <FlowView state={boards} loops={loops} repo={repo?.root ?? null} />
             </TabsContent>
             <TabsContent value="sessions" className="h-full">
               <SessionsView

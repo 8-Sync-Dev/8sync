@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { Awake } from "@/lib/server/awake";
+import type { GuardRamSplit } from "@/lib/server/guard";
 import type { GuardView } from "@/lib/server/guard-trigger";
 import type { Machine, Spec } from "@/lib/server/machine";
 import type { Power } from "@/lib/server/power";
@@ -12,6 +13,12 @@ import { cn } from "@/lib/utils";
 export type MachineView = Machine & { power: Power | null; awake: Awake | null; spec: Spec | null; guard: GuardView | null; sweep?: SweepProject[] };
 
 export const gb = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
+/** The guard's RAM attribution (8sync ≥ the trim): "phòng 12.3 GB · omp/8sync 2.8 GB · app khác 20.1 GB (Edge 2.8 GB · ChatGPT 2.2 GB)" + the no-way-out hint. */
+export function ramSplitText(s: GuardRamSplit): string {
+  const top = s.top.length ? ` (${s.top.map((t) => `${t.name} ${gb(t.mb)}`).join(" · ")})` : "";
+  const hint = s.stuck ? " — ngưỡng không đạt được bằng dọn phòng: hạ app khác hoặc nâng ngưỡng" : "";
+  return `phòng ${gb(s.rooms_mb)} · omp/8sync ${gb(s.omp_mb)} · app khác ${gb(s.other_mb)}${top}${hint}`;
+}
 export const pctOf = (used: number, total: number) => (total > 0 ? Math.round((100 * used) / total) : 0);
 export const vnd = (n: number) => `${Math.round(n).toLocaleString("vi-VN")} ₫`;
 export const energy = (wh: number) => (wh < 1000 ? `${Math.round(wh)} Wh` : `${(wh / 1000).toLocaleString("vi-VN", { maximumFractionDigits: 2 })} kWh`);

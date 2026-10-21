@@ -34,13 +34,18 @@ pub(super) fn check(input: &str) -> Option<String> {
 
 /// [`check`] with the ship-grant directory and clock injected (tests).
 pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<String> {
-    check_full(input, grants, now_s, &pr_base, &super::merge::default_branch)
+    check_full(input, grants, now_s, &pr_base, &super::merge::default_branch_of)
 }
 
-/// The base branch of PR `pr`, read with `gh` in `root` (bounded: a hung `gh` must not hang the hook).
-fn pr_base(root: &Path, pr: u64) -> Option<String> {
+/// The base branch of PR `pr` (in `repo`, else this one), read with `gh` in `root` (bounded: a
+/// hung `gh` must not hang the hook).
+fn pr_base(root: &Path, pr: u64, repo: Option<&str>) -> Option<String> {
     let mut c = Command::new("gh");
-    c.args(["pr", "view", &pr.to_string(), "--json", "baseRefName", "-q", ".baseRefName"])
+    c.args(["pr", "view", &pr.to_string()]);
+    if let Some(r) = repo {
+        c.args(["--repo", r]);
+    }
+    c.args(["--json", "baseRefName", "-q", ".baseRefName"])
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -50,25 +55,27 @@ fn pr_base(root: &Path, pr: u64) -> Option<String> {
     Some(String::from_utf8_lossy(&out).trim().to_string())
 }
 
-/// `(repo root) → default branch`, None when unknown (injected in tests).
-type DefaultOf<'a> = &'a dyn Fn(&Path) -> Option<String>;
+/// `(repo root, owner/repo or None for this one) → default branch`, None when unknown (injected in tests).
+type DefaultOf<'a> = &'a dyn Fn(&Path, Option<&str>) -> Option<String>;
 
 /// The approved card a `gh pr merge` lands under the owner's project self-merge permission: the
-/// whole command is [`super::merge::merge_command`], the PR is an open `approved` card's, the SHA is
-/// the reviewed one and the base is the repo's default branch (unknown → no opinion: the normal
-/// rules decide). Only for the real store (`<home>/…/grants`).
+/// whole command is [`super::merge::merge_command`], the PR (number, and `--repo` for a card whose
+/// PR is in another repo of the org, checked same-org when the card took `--pr`) is an open
+/// `approved` card's, the SHA is the reviewed one and the base is that repo's default branch
+/// (unknown → no opinion: the normal rules decide). Only for the real store (`<home>/…/grants`).
 fn self_merge_card(v: &Value, grants: &Path, now_s: u64, base_of: BaseOf, default_of: DefaultOf) -> Option<u64> {
-    let (pr, sha) = super::merge::merge_command(v["tool_input"]["command"].as_str()?)?;
+    let (pr, repo, sha) = super::merge::merge_command(v["tool_input"]["command"].as_str()?)?;
     let home = super::grant::home_of(grants)?;
     let cwd = v["cwd"].as_str().map(Path::new).filter(|c| c.is_absolute())?;
     let root = crate::verbs::here::repo_of(cwd).unwrap_or_else(|| cwd.to_path_buf());
     super::grant::self_merge(grants, &root, now_s)?;
     let cards = super::target::list(home, &root).ok()?;
-    super::merge::approved_merge(pr, &sha, &cards, || Some((base_of(&root, pr)?, default_of(&root)?)))
+    let repo = repo.as_deref();
+    super::merge::approved_merge(pr, repo, &sha, &cards, || Some((base_of(&root, pr, repo)?, default_of(&root, repo)?)))
 }
 
-/// `(repo root, pr) → base branch` (injected in tests).
-type BaseOf<'a> = &'a dyn Fn(&Path, u64) -> Option<String>;
+/// `(repo root, pr, owner/repo or None) → base branch` (injected in tests).
+type BaseOf<'a> = &'a dyn Fn(&Path, u64, Option<&str>) -> Option<String>;
 
 /// [`check_with`] with the PR base and default-branch lookups injected (tests).
 fn check_full(input: &str, grants: &Path, now_s: u64, base_of: BaseOf, default_of: DefaultOf) -> Option<String> {
@@ -153,7 +160,7 @@ fn check_full(input: &str, grants: &Path, now_s: u64, base_of: BaseOf, default_o
         // permit hook stops it. Anything else falls through to the per-session Ship grant.
         Verdict::Ship { why, .. } if merge_card.is_some() => decision(
             "allow",
-            &format!("{why} Card #{} approved: owner đã cho tự merge dự án này, base là nhánh mặc định, --match-head-commit đúng SHA đã review.", merge_card.unwrap_or_default()),
+            &format!("{why} Card #{} approved: owner đã cho tự merge dự án này, base là nhánh mặc định của repo đó, --match-head-commit đúng SHA đã review.", merge_card.unwrap_or_default()),
         ),
         // The owner approved shipping once for this session (one `Ship` AskUserQuestion). Staying
         // silent left the step to auto mode's classifier, which still prompted at every merge and
@@ -805,12 +812,22 @@ mod tests {
         let board = super::super::idle::state_dir(&home).parent().unwrap().join("targets.json");
         std::fs::create_dir_all(board.parent().unwrap()).unwrap();
         std::fs::write(&board, json!({ "projects": { key.clone(): { "next_id": 3, "items": [card(1, "approved", "81"), card(2, "review", "82")] } } }).to_string()).unwrap();
-        let base = |_: &Path, pr: u64| Some(if pr == 81 { "main" } else { "card-125-ui" }.to_string());
+        // PR 81 here and zus-backend#8 sit on their default branches (main, develop); 82 is stacked.
+        let base = |_: &Path, pr: u64, repo: Option<&str>| Some(match (pr, repo) {
+            (81, None) => "main",
+            (8, Some("8-Sync-Dev/zus-backend")) => "develop",
+            _ => "card-125-ui",
+        }.to_string());
         let default = std::cell::RefCell::new(Some("main".to_string()));
         // A relaunched lead: session "new", the owner answered in session "old".
         let run = |cmd: &str, now: u64| {
             let input = json!({ "tool_name": "Bash", "tool_input": { "command": cmd }, "cwd": root.join(".claude/worktrees/card-1"), "session_id": "new", "permission_mode": "auto" });
-            check_full(&input.to_string(), &grants, now, &base, &|_| default.borrow().clone()).map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"]["permissionDecision"].as_str().unwrap().to_string())
+            let default_of = |_: &Path, repo: Option<&str>| match repo {
+                None => default.borrow().clone(),
+                Some("8-Sync-Dev/zus-backend") => default.borrow().as_ref().map(|_| "develop".to_string()),
+                Some(_) => None,
+            };
+            check_full(&input.to_string(), &grants, now, &base, &default_of).map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"]["permissionDecision"].as_str().unwrap().to_string())
         };
         let merge = format!("gh pr merge 81 --squash --delete-branch --match-head-commit {head}");
         assert_eq!(run(&merge, 1_000).as_deref(), Some("ask"), "no permission yet");
@@ -842,6 +859,19 @@ mod tests {
         // Stacked on another branch: the guard reads the base and keeps the prompt.
         std::fs::write(&board, json!({ "projects": { key.clone(): { "next_id": 3, "items": [card(2, "approved", "82")] } } }).to_string()).unwrap();
         assert_eq!(run(&format!("gh pr merge 82 --match-head-commit {head}"), 1_000).as_deref(), Some("ask"));
+        // A card whose PR lives in another repo of the org (zus/ide → zus-backend#8, 2026-10-21):
+        // allowed only as `gh pr merge 8 --repo 8-Sync-Dev/zus-backend --match-head-commit <sha>`.
+        let mut cross = card(3, "approved", "8");
+        cross["pr_repo"] = json!("8-Sync-Dev/zus-backend");
+        std::fs::write(&board, json!({ "projects": { key.clone(): { "next_id": 4, "items": [cross] } } }).to_string()).unwrap();
+        let merge8 = format!("gh pr merge 8 --repo 8-Sync-Dev/zus-backend --squash --delete-branch --match-head-commit {head}");
+        assert_eq!(run(&merge8, 1_000).as_deref(), Some("allow"), "cross-repo card under the project's grant");
+        assert_eq!(run(&format!("gh pr merge 8 --repo 8-Sync-Dev/zus-backend --match-head-commit {}", "fedcba9876543210"), 1_000).as_deref(), Some("ask"), "another SHA");
+        assert_eq!(run(&format!("gh pr merge 8 --match-head-commit {head}"), 1_000).as_deref(), Some("ask"), "PR 8 of this repo is another PR");
+        assert_eq!(run(&format!("gh pr merge 8 --repo 8-Sync-Dev/other --match-head-commit {head}"), 1_000).as_deref(), Some("ask"), "another repo");
+        assert_eq!(run(&merge8, 900 + 8 * 3600).as_deref(), Some("ask"), "grant expired");
+        *default.borrow_mut() = None;
+        assert_eq!(run(&merge8, 1_000).as_deref(), Some("ask"), "zus-backend's default branch unknown");
         let _ = std::fs::remove_dir_all(&home);
     }
 }
