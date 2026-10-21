@@ -5,11 +5,18 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.37] — 2026-10-22
+
+### Fixed
+- **`auto merge` land được card chưa có trường PR nếu ghi chú review nêu PR.** Owner 2026-10-22 (ide): 8 card Approved nằm 9 giờ dù Ship đã duyệt ("Duyệt tất cả", grant còn hiệu lực): PR của chúng ở zus-backend, review trước 0.110.30 chỉ ghi `[review] OK zus-backend#19 @b6d1e81` vào note, card không có `pr`/`pr_repo`, nên merge nền báo "card không có PR" mãi. Giờ `merge.rs` `infer_pr` đọc `repo#N @sha` / `owner/repo#N` / `#N` từ ghi chú (mới nhất trước; có SHA đã duyệt thì SHA trong note phải khớp; repo khác org bị bỏ qua, cùng org qua `pr_repo_for`) rồi land như card có `--pr`. Dòng chờ ghi rõ cách đặt tay khi note cũng không có.
+
 ## [0.110.36] — 2026-10-22
+
 ### Added
 - **Phòng hỏi → lead trả lời ngay** (owner: "khi biết ccc đang code bị dính hỏi, ccc auto phải gọi agent lead trả lời ngay làm tiếp"): mỗi nhịp revive đọc cuối transcript mọi phòng lane đang idle; phòng nào dừng chờ một câu AskUserQuestion chưa ai trả lời (critic không bắt được: câu rails Ship/secret/tiền/xoá, hỏi lúc chưa có kit) → lead nhận MỘT tin liệt kê từng phòng + câu hỏi, được đánh thức NGAY, và trả lời từng phòng qua `8sync ccc msg` (câu sản phẩm/kỹ thuật tự quyết theo DECISIONS.md, không cần owner; câu rails gom một câu AskUserQuestion cho owner). Giãn 10 phút mỗi phòng để không spam. Phòng lead không nằm trong danh sách (câu Ship của lead đã có nhắc 30 phút của ship-ask).
 ### Changed
 - Live check 2026-10-22 sau bản này: 8sync/platform và zus/ide đều không có phòng kẹt câu hỏi.
+
 ## [0.110.35] — 2026-10-21
 
 ### Added

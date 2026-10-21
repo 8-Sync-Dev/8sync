@@ -296,19 +296,81 @@ struct Ctx<'a> {
     main: &'a str,
     /// Another repo's default branch, by `owner/repo` ([`default_branch_of`]).
     main_of: &'a dyn Fn(&str) -> Option<String>,
+    /// This project's `owner/repo` ([`origin_repo`]), read only for a card without a PR field.
+    origin: &'a dyn Fn() -> Option<String>,
     gh: Gh<'a>,
+}
+
+/// Pure: the PR a card without a `pr` field names in its notes, newest note first: `zus-backend#19
+/// @b6d1e81`, `8-Sync-Dev/zus-backend#19`, or `#19` (this repo). With a reviewed `sha`, a note that
+/// carries a commit must match it. The repo goes through [`target::pr_repo_for`]: this repo → None,
+/// another repo of the same org → `Some`, another org → skipped. Owner 2026-10-21: 8 cards reviewed
+/// `[review] OK zus-backend#N @sha` before 0.110.30 (no `--pr owner/repo#N` yet) sat in Approved
+/// for 9 hours under a live Ship grant with "card không có PR".
+pub(super) fn infer_pr(notes: &[target::Note], sha: Option<&str>, origin: &str) -> Option<(u64, Option<String>)> {
+    let own_owner = origin.split('/').next().unwrap_or_default();
+    // `strict`: only a note whose commit matches the reviewed sha. First that, then any note that
+    // names a PR without a commit (a note with a different commit never counts).
+    let scan = |strict: bool| -> Option<(u64, Option<String>)> {
+        for n in notes.iter().rev() {
+            let text = n.text.as_str();
+            let mut i = 0;
+            while let Some(off) = text[i..].find('#') {
+                let at = i + off;
+                i = at + 1;
+                let digits: String = text[at + 1..].chars().take_while(char::is_ascii_digit).collect();
+                if digits.is_empty() || digits.len() > 10 {
+                    continue;
+                }
+                // The word glued to the left of `#`: `repo`, `owner/repo`, or nothing.
+                let left = text[..at].rsplit(|c: char| c.is_whitespace() || matches!(c, '(' | '[' | ',' | ';' | ':')).next().unwrap_or_default();
+                let repo = match left {
+                    "" => None,
+                    w if w.contains('/') => Some(w.to_string()),
+                    w => Some(format!("{own_owner}/{w}")),
+                };
+                if repo.as_deref().is_some_and(|r| valid_repo(r).is_none()) {
+                    continue;
+                }
+                let rest = &text[at + 1 + digits.len()..];
+                let commit = rest.trim_start().strip_prefix('@').map(|r| r.trim_start().chars().take_while(char::is_ascii_hexdigit).collect::<String>()).filter(|c| c.len() >= 7);
+                let matches = match (sha, commit.as_deref()) {
+                    (Some(want), Some(got)) => want.starts_with(got) || got.starts_with(want),
+                    (Some(_), None) => !strict,
+                    (None, _) => true,
+                };
+                if !matches {
+                    continue;
+                }
+                let Ok(repo) = repo.map_or(Ok(None), |r| target::pr_repo_for(&r, origin)) else { continue };
+                return digits.parse().ok().map(|n| (n, repo));
+            }
+        }
+        None
+    };
+    scan(true).or_else(|| sha.is_some().then(|| scan(false)).flatten())
 }
 
 /// Land one card; `first` defers a card stacked on a branch that is not merged yet. A card whose
 /// PR is in another repo of the org (`pr_repo`) runs every `gh pr …` with `--repo` and lands into
 /// that repo's default branch.
 fn land(t: &Target, c: &Ctx, first: bool) -> Outcome {
+    // No PR field: the review note may still name it ([`infer_pr`]); land with that.
+    let inferred = t.pr.is_none().then(|| (c.origin)()).flatten().and_then(|o| infer_pr(&t.notes, t.sha.as_deref(), &o));
+    let owned;
+    let t = match inferred {
+        Some((n, repo)) => {
+            owned = Target { pr: Some(n.to_string()), pr_repo: repo, ..t.clone() };
+            &owned
+        }
+        None => t,
+    };
     let pr = t.pr.as_deref().and_then(pr_number);
     let repo = t.pr_repo.as_deref();
     let mut out = Outcome { id: t.id, pr, repo: t.pr_repo.clone(), action: "failed", sha: None, why: None };
     let Some(n) = pr else {
         out.action = "wait";
-        out.why = Some("card không có PR: lead xem (`auto note`)".into());
+        out.why = Some("card không có PR và ghi chú không nêu `repo#N`: lead đặt `auto move <id> approved --pr …`".into());
         return out;
     };
     let main = match repo {
@@ -439,7 +501,8 @@ pub(super) fn run(as_json: bool, home: &Path, root: &Path, who: Option<&str>, no
     let Some(main) = default_branch(root) else { bail!(NO_DEFAULT) };
     let gh = |args: &[&str]| gh(root, args);
     let main_of = |repo: &str| default_branch_of(root, Some(repo));
-    run_with(as_json, &Ctx { home, root, who, now, main: &main, main_of: &main_of, gh: &gh })
+    let origin = || origin_repo(root);
+    run_with(as_json, &Ctx { home, root, who, now, main: &main, main_of: &main_of, origin: &origin, gh: &gh })
 }
 
 /// HQ's revive tick (every 2 min): land approved cards in code while the owner's self-merge grant
@@ -456,7 +519,8 @@ pub(super) fn background(home: &Path, root: &Path, now: u64) -> Result<Vec<Strin
     let Some(main) = default_branch(root) else { return Ok(Vec::new()) };
     let gh = |args: &[&str]| gh(root, args);
     let main_of = |repo: &str| default_branch_of(root, Some(repo));
-    let c = Ctx { home, root, who: Some("lead"), now, main: &main, main_of: &main_of, gh: &gh };
+    let origin = || origin_repo(root);
+    let c = Ctx { home, root, who: Some("lead"), now, main: &main, main_of: &main_of, origin: &origin, gh: &gh };
     // HQ kills a revive that runs past 120 s and each card is several gh calls (≤ 20 s each): start
     // no card after [`BACKGROUND_BUDGET`]. A card stacked on an approved card not landed yet is
     // deferred, not bounced: try the next.
@@ -534,6 +598,23 @@ mod tests {
 
     fn pr(base: &str, mergeable: &str, head: &str, state: &str) -> Value {
         json!({ "baseRefName": base, "mergeable": mergeable, "headRefOid": head, "state": state })
+    }
+
+    #[test]
+    fn a_card_without_a_pr_field_lands_the_pr_its_review_note_names() {
+        let note = |text: &str| target::Note { at: 1, room: Some("review".into()), text: text.into() };
+        let origin = "8-Sync-Dev/zus";
+        // The owner's 8 cards (2026-10-21): `[review] OK zus-backend#19 @b6d1e81 (base main, không stack)`.
+        let notes = vec![note("ready → review: PR lên"), note("[review] OK zus-backend#19 @b6d1e81 (base main, không stack): text-only")];
+        assert_eq!(infer_pr(&notes, Some("b6d1e810f5cbf53f94fbc8198fcd9b0f9848866e"), origin), Some((19, Some("8-Sync-Dev/zus-backend".into()))));
+        assert_eq!(infer_pr(&notes, Some("deadbeef0000"), origin), None, "a note for another commit is not this card's PR");
+        assert_eq!(infer_pr(&notes, None, origin), Some((19, Some("8-Sync-Dev/zus-backend".into()))), "no reviewed sha: the newest note wins");
+        // Newest note first; `owner/repo#N`; this repo's own PR → no repo; another org → skipped.
+        let many = vec![note("[review] OK #41 @abc1234"), note("[qa] pass 8-Sync-Dev/zus-backend#7"), note("thấy evil/zus-backend#9 @abc1234 nhưng không phải của ta")];
+        assert_eq!(infer_pr(&many, Some("abc1234"), origin), Some((41, None)), "the evil-org note is skipped, then #41 matches the sha");
+        assert_eq!(infer_pr(&many, None, origin), Some((7, Some("8-Sync-Dev/zus-backend".into()))), "newest usable note: the org PR without a commit (the evil one is skipped)");
+        assert_eq!(infer_pr(&[note("card #2 con của #1: xong")], Some("abc"), origin), Some((2, None)), "a bare `#N` is this repo's PR (the first in the note; no commit anywhere → the lax pass)");
+        assert_eq!(infer_pr(&[note("không có gì")], None, origin), None);
     }
 
     #[test]
@@ -690,7 +771,8 @@ mod tests {
             })
         };
         let main_of = |r: &str| (r == "8-Sync-Dev/zus-backend").then(|| "develop".to_string());
-        let ctx = Ctx { home: &home, root: &root, who: None, now: 1_000, main, main_of: &main_of, gh: &gh };
+        let origin = || Some("8-Sync-Dev/zus".to_string());
+        let ctx = Ctx { home: &home, root: &root, who: None, now: 1_000, main, main_of: &main_of, origin: &origin, gh: &gh };
         run_with(true, &ctx).unwrap();
         let card = target::list(&home, &root).unwrap().into_iter().find(|t| t.id == 1).unwrap();
         let _ = std::fs::remove_dir_all(&home);
