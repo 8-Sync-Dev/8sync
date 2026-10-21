@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.23] — 2026-10-21
+### Added
+- **Strict CPU cap for rooms.** Owner 2026-10-21: "never cpu go to 60% check kĩ nghiêm khắc". Every guard pass, and right after `auto up`/revive open rooms, every room process tree is pinned to the top N logical CPUs (`8sync ccc auto guard cap <10..90>|off`, default 37 % → 12 of 32), leaving the low CPUs (the V-Cache CCD on X3D parts) to the owner. Kernel-enforced and inherited by the rooms' children (Windows `SetProcessAffinityMask`; Linux `taskset` only when a mask changes; macOS no-op). Only room trees are pinned — never the Claude Code daemon, the owner's sessions, omp, HQ or 8sync. What was pinned is recorded (pid, start, project, original mask) and restored exactly on `cap off`, `guard off`, auto off/pause or when a project leaves scope.
+  - While the rooms are the load (all projects' rooms ≥ 15 % of the machine), two readings at or over the CPU threshold tighten the cap one step (12 → 6 → 3 → 2 CPUs); it loosens one step only when the predicted CPU stays under the threshold, at most one decision per 20 s machine-wide, so it never cycles over the line.
+- **Separate CPU and RAM thresholds.** `8sync ccc auto guard cpu <30..95>` (default 55) next to `guard <pct>` (RAM, default 60). A CPU breach tightens the cap, idles room builds and can pause rooms on CPU timing; a RAM breach takes the RAM path (clean, lean restart, pause). An old single threshold keeps meaning CPU (RAM then at least 60) until either one is set. HQ Máy › Bảo vệ máy: RAM row, CPU row, cap row ("đang siết" while tightened); the 5 s trigger compares each to its own threshold. `auto status --json` adds `cpu_pct`, `cap`, `cap_n`, `cpus`, `cap_tight`.
+### Fixed
+- The guard's CPU figures used a fixed 5 s window although two listings plus the sleep span ~7–8 s (dry run printed machine "CPU 5 s 1 %" while one rustc showed 9 %). Each listing is now stamped with the machine's CPU times (`GetSystemTimes`, `/proc/stat` first 8 fields) and shares are divided by the measured interval.
+
 ## [0.110.22] — 2026-10-21
 ### Fixed
 - **HQ through the VPS link recovers by itself when the login lapses.** Owner 2026-10-21: "check gấp ovh web chưa vô được hq ui". The VPS gate (oauth2-proxy, 12 h cookie) answers a lapsed session with a redirect to GitHub that fetch cannot follow, so an open HQ tab failed every poll until a manual reload: the owner's previous login lapsed at 05:38 UTC, when he reported it. HQ's API never redirects, so the client now asks for redirects by hand and reloads into the sign-in when it gets one (at most once per 30 s).
