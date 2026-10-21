@@ -16,7 +16,7 @@ import { GET, POST } from "@/app/api/auto/loop/route";
 import { getToken } from "@/lib/server/auth";
 import { ORIGIN, req, tempHome } from "./helpers";
 
-const STATUS = (loops: unknown) => ({ ok: true, stdout: JSON.stringify({ on: true, paused: false, ship_loops: loops }), stderr: "" });
+const STATUS = (loops: unknown, ship_fast?: unknown) => ({ ok: true, stdout: JSON.stringify({ on: true, paused: false, ship_loops: loops, ship_fast }), stderr: "" });
 
 let token = "";
 beforeAll(() => {
@@ -76,6 +76,6 @@ describe("GET /api/auto/loop", () => {
     await post({ root: room.cwd, on: false });
     const res = await GET(req("/api/auto/loop", { token }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ loops: [{ root: room.cwd, round: 4, focus: "sec", since: 1, next: "usage" }] });
+    expect(await res.json()).toEqual({ loops: [{ root: room.cwd, round: 4, focus: "sec", since: 1, next: "usage" }], sprints: [] });
   });
 });
