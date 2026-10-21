@@ -115,6 +115,21 @@ fn root_by_key(cwd: &Path, key: &str) -> Option<PathBuf> {
     cwd.ancestors().find(|a| session::project_key(a) == key).map(Path::to_path_buf)
 }
 
+/// The omp session whose `ls` inbox id is `id`, from the same registry rows `8sync ls --all`
+/// prints: (repo root, registry entry, newest transcript).
+pub fn omp_room(env: &Env, id: &str) -> Option<(PathBuf, session::Session, Option<PathBuf>)> {
+    for e in std::fs::read_dir(kind_dir(env, "sessions")).into_iter().flatten().flatten() {
+        let dir = e.path();
+        let rows = engine_rows(env, "omp", &dir, None, &[], false, false);
+        let Some(row) = rows.iter().find(|r| r.inbox_id.as_deref() == Some(id)) else { continue };
+        let reg: session::Registry = serde_json::from_value(read_json(&dir.join("index.json"))?).ok()?;
+        let key = e.file_name().to_string_lossy().into_owned();
+        let root = reg.root.clone().or_else(|| rows.iter().filter_map(|x| x.digest.cwd.as_deref()).find_map(|c| root_by_key(Path::new(c), &key)))?;
+        return Some((root, reg.get(&row.name)?.clone(), row.transcript.clone()));
+    }
+    None
+}
+
 /// Sessions of one repo, in engine order, skipping engines with none.
 fn repo_rows(env: &Env, root: &Path, procs: &[Vec<u8>], detail: bool, git: bool) -> Groups {
     let key = session::project_key(root);

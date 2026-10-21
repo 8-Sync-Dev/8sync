@@ -142,6 +142,20 @@ fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str), mode
     // (omp's default per-cwd store) lands somewhere else entirely and the
     // session looks lost. Print the command that reopens THIS one.
     ui::info(&format!("omp --session-dir {} --continue", session_dir.display()));
+    let mut cmd = omp_command(cwd, session_dir, room, model);
+    if !fresh {
+        cmd.arg("--continue");
+    }
+    let status = cmd.status().context("could not exec omp")?;
+    if !status.success() {
+        ui::warn("omp exited non-zero");
+    }
+    Ok(())
+}
+
+/// The omp argv + env of a named session (see [`launch`]), without `--continue`: the web terminal
+/// host (`ccc term --host`) adds `--resume`/`--restore <transcript>` instead.
+pub(crate) fn omp_command(cwd: &Path, session_dir: &Path, room: (&Path, &str), model: Option<&str>) -> Command {
     let cfg = crate::models::ModelConfig::load();
     let mut cmd = Command::new("omp");
     cmd.current_dir(cwd)
@@ -155,20 +169,13 @@ fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str), mode
         Some(m) => cmd.args(cfg.pinned_flags(m)),
         None => cmd.args(cfg.resume_flags()),
     };
-    if !fresh {
-        cmd.arg("--continue");
-    }
-    let status = cmd.status().context("could not exec omp")?;
-    if !status.success() {
-        ui::warn("omp exited non-zero");
-    }
-    Ok(())
+    cmd
 }
 
 // ── git / worktree ─────────────────────────────────────────────────────────
 
 /// Working dir for a session: its worktree when isolated, else the repo root.
-fn session_cwd<'a>(s: &'a Session, root: &'a Path) -> &'a Path {
+pub(crate) fn session_cwd<'a>(s: &'a Session, root: &'a Path) -> &'a Path {
     s.worktree.as_ref().map(|w| w.path.as_path()).unwrap_or(root)
 }
 

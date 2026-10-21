@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.14] — 2026-10-21
+### Added
+- **omp rooms open in HQ's terminal ("Mở terminal").** Owner: "vẫn chưa vô xem được omp đang làm gì". `8sync ccc term <omp-room-id>` runs the room's omp in a detached host (ConPTY, resumes its transcript, keeps 256 KB of screen, 127.0.0.1 + random token, record in `~/.local/state/8sync/ccc/term/`). Closing the drawer only disconnects; omp keeps running and reopening replays the screen. A client sends the token only to a host whose recorded omp is still its own child.
+- **Session already open in another terminal on the PC:** the drawer shows a live read-only view (its Nhật ký, every 2 s, secrets masked) with "Chuyển sang HQ". That button ends only the omp holding that session (root first, then its descendants, never omp's shared `__omp_worker_daemon*` broker; every PID re-checked right before its kill) and reopens it in the host with `omp --restore`. The kill-and-start runs inside the detached host, so closing the drawer mid-way never leaves the room without omp. Inbox chat keeps working meanwhile.
+### Fixed
+- HQ expands `~\…` repos from `8sync ls` on Windows (an omp room's folder was a literal `~\…`, so its terminal failed with ENOENT).
+
 ## [0.110.13] — 2026-10-21
 ### Fixed
 - **HQ "⚡ Sấm Sét" can be turned off.** Owner 2026-10-21: "bật sao không tắt được" — while it ran, a click only renewed the lease. Now it asks: **Tắt Sấm Sét** (back to the 6-room full team: stops ba, dev3–dev6, qa2, review2; the cards they held go back to the board) or **Gia hạn 2 giờ** (renews the lease, as before).
