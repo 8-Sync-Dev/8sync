@@ -350,8 +350,19 @@ fn log(dir: &Path, row: &Value) {
     }
 }
 
+/// An `AskUserQuestion` whose header is `Ship` ([`super::grant::HEADER`]): the lead's one-tap
+/// merge / release question that only the owner answers (the critic never takes it, delegate.rs).
+pub(super) fn ship_ask(input: &Value) -> bool {
+    input["tool_name"].as_str() == Some("AskUserQuestion")
+        && input["tool_input"]["questions"].as_array().is_some_and(|qs| qs.iter().any(|q| q["header"].as_str().is_some_and(|h| h.trim().eq_ignore_ascii_case(super::grant::HEADER))))
+}
+
 /// Post the request, wait up to `wait_s` for the owner's click, then the owner's answer or the
-/// recommended one ([`may_proceed`]). `sleep` and `now` are injected for tests.
+/// recommended one ([`may_proceed`]). `sleep` and `now` are injected for tests. A Ship question
+/// is not a step the room can skip: it stays on screen as Claude Code's own prompt (HQ's ask panel
+/// shows it, the owner answers whenever they come back, the grant is read from the transcript).
+/// Owner 2026-10-21 ("kẹt hoài vậy lead không auto check ship"): lead-ide asked Ship five times,
+/// each refused after the 60 s, and 8 approved cards sat for 9 hours.
 pub(super) fn wait_for_owner(
     dir: &Path,
     input: &Value,
@@ -359,6 +370,9 @@ pub(super) fn wait_for_owner(
     now: &mut dyn FnMut() -> u64,
     sleep: &mut dyn FnMut(Duration),
 ) -> Option<String> {
+    if ship_ask(input) {
+        return None;
+    }
     let session = input["session_id"].as_str()?;
     let tool = input["tool_name"].as_str().unwrap_or("tool");
     let what = shown(tool, &input["tool_input"]);
@@ -606,6 +620,25 @@ mod tests {
         assert_eq!(b, "deny", "the owner's no wins even where silence would proceed");
         assert!(msg.contains("Owner từ chối"), "{msg}");
         assert!(!d.join("auto.jsonl").exists(), "the owner decided: nothing auto to log");
+    }
+
+    #[test]
+    fn a_ship_question_stays_on_screen_for_the_owner_instead_of_being_refused_after_the_wait() {
+        let r = repo("ship-ask");
+        let d = tmp("ship-ask-state");
+        let q = |header: &str| json!({ "questions": [{ "header": header, "question": "Merge 8 card approved?", "options": [{ "label": "Duyệt tất cả (Recommended)" }, { "label": "Dừng" }] }] });
+        let mut now = || 50;
+        let mut no_sleep = |_| panic!("a Ship question never waits on the 60 s window");
+        assert!(ship_ask(&req(&r, "AskUserQuestion", q("Ship"))) && ship_ask(&req(&r, "AskUserQuestion", q(" ship "))));
+        assert!(!ship_ask(&req(&r, "AskUserQuestion", q("Thư viện"))) && !ship_ask(&req(&r, "Bash", json!({ "command": "gh pr merge 2" }))));
+        // No decision: Claude Code's own prompt shows the question; nothing posted to HQ's permit lane, nothing auto-logged.
+        assert_eq!(wait_for_owner(&d, &req(&r, "AskUserQuestion", q("Ship")), 60, &mut now, &mut no_sleep), None);
+        assert!(!d.join("s1.ask.json").exists() && !d.join("auto.jsonl").exists());
+        // Any other question still ends after the wait as before: the critic (delegate.rs) or a refusal.
+        let mut sleep = |_| {};
+        let (b, msg) = behavior(&wait_for_owner(&d, &req(&r, "AskUserQuestion", q("Thư viện")), 0, &mut now, &mut sleep).unwrap());
+        assert_eq!(b, "deny");
+        assert!(msg.contains("không tự duyệt"), "{msg}");
     }
 
     #[test]

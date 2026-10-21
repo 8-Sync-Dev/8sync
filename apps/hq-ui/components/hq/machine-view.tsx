@@ -19,7 +19,7 @@ import type { Spec } from "@/lib/server/machine";
 import type { SweepProject } from "@/lib/server/sweep";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
-import { Bar, dayTime, energy, gb, hhmm, level, Meter, ramSplitText, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
+import { Bar, dayTime, energy, gb, hhmm, level, LoadChart, Meter, ramSplitText, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
 import type { Hq } from "./use-hq";
 import type { Room } from "./use-office";
 import { usePoll } from "./use-poll";
@@ -958,6 +958,11 @@ export function MachineView({ m, reload, api, rooms, active }: { m: MachineData 
                 <Meter key={i} label={m.gpus!.length > 1 ? `GPU ${i}` : "GPU"} pct={g.util} detail={`VRAM ${(g.memUsed / 1024).toFixed(1)}/${(g.memTotal / 1024).toFixed(1)} GB${g.temp != null ? ` · ${g.temp}°C` : ""}`} />
               ))}
               {m.gpus == null && <p className="text-xs text-muted-foreground">Không thấy GPU NVIDIA (nvidia-smi).</p>}
+              {m.history && (
+                <div className="pt-1">
+                  <LoadChart samples={m.history} now={m.at} guardPct={m.guard?.pct ?? null} />
+                </div>
+              )}
             </div>
           </Panel>
           {m.power && <PowerPanel p={m.power} api={api} onSaved={reload} />}
