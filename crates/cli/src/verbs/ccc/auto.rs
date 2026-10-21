@@ -2294,16 +2294,18 @@ mod tests {
         let h = home("rush");
         let root = h.join("ide");
         std::fs::create_dir_all(&root).unwrap();
-        idle::write_json(&idle::state_dir(&h).join("team-roots.json"), &json!([root.to_string_lossy()]));
         let names = ["lead", "dev", "dev2", "qa", "review"];
         let rooms: Vec<(String, String)> = names.iter().enumerate().map(|(i, n)| (n.to_string(), format!("a{i}830544-0719-4d6f-aaa3-644783ddb0b5"))).collect();
         let id = |n: &str| rooms.iter().find(|(x, _)| x == n).unwrap().1.clone();
         let inbox = |n: &str| std::fs::read_to_string(crate::verbs::hq::inbox_file(&h, &id(n)).unwrap()).unwrap_or_default();
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let go = |args: &[&str]| run_target(args[0], &a(&args[1..]), &h, &root, || rooms.clone(), Vec::new, 100);
+        // Cards first, team root after: an owner `add` on a board team goes to the front (`--now`), and
+        // whether this test runs as the owner depends on its shell (CI has no room env).
         for t in ["card 15", "card 20", "card 21"] {
             go(&["add", t, "--check", "true"]).unwrap();
         }
+        idle::write_json(&idle::state_dir(&h).join("team-roots.json"), &json!([root.to_string_lossy()]));
         // dev2 builds the first ready card; dev just handed its card on and holds nothing.
         let held = target::claim(&h, &root, "dev2", "ready", 100).unwrap().unwrap();
         let c21 = target::list(&h, &root).unwrap().into_iter().find(|t| t.text == "card 21").unwrap();
