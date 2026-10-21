@@ -201,8 +201,21 @@ const QUEUE: usize = 512;
 /// hub (another client's ACK, the terminal's output) while its socket is full.
 pub(super) struct Queue(SyncSender<Arc<[u8]>>);
 
+/// The socket end of a [`Queue`]: closed when its writer ends.
+pub(super) trait Sink: Write + Send + 'static {
+    fn close(&mut self);
+}
+
+impl Sink for TcpStream {
+    fn close(&mut self) {
+        let _ = self.shutdown(Shutdown::Both);
+    }
+}
+
 impl Queue {
-    pub(super) fn spawn<W: Write + Send + 'static>(mut w: W) -> Queue {
+    /// When the writer ends (the hub dropped this viewer, e.g. its queue was full, or a write
+    /// failed) the socket is shut down, so a dropped client sees its terminal end, not a frozen one.
+    pub(super) fn spawn<W: Sink>(mut w: W) -> Queue {
         let (tx, rx) = sync_channel::<Arc<[u8]>>(QUEUE);
         std::thread::spawn(move || {
             for b in rx {
@@ -210,6 +223,7 @@ impl Queue {
                     break;
                 }
             }
+            w.close();
         });
         Queue(tx)
     }
@@ -465,18 +479,37 @@ pub(super) fn session_pids(procs: &[(u32, Vec<u8>)], session_dir: &Path) -> Vec<
     procs.iter().filter(|(_, argv)| ccc_core::transcript::proc_match(argv, &dir)).map(|(p, _)| *p).collect()
 }
 
-/// `pid` is alive and runs this very 8sync executable: a host record's process, not whatever got its pid.
-fn host_is_ours(pid: u32) -> bool {
-    let (Some(img), Ok(me)) = (ccc_core::transcript::process_image(pid), std::env::current_exe()) else { return false };
-    matches!((std::fs::canonicalize(img), std::fs::canonicalize(me)), (Ok(a), Ok(b)) if a == b)
+/// An image that is 8sync: this executable, a file named `8sync`/`8sync.exe`, or the name `8sync up`
+/// gives the running binary when it swaps a new one in (`.8sync.old.<pid>`, selfup.rs); on Linux a
+/// replaced binary reads `… (deleted)`.
+pub(super) fn eightsync_image(img: &Path) -> bool {
+    let name = img.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let name = name.strip_suffix(" (deleted)").unwrap_or(&name);
+    name == "8sync" || name == "8sync.exe" || name.starts_with(".8sync.old.")
+        || std::env::current_exe().ok().and_then(|me| std::fs::canonicalize(me).ok()).is_some_and(|me| std::fs::canonicalize(img).is_ok_and(|i| i == me))
+}
+
+/// The record's omp is alive as the host's own child (parent = host pid, started after it): the
+/// host is this record's, whatever its image is called now.
+pub(super) fn hosts_its_omp(procs: &[ProcEntry], rec: &HostState) -> bool {
+    let Some(host) = procs.iter().find(|p| p.pid == rec.pid && p.started != 0) else { return false };
+    rec.omp_pid.is_some_and(|o| procs.iter().any(|p| p.pid == o && p.ppid == rec.pid && p.started >= host.started))
+}
+
+/// `rec`'s process is our host, not whatever got its pid: an 8sync image, or the parent of its omp.
+fn host_is_ours(rec: &HostState) -> bool {
+    ccc_core::transcript::process_image(rec.pid).is_some_and(|i| eightsync_image(&i)) || hosts_its_omp(&ccc_core::transcript::processes(), rec)
 }
 
 /// The live host of room `id`, the hello sent. A record whose host is gone (or whose pid now runs
-/// another program) is deleted unread: its token never goes to whatever listens on that port now.
-fn connect(state: &Path, id: &str, cols: u16, rows: u16) -> Option<TcpStream> {
+/// another program) gets no token; it is deleted unless its omp still has the session open (then
+/// the client waits for it, never reports it as another terminal or takes it over).
+fn connect(state: &Path, id: &str, session_dir: &Path, cols: u16, rows: u16) -> Option<TcpStream> {
     let s = read_state(state, id)?;
-    if !host_is_ours(s.pid) {
-        let _ = std::fs::remove_file(state);
+    if !host_is_ours(&s) {
+        if !s.omp_pid.is_some_and(|o| session_pids(&ccc_core::transcript::agent_procs(), session_dir).contains(&o)) {
+            let _ = std::fs::remove_file(state);
+        }
         return None;
     }
     let mut c = TcpStream::connect_timeout(&SocketAddr::from((Ipv4Addr::LOCALHOST, s.port)), Duration::from_secs(2)).ok()?;
@@ -489,10 +522,10 @@ fn connect(state: &Path, id: &str, cols: u16, rows: u16) -> Option<TcpStream> {
     (ack == ACK).then_some(c)
 }
 
-fn wait_host(state: &Path, id: &str, cols: u16, rows: u16, wait: Duration) -> Result<TcpStream> {
+fn wait_host(state: &Path, id: &str, session_dir: &Path, cols: u16, rows: u16, wait: Duration) -> Result<TcpStream> {
     let until = Instant::now() + wait;
     loop {
-        if let Some(c) = connect(state, id, cols, rows) {
+        if let Some(c) = connect(state, id, session_dir, cols, rows) {
             return Ok(c);
         }
         if Instant::now() > until {
@@ -536,28 +569,34 @@ impl Drop for StartLock {
     }
 }
 
-/// Takeover kill order for `root` (an omp that has the session open): its descendants in `procs`,
-/// children before parents, then `root`. omp's shared worker daemons (`omp __omp_worker_daemon…`,
-/// which the owner's other omp sessions use too) and everything under them are left alone. A
-/// "child" started before its parent is not one (its dead parent's pid was reused) and is skipped.
+/// Takeover kill order for `root` (an omp that has the session open): `root` first (so it cannot
+/// start a new worker between kills), then its descendants in `procs`, parents before children.
+/// omp's shared worker daemons (`omp __omp_worker_daemon…`, which the owner's other omp sessions
+/// use too) and everything under them are left alone. A "child" started before its parent is not
+/// one (its dead parent's pid was reused) and is skipped.
 pub(super) fn kill_order(procs: &[ProcEntry], root: u32) -> Vec<ProcEntry> {
     fn daemon(p: &ProcEntry) -> bool {
         p.argv.get(1).is_some_and(|a| a.starts_with("__omp_worker_daemon"))
     }
-    fn walk(procs: &[ProcEntry], p: &ProcEntry, seen: &mut Vec<u32>, out: &mut Vec<ProcEntry>) {
-        seen.push(p.pid);
+    fn walk(procs: &[ProcEntry], p: &ProcEntry, out: &mut Vec<ProcEntry>) {
+        out.push(p.clone());
         for c in procs.iter().filter(|c| c.ppid == p.pid && c.started != 0 && c.started >= p.started && !daemon(c)) {
-            if !seen.contains(&c.pid) {
-                walk(procs, c, seen, out);
+            if !out.iter().any(|q| q.pid == c.pid) {
+                walk(procs, c, out);
             }
         }
-        out.push(p.clone());
     }
     let mut out = Vec::new();
     if let Some(r) = procs.iter().find(|p| p.pid == root).filter(|r| !daemon(r)) {
-        walk(procs, r, &mut Vec::new(), &mut out);
+        walk(procs, r, &mut out);
     }
     out
+}
+
+/// `b` is still the process `a` was: same pid, start time and argv (its parent may differ: an
+/// orphan is re-parented on Linux once the root is gone).
+fn same_proc(a: &ProcEntry, b: &ProcEntry) -> bool {
+    a.pid == b.pid && a.started == b.started && a.argv == b.argv
 }
 
 /// Ends one process, never its tree and never by image name.
@@ -581,7 +620,7 @@ fn kill_pid(pid: u32) {
 
 /// Takeover (in the host, before its own omp starts): ends every omp that has the session open,
 /// with its own children ([`kill_order`]), one pid at a time, each only while a fresh snapshot still
-/// shows that very process (same pid, parent, start time and argv); then waits until none is left.
+/// shows that very process ([`same_proc`]); then waits until none is left.
 fn end_session(session_dir: &Path) -> Result<()> {
     let live = session_pids(&ccc_core::transcript::agent_procs(), session_dir);
     let snap = ccc_core::transcript::processes();
@@ -594,7 +633,7 @@ fn end_session(session_dir: &Path) -> Result<()> {
         }
     }
     for p in &order {
-        if ccc_core::transcript::processes().contains(p) {
+        if ccc_core::transcript::processes().iter().any(|q| same_proc(p, q)) {
             kill_pid(p.pid);
         }
     }
@@ -642,13 +681,13 @@ fn relay(sock: TcpStream) -> Result<()> {
 pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool) -> Result<()> {
     let room = resolve(env, id)?;
     let state = state_path(&env.home, id);
-    if let Some(s) = connect(&state, id, cols, rows) {
+    if let Some(s) = connect(&state, id, &room.session_dir, cols, rows) {
         return relay(s);
     }
     let Some(lock) = StartLock::take(&lock_path(&state))? else {
-        return relay(wait_host(&state, id, cols, rows, LOCK_STALE)?);
+        return relay(wait_host(&state, id, &room.session_dir, cols, rows, LOCK_STALE)?);
     };
-    if let Some(s) = connect(&state, id, cols, rows) {
+    if let Some(s) = connect(&state, id, &room.session_dir, cols, rows) {
         drop(lock);
         return relay(s);
     }
@@ -658,7 +697,7 @@ pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool) 
     let restore = match plan(&live, host_omp, takeover) {
         Plan::Wait => {
             drop(lock);
-            return relay(wait_host(&state, id, cols, rows, START_WAIT)?);
+            return relay(wait_host(&state, id, &room.session_dir, cols, rows, START_WAIT)?);
         }
         Plan::Start => false,
         Plan::Elsewhere(pid) => {
@@ -680,7 +719,7 @@ pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool) 
     super::awake::spawn_detached(&exe, &args).context("không chạy được host terminal omp")?;
     // From here the host owns the lock (see [`host_logged`]), also if this client is killed.
     std::mem::forget(lock);
-    relay(wait_host(&state, id, cols, rows, LOCK_STALE)?)
+    relay(wait_host(&state, id, &room.session_dir, cols, rows, LOCK_STALE)?)
 }
 
 #[cfg(test)]
@@ -707,8 +746,8 @@ mod tests {
         }
     }
 
-    /// A socket that never takes a byte (a client that stopped reading).
-    struct Stuck(std::sync::mpsc::Receiver<()>);
+    /// A socket that never takes a byte (a client that stopped reading); `closed` once its writer ends.
+    struct Stuck(std::sync::mpsc::Receiver<()>, Arc<std::sync::atomic::AtomicBool>);
     impl Write for Stuck {
         fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
             let _ = self.0.recv();
@@ -716,6 +755,11 @@ mod tests {
         }
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
+        }
+    }
+    impl Sink for Stuck {
+        fn close(&mut self) {
+            self.1.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -791,7 +835,7 @@ mod tests {
     fn a_stuck_client_never_holds_the_hub_and_another_client_still_gets_its_ack_at_once() {
         let (_hold, rx) = std::sync::mpsc::channel();
         let mut hub: Hub<Box<dyn Viewer>> = Hub::new();
-        hub.join(Box::new(Queue::spawn(Stuck(rx)))).unwrap();
+        hub.join(Box::new(Queue::spawn(Stuck(rx, Arc::default())))).unwrap();
         let t = Instant::now();
         for _ in 0..QUEUE + 4 {
             hub.push(b"chunk");
@@ -842,17 +886,17 @@ mod tests {
                 assert_eq!(got.first(), Some(&Ctl::Resize(80, 24)));
             }
         });
-        let mut c = connect(&p, id, 80, 24).expect("host answers");
+        let mut c = connect(&p, id, &dir, 80, 24).expect("host answers");
         let mut buf = [0u8; 9];
         c.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"omp ready", "the ack is not part of the terminal output");
         drop(c);
         // Same pid, port and token on reconnect: it is the same host.
-        assert!(connect(&p, id, 80, 24).is_some());
+        assert!(connect(&p, id, &dir, 80, 24).is_some());
         fake.join().unwrap();
-        assert!(connect(&p, id, 80, 24).is_none(), "nothing listens any more");
+        assert!(connect(&p, id, &dir, 80, 24).is_none(), "nothing listens any more");
         assert!(p.exists(), "a host of ours that does not answer keeps its record (it may be busy)");
-        assert!(connect(&p, "omp-0000000000000004", 80, 24).is_none());
+        assert!(connect(&p, "omp-0000000000000004", &dir, 80, 24).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -881,7 +925,7 @@ mod tests {
         let mut other = other.spawn().unwrap();
         for pid in [gone_pid, other.id()] {
             write_state(&p, &HostState { pid, omp_pid: Some(pid), port, token: TOKEN.into(), room: id.into() }).unwrap();
-            assert!(connect(&p, id, 80, 24).is_none(), "pid {pid}");
+            assert!(connect(&p, id, &dir, 80, 24).is_none(), "pid {pid}");
             assert!(!p.exists(), "the stale record is deleted");
             assert!(l.accept().is_err(), "nothing connected to the port, so no token was sent");
         }
@@ -930,7 +974,7 @@ mod tests {
             proc(31884, 5, 160, &["omp", "--resume", "other.jsonl"]),
         ];
         let order: Vec<u32> = kill_order(&procs, 18480).iter().map(|p| p.pid).collect();
-        assert_eq!(order, [40000, 39676, 41000, 18480], "children before parents, the root last");
+        assert_eq!(order, [18480, 39676, 40000, 41000], "the root first (no worker respawns between kills), then parents before children");
         for spared in [34212, 37764, 222, 31884, 5, 1] {
             assert!(!order.contains(&spared), "{spared}");
         }
@@ -939,6 +983,49 @@ mod tests {
         let mut cycle = procs.clone();
         cycle.push(proc(18480, 41000, 100, &["omp"]));
         assert!(kill_order(&cycle, 18480).len() <= cycle.len(), "a parent loop ends");
+    }
+
+    #[test]
+    fn after_8sync_up_renames_the_running_exe_the_host_is_still_known_by_its_name_and_its_omp_child() {
+        let bin = std::env::temp_dir().join("bin");
+        for ok in [".8sync.old.4242", "8sync.exe", "8sync", "8sync (deleted)"] {
+            assert!(eightsync_image(&bin.join(ok)), "{ok}");
+        }
+        for bad in ["PING.EXE", "nc", "8sync-evil.exe"] {
+            assert!(!eightsync_image(&bin.join(bad)), "{bad}");
+        }
+        let rec = |pid, omp| HostState { pid, omp_pid: Some(omp), port: 4000, token: TOKEN.into(), room: "omp-0000000000000006".into() };
+        let procs = vec![proc(70, 5, 100, &[".8sync.old.70", "ccc", "term", "--host"]), proc(71, 70, 101, &["omp"]), proc(72, 9, 102, &["omp"]), proc(73, 70, 99, &["omp"])];
+        assert!(hosts_its_omp(&procs, &rec(70, 71)), "its omp is its child, started after it");
+        assert!(!hosts_its_omp(&procs, &rec(70, 72)), "an omp that is not its child");
+        assert!(!hosts_its_omp(&procs, &rec(70, 73)), "a 'child' older than the host: the pid was reused");
+        assert!(!hosts_its_omp(&procs, &rec(70, 99)) && !hosts_its_omp(&procs, &rec(98, 71)), "gone");
+        // Real processes: this test is the host, a child it starts is its omp.
+        let mut child = if cfg!(windows) { std::process::Command::new("ping") } else { std::process::Command::new("sleep") };
+        child.args(if cfg!(windows) { ["-n", "30", "127.0.0.1"].as_slice() } else { ["30"].as_slice() });
+        let mut child = child.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap();
+        let snap = ccc_core::transcript::processes();
+        assert!(hosts_its_omp(&snap, &rec(std::process::id(), child.id())));
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn a_viewer_the_hub_drops_has_its_socket_closed() {
+        let (hold, rx) = std::sync::mpsc::channel();
+        let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut hub: Hub<Queue> = Hub::new();
+        hub.join(Queue::spawn(Stuck(rx, closed.clone()))).unwrap();
+        for _ in 0..QUEUE + 4 {
+            hub.push(b"chunk");
+        }
+        assert!(hub.viewers.is_empty());
+        drop(hold);
+        let until = Instant::now() + Duration::from_secs(5);
+        while !closed.load(std::sync::atomic::Ordering::SeqCst) && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(closed.load(std::sync::atomic::Ordering::SeqCst), "a dropped client's socket is shut down, not left frozen");
     }
 
     #[test]
