@@ -55,6 +55,8 @@ const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30
        8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--role <vai>] [--prio P0..P3] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id> | reopen <id> [--note \"…\"]
        8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>|--mail] [--timeout <giây ≤1800>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
        8sync ccc auto merge [--as <phòng>] [--json]   (lead: merge mọi card approved; cần quyền tự merge của owner)
+       8sync ccc auto guard [<30..95>|off] [eco on|off] [--dry-run] [--json]   (tự dọn máy khi RAM/CPU ≥ ngưỡng, mặc định 60%; eco: phòng chạy chế độ tiết kiệm điện, mặc định bật)
+       8sync ccc auto guard now   (một lượt bảo vệ ngay cho mọi dự án đang auto; HQ tự gọi khi RAM/CPU vượt ngưỡng)
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
 pub(super) const DEFAULT_AFTER_S: u64 = 60;
 /// The backup cron of a room. 10 min fired 1,050 cron turns in 36 h on ai-game-studio (each a full
@@ -164,8 +166,8 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
 }
 
 /// The marker write must not fail silently: a lost `paused` would let HQ turn auto on again.
-/// A marker written without `teams` / `omp_model` keeps those of the one it replaces (on / off /
-/// pause never change who is on the team or which model team omp runs).
+/// A marker written without `teams` / `omp_model` / `guard` keeps those of the one it replaces (on /
+/// off / pause never change who is on the team, which model team omp runs or the guard threshold).
 fn write_marker(home: &Path, v: &Value) -> Result<()> {
     let p = marker(home);
     if let Some(d) = p.parent() {
@@ -173,7 +175,7 @@ fn write_marker(home: &Path, v: &Value) -> Result<()> {
     }
     let mut v = v.clone();
     let old = idle::read_json(&p);
-    for k in ["teams", "omp_model"] {
+    for k in ["teams", "omp_model", "guard", "eco"] {
         if v.get(k).is_none() {
             if let Some(t) = old.as_ref().and_then(|m| m.get(k).cloned()) {
                 v[k] = t;
@@ -213,6 +215,55 @@ pub(super) fn set_omp(home: &Path, on: bool, model: Option<&str>, now: u64) -> R
     if let Some(model) = model {
         m["omp_model"] = json!(model);
     }
+    write_marker(home, &m)
+}
+
+/// The resource guard's RAM threshold (%), None while the owner turned it off. Marker `guard`: a
+/// number, or `"off"`; absent = [`super::pressure::DEFAULT_PCT`] (owner 2026-10-21: "ngưỡng 60%").
+pub(super) fn guard_pct(home: &Path) -> Option<u32> {
+    let m = idle::read_json(&marker(home));
+    match m.as_ref().map(|m| &m["guard"]) {
+        Some(Value::String(s)) if s == "off" => None,
+        Some(Value::Bool(false)) => None,
+        Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| super::pressure::PCT_RANGE.contains(n)).or(Some(super::pressure::DEFAULT_PCT)),
+        None => Some(super::pressure::DEFAULT_PCT),
+    }
+}
+
+/// `auto guard <pct>|off`: only the marker's `guard` changes. A marker that does not parse is refused
+/// (rewriting it could drop the owner's `paused`). Off ends the guard's pauses: the next revive
+/// brings those rooms back.
+pub(super) fn set_guard(home: &Path, pct: Option<u32>, now: u64) -> Result<()> {
+    if let Some(n) = pct.filter(|n| !super::pressure::PCT_RANGE.contains(n)) {
+        bail!("ngưỡng {n}%: cần {}..{}\n{USAGE}", super::pressure::PCT_RANGE.start(), super::pressure::PCT_RANGE.end());
+    }
+    set_marker_key(home, "guard", pct.map_or_else(|| json!("off"), |n| json!(n)), now)?;
+    if pct.is_none() {
+        super::pressure::clear_all(home);
+    }
+    Ok(())
+}
+
+/// Rooms run in Windows Efficiency mode (EcoQoS) while the guard is on; marker `eco`, default on
+/// (owner 2026-10-21: "ăn điện ít").
+pub(super) fn guard_eco(home: &Path) -> bool {
+    idle::read_json(&marker(home)).and_then(|m| m["eco"].as_bool()).unwrap_or(true)
+}
+
+/// `auto guard eco on|off`.
+pub(super) fn set_guard_eco(home: &Path, on: bool, now: u64) -> Result<()> {
+    set_marker_key(home, "eco", json!(on), now)
+}
+
+/// One key of the marker changes, the rest stays; a marker that does not parse is refused.
+fn set_marker_key(home: &Path, k: &str, v: Value, now: u64) -> Result<()> {
+    let p = marker(home);
+    let mut m = match idle::read_json(&p) {
+        Some(m) => m,
+        None if p.exists() => bail!("{} hỏng: sửa hoặc xoá file rồi chạy lại", p.display()),
+        None => json!({ "schema": 1, "on": false, "paused": false, "since": now }),
+    };
+    m[k] = v;
     write_marker(home, &m)
 }
 
@@ -546,6 +597,7 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         "teams": teams_of(m.as_ref()),
         "omp_model": m.as_ref().and_then(|m| m["omp_model"].as_str()),
         "omp_blocked": omp_blocked(home),
+        "guard": super::pressure::status_json(home, guard_pct(home)),
     })
 }
 
@@ -571,6 +623,11 @@ pub(super) fn text(v: &Value) -> String {
     // `auto status` only: one line on the project's GitHub CI ([`super::ci`]).
     if let Some(ci) = v["ci"].as_str() {
         s = format!("{s}\n{}", super::ci::line(ci));
+    }
+    if v["on"].as_bool() == Some(true) {
+        for l in super::pressure::lines(&v["guard"]) {
+            s = format!("{s}\n{l}");
+        }
     }
     s
 }
@@ -746,8 +803,8 @@ pub(super) fn lane_playbook(lane: &str) -> &'static str {
     match lane {
         "backlog" => "card backlog: viết AC + MỘT lệnh check (exit 0 = đạt) → `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (bug chặn người dùng hoặc owner nói gấp: `--prio P0`, quan trọng `--prio P1`). Một card = một PR nhỏ một dev làm xong trong một phiên; không tách card R&D/audit/ADR riêng cho việc dev tự làm được. Ý lớn → card con `auto add \"[#<id>] …\"`, card gốc ở backlog (không blocked). Card thêm service/DB/queue/cache/scale/API công khai → gắn nhãn arch khi tạo (`auto add … --label arch`); card nhãn arch chỉ sang ready khi đã có note \"ADR: …\" (phòng arch viết; team không có phòng arch trong `auto status` → tự viết ADR ngắn bằng `/sysdesign`). Ready đầy (claim trả `why`, move bị từ chối) → không tách thêm card.",
         "ready" => "card building: `git fetch origin`, worktree `.claude/worktrees/card-<id>` nhánh `card-<id>-<slug>` tạo từ `origin/main` (KHÔNG chồng lên nhánh card khác; cần code của PR chưa merge → `8sync ccc auto move <id> blocked --note \"chờ PR #<số> merge\"` rồi claim card khác; cần main mới → `git merge origin/main`, không rebase/force-push), trong worktree sửa file bằng Edit/Write và mỗi Bash MỘT lệnh đơn, đường dẫn đầy đủ (không heredoc, `sed -i`, `python -`, `git -C`, PowerShell: guard từ chối), `/ship` card tới commit (test của phần sửa; gate: `8sync ccc risk` rồi chỉ gọi skill nó liệt kê — diff chỉ docs → chỉ `/sec`, không mặc định `/rules` + `/aup-audit`; changelog ghi vào file mới `changelog.d/card-<id>.md`, KHÔNG sửa CHANGELOG.md: mỗi merge làm mọi PR khác conflict, gộp lúc release), push nhánh, `gh pr create` → `8sync ccc auto move <id> qa --pr <số>` (không chờ CI khi `ci` trong status khác `ok`); làm dở → `8sync ccc auto note <id> \"…\"` (giữ claim)",
-        "qa" => "card qa: MỘT worktree riêng của phòng `.claude/worktrees/<tên phòng>` (qa → `.claude/worktrees/qa`, qa2 → `.claude/worktrees/qa2`; không dùng chung với phòng qa khác) dùng lại cho mọi card (`git fetch origin <nhánh PR>` + `git checkout --detach <head sha>`; `npm ci` chỉ khi lockfile đổi); gate test của dự án chạy MỘT lần cho head SHA (`gh pr view <pr> --json headRefOid`): card đã có note `gate <sha>` đúng SHA đó → dùng lại, không thì chạy `check` + suite test rồi `8sync ccc auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"`; UAT thật, `8sync shot` chạy thẳng (không `&` + sleep), ảnh lưu đúng `qa/evidence/card-<id>-<slug>.png` (không lưu ảnh hàng loạt thiếu tiền tố `card-<id>-` vào `qa/evidence/`), server preview/dev tự mở cho UAT → tắt ngay sau khi chụp (KillShell hoặc kill đúng PID; KHÔNG kill theo tên `node.exe`/`chrome.exe`: giết cả HQ) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`; CI không xanh (`ci` khác `ok`) → gate local này là bằng chứng, không chờ CI",
-        "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước; changelog của card nằm ở `changelog.d/card-<id>.md`, không đòi CHANGELOG.md); test: dùng note `gate <sha>` của qa khi head SHA chưa đổi (không chạy lại suite), SHA đổi → chạy gate một lần và note `gate <sha>: <lệnh>: <kết quả>` mới → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi, hoặc PR chồng nhánh/chứa việc card khác → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
+        "qa" => "card qa: MỘT worktree riêng của phòng `.claude/worktrees/<tên phòng>` (qa → `.claude/worktrees/qa`, qa2 → `.claude/worktrees/qa2`; không dùng chung với phòng qa khác) dùng lại cho mọi card (`git fetch origin <nhánh PR>` + `git checkout --detach <head sha>`; `pnpm install --frozen-lockfile --prefer-offline`/`npm ci` chỉ khi lockfile đổi); KHÔNG chép repo/node_modules ra %TEMP% (Defender quét): file tạm chỉ ở `.claude/worktrees/<tên phòng>-scratch/`, xoá sau card; gate test của dự án chạy MỘT lần cho head SHA (`gh pr view <pr> --json headRefOid`): card đã có note `gate <sha>` đúng SHA đó → dùng lại, không thì chạy `check` + suite test rồi `8sync ccc auto note <id> \"gate <sha>: <lệnh>: <kết quả>\"`; UAT thật, `8sync shot` chạy thẳng (không `&` + sleep), ảnh lưu đúng `qa/evidence/card-<id>-<slug>.png` (không lưu ảnh hàng loạt thiếu tiền tố `card-<id>-` vào `qa/evidence/`), server preview/dev tự mở cho UAT → tắt ngay sau khi chụp (KillShell hoặc kill đúng PID; KHÔNG kill theo tên `node.exe`/`chrome.exe`: giết cả HQ) → đạt `8sync ccc auto move <id> review`; trượt → `8sync ccc auto move <id> ready --note \"[qa] <lỗi + cách tái hiện>\"`; CI không xanh (`ci` khác `ok`) → gate local này là bằng chứng, không chờ CI",
+        "review" => "card review: review đối kháng diff PR (bug, test thiếu, bảo mật, quy ước; changelog của card nằm ở `changelog.d/card-<id>.md`, không đòi CHANGELOG.md); test: dùng note `gate <sha>` của qa khi head SHA chưa đổi (không chạy lại suite), SHA đổi → chạy gate một lần trong worktree của phòng `.claude/worktrees/<tên phòng>` (không chép repo ra %TEMP%; file tạm ở `.claude/worktrees/<tên phòng>-scratch/`, xoá sau card) và note `gate <sha>: <lệnh>: <kết quả>` mới → ổn `8sync ccc auto move <id> approved --sha <head commit đã review>`; lỗi, hoặc PR chồng nhánh/chứa việc card khác → `8sync ccc auto move <id> ready --note \"[review] <lỗi>\"`",
         _ => "",
     }
 }
@@ -1773,6 +1830,50 @@ pub(super) fn run(
     if rest.first().map(String::as_str) == Some("ci") {
         return super::ci::run(&rest[1..], home, root, &ci_repo(&scope(home), root), now);
     }
+    if rest.first().map(String::as_str) == Some("guard") {
+        let (mut set, mut dry, mut eco) = (None, false, None);
+        let mut it = rest[1..].iter();
+        while let Some(a) = it.next() {
+            match a.as_str() {
+                "--json" => {}
+                "--dry-run" => dry = true,
+                "eco" if eco.is_none() => {
+                    eco = Some(match it.next().map(String::as_str) {
+                        Some("on") => true,
+                        Some("off") => false,
+                        _ => bail!("eco cần `on` hoặc `off`\n{USAGE}"),
+                    })
+                }
+                "off" if set.is_none() => set = Some(None),
+                n if set.is_none() && !n.is_empty() && n.trim_end_matches('%').chars().all(|c| c.is_ascii_digit()) => {
+                    set = Some(Some(n.trim_end_matches('%').parse::<u32>().map_err(|_| anyhow::anyhow!("ngưỡng không hợp lệ: `{n}`\n{USAGE}"))?));
+                }
+                x => bail!("không rõ `{x}`\n{USAGE}"),
+            }
+        }
+        if let Some(on) = eco {
+            set_guard_eco(home, on, now)?;
+        }
+        if dry {
+            // Read-only: what a pass would kill and each live room's load, nothing killed or sent.
+            let exe = super::ensure_claude(true)?;
+            let bin = super::team::Bin { exe, root };
+            for l in super::pressure::dry_run(home, root, &bin, &rooms(), now) {
+                println!("{l}");
+            }
+            return Ok(());
+        }
+        if let Some(pct) = set {
+            set_guard(home, pct, now)?;
+        }
+        let g = super::pressure::status_json(home, guard_pct(home));
+        if rest.iter().any(|a| a == "--json") {
+            println!("{}", json!({ "guard": g }));
+        } else {
+            println!("{}", super::pressure::lines(&g).join("\n"));
+        }
+        return Ok(());
+    }
     if rest.first().map(String::as_str) == Some("omp") {
         let on = match rest.get(1).map(String::as_str) {
             Some("on") => true,
@@ -2377,6 +2478,7 @@ mod tests {
                 "delegate",
                 "five_hour_pct",
                 "gate",
+                "guard",
                 "idle",
                 "lease_until",
                 "manual",
@@ -2407,6 +2509,36 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("lease"));
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn guard_threshold_defaults_to_60_and_survives_on_pause_off() {
+        let h = home("guard");
+        assert_eq!(guard_pct(&h), Some(super::super::pressure::DEFAULT_PCT));
+        set_guard(&h, Some(70), 1).unwrap();
+        assert_eq!(guard_pct(&h), Some(70));
+        set(&h, on(2.0, 60), false, 2).unwrap();
+        set(&h, Mode::Pause, false, 3).unwrap();
+        mark_paused(&h, 4).unwrap();
+        assert_eq!(guard_pct(&h), Some(70), "on / pause / cancel keep the owner's threshold");
+        assert_eq!(status(&h, false, 5)["guard"]["pct"], 70);
+        set_guard(&h, None, 6).unwrap();
+        assert!(guard_eco(&h), "eco on by default");
+        run(&["guard".to_string(), "eco".into(), "off".into()], &h, false, &h, Vec::new).unwrap();
+        set(&h, on(2.0, 60), false, 6).unwrap();
+        assert!(!guard_eco(&h) && status(&h, false, 6)["guard"]["eco"] == false, "eco off survives on/pause");
+        assert!(run(&["guard".to_string(), "eco".into(), "maybe".into()], &h, false, &h, Vec::new).is_err());
+        assert_eq!(guard_pct(&h), None);
+        assert!(status(&h, false, 7)["guard"]["pct"].is_null());
+        for bad in [29, 96] {
+            assert!(set_guard(&h, Some(bad), 8).is_err(), "{bad}");
+        }
+        assert_eq!(guard_pct(&h), None, "a refused value changes nothing");
+        let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        run(&s(&["guard", "65%"]), &h, false, &h, Vec::new).unwrap();
+        assert_eq!(guard_pct(&h), Some(65));
+        assert!(run(&s(&["guard", "lots"]), &h, false, &h, Vec::new).is_err());
         let _ = std::fs::remove_dir_all(&h);
     }
 

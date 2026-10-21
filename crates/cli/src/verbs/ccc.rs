@@ -49,6 +49,7 @@ pub(crate) mod report;
 mod risk;
 mod secret;
 pub(crate) mod resume;
+mod pressure;
 mod reap;
 mod room;
 mod statusline;
@@ -243,7 +244,20 @@ pub fn run(a: Args) -> Result<()> {
                 // Only the roots `auto up` brought a team up in (HQ calls this without a cwd), one
                 // revive at a time (HQ and a boot hook can both fire it).
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-                let Some(_lock) = team::revive_lock(&env.home, now)? else { return Ok(()) };
+                // One deadline for every root of this run (HQ kills `revive` at 120 s), the lock
+                // wait included.
+                team::run_clock_start();
+                // A `guard now` pass holds the lock a few seconds: wait for it (≤ 10 s) rather than
+                // lose this tick; a revive or `up` still running after that keeps it.
+                let mut lock = team::revive_lock(&env.home, now)?;
+                for _ in 0..20 {
+                    if lock.is_some() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    lock = team::revive_lock(&env.home, now)?;
+                }
+                let Some(_lock) = lock else { return Ok(()) };
                 for r in team::team_roots(&env.home) {
                     let r = PathBuf::from(r);
                     if let Err(e) = auto_team(&env, &r, rest) {
@@ -251,6 +265,8 @@ pub fn run(a: Args) -> Result<()> {
                     }
                 }
                 Ok(())
+            } else if rest.first().is_some_and(|a| a == "guard") && rest.get(1).is_some_and(|a| a == "now") {
+                guard_now(&env, &rest[2..])
             } else if team::wants(rest) {
                 auto_team(&env, &repo, rest)
             } else {
@@ -594,6 +610,60 @@ fn down_nested(env: &Env, root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `8sync ccc auto guard now`: one resource-guard pass ([`pressure::tick`]) for every team root
+/// where auto and the guard are on, outside `revive`. HQ fires it within seconds of a breach (owner
+/// 2026-10-21: "bị cao là auto xử lý liền luôn không có để lâu"); passes closer than
+/// [`pressure::NOW_GAP_S`] are skipped. It takes `revive`'s lock waiting ≤ 2 s and otherwise
+/// yields (a revive does the pass itself; revive waits ≤ 10 s for this one, never starved).
+/// `--json`: one object `{acted, skipped, rows}`; `acted` false = the pass changed nothing (no
+/// kill, restart, pause, resume or level change): HQ then backs off.
+fn guard_now(env: &Env, extra: &[String]) -> Result<()> {
+    if let Some(x) = extra.iter().find(|a| *a != "--json") {
+        bail!("không rõ `{x}`: dùng `8sync ccc auto guard now`");
+    }
+    let as_json = !extra.is_empty();
+    let clock = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let mut lock = team::revive_lock(&env.home, clock())?;
+    for _ in 0..4 {
+        if lock.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        lock = team::revive_lock(&env.home, clock())?;
+    }
+    let Some(_lock) = lock else {
+        if as_json {
+            println!("{}", serde_json::json!({ "acted": false, "skipped": "revive", "rows": [] }));
+        } else {
+            println!("máy: revive đang chạy, lượt bảo vệ chạy trong đó");
+        }
+        return Ok(());
+    };
+    let now = clock();
+    let subscription = login_kind_at(&env.home).kind == "subscription";
+    let gated = !auto::status(&env.home, subscription, now)["gate"].is_null();
+    let listing = reap::Listing::new(now);
+    let exe = ensure_claude(true)?;
+    let (mut rows, mut acted) = (Vec::new(), false);
+    for r in team::team_roots(&env.home) {
+        let root = PathBuf::from(r);
+        let registry: Vec<(String, String)> = sessions(env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
+        let bin = team::Bin { exe: exe.clone(), root: &root };
+        let (got, did) = pressure::tick(&env.home, &root, &bin, &registry, gated, now, pressure::NOW_GAP_S, &listing);
+        rows.extend(got);
+        acted |= did;
+    }
+    if as_json {
+        let rows: Vec<serde_json::Value> = rows.iter().map(|r| serde_json::json!({ "name": r.name, "role": r.role, "state": r.state })).collect();
+        println!("{}", serde_json::json!({ "acted": acted, "skipped": null, "rows": rows }));
+    } else {
+        for row in &rows {
+            println!("{} ({}): {}", row.name, row.role, row.state);
+        }
+    }
+    Ok(())
+}
+
 /// How long `auto up` waits for a running revive / up to finish.
 const UP_LOCK_WAIT_S: u64 = 150;
 
@@ -619,8 +689,11 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         for r in &rows {
             println!("{} ({}): {} {}", r.name, r.role, r.state, r.short);
         }
-        // Approved cards land here, in code, while the owner's self-merge grant holds.
-        if auto::running(&env.home) && auto::in_scope(&env.home, Some(&root.to_string_lossy())) && auto::status(&env.home, subscription, now)["gate"].is_null() {
+        // Approved cards land here, in code, while the owner's self-merge grant holds; not past this
+        // revive's deadline (the next tick merges).
+        if team::revive_left() < std::time::Duration::from_secs(15) {
+            println!("merge nền: để lượt revive sau (hết giờ của lượt này)");
+        } else if auto::running(&env.home) && auto::in_scope(&env.home, Some(&root.to_string_lossy())) && auto::status(&env.home, subscription, now)["gate"].is_null() {
             match merge::background(&env.home, root, now) {
                 Ok(lines) => lines.iter().for_each(|l| println!("{l}")),
                 Err(e) => println!("merge nền: lỗi — {e:#}"),
@@ -694,6 +767,8 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     };
     // One resumer at a time: HQ's revive and this `up` must not fork the same dead room twice.
     // HQ's revive (every 2 min) holds this while it reopens rooms: wait for it rather than fail.
+    // The wait counts against `up`'s stagger budget (HQ gives `up` 300 s in all).
+    team::run_clock_start();
     let mut waited = 0;
     let _lock = loop {
         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs());

@@ -5,6 +5,17 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.16] — 2026-10-21
+### Added
+- **Resource guard: overload is handled within seconds, by itself.** Owner 2026-10-21: "tối ưu hóa hơn ăn điện ít, ram, cpu, gpu ít ổn định có ngưỡng tự chặn cleanup và auto chạy lại", "bị cao là auto xử lý liền luôn không có để lâu". Threshold 60% by default (`8sync ccc auto guard <30..95>|off`, `guard eco on|off`, `guard --dry-run`, `guard now [--json]`; HQ Máy → "Bảo vệ máy").
+  - **Trigger:** HQ samples the machine every 5 s server-side and runs `8sync ccc auto guard now` when CPU stays ≥ threshold for 3 samples, RAM for 2, or VRAM ≥ 90% for 2 while a room holds GPU memory; one run at a time, ≥ 20 s apart, backing off to 300 s while passes change nothing. Without HQ, `auto revive` runs the same pass every 2 min.
+  - **Every pass:** room process trees run below normal priority and in Efficiency mode (EcoQoS); on a breach the rooms' build/test processes (node, esbuild, cargo, rustc, browsers…) drop to idle priority (never the room's claude, 8sync, `auto wait` or MCP servers) and go back when calm.
+  - **L1 (at once):** kills what rooms left behind in this project only — detached servers older than 5 min, test watchers, language servers of closed cards, headless browsers and orphaned MCP servers that belong to the project — and room `<room>-scratch` entries idle for 60 min; each room holding ≥ 1 GB gets one note naming its top items.
+  - **L2:** RAM ≥ threshold+15, or over it for 30 s: up to 2 idle heavy rooms restart in the same conversation without LSP plugins and indexing MCP servers (serena, codebase-memory) — re-checked busy and inbox right before the stop; at most once per room per 30 min.
+  - **L3:** CPU ≥ 90% for 45 s, or RAM ≥ threshold+15 for 60 s: rooms that don't fit pause in a fixed order (review2, dev6, dev5, qa2, ba, …; never lead, dev, qa), their cards go back to the board, and they come back one per tick once another room fits for 10 min. `auto up` clears pauses; `guard off` brings every paused room back.
+  - Rooms start staggered (`up` ≤ 90 s, revive ≤ 50 s) and one revive has a 90 s deadline across all projects. Planning, QA and review rooms start lean while the guard is on. The lead is told about restarts and pauses.
+  - QA/review lane text: never copy the repo or node_modules to %TEMP%; test in the room's gate worktree, scratch only under `.claude/worktrees/<room>-scratch/`. HQ shows the size of old `%TEMP%\qa-card-*` copies and Defender's CPU share with the exclusion command to copy (never run by 8sync).
+
 ## [0.110.15] — 2026-10-21
 ### Added
 - **HQ "Đóng dự án" stops the project for real (`8sync ccc auto close [--dry-run] [--json]`).** Owner 2026-10-21: "kill hẳn luôn không phải ẩn". The project "⋯" item opens a confirm dialog listing what will stop (from `auto close --dry-run --json`): team rooms, other Claude Code sessions, omp sessions (warning when one is probably the owner's own open terminal) and leftover processes, under the repo root it resolved. "Dừng hẳn & đóng" runs the close in that root through `POST /api/projects/sidebar {root, hidden: true, kill: true}` (token + Origin gate, fixed argv), then hides the project; a close that fails, or that resolves to another root, hides nothing and offers "Chỉ ẩn". The CLI:

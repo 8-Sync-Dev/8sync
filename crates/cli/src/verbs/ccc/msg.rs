@@ -167,27 +167,34 @@ pub(super) fn run(args: &[String], home: &Path, root: &Path, rooms: &[Room]) -> 
         bail!("--all: dự án này không có phòng nào khác");
     }
     let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
-    let body = format!("[từ phòng {}] {text}", me.label);
     let from_id = me.room.map_or(me.label.as_str(), |r| r.id.as_str());
-    let cwd = root.to_string_lossy();
     let mut sent = 0;
     for r in targets {
-        if let Err(e) = crate::verbs::hq::queue_inbox_from(home, &r.id, &body, &me.label, now_ms) {
-            crate::ui::warn(&format!("{} ({}): không gửi được — {e:#}", r.name, r.team));
-            continue;
+        match deliver(home, root, (from_id, &me.label, me.room.map(|m| m.name.as_str())), (&r.id, &r.name), &text, now_ms) {
+            Ok(live) => {
+                sent += 1;
+                let when = if live { "vào ngay khi phòng rảnh" } else { "vào khi phòng xong lượt kế" };
+                crate::ui::ok(&format!("→ {} ({}): {when}", r.name, r.team));
+            }
+            Err(e) => crate::ui::warn(&format!("{} ({}): không gửi được — {e:#}", r.name, r.team)),
         }
-        sent += 1;
-        if let Err(e) = crate::verbs::hq::journal_room_message(home, &cwd, (from_id, me.room.map(|m| m.name.as_str())), (&r.id, &r.name), &text, now_ms) {
-            crate::ui::warn(&format!("journal HQ: {e:#}"));
-        }
-        let live = crate::verbs::hq::inbox_live(home, &r.id, std::time::SystemTime::now());
-        let when = if live { "vào ngay khi phòng rảnh" } else { "vào khi phòng xong lượt kế" };
-        crate::ui::ok(&format!("→ {} ({}): {when}", r.name, r.team));
     }
     if sent == 0 {
         bail!("không gửi được tin nào");
     }
     Ok(())
+}
+
+/// One message into room `to` (inbox id, name) as `[từ phòng <label>] <text>`, journalled for HQ
+/// chat; `from` = (id, label, room name). `true` when the room's inbox is live (taken as soon as it
+/// is idle). Also how the resource guard ([`super::pressure`]) talks to rooms.
+pub(super) fn deliver(home: &Path, root: &Path, from: (&str, &str, Option<&str>), to: (&str, &str), text: &str, now_ms: u64) -> Result<bool> {
+    let (from_id, label, from_room) = from;
+    crate::verbs::hq::queue_inbox_from(home, to.0, &format!("[từ phòng {label}] {text}"), label, now_ms)?;
+    if let Err(e) = crate::verbs::hq::journal_room_message(home, &root.to_string_lossy(), (from_id, from_room), to, text, now_ms) {
+        crate::ui::warn(&format!("journal HQ: {e:#}"));
+    }
+    Ok(crate::verbs::hq::inbox_live(home, to.0, std::time::SystemTime::now()))
 }
 
 #[cfg(test)]

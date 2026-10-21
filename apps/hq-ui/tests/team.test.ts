@@ -91,7 +91,7 @@ describe("team", () => {
     const ok = await post({ root: room.cwd.toUpperCase(), action: "clean" });
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ ok: true, output: "✓ lead mở\n✓ dev mở" });
-    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "auto", "up", "--clear-ss"], 180_000, room.cwd);
+    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "auto", "up", "--clear-ss"], 300_000, room.cwd);
     run.mockClear();
     expect((await post({ root: path.join(os.tmpdir(), "not-a-project"), action: "up" })).status).toBe(409);
     expect((await post({ root: room.cwd, action: "rm -rf" })).status).toBe(422);

@@ -514,7 +514,7 @@ mod tests {
     const NOW: u64 = 1_000_000;
 
     fn node(pid: u32, ppid: u32, cmd: &str) -> Proc {
-        Proc { pid, ppid, started: NOW - 600, rss: 0, node: true, shell: false, image: "node".into(), cmd: cmd.into() }
+        Proc { pid, ppid, started: NOW - 600, rss: 0, node: true, shell: false, image: "node".into(), cmd: cmd.into(), ..Proc::default() }
     }
 
     fn img(image: &str, pid: u32, ppid: u32, cmd: &str) -> Proc {

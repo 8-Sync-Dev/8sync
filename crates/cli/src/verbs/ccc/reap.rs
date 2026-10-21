@@ -27,7 +27,7 @@ const PRESSURE_EVERY_S: u64 = 120;
 const PRESSURE_SERVER_AGE_S: u64 = 10 * 60;
 
 /// A process as the OS lists it (every image: a parent must be seen to tell an orphan).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub(super) struct Proc {
     pub pid: u32,
     pub ppid: u32,
@@ -35,7 +35,8 @@ pub(super) struct Proc {
     pub started: u64,
     /// Resident memory (bytes), 0 when unknown.
     pub rss: u64,
-    /// The image is node: nothing else is ever picked or killed here (`auto close` takes more).
+    /// The image is node: nothing else is ever picked or killed here (`auto close` takes more; the
+    /// resource guard, [`super::pressure`], also takes headless browsers and orphaned MCP servers).
     pub node: bool,
     /// The image is a shell (bash, sh, zsh, cmd, pwsh…): what a room's background tool call leaves.
     pub shell: bool,
@@ -43,6 +44,16 @@ pub(super) struct Proc {
     pub image: String,
     /// Command line; empty when the OS did not give it.
     pub cmd: String,
+    /// Image file name, lowercased (`node.exe`, `chrome.exe`, `node`); empty when unknown.
+    pub name: String,
+    /// CPU time used so far (100 ns units), 0 when unknown.
+    pub cpu: u64,
+    /// Runs at normal (or above-normal) priority: the resource guard lowers a room's
+    /// ([`super::pressure`]). False when unknown.
+    pub normal: bool,
+    /// Already at idle priority (Windows base priority 4, unix nice 19): the guard's breach
+    /// measure for a room's build/test processes. False when unknown.
+    pub idle: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -63,7 +74,7 @@ impl Sweep {
 }
 
 /// RAM in use (%) of a sample's `(total, used)` MiB.
-fn ram_pct(mem: Option<(u64, u64)>) -> Option<u32> {
+pub(super) fn ram_pct(mem: Option<(u64, u64)>) -> Option<u32> {
     mem.filter(|(t, _)| *t > 0).map(|(t, u)| (u.min(t) * 100 / t) as u32)
 }
 
@@ -81,7 +92,7 @@ fn due(stamps: &Value, key: &str, now: u64, ram: Option<u32>) -> Option<Sweep> {
 }
 
 /// `RAM 88% · CPU 40% · GPU 35% (6120/16303 MB)`; parts the OS did not give are left out.
-fn machine_line(s: &Sample) -> String {
+pub(super) fn machine_line(s: &Sample) -> String {
     let mut parts = Vec::new();
     if let Some(r) = ram_pct(s.mem) {
         parts.push(format!("RAM {r}%"));
@@ -101,11 +112,35 @@ fn pct_after(mem: (u64, u64), freed: u64) -> Option<u32> {
     ram_pct(Some((t, u.saturating_sub(freed / (1024 * 1024)))))
 }
 
+/// One process listing per revive pass, taken on first use and shared by the reaper and the
+/// resource guard ([`super::pressure`]); what one of them killed is left out for the other.
+pub(super) struct Listing {
+    now: u64,
+    procs: std::cell::OnceCell<Vec<Proc>>,
+    killed: std::cell::RefCell<Vec<u32>>,
+}
+
+impl Listing {
+    pub(super) fn new(now: u64) -> Listing {
+        Listing { now, procs: std::cell::OnceCell::new(), killed: std::cell::RefCell::new(Vec::new()) }
+    }
+
+    /// The processes, minus the ones killed through [`Listing::killed`].
+    pub(super) fn procs(&self) -> Vec<Proc> {
+        let k = self.killed.borrow();
+        self.procs.get_or_init(|| list(self.now)).iter().filter(|p| !k.contains(&p.pid)).cloned().collect()
+    }
+
+    pub(super) fn killed(&self, pids: &[u32]) {
+        self.killed.borrow_mut().extend_from_slice(pids);
+    }
+}
+
 /// `auto revive`'s pass for `root`: a machine row, then one row per leftover server killed
 /// ([`pick`], with its node children: [`tree`]); under RAM pressure also a summary row. Nothing
 /// while auto does not run for `root` (the owner's machine without a team is never swept) or when
 /// the sweep is not [`due`].
-pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Vec<Row> {
+pub(super) fn tick(home: &Path, root: &Path, now: u64, listing: &Listing) -> Vec<Row> {
     if !super::auto::running(home) || !super::auto::in_scope(home, Some(&root.to_string_lossy())) {
         return Vec::new();
     }
@@ -125,7 +160,7 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Vec<Row> {
     if let Some(line) = sample.as_ref().map(machine_line).filter(|l| !l.is_empty()) {
         rows.push(row("trạng thái".into(), line));
     }
-    let procs = list(now);
+    let procs = listing.procs();
     let mut freed = (0, 0u64);
     for pid in pick(&procs, root, now, sweep.server_age(), std::process::id(), &|p| p.exists()) {
         let Some(p) = procs.iter().find(|p| p.pid == pid) else { continue };
@@ -135,6 +170,7 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Vec<Row> {
         // The server itself is first in the tree: its kill is the one that counts.
         let ok = kill(&pids).first().copied().unwrap_or(false);
         if ok {
+            listing.killed(&pids);
             freed = (freed.0 + 1, freed.1 + rss);
         }
         let state = if ok { format!("dọn server cũ: {what}") } else { format!("không dọn được server cũ: {what}") };
@@ -163,34 +199,17 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Vec<Row> {
 /// Never `me` or its ancestors (HQ runs `auto revive`), never HQ's own app (`hq-ui`, `hq-channel`),
 /// never a process with no start time.
 pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u32, exists: &dyn Fn(&Path) -> bool) -> Vec<u32> {
-    let root_s = root.to_string_lossy();
-    let fold = windows_path(&root_s);
-    let rootn = norm_root(&root_s);
-    let rootn = rootn.as_str();
-    if rootn.is_empty() {
-        return Vec::new();
-    }
+    let fold = windows_path(&root.to_string_lossy());
+    let Some(rootn) = root_key(root) else { return Vec::new() };
     let keep = lineage(procs, me);
-    // A parent of unknown start time (0) counts as a live host: kept rather than guessed. pid 1 is
-    // unix init adopting an orphan.
-    let detached = |p: &Proc| {
-        let mut cur = p;
-        for _ in 0..32 {
-            match procs.iter().find(|q| cur.ppid > 1 && q.pid == cur.ppid && q.started <= cur.started) {
-                None => return true,
-                Some(q) if q.started != 0 && (q.node || q.shell) => cur = q,
-                Some(_) => return false,
-            }
-        }
-        false
-    };
+    let detached = |p: &Proc| detached(procs, p, &|q| q.node || q.shell);
     let mut out = Vec::new();
     for p in procs {
         if !p.node || keep.contains(&p.pid) || p.started == 0 || !detached(p) {
             continue;
         }
         let c = norm(&p.cmd, fold);
-        if is_hq(&c) || !names(&c, rootn) {
+        if is_hq(&c) || !names(&c, &rootn) {
             continue;
         }
         let age = now.saturating_sub(p.started);
@@ -198,9 +217,9 @@ pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u
         // window (`start cmd /k npm run dev` from a launcher that exited) or a service (pm2,
         // systemd: ppid 1) and is never taken.
         let stale = if kind(&p.cmd).is_some() {
-            age >= server_age && worktree(&c, rootn).is_some()
+            age >= server_age && worktree(&c, &rootn).is_some()
         } else if c.contains("tsserver") || c.contains("typescript-language-server") {
-            worktree(&c, rootn).is_some_and(|dir| age >= TS_AGE_S || !exists(&root.join(".claude").join("worktrees").join(dir)))
+            worktree(&c, &rootn).is_some_and(|dir| age >= TS_AGE_S || !exists(&root.join(".claude").join("worktrees").join(dir)))
         } else {
             false
         };
@@ -213,11 +232,37 @@ pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u
     out.iter().copied().filter(|pid| !trees.iter().any(|t| t[0] != *pid && t.contains(pid))).collect()
 }
 
+/// [`norm_root`] of `root`; None for an empty root.
+pub(super) fn root_key(root: &Path) -> Option<String> {
+    Some(norm_root(&root.to_string_lossy())).filter(|r| !r.is_empty())
+}
+
+/// Walking up from `p` through parents that `through` accepts ends at one whose parent is gone (or
+/// names a pid reused by a later process). A parent of unknown start time (0) counts as a live
+/// host: kept rather than guessed. pid 1 is unix init adopting an orphan.
+pub(super) fn detached(procs: &[Proc], p: &Proc, through: &dyn Fn(&Proc) -> bool) -> bool {
+    let mut cur = p;
+    for _ in 0..32 {
+        match procs.iter().find(|q| cur.ppid > 1 && q.pid == cur.ppid && q.started <= cur.started) {
+            None => return true,
+            Some(q) if q.started != 0 && through(q) => cur = q,
+            Some(_) => return false,
+        }
+    }
+    false
+}
+
 /// `pid` then its node descendants: a child counts only when it started no earlier than its
 /// parent (a `ParentProcessId` naming a recycled pid is never followed); a non-node child is walked
 /// through but never returned, so nothing but node is ever killed.
 fn tree(procs: &[Proc], pid: u32) -> Vec<u32> {
-    descendants(procs, pid, &|_| false).into_iter().filter(|p| *p == pid || procs.iter().any(|q| q.pid == *p && q.node)).collect()
+    tree_of(procs, pid, &|q| q.node)
+}
+
+/// `pid` then every descendant `keep` accepts (others are walked through, never returned), with the
+/// start-time rule of [`descendants`].
+pub(super) fn tree_of(procs: &[Proc], pid: u32, keep: &dyn Fn(&Proc) -> bool) -> Vec<u32> {
+    descendants(procs, pid, &|_| false).into_iter().filter(|p| *p == pid || procs.iter().any(|q| q.pid == *p && keep(q))).collect()
 }
 
 /// `pid` then every descendant of any image, parents before children; a child counts only when it
@@ -287,7 +332,7 @@ pub(super) fn names(c: &str, root: &str) -> bool {
 }
 
 /// `<dir>` of the first `<root>/.claude/worktrees/<dir>` in `c` (as `c` spells it).
-fn worktree<'a>(c: &'a str, root: &str) -> Option<&'a str> {
+pub(super) fn worktree<'a>(c: &'a str, root: &str) -> Option<&'a str> {
     let marker = format!("{root}/.claude/worktrees/");
     let i = c.find(&marker)? + marker.len();
     let dir = c[i..].split(['/', '"', '\'', ' ', '\t']).next()?;
@@ -391,9 +436,9 @@ pub(super) fn list(now: u64) -> Vec<Proc> {
     {
         let _ = now;
         use std::os::windows::process::CommandExt;
-        // UTF-8 out: in the console code page a room's Vietnamese prompt in a command line turns
-        // into control bytes (`→` → 0x1A) and the whole JSON fails to parse.
-        let ps = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Select ProcessId,ParentProcessId,Name,WorkingSetSize,CommandLine,@{n='Started';e={if($_.CreationDate){([DateTimeOffset]$_.CreationDate).ToUnixTimeSeconds()}else{0}}} | ConvertTo-Json -Compress";
+        // UTF-8 out: in the OEM code page a room's command line (its Vietnamese goal prompt) came
+        // out with `→` as a raw 0x1A, and the whole listing failed to parse (seen live 2026-10-21).
+        let ps = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Select ProcessId,ParentProcessId,Name,WorkingSetSize,CommandLine,Priority,@{n='Cpu';e={[uint64]$_.KernelModeTime+[uint64]$_.UserModeTime}},@{n='Started';e={if($_.CreationDate){([DateTimeOffset]$_.CreationDate).ToUnixTimeSeconds()}else{0}}} | ConvertTo-Json -Compress";
         let mut c = std::process::Command::new("powershell");
         c.args(["-NoProfile", "-NonInteractive", "-Command", ps])
             .stdin(std::process::Stdio::null())
@@ -427,10 +472,12 @@ pub(super) fn list(now: u64) -> Vec<Proc> {
     }
 }
 
-/// `ConvertTo-Json` of the `Win32_Process` rows: an array, or one object for a single process.
+/// `ConvertTo-Json` of the `Win32_Process` rows: an array, or one object for a single process. A raw
+/// control character (never valid JSON, inside a string or out) reads as a space.
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
 fn parse_windows(s: &str) -> Vec<Proc> {
-    let v: Value = serde_json::from_str(s.trim()).unwrap_or(Value::Null);
+    let clean: String = s.trim().chars().map(|c| if c.is_control() && !matches!(c, '\t' | '\n' | '\r') { ' ' } else { c }).collect();
+    let v: Value = serde_json::from_str(&clean).unwrap_or(Value::Null);
     let rows = match v {
         Value::Array(a) => a,
         o @ Value::Object(_) => vec![o],
@@ -439,16 +486,20 @@ fn parse_windows(s: &str) -> Vec<Proc> {
     rows.iter()
         .filter_map(|r| {
             let name = r["Name"].as_str().unwrap_or_default();
-            let node = name.eq_ignore_ascii_case("node.exe");
             Some(Proc {
                 pid: u32::try_from(r["ProcessId"].as_u64()?).ok()?,
                 ppid: r["ParentProcessId"].as_u64().and_then(|x| u32::try_from(x).ok()).unwrap_or(0),
                 started: r["Started"].as_u64().unwrap_or(0),
                 rss: r["WorkingSetSize"].as_u64().unwrap_or(0),
-                node,
+                node: name.eq_ignore_ascii_case("node.exe"),
                 shell: is_shell(name),
                 image: image_of(name),
                 cmd: r["CommandLine"].as_str().unwrap_or_default().to_string(),
+                name: name.to_ascii_lowercase(),
+                cpu: r["Cpu"].as_u64().unwrap_or(0),
+                // Base priority: 8 normal, 10 above normal (6 below normal, 4 idle, 13 high, 24 realtime).
+                normal: matches!(r["Priority"].as_u64(), Some(8..=10)),
+                idle: r["Priority"].as_u64() == Some(4),
             })
         })
         .collect()
@@ -477,11 +528,12 @@ fn parse_ps(s: &str, now: u64) -> Vec<Proc> {
             let rss: u64 = f.next()?.parse().ok()?;
             let cmd = f.collect::<Vec<_>>().join(" ");
             let arg0 = cmd.split_whitespace().next().unwrap_or_default();
-            let node = arg0.rsplit('/').next().is_some_and(|b| b.starts_with("node"));
+            let base = arg0.rsplit('/').next().unwrap_or(arg0).to_ascii_lowercase();
+            let node = base.starts_with("node");
             let (days, hms) = etime.split_once('-').map_or((0, etime), |(d, r)| (d.parse().unwrap_or(0), r));
             let secs = hms.split(':').try_fold(0u64, |acc, x| x.parse::<u64>().ok().map(|n| acc * 60 + n))?;
             let (shell, image) = (is_shell(arg0), image_of(arg0));
-            Some(Proc { pid, ppid, started: now.saturating_sub(days * 86_400 + secs), rss: rss * 1024, node, shell, image, cmd })
+            Some(Proc { pid, ppid, started: now.saturating_sub(days * 86_400 + secs), rss: rss * 1024, node, shell, image, cmd, name: base, cpu: 0, normal: false, idle: false })
         })
         .collect()
 }
@@ -501,18 +553,24 @@ fn list_linux() -> Vec<Proc> {
             let pid: u32 = e.file_name().to_str()?.parse().ok()?;
             let raw = std::fs::read(e.path().join("cmdline")).ok()?;
             let argv: Vec<String> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
-            let node = argv.first().and_then(|a| a.rsplit('/').next()).is_some_and(|b| b.starts_with("node"));
+            let base = argv.first().and_then(|a| a.rsplit('/').next()).unwrap_or_default().to_ascii_lowercase();
+            let node = base.starts_with("node");
             let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
             let f: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
             let ppid = f.get(1)?.parse().ok()?;
             let ticks: u64 = f.get(19)?.parse().ok()?;
+            // utime + stime, clock ticks (USER_HZ 100) → 100 ns units.
+            let cpu = f.get(11).and_then(|u| u.parse::<u64>().ok()).unwrap_or(0) + f.get(12).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
             let rss = std::fs::read_to_string(e.path().join("statm"))
                 .ok()
                 .and_then(|s| s.split_whitespace().nth(1).and_then(|x| x.parse::<u64>().ok()))
                 .map_or(0, |pages| pages * 4096);
             let shell = argv.first().is_some_and(|a| is_shell(a));
             let image = argv.first().map(|a| image_of(a)).unwrap_or_default();
-            Some(Proc { pid, ppid, started: btime + ticks / 100, rss, node, shell, image, cmd: argv.join(" ") })
+            // field 19: nice; 0 or less runs at normal priority or above, 19 is idle.
+            let nice = f.get(16).and_then(|n| n.parse::<i64>().ok());
+            let (normal, idle) = (nice.is_some_and(|n| n <= 0), nice == Some(19));
+            Some(Proc { pid, ppid, started: btime + ticks / 100, rss, node, shell, image, cmd: argv.join(" "), name: base, cpu: cpu * 100_000, normal, idle })
         })
         .collect()
 }
@@ -525,12 +583,12 @@ mod tests {
     const NOW: u64 = 1_000_000;
 
     fn p(pid: u32, ppid: u32, age_min: u64, cmd: &str) -> Proc {
-        Proc { pid, ppid, started: NOW - age_min * 60, rss: 120 * 1024 * 1024, node: true, shell: false, image: "node".into(), cmd: cmd.into() }
+        Proc { pid, ppid, started: NOW - age_min * 60, rss: 120 * 1024 * 1024, node: true, shell: false, image: "node".into(), cmd: cmd.into(), name: "node.exe".into(), cpu: 0, normal: true, idle: false }
     }
 
     /// A process of another image (shell, terminal, claude.exe).
     fn other(pid: u32, ppid: u32, age_min: u64) -> Proc {
-        Proc { node: false, image: "other".into(), cmd: String::new(), ..p(pid, ppid, age_min, "") }
+        Proc { node: false, image: "other".into(), cmd: String::new(), name: "claude.exe".into(), ..p(pid, ppid, age_min, "") }
     }
 
     fn all_exist(_: &Path) -> bool {
@@ -597,20 +655,24 @@ mod tests {
 
     #[test]
     fn parses_the_os_listings() {
-        let one = r#"{"ProcessId":7,"ParentProcessId":1,"Name":"node.exe","WorkingSetSize":2048,"CommandLine":"node a.js","Started":123}"#;
-        assert_eq!(parse_windows(one), vec![Proc { pid: 7, ppid: 1, started: 123, rss: 2048, node: true, shell: false, image: "node".into(), cmd: "node a.js".into() }]);
+        let one = r#"{"ProcessId":7,"ParentProcessId":1,"Name":"node.exe","WorkingSetSize":2048,"CommandLine":"node a.js","Cpu":5000,"Started":123}"#;
+        assert_eq!(parse_windows(one), vec![Proc { pid: 7, ppid: 1, started: 123, rss: 2048, node: true, shell: false, image: "node".into(), cmd: "node a.js".into(), name: "node.exe".into(), cpu: 5000, normal: false, idle: false }]);
+        assert!(parse_windows(&one.replace("\"Started\"", "\"Priority\":4,\"Started\""))[0].idle);
+        assert!(parse_windows(&one.replace("\"Started\"", "\"Priority\":8,\"Started\""))[0].normal);
         let many = r#"[{"ProcessId":7,"ParentProcessId":1,"Name":"cmd.exe","WorkingSetSize":1,"CommandLine":null,"Started":3},{"ProcessId":8,"ParentProcessId":7,"Name":"NODE.EXE","WorkingSetSize":1,"CommandLine":"node b","Started":5},{"ProcessId":9,"ParentProcessId":1,"Name":"omp.exe","CommandLine":"omp --session-dir x","Started":6},{"ParentProcessId":7}]"#;
         let got = parse_windows(many);
         assert_eq!(
-            got.iter().map(|p| (p.pid, p.node, p.shell, p.image.as_str(), p.cmd.as_str())).collect::<Vec<_>>(),
-            vec![(7, false, true, "cmd", ""), (8, true, false, "node", "node b"), (9, false, false, "omp", "omp --session-dir x")]
+            got.iter().map(|p| (p.pid, p.node, p.shell, p.image.as_str(), p.cmd.as_str(), p.name.as_str())).collect::<Vec<_>>(),
+            vec![(7, false, true, "cmd", "", "cmd.exe"), (8, true, false, "node", "node b", "node.exe"), (9, false, false, "omp", "omp --session-dir x", "omp.exe")]
         );
         assert!(parse_windows("").is_empty());
+        let sub = "[{\"ProcessId\":9,\"ParentProcessId\":1,\"Name\":\"claude.exe\",\"CommandLine\":\"claude /goal a \u{1a} b\",\"Started\":5}]";
+        assert_eq!(parse_windows(sub)[0].cmd, "claude /goal a   b", "an OEM-mangled char does not sink the whole listing");
         let ps = "  41     1 1-02:03:04  2048 /usr/local/bin/node /x/vite.js preview\n  42 1 05:06 10 /bin/zsh -l\n 43 1 07 1 node y.js\n";
         let got = parse_ps(ps, NOW);
         assert_eq!(got.len(), 3);
-        assert_eq!(got[0], Proc { pid: 41, ppid: 1, started: NOW - (86_400 + 2 * 3600 + 3 * 60 + 4), rss: 2048 * 1024, node: true, shell: false, image: "node".into(), cmd: "/usr/local/bin/node /x/vite.js preview".into() });
-        assert_eq!((got[1].node, got[1].shell, got[1].image.as_str(), got[1].cmd.as_str(), got[1].started), (false, true, "zsh", "/bin/zsh -l", NOW - 306));
+        assert_eq!(got[0], Proc { pid: 41, ppid: 1, started: NOW - (86_400 + 2 * 3600 + 3 * 60 + 4), rss: 2048 * 1024, node: true, shell: false, image: "node".into(), cmd: "/usr/local/bin/node /x/vite.js preview".into(), name: "node".into(), cpu: 0, normal: false, idle: false });
+        assert_eq!((got[1].node, got[1].shell, got[1].image.as_str(), got[1].cmd.as_str(), got[1].name.as_str(), got[1].started), (false, true, "zsh", "/bin/zsh -l", "zsh", NOW - 306));
         assert_eq!(got[2].started, NOW - 7);
     }
 
@@ -674,7 +736,9 @@ mod tests {
     fn nothing_while_auto_does_not_run_for_the_project() {
         let home = std::env::temp_dir().join(format!("reap-off-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
-        assert!(tick(&home, Path::new(r"C:\w\game"), NOW).is_empty());
+        let listing = Listing::new(NOW);
+        assert!(tick(&home, Path::new(r"C:\w\game"), NOW, &listing).is_empty());
+        assert!(listing.procs.get().is_none(), "nothing listed when nothing is due");
         assert!(!idle::state_dir(&home).join("reap.json").exists(), "no sweep, no stamp");
         let _ = std::fs::remove_dir_all(&home);
     }

@@ -113,8 +113,9 @@ type CoreMachine = Pick<Machine, "cpu" | "gpus" | "procs" | "at"> & { mem: Machi
 /**
  * One snapshot. CPU is the busy share since the previous call (the first call samples 250 ms).
  * With the core: its sampler's reading (Toolhelp + NVML in process, no tasklist / nvidia-smi).
+ * `procs: false` (the guard trigger's 5 s loop) skips the tasklist / ps probe.
  */
-export async function machine(platform: NodeJS.Platform = process.platform, run: Exec = exec): Promise<Machine> {
+export async function machine(platform: NodeJS.Platform = process.platform, run: Exec = exec, procs = true): Promise<Machine> {
   const c = (await coreGet("/v1/machine"))?.v as CoreMachine | undefined;
   if (c?.cpu) {
     const totalMb = Math.round(os.totalmem() / 2 ** 20);
@@ -130,7 +131,7 @@ export async function machine(platform: NodeJS.Platform = process.platform, run:
   last = now;
   const [smi, list] = await Promise.all([
     run("nvidia-smi", ["--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu", "--format=csv,noheader,nounits"]),
-    platform === "win32" ? run("tasklist", ["/FO", "CSV", "/NH"]) : run("ps", ["-A", "-o", "rss=,comm="]),
+    !procs ? null : platform === "win32" ? run("tasklist", ["/FO", "CSV", "/NH"]) : run("ps", ["-A", "-o", "rss=,comm="]),
   ]);
   const totalMb = Math.round(os.totalmem() / 2 ** 20);
   return {

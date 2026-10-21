@@ -48,9 +48,10 @@ export async function runTeam(root: string, action: TeamAction): Promise<TeamRes
   const key = root.replace(/\\/g, "/").toLowerCase();
   if (inFlight.has(key)) return { ok: false, output: "", error: "team của dự án này đang mở/dừng, đợi lần trước xong", busy: true };
   inFlight.add(key);
-  // Starting four background sessions takes a while; boost starts thirteen `claude --bg` rooms one by
-  // one (up to ~10 minutes on Windows). Stopping is quick.
-  const ms = action === "boost" ? 660_000 : 180_000;
+  // Starting four background sessions takes a while, and `auto up` waits (≤ 90 s extra) for the CPU to
+  // settle between room starts; boost starts thirteen `claude --bg` rooms one by one (up to ~10 minutes
+  // on Windows). Stopping (`down`, `unboost`) is quick.
+  const ms = action === "boost" ? 660_000 : action === "down" || action === "unboost" ? 180_000 : 300_000;
   try {
     const r = await run("8sync", teamArgs(action), ms, root);
     const output = tail(`${r.stdout}\n${r.stderr}`);
