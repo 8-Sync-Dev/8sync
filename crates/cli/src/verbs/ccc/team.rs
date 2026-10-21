@@ -905,6 +905,9 @@ pub(super) fn down_only(t: &Team, names: &[&str], now: u64) -> Result<DownOnly> 
     // Ask Claude Code for its sessions only when there is a room to stop.
     let live = if names.iter().any(|n| reg.sessions.iter().any(|s| s.name == *n)) { agents(t, false)? } else { Vec::new() };
     let mut rooms = Vec::new();
+    // Rooms already stopped keep their release even when a later stop fails (cards never stranded
+    // for CLAIM_SECS); the failure is reported after it.
+    let mut failed = None;
     for &name in names {
         let Some(s) = reg.sessions.iter().find(|s| s.name == name) else {
             rooms.push((name.to_string(), false));
@@ -913,12 +916,22 @@ pub(super) fn down_only(t: &Team, names: &[&str], now: u64) -> Result<DownOnly> 
         let title = (t.title)(name);
         let hit = live.iter().find(|l| l.background && (l.id == s.conversation_id || l.name == title));
         if let Some(l) = hit {
-            t.claude.run(&["stop".into(), l.id.chars().take(8).collect()])?;
+            if let Err(e) = t.claude.run(&["stop".into(), l.id.chars().take(8).collect()]) {
+                failed = Some(e.context(format!("không dừng được phòng {name}")));
+                break;
+            }
         }
-        t.store.remove(name)?;
+        if let Err(e) = t.store.remove(name) {
+            failed = Some(e);
+            break;
+        }
         rooms.push((name.to_string(), hit.is_some()));
     }
-    let freed = super::target::release(t.home, t.root, names, "tắt (down --only)", now)?;
+    let done: Vec<&str> = rooms.iter().map(|(n, _)| n.as_str()).collect();
+    let freed = super::target::release(t.home, t.root, &done, "tắt (down --only)", now)?;
+    if let Some(e) = failed {
+        return Err(e);
+    }
     Ok(DownOnly { rooms, freed })
 }
 
