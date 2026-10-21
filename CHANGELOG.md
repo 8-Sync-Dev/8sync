@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.20] — 2026-10-21
+### Added
+- **HQ Terminal sends images.** Owner 2026-10-21: "Terminal thiếu gửi ảnh". A room terminal has an "Ảnh" button (phone photo picker) and takes a pasted image. The image goes into the room's repo like a chat attachment (`.claude/hq-uploads`), and its path lands in the input line, so the owner adds a question and sends. `POST /api/sessions/<id>/term {files}` places the uploads; the room is resolved server side.
+### Changed
+- **HQ cleans idle build output by itself, right after each scan.** Owner 2026-10-21: "tình trạng cao chú ý là phải auto xử lý gấp luôn không đợi gửi". The 11:50 cleanup mail sat with a lead waiting on the owner while 78 GB of card worktree builds stayed on disk. Every scan now removes `target` / `.next` over 1 GB in `.claude/worktrees/<card>`. A dir is kept when a live room's folder is in that worktree, a build wrote to it within the hour, or Windows refuses to move it (a file in it is open). It is moved to `.claude/hq-trash`, then deleted by a below-normal-priority child process. The Máy tab shows what went. The loop runs hourly (was every 6 h) and measures the projects that have card worktrees plus the switched-on ones; what needs judgment still goes to a room of a switched-on project.
+
 ## [0.110.19] — 2026-10-21
 ### Added
 - **`sweep` room ("Dọn máy"): each running project's own machine and disk cleaner, kept by HQ.** Owner 2026-10-21: "khi hq ui bật lên mỗi dự án đang chạy đều nên có 1 super agent chuyên quét phân tích sâu để clean dọn rác ram, cpu, gpu chống ăn điện cao và dung lượng rác cao cực strictly giao tiếp all rooms/roles".

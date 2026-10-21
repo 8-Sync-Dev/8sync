@@ -53,7 +53,37 @@ export type ProjectDisk = {
   error: string | null;
   at: number;
   ms: number;
+  /** HQ's last auto clean of idle worktree build output (lib/server/disk-clean.ts), kept across scans. */
+  cleaned?: Cleaned | null;
 };
+
+/** What one HQ auto clean removed. */
+export type Cleaned = { at: number; bytes: number; dirs: string[] };
+
+/** Build output HQ removes by itself: `target` / `.next` of an agent's card worktree (the next build makes it again). */
+const AUTO_DIR = /^\.claude\/worktrees\/[^/]+\/(target|\.next)$/;
+/** A build dir written this recently belongs to work in progress: left alone. */
+export const AUTO_IDLE_MS = 3600_000;
+
+/** Flagged build dirs (over LIMITS.dir) HQ may remove without asking a room. */
+export function autoCandidates(p: Pick<ProjectDisk, "build">): Sized[] {
+  return p.build.filter((b) => b.bytes > LIMITS.dir && AUTO_DIR.test(b.path));
+}
+
+/** The scan result once `gone` (from autoCandidates) is deleted, without walking again. */
+export function withoutDirs(p: ProjectDisk, gone: Sized[]): ProjectDisk {
+  if (!gone.length) return p;
+  const n = gone.reduce((a, g) => a + g.bytes, 0);
+  const paths = new Set(gone.map((g) => g.path));
+  const less = (v: number) => Math.max(0, v - n);
+  return {
+    ...p,
+    total: less(p.total),
+    entries: p.entries.map((e) => (e.path === ".claude" ? { ...e, bytes: less(e.bytes) } : e)),
+    worktrees: p.worktrees && { ...p.worktrees, bytes: less(p.worktrees.bytes) },
+    build: p.build.filter((b) => !paths.has(b.path)),
+  };
+}
 
 export type Severity = "high" | "warn";
 export type Finding = { id: string; severity: Severity; path: string; bytes: number; why: string };

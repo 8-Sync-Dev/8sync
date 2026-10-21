@@ -679,6 +679,11 @@ function ProjectDiskRow({
         </label>
       </div>
       {!room && <p className="text-xs text-muted-foreground">Dự án chưa có phòng nào chạy: mở một phòng để gửi tin dọn.</p>}
+      {p.cleaned && (
+        <p className="text-xs text-muted-foreground">
+          HQ tự dọn {dayTime(p.cleaned.at)}: xoá {bytes(p.cleaned.bytes)} build của worktree rảnh ({p.cleaned.dirs.map((d) => d.split("/").slice(-2).join("/")).join(", ")})
+        </p>
+      )}
       {sent && (
         <p className="text-xs text-muted-foreground">
           Tự gửi lần cuối {dayTime(sent.at)} cho {sent.room} ({sent.n} mục)
@@ -779,7 +784,6 @@ function DiskPanel({ api, rooms, active }: { api: Hq["api"]; rooms: Room[]; acti
   };
 
   const l = loop.data;
-  const anyOn = l ? Object.values(l.projects).some((x) => x.on) : false;
   return (
     <Panel
       id="may-disk"
@@ -795,12 +799,12 @@ function DiskPanel({ api, rooms, active }: { api: Hq["api"]; rooms: Room[]; acti
       }
     >
       <p className="text-xs leading-snug text-muted-foreground">
-        Mỗi dự án: thư mục lớn, .git, worktree, bằng chứng, node_modules, thư mục build và file lớn đã commit. Dọn định kỳ: mỗi 6 giờ HQ đo lại dự án đang bật và tự gửi phòng khi có mục vượt ngưỡng chưa gửi trong 24 giờ.
+        Mỗi dự án: thư mục lớn, .git, worktree, bằng chứng, node_modules, thư mục build và file lớn đã commit. Mỗi giờ HQ đo lại mọi dự án và tự xoá ngay thư mục build (target, .next) trên 1 GB của worktree không phòng nào dùng và không build trong 1 giờ. Dọn định kỳ: phần còn lại tự gửi phòng khi có mục vượt ngưỡng chưa gửi trong 24 giờ.
         {l && (
           <span className="tabular">
             {" "}
             {l.lastRun != null ? `Chạy gần nhất ${dayTime(l.lastRun)}` : "Chưa chạy lần nào"}
-            {anyOn && l.nextRun != null ? ` · lần tới ${dayTime(l.nextRun)}` : ""}
+            {l.nextRun != null ? ` · lần tới ${dayTime(l.nextRun)}` : ""}
             {l.running ? " · đang chạy" : ""}.
           </span>
         )}

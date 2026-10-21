@@ -9,9 +9,12 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { coreCall } from "./core";
-import { diskKey, findings, LIMITS, type Finding, type ProjectDisk, type Sized } from "../disk";
+import { diskKey, findings, LIMITS, withoutDirs, type Finding, type ProjectDisk, type Sized } from "../disk";
+import { cleanIdleBuild, processPaths } from "./disk-clean";
+import { loadFloor, ompSessions } from "./floor";
+import { mergedSessions } from "./proc";
 import type { ProjectInfo } from "../office";
-import { withMissing } from "./db";
+import { getDb, withMissing } from "./db";
 import { loadOffice } from "./office";
 import { stateDir } from "./paths";
 import { PREVIEW_DIRS } from "./preview";
@@ -226,6 +229,18 @@ function save(projects: ProjectDisk[]) {
 }
 
 /**
+ * What is in use (disk-clean.ts): live rooms' folders and every process's command line. Throws when
+ * either cannot be read, so nothing is removed (loadOffice would read a failed session list as none).
+ */
+async function inUse(): Promise<string[]> {
+  const db = getDb();
+  const [merged, floor, procs] = await Promise.all([mergedSessions(db), loadFloor(db), processPaths()]);
+  if (!procs) throw new Error("process list unreadable");
+  const rooms = [...merged.filter((s) => s.status !== "ended"), ...ompSessions(db, floor)];
+  return [...rooms.flatMap((r) => (r.cwd ? [r.cwd] : [])), ...procs];
+}
+
+/**
  * Measure `projects` (one at a time: the disk, not the CPU, is the limit). Each result replaces
  * only that project's earlier one, so a scan of a few projects (the loop) keeps everyone else's.
  * Projects already queued are not measured twice; the rest wait for the running scan.
@@ -238,7 +253,11 @@ export function startScan(projects: ProjectInfo[]): Promise<void> {
   for (const p of want) s.queued.add(diskKey(p.root));
   const run = (s.scanning ?? Promise.resolve()).then(async () => {
     for (const p of want) {
-      const d = await scanDisk(p);
+      let d = await scanDisk(p);
+      const prev = s.projects.find((o) => diskKey(o.root) === diskKey(d.root));
+      // Idle worktree build output goes right away (disk-clean.ts); the rest waits for a room.
+      const c = d.error ? null : await cleanIdleBuild(d, inUse).catch(() => null);
+      d = c ? { ...withoutDirs(d, c.gone), cleaned: c.cleaned } : { ...d, cleaned: prev?.cleaned ?? null };
       s.projects = [d, ...s.projects.filter((o) => diskKey(o.root) !== diskKey(d.root))];
       s.queued.delete(diskKey(p.root));
     }

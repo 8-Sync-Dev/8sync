@@ -139,7 +139,7 @@ describe("runLoop", () => {
 });
 
 describe("schedule", () => {
-  it("first run waits 10 min after a start, or until 6 h after the last run", () => {
+  it("first run waits FIRST_DELAY_MS after a start, or until LOOP_EVERY_MS after the last run", () => {
     stopCleanupLoop();
     startCleanupLoop(5_000_000);
     expect(loopState().nextRun).toBe(5_000_000 + FIRST_DELAY_MS);

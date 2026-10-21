@@ -1,9 +1,11 @@
 import { isOmpRoomId } from "@/lib/labels";
 import { ompRoom } from "@/lib/server/floor";
 import { bad, json, open, readBody } from "@/lib/server/http";
+import { projectOf } from "@/lib/server/office";
 import { mergedSessions } from "@/lib/server/proc";
 import { clampSize, closeTerm, input, isTermId, openTerm, takeoverTerm } from "@/lib/server/term";
 import { termResponse } from "@/lib/server/term-http";
+import { FILES_PER_TASK, isUploadId, placeUploads } from "@/lib/server/uploads";
 
 export const runtime = "nodejs";
 
@@ -37,7 +39,8 @@ export async function GET(req: Request, ctx: RouteContext<"/api/sessions/[name]/
 /**
  * `{data}` keys typed in the browser and/or `{cols, rows}`. `{takeover: true, cols, rows}` (omp rooms,
  * "Chuyển sang HQ"): end the other terminal that has the session open and open it here; the page
- * then reconnects with GET.
+ * then reconnects with GET. `{files: [upload id]}` (the terminal's image button): place the uploads in
+ * the room's repo (like a chat attachment) and answer `{paths}`; the page puts them in the input line.
  */
 export async function POST(req: Request, ctx: RouteContext<"/api/sessions/[name]/term">) {
   const o = open(req);
@@ -46,6 +49,17 @@ export async function POST(req: Request, ctx: RouteContext<"/api/sessions/[name]
   if (!isTermId(name)) return bad("bad session id", 422);
   const body = await readBody(req);
   if (!body) return bad("body must be a JSON object", 422);
+  if (body.files !== undefined) {
+    const files = body.files;
+    if (!Array.isArray(files) || files.length === 0 || files.length > FILES_PER_TASK || !files.every(isUploadId)) return bad(`files: 1 to ${FILES_PER_TASK} upload ids`, 422);
+    const s = await room(o.db, name);
+    if (!s?.cwd) return bad("phòng này không còn chạy, không đặt được ảnh", 409);
+    try {
+      return json({ paths: placeUploads([...new Set(files as string[])], projectOf(s.cwd)?.root ?? s.cwd) });
+    } catch (e) {
+      return bad((e as Error).message, 400);
+    }
+  }
   if (body.takeover === true) {
     if (!isOmpRoomId(name)) return bad("chỉ phòng omp mới chuyển sang HQ được", 422);
     const s = await room(o.db, name);

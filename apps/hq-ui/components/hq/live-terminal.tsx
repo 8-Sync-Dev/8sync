@@ -4,7 +4,9 @@ import "@xterm/xterm/css/xterm.css";
 import type { Terminal } from "@xterm/xterm";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
+import { ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { FILES_MAX, fileError, toBase64 } from "@/lib/attach";
 import { isLocalHost } from "@/lib/hosts";
 import type { ActivityEvent } from "@/lib/server/activity";
 import { activityScreen } from "@/lib/term-activity";
@@ -126,9 +128,45 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
   const [retry, setRetry] = useState(0);
   const [moving, setMoving] = useState(false);
   const [line, setLine] = useState("");
+  const picker = useRef<HTMLInputElement>(null);
+  const uploading = useRef(false);
+  /** The image upload in flight or the reason it failed; null when idle. */
+  const [note, setNote] = useState<{ busy: boolean; text: string } | null>(null);
   const { resolvedTheme } = useTheme();
   const dark = resolvedTheme === "dark";
   const text = TEXT[kind];
+
+  /**
+   * Images (picked or pasted) go into the room's repo like a chat attachment; their paths land in
+   * the input line, so the owner adds a question and sends, and the room opens them with Read.
+   */
+  async function attach(list: File[]) {
+    if (uploading.current) return;
+    const files = list.filter((f) => f.type.startsWith("image/")).slice(0, FILES_MAX);
+    if (!files.length) return setNote({ busy: false, text: "Chỉ gửi được ảnh" });
+    const why = files.map(fileError).find(Boolean);
+    if (why) return setNote({ busy: false, text: why });
+    uploading.current = true;
+    setNote({ busy: true, text: `Đang tải ${files.length} ảnh…` });
+    const headers = { "x-hq-token": token, "content-type": "application/json" };
+    try {
+      const ids: string[] = [];
+      for (const f of files) {
+        const res = await fetch("/api/uploads", { method: "POST", headers, body: JSON.stringify({ name: f.name || "anh-dan.png", data: await toBase64(f) }) });
+        if (!res.ok) throw new Error(await errorOf(res));
+        ids.push(((await res.json()) as { id: string }).id);
+      }
+      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ files: ids }) });
+      if (!res.ok) throw new Error(await errorOf(res));
+      const { paths } = (await res.json()) as { paths: string[] };
+      setLine((l) => [l.trimEnd(), ...paths.map((p) => (/\s/.test(p) ? `"${p}"` : p))].filter(Boolean).join(" ") + " ");
+      setNote(null);
+    } catch (e) {
+      setNote({ busy: false, text: `Không gửi được ảnh: ${(e as Error).message}` });
+    } finally {
+      uploading.current = false;
+    }
+  }
 
   /** "Chuyển sang HQ": the server ends the other terminal's omp for this session and opens it here; then reconnect. */
   async function takeover() {
@@ -363,6 +401,13 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
         <input
           value={line}
           onChange={(e) => setLine(e.target.value)}
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData.files);
+            if (kind === "room" && files.length) {
+              e.preventDefault();
+              void attach(files);
+            }
+          }}
           disabled={state !== "live"}
           placeholder={kind === "shell" ? "Gõ lệnh rồi Enter/Gửi (ô trống = Enter)" : "Gõ câu trả lời rồi Enter/Gửi (ô trống = Enter)"}
           aria-label="Gõ vào terminal"
@@ -373,10 +418,45 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
           spellCheck={false}
           className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         />
+        {kind === "room" && (
+          <>
+            <input
+              ref={picker}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                e.target.value = "";
+                if (files.length) void attach(files);
+              }}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 px-2"
+              aria-label="Gửi ảnh vào phòng"
+              title="Gửi ảnh: ảnh vào repo của phòng, đường dẫn hiện trong ô gõ"
+              disabled={state !== "live" || note?.busy === true}
+              aria-busy={note?.busy === true}
+              onClick={() => picker.current?.click()}
+            >
+              <ImageIcon aria-hidden />
+              Ảnh
+            </Button>
+          </>
+        )}
         <Button type="submit" size="sm" className="h-8" disabled={state !== "live"}>
           Gửi
         </Button>
       </form>
+      {note && (
+        <p role="status" className={note.busy ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
+          {note.text}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-1" role="toolbar" aria-label="Phím terminal">
         {KEYS.map((k) => (
           <Button
