@@ -49,8 +49,8 @@ export type SidebarRoom<T> = { room: T; now: RoomNow; worktree: string | null; b
 export type SidebarGroup<T> = { key: string; name: string; root: string; needs: number; rooms: SidebarRoom<T>[] };
 
 const ORDER: Record<NowState, number> = { needs: 0, blocked: 1, working: 2, holding: 3, waiting: 4, idle: 5 };
-/** The key a sidebar group (and a closed project) goes by: forward slashes, no trailing slash, lower case. */
-export const groupKey = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+/** The key a sidebar group (and a closed project) goes by: forward slashes, no `\\?\` prefix, no trailing slash, lower case. */
+export const groupKey = (p: string) => p.replace(/\\/g, "/").replace(/^\/\/\?\//, "").replace(/\/+$/, "").toLowerCase();
 
 /**
  * Live rooms by repo. Inside a group: the repo's own rooms before worktree rooms, then attention order.

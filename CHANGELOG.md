@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.18] — 2026-10-21
+### Fixed
+- **HQ "Gửi cho mọi phòng" sends to the project you are looking at.** Owner 2026-10-21: "Dự án platform mà tại sao lead của ide". A repo picked in the sidebar that is not a registered HQ folder set only the page's repo, so the box under Tổng quan / Văn phòng / Chat tổng defaulted to the busiest project (ide) and suggested its lead. It now follows the repo in view, and project roots compare the same however they are written (slashes, case, trailing slash, `\\?\\`).
+
 ## [0.110.17] — 2026-10-21
 ### Fixed
 - **HQ no longer lags or shows rooms as ids under load (local and through the VPS link).** Owner 2026-10-21: "ui ux lỗi không hiện tên", "web ovh bị lag quá", "Đang Sấm Sét" that would not turn off. Busy rooms rewrite their Claude session and job files every second, so the native core re-ran `claude agents` for every poll, one at a time behind a lock; polls from every client queued, timed out in node after 5 s and each fell back to its own `claude agents` (15 at once), which made claude slower still. When the listing failed, rooms showed as their 8-hex id with the last journal status — stopped rooms stayed "Đang làm" and a stopped Sấm Sét team still counted as 13 rooms. Now:

@@ -10,6 +10,7 @@ import { FILE_MAX_MB, FILES_MAX, fileError, toBase64 } from "@/lib/attach";
 import { ALL_PROJECTS, broadcastProjects, broadcastSummary, choiceValid, isSendKey, resolveChoice, resultLine, sendOutcome, type BroadcastResult } from "@/lib/broadcast";
 import { inboxText } from "@/lib/labels";
 import { leadOf, parseTarget, roomGroups, suggestion, targetValue, type SendTarget } from "@/lib/room-send";
+import { groupKey } from "@/lib/sidebar";
 import type { Message } from "./types";
 import { cn } from "@/lib/utils";
 import { MentionTextarea } from "./mention-textarea";
@@ -86,7 +87,10 @@ export function RoomSend({
   const room = target.kind === "room" ? byKey(target.key) : null;
   const group = room
     ? groups.find((g) => g.rooms.includes(room))
-    : groups.find((g) => g.root === (target.kind === "all" && target.root !== ALL_PROJECTS ? target.root : preferRoot)) ?? null;
+    : groups.find((g) => {
+        const want = target.kind === "all" && target.root !== ALL_PROJECTS ? target.root : preferRoot;
+        return want != null && groupKey(g.root) === groupKey(want);
+      }) ?? null;
   const sug = group ? suggestion(group.rooms) : null;
   const showSug = sug && !(room && room.key === sug.room);
   const allRoot = target.kind === "all" ? target.root : null;
