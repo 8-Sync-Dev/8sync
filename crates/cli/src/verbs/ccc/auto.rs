@@ -947,6 +947,64 @@ fn wake_arch(home: &Path, rooms: &[(String, String)], t: &target::Target, labell
     queue_all(home, &to, now, from, |name| format!("{name}: card #{} nhãn arch ở cột {}: {} — chạy playbook arch cho card này (chưa có note \"ADR:\" → ADR; ở review → review kiến trúc diff)", t.id, t.lane, short(&t.text)))
 }
 
+/// HQ "⚡ Làm ngay" (the owner's P0 on open card `t` of a board team). Setting P0 alone changed
+/// nothing for 3 hours (zus/ide 2026-10-21: #20 and #21 sat in ready while `dev` idled with its goal
+/// ended). Now the lead gets `[⚡ owner] Làm ngay #N …` and every room that would take the card now
+/// gets one inbox line to claim it: a backlog/blocked card goes to the backlog rooms (as before),
+/// any other to the lane rooms whose [`target::claimable`] pick is this card (so a room holding
+/// another card is left alone). A room blocked in `auto wait` wakes on that mail, an idle one gets
+/// it from the inbox mod, and one idle in the background with its goal ended is re-armed by
+/// `auto revive` ([`super::team::ask_wake`]), started now. `(lead, takers)` with delivery.
+fn rush(home: &Path, root: &Path, rooms: &[(String, String)], t: &target::Target, now: u64) -> Result<(Vec<(String, bool)>, Vec<(String, bool)>)> {
+    let cards = target::list(home, root)?;
+    let early = matches!(t.lane.as_str(), "backlog" | "blocked");
+    let lane_of = |n: &str| super::room::find(n).and_then(|r| r.lane);
+    let takers: Vec<(String, String)> = rooms
+        .iter()
+        .filter(|(n, _)| match lane_of(n) {
+            Some("backlog") => early,
+            Some(lane) => !early && target::claimable(&cards, n, lane, now) == Some(t.id),
+            None => false,
+        })
+        .cloned()
+        .collect();
+    let names: Vec<String> = takers.iter().map(|(n, _)| n.clone()).collect();
+    let head = format!("[⚡ owner] Làm ngay #{} (P0, cột {}): {}", t.id, t.lane, short(&t.text));
+    let called = match (&names[..], &t.claim) {
+        ([], Some(c)) => format!("{} đang giữ card", c.room),
+        ([], None) => "chưa phòng nào nhận được ngay: xếp người cho card này lượt này (claim/move)".to_string(),
+        (n, _) => format!("đã gọi {} nhận ngay", n.join(", ")),
+    };
+    let is_lead = |n: &str| super::room::crew(n) == "lead";
+    let leads: Vec<(String, String)> = rooms.iter().filter(|(n, _)| is_lead(n)).cloned().collect();
+    let lead = queue_all(home, &leads, now, None, |name| {
+        if early { format!("{head} — {called}\n{}", target::now_prompt(t, name)) } else { format!("{head} — {called}") }
+    });
+    let others: Vec<(String, String)> = takers.into_iter().filter(|(n, _)| !is_lead(n)).collect();
+    let woke = queue_all(home, &others, now, None, |name| {
+        if early {
+            format!("{head}\n{}", target::now_prompt(t, name))
+        } else {
+            format!(
+                "{head}\nPhòng `{name}` nhận NGAY: `8sync ccc auto claim` (#{id} P0 đứng đầu cột {lane}), rồi làm theo vòng thường (worktree, test, move).",
+                id = t.id,
+                lane = lane_of(name).unwrap_or("ready"),
+            )
+        }
+    });
+    if !names.is_empty() {
+        super::team::ask_wake(home, root, &names, now);
+        // A detached `auto revive` re-arms an idle room now instead of at HQ's next tick (≤ 2 min);
+        // it takes the revive lock, so one already running keeps the marker for its next run.
+        if !cfg!(test) {
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = super::awake::spawn_detached(&exe, &["ccc".into(), "auto".into(), "revive".into()]);
+            }
+        }
+    }
+    Ok((lead, woke))
+}
+
 /// Who `auto add --now` speaks as: the `msg` label of the session it runs in, None from a terminal
 /// (no session env). `omp` (the project's omp room names) is asked only when there is a session env.
 fn now_sender(root: &Path, ccc: &[(String, String)], env: &super::msg::SenderEnv, omp: impl FnOnce() -> Vec<String>) -> Result<Option<String>> {
@@ -1341,18 +1399,23 @@ fn run_target(
                 bail!("prio cần <id> <P0|P1|P2|P3|none>\n{USAGE}");
             };
             let t = target::set_prio(home, root, parse_id(i)?, target::parse_prio(p)?, who.as_deref(), now)?;
-            // HQ "⚡ Làm ngay": the owner raising a card still waiting for its AC to P0 tells the
-            // backlog rooms now instead of at their next tick; a ready card is simply claimed first.
-            let urgent = t.prio == Some(0) && who.is_none() && t.state == "open" && matches!(t.lane.as_str(), "backlog" | "blocked") && board_team(home, root);
-            let backlog: Vec<(String, String)> = all.iter().filter(|(n, _)| super::room::find(n).and_then(|r| r.lane) == Some("backlog")).cloned().collect();
-            let sent = if urgent { queue_all(home, &backlog, now, None, |name| target::now_prompt(&t, name)) } else { Vec::new() };
+            // HQ "⚡ Làm ngay": the owner's P0 on a board team reaches the lead and the rooms that take
+            // the card now ([`rush`]); a room raising a card wakes nobody.
+            let rushing = t.prio == Some(0) && who.is_none() && t.state == "open" && board_team(home, root);
+            let (lead, woke) = if rushing { rush(home, root, &all, &t, now)? } else { Default::default() };
             if as_json {
-                let sent: Vec<Value> = sent.iter().map(|(n, live)| json!({ "name": n, "now": live })).collect();
-                println!("{}", json!({ "card": t, "sent": sent }));
+                let rows = |v: &[(String, bool)]| v.iter().map(|(n, live)| json!({ "name": n, "now": live })).collect::<Vec<Value>>();
+                println!("{}", json!({ "card": t, "rushed": rushing, "lead": rows(&lead), "woke": rows(&woke) }));
             } else {
                 println!("card #{} ưu tiên {}", t.id, t.prio.map_or("mặc định (P2)".to_string(), |n| format!("P{n}")));
-                for (name, live) in &sent {
-                    println!("báo {name}: {}", delivery(*live));
+                for (name, live) in &lead {
+                    println!("⚡ báo lead → {name}: {}", delivery(*live));
+                }
+                for (name, live) in &woke {
+                    println!("⚡ gọi {name} nhận #{}: {}", t.id, delivery(*live));
+                }
+                if rushing && woke.is_empty() {
+                    println!("⚡ chưa phòng nào nhận được #{} ngay (phòng cột {} đang giữ card khác, hoặc team không có phòng cho cột này): lead xếp người", t.id, t.lane);
                 }
             }
         }
@@ -2192,6 +2255,49 @@ mod tests {
         go("prio", &["1", "none"]).unwrap();
         assert_eq!(target::list(&h, &root).unwrap()[0].prio, None);
         assert!(go("prio", &["1"]).is_err(), "needs a level");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// zus/ide 2026-10-21: the owner pressed ⚡ Làm ngay on ready cards #20/#21 at P0 and nothing
+    /// moved for 3 hours (`dev` idle after `auto move 15 qa`). The owner's P0 now tells the lead and
+    /// calls the rooms that would take the card now; a room holding another card, a room of another
+    /// lane and a room raising the priority itself call nobody.
+    #[test]
+    fn rush_tells_the_lead_and_calls_the_free_rooms_of_the_cards_lane() {
+        let h = home("rush");
+        let root = h.join("ide");
+        std::fs::create_dir_all(&root).unwrap();
+        idle::write_json(&idle::state_dir(&h).join("team-roots.json"), &json!([root.to_string_lossy()]));
+        let names = ["lead", "dev", "dev2", "qa", "review"];
+        let rooms: Vec<(String, String)> = names.iter().enumerate().map(|(i, n)| (n.to_string(), format!("a{i}830544-0719-4d6f-aaa3-644783ddb0b5"))).collect();
+        let id = |n: &str| rooms.iter().find(|(x, _)| x == n).unwrap().1.clone();
+        let inbox = |n: &str| std::fs::read_to_string(crate::verbs::hq::inbox_file(&h, &id(n)).unwrap()).unwrap_or_default();
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let go = |args: &[&str]| run_target(args[0], &a(&args[1..]), &h, &root, || rooms.clone(), Vec::new, 100);
+        for t in ["card 15", "card 20", "card 21"] {
+            go(&["add", t, "--check", "true"]).unwrap();
+        }
+        // dev2 builds the first ready card; dev just handed its card on and holds nothing.
+        let held = target::claim(&h, &root, "dev2", "ready", 100).unwrap().unwrap();
+        let c21 = target::list(&h, &root).unwrap().into_iter().find(|t| t.text == "card 21").unwrap();
+        assert_eq!(c21.lane, "ready");
+        // A room raising a card wakes nobody.
+        go(&["prio", &c21.id.to_string(), "P0", "--as", "qa"]).unwrap();
+        assert!(names.iter().all(|n| inbox(n).is_empty()));
+        go(&["prio", &c21.id.to_string(), "none"]).unwrap();
+        // The owner's ⚡ Làm ngay.
+        go(&["prio", &c21.id.to_string(), "P0"]).unwrap();
+        assert!(inbox("lead").contains(&format!("[⚡ owner] Làm ngay #{}", c21.id)), "{}", inbox("lead"));
+        assert!(inbox("lead").contains("đã gọi dev nhận ngay"), "{}", inbox("lead"));
+        assert!(inbox("dev").contains(&format!("#{} P0", c21.id)) && inbox("dev").contains("auto claim"), "{}", inbox("dev"));
+        for n in ["dev2", "qa", "review"] {
+            assert!(inbox(n).is_empty(), "{n} holds #{} or works another lane: {}", held.id, inbox(n));
+        }
+        // `revive` re-arms dev at its first idle sighting (no second look, no backoff).
+        let marks = idle::read_json(&idle::state_dir(&h).join("wake-now.json")).unwrap();
+        assert_eq!(marks.as_object().unwrap().keys().map(|k| k.rsplit('|').next().unwrap()).collect::<Vec<_>>(), ["dev"]);
+        // The claim takes it before the older ready card.
+        assert_eq!(target::claimable(&target::list(&h, &root).unwrap(), "dev", "ready", 100), Some(c21.id));
         let _ = std::fs::remove_dir_all(&h);
     }
 

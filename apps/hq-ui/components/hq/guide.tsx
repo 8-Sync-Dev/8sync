@@ -40,7 +40,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     title: "Giao việc",
     body:
       "Bấm \"Giao việc\" hoặc gõ vào ô \"Gửi cho mọi phòng\": việc thành card trên Board. lead viết tiêu chí và lệnh kiểm, dev làm trên nhánh card-<số>, qa kiểm, review duyệt. " +
-      "Việc gấp: bấm \"⚡ Làm ngay\" trên card Backlog/Ready (P0, lead nhận ngay); card Blocked có \"⚡ Gỡ block ngay\".",
+      "Việc gấp: bấm \"⚡ Làm ngay\" trên card Backlog/Ready (P0: báo lead, gọi phòng rảnh của cột nhận ngay); card Blocked có \"⚡ Gỡ block ngay\".",
   },
   {
     icon: TerminalIcon,

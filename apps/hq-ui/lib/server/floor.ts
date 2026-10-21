@@ -184,7 +184,8 @@ async function build(db: DatabaseSync): Promise<{ rows: FloorRow[]; transcripts:
       sid: sidOf(hq?.session_id, r.name),
       tokens: typeof r.tokens === "number" ? r.tokens : null,
       inbox_id: typeof r.inbox_id === "string" ? r.inbox_id : null,
-      live: r.status === "running" || r.status === "active",
+      // Alive: a process has it open (`8sync ls`) or its hq session is in tmux / `claude agents`.
+      live: r.status === "running" || r.status === "active" || (hq != null && hq.status !== "ended"),
       model: typeof r.model === "string" ? r.model : null,
       ...deriveFloor(r, { ...(hq ?? {}), standup: standupOf(repo) }, now, autoActs),
     };

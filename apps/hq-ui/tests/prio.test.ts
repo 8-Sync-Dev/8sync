@@ -18,7 +18,7 @@ import { POST } from "@/app/api/board/prio/route";
 import { CardDetail, PrioChip } from "@/components/hq/card-sheet";
 import type { Card } from "@/lib/lanes";
 import { getToken } from "@/lib/server/auth";
-import { parsePrioBody, prioArgs } from "@/lib/server/board";
+import { parsePrioBody, prioArgs, rushLine } from "@/lib/server/board";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const card = (over: Partial<Card>): Card => ({ id: 4, text: "x", lane: "ready", check: "true", label: null, claim: null, pr: null, sha: null, bounces: 0, note: null, added: 0, ...over });
@@ -79,5 +79,23 @@ describe("POST /api/board/prio", () => {
     const gone = await post({ root: room.cwd, id: 99, prio: 1 });
     expect(gone.status).toBe(502);
     expect((await gone.json()).error).toBe("không có card mở #99");
+  });
+
+  it("⚡ Làm ngay answers with the rooms the CLI called (zus/ide #21 sat 3 h at P0 with nobody told)", async () => {
+    const out = { card: { id: 21, prio: 0 }, rushed: true, lead: [{ name: "lead", now: true }], woke: [{ name: "dev", now: true }] };
+    run.mockResolvedValueOnce({ ok: true, stdout: JSON.stringify(out), stderr: "" } as never);
+    const res = await post({ root: room.cwd, id: 21, prio: 0 });
+    expect(await res.json()).toEqual({ ok: true, error: null, woke: "Đã gọi dev nhận #21 ngay · đã báo lead" });
+  });
+});
+
+describe("rushLine", () => {
+  it("names who was called; nobody free, no team or an older 8sync say so or stay silent", () => {
+    const line = (v: unknown) => rushLine(JSON.stringify(v), 21);
+    expect(line({ rushed: true, lead: [{ name: "lead" }], woke: [{ name: "dev" }, { name: "ui" }] })).toBe("Đã gọi dev, ui nhận #21 ngay · đã báo lead");
+    expect(line({ rushed: true, lead: [{ name: "lead" }], woke: [] })).toBe("Chưa phòng nào rảnh nhận #21 · đã báo lead xếp người");
+    expect(line({ rushed: false, lead: [], woke: [] })).toBeNull();
+    expect(line({ card: { id: 21 } })).toBeNull();
+    expect(rushLine("not json", 21)).toBeNull();
   });
 });

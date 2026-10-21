@@ -738,6 +738,42 @@ fn regoal_file(home: &Path) -> PathBuf {
     idle::state_dir(home).join("regoal.json")
 }
 
+fn wake_file(home: &Path) -> PathBuf {
+    idle::state_dir(home).join("wake-now.json")
+}
+
+fn wake_key(root: &Path, name: &str) -> String {
+    format!("{}|{name}", auto::canon(root).to_string_lossy())
+}
+
+/// HQ "⚡ Làm ngay" (`auto prio <id> P0` from the owner): the rooms of `root` called to take the
+/// card. The next `revive` re-arms each one it finds idle in the background with its goal ended at
+/// once (no second sighting, no backoff); a mark older than [`IDLE_STALE_S`] says nothing.
+pub(super) fn ask_wake(home: &Path, root: &Path, names: &[String], now: u64) {
+    let file = wake_file(home);
+    let mut v = idle::read_json(&file).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    for n in names {
+        v[wake_key(root, n)] = json!(now);
+    }
+    idle::write_json(&file, &v);
+}
+
+/// The rooms of `root` with a fresh [`ask_wake`] mark.
+fn woken(home: &Path, root: &Path, names: impl Iterator<Item = String>, now: u64) -> Vec<String> {
+    let v = idle::read_json(&wake_file(home)).unwrap_or_default();
+    names.filter(|n| v[wake_key(root, n)].as_u64().is_some_and(|at| now.saturating_sub(at) <= IDLE_STALE_S)).collect()
+}
+
+fn wake_done(home: &Path, root: &Path, names: &[String]) {
+    let file = wake_file(home);
+    if let Some(mut v) = idle::read_json(&file).filter(Value::is_object) {
+        for n in names {
+            v.as_object_mut().map(|o| o.remove(&wake_key(root, n)));
+        }
+        idle::write_json(&file, &v);
+    }
+}
+
 /// `auto revive`: bring back this project's team rooms whose background session died (machine
 /// restarted, process killed) while auto still runs here. Owner (2026-10-19): "tắt máy chứ chưa tắt
 /// ccc auto … mở máy lên hiển thị đang làm nhưng mà lại không có làm". A room counts when it is a
@@ -747,7 +783,8 @@ fn regoal_file(home: &Path) -> PathBuf {
 /// room that never ran, and does nothing while auto is off, paused, out of scope or gated (on a
 /// subscription the owner-present lease; usage window; `$`/hour cap). A live lane room idle
 /// ([`lost_goal`]) at two runs [`IDLE_CONFIRM_S`] apart, with an empty inbox, not resumed in the last
-/// [`REGOAL_BACKOFF_S`], and still idle right before the stop, is stopped and resumed with its goal.
+/// [`REGOAL_BACKOFF_S`], and still idle right before the stop, is stopped and resumed with its goal;
+/// one the owner called with ⚡ Làm ngay ([`ask_wake`]) at the first sighting.
 /// The resource guard ([`super::pressure::tick`]) runs first (also while gated); a room it paused
 /// is not revived, a room it asked to restart is stopped and resumed lean, and rooms open
 /// staggered ([`super::pressure::settle`]).
@@ -780,12 +817,23 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let file = regoal_file(t.home);
     let mut seen = idle::read_json(&file).filter(Value::is_object).unwrap_or_else(|| json!({}));
     let mut stalled = Vec::new();
+    let wake = woken(t.home, t.root, sessions.iter().map(|s| s.name.clone()), now);
+    let mut rearmed = Vec::new();
     for s in &sessions {
         let key = format!("{root}|{}", s.name);
         let idle = running.iter().any(|l| l.id == s.conversation_id && lost_goal(on_goal(&s.name), l));
         if !idle {
             if let Some(o) = seen.get_mut(&key).and_then(Value::as_object_mut) {
                 o.remove("seen");
+            }
+            continue;
+        }
+        // The owner's ⚡ Làm ngay: re-arm now, unless the inbox mod is about to hand the room its message.
+        if wake.contains(&s.name) {
+            let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now);
+            if !(pending_inbox(t.home, &s.conversation_id) && crate::verbs::hq::inbox_live(t.home, &s.conversation_id, at)) {
+                stalled.push(s.conversation_id.clone());
+                rearmed.push(s.name.clone());
             }
             continue;
         }
@@ -804,6 +852,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             _ => e["seen"] = json!(now),
         }
     }
+    wake_done(t.home, t.root, &rearmed);
     let mut started = Vec::new();
     let reserve = std::time::Duration::from_secs(LAUNCH_RESERVE_S);
     for s in sessions {
@@ -1461,6 +1510,10 @@ mod tests {
         assert!(pass(700, Some(&idle_qa)).is_empty() && !stopped(), "first sighting after the backoff");
         assert!(pass(1100, Some(&idle_qa)).is_empty() && !stopped(), "400 s old sighting: stale, counted again");
         assert_eq!(pass(1170, Some(&idle_qa)).len(), 1, "70 s after a fresh sighting: resumed");
+        // The owner's ⚡ Làm ngay called qa: re-armed at the first idle sighting, backoff or not, once.
+        ask_wake(&h, &root, &["qa".to_string()], 1180);
+        assert_eq!(pass(1185, Some(&idle_qa)).len(), 1, "called: resumed with its goal at once");
+        assert!(pass(1190, Some(&idle_qa)).is_empty() && !stopped(), "the call is spent: backed off again");
         auto::mark_paused(&h, 4).unwrap();
         *fake.agents.borrow_mut() = vec![all, live];
         fake.calls.borrow_mut().clear();

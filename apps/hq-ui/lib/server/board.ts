@@ -87,12 +87,31 @@ export function parsePrioBody(b: Record<string, unknown> | null): { ok: true; va
   return { ok: true, value: { root: b.root, id: b.id, prio: b.prio } };
 }
 
-/** Run `auto prio` in the project root; never throws. */
-export async function setCardPrio(root: string, x: Pick<PrioInput, "id" | "prio">): Promise<{ ok: boolean; error: string | null }> {
+/**
+ * One line for the "⚡ Làm ngay" toast from `auto prio --json` (`rushed`, `lead`, `woke`: the owner's
+ * P0 on a board team mails the lead and calls the rooms that take the card now); null when nobody
+ * was told (a lower level, no team, an older 8sync).
+ */
+export function rushLine(stdout: string, id: number): string | null {
+  let v: { rushed?: unknown; lead?: unknown; woke?: unknown };
+  try {
+    v = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (v?.rushed !== true) return null;
+  const names = (x: unknown) => (Array.isArray(x) ? x.map((r) => (r && typeof r.name === "string" ? r.name : null)).filter((n): n is string => !!n) : []);
+  const woke = names(v.woke);
+  const lead = names(v.lead).length > 0 ? "đã báo lead" : "team không có phòng lead";
+  return woke.length ? `Đã gọi ${woke.join(", ")} nhận #${id} ngay · ${lead}` : `Chưa phòng nào rảnh nhận #${id} · ${lead} xếp người`;
+}
+
+/** Run `auto prio` in the project root; never throws. `woke`: [rushLine]. */
+export async function setCardPrio(root: string, x: Pick<PrioInput, "id" | "prio">): Promise<{ ok: boolean; error: string | null; woke: string | null }> {
   const r = await run("8sync", prioArgs(x.id, x.prio), TIMEOUT_MS, root);
-  if (r.ok) return { ok: true, error: null };
+  if (r.ok) return { ok: true, error: null, woke: rushLine(r.stdout, x.id) };
   const msg = r.killed ? `8sync không trả lời sau ${TIMEOUT_MS / 1000} s` : r.stderr.trim().replace(/^Error:\s*/, "");
-  return { ok: false, error: (msg || "8sync ccc auto prio thất bại (cần 8sync ≥ 0.100.4: `8sync up`)").slice(0, 300) };
+  return { ok: false, error: (msg || "8sync ccc auto prio thất bại (cần 8sync ≥ 0.100.4: `8sync up`)").slice(0, 300), woke: null };
 }
 
 /** The note "⚡ Gỡ block ngay" leaves on the card: what the lead does with it this turn. */
@@ -107,11 +126,11 @@ export function unblockArgs(id: number): string[] {
  * "⚡ Gỡ block ngay" (owner 2026-10-20): Blocked → Backlog with the owner's note, then P0, so the lead
  * wakes at once to decide, write AC and the check, and send it to Ready. Never throws.
  */
-export async function unblockCard(root: string, id: number): Promise<{ ok: boolean; error: string | null }> {
+export async function unblockCard(root: string, id: number): Promise<{ ok: boolean; error: string | null; woke: string | null }> {
   const r = await run("8sync", unblockArgs(id), TIMEOUT_MS, root);
   if (!r.ok) {
     const msg = r.killed ? `8sync không trả lời sau ${TIMEOUT_MS / 1000} s` : r.stderr.trim().replace(/^Error:\s*/, "");
-    return { ok: false, error: (msg || "8sync ccc auto move thất bại").slice(0, 300) };
+    return { ok: false, error: (msg || "8sync ccc auto move thất bại").slice(0, 300), woke: null };
   }
   return setCardPrio(root, { id, prio: 0 });
 }
