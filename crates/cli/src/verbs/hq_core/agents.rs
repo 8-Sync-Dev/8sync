@@ -9,6 +9,14 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 pub const MAX_AGE: Duration = Duration::from_secs(30);
+/// A listing this young is served even when the fingerprint moved: busy rooms rewrite their session
+/// and job files every second or so, and with a fresh run per poll the polls of every HQ client
+/// queued on the mutex behind one claude run each, timed out in node (5 s) and fell back to one
+/// `claude agents` per request — 15 at once, rooms shown as ids and stale "Đang làm" (2026-10-21).
+pub const MIN_GAP: Duration = Duration::from_secs(3);
+/// A failed run serves the last good listing while it is this young (a slow `claude` under load is
+/// not "no room is running").
+pub const KEEP_GOOD: Duration = Duration::from_secs(120);
 const TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_OUT: u64 = 4 * 1024 * 1024;
 /// Entries per directory folded into the fingerprint; past it the TTL alone refreshes.
@@ -77,26 +85,35 @@ pub struct Cache {
     at: Option<Instant>,
     /// Claude's stdout when it was valid JSON; `null` when claude failed (callers trust the journal).
     body: std::sync::Arc<[u8]>,
+    /// When `body` last came from a run that worked.
+    good_at: Option<Instant>,
 }
 
 impl Default for Cache {
     fn default() -> Self {
-        Cache { fp: None, at: None, body: std::sync::Arc::from(&b"null"[..]) }
+        Cache { fp: None, at: None, body: std::sync::Arc::from(&b"null"[..]), good_at: None }
     }
 }
 
 impl Cache {
     /// Whether a cached answer may be served for `fp` at `now`.
     pub fn fresh(&self, fp: &Fingerprint, now: Instant) -> bool {
-        self.fp.as_ref() == Some(fp) && self.at.is_some_and(|t| now.duration_since(t) < MAX_AGE)
+        let age = |t: Instant| now.saturating_duration_since(t);
+        self.at.is_some_and(|t| age(t) < MIN_GAP) || (self.fp.as_ref() == Some(fp) && self.at.is_some_and(|t| age(t) < MAX_AGE))
     }
 
     pub fn store(&mut self, fp: Fingerprint, now: Instant, body: Option<Vec<u8>>) {
         self.fp = Some(fp);
         self.at = Some(now);
-        self.body = std::sync::Arc::from(body.unwrap_or_else(|| b"null".to_vec()));
+        match body {
+            Some(b) => {
+                self.body = std::sync::Arc::from(b);
+                self.good_at = Some(now);
+            }
+            None if self.good_at.is_some_and(|t| now.saturating_duration_since(t) < KEEP_GOOD) => {}
+            None => self.body = std::sync::Arc::from(&b"null"[..]),
+        }
     }
-
     pub fn body(&self) -> std::sync::Arc<[u8]> {
         self.body.clone()
     }
@@ -212,8 +229,14 @@ mod tests {
         c.store(fp.clone(), t0, Some(b"[]".to_vec()));
         assert!(c.fresh(&fp, t0 + Duration::from_secs(1)));
         assert!(!c.fresh(&fp, t0 + MAX_AGE), "too old");
-        assert!(!c.fresh(&vec![], t0), "something changed");
-        c.store(fp.clone(), t0, None);
+        assert!(c.fresh(&vec![], t0 + Duration::from_secs(1)), "a moved fingerprint waits MIN_GAP: one run serves every poll");
+        assert!(!c.fresh(&vec![], t0 + MIN_GAP), "something changed, past MIN_GAP");
+        // A failed run under load keeps the last good listing (rooms keep their names) …
+        c.store(vec![], t0 + MIN_GAP, None);
+        assert_eq!(&*c.body(), b"[]");
+        // … not for ever: past KEEP_GOOD with no good run it says null (HQ trusts its journal).
+        c.store(vec![], t0 + KEEP_GOOD, None);
         assert_eq!(&*c.body(), b"null", "a failed run is served as null, not retried per poll");
+        assert!(c.fresh(&vec![], t0 + KEEP_GOOD + Duration::from_secs(1)), "and not retried per poll either");
     }
 }

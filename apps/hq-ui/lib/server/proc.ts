@@ -61,7 +61,15 @@ export type ClaudeAgent = {
 };
 
 /** null when `claude` is missing or failed: callers then trust the journal. The core keeps this warm. */
-export async function listClaudeAgents(): Promise<ClaudeAgent[] | null> {
+/** A listing this young answers every caller (all routes and clients poll together). */
+const AGENTS_FRESH_MS = 2_000;
+/** A failed probe answers with the last good listing while it is this young: a slow `claude` under
+ * load is not "no room runs" (rooms would show as ids with their last journal status). */
+const AGENTS_KEEP_MS = 120_000;
+let agentsLast: { at: number; v: ClaudeAgent[] } | null = null;
+let agentsFlight: Promise<ClaudeAgent[] | null> | null = null;
+
+async function probeAgents(): Promise<ClaudeAgent[] | null> {
   const viaCore = await coreGet("/v1/agents");
   if (viaCore) return Array.isArray(viaCore.v) ? (viaCore.v as ClaudeAgent[]) : null;
   const r = await run("claude", ["agents", "--json"], 5000);
@@ -72,6 +80,30 @@ export async function listClaudeAgents(): Promise<ClaudeAgent[] | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * `claude agents --json` (through the core when HQ has one). One probe in flight for the whole
+ * server: concurrent callers share it (2026-10-21 a slow core made every poll start its own
+ * `claude agents`, 15 at once, which made claude slower still).
+ */
+export async function listClaudeAgents(now: () => number = Date.now): Promise<ClaudeAgent[] | null> {
+  if (agentsLast && now() - agentsLast.at < AGENTS_FRESH_MS) return agentsLast.v;
+  agentsFlight ??= probeAgents().finally(() => {
+    agentsFlight = null;
+  });
+  const v = await agentsFlight;
+  if (v) {
+    agentsLast = { at: now(), v };
+    return v;
+  }
+  return agentsLast && now() - agentsLast.at < AGENTS_KEEP_MS ? agentsLast.v : null;
+}
+
+/** Tests: forget the shared listing. */
+export function resetAgentsCache(): void {
+  agentsLast = null;
+  agentsFlight = null;
 }
 
 export type SessionStatus = "running" | "idle" | "needs_input" | "ended";
