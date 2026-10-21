@@ -239,42 +239,48 @@ pub(super) fn eye_prompt(name: &str) -> String {
     g.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// How long the sweep's `auto wait --mail` blocks: it scans on every wake and at least this often.
-pub(super) const SWEEP_EVERY_S: u64 = 900;
+/// Where the sweep remembers what it already told a room or the lead, inside the repo's git dir
+/// (`git rev-parse --git-common-dir`): one per project, shared by its worktrees, never committed.
+pub(super) const SWEEP_SENT: &str = "8sync-sweep-sent.txt";
 
 /// The first message of the "Dọn máy" room ([`room::SWEEP`]): the project's machine and disk
-/// cleaner. Like the eye it waits on its inbox (`auto wait --mail`, no tokens), but wakes at least
-/// every [`SWEEP_EVERY_S`] to scan: the guard's dry run, worktrees against merged PRs, build dirs,
-/// big untracked files and %TEMP% copies. HQ mails it `[máy]` breaches (lib/server/guard-trigger.ts)
-/// and disk findings (lib/server/cleanup-loop.ts). Strict rules: only provably safe cleanups, never
-/// uncommitted or unpushed work, never another project; it tells each affected room exactly what
-/// (PID/port/path) and the lead what it freed and kept.
+/// cleaner. Event-driven like the eye: it blocks in `auto wait --mail` (no tokens) and a timeout or
+/// a cap only ends the turn. It acts on three messages only: HQ's `[máy]` breach (processes only,
+/// one `guard --dry-run`; lib/server/guard-trigger.ts), HQ's disk findings (only the items listed,
+/// sizes already reclaimable; lib/server/cleanup-loop.ts) and the owner's. Strict rules: only
+/// provably safe cleanups, never uncommitted or unpushed work, never another project, %TEMP%
+/// copies reported only; each room and the lead hear a thing once ([`SWEEP_SENT`]), the lead only
+/// when something was freed.
 pub(super) fn sweep_prompt(name: &str) -> String {
     let (role, duty) = room::role(name);
     let g = format!(
-        "/goal Phòng `{name}` (vai {role}: {duty}) là super agent giữ máy nhẹ cho RIÊNG dự án này: CPU không bao giờ chạm 60%, RAM/GPU/điện thấp, đĩa không phình rác. \
-         Cực nghiêm: chỉ làm điều chắc chắn an toàn; không chắc → để nguyên và báo lead. \
-         Mỗi lượt: (1) `8sync ccc auto status --json`; (2) `8sync ccc auto wait --json --mail --timeout {every} --as {name}` (Bash timeout {bash_ms}; chặn ≤ {every_min} phút, không tốn token): \
-         `\"wake\":\"off\"` → dừng; `\"wake\":\"msg\"` (tin `[máy]`/`Dọn dung lượng` của HQ, tin phòng khác) hoặc hết giờ → (3) quét, (4) xử lý, (5) báo, rồi quay lại (1): quét mỗi lần thức và ít nhất mỗi {every_min} phút. \
-         (3) Quét: `8sync ccc auto guard --dry-run` (RAM/CPU, phòng và tiến trình ăn nhiều, Defender); `git fetch origin`; `git worktree list`; mỗi worktree `.claude/worktrees/*`: `git -C <wt> status --porcelain`, `git -C <wt> log @{{u}}.. --oneline` (không có upstream = chưa push), `gh pr list --state merged --head <nhánh> --json number,headRefOid`; \
-         số lượng + dung lượng `.claude/worktrees`, `target`, `node_modules`, `.next`, `dist`, file lớn chưa track (`git ls-files --others --exclude-standard`), bản sao trong %TEMP% mang tên card của dự án này (`qa-card-*`, `qa-fetch*`). \
-         (4) Luật xử lý: KHÔNG BAO GIỜ xoá việc chưa commit hoặc chưa push. \
-         Worktree chỉ gỡ khi: sạch VÀ HEAD = headRefOid của một PR đã MERGED (hoặc `git merge-base --is-ancestor <HEAD> origin/main`) VÀ không phòng nào đang chạy/giữ card trong đó → `git worktree remove <wt>` (không --force). \
+        "/goal Phòng `{name}` (vai {role}: {duty}) giữ máy nhẹ cho RIÊNG dự án này: CPU không chạm 60%, RAM/GPU/điện thấp, đĩa không phình rác. \
+         Chỉ làm khi có tin, không tự quét định kỳ. Cực nghiêm: chỉ làm điều chắc chắn an toàn; không chắc → để nguyên. \
+         Mỗi lượt: (1) `8sync ccc auto status --json`; `cap` khác null → chỉ chạy (2); (2) `8sync ccc auto wait --json --mail --as {name}` (Bash timeout {bash_ms}; chặn ≤ {wait_min} phút, không tốn token): \
+         `\"wake\":\"off\"` → dừng; `\"wake\":\"msg\"` → xử lý từng tin trong `messages` theo (3) rồi quay lại (1); còn lại (hết giờ, `\"wake\":\"cap\"`) → kết thúc lượt, không quét gì. \
+         (3) Chỉ làm ba loại tin: \
+         (a) `[máy] …` của HQ: chỉ xem tiến trình, `8sync ccc auto guard --dry-run` tối đa MỘT lần mỗi lần thức; không git fetch, không gh, không đo đĩa; tiến trình gây tải thuộc phòng/worktree dự án này → nhắn đúng phòng đó. \
+         (b) `Dọn dung lượng dự án …` của HQ: chỉ xét đúng các mục tin liệt kê; số trong tin đã là phần xoá lấy lại được (HQ đo 6 giờ/lần), không tự du/đo lại node_modules/target; node_modules của pnpm/bun là hardlink vào store: xoá gần như không lấy lại chỗ → đừng xoá chỉ để lấy chỗ. \
+         (c) tin của owner (không phải từ phòng khác): làm trong luật (4). \
+         Tin khác (phòng trả lời tin của bạn…) → không quét, không trả lời. \
+         (4) Luật: KHÔNG BAO GIỜ xoá việc chưa commit hoặc chưa push. \
+         Worktree chỉ gỡ khi đủ cả ba: `git -C <wt> status --porcelain --ignored` không có gì ngoài target/.next/node_modules/dist; nhánh có commit riêng và HEAD = headRefOid của một PR đã MERGED (`gh pr list --state merged --head <nhánh> --json number,headRefOid`); không phòng nào chạy/giữ card trong đó → `git worktree remove <wt>` (không --force). \
          Thư mục build (target/.next/node_modules/dist) chỉ dọn bằng lệnh của công cụ (`cargo clean` đúng thư mục đó…) và chỉ khi không tiến trình phòng nào chạy trong worktree đó. \
-         File đã commit: chỉ qua một PR riêng `git rm` (nhánh mới từ origin/main), không viết lại lịch sử, không tự merge. \
+         File đã commit lớn: không tự sửa, báo lead đề xuất card `git rm`. \
          Asset/bằng chứng dự án ghi chỉ owner được xoá → hỏi owner bằng AskUserQuestion, không tự xoá. \
-         Không kill tiến trình, trừ server/watcher còn sót (vite, next dev, cargo watch…) chạy trong worktree của dự án này, sống > 5 phút, không phòng nào dùng: nhắn phòng đó trước; lượt sau vẫn còn → dừng đúng PID đó (không kill theo tên). \
-         Không đụng dự án khác hay thư mục ngoài repo (trừ bản sao %TEMP% mang tên card của dự án này); không đổi cài đặt guard. \
-         (5) Báo: mỗi phòng bị ảnh hưởng MỘT tin ngắn `8sync ccc msg <phòng> \"…\" --from {name}` có đúng PID/port/đường dẫn + việc cần làm; \
-         lượt có dọn hoặc có giữ lại → `8sync ccc msg lead \"[dọn máy] giải phóng <MB/GB>: …; giữ: … vì …\" --from {name}`; \
+         Bản sao trong %TEMP% (`qa-card-*`, `qa-fetch*`) không mang tên dự án: chỉ báo dung lượng, không xoá. \
+         Không kill tiến trình, trừ server/watcher còn sót (vite, next dev, cargo watch…) chạy trong worktree của dự án này, sống > 5 phút, không phòng nào dùng: nhắn phòng đó trước; lần thức sau vẫn còn → ngay trước khi dừng kiểm lại cùng PID, tên ảnh, dòng lệnh, cwd trong worktree đó và giờ bắt đầu như lần trước → dừng đúng PID đó (không kill theo tên); khác → không dừng. \
+         Không đụng dự án khác; không đổi cài đặt guard. \
+         (5) Báo một lần: mỗi điều đã báo ghi một dòng `<phòng>|<mục>` vào `<git-common-dir>/{sent}` (`git rev-parse --git-common-dir`, không commit); dòng đã có → không báo lại. \
+         Mỗi phòng bị ảnh hưởng MỘT tin ngắn `8sync ccc msg <phòng> \"…\" --from {name}` có đúng PID/port/đường dẫn + việc cần làm; \
+         lead chỉ khi THẬT đã giải phóng chỗ, mỗi mục một lần: `8sync ccc msg lead \"[dọn máy] giải phóng <MB/GB>: …; giữ: … vì …\" --from {name}`; \
          `8sync ccc msg --all \"…\" --from {name}` chỉ cho luật cả team (không copy repo/node_modules ra %TEMP%, tắt vite/server khi xong card, `cargo build -j2`), mỗi luật một lần, nhắc lại chỉ khi tái phạm. \
-         Rail: không viết code cho card, không `auto claim|add|done`, không move card trừ trả claim của phòng đã dừng (`8sync ccc auto move <id> ready --note \"[dọn máy] trả claim: phòng <x> đã dừng\" --as {name}`); \
-         không merge/push main/tag/deploy; không `git reset|clean -f|checkout|stash` trong worktree; không chạy build/test. \
+         Rail: không viết code, không `auto claim|move|add|done`, không move card; không merge/push/tag/deploy; không `git commit|reset|clean -f|checkout|stash`; không chạy build/test. \
          Điều kiện đạt (dừng): trong lượt gần nhất, `auto status --json` cho `on`/`here` false hoặc `paused` true \
          hoặc `gate` nhắc tới lease, hoặc `auto wait --json` trả `\"wake\":\"off\"`.",
-        every = SWEEP_EVERY_S,
-        every_min = SWEEP_EVERY_S / 60,
+        sent = SWEEP_SENT,
         bash_ms = BASH_MAX_MS,
+        wait_min = auto::WAIT_MAX_S / 60,
     );
     g.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -1828,56 +1834,63 @@ mod tests {
     }
 
     #[test]
-    fn the_sweep_opens_on_a_strict_goal_that_scans_on_mail_and_every_15_minutes() {
+    fn the_sweep_opens_on_a_strict_event_driven_goal() {
         let g = first_prompt("sweep", None, auto::DEFAULT_LOOP_MIN);
         assert_eq!(g, sweep_prompt("sweep"));
         assert!(g.starts_with("/goal Phòng `sweep` (vai Dọn máy"), "{g}");
         assert!(g.chars().count() <= GOAL_MAX, "sweep: {} chars over Claude Code's /goal cap", g.chars().count());
         assert!(!g.contains('\n'), "one line through a .cmd shim");
         for want in [
-            "`8sync ccc auto wait --json --mail --timeout 900 --as sweep`",
-            "ít nhất mỗi 15 phút",
-            "`8sync ccc auto guard --dry-run`",
-            "`8sync ccc auto status --json`",
-            "`git worktree list`",
-            "`git -C <wt> status --porcelain`",
-            "`git -C <wt> log @{u}.. --oneline`",
-            "`gh pr list --state merged --head <nhánh>",
-            "`.claude/worktrees`",
-            "`node_modules`",
-            "`.next`",
-            "file lớn chưa track",
-            "%TEMP% mang tên card",
+            // Events only: a timeout or a cap ends the turn, other rooms' replies never start a scan.
+            "`8sync ccc auto wait --json --mail --as sweep`",
+            "không tự quét định kỳ",
+            "còn lại (hết giờ, `\"wake\":\"cap\"`) → kết thúc lượt, không quét gì",
+            "`cap` khác null → chỉ chạy (2)",
+            "Tin khác (phòng trả lời tin của bạn…) → không quét, không trả lời",
+            "\"wake\":\"off\"",
+            // `[máy]`: processes only, one dry run, no network or disk.
+            "`[máy] …` của HQ: chỉ xem tiến trình, `8sync ccc auto guard --dry-run` tối đa MỘT lần mỗi lần thức; không git fetch, không gh, không đo đĩa",
+            // Disk: HQ's listed items, sizes already reclaimable.
+            "chỉ xét đúng các mục tin liệt kê",
+            "không tự du/đo lại node_modules/target",
+            "node_modules của pnpm/bun là hardlink vào store: xoá gần như không lấy lại chỗ",
             "KHÔNG BAO GIỜ xoá việc chưa commit hoặc chưa push",
-            "sạch VÀ HEAD = headRefOid của một PR đã MERGED",
-            "`git merge-base --is-ancestor <HEAD> origin/main`",
+            "`git -C <wt> status --porcelain --ignored` không có gì ngoài target/.next/node_modules/dist",
+            "nhánh có commit riêng và HEAD = headRefOid của một PR đã MERGED",
+            "`gh pr list --state merged --head <nhánh>",
             "`git worktree remove <wt>` (không --force)",
             "chỉ dọn bằng lệnh của công cụ",
             "không tiến trình phòng nào chạy trong worktree đó",
-            "PR riêng `git rm`",
+            "File đã commit lớn: không tự sửa, báo lead",
             "AskUserQuestion",
+            "chỉ báo dung lượng, không xoá",
             "sống > 5 phút",
             "nhắn phòng đó trước",
+            "kiểm lại cùng PID, tên ảnh, dòng lệnh, cwd trong worktree đó và giờ bắt đầu",
             "không kill theo tên",
             "Không đụng dự án khác",
+            // Told once; the lead only when something was freed.
+            "`<git-common-dir>/8sync-sweep-sent.txt`",
+            "dòng đã có → không báo lại",
             "`8sync ccc msg <phòng> \"…\" --from sweep`",
             "PID/port/đường dẫn",
+            "lead chỉ khi THẬT đã giải phóng chỗ, mỗi mục một lần",
             "`8sync ccc msg lead \"[dọn máy] giải phóng <MB/GB>",
-            "giữ: … vì …",
             "`8sync ccc msg --all \"…\" --from sweep`",
             "không copy repo/node_modules ra %TEMP%",
             "tắt vite/server khi xong card",
             "`cargo build -j2`",
-            "không viết code cho card",
-            "không `auto claim|add|done`",
-            "trả claim của phòng đã dừng",
-            "\"wake\":\"off\"",
+            "không viết code",
+            "không `auto claim|move|add|done`, không move card",
+            "không `git commit|reset|clean -f|checkout|stash`",
         ] {
             assert!(g.contains(want), "sweep misses {want}: {g}");
         }
+        for gone in ["--timeout", "git fetch origin`", "--is-ancestor", "trả claim", "PR riêng", "trừ bản sao %TEMP%"] {
+            assert!(!g.contains(gone), "sweep still has {gone}: {g}");
+        }
         assert!(!g.contains("auto claim --json") && !g.contains("CronCreate"), "no lane, no cron: {g}");
         assert!(g.contains(&format!("Bash timeout {BASH_MAX_MS}")));
-        assert!(SWEEP_EVERY_S <= auto::WAIT_MAX_S, "auto wait accepts the timeout");
         let idle = Live { id: "s".into(), name: "sweep".into(), background: true, started: 0, busy: false, cwd: String::new(), pid: 0 };
         assert!(lost_goal(on_goal("sweep"), &idle), "an idle sweep is brought back on its goal");
     }

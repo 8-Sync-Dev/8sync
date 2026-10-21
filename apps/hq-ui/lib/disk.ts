@@ -120,6 +120,7 @@ export function cleanupText(p: Pick<ProjectDisk, "root" | "name" | "truncated">,
     "- Asset hoặc bằng chứng mà dự án ghi là chỉ owner được xoá: hỏi anh bằng AskUserQuestion trước khi xoá.",
     "- File đã commit: ưu tiên git rm (hoặc nén, chuyển sang LFS) trong một commit qua PR; không viết lại lịch sử git.",
     "- Thư mục build (target, .next, node_modules): dọn bằng lệnh của công cụ (cargo clean, xoá rồi cài lại) khi không phòng nào đang build.",
+    "- Số HQ báo là phần xoá lấy lại được: node_modules của pnpm/bun là hardlink vào store, xoá gần như không lấy lại chỗ, đừng xoá chỉ để lấy chỗ.",
   ].join("\n");
 }
 

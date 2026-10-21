@@ -352,7 +352,7 @@ function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: Swe
         <div className="space-y-1.5 border-t pt-2.5">
           <div>
             <p className="text-sm font-medium">Dọn máy tự động</p>
-            <p className="text-xs leading-snug text-muted-foreground">Mỗi team đang chạy có phòng sweep: quét RAM/CPU/GPU và rác đĩa, chỉ dọn thứ chắc chắn an toàn, nhắn đúng phòng gây tải, báo lead.</p>
+            <p className="text-xs leading-snug text-muted-foreground">Mỗi team đang chạy có phòng sweep: chỉ thức khi HQ báo máy quá tải hay rác đĩa, dọn thứ chắc chắn an toàn, nhắn đúng phòng gây tải, báo lead khi đã giải phóng chỗ.</p>
           </div>
           {sweep.map((p) => (
             <SweepRow key={p.root} p={p} at={at} api={api} onChanged={onChanged} />
@@ -469,7 +469,7 @@ function SweepRow({ p, at, api, onChanged }: { p: SweepProject; at: number; api:
     try {
       await api("/api/machine/sweep", { method: "POST", body: { root: p.root, on: next } });
       toast.success(next ? `Đã bật dọn máy tự động cho ${p.name}` : `Đã tắt dọn máy tự động cho ${p.name}`, {
-        description: next ? "Phòng sweep quét máy mỗi 15 phút và khi HQ báo quá tải." : "Đã dừng riêng phòng sweep; các phòng khác vẫn chạy.",
+        description: next ? "Phòng sweep chờ tin, chỉ thức khi HQ báo máy quá tải hay rác đĩa." : "Đã dừng riêng phòng sweep; các phòng khác vẫn chạy.",
       });
       onChanged();
     } catch (e) {

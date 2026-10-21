@@ -2,12 +2,13 @@
 // whose switch is on (no row in hq.db sweep_switch = on). A 60 s loop (instrumentation.ts) runs
 // `8sync ccc auto up --add sweep` in a project that lacks it: one pass at a time, one project at a
 // time, a failure backs off 5 min doubling to 1 h, a success is not repeated for 10 min. The owner's
-// off runs `auto down --only sweep`. The guard trigger mails the sweep `[máy] …` (≤ 1 per 5 min per
-// project). Fixed argv only; a root reaches the CLI only as its working directory.
+// off runs `auto down --only sweep` and is remembered only once that worked. The guard trigger mails
+// `[máy] …` to the sweeps of projects whose own rooms carry the load (≤ 1 per 5 min per project).
+// Fixed argv only; a root reaches the CLI only as its working directory.
 import type { DatabaseSync } from "node:sqlite";
 import { diskKey } from "../disk";
 import { repoOf } from "../sidebar";
-import { ALERT_EVERY_MS, alertText, ENSURE_AGAIN_MS, ENSURE_EVERY_MS, isSweepRoom, nextBackoff, SWEEP_ROOM, sweepArgs } from "../sweep";
+import { ALERT_EVERY_MS, alertText, ENSURE_AGAIN_MS, ENSURE_EVERY_MS, isSweepRoom, loadIsTheirs, nextBackoff, SWEEP_ROOM, sweepArgs } from "../sweep";
 import { autoStatus, lastAutoStatus, type AutoStatus } from "./auto";
 import { getDb } from "./db";
 import { projectOf } from "./office";
@@ -44,10 +45,19 @@ export function sweepOn(db: DatabaseSync, root: string): boolean {
   return r ? Number(r.enabled) === 1 : true;
 }
 
-/** Roots whose team runs now: auto on, not paused, brought up by `auto up`. */
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((r): r is string => typeof r === "string" && r.length > 0 && r.length <= 1024) : []);
+/** `k` (a diskKey) is folder `dir` or inside it. */
+const within = (k: string, dir: string) => k === diskKey(dir) || k.startsWith(`${diskKey(dir)}/`);
+
+/** Roots whose team runs now: auto on, not paused, brought up by `auto up`, in auto's scope (`repos`; none = every project) and not taken out by `auto close` (`out`). */
 export function runningTeams(st: AutoStatus | null | undefined): string[] {
-  if (!st?.on || st.paused || !Array.isArray(st.team_roots)) return [];
-  return st.team_roots.filter((r): r is string => typeof r === "string" && r.length > 0 && r.length <= 1024);
+  if (!st?.on || st.paused) return [];
+  const repos = strings(st.repos);
+  const out = strings(st.out);
+  return strings(st.team_roots).filter((r) => {
+    const k = diskKey(r);
+    return (repos.length === 0 || repos.some((x) => within(k, x))) && !out.some((x) => within(k, x));
+  });
 }
 
 type Sess = { name: string; label?: string | null; cwd: string | null; status: string };
@@ -118,12 +128,18 @@ export async function sweepTick(db: DatabaseSync, now = Date.now(), deps: SweepD
 
 export type SweepResult = { ok: boolean; on: boolean; output: string; error: string | null };
 
-/** The owner's switch: remembered first (the loop then follows it), then `auto up --add sweep` / `auto down --only sweep`. */
+/**
+ * The owner's switch. On: remembered first (the loop then keeps the room), then `auto up --add
+ * sweep`. Off: `auto down --only sweep` first and remembered only once it worked, so a failed stop
+ * (the revive lock held, `8sync` missing) leaves the switch on with the error shown instead of
+ * "tắt" over a room that still runs. The project is busy meanwhile: the loop never adds it then.
+ */
 export async function setSweep(db: DatabaseSync, root: string, on: boolean, now = Date.now()): Promise<SweepResult> {
   const m = mem();
   const k = diskKey(root);
   if (m.busy.has(k)) return { ok: false, on: sweepOn(db, root), output: "", error: "đang bật/tắt phòng dọn máy, đợi lần trước xong" };
-  db.prepare("INSERT INTO sweep_switch(key, root, enabled, at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET root = excluded.root, enabled = excluded.enabled, at = excluded.at").run(k, root, on ? 1 : 0, now);
+  const remember = () => db.prepare("INSERT INTO sweep_switch(key, root, enabled, at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET root = excluded.root, enabled = excluded.enabled, at = excluded.at").run(k, root, on ? 1 : 0, now);
+  if (on) remember();
   m.busy.add(k);
   try {
     const r = await run("8sync", sweepArgs(on), on ? 180_000 : 60_000, cwdOf(root));
@@ -131,10 +147,13 @@ export async function setSweep(db: DatabaseSync, root: string, on: boolean, now 
     m.backoff.delete(k);
     if (!r.ok) {
       if (on) m.backoff.set(k, { until: now + nextBackoff(null), ms: nextBackoff(null), error: firstLine(`${r.stderr}\n${r.stdout}`) });
-      return { ok: false, on, output, error: tail(r.stderr, 4).replace(/^Error:\s*/, "") || "8sync ccc auto thất bại" };
+      return { ok: false, on: sweepOn(db, root), output, error: tail(r.stderr, 4).replace(/^Error:\s*/, "") || "8sync ccc auto thất bại" };
     }
     if (on) m.okAt.set(k, now);
-    else m.okAt.delete(k);
+    else {
+      remember();
+      m.okAt.delete(k);
+    }
     return { ok: true, on, output, error: null };
   } finally {
     m.busy.delete(k);
@@ -142,20 +161,20 @@ export async function setSweep(db: DatabaseSync, root: string, on: boolean, now 
 }
 
 /**
- * The guard trigger fired (`why`, e.g. "CPU 72% ×3"): every running team with the switch on and a
- * live sweep gets one `[máy] …` line with its project's top CPU eaters, at most once per 5 min per
- * project (a failed send does not count). Never throws; returns the roots messaged.
+ * The guard trigger fired (`why`, e.g. "CPU 72% ×3"): each running team with the switch on, a live
+ * sweep and load of its own in the guard's last pass ([`loadIsTheirs`]) gets one `[máy] …` line
+ * with its top CPU eaters, at most once per 5 min per project (a failed send does not count).
+ * Never throws; returns the roots messaged.
  */
 export async function sweepAlert(db: DatabaseSync, why: string, now = Date.now(), deps: SweepDeps = realDeps(db)): Promise<string[]> {
   const m = mem();
   const sent: string[] = [];
   try {
     const st = await deps.status();
-    const teams = runningTeams(st).filter((r) => sweepOn(db, r));
-    if (!teams.length) return [];
-    const due = teams.filter((r) => {
+    const guard = (r: string) => st?.guard?.projects.find((p) => diskKey(p.root) === diskKey(r));
+    const due = runningTeams(st).filter((r) => {
       const last = m.alertAt.get(diskKey(r));
-      return last == null || now - last >= ALERT_EVERY_MS;
+      return (last == null || now - last >= ALERT_EVERY_MS) && loadIsTheirs(guard(r)) && sweepOn(db, r);
     });
     if (!due.length) return [];
     const live = liveSweeps(await deps.sessions());
@@ -163,8 +182,7 @@ export async function sweepAlert(db: DatabaseSync, why: string, now = Date.now()
       const k = diskKey(root);
       if (!live.has(k)) continue;
       m.alertAt.set(k, now);
-      const top = st?.guard?.projects.find((p) => diskKey(p.root) === k)?.top ?? [];
-      const r = await run("8sync", ["ccc", "msg", SWEEP_ROOM, alertText(why, top)], 30_000, cwdOf(root));
+      const r = await run("8sync", ["ccc", "msg", SWEEP_ROOM, alertText(why, guard(root)?.top ?? [])], 30_000, cwdOf(root));
       if (r.ok) sent.push(root);
       else m.alertAt.delete(k);
     }

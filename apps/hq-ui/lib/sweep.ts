@@ -1,8 +1,9 @@
 // "Dọn máy tự động" (Máy tab, "Bảo vệ máy"): while HQ runs, every project whose team runs and whose
 // switch is on (default on) has one `sweep` room (crates/cli/src/verbs/ccc/team.rs `sweep_prompt`):
-// it scans RAM/CPU/GPU and disk junk, cleans only what is provably safe, messages the room that
-// causes the load and reports to the lead. HQ mails it guard breaches (lib/server/guard-trigger.ts)
-// and disk findings (lib/server/cleanup-loop.ts). Pure: lib/server/sweep.ts runs the commands.
+// it waits on its inbox and acts only on HQ's guard breaches (lib/server/guard-trigger.ts, projects
+// whose own rooms carry the load) and disk findings (lib/server/cleanup-loop.ts), cleans only what
+// is provably safe, messages the room that causes the load and tells the lead what it freed.
+// Pure: lib/server/sweep.ts runs the commands.
 
 export const SWEEP_ROOM = "sweep";
 /** The ensure pass runs this often (lib/server/sweep.ts startSweepLoop). */
@@ -29,5 +30,19 @@ export const nextBackoff = (prev: number | null) => (prev == null ? BACKOFF_MIN_
 /** The one-line alert the guard trigger mails the sweep: why it fired, the project's top CPU eaters. */
 export function alertText(why: string, top: readonly string[]): string {
   const t = top.length ? ` · top: ${top.join(", ")}` : "";
-  return `[máy] ${why}${t} — phân tích và dọn ngay theo luật của phòng, báo phòng gây tải`;
+  return `[máy] ${why}${t}. Xem tiến trình (một lần guard --dry-run), nhắn đúng phòng gây tải theo luật của phòng`;
+}
+
+/**
+ * The guard's last pass for one project shows the load is that project's own: its level is up, or
+ * one of its top CPU users (pressure.rs `cpu_top`: "node 24% (dev2)", owner "máy" = not a room)
+ * belongs to one of its rooms at ≥ 1 %. Only those projects' sweeps get a `[máy]` alert.
+ */
+export function loadIsTheirs(p: { level: number; top: readonly string[] } | null | undefined): boolean {
+  if (!p) return false;
+  if (p.level > 0) return true;
+  return p.top.some((t) => {
+    const m = /(\d+(?:\.\d+)?)% \(([^()]+)\)\s*$/.exec(t);
+    return m != null && Number(m[1]) >= 1 && m[2] !== "máy";
+  });
 }
