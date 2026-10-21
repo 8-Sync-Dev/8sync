@@ -61,9 +61,11 @@ const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30
        8sync ccc auto ship-fast on [--hours 0.5..4] | off | ship-ask | status [--json]   (Ship tốc độ cao: cả team land card gần xong trước, builder không lấy card mới khi qa/review còn ≥ 3, lead hỏi Ship một chạm; chỉ owner)   (vòng auto-ship: lead nhận brief vòng kế khi board cạn, ≥ 20 phút một vòng; 2 vòng không ra card thì nghỉ; chỉ owner)
        8sync ccc auto guard now   (một lượt bảo vệ ngay cho mọi dự án đang auto; HQ tự gọi khi RAM/CPU vượt ngưỡng)
        cột: backlog → ready → building → qa → review → approved (chờ Ship) → done; blocked";
-/// Owner 2026-10-22: "tôi nghĩ bây giờ không cần sau 1p auto trả lời" — the critic answers at once;
-/// `--after <s>` still brings the "owner treo" grace back.
-pub(super) const DEFAULT_AFTER_S: u64 = 0;
+/// How long the owner may stay silent on a room's question before the critic picks and the room
+/// goes on. 60 s until v0.110.38; owner 2026-10-22 ("không cần sau 1p, luôn bật auto, cần tốc độ
+/// ship cao"): 5 s, so a room never idles on a question while the owner is away, and an owner
+/// who is typing in that room (last prompt < 5 s ago) still gets to answer it. Ship stays theirs.
+pub(super) const DEFAULT_AFTER_S: u64 = 5;
 /// The backup cron of a room. 10 min fired 1,050 cron turns in 36 h on ai-game-studio (each a full
 /// context re-read); a lane room already wakes on cards through `auto wait`, so the cron only has to
 /// catch a room that stopped. Shorter loops are refused ([`parse_every`]).
@@ -104,8 +106,8 @@ pub(super) fn set(home: &Path, mode: Mode, subscription: bool, now: u64) -> Resu
             rate,
             repo,
         } => {
-            if after > 86_400 {
-                bail!("--after: tối đa 86400 giây (0 = critic trả lời ngay)");
+            if after == 0 || after > 86_400 {
+                bail!("--after: 1..86400 giây");
             }
             // idle::on validates (hours, rate, subscription cap) before writing anything.
             idle::on(home, hours, rate, subscription, true)?;
@@ -799,10 +801,9 @@ fn state_text(v: &Value) -> String {
         } else {
             String::new()
         };
-        let after_s = v["after_s"].as_u64().unwrap_or(0);
         let mut s = format!(
-            "auto: ĐANG CHẠY liên tục{lease} · critic {}{only}{window}",
-            if after_s == 0 { "trả lời ngay".to_string() } else { format!("trả lời sau {after_s} s") }
+            "auto: ĐANG CHẠY liên tục{lease} · critic trả lời sau {} s{only}{window}",
+            v["after_s"].as_u64().unwrap_or(0)
         );
         if let Some(g) = v["gate"].as_str() {
             s.push_str(&format!("\nđang cho nghỉ: {g}"));
@@ -908,7 +909,7 @@ Mỗi nhịp:
 
 Không bao giờ: merge, push main, tag, release, publish, deploy khi owner chưa trả lời Ship; đọc hay in secret; xoá dữ liệu; nhắn người ngoài.
 Câu hỏi Ship, secret, tiền, high-risk chờ owner. Không có việc hợp vai → R&D cho mục Next kế tiếp, không ngồi không.
-Hỏi owner luôn bằng tool AskUserQuestion (option khuyến nghị đứng đầu), không hỏi bằng chữ cuối lượt rồi dừng: owner vắng 60 s
+Hỏi owner luôn bằng tool AskUserQuestion (option khuyến nghị đứng đầu), không hỏi bằng chữ cuối lượt rồi dừng: owner im 5 s
 thì critic chỉ trả lời thay được câu hỏi qua AskUserQuestion. Câu Ship chỉ phòng lead hỏi.
 ";
 
@@ -937,7 +938,7 @@ pub(super) fn write_loop_md(root: &Path) -> Result<(PathBuf, bool)> {
 /// AskUserQuestion call; a question typed as plain text at the end of a turn just waits, so the critic
 /// never gets it (seen live 2026-10-18: rd asked about BiRefNet in prose and sat). One Ship question
 /// per project: two rooms asking it doubles the owner's work (ba and lead both asked for PR 20).
-pub(super) const ASK_RULE: &str = "Cần owner quyết → gọi tool AskUserQuestion (≤4 câu, option khuyến nghị đứng đầu có \"(Recommended)\"), KHÔNG hỏi bằng chữ ở cuối lượt rồi dừng: owner vắng 60 s thì critic chỉ trả lời thay được câu hỏi qua AskUserQuestion. Câu Ship (merge/release/deploy) chỉ phòng lead hỏi. Mỗi quyết định hỏi MỘT lần cả team: có trong su-code/DECISIONS.md hay note card thì theo; phòng khác đang hỏi thì `auto note <id> \"đề xuất: …\"` rồi làm việc khác.";
+pub(super) const ASK_RULE: &str = "Cần owner quyết → gọi tool AskUserQuestion (≤4 câu, option khuyến nghị đứng đầu có \"(Recommended)\"), KHÔNG hỏi bằng chữ ở cuối lượt rồi dừng: owner im 5 s thì critic chỉ trả lời thay được câu hỏi qua AskUserQuestion. Câu Ship (merge/release/deploy) chỉ phòng lead hỏi. Mỗi quyết định hỏi MỘT lần cả team: có trong su-code/DECISIONS.md hay note card thì theo; phòng khác đang hỏi thì `auto note <id> \"đề xuất: …\"` rồi làm việc khác.";
 
 /// What a room does with the card `auto claim` gives it, per lane (super-board's lane playbooks).
 /// Measured on ai-game-studio (2026-10-19): 51 open PRs, merges held up by stacked branch chains
@@ -2677,7 +2678,7 @@ mod tests {
             ),
             (json!(true), json!(true), json!(true), json!(false))
         );
-        assert_eq!(v["after_s"], 60);
+        assert_eq!(v["after_s"], 60, "the test switched on with --after 60");
         assert!(v["lease_until"].as_u64().unwrap() > 0 && v["gate"].is_null());
         let m = idle::read_json(&marker(&h)).unwrap();
         assert_eq!(
@@ -2774,7 +2775,7 @@ mod tests {
     #[test]
     fn invalid_input_bails_and_leaves_nothing() {
         let h = home("bad");
-        for (hours, after) in [(0.0, 60), (25.0, 60), (2.0, 90_000)] {
+        for (hours, after) in [(0.0, 60), (25.0, 60), (2.0, 0), (2.0, 90_000)] {
             assert!(
                 set(&h, on(hours, after), false, 1).is_err(),
                 "{hours} {after}"

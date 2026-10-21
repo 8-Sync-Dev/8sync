@@ -28,13 +28,12 @@ describe("stuck questions go to the critic (seen live 2026-10-18: 7 rooms waited
     expect(stuckAsks([room("a", q(now - 200_000))], { a: now - STUCK_AFTER_MS - 1 }, now)).toHaveLength(1);
   });
 
-  it("the threshold follows 8sync's `after_s` (owner 2026-10-22: answer at once, not after a minute), floored at 5 s, the old minute without it", () => {
-    expect(stuckAfterMs(0)).toBe(STUCK_MIN_MS); // v0.110.38 default: "trả lời ngay"
+  it("the threshold follows 8sync's `after_s` (owner 2026-10-22: 5 s, not a minute), floored at 5 s, the old minute without it", () => {
     expect(stuckAfterMs(5)).toBe(5_000);
     expect(stuckAfterMs(1)).toBe(STUCK_MIN_MS);
     expect(stuckAfterMs(120)).toBe(120_000);
     expect(stuckAfterMs(null)).toBe(STUCK_AFTER_MS);
-    expect(stuckAfterMs(undefined)).toBe(STUCK_AFTER_MS);
+    expect(stuckAfterMs(0)).toBe(STUCK_AFTER_MS);
     // A 6 s old question is stuck at the 5 s threshold, not at the minute.
     const rooms = [room("a", q(now - 6_000))];
     expect(stuckAsks(rooms, {}, now, stuckAfterMs(5))).toHaveLength(1);

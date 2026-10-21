@@ -11,9 +11,9 @@ export const STUCK_AFTER_MS = 60_000;
 /** Never below this, whatever `after_s` says: the owner needs a moment to read a question they were typing at. */
 export const STUCK_MIN_MS = 5_000;
 
-/** The sweep's threshold: 8sync's `after_s` (`auto on --after`; 0 = "trả lời ngay", the default since v0.110.38), floored. */
+/** The sweep's threshold: 8sync's `after_s` (`auto on --after`, default 5 s since v0.110.38), floored. */
 export function stuckAfterMs(afterS: number | null | undefined): number {
-  return typeof afterS === "number" && Number.isFinite(afterS) && afterS >= 0 ? Math.max(STUCK_MIN_MS, afterS * 1000) : STUCK_AFTER_MS;
+  return typeof afterS === "number" && Number.isFinite(afterS) && afterS > 0 ? Math.max(STUCK_MIN_MS, afterS * 1000) : STUCK_AFTER_MS;
 }
 
 export type StuckRoom = { session_id: string | null; cwd: string | null; delivery: "terminal" | "inbox" | null; ask: Ask | null };

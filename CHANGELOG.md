@@ -6,6 +6,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [Unreleased]
 
 ## [0.110.39] — 2026-10-22
+
+### Changed
+- **Critic trả lời sau 5 giây thay vì 60.** Owner 2026-10-22 ("không cần sau 1 phút auto trả lời, luôn có nút bật auto mặc định bật, cần tốc độ ship cao"): `auto on` mặc định `--after 5` (`DEFAULT_AFTER_S`): câu hỏi sản phẩm/kỹ thuật của phòng được critic chọn ngay khi owner không gõ vào phòng đó trong 5 giây; quyền (permit) cũng tự quyết sau 5 giây theo allowlist; phòng mà owner đang gõ (prompt < 5 s) vẫn hỏi owner. Vòng quét câu hỏi kẹt của HQ (`stuck-asks`) đọc `after_s` của 8sync thay vì 60 giây cố định (sàn 5 s; 8sync cũ không báo thì vẫn 60 s). Rail giữ nguyên: Ship, secret, tiền, xoá/không hoàn tác, deploy prod, high-risk vẫn chờ owner. Text kit và hướng dẫn HQ cập nhật.
+
+## [0.110.39] — 2026-10-22
 ### Changed
 - **Tổng quan gọn lại** (owner 2026-10-22: "ui ux loạn quá"): câu hỏi dài trong khung "Anh cần trả lời" (danh sách 19 card merge của lead) gập còn 3 dòng, bấm vào mở đủ; bỏ dòng "Màn hình phòng đang hiện đúng câu này" và dòng nhắc Ship khi đã có nút đáp án; cột Preview ẩn khi chưa có ảnh (tab Preview vẫn chỉ chỗ lưu ảnh).
 ### Fixed
