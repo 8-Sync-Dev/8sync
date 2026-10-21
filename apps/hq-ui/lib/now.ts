@@ -5,7 +5,7 @@ import { LANES, claimStale, type Board, type Card, type LaneKey } from "./lanes"
 import type { SeatKey } from "./office";
 import type { RoleId } from "./roles";
 
-/** needs: Claude waits for the owner · blocked: its card is in Blocked (or the claim went stale) ·
+/** needs: Claude waits for the owner · blocked: a quiet room whose card is in Blocked, or any room whose claim went stale ·
  * working: the session is running · holding: idle between loop ticks with a card in hand ·
  * waiting: an auto room with nothing to claim (`auto wait`) · idle: any other quiet room. */
 export const NOW_STATES = ["needs", "blocked", "working", "holding", "waiting", "idle"] as const;
@@ -61,16 +61,48 @@ const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCas
 
 export type BoardRef = { root: string; board: Board | null };
 
+/** Boards whose root contains the room's cwd (two repos may both have a `dev`). */
+function boardsNear(cwd: string | null, boards: BoardRef[]): BoardRef[] {
+  const c = cwd ? norm(cwd) : null;
+  return c ? boards.filter((b) => c === norm(b.root) || c.startsWith(`${norm(b.root)}/`)) : [];
+}
+
 /** The card this room holds: boards whose root contains the room's cwd first (two repos may both have a `dev`). */
 export function heldCard(room: { label: string; name: string; cwd: string | null }, boards: BoardRef[]): Card | null {
-  const cwd = room.cwd ? norm(room.cwd) : null;
-  const near = cwd ? boards.filter((b) => cwd === norm(b.root) || cwd.startsWith(`${norm(b.root)}/`)) : [];
+  const near = boardsNear(room.cwd, boards);
   for (const b of near.length ? near : boards) {
     if (!b.board) continue;
     const mine = LANES.flatMap((l) => b.board!.lanes[l.key]).filter((c) => c.claim && claimMatches(c.claim.room, room.label, room.name));
     if (mine.length) return mine.sort((a, z) => z.claim!.at - a.claim!.at)[0];
   }
   return null;
+}
+
+/** A move note into one of these lanes is the room handing its card on: its task is done. */
+const HANDED_ON: readonly LaneKey[] = ["qa", "review", "approved"];
+
+/**
+ * Tasks of this session from the boards whose root holds its cwd: `done` = cards (open, or among the
+ * last 10 closed the CLI keeps — target.rs take(10)) it moved on to QA / Review / Approved by a note,
+ * `open` = cards it holds now. Only notes and claims at or after `started_at` (ms) count, so a reused
+ * label (`dev`) never inherits an earlier session's cards; the label must match exactly (case-insensitive:
+ * `dev-ide` is not `dev`). Null when the cwd is under no readable board (the caller falls back to its journal).
+ */
+export function boardTasks(room: { label: string; cwd: string | null; started_at: number | null }, boards: BoardRef[]): { done: number; open: number } | null {
+  const label = room.label.trim().toLowerCase();
+  const since = room.started_at ?? 0;
+  const mine = (r: string | null, at: number) => r != null && r.trim().toLowerCase() === label && at >= since;
+  let seen = false;
+  let done = 0;
+  let open = 0;
+  for (const b of boardsNear(room.cwd, boards)) {
+    if (!b.board) continue;
+    seen = true;
+    const cards = LANES.flatMap((l) => b.board!.lanes[l.key]);
+    open += cards.filter((c) => c.claim && mine(c.claim.room, c.claim.at)).length;
+    for (const c of [...cards, ...b.board.closed]) if (c.history?.some((s) => s.to != null && HANDED_ON.includes(s.to) && mine(s.room, s.at))) done++;
+  }
+  return seen ? { done, open } : null;
 }
 
 export type NowRoom = {
@@ -106,7 +138,9 @@ export function roomNow(room: NowRoom, boards: BoardRef[], now: number): RoomNow
   const card = heldCard(room, boards);
   let state: NowState;
   if (room.status === "needs_input" || room.waiting) state = "needs";
-  else if (card && (card.lane === "blocked" || claimStale(card, now))) state = "blocked";
+  // A running room is working even when its card sits in Blocked: that claim is only the board's retry
+  // timer (the lead's card waiting on an owner decision), not the room being stuck.
+  else if (card && (claimStale(card, now) || (card.lane === "blocked" && room.status !== "running"))) state = "blocked";
   else if (room.status === "running") state = "working";
   else if (card) state = "holding";
   else if (named?.lane) state = "waiting";

@@ -6,6 +6,8 @@ import { isModelId, isRoleId } from "@/lib/roles";
 import { projectIdFor } from "./db";
 import fs from "node:fs";
 import path from "node:path";
+import { binFor, childEnv } from "./child-env";
+import { coreGet } from "./core";
 import { inboxLive } from "./inbox";
 import { channelMcpConfigPath } from "./paths";
 import { CHANNEL_FLAGS_RE, TMUX_NAME_RE, hasControlChars, isTmuxName } from "./validate";
@@ -13,10 +15,14 @@ import { CHANNEL_FLAGS_RE, TMUX_NAME_RE, hasControlChars, isTmuxName } from "./v
 /** `killed`: the timeout (or a signal) stopped it, so it may have done part of its work. */
 type Run = { ok: boolean; stdout: string; stderr: string; killed?: boolean };
 
-/** argv-only process runner (never a shell), with a hard timeout; `cwd` defaults to the server's. */
+/**
+ * argv-only process runner (never a shell), with a hard timeout; `cwd` defaults to the server's.
+ * The child gets the scrubbed env (no HQ_* / PORT / HOSTNAME / NODE_ENV); `8sync` is the binary that
+ * started this HQ (contract C-E).
+ */
 export function run(cmd: string, args: string[], timeoutMs = 4000, cwd?: string): Promise<Run> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, cwd }, (err, stdout, stderr) => {
+    execFile(binFor(cmd), args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, cwd, env: childEnv() }, (err, stdout, stderr) => {
       resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), ...(err?.killed ? { killed: true } : {}) });
     });
   });
@@ -54,8 +60,18 @@ export type ClaudeAgent = {
   waitingFor?: string;
 };
 
-/** null when `claude` is missing or failed: callers then trust the journal. */
-export async function listClaudeAgents(): Promise<ClaudeAgent[] | null> {
+/** null when `claude` is missing or failed (past AGENTS_KEEP_MS): no session is known alive then; journal rows stay ended. The core keeps this warm. */
+/** A listing this young answers every caller (all routes and clients poll together). */
+const AGENTS_FRESH_MS = 2_000;
+/** A failed probe answers with the last good listing while it is this young: a slow `claude` under
+ * load is not "no room runs" (rooms would show as ids with their last journal status). */
+const AGENTS_KEEP_MS = 120_000;
+let agentsLast: { at: number; v: ClaudeAgent[] } | null = null;
+let agentsFlight: Promise<ClaudeAgent[] | null> | null = null;
+
+async function probeAgents(): Promise<ClaudeAgent[] | null> {
+  const viaCore = await coreGet("/v1/agents");
+  if (viaCore) return Array.isArray(viaCore.v) ? (viaCore.v as ClaudeAgent[]) : null;
   const r = await run("claude", ["agents", "--json"], 5000);
   if (!r.ok) return null;
   try {
@@ -64,6 +80,30 @@ export async function listClaudeAgents(): Promise<ClaudeAgent[] | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * `claude agents --json` (through the core when HQ has one). One probe in flight for the whole
+ * server: concurrent callers share it (2026-10-21 a slow core made every poll start its own
+ * `claude agents`, 15 at once, which made claude slower still).
+ */
+export async function listClaudeAgents(now: () => number = Date.now): Promise<ClaudeAgent[] | null> {
+  if (agentsLast && now() - agentsLast.at < AGENTS_FRESH_MS) return agentsLast.v;
+  agentsFlight ??= probeAgents().finally(() => {
+    agentsFlight = null;
+  });
+  const v = await agentsFlight;
+  if (v) {
+    agentsLast = { at: now(), v };
+    return v;
+  }
+  return agentsLast && now() - agentsLast.at < AGENTS_KEEP_MS ? agentsLast.v : null;
+}
+
+/** Tests: forget the shared listing. */
+export function resetAgentsCache(): void {
+  agentsLast = null;
+  agentsFlight = null;
 }
 
 export type SessionStatus = "running" | "idle" | "needs_input" | "ended";
@@ -77,13 +117,16 @@ export type SessionView = {
   started_at: number | null;
   cwd: string | null;
   tmux: boolean;
-  source: "tmux" | "claude" | "journal";
+  /** `omp`: an omp-team room from `8sync ls` (lib/server/floor.ts ompSessions), reached only through its inbox. */
+  source: "tmux" | "claude" | "journal" | "omp";
   detail: string | null;
   /** Inbox delivery only: the `8sync-inbox` mod polled within LIVE_MS, so a task enters as soon as the session is idle. */
   inbox_live: boolean;
   /** Team role / model the session was started with (null for sessions started elsewhere). */
   role?: string | null;
   model?: string | null;
+  /** Team (contract C4): absent = Claude Code (ccc); "omp" for omp rooms. */
+  engine?: string;
 };
 
 function agentStatus(s: string | undefined): SessionStatus {
@@ -100,9 +143,11 @@ function normStatus(s: string | null | undefined): SessionStatus {
  * Merges three sources: tmux `hq-*` sessions, `claude agents --json`, and the
  * journal-derived sessions table. A tmux pane's pid is the claude pid (tmux's
  * shell execs `env`, which execs `claude`), which links the first two.
+ * Only tmux and `claude agents` prove a session alive: journal-only rows are always "ended".
  */
 export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
   const [tmux, listed] = await Promise.all([listTmux(), listClaudeAgents()]);
+  // Past AGENTS_KEEP_MS without an answer nothing is known alive: journal rows stay ended (below).
   const agents = listed ?? [];
   const rows = db
     .prepare("SELECT name, project_id, started_at, status, cwd, role, model FROM sessions")
@@ -154,8 +199,8 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
       label: TMUX_NAME_RE.test(r.name) ? r.name : r.name.slice(0, 8),
       session_id: TMUX_NAME_RE.test(r.name) ? null : r.name,
       project_id: r.project_id ?? projectIdFor(db, r.cwd),
-      // Not alive in tmux or `claude agents`: it is gone. Without `claude`, trust the journal.
-      status: listed ? "ended" : normStatus(r.status),
+      // Not alive in tmux or `claude agents` (or its last good answer): it is gone, whatever the journal says.
+      status: "ended",
       started_at: r.started_at,
       cwd: r.cwd,
       tmux: false,

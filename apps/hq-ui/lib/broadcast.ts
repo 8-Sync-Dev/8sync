@@ -5,7 +5,7 @@
 // Chat tổng, and its summary line says which rooms the task reaches before it is sent.
 import { type ProjectInfo } from "./office";
 import { roomLabel } from "./room-label";
-import { groupByRepo } from "./sidebar";
+import { groupByRepo, groupKey } from "./sidebar";
 
 export const ALL_PROJECTS = "all";
 
@@ -36,8 +36,8 @@ export function broadcastProjects(rooms: R[]): BroadcastProject[] {
 
 /** The project in scope when it has rooms, else the one with the most rooms; "" when none. */
 export function defaultChoice(projects: BroadcastProject[], preferRoot?: string | null): string {
-  const want = preferRoot?.toLowerCase();
-  return projects.find((p) => want != null && p.root.toLowerCase() === want)?.root ?? projects[0]?.root ?? "";
+  const want = preferRoot ? groupKey(preferRoot) : null;
+  return projects.find((p) => want != null && groupKey(p.root) === want)?.root ?? projects[0]?.root ?? "";
 }
 
 /** Whether the owner's pick still exists ("all" needs two projects or more). */

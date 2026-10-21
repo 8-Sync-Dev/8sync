@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronsDownIcon, ChevronsUpIcon, CopyIcon, ExternalLinkIcon, FlameIcon, GitPullRequestIcon, TagIcon, Undo2Icon } from "lucide-react";
+import { ChevronsDownIcon, ChevronsUpIcon, CopyIcon, ExternalLinkIcon, FlameIcon, GitPullRequestIcon, TagIcon, Undo2Icon, ZapIcon } from "lucide-react";
 import { useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -160,6 +160,53 @@ function PrioPicker({ c, onPrio }: { c: Card; onPrio: (prio: number | null) => P
   );
 }
 
+/**
+ * The force button a card carries, wherever it sits: "unblock" for a Blocked card, "rush" for one
+ * still waiting (Backlog or Ready) and not P0 yet; null elsewhere (in work, or closed).
+ */
+export function forceKind(c: Pick<Card, "lane" | "prio">): "rush" | "unblock" | null {
+  if (c.lane === "blocked") return "unblock";
+  return (c.lane === "backlog" || c.lane === "ready") && c.prio !== 0 ? "rush" : null;
+}
+
+const FORCE = {
+  rush: { label: "Làm ngay", done: (id: number) => `#${id} lên P0`, title: "Đặt P0, báo lead và gọi phòng rảnh của cột nhận card này ngay" },
+  unblock: {
+    label: "Gỡ block ngay",
+    done: (id: number) => `#${id} ra khỏi Blocked, P0 — lead xử lý ngay`,
+    title: "Đưa card về Backlog kèm ghi chú cho lead (quyết, viết AC + check, đưa Ready lượt này) và đặt P0",
+  },
+} as const;
+
+/**
+ * "⚡ Làm ngay" (P0 through `auto prio`) or "⚡ Gỡ block ngay" (POST /api/board/unblock: Backlog with
+ * the owner's note, then P0): the lead hears it and the free rooms of the card's lane are called.
+ * `run` does the call; a string it resolves to (the CLI's "Đã gọi dev nhận #21 ngay · đã báo lead",
+ * lib/server/board.ts rushLine) is the toast's second line.
+ */
+export function ForceButton({ c, run, className }: { c: Card; run: () => Promise<unknown>; className?: string }) {
+  const [busy, setBusy] = useState(false);
+  const kind = forceKind(c);
+  if (!kind) return null;
+  const f = FORCE[kind];
+  async function force() {
+    setBusy(true);
+    try {
+      const woke = await run();
+      toast.success(f.done(c.id), typeof woke === "string" ? { description: woke } : undefined);
+    } catch (e) {
+      toast.error(`${f.label} #${c.id} thất bại: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Button type="button" size="xs" variant="outline" disabled={busy} aria-busy={busy} onClick={() => void force()} className={className} aria-label={`${f.label} card #${c.id}`} title={f.title}>
+      <ZapIcon aria-hidden className="text-st-needs" /> {f.label}
+    </Button>
+  );
+}
+
 async function copy(text: string, what: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -170,7 +217,7 @@ async function copy(text: string, what: string) {
 }
 
 /** Everything the board knows about one card. Rendered inside the sheet; kept separate so tests can render it. */
-export function CardDetail({ c, now, next, onPrio }: { c: Card; now: number; next: boolean; onPrio?: (prio: number | null) => Promise<void> }) {
+export function CardDetail({ c, now, next, onPrio, onForce }: { c: Card; now: number; next: boolean; onPrio?: (prio: number | null) => Promise<void>; onForce?: () => Promise<unknown> }) {
   const { title, tags } = cardParts(c.text);
   const lane = LANES.find((l) => l.key === c.lane);
   const stale = claimStale(c, now);
@@ -187,6 +234,7 @@ export function CardDetail({ c, now, next, onPrio }: { c: Card; now: number; nex
         {c.label && <LabelChip label={c.label} />}
         <TagChips tags={tags} />
         {next && <span className={cn(CHIP, "bg-brand/25 text-brand-ink dark:text-brand")}>Kế tiếp</span>}
+        {onForce && <ForceButton c={c} run={onForce} className="ml-auto" />}
       </div>
 
       {title !== c.text.trim() && (
@@ -336,6 +384,7 @@ export function CardSheet({
   next,
   onClose,
   onPrio,
+  onForce,
 }: {
   c: Card | null;
   open: boolean;
@@ -343,6 +392,7 @@ export function CardSheet({
   next: boolean;
   onClose: () => void;
   onPrio?: (prio: number | null) => Promise<void>;
+  onForce?: () => Promise<unknown>;
 }) {
   const title = c ? cardParts(c.text).title : "";
   return (
@@ -355,7 +405,7 @@ export function CardSheet({
           </SheetTitle>
           <SheetDescription className="sr-only">Chi tiết card trên board</SheetDescription>
         </SheetHeader>
-        {c && <CardDetail c={c} now={now} next={next} onPrio={onPrio} />}
+        {c && <CardDetail c={c} now={now} next={next} onPrio={onPrio} onForce={onForce} />}
       </SheetContent>
     </Sheet>
   );

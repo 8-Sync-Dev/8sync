@@ -163,6 +163,13 @@ enum Cmd {
     /// Claude Code CLI with named per-repo sessions + the 8sync kit: 8sync ccc . <name>
     Ccc(verbs::ccc::Args),
 
+    /// Keep the machine awake while rooms work (= `8sync ccc awake …`); hidden, not a new verb.
+    #[command(hide = true, disable_help_flag = true)]
+    Awake {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
+
     /// Always-on guard: alerts Claude Code + you and SIGTERMs runaway harness helpers (MCP servers, LSPs, index workers)
     Watchdog(verbs::watchdog::Args),
 
@@ -232,6 +239,7 @@ fn main() -> Result<()> {
         Some(Cmd::Hq(a))      => verbs::hq::run(a),
         Some(Cmd::Forge(a))   => verbs::forge::run(a),
         Some(Cmd::Ccc(a))     => verbs::ccc::run(a),
+        Some(Cmd::Awake { rest }) => verbs::ccc::run(verbs::ccc::Args { rest: std::iter::once("awake".to_string()).chain(rest).collect() }),
         Some(Cmd::Completions(a)) => verbs::completions::run(a),
         Some(Cmd::Watchdog(a)) => verbs::watchdog::run(a),
         Some(Cmd::Learn(a)) => verbs::learn::run(a),

@@ -73,14 +73,53 @@ CREATE TABLE IF NOT EXISTS ingest_state (
   file TEXT PRIMARY KEY,
   offset INTEGER NOT NULL
 );
+-- Projects the owner closed in the sidebar; key = lib/sidebar.ts groupKey(root). Shown again on new activity.
+CREATE TABLE IF NOT EXISTS hidden_projects (
+  key TEXT PRIMARY KEY,
+  root TEXT NOT NULL,
+  name TEXT NOT NULL,
+  hidden_at INTEGER NOT NULL
+);
+-- "Tự soi ảnh" switch per project (lib/server/eye.ts); key = lib/preview.ts rootKey(root), since = when it went on.
+CREATE TABLE IF NOT EXISTS eye_on (
+  key TEXT PRIMARY KEY,
+  root TEXT NOT NULL,
+  since INTEGER NOT NULL
+);
+-- Images already handed to a project's eye room (lib/eye.ts imageKey): never sent twice, across restarts.
+CREATE TABLE IF NOT EXISTS eye_sent (
+  key TEXT NOT NULL,
+  image TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (key, image)
+);
+-- "Dọn máy tự động" switch the owner flipped per project (lib/server/sweep.ts); no row = on.
+-- key = lib/disk.ts diskKey(root), enabled = 0|1, at = when flipped.
+CREATE TABLE IF NOT EXISTS sweep_switch (
+  key TEXT PRIMARY KEY,
+  root TEXT NOT NULL,
+  enabled INTEGER NOT NULL,
+  at INTEGER NOT NULL
+);
 `;
 
-const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync } };
+const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync; schema: string } };
 
-/** One connection per DB file (HOME can change between tests). */
+/**
+ * One connection per DB file (HOME can change between tests). The connection outlives a code
+ * reload in `next dev`: a newer SCHEMA is applied to it on the next call, not only to a new one.
+ */
 export function getDb(): DatabaseSync {
   const file = dbPath();
-  if (g.__hqDb?.file === file) return g.__hqDb.db;
+  const open = g.__hqDb;
+  if (open?.file === file) {
+    if (open.schema !== SCHEMA) {
+      open.db.exec(SCHEMA);
+      migrate(open.db);
+      open.schema = SCHEMA;
+    }
+    return open.db;
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(file);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 2000;");
@@ -93,7 +132,7 @@ export function getDb(): DatabaseSync {
       /* wal/shm may not exist yet */
     }
   }
-  g.__hqDb = { file, db };
+  g.__hqDb = { file, db, schema: SCHEMA };
   return db;
 }
 

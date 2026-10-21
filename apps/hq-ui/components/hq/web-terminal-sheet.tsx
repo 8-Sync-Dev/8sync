@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { isOmpRoomId } from "@/lib/labels";
 import { makeApi } from "./use-hq";
 
 // xterm touches `document`, so it loads only in the browser.
@@ -28,7 +29,9 @@ export function WebTerminalSheet({ token }: { token: string }) {
   const [fetched, setInfo] = useState<Info | null>(null);
   // Read on the client only: the checkbox renders after the Orca check, never in the server HTML.
   const [orcaFirst, setOrcaFirst] = useState(() => typeof window !== "undefined" && localStorage.getItem(ORCA_PREF) === "1");
-  const info = fetched && fetched.id === target?.id ? fetched : null;
+  const omp = target != null && isOmpRoomId(target.id);
+  // An omp room has no Orca / `claude attach`: its own terminal is `8sync . <name>` in the repo.
+  const info = omp ? { id: target.id, orca: false, command: `8sync . ${target.label}` } : fetched && fetched.id === target?.id ? fetched : null;
 
   async function toOrca(t: Target): Promise<boolean> {
     try {
@@ -45,7 +48,7 @@ export function WebTerminalSheet({ token }: { token: string }) {
     const on = (e: Event) => {
       const t = (e as CustomEvent<Target>).detail;
       // "Luôn mở Orca": straight to Orca; the web panel opens only when Orca fails.
-      if (localStorage.getItem(ORCA_PREF) === "1") void toOrca(t).then((ok) => !ok && setTarget(t));
+      if (localStorage.getItem(ORCA_PREF) === "1" && !isOmpRoomId(t.id)) void toOrca(t).then((ok) => !ok && setTarget(t));
       else setTarget(t);
     };
     window.addEventListener(EVENT, on);
@@ -54,7 +57,7 @@ export function WebTerminalSheet({ token }: { token: string }) {
   }, [token]);
 
   useEffect(() => {
-    if (!target) return;
+    if (!target || isOmpRoomId(target.id)) return;
     let live = true;
     makeApi(token)(`/api/sessions/${encodeURIComponent(target.id)}/orca`)
       .then((v) => live && setInfo({ ...(v as Omit<Info, "id">), id: target.id }))
@@ -110,11 +113,13 @@ export function WebTerminalSheet({ token }: { token: string }) {
           <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" disabled={!info} title={info?.command} onClick={() => void copy()}>
             <CopyIcon aria-hidden /> Copy lệnh
           </Button>
-          <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => void popOut()}>
-            <ExternalLinkIcon aria-hidden /> Cửa sổ riêng
-          </Button>
+          {!omp && (
+            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => void popOut()}>
+              <ExternalLinkIcon aria-hidden /> Cửa sổ riêng
+            </Button>
+          )}
         </SheetHeader>
-        {target && <LiveTerminal key={target.id} sessionId={target.id} token={token} />}
+        {target && <LiveTerminal key={target.id} url={`/api/sessions/${encodeURIComponent(target.id)}/term`} token={token} />}
       </SheetContent>
     </Sheet>
   );

@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { GET } from "@/app/api/board/route";
 import { getToken } from "@/lib/server/auth";
-import { BOARD_ARGS } from "@/lib/server/board";
+import { BOARD_ARGS, resetBoards } from "@/lib/server/board";
 import { CLAIM_STALE_MS, LANES, boardSummary, claimStale, openCount, parseBoard } from "@/lib/lanes";
 import { req, tempHome } from "./helpers";
 
@@ -112,6 +112,7 @@ describe("GET /api/board", () => {
     tools = repo(path.join(base, "tools"));
   });
   beforeEach(() => {
+    resetBoards();
     run.mockReset();
     merged.mockReset();
     merged.mockResolvedValue([

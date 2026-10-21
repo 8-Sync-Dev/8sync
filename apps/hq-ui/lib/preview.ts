@@ -1,21 +1,31 @@
 // Shared by the Preview route (lib/server/preview.ts) and the views: item shape and pure helpers.
+import type { Board, Card, Closed, LaneKey } from "./lanes";
 
 export type PreviewItem = {
   id: string;
   project: string;
   root: string;
-  /** Path relative to the project root, `/`-separated. */
+  /** Path relative to the project root, `/`-separated; for an image read from `ref`, its path in that tree. */
   rel: string;
-  /** Worktree folder name under `.claude/worktrees`, null for the root itself. */
+  /** Worktree folder name under `.claude/worktrees`, null for the root itself and for a ref. */
   worktree: string | null;
   branch: string | null;
-  /** `card-<n>` in the file name, else in the path (worktree name). */
+  /** Set when no checkout has the image and HQ reads it from this ref (`origin/main`). */
+  ref: string | null;
+  /** The board card the image belongs to (its name or path says `card-<n>`, or the card worktree it was made in). */
   card: number | null;
-  mtime: number;
+  /** True time (ms): its last commit when tracked and unmodified, else the file's mtime. */
+  at: number;
+  /** "commit": `at` is a commit time; "file": an untracked or modified file's mtime. */
+  timeFrom: "commit" | "file";
   size: number;
 };
 
-export type ProjectPreviews = { root: string; name: string; items: PreviewItem[] };
+/** The newest main branch tip the repo knows (local or `origin`). */
+export type MainHead = { ref: string; sha: string; at: number; subject: string };
+
+/** `eye`: when "Tự soi ảnh" went on for this project (lib/server/eye.ts), null/absent = off. */
+export type ProjectPreviews = { root: string; name: string; main: MainHead | null; items: PreviewItem[]; eye?: number | null };
 
 const CARD_RE = /(?:^|[^a-z0-9])card[-_]?(\d{1,9})(?!\d)/i;
 
@@ -24,6 +34,9 @@ export function cardOf(rel: string): number | null {
   const m = CARD_RE.exec(rel.split("/").pop() ?? "") ?? CARD_RE.exec(rel);
   return m ? Number(m[1]) : null;
 }
+
+/** The card a worktree works on: its branch says it (folders get reused), else its folder name. */
+export const worktreeCard = (folder: string, branch: string | null): number | null => (branch ? cardOf(branch) : null) ?? cardOf(folder);
 
 /** A worktree path (`<root>/.claude/worktrees/<name>/…`) belongs to its repo root. */
 export function mainRoot(root: string): string {
@@ -40,17 +53,50 @@ export function rootKey(p: string): string {
     .toLowerCase();
 }
 
-/** Image cards grouped by card id (null = not tied to a card), newest group first. */
-export function groupByCard(items: PreviewItem[]): { card: number | null; items: PreviewItem[]; at: number }[] {
-  const map = new Map<number | null, PreviewItem[]>();
-  for (const i of items) (map.get(i.card) ?? map.set(i.card, []).get(i.card)!).push(i);
-  return [...map.entries()]
-    .map(([card, xs]) => {
-      const sorted = [...xs].sort((a, b) => b.mtime - a.mtime);
-      return { card, items: sorted, at: sorted[0]?.mtime ?? 0 };
-    })
-    .sort((a, b) => b.at - a.at);
-}
-
 /** "home.png" from "qa/evidence/card-7-home.png". */
 export const fileName = (rel: string) => rel.split("/").pop() ?? rel;
+
+/** Lanes whose cards are being worked on right now, in board order. */
+export const WORK_LANES = ["building", "qa", "review", "approved"] as const satisfies readonly LaneKey[];
+
+/** The last thing that happened to a card: its latest note, its claim, or its creation. */
+export const lastActivity = (c: Card): number => Math.max(c.note?.at ?? 0, c.claim?.at ?? 0, c.added);
+
+export type WorkRow = { card: Card; items: PreviewItem[] };
+export type DoneRow = { card: Closed; items: PreviewItem[] };
+export type PreviewSections = {
+  /** Open cards in WORK_LANES: lane by lane, most recently active first; each with its images, newest first. */
+  working: WorkRow[];
+  /** Done cards, last closed first. */
+  done: DoneRow[];
+  /** Images of no card, or of a card neither list shows; newest first. */
+  other: PreviewItem[];
+  /** Done cards closed in the last 24 h. */
+  done24h: number;
+};
+
+const DAY_MS = 24 * 3600 * 1000;
+const newestFirst = (a: PreviewItem, b: PreviewItem) => b.at - a.at;
+
+/** The Preview tab's three lists, from the board's truth and each image's true time. */
+export function previewSections(items: PreviewItem[], board: Board | null, now: number): PreviewSections {
+  const byCard = new Map<number, PreviewItem[]>();
+  for (const i of items) if (i.card != null) (byCard.get(i.card) ?? byCard.set(i.card, []).get(i.card)!).push(i);
+  const shotsOf = (id: number) => [...(byCard.get(id) ?? [])].sort(newestFirst);
+  const working: WorkRow[] = board
+    ? WORK_LANES.flatMap((l) => [...board.lanes[l]].sort((a, b) => lastActivity(b) - lastActivity(a)).map((card) => ({ card, items: shotsOf(card.id) })))
+    : [];
+  const done: DoneRow[] = board
+    ? board.closed
+        .filter((c) => c.state === "done")
+        .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+        .map((card) => ({ card, items: shotsOf(card.id) }))
+    : [];
+  const shown = new Set([...working.map((w) => w.card.id), ...done.map((d) => d.card.id)]);
+  return {
+    working,
+    done,
+    other: items.filter((i) => i.card == null || !shown.has(i.card)).sort(newestFirst),
+    done24h: done.filter((d) => d.card.at != null && now - d.card.at < DAY_MS).length,
+  };
+}

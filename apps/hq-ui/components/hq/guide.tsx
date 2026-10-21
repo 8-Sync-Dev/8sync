@@ -9,6 +9,7 @@ import {
   FolderPlusIcon,
   HourglassIcon,
   MessagesSquareIcon,
+  PowerIcon,
   SendIcon,
   TerminalIcon,
   type LucideIcon,
@@ -31,14 +32,16 @@ export const GUIDE_STEPS: GuideStep[] = [
     body:
       "Thêm thư mục ở \"Mở team ở repo mới\" bên trái (dự án đã có phòng tự hiện), rồi bấm \"Mở team\": 5 phòng nền chạy liên tục. " +
       "lead và rd dùng Opus (claude-opus-5-5) để chia việc, nghiên cứu; dev và review dùng Sonnet (claude-sonnet-5-5) để code, duyệt; qa dùng Haiku (claude-haiku-5-5) để kiểm nhanh. " +
-      "\"Team đầy đủ\" mở 8 phòng (thêm ba, arch, ui; arch viết ADR cho card nhãn arch và làm tech radar mỗi ngày), tốn quota gần gấp 8 lần một phòng.",
+      "\"Team đầy đủ\" mở 6 phòng, 3 phòng code (lead, dev, dev2, ui, qa, review), tốn quota gần gấp 6 lần một phòng. " +
+      "\"Ship tốc độ cao\" (🚀, cạnh Sấm Sét): 2 giờ cả team dồn land card gần xong trước — review/qa dọn cột trước, builder không lấy card mới khi ≥ 3 card chờ qa/review/approved, lead hỏi Ship một chạm khi card approved (anh mới bấm merge/release); hết giờ/hết card 8sync tự báo. " +
+      "\"Sấm Sét\" (⚡ = tăng nhân lực, đầu dự án ở Tổng quan và Văn phòng) mở 13 phòng: lead + ba, 7 builder, 2 QA, 2 review, lease 2 giờ, tốn quota khoảng 13 lần; đang chạy thì bấm lại để gia hạn hoặc tắt (Tắt Sấm Sét dừng 7 phòng thêm, về team 6 phòng, card chúng đang giữ trả về cột). Phòng arch, rd chỉ mở khi cần (`--roles`).",
   },
   {
     icon: SendIcon,
     title: "Giao việc",
     body:
       "Bấm \"Giao việc\" hoặc gõ vào ô \"Gửi cho mọi phòng\": việc thành card trên Board. lead viết tiêu chí và lệnh kiểm, dev làm trên nhánh card-<số>, qa kiểm, review duyệt. " +
-      "Việc gấp: mở card, chọn P0 (phòng nhận trước mọi card khác).",
+      "Việc gấp: bấm \"⚡ Làm ngay\" trên card Backlog/Ready (P0: báo lead, gọi phòng rảnh của cột nhận ngay); card Blocked có \"⚡ Gỡ block ngay\".",
   },
   {
     icon: TerminalIcon,
@@ -60,6 +63,13 @@ export const GUIDE_STEPS: GuideStep[] = [
     body:
       "Sau `8sync up`, bấm \"Dọn & mở lại\": phòng rảnh chạy lại trên bản mới, giữ hội thoại; session rác được dọn, worktree còn thay đổi được giữ. Bấm \"Dừng team\" để nghỉ (hội thoại vẫn giữ). " +
       "Chat tổng xem các phòng nhắn nhau và bàn giao \"A → B\".",
+  },
+  {
+    icon: PowerIcon,
+    title: "CLI chỉ để bật / tắt",
+    body:
+      "Terminal chỉ cần hai lệnh: `8sync ccc auto on [--omp]` bật chạy liên tục (--omp cho Đội omp làm cạnh Đội ccc) và `8sync hq ui [--public]` mở HQ (--public in link internet để mở từ điện thoại, hết hạn sau 12 giờ). " +
+      "Mọi việc khác làm ở đây: Tạm dừng / Chạy liên tục, công tắc Đội omp, giao việc, trả lời câu hỏi. Phòng dừng vì hết usage hoặc lỗi API tự chạy lại; chỉ phòng ghi \"cần anh xử lý\" mới chờ anh.",
   },
 ];
 

@@ -3,22 +3,33 @@
 import { stripAnsi } from "./pane";
 import { run } from "./proc";
 
-export type TeamAction = "up" | "full" | "clean" | "down";
+export type TeamAction = "up" | "full" | "boost" | "unboost" | "clean" | "down" | "ship-fast" | "ship-fast-off" | "ship-ask";
+
+/** The CLI's `room::FULL_TEAM` and `room::BOOST_TEAM` (crates/cli/src/verbs/ccc/room.rs; tests/team.test.ts pins them). */
+export const FULL_TEAM = ["lead", "dev", "dev2", "ui", "qa", "review"] as const;
+export const BOOST_TEAM = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"] as const;
+/** The rooms only Sấm Sét opens: "Tắt Sấm Sét" stops these and the full team runs on. */
+export const BOOST_ONLY: string[] = BOOST_TEAM.filter((r) => !(FULL_TEAM as readonly string[]).includes(r));
 
 /**
- * `up` opens or resumes the 5-room team; `full` the 8-room product team (`--roles full`); `clean`
+ * `up` opens or resumes the 5-room team; `full` the 6-room builder-heavy team (`--roles full`); `boost`
+ * (HQ "Sấm Sét") the 13-room team with a 2-hour lease (renews it when already running); `unboost`
+ * ("Tắt Sấm Sét") stops the boost-only rooms and frees their cards, back to the 6-room team; `clean`
  * first deletes the background sessions no room keeps and restarts rooms that run an older kit.
  */
 export function teamArgs(action: TeamAction): string[] {
+  if (action === "ship-fast") return ["ccc", "auto", "ship-fast", "on", "--json"];
+  if (action === "ship-ask") return ["ccc", "auto", "ship-fast", "ship-ask", "--json"];
+  if (action === "ship-fast-off") return ["ccc", "auto", "ship-fast", "off", "--json"];
   if (action === "down") return ["ccc", "auto", "down"];
+  if (action === "unboost") return ["ccc", "auto", "down", "--only", BOOST_ONLY.join(",")];
   if (action === "full") return ["ccc", "auto", "up", "--roles", "full"];
+  if (action === "boost") return ["ccc", "auto", "up", "--roles", "boost", "--hours", "2"];
   return ["ccc", "auto", "up", ...(action === "clean" ? ["--clear-ss"] : [])];
 }
 
-export const isTeamAction = (v: unknown): v is TeamAction => v === "up" || v === "full" || v === "clean" || v === "down";
-
-/** Starting four background sessions takes a while; stopping them is quick. */
-const TIMEOUT_MS = 180_000;
+const ACTIONS: readonly unknown[] = ["up", "full", "boost", "unboost", "clean", "down", "ship-fast", "ship-fast-off", "ship-ask"] satisfies TeamAction[];
+export const isTeamAction = (v: unknown): v is TeamAction => ACTIONS.includes(v);
 
 /** `busy`: another team run is still going in this root (a second tab, a double click). */
 export type TeamResult = { ok: boolean; output: string; error: string | null; busy?: boolean };
@@ -40,11 +51,24 @@ export async function runTeam(root: string, action: TeamAction): Promise<TeamRes
   const key = root.replace(/\\/g, "/").toLowerCase();
   if (inFlight.has(key)) return { ok: false, output: "", error: "team của dự án này đang mở/dừng, đợi lần trước xong", busy: true };
   inFlight.add(key);
+  // Starting four background sessions takes a while, and `auto up` waits (≤ 90 s extra) for the CPU to
+  // settle between room starts; boost starts thirteen `claude --bg` rooms one by one (up to ~10 minutes
+  // on Windows). Stopping (`down`, `unboost`) is quick.
+  const ms = action === "boost" ? 660_000 : action === "down" || action === "unboost" ? 180_000 : 300_000;
   try {
-    const r = await run("8sync", teamArgs(action), TIMEOUT_MS, root);
+    const r = await run("8sync", teamArgs(action), ms, root);
     const output = tail(`${r.stdout}\n${r.stderr}`);
-    if (r.ok) return { ok: true, output, error: null };
-    const error = r.killed ? `8sync không trả lời sau ${TIMEOUT_MS / 1000} s; xem lại văn phòng trước khi bấm lần nữa` : tail(r.stderr, 6) || "8sync ccc auto thất bại";
+    if (r.ok) {
+      // Boost sets a fresh owner lease, like the Run button: rooms that died with the machine come back now.
+      // Sấm Sét = more rooms AND the ship sprint (owner 2026-10-21: "nút sấm sét có hợp nhất nút ship
+      // không"): 13 rooms with nobody landing only piles cards in qa/review; the sprint makes the
+      // extra hands land nearest-done first. Ship tốc độ cao alone stays for a tight quota.
+      if (action === "boost") {
+        void run("8sync", ["ccc", "auto", "ship-fast", "on", "--hours", "2", "--json"], 60_000, root).then(() => run("8sync", ["ccc", "auto", "revive"], 120_000));
+      }
+      return { ok: true, output, error: null };
+    }
+    const error = r.killed ? `8sync không trả lời sau ${ms / 1000} s; xem lại văn phòng trước khi bấm lần nữa` : tail(r.stderr, 6) || "8sync ccc auto thất bại";
     return { ok: false, output, error };
   } finally {
     inFlight.delete(key);

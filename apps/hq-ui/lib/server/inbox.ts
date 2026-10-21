@@ -4,20 +4,26 @@
 // hands them to Claude when the session ends its current turn: delivered once, masked.
 import fs from "node:fs";
 import path from "node:path";
+import { isOmpRoomId } from "../labels";
 import { stateDir } from "./paths";
 
-/** A Claude session id (uuid) as a file name: nothing else is ever accepted. */
+/** A Claude session id (uuid) as a file name. */
 export const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isSessionId(s: unknown): s is string {
   return typeof s === "string" && SESSION_ID_RE.test(s);
 }
 
+/** Any room's inbox id (`8sync ls` `inbox_id`, contract C3): a Claude session id or an omp room id. Nothing else is ever a file name. */
+export function isInboxId(s: unknown): s is string {
+  return isSessionId(s) || isOmpRoomId(s);
+}
+
 export const inboxDir = () => path.join(stateDir(), "inbox");
 
-export function inboxFile(sessionId: string): string {
-  if (!isSessionId(sessionId)) throw new Error("bad session id");
-  return path.join(inboxDir(), `${sessionId}.jsonl`);
+export function inboxFile(id: string): string {
+  if (!isInboxId(id)) throw new Error("bad inbox id");
+  return path.join(inboxDir(), `${id}.jsonl`);
 }
 
 /** Append one message (0600 file in a 0700 dir). */
@@ -38,7 +44,7 @@ export function queueInbox(sessionId: string, text: string, ts = Date.now()): vo
 export const LIVE_MS = 24 * 3600_000;
 
 export function inboxLive(sessionId: string, now = Date.now()): boolean {
-  if (!isSessionId(sessionId)) return false;
+  if (!isInboxId(sessionId)) return false;
   try {
     return now - fs.statSync(path.join(inboxDir(), `${sessionId}.live`)).mtimeMs < LIVE_MS;
   } catch {

@@ -144,6 +144,8 @@ pub(super) struct Assessment {
     pub gates: Vec<Gate>,
     /// `low` (sec only) · `medium` (rules + aup-audit) · `high` (secret file or high-risk domain).
     pub level: &'static str,
+    /// Why the file list may be off (the base could not be fetched), shown with the result.
+    pub warning: Option<String>,
 }
 
 fn why(hits: &[(Cat, String)], cats: &[Cat]) -> String {
@@ -187,23 +189,35 @@ pub(super) fn assess(base: &str, files: Vec<String>, release: bool) -> Assessmen
     } else {
         "low"
     };
-    Assessment { base: base.to_string(), files, hits, gates, level }
+    Assessment { base: base.to_string(), files, hits, gates, level, warning: None }
 }
 
 impl Assessment {
+    /// The skills a room invokes for this diff, and only these (`/ship` and the lead's merge read
+    /// this line instead of loading `/sec` + `/rules` + `/aup-audit` on every diff: 1,003 skill
+    /// bodies in 36 h on ai-game-studio). `human-review` is a person, not a skill.
+    pub(super) fn skills(&self) -> Vec<String> {
+        self.gates.iter().filter(|g| g.name != "human-review").map(|g| format!("/{}", g.name)).collect()
+    }
+
     pub(super) fn json(&self) -> Value {
         json!({
             "schema": 1,
             "base": self.base,
+            "warning": self.warning,
             "level": self.level,
             "files": self.files,
             "hits": self.hits.iter().map(|(c, p)| json!({"category": c.key(), "path": p})).collect::<Vec<_>>(),
             "gates": self.gates.iter().map(|g| json!({"gate": g.name, "why": g.why})).collect::<Vec<_>>(),
+            "skills": self.skills(),
         })
     }
 
     pub(super) fn text(&self) -> String {
         let mut out = format!("risk: {} — {} file đổi so với {}\n", self.level, self.files.len(), self.base);
+        if let Some(w) = &self.warning {
+            out.push_str(&format!("⚠ {w}\n"));
+        }
         for (c, p) in &self.hits {
             out.push_str(&format!("  {:<12}{p}\n", c.key()));
         }
@@ -214,6 +228,7 @@ impl Assessment {
         for g in &self.gates {
             out.push_str(&format!("  /{:<13}{}\n", g.name, g.why));
         }
+        out.push_str(&format!("chỉ gọi: {}\n", self.skills().join(" ")));
         out.push_str("(chỉ đọc tên file, không đọc nội dung: sàn dưới review, không thay review; trước release thêm --release)\n");
         out
     }
@@ -224,11 +239,56 @@ fn git(cwd: &Path, args: &[&str]) -> Result<Option<String>> {
     Ok(out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim_end_matches(['\n', '\0']).to_string()))
 }
 
+/// How long `git fetch` of the base may take before risk goes on with the local ref.
+const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Pure: the `git fetch` that brings remote-tracking `base` up to date, or None when `base` is no
+/// remote-tracking ref (`HEAD~1`, a local branch). `origin/HEAD` fetches the remote's branches.
+fn fetch_args(base: &str) -> Option<Vec<String>> {
+    let (remote, branch) = base.split_once('/')?;
+    if remote != "origin" || branch.is_empty() || branch.starts_with('-') {
+        return None;
+    }
+    let mut args = vec!["fetch".to_string(), "--quiet".into(), "origin".into()];
+    if branch != "HEAD" {
+        args.push(branch.to_string());
+    }
+    Some(args)
+}
+
+/// Run [`fetch_args`] for `base` in `top`, bounded by [`FETCH_TIMEOUT`]: Some(warning) when it
+/// failed (offline, no auth, slow), None when fetched or nothing to fetch.
+fn fetch_base(top: &Path, base: &str) -> Option<String> {
+    let args = fetch_args(base)?;
+    let mut cmd = Command::new("git");
+    cmd.args(&args)
+        .current_dir(top)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_WORK_TREE")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    match crate::verbs::hq_core::agents::run_bounded(cmd, FETCH_TIMEOUT) {
+        Some(_) => None,
+        None => Some(format!("`git {}` lỗi hoặc quá {} s: {base} có thể cũ, danh sách file có thể thừa", args.join(" "), FETCH_TIMEOUT.as_secs())),
+    }
+}
+
+/// Pure: the diff of the working tree against the merge-base `point` of the base and HEAD (never
+/// the base's tip: what only landed on main is not this branch's change).
+fn diff_args(point: &str) -> [&str; 6] {
+    ["diff", "--name-only", "--no-renames", "-z", point, "--"]
+}
+
 /// Paths changed since `base` (committed, staged, unstaged) plus untracked files, repo-root
 /// relative, from the repo's top level whatever the cwd. `base` defaults to `origin/main`, else
-/// `origin/HEAD`, else `HEAD` (then only uncommitted work is seen: said on stderr). The comparison
-/// point is `merge-base(base, HEAD)` so commits that only landed on main are not counted.
-pub(super) fn changed_paths(cwd: &Path, base: Option<&str>) -> Result<(String, Vec<String>)> {
+/// `origin/HEAD`, else `HEAD` (then only uncommitted work is seen: said on stderr). A remote base is
+/// fetched first ([`fetch_base`]; ai-game-studio 2026-10-20: a stale local origin/main made an
+/// 84-file PR read as 177 files with `ci.yml`). The comparison point is `merge-base(base, HEAD)`
+/// so commits that only landed on main are not counted. Returns (base, files, warning).
+pub(super) fn changed_paths(cwd: &Path, base: Option<&str>) -> Result<(String, Vec<String>, Option<String>)> {
     let top = git(cwd, &["rev-parse", "--show-toplevel"])?.filter(|s| !s.is_empty()).context("not a git repo (run inside one, or pass --paths)")?;
     let top = Path::new(&top);
     let base = match base {
@@ -242,13 +302,14 @@ pub(super) fn changed_paths(cwd: &Path, base: Option<&str>) -> Result<(String, V
             }
         },
     };
+    let warning = fetch_base(top, &base);
     let point = git(top, &["merge-base", &base, "HEAD"])?.filter(|s| !s.is_empty()).unwrap_or_else(|| base.clone());
-    let diff = git(top, &["diff", "--name-only", "--no-renames", "-z", &point, "--"])?.with_context(|| format!("git diff against {base} failed (no such ref?)"))?;
+    let diff = git(top, &diff_args(&point))?.with_context(|| format!("git diff against {base} failed (no such ref?)"))?;
     let untracked = git(top, &["ls-files", "--others", "--exclude-standard", "-z"])?.context("git ls-files failed")?;
     let mut files: Vec<String> = diff.split('\0').chain(untracked.split('\0')).map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect();
     files.sort();
     files.dedup();
-    Ok((base, files))
+    Ok((base, files, warning))
 }
 
 pub(super) fn run(rest: &[String], cwd: &Path) -> Result<()> {
@@ -270,11 +331,12 @@ pub(super) fn run(rest: &[String], cwd: &Path) -> Result<()> {
             s => anyhow::bail!("unknown argument `{s}`\n{USAGE}"),
         }
     }
-    let (base, files) = match paths {
-        Some(p) => ("--paths".to_string(), p),
+    let (base, files, warning) = match paths {
+        Some(p) => ("--paths".to_string(), p, None),
         None => changed_paths(cwd, base.as_deref())?,
     };
-    let a = assess(&base, files, release);
+    let mut a = assess(&base, files, release);
+    a.warning = warning;
     if json_out {
         println!("{}", a.json());
     } else {
@@ -357,6 +419,19 @@ mod tests {
         assert_eq!(a.gates[1].why, "auth (a/auth-1.rs, a/auth-2.rs, a/auth-3.rs +2)");
     }
 
+    /// What `/ship` and the lead's merge invoke (auto.rs lane playbooks point here).
+    #[test]
+    fn risk_skill_list_is_sec_alone_for_docs_and_adds_compliance_for_auth() {
+        let docs = assess("origin/main", v(&["docs/guide.md", "README.md", "CHANGELOG.md", "docs/auth/README.md"]), false);
+        assert_eq!(docs.skills(), ["/sec"]);
+        assert!(docs.text().contains("chỉ gọi: /sec\n"), "{}", docs.text());
+        assert_eq!(docs.json()["skills"], json!(["/sec"]));
+        let auth = assess("origin/main", v(&["apps/web/lib/oauth/callback.ts", "docs/guide.md"]), false);
+        assert_eq!(auth.skills(), ["/sec", "/rules", "/aup-audit"]);
+        let high = assess("HEAD", v(&["services/hiring/rank.go", ".claude/settings.json"]), false);
+        assert_eq!(high.skills(), ["/sec", "/rules", "/aup-audit", "/harden"], "a person reviews high-risk; not a skill");
+    }
+
     #[test]
     fn risk_reads_the_diff_and_untracked_files_from_git() {
         let d = std::env::temp_dir().join(format!("8sync-risk-{}", std::process::id()));
@@ -373,15 +448,48 @@ mod tests {
         g(&["commit", "-q", "-m", "login"]);
         std::fs::write(d.join("CHANGELOG.md"), "y").unwrap(); // untracked, at the root
         std::fs::write(d.join("src/tệp mới.rs"), "z").unwrap(); // untracked, non-ASCII: -z keeps it unquoted
-        let (base, files) = changed_paths(&d, Some("HEAD~1")).unwrap();
+        let (base, files, _) = changed_paths(&d, Some("HEAD~1")).unwrap();
         assert_eq!((base.as_str(), files), ("HEAD~1", v(&["CHANGELOG.md", "src/login.rs", "src/tệp mới.rs"])));
-        let (base, files) = changed_paths(&d.join("src"), Some("HEAD~1")).unwrap();
+        let (base, files, _) = changed_paths(&d.join("src"), Some("HEAD~1")).unwrap();
         assert_eq!((base.as_str(), files), ("HEAD~1", v(&["CHANGELOG.md", "src/login.rs", "src/tệp mới.rs"])), "from a subdirectory the same root-relative list");
-        let (base, files) = changed_paths(&d, None).unwrap();
-        assert_eq!((base.as_str(), files), ("HEAD", v(&["CHANGELOG.md", "src/tệp mới.rs"])), "no origin/main → HEAD: only uncommitted work");
+        let (base, files, warning) = changed_paths(&d, None).unwrap();
+        assert_eq!((base.as_str(), files, warning), ("HEAD", v(&["CHANGELOG.md", "src/tệp mới.rs"]), None), "no origin/main → HEAD: only uncommitted work");
         assert!(changed_paths(&std::env::temp_dir(), Some("HEAD")).is_err() || true, "outside a repo: error or a parent repo");
         assert!(changed_paths(&d, Some("no-such-ref")).is_err());
         assert!(changed_paths(&d, Some("--output=x")).unwrap_err().to_string().contains("not an option"), "a ref can never be passed to git as an option");
+        // main moved on after the branch (a ci.yml change): diffed from the merge-base, not main's tip
+        g(&["checkout", "-q", "-b", "card-1"]);
+        g(&["checkout", "-q", "main"]);
+        std::fs::create_dir_all(d.join(".github/workflows")).unwrap();
+        std::fs::write(d.join(".github/workflows/ci.yml"), "on: push").unwrap();
+        g(&["add", ".github/workflows/ci.yml"]);
+        g(&["commit", "-q", "-m", "ci"]);
+        g(&["checkout", "-q", "card-1"]);
+        let (_, files, warning) = changed_paths(&d, Some("main")).unwrap();
+        assert_eq!((files, warning), (v(&["CHANGELOG.md", "src/tệp mới.rs"]), None), "main's ci.yml is not this branch's change");
+        // origin/main whose remote cannot be fetched: risk goes on from the local ref and says so
+        let gone = d.join("no-such-remote");
+        g(&["remote", "add", "origin", gone.to_str().unwrap()]);
+        g(&["update-ref", "refs/remotes/origin/main", "main"]);
+        let (_, files, warning) = changed_paths(&d, Some("origin/main")).unwrap();
+        assert_eq!(files, v(&["CHANGELOG.md", "src/tệp mới.rs"]), "still from the merge-base");
+        assert!(warning.as_deref().is_some_and(|w| w.contains("git fetch --quiet origin main") && w.contains("origin/main có thể cũ")), "{warning:?}");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn risk_fetches_a_remote_base_and_diffs_from_the_merge_base() {
+        let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(fetch_args("origin/main"), Some(s(&["fetch", "--quiet", "origin", "main"])));
+        assert_eq!(fetch_args("origin/release/1.2"), Some(s(&["fetch", "--quiet", "origin", "release/1.2"])));
+        assert_eq!(fetch_args("origin/HEAD"), Some(s(&["fetch", "--quiet", "origin"])));
+        for none in ["HEAD", "HEAD~1", "main", "upstream/main", "origin/", "origin/--upload-pack=x"] {
+            assert_eq!(fetch_args(none), None, "{none}");
+        }
+        assert_eq!(diff_args("abc1234"), ["diff", "--name-only", "--no-renames", "-z", "abc1234", "--"]);
+        let mut a = assess("origin/main", v(&["src/x.rs"]), false);
+        a.warning = Some("`git fetch --quiet origin main` lỗi hoặc quá 20 s: origin/main có thể cũ, danh sách file có thể thừa".into());
+        assert!(a.text().lines().nth(1).unwrap().starts_with("⚠ `git fetch"), "{}", a.text());
+        assert_eq!(a.json()["warning"], a.warning.clone().unwrap());
     }
 }

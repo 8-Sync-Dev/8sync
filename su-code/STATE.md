@@ -1,3 +1,31 @@
+# v0.101.1 — two teams (ccc + omp), rooms never stuck, HQ remote link, on/off CLI
+
+## Goal
+CLI = on/off; everything else from HQ (local or internet link). Rooms never stay stuck: API-error / usage-limit stops resume by themselves at the right time; optional omp team (default ccc only, `auto up --omp`) shares board, inbox and messages with the ccc team; HQ reachable from the phone (`hq ui --public`). Contract: `su-code/planning/ccc-two-teams/CONTRACT.md`. Branch `feat/two-teams` (from origin/main 7d2180c; first built on a stale v0.98.1 base, kept as local branch `wip/two-teams-stale`).
+
+## Assumptions (sourced)
+- Status line JSON carries `rate_limits.five_hour|seven_day.used_percentage|resets_at` (epoch s), since Claude Code 2.1.80 (code.claude.com/docs/en/statusline; CHANGELOG). Values come from the session's last API response. We read only this — never OAuth credentials.
+- Orca (stablyai/orca) reads Claude OAuth tokens to poll `api/oauth/usage` (`src/main/rate-limits/claude-oauth-credentials.ts`) → NOT copied (org rule: subscription credentials never leave Claude Code).
+- StopFailure `error` values: rate_limit, overloaded, authentication_failed, oauth_org_not_allowed, account_on_hold, billing_error, invalid_request, model_not_found, server_error, max_output_tokens, cloud_credential_error, unknown; no reset time in hooks (hooks.md).
+- Claude Code itself auto-continues after a claude.ai limit reset in interactive sessions (`autoContinueAtUsageLimit`, ≤2 consecutive, not >24 h, not background/-p) → 8sync mirrors those caps for its own resume.
+- PreToolUse may answer AskUserQuestion: `permissionDecision:"allow"` + `updatedInput` = questions + `answers` map ("collects the answer through your own UI", hooks.md §Tools that require user interaction). PermissionRequest hooks decide allow/deny on behalf of the user; deny rules still apply. Command hook default timeout 600 s.
+- Cloudflare quick tunnels: no account, URL on stderr, testing-only, no SSE, ~200 in-flight cap (developers.cloudflare.com trycloudflare page) → remote HQ polls.
+- omp 18.12.2: extensions `pi.on(agent_end|tool_call|…)`, `pi.sendUserMessage(text,{deliverAs:"followUp"})`, `ctx.isIdle()`, `tool_call` can block (oh-my-pi source via librarian); `omp -p` exists (`omp --help`).
+
+## Checklist
+- [x] v0.101.0 merged (PR #116), released, installed; HQ 8740 restarted; ai-game-studio 8 rooms up; `awake --while-rooms` running.
+- [x] Reviews: 3 rounds (reviewer + security-reviewer); HIGH/MED fixed; residual = same-user trust (guards advisory), `stuck-asks` owner-voice echo (upstream, open), omp edit-header parsing gaps (LOW).
+- [x] v0.101.1 (PR #117, 8/8 CI incl. new `ts-assets`): past-reset usage reading counts 0% (0.101.0 left teams blocked after a reset when no 7-day reading), loop notes wording, omp provider docs.
+- [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
+
+## Current
+v0.110.29: tick auto chạy server 60 s (không cần tab); Báo cáo có dòng +/− từ transcript; phòng giữ card giữ thư mục build; guard nhắc kết thúc lượt khi có lệnh nền. Đang UAT: quét transcript phòng xem sau khi bị chặn `sleep` phòng làm gì. Chờ owner: repo công khai, token HQ, merge tay zus-backend #5-#14.
+
+## Next
+- Upstream Windows bug: hq ingest stores NTFS inode > 2^53 in `ingest_state.offset` → RangeError (fix: bigint stat + `setReadBigInts`).
+- omp rooms: `last_used` side effect; `nudge_gate` ties omp to the Claude lease (design call).
+- apps/hq-ui `start` script uses POSIX `${PORT:-…}` (Windows dev only; release asset runs `node server.js`).
+
 # v0.67.1 — rich `ccc . ls`, local team UI (`8sync hq ui`), agent teams (`--team`), guard fixes, dnf5
 
 ## Goal
@@ -19,7 +47,6 @@ Released and installed. Owner-only: enable Channels in claude.ai org settings (O
 
 ## Next
 - Owner: Channels on → re-run the channel UAT (inbox → session → reply tool).
-- `hq-ui` packaging: ship the Next.js standalone build as a release asset so `8sync hq ui` works without the repo checkout.
 - Roadmap outputs/ccc-harness-next.md: P1 /planning, P2 loop breaker / statusline / keep plan across /compact, P3 eval kit.
 - Size: linux asset ~64 KiB under 5952 KiB; next Rust feature needs attribution or trimming (goal 4 MiB).
 

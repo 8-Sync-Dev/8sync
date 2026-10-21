@@ -317,6 +317,8 @@
     .ref td:first-child { white-space: nowrap; }
     .ref td code { white-space: nowrap; }
     .ref p.alt { padding: 0 1rem 0.9rem; margin: 0.4rem 0 0; }
+    .onoff { margin: 0 0 clamp(2rem, 4vw, 3rem); }
+    .onoff h3 { margin: 0; padding: 0.8rem 1rem 0.4rem; font-size: 1rem; color: var(--ink); }
     @media (max-width: 720px) { .ref thead { display: none; } .ref tr { display: grid; } .ref td:empty { display: none; } .ref td:first-child, .ref td code { white-space: normal; } }
     .step .code-line { margin-top: 0.55rem; }
     .rooms { list-style: none; margin: 0 0 1.75rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
@@ -592,6 +594,22 @@
         <p><code>auto up</code> starts every role room of the repo as a Claude Code background session (<code>claude --bg</code>), each on its role's model. Rooms run on Claude Code's own <code>/goal</code>: claim a card, do the lane's job, move it, and wait at <code>auto wait</code> (no tokens) while the lane is empty. You follow the work in <code>8sync hq ui</code>. <code>--clear-ss</code> first deletes leftover background sessions and never touches the ones you have open.</p>
       </div>
 
+      <div class="ref onoff">
+        <h3 id="onoff-title">On / off: the only commands you need</h3>
+        <table aria-labelledby="onoff-title">
+          <thead><tr><th scope="col">Switch</th><th scope="col">Command</th><th scope="col">Same thing in HQ</th></tr></thead>
+          <tbody>
+            <tr><td>Team on · off</td><td><code>8sync ccc auto up</code> · <code>8sync ccc auto down</code></td><td><span lang="vi">Mở team · Dừng team</span></td></tr>
+            <tr><td>Second team on omp</td><td><code>8sync ccc auto up --omp</code> · <code>8sync ccc auto omp off</code></td><td><span lang="vi">Đội omp</span> switch</td></tr>
+            <tr><td>Pause · resume</td><td><code>8sync ccc auto pause</code> · <code>8sync ccc auto on</code></td><td>Auto button</td></tr>
+            <tr><td>HQ on this machine</td><td><code>8sync hq ui</code></td><td></td></tr>
+            <tr><td>HQ from your phone</td><td><code>8sync hq ui --public</code></td><td></td></tr>
+            <tr><td>Emergency stop</td><td><code>8sync ccc cancel --all</code></td><td></td></tr>
+          </tbody>
+        </table>
+        <p class="alt">Everything else happens in HQ: assign work, answer questions, approve steps, read the board, the chat and the usage reset time.</p>
+      </div>
+
       <figure class="board" aria-labelledby="board-cap">
         <div class="board-head">
           <span>8sync ccc auto board</span>
@@ -638,17 +656,18 @@
               <code>8sync hq ui</code>
               <button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button>
             </div>
-            <p class="alt">Any folder; page at <code>127.0.0.1:8740</code>. <span lang="vi">Tổng quan</span> · Board · Flow · Preview (the team's screenshots) · <span lang="vi">Máy</span> (RAM, CPU, GPU).</p></li>
+            <p class="alt">Any folder; page at <code>127.0.0.1:8740</code>. <span lang="vi">Tổng quan</span> · Board · Flow · Preview (the team's screenshots) · <span lang="vi">Máy</span> (RAM, CPU, GPU). Away from the desk: <code>8sync hq ui --public</code> prints a one-time login link (Cloudflare quick tunnel; needs <code>cloudflared</code>). Anyone with the link controls your rooms, so keep it to yourself.</p></li>
           <li><h3>Add the folder</h3>
             <p>Sidebar → paste the repo path. One git repo = one team, one board; a repo nested inside another keeps its own. First time: run <code>claude</code> there once and trust it.</p></li>
           <li><h3>Start the team</h3>
-            <p>HQ button <b lang="vi">Mở team</b> (start team): lead, dev, qa, review, rd in the background. <b lang="vi">Team đầy đủ</b> (full team): 8 rooms, adds ba, arch, ui. Put the first task in the same command.</p>
-            <p class="alt"><code>8sync ccc auto up "fix login" --roles full</code></p></li>
+            <p>HQ button <b lang="vi">Mở team</b> (start team): lead, dev, qa, review, rd in the background. <b lang="vi">Team đầy đủ</b> (full team): 6 rooms, three of them building (lead, dev, dev2, ui, qa, review). Put the first task in the same command.</p>
+            <p class="alt"><code>8sync ccc auto up "fix login" --roles full</code></p>
+            <p class="alt"><code>8sync ccc auto up --omp</code>: the same roles again as omp rooms (<code>omp-dev</code>, <code>omp-qa</code>…) on omp's own model. Both teams share the board and the inbox, and message each other with <code>8sync ccc msg</code>.</p></li>
           <li><h3>Give it work</h3>
             <p><b lang="vi">Giao việc</b> (assign) or the box under the office: the task + a command that proves it done, screenshots and files attached. Urgent: P0 on the card.</p>
             <p class="alt"><code>8sync ccc auto add "fix login" --check "pnpm test auth" --prio P0</code></p></li>
           <li><h3>Answer only what needs you</h3>
-            <p>The <b lang="vi">Anh cần trả lời</b> (needs you) panel, or the room's terminal: in HQ, in <a href="https://github.com/stablyai/orca">Orca</a> at the room's worktree, or copy <code>claude attach &lt;id&gt;</code>. Silent 60 s: the critic picks, safe in-repo steps proceed. Ship always waits for you.</p></li>
+            <p>The <b lang="vi">Anh cần trả lời</b> (needs you) panel, or the room's terminal: in HQ, in <a href="https://github.com/stablyai/orca">Orca</a> at the room's worktree, or copy <code>claude attach &lt;id&gt;</code>. Silent 60 s: the critic picks, safe in-repo steps proceed. Ship always waits for you. A room stopped by an API error or a usage limit restarts by itself: errors like <code>overloaded</code> after 1 to 15 min, a usage limit at the reset time the status line reports (HQ shows it).</p></li>
           <li><h3>Update or stop</h3>
             <p>After <code>8sync up</code>: <b lang="vi">Dọn &amp; mở lại</b> (clean and reopen) deletes only leftover sessions, never a named room. <b lang="vi">Dừng team</b> (stop) keeps every conversation; <code>auto up</code> resumes them. Other projects keep running.</p>
             <p class="alt"><code>auto up --clear-ss</code> · <code>auto down</code></p></li>
@@ -675,8 +694,11 @@
           <thead><tr><th scope="col">Command</th><th scope="col">Options</th><th scope="col">What it does</th></tr></thead>
           <tbody>
             <tr><th colspan="3" scope="rowgroup">Team</th></tr>
-            <tr><td><code>auto up ["…"]</code></td><td><code>"task" --check "…"</code> <code>--roles small|full|lead,dev,…</code> <code>--loop 10m</code> <code>--hours N</code> <code>--usd-per-hour X</code> <code>--clear-ss</code></td><td>Open or resume the rooms of this git repo; a task given here is the first card. <code>--clear-ss</code> deletes junk background sessions and restarts idle rooms on a newer kit; the board is never touched.</td></tr>
+            <tr><td><code>auto up ["…"]</code></td><td><code>"task" --check "…"</code> <code>--roles small|full|lead,dev,…</code> <code>--omp</code> <code>--loop 10m</code> <code>--hours N</code> <code>--usd-per-hour X</code> <code>--clear-ss</code></td><td>Open or resume the rooms of this git repo; a task given here is the first card. <code>--clear-ss</code> deletes junk background sessions and restarts idle rooms on a newer kit; the board is never touched.</td></tr>
             <tr><td><code>auto down</code></td><td></td><td>Stop this repo's background rooms, keep their conversations; other repos keep running.</td></tr>
+            <tr><td><code>auto revive</code></td><td></td><td>Bring back team rooms that died with the machine (same conversation). HQ runs it every 2 minutes and when you press Run; it never renews the lease.</td></tr>
+            <tr><td><code>8sync awake</code></td><td><code>--while-rooms</code> <code>--hours 8</code> <code>--screen-off 10</code></td><td>Keep the machine from sleeping while rooms run; lets go when none is left, at most 24 hours. On Windows it also turns the screen off after 10 minutes without mouse or keyboard input (<code>0</code> leaves it to the power plan); a touch brings it back.</td></tr>
+            <tr><td><code>auto omp on · off</code></td><td><code>--json</code></td><td>Second team on omp. <code>auto up --omp</code> also opens an <code>omp-&lt;role&gt;</code> room per role (tmux, or a Windows Terminal tab). Refused while omp's default model is <code>anthropic/…</code>.</td></tr>
             <tr><td><code>auto on</code></td><td><code>--here</code> <code>--loop [10m]</code> <code>--team</code> <code>--target "…" --check "…"</code> <code>--hours N</code> <code>--after 60</code> <code>--usd-per-hour X</code></td><td>Keep rooms you opened yourself working on a loop. <code>--here</code>: this folder only. <code>--after</code>: seconds of owner silence before the critic answers.</td></tr>
             <tr><td><code>auto off · pause · status</code></td><td><code>--json</code></td><td>Stop, pause, or show the loop, lease and usage cap.</td></tr>
             <tr><th colspan="3" scope="rowgroup">Work and board</th></tr>
@@ -691,6 +713,9 @@
             <tr><th colspan="3" scope="rowgroup">Sessions</th></tr>
             <tr><td><code>8sync ccc . &lt;name&gt;</code></td><td><code>--team</code> <code>--panes</code></td><td>Open or resume a named session in this repo; <code>. ls</code> lists them.</td></tr>
             <tr><td><code>term &lt;id&gt;</code></td><td><code>--cols</code> <code>--rows</code></td><td>A room's real terminal (HQ uses it for its web terminal).</td></tr>
+            <tr><td><code>msg &lt;room&gt; "…"</code></td><td><code>--all</code> <code>--from</code></td><td>One room messages another, ccc or omp (rooms run it themselves). Marked as a room's words, never the owner's.</td></tr>
+            <tr><th colspan="3" scope="rowgroup">HQ</th></tr>
+            <tr><td><code>8sync hq ui</code></td><td><code>--public</code> <code>--off</code></td><td>The dashboard on <code>127.0.0.1:8740</code>; <code>--public</code> adds a login link from anywhere (new host and key each start, gone when HQ stops).</td></tr>
           </tbody>
         </table>
         <p class="alt">All under <code>8sync ccc</code>. Full list in the terminal: <code>8sync ccc help</code>.</p>
@@ -711,6 +736,8 @@
             <li>On a Claude subscription, auto holds a lease of at most 4 hours and runs while you're around. For runs over days, use Claude Code Routines (<code>/schedule</code>) or a Console API key.</li>
             <li>On a subscription, rooms rest once the 5-hour or 7-day usage window reaches 90%. With an API key, or with <code class="nb">--usd-per-hour</code>, a ceiling on this project's spend (default $5 an hour) skips ticks.</li>
             <li>Claude Code removes a loop after 7 days; run the command again to extend it.</li>
+            <li>A usage limit restarts a room at most twice in a row and never more than 24 hours out, like Claude Code's own auto-continue. 8sync reads usage only from what Claude Code gives the status line, never from your login.</li>
+            <li>Never sign in to a Claude plan (Pro/Max/Team) in omp: the plan stays in Claude Code. The omp team runs on another provider (GLM, OpenAI…); <code>--omp</code> is refused while omp's default model is <code>anthropic/…</code>, Console key or not.</li>
           </ul>
         </div>
       </div>

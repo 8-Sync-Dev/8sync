@@ -4,7 +4,7 @@ description: Kiểm tra repo theo Usage Policy của Anthropic (anthropic.com/le
 ---
 Không phải tư vấn pháp lý: báo cáo phát hiện, user quyết định sửa gì.
 
-1. **Secret, cả history:** `gitleaks detect --no-banner --redact` (thiếu gitleaks → `8sync setup`, hoặc báo user). Chỉ nêu file:dòng + loại, KHÔNG in giá trị.
+1. **Secret:** gate trước commit/release → chỉ commit của nhánh: `gitleaks detect --no-banner --redact --max-target-megabytes 5 --log-opts=origin/main..HEAD` + `gitleaks protect --staged --no-banner --redact` (thiếu gitleaks → `8sync setup`, hoặc báo user). Cả history (`gitleaks detect --no-banner --redact --max-target-megabytes 5`, 3–4 GB RAM trên repo lớn, chạy một mình) CHỈ khi sắp public repo hoặc user yêu cầu. Chỉ nêu file:dòng + loại, KHÔNG in giá trị.
 2. **File nhạy cảm đang track hoặc từng commit:** lọc `git ls-files` và `git log --all --name-only --format=` theo `.env` (trừ `.example`/`.sample`/`.template`), `*.session`, `*.pkl`, `*.pem`, `*.p12`, `id_rsa*`, `id_ed25519*`, `accounts*.json`, `members*.csv`. Đã xoá khỏi cây nhưng còn trong history → `git filter-repo` + rotate.
 3. **Hiểu sản phẩm trước khi phán:** đọc README, entry point, route/API chính. Rồi đi từng dòng trong `RULES.md` (cùng thư mục): tìm theo cột "Dấu hiệu" bằng code intelligence hoặc grep, đọc ngữ cảnh từng chỗ. Tài liệu phòng thủ, test fixture, ví dụ trong docs, regex mẫu ≠ vi phạm.
 4. **Báo cáo:** bảng `mức | mục AUP / quy tắc | file:dòng | việc cần làm`. BLOCK = vi phạm rõ (dừng ship; hỏi user trước khi xoá/sửa) · WARN = rủi ro cần user quyết · bỏ qua mục sạch.

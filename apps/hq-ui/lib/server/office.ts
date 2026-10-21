@@ -8,14 +8,17 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Ask } from "../ask";
 import { teamOf, type IdleRecord } from "../idle";
 import { deliveryOf, sessionLabel } from "../labels";
-import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
+import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type Limits, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
+import { boardTasks } from "../now";
 import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
-import { readAsk } from "./ask";
-import { loadFloor } from "./floor";
+import { parsePins, type HiddenProject, type Pin } from "../sidebar";
+import { readAsk, transcriptOf } from "./ask";
+import { projectBoards, type ProjectBoard } from "./board";
+import { loadFloor, ompSessions } from "./floor";
 import { readPermits, type Permit } from "./permit";
 import { readIdleStatus } from "./idle";
 import { inboxLive, pendingInbox } from "./inbox";
-import { stateDir } from "./paths";
+import { pinnedRootsPath, stateDir } from "./paths";
 import { mergedSessions, type SessionView } from "./proc";
 
 const projectCache = new Map<string, { at: number; v: ProjectInfo | null }>();
@@ -85,6 +88,167 @@ export function readUsage(sessionId: string | null | undefined): Usage | null {
   }
 }
 
+const TS_RE = /"timestamp":"([^"]{10,40})"/g;
+const MODEL_RE = /"model":"([^"<]+)"/;
+const EDIT_TOOL_RE = /"name":"(Write|Edit|MultiEdit|NotebookEdit)"/;
+const CHUNK_BYTES = 4 * 1024 * 1024;
+
+/** `offset`: bytes of the transcript consumed so far (whole lines); the next read starts there. */
+export type TranscriptStats = { model: string | null; first: number | null; last: number | null; lines_added: number; lines_removed: number; offset: number };
+/** `written`: line count of the last `Write` per file, so a rewrite counts the old content as removed. */
+type Measured = TranscriptStats & { size: number; mtime: number; written: Map<string, number> };
+const measured = new Map<string, Measured>();
+
+const nLines = (s: unknown) => (typeof s === "string" && s.length ? s.split("\n").length - (s.endsWith("\n") ? 1 : 0) : 0);
+
+type ToolUse = { type?: string; name?: string; input?: Record<string, unknown> };
+
+/** Lines a `Write` / `Edit` / `MultiEdit` / `NotebookEdit` call adds and removes, folded into `m`. */
+function countEdit(m: Measured, b: ToolUse): void {
+  const i = b.input ?? {};
+  switch (b.name) {
+    case "Write": {
+      const n = nLines(i.content);
+      const file = typeof i.file_path === "string" ? i.file_path : "";
+      m.lines_removed += m.written.get(file) ?? 0;
+      m.written.set(file, n);
+      m.lines_added += n;
+      break;
+    }
+    case "Edit":
+      m.lines_removed += nLines(i.old_string);
+      m.lines_added += nLines(i.new_string);
+      break;
+    case "MultiEdit":
+      for (const e of Array.isArray(i.edits) ? (i.edits as Record<string, unknown>[]) : []) {
+        m.lines_removed += nLines(e?.old_string);
+        m.lines_added += nLines(e?.new_string);
+      }
+      break;
+    case "NotebookEdit":
+      m.lines_added += nLines(i.new_source);
+      break;
+  }
+}
+
+/** Folds one transcript line into `m`: timestamps, the model an assistant line names, its edit tool calls. */
+function scanLine(m: Measured, line: string): void {
+  for (const t of line.matchAll(TS_RE)) {
+    const at = Date.parse(t[1]);
+    if (!Number.isFinite(at)) continue;
+    if (m.first == null || at < m.first) m.first = at;
+    if (m.last == null || at > m.last) m.last = at;
+  }
+  if (!line.includes('"type":"assistant"')) return;
+  m.model = MODEL_RE.exec(line)?.[1] ?? m.model;
+  if (!line.includes('"type":"tool_use"') || !EDIT_TOOL_RE.test(line)) return;
+  try {
+    // JSON.parse is `any`; the content blocks are checked one by one in countEdit.
+    const content: unknown = JSON.parse(line)?.message?.content;
+    for (const b of Array.isArray(content) ? (content as ToolUse[]) : []) if (b?.type === "tool_use") countEdit(m, b);
+  } catch {
+    /* a truncated or foreign line: no edit counted */
+  }
+}
+
+/**
+ * Model, first / last timestamp and lines added / removed (from `Write` / `Edit` / `MultiEdit` /
+ * `NotebookEdit` calls) of a room's Claude Code transcript, for rooms that run no status line.
+ * The file is append-only: each call parses only the whole lines appended since the last one
+ * (from scratch when it shrank or its mtime went back), so polls after the first cost ~ms.
+ */
+export function readTranscriptStats(sessionId: string | null | undefined, cwd: string | null, root?: string): TranscriptStats | null {
+  const f = sessionId ? transcriptOf(sessionId, cwd, root) : null;
+  if (!f) return null;
+  let st: fs.Stats;
+  try {
+    st = fs.statSync(f);
+  } catch {
+    return null;
+  }
+  const hit = measured.get(f);
+  if (hit && hit.size === st.size && hit.mtime === st.mtimeMs) return hit;
+  const m: Measured =
+    hit && st.size >= hit.size && st.mtimeMs >= hit.mtime
+      ? { ...hit, written: new Map(hit.written) }
+      : { model: null, first: null, last: null, lines_added: 0, lines_removed: 0, offset: 0, size: 0, mtime: 0, written: new Map() };
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(f, "r");
+    // `carry`: the chunks of a line not ended yet (joined once it ends, not per chunk).
+    let carry: Buffer[] = [];
+    let carried = 0;
+    while (m.offset + carried < st.size) {
+      const want = Math.min(CHUNK_BYTES, st.size - m.offset - carried);
+      const buf = Buffer.allocUnsafe(want);
+      const got = fs.readSync(fd, buf, 0, want, m.offset + carried);
+      if (got <= 0) break;
+      const chunk = buf.subarray(0, got);
+      const end = chunk.lastIndexOf(10);
+      if (end < 0) {
+        carry.push(chunk);
+        carried += got;
+        continue;
+      }
+      const all = carry.length ? Buffer.concat([...carry, chunk.subarray(0, end)]) : chunk.subarray(0, end);
+      for (const line of all.toString("utf8").split("\n")) scanLine(m, line);
+      m.offset += carried + end + 1;
+      carry = [chunk.subarray(end + 1)];
+      carried = got - end - 1;
+    }
+    m.size = st.size;
+    m.mtime = st.mtimeMs;
+    // A session whose latest lines are all one huge tool result names no time: the write time stands in.
+    if (m.last == null) m.last = Math.round(st.mtimeMs);
+    measured.set(f, m);
+    return m;
+  } catch {
+    return hit ?? null;
+  } finally {
+    if (fd != null) fs.closeSync(fd);
+  }
+}
+
+/**
+ * Plan limits from the freshest usage snapshot that carries any (contract C1; Claude Code gives the
+ * status line `rate_limits` only on a subscription). Newest files first, at most 5 read; null when none.
+ */
+export function readLimits(): Limits | null {
+  const dir = path.join(stateDir(), "usage");
+  let files: { f: string; at: number }[];
+  try {
+    files = fs
+      .readdirSync(dir)
+      .filter((n) => n.endsWith(".json") && SAFE_ID.test(n.slice(0, -5)))
+      .flatMap((n) => {
+        try {
+          return [{ f: path.join(dir, n), at: fs.statSync(path.join(dir, n)).mtimeMs }];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return null;
+  }
+  const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+  for (const { f } of files.sort((a, b) => b.at - a.at).slice(0, 5)) {
+    try {
+      const v = JSON.parse(readSafe(f) ?? "");
+      const l: Limits = {
+        five_hour_pct: n(v.five_hour_pct),
+        five_hour_resets_at: n(v.five_hour_resets_at),
+        seven_day_pct: n(v.seven_day_pct),
+        seven_day_resets_at: n(v.seven_day_resets_at),
+        ts: n(v.ts),
+      };
+      if (l.five_hour_pct != null || l.seven_day_pct != null) return l;
+    } catch {
+      /* half-written snapshot: try the next one */
+    }
+  }
+  return null;
+}
+
 export type Room = {
   key: string;
   /** What the composer / API addresses: hq-* name or the Claude session id. */
@@ -117,6 +281,8 @@ export type Room = {
   role: string | null;
   /** Agent-team name of this session as lead ("session-" + 8 id chars): joins `Office.idle`. */
   team: string | null;
+  /** Which team the room belongs to (contract C4): "ccc" (Claude Code) or "omp". */
+  engine: string;
   /** The sprint meeting this room's lead is at (`su-code/standup/<today>.md` row < 30 min old), else null. */
   meeting: { at: number; phase: WalkPhase } | null;
 };
@@ -193,20 +359,43 @@ export function readLoops(roots: { root: string; name: string }[]): LoopInfo[] {
   return out.sort((a, b) => (b.started ?? 0) - (a.started ?? 0)).slice(0, 30);
 }
 
-/** `idle`: every agent-team member's "không ai rảnh" status (lib/idle.ts), stale ones included. */
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; at: number };
+/** `pinned-roots.json` (`8sync ccc auto pin`), oldest pin first, without Rust's `\\?\` prefix; [] when absent or unreadable. */
+export function readPins(file = pinnedRootsPath()): Pin[] {
+  try {
+    return parsePins(JSON.parse(fs.readFileSync(file, "utf8"))).map((p) => ({ ...p, root: p.root.replace(/^\\\\\?\\/, "") }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * `idle`: every agent-team member's "không ai rảnh" status (lib/idle.ts), stale ones included. `limits`: plan usage (header).
+ * `hidden`: projects the owner closed in the sidebar (lib/sidebar.ts splitClosed decides which still hide).
+ * `pins`: projects the owner pinned (sidebar "Ghim", lib/sidebar.ts pinSidebar).
+ */
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; pins: Pin[]; at: number };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
-  const live = merged.filter((s) => s.status !== "ended");
+  // Both teams: Claude Code sessions, then the omp rooms `8sync ls` reports live (contract C4).
+  const live = [...merged.filter((s) => s.status !== "ended"), ...ompSessions(db, floor)];
   const agentsQ = db.prepare(
     "SELECT agent_id, agent_type, started_at, ended_at FROM agents WHERE session IN (?, ?) AND (ended_at IS NULL OR ended_at > ?) ORDER BY started_at DESC LIMIT 40",
   );
   const tasksQ = db.prepare("SELECT status, COUNT(*) AS n FROM tasks WHERE session IN (?, ?) GROUP BY status");
   const permits = readPermits(now);
+  const projects = new Map(
+    live.flatMap((s) => {
+      const p = projectOf(s.cwd, now);
+      return p ? [[p.root, p] as const] : [];
+    }),
+  );
+  // Tasks come from the project boards (cards a room moved on / holds); the HQ task journal only when no board is readable.
+  const boards = await projectBoards([...projects.values()]).catch(() => [] as ProjectBoard[]);
   const rooms: Room[] = live.map((s) => {
     const sid = s.session_id ?? (SAFE_ID.test(s.name) && !s.name.startsWith("hq-") ? s.name : null);
     const f =
+      floor.find((r) => r.inbox_id && r.inbox_id === sid) ??
       floor.find((r) => r.sid && sid && sid.startsWith(r.sid)) ??
       floor.find((r) => r.name === s.name || r.title === sessionLabel(s));
     // Agents still flagged running after 6 h lost their SubagentStop (crash, kill): not shown.
@@ -214,15 +403,32 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       (a) => a.ended_at != null || now - a.started_at < 6 * 3600_000,
     );
     const counts = tasksQ.all(s.name, sid ?? s.name) as { status: string; n: number }[];
-    const done = counts.filter((c) => c.status === "done").reduce((a, c) => a + Number(c.n), 0);
-    const open = counts.filter((c) => c.status !== "done").reduce((a, c) => a + Number(c.n), 0);
-    const usage = readUsage(sid);
+    const journal = {
+      done: counts.filter((c) => c.status === "done").reduce((a, c) => a + Number(c.n), 0),
+      open: counts.filter((c) => c.status !== "done").reduce((a, c) => a + Number(c.n), 0),
+    };
+    const label = sessionLabel(s);
+    const tasks = boardTasks({ label, cwd: s.cwd, started_at: s.started_at }, boards) ?? journal;
+    // The status-line snapshot (cost, lines) when the room writes one; model and time from its transcript otherwise.
+    const snap = readUsage(sid);
+    const tr = s.engine === "omp" ? null : readTranscriptStats(sid, s.cwd);
+    const usage: Usage | null =
+      snap || tr
+        ? {
+            cost_usd: snap?.cost_usd ?? null,
+            duration_ms: snap?.duration_ms ?? (tr?.first != null && tr.last != null ? Math.max(0, tr.last - tr.first) : null),
+            lines_added: snap?.lines_added ?? tr?.lines_added ?? null,
+            lines_removed: snap?.lines_removed ?? tr?.lines_removed ?? null,
+            context_pct: snap?.context_pct ?? null,
+            model: snap?.model ?? tr?.model ?? null,
+          }
+        : null;
     const busy = s.status === "running" || s.status === "needs_input";
     return {
       key: s.name,
       name: s.name,
       session_id: sid,
-      label: sessionLabel(s),
+      label,
       status: s.status,
       waiting: (s as SessionView & { waiting?: string | null }).waiting ?? null,
       ask: s.status === "needs_input" && sid ? readAsk(sid, s.cwd) : null,
@@ -238,11 +444,12 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       tokens: f?.tokens ?? null,
       model: usage?.model ?? s.model ?? null,
       usage,
-      tasks: { done, open },
-      cost_per_task: costPerTask(usage?.cost_usd, done),
+      tasks,
+      cost_per_task: costPerTask(usage?.cost_usd, tasks.done),
       seats: seatsFor(agents, busy, now),
       role: s.role ?? null,
       team: teamOf(sid),
+      engine: s.engine ?? "ccc",
       meeting: null,
     };
   });
@@ -250,6 +457,15 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
   const recent = db
     .prepare("SELECT kind, ts, session, from_, to_, text FROM messages WHERE kind = 'session_message' AND ts > ? ORDER BY id DESC LIMIT 50")
     .all(now - 120_000) as { kind: string; ts: number; session: string | null; from_: string | null; to_: string | null; text: string | null }[];
-  const roots = new Map(rooms.flatMap((r) => (r.project ? [[r.project.root, r.project] as const] : [])));
-  return { rooms, visits: visitsFrom(recent, refs, now), loops: readLoops([...roots.values()]), idle: readIdleStatus(), meetings: loadMeetings(rooms, now), at: now };
+  return {
+    rooms,
+    visits: visitsFrom(recent, refs, now),
+    loops: readLoops([...projects.values()]),
+    idle: readIdleStatus(),
+    meetings: loadMeetings(rooms, now),
+    limits: readLimits(),
+    hidden: db.prepare("SELECT key, root, name, hidden_at FROM hidden_projects ORDER BY hidden_at DESC").all() as HiddenProject[],
+    pins: readPins(),
+    at: now,
+  };
 }

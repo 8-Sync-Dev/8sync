@@ -128,8 +128,8 @@ fn run_forge(forge: &Path, root: &Path, conversation_id: Option<&str>, args: &[S
 // ── zsh-native shell ────────────────────────────────────────────────────────
 
 /// Managed `.zshenv`: keep the user's own, but never let it move ZDOTDIR away
-/// from the managed `.zshrc` that loads the Forge plugin.
-const ZSHENV: &str = r#"# Managed by `8sync forge` — rewritten on every launch. Personal settings: ~/.zshenv
+/// from the managed `.zshrc` (Forge's, or the HQ shell's).
+const ZSHENV: &str = r#"# Managed by 8sync — rewritten on every launch. Personal settings: ~/.zshenv
 _8sync_zdot=$ZDOTDIR
 [[ -r "$HOME/.zshenv" ]] && source "$HOME/.zshenv"
 ZDOTDIR=$_8sync_zdot
@@ -166,10 +166,67 @@ pub(crate) fn write_zsh_config(env: &Env) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Managed `.zshrc` of HQ's shell terminal (`8sync ccc term --shell`): the user's own rc and
+/// 8sync's shared zsh (prompt, keys, completion, autosuggestions) — no Forge plugin.
+const SHELL_ZSHRC: &str = r#"# Managed by `8sync ccc term --shell` — rewritten on every launch. Personal settings: ~/.zshrc
+_8s_zdot=$ZDOTDIR
+[[ -r "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
+ZDOTDIR=$_8s_zdot
+: ${HISTFILE:=$HOME/.zsh_history}
+autoload -Uz compinit
+() {
+  setopt local_options extended_glob
+  local dump=$ZDOTDIR/.zcompdump
+  if [[ -f $dump && -z $dump(#qN.mh+20) ]]; then compinit -C -d $dump; else compinit -u -d $dump; fi
+}
+source "${ZDOTDIR:h}/zsh/8sync.zsh"
+"#;
+
+/// Write the HQ shell's ZDOTDIR (`<config>/8sync/shell-zsh`) and 8sync's shared zsh config;
+/// returns the ZDOTDIR. Writes files only — never downloads.
+pub(crate) fn write_shell_zdotdir(env: &Env) -> Result<PathBuf> {
+    let zdot = env.xdg_config.join("8sync").join("shell-zsh");
+    std::fs::create_dir_all(&zdot).with_context(|| format!("mkdir {}", zdot.display()))?;
+    write_if_changed(&zdot.join(".zshenv"), ZSHENV.as_bytes())?;
+    write_if_changed(&zdot.join(".zshrc"), SHELL_ZSHRC.as_bytes())?;
+    write_zsh_config(env)?;
+    Ok(zdot)
+}
+
+/// The zsh plugins dir when a previous `8sync forge` already cloned it (no download here).
+pub(crate) fn zsh_plugins_if_present() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|d| d.join("8sync").join("zsh-plugins")).filter(|d| d.is_dir())
+}
+
+/// zsh already on this machine — never installs anything (HQ's shell must open at once).
+/// Windows: 8sync's private MSYS zsh; elsewhere: zsh on PATH, else the private zsh-bin.
+pub(crate) fn installed_zsh() -> Option<Zsh> {
+    let root = zsh_root().ok();
+    #[cfg(windows)]
+    {
+        let root = root?;
+        let exe = root.join("usr/bin/zsh.exe");
+        exe.exists().then(|| Zsh { exe, path_prefix: [Some(root.join("usr/bin")), git_msys_bin().ok()].into_iter().flatten().collect() })
+    }
+    #[cfg(not(windows))]
+    {
+        which::which("zsh").ok().or_else(|| root.map(|r| r.join("bin/zsh")).filter(|p| p.exists())).map(|exe| Zsh { exe, path_prefix: Vec::new() })
+    }
+}
+
 pub(crate) struct Zsh {
     pub(crate) exe: PathBuf,
     /// Directories prepended to PATH (Windows: the private MSYS root + Git's coreutils).
     path_prefix: Vec<PathBuf>,
+}
+
+impl Zsh {
+    /// PATH for zsh: its prefix dirs, then this process's PATH.
+    pub(crate) fn path_env(&self) -> Result<std::ffi::OsString> {
+        let mut path = self.path_prefix.clone();
+        path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+        Ok(std::env::join_paths(path)?)
+    }
 }
 
 /// Start zsh with Forge's plugin and theme (regenerated from the installed forge
@@ -205,12 +262,10 @@ fn launch_zsh(forge: &Path, zsh: &Zsh, env: &Env, root: &Path, s: &uuid_sessions
     write_zsh_config(env)?;
     let plugins = ensure_zsh_plugins();
 
-    let mut path = zsh.path_prefix.clone();
-    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
     let mut cmd = Command::new(&zsh.exe);
     cmd.arg("-i")
         .current_dir(root)
-        .env("PATH", std::env::join_paths(path)?)
+        .env("PATH", zsh.path_env()?)
         .env("ZDOTDIR", shell_path(&zdot))
         .env("FORGE_BIN", shell_path(forge))
         .env("_FORGE_CONVERSATION_ID", &s.conversation_id)
@@ -285,7 +340,7 @@ pub(crate) fn ensure_zsh_plugins() -> Option<PathBuf> {
 }
 
 /// A path as zsh sees it. MSYS zsh takes POSIX paths: `C:\a\b` → `/c/a/b`.
-fn shell_path(p: &Path) -> String {
+pub(crate) fn shell_path(p: &Path) -> String {
     let s = p.to_string_lossy().replace('\\', "/");
     let b = s.as_bytes();
     if cfg!(windows) && b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {

@@ -28,6 +28,7 @@ pub mod locate;
 pub mod feature;
 pub mod feynman;
 pub mod hq;
+pub mod hq_core;
 pub mod vpn;
 pub mod omp;
 pub mod gen_img;

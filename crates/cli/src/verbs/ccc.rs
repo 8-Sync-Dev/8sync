@@ -22,7 +22,10 @@ use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
 mod auto;
+pub(crate) mod awake;
 mod cancel;
+mod close;
+mod ci;
 mod compact;
 mod danger;
 mod delegate;
@@ -33,15 +36,24 @@ mod guard;
 mod help;
 mod hint;
 mod idle;
+mod lease;
 mod looper;
 mod meet;
+mod merge;
 mod output_budget;
+mod msg;
+mod omp_team;
+mod omp_term;
 mod permit;
 mod term;
 pub(crate) mod report;
 mod risk;
 mod secret;
-mod resume;
+mod ship_loop;
+mod ship_fast;
+pub(crate) mod resume;
+mod pressure;
+mod reap;
 mod room;
 mod statusline;
 mod taskdone;
@@ -136,13 +148,22 @@ pub fn run(a: Args) -> Result<()> {
     if verb == "statusline" {
         return statusline::run(rest); // before Env::detect: runs every few seconds, must stay fast
     }
+    if verb == "awake" {
+        // Before Env::detect: HQ polls `status` every ~30 s and flips `on`/`off` from its switch.
+        match rest.first().map(String::as_str) {
+            Some("status") => return awake::status(&rest[1..]),
+            Some("on") => return awake::on(&rest[1..], &dirs::home_dir().context("no HOME")?),
+            Some("off") => return awake::off(&dirs::home_dir().context("no HOME")?),
+            _ => {}
+        }
+    }
     if verb == "help" {
         print!("{}", help::TEXT);
         return Ok(());
     }
     let env = Env::detect()?;
     let cwd = std::env::current_dir().context("no cwd")?;
-    let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd);
+    let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or_else(|| cwd.clone());
     match verb {
         "kit" if rest.iter().any(|a| a == "--remove") => remove_kit_hooks(&env),
         "kit" if rest.first().map(String::as_str) == Some("status") => {
@@ -193,13 +214,79 @@ pub fn run(a: Args) -> Result<()> {
         // One team per git repo: a subfolder with its own package.json is not a project, a nested
         // repo is (ai-game-studio inside 8sync-startup), and a worktree belongs to its repo.
         "auto" => {
-            let repo = std::env::current_dir().ok().and_then(|c| crate::verbs::here::repo_of(&c)).unwrap_or_else(|| root.clone());
-            if team::wants(rest) {
+            // A folder that only groups repos (8sync-startup/zus holds the submodules admin, ide,
+            // models, web; 8sync-startup/game holds 3d-game) is no project: `up` there started the
+            // PARENT repo's team. Checked before an untracked folder is `git init`ed.
+            let first = rest.first().map(String::as_str);
+            let starts = matches!(first, Some("up" | "add")) || first == Some("on") && rest.iter().any(|a| a == "--here");
+            // `close` only where the cwd is the repo itself: from a subfolder or a grouping folder
+            // (HQ can list one added by hand) it would close the whole parent repo.
+            if first == Some("close") {
+                return auto_team(&env, &close::close_root(&cwd)?, rest);
+            }
+            let before = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
+            if let Some(kids) = grouping_folder(&cwd, &before).filter(|_| starts) {
+                let repo = before;
+                bail!(
+                    "{} không phải repo riêng: nó là thư mục của repo {} và chứa repo con: {}.\nTeam, board và phòng chạy theo repo → `cd` vào repo muốn làm rồi chạy lại (vd `cd {}`), hoặc chạy ở {} nếu thật sự muốn team cho cả repo cha.",
+                    cwd.display(),
+                    repo.display(),
+                    kids.join(", "),
+                    cwd.join(&kids[0]).display(),
+                    repo.display()
+                );
+            }
+            if matches!(first, Some("up" | "add")) {
+                adopt_here(&cwd, true);
+            }
+            let repo = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
+            // `up` does it under its lock (auto_team); `on --here` once its arguments passed and the
+            // scope moved here (the nested repo is out of auto by then, revive no longer opens it).
+            let here = rest.first().is_some_and(|a| a == "on") && rest.iter().any(|a| a == "--here");
+            if rest.first().is_some_and(|a| a == "revive") {
+                // Only the roots `auto up` brought a team up in (HQ calls this without a cwd), one
+                // revive at a time (HQ and a boot hook can both fire it).
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                // One deadline for every root of this run (HQ kills `revive` at 120 s), the lock
+                // wait included.
+                team::run_clock_start();
+                // A `guard now` pass holds the lock a few seconds: wait for it (≤ 10 s) rather than
+                // lose this tick; a revive or `up` still running after that keeps it.
+                let mut lock = team::revive_lock(&env.home, now)?;
+                for _ in 0..20 {
+                    if lock.is_some() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    lock = team::revive_lock(&env.home, now)?;
+                }
+                let Some(_lock) = lock else { return Ok(()) };
+                // Lease liên tục ([`lease::tick`]): API key within the $/hour budget; a subscription
+                // only on a prompt the owner typed in the last 30 min.
+                let subscription = login_kind_at(&env.home).kind == "subscription";
+                if let Some(l) = lease::tick(&env.home, subscription, now, || lease::presence(&claude_dir(&env), now)) {
+                    println!("{l}");
+                }
+                // Pinned projects first: rooms past this run's deadline open at the next tick.
+                for r in lease::revive_order(&env.home, team::team_roots(&env.home)) {
+                    let r = PathBuf::from(r);
+                    if let Err(e) = auto_team(&env, &r, rest) {
+                        eprintln!("{}: {e:#}", r.display());
+                    }
+                }
+                Ok(())
+            } else if rest.first().is_some_and(|a| a == "guard") && rest.get(1).is_some_and(|a| a == "now") {
+                guard_now(&env, &rest[2..])
+            } else if team::wants(rest) {
                 auto_team(&env, &repo, rest)
             } else {
                 auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", &repo, || {
                     sessions(&env, &repo).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect()
-                })
+                })?;
+                if here {
+                    down_nested(&env, &repo)?;
+                }
+                Ok(())
             }
         }
         "meet" => {
@@ -207,7 +294,13 @@ pub fn run(a: Args) -> Result<()> {
             meet::run(&sessions(&env, &root), rest, id.as_deref(), &std::env::current_dir().context("no cwd")?, view_now())
         }
         "risk" => risk::run(rest, &std::env::current_dir().context("no cwd")?),
-        "term" => term::run(rest),
+        "term" => term::run(rest, &env),
+        "awake" => {
+            let o = awake::parse(rest)?;
+            // `claude` is only needed to watch the rooms; never with a console window (a detached hold).
+            let bin = if o.while_rooms { Some(awake::Quiet { exe: ensure_claude(true)?, root: env.home.clone() }) } else { None };
+            awake::run(&o, bin.as_ref().map(|b| b as &dyn team::Claude), login_kind_at(&env.home).kind == "subscription", &env.home)
+        }
         "hint" => {
             let cwd = std::env::current_dir().context("no cwd")?;
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
@@ -218,6 +311,11 @@ pub fn run(a: Args) -> Result<()> {
         "inbox" => {
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
             crate::verbs::hq::run_inbox(&env.home, rest, id.as_deref())
+        }
+        "msg" => {
+            let ccc = sessions(&env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
+            let omp = crate::verbs::session::load(&env, &root).sessions.into_iter().map(|s| s.name).collect();
+            msg::run(rest, &env.home, &root, &msg::rooms(&root, ccc, omp))
         }
         "ls" | "list" => {
             print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
@@ -256,10 +354,12 @@ pub fn run(a: Args) -> Result<()> {
         "rm" => cmd_rm(&env, &root, rest.first().context("usage: 8sync ccc . rm <name>")?),
         "new" => {
             let name = rest.first().context("usage: 8sync ccc . new <name>")?;
+            let root = adopt_here(&cwd, false).unwrap_or(root);
             prepare(&env, &root, offline);
             open(&env, &root, name, true, &rest[1..], offline)
         }
         "" => {
+            let root = adopt_here(&cwd, false).unwrap_or(root);
             prepare(&env, &root, offline);
             match sessions(&env, &root).load().last_used {
                 Some(name) => open(&env, &root, &name, false, &[], offline),
@@ -267,6 +367,7 @@ pub fn run(a: Args) -> Result<()> {
             }
         }
         _ if verb.starts_with('-') && args.iter().any(|a| a == "--team" || a == "--panes") => {
+            let root = adopt_here(&cwd, false).unwrap_or(root);
             prepare(&env, &root, offline);
             match sessions(&env, &root).load().last_used {
                 Some(name) => open(&env, &root, &name, false, args, offline),
@@ -274,6 +375,7 @@ pub fn run(a: Args) -> Result<()> {
             }
         }
         _ if verb.starts_with('-') => {
+            let root = adopt_here(&cwd, false).unwrap_or(root);
             prepare(&env, &root, offline);
             launch(Command::new(ensure_claude(offline)?).args(args).current_dir(&root))
         }
@@ -283,10 +385,32 @@ pub fn run(a: Args) -> Result<()> {
             bail!("`8sync ccc {name}` không phải verb ở dạng này — xem trợ giúp ở trên (hook chạy qua `8sync ccc hook <tên>`)")
         }
         name => {
+            let root = adopt_here(&cwd, false).unwrap_or(root);
             prepare(&env, &root, offline);
             open(&env, &root, name, false, rest, offline)
         }
     }
+}
+
+/// Commands that create work or open rooms first give an untracked folder inside another repo its
+/// own repo ([`crate::verbs::here::adopt_untracked`]), so its board, rooms and sessions are its own.
+/// A team (`auto up`/`add`) needs its own repo, so any untracked folder qualifies (a cluster repo
+/// often ignores its project folders: 8sync-startup has `/game/*`). A single session only adopts an
+/// EMPTY folder (`mkdir x; cd x`): an untracked folder with files may be new code of the parent
+/// (`crates/new/` before its first commit), and a nested repo would hide it from the parent.
+/// Read-only verbs never call this.
+fn adopt_here(cwd: &Path, team: bool) -> Option<PathBuf> {
+    if !team && std::fs::read_dir(cwd).map_or(true, |mut d| d.next().is_some()) {
+        return None;
+    }
+    let parent = crate::verbs::here::repo_of(cwd)?;
+    let dir = crate::verbs::here::adopt_untracked(cwd)?;
+    let name = dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned());
+    ui::ok(&format!(
+        "{name} chưa có git repo riêng (repo cha {} không theo dõi thư mục này) → đã `git init`: board, phòng và phiên của thư mục này ở đây",
+        parent.display()
+    ));
+    Some(dir)
 }
 
 /// Every launch brings the environment up to date, with no network on the
@@ -472,7 +596,89 @@ fn team_flags(extra: &[String]) -> Result<(bool, bool, Vec<String>)> {
     Ok((team || panes, panes, rest))
 }
 
-/// `8sync ccc auto up|down` ([`team`]): the project's role rooms as Claude Code background sessions.
+/// `cwd` inside `repo` (not its root, not a card worktree) holding repos of its own (submodules,
+/// nested repos) one level down: their names, sorted.
+fn grouping_folder(cwd: &Path, repo: &Path) -> Option<Vec<String>> {
+    let (c, r) = (auto::canon(cwd), auto::canon(repo));
+    let rel = c.strip_prefix(&r).ok().filter(|rel| !rel.as_os_str().is_empty())?;
+    if rel.starts_with(Path::new(".claude").join("worktrees")) {
+        return None;
+    }
+    let mut kids: Vec<String> = std::fs::read_dir(cwd).ok()?.flatten().filter(|e| e.path().join(".git").exists()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    kids.sort();
+    (!kids.is_empty()).then_some(kids)
+}
+
+/// One team per folder tree: `up` / `on --here` in `root` first stops the team of a repo it sits in
+/// or holds (owner 2026-10-21: "vào đúng folder rồi mở ccc auto cứ bị dính ccc auto ở folder cha").
+/// A team that would not stop is an error: its rooms would run on with nothing tracking them.
+fn down_nested(env: &Env, root: &Path) -> Result<()> {
+    for n in team::nested_teams(&env.home, root) {
+        println!("{} lồng với {}: tắt team ở đó (mỗi cây thư mục một team)", n.display(), root.display());
+        auto_team(env, &n, &["down".to_string()]).with_context(|| format!("không tắt được team ở {} — chạy `8sync ccc auto down` ở đó rồi thử lại", n.display()))?;
+    }
+    Ok(())
+}
+
+/// `8sync ccc auto guard now`: one resource-guard pass ([`pressure::tick`]) for every team root
+/// where auto and the guard are on, outside `revive`. HQ fires it within seconds of a breach (owner
+/// 2026-10-21: "bị cao là auto xử lý liền luôn không có để lâu"); passes closer than
+/// [`pressure::NOW_GAP_S`] are skipped. It takes `revive`'s lock waiting ≤ 2 s and otherwise
+/// yields (a revive does the pass itself; revive waits ≤ 10 s for this one, never starved).
+/// `--json`: one object `{acted, skipped, rows}`; `acted` false = the pass changed nothing (no
+/// kill, restart, pause, resume or level change): HQ then backs off.
+fn guard_now(env: &Env, extra: &[String]) -> Result<()> {
+    if let Some(x) = extra.iter().find(|a| *a != "--json") {
+        bail!("không rõ `{x}`: dùng `8sync ccc auto guard now`");
+    }
+    let as_json = !extra.is_empty();
+    let clock = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let mut lock = team::revive_lock(&env.home, clock())?;
+    for _ in 0..4 {
+        if lock.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        lock = team::revive_lock(&env.home, clock())?;
+    }
+    let Some(_lock) = lock else {
+        if as_json {
+            println!("{}", serde_json::json!({ "acted": false, "skipped": "revive", "rows": [] }));
+        } else {
+            println!("máy: revive đang chạy, lượt bảo vệ chạy trong đó");
+        }
+        return Ok(());
+    };
+    let now = clock();
+    let subscription = login_kind_at(&env.home).kind == "subscription";
+    let gated = !auto::status(&env.home, subscription, now)["gate"].is_null();
+    let listing = reap::Listing::new(now);
+    let exe = ensure_claude(true)?;
+    let (mut rows, mut acted) = (Vec::new(), false);
+    for r in team::team_roots(&env.home) {
+        let root = PathBuf::from(r);
+        let registry: Vec<(String, String)> = sessions(env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
+        let bin = team::Bin { exe: exe.clone(), root: &root };
+        let (got, did) = pressure::tick(&env.home, &root, &bin, &registry, gated, now, pressure::NOW_GAP_S, &listing);
+        rows.extend(got);
+        acted |= did;
+    }
+    if as_json {
+        let rows: Vec<serde_json::Value> = rows.iter().map(|r| serde_json::json!({ "name": r.name, "role": r.role, "state": r.state })).collect();
+        println!("{}", serde_json::json!({ "acted": acted, "skipped": null, "rows": rows }));
+    } else {
+        for row in &rows {
+            println!("{} ({}): {}", row.name, row.role, row.state);
+        }
+    }
+    Ok(())
+}
+
+/// How long `auto up` waits for a running revive / up to finish.
+const UP_LOCK_WAIT_S: u64 = 150;
+
+/// `8sync ccc auto up|down|close` ([`team`], [`close`]): the project's role rooms as Claude Code
+/// background sessions; `close` stops everything of the project.
 fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let subscription = login_kind_at(&env.home).kind == "subscription";
@@ -488,7 +694,44 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
     let t = team::Team { home: &env.home, root, store: &store, subscription, claude: &bin, has_transcript: &has, title: &title, kit_at };
+    if rest[0] == "revive" {
+        let rows = team::revive(&t, auto::DEFAULT_LOOP_MIN, now)?;
+        for r in &rows {
+            println!("{} ({}): {} {}", r.name, r.role, r.state, r.short);
+        }
+        // Approved cards land here, in code, while the owner's self-merge grant holds; not past this
+        // revive's deadline (the next tick merges).
+        if team::revive_left() < std::time::Duration::from_secs(15) {
+            println!("merge nền: để lượt revive sau (hết giờ của lượt này)");
+        } else if auto::running(&env.home) && auto::in_scope(&env.home, Some(&root.to_string_lossy())) && auto::status(&env.home, subscription, now)["gate"].is_null() {
+            match merge::background(&env.home, root, now) {
+                Ok(lines) => lines.iter().for_each(|l| println!("{l}")),
+                Err(e) => println!("merge nền: lỗi — {e:#}"),
+            }
+        }
+        return Ok(());
+    }
+    if rest[0] == "close" {
+        return close::run(env, &t, &rest[1..], now);
+    }
     if rest[0] == "down" {
+        // `down --only <room,room…>`: those rooms alone (HQ "Tự soi ảnh" off, "Tắt Sấm Sét");
+        // auto and the other rooms run on.
+        if let [_, flag, list] = rest {
+            if flag == "--only" && !list.starts_with("--") {
+                let names = team::only_list(list);
+                let r = team::down_only(&t, &names, now)?;
+                for (name, stopped) in &r.rooms {
+                    let state = if *stopped { "đã dừng" } else { "không có phiên nền đang chạy của" };
+                    println!("{state} phòng {name} (đã bỏ khỏi team; thêm lại: `8sync ccc auto up --add {name}`).");
+                }
+                for (id, room, lane) in &r.freed {
+                    println!("card #{id} của {room} trả về cột {lane}.");
+                }
+                println!("Các phòng khác vẫn chạy.");
+                return Ok(());
+            }
+        }
         if let Some(x) = rest.get(1) {
             bail!("không rõ `{x}`\n{}", team::USAGE);
         }
@@ -498,12 +741,75 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         } else {
             println!("đã dừng {} phòng nền: {} (hội thoại giữ nguyên; mở lại: `8sync ccc auto up`).", stopped.len(), stopped.join(", "));
         }
-        println!("auto: TẠM DỪNG (owner). Phòng mở trong terminal không bị đóng.");
+        omp_team::print_down(&omp_team::down(env, root)?);
+        let st = auto::status(&env.home, subscription, now);
+        let left: Vec<&str> = st["repos"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|r| r.trim_start_matches(r"\\?\")).collect();
+        if st["on"] == true && !left.is_empty() {
+            println!("auto vẫn chạy cho: {}. Phòng mở trong terminal không bị đóng.", left.join(" + "));
+        } else {
+            println!("auto: TẠM DỪNG (owner). Phòng mở trong terminal không bị đóng.");
+        }
         return Ok(());
     }
-    let o = team::parse(&rest[1..])?;
-    let (status, gone, rows) = team::up(&t, &o, now)?;
+    // `--omp-model <provider/model>` (team omp's model) is ours; team::parse sees the rest.
+    let mut args = rest[1..].to_vec();
+    let team_model = match args.iter().position(|a| a == "--omp-model") {
+        Some(i) => {
+            let m = args.get(i + 1).filter(|v| !v.starts_with("--")).cloned().ok_or_else(|| anyhow::anyhow!("--omp-model cần một giá trị\n{}", team::USAGE))?;
+            args.drain(i..i + 2);
+            Some(auto::checked_model("--omp-model", &m)?)
+        }
+        None => None,
+    };
+    let o = team::parse(&args)?;
+    // `--add` joins the team running here, else is refused before anything is touched.
+    if o.add {
+        team::check_add(&t)?;
+    }
+    if team_model.is_some() && !o.omp {
+        bail!("--omp-model đi cùng --omp\n{}", team::USAGE);
+    }
+    // `--omp` = `auto omp on` first, so `up`'s auto on keeps it in `teams`; refused only for omp.
+    let blocked = if o.omp {
+        auto::omp_on(&env.home, team_model.as_deref(), now).err().map(|e| e.to_string())
+    } else {
+        auto::omp_blocked(&env.home)
+    };
+    // One resumer at a time: HQ's revive and this `up` must not fork the same dead room twice.
+    // HQ's revive (every 2 min) holds this while it reopens rooms: wait for it rather than fail.
+    // The wait counts against `up`'s stagger budget (HQ gives `up` 300 s in all).
+    team::run_clock_start();
+    let mut waited = 0;
+    let _lock = loop {
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs());
+        if let Some(l) = team::revive_lock(&env.home, at)? {
+            break l;
+        }
+        if waited >= UP_LOCK_WAIT_S {
+            bail!("`auto revive` / `auto up` khác vẫn đang mở phòng sau {UP_LOCK_WAIT_S} giây — chạy lại sau ít phút");
+        }
+        if waited == 0 {
+            println!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ tối đa {UP_LOCK_WAIT_S} giây…");
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        waited += 3;
+    };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs());
+    // Under the lock (no revive re-opens what this stops), before anything here starts; `--add`
+    // stops nothing (up_locked).
+    let help = args.iter().any(|a| a == "-h" || a == "--help");
+    let (status, gone, rows) = team::up_locked(&t, &o, now, || if help { Ok(()) } else { down_nested(env, root) })?;
     team::print_up(&status, &gone, &rows, o.every, subscription);
+    // Team omp: `--omp`, or omp already in auto.json's teams (turned on from HQ); never for `--add`.
+    if !o.add && omp_team::wanted(o.omp, &status) {
+        match blocked {
+            Some(why) => println!("đội omp: không mở — {why}"),
+            None => {
+                let model = auto::omp_model(&env.home);
+                omp_team::print_up(&omp_team::up(env, root, &o.roles, model.as_deref()), model.as_deref());
+            }
+        }
+    }
     Ok(())
 }
 
@@ -595,6 +901,15 @@ fn display_name(sessions_dir: &Path, name: &str, root: &Path) -> String {
     } else {
         name.to_string()
     }
+}
+
+/// `8sync ccc auto board --json` as if run with `cwd` as the working directory (the HQ core's
+/// `/v1/board`): same repo resolution as the `auto` verb, same object.
+pub(crate) fn board_json_at(home: &Path, cwd: &Path) -> Result<serde_json::Value> {
+    let root = crate::verbs::here::detect_project_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+    let repo = crate::verbs::here::repo_of(cwd).unwrap_or(root);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    auto::board_value(home, &repo, now)
 }
 
 fn claude_dir(env: &Env) -> PathBuf {
@@ -748,7 +1063,9 @@ const CLAUDE_MD_END: &str = "<!-- 8sync:kit:end -->";
 /// No `Edit(**/.env*)`: Claude Code applies Edit deny rules to `rm`/`sed`/redirects in Bash,
 /// so it blocked deleting a stray `.env` copy; the guard still denies printing a credential
 /// file and writing a real secret anywhere (see RETIRED_DENY).
-const DENY: [&str; 14] = [
+/// The HQ owner files (UI token, public-link key, Discord secrets, usage snapshots, permit
+/// answers, inbox) back the guard's Bash/Write check for the Read tool, which the guard does not see.
+const DENY: [&str; 22] = [
     "Read(**/.env)",
     "Read(**/.env.*)",
     "Read(**/*.pem)",
@@ -763,6 +1080,14 @@ const DENY: [&str; 14] = [
     "Bash(git push -f*)",
     "Bash(git push * --force*)",
     "Bash(git push * -f*)",
+    "Read(~/.config/8sync/hq/ui-token)",
+    "Read(~/.config/8sync/hq/public.json)",
+    "Edit(~/.config/8sync/hq/public.json)",
+    "Read(~/.config/8sync/hq/secrets.json)",
+    "Edit(~/.config/8sync/hq/secrets.json)",
+    "Edit(~/.local/state/8sync/ccc/permit/**)",
+    "Edit(~/.local/state/8sync/hq/inbox/**)",
+    "Edit(~/.local/state/8sync/hq/usage/**)",
 ];
 
 /// Deny rules earlier kits wrote and this one takes back (owner decision 2026-10-14).
@@ -1931,13 +2256,15 @@ fn hook(rest: &[String]) -> Result<()> {
             None
         }
         Some(h @ ("stop-failure" | "resume-note")) => {
-            let home = std::env::var_os("HOME").map(PathBuf::from);
+            // Same home as `env.home` / `8sync ccc inbox` and ccc-core's reader: `$HOME` on unix,
+            // the profile folder on Windows (hooks there often run without HOME).
+            let home = dirs::home_dir();
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
             resume::state_dir(home.as_deref()).and_then(|dir| {
                 if h == "resume-note" {
                     return resume::note(&input, &dir, now);
                 }
-                if let Some(msg) = resume::record(&input, &dir, now) {
+                if let Some(msg) = resume::record(&input, &dir, home.as_deref(), now) {
                     resume::notify(&msg);
                 }
                 None
@@ -2422,6 +2749,9 @@ mod tests {
         assert_eq!(p["permissions"]["disableBypassPermissionsMode"], "disable");
         let deny: Vec<&str> = p["permissions"]["deny"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
         assert!(DENY.iter().all(|r| deny.contains(r)));
+        for r in ["Edit(~/.config/8sync/hq/public.json)", "Read(~/.config/8sync/hq/secrets.json)", "Edit(~/.config/8sync/hq/secrets.json)", "Edit(~/.local/state/8sync/hq/usage/**)"] {
+            assert!(deny.contains(&r), "{r}");
+        }
         assert_eq!(p["forceLoginMethod"], "claudeai");
         assert_eq!(p["sandbox"]["enabled"], true);
         assert_eq!(p["channelsEnabled"], true);
@@ -2672,4 +3002,23 @@ mod tests {
         assert_eq!(manifest["types"], "./types/index.d.ts");
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn a_folder_that_only_groups_repos_is_not_a_project() {
+        let base = std::env::temp_dir().join(format!("8sync-group-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("startup");
+        for d in [repo.join(".git"), repo.join("zus").join("web"), repo.join("src"), repo.join(".claude").join("worktrees").join("card-1").join("game")] {
+            std::fs::create_dir_all(&d).unwrap();
+        }
+        std::fs::create_dir_all(repo.join("zus").join("ide").join(".git")).unwrap();
+        std::fs::write(repo.join("zus").join("web").join(".git"), "gitdir: ../../.git/modules/web").unwrap();
+        std::fs::create_dir_all(repo.join(".claude").join("worktrees").join("card-1").join("game").join(".git")).unwrap();
+        assert_eq!(grouping_folder(&repo.join("zus"), &repo), Some(vec!["ide".to_string(), "web".to_string()]), "submodule (.git file) and nested repo");
+        assert_eq!(grouping_folder(&repo, &repo), None, "the repo itself");
+        assert_eq!(grouping_folder(&repo.join("src"), &repo), None, "a plain subfolder is its repo");
+        assert_eq!(grouping_folder(&repo.join(".claude").join("worktrees").join("card-1"), &repo), None, "a card worktree");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
 }

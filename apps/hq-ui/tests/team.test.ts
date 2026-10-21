@@ -12,10 +12,13 @@ vi.mock("@/lib/server/proc", async (orig) => ({
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { POST } from "@/app/api/team/route";
+import { BoostButton, BoostChoices, boostOn, TeamControls } from "@/components/hq/team-controls";
 import { getToken } from "@/lib/server/auth";
 import { onePerBoard, type ProjectBoard } from "@/lib/server/board";
-import { tail, teamArgs } from "@/lib/server/team";
+import { BOOST_ONLY, BOOST_TEAM, FULL_TEAM, tail, teamArgs } from "@/lib/server/team";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const empty = { lanes: { backlog: [], ready: [], building: [], qa: [], review: [], approved: [], blocked: [] }, closed: [] } as unknown as ProjectBoard["board"];
@@ -55,7 +58,21 @@ describe("team", () => {
     expect(teamArgs("clean")).toEqual(["ccc", "auto", "up", "--clear-ss"]);
     expect(teamArgs("down")).toEqual(["ccc", "auto", "down"]);
     expect(teamArgs("full")).toEqual(["ccc", "auto", "up", "--roles", "full"]);
+    expect(teamArgs("boost")).toEqual(["ccc", "auto", "up", "--roles", "boost", "--hours", "2"]);
+    expect(teamArgs("unboost")).toEqual(["ccc", "auto", "down", "--only", "ba,dev3,dev4,dev5,dev6,qa2,review2"]);
     expect(tail("\x1b[1mone\x1b[0m\n\n two \n")).toBe("one\n two ");
+  });
+
+  it("knows the CLI's own full and boost teams (room.rs), so Tắt Sấm Sét stops exactly the boost-only rooms", () => {
+    const rs = fs.readFileSync(path.join(import.meta.dirname, "../../../crates/cli/src/verbs/ccc/room.rs"), "utf8");
+    const team = (name: string) => JSON.parse(rs.match(new RegExp(`const ${name}: \\[&str; \\d+\\] = (\\[[^\\]]*\\]);`))![1]) as string[];
+    expect([...FULL_TEAM]).toEqual(team("FULL_TEAM"));
+    expect([...BOOST_TEAM]).toEqual(team("BOOST_TEAM"));
+    expect(BOOST_ONLY).toEqual(["ba", "dev3", "dev4", "dev5", "dev6", "qa2", "review2"]);
+    // What stays after Tắt Sấm Sét is the full team, and boostOn flips off.
+    const rooms = BOOST_TEAM.filter((r) => !BOOST_ONLY.includes(r)).map((n) => ({ name: n, label: n, status: "running" }));
+    expect(rooms.map((r) => r.name)).toEqual([...FULL_TEAM]);
+    expect(boostOn(rooms)).toBe(false);
   });
 
   let token = "";
@@ -74,7 +91,7 @@ describe("team", () => {
     const ok = await post({ root: room.cwd.toUpperCase(), action: "clean" });
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ ok: true, output: "✓ lead mở\n✓ dev mở" });
-    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "auto", "up", "--clear-ss"], 180_000, room.cwd);
+    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "auto", "up", "--clear-ss"], 300_000, room.cwd);
     run.mockClear();
     expect((await post({ root: path.join(os.tmpdir(), "not-a-project"), action: "up" })).status).toBe(409);
     expect((await post({ root: room.cwd, action: "rm -rf" })).status).toBe(422);
@@ -93,5 +110,76 @@ describe("team", () => {
     expect((await first).status).toBe(200);
     run.mockResolvedValueOnce({ ok: true, stdout: "again", stderr: "" });
     expect((await post({ root: room.cwd, action: "up" })).status).toBe(200);
+  });
+
+  it("Sấm Sét runs exactly `auto up --roles boost --hours 2` in the project root, turns on the ship sprint, then revives", async () => {
+    run.mockClear();
+    run.mockResolvedValueOnce({ ok: true, stdout: "✓ dev6 mở\n✓ review2 mở\nboost: 13 phòng · lease tới 18:00 UTC\n", stderr: "" });
+    const ok = await post({ root: room.cwd.toUpperCase(), action: "boost" });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).output.split("\n").at(-1)).toBe("boost: 13 phòng · lease tới 18:00 UTC");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(run.mock.calls).toEqual([
+      ["8sync", ["ccc", "auto", "up", "--roles", "boost", "--hours", "2"], 660_000, room.cwd],
+      ["8sync", ["ccc", "auto", "ship-fast", "on", "--hours", "2", "--json"], 60_000, room.cwd],
+      ["8sync", ["ccc", "auto", "revive"], 120_000],
+    ]);
+    // A failed boost reports the CLI's own error and revives nothing.
+    run.mockClear();
+    run.mockResolvedValueOnce({ ok: false, stdout: "", stderr: "boost: cửa sổ 5 giờ đã 90%" });
+    const failed = await post({ root: room.cwd, action: "boost" });
+    expect(failed.status).toBe(502);
+    expect((await failed.json()).error).toBe("boost: cửa sổ 5 giờ đã 90%");
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("Sấm Sét is refused without the token, from a foreign origin or with no origin: nothing runs", async () => {
+    run.mockClear();
+    const body = { root: room.cwd, action: "boost" };
+    expect((await POST(req("/api/team", { method: "POST", origin: ORIGIN, body }))).status).toBe(401);
+    expect((await POST(req("/api/team", { method: "POST", token, origin: "http://evil.test", body }))).status).toBe(403);
+    expect((await POST(req("/api/team", { method: "POST", token, body }))).status).toBe(403);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("Tắt Sấm Sét runs exactly `auto down --only <boost-only rooms>` in the project root, and nothing else", async () => {
+    run.mockClear();
+    run.mockResolvedValueOnce({ ok: true, stdout: "đã dừng phòng dev3\ncard #4 của dev3 trả về cột ready.\nCác phòng khác vẫn chạy.\n", stderr: "" });
+    const ok = await post({ root: room.cwd.toUpperCase(), action: "unboost" });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).output).toContain("card #4 của dev3 trả về cột ready.");
+    expect(run.mock.calls).toEqual([["8sync", ["ccc", "auto", "down", "--only", "ba,dev3,dev4,dev5,dev6,qa2,review2"], 180_000, room.cwd]]);
+    run.mockClear();
+    const body = { root: room.cwd, action: "unboost" };
+    expect((await POST(req("/api/team", { method: "POST", origin: ORIGIN, body }))).status).toBe(401);
+    expect((await POST(req("/api/team", { method: "POST", token, origin: "http://evil.test", body }))).status).toBe(403);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("UI: the Sấm Sét button asks first, shows the live boost team as active, and sits in the team controls", () => {
+    const p = { root: room.cwd, name: "3d-game", token: "t" };
+    const off = renderToStaticMarkup(createElement(BoostButton, { ...p, active: false }));
+    for (const s of ["Sấm Sét", "13 phòng", "lead, ba", "7 builder", "2 QA", "2 review", "13 lần một phiên", "lease 2 giờ"]) expect(off).toContain(s);
+    expect(off).not.toContain("Đang Sấm Sét");
+    const on = renderToStaticMarkup(createElement(BoostButton, { ...p, active: true }));
+    for (const s of ["Đang Sấm Sét", "gia hạn thêm 2 giờ hoặc tắt", "bg-brand/25"]) expect(on).toContain(s);
+    // Active: the dialog offers both, turning off first.
+    const noop = () => {};
+    const choices = renderToStaticMarkup(createElement(BoostChoices, { onOff: noop, onRenew: noop, onCancel: noop }));
+    for (const s of ["Tắt Sấm Sét", "Gia hạn 2 giờ", "Thôi", "auto down --only ba,dev3,dev4,dev5,dev6,qa2,review2", "auto up --roles boost --hours 2"]) expect(choices).toContain(s);
+    const bar = renderToStaticMarkup(createElement(TeamControls, { ...p, boost: true }));
+    for (const s of ["Đang Sấm Sét", "Mở lại team", "Team đầy đủ", "Dừng team"]) expect(bar).toContain(s);
+
+    const rooms = (names: string[], status = "running") => names.map((n) => ({ name: n, label: n, status }));
+    const boost = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"];
+    expect(boostOn(rooms(boost))).toBe(true);
+    // `auto up` titles a clashing room `<name>-<repo>`; HQ rooms are `hq-<repo>-<name>`, labelled `<repo> · <name>`.
+    expect(boostOn(rooms(boost.map((n) => `${n}-3d-game`)))).toBe(true);
+    expect(boostOn(boost.map((n) => ({ name: `hq-3d-game-${n}`, label: `3d-game · ${n}`, status: "idle" })))).toBe(true);
+    expect(boostOn(rooms(["lead", "dev", "dev2", "ui", "qa", "review"]))).toBe(false);
+    // The old 9-room boost team is not the 13-room one.
+    expect(boostOn(rooms(["lead", "dev", "dev2", "dev3", "dev4", "ui", "qa", "qa2", "review"]))).toBe(false);
+    for (const only of ["dev6", "qa2", "review2"]) expect(boostOn(rooms(boost.filter((n) => n !== only).concat("rd")))).toBe(false);
+    expect(boostOn([...rooms(boost.slice(0, 12)), ...rooms(["review2"], "ended")])).toBe(false);
   });
 });

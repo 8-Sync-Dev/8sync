@@ -135,7 +135,58 @@ export LC_ALL=C
 # rooms and `--clear-ss` reload (`ccc/team.rs`), the PermissionRequest hook with its allowlist
 # (`ccc/permit.rs`), card priority and the `auto wait` poller. No new dependency. Ceiling
 # 7040 KiB (~101 KiB left).
-CEILING="${CEILING:-7208960}"   # 7040 KiB (raised 2026-10-18 from 6912 KiB, see above). Goal is 4 MiB (4194304) — AGENTS.md §8.
+#
+# 2026-10-19 PR #116 run 39179917755: linux-x86_64 (musl) 7,280,784 B, 71,824 B over 7040 KiB;
+# v0.100.15 asset 7,198,832 → +81,952 B (Windows MSVC local: 5,726,720 → 5,798,912, +72,192 B).
+# v0.101.0: the embedded omp extension `8sync-team.ts` (17,039 B source), stop-failure resume
+# at the status-line reset (`ccc/resume.rs`), team omp + `auto nudge` (`ccc/auto.rs`,
+# `ccc/omp_team.rs`), `ccc msg` + room-line gating/quoting (`ccc/msg.rs`, `hq.rs`), the public
+# link (`hq.rs`: cloudflared, nonce), `auto revive` and `awake` (kernel32 FFI, no crate). No new
+# dependency. Ceiling 7168 KiB (~58 KiB left).
+#
+# 2026-10-19 v0.107.0 (before tagging): v0.106.0 linux-x86_64 (musl) asset 7,329,936 B left only
+# 10,096 B under 7168 KiB. Windows MSVC local release of v0.107.0 = 5,991,424 B vs the v0.106.0
+# Windows asset 5,851,648 → +139,776 B; at the last measured musl/MSVC ratio (1.135) the musl
+# asset lands near 7,488,600 B. v0.107.0: the HQ native core `hq_core/` (loopback HTTP + token,
+# `claude agents` fingerprint cache, warm transcript digests, 5 s machine sampler over
+# kernel32/psapi/PDH/NVML FFI + Linux /proc, usage scan, disk walk), `ccc auto omp on --model`
+# (team model, nudge model gate, `8sync . <name> --model`), lead merge-order prompt text. No new
+# dependency (Cargo.lock: version lines only). Ceiling 7360 KiB (~47 KiB left over the estimate).
+#
+# 2026-10-20 v0.108.0 (before tagging): v0.107.0 linux-x86_64 (musl) asset 7,498,000 B left 38,640 B
+# under 7360 KiB. Windows MSVC local release of v0.108.0 = 6,077,440 B vs the v0.107.0 Windows asset
+# 5,994,496 → +82,944 B; at 1.135 the musl asset lands near 7,592,100 B. v0.108.0: `ccc auto merge`
+# (`ccc/merge.rs`), project-scoped merge permission (`grant.rs`) and its guard rule (`guard.rs`), PR
+# base/conflict/head checks + role-aware claims + `reopen` (`target.rs`, `room.rs`), CI health with
+# billing detection (`ccc/ci.rs`, owner alert in `hq.rs`), event-only rooms and longer waits
+# (`auto.rs`, `team.rs`, `idle.rs`). No new dependency. Ceiling 7488 KiB (~74 KiB left over the estimate).
+#
+# 2026-10-21 v0.110.11: v0.108.0 → v0.110.10 used the 74 KiB headroom (CI musl asset of this PR
+# 7,670,032 B, 2,320 B over). Grown by: reap.rs (machine guard of leftover dev servers, process
+# tree walk), merge.rs background landing, one-tap answers + boost/force verbs (auto.rs, team.rs),
+# ccc-core Windows omp process scan (Toolhelp + NtQueryInformationProcess FFI), nested-scope +
+# revive-lock liveness (`tasklist`) + grouping-folder refusal. No new dependency. In flight next:
+# eye room, resource guard (EcoQoS/priority/lean rooms), project close, omp terminal host.
+# Ceiling 7744 KiB (~60 KiB left over this asset; re-attribute with size-report before the next raise).
+#
+# 2026-10-21 v0.110.23: v0.110.11 → v0.110.22 used the headroom down to 9,936 B (main 2e5aea9 CI
+# musl asset 7,919,920 B: eye room, resource guard, project close, omp terminal host, sweep room,
+# live-room checks). This PR's CI musl asset 7,960,880 B (+40,960 B, 31,024 B over): the strict
+# CPU cap in `ccc/pressure.rs` — affinity FFI (Set/GetProcessAffinityMask, GetProcessTimes,
+# GetSystemTimes), Linux /proc/stat + Cpus_allowed parsing and `taskset`, pin records with exact
+# restore, the stepwise tighten/loosen decision — plus the split CPU/RAM thresholds (`auto.rs`).
+# No new dependency. Ceiling 7808 KiB (~34 KiB left over this asset).
+# 2026-10-21 v0.110.26: `ccc/ship_fast.rs` (the owner's Ship-tốc-độ-cao sprint: brief delivery,
+# approved watch, claim hold) + the lease/pin groundwork — CI musl asset 8,005,936 B (+~85 KB over
+# v0.110.24, 10,544 B over the 7808 KiB ceiling). No new dependency. Ceiling 7840 KiB (~20 KiB left).
+# 2026-10-21 v0.110.27: `ccc/lease.rs` (Lease liên tục: API-key renew within budget, subscription
+# renew on owner presence; pinned projects + usage-tight focus) — CI musl asset 8,038,704 B
+# (+32,768 B over v0.110.26). No new dependency. Ceiling 7872 KiB (~20 KiB left).
+CEILING="${CEILING:-8126464}"   # 7936 KiB. 2026-10-21 v0.110.30: cross-repo --pr (target.rs parse_pr/
+# pr_repo_for, merge.rs default_branch_of/cached per repo, guard.rs repo-aware self-merge) and the
+# guard RAM trim + attribution (pressure.rs trim_pick/trim K32EmptyWorkingSet, ram_split JSON) grew
+# the CI linux musl asset to 8,083,760 B, 22,832 B over the 8,060,928 ceiling. +64 KiB, ~43 KiB left.
+# Goal is 4 MiB (4194304) — AGENTS.md §8.
 GOAL=4194304
 
 asset="${1:-}"

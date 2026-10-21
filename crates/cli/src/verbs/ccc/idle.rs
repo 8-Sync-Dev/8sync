@@ -34,7 +34,7 @@ pub(super) const DEFAULT_USD_PER_HOUR: f64 = 5.0;
 /// Subscription: the loops rest once either usage window is this full.
 pub(super) const SUB_WINDOW_PCT: f64 = 90.0;
 /// Subscription: lease cap and "owner present" window (last prompt typed by a human).
-const SUB_MAX_HOURS: f64 = 4.0;
+pub(super) const SUB_MAX_HOURS: f64 = 4.0;
 pub(super) const PRESENT_S: u64 = 30 * 60;
 /// Another session's task list counts as "has work" only when touched this recently.
 const ROOM_FRESH_S: u64 = 2 * 3600;
@@ -394,12 +394,19 @@ pub(super) fn usage(home: &Path, lease: Option<&Value>, now: u64) -> Usage {
     let snaps = super::report::load_snapshots(home); // newest first
     let mine = super::auto::scoped(home);
     let costs: Vec<(String, f64)> = snaps.iter().filter(|s| mine(s["cwd"].as_str())).filter_map(cost_of).collect();
+    // A reading whose window has reset since (`<key>_resets_at`, from the status line) means that
+    // window started over: it counts as 0 %, whatever its age, so a team that rested at 90 % (or
+    // stopped on the limit) goes on at the reset instead of waiting for a fresh status line that
+    // background rooms may never draw. Not None: with no 7-day reading (this owner's status line
+    // has none) an unknown 5-hour window would arm the `$` fail-safe against the spend that filled
+    // the window, and the team would stay down until the lease ran out (review 2026-10-19).
     let window = |key: &str, max_age: u64| {
-        snaps
-            .iter()
-            .find(|s| s[key].is_number())
-            .filter(|s| now.saturating_sub(s["ts"].as_u64().unwrap_or(0)) < max_age)
-            .and_then(|s| s[key].as_f64())
+        let s = snaps.iter().find(|s| s[key].is_number())?;
+        let reset = key.strip_suffix("_pct").map(|w| format!("{w}_resets_at"));
+        if reset.is_some_and(|r| s[r.as_str()].as_u64().is_some_and(|at| at <= now)) {
+            return Some(0.0);
+        }
+        s[key].as_f64().filter(|_| now.saturating_sub(s["ts"].as_u64().unwrap_or(0)) < max_age)
     };
     Usage {
         spent: lease.map_or(0.0, |l| spent_since(&l["baseline"], &costs)),
@@ -451,8 +458,8 @@ pub(super) fn cap(lease: &Value, u: &Usage, subscription: bool, now: u64) -> Res
             }
         }
     }
-    let known = windows.iter().any(|(_, p)| p.is_some());
-    let Some(rate) = lease["usd_per_hour"].as_f64().or((!subscription || !known).then_some(DEFAULT_USD_PER_HOUR)) else {
+    // The 5-hour window is the one that moves within a run: without it, the `$` default holds.
+    let Some(rate) = lease["usd_per_hour"].as_f64().or((!subscription || u.five_hour.is_none()).then_some(DEFAULT_USD_PER_HOUR)) else {
         return Ok(());
     };
     let hours = (now.saturating_sub(lease["on"].as_u64().unwrap_or(now)) as f64 / 3600.0).max(1.0);
@@ -583,7 +590,8 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
             // Stop fires at every turn end, so the "minute" is bounded by the ladder instead:
             // at most MAX_BLOCKS nudges while the task list does not change, the owner-present
             // gate on a subscription, and `auto pause`. HQ's auto-tick covers a session that
-            // is already idle (no Stop ever fires there).
+            // is already idle (no Stop ever fires there). A session with its own cron loop, or a
+            // team room without a board lane, is left alone ([`quiet_stop`]).
             let team = format!("session-{}", sid.get(..8)?);
             let lead = is_lead(&team);
             if !lead && !super::auto::running(home) {
@@ -596,6 +604,15 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
     // The team name becomes a path under ~/.claude/tasks: never let it climb out.
     if team.is_empty() || team.len() > 64 || !team.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
         return None;
+    }
+    if !lead && me.is_none() {
+        if let Some((kind, why)) = quiet_stop(&v, || room_name(&v)) {
+            // `no_tick` = why HQ's auto-tick skips this session too (apps/hq-ui lib/server/auto-tick.ts):
+            // `"cron"` expires there once the loop stops rewriting it, `"events"` holds while auto runs.
+            let key = format!("{}__lead", safe(&team));
+            write_json(&state_dir(home).join("status").join(format!("{key}.json")), &json!({ "schema": 1, "team": team, "name": "lead", "state": "rest", "detail": why, "ts": now(), "no_tick": kind }));
+            return None;
+        }
     }
     let dir = state_dir(home);
     let lease = read_json(&dir.join("lease.json"));
@@ -623,7 +640,11 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
         tasks: &tasks,
         recall: &recall,
         rooms: &rooms,
-        gate: gate(lease.as_ref(), subscription, &used, now(), owner_seen),
+        // Tight usage with other projects pinned: this one rests ([`super::lease::focus_rest`]).
+        gate: gate(lease.as_ref(), subscription, &used, now(), owner_seen).and_then(|()| match cwd.as_os_str().is_empty() {
+            true => Ok(()),
+            false => super::lease::focus_rest(home, &cwd, now()).map_or(Ok(()), Err),
+        }),
         learn: learn.as_deref(),
         research: research.as_deref(),
     };
@@ -654,6 +675,41 @@ pub(super) fn hook(input: &str, home: &Path, subscription: bool) -> Option<Strin
         Step::Nudge { state: "working", msg } => Some(json!({ "decision": "block", "reason": format!("8sync không-ai-rảnh: {msg}") }).to_string()),
         Step::Nudge { msg, .. } => Some(lead_context(&msg)),
     }
+}
+
+/// Why a standalone session's Stop gets no nudge, if it gets none: it runs its own cron loop (the
+/// loop ticks it; a nudge on top doubled the turns), or it is a team room without a board lane
+/// ([`super::auto::events_only`]: it works on messages and cards only). `room` is looked up only
+/// when there is no cron.
+pub(super) fn quiet_stop(v: &Value, room: impl FnOnce() -> Option<String>) -> Option<(&'static str, &'static str)> {
+    if v["session_crons"].as_array().is_some_and(|c| !c.is_empty()) {
+        Some(("cron", "có loop cron riêng: không nhắc thêm"))
+    } else if room().is_some_and(|n| super::auto::events_only(&n)) {
+        Some(("events", "phòng không giữ cột board: chỉ chạy khi có tin hoặc card"))
+    } else {
+        None
+    }
+}
+
+/// Drop every `no_tick` status record ([`quiet_stop`]): called whenever auto turns on, resumes,
+/// pauses or goes off, so a flag written in an earlier run never silences a session HQ should wake.
+/// HQ also ignores one older than its cron period (apps/hq-ui lib/server/auto-tick.ts `NO_TICK_MS`).
+pub(super) fn clear_no_tick(home: &Path) {
+    let Ok(rd) = std::fs::read_dir(state_dir(home).join("status")) else { return };
+    for p in rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")) {
+        if read_json(&p).is_some_and(|v| v["no_tick"].is_string() || v["no_tick"] == true) {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+}
+
+/// The `ccc .` room name of the hook's session (registry of the cwd's project), if it is one.
+fn room_name(v: &Value) -> Option<String> {
+    let cwd = Path::new(v["cwd"].as_str()?);
+    let sid = v["session_id"].as_str().filter(|s| !s.is_empty())?;
+    let root = crate::verbs::here::detect_project_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+    let cfg = dirs::config_dir()?;
+    ccc_core::registry::Store::new(&cfg, &root, "claude-sessions", "ccc .").load().sessions.into_iter().find(|s| s.conversation_id == sid).map(|s| s.name)
 }
 
 /// A session id as a path segment: uuid characters only, or nothing.
@@ -991,7 +1047,8 @@ mod tests {
         let e = cap(&sub, &w(Some(90.0), Some(10.0), 0.0), true, 3600).unwrap_err();
         assert!(e.contains("5 giờ") && e.contains("90%"), "{e}");
         assert!(cap(&sub, &w(Some(10.0), Some(95.0), 0.0), true, 3600).unwrap_err().contains("7 ngày"));
-        assert!(cap(&sub, &w(None, Some(50.0), 500.0), true, 3600).is_ok(), "one fresh window is enough to drop the $ rail");
+        assert!(cap(&sub, &w(Some(50.0), None, 500.0), true, 3600).is_ok(), "a fresh 5-hour window drops the $ rail");
+        assert!(cap(&sub, &w(None, Some(50.0), 500.0), true, 3600).unwrap_err().contains("$5.00/giờ"), "the 7-day window alone does not");
         // No window reading at all: fail safe, the old $5 default.
         assert!(cap(&sub, &w(None, None, 6.72), true, 3600).unwrap_err().contains("$5.00/giờ"));
         // The owner set --usd-per-hour (or an old lease): both rails.
@@ -1014,6 +1071,26 @@ mod tests {
         assert_eq!(usage(&d, None, t), w(Some(95.0), Some(50.0), 0.0));
         assert_eq!(usage(&d, None, t + 5 * 3600), w(None, Some(50.0), 0.0), "a 5-hour reading older than 5 hours is stale");
         assert_eq!(usage(&d, None, t + 7 * 86_400), w(None, None, 0.0));
+        // The status line said when the 5-hour window resets: past that time the old 100% is void
+        // and the window started over (0%), so the team goes on even after a big spend.
+        snap(&d, json!({ "session_id": "c", "ts": t - 50, "five_hour_pct": 100, "five_hour_resets_at": t + 600, "seven_day_pct": 50 }));
+        assert_eq!(usage(&d, None, t), w(Some(100.0), Some(50.0), 0.0), "before the reset the window is full");
+        assert_eq!(usage(&d, None, t + 600), w(Some(0.0), Some(50.0), 0.0), "at the reset it started over");
+        assert_eq!(usage(&d, None, t + 6 * 3600).five_hour, Some(0.0), "a reset reading never turns back into a full one");
+        assert!(cap(&sub, &Usage { spent: 500.0, ..usage(&d, None, t + 600) }, true, t + 600).is_ok(), "the subscription rail clears at the reset");
+        // This owner's status line has no 7-day window: the reset alone must clear the rail.
+        let d7 = std::env::temp_dir().join(format!("8sync-idle-no7d-{}-{}", std::process::id(), now()));
+        let _ = std::fs::remove_dir_all(&d7);
+        snap(&d7, json!({ "session_id": "a", "ts": t - 50, "five_hour_pct": 100, "five_hour_resets_at": t + 600 }));
+        assert!(cap(&sub, &Usage { spent: 500.0, ..usage(&d7, None, t) }, true, t).is_err(), "full before the reset");
+        let after = usage(&d7, None, t + 600);
+        assert_eq!((after.five_hour, after.seven_day), (Some(0.0), None));
+        assert!(cap(&sub, &Usage { spent: 500.0, ..after }, true, t + 600).is_ok(), "no 7-day reading: still back at the reset");
+        let _ = std::fs::remove_dir_all(&d7);
+        // With no known window at all the default $ rail applies (spent 0 → ok, over $5/h → rest).
+        let none = Usage::default();
+        assert!(cap(&sub, &none, true, t + 600).is_ok(), "spent 0 → ok");
+        assert!(cap(&sub, &Usage { spent: 6.72, ..none }, true, 3600).unwrap_err().contains("$5.00/giờ"));
         // `on` without --usd-per-hour: a subscription lease stores no $ rate, an API key lease $5.
         on(&d, 1.0, None, true, true).unwrap();
         assert!(read_json(&state_dir(&d).join("lease.json")).unwrap()["usd_per_hour"].is_null());
@@ -1046,12 +1123,29 @@ mod tests {
         assert!(out.contains("không-ai-rảnh") && out.contains("solo-task-xyz"), "{out}");
         let status = std::fs::read_dir(state_dir(&home).join("status")).unwrap().count();
         assert_eq!(status, 1, "one status file for HQ");
+        // The same session with its own cron loop: the loop ticks it, so no nudge, and the status
+        // file tells HQ's auto-tick to skip it.
+        let with_cron = json!({ "hook_event_name": "Stop", "session_id": sid, "cwd": cwd.to_string_lossy(), "transcript_path": "", "session_crons": [{ "id": "c1" }] }).to_string();
+        assert_eq!(hook(&with_cron, &home, false), None);
+        let st = read_json(&state_dir(&home).join("status").join("session-0f0f0f0f__lead.json")).unwrap();
+        assert_eq!((st["no_tick"].as_str(), st["state"].as_str()), (Some("cron"), Some("rest")), "{st}");
+        // A lane-less team room (arch, rd …) rests on Stop; a lane room or an owner's room does not.
+        let plain = json!({});
+        assert_eq!(quiet_stop(&plain, || Some("rd".into())).map(|q| q.0), Some("events"));
+        assert_eq!(quiet_stop(&plain, || Some("arch-2".into())).map(|q| q.0), Some("events"));
+        assert_eq!(quiet_stop(&json!({ "session_crons": [{ "id": "c" }] }), || Some("rd".into())).map(|q| q.0), Some("cron"));
+        assert_eq!(quiet_stop(&plain, || Some("dev".into())), None);
+        assert_eq!(quiet_stop(&plain, || Some("zus".into())), None);
+        assert_eq!(quiet_stop(&plain, || None), None);
+        assert!(quiet_stop(&json!({ "session_crons": [] }), || None).is_none(), "an empty cron list is no loop");
         // A bad session id never becomes a path.
         let evil = json!({ "hook_event_name": "Stop", "session_id": "../../x", "cwd": cwd.to_string_lossy() }).to_string();
         assert_eq!(hook(&evil, &home, false), None);
         assert_eq!(safe_id("ab/cd"), None);
-        // Paused: silent again for the standalone session …
+        // Paused: the `no_tick` flag goes (a resumed auto asks the session again), and the
+        // standalone session is silent again …
         super::super::auto::set(&home, super::super::auto::Mode::Pause, false, now()).unwrap();
+        assert!(!state_dir(&home).join("status").join("session-0f0f0f0f__lead.json").exists(), "no_tick cleared on pause");
         assert_eq!(hook(&input, &home, false), None);
         // `idle on` by hand without `auto on` (manual): the standalone session stays silent,
         // while a real lead (team config present) still reads its team's task list, as before.

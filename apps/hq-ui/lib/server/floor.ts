@@ -2,15 +2,30 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { sessionLabel } from "../labels";
+import { isOmpRoomId, sessionLabel } from "../labels";
 import { roomLabel } from "../room-label";
-import { deriveFloor, type FloorRow, type LsInput } from "../floor";
+import { autoMayAct, deriveFloor, type FloorRow, type LsInput } from "../floor";
+import { lastAutoStatus } from "./auto";
+import { projectIdFor } from "./db";
+import { coreGet } from "./core";
+import { inboxLive } from "./inbox";
 import { mergedSessions, run, type SessionView } from "./proc";
 
-type LsRow = LsInput & { name: string; sid?: string | null; title?: string | null; repo?: string | null; engine?: string | null; tokens?: number | null };
+type LsRow = LsInput & {
+  name: string;
+  sid?: string | null;
+  title?: string | null;
+  repo?: string | null;
+  engine?: string | null;
+  tokens?: number | null;
+  inbox_id?: string | null;
+  model?: string | null;
+  /** Local transcript file (`8sync ls`): kept server side, never sent to the browser. */
+  transcript?: string | null;
+};
 
 const TTL_MS = 4000;
-let cache: { at: number; rows: FloorRow[] } | null = null;
+let cache: { at: number; rows: FloorRow[]; transcripts: Map<string, string> } | null = null;
 let inflight: Promise<FloorRow[]> | null = null;
 
 const UUID_ISH = /^[0-9a-f]{8}(-[0-9a-f]{4}){0,4}/i;
@@ -31,8 +46,8 @@ export function tilde(p: string | null | undefined, home = os.homedir()): string
 const claudeEngine = (e: string | null | undefined) => !e || e === "ccc" || e === "claude";
 
 const trimSlash = (p: string) => p.replace(/\/+$/, "");
-/** Expand "~" so ls `repo` and hq cwd compare as absolute paths. */
-const expand = (p: string, home = os.homedir()) => (p === "~" ? home : p.startsWith("~/") ? home + p.slice(1) : p);
+/** Expand "~" so ls `repo` and hq cwd compare as absolute paths (`8sync ls` on Windows prints `~\x`). */
+const expand = (p: string, home = os.homedir()) => (p === "~" ? home : p.startsWith("~/") || p.startsWith("~\\") ? home + p.slice(1) : p);
 /** `repo` may also be Claude's dash-encoded project dir. */
 const dashed = (p: string) => p.replace(/[/.]/g, "-");
 
@@ -83,15 +98,19 @@ function pairHq(ls: LsRow[], merged: SessionView[]): Map<number, SessionView> {
   return out;
 }
 
+/** `8sync ls --json --all`: from the core's warm copy when there is one, else one process. */
 async function lsRows(): Promise<LsRow[]> {
-  const r = await run("8sync", ["ls", "--json", "--all"], 8000);
-  if (!r.ok) return []; // 8sync missing or failed
-  try {
-    const v = JSON.parse(r.stdout);
-    return Array.isArray(v) ? (v as LsRow[]).filter((x) => x && typeof x.name === "string") : [];
-  } catch {
-    return [];
+  let v: unknown = (await coreGet("/v1/ls"))?.v;
+  if (v === undefined) {
+    const r = await run("8sync", ["ls", "--json", "--all"], 8000);
+    if (!r.ok) return []; // 8sync missing or failed
+    try {
+      v = JSON.parse(r.stdout);
+    } catch {
+      return [];
+    }
   }
+  return Array.isArray(v) ? (v as LsRow[]).filter((x) => x && typeof x.name === "string") : [];
 }
 
 /**
@@ -119,9 +138,17 @@ export function newestStandup(repo: string | null | undefined, home = os.homedir
   return best;
 }
 
-async function build(db: DatabaseSync): Promise<FloorRow[]> {
+async function build(db: DatabaseSync): Promise<{ rows: FloorRow[]; transcripts: Map<string, string> }> {
   const [ls, merged] = await Promise.all([lsRows(), mergedSessions(db).catch(() => [] as SessionView[])]);
+  // omp room id -> its transcript, for "Nhật ký" (readOmpActivity). Only absolute `.jsonl` paths.
+  const transcripts = new Map<string, string>();
+  for (const r of ls) {
+    if (r.engine === "omp" && isOmpRoomId(r.inbox_id) && typeof r.transcript === "string" && path.isAbsolute(r.transcript) && r.transcript.endsWith(".jsonl")) transcripts.set(r.inbox_id, r.transcript);
+  }
   const now = Date.now();
+  // "tự chạy lại lúc …" only while auto will actually resume the room (on, not paused, no gate);
+  // the status GET /api/auto last fetched, unknown (no poll yet) = the owner must act.
+  const autoActs = autoMayAct(lastAutoStatus());
   const used = new Set<string>();
   const ids = new Set<string>();
   // One readdir per repo per build, not per session.
@@ -156,7 +183,11 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       engine,
       sid: sidOf(hq?.session_id, r.name),
       tokens: typeof r.tokens === "number" ? r.tokens : null,
-      ...deriveFloor(r, { ...(hq ?? {}), standup: standupOf(repo) }, now),
+      inbox_id: typeof r.inbox_id === "string" ? r.inbox_id : null,
+      // Alive: a process has it open (`8sync ls`) or its hq session is in tmux / `claude agents`.
+      live: r.status === "running" || r.status === "active" || (hq != null && hq.status !== "ended"),
+      model: typeof r.model === "string" ? r.model : null,
+      ...deriveFloor(r, { ...(hq ?? {}), standup: standupOf(repo) }, now, autoActs),
     };
   });
   // hq sessions `8sync ls` does not know (fresh tmux panes, `claude agents` only).
@@ -173,18 +204,52 @@ async function build(db: DatabaseSync): Promise<FloorRow[]> {
       repo,
       engine: "ccc",
       sid: sidOf(s.session_id, s.name),
-      ...deriveFloor(null, { ...s, standup: standupOf(repo) }, now),
+      inbox_id: s.session_id,
+      live: true,
+      ...deriveFloor(null, { ...s, standup: standupOf(repo) }, now, autoActs),
     });
   }
-  return rows;
+  return { rows, transcripts };
+}
+
+/** hq has no hook data for omp rooms: the desk state stands in for the session status. */
+const OMP_STATUS: Partial<Record<FloorRow["state"], SessionView["status"]>> = { waiting: "needs_input", idle: "idle", done: "idle" };
+
+/**
+ * The omp team's live rooms as sessions (contract C3/C4). HQ cannot type into them; it queues into
+ * their inbox by `inbox_id`, so they join the room list, "Giao việc" and "Cả dự án" like any inbox room.
+ */
+export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
+  return rows.flatMap((r): SessionView[] => {
+    const id = r.inbox_id;
+    if (r.engine !== "omp" || !r.live || !isOmpRoomId(id)) return [];
+    const cwd = r.repo ? expand(r.repo) : null;
+    return [
+      {
+        name: id,
+        label: r.name,
+        session_id: id,
+        project_id: projectIdFor(db, cwd),
+        status: OMP_STATUS[r.state] ?? "running",
+        started_at: r.last_active ? r.last_active * 1000 : null,
+        cwd,
+        tmux: false,
+        source: "omp",
+        detail: r.caption || null,
+        inbox_live: inboxLive(id),
+        engine: "omp",
+        model: r.model ?? null,
+      },
+    ];
+  });
 }
 
 /** 4 s cache; concurrent callers share one in-flight `8sync ls`. */
 export function loadFloor(db: DatabaseSync): Promise<FloorRow[]> {
   if (cache && Date.now() - cache.at < TTL_MS) return Promise.resolve(cache.rows);
   inflight ??= build(db)
-    .then((rows) => {
-      cache = { at: Date.now(), rows };
+    .then(({ rows, transcripts }) => {
+      cache = { at: Date.now(), rows, transcripts };
       return rows;
     })
     .catch(() => [] as FloorRow[])
@@ -192,6 +257,20 @@ export function loadFloor(db: DatabaseSync): Promise<FloorRow[]> {
       inflight = null;
     });
   return inflight;
+}
+
+/** Transcript file of the omp room `id` (from `8sync ls`, never from a client), or null. */
+export async function ompTranscript(db: DatabaseSync, id: string): Promise<string | null> {
+  if (!isOmpRoomId(id)) return null;
+  await loadFloor(db);
+  return cache?.transcripts.get(id) ?? null;
+}
+
+/** The omp room `id` as `8sync ls` lists it (any status: its terminal can start it), or null. `cwd`: its repo. */
+export async function ompRoom(db: DatabaseSync, id: string): Promise<{ cwd: string | null } | null> {
+  if (!isOmpRoomId(id)) return null;
+  const r = (await loadFloor(db)).find((x) => x.engine === "omp" && x.inbox_id === id);
+  return r ? { cwd: r.repo ? expand(r.repo) : null } : null;
 }
 
 export function resetFloorCache() {

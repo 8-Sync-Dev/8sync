@@ -5,7 +5,8 @@ import { messagesAfter, tasksFor } from "@/lib/server/queries";
 export const runtime = "nodejs";
 
 const TICK_MS = 1000;
-const HEARTBEAT_MS = 15_000;
+// Short enough that a healthy idle stream is never 10 s silent (the client's SILENT_MS switch to polling).
+const HEARTBEAT_MS = 5000;
 
 /**
  * SSE of new rows. Auth uses the same header as every API call, so the client

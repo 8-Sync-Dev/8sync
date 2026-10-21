@@ -1,17 +1,20 @@
 "use client";
 
-import { ChevronRightIcon, FolderIcon, FolderPlusIcon, GitBranchIcon, HandIcon, LayersIcon, MoonIcon, SunIcon } from "lucide-react";
+import { ChevronRightIcon, FolderIcon, FolderPlusIcon, GitBranchIcon, HandIcon, LayersIcon, MoonIcon, PinIcon, SunIcon } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useMemo, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { teamLabel } from "@/lib/labels";
 import type { BoardRef, NowState } from "@/lib/now";
 import { matchesSession } from "@/lib/office";
-import { SIDEBAR_WORD, sidebarGroups, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
+import { SIDEBAR_WORD, groupKey, pinSidebar, sidebarGroups, splitClosed, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
 import { ErrorNote } from "./bits";
+import { BrandMark } from "./brand-mark";
+import { CloseDialog, ClosedProjects, ProjectMenu, RoomEndDialog, RoomMenu, WorktreeDialog, useWorktreeKeys, type Confirm, type RoomAction } from "./nav-actions";
 import { RoleIcon } from "./role-badge";
 import type { Hq, Live } from "./use-hq";
 import type { OfficeState, Room } from "./use-office";
@@ -19,8 +22,10 @@ import type { Project } from "./types";
 
 export type Scope = { project: number | null; session: string | null };
 
+/** Hover stays neutral; only the current item takes the accent (a brand wash and hairline, like the ZUS IDE selection).
+ *  10 %, not more: the small "Đang làm" status text on it keeps 4.56:1 in the light theme. */
 const item =
-  "group flex w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/60 aria-[current=true]:bg-sidebar-accent aria-[current=true]:font-medium";
+  "group flex w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/60 aria-[current=true]:bg-primary/10 aria-[current=true]:font-medium aria-[current=true]:ring-1 aria-[current=true]:ring-primary/30";
 
 /** Amber that passes AA as text on light surfaces (same mix as now-roster / idle-chip). */
 const NEEDS_INK = "text-[color-mix(in_oklch,var(--st-needs),black_38%)] dark:text-st-needs";
@@ -68,13 +73,78 @@ export function Nav({
   const groups = useMemo(() => sidebarGroups(data?.rooms ?? [], boards, now), [data, boards, now]);
   const live = groups.reduce((n, g) => n + g.rooms.length, 0);
   // Folders added in HQ that have no room yet: the only reason to add a folder is to start a team there.
-  const roomless = hq.projects.data.filter((p) => !p.missing && !groups.some((g) => g.key === norm(p.path)));
+  const roomless = useMemo(() => hq.projects.data.filter((p) => !p.missing && !groups.some((g) => g.key === norm(p.path))), [hq.projects.data, groups]);
+  const worktrees = useWorktreeKeys(hq.api, groups.map((g) => g.key).join("\n"));
+  // The last close / show, applied until an /api/office newer than it carries the same row.
+  const [overlay, setOverlay] = useState<{ at: number; key: string; row: HiddenProject | null } | null>(null);
+  const split = useMemo(() => {
+    let hidden = data?.hidden ?? [];
+    if (overlay && (data?.at ?? 0) <= overlay.at) hidden = [...hidden.filter((h) => h.key !== overlay.key), ...(overlay.row ? [overlay.row] : [])];
+    return splitClosed(groups, hidden);
+  }, [groups, data, overlay]);
+  // Pinned projects (`8sync ccc auto pin`) first under "Ghim", rooms or not; the rest as before.
+  const side = useMemo(() => pinSidebar(data?.pins ?? [], split.shown, split.closed, roomless), [data, split, roomless]);
+  const { shown, closed } = side;
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  // The project whose "Hiện lại" is in flight: its "⋯" and "Hiện lại" stay disabled meanwhile.
+  const [hiding, setHiding] = useState<string | null>(null);
+  // The project whose pin / unpin is in flight.
+  const [pinning, setPinning] = useState<string | null>(null);
+
+  async function pin(root: string, name: string, on: boolean) {
+    setPinning(groupKey(root));
+    try {
+      await hq.api("/api/projects/pin", { method: "POST", body: { root, pinned: on } });
+      office.retry();
+      toast.success(on ? `Đã ghim ${name}: luôn ở đầu sidebar, usage chặt thì lease tập trung vào đây` : `Đã bỏ ghim ${name}`);
+    } catch (e) {
+      toast.error(`Không ${on ? "ghim" : "bỏ ghim"} được ${name}: ${(e as Error).message}`);
+    } finally {
+      setPinning(null);
+    }
+  }
+
+  const group = (g: SidebarGroup<Room>, pinned: boolean) => (
+    <RepoGroup
+      key={g.key}
+      g={g}
+      selected={scope.session}
+      current={repo != null && norm(repo) === g.key && scope.session == null}
+      onOpen={onOpenRoom}
+      onOpenRepo={onOpenRepo}
+      worktree={worktrees.worktrees.includes(g.key)}
+      hiding={hiding === g.key}
+      onClose={() => setConfirm({ kind: "close", g })}
+      onDelete={() => setConfirm({ kind: "worktree", g })}
+      onRoom={(x, action) => setConfirm({ kind: "room", x, action })}
+      pin={<PinButton name={g.name} pinned={pinned} busy={pinning === g.key} onPin={() => void pin(g.root, g.name, !pinned)} />}
+    />
+  );
+
+  function refresh() {
+    office.retry();
+    void hq.reload.sessions();
+    worktrees.reload();
+  }
+
+  async function show(g: SidebarGroup<Room>) {
+    setHiding(g.key);
+    try {
+      await hq.api("/api/projects/sidebar", { method: "POST", body: { root: g.root, hidden: false } });
+      setOverlay({ at: data?.at ?? 0, key: g.key, row: null });
+      office.retry();
+      toast.success(`Đã hiện lại ${g.name}`);
+    } catch (e) {
+      toast.error(`Không hiện lại được ${g.name}: ${(e as Error).message}`);
+    } finally {
+      setHiding(null);
+    }
+  }
 
   return (
     <nav aria-label="Dự án và phòng" className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border px-3">
-        {/* eslint-disable-next-line @next/next/no-img-element -- local 4 KB svg, no optimizer needed */}
-        <img src="/8sync-mark.svg" alt="" width={24} height={24} className="size-6 shrink-0 rounded-md" />
+        <BrandMark className="h-6 w-4 shrink-0 text-primary dark:drop-shadow-[0_0_6px_color-mix(in_oklch,var(--brand)_45%,transparent)]" />
         <span className="text-[15px] font-semibold tracking-tight">8 Sync HQ</span>
         <LiveDot live={hq.live} />
       </div>
@@ -90,6 +160,45 @@ export function Nav({
           <span className="flex-1 truncate">Tất cả phòng</span>
           <Count n={live} />
         </button>
+
+        {side.pinned.length > 0 && (
+          <>
+            <h2 className="mt-4 mb-1 flex items-center gap-1 px-2 text-xs font-medium text-muted-foreground">
+              <PinIcon className="size-3" aria-hidden />
+              Ghim
+            </h2>
+            <ul className="space-y-1" aria-label="Dự án ghim">
+              {side.pinned.map((p) =>
+                p.group ? (
+                  group(p.group, true)
+                ) : p.folder ? (
+                  <FolderItem
+                    key={p.key}
+                    p={p.folder}
+                    current={scope.project === p.folder.id && scope.session == null}
+                    onOpen={onOpenFolder}
+                    pin={<PinButton name={p.name} pinned busy={pinning === p.key} onPin={() => void pin(p.root, p.name, false)} />}
+                  />
+                ) : (
+                  <li key={p.key} className="group/row flex items-center">
+                    <button
+                      type="button"
+                      className={cn(item, "h-8 min-w-0 flex-1 gap-1.5 max-sm:h-11")}
+                      aria-current={repo != null && norm(repo) === p.key && scope.session == null}
+                      title={`${p.root}: chưa có phòng nào chạy`}
+                      onClick={() => onOpenRepo(p.root, p.name)}
+                    >
+                      <FolderIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                      <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground">0 phòng</span>
+                    </button>
+                    <PinButton name={p.name} pinned busy={pinning === p.key} onPin={() => void pin(p.root, p.name, false)} />
+                  </li>
+                ),
+              )}
+            </ul>
+          </>
+        )}
 
         <h2 className="mt-4 mb-1 px-2 text-xs font-medium text-muted-foreground">Dự án</h2>
         {!data && office.error ? (
@@ -107,19 +216,32 @@ export function Nav({
             Chưa có phòng nào chạy. Dự án có phòng đang chạy tự hiện ở đây, kể cả session mở ngoài HQ.
           </p>
         ) : (
-          <ul className="space-y-1">
-            {groups.map((g) => (
-              <RepoGroup key={g.key} g={g} selected={scope.session} current={repo != null && norm(repo) === g.key && scope.session == null} onOpen={onOpenRoom} onOpenRepo={onOpenRepo} />
-            ))}
-          </ul>
+          <>
+            {shown.length === 0 ? (
+              closed.length > 0 && (
+                <p className="px-2 py-1 text-xs leading-relaxed text-pretty text-muted-foreground">
+                  Mọi dự án đang đóng. Dự án tự hiện lại khi có phòng hoạt động hoặc chờ anh.
+                </p>
+              )
+            ) : (
+              <ul className="space-y-1">{shown.map((g) => group(g, false))}</ul>
+            )}
+            <ClosedProjects closed={closed} busy={hiding} onShow={(g) => void show(g)} />
+          </>
         )}
 
-        {roomless.length > 0 && (
+        {side.folders.length > 0 && (
           <>
             <h2 className="mt-5 mb-1 px-2 text-xs font-medium text-muted-foreground">Chưa có team</h2>
             <ul className="space-y-0.5">
-              {roomless.map((p) => (
-                <FolderItem key={p.id} p={p} current={scope.project === p.id && scope.session == null} onOpen={onOpenFolder} />
+              {side.folders.map((p) => (
+                <FolderItem
+                  key={p.id}
+                  p={p}
+                  current={scope.project === p.id && scope.session == null}
+                  onOpen={onOpenFolder}
+                  pin={<PinButton name={p.name} pinned={false} busy={pinning === groupKey(p.path)} onPin={() => void pin(p.path, p.name, true)} />}
+                />
               ))}
             </ul>
           </>
@@ -127,6 +249,43 @@ export function Nav({
       </div>
 
       <AddProject hq={hq} onAdded={onOpenFolder} />
+
+      {confirm?.kind === "room" && (
+        <RoomEndDialog
+          hq={hq}
+          x={confirm.x}
+          action={confirm.action}
+          onCancel={() => setConfirm(null)}
+          onDone={() => {
+            setConfirm(null);
+            refresh();
+          }}
+        />
+      )}
+      {confirm?.kind === "worktree" && (
+        <WorktreeDialog
+          hq={hq}
+          g={confirm.g}
+          onCancel={() => setConfirm(null)}
+          onRoomsClosed={refresh}
+          onDone={() => {
+            setConfirm(null);
+            refresh();
+          }}
+        />
+      )}
+      {confirm?.kind === "close" && (
+        <CloseDialog
+          hq={hq}
+          g={confirm.g}
+          onCancel={() => setConfirm(null)}
+          onHidden={(row) => {
+            setOverlay({ at: data?.at ?? 0, key: confirm.g.key, row });
+            setConfirm(null);
+            refresh();
+          }}
+        />
+      )}
     </nav>
   );
 }
@@ -141,18 +300,32 @@ function RepoGroup({
   current,
   onOpen,
   onOpenRepo,
+  worktree,
+  hiding,
+  onClose,
+  onDelete,
+  onRoom,
+  pin,
 }: {
   g: SidebarGroup<Room>;
   selected: string | null;
   current: boolean;
   onOpen: (r: Room) => void;
   onOpenRepo: (root: string, name: string) => void;
+  /** The project folder is a git worktree: "Xóa worktree" shows. */
+  worktree: boolean;
+  hiding: boolean;
+  onClose: () => void;
+  onDelete: () => void;
+  onRoom: (x: SidebarRoom<Room>, action: RoomAction) => void;
+  /** The pin / unpin button. */
+  pin: ReactNode;
 }) {
   const [open, setOpen] = useState(true);
   const list = `repo-${g.key.replace(/[^\w-]/g, "_")}`;
   return (
     <li>
-      <div className="flex items-center">
+      <div className="group/row flex items-center">
         <button
           type="button"
           className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/60"
@@ -163,7 +336,7 @@ function RepoGroup({
         >
           <ChevronRightIcon className={cn("size-3 transition-transform motion-reduce:transition-none", open && "rotate-90")} aria-hidden />
         </button>
-        <button type="button" className={cn(item, "h-8 gap-1.5 pl-1")} aria-current={current} title={`${g.root}: Tổng quan của dự án`} onClick={() => onOpenRepo(g.root, g.name)}>
+        <button type="button" className={cn(item, "h-8 min-w-0 flex-1 gap-1.5 pl-1 max-sm:h-11")} aria-current={current} title={`${g.root}: Tổng quan của dự án`} onClick={() => onOpenRepo(g.root, g.name)}>
           <FolderIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           <span className="min-w-0 flex-1 truncate font-medium">{g.name}</span>
           {g.needs > 0 ? (
@@ -176,17 +349,31 @@ function RepoGroup({
             <Count n={g.rooms.length} />
           )}
         </button>
+        {pin}
+        <ProjectMenu g={g} worktree={worktree} busy={hiding} onClose={onClose} onDelete={onDelete} />
       </div>
       <ul id={list} hidden={!open} className="mt-0.5 ml-[13px] space-y-0.5 border-l border-sidebar-border pl-1.5">
         {g.rooms.map((x, i) => (
-          <RoomRows key={x.room.key} x={x} first={x.worktree != null && g.rooms[i - 1]?.worktree !== x.worktree} selected={selected} onOpen={onOpen} />
+          <RoomRows key={x.room.key} x={x} first={x.worktree != null && g.rooms[i - 1]?.worktree !== x.worktree} selected={selected} onOpen={onOpen} onPick={(a) => onRoom(x, a)} />
         ))}
       </ul>
     </li>
   );
 }
 
-function RoomRows({ x, first, selected, onOpen }: { x: SidebarRoom<Room>; first: boolean; selected: string | null; onOpen: (r: Room) => void }) {
+function RoomRows({
+  x,
+  first,
+  selected,
+  onOpen,
+  onPick,
+}: {
+  x: SidebarRoom<Room>;
+  first: boolean;
+  selected: string | null;
+  onOpen: (r: Room) => void;
+  onPick: (a: RoomAction) => void;
+}) {
   const { room, now: n } = x;
   const word = SIDEBAR_WORD[n.state];
   const what = room.ask ? null : (n.last?.text ?? null);
@@ -198,17 +385,18 @@ function RoomRows({ x, first, selected, onOpen }: { x: SidebarRoom<Room>; first:
           <span className="truncate">{x.worktree}</span>
         </li>
       )}
-      <li>
+      <li className="group/row flex items-center">
         <button
           type="button"
-          className={cn(item, "h-8", x.worktree && "pl-3")}
+          className={cn(item, "h-8 min-w-0 flex-1 max-sm:h-11", x.worktree && "pl-3")}
           aria-current={matchesSession(room, selected)}
-          aria-label={`${room.label}${x.worktree ? ` (worktree ${x.worktree})` : ""}: ${word}`}
+          aria-label={`${room.label}${x.worktree ? ` (worktree ${x.worktree})` : ""} · ${teamLabel(room.engine)}: ${word}`}
           title={[room.label, word, what].filter(Boolean).join(" · ")}
           onClick={() => onOpen(room)}
         >
           <RoleIcon role={n.role ?? room.role} className="size-3.5 text-muted-foreground group-aria-[current=true]:text-foreground" />
           <span className="min-w-0 flex-1 truncate text-[13px]">{room.label}</span>
+          {room.engine === "omp" && <span className="shrink-0 text-[10px] text-muted-foreground">{teamLabel(room.engine)}</span>}
           {n.state === "needs" ? (
             <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full bg-st-needs/15 px-1.5 py-px text-[11px] font-semibold", NEEDS_INK)}>
               <span aria-hidden className="size-1.5 rounded-full bg-st-needs motion-safe:animate-pulse" />
@@ -218,20 +406,45 @@ function RoomRows({ x, first, selected, onOpen }: { x: SidebarRoom<Room>; first:
             <span className={cn("shrink-0 text-[11px]", WORD_INK[n.state], n.flagged && "font-medium text-foreground")}>{word}</span>
           )}
         </button>
+        <RoomMenu x={x} onPick={onPick} />
       </li>
     </>
   );
 }
 
-function FolderItem({ p, current, onOpen }: { p: Project; current: boolean; onOpen: (id: number) => void }) {
+function FolderItem({ p, current, onOpen, pin }: { p: Project; current: boolean; onOpen: (id: number) => void; pin: ReactNode }) {
   return (
-    <li>
-      <button type="button" className={cn(item, "h-8")} aria-current={current} title={`${p.path}: mở Văn phòng để bấm “Mở team”`} onClick={() => onOpen(p.id)}>
+    <li className="group/row flex items-center">
+      <button type="button" className={cn(item, "h-8 min-w-0 flex-1")} aria-current={current} title={`${p.path}: mở Văn phòng để bấm “Mở team”`} onClick={() => onOpen(p.id)}>
         <FolderIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="min-w-0 flex-1 truncate">{p.name}</span>
         <span className="shrink-0 text-[11px] text-muted-foreground">Mở team</span>
       </button>
+      {pin}
     </li>
+  );
+}
+
+/**
+ * Pin / unpin a project (`8sync ccc auto pin|unpin`): a pinned one sits under "Ghim" at the top, even
+ * with no room, and gets the usage first when it runs short. Shown on hover/focus until pinned.
+ */
+function PinButton({ name, pinned, busy, onPin }: { name: string; pinned: boolean; busy: boolean; onPin: () => void }) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50 max-sm:size-11",
+        pinned ? "text-primary" : "opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 max-sm:opacity-100",
+      )}
+      aria-pressed={pinned}
+      aria-label={pinned ? `Bỏ ghim ${name}` : `Ghim ${name}`}
+      title={pinned ? `Bỏ ghim ${name}` : `Ghim ${name}: luôn ở đầu sidebar; usage chặt thì lease tập trung vào dự án ghim`}
+      disabled={busy}
+      onClick={onPin}
+    >
+      <PinIcon className={cn("size-3.5", pinned && "fill-current")} aria-hidden />
+    </button>
   );
 }
 
@@ -241,14 +454,14 @@ function Count({ n }: { n: number }) {
 }
 
 function LiveDot({ live }: { live: Live }) {
-  const label = live === "live" ? "Live" : live === "connecting" ? "Đang kết nối" : "Đang nối lại";
+  const label = live === "live" ? "Live" : live === "polling" ? "Cập nhật 3 giây/lần" : live === "connecting" ? "Đang kết nối" : "Đang nối lại";
   return (
     <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
       <span
         aria-hidden
         className={cn(
           "size-1.5 rounded-full",
-          live === "live" ? "bg-st-running" : "bg-st-needs motion-safe:animate-pulse",
+          live === "live" || live === "polling" ? "bg-st-running shadow-glow-dot" : "bg-st-needs motion-safe:animate-pulse",
         )}
       />
       {label}

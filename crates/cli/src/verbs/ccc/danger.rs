@@ -91,7 +91,7 @@ pub(super) fn check(cmd: &str, shell: Shell, ctx: &Ctx) -> Option<Verdict> {
 
 /// `raw: false` runs the parser alone, so tests prove each pass on its own.
 fn analyse(cmd: &str, shell: Shell, ctx: &Ctx, raw: bool) -> Option<Verdict> {
-    let mut found = Found::default();
+    let mut found = Found { git_redirect: git_redirect(cmd), ..Found::default() };
     if raw {
         backstop(cmd, ctx, &mut found);
     }
@@ -115,6 +115,9 @@ struct Found {
     deploy: bool,
     /// Inside `X=$(…)` / `export $(…)`: the output is captured, not printed.
     quiet_reads: bool,
+    /// The command names a way to point git at another work tree or repo (`GIT_DIR`,
+    /// `GIT_WORK_TREE`, `core.worktree`, … in any form, any segment): no gate-checkout pass.
+    git_redirect: bool,
 }
 
 impl Found {
@@ -212,7 +215,7 @@ fn split_unquoted(s: &str) -> Vec<String> {
 /// A `rm -rf ~` inside such a note is text, not a command. Anything else (a pipe, a list, a
 /// substitution, `bash`, `python -`, `ssh`, `eval`, a quote the scan cannot close) keeps its
 /// body in the raw text.
-fn without_data_heredocs(cmd: &str) -> String {
+pub(super) fn without_data_heredocs(cmd: &str) -> String {
     // `$'…'` / `$"…"` (ANSI-C / locale quoting) and CR line ends are not modelled by `scan_line`:
     // keep the raw text so the backstop scans everything.
     if !cmd.contains("<<") || cmd.contains("$'") || cmd.contains("$\"") || cmd.contains('\r') {
@@ -1582,7 +1585,7 @@ fn command(seg: &Seg, shell: Shell, ctx: &Ctx, cwd: Option<&Abs>, place: Place, 
             }
             walk(&script, shell, ctx, cwd.cloned(), place, f, depth + 1);
         }
-        "git" => git(args, f),
+        "git" => git(args, cwd, ctx.windows, f),
         "xargs" => xargs(args, seg, shell, &line, f),
         "find" => find(args, ctx, cwd, place, &line, f),
         "mkfs" | "diskpart" | "format-volume" | "clear-disk" | "initialize-disk" | "remove-partition" => f.deny(format!("`{line}` wipes a disk.")),
@@ -2278,10 +2281,31 @@ fn brace_group(t: &str) -> Option<(usize, usize)> {
     None
 }
 
-fn git(args: &[String], f: &mut Found) {
+/// Anything in the raw command that can point git at another work tree, repo or index: env
+/// (`NAME=`, `export`, `env`, `$env:`, `set`) or config (`-c core.worktree=…`, `--config-env`).
+fn git_redirect(cmd: &str) -> bool {
+    let up = cmd.to_ascii_uppercase();
+    ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_CONFIG", "CORE.WORKTREE", "CORE.BARE", "--CONFIG-ENV", "--WORK-TREE", "--GIT-DIR"].iter().any(|k| up.contains(k))
+}
+
+/// A QA room's gate checkout, `<repo>/.claude/worktrees/qa` or `qa<N>`: rebuilt from a PR head for
+/// every gate, it holds no work of its own. 3d-game 2026-10-20: qa2 waited on "discards uncommitted
+/// changes" before every gate (`git checkout -- .`, `git clean -fdq qa`) while cards queued for it.
+fn gate_checkout(dir: &Abs) -> bool {
+    dir.parts.windows(3).any(|w| {
+        w[0] == ".claude" && w[1] == "worktrees" && w[2].strip_prefix("qa").is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()))
+    })
+}
+
+fn git(args: &[String], cwd: Option<&Abs>, windows: bool, f: &mut Found) {
     let mut i = 0;
     let mut forced_by_config = false;
+    // where git works: the cwd, or `-C <dir>` resolved against it
+    let mut dir = cwd.cloned();
     while i < args.len() && args[i].starts_with('-') {
+        if args[i] == "-C" {
+            dir = args.get(i + 1).and_then(|d| abs(d, dir.as_ref(), windows));
+        }
         // Global options taking a separate value.
         if matches!(args[i].as_str(), "-C" | "-c" | "--git-dir" | "--work-tree" | "--namespace" | "--exec-path" | "--config-env" | "--super-prefix") {
             if args[i] == "-c" && args.get(i + 1).is_some_and(|kv| kv.to_ascii_lowercase().contains("push=+")) {
@@ -2300,6 +2324,13 @@ fn git(args: &[String], f: &mut Found) {
     let secret = || rest.iter().find(|a| !a.starts_with('-') && credential_like(a.rsplit_once(':').map_or(a.as_str(), |(_, p)| p)));
     let line = format!("git {sub} {}", rest.join(" "));
     let line = line.trim();
+    // In a gate checkout, discarding its files passes; `reset`/`switch` and branch-creating
+    // checkouts still ask (branches are shared by every worktree: a builder's commits could go).
+    let moves_branch = long("--orphan") || long("--ignore-other-worktrees") || rest.iter().any(|a| a.starts_with('-') && !a.starts_with("--") && (a[1..].contains('b') || a[1..].contains('B')));
+    let scratch = !f.git_redirect && dir.as_ref().is_some_and(gate_checkout);
+    if scratch && (matches!(sub.as_str(), "restore" | "clean") || (sub == "checkout" && !moves_branch)) {
+        return;
+    }
     match sub.as_str() {
         "push" if !long("--dry-run") && !short('n') => {
             if forced_by_config || rest.iter().any(|a| forcing(a)) {
@@ -2559,7 +2590,16 @@ fn target(t: &str, mode: Mode, ctx: &Ctx, cwd: Option<&Abs>, place: Place, f: &m
         return;
     }
     let inside = |root: &Abs| if mode == Mode::Below { p.under_or_eq(root) } else { p.under(root) };
-    if temps.iter().any(inside) || project.is_some_and(inside) {
+    // Claude Code's scratch dir of a background session, `~/.claude/jobs/<id>/tmp/<anything>`: rooms
+    // export a PR head there for a clean gate (3d-game qa, 2026-10-20: 35 min waiting on this ask
+    // while five cards queued for qa). The `tmp` dir itself and the job dir still ask.
+    let job_tmp = home.as_ref().is_some_and(|h| {
+        p.under(h) && {
+            let rest = &p.parts[h.parts.len()..];
+            rest.len() >= 5 && rest[0] == ".claude" && rest[1] == "jobs" && rest[3] == "tmp"
+        }
+    });
+    if temps.iter().any(inside) || project.is_some_and(inside) || job_tmp {
         return;
     }
     f.ask(format!(
@@ -3148,9 +3188,48 @@ mod tests {
                 ("rsync -av --exclude .env ./ host:/srv/app", Bash, "pass"),
                 ("rsync -a --delete src/ build/", Bash, "pass"),
                 ("mv ~/Downloads/data.zip .", Bash, "pass"),
+                ("rm -rf /home/u/.claude/jobs/e2edff85/tmp/g30b && mkdir -p /home/u/.claude/jobs/e2edff85/tmp/g30b", Bash, "pass"),
+                ("rm -rf ~/.claude/jobs/e2edff85/tmp/g33", Bash, "pass"),
             ],
             &unix(),
         );
+        // The room's scratch dir itself, the job dir and the jobs dir are not scratch.
+        for cmd in ["rm -rf /home/u/.claude/jobs/e2edff85/tmp", "rm -rf /home/u/.claude/jobs/e2edff85", "rm -rf ~/.claude/jobs", "rm -rf /home/u/.claude/jobs/x/state/tmp/y"] {
+            assert_eq!(verdict(cmd, Bash, &unix()), "ask", "{cmd}");
+        }
+        assert_eq!(verdict("rm -rf C:/Users/U/.claude/jobs/e2edff85/tmp/g30b", Bash, &win()), "pass", "the path qa used");
+        // A QA room's gate checkout is rebuilt for every gate: resets there pass, elsewhere they ask.
+        let qa2 = "cd /home/u/work/app/.claude/worktrees/qa2 && git checkout -q -- . ; git clean -fdq qa; git checkout --detach abc123";
+        assert_eq!(verdict(qa2, Bash, &unix()), "pass", "the command qa2 waited on");
+        assert_eq!(verdict("git -C .claude/worktrees/qa clean -fdq qa", Bash, &unix()), "pass");
+        let in_qa = Ctx { cwd: Some(r"C:\Users\U\game\.claude\worktrees\qa".into()), ..win() };
+        assert_eq!(verdict("git checkout --force --detach abc123", Bash, &in_qa), "pass");
+        assert_eq!(verdict("git checkout -q -- . ; git clean -fdq qa", PowerShell, &in_qa), "pass");
+        assert_eq!(verdict(r"$env:GIT_WORK_TREE='C:\Users\U\game'; git clean -fd", PowerShell, &in_qa), "ask", "redirect in another segment");
+        for cmd in [
+            "git checkout -- .",
+            "cd .claude/worktrees/card-12 && git checkout -- .",
+            "cd .claude/worktrees/qa-notes && git clean -fd",
+            "cd .claude/worktrees/qa2 && cd ../../.. && git reset --hard",
+        ] {
+            assert_eq!(verdict(cmd, Bash, &unix()), "ask", "{cmd}");
+        }
+        assert_eq!(verdict("cd .claude/worktrees/qa2 && git push --force", Bash, &unix()), "deny", "only discarding files passes there");
+        for cmd in [
+            "cd .claude/worktrees/qa2 && git --work-tree=/home/u/work/app reset --hard",
+            "cd .claude/worktrees/qa2 && git --git-dir /home/u/work/app/.git checkout -- .",
+            "cd .claude/worktrees/qa2 && GIT_WORK_TREE=/home/u/work/app git clean -fd",
+            "cd .claude/worktrees/qa2 && git -C ../../.. checkout -- .",
+            "cd .claude/worktrees/qa2 && env GIT_WORK_TREE=/home/u/work/app git checkout -- .",
+            "cd .claude/worktrees/qa2 && export GIT_WORK_TREE=/home/u/work/app && git clean -fd",
+            "cd .claude/worktrees/qa2 && git -c core.worktree=/home/u/work/app checkout -- .",
+            "cd .claude/worktrees/qa2 && git reset --hard",
+            "cd .claude/worktrees/qa2 && git switch -f main",
+            "cd .claude/worktrees/qa2 && git checkout -f -B card-12-x abc123",
+            "cd .claude/worktrees/qa2 && git checkout --force --ignore-other-worktrees card-12-x",
+        ] {
+            assert_eq!(verdict(cmd, Bash, &unix()), "ask", "{cmd}");
+        }
         let app1 = Ctx { cwd: Some("/app".into()), ..unix() };
         assert_eq!(verdict("rm -rf node_modules", Bash, &app1), "pass", "one-level container workdir");
         let spaced = Ctx { cwd: Some(r"D:\My Projects\app".into()), ..win() };

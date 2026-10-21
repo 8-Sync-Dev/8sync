@@ -1,11 +1,13 @@
 "use client";
 
-import { ArrowRightIcon, GitBranchIcon, LayoutDashboardIcon } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import { ArrowRightIcon, GitBranchIcon, LayoutDashboardIcon, LifeBuoyIcon, ZapIcon } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { askLine } from "@/lib/ask";
 import { cardParts } from "@/lib/card-tags";
-import { LANES, type Board } from "@/lib/lanes";
+import { LANES, type Board, type Card } from "@/lib/lanes";
 import { agoShort, roster, rosterSummary } from "@/lib/now";
 import { groupByRepo, worktreeOf } from "@/lib/sidebar";
 import { recentMoves, topCards } from "@/lib/overview";
@@ -13,13 +15,17 @@ import { fileName, rootKey, type ProjectPreviews } from "@/lib/preview";
 import type { ProjectBoard } from "@/lib/server/board";
 import { buildTeamThread, partyKey, type ThreadItem } from "@/lib/team-thread";
 import { cn } from "@/lib/utils";
-import { AskPanel, type AskRoom } from "./ask-panel";
+import { AskPanel, askRoomOf, type AskRoom } from "./ask-panel";
 import { EmptyState, ErrorNote, shortName } from "./bits";
 import { LANE_VI, TONE_INK, laneTone } from "./card-sheet";
+import { PlayButton } from "./play-view";
 import { PreviewImage } from "./preview-view";
 import { StateTag, type RosterRow } from "./now-roster";
 import { RoleIcon } from "./role-badge";
 import type { Message } from "./types";
+import { ShipLoopChip } from "./ship-loop-chip";
+import { BoostButton, boostOn } from "./team-controls";
+import { makeApi } from "./use-hq";
 import type { BoardsState } from "./use-board";
 import type { OfficeState, Room } from "./use-office";
 import type { PreviewState } from "./preview-view";
@@ -69,7 +75,7 @@ export function OverviewView({
       rows.flatMap((n) => {
         const r = rooms.find((x) => x.key === n.key);
         if (!r || (n.state !== "needs" && !r.permit)) return [];
-        return [{ key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting: r.waiting, ask: r.ask, permit: r.permit, tmux: r.delivery === "terminal" }];
+        return [askRoomOf(r)];
       }),
     [rows, rooms],
   );
@@ -141,6 +147,7 @@ export function OverviewView({
                     onTab={onTab}
                     onOpenRoom={onOpenRoom}
                     onOpenCard={(id) => onOpenCard(pb?.root ?? g.project.root, id)}
+                    onUnblock={(c) => boards.force(pb?.root ?? g.project.root, c)}
                   />
                 );
               })}
@@ -149,6 +156,40 @@ export function OverviewView({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * "Gỡ kẹt ngay" (owner 2026-10-20): shown while a room of the project waits on the owner or is stuck.
+ * Brings the "Anh cần trả lời" panel into view, then renews THIS project (POST /api/auto `on` with its
+ * root = `auto on --here`: a fresh lease, then `8sync ccc auto revive` brings back rooms that died).
+ * Never a plain `on`: that resumed every remembered project, a parent repo's team included.
+ */
+export function UnstickButton({ token, stuck, root }: { token: string; stuck: number; root: string }) {
+  const [busy, setBusy] = useState(false);
+  async function unstick() {
+    const panel = document.getElementById("ask-panel");
+    if (panel) {
+      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      panel.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
+      panel.closest("section")?.querySelector<HTMLElement>("button:not([disabled])")?.focus({ preventScroll: true });
+    }
+    setBusy(true);
+    try {
+      const st = await makeApi(token)<{ error?: string }>("/api/auto", { method: "POST", body: { action: "on", root } });
+      if (st.error) toast.error(`Chưa gỡ được: ${st.error}`);
+      else toast.success(panel ? "Đang mở lại phòng chết. Câu hỏi đang chờ anh ở khung trên." : "Đang mở lại phòng chết và đẩy team chạy tiếp.");
+    } catch (e) {
+      toast.error(`Chưa gỡ được: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Button type="button" size="sm" disabled={busy} aria-busy={busy} onClick={() => void unstick()} title="Mở khung “Anh cần trả lời” và chạy 8sync ccc auto revive">
+      <LifeBuoyIcon aria-hidden /> Gỡ kẹt ngay
+      <span className="rounded-full bg-primary-foreground/20 px-1.5 text-[11px] tabular">{stuck}</span>
+    </Button>
   );
 }
 
@@ -162,6 +203,48 @@ function OverviewSkeleton() {
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * "N card blocked · Gỡ hết ngay": "⚡ Gỡ block ngay" on every Blocked card of the board, one after
+ * the other (same route as the card button), then one toast with what went through.
+ */
+export function UnblockAll({ cards, onUnblock }: { cards: Card[]; onUnblock: (c: Card) => Promise<unknown> }) {
+  const [busy, setBusy] = useState<number | null>(null);
+  if (!cards.length) return null;
+  async function all() {
+    const done: number[] = [];
+    const failed: string[] = [];
+    for (const c of cards) {
+      setBusy(c.id);
+      try {
+        await onUnblock(c);
+        done.push(c.id);
+      } catch (e) {
+        failed.push(`#${c.id}: ${(e as Error).message}`);
+      }
+    }
+    setBusy(null);
+    if (done.length) toast.success(`${done.map((id) => `#${id}`).join(" ")} ra khỏi Blocked, P0 — lead xử lý ngay`);
+    if (failed.length) toast.error(`Chưa gỡ được ${failed.join(" · ")}`);
+  }
+  return (
+    <p className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      <span className="font-medium text-destructive tabular">{cards.length} card blocked</span>
+      <span aria-hidden className="text-muted-foreground">·</span>
+      <button
+        type="button"
+        disabled={busy != null}
+        aria-busy={busy != null}
+        onClick={() => void all()}
+        title="Mỗi card: về Backlog kèm ghi chú cho lead, rồi P0 (8sync ccc auto move … backlog --note, auto prio … P0)"
+        className="inline-flex items-center gap-1 rounded-sm font-semibold underline underline-offset-4 outline-none hover:no-underline focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-60"
+      >
+        <ZapIcon aria-hidden className="size-3 text-st-needs" />
+        {busy != null ? `Đang gỡ #${busy}…` : "Gỡ hết ngay"}
+      </button>
+    </p>
   );
 }
 
@@ -182,6 +265,7 @@ function ProjectBlock({
   onTab,
   onOpenRoom,
   onOpenCard,
+  onUnblock,
 }: {
   name: string;
   root: string;
@@ -198,8 +282,11 @@ function ProjectBlock({
   onTab: (t: OverviewTab) => void;
   onOpenRoom: (r: Room) => void;
   onOpenCard: (id: number) => void;
+  /** "Gỡ block ngay" on one Blocked card of this board (useBoards.force). */
+  onUnblock: (c: Card) => Promise<unknown>;
 }) {
   const id = `ov-${root.replace(/[^\w-]/g, "_")}`;
+  const stuck = rows.filter((n) => n.state === "needs" || n.state === "blocked").length;
   return (
     <section aria-labelledby={id} className="rounded-xl border bg-card">
       <header className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-2.5">
@@ -213,6 +300,12 @@ function ProjectBlock({
           </span>
         ))}
         <span className="text-xs text-muted-foreground tabular">{rows.length ? rosterSummary(rows) : `${rooms.length} phòng`}</span>
+        <span className="ml-auto flex flex-wrap items-center gap-2 self-center">
+          {stuck > 0 && <UnstickButton token={token} stuck={stuck} root={root} />}
+          <ShipLoopChip root={root} token={token} />
+          <PlayButton root={root} name={name} token={token} />
+          <BoostButton root={root} name={name} token={token} active={boostOn(rooms)} />
+        </span>
       </header>
       {/* Hairlines between panels: each panel draws its right and bottom edge, the outer ones are clipped. */}
       <div className="overflow-hidden rounded-b-xl">
@@ -264,7 +357,10 @@ function ProjectBlock({
           ) : !board?.board ? (
             <Quiet>{board?.error ?? "Chưa đọc được board của dự án này."}</Quiet>
           ) : (
-            <MiniBoard b={board.board} onOpenCard={onOpenCard} />
+            <>
+              <UnblockAll cards={board.board.lanes.blocked} onUnblock={onUnblock} />
+              <MiniBoard b={board.board} onOpenCard={onOpenCard} />
+            </>
           )}
         </Panel>
 
@@ -283,7 +379,7 @@ function ProjectBlock({
                     <PreviewImage id={i.id} token={token} alt="" className="aspect-[16/10] w-full rounded-md border" />
                     <span className="mt-0.5 block truncate text-[11px] text-muted-foreground tabular">
                       {i.card != null ? `#${i.card} · ` : ""}
-                      {agoShort(i.mtime, now)}
+                      {agoShort(i.at, now)}
                     </span>
                   </button>
                 </li>

@@ -2,9 +2,10 @@
 
 import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
 import { roomNow } from "@/lib/now";
-import { matchesSession } from "@/lib/office";
-import { CircleHelpIcon, MenuIcon, SendIcon } from "lucide-react";
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { limitsView, matchesSession } from "@/lib/office";
+import { CircleHelpIcon, MenuIcon, SendIcon, SquareTerminalIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useNarrow } from "@/hooks/use-narrow";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -19,26 +20,30 @@ import { FirstRun } from "./first-run";
 import { FlowView, type LoopsState } from "./flow-view";
 import { Guide, useGuideFirstRun } from "./guide";
 import { Nav, type Scope } from "./nav";
-import { RoomBrief } from "./room-brief";
+import { RoomBar, RoomBrief } from "./room-brief";
 import { OfficeView } from "./office-view";
 import { OverviewView } from "./overview-view";
 import { PreviewView, type PreviewState } from "./preview-view";
 import { ReportView } from "./report-view";
 import { SessionsView } from "./sessions-view";
+import { FloatShell } from "./float-shell";
 import { TeamThread } from "./team-thread";
 import { TeamView } from "./team-view";
+import { useEdgeFade } from "./scroll-strip";
 import { TerminalDrawer } from "./terminal-drawer";
 import { WebTerminalSheet } from "./web-terminal-sheet";
 import { useBoards } from "./use-board";
 import { useHq } from "./use-hq";
+import { useReloadOnNewUi } from "./use-ui-version";
 import { useOffice, type Room } from "./use-office";
 import { usePoll } from "./use-poll";
-import { MachineChip } from "./machine-chip";
+import { MachineChip, type MachineView as MachineData } from "./machine-chip";
+import { MachineView } from "./machine-view";
+import { UsageView } from "./usage-view";
 import type { Session } from "./types";
 
-/** office: every session is a room · group: all rooms talking · room: one room's chat. */
-type Tab = "overview" | "office" | "group" | "room" | "board" | "preview" | "flow" | "report" | "sessions" | "activity";
-
+/** office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens. */
+type Tab = "overview" | "office" | "group" | "room" | "board" | "preview" | "flow" | "report" | "usage" | "may" | "sessions" | "activity";
 /** Tổng quan is the first screen on a wide monitor; below this the office stays the default. */
 const WIDE_QUERY = "(min-width: 1600px)";
 const subscribeWide = (cb: () => void) => {
@@ -49,13 +54,15 @@ const subscribeWide = (cb: () => void) => {
 const isWide = () => window.matchMedia(WIDE_QUERY).matches;
 const PREVIEW_POLL_MS = 15_000;
 const LOOPS_POLL_MS = 30_000;
-
+/** The header chip and the Máy tab share one poll. */
+const MACHINE_POLL_MS = 5_000;
 /** Scope by any name a session goes by: hq name, Claude session id, or its label. */
 const isScoped = (s: Session, key: string | null) => matchesSession({ ...s, label: sessionLabel(s) }, key);
 const SESSION_NAME_INPUT = "start-session-name";
 
-export function HqApp({ token }: { token: string }) {
+export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const hq = useHq(token);
+  useReloadOnNewUi(token, ui);
   const office = useOffice(token);
   // One board poll for Văn phòng (who holds which card) and Board (lanes).
   const boards = useBoards(hq.api);
@@ -65,6 +72,7 @@ export function HqApp({ token }: { token: string }) {
   // null until the owner picks a tab: the default follows the screen (Tổng quan on a wide monitor).
   const [picked, setTab] = useState<Tab | null>(null);
   const wide = useSyncExternalStore(subscribeWide, isWide, () => false);
+  const narrow = useNarrow();
   const tab: Tab = picked ?? (wide ? "overview" : "office");
   const [target, setTarget] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -75,6 +83,20 @@ export function HqApp({ token }: { token: string }) {
   // A card another tab asked Board to open ("Mở card"); `n` makes each request new.
   const [focusCard, setFocusCard] = useState<{ root: string; id: number; n: number } | null>(null);
   const previews = usePoll<{ projects: NonNullable<PreviewState["data"]>["projects"] }>(hq.api, "/api/preview", PREVIEW_POLL_MS, tab === "preview" || tab === "overview");
+  const machine = usePoll<MachineData>(hq.api, "/api/machine", MACHINE_POLL_MS, true);
+  const openMachine = useCallback(() => setTab("may"), []);
+  // Phones scroll the tab row: keep the active tab in view (the Máy chip opens the last ones).
+  // The row is scrolled itself (scrollIntoView would also nudge the page).
+  const tabRow = useRef<HTMLDivElement>(null);
+  useEdgeFade(tabRow);
+  useEffect(() => {
+    const row = tabRow.current;
+    const t = row?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+    if (!row || !t) return;
+    const pad = 16;
+    if (t.offsetLeft - pad < row.scrollLeft) row.scrollTo({ left: t.offsetLeft - pad });
+    else if (t.offsetLeft + t.offsetWidth + pad > row.scrollLeft + row.clientWidth) row.scrollTo({ left: t.offsetLeft + t.offsetWidth + pad - row.clientWidth });
+  }, [tab]);
   const loops = usePoll<NonNullable<LoopsState["data"]>>(hq.api, "/api/loops", LOOPS_POLL_MS, tab === "flow");
 
   const openCard = useCallback((root: string, id: number) => {
@@ -82,6 +104,7 @@ export function HqApp({ token }: { token: string }) {
     setTab("board");
   }, []);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [shellOpen, setShellOpen] = useState(false);
 
   const onScope = useCallback((s: Scope) => {
     setScope(s);
@@ -130,6 +153,8 @@ export function HqApp({ token }: { token: string }) {
       : (repo?.root ?? officeSummary);
   const needsYou = view.sessions.filter((s) => s.status === "needs_input").length;
   const running = view.sessions.filter((s) => s.status !== "ended").length;
+  // Plan usage (contract C1): the freshest status-line snapshot, drawn like Orca's meter.
+  const limits = limitsView(office.office?.limits, office.office?.at);
 
   const firstRun = {
     hasProject: hq.projects.data.length > 0,
@@ -195,7 +220,8 @@ export function HqApp({ token }: { token: string }) {
 
   return (
     <>
-      <div className="grid h-dvh grid-cols-1 grid-rows-1 md:grid-cols-[264px_minmax(0,1fr)]">
+      {/* viewport-fit=cover (layout.tsx): the notch side in landscape stays clear. */}
+      <div className="grid h-dvh grid-cols-1 grid-rows-1 pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] md:grid-cols-[264px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 border-r border-sidebar-border md:block">
           <Nav hq={hq} scope={scope} office={office} boards={boards.boards ?? []} onHome={goHome} onOpenRoom={openRoom} onOpenFolder={openFolder} onOpenRepo={openRepo} repo={repo?.root ?? null} />
         </aside>
@@ -206,10 +232,12 @@ export function HqApp({ token }: { token: string }) {
           </SheetContent>
         </Sheet>
 
-        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex min-h-0 flex-col gap-0">
-          <header className="shrink-0 border-b">
-            <div className="flex items-center gap-3 px-4 pt-3 sm:px-6">
-              <Button size="icon-sm" variant="ghost" className="-ml-1 md:hidden" onClick={() => setNavOpen(true)} aria-label="Open projects">
+        {/* The composers and board lanes end at the bottom edge: keep them above a phone's home indicator. */}
+        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex min-h-0 flex-col gap-0 pb-[env(safe-area-inset-bottom)]">
+          <header className="shrink-0 border-b pt-[env(safe-area-inset-top)]">
+            {/* Phones: 44 px targets; px-3 and gap-2 leave the title room at 360 px. */}
+            <div className="flex items-center gap-2 px-3 pt-2 sm:gap-3 sm:px-6 sm:pt-3">
+              <Button size="icon-sm" variant="ghost" className="-ml-1 max-sm:size-11 md:hidden" onClick={() => setNavOpen(true)} aria-label="Open projects">
                 <MenuIcon />
               </Button>
               <div className="min-w-0 flex-1">
@@ -221,19 +249,48 @@ export function HqApp({ token }: { token: string }) {
                   {subtitle || " "}
                 </p>
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <Button size="sm" onClick={() => openAssign()} disabled={!hq.projects.data.length && !running}>
-                  <SendIcon /> Giao việc
+              <div className="flex shrink-0 items-center gap-1.5 max-sm:gap-0.5">
+                <Button size="sm" className="max-sm:h-11 max-sm:px-3" onClick={() => openAssign()} disabled={!hq.projects.data.length && !running}>
+                  {/* Under 390 px the icon goes so the title keeps its room. */}
+                  <SendIcon className="max-[389px]:hidden" /> Giao việc
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => setGuideOpen(true)} aria-label="Cách dùng HQ">
+                <Button size="sm" variant="ghost" className="max-sm:size-11 max-sm:px-0" onClick={() => setGuideOpen(true)} aria-label="Cách dùng HQ">
                   <CircleHelpIcon /> <span className="hidden lg:inline">Cách dùng</span>
                 </Button>
+                <Button size="sm" variant={shellOpen ? "secondary" : "ghost"} className="-mr-1 max-sm:size-11 max-sm:px-0 sm:mr-0" onClick={() => setShellOpen((o) => !o)} aria-label="Shell trên máy (Ctrl+`)" aria-pressed={shellOpen} title="Shell trên máy (Ctrl+`)">
+                  <SquareTerminalIcon /> <span className="hidden lg:inline">Terminal</span>
+                </Button>
               </div>
-              <dl className="hidden shrink-0 items-center gap-4 text-xs text-muted-foreground sm:flex">
+              {/* Below xl the header has no room for these (they pushed the page wider than a tablet); Hạn mức and Sessions carry the same numbers. */}
+              <dl className="hidden shrink-0 items-center gap-4 text-xs text-muted-foreground xl:flex">
                 <div className="flex items-baseline gap-1.5">
                   <dt>Running</dt>
                   <dd className="text-sm font-medium text-foreground tabular">{running}</dd>
                 </div>
+                {limits.length > 0 && (
+                  <div className="flex items-center gap-2" title="Hạn mức gói Claude (5 giờ / 7 ngày), từ status line của phiên mới nhất; tự chạy lại khi reset">
+                    <dt className="sr-only">Usage</dt>
+                    <dd className="flex items-center gap-2 text-foreground tabular">
+                      {limits.map((w, i) => (
+                        <span key={w.label} className="flex items-center gap-1.5">
+                          {i === 0 && (
+                            <span aria-hidden className="h-1.5 w-12 overflow-hidden rounded-full bg-muted">
+                              <span
+                                className={`block h-full rounded-full ${w.pct >= 90 ? "bg-destructive" : w.pct >= 70 ? "bg-st-needs" : "bg-foreground/70"}`}
+                                style={{ width: `${w.pct}%` }}
+                              />
+                            </span>
+                          )}
+                          {i > 0 && <span aria-hidden className="text-muted-foreground">·</span>}
+                          <span>
+                            {i === 0 ? `${w.pct}% used` : `${w.label} ${w.pct}%`}
+                            {w.left && <span className="text-muted-foreground"> {w.left}</span>}
+                          </span>
+                        </span>
+                      ))}
+                    </dd>
+                  </div>
+                )}
                 {needsYou > 0 && (
                   <div className="flex items-baseline gap-1.5 text-st-needs">
                     <dt>Needs you</dt>
@@ -241,28 +298,45 @@ export function HqApp({ token }: { token: string }) {
                   </div>
                 )}
               </dl>
-              <div className="hidden shrink-0 sm:block">
-                <MachineChip api={hq.api} />
-              </div>
+              {!narrow && (
+                <div className="shrink-0">
+                  <MachineChip m={machine.data} onOpen={openMachine} />
+                </div>
+              )}
             </div>
-            <TabsList variant="line" className="mt-2 h-9 w-full max-w-full justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] sm:px-6">
-              <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
-              <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
-              <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
-              <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
-              <TabsTrigger value="board" className="flex-none px-0">
-                Board
-                {view.tasks.length > 0 && <span className="text-xs text-muted-foreground tabular">{view.tasks.filter((t) => t.status !== "done").length}</span>}
-              </TabsTrigger>
-              <TabsTrigger value="preview" className="flex-none px-0">Preview</TabsTrigger>
-              <TabsTrigger value="flow" className="flex-none px-0">Flow</TabsTrigger>
-              <TabsTrigger value="report" className="flex-none px-0">Báo cáo</TabsTrigger>
-              <TabsTrigger value="sessions" className="flex-none px-0">
-                Sessions
-                {needsYou > 0 && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
-              </TabsTrigger>
-              <TabsTrigger value="activity" className="flex-none px-0">Activity</TabsTrigger>
-            </TabsList>
+            <div className="mt-1 flex items-center sm:mt-2">
+              {/* Phones: 12 tabs scroll (edges fade while more are hidden, snapping to a tab); each is a full 44 px tall target, its underline kept inside the scroller. */}
+              <TabsList
+                ref={tabRow}
+                variant="line"
+                className="hq-fade-x relative h-9 min-w-0 flex-1 snap-x snap-proximity scroll-px-4 justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] max-sm:gap-5 max-sm:group-data-horizontal/tabs:h-[50px] max-sm:*:data-[slot=tabs-trigger]:h-11 max-sm:*:data-[slot=tabs-trigger]:snap-start max-sm:*:data-[slot=tabs-trigger]:after:bottom-0 sm:px-6"
+              >
+                <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
+                <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
+                <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
+                <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
+                <TabsTrigger value="board" className="flex-none px-0">
+                  Board
+                  {view.tasks.length > 0 && <span className="text-xs text-muted-foreground tabular">{view.tasks.filter((t) => t.status !== "done").length}</span>}
+                </TabsTrigger>
+                <TabsTrigger value="preview" className="flex-none px-0">Preview</TabsTrigger>
+                <TabsTrigger value="flow" className="flex-none px-0">Flow</TabsTrigger>
+                <TabsTrigger value="report" className="flex-none px-0">Báo cáo</TabsTrigger>
+                <TabsTrigger value="usage" className="flex-none px-0">Hạn mức</TabsTrigger>
+                <TabsTrigger value="may" className="flex-none px-0">Máy</TabsTrigger>
+                <TabsTrigger value="sessions" className="flex-none px-0">
+                  Sessions
+                  {needsYou > 0 && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
+                </TabsTrigger>
+                <TabsTrigger value="activity" className="flex-none px-0">Activity</TabsTrigger>
+              </TabsList>
+              {/* Phones: the header row has no room left, so the chip ends the tab row, compact and set apart by a rule. */}
+              {narrow && (
+                <div className="shrink-0 border-l pr-1.5 pl-1">
+                  <MachineChip m={machine.data} onOpen={openMachine} compact />
+                </div>
+              )}
+            </div>
           </header>
 
           <main className="min-h-0 flex-1">
@@ -281,10 +355,10 @@ export function HqApp({ token }: { token: string }) {
               />
             </TabsContent>
             <TabsContent value="office" className="h-full">
-              <OfficeView data={office} boards={boards} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} projects={hq.projects.data} />
+              <OfficeView data={office} boards={boards} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} projects={hq.projects.data} repo={repo?.root ?? null} onAll={() => setRepo(null)} />
             </TabsContent>
             <TabsContent value="group" className="flex h-full min-h-0 flex-col">
-              <TeamThread rows={group.messages} filters={{ roleOf, tasks: group.tasks }} onOpenSession={openSession} />
+              <TeamThread rows={group.messages} filters={{ roleOf, tasks: group.tasks }} token={token} onOpenSession={openSession} />
             </TabsContent>
             <TabsContent value="room" className="h-full">
               {scope.session == null ? (
@@ -303,6 +377,7 @@ export function HqApp({ token }: { token: string }) {
                 target={target}
                 onTarget={setTarget}
                 onStartSession={focusStartSession}
+                bar={room && roomState ? <RoomBar room={room} n={roomState} token={token} onTerminal={openTerminal} /> : null}
                 header={
                   room && roomState ? (
                     <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} />
@@ -314,16 +389,22 @@ export function HqApp({ token }: { token: string }) {
               )}
             </TabsContent>
             <TabsContent value="report" className="h-full">
-              <ReportView data={office} onOpen={openRoom} />
+              <ReportView data={office} onOpen={openRoom} repo={repo?.root ?? null} />
+            </TabsContent>
+            <TabsContent value="usage" className="h-full">
+              <UsageView token={token} />
+            </TabsContent>
+            <TabsContent value="may" className="h-full">
+              <MachineView m={machine.data} reload={machine.reload} api={hq.api} rooms={officeRooms} active={tab === "may"} />
             </TabsContent>
             <TabsContent value="board" className="h-full">
-              <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} focus={focusCard} />
+              <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} focus={focusCard} repo={repo?.root ?? null} />
             </TabsContent>
             <TabsContent value="preview" className="h-full">
-              <PreviewView state={previews} boards={boards.boards} token={token} onOpenCard={openCard} />
+              <PreviewView state={previews} boards={boards.boards} token={token} rooms={officeRooms} onOpenCard={openCard} repo={repo?.root ?? null} />
             </TabsContent>
             <TabsContent value="flow" className="h-full">
-              <FlowView state={boards} loops={loops} />
+              <FlowView state={boards} loops={loops} repo={repo?.root ?? null} />
             </TabsContent>
             <TabsContent value="sessions" className="h-full">
               <SessionsView
@@ -339,7 +420,7 @@ export function HqApp({ token }: { token: string }) {
             </TabsContent>
           </main>
           {/* Văn phòng and Chat tổng show every room, so the box that reaches every room sits under them. */}
-          {(tab === "overview" || tab === "office" || tab === "group") && <BroadcastComposer hq={hq} rooms={officeRooms} preferRoot={project?.path} />}
+          {(tab === "overview" || tab === "office" || tab === "group") && <BroadcastComposer hq={hq} rooms={officeRooms} preferRoot={project?.path ?? repo?.root ?? null} />}
         </Tabs>
       </div>
       <TerminalDrawer
@@ -350,6 +431,7 @@ export function HqApp({ token }: { token: string }) {
         model={drawerSession?.model}
       />
       <WebTerminalSheet token={token} />
+      <FloatShell token={token} cwd={scope.session ? (view.sessions[0]?.cwd ?? null) : (project?.path ?? repo?.root ?? null)} open={shellOpen} onOpenChange={setShellOpen} />
       <AssignDialog
         key={assign.n}
         hq={hq}

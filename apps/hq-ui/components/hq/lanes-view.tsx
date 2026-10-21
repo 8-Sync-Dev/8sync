@@ -1,28 +1,32 @@
 "use client";
 
-import { ArrowRightIcon, CheckIcon, ChevronsLeftIcon, ChevronsRightIcon, GitPullRequestIcon, LayersIcon, OctagonAlertIcon, RefreshCwIcon, ShipIcon, Undo2Icon } from "lucide-react";
-import { useState } from "react";
+import { ArrowRightIcon, CheckIcon, ChevronsLeftIcon, ChevronsRightIcon, GitPullRequestIcon, LayersIcon, ListTreeIcon, OctagonAlertIcon, RefreshCwIcon, ShipIcon, Undo2Icon } from "lucide-react";
+import { useRef, useState } from "react";
+import { entryFor, useFollowRepo } from "@/lib/follow-repo";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cardParts, nextUp, prRef } from "@/lib/card-tags";
+import { cardParts, type Kid, nextUp, prRef, splitInto } from "@/lib/card-tags";
 import { LANES, boardSummary, claimStale, openCount, rankOf, type Card, type Closed, type LaneKey } from "@/lib/lanes";
 import { agoShort, agoVi, roomRole, type Move } from "@/lib/now";
 import { rootKey } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
-import { CardSheet, LabelChip, PrioChip, TagChips, TONE_INK, laneTone } from "./card-sheet";
+import { CardSheet, ForceButton, LabelChip, PrioChip, TagChips, TONE_INK, forceKind, laneTone } from "./card-sheet";
 import { RoleIcon } from "./role-badge";
+import { LaneStrip } from "./scroll-strip";
 import type { BoardsState } from "./use-board";
 
 /** The project board (`8sync ccc auto board`): which room holds which card, lane by lane. */
-export function LanesView({ state, focus }: { state: BoardsState; focus?: { root: string; id: number; n: number } | null }) {
+export function LanesView({ state, focus, repo = null }: { state: BoardsState; focus?: { root: string; id: number; n: number } | null; repo?: string | null }) {
   const { boards, error, moves, at: now, reload: load } = state;
-  const [pick, setPick] = useState<string | null>(null);
+  const [pick, setPick] = useState<string | null>(repo);
+  useFollowRepo(repo, setPick);
   // The open card by id, so each poll shows its latest state; the snapshot keeps the sheet filled while it closes.
   const [open, setOpen] = useState<{ root: string; card: Card } | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [doneWide, setDoneWide] = useState(false);
+  const lanesRef = useRef<HTMLDivElement>(null);
 
   // "Mở card" from another tab (Preview, Tổng quan): pick that project and open the card once the board has it.
   // Adjusted during render (not in an effect), the React way to react to a changed prop.
@@ -48,7 +52,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
   }
   // Busiest project first; the owner's pick wins while it still has a live room.
   const list = [...(boards ?? [])].sort((a, b) => (b.board ? openCount(b.board) : -1) - (a.board ? openCount(a.board) : -1));
-  const cur = list.find((b) => b.root === pick) ?? list[0];
+  const cur = (pick ? entryFor(list, pick) : undefined) ?? list[0];
 
   if (boards && !cur) {
     return (
@@ -62,8 +66,10 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
   const movedHere = prefix ? [...moves].filter(([k]) => k.startsWith(prefix)).map(([k, m]) => ({ id: k.slice(prefix.length), ...m })) : [];
   const moveOf = (id: number) => (prefix ? moves.get(`${prefix}${id}`) : undefined);
   const next = cur?.board ? nextUp(cur.board.lanes.ready) : null;
+  const kids = cur?.board ? splitInto(cur.board.lanes) : null;
   const live = open ? boards?.find((b) => b.root === open.root)?.board : null;
   const shown = open ? ((live ? LANES.flatMap((l) => live.lanes[l.key]).find((c) => c.id === open.card.id) : undefined) ?? open.card) : null;
+  const onForce = cur ? (c: Card) => state.force(cur.root, c) : undefined;
   const onOpenCard = (c: Card) => {
     if (!cur) return;
     setOpen({ root: cur.root, card: c });
@@ -72,10 +78,10 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b px-4 py-2.5 sm:px-6">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b px-4 py-2.5 max-md:py-1.5 sm:px-6">
         {list.length > 1 ? (
           <Select value={cur?.root ?? ""} onValueChange={setPick}>
-            <SelectTrigger size="sm" className="max-w-64 text-xs" aria-label="Dự án">
+            <SelectTrigger size="sm" className="max-w-64 text-xs max-md:min-w-0 max-md:flex-1 max-sm:h-11" aria-label="Dự án">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -91,12 +97,13 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
         ) : (
           <Skeleton className="h-4 w-32" />
         )}
-        <span className="text-xs text-muted-foreground">{cur?.board ? boardSummary(cur.board) : (cur?.error ?? "")}</span>
+        {/* Phones: project and reload share the first line, the summary takes the next (order-last + basis-full). */}
+        <span className="text-xs text-muted-foreground max-md:order-last max-md:basis-full">{cur?.board ? boardSummary(cur.board) : (cur?.error ?? "")}</span>
         {/* Announced once per poll that moved a card; the moved cards carry the same text. */}
-        <span role="status" className="min-w-0 truncate text-xs font-medium text-brand-ink">
+        <span role="status" className="min-w-0 truncate text-xs font-medium text-brand-ink max-md:order-last max-md:basis-full max-md:empty:sr-only">
           {movedHere.length > 0 && `Vừa chuyển: ${movedHere.map((m) => `#${m.id} ${laneLabel(m.from)} → ${laneLabel(m.to)}`).join(" · ")}`}
         </span>
-        <Button type="button" variant="ghost" size="icon-sm" className="ml-auto" onClick={() => void load()} aria-label="Tải lại board">
+        <Button type="button" variant="ghost" size="icon-sm" className="ml-auto max-sm:size-11 max-sm:-mr-2" onClick={() => void load()} aria-label="Tải lại board">
           <RefreshCwIcon />
         </Button>
       </div>
@@ -105,20 +112,33 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
           <ErrorNote what={`board của ${cur.name}`} error={cur.error} onRetry={load} />
         </div>
       ) : (
-        <div className="min-h-0 flex-1 snap-x snap-mandatory scroll-px-4 overflow-x-auto overflow-y-hidden md:snap-none">
-          {/* Done sits between Approved and Blocked: where an approved card goes once merged. Narrow until opened. */}
-          <div
-            className={cn(
-              "grid h-full grid-cols-[repeat(8,minmax(min(82vw,16rem),1fr))] gap-2.5 px-4 py-4 sm:px-6",
-              doneWide ? "md:grid-cols-[repeat(6,minmax(10.5rem,1fr))_minmax(15rem,1.3fr)_minmax(10.5rem,1fr)]" : "md:grid-cols-[repeat(6,minmax(10.5rem,1fr))_8.5rem_minmax(10.5rem,1fr)]",
-            )}
-          >
-            {LANES.flatMap((l) => {
-              const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} now={now} next={next} onOpen={onOpenCard} />;
-              return l.key === "blocked" ? [<DoneLane key="done" closed={cur?.board?.closed ?? null} now={now} wide={doneWide} onWide={setDoneWide} />, lane] : [lane];
+        <>
+          {/* Phones: one lane per screen; the strip names every lane with its count and jumps to it. */}
+          <LaneStrip
+            scroller={lanesRef}
+            label="Cột board"
+            className="border-b md:hidden"
+            items={LANES.flatMap((l) => {
+              const item = { key: l.key, label: l.label, count: cur?.board ? cur.board.lanes[l.key].length : null, style: laneTone(l.key) };
+              return l.key === "blocked" ? [{ key: "done", label: "Done", count: cur?.board?.closed ? cur.board.closed.length : null }, item] : [item];
             })}
+          />
+          <div ref={lanesRef} className="relative min-h-0 flex-1 snap-x snap-mandatory scroll-px-4 overflow-x-auto overflow-y-hidden md:snap-none">
+            {/* Done sits between Approved and Blocked: where an approved card goes once merged. Narrow until opened. */}
+            {/* Phones: a lane is 88vw so the next one peeks in; 640-767 px (no sidebar yet): two lanes side by side. */}
+            <div
+              className={cn(
+                "grid h-full grid-cols-[repeat(8,88vw)] gap-2.5 px-4 py-3 sm:grid-cols-[repeat(8,minmax(17rem,1fr))] sm:px-6 md:py-4",
+                doneWide ? "md:grid-cols-[repeat(6,minmax(10.5rem,1fr))_minmax(15rem,1.3fr)_minmax(10.5rem,1fr)]" : "md:grid-cols-[repeat(6,minmax(10.5rem,1fr))_8.5rem_minmax(10.5rem,1fr)]",
+              )}
+            >
+              {LANES.flatMap((l) => {
+                const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} kidsOf={(id) => kids?.get(id)} now={now} next={next} onOpen={onOpenCard} onForce={onForce} />;
+                return l.key === "blocked" ? [<DoneLane key="done" closed={cur?.board?.closed ?? null} now={now} wide={doneWide} onWide={setDoneWide} />, lane] : [lane];
+              })}
+            </div>
           </div>
-        </div>
+        </>
       )}
       <CardSheet
         c={shown}
@@ -127,6 +147,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
         next={shown != null && shown.id === next && shown.lane === "ready"}
         onClose={() => setSheetOpen(false)}
         onPrio={open && shown ? (prio) => state.setPrio(open.root, shown.id, prio) : undefined}
+        onForce={open && shown ? () => state.force(open.root, shown) : undefined}
       />
     </div>
   );
@@ -136,7 +157,7 @@ export function LanesView({ state, focus }: { state: BoardsState; focus?: { root
 function DoneLane({ closed, now, wide, onWide }: { closed: Closed[] | null; now: number; wide: boolean; onWide: (v: boolean) => void }) {
   const done = closed?.filter((c) => c.state === "done").length ?? 0;
   return (
-    <section aria-labelledby="lane-done" className="flex min-h-0 snap-start flex-col rounded-xl bg-muted/60">
+    <section aria-labelledby="lane-done" data-lane="done" className="flex min-h-0 snap-start flex-col rounded-xl bg-muted/60">
       <h3 id="lane-done" className="flex items-center gap-1.5 px-3 pt-3 text-[13px] font-semibold">
         <CheckIcon aria-hidden className="size-3.5 text-st-running" strokeWidth={3} />
         <span>Done</span>
@@ -203,25 +224,30 @@ function Lane({
   hint,
   cards,
   moveOf,
+  kidsOf,
   now,
   next,
   onOpen,
+  onForce,
 }: {
   lane: LaneKey;
   label: string;
   hint: string;
   cards: Card[] | null;
   moveOf: (id: number) => Move | undefined;
+  kidsOf: (id: number) => Kid[] | undefined;
   now: number;
   next: number | null;
   onOpen: (c: Card) => void;
+  onForce?: (c: Card) => Promise<unknown>;
 }) {
   const n = cards?.length ?? 0;
-  // Ship and Blocked wait on the owner: their lane is tinted harder and says so in its header.
+  // Ship waits on the owner, Blocked on the lead (it clears them first): both are tinted harder and say so in the header.
   const loud = (lane === "approved" || lane === "blocked") && n > 0;
   return (
     <section
       aria-labelledby={`lane-${lane}`}
+      data-lane={lane}
       style={laneTone(lane)}
       className={cn(
         "flex min-h-0 snap-start flex-col rounded-xl",
@@ -259,7 +285,7 @@ function Lane({
           // Keyed on the move too: the highlight replays only when the card changes lane again.
           [...cards].sort((a, b) => rankOf(a) - rankOf(b)).map((c) => {
             const m = moveOf(c.id);
-            return <CardItem key={m ? `${c.id}:${m.from}` : c.id} c={c} move={m} now={now} next={c.id === next && lane === "ready"} onOpen={onOpen} />;
+            return <CardItem key={m ? `${c.id}:${m.from}` : c.id} c={c} move={m} kids={kidsOf(c.id)} now={now} next={c.id === next && lane === "ready"} onOpen={onOpen} onForce={onForce} />;
           })
         )}
       </ul>
@@ -267,14 +293,20 @@ function Lane({
   );
 }
 
-/** One card: its chips, the title in up to 3 lines, who holds it, PR, bounces, a missing check, the last note. A click opens the sheet. */
-export function CardItem({ c, move, now, next, onOpen }: { c: Card; move?: Move; now: number; next: boolean; onOpen: (c: Card) => void }) {
+/**
+ * One card: its chips, the title in up to 3 lines, who holds it, PR, bounces, the cards split off it, a missing check, the last note. A click opens the sheet.
+ * A Blocked card carries "⚡ Gỡ block ngay", a waiting one (Backlog/Ready, not P0) "⚡ Làm ngay", at the bottom right: a sibling of the card button (never nested).
+ */
+export function CardItem({ c, move, kids, now, next, onOpen, onForce }: { c: Card; move?: Move; kids?: Kid[]; now: number; next: boolean; onOpen: (c: Card) => void; onForce?: (c: Card) => Promise<unknown> }) {
   const stale = claimStale(c, now);
   const who = c.claim ? roomRole(c.claim.room) : null;
   const { title, tags } = cardParts(c.text);
   const noCheck = !c.check && c.lane !== "backlog";
+  // Room on the right of the last row for the button ("Gỡ block ngay" is the wider label).
+  const kind = onForce ? forceKind(c) : null;
+  const pad = kind === "unblock" ? "pr-32" : kind ? "pr-24" : null;
   return (
-    <li data-moved={move ? "" : undefined}>
+    <li data-moved={move ? "" : undefined} className={cn(kind && "relative")}>
       <button
         type="button"
         onClick={() => onOpen(c)}
@@ -307,7 +339,7 @@ export function CardItem({ c, move, now, next, onOpen }: { c: Card; move?: Move;
           <span className="mr-1 font-mono text-[11px] font-normal text-muted-foreground">#{c.id}</span>
           {title}
         </span>
-        <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+        <span className={cn("mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground", pad, pad && !c.note && "min-h-6")}>
           {c.claim && (
             <span
               className={cn("inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 whitespace-nowrap text-foreground", stale && "bg-st-needs/15")}
@@ -331,16 +363,34 @@ export function CardItem({ c, move, now, next, onOpen }: { c: Card; move?: Move;
               <span className="sr-only"> lần bị trả về</span>
             </span>
           )}
+          {kids && kids.length > 0 && (
+            // An idea split into cards waits in Backlog on purpose (not stuck): owner 2026-10-20 read
+            // "đang làm qua #64 #65 … #46" as a hung card.
+            <span
+              className="inline-flex items-center gap-0.5 text-foreground"
+              title={`Ý lớn, không treo: team đang làm nó qua ${kids.length} card con ${kids.map((k) => `#${k.id}`).join(" ")}; lead tách tiếp khi ready cạn và nghiệm thu khi chúng xong`}
+            >
+              <ListTreeIcon className="size-3" aria-hidden />
+              {kidsLine(kids)}
+            </span>
+          )}
           {noCheck && <span className="font-medium text-destructive">thiếu lệnh check</span>}
         </span>
         {c.note && (
-          <span className="mt-1 line-clamp-1 text-[11px] text-muted-foreground">
+          <span className={cn("mt-1 line-clamp-1 text-[11px] text-muted-foreground", pad)}>
             {c.note.room && <span className="font-medium text-foreground">{c.note.room}: </span>}
             {c.note.text}
             {c.note.at > 0 && <span className="tabular"> · {agoShort(c.note.at, now)}</span>}
           </span>
         )}
       </button>
+      {kind && onForce && <ForceButton c={c} run={() => onForce(c)} className="absolute right-1.5 bottom-1.5" />}
     </li>
   );
+}
+
+/** "13 card con đang mở · 4 đang build/QA" for an idea's open split-off cards. */
+export function kidsLine(kids: Kid[]): string {
+  const active = kids.filter((k) => ["building", "qa", "review", "approved"].includes(k.lane)).length;
+  return `${kids.length} card con đang mở${active ? ` · ${active} đang build/QA` : ""}`;
 }

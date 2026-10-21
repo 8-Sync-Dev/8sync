@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { shouldAutoStart, type AutoState } from "@/lib/auto";
+import type { AutoAction } from "@/lib/server/auto";
 import type { Office } from "@/lib/server/office";
 
 export type { Office, Room } from "@/lib/server/office";
@@ -67,7 +68,7 @@ export function useAuto(token: string) {
   const started = useRef(false);
 
   const call = useCallback(
-    async (method: "GET" | "POST", action?: "on" | "pause", signal?: AbortSignal): Promise<AutoState> => {
+    async (method: "GET" | "POST", action?: AutoAction, signal?: AbortSignal): Promise<AutoState> => {
       try {
         const r = await fetch("/api/auto", {
           method,
@@ -117,9 +118,11 @@ export function useAuto(token: string) {
   }, [call]);
 
   const setAuto = useCallback(
-    async (action: "on" | "pause") => {
+    async (action: AutoAction) => {
       setBusy(true);
-      setStatus(await call("POST", action));
+      const next = await call("POST", action);
+      // POST answers the auto status only: keep the version / remote-link facts from the last GET.
+      setStatus((prev) => ({ ...next, versions: next.versions ?? prev?.versions, remote: next.remote ?? prev?.remote }));
       setBusy(false);
     },
     [call],

@@ -1,7 +1,7 @@
 "use client";
 
 import { KanbanSquareIcon, PlusIcon } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { addressOf, inboxText, messageTargets, sessionLabel } from "@/lib/labels
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote, ago, shortName } from "./bits";
 import { LanesView } from "./lanes-view";
+import { LaneStrip } from "./scroll-strip";
 import type { BoardsState } from "./use-board";
 import type { Hq } from "./use-hq";
 import { TASK_COLUMNS, type Message, type Session, type Task } from "./types";
@@ -22,6 +23,7 @@ export function BoardView({
   sessions,
   boards,
   focus,
+  repo = null,
 }: {
   hq: Hq;
   tasks: Task[];
@@ -29,6 +31,7 @@ export function BoardView({
   boards: BoardsState;
   /** A card another tab asked to open: shows the project cards and opens it. */
   focus?: { root: string; id: number; n: number } | null;
+  repo?: string | null;
 }) {
   const [mode, setMode] = useState<"lanes" | "tasks">("lanes");
   // A new "Mở card" request always lands on the project cards.
@@ -48,7 +51,7 @@ export function BoardView({
         {tab("lanes", "Card dự án")}
         {tab("tasks", "Task của session")}
       </div>
-      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView state={boards} focus={focus} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
+      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView state={boards} focus={focus} repo={repo} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
     </div>
   );
 }
@@ -57,6 +60,7 @@ function TaskBoard({ hq, tasks, sessions }: { hq: Hq; tasks: Task[]; sessions: S
   const { loading, error } = hq.tasks;
   const byCol = new Map<string, Task[]>(TASK_COLUMNS.map((c) => [c.key, []]));
   for (const t of tasks) (byCol.get(t.status) ?? byCol.get("todo"))!.push(t);
+  const colsRef = useRef<HTMLDivElement>(null);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -71,30 +75,39 @@ function TaskBoard({ hq, tasks, sessions }: { hq: Hq; tasks: Task[]; sessions: S
           hand one to a session above.
         </EmptyState>
       ) : (
-        <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
-          <div className="grid h-full min-w-[960px] grid-cols-5 gap-3 px-4 py-4 sm:px-6">
-            {TASK_COLUMNS.map((c) => {
-              const list = byCol.get(c.key)!;
-              return (
-                <section key={c.key} aria-labelledby={`col-${c.key}`} className="flex min-h-0 flex-col rounded-xl bg-muted/50">
-                  <h3 id={`col-${c.key}`} className="flex items-center gap-2 px-3 pt-3 pb-2 text-[13px] font-medium">
-                    {c.label}
-                    <span className="text-xs font-normal text-muted-foreground tabular">{loading ? "" : list.length}</span>
-                  </h3>
-                  <ul className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2 pb-2">
-                    {loading
-                      ? [0, 1].map((i) => (
-                          <li key={i}>
-                            <Skeleton className="h-14 rounded-lg" />
-                          </li>
-                        ))
-                      : list.map((t) => <TaskCard key={t.task_id} t={t} />)}
-                  </ul>
-                </section>
-              );
-            })}
+        <>
+          <LaneStrip
+            scroller={colsRef}
+            label="Cột task"
+            className="border-b md:hidden"
+            items={TASK_COLUMNS.map((c) => ({ key: c.key, label: c.label, count: loading ? null : byCol.get(c.key)!.length }))}
+          />
+          {/* Phones: one 88vw column per screen, snapping, the next one peeking in (same as the card lanes). */}
+          <div ref={colsRef} className="relative min-h-0 flex-1 snap-x snap-mandatory scroll-px-4 overflow-x-auto overflow-y-hidden md:snap-none">
+            <div className="grid h-full grid-cols-[repeat(5,88vw)] gap-3 px-4 py-4 sm:grid-cols-[repeat(5,minmax(17rem,1fr))] sm:px-6 md:min-w-[960px] md:grid-cols-5">
+              {TASK_COLUMNS.map((c) => {
+                const list = byCol.get(c.key)!;
+                return (
+                  <section key={c.key} aria-labelledby={`col-${c.key}`} data-lane={c.key} className="flex min-h-0 snap-start flex-col rounded-xl bg-muted/50">
+                    <h3 id={`col-${c.key}`} className="flex items-center gap-2 px-3 pt-3 pb-2 text-[13px] font-medium">
+                      {c.label}
+                      <span className="text-xs font-normal text-muted-foreground tabular">{loading ? "" : list.length}</span>
+                    </h3>
+                    <ul className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2 pb-2">
+                      {loading
+                        ? [0, 1].map((i) => (
+                            <li key={i}>
+                              <Skeleton className="h-14 rounded-lg" />
+                            </li>
+                          ))
+                        : list.map((t) => <TaskCard key={t.task_id} t={t} />)}
+                    </ul>
+                  </section>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

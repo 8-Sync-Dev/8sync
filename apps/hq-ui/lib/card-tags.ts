@@ -1,7 +1,7 @@
 // The leading `[...]` tags of a board card (`[#1 v1][art-director] Art bible …`): the lead writes the
 // epic/version and the role the card is for in front of the title. Pure. Tested in tests/card-tags.test.ts.
 import { roomRole } from "./now";
-import { rankOf, type Card } from "./lanes";
+import { LANES, rankOf, type Board, type Card } from "./lanes";
 import type { RoleId } from "./roles";
 
 export type CardTag = { text: string; kind: "epic" | "role" | "tag"; role: RoleId | null };
@@ -26,6 +26,30 @@ export function cardParts(text: string): CardParts {
     rest = rest.slice(m[0].length);
   }
   return { title: rest.trim() || text.trim(), tags };
+}
+
+/** The card this one was split off: its first `[#N]` tag (`[#10] player …`), never itself; target.rs `parent`. */
+export function parentOf(c: Pick<Card, "id" | "text">): number | null {
+  for (const t of cardParts(c.text).tags) {
+    const m = /^#(\d+)/.exec(t.text);
+    if (m) return Number(m[1]) === c.id ? null : Number(m[1]);
+  }
+  return null;
+}
+
+/** An open card split off an idea, and the lane it is in. */
+export type Kid = { id: number; lane: string };
+
+/** Open cards split off each card, by its id: an idea that waits in Backlog while these are built. */
+export function splitInto(lanes: Board["lanes"]): Map<number, Kid[]> {
+  const out = new Map<number, Kid[]>();
+  for (const l of LANES) {
+    for (const c of lanes[l.key]) {
+      const p = parentOf(c);
+      if (p != null) out.set(p, [...(out.get(p) ?? []), { id: c.id, lane: l.key }]);
+    }
+  }
+  return out;
 }
 
 /**

@@ -33,7 +33,7 @@ export function groupByRepo<T extends { key: string; project: ProjectInfo | null
     if (!r.project) return r;
     const repo = repoOf(r.project.root);
     if (!repo.worktree) return r;
-    const main = rooms.find((x) => x.project && keyOf(x.project.root) === keyOf(repo.root));
+    const main = rooms.find((x) => x.project && groupKey(x.project.root) === groupKey(repo.root));
     return { ...r, project: { root: main?.project?.root ?? repo.root, name: main?.project?.name ?? repo.name, branch: main?.project?.branch ?? null } };
   });
   return groupByProject(folded).map((g) => ({ project: g.project, rooms: g.rooms.map((r) => byKey.get(r.key)!) }));
@@ -49,7 +49,8 @@ export type SidebarRoom<T> = { room: T; now: RoomNow; worktree: string | null; b
 export type SidebarGroup<T> = { key: string; name: string; root: string; needs: number; rooms: SidebarRoom<T>[] };
 
 const ORDER: Record<NowState, number> = { needs: 0, blocked: 1, working: 2, holding: 3, waiting: 4, idle: 5 };
-const keyOf = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+/** The key a sidebar group (and a closed project) goes by: forward slashes, no `\\?\` prefix, no trailing slash, lower case. */
+export const groupKey = (p: string) => p.replace(/\\/g, "/").replace(/^\/\/\?\//, "").replace(/\/+$/, "").toLowerCase();
 
 /**
  * Live rooms by repo. Inside a group: the repo's own rooms before worktree rooms, then attention order.
@@ -65,7 +66,7 @@ export function sidebarGroups<T extends NowRoom & { key: string; project: Projec
     if (r.status === "ended") continue;
     const at = r.project?.root ?? r.cwd;
     const repo = at ? repoOf(at) : { root: "", name: "Không rõ thư mục", worktree: null };
-    const key = keyOf(repo.root) || "~other";
+    const key = groupKey(repo.root) || "~other";
     let g = map.get(key);
     if (!g) map.set(key, (g = { key, name: repo.name, root: repo.root, needs: 0, rooms: [] }));
     const n = roomNow(r, boards, now);
@@ -84,5 +85,72 @@ export function sidebarGroups<T extends NowRoom & { key: string; project: Projec
   return [...map.values()].sort(
     (a, b) => Number(b.needs > 0) - Number(a.needs > 0) || Number(a.key === "~other") - Number(b.key === "~other") || a.name.localeCompare(b.name),
   );
+}
+
+/** A project the owner closed in the sidebar (HQ state: lib/server/db.ts `hidden_projects`). */
+export type HiddenProject = { key: string; root: string; name: string; hidden_at: number };
+
+/**
+ * Shown and closed groups. A closed project comes back by itself on new activity: a room that waits
+ * on the owner or is stuck, or anything a room did after it was closed.
+ */
+export function splitClosed<T extends { last_active?: number | null }>(
+  groups: SidebarGroup<T>[],
+  hidden: HiddenProject[],
+): { shown: SidebarGroup<T>[]; closed: SidebarGroup<T>[] } {
+  const at = new Map(hidden.map((h) => [h.key, h.hidden_at]));
+  const shown: SidebarGroup<T>[] = [];
+  const closed: SidebarGroup<T>[] = [];
+  for (const g of groups) {
+    const since = at.get(g.key);
+    const active = g.rooms.reduce((m, x) => Math.max(m, x.room.last_active ?? 0, x.now.last?.at ?? 0), 0);
+    const back = since == null || g.rooms.some((x) => x.now.state === "needs" || x.now.state === "blocked") || active > since;
+    (back ? shown : closed).push(g);
+  }
+  return { shown, closed };
+}
+
+/** A project the owner pinned (`8sync ccc auto pin`, HQ's pin button); `at` = unix seconds. */
+export type Pin = { root: string; at: number };
+
+/** `pinned-roots.json` (`{ "<root>": <at> }`) → pins, oldest first; anything else → none. */
+export function parsePins(v: unknown): Pin[] {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return [];
+  return Object.entries(v)
+    .filter(([root, at]) => root.length > 0 && root.length <= 4096 && typeof at === "number" && Number.isFinite(at))
+    .map(([root, at]) => ({ root, at: at as number }))
+    .sort((a, b) => a.at - b.at || a.root.localeCompare(b.root));
+}
+
+/** One pinned project in the sidebar: its live group, else its added folder, else just the root (0 rooms). */
+export type PinnedEntry<T, F> = { key: string; root: string; name: string; group: SidebarGroup<T> | null; folder: F | null };
+
+/**
+ * Pinned projects first, under their own header, in pin order: each takes its live group (closed or
+ * not: a pinned project stays visible) or its added folder, or stands alone with 0 rooms. The rest
+ * keep their order; `closed` loses the pinned ones too.
+ */
+export function pinSidebar<T, F extends { path: string; name: string }>(
+  pins: Pin[],
+  shown: SidebarGroup<T>[],
+  closed: SidebarGroup<T>[],
+  folders: F[],
+): { pinned: PinnedEntry<T, F>[]; shown: SidebarGroup<T>[]; closed: SidebarGroup<T>[]; folders: F[] } {
+  const keys = new Set<string>();
+  const pinned: PinnedEntry<T, F>[] = [];
+  for (const p of pins) {
+    const key = groupKey(p.root);
+    if (!key || keys.has(key)) continue;
+    keys.add(key);
+    const group = shown.find((g) => g.key === key) ?? closed.find((g) => g.key === key) ?? null;
+    const folder = folders.find((f) => groupKey(f.path) === key) ?? null;
+    pinned.push({ key, root: group?.root ?? folder?.path ?? p.root, name: group?.name ?? folder?.name ?? repoOf(p.root).name, group, folder });
+  }
+  return {
+    pinned,
+    shown: shown.filter((g) => !keys.has(g.key)),
+    closed: closed.filter((g) => !keys.has(g.key)),
+    folders: folders.filter((f) => !keys.has(groupKey(f.path))),
+  };
 }
 

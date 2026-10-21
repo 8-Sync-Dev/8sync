@@ -4,6 +4,7 @@ import {
   IDLE_FLAG_MS,
   agoShort,
   agoVi,
+  boardTasks,
   cardMoves,
   claimMatches,
   deskClip,
@@ -87,15 +88,68 @@ describe("heldCard", () => {
   });
 });
 
+describe("boardTasks (Báo cáo: task xong / đang giữ từ board)", () => {
+  const b = board(
+    {
+      building: [{ id: 1, text: "A", claim: { room: "dev", at: S - 60 }, notes: [{ room: "dev", text: "nhận", at: S - 60 }] }],
+      qa: [
+        { id: 2, text: "B", claim: { room: "qa", at: S - 30 }, notes: [{ room: "dev", text: "building → qa: PR #5", at: S - 50 }] },
+        // bounced and handed on again: one card, counted once for dev
+        {
+          id: 3,
+          text: "C",
+          claim: { room: "qa", at: S - 20 },
+          notes: [
+            { room: "dev", text: "building → qa: v1", at: S - 90 },
+            { room: "qa", text: "qa → building: lỗi", at: S - 80 },
+            { room: "dev", text: "building → qa: v2", at: S - 40 },
+          ],
+        },
+      ],
+      review: [{ id: 4, text: "D", claim: { room: "review", at: S - 10 }, notes: [{ room: "qa", text: "qa → review: UAT xanh", at: S - 10 }] }],
+    },
+    [{ id: 5, text: "E", state: "done", by: "lead", closed: S - 5, notes: [{ room: "dev", text: "building → qa", at: S - 300 }, { room: "lead", text: "review → approved", at: S - 100 }] }],
+  );
+  const boards = [{ root: ROOT, board: b }];
+  const r = (label: string, cwd: string | null = ROOT, started_at: number | null = null) => ({ label, cwd, started_at });
+  it("done = cards the room moved on to qa/review/approved (open or closed, once each); open = cards it holds", () => {
+    expect(boardTasks(r("dev", `${ROOT}/x`), boards)).toEqual({ done: 3, open: 1 });
+    expect(boardTasks(r("qa"), boards)).toEqual({ done: 1, open: 2 });
+    expect(boardTasks(r("lead"), boards)).toEqual({ done: 1, open: 0 });
+    expect(boardTasks(r("ba"), boards)).toEqual({ done: 0, open: 0 });
+  });
+  it("only this session: notes and claims before started_at belong to an earlier room with the same label", () => {
+    expect(boardTasks(r("dev", ROOT, NOW - 70_000), boards)).toEqual({ done: 2, open: 1 }); // #3 (v2 at −40 s), #2 (−50 s); #5 (−300 s) is old
+    expect(boardTasks(r("dev", ROOT, NOW - 55_000), boards)).toEqual({ done: 2, open: 0 }); // the claim at −60 s predates it
+    expect(boardTasks(r("lead", ROOT, NOW - 50_000), boards)).toEqual({ done: 0, open: 0 });
+  });
+  it("the label matches exactly (case-insensitive): dev-ide / hq-dev get none of dev's cards", () => {
+    expect(boardTasks(r("dev-ide"), boards)).toEqual({ done: 0, open: 0 });
+    expect(boardTasks(r("hq-dev"), boards)).toEqual({ done: 0, open: 0 });
+    expect(boardTasks(r("DEV"), boards)).toEqual({ done: 3, open: 1 });
+  });
+  it("null outside every board root or without a readable board: the caller falls back to its journal", () => {
+    expect(boardTasks(r("dev"), [])).toBeNull();
+    expect(boardTasks(r("dev"), [{ root: ROOT, board: null }])).toBeNull();
+    expect(boardTasks(r("dev", "D:/elsewhere"), boards)).toBeNull();
+    expect(boardTasks(r("dev", null), boards)).toBeNull();
+  });
+});
+
 describe("roomNow", () => {
   it("needs the owner first, whatever else is true", () => {
     expect(roomNow(room({ label: "dev2", status: "needs_input" }), BOARDS, NOW).state).toBe("needs");
     expect(roomNow(room({ label: "qa", waiting: "Trust this folder?" }), BOARDS, NOW).state).toBe("needs");
   });
 
-  it("is blocked when its card sits in Blocked or its claim went stale (2 h)", () => {
-    expect(roomNow(room({ label: "dev2", status: "running" }), BOARDS, NOW).state).toBe("blocked");
+  it("is blocked when a quiet room's card sits in Blocked, or any claim went stale (2 h)", () => {
+    expect(roomNow(room({ label: "dev2" }), BOARDS, NOW).state).toBe("blocked");
     expect(roomNow(room({ label: "review", status: "running" }), BOARDS, NOW).state).toBe("blocked");
+    expect(roomNow(room({ label: "review" }), BOARDS, NOW).state).toBe("blocked");
+  });
+
+  it("a running room is working even while its claimed card sits in Blocked (no false Kẹt)", () => {
+    expect(roomNow(room({ label: "dev2", status: "running" }), BOARDS, NOW).state).toBe("working");
   });
 
   it("working / holding / waiting / idle from the session status and the claim", () => {

@@ -123,6 +123,9 @@ pub struct Row {
     /// Command that resumes it.
     pub resume: String,
     pub transcript: Option<PathBuf>,
+    /// Inbox HQ and `ccc msg` deliver to: a Claude Code room's session id, an omp named
+    /// session's [`crate::room_id`]; `None` for every other row.
+    pub inbox_id: Option<String>,
 }
 
 // ── secrets ─────────────────────────────────────────────────────────────────
@@ -172,22 +175,41 @@ pub fn ago(secs: u64, now: u64) -> String {
 // ── status detection (pure) ─────────────────────────────────────────────────
 
 /// True when some omp/claude process has `needle` (a session dir or id) as an
-/// argument. `cmdlines` are raw `/proc/<pid>/cmdline` buffers (NUL-separated).
-/// The process must itself look like omp/claude so an editor or `grep <id>`
-/// doesn't count.
+/// argument, or a `*.jsonl` file directly inside it (`omp --resume <session-dir>/<file>.jsonl`).
+/// `cmdlines` are NUL-separated argv buffers ([`agent_cmdlines`]). The process must itself look
+/// like omp/claude so an editor or `grep <id>` doesn't count. On Windows a path compares in any
+/// case and slash direction.
 pub fn proc_matches(cmdlines: &[Vec<u8>], needle: &str) -> bool {
+    cmdlines.iter().any(|raw| proc_match(raw, needle))
+}
+
+/// [`proc_matches`] for one NUL-separated argv buffer.
+pub fn proc_match(raw: &[u8], needle: &str) -> bool {
     if needle.is_empty() {
         return false;
     }
-    cmdlines.iter().any(|raw| {
-        let args: Vec<&[u8]> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).collect();
-        let is_agent = args.iter().take(3).any(|a| {
-            let base = a.rsplit(|b| *b == b'/').next().unwrap_or(a);
-            let base = String::from_utf8_lossy(base).to_ascii_lowercase();
-            base == "omp" || base == "claude" || base.starts_with("claude") || base == "omp.js"
-        });
-        is_agent && args.iter().skip(1).any(|a| *a == needle.as_bytes())
-    })
+    let want = path_key(needle);
+    let sep = if cfg!(windows) { '\\' } else { '/' };
+    let args: Vec<String> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+    let is_agent = args.iter().take(3).any(|a| {
+        let base = a.rsplit(['/', '\\']).next().unwrap_or(a).to_ascii_lowercase();
+        let base = base.strip_suffix(".exe").unwrap_or(&base);
+        base == "omp" || base.starts_with("claude") || base == "omp.js"
+    });
+    is_agent
+        && args.iter().skip(1).any(|a| {
+            let a = path_key(a);
+            a == want || (a.ends_with(".jsonl") && a.rsplit_once(sep).is_some_and(|(dir, _)| dir == want))
+        })
+}
+
+/// An argument as a path to compare: no trailing separator; on Windows also lower case with `\`.
+fn path_key(s: &str) -> String {
+    if cfg!(windows) {
+        s.replace('/', "\\").trim_end_matches('\\').to_lowercase()
+    } else {
+        s.trim_end_matches('/').to_string()
+    }
 }
 
 pub fn classify(proc_hit: bool, mtime: Option<u64>, now: u64) -> Status {
@@ -200,28 +222,302 @@ pub fn classify(proc_hit: bool, mtime: Option<u64>, now: u64) -> Status {
     }
 }
 
-/// Cmdlines of live omp/claude processes (Linux `/proc`; empty elsewhere).
+/// Argv of live agent processes, NUL-separated. Linux: omp/claude from `/proc`. Windows: `omp.exe`
+/// only (Claude Code rooms reach HQ through its hooks and `claude agents`), its command line split
+/// like `CommandLineToArgvW`. Empty elsewhere.
 pub fn agent_cmdlines() -> Vec<Vec<u8>> {
+    agent_procs().into_iter().map(|(_, c)| c).collect()
+}
+
+/// [`agent_cmdlines`] with each process id.
+pub fn agent_procs() -> Vec<(u32, Vec<u8>)> {
     #[cfg(target_os = "linux")]
     {
         let mut out = Vec::new();
         for e in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
-            let name = e.file_name();
-            if !name.to_string_lossy().bytes().all(|b| b.is_ascii_digit()) {
-                continue;
-            }
+            let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
             if let Ok(raw) = std::fs::read(e.path().join("cmdline")) {
                 let head = String::from_utf8_lossy(&raw[..raw.len().min(512)]).to_ascii_lowercase();
                 if head.contains("omp") || head.contains("claude") {
-                    out.push(raw);
+                    out.push((pid, raw));
                 }
             }
         }
         out
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        win::command_lines("omp.exe").into_iter().map(|(pid, c)| (pid, win_args(&c).join("\0").into_bytes())).collect()
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         Vec::new()
+    }
+}
+
+/// A Windows command line split like `CommandLineToArgvW`: 2n backslashes + `"` = n backslashes and
+/// a quote toggle, 2n+1 = n backslashes and a literal quote, other backslashes are literal.
+pub fn win_args(cmdline: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let (mut cur, mut quoted, mut started, mut slashes) = (String::new(), false, false, 0usize);
+    for c in cmdline.chars() {
+        if c == '\\' {
+            slashes += 1;
+            started = true;
+            continue;
+        }
+        if c == '"' {
+            cur.push_str(&"\\".repeat(slashes / 2));
+            if slashes % 2 == 1 {
+                cur.push('"');
+            } else {
+                quoted = !quoted;
+            }
+            started = true;
+        } else if c.is_whitespace() && !quoted {
+            cur.push_str(&"\\".repeat(slashes));
+            if started {
+                out.push(std::mem::take(&mut cur));
+                started = false;
+            }
+        } else {
+            cur.push_str(&"\\".repeat(slashes));
+            cur.push(c);
+            started = true;
+        }
+        slashes = 0;
+    }
+    cur.push_str(&"\\".repeat(slashes));
+    if started {
+        out.push(cur);
+    }
+    out
+}
+
+/// Command lines of running processes by image name, read in-process (Toolhelp snapshot +
+/// `NtQueryInformationProcess(ProcessCommandLineInformation)`): no PowerShell per `8sync ls`.
+#[cfg(windows)]
+mod win {
+    use std::ffi::c_void;
+
+    type Handle = *mut c_void;
+    const TH32CS_SNAPPROCESS: u32 = 0x2;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const PROCESS_COMMAND_LINE_INFORMATION: u32 = 60;
+    const MAX_CMDLINE: u32 = 1 << 20;
+
+    #[repr(C)]
+    struct ProcessEntry32W {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_process_id: u32,
+        th32_default_heap_id: usize,
+        th32_module_id: u32,
+        cnt_threads: u32,
+        th32_parent_process_id: u32,
+        pc_pri_class_base: i32,
+        dw_flags: u32,
+        sz_exe_file: [u16; 260],
+    }
+
+    #[repr(C)]
+    struct UnicodeString {
+        length: u16,
+        maximum_length: u16,
+        buffer: *const u16,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> Handle;
+        fn Process32FirstW(snap: Handle, entry: *mut ProcessEntry32W) -> i32;
+        fn Process32NextW(snap: Handle, entry: *mut ProcessEntry32W) -> i32;
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+        fn CloseHandle(h: Handle) -> i32;
+        fn GetModuleHandleW(name: *const u16) -> Handle;
+        fn GetProcAddress(module: Handle, name: *const u8) -> *const c_void;
+    }
+
+    type NtQueryInformationProcess = unsafe extern "system" fn(Handle, u32, *mut c_void, u32, *mut u32) -> i32;
+
+    fn nt_query() -> Option<NtQueryInformationProcess> {
+        let name: Vec<u16> = "ntdll.dll".encode_utf16().chain([0]).collect();
+        // SAFETY: ntdll is mapped in every process; the symbol has this signature on every Windows.
+        unsafe {
+            let m = GetModuleHandleW(name.as_ptr());
+            if m.is_null() {
+                return None;
+            }
+            let f = GetProcAddress(m, c"NtQueryInformationProcess".as_ptr().cast());
+            (!f.is_null()).then(|| std::mem::transmute::<*const c_void, NtQueryInformationProcess>(f))
+        }
+    }
+
+    /// Command line of `pid`; None when the process is gone or not ours to read.
+    fn command_line(query: NtQueryInformationProcess, pid: u32) -> Option<String> {
+        // SAFETY: the handle is closed below; the buffer is u64-aligned and `need` bytes long, and
+        // the UNICODE_STRING it returns is only read after checking it points inside that buffer.
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None;
+            }
+            let mut need = 0u32;
+            query(h, PROCESS_COMMAND_LINE_INFORMATION, std::ptr::null_mut(), 0, &mut need);
+            let mut out = None;
+            if need as usize >= std::mem::size_of::<UnicodeString>() && need <= MAX_CMDLINE {
+                let mut buf = vec![0u64; (need as usize).div_ceil(8)];
+                if query(h, PROCESS_COMMAND_LINE_INFORMATION, buf.as_mut_ptr().cast(), need, &mut need) >= 0 {
+                    let us = &*(buf.as_ptr() as *const UnicodeString);
+                    let (start, len) = (buf.as_ptr() as usize, buf.len() * 8);
+                    let (at, bytes) = (us.buffer as usize, us.length as usize);
+                    if at >= start && at + bytes <= start + len {
+                        out = Some(String::from_utf16_lossy(std::slice::from_raw_parts(us.buffer, bytes / 2)));
+                    }
+                }
+            }
+            CloseHandle(h);
+            out
+        }
+    }
+
+    /// Pid, parent pid and image name of every running process (Toolhelp walk).
+    fn snapshot() -> Vec<(u32, u32, String)> {
+        let mut out = Vec::new();
+        // SAFETY: plain Toolhelp walk; the entry is sized as the API requires and the snapshot is closed.
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snap.is_null() || snap as isize == -1 {
+                return out;
+            }
+            let mut e: ProcessEntry32W = std::mem::zeroed();
+            e.dw_size = std::mem::size_of::<ProcessEntry32W>() as u32;
+            let mut more = Process32FirstW(snap, &mut e) != 0;
+            while more {
+                let n = e.sz_exe_file.iter().position(|c| *c == 0).unwrap_or(e.sz_exe_file.len());
+                out.push((e.th32_process_id, e.th32_parent_process_id, String::from_utf16_lossy(&e.sz_exe_file[..n])));
+                more = Process32NextW(snap, &mut e) != 0;
+            }
+            CloseHandle(snap);
+        }
+        out
+    }
+
+    /// Pid and command line of every process whose image is `exe` (any case).
+    pub(super) fn command_lines(exe: &str) -> Vec<(u32, String)> {
+        let Some(query) = nt_query() else { return Vec::new() };
+        snapshot().into_iter().filter(|(_, _, name)| name.eq_ignore_ascii_case(exe)).filter_map(|(pid, _, _)| command_line(query, pid).map(|c| (pid, c))).collect()
+    }
+
+    /// Creation time (FILETIME) of `pid`, 0 when it is gone or not ours to read.
+    fn created(pid: u32) -> u64 {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetProcessTimes(h: Handle, created: *mut u64, exited: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
+        }
+        // SAFETY: the handle is checked and closed once; every out-pointer is a writable u64 (FILETIME).
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return 0;
+            }
+            let (mut c, mut x) = (0u64, 0u64);
+            let ok = GetProcessTimes(h, &mut c, &mut x, &mut x, &mut x) != 0;
+            CloseHandle(h);
+            if ok {
+                c
+            } else {
+                0
+            }
+        }
+    }
+
+    /// Every process, its argv split like `CommandLineToArgvW` (just the image name when its command line is not ours to read).
+    pub(super) fn processes() -> Vec<super::ProcEntry> {
+        let query = nt_query();
+        snapshot()
+            .into_iter()
+            .map(|(pid, ppid, name)| {
+                let argv = query.and_then(|q| command_line(q, pid)).map(|c| super::win_args(&c)).filter(|a| !a.is_empty()).unwrap_or_else(|| vec![name]);
+                super::ProcEntry { pid, ppid, started: created(pid), argv }
+            })
+            .collect()
+    }
+
+    /// Full path of the image `pid` runs; None when it is gone or not ours to read.
+    pub(super) fn image(pid: u32) -> Option<std::path::PathBuf> {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn QueryFullProcessImageNameW(h: Handle, flags: u32, name: *mut u16, len: *mut u32) -> i32;
+        }
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        // SAFETY: the handle is checked and closed once; `buf`/`len` are a writable buffer and its length.
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None;
+            }
+            let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0;
+            CloseHandle(h);
+            ok.then(|| String::from_utf16_lossy(&buf[..len as usize]).into())
+        }
+    }
+}
+
+/// One running process for a takeover's tree walk ([`processes`]). `started`: its creation time
+/// (Windows FILETIME, Linux clock ticks since boot; 0 = unknown), which tells a real child from a
+/// process whose dead parent's pid was reused.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProcEntry {
+    pub pid: u32,
+    pub ppid: u32,
+    pub started: u64,
+    pub argv: Vec<String>,
+}
+
+/// Every running process with its parent and argv. Linux: `/proc`; Windows: Toolhelp + command
+/// lines read in-process. Empty elsewhere.
+pub fn processes() -> Vec<ProcEntry> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut out = Vec::new();
+        for e in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+            let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+            // `pid (comm) state ppid … starttime(22) …`: comm may hold spaces and parens, so read after the last `)`.
+            let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { continue };
+            let rest: Vec<&str> = stat.rsplit_once(')').map(|(_, r)| r.split_whitespace().collect()).unwrap_or_default();
+            let Some(ppid) = rest.get(1).and_then(|s| s.parse().ok()) else { continue };
+            let started = rest.get(19).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let argv = std::fs::read(e.path().join("cmdline")).unwrap_or_default().split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+            out.push(ProcEntry { pid, ppid, started, argv });
+        }
+        out
+    }
+    #[cfg(windows)]
+    {
+        win::processes()
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        Vec::new()
+    }
+}
+
+/// Full path of the program `pid` runs, None when it is gone or unreadable.
+pub fn process_image(pid: u32) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_link(format!("/proc/{pid}/exe")).ok()
+    }
+    #[cfg(windows)]
+    {
+        win::image(pid)
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = pid;
+        None
     }
 }
 
@@ -310,23 +606,55 @@ fn title_of(v: &Value) -> Option<String> {
 
 /// Core scanner over any line source (unit-tested on fixtures).
 pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
-    let mut d = Digest::default();
+    let mut s = LineScanner::new(fmt, detail);
     let mut buf: Vec<u8> = Vec::new();
-    let mut last_asst: Vec<u8> = Vec::new();
-    let mut last_text: Vec<u8> = Vec::new();
-    let mut last_tool: Vec<u8> = Vec::new();
-    let mut tool_ring: VecDeque<Vec<u8>> = VecDeque::new();
-    let mut next_id = 1usize;
-    let mut change_title: Option<String> = None;
     loop {
         buf.clear();
         match r.read_until(b'\n', &mut buf) {
             Ok(0) | Err(_) => break,
-            Ok(_) => {}
+            Ok(_) => s.feed(&buf),
         }
-        let Ok(line) = std::str::from_utf8(&buf) else { continue };
+    }
+    s.finish()
+}
+
+/// [`scan_reader`]'s state between lines, so a long-running caller can feed only the lines
+/// appended since its last look (`feed` each line with its `\n`, as `read_until` yields it) and
+/// get the same [`Digest`] a full scan would (`clone().finish()`).
+#[derive(Clone, Debug)]
+pub struct LineScanner {
+    fmt: Fmt,
+    detail: bool,
+    d: Digest,
+    last_asst: Vec<u8>,
+    last_text: Vec<u8>,
+    last_tool: Vec<u8>,
+    tool_ring: VecDeque<Vec<u8>>,
+    next_id: usize,
+    change_title: Option<String>,
+}
+
+impl LineScanner {
+    pub fn new(fmt: Fmt, detail: bool) -> Self {
+        LineScanner {
+            fmt,
+            detail,
+            d: Digest::default(),
+            last_asst: Vec::new(),
+            last_text: Vec::new(),
+            last_tool: Vec::new(),
+            tool_ring: VecDeque::new(),
+            next_id: 1,
+            change_title: None,
+        }
+    }
+
+    /// One raw line (trailing `\n` included when the source had one).
+    pub fn feed(&mut self, buf: &[u8]) {
+        let Ok(line) = std::str::from_utf8(buf) else { return };
         let head = &line[..floor_boundary(line, 400)];
-        match fmt {
+        let d = &mut self.d;
+        match self.fmt {
             Fmt::Omp => {
                 if head.starts_with(r#"{"type":"title""#) {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
@@ -334,7 +662,7 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
                     }
                 } else if head.starts_with(r#"{"type":"title_change""#) {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
-                        change_title = v.get("title").and_then(|t| t.as_str()).map(str::to_string);
+                        self.change_title = v.get("title").and_then(|t| t.as_str()).map(str::to_string);
                     }
                 } else if head.starts_with(r#"{"type":"session""#) {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
@@ -349,7 +677,7 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
                 } else if head.contains(r#""role":"user""#) {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
                         if let Some(t) = omp_user_text(&v) {
-                            push_user(&mut d, t);
+                            push_user(d, t);
                         }
                     }
                 } else if head.contains(r#""role":"toolResult""#) && head.contains(r#""toolName":"todo""#) {
@@ -359,15 +687,15 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
                         }
                     }
                 } else if head.contains(r#""role":"assistant""#) {
-                    keep_assistant(line, &buf, r#""type":"toolCall""#, &mut last_asst, &mut last_text, &mut last_tool);
-                    if detail && line.contains(r#""type":"toolCall""#) {
-                        push_ring(&mut tool_ring, &buf);
+                    keep_assistant(line, buf, r#""type":"toolCall""#, &mut self.last_asst, &mut self.last_text, &mut self.last_tool);
+                    if self.detail && line.contains(r#""type":"toolCall""#) {
+                        push_ring(&mut self.tool_ring, buf);
                     }
                 }
             }
             Fmt::Claude => {
                 if line.contains(r#""isSidechain":true"#) {
-                    continue;
+                    return;
                 }
                 if head.starts_with(r#"{"type":"custom-title""#) {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
@@ -376,7 +704,7 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
                 } else if head.starts_with(r#"{"type":"agent-name""#) {
                     if d.title.is_none() {
                         if let Ok(v) = serde_json::from_str::<Value>(line) {
-                            change_title = v.get("agentName").and_then(|c| c.as_str()).map(str::to_string);
+                            self.change_title = v.get("agentName").and_then(|c| c.as_str()).map(str::to_string);
                         }
                     }
                 } else if head.contains(r#""type":"user""#) {
@@ -390,62 +718,67 @@ pub fn scan_reader<R: BufRead>(mut r: R, fmt: Fmt, detail: bool) -> Digest {
                             }
                         }
                         if let Some(t) = claude_user_text(&v) {
-                            push_user(&mut d, t);
+                            push_user(d, t);
                         }
                     }
                 } else if line.contains(r#""type":"assistant""#) {
-                    keep_assistant(line, &buf, r#""type":"tool_use""#, &mut last_asst, &mut last_text, &mut last_tool);
+                    keep_assistant(line, buf, r#""type":"tool_use""#, &mut self.last_asst, &mut self.last_text, &mut self.last_tool);
                     let has_task = line.contains(r#""name":"TaskCreate""#)
                         || line.contains(r#""name":"TaskUpdate""#)
                         || line.contains(r#""name":"TodoWrite""#);
                     if has_task {
                         if let Ok(v) = serde_json::from_str::<Value>(line) {
-                            apply_claude_tasks(&v, &mut d.tasks, &mut next_id);
+                            apply_claude_tasks(&v, &mut d.tasks, &mut self.next_id);
                         }
                     }
-                    if detail && line.contains(r#""type":"tool_use""#) {
-                        push_ring(&mut tool_ring, &buf);
+                    if self.detail && line.contains(r#""type":"tool_use""#) {
+                        push_ring(&mut self.tool_ring, buf);
                     }
                 }
             }
         }
     }
-    if d.title.is_none() {
-        d.title = change_title;
-    }
-    // Latest assistant line → model + context size.
-    if let Ok(v) = serde_json::from_slice::<Value>(&last_asst) {
-        let m = v.get("message").unwrap_or(&v);
-        if let Some(model) = m.get("model").and_then(|x| x.as_str()) {
-            d.model = Some(model.to_string());
+
+    /// The digest of every line fed so far.
+    pub fn finish(self) -> Digest {
+        let mut d = self.d;
+        if d.title.is_none() {
+            d.title = self.change_title;
         }
-        d.tokens = usage_tokens(m.get("usage"));
-    }
-    if let Ok(v) = serde_json::from_slice::<Value>(&last_text) {
-        d.last_text = blocks(&v).iter().rev().find_map(text_block).map(|t| mask_secrets(&t));
-    }
-    if let Ok(v) = serde_json::from_slice::<Value>(&last_tool) {
-        if let Some((n, a)) = blocks(&v).iter().rev().find_map(tool_block) {
-            d.last_tool = Some(tool_summary(&n, &a));
-            d.last_tool_name = Some(n);
+        // Latest assistant line → model + context size.
+        if let Ok(v) = serde_json::from_slice::<Value>(&self.last_asst) {
+            let m = v.get("message").unwrap_or(&v);
+            if let Some(model) = m.get("model").and_then(|x| x.as_str()) {
+                d.model = Some(model.to_string());
+            }
+            d.tokens = usage_tokens(m.get("usage"));
         }
-    }
-    if detail {
-        let mut seen = std::collections::HashSet::new();
-        for raw in tool_ring.iter().rev() {
-            let Ok(v) = serde_json::from_slice::<Value>(raw) else { continue };
-            for b in blocks(&v).iter().rev() {
-                if let Some((n, a)) = tool_block(b) {
-                    if let Some(p) = touched_file(&n, &a) {
-                        if seen.insert(p.clone()) && d.files.len() < 10 {
-                            d.files.push(p);
+        if let Ok(v) = serde_json::from_slice::<Value>(&self.last_text) {
+            d.last_text = blocks(&v).iter().rev().find_map(text_block).map(|t| mask_secrets(&t));
+        }
+        if let Ok(v) = serde_json::from_slice::<Value>(&self.last_tool) {
+            if let Some((n, a)) = blocks(&v).iter().rev().find_map(tool_block) {
+                d.last_tool = Some(tool_summary(&n, &a));
+                d.last_tool_name = Some(n);
+            }
+        }
+        if self.detail {
+            let mut seen = std::collections::HashSet::new();
+            for raw in self.tool_ring.iter().rev() {
+                let Ok(v) = serde_json::from_slice::<Value>(raw) else { continue };
+                for b in blocks(&v).iter().rev() {
+                    if let Some((n, a)) = tool_block(b) {
+                        if let Some(p) = touched_file(&n, &a) {
+                            if seen.insert(p.clone()) && d.files.len() < 10 {
+                                d.files.push(p);
+                            }
                         }
                     }
                 }
             }
         }
+        d
     }
-    d
 }
 
 fn floor_boundary(s: &str, max: usize) -> usize {
@@ -673,23 +1006,25 @@ pub fn safe_id(s: &str) -> Option<String> {
     (!s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then(|| s.to_string())
 }
 
-/// API error type recorded by the kit's StopFailure hook for a Claude session
-/// (`<dir>/<session_id>.json`, written by `ccc/resume.rs`). Read-only; records older
-/// than 24 h are ignored.
-fn stalled_error_in(dir: &Path, row: &Row, now_s: u64) -> Option<String> {
+/// API error type and planned automatic resume time (`resume_at`, epoch s) recorded by the kit's
+/// StopFailure hook for a Claude session (`<dir>/<session_id>.json`, written by `ccc/resume.rs`).
+/// Read-only; records older than 24 h, or already resumed by 8sync (`resumed_at`), are ignored.
+fn stalled_error_in(dir: &Path, row: &Row, now_s: u64) -> Option<(String, Option<u64>)> {
     if row.engine != "claude" {
         return None;
     }
     let id = safe_id(row.transcript.as_deref()?.file_stem()?.to_str()?)?;
     let rec: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(format!("{id}.json"))).ok()?).ok()?;
-    if now_s.saturating_sub(rec["ts"].as_u64()?) > 24 * 3600 {
+    if now_s.saturating_sub(rec["ts"].as_u64()?) > 24 * 3600 || !rec["resumed_at"].is_null() {
         return None;
     }
-    rec["error"].as_str().map(str::to_string)
+    Some((rec["error"].as_str()?.to_string(), rec["resume_at"].as_u64()))
 }
 
-fn stalled_error(row: &Row) -> Option<String> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+fn stalled_error(row: &Row) -> Option<(String, Option<u64>)> {
+    // Same home as the writer (`8sync ccc hook stop-failure`): `$HOME` on unix, the profile
+    // folder on Windows, where a hook or HQ child often has no HOME.
+    let home = dirs::home_dir();
     let dir = home.filter(|h| h.is_absolute())?.join(".local/state/8sync/ccc/stopfail");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
     stalled_error_in(&dir, row, now)
@@ -706,6 +1041,7 @@ fn claude_sid(row: &Row) -> Option<String> {
 /// JSON for one session — the `--json` contract of `ls`.
 pub fn row_json(row: &Row) -> Value {
     let d = &row.digest;
+    let stalled = stalled_error(row);
     serde_json::json!({
         "schema": crate::SCHEMA,
         "engine": row.engine,
@@ -721,7 +1057,8 @@ pub fn row_json(row: &Row) -> Value {
         "last_user": d.last_user().map(|u| clean(u, 200)),
         "last_activity": d.last_activity().map(|s| clean(&s, 200)),
         "last_tool": d.last_tool_name.as_deref().map(|s| clean(s, 60)),
-        "stalled_error": stalled_error(row),
+        "stalled_error": stalled.as_ref().map(|s| &s.0),
+        "stalled_resume_at": stalled.as_ref().and_then(|s| s.1),
         "current_task": d.current_task().map(|t| clean(&t.title, 200)),
         "tasks_done": d.tasks_done(),
         "tasks_total": d.tasks.len(),
@@ -729,6 +1066,9 @@ pub fn row_json(row: &Row) -> Value {
         "tokens": d.tokens,
         "model": d.model,
         "resume": mask_secrets(&row.resume),
+        "inbox_id": row.inbox_id,
+        // Local transcript file: HQ reads an omp room's "Nhật ký" from it (server side only).
+        "transcript": row.transcript.as_deref().map(|p| p.to_string_lossy()),
     })
 }
 
@@ -773,6 +1113,7 @@ pub fn unreadable(engine: &'static str, name: &str, resume: String, last_active:
         digest: Digest { title: Some("unreadable".into()), ..Default::default() },
         resume,
         transcript: None,
+        inbox_id: None,
     }
 }
 
@@ -793,6 +1134,7 @@ mod tests {
             digest,
             resume: "8sync . core".into(),
             transcript: None,
+            inbox_id: None,
         }
     }
 
@@ -821,6 +1163,53 @@ mod tests {
         assert_eq!(classify(false, Some(950), 1000), Status::Active);
         assert_eq!(classify(false, Some(100), 1000), Status::Idle);
         assert_eq!(classify(false, None, 1000), Status::Idle);
+    }
+
+    #[test]
+    fn omp_resumed_by_transcript_file_counts_for_its_session_dir() {
+        let procs = vec![
+            b"/usr/bin/omp.exe\0--extension\0x.ts\0--resume\0/s/web/2026-10-07_01a1.jsonl\0".to_vec(),
+            b"omp\0/s/notes/readme.md\0".to_vec(),
+        ];
+        assert!(proc_matches(&procs, "/s/web"));
+        assert!(proc_matches(&procs, "/s/web/"), "trailing separator");
+        assert!(!proc_matches(&procs, "/s"), "only the file's own dir");
+        assert!(!proc_matches(&procs, "/s/web/sub"));
+        assert!(!proc_matches(&procs, "/s/notes"), "a non-transcript file is not a session");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_lines_match_in_any_case_and_slash() {
+        let argv = |c: &str| win_args(c).join("\0").into_bytes();
+        let procs = vec![
+            argv(r#""omp" --cwd C:\r --session-dir C:\Users\A\8sync\sessions\K\core --continue"#),
+            argv(r#""C:\Users\A\AppData\Local\omp\omp.exe" --resume C:\Users\A\8sync\sessions\K2\core\2026-10-07T03_01a1.jsonl"#),
+            argv(r#"C:\Windows\notepad.exe C:\Users\A\8sync\sessions\K3\core"#),
+        ];
+        assert!(proc_matches(&procs, "C:/users/a/8sync/sessions/k/CORE/"));
+        assert!(proc_matches(&procs, r"C:\Users\A\8sync\sessions\K2\core"));
+        assert!(!proc_matches(&procs, r"C:\Users\A\8sync\sessions\K3\core"), "an editor is not an agent");
+        assert!(!proc_matches(&procs, r"C:\Users\A\8sync\sessions\K\core2"));
+    }
+
+    #[test]
+    fn win_args_splits_like_command_line_to_argv() {
+        assert_eq!(win_args(r#""omp" --cwd C:\r --session-dir C:\s\omp-lead --continue"#), ["omp", "--cwd", r"C:\r", "--session-dir", r"C:\s\omp-lead", "--continue"]);
+        assert_eq!(win_args(r#""C:\a b\omp.exe"  "C:\x y\" a\\\"b"#), [r"C:\a b\omp.exe", r#"C:\x y" a\"b"#]);
+        assert_eq!(win_args(r#"x "" y"#), ["x", "", "y"]);
+        assert!(win_args("   ").is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_scan_reads_real_command_lines() {
+        // The test binary itself is a running process: its own command line must come back whole.
+        let exe = std::env::current_exe().unwrap();
+        let name = exe.file_name().unwrap().to_string_lossy().into_owned();
+        let lines = win::command_lines(&name);
+        let me = name.to_lowercase();
+        assert!(lines.iter().any(|(pid, l)| *pid == std::process::id() && win_args(l).first().is_some_and(|a| a.to_lowercase().ends_with(&me))), "{lines:?}");
     }
 
     #[test]
@@ -975,8 +1364,12 @@ mod tests {
         r.transcript = Some(PathBuf::from("/x/abc-123.jsonl"));
         assert_eq!(stalled_error_in(&dir, &r, 1000), None, "absent");
         std::fs::write(dir.join("abc-123.json"), r#"{"error":"rate_limit","ts":1000,"cwd":"/w"}"#).unwrap();
-        assert_eq!(stalled_error_in(&dir, &r, 2000).as_deref(), Some("rate_limit"));
+        assert_eq!(stalled_error_in(&dir, &r, 2000), Some(("rate_limit".into(), None)), "old record shape: no resume time");
         assert_eq!(stalled_error_in(&dir, &r, 1000 + 24 * 3600 + 1), None, "old");
+        std::fs::write(dir.join("abc-123.json"), r#"{"error":"overloaded","ts":1000,"cwd":"/w","auto":0,"resume_at":1060,"resumed_at":null}"#).unwrap();
+        assert_eq!(stalled_error_in(&dir, &r, 2000), Some(("overloaded".into(), Some(1060))));
+        std::fs::write(dir.join("abc-123.json"), r#"{"error":"overloaded","ts":1000,"cwd":"/w","auto":0,"resume_at":1060,"resumed_at":1061}"#).unwrap();
+        assert_eq!(stalled_error_in(&dir, &r, 2000), None, "resumed by 8sync: not stuck");
         assert!(dir.join("abc-123.json").exists(), "never deleted");
         r.engine = "omp";
         assert_eq!(stalled_error_in(&dir, &r, 2000), None, "claude only");

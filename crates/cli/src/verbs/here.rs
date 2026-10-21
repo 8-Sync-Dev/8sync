@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "web")]
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::{env_detect, ui, verbs::{session, skill}};
 
@@ -52,6 +51,10 @@ pub struct Args {
     /// With `ls`/`--list`: emit machine-readable JSON.
     #[arg(long)]
     pub json: bool,
+
+    /// With a bare `<name>`: run omp on this model (`--model <provider/model>`, e.g. zai/glm-5.3).
+    #[arg(long)]
+    pub model: Option<String>,
 }
 
 pub fn run(a: Args) -> Result<()> {
@@ -101,7 +104,7 @@ pub fn run(a: Args) -> Result<()> {
             session::cmd_new(&env, &root, name, a.worktree)
         }
         "" => session::resume_latest(&env, &root),
-        name => session::resume_named(&env, &root, name),
+        name => session::resume_named(&env, &root, name, a.model.as_deref()),
     }
 }
 
@@ -157,6 +160,43 @@ pub(crate) fn repo_of(start: &Path) -> Option<PathBuf> {
             return None;
         }
     }
+}
+
+/// Give an untracked folder inside another repo its own git repo, so `ccc auto` and sessions file
+/// its board and rooms there. Live 2026-10-20: `8sync-startup/game/3d-game` was a new, empty folder
+/// with no `.git`; [`repo_of`] walked up to 8sync-startup and every room of the new project opened
+/// in the parent. A new project made inside a cluster repo must not land under the parent.
+///
+/// Inits (`git init -b main` + one empty commit) and returns `dir` only when `dir` has no `.git`,
+/// is not a Claude Code worktree, sits under a repo, and that repo tracks nothing at or under it
+/// (`ls-files` lists gitlinks too, so an uninitialised submodule folder is left alone). Otherwise
+/// `None`, nothing touched.
+pub(crate) fn adopt_untracked(dir: &Path) -> Option<PathBuf> {
+    if dir.join(".git").exists() {
+        return None;
+    }
+    // A folder holding repos (8sync-startup/game holds 3d-game) groups projects; it is none itself.
+    if std::fs::read_dir(dir).ok()?.flatten().any(|e| e.path().join(".git").exists()) {
+        return None;
+    }
+    let parts: Vec<_> = dir.components().collect();
+    if parts.windows(2).any(|w| w[0].as_os_str() == ".claude" && w[1].as_os_str() == "worktrees") {
+        return None;
+    }
+    let parent = repo_of(dir)?;
+    let rel = dir.strip_prefix(&parent).ok()?.to_string_lossy().replace('\\', "/");
+    let tracked = Command::new("git").arg("-C").arg(&parent).args(["ls-files", "-z", "--"]).arg(&rel).stderr(Stdio::null()).output().ok()?;
+    if !tracked.status.success() || !tracked.stdout.is_empty() {
+        return None;
+    }
+    let quiet = |c: &mut Command| c.stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+    if !quiet(Command::new("git").args(["init", "-q", "-b", "main"]).arg(dir)) {
+        return None;
+    }
+    let name = dir.file_name().map_or_else(|| rel.clone(), |n| n.to_string_lossy().into_owned());
+    // No user.email on this machine → no commit; the repo still stands on its own.
+    let _ = quiet(Command::new("git").arg("-C").arg(dir).args(["commit", "-q", "--allow-empty", "-m"]).arg(format!("chore: init {name}")));
+    Some(dir.to_path_buf())
 }
 
 pub(crate) fn detect_stack(root: &Path) -> Vec<String> {
@@ -263,4 +303,66 @@ Session memory được omp tự quản (retain/recall/auto-compact). Không c�
         ui::warn(&format!("could not inject sub-folder skill indexes: {}", e));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) -> bool {
+        Command::new("git").arg("-C").arg(dir).args(["-c", "user.email=t@t", "-c", "user.name=t", "-c", "core.hooksPath="]).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+    }
+
+    #[test]
+    fn only_an_untracked_folder_under_a_repo_gets_its_own() {
+        // Live 2026-10-20: an empty `game/3d-game` in 8sync-startup filed its board and rooms under the parent.
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let h = std::env::temp_dir().join(format!("8sync-adopt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&h);
+        let root = h.join("parent");
+        std::fs::create_dir_all(root.join("apps/x")).unwrap();
+        std::fs::write(root.join("apps/x/a.txt"), "a").unwrap();
+        // 8sync-startup ignores its project folders (`/game/*`): an ignored folder is still adopted.
+        std::fs::write(root.join(".gitignore"), "/game/*\n").unwrap();
+        assert!(git(&root, &["init", "-q", "-b", "main"]) && git(&root, &["add", "-A"]) && git(&root, &["commit", "-q", "-m", "init"]));
+
+        let new = root.join("game/new");
+        std::fs::create_dir_all(&new).unwrap();
+        assert_eq!(adopt_untracked(&new), Some(new.clone()), "an untracked folder is adopted");
+        assert!(new.join(".git").exists());
+        assert_eq!(repo_of(&new), Some(new.clone()), "and is now its own repo");
+        assert_eq!(adopt_untracked(&new), None, "once");
+
+        let tracked = root.join("apps/x");
+        assert_eq!(adopt_untracked(&tracked), None, "the parent tracks files under it");
+        assert!(!tracked.join(".git").exists());
+
+        let nested = root.join("game/own");
+        std::fs::create_dir_all(nested.join(".git")).unwrap();
+        assert_eq!(adopt_untracked(&nested), None, "a nested repo stays as it is");
+        let group = root.join("game");
+        assert_eq!(adopt_untracked(&group), None, "a folder holding repos (game/new, game/own) is never made a repo");
+        assert!(!group.join(".git").exists());
+
+        let wt = root.join(".claude/worktrees/w");
+        std::fs::create_dir_all(&wt).unwrap();
+        assert_eq!(adopt_untracked(&wt), None, "a Claude Code worktree belongs to its repo");
+        assert!(!wt.join(".git").exists());
+
+        let sub = root.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert!(git(&root, &["update-index", "--add", "--cacheinfo", "160000,1111111111111111111111111111111111111111,sub"]));
+        assert_eq!(adopt_untracked(&sub), None, "an uninitialised submodule is the parent's");
+        assert!(!sub.join(".git").exists());
+
+        let lone = h.join("lone");
+        std::fs::create_dir_all(&lone).unwrap();
+        if repo_of(&lone).is_none() {
+            assert_eq!(adopt_untracked(&lone), None, "no repo above → nothing to split from");
+            assert!(!lone.join(".git").exists());
+        }
+        let _ = std::fs::remove_dir_all(&h);
+    }
 }

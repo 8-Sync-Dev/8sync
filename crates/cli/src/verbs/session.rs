@@ -30,6 +30,10 @@ pub struct Registry {
     pub last_used: Option<String>,
     #[serde(default)]
     pub sessions: Vec<Session>,
+    /// Project root this registry belongs to (written by [`save`]): `8sync ls --all` only knows
+    /// the sanitized key, and a room's inbox id ([`ccc_core::room_id`]) needs the root itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -83,7 +87,8 @@ pub(crate) fn project_key(root: &Path) -> String {
     format!("h{:016x}", h.finish())
 }
 
-fn key_dir(env: &Env, root: &Path) -> PathBuf {
+/// This repo's 8sync session registry and its omp session dirs (`<config>/8sync/sessions/<key>`).
+pub(crate) fn key_dir(env: &Env, root: &Path) -> PathBuf {
     env.xdg_config.join("8sync").join("sessions").join(project_key(root))
 }
 
@@ -112,7 +117,9 @@ pub fn load(env: &Env, root: &Path) -> Registry {
 pub fn save(env: &Env, root: &Path, reg: &Registry) -> Result<()> {
     let dir = key_dir(env, root);
     std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
-    let json = serde_json::to_string_pretty(reg)?;
+    let mut v = serde_json::to_value(reg)?;
+    v["root"] = serde_json::json!(root);
+    let json = serde_json::to_string_pretty(&v)?;
     std::fs::write(index_path(env, root), json).context("write session index")?;
     Ok(())
 }
@@ -122,7 +129,11 @@ pub fn save(env: &Env, root: &Path, reg: &Registry) -> Result<()> {
 /// Launch omp for a named session's `--session-dir`. `fresh=true` starts a new
 /// conversation (no `--continue`); otherwise it resumes the latest one there.
 /// Reuses `ModelConfig` so STEP-0 tool-routing + advisor survive every launch.
-fn launch(cwd: &Path, session_dir: &Path, fresh: bool) -> Result<()> {
+/// `room` = (project root, session name): exported as `EIGHTSYNC_ROOM` / `EIGHTSYNC_ROOM_ID`
+/// so the omp extension polls this room's inbox and `ccc msg` knows the sender, plus
+/// `EIGHTSYNC_BIN` (this executable) so the extension never resolves `8sync` from PATH/cwd.
+/// `model` = `--model <id>` for omp (`8sync . <name> --model <id>`); None = omp's default.
+fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str), model: Option<&str>) -> Result<()> {
     if which::which("omp").is_err() {
         ui::err("omp not installed. Run `8sync setup` first.");
         return Ok(());
@@ -132,14 +143,7 @@ fn launch(cwd: &Path, session_dir: &Path, fresh: bool) -> Result<()> {
     // (omp's default per-cwd store) lands somewhere else entirely and the
     // session looks lost. Print the command that reopens THIS one.
     ui::info(&format!("omp --session-dir {} --continue", session_dir.display()));
-    let cfg = crate::models::ModelConfig::load();
-    let mut cmd = Command::new("omp");
-    cmd.current_dir(cwd)
-        .arg("--cwd")
-        .arg(cwd)
-        .arg("--session-dir")
-        .arg(session_dir)
-        .args(cfg.resume_flags());
+    let mut cmd = omp_command(cwd, session_dir, room, model);
     if !fresh {
         cmd.arg("--continue");
     }
@@ -150,10 +154,29 @@ fn launch(cwd: &Path, session_dir: &Path, fresh: bool) -> Result<()> {
     Ok(())
 }
 
+/// The omp argv + env of a named session (see [`launch`]), without `--continue`: the web terminal
+/// host (`ccc term --host`) adds `--resume`/`--restore <transcript>` instead.
+pub(crate) fn omp_command(cwd: &Path, session_dir: &Path, room: (&Path, &str), model: Option<&str>) -> Command {
+    let cfg = crate::models::ModelConfig::load();
+    let mut cmd = Command::new("omp");
+    cmd.current_dir(cwd)
+        .env("EIGHTSYNC_ROOM", room.1)
+        .env("EIGHTSYNC_ROOM_ID", ccc_core::room_id(room.0, room.1));
+    if let Ok(exe) = std::env::current_exe() {
+        cmd.env("EIGHTSYNC_BIN", exe);
+    }
+    cmd.arg("--cwd").arg(cwd).arg("--session-dir").arg(session_dir);
+    match model {
+        Some(m) => cmd.args(cfg.pinned_flags(m)),
+        None => cmd.args(cfg.resume_flags()),
+    };
+    cmd
+}
+
 // ── git / worktree ─────────────────────────────────────────────────────────
 
 /// Working dir for a session: its worktree when isolated, else the repo root.
-fn session_cwd<'a>(s: &'a Session, root: &'a Path) -> &'a Path {
+pub(crate) fn session_cwd<'a>(s: &'a Session, root: &'a Path) -> &'a Path {
     s.worktree.as_ref().map(|w| w.path.as_path()).unwrap_or(root)
 }
 
@@ -240,7 +263,7 @@ pub fn resume_latest(env: &Env, root: &Path) -> Result<()> {
             let cwd = session_cwd(s, root).to_path_buf();
             ui::ok(&format!("→ resume session '{name}' (latest)"));
             touch(env, root, &mut reg, &name)?;
-            return launch(&cwd, &dir, false);
+            return launch(&cwd, &dir, false, (root, &name), None);
         }
     }
     // No named session yet — legacy behavior: omp's default path-scoped store.
@@ -271,8 +294,8 @@ fn resume_default(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `8sync . <name>` — create-or-resume a named session.
-pub fn resume_named(env: &Env, root: &Path, name: &str) -> Result<()> {
+/// `8sync . <name> [--model <id>]` — create-or-resume a named session.
+pub fn resume_named(env: &Env, root: &Path, name: &str, model: Option<&str>) -> Result<()> {
     if !valid_name(name) {
         bail!("invalid session name '{name}' (use letters, digits, '-', '_', '.'; ≤64 chars)");
     }
@@ -283,7 +306,10 @@ pub fn resume_named(env: &Env, root: &Path, name: &str) -> Result<()> {
         let cwd = session_cwd(s, root).to_path_buf();
         ui::ok(&format!("→ resume session '{name}'"));
         touch(env, root, &mut reg, name)?;
-        launch(&cwd, &dir, false)
+        // A session made without a launch (`8sync ccc auto up --omp` creates its rooms first) has
+        // no conversation yet: open a fresh one instead of continuing nothing.
+        let fresh = crate::verbs::session_view::omp_transcript(&dir).is_none();
+        launch(&cwd, &dir, fresh, (root, name), model)
     } else {
         ui::info(&format!("no session '{name}' yet — creating it"));
         create(env, root, &mut reg, name, false)?;
@@ -291,7 +317,7 @@ pub fn resume_named(env: &Env, root: &Path, name: &str) -> Result<()> {
         let dir = s.session_dir.clone();
         let cwd = session_cwd(s, root).to_path_buf();
         touch(env, root, &mut reg, name)?;
-        launch(&cwd, &dir, true)
+        launch(&cwd, &dir, true, (root, name), model)
     }
 }
 
@@ -310,7 +336,22 @@ pub fn cmd_new(env: &Env, root: &Path, name: &str, worktree: bool) -> Result<()>
     let cwd = session_cwd(s, root).to_path_buf();
     ui::ok(&format!("created session '{name}'"));
     touch(env, root, &mut reg, name)?;
-    launch(&cwd, &dir, true)
+    launch(&cwd, &dir, true, (root, name), None)
+}
+
+/// The session dir of the named session `name` of this repo, creating the session like
+/// `8sync . new <name>` when missing but never launching omp. `last_used` is left alone, so the
+/// owner's bare `8sync .` still resumes what it did. Used by `8sync ccc auto up --omp`.
+pub(crate) fn ensure(env: &Env, root: &Path, name: &str) -> Result<PathBuf> {
+    if !valid_name(name) {
+        bail!("invalid session name '{name}' (use letters, digits, '-', '_', '.'; ≤64 chars)");
+    }
+    let mut reg = load(env, root);
+    if let Some(s) = reg.get(name) {
+        return Ok(s.session_dir.clone());
+    }
+    create(env, root, &mut reg, name, false)?;
+    reg.get(name).map(|s| s.session_dir.clone()).context("session vừa tạo không có trong registry")
 }
 
 fn create(env: &Env, root: &Path, reg: &mut Registry, name: &str, worktree: bool) -> Result<()> {
@@ -334,7 +375,7 @@ fn create(env: &Env, root: &Path, reg: &mut Registry, name: &str, worktree: bool
 pub fn cmd_ls(env: &Env, root: &Path, json: bool) -> Result<()> {
     use super::session_view as view;
     let reg = load(env, root);
-    let rows = view::omp_rows(&reg, &view::agent_cmdlines(), false, true);
+    let rows = view::omp_rows(&reg, Some(root), &view::agent_cmdlines(), false, true);
     debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry (zip below)");
     if json {
         let arr: Vec<serde_json::Value> = rows

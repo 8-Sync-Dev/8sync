@@ -1,11 +1,11 @@
 "use client";
 
-import { GitBranchIcon, InboxIcon, MoonIcon, PauseIcon, PlayIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
+import { BotIcon, GitBranchIcon, GlobeIcon, InboxIcon, LaptopIcon, MoonIcon, PauseIcon, PlayIcon, RefreshCwIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
 import { useMemo, useState, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isStale, longRestCount, sortMembers, type IdleRecord } from "@/lib/idle";
-import { autoButton, autoText, staleText } from "@/lib/auto";
+import { autoButton, autoText, leaseText, staleText } from "@/lib/auto";
 import { LANES } from "@/lib/lanes";
 import { attendeesNow, meetingLabel, walkPhase, type Attendee } from "@/lib/meeting";
 import { askLine } from "@/lib/ask";
@@ -16,14 +16,16 @@ import { groupByRepo, meetingShown, worktreeOf } from "@/lib/sidebar";
 import { modelShort } from "@/lib/roles";
 import { shirtFor, shirtOf } from "@/lib/sprite/frames";
 import { cn } from "@/lib/utils";
+import { isLocalHost } from "@/lib/hosts";
+import { teamLabel } from "@/lib/labels";
 import { EmptyState, ErrorNote } from "./bits";
 import { IdleChip } from "./idle-chip";
 import { NowRoster, type RosterRow } from "./now-roster";
 import { RoleIcon } from "./role-badge";
 import { SpriteCanvas, WalkerCanvas } from "./sprite-canvas";
 import type { BoardsState } from "./use-board";
-import { AskPanel, type AskRoom } from "./ask-panel";
-import { TeamControls, TeamStarter } from "./team-controls";
+import { AskPanel, askRoomOf, type AskRoom } from "./ask-panel";
+import { boostOn, TeamControls, TeamStarter } from "./team-controls";
 import { useAuto, type Office, type OfficeState, type Room } from "./use-office";
 
 /*
@@ -170,6 +172,7 @@ function RoomCard({
             </button>
           </h3>
           {room.model && <span className="shrink-0 text-[11px] text-(--soft)">{modelShort(room.model)}</span>}
+          <span className="shrink-0 rounded border border-(--soft)/40 px-1 text-[10px] leading-4 text-(--soft)">{teamLabel(room.engine)}</span>
           {worktreeOf(room) && (
             <span className="inline-flex min-w-0 items-center gap-0.5 font-mono text-[11px] text-(--soft)" title={`worktree ${worktreeOf(room)}${room.project?.branch ? ` · nhánh ${room.project.branch}` : ""}`}>
               <GitBranchIcon aria-hidden className="size-3 shrink-0" />
@@ -268,9 +271,17 @@ function RoomCard({
               <TerminalSquareIcon className="size-3" aria-hidden /> Terminal
             </>
           ) : room.delivery === "inbox" ? (
-            <span title={room.inboxLive ? "Mod 8sync-inbox đang nạp: việc vào ngay khi phòng rảnh" : "Mod 8sync-inbox chưa nạp: việc vào ở lượt kế"}>
+            <span
+              title={
+                room.engine === "omp"
+                  ? "Phòng omp đọc inbox khi rảnh"
+                  : room.inboxLive
+                    ? "Mod 8sync-inbox đang nạp: việc vào ngay khi phòng rảnh"
+                    : "Mod 8sync-inbox chưa nạp: việc vào ở lượt kế"
+              }
+            >
               <InboxIcon className="mr-1 inline size-3 align-[-2px]" aria-hidden />
-              Inbox{room.inboxLive ? "" : " · chưa nạp mod"}
+              Inbox{room.inboxLive || room.engine === "omp" ? "" : " · chưa nạp mod"}
               {room.pending > 0 && ` · ${room.pending} chờ giao`}
             </span>
           ) : null}
@@ -327,12 +338,22 @@ function MeetingRoom({ attendees, rooms, until, now }: { attendees: Attendee[]; 
   );
 }
 
-/** Pause / Run: HQ keeps `8sync ccc auto` on by default (useAuto); the owner can pause it. */
+/**
+ * Pause / Run: HQ keeps `8sync ccc auto` on by default (useAuto); the owner can pause it. Next to it
+ * the "Đội omp" switch (`8sync ccc auto omp on|off`) and where HQ can be reached from.
+ */
 function AutoBar({ token }: { token: string }) {
   const { status, busy, setAuto } = useAuto(token);
   if (!status) return <Skeleton className="h-8 w-56" />;
   const btn = autoButton(status);
   const stale = staleText(status);
+  const lease = leaseText(status);
+  const omp = !!status.teams?.includes("omp");
+  // While blocked (omp on the anthropic provider) 8sync keeps the omp team off and refuses to turn it on.
+  const blocked = status.omp_blocked || null;
+  const host = status.remote?.host;
+  // Status arrives client-side only (useAuto), so `window` is there; the remote view hides where HQ is reachable from.
+  const local = isLocalHost(window.location.host);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm" role="status">
       {stale && (
@@ -347,6 +368,62 @@ function AutoBar({ token }: { token: string }) {
         </Button>
       )}
       <span className="text-muted-foreground">{autoText(status)}</span>
+      {/* "Lease liên tục": absent on an older 8sync (no `lease_auto` in the status), so no switch there. */}
+      {!status.error && typeof status.lease_auto === "boolean" && (
+        <>
+          <Button
+            type="button"
+            size="sm"
+            variant={status.lease_auto ? "secondary" : "outline"}
+            aria-pressed={status.lease_auto}
+            disabled={busy}
+            title={
+              status.subscription === true
+                ? "Tự gia hạn lease (tối đa 4 giờ) mỗi lần anh dùng HQ hoặc gõ prompt; gói subscription cần anh có mặt (8sync ccc auto lease auto on|off)"
+                : "Tự gia hạn lease khi còn < 30 phút, dừng khi chạm ngân sách $/giờ (8sync ccc auto lease auto on|off)"
+            }
+            onClick={() => void setAuto(status.lease_auto ? "lease-auto-off" : "lease-auto-on")}
+          >
+            <RefreshCwIcon aria-hidden />
+            Lease liên tục: {status.lease_auto ? "bật" : "tắt"}
+          </Button>
+          {lease && (
+            <span className="text-xs text-muted-foreground" data-testid="lease-text">
+              {lease}
+            </span>
+          )}
+          {status.lease_error && <span className="text-destructive">{status.lease_error}</span>}
+        </>
+      )}
+      {!status.error && (
+        <Button
+          type="button"
+          size="sm"
+          variant={omp ? "secondary" : "outline"}
+          aria-pressed={omp}
+          disabled={busy || (!!blocked && !omp)}
+          title={blocked ? `Đội omp đang bị chặn: ${blocked}` : "Phòng omp làm việc cạnh phòng Claude Code (8sync ccc auto omp on|off)"}
+          onClick={() => void setAuto(omp ? "omp-off" : "omp-on")}
+        >
+          <BotIcon aria-hidden />
+          Đội omp: {omp ? "bật" : "tắt"}
+        </Button>
+      )}
+      {blocked && <span className="text-xs text-muted-foreground">Đội omp bị chặn: {blocked}</span>}
+      {status.omp_error && <span className="text-destructive">{status.omp_error}</span>}
+      {local && (
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          {host ? (
+            <>
+              <GlobeIcon className="size-3.5" aria-hidden /> Link internet: <span className="font-mono">{host}</span>
+            </>
+          ) : (
+            <>
+              <LaptopIcon className="size-3.5" aria-hidden /> chỉ máy này · <code className="font-mono">8sync hq ui --public</code>
+            </>
+          )}
+        </span>
+      )}
     </div>
   );
 }
@@ -372,6 +449,8 @@ export function OfficeView({
   onStart,
   token,
   projects = [],
+  repo = null,
+  onAll,
 }: {
   data: OfficeState;
   /** The shared board poll (use-board.ts): which card each room holds, and which cards just moved. */
@@ -384,17 +463,22 @@ export function OfficeView({
   token: string;
   /** Folders added in the sidebar: the ones with no room get a "Mở team" button. */
   projects?: { path: string; name: string; missing?: boolean }[];
+  /** The repo picked in the sidebar: only its rooms show (owner 2026-10-21: "mở dự án nào nó phải đúng cái đó"). */
+  repo?: string | null;
+  onAll?: () => void;
 }) {
-  const rooms = useMemo(() => office?.rooms ?? [], [office]);
+  const allRooms = useMemo(() => office?.rooms ?? [], [office]);
   // Worktree rooms sit under their repo (lib/sidebar.ts groupByRepo), like the sidebar.
-  const groups = useMemo(() => groupByRepo(rooms), [rooms]);
+  const allGroups = useMemo(() => groupByRepo(allRooms), [allRooms]);
+  const groups = useMemo(() => (repo ? allGroups.filter((g) => rootKey(g.project.root) === rootKey(repo)) : allGroups), [allGroups, repo]);
+  const rooms = useMemo(() => (repo ? groups.flatMap((g) => g.rooms) : allRooms), [repo, groups, allRooms]);
   // After a team button: read the office and the board again now, not at the next poll.
   const refresh = () => {
     retry();
     boards.reload();
   };
   const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const idleFolders = projects.filter((p) => !p.missing && !groups.some((g) => slash(g.project.root) === slash(p.path)));
+  const idleFolders = projects.filter((p) => !p.missing && !allGroups.some((g) => slash(g.project.root) === slash(p.path)) && (!repo || slash(p.path) === slash(repo)));
   const labelOf = (key: string) => rooms.find((r) => r.key === key)?.label ?? key.slice(0, 8);
   const visits = office?.visits ?? [];
   const now = office?.at ?? 0;
@@ -420,7 +504,7 @@ export function OfficeView({
       rows.flatMap((n) => {
         const r = rooms.find((x) => x.key === n.key);
         if (!r || (n.state !== "needs" && !r.permit)) return [];
-        return [{ key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting: r.waiting, ask: r.ask, permit: r.permit, tmux: r.delivery === "terminal" }];
+        return [askRoomOf(r)];
       }),
     [rows, rooms],
   );
@@ -457,6 +541,14 @@ export function OfficeView({
             {error && (
               <p role="status" className="text-xs text-muted-foreground">
                 Mất kết nối ({error}), đang thử lại. Dữ liệu dưới đây có thể đã cũ.
+              </p>
+            )}
+            {repo && allGroups.length > 1 && (
+              <p className="text-sm text-muted-foreground">
+                Đang xem một dự án.{" "}
+                <button type="button" className="font-medium text-foreground underline underline-offset-4 hover:no-underline" onClick={onAll}>
+                  Xem cả {allGroups.length} dự án
+                </button>
               </p>
             )}
             <div className="space-y-7 min-[1600px]:grid min-[1600px]:grid-cols-[minmax(36rem,1fr)_minmax(0,1.35fr)] min-[1600px]:items-start min-[1600px]:gap-8 min-[1600px]:space-y-0">
@@ -514,7 +606,7 @@ export function OfficeView({
                         ))}
                         <span className="text-xs text-muted-foreground tabular">{g.rooms.length} phòng</span>
                         <span className="ml-auto">
-                          <TeamControls root={g.project.root} name={g.project.name} token={token} after={refresh} />
+                          <TeamControls root={g.project.root} name={g.project.name} token={token} boost={boostOn(g.rooms)} after={refresh} />
                         </span>
                       </header>
                       {meeting && <MeetingRoom attendees={meeting.attendees} rooms={g.rooms} until={meeting.until} now={now} />}

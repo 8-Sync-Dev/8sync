@@ -81,14 +81,53 @@ fn read_json(p: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }
 
-/// Rows of one engine for the registry dir `dir` (`<kind>/<project-key>`).
-pub fn engine_rows(env: &Env, engine: &'static str, dir: &Path, procs: &[Vec<u8>], detail: bool, git: bool) -> Vec<Row> {
+/// Rows of one engine for the registry dir `dir` (`<kind>/<project-key>`). `root`: the repo of
+/// that registry when known (omp rows key their inbox id on it; else the registry's own record,
+/// else the transcript cwd ancestor whose key is `dir`'s name: a registry written before it
+/// recorded its root).
+pub fn engine_rows(env: &Env, engine: &'static str, dir: &Path, root: Option<&Path>, procs: &[Vec<u8>], detail: bool, git: bool) -> Vec<Row> {
     let Some(v) = read_json(&dir.join("index.json")) else { return Vec::new() };
     match engine {
-        "omp" => serde_json::from_value::<session::Registry>(v).map(|r| view::omp_rows(&r, procs, detail, git)).unwrap_or_default(),
+        "omp" => serde_json::from_value::<session::Registry>(v)
+            .map(|r| {
+                let mut rows = view::omp_rows(&r, root, procs, detail, git);
+                if root.is_none() && r.root.is_none() {
+                    let key = dir.file_name().map(|k| k.to_string_lossy().into_owned()).unwrap_or_default();
+                    if let Some(found) = rows.iter().filter_map(|x| x.digest.cwd.as_deref()).find_map(|c| root_by_key(Path::new(c), &key)) {
+                        for x in &mut rows {
+                            x.inbox_id = Some(ccc_core::room_id(&found, &x.name));
+                        }
+                    }
+                }
+                rows
+            })
+            .unwrap_or_default(),
         "feynman" => view::feynman_rows(&v),
         _ => serde_json::from_value::<uuid_sessions::Registry>(v).map(|r| view::uuid_rows(env, engine, &r, procs, detail)).unwrap_or_default(),
     }
+}
+
+/// `cwd` or the ancestor of it whose registry key ([`session::project_key`]) is `key`.
+fn root_by_key(cwd: &Path, key: &str) -> Option<PathBuf> {
+    if key.is_empty() {
+        return None;
+    }
+    cwd.ancestors().find(|a| session::project_key(a) == key).map(Path::to_path_buf)
+}
+
+/// The omp session whose `ls` inbox id is `id`, from the same registry rows `8sync ls --all`
+/// prints: (repo root, registry entry, newest transcript).
+pub fn omp_room(env: &Env, id: &str) -> Option<(PathBuf, session::Session, Option<PathBuf>)> {
+    for e in std::fs::read_dir(kind_dir(env, "sessions")).into_iter().flatten().flatten() {
+        let dir = e.path();
+        let rows = engine_rows(env, "omp", &dir, None, &[], false, false);
+        let Some(row) = rows.iter().find(|r| r.inbox_id.as_deref() == Some(id)) else { continue };
+        let reg: session::Registry = serde_json::from_value(read_json(&dir.join("index.json"))?).ok()?;
+        let key = e.file_name().to_string_lossy().into_owned();
+        let root = reg.root.clone().or_else(|| rows.iter().filter_map(|x| x.digest.cwd.as_deref()).find_map(|c| root_by_key(Path::new(c), &key)))?;
+        return Some((root, reg.get(&row.name)?.clone(), row.transcript.clone()));
+    }
+    None
 }
 
 /// Sessions of one repo, in engine order, skipping engines with none.
@@ -96,7 +135,7 @@ fn repo_rows(env: &Env, root: &Path, procs: &[Vec<u8>], detail: bool, git: bool)
     let key = session::project_key(root);
     ENGINES
         .iter()
-        .map(|(e, kind)| (*e, engine_rows(env, e, &kind_dir(env, kind).join(&key), procs, detail, git)))
+        .map(|(e, kind)| (*e, engine_rows(env, e, &kind_dir(env, kind).join(&key), Some(root), procs, detail, git)))
         .filter(|(_, r)| !r.is_empty())
         .collect()
 }
@@ -141,37 +180,49 @@ pub fn run_ls(a: LsArgs) -> Result<()> {
     Ok(())
 }
 
-/// Every repo in every registry: `<kind>/<key>/index.json`. The repo path is
-/// recovered from a transcript's cwd; the registry key is the fallback.
-fn ls_all(env: &Env, procs: &[Vec<u8>], json: bool) -> Result<()> {
+/// Every repo in every registry: `<kind>/<key>/index.json`, grouped by registry key.
+fn all_repos(env: &Env, procs: &[Vec<u8>]) -> BTreeMap<String, Groups> {
     let mut repos: BTreeMap<String, Groups> = BTreeMap::new();
     for (engine, kind) in ENGINES {
         for e in std::fs::read_dir(kind_dir(env, kind)).into_iter().flatten().flatten() {
             if !e.path().is_dir() {
                 continue;
             }
-            let rows = engine_rows(env, engine, &e.path(), procs, false, false);
+            let rows = engine_rows(env, engine, &e.path(), None, procs, false, false);
             if !rows.is_empty() {
                 repos.entry(e.file_name().to_string_lossy().into_owned()).or_default().push((engine, rows));
             }
         }
     }
-    if json {
-        let arr: Vec<Value> = repos
-            .iter()
-            .flat_map(|(key, g)| {
-                g.iter().flat_map(move |(_, rows)| {
-                    rows.iter().map(move |r| {
-                        let mut v = view::row_json(r);
-                        v["repo"] = Value::String(repo_label(key, g));
-                        v
-                    })
+    repos
+}
+
+/// What `8sync ls --all --json` prints (one object per session, `repo` added); the HQ core serves
+/// the same array without a process per poll.
+pub fn ls_all_json(env: &Env, procs: &[Vec<u8>]) -> Vec<Value> {
+    let repos = all_repos(env, procs);
+    repos
+        .iter()
+        .flat_map(|(key, g)| {
+            g.iter().flat_map(move |(_, rows)| {
+                rows.iter().map(move |r| {
+                    let mut v = view::row_json(r);
+                    v["repo"] = Value::String(repo_label(key, g));
+                    v
                 })
             })
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&arr)?);
+        })
+        .collect()
+}
+
+/// Every repo in every registry. The repo path is recovered from a transcript's cwd; the
+/// registry key is the fallback.
+fn ls_all(env: &Env, procs: &[Vec<u8>], json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(&ls_all_json(env, procs))?);
         return Ok(());
     }
+    let repos = all_repos(env, procs);
     if repos.is_empty() {
         ui::info("no sessions recorded on this machine yet");
         return Ok(());
@@ -398,8 +449,35 @@ mod tests {
             digest: view::Digest { cwd: Some("/srv/app".into()), ..Default::default() },
             resume: String::new(),
             transcript: None,
+            inbox_id: None,
         };
         assert_eq!(repo_label("-srv-app", &[("omp", vec![r])]), "/srv/app");
         assert_eq!(repo_label("-srv-app", &[]), "-srv-app");
+    }
+
+    #[test]
+    fn omp_registry_without_root_gets_inbox_ids_from_its_transcript_cwd() {
+        let tmp = std::env::temp_dir().join(format!("ls-root-{}", std::process::id()));
+        let repo = tmp.join("work").join("app");
+        let sd = tmp.join("sd");
+        std::fs::create_dir_all(repo.join("sub")).unwrap();
+        std::fs::create_dir_all(&sd).unwrap();
+        // omp writes `type` first (the scanner matches the line head); json! would sort the keys.
+        let line = format!(r#"{{"type":"session","version":3,"id":"x","cwd":{}}}"#, serde_json::json!(repo.join("sub")));
+        std::fs::write(sd.join("2026-10-20_x.jsonl"), format!("{line}\n")).unwrap();
+        let reg = |key: &str| {
+            let dir = tmp.join("reg").join(key);
+            std::fs::create_dir_all(&dir).unwrap();
+            let index = serde_json::json!({ "sessions": [{ "name": "core", "session_dir": sd, "created": 0, "last_active": 0 }] });
+            std::fs::write(dir.join("index.json"), index.to_string()).unwrap();
+            dir
+        };
+        let env = Env::detect().unwrap();
+        let rows = engine_rows(&env, "omp", &reg(&session::project_key(&repo)), None, &[], false, false);
+        assert_eq!(rows[0].inbox_id.as_deref(), Some(ccc_core::room_id(&repo, "core").as_str()));
+        let rows = engine_rows(&env, "omp", &reg("C--elsewhere"), None, &[], false, false);
+        assert_eq!(rows[0].inbox_id, None, "no ancestor has the registry's key");
+        assert_eq!(root_by_key(&repo.join("sub"), ""), None);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

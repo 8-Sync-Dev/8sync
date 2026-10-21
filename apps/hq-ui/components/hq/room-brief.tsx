@@ -17,29 +17,41 @@ import { openWebTerminal } from "./web-terminal-sheet";
 const laneLabel = (k: string) => LANES.find((l) => l.key === k)?.label ?? k;
 
 /**
+ * The room's title row: name, state, project · branch · model, and the terminal button. Pinned at the
+ * top of the room view (TeamView `bar`): the owner switches model or effort and opens the terminal
+ * from here, and lost it once the log and chat scrolled (owner 2026-10-20).
+ */
+export function RoomBar({ room, n, token, onTerminal }: { room: Room; n: RoomNow; token: string; onTerminal: () => void }) {
+  const tmux = room.delivery === "terminal";
+  const where = room.project ? repoOf(room.project.root) : null;
+  const sub = [where?.name, where?.worktree ? `worktree ${where.worktree}` : room.project?.branch, room.model ? modelShort(room.model) : null].filter(Boolean).join(" · ");
+  const term = useOpenTerminal(room, tmux, token, onTerminal);
+  return (
+    <div className="flex items-center gap-3">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <h2 id="room-brief" className="flex min-w-0 items-center gap-2 text-base font-semibold tracking-tight">
+          <RoleIcon role={n.role ?? room.role} className="size-4 shrink-0 text-muted-foreground" />
+          <span className="truncate">{room.label}</span>
+          <StateTag n={n} />
+        </h2>
+        {sub && <p className="truncate text-xs text-muted-foreground">{sub}</p>}
+      </div>
+      {n.state !== "needs" && <OpenTerminal term={term} />}
+    </div>
+  );
+}
+
+/**
  * The top of Chat phòng: what this room is doing now (its line and the card it holds), what it asks
  * the owner, and the way into its terminal. The message box under the timeline sends it work.
  */
 export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: RoomNow; now: number; token: string; onTerminal: () => void }) {
   const tmux = room.delivery === "terminal";
   const where = room.project ? repoOf(room.project.root) : null;
-  const sub = [where?.name, where?.worktree ? `worktree ${where.worktree}` : room.project?.branch, room.model ? modelShort(room.model) : null].filter(Boolean).join(" · ");
   const term = useOpenTerminal(room, tmux, token, onTerminal);
 
   return (
     <section aria-labelledby="room-brief" className="space-y-4">
-      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <h2 id="room-brief" className="flex min-w-0 items-center gap-2 text-base font-semibold tracking-tight">
-            <RoleIcon role={n.role ?? room.role} className="size-4 text-muted-foreground" />
-            <span className="truncate">{room.label}</span>
-            <StateTag n={n} />
-          </h2>
-          {sub && <p className="truncate text-xs text-muted-foreground">{sub}</p>}
-        </div>
-        {n.state !== "needs" && <OpenTerminal term={term} />}
-      </div>
-
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
         <dt className="text-muted-foreground">Đang làm</dt>
         <dd className="min-w-0">
@@ -89,21 +101,23 @@ export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: 
 }
 
 /**
- * The room's terminal: HQ's own tmux rooms open in the drawer; a background Claude Code session opens
- * `claude attach` in a new window. `open` is null when there is no way in (no session id).
+ * The room's terminal: HQ's own tmux rooms open in the drawer; a background Claude Code session
+ * (`claude attach`) or an omp room (its omp, kept running by a host) opens inside HQ. `open` is null
+ * when there is no way in (no session id).
  */
 function useOpenTerminal(room: Room, tmux: boolean, _token: string, onTerminal: () => void) {
   const id = room.session_id;
   if (tmux) return { busy: false, open: onTerminal, title: undefined };
   if (!id) return { busy: false, open: null, title: undefined };
   // A background room opens its real terminal inside HQ (`8sync ccc term`), no separate window.
-  return { busy: false, open: () => openWebTerminal(id, room.label), title: `Terminal trong HQ (hoặc: ${attachCommand(id)})` };
+  const other = room.engine === "omp" ? `8sync . ${room.label} trong repo` : attachCommand(id);
+  return { busy: false, open: () => openWebTerminal(id, room.label), title: `Terminal trong HQ (hoặc: ${other})` };
 }
 
 function OpenTerminal({ term }: { term: ReturnType<typeof useOpenTerminal> }) {
   if (!term.open) return null;
   return (
-    <Button type="button" size="sm" variant="outline" disabled={term.busy} aria-busy={term.busy} onClick={term.open} title={term.title}>
+    <Button type="button" size="sm" variant="outline" className="shrink-0" disabled={term.busy} aria-busy={term.busy} onClick={term.open} title={term.title}>
       <SquareTerminalIcon aria-hidden /> {term.busy ? "Đang mở…" : "Mở terminal"}
     </Button>
   );

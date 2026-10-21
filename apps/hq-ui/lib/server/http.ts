@@ -1,7 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
-import { checkAuth, getToken, type AuthOptions } from "./auth";
+import { checkAuth, cookieValue, getToken, PUB_COOKIE, readPublic, viaTunnel, type AuthOptions } from "./auth";
 import { getDb } from "./db";
 import { ingest } from "./ingest";
+import { touchLease } from "./lease-touch";
 
 export function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { "cache-control": "no-store" } });
@@ -20,11 +21,16 @@ export function open(req: Request, opts?: AuthOptions): { db: DatabaseSync } | {
       host: req.headers.get("host"),
       origin: req.headers.get("origin"),
       token: req.headers.get("x-hq-token"),
+      cookie: cookieValue(req.headers.get("cookie"), PUB_COOKIE),
+      tunnel: viaTunnel(req.headers),
     },
     getToken(),
     opts,
+    readPublic(),
   );
   if (denied) return { res: bad(denied.error, denied.status) };
+  // The owner acted in HQ: renew a "Lease liên tục" lease (≤ 1 per 5 min; lib/server/lease-touch.ts).
+  touchLease({ method: req.method, origin: req.headers.get("origin") });
   const db = getDb();
   try {
     ingest(db);

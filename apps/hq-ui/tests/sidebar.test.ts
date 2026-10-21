@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { repoOf, sidebarGroups } from "@/lib/sidebar";
+import { repoOf, groupKey, sidebarGroups, splitClosed } from "@/lib/sidebar";
 import type { Room } from "@/lib/server/office";
 
 const NOW = Date.parse("2026-10-17T16:00:00Z");
@@ -30,6 +30,7 @@ function room(over: Partial<Room> & { name: string; root?: string }): Room {
     seats: [],
     role: null,
     team: null,
+    engine: "ccc",
     meeting: null,
     ...over,
   };
@@ -92,6 +93,36 @@ describe("sidebarGroups", () => {
   });
 });
 
+describe("splitClosed", () => {
+  const groups = (rooms: Room[]) => sidebarGroups(rooms, [], NOW);
+  const hide = (root: string, at: number) => ({ key: groupKey(root), root, name: root.split("/").pop()!, hidden_at: at });
+
+  it("hides a closed project until something happens in it", () => {
+    const g = groups([room({ name: "dev", root: "/w/card-113-dev", last_active: NOW - 60_000 }), room({ name: "core", root: "/w/8sync-startup" })]);
+    const r = splitClosed(g, [hide("/w/card-113-dev", NOW - 30_000)]);
+    expect(r.shown.map((x) => x.name)).toEqual(["8sync-startup"]);
+    expect(r.closed.map((x) => x.name)).toEqual(["card-113-dev"]);
+  });
+
+  it("brings it back on new activity after the close, and matches the key across slash style and case", () => {
+    const g = groups([room({ name: "dev", root: "C:\\W\\card-113-dev", last_active: NOW - 10_000 })]);
+    const r = splitClosed(g, [{ ...hide("/w/x", NOW - 30_000), key: "c:/w/card-113-dev" }]);
+    expect(r.closed).toEqual([]);
+    expect(r.shown).toHaveLength(1);
+  });
+
+  it("brings it back while a room waits on the owner, even with no newer transcript", () => {
+    const g = groups([room({ name: "dev", root: "/w/game", status: "needs_input", waiting: "input needed", last_active: NOW - 3_600_000 })]);
+    expect(splitClosed(g, [hide("/w/game", NOW)]).shown).toHaveLength(1);
+  });
+
+  it("keeps it closed when activity is unknown, and shows everything with no closed project", () => {
+    const g = groups([room({ name: "dev", root: "/w/game", last_active: null })]);
+    expect(splitClosed(g, [hide("/w/game", NOW - 1)]).closed).toHaveLength(1);
+    expect(splitClosed(g, []).shown).toHaveLength(1);
+  });
+});
+
 describe("sidebar UI", () => {
   const hq = {
     live: "live",
@@ -99,7 +130,7 @@ describe("sidebar UI", () => {
     api: async () => ({}),
     reload: { projects: async () => {}, sessions: async () => {} },
   };
-  const office = (rooms: Room[] | null, error: string | null = null) => ({ office: rooms ? { at: NOW, rooms } : null, error, retry: () => {} });
+  const office = (rooms: Room[] | null, error: string | null = null, hidden: unknown[] = []) => ({ office: rooms ? { at: NOW, rooms, hidden } : null, error, retry: () => {} });
 
   async function nav(o: ReturnType<typeof office>, session: string | null = null) {
     const { createElement } = await import("react");
@@ -124,6 +155,13 @@ describe("sidebar UI", () => {
     expect(html.match(/>8sync-startup</g)).toHaveLength(1);
   });
 
+  it("labels omp rooms with their team", async () => {
+    const html = await nav(office([room({ name: "omp-0123456789abcdef", label: "scout", engine: "omp", status: "running" }), room({ name: "core", status: "running" })]));
+    expect(html).toContain("Đội omp");
+    expect(html).toContain("scout · Đội omp");
+    expect(html).toContain("core · Đội ccc");
+  });
+
   it("has loading, empty and error states", async () => {
     expect(await nav(office(null))).toContain('aria-busy="true"');
     expect(await nav(office([]))).toContain("Dự án có phòng đang chạy tự hiện ở đây");
@@ -132,22 +170,52 @@ describe("sidebar UI", () => {
     expect(err).toContain('role="alert"');
   });
 
+  it("puts a ⋯ menu on every project and room row, and lists a closed project behind its toggle", async () => {
+    const rooms = [
+      room({ name: "core", root: "/w/8sync-startup", status: "running" }),
+      room({ name: "dev", root: "/w/game/.claude/worktrees/card-113-dev/.claude/worktrees/card-147-fix", last_active: NOW - 3_600_000 }),
+    ];
+    const open = await nav(office(rooms));
+    for (const s of ["Thao tác với dự án 8sync-startup", "Thao tác với phòng core", "Thao tác với dự án card-113-dev", "Thao tác với phòng dev", "card-147-fix"]) expect(open).toContain(s);
+    expect(open).not.toContain("dự án đã đóng");
+
+    const root = "/w/game/.claude/worktrees/card-113-dev";
+    const closed = await nav(office(rooms, null, [{ key: groupKey(root), root, name: "card-113-dev", hidden_at: NOW - 60_000 }]));
+    expect(closed).toContain("Hiện dự án đã đóng (1)");
+    expect(closed).toContain("Hiện lại dự án card-113-dev");
+    expect(closed).not.toContain("Thao tác với dự án card-113-dev");
+    expect(closed).toContain("Thao tác với dự án 8sync-startup");
+  });
+
+  it("says so when every project is closed", async () => {
+    const html = await nav(office([room({ name: "dev", root: "/w/game", last_active: NOW - 3_600_000 })], null, [{ key: "/w/game", root: "/w/game", name: "game", hidden_at: NOW }]));
+    expect(html).toContain("Mọi dự án đang đóng");
+    expect(html).toContain("Hiện dự án đã đóng (1)");
+  });
+
   it("room brief: doing line, card, terminal button; the ask panel replaces it while the room waits", async () => {
     const { createElement } = await import("react");
     const { renderToStaticMarkup } = await import("react-dom/server");
-    const { RoomBrief } = await import("@/components/hq/room-brief");
+    const { RoomBar, RoomBrief } = await import("@/components/hq/room-brief");
     const { roomNow } = await import("@/lib/now");
     const r = room({ name: "dev", session_id: "04d7c8d5-7473-44e7-bab9-0606b4db5a01", status: "running", doing: "Sửa nav.tsx", last_active: NOW - 120_000 });
     const card = { id: 12, text: "Sidebar mở phòng", lane: "building", check: null, label: null, claim: { room: "dev", at: NOW - 60_000 }, pr: null, sha: null, bounces: 0, note: null, added: 0 };
     const empty = { backlog: [], ready: [], building: [], qa: [], review: [], approved: [], blocked: [] };
     const boards = [{ root: "C:\\code\\ai-game-studio", board: { lanes: { ...empty, building: [card] }, closed: [] } }] as unknown as Parameters<typeof roomNow>[1];
-    const html = renderToStaticMarkup(createElement(RoomBrief, { room: r, n: roomNow(r, boards, NOW), now: NOW, token: "t", onTerminal: () => {} }));
-    for (const s of ["dev", "Đang làm", "Sửa nav.tsx", "2 phút trước", "#12", "Sidebar mở phòng", "Building", "Mở terminal"]) expect(html).toContain(s);
+    const n = roomNow(r, boards, NOW);
+    const html = renderToStaticMarkup(createElement(RoomBrief, { room: r, n, now: NOW, token: "t", onTerminal: () => {} }));
+    for (const s of ["Đang làm", "Sửa nav.tsx", "2 phút trước", "#12", "Sidebar mở phòng", "Building"]) expect(html).toContain(s);
+    // The title row and terminal button live in the pinned bar (owner 2026-10-20: lost once the log scrolled).
+    const bar = renderToStaticMarkup(createElement(RoomBar, { room: r, n, token: "t", onTerminal: () => {} }));
+    for (const s of ["dev", "Đang làm", "Mở terminal"]) expect(bar).toContain(s);
+    expect(html).not.toContain("Mở terminal");
     expect(html).not.toContain("Anh cần trả lời");
 
     const w = room({ name: "lead", status: "needs_input", waiting: "input needed", delivery: "terminal" });
     const asking = renderToStaticMarkup(createElement(RoomBrief, { room: w, n: roomNow(w, [], NOW), now: NOW, token: "t", onTerminal: () => {} }));
     expect(asking).toContain("Anh cần trả lời");
+    const askingBar = renderToStaticMarkup(createElement(RoomBar, { room: w, n: roomNow(w, [], NOW), token: "t", onTerminal: () => {} }));
+    expect(askingBar).not.toContain("Mở terminal");
     expect(asking).toContain("Không giữ card nào.");
   });
 });
