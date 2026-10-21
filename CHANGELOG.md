@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.17] — 2026-10-21
+### Fixed
+- **HQ no longer lags or shows rooms as ids under load (local and through the VPS link).** Owner 2026-10-21: "ui ux lỗi không hiện tên", "web ovh bị lag quá", "Đang Sấm Sét" that would not turn off. Busy rooms rewrite their Claude session and job files every second, so the native core re-ran `claude agents` for every poll, one at a time behind a lock; polls from every client queued, timed out in node after 5 s and each fell back to its own `claude agents` (15 at once), which made claude slower still. When the listing failed, rooms showed as their 8-hex id with the last journal status — stopped rooms stayed "Đang làm" and a stopped Sấm Sét team still counted as 13 rooms. Now:
+  - the core serves one listing to every poll for 3 s even when files moved, and a failed run keeps the last good listing for up to 2 min;
+  - node runs one probe at a time for the whole server and keeps the last good listing on a failed probe.
+- **HQ runs at normal priority.** Task Scheduler starts tasks at priority 7 — below-normal CPU, low memory and low I/O priority — and every child inherits it; HQ's node server, its core and the VPS `ssh -R` tunnel were at I/O priority Low while rooms built. `8sync hq ui` now raises itself (and so everything it starts) to normal CPU, memory and I/O priority on Windows.
+
 ## [0.110.16] — 2026-10-21
 ### Added
 - **Resource guard: overload is handled within seconds, by itself.** Owner 2026-10-21: "tối ưu hóa hơn ăn điện ít, ram, cpu, gpu ít ổn định có ngưỡng tự chặn cleanup và auto chạy lại", "bị cao là auto xử lý liền luôn không có để lâu". Threshold 60% by default (`8sync ccc auto guard <30..95>|off`, `guard eco on|off`, `guard --dry-run`, `guard now [--json]`; HQ Máy → "Bảo vệ máy").

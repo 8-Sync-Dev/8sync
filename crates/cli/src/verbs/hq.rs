@@ -3028,6 +3028,48 @@ fn start_public(port: u16, file: &Path, nonce: &str) -> Result<Option<std::proce
     Ok(Some(tun))
 }
 
+/// Task Scheduler starts a task at priority 7: BELOW_NORMAL CPU, low memory priority and low I/O
+/// priority, and every child inherits them (node, the core's `claude agents`, revive). HQ is the
+/// owner's interactive path, locally and through the VPS link, so it runs at normal priority (seen
+/// 2026-10-21: the HQ chain and its `ssh -R` tunnel all at I/O priority Low while rooms built).
+#[cfg(windows)]
+fn normal_priority() {
+    type Handle = *mut std::ffi::c_void;
+    type NtSet = unsafe extern "system" fn(Handle, u32, *const std::ffi::c_void, u32) -> i32;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> Handle;
+        fn SetPriorityClass(h: Handle, class: u32) -> i32;
+        fn SetProcessInformation(h: Handle, class: i32, info: *const std::ffi::c_void, size: u32) -> i32;
+        fn GetModuleHandleW(name: *const u16) -> Handle;
+        fn GetProcAddress(m: Handle, name: *const std::ffi::c_char) -> *const std::ffi::c_void;
+    }
+    const NORMAL_PRIORITY_CLASS: u32 = 0x20;
+    const PROCESS_MEMORY_PRIORITY: i32 = 0;
+    const MEMORY_PRIORITY_NORMAL: u32 = 5;
+    const PROCESS_IO_PRIORITY: u32 = 33;
+    const IO_PRIORITY_NORMAL: u32 = 2;
+    let ntdll: Vec<u16> = "ntdll.dll".encode_utf16().chain([0]).collect();
+    // SAFETY: the pseudo-handle of this process needs no close; each call gets a u32 of the size
+    // passed; NtSetInformationProcess is looked up in ntdll (mapped in every process) and has this
+    // signature on every Windows.
+    unsafe {
+        let me = GetCurrentProcess();
+        SetPriorityClass(me, NORMAL_PRIORITY_CLASS);
+        let mem = MEMORY_PRIORITY_NORMAL;
+        SetProcessInformation(me, PROCESS_MEMORY_PRIORITY, &mem as *const u32 as *const _, 4);
+        let m = GetModuleHandleW(ntdll.as_ptr());
+        if !m.is_null() {
+            let f = GetProcAddress(m, c"NtSetInformationProcess".as_ptr());
+            if !f.is_null() {
+                let set: NtSet = std::mem::transmute(f);
+                let io = IO_PRIORITY_NORMAL;
+                set(me, PROCESS_IO_PRIORITY, &io as *const u32 as *const _, 4);
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_only: bool, dry: bool, public: bool) -> Result<()> {
     let paths = Paths::new()?;
@@ -3036,6 +3078,10 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
     let ver = env!("CARGO_PKG_VERSION");
     let installed = hq_ui_data_dir()?.join(ver);
     let env_app = std::env::var_os("EIGHTSYNC_HQ_UI_APP").map(PathBuf::from);
+    #[cfg(windows)]
+    if !dry && !install_only {
+        normal_priority();
+    }
     if !dry && !install_only {
         let out = Command::new("node").arg("--version").output().map_err(|_| anyhow!("node not found on PATH (need >= 22.5)"))?;
         let nv = String::from_utf8_lossy(&out.stdout);
