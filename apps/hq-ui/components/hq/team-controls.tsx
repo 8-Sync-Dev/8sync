@@ -8,11 +8,15 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from "@/lib/utils";
 import { ShipLoopChip } from "./ship-loop-chip";
 import { makeApi } from "./use-hq";
+import { sprintFor, type Sprint } from "@/lib/ship-fast";
 
-type Action = "up" | "full" | "boost" | "unboost" | "clean" | "down";
+type Action = "up" | "full" | "boost" | "unboost" | "clean" | "down" | "ship-fast" | "ship-fast-off" | "ship-ask";
 type Result = { ok: boolean; output: string; error: string | null };
 
 const DONE: Record<Action, string> = {
+  "ship-fast": "Đã bật Ship tốc độ cao",
+  "ship-fast-off": "Đã tắt Ship tốc độ cao",
+  "ship-ask": "Đã nhắc lead hỏi Ship",
   up: "Đã mở team",
   full: "Đã mở team đầy đủ",
   boost: "Đã bật Sấm Sét",
@@ -21,6 +25,9 @@ const DONE: Record<Action, string> = {
   down: "Đã dừng team",
 };
 const OPENING: Record<Action, string> = {
+  "ship-fast": "gửi brief ship nhanh cho mọi phòng",
+  "ship-ask": "nhắc lead hỏi Ship ngay",
+  "ship-fast-off": "",
   up: "lead, dev, qa, review, rd",
   full: "6 phòng: lead, dev, dev2, ui, qa, review",
   boost: "Sấm Sét, 13 phòng mở lần lượt, có thể mất tới 10 phút",
@@ -29,7 +36,17 @@ const OPENING: Record<Action, string> = {
   down: "",
 };
 const WAITING = (action: Action, name: string) =>
-  action === "down" ? `Đang dừng team ${name}…` : action === "unboost" ? `Đang tắt Sấm Sét của ${name} (dừng 7 phòng thêm, card đang giữ trả về cột)…` : `Đang mở team ${name} (${OPENING[action]})…`;
+  action === "down"
+    ? `Đang dừng team ${name}…`
+    : action === "unboost"
+      ? `Đang tắt Sấm Sét của ${name} (dừng 7 phòng thêm, card đang giữ trả về cột)…`
+      : action === "ship-fast"
+        ? `Đang bật Ship tốc độ cao cho ${name}…`
+        : action === "ship-fast-off"
+          ? `Đang tắt Ship tốc độ cao của ${name}…`
+          : action === "ship-ask"
+            ? `Đang nhắc lead ${name} hỏi Ship…`
+            : `Đang mở team ${name} (${OPENING[action]})…`;
 const FAILED = (action: Action, name: string) => action === "down" ? `Không dừng được team ${name}` : action === "unboost" ? `Không tắt được Sấm Sét của ${name}` : action === "ship-fast" ? `Không bật được Ship tốc độ cao cho ${name}` : action === "ship-fast-off" ? `Không tắt được Ship tốc độ cao của ${name}` : `Không mở được team ${name}`;
 
 /** What the confirm dialog of Sấm Sét says, in one sentence (also the button's tooltip). */
@@ -144,13 +161,25 @@ export function BoostButton({ root, name, token, active, after, className }: { r
 export function ShipFastButton({ root, name, token, after, className }: { root: string; name: string; token: string; after?: () => void; className?: string }) {
   const { busy, act } = useTeam(token, after);
   const [ask, setAsk] = useState(false);
-  const [until, setUntil] = useState<number | null>(null);
+  const [sprint, setSprint] = useState<Sprint | null>(null);
   const [now, setNow] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setNow(Math.round(Date.now() / 1000)), 30_000);
-    return () => clearInterval(t);
-  }, []);
-  const left = now > 0 && until != null && until > now ? Math.max(1, Math.round((until - now) / 60)) : null;
+    let alive = true;
+    const load = () =>
+      void makeApi(token)<{ sprints: Sprint[] }>("/api/auto/loop")
+        .then((r) => alive && setSprint(sprintFor(r.sprints ?? [], root)))
+        .catch(() => {});
+    load();
+    const p = setInterval(load, 30_000);
+    const c = setInterval(() => setNow(Math.round(Date.now() / 1000)), 30_000);
+    return () => {
+      alive = false;
+      clearInterval(p);
+      clearInterval(c);
+    };
+  }, [token, root]);
+  const until = sprint?.until ?? null;
+  const left = now > 0 && until != null && until > now ? Math.max(1, Math.round((until - now) / 60)) : until != null ? 0 : null;
   return (
     <>
       <Button
@@ -166,7 +195,7 @@ export function ShipFastButton({ root, name, token, after, className }: { root: 
         <RocketIcon aria-hidden className={cn(busy != null && "motion-safe:animate-pulse")} />
         {busy === "ship-fast" ? "Đang bật…" : busy === "ship-fast-off" ? "Đang tắt…" : left != null ? `Ship nhanh · ${left}′` : "Ship tốc độ cao"}
       </Button>
-      <Dialog open={ask} onOpenChange={(o) => { setAsk(o); if (!o) setUntil(null); }}>
+      <Dialog open={ask} onOpenChange={setAsk}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Bật Ship tốc độ cao cho {name}?</DialogTitle>
@@ -187,9 +216,7 @@ export function ShipFastButton({ root, name, token, after, className }: { root: 
               type="button"
               onClick={() => {
                 setAsk(false);
-                const at = Math.round(Date.now() / 1000);
-                setNow(at);
-                setUntil(at + 120 * 60);
+                setNow(Math.round(Date.now() / 1000));
                 void act(root, name, "ship-fast");
               }}
             >
@@ -210,6 +237,17 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
     <div className="flex shrink-0 flex-wrap items-center gap-1.5">
       <ShipLoopChip root={root} token={token} />
       <ShipFastButton root={root} name={name} token={token} after={after} />
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={busy != null}
+        onClick={() => void act(root, name, "ship-ask")}
+        title="Bảng approved đang chờ: lead hỏi anh một câu Ship (Duyệt tất cả / Chỉ merge / Dừng) ngay lượt này — anh bấm một phát là merge hết (auto ship-fast ship-ask)"
+        className="font-semibold"
+      >
+        <RocketIcon aria-hidden /> Ship card approved
+      </Button>
       <BoostButton root={root} name={name} token={token} active={boost} after={after} />
       <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(root, name, "up")} title="Mở phòng còn thiếu, nối lại phòng đã dừng (8sync ccc auto up)">
         <PlayIcon aria-hidden /> Mở lại team

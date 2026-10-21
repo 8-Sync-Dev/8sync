@@ -44,7 +44,16 @@ pub(super) fn get(home: &Path, root: &Path) -> Option<Value> {
 /// Every sprint by root for `auto status --json` `ship_fast`: `{on, since, until}` (an expired one
 /// stays listed until its tick ends it, so HQ can show why it just ended).
 pub(super) fn view(home: &Path, now: u64) -> Value {
-    idle::read_json(&file(home)).filter(Value::is_object).unwrap_or_else(|| json!({}))
+    let v = idle::read_json(&file(home)).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    let mut out = serde_json::Map::new();
+    if let Some(o) = v.as_object() {
+        for (root, l) in o {
+            if let Some(until) = l["until"].as_u64().filter(|u| *u > now) {
+                out.insert(root.clone(), json!({ "on": true, "since": l["since"].as_u64(), "until": until }));
+            }
+        }
+    }
+    Value::Object(out)
 }
 
 /// The brief every room of the project gets when the sprint starts.
@@ -60,7 +69,7 @@ pub(super) fn brief(left_min: u64) -> String {
 }
 
 /// `auto ship-fast on`: owner-only. Writes the sprint and returns the brief's header line.
-pub(super) fn on(home: &Path, root: &Path, hours: f64, now: u64) -> Result<(u64, String)> {
+pub(super) fn on(home: &Path, root: &Path, hours: f64, rooms: &[(String, String)], now: u64) -> Result<(u64, usize)> {
     if !(0.5..=MAX_HOURS).contains(&hours) {
         bail!("--hours 0.5..{MAX_HOURS}");
     }
@@ -68,7 +77,12 @@ pub(super) fn on(home: &Path, root: &Path, hours: f64, now: u64) -> Result<(u64,
     super::team::update_json(&file(home), |v| {
         v[key(root)] = json!({ "since": now, "until": until });
     });
-    Ok((until, brief(((until - now) / 60).max(1))))
+    let text = brief(((until - now) / 60).max(1));
+    let sent: Vec<String> = rooms.iter().filter(|(_, id)| crate::verbs::hq::queue_inbox(home, id, &text, now * 1000).is_ok()).map(|(n, _)| n.clone()).collect();
+    if !sent.is_empty() {
+        super::team::ask_wake(home, root, &sent, now);
+    }
+    Ok((until, sent.len()))
 }
 
 /// `auto ship-fast off`: owner-only. Whether a sprint was on.
@@ -96,7 +110,9 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64) -> Option<String> {
     if !expired && !(waiting.is_empty() && approved >= 1) {
         return None;
     }
-    off(home, root);
+    if !off(home, root) {
+        return None; // another revive already ended it and alerted
+    }
     let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let title = if expired {
         format!("Ship tốc độ cao hết giờ: {name}")
@@ -159,17 +175,13 @@ pub(super) fn ask_ship(home: &Path, root: &Path, registry: &[(String, String)], 
 
 /// Whether builders of `root` hold off fresh feature cards ([`HOLD_AT`] or more waiting in
 /// qa/review/approved). Read by `target::claim`.
-pub(super) fn holding(home: &Path, root: &Path, now: u64) -> bool {
-    get(home, root).is_some_and(|_| {
-        let cards = target::list(home, root).unwrap_or_default();
-        let _ = now;
-        cards.iter().filter(|t| t.state == "open" && matches!(t.lane.as_str(), "qa" | "review" | "approved")).count() >= HOLD_AT
-    })
+pub(super) fn holding(home: &Path, root: &Path, cards: &[target::Target]) -> bool {
+    get(home, root).is_some() && cards.iter().filter(|t| t.state == "open" && matches!(t.lane.as_str(), "qa" | "review")).count() >= HOLD_AT
 }
 
 /// `8sync ccc auto ship-fast on [--hours N] | off | status [--json]` in `root`; `owner`:
 /// [`super::auto::owner`] of the caller (the HQ button is the owner).
-pub(super) fn run(args: &[String], home: &Path, root: &Path, owner: bool, now: u64) -> Result<()> {
+pub(super) fn run(args: &[String], home: &Path, root: &Path, owner: bool, rooms: &[(String, String)], now: u64) -> Result<()> {
     let as_json = args.iter().any(|a| a == "--json");
     let words: Vec<&str> = args.iter().map(String::as_str).filter(|a| *a != "--json").collect();
     let hours = |rest: &[&str]| -> Result<f64> {
@@ -183,12 +195,12 @@ pub(super) fn run(args: &[String], home: &Path, root: &Path, owner: bool, now: u
             if !owner {
                 bail!("chỉ owner bật Ship tốc độ cao (nút HQ), không phải một phòng");
             }
-            let (until, brief) = on(home, root, hours(rest)?, now)?;
+            let (until, sent) = on(home, root, hours(rest)?, rooms, now)?;
             if as_json {
-                println!("{}", json!({ "until": until, "brief": brief }));
+                println!("{}", json!({ "until": until, "sent": sent }));
             } else {
-                println!("Ship tốc độ cao: BẬT, {} phút", (until - now) / 60);
-                println!("{brief}");
+                println!("Ship tốc độ cao: BẬT, {} phút, brief tới {sent} phòng", (until - now) / 60);
+                println!("{}", brief(((until - now) / 60).max(1)));
             }
         }
         Some((&"ship-ask", []) | (&"ask", [])) => {
@@ -257,12 +269,12 @@ mod tests {
     #[test]
     fn on_off_status_is_owner_only_and_bounded() {
         let (h, root) = tmp("verbs");
-        assert!(run(&["on".into()], &h, &root, false, 100).is_err(), "a room cannot start it");
-        run(&["on".into(), "--hours".into(), "2".into()], &h, &root, true, 100).unwrap();
+        assert!(run(&["on".into()], &h, &root, false, &vec![], 100).is_err(), "a room cannot start it");
+        run(&["on".into(), "--hours".into(), "2".into()], &h, &root, true, &vec![], 100).unwrap();
         let l = get(&h, &root).unwrap();
         assert_eq!((l["since"].as_u64(), l["until"].as_u64()), (Some(100), Some(100 + 2 * 3600)));
-        assert!(run(&["on".into(), "--hours".into(), "9".into()], &h, &root, true, 100).is_err(), "over the cap");
-        assert!(run(&["off".into()], &h, &root, false, 100).is_err(), "a room cannot stop it");
+        assert!(run(&["on".into(), "--hours".into(), "9".into()], &h, &root, true, &vec![], 100).is_err(), "over the cap");
+        assert!(run(&["off".into()], &h, &root, false, &vec![], 100).is_err(), "a room cannot stop it");
         assert!(off(&h, &root));
         assert!(get(&h, &root).is_none());
         let _ = std::fs::remove_dir_all(&h);
@@ -293,17 +305,16 @@ mod tests {
     #[test]
     fn claim_holds_fresh_ready_cards_while_the_sprint_piles_up() {
         let (h, root) = tmp("claim");
-        run(&["on".into()], &h, &root, true, 100).unwrap();
+        run(&["on".into()], &h, &root, true, &vec![], 100).unwrap();
         let id = card(&h, &root, "fresh", "ready", 150);
-        for (n, lane) in [("a", "qa"), ("b", "review"), ("c", "approved")] {
+        for (n, lane) in [("a", "qa"), ("b", "review"), ("d", "qa")] {
             let c = card(&h, &root, n, "ready", 150);
-            let steps = 2 + ["qa", "review", "approved"].iter().position(|l| *l == lane).unwrap();
-            for step in ["building", "qa", "review", "approved"].iter().take(steps) {
-                let m = if *step == "approved" { target::Move { sha: Some("0d596904e5cbf53f94fbc8198fcd9b0f9848866e"), ..Default::default() } } else { target::Move::default() };
-                target::move_to(&h, &root, c, step, &m, None, 150).unwrap();
+            let steps = 2 + ["qa", "review"].iter().position(|l| *l == lane).unwrap();
+            for step in ["building", "qa", "review"].iter().take(steps) {
+                target::move_to(&h, &root, c, step, &target::Move::default(), None, 150).unwrap();
             }
         }
-        assert!(holding(&h, &root, 200), "3 waiting");
+        assert!(holding(&h, &root, &target::list(&h, &root).unwrap()), "3 waiting");
         assert!(target::claim(&h, &root, "dev", "ready", 200).is_ok_and(|t| t.is_none()), "holding: no fresh card");
         assert!(target::claim(&h, &root, "qa", "qa", 200).is_ok_and(|t| t.is_some()), "qa still takes its lane");
         off(&h, &root);
@@ -314,26 +325,27 @@ mod tests {
     #[test]
     fn builders_hold_while_qa_review_approved_pile_up() {
         let (h, root) = tmp("hold");
-        run(&["on".into()], &h, &root, true, 100).unwrap();
-        assert!(!holding(&h, &root, 200), "nothing waiting");
-        for (n, lane) in [("a", "qa"), ("b", "review"), ("c", "approved")] {
+        run(&["on".into()], &h, &root, true, &vec![], 100).unwrap();
+        assert!(!holding(&h, &root, &target::list(&h, &root).unwrap()), "nothing waiting");
+        for (n, lane) in [("a", "qa"), ("b", "review"), ("d", "qa")] {
             let id = card(&h, &root, n, "ready", 150);
-            let steps = 2 + ["qa", "review", "approved"].iter().position(|l| *l == lane).unwrap();
-            for step in ["building", "qa", "review", "approved"].iter().take(steps) {
-                let m = if *step == "approved" { target::Move { sha: Some("0d596904e5cbf53f94fbc8198fcd9b0f9848866e"), ..Default::default() } } else { target::Move::default() };
-                target::move_to(&h, &root, id, step, &m, None, 150).unwrap();
+            let steps = 2 + ["qa", "review"].iter().position(|l| *l == lane).unwrap();
+            for step in ["building", "qa", "review"].iter().take(steps) {
+                target::move_to(&h, &root, id, step, &target::Move::default(), None, 150).unwrap();
             }
         }
-        assert!(holding(&h, &root, 200), "3 waiting: builders take no fresh card");
+        assert!(holding(&h, &root, &target::list(&h, &root).unwrap()), "3 waiting: builders take no fresh card");
+        let approved_only: Vec<target::Target> = target::list(&h, &root).unwrap().into_iter().map(|mut t| { if matches!(t.lane.as_str(), "qa" | "review") { t.lane = "approved".into(); } t }).collect();
+        assert!(!holding(&h, &root, &approved_only), "approved does not freeze builders");
         off(&h, &root);
-        assert!(!holding(&h, &root, 200), "sprint over: normal order");
+        assert!(!holding(&h, &root, &target::list(&h, &root).unwrap()), "sprint over: normal order");
         let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]
     fn tick_ends_it_when_the_team_is_done_or_time_is_up_and_alerts_once() {
         let (h, root) = tmp("tick");
-        run(&["on".into()], &h, &root, true, 1000).unwrap();
+        run(&["on".into()], &h, &root, true, &vec![], 1000).unwrap();
         assert!(tick(&h, &root, 2000).is_none(), "nothing to do yet but time remains: continues");
         let a = card(&h, &root, "fix", "ready", 1200);
         target::move_to(&h, &root, a, "building", &target::Move::default(), None, 1200).unwrap();
@@ -349,7 +361,7 @@ mod tests {
         assert!(line.contains("xong"), "{line}");
         assert!(get(&h, &root).is_none(), "ended");
         assert!(tick(&h, &root, 4000).is_none(), "no second alert");
-        run(&["on".into()], &h, &root, true, 5000).unwrap();
+        run(&["on".into()], &h, &root, true, &vec![], 5000).unwrap();
         let b = card(&h, &root, "long", "ready", 5100);
         target::move_to(&h, &root, b, "building", &target::Move::default(), None, 5100).unwrap();
         assert!(tick(&h, &root, 5000 + 3 * 3600).unwrap().contains("hết giờ"), "expired with work left");

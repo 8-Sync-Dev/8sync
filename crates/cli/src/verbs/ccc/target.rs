@@ -730,7 +730,7 @@ pub(super) fn claim(home: &Path, root: &Path, room: &str, lane: &str, now: u64) 
         let split = split_ids(&p.items);
         // Ship tốc độ cao: while enough cards wait in qa/review/approved, a room pulling fresh work
         // from `ready` (builders) holds off — the near-done cards go first.
-        let hold_fresh = super::ship_fast::holding(home, root, now) && lane == "ready";
+        let hold_fresh = lane == "ready" && super::ship_fast::holding(home, root, &p.items);
         let free = |t: &Target| t.state == "open" && t.claim.is_none() && !(split.contains(&t.id) && lane == "backlog") && !(hold_fresh && t.lane == "ready") && fits(t, lane, &crew, now) && open_to(t, lane, ready);
         // The most urgent free card, queue order within a priority.
         let first_free = || p.items.iter().enumerate().filter(|(_, t)| free(t)).min_by_key(|(i, t)| (rank(t), *i)).map(|(i, _)| i);

@@ -1200,8 +1200,10 @@ pub(super) fn down(t: &Team, now: u64) -> Result<Vec<String>> {
     }
     auto::leave(t.home, t.root, t.subscription, now)?;
     set_team_root(t.home, t.root, false);
-    // No team, no rounds: a loop left on would mail a lead that is gone ([`super::ship_loop`]).
+    // No team, no rounds: a loop left on would mail a lead that is gone ([`super::ship_loop`]);
+    // a sprint left on would hold builders off fresh cards.
     super::ship_loop::off(t.home, t.root);
+    super::ship_fast::off(t.home, t.root);
     Ok(stopped)
 }
 

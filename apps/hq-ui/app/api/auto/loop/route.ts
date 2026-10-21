@@ -3,6 +3,7 @@ import { bad, json, open, readBody } from "@/lib/server/http";
 import { knownRoot } from "@/lib/server/in-view";
 import { hasControlChars } from "@/lib/server/validate";
 import { shipLoops } from "@/lib/slash";
+import { sprintsOf } from "@/lib/ship-fast";
 
 export const runtime = "nodejs";
 
@@ -13,7 +14,7 @@ export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
   const st = lastAutoStatus() ?? (await autoStatus());
-  return json({ loops: shipLoops(st.ship_loops) });
+  return json({ loops: shipLoops(st.ship_loops), sprints: sprintsOf(st.ship_fast) });
 }
 
 /**
