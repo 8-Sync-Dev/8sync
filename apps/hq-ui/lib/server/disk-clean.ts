@@ -8,7 +8,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { AUTO_IDLE_MS, autoCandidates, diskKey, type Cleaned, type ProjectDisk, type Sized } from "../disk";
+import { AUTO_DIR, AUTO_IDLE_MS, autoCandidates, diskKey, type Cleaned, type ProjectDisk, type Sized } from "../disk";
 
 /** Moved build dirs wait here for deletion (git-ignored); what a stopped HQ left goes on the next pass. */
 export const trashDir = (root: string) => path.join(root, ".claude", "hq-trash");
@@ -34,7 +34,7 @@ const run = (cmd: string, args: string[]) =>
  */
 export async function processPaths(platform: NodeJS.Platform = process.platform): Promise<string[] | null> {
   if (platform === "win32") {
-    const out = await run("powershell", ["-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }"]);
+    const out = await run("powershell", ["-NoProfile", "-NonInteractive", "-Command", "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }"]);
     return out == null ? null : out.split(/\r?\n/).filter(Boolean);
   }
   if (platform === "linux") {
@@ -96,37 +96,53 @@ export function purgeTrash(root: string): Promise<void> {
 }
 
 /**
+ * Whether `abs` is a tool's build output, not a source folder that happens to be called `target`:
+ * cargo's `target` has its CACHEDIR.TAG or a Cargo.toml beside it; a `.next` has a package.json beside it.
+ */
+function isBuildOutput(abs: string): boolean {
+  const beside = (f: string) => fs.existsSync(path.join(path.dirname(abs), f));
+  return path.basename(abs) === "target" ? fs.existsSync(path.join(abs, "CACHEDIR.TAG")) || beside("Cargo.toml") : beside("package.json");
+}
+
+/**
  * Remove the idle flagged build dirs of `p` ([autoCandidates]). A dir stays when `busy` (room folders
  * and process paths, asked only when there is a candidate) names its worktree, a build wrote to it
  * within AUTO_IDLE_MS, or it cannot be moved: Windows refuses to rename a folder while a process has
  * a file in it open. `busy` failing removes nothing. Moved into `.claude/hq-trash`, deleted in the
- * background ([purgeTrash]). `gone`: what went, for [withoutDirs]; null when nothing did.
+ * background ([purgeTrash]). `gone`: what went, for [withoutDirs]; `kept`: the dirs left because
+ * they are (or may be) in use, which the cleanup mail must not hand to a room either.
  */
 export async function cleanIdleBuild(
   p: Pick<ProjectDisk, "root" | "build">,
   busy: () => Promise<string[]>,
   now = Date.now(),
-): Promise<{ cleaned: Cleaned; gone: Sized[] } | null> {
+): Promise<{ cleaned: Cleaned | null; gone: Sized[]; kept: string[] }> {
   const trash = trashDir(p.root);
   const gone: Sized[] = [];
+  const kept: string[] = [];
   const cands = autoCandidates(p);
   const used = cands.length ? await busy().catch(() => null) : [];
-  for (const b of used ? cands : []) {
+  for (const [i, b] of cands.entries()) {
     const abs = path.join(p.root, ...b.path.split("/"));
-    const wt = path.dirname(abs);
-    if (used!.some((l) => names(l, wt))) continue;
-    if (now - (await lastWrite(abs)) < AUTO_IDLE_MS) continue;
+    if (!isBuildOutput(abs)) continue;
+    // The whole worktree: a dev server at its root uses `src-tauri/target` and `apps/web/.next` too.
+    const wt = path.join(p.root, ...AUTO_DIR.exec(b.path)![1].split("/"));
+    if (!used || used.some((l) => names(l, wt)) || now - (await lastWrite(abs)) < AUTO_IDLE_MS) {
+      kept.push(b.path);
+      continue;
+    }
     try {
       await fsp.mkdir(trash, { recursive: true });
       // Before the first move: a room's `git add -A` must never stage gigabytes of build output.
       const ignore = path.join(trash, ".gitignore");
       if (!fs.existsSync(ignore)) await fsp.writeFile(ignore, "# HQ: build output waiting for deletion\n*\n");
-      await fsp.rename(abs, path.join(trash, `${now}-${path.basename(wt)}-${path.basename(abs)}`));
+      await fsp.rename(abs, path.join(trash, `${now}-${i}-${path.basename(wt)}-${path.basename(abs)}`));
       gone.push(b);
     } catch {
-      // in use (or already gone): the next pass looks again
+      // a file in it is open (a build running right now), or it is gone already
+      if (fs.existsSync(abs)) kept.push(b.path);
     }
   }
   void purgeTrash(p.root);
-  return gone.length ? { cleaned: { at: now, bytes: gone.reduce((n, g) => n + g.bytes, 0), dirs: gone.map((g) => g.path) }, gone } : null;
+  return { cleaned: gone.length ? { at: now, bytes: gone.reduce((n, g) => n + g.bytes, 0), dirs: gone.map((g) => g.path) } : null, gone, kept };
 }

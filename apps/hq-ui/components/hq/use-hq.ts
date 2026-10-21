@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import type { ChannelMode, Message, Project, Session, Task } from "./types";
 
 export class ApiError extends Error {
@@ -12,6 +13,41 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Behind the VPS login (oauth2-proxy, 12 h cookie) a lapsed session answers every call with a redirect
+ * to GitHub that fetch cannot follow, so the page sat broken until a manual reload (owner 2026-10-21:
+ * "chưa vô được hq ui"). HQ's API never redirects: an opaque redirect means the login lapsed, and the
+ * page reloads into the sign-in, at most once per RELOGIN_MS so a stray redirect cannot loop. Text
+ * typed in a box would be lost by a reload: then a toast offers the sign-in instead.
+ */
+export const RELOGIN_MS = 30_000;
+const typing = () =>
+  typeof document !== "undefined" &&
+  [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('textarea, input[type="text"], input:not([type])')].some((e) => e.value.trim() !== "");
+export function loginLapsed(res: Response, now = Date.now()): boolean {
+  if (res.type !== "opaqueredirect") return false;
+  if (typing()) {
+    toast.error("Phiên đăng nhập đã hết hạn", {
+      id: "hq-relogin",
+      duration: Infinity,
+      description: "Chép phần đang gõ rồi đăng nhập lại.",
+      action: { label: "Đăng nhập lại", onClick: () => location.reload() },
+    });
+    return true;
+  }
+  try {
+    if (now - Number(sessionStorage.getItem("hq-relogin") ?? 0) > RELOGIN_MS) {
+      sessionStorage.setItem("hq-relogin", String(now));
+      location.reload();
+    }
+  } catch {
+    // no storage: no reload either (it could loop); the error below still shows
+  }
+  return true;
+}
+
+const LAPSED = "Phiên đăng nhập đã hết hạn: đang mở lại trang đăng nhập";
+
 export type Api = <T>(path: string, init?: { method?: string; body?: unknown; signal?: AbortSignal }) => Promise<T>;
 
 export function makeApi(token: string): Api {
@@ -20,12 +56,14 @@ export function makeApi(token: string): Api {
       method: init.method ?? "GET",
       signal: init.signal,
       cache: "no-store",
+      redirect: "manual",
       headers: {
         "x-hq-token": token,
         ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
       },
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
     });
+    if (loginLapsed(res)) throw new ApiError(LAPSED, 401);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new ApiError((data as { error?: string }).error ?? `HTTP ${res.status}`, res.status);
     return data as never;
@@ -157,7 +195,9 @@ export function useHq(token: string) {
             headers: { "x-hq-token": token },
             signal: conn.signal,
             cache: "no-store",
+            redirect: "manual",
           });
+          if (loginLapsed(res)) throw new Error(LAPSED);
           if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
           const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
           let buf = "";

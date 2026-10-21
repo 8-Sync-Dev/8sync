@@ -257,7 +257,7 @@ export function startScan(projects: ProjectInfo[]): Promise<void> {
       const prev = s.projects.find((o) => diskKey(o.root) === diskKey(d.root));
       // Idle worktree build output goes right away (disk-clean.ts); the rest waits for a room.
       const c = d.error ? null : await cleanIdleBuild(d, inUse).catch(() => null);
-      d = c ? { ...withoutDirs(d, c.gone), cleaned: c.cleaned } : { ...d, cleaned: prev?.cleaned ?? null };
+      d = c ? { ...withoutDirs(d, c.gone), cleaned: c.cleaned ?? prev?.cleaned ?? null, inUse: c.kept } : { ...d, cleaned: prev?.cleaned ?? null };
       s.projects = [d, ...s.projects.filter((o) => diskKey(o.root) !== diskKey(d.root))];
       s.queued.delete(diskKey(p.root));
     }

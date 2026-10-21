@@ -8,6 +8,7 @@
 import { execFile, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { groupKey } from "../sidebar";
@@ -318,6 +319,13 @@ function step(job: Job, cmd: string, args: string[], cwd: string, deadline: numb
   }
   const env = { ...childEnv(), NO_COLOR: "1", FORCE_COLOR: "0", npm_config_update_notifier: "false", npm_config_fund: "false", npm_config_audit: "false", GIT_TERMINAL_PROMPT: "0" };
   const child = spawn(cmd, args, { cwd, env, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
+  // HQ itself runs at normal priority (it serves the owner); its builds do not: below normal, and on
+  // Windows every process npm starts inherits that class.
+  try {
+    if (child.pid) os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+  } catch {
+    // already exited
+  }
   let timedOut = false;
   const carry = { rest: "" };
   const onData = (b: Buffer) => pushLog(job.log, b.toString("utf8"), carry);

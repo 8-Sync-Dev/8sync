@@ -8,7 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { bytes, cleanupRoom, cleanupText, diskKey, projectRooms, type Finding, type Severity } from "@/lib/disk";
+import { bytes, cleanupRoom, cleanupText, diskKey, projectRooms, sendable, type Finding, type Severity } from "@/lib/disk";
 import { inboxText } from "@/lib/labels";
 import type { Awake } from "@/lib/server/awake";
 import type { GuardView } from "@/lib/server/guard-trigger";
@@ -623,16 +623,17 @@ function ProjectDiskRow({
                     {bytes(f.bytes)}
                   </span>{" "}
                   · {f.why}
+                  {p.inUse?.includes(f.path) ? " · đang có phòng hoặc tiến trình dùng: để nguyên" : ""}
                 </p>
               </div>
               <Button
                 size="icon-sm"
                 variant="ghost"
                 className={TOUCH}
-                disabled={!room || sending != null}
+                disabled={!room || sending != null || p.inUse?.includes(f.path)}
                 onClick={() => room && void send(p, [f], room, f.id)}
-                aria-label={room ? `Gửi riêng mục ${f.path} cho ${room.label}` : "Chưa có phòng để gửi"}
-                title={room ? `Gửi riêng mục này cho ${room.label}` : "Chưa có phòng để gửi"}
+                aria-label={p.inUse?.includes(f.path) ? `${f.path} đang được dùng, không gửi dọn` : room ? `Gửi riêng mục ${f.path} cho ${room.label}` : "Chưa có phòng để gửi"}
+                title={p.inUse?.includes(f.path) ? "Đang được dùng: HQ tự dọn khi rảnh" : room ? `Gửi riêng mục này cho ${room.label}` : "Chưa có phòng để gửi"}
               >
                 {sending === `${k}:${f.id}` ? <Loader2Icon className="animate-spin motion-reduce:animate-none" /> : <SendIcon />}
               </Button>
@@ -654,7 +655,7 @@ function ProjectDiskRow({
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" className={TOUCH} disabled={!room || sending != null} onClick={() => room && void send(p, p.findings, room, "*")}>
+        <Button size="sm" className={TOUCH} disabled={!room || sending != null} onClick={() => room && void send(p, sendable(p), room, "*")}>
           {busyAll ? <Loader2Icon className="animate-spin motion-reduce:animate-none" /> : <SendIcon />}
           {room ? (p.findings.length ? `Gửi dọn cho ${room.label}` : `Gửi kiểm tra cho ${room.label}`) : "Chưa có phòng"}
         </Button>
@@ -681,7 +682,7 @@ function ProjectDiskRow({
       {!room && <p className="text-xs text-muted-foreground">Dự án chưa có phòng nào chạy: mở một phòng để gửi tin dọn.</p>}
       {p.cleaned && (
         <p className="text-xs text-muted-foreground">
-          HQ tự dọn {dayTime(p.cleaned.at)}: xoá {bytes(p.cleaned.bytes)} build của worktree rảnh ({p.cleaned.dirs.map((d) => d.split("/").slice(-2).join("/")).join(", ")})
+          HQ tự dọn {dayTime(p.cleaned.at)}: xoá {bytes(p.cleaned.bytes)} build của worktree rảnh ({p.cleaned.dirs.map((d) => d.replace(/^\.claude\/worktrees\//, "")).join(", ")})
         </p>
       )}
       {sent && (
