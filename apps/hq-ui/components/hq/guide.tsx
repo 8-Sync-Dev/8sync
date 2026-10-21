@@ -54,7 +54,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: BellRingIcon,
     title: "Chỉ trả lời việc cần anh",
     body:
-      "Khung \"Anh cần trả lời\" hiện câu hỏi và xin quyền của mọi phòng. Im lặng 60 giây: câu hỏi sản phẩm/kỹ thuật thì critic (Opus) chọn; xin quyền thì việc an toàn trong dự án (test, sửa file, đẩy nhánh card) tự chạy, còn merge, release, cài gói, file secret luôn chờ anh. " +
+      "Khung \"Anh cần trả lời\" hiện câu hỏi và xin quyền của mọi phòng. Anh không trả lời trong vài giây (mặc định 5 s, chỉnh bằng `8sync ccc auto on --after`): câu hỏi sản phẩm/kỹ thuật thì critic (Opus) chọn; xin quyền thì việc an toàn trong dự án (test, sửa file, đẩy nhánh card) tự chạy, còn merge, release, cài gói, file secret luôn chờ anh. " +
       "Câu Ship (merge, phát hành) chỉ anh trả lời.",
   },
   {

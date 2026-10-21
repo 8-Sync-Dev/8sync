@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.38] — 2026-10-22
+
+### Changed
+- **Critic trả lời sau 5 giây thay vì 60.** Owner 2026-10-22 ("không cần sau 1 phút auto trả lời, luôn có nút bật auto mặc định bật, cần tốc độ ship cao"): `auto on` mặc định `--after 5` (`DEFAULT_AFTER_S`): câu hỏi sản phẩm/kỹ thuật của phòng được critic chọn ngay khi owner không gõ vào phòng đó trong 5 giây; quyền (permit) cũng tự quyết sau 5 giây theo allowlist; phòng mà owner đang gõ (prompt < 5 s) vẫn hỏi owner. Vòng quét câu hỏi kẹt của HQ (`stuck-asks`) đọc `after_s` của 8sync thay vì 60 giây cố định (sàn 5 s; 8sync cũ không báo thì vẫn 60 s). Rail giữ nguyên: Ship, secret, tiền, xoá/không hoàn tác, deploy prod, high-risk vẫn chờ owner. Text kit và hướng dẫn HQ cập nhật.
+
 ## [0.110.36] — 2026-10-22
 ### Added
 - **Phòng hỏi → lead trả lời ngay** (owner: "khi biết ccc đang code bị dính hỏi, ccc auto phải gọi agent lead trả lời ngay làm tiếp"): mỗi nhịp revive đọc cuối transcript mọi phòng lane đang idle; phòng nào dừng chờ một câu AskUserQuestion chưa ai trả lời (critic không bắt được: câu rails Ship/secret/tiền/xoá, hỏi lúc chưa có kit) → lead nhận MỘT tin liệt kê từng phòng + câu hỏi, được đánh thức NGAY, và trả lời từng phòng qua `8sync ccc msg` (câu sản phẩm/kỹ thuật tự quyết theo DECISIONS.md, không cần owner; câu rails gom một câu AskUserQuestion cho owner). Giãn 10 phút mỗi phòng để không spam. Phòng lead không nằm trong danh sách (câu Ship của lead đã có nhắc 30 phút của ship-ask).

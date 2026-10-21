@@ -130,7 +130,7 @@ pub(super) fn hook(input: &str, home: &Path) -> Option<String> {
 /// `8sync ccc delegate check --cwd <dir>` with the AskUserQuestion input (`{"questions": …}`) on
 /// stdin: may the critic take this question for a room in `dir`? Same rails as [`hook`] (delegate on,
 /// auto scope, [`decide`]), minus the owner-typing check: HQ asks this only for a question that has
-/// sat on screen past the owner's 60 s. Prints `{"critic": bool}`.
+/// sat on screen past the owner's delay (`auto on --after`, default 5 s). Prints `{"critic": bool}`.
 pub(super) fn check(input: &str, cwd: Option<&str>, home: &Path) -> Value {
     let v: Value = serde_json::from_str(input).unwrap_or(Value::Null);
     let reason = (enabled(home) && super::auto::in_scope(home, cwd)).then(|| decide(&v)).flatten();

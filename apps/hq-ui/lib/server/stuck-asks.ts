@@ -5,8 +5,8 @@ import { spawn as nodeSpawn, execFile } from "node:child_process";
 import { binFor, childEnv } from "./child-env";
 import fs from "node:fs";
 import path from "node:path";
-import { criticMessage, stuckAsks } from "../stuck-asks";
-import type { AutoStatus } from "./auto";
+import { criticMessage, stuckAfterMs, stuckAsks } from "../stuck-asks";
+import { lastAutoStatus, type AutoStatus } from "./auto";
 import { getDb } from "./db";
 import { isSessionId, queueInbox } from "./inbox";
 import { loadOffice } from "./office";
@@ -90,7 +90,7 @@ export function sweepStuckAsks(status: AutoStatus, now = Date.now()): Promise<st
 async function sweep(now: number): Promise<string[]> {
   const office = await loadOffice(getDb(), now);
   const handled = readHandled();
-  const stuck = stuckAsks(office.rooms, handled, now);
+  const stuck = stuckAsks(office.rooms, handled, now, stuckAfterMs(lastAutoStatus()?.after_s));
   const done: string[] = [];
   for (const r of stuck) {
     const sid = r.session_id!;
