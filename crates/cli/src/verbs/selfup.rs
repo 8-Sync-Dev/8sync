@@ -231,6 +231,29 @@ pub(crate) fn parse_sha256_text(text: &str) -> Option<String> {
 /// digest (rate limit, or GitHub not done computing it). A plain download URL, so
 /// it is not API rate-limited. `None` for releases cut before these files existed.
 fn sidecar_digest(asset_url: &str) -> Option<String> {
+    retry_digest(SIDECAR_TRIES, SIDECAR_WAIT, || sidecar_digest_once(asset_url))
+}
+
+const SIDECAR_TRIES: u32 = 3;
+const SIDECAR_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Call `fetch` up to `tries` times, sleeping `wait` between attempts, and return
+/// the first digest. The `.sha256` file can lag the release by a few seconds, so
+/// one miss is not yet "not verified"; the waits stay short (2 x 2 s) so a
+/// rate-limited or offline box is never held up.
+fn retry_digest(tries: u32, wait: std::time::Duration, mut fetch: impl FnMut() -> Option<String>) -> Option<String> {
+    for i in 0..tries {
+        if i > 0 {
+            std::thread::sleep(wait);
+        }
+        if let Some(d) = fetch() {
+            return Some(d);
+        }
+    }
+    None
+}
+
+fn sidecar_digest_once(asset_url: &str) -> Option<String> {
     let out = Command::new("curl")
         .args(["-fsSL", "--proto", "=https", "--tlsv1.2", "--max-time", "15", &format!("{asset_url}.sha256")])
         .output()
@@ -677,7 +700,7 @@ mod tests {
         assert_eq!(super::strip_deleted_suffix(PathBuf::from(r"C:\Users\u\8sync.exe")), PathBuf::from(r"C:\Users\u\8sync.exe"));
     }
 
-    use super::{check_due, find_asset, first_hex64, is_newer, parse_digest, parse_sha256_text, strip_verbatim_drive, tag_from_release_url};
+    use super::{check_due, find_asset, first_hex64, is_newer, parse_digest, parse_sha256_text, retry_digest, strip_verbatim_drive, tag_from_release_url};
     use std::path::PathBuf;
 
     fn tmpdir(tag: &str) -> PathBuf {
@@ -749,6 +772,24 @@ mod tests {
         drop(again);
         assert!(!d.join(".8sync.update.lock").exists(), "released on drop");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn sidecar_is_retried_until_it_appears_then_gives_up() {
+        let hex = "9e837aee823ba27cee8abe4e1121792583268a41726bfaee067dfe9a5de69f1a";
+        let none = std::time::Duration::ZERO;
+        let mut calls = 0;
+        let got = retry_digest(3, none, || {
+            calls += 1;
+            (calls == 2).then(|| hex.to_string())
+        });
+        assert_eq!((got.as_deref(), calls), (Some(hex), 2), "stops at the first hit");
+        let mut calls = 0;
+        let got = retry_digest(3, none, || {
+            calls += 1;
+            None
+        });
+        assert_eq!((got, calls), (None, 3), "exhausted tries -> unverified warning, never a block");
     }
 
     #[test]

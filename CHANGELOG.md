@@ -8,6 +8,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - **A permission prompt after an auto-compact no longer waits on the owner forever.** The permit hook counted Claude Code's post-compaction summary (`isCompactSummary`) as the owner typing. Within 60 s of a compact, every prompt therefore stayed with the owner. Summaries and transcript-only lines no longer count.
 - **A room may move to another card's worktree of its own repo by itself.** `EnterWorktree` into `<repo>/.claude/worktrees/<name>` was refused because it lies outside the room's current worktree (seen live: dev in card-31 entering card-58). It is now allowed for one plain folder name directly under the repo's `.claude/worktrees/`. Anything else still waits for the owner.
 
+### Fixed
+- `8sync up`: when the GitHub API has no digest, the release's `.sha256` file is tried up to 3 times (2 s apart) before "checksum NOT VERIFIED"; a missing digest still never blocks the install, a wrong one still does.
+
 ## [0.110.32] — 2026-10-21
 
 ### Fixed
