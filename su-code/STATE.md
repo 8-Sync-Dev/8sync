@@ -19,7 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
-v0.110.28: guard chặn ngủ ≥ 120 s trong phòng; dọn đĩa chỉ giữ thư mục của phòng `running`; Báo cáo đo model/thời gian từ transcript + task từ board. Chờ owner: repo công khai, token HQ, merge tay zus-backend #5-#14.
+v0.110.29: tick auto chạy server 60 s (không cần tab); Báo cáo có dòng +/− từ transcript; phòng giữ card giữ thư mục build; guard nhắc kết thúc lượt khi có lệnh nền. Đang UAT: quét transcript phòng xem sau khi bị chặn `sleep` phòng làm gì. Chờ owner: repo công khai, token HQ, merge tay zus-backend #5-#14.
 
 ## Next
 - Upstream Windows bug: hq ingest stores NTFS inode > 2^53 in `ingest_state.offset` → RangeError (fix: bigint stat + `setReadBigInts`).

@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.29] — 2026-10-21
+
+### Fixed
+- **HQ tự đánh thức / hồi sinh phòng kể cả khi không mở tab.** Owner 2026-10-21: "tự lên task chậm". Vòng tick (`runAutoTick`: nhắc phòng rảnh ≥ 60 s, `auto revive`, đóng câu hỏi kẹt, "Tự soi ảnh") trước chỉ chạy khi tab Office poll `/api/auto` mỗi 60 s, và `STALE_MS` quên "phòng rảnh từ lúc nào" 3 phút sau poll cuối — đóng HQ là không ai đánh thức phòng. Giờ server chạy vòng này mỗi phút từ lúc khởi động (`instrumentation.ts`), một lượt một lúc (tab poll trùng lượt thì chờ, báo không có gì mới).
+- **Báo cáo: dòng +/− cho mọi phòng Claude Code.** Đếm từ `Write`/`Edit`/`MultiEdit`/`NotebookEdit` trong transcript, đọc tiếp từ byte đã đọc (file chỉ nối thêm): lần đầu 1,1 s cho 23 phòng (transcript 135 MB: 368 ms), lần sau 25 ms. Snapshot status line vẫn thắng khi có. Phòng omp vẫn "chưa đo".
+- **Dọn đĩa: phòng đang giữ card giữ thư mục.** v0.110.28 chỉ giữ phòng `running`; phòng giữ card giữa hai nhịp mất cache build và build lại từ đầu. Giờ giữ khi phòng đang chạy, đang chờ owner, hoặc đang giữ card trên board; phòng "Chờ card" vẫn được dọn.
+- **Guard: lời dặn khi chặn `sleep`** nói rõ: đang có lệnh nền thì kết thúc lượt ngay, không `auto wait` (cũng giữ tin báo lại).
+
 ## [0.110.28] — 2026-10-21
 
 ### Fixed

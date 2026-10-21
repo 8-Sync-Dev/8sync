@@ -431,7 +431,7 @@ fn sleeping(cmd: &str, background: bool) -> Option<String> {
     (total >= SLEEP_MAX_S).then(|| {
         let shown = if total == u64::MAX { "forever".to_string() } else { format!("{total} s") };
         format!(
-            "this command sleeps {shown}; a turn must not idle {SLEEP_MAX_S} s or more. A command Claude Code moved to the background is reported to you when it finishes: end the turn instead of sleeping. Waiting for a card or a message: `8sync ccc auto wait` (returns the moment one arrives). Polling something else: one check now, then end the turn."
+            "this command sleeps {shown}; a turn must not idle {SLEEP_MAX_S} s or more. A command Claude Code moved to the background is reported to you when it finishes — while one runs, END THE TURN NOW (no sleep, no `auto wait`: both hold the report back). No background command and nothing to do: `8sync ccc auto wait` (returns the moment a card or message arrives). Polling something else: one check now, then end the turn."
         )
     })
 }

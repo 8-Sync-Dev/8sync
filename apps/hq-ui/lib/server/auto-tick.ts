@@ -1,4 +1,7 @@
-// Server side of "Chạy liên tục": called from GET /api/auto (the Office tab polls it every 60 s).
+// Server side of "Chạy liên tục": [startAutoTickLoop] runs it every TICK_LOOP_MS from server start, and
+// GET /api/auto runs it too (its answer shows the tab what was ticked). Before v0.110.29 only the Office
+// tab's 60 s poll ran it, and STALE_MS forgot every idle time 3 min after the last poll: with no HQ tab
+// open nothing was woken or revived (owner 2026-10-21: "tự lên task chậm").
 import fs from "node:fs";
 import path from "node:path";
 import { focusRests } from "../auto";
@@ -11,6 +14,9 @@ import { loadOffice } from "./office";
 import { stateDir } from "./paths";
 import { run } from "./proc";
 import { readIdleStatus } from "./idle";
+import { autoStatus } from "./auto";
+import { eyeAutoTick } from "./eye";
+import { sweepStuckAsks } from "./stuck-asks";
 import { teamOf } from "../idle";
 
 /** `revived`: when HQ last asked 8sync to bring back team rooms that died (machine restart). */
@@ -64,7 +70,46 @@ function writeState(s: State): void {
  * idleSince is the first poll that saw the session idle (state.idle); a session that is busy again
  * loses its entry. The first sighting therefore never ticks: the next 60 s poll can.
  */
-export async function runAutoTick(status: AutoStatus, now = Date.now()): Promise<{ ticked: string[]; error?: string }> {
+type TickResult = { ticked: string[]; error?: string };
+const g = globalThis as { __hqAutoTick?: { flight: Promise<TickResult> | null; timer: NodeJS.Timeout | null } };
+const mem = () => (g.__hqAutoTick ??= { flight: null, timer: null });
+
+/** One tick at a time: the loop and a tab's poll landing together must not queue two prompts; the later caller waits and reports nothing new. */
+export function runAutoTick(status: AutoStatus, now = Date.now()): Promise<TickResult> {
+  const m = mem();
+  if (m.flight) return m.flight.then((r) => ({ ticked: [], ...(r.error ? { error: r.error } : {}) }));
+  m.flight = tickOnce(status, now).finally(() => {
+    m.flight = null;
+  });
+  return m.flight;
+}
+
+/** Every tab-independent minute: wake idle rooms, revive dead ones, close stuck asks, "Tự soi ảnh". */
+export const TICK_LOOP_MS = 60_000;
+export function startAutoTickLoop(): void {
+  const m = mem();
+  if (m.timer) return;
+  m.timer = setInterval(() => {
+    void autoStatus()
+      .then(async (status) => {
+        await runAutoTick(status);
+        void sweepStuckAsks(status);
+        void eyeAutoTick(getDb());
+      })
+      .catch((e) => console.error("[hq] auto tick loop failed:", e instanceof Error ? e.message : String(e)));
+  }, TICK_LOOP_MS);
+  m.timer.unref();
+}
+
+/** Test seam. */
+export function stopAutoTickLoop(): void {
+  const m = mem();
+  if (m.timer) clearInterval(m.timer);
+  m.timer = null;
+  m.flight = null;
+}
+
+async function tickOnce(status: AutoStatus, now: number): Promise<TickResult> {
   // Off, paused, or the lease gate is holding (expired / over budget / owner away): never wake anyone.
   // With "Lease liên tục" on, `8sync ccc auto revive` still runs while gated: its lease tick renews on
   // the owner's presence, and it wakes the rooms by itself once the usage window drops.

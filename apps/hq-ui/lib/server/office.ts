@@ -88,33 +88,74 @@ export function readUsage(sessionId: string | null | undefined): Usage | null {
   }
 }
 
-/** The head holds the session's first timestamps; the tail its latest assistant line, even after a long tool result. */
-const HEAD_BYTES = 64 * 1024;
-const TAIL_BYTES = 256 * 1024;
 const TS_RE = /"timestamp":"([^"]{10,40})"/g;
 const MODEL_RE = /"model":"([^"<]+)"/;
+const EDIT_TOOL_RE = /"name":"(Write|Edit|MultiEdit|NotebookEdit)"/;
+const CHUNK_BYTES = 4 * 1024 * 1024;
 
-export type TranscriptStats = { model: string | null; first: number | null; last: number | null };
-type Measured = TranscriptStats & { size: number; mtime: number };
+/** `offset`: bytes of the transcript consumed so far (whole lines); the next read starts there. */
+export type TranscriptStats = { model: string | null; first: number | null; last: number | null; lines_added: number; lines_removed: number; offset: number };
+/** `written`: line count of the last `Write` per file, so a rewrite counts the old content as removed. */
+type Measured = TranscriptStats & { size: number; mtime: number; written: Map<string, number> };
 const measured = new Map<string, Measured>();
 
-/** Timestamps (ms) found in `buf`, in file order, and the last model an assistant line names. */
-function scanLines(buf: Buffer): { ts: number[]; model: string | null } {
-  const ts: number[] = [];
-  let model: string | null = null;
-  for (const line of buf.toString("utf8").split("\n")) {
-    for (const m of line.matchAll(TS_RE)) {
-      const t = Date.parse(m[1]);
-      if (Number.isFinite(t)) ts.push(t);
+const nLines = (s: unknown) => (typeof s === "string" && s.length ? s.split("\n").length - (s.endsWith("\n") ? 1 : 0) : 0);
+
+type ToolUse = { type?: string; name?: string; input?: Record<string, unknown> };
+
+/** Lines a `Write` / `Edit` / `MultiEdit` / `NotebookEdit` call adds and removes, folded into `m`. */
+function countEdit(m: Measured, b: ToolUse): void {
+  const i = b.input ?? {};
+  switch (b.name) {
+    case "Write": {
+      const n = nLines(i.content);
+      const file = typeof i.file_path === "string" ? i.file_path : "";
+      m.lines_removed += m.written.get(file) ?? 0;
+      m.written.set(file, n);
+      m.lines_added += n;
+      break;
     }
-    if (line.includes('"type":"assistant"')) model = MODEL_RE.exec(line)?.[1] ?? model;
+    case "Edit":
+      m.lines_removed += nLines(i.old_string);
+      m.lines_added += nLines(i.new_string);
+      break;
+    case "MultiEdit":
+      for (const e of Array.isArray(i.edits) ? (i.edits as Record<string, unknown>[]) : []) {
+        m.lines_removed += nLines(e?.old_string);
+        m.lines_added += nLines(e?.new_string);
+      }
+      break;
+    case "NotebookEdit":
+      m.lines_added += nLines(i.new_source);
+      break;
   }
-  return { ts, model };
+}
+
+/** Folds one transcript line into `m`: timestamps, the model an assistant line names, its edit tool calls. */
+function scanLine(m: Measured, line: string): void {
+  for (const t of line.matchAll(TS_RE)) {
+    const at = Date.parse(t[1]);
+    if (!Number.isFinite(at)) continue;
+    if (m.first == null || at < m.first) m.first = at;
+    if (m.last == null || at > m.last) m.last = at;
+  }
+  if (!line.includes('"type":"assistant"')) return;
+  m.model = MODEL_RE.exec(line)?.[1] ?? m.model;
+  if (!line.includes('"type":"tool_use"') || !EDIT_TOOL_RE.test(line)) return;
+  try {
+    // JSON.parse is `any`; the content blocks are checked one by one in countEdit.
+    const content: unknown = JSON.parse(line)?.message?.content;
+    for (const b of Array.isArray(content) ? (content as ToolUse[]) : []) if (b?.type === "tool_use") countEdit(m, b);
+  } catch {
+    /* a truncated or foreign line: no edit counted */
+  }
 }
 
 /**
- * Model and first / last timestamp of a room's Claude Code transcript, for rooms that run no status
- * line. Re-read only when the file's size or mtime moved: the head once, the tail (≤ 256 KB) per change.
+ * Model, first / last timestamp and lines added / removed (from `Write` / `Edit` / `MultiEdit` /
+ * `NotebookEdit` calls) of a room's Claude Code transcript, for rooms that run no status line.
+ * The file is append-only: each call parses only the whole lines appended since the last one
+ * (from scratch when it shrank or its mtime went back), so polls after the first cost ~ms.
  */
 export function readTranscriptStats(sessionId: string | null | undefined, cwd: string | null, root?: string): TranscriptStats | null {
   const f = sessionId ? transcriptOf(sessionId, cwd, root) : null;
@@ -127,26 +168,40 @@ export function readTranscriptStats(sessionId: string | null | undefined, cwd: s
   }
   const hit = measured.get(f);
   if (hit && hit.size === st.size && hit.mtime === st.mtimeMs) return hit;
+  const m: Measured =
+    hit && st.size >= hit.size && st.mtimeMs >= hit.mtime
+      ? { ...hit, written: new Map(hit.written) }
+      : { model: null, first: null, last: null, lines_added: 0, lines_removed: 0, offset: 0, size: 0, mtime: 0, written: new Map() };
   let fd: number | null = null;
   try {
     fd = fs.openSync(f, "r");
-    const read = (at: number, len: number) => {
-      const buf = Buffer.alloc(len);
-      return buf.subarray(0, fs.readSync(fd!, buf, 0, len, at));
-    };
-    const first = hit?.first ?? (scanLines(read(0, Math.min(HEAD_BYTES, st.size))).ts[0] ?? null);
-    const tailAt = Math.max(0, st.size - TAIL_BYTES);
-    const tail = scanLines(read(tailAt, st.size - tailAt));
-    const out: Measured = {
-      size: st.size,
-      mtime: st.mtimeMs,
-      first,
-      // A tail that is one huge tool result names no time: the write time stands in.
-      last: tail.ts.length ? Math.max(...tail.ts) : hit?.last ?? Math.round(st.mtimeMs),
-      model: tail.model ?? hit?.model ?? null,
-    };
-    measured.set(f, out);
-    return out;
+    // `carry`: the chunks of a line not ended yet (joined once it ends, not per chunk).
+    let carry: Buffer[] = [];
+    let carried = 0;
+    while (m.offset + carried < st.size) {
+      const want = Math.min(CHUNK_BYTES, st.size - m.offset - carried);
+      const buf = Buffer.allocUnsafe(want);
+      const got = fs.readSync(fd, buf, 0, want, m.offset + carried);
+      if (got <= 0) break;
+      const chunk = buf.subarray(0, got);
+      const end = chunk.lastIndexOf(10);
+      if (end < 0) {
+        carry.push(chunk);
+        carried += got;
+        continue;
+      }
+      const all = carry.length ? Buffer.concat([...carry, chunk.subarray(0, end)]) : chunk.subarray(0, end);
+      for (const line of all.toString("utf8").split("\n")) scanLine(m, line);
+      m.offset += carried + end + 1;
+      carry = [chunk.subarray(end + 1)];
+      carried = got - end - 1;
+    }
+    m.size = st.size;
+    m.mtime = st.mtimeMs;
+    // A session whose latest lines are all one huge tool result names no time: the write time stands in.
+    if (m.last == null) m.last = Math.round(st.mtimeMs);
+    measured.set(f, m);
+    return m;
   } catch {
     return hit ?? null;
   } finally {
@@ -362,8 +417,8 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
         ? {
             cost_usd: snap?.cost_usd ?? null,
             duration_ms: snap?.duration_ms ?? (tr?.first != null && tr.last != null ? Math.max(0, tr.last - tr.first) : null),
-            lines_added: snap?.lines_added ?? null,
-            lines_removed: snap?.lines_removed ?? null,
+            lines_added: snap?.lines_added ?? tr?.lines_added ?? null,
+            lines_removed: snap?.lines_removed ?? tr?.lines_removed ?? null,
             context_pct: snap?.context_pct ?? null,
             model: snap?.model ?? tr?.model ?? null,
           }
