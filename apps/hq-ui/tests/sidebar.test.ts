@@ -265,3 +265,44 @@ describe("company sidebar: one team, many projects", () => {
     expect(moved[2]).toBe(rooms[2]);
   });
 });
+
+describe("company sidebar UI (rendered)", () => {
+  const S = NOW / 1000;
+  const PLATFORM = "/w/platform";
+  const IDE = "/w/ide";
+  const board = (lanes: Record<string, unknown[]>): Board => parseBoard({ schema: 1, lanes: Object.entries(lanes).map(([lane, cards]) => ({ lane, cards })), closed: [] })!;
+  const boards = [
+    { root: PLATFORM, board: board({ ready: [{ id: 1, text: "a" }], building: [{ id: 3, text: "c", claim: { room: "dev", at: S - 60 } }] }) },
+    { root: IDE, board: board({ building: [{ id: 9, text: "z", claim: { room: "dev2", at: S - 30 } }] }) },
+    { root: "/w/news", board: board({ ready: [{ id: 4, text: "n" }] }) },
+  ];
+  const hq = { live: "live", projects: { data: [], loading: false, error: null }, api: async () => ({}), reload: { projects: async () => {}, sessions: async () => {} } };
+
+  async function render(company: boolean) {
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { Nav } = await import("@/components/hq/nav");
+    const rooms = [room({ name: "dev", root: PLATFORM, status: "running" }), room({ name: "dev2", root: PLATFORM, status: "running" }), room({ name: "qa", root: PLATFORM })];
+    const office = { office: { at: NOW, rooms, hidden: [], company }, error: null, retry: () => {} };
+    const props = { hq, scope: { project: null, session: null }, office, boards, onHome: () => {}, onOpenRoom: () => {}, onOpenFolder: () => {}, onOpenRepo: () => {}, repo: null };
+    return renderToStaticMarkup(createElement(Nav, props as unknown as Parameters<typeof Nav>[0]));
+  }
+
+  it("company on: one room list tagged by project, projects with how many work there, add box for the company", async () => {
+    const html = await render(true);
+    for (const s of ["Phòng của công ty · 3", "Công ty · 3 dự án", "dev2 ở ide", "dev ở platform", "1 người", "chưa ai", "Thêm dự án cho công ty"]) expect(html).toContain(s);
+    // no per-project room folders: no "Thao tác với dự án" menu, no "Mở team ở repo mới"
+    expect(html).not.toContain("Thao tác với dự án");
+    expect(html).not.toContain("Mở team ở repo mới");
+    // each room once
+    expect(html.match(/Thao tác với phòng dev2/g)).toHaveLength(1);
+  });
+
+  it("company off: the sidebar stays per project", async () => {
+    const html = await render(false);
+    expect(html).toContain("Thao tác với dự án platform");
+    expect(html).toContain("Mở team ở repo mới");
+    expect(html).not.toContain("Phòng của công ty");
+  });
+});
+
