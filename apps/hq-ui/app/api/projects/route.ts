@@ -1,6 +1,7 @@
 import path from "node:path";
 import { projectIdFor, withMissing, type ProjectRow } from "@/lib/server/db";
 import { bad, json, open, readBody } from "@/lib/server/http";
+import { knownProjects } from "@/lib/server/known-projects";
 import { validateProjectPath } from "@/lib/server/validate";
 
 export const runtime = "nodejs";
@@ -9,7 +10,8 @@ export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
   const rows = o.db.prepare("SELECT id, path, name, added_at FROM projects ORDER BY added_at").all() as ProjectRow[];
-  return json({ projects: withMissing(rows) });
+  // `known`: every other repo this machine's 8sync has seen (auto scope, team roots, pins, sessions), for one-tap opening.
+  return json({ projects: withMissing(rows), known: knownProjects(o.db, rows.map((r) => r.path)) });
 }
 
 export async function POST(req: Request) {

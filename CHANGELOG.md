@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.47] — 2026-10-22
+### Added
+- **Sidebar HQ: mục "Dự án trên máy"** (owner 2026-10-22: "nên có chỗ hiển thị all dự án trong máy để bấm mở"): mọi repo 8sync từng thấy trên máy (scope auto, team roots, dự án đã đóng, ghim, thư mục của các phiên HQ ghi nhận) mà chưa thêm vào HQ và chưa có phòng, mỗi dòng một nút Mở: thêm vào HQ rồi mở Văn phòng để bấm "Mở team"; không còn phải gõ đường dẫn. `/api/projects` thêm `known` (chỉ thư mục còn tồn tại). Test known-projects 1.
+
 ## [0.110.46] — 2026-10-22
 ### Added
 - **Tab 3D: biển tên trên mỗi bàn** (tiếp .43; owner: "ui ux strong realistic working day"): sprite 2 dòng trên bàn ghi tên phòng và card đang giữ (`#12 · qa`), không có card thì "đang làm / chờ anh / kẹt / rảnh" (dòng hai màu cam khi chờ anh); tooltip rê chuột thêm tiêu đề card. Canvas texture 256×96, không tải font, không thêm dependency. Test office-3d +1.

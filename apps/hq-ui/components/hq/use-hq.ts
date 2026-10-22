@@ -1,5 +1,6 @@
 "use client";
 
+import type { KnownProject } from "@/lib/known-projects";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { ChannelMode, Message, Project, Session, Task } from "./types";
@@ -97,6 +98,8 @@ const sleep = (ms: number, signal: AbortSignal) =>
 export function useHq(token: string) {
   const api = useMemo(() => makeApi(token), [token]);
   const [projects, setProjects] = useState<Load<Project[]>>(init([]));
+  // Repos the machine knows but the owner has not added ("Dự án trên máy").
+  const [known, setKnown] = useState<KnownProject[]>([]);
   const [sessions, setSessions] = useState<Load<Session[]>>(init([]));
   const [channelMode, setChannelMode] = useState<ChannelMode | null>(null);
   const [tasks, setTasks] = useState<Load<Task[]>>(init([]));
@@ -106,8 +109,9 @@ export function useHq(token: string) {
 
   const loadProjects = useCallback(async () => {
     try {
-      const r = await api<{ projects: Project[] }>("/api/projects");
+      const r = await api<{ projects: Project[]; known?: KnownProject[] }>("/api/projects");
       setProjects({ data: r.projects, loading: false, error: null });
+      setKnown(r.known ?? []);
     } catch (e) {
       setProjects((p) => ({ ...p, loading: false, error: (e as Error).message }));
     }
@@ -271,6 +275,7 @@ export function useHq(token: string) {
     api,
     live,
     projects,
+    knownProjects: known,
     sessions,
     channelMode,
     tasks,
