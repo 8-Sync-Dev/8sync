@@ -54,7 +54,7 @@ mod ship_loop;
 mod ship_fast;
 pub(crate) mod resume;
 mod pressure;
-mod reap;
+pub(crate) mod reap;
 mod room;
 mod statusline;
 mod taskdone;
@@ -245,6 +245,8 @@ pub fn run(a: Args) -> Result<()> {
             // scope moved here (the nested repo is out of auto by then, revive no longer opens it).
             let here = rest.first().is_some_and(|a| a == "on") && rest.iter().any(|a| a == "--here");
             if rest.first().is_some_and(|a| a == "revive") {
+                // Shots whose 8sync died leave Chromium rendering: HQ runs revive every minute.
+                crate::verbs::shot::sweep_zombies();
                 // Only the roots `auto up` brought a team up in (HQ calls this without a cwd), one
                 // revive at a time (HQ and a boot hook can both fire it).
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());

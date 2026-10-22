@@ -106,3 +106,11 @@ export function flightPoint(h: Handoff, p: number, height = 1.6): { x: number; y
   const e = 1 - Math.pow(1 - q, 3);
   return { x: h.from.x + (h.to.x - h.from.x) * e, y: 0.7 + Math.sin(Math.PI * q) * height, z: h.from.z + (h.to.z - h.from.z) * e };
 }
+
+/** Shirts by role (who sits where reads at a glance); the state shows on the floor ring, the screen and the tag. */
+export const ROLE_SHIRT: Record<string, number> = {
+  lead: 0x3f6fc0, ba: 0x4f86b8, plan: 0x4f86b8, dev: 0x2fa088, fullstack: 0x2fa088, ui: 0x9a66d6, ai: 0x9a66d6,
+  qa: 0xd98a4a, tester: 0xd98a4a, review: 0xc0566a, reviewer: 0xc0566a, rd: 0x8f9e3c, arch: 0x6a70c8, architect: 0x6a70c8,
+};
+/** The room's role (`fullstack`, `tester`…) or its crew from the name (`dev2` → `dev`). */
+export const shirtOf = (role: string | null, label: string): number => ROLE_SHIRT[role ?? ""] ?? ROLE_SHIRT[label.toLowerCase().replace(/[0-9]+$/, "")] ?? 0x7a8696;

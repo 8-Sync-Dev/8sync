@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DESK_GAP, FLOOR_PAD, MAX_COLS, STATE_COLOR, cameraDistance, deskSign, flightPoint, handoffs, holders, layoutOffice } from "@/lib/office-3d";
+import { DESK_GAP, FLOOR_PAD, MAX_COLS, STATE_COLOR, cameraDistance, deskSign, flightPoint, handoffs, holders, layoutOffice, ROLE_SHIRT, shirtOf } from "@/lib/office-3d";
 import { NOW_STATES } from "@/lib/now";
 
 const room = (i: number, state: "working" | "needs" | "idle" = "working") => ({ key: `r${i}`, label: `dev${i}`, state, role: "dev" });
@@ -66,5 +66,15 @@ describe("card handoffs between desks", () => {
     expect(end.y).toBeCloseTo(0.7);
     expect(flightPoint(h, 0.5).y).toBeGreaterThan(2);
     expect(flightPoint(h, 2)).toEqual(flightPoint(h, 1));
+  });
+});
+
+describe("shirtOf (owner 2026-10-22: the 3D office was one green clone, \"qúa xấu\")", () => {
+  it("dresses by role id, else by crew name with its number dropped, else a neutral grey", () => {
+    expect(shirtOf("tester", "anything")).toBe(ROLE_SHIRT.qa);
+    expect(shirtOf(null, "dev2")).toBe(ROLE_SHIRT.dev);
+    expect(shirtOf(null, "Lead")).toBe(ROLE_SHIRT.lead);
+    expect(shirtOf(null, "mystery")).toBe(0x7a8696);
+    expect(new Set(["lead", "dev", "qa", "review", "rd", "ui"].map((n) => shirtOf(null, n))).size).toBe(6);
   });
 });
