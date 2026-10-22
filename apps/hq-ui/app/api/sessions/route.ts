@@ -5,7 +5,7 @@ import { startHqSession } from "@/lib/server/start";
 import { beats, channelStates, isFresh, notePane } from "@/lib/server/channel";
 import { detectPane } from "@/lib/server/pane";
 import { loadFloor, ompSessions } from "@/lib/server/floor";
-import { capturePlain, channelArgs, listTmux, mergedSessions } from "@/lib/server/proc";
+import { capturePlain, channelArgs, listClaudeAgents, listTmux, mergedSessions } from "@/lib/server/proc";
 import { toTmuxName, validateProjectPath } from "@/lib/server/validate";
 
 export const runtime = "nodejs";
@@ -57,7 +57,7 @@ export async function POST(req: Request) {
   } catch (e) {
     return bad((e as Error).message, 500);
   }
-  if (!r.ok) return bad(`tmux: ${r.stderr.trim() || "failed to start"}`, 502);
+  if (!r.ok) return bad(`không mở được session: ${r.stderr.trim() || "failed to start"}`, 502);
   const { channel, startedAt: now } = r;
   return json(
     {
@@ -83,4 +83,19 @@ function uiPort(req: Request): string | undefined {
   if (fromEnv && /^\d{1,5}$/.test(fromEnv)) return fromEnv;
   const m = /:(\d{1,5})$/.exec(req.headers.get("host") ?? "");
   return m?.[1];
+}
+
+/**
+ * "Xoá session rác" (owner 2026-10-22: "tab session nên có nút xoá session rác"): delete the journal
+ * rows of every session that is gone (not in tmux, not in `claude agents`). Nothing running is touched;
+ * HQ keeps their messages. Refused while `claude agents` cannot answer: every row would look gone then.
+ */
+export async function DELETE(req: Request) {
+  const o = open(req);
+  if ("res" in o) return o.res;
+  if ((await listClaudeAgents()) == null) return bad("claude agents không trả lời: không biết session nào còn chạy, chưa xoá gì", 503);
+  const gone = (await mergedSessions(o.db)).filter((s) => s.status === "ended" && s.source === "journal").map((s) => s.name);
+  const drop = o.db.prepare("DELETE FROM sessions WHERE name = ?");
+  for (const name of gone) drop.run(name);
+  return json({ deleted: gone.length });
 }

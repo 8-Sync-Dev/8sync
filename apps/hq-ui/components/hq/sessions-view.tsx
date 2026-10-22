@@ -1,6 +1,6 @@
 "use client";
 
-import { MonitorIcon, PlayIcon, RadioIcon, ShieldOffIcon, SquareIcon, TerminalSquareIcon } from "lucide-react";
+import { MonitorIcon, PlayIcon, RadioIcon, ShieldOffIcon, SquareIcon, TerminalSquareIcon, Trash2Icon } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -19,6 +19,28 @@ import type { ChannelMode, Project, Session } from "./types";
 
 const TerminalPanel = dynamic(() => import("./terminal").then((m) => m.TerminalPanel), { ssr: false });
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** "Xoá session rác": DELETE /api/sessions drops the rows of sessions that are gone; running ones stay. */
+function ClearEnded({ hq, n }: { hq: Hq; n: number }) {
+  const [busy, setBusy] = useState(false);
+  async function clear() {
+    setBusy(true);
+    try {
+      const r = await hq.api<{ deleted: number }>("/api/sessions", { method: "DELETE" });
+      toast.success(`Đã xoá ${r.deleted} session đã dừng`, { description: "Session đang chạy giữ nguyên; tin nhắn cũ vẫn còn trong Chat." });
+      await hq.reload.sessions();
+    } catch (e) {
+      toast.error("Chưa xoá được session rác", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void clear()} title="Xoá khỏi danh sách mọi session đã dừng. Không dừng session nào đang chạy.">
+      <Trash2Icon aria-hidden /> {busy ? "Đang xoá…" : `Xoá session rác (${n})`}
+    </Button>
+  );
+}
 
 export function SessionsView({
   hq,
@@ -145,9 +167,12 @@ export function SessionsView({
           </div>
         )}
         {!error && !loading && split.ended.length > 0 && (
-          <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" aria-expanded={showEnded} onClick={() => setShowEnded((v) => !v)}>
-            {showEnded ? "Ẩn session đã dừng" : `Hiện session đã dừng (${split.ended.length})`}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" aria-expanded={showEnded} onClick={() => setShowEnded((v) => !v)}>
+              {showEnded ? "Ẩn session đã dừng" : `Hiện session đã dừng (${split.ended.length})`}
+            </Button>
+            <ClearEnded hq={hq} n={split.ended.length} />
+          </div>
         )}
       </div>
 

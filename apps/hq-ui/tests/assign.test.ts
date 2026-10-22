@@ -11,6 +11,8 @@ vi.mock("@/lib/server/proc", async (orig) => ({
   listTmux: async () => m.live.map((name) => ({ name, created: 0, pid: null, cwd: null })),
   sendKeys: m.sendKeys,
   startTmux: m.startTmux,
+  // tmux "is here" for these tests (on Windows HQ would start background sessions instead).
+  hasTmux: async () => true,
   capturePlain: async () => "> ",
   channelArgs: () => ({ args: [], mode: "off", reason: null }),
 }));

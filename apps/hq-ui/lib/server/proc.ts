@@ -29,6 +29,13 @@ export function run(cmd: string, args: string[], timeoutMs = 4000, cwd?: string)
   });
 }
 
+/** tmux runs here (`tmux -V`), asked once per process. Windows has none: HQ starts background sessions instead (lib/server/start.ts). */
+let tmuxHere: Promise<boolean> | null = null;
+export function hasTmux(): Promise<boolean> {
+  tmuxHere ??= run("tmux", ["-V"], 3000).then((r) => r.ok);
+  return tmuxHere;
+}
+
 export type TmuxSession = { name: string; created: number; pid: number | null; cwd: string | null };
 
 export async function listTmux(): Promise<TmuxSession[]> {

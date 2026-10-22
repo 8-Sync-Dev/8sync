@@ -200,9 +200,14 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     setRepo({ root, name });
     setTab("overview");
   };
-  /** A folder with no room yet: the office lists it under "Dự án chưa có team" with its Mở team button. */
-  const openFolder = (id: number) => {
+  /**
+   * A folder with no room yet: the office, focused on that folder (owner 2026-10-22: "mở cũng không
+   * được": the office kept every project on screen, so opening looked like nothing happened).
+   */
+  const openFolder = (id: number, p?: { path: string; name: string }) => {
     onScope({ project: id, session: null });
+    const f = p ?? hq.projects.data.find((x) => x.id === id);
+    if (f) setRepo({ root: f.path, name: f.name });
     setTab("office");
   };
   // The room Chat phòng is about: its office row (doing, card, ask) feeds the brief above the timeline.
