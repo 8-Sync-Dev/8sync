@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.51] — 2026-10-22
+### Changed
+- **HQ: thanh tab gọn còn 6 + "Thêm"** (owner 2026-10-22: "ui ux loạn quá"): 14 tab không vừa một hàng, trên điện thoại phải cuộn ngang. Thanh tab giữ 6 tab dùng hằng ngày (Tổng quan, Văn phòng, Board, Chat tổng, Chat phòng, Tri thức); 8 tab còn lại (Văn phòng 3D, Preview, Flow, Báo cáo, Hạn mức, Máy, Sessions, Activity) nằm trong menu "Thêm", nút đổi tên thành tab đang mở và có gạch chân như tab thường; chấm "cần anh" của Sessions hiện trên nút. Test tabs 2.
+
 ## [0.110.50] — 2026-10-22
 ### Added
 - **`8sync ccc auto board --all`: lead của công ty nhìn board mọi dự án** (owner 2026-10-22: một công ty nhiều dự án): in board từng dự án trong scope của auto, dự án hiện tại trước, mỗi board có tiêu đề root; `--json` trả `boards[]` (mỗi phần tử có `root`); `lint` theo từng dự án. Không `--all` thì như cũ. Test auto +1.

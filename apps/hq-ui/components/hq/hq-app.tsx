@@ -3,7 +3,7 @@
 import { addressOf, deliveryOf, sessionLabel } from "@/lib/labels";
 import { roomNow } from "@/lib/now";
 import { limitsView, matchesSession } from "@/lib/office";
-import { CircleHelpIcon, MenuIcon, SendIcon, SquareTerminalIcon } from "lucide-react";
+import { ChevronDownIcon, CircleHelpIcon, MenuIcon, SendIcon, SquareTerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNarrow } from "@/hooks/use-narrow";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,8 @@ import { useOffice, type Room } from "./use-office";
 import { usePoll } from "./use-poll";
 import { MachineChip, type MachineView as MachineData } from "./machine-chip";
 import { rootKey } from "@/lib/preview";
+import { MORE_LABEL, MORE_TABS, isMore, moreLabel } from "@/lib/tabs";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { KnowView } from "./know-view";
 import { Office3D } from "./office-3d";
 import { MachineView } from "./machine-view";
@@ -322,24 +324,35 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               >
                 <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
                 <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
-                <TabsTrigger value="office3d" className="flex-none px-0">3D</TabsTrigger>
-                <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
-                <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
                 <TabsTrigger value="board" className="flex-none px-0">
                   Board
                   {view.tasks.length > 0 && <span className="text-xs text-muted-foreground tabular">{view.tasks.filter((t) => t.status !== "done").length}</span>}
                 </TabsTrigger>
-                <TabsTrigger value="preview" className="flex-none px-0">Preview</TabsTrigger>
-                <TabsTrigger value="flow" className="flex-none px-0">Flow</TabsTrigger>
-                <TabsTrigger value="report" className="flex-none px-0">Báo cáo</TabsTrigger>
-                <TabsTrigger value="usage" className="flex-none px-0">Hạn mức</TabsTrigger>
-                <TabsTrigger value="may" className="flex-none px-0">Máy</TabsTrigger>
+                <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
+                <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
                 <TabsTrigger value="know" className="flex-none px-0">Tri thức</TabsTrigger>
-                <TabsTrigger value="sessions" className="flex-none px-0">
-                  Sessions
-                  {needsYou > 0 && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
-                </TabsTrigger>
-                <TabsTrigger value="activity" className="flex-none px-0">Activity</TabsTrigger>
+                {/* The other eight tabs, one menu (owner 2026-10-22: "ui ux loạn quá"); its label is the open one. */}
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger
+                    className={cn(
+                      "relative inline-flex h-full flex-none items-center gap-1 text-sm font-medium whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                      isMore(tab) ? "text-foreground after:absolute after:inset-x-0 after:bottom-[-5px] after:h-0.5 after:bg-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
+                    aria-label={`Tab khác: ${moreLabel(tab)}`}
+                  >
+                    {moreLabel(tab)}
+                    {needsYou > 0 && !isMore(tab) && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
+                    <ChevronDownIcon aria-hidden className="size-3.5 opacity-70" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-44">
+                    {MORE_TABS.map((t) => (
+                      <DropdownMenuItem key={t} onSelect={() => setTab(t)} className={cn(tab === t && "font-semibold")}>
+                        {MORE_LABEL[t]}
+                        {t === "sessions" && needsYou > 0 && <span aria-label={`${needsYou} need you`} className="ml-auto size-1.5 rounded-full bg-st-needs" />}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </TabsList>
               {/* Phones: the header row has no room left, so the chip ends the tab row, compact and set apart by a rule. */}
               {narrow && (
