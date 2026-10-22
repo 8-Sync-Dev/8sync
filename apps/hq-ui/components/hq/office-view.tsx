@@ -517,9 +517,16 @@ export function OfficeView({
   const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
   // Company mode: a folder already in the company's scope is served by the one team (no "Mở team" there).
   const scope = office?.company ? (office.scope ?? []) : [];
-  const idleFolders = projects.filter(
+  const added = projects.filter(
     (p) => !p.missing && !allGroups.some((g) => slash(g.project.root) === slash(p.path)) && (!repo || slash(p.path) === slash(repo)) && !inScope(scope, p.path),
   );
+  // The project picked in the sidebar with no room running gets its team buttons too, even when it is
+  // only pinned or known (owner 2026-10-22, ide "0 phòng": "mất nút mở lại team").
+  const picked =
+    repo && !allGroups.some((g) => slash(g.project.root) === slash(repo)) && !added.some((p) => slash(p.path) === slash(repo)) && !inScope(scope, repo)
+      ? [{ path: repo, name: repo.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || repo }]
+      : [];
+  const idleFolders = [...added, ...picked];
   const labelOf = (key: string) => rooms.find((r) => r.key === key)?.label ?? key.slice(0, 8);
   const visits = office?.visits ?? [];
   const now = office?.at ?? 0;
@@ -570,14 +577,20 @@ export function OfficeView({
           <OfficeSkeleton />
         ) : rooms.length === 0 ? (
           <>
-            <EmptyState icon={<UsersIcon />} title="Văn phòng đang trống" action={<Button variant="outline" onClick={onStart}>Mở một session lẻ</Button>}>
-              {office.company
+            <EmptyState
+              icon={<UsersIcon />}
+              title={repo ? "Dự án này chưa có phòng nào chạy" : "Văn phòng đang trống"}
+              action={<Button variant="outline" onClick={onStart}>Mở một session lẻ</Button>}
+            >
+              {repo && idleFolders.length
+                ? "Bấm “Mở team” bên dưới: phòng của dự án mở lại, nối tiếp hội thoại cũ nếu có."
+                : office.company
                 ? "Công ty chưa có phòng nào chạy. Bấm “Mở team” ở một dự án: các phòng mở ra làm cho mọi dự án của công ty."
                 : idleFolders.length
                   ? "Bấm “Mở team” ở dự án bên dưới: HQ mở 4 phòng nền (lead, dev, qa, review) và mọi thứ hiện ở đây."
                   : "Thêm thư mục dự án ở mục Projects bên trái, rồi bấm “Mở team” để mở 4 phòng nền (lead, dev, qa, review)."}
             </EmptyState>
-            <TeamStarter projects={idleFolders} token={token} after={refresh} />
+            <TeamStarter projects={idleFolders} token={token} after={refresh} company={office.company} />
           </>
         ) : (
           <>

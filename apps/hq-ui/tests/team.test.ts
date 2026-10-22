@@ -17,6 +17,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { POST } from "@/app/api/team/route";
 import { BoostButton, BoostChoices, boostOn, TeamControls } from "@/components/hq/team-controls";
 import { getToken } from "@/lib/server/auth";
+import { pinnedRootsPath } from "@/lib/server/paths";
 import { onePerBoard, type ProjectBoard } from "@/lib/server/board";
 import { BOOST_ONLY, BOOST_TEAM, FULL_TEAM, tail, teamArgs } from "@/lib/server/team";
 import { ORIGIN, req, tempHome } from "./helpers";
@@ -96,6 +97,18 @@ describe("team", () => {
     expect((await post({ root: path.join(os.tmpdir(), "not-a-project"), action: "up" })).status).toBe(409);
     expect((await post({ root: room.cwd, action: "rm -rf" })).status).toBe(422);
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("also runs in a pinned project with no room running (the sidebar shows it with its team buttons)", async () => {
+    const pinned = fs.mkdtempSync(path.join(os.tmpdir(), "hq-team-pin-"));
+    expect((await post({ root: pinned, action: "up" })).status).toBe(409);
+    fs.mkdirSync(path.dirname(pinnedRootsPath()), { recursive: true });
+    fs.writeFileSync(pinnedRootsPath(), JSON.stringify({ [pinned]: 1 }));
+    run.mockClear();
+    const ok = await post({ root: pinned, action: "up" });
+    expect(ok.status).toBe(200);
+    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "auto", "up"], 300_000, pinned);
+    fs.rmSync(pinnedRootsPath());
   });
 
   it("refuses a second run in the same root while one is in flight (a second tab, a double click)", async () => {

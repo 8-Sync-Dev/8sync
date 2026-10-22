@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.67] — 2026-10-22
+### Fixed
+- **"⚡ Làm ngay" trên card backlog có người nhận ngay** (owner 2026-10-22, 3d-game: "bấm khẩn cấp gấp đợi lâu kinh khủng không ai làm"): card backlog/blocked chỉ gọi lead/ba; lead đang trong một goal dài, không có ba, `rd` ngồi rảnh, card P0 nằm im. Giờ nút gọi thêm `rd` (R&D) làm thay lead: viết AC + lệnh check, tách card con, `auto move <id> ready` ngay lượt này; lead vẫn nhận tin. Card ở cột khác không đổi. Test +1.
+- **Máy bớt nặng tận gốc: guard không còn gọi WMI** (owner: "fix tận gốc … ram, cpu"): mỗi nhịp guard của mỗi dự án chạy `Get-CimInstance Win32_Process` kèm command line qua PowerShell; trên máy owner WmiPrvSE phình tới 12,7 GB RAM và 22% CPU. Giờ 8sync liệt kê process bằng Win32 API trực tiếp (ToolHelp, GetProcessTimes, bộ nhớ, NtQueryInformationProcess cho command line): khoảng 0,1 giây, không qua WMI. WMI chỉ còn là đường dự phòng khi cách mới trả rỗng. Test Windows thật +1.
+- **Terminal phòng qua web VPS không còn bỏ cuộc sau 3 giây** (owner: "Fail connect terminal rất nhiều"): trang hiện "đang nối" và thử lại giãn dần (0,6 → 5 giây) suốt một phút; lỗi từ chối vẫn báo ngay.
+- **Câu hỏi 5 lựa chọn trong terminal không còn bị cắt còn 3**: terminal xin ít nhất 22 dòng và không thu nhỏ khi bàn phím điện thoại mở. Test +2.
+- **Dự án ghim hoặc trong scope mà 0 phòng vẫn có nút "Mở team"** (owner, ide: "mất nút mở lại team"): Văn phòng của dự án đang chọn hiện nút mở team dù dự án chỉ được ghim; `POST /api/team` nhận cả dự án ghim và dự án trong scope/team của auto. Test +1.
+### Changed
+- **Nút tăng tốc ngay ở Tổng quan từng dự án**: "Ship card approved" và "Thao tác team" (Ship tốc độ cao, Sấm Sét, mở lại, dọn…) ở đầu mỗi khối dự án, đúng dự án đó.
+
 ## [0.110.66] — 2026-10-22
 ### Fixed
 - **Critic sweep đụng phòng của dự án KHÔNG chạy auto** (owner: "không gửi nhầm inbox các dự án không phải chế độ 8sync ccc auto"): `sweepStuckAsks` quét mọi phòng trên máy rồi nhắn tin + đóng dialog hỏi — giờ lọc đúng `inAutoScope` + bỏ dự án bị ghim nghỉ, cùng luật với auto-tick. Rust (`ccc msg`, ship-fast/loop, relay_stuck) đã root-scope sẵn, không đổi.
