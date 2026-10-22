@@ -69,3 +69,40 @@ export function deskSign(d: DeskIn): [string, string] {
   const second = d.card ? `#${d.card.id} · ${d.card.lane}` : d.state === "needs" ? "chờ anh" : d.state === "working" ? "đang làm" : d.state === "blocked" ? "kẹt" : "rảnh";
   return [d.label, second];
 }
+
+/** A card that changed hands since the last layout: it flies from the old desk to the new one. */
+export type Handoff = { id: number; from: { x: number; z: number }; to: { x: number; z: number } };
+
+/** Which card each desk holds now (card id → desk key). */
+export function holders(desks: Desk[]): Map<number, string> {
+  const m = new Map<number, string>();
+  for (const d of desks) if (d.card) m.set(d.card.id, d.key);
+  return m;
+}
+
+/**
+ * Pure: the handoffs between two layouts — a card held by desk A before and by desk B now (B ≠ A,
+ * both still on screen). A card that appears or disappears is not a handoff (claimed from or
+ * returned to the board), and the first layout has none.
+ */
+export function handoffs(prev: Map<number, string> | null, desks: Desk[]): Handoff[] {
+  if (!prev) return [];
+  const at = new Map(desks.map((d) => [d.key, d]));
+  const out: Handoff[] = [];
+  for (const d of desks) {
+    if (!d.card) continue;
+    const was = prev.get(d.card.id);
+    if (!was || was === d.key) continue;
+    const from = at.get(was);
+    if (!from) continue;
+    out.push({ id: d.card.id, from: { x: from.x, z: from.z }, to: { x: d.x, z: d.z } });
+  }
+  return out;
+}
+
+/** Where a flying card is at progress p (0..1): straight over the floor, an arc up to `height`, ease-out. */
+export function flightPoint(h: Handoff, p: number, height = 1.6): { x: number; y: number; z: number } {
+  const q = Math.min(1, Math.max(0, p));
+  const e = 1 - Math.pow(1 - q, 3);
+  return { x: h.from.x + (h.to.x - h.from.x) * e, y: 0.7 + Math.sin(Math.PI * q) * height, z: h.from.z + (h.to.z - h.from.z) * e };
+}

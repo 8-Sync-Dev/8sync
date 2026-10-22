@@ -7,7 +7,7 @@
 import { BoxIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NOW_LABEL, roster, type NowState } from "@/lib/now";
-import { cameraDistance, deskSign, layoutOffice, STATE_COLOR, type Desk, type GroupIn } from "@/lib/office-3d";
+import { cameraDistance, deskSign, flightPoint, handoffs, holders, layoutOffice, STATE_COLOR, type Desk, type GroupIn, type Handoff } from "@/lib/office-3d";
 import { groupByRepo } from "@/lib/sidebar";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "./bits";
@@ -121,6 +121,13 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
       const avatars: { mesh: InstanceType<Three["Group"]>; desk: Desk }[] = [];
       const labels = new T.Group();
       scene.add(labels);
+      // Cards changing hands (owner 2026-10-22: "realistic working day"): a small card flies from the
+      // desk that handed it over to the one that took it, 1.2 s, then disappears. Not under reduced motion.
+      const FLIGHT_MS = 1200;
+      const cardGeo = new T.BoxGeometry(0.42, 0.04, 0.3);
+      const cardMat = new T.MeshStandardMaterial({ color: 0xf5f1e8, emissive: 0x85d840, emissiveIntensity: 0.35, roughness: 0.5 });
+      const flights: { h: Handoff; mesh: InstanceType<Three["Mesh"]>; at: number }[] = [];
+      let held: Map<number, string> | null = null;
 
       function build() {
         office.clear();
@@ -197,6 +204,7 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
       ro.observe(el);
       resize();
       build();
+      held = holders(layoutRef.current.desks);
 
       let lastLayout = layoutRef.current;
       let frames = 0;
@@ -208,6 +216,26 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
         if (layoutRef.current !== lastLayout) {
           lastLayout = layoutRef.current;
           build();
+          if (!reduced) {
+            for (const h of handoffs(held, lastLayout.desks)) {
+              const mesh = new T.Mesh(cardGeo, cardMat);
+              scene.add(mesh);
+              flights.push({ h, mesh, at: t });
+            }
+          }
+          held = holders(lastLayout.desks);
+        }
+        for (let i = flights.length - 1; i >= 0; i--) {
+          const f = flights[i];
+          const p = (t - f.at) / FLIGHT_MS;
+          if (p >= 1) {
+            scene.remove(f.mesh);
+            flights.splice(i, 1);
+            continue;
+          }
+          const q = flightPoint(f.h, p);
+          f.mesh.position.set(q.x, q.y, q.z);
+          f.mesh.rotation.y = p * Math.PI * 2;
         }
         const dt = t - last;
         last = t;

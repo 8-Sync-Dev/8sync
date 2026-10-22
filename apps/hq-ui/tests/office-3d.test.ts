@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DESK_GAP, FLOOR_PAD, MAX_COLS, STATE_COLOR, cameraDistance, deskSign, layoutOffice } from "@/lib/office-3d";
+import { DESK_GAP, FLOOR_PAD, MAX_COLS, STATE_COLOR, cameraDistance, deskSign, flightPoint, handoffs, holders, layoutOffice } from "@/lib/office-3d";
 import { NOW_STATES } from "@/lib/now";
 
 const room = (i: number, state: "working" | "needs" | "idle" = "working") => ({ key: `r${i}`, label: `dev${i}`, state, role: "dev" });
@@ -44,5 +44,27 @@ describe("deskSign", () => {
     expect(deskSign({ key: "k", label: "lead", state: "needs", role: "lead", card: null })).toEqual(["lead", "chờ anh"]);
     expect(deskSign({ key: "k", label: "qa", state: "idle", role: "qa" })).toEqual(["qa", "rảnh"]);
     expect(deskSign({ key: "k", label: "ui", state: "blocked", role: "ui" })[1]).toBe("kẹt");
+  });
+});
+
+describe("card handoffs between desks", () => {
+  const desk = (key: string, x: number, card: number | null) => ({ key, label: key, state: "working" as const, role: null, root: "/r", x, z: 0, card: card == null ? null : { id: card, lane: "qa", text: "t" } });
+  it("a card that moved from one desk to another flies; new, gone or unmoved cards do not", () => {
+    const before = [desk("dev", 0, 7), desk("qa", 2, null), desk("review", 4, 9)];
+    const after = [desk("dev", 0, 11), desk("qa", 2, 7), desk("review", 4, 9)];
+    expect(handoffs(null, after)).toEqual([]);
+    expect(handoffs(holders(before), after)).toEqual([{ id: 7, from: { x: 0, z: 0 }, to: { x: 2, z: 0 } }]);
+    // the old desk left the screen: no flight from nowhere
+    expect(handoffs(new Map([[7, "gone"]]), after)).toEqual([]);
+  });
+  it("flies in an arc from the old desk to the new one", () => {
+    const h = { id: 1, from: { x: 0, z: 0 }, to: { x: 4, z: 2 } };
+    expect(flightPoint(h, 0)).toEqual({ x: 0, y: 0.7, z: 0 });
+    const end = flightPoint(h, 1);
+    expect(end.x).toBeCloseTo(4);
+    expect(end.z).toBeCloseTo(2);
+    expect(end.y).toBeCloseTo(0.7);
+    expect(flightPoint(h, 0.5).y).toBeGreaterThan(2);
+    expect(flightPoint(h, 2)).toEqual(flightPoint(h, 1));
   });
 });
