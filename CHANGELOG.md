@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.53] — 2026-10-22
+### Changed
+- **HQ sidebar ở chế độ công ty: một team, nhiều dự án** (owner 2026-10-22: "1 cty cân all dự án tiết kiệm session claude chứ không phải mỗi dự án là mở full rooms"): khi `auto company on`, sidebar không còn xếp phòng dưới từng thư mục dự án. Mục "Phòng của công ty" liệt kê mỗi phòng một lần, chữ nhỏ bên cạnh là dự án phòng đang làm (theo card nó giữ, kể cả card ở repo khác). Mục "Công ty · N dự án" liệt kê từng dự án với số người đang làm ("1 người", "chưa ai"), số card mở và số phòng chờ anh; dự án ghim lên đầu. Ô thêm repo đổi thành "Thêm dự án cho công ty": công ty nhận card ở đó bằng phòng sẵn có, không mở thêm phòng. Tắt chế độ công ty thì sidebar như cũ. Logic thuần `companySidebar` có test 2.
+
 ## [0.110.52] — 2026-10-22
 ### Added
 - **Văn phòng 3D: card bay giữa các bàn khi đổi tay** (owner: "ui ux strong realistic working day"): card một phòng vừa giao (dev → qa → review) bay theo đường vòng cung từ bàn cũ sang bàn mới trong 1,2 giây rồi biến mất; card mới nhận từ board hay trả về board không bay. Tắt khi `prefers-reduced-motion`. Logic thuần (`handoffs`, `flightPoint`) có test 2.
