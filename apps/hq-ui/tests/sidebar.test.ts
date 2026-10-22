@@ -149,7 +149,7 @@ describe("sidebar UI", () => {
       ]),
       "core",
     );
-    for (const s of ["8sync-startup", "core", "Đang làm", "Chờ anh", "card-12", "1<span class=\"sr-only\"> phòng chờ anh</span>", "Chưa có team", "new-repo", "Mở team ở repo mới"]) expect(html).toContain(s);
+    for (const s of ["8sync-startup", "core", "Đang làm", "Chờ anh", "card-12", "1<span class=\"sr-only\"> phòng chờ anh</span>", "Chưa có team", "new-repo", "Dự án</button>"]) expect(html).toContain(s);
     expect(html).toContain('aria-current="true"');
     expect(html).not.toContain("No folders yet");
     // A registered folder that already has rooms is not listed again as roomless.
@@ -292,10 +292,9 @@ describe("company sidebar UI (rendered)", () => {
 
   it("company on: one room list tagged by project, projects with how many work there, add box for the company", async () => {
     const html = await render(true);
-    for (const s of ["Phòng của công ty · 3", "Công ty · 3 dự án", "dev2 ở ide", "dev ở platform", "1 người", "chưa ai", "Thêm dự án cho công ty"]) expect(html).toContain(s);
-    // no per-project room folders: no "Thao tác với dự án" menu, no "Mở team ở repo mới"
+    for (const s of ["Phòng của công ty · 3", "Công ty · 3 dự án", "dev2 ở ide", "dev ở platform", "1 người", "chưa ai"]) expect(html).toContain(s);
+    // no per-project room folders: no "Thao tác với dự án" menu
     expect(html).not.toContain("Thao tác với dự án");
-    expect(html).not.toContain("Mở team ở repo mới");
     // a room with no card is free: no project tag
     expect(html).not.toContain("qa ở platform");
     // each room once
@@ -305,7 +304,7 @@ describe("company sidebar UI (rendered)", () => {
   it("company off: the sidebar stays per project", async () => {
     const html = await render(false);
     expect(html).toContain("Thao tác với dự án platform");
-    expect(html).toContain("Mở team ở repo mới");
+    expect(html).toContain("Dự án</button>");
     expect(html).not.toContain("Phòng của công ty");
   });
 });

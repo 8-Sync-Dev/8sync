@@ -1,11 +1,13 @@
 "use client";
 
-import { ChevronRightIcon, FolderIcon, FolderPlusIcon, GitBranchIcon, HandIcon, LayersIcon, MoonIcon, PinIcon, SunIcon } from "lucide-react";
+import { ChevronRightIcon, FolderIcon, FolderPlusIcon, GitBranchIcon, HandIcon, LayersIcon, MoonIcon, PinIcon, PlusIcon, SunIcon } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useMemo, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { teamLabel } from "@/lib/labels";
@@ -554,37 +556,65 @@ function LiveDot({ live }: { live: Live }) {
   );
 }
 
+/**
+ * "+ Dự án" (owner 2026-10-22: "không có nút tạo dự án … tạo xong giao spec mới để làm"): one dialog.
+ * A folder that exists is added; one that does not is created (with git). With a spec, the team opens
+ * at once with the spec as its first card (`auto up "<spec>"`, on the board before any room starts).
+ */
 function AddProject({ hq, onAdded, company }: { hq: Hq; onAdded: (id: number, p?: { path: string; name: string }) => void; company: boolean }) {
+  const [open, setOpen] = useState(false);
   const [path, setPath] = useState("");
+  const [spec, setSpec] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { theme, setTheme, resolvedTheme } = useTheme();
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!path.trim()) return;
+    const p = path.trim();
+    if (!p) return;
     setBusy(true);
     setError(null);
     try {
-      const r = await hq.api<{ project: Project; existed?: boolean }>("/api/projects", {
-        method: "POST",
-        body: { path: path.trim() },
-      });
-      toast.success(
-        r.existed
-          ? `${r.project.name} đã có trong HQ`
-          : company
-            ? `Đã thêm ${r.project.name}: bấm “Mở team” trong Văn phòng để công ty nhận dự án (không mở phòng mới)`
-            : `Đã thêm ${r.project.name}: bấm “Mở team” trong Văn phòng`,
-      );
-      setPath("");
+      type Added = { project: Project; existed?: boolean };
+      let r: Added;
+      let created = false;
+      try {
+        r = await hq.api<Added>("/api/projects", { method: "POST", body: { path: p } });
+      } catch (err) {
+        if (!/does not exist/.test((err as Error).message)) throw err;
+        r = await hq.api<Added>("/api/projects", { method: "POST", body: { path: p, create: true } });
+        created = true;
+      }
       await hq.reload.projects();
-      await hq.reload.sessions();
+      setOpen(false);
+      setPath("");
       onAdded(r.project.id, r.project);
+      const name = r.project.name;
+      if (!spec.trim()) {
+        toast.success(created ? `Đã tạo ${name}` : r.existed ? `${name} đã có trong HQ` : `Đã thêm ${name}`, { description: company ? "Bấm “Đưa vào công ty” trong Văn phòng." : "Bấm “Mở team” trong Văn phòng để có phòng làm." });
+        return;
+      }
+      const wait = toast.loading(`Đang mở team cho ${name} với việc đầu tiên…`);
+      try {
+        await hq.api("/api/team", { method: "POST", body: { root: r.project.path, action: "up", task: spec.trim() } });
+        toast.success(`${name}: team đã nhận việc`, { id: wait, description: "Lead viết AC từ spec, dev/qa/review kéo card theo cột. Xem ở Board." });
+        setSpec("");
+      } catch (err) {
+        const m = (err as Error).message;
+        toast.error(`${name}: chưa mở được team`, {
+          id: wait,
+          duration: 20_000,
+          description: /trust/i.test(m)
+            ? `Claude Code cần anh tin thư mục này một lần: mở terminal ở ${r.project.path}, chạy claude, chọn Yes, rồi bấm “Mở team”. Spec đã nằm trên Board.`
+            : m,
+        });
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy(false);
+      void hq.reload.sessions();
     }
   }
 
@@ -592,49 +622,59 @@ function AddProject({ hq, onAdded, company }: { hq: Hq; onAdded: (id: number, p?
   const mounted = useSyncExternalStore(noop, () => true, () => false);
   const dark = (theme === "system" ? resolvedTheme : theme) === "dark";
   return (
-    <div className="shrink-0 border-t border-sidebar-border p-3">
-      <form onSubmit={submit} className="space-y-1.5">
-        <label htmlFor="add-project" className="text-xs font-medium text-muted-foreground">
-          {company ? "Thêm dự án cho công ty" : "Mở team ở repo mới"}
-        </label>
-        <div className="flex gap-1.5">
-          <Input
-            id="add-project"
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            placeholder="/home/you/code/app"
-            spellCheck={false}
-            autoComplete="off"
-            aria-invalid={!!error}
-            aria-describedby={error ? "add-project-error" : "add-project-hint"}
-            className="h-8 font-mono text-xs"
-          />
-          <Button type="submit" size="icon" variant="outline" disabled={busy || !path.trim()} aria-label="Thêm thư mục">
-            <FolderPlusIcon />
-          </Button>
-        </div>
-        {error ? (
-          <p id="add-project-error" className="text-xs text-destructive">
-            {error}
-          </p>
-        ) : (
-          <p id="add-project-hint" className="text-[11px] leading-snug text-pretty text-muted-foreground">
-            {company
-              ? "Công ty nhận card ở repo này bằng các phòng đang có, không mở thêm phòng."
-              : "Chỉ cần khi repo chưa có phòng nào. Dự án đang có phòng chạy tự hiện ở trên."}
-          </p>
-        )}
-      </form>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="mt-2 -ml-1 text-muted-foreground"
-        onClick={() => setTheme(dark ? "light" : "dark")}
-        disabled={!mounted}
-      >
-        {mounted && dark ? <SunIcon /> : <MoonIcon />}
-        {mounted && dark ? "Giao diện sáng" : "Giao diện tối"}
+    <div className="flex shrink-0 items-center gap-1 border-t border-sidebar-border p-2">
+      <Button type="button" size="sm" className="flex-1" onClick={() => setOpen(true)}>
+        <PlusIcon aria-hidden /> Dự án
       </Button>
+      <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" onClick={() => setTheme(dark ? "light" : "dark")} disabled={!mounted} aria-label={mounted && dark ? "Giao diện sáng" : "Giao diện tối"}>
+        {mounted && dark ? <SunIcon /> : <MoonIcon />}
+      </Button>
+      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+        <DialogContent className="sm:max-w-lg">
+          <form onSubmit={submit} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle>Dự án</DialogTitle>
+              <DialogDescription>Thư mục chưa có thì HQ tạo mới (kèm git). Có spec thì team mở ngay và nhận spec làm việc đầu tiên.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5">
+              <label htmlFor="add-project" className="text-sm font-medium">
+                Thư mục
+              </label>
+              <Input
+                id="add-project"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                placeholder="C:\\Users\\Projects\\du-an-moi"
+                spellCheck={false}
+                autoComplete="off"
+                aria-invalid={!!error}
+                aria-describedby={error ? "add-project-error" : undefined}
+                className="font-mono text-sm"
+                autoFocus
+              />
+              {error && (
+                <p id="add-project-error" className="text-xs text-destructive">
+                  {error}
+                </p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="add-project-spec" className="text-sm font-medium">
+                Việc đầu tiên <span className="font-normal text-muted-foreground">(không bắt buộc)</span>
+              </label>
+              <Textarea id="add-project-spec" value={spec} onChange={(e) => setSpec(e.target.value)} rows={5} maxLength={4000} placeholder="Ví dụ: Trang landing cho ZUS, có form đăng ký email, deploy lên Vercel." />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
+                Thôi
+              </Button>
+              <Button type="submit" disabled={busy || !path.trim()}>
+                <FolderPlusIcon aria-hidden /> {busy ? "Đang làm…" : spec.trim() ? "Tạo và giao việc" : "Thêm dự án"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
