@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.64] — 2026-10-22
+### Fixed
+- **Terminal phòng qua web VPS không còn bỏ cuộc sau 3 giây** (owner 2026-10-22: "Fail connect terminal rất nhiều"): điện thoại ngủ hay chuyển Wi-Fi sang 4G làm tunnel mất vài giây, trước 5 lần poll lỗi (~3 giây) là trang báo "Không nối được". Giờ trang hiện "đang nối" và thử lại giãn dần (0,6 → 5 giây) suốt một phút; lỗi từ chối (không có phòng, sai token) vẫn báo ngay.
+- **Câu hỏi 5 lựa chọn trong terminal không còn bị cắt còn 3** (owner: "options chọn trong terminal ra thiếu có 5 toàn hiện có 3 cái đầu"): terminal xin ít nhất 22 dòng (khung tự cuộn) và không thu nhỏ khi bàn phím điện thoại mở, nên Claude Code vẽ đủ danh sách. Test +2.
+### Changed
+- **Nút tăng tốc ngay ở Tổng quan từng dự án** (owner: "các nút tăng tốc để trong văn phòng không ở ngoài tổng quan dự án"): đầu mỗi khối dự án ở Tổng quan có "Ship card approved" và "Thao tác team" (Ship tốc độ cao, Sấm Sét, mở lại, dọn…) như Văn phòng, đúng dự án đó.
+
 ## [0.110.63] — 2026-10-22
 ### Changed
 - **Preview ưu tiên kết quả xem được** (owner 2026-10-22: "Tab preview rất quan trọng việc xem ảnh, xem video demo nếu có, link demo thật mà các task không có ảnh không có gì xem được không nên hiển thị"): Preview về lại thanh tab chính (cạnh Board). Card không có ảnh, video hay link demo không hiện nữa. Video demo (`.mp4`, `.webm`, tới 60 MB) trong các thư mục evidence hiện cạnh ảnh và mở ra là phát được. Link demo thật trong ghi chú card (http/https, trừ GitHub vì PR đã có chip riêng) thành nút "Mở demo · <host>". Test +2.
