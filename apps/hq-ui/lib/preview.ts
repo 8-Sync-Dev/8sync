@@ -100,3 +100,32 @@ export function previewSections(items: PreviewItem[], board: Board | null, now: 
     done24h: done.filter((d) => d.card.at != null && now - d.card.at < DAY_MS).length,
   };
 }
+
+/** A demo video the rooms recorded (owner 2026-10-22: "xem ảnh, xem video demo"). */
+export const isVideo = (rel: string): boolean => /\.(mp4|webm)$/i.test(rel);
+
+/**
+ * Real demo links in a card's notes ("link demo thật"): http(s) URLs, trailing punctuation dropped,
+ * GitHub left out (the PR has its own chip), each once, at most 3. Pure.
+ */
+export function demoLinks(texts: (string | null | undefined)[]): string[] {
+  const out: string[] = [];
+  for (const t of texts) {
+    for (const m of (t ?? "").matchAll(/https?:\/\/[^\s<>"'`)\]]+/g)) {
+      const u = m[0].replace(/[.,;:!?]+$/, "");
+      let host = "";
+      try {
+        host = new URL(u).hostname.toLowerCase();
+      } catch {
+        continue;
+      }
+      if (host === "github.com" || host.endsWith(".github.com")) continue;
+      if (!out.includes(u)) out.push(u);
+      if (out.length === 3) return out;
+    }
+  }
+  return out;
+}
+
+/** A row worth showing in Preview: something to look at (an image, a video) or a demo to open. */
+export const viewableRow = (items: PreviewItem[], links: string[]): boolean => items.length > 0 || links.length > 0;

@@ -3,7 +3,7 @@ import { MAIN_TABS, MORE_TABS, barTabs, isMore, moreLabel } from "@/lib/tabs";
 
 describe("HQ tab bar groups", () => {
   it("keeps four daily tabs in the bar (+ Chat phòng while a room is open) and folds the rest, no tab lost or doubled", () => {
-    expect(barTabs(false)).toEqual(["overview", "office", "board", "group"]);
+    expect(barTabs(false)).toEqual(["overview", "office", "board", "preview", "group"]);
     expect(barTabs(true)).toEqual([...MAIN_TABS]);
     const all = [...MAIN_TABS, ...MORE_TABS];
     expect(new Set(all).size).toBe(all.length);

@@ -4,6 +4,7 @@ import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ExternalLinkIcon,
   GitBranchIcon,
   GitCommitHorizontalIcon,
   GitPullRequestIcon,
@@ -23,7 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cardParts, prRef } from "@/lib/card-tags";
 import { LANES, type Board, type LaneKey, type Step } from "@/lib/lanes";
 import { agoShort, agoVi } from "@/lib/now";
-import { fileName, lastActivity, previewSections, rootKey, type PreviewItem, type ProjectPreviews } from "@/lib/preview";
+import { demoLinks, fileName, isVideo, lastActivity, previewSections, rootKey, viewableRow, type PreviewItem, type ProjectPreviews } from "@/lib/preview";
 import { entryFor, useFollowRepo } from "@/lib/follow-repo";
 import type { ProjectBoard } from "@/lib/server/board";
 import { boardCard, eyeNote } from "@/lib/eye";
@@ -101,7 +102,14 @@ export function PreviewView({
   // The poll clock: relative times move with each answer, never with a render.
   const now = state.at;
   const board = cur ? boardOf(boards, cur.root) : null;
-  const sec = useMemo(() => previewSections(cur?.items ?? [], board, now), [cur, board, now]);
+  // Owner 2026-10-22: "các task không có ảnh không có gì xem được không nên hiển thị, ưu tiên xem được
+  // kết quả": a card shows only with an image, a video or a real demo link.
+  const sec = useMemo(() => {
+    const raw = previewSections(cur?.items ?? [], board, now);
+    const working = raw.working.map((r) => ({ ...r, links: demoLinks([r.card.note?.text, ...(r.card.history ?? []).map((h) => h.text)]) })).filter((r) => viewableRow(r.items, r.links));
+    const done = raw.done.map((r) => ({ ...r, links: demoLinks([...(r.card.history ?? []).map((h) => h.text), r.card.evidence]) })).filter((r) => viewableRow(r.items, r.links));
+    return { ...raw, working, done };
+  }, [cur, board, now]);
 
   if (state.error && !state.data) {
     return (
@@ -187,10 +195,10 @@ export function PreviewView({
             {board && (
               <Section id="pv-work" title="Đang làm" count={sec.working.length}>
                 {sec.working.length === 0 ? (
-                  <p className="py-2 text-sm text-muted-foreground">Không card nào ở Building, QA, Review hay Approved.</p>
+                  <p className="py-2 text-sm text-muted-foreground">Chưa card nào đang làm có ảnh, video hay link demo.</p>
                 ) : (
                   <ul className="divide-y">
-                    {sec.working.map(({ card: c, items }) => {
+                    {sec.working.map(({ card: c, items, links }) => {
                       const pr = c.pr ? prRef(c.pr) : null;
                       return (
                         <CardRow
@@ -199,6 +207,7 @@ export function PreviewView({
                           title={cardParts(c.text).title}
                           onTitle={() => onOpenCard(cur.root, c.id)}
                           items={items}
+                          links={links}
                           token={token}
                           now={now}
                           onOpen={(id) => open(c.id, id)}
@@ -240,12 +249,13 @@ export function PreviewView({
             {board && sec.done.length > 0 && (
               <Section id="pv-done" title="Xong gần đây" count={sec.done.length}>
                 <ul className="divide-y">
-                  {doneShown.map(({ card: c, items }) => (
+                  {doneShown.map(({ card: c, items, links }) => (
                     <CardRow
                       key={c.id}
                       id={c.id}
                       title={cardParts(c.text).title}
                       items={items}
+                      links={links}
                       token={token}
                       now={now}
                       onOpen={(id) => open(c.id, id)}
@@ -349,6 +359,7 @@ function CardRow({
   meta,
   note,
   items,
+  links = [],
   token,
   now,
   onOpen,
@@ -359,6 +370,8 @@ function CardRow({
   meta: ReactNode;
   note: string | null;
   items: PreviewItem[];
+  /** Real demo links from the card's notes (lib/preview.ts demoLinks). */
+  links?: string[];
   token: string;
   now: number;
   onOpen: (id: string) => void;
@@ -389,6 +402,23 @@ function CardRow({
         )}
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">{meta}</div>
         {note && <p className="line-clamp-1 text-[11px] text-muted-foreground">{note}</p>}
+        {links.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {links.map((u) => (
+              <a
+                key={u}
+                href={u}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium hover:bg-muted"
+                title={u}
+              >
+                <ExternalLinkIcon aria-hidden className="size-3 shrink-0" />
+                <span className="truncate">Mở demo · {linkHost(u)}</span>
+              </a>
+            ))}
+          </div>
+        )}
       </div>
       {shots.length ? (
         <ul className="grid grid-cols-3 gap-2" aria-label={`Ảnh của card #${id}, mới nhất trước`}>
@@ -481,15 +511,20 @@ function RowsSkeleton() {
 }
 
 /** The image itself on a neutral surface; fetched with the token only once it scrolls near view. */
-export function PreviewImage({ id, token, alt, className, eager }: { id: string; token: string; alt: string; className?: string; eager?: boolean }) {
+export function PreviewImage({ id, token, alt, className, eager, video = false }: { id: string; token: string; alt: string; className?: string; eager?: boolean; video?: boolean }) {
   const [ref, near] = useNearView<HTMLDivElement>();
   const { src, failed } = useAuthedImage(token, previewFileUrl(id), eager || near);
   return (
     <div ref={ref} className={cn("relative grid place-items-center overflow-hidden bg-muted", className)}>
       {src ? (
-        // An object URL from an authed fetch: next/image cannot load it, a plain img is right here.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={alt} className="absolute inset-0 size-full object-contain" draggable={false} />
+        video ? (
+          // A demo recording: the first frame in a list, playable with controls when opened.
+          <video src={src} className="absolute inset-0 size-full object-contain" muted={!eager} controls={eager} playsInline preload="metadata" aria-label={alt || "video demo"} />
+        ) : (
+          // An object URL from an authed fetch: next/image cannot load it, a plain img is right here.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={src} alt={alt} className="absolute inset-0 size-full object-contain" draggable={false} />
+        )
       ) : failed ? (
         <span className="flex flex-col items-center gap-1 text-xs text-muted-foreground">
           <ImageOffIcon aria-hidden className="size-4" />
@@ -518,6 +553,7 @@ function Thumb({ item, token, now, onOpen, caption }: { item: PreviewItem; token
         id={item.id}
         token={token}
         alt=""
+        video={isVideo(item.rel)}
         className="aspect-[16/10] w-full rounded-md border transition-[border-color] duration-150 group-hover:border-foreground/25 motion-reduce:transition-none"
       />
       {caption && <span className="mt-1.5 block truncate text-[13px] font-medium">{name}</span>}
@@ -670,7 +706,7 @@ function Viewer({
               </div>
             </div>
             <div className="relative min-h-0 touch-none select-none" {...swipe}>
-              <PreviewImage key={item.id} id={item.id} token={token} alt={item.rel} eager className="h-[min(72dvh,900px)] w-full rounded-lg max-sm:h-[min(52dvh,900px)]" />
+              <PreviewImage key={item.id} id={item.id} token={token} alt={item.rel} eager video={isVideo(item.rel)} className="h-[min(72dvh,900px)] w-full rounded-lg max-sm:h-[min(52dvh,900px)]" />
               {items.length > 1 && (
                 <>
                   <Button type="button" size="icon" variant="secondary" className="absolute top-1/2 left-2 -translate-y-1/2 shadow-sm max-sm:size-11" onClick={() => go(-1)} aria-label="Ảnh trước (←)">
@@ -746,4 +782,13 @@ function EyeToggle({ root, since, api, onChanged }: { root: string; since: numbe
       <Switch on={on} busy={busy} label="Tự soi ảnh" onChange={(v) => void flip(v)} />
     </span>
   );
+}
+
+/** "zus-landing.vercel.app" from a URL, for the demo button. */
+function linkHost(u: string): string {
+  try {
+    return new URL(u).host;
+  } catch {
+    return u;
+  }
 }
