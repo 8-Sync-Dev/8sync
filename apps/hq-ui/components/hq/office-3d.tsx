@@ -7,7 +7,7 @@
 import { BoxIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NOW_LABEL, roster, type NowState } from "@/lib/now";
-import { cameraDistance, deskSign, flightPoint, handoffs, holders, layoutOffice, STATE_COLOR, type Desk, type GroupIn, type Handoff } from "@/lib/office-3d";
+import { cameraDistance, deskSign, flightPoint, handoffs, holders, layoutOffice, shirtOf, STATE_COLOR, type Desk, type GroupIn, type Handoff } from "@/lib/office-3d";
 import { groupByRepo } from "@/lib/sidebar";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "./bits";
@@ -20,29 +20,65 @@ type Hover = { key: string; label: string; state: NowState; project: string; car
 type Stats = { calls: number; ms: number; rooms: number };
 
 /** A 2-line text sprite (canvas texture): 256×96 px, always faces the camera, no font loading. */
-function makeSign(T: Three, lines: [string, string], dark: boolean, loud: boolean) {
+function makeSign(T: Three, lines: [string, string], dark: boolean, loud: boolean, dot: number) {
+  // Owner 2026-10-22 ("qúa xấu"): a small crisp name tag (2x canvas), a state dot, the card under it.
   const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 96;
+  canvas.width = 512;
+  canvas.height = 128;
   const g = canvas.getContext("2d")!;
-  g.fillStyle = dark ? "rgba(20,24,28,0.85)" : "rgba(255,255,255,0.9)";
+  g.fillStyle = dark ? "rgba(16,19,23,0.78)" : "rgba(255,255,255,0.88)";
   g.beginPath();
-  g.roundRect(4, 4, 248, 88, 12);
+  g.roundRect(8, 8, 496, 112, 56);
   g.fill();
-  g.textAlign = "center";
-  g.fillStyle = dark ? "#e8eaed" : "#1b1f24";
-  g.font = "600 30px system-ui, sans-serif";
-  g.fillText(lines[0].slice(0, 16), 128, 42);
-  g.fillStyle = loud ? "#d9822b" : dark ? "#aab0b8" : "#5c6470";
-  g.font = "500 24px system-ui, sans-serif";
-  g.fillText(lines[1].slice(0, 20), 128, 76);
+  g.fillStyle = `#${dot.toString(16).padStart(6, "0")}`;
+  g.beginPath();
+  g.arc(58, 64, 14, 0, Math.PI * 2);
+  g.fill();
+  g.textAlign = "left";
+  g.fillStyle = dark ? "#f1f3f5" : "#14171b";
+  g.font = "600 40px system-ui, sans-serif";
+  g.fillText(lines[0].slice(0, 18), 92, 58);
+  g.fillStyle = loud ? "#e08a2c" : dark ? "#9aa3ad" : "#5c6470";
+  g.font = "500 30px system-ui, sans-serif";
+  g.fillText(lines[1].slice(0, 26), 92, 98);
   const tex = new T.CanvasTexture(canvas);
   tex.colorSpace = T.SRGBColorSpace;
-  const mat = new T.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  tex.anisotropy = 4;
+  const mat = new T.SpriteMaterial({ map: tex, transparent: true, depthTest: false, fog: false, toneMapped: false });
   const sprite = new T.Sprite(mat);
-  sprite.scale.set(1.6, 0.6, 1);
+  sprite.scale.set(2, 0.5, 1);
   return sprite;
 }
+
+/** A warm oak plank floor, drawn once on a canvas (no image asset). */
+function woodTexture(T: Three, dark: boolean) {
+  const c = document.createElement("canvas");
+  c.width = 512;
+  c.height = 512;
+  const g = c.getContext("2d")!;
+  const base = dark ? [74, 58, 44] : [196, 162, 120];
+  for (let i = 0; i < 8; i++) {
+    const v = ((i * 37) % 9) - 4;
+    g.fillStyle = `rgb(${base[0] + v * 3},${base[1] + v * 2},${base[2] + v * 2})`;
+    g.fillRect(0, i * 64, 512, 64);
+    g.fillStyle = dark ? "rgba(0,0,0,0.35)" : "rgba(60,40,20,0.25)";
+    g.fillRect(0, i * 64, 512, 2);
+    g.fillRect(((i * 173) % 448) + 32, i * 64, 2, 64);
+    for (let k = 0; k < 14; k++) {
+      g.fillStyle = dark ? "rgba(255,255,255,0.025)" : "rgba(90,60,30,0.06)";
+      g.fillRect(0, i * 64 + 4 + ((k * 29 + i * 11) % 56), 512, 1);
+    }
+  }
+  const tex = new T.CanvasTexture(c);
+  tex.colorSpace = T.SRGBColorSpace;
+  tex.wrapS = T.RepeatWrapping;
+  tex.wrapT = T.RepeatWrapping;
+  return tex;
+}
+
+/** A little variety so a floor of people is not one clone. */
+const SKINS = [0xe0b18c, 0xc68d65, 0xf1c9a5, 0x9c6b4a];
+const HAIRS = [0x2a2019, 0x3b2a1d, 0x111111, 0x5a3a22];
 
 export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: Room[]; boards: BoardsState; now: number; repo: string | null; active: boolean; onOpen: (room: Room) => void }) {
   const host = useRef<HTMLDivElement>(null);
@@ -100,6 +136,8 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
       renderer.shadowMap.type = T.PCFSoftShadowMap;
       el.appendChild(renderer.domElement);
       const scene = new T.Scene();
+      const bg = dark ? 0x15181d : 0xeceff2;
+      scene.background = new T.Color(bg);
       const camera = new T.PerspectiveCamera(38, 1, 0.1, 200);
       scene.add(new T.HemisphereLight(dark ? 0xeef1f6 : 0xffffff, dark ? 0x1d1f22 : 0xd8d2c8, dark ? 1.3 : 1.5));
       const sun = new T.DirectionalLight(dark ? 0xdfe6ff : 0xfff3e0, dark ? 1.6 : 2.2);
@@ -111,15 +149,32 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
       scene.add(sun, sun.target);
 
       const std = (color: number, roughness = 0.8, metalness = 0) => new T.MeshStandardMaterial({ color, roughness, metalness });
-      const floorMat = std(dark ? 0x3b3e43 : 0xdfe3e6, 0.9);
-      const rugMat = std(dark ? 0x45484e : 0xcfd5da, 1);
-      const deskMat = std(dark ? 0x6b5845 : 0xc9a882, 0.55);
+      const wood = woodTexture(T, dark);
+      const floorMat = new T.MeshStandardMaterial({ map: wood, roughness: 0.7 });
+      const rugMat = std(dark ? 0x2f3540 : 0xc9d1d8, 1);
+      const deskMat = std(dark ? 0xd9d3c7 : 0xf1ece3, 0.45);
+      const wallMat = std(dark ? 0x2a2e35 : 0xf4f1ec, 0.95);
+      const windowMat = new T.MeshStandardMaterial({ color: dark ? 0x1e2b3a : 0xbfd9ee, emissive: dark ? 0x3b5f86 : 0x9cc7ea, emissiveIntensity: dark ? 0.55 : 0.35, roughness: 0.15 });
+      const blobMat = new T.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: dark ? 0.35 : 0.18, depthWrite: false });
+      const ringMats = new Map<NowState, InstanceType<Three["MeshBasicMaterial"]>>();
+      const ringMat = (s: NowState) => {
+        let m = ringMats.get(s);
+        if (!m) {
+          m = new T.MeshBasicMaterial({ color: STATE_COLOR[s], transparent: true, opacity: s === "idle" || s === "waiting" ? 0.35 : 0.85, depthWrite: false });
+          ringMats.set(s, m);
+        }
+        return m;
+      };
+      const shirts = new Map<number, InstanceType<Three["MeshStandardMaterial"]>>();
+      const solid = (c: number, r = 0.7) => {
+        let m = shirts.get(c);
+        if (!m) shirts.set(c, (m = std(c, r)));
+        return m;
+      };
       const metalMat = std(dark ? 0x3a3f46 : 0x5b6168, 0.4, 0.6);
       const plasticMat = std(0x1d2024, 0.5);
       const keyMat = std(dark ? 0x8a9099 : 0xd9dde1, 0.6);
       const chairMat = std(dark ? 0x23272d : 0x2f343b, 0.7);
-      const skinMat = std(0xe0b18c, 0.65);
-      const hairMat = std(0x2a2019, 0.9);
       const pantsMat = std(dark ? 0x2c3442 : 0x37425a, 0.85);
       const mugMat = std(0xf2efe9, 0.4);
       const potMat = std(dark ? 0x7a5a45 : 0xa8765a, 0.8);
@@ -136,10 +191,13 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
       const backGeo = box(0.46, 0.5, 0.05);
       const postGeo = new T.CylinderGeometry(0.03, 0.03, 0.4, 8);
       const footGeo = new T.CylinderGeometry(0.26, 0.26, 0.04, 16);
-      const torsoGeo = new T.CapsuleGeometry(0.17, 0.3, 4, 12);
-      const headGeo = new T.SphereGeometry(0.15, 16, 12);
-      const hairGeo = new T.SphereGeometry(0.155, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
-      const armGeo = new T.CapsuleGeometry(0.05, 0.32, 3, 8);
+      const torsoGeo = new T.CapsuleGeometry(0.17, 0.3, 8, 20);
+      const headGeo = new T.SphereGeometry(0.15, 24, 18);
+      const hairGeo = new T.SphereGeometry(0.157, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2);
+      const armGeo = new T.CapsuleGeometry(0.05, 0.32, 6, 12);
+      const wallGeo = box(1, 1, 1);
+      const blobGeo = new T.CircleGeometry(0.5, 24);
+      const ringGeo = new T.RingGeometry(0.36, 0.44, 32);
       const thighGeo = box(0.13, 0.12, 0.42);
       const shinGeo = box(0.11, 0.42, 0.11);
       const potGeo = new T.CylinderGeometry(0.16, 0.12, 0.3, 14);
@@ -153,15 +211,6 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
           const c = s === "working" ? 0x6aa9ff : s === "needs" ? STATE_COLOR.needs : s === "blocked" ? STATE_COLOR.blocked : 0x223040;
           m = new T.MeshStandardMaterial({ color: 0x0b0f14, emissive: c, emissiveIntensity: s === "idle" || s === "waiting" ? 0.25 : 0.9, roughness: 0.3 });
           screenMats.set(s, m);
-        }
-        return m;
-      };
-      const matByState = new Map<NowState, InstanceType<Three["MeshStandardMaterial"]>>();
-      const mat = (s: NowState) => {
-        let m = matByState.get(s);
-        if (!m) {
-          m = new T.MeshStandardMaterial({ color: STATE_COLOR[s], roughness: 0.6, emissive: STATE_COLOR[s], emissiveIntensity: s === "needs" ? 0.35 : 0.08 });
-          matByState.set(s, m);
         }
         return m;
       };
@@ -194,10 +243,28 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
         };
         let span = 4;
         for (const f of l.floors) {
-          const plate = new T.Mesh(new T.BoxGeometry(f.w, 0.2, f.d), floorMat);
+          const plateMat = floorMat.clone();
+          plateMat.map = wood.clone();
+          plateMat.map.repeat.set(f.w / 3, f.d / 3);
+          plateMat.map.needsUpdate = true;
+          const plate = new T.Mesh(new T.BoxGeometry(f.w, 0.2, f.d), plateMat);
           plate.position.set(f.x, -0.1, f.z);
           plate.receiveShadow = true;
           office.add(plate);
+          // Two walls (back and left) with a row of daylight windows: a room, not a slab in the void.
+          const H = 2.2;
+          const back = add(office, wallGeo, wallMat, f.x, H / 2, f.z - f.d / 2 - 0.06, false);
+          back.scale.set(f.w, H, 0.12);
+          const left = add(office, wallGeo, wallMat, f.x - f.w / 2 - 0.06, H / 2, f.z, false);
+          left.scale.set(0.12, H, f.d + 0.12);
+          for (let wx = f.x - f.w / 2 + 1.2; wx < f.x + f.w / 2 - 0.6; wx += 1.8) {
+            const w = add(office, wallGeo, windowMat, wx, 1.35, f.z - f.d / 2 + 0.005, false);
+            w.scale.set(1.2, 0.9, 0.02);
+          }
+          for (let wz = f.z - f.d / 2 + 1.2; wz < f.z + f.d / 2 - 0.6; wz += 1.8) {
+            const w = add(office, wallGeo, windowMat, f.x - f.w / 2 + 0.005, 1.35, wz, false);
+            w.scale.set(0.02, 0.9, 1.2);
+          }
           span = Math.max(span, Math.abs(f.x) + f.w / 2, Math.abs(f.z) + f.d / 2);
           // A plant at each corner of the project's floor.
           for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
@@ -219,6 +286,15 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
         for (const d of l.desks) {
           // Workstation: rug, desk on four legs, monitor (glows by state), keyboard, mug, chair.
           add(office, rugGeo, rugMat, d.x, 0.005, d.z + 0.35, false);
+          // Soft contact shadows that work even where shadow maps are off, and the state ring on the floor.
+          const blob = add(office, blobGeo, blobMat, d.x, 0.012, d.z + 0.1, false);
+          blob.rotation.x = -Math.PI / 2;
+          blob.scale.set(1.6, 1.1, 1);
+          const chairBlob = add(office, blobGeo, blobMat, d.x, 0.013, d.z + 0.78, false);
+          chairBlob.rotation.x = -Math.PI / 2;
+          chairBlob.scale.setScalar(0.7);
+          const ring = add(office, ringGeo, ringMat(d.state), d.x, 0.016, d.z + 0.78, false);
+          ring.rotation.x = -Math.PI / 2;
           add(office, deskGeo, deskMat, d.x, 0.745, d.z);
           for (const [lx, lz] of [[-0.65, -0.35], [0.65, -0.35], [-0.65, 0.35], [0.65, 0.35]] as const) add(office, deskLegGeo, metalMat, d.x + lx, 0.36, d.z + lz);
           add(office, baseGeo, plasticMat, d.x, 0.78, d.z - 0.22);
@@ -231,10 +307,13 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
           add(office, postGeo, metalMat, d.x, 0.24, d.z + 0.78);
           add(office, seatGeo, chairMat, d.x, 0.47, d.z + 0.78);
           add(office, backGeo, chairMat, d.x, 0.8, d.z + 1.0);
-          // The person, seated facing the screen; the shirt carries the room's state colour.
+          // The person, seated facing the screen; the shirt says the role, the ring/screen/tag the state.
           const a = new T.Group();
           a.position.set(d.x, 0, d.z + 0.72);
-          const shirt = mat(d.state);
+          const pick = Math.abs(Math.round(d.x * 13 + d.z * 7));
+          const shirt = solid(shirtOf(d.role, d.label), 0.75);
+          const skinMat = solid(SKINS[pick % SKINS.length], 0.6);
+          const hairMat = solid(HAIRS[(pick >> 1) % HAIRS.length], 0.9);
           const torso = new T.Group();
           torso.position.set(0, 0.52, 0.06);
           add(torso, torsoGeo, shirt, 0, 0.3, 0);
@@ -264,11 +343,12 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
           office.add(a);
           avatars.push({ mesh: a, desk: d, torso, armL, armR, head, seed: (d.x * 7.3 + d.z * 3.1) % 6.28 });
           // The desk sign: room name and its card (owner 2026-10-22: a realistic working day, not just colours).
-          const sign = makeSign(T, deskSign(d), dark, d.state === "needs");
-          sign.position.set(d.x, 1.35, d.z);
+          const sign = makeSign(T, deskSign(d), dark, d.state === "needs", STATE_COLOR[d.state]);
+          sign.position.set(d.x, 1.75, d.z - 0.2);
           office.add(sign);
         }
         const dist = cameraDistance(l);
+        scene.fog = new T.Fog(bg, dist * 1.1, dist * 2.4);
         // Closer than the plain fit: the workstations are the point, the floor edges may crop.
         camera.position.set(dist * 0.42, dist * 0.55, dist * 0.6);
         camera.lookAt(0, 0, 0);
@@ -443,7 +523,7 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
         )}
       </div>
       <p className="shrink-0 border-t px-4 py-1.5 text-[11px] text-muted-foreground tabular sm:px-6">
-        {stats ? `${stats.rooms} phòng · ${stats.calls} draw call · ${stats.ms.toFixed(1)} ms/khung (GPU thấp, không bóng)` : "Đang dựng cảnh…"} · bấm một người để mở phòng
+        {stats ? `${stats.rooms} phòng · ${stats.calls} draw call · ${stats.ms.toFixed(1)} ms/khung` : "Đang dựng cảnh…"} · bấm một người để mở phòng
       </p>
     </div>
   );

@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::ui;
+use crate::verbs::ccc::reap::{self, Proc};
 
 #[derive(ClapArgs, Debug)]
 #[command(after_help = indoc::indoc! {"
@@ -117,7 +118,7 @@ pub fn run(a: Args) -> Result<()> {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
     let profile = std::env::temp_dir().join(format!("8sync-shot-{}-{nanos}", std::process::id()));
     // Shots whose 8sync died mid-render leave Chromium burning GPU (see [`sweep_zombies`]).
-    sweep_zombies(&profile);
+    sweep_zombies();
     let mut cmd = low_priority(&chrome);
     cmd.args([
         "--headless".into(),
@@ -149,7 +150,7 @@ pub fn run(a: Args) -> Result<()> {
         _ => {}
     }
     // Helpers that outlived the browser (or an 8sync killed mid-render) must not keep rendering.
-    sweep_zombies(&profile);
+    sweep_zombies();
     // Chromium's helpers may hold the profile a moment after the browser exits.
     for _ in 0..10 {
         if std::fs::remove_dir_all(&profile).is_ok() || !profile.exists() {
@@ -214,64 +215,35 @@ fn kill_tree(child: &mut std::process::Child) {
 /// The marker every shot's throwaway profile carries (`--user-data-dir=…8sync-shot-…`).
 const SHOT_MARK: &str = "8sync-shot-";
 
-/// Kill Chromium processes left over from earlier shots whose `8sync` died mid-render (the auto
-/// guard pausing a room kills the room's shell tree; Chromium's children survive it and a stuck one
-/// burned ~20% GPU for hours, 2026-10-22). Ours (`keep`) is spared. Best effort, never fails a shot.
-fn sweep_zombies(_keep: &std::path::Path) {
-    // Only true orphans: a marker Chromium whose parent pid is gone (the `8sync shot` that spawned
-    // it died — e.g. the RAM guard paused the room mid-render). A LIVE shot's Chromium keeps its
-    // parent chain, so concurrent shots (two rooms shooting at once, 2026-10-22) never kill each
-    // other — the v0.110.64 sweep matched every marker and did exactly that.
-    #[cfg(windows)]
-    {
-        // No embedded PowerShell here: Defender's heuristics flagged the whole v0.110.67 binary
-        // for the `powershell -Command … Stop-Process` string baked into it (2026-10-22: every
-        // Windows `8sync up` to .67 quarantined the exe). WMIC CSV + `taskkill` per orphan pid
-        // says the same thing without looking like a dropper; a machine without wmic skips.
-        let out = Command::new("wmic")
-            .args(["process", "get", "processid,parentprocessid,commandline", "/format:csv"])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output();
-        if let Ok(o) = out {
-            for pid in orphan_pids(&String::from_utf8_lossy(&o.stdout), SHOT_MARK) {
-                let _ = Command::new("taskkill")
-                    .args(["/F", "/PID", &pid.to_string()])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        // Kill a marker Chromium only when its parent pid is gone (a live shot keeps its parent
-        // chain; concurrent shots never touch each other).
-        let _ = Command::new("sh")
-            .arg("-c")
-            .arg(format!("ps -eo pid=,ppid=,args= | grep '[c]hrome.*{SHOT_MARK}' | while read pid ppid rest; do kill -0 \"$ppid\" 2>/dev/null || kill \"$pid\" 2>/dev/null || true; done"))
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
+/// The 8sync that started a shot, from its profile in the command line (`8sync-shot-<pid>-<nanos>`).
+fn shot_owner(cmd: &str) -> Option<u32> {
+    let i = cmd.find(SHOT_MARK)? + SHOT_MARK.len();
+    cmd[i..].split('-').next()?.parse().ok()
 }
 
-/// WMIC `process get … /format:csv`: the pids of rows that mention `mark` (a shot's Chromium) and
-/// whose parent pid no longer exists in the same listing (a true orphan). A live shot keeps its
-/// parent chain, so concurrent shots never match.
-fn orphan_pids(csv: &str, mark: &str) -> Vec<u32> {
-    let alive: Vec<u32> = csv
-        .lines()
-        .filter_map(|l| l.rsplit(',').next()?.trim().parse::<u32>().ok())
-        .collect();
-    csv.lines()
-        .filter(|l| l.contains(mark) && l.to_ascii_lowercase().contains("chrome"))
-        .filter_map(|l| {
-            let pid = l.rsplit(',').next()?.trim().parse::<u32>().ok()?;
-            let ppid = l.rsplit(',').nth(1)?.trim().parse::<u32>().ok()?;
-            (!alive.contains(&ppid)).then_some(pid)
-        })
+/// Chromium processes of shots whose `8sync` is gone: the auto guard pausing a room kills the
+/// room's shell tree, Chromium's children survive it and a stuck one burned ~20% GPU for hours
+/// (2026-10-22). A shot whose 8sync still runs is never touched: the first sweep killed every
+/// other shot, so rooms shooting at the same time killed each other's Chromium ("Chromium exited
+/// non-zero" on every WebGL page, 3d-game #184/#185, 2026-10-22).
+pub(crate) fn zombies(procs: &[Proc]) -> Vec<u32> {
+    let images: std::collections::HashMap<u32, &str> = procs.iter().map(|p| (p.pid, p.image.as_str())).collect();
+    procs
+        .iter()
+        .filter(|p| p.image.contains("chrom") || p.image.contains("msedge"))
+        .filter(|p| shot_owner(&p.cmd).is_some_and(|o| !images.get(&o).is_some_and(|i| i.contains("8sync"))))
+        .map(|p| p.pid)
         .collect()
+}
+
+/// Kill [`zombies`] (native process list, no WMI). Best effort, never fails a shot. `8sync ccc auto
+/// revive` (HQ, every minute) calls it too.
+pub(crate) fn sweep_zombies() {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let z = zombies(&reap::list(now));
+    if !z.is_empty() {
+        let _ = reap::kill(&z);
+    }
 }
 
 #[cfg(test)]
@@ -295,12 +267,24 @@ mod tests {
     }
 
     #[test]
-    fn orphan_sweep_kills_only_parentless_chromium() {
-        let csv = "Node,CommandLine,ParentProcessId,ProcessId\r\n\\HOST,8sync.exe shot,100,100\r\n\\HOST,\"chrome.exe\" --user-data-dir=C:\\Temp\\8sync-shot-1-a,100,101\r\n\\HOST,\"chrome.exe\" --type=gpu-process --user-data-dir=C:\\Temp\\8sync-shot-1-a,101,102\r\n\\HOST,\"chrome.exe\" --user-data-dir=C:\\Temp\\8sync-shot-2-b,999,201\r\n\\HOST,\"chrome.exe\" --user-data-dir=C:\\Temp\\8sync-shot-2-b,201,202\r\n\\HOST,explorer.exe,7,7\r\n";
-        // Live shot 1-a (parent 100 alive): nothing. Shot 2-b's root parent 999 is gone: both its
-        // processes are orphans (201 parentless; 202's parent 201 still alive but 201 itself is a
-        // goner-to-be, so killing 201 suffices; 202 is spared this pass and dies with Chrome).
-        let pids = orphan_pids(csv, "8sync-shot-");
-        assert_eq!(pids, vec![201]);
+    fn only_shots_whose_8sync_is_gone_are_zombies() {
+        let p = |pid: u32, image: &str, cmd: &str| Proc { pid, image: image.into(), cmd: cmd.into(), ..Default::default() };
+        let procs = [
+            p(10, "8sync", "8sync shot http://x"),
+            // a live shot of another room (owner 10 runs): spared
+            p(11, "chrome", r"chrome.exe --user-data-dir=C:\T\8sync-shot-10-123 --headless"),
+            // its owner died: swept, the GPU helper too
+            p(12, "chrome", r"chrome.exe --user-data-dir=C:\T\8sync-shot-77-5 --headless"),
+            p(13, "chrome", r"chrome.exe --type=gpu-process --user-data-dir=C:\T\8sync-shot-77-5"),
+            // the owner pid was reused by something else: still a zombie
+            p(20, "node", "node server.js"),
+            p(21, "chrome", "chrome --user-data-dir=/tmp/8sync-shot-20-9"),
+            // a browser of the owner's own and other processes naming the mark are not ours to kill
+            p(30, "chrome", "chrome.exe --profile-directory=Default"),
+            p(31, "bash", "grep 8sync-shot-77-"),
+        ];
+        assert_eq!(zombies(&procs), [12, 13, 21]);
+        assert_eq!(shot_owner("x 8sync-shot-4242-77 y"), Some(4242));
+        assert_eq!(shot_owner("8sync-shot-x"), None);
     }
 }

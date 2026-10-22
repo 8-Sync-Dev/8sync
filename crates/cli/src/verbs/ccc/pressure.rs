@@ -1847,6 +1847,29 @@ fn row(role: &str, state: String) -> Row {
     Row { name: "máy".into(), role: role.into(), model: String::new(), state, short: String::new() }
 }
 
+/// A room's browser holding this share of the machine (0.1 %) on a CPU breach is a runaway.
+const RUNAWAY_PERMILLE: u64 = 150;
+
+/// Browsers the rooms started (each tree from its top: a browser whose parent is not one) that used
+/// at least [`RUNAWAY_PERMILLE`] of the machine this tick: (room, the browser's pids, share in 0.1 %).
+fn runaway_browsers(procs: &[Proc], trees: &[(String, Vec<u32>)], deltas: &[(u32, u64)], ms: u64, cores: usize) -> Vec<(String, Vec<u32>, u64)> {
+    let mut out = Vec::new();
+    for (room, t) in trees {
+        for p in procs.iter().filter(|p| t.contains(&p.pid) && is_browser(&p.name)) {
+            if procs.iter().any(|q| q.pid == p.ppid && is_browser(&q.name)) {
+                continue;
+            }
+            let tree = reap::tree_of(procs, p.pid, &|q| is_browser(&q.name));
+            let d: u64 = deltas.iter().filter(|(pid, _)| tree.contains(pid)).map(|(_, d)| d).sum();
+            let share = cpu_permille(d, ms, cores);
+            if share >= RUNAWAY_PERMILLE {
+                out.push((room.clone(), tree, share));
+            }
+        }
+    }
+    out
+}
+
 /// CPU share in 0.1 % of the machine (the unit [`keep_count`] and [`room_fits`] take for CPU).
 fn cpu_permille(delta_100ns: u64, ms: u64, cores: usize) -> u64 {
     if ms == 0 || cores == 0 {
@@ -2031,6 +2054,22 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
                 st["defender_at"] = json!(now);
                 rows.push(row("Defender", format!("MsMpEng ăn CPU {share}% (quét node_modules của worktree) — PowerShell admin, 8sync không tự chạy: {cmd}")));
                 log(&mut st, now, &format!("Defender ăn CPU {share}%: gợi ý loại trừ worktree"));
+            }
+        }
+    }
+
+    // A browser a room started (Playwright, `8sync shot`, a QA script) holding a big share of the
+    // machine while CPU is over the owner's threshold is killed with its helpers, its room alive or
+    // not (owner 2026-10-22, "cpu chạm 45% phải kill … fix triệt để": a room's headless Edge drew
+    // software WebGL at 40% of 32 threads, CPU 94% with the threshold at 45%, and the guard only
+    // lowered its priority). The room's shot fails and is retried; the machine stays usable.
+    if breach.cpu.is_some() && fresh {
+        for (room, tree, share) in runaway_browsers(&procs, &trees, &deltas, ms, sample.cores) {
+            if reap::kill(&tree).first().copied().unwrap_or(false) {
+                *acted = true;
+                let text = format!("trình duyệt của phòng {room} ăn {}% CPU máy (CPU {cpu_s} ≥ ngưỡng {cpu_t}%): tắt {} tiến trình của nó", share / 10, tree.len());
+                rows.push(row("CPU", text.clone()));
+                log(&mut st, now, &text);
             }
         }
     }
@@ -2399,6 +2438,36 @@ mod tests {
     fn p(pid: u32, ppid: u32, age_min: u64, name: &str, cmd: &str, mb: u64) -> Proc {
         let image = name.trim_end_matches(".exe").to_string();
         Proc { pid, ppid, started: NOW - age_min * 60, rss: mb * MB, node: name == "node.exe", shell: matches!(name, "bash.exe" | "cmd.exe"), image, cmd: cmd.into(), name: name.into(), cpu: 0, normal: false, idle: false }
+    }
+
+    #[test]
+    fn a_rooms_browser_eating_the_machine_is_a_runaway_the_owners_browser_never() {
+        let procs = [
+            p(1, 0, 60, "claude.exe", "claude --bg", 300),
+            p(2, 1, 5, "node.exe", "node qa.mjs", 100),
+            // the room's headless Edge: main + GPU process drawing software WebGL
+            p(3, 2, 2, "msedge.exe", "msedge.exe --headless --user-data-dir=C:/j/tmp/edge-prof", 200),
+            p(4, 3, 2, "msedge.exe", "msedge.exe --type=gpu-process", 300),
+            p(5, 3, 2, "msedge.exe", "msedge.exe --type=renderer", 100),
+            // a quiet browser of another room
+            p(10, 0, 60, "claude.exe", "claude --bg", 300),
+            p(11, 10, 1, "chrome.exe", "chrome.exe --headless=new", 100),
+            // the owner's own Edge, busy too, in no room
+            p(20, 0, 600, "msedge.exe", "msedge.exe", 900),
+            p(21, 20, 600, "msedge.exe", "msedge.exe --type=gpu-process", 300),
+        ];
+        let trees = vec![("qa".to_string(), vec![1, 2, 3, 4, 5]), ("dev".to_string(), vec![10, 11])];
+        // 1 s on 32 cores: 32e7 units of 100 ns = the whole machine. The Edge GPU: 40 %.
+        let deltas = [(4, 128_000_000), (5, 3_000_000), (11, 3_000_000), (21, 128_000_000), (2, 30_000_000)];
+        let r = runaway_browsers(&procs, &trees, &deltas, 1000, 32);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "qa");
+        let mut t = r[0].1.clone();
+        t.sort();
+        assert_eq!(t, [3, 4, 5], "the browser tree only, never the room's node or claude");
+        assert_eq!(r[0].2 / 10, 40);
+        // under the bar: nothing
+        assert!(runaway_browsers(&procs, &trees, &[(4, 30_000_000)], 1000, 32).is_empty());
     }
 
     #[test]
