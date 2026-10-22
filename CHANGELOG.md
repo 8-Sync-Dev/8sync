@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.68] — 2026-10-22
+### Fixed
+- **v0.110.67 bị Windows Defender đỏ mừ trực tiếp** (chuỗi `powershell -Command … Stop-Process` nhúng trong binary → heuristic dropper: mọi máy Windows `8sync up` lên .67 bị quarantine mất exe — máy owner chết lệnh `8sync` hoàn toàn tối 22/10). Sweep zombie giờ dùng WMIC CSV + `taskkill` theo pid mồ côi (cha đã chết) — binary mới qua Defender (hash + chạy OK), logic tách hàm thuần `orphan_pids` + unit test: shot sống không bị đụng, mồ côi chết.
 ## [0.110.67] — 2026-10-22
 ### Fixed
 - **Sweep zombie của `shot` giết nhầm shot chạy song song** (v0.110.64/.65 khớp mọi chromium `8sync-shot-*` → 2 phòng shot cùng lúc giết nhau, card #184/#185 "8sync shot fails on all WebGL pages" thiếu bằng chứng QA): giờ chỉ kill chromium mồ côi THẬT — pid cha đã chết (8sync chết giữa render). Shot sống (bất kỳ tuổi, kể cả song song) không bao giờ bị đụng. HQ auto-tick dùng cùng luật mồ côi.
