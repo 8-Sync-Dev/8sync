@@ -92,20 +92,70 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
       const dark = document.documentElement.classList.contains("dark");
       const renderer = new T.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "low-power" });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      // Owner 2026-10-22: "3d phòng chưa đẹp quá xấu chưa realistic": filmic light, soft shadows,
+      // real workstations (desk on legs, monitor, keyboard, chair) and seated people.
+      renderer.toneMapping = T.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = dark ? 1.3 : 1.15;
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = T.PCFSoftShadowMap;
       el.appendChild(renderer.domElement);
       const scene = new T.Scene();
-      const camera = new T.PerspectiveCamera(40, 1, 0.1, 200);
-      scene.add(new T.HemisphereLight(0xffffff, dark ? 0x1b1f24 : 0xcfd6dd, dark ? 1.4 : 1.8));
-      const sun = new T.DirectionalLight(0xffffff, dark ? 1.2 : 1.6);
-      sun.position.set(6, 12, 8);
-      scene.add(sun);
+      const camera = new T.PerspectiveCamera(38, 1, 0.1, 200);
+      scene.add(new T.HemisphereLight(dark ? 0xeef1f6 : 0xffffff, dark ? 0x1d1f22 : 0xd8d2c8, dark ? 1.3 : 1.5));
+      const sun = new T.DirectionalLight(dark ? 0xdfe6ff : 0xfff3e0, dark ? 1.6 : 2.2);
+      sun.position.set(7, 14, 9);
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(1024, 1024);
+      sun.shadow.bias = -0.0005;
+      sun.shadow.radius = 4;
+      scene.add(sun, sun.target);
 
-      const floorMat = new T.MeshStandardMaterial({ color: dark ? 0x2a2f36 : 0xe9ecef, roughness: 0.95 });
-      const deskMat = new T.MeshStandardMaterial({ color: dark ? 0x4b4034 : 0xb08968, roughness: 0.8 });
-      const deskGeo = new T.BoxGeometry(1.3, 0.12, 0.8);
-      const legGeo = new T.BoxGeometry(1.2, 0.5, 0.7);
-      const bodyGeo = new T.CapsuleGeometry(0.22, 0.4, 4, 10);
-      const headGeo = new T.SphereGeometry(0.19, 12, 10);
+      const std = (color: number, roughness = 0.8, metalness = 0) => new T.MeshStandardMaterial({ color, roughness, metalness });
+      const floorMat = std(dark ? 0x3b3e43 : 0xdfe3e6, 0.9);
+      const rugMat = std(dark ? 0x45484e : 0xcfd5da, 1);
+      const deskMat = std(dark ? 0x6b5845 : 0xc9a882, 0.55);
+      const metalMat = std(dark ? 0x3a3f46 : 0x5b6168, 0.4, 0.6);
+      const plasticMat = std(0x1d2024, 0.5);
+      const keyMat = std(dark ? 0x8a9099 : 0xd9dde1, 0.6);
+      const chairMat = std(dark ? 0x23272d : 0x2f343b, 0.7);
+      const skinMat = std(0xe0b18c, 0.65);
+      const hairMat = std(0x2a2019, 0.9);
+      const pantsMat = std(dark ? 0x2c3442 : 0x37425a, 0.85);
+      const mugMat = std(0xf2efe9, 0.4);
+      const potMat = std(dark ? 0x7a5a45 : 0xa8765a, 0.8);
+      const leafMat = std(0x4f8a3c, 0.75);
+      const box = (w: number, h: number, d: number) => new T.BoxGeometry(w, h, d);
+      const deskGeo = box(1.4, 0.05, 0.8);
+      const deskLegGeo = box(0.05, 0.72, 0.05);
+      const screenGeo = box(0.62, 0.38, 0.03);
+      const standGeo = box(0.05, 0.2, 0.05);
+      const baseGeo = box(0.22, 0.02, 0.16);
+      const kbGeo = box(0.46, 0.02, 0.15);
+      const mugGeo = new T.CylinderGeometry(0.04, 0.035, 0.1, 12);
+      const seatGeo = box(0.48, 0.07, 0.46);
+      const backGeo = box(0.46, 0.5, 0.05);
+      const postGeo = new T.CylinderGeometry(0.03, 0.03, 0.4, 8);
+      const footGeo = new T.CylinderGeometry(0.26, 0.26, 0.04, 16);
+      const torsoGeo = new T.CapsuleGeometry(0.17, 0.3, 4, 12);
+      const headGeo = new T.SphereGeometry(0.15, 16, 12);
+      const hairGeo = new T.SphereGeometry(0.155, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+      const armGeo = new T.CapsuleGeometry(0.05, 0.32, 3, 8);
+      const thighGeo = box(0.13, 0.12, 0.42);
+      const shinGeo = box(0.11, 0.42, 0.11);
+      const potGeo = new T.CylinderGeometry(0.16, 0.12, 0.3, 14);
+      const leafGeo = new T.SphereGeometry(0.24, 12, 10);
+      const rugGeo = box(1.9, 0.01, 1.9);
+      /** The glow of a monitor by the room's state. */
+      const screenMats = new Map<NowState, InstanceType<Three["MeshStandardMaterial"]>>();
+      const screenMat = (s: NowState) => {
+        let m = screenMats.get(s);
+        if (!m) {
+          const c = s === "working" ? 0x6aa9ff : s === "needs" ? STATE_COLOR.needs : s === "blocked" ? STATE_COLOR.blocked : 0x223040;
+          m = new T.MeshStandardMaterial({ color: 0x0b0f14, emissive: c, emissiveIntensity: s === "idle" || s === "waiting" ? 0.25 : 0.9, roughness: 0.3 });
+          screenMats.set(s, m);
+        }
+        return m;
+      };
       const matByState = new Map<NowState, InstanceType<Three["MeshStandardMaterial"]>>();
       const mat = (s: NowState) => {
         let m = matByState.get(s);
@@ -118,7 +168,8 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
 
       const office = new T.Group();
       scene.add(office);
-      const avatars: { mesh: InstanceType<Three["Group"]>; desk: Desk }[] = [];
+      type Part = InstanceType<Three["Object3D"]>;
+      const avatars: { mesh: InstanceType<Three["Group"]>; desk: Desk; torso: Part; armL: Part; armR: Part; head: Part; seed: number }[] = [];
       const labels = new T.Group();
       scene.add(labels);
       // Cards changing hands (owner 2026-10-22: "realistic working day"): a small card flies from the
@@ -133,34 +184,93 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
         office.clear();
         avatars.length = 0;
         const l = layoutRef.current;
+        const add = (parent: InstanceType<Three["Object3D"]>, geo: ConstructorParameters<Three["Mesh"]>[0], m: ConstructorParameters<Three["Mesh"]>[1], x: number, y: number, z: number, cast = true) => {
+          const mesh = new T.Mesh(geo, m);
+          mesh.position.set(x, y, z);
+          mesh.castShadow = cast;
+          mesh.receiveShadow = true;
+          parent.add(mesh);
+          return mesh;
+        };
+        let span = 4;
         for (const f of l.floors) {
           const plate = new T.Mesh(new T.BoxGeometry(f.w, 0.2, f.d), floorMat);
           plate.position.set(f.x, -0.1, f.z);
+          plate.receiveShadow = true;
           office.add(plate);
+          span = Math.max(span, Math.abs(f.x) + f.w / 2, Math.abs(f.z) + f.d / 2);
+          // A plant at each corner of the project's floor.
+          for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+            const px = f.x + sx * (f.w / 2 - 0.35);
+            const pz = f.z + sz * (f.d / 2 - 0.35);
+            add(office, potGeo, potMat, px, 0.15, pz);
+            add(office, leafGeo, leafMat, px, 0.5, pz);
+            add(office, leafGeo, leafMat, px + 0.08, 0.72, pz - 0.05).scale.setScalar(0.7);
+          }
         }
+        // Shadows cover the whole office, no more.
+        const cam = sun.shadow.camera;
+        cam.left = -span - 1;
+        cam.right = span + 1;
+        cam.top = span + 1;
+        cam.bottom = -span - 1;
+        cam.far = 60;
+        cam.updateProjectionMatrix();
         for (const d of l.desks) {
-          const top = new T.Mesh(deskGeo, deskMat);
-          top.position.set(d.x, 0.56, d.z);
-          const legs = new T.Mesh(legGeo, deskMat);
-          legs.position.set(d.x, 0.25, d.z);
-          office.add(top, legs);
+          // Workstation: rug, desk on four legs, monitor (glows by state), keyboard, mug, chair.
+          add(office, rugGeo, rugMat, d.x, 0.005, d.z + 0.35, false);
+          add(office, deskGeo, deskMat, d.x, 0.745, d.z);
+          for (const [lx, lz] of [[-0.65, -0.35], [0.65, -0.35], [-0.65, 0.35], [0.65, 0.35]] as const) add(office, deskLegGeo, metalMat, d.x + lx, 0.36, d.z + lz);
+          add(office, baseGeo, plasticMat, d.x, 0.78, d.z - 0.22);
+          add(office, standGeo, plasticMat, d.x, 0.88, d.z - 0.24);
+          add(office, screenGeo, plasticMat, d.x, 1.1, d.z - 0.26).scale.set(1.04, 1.06, 1);
+          add(office, screenGeo, screenMat(d.state), d.x, 1.1, d.z - 0.243, false);
+          add(office, kbGeo, keyMat, d.x, 0.785, d.z + 0.12);
+          add(office, mugGeo, mugMat, d.x + 0.48, 0.82, d.z + 0.05);
+          add(office, footGeo, metalMat, d.x, 0.03, d.z + 0.78);
+          add(office, postGeo, metalMat, d.x, 0.24, d.z + 0.78);
+          add(office, seatGeo, chairMat, d.x, 0.47, d.z + 0.78);
+          add(office, backGeo, chairMat, d.x, 0.8, d.z + 1.0);
+          // The person, seated facing the screen; the shirt carries the room's state colour.
           const a = new T.Group();
-          const body = new T.Mesh(bodyGeo, mat(d.state));
-          body.position.y = 0.45;
-          const head = new T.Mesh(headGeo, mat(d.state));
-          head.position.y = 0.95;
-          a.add(body, head);
-          a.position.set(d.x, 0, d.z + 0.75);
-          a.userData.key = d.key;
+          a.position.set(d.x, 0, d.z + 0.72);
+          const shirt = mat(d.state);
+          const torso = new T.Group();
+          torso.position.set(0, 0.52, 0.06);
+          add(torso, torsoGeo, shirt, 0, 0.3, 0);
+          const head = new T.Group();
+          head.position.set(0, 0.72, -0.02);
+          add(head, headGeo, skinMat, 0, 0, 0);
+          add(head, hairGeo, hairMat, 0, 0.02, 0.01);
+          torso.add(head);
+          const arm = (side: number) => {
+            const g = new T.Group();
+            g.position.set(side * 0.22, 0.48, 0);
+            add(g, armGeo, shirt, 0, -0.2, 0);
+            g.rotation.x = -1.05;
+            torso.add(g);
+            return g;
+          };
+          const armL = arm(-1);
+          const armR = arm(1);
+          a.add(torso);
+          for (const side of [-1, 1]) {
+            add(a, thighGeo, pantsMat, side * 0.09, 0.53, -0.16);
+            add(a, shinGeo, pantsMat, side * 0.09, 0.27, -0.36);
+          }
+          a.traverse((o) => {
+            o.userData.key = d.key;
+          });
           office.add(a);
-          avatars.push({ mesh: a, desk: d });
+          avatars.push({ mesh: a, desk: d, torso, armL, armR, head, seed: (d.x * 7.3 + d.z * 3.1) % 6.28 });
           // The desk sign: room name and its card (owner 2026-10-22: a realistic working day, not just colours).
           const sign = makeSign(T, deskSign(d), dark, d.state === "needs");
           sign.position.set(d.x, 1.35, d.z);
           office.add(sign);
         }
         const dist = cameraDistance(l);
-        camera.position.set(dist * 0.55, dist * 0.75, dist * 0.8);
+        // Closer than the plain fit: the workstations are the point, the floor edges may crop.
+        camera.position.set(dist * 0.42, dist * 0.55, dist * 0.6);
         camera.lookAt(0, 0, 0);
       }
 
@@ -172,7 +282,7 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
         ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
         ray.setFromCamera(ptr, camera);
         const hit = ray.intersectObjects(avatars.map((a) => a.mesh), true)[0];
-        const key = hit ? (hit.object.parent?.userData.key as string | undefined) ?? null : null;
+        const key = hit ? ((hit.object.userData.key as string | undefined) ?? null) : null;
         if (key !== hovered) {
           hovered = key;
           renderer.domElement.style.cursor = key ? "pointer" : "";
@@ -240,10 +350,32 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
         const dt = t - last;
         last = t;
         if (!reduced) {
-          // Rooms waiting on the owner breathe; working rooms nod a little. Cheap: two transforms per avatar.
-          for (const { mesh, desk } of avatars) {
-            if (desk.state === "needs") mesh.scale.setScalar(1 + 0.06 * Math.sin(t / 350));
-            else if (desk.state === "working") mesh.rotation.y = 0.15 * Math.sin(t / 900);
+          // A working day: working rooms type (arms tap, head follows the screen), a room waiting on the
+          // owner raises a hand and waves, idle and waiting rooms lean back. A few transforms per person.
+          for (const { desk, torso, armL, armR, head, seed } of avatars) {
+            const s = t / 1000 + seed;
+            if (desk.state === "working") {
+              armL.rotation.x = -1.05 + 0.08 * Math.sin(s * 14);
+              armR.rotation.x = -1.05 + 0.08 * Math.sin(s * 14 + 1.7);
+              head.rotation.y = 0.12 * Math.sin(s * 0.7);
+              torso.rotation.x = 0;
+            } else if (desk.state === "needs") {
+              armR.rotation.x = -2.9;
+              armR.rotation.z = -0.25 + 0.25 * Math.sin(s * 6);
+              armL.rotation.x = -1.05;
+              head.rotation.y = 0.5;
+              torso.rotation.x = 0;
+            } else if (desk.state === "blocked") {
+              armL.rotation.x = -2.2;
+              armR.rotation.x = -2.2;
+              head.rotation.x = 0.25;
+              torso.rotation.x = -0.05;
+            } else {
+              torso.rotation.x = 0.16;
+              armL.rotation.x = -0.5;
+              armR.rotation.x = -0.5;
+              head.rotation.y = 0.2 * Math.sin(s * 0.3);
+            }
           }
         }
         const t0 = performance.now();
