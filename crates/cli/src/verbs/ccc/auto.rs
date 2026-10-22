@@ -48,7 +48,7 @@ use serde_json::{json, Value};
 
 use super::{delegate, idle, target};
 
-const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--company] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | company on|off [--json] | ci [local|github] [--json]
+const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--company] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | company on|off [--json] | ci [local|github] [--json] | board [--all] [--json]
        8sync ccc auto omp on [--model <provider/model>]|off [--json] | nudge --session <room id> --cwd <dir> [--model <provider/model>] [--json]
        (on --omp nhận thêm --omp-model <provider/model>: model của đội omp)
        8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | up --add <phòng> | down [--only <phòng>]
@@ -253,6 +253,19 @@ pub(super) fn company(home: &Path) -> bool {
 fn other_roots(home: &Path, root: &Path) -> Vec<PathBuf> {
     let here = canon(root);
     live_scope(home).into_iter().filter(|r| *r != here).collect()
+}
+
+/// Pure: the boards `board --all` shows: this project first, then the rest of auto's scope in order,
+/// each once (a scope that does not list this project still shows it first).
+pub(super) fn board_roots(scope: Vec<PathBuf>, root: &Path) -> Vec<PathBuf> {
+    let here = canon(root);
+    let mut out = vec![root.to_path_buf()];
+    for r in scope {
+        if canon(&r) != here && !out.iter().any(|o| canon(o) == canon(&r)) {
+            out.push(r);
+        }
+    }
+    out
 }
 
 /// Pure: the most urgent card a company room would get from another project's board: the lowest
@@ -1498,11 +1511,13 @@ fn run_target(
         "note" => &["--as"],
         _ => &[],
     };
-    let (mut words, mut flags, mut first) = (Vec::new(), std::collections::BTreeMap::new(), false);
+    let (mut words, mut flags, mut first, mut all_boards) = (Vec::new(), std::collections::BTreeMap::new(), false, false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => {}
+            // `board --all`: every project of the company (auto's scope), this one first.
+            "--all" if verb == "board" => all_boards = true,
             // `auto add -h` once queued a card titled "-h" on a live board.
             "-h" | "--help" => bail!("{USAGE}"),
             "--now" if verb == "add" => first = true,
@@ -1681,39 +1696,56 @@ fn run_target(
                 bail!("không rõ `{}`\n{USAGE}", words[0]);
             }
             let team = lint_team(&all, live());
+            // `--all` (the lead of a company, owner 2026-10-22: one team, many projects): every project
+            // in auto's scope, this one first; without it, this project only.
+            let roots = if all_boards { board_roots(live_scope(home), root) } else { vec![root.to_path_buf()] };
             if as_json && verb == "board" {
-                let mut v = board_value(home, root, now)?;
-                if let Some(issues) = v["issues"].as_array_mut() {
-                    issues.extend(target::unstaffed(&target::list(home, root)?, &team).into_iter().map(Value::from));
-                }
-                println!("{v}");
-                return Ok(());
-            }
-            let cards = target::list(home, root)?;
-            let mut issues = target::lint(&cards, now);
-            issues.extend(target::unstaffed(&cards, &team));
-            if as_json {
-                println!("{}", json!({ "issues": issues }));
-                return Ok(());
-            }
-            if verb == "board" {
-                for lane in target::LANES {
-                    let mut in_lane: Vec<_> = cards.iter().filter(|t| t.state == "open" && t.lane == lane).collect();
-                    // The order rooms claim in: most urgent first, queue order within a priority.
-                    in_lane.sort_by_key(|t| t.prio.unwrap_or(2));
-                    println!("── {lane} ({}) ──", in_lane.len());
-                    for t in in_lane {
-                        println!("{}", card_lines(t)[0]);
+                let mut boards = Vec::new();
+                for r in &roots {
+                    let mut v = board_value(home, r, now)?;
+                    if let Some(issues) = v["issues"].as_array_mut() {
+                        issues.extend(target::unstaffed(&target::list(home, r)?, &team).into_iter().map(Value::from));
                     }
+                    v["root"] = json!(r.to_string_lossy());
+                    boards.push(v);
                 }
-                let done = cards.iter().filter(|t| t.state == "done").count();
-                println!("── done: {done} gần nhất (`8sync ccc auto queue`) ──");
+                if all_boards {
+                    println!("{}", json!({ "boards": boards }));
+                } else {
+                    println!("{}", boards.remove(0));
+                }
+                return Ok(());
             }
-            if issues.is_empty() {
-                println!("lint: board sạch");
-            }
-            for i in issues {
-                println!("lint: {i}");
+            for r in &roots {
+                let cards = target::list(home, r)?;
+                let mut issues = target::lint(&cards, now);
+                issues.extend(target::unstaffed(&cards, &team));
+                if as_json {
+                    println!("{}", json!({ "root": r.to_string_lossy(), "issues": issues }));
+                    continue;
+                }
+                if all_boards {
+                    println!("═══ {} ═══", r.display());
+                }
+                if verb == "board" {
+                    for lane in target::LANES {
+                        let mut in_lane: Vec<_> = cards.iter().filter(|t| t.state == "open" && t.lane == lane).collect();
+                        // The order rooms claim in: most urgent first, queue order within a priority.
+                        in_lane.sort_by_key(|t| t.prio.unwrap_or(2));
+                        println!("── {lane} ({}) ──", in_lane.len());
+                        for t in in_lane {
+                            println!("{}", card_lines(t)[0]);
+                        }
+                    }
+                    let done = cards.iter().filter(|t| t.state == "done").count();
+                    println!("── done: {done} gần nhất (`8sync ccc auto queue`) ──");
+                }
+                if issues.is_empty() {
+                    println!("lint: board sạch");
+                }
+                for i in issues {
+                    println!("lint: {i}");
+                }
             }
         }
         "add" => {
@@ -2961,6 +2993,11 @@ mod tests {
         assert_eq!(company_pick(&roots, |_| true, |_| bail!("no board"), "dev", "ready", 10), None);
         assert_eq!(company_pick(&roots, |_| true, |_| Ok(vec![]), "dev", "ready", 10), None);
         assert!(elsewhere_hint(&c, "dev").contains("env -C /srv/c 8sync ccc auto"));
+        // board --all: this project first, the rest of the scope once each, never a duplicate of this one.
+        let a = PathBuf::from("/srv/a");
+        let roots = board_roots(vec![b.clone(), a.clone(), c.clone(), b.clone()], &a);
+        assert_eq!(roots, vec![a.clone(), b.clone(), c.clone()]);
+        assert_eq!(board_roots(vec![], &a), vec![a.clone()]);
     }
 
     #[test]
