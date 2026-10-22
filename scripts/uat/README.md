@@ -1,27 +1,27 @@
-# scripts/uat — real-world acceptance scripts
+# scripts/uat: real-world acceptance scripts
 
 Each script runs a real binary (official `claude`, a released `8sync`) in a `mktemp` sandbox, prints
 PASS/FAIL per assertion and exits non-zero on failure. No API key is read or set; `claude` uses the
 owner's existing subscription login. Nothing here touches the owner's `~/.claude/settings.json`,
 `~/.local/bin/8sync` or `~/.config/8sync`. Not run in CI (they spend real tokens / need network).
 
-## hook-latency.sh — how long the kit hooks keep Claude waiting (no model, free)
+## hook-latency.sh: how long the kit hooks keep Claude waiting (no model, free)
 
 `bash scripts/uat/hook-latency.sh [8sync] [runs]`: sandbox HOME, each hook fed the JSON Claude Code would send,
-median of 7 runs against a budget — guard, wake, watchdog, resume-note ≤ 20 ms; `verify` with a file outside any
+median of 7 runs against a budget: guard, wake, watchdog, resume-note ≤ 20 ms; `verify` with a file outside any
 project (its no-op path) ≤ 50 ms. The real verify check (tsc/cargo) runs with `asyncRewake` and never blocks the
 model. Measured 2026-10-15 on Linux (v0.90.0 + this branch): every hook median 3 ms, PASS; the Orca per-event shell
-hook on the same machine ≈ 5 ms. Timing uses bash 5 `EPOCHREALTIME` with a `date +%s%N` fallback — not verified on
+hook on the same machine ≈ 5 ms. Timing uses bash 5 `EPOCHREALTIME` with a `date +%s%N` fallback; not verified on
 macOS `/bin/bash` 3.2 (run it with Homebrew bash) or Windows.
 
-## no-idle-hook.sh — "không ai rảnh" ladder and rails (no model, free)
+## no-idle-hook.sh: "không ai rảnh" ladder and rails (no model, free)
 
 `bash scripts/uat/no-idle-hook.sh target/debug/8sync`: sandbox HOME + a fake team task list; checks
 off-by-default, teammate takes the next task (exit 2), loop → rest, lead Stop block, rest, and subscription
 without a lease → rest, plus the `task-done` gate (an unchecked code edit on a dirty tree holds the task, a test run
 lets it pass, the next idle asks for one `/remember` lesson). Measured 2026-10-14 on Linux: 15/15 ok, PASS.
 
-Live run (owner-run, interactive — agent teams do not spawn under `claude -p`): `8sync ccc idle on --hours 1
+Live run (owner-run, interactive, since agent teams do not spawn under `claude -p`): `8sync ccc idle on --hours 1
 --usd-per-hour 2`, `8sync ccc kit`, open a new `8sync ccc . uat-idle --team`, ask the lead for 2 teammates and
 4 small tasks. Expect: a teammate that finishes takes the next task by itself; the
 lead stops when nothing is open; `8sync ccc idle status` shows each member and the rest reason. Gate check: ask a
@@ -30,7 +30,7 @@ teammate to edit a `.rs` file and mark its task done without testing → the tas
 from `<lead id>/subagents/agent-<agent_id>.jsonl`, a layout seen on disk, not documented: not verified live). On a
 subscription login keep it attended (lease); unattended runs belong on a Console API key. Then `idle off`.
 
-## compact-window.sh — `CLAUDE_CODE_AUTO_COMPACT_WINDOW` moves the trigger
+## compact-window.sh: `CLAUDE_CODE_AUTO_COMPACT_WINDOW` moves the trigger
 
 Run: `scripts/uat/compact-window.sh [WINDOW=200000] [PCT=60] [MODEL=claude-haiku-5-5]`. Same harness as compact.sh but the window comes
 from the env var (what `8sync ccc compact --window` writes), no `--autocompact` flag. A secret token sits in the first file and is asked for at the end.
@@ -40,7 +40,7 @@ window 120000 -> 58,098 (48.4 %, expected ~72K); window 100000 -> 50,136 (50.1 %
 those runs stop with "Autocompact is thrashing" (the 34 KB files refill the context), so recall is not reachable there; that is a test-size artefact, not proof of token loss.
 400K (the kit default) was not run (~US$1+): not verified.
 
-## compact.sh — auto-compaction honours `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`
+## compact.sh: auto-compaction honours `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`
 
 Run: `scripts/uat/compact.sh [WINDOW=100000] [PCT=60] [MODEL=claude-haiku-5-5]`
 (`PCT=none` = control run without the variable; `KEEP=1` keeps the sandbox + transcript for inspection).
@@ -78,7 +78,7 @@ window with override 60 → PASS (later compactions at 48.6 % and 53.5 % are log
 context, so only the first is judged). Control (`PCT=none`, same window): first auto-compaction at 75,587 tokens = 75.6 % (default threshold is higher
 than 60 %, so the override is what moved it from ~76 % to ~58 %).
 
-## tool-output.sh — the kit's tool-output budget cuts tokens, answer still found
+## tool-output.sh: the kit's tool-output budget cuts tokens, answer still found
 
 Run: `scripts/uat/tool-output.sh [MODEL=claude-haiku-5-5]` (`KEEP=1` keeps the sandbox). Cost: about US$0.02 per run pair (cap `--max-budget-usd 1` per arm). Needs: `claude`, `jq`, `python3`.
 
@@ -92,7 +92,7 @@ tools-reference: valid Bash output past the limit becomes "the path of a file sa
 
 Result (2026-10-14, claude 2.1.296, two runs): baseline 171,115 and 171,177 tokens (4 turns); kit 98,897 and 98,863 tokens (5 turns); about -42 %; hidden check passed in all four runs. Caveat: one task; Read and Bash effects are not separated.
 
-## up-kit.sh — `8sync up` refreshes the kit on another machine
+## up-kit.sh: `8sync up` refreshes the kit on another machine
 
 Run: `scripts/uat/up-kit.sh [OLD_TAG=v0.79.1]`   Cost: free (public release download, ~5 MB x2).
 Needs: `gh` (already logged in; `GH_CONFIG_DIR` is kept so gh works despite the HOME redirect), `curl`, `jq`, linux.
@@ -107,7 +107,7 @@ that dir (`selfup::installed_path()` = `current_exe()`, so `up` replaces only th
 Known failing assertion at time of writing: kit stamp stays at the old version because `refresh_kit` cannot
 re-exec the replaced binary on Linux (root cause in the task report; Rust fix belongs to crates/cli).
 
-## omc-cancel-risk.sh — `8sync ccc risk` on the real diff, `8sync ccc cancel` fail-closed (no model, free)
+## omc-cancel-risk.sh: `8sync ccc risk` on the real diff, `8sync ccc cancel` fail-closed (no model, free)
 
 `bash scripts/uat/omc-cancel-risk.sh [target/debug/8sync]`: `risk --json` on this repo's working tree must name
 `sec` first with a valid level; `risk --paths apps/web/login.ts,CHANGELOG.md` must require `/rules`; then in a

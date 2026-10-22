@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Changed
+- Docs cho cộng đồng: README, `docs/huong-dan.md`, `docs/hq.md`, `docs/known-issues.md`, `COMMERCIAL.md`, `scripts/uat/README.md` viết lại câu chữ gọn kiểu engineer (bỏ bold trang trí, emoji ở heading, gạch dài trong câu). Sửa số liệu cho khớp code: team mặc định là `lead,dev,qa,review,rd`, `--roles` tối đa 14 phòng, `--roles boost` mở 13 phòng (quota khoảng 13 lần một phiên), danh sách Stage A/B của `8sync setup` khớp `8sync setup -h`. Bản hướng dẫn tiếng Việt gọi người đọc là "bạn"; nhãn UI giữ nguyên.
 
 ## [0.110.55] — 2026-10-22
 ### Fixed
