@@ -5,6 +5,19 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.68] — 2026-10-22
+### Fixed
+- **Guard tắt ngay trình duyệt của phòng ăn CPU khi máy quá ngưỡng** (owner: "cpu chạm 45% phải kill … fix triệt để"): một Edge headless của phòng QA vẽ WebGL bằng CPU, ăn 40% máy, CPU lên 94% dù ngưỡng 45%, mà guard chỉ hạ ưu tiên. Giờ khi CPU ≥ ngưỡng, trình duyệt nào do phòng mở ăn ≥ 15% máy bị tắt cả cây (phòng vẫn sống, lần chụp sau thử lại); trình duyệt của anh không bao giờ bị đụng. Test +1.
+- **Dọn Chromium của `8sync shot` không qua WMI nữa**: luật mồ côi của v0.110.67 (#216) giờ đọc danh sách tiến trình native (8sync chủ đã chết mới dọn) thay cho `Get-CimInstance Win32_Process` liệt kê mọi tiến trình mỗi lần chụp; HQ không còn chạy PowerShell/WMI mỗi phút, việc dọn nằm trong `8sync ccc auto revive`. Đã chạy thật trên Windows: hai lần chụp cách 0,1 s đều ra ảnh, Chromium mồ côi bị dọn. Test +1.
+- **"⚡ Làm ngay" trên card backlog có người nhận ngay** (owner 2026-10-22, 3d-game: "bấm khẩn cấp gấp đợi lâu kinh khủng không ai làm"): card backlog/blocked chỉ gọi lead/ba; lead đang trong một goal dài, không có ba, `rd` ngồi rảnh, card P0 nằm im. Giờ nút gọi thêm `rd` (R&D) làm thay lead: viết AC + lệnh check, tách card con, `auto move <id> ready` ngay lượt này; lead vẫn nhận tin. Card ở cột khác không đổi. Test +1.
+- **Máy bớt nặng tận gốc: guard không còn gọi WMI** (owner: "fix tận gốc … ram, cpu"): mỗi nhịp guard của mỗi dự án chạy `Get-CimInstance Win32_Process` kèm command line qua PowerShell; trên máy owner WmiPrvSE phình tới 12,7 GB RAM và 22% CPU. Giờ 8sync liệt kê process bằng Win32 API trực tiếp (ToolHelp, GetProcessTimes, bộ nhớ, NtQueryInformationProcess cho command line): khoảng 0,1 giây, không qua WMI. WMI chỉ còn là đường dự phòng khi cách mới trả rỗng. Test Windows thật +1.
+- **Terminal phòng qua web VPS không còn bỏ cuộc sau 3 giây** (owner: "Fail connect terminal rất nhiều"): trang hiện "đang nối" và thử lại giãn dần (0,6 → 5 giây) suốt một phút; lỗi từ chối vẫn báo ngay.
+- **Câu hỏi 5 lựa chọn trong terminal không còn bị cắt còn 3**: terminal xin ít nhất 22 dòng và không thu nhỏ khi bàn phím điện thoại mở. Test +2.
+- **Dự án ghim hoặc trong scope mà 0 phòng vẫn có nút "Mở team"** (owner, ide: "mất nút mở lại team"): Văn phòng của dự án đang chọn hiện nút mở team dù dự án chỉ được ghim; `POST /api/team` nhận cả dự án ghim và dự án trong scope/team của auto. Test +1.
+### Changed
+- **Văn phòng 3D đẹp và dễ đọc hơn** (owner: "qúa xấu fix gấp đi"): phòng có tường, cửa sổ, sàn gỗ, bàn sáng màu, bóng mềm dưới bàn ghế; áo theo vai trò (lead xanh dương, dev xanh ngọc, qa cam, review đỏ, rd ô liu, ui tím); trạng thái hiện ở vòng sáng dưới ghế, màn hình và chấm trên bảng tên; bảng tên nhỏ gọn, đọc rõ ở cả nền sáng và tối, không che người. Test +1.
+- **Nút tăng tốc ngay ở Tổng quan từng dự án**: "Ship card approved" và "Thao tác team" (Ship tốc độ cao, Sấm Sét, mở lại, dọn…) ở đầu mỗi khối dự án, đúng dự án đó.
+
 ## [0.110.67] — 2026-10-22
 ### Fixed
 - **Sweep zombie của `shot` giết nhầm shot chạy song song** (v0.110.64/.65 khớp mọi chromium `8sync-shot-*` → 2 phòng shot cùng lúc giết nhau, card #184/#185 "8sync shot fails on all WebGL pages" thiếu bằng chứng QA): giờ chỉ kill chromium mồ côi THẬT — pid cha đã chết (8sync chết giữa render). Shot sống (bất kỳ tuổi, kể cả song song) không bao giờ bị đụng. HQ auto-tick dùng cùng luật mồ côi.

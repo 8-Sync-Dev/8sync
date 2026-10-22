@@ -23,8 +23,7 @@ import { PreviewImage } from "./preview-view";
 import { StateTag, type RosterRow } from "./now-roster";
 import { RoleIcon } from "./role-badge";
 import type { Message } from "./types";
-import { ShipLoopChip } from "./ship-loop-chip";
-import { BoostButton, boostOn } from "./team-controls";
+import { TeamControls, boostOn } from "./team-controls";
 import { makeApi } from "./use-hq";
 import type { BoardsState } from "./use-board";
 import type { OfficeState, Room } from "./use-office";
@@ -312,9 +311,9 @@ function ProjectBlock({
         <span className="text-xs text-muted-foreground tabular">{rows.length ? rosterSummary(rows) : `${rooms.length} phòng`}</span>
         <span className="ml-auto flex flex-wrap items-center gap-2 self-center">
           {stuck > 0 && <UnstickButton token={token} stuck={stuck} root={root} />}
-          <ShipLoopChip root={root} token={token} />
           <PlayButton root={root} name={name} token={token} />
-          <BoostButton root={root} name={name} token={token} active={boostOn(rooms)} />
+          {/* This project's speed buttons right here (owner 2026-10-22: "các nút tăng tốc để trong văn phòng không ở ngoài tổng quan dự án"): Ship card approved; Ship tốc độ cao, Sấm Sét and the team actions behind Thao tác team. */}
+          <TeamControls root={root} name={name} token={token} boost={boostOn(rooms)} />
         </span>
       </header>
       {/* Hairlines between panels: each panel draws its right and bottom edge, the outer ones are clipped. */}

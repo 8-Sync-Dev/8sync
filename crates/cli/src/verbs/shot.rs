@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::ui;
+use crate::verbs::ccc::reap::{self, Proc};
 
 #[derive(ClapArgs, Debug)]
 #[command(after_help = indoc::indoc! {"
@@ -117,7 +118,7 @@ pub fn run(a: Args) -> Result<()> {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
     let profile = std::env::temp_dir().join(format!("8sync-shot-{}-{nanos}", std::process::id()));
     // Shots whose 8sync died mid-render leave Chromium burning GPU (see [`sweep_zombies`]).
-    sweep_zombies(&profile);
+    sweep_zombies();
     let mut cmd = low_priority(&chrome);
     cmd.args([
         "--headless".into(),
@@ -149,7 +150,7 @@ pub fn run(a: Args) -> Result<()> {
         _ => {}
     }
     // Helpers that outlived the browser (or an 8sync killed mid-render) must not keep rendering.
-    sweep_zombies(&profile);
+    sweep_zombies();
     // Chromium's helpers may hold the profile a moment after the browser exits.
     for _ in 0..10 {
         if std::fs::remove_dir_all(&profile).is_ok() || !profile.exists() {
@@ -214,35 +215,34 @@ fn kill_tree(child: &mut std::process::Child) {
 /// The marker every shot's throwaway profile carries (`--user-data-dir=…8sync-shot-…`).
 const SHOT_MARK: &str = "8sync-shot-";
 
-/// Kill Chromium processes left over from earlier shots whose `8sync` died mid-render (the auto
-/// guard pausing a room kills the room's shell tree; Chromium's children survive it and a stuck one
-/// burned ~20% GPU for hours, 2026-10-22). Ours (`keep`) is spared. Best effort, never fails a shot.
-fn sweep_zombies(_keep: &std::path::Path) {
-    // Only true orphans: a marker Chromium whose parent pid is gone (the `8sync shot` that spawned
-    // it died — e.g. the RAM guard paused the room mid-render). A LIVE shot's Chromium keeps its
-    // parent chain, so concurrent shots (two rooms shooting at once, 2026-10-22) never kill each
-    // other — the v0.110.64 sweep matched every marker and did exactly that.
-    #[cfg(windows)]
-    {
-        let script = format!(
-            "$p = Get-CimInstance Win32_Process; $alive = @({{ }} + $p.ProcessId); $p | Where-Object {{ $_.Name -eq 'chrome.exe' -and $_.CommandLine -like '*{SHOT_MARK}*' -and -not $alive.Contains($_.ParentProcessId) }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
-        );
-        let _ = Command::new("powershell")
-            .args(["-NoProfile", "-Command", &script])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
-    #[cfg(not(windows))]
-    {
-        // Kill a marker Chromium only when its parent pid is gone (a live shot keeps its parent
-        // chain; concurrent shots never touch each other).
-        let _ = Command::new("sh")
-            .arg("-c")
-            .arg(format!("ps -eo pid=,ppid=,args= | grep '[c]hrome.*{SHOT_MARK}' | while read pid ppid rest; do kill -0 \"$ppid\" 2>/dev/null || kill \"$pid\" 2>/dev/null || true; done"))
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+/// The 8sync that started a shot, from its profile in the command line (`8sync-shot-<pid>-<nanos>`).
+fn shot_owner(cmd: &str) -> Option<u32> {
+    let i = cmd.find(SHOT_MARK)? + SHOT_MARK.len();
+    cmd[i..].split('-').next()?.parse().ok()
+}
+
+/// Chromium processes of shots whose `8sync` is gone: the auto guard pausing a room kills the
+/// room's shell tree, Chromium's children survive it and a stuck one burned ~20% GPU for hours
+/// (2026-10-22). A shot whose 8sync still runs is never touched: the first sweep killed every
+/// other shot, so rooms shooting at the same time killed each other's Chromium ("Chromium exited
+/// non-zero" on every WebGL page, 3d-game #184/#185, 2026-10-22).
+pub(crate) fn zombies(procs: &[Proc]) -> Vec<u32> {
+    let images: std::collections::HashMap<u32, &str> = procs.iter().map(|p| (p.pid, p.image.as_str())).collect();
+    procs
+        .iter()
+        .filter(|p| p.image.contains("chrom") || p.image.contains("msedge"))
+        .filter(|p| shot_owner(&p.cmd).is_some_and(|o| !images.get(&o).is_some_and(|i| i.contains("8sync"))))
+        .map(|p| p.pid)
+        .collect()
+}
+
+/// Kill [`zombies`] (native process list, no WMI). Best effort, never fails a shot. `8sync ccc auto
+/// revive` (HQ, every minute) calls it too.
+pub(crate) fn sweep_zombies() {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let z = zombies(&reap::list(now));
+    if !z.is_empty() {
+        let _ = reap::kill(&z);
     }
 }
 
@@ -264,5 +264,27 @@ mod tests {
         std::fs::write(d.join("chromium.shim"), "path = \"C:\\nope\\chrome.exe\"\n").unwrap();
         assert_eq!(unshim(shim.clone()), shim);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn only_shots_whose_8sync_is_gone_are_zombies() {
+        let p = |pid: u32, image: &str, cmd: &str| Proc { pid, image: image.into(), cmd: cmd.into(), ..Default::default() };
+        let procs = [
+            p(10, "8sync", "8sync shot http://x"),
+            // a live shot of another room (owner 10 runs): spared
+            p(11, "chrome", r"chrome.exe --user-data-dir=C:\T\8sync-shot-10-123 --headless"),
+            // its owner died: swept, the GPU helper too
+            p(12, "chrome", r"chrome.exe --user-data-dir=C:\T\8sync-shot-77-5 --headless"),
+            p(13, "chrome", r"chrome.exe --type=gpu-process --user-data-dir=C:\T\8sync-shot-77-5"),
+            // the owner pid was reused by something else: still a zombie
+            p(20, "node", "node server.js"),
+            p(21, "chrome", "chrome --user-data-dir=/tmp/8sync-shot-20-9"),
+            // a browser of the owner's own and other processes naming the mark are not ours to kill
+            p(30, "chrome", "chrome.exe --profile-directory=Default"),
+            p(31, "bash", "grep 8sync-shot-77-"),
+        ];
+        assert_eq!(zombies(&procs), [12, 13, 21]);
+        assert_eq!(shot_owner("x 8sync-shot-4242-77 y"), Some(4242));
+        assert_eq!(shot_owner("8sync-shot-x"), None);
     }
 }

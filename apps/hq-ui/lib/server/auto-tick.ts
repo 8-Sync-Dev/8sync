@@ -123,16 +123,9 @@ async function tickOnce(status: AutoStatus, now: number): Promise<TickResult> {
     let revived = state.revived;
     if (now - revived >= REVIVE_MS) {
       revived = now;
+      // `revive` also sweeps headless Chromium left by an `8sync shot` whose 8sync died mid-render
+      // (native process list; the PowerShell/WMI sweep that ran here every minute is gone).
       void run("8sync", ["ccc", "auto", "revive"], REVIVE_MS);
-      // Headless Chromium left by an `8sync shot` whose 8sync died mid-render (a guard pause
-      // kills the room's shell tree; Chromium's children survive and burn GPU for hours —
-      // 2026-10-22, 47% GPU). Orphan rule only: the parent pid is gone; a live shot (any age,
-      // also a concurrent one) keeps its parent chain and is never touched.
-      void run(
-        "powershell",
-        ["-NoProfile", "-Command", `$p = Get-CimInstance Win32_Process; $alive = @({} + $p.ProcessId); $p | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -like '*8sync-shot-*' -and -not $alive.Contains($_.ParentProcessId) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`],
-        REVIVE_MS,
-      ).catch(() => {});
     }
     if (!office) {
       writeState({ ...state, at: now, revived });
