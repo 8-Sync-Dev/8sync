@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.62] — 2026-10-22
+### Changed
+- **Văn phòng 3D giống văn phòng thật** (owner 2026-10-22: "3d phòng chưa đẹp quá xấu chưa realistic"): trước mỗi phòng là một hộp và một khối viên nang. Giờ mỗi phòng là một chỗ làm: bàn mặt mỏng bốn chân, màn hình sáng theo trạng thái (xanh khi làm, cam khi chờ anh), bàn phím, cốc, ghế xoay, thảm; người ngồi ghế với đầu, tóc, tay, chân, áo mang màu trạng thái. Ánh sáng filmic (ACES) và bóng mềm, cây xanh ở góc mỗi khu dự án, camera gần hơn. Chuyển động một ngày làm việc: phòng đang làm gõ phím, phòng chờ anh giơ tay vẫy, phòng kẹt ôm đầu, phòng rảnh ngả lưng; tắt khi `prefers-reduced-motion`. Không thêm asset hay thư viện. Kiểm bằng ảnh chụp WebGL headless của chính component, cả nền tối và sáng.
+
 ## [0.110.61] — 2026-10-22
 ### Fixed
 - **Terminal của phòng chết nói đúng sự thật** (owner: phòng su-code "đang mở mà không mở được" — `claude attach` in "No job matching" rồi tắt, HQ vẫn ghi "Đã rời phòng (phòng vẫn chạy nền)" và khoá ô gõ): server giờ nhận biết dấu hiệu đó, khung terminal hiện "Phiên đã tắt hẳn trên máy — phòng không còn chạy nền" (chấm đỏ) thay vì câu an ủi sai, và phòng ma đó được ghi `ended` ngay khỏi danh sách đang chạy — sidebar không còn card "Đang làm" của session đã chết.
