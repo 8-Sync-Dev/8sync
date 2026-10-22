@@ -197,14 +197,7 @@ export function companySidebar<T extends NowRoom & { key: string; project: Proje
   const out: CompanyRoom<T>[] = [];
   for (const r of rooms) {
     if (r.status === "ended") continue;
-    // The board where this room holds its newest card, any project.
-    let held: { root: string; at: number } | null = null;
-    for (const b of boards) {
-      if (!b.board) continue;
-      for (const l of LANES)
-        for (const c of b.board.lanes[l.key])
-          if (c.claim && claimMatches(c.claim.room, r.label, r.name) && (!held || c.claim.at > held.at)) held = { root: b.root, at: c.claim.at };
-    }
+    const held = heldRoot(r, boards);
     const home = r.project?.root ?? r.cwd ?? "";
     const n = roomNow(held ? { ...r, cwd: held.root } : r, boards, now);
     const p = project(held?.root ?? home);
@@ -221,3 +214,31 @@ export function companySidebar<T extends NowRoom & { key: string; project: Proje
 
 /** "1 người", "chưa ai": how many company rooms work on a project now. */
 export const peopleWord = (n: number): string => (n === 0 ? "chưa ai" : `${n} người`);
+
+/** The board root where this room holds its newest card, any project; null = it holds none. */
+export function heldRoot(r: { label: string; name: string }, boards: BoardRef[]): { root: string; at: number } | null {
+  let held: { root: string; at: number } | null = null;
+  for (const b of boards) {
+    if (!b.board) continue;
+    for (const l of LANES)
+      for (const c of b.board.lanes[l.key])
+        if (c.claim && claimMatches(c.claim.room, r.label, r.name) && (!held || c.claim.at > held.at)) held = { root: b.root, at: c.claim.at };
+  }
+  return held;
+}
+
+/**
+ * Company mode for Văn phòng and Tổng quan (owner 2026-10-22: one company, many projects): a room that
+ * holds a card on another project's board is shown at that project (its `project` and `cwd` become that
+ * board's root), so every project block holds the rooms working on it now, and the roster finds the card.
+ * Rooms with no card, or with a card in their own repo, stay as they are. Pure.
+ */
+export function companyRooms<T extends { label: string; name: string; cwd: string | null; project: ProjectInfo | null }>(rooms: T[], boards: BoardRef[]): T[] {
+  return rooms.map((r) => {
+    const held = heldRoot(r, boards);
+    if (!held) return r;
+    const home = r.project?.root ?? r.cwd ?? "";
+    if (home && groupKey(repoOf(home).root) === groupKey(repoOf(held.root).root)) return r;
+    return { ...r, cwd: held.root, project: { root: held.root, name: repoOf(held.root).name, branch: null } };
+  });
+}

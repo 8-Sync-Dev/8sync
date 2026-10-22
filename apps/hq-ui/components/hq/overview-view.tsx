@@ -9,7 +9,7 @@ import { askLine } from "@/lib/ask";
 import { cardParts } from "@/lib/card-tags";
 import { LANES, type Board, type Card } from "@/lib/lanes";
 import { agoShort, roster, rosterSummary } from "@/lib/now";
-import { groupByRepo, worktreeOf } from "@/lib/sidebar";
+import { companyRooms, groupByRepo, worktreeOf } from "@/lib/sidebar";
 import { recentMoves, topCards } from "@/lib/overview";
 import { fileName, rootKey, type ProjectPreviews } from "@/lib/preview";
 import type { ProjectBoard } from "@/lib/server/board";
@@ -63,7 +63,11 @@ export function OverviewView({
   focus?: string | null;
   onAll?: () => void;
 }) {
-  const rooms = useMemo(() => office.office?.rooms ?? [], [office.office]);
+  // Company mode: each room sits at the project whose card it holds (lib/sidebar.ts companyRooms).
+  const rooms = useMemo(
+    () => (office.office?.company ? companyRooms(office.office.rooms, boards.boards ?? []) : (office.office?.rooms ?? [])),
+    [office.office, boards.boards],
+  );
   const now = office.office?.at ?? 0;
   const rows: RosterRow[] = useMemo(
     () => roster(rooms, boards.boards ?? [], now).map((r) => ({ ...r, model: r.room.model, waiting: askLine(r.room.ask) ?? r.room.waiting })),
