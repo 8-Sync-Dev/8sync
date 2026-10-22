@@ -333,6 +333,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   Board
                   {view.tasks.length > 0 && <span className="text-xs text-muted-foreground tabular">{view.tasks.filter((t) => t.status !== "done").length}</span>}
                 </TabsTrigger>
+                <TabsTrigger value="preview" className="flex-none px-0">Preview</TabsTrigger>
                 <TabsTrigger value="group" className="flex-none px-0">Chat</TabsTrigger>
                 {/* Chat phòng only while a room is open (owner 2026-10-22: "nhiều tab đang bị rối"). */}
                 {(scope.session != null || tab === "room") && (

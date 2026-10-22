@@ -4,14 +4,14 @@
 
 // Owner 2026-10-22 again ("nhiều chữ nhiều tab đang bị rối"): four in the bar; "room" (Chat phòng) only
 // while a room is open, Tri thức joins the menu.
-export const MAIN_TABS = ["overview", "office", "board", "group", "room"] as const;
-export const MORE_TABS = ["know", "office3d", "preview", "flow", "report", "usage", "may", "sessions", "activity"] as const;
+// Preview is back in the bar (owner 2026-10-22: "Tab preview rất quan trọng … ưu tiên xem được kết quả").
+export const MAIN_TABS = ["overview", "office", "board", "preview", "group", "room"] as const;
+export const MORE_TABS = ["know", "office3d", "flow", "report", "usage", "may", "sessions", "activity"] as const;
 export type MoreTab = (typeof MORE_TABS)[number];
 
 export const MORE_LABEL: Record<MoreTab, string> = {
   know: "Tri thức",
   office3d: "Văn phòng 3D",
-  preview: "Preview",
   flow: "Flow",
   report: "Báo cáo",
   usage: "Hạn mức",

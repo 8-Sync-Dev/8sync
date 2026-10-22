@@ -26,10 +26,17 @@ export const PREVIEW_TYPES: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".gif": "image/gif",
+  // Demo recordings (owner 2026-10-22: "xem video demo nếu có").
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
 };
 /** Levels of sub-folders walked inside a preview folder. */
 export const PREVIEW_DEPTH = 3;
 export const PREVIEW_MAX_BYTES = 15 * 1024 * 1024;
+/** A demo video may be bigger than a screenshot. */
+export const PREVIEW_VIDEO_MAX_BYTES = 60 * 1024 * 1024;
+/** The size cap for a preview file by its name. */
+export const maxBytesFor = (name: string): number => (/\.(mp4|webm)$/i.test(name) ? PREVIEW_VIDEO_MAX_BYTES : PREVIEW_MAX_BYTES);
 export const PREVIEW_CAP = 300;
 /** Directory entries looked at per preview folder: a huge evidence tree never stalls a poll. */
 const ENTRY_BUDGET = 4_000;
@@ -108,7 +115,7 @@ function walk(dir: string, realBase: string, depth: number, budget: { n: number 
     if (!isFile || !PREVIEW_TYPES[path.extname(e.name).toLowerCase()]) continue;
     try {
       const st = fs.statSync(abs);
-      if (st.size > 0 && st.size <= PREVIEW_MAX_BYTES) out.push({ abs, st });
+      if (st.size > 0 && st.size <= maxBytesFor(e.name)) out.push({ abs, st });
     } catch {
       /* gone between readdir and stat */
     }
@@ -267,7 +274,7 @@ async function mainTree(root: string): Promise<MainTree | null> {
       const [, type, oid, size] = rec.slice(0, tab).trim().split(/\s+/);
       const sub = rec.slice(tab + 1);
       const n = Number(size);
-      if (type === "blob" && /^[0-9a-f]{40,64}$/.test(oid) && n > 0 && n <= PREVIEW_MAX_BYTES && inPreviewDir(sub)) files.push({ sub, oid, size: n });
+      if (type === "blob" && /^[0-9a-f]{40,64}$/.test(oid) && n > 0 && n <= maxBytesFor(sub) && inPreviewDir(sub)) files.push({ sub, oid, size: n });
     }
     v = { head: tip, files, ...timesOf(log ?? "") };
   }
@@ -441,7 +448,7 @@ export async function openPreview(id: string | null, projects: ProjectInfo[]): P
     return { type: t.type, body: Readable.toWeb(fs.createReadStream(t.abs)) as ReadableStream<Uint8Array> };
   }
   const { promise, resolve } = Promise.withResolvers<Buffer | null>();
-  execFile("git", ["-C", t.root, "cat-file", "blob", t.oid], { encoding: "buffer", timeout: GIT_TIMEOUT_MS, maxBuffer: PREVIEW_MAX_BYTES + 1024, windowsHide: true, env: { ...childEnv(), GIT_TERMINAL_PROMPT: "0" } }, (err, stdout) =>
+  execFile("git", ["-C", t.root, "cat-file", "blob", t.oid], { encoding: "buffer", timeout: GIT_TIMEOUT_MS, maxBuffer: PREVIEW_VIDEO_MAX_BYTES + 1024, windowsHide: true, env: { ...childEnv(), GIT_TERMINAL_PROMPT: "0" } }, (err, stdout) =>
     resolve(err ? null : stdout),
   );
   const buf = await promise;

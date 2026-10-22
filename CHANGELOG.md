@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.63] — 2026-10-22
+### Changed
+- **Preview ưu tiên kết quả xem được** (owner 2026-10-22: "Tab preview rất quan trọng việc xem ảnh, xem video demo nếu có, link demo thật mà các task không có ảnh không có gì xem được không nên hiển thị"): Preview về lại thanh tab chính (cạnh Board). Card không có ảnh, video hay link demo không hiện nữa. Video demo (`.mp4`, `.webm`, tới 60 MB) trong các thư mục evidence hiện cạnh ảnh và mở ra là phát được. Link demo thật trong ghi chú card (http/https, trừ GitHub vì PR đã có chip riêng) thành nút "Mở demo · <host>". Test +2.
+
 ## [0.110.62] — 2026-10-22
 ### Changed
 - **Văn phòng 3D giống văn phòng thật** (owner 2026-10-22: "3d phòng chưa đẹp quá xấu chưa realistic"): trước mỗi phòng là một hộp và một khối viên nang. Giờ mỗi phòng là một chỗ làm: bàn mặt mỏng bốn chân, màn hình sáng theo trạng thái (xanh khi làm, cam khi chờ anh), bàn phím, cốc, ghế xoay, thảm; người ngồi ghế với đầu, tóc, tay, chân, áo mang màu trạng thái. Ánh sáng filmic (ACES) và bóng mềm, cây xanh ở góc mỗi khu dự án, camera gần hơn. Chuyển động một ngày làm việc: phòng đang làm gõ phím, phòng chờ anh giơ tay vẫy, phòng kẹt ôm đầu, phòng rảnh ngả lưng; tắt khi `prefers-reduced-motion`. Không thêm asset hay thư viện. Kiểm bằng ảnh chụp WebGL headless của chính component, cả nền tối và sáng.
