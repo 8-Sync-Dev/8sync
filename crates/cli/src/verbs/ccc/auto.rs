@@ -1238,6 +1238,52 @@ fn rush(home: &Path, root: &Path, rooms: &[(String, String)], t: &target::Target
     Ok(Rush { lead, lead_recent: !mail_lead, woke, held })
 }
 
+/// How often an empty `ready` lane calls the splitters again (per project).
+const STARVE_EVERY_S: u64 = 15 * 60;
+
+/// `ready` ran dry while backlog still holds open cards: rd, ba and the lead each get one inbox line
+/// to split backlog into ready cards (AC + check) now, at most every [`STARVE_EVERY_S`] per project.
+/// Owner 2026-10-22 (3d-game, "tăng tốc ship … còn kém quá"): ready 0 and building 0 left 8 builder
+/// rooms idle for most of an hour; the refill ([`target::claim`]) only came when the lead itself
+/// claimed backlog, and the lead was in a long turn or waiting on its 30-minute cron. Called by
+/// `auto revive` (HQ, every minute). The line for the status rows, None when nothing was sent.
+pub(super) fn starved(home: &Path, root: &Path, rooms: &[(String, String)], now: u64) -> Option<String> {
+    let cards = target::list(home, root).ok()?;
+    let open = |lane: &str| cards.iter().filter(|t| t.state == "open" && t.lane == lane).collect::<Vec<_>>();
+    if !open("ready").is_empty() {
+        return None;
+    }
+    let mut backlog = open("backlog");
+    if backlog.is_empty() {
+        return None;
+    }
+    backlog.sort_by_key(|t| (t.prio.unwrap_or(2), t.id));
+    let splitters: Vec<(String, String)> = rooms.iter().filter(|(n, _)| matches!(super::room::crew(n).as_str(), "rd" | "ba" | "lead")).cloned().collect();
+    if splitters.is_empty() {
+        return None;
+    }
+    let key = canon(root).to_string_lossy().into_owned();
+    let mut due = false;
+    super::team::update_json(&idle::state_dir(home).join("starve.json"), |v| {
+        due = !v[&key].as_u64().is_some_and(|at| now.saturating_sub(at) < STARVE_EVERY_S);
+        if due {
+            v[&key] = json!(now);
+        }
+    });
+    if !due {
+        return None;
+    }
+    let top: Vec<String> = backlog.iter().take(3).map(|t| format!("#{} {}", t.id, short(&t.text))).collect();
+    let n = backlog.len();
+    let sent = queue_all(home, &splitters, now, None, |name| {
+        format!(
+            "[8sync] Cột ready TRỐNG, backlog còn {n} card, phòng build đang ngồi không. Phòng `{name}` tách việc NGAY lượt này: lấy card đầu hàng ({}), viết AC + lệnh check, tách 2–3 card con vừa một phòng làm, rồi `8sync ccc auto move <id> ready --check \"<lệnh>\" --note \"AC: …\"` (card con: `auto add … --check`). Phòng khác đã tách card đó thì lấy card kế; không đụng card phòng khác đang giữ.",
+            top.join(" · ")
+        )
+    });
+    (!sent.is_empty()).then(|| format!("ready trống, backlog {n}: gọi {} tách việc", sent.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")))
+}
+
 /// The owner's own terminal (or HQ, which drops the room env: apps/hq-ui lib/server/child-env.ts):
 /// no room named (`--as`) and no room env at all. A room in a worktree that forgot `--as`, an omp
 /// room, or a room whose forked id is not rebound yet is not the owner.
@@ -2640,6 +2686,30 @@ mod tests {
         }).unwrap();
         let r2 = rush(&h, &root, &rooms, &ready, 800).unwrap();
         assert!(!r2.woke.iter().any(|(n, _)| n == "rd"));
+    }
+
+    #[test]
+    fn an_empty_ready_lane_calls_rd_ba_and_lead_to_split_backlog_once_per_window() {
+        let h = home("starve");
+        let root = h.join("game");
+        std::fs::create_dir_all(&root).unwrap();
+        let names = ["lead", "rd", "dev", "qa", "ba"];
+        let rooms: Vec<(String, String)> = names.iter().enumerate().map(|(i, n)| (n.to_string(), format!("c{i}830544-0719-4d6f-aaa3-644783ddb0b5"))).collect();
+        let id = |n: &str| rooms.iter().find(|(x, _)| x == n).unwrap().1.clone();
+        let inbox = |n: &str| std::fs::read_to_string(crate::verbs::hq::inbox_file(&h, &id(n)).unwrap()).unwrap_or_default();
+        // No backlog: nothing to split, nobody called.
+        assert_eq!(starved(&h, &root, &rooms, 100), None);
+        target::add(&h, &root, "game quá xấu: làm lại", None, None, false, None, 100).unwrap();
+        let line = starved(&h, &root, &rooms, 200).expect("ready empty, backlog open: splitters called");
+        assert!(line.contains("lead") && line.contains("rd") && line.contains("ba"), "{line}");
+        assert!(inbox("rd").contains("ready TRỐNG") && inbox("rd").contains("auto move <id> ready"), "{}", inbox("rd"));
+        assert!(inbox("dev").is_empty() && inbox("qa").is_empty(), "builders are not splitters");
+        // Within the window: quiet; after it: called again.
+        assert_eq!(starved(&h, &root, &rooms, 200 + STARVE_EVERY_S - 1), None);
+        assert!(starved(&h, &root, &rooms, 200 + STARVE_EVERY_S).is_some());
+        // A team without rd/ba/lead: nobody to call.
+        let builders: Vec<(String, String)> = rooms.iter().filter(|(n, _)| n == "dev" || n == "qa").cloned().collect();
+        assert_eq!(starved(&h, &root, &builders, 99_999), None);
     }
 
     /// zus/ide 2026-10-21: the owner pressed ⚡ Làm ngay on ready cards #20/#21 at P0 and nothing

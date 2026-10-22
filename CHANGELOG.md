@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.70] — 2026-10-22
+### Fixed
+- **Cột ready trống thì tự có người tách việc** (owner: "tăng tốc ship tốc độ cao mạnh hơn còn kém quá"; 3d-game: ready 0, building 0, 8 phòng build ngồi không gần một giờ): trước đây chỉ khi lead tự nhận card backlog mới có việc tách, mà lead đang trong lượt dài hoặc chờ cron 30 phút. Giờ `auto revive` (HQ gọi mỗi phút) thấy ready trống mà backlog còn card thì gửi ngay cho rd, ba và lead một dòng: tách card đầu hàng thành card con có AC + lệnh check và đưa vào ready lượt này. Mỗi dự án tối đa 15 phút một lần. Test +1.
+
 ## [0.110.69] — 2026-10-22
 ### Fixed
 - **Guard tắt ngay trình duyệt của phòng ăn CPU khi máy quá ngưỡng** (owner: "cpu chạm 45% phải kill … fix triệt để"): một Edge headless của phòng QA vẽ WebGL bằng CPU, ăn 40% máy, CPU lên 94% dù ngưỡng 45%, mà guard chỉ hạ ưu tiên. Giờ khi CPU ≥ ngưỡng, trình duyệt nào do phòng mở ăn ≥ 15% máy bị tắt cả cây (phòng vẫn sống, lần chụp sau thử lại); trình duyệt của anh không bao giờ bị đụng. Test +1.
