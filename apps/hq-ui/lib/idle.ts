@@ -23,8 +23,6 @@ export type IdleRecord = {
 export const IDLE_STALE_MS = 6 * 3600_000;
 /** "Nghỉ lâu": resting longer than this counts in the office header. */
 export const IDLE_LONG_REST_MS = 10 * 60_000;
-/** A `noTick` record survives this long (a cron loop that has not rewritten it by then is dead). */
-export const IDLE_PRUNE_MS = 7 * 24 * 3600_000;
 
 const SAFE = /^[A-Za-z0-9_.-]{1,80}$/;
 

@@ -103,19 +103,17 @@ describe("idle: server reader", () => {
     fs.writeFileSync(path.join(dir, "b.json"), JSON.stringify(rec({ ts: now - 10, state: "rest" })));
     expect(readIdleStatus(dir).map((r) => r.state)).toEqual(["rest"]);
   });
-  it("prunes stale leftovers on read (dead teams stop piling up), keeps a noTick record a week", () => {
+  it("prunes stale leftovers on read (dead teams stop piling up); a noTick flag is never pruned here", () => {
     const dir = path.join(tempHome(), "s2");
     fs.mkdirSync(dir);
     const now = Date.now() / 1000;
     fs.writeFileSync(path.join(dir, "fresh.json"), JSON.stringify(rec({ ts: now - 60 })));
     fs.writeFileSync(path.join(dir, "stale.json"), JSON.stringify(rec({ name: "dev", ts: now - 7 * 3600 })));
-    fs.writeFileSync(path.join(dir, "notick-quiet.json"), JSON.stringify(rec({ name: "lead", ts: now - 8 * 3600, no_tick: "cron" })));
-    fs.writeFileSync(path.join(dir, "notick-dead.json"), JSON.stringify(rec({ name: "qa", ts: now - 8 * 24 * 3600, no_tick: "cron" })));
+    fs.writeFileSync(path.join(dir, "notick.json"), JSON.stringify(rec({ name: "lead", ts: now - 8 * 24 * 3600, no_tick: "cron" })));
     expect(readIdleStatus(dir).map((r) => r.name).sort()).toEqual(["be", "lead"]);
     expect(fs.existsSync(path.join(dir, "fresh.json"))).toBe(true);
     expect(fs.existsSync(path.join(dir, "stale.json"))).toBe(false);
-    expect(fs.existsSync(path.join(dir, "notick-quiet.json"))).toBe(true);
-    expect(fs.existsSync(path.join(dir, "notick-dead.json"))).toBe(false);
+    expect(fs.existsSync(path.join(dir, "notick.json"))).toBe(true);
   });
 });
 
