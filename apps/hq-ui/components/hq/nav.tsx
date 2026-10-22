@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { teamLabel } from "@/lib/labels";
 import type { BoardRef, NowState } from "@/lib/now";
 import { matchesSession } from "@/lib/office";
-import { SIDEBAR_WORD, groupKey, pinSidebar, sidebarGroups, splitClosed, type HiddenProject, type SidebarGroup, type SidebarRoom, projectsHeading } from "@/lib/sidebar";
+import { SIDEBAR_WORD, companySidebar, groupKey, peopleWord, pinSidebar, sidebarGroups, splitClosed, type CompanyProject, type HiddenProject, type SidebarGroup, type SidebarRoom, projectsHeading } from "@/lib/sidebar";
 import { ErrorNote } from "./bits";
 import { BrandMark } from "./brand-mark";
 import { CloseDialog, ClosedProjects, ProjectMenu, RoomEndDialog, RoomMenu, WorktreeDialog, useWorktreeKeys, type Confirm, type RoomAction } from "./nav-actions";
@@ -86,7 +86,16 @@ export function Nav({
   // Pinned projects (`8sync ccc auto pin`) first under "Ghim", rooms or not; the rest as before.
   const side = useMemo(() => pinSidebar(data?.pins ?? [], split.shown, split.closed, roomless), [data, split, roomless]);
   const { shown, closed } = side;
-  const heading = projectsHeading(data?.company === true, shown.length);
+  // Company mode (owner 2026-10-22: one company serves every project, not a full team per project):
+  // one list of rooms, each tagged with the project it works on, then the projects with how many work there.
+  const company = data?.company === true;
+  const co = useMemo(() => (company ? companySidebar(data?.rooms ?? [], boards, now) : null), [company, data, boards, now]);
+  const pinnedKeys = useMemo(() => new Set((data?.pins ?? []).map((p) => groupKey(p.root))), [data]);
+  const coProjects = useMemo(
+    () => (co ? [...co.projects].sort((a, b) => Number(pinnedKeys.has(b.key)) - Number(pinnedKeys.has(a.key))) : []),
+    [co, pinnedKeys],
+  );
+  const heading = projectsHeading(company, co ? co.projects.length : shown.length);
   // "Dự án trên máy": known repos that are neither added folders nor live groups.
   const knownRest = useMemo(() => (hq.knownProjects ?? []).filter((k) => !groups.some((g) => g.key === norm(k.path)) && !hq.projects.data.some((p) => norm(p.path) === norm(k.path))), [hq.knownProjects, hq.projects.data, groups]);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
@@ -165,7 +174,7 @@ export function Nav({
           <Count n={live} />
         </button>
 
-        {side.pinned.length > 0 && (
+        {!co && side.pinned.length > 0 && (
           <>
             <h2 className="mt-4 mb-1 flex items-center gap-1 px-2 text-xs font-medium text-muted-foreground">
               <PinIcon className="size-3" aria-hidden />
@@ -204,6 +213,38 @@ export function Nav({
           </>
         )}
 
+        {co ? (
+          <>
+            <h2 className="mt-4 mb-1 px-2 text-xs font-medium text-muted-foreground" title="Một team chung: phòng nhận card gấp nhất ở mọi dự án, chữ nhỏ bên phải là dự án phòng đang làm">
+              Phòng của công ty · {co.rooms.length}
+            </h2>
+            {co.rooms.length === 0 ? (
+              <p className="px-2 py-1 text-xs leading-relaxed text-pretty text-muted-foreground">Chưa có phòng nào chạy. Bấm “Mở team” ở một dự án là cả công ty có người.</p>
+            ) : (
+              <ul className="space-y-0.5" aria-label="Phòng của công ty">
+                {co.rooms.map((x) => (
+                  <RoomRows key={x.room.key} x={{ ...x, worktree: null }} at={x.at.name} first={false} selected={scope.session} onOpen={onOpenRoom} onPick={(a) => setConfirm({ kind: "room", x, action: a })} />
+                ))}
+              </ul>
+            )}
+            <h2 className="mt-5 mb-1 px-2 text-xs font-medium text-muted-foreground" title={heading.hint ?? undefined}>
+              {heading.title}
+            </h2>
+            <ul className="space-y-0.5" aria-label="Dự án của công ty">
+              {coProjects.map((p) => (
+                <CompanyProjectRow
+                  key={p.key}
+                  p={p}
+                  current={repo != null && norm(repo) === p.key && scope.session == null}
+                  onOpen={() => onOpenRepo(p.root, p.name)}
+                  pin={<PinButton name={p.name} pinned={pinnedKeys.has(p.key)} busy={pinning === p.key} onPin={() => void pin(p.root, p.name, !pinnedKeys.has(p.key))} />}
+                />
+              ))}
+            </ul>
+            <KnownProjects items={knownRest} hq={hq} onOpen={onOpenFolder} />
+          </>
+        ) : (
+          <>
         <h2 className="mt-4 mb-1 px-2 text-xs font-medium text-muted-foreground" title={heading.hint ?? undefined}>
           {heading.title}
         </h2>
@@ -236,6 +277,8 @@ export function Nav({
             <KnownProjects items={knownRest} hq={hq} onOpen={onOpenFolder} />
           </>
         )}
+          </>
+        )}
 
         {side.folders.length > 0 && (
           <>
@@ -255,7 +298,7 @@ export function Nav({
         )}
       </div>
 
-      <AddProject hq={hq} onAdded={onOpenFolder} />
+      <AddProject hq={hq} onAdded={onOpenFolder} company={company} />
 
       {confirm?.kind === "room" && (
         <RoomEndDialog
@@ -370,12 +413,15 @@ function RepoGroup({
 
 function RoomRows({
   x,
+  at,
   first,
   selected,
   onOpen,
   onPick,
 }: {
   x: SidebarRoom<Room>;
+  /** Company mode: the project this room works on now. */
+  at?: string;
   first: boolean;
   selected: string | null;
   onOpen: (r: Room) => void;
@@ -397,12 +443,15 @@ function RoomRows({
           type="button"
           className={cn(item, "h-8 min-w-0 flex-1 max-sm:h-11", x.worktree && "pl-3")}
           aria-current={matchesSession(room, selected)}
-          aria-label={`${room.label}${x.worktree ? ` (worktree ${x.worktree})` : ""} · ${teamLabel(room.engine)}: ${word}`}
-          title={[room.label, word, what].filter(Boolean).join(" · ")}
+          aria-label={`${room.label}${x.worktree ? ` (worktree ${x.worktree})` : ""}${at ? ` ở ${at}` : ""} · ${teamLabel(room.engine)}: ${word}`}
+          title={[room.label, at, word, what].filter(Boolean).join(" · ")}
           onClick={() => onOpen(room)}
         >
           <RoleIcon role={n.role ?? room.role} className="size-3.5 text-muted-foreground group-aria-[current=true]:text-foreground" />
-          <span className="min-w-0 flex-1 truncate text-[13px]">{room.label}</span>
+          <span className="min-w-0 flex-1 truncate text-[13px]">
+            {room.label}
+            {at && <span className="ml-1.5 text-[11px] text-muted-foreground">{at}</span>}
+          </span>
           {room.engine === "omp" && <span className="shrink-0 text-[10px] text-muted-foreground">{teamLabel(room.engine)}</span>}
           {n.state === "needs" ? (
             <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full bg-st-needs/15 px-1.5 py-px text-[11px] font-semibold", NEEDS_INK)}>
@@ -416,6 +465,34 @@ function RoomRows({
         <RoomMenu x={x} onPick={onPick} />
       </li>
     </>
+  );
+}
+
+/** One project the company serves: who works there now, its open cards, rooms waiting on the owner. */
+function CompanyProjectRow({ p, current, onOpen, pin }: { p: CompanyProject; current: boolean; onOpen: () => void; pin: ReactNode }) {
+  return (
+    <li className="group/row flex items-center">
+      <button
+        type="button"
+        className={cn(item, "h-8 min-w-0 flex-1 gap-1.5 max-sm:h-11")}
+        aria-current={current}
+        title={`${p.root}: ${peopleWord(p.people)} đang làm, ${p.open} card mở`}
+        onClick={onOpen}
+      >
+        <FolderIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
+        {p.needs > 0 && (
+          <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full bg-st-needs/15 px-1.5 text-[11px] font-semibold tabular", NEEDS_INK)}>
+            <HandIcon className="size-3" aria-hidden />
+            {p.needs}
+            <span className="sr-only"> phòng chờ anh</span>
+          </span>
+        )}
+        <span className={cn("shrink-0 text-[11px] tabular", p.people > 0 ? "text-foreground" : "text-muted-foreground")}>{peopleWord(p.people)}</span>
+        {p.open > 0 && <span className="shrink-0 text-[11px] text-muted-foreground tabular">· {p.open} card</span>}
+      </button>
+      {pin}
+    </li>
   );
 }
 
@@ -476,7 +553,7 @@ function LiveDot({ live }: { live: Live }) {
   );
 }
 
-function AddProject({ hq, onAdded }: { hq: Hq; onAdded: (id: number) => void }) {
+function AddProject({ hq, onAdded, company }: { hq: Hq; onAdded: (id: number) => void; company: boolean }) {
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -492,7 +569,13 @@ function AddProject({ hq, onAdded }: { hq: Hq; onAdded: (id: number) => void }) 
         method: "POST",
         body: { path: path.trim() },
       });
-      toast.success(r.existed ? `${r.project.name} đã có trong HQ` : `Đã thêm ${r.project.name}: bấm “Mở team” trong Văn phòng`);
+      toast.success(
+        r.existed
+          ? `${r.project.name} đã có trong HQ`
+          : company
+            ? `Đã thêm ${r.project.name}: bấm “Mở team” trong Văn phòng để công ty nhận dự án (không mở phòng mới)`
+            : `Đã thêm ${r.project.name}: bấm “Mở team” trong Văn phòng`,
+      );
       setPath("");
       await hq.reload.projects();
       await hq.reload.sessions();
@@ -511,7 +594,7 @@ function AddProject({ hq, onAdded }: { hq: Hq; onAdded: (id: number) => void }) 
     <div className="shrink-0 border-t border-sidebar-border p-3">
       <form onSubmit={submit} className="space-y-1.5">
         <label htmlFor="add-project" className="text-xs font-medium text-muted-foreground">
-          Mở team ở repo mới
+          {company ? "Thêm dự án cho công ty" : "Mở team ở repo mới"}
         </label>
         <div className="flex gap-1.5">
           <Input
@@ -535,7 +618,9 @@ function AddProject({ hq, onAdded }: { hq: Hq; onAdded: (id: number) => void }) 
           </p>
         ) : (
           <p id="add-project-hint" className="text-[11px] leading-snug text-pretty text-muted-foreground">
-            Chỉ cần khi repo chưa có phòng nào. Dự án đang có phòng chạy tự hiện ở trên.
+            {company
+              ? "Công ty nhận card ở repo này bằng các phòng đang có, không mở thêm phòng."
+              : "Chỉ cần khi repo chưa có phòng nào. Dự án đang có phòng chạy tự hiện ở trên."}
           </p>
         )}
       </form>

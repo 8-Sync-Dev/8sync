@@ -1,6 +1,7 @@
 // The sidebar's room list: every live room under its repo, worktrees (`<repo>/.claude/worktrees/<x>`)
 // folded under the repo they belong to, attention first. Pure, no I/O. Tested in tests/sidebar.test.ts.
-import { roomNow, type BoardRef, type NowRoom, type NowState, type RoomNow } from "./now";
+import { claimMatches, roomNow, type BoardRef, type NowRoom, type NowState, type RoomNow } from "./now";
+import { LANES } from "./lanes";
 import { groupByProject, type ProjectInfo } from "./office";
 
 /** Short state words for a narrow row (NOW_LABEL's "holding" is a sentence). */
@@ -163,3 +164,60 @@ export function projectsHeading(company: boolean, projects: number): { title: st
   if (!company) return { title: "Dự án", hint: null };
   return { title: `Công ty · ${projects} dự án`, hint: "Một team làm mọi dự án: phòng hết card ở dự án mình thì lấy card gấp nhất ở dự án khác (8sync ccc auto company on|off)." };
 }
+
+/** A company room: where it works now (the project of the card it holds, else its home repo). */
+export type CompanyRoom<T> = SidebarRoom<T> & { at: { key: string; root: string; name: string } };
+/** A project the company serves: rooms holding a card there now, open cards on its board, rooms waiting on the owner there. */
+export type CompanyProject = { key: string; root: string; name: string; people: number; open: number; needs: number };
+
+/**
+ * The sidebar in company mode (owner 2026-10-22: "1 cty cân all dự án … không phải mỗi dự án là mở full
+ * rooms"): ONE list of rooms, each tagged with the project it works on now, and ONE list of projects,
+ * each with how many rooms work there (a project with one person on it shows 1). A room working on another
+ * project's card is found by its claim on that board: company mode has one team, so a label is unique.
+ * Pure; tested in tests/sidebar.test.ts.
+ */
+export function companySidebar<T extends NowRoom & { key: string; project: ProjectInfo | null }>(
+  rooms: T[],
+  boards: BoardRef[],
+  now: number,
+): { rooms: CompanyRoom<T>[]; projects: CompanyProject[] } {
+  const projects = new Map<string, CompanyProject>();
+  const project = (at: string) => {
+    const repo = repoOf(at);
+    const key = groupKey(repo.root) || "~other";
+    let p = projects.get(key);
+    if (!p) projects.set(key, (p = { key, root: repo.root, name: repo.name || "Không rõ thư mục", people: 0, open: 0, needs: 0 }));
+    return p;
+  };
+  for (const b of boards) {
+    const p = project(b.root);
+    if (b.board) p.open += LANES.reduce((n, l) => n + b.board!.lanes[l.key].length, 0);
+  }
+  const out: CompanyRoom<T>[] = [];
+  for (const r of rooms) {
+    if (r.status === "ended") continue;
+    // The board where this room holds its newest card, any project.
+    let held: { root: string; at: number } | null = null;
+    for (const b of boards) {
+      if (!b.board) continue;
+      for (const l of LANES)
+        for (const c of b.board.lanes[l.key])
+          if (c.claim && claimMatches(c.claim.room, r.label, r.name) && (!held || c.claim.at > held.at)) held = { root: b.root, at: c.claim.at };
+    }
+    const home = r.project?.root ?? r.cwd ?? "";
+    const n = roomNow(held ? { ...r, cwd: held.root } : r, boards, now);
+    const p = project(held?.root ?? home);
+    if (held) p.people++;
+    if (n.state === "needs") p.needs++;
+    out.push({ room: r, now: n, worktree: home ? repoOf(home).worktree : null, branch: r.project?.branch ?? null, at: { key: p.key, root: p.root, name: p.name } });
+  }
+  out.sort((a, b) => ORDER[a.now.state] - ORDER[b.now.state] || a.now.label.localeCompare(b.now.label));
+  const list = [...projects.values()].sort(
+    (a, b) => Number(b.needs > 0) - Number(a.needs > 0) || b.people - a.people || Number(a.key === "~other") - Number(b.key === "~other") || a.name.localeCompare(b.name),
+  );
+  return { rooms: out, projects: list };
+}
+
+/** "1 người", "chưa ai": how many company rooms work on a project now. */
+export const peopleWord = (n: number): string => (n === 0 ? "chưa ai" : `${n} người`);
