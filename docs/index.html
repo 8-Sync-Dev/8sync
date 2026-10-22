@@ -656,7 +656,7 @@
               <code>8sync hq ui</code>
               <button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button>
             </div>
-            <p class="alt">Any folder; page at <code>127.0.0.1:8740</code>. <span lang="vi">Tổng quan</span> · Board · Flow · Preview (the team's screenshots) · <span lang="vi">Máy</span> (RAM, CPU, GPU). Away from the desk: <code>8sync hq ui --public</code> prints a one-time login link (Cloudflare quick tunnel; needs <code>cloudflared</code>). Anyone with the link controls your rooms, so keep it to yourself.</p></li>
+            <p class="alt">Any folder; page at <code>127.0.0.1:8740</code>. <span lang="vi">Tổng quan</span> · Board · Flow · Preview (the team's screenshots) · <span lang="vi">Máy</span> (RAM, CPU, GPU, 30-min load chart) · <span lang="vi">Tri thức</span> (the machine's knowledge tree) · 3D (a WebGL office, one floor per project). The Board's Approved column has a one-tap <span lang="vi">Ship tất cả / Duyệt tất cả</span> button. Away from the desk: <code>8sync hq ui --public</code> prints a one-time login link (Cloudflare quick tunnel; needs <code>cloudflared</code>). Anyone with the link controls your rooms, so keep it to yourself.</p></li>
           <li><h3>Add the folder</h3>
             <p>Sidebar → paste the repo path. One git repo = one team, one board; a repo nested inside another keeps its own. First time: run <code>claude</code> there once and trust it.</p></li>
           <li><h3>Start the team</h3>
@@ -713,6 +713,8 @@
             <tr><th colspan="3" scope="rowgroup">Sessions</th></tr>
             <tr><td><code>8sync ccc . &lt;name&gt;</code></td><td><code>--team</code> <code>--panes</code></td><td>Open or resume a named session in this repo; <code>. ls</code> lists them.</td></tr>
             <tr><td><code>term &lt;id&gt;</code></td><td><code>--cols</code> <code>--rows</code></td><td>A room's real terminal (HQ uses it for its web terminal).</td></tr>
+            <tr><td><code>auto up --company</code></td><td></td><td>One team for every project in auto's scope: a room with an empty home board claims the most urgent card of another project (P0 first); the card returns with its root and an <code>env -C</code> hint.</td></tr>
+            <tr><td><code>know add "…"</code></td><td><code>--repo</code> · <code>ls [--all] [--json]</code></td><td>The machine's knowledge tree, one file per repo; every session start reads its own project first, then the others under their root. General lessons only, never a client's facts.</td></tr>
             <tr><td><code>msg &lt;room&gt; "…"</code></td><td><code>--all</code> <code>--from</code></td><td>One room messages another, ccc or omp (rooms run it themselves). Marked as a room's words, never the owner's.</td></tr>
             <tr><th colspan="3" scope="rowgroup">HQ</th></tr>
             <tr><td><code>8sync hq ui</code></td><td><code>--public</code> <code>--off</code></td><td>The dashboard on <code>127.0.0.1:8740</code>; <code>--public</code> adds a login link from anywhere (new host and key each start, gone when HQ stops).</td></tr>
