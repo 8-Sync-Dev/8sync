@@ -185,6 +185,8 @@ export function companySidebar<T extends NowRoom & { key: string; project: Proje
   rooms: T[],
   boards: BoardRef[],
   now: number,
+  /** The company's repos (companyScope): listed even before they have a board or a room. */
+  scope: string[] = [],
 ): { rooms: CompanyRoom<T>[]; projects: CompanyProject[] } {
   const projects = new Map<string, CompanyProject>();
   const project = (at: string) => {
@@ -194,6 +196,7 @@ export function companySidebar<T extends NowRoom & { key: string; project: Proje
     if (!p) projects.set(key, (p = { key, root: repo.root, name: repo.name || "Không rõ thư mục", people: 0, open: 0, needs: 0 }));
     return p;
   };
+  for (const r of scope) project(r);
   for (const b of boards) {
     const p = project(b.root);
     if (b.board) p.open += LANES.reduce((n, l) => n + b.board!.lanes[l.key].length, 0);
@@ -246,3 +249,17 @@ export function companyRooms<T extends { label: string; name: string; cwd: strin
     return { ...r, cwd: held.root, project: { root: held.root, name: repoOf(held.root).name, branch: null } };
   });
 }
+
+/**
+ * The company's scope from auto status (`repos`, minus `out`): the repos the one team serves. Company
+ * off, or a status without `repos`: none. Pure.
+ */
+export function companyScope(status: { company?: boolean; repos?: unknown; out?: unknown } | null | undefined): string[] {
+  if (!status?.company) return [];
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 4096) : []);
+  const out = new Set(list(status.out).map((x) => groupKey(x)));
+  return list(status.repos).filter((r) => !out.has(groupKey(r)));
+}
+
+/** A folder already in the company's scope: "Mở team" there would open no room, so it is not offered. */
+export const inScope = (scope: string[], path: string): boolean => scope.some((r) => groupKey(repoOf(r).root) === groupKey(repoOf(path).root));

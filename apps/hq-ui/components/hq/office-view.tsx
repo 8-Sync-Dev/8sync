@@ -12,7 +12,7 @@ import { askLine } from "@/lib/ask";
 import { NOW_LABEL, agoVi, claimMatches, deskClip, roster, rosterSummary, stateChanges, type RoomNow } from "@/lib/now";
 import { cloneCount, fmtDuration, fmtTokens, fmtUsd, roomFor, SEATS, type Visit } from "@/lib/office";
 import { rootKey } from "@/lib/preview";
-import { companyRooms, groupByRepo, meetingShown, worktreeOf } from "@/lib/sidebar";
+import { companyRooms, groupByRepo, inScope, meetingShown, worktreeOf } from "@/lib/sidebar";
 import { modelShort } from "@/lib/roles";
 import { shirtFor, shirtOf } from "@/lib/sprite/frames";
 import { cn } from "@/lib/utils";
@@ -515,7 +515,11 @@ export function OfficeView({
     boards.reload();
   };
   const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const idleFolders = projects.filter((p) => !p.missing && !allGroups.some((g) => slash(g.project.root) === slash(p.path)) && (!repo || slash(p.path) === slash(repo)));
+  // Company mode: a folder already in the company's scope is served by the one team (no "Mở team" there).
+  const scope = office?.company ? (office.scope ?? []) : [];
+  const idleFolders = projects.filter(
+    (p) => !p.missing && !allGroups.some((g) => slash(g.project.root) === slash(p.path)) && (!repo || slash(p.path) === slash(repo)) && !inScope(scope, p.path),
+  );
   const labelOf = (key: string) => rooms.find((r) => r.key === key)?.label ?? key.slice(0, 8);
   const visits = office?.visits ?? [];
   const now = office?.at ?? 0;
@@ -567,9 +571,11 @@ export function OfficeView({
         ) : rooms.length === 0 ? (
           <>
             <EmptyState icon={<UsersIcon />} title="Văn phòng đang trống" action={<Button variant="outline" onClick={onStart}>Mở một session lẻ</Button>}>
-              {idleFolders.length
-                ? "Bấm “Mở team” ở dự án bên dưới: HQ mở 4 phòng nền (lead, dev, qa, review) và mọi thứ hiện ở đây."
-                : "Thêm thư mục dự án ở mục Projects bên trái, rồi bấm “Mở team” để mở 4 phòng nền (lead, dev, qa, review)."}
+              {office.company
+                ? "Công ty chưa có phòng nào chạy. Bấm “Mở team” ở một dự án: các phòng mở ra làm cho mọi dự án của công ty."
+                : idleFolders.length
+                  ? "Bấm “Mở team” ở dự án bên dưới: HQ mở 4 phòng nền (lead, dev, qa, review) và mọi thứ hiện ở đây."
+                  : "Thêm thư mục dự án ở mục Projects bên trái, rồi bấm “Mở team” để mở 4 phòng nền (lead, dev, qa, review)."}
             </EmptyState>
             <TeamStarter projects={idleFolders} token={token} after={refresh} />
           </>
@@ -672,7 +678,12 @@ export function OfficeView({
                     </section>
                   );
                 })}
-                <TeamStarter projects={idleFolders} token={token} after={refresh} />
+                <TeamStarter projects={idleFolders} token={token} after={refresh} company={office.company} />
+                {repo && office.company && inScope(scope, repo) && rooms.length === 0 && (
+                  <p className="max-w-[75ch] rounded-lg border bg-card px-3.5 py-2.5 text-sm text-pretty">
+                    Dự án này đã thuộc công ty nhưng chưa phòng nào làm. Thêm card ở tab Board: phòng rảnh của công ty nhận card gấp nhất, ở bất kỳ dự án nào.
+                  </p>
+                )}
                 <details className="text-xs text-muted-foreground">
                   <summary className="w-fit cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60">Cách đọc văn phòng</summary>
                   <p className="mt-2 max-w-[75ch] text-pretty">

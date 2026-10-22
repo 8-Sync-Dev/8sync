@@ -4,6 +4,13 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+
+## [0.110.56] — 2026-10-22
+### Fixed
+- **Terminal phòng trên web VPS không còn chết giữa chừng** (owner 2026-10-22: "terminal hq ui ovh web không mở được"): qua tunnel ssh, stream của terminal bị cắt sau vài byte thì trang báo "Không nối được" và đứng luôn. Giờ trang ở máy khác (không phải loopback) chuyển sang poll, có thử lại khi tunnel chập chờn; lỗi từ chối (không có phòng, sai token) vẫn báo ngay. Logic thuần `afterStream` có test.
+- **Mở dự án ở chế độ công ty** (owner: "mở dự án lên tiếp tục làm ở hq ui không được"): "Mở team" ở repo thứ hai chỉ đưa repo vào công ty, không mở phòng, mà HQ vẫn để repo ở "Dự án chưa có team" với nút "Mở team" như chưa làm gì. Giờ khi công ty bật: nút là "Đưa vào công ty" và giải thích không mở thêm phòng; repo đã thuộc công ty rời khỏi danh sách đó và hiện trong mục "Công ty · N dự án" của sidebar ngay cả khi chưa có board; mở một dự án chưa ai làm thì Tổng quan nói rõ "thêm card ở Board, phòng rảnh của công ty sẽ nhận" kèm nút mở Board; Văn phòng trống nói đúng chế độ công ty. HQ đọc scope công ty từ `auto status` (`repos` trừ `out`). Test +2.
+- **Tab Sessions bớt rác** (owner: "chưa xoá session cũ rác dư thừa quá nhiều"): session đã dừng gập lại sau nút "Hiện session đã dừng (N)", phòng đang chạy ở trên. HQ xoá dòng journal của session đã mất và không động tới hơn 3 ngày (tin nhắn giữ nguyên); không xoá gì khi `claude agents` không trả lời. Test +2.
+- **Ingest trên Windows**: file id NTFS lớn hơn 2^53 làm node:sqlite ném RangeError và HQ ngừng đọc journal (test ingest đỏ ngẫu nhiên trên Windows). HQ giờ lưu 48 bit thấp của inode (bigint stat) dưới khoá mới, không so với giá trị cũ. Test +1.
 ### Changed
 - Docs cho cộng đồng: README, `docs/huong-dan.md`, `docs/hq.md`, `docs/known-issues.md`, `COMMERCIAL.md`, `scripts/uat/README.md` viết lại câu chữ gọn kiểu engineer (bỏ bold trang trí, emoji ở heading, gạch dài trong câu). Sửa số liệu cho khớp code: team mặc định là `lead,dev,qa,review,rd`, `--roles` tối đa 14 phòng, `--roles boost` mở 13 phòng (quota khoảng 13 lần một phiên), danh sách Stage A/B của `8sync setup` khớp `8sync setup -h`. Bản hướng dẫn tiếng Việt gọi người đọc là "bạn"; nhãn UI giữ nguyên.
 

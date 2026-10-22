@@ -103,9 +103,15 @@ export function OverviewView({
         {!office.office ? (
           <OverviewSkeleton />
         ) : groups.length === 0 ? (
-          <EmptyState icon={<LayoutDashboardIcon />} title="Chưa có phòng nào đang chạy">
-            Mở team ở tab Văn phòng: mỗi dự án có phòng chạy sẽ thành một khối ở đây, gồm phòng, board, ảnh preview, card vừa chuyển và chat.
-          </EmptyState>
+          office.office.company && focus ? (
+            <EmptyState icon={<LayoutDashboardIcon />} title="Chưa phòng nào làm dự án này" action={<Button variant="outline" onClick={() => onTab("board")}>Mở Board để giao việc</Button>}>
+              Dự án thuộc công ty: thêm card ở Board, phòng rảnh của công ty sẽ nhận card gấp nhất. Không cần mở thêm phòng.
+            </EmptyState>
+          ) : (
+            <EmptyState icon={<LayoutDashboardIcon />} title="Chưa có phòng nào đang chạy">
+              Mở team ở tab Văn phòng: mỗi dự án có phòng chạy sẽ thành một khối ở đây, gồm phòng, board, ảnh preview, card vừa chuyển và chat.
+            </EmptyState>
+          )
         ) : (
           <>
             {focus && all.length > 1 && (

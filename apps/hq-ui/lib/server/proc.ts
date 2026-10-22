@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { staleJournal } from "../sessions-list";
 import os from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import { roomLabel } from "@/lib/room-label";
@@ -150,8 +151,8 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
   // Past AGENTS_KEEP_MS without an answer nothing is known alive: journal rows stay ended (below).
   const agents = listed ?? [];
   const rows = db
-    .prepare("SELECT name, project_id, started_at, status, cwd, role, model FROM sessions")
-    .all() as { name: string; project_id: number | null; started_at: number | null; status: string; cwd: string | null; role: string | null; model: string | null }[];
+    .prepare("SELECT name, project_id, started_at, status, cwd, role, model, updated_at FROM sessions")
+    .all() as { name: string; project_id: number | null; started_at: number | null; status: string; cwd: string | null; role: string | null; model: string | null; updated_at: number | null }[];
   const byName = new Map(rows.map((r) => [r.name, r]));
   const out = new Map<string, SessionView>();
   const usedAgents = new Set<string>();
@@ -192,8 +193,15 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
       inbox_live: inboxLive(a.sessionId),
     });
   }
+  // Gone sessions untouched for days: drop their journal row (lib/sessions-list.ts staleJournal; messages stay).
+  const now = Date.now();
+  const drop = db.prepare("DELETE FROM sessions WHERE name = ?");
   for (const r of rows) {
     if (out.has(r.name) || [...out.values()].some((s) => s.session_id === r.name)) continue;
+    if (staleJournal(r, false, listed != null, now)) {
+      drop.run(r.name);
+      continue;
+    }
     out.set(r.name, {
       name: r.name,
       label: TMUX_NAME_RE.test(r.name) ? r.name : r.name.slice(0, 8),

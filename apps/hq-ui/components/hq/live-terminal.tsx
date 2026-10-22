@@ -14,6 +14,7 @@ import { FILES_MAX, fileError, toBase64 } from "@/lib/attach";
 import { isLocalHost } from "@/lib/hosts";
 import type { ActivityEvent } from "@/lib/server/activity";
 import { activityScreen } from "@/lib/term-activity";
+import { afterStream } from "@/lib/term-stream";
 
 /** Off loopback: no byte (not even the opening ping) this long = the proxy holds the stream back, so poll. */
 const FIRST_BYTE_MS = 4000;
@@ -277,6 +278,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
         const stop = () => conn.abort();
         ac.signal.addEventListener("abort", stop, { once: true });
         let silent = false;
+        let ended = false;
         const dog = remote
           ? setTimeout(() => {
               silent = true;
@@ -285,7 +287,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
           : undefined;
         try {
           const res = await fetch(withQuery(url, `cols=${size.cols}&rows=${size.rows}`), { headers: { "x-hq-token": token }, signal: conn.signal, cache: "no-store" });
-          if (!res.ok || !res.body) throw new Error(await errorOf(res));
+          if (!res.ok || !res.body) throw res.status < 500 && !res.ok ? new PollRefused(await errorOf(res)) : new Error(await errorOf(res));
           if (!remote) setState("live");
           const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
           let rest = "";
@@ -299,17 +301,25 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
             for (const e of p.events) {
               if (e.event === "out") write(e.data);
               else if (e.event === "replay") write(e.data, true);
-              else if (e.event === "end") end(e.data.includes('"elsewhere":true'));
+              else if (e.event === "end") {
+                ended = true;
+                end(e.data.includes('"elsewhere":true'));
+              }
             }
           }
         } catch (e) {
           if (silent && !ac.signal.aborted) return "silent";
+          // A drop after the first bytes (ssh tunnel, proxy): poll on instead of giving up (lib/term-stream.ts).
+          const next = afterStream({ remote, aborted: ac.signal.aborted, refused: e instanceof PollRefused, ended, threw: true });
+          if (next === "poll") return "silent";
+          if (next === "done") return "done";
           throw e;
         } finally {
           clearTimeout(dog);
           ac.signal.removeEventListener("abort", stop);
         }
-        return "done";
+        // Closed without an `end` event: the proxy cut it. Remote pages carry on by polling.
+        return afterStream({ remote, aborted: ac.signal.aborted, refused: false, ended, threw: false }) === "poll" ? "silent" : "done";
       };
       const poll = async () => {
         let gen = 0;

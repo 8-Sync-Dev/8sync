@@ -296,14 +296,14 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
 }
 
 /** Folders added in HQ with no room running: one click opens the whole team there. */
-export function TeamStarter({ projects, token, after }: { projects: { path: string; name: string }[]; token: string; after?: () => void }) {
+export function TeamStarter({ projects, token, after, company = false }: { projects: { path: string; name: string }[]; token: string; after?: () => void; company?: boolean }) {
   const { busy, act } = useTeam(token, after);
   if (!projects.length) return null;
   return (
     <section aria-labelledby="team-starter" className="space-y-2">
       <h2 id="team-starter" className="flex items-center gap-2 text-sm font-semibold">
         <UsersIcon aria-hidden className="size-4 text-muted-foreground" />
-        Dự án chưa có team
+        {company ? "Dự án chưa vào công ty" : "Dự án chưa có team"}
       </h2>
       <ul className="divide-y overflow-hidden rounded-xl border bg-card">
         {projects.map((p) => (
@@ -315,16 +315,21 @@ export function TeamStarter({ projects, token, after }: { projects: { path: stri
               </span>
             </span>
             <Button type="button" size="sm" disabled={busy != null} onClick={() => void act(p.path, p.name, "up")}>
-              <PlayIcon aria-hidden /> Mở team
+              <PlayIcon aria-hidden /> {company ? "Đưa vào công ty" : "Mở team"}
             </Button>
-            <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(p.path, p.name, "full")} title="6 phòng, tốn quota gần gấp 6 lần một session">
-              <UsersIcon aria-hidden /> Team đầy đủ
-            </Button>
+            {!company && (
+              <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(p.path, p.name, "full")} title="6 phòng, tốn quota gần gấp 6 lần một session">
+                <UsersIcon aria-hidden /> Team đầy đủ
+              </Button>
+            )}
           </li>
         ))}
       </ul>
       <p className="max-w-[75ch] text-xs text-muted-foreground text-pretty">
-        Mở team: 5 phòng nền (lead viết card, dev làm, qa kiểm, review duyệt, rd nghiên cứu). Team đầy đủ: 6 phòng, 3 phòng code (lead, dev, dev2, ui, qa, review). Thêm thư mục khác ở mục Projects bên trái.
+        {company
+          ? "Đưa vào công ty: không mở thêm phòng. Các phòng đang chạy nhận card của dự án này khi hết việc ở dự án khác; thêm card ở tab Board để giao việc."
+          : null}
+        {company ? null : <>Mở team: 5 phòng nền (lead viết card, dev làm, qa kiểm, review duyệt, rd nghiên cứu). Team đầy đủ: 6 phòng, 3 phòng code (lead, dev, dev2, ui, qa, review). Thêm thư mục khác ở mục Projects bên trái.</>}
       </p>
     </section>
   );
