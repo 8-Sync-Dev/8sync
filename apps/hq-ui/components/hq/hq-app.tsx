@@ -38,12 +38,14 @@ import { useReloadOnNewUi } from "./use-ui-version";
 import { useOffice, type Room } from "./use-office";
 import { usePoll } from "./use-poll";
 import { MachineChip, type MachineView as MachineData } from "./machine-chip";
+import { rootKey } from "@/lib/preview";
+import { KnowView } from "./know-view";
 import { MachineView } from "./machine-view";
 import { UsageView } from "./usage-view";
 import type { Session } from "./types";
 
 /** office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens. */
-type Tab = "overview" | "office" | "group" | "room" | "board" | "preview" | "flow" | "report" | "usage" | "may" | "sessions" | "activity";
+type Tab = "overview" | "office" | "group" | "room" | "board" | "preview" | "flow" | "report" | "usage" | "may" | "know" | "sessions" | "activity";
 /** Tổng quan is the first screen on a wide monitor; below this the office stays the default. */
 const WIDE_QUERY = "(min-width: 1600px)";
 const subscribeWide = (cb: () => void) => {
@@ -141,6 +143,12 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const project = hq.projects.data.find((p) => p.id === scope.project);
   // Projects come from each session's git folder, not only the folders registered in the sidebar.
   const officeRooms = office.office?.rooms ?? [];
+  // Projects with a live room, one entry each: what the Tri thức tab lets the owner pick.
+  const knowRoots = useMemo(() => {
+    const seen = new Map<string, { root: string; name: string }>();
+    for (const r of office.office?.rooms ?? []) if (r.project && r.status !== "ended" && !seen.has(rootKey(r.project.root))) seen.set(rootKey(r.project.root), { root: r.project.root, name: r.project.name });
+    return [...seen.values()];
+  }, [office.office?.rooms]);
   const officeSummary = office.office
     ? `${new Set(officeRooms.map((r) => r.project?.root ?? r.cwd)).size} dự án · ${officeRooms.length} phòng`
     : "";
@@ -324,6 +332,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 <TabsTrigger value="report" className="flex-none px-0">Báo cáo</TabsTrigger>
                 <TabsTrigger value="usage" className="flex-none px-0">Hạn mức</TabsTrigger>
                 <TabsTrigger value="may" className="flex-none px-0">Máy</TabsTrigger>
+                <TabsTrigger value="know" className="flex-none px-0">Tri thức</TabsTrigger>
                 <TabsTrigger value="sessions" className="flex-none px-0">
                   Sessions
                   {needsYou > 0 && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
@@ -396,6 +405,9 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
             </TabsContent>
             <TabsContent value="may" className="h-full">
               <MachineView m={machine.data} reload={machine.reload} api={hq.api} rooms={officeRooms} active={tab === "may"} />
+            </TabsContent>
+            <TabsContent value="know" className="h-full">
+              <KnowView token={token} roots={knowRoots} repo={repo?.root ?? null} active={tab === "know"} />
             </TabsContent>
             <TabsContent value="board" className="h-full">
               <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} focus={focusCard} repo={repo?.root ?? null} rooms={officeRooms} token={token} />
