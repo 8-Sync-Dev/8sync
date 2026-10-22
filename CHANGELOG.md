@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.48] — 2026-10-22
+### Changed
+- **Một công ty, nhiều dự án: `auto up` không mở đội thứ hai nữa** (owner 2026-10-22: "ý tôi là 1 công ty là rooms roles làm nhiều dự án… chứ ui ux vẫn mỗi folder dự án 1 công ty"). Khi `company` đang bật (`auto company on` hoặc `auto up --company`) và đội đã chạy ở repo khác, `auto up` (kể cả nút "Mở team" trên HQ) ở repo này chỉ đưa repo vào scope của auto, ghi `.claude/loop.md`, thêm card đầu nếu có, và báo "đội chung ở <host> nhận card tại đây"; không mở phòng, không ghi team-root (revive không mở phòng ở đó). Đội chung lấy card qua `claim`/`wait` liên dự án (bản .40). Muốn đội riêng cho một repo: `auto company off` rồi `auto up`. `--add` không đổi. Test team +1 (30).
+
 ## [0.110.47] — 2026-10-22
 ### Added
 - **Sidebar HQ: mục "Dự án trên máy"** (owner 2026-10-22: "nên có chỗ hiển thị all dự án trong máy để bấm mở"): mọi repo 8sync từng thấy trên máy (scope auto, team roots, dự án đã đóng, ghim, thư mục của các phiên HQ ghi nhận) mà chưa thêm vào HQ và chưa có phòng, mỗi dòng một nút Mở: thêm vào HQ rồi mở Văn phòng để bấm "Mở team"; không còn phải gõ đường dẫn. `/api/projects` thêm `known` (chỉ thư mục còn tồn tại). Test known-projects 1.
