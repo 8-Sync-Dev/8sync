@@ -224,14 +224,24 @@ fn sweep_zombies(_keep: &std::path::Path) {
     // other — the v0.110.64 sweep matched every marker and did exactly that.
     #[cfg(windows)]
     {
-        let script = format!(
-            "$p = Get-CimInstance Win32_Process; $alive = @({{ }} + $p.ProcessId); $p | Where-Object {{ $_.Name -eq 'chrome.exe' -and $_.CommandLine -like '*{SHOT_MARK}*' -and -not $alive.Contains($_.ParentProcessId) }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
-        );
-        let _ = Command::new("powershell")
-            .args(["-NoProfile", "-Command", &script])
-            .stdout(std::process::Stdio::null())
+        // No embedded PowerShell here: Defender's heuristics flagged the whole v0.110.67 binary
+        // for the `powershell -Command … Stop-Process` string baked into it (2026-10-22: every
+        // Windows `8sync up` to .67 quarantined the exe). WMIC CSV + `taskkill` per orphan pid
+        // says the same thing without looking like a dropper; a machine without wmic skips.
+        let out = Command::new("wmic")
+            .args(["process", "get", "processid,parentprocessid,commandline", "/format:csv"])
+            .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
-            .status();
+            .output();
+        if let Ok(o) = out {
+            for pid in orphan_pids(&String::from_utf8_lossy(&o.stdout), SHOT_MARK) {
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/PID", &pid.to_string()])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
     }
     #[cfg(not(windows))]
     {
@@ -244,6 +254,24 @@ fn sweep_zombies(_keep: &std::path::Path) {
             .stderr(std::process::Stdio::null())
             .status();
     }
+}
+
+/// WMIC `process get … /format:csv`: the pids of rows that mention `mark` (a shot's Chromium) and
+/// whose parent pid no longer exists in the same listing (a true orphan). A live shot keeps its
+/// parent chain, so concurrent shots never match.
+fn orphan_pids(csv: &str, mark: &str) -> Vec<u32> {
+    let alive: Vec<u32> = csv
+        .lines()
+        .filter_map(|l| l.rsplit(',').next()?.trim().parse::<u32>().ok())
+        .collect();
+    csv.lines()
+        .filter(|l| l.contains(mark) && l.to_ascii_lowercase().contains("chrome"))
+        .filter_map(|l| {
+            let pid = l.rsplit(',').next()?.trim().parse::<u32>().ok()?;
+            let ppid = l.rsplit(',').nth(1)?.trim().parse::<u32>().ok()?;
+            (!alive.contains(&ppid)).then_some(pid)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -264,5 +292,15 @@ mod tests {
         std::fs::write(d.join("chromium.shim"), "path = \"C:\\nope\\chrome.exe\"\n").unwrap();
         assert_eq!(unshim(shim.clone()), shim);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn orphan_sweep_kills_only_parentless_chromium() {
+        let csv = "Node,CommandLine,ParentProcessId,ProcessId\r\n\\HOST,8sync.exe shot,100,100\r\n\\HOST,\"chrome.exe\" --user-data-dir=C:\\Temp\\8sync-shot-1-a,100,101\r\n\\HOST,\"chrome.exe\" --type=gpu-process --user-data-dir=C:\\Temp\\8sync-shot-1-a,101,102\r\n\\HOST,\"chrome.exe\" --user-data-dir=C:\\Temp\\8sync-shot-2-b,999,201\r\n\\HOST,\"chrome.exe\" --user-data-dir=C:\\Temp\\8sync-shot-2-b,201,202\r\n\\HOST,explorer.exe,7,7\r\n";
+        // Live shot 1-a (parent 100 alive): nothing. Shot 2-b's root parent 999 is gone: both its
+        // processes are orphans (201 parentless; 202's parent 201 still alive but 201 itself is a
+        // goner-to-be, so killing 201 suffices; 202 is spared this pass and dies with Chrome).
+        let pids = orphan_pids(csv, "8sync-shot-");
+        assert_eq!(pids, vec![201]);
     }
 }

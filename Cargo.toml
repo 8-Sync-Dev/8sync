@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/cli", "crates/ccc-core"]
 
 [workspace.package]
-version = "0.110.67"
+version = "0.110.68"
 edition = "2021"
 license = "PolyForm-Noncommercial-1.0.0"
 authors = ["8sync-dev <8sync.dev.1111@gmail.com>"]
