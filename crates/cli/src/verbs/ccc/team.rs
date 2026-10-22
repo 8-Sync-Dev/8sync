@@ -528,6 +528,20 @@ fn clear(t: &Team, roles: &[String]) -> Result<Vec<Gone>> {
     Ok(gone)
 }
 
+/// Company mode (`--company` now, or `auto company on` before): the root of a team that runs in
+/// ANOTHER repo (a team root with at least one live session), else None — then `up` opens rooms here.
+pub(super) fn company_host(t: &Team, flag: bool) -> Option<PathBuf> {
+    if !(flag || auto::company(t.home)) {
+        return None;
+    }
+    let here = auto::canon(t.root);
+    team_roots(t.home)
+        .into_iter()
+        .map(|r| PathBuf::from(r.trim_start_matches(r"\\?\")))
+        .filter(|p| auto::canon(p) != here)
+        .find(|p| !live_names(t.claude, p).is_empty())
+}
+
 /// `--add` goes only into a team that runs here: auto on and scoped to this project, its team root.
 pub(super) fn check_add(t: &Team) -> Result<()> {
     if !(auto::running(t.home) && auto::in_scope(t.home, Some(&t.root.to_string_lossy())) && team_roots(t.home).iter().any(|r| auto::canon(Path::new(r)) == auto::canon(t.root))) {
@@ -559,6 +573,27 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     let gone = if o.clear { clear(t, &o.roles)? } else { Vec::new() };
     if o.add {
         check_add(t)?;
+    }
+    // One company (owner 2026-10-22: "1 công ty rooms/roles làm nhiều dự án"): while `company` is on
+    // and a team already runs in another repo, this repo JOINS auto's scope instead of opening a
+    // second team — the company rooms claim its cards ([`auto::company_pick`]). `--add` is untouched.
+    if !o.add {
+        if let Some(host) = company_host(t, o.company) {
+            let status = auto::set(t.home, auto::Mode::On { hours: o.hours, after: auto::DEFAULT_AFTER_S, rate: o.rate, repo: Some(t.root.to_path_buf()) }, t.subscription, now)?;
+            auto::set_company(t.home, true, now)?;
+            auto::write_loop_md(t.root)?;
+            if let Some(task) = &o.task {
+                super::target::add(t.home, t.root, task, o.check.as_deref(), None, true, None, now)?;
+            }
+            let rows = vec![Row {
+                name: "công ty".into(),
+                role: "đội chung".into(),
+                model: "-".into(),
+                state: format!("dự án vào scope, không mở phòng mới: đội chung ở {} nhận card tại đây (`8sync ccc auto company off` rồi `auto up` nếu muốn đội riêng)", host.display()),
+                short: "-".into(),
+            }];
+            return Ok((status, gone, rows));
+        }
     }
     let before = agents(t, false)?;
     let everywhere = live(&t.claude.run(&["agents".into(), "--json".into()])?)?;
@@ -1447,6 +1482,36 @@ mod tests {
     }
 
     const DEV_BG: &str = "3698e3a6-9b73-4b37-ab3a-368b169d0508";
+
+    #[test]
+    fn up_in_a_second_repo_while_the_company_runs_joins_scope_without_opening_rooms() {
+        let (h, host) = tmp("company-host");
+        let other = h.join("other");
+        std::fs::create_dir_all(other.join(".git")).unwrap();
+        let store = Store::new(&h.join("cfg"), &other, "claude-sessions", "ccc .");
+        // The company team lives in `host` (a live background room there); company mode is on.
+        set_team_root(&h, &host, true);
+        auto::set_company(&h, true, 1).unwrap();
+        let live_host = format!("[{}]", agent(DEV_BG, "dev", "background"));
+        let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![live_host]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
+        let has = |_: &str| false;
+        let t = Team { home: &h, root: &other, store: &store, subscription: true, claude: &fake, has_transcript: &has, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("việc đầu".into()), check: None, omp: false, company: false, add: false };
+        let (status, _, rows) = up(&t, &o, 5).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "công ty");
+        assert!(rows[0].state.contains(&host.display().to_string()), "{}", rows[0].state);
+        assert!(fake.calls.borrow().iter().all(|c| !c.iter().any(|a| a == "--bg")), "no room opened in the second repo");
+        assert_eq!(status["on"], true);
+        let repos: Vec<String> = status["repos"].as_array().unwrap().iter().filter_map(|r| r.as_str()).map(|s| s.to_lowercase()).collect();
+        assert!(repos.iter().any(|r| r.ends_with("other")), "the second repo joined auto's scope: {repos:?}");
+        assert!(super::super::target::list(&h, &other).unwrap().iter().any(|c| c.text == "việc đầu"), "its first card is on its own board");
+        assert!(!team_roots(&h).iter().any(|r| r.ends_with("other")), "not a team root: revive opens nothing there");
+        // company off → the same repo opens its own team as before
+        auto::set_company(&h, false, 6).unwrap();
+        assert!(company_host(&t, false).is_none());
+        assert!(company_host(&t, true).is_some(), "--company on the second repo joins too");
+    }
 
     #[test]
     fn parses_claude_code_output() {
