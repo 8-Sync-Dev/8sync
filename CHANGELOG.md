@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.66] — 2026-10-22
+### Fixed
+- **Critic sweep đụng phòng của dự án KHÔNG chạy auto** (owner: "không gửi nhầm inbox các dự án không phải chế độ 8sync ccc auto"): `sweepStuckAsks` quét mọi phòng trên máy rồi nhắn tin + đóng dialog hỏi — giờ lọc đúng `inAutoScope` + bỏ dự án bị ghim nghỉ, cùng luật với auto-tick. Rust (`ccc msg`, ship-fast/loop, relay_stuck) đã root-scope sẵn, không đổi.
 ## [0.110.65] — 2026-10-22
 ### Fixed
 - **Sweep zombie của `8sync shot` match 0 tiến trình** (v0.110.64): PowerShell parse `-not $_.CommandLine -like '*x*'` thành `(-not $x) -like` → luôn false; thêm ngoesi `( ... -like ... )` để lọc đúng.

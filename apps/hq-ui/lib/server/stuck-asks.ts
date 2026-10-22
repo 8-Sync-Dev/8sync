@@ -6,6 +6,8 @@ import { binFor, childEnv } from "./child-env";
 import fs from "node:fs";
 import path from "node:path";
 import { criticMessage, stuckAfterMs, stuckAsks } from "../stuck-asks";
+import { focusRests, inAutoScope } from "../auto";
+import { repoOf } from "../sidebar";
 import { lastAutoStatus, type AutoStatus } from "./auto";
 import { getDb } from "./db";
 import { isSessionId, queueInbox } from "./inbox";
@@ -77,9 +79,14 @@ export function closeDialog(id: string, cwd: string | null, spawn = nodeSpawn): 
 let inflight: Promise<string[]> | null = null;
 
 /** One sweep at a time: the office tab and the ask panel both poll GET /api/auto. */
+/**
+ * Only the rooms auto drives (same rule as auto-tick: in scope, not pinned away) — the critic
+ * never mails or closes dialogs in rooms of projects outside `8sync ccc auto` (owner 2026-10-22:
+ * "không gửi nhầm inbox các dự án không phải chế độ auto").
+ */
 export function sweepStuckAsks(status: AutoStatus, now = Date.now()): Promise<string[]> {
   if (!status.on || status.paused || status.gate) return Promise.resolve([]);
-  inflight ??= sweep(now)
+  inflight ??= sweep(now, status)
     .catch(() => [] as string[])
     .finally(() => {
       inflight = null;
@@ -87,10 +94,20 @@ export function sweepStuckAsks(status: AutoStatus, now = Date.now()): Promise<st
   return inflight;
 }
 
-async function sweep(now: number): Promise<string[]> {
+/** A room's project root, worktrees folded to their repo (as auto-tick's roomRepo). */
+function roomRepo(r: { project?: { root: string } | null; cwd?: string | null }): string {
+  return repoOf(r.project?.root ?? r.cwd ?? "").root;
+}
+
+/** Pure: the rooms the sweep may touch — auto scope and not focus-resting. */
+export function scopedFor<T extends { project?: { root: string } | null; cwd?: string | null }>(status: Pick<AutoStatus, "repos" | "out" | "focus" | "pins">, rooms: T[]): T[] {
+  return rooms.filter((r) => inAutoScope(status, roomRepo(r)) && !focusRests(status, roomRepo(r)));
+}
+
+async function sweep(now: number, status: AutoStatus): Promise<string[]> {
   const office = await loadOffice(getDb(), now);
   const handled = readHandled();
-  const stuck = stuckAsks(office.rooms, handled, now, stuckAfterMs(lastAutoStatus()?.after_s));
+  const stuck = stuckAsks(scopedFor(lastAutoStatus() ?? status, office.rooms), handled, now, stuckAfterMs(lastAutoStatus()?.after_s));
   const done: string[] = [];
   for (const r of stuck) {
     const sid = r.session_id!;
