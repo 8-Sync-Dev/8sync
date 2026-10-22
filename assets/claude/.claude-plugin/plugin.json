@@ -1,7 +1,7 @@
 {
   "name": "8sync-kit",
   "displayName": "8sync kit",
-  "version": "0.110.40",
+  "version": "0.110.41",
   "description": "8 Sync kit for Claude Code: role-routed subagents (explore, task, quick-task, reviewer, designer, researcher, verifier, pm, architect, qa, critic) and the /ship /rules /sec /harden skills. Hooks, rules and the full skill set come from `8sync ccc kit`.",
   "author": { "name": "8 Sync", "url": "https://8syncdev.com" },
   "homepage": "https://get.8syncdev.com",

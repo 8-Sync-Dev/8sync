@@ -299,6 +299,11 @@ struct Ctx<'a> {
     /// This project's `owner/repo` ([`origin_repo`]), read only for a card without a PR field.
     origin: &'a dyn Fn() -> Option<String>,
     gh: Gh<'a>,
+    /// Whether this run may really `gh pr merge`. The ungranted `auto merge` (owner 2026-10-22:
+    /// "bị kẹt hoài vậy … auto ship chứ") still lands what needs no permission — a PR already
+    /// merged is marked done, a conflict goes back to ready — and collects the rest for the one
+    /// Ship question instead of stalling the whole board on it.
+    merge_allowed: bool,
 }
 
 /// Pure: the PR a card without a `pr` field names in its notes, newest note first: `zus-backend#19
@@ -419,6 +424,7 @@ fn land(t: &Target, c: &Ctx, first: bool) -> Outcome {
             }
         };
         Ok(match decide(&sha, &v, base_merged, main) {
+            Step::Merge(head) if !c.merge_allowed => ("ask", None, Some("PR mở, chờ owner Duyệt tất cả (Ship)".into())),
             Step::Merge(head) => {
                 // GitHub refuses to merge a draft; review already approved this head (4 failed
                 // merges on 3d-game, 2026-10-20).
@@ -489,20 +495,39 @@ pub(super) fn run(as_json: bool, home: &Path, root: &Path, who: Option<&str>, no
     if let Some(lane) = who.and_then(super::room::find).and_then(|r| r.lane).filter(|l| *l != "backlog") {
         bail!("`auto merge` là việc của phòng lead, không phải phòng cột {lane}");
     }
+    // Never guess `main`: on a master repo that would merge stacked PRs into the wrong branch.
+    let Some(main) = default_branch(root) else { bail!(NO_DEFAULT) };
+    let gh = |args: &[&str]| gh(root, args);
+    let main_of = |repo: &str| default_branch_of(root, Some(repo));
+    let origin = || origin_repo(root);
     if super::grant::self_merge(&super::grant::dir(home), root, now).is_none() {
         let approved: Vec<Target> = target::list(home, root)?.into_iter().filter(|t| t.state == "open" && t.lane == "approved").collect();
         if approved.is_empty() {
             println!("không có card approved");
             return Ok(());
         }
-        bail!("{}", ship_question(&approved));
+        // Free outcomes first (owner 2026-10-22: 19 of 27 approved cards on zus/ide had PRs merged
+        // on GitHub the day before and sat in approved because one unmergeable card made the whole
+        // run bail): done / back / retarget need no merge permission. What really needs
+        // `gh pr merge` (or has no PR at all) goes into the owner's ONE Ship question.
+        let c = Ctx { home, root, who: Some("lead"), now, main: &main, main_of: &main_of, origin: &origin, gh: &gh, merge_allowed: false };
+        let mut left: Vec<Target> = Vec::new();
+        for t in &approved {
+            let mut o = land(t, &c, true);
+            if o.action == "deferred" {
+                o = land(t, &c, false);
+            }
+            match o.action.as_ref() {
+                "ask" | "wait" | "failed" => left.push(t.clone()),
+                a => println!("{a}: {}", line(&o)),
+            }
+        }
+        if left.is_empty() {
+            return Ok(());
+        }
+        bail!("{}", ship_question(&left));
     }
-    // Never guess `main`: on a master repo that would merge stacked PRs into the wrong branch.
-    let Some(main) = default_branch(root) else { bail!(NO_DEFAULT) };
-    let gh = |args: &[&str]| gh(root, args);
-    let main_of = |repo: &str| default_branch_of(root, Some(repo));
-    let origin = || origin_repo(root);
-    run_with(as_json, &Ctx { home, root, who, now, main: &main, main_of: &main_of, origin: &origin, gh: &gh })
+    run_with(as_json, &Ctx { home, root, who, now, main: &main, main_of: &main_of, origin: &origin, gh: &gh, merge_allowed: true })
 }
 
 /// HQ's revive tick (every 2 min): land approved cards in code while the owner's self-merge grant
@@ -520,7 +545,7 @@ pub(super) fn background(home: &Path, root: &Path, now: u64) -> Result<Vec<Strin
     let gh = |args: &[&str]| gh(root, args);
     let main_of = |repo: &str| default_branch_of(root, Some(repo));
     let origin = || origin_repo(root);
-    let c = Ctx { home, root, who: Some("lead"), now, main: &main, main_of: &main_of, origin: &origin, gh: &gh };
+    let c = Ctx { home, root, who: Some("lead"), now, main: &main, main_of: &main_of, origin: &origin, gh: &gh, merge_allowed: true };
     // HQ kills a revive that runs past 120 s and each card is several gh calls (≤ 20 s each): start
     // no card after [`BACKGROUND_BUDGET`]. A card stacked on an approved card not landed yet is
     // deferred, not bounced: try the next.
@@ -695,6 +720,47 @@ mod tests {
         assert_eq!(approved_merge(8, Some("8-Sync-Dev/zus-backend"), HEAD, &cards, || Some(("main".into(), "develop".into()))), None, "not that repo's default branch");
     }
 
+    /// Owner 2026-10-22 ("bị kẹt hoài"): without the grant, `auto merge` still lands what needs
+    /// no permission — a card whose PR is already merged is done — and the OPEN one is only "ask",
+    /// never `gh pr merge`.
+    #[test]
+    fn ungranted_lands_merged_prs_and_never_merges_open_ones() {
+        let h = std::env::temp_dir().join(format!("8sync-merge-declog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&h);
+        let root = h.join("r");
+        std::fs::create_dir_all(&root).unwrap();
+        // `move_to` validates a `--pr` against the real gh; the fixture sets the sha on the card
+        // (what approved requires) and the PR number in memory, which is all `land` reads.
+        let mk = |pr: &str| {
+            let (t, _) = target::add(&h, &root, &format!("việc {pr}"), Some("true"), None, false, None, 1).unwrap();
+            for lane in ["building", "qa", "review", "approved"] {
+                target::move_to(&h, &root, t.id, lane, &target::Move { sha: Some("0d596904e5cbf53f94fbc8198fcd9b0f9848866e".into()), ..Default::default() }, None, 2).unwrap();
+            }
+            let mut c = target::list(&h, &root).unwrap().into_iter().find(|c| c.id == t.id).unwrap();
+            c.pr = Some(pr.into());
+            c
+        };
+        let a = mk("61");
+        let b = mk("62");
+        let merged = json!({ "state": "MERGED", "baseRefName": "main", "headRefOid": "0d596904e5cbf53f94fbc8198fcd9b0f9848866e", "mergeable": "MERGEABLE", "isDraft": false });
+        let open = json!({ "state": "OPEN", "baseRefName": "main", "headRefOid": "0d596904e5cbf53f94fbc8198fcd9b0f9848866e", "mergeable": "MERGEABLE", "isDraft": false });
+        let main_of = |r: &str| (r == "main").then(|| "main".to_string()).or_else(|| Some("main".to_string()));
+        let origin = || Some("o/r".to_string());
+        let gh_merged = |_: &[&str]| Ok(merged.to_string());
+        let gh_open = |args: &[&str]| {
+            assert!(!args.contains(&"merge"), "no gh pr merge without the grant: {args:?}");
+            Ok(open.to_string())
+        };
+        let c1 = Ctx { home: &h, root: &root, who: Some("lead"), now: 1_000, main: "main", main_of: &main_of, origin: &origin, gh: &gh_merged, merge_allowed: false };
+        let o = land(&a, &c1, true);
+        assert_eq!(o.action, "done", "{:?} - a merged PR needs no permission", o.why);
+        assert_eq!(target::list(&h, &root).unwrap().into_iter().find(|c| c.id == a.id).unwrap().state, "done");
+        let c2 = Ctx { home: &h, root: &root, who: Some("lead"), now: 1_000, main: "main", main_of: &main_of, origin: &origin, gh: &gh_open, merge_allowed: false };
+        let o = land(&b, &c2, true);
+        assert_eq!(o.action, "ask", "{:?}", o.why);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
     #[test]
     fn the_ship_refusal_carries_the_exact_question() {
         let mut other = card(7, "approved", "https://github.com/o/r/pull/90", "0123456");
@@ -772,7 +838,7 @@ mod tests {
         };
         let main_of = |r: &str| (r == "8-Sync-Dev/zus-backend").then(|| "develop".to_string());
         let origin = || Some("8-Sync-Dev/zus".to_string());
-        let ctx = Ctx { home: &home, root: &root, who: None, now: 1_000, main, main_of: &main_of, origin: &origin, gh: &gh };
+        let ctx = Ctx { home: &home, root: &root, who: None, now: 1_000, main, main_of: &main_of, origin: &origin, gh: &gh, merge_allowed: true };
         run_with(true, &ctx).unwrap();
         let card = target::list(&home, &root).unwrap().into_iter().find(|t| t.id == 1).unwrap();
         let _ = std::fs::remove_dir_all(&home);
