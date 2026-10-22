@@ -18,6 +18,7 @@ import { CloseDialog, ClosedProjects, ProjectMenu, RoomEndDialog, RoomMenu, Work
 import { RoleIcon } from "./role-badge";
 import type { Hq, Live } from "./use-hq";
 import type { OfficeState, Room } from "./use-office";
+import type { KnownProject } from "@/lib/known-projects";
 import type { Project } from "./types";
 
 export type Scope = { project: number | null; session: string | null };
@@ -86,6 +87,8 @@ export function Nav({
   const side = useMemo(() => pinSidebar(data?.pins ?? [], split.shown, split.closed, roomless), [data, split, roomless]);
   const { shown, closed } = side;
   const heading = projectsHeading(data?.company === true, shown.length);
+  // "Dự án trên máy": known repos that are neither added folders nor live groups.
+  const knownRest = useMemo(() => (hq.knownProjects ?? []).filter((k) => !groups.some((g) => g.key === norm(k.path)) && !hq.projects.data.some((p) => norm(p.path) === norm(k.path))), [hq.knownProjects, hq.projects.data, groups]);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   // The project whose "Hiện lại" is in flight: its "⋯" and "Hiện lại" stay disabled meanwhile.
   const [hiding, setHiding] = useState<string | null>(null);
@@ -230,6 +233,7 @@ export function Nav({
               <ul className="space-y-1">{shown.map((g) => group(g, false))}</ul>
             )}
             <ClosedProjects closed={closed} busy={hiding} onShow={(g) => void show(g)} />
+            <KnownProjects items={knownRest} hq={hq} onOpen={onOpenFolder} />
           </>
         )}
 
@@ -550,3 +554,43 @@ function AddProject({ hq, onAdded }: { hq: Hq; onAdded: (id: number) => void }) 
 }
 
 const noop = () => () => {};
+
+/**
+ * "Dự án trên máy" (owner 2026-10-22): repos 8sync has seen on this machine but the owner never added
+ * to HQ. One tap adds the folder and opens it in the office, where "Mở team" waits.
+ */
+function KnownProjects({ items, hq, onOpen }: { items: KnownProject[]; hq: Hq; onOpen: (id: number) => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  if (!items.length) return null;
+  async function add(k: KnownProject) {
+    setBusy(k.path);
+    try {
+      const r = await hq.api<{ project: Project; existed?: boolean }>("/api/projects", { method: "POST", body: { path: k.path } });
+      await hq.reload.projects();
+      toast.success(`Đã thêm ${r.project.name}: bấm “Mở team” trong Văn phòng`);
+      onOpen(r.project.id);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+  return (
+    <section className="mt-3" aria-labelledby="known-projects">
+      <h3 id="known-projects" className="mb-1 px-2 text-xs font-medium text-muted-foreground" title="Repo máy này từng chạy 8sync (scope auto, team, ghim, phiên cũ) mà chưa thêm vào HQ">
+        Dự án trên máy · {items.length}
+      </h3>
+      <ul className="space-y-1">
+        {items.map((k) => (
+          <li key={k.path} className="flex items-center">
+            <button type="button" className={cn(item, "h-8 min-w-0 flex-1")} disabled={busy === k.path} title={`${k.path} (${k.source}): thêm vào HQ và mở`} onClick={() => void add(k)}>
+              <FolderIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1 truncate">{k.name}</span>
+              <span className="shrink-0 text-[11px] text-muted-foreground">{busy === k.path ? "…" : "Mở"}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
