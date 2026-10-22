@@ -28,7 +28,7 @@ One project folder, in order:
 | 2 | Add the repo folder; the first time, open `claude` there once and accept the trust question | **Projects** → paste the path | — |
 | 3 | Start the team: lead, dev, qa, review, rd as background sessions | **Mở team** | `cd my-app && 8sync ccc auto up --clear-ss` |
 | 4 | Give it work; done when the check exits 0 | **Giao việc** | `8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"` |
-| 5 | Answer what needs you; silent 60 s → the critic picks, safe work proceeds | **Anh cần trả lời** (top of the office) | `claude attach <id>` |
+| 5 | Answer what needs you; product/technical questions go to the critic at once (default on; `--after N` to wait for you first), safe work proceeds; Ship waits for you | **Anh cần trả lời** (top of the office) | `claude attach <id>` |
 | 6 | After `8sync up`: reload the rooms onto the new version, conversations kept | **Dọn & mở lại** | `8sync ccc auto up --clear-ss` |
 | 7 | Stop the team | **Dừng team** | `8sync ccc auto down` |
 
