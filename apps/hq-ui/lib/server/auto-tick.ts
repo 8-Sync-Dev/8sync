@@ -126,10 +126,11 @@ async function tickOnce(status: AutoStatus, now: number): Promise<TickResult> {
       void run("8sync", ["ccc", "auto", "revive"], REVIVE_MS);
       // Headless Chromium left by an `8sync shot` whose 8sync died mid-render (a guard pause
       // kills the room's shell tree; Chromium's children survive and burn GPU for hours —
-      // 2026-10-22, 47% GPU). One sweep per revive minute; live shots are younger than that.
+      // 2026-10-22, 47% GPU). Orphan rule only: the parent pid is gone; a live shot (any age,
+      // also a concurrent one) keeps its parent chain and is never touched.
       void run(
         "powershell",
-        ["-NoProfile", "-Command", `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -like '*8sync-shot-*' -and $_.CreationDate -lt (Get-Date).AddMinutes(-10) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`],
+        ["-NoProfile", "-Command", `$p = Get-CimInstance Win32_Process; $alive = @({} + $p.ProcessId); $p | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -like '*8sync-shot-*' -and -not $alive.Contains($_.ParentProcessId) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`],
         REVIVE_MS,
       ).catch(() => {});
     }

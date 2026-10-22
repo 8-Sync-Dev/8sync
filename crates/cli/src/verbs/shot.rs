@@ -217,12 +217,15 @@ const SHOT_MARK: &str = "8sync-shot-";
 /// Kill Chromium processes left over from earlier shots whose `8sync` died mid-render (the auto
 /// guard pausing a room kills the room's shell tree; Chromium's children survive it and a stuck one
 /// burned ~20% GPU for hours, 2026-10-22). Ours (`keep`) is spared. Best effort, never fails a shot.
-fn sweep_zombies(keep: &std::path::Path) {
-    let keep = keep.display().to_string();
+fn sweep_zombies(_keep: &std::path::Path) {
+    // Only true orphans: a marker Chromium whose parent pid is gone (the `8sync shot` that spawned
+    // it died — e.g. the RAM guard paused the room mid-render). A LIVE shot's Chromium keeps its
+    // parent chain, so concurrent shots (two rooms shooting at once, 2026-10-22) never kill each
+    // other — the v0.110.64 sweep matched every marker and did exactly that.
     #[cfg(windows)]
     {
         let script = format!(
-            "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object {{ $_.CommandLine -like '*{SHOT_MARK}*' -and -not ($_.CommandLine -like '*{keep}*') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
+            "$p = Get-CimInstance Win32_Process; $alive = @({{ }} + $p.ProcessId); $p | Where-Object {{ $_.Name -eq 'chrome.exe' -and $_.CommandLine -like '*{SHOT_MARK}*' -and -not $alive.Contains($_.ParentProcessId) }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
         );
         let _ = Command::new("powershell")
             .args(["-NoProfile", "-Command", &script])
@@ -232,12 +235,14 @@ fn sweep_zombies(keep: &std::path::Path) {
     }
     #[cfg(not(windows))]
     {
-        let _ = Command::new("pkill")
-            .args(["-f", &format!("chrome.*{SHOT_MARK}")])
+        // Kill a marker Chromium only when its parent pid is gone (a live shot keeps its parent
+        // chain; concurrent shots never touch each other).
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg(format!("ps -eo pid=,ppid=,args= | grep '[c]hrome.*{SHOT_MARK}' | while read pid ppid rest; do kill -0 \"$ppid\" 2>/dev/null || kill \"$pid\" 2>/dev/null || true; done"))
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
-        let _ = keep;
     }
 }
 
