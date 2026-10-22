@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { GET as inboxGET } from "@/app/api/channel/inbox/route";
 import { POST as heartbeatPOST } from "@/app/api/channel/heartbeat/route";
@@ -81,14 +82,14 @@ describe("channel flags", () => {
     fs.mkdirSync(`${home}/.config/8sync/hq`, { recursive: true });
     fs.writeFileSync(`${home}/.config/8sync/hq/channel-mcp.json`, "{}");
     expect(channelArgs({}, home).args).toEqual([
-      "--mcp-config", `${home}/.config/8sync/hq/channel-mcp.json`,
+      "--mcp-config", path.join(home, ".config", "8sync", "hq", "channel-mcp.json"),
       "--dangerously-load-development-channels", "server:8sync-hq",
     ]);
   });
   it("HQ_CHANNEL_FLAGS=off and custom flags", () => {
     expect(channelArgs({ HQ_CHANNEL_FLAGS: "off" })).toMatchObject({ args: [], mode: "off" });
     expect(channelArgs({ HQ_CHANNEL_FLAGS: "--channels plugin:8sync-hq@8sync" }).args).toEqual(["--channels", "plugin:8sync-hq@8sync"]);
-    expect(channelArgs({ HQ_CHANNEL_FLAGS: "--mcp-config ~/x.json" }, "/h").args).toEqual(["--mcp-config", "/h/x.json"]);
+    expect(channelArgs({ HQ_CHANNEL_FLAGS: "--mcp-config ~/x.json" }, "/h").args).toEqual(["--mcp-config", path.join("/h", "x.json")]);
     expect(() => channelArgs({ HQ_CHANNEL_FLAGS: "--x $(id)" })).toThrow();
   });
   it("tmux start argv is env … claude with the channel env", () => {

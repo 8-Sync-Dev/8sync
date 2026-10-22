@@ -17,7 +17,8 @@ describe("auth", () => {
   it("creates a 0600 token on first run and reuses it", () => {
     const t = getToken();
     expect(t).toMatch(/^[0-9a-f]{64}$/);
-    expect(fs.statSync(tokenPath()).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits (stat reports 0o666 whatever chmod set); the profile ACL guards it there.
+    if (process.platform !== "win32") expect(fs.statSync(tokenPath()).mode & 0o777).toBe(0o600);
     expect(getToken()).toBe(t);
   });
 

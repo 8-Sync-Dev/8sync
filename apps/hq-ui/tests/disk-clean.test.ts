@@ -230,7 +230,7 @@ describe("pruneWorktrees on a real repo", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30_000); // real git commands: slow under a full parallel run
 
   it("removes nothing when the room folders cannot be read, and nothing outside .claude/worktrees", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "hq-prune-"));
