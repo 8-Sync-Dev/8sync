@@ -463,6 +463,14 @@ pub(super) fn list(now: u64) -> Vec<Proc> {
     #[cfg(windows)]
     {
         let _ = now;
+        // Native first (owner 2026-10-22: "fix tận gốc … ram, cpu"): every guard tick of every
+        // project ran `Get-CimInstance Win32_Process` with command lines, and WmiPrvSE grew to
+        // 12.7 GB RAM / 22% CPU on the owner's PC. ToolHelp + per-process queries answer in
+        // milliseconds and never touch WMI. WMI stays only as the fallback when that comes back empty.
+        let native = win_procs::list();
+        if !native.is_empty() {
+            return native;
+        }
         use std::os::windows::process::CommandExt;
         // UTF-8 out: in the OEM code page a room's command line (its Vietnamese goal prompt) came
         // out with `→` as a raw 0x1A, and the whole listing failed to parse (seen live 2026-10-21).
@@ -497,6 +505,189 @@ pub(super) fn list(now: u64) -> Vec<Proc> {
     {
         let _ = now;
         Vec::new()
+    }
+}
+
+/// Every process through the Win32 API, no WMI: a ToolHelp snapshot (pid, parent, image, base
+/// priority), then per process with `PROCESS_QUERY_LIMITED_INFORMATION`: times (start, CPU), working
+/// set and the command line (`NtQueryInformationProcess` class 60, Windows 8.1+). A process this
+/// user may not open keeps its snapshot fields, the rest 0 / empty, as WMI gave for it.
+#[cfg(windows)]
+mod win_procs {
+    use super::{image_of, is_shell, Proc};
+    use std::ffi::c_void;
+
+    type Handle = *mut c_void;
+    const INVALID: Handle = -1isize as Handle;
+    const TH32CS_SNAPPROCESS: u32 = 0x2;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const PROCESS_COMMAND_LINE_INFORMATION: i32 = 60;
+    const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC000_0004_u32 as i32;
+    /// FILETIME of 1970-01-01 (100 ns since 1601).
+    const UNIX_EPOCH_FT: u64 = 116_444_736_000_000_000;
+
+    #[repr(C)]
+    struct ProcessEntry {
+        size: u32,
+        usage: u32,
+        pid: u32,
+        heap: usize,
+        module: u32,
+        threads: u32,
+        ppid: u32,
+        pri_base: i32,
+        flags: u32,
+        exe: [u16; 260],
+    }
+    #[repr(C)]
+    #[derive(Default, Clone, Copy)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct MemCounters {
+        cb: u32,
+        page_faults: u32,
+        peak_ws: usize,
+        ws: usize,
+        quota_peak_paged: usize,
+        quota_paged: usize,
+        quota_peak_nonpaged: usize,
+        quota_nonpaged: usize,
+        pagefile: usize,
+        peak_pagefile: usize,
+    }
+    #[repr(C)]
+    struct UnicodeString {
+        len: u16,
+        max: u16,
+        buf: *const u16,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> Handle;
+        fn Process32FirstW(snap: Handle, entry: *mut ProcessEntry) -> i32;
+        fn Process32NextW(snap: Handle, entry: *mut ProcessEntry) -> i32;
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+        fn GetProcessTimes(h: Handle, create: *mut FileTime, exit: *mut FileTime, kernel: *mut FileTime, user: *mut FileTime) -> i32;
+        fn K32GetProcessMemoryInfo(h: Handle, counters: *mut MemCounters, cb: u32) -> i32;
+        fn CloseHandle(h: Handle) -> i32;
+    }
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtQueryInformationProcess(h: Handle, class: i32, info: *mut c_void, len: u32, ret: *mut u32) -> i32;
+    }
+
+    fn ft(t: FileTime) -> u64 {
+        (u64::from(t.high) << 32) | u64::from(t.low)
+    }
+
+    /// The command line of an open process handle; empty when the OS refuses.
+    fn command_line(h: Handle) -> String {
+        // u64 words keep the UNICODE_STRING header aligned at the start of the buffer.
+        let mut words: Vec<u64> = vec![0; 1024];
+        for _ in 0..2 {
+            let bytes = (words.len() * 8) as u32;
+            let mut need = 0u32;
+            // SAFETY: `words` is a writable buffer of `bytes` bytes owned by us; `need` is a valid out pointer.
+            let st = unsafe { NtQueryInformationProcess(h, PROCESS_COMMAND_LINE_INFORMATION, words.as_mut_ptr().cast(), bytes, &mut need) };
+            if st == STATUS_INFO_LENGTH_MISMATCH && need > bytes && need < 1 << 22 {
+                words = vec![0; (need as usize).div_ceil(8)];
+                continue;
+            }
+            if st < 0 {
+                return String::new();
+            }
+            // SAFETY: on success the buffer starts with a UNICODE_STRING whose `buf` points into the
+            // same buffer, `len` bytes long; both checked against the buffer bounds below.
+            let us = unsafe { &*(words.as_ptr().cast::<UnicodeString>()) };
+            let base = words.as_ptr() as usize;
+            let end = base + words.len() * 8;
+            let start = us.buf as usize;
+            let n = usize::from(us.len) / 2;
+            if us.buf.is_null() || start < base || start + n * 2 > end {
+                return String::new();
+            }
+            // SAFETY: bounds checked just above; u16 reads inside our own buffer.
+            let s = unsafe { std::slice::from_raw_parts(us.buf, n) };
+            return String::from_utf16_lossy(s);
+        }
+        String::new()
+    }
+
+    pub(super) fn list() -> Vec<Proc> {
+        // SAFETY: plain snapshot call; the handle is closed below.
+        let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snap == INVALID || snap.is_null() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        // SAFETY: zeroed POD struct with its size set, as the API requires.
+        let mut e: ProcessEntry = unsafe { std::mem::zeroed() };
+        e.size = std::mem::size_of::<ProcessEntry>() as u32;
+        // SAFETY: valid snapshot handle and entry pointer.
+        let mut ok = unsafe { Process32FirstW(snap, &mut e) } != 0;
+        while ok {
+            let len = e.exe.iter().position(|&c| c == 0).unwrap_or(e.exe.len());
+            let name = String::from_utf16_lossy(&e.exe[..len]);
+            let (mut started, mut cpu, mut rss, mut cmd) = (0u64, 0u64, 0u64, String::new());
+            // SAFETY: OpenProcess with limited query rights; a null handle means no access and is skipped.
+            let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, e.pid) };
+            if !h.is_null() {
+                let (mut c, mut x, mut k, mut u) = (FileTime::default(), FileTime::default(), FileTime::default(), FileTime::default());
+                // SAFETY: valid handle and four out pointers to our locals.
+                if unsafe { GetProcessTimes(h, &mut c, &mut x, &mut k, &mut u) } != 0 {
+                    started = ft(c).saturating_sub(UNIX_EPOCH_FT) / 10_000_000;
+                    cpu = ft(k) + ft(u);
+                }
+                let mut m = MemCounters { cb: std::mem::size_of::<MemCounters>() as u32, ..Default::default() };
+                // SAFETY: valid handle, counters struct with its size set.
+                if unsafe { K32GetProcessMemoryInfo(h, &mut m, m.cb) } != 0 {
+                    rss = m.ws as u64;
+                }
+                cmd = command_line(h);
+                // SAFETY: closing the handle we opened.
+                unsafe { CloseHandle(h) };
+            }
+            out.push(Proc {
+                pid: e.pid,
+                ppid: e.ppid,
+                started,
+                rss,
+                node: name.eq_ignore_ascii_case("node.exe"),
+                shell: is_shell(&name),
+                image: image_of(&name),
+                cmd,
+                name: name.to_ascii_lowercase(),
+                cpu,
+                // Base priority, as WMI's `Priority`: 8 normal, 10 above normal, 4 idle.
+                normal: (8..=10).contains(&e.pri_base),
+                idle: e.pri_base == 4,
+            });
+            // SAFETY: same snapshot and entry.
+            ok = unsafe { Process32NextW(snap, &mut e) } != 0;
+        }
+        // SAFETY: closing the snapshot we created.
+        unsafe { CloseHandle(snap) };
+        out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn lists_this_process_with_its_command_line_and_parent_without_wmi() {
+            let me = std::process::id();
+            let all = super::list();
+            assert!(all.len() > 10, "a Windows machine runs more than 10 processes");
+            let p = all.iter().find(|p| p.pid == me).expect("this test process is listed");
+            assert!(p.ppid != 0);
+            assert!(p.started > 1_600_000_000, "start time in unix seconds");
+            assert!(p.rss > 0);
+            assert!(p.cmd.to_lowercase().contains(&p.image), "command line names the image: {} / {}", p.cmd, p.image);
+        }
     }
 }
 

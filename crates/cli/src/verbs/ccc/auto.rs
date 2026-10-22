@@ -1177,9 +1177,13 @@ fn rush(home: &Path, root: &Path, rooms: &[(String, String)], t: &target::Target
     let cards = target::list(home, root)?;
     let early = matches!(t.lane.as_str(), "backlog" | "blocked");
     let lane_of = |n: &str| super::room::find(n).and_then(|r| r.lane);
+    // A backlog/blocked P0 also goes to R&D (owner 2026-10-22, 3d-game: "bấm khẩn cấp gấp đợi lâu
+    // kinh khủng không ai làm": the lead sat in an hour-long goal while `rd` idled, and no `ba`).
+    // R&D writes the AC + check in the lead's place; the lead still gets its line.
+    let stand_in = |n: &str| early && super::room::crew(n) == "rd";
     let takers: Vec<(String, String)> = rooms
         .iter()
-        .filter(|(n, _)| match lane_of(n) {
+        .filter(|(n, _)| stand_in(n) || match lane_of(n) {
             Some("backlog") => early,
             // The room holding the card is on it already: never called to claim it again.
             Some(lane) => !early && target::claimable(&cards, n, lane, now) == Some(t.id) && t.claim.as_ref().is_none_or(|c| &c.room != n),
@@ -1207,7 +1211,12 @@ fn rush(home: &Path, root: &Path, rooms: &[(String, String)], t: &target::Target
     };
     let others: Vec<(String, String)> = takers.into_iter().filter(|(n, _)| !is_lead(n)).collect();
     let woke = queue_all(home, &others, now, None, |name| {
-        if early {
+        if stand_in(name) {
+            format!(
+                "{head}\nPhòng `{name}` (R&D) làm thay lead NGAY, lead có thể đang bận lượt dài: đọc kĩ card, viết AC + lệnh check, tách card con nếu lớn, rồi `8sync ccc auto move {id} ready --check \"<lệnh>\" --note \"AC: …\"` lượt này để builder nhận. Lead đã làm xong thì thôi.",
+                id = t.id
+            )
+        } else if early {
             format!("{head}\n{}", target::now_prompt(t, name))
         } else {
             format!(
@@ -2605,6 +2614,32 @@ mod tests {
         assert_eq!(target::list(&h, &root).unwrap()[0].prio, None);
         assert!(go("prio", &["1"]).is_err(), "needs a level");
         let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn rush_on_a_backlog_card_also_calls_rd_to_stand_in_for_a_busy_lead() {
+        let h = home("rush-rd");
+        let root = h.join("game");
+        std::fs::create_dir_all(&root).unwrap();
+        let names = ["lead", "rd", "dev", "qa"];
+        let rooms: Vec<(String, String)> = names.iter().enumerate().map(|(i, n)| (n.to_string(), format!("b{i}830544-0719-4d6f-aaa3-644783ddb0b5"))).collect();
+        let id = |n: &str| rooms.iter().find(|(x, _)| x == n).unwrap().1.clone();
+        let inbox = |n: &str| std::fs::read_to_string(crate::verbs::hq::inbox_file(&h, &id(n)).unwrap()).unwrap_or_default();
+        let (added, _) = target::add(&h, &root, "game quá xấu: làm lại", None, None, false, None, 100).unwrap();
+        let t = target::list(&h, &root).unwrap().into_iter().find(|x| x.id == added.id).unwrap();
+        assert_eq!(t.lane, "backlog");
+        let r = rush(&h, &root, &rooms, &t, 100).unwrap();
+        assert_eq!(r.lead.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["lead"]);
+        assert_eq!(r.woke.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["rd"]);
+        assert!(inbox("rd").contains("làm thay lead") && inbox("rd").contains(&format!("auto move {} ready", t.id)), "{}", inbox("rd"));
+        assert!(inbox("dev").is_empty() && inbox("qa").is_empty());
+        // A ready card never calls rd: only the lane's free rooms.
+        let ready = target::list(&h, &root).unwrap().into_iter().find(|x| x.id == t.id).map(|mut x| {
+            x.lane = "ready".into();
+            x
+        }).unwrap();
+        let r2 = rush(&h, &root, &rooms, &ready, 800).unwrap();
+        assert!(!r2.woke.iter().any(|(n, _)| n == "rd"));
     }
 
     /// zus/ide 2026-10-21: the owner pressed ⚡ Làm ngay on ready cards #20/#21 at P0 and nothing
