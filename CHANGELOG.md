@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.59] — 2026-10-22
+### Added
+- **Nút "+ Dự án": tạo dự án mới và giao spec ngay** (owner 2026-10-22: "không có nút tạo dự án … tạo xong giao spec mới để làm"): ô đường dẫn cuối sidebar thay bằng một nút mở hộp thoại gồm thư mục và việc đầu tiên. Thư mục có sẵn thì HQ thêm vào; chưa có thì HQ tạo (kèm `git init`; chỉ dưới thư mục cha có thật, không ở gốc ổ đĩa, không đè thư mục đã có file). Có spec thì team mở luôn với spec làm card đầu tiên (`auto up "<spec>"`, card vào board trước khi phòng nào chạy). Thư mục Claude Code chưa tin thì HQ nói rõ bước còn lại (chạy `claude` ở đó một lần, chọn Yes, rồi "Mở team"); spec vẫn nằm trên Board. API: `POST /api/projects {path, create: true}`, `POST /api/team {…, task}`. Test +2.
+### Changed
+- **Thanh tab còn 4** (owner: "nhiều chữ nhiều tab đang bị rối"): Tổng quan, Văn phòng, Board, Chat; "Chat phòng" chỉ hiện khi đang mở một phòng; Tri thức vào menu "Thêm". Không tab nào mất.
+
 ## [0.110.58] — 2026-10-22
 ### Fixed
 - **Mở session Claude từ HQ trên Windows** (owner 2026-10-22: "terminal claude không mở được ở dự án su-code"): HQ mở session bằng tmux, mà Windows không có tmux nên lần nào cũng lỗi. Giờ máy không có tmux thì HQ mở session nền của Claude Code như một phòng của team (`claude --bg --name <tên> --permission-mode auto`); `claude agents` thấy nó và terminal của HQ attach được. Thư mục Claude Code chưa tin thì HQ báo đúng câu của Claude ("Workspace not trusted…"). Đã thử thật: mở session nền trong su-code, `claude agents` liệt kê, rồi dừng và xoá. Test +1.

@@ -333,9 +333,13 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   Board
                   {view.tasks.length > 0 && <span className="text-xs text-muted-foreground tabular">{view.tasks.filter((t) => t.status !== "done").length}</span>}
                 </TabsTrigger>
-                <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
-                <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
-                <TabsTrigger value="know" className="flex-none px-0">Tri thức</TabsTrigger>
+                <TabsTrigger value="group" className="flex-none px-0">Chat</TabsTrigger>
+                {/* Chat phòng only while a room is open (owner 2026-10-22: "nhiều tab đang bị rối"). */}
+                {(scope.session != null || tab === "room") && (
+                  <TabsTrigger value="room" className="flex-none px-0">
+                    Chat phòng
+                  </TabsTrigger>
+                )}
                 {/* The other eight tabs, one menu (owner 2026-10-22: "ui ux loạn quá"); its label is the open one. */}
                 <DropdownMenu modal={false}>
                   <DropdownMenuTrigger

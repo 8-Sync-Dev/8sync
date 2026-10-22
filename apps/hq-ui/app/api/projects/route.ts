@@ -2,7 +2,9 @@ import path from "node:path";
 import { projectIdFor, withMissing, type ProjectRow } from "@/lib/server/db";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { knownProjects } from "@/lib/server/known-projects";
-import { validateProjectPath } from "@/lib/server/validate";
+import { validateNewProjectPath, validateProjectPath } from "@/lib/server/validate";
+import { run } from "@/lib/server/proc";
+import fs from "node:fs";
 
 export const runtime = "nodejs";
 
@@ -19,6 +21,18 @@ export async function POST(req: Request) {
   if ("res" in o) return o.res;
   const body = await readBody(req);
   if (!body) return bad("JSON body required");
+  // `create: true`: a new project. Make the folder and a git repo (rooms work in git worktrees), then register it.
+  if (body.create === true) {
+    const n = validateNewProjectPath(body.path);
+    if (!n.ok) return bad(n.error, 422);
+    try {
+      fs.mkdirSync(n.value, { recursive: true });
+    } catch (e) {
+      return bad(`không tạo được thư mục: ${(e as Error).message}`, 500);
+    }
+    const g = await run("git", ["init", "-q"], 15_000, n.value);
+    if (!g.ok) return bad(`git init lỗi: ${(g.stderr || g.stdout).trim() || "git không chạy"}`, 502);
+  }
   const v = validateProjectPath(body.path);
   if (!v.ok) return bad(v.error, 422);
   const { db } = o;

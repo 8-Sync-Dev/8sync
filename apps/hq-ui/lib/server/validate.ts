@@ -71,3 +71,33 @@ export function clampText(text: unknown, max = 4000, allowControls = false): Res
   if (!allowControls && hasControlChars(t)) return { ok: false, error: "text must not contain control characters" };
   return { ok: true, value: Array.from(t).slice(0, max).join("") };
 }
+
+/**
+ * A folder to create for a new project (owner 2026-10-22: "không có nút tạo dự án"): absolute, no
+ * "..", not a drive or filesystem root, not there yet (or an empty folder), under an existing parent.
+ * Returns the normalized path; creating it is the caller's job.
+ */
+export function validateNewProjectPath(input: unknown): Result<string> {
+  if (typeof input !== "string" || input.trim() === "") return { ok: false, error: "path is required" };
+  const p = path.normalize(input.trim()).replace(/[\\/]+$/, "");
+  if (p.length > 4096 || p.includes("\0")) return { ok: false, error: "path is invalid" };
+  if (!path.isAbsolute(p)) return { ok: false, error: "path must be absolute" };
+  if (input.split(/[\\/]+/).includes("..")) return { ok: false, error: "path must not contain '..'" };
+  if (path.dirname(p) === p || /^[a-zA-Z]:$/.test(p)) return { ok: false, error: "không tạo dự án ở gốc ổ đĩa" };
+  if (fs.existsSync(p)) {
+    try {
+      if (!fs.statSync(p).isDirectory()) return { ok: false, error: "path is a file" };
+      if (fs.readdirSync(p).length > 0) return { ok: false, error: "thư mục đã có và không trống: dùng “Thêm thư mục có sẵn”" };
+    } catch {
+      return { ok: false, error: "path is not readable" };
+    }
+  }
+  let parent = path.dirname(p);
+  while (!fs.existsSync(parent)) {
+    const up = path.dirname(parent);
+    if (up === parent) return { ok: false, error: "không có thư mục cha nào tồn tại" };
+    parent = up;
+  }
+  if (!fs.statSync(parent).isDirectory()) return { ok: false, error: "thư mục cha là một file" };
+  return { ok: true, value: p };
+}

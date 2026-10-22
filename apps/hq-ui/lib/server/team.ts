@@ -17,6 +17,20 @@ export const BOOST_ONLY: string[] = BOOST_TEAM.filter((r) => !(FULL_TEAM as read
  * ("Tắt Sấm Sét") stops the boost-only rooms and frees their cards, back to the 6-room team; `clean`
  * first deletes the background sessions no room keeps and restarts rooms that run an older kit.
  */
+/** The longest first task (spec) HQ passes to `auto up`. */
+export const TASK_MAX = 4000;
+
+/**
+ * `auto up "<task>"` puts the task on the board before any room starts (crates/cli/src/verbs/ccc/team.rs).
+ * Only for actions that bring a team up; a task starting with "-" gets a leading space so the CLI
+ * never reads it as a flag.
+ */
+export function withTask(args: string[], action: TeamAction, task?: string | null): string[] {
+  const t = task?.trim();
+  if (!t || !(action === "up" || action === "full")) return args;
+  return [...args, t.startsWith("-") ? ` ${t}` : t];
+}
+
 export function teamArgs(action: TeamAction): string[] {
   if (action === "ship-fast") return ["ccc", "auto", "ship-fast", "on", "--json"];
   if (action === "ship-ask") return ["ccc", "auto", "ship-fast", "ship-ask", "--json"];
@@ -47,7 +61,7 @@ export function tail(text: string, lines = 24): string {
     .slice(0, 4000);
 }
 
-export async function runTeam(root: string, action: TeamAction): Promise<TeamResult> {
+export async function runTeam(root: string, action: TeamAction, task?: string | null): Promise<TeamResult> {
   const key = root.replace(/\\/g, "/").toLowerCase();
   if (inFlight.has(key)) return { ok: false, output: "", error: "team của dự án này đang mở/dừng, đợi lần trước xong", busy: true };
   inFlight.add(key);
@@ -56,7 +70,7 @@ export async function runTeam(root: string, action: TeamAction): Promise<TeamRes
   // on Windows). Stopping (`down`, `unboost`) is quick.
   const ms = action === "boost" ? 660_000 : action === "down" || action === "unboost" ? 180_000 : 300_000;
   try {
-    const r = await run("8sync", teamArgs(action), ms, root);
+    const r = await run("8sync", withTask(teamArgs(action), action, task), ms, root);
     const output = tail(`${r.stdout}\n${r.stderr}`);
     if (r.ok) {
       // Boost sets a fresh owner lease, like the Run button: rooms that died with the machine come back now.
