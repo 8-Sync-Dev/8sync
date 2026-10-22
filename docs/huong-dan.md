@@ -21,6 +21,10 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 | 6 | Trả lời việc cần anh. Câu sản phẩm/kỹ thuật thì critic (Opus) chọn ngay (mặc định bật; `auto on --after N` để chờ anh N giây trước), xin quyền thì việc an toàn trong repo tự chạy tiếp; merge/release/secret/ngoài repo luôn chờ anh | khung **Anh cần trả lời** đầu trang: chọn đáp án, **Cho phép / Từ chối**, hoặc **Mở terminal để trả lời** | `claude attach <id>` |
 | 7 | Sau `8sync up`: cho cả team chạy bản mới (giữ hội thoại) | **Dọn & mở lại** | `8sync ccc auto up --clear-ss` |
 | 8 | Dừng team (giữ hội thoại) | **Dừng team** | `8sync ccc auto down` |
+| 9 | Card approved chờ Ship: bấm một phát trên cột Approved của Board — có câu Ship của lead thì nút là **Duyệt tất cả** (trả lời đúng option đó), chưa có thì **Ship tất cả** nhắc lead hỏi ngay | cột **Approved** | `8sync ccc auto ship-fast ship-ask` |
+| 10 | Một team làm mọi dự án trên máy: phòng hết card ở dự án mình thì `claim`/`wait` lấy card gấp nhất ở dự án khác trong scope (card về kèm root + lệnh `env -C`) | — | `8sync ccc auto up --company` |
+| 11 | Bài học dùng được ở mọi dự án (công cụ, hook, cách làm) ghi vào cây tri thức của máy; đầu phiên mỗi phòng đọc dự án mình trước rồi 3 dòng cuối của từng dự án khác dưới root của nó; chuyện riêng của khách KHÔNG vào đây | tab **Tri thức** | `8sync ccc know add "<bài học>"` · `know ls [--all]` |
+| 12 | Văn phòng 3D (WebGL): mỗi dự án một sàn, mỗi phòng một bàn, màu = trạng thái; three.js chỉ nạp khi mở tab | tab **3D** | — |
 
 Tạm dừng / chạy tiếp auto: nút **Tạm dừng / Chạy** trên cùng (`8sync ccc auto pause` / `on`).
 
@@ -59,7 +63,7 @@ Team mặc định `lead,dev,qa,review`; tự chọn: `--roles lead,ba,dev,dev2,
 
 - `ready` cần lệnh check, `approved` cần SHA đã review.
 - Card bị trả về quá 2 lần thì sang `blocked`; claim im 2 giờ thì phòng khác lấy lại.
-- Merge chỉ sau khi anh trả lời `Ship` (lead chạy `gh pr merge --squash --match-head-commit <sha>`).
+- Merge chỉ sau khi anh trả lời `Ship` (lead chạy `gh pr merge --squash --match-head-commit <sha>`); cột Approved trên HQ có nút **Ship tất cả / Duyệt tất cả** để trả lời một phát.
 - Xem: `8sync ccc auto board`; việc cần lead/anh: `8sync ccc auto lint`.
 
 **Tự mở từng phòng (cách cũ, vẫn dùng được):**

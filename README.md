@@ -31,6 +31,10 @@ One project folder, in order:
 | 5 | Answer what needs you; product/technical questions go to the critic at once (default on; `--after N` to wait for you first), safe work proceeds; Ship waits for you | **Anh cần trả lời** (top of the office) | `claude attach <id>` |
 | 6 | After `8sync up`: reload the rooms onto the new version, conversations kept | **Dọn & mở lại** | `8sync ccc auto up --clear-ss` |
 | 7 | Stop the team | **Dừng team** | `8sync ccc auto down` |
+| 8 | Approved cards waiting on Ship: one tap on the Board's Approved column answers the lead's Ship question with "Duyệt tất cả" (or nudges the lead to ask it) | **Ship tất cả / Duyệt tất cả** | `8sync ccc auto ship-fast ship-ask` |
+| 9 | One team for every project on the machine: a room with nothing on its own board takes the most urgent card of another project in scope | — | `8sync ccc auto up --company` |
+| 10 | Lessons every project can use (tools, hooks, ways of working) go to the machine's knowledge tree; each session's start reads its own project first, then the others under their root | **Tri thức** tab | `8sync ccc know add "<lesson>"` · `know ls` |
+| 11 | A WebGL office: one floor per project, one desk per room, colour = state; three.js loads only when the tab opens | **3D** tab | — |
 
 The lead writes acceptance criteria. Dev builds the card in its own worktree and opens a PR, qa runs the check and a UAT, and review approves the head SHA. Nothing merges until you answer one `Ship` question. `8sync ccc auto down` stops the team. Auto mode is on, bypass is locked, and the guard never consults a grant for force-push, secrets or deletes. More in [The whole team](#the-whole-team-one-command-no-terminal-per-room) and, in Vietnamese, [docs/huong-dan.md](docs/huong-dan.md).
 
