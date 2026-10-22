@@ -5,10 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
-## [0.110.41] — 2026-10-22
+## [0.110.42] — 2026-10-22
 ### Added
 - **Cây tri thức chung của máy: `8sync ccc know add "<bài học>" [--repo <root>]` · `know ls [--all] [--json]`** (owner 2026-10-22: "agent tự biết dự án nào, ghi lại vào cây tri thức chung không bị nhầm lẫn tri thức nhưng vẫn đọc của nhau được để học hỏi"; mô hình theo omp `memory.scoping: per-project-tagged`). Mỗi repo một file `~/.local/state/8sync/ccc/know/<repo>-<hash>.md` (dòng đầu `# <root>`, rồi `- <ngày> [<phòng>] <bài học>`); SessionStart nạp bài học của dự án này trước (10 dòng cuối) rồi 3 dòng cuối của từng dự án khác dưới tiêu đề root của nó (≤ 1.500 ký tự, "đọc để học, không áp dụng mù"), nên phòng không lẫn tri thức của repo khác. `su-code/KNOWLEDGE.md` vẫn là memory commit của repo; skill `/remember` thêm bước ghi `know add` cho bài học dùng được ở mọi dự án. Test know 1, help 6, session-start 29.
 - **HQ tab "Tri thức"**: cây tri thức của máy theo dự án đang chọn (bài học của dự án này trước, rồi từng dự án khác dưới root của nó, mới nhất trên cùng), nút Tải lại; `/api/know?root=` chạy `8sync ccc know ls --json --all` trong dự án có phòng đang chạy; 8sync cũ → báo thiếu `ccc know`. Test know (hq-ui) 2.
+
+## [0.110.41] — 2026-10-22
+### Fixed
+- **`auto merge` không kẹt cả board vì một card chờ Ship** (owner: "bị kẹt hoài vậy auto ship chứ"; live zus/ide: 19/27 card approved có PR đã merge từ hôm trước nhưng card ngồi yên vì 8 card không merge được làm cả lệnh dừng): chưa có quyền tự merge, `auto merge` vẫn land những việc không cần quyền — PR đã merge → card done, conflict/base sai → về ready/review — rồi MỚI hỏi owner MỘT câu Ship cho đúng những card cần `gh pr merge` thật (hoặc chưa có PR). Không bao giờ tự merge khi chưa có quyền.
 
 ## [0.110.40] — 2026-10-22
 ### Added
