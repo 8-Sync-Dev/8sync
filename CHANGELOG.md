@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.40] — 2026-10-22
+### Added
+- **Một team cho nhiều dự án: `8sync ccc auto up --company` / `auto on --company`** (owner 2026-10-22: "1 cty rooms/roles agent nhận nhiều dự án … chứ hiện tại mỗi dự án 1 hạm đội riêng"; đo 2026-10-22: 17 phòng rảnh giữ 9,4 GB cho hai dự án). Cờ `company` trong auto.json (giữ qua on/off/pause như `teams`): phòng hết card ở dự án mình thì `auto claim` lấy card gấp nhất (P0 trước, rồi thứ tự scope) ở dự án khác trong scope của auto, `auto wait` thức dậy khi dự án khác có card; card về kèm `root` và hướng dẫn `env -C <root> 8sync ccc auto … --as <phòng>` (board, inbox, grant vẫn theo từng repo; dự án bị pin bằng lease vẫn bị bỏ qua). `auto status --json` thêm `company`. Test auto +1 (round trip, chọn theo prio, bỏ qua dự án pin/không board), wait +2 (card dự án khác, dự án mình ưu tiên). HQ nhóm "Công ty" sẽ ở bản sau.
+
 ## [0.110.39] — 2026-10-22
 ### Changed
 - **Tổng quan gọn lại** (owner 2026-10-22: "ui ux loạn quá"): câu hỏi dài trong khung "Anh cần trả lời" (danh sách 19 card merge của lead) gập còn 3 dòng, bấm vào mở đủ; bỏ dòng "Màn hình phòng đang hiện đúng câu này" và dòng nhắc Ship khi đã có nút đáp án; cột Preview ẩn khi chưa có ảnh (tab Preview vẫn chỉ chỗ lưu ảnh).
