@@ -63,7 +63,7 @@ export function Nav({
   boards: BoardRef[];
   onHome: () => void;
   onOpenRoom: (r: Room) => void;
-  onOpenFolder: (id: number) => void;
+  onOpenFolder: (id: number, p?: { path: string; name: string }) => void;
   /** A repo with rooms: its Tổng quan (that project's block only). */
   onOpenRepo: (root: string, name: string) => void;
   /** The repo Tổng quan is focused on, if any. */
@@ -554,7 +554,7 @@ function LiveDot({ live }: { live: Live }) {
   );
 }
 
-function AddProject({ hq, onAdded, company }: { hq: Hq; onAdded: (id: number) => void; company: boolean }) {
+function AddProject({ hq, onAdded, company }: { hq: Hq; onAdded: (id: number, p?: { path: string; name: string }) => void; company: boolean }) {
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -580,7 +580,7 @@ function AddProject({ hq, onAdded, company }: { hq: Hq; onAdded: (id: number) =>
       setPath("");
       await hq.reload.projects();
       await hq.reload.sessions();
-      onAdded(r.project.id);
+      onAdded(r.project.id, r.project);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -645,7 +645,7 @@ const noop = () => () => {};
  * "Dự án trên máy" (owner 2026-10-22): repos 8sync has seen on this machine but the owner never added
  * to HQ. One tap adds the folder and opens it in the office, where "Mở team" waits.
  */
-function KnownProjects({ items, hq, onOpen }: { items: KnownProject[]; hq: Hq; onOpen: (id: number) => void }) {
+function KnownProjects({ items, hq, onOpen }: { items: KnownProject[]; hq: Hq; onOpen: (id: number, p?: { path: string; name: string }) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   if (!items.length) return null;
   async function add(k: KnownProject) {
@@ -654,7 +654,7 @@ function KnownProjects({ items, hq, onOpen }: { items: KnownProject[]; hq: Hq; o
       const r = await hq.api<{ project: Project; existed?: boolean }>("/api/projects", { method: "POST", body: { path: k.path } });
       await hq.reload.projects();
       toast.success(`Đã thêm ${r.project.name}: bấm “Mở team” trong Văn phòng`);
-      onOpen(r.project.id);
+      onOpen(r.project.id, r.project);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -662,11 +662,17 @@ function KnownProjects({ items, hq, onOpen }: { items: KnownProject[]; hq: Hq; o
     }
   }
   return (
-    <section className="mt-3" aria-labelledby="known-projects">
-      <h3 id="known-projects" className="mb-1 px-2 text-xs font-medium text-muted-foreground" title="Repo máy này từng chạy 8sync (scope auto, team, ghim, phiên cũ) mà chưa thêm vào HQ">
+    // Every repo on the machine can be dozens: folded past 8 so the rooms stay on screen.
+    <details className="group/known mt-3" open={items.length <= 8}>
+      <summary
+        id="known-projects"
+        className="mb-1 flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        title="Repo trên máy này: Claude Code đã tin, 8sync đã chạy, hoặc tìm thấy cạnh các repo đó. Bấm một repo để thêm vào HQ và mở."
+      >
+        <ChevronRightIcon className="size-3 transition-transform group-open/known:rotate-90 motion-reduce:transition-none" aria-hidden />
         Dự án trên máy · {items.length}
-      </h3>
-      <ul className="space-y-1">
+      </summary>
+      <ul className="space-y-1" aria-labelledby="known-projects">
         {items.map((k) => (
           <li key={k.path} className="flex items-center">
             <button type="button" className={cn(item, "h-8 min-w-0 flex-1")} disabled={busy === k.path} title={`${k.path} (${k.source}): thêm vào HQ và mở`} onClick={() => void add(k)}>
@@ -677,6 +683,6 @@ function KnownProjects({ items, hq, onOpen }: { items: KnownProject[]; hq: Hq; o
           </li>
         ))}
       </ul>
-    </section>
+    </details>
   );
 }

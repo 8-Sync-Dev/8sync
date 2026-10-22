@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.58] — 2026-10-22
+### Fixed
+- **Mở session Claude từ HQ trên Windows** (owner 2026-10-22: "terminal claude không mở được ở dự án su-code"): HQ mở session bằng tmux, mà Windows không có tmux nên lần nào cũng lỗi. Giờ máy không có tmux thì HQ mở session nền của Claude Code như một phòng của team (`claude --bg --name <tên> --permission-mode auto`); `claude agents` thấy nó và terminal của HQ attach được. Thư mục Claude Code chưa tin thì HQ báo đúng câu của Claude ("Workspace not trusted…"). Đã thử thật: mở session nền trong su-code, `claude agents` liệt kê, rồi dừng và xoá. Test +1.
+- **"Dự án trên máy" đủ dự án** (owner: "thiếu dự án quá nhiều"): trước chỉ có repo 8sync từng thấy. Giờ thêm thư mục Claude Code đã tin (chỉ đọc đường dẫn trong `~/.claude.json`) và quét repo dưới thư mục cha của các repo đã biết (sâu 4 cấp, có repo lồng nhau, bỏ node_modules/target/thư mục ẩn, không quét cả ổ hay cả thư mục home; cache 5 phút). Trên máy owner: từ 8 lên khoảng 30 repo. Danh sách dài thì tự gập. Test +2.
+- **Bấm "Mở" một dự án là mở đúng dự án đó** (owner: "mở cũng không được"): trước HQ chỉ chuyển sang Văn phòng với mọi dự án nên trông như không có gì xảy ra. Giờ Văn phòng lọc đúng dự án vừa mở, với nút "Mở team" của nó.
+### Changed
+- **Tri thức gom một chỗ** (owner: "Tri thức là gom all mà sao ui phân chia"): bỏ ba khối Công ty / Dự án này / Dự án khác. Giờ là một danh sách bài học của mọi dự án, mới nhất trước, mỗi dòng có nhãn dự án (Công ty nổi màu riêng); chip lọc theo dự án và ô tìm theo chữ, phòng, dự án. Test +2.
+### Added
+- **Nút "Xoá session rác" ở tab Sessions** (owner: "tab session nên có nút xoá session rác"): xoá khỏi danh sách mọi session đã dừng (không còn trong tmux hay `claude agents`); session đang chạy và tin nhắn cũ giữ nguyên. Không xoá gì khi `claude agents` không trả lời. API `DELETE /api/sessions`. Test +2.
+
 ## [0.110.57] — 2026-10-22
 ### Changed
 - **Văn phòng gọn hơn: mỗi dự án còn 2 nút** (owner 2026-10-22: "ui ux khó hiểu"): đầu mỗi khối dự án từng có 7 nút (Ship tốc độ cao, Ship card approved, Sấm Sét, Mở lại team, Dọn & mở lại, Team đầy đủ, Dừng team). Giờ chỉ còn "Ship card approved" và "Thao tác team"; bấm "Thao tác team" thì hiện đủ các nút kia, hộp xác nhận như cũ. Sấm Sét đang chạy (13 phòng, tốn quota gấp ~13 lần) luôn hiện, không bị gập. Kiểm bằng ảnh chụp headless của Văn phòng thật.

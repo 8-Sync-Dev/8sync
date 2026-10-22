@@ -1,17 +1,23 @@
 "use client";
-import { BookOpenIcon, RefreshCwIcon } from "lucide-react";
+import { BookOpenIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type Book, type Know, parseKnow } from "@/lib/know";
+import { feedProjects, filterFeed, lessonFeed, type Know, parseKnow } from "@/lib/know";
+import { cn } from "@/lib/utils";
 import { rootKey } from "@/lib/preview";
-import { EmptyState, ErrorNote, shortName } from "./bits";
+import { EmptyState, ErrorNote } from "./bits";
 
-/** The Tri thức tab: the machine's knowledge tree (`8sync ccc know`), the chosen project's book first, the others under their root. */
+/**
+ * The Tri thức tab: every book of the machine (`8sync ccc know`) as ONE feed, newest first, each lesson
+ * tagged with its project (owner 2026-10-22: "gom all … vẫn hiểu đúng dự án"); chips narrow it to a project.
+ */
 export function KnowView({ token, roots, repo, active }: { token: string; roots: { root: string; name: string }[]; repo: string | null; active: boolean }) {
-  const [pick, setPick] = useState<string | null>(repo);
-  const chosen = useMemo(() => (pick && roots.some((r) => rootKey(r.root) === rootKey(pick)) ? pick : (roots[0]?.root ?? null)), [pick, roots]);
+  // The API answers every book whatever root it is asked for; the root only marks which one is "own".
+  const chosen = useMemo(() => (repo && roots.some((r) => rootKey(r.root) === rootKey(repo)) ? repo : (roots[0]?.root ?? null)), [repo, roots]);
+  const [only, setOnly] = useState<string | null>(null);
+  const [q, setQ] = useState("");
   const [data, setData] = useState<(Know & { error?: string }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -46,26 +52,33 @@ export function KnowView({ token, roots, repo, active }: { token: string; roots:
       </div>
     );
   }
-  const n = (data?.shared?.lessons.length ?? 0) + (data?.own?.lessons.length ?? 0) + (data?.others.reduce((s, b) => s + b.lessons.length, 0) ?? 0);
+  const feed = data ? lessonFeed(data) : [];
+  const n = feed.length;
+  const projects = feedProjects(feed);
+  const shown = filterFeed(feed, only, q);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 sm:px-6">
-        <Select value={chosen ?? ""} onValueChange={setPick}>
-          <SelectTrigger size="sm" className="w-56" aria-label="Dự án">
-            <SelectValue placeholder="Dự án" />
-          </SelectTrigger>
-          <SelectContent>
-            {roots.map((r) => (
-              <SelectItem key={r.root} value={r.root}>
-                {r.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <span className="text-xs text-muted-foreground tabular">{data ? `${n} bài học` : ""}</span>
+        <div className="relative w-full max-w-72">
+          <SearchIcon aria-hidden className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm bài học, phòng, dự án" aria-label="Tìm trong tri thức" className="h-8 pl-7 text-sm" />
+        </div>
+        <span className="text-xs text-muted-foreground tabular">{data ? `${shown.length}/${n} bài học` : ""}</span>
         <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={reload} disabled={loading} aria-label="Tải lại">
           <RefreshCwIcon aria-hidden className={loading ? "animate-spin" : undefined} /> Tải lại
         </Button>
+        {projects.length > 1 && (
+          <div className="flex w-full flex-wrap gap-1.5" role="group" aria-label="Lọc theo dự án">
+            <Chip on={only == null} onClick={() => setOnly(null)}>
+              Tất cả · {n}
+            </Chip>
+            {projects.map((p) => (
+              <Chip key={p.project} on={only === p.project} onClick={() => setOnly(only === p.project ? null : p.project)}>
+                {p.project} · {p.n}
+              </Chip>
+            ))}
+          </div>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:px-6">
         {error ? (
@@ -80,48 +93,45 @@ export function KnowView({ token, roots, repo, active }: { token: string; roots:
           <EmptyState icon={<BookOpenIcon />} title="Cây tri thức còn trống">
             Phòng ghi bài học của dự án bằng <code className="font-mono">8sync ccc know add &quot;&lt;bài học&gt;&quot;</code>, bài học đúng cho mọi dự án thêm <code className="font-mono">--shared</code> (hoặc qua <code className="font-mono">/remember</code>). Chuyện riêng của repo vẫn ở su-code/KNOWLEDGE.md.
           </EmptyState>
+        ) : shown.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Không có bài học khớp.</p>
         ) : (
-          <div className="space-y-6">
-            {data.shared && data.shared.lessons.length > 0 && <BookBlock book={data.shared} title="Công ty" sub="mọi dự án · 8sync ccc know add --shared" />}
-            <BookBlock book={data.own} title="Dự án này" empty="Dự án này chưa có bài học chung." />
-            {data.others.length > 0 && (
-              <section>
-                <h3 className="mb-2 text-[13px] font-semibold">Dự án khác trên máy này <span className="font-normal text-muted-foreground">(đọc để học, không áp dụng mù)</span></h3>
-                <div className="space-y-4">
-                  {data.others.map((b) => (
-                    <BookBlock key={b.root} book={b} title={shortName(b.root.split("/").pop() ?? b.root)} sub={b.root} />
-                  ))}
-                </div>
-              </section>
-            )}
-          </div>
+          <ol className="max-w-[90ch] divide-y" aria-label="Bài học của mọi dự án, mới nhất trước">
+            {shown.map((l, i) => (
+              <li key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 py-2 text-[13px] leading-snug">
+                <span
+                  className={cn(
+                    "shrink-0 rounded-sm px-1.5 text-[11px] font-medium",
+                    l.kind === "shared" ? "bg-primary/15 text-primary" : l.kind === "own" ? "bg-foreground/10 text-foreground" : "bg-muted text-muted-foreground",
+                  )}
+                  title={l.kind === "shared" ? "Bài học cho mọi dự án" : l.root}
+                >
+                  {l.project}
+                </span>
+                {l.room && <span className="shrink-0 text-[11px] text-muted-foreground">{l.room}</span>}
+                <span className="min-w-0 flex-1 basis-64">{l.text}</span>
+                <span className="shrink-0 text-[11px] text-muted-foreground tabular">{l.day ?? ""}</span>
+              </li>
+            ))}
+          </ol>
         )}
       </div>
     </div>
   );
 }
 
-function BookBlock({ book, title, sub, empty }: { book: Book | null; title: string; sub?: string; empty?: string }) {
-  const lessons = book?.lessons ?? [];
+function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <section>
-      <h3 className="text-[13px] font-semibold">
-        {title}
-        {sub && <span className="ml-2 font-mono text-[11px] font-normal text-muted-foreground">{sub}</span>}
-      </h3>
-      {lessons.length === 0 ? (
-        <p className="mt-1 text-xs text-muted-foreground">{empty ?? "Chưa có bài học."}</p>
-      ) : (
-        <ol className="mt-1.5 max-w-[80ch] space-y-1">
-          {[...lessons].reverse().map((l, i) => (
-            <li key={i} className="text-[13px] leading-snug">
-              <span className="mr-2 text-[11px] text-muted-foreground tabular">{l.day ?? ""}</span>
-              {l.room && <span className="mr-2 rounded-sm bg-muted px-1 text-[11px] font-medium text-muted-foreground">{l.room}</span>}
-              {l.text}
-            </li>
-          ))}
-        </ol>
+    <button
+      type="button"
+      aria-pressed={on}
+      onClick={onClick}
+      className={cn(
+        "rounded-full border px-2.5 py-0.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+        on ? "border-foreground bg-foreground text-background" : "text-muted-foreground hover:text-foreground",
       )}
-    </section>
+    >
+      {children}
+    </button>
   );
 }
