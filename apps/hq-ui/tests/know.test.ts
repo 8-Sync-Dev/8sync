@@ -14,7 +14,8 @@ describe("knowledge tree (8sync ccc know ls --json)", () => {
     expect(k.others).toHaveLength(1);
     expect(k.others[0].lessons).toHaveLength(1);
     expect(k.dir).toBe("/h/know");
-    expect(parseKnow({ own: null, others: [] })).toEqual({ own: null, others: [], dir: null });
-    expect(parseKnow("junk")).toEqual({ own: null, others: [], dir: null });
+    expect(parseKnow({ own: null, others: [] })).toEqual({ shared: null, own: null, others: [], dir: null });
+    expect(parseKnow("junk")).toEqual({ shared: null, own: null, others: [], dir: null });
+    expect(parseKnow({ shared: { root: "Công ty", lines: ["- 2026-10-22 [lead] s"] }, own: null, others: [] }).shared?.lessons[0].text).toBe("s");
   });
 });

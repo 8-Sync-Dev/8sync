@@ -20,10 +20,10 @@ export async function GET(req: Request) {
   const root = liveProjects(await mergedSessions(o.db), (cwd) => projectOf(cwd)).find((x) => x.root.toLowerCase() === want)?.root;
   if (!root) return bad("dự án này không có phòng nào đang chạy", 409);
   const r = await run("8sync", ["ccc", "know", "ls", "--json", "--all"], TIMEOUT_MS, root);
-  if (!r.ok) return json({ own: null, others: [], dir: null, error: (r.stderr.trim() || "8sync ccc know không chạy được (8sync < 0.110.41?)").slice(0, 200) });
+  if (!r.ok) return json({ shared: null, own: null, others: [], dir: null, error: (r.stderr.trim() || "8sync ccc know không chạy được (8sync < 0.110.41?)").slice(0, 200) });
   try {
     return json(parseKnow(JSON.parse(r.stdout)));
   } catch {
-    return json({ own: null, others: [], dir: null, error: "8sync ccc know ls trả JSON không hợp lệ" });
+    return json({ shared: null, own: null, others: [], dir: null, error: "8sync ccc know ls trả JSON không hợp lệ" });
   }
 }
