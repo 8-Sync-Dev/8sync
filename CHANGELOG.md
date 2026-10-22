@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.41] — 2026-10-22
+### Added
+- **Cây tri thức chung của máy: `8sync ccc know add "<bài học>" [--repo <root>]` · `know ls [--all] [--json]`** (owner 2026-10-22: "agent tự biết dự án nào, ghi lại vào cây tri thức chung không bị nhầm lẫn tri thức nhưng vẫn đọc của nhau được để học hỏi"; mô hình theo omp `memory.scoping: per-project-tagged`). Mỗi repo một file `~/.local/state/8sync/ccc/know/<repo>-<hash>.md` (dòng đầu `# <root>`, rồi `- <ngày> [<phòng>] <bài học>`); SessionStart nạp bài học của dự án này trước (10 dòng cuối) rồi 3 dòng cuối của từng dự án khác dưới tiêu đề root của nó (≤ 1.500 ký tự, "đọc để học, không áp dụng mù"), nên phòng không lẫn tri thức của repo khác. `su-code/KNOWLEDGE.md` vẫn là memory commit của repo; skill `/remember` thêm bước ghi `know add` cho bài học dùng được ở mọi dự án. Test know 1, help 6, session-start 29.
+
 ## [0.110.40] — 2026-10-22
 ### Added
 - **Một team cho nhiều dự án: `8sync ccc auto up --company` / `auto on --company`** (owner 2026-10-22: "1 cty rooms/roles agent nhận nhiều dự án … chứ hiện tại mỗi dự án 1 hạm đội riêng"; đo 2026-10-22: 17 phòng rảnh giữ 9,4 GB cho hai dự án). Cờ `company` trong auto.json (giữ qua on/off/pause như `teams`): phòng hết card ở dự án mình thì `auto claim` lấy card gấp nhất (P0 trước, rồi thứ tự scope) ở dự án khác trong scope của auto, `auto wait` thức dậy khi dự án khác có card; card về kèm `root` và hướng dẫn `env -C <root> 8sync ccc auto … --as <phòng>` (board, inbox, grant vẫn theo từng repo; dự án bị pin bằng lease vẫn bị bỏ qua). `auto status --json` thêm `company`. Test auto +1 (round trip, chọn theo prio, bỏ qua dự án pin/không board), wait +2 (card dự án khác, dự án mình ưu tiên). HQ nhóm "Công ty" sẽ ở bản sau.
