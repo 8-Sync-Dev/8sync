@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.54] — 2026-10-22
+### Changed
+- **Văn phòng và Tổng quan theo chế độ công ty** (owner 2026-10-22: một công ty nhiều dự án): khi `auto company on`, phòng đang giữ card của dự án khác hiện ở khối của dự án đó (không còn nằm ở thư mục nó chạy), và roster thấy đúng card nó đang làm thay vì "Chờ card". Phòng chưa có card ở nguyên dự án nhà. Tắt chế độ công ty thì như cũ. Logic thuần `companyRooms` có test.
+
 ## [0.110.53] — 2026-10-22
 ### Changed
 - **HQ sidebar ở chế độ công ty: một team, nhiều dự án** (owner 2026-10-22: "1 cty cân all dự án tiết kiệm session claude chứ không phải mỗi dự án là mở full rooms"): khi `auto company on`, sidebar không còn xếp phòng dưới từng thư mục dự án. Mục "Phòng của công ty" liệt kê mỗi phòng một lần, chữ nhỏ bên cạnh là dự án phòng đang làm (theo card nó giữ, kể cả card ở repo khác). Mục "Công ty · N dự án" liệt kê từng dự án với số người đang làm ("1 người", "chưa ai"), số card mở và số phòng chờ anh; dự án ghim lên đầu. Ô thêm repo đổi thành "Thêm dự án cho công ty": công ty nhận card ở đó bằng phòng sẵn có, không mở thêm phòng. Tắt chế độ công ty thì sidebar như cũ. Logic thuần `companySidebar` có test 2.

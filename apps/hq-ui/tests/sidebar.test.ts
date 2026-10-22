@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { companySidebar, peopleWord, projectsHeading, repoOf, groupKey, sidebarGroups, splitClosed } from "@/lib/sidebar";
+import { companyRooms, companySidebar, peopleWord, projectsHeading, repoOf, groupKey, sidebarGroups, splitClosed } from "@/lib/sidebar";
 import { parseBoard, type Board } from "@/lib/lanes";
 import type { Room } from "@/lib/server/office";
 
@@ -254,5 +254,14 @@ describe("company sidebar: one team, many projects", () => {
     expect(c.projects.find((p) => p.name === "ide")).toMatchObject({ people: 0, open: 1 });
     expect(peopleWord(0)).toBe("chưa ai");
     expect(peopleWord(1)).toBe("1 người");
+  });
+  it("Văn phòng / Tổng quan: a room working on another project's card moves to that project; the rest stay home", () => {
+    const rooms = [room({ name: "dev", root: PLATFORM }), room({ name: "dev2", root: PLATFORM }), room({ name: "qa", root: PLATFORM })];
+    const moved = companyRooms(rooms, boards);
+    expect(moved.map((r) => r.project?.name)).toEqual(["platform", "ide", "platform"]);
+    expect(moved[1].cwd).toBe(IDE);
+    // untouched rooms are the same objects
+    expect(moved[0]).toBe(rooms[0]);
+    expect(moved[2]).toBe(rooms[2]);
   });
 });

@@ -12,7 +12,7 @@ import { askLine } from "@/lib/ask";
 import { NOW_LABEL, agoVi, claimMatches, deskClip, roster, rosterSummary, stateChanges, type RoomNow } from "@/lib/now";
 import { cloneCount, fmtDuration, fmtTokens, fmtUsd, roomFor, SEATS, type Visit } from "@/lib/office";
 import { rootKey } from "@/lib/preview";
-import { groupByRepo, meetingShown, worktreeOf } from "@/lib/sidebar";
+import { companyRooms, groupByRepo, meetingShown, worktreeOf } from "@/lib/sidebar";
 import { modelShort } from "@/lib/roles";
 import { shirtFor, shirtOf } from "@/lib/sprite/frames";
 import { cn } from "@/lib/utils";
@@ -500,7 +500,11 @@ export function OfficeView({
   repo?: string | null;
   onAll?: () => void;
 }) {
-  const allRooms = useMemo(() => office?.rooms ?? [], [office]);
+  // Company mode: each room sits at the project whose card it holds (lib/sidebar.ts companyRooms).
+  const allRooms = useMemo(
+    () => (office?.company ? companyRooms(office.rooms, boards.boards ?? []) : (office?.rooms ?? [])),
+    [office, boards.boards],
+  );
   // Worktree rooms sit under their repo (lib/sidebar.ts groupByRepo), like the sidebar.
   const allGroups = useMemo(() => groupByRepo(allRooms), [allRooms]);
   const groups = useMemo(() => (repo ? allGroups.filter((g) => rootKey(g.project.root) === rootKey(repo)) : allGroups), [allGroups, repo]);
