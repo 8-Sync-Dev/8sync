@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.65] — 2026-10-22
+### Fixed
+- **Sweep zombie của `8sync shot` match 0 tiến trình** (v0.110.64): PowerShell parse `-not $_.CommandLine -like '*x*'` thành `(-not $x) -like` → luôn false; thêm ngoesi `( ... -like ... )` để lọc đúng.
 ## [0.110.64] — 2026-10-22
 ### Fixed
 - **`8sync shot` để lại Chromium zombie ăn GPU hàng giờ** (máy anh 2026-10-22: 47% GPU / ~85 W chỉ vì 1 renderer headless kẹt — guard siết RAM giết phòng giữa lúc shot, chromium con sống sót): mỗi lần `shot` chạy nó quét và kill mọi chromium `8sync-shot-*` mồ côi (của lần chạy trước), và HQ auto-tick mỗi phút quét chromium `8sync-shot-*` già hơn 10 phút (shot sống không bao giờ già thế). Điện máy về ~100 W khi không render.
