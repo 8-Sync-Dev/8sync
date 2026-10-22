@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { repoOf, groupKey, sidebarGroups, splitClosed } from "@/lib/sidebar";
+import { projectsHeading, repoOf, groupKey, sidebarGroups, splitClosed } from "@/lib/sidebar";
 import type { Room } from "@/lib/server/office";
 
 const NOW = Date.parse("2026-10-17T16:00:00Z");
@@ -217,5 +217,14 @@ describe("sidebar UI", () => {
     const askingBar = renderToStaticMarkup(createElement(RoomBar, { room: w, n: roomNow(w, [], NOW), token: "t", onTerminal: () => {} }));
     expect(askingBar).not.toContain("Mở terminal");
     expect(asking).toContain("Không giữ card nào.");
+  });
+});
+
+describe("projectsHeading", () => {
+  it("says Công ty with the project count only in company mode", () => {
+    expect(projectsHeading(false, 3)).toEqual({ title: "Dự án", hint: null });
+    const h = projectsHeading(true, 2);
+    expect(h.title).toBe("Công ty · 2 dự án");
+    expect(h.hint).toContain("auto company");
   });
 });
