@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.45] — 2026-10-22
+### Changed
+- **Sidebar HQ: nhóm "Công ty"** (tiếp .40/.44): khi `auto company on`, tiêu đề danh sách dự án ở sidebar đổi từ "Dự án" thành "Công ty · N dự án" (tooltip giải thích một team làm mọi dự án); `/api/office` thêm `company` từ lần đọc `auto status` gần nhất. Test sidebar +1.
+
 ## [0.110.44] — 2026-10-22
 ### Added
 - **Công tắc "Công ty" trên HQ + `8sync ccc auto company on|off`** (tiếp bản .40, owner 2026-10-22: "1 cty rooms/roles agent nhận nhiều dự án"): nút cạnh "Critic trả lời ngay" ở Văn phòng bật/tắt chế độ một team làm mọi dự án trong scope; dòng trạng thái auto ghi "Công ty: một team, mọi dự án"; `auto status --json` có `company` (8sync cũ hơn không hiện nút). Test auto-ui +1.

@@ -154,3 +154,12 @@ export function pinSidebar<T, F extends { path: string; name: string }>(
   };
 }
 
+
+/**
+ * The sidebar's projects heading. Company mode (`auto company on`, owner 2026-10-22: "1 cty rooms/roles agent
+ * nhận nhiều dự án"): one team serves every listed project, so the heading says so instead of "Dự án".
+ */
+export function projectsHeading(company: boolean, projects: number): { title: string; hint: string | null } {
+  if (!company) return { title: "Dự án", hint: null };
+  return { title: `Công ty · ${projects} dự án`, hint: "Một team làm mọi dự án: phòng hết card ở dự án mình thì lấy card gấp nhất ở dự án khác (8sync ccc auto company on|off)." };
+}

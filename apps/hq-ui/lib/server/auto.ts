@@ -18,6 +18,8 @@ export type AutoStatus = {
   /** Repos whose team `auto up` brought up; absent on an older 8sync. `repos`: auto's scope (none = every project); `out`: projects `auto close` took out. Unvalidated: read via lib/server/sweep.ts runningTeams. */
   team_roots?: unknown;
   repos?: unknown;
+  /** `auto company on`: one team for every project in scope (v0.110.40). */
+  company?: boolean;
   out?: unknown;
   /** Why 8sync keeps the omp team off (e.g. omp's default model is `anthropic/…`); null when not blocked. */
   omp_blocked?: string | null;

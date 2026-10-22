@@ -13,6 +13,7 @@ import { boardTasks } from "../now";
 import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
 import { parsePins, type HiddenProject, type Pin } from "../sidebar";
 import { readAsk, transcriptOf } from "./ask";
+import { lastAutoStatus } from "./auto";
 import { projectBoards, type ProjectBoard } from "./board";
 import { loadFloor, ompSessions } from "./floor";
 import { readPermits, type Permit } from "./permit";
@@ -373,7 +374,7 @@ export function readPins(file = pinnedRootsPath()): Pin[] {
  * `hidden`: projects the owner closed in the sidebar (lib/sidebar.ts splitClosed decides which still hide).
  * `pins`: projects the owner pinned (sidebar "Ghim", lib/sidebar.ts pinSidebar).
  */
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; pins: Pin[]; at: number };
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; pins: Pin[]; at: number; /** One team for every project (`auto company on`), from the last auto status poll. */ company: boolean };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
@@ -467,5 +468,6 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     hidden: db.prepare("SELECT key, root, name, hidden_at FROM hidden_projects ORDER BY hidden_at DESC").all() as HiddenProject[],
     pins: readPins(),
     at: now,
+    company: lastAutoStatus()?.company === true,
   };
 }

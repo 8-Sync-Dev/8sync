@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { teamLabel } from "@/lib/labels";
 import type { BoardRef, NowState } from "@/lib/now";
 import { matchesSession } from "@/lib/office";
-import { SIDEBAR_WORD, groupKey, pinSidebar, sidebarGroups, splitClosed, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
+import { SIDEBAR_WORD, groupKey, pinSidebar, sidebarGroups, splitClosed, type HiddenProject, type SidebarGroup, type SidebarRoom, projectsHeading } from "@/lib/sidebar";
 import { ErrorNote } from "./bits";
 import { BrandMark } from "./brand-mark";
 import { CloseDialog, ClosedProjects, ProjectMenu, RoomEndDialog, RoomMenu, WorktreeDialog, useWorktreeKeys, type Confirm, type RoomAction } from "./nav-actions";
@@ -85,6 +85,7 @@ export function Nav({
   // Pinned projects (`8sync ccc auto pin`) first under "Ghim", rooms or not; the rest as before.
   const side = useMemo(() => pinSidebar(data?.pins ?? [], split.shown, split.closed, roomless), [data, split, roomless]);
   const { shown, closed } = side;
+  const heading = projectsHeading(data?.company === true, shown.length);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   // The project whose "Hiện lại" is in flight: its "⋯" and "Hiện lại" stay disabled meanwhile.
   const [hiding, setHiding] = useState<string | null>(null);
@@ -200,7 +201,9 @@ export function Nav({
           </>
         )}
 
-        <h2 className="mt-4 mb-1 px-2 text-xs font-medium text-muted-foreground">Dự án</h2>
+        <h2 className="mt-4 mb-1 px-2 text-xs font-medium text-muted-foreground" title={heading.hint ?? undefined}>
+          {heading.title}
+        </h2>
         {!data && office.error ? (
           <div className="px-1">
             <ErrorNote what="danh sách phòng" error={office.error} onRetry={office.retry} />
