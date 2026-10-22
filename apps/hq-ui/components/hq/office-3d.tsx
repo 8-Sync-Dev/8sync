@@ -7,7 +7,7 @@
 import { BoxIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NOW_LABEL, roster, type NowState } from "@/lib/now";
-import { cameraDistance, layoutOffice, STATE_COLOR, type Desk, type GroupIn } from "@/lib/office-3d";
+import { cameraDistance, deskSign, layoutOffice, STATE_COLOR, type Desk, type GroupIn } from "@/lib/office-3d";
 import { groupByRepo } from "@/lib/sidebar";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "./bits";
@@ -16,8 +16,33 @@ import type { Room } from "./use-office";
 
 type Three = typeof import("three");
 
-type Hover = { key: string; label: string; state: NowState; project: string; x: number; y: number } | null;
+type Hover = { key: string; label: string; state: NowState; project: string; card: string | null; x: number; y: number } | null;
 type Stats = { calls: number; ms: number; rooms: number };
+
+/** A 2-line text sprite (canvas texture): 256×96 px, always faces the camera, no font loading. */
+function makeSign(T: Three, lines: [string, string], dark: boolean, loud: boolean) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 96;
+  const g = canvas.getContext("2d")!;
+  g.fillStyle = dark ? "rgba(20,24,28,0.85)" : "rgba(255,255,255,0.9)";
+  g.beginPath();
+  g.roundRect(4, 4, 248, 88, 12);
+  g.fill();
+  g.textAlign = "center";
+  g.fillStyle = dark ? "#e8eaed" : "#1b1f24";
+  g.font = "600 30px system-ui, sans-serif";
+  g.fillText(lines[0].slice(0, 16), 128, 42);
+  g.fillStyle = loud ? "#d9822b" : dark ? "#aab0b8" : "#5c6470";
+  g.font = "500 24px system-ui, sans-serif";
+  g.fillText(lines[1].slice(0, 20), 128, 76);
+  const tex = new T.CanvasTexture(canvas);
+  tex.colorSpace = T.SRGBColorSpace;
+  const mat = new T.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new T.Sprite(mat);
+  sprite.scale.set(1.6, 0.6, 1);
+  return sprite;
+}
 
 export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: Room[]; boards: BoardsState; now: number; repo: string | null; active: boolean; onOpen: (room: Room) => void }) {
   const host = useRef<HTMLDivElement>(null);
@@ -31,7 +56,11 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
     const rows = new Map(roster(live, boards.boards ?? [], now).map((r) => [r.key, r]));
     return groupByRepo(live).map((g) => ({
       project: { root: g.project.root, name: g.project.name },
-      rooms: g.rooms.map((r) => ({ key: r.key, label: r.label, state: rows.get(r.key)?.state ?? "idle", role: rows.get(r.key)?.role ?? null })),
+      rooms: g.rooms.map((r) => {
+        const row = rows.get(r.key);
+        const c = row?.card;
+        return { key: r.key, label: r.label, state: row?.state ?? "idle", role: row?.role ?? null, card: c ? { id: c.id, lane: c.lane, text: c.text } : null };
+      }),
     }));
   }, [rooms, boards.boards, now, repo]);
   const layout = useMemo(() => layoutOffice(groups), [groups]);
@@ -118,6 +147,10 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
           a.userData.key = d.key;
           office.add(a);
           avatars.push({ mesh: a, desk: d });
+          // The desk sign: room name and its card (owner 2026-10-22: a realistic working day, not just colours).
+          const sign = makeSign(T, deskSign(d), dark, d.state === "needs");
+          sign.position.set(d.x, 1.35, d.z);
+          office.add(sign);
         }
         const dist = cameraDistance(l);
         camera.position.set(dist * 0.55, dist * 0.75, dist * 0.8);
@@ -138,7 +171,7 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
           renderer.domElement.style.cursor = key ? "pointer" : "";
           const a = avatars.find((x) => x.desk.key === key);
           const l = layoutRef.current;
-          setHover(a ? { key: a.desk.key, label: a.desk.label, state: a.desk.state, project: l.floors.find((f) => f.root === a.desk.root)?.name ?? "", x: e.clientX - r.left, y: e.clientY - r.top } : null);
+          setHover(a ? { key: a.desk.key, label: a.desk.label, state: a.desk.state, project: l.floors.find((f) => f.root === a.desk.root)?.name ?? "", card: a.desk.card ? `#${a.desk.card.id} ${a.desk.card.text}` : null, x: e.clientX - r.left, y: e.clientY - r.top } : null);
         } else if (key) {
           setHover((h) => (h ? { ...h, x: e.clientX - r.left, y: e.clientY - r.top } : h));
         }
@@ -245,6 +278,7 @@ export function Office3D({ rooms, boards, now, repo, active, onOpen }: { rooms: 
             <span className="font-medium">{hover.label}</span>
             <span className="text-muted-foreground"> · {hover.project} · </span>
             <span className={cn(hover.state === "needs" && "text-st-needs", hover.state === "working" && "text-st-running")}>{NOW_LABEL[hover.state]}</span>
+            {hover.card && <span className="block max-w-[40ch] truncate text-muted-foreground">{hover.card}</span>}
           </div>
         )}
       </div>

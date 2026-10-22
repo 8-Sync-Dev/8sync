@@ -3,7 +3,8 @@
 // Tested in tests/office-3d.test.ts.
 import type { NowState } from "./now";
 
-export type DeskIn = { key: string; label: string; state: NowState; role: string | null };
+export type DeskCard = { id: number; lane: string; text: string };
+export type DeskIn = { key: string; label: string; state: NowState; role: string | null; /** The card the room holds (its board claim), shown on the desk. */ card?: DeskCard | null };
 export type GroupIn = { project: { root: string; name: string }; rooms: DeskIn[] };
 
 export type Floor = { root: string; name: string; x: number; z: number; w: number; d: number };
@@ -61,4 +62,10 @@ export function layoutOffice(groups: GroupIn[]): Layout {
 export function cameraDistance(l: Layout): number {
   const span = Math.max(l.width, l.depth, 6);
   return span * 1.35 + 4;
+}
+
+/** The two lines on a desk's sign: the room, then its card (`#12 · qa`) or what it is doing when idle. */
+export function deskSign(d: DeskIn): [string, string] {
+  const second = d.card ? `#${d.card.id} · ${d.card.lane}` : d.state === "needs" ? "chờ anh" : d.state === "working" ? "đang làm" : d.state === "blocked" ? "kẹt" : "rảnh";
+  return [d.label, second];
 }

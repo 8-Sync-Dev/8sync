@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.46] — 2026-10-22
+### Added
+- **Tab 3D: biển tên trên mỗi bàn** (tiếp .43; owner: "ui ux strong realistic working day"): sprite 2 dòng trên bàn ghi tên phòng và card đang giữ (`#12 · qa`), không có card thì "đang làm / chờ anh / kẹt / rảnh" (dòng hai màu cam khi chờ anh); tooltip rê chuột thêm tiêu đề card. Canvas texture 256×96, không tải font, không thêm dependency. Test office-3d +1.
+
 ## [0.110.45] — 2026-10-22
 ### Changed
 - **Sidebar HQ: nhóm "Công ty"** (tiếp .40/.44): khi `auto company on`, tiêu đề danh sách dự án ở sidebar đổi từ "Dự án" thành "Công ty · N dự án" (tooltip giải thích một team làm mọi dự án); `/api/office` thêm `company` từ lần đọc `auto status` gần nhất. Test sidebar +1.
