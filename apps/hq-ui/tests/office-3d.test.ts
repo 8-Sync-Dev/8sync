@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DESK_GAP, FLOOR_PAD, MAX_COLS, STATE_COLOR, cameraDistance, layoutOffice } from "@/lib/office-3d";
+import { DESK_GAP, FLOOR_PAD, MAX_COLS, STATE_COLOR, cameraDistance, deskSign, layoutOffice } from "@/lib/office-3d";
 import { NOW_STATES } from "@/lib/now";
 
 const room = (i: number, state: "working" | "needs" | "idle" = "working") => ({ key: `r${i}`, label: `dev${i}`, state, role: "dev" });
@@ -35,5 +35,14 @@ describe("3D office layout (one floor per project, desks in a grid)", () => {
     expect(l.desks).toHaveLength(0);
     for (const s of NOW_STATES) expect(STATE_COLOR[s]).toBeTypeOf("number");
     expect(layoutOffice([])).toEqual({ floors: [], desks: [], width: 0, depth: 0 });
+  });
+});
+
+describe("deskSign", () => {
+  it("names the room and its card, or what it is doing without one", () => {
+    expect(deskSign({ key: "k", label: "dev2", state: "working", role: "dev", card: { id: 12, lane: "qa", text: "t" } })).toEqual(["dev2", "#12 · qa"]);
+    expect(deskSign({ key: "k", label: "lead", state: "needs", role: "lead", card: null })).toEqual(["lead", "chờ anh"]);
+    expect(deskSign({ key: "k", label: "qa", state: "idle", role: "qa" })).toEqual(["qa", "rảnh"]);
+    expect(deskSign({ key: "k", label: "ui", state: "blocked", role: "ui" })[1]).toBe("kẹt");
   });
 });
