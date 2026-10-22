@@ -215,19 +215,8 @@ export function Nav({
 
         {co ? (
           <>
-            <h2 className="mt-4 mb-1 px-2 text-xs font-medium text-muted-foreground" title="Một team chung: phòng nhận card gấp nhất ở mọi dự án, chữ nhỏ bên phải là dự án phòng đang làm">
-              Phòng của công ty · {co.rooms.length}
-            </h2>
-            {co.rooms.length === 0 ? (
-              <p className="px-2 py-1 text-xs leading-relaxed text-pretty text-muted-foreground">Chưa có phòng nào chạy. Bấm “Mở team” ở một dự án là cả công ty có người.</p>
-            ) : (
-              <ul className="space-y-0.5" aria-label="Phòng của công ty">
-                {co.rooms.map((x) => (
-                  <RoomRows key={x.room.key} x={{ ...x, worktree: null }} at={x.at.name} first={false} selected={scope.session} onOpen={onOpenRoom} onPick={(a) => setConfirm({ kind: "room", x, action: a })} />
-                ))}
-              </ul>
-            )}
-            <h2 className="mt-5 mb-1 px-2 text-xs font-medium text-muted-foreground" title={heading.hint ?? undefined}>
+            {/* Projects first: a few rows; 18 rooms on a phone pushed them off screen. */}
+            <h2 className="mt-4 mb-1 px-2 text-xs font-medium text-muted-foreground" title={heading.hint ?? undefined}>
               {heading.title}
             </h2>
             <ul className="space-y-0.5" aria-label="Dự án của công ty">
@@ -241,6 +230,18 @@ export function Nav({
                 />
               ))}
             </ul>
+            <h2 className="mt-5 mb-1 px-2 text-xs font-medium text-muted-foreground" title="Một team chung: phòng nhận card gấp nhất ở mọi dự án, chữ nhỏ bên phải là dự án phòng đang làm">
+              Phòng của công ty · {co.rooms.length}
+            </h2>
+            {co.rooms.length === 0 ? (
+              <p className="px-2 py-1 text-xs leading-relaxed text-pretty text-muted-foreground">Chưa có phòng nào chạy. Bấm “Mở team” ở một dự án là cả công ty có người.</p>
+            ) : (
+              <ul className="space-y-0.5" aria-label="Phòng của công ty">
+                {co.rooms.map((x) => (
+                  <RoomRows key={x.room.key} x={{ ...x, worktree: null }} at={x.working ? x.at.name : undefined} first={false} selected={scope.session} onOpen={onOpenRoom} onPick={(a) => setConfirm({ kind: "room", x, action: a })} />
+                ))}
+              </ul>
+            )}
             <KnownProjects items={knownRest} hq={hq} onOpen={onOpenFolder} />
           </>
         ) : (

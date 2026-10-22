@@ -166,7 +166,11 @@ export function projectsHeading(company: boolean, projects: number): { title: st
 }
 
 /** A company room: where it works now (the project of the card it holds, else its home repo). */
-export type CompanyRoom<T> = SidebarRoom<T> & { at: { key: string; root: string; name: string } };
+export type CompanyRoom<T> = SidebarRoom<T> & {
+  at: { key: string; root: string; name: string };
+  /** It holds a card at `at`. A room without one is free for any project: the sidebar shows no project tag. */
+  working: boolean;
+};
 /** A project the company serves: rooms holding a card there now, open cards on its board, rooms waiting on the owner there. */
 export type CompanyProject = { key: string; root: string; name: string; people: number; open: number; needs: number };
 
@@ -203,7 +207,7 @@ export function companySidebar<T extends NowRoom & { key: string; project: Proje
     const p = project(held?.root ?? home);
     if (held) p.people++;
     if (n.state === "needs") p.needs++;
-    out.push({ room: r, now: n, worktree: home ? repoOf(home).worktree : null, branch: r.project?.branch ?? null, at: { key: p.key, root: p.root, name: p.name } });
+    out.push({ room: r, now: n, worktree: home ? repoOf(home).worktree : null, branch: r.project?.branch ?? null, at: { key: p.key, root: p.root, name: p.name }, working: held != null });
   }
   out.sort((a, b) => ORDER[a.now.state] - ORDER[b.now.state] || a.now.label.localeCompare(b.now.label));
   const list = [...projects.values()].sort(

@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.55] — 2026-10-22
+### Fixed
+- **Sidebar công ty: phòng rảnh không còn gắn tên dự án**: phòng chưa giữ card (lead, ba, dev đang "Chờ card") trước hiện tên repo nó chạy, như thể đang làm dự án đó. Giờ chỉ phòng đang giữ card mới có tên dự án bên cạnh; phòng rảnh là của cả công ty. Thấy khi chụp sidebar thật bằng Edge headless.
+- **Sidebar công ty: danh sách dự án lên trên danh sách phòng**: với 18 phòng, mục dự án bị đẩy khỏi màn hình điện thoại. Giờ vài dòng dự án (số người, số card, chờ anh) đứng đầu, phòng ở dưới.
+
 ## [0.110.54] — 2026-10-22
 ### Changed
 - **Văn phòng và Tổng quan theo chế độ công ty** (owner 2026-10-22: một công ty nhiều dự án): khi `auto company on`, phòng đang giữ card của dự án khác hiện ở khối của dự án đó (không còn nằm ở thư mục nó chạy), và roster thấy đúng card nó đang làm thay vì "Chờ card". Phòng chưa có card ở nguyên dự án nhà. Tắt chế độ công ty thì như cũ. Logic thuần `companyRooms` có test.

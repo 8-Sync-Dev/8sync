@@ -244,6 +244,8 @@ describe("company sidebar: one team, many projects", () => {
     const c = companySidebar(rooms, boards, NOW);
     expect(c.rooms).toHaveLength(3);
     expect(Object.fromEntries(c.rooms.map((x) => [x.room.label, x.at.name]))).toEqual({ dev: "platform", dev2: "ide", qa: "platform" });
+    // qa holds no card: free for any project, so it carries no project tag in the sidebar
+    expect(Object.fromEntries(c.rooms.map((x) => [x.room.label, x.working]))).toEqual({ dev: true, dev2: true, qa: false });
     // dev2 lives in platform but works on ide's card: it holds that card.
     expect(c.rooms.find((x) => x.room.label === "dev2")!.now.card?.id).toBe(9);
     const by = Object.fromEntries(c.projects.map((p) => [p.name, [p.people, p.open]]));
@@ -294,6 +296,8 @@ describe("company sidebar UI (rendered)", () => {
     // no per-project room folders: no "Thao tác với dự án" menu, no "Mở team ở repo mới"
     expect(html).not.toContain("Thao tác với dự án");
     expect(html).not.toContain("Mở team ở repo mới");
+    // a room with no card is free: no project tag
+    expect(html).not.toContain("qa ở platform");
     // each room once
     expect(html.match(/Thao tác với phòng dev2/g)).toHaveLength(1);
   });
