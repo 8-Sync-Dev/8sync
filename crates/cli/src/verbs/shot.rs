@@ -116,6 +116,8 @@ pub fn run(a: Args) -> Result<()> {
     // `--user-data-dir` given later on the command line wins over the shim's.
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
     let profile = std::env::temp_dir().join(format!("8sync-shot-{}-{nanos}", std::process::id()));
+    // Shots whose 8sync died mid-render leave Chromium burning GPU (see [`sweep_zombies`]).
+    sweep_zombies(&profile);
     let mut cmd = low_priority(&chrome);
     cmd.args([
         "--headless".into(),
@@ -146,6 +148,8 @@ pub fn run(a: Args) -> Result<()> {
         None => ui::warn(&format!("Chromium did not finish within --wait + 60 s: killed (target {})", a.output)),
         _ => {}
     }
+    // Helpers that outlived the browser (or an 8sync killed mid-render) must not keep rendering.
+    sweep_zombies(&profile);
     // Chromium's helpers may hold the profile a moment after the browser exits.
     for _ in 0..10 {
         if std::fs::remove_dir_all(&profile).is_ok() || !profile.exists() {
@@ -205,6 +209,36 @@ fn kill_tree(child: &mut std::process::Child) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// The marker every shot's throwaway profile carries (`--user-data-dir=…8sync-shot-…`).
+const SHOT_MARK: &str = "8sync-shot-";
+
+/// Kill Chromium processes left over from earlier shots whose `8sync` died mid-render (the auto
+/// guard pausing a room kills the room's shell tree; Chromium's children survive it and a stuck one
+/// burned ~20% GPU for hours, 2026-10-22). Ours (`keep`) is spared. Best effort, never fails a shot.
+fn sweep_zombies(keep: &std::path::Path) {
+    let keep = keep.display().to_string();
+    #[cfg(windows)]
+    {
+        let script = format!(
+            "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object {{ $_.CommandLine -like '*{SHOT_MARK}*' -and -not $_.CommandLine -like '*{keep}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
+        );
+        let _ = Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("pkill")
+            .args(["-f", &format!("chrome.*{SHOT_MARK}")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        let _ = keep;
+    }
 }
 
 #[cfg(test)]
