@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.67] — 2026-10-22
+### Fixed
+- **Sweep zombie của `shot` giết nhầm shot chạy song song** (v0.110.64/.65 khớp mọi chromium `8sync-shot-*` → 2 phòng shot cùng lúc giết nhau, card #184/#185 "8sync shot fails on all WebGL pages" thiếu bằng chứng QA): giờ chỉ kill chromium mồ côi THẬT — pid cha đã chết (8sync chết giữa render). Shot sống (bất kỳ tuổi, kể cả song song) không bao giờ bị đụng. HQ auto-tick dùng cùng luật mồ côi.
 ## [0.110.66] — 2026-10-22
 ### Fixed
 - **Critic sweep đụng phòng của dự án KHÔNG chạy auto** (owner: "không gửi nhầm inbox các dự án không phải chế độ 8sync ccc auto"): `sweepStuckAsks` quét mọi phòng trên máy rồi nhắn tin + đóng dialog hỏi — giờ lọc đúng `inAutoScope` + bỏ dự án bị ghim nghỉ, cùng luật với auto-tick. Rust (`ccc msg`, ship-fast/loop, relay_stuck) đã root-scope sẵn, không đổi.
