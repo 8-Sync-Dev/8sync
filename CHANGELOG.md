@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.64] — 2026-10-22
+### Fixed
+- **`8sync shot` để lại Chromium zombie ăn GPU hàng giờ** (máy anh 2026-10-22: 47% GPU / ~85 W chỉ vì 1 renderer headless kẹt — guard siết RAM giết phòng giữa lúc shot, chromium con sống sót): mỗi lần `shot` chạy nó quét và kill mọi chromium `8sync-shot-*` mồ côi (của lần chạy trước), và HQ auto-tick mỗi phút quét chromium `8sync-shot-*` già hơn 10 phút (shot sống không bao giờ già thế). Điện máy về ~100 W khi không render.
 ## [0.110.63] — 2026-10-22
 ### Changed
 - **Preview ưu tiên kết quả xem được** (owner 2026-10-22: "Tab preview rất quan trọng việc xem ảnh, xem video demo nếu có, link demo thật mà các task không có ảnh không có gì xem được không nên hiển thị"): Preview về lại thanh tab chính (cạnh Board). Card không có ảnh, video hay link demo không hiện nữa. Video demo (`.mp4`, `.webm`, tới 60 MB) trong các thư mục evidence hiện cạnh ảnh và mở ra là phát được. Link demo thật trong ghi chú card (http/https, trừ GitHub vì PR đã có chip riêng) thành nút "Mở demo · <host>". Test +2.
