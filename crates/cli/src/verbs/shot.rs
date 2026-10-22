@@ -222,7 +222,7 @@ fn sweep_zombies(keep: &std::path::Path) {
     #[cfg(windows)]
     {
         let script = format!(
-            "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object {{ $_.CommandLine -like '*{SHOT_MARK}*' -and -not $_.CommandLine -like '*{keep}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
+            "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object {{ $_.CommandLine -like '*{SHOT_MARK}*' -and -not ($_.CommandLine -like '*{keep}*') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
         );
         let _ = Command::new("powershell")
             .args(["-NoProfile", "-Command", &script])
