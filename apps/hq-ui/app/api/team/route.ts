@@ -1,6 +1,7 @@
 import { withMissing, type ProjectRow } from "@/lib/server/db";
 import { bad, json, open, readBody } from "@/lib/server/http";
-import { projectOf } from "@/lib/server/office";
+import { lastAutoStatus } from "@/lib/server/auto";
+import { projectOf, readPins } from "@/lib/server/office";
 import { mergedSessions } from "@/lib/server/proc";
 import { runBlocked } from "@/lib/server/power";
 import { liveProjects } from "@/lib/server/targets";
@@ -30,8 +31,14 @@ export async function POST(req: Request) {
   const added = withMissing(o.db.prepare("SELECT id, path, name, added_at FROM projects").all() as ProjectRow[])
     .filter((p) => !p.missing)
     .map((p) => p.path);
-  const want = root.toLowerCase();
-  const known = [...live, ...added].find((r) => r.toLowerCase() === want);
+  // Also a pinned project and one in auto's scope or team roots: the sidebar shows them with 0 rooms,
+  // and "Mở team" there must work (owner 2026-10-22: ide pinned, team gone, no button).
+  const st = lastAutoStatus();
+  const listed = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  const extraRoots = [...readPins().map((p) => p.root), ...listed(st?.repos), ...listed(st?.team_roots)].map((r) => r.replace(/^\\\\\?\\/, ""));
+  const norm = (r: string) => r.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const want = norm(root);
+  const known = [...live, ...added, ...extraRoots].find((r) => norm(r) === want);
   if (!known) return bad("thư mục này không có trong HQ: thêm nó ở mục Projects trước", 409);
   const r = await runTeam(known, action, typeof task === "string" ? task : null);
   return json(r, r.ok ? 200 : r.busy ? 409 : 502);

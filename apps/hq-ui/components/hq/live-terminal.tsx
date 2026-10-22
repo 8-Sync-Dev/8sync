@@ -14,15 +14,13 @@ import { FILES_MAX, fileError, toBase64 } from "@/lib/attach";
 import { isLocalHost } from "@/lib/hosts";
 import type { ActivityEvent } from "@/lib/server/activity";
 import { activityScreen } from "@/lib/term-activity";
-import { afterStream } from "@/lib/term-stream";
+import { afterStream, giveUp, keyboardOpen, retryDelay, termRows } from "@/lib/term-stream";
 
 /** Off loopback: no byte (not even the opening ping) this long = the proxy holds the stream back, so poll. */
 const FIRST_BYTE_MS = 4000;
 /** Polling: gap while the terminal prints, and while it is quiet. */
 const POLL_BUSY_MS = 150;
 const POLL_IDLE_MS = 600;
-/** Polling: polls in a row that may fail (tunnel hiccup) before the terminal says so. */
-const POLL_TRIES = 5;
 /** Read-only view (an omp session open in another terminal): how often its Nhật ký is read again. */
 const READ_ONLY_MS = 2000;
 
@@ -78,7 +76,7 @@ function fit(el: HTMLElement, font: string): { cols: number; rows: number } {
   const cw = probe.getBoundingClientRect().width / 50 || 8;
   const ch = probe.getBoundingClientRect().height || 16;
   probe.remove();
-  return { cols: Math.max(20, Math.floor((el.clientWidth - 16) / cw)), rows: Math.max(8, Math.floor((el.clientHeight - 8) / ch)) };
+  return { cols: Math.max(20, Math.floor((el.clientWidth - 16) / cw)), rows: termRows(Math.floor((el.clientHeight - 8) / ch), null, false) };
 }
 
 /** Decode SSE `data:` lines of `event: out` (base64 bytes) as they arrive. */
@@ -254,7 +252,9 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
       });
       let last = size;
       ro = new ResizeObserver(() => {
-        const s = fit(el, font);
+        const f = fit(el, font);
+        // A phone keyboard makes the box short: keep the rows (the box scrolls) so a question's options stay whole.
+        const s = { cols: f.cols, rows: termRows(f.rows, last.rows, keyboardOpen(window.visualViewport?.height, window.innerHeight)) };
         if (s.cols === last.cols && s.rows === last.rows) return;
         last = s;
         sizeRef.current = s;
@@ -329,6 +329,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
         let gen = 0;
         let since = -1;
         let fails = 0;
+        let failingSince = 0;
         while (!ac.signal.aborted) {
           let p: PollJson;
           try {
@@ -339,8 +340,12 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
             p = body;
             fails = 0;
           } catch (e) {
-            if (ac.signal.aborted || e instanceof PollRefused || ++fails >= POLL_TRIES) throw e;
-            await new Promise((r) => setTimeout(r, POLL_IDLE_MS));
+            if (ac.signal.aborted || e instanceof PollRefused) throw e;
+            // The tunnel is down for a moment (phone asleep, Wi-Fi to 4G): say so and keep trying for a minute.
+            if (fails++ === 0) failingSince = Date.now();
+            if (giveUp(failingSince, Date.now())) throw e;
+            setState("connecting");
+            await new Promise((r) => setTimeout(r, retryDelay(fails)));
             continue;
           }
           setState("live");
