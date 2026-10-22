@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.61] — 2026-10-22
+### Fixed
+- **Terminal của phòng chết nói đúng sự thật** (owner: phòng su-code "đang mở mà không mở được" — `claude attach` in "No job matching" rồi tắt, HQ vẫn ghi "Đã rời phòng (phòng vẫn chạy nền)" và khoá ô gõ): server giờ nhận biết dấu hiệu đó, khung terminal hiện "Phiên đã tắt hẳn trên máy — phòng không còn chạy nền" (chấm đỏ) thay vì câu an ủi sai, và phòng ma đó được ghi `ended` ngay khỏi danh sách đang chạy — sidebar không còn card "Đang làm" của session đã chết.
+- **Dọn rác idle đóng góp "83 trạng thái team cũ"**: file status `8sync ccc hook idle` cũ quá 6 giờ bị xoá khi HQ đọc (room còn sống sẽ tự ghi lại); record `noTick` (cron/events) sống qua 7 ngày rồi mới xoá. Trên máy anh: 85/91 file là rác vài ngày tuổi — sẽ biến sau lần mở HQ đầu tiên.
 ## [0.110.59] — 2026-10-22
 ### Added
 - **Nút "+ Dự án": tạo dự án mới và giao spec ngay** (owner 2026-10-22: "không có nút tạo dự án … tạo xong giao spec mới để làm"): ô đường dẫn cuối sidebar thay bằng một nút mở hộp thoại gồm thư mục và việc đầu tiên. Thư mục có sẵn thì HQ thêm vào; chưa có thì HQ tạo (kèm `git init`; chỉ dưới thư mục cha có thật, không ở gốc ổ đĩa, không đè thư mục đã có file). Có spec thì team mở luôn với spec làm card đầu tiên (`auto up "<spec>"`, card vào board trước khi phòng nào chạy). Thư mục Claude Code chưa tin thì HQ nói rõ bước còn lại (chạy `claude` ở đó một lần, chọn Yes, rồi "Mở team"); spec vẫn nằm trên Board. API: `POST /api/projects {path, create: true}`, `POST /api/team {…, task}`. Test +2.

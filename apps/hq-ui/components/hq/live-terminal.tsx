@@ -46,6 +46,7 @@ const TEXT = {
     connecting: "Đang nối vào phòng…",
     live: "Đang nối: gõ, mũi tên và Enter đi thẳng vào phòng. Đóng khung này phòng vẫn chạy.",
     ended: "Đã rời phòng (phòng vẫn chạy nền).",
+    dead: "Phiên đã tắt hẳn trên máy — phòng không còn chạy nền. Mở lại bằng “Mở lại team” của dự án này, hoặc bỏ qua.",
     hint: "↑↓ chọn · Enter xác nhận · Esc huỷ · số = chọn nhanh",
     label: "Terminal của phòng",
   },
@@ -53,6 +54,7 @@ const TEXT = {
     connecting: "Đang mở shell trên máy…",
     live: "Shell trên máy anh: lệnh chạy thật như ở terminal. Đóng khung vẫn giữ shell 30 phút.",
     ended: "Shell đã thoát.",
+    dead: "Shell đã thoát.",
     hint: "Tab gợi ý/hoàn thành · → nhận gợi ý xám · ↑ lệnh trước · ^R tìm lịch sử · ^C dừng lệnh",
     label: "Shell trên máy",
   },
@@ -99,7 +101,7 @@ function parseSse(buf: string): { events: { event: string; data: string }[]; res
 export { parseSse };
 
 /** One poll of the remote terminal (`GET /term?gen=&since=`), `out` in base64. */
-type PollJson = { gen: number; cursor: number; out: string; reset: boolean; answered?: boolean; ended: boolean; elsewhere?: boolean };
+type PollJson = { gen: number; cursor: number; out: string; reset: boolean; answered?: boolean; ended: boolean; elsewhere?: boolean; dead?: boolean };
 
 function isPoll(v: unknown): v is PollJson {
   return !!v && typeof v === "object" && "gen" in v && typeof v.gen === "number" && "cursor" in v && typeof v.cursor === "number" && "out" in v && typeof v.out === "string" && "reset" in v && "ended" in v;
@@ -129,6 +131,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
   const sizeRef = useRef({ cols: 120, rows: 34 });
   const view = useRef<Terminal | null>(null);
   const [state, setState] = useState<State>("connecting");
+  const [dead, setDead] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const [moving, setMoving] = useState(false);
@@ -265,9 +268,10 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
         muted++;
         t.write(bytes, () => muted--);
       };
-      const end = (elsewhere = false) => {
+      const end = (elsewhere = false, gone = false) => {
         readOnly = elsewhere;
         setState(elsewhere ? "elsewhere" : "ended");
+        if (gone) setDead(true);
         if (!elsewhere) onEnded?.();
       };
       // Off loopback the stream may be held back by the proxy (a Cloudflare quick tunnel does; the VPS
@@ -303,7 +307,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
               else if (e.event === "replay") write(e.data, true);
               else if (e.event === "end") {
                 ended = true;
-                end(e.data.includes('"elsewhere":true'));
+                end(e.data.includes('"elsewhere":true'), e.data.includes('"dead":true'));
               }
             }
           }
@@ -344,7 +348,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
           if (p.out) write(p.out, p.reset && p.answered);
           gen = p.gen;
           since = p.cursor;
-          if (p.ended) return end(p.elsewhere === true);
+          if (p.ended) return end(p.elsewhere === true, p.dead === true);
           await new Promise((r) => setTimeout(r, p.out ? POLL_BUSY_MS : POLL_IDLE_MS));
         }
       };
@@ -371,10 +375,10 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
-        <span className={state === "live" ? "size-2 rounded-full bg-st-running" : state === "error" ? "size-2 rounded-full bg-destructive" : state === "elsewhere" ? "size-2 rounded-full bg-st-needs" : "size-2 rounded-full bg-st-idle"} aria-hidden />
+        <span className={state === "live" ? "size-2 rounded-full bg-st-running" : state === "error" || (state === "ended" && dead) ? "size-2 rounded-full bg-destructive" : state === "elsewhere" ? "size-2 rounded-full bg-st-needs" : "size-2 rounded-full bg-st-idle"} aria-hidden />
         {state === "connecting" && text.connecting}
         {state === "live" && text.live}
-        {state === "ended" && text.ended}
+        {state === "ended" && (dead ? text.dead : text.ended)}
         {state === "error" && `Không nối được: ${error}`}
         {state === "elsewhere" && "Đang xem (chỉ đọc) — phiên mở ở terminal khác trên máy"}
         {(state === "ended" || state === "error" || state === "elsewhere") && (
@@ -385,6 +389,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
             className="ml-auto h-7"
             onClick={() => {
               setState("connecting");
+              setDead(false);
               setRetry((n) => n + 1);
             }}
           >

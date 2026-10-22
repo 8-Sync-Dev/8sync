@@ -67,9 +67,10 @@ async function findRegistry(sid: string, cwd: string | null): Promise<RegistryEn
 
 /**
  * HQ's own row for a closed room, status ended: it keeps the room's folder among the projects HQ
- * knows (the worktree delete needs it once the room stopped) and keeps it off the live list.
+ * knows (the worktree delete needs it once the room stopped) and keeps it off the live list. Also
+ * used when a room's terminal proves the room is gone ("No job matching" on attach).
  */
-function markEnded(db: DatabaseSync, s: SessionView): void {
+export function markEnded(db: DatabaseSync, s: Pick<SessionView, "name" | "project_id" | "started_at" | "cwd">): void {
   db.prepare(
     `INSERT INTO sessions(name, project_id, started_at, status, cwd, updated_at) VALUES (?, ?, ?, 'ended', ?, ?)
      ON CONFLICT(name) DO UPDATE SET status = 'ended', updated_at = excluded.updated_at`,

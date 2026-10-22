@@ -152,3 +152,22 @@ describe("web terminal bridge", () => {
     expect(b.events).toEqual([{ event: "ping", data: "{}" }]);
   });
 });
+
+describe("dead room (attach found no job)", () => {
+  it("flags the bridge dead when `claude attach` prints 'No job matching', and reports it in the poll", async () => {
+    const f = fakeSpawn();
+    const t = openTerm(ID, "/repo/x", { cols: 80, rows: 20 }, f.spawn);
+    f.proc().stdout.write("No job matching '1eb79553'. Run 'claude agents' to list running sessions.\r\n");
+    await new Promise((r) => setImmediate(r));
+    expect(t.dead).toBe(true);
+    expect(poll(ID, t, t.gen, -1).dead).toBe(true);
+    f.proc().kill();
+  });
+  it("the owner's shell never turns dead on the same words", async () => {
+    const f = fakeSpawn();
+    const t = openShell(null, { cols: 80, rows: 20 }, f.spawn);
+    f.proc().stdout.write("No job matching 'x'");
+    await new Promise((r) => setImmediate(r));
+    expect(t.dead).toBe(false);
+  });
+});
