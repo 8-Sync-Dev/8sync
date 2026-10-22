@@ -364,16 +364,14 @@ function ProjectBlock({
           )}
         </Panel>
 
+        {/* No screenshots yet: no panel (owner 2026-10-22: an empty column is noise); the Preview tab explains where images come from. */}
+        {(!previewsLoaded || (previews?.items.length ?? 0) > 0) && (
         <Panel title="Preview" action="Preview" onAction={() => onTab("preview")}>
           {!previewsLoaded ? (
             <Skeleton className="aspect-[16/10] w-full" />
-          ) : !previews?.items.length ? (
-            <Quiet>
-              Chưa có ảnh. Phòng qa/ui lưu ảnh vào <code className="font-mono">qa/evidence/card-&lt;số&gt;-…png</code>.
-            </Quiet>
           ) : (
             <ul className="grid grid-cols-2 gap-2">
-              {previews.items.slice(0, 4).map((i) => (
+              {(previews?.items ?? []).slice(0, 4).map((i) => (
                 <li key={i.id}>
                   <button type="button" onClick={() => onTab("preview")} className="block w-full rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-label={`${fileName(i.rel)}, mở tab Preview`}>
                     <PreviewImage id={i.id} token={token} alt="" className="aspect-[16/10] w-full rounded-md border" />
@@ -387,6 +385,7 @@ function ProjectBlock({
             </ul>
           )}
         </Panel>
+        )}
 
         <Panel title="Vừa chuyển" action="Flow" onAction={() => onTab("flow")}>
           {!boardsLoaded ? <Skeleton className="h-24 w-full" /> : !board?.board ? <Quiet>Chưa có board.</Quiet> : <MiniFlow b={board.board} now={now} />}
