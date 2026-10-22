@@ -70,3 +70,26 @@ describe("stuck questions go to the critic (seen live 2026-10-18: 7 rooms waited
     vi.useRealTimers();
   });
 });
+
+describe("the critic sweep only touches rooms of projects auto drives (owner 2026-10-22)", () => {
+  const room = (root: string | null) => ({ project: root ? { root } : null, cwd: root });
+  const fwd = (p: string | null | undefined) => (p ?? "").replace(/\\/g, "/");
+
+  it("with projects pinned, a room of another project is out; a worktree of a pinned repo stays", async () => {
+    const { scopedFor } = await import("@/lib/server/stuck-asks");
+    const pinned = { repos: ["D:/p/ide"], out: [], focus: true, pins: ["D:/p/ide"] };
+    const kept = scopedFor(pinned, [
+      room("D:\\p\\ide"),
+      room("D:\\p\\ide\\.claude\\worktrees\\card-1"),
+      room("D:\\other\\su-code"),
+    ]);
+    expect(kept.map((r) => fwd(r.cwd))).toEqual(["D:/p/ide", "D:/p/ide/.claude/worktrees/card-1"]);
+  });
+
+  it("a project pinned away by focus rests even when in scope; no pins: every project is in scope", async () => {
+    const { scopedFor } = await import("@/lib/server/stuck-asks");
+    const focus = { repos: [], out: [], focus: true, pins: ["D:/p/ide"] };
+    expect(scopedFor(focus, [room("D:/p/ide"), room("D:/q/game")]).map((r) => r.cwd)).toEqual(["D:/p/ide"]);
+    expect(scopedFor({ repos: [], out: [], focus: false, pins: [] }, [room("D:/any")])).toHaveLength(1);
+  });
+});
