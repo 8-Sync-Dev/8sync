@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.43] — 2026-10-22
+### Added
+- **HQ tab "3D": văn phòng WebGL** (owner 2026-10-22: "ui ux … 3d nhanh nhẹ đẹp"; quyết định 2026-10-22: WebGL/three trong HQ hiện tại trước, Rust/Tauri native để sau). Mỗi dự án một sàn, mỗi phòng một bàn + một nhân vật tô màu theo trạng thái (Chờ anh = cam và thở nhẹ, đang làm = xanh và gật nhẹ, rảnh = xám); rê chuột hiện tên/dự án/trạng thái, bấm mở phòng; chọn dự án ở sidebar thì chỉ sàn đó. Nhẹ: three.js nạp động khi mở tab (≤ 417 KB gzip toàn bộ thư viện, chunk thật nhỏ hơn sau tree-shake — not verified: chưa đo build), không bóng, không post-processing, `powerPreference: low-power`, vòng vẽ chỉ chạy khi tab mở, `prefers-reduced-motion` tắt cử động; chân tab in số đo thật (số phòng, draw call, ms/khung). Layout thuần (`lib/office-3d.ts`) có test 2.
+
 ## [0.110.42] — 2026-10-22
 ### Added
 - **Cây tri thức chung của máy: `8sync ccc know add "<bài học>" [--repo <root>]` · `know ls [--all] [--json]`** (owner 2026-10-22: "agent tự biết dự án nào, ghi lại vào cây tri thức chung không bị nhầm lẫn tri thức nhưng vẫn đọc của nhau được để học hỏi"; mô hình theo omp `memory.scoping: per-project-tagged`). Mỗi repo một file `~/.local/state/8sync/ccc/know/<repo>-<hash>.md` (dòng đầu `# <root>`, rồi `- <ngày> [<phòng>] <bài học>`); SessionStart nạp bài học của dự án này trước (10 dòng cuối) rồi 3 dòng cuối của từng dự án khác dưới tiêu đề root của nó (≤ 1.500 ký tự, "đọc để học, không áp dụng mù"), nên phòng không lẫn tri thức của repo khác. `su-code/KNOWLEDGE.md` vẫn là memory commit của repo; skill `/remember` thêm bước ghi `know add` cho bài học dùng được ở mọi dự án. Test know 1, help 6, session-start 29.

@@ -40,12 +40,13 @@ import { usePoll } from "./use-poll";
 import { MachineChip, type MachineView as MachineData } from "./machine-chip";
 import { rootKey } from "@/lib/preview";
 import { KnowView } from "./know-view";
+import { Office3D } from "./office-3d";
 import { MachineView } from "./machine-view";
 import { UsageView } from "./usage-view";
 import type { Session } from "./types";
 
 /** office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens. */
-type Tab = "overview" | "office" | "group" | "room" | "board" | "preview" | "flow" | "report" | "usage" | "may" | "know" | "sessions" | "activity";
+type Tab = "overview" | "office" | "group" | "room" | "board" | "preview" | "flow" | "report" | "usage" | "may" | "know" | "office3d" | "sessions" | "activity";
 /** Tổng quan is the first screen on a wide monitor; below this the office stays the default. */
 const WIDE_QUERY = "(min-width: 1600px)";
 const subscribeWide = (cb: () => void) => {
@@ -321,6 +322,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               >
                 <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
                 <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
+                <TabsTrigger value="office3d" className="flex-none px-0">3D</TabsTrigger>
                 <TabsTrigger value="group" className="flex-none px-0">Chat tổng</TabsTrigger>
                 <TabsTrigger value="room" className="flex-none px-0">Chat phòng</TabsTrigger>
                 <TabsTrigger value="board" className="flex-none px-0">
@@ -365,6 +367,9 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
             </TabsContent>
             <TabsContent value="office" className="h-full">
               <OfficeView data={office} boards={boards} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} projects={hq.projects.data} repo={repo?.root ?? null} onAll={() => setRepo(null)} />
+            </TabsContent>
+            <TabsContent value="office3d" className="h-full">
+              <Office3D rooms={officeRooms} boards={boards} now={office.office?.at ?? 0} repo={repo?.root ?? null} active={tab === "office3d"} onOpen={openRoom} />
             </TabsContent>
             <TabsContent value="group" className="flex h-full min-h-0 flex-col">
               <TeamThread rows={group.messages} filters={{ roleOf, tasks: group.tasks }} token={token} onOpenSession={openSession} />
