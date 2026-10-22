@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { projectsHeading, repoOf, groupKey, sidebarGroups, splitClosed } from "@/lib/sidebar";
+import { companySidebar, peopleWord, projectsHeading, repoOf, groupKey, sidebarGroups, splitClosed } from "@/lib/sidebar";
+import { parseBoard, type Board } from "@/lib/lanes";
 import type { Room } from "@/lib/server/office";
 
 const NOW = Date.parse("2026-10-17T16:00:00Z");
@@ -226,5 +227,32 @@ describe("projectsHeading", () => {
     const h = projectsHeading(true, 2);
     expect(h.title).toBe("Công ty · 2 dự án");
     expect(h.hint).toContain("auto company");
+  });
+});
+
+describe("company sidebar: one team, many projects", () => {
+  const S = NOW / 1000;
+  const board = (lanes: Record<string, unknown[]>): Board => parseBoard({ schema: 1, lanes: Object.entries(lanes).map(([lane, cards]) => ({ lane, cards })), closed: [] })!;
+  const PLATFORM = "C:\\code\\platform";
+  const IDE = "C:\\code\\ide";
+  const boards = [
+    { root: PLATFORM, board: board({ ready: [{ id: 1, text: "a" }, { id: 2, text: "b" }], building: [{ id: 3, text: "c", claim: { room: "dev", at: S - 60 } }] }) },
+    { root: IDE, board: board({ building: [{ id: 9, text: "z", claim: { room: "dev2", at: S - 30 } }] }) },
+  ];
+  it("lists every room once, tagged with the project of the card it holds, and counts people per project", () => {
+    const rooms = [room({ name: "dev", root: PLATFORM, status: "running" }), room({ name: "dev2", root: PLATFORM, status: "running" }), room({ name: "qa", root: PLATFORM })];
+    const c = companySidebar(rooms, boards, NOW);
+    expect(c.rooms).toHaveLength(3);
+    expect(Object.fromEntries(c.rooms.map((x) => [x.room.label, x.at.name]))).toEqual({ dev: "platform", dev2: "ide", qa: "platform" });
+    // dev2 lives in platform but works on ide's card: it holds that card.
+    expect(c.rooms.find((x) => x.room.label === "dev2")!.now.card?.id).toBe(9);
+    const by = Object.fromEntries(c.projects.map((p) => [p.name, [p.people, p.open]]));
+    expect(by).toEqual({ platform: [1, 3], ide: [1, 1] });
+  });
+  it("a project with a board and nobody on it still shows, with nobody", () => {
+    const c = companySidebar([room({ name: "dev", root: PLATFORM, status: "running" })], boards, NOW);
+    expect(c.projects.find((p) => p.name === "ide")).toMatchObject({ people: 0, open: 1 });
+    expect(peopleWord(0)).toBe("chưa ai");
+    expect(peopleWord(1)).toBe("1 người");
   });
 });
