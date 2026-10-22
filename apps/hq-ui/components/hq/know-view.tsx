@@ -46,7 +46,7 @@ export function KnowView({ token, roots, repo, active }: { token: string; roots:
       </div>
     );
   }
-  const n = (data?.own?.lessons.length ?? 0) + (data?.others.reduce((s, b) => s + b.lessons.length, 0) ?? 0);
+  const n = (data?.shared?.lessons.length ?? 0) + (data?.own?.lessons.length ?? 0) + (data?.others.reduce((s, b) => s + b.lessons.length, 0) ?? 0);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 sm:px-6">
@@ -78,10 +78,11 @@ export function KnowView({ token, roots, repo, active }: { token: string; roots:
           </EmptyState>
         ) : n === 0 ? (
           <EmptyState icon={<BookOpenIcon />} title="Cây tri thức còn trống">
-            Phòng ghi bài học dùng được ở mọi dự án bằng <code className="font-mono">8sync ccc know add &quot;&lt;bài học&gt;&quot;</code> (hoặc qua <code className="font-mono">/remember</code>). Chuyện riêng của repo vẫn ở su-code/KNOWLEDGE.md.
+            Phòng ghi bài học của dự án bằng <code className="font-mono">8sync ccc know add &quot;&lt;bài học&gt;&quot;</code>, bài học đúng cho mọi dự án thêm <code className="font-mono">--shared</code> (hoặc qua <code className="font-mono">/remember</code>). Chuyện riêng của repo vẫn ở su-code/KNOWLEDGE.md.
           </EmptyState>
         ) : (
           <div className="space-y-6">
+            {data.shared && data.shared.lessons.length > 0 && <BookBlock book={data.shared} title="Công ty" sub="mọi dự án · 8sync ccc know add --shared" />}
             <BookBlock book={data.own} title="Dự án này" empty="Dự án này chưa có bài học chung." />
             {data.others.length > 0 && (
               <section>

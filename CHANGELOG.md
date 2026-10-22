@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.49] — 2026-10-22
+### Added
+- **Sổ tri thức công ty: `8sync ccc know add --shared "<bài học>"`** (owner 2026-10-22: "cây tri thức liên tục all in 1, hiểu biết rộng, tận dụng kinh nghiệm lẫn nhau, không nhầm lẫn"): một sổ `Công ty` cho bài học đúng với MỌI dự án, mọi phòng đọc đầu tiên ở SessionStart (5 dòng cuối), rồi mới tới sổ dự án mình và 3 dòng cuối của từng dự án khác dưới root của nó; `know ls` in sổ công ty trước, `--json` thêm `shared`; tab Tri thức trên HQ có khối "Công ty" trên cùng. `--shared` và `--repo` không đi cùng. `/remember` ghi rõ khi nào dùng `--shared`. Test know (cả hai bên).
+
 ## [0.110.48] — 2026-10-22
 ### Changed
 - **Một công ty, nhiều dự án: `auto up` không mở đội thứ hai nữa** (owner 2026-10-22: "ý tôi là 1 công ty là rooms roles làm nhiều dự án… chứ ui ux vẫn mỗi folder dự án 1 công ty"). Khi `company` đang bật (`auto company on` hoặc `auto up --company`) và đội đã chạy ở repo khác, `auto up` (kể cả nút "Mở team" trên HQ) ở repo này chỉ đưa repo vào scope của auto, ghi `.claude/loop.md`, thêm card đầu nếu có, và báo "đội chung ở <host> nhận card tại đây"; không mở phòng, không ghi team-root (revive không mở phòng ở đó). Đội chung lấy card qua `claim`/`wait` liên dự án (bản .40). Muốn đội riêng cho một repo: `auto company off` rồi `auto up`. `--add` không đổi. Test team +1 (30).
