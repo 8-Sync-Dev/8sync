@@ -8,6 +8,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [0.110.40] — 2026-10-22
 ### Added
 - **Một team cho nhiều dự án: `8sync ccc auto up --company` / `auto on --company`** (owner 2026-10-22: "1 cty rooms/roles agent nhận nhiều dự án … chứ hiện tại mỗi dự án 1 hạm đội riêng"; đo 2026-10-22: 17 phòng rảnh giữ 9,4 GB cho hai dự án). Cờ `company` trong auto.json (giữ qua on/off/pause như `teams`): phòng hết card ở dự án mình thì `auto claim` lấy card gấp nhất (P0 trước, rồi thứ tự scope) ở dự án khác trong scope của auto, `auto wait` thức dậy khi dự án khác có card; card về kèm `root` và hướng dẫn `env -C <root> 8sync ccc auto … --as <phòng>` (board, inbox, grant vẫn theo từng repo; dự án bị pin bằng lease vẫn bị bỏ qua). `auto status --json` thêm `company`. Test auto +1 (round trip, chọn theo prio, bỏ qua dự án pin/không board), wait +2 (card dự án khác, dự án mình ưu tiên). HQ nhóm "Công ty" sẽ ở bản sau.
+- **Nút "Ship tất cả" / "Duyệt tất cả" trên cột Approved của Board** (owner 2026-10-22: "kẹt suốt vậy auto ship mà nên có thêm nút ở ví dụ ship all": 21 card approved nằm sau một câu Ship chưa ai bấm). Có câu Ship của lead đang chờ → nút ghi "Duyệt tất cả", một chạm trả lời đúng option đó (như khung Anh cần trả lời; màn hình đổi thì báo mở khung đó); chưa có câu nào → "Ship tất cả" nhắc lead hỏi Ship ngay lượt này (`auto ship-fast ship-ask`) và nút đổi thành "Duyệt tất cả" khi câu hỏi hiện. Test ship-all 2.
 
 ## [0.110.39] — 2026-10-22
 ### Changed

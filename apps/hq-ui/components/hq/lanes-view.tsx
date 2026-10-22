@@ -10,7 +10,10 @@ import { cardParts, type Kid, nextUp, prRef, splitInto } from "@/lib/card-tags";
 import { LANES, boardSummary, claimStale, openCount, rankOf, type Card, type Closed, type LaneKey } from "@/lib/lanes";
 import { agoShort, agoVi, roomRole, type Move } from "@/lib/now";
 import { rootKey } from "@/lib/preview";
+import { shipAskOf, type ShipAsk, type ShipRoom } from "@/lib/ship-all";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { ApiError, makeApi } from "./use-hq";
 import { EmptyState, ErrorNote } from "./bits";
 import { CardSheet, ClosedSheet, ForceButton, LabelChip, PrioChip, TagChips, TONE_INK, forceKind, laneTone } from "./card-sheet";
 import { RoleIcon } from "./role-badge";
@@ -18,7 +21,7 @@ import { LaneStrip } from "./scroll-strip";
 import type { BoardsState } from "./use-board";
 
 /** The project board (`8sync ccc auto board`): which room holds which card, lane by lane. */
-export function LanesView({ state, focus, repo = null }: { state: BoardsState; focus?: { root: string; id: number; n: number } | null; repo?: string | null }) {
+export function LanesView({ state, focus, repo = null, rooms = [], token }: { state: BoardsState; focus?: { root: string; id: number; n: number } | null; repo?: string | null; rooms?: ShipRoom[]; token?: string }) {
   const { boards, error, moves, at: now, reload: load } = state;
   const [pick, setPick] = useState<string | null>(repo);
   useFollowRepo(repo, setPick);
@@ -73,6 +76,10 @@ export function LanesView({ state, focus, repo = null }: { state: BoardsState; f
   const live = open ? boards?.find((b) => b.root === open.root)?.board : null;
   const shown = open ? ((live ? LANES.flatMap((l) => live.lanes[l.key]).find((c) => c.id === open.card.id) : undefined) ?? open.card) : null;
   const onForce = cur ? (c: Card) => state.force(cur.root, c) : undefined;
+  // "Ship tất cả" (owner 2026-10-22: "kẹt suốt vậy auto ship mà nên có thêm nút"): the project's pending Ship
+  // question, answered with "Duyệt tất cả" in one tap; none pending → the lead is told to ask it now (ship-ask).
+  const shipAsk = cur && token ? shipAskOf(rooms, cur.root) : null;
+  const onShip = cur && token ? () => shipAll(token, cur.root, shipAsk, load) : undefined;
   const onOpenCard = (c: Card) => {
     if (!cur) return;
     setOpen({ root: cur.root, card: c });
@@ -136,7 +143,7 @@ export function LanesView({ state, focus, repo = null }: { state: BoardsState; f
               )}
             >
               {LANES.flatMap((l) => {
-                const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} kidsOf={(id) => kids?.get(id)} now={now} next={next} onOpen={onOpenCard} onForce={onForce} />;
+                const lane = <Lane key={l.key} lane={l.key} label={l.label} hint={l.hint} cards={cur?.board?.lanes[l.key] ?? null} moveOf={moveOf} kidsOf={(id) => kids?.get(id)} now={now} next={next} onOpen={onOpenCard} onForce={onForce} ship={l.key === "approved" && onShip ? { pending: shipAsk, act: onShip } : undefined} />;
                 return l.key === "blocked"
                   ? [
                       <DoneLane
@@ -241,6 +248,55 @@ const laneLabel = (k: string) => LANES.find((l) => l.key === k)?.label ?? (k ===
 /** Amber text that passes AA on light surfaces (same mix as idle-chip). */
 const NEEDS_INK = "text-[color-mix(in_oklch,var(--st-needs),black_38%)] dark:text-st-needs";
 
+/**
+ * One tap on the Approved column. A Ship question pending → answer it with "Duyệt tất cả" (the same keys the
+ * ask panel sends; the answer API checks the room's screen first). None pending → `auto ship-fast ship-ask`:
+ * the lead asks it this turn and the button turns into "Duyệt tất cả" when the question shows.
+ */
+async function shipAll(token: string, root: string, pending: ShipAsk | null, after: () => void): Promise<void> {
+  const api = makeApi(token);
+  if (pending) {
+    const path = `/api/sessions/${encodeURIComponent(pending.sid)}/answer`;
+    try {
+      const d = await api<{ dialog: { text: string } }>(path, { method: "POST", body: { kind: "question", keys: [] } });
+      await api(path, { method: "POST", body: { kind: "question", keys: [pending.key], text: d.dialog.text } });
+      toast.success(`Đã chọn “${pending.label}”: lead land các card approved (auto merge)`);
+    } catch (e) {
+      toast.error(e instanceof ApiError && e.status === 409 ? "Màn hình phòng đã đổi: trả lời ở khung Anh cần trả lời" : (e as Error).message);
+    }
+  } else {
+    const wait = toast.loading("Đang nhắc lead hỏi Ship…");
+    try {
+      await api("/api/team", { method: "POST", body: { root, action: "ship-ask" } });
+      toast.success("Đã nhắc lead hỏi Ship ngay lượt này", { id: wait, description: "Câu hỏi hiện ở khung Anh cần trả lời; nút này thành “Duyệt tất cả” khi lead hỏi." });
+    } catch (e) {
+      toast.error("Không nhắc được lead", { id: wait, description: (e as Error).message });
+    }
+  }
+  after();
+}
+
+function ShipAllButton({ pending, n, act }: { pending: ShipAsk | null; n: number; act: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="px-3 pb-2">
+      <Button
+        type="button"
+        size="sm"
+        className="w-full"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          void act().finally(() => setBusy(false));
+        }}
+        title={pending ? `Trả lời câu Ship của lead bằng “${pending.label}”: ${n} card approved được merge/tag/release theo luật của card` : `Chưa có câu Ship nào chờ: nhắc lead gom ${n} card approved thành MỘT câu Ship ngay lượt này (auto ship-fast ship-ask)`}
+      >
+        <ShipIcon aria-hidden /> {pending ? "Duyệt tất cả" : "Ship tất cả"}
+      </Button>
+    </div>
+  );
+}
+
 function Lane({
   lane,
   label,
@@ -252,11 +308,14 @@ function Lane({
   next,
   onOpen,
   onForce,
+  ship,
 }: {
   lane: LaneKey;
   label: string;
   hint: string;
   cards: Card[] | null;
+  /** Approved only: the one-tap Ship (pending question → approve all; none → ask the lead now). */
+  ship?: { pending: ShipAsk | null; act: () => Promise<void> };
   moveOf: (id: number) => Move | undefined;
   kidsOf: (id: number) => Kid[] | undefined;
   now: number;
@@ -294,6 +353,7 @@ function Lane({
         </span>
       </h3>
       <p className={cn("px-3 pt-0.5 pb-2 text-[11px] text-muted-foreground", loud && cn("font-medium", TONE_INK))}>{hint}</p>
+      {ship && loud && <ShipAllButton pending={ship.pending} n={n} act={ship.act} />}
       <ul className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-1.5 pb-2">
         {cards === null ? (
           [0, 1].map((i) => (

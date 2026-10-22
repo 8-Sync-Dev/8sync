@@ -398,7 +398,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               <MachineView m={machine.data} reload={machine.reload} api={hq.api} rooms={officeRooms} active={tab === "may"} />
             </TabsContent>
             <TabsContent value="board" className="h-full">
-              <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} focus={focusCard} repo={repo?.root ?? null} />
+              <BoardView hq={hq} tasks={view.tasks} sessions={view.sessions} boards={boards} focus={focusCard} repo={repo?.root ?? null} rooms={officeRooms} token={token} />
             </TabsContent>
             <TabsContent value="preview" className="h-full">
               <PreviewView state={previews} boards={boards.boards} token={token} rooms={officeRooms} onOpenCard={openCard} repo={repo?.root ?? null} />

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { addressOf, inboxText, messageTargets, sessionLabel } from "@/lib/labels";
+import type { ShipRoom } from "@/lib/ship-all";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote, ago, shortName } from "./bits";
 import { LanesView } from "./lanes-view";
@@ -24,6 +25,8 @@ export function BoardView({
   boards,
   focus,
   repo = null,
+  rooms,
+  token,
 }: {
   hq: Hq;
   tasks: Task[];
@@ -32,6 +35,9 @@ export function BoardView({
   /** A card another tab asked to open: shows the project cards and opens it. */
   focus?: { root: string; id: number; n: number } | null;
   repo?: string | null;
+  /** Office rooms + token: the Approved column's "Ship tất cả" answers the project's pending Ship question. */
+  rooms?: ShipRoom[];
+  token?: string;
 }) {
   const [mode, setMode] = useState<"lanes" | "tasks">("lanes");
   // A new "Mở card" request always lands on the project cards.
@@ -51,7 +57,7 @@ export function BoardView({
         {tab("lanes", "Card dự án")}
         {tab("tasks", "Task của session")}
       </div>
-      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView state={boards} focus={focus} repo={repo} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
+      <div className="min-h-0 flex-1">{mode === "lanes" ? <LanesView state={boards} focus={focus} repo={repo} rooms={rooms} token={token} /> : <TaskBoard hq={hq} tasks={tasks} sessions={sessions} />}</div>
     </div>
   );
 }
