@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.44] — 2026-10-22
+### Added
+- **Công tắc "Công ty" trên HQ + `8sync ccc auto company on|off`** (tiếp bản .40, owner 2026-10-22: "1 cty rooms/roles agent nhận nhiều dự án"): nút cạnh "Critic trả lời ngay" ở Văn phòng bật/tắt chế độ một team làm mọi dự án trong scope; dòng trạng thái auto ghi "Công ty: một team, mọi dự án"; `auto status --json` có `company` (8sync cũ hơn không hiện nút). Test auto-ui +1.
+
 ## [0.110.43] — 2026-10-22
 ### Added
 - **HQ tab "3D": văn phòng WebGL** (owner 2026-10-22: "ui ux … 3d nhanh nhẹ đẹp"; quyết định 2026-10-22: WebGL/three trong HQ hiện tại trước, Rust/Tauri native để sau). Mỗi dự án một sàn, mỗi phòng một bàn + một nhân vật tô màu theo trạng thái (Chờ anh = cam và thở nhẹ, đang làm = xanh và gật nhẹ, rảnh = xám); rê chuột hiện tên/dự án/trạng thái, bấm mở phòng; chọn dự án ở sidebar thì chỉ sàn đó. Nhẹ: three.js nạp động khi mở tab (≤ 417 KB gzip toàn bộ thư viện, chunk thật nhỏ hơn sau tree-shake — not verified: chưa đo build), không bóng, không post-processing, `powerPreference: low-power`, vòng vẽ chỉ chạy khi tab mở, `prefers-reduced-motion` tắt cử động; chân tab in số đo thật (số phòng, draw call, ms/khung). Layout thuần (`lib/office-3d.ts`) có test 2.

@@ -55,6 +55,7 @@ describe("auto control model", () => {
     expect(shouldAutoStart(s)).toBe(false);
     expect(autoText({ on: true, paused: false, gate: "chạm trần $5/giờ", lease_until: past + 7200 })).toBe("Đang nghỉ: chạm trần $5/giờ");
     expect(autoText({ on: false, paused: false, manual: true })).toBe("Idle/delegate bật tay — Chạy liên tục sẽ ghi đè");
+    expect(autoText({ on: true, paused: false, company: true })).toBe("Luôn chạy · Công ty: một team, mọi dự án");
     expect(autoText({ on: false, paused: false, error: "HTTP 401" })).toBe("Không đọc được trạng thái auto: HTTP 401");
     expect(autoText({ on: false, paused: false, error: "không rõ `auto`" })).toBe("8sync chưa có lệnh auto — chạy 8sync up");
   });

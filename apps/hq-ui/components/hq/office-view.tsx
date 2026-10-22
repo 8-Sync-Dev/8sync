@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, GitBranchIcon, GlobeIcon, InboxIcon, LaptopIcon, MoonIcon, PauseIcon, PlayIcon, RefreshCwIcon, SparklesIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
+import { BotIcon, Building2Icon, GitBranchIcon, GlobeIcon, InboxIcon, LaptopIcon, MoonIcon, PauseIcon, PlayIcon, RefreshCwIcon, SparklesIcon, TerminalSquareIcon, UsersIcon } from "lucide-react";
 import { useMemo, useState, type CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -383,6 +383,22 @@ function AutoBar({ token }: { token: string }) {
         >
           <SparklesIcon aria-hidden />
           Critic trả lời ngay: {status.delegate ? "bật" : "tắt"}
+        </Button>
+      )}
+      {/* "Công ty": one team for every project in scope (owner 2026-10-22: "1 cty rooms/roles agent nhận
+          nhiều dự án"); `auto company on|off`. Older 8sync: no `company` in the status, no switch. */}
+      {!status.error && typeof status.company === "boolean" && (
+        <Button
+          type="button"
+          size="sm"
+          variant={status.company ? "secondary" : "outline"}
+          aria-pressed={status.company}
+          disabled={busy}
+          title="Một team làm mọi dự án trong scope: phòng hết card ở dự án mình thì lấy card gấp nhất ở dự án khác (8sync ccc auto company on|off). Board, inbox, Ship vẫn theo từng repo."
+          onClick={() => void setAuto(status.company ? "company-off" : "company-on")}
+        >
+          <Building2Icon aria-hidden />
+          Công ty: {status.company ? "bật" : "tắt"}
         </Button>
       )}
       {/* "Lease liên tục": absent on an older 8sync (no `lease_auto` in the status), so no switch there. */}

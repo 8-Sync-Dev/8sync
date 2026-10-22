@@ -16,6 +16,8 @@ export type AutoState = {
   versions?: { ui: string | null; binary: string | null };
   /** Teams auto drives (`auto.json` `teams`, contract C4); absent = ["ccc"]. */
   teams?: string[];
+  /** One team for every project in scope (`auto company on`); absent on an older 8sync. */
+  company?: boolean;
   /** Why 8sync keeps the omp team off (omp on the anthropic provider); null when not blocked. */
   omp_blocked?: string | null;
   /** The last "Đội omp" switch failed (8sync's reason). */
@@ -109,7 +111,8 @@ export function autoText(s: AutoState, now = Date.now()): string {
         : s.ci === "local"
           ? " · CI: máy release (GitHub chỉ lưu code)"
           : "";
-    return `${t ? `Luôn chạy · lease tới ${hhmm(t)}` : "Luôn chạy"}${ci}`;
+    const company = s.company ? " · Công ty: một team, mọi dự án" : "";
+    return `${t ? `Luôn chạy · lease tới ${hhmm(t)}` : "Luôn chạy"}${company}${ci}`;
   }
   if (s.manual) return "Idle/delegate bật tay — Chạy liên tục sẽ ghi đè";
   return "Đang tắt";
