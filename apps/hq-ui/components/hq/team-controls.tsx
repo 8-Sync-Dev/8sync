@@ -1,6 +1,6 @@
 "use client";
 
-import { PlayIcon, PowerOffIcon, RefreshCwIcon, RocketIcon, SquareIcon, SparklesIcon, UsersIcon, ZapIcon } from "lucide-react";
+import { ChevronDownIcon, PlayIcon, PowerOffIcon, RefreshCwIcon, RocketIcon, SparklesIcon, SquareIcon, UsersIcon, ZapIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -233,10 +233,12 @@ export function ShipFastButton({ root, name, token, after, className }: { root: 
 export function TeamControls({ root, name, token, boost = false, after }: { root: string; name: string; token: string; boost?: boolean; after?: () => void }) {
   const { busy, act } = useTeam(token, after);
   const [ask, setAsk] = useState<Action | null>(null);
+  // Owner 2026-10-22 "ui ux khó hiểu": seven buttons on every project read as noise. The one action a
+  // project needs most stays out; the team actions fold behind "Thao tác team" (same buttons, same dialogs).
+  const [more, setMore] = useState(false);
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
       <ShipLoopChip root={root} token={token} />
-      <ShipFastButton root={root} name={name} token={token} after={after} />
       <Button
         type="button"
         size="sm"
@@ -248,7 +250,16 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
       >
         <RocketIcon aria-hidden /> Ship card approved
       </Button>
-      <BoostButton root={root} name={name} token={token} active={boost} after={after} />
+      {/* A live Sấm Sét costs ~13x quota: it never hides behind the fold. */}
+      {boost && <BoostButton root={root} name={name} token={token} active after={after} />}
+      <Button type="button" size="sm" variant="ghost" aria-expanded={more} onClick={() => setMore((m) => !m)} title="Ship tốc độ cao, Sấm Sét, mở lại, dọn, team đầy đủ, dừng team">
+        {more ? "Ẩn thao tác" : "Thao tác team"}
+        <ChevronDownIcon aria-hidden className={more ? "rotate-180 transition-transform motion-reduce:transition-none" : "transition-transform motion-reduce:transition-none"} />
+      </Button>
+      {more && (
+        <>
+      <ShipFastButton root={root} name={name} token={token} after={after} />
+      {!boost && <BoostButton root={root} name={name} token={token} active={false} after={after} />}
       <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(root, name, "up")} title="Mở phòng còn thiếu, nối lại phòng đã dừng (8sync ccc auto up)">
         <PlayIcon aria-hidden /> Mở lại team
       </Button>
@@ -261,6 +272,8 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
       <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("down")} title="Dừng các phòng nền, giữ hội thoại (auto down)">
         <SquareIcon aria-hidden /> Dừng team
       </Button>
+        </>
+      )}
       <Dialog open={ask != null} onOpenChange={(o) => !o && setAsk(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

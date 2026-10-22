@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.57] — 2026-10-22
+### Changed
+- **Văn phòng gọn hơn: mỗi dự án còn 2 nút** (owner 2026-10-22: "ui ux khó hiểu"): đầu mỗi khối dự án từng có 7 nút (Ship tốc độ cao, Ship card approved, Sấm Sét, Mở lại team, Dọn & mở lại, Team đầy đủ, Dừng team). Giờ chỉ còn "Ship card approved" và "Thao tác team"; bấm "Thao tác team" thì hiện đủ các nút kia, hộp xác nhận như cũ. Sấm Sét đang chạy (13 phòng, tốn quota gấp ~13 lần) luôn hiện, không bị gập. Kiểm bằng ảnh chụp headless của Văn phòng thật.
+
 ## [0.110.56] — 2026-10-22
 ### Fixed
 - **Terminal phòng trên web VPS không còn chết giữa chừng** (owner 2026-10-22: "terminal hq ui ovh web không mở được"): qua tunnel ssh, stream của terminal bị cắt sau vài byte thì trang báo "Không nối được" và đứng luôn. Giờ trang ở máy khác (không phải loopback) chuyển sang poll, có thử lại khi tunnel chập chờn; lỗi từ chối (không có phòng, sai token) vẫn báo ngay. Logic thuần `afterStream` có test.

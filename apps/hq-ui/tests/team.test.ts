@@ -167,8 +167,11 @@ describe("team", () => {
     const noop = () => {};
     const choices = renderToStaticMarkup(createElement(BoostChoices, { onOff: noop, onRenew: noop, onCancel: noop }));
     for (const s of ["Tắt Sấm Sét", "Gia hạn 2 giờ", "Thôi", "auto down --only ba,dev3,dev4,dev5,dev6,qa2,review2", "auto up --roles boost --hours 2"]) expect(choices).toContain(s);
+    // Owner 2026-10-22 "ui ux khó hiểu": the team actions fold behind "Thao tác team"; a live Sấm Sét stays in sight.
     const bar = renderToStaticMarkup(createElement(TeamControls, { ...p, boost: true }));
-    for (const s of ["Đang Sấm Sét", "Mở lại team", "Team đầy đủ", "Dừng team"]) expect(bar).toContain(s);
+    for (const s of ["Đang Sấm Sét", "Ship card approved", "Thao tác team"]) expect(bar).toContain(s);
+    for (const s of ["Mở lại team", "Team đầy đủ", "Dừng team"]) expect(bar).not.toContain(s);
+    expect(renderToStaticMarkup(createElement(TeamControls, { ...p, boost: false }))).not.toContain("Sấm Sét</");
 
     const rooms = (names: string[], status = "running") => names.map((n) => ({ name: n, label: n, status }));
     const boost = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"];
