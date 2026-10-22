@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.50] — 2026-10-22
+### Added
+- **`8sync ccc auto board --all`: lead của công ty nhìn board mọi dự án** (owner 2026-10-22: một công ty nhiều dự án): in board từng dự án trong scope của auto, dự án hiện tại trước, mỗi board có tiêu đề root; `--json` trả `boards[]` (mỗi phần tử có `root`); `lint` theo từng dự án. Không `--all` thì như cũ. Test auto +1.
+
 ## [0.110.49] — 2026-10-22
 ### Added
 - **Sổ tri thức công ty: `8sync ccc know add --shared "<bài học>"`** (owner 2026-10-22: "cây tri thức liên tục all in 1, hiểu biết rộng, tận dụng kinh nghiệm lẫn nhau, không nhầm lẫn"): một sổ `Công ty` cho bài học đúng với MỌI dự án, mọi phòng đọc đầu tiên ở SessionStart (5 dòng cuối), rồi mới tới sổ dự án mình và 3 dòng cuối của từng dự án khác dưới root của nó; `know ls` in sổ công ty trước, `--json` thêm `shared`; tab Tri thức trên HQ có khối "Công ty" trên cùng. `--shared` và `--repo` không đi cùng. `/remember` ghi rõ khi nào dùng `--shared`. Test know (cả hai bên).
