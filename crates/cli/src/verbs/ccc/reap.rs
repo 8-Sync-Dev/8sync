@@ -28,7 +28,7 @@ const PRESSURE_SERVER_AGE_S: u64 = 10 * 60;
 
 /// A process as the OS lists it (every image: a parent must be seen to tell an orphan).
 #[derive(Debug, Clone, PartialEq, Default)]
-pub(super) struct Proc {
+pub(crate) struct Proc {
     pub pid: u32,
     pub ppid: u32,
     /// Start time (unix seconds), 0 when the OS did not say.
@@ -422,7 +422,7 @@ fn describe(p: &Proc, now: u64) -> String {
 
 /// Kills each pid alone (`taskkill /F` without `/T`, which would follow stale parent links);
 /// `true` where the kill went through. Never by image name.
-pub(super) fn kill(pids: &[u32]) -> Vec<bool> {
+pub(crate) fn kill(pids: &[u32]) -> Vec<bool> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -459,7 +459,7 @@ pub(super) fn kill(pids: &[u32]) -> Vec<bool> {
 }
 
 /// Every process on this machine with its command line (empty when the OS listing fails).
-pub(super) fn list(now: u64) -> Vec<Proc> {
+pub(crate) fn list(now: u64) -> Vec<Proc> {
     #[cfg(windows)]
     {
         let _ = now;

@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.68] — 2026-10-22
+### Fixed
+- **`8sync shot` không còn giết ảnh của phòng khác** (3d-game #184/#185 bị chặn: "8sync shot fails on all WebGL pages (Chromium exited non-zero)"): mỗi lần chụp, 8sync dọn mọi Chromium mang hồ sơ `8sync-shot-` trừ của chính nó, nên các phòng chụp cùng lúc giết Chromium của nhau, card không có ảnh QA và nằm im. Giờ chỉ dọn Chromium mà tiến trình 8sync khởi tạo nó đã chết, qua danh sách tiến trình native (không WMI). Đã chạy thật trên Windows: hai lần chụp cách nhau 0,1–0,3 giây đều ra ảnh (bản cũ: một lần hỏng), Chromium mồ côi vẫn bị dọn. Test +1.
+- **HQ không gọi WMI mỗi phút để dọn Chromium nữa**: việc dọn chuyển vào `8sync ccc auto revive` (HQ vẫn gọi mỗi phút), bớt tải WmiPrvSE.
+### Changed
+- **Văn phòng 3D đẹp và dễ đọc hơn** (owner: "qúa xấu fix gấp đi"): phòng có tường, cửa sổ, sàn gỗ, bàn sáng màu, bóng mềm dưới bàn ghế; áo theo vai trò (lead xanh dương, dev xanh ngọc, qa cam, review đỏ, rd ô liu, ui tím); trạng thái hiện ở vòng sáng dưới ghế, màn hình và chấm trên bảng tên; bảng tên nhỏ gọn, đọc rõ ở cả nền sáng và tối, không che người. Test +1.
+
 ## [0.110.67] — 2026-10-22
 ### Fixed
 - **"⚡ Làm ngay" trên card backlog có người nhận ngay** (owner 2026-10-22, 3d-game: "bấm khẩn cấp gấp đợi lâu kinh khủng không ai làm"): card backlog/blocked chỉ gọi lead/ba; lead đang trong một goal dài, không có ba, `rd` ngồi rảnh, card P0 nằm im. Giờ nút gọi thêm `rd` (R&D) làm thay lead: viết AC + lệnh check, tách card con, `auto move <id> ready` ngay lượt này; lead vẫn nhận tin. Card ở cột khác không đổi. Test +1.
