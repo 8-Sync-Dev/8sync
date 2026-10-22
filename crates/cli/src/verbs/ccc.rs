@@ -38,6 +38,7 @@ mod hint;
 mod idle;
 mod lease;
 mod looper;
+mod know;
 mod meet;
 mod merge;
 mod output_budget;
@@ -311,6 +312,12 @@ pub fn run(a: Args) -> Result<()> {
         "inbox" => {
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
             crate::verbs::hq::run_inbox(&env.home, rest, id.as_deref())
+        }
+        "know" => {
+            let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
+            let me = id.and_then(|id| sessions(&env, &root).load().sessions.into_iter().find(|s| s.conversation_id == id).map(|s| s.name));
+            let day = standup::utc_stamp(view_now())[..10].to_string();
+            know::run(rest, &env.home, &root, me.as_deref(), &day)
         }
         "msg" => {
             let ccc = sessions(&env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
@@ -1796,7 +1803,7 @@ fn session_start_output(input: &str, home: Option<&Path>) -> Option<String> {
     let v = serde_json::from_str::<Value>(input).unwrap_or(Value::Null);
     let start = v["cwd"].as_str().map(PathBuf::from).or_else(|| std::env::current_dir().ok()).unwrap_or_default();
     let root = find_state_root(&start, home);
-    let mut out = root.map(|r| session_digest(&r)).unwrap_or_default();
+    let mut out = root.as_deref().map(session_digest).unwrap_or_default();
     // The room this session is (its registry name → role, recall, what other rooms are doing).
     if let Some(h) = home {
         let claude = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| h.join(".claude"));
@@ -1814,6 +1821,19 @@ fn session_start_output(input: &str, home: Option<&Path>) -> Option<String> {
 ");
             }
             out.push_str(&r);
+        }
+    }
+    // The machine's knowledge tree (`ccc know`): own project first, then the others by root.
+    if let (Some(h), Some(r)) = (home, root.as_deref()) {
+        let left = 10_000usize.saturating_sub(out.chars().count() + 2);
+        let k = know::digest(h, r, left.min(know::DIGEST_CAP));
+        if !k.is_empty() && left >= 300 {
+            if !out.is_empty() {
+                out.push_str("
+
+");
+            }
+            out.push_str(&k);
         }
     }
     // After /compact or on --resume, give back this session's own thread:

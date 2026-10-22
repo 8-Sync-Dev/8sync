@@ -47,6 +47,7 @@ pub(super) const CCC_VERBS: &[(&str, &str)] = &[
     ("meet", "họp sprint daily: --say \"done|doing|blocked\" vào su-code/standup"),
     ("msg", "nhắn phòng khác (cả đội omp): msg <phòng|--all> \"…\""),
     ("standup", "bảng sprint: role nào rảnh, việc trùng file"),
+    ("know", "cây tri thức chung của máy: add \"<bài học>\" | ls"),
     ("ls", "session của repo, mới nhất lên đầu"),
     ("report", "token, cost, thời gian, loop"),
     ("show", "tóm tắt một session"),
