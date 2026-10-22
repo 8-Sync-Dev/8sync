@@ -16,7 +16,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [0.110.43] — 2026-10-22
 ### Added
-- **HQ tab "3D": văn phòng WebGL** (owner 2026-10-22: "ui ux … 3d nhanh nhẹ đẹp"; quyết định 2026-10-22: WebGL/three trong HQ hiện tại trước, Rust/Tauri native để sau). Mỗi dự án một sàn, mỗi phòng một bàn + một nhân vật tô màu theo trạng thái (Chờ anh = cam và thở nhẹ, đang làm = xanh và gật nhẹ, rảnh = xám); rê chuột hiện tên/dự án/trạng thái, bấm mở phòng; chọn dự án ở sidebar thì chỉ sàn đó. Nhẹ: three.js nạp động khi mở tab (≤ 417 KB gzip toàn bộ thư viện, chunk thật nhỏ hơn sau tree-shake — not verified: chưa đo build), không bóng, không post-processing, `powerPreference: low-power`, vòng vẽ chỉ chạy khi tab mở, `prefers-reduced-motion` tắt cử động; chân tab in số đo thật (số phòng, draw call, ms/khung). Layout thuần (`lib/office-3d.ts`) có test 2.
+- **HQ tab "3D": văn phòng WebGL** (owner 2026-10-22: "ui ux … 3d nhanh nhẹ đẹp"; quyết định 2026-10-22: WebGL/three trong HQ hiện tại trước, Rust/Tauri native để sau). Mỗi dự án một sàn, mỗi phòng một bàn + một nhân vật tô màu theo trạng thái (Chờ anh = cam và thở nhẹ, đang làm = xanh và gật nhẹ, rảnh = xám); rê chuột hiện tên/dự án/trạng thái, bấm mở phòng; chọn dự án ở sidebar thì chỉ sàn đó. Nhẹ: three.js nạp động khi mở tab (đo trên bundle phát hành 0.110.45: chunk riêng 737 KB raw / 184 KB gzip, chunk app chính không chứa thư viện), không bóng, không post-processing, `powerPreference: low-power`, vòng vẽ chỉ chạy khi tab mở, `prefers-reduced-motion` tắt cử động; chân tab in số đo thật (số phòng, draw call, ms/khung). Layout thuần (`lib/office-3d.ts`) có test 2.
 
 ## [0.110.42] — 2026-10-22
 ### Added
