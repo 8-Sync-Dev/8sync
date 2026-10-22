@@ -223,7 +223,6 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
   }, [state, url, token, dark]);
 
   useEffect(() => {
-    setDead(false);
     const el = host.current;
     if (!el) return;
     const ac = new AbortController();
@@ -390,6 +389,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
             className="ml-auto h-7"
             onClick={() => {
               setState("connecting");
+              setDead(false);
               setRetry((n) => n + 1);
             }}
           >
