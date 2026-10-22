@@ -48,7 +48,7 @@ use serde_json::{json, Value};
 
 use super::{delegate, idle, target};
 
-const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--company] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | ci [local|github] [--json]
+const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--company] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | company on|off [--json] | ci [local|github] [--json]
        8sync ccc auto omp on [--model <provider/model>]|off [--json] | nudge --session <room id> --cwd <dir> [--model <provider/model>] [--json]
        (on --omp nhận thêm --omp-model <provider/model>: model của đội omp)
        8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | up --add <phòng> | down [--only <phòng>]
@@ -2221,6 +2221,27 @@ pub(super) fn run(
             println!("{}", json!({ "guard": g }));
         } else {
             println!("{}", super::pressure::lines(&g).join("\n"));
+        }
+        return Ok(());
+    }
+    // `auto company on|off`: one team for every project in scope (HQ "Công ty" switch; [`set_company`]).
+    if rest.first().map(String::as_str) == Some("company") {
+        let on = match rest.get(1).map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => bail!("cần `on` hoặc `off`
+{USAGE}"),
+        };
+        if let Some(x) = rest.iter().skip(2).find(|a| *a != "--json") {
+            bail!("không rõ `{x}`
+{USAGE}");
+        }
+        set_company(home, on, now)?;
+        let v = status(home, subscription, now);
+        if rest.iter().any(|a| a == "--json") {
+            println!("{v}");
+        } else {
+            crate::ui::ok(&format!("công ty: {} — một team làm {} dự án trong scope", if on { "bật" } else { "tắt" }, v["repos"].as_array().map_or(0, |r| r.len())));
         }
         return Ok(());
     }
