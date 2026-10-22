@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.60] — 2026-10-22
+### Changed
+- **Văn phòng 3D giống văn phòng thật** (owner 2026-10-22: "3d phòng chưa đẹp quá xấu chưa realistic"): trước mỗi phòng là một hộp và một khối viên nang. Giờ mỗi phòng là một chỗ làm: bàn mặt mỏng bốn chân, màn hình sáng theo trạng thái (xanh khi làm, cam khi chờ anh), bàn phím, cốc, ghế xoay, thảm; người ngồi ghế với đầu, tóc, tay, chân, áo mang màu trạng thái. Ánh sáng filmic (ACES) và bóng mềm, cây xanh ở góc mỗi khu dự án, camera gần hơn. Chuyển động một ngày làm việc: phòng đang làm gõ phím, phòng chờ anh giơ tay vẫy, phòng kẹt ôm đầu, phòng rảnh ngả lưng; tắt khi `prefers-reduced-motion`. Không thêm asset hay thư viện. Kiểm bằng ảnh chụp WebGL headless của chính component, cả nền tối và sáng.
+
 ## [0.110.59] — 2026-10-22
 ### Added
 - **Nút "+ Dự án": tạo dự án mới và giao spec ngay** (owner 2026-10-22: "không có nút tạo dự án … tạo xong giao spec mới để làm"): ô đường dẫn cuối sidebar thay bằng một nút mở hộp thoại gồm thư mục và việc đầu tiên. Thư mục có sẵn thì HQ thêm vào; chưa có thì HQ tạo (kèm `git init`; chỉ dưới thư mục cha có thật, không ở gốc ổ đĩa, không đè thư mục đã có file). Có spec thì team mở luôn với spec làm card đầu tiên (`auto up "<spec>"`, card vào board trước khi phòng nào chạy). Thư mục Claude Code chưa tin thì HQ nói rõ bước còn lại (chạy `claude` ở đó một lần, chọn Yes, rồi "Mở team"); spec vẫn nằm trên Board. API: `POST /api/projects {path, create: true}`, `POST /api/team {…, task}`. Test +2.
