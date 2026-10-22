@@ -48,7 +48,7 @@ use serde_json::{json, Value};
 
 use super::{delegate, idle, target};
 
-const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | ci [local|github] [--json]
+const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--company] [--omp] [--loop [30m]] [--team] [--target \"<đích>\" [--check \"<lệnh>\"]] [--hours N] [--after <giây|1m>] [--usd-per-hour X] | off | pause | status [--json] | ci [local|github] [--json]
        8sync ccc auto omp on [--model <provider/model>]|off [--json] | nudge --session <room id> --cwd <dir> [--model <provider/model>] [--json]
        (on --omp nhận thêm --omp-model <provider/model>: model của đội omp)
        8sync ccc auto up [--roles lead,dev,qa,review,rd] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] | up --add <phòng> | down [--only <phòng>]
@@ -186,7 +186,7 @@ fn write_marker(home: &Path, v: &Value) -> Result<()> {
     }
     let mut v = v.clone();
     let old = idle::read_json(&p);
-    for k in ["teams", "omp_model", "guard", "eco", "cap", "cpu", "lease_auto"] {
+    for k in ["teams", "omp_model", "guard", "eco", "cap", "cpu", "lease_auto", "company"] {
         if v.get(k).is_none() {
             if let Some(t) = old.as_ref().and_then(|m| m.get(k).cloned()) {
                 v[k] = t;
@@ -227,6 +227,56 @@ pub(super) fn set_omp(home: &Path, on: bool, model: Option<&str>, now: u64) -> R
         m["omp_model"] = json!(model);
     }
     write_marker(home, &m)
+}
+
+/// `auto on --company` / `auto up --company`: one team serves every project in auto's scope. Marker
+/// `company: true`; `auto claim` and `auto wait` then look at the other projects' boards when the
+/// room's own has nothing ([`company_pick`]). Owner 2026-10-22: "1 cty rooms/roles agent nhận nhiều
+/// dự án … chứ hiện tại mỗi dự án 1 hạm đội riêng" (17 idle rooms held 9.4 GB for two projects).
+pub(super) fn set_company(home: &Path, on: bool, now: u64) -> Result<()> {
+    let p = marker(home);
+    let mut m = match idle::read_json(&p) {
+        Some(m) => m,
+        None if p.exists() => bail!("{} hỏng: sửa hoặc xoá file rồi chạy lại", p.display()),
+        None => json!({ "schema": 1, "on": false, "paused": false, "since": now }),
+    };
+    m["company"] = json!(on);
+    write_marker(home, &m)
+}
+
+/// Whether the marker says one team serves every project in scope ([`set_company`]).
+pub(super) fn company(home: &Path) -> bool {
+    idle::read_json(&marker(home)).is_some_and(|m| m["company"].as_bool() == Some(true))
+}
+
+/// The other projects a company room may take cards from: auto's live scope without `root`.
+fn other_roots(home: &Path, root: &Path) -> Vec<PathBuf> {
+    let here = canon(root);
+    live_scope(home).into_iter().filter(|r| *r != here).collect()
+}
+
+/// Pure: the most urgent card a company room would get from another project's board: the lowest
+/// priority number wins, then scope order. `cards_of` reads one project's board; a project that
+/// cannot be read (no board yet) or is pinned away ([`super::lease::focus_rest`], checked by the
+/// caller through `open`) is skipped.
+fn company_pick(roots: &[PathBuf], open: impl Fn(&Path) -> bool, cards_of: impl Fn(&Path) -> Result<Vec<target::Target>>, room: &str, lane: &str, now: u64) -> Option<(PathBuf, u64)> {
+    roots
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| open(r))
+        .filter_map(|(i, r)| {
+            let cs = cards_of(r).ok()?;
+            let id = target::claimable(&cs, room, lane, now)?;
+            let prio = cs.iter().find(|t| t.id == id).and_then(|t| t.prio).unwrap_or(2);
+            Some((prio, i, r.clone(), id))
+        })
+        .min_by_key(|(p, i, _, _)| (*p, *i))
+        .map(|(_, _, r, id)| (r, id))
+}
+
+/// What a room reads with a card from another project: every `auto` command for it runs there.
+fn elsewhere_hint(root: &Path, room: &str) -> String {
+    format!("card ở dự án khác ({}): làm trong worktree của repo đó; mọi lệnh auto cho card này chạy bằng `env -C {} 8sync ccc auto <move|note|done|…> --as {room}`", root.display(), root.display())
 }
 
 /// The resource guard's RAM threshold (%), None while the owner turned it off. Marker `guard`: a
@@ -695,6 +745,8 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         // Projects `auto close` took out: never in scope, even with no list (every project).
         "out": out_roots(home).iter().map(|r| r.to_string_lossy().into_owned()).collect::<Vec<_>>(),
         "teams": teams_of(m.as_ref()),
+        // One team for every project in scope ([`set_company`]; HQ shows the team once, under "Công ty").
+        "company": company(home),
         // Repos whose team `auto up` brought up (HQ adds the sweep room to each, lib/server/sweep.ts).
         "team_roots": super::team::team_roots(home),
         "omp_model": m.as_ref().and_then(|m| m["omp_model"].as_str()),
@@ -1501,6 +1553,26 @@ fn run_target(
             // Tight usage with other projects pinned: no card here ([`super::lease::focus_rest`]).
             let focus = super::lease::focus_rest(home, root, now);
             let card = if focus.is_some() { None } else { target::claim(home, root, &room, &lane, now)? };
+            // A company room with nothing at home takes the most urgent card of another project in
+            // scope ([`company_pick`]); the card comes back with its `root` and how to work on it.
+            let elsewhere = if card.is_none() && company(home) {
+                let others = other_roots(home, root);
+                match company_pick(&others, |r| super::lease::focus_rest(home, r, now).is_none(), |r| target::list(home, r), &room, &lane, now) {
+                    Some((r, _)) => target::claim(home, &r, &room, &lane, now)?.map(|t| (r, t)),
+                    None => None,
+                }
+            } else {
+                None
+            };
+            if let Some((r, t)) = elsewhere {
+                let hint = elsewhere_hint(&r, &room);
+                if as_json {
+                    println!("{}", json!({ "card": t, "lane": lane, "room": room, "root": r.to_string_lossy(), "why": null, "hint": hint }));
+                } else {
+                    println!("{}\n   {hint}", card_lines(&t).join("\n"));
+                }
+                return Ok(());
+            }
             // A planning room that gets nothing is told why, not left guessing: ready full, or the
             // board ran dry (ready low, no idea left in backlog) and it is the one to think up more.
             let cards = if card.is_none() && lane == "backlog" { target::list(home, root)? } else { Vec::new() };
@@ -1926,6 +1998,7 @@ fn parse_wait(args: &[String], bash_max_ms: Option<&str>, rooms: impl FnOnce() -
 fn wait_for(
     w: &Wait,
     cards: impl Fn() -> Result<Vec<target::Target>>,
+    elsewhere: impl Fn(u64) -> Option<(PathBuf, u64)>,
     status: impl Fn(u64) -> Value,
     now: impl Fn() -> u64,
     sleep: impl Fn(),
@@ -1939,6 +2012,7 @@ fn wait_for(
         // A subscription lease that ran out (or never started) ends the room's work like `off`: the
         // rail is "lease ≤ 4 h, while the owner is around" (idle::gate).
         let lease_over = st["gate"].as_str().is_some_and(|g| g.contains("lease"));
+        let mut root: Option<PathBuf> = None;
         let wake = if st["on"] != true || st["paused"] == true || st["here"] == false || lease_over {
             Some(("off", None))
         } else if !st["cap"].is_null() {
@@ -1959,6 +2033,12 @@ fn wait_for(
                     .flatten()
                     .map(|id| ("merge", id))
                     .or_else(|| target::claimable(&cs, &w.room, lane, t).map(|id| ("card", id)))
+                    // A company room: a card on another project's board wakes it too.
+                    .or_else(|| {
+                        let (r, id) = elsewhere(t)?;
+                        root = Some(r);
+                        Some(("card", id))
+                    })
             }
         } {
             Some((why, Some(id)))
@@ -1968,7 +2048,7 @@ fn wait_for(
             None
         };
         if let Some((why, card)) = wake {
-            return Ok(json!({ "wake": why, "card": card, "room": w.room, "lane": w.lane, "waited_s": t.saturating_sub(start), "cap": st["cap"], "mail": st["mail"] }));
+            return Ok(json!({ "wake": why, "card": card, "root": root.map(|r| r.to_string_lossy().into_owned()), "room": w.room, "lane": w.lane, "waited_s": t.saturating_sub(start), "cap": st["cap"], "mail": st["mail"] }));
         }
         sleep();
     }
@@ -2006,7 +2086,10 @@ fn wait_text(v: &Value) -> String {
             Some(m) => format!("tin nhắn mới cho phòng này (đã lấy khỏi inbox): đọc và làm theo trước khi claim, rồi quay lại `8sync ccc auto wait`\n{m}"),
             None => "có tin nhắn mới cho phòng này (owner hoặc phòng khác): KẾT THÚC lượt ngay, không chạy thêm lệnh — tin vào phiên khi lượt xong; làm theo tin rồi quay lại `8sync ccc auto wait`".into(),
         },
-        Some("card") => format!("card #{} ở cột {lane}: `8sync ccc auto claim`", v["card"]),
+        Some("card") => match v["root"].as_str() {
+            Some(r) => format!("card #{} ở cột {lane} của dự án khác ({r}): `8sync ccc auto claim` (card về kèm cách làm ở repo đó)", v["card"]),
+            None => format!("card #{} ở cột {lane}: `8sync ccc auto claim`", v["card"]),
+        },
         Some("merge") => format!("card #{} vừa approved, owner đã cho tự merge: `8sync ccc auto merge`", v["card"]),
         Some("off") => "auto đã tắt hoặc tạm dừng: dừng, không claim nữa".into(),
         Some("cap") => format!("chạm trần ({}): nghỉ, không claim; chạy lại `8sync ccc auto wait` (chờ cửa sổ hồi)", v["cap"].as_str().unwrap_or("")),
@@ -2178,9 +2261,15 @@ pub(super) fn run(
         let sid = all.iter().find(|(n, _)| n == &w.room).map(|(_, s)| s.clone()).or_else(|| std::env::var("CLAUDE_CODE_SESSION_ID").ok());
         let cwd = root.to_string_lossy();
         let clock = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let company = company(home);
+        let others = if company { other_roots(home, root) } else { Vec::new() };
         let mut v = wait_for(
             &w,
             || target::list(home, root),
+            |t| {
+                let lane = w.lane.as_deref()?;
+                company_pick(&others, |r| super::lease::focus_rest(home, r, t).is_none(), |r| target::list(home, r), &w.room, lane, t)
+            },
             |t| {
                 let mut v = focused(status(home, subscription, t), home, root, t);
                 v["here"] = json!(here);
@@ -2222,6 +2311,7 @@ pub(super) fn run(
                 "--target",
                 "--check",
                 "--omp-model",
+                "--company",
             ])?;
             let goal = num(rest, "--target")?;
             let check = num(rest, "--check")?;
@@ -2301,6 +2391,10 @@ pub(super) fn run(
                 v["teams"] = json!(["ccc", "omp"]);
                 v["omp_model"] = json!(omp_model(home));
                 v["omp_blocked"] = json!(omp_blocked(home));
+            }
+            if rest.iter().any(|a| a == "--company") {
+                set_company(home, true, now)?;
+                v["company"] = json!(true);
             }
             v
         }
@@ -2802,6 +2896,53 @@ mod tests {
     }
 
     #[test]
+    fn company_flag_round_trips_and_claim_picks_the_most_urgent_card_across_projects() {
+        let h = home("company");
+        assert!(!company(&h));
+        set_company(&h, true, 1).unwrap();
+        assert!(company(&h));
+        // `on` keeps the flag (write_marker carries it like `teams`).
+        set(&h, Mode::On { hours: 1.0, after: 0, rate: None, repo: None }, false, 2).unwrap();
+        assert!(company(&h), "auto on must not drop company");
+        set_company(&h, false, 3).unwrap();
+        assert!(!company(&h));
+        // Two other projects: b has a P2 card, c a P0 card → c first; a pinned-away project is skipped;
+        // an unreadable board is skipped; no card anywhere → None.
+        let card = |id: u64, prio: Option<u8>| target::Target {
+            id,
+            text: "t".into(),
+            check: Some("true".into()),
+            added: 0,
+            from: None,
+            state: "open".into(),
+            closed: None,
+            evidence: None,
+            by: None,
+            lane: "ready".into(),
+            label: None,
+            claim: None,
+            notes: vec![],
+            bounces: 0,
+            pr: None,
+            pr_repo: None,
+            sha: None,
+            role: None,
+            prio,
+            refill_at: None,
+        };
+        let (b, c) = (PathBuf::from("/srv/b"), PathBuf::from("/srv/c"));
+        let roots = vec![b.clone(), c.clone()];
+        let boards = |r: &Path| -> Result<Vec<target::Target>> {
+            if r == b { Ok(vec![card(1, None)]) } else if r == c { Ok(vec![card(2, Some(0))]) } else { bail!("no board") }
+        };
+        assert_eq!(company_pick(&roots, |_| true, boards, "dev", "ready", 10), Some((c.clone(), 2)));
+        assert_eq!(company_pick(&roots, |r| r != c, boards, "dev", "ready", 10), Some((b.clone(), 1)), "a pinned-away project is skipped");
+        assert_eq!(company_pick(&roots, |_| true, |_| bail!("no board"), "dev", "ready", 10), None);
+        assert_eq!(company_pick(&roots, |_| true, |_| Ok(vec![]), "dev", "ready", 10), None);
+        assert!(elsewhere_hint(&c, "dev").contains("env -C /srv/c 8sync ccc auto"));
+    }
+
+    #[test]
     fn json_shape_is_stable() {
         let h = home("shape");
         let v = status(&h, false, 1);
@@ -2812,6 +2953,7 @@ mod tests {
             [
                 "after_s",
                 "cap",
+                "company",
                 "delegate",
                 "five_hour_pct",
                 "focus",
@@ -3133,20 +3275,29 @@ mod tests {
             polls.set(polls.get() + 1);
             Ok(if polls.get() >= 3 { vec![card(4, "backlog"), card(7, "ready")] } else { vec![card(4, "backlog")] })
         };
-        let v = wait_for(&w, cards, |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
+        let v = wait_for(&w, cards, |_| None, |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
         assert_eq!((v["wake"].as_str(), v["card"].as_u64(), v["waited_s"].as_u64()), (Some("card"), Some(7), Some(4)));
         assert!(wait_text(&v).contains("card #7"));
+        assert!(v["root"].is_null());
+        // A company room (owner 2026-10-22: one team, many projects): an empty home board, a card on
+        // another project's board → wake "card" with that project's root; the home board wins when both have one.
+        let other = PathBuf::from("/srv/other");
+        let v = wait_for(&w, || Ok(vec![card(4, "backlog")]), |_| Some((other.clone(), 9)), |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
+        assert_eq!((v["wake"].as_str(), v["card"].as_u64(), v["root"].as_str()), (Some("card"), Some(9), Some("/srv/other")));
+        assert!(wait_text(&v).contains("dự án khác"), "{}", wait_text(&v));
+        let v = wait_for(&w, || Ok(vec![card(7, "ready")]), |_| Some((other.clone(), 9)), |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
+        assert_eq!((v["card"].as_u64(), v["root"].as_str()), (Some(7), None));
         // auto paused or capped: wake at once, never claim
         let paused = json!({ "on": true, "paused": true, "cap": null });
-        assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| paused.clone(), || 5, || {}).unwrap()["wake"], "off");
+        assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| None, |_| paused.clone(), || 5, || {}).unwrap()["wake"], "off");
         let expired = json!({ "on": true, "paused": false, "cap": null, "gate": "gói subscription: lease hết hạn (owner vắng) — gia hạn `8sync ccc idle on`" });
-        assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| expired.clone(), || 5, || {}).unwrap()["wake"], "off", "the 4 h lease ends the room's work");
+        assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| None, |_| expired.clone(), || 5, || {}).unwrap()["wake"], "off", "the 4 h lease ends the room's work");
         let away = json!({ "on": true, "paused": false, "cap": null, "gate": "owner vắng: không có prompt do người gõ trong session lead 20 phút qua" });
-        assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| away.clone(), || 5, || {}).unwrap()["wake"], "card", "owner typing is the idle hook's rail, not the room's");
+        assert_eq!(wait_for(&w, || Ok(vec![card(7, "ready")]), |_| None, |_| away.clone(), || 5, || {}).unwrap()["wake"], "card", "owner typing is the idle hook's rail, not the room's");
         // A message waits in the room's inbox: end the turn so the Stop hook hands it over; off and
         // capped still win, and an empty inbox keeps waiting.
         let mail = json!({ "on": true, "paused": false, "cap": null, "mail": 1_700_000_000_123u64 });
-        let v = wait_for(&w, || Ok(vec![]), |_| mail.clone(), || 5, || {}).unwrap();
+        let v = wait_for(&w, || Ok(vec![]), |_| None, |_| mail.clone(), || 5, || {}).unwrap();
         assert_eq!((v["wake"].as_str(), v["mail"].as_u64()), (Some("msg"), Some(1_700_000_000_123)));
         assert!(wait_text(&v).contains("KẾT THÚC lượt"), "nothing taken: end the turn so the Stop hook delivers");
         let mut got = v.clone();
@@ -3154,25 +3305,25 @@ mod tests {
         let t = wait_text(&got);
         assert!(t.contains("đổi màu nút Play") && t.contains("trước khi claim") && !t.contains("KẾT THÚC"), "{t}");
         let mail_off = json!({ "on": true, "paused": true, "cap": null, "mail": 1u64 });
-        assert_eq!(wait_for(&w, || Ok(vec![]), |_| mail_off.clone(), || 5, || {}).unwrap()["wake"], "off");
+        assert_eq!(wait_for(&w, || Ok(vec![]), |_| None, |_| mail_off.clone(), || 5, || {}).unwrap()["wake"], "off");
         // Capped: rest until the wait is up (never claim the ready card), then report `cap`.
         let capped = json!({ "on": true, "paused": false, "cap": "cửa sổ 5 giờ 92%" });
         let clock = std::cell::Cell::new(0u64);
-        let v = wait_for(&w, || Ok(vec![card(7, "ready")]), |_| capped.clone(), || clock.get(), || clock.set(clock.get() + 30)).unwrap();
+        let v = wait_for(&w, || Ok(vec![card(7, "ready")]), |_| None, |_| capped.clone(), || clock.get(), || clock.set(clock.get() + 30)).unwrap();
         assert_eq!((v["wake"].as_str(), v["card"].as_u64()), (Some("cap"), None));
         assert!(v["waited_s"].as_u64().unwrap() >= w.timeout, "rested the whole wait: {v}");
         // nothing arrives: timeout
         let clock = Cell::new(0u64);
-        let v = wait_for(&w, || Ok(vec![]), |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
+        let v = wait_for(&w, || Ok(vec![]), |_| None, |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
         assert_eq!((v["wake"].as_str(), v["waited_s"].as_u64()), (Some("timeout"), Some(60)));
         assert!(wait_text(&v).contains("chờ tiếp"));
         // --mail (the eye room): a ready card never wakes it, a message does, nothing → timeout.
         let eye = Wait { room: "eye".into(), lane: None, timeout: 4 };
         let clock = Cell::new(0u64);
-        let v = wait_for(&eye, || panic!("a mail-only wait never reads the board"), |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
+        let v = wait_for(&eye, || panic!("a mail-only wait never reads the board"), |_| None, |_| on.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
         assert_eq!((v["wake"].as_str(), v["lane"].is_null()), (Some("timeout"), true));
         assert!(wait_text(&v).contains("auto wait --mail"), "{}", wait_text(&v));
-        assert_eq!(wait_for(&eye, || Ok(vec![card(7, "ready")]), |_| mail.clone(), || 5, || {}).unwrap()["wake"], "msg");
+        assert_eq!(wait_for(&eye, || Ok(vec![card(7, "ready")]), |_| None, |_| mail.clone(), || 5, || {}).unwrap()["wake"], "msg");
     }
 
     #[test]
@@ -3235,12 +3386,12 @@ mod tests {
             polls.set(polls.get() + 1);
             Ok(if polls.get() >= 3 { vec![card(5, "approved"), card(6, "approved")] } else { vec![card(5, "approved")] })
         };
-        let v = wait_for(&lead, cards, |_| live.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
+        let v = wait_for(&lead, cards, |_| None, |_| live.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap();
         assert_eq!((v["wake"].as_str(), v["card"].as_u64()), (Some("merge"), Some(6)));
         assert!(wait_text(&v).contains("auto merge"));
         // No permission: approved cards never wake the lead (it times out).
         let clock = Cell::new(0u64);
-        let v = wait_for(&lead, || Ok(vec![card(6, "approved")]), |_| none.clone(), || clock.get(), || clock.set(clock.get() + 30)).unwrap();
+        let v = wait_for(&lead, || Ok(vec![card(6, "approved")]), |_| None, |_| none.clone(), || clock.get(), || clock.set(clock.get() + 30)).unwrap();
         assert_eq!(v["wake"], "timeout");
         // Permission granted during the wait: the cards already approved wake it.
         let (clock, polls) = (Cell::new(0u64), Cell::new(0));
@@ -3248,11 +3399,11 @@ mod tests {
             polls.set(polls.get() + 1);
             if polls.get() >= 2 { live.clone() } else { none.clone() }
         };
-        assert_eq!(wait_for(&lead, || Ok(vec![card(6, "approved")]), st, || clock.get(), || clock.set(clock.get() + 2)).unwrap()["card"], 6);
+        assert_eq!(wait_for(&lead, || Ok(vec![card(6, "approved")]), |_| None, st, || clock.get(), || clock.set(clock.get() + 2)).unwrap()["card"], 6);
         // Other rooms never wake for approved cards.
         let dev = Wait { room: "dev".into(), lane: Some("ready".into()), timeout: 4 };
         let clock = Cell::new(0u64);
-        assert_eq!(wait_for(&dev, || Ok(vec![card(6, "approved")]), |_| live.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap()["wake"], "timeout");
+        assert_eq!(wait_for(&dev, || Ok(vec![card(6, "approved")]), |_| None, |_| live.clone(), || clock.get(), || clock.set(clock.get() + 2)).unwrap()["wake"], "timeout");
     }
 
     #[test]
