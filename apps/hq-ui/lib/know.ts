@@ -3,7 +3,7 @@
 
 export type Lesson = { day: string | null; room: string | null; text: string };
 export type Book = { root: string; lessons: Lesson[] };
-export type Know = { own: Book | null; others: Book[]; dir: string | null };
+export type Know = { /** The company book (`know add --shared`): lessons for every project. */ shared: Book | null; own: Book | null; others: Book[]; dir: string | null };
 
 /** `- 2026-10-22 [dev] gitleaks full history eats 4 GB` → its parts; a line without the stamp is text only. */
 export function lessonParts(line: string): Lesson {
@@ -22,9 +22,10 @@ function book(v: unknown): Book | null {
 
 /** The CLI's JSON (`{own, others, dir}`); junk degrades to an empty tree, never throws. */
 export function parseKnow(v: unknown): Know {
-  if (!v || typeof v !== "object") return { own: null, others: [], dir: null };
-  const o = v as { own?: unknown; others?: unknown; dir?: unknown };
+  if (!v || typeof v !== "object") return { shared: null, own: null, others: [], dir: null };
+  const o = v as { shared?: unknown; own?: unknown; others?: unknown; dir?: unknown };
   return {
+    shared: book(o.shared),
     own: book(o.own),
     others: Array.isArray(o.others) ? o.others.map(book).filter((b): b is Book => b != null) : [],
     dir: typeof o.dir === "string" ? o.dir : null,

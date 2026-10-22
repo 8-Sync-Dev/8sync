@@ -14,7 +14,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Result};
 use serde_json::json;
 
-const USAGE: &str = "usage: 8sync ccc know add \"<bài học>\" [--repo <root>] | ls [--all] [--json]";
+const USAGE: &str = "usage: 8sync ccc know add \"<bài học>\" [--repo <root> | --shared] | ls [--all] [--json]";
+/// The company book (`add --shared`): lessons true for every project, read first by every room.
+pub(super) const SHARED_KEY: &str = "_cong-ty";
+pub(super) const SHARED_ROOT: &str = "Công ty";
+/// Lines of the company book in the digest.
+const SHARED_LINES: usize = 5;
 /// Lines of the own project in the digest, and of each other project.
 const OWN_LINES: usize = 10;
 const OTHER_LINES: usize = 3;
@@ -46,6 +51,33 @@ pub(super) fn key(root: &Path) -> String {
 
 fn file(home: &Path, root: &Path) -> PathBuf {
     dir(home).join(format!("{}.md", key(root)))
+}
+
+fn shared_file(home: &Path) -> PathBuf {
+    dir(home).join(format!("{SHARED_KEY}.md"))
+}
+
+/// Append one lesson to the company book (`add --shared`), created with its `# Công ty` heading.
+pub(super) fn add_shared(home: &Path, day: &str, room: Option<&str>, lesson: &str) -> Result<PathBuf> {
+    let p = shared_file(home);
+    let l = line(day, room, lesson)?;
+    std::fs::create_dir_all(dir(home))?;
+    let mut body = std::fs::read_to_string(&p).unwrap_or_default();
+    if body.is_empty() {
+        body = format!("# {SHARED_ROOT}\n");
+    }
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    body.push_str(&l);
+    body.push('\n');
+    std::fs::write(&p, body)?;
+    Ok(p)
+}
+
+/// The company book, None until the first `add --shared`.
+pub(super) fn shared(home: &Path) -> Option<Book> {
+    std::fs::read_to_string(shared_file(home)).ok().and_then(|b| parse(&b))
 }
 
 /// Pure: the line stored for a lesson; refused when empty. `room` = the session's registry name.
@@ -100,7 +132,7 @@ pub(super) fn books(home: &Path, root: &Path) -> (Option<Book>, Vec<Book>) {
     names.sort();
     let others = names
         .into_iter()
-        .filter(|p| p.file_stem().is_none_or(|s| s != own_key.as_str()))
+        .filter(|p| p.file_stem().is_none_or(|s| s != own_key.as_str() && s != SHARED_KEY))
         .filter_map(|p| std::fs::read_to_string(p).ok())
         .filter_map(|b| parse(&b))
         .collect();
@@ -110,9 +142,17 @@ pub(super) fn books(home: &Path, root: &Path) -> (Option<Book>, Vec<Book>) {
 /// Pure: the SessionStart block, at most `cap` chars, empty when nothing is known yet. Own project
 /// first with its last [`OWN_LINES`], then each other project under its own root heading with its
 /// last [`OTHER_LINES`]: a room reads its neighbours' lessons and always knows whose they are.
-pub(super) fn digest_of(own: Option<&Book>, others: &[Book], cap: usize) -> String {
+pub(super) fn digest_of(shared: Option<&Book>, own: Option<&Book>, others: &[Book], cap: usize) -> String {
     let mut out = String::new();
+    // The company book first: what holds for every project on this machine.
+    if let Some(b) = shared.filter(|b| !b.lines.is_empty()) {
+        out.push_str("## Tri thức công ty (mọi dự án)\n");
+        out.push_str(&b.lines[b.lines.len().saturating_sub(SHARED_LINES)..].join("\n"));
+    }
     if let Some(b) = own.filter(|b| !b.lines.is_empty()) {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
         out.push_str("## Tri thức máy này — dự án này\n");
         out.push_str(&b.lines[b.lines.len().saturating_sub(OWN_LINES)..].join("\n"));
     }
@@ -137,7 +177,7 @@ pub(super) fn digest_of(own: Option<&Book>, others: &[Book], cap: usize) -> Stri
 /// The SessionStart block for the room at `root` (`hook session-start`).
 pub(super) fn digest(home: &Path, root: &Path, cap: usize) -> String {
     let (own, others) = books(home, root);
-    digest_of(own.as_ref(), &others, cap)
+    digest_of(shared(home).as_ref(), own.as_ref(), &others, cap)
 }
 
 /// `8sync ccc know …`. `room`: the caller's registry name; `day`: today as YYYY-MM-DD.
@@ -145,13 +185,22 @@ pub(super) fn run(rest: &[String], home: &Path, root: &Path, room: Option<&str>,
     let mut it = rest.iter();
     match it.next().map(String::as_str) {
         Some("add") => {
-            let (mut text, mut repo) = (Vec::new(), None);
+            let (mut text, mut repo, mut to_shared) = (Vec::new(), None, false);
             while let Some(a) = it.next() {
                 match a.as_str() {
+                    "--shared" => to_shared = true,
                     "--repo" => repo = Some(PathBuf::from(it.next().filter(|v| !v.starts_with("--")).ok_or_else(|| anyhow::anyhow!("--repo cần một đường dẫn\n{USAGE}"))?)),
                     x if x.starts_with("--") => bail!("không rõ `{x}`\n{USAGE}"),
                     w => text.push(w.to_string()),
                 }
+            }
+            if to_shared && repo.is_some() {
+                bail!("--shared và --repo không đi cùng nhau\n{USAGE}");
+            }
+            if to_shared {
+                let p = add_shared(home, day, room, &text.join(" "))?;
+                crate::ui::ok(&format!("đã ghi vào sổ công ty {}", p.display()));
+                return Ok(());
             }
             let root = match repo {
                 Some(r) => crate::verbs::here::repo_of(&r).unwrap_or(r),
@@ -167,12 +216,17 @@ pub(super) fn run(rest: &[String], home: &Path, root: &Path, room: Option<&str>,
                 bail!("không rõ `{x}`\n{USAGE}");
             }
             let (own, others) = books(home, root);
+            let company = shared(home);
             let take = |b: &Book| -> Vec<String> { if all { b.lines.clone() } else { b.lines[b.lines.len().saturating_sub(LS_LINES)..].to_vec() } };
             if as_json {
                 let o = own.as_ref().map(|b| json!({ "root": b.root, "lines": take(b) }));
+                let c = company.as_ref().map(|b| json!({ "root": b.root, "lines": take(b) }));
                 let rest: Vec<_> = others.iter().map(|b| json!({ "root": b.root, "lines": take(b) })).collect();
-                println!("{}", json!({ "own": o, "others": rest, "dir": dir(home) }));
+                println!("{}", json!({ "shared": c, "own": o, "others": rest, "dir": dir(home) }));
                 return Ok(());
+            }
+            if let Some(b) = company.as_ref().filter(|b| !b.lines.is_empty()) {
+                println!("# {} (mọi dự án)\n{}\n", b.root, take(b).join("\n"));
             }
             match &own {
                 Some(b) if !b.lines.is_empty() => println!("# {}\n{}", b.root, take(b).join("\n")),
@@ -227,7 +281,16 @@ mod tests {
         assert!(d.contains("### C:/code/app"));
         let d = digest(&h, Path::new("/srv/new"), 4000);
         assert!(!d.contains("dự án này") && d.contains("### C:/code/app") && d.contains("### /srv/zus"), "{d}");
+        // The company book: first in every project's digest, never listed among the "other projects".
+        add_shared(&h, "2026-10-22", Some("lead"), "gitleaks cả history ăn 4 GB: chỉ quét nhánh").unwrap();
+        let d = digest(&h, a, 4000);
+        assert!(d.starts_with("## Tri thức công ty (mọi dự án)\n- 2026-10-22 [lead] gitleaks"), "{d}");
+        assert!(d.contains("## Tri thức máy này — dự án này"), "{d}");
+        let (_, others) = books(&h, a);
+        assert!(others.iter().all(|b| b.root != SHARED_ROOT), "shared is not an 'other project'");
+        assert_eq!(shared(&h).map(|b| b.root), Some(SHARED_ROOT.to_string()));
         assert_eq!(digest(&home("empty"), a, 4000), "");
+        assert!(shared(&home("empty2")).is_none());
         // The cap cuts on a char boundary; only the last lines of a long book show.
         for i in 0..30 {
             add(&h, a, "2026-10-22", None, &format!("bài {i} ở đây")).unwrap();
