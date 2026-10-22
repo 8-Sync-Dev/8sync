@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.41] — 2026-10-22
+### Fixed
+- **`auto merge` không kẹt cả board vì một card chờ Ship** (owner: "bị kẹt hoài vậy auto ship chứ"; live zus/ide: 19/27 card approved có PR đã merge từ hôm trước nhưng card ngồi yên vì 8 card không merge được làm cả lệnh dừng): chưa có quyền tự merge, `auto merge` vẫn land những việc không cần quyền — PR đã merge → card done, conflict/base sai → về ready/review — rồi MỚI hỏi owner MỘT câu Ship cho đúng những card cần `gh pr merge` thật (hoặc chưa có PR). Không bao giờ tự merge khi chưa có quyền.
 ## [0.110.40] — 2026-10-22
 ### Added
 - **Một team cho nhiều dự án: `8sync ccc auto up --company` / `auto on --company`** (owner 2026-10-22: "1 cty rooms/roles agent nhận nhiều dự án … chứ hiện tại mỗi dự án 1 hạm đội riêng"; đo 2026-10-22: 17 phòng rảnh giữ 9,4 GB cho hai dự án). Cờ `company` trong auto.json (giữ qua on/off/pause như `teams`): phòng hết card ở dự án mình thì `auto claim` lấy card gấp nhất (P0 trước, rồi thứ tự scope) ở dự án khác trong scope của auto, `auto wait` thức dậy khi dự án khác có card; card về kèm `root` và hướng dẫn `env -C <root> 8sync ccc auto … --as <phòng>` (board, inbox, grant vẫn theo từng repo; dự án bị pin bằng lease vẫn bị bỏ qua). `auto status --json` thêm `company`. Test auto +1 (round trip, chọn theo prio, bỏ qua dự án pin/không board), wait +2 (card dự án khác, dự án mình ưu tiên). HQ nhóm "Công ty" sẽ ở bản sau.
