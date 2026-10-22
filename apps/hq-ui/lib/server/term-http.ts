@@ -16,7 +16,7 @@ export function termResponse(req: Request, key: string, term: Term): Response {
   const url = new URL(req.url);
   if (url.searchParams.has("since")) {
     const p = poll(key, term, Number(url.searchParams.get("gen")), Number(url.searchParams.get("since")));
-    return json({ gen: p.gen, cursor: p.cursor, out: p.out.toString("base64"), reset: p.reset, answered: p.answered, ended: p.ended, elsewhere: p.elsewhere });
+    return json({ gen: p.gen, cursor: p.cursor, out: p.out.toString("base64"), reset: p.reset, answered: p.answered, ended: p.ended, elsewhere: p.elsewhere, dead: p.dead });
   }
   const enc = new TextEncoder();
   let stop: () => void = () => {};
@@ -35,7 +35,7 @@ export function termResponse(req: Request, key: string, term: Term): Response {
       stop = watch(key, term, (b, answered) => {
         if (b) push(answered ? "replay" : "out", b.toString("base64"));
         else {
-          push("end", term.elsewhere ? '{"elsewhere":true}' : "{}");
+          push("end", term.dead ? '{"dead":true}' : term.elsewhere ? '{"elsewhere":true}' : "{}");
           clearInterval(beat);
           try {
             controller.close();

@@ -25,8 +25,13 @@ type Spawn = (cmd: string, args: string[], opts: { cwd?: string; windowsHide: bo
 /**
  * `typed`: the bridge has had input, so the queries in its kept output (ConPTY's opening `ESC[6n`, DA…) were answered.
  * `elsewhere`: an omp room's bridge ended because the session is open in another terminal (HQ offers the takeover).
+ * `dead`: a room's bridge ended because `claude attach` found no job (owner 2026-10-22: a room kept showing
+ * "Đang làm" and its terminal said "No job matching" with the input disabled) — the room is not running at all.
  */
-export type Term = { proc: ChildProcessWithoutNullStreams; gen: number; chunks: Buffer[]; bytes: number; total: number; viewers: Set<(b: Buffer | null, answered?: boolean) => void>; idle?: ReturnType<typeof setTimeout>; idleMs: number; typed: boolean; ended: boolean; elsewhere: boolean };
+export type Term = { proc: ChildProcessWithoutNullStreams; gen: number; chunks: Buffer[]; bytes: number; total: number; viewers: Set<(b: Buffer | null, answered?: boolean) => void>; idle?: ReturnType<typeof setTimeout>; idleMs: number; typed: boolean; ended: boolean; elsewhere: boolean; dead: boolean };
+
+/** What `claude attach` prints into the pty when the session's job is gone (anywhere in a chunk). */
+const DEAD_MARK = "No job matching";
 
 const terms = new Map<string, Term>();
 let gens = 0;
@@ -49,9 +54,11 @@ function start(key: string, args: string[], cwd: string | null, idleMs: number, 
   const cur = terms.get(key);
   if (cur && !cur.ended) return cur;
   const proc = spawn(binFor("8sync"), args, { cwd: cwd ?? undefined, windowsHide: true, env: childEnv() });
-  const t: Term = { proc, gen: ++gens, chunks: [], bytes: 0, total: 0, viewers: new Set(), idleMs, typed: false, ended: false, elsewhere: false };
+  const t: Term = { proc, gen: ++gens, chunks: [], bytes: 0, total: 0, viewers: new Set(), idleMs, typed: false, ended: false, elsewhere: false, dead: false };
   terms.set(key, t);
   proc.stdout.on("data", (b: Buffer) => {
+    // A room (never the owner's shell) whose attach found no job: the room is gone, not just detached.
+    if (!t.dead && key !== SHELL_KEY && b.includes(DEAD_MARK)) t.dead = true;
     t.chunks.push(b);
     t.bytes += b.length;
     t.total += b.length;
@@ -116,8 +123,8 @@ export function watch(id: string, t: Term, fn: (b: Buffer | null, answered?: boo
   };
 }
 
-/** One poll: bridge `gen`, byte `cursor` to send next, `out` after the asked cursor (all kept output on `reset`); `answered` as in [watch], for a `reset` replay; `elsewhere` as in [Term]. */
-export type TermPoll = { gen: number; cursor: number; out: Buffer; reset: boolean; answered: boolean; ended: boolean; elsewhere: boolean };
+/** One poll: bridge `gen`, byte `cursor` to send next, `out` after the asked cursor (all kept output on `reset`); `answered` as in [watch], for a `reset` replay; `elsewhere` and `dead` as in [Term]. */
+export type TermPoll = { gen: number; cursor: number; out: Buffer; reset: boolean; answered: boolean; ended: boolean; elsewhere: boolean; dead: boolean };
 
 /**
  * The remote link's view (a Cloudflare quick tunnel holds an event stream back, so the page polls):
@@ -133,7 +140,7 @@ export function poll(id: string, t: Term, gen: number, since: number): TermPoll 
   const first = t.total - t.bytes;
   const reset = gen !== t.gen || !Number.isInteger(since) || since < first || since > t.total;
   const all = Buffer.concat(t.chunks);
-  return { gen: t.gen, cursor: t.total, out: reset ? all : all.subarray(since - first), reset, answered: reset && t.typed, ended: t.ended, elsewhere: t.elsewhere };
+  return { gen: t.gen, cursor: t.total, out: reset ? all : all.subarray(since - first), reset, answered: reset && t.typed, ended: t.ended, elsewhere: t.elsewhere, dead: t.dead };
 }
 
 /** Keys typed in the browser (xterm's onData), or a new size. */
