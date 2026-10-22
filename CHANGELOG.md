@@ -8,6 +8,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [0.110.50] — 2026-10-22
 ### Added
 - **`8sync ccc auto board --all`: lead của công ty nhìn board mọi dự án** (owner 2026-10-22: một công ty nhiều dự án): in board từng dự án trong scope của auto, dự án hiện tại trước, mỗi board có tiêu đề root; `--json` trả `boards[]` (mỗi phần tử có `root`); `lint` theo từng dự án. Không `--all` thì như cũ. Test auto +1.
+### Changed
+- Size gate: trần binary linux musl 7936 → 7968 KiB, có ghi nguồn tăng trong `scripts/size-gate.sh` (company/board --all, company_host, know, infer_pr, pressure floor: asset CI 8.128.816 B, vượt 2.352 B); không thêm dependency.
 
 ## [0.110.49] — 2026-10-22
 ### Added

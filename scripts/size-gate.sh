@@ -182,7 +182,11 @@ export LC_ALL=C
 # 2026-10-21 v0.110.27: `ccc/lease.rs` (Lease liên tục: API-key renew within budget, subscription
 # renew on owner presence; pinned projects + usage-tight focus) — CI musl asset 8,038,704 B
 # (+32,768 B over v0.110.26). No new dependency. Ceiling 7872 KiB (~20 KiB left).
-CEILING="${CEILING:-8126464}"   # 7936 KiB. 2026-10-21 v0.110.30: cross-repo --pr (target.rs parse_pr/
+# 2026-10-22 v0.110.50: one company for many projects — auto.rs company flag / company_pick /
+# board --all, team.rs company_host (auto up joins scope), know.rs (machine knowledge tree + company
+# book), merge.rs infer_pr, pressure.rs floor — CI musl asset 8,128,816 B, 2,352 B over the 8,126,464
+# ceiling. No new dependency. Ceiling 7968 KiB (~30 KiB left).
+CEILING="${CEILING:-8159232}"   # 7968 KiB (was 7936 KiB). 2026-10-21 v0.110.30: cross-repo --pr (target.rs parse_pr/
 # pr_repo_for, merge.rs default_branch_of/cached per repo, guard.rs repo-aware self-merge) and the
 # guard RAM trim + attribution (pressure.rs trim_pick/trim K32EmptyWorkingSet, ram_split JSON) grew
 # the CI linux musl asset to 8,083,760 B, 22,832 B over the 8,060,928 ceiling. +64 KiB, ~43 KiB left.
