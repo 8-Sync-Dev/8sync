@@ -11,7 +11,7 @@ import { deliveryOf, sessionLabel } from "../labels";
 import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type Limits, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
 import { boardTasks } from "../now";
 import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
-import { parsePins, type HiddenProject, type Pin } from "../sidebar";
+import { companyScope, parsePins, type HiddenProject, type Pin } from "../sidebar";
 import { readAsk, transcriptOf } from "./ask";
 import { lastAutoStatus } from "./auto";
 import { projectBoards, type ProjectBoard } from "./board";
@@ -374,7 +374,7 @@ export function readPins(file = pinnedRootsPath()): Pin[] {
  * `hidden`: projects the owner closed in the sidebar (lib/sidebar.ts splitClosed decides which still hide).
  * `pins`: projects the owner pinned (sidebar "Ghim", lib/sidebar.ts pinSidebar).
  */
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; pins: Pin[]; at: number; /** One team for every project (`auto company on`), from the last auto status poll. */ company: boolean };
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; pins: Pin[]; at: number; /** One team for every project (`auto company on`), from the last auto status poll. */ company: boolean; /** The company's repos (lib/sidebar.ts companyScope); empty when company is off. */ scope: string[] };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
@@ -469,5 +469,6 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     pins: readPins(),
     at: now,
     company: lastAutoStatus()?.company === true,
+    scope: companyScope(lastAutoStatus()),
   };
 }

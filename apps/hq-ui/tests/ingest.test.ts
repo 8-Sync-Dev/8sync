@@ -138,3 +138,16 @@ describe("ingest", () => {
     expect(db.prepare("SELECT count(*) c FROM messages WHERE session='hq-dup'").get()).toEqual({ c: 1 });
   });
 });
+
+describe("ingest on Windows", () => {
+  it("keeps an NTFS file id past 2^53 as a safe integer (node:sqlite refuses the raw one)", async () => {
+    const { inoKey } = await import("@/lib/server/ingest");
+    const big = BigInt("0x0123456789abcdef"); // > 2^53
+    const k = inoKey(big);
+    expect(Number.isSafeInteger(k)).toBe(true);
+    expect(k).toBe(inoKey(big));
+    expect(inoKey(big + BigInt(1))).not.toBe(k);
+    expect(inoKey(BigInt(42))).toBe(42);
+  });
+});
+

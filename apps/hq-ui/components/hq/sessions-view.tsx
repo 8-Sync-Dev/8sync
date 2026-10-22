@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { sessionLabel } from "@/lib/labels";
+import { splitSessions } from "@/lib/sessions-list";
 import { ROLES, modelShort } from "@/lib/roles";
 import { RoleBadge } from "./role-badge";
 import { EmptyState, ErrorNote, STATUS_LABEL, StatusDot, WaitingBadge, ago, shortName } from "./bits";
@@ -33,6 +34,10 @@ export function SessionsView({
   nameInputId: string;
 }) {
   const [viewing, setViewing] = useState<string | null>(null);
+  // Ended sessions fold away (owner 2026-10-22: "session cũ rác dư thừa quá nhiều"); HQ drops their rows after 3 days.
+  const [showEnded, setShowEnded] = useState(false);
+  const split = splitSessions(sessions);
+  const shown = showEnded ? [...split.live, ...split.ended] : split.live;
   const { loading, error } = hq.sessions;
   const viewingSession = sessions.find((x) => x.name === viewing);
   const projectName = (id: number | null) => projects.find((p) => p.id === id)?.name ?? "No project";
@@ -50,7 +55,7 @@ export function SessionsView({
               <Skeleton key={i} className="h-11" />
             ))}
           </div>
-        ) : sessions.length === 0 ? (
+        ) : shown.length === 0 ? (
           <EmptyState icon={<MonitorIcon />} title="No sessions here yet">
             Start one above. Sessions you run yourself with <code className="font-mono text-[12px]">claude</code> also
             show up once their hooks report in.
@@ -70,7 +75,7 @@ export function SessionsView({
                 </tr>
               </thead>
               <tbody>
-                {sessions.map((s) => (
+                {shown.map((s) => (
                   <tr key={s.name} className="border-b last:border-0 hover:bg-muted/40">
                     <td className="px-3 py-2">
                       <span className="flex items-center gap-2 text-[13px]" title={s.name}>
@@ -138,6 +143,11 @@ export function SessionsView({
               </tbody>
             </table>
           </div>
+        )}
+        {!error && !loading && split.ended.length > 0 && (
+          <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" aria-expanded={showEnded} onClick={() => setShowEnded((v) => !v)}>
+            {showEnded ? "Ẩn session đã dừng" : `Hiện session đã dừng (${split.ended.length})`}
+          </Button>
         )}
       </div>
 

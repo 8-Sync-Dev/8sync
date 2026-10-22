@@ -89,7 +89,7 @@ export function Nav({
   // Company mode (owner 2026-10-22: one company serves every project, not a full team per project):
   // one list of rooms, each tagged with the project it works on, then the projects with how many work there.
   const company = data?.company === true;
-  const co = useMemo(() => (company ? companySidebar(data?.rooms ?? [], boards, now) : null), [company, data, boards, now]);
+  const co = useMemo(() => (company ? companySidebar(data?.rooms ?? [], boards, now, data?.scope ?? []) : null), [company, data, boards, now]);
   const pinnedKeys = useMemo(() => new Set((data?.pins ?? []).map((p) => groupKey(p.root))), [data]);
   const coProjects = useMemo(
     () => (co ? [...co.projects].sort((a, b) => Number(pinnedKeys.has(b.key)) - Number(pinnedKeys.has(a.key))) : []),

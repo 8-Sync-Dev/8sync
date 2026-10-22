@@ -316,21 +316,35 @@ function setState(db: DatabaseSync, key: string, value: number): void {
 }
 
 /**
+ * The journal file's identity for rotation checks, as a safe integer: the low 48 bits of its inode.
+ * NTFS file ids pass 2^53, and node:sqlite refuses such a number (RangeError: ingest stopped on
+ * Windows). A collision only matters if the file is replaced by one with the same low 48 bits AND not
+ * smaller; the size check catches the rest.
+ */
+export function inoKey(ino: bigint): number {
+  return Number(BigInt.asUintN(48, ino));
+}
+/** The key holding inoKey; a new key so a value stored by an older HQ is never compared with it. */
+const INO_KEY = "ino48:events.jsonl";
+
+/**
  * Ingests new journal lines by byte offset. Fully synchronous, so two requests
  * in the same process can never interleave. Handles one rotation between runs:
  * the tail of the old file is read from events.1.jsonl, then the new file from 0.
  */
 export function ingest(db: DatabaseSync): number {
   const { current, rotated } = journalFiles();
-  let st: fs.Stats;
+  let st: fs.BigIntStats;
   try {
-    st = fs.statSync(current);
+    st = fs.statSync(current, { bigint: true });
   } catch {
     return 0;
   }
+  const size = Number(st.size);
+  const id = inoKey(st.ino);
   return tx(db, () => {
     let offset = getState(db, "events.jsonl") ?? 0;
-    const ino = getState(db, "ino:events.jsonl");
+    const ino = getState(db, INO_KEY);
     let count = 0;
     const run = (buf: Buffer) => {
       const { events, consumed } = parseChunk(buf);
@@ -343,14 +357,14 @@ export function ingest(db: DatabaseSync): number {
       }
       return consumed;
     };
-    const rotatedNow = (ino !== null && ino !== st.ino) || st.size < offset;
+    const rotatedNow = (ino !== null && ino !== id) || size < offset;
     if (rotatedNow) {
       if (offset > 0) run(readFrom(rotated, offset));
       offset = 0;
     }
     offset += run(readFrom(current, offset));
     setState(db, "events.jsonl", offset);
-    setState(db, "ino:events.jsonl", st.ino);
+    setState(db, INO_KEY, id);
     return count;
   });
 }

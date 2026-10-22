@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { companyRooms, companySidebar, peopleWord, projectsHeading, repoOf, groupKey, sidebarGroups, splitClosed } from "@/lib/sidebar";
+import { companyRooms, companyScope, companySidebar, inScope, peopleWord, projectsHeading, repoOf, groupKey, sidebarGroups, splitClosed } from "@/lib/sidebar";
 import { parseBoard, type Board } from "@/lib/lanes";
 import type { Room } from "@/lib/server/office";
 
@@ -307,6 +307,21 @@ describe("company sidebar UI (rendered)", () => {
     expect(html).toContain("Thao tác với dự án platform");
     expect(html).toContain("Mở team ở repo mới");
     expect(html).not.toContain("Phòng của công ty");
+  });
+});
+
+describe("company scope", () => {
+  it("is auto's repos minus the closed ones, only in company mode", () => {
+    expect(companyScope({ company: true, repos: ["/w/a", "/w/b", 3], out: ["/W/B/"] })).toEqual(["/w/a"]);
+    expect(companyScope({ company: false, repos: ["/w/a"] })).toEqual([]);
+    expect(companyScope(null)).toEqual([]);
+  });
+  it("matches a folder (or one of its worktrees) across slash style and case; lists scope repos with no board", () => {
+    expect(inScope(["C:\\W\\ide"], "c:/w/ide/")).toBe(true);
+    expect(inScope(["/w/ide"], "/w/ide/.claude/worktrees/x")).toBe(true);
+    expect(inScope(["/w/ide"], "/w/other")).toBe(false);
+    const c = companySidebar([], [], NOW, ["/w/fresh"]);
+    expect(c.projects).toMatchObject([{ name: "fresh", people: 0, open: 0 }]);
   });
 });
 
