@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+- VPS (2026-10-23, apart from the ccc work): omp router live at `https://vps.8syncdev.com/omp-router` (omp 18.12.6, `scripts/vps/omp-router/`). No client keys yet: the owner mints them with `omp-gw key add <name>`. Runner `ovh-sgp-1` and `/term` kept. Re-deploy: `bash scripts/vps/omp-router/install.sh` from Git Bash.
 v0.110.64: shot zombie sweep (rust + HQ tick) — GPU burn fixed.
 v0.110.61: dead-room terminal honest + ghost room ends; idle junk pruned (6h/7d).
 v0.110.41: ungranted auto merge lands merged-PR cards (done) and asks Ship only for what really needs gh pr merge.

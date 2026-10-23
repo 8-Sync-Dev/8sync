@@ -1,0 +1,28 @@
+# omp router at https://vps.8syncdev.com/omp-router (su-code scripts/vps/omp-router). Imported inside
+# the vps.8syncdev.com site by `import /sites/*.routes` (setup.sh adds that line once).
+# Caddy reaches the gateway (127.0.0.1:4000 on the host, user agent) through the unix socket
+# /run/omp-gw/gw.sock (omp-gw.socket + systemd-socket-proxyd), bind-mounted like the HQ and terminal
+# sockets: Caddy sits on the docker `edge` network and ufw drops container -> host TCP.
+
+# API: no GitHub session. The lock is the gateway's bearer check: one 256-bit key per client
+# (omp-gw key add). No fail2ban jail: a ban would hit every 443 path of the box, /hq and /term too,
+# and IPv6 clients all arrive as the Docker bridge address.
+handle /omp-router/v1/* {
+	uri strip_prefix /omp-router
+	reverse_proxy unix//run/omp-gw/gw.sock {
+		header_up -Cookie
+		header_up -X-Auth-Request-User
+		header_up -X-Auth-Request-Email
+		flush_interval -1
+	}
+}
+handle /omp-router/healthz {
+	uri strip_prefix /omp-router
+	reverse_proxy unix//run/omp-gw/gw.sock
+}
+# Usage guide (/srv/www/omp-router/index.html): public, holds no secret.
+redir /omp-router /omp-router/ 308
+handle /omp-router/* {
+	root * /www
+	file_server
+}
