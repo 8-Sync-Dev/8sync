@@ -242,6 +242,17 @@ fn shell() -> Result<PathBuf> {
             let s = p.to_string_lossy().to_ascii_lowercase();
             !s.contains("\\system32\\") && !s.contains("\\windowsapps\\")
         })
+        .or_else(|| {
+            let git_root = which::which("git").ok().and_then(|g| g.parent()?.parent().map(Path::to_path_buf));
+            git_root
+                .into_iter()
+                .flat_map(|r| [r.join(r"bin\bash.exe"), r.join(r"usr\bin\bash.exe")])
+                .chain([
+                    PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"),
+                    PathBuf::from(r"C:\Program Files (x86)\Git\bin\bash.exe"),
+                ])
+                .find(|p| p.is_file())
+        })
         .context("no Git Bash on PATH (System32 bash is WSL); install Git for Windows, or give bash's full path after --")
 }
 

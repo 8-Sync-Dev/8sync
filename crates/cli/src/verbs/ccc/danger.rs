@@ -2524,7 +2524,10 @@ fn target(t: &str, mode: Mode, ctx: &Ctx, cwd: Option<&Abs>, place: Place, f: &m
     // On the real filesystem the project is the git root above the session directory, so a
     // `cd apps/x` (Claude Code reports the new cwd) does not make the rest of the repo "outside".
     let root = session.as_ref().filter(|_| ctx.fs).and_then(|c| {
-        to_path(c).ancestors().find(|d| d.join(".git").exists()).and_then(|d| abs(&d.display().to_string(), None, ctx.windows))
+        let p = to_path(c);
+        crate::verbs::here::repo_of(&p)
+            .or_else(|| p.ancestors().find(|d| d.join(".git").exists()).map(Path::to_path_buf))
+            .and_then(|d| abs(&d.display().to_string(), None, ctx.windows))
     });
     let project = root
         .as_ref()
@@ -2559,7 +2562,15 @@ fn target(t: &str, mode: Mode, ctx: &Ctx, cwd: Option<&Abs>, place: Place, f: &m
         return;
     }
     let inside = |root: &Abs| if mode == Mode::Below { p.under_or_eq(root) } else { p.under(root) };
-    if temps.iter().any(inside) || project.is_some_and(inside) {
+    // Claude Code `--bg` gives each background job `<home>/.claude/jobs/<job-id>/tmp` as its scratch dir.
+    let job_tmp = home.as_ref().is_some_and(|h| {
+        p.under(h)
+            && p.parts.len() > h.parts.len() + 4
+            && p.parts.get(h.parts.len()).is_some_and(|s| s == ".claude")
+            && p.parts.get(h.parts.len() + 1).is_some_and(|s| s == "jobs")
+            && p.parts.get(h.parts.len() + 3).is_some_and(|s| s == "tmp")
+    });
+    if temps.iter().any(inside) || project.is_some_and(inside) || job_tmp {
         return;
     }
     f.ask(format!(

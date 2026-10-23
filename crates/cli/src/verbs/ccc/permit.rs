@@ -107,9 +107,11 @@ fn norm(p: &str) -> String {
     if cfg!(windows) { s.to_lowercase() } else { s }
 }
 
-/// The project a room works in: the nearest folder above `cwd` with `.git` (a worktree's own root).
+/// The project a room works in: the main git repo of `cwd` (worktrees included), or the nearest `.git`.
 fn project_root(cwd: &Path) -> PathBuf {
-    cwd.ancestors().find(|d| d.join(".git").exists()).unwrap_or(cwd).to_path_buf()
+    crate::verbs::here::repo_of(cwd)
+        .or_else(|| cwd.ancestors().find(|d| d.join(".git").exists()).map(Path::to_path_buf))
+        .unwrap_or_else(|| cwd.to_path_buf())
 }
 
 /// One step of a command, in an exact shape a room may run with nobody watching. Reviews broke a word
@@ -215,11 +217,17 @@ fn path_ok(cwd: &Path, p: &str, write: bool) -> Result<(), String> {
     if parts.last().is_some_and(|f| secret_name(f)) {
         return Err(format!("file secret ({p})"));
     }
-    if write && parts.iter().any(|s| HOLD_PATHS.contains(&s.as_str())) {
+    // Inside `.claude/worktrees/<wt>/...`, check the path relative to the worktree root so
+    // `EnterWorktree` and source edits in the worktree pass while `.claude/settings.json` stays held.
+    let check_parts: &[String] = match parts.as_slice() {
+        [c, w, wt, rest @ ..] if c == ".claude" && w == "worktrees" && !wt.is_empty() => rest,
+        all => all,
+    };
+    if write && check_parts.iter().any(|s| HOLD_PATHS.contains(&s.as_str())) {
         return Err(format!("file của kit/git/CI/script ({p}): owner duyệt"));
     }
     // Reads skip the held folders too: `.mcp.json`, `.claude/settings.local.json`, `.cursor/mcp.json` carry tokens.
-    if !write && parts.iter().any(|s| HOLD_READS.contains(&s.as_str()) || HOLD_PATHS.contains(&s.as_str())) {
+    if !write && check_parts.iter().any(|s| HOLD_READS.contains(&s.as_str()) || HOLD_PATHS.contains(&s.as_str())) {
         return Err(format!("file có thể chứa token ({p}): owner duyệt"));
     }
     Ok(())
@@ -383,6 +391,12 @@ pub(super) fn wait_for_owner(
             &format!("Owner từ chối {tool} ({what}) trên HQ. Đừng thử lại cách này: làm theo cách khác, hoặc ghi `8sync ccc auto note <card> \"owner không duyệt: …\"` rồi làm phần khác."),
         ),
         None => {
+            if tool == "AskUserQuestion" {
+                if let Some(critic) = super::delegate::decide(&input["tool_input"]) {
+                    log(dir, &json!({ "at": now(), "session": session, "tool": tool, "what": what, "allow": false, "why": "critic trả lời sau khi chờ owner" }));
+                    return Some(decision(false, &critic));
+                }
+            }
             log(dir, &json!({ "at": now(), "session": session, "tool": tool, "what": what, "allow": verdict.is_ok(), "why": verdict.as_ref().err() }));
             match verdict {
                 Ok(()) => decision(true, ""),
@@ -680,5 +694,38 @@ mod tests {
         let input = json!({ "session_id": "../../etc", "tool_name": "Bash", "tool_input": {}, "cwd": "/tmp" });
         assert!(wait_for_owner(&d, &input, 1, &mut now, &mut sleep).is_none());
         assert!(!d.exists());
+    }
+
+    #[test]
+    fn worktree_paths_pass_and_ask_user_question_goes_to_critic_after_silence() {
+        let r = repo("wt-ask");
+        let d = r.join("state");
+        assert_eq!(path_ok(&r, ".claude/worktrees/card-113", true), Ok(()));
+        assert_eq!(path_ok(&r, ".claude/worktrees/card-113/src/main.rs", true), Ok(()));
+        assert!(path_ok(&r, ".claude/settings.json", true).is_err());
+        assert!(path_ok(&r, ".claude/worktrees/card-113/.claude/settings.json", true).is_err());
+
+        let q = json!({
+            "questions": [{
+                "header": "UI",
+                "question": "Màu nút?",
+                "options": [{ "label": "Lime (Recommended)" }, { "label": "Blue" }]
+            }]
+        });
+        let (b, msg) = silent(&d, &req(&r, "AskUserQuestion", q));
+        assert_eq!(b, "deny");
+        assert!(msg.contains("subagent_type \"critic\"") && msg.contains("(Recommended)"), "{msg}");
+
+        let ship = json!({
+            "questions": [{
+                "header": "Ship",
+                "question": "Merge PR #91?",
+                "options": [{ "label": "Merge" }, { "label": "Hold" }]
+            }]
+        });
+        let (b2, msg2) = silent(&d, &req(&r, "AskUserQuestion", ship));
+        assert_eq!(b2, "deny");
+        assert!(msg2.contains("owner vắng") && !msg2.contains("subagent_type \"critic\""), "{msg2}");
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
     }
 }

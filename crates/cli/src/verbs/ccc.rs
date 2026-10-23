@@ -156,7 +156,7 @@ pub fn run(a: Args) -> Result<()> {
     }
     let env = Env::detect()?;
     let cwd = std::env::current_dir().context("no cwd")?;
-    let root = crate::verbs::here::detect_project_root(&cwd).unwrap_or(cwd);
+    let root = crate::verbs::here::repo_of(&cwd).or_else(|| crate::verbs::here::detect_project_root(&cwd)).unwrap_or(cwd);
     match verb {
         "kit" if rest.iter().any(|a| a == "--remove") => remove_kit_hooks(&env),
         "kit" if rest.first().map(String::as_str) == Some("status") => {
@@ -2067,7 +2067,7 @@ fn hook(rest: &[String]) -> Result<()> {
         // PermissionRequest: an away owner's room gets the owner's HQ click, or a deny that keeps it working.
         Some("permit") => dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| permit::hook(&input, &h)),
         Some("session-start") => {
-            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let home = std::env::var_os("HOME").map(PathBuf::from).or_else(dirs::home_dir);
             session_start_output(&input, home.as_deref())
         }
 

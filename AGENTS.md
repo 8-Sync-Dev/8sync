@@ -2,14 +2,13 @@
 
 
 <!-- 8sync:skills:begin -->
-## 🚨 STEP 0 — CODE INTELLIGENCE FIRST (codegraph + codebase-memory-mcp; bắt buộc)
+## 🚨 STEP 0 — CODE INTELLIGENCE FIRST (codegraph CLI trước)
 
 Mọi câu hỏi về code → dùng code-intelligence engine TRƯỚC grep/read (tiết kiệm ~99% token). Bạn (AI) **PHẢI**:
 
 1. **codegraph** (local index): `codegraph index .` 1 lần/session; rồi `codegraph query/explore/node/callers/callees/impact` thay cho `grep`/`rg`/`fd`/`Grep`/`Glob` và `Read` toàn file.
-2. **codebase-memory-mcp** (MCP, LUÔN có trong tool list — gọi đúng tên đăng ký): `mcp__codebase_memory_mcp_search_graph`, `_trace_path`, `_get_architecture`, `_get_code_snippet` — knowledge graph 158 ngôn ngữ, query sub-ms. Full catalog visible (`query_graph`, `detect_changes`, …); server khác/mới thêm → 1 lệnh `search_tool_bm25`.
-3. Tìm/hiểu/định vị code · impact · route→handler · dead code · architecture → ƯU TIÊN 2 engine trên. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit). Serena LUÔN có trong tool list: `mcp__serena_find_symbol` / `mcp__serena_find_referencing_symbols` / `mcp__serena_get_symbols_overview`.
-4. **Nén những gì BẠN phát lại:** báo cáo / subagent prompt / nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill vào context.
+2. Tìm/hiểu/định vị code · impact · route→handler · dead code · architecture → codegraph CLI trước. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit).
+3. **Nén những gì BẠN phát lại:** báo cáo / subagent prompt / nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill vào context.
 
 Lý do: 5 query cấu trúc ≈ 3.4k token vs ≈ 412k token grep từng file (−99%). Dump cả file / grep mù = đốt token = bug.
 
@@ -221,6 +220,11 @@ KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Kh
 - `tanstack-query` — `su-code/skills/tanstack-query/SKILL.md`
 - `tanstack-table` — `su-code/skills/tanstack-table/SKILL.md`
 - `tanstack-virtual` — `su-code/skills/tanstack-virtual/SKILL.md`
+- `taste-brutalist` — `su-code/skills/taste-brutalist/SKILL.md`
+- `taste-minimalist` — `su-code/skills/taste-minimalist/SKILL.md`
+- `taste-output` — `su-code/skills/taste-output/SKILL.md`
+- `taste-redesign` — `su-code/skills/taste-redesign/SKILL.md`
+- `taste-soft` — `su-code/skills/taste-soft/SKILL.md`
 - `tauri-ui-test` — `su-code/skills/tauri-ui-test/SKILL.md`
 - `tauri-v2` — `su-code/skills/tauri-v2/SKILL.md`
 - `tdd` — `su-code/skills/tdd/SKILL.md`
@@ -267,7 +271,7 @@ KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Kh
 
 ### Quy tắc bất biến
 
-- **Code-intelligence FIRST** (codegraph + codebase-memory-mcp) cho mọi câu hỏi explore code (Step 0). Bypass = bug.
+- **Code-intelligence FIRST** (codegraph CLI trước) cho mọi câu hỏi explore code (Step 0). Bypass = bug.
 - **Output > ~50 dòng → BẮT BUỘC `headroom_compress`** trước khi vào context — không dump thô.
 - Đọc body **CORE** (codegraph → karpathy → ponytail → 8sync-cli) TRƯỚC tool call đầu tiên. **SPECIALIST** (assp · impeccable · taste · image-routing) đọc body KHI task khớp — `impeccable` bắt buộc ngay khi có việc UI/design.
 - Skill **on-demand**: chỉ mở khi description khớp task hiện tại — đừng đọc thừa.

@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+"""Keep omp current on the 8sync VPS without breaking the router (omp-router-update.timer, every 30 min).
+
+1. Guard: an Anthropic subscription (OAuth) login in the vault stops the gateway (omp-gw guard).
+2. Pick the newest stable release of can1357/oh-my-pi published at least SOAK hours ago; a release
+   that failed here before (STATE/bad-version) is skipped. omp ships patch releases almost daily,
+   so a day's soak lets upstream pull a broken one before we take it.
+3. Download omp-linux-x64, check its sha256 against the release's asset digest and `--version`.
+4. Snapshot the binary (omp.prev) and every ~/.omp/agent/*.db with SQLite's online backup.
+5. Swap the binary, restart broker + gateway, then prove the router works: /healthz, /v1/models,
+   and one real chat completion through the gateway (healthz alone misses a broken wire format).
+6. On any failure: restore the binary, restore each database whose schema changed (a newer omp may
+   have migrated it), restart, and remember the version as bad.
+The router's omp (/opt/omp-router/bin) is apart from the interactive omp of `agent`, which updates itself.
+"""
+import fcntl
+import hashlib
+import json
+import os
+import pwd
+import shutil
+import sqlite3
+import subprocess
+import sys
+import time
+import urllib.request
+from datetime import datetime, timedelta, timezone
+
+USER = "omprouter"  # owns the router's vault; never runs interactive sessions
+PW = pwd.getpwnam(USER)
+BIN = "/opt/omp-router/bin/omp"  # root-owned dir: written by root only, no symlink games
+AGENT_DIR = os.path.join(PW.pw_dir, ".omp/agent")
+STATE = "/var/lib/omp-router"
+REPO = "can1357/oh-my-pi"
+ASSET = "omp-linux-x64"
+SOAK = float(os.environ.get("OMP_SOAK_HOURS", "24"))
+PROBE_MODEL = os.environ.get("OMP_PROBE_MODEL", "")
+GATEWAY = "http://127.0.0.1:4000"
+UNITS = ["omp-auth-broker.service", "omp-auth-gateway.service"]
+
+
+def log(msg):
+    print(f"omp-router-update: {msg}", flush=True)
+
+
+def run_agent(*args, timeout=120, env=None):
+    e = {"HOME": PW.pw_dir, "PATH": "/usr/local/bin:/usr/bin:/bin", **(env or {})}
+    return subprocess.run(["/usr/sbin/runuser", "-u", USER, "--", *args], capture_output=True, text=True,
+                          timeout=timeout, env=e)
+
+
+def install_atomic(src, dst):
+    """Copy src over dst through a temp file + rename, so a running dst keeps its inode."""
+    tmp = dst + ".tmp"
+    shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
+
+
+def version(path):
+    r = run_agent(path, "--version", timeout=60)
+    return r.stdout.strip().removeprefix("omp/") if r.returncode == 0 else None
+
+
+def vkey(v):
+    return tuple(int(x) if x.isdigit() else 0 for x in v.split("."))
+
+
+def pick_release():
+    req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/releases?per_page=30",
+                                 headers={"Accept": "application/vnd.github+json", "User-Agent": "omp-router-update"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        rels = json.load(r)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=SOAK)
+    ok = []
+    for rel in rels:
+        if rel.get("draft") or rel.get("prerelease") or not rel.get("published_at"):
+            continue
+        if datetime.fromisoformat(rel["published_at"].replace("Z", "+00:00")) > cutoff:
+            continue
+        asset = next((a for a in rel.get("assets", []) if a["name"] == ASSET), None)
+        if asset and (asset.get("digest") or "").startswith("sha256:"):
+            ok.append((vkey(rel["tag_name"].lstrip("v")), rel["tag_name"].lstrip("v"), asset))
+    return max(ok, default=None)
+
+
+def download(asset, dest):
+    h = hashlib.sha256()
+    req = urllib.request.Request(asset["browser_download_url"], headers={"User-Agent": "omp-router-update"})
+    with urllib.request.urlopen(req, timeout=600) as r, open(dest, "wb") as f:
+        while chunk := r.read(1 << 20):
+            h.update(chunk)
+            f.write(chunk)
+    want = asset["digest"].split(":", 1)[1]
+    if h.hexdigest() != want:
+        raise RuntimeError(f"sha256 mismatch: got {h.hexdigest()}, release says {want}")
+    os.chmod(dest, 0o755)
+
+
+def dbs():
+    return sorted(f for f in os.listdir(AGENT_DIR) if f.endswith(".db"))
+
+
+def schema(path):
+    c = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
+    try:
+        uv = c.execute("PRAGMA user_version").fetchone()[0]
+        sql = "\n".join(r[0] or "" for r in c.execute("SELECT sql FROM sqlite_master ORDER BY name"))
+    finally:
+        c.close()
+    return f"{uv}:{hashlib.sha256(sql.encode()).hexdigest()}"
+
+
+def backup(src_path, dst_path):
+    src = sqlite3.connect(src_path, timeout=30)
+    dst = sqlite3.connect(dst_path, timeout=30)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+
+
+def systemctl(*args):
+    return subprocess.run(["systemctl", *args], capture_output=True, text=True)
+
+
+def gateway_token():
+    r = run_agent(BIN, "auth-gateway", "token", "--json", timeout=60)
+    try:
+        return json.loads(r.stdout)["token"]
+    except (ValueError, KeyError):
+        return r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+
+
+def call(path, tok, body=None, timeout=60):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(GATEWAY + path, data=data, headers={
+        "Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.status, json.loads(r.read() or b"null")
+
+
+def healthy():
+    """True when the gateway answers, lists models and completes one real chat request."""
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(GATEWAY + "/healthz", timeout=5) as r:
+                if r.status == 200:
+                    break
+        except OSError:
+            pass
+        time.sleep(3)
+    else:
+        log("health: /healthz never answered")
+        return False
+    try:
+        tok = gateway_token()
+        _, models = call("/v1/models", tok)
+        ids = [m["id"] for m in models.get("data", []) if m.get("kind", "chat") == "chat"]
+        if not ids:
+            log("health: /v1/models lists no chat model")
+            return False
+        if PROBE_MODEL and PROBE_MODEL not in ids:
+            # Never fall back to another model: outside the GLM Coding Plan it bills the balance.
+            log(f"health: probe model {PROBE_MODEL} not served")
+            return False
+        model = PROBE_MODEL or ids[0]
+        _, out = call("/v1/chat/completions", tok, {
+            "model": model, "max_tokens": 256,  # thinking models spend part of it on reasoning
+            "messages": [{"role": "user", "content": "Reply with the single word: ok"}]}, timeout=120)
+        text = (out.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        if not text.strip():
+            log(f"health: empty completion from {model}: {json.dumps(out)[:300]}")
+            return False
+        log(f"health: ok ({len(ids)} chat models, {model} answered {text.strip()[:20]!r})")
+        return True
+    except Exception as e:  # noqa: BLE001 - any failure means unhealthy
+        log(f"health: {e}")
+        return False
+
+
+def guard():
+    r = subprocess.run(["/usr/local/bin/omp-gw", "guard"], capture_output=True, text=True)
+    if r.returncode == 2:  # a claude.ai subscription login is in the vault
+        systemctl("stop", "omp-auth-gateway.service")
+        log(f"gateway STOPPED: {r.stderr.strip()}")
+        return False
+    if r.returncode != 0:  # the guard itself broke: report it, never take the router down for it
+        log(f"guard could not run (exit {r.returncode}): {(r.stderr or r.stdout).strip()[:300]}")
+    return True
+
+
+def ensure_running():
+    """Bring a stopped or failed unit back (StartLimitBurst gives up after 10 crashes in 5 min)."""
+    for unit in UNITS:
+        if systemctl("is-active", "--quiet", unit).returncode != 0:
+            systemctl("reset-failed", unit)
+            systemctl("start", unit)
+            log(f"{unit} was down; started it")
+
+
+def main():
+    # 700: the database snapshots hold the vault's API keys
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    os.chmod(STATE, 0o700)
+    lock = open("/run/lock/omp-router-update.lock", "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    if not guard():
+        return 1
+    ensure_running()
+    cur = version(BIN)
+    pick = pick_release()
+    if not pick:
+        log(f"no stable release older than {SOAK:g} h; staying on {cur}")
+        return 0
+    _, tag, asset = pick
+    bad_file = os.path.join(STATE, "bad-version")
+    bad = open(bad_file).read().strip() if os.path.exists(bad_file) else ""
+    if cur and vkey(tag) <= vkey(cur):
+        log(f"up to date ({cur}; newest soaked release {tag})")
+        return 0
+    if tag == bad:
+        log(f"{tag} failed here before; staying on {cur}")
+        return 0
+
+    new = os.path.join(os.path.dirname(BIN), ".omp.new")  # root-owned dir: nobody can plant a link
+    download(asset, new)
+    if version(new) != tag:
+        os.unlink(new)
+        raise RuntimeError(f"downloaded binary does not report {tag}")
+
+    snap = os.path.join(STATE, "prev-db")
+    shutil.rmtree(snap, ignore_errors=True)
+    os.makedirs(snap)
+    before = {}
+    for name in dbs():
+        backup(os.path.join(AGENT_DIR, name), os.path.join(snap, name))
+        before[name] = schema(os.path.join(AGENT_DIR, name))
+    prev = BIN + ".prev"
+    install_atomic(BIN, prev)
+    os.replace(new, BIN)
+    systemctl("restart", *UNITS)
+    log(f"updated {cur} -> {tag}; checking")
+    if healthy():
+        if os.path.exists(bad_file):
+            os.unlink(bad_file)
+        return 0
+
+    log(f"{tag} unhealthy, rolling back to {cur}")
+    # Remember the bad version first: if a step below fails, the next run must not read the
+    # half-restored state as "up to date" and leave the router stopped.
+    with open(bad_file, "w") as f:
+        f.write(tag + "\n")
+    systemctl("stop", *UNITS)
+    try:
+        # Atomic: an `omp` started from the new binary meanwhile keeps its inode (no ETXTBSY).
+        install_atomic(prev, BIN)
+        for name, sig in before.items():
+            live = os.path.join(AGENT_DIR, name)
+            if os.path.exists(live) and schema(live) != sig:
+                backup(os.path.join(snap, name), live)
+                log(f"restored {name} (schema changed under {tag})")
+    finally:
+        systemctl("start", *UNITS)
+    if healthy():
+        log("rollback ok")
+    else:
+        # The old release fails too: the cause is outside omp (provider down, quota spent), so the
+        # new release is not to blame. Forget it and retry on the next run.
+        os.unlink(bad_file)
+        log("rollback UNHEALTHY as well: provider-side failure, will retry the release next run; "
+            "check `journalctl -u omp-auth-gateway`")
+    return 1
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as e:  # noqa: BLE001 - one line in the journal, non-zero exit
+        log(f"error: {e}")
+        sys.exit(1)

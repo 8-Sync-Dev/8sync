@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""omp-gw: admin CLI of the omp router on the 8sync VPS (https://vps.8syncdev.com/omp-router).
+
+The router is `omp auth-gateway serve` behind Caddy, reading credentials from `omp auth-broker
+serve`; both run as user `omprouter` with their own vault (setup.sh), apart from the interactive
+omp sessions of `agent`. Each client gets its own bearer token; only its SHA-256 is stored, in
+CLIENTS (the gateway re-reads that file every 10 s, so add/rm need no restart). Usage reads the
+broker and the gateway on loopback with their own admin tokens.
+
+  omp-gw status                         services, versions, keys, health
+  omp-gw login [provider]               add a login to the router's vault (API key prompt or picker)
+  omp-gw tui                            same through omp's TUI: type /login, pick, paste, exit
+  omp-gw accounts [--hours N]           every login per provider: health, own limits, requests served
+  omp-gw key add <name> [--models a,b]  new key, printed once (no --models: every served model)
+  omp-gw key rm <name>                  revoke (refused from the next request, within 10 s)
+  omp-gw key ls                         names and model limits, never tokens
+  omp-gw models                         models the gateway serves; with OMP_ROUTER_KEY set, the ones
+                                        that key may call (the key stays out of argv and sudo logs)
+  omp-gw usage [--hours N]              per-client usage from the broker + account limits
+  omp-gw guard                          exit 2 when an Anthropic subscription (OAuth) login is stored
+"""
+import fcntl
+import hashlib
+import json
+import os
+import pwd
+import secrets
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+USER = "omprouter"  # own user and vault: logins of interactive omp sessions never reach the router
+HOME = pwd.getpwnam(USER).pw_dir
+OMP = "/opt/omp-router/bin/omp"  # root-owned; omp-router-update replaces it
+AGENT_DIR = os.path.join(HOME, ".omp/agent")
+CLIENTS = os.path.join(HOME, ".omp/gw/clients.json")
+GATEWAY = "http://127.0.0.1:4000"
+BROKER = "http://127.0.0.1:8765"
+PUBLIC = "https://vps.8syncdev.com/omp-router/v1"
+NAME_OK = set("abcdefghijklmnopqrstuvwxyz0123456789-_.")
+
+
+def die(msg, code=1):
+    print(f"omp-gw: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def as_router():
+    """Re-run as USER (owner of the vault and CLIENTS); root uses runuser, others sudo."""
+    if pwd.getpwuid(os.getuid()).pw_name == USER:
+        return
+    me = os.path.realpath(sys.argv[0])
+    if os.geteuid() == 0:
+        os.execv("/usr/sbin/runuser", ["runuser", "-u", USER, "--", me, *sys.argv[1:]])
+    os.execvp("sudo", ["sudo", "-u", USER, "-H", me, *sys.argv[1:]])
+
+
+def omp(*args):
+    env = dict(os.environ, HOME=HOME)
+    r = subprocess.run([OMP, *args], capture_output=True, text=True, env=env, timeout=60)
+    if r.returncode != 0:
+        die(f"`omp {' '.join(args)}` failed: {(r.stderr or r.stdout).strip()[:400]}")
+    return r.stdout.strip()
+
+
+def token(kind):
+    out = omp(kind, "token", "--json")
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return out.splitlines()[-1].strip()
+    return data.get("token") or die(f"no token in `omp {kind} token --json`")
+
+
+def http(base, path, bearer, timeout=20):
+    req = urllib.request.Request(base + path, headers={"Authorization": f"Bearer {bearer}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, json.loads(r.read() or b"null")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode(errors="replace")[:300]
+    except (urllib.error.URLError, OSError) as e:
+        return 0, str(e)
+
+
+def load_clients():
+    try:
+        with open(CLIENTS) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def save_clients(data):
+    """Atomic replace: the gateway re-reads the file every 10 s and must never see half of it."""
+    d = os.path.dirname(CLIENTS)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".clients.")
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+        f.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, CLIENTS)
+
+
+def anthropic_oauth():
+    """Stored Anthropic logins that are subscription OAuth (not a Console API key)."""
+    db = os.path.join(AGENT_DIR, "agent.db")
+    if not os.path.exists(db):
+        return []
+    c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
+    try:
+        rows = c.execute(
+            "SELECT id, credential_type, json_extract(data, '$.type') FROM auth_credentials "
+            "WHERE provider LIKE 'anthropic%' AND disabled_cause IS NULL"
+        ).fetchall()
+    finally:
+        c.close()
+    return [r[0] for r in rows if "oauth" in f"{r[1]} {r[2]}".lower()]
+
+
+def cmd_guard(_):
+    bad = anthropic_oauth()
+    if bad:
+        die(
+            f"Anthropic subscription login stored (credential id {bad}). Serving it to other clients "
+            "breaks Anthropic's terms (anthropic-compliance §1.1, §1.3). Run `omp auth-broker logout "
+            "anthropic` and use a Console API key instead.",
+            2,
+        )
+    print("guard: ok (no Anthropic subscription login)")
+
+
+def cmd_key(args):
+    if not args:
+        die("usage: omp-gw key add <name> [--models a,b] | rm <name> | ls")
+    sub, rest = args[0], args[1:]
+    clients = load_clients()
+    if sub == "ls":
+        if not clients:
+            print("no keys yet: omp-gw key add <name>")
+        for name, entry in sorted(clients.items()):
+            models = entry.get("models")
+            print(f"{name:24} {'every served model' if models is None else ', '.join(models) or '(none)'}")
+        return
+    names = [a for i, a in enumerate(rest) if not a.startswith("-") and (i == 0 or rest[i - 1] != "--models")]
+    if len(names) != 1:
+        die(f"usage: omp-gw key {sub} <name>" + (" [--models a,b]" if sub == "add" else ""))
+    name = names[0].lower()
+    if set(name) - NAME_OK:
+        die("name: lowercase letters, digits, - _ . only")
+    if sub == "rm":
+        if clients.pop(name, None) is None:
+            die(f"no key named {name}")
+        save_clients(clients)
+        print(f"revoked {name}: refused from its next request (the gateway re-reads keys every 10 s)")
+        return
+    if sub != "add":
+        die(f"unknown: key {sub}")
+    if name in clients:
+        die(f"{name} exists; `omp-gw key rm {name}` first to rotate it")
+    entry = {}
+    if "--models" in rest:
+        i = rest.index("--models")
+        if i + 1 >= len(rest):
+            die("--models needs a comma list, e.g. zai/glm-5.3,openai-codex/*")
+        entry["models"] = [m.strip() for m in rest[i + 1].split(",") if m.strip()]
+        bad = [m for m in entry["models"] if "/" not in m]
+        if bad:
+            die(f"models must be provider/id or provider/*: {bad}")
+    tok = "ogw_" + secrets.token_urlsafe(32)
+    entry["tokenSha256"] = hashlib.sha256(tok.encode()).hexdigest()
+    clients[name] = entry
+    save_clients(clients)
+    print(f"key {name} (shown once, store it in your secrets manager):\n\n  {tok}\n")
+    print(f"base URL: {PUBLIC}\nmodels:   {', '.join(entry.get('models', [])) or 'every served model'}")
+    print("works within 10 s; guide: https://vps.8syncdev.com/omp-router/")
+
+
+def cmd_models(args):
+    bearer = os.environ.get("OMP_ROUTER_KEY") or token("auth-gateway")
+    st, body = http(GATEWAY, "/v1/models", bearer)
+    if st != 200:
+        die(f"/v1/models: {st} {body}")
+    for m in body.get("data", []):
+        print(f"{m['id']:40} {m.get('kind', 'chat'):9} ctx {m.get('context_length', '?')}")
+
+
+def cmd_usage(args):
+    hours = float(args[args.index("--hours") + 1]) if "--hours" in args else 24
+    since = int((time.time() - hours * 3600) * 1000)
+    st, body = http(BROKER, f"/v1/usage/clients?sinceMs={since}", token("auth-broker"))
+    print(f"== requests, last {hours:g} h, grouped by the x-omp-app / x-omp-hostname headers clients send")
+    if st != 200:
+        print(f"  broker /v1/usage/clients: {st} {body}")
+    else:
+        print(f"  {'app':16} {'host':20} {'provider':12} {'req':>6} {'in tok':>10} {'out tok':>10} {'USD':>9}")
+        for c in body.get("clients", []):
+            for p in c.get("providers", []):
+                print(f"  {p.get('app', '?'):16} {c.get('hostname', '?')[:20]:20} {p.get('provider', '?'):12} "
+                      f"{p.get('requests', 0):>6} {p.get('inputTokens', 0):>10} {p.get('outputTokens', 0):>10} "
+                      f"{p.get('costUsd', 0):>9.4f}")
+    st, body = http(GATEWAY, "/v1/usage", token("auth-gateway"))
+    print(f"== account limits (gateway /v1/usage; reset times {time.strftime('%Z')})")
+    if st != 200:
+        print(f"  {st} {body}")
+        return
+    # One report per stored credential; keys of the same account report the same limits, so identical
+    # rows are folded and counted.
+    rows = {}
+    for rep in body.get("reports", []):
+        for lim in rep.get("limits", []):
+            used = lim.get("amount", {}).get("usedFraction")
+            reset = lim.get("window", {}).get("resetsAt")
+            when = time.strftime("%m-%d %H:%M", time.localtime(reset / 1000)) if reset else "-"
+            row = (f"  {rep.get('provider', '?'):10} {lim.get('label', lim.get('id', '?'))[:34]:34} "
+                   f"{'' if used is None else f'{used * 100:.0f}% used':>10} {lim.get('status', ''):10} resets {when}")
+            rows[row] = rows.get(row, 0) + 1
+    for row, n in rows.items():
+        print(row + (f"  (x{n} credentials)" if n > 1 else ""))
+
+
+def cmd_status(_):
+    for unit in ("omp-auth-broker", "omp-auth-gateway", "omp-gw.socket", "omp-gw-proxy", "omp-router-update.timer"):
+        r = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True)
+        print(f"{unit:26} {r.stdout.strip()}")
+    print(f"{'omp':26} {omp('--version')}")
+    for base, path in ((BROKER, "/v1/healthz"), (GATEWAY, "/healthz")):
+        try:
+            with urllib.request.urlopen(base + path, timeout=5) as r:
+                print(f"{base + path:26} {r.status} {r.read().decode()[:80]}")
+        except Exception as e:  # noqa: BLE001 - report any failure as-is
+            print(f"{base + path:26} DOWN {e}")
+    print(f"{'keys':26} {len(load_clients())}  ({CLIENTS})")
+    bad = anthropic_oauth()
+    print(f"{'guard':26} {'VIOLATION ids ' + str(bad) if bad else 'ok'}")
+    print(f"{'public':26} {PUBLIC}")
+
+
+def limits_line(report):
+    out = []
+    for lim in (report or {}).get("limits", []):
+        used = lim.get("amount", {}).get("usedFraction")
+        reset = lim.get("window", {}).get("resetsAt")
+        when = time.strftime("%m-%d %H:%M", time.gmtime(reset / 1000)) if reset else "-"
+        pct = "?" if used is None else f"{used * 100:.0f}%"
+        out.append(f"{lim.get('label', lim.get('id', '?'))}: {pct} {lim.get('status', '')}, reset {when} UTC")
+    return out
+
+
+def requests_per_credential(hours):
+    """Count gateway requests per credential id from omp's own logs (`"auth-gateway request"` lines)."""
+    since = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - hours * 3600))
+    counts = {}
+    logs = os.path.join(HOME, ".omp/logs")
+    for name in os.listdir(logs) if os.path.isdir(logs) else []:
+        if not name.endswith(".log"):
+            continue
+        with open(os.path.join(logs, name), errors="replace") as f:
+            for line in f:
+                if '"auth-gateway request"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("timestamp", "") >= since:
+                    counts[rec.get("credentialId")] = counts.get(rec.get("credentialId"), 0) + 1
+    return counts
+
+
+def cmd_accounts(args):
+    """Every login (credential) in the vault: health, own limits and requests served, per provider."""
+    hours = float(args[args.index("--hours") + 1]) if "--hours" in args else 24
+    gt = token("auth-gateway")
+    st, body = http(GATEWAY, "/v1/credentials/check", gt, timeout=90)
+    if st != 200:
+        die(f"/v1/credentials/check: {st} {body}")
+    st_m, models = http(GATEWAY, "/v1/models", gt)
+    served = {}
+    for m in (models.get("data", []) if st_m == 200 else []):
+        served[m["id"].split("/", 1)[0]] = served.get(m["id"].split("/", 1)[0], 0) + 1
+    served_by = requests_per_credential(hours)
+    by_provider = {}
+    for c in body.get("credentials", []):
+        by_provider.setdefault(c.get("provider", "?"), []).append(c)
+    for provider, creds in sorted(by_provider.items()):
+        print(f"== {provider}: {len(creds)} login(s), {served.get(provider, 0)} model(s) served")
+        seen = {}
+        for c in creds:
+            lines = limits_line(c.get("report"))
+            sig = "\n".join(lines)
+            state = "ok" if c.get("ok") else f"FAIL {c.get('error') or c.get('reason') or ''}".strip()
+            n = served_by.get(c.get("id"), 0)
+            print(f"  #{c.get('id')} {c.get('type', '?')} {state}, {n} request(s) in the last {hours:g} h")
+            if sig and sig in seen:
+                print(f"     same limits as #{seen[sig]}: likely the same provider account")
+            else:
+                for line in lines:
+                    print(f"     {line}")
+                seen.setdefault(sig, c.get("id"))
+    st, body = http(BROKER, "/v1/credentials/disabled", token("auth-broker"))
+    disabled = body.get("disabled", []) if st == 200 and isinstance(body, dict) else []
+    print(f"== disabled logins: {len(disabled)}")
+    for c in disabled:
+        print(f"  #{c.get('id')} {c.get('provider')} {c.get('disabledCause') or c.get('disabled_cause') or ''}")
+    print("Several logins of one provider: the gateway picks one per request by usage and moves on when\n"
+          "one hits its limit or fails auth (omp docs: usage-limit blocking, auth-recovery rotation).")
+
+
+def cmd_login(args):
+    """Add a login to the router's vault. The gateway is stopped meanwhile, so a login the guard
+    refuses (claude.ai subscription) is never served, not even for the 10 s the gateway takes to
+    see a new credential; it starts again only when the guard passes."""
+    if os.geteuid() != 0:
+        os.execvp("sudo", ["sudo", os.path.realpath(sys.argv[0]), *sys.argv[1:]])
+    provider = args[1].lower() if args[0] == "login" and len(args) > 1 else None
+    if provider and provider.startswith("anthropic"):
+        die("claude.ai subscription logins are never served (anthropic-compliance §1.1, §1.3); "
+            "Claude goes through an org Console API key")
+    omp_cmd = ["auth-broker", "login", *([provider] if provider else [])] if args[0] == "login" else []
+    # Same lock as omp-router-update, so the timer cannot restart the gateway mid-login.
+    lock = open("/run/lock/omp-router-update.lock", "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    subprocess.run(["systemctl", "stop", "omp-auth-gateway.service"], check=True)
+    try:
+        subprocess.run(["/usr/sbin/runuser", "-u", USER, "--", "env", f"HOME={HOME}", "PATH=/usr/bin:/bin",
+                        OMP, *omp_cmd])
+    finally:
+        g = subprocess.run(["/usr/sbin/runuser", "-u", USER, "--", os.path.realpath(sys.argv[0]), "guard"])
+        if g.returncode == 0:
+            subprocess.run(["systemctl", "restart", "omp-auth-broker.service", "omp-auth-gateway.service"])
+            print("router restarted with the new login; check it: omp-gw accounts")
+        else:
+            print("omp-gw: gateway left STOPPED until that login is removed:\n"
+                  f"  sudo -u {USER} -H {OMP} auth-broker logout anthropic && sudo systemctl start omp-auth-gateway",
+                  file=sys.stderr)
+            sys.exit(2)
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    if args[0] in ("login", "tui"):
+        return cmd_login(args)  # needs root (systemctl), runs omp itself as USER
+    if args[0] == "models" and os.environ.get("OMP_ROUTER_KEY"):
+        return cmd_models(args[1:])  # a client key needs no vault access
+    as_router()
+    cmds = {"status": cmd_status, "key": cmd_key, "models": cmd_models, "usage": cmd_usage,
+            "accounts": cmd_accounts, "guard": cmd_guard}
+    if args[0] not in cmds:
+        die(f"unknown command {args[0]}; omp-gw --help")
+    cmds[args[0]](args[1:])
+
+
+if __name__ == "__main__":
+    main()

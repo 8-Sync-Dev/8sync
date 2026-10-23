@@ -499,8 +499,9 @@ pub(super) fn iso_secs(s: &str) -> Option<u64> {
     u64::try_from(days * 86_400 + h * 3600 + mi * 60 + se).ok()
 }
 
-/// Time of the last prompt a human typed in a transcript (cross-session and teammate messages
-/// do not count), from its last 1 MiB.
+/// Time of the last prompt a human typed in a transcript (cross-session, teammate, and automated
+/// loop/goal messages do not count), from its last 1 MiB. Falls back to the earliest timestamp in
+/// the window for background rooms started by `auto up` so they count as owner-away after `after_s`.
 pub(super) fn last_human_ts(transcript: &Path) -> Option<u64> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(transcript).ok()?;
@@ -509,7 +510,22 @@ pub(super) fn last_human_ts(transcript: &Path) -> Option<u64> {
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).ok()?;
     let text = String::from_utf8_lossy(&buf);
-    text.lines().rev().filter(|l| super::gate::human_text(l).is_some()).find_map(|l| serde_json::from_str::<Value>(l).ok()?["timestamp"].as_str().and_then(iso_secs))
+    let is_auto = |t: &str| {
+        let t = t.trim_start();
+        t.starts_with("8sync-auto-loop ")
+            || t.starts_with("8sync auto --loop:")
+            || t.starts_with("8sync auto --now:")
+            || t.starts_with("8sync auto (")
+            || t.starts_with("[8sync:")
+            || t.starts_with("[Phòng ")
+            || (t.starts_with("/goal Phòng `") && t.contains("8sync ccc auto"))
+    };
+    let ts_of = |l: &str| serde_json::from_str::<Value>(l).ok()?["timestamp"].as_str().and_then(iso_secs);
+    text.lines()
+        .rev()
+        .filter(|l| super::gate::human_text(l).is_some_and(|t| !is_auto(&t)))
+        .find_map(ts_of)
+        .or_else(|| text.lines().find_map(ts_of))
 }
 
 /// The lead's transcript: `projects/*/<lead session id>.jsonl`, the id starting with the team's 8 chars.

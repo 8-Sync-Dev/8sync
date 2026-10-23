@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+- VPS (2026-10-23, apart from the ccc work): omp router live at `https://vps.8syncdev.com/omp-router` (omp 18.12.6, `scripts/vps/omp-router/`, uncommitted in the main tree). No client keys yet: the owner mints them with `omp-gw key add <name>`. Runner `ovh-sgp-1` and `/term` kept. Re-deploy: `bash scripts/vps/omp-router/install.sh` from Git Bash.
 v0.108.1 (branch `fix/auto-flow-1081`, worktree `C:/Users/Projects/su-code-v1081`). v0.108.0 is released (PR #128, tag on 0e6d099) and installed, and HQ restarted on it. The main tree is on `main` with another session's uncommitted edits (backup `~/.local/state/8sync/backup/foreign-edits-2026-10-20.patch`).
 - Live UAT of v0.108.0 (`local://ags-after.md`, ai-game-studio relaunched 01:23 VN, 33 min): 156 calls/h vs 1,062; wrong-role returns 1 vs 10; conflict returns 0 vs 10. Merges wait on the owner's one Ship answer (lead asked at 01:33). v0.108.1 fixes the 5 gaps the UAT showed: unknown role tags, UNKNOWN mergeable, Ship question in the same turn, wait default from `BASH_MAX_TIMEOUT_MS`, `ccc risk` fetch + merge-base. Tests: cargo bin 676, ccc-core 32+3, vitest 695 + 3 known Windows failures.
 - Diagnosis (`local://ags-diagnosis.md`, ai-game-studio, 71 min after 0.105.0): 14 approvals and 2 merges; 25/59 PRs conflicting; 10/33 returns from role mismatch; 1,068 calls/h; CI dead on GitHub billing for 12 h.
@@ -45,6 +46,20 @@ v0.108.1 (branch `fix/auto-flow-1081`, worktree `C:/Users/Projects/su-code-v1081
   - `cloudgo-cc`;
   - `claude-api-8sync` unverified;
   - an active `google-antigravity` OAuth credential in omp.
+
+## Owner asks — open checklist (2026-10-21 late)
+- [x] Mọi tab theo dự án sidebar (v0.110.30)
+- [x] RAM quá ngưỡng: trim phòng rảnh + attribution (v0.110.30)
+- [x] `--pr` chéo repo; nhắn 2 lead merge zus-backend (v0.110.30)
+- [x] Vòng auto-ship bỏ qua card chờ owner (v0.110.30)
+- [x] Tự xoá worktree rảnh đã merge/đóng (v0.110.30)
+- [x] Ảnh chat thumbnail + lightbox; composer mobile nổi (v0.110.30)
+- [x] "Dừng team" không work: rời auto trước + xác minh stop (v0.110.31)
+- [ ] Tab đồ thị tri thức + xuất/nhập JSON (agent chết vì 429; worktree đã dọn, làm lại)
+- [ ] Bảng hiệu quả agent chuẩn (token/cost/task/độ khó, công thức) + gộp nút chế độ 1 chỗ + ship-fast loop vĩnh viễn
+- [ ] KPI 1 giờ/release đã ghi DECISIONS.md cả 2 dự án; theo dõi lead platform tách việc
+- [ ] Chờ owner: repo công khai hay private; xoay token HQ
+- [ ] Tài khoản Anthropic 429 (~16h) — xem usage; agent fan-out chỉ khi hết
 
 ## Next
 - Upstream Windows bug: hq ingest stores NTFS inode > 2^53 in `ingest_state.offset` → RangeError (fix: bigint stat + `setReadBigInts`).

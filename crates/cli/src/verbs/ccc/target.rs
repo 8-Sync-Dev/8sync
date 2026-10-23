@@ -769,8 +769,11 @@ fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option
             t.pr = Some(pr);
         }
         let from = std::mem::replace(&mut t.lane, to.to_string());
+        if from == "blocked" && t.bounces >= REBUILD_CAP {
+            t.bounces = 0;
+        }
         let mut line = format!("{from} → {to}");
-        if to == "ready" && matches!(from.as_str(), "qa" | "review" | "approved") {
+        if to == "ready" && matches!(from.as_str(), "qa" | "review") {
             t.bounces += 1;
             if t.bounces > REBUILD_CAP {
                 t.lane = "blocked".into();
@@ -782,7 +785,7 @@ fn move_with(home: &Path, root: &Path, id: u64, to: &str, m: &Move, room: Option
         }
         t.note(room, &line, now);
         t.claim = if to == "building" {
-            room.map(|r| Claim { room: r.to_string(), at: now })
+            room.map(|r| Claim { room: r.to_string(), at: now }).or_else(|| t.claim.take())
         } else {
             None
         };

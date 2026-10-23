@@ -59,11 +59,15 @@ describe("scanProject", () => {
     put(root, "docs/screenshots/home.webp", PNG, 1_000_000);
     put(root, "src/not-a-preview-folder.png");
     put(root, ".claude/worktrees/card-9/qa/evidence/login.png", PNG, 4_000_000);
+    // Checked-out copies of root or another card's image inside card-9 must not duplicate under #9.
+    put(root, ".claude/worktrees/card-9/qa/evidence/card-7-home.png", PNG, 4_500_000);
+    put(root, ".claude/worktrees/card-9/docs/screenshots/home.webp", PNG, 4_500_000);
+    put(root, ".claude/worktrees/card-9/qa/evidence/card-5-old.png", PNG, 4_500_000);
     fs.writeFileSync(path.join(root, "qa/evidence/huge.png"), "");
     fs.truncateSync(path.join(root, "qa/evidence/huge.png"), PREVIEW_MAX_BYTES + 1);
   });
 
-  it("lists images in the preview folders only, depth ≤ 3, ≤ 15 MB, newest first, with card and worktree", () => {
+  it("lists images in the preview folders only, depth ≤ 3, ≤ 15 MB, newest first, with card and worktree, without duplicating checked-out files", () => {
     const items = scanProject({ root, name: "app" });
     expect(items.map((i) => i.rel)).toEqual([
       ".claude/worktrees/card-9/qa/evidence/login.png",

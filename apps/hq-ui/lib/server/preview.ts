@@ -81,13 +81,26 @@ function walk(dir: string, realBase: string, depth: number, budget: { n: number 
   }
 }
 
-/** Every base a project's images live under: the root, then each `.claude/worktrees/*`. */
+/** Every base a project's images live under: the root, then each `.claude/worktrees/*` (newest first). */
 function bases(root: string): { dir: string; worktree: string | null }[] {
   const out: { dir: string; worktree: string | null }[] = [{ dir: root, worktree: null }];
   try {
     const wt = path.join(root, ".claude", "worktrees");
-    for (const e of fs.readdirSync(wt, { withFileTypes: true }).slice(0, WORKTREES_MAX)) {
-      if (e.isDirectory()) out.push({ dir: path.join(wt, e.name), worktree: e.name });
+    const dirs: { dir: string; worktree: string; mtime: number }[] = [];
+    for (const e of fs.readdirSync(wt, { withFileTypes: true })) {
+      if (!e.isDirectory()) continue;
+      const dir = path.join(wt, e.name);
+      let mtime = 0;
+      try {
+        mtime = fs.statSync(dir).mtimeMs;
+      } catch {
+        /* gone */
+      }
+      dirs.push({ dir, worktree: e.name, mtime });
+    }
+    dirs.sort((a, b) => b.mtime - a.mtime);
+    for (const d of dirs.slice(0, WORKTREES_MAX)) {
+      out.push({ dir: d.dir, worktree: d.worktree });
     }
   } catch {
     /* no worktrees */
@@ -100,6 +113,7 @@ export function scanProject(p: { root: string; name: string }): PreviewItem[] {
   const realRoot = realOrNull(p.root);
   if (!realRoot) return [];
   const items: PreviewItem[] = [];
+  const seenSubRel = new Map<string, number>();
   for (const b of bases(p.root)) {
     const realBase = realOrNull(b.dir);
     // A worktree folder that is itself a link out of the repo is skipped whole.
@@ -113,10 +127,20 @@ export function scanProject(p: { root: string; name: string }): PreviewItem[] {
     }
     if (!found.length) continue;
     const branch = projectOf(b.dir)?.branch ?? null;
+    const wtCard = b.worktree ? cardOf(b.worktree) : null;
+    const hasGit = b.worktree !== null && fs.existsSync(path.join(b.dir, ".git"));
     for (const f of found) {
       // The real file must sit inside the root too (a linked folder above passed, a hard path never leaves).
       const real = realOrNull(f.abs);
       if (!real || !inside(real, realBase)) continue;
+      const subRel = path.relative(b.dir, f.abs).split(path.sep).join("/");
+      if (b.worktree !== null) {
+        if (seenSubRel.get(subRel) === f.st.size) continue;
+        const fileCard = cardOf(subRel);
+        if (wtCard !== null && fileCard !== null && fileCard !== wtCard) continue;
+        if (hasGit && wtCard !== null && fileCard !== wtCard) continue;
+      }
+      seenSubRel.set(subRel, f.st.size);
       const rel = path.relative(p.root, f.abs).split(path.sep).join("/");
       items.push({
         id: previewId(f.abs),
