@@ -3,6 +3,15 @@
 // by canonical root; here we only pick a project's sprint across path spellings.
 import { rootKey } from "./preview";
 
+/** The sprint lengths the owner may pick (owner 2026-10-23: "chỉnh time được, chọn được, mặc định là 30p"). */
+export const SHIP_HOURS = [0.5, 1, 2, 4] as const;
+export type ShipHours = (typeof SHIP_HOURS)[number];
+/** The default sprint, also the one Sấm Sét starts with its rooms. */
+export const DEFAULT_SHIP_HOURS: ShipHours = 0.5;
+export const isShipHours = (v: unknown): v is ShipHours => (SHIP_HOURS as readonly unknown[]).includes(v);
+/** "30 phút", "1 giờ", "2 giờ", "4 giờ". */
+export const hoursLabel = (h: ShipHours): string => (h < 1 ? `${h * 60} phút` : `${h} giờ`);
+
 export type Sprint = { root: string; until: number; since: number | null };
 
 type Raw = Record<string, { until?: unknown; since?: unknown }>;

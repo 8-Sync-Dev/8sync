@@ -9,7 +9,7 @@ import { BOOST_ONLY, BOOST_TEAM, DEFAULT_TEAM, FULL_TEAM, teamText } from "@/lib
 import { cn } from "@/lib/utils";
 import { ShipLoopChip } from "./ship-loop-chip";
 import { makeApi } from "./use-hq";
-import { sprintFor, type Sprint } from "@/lib/ship-fast";
+import { DEFAULT_SHIP_HOURS, hoursLabel, SHIP_HOURS, sprintFor, type ShipHours, type Sprint } from "@/lib/ship-fast";
 
 type Action = "up" | "full" | "boost" | "unboost" | "clean" | "down" | "ship-fast" | "ship-fast-off" | "ship-ask";
 type Result = { ok: boolean; output: string; error: string | null };
@@ -51,7 +51,7 @@ const WAITING = (action: Action, name: string) =>
 const FAILED = (action: Action, name: string) => action === "down" ? `Không dừng được team ${name}` : action === "unboost" ? `Không tắt được Sấm Sét của ${name}` : action === "ship-fast" ? `Không bật được Ship tốc độ cao cho ${name}` : action === "ship-fast-off" ? `Không tắt được Ship tốc độ cao của ${name}` : `Không mở được team ${name}`;
 
 /** What the confirm dialog of Sấm Sét says, in one sentence (also the button's tooltip). */
-const BOOST_COST = `Sấm Sét = tăng nhân lực + Ship tốc độ cao 2 giờ (cả team land card gần xong trước). ${teamText(BOOST_TEAM)} chạy song song: thêm ${BOOST_ONLY.join(", ")} vào team thường; đội omp mặc định, lease 2 giờ.`;
+const BOOST_COST = `Sấm Sét = tăng nhân lực + Ship tốc độ cao ${hoursLabel(DEFAULT_SHIP_HOURS)} (cả team land card gần xong trước). ${teamText(BOOST_TEAM)} chạy song song: thêm ${BOOST_ONLY.join(", ")} vào team thường; đội Claude Code mặc định, lease 2 giờ.`;
 /** What "Tắt Sấm Sét" does (`auto down --only <BOOST_ONLY>`, lib/team-size.ts). */
 const UNBOOST_INFO = `Tắt Sấm Sét: về team ${teamText(DEFAULT_TEAM)}; dừng ${BOOST_ONLY.join(", ")}; card các phòng đó đang giữ trả về cột (building → ready, qa/review ở lại cột, bỏ claim). Lease giữ nguyên: hết giờ Sấm Sét thì cả team dừng như cũ (muốn chạy tiếp: Chạy liên tục). Gia hạn 2 giờ: giữ ${BOOST_TEAM.length} phòng thêm 2 giờ.`;
 
@@ -69,11 +69,11 @@ export function boostOn(rooms: { name: string; label: string; status: string }[]
 /** POST /api/team and say what happened; `after` refreshes the office and the board. */
 function useTeam(token: string, after?: () => void) {
   const [busy, setBusy] = useState<Action | null>(null);
-  async function act(root: string, name: string, action: Action) {
+  async function act(root: string, name: string, action: Action, hours?: ShipHours) {
     setBusy(action);
     const wait = toast.loading(WAITING(action, name));
     try {
-      const r = await makeApi(token)<Result>("/api/team", { method: "POST", body: { root, action } });
+      const r = await makeApi(token)<Result>("/api/team", { method: "POST", body: { root, action, ...(hours != null && { hours }) } });
       // Boost: the CLI's own summary (its last line); the other actions show the whole report.
       const description = action === "boost" ? r.output.split("\n").at(-1) : <pre className="mt-1 max-h-48 overflow-auto text-[11px] leading-snug whitespace-pre-wrap">{r.output}</pre>;
       toast.success(`${DONE[action]}: ${name}`, { id: wait, description });
@@ -159,10 +159,24 @@ export function BoostButton({ root, name, token, active, after, className }: { r
   );
 }
 
-/** "🚀 Ship tốc độ cao" (owner 2026-10-21): the team lands work nearest-done first for 2 h. */
+/** The sprint lengths of Ship tốc độ cao, one picked (30 phút unless the owner picks another). */
+export function ShipFastHours({ hours, onPick }: { hours: ShipHours; onPick: (h: ShipHours) => void }) {
+  return (
+    <div role="radiogroup" aria-label="Thời gian Ship tốc độ cao" className="flex flex-wrap gap-2">
+      {SHIP_HOURS.map((h) => (
+        <Button key={h} type="button" size="sm" role="radio" aria-checked={h === hours} variant={h === hours ? "default" : "outline"} onClick={() => onPick(h)}>
+          {hoursLabel(h)}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/** "🚀 Ship tốc độ cao" (owner 2026-10-21): the team lands work nearest-done first for the picked time (30 phút by default). */
 export function ShipFastButton({ root, name, token, after, className }: { root: string; name: string; token: string; after?: () => void; className?: string }) {
   const { busy, act } = useTeam(token, after);
   const [ask, setAsk] = useState(false);
+  const [hours, setHours] = useState<ShipHours>(DEFAULT_SHIP_HOURS);
   const [sprint, setSprint] = useState<Sprint | null>(null);
   const [now, setNow] = useState(0);
   useEffect(() => {
@@ -190,8 +204,11 @@ export function ShipFastButton({ root, name, token, after, className }: { root: 
         variant="outline"
         disabled={busy != null}
         aria-busy={busy != null}
-        onClick={() => setAsk(true)}
-        title="Cả team dồn land card gần xong trước: review/qa dọn cột trước, builder không lấy card mới khi ≥ 3 card chờ qa/review/approved, lead hỏi Ship một chạm khi card approved. Không bỏ cổng nào (auto ship-fast on --hours 2)"
+        onClick={() => {
+          setHours(DEFAULT_SHIP_HOURS);
+          setAsk(true);
+        }}
+        title={`Cả team dồn land card gần xong trước: review/qa dọn cột trước, builder không lấy card mới khi ≥ 3 card chờ qa/review/approved, lead hỏi Ship một chạm khi card approved. Không bỏ cổng nào (auto ship-fast on --hours ${DEFAULT_SHIP_HOURS}, chọn được 30 phút tới 4 giờ)`}
         className={cn("font-semibold", left != null && "border-brand-ink/40 bg-brand/25 text-brand-ink hover:bg-brand/40 hover:text-brand-ink dark:border-brand/40 dark:bg-brand/15 dark:text-brand", className)}
       >
         <RocketIcon aria-hidden className={cn(busy != null && "motion-safe:animate-pulse")} />
@@ -202,9 +219,10 @@ export function ShipFastButton({ root, name, token, after, className }: { root: 
           <DialogHeader>
             <DialogTitle>Bật Ship tốc độ cao cho {name}?</DialogTitle>
             <DialogDescription>
-              2 giờ: cả team land card gần xong trước (approved → review → qa → building); review/qa dọn cột mình trước; builder không lấy card tính năng mới khi ≥ 3 card chờ qa/review/approved; PR nhỏ, chạy lệnh kiểm + test trước khi push, CI xanh mới merge. Card approved: lead hỏi Ship để anh bấm — anh mới được merge/release. Hết giờ hoặc hết card thì 8sync báo anh.
+              Trong thời gian anh chọn: cả team land card gần xong trước (approved → review → qa → building); review/qa dọn cột mình trước; builder không lấy card tính năng mới khi ≥ 3 card chờ qa/review/approved; PR nhỏ, chạy lệnh kiểm + test trước khi push, CI xanh mới merge. Card approved: lead hỏi Ship để anh bấm — anh mới được merge/release. Hết giờ hoặc hết card thì 8sync báo anh.
             </DialogDescription>
           </DialogHeader>
+          <ShipFastHours hours={hours} onPick={setHours} />
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setAsk(false)}>
               Thôi
@@ -219,10 +237,10 @@ export function ShipFastButton({ root, name, token, after, className }: { root: 
               onClick={() => {
                 setAsk(false);
                 setNow(Math.round(Date.now() / 1000));
-                void act(root, name, "ship-fast");
+                void act(root, name, "ship-fast", hours);
               }}
             >
-              <RocketIcon aria-hidden /> Bật 2 giờ
+              <RocketIcon aria-hidden /> Bật {hoursLabel(hours)}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -262,7 +280,7 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
         <>
       <ShipFastButton root={root} name={name} token={token} after={after} />
       {!boost && <BoostButton root={root} name={name} token={token} active={false} after={after} />}
-      <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(root, name, "up")} title={`Mở phòng còn thiếu, nối lại phòng đã dừng: team ${teamText(DEFAULT_TEAM)}, đội omp mặc định (8sync ccc auto up)`}>
+      <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(root, name, "up")} title={`Mở phòng còn thiếu, nối lại phòng đã dừng: team ${teamText(DEFAULT_TEAM)}, đội Claude Code mặc định (8sync ccc auto up)`}>
         <PlayIcon aria-hidden /> Mở lại team
       </Button>
       <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("clean")} title="Xoá session nền rác, khởi động lại phòng đang chạy bản cũ, rồi mở team (auto up --clear-ss)">
@@ -311,7 +329,7 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
 }
 
 /**
- * One project with no room running: "Mở team" (`auto up`, the 3-room omp team, primary) then
+ * One project with no room running: "Mở team" (`auto up`, the 3-room Claude Code team, primary) then
  * "⚡ Sấm Sét" (`auto up --roles boost`, 5 rooms); `full` adds "Team đầy đủ", `children` follow as
  * secondary actions. The empty office puts these inside its card (owner 2026-10-23: a block below the
  * card sat under the fold behind the composer).
@@ -320,7 +338,7 @@ export function TeamStartButtons({ path, name, token, after, full = false, child
   const { busy, act } = useTeam(token, after);
   return (
     <div className="flex flex-wrap items-center justify-center gap-2">
-      <Button type="button" size="sm" disabled={busy != null} onClick={() => void act(path, name, "up")} title="8sync ccc auto up: đội omp mặc định">
+      <Button type="button" size="sm" disabled={busy != null} onClick={() => void act(path, name, "up")} title="8sync ccc auto up: đội Claude Code mặc định (đội omp: bật công tắc Đội omp)">
         <PlayIcon aria-hidden /> Mở team ({DEFAULT_TEAM.length} phòng: {DEFAULT_TEAM.join(", ")})
       </Button>
       <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(path, name, "boost")} title={`${BOOST_COST} (auto up --roles boost --hours 2)`} className="font-semibold">

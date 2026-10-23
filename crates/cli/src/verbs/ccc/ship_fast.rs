@@ -18,8 +18,9 @@ use std::path::{Path, PathBuf};
 
 use super::{auto, idle, target};
 
-/// Default and maximum sprint length (hours). `--hours 0.5..4`.
-pub(super) const DEFAULT_HOURS: f64 = 2.0;
+/// Default and maximum sprint length (hours). `--hours 0.5..4`; 30 minutes by default (owner
+/// 2026-10-23: "chỉnh time được, chọn được, mặc định là 30p" — HQ offers 30 min, 1, 2, 4 h).
+pub(super) const DEFAULT_HOURS: f64 = 0.5;
 const MAX_HOURS: f64 = 4.0;
 /// While this many cards wait in qa/review/approved, builders take no fresh feature card.
 pub(super) const HOLD_AT: usize = 3;
@@ -352,7 +353,8 @@ mod tests {
     #[test]
     fn tick_ends_it_when_the_team_is_done_or_time_is_up_and_alerts_once() {
         let (h, root) = tmp("tick");
-        run(&["on".into()], &h, &root, true, &vec![], 1000).unwrap();
+        // The default sprint is 30 minutes; this one runs 2 h so the cards below fit inside it.
+        run(&["on".into(), "--hours".into(), "2".into()], &h, &root, true, &vec![], 1000).unwrap();
         assert!(tick(&h, &root, 2000).is_none(), "nothing to do yet but time remains: continues");
         let a = card(&h, &root, "fix", "ready", 1200);
         target::move_to(&h, &root, a, "building", &target::Move::default(), None, 1200).unwrap();
@@ -369,6 +371,7 @@ mod tests {
         assert!(get(&h, &root).is_none(), "ended");
         assert!(tick(&h, &root, 4000).is_none(), "no second alert");
         run(&["on".into()], &h, &root, true, &vec![], 5000).unwrap();
+        assert_eq!(get(&h, &root).unwrap()["until"].as_u64(), Some(5000 + 30 * 60), "default sprint: 30 minutes");
         let b = card(&h, &root, "long", "ready", 5100);
         target::move_to(&h, &root, b, "building", &target::Move::default(), None, 5100).unwrap();
         assert!(tick(&h, &root, 5000 + 3 * 3600).unwrap().contains("hết giờ"), "expired with work left");

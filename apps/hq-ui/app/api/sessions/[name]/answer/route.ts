@@ -1,3 +1,4 @@
+import { termGate } from "@/lib/interactive";
 import { answerRoom, keysFit, type Expect } from "@/lib/server/answer";
 import { readAsk } from "@/lib/server/ask";
 import { bad, json, open, readBody } from "@/lib/server/http";
@@ -27,6 +28,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/sessions/[name]
   if (keys.length && !text) return bad("cần text: đúng nội dung hộp thoại anh đã xem", 422);
   const s = (await mergedSessions(o.db)).find((x) => x.session_id === name && !x.tmux && x.status !== "ended");
   if (!s) return bad("phòng này không chạy nền (hoặc đã dừng)", 404);
+  const gate = termGate(s);
+  if (!gate.ok) return bad(gate.error, gate.status);
   let expect: Expect = { kind: "permission" };
   if (kind === "question") {
     const ask = readAsk(name, s.cwd);

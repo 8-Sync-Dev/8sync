@@ -22,9 +22,13 @@ describe("guide", () => {
     expect(text).not.toContain("60 giây");
     expect(text).not.toContain("tạo nhân viên");
   });
-  it("names the team sizes as they are: 3 rooms by default on omp, 5 for Sấm Sét, no 13-room team", () => {
-    for (const s of ["3 phòng (lead, dev, qa)", "5 phòng (lead, dev, dev2, qa, review)", "Đội mặc định là omp", "Tắt Sấm Sét dừng dev2, review"]) expect(text).toContain(s);
-    expect(text).not.toMatch(/13 phòng|7 builder/);
+  it("names the team sizes as they are: 3 Claude Code rooms by default, omp only by its switch, 5 for Sấm Sét, no 13-room team", () => {
+    for (const s of ["3 phòng (lead, dev, qa)", "5 phòng (lead, dev, dev2, qa, review)", "Đội mặc định là Claude Code", "chỉ chạy khi anh bật công tắc Đội omp", "Tắt Sấm Sét dừng dev2, review"]) expect(text).toContain(s);
+    expect(text).not.toMatch(/13 phòng|7 builder|Đội mặc định là omp/);
+  });
+  it("Ship tốc độ cao: 30 minutes by default, picked from 30 phút to 4 giờ; Sấm Sét starts the 30-minute sprint", () => {
+    for (const s of ["chọn 30 phút / 1 giờ / 2 giờ / 4 giờ (mặc định 30 phút)", "kèm Ship tốc độ cao 30 phút, lease 2 giờ"]) expect(text).toContain(s);
+    expect(text).not.toContain("2 giờ cả team");
   });
   it("has the 5-status legend and tips", () => {
     expect(GUIDE_LEGEND.map((l) => l.label)).toEqual(["Đang làm", "Cần bạn", "Chờ review", "Xong", "Rảnh"]);

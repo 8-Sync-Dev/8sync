@@ -228,7 +228,7 @@ function StopButton({ hq, name }: { hq: Hq; name: string }) {
 /**
  * "Start session". Vai trò: the roles of the seats the project's team misses now (lib/team-room.ts
  * recommendRoles; the Sấm Sét seats while it runs) stand out, covered ones are muted. Before a new
- * session: an idle session of the project that is exactly that team role (`omp-lead` for lead) is
+ * session: an idle session of the project that is exactly that team role (`lead`, or `omp-lead` in the omp team) is
  * offered first, "Dùng phiên trống" opens it instead of starting another.
  */
 function StartSession({

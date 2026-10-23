@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.73] — 2026-10-23
+### Changed
+- **Đội mặc định trở lại Claude Code** (owner: "mặc định giờ claude … ccc chính chủ làm mặc định như cũ"), giữ số phòng mới: Thường 3 (lead, dev, qa), ⚡ Sấm Sét 5 (+ dev2, review). Dự án nhớ engine lần trước; `--omp` thêm đội omp, `--omp-only` chỉ đội omp; về lại Claude Code thì phòng omp của dự án đó dừng (mỗi phòng ~1,3 GB RAM). HQ nói đội mặc định là Claude Code.
+- **Ship tốc độ cao chọn được thời gian, mặc định 30 phút** (trước: cố định 2 giờ): HQ hỏi 30 phút / 1 giờ / 2 giờ / 4 giờ, API chỉ nhận 4 giá trị đó; `auto ship-fast on` không `--hours` = 30 phút; Sấm Sét bật kèm sprint 30 phút (lease phòng vẫn 2 giờ). Test +3.
+### Fixed
+- **Phiên Claude mở tay "không xem được" trên HQ** (owner: "ccc mở không xem được"): phiên `core` mở trong cửa sổ terminal của anh (`kind: interactive`) bị HQ nối bằng `claude attach` → "No job matching" → báo đỏ "Phiên đã tắt hẳn" và đánh dấu kết thúc một phiên đang sống. Giờ HQ nhận ra phiên mở tay: nút ghi "Trả lời trong cửa sổ của anh", terminal/one-tap trả 409 kèm lời dặn, không bao giờ đánh dấu phiên đó kết thúc; chỉ phòng nền mới bị coi là chết khi attach báo không có job. Test +1.
+
 ## [0.110.72] — 2026-10-23
 ### Fixed
 - **HQ: nút "Mở team" nằm ngay trong khung dự án trống** (owner: "không có nút mở team"; bản .71 vẽ nút ở khối thứ hai, dưới khung soạn tin nên không thấy): "Mở team (3 phòng: lead, dev, qa)" xanh, rồi "⚡ Sấm Sét (5 phòng)", rồi "Mở một session lẻ". Chế độ công ty nói đúng team chung đang chạy ở dự án nào (từ `team_roots`, trước đây liệt kê cả scope: "đang chạy ở 8sync-startup, agentic-cloudgo-v1, ide, su-code" trong khi chỉ ide có phòng).

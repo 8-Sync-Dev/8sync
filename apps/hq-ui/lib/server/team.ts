@@ -1,5 +1,6 @@
 // Team buttons of HQ: `8sync ccc auto up [--clear-ss]` / `auto down` in a project root, so the owner
 // never needs the terminal for them. argv only; the root must be a project HQ already shows.
+import { DEFAULT_SHIP_HOURS, type ShipHours } from "../ship-fast";
 import { BOOST_ONLY } from "../team-size";
 import { stripAnsi } from "./pane";
 import { run } from "./proc";
@@ -7,11 +8,12 @@ import { run } from "./proc";
 export type TeamAction = "up" | "full" | "boost" | "unboost" | "clean" | "down" | "ship-fast" | "ship-fast-off" | "ship-ask";
 
 /**
- * `up` opens or resumes the 3-room team (lib/team-size.ts DEFAULT_TEAM; omp rooms by default);
- * `full` the 6-room builder-heavy team (`--roles full`); `boost` (HQ "Sấm Sét") the 5-room team with
- * a 2-hour lease (renews it when already running); `unboost` ("Tắt Sấm Sét") stops the boost-only
- * rooms and frees their cards, back to the 3-room team; `clean` first deletes the background
- * sessions no room keeps and restarts rooms that run an older kit.
+ * `up` opens or resumes the 3-room Claude Code team (lib/team-size.ts DEFAULT_TEAM); `full` the
+ * 6-room builder-heavy team (`--roles full`); `boost` (HQ "Sấm Sét") the 5-room team with a 2-hour
+ * lease (renews it when already running); `unboost` ("Tắt Sấm Sét") stops the boost-only rooms and
+ * frees their cards, back to the 3-room team; `clean` first deletes the background sessions no room
+ * keeps and restarts rooms that run an older kit. `ship-fast` runs the sprint for `hours`
+ * (lib/ship-fast.ts SHIP_HOURS, 30 minutes by default).
  */
 /** The longest first task (spec) HQ passes to `auto up`. */
 export const TASK_MAX = 4000;
@@ -27,8 +29,8 @@ export function withTask(args: string[], action: TeamAction, task?: string | nul
   return [...args, t.startsWith("-") ? ` ${t}` : t];
 }
 
-export function teamArgs(action: TeamAction): string[] {
-  if (action === "ship-fast") return ["ccc", "auto", "ship-fast", "on", "--json"];
+export function teamArgs(action: TeamAction, hours: ShipHours = DEFAULT_SHIP_HOURS): string[] {
+  if (action === "ship-fast") return ["ccc", "auto", "ship-fast", "on", "--hours", String(hours), "--json"];
   if (action === "ship-ask") return ["ccc", "auto", "ship-fast", "ship-ask", "--json"];
   if (action === "ship-fast-off") return ["ccc", "auto", "ship-fast", "off", "--json"];
   if (action === "down") return ["ccc", "auto", "down"];
@@ -57,7 +59,7 @@ export function tail(text: string, lines = 24): string {
     .slice(0, 4000);
 }
 
-export async function runTeam(root: string, action: TeamAction, task?: string | null): Promise<TeamResult> {
+export async function runTeam(root: string, action: TeamAction, task?: string | null, hours: ShipHours = DEFAULT_SHIP_HOURS): Promise<TeamResult> {
   const key = root.replace(/\\/g, "/").toLowerCase();
   if (inFlight.has(key)) return { ok: false, output: "", error: "team của dự án này đang mở/dừng, đợi lần trước xong", busy: true };
   inFlight.add(key);
@@ -66,15 +68,16 @@ export async function runTeam(root: string, action: TeamAction, task?: string | 
   // (`down`, `unboost`) is quick.
   const ms = action === "boost" ? 660_000 : action === "down" || action === "unboost" ? 180_000 : 300_000;
   try {
-    const r = await run("8sync", withTask(teamArgs(action), action, task), ms, root);
+    const r = await run("8sync", withTask(teamArgs(action, hours), action, task), ms, root);
     const output = tail(`${r.stdout}\n${r.stderr}`);
     if (r.ok) {
       // Boost sets a fresh owner lease, like the Run button: rooms that died with the machine come back now.
       // Sấm Sét = more rooms AND the ship sprint (owner 2026-10-21: "nút sấm sét có hợp nhất nút ship
       // không"): extra hands with nobody landing only pile cards in qa/review; the sprint makes them
-      // land nearest-done first. Ship tốc độ cao alone stays for a tight quota.
+      // land nearest-done first (the default 30 minutes; the rooms keep their 2-hour lease). Ship tốc
+      // độ cao alone stays for a tight quota.
       if (action === "boost") {
-        void run("8sync", ["ccc", "auto", "ship-fast", "on", "--hours", "2", "--json"], 60_000, root).then(() => run("8sync", ["ccc", "auto", "revive"], 120_000));
+        void run("8sync", teamArgs("ship-fast", DEFAULT_SHIP_HOURS), 60_000, root).then(() => run("8sync", ["ccc", "auto", "revive"], 120_000));
       }
       return { ok: true, output, error: null };
     }

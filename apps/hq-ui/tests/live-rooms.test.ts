@@ -79,6 +79,16 @@ describe("rooms count only when alive", () => {
     expect(boostOn(rooms)).toBe(false);
   });
 
+  it("an interactive session (the owner's own window) is flagged on the merged view and its office room", async () => {
+    bins.claude = JSON.stringify([{ pid: 7, cwd: game, sessionId: DEV, name: "core", kind: "interactive", status: "idle" }]);
+    const s = (await mergedSessions(getDb())).find((x) => x.session_id === DEV);
+    expect(s?.interactive).toBe(true);
+    expect((await gameRooms()).map((r) => r.interactive)).toEqual([true]);
+    resetAgentsCache();
+    bins.claude = JSON.stringify([{ pid: 7, cwd: game, sessionId: DEV, name: "dev", kind: "background", status: "idle" }]);
+    expect((await mergedSessions(getDb())).find((x) => x.session_id === DEV)?.interactive).toBeUndefined();
+  });
+
   it("boostOn: every Sấm Sét room alive is on; the boost-only rooms ended are off", () => {
     const rooms = BOOST.map((r) => ({ name: `hq-3d-game-${r}`, label: r, status: "running" }));
     expect(boostOn(rooms)).toBe(true);

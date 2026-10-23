@@ -135,6 +135,8 @@ export type SessionView = {
   model?: string | null;
   /** Team (contract C4): absent = Claude Code (ccc); "omp" for omp rooms. */
   engine?: string;
+  /** `claude agents` kind "interactive": opened by hand in the owner's terminal window, not a background job (`claude attach` cannot reach it). */
+  interactive?: boolean;
 };
 
 function agentStatus(s: string | undefined): SessionStatus {
@@ -198,6 +200,7 @@ export async function mergedSessions(db: DatabaseSync): Promise<SessionView[]> {
       source: "claude",
       detail: a.waitingFor ?? null,
       inbox_live: inboxLive(a.sessionId),
+      ...(a.kind === "interactive" && { interactive: true }),
     });
   }
   // Gone sessions untouched for days: drop their journal row (lib/sessions-list.ts staleJournal; messages stay).

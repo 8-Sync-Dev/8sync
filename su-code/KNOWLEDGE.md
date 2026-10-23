@@ -646,3 +646,6 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - failure: đội omp trong team board không bao giờ nhận việc — `auto nudge` trả `head = None` cho mọi board team, session dir phòng omp trống sau 15 phút. Nudge phải theo cột của phòng (`claim --as omp-<vai>`), không theo hàng đích.
 - failure: `teams` trong auto.json là MỘT giá trị cho cả máy; đổi engine một dự án làm revive bỏ phòng Claude của dự án khác. Engine giờ theo từng root (`engines`), `teams` = hợp.
 - validated: grant Ship đọc từ transcript Claude Code → đội omp không tự xin được quyền merge; Ship của đội omp đi qua HQ alert + nút "Ship card approved".
+
+- failure: (2026-10-23) HQ coi phiên Claude mở tay (`claude agents` kind=interactive) như phòng nền: `claude attach` chỉ nối được phiên `--bg`, in "No job matching" → dead-detection (.61) đánh dấu kết thúc phiên đang sống. Luôn xét `kind` trước khi attach/markEnded.
+- validated: (2026-10-23) RAM thật mỗi phòng Claude nền ≈ 450 MB phiên + ~140 MB pty-host; phòng omp ≈ 1,3 GB (MCP mỗi phiên). Ngốn RAM lớn của máy owner là app ngoài fleet (omnivoice 2,3 GB, Edge 3,8, ChatGPT 2,1, WSL 2,3) + serena/headroom MCP mỗi phiên (12 + 10 tiến trình ≈ 1,1 GB) + WmiPrvSE (đã bỏ WMI).
