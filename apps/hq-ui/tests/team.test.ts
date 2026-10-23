@@ -141,6 +141,11 @@ describe("team", () => {
     const ok = await post({ root: pinned, action: "up" });
     expect(ok.status).toBe(200);
     expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "auto", "up"], 300_000, pinned);
+    // Pinned and sent back in Rust's verbatim form (`\\?\C:\…`, the page shows it like that): still known.
+    fs.writeFileSync(pinnedRootsPath(), JSON.stringify({ [`\\\\?\\${pinned}`]: 1 }));
+    run.mockClear();
+    expect((await post({ root: `\\\\?\\${pinned}`, action: "up" })).status).toBe(200);
+    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "auto", "up"], 300_000, pinned);
     fs.rmSync(pinnedRootsPath());
   });
 
