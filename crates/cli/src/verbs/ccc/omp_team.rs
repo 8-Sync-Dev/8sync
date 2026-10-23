@@ -147,12 +147,23 @@ pub(super) fn carries(cmdline: &str, session_dir: &Path) -> bool {
     !want.is_empty() && (base == "omp" || base == "omp.exe") && rest.iter().any(|a| norm(a) == want)
 }
 
-/// `<pid>\t<command line>` lines of the Windows process scan.
-pub(super) fn parse_procs(out: &str) -> Vec<(u32, String)> {
+/// `<pid>\t<command line>` lines (the test fixtures' process scan).
+#[cfg(test)]
+fn parse_procs(out: &str) -> Vec<(u32, String)> {
     out.lines()
         .filter_map(|l| {
             let (pid, cmd) = l.split_once('\t')?;
             Some((pid.trim().parse().ok()?, cmd.trim().to_string()))
+        })
+        .collect()
+}
+
+/// The team's omp rooms of `root` as (name, room id): what `ccc inbox`/`msg` deliver to.
+pub(super) fn registry(root: &Path) -> Vec<(String, String)> {
+    let Ok(env) = Env::detect() else { return Vec::new() };
+    session::load(&env, root).sessions.into_iter().filter(|s| role_of(&s.name).is_some()).map(|s| {
+            let id = ccc_core::room_id(root, &s.name);
+            (s.name, id)
         })
         .collect()
 }
@@ -162,16 +173,12 @@ pub(super) fn room_pids(procs: &[(u32, String)], dir: &Path) -> Vec<u32> {
     procs.iter().filter(|(_, c)| carries(c, dir)).map(|(p, _)| *p).collect()
 }
 
-/// Live `omp.exe` processes (pid, command line). Windows only; empty when the scan fails.
+/// Live `omp.exe` processes (pid, command line). Windows only; empty when the scan fails. The
+/// native listing ([`super::reap::list`], ToolHelp + per-process reads): the old
+/// `Get-CimInstance Win32_Process` ran PowerShell + WMI per `up`/`down` (WmiPrvSE grew to GBs on
+/// the owner's PC, and a PowerShell process-kill string in the binary is what Defender flagged).
 fn win_procs() -> Vec<(u32, String)> {
-    const PS: &str = "Get-CimInstance Win32_Process -Filter \"Name='omp.exe'\" | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }";
-    Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", PS])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map(|o| parse_procs(&String::from_utf8_lossy(&o.stdout)))
-        .unwrap_or_default()
+    super::reap::list(0).into_iter().filter(|p| p.image == "omp").map(|p| (p.pid, p.cmd)).collect()
 }
 
 /// Runs `argv` (program first), no shell; Err carries the program's stderr.
@@ -269,8 +276,18 @@ pub(super) struct Down {
 
 /// `auto down`: stop this repo's `omp-<role>` rooms; nothing else, nothing deleted.
 pub(super) fn down(env: &Env, root: &Path) -> Result<Down> {
+    down_where(env, root, |_| true)
+}
+
+/// `auto down --only <room,…>` for team omp: the `omp-<room>` rooms alone (HQ "Tắt Sấm Sét" on an
+/// omp team stops omp-dev2 and omp-review).
+pub(super) fn down_only(env: &Env, root: &Path, roles: &[&str]) -> Result<Down> {
+    down_where(env, root, |r| roles.contains(&r))
+}
+
+fn down_where(env: &Env, root: &Path, keep: impl Fn(&str) -> bool) -> Result<Down> {
     let reg = session::load(env, root);
-    let rooms: Vec<(&str, &session::Session)> = reg.sessions.iter().filter_map(|s| role_of(&s.name).map(|r| (r, s))).collect();
+    let rooms: Vec<(&str, &session::Session)> = reg.sessions.iter().filter_map(|s| role_of(&s.name).filter(|r| keep(r)).map(|r| (r, s))).collect();
     let mut stopped = Vec::new();
     if rooms.is_empty() {
         return Ok(Down { stopped, note: None });
@@ -324,7 +341,7 @@ mod tests {
     fn room_names_follow_the_roles() {
         let roles: Vec<String> = room::DEFAULT_TEAM.iter().map(|s| s.to_string()).collect();
         let names: Vec<String> = roles.iter().map(|r| room_name(r)).collect();
-        assert_eq!(names, ["omp-lead", "omp-dev", "omp-qa", "omp-review", "omp-rd"]);
+        assert_eq!(names, ["omp-lead", "omp-dev", "omp-qa"]);
         for (n, r) in names.iter().zip(&roles) {
             assert_eq!(role_of(n), Some(r.as_str()));
             assert_eq!(room::role(n).0, room::role(r).0, "omp-{r} keeps the role of {r}");

@@ -186,7 +186,13 @@ export LC_ALL=C
 # board --all, team.rs company_host (auto up joins scope), know.rs (machine knowledge tree + company
 # book), merge.rs infer_pr, pressure.rs floor — CI musl asset 8,128,816 B, 2,352 B over the 8,126,464
 # ceiling. No new dependency. Ceiling 7968 KiB (~30 KiB left).
-CEILING="${CEILING:-8159232}"   # 7968 KiB (was 7936 KiB). 2026-10-21 v0.110.30: cross-repo --pr (target.rs parse_pr/
+# 2026-10-23 v0.110.71: omp default team — per-project engine (auto.rs engines/set_engine), omp
+# board nudges (omp_board_due/omp_board_text), qa→review fallback (target.rs review_waiting/
+# claim_review), card-worktree prune with --force + orphan sweep, Ship 24h label TTL (grant.rs),
+# omp --hours, omp down --only — ~3.8 KB of new Vietnamese strings plus their code; the omp
+# PowerShell/WMI scan string went away. CI musl asset 8,161,584 B, 2,352 B over 8,159,232. No new
+# dependency. Ceiling 8000 KiB (~30 KiB left).
+CEILING="${CEILING:-8192000}"   # 8000 KiB (was 7968 KiB). 2026-10-21 v0.110.30: cross-repo --pr (target.rs parse_pr/
 # pr_repo_for, merge.rs default_branch_of/cached per repo, guard.rs repo-aware self-merge) and the
 # guard RAM trim + attribution (pressure.rs trim_pick/trim K32EmptyWorkingSet, ram_split JSON) grew
 # the CI linux musl asset to 8,083,760 B, 22,832 B over the 8,060,928 ceiling. +64 KiB, ~43 KiB left.

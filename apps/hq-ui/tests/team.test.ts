@@ -15,11 +15,12 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { POST } from "@/app/api/team/route";
-import { BoostButton, BoostChoices, boostOn, TeamControls } from "@/components/hq/team-controls";
+import { BoostButton, BoostChoices, boostOn, TeamControls, TeamStarter } from "@/components/hq/team-controls";
 import { getToken } from "@/lib/server/auth";
 import { pinnedRootsPath } from "@/lib/server/paths";
 import { onePerBoard, type ProjectBoard } from "@/lib/server/board";
-import { BOOST_ONLY, BOOST_TEAM, FULL_TEAM, tail, teamArgs } from "@/lib/server/team";
+import { tail, teamArgs } from "@/lib/server/team";
+import { BOOST_ONLY, BOOST_TEAM, DEFAULT_TEAM, emptyOfficeCopy, FULL_TEAM, teamText } from "@/lib/team-size";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const empty = { lanes: { backlog: [], ready: [], building: [], qa: [], review: [], approved: [], blocked: [] }, closed: [] } as unknown as ProjectBoard["board"];
@@ -60,20 +61,41 @@ describe("team", () => {
     expect(teamArgs("down")).toEqual(["ccc", "auto", "down"]);
     expect(teamArgs("full")).toEqual(["ccc", "auto", "up", "--roles", "full"]);
     expect(teamArgs("boost")).toEqual(["ccc", "auto", "up", "--roles", "boost", "--hours", "2"]);
-    expect(teamArgs("unboost")).toEqual(["ccc", "auto", "down", "--only", "ba,dev3,dev4,dev5,dev6,qa2,review2"]);
+    expect(teamArgs("unboost")).toEqual(["ccc", "auto", "down", "--only", "dev2,review"]);
     expect(tail("\x1b[1mone\x1b[0m\n\n two \n")).toBe("one\n two ");
   });
 
-  it("knows the CLI's own full and boost teams (room.rs), so Tắt Sấm Sét stops exactly the boost-only rooms", () => {
+  it("knows the CLI's own default, full and boost teams (room.rs), so Tắt Sấm Sét stops exactly the boost-only rooms", () => {
     const rs = fs.readFileSync(path.join(import.meta.dirname, "../../../crates/cli/src/verbs/ccc/room.rs"), "utf8");
     const team = (name: string) => JSON.parse(rs.match(new RegExp(`const ${name}: \\[&str; \\d+\\] = (\\[[^\\]]*\\]);`))![1]) as string[];
+    expect([...DEFAULT_TEAM]).toEqual(team("DEFAULT_TEAM"));
     expect([...FULL_TEAM]).toEqual(team("FULL_TEAM"));
     expect([...BOOST_TEAM]).toEqual(team("BOOST_TEAM"));
-    expect(BOOST_ONLY).toEqual(["ba", "dev3", "dev4", "dev5", "dev6", "qa2", "review2"]);
-    // What stays after Tắt Sấm Sét is the full team, and boostOn flips off.
+    expect(teamText(DEFAULT_TEAM)).toBe("3 phòng (lead, dev, qa)");
+    expect(teamText(BOOST_TEAM)).toBe("5 phòng (lead, dev, dev2, qa, review)");
+    expect(BOOST_ONLY).toEqual(["dev2", "review"]);
+    // What stays after Tắt Sấm Sét is the default team, and boostOn flips off.
     const rooms = BOOST_TEAM.filter((r) => !BOOST_ONLY.includes(r)).map((n) => ({ name: n, label: n, status: "running" }));
-    expect(rooms.map((r) => r.name)).toEqual([...FULL_TEAM]);
+    expect(rooms.map((r) => r.name)).toEqual([...DEFAULT_TEAM]);
     expect(boostOn(rooms)).toBe(false);
+  });
+
+  it("empty office: real buttons under the text; company mode says where the company team runs", () => {
+    const open = emptyOfficeCopy({ repo: true, company: false, homes: [], starters: 1 });
+    expect(open.title).toBe("Dự án này chưa có phòng nào chạy");
+    expect(open.body).toContain("“Mở team” bên dưới: 3 phòng (lead, dev, qa)");
+    expect(open.body).toContain("5 phòng (lead, dev, dev2, qa, review)");
+    const co = emptyOfficeCopy({ repo: true, company: true, homes: ["platform"], starters: 1 });
+    expect(co.title).toBe("Dự án này chưa có phòng riêng");
+    expect(co.body).toContain("Team công ty đang chạy ở platform: các phòng đó nhận card của dự án này");
+    expect(co.body).toContain("Mở team");
+    expect(co.body).not.toContain("chưa có phòng nào chạy");
+    expect(emptyOfficeCopy({ repo: false, company: false, homes: [], starters: 0 }).body).not.toContain("Bấm “Mở team”");
+    for (const company of [false, true]) {
+      const html = renderToStaticMarkup(createElement(TeamStarter, { projects: [{ path: "C:/p/zus", name: "zus" }], token: "t", company }));
+      expect(html).toContain("Mở team (3 phòng: lead, dev, qa)");
+      expect(html).toContain("Sấm Sét (5 phòng)");
+    }
   });
 
   let token = "";
@@ -127,10 +149,10 @@ describe("team", () => {
 
   it("Sấm Sét runs exactly `auto up --roles boost --hours 2` in the project root, turns on the ship sprint, then revives", async () => {
     run.mockClear();
-    run.mockResolvedValueOnce({ ok: true, stdout: "✓ dev6 mở\n✓ review2 mở\nboost: 13 phòng · lease tới 18:00 UTC\n", stderr: "" });
+    run.mockResolvedValueOnce({ ok: true, stdout: "✓ dev2 mở\n✓ review mở\nboost: 5 phòng · lease tới 18:00 UTC\n", stderr: "" });
     const ok = await post({ root: room.cwd.toUpperCase(), action: "boost" });
     expect(ok.status).toBe(200);
-    expect((await ok.json()).output.split("\n").at(-1)).toBe("boost: 13 phòng · lease tới 18:00 UTC");
+    expect((await ok.json()).output.split("\n").at(-1)).toBe("boost: 5 phòng · lease tới 18:00 UTC");
     await new Promise((r) => setTimeout(r, 0));
     expect(run.mock.calls).toEqual([
       ["8sync", ["ccc", "auto", "up", "--roles", "boost", "--hours", "2"], 660_000, room.cwd],
@@ -157,11 +179,11 @@ describe("team", () => {
 
   it("Tắt Sấm Sét runs exactly `auto down --only <boost-only rooms>` in the project root, and nothing else", async () => {
     run.mockClear();
-    run.mockResolvedValueOnce({ ok: true, stdout: "đã dừng phòng dev3\ncard #4 của dev3 trả về cột ready.\nCác phòng khác vẫn chạy.\n", stderr: "" });
+    run.mockResolvedValueOnce({ ok: true, stdout: "đã dừng phòng dev2\ncard #4 của dev2 trả về cột ready.\nCác phòng khác vẫn chạy.\n", stderr: "" });
     const ok = await post({ root: room.cwd.toUpperCase(), action: "unboost" });
     expect(ok.status).toBe(200);
-    expect((await ok.json()).output).toContain("card #4 của dev3 trả về cột ready.");
-    expect(run.mock.calls).toEqual([["8sync", ["ccc", "auto", "down", "--only", "ba,dev3,dev4,dev5,dev6,qa2,review2"], 180_000, room.cwd]]);
+    expect((await ok.json()).output).toContain("card #4 của dev2 trả về cột ready.");
+    expect(run.mock.calls).toEqual([["8sync", ["ccc", "auto", "down", "--only", "dev2,review"], 180_000, room.cwd]]);
     run.mockClear();
     const body = { root: room.cwd, action: "unboost" };
     expect((await POST(req("/api/team", { method: "POST", origin: ORIGIN, body }))).status).toBe(401);
@@ -172,30 +194,32 @@ describe("team", () => {
   it("UI: the Sấm Sét button asks first, shows the live boost team as active, and sits in the team controls", () => {
     const p = { root: room.cwd, name: "3d-game", token: "t" };
     const off = renderToStaticMarkup(createElement(BoostButton, { ...p, active: false }));
-    for (const s of ["Sấm Sét", "13 phòng", "lead, ba", "7 builder", "2 QA", "2 review", "13 lần một phiên", "lease 2 giờ"]) expect(off).toContain(s);
+    for (const s of ["Sấm Sét", "5 phòng (lead, dev, dev2, qa, review)", "thêm dev2, review", "đội omp mặc định", "lease 2 giờ"]) expect(off).toContain(s);
+    expect(off).not.toContain("13 phòng");
     expect(off).not.toContain("Đang Sấm Sét");
     const on = renderToStaticMarkup(createElement(BoostButton, { ...p, active: true }));
     for (const s of ["Đang Sấm Sét", "gia hạn thêm 2 giờ hoặc tắt", "bg-brand/25"]) expect(on).toContain(s);
     // Active: the dialog offers both, turning off first.
     const noop = () => {};
     const choices = renderToStaticMarkup(createElement(BoostChoices, { onOff: noop, onRenew: noop, onCancel: noop }));
-    for (const s of ["Tắt Sấm Sét", "Gia hạn 2 giờ", "Thôi", "auto down --only ba,dev3,dev4,dev5,dev6,qa2,review2", "auto up --roles boost --hours 2"]) expect(choices).toContain(s);
+    for (const s of ["Tắt Sấm Sét", "Gia hạn 2 giờ", "Thôi", "Giữ 5 phòng", "Về team 3 phòng (lead, dev, qa)", "auto down --only dev2,review", "auto up --roles boost --hours 2"]) expect(choices).toContain(s);
     // Owner 2026-10-22 "ui ux khó hiểu": the team actions fold behind "Thao tác team"; a live Sấm Sét stays in sight.
     const bar = renderToStaticMarkup(createElement(TeamControls, { ...p, boost: true }));
     for (const s of ["Đang Sấm Sét", "Ship card approved", "Thao tác team"]) expect(bar).toContain(s);
     for (const s of ["Mở lại team", "Team đầy đủ", "Dừng team"]) expect(bar).not.toContain(s);
     expect(renderToStaticMarkup(createElement(TeamControls, { ...p, boost: false }))).not.toContain("Sấm Sét</");
 
-    const rooms = (names: string[], status = "running") => names.map((n) => ({ name: n, label: n, status }));
-    const boost = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"];
+    const rooms = (names: readonly string[], status = "running") => names.map((n) => ({ name: n, label: n, status }));
+    const boost = ["lead", "dev", "dev2", "qa", "review"];
     expect(boostOn(rooms(boost))).toBe(true);
-    // `auto up` titles a clashing room `<name>-<repo>`; HQ rooms are `hq-<repo>-<name>`, labelled `<repo> · <name>`.
+    // omp rooms are `omp-<role>`; `auto up` titles a clashing room `<name>-<repo>`; HQ rooms are `hq-<repo>-<name>`, labelled `<repo> · <name>`.
+    expect(boostOn(rooms(boost.map((n) => `omp-${n}`)))).toBe(true);
     expect(boostOn(rooms(boost.map((n) => `${n}-3d-game`)))).toBe(true);
     expect(boostOn(boost.map((n) => ({ name: `hq-3d-game-${n}`, label: `3d-game · ${n}`, status: "idle" })))).toBe(true);
-    expect(boostOn(rooms(["lead", "dev", "dev2", "ui", "qa", "review"]))).toBe(false);
-    // The old 9-room boost team is not the 13-room one.
-    expect(boostOn(rooms(["lead", "dev", "dev2", "dev3", "dev4", "ui", "qa", "qa2", "review"]))).toBe(false);
-    for (const only of ["dev6", "qa2", "review2"]) expect(boostOn(rooms(boost.filter((n) => n !== only).concat("rd")))).toBe(false);
-    expect(boostOn([...rooms(boost.slice(0, 12)), ...rooms(["review2"], "ended")])).toBe(false);
+    // Team đầy đủ also has dev2 and review, but its ui room says it is not Sấm Sét; the 3-room team is not either.
+    expect(boostOn(rooms(FULL_TEAM))).toBe(false);
+    expect(boostOn(rooms(DEFAULT_TEAM))).toBe(false);
+    for (const only of BOOST_ONLY) expect(boostOn(rooms(boost.filter((n) => n !== only)))).toBe(false);
+    expect(boostOn([...rooms(boost.slice(0, 4)), ...rooms(["review"], "ended")])).toBe(false);
   });
 });

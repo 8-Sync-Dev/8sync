@@ -126,6 +126,23 @@ describe("omp rooms on the floor and in Nhật ký", () => {
       ["core", ROOM, "claude-opus-5-5"],
       ["active", "omp-0000000000000001", "claude-opus-5-5"],
     ]);
+    // Once auto status carries `omp_model`, every omp team room (`omp-<role>`) names the team's model
+    // (null = omp's default); the owner's own omp sessions (`core`) keep the model they run.
+    const g = globalThis as { __hqAutoLast?: unknown };
+    const keep = g.__hqAutoLast;
+    try {
+      resetFloorCache();
+      run.mockResolvedValue(lsOut([ompRow({ name: "omp-lead", inbox_id: ROOM }), ompRow({ name: "core", inbox_id: "omp-0000000000000001" })]));
+      g.__hqAutoLast = { on: true, paused: false, omp_model: "zai/glm-5.3" };
+      expect(ompSessions(db, await loadFloor(db)).map((r) => [r.label, r.model])).toEqual([
+        ["omp-lead", "zai/glm-5.3"],
+        ["core", "claude-opus-5-5"],
+      ]);
+      g.__hqAutoLast = { on: true, paused: false, omp_model: null };
+      expect(ompSessions(db, await loadFloor(db)).map((r) => r.model)).toEqual([null, "claude-opus-5-5"]);
+    } finally {
+      g.__hqAutoLast = keep;
+    }
   });
 
   it("GET activity reads an omp room's transcript from `8sync ls`, never a path from the client", async () => {

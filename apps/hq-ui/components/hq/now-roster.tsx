@@ -3,7 +3,6 @@
 import { CoffeeIcon, HandIcon, HourglassIcon, OctagonAlertIcon, PauseIcon, type LucideIcon } from "lucide-react";
 import { LANES } from "@/lib/lanes";
 import { NOW_LABEL, agoVi, spanVi, type NowState, type RoomNow } from "@/lib/now";
-import { modelShort } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { RoleIcon } from "./role-badge";
 
@@ -54,7 +53,8 @@ export function StateTag({ n }: { n: RoomNow }) {
 
 const laneLabel = (k: string) => LANES.find((l) => l.key === k)?.label ?? k;
 
-export type RosterRow = RoomNow & { key: string; model: string | null; waiting: string | null };
+/** `modelLabel`: lib/roles.ts roomModelLabel of the room (an omp room names its team's model). */
+export type RosterRow = RoomNow & { key: string; modelLabel: string | null; waiting: string | null };
 
 /**
  * "Đang làm gì": one line per room in attention order (needs the owner, blocked, working, then free).
@@ -104,7 +104,7 @@ export function NowRoster({
                 <span className="flex min-w-0 items-center gap-1.5 md:order-none">
                   <RoleIcon role={n.role} className="size-3.5 text-muted-foreground" />
                   <span className="truncate text-sm font-semibold">{n.label}</span>
-                  {n.model && <span className="shrink-0 text-xs text-muted-foreground">{modelShort(n.model)}</span>}
+                  {n.modelLabel && <span className="shrink-0 text-xs text-muted-foreground">{n.modelLabel}</span>}
                 </span>
               </span>
               <span className={cn("text-right text-xs text-muted-foreground tabular md:hidden", n.flagged && cn("font-medium", NEEDS_INK))}>

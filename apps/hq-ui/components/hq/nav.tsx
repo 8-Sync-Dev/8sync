@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { teamLabel } from "@/lib/labels";
+import { teamBadge } from "@/lib/labels";
 import type { BoardRef, NowState } from "@/lib/now";
 import { matchesSession } from "@/lib/office";
 import { SIDEBAR_WORD, companySidebar, groupKey, peopleWord, pinSidebar, sidebarGroups, splitClosed, type CompanyProject, type HiddenProject, type SidebarGroup, type SidebarRoom, projectsHeading } from "@/lib/sidebar";
@@ -446,7 +446,7 @@ function RoomRows({
           type="button"
           className={cn(item, "h-8 min-w-0 flex-1 max-sm:h-11", x.worktree && "pl-3")}
           aria-current={matchesSession(room, selected)}
-          aria-label={`${room.label}${x.worktree ? ` (worktree ${x.worktree})` : ""}${at ? ` ở ${at}` : ""} · ${teamLabel(room.engine)}: ${word}`}
+          aria-label={`${room.label}${x.worktree ? ` (worktree ${x.worktree})` : ""}${at ? ` ở ${at}` : ""} · ${teamBadge(room) ?? "phiên omp riêng"}: ${word}`}
           title={[room.label, at, word, what].filter(Boolean).join(" · ")}
           onClick={() => onOpen(room)}
         >
@@ -455,7 +455,7 @@ function RoomRows({
             {room.label}
             {at && <span className="ml-1.5 text-[11px] text-muted-foreground">{at}</span>}
           </span>
-          {room.engine === "omp" && <span className="shrink-0 text-[10px] text-muted-foreground">{teamLabel(room.engine)}</span>}
+          {room.engine === "omp" && teamBadge(room) && <span className="shrink-0 text-[10px] text-muted-foreground">{teamBadge(room)}</span>}
           {n.state === "needs" ? (
             <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full bg-st-needs/15 px-1.5 py-px text-[11px] font-semibold", NEEDS_INK)}>
               <span aria-hidden className="size-1.5 rounded-full bg-st-needs motion-safe:animate-pulse" />

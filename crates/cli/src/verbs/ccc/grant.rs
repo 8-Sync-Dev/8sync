@@ -7,7 +7,8 @@
 //! - "Chỉ merge" / "Merge only" → shipping (merge, push main, tag, release, publish), no deploy;
 //! - anything else → no grant.
 //!
-//! Grants last 8 hours and only for that session. Deny rules (force-push, deleting roots,
+//! Grants last 8 hours and only for that session (the project self-merge permission: 8 hours, or
+//! 24 when the chosen label says so, [`self_merge_ttl`]). Deny rules (force-push, deleting roots,
 //! secrets…) never consult a grant.
 //!
 //! The same answer also writes a per-project self-merge permission (`self-merge.projects.json`
@@ -23,6 +24,19 @@ use std::path::{Path, PathBuf};
 
 pub(super) const HEADER: &str = "Ship";
 const TTL_S: u64 = 8 * 3600;
+/// The project self-merge permission when the owner's chosen label says 24 h ("Chỉ merge, tự merge
+/// 24h"): a day instead of [`TTL_S`], read from the label in the transcript like the grant itself.
+/// Owner 2026-10-23: re-answering Ship every 8 h left approved cards waiting overnight.
+const DAY_S: u64 = 24 * 3600;
+
+/// Pure: how long a self-merge permission from these chosen labels lasts.
+fn self_merge_ttl(labels: &[&str]) -> u64 {
+    let day = |l: &&str| {
+        let l = l.to_lowercase();
+        ["24h", "24 h", "24 giờ", "1 ngày", "24 hours"].iter().any(|k| l.contains(k))
+    };
+    if labels.iter().any(day) { DAY_S } else { TTL_S }
+}
 
 pub(super) fn dir(home: &Path) -> PathBuf {
     home.join(".local/state/8sync/ccc/grants")
@@ -107,13 +121,17 @@ pub(super) fn self_merge(dir: &Path, root: &Path, now: u64) -> Option<SelfMerge>
     let all: Value = serde_json::from_str(&std::fs::read_to_string(projects_file(dir)).ok()?).ok()?;
     let g = &all[project_key(root)];
     let at = g["at"].as_u64()?;
-    let until = g["until"].as_u64().filter(|u| now < *u && *u <= at.saturating_add(TTL_S) && *u <= now.saturating_add(TTL_S))?;
+    let until = g["until"].as_u64().filter(|u| now < *u)?;
     let (q, a, t) = (g["question"].as_str()?, g["answer"].as_str()?, g["transcript"].as_str()?);
     let logs = home.join(".claude").join("projects").canonicalize().ok()?;
     let t = Path::new(t).canonicalize().ok().filter(|t| t.starts_with(&logs))?;
     let question = answered(&t, q, a, None)?;
     let ship = question["header"].as_str().is_some_and(|h| h.trim().eq_ignore_ascii_case(HEADER));
-    chosen(a, &question).into_iter().any(|l| grants_self_merge(l) || (ship && scope(l).0)).then_some(())?;
+    let labels = chosen(a, &question);
+    labels.iter().any(|l| grants_self_merge(l) || (ship && scope(l).0)).then_some(())?;
+    // The lifetime comes from the label the transcript proves, never from the store file.
+    let ttl = self_merge_ttl(&labels);
+    (until <= at.saturating_add(ttl) && until <= now.saturating_add(ttl)).then_some(())?;
     Some(SelfMerge { until, by: g["by"].as_str().unwrap_or_default().into(), answer: a.into() })
 }
 
@@ -193,7 +211,7 @@ pub(super) fn record(input: &str, dir: &Path, now_s: u64) -> Option<(bool, bool)
     let granted = ship.map(|(_, _, a)| scope(a));
     if let Some(key) = &project {
         let transcript = v["transcript_path"].as_str();
-        let entry = |(_, q, a): (&Value, &str, &str)| json!({ "at": now_s, "until": now_s + TTL_S, "by": session, "question": q, "answer": a, "transcript": transcript });
+        let entry = |(qv, q, a): (&Value, &str, &str)| json!({ "at": now_s, "until": now_s + self_merge_ttl(&chosen(a, qv)), "by": session, "question": q, "answer": a, "transcript": transcript });
         // The project permission needs an option label, not free text.
         let ship_ok = ship.filter(|(q, _, a)| chosen(a, q).into_iter().any(|l| scope(l).0));
         // Best effort: a failed project write never costs the session grant below.
@@ -429,5 +447,14 @@ mod tests {
         let home = Path::new("/home/u");
         assert_eq!(home_of(&dir(home)), Some(home));
         assert_eq!(home_of(Path::new("/tmp/grants")), None);
+    }
+
+    #[test]
+    fn self_merge_lasts_a_day_only_when_the_label_says_so() {
+        assert_eq!(self_merge_ttl(&["Chỉ merge, tự merge 24h"]), DAY_S);
+        assert_eq!(self_merge_ttl(&["Tự merge 24 giờ"]), DAY_S);
+        assert_eq!(self_merge_ttl(&["Chỉ merge, chưa deploy"]), TTL_S);
+        assert_eq!(self_merge_ttl(&["Tự merge khi đủ cổng"]), TTL_S);
+        assert_eq!(self_merge_ttl(&[]), TTL_S);
     }
 }

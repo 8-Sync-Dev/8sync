@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { isOmpRoomId, sessionLabel } from "../labels";
+import { isOmpTeamRoom } from "../team-room";
 import { roomLabel } from "../room-label";
 import { autoMayAct, deriveFloor, type FloorRow, type LsInput } from "../floor";
 import { lastAutoStatus } from "./auto";
@@ -218,8 +219,13 @@ const OMP_STATUS: Partial<Record<FloorRow["state"], SessionView["status"]>> = { 
 /**
  * The omp team's live rooms as sessions (contract C3/C4). HQ cannot type into them; it queues into
  * their inbox by `inbox_id`, so they join the room list, "Giao việc" and "Cả dự án" like any inbox room.
+ * `model` of a team room (`omp-<role>`): the team's model from auto status (`omp_model`, null = omp's
+ * default; lib/roles.ts ompModelLabel); the row's own `8sync ls` model for the owner's own omp
+ * sessions, and before a status that carries `omp_model`.
  */
 export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
+  const st = lastAutoStatus();
+  const team = st && "omp_model" in st ? { model: typeof st.omp_model === "string" ? st.omp_model : null } : null;
   return rows.flatMap((r): SessionView[] => {
     const id = r.inbox_id;
     if (r.engine !== "omp" || !r.live || !isOmpRoomId(id)) return [];
@@ -238,7 +244,7 @@ export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
         detail: r.caption || null,
         inbox_live: inboxLive(id),
         engine: "omp",
-        model: r.model ?? null,
+        model: team && isOmpTeamRoom(r.name) ? team.model : (r.model ?? null),
       },
     ];
   });

@@ -22,6 +22,10 @@ describe("guide", () => {
     expect(text).not.toContain("60 giây");
     expect(text).not.toContain("tạo nhân viên");
   });
+  it("names the team sizes as they are: 3 rooms by default on omp, 5 for Sấm Sét, no 13-room team", () => {
+    for (const s of ["3 phòng (lead, dev, qa)", "5 phòng (lead, dev, dev2, qa, review)", "Đội mặc định là omp", "Tắt Sấm Sét dừng dev2, review"]) expect(text).toContain(s);
+    expect(text).not.toMatch(/13 phòng|7 builder/);
+  });
   it("has the 5-status legend and tips", () => {
     expect(GUIDE_LEGEND.map((l) => l.label)).toEqual(["Đang làm", "Cần bạn", "Chờ review", "Xong", "Rảnh"]);
     expect(GUIDE_TIPS.join(" ")).toMatch(/\/do.*\/ship-loop.*Haiku/);

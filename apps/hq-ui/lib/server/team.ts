@@ -1,21 +1,17 @@
 // Team buttons of HQ: `8sync ccc auto up [--clear-ss]` / `auto down` in a project root, so the owner
 // never needs the terminal for them. argv only; the root must be a project HQ already shows.
+import { BOOST_ONLY } from "../team-size";
 import { stripAnsi } from "./pane";
 import { run } from "./proc";
 
 export type TeamAction = "up" | "full" | "boost" | "unboost" | "clean" | "down" | "ship-fast" | "ship-fast-off" | "ship-ask";
 
-/** The CLI's `room::FULL_TEAM` and `room::BOOST_TEAM` (crates/cli/src/verbs/ccc/room.rs; tests/team.test.ts pins them). */
-export const FULL_TEAM = ["lead", "dev", "dev2", "ui", "qa", "review"] as const;
-export const BOOST_TEAM = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"] as const;
-/** The rooms only Sấm Sét opens: "Tắt Sấm Sét" stops these and the full team runs on. */
-export const BOOST_ONLY: string[] = BOOST_TEAM.filter((r) => !(FULL_TEAM as readonly string[]).includes(r));
-
 /**
- * `up` opens or resumes the 5-room team; `full` the 6-room builder-heavy team (`--roles full`); `boost`
- * (HQ "Sấm Sét") the 13-room team with a 2-hour lease (renews it when already running); `unboost`
- * ("Tắt Sấm Sét") stops the boost-only rooms and frees their cards, back to the 6-room team; `clean`
- * first deletes the background sessions no room keeps and restarts rooms that run an older kit.
+ * `up` opens or resumes the 3-room team (lib/team-size.ts DEFAULT_TEAM; omp rooms by default);
+ * `full` the 6-room builder-heavy team (`--roles full`); `boost` (HQ "Sấm Sét") the 5-room team with
+ * a 2-hour lease (renews it when already running); `unboost` ("Tắt Sấm Sét") stops the boost-only
+ * rooms and frees their cards, back to the 3-room team; `clean` first deletes the background
+ * sessions no room keeps and restarts rooms that run an older kit.
  */
 /** The longest first task (spec) HQ passes to `auto up`. */
 export const TASK_MAX = 4000;
@@ -65,9 +61,9 @@ export async function runTeam(root: string, action: TeamAction, task?: string | 
   const key = root.replace(/\\/g, "/").toLowerCase();
   if (inFlight.has(key)) return { ok: false, output: "", error: "team của dự án này đang mở/dừng, đợi lần trước xong", busy: true };
   inFlight.add(key);
-  // Starting four background sessions takes a while, and `auto up` waits (≤ 90 s extra) for the CPU to
-  // settle between room starts; boost starts thirteen `claude --bg` rooms one by one (up to ~10 minutes
-  // on Windows). Stopping (`down`, `unboost`) is quick.
+  // Starting background sessions takes a while, and `auto up` waits (≤ 90 s extra) for the CPU to
+  // settle between room starts; boost starts five rooms one by one (minutes on Windows). Stopping
+  // (`down`, `unboost`) is quick.
   const ms = action === "boost" ? 660_000 : action === "down" || action === "unboost" ? 180_000 : 300_000;
   try {
     const r = await run("8sync", withTask(teamArgs(action), action, task), ms, root);
@@ -75,8 +71,8 @@ export async function runTeam(root: string, action: TeamAction, task?: string | 
     if (r.ok) {
       // Boost sets a fresh owner lease, like the Run button: rooms that died with the machine come back now.
       // Sấm Sét = more rooms AND the ship sprint (owner 2026-10-21: "nút sấm sét có hợp nhất nút ship
-      // không"): 13 rooms with nobody landing only piles cards in qa/review; the sprint makes the
-      // extra hands land nearest-done first. Ship tốc độ cao alone stays for a tight quota.
+      // không"): extra hands with nobody landing only pile cards in qa/review; the sprint makes them
+      // land nearest-done first. Ship tốc độ cao alone stays for a tight quota.
       if (action === "boost") {
         void run("8sync", ["ccc", "auto", "ship-fast", "on", "--hours", "2", "--json"], 60_000, root).then(() => run("8sync", ["ccc", "auto", "revive"], 120_000));
       }

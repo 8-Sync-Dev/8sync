@@ -12,6 +12,7 @@ import { agoShort, roster, rosterSummary } from "@/lib/now";
 import { companyRooms, groupByRepo, worktreeOf } from "@/lib/sidebar";
 import { recentMoves, topCards } from "@/lib/overview";
 import { fileName, rootKey, type ProjectPreviews } from "@/lib/preview";
+import { roomModelLabel } from "@/lib/roles";
 import type { ProjectBoard } from "@/lib/server/board";
 import { buildTeamThread, partyKey, type ThreadItem } from "@/lib/team-thread";
 import { cn } from "@/lib/utils";
@@ -69,7 +70,7 @@ export function OverviewView({
   );
   const now = office.office?.at ?? 0;
   const rows: RosterRow[] = useMemo(
-    () => roster(rooms, boards.boards ?? [], now).map((r) => ({ ...r, model: r.room.model, waiting: askLine(r.room.ask) ?? r.room.waiting })),
+    () => roster(rooms, boards.boards ?? [], now).map((r) => ({ ...r, modelLabel: roomModelLabel(r.room), waiting: askLine(r.room.ask) ?? r.room.waiting })),
     [rooms, boards.boards, now],
   );
   // Same rule as the office: rooms stopped on the owner, plus permission hooks counting down.

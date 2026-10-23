@@ -156,10 +156,17 @@ describe("sidebar UI", () => {
     expect(html.match(/>8sync-startup</g)).toHaveLength(1);
   });
 
-  it("labels omp rooms with their team", async () => {
-    const html = await nav(office([room({ name: "omp-0123456789abcdef", label: "scout", engine: "omp", status: "running" }), room({ name: "core", status: "running" })]));
-    expect(html).toContain("Đội omp");
-    expect(html).toContain("scout · Đội omp");
+  it("labels omp team rooms (`omp-<role>`) with their team; the owner's own omp sessions get no Đội omp badge", async () => {
+    const html = await nav(
+      office([
+        room({ name: "omp-0123456789abcdef", label: "omp-lead", engine: "omp", status: "running" }),
+        room({ name: "omp-00000000000000aa", label: "team", engine: "omp", status: "running" }),
+        room({ name: "core", status: "running" }),
+      ]),
+    );
+    expect(html).toContain("omp-lead · Đội omp");
+    expect(html).toContain("team · phiên omp riêng");
+    expect(html).not.toContain("team · Đội omp");
     expect(html).toContain("core · Đội ccc");
   });
 

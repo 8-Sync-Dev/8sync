@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { BOOST_ONLY, BOOST_TEAM, DEFAULT_TEAM, FULL_TEAM, teamText } from "@/lib/team-size";
 import { cn } from "@/lib/utils";
 import { ShipLoopChip } from "./ship-loop-chip";
 import { makeApi } from "./use-hq";
@@ -20,7 +21,7 @@ const DONE: Record<Action, string> = {
   up: "Đã mở team",
   full: "Đã mở team đầy đủ",
   boost: "Đã bật Sấm Sét",
-  unboost: "Đã tắt Sấm Sét, về team 6 phòng",
+  unboost: `Đã tắt Sấm Sét, về team ${DEFAULT_TEAM.length} phòng`,
   clean: "Đã dọn session rác, nạp bản mới và mở team",
   down: "Đã dừng team",
 };
@@ -28,9 +29,9 @@ const OPENING: Record<Action, string> = {
   "ship-fast": "gửi brief ship nhanh cho mọi phòng",
   "ship-ask": "nhắc lead hỏi Ship ngay",
   "ship-fast-off": "",
-  up: "lead, dev, qa, review, rd",
-  full: "6 phòng: lead, dev, dev2, ui, qa, review",
-  boost: "Sấm Sét, 13 phòng mở lần lượt, có thể mất tới 10 phút",
+  up: DEFAULT_TEAM.join(", "),
+  full: teamText(FULL_TEAM),
+  boost: `Sấm Sét, ${teamText(BOOST_TEAM)} mở lần lượt`,
   unboost: "",
   clean: "dọn rác, khởi động lại phòng chạy bản cũ",
   down: "",
@@ -39,7 +40,7 @@ const WAITING = (action: Action, name: string) =>
   action === "down"
     ? `Đang dừng team ${name}…`
     : action === "unboost"
-      ? `Đang tắt Sấm Sét của ${name} (dừng 7 phòng thêm, card đang giữ trả về cột)…`
+      ? `Đang tắt Sấm Sét của ${name} (dừng ${BOOST_ONLY.join(", ")}, card đang giữ trả về cột)…`
       : action === "ship-fast"
         ? `Đang bật Ship tốc độ cao cho ${name}…`
         : action === "ship-fast-off"
@@ -50,18 +51,19 @@ const WAITING = (action: Action, name: string) =>
 const FAILED = (action: Action, name: string) => action === "down" ? `Không dừng được team ${name}` : action === "unboost" ? `Không tắt được Sấm Sét của ${name}` : action === "ship-fast" ? `Không bật được Ship tốc độ cao cho ${name}` : action === "ship-fast-off" ? `Không tắt được Ship tốc độ cao của ${name}` : `Không mở được team ${name}`;
 
 /** What the confirm dialog of Sấm Sét says, in one sentence (also the button's tooltip). */
-const BOOST_COST = "Sấm Sét = tăng nhân lực + Ship tốc độ cao 2 giờ (cả team land card gần xong trước). 13 phòng chạy song song: 2 lập kế hoạch (lead, ba), 7 builder (dev, dev2, dev3, dev4, dev5, dev6, ui), 2 QA (qa, qa2), 2 review (review, review2); tốn quota khoảng 13 lần một phiên, lease 2 giờ.";
-/** What "Tắt Sấm Sét" does (`auto down --only ba,dev3,dev4,dev5,dev6,qa2,review2`, lib/server/team.ts BOOST_ONLY). */
-const UNBOOST_INFO = "Tắt Sấm Sét: về team 6 phòng (lead, dev, dev2, ui, qa, review); dừng ba, dev3–dev6, qa2, review2; card các phòng đó đang giữ trả về cột (building → ready, qa/review ở lại cột, bỏ claim). Lease giữ nguyên: hết giờ Sấm Sét thì cả team dừng như cũ (muốn chạy tiếp: Team đầy đủ). Gia hạn 2 giờ: giữ 13 phòng thêm 2 giờ.";
+const BOOST_COST = `Sấm Sét = tăng nhân lực + Ship tốc độ cao 2 giờ (cả team land card gần xong trước). ${teamText(BOOST_TEAM)} chạy song song: thêm ${BOOST_ONLY.join(", ")} vào team thường; đội omp mặc định, lease 2 giờ.`;
+/** What "Tắt Sấm Sét" does (`auto down --only <BOOST_ONLY>`, lib/team-size.ts). */
+const UNBOOST_INFO = `Tắt Sấm Sét: về team ${teamText(DEFAULT_TEAM)}; dừng ${BOOST_ONLY.join(", ")}; card các phòng đó đang giữ trả về cột (building → ready, qa/review ở lại cột, bỏ claim). Lease giữ nguyên: hết giờ Sấm Sét thì cả team dừng như cũ (muốn chạy tiếp: Chạy liên tục). Gia hạn 2 giờ: giữ ${BOOST_TEAM.length} phòng thêm 2 giờ.`;
 
 /**
- * The project's live team is already the boost team: 13+ rooms that include the rooms only boost opens
- * (dev6, qa2, review2). Any name token counts: `auto up` titles a clashing room `<name>-<repo>`, HQ rooms are `hq-<repo>-<name>`.
+ * The project's live team is the boost team: every Sấm Sét role alive and no `ui` room (that is
+ * "Team đầy đủ", which also has dev2 and review). Any name token counts: omp rooms are `omp-<role>`,
+ * `auto up` titles a clashing room `<name>-<repo>`, HQ rooms are `hq-<repo>-<name>`.
  */
 export function boostOn(rooms: { name: string; label: string; status: string }[]): boolean {
   const live = rooms.filter((r) => r.status !== "ended");
   const tokens = new Set(live.flatMap((r) => `${r.label} ${r.name}`.toLowerCase().split(/[^\p{L}\p{N}]+/u)));
-  return live.length >= 13 && tokens.has("dev6") && tokens.has("qa2") && tokens.has("review2");
+  return BOOST_TEAM.every((r) => tokens.has(r)) && !tokens.has("ui");
 }
 
 /** POST /api/team and say what happened; `after` refreshes the office and the board. */
@@ -85,17 +87,17 @@ function useTeam(token: string, after?: () => void) {
   return { busy, act };
 }
 
-/** The choices of an active Sấm Sét: turn it off (back to the 6-room team), renew the lease, or nothing. */
+/** The choices of an active Sấm Sét: turn it off (back to the default team), renew the lease, or nothing. */
 export function BoostChoices({ onOff, onRenew, onCancel }: { onOff: () => void; onRenew: () => void; onCancel: () => void }) {
   return (
     <DialogFooter>
       <Button type="button" variant="ghost" onClick={onCancel}>
         Thôi
       </Button>
-      <Button type="button" variant="outline" onClick={onRenew} title="Giữ 13 phòng thêm 2 giờ (auto up --roles boost --hours 2)">
+      <Button type="button" variant="outline" onClick={onRenew} title={`Giữ ${BOOST_TEAM.length} phòng thêm 2 giờ (auto up --roles boost --hours 2)`}>
         <RefreshCwIcon aria-hidden /> Gia hạn 2 giờ
       </Button>
-      <Button type="button" onClick={onOff} title="Về team 6 phòng (auto down --only ba,dev3,dev4,dev5,dev6,qa2,review2)">
+      <Button type="button" onClick={onOff} title={`Về team ${teamText(DEFAULT_TEAM)} (auto down --only ${BOOST_ONLY.join(",")})`}>
         <PowerOffIcon aria-hidden /> Tắt Sấm Sét
       </Button>
     </DialogFooter>
@@ -103,9 +105,9 @@ export function BoostChoices({ onOff, onRenew, onCancel }: { onOff: () => void; 
 }
 
 /**
- * "⚡ Sấm Sét": the 13-room boost team of one project (`auto up --roles boost --hours 2`). Off: asks first
- * (the quota cost). On (`active`, see boostOn): asks to turn it off (`unboost`, back to the 6-room team)
- * or renew the 2-hour lease with the same command.
+ * "⚡ Sấm Sét": the 5-room boost team of one project (`auto up --roles boost --hours 2`). Off: asks
+ * first. On (`active`, see boostOn): asks to turn it off (`unboost`, back to the 3-room team) or
+ * renew the 2-hour lease with the same command.
  */
 export function BoostButton({ root, name, token, active, after, className }: { root: string; name: string; token: string; active: boolean; after?: () => void; className?: string }) {
   const { busy, act } = useTeam(token, after);
@@ -123,7 +125,7 @@ export function BoostButton({ root, name, token, active, after, className }: { r
         disabled={busy != null}
         aria-busy={busy != null}
         onClick={() => setAsk(true)}
-        title={active ? "Sấm Sét (tăng nhân lực) đang chạy 13 phòng. Bấm để gia hạn thêm 2 giờ hoặc tắt (về team 6 phòng)" : `Sấm Sét = tăng nhân lực: ${BOOST_COST} (auto up --roles boost --hours 2). Muốn đẩy nhanh land/release: Ship tốc độ cao`}
+        title={active ? `Sấm Sét (tăng nhân lực) đang chạy ${BOOST_TEAM.length} phòng. Bấm để gia hạn thêm 2 giờ hoặc tắt (về team ${DEFAULT_TEAM.length} phòng)` : `${BOOST_COST} (auto up --roles boost --hours 2). Muốn đẩy nhanh land/release: Ship tốc độ cao`}
         className={cn(
           "font-semibold",
           active && "border-brand-ink/40 bg-brand/25 text-brand-ink hover:bg-brand/40 hover:text-brand-ink dark:border-brand/40 dark:bg-brand/15 dark:text-brand",
@@ -136,7 +138,7 @@ export function BoostButton({ root, name, token, active, after, className }: { r
       <Dialog open={ask} onOpenChange={setAsk}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{active ? "Sấm Sét đang chạy 13 phòng" : `Bật Sấm Sét cho ${name}?`}</DialogTitle>
+            <DialogTitle>{active ? `Sấm Sét đang chạy ${BOOST_TEAM.length} phòng` : `Bật Sấm Sét cho ${name}?`}</DialogTitle>
             <DialogDescription>{active ? UNBOOST_INFO : BOOST_COST}</DialogDescription>
           </DialogHeader>
           {active ? (
@@ -147,7 +149,7 @@ export function BoostButton({ root, name, token, active, after, className }: { r
                 Thôi
               </Button>
               <Button type="button" onClick={() => choose("boost")}>
-                <ZapIcon aria-hidden /> Mở 13 phòng
+                <ZapIcon aria-hidden /> Mở {BOOST_TEAM.length} phòng
               </Button>
             </DialogFooter>
           )}
@@ -250,7 +252,7 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
       >
         <RocketIcon aria-hidden /> Ship card approved
       </Button>
-      {/* A live Sấm Sét costs ~13x quota: it never hides behind the fold. */}
+      {/* A live Sấm Sét runs the bigger team: it never hides behind the fold. */}
       {boost && <BoostButton root={root} name={name} token={token} active after={after} />}
       <Button type="button" size="sm" variant="ghost" aria-expanded={more} onClick={() => setMore((m) => !m)} title="Ship tốc độ cao, Sấm Sét, mở lại, dọn, team đầy đủ, dừng team">
         {more ? "Ẩn thao tác" : "Thao tác team"}
@@ -260,13 +262,13 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
         <>
       <ShipFastButton root={root} name={name} token={token} after={after} />
       {!boost && <BoostButton root={root} name={name} token={token} active={false} after={after} />}
-      <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(root, name, "up")} title="Mở phòng còn thiếu, nối lại phòng đã dừng (8sync ccc auto up)">
+      <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(root, name, "up")} title={`Mở phòng còn thiếu, nối lại phòng đã dừng: team ${teamText(DEFAULT_TEAM)}, đội omp mặc định (8sync ccc auto up)`}>
         <PlayIcon aria-hidden /> Mở lại team
       </Button>
       <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("clean")} title="Xoá session nền rác, khởi động lại phòng đang chạy bản cũ, rồi mở team (auto up --clear-ss)">
         <SparklesIcon aria-hidden /> Dọn & mở lại
       </Button>
-      <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("full")} title="6 phòng, 3 phòng code: lead, dev, dev2, ui, qa, review (auto up --roles full)">
+      <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("full")} title={`${teamText(FULL_TEAM)}, 3 phòng code (auto up --roles full)`}>
         <UsersIcon aria-hidden /> Team đầy đủ
       </Button>
       <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => setAsk("down")} title="Dừng các phòng nền, giữ hội thoại (auto down)">
@@ -299,7 +301,7 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
                 void act(root, name, a);
               }}
             >
-              {ask === "down" ? "Dừng team" : ask === "full" ? "Mở 6 phòng" : "Dọn và mở lại"}
+              {ask === "down" ? "Dừng team" : ask === "full" ? `Mở ${FULL_TEAM.length} phòng` : "Dọn và mở lại"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -308,7 +310,11 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
   );
 }
 
-/** Folders added in HQ with no room running: one click opens the whole team there. */
+/**
+ * Projects in view with no room running: one click opens the team there — "Mở team" (`auto up`, the
+ * 3-room omp team) or "⚡ Sấm Sét" (`auto up --roles boost`, 5 rooms). In company mode too (owner
+ * 2026-10-23): the company team may serve the project, the owner can still give it rooms of its own.
+ */
 export function TeamStarter({ projects, token, after, company = false }: { projects: { path: string; name: string }[]; token: string; after?: () => void; company?: boolean }) {
   const { busy, act } = useTeam(token, after);
   if (!projects.length) return null;
@@ -316,22 +322,25 @@ export function TeamStarter({ projects, token, after, company = false }: { proje
     <section aria-labelledby="team-starter" className="space-y-2">
       <h2 id="team-starter" className="flex items-center gap-2 text-sm font-semibold">
         <UsersIcon aria-hidden className="size-4 text-muted-foreground" />
-        {company ? "Dự án chưa vào công ty" : "Dự án chưa có team"}
+        {company ? "Dự án chưa có phòng riêng" : "Dự án chưa có team"}
       </h2>
       <ul className="divide-y overflow-hidden rounded-xl border bg-card">
         {projects.map((p) => (
-          <li key={p.path} className="flex min-w-0 items-center gap-3 px-3.5 py-2.5">
+          <li key={p.path} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-2.5">
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{p.name}</span>
               <span className="block truncate font-mono text-xs text-muted-foreground" title={p.path}>
                 {p.path}
               </span>
             </span>
-            <Button type="button" size="sm" disabled={busy != null} onClick={() => void act(p.path, p.name, "up")}>
-              <PlayIcon aria-hidden /> {company ? "Đưa vào công ty" : "Mở team"}
+            <Button type="button" size="sm" disabled={busy != null} onClick={() => void act(p.path, p.name, "up")} title="8sync ccc auto up: đội omp mặc định">
+              <PlayIcon aria-hidden /> Mở team ({DEFAULT_TEAM.length} phòng: {DEFAULT_TEAM.join(", ")})
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(p.path, p.name, "boost")} title={`${BOOST_COST} (auto up --roles boost --hours 2)`} className="font-semibold">
+              <ZapIcon aria-hidden className="text-brand-ink dark:text-brand" /> Sấm Sét ({BOOST_TEAM.length} phòng)
             </Button>
             {!company && (
-              <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(p.path, p.name, "full")} title="6 phòng, tốn quota gần gấp 6 lần một session">
+              <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => void act(p.path, p.name, "full")} title={`${teamText(FULL_TEAM)}, tốn quota gần gấp ${FULL_TEAM.length} lần một session`}>
                 <UsersIcon aria-hidden /> Team đầy đủ
               </Button>
             )}
@@ -339,10 +348,8 @@ export function TeamStarter({ projects, token, after, company = false }: { proje
         ))}
       </ul>
       <p className="max-w-[75ch] text-xs text-muted-foreground text-pretty">
-        {company
-          ? "Đưa vào công ty: không mở thêm phòng. Các phòng đang chạy nhận card của dự án này khi hết việc ở dự án khác; thêm card ở tab Board để giao việc."
-          : null}
-        {company ? null : <>Mở team: 5 phòng nền (lead viết card, dev làm, qa kiểm, review duyệt, rd nghiên cứu). Team đầy đủ: 6 phòng, 3 phòng code (lead, dev, dev2, ui, qa, review). Thêm thư mục khác ở mục Projects bên trái.</>}
+        Mở team: {teamText(DEFAULT_TEAM)} của đội omp (mặc định): lead viết card, dev làm, qa kiểm và duyệt. ⚡ Sấm Sét: {teamText(BOOST_TEAM)}, lease 2 giờ.
+        {company ? " Team công ty vẫn nhận card của dự án này khi rảnh; mở team ở đây là thêm phòng riêng." : ` Team đầy đủ: ${teamText(FULL_TEAM)}. Thêm thư mục khác ở mục Projects bên trái.`}
       </p>
     </section>
   );

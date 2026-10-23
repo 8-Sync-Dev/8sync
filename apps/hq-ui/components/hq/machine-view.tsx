@@ -48,8 +48,8 @@ function Panel({ id, title, aside, children, className }: { id: string; title: s
   );
 }
 
-/** An on/off switch with a 44 px hit area on phones; `busy` while the change is on its way. */
-export function Switch({ on, busy, label, onChange }: { on: boolean; busy?: boolean; label: string; onChange: (on: boolean) => void }) {
+/** An on/off switch with a 44 px hit area on phones; `busy` while the change is on its way; `disabled` when it cannot change (the row says why). */
+export function Switch({ on, busy, disabled, label, onChange }: { on: boolean; busy?: boolean; disabled?: boolean; label: string; onChange: (on: boolean) => void }) {
   return (
     <button
       type="button"
@@ -57,16 +57,16 @@ export function Switch({ on, busy, label, onChange }: { on: boolean; busy?: bool
       aria-checked={on}
       aria-label={label}
       aria-busy={busy || undefined}
-      disabled={busy}
+      disabled={busy || disabled}
       onClick={() => onChange(!on)}
-      className="group inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait sm:min-h-8 sm:min-w-9"
+      className={cn("group inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8 sm:min-w-9", busy ? "disabled:cursor-wait" : "disabled:cursor-not-allowed")}
     >
       <span
         aria-hidden
         className={cn(
           "relative h-5 w-9 rounded-full transition-colors duration-200 ease-out motion-reduce:transition-none",
           on ? "bg-primary group-hover:bg-primary/85" : "bg-muted-foreground/30 group-hover:bg-muted-foreground/45",
-          busy && "opacity-60",
+          (busy || disabled) && "opacity-60",
         )}
       >
         <span className={cn("absolute top-0.5 left-0.5 grid size-4 place-items-center rounded-full bg-background shadow-sm transition-transform duration-200 ease-out motion-reduce:transition-none", on && "translate-x-4")}>
@@ -388,7 +388,7 @@ function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: Swe
         <div className="space-y-1.5 border-t pt-2.5">
           <div>
             <p className="text-sm font-medium">Dọn máy tự động</p>
-            <p className="text-xs leading-snug text-muted-foreground">Mỗi team đang chạy có phòng sweep: chỉ thức khi HQ báo máy quá tải hay rác đĩa, dọn thứ chắc chắn an toàn, nhắn đúng phòng gây tải, báo lead khi đã giải phóng chỗ.</p>
+            <p className="text-xs leading-snug text-muted-foreground">Team chạy đội Claude có một phòng sweep (đội chỉ omp thì không). Phòng chỉ thức khi HQ báo máy quá tải hay rác đĩa, dọn thứ chắc chắn an toàn, nhắn đúng phòng gây tải, báo lead khi đã giải phóng chỗ.</p>
           </div>
           {sweep.map((p) => (
             <SweepRow key={p.root} p={p} at={at} api={api} onChanged={onChanged} />
@@ -497,7 +497,7 @@ function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: Swe
   );
 }
 
-/** One running team's sweep switch: on = HQ keeps a `sweep` room in it (`auto up --add sweep`), off = `auto down --only sweep`. */
+/** One running team's sweep switch: on = HQ keeps a `sweep` room in it (`auto up --add sweep`), off = `auto down --only sweep`; greyed off with the reason while the team runs omp only. */
 function SweepRow({ p, at, api, onChanged }: { p: SweepProject; at: number; api: Hq["api"]; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   async function flip(next: boolean) {
@@ -514,24 +514,26 @@ function SweepRow({ p, at, api, onChanged }: { p: SweepProject; at: number; api:
       setBusy(false);
     }
   }
-  const state = !p.on
-    ? "tắt"
-    : p.live
-      ? "phòng sweep đang chạy"
-      : p.error
-        ? `chưa mở được: ${p.error}${p.retryAt ? ` · thử lại ${span(Math.max(0, (p.retryAt - at) / 1000))} nữa` : ""}`
-        : p.busy
-          ? "đang mở phòng sweep…"
-          : "sẽ mở phòng sweep trong vòng 1 phút";
+  const state = p.blocked
+    ? p.blocked
+    : !p.on
+      ? "tắt"
+      : p.live
+        ? "phòng sweep đang chạy"
+        : p.error
+          ? `chưa mở được: ${p.error}${p.retryAt ? ` · thử lại ${span(Math.max(0, (p.retryAt - at) / 1000))} nữa` : ""}`
+          : p.busy
+            ? "đang mở phòng sweep…"
+            : "sẽ mở phòng sweep trong vòng 1 phút";
   return (
     <div className="flex items-center gap-3">
       <div className="min-w-0 flex-1">
         <p className="truncate font-mono text-xs" title={p.root}>
           {p.name}
         </p>
-        <p className={cn("text-[11px] leading-snug", p.on && p.error ? NEEDS_INK : "text-muted-foreground")}>{state}</p>
+        <p className={cn("text-[11px] leading-snug", p.on && p.error && !p.blocked ? NEEDS_INK : "text-muted-foreground")}>{state}</p>
       </div>
-      <Switch on={p.on} busy={busy || p.busy} label={`Dọn máy tự động ${p.name}`} onChange={(v) => void flip(v)} />
+      <Switch on={p.on && !p.blocked} busy={busy || p.busy} disabled={p.blocked != null} label={`Dọn máy tự động ${p.name}`} onChange={(v) => void flip(v)} />
     </div>
   );
 }

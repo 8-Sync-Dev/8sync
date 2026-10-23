@@ -13,11 +13,12 @@ import { NOW_LABEL, agoVi, claimMatches, deskClip, roster, rosterSummary, stateC
 import { cloneCount, fmtDuration, fmtTokens, fmtUsd, roomFor, SEATS, type Visit } from "@/lib/office";
 import { rootKey } from "@/lib/preview";
 import { companyRooms, groupByRepo, inScope, meetingShown, worktreeOf } from "@/lib/sidebar";
-import { modelShort } from "@/lib/roles";
+import { roomModelLabel } from "@/lib/roles";
+import { emptyOfficeCopy } from "@/lib/team-size";
 import { shirtFor, shirtOf } from "@/lib/sprite/frames";
 import { cn } from "@/lib/utils";
 import { isLocalHost } from "@/lib/hosts";
-import { teamLabel } from "@/lib/labels";
+import { teamBadge } from "@/lib/labels";
 import { EmptyState, ErrorNote } from "./bits";
 import { IdleChip } from "./idle-chip";
 import { NowRoster, type RosterRow } from "./now-roster";
@@ -139,6 +140,8 @@ function RoomCard({
   const working = seated.reduce((a, s) => a + s.active.length, 0);
   const settle = deskClip(n, room.state, { inMeeting });
   const clip = deskClip(n, room.state, { inMeeting, cheer });
+  const badge = teamBadge(room);
+  const model = roomModelLabel(room);
   // Only numbers that were measured; "chưa đo" four times per room is noise, not information.
   const stats = [
     room.tokens != null && <Stat key="ctx" k="Context" v={fmtTokens(room.tokens)} title="Token đang nằm trong context của session (8sync ls)" />,
@@ -171,8 +174,8 @@ function RoomCard({
               {room.label}
             </button>
           </h3>
-          {room.model && <span className="shrink-0 text-[11px] text-(--soft)">{modelShort(room.model)}</span>}
-          <span className="shrink-0 rounded border border-(--soft)/40 px-1 text-[10px] leading-4 text-(--soft)">{teamLabel(room.engine)}</span>
+          {model && <span className="shrink-0 text-[11px] text-(--soft)">{model}</span>}
+          {badge && <span className="shrink-0 rounded border border-(--soft)/40 px-1 text-[10px] leading-4 text-(--soft)">{badge}</span>}
           {worktreeOf(room) && (
             <span className="inline-flex min-w-0 items-center gap-0.5 font-mono text-[11px] text-(--soft)" title={`worktree ${worktreeOf(room)}${room.project?.branch ? ` · nhánh ${room.project.branch}` : ""}`}>
               <GitBranchIcon aria-hidden className="size-3 shrink-0" />
@@ -521,12 +524,19 @@ export function OfficeView({
     (p) => !p.missing && !allGroups.some((g) => slash(g.project.root) === slash(p.path)) && (!repo || slash(p.path) === slash(repo)) && !inScope(scope, p.path),
   );
   // The project picked in the sidebar with no room running gets its team buttons too, even when it is
-  // only pinned or known (owner 2026-10-22, ide "0 phòng": "mất nút mở lại team").
+  // only pinned or known (owner 2026-10-22, ide "0 phòng": "mất nút mở lại team"), and in company mode
+  // even when the company team serves it (owner 2026-10-23: the text said "Mở team" with no button).
   const picked =
-    repo && !allGroups.some((g) => slash(g.project.root) === slash(repo)) && !added.some((p) => slash(p.path) === slash(repo)) && !inScope(scope, repo)
+    repo && !allGroups.some((g) => slash(g.project.root) === slash(repo)) && !added.some((p) => slash(p.path) === slash(repo))
       ? [{ path: repo, name: repo.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || repo }]
       : [];
   const idleFolders = [...added, ...picked];
+  const empty = emptyOfficeCopy({
+    repo: !!repo,
+    company: !!office?.company,
+    homes: office?.company ? groupByRepo(office.rooms).map((g) => g.project.name) : [],
+    starters: idleFolders.length,
+  });
   const labelOf = (key: string) => rooms.find((r) => r.key === key)?.label ?? key.slice(0, 8);
   const visits = office?.visits ?? [];
   const now = office?.at ?? 0;
@@ -541,7 +551,7 @@ export function OfficeView({
   const resting = longRestCount(idle, now);
 
   const rows: RosterRow[] = useMemo(
-    () => roster(rooms, boards.boards ?? [], now).map((r) => ({ ...r, model: r.room.model, waiting: askLine(r.room.ask) ?? r.room.waiting })),
+    () => roster(rooms, boards.boards ?? [], now).map((r) => ({ ...r, modelLabel: roomModelLabel(r.room), waiting: askLine(r.room.ask) ?? r.room.waiting })),
     [rooms, boards.boards, now],
   );
   const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
@@ -579,16 +589,10 @@ export function OfficeView({
           <>
             <EmptyState
               icon={<UsersIcon />}
-              title={repo ? "Dự án này chưa có phòng nào chạy" : "Văn phòng đang trống"}
+              title={empty.title}
               action={<Button variant="outline" onClick={onStart}>Mở một session lẻ</Button>}
             >
-              {repo && idleFolders.length
-                ? "Bấm “Mở team” bên dưới: phòng của dự án mở lại, nối tiếp hội thoại cũ nếu có."
-                : office.company
-                ? "Công ty chưa có phòng nào chạy. Bấm “Mở team” ở một dự án: các phòng mở ra làm cho mọi dự án của công ty."
-                : idleFolders.length
-                  ? "Bấm “Mở team” ở dự án bên dưới: HQ mở 4 phòng nền (lead, dev, qa, review) và mọi thứ hiện ở đây."
-                  : "Thêm thư mục dự án ở mục Projects bên trái, rồi bấm “Mở team” để mở 4 phòng nền (lead, dev, qa, review)."}
+              {empty.body}
             </EmptyState>
             <TeamStarter projects={idleFolders} token={token} after={refresh} company={office.company} />
           </>
