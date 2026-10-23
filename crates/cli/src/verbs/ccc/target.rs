@@ -485,6 +485,10 @@ pub(super) fn add(
             role: None,
             refill_at: None,
         };
+        // A card split off an urgent idea is as urgent as it (owner 2026-10-23: "Khẩn cấp không thấy
+        // ưu tiên làm gấp": #163 was P0 but its 9 cards were P1/P2, so builders took other work first).
+        let mut t = t;
+        t.prio = parent(&t).and_then(|pid| p.items.iter().find(|x| x.id == pid && x.state == "open")).and_then(|x| x.prio);
         if first {
             p.items.insert(0, t.clone());
         } else {
@@ -1121,7 +1125,15 @@ pub(super) fn set_prio(home: &Path, root: &Path, id: u64, prio: Option<u8>, room
             t.prio = prio;
             t.note(room, &prio.map_or_else(|| "bỏ mức ưu tiên".to_string(), |n| format!("ưu tiên P{n}")), now);
         }
-        Ok(t.clone())
+        let out = t.clone();
+        // Its open cards come up with it (never down): the work of an idea runs in them.
+        if let Some(n) = prio {
+            for c in p.items.iter_mut().filter(|c| c.state == "open" && parent(c) == Some(id) && c.prio.is_none_or(|x| x > n)) {
+                c.prio = Some(n);
+                c.note(room, &format!("ưu tiên P{n} theo card gốc #{id}"), now);
+            }
+        }
+        Ok(out)
     })
 }
 
@@ -1908,6 +1920,26 @@ mod tests {
         assert!(!p.contains("owner gửi"), "a room's --now must not claim the owner's voice: {p}");
         assert_eq!(json(Some(&t))["id"], 7);
         assert!(json(None).is_null());
+    }
+
+    #[test]
+    fn cards_split_off_an_urgent_idea_are_as_urgent_and_raising_the_idea_raises_them() {
+        let (d, root) = tmp("prio-inherit");
+        let h = &d;
+        let (epic, _) = add(h, &root, "game quá xấu: làm lại", None, None, false, None, 1).unwrap();
+        let (early, _) = add(h, &root, &format!("[#{}] cỏ gần camera", epic.id), Some("true"), None, false, Some("lead"), 2).unwrap();
+        assert_eq!(early.prio, None, "an idea with no priority passes none on");
+        set_prio(h, &root, epic.id, Some(0), None, 3).unwrap();
+        let (late, _) = add(h, &root, &format!("[#{}][ui] vạt áo", epic.id), Some("true"), None, false, Some("lead"), 4).unwrap();
+        assert_eq!(late.prio, Some(0), "split after the owner's P0: P0");
+        let cards = list(h, &root).unwrap();
+        assert_eq!(cards.iter().find(|t| t.id == early.id).unwrap().prio, Some(0), "raised with its idea");
+        // Never lowered: the idea back to P2 leaves its cards at P0; a more urgent child stays.
+        set_prio(h, &root, epic.id, Some(2), None, 5).unwrap();
+        assert!(list(h, &root).unwrap().iter().filter(|t| t.id != epic.id).all(|t| t.prio == Some(0)));
+        let (other, _) = add(h, &root, "việc khác", None, None, false, None, 6).unwrap();
+        assert_eq!(other.prio, None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.75] — 2026-10-23
+### Fixed
+- **Phòng không còn chụp game 3D bằng CPU** (owner: "Fix cpu quá cao chưa", CPU 88–95% trong khi GPU RTX 3%): các phòng 3d-game tự viết `shot.sh` mở Edge headless với `--use-angle=swiftshader --enable-unsafe-swiftshader`, ép WebGL vẽ bằng CPU, nhiều phòng chụp cùng lúc. Mỗi trình duyệt chỉ sống vài chục giây nên luật dọn theo nhịp guard không bắt kịp. Giờ guard hook trên Windows chặn ngay lệnh và script có cờ swiftshader, chỉ cách dùng `8sync shot` hoặc `--use-angle=d3d11` (đo trên máy owner: 5,1 so với 9,0 giây CPU mỗi ảnh); file CI trong `.github/` giữ nguyên vì máy CI không có GPU. Test +1.
+- **Card con của ý P0 cũng là P0** (owner: "Khẩn cấp không thấy ưu tiên làm gấp"): #163 là P0 nhưng 9 card con là P1/P2, builder làm việc khác trước. Giờ card tách từ ý gốc (`[#N] …`) nhận mức ưu tiên của ý gốc, và nâng ý gốc lên mức gấp hơn thì các card con đang mở lên theo (không bao giờ hạ). Test +1.
+
 ## [0.110.74] — 2026-10-23
 ### Fixed
 - **Nút "Mở team" không còn báo "thư mục này không có trong HQ" với dự án ghim** (owner, HQ trên VPS: "Không mở được team 3d-game"): Rust ghi đường dẫn Windows dạng `\\?\C:\…` và trang gửi lại đúng dạng đó; `/api/team` chỉ bỏ tiền tố này ở danh sách dự án đã biết, không bỏ ở đường dẫn trang gửi, nên hai bên không khớp. Giờ bỏ ở cả hai phía. Test +1.
