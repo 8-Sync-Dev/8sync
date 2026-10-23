@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.72] — 2026-10-23
+### Fixed
+- **HQ: nút "Mở team" nằm ngay trong khung dự án trống** (owner: "không có nút mở team"; bản .71 vẽ nút ở khối thứ hai, dưới khung soạn tin nên không thấy): "Mở team (3 phòng: lead, dev, qa)" xanh, rồi "⚡ Sấm Sét (5 phòng)", rồi "Mở một session lẻ". Chế độ công ty nói đúng team chung đang chạy ở dự án nào (từ `team_roots`, trước đây liệt kê cả scope: "đang chạy ở 8sync-startup, agentic-cloudgo-v1, ide, su-code" trong khi chỉ ide có phòng).
+- `auto status` nói đúng cách đội omp nhận việc (theo cột board, ≤ 1 lần/phút).
+
 ## [0.110.71] — 2026-10-23
 ### Changed
 - **Đội mặc định là omp, 3 phòng; Sấm Sét 5 phòng** (owner: "1 team có 3, team sấm sét mới là 5 … all mặc định là omp"; máy lên CPU 94% với 7–13 phòng Claude Code mỗi team): `8sync ccc auto up` (HQ "Chạy") mở đội omp `omp-lead`, `omp-dev`, `omp-qa` trên model không phải Anthropic (`auto omp on --model zai/glm-5.3`), không mở phòng Claude Code; `--roles boost` (⚡ Sấm Sét) = lead, dev, dev2, qa, review (trước là 13); `--ccc` = đội Claude Code, `--omp` = cả hai. Chưa có model omp dùng được thì mở đội Claude Code và in rõ lý do. `auto revive` không hồi sinh phòng Claude Code cũ của đội omp, và tin lead/rd của revive (ship loop, ready cạn, hỏi Ship) vào inbox phòng omp. Đo trên máy owner: phòng omp lúc chờ 0% CPU nhưng mỗi phòng ~1,3 GB RAM (omp nạp ~8 MCP server mỗi phiên).

@@ -885,7 +885,7 @@ fn omp_line(v: &Value) -> Option<String> {
     let model = v["omp_model"].as_str().map_or_else(|| "model mặc định của omp".to_string(), |m| format!("model {m}"));
     match (omp, v["omp_blocked"].as_str()) {
         (true, Some(why)) => Some(format!("đội omp: đang chặn — {why}")),
-        (true, None) if on => Some(format!("đội omp: BẬT ({model}) — phòng `8sync . <tên>` nhận nhắc việc từ hàng đích (mỗi phòng ≤ 1 lần/10 phút)")),
+        (true, None) if on => Some(format!("đội omp: BẬT ({model}) — phòng `8sync . <tên>` nhận việc theo cột board khi cột có card (≤ 1 lần/phút), không có board thì theo hàng đích (≤ 1 lần/10 phút)")),
         (true, None) => Some(format!("đội omp: BẬT ({model}), chạy khi auto on")),
         (false, _) if on => Some("đội omp: TẮT (bật: `8sync ccc auto omp on`)".into()),
         (false, _) => None,
