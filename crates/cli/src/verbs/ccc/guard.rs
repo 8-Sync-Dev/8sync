@@ -127,7 +127,7 @@ fn check_full(input: &str, grants: &Path, now_s: u64, base_of: BaseOf, default_o
             // `8sync ccc loop ev <slug> <label> -- '<cmd>'` runs <cmd> in a shell: check it as one.
             let inner = loop_ev_command(cmd).and_then(|c| danger::check(&c, Shell::Bash, &ctx));
             let found = stricter(found, inner);
-            match git_add(cmd, cwd).or_else(|| content(cmd)).or_else(|| sleeping(cmd, ti["run_in_background"] == true)) {
+            match git_add(cmd, cwd).or_else(|| content(cmd)).or_else(|| sleeping(cmd, ti["run_in_background"] == true)).or_else(|| software_gl(cmd, cfg!(windows))) {
                 Some(why) => Some(Verdict::Deny(why)),
                 None => found,
             }
@@ -137,6 +137,8 @@ fn check_full(input: &str, grants: &Path, now_s: u64, base_of: BaseOf, default_o
             credential_file(path)
                 .map(|why| format!("{path} is a credential file ({why}). The user creates it themselves and keeps it out of git; read values from the environment instead."))
                 .or_else(|| content(&written_text(ti)))
+                // CI configs keep their software GL: a CI runner has no GPU.
+                .or_else(|| (!norm(path).contains("/.github/")).then(|| software_gl(&written_text(ti), cfg!(windows))).flatten())
                 .map(Verdict::Deny)
         }
         _ => None,
@@ -253,6 +255,20 @@ pub(super) fn decision(decision: &str, reason: &str) -> String {
         }
     })
     .to_string()
+}
+
+/// A browser forced onto software WebGL (SwiftShader) on Windows, where D3D11 is always there: the
+/// 3D game renders on the CPU. Owner 2026-10-23 ("Fix cpu quá cao chưa", CPU 88–95% with the RTX
+/// at 3%): 3d-game rooms wrote their own `shot.sh` with `--use-angle=swiftshader
+/// --enable-unsafe-swiftshader`, several at once. Measured here: 9.0 vs 5.1 CPU-s for one shot of a
+/// light scene. `windows` false (Linux/macOS, no D3D) never matches.
+fn software_gl(text: &str, windows: bool) -> Option<String> {
+    let t = text.to_ascii_lowercase();
+    (windows && ["use-angle=swiftshader", "enable-unsafe-swiftshader", "use-gl=swiftshader"].iter().any(|f| t.contains(f))).then(|| {
+        "software WebGL (SwiftShader) renders on the CPU: rooms shooting the 3D game this way drove the PC to 95% CPU with the GPU idle. \
+         Use `8sync shot <url> -o <png>` (GPU), or headless Edge/Chrome with `--use-angle=d3d11 --enable-webgl --ignore-gpu-blocklist` and no swiftshader flag. One shot at a time."
+            .to_string()
+    })
 }
 
 /// All text an edit tool would write.
@@ -670,6 +686,20 @@ mod tests {
         assert!(decide("Bash", json!({ "command": "git add src/ .env.example" })).is_none());
         assert!(decide("Bash", json!({ "command": "echo add .env" })).is_none());
         assert!(decide("Bash", json!({ "command": "git add src/ ':!config/.env'" })).is_none(), "an exclusion is not an add");
+    }
+
+    #[test]
+    fn software_webgl_is_denied_on_windows_only_and_never_in_ci_configs() {
+        let sw = r#"msedge --headless=new --use-angle=swiftshader --enable-unsafe-swiftshader --screenshot=a.png http://x"#;
+        assert!(software_gl(sw, true).is_some_and(|w| w.contains("8sync shot") && w.contains("d3d11")));
+        assert!(software_gl("chrome --use-gl=SwiftShader", true).is_some());
+        assert!(software_gl(sw, false).is_none(), "no D3D on Linux/macOS: left alone");
+        assert!(software_gl("msedge --headless=new --use-angle=d3d11 --enable-webgl", true).is_none());
+        if cfg!(windows) {
+            assert!(decide("Bash", json!({ "command": sw })).is_some_and(|d| d.contains("SwiftShader")));
+            assert!(decide("Write", json!({ "file_path": "C:/Users/a/.claude/jobs/4be4/tmp/shot.sh", "content": sw })).is_some());
+            assert!(decide("Write", json!({ "file_path": "C:/repo/.github/workflows/ci.yml", "content": sw })).is_none(), "CI has no GPU");
+        }
     }
 
     #[test]
