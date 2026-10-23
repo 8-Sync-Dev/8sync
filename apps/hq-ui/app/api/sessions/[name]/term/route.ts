@@ -1,3 +1,4 @@
+import { endsWhenDead, termGate } from "@/lib/interactive";
 import { isOmpRoomId } from "@/lib/labels";
 import { ompRoom } from "@/lib/server/floor";
 import { bad, json, open, readBody } from "@/lib/server/http";
@@ -10,26 +11,30 @@ import { FILES_PER_TASK, isUploadId, placeUploads } from "@/lib/server/uploads";
 
 export const runtime = "nodejs";
 
+type RoomRef = { cwd: string | null; name: string | null; label: string; project_id: number | null; started_at: number | null; interactive?: boolean };
+
 /**
  * The room's session view, or null when there is no such room: a live background Claude Code room (tmux
  * rooms keep their own drawer), or an omp room `8sync ls` lists (resolved server side, never a path
- * from the client; idle is fine, its terminal starts it).
+ * from the client; idle is fine, its terminal starts it). An interactive session comes back flagged:
+ * the caller refuses it (lib/interactive.ts termGate).
  */
-async function room(db: Parameters<typeof mergedSessions>[0], id: string): Promise<{ cwd: string | null; name: string | null; project_id: number | null; started_at: number | null } | null> {
-  if (isOmpRoomId(id)) { const o = await ompRoom(db, id); return o ? { cwd: o.cwd, name: null, project_id: null, started_at: null } : null; }
+async function room(db: Parameters<typeof mergedSessions>[0], id: string): Promise<RoomRef | null> {
+  if (isOmpRoomId(id)) { const o = await ompRoom(db, id); return o ? { cwd: o.cwd, name: null, label: id, project_id: null, started_at: null } : null; }
   const s = (await mergedSessions(db)).find((x) => x.session_id === id && !x.tmux && x.status !== "ended") ?? null;
-  return s && { cwd: s.cwd, name: s.name, project_id: s.project_id, started_at: s.started_at };
+  return s && { cwd: s.cwd, name: s.name, label: s.label, project_id: s.project_id, started_at: s.started_at, interactive: s.interactive };
 }
 
 /**
- * The terminal proves the room is gone (`claude attach` printed "No job matching"): keep the ghost off
- * the live list (owner 2026-10-22 — a dead room kept showing "Đang làm" and its terminal would not open).
+ * The terminal proves a background room is gone (`claude attach` printed "No job matching"): keep the
+ * ghost off the live list (owner 2026-10-22 — a dead room kept showing "Đang làm" and its terminal would
+ * not open). Never an interactive session: attach always says that for it, and it is alive.
  */
-function forgetIfDead(db: Parameters<typeof mergedSessions>[0], s: Awaited<ReturnType<typeof room>>, id: string, t: Term) {
-  if (!s?.name || isOmpRoomId(id)) return;
+function forgetIfDead(db: Parameters<typeof mergedSessions>[0], s: RoomRef, id: string, t: Term) {
+  if (!s.name || isOmpRoomId(id)) return;
   const row = { name: s.name, project_id: s.project_id ?? null, started_at: s.started_at ?? 0, cwd: s.cwd };
   watch(id, t, (b) => {
-    if (b === null && t.dead) markEnded(db, row);
+    if (b === null && endsWhenDead(s, t.dead)) markEnded(db, row);
   });
 }
 
@@ -41,6 +46,8 @@ export async function GET(req: Request, ctx: RouteContext<"/api/sessions/[name]/
   if (!isTermId(name)) return bad("terminal is opened by a Claude Code session id or an omp room id", 422);
   const s = await room(o.db, name);
   if (!s) return bad("phòng này không chạy nền (hoặc đã dừng)", 404);
+  const gate = termGate(s);
+  if (!gate.ok) return bad(gate.error, gate.status);
   const url = new URL(req.url);
   const size = clampSize(Number(url.searchParams.get("cols")), Number(url.searchParams.get("rows")));
   try {
@@ -70,6 +77,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/sessions/[name]
     if (!Array.isArray(files) || files.length === 0 || files.length > FILES_PER_TASK || !files.every(isUploadId)) return bad(`files: 1 to ${FILES_PER_TASK} upload ids`, 422);
     const s = await room(o.db, name);
     if (!s?.cwd) return bad("phòng này không còn chạy, không đặt được ảnh", 409);
+    const gate = termGate(s);
+    if (!gate.ok) return bad(gate.error, gate.status);
     try {
       return json({ paths: placeUploads([...new Set(files as string[])], projectOf(s.cwd)?.root ?? s.cwd) });
     } catch (e) {
@@ -83,7 +92,11 @@ export async function POST(req: Request, ctx: RouteContext<"/api/sessions/[name]
     takeoverTerm(name, s.cwd, clampSize(body.cols, body.rows));
     return json({ ok: true });
   }
-  return input(name, body) ? json({ ok: true }) : bad("terminal chưa mở", 409);
+  if (input(name, body)) return json({ ok: true });
+  // No terminal (GET refused it): say why when the session is an interactive one, not "chưa mở".
+  const s = isOmpRoomId(name) ? null : await room(o.db, name);
+  const gate = s ? termGate(s) : { ok: true as const };
+  return gate.ok ? bad("terminal chưa mở", 409) : bad(gate.error, gate.status);
 }
 
 /** Close the terminal now (the room keeps running; an omp room's host keeps omp running). */

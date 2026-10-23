@@ -22,6 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DEFAULT_SHIP_HOURS, hoursLabel, SHIP_HOURS } from "@/lib/ship-fast";
 import { BOOST_ONLY, BOOST_TEAM, DEFAULT_TEAM, FULL_TEAM, teamText } from "@/lib/team-size";
 
 export type GuideStep = { icon: LucideIcon; title: string; body: string };
@@ -32,10 +33,10 @@ export const GUIDE_STEPS: GuideStep[] = [
     title: "Mở team cho dự án",
     body:
       `Thêm thư mục ở "Mở team ở repo mới" bên trái (dự án đã có phòng tự hiện), rồi bấm "Mở team" (Chạy): team thường ${teamText(DEFAULT_TEAM)} chạy nền liên tục. ` +
-      "Đội mặc định là omp (phòng omp-<vai>, model ghi trên thẻ phòng, ví dụ GLM-5.3); đội Claude Code (`--ccc`) dùng Opus (claude-opus-5-5) cho lead, Sonnet (claude-sonnet-5-5) cho dev và review, Haiku (claude-haiku-5-5) cho qa. " +
-      `"⚡ Sấm Sét" (đầu dự án ở Tổng quan và Văn phòng) mở ${teamText(BOOST_TEAM)} kèm Ship tốc độ cao, lease 2 giờ; đang chạy thì bấm lại để gia hạn hoặc tắt (Tắt Sấm Sét dừng ${BOOST_ONLY.join(", ")}, về team thường, card chúng đang giữ trả về cột). ` +
+      "Đội mặc định là Claude Code: Opus (claude-opus-5-5) cho lead, Sonnet (claude-sonnet-5-5) cho dev và review, Haiku (claude-haiku-5-5) cho qa. Đội omp (phòng omp-<vai>, model ghi trên thẻ phòng, ví dụ GLM-5.3) chỉ chạy khi anh bật công tắc Đội omp (`--omp`). " +
+      `"⚡ Sấm Sét" (đầu dự án ở Tổng quan và Văn phòng) mở ${teamText(BOOST_TEAM)} kèm Ship tốc độ cao ${hoursLabel(DEFAULT_SHIP_HOURS)}, lease 2 giờ; đang chạy thì bấm lại để gia hạn hoặc tắt (Tắt Sấm Sét dừng ${BOOST_ONLY.join(", ")}, về team thường, card chúng đang giữ trả về cột). ` +
       `"Team đầy đủ" mở ${teamText(FULL_TEAM)}. ` +
-      "\"Ship tốc độ cao\" (🚀, cạnh Sấm Sét): 2 giờ cả team dồn land card gần xong trước — review/qa dọn cột trước, builder không lấy card mới khi ≥ 3 card chờ qa/review/approved, lead hỏi Ship một chạm khi card approved (anh mới bấm merge/release); hết giờ/hết card 8sync tự báo. " +
+      `"Ship tốc độ cao" (🚀, cạnh Sấm Sét): chọn ${SHIP_HOURS.map(hoursLabel).join(" / ")} (mặc định ${hoursLabel(DEFAULT_SHIP_HOURS)}), cả team dồn land card gần xong trước — review/qa dọn cột trước, builder không lấy card mới khi ≥ 3 card chờ qa/review/approved, lead hỏi Ship một chạm khi card approved (anh mới bấm merge/release); hết giờ/hết card 8sync tự báo. ` +
       "Phòng rd, ba, arch chỉ mở khi cần (`--roles`).",
   },
   {

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { TOOL_ASK, askTitle, attachCommand, type Ask } from "@/lib/ask";
+import { interactiveHint } from "@/lib/interactive";
 import { criticNote, type AutoState } from "@/lib/auto";
 import { agoVi } from "@/lib/now";
 import { flatText } from "@/lib/screen";
@@ -24,6 +25,8 @@ export type AskRoom = {
   permit?: Permit | null;
   /** A tmux room: answered in its live terminal (the drawer), not with `claude attach`. */
   tmux: boolean;
+  /** Opened by hand in the owner's own terminal window: answered there, HQ cannot attach to it. */
+  interactive?: boolean;
 };
 
 /**
@@ -146,6 +149,11 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
 
   async function openTerminal() {
     if (!r.session_id) return;
+    // An interactive session lives in the owner's own window: `claude attach` cannot reach it.
+    if (r.interactive) {
+      toast.message(interactiveHint(r.label));
+      return;
+    }
     // tmux rooms keep their own drawer; a background room's real terminal opens inside HQ.
     if (r.tmux) {
       setBusy(true);
@@ -178,7 +186,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
           {cmd ? (
             <>
               <Button type="button" size="sm" variant={tap ? "outline" : "default"} disabled={busy} onClick={() => void openTerminal()}>
-                <SquareTerminalIcon aria-hidden /> Mở terminal để trả lời
+                <SquareTerminalIcon aria-hidden /> {r.interactive ? "Trả lời trong cửa sổ của anh" : "Mở terminal để trả lời"}
               </Button>
               <Button type="button" size="sm" variant="outline" onClick={() => void copy(cmd, true)} title={cmd}>
                 <CopyIcon aria-hidden /> Chép lệnh
@@ -236,7 +244,9 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
       ) : null}
 
       <p className="mt-3 max-w-[75ch] text-xs text-muted-foreground text-pretty">
-        {cmd && tap ? (
+        {r.interactive ? (
+          interactiveHint(r.label)
+        ) : cmd && tap ? (
           "Bấm một nút: HQ đọc lại màn hình của phòng rồi mới gửi phím, màn hình đã đổi thì không gửi gì. Muốn trả lời khác: mở terminal ngay trong HQ."
         ) : cmd ? (
           <>
@@ -253,15 +263,15 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
 /** The panel's view of an office room. `claude agents` reports a background room's dialog ("permission prompt") as its `doing` line. */
 export function askRoomOf(r: Room): AskRoom {
   const waiting = r.waiting ?? (r.status === "needs_input" ? r.doing : null);
-  return { key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting, ask: r.ask, permit: r.permit, tmux: r.delivery === "terminal" };
+  return { key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting, ask: r.ask, permit: r.permit, tmux: r.delivery === "terminal", interactive: r.interactive };
 }
 
 /**
  * Which dialogs one tap may answer in a background room: a permission prompt (from the transcript or
  * `claude agents` "permission prompt"), or one single-choice question. Anything else: the terminal.
  */
-export function oneTapKind(r: Pick<AskRoom, "ask" | "waiting" | "tmux" | "session_id">): "permission" | "question" | null {
-  if (r.tmux || !r.session_id) return null;
+export function oneTapKind(r: Pick<AskRoom, "ask" | "waiting" | "tmux" | "session_id" | "interactive">): "permission" | "question" | null {
+  if (r.tmux || r.interactive || !r.session_id) return null;
   const a = r.ask;
   if (a?.kind === "question") return a.questions.length === 1 && !a.questions[0].multi && a.questions[0].options.length > 0 ? "question" : null;
   if (a?.kind === "permission" || /permission/i.test(r.waiting ?? "")) return "permission";

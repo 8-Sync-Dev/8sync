@@ -791,29 +791,23 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     if team_model.is_some() && o.engine == Some(team::Engine::Ccc) {
         bail!("--omp-model không đi cùng --ccc\n{}", team::USAGE);
     }
-    // The engine (owner 2026-10-23: "all mặc định là omp"): the flag (`--ccc`, `--omp` = both), else
-    // what this project ran last (HQ's "Mở lại team" keeps a `--ccc` team a Claude Code team), else
-    // omp. No usable omp model (omp's default is anthropic/… and none was set) → the Claude Code
-    // team, said out loud: the subscription never runs outside Claude Code.
+    // The engine: the flag (`--omp` = both, `--omp-only` = omp alone, `--ccc`), else what this project
+    // ran last (HQ's "Mở lại team" keeps a team what it was), else the Claude Code team (owner
+    // 2026-10-23: "mặc định giờ claude … ccc chính chủ làm mặc định như cũ"; omp opt-in). An omp
+    // engine without a usable omp model is refused: the subscription never runs outside Claude Code.
     let help = args.iter().any(|a| a == "-h" || a == "--help");
     let before = auto::engine_of(&env.home, root);
-    let asked = o.engine.or(before);
-    let blocked = if o.add || asked == Some(team::Engine::Ccc) {
+    let engine = o.engine.or(before).unwrap_or(team::Engine::Ccc);
+    let blocked = if o.add || engine == team::Engine::Ccc {
         auto::omp_blocked(&env.home)
     } else {
         auto::omp_on(&env.home, team_model.as_deref(), now).err().map(|e| e.to_string())
     };
     if !o.add {
-        let engine = match (asked, &blocked) {
-            (Some(e), _) => e,
-            (None, None) => team::Engine::Omp,
-            (None, Some(why)) => {
-                println!("đội omp: chưa chạy được — {why}. Mở đội Claude Code (chọn model omp: `8sync ccc auto omp on --model zai/glm-5.3`).");
-                team::Engine::Ccc
+        if engine != team::Engine::Ccc {
+            if let Some(why) = &blocked {
+                bail!("đội omp: {why}\n{}", team::USAGE);
             }
-        };
-        if engine != team::Engine::Ccc && blocked.is_some() {
-            bail!("đội omp: {}\n{}", blocked.unwrap_or_default(), team::USAGE);
         }
         o.engine = Some(engine);
     }
@@ -842,6 +836,10 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     // A project switching to an omp-only team: its Claude Code rooms stop first (they would run on
     // unmanaged, never revived and never mailed). Then the engine is recorded for this project.
     if let (false, Some(engine)) = (o.add || help, o.engine) {
+        // Back to the Claude Code team alone: this project's omp rooms stop (they hold ~1.3 GB each).
+        if engine == team::Engine::Ccc && before.is_some_and(|b| b != team::Engine::Ccc) {
+            omp_team::print_down(&omp_team::down(env, root)?);
+        }
         if !engine.ccc() && before.is_none_or(team::Engine::ccc) {
             let stopped = team::down(&t, now)?;
             if !stopped.is_empty() {

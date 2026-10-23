@@ -6,12 +6,14 @@ import { mergedSessions } from "@/lib/server/proc";
 import { runBlocked } from "@/lib/server/power";
 import { liveProjects } from "@/lib/server/targets";
 import { isTeamAction, runTeam, TASK_MAX } from "@/lib/server/team";
+import { DEFAULT_SHIP_HOURS, isShipHours, SHIP_HOURS } from "@/lib/ship-fast";
 
 export const runtime = "nodejs";
 
 /**
- * {root, action: "up" | "full" | "boost" | "unboost" | "clean" | "down"}: the team of one project
- * (`8sync ccc auto up|down`; unboost = `auto down --only <boost-only rooms>`).
+ * {root, action: "up" | "full" | "boost" | "unboost" | "clean" | "down" | "ship-fast" | …, hours?}: the
+ * team of one project (`8sync ccc auto up|down`; unboost = `auto down --only <boost-only rooms>`).
+ * `hours` (0.5, 1, 2 or 4; 0.5 when absent): how long `ship-fast` runs the sprint.
  * Only a root HQ shows (a project with a live room, or a folder added in the sidebar), never an arbitrary path.
  */
 export async function POST(req: Request) {
@@ -24,6 +26,8 @@ export async function POST(req: Request) {
   // Optional first task (the new project's spec): a card on the board before the rooms start.
   const task = body?.task;
   if (task != null && (typeof task !== "string" || Array.from(task).length > TASK_MAX)) return bad(`task: chuỗi, tối đa ${TASK_MAX} ký tự`, 422);
+  const hours = body?.hours ?? DEFAULT_SHIP_HOURS;
+  if (!isShipHours(hours)) return bad(`hours: một trong ${SHIP_HOURS.join(", ")}`, 422);
   // Boost renews the owner lease like Run: over today's electricity budget it stays off (lib/server/power.ts).
   const blocked = action === "boost" ? runBlocked() : null;
   if (blocked) return bad(blocked, 409);
@@ -40,6 +44,6 @@ export async function POST(req: Request) {
   const want = norm(root);
   const known = [...live, ...added, ...extraRoots].find((r) => norm(r) === want);
   if (!known) return bad("thư mục này không có trong HQ: thêm nó ở mục Projects trước", 409);
-  const r = await runTeam(known, action, typeof task === "string" ? task : null);
+  const r = await runTeam(known, action, typeof task === "string" ? task : null, hours);
   return json(r, r.ok ? 200 : r.busy ? 409 : 502);
 }

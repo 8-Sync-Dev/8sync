@@ -36,7 +36,7 @@ use super::{auto, idle, room, target};
 /// Rooms one `auto up` starts at most (the `boost` preset is the largest team).
 const MAX_ROOMS: usize = 14;
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa|boost|full] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--ccc | --omp] [--omp-model <provider/model>] [--company] | up --add <phòng> | down [--only <phòng>[,<phòng>…]] | close [--dry-run] [--json] | revive";
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa|boost|full] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--ccc | --omp | --omp-only] [--omp-model <provider/model>] [--company] | up --add <phòng> | down [--only <phòng>[,<phòng>…]] | close [--dry-run] [--json] | revive";
 
 /// `auto up …` / `auto down` / `auto close` / `auto revive`: the verbs this module (and
 /// [`super::close`]) owns.
@@ -377,13 +377,13 @@ pub(super) struct Row {
     pub short: String,
 }
 
-/// Which agents run the team's rooms. Owner 2026-10-23 ("all mặc định là omp"): omp rooms on a
-/// non-Anthropic model by default; Claude Code rooms on request (`--ccc`), both with `--omp`.
+/// Which agents run the team's rooms: Claude Code rooms by default (owner 2026-10-23, after a day on
+/// omp: "mặc định giờ claude"), omp rooms alone with `--omp-only`, both with `--omp`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Engine {
-    /// omp rooms only (`omp-<role>`), the default.
+    /// omp rooms only (`omp-<role>`, `--omp-only`).
     Omp,
-    /// Claude Code background rooms only (`--ccc`).
+    /// Claude Code background rooms only: the default (`--ccc` says it outright).
     Ccc,
     /// Both teams side by side (`--omp`, as before 2026-10-23).
     Both,
@@ -416,7 +416,7 @@ pub(super) struct Opts {
     /// `auto up "<việc>" [--check "<lệnh>"]`: the first card, at the head of the queue.
     pub task: Option<String>,
     pub check: Option<String>,
-    /// `--omp` (both teams) / `--ccc` (Claude Code only); None = the default, omp ([`Engine`]).
+    /// `--omp` (both teams) / `--omp-only` / `--ccc`; None = what the project ran last, else Claude Code ([`Engine`]).
     pub engine: Option<Engine>,
     /// `--company`: this team serves every project in auto's scope (`auto::set_company`).
     pub company: bool,
@@ -470,6 +470,7 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
             "-h" | "--help" => bail!("{USAGE}"),
             "--omp" => o.engine = Some(Engine::Both),
             "--ccc" => o.engine = Some(Engine::Ccc),
+            "--omp-only" => o.engine = Some(Engine::Omp),
             "--company" => o.company = true,
             "--check" => o.check = Some(value()?),
             x if x.starts_with("--") => bail!("không rõ `{x}`\n{USAGE}"),
@@ -1604,6 +1605,7 @@ mod tests {
         assert_eq!(parse(&v(&["--roles", "small"])).unwrap().roles.len(), 3);
         assert_eq!(parse(&v(&["--omp"])).unwrap().engine, Some(Engine::Both));
         assert_eq!(parse(&v(&["--ccc"])).unwrap().engine, Some(Engine::Ccc));
+        assert_eq!(parse(&v(&["--omp-only"])).unwrap().engine, Some(Engine::Omp));
         // Every room of the full team has a role.
         assert!(room::FULL_TEAM.iter().all(|n| room::find(n).is_some()), "{:?}", room::FULL_TEAM);
         let o = parse(&v(&["--roles", "lead, ba,dev,dev2,qc,dev", "--loop", "45m", "--usd-per-hour", "3"])).unwrap();

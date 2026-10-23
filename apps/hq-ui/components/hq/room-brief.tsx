@@ -1,8 +1,10 @@
 "use client";
 
 import { CircleDotIcon, SquareTerminalIcon } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { attachCommand } from "@/lib/ask";
+import { interactiveHint } from "@/lib/interactive";
 import { LANES } from "@/lib/lanes";
 import { agoVi, spanVi, type RoomNow } from "@/lib/now";
 import { roomModelLabel } from "@/lib/roles";
@@ -84,7 +86,7 @@ export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: 
 
       {(n.state === "needs" || room.permit) && (
         <AskPanel
-          rooms={[{ key: room.key, label: room.label, session_id: room.session_id, project: where?.name ?? null, waiting: room.waiting, ask: room.ask, permit: room.permit, tmux }]}
+          rooms={[{ key: room.key, label: room.label, session_id: room.session_id, project: where?.name ?? null, waiting: room.waiting, ask: room.ask, permit: room.permit, tmux, interactive: room.interactive }]}
           now={now}
           token={token}
           onOpen={onTerminal}
@@ -103,12 +105,16 @@ export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: 
 /**
  * The room's terminal: HQ's own tmux rooms open in the drawer; a background Claude Code session
  * (`claude attach`) or an omp room (its omp, kept running by a host) opens inside HQ. `open` is null
- * when there is no way in (no session id).
+ * when there is no way in (no session id). An interactive session (the owner's own window) only says so.
  */
 function useOpenTerminal(room: Room, tmux: boolean, _token: string, onTerminal: () => void) {
   const id = room.session_id;
   if (tmux) return { busy: false, open: onTerminal, title: undefined };
   if (!id) return { busy: false, open: null, title: undefined };
+  if (room.interactive) {
+    const hint = interactiveHint(room.label);
+    return { busy: false, open: () => toast.message(hint), title: hint };
+  }
   // A background room opens its real terminal inside HQ (`8sync ccc term`), no separate window.
   const other = room.engine === "omp" ? `8sync . ${room.label} trong repo` : attachCommand(id);
   return { busy: false, open: () => openWebTerminal(id, room.label), title: `Terminal trong HQ (hoặc: ${other})` };

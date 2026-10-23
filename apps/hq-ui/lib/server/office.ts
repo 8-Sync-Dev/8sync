@@ -284,6 +284,8 @@ export type Room = {
   team: string | null;
   /** Which team the room belongs to (contract C4): "ccc" (Claude Code) or "omp". */
   engine: string;
+  /** Opened by hand in the owner's terminal window (`claude agents` kind "interactive"): HQ cannot open its terminal. */
+  interactive?: boolean;
   /** The sprint meeting this room's lead is at (`su-code/standup/<today>.md` row < 30 min old), else null. */
   meeting: { at: number; phase: WalkPhase } | null;
 };
@@ -451,6 +453,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       role: s.role ?? null,
       team: teamOf(sid),
       engine: s.engine ?? "ccc",
+      ...(s.interactive && { interactive: true }),
       meeting: null,
     };
   });

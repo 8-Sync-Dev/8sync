@@ -15,7 +15,7 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { POST } from "@/app/api/team/route";
-import { BoostButton, BoostChoices, boostOn, TeamControls, TeamStartButtons, TeamStarter } from "@/components/hq/team-controls";
+import { BoostButton, BoostChoices, boostOn, ShipFastHours, TeamControls, TeamStartButtons, TeamStarter } from "@/components/hq/team-controls";
 import { getToken } from "@/lib/server/auth";
 import { pinnedRootsPath } from "@/lib/server/paths";
 import { onePerBoard, type ProjectBoard } from "@/lib/server/board";
@@ -62,6 +62,10 @@ describe("team", () => {
     expect(teamArgs("full")).toEqual(["ccc", "auto", "up", "--roles", "full"]);
     expect(teamArgs("boost")).toEqual(["ccc", "auto", "up", "--roles", "boost", "--hours", "2"]);
     expect(teamArgs("unboost")).toEqual(["ccc", "auto", "down", "--only", "dev2,review"]);
+    // Ship tốc độ cao: 30 minutes unless the owner picks 1, 2 or 4 hours.
+    expect(teamArgs("ship-fast")).toEqual(["ccc", "auto", "ship-fast", "on", "--hours", "0.5", "--json"]);
+    expect(teamArgs("ship-fast", 4)).toEqual(["ccc", "auto", "ship-fast", "on", "--hours", "4", "--json"]);
+    expect(teamArgs("boost", 4)).toEqual(["ccc", "auto", "up", "--roles", "boost", "--hours", "2"]);
     expect(tail("\x1b[1mone\x1b[0m\n\n two \n")).toBe("one\n two ");
   });
 
@@ -84,7 +88,8 @@ describe("team", () => {
     const game = "C:\\Users\\P\\3d-game";
     const open = emptyOfficeCopy({ repo: game, company: false, teamRoots: [], buttons: true });
     expect(open.title).toBe("Dự án này chưa có phòng nào chạy");
-    expect(open.body).toBe("Mở team: 3 phòng (lead, dev, qa) của đội omp; ⚡ Sấm Sét: 5 phòng (lead, dev, dev2, qa, review).");
+    expect(open.body).toBe("Mở team: 3 phòng (lead, dev, qa) của đội Claude Code; ⚡ Sấm Sét: 5 phòng (lead, dev, dev2, qa, review).");
+    expect(open.body).not.toContain("omp");
     // Live 2026-10-23: scope had 4 repos, only ide ran a team; 3d-game's own root is never listed.
     const co = emptyOfficeCopy({ repo: game, company: true, teamRoots: ["\\\\?\\C:\\Users\\P\\ide", "\\\\?\\C:\\Users\\P\\3d-game"], buttons: true });
     expect(co.title).toBe("Dự án này chưa có phòng riêng");
@@ -153,7 +158,7 @@ describe("team", () => {
     expect((await post({ root: room.cwd, action: "up" })).status).toBe(200);
   });
 
-  it("Sấm Sét runs exactly `auto up --roles boost --hours 2` in the project root, turns on the ship sprint, then revives", async () => {
+  it("Sấm Sét runs exactly `auto up --roles boost --hours 2` in the project root, turns on the 30-minute ship sprint, then revives", async () => {
     run.mockClear();
     run.mockResolvedValueOnce({ ok: true, stdout: "✓ dev2 mở\n✓ review mở\nboost: 5 phòng · lease tới 18:00 UTC\n", stderr: "" });
     const ok = await post({ root: room.cwd.toUpperCase(), action: "boost" });
@@ -162,7 +167,7 @@ describe("team", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(run.mock.calls).toEqual([
       ["8sync", ["ccc", "auto", "up", "--roles", "boost", "--hours", "2"], 660_000, room.cwd],
-      ["8sync", ["ccc", "auto", "ship-fast", "on", "--hours", "2", "--json"], 60_000, room.cwd],
+      ["8sync", ["ccc", "auto", "ship-fast", "on", "--hours", "0.5", "--json"], 60_000, room.cwd],
       ["8sync", ["ccc", "auto", "revive"], 120_000],
     ]);
     // A failed boost reports the CLI's own error and revives nothing.
@@ -172,6 +177,25 @@ describe("team", () => {
     expect(failed.status).toBe(502);
     expect((await failed.json()).error).toBe("boost: cửa sổ 5 giờ đã 90%");
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("Ship tốc độ cao runs for the picked hours (30 phút by default); any other length is refused and nothing runs", async () => {
+    run.mockClear();
+    expect((await post({ root: room.cwd, action: "ship-fast" })).status).toBe(200);
+    expect((await post({ root: room.cwd, action: "ship-fast", hours: 2 })).status).toBe(200);
+    expect(run.mock.calls).toEqual([
+      ["8sync", ["ccc", "auto", "ship-fast", "on", "--hours", "0.5", "--json"], 300_000, room.cwd],
+      ["8sync", ["ccc", "auto", "ship-fast", "on", "--hours", "2", "--json"], 300_000, room.cwd],
+    ]);
+    run.mockClear();
+    for (const hours of [3, 0, -1, "2", "0.5; rm -rf", 8]) expect((await post({ root: room.cwd, action: "ship-fast", hours })).status, String(hours)).toBe(422);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("UI: the Ship tốc độ cao picker offers 30 phút (picked), 1 giờ, 2 giờ, 4 giờ", () => {
+    const html = renderToStaticMarkup(createElement(ShipFastHours, { hours: 0.5, onPick: () => {} }));
+    const picks = [...html.matchAll(/aria-checked="(true|false)"[^>]*>([^<]+)</g)].map((m) => [m[2], m[1]]);
+    expect(picks).toEqual([["30 phút", "true"], ["1 giờ", "false"], ["2 giờ", "false"], ["4 giờ", "false"]]);
   });
 
   it("Sấm Sét is refused without the token, from a foreign origin or with no origin: nothing runs", async () => {
@@ -200,7 +224,8 @@ describe("team", () => {
   it("UI: the Sấm Sét button asks first, shows the live boost team as active, and sits in the team controls", () => {
     const p = { root: room.cwd, name: "3d-game", token: "t" };
     const off = renderToStaticMarkup(createElement(BoostButton, { ...p, active: false }));
-    for (const s of ["Sấm Sét", "5 phòng (lead, dev, dev2, qa, review)", "thêm dev2, review", "đội omp mặc định", "lease 2 giờ"]) expect(off).toContain(s);
+    for (const s of ["Sấm Sét", "5 phòng (lead, dev, dev2, qa, review)", "thêm dev2, review", "đội Claude Code mặc định", "Ship tốc độ cao 30 phút", "lease 2 giờ"]) expect(off).toContain(s);
+    expect(off).not.toContain("omp");
     expect(off).not.toContain("13 phòng");
     expect(off).not.toContain("Đang Sấm Sét");
     const on = renderToStaticMarkup(createElement(BoostButton, { ...p, active: true }));

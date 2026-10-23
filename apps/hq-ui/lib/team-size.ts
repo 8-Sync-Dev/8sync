@@ -1,7 +1,7 @@
 // The team shapes `8sync ccc auto up` opens: the CLI's `room::DEFAULT_TEAM`, `room::FULL_TEAM` and
 // `room::BOOST_TEAM` (crates/cli/src/verbs/ccc/room.rs; tests/team.test.ts pins them). The default
-// engine is omp (rooms `omp-<role>`, owner 2026-10-23 "all mặc định là omp"); `--ccc` opens the same
-// roles as Claude Code rooms. Pure: the buttons' copy and lib/server/team.ts read these.
+// team is Claude Code (owner 2026-10-23, back from omp); `--omp` (HQ's "Đội omp" switch) opens the
+// omp team, rooms `omp-<role>`. Pure: the buttons' copy and lib/server/team.ts read these.
 import { diskKey } from "./disk";
 import { repoOf } from "./sidebar";
 
@@ -25,7 +25,7 @@ export const teamText = (team: readonly string[]) => `${team.length} phòng (${t
  * repo as "đang chạy ở" while only one ran a team.
  */
 export function emptyOfficeCopy(o: { repo: string | null; company: boolean; teamRoots: readonly string[]; buttons: boolean }): { title: string; body: string } {
-  const sizes = `Mở team: ${teamText(DEFAULT_TEAM)} của đội omp; ⚡ Sấm Sét: ${teamText(BOOST_TEAM)}.`;
+  const sizes = `Mở team: ${teamText(DEFAULT_TEAM)} của đội Claude Code; ⚡ Sấm Sét: ${teamText(BOOST_TEAM)}.`;
   const title = o.repo ? (o.company ? "Dự án này chưa có phòng riêng" : "Dự án này chưa có phòng nào chạy") : "Văn phòng đang trống";
   if (!o.company) return { title, body: o.buttons ? sizes : "Thêm thư mục dự án ở mục Projects bên trái: nút “Mở team” hiện ở đây." };
   const here = o.repo ? diskKey(o.repo) : null;
