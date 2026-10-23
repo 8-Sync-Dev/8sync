@@ -1027,7 +1027,10 @@ fn ram_split_text(v: &Value) -> Option<String> {
 
 /// Images a process chain is not followed above when naming its app: the shell and service hosts
 /// every app descends from.
-const APP_ROOTS: [&str; 16] = ["explorer", "services", "svchost", "wininit", "winlogon", "userinit", "system", "smss", "csrss", "sihost", "runtimebroker", "taskhostw", "dwm", "init", "systemd", "launchd"];
+/// `wmiprvse` too: Claude Code starts its background-session daemon through WMI, so every claude,
+/// node and browser under it was labelled "Wmiprvse 12.5 GB" while WmiPrvSE itself held 98 MB
+/// (owner's PC, 2026-10-23): the guard named the wrong app.
+const APP_ROOTS: [&str; 17] = ["explorer", "services", "svchost", "wininit", "winlogon", "userinit", "system", "smss", "csrss", "sihost", "runtimebroker", "taskhostw", "dwm", "wmiprvse", "init", "systemd", "launchd"];
 
 /// The owner-facing name of an app's root image.
 fn app_label(image: &str) -> String {
@@ -2438,6 +2441,19 @@ mod tests {
     fn p(pid: u32, ppid: u32, age_min: u64, name: &str, cmd: &str, mb: u64) -> Proc {
         let image = name.trim_end_matches(".exe").to_string();
         Proc { pid, ppid, started: NOW - age_min * 60, rss: mb * MB, node: name == "node.exe", shell: matches!(name, "bash.exe" | "cmd.exe"), image, cmd: cmd.into(), name: name.into(), cpu: 0, normal: false, idle: false }
+    }
+
+    #[test]
+    fn memory_under_the_claude_daemon_is_claudes_not_wmiprvse() {
+        let procs = [
+            p(5540, 900, 600, "wmiprvse.exe", "wmiprvse.exe", 98),
+            p(12968, 5540, 300, "claude.exe", "claude.exe daemon run", 200),
+            p(30, 12968, 60, "claude.exe", "claude --bg", 9_000),
+            p(31, 30, 30, "node.exe", "node vite", 3_000),
+        ];
+        let s = ram_split(&procs, &[]);
+        assert_eq!(s.top.first().map(|(n, _)| n.as_str()), Some("Claude"), "{:?}", s.top);
+        assert!(s.top.iter().any(|(n, b)| n == "Wmiprvse" && *b == 98 * MB), "WmiPrvSE keeps only its own memory: {:?}", s.top);
     }
 
     #[test]
