@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.76] — 2026-10-23
+### Fixed
+- **Guard chỉ đúng app ăn RAM, không đổ cho WmiPrvSE nữa**: dòng "RAM: … app khác (Wmiprvse 12.5 GB …)" sai, WmiPrvSE thật chỉ giữ 98 MB. Claude Code mở daemon chạy session nền qua WMI nên mọi claude, node, trình duyệt dưới daemon bị tính cho WmiPrvSE. Giờ dừng ở WmiPrvSE như các tiến trình hệ thống khác, bộ nhớ ghi đúng tên app (Claude, Node…). Test +1.
+
 ## [0.110.75] — 2026-10-23
 ### Fixed
 - **Phòng không còn chụp game 3D bằng CPU** (owner: "Fix cpu quá cao chưa", CPU 88–95% trong khi GPU RTX 3%): các phòng 3d-game tự viết `shot.sh` mở Edge headless với `--use-angle=swiftshader --enable-unsafe-swiftshader`, ép WebGL vẽ bằng CPU, nhiều phòng chụp cùng lúc. Mỗi trình duyệt chỉ sống vài chục giây nên luật dọn theo nhịp guard không bắt kịp. Giờ guard hook trên Windows chặn ngay lệnh và script có cờ swiftshader, chỉ cách dùng `8sync shot` hoặc `--use-angle=d3d11` (đo trên máy owner: 5,1 so với 9,0 giây CPU mỗi ảnh); file CI trong `.github/` giữ nguyên vì máy CI không có GPU. Test +1.
