@@ -40,7 +40,9 @@ export async function POST(req: Request) {
   const st = lastAutoStatus();
   const listed = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
   const extraRoots = [...readPins().map((p) => p.root), ...listed(st?.repos), ...listed(st?.team_roots)].map((r) => r.replace(/^\\\\\?\\/, ""));
-  const norm = (r: string) => r.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  // Rust writes Windows roots as `\\?\C:\…` and the page sends them back that way (owner 2026-10-23,
+  // VPS: "Không mở được team 3d-game: thư mục này không có trong HQ"): the prefix goes on both sides.
+  const norm = (r: string) => r.replace(/^\\\\\?\\/, "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
   const want = norm(root);
   const known = [...live, ...added, ...extraRoots].find((r) => norm(r) === want);
   if (!known) return bad("thư mục này không có trong HQ: thêm nó ở mục Projects trước", 409);

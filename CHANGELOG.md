@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.74] — 2026-10-23
+### Fixed
+- **Nút "Mở team" không còn báo "thư mục này không có trong HQ" với dự án ghim** (owner, HQ trên VPS: "Không mở được team 3d-game"): Rust ghi đường dẫn Windows dạng `\\?\C:\…` và trang gửi lại đúng dạng đó; `/api/team` chỉ bỏ tiền tố này ở danh sách dự án đã biết, không bỏ ở đường dẫn trang gửi, nên hai bên không khớp. Giờ bỏ ở cả hai phía. Test +1.
+
 ## [0.110.73] — 2026-10-23
 ### Changed
 - **Đội mặc định trở lại Claude Code** (owner: "mặc định giờ claude … ccc chính chủ làm mặc định như cũ"), giữ số phòng mới: Thường 3 (lead, dev, qa), ⚡ Sấm Sét 5 (+ dev2, review). Dự án nhớ engine lần trước; `--omp` thêm đội omp, `--omp-only` chỉ đội omp; về lại Claude Code thì phòng omp của dự án đó dừng (mỗi phòng ~1,3 GB RAM). HQ nói đội mặc định là Claude Code.
