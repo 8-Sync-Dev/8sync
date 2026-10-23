@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { attachCommand } from "@/lib/ask";
 import { LANES } from "@/lib/lanes";
 import { agoVi, spanVi, type RoomNow } from "@/lib/now";
-import { modelShort } from "@/lib/roles";
+import { roomModelLabel } from "@/lib/roles";
 import { repoOf } from "@/lib/sidebar";
 import { AskPanel } from "./ask-panel";
 import { StateTag } from "./now-roster";
@@ -24,7 +24,7 @@ const laneLabel = (k: string) => LANES.find((l) => l.key === k)?.label ?? k;
 export function RoomBar({ room, n, token, onTerminal }: { room: Room; n: RoomNow; token: string; onTerminal: () => void }) {
   const tmux = room.delivery === "terminal";
   const where = room.project ? repoOf(room.project.root) : null;
-  const sub = [where?.name, where?.worktree ? `worktree ${where.worktree}` : room.project?.branch, room.model ? modelShort(room.model) : null].filter(Boolean).join(" · ");
+  const sub = [where?.name, where?.worktree ? `worktree ${where.worktree}` : room.project?.branch, roomModelLabel(room)].filter(Boolean).join(" · ");
   const term = useOpenTerminal(room, tmux, token, onTerminal);
   return (
     <div className="flex items-center gap-3">

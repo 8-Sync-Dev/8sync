@@ -23,6 +23,10 @@ export type AutoStatus = {
   out?: unknown;
   /** Why 8sync keeps the omp team off (e.g. omp's default model is `anthropic/…`); null when not blocked. */
   omp_blocked?: string | null;
+  /** The omp team's model (`<provider>/<model>`, `auto omp on --model`); null = omp's own default; absent on an older 8sync. */
+  omp_model?: string | null;
+  /** The omp team's own hours (`auto omp on --hours`, unix s); null when unset. */
+  omp_until?: number | null;
   error?: string;
   /** Why the last "Đội omp" switch failed (e.g. omp runs on the anthropic provider); the Pause / Run state is unaffected. */
   omp_error?: string;

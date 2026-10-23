@@ -2801,7 +2801,8 @@ mod tests {
         // CPU: the owner's build at 82%, rooms 13 × 1% = 13%: rooms keep their 10% floor, and the
         // machine at 95% is over the 92% hard line by 3% → 3 rooms give way.
         assert_eq!(keep_count(&[10; 13], 950, 600, 100, 920, 3), 10);
-        let live: Vec<String> = room::BOOST_TEAM.iter().map(|s| s.to_string()).collect();
+        // A 13-room team (the old Sấm Sét roster, still reachable with `--roles`).
+        let live: Vec<String> = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"].iter().map(|s| s.to_string()).collect();
         let p = to_pause(&live, 3);
         assert_eq!(p, ["review2", "dev6", "dev5", "qa2", "ba", "dev4", "dev3", "review", "dev2", "ui"]);
         assert!(!p.iter().any(|n| CORE.contains(&n.as_str())), "never lead/dev/qa");

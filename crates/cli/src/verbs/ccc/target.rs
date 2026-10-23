@@ -504,6 +504,7 @@ pub(super) fn close(
     now: u64,
 ) -> Result<(Target, Option<Target>)> {
     let evidence = done.map(|e| clean(e, EVIDENCE_MAX));
+    let merged = evidence.is_some();
     if evidence.as_deref() == Some("") {
         bail!("--evidence rỗng: dán lệnh kiểm + kết quả");
     }
@@ -545,33 +546,81 @@ pub(super) fn close(
         Ok((closed, next))
     });
     if res.is_ok() {
-        prune_card_worktree(root, id);
+        prune_card_worktree(root, id, merged);
     }
     res
 }
 
-/// Best-effort cleanup of clean `.claude/worktrees/*card-<id>*` folders when card `<id>` closes,
-/// so finished worktrees do not pile up or clutter HQ Preview. Dirty worktrees are kept.
-fn prune_card_worktree(root: &Path, id: u64) {
+/// Best-effort cleanup of `.claude/worktrees/*card-<id>*` folders when card `<id>` closes, so
+/// finished worktrees do not pile up or clutter HQ Preview. A clean one goes; on a card closed
+/// `done` (merged) one dirty only with what the build leaves ([`noise_only`]: lockfiles a
+/// `pnpm install` rewrote, submodule pointers, room memory, QA evidence) goes too, with `--force`
+/// (git also refuses a worktree holding submodules without it). Anything else dirty stays.
+/// Then up to [`ORPHANS_PER_CLOSE`] leftover `card-*` folders without `.git` (a `git worktree
+/// remove` cut short by a locked file) are deleted. Owner 2026-10-23: platform had 102 folders
+/// for 31 registered worktrees, 73 of them such leftovers, each with its own `node_modules`.
+fn prune_card_worktree(root: &Path, id: u64, done: bool) {
     let wt_dir = root.join(".claude").join("worktrees");
     let Ok(rd) = std::fs::read_dir(&wt_dir) else { return };
     let needle = format!("card-{id}");
+    let git = |args: &[&str], dir: &Path| {
+        std::process::Command::new("git").args(args).current_dir(dir).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok().filter(|o| o.status.success())
+    };
+    let mut orphans = Vec::new();
     for e in rd.flatten() {
         let name = e.file_name();
         let Some(s) = name.to_str() else { continue };
         let low = s.to_ascii_lowercase();
-        let matches = low.find(&needle).is_some_and(|i| !low[i + needle.len()..].starts_with(|c: char| c.is_ascii_digit()));
         let p = e.path();
-        if matches && p.join(".git").exists() {
-            let _ = std::process::Command::new("git")
-                .args(["worktree", "remove"])
-                .arg(&p)
-                .current_dir(root)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+        if !p.join(".git").exists() {
+            if low.starts_with("card-") && p.is_dir() {
+                orphans.push(p);
+            }
+            continue;
         }
+        let matches = low.find(&needle).is_some_and(|i| !low[i + needle.len()..].starts_with(|c: char| c.is_ascii_digit()));
+        if !matches {
+            continue;
+        }
+        let force = done && git(&["status", "--porcelain=v2", "--untracked-files=all"], &p).is_some_and(|o| noise_only(&String::from_utf8_lossy(&o.stdout)));
+        let mut args = vec!["worktree", "remove"];
+        if force {
+            args.push("--force");
+        }
+        let target = p.to_string_lossy().into_owned();
+        args.push(&target);
+        let _ = git(&args, root);
     }
+    for p in orphans.into_iter().take(ORPHANS_PER_CLOSE) {
+        let _ = std::fs::remove_dir_all(&p);
+    }
+    let _ = git(&["worktree", "prune"], root);
+}
+
+/// Leftover `card-*` folders deleted per card close (each can hold a `node_modules`).
+const ORPHANS_PER_CLOSE: usize = 3;
+
+/// Pure: `git status --porcelain=v2` of a closed card's worktree changes nothing but what builds
+/// and rooms leave behind: a submodule pointer, a lockfile, the rooms' `su-code/` memory, QA
+/// evidence, screenshots and logs. Empty output counts (clean). Anything else — a source file
+/// edited or created and never committed — keeps the worktree.
+fn noise_only(porcelain: &str) -> bool {
+    const LOCKS: [&str; 5] = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb", "Cargo.lock"];
+    const DIRS: [&str; 3] = ["su-code/", "qa/evidence/", ".next/"];
+    const EXT: [&str; 3] = [".png", ".jpg", ".log"];
+    porcelain.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).all(|l| {
+        let f: Vec<&str> = l.split(' ').collect();
+        // `1 XY sub mH mI mW hH hI <path>`, `2 XY sub mH mI mW hH hI Xscore <path>\t<orig>`, `? <path>`.
+        let (sub, path) = match f.first() {
+            Some(&"?") => ("N...", f[1..].join(" ")),
+            Some(&"1") if f.len() >= 9 => (f[2], f[8..].join(" ")),
+            Some(&"2") if f.len() >= 10 => (f[2], f[9..].join(" ").split('\t').next().unwrap_or_default().to_string()),
+            _ => return false,
+        };
+        let path = path.trim_matches('"').replace('\\', "/");
+        let low = path.to_ascii_lowercase();
+        sub.starts_with('S') || LOCKS.iter().any(|k| path == *k || path.ends_with(&format!("/{k}"))) || DIRS.iter().any(|d| path.starts_with(d)) || EXT.iter().any(|x| low.ends_with(x))
+    })
 }
 
 /// Pure: does a `done` evidence line carry a result: a commit SHA (7–40 hex chars) or the
@@ -694,6 +743,18 @@ fn fits(t: &Target, lane: &str, crew: &str, now: u64) -> bool {
         "ready" => at == "ready" && !for_qa && (roles.is_empty() || roles.iter().any(|r| r == crew)),
         l => at == l,
     }
+}
+
+/// A review card nobody picked up for this long goes to a qa room with nothing in qa: the default
+/// team (lead, dev, qa) has no review room, and a 5-room team's reviewer claims long before this.
+pub(super) const REVIEW_FALLBACK_S: u64 = 10 * 60;
+
+/// Pure: a qa room may take the review lane now ([`REVIEW_FALLBACK_S`]): an open review card no
+/// room holds (or whose claim went stale) and untouched for that long.
+pub(super) fn review_waiting(cards: &[Target], now: u64) -> bool {
+    cards.iter().any(|t| {
+        t.state == "open" && t.lane == "review" && t.claim.as_ref().is_none_or(|c| now.saturating_sub(c.at) >= CLAIM_SECS) && now.saturating_sub(touched(t)) >= REVIEW_FALLBACK_S
+    })
 }
 
 /// Read-only twin of [`claim`]'s pick: the card `room` would get from `lane` now. `auto wait` polls it.
@@ -1949,5 +2010,16 @@ mod tests {
         assert_eq!(claim(h, &root, "ba", "backlog", 5).unwrap(), None, "the other backlog room does not take it either");
         assert_eq!(claimable(&list(h, &root).unwrap(), "ba", "backlog", 4 + BLOCKED_RETRY), Some(stuck.id), "an hour later it comes back");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn closed_card_worktree_goes_only_when_dirty_with_build_leftovers() {
+        assert!(noise_only(""), "clean");
+        let leftovers = "1 .M S.M. 160000 160000 160000 abc abc backend\n1 .M N... 100644 100644 100644 a a pnpm-lock.yaml\n1 .M N... 100644 100644 100644 a a su-code/DECISIONS.md\n? qa/evidence/card-7-hero.png\n? su-code/standup/2026-10-22.md";
+        assert!(noise_only(leftovers), "submodule pointer, lockfile, room memory, evidence");
+        assert!(!noise_only("1 .M N... 100644 100644 100644 a a src/main.rs"), "an edited source file keeps it");
+        assert!(!noise_only("? src/new_feature.ts"), "an uncommitted new file keeps it");
+        assert!(!noise_only("u UU N... 100644 100644 100644 100644 a b c src/x.rs"), "a conflict keeps it");
+        assert!(noise_only("1 .M N... 100644 100644 100644 a a apps/web/package-lock.json"), "nested lockfile");
     }
 }

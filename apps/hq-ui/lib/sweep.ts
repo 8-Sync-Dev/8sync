@@ -18,6 +18,17 @@ export const ALERT_EVERY_MS = 5 * 60_000;
 
 export const sweepArgs = (on: boolean) => (on ? ["ccc", "auto", "up", "--add", SWEEP_ROOM] : ["ccc", "auto", "down", "--only", SWEEP_ROOM]);
 
+/** Why the switch is off and greyed in a project whose team runs omp only. */
+export const SWEEP_OMP_ONLY = "Đội chỉ chạy omp: phòng sweep là phòng Claude, không thêm";
+
+/**
+ * The Claude `sweep` room may join the team: auto's `teams` (contract C4) has "ccc"; absent = ["ccc"]
+ * (an older 8sync). An omp-only team (`["omp"]`, the default since 2026-10-23) never gets it.
+ */
+export function sweepAllowed(teams: unknown): boolean {
+  return !Array.isArray(teams) || teams.includes("ccc");
+}
+
 /** A room named like the sweep (`sweep`, `sweep2`, `sweep-zus` when `auto up` titled it after the repo), as room.rs `find` reads names. */
 export function isSweepRoom(label: string | null | undefined): boolean {
   const first = (label ?? "").toLowerCase().split(/[^\p{L}\p{N}&]+/u).find(Boolean) ?? "";

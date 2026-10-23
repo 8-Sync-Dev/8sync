@@ -710,10 +710,12 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
             println!("{} ({}): {} {}", r.name, r.role, r.state, r.short);
         }
         // Approved cards land here, in code, while the owner's self-merge grant holds; not past this
-        // revive's deadline (the next tick merges).
+        // revive's deadline (the next tick merges). Not behind the lease/usage gate: a merge is `gh`
+        // calls, no Claude tokens, and the owner's grant + the reviewed SHA are its rails (owner
+        // 2026-10-23: approved cards sat while the lease had run out and the grant was still valid).
         if team::revive_left() < std::time::Duration::from_secs(15) {
             println!("merge nền: để lượt revive sau (hết giờ của lượt này)");
-        } else if auto::running(&env.home) && auto::in_scope(&env.home, Some(&root.to_string_lossy())) && auto::status(&env.home, subscription, now)["gate"].is_null() {
+        } else if auto::running(&env.home) && auto::in_scope(&env.home, Some(&root.to_string_lossy())) {
             match merge::background(&env.home, root, now) {
                 Ok(lines) => lines.iter().for_each(|l| println!("{l}")),
                 Err(e) => println!("merge nền: lỗi — {e:#}"),
@@ -771,20 +773,40 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         }
         None => None,
     };
-    let o = team::parse(&args)?;
+    let mut o = team::parse(&args)?;
     // `--add` joins the team running here, else is refused before anything is touched.
     if o.add {
         team::check_add(&t)?;
     }
-    if team_model.is_some() && !o.omp {
-        bail!("--omp-model đi cùng --omp\n{}", team::USAGE);
+    if team_model.is_some() && o.engine == Some(team::Engine::Ccc) {
+        bail!("--omp-model không đi cùng --ccc\n{}", team::USAGE);
     }
-    // `--omp` = `auto omp on` first, so `up`'s auto on keeps it in `teams`; refused only for omp.
-    let blocked = if o.omp {
-        auto::omp_on(&env.home, team_model.as_deref(), now).err().map(|e| e.to_string())
-    } else {
+    // The engine (owner 2026-10-23: "all mặc định là omp"): omp unless `--ccc`; `--omp` = both.
+    // No usable omp model (omp's default is anthropic/… and none was set) → the Claude Code team,
+    // said out loud: the subscription never runs outside Claude Code.
+    let help = args.iter().any(|a| a == "-h" || a == "--help");
+    let blocked = if o.add || o.engine == Some(team::Engine::Ccc) {
         auto::omp_blocked(&env.home)
+    } else {
+        auto::omp_on(&env.home, team_model.as_deref(), now).err().map(|e| e.to_string())
     };
+    if !o.add {
+        let engine = match (o.engine, &blocked) {
+            (Some(e), _) => e,
+            (None, None) => team::Engine::Omp,
+            (None, Some(why)) => {
+                println!("đội omp: chưa chạy được — {why}. Mở đội Claude Code (chọn model omp: `8sync ccc auto omp on --model zai/glm-5.3`).");
+                team::Engine::Ccc
+            }
+        };
+        if engine != team::Engine::Ccc && blocked.is_some() {
+            bail!("đội omp: {}\n{}", blocked.unwrap_or_default(), team::USAGE);
+        }
+        if !help {
+            auto::set_teams(&env.home, engine.teams(), now)?;
+        }
+        o.engine = Some(engine);
+    }
     // One resumer at a time: HQ's revive and this `up` must not fork the same dead room twice.
     // HQ's revive (every 2 min) holds this while it reopens rooms: wait for it rather than fail.
     // The wait counts against `up`'s stagger budget (HQ gives `up` 300 s in all).
@@ -807,11 +829,12 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs());
     // Under the lock (no revive re-opens what this stops), before anything here starts; `--add`
     // stops nothing (up_locked).
-    let help = args.iter().any(|a| a == "-h" || a == "--help");
     let (status, gone, rows) = team::up_locked(&t, &o, now, || if help { Ok(()) } else { down_nested(env, root) })?;
-    team::print_up(&status, &gone, &rows, o.every, subscription);
-    // Team omp: `--omp`, or omp already in auto.json's teams (turned on from HQ); never for `--add`.
-    if !o.add && omp_team::wanted(o.omp, &status) {
+    if !rows.is_empty() {
+        team::print_up(&status, &gone, &rows, o.every, subscription);
+    }
+    // Team omp: the default engine, `--omp`, or omp in auto.json's teams (turned on from HQ); never for `--add`.
+    if !o.add && omp_team::wanted(o.engine != Some(team::Engine::Ccc), &status) {
         match blocked {
             Some(why) => println!("đội omp: không mở — {why}"),
             None => {

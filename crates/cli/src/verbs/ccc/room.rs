@@ -34,11 +34,11 @@ const fn r(keys: &'static [&'static str], name: &'static str, duty: &'static str
     Role { keys, name, duty, model, lane }
 }
 
-/// The team `auto up` opens by default: a lead triages, one builder, one tester, one reviewer
-/// (super-board's Builder, Tester and Reviewer lanes plus the orchestrator), and an R&D room that
-/// researches what blocks the board (no lane: its loop). The site and README name all five
-/// (owner 2026-10-17: "team nhiều mà team này thấy thiếu").
-pub(super) const DEFAULT_TEAM: [&str; 5] = ["lead", "dev", "qa", "review", "rd"];
+/// The team `auto up` opens by default (HQ "Chạy", "Thường"): a lead triages and splits, one
+/// builder, one tester that also takes the review lane while no review room runs
+/// ([`super::target::claim`]). Owner 2026-10-23: "1 team có 3, team sấm sét mới là 5" — the machine
+/// sat at 94% CPU with 7–13 rooms per team; R&D, BA and architect join on request.
+pub(super) const DEFAULT_TEAM: [&str; 3] = ["lead", "dev", "qa"];
 
 /// `auto up --roles full` (HQ "Team đầy đủ"): three builders (two devs and a UI/UX room) on the ready
 /// lane, a lead, QA and review. Before 2026-10-19 this was lead, ba, arch, rd, dev, ui, qa, review;
@@ -49,13 +49,11 @@ pub(super) const DEFAULT_TEAM: [&str; 5] = ["lead", "dev", "qa", "review", "rd"]
 /// so this spends quota about 6× a single session; the 90% rest still applies.
 pub(super) const FULL_TEAM: [&str; 6] = ["lead", "dev", "dev2", "ui", "qa", "review"];
 
-/// `auto up --roles boost` (HQ "⚡ Sấm Sét"): two planners (lead + BA split backlog in parallel),
-/// seven builders (six devs and UI/UX), two QA and two review rooms. 3d-game 2026-10-20: with 9 rooms
-/// the team used 4% of the 5-hour window in 30 min (RAM 63%, CPU 57%, GPU 3%) while builders waited
-/// on one lead that split cards and polled merges; the lead keeps ready filled
-/// ([`super::target::READY_LOW`]) and HQ merges approved cards in the background. About 13× a single
-/// session's quota.
-pub(super) const BOOST_TEAM: [&str; 13] = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"];
+/// `auto up --roles boost` (HQ "⚡ Sấm Sét"): the default team plus a second builder and its own
+/// review room, 5 in all. It was 13 rooms (lead, BA, six devs, UI, two QA, two review) until
+/// 2026-10-23: the guard paused rooms at CPU 94% and the pipeline stalled at review anyway (owner:
+/// "team sấm sét mới là 5").
+pub(super) const BOOST_TEAM: [&str; 5] = ["lead", "dev", "dev2", "qa", "review"];
 
 /// What the architect room does each tick instead of a board lane: it owns no lane, so a card
 /// labelled `arch` never waits on a room the team does not have (the lead writes a short ADR then).
@@ -351,7 +349,9 @@ mod tests {
     #[test]
     fn the_default_team_covers_every_lane_with_a_model() {
         let lanes: Vec<_> = DEFAULT_TEAM.iter().map(|n| find(n).and_then(|r| r.lane)).collect();
-        assert_eq!(lanes, [Some("backlog"), Some("ready"), Some("qa"), Some("review"), None], "rd has no lane: it works on messages and cards only");
+        assert_eq!(lanes, [Some("backlog"), Some("ready"), Some("qa")], "qa takes review too while no review room runs");
+        let boost: Vec<_> = BOOST_TEAM.iter().map(|n| find(n).and_then(|r| r.lane)).collect();
+        assert_eq!(boost, [Some("backlog"), Some("ready"), Some("ready"), Some("qa"), Some("review")], "Sấm Sét: 5 rooms, every lane");
         let models: Vec<_> = ["lead", "ba", "rd", "dev", "qa", "review"].iter().map(|n| find(n).and_then(|r| r.model)).collect();
         assert_eq!(models, [Some("opus"), Some("opus"), Some("opus"), Some("sonnet"), Some("sonnet"), Some("sonnet")], "qa gates visual UAT: not haiku");
         assert!(find("acoleads").is_none());

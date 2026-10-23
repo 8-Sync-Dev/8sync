@@ -1,6 +1,6 @@
 // Regression (2026-10-21): "⚡ Đang Sấm Sét" stayed on for 3d-game after its boost rooms were stopped.
-// `claude agents` timed out on a crawling machine, so every old journal row (dev6, review2, qa2, …)
-// came back with its stored status and the 13-room boost team looked alive.
+// `claude agents` timed out on a crawling machine, so every old journal row (dev2, review, …) came
+// back with its stored status and the boost team looked alive.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +18,7 @@ vi.mock("node:child_process", async (orig) => ({
 }));
 
 import { boostOn } from "@/components/hq/team-controls";
+import { BOOST_TEAM } from "@/lib/team-size";
 import { groupByRepo } from "@/lib/sidebar";
 import { getDb } from "@/lib/server/db";
 import { loadFloor, resetFloorCache } from "@/lib/server/floor";
@@ -25,7 +26,7 @@ import { loadOffice } from "@/lib/server/office";
 import { listClaudeAgents, mergedSessions, resetAgentsCache } from "@/lib/server/proc";
 import { tempHome } from "./helpers";
 
-const BOOST = ["lead", "ba", "dev", "dev2", "dev3", "dev4", "dev5", "dev6", "ui", "qa", "qa2", "review", "review2"];
+const BOOST = [...BOOST_TEAM];
 const DEV = "1eb79553-8369-4a90-b428-2dedb50e18db";
 let game = "";
 
@@ -78,9 +79,9 @@ describe("rooms count only when alive", () => {
     expect(boostOn(rooms)).toBe(false);
   });
 
-  it("boostOn: 13 alive rooms with dev6/qa2/review2 is on; the same names ended are off", () => {
+  it("boostOn: every Sấm Sét room alive is on; the boost-only rooms ended are off", () => {
     const rooms = BOOST.map((r) => ({ name: `hq-3d-game-${r}`, label: r, status: "running" }));
     expect(boostOn(rooms)).toBe(true);
-    expect(boostOn(rooms.map((r) => (/dev6|qa2|review2/.test(r.label) ? { ...r, status: "ended" } : r)))).toBe(false);
+    expect(boostOn(rooms.map((r) => (/^(dev2|review)$/.test(r.label) ? { ...r, status: "ended" } : r)))).toBe(false);
   });
 });

@@ -36,7 +36,7 @@ use super::{auto, idle, room, target};
 /// Rooms one `auto up` starts at most (the `boost` preset is the largest team).
 const MAX_ROOMS: usize = 14;
 
-pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa,review,rd|full|boost] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--omp [--omp-model <provider/model>]] [--company] | up --add <phòng> | down [--only <phòng>[,<phòng>…]] | close [--dry-run] [--json] | revive";
+pub(super) const USAGE: &str = "usage: 8sync ccc auto up [\"<việc>\" [--check \"<lệnh>\"]] [--roles lead,dev,qa|boost|full] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--ccc | --omp] [--omp-model <provider/model>] [--company] | up --add <phòng> | down [--only <phòng>[,<phòng>…]] | close [--dry-run] [--json] | revive";
 
 /// `auto up …` / `auto down` / `auto close` / `auto revive`: the verbs this module (and
 /// [`super::close`]) owns.
@@ -377,6 +377,34 @@ pub(super) struct Row {
     pub short: String,
 }
 
+/// Which agents run the team's rooms. Owner 2026-10-23 ("all mặc định là omp"): omp rooms on a
+/// non-Anthropic model by default; Claude Code rooms on request (`--ccc`), both with `--omp`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Engine {
+    /// omp rooms only (`omp-<role>`), the default.
+    Omp,
+    /// Claude Code background rooms only (`--ccc`).
+    Ccc,
+    /// Both teams side by side (`--omp`, as before 2026-10-23).
+    Both,
+}
+
+impl Engine {
+    /// The marker's `teams` for this engine.
+    pub(super) fn teams(self) -> &'static [&'static str] {
+        match self {
+            Engine::Omp => &["omp"],
+            Engine::Ccc => &["ccc"],
+            Engine::Both => &["ccc", "omp"],
+        }
+    }
+
+    /// Claude Code rooms open (and are revived) for this engine.
+    pub(super) fn ccc(self) -> bool {
+        self != Engine::Omp
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Opts {
     pub roles: Vec<String>,
@@ -388,8 +416,8 @@ pub(super) struct Opts {
     /// `auto up "<việc>" [--check "<lệnh>"]`: the first card, at the head of the queue.
     pub task: Option<String>,
     pub check: Option<String>,
-    /// `--omp`: team omp too (also turns omp on in auto.json's teams).
-    pub omp: bool,
+    /// `--omp` (both teams) / `--ccc` (Claude Code only); None = the default, omp ([`Engine`]).
+    pub engine: Option<Engine>,
     /// `--company`: this team serves every project in auto's scope (`auto::set_company`).
     pub company: bool,
     /// `--add <room>`: open one more room in a team already running here; auto's lease, hours and
@@ -398,7 +426,7 @@ pub(super) struct Opts {
 }
 
 pub(super) fn parse(rest: &[String]) -> Result<Opts> {
-    let mut o = Opts { roles: room::DEFAULT_TEAM.iter().map(|s| s.to_string()).collect(), every: auto::DEFAULT_LOOP_MIN, hours: idle::DEFAULT_HOURS as f64, rate: None, clear: false, task: None, check: None, omp: false, company: false, add: false };
+    let mut o = Opts { roles: room::DEFAULT_TEAM.iter().map(|s| s.to_string()).collect(), every: auto::DEFAULT_LOOP_MIN, hours: idle::DEFAULT_HOURS as f64, rate: None, clear: false, task: None, check: None, engine: None, company: false, add: false };
     // `--add <room>` stands alone: the other options set up a whole team (lease, hours, cap, task).
     if rest.first().map(String::as_str) == Some("--add") {
         let [_, name] = rest else { bail!("--add <phòng> đi một mình, vd `8sync ccc auto up --add eye`\n{USAGE}") };
@@ -416,8 +444,8 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
             "--roles" => {
                 let mut v: Vec<String> = Vec::new();
                 let raw = value()?;
-                // Presets: `small` = the default team, `full` = 6 rooms, 3 of them builders (~6× quota),
-                // `boost` = 13 rooms: lead + BA, 7 builders, 2 QA, 2 review (HQ "⚡ Sấm Sét", ~13× quota).
+                // Presets: `small` = the default team (3 rooms), `full` = 6 rooms, 3 of them builders,
+                // `boost` = 5 rooms: lead, 2 builders, QA, review (HQ "⚡ Sấm Sét").
                 let list = match raw.trim() {
                     "small" => room::DEFAULT_TEAM.join(","),
                     "full" => room::FULL_TEAM.join(","),
@@ -438,7 +466,8 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
             "--hours" => o.hours = value()?.parse().map_err(|_| anyhow::anyhow!("--hours cần một số\n{USAGE}"))?,
             "--usd-per-hour" => o.rate = Some(value()?.parse().map_err(|_| anyhow::anyhow!("--usd-per-hour cần một số\n{USAGE}"))?),
             "--clear-ss" | "--clean" => o.clear = true,
-            "--omp" => o.omp = true,
+            "--omp" => o.engine = Some(Engine::Both),
+            "--ccc" => o.engine = Some(Engine::Ccc),
             "--company" => o.company = true,
             "--check" => o.check = Some(value()?),
             x if x.starts_with("--") => bail!("không rõ `{x}`\n{USAGE}"),
@@ -626,7 +655,9 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     // guard on, each next room waits for the CPU to settle, this long at most in total — less what
     // this run already spent waiting for the lock ([`up_stagger`]).
     let mut stagger = up_stagger();
-    for name in &o.roles {
+    // An omp team (the default) opens no Claude Code room: `ccc` opens its omp rooms after this.
+    let claude_rooms: &[String] = if o.engine.is_none_or(Engine::ccc) || o.add { &o.roles } else { &[] };
+    for name in claude_rooms {
         let s = t.store.touch(name, false)?;
         let title = (t.title)(name);
         let r = room::find(name);
@@ -944,7 +975,9 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     let paused = super::pressure::paused(t.home, t.root);
     // The auto-ship loop ([`super::ship_loop::tick`]): the lead gets the next round once the board
     // drained; it waits (never ends) while the $/hour cap rests or the guard holds the project.
-    let registry: Vec<(String, String)> = t.store.load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
+    // An omp team (no Claude Code rooms): the lead/rd lines below go to its omp rooms' inboxes.
+    let ccc = auto::ccc_team(t.home);
+    let registry: Vec<(String, String)> = if ccc { t.store.load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect() } else { super::omp_team::registry(t.root) };
     if let Some(line) = super::ship_loop::tick(t.home, t.root, &registry, !st["cap"].is_null(), super::pressure::holds(t.home, t.root), now) {
         rows.push(Row { name: "lead".into(), role: room::role("lead").0, model: String::new(), state: line, short: String::new() });
     }
@@ -960,6 +993,11 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     // 2026-10-21: "lead agent nên xem board thường xuyên hơn, kẹt để còn approve").
     if let Some(line) = super::ship_fast::ask_ship(t.home, t.root, &registry, now) {
         rows.push(Row { name: "lead".into(), role: room::role("lead").0, model: String::new(), state: line, short: String::new() });
+    }
+    // Claude Code rooms are revived only when they are the team's (`--ccc`/`--omp`): an omp team's
+    // old Claude Code registry must not come back to life.
+    if !ccc {
+        return Ok(rows);
     }
     let all = agents(t, true)?;
     let running = agents(t, false)?;
@@ -1500,7 +1538,7 @@ mod tests {
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![live_host]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
         let has = |_: &str| false;
         let t = Team { home: &h, root: &other, store: &store, subscription: true, claude: &fake, has_transcript: &has, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("việc đầu".into()), check: None, omp: false, company: false, add: false };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("việc đầu".into()), check: None, engine: Some(Engine::Ccc), company: false, add: false };
         let (status, _, rows) = up(&t, &o, 5).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "công ty");
@@ -1553,15 +1591,17 @@ mod tests {
     }
 
     #[test]
-    fn options_default_to_the_five_room_team_and_full_opens_six_builder_heavy() {
+    fn options_default_to_the_three_room_team_and_full_opens_six_builder_heavy() {
         let o = parse(&[]).unwrap();
-        assert_eq!((o.roles.join(","), o.every, o.rate), ("lead,dev,qa,review,rd".into(), 30, None));
+        assert_eq!((o.roles.join(","), o.every, o.rate, o.engine), ("lead,dev,qa".into(), 30, None, None));
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(parse(&v(&["--roles", "full"])).unwrap().roles.join(","), "lead,dev,dev2,ui,qa,review");
         let boost = parse(&v(&["--roles", "boost"])).unwrap().roles;
         assert!(boost.len() == room::BOOST_TEAM.len() && boost.iter().all(|n| room::find(n).is_some()), "{boost:?}");
-        assert_eq!(boost.iter().filter(|n| room::find(n).and_then(|r| r.lane) == Some("qa")).count(), 2, "two rooms gate");
-        assert_eq!(parse(&v(&["--roles", "small"])).unwrap().roles.len(), 5);
+        assert_eq!(boost.len(), 5, "Sấm Sét = 5 rooms");
+        assert_eq!(parse(&v(&["--roles", "small"])).unwrap().roles.len(), 3);
+        assert_eq!(parse(&v(&["--omp"])).unwrap().engine, Some(Engine::Both));
+        assert_eq!(parse(&v(&["--ccc"])).unwrap().engine, Some(Engine::Ccc));
         // Every room of the full team has a role.
         assert!(room::FULL_TEAM.iter().all(|n| room::find(n).is_some()), "{:?}", room::FULL_TEAM);
         let o = parse(&v(&["--roles", "lead, ba,dev,dev2,qc,dev", "--loop", "45m", "--usd-per-hour", "3"])).unwrap();
@@ -1573,7 +1613,7 @@ mod tests {
         assert!(parse(&v(&["--team"])).is_err());
         assert!(!o.clear);
         assert!(parse(&v(&["--clear-ss"])).unwrap().clear && parse(&v(&["--clean"])).unwrap().clear);
-        assert!(!o.omp && parse(&v(&["--omp", "--roles", "lead,dev"])).unwrap().omp);
+        assert!(o.engine.is_none() && parse(&v(&["--omp", "--roles", "lead,dev"])).unwrap().engine == Some(Engine::Both));
         assert!(!o.company && parse(&v(&["--company"])).unwrap().company);
     }
 
@@ -1662,7 +1702,7 @@ mod tests {
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{d}]"), format!("[{l},{forked}]")]), bg: "backgrounded · 3698e3a6 · {name}".into() };
         // Both sessions started at 1 ms; the kit wrote settings at 1000 ms.
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| true, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: Some(1000) };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, omp: false, company: false, add: false };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, engine: Some(Engine::Ccc), company: false, add: false };
         let (_, _, rows) = up(&t, &o, 1).unwrap();
         let calls = fake.calls.borrow();
         let stops: Vec<_> = calls.iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
@@ -1914,7 +1954,7 @@ mod tests {
             bg: String::new(),
         };
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|_: &str| false, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, omp: false, company: false, add: false };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: true, task: None, check: None, engine: Some(Engine::Ccc), company: false, add: false };
         let (_, gone, rows) = up(&t, &o, 1).unwrap();
         let g: Vec<_> = gone.iter().map(|g| (g.name.as_str(), g.short.as_str(), g.kept.is_some())).collect();
         assert_eq!(g, [("dev", "aaaaaaaa", false), ("ui", &ui.conversation_id[..8], false), ("x", "bbbbbbbb", true)]);
@@ -1951,7 +1991,7 @@ mod tests {
         let qa_id = qa.conversation_id.clone();
         let has = move |id: &str| id == qa_id;
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &has, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false, company: false, add: false };
+        let o = Opts { roles: vec!["lead".into(), "dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, engine: Some(Engine::Ccc), company: false, add: false };
         let (status, _, rows) = up(&t, &o, 1_000).unwrap();
         assert_eq!(status["on"], true);
         assert!(status["repo"].as_str().is_some(), "auto is scoped to the project");
@@ -1982,11 +2022,11 @@ mod tests {
         let store = Store::new(&h.join("cfg"), &root, "claude-sessions", "ccc .");
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec!["[]".into()]), bg: "Workspace not trusted. Run `claude` in C:\\proj once and accept the trust prompt".into() };
         let t = Team { home: &h, root: &root, store: &store, subscription: false, claude: &fake, has_transcript: &|_: &str| false, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false, company: false, add: false };
+        let o = Opts { roles: vec!["dev".into(), "qa".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, engine: Some(Engine::Ccc), company: false, add: false };
         let e = up(&t, &o, 1).unwrap_err().to_string();
         assert!(e.contains("chưa trust") && e.contains("8sync ccc auto up"), "{e}");
         assert_eq!(fake.calls.borrow().iter().filter(|c| c.iter().any(|a| a == "--bg")).count(), 1, "stops at the first room");
-        assert!(up(&t, &Opts { roles: vec!["../x".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, omp: false, company: false, add: false }, 1).is_err());
+        assert!(up(&t, &Opts { roles: vec!["../x".into()], every: 10, hours: 2.0, rate: None, clear: false, task: None, check: None, engine: Some(Engine::Ccc), company: false, add: false }, 1).is_err());
         // `auto revive` walks exactly the roots `up` brought a team up in (here only this one, once).
         assert_eq!(team_roots(&h), [root.to_string_lossy().into_owned()]);
 
@@ -2105,7 +2145,7 @@ mod tests {
         let list = format!("[{},{}]", agent_in(game_lead, "lead", "background", &game), agent_in(DEV_BG, "dev", "background", &game));
         let fake = Fake { calls: RefCell::new(vec![]), agents: RefCell::new(vec![list]), bg: "backgrounded · 3698e3a6 · {name}\n".into() };
         let t = Team { home: &h, root: &root, store: &store, subscription: true, claude: &fake, has_transcript: &|id: &str| id == game_lead, pending_ask: &|_| None, title: &|n: &str| n.to_string(), kit_at: None };
-        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("BE AI zus".into()), check: None, omp: false, company: false, add: false };
+        let o = Opts { roles: vec!["lead".into(), "dev".into()], every: 10, hours: 2.0, rate: None, clear: false, task: Some("BE AI zus".into()), check: None, engine: Some(Engine::Ccc), company: false, add: false };
         let (status, _, rows) = up(&t, &o, 1_000).unwrap();
         let states: Vec<_> = rows.iter().map(|r| r.state.split(' ').next().unwrap()).collect();
         assert_eq!(states, ["mở", "mở"], "neither the game's lead nor its dev is ours: {rows:?}");
@@ -2323,7 +2363,7 @@ mod tests {
     fn add_opens_one_room_in_a_running_team_and_down_only_stops_just_that_room() {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let o = parse(&v(&["--add", "eye"])).unwrap();
-        assert_eq!((o.roles.join(","), o.add, o.clear, o.omp, o.task.clone()), ("eye".to_string(), true, false, false, None));
+        assert_eq!((o.roles.join(","), o.add, o.clear, o.engine, o.task.clone()), ("eye".to_string(), true, false, None, None));
         for bad in [&["--add"][..], &["--add", "eye", "--roles", "full"], &["--add", "--roles"], &["--roles", "lead", "--add", "eye"], &["--add", "eye", "--hours", "8"]] {
             assert!(parse(&v(bad)).is_err(), "{bad:?}");
         }

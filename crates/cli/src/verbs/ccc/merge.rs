@@ -107,13 +107,14 @@ fn gh_repo_field(root: &Path, repo: Option<&str>, field: &str, jq: &str) -> Opti
 pub(super) const GH_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The Ship question's options, in the order the lead asks them.
-const SHIP_OPTIONS: [(&str, &str); 3] = [
+const SHIP_OPTIONS: [(&str, &str); 4] = [
     ("Duyệt tất cả (Recommended)", "merge mọi card approved liệt kê ở câu hỏi"),
     ("Chỉ merge, chưa deploy", "merge các card đó, chưa tag/deploy"),
+    ("Chỉ merge, tự merge 24h", "merge các card đó và cho team tự merge card đủ cổng (QA + review + đúng SHA) trong 24 giờ; chưa deploy"),
     ("Dừng", "không merge; card ở lại approved"),
 ];
 
-pub(super) const NO_PERMISSION: &str = "chưa có quyền tự merge cho dự án này (hoặc đã quá 8 giờ): lead hỏi owner MỘT câu AskUserQuestion header \"Ship\" gom MỌI card approved (option \"Duyệt tất cả (Recommended)\" | \"Chỉ merge, chưa deploy\" | \"Dừng\") NGAY lượt này, trước `auto wait`, rồi chạy lại `8sync ccc auto merge`. Không tự `gh pr merge`.";
+pub(super) const NO_PERMISSION: &str = "chưa có quyền tự merge cho dự án này (hoặc đã quá 8 giờ): lead hỏi owner MỘT câu AskUserQuestion header \"Ship\" gom MỌI card approved (option \"Duyệt tất cả (Recommended)\" | \"Chỉ merge, chưa deploy\" | \"Chỉ merge, tự merge 24h\" | \"Dừng\") NGAY lượt này, trước `auto wait`, rồi chạy lại `8sync ccc auto merge`. Không tự `gh pr merge`.";
 
 /// Pure: the refusal without permission, with the exact AskUserQuestion input (header Ship, the
 /// options, every approved card and its PR) for the lead to copy. ai-game-studio 2026-10-20: the
@@ -773,7 +774,7 @@ mod tests {
         assert_eq!(q["header"], "Ship");
         assert_eq!(q["question"], "Merge 2 card approved: #5 (PR #81), #7 (PR zus-backend#90)?");
         let labels: Vec<&str> = q["options"].as_array().unwrap().iter().map(|o| o["label"].as_str().unwrap()).collect();
-        assert_eq!(labels, ["Duyệt tất cả (Recommended)", "Chỉ merge, chưa deploy", "Dừng"]);
+        assert_eq!(labels, ["Duyệt tất cả (Recommended)", "Chỉ merge, chưa deploy", "Chỉ merge, tự merge 24h", "Dừng"]);
     }
 
     #[test]

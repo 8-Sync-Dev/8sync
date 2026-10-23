@@ -13,8 +13,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { POST } from "@/app/api/machine/sweep/route";
-import { ALERT_EVERY_MS, alertText, BACKOFF_MAX_MS, BACKOFF_MIN_MS, ENSURE_AGAIN_MS, isSweepRoom, loadIsTheirs, nextBackoff, sweepArgs } from "@/lib/sweep";
-import type { AutoStatus } from "@/lib/server/auto";
+import { ALERT_EVERY_MS, alertText, BACKOFF_MAX_MS, BACKOFF_MIN_MS, ENSURE_AGAIN_MS, isSweepRoom, loadIsTheirs, nextBackoff, SWEEP_OMP_ONLY, sweepAllowed, sweepArgs } from "@/lib/sweep";
+import { autoStatus, type AutoStatus } from "@/lib/server/auto";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { resetSweep, runningTeams, setSweep, sweepAlert, sweepOn, sweepTick, sweepView, type SweepDeps } from "@/lib/server/sweep";
@@ -61,6 +61,9 @@ describe("pure rules", () => {
     expect(loadIsTheirs({ level: 0, top: ["chrome 40% (máy)", "node 0% (dev)"] })).toBe(false);
     expect(loadIsTheirs({ level: 0, top: [] })).toBe(false);
     expect(loadIsTheirs(undefined)).toBe(false);
+    // The Claude sweep joins only a team with Claude Code rooms; absent `teams` (older 8sync) = ["ccc"].
+    for (const t of [undefined, null, ["ccc"], ["ccc", "omp"]]) expect(sweepAllowed(t), JSON.stringify(t)).toBe(true);
+    for (const t of [["omp"], []]) expect(sweepAllowed(t), JSON.stringify(t)).toBe(false);
   });
 });
 
@@ -71,11 +74,13 @@ describe("ensure, switch, alert", () => {
     tempHome();
     token = getToken();
   });
-  beforeEach(() => {
+  beforeEach(async () => {
     resetSweep();
-    run.mockClear();
     root = repo();
     status.v = { on: true, paused: false, team_roots: [root] };
+    // The route reads the shared status cache: this test's team, not the last test's.
+    await autoStatus();
+    run.mockClear();
   });
   const post = (body: unknown, auth = true) => POST(req("/api/machine/sweep", { method: "POST", token: auth ? token : null, origin: ORIGIN, body }));
 
@@ -91,7 +96,22 @@ describe("ensure, switch, alert", () => {
     expect(await sweepTick(db, 1_000 + ENSURE_AGAIN_MS - 1, deps(status.v))).toEqual([]);
     expect(await sweepTick(db, 1_000 + ENSURE_AGAIN_MS, deps(status.v))).toEqual([root]);
     expect(ups().length).toBe(2);
-    expect(sweepView(db, status.v as AutoStatus)).toEqual([{ root, name: path.basename(root), on: true, live: false, busy: false, error: null, retryAt: null }]);
+    expect(sweepView(db, status.v as AutoStatus)).toEqual([{ root, name: path.basename(root), on: true, live: false, busy: false, error: null, retryAt: null, blocked: null }]);
+  });
+
+  it("an omp-only team never gets the Claude sweep: no `auto up --add sweep`, the switch shows why, the route refuses on", async () => {
+    const db = getDb();
+    status.v = { on: true, paused: false, team_roots: [root], teams: ["omp"] };
+    expect(await sweepTick(db, 1_000, deps(status.v))).toEqual([]);
+    expect(run).not.toHaveBeenCalled();
+    expect(sweepView(db, status.v as AutoStatus)).toEqual([{ root, name: path.basename(root), on: true, live: false, busy: false, error: null, retryAt: null, blocked: SWEEP_OMP_ONLY }]);
+    await autoStatus();
+    const on = await post({ root, on: true });
+    expect(on.status).toBe(409);
+    expect((await on.json()).error).toBe(SWEEP_OMP_ONLY);
+    expect(ups()).toEqual([]);
+    // Both teams: the Claude team gets its sweep as before.
+    expect(await sweepTick(db, 1_000, deps({ ...status.v, teams: ["ccc", "omp"] }))).toEqual([root]);
   });
 
   it("one pass at a time; a failure backs off 5 min, doubling", async () => {
