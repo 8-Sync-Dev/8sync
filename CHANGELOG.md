@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.77] — 2026-10-23
+### Added
+- **`8sync stop all`** (= `8sync ccc stop all`; owner: "nên có lệnh 8sync stop all để dừng all gồm cả ccc auto"): tắt auto + đội omp trước (không revive nào mở lại phòng), `auto down` ở mọi dự án auto biết (phòng Claude Code + omp, vòng loop, sprint), rồi dừng mọi phòng nền Claude Code còn sót. Phiên mở trong terminal của owner không bị đóng.
+
 ## [0.110.76] — 2026-10-23
 ### Fixed
 - **Guard chỉ đúng app ăn RAM, không đổ cho WmiPrvSE nữa**: dòng "RAM: … app khác (Wmiprvse 12.5 GB …)" sai, WmiPrvSE thật chỉ giữ 98 MB. Claude Code mở daemon chạy session nền qua WMI nên mọi claude, node, trình duyệt dưới daemon bị tính cho WmiPrvSE. Giờ dừng ở WmiPrvSE như các tiến trình hệ thống khác, bộ nhớ ghi đúng tên app (Claude, Node…). Test +1.

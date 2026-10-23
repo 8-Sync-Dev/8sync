@@ -298,6 +298,7 @@ pub fn run(a: Args) -> Result<()> {
         }
         "risk" => risk::run(rest, &std::env::current_dir().context("no cwd")?),
         "term" => term::run(rest, &env),
+        "stop" => stop_all(&env, rest),
         "awake" => {
             let o = awake::parse(rest)?;
             // `claude` is only needed to watch the rooms; never with a console window (a detached hold).
@@ -626,6 +627,59 @@ fn down_nested(env: &Env, root: &Path) -> Result<()> {
         println!("{} lồng với {}: tắt team ở đó (mỗi cây thư mục một team)", n.display(), root.display());
         auto_team(env, &n, &["down".to_string()]).with_context(|| format!("không tắt được team ở {} — chạy `8sync ccc auto down` ở đó rồi thử lại", n.display()))?;
     }
+    Ok(())
+}
+
+/// `8sync stop all` (= `8sync ccc stop all`; owner 2026-10-23: "nên có lệnh 8sync stop all để dừng
+/// all gồm cả ccc auto"): auto off first (no revive brings a room back), then `auto down` in every
+/// team root auto knows (Claude Code + omp rooms, loop, sprint), then every background Claude Code
+/// session still listed anywhere. Sessions open in a terminal (the owner's own) are not touched.
+fn stop_all(env: &Env, rest: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: 8sync stop all   (= 8sync ccc stop all: tắt auto, dừng mọi phòng nền Claude Code + omp của mọi dự án; phiên mở trong terminal giữ nguyên)";
+    if rest.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    if rest != ["all"] {
+        bail!("{USAGE}");
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let subscription = login_kind_at(&env.home).kind == "subscription";
+    auto::set(&env.home, auto::Mode::Off, subscription, now)?;
+    auto::set_omp(&env.home, false, None, now)?;
+    println!("auto: TẮT (bật lại: `8sync ccc auto on` / `8sync ccc auto up`).");
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for r in team::team_roots(&env.home).into_iter().chain(auto::remembered_roots(&env.home)) {
+        let p = PathBuf::from(r.trim_start_matches(r"\\?\"));
+        if p.is_dir() && !roots.iter().any(|o| auto::canon(o) == auto::canon(&p)) {
+            roots.push(p);
+        }
+    }
+    let mut failed = 0;
+    for r in &roots {
+        println!("— {}", r.display());
+        if let Err(e) = auto_team(env, r, &["down".to_string()]) {
+            failed += 1;
+            println!("  lỗi: {e:#}");
+        }
+    }
+    // Background sessions no team root covers (a root forgotten, a room started by hand).
+    let bin = team::Bin { exe: ensure_claude(true)?, root: &env.home };
+    let left: Vec<team::Live> = team::live(&team::Claude::run(&bin, &["agents".into(), "--json".into()])?)?.into_iter().filter(|l| l.background).collect();
+    for l in &left {
+        let id: String = l.id.chars().take(8).collect();
+        match team::Claude::run(&bin, &["stop".into(), id]) {
+            Ok(_) => println!("đã dừng phòng nền {} ({})", l.name, l.cwd),
+            Err(e) => {
+                failed += 1;
+                println!("không dừng được {}: {e:#}", l.name);
+            }
+        }
+    }
+    if failed > 0 {
+        bail!("{failed} chỗ chưa dừng được — xem dòng lỗi ở trên");
+    }
+    println!("xong: {} dự án, mọi phòng nền đã dừng. Phiên mở trong terminal không bị đóng.", roots.len());
     Ok(())
 }
 

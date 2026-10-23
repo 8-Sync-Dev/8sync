@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.77: `8sync stop all` — auto off + omp off, `auto down` every known root, stop leftover background Claude sessions (live: 16 rooms stopped, RAM 49% → 37.5%).
 v0.110.73: Claude Code default team again (3 / Sấm Sét 5, omp opt-in --omp/--omp-only); ship-fast 30 min default, picker 30m/1h/2h/4h; HQ interactive sessions not attachable (no false 'dead').
 v0.110.72: HQ Mở team buttons inside the empty card; company text from team_roots.
 v0.110.71: đội mặc định omp (3 phòng lead/dev/qa; Sấm Sét 5), phòng omp làm card board (nudge theo cột), qa kiêm review mồ côi, merge nền không chờ lease, grant Ship 24h, omp --hours, prune worktree card, HQ nút Mở team + model omp + phiên trống đúng vai.
