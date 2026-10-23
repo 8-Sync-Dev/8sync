@@ -1,5 +1,5 @@
 // "Dọn máy tự động": HQ keeps one `sweep` room (lib/sweep.ts) in every project whose team runs, has
-// the Claude Code team (`teams` has "ccc"; never an omp-only team) and whose switch is on (no row in hq.db sweep_switch = on). A 60 s loop (instrumentation.ts) runs
+// Claude Code rooms (`engines[root]` ccc/both, else `teams` has "ccc"; never an omp-only team) and whose switch is on (no row in hq.db sweep_switch = on). A 60 s loop (instrumentation.ts) runs
 // `8sync ccc auto up --add sweep` in a project that lacks it: one pass at a time, one project at a
 // time, a failure backs off 5 min doubling to 1 h, a success is not repeated for 10 min. The owner's
 // off runs `auto down --only sweep` and is remembered only once that worked. The guard trigger mails
@@ -78,8 +78,8 @@ const realDeps = (db: DatabaseSync): SweepDeps => ({ status: async () => lastAut
 const firstLine = (s: string) => tail(s, 4).replace(/^Error:\s*/, "").split(/\r?\n/)[0]?.slice(0, 200) || "8sync ccc auto up --add sweep thất bại";
 
 /**
- * One ensure pass: every running team with the switch on and no live sweep room gets one; none
- * while the team runs omp only (lib/sweep.ts sweepAllowed). Single flight (a pass while one runs
+ * One ensure pass: every running team with the switch on and no live sweep room gets one; none in a
+ * project whose team runs omp only (lib/sweep.ts sweepAllowed, per root). Single flight (a pass while one runs
  * returns []), skips projects backing off or added < 10 min ago.
  * Never throws; returns the roots it added the room to.
  */
@@ -88,8 +88,7 @@ export async function sweepTick(db: DatabaseSync, now = Date.now(), deps: SweepD
   if (m.tick) return [];
   const job = (async () => {
     const st = await deps.status();
-    if (!sweepAllowed(st?.teams)) return [];
-    const teams = runningTeams(st).filter((r) => sweepOn(db, r));
+    const teams = runningTeams(st).filter((r) => sweepAllowed(st?.teams, st?.engines, r) && sweepOn(db, r));
     if (!teams.length) return [];
     m.live = liveSweeps(await deps.sessions());
     const added: string[] = [];
@@ -201,11 +200,11 @@ export type SweepProject = { root: string; name: string; on: boolean; live: bool
 /** From the shared auto status and the loop's memory; spawns nothing. */
 export function sweepView(db: DatabaseSync, st: AutoStatus | null = lastAutoStatus()): SweepProject[] {
   const m = mem();
-  const blocked = sweepAllowed(st?.teams) ? null : SWEEP_OMP_ONLY;
   return runningTeams(st).map((root) => {
     const k = diskKey(root);
     const b = m.backoff.get(k);
     const r = repoOf(cwdOf(root));
+    const blocked = sweepAllowed(st?.teams, st?.engines, root) ? null : SWEEP_OMP_ONLY;
     return { root, name: r.name, on: sweepOn(db, root), live: m.live.has(k), busy: m.busy.has(k), error: b?.error ?? null, retryAt: b?.until ?? null, blocked };
   });
 }

@@ -27,6 +27,8 @@ export type AutoStatus = {
   omp_model?: string | null;
   /** The omp team's own hours (`auto omp on --hours`, unix s); null when unset. */
   omp_until?: number | null;
+  /** Each project's engine (`auto up` `--ccc`/`--omp`/default), keyed by canonical root like `team_roots`: "omp" | "ccc" | "both"; no key = never chosen (fall back to `teams`). Unvalidated: read via lib/sweep.ts sweepAllowed. */
+  engines?: unknown;
   error?: string;
   /** Why the last "Đội omp" switch failed (e.g. omp runs on the anthropic provider); the Pause / Run state is unaffected. */
   omp_error?: string;

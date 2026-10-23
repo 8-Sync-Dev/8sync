@@ -4,6 +4,7 @@
 // whose own rooms carry the load) and disk findings (lib/server/cleanup-loop.ts), cleans only what
 // is provably safe, messages the room that causes the load and tells the lead what it freed.
 // Pure: lib/server/sweep.ts runs the commands.
+import { diskKey } from "./disk";
 
 export const SWEEP_ROOM = "sweep";
 /** The ensure pass runs this often (lib/server/sweep.ts startSweepLoop). */
@@ -22,10 +23,18 @@ export const sweepArgs = (on: boolean) => (on ? ["ccc", "auto", "up", "--add", S
 export const SWEEP_OMP_ONLY = "Đội chỉ chạy omp: phòng sweep là phòng Claude, không thêm";
 
 /**
- * The Claude `sweep` room may join the team: auto's `teams` (contract C4) has "ccc"; absent = ["ccc"]
- * (an older 8sync). An omp-only team (`["omp"]`, the default since 2026-10-23) never gets it.
+ * The Claude `sweep` room may join this project's team. `engines` (auto status, keyed by canonical
+ * root `\\?\C:\…`, compared by diskKey): "omp" → no; "ccc"/"both" → yes. No entry (never chosen, or
+ * an older 8sync): auto's `teams` (contract C4) has "ccc"; absent = ["ccc"]. An omp-only team
+ * (the default since 2026-10-23) never gets it.
  */
-export function sweepAllowed(teams: unknown): boolean {
+export function sweepAllowed(teams: unknown, engines: unknown, root: string): boolean {
+  if (engines && typeof engines === "object" && !Array.isArray(engines)) {
+    const k = diskKey(root);
+    const hit = Object.entries(engines).find(([r]) => diskKey(r) === k)?.[1];
+    if (hit === "omp") return false;
+    if (hit === "ccc" || hit === "both") return true;
+  }
   return !Array.isArray(teams) || teams.includes("ccc");
 }
 

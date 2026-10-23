@@ -16,7 +16,7 @@ export async function POST(req: Request) {
   const st = lastAutoStatus() ?? (await autoStatus());
   const root = runningTeams(st).find((r) => diskKey(r) === want);
   if (!root) return bad("team của dự án này chưa chạy", 409);
-  if (body.on && !sweepAllowed(st.teams)) return bad(SWEEP_OMP_ONLY, 409);
+  if (body.on && !sweepAllowed(st.teams, st.engines, root)) return bad(SWEEP_OMP_ONLY, 409);
   const r = await setSweep(o.db, root, body.on);
   return json(r, r.ok ? 200 : 502);
 }

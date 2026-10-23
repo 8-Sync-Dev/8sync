@@ -619,7 +619,9 @@ fn noise_only(porcelain: &str) -> bool {
         };
         let path = path.trim_matches('"').replace('\\', "/");
         let low = path.to_ascii_lowercase();
-        sub.starts_with('S') || LOCKS.iter().any(|k| path == *k || path.ends_with(&format!("/{k}"))) || DIRS.iter().any(|d| path.starts_with(d)) || EXT.iter().any(|x| low.ends_with(x))
+        // A submodule only when its pointer moved (`SC..`): modified or untracked content inside it
+        // (`S.M.`, `S..U`) is someone's uncommitted work.
+        sub == "SC.." || LOCKS.iter().any(|k| path == *k || path.ends_with(&format!("/{k}"))) || DIRS.iter().any(|d| path.starts_with(d)) || EXT.iter().any(|x| low.ends_with(x))
     })
 }
 
@@ -749,11 +751,34 @@ fn fits(t: &Target, lane: &str, crew: &str, now: u64) -> bool {
 /// team (lead, dev, qa) has no review room, and a 5-room team's reviewer claims long before this.
 pub(super) const REVIEW_FALLBACK_S: u64 = 10 * 60;
 
-/// Pure: a qa room may take the review lane now ([`REVIEW_FALLBACK_S`]): an open review card no
-/// room holds (or whose claim went stale) and untouched for that long.
-pub(super) fn review_waiting(cards: &[Target], now: u64) -> bool {
-    cards.iter().any(|t| {
-        t.state == "open" && t.lane == "review" && t.claim.as_ref().is_none_or(|c| now.saturating_sub(c.at) >= CLAIM_SECS) && now.saturating_sub(touched(t)) >= REVIEW_FALLBACK_S
+/// Pure: the review card a qa room `room` may take now ([`REVIEW_FALLBACK_S`]): open in review, no
+/// room holds it (or the claim went stale), untouched for that long, and `room` never worked on it
+/// (QA and review stay two rooms). The most urgent, queue order within a priority.
+pub(super) fn review_waiting(cards: &[Target], room: &str, now: u64) -> Option<u64> {
+    cards
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| {
+            t.state == "open"
+                && t.lane == "review"
+                && t.claim.as_ref().is_none_or(|c| now.saturating_sub(c.at) >= CLAIM_SECS)
+                && now.saturating_sub(touched(t)) >= REVIEW_FALLBACK_S
+                && !t.notes.iter().any(|n| n.room.as_deref() == Some(room))
+        })
+        .min_by_key(|(i, t)| (rank(t), *i))
+        .map(|(_, t)| t.id)
+}
+
+/// Claim review card `id` for `room` (the qa fallback, [`review_waiting`]): only while it is still
+/// open in review and free; None when another room took it first.
+pub(super) fn claim_review(home: &Path, root: &Path, room: &str, id: u64, now: u64) -> Result<Option<Target>> {
+    edit(home, root, |p| {
+        let Some(t) = p.items.iter_mut().find(|t| t.id == id && t.state == "open" && t.lane == "review") else { return Ok(None) };
+        if t.claim.as_ref().is_some_and(|c| now.saturating_sub(c.at) < CLAIM_SECS) {
+            return Ok(None);
+        }
+        t.claim = Some(Claim { room: room.to_string(), at: now });
+        Ok(Some(t.clone()))
     })
 }
 
@@ -2015,10 +2040,12 @@ mod tests {
     #[test]
     fn closed_card_worktree_goes_only_when_dirty_with_build_leftovers() {
         assert!(noise_only(""), "clean");
-        let leftovers = "1 .M S.M. 160000 160000 160000 abc abc backend\n1 .M N... 100644 100644 100644 a a pnpm-lock.yaml\n1 .M N... 100644 100644 100644 a a su-code/DECISIONS.md\n? qa/evidence/card-7-hero.png\n? su-code/standup/2026-10-22.md";
+        let leftovers = "1 .M SC.. 160000 160000 160000 abc def backend\n1 .M N... 100644 100644 100644 a a pnpm-lock.yaml\n1 .M N... 100644 100644 100644 a a su-code/DECISIONS.md\n? qa/evidence/card-7-hero.png\n? su-code/standup/2026-10-22.md";
         assert!(noise_only(leftovers), "submodule pointer, lockfile, room memory, evidence");
         assert!(!noise_only("1 .M N... 100644 100644 100644 a a src/main.rs"), "an edited source file keeps it");
         assert!(!noise_only("? src/new_feature.ts"), "an uncommitted new file keeps it");
+        assert!(!noise_only("1 .M S.M. 160000 160000 160000 abc abc backend"), "edits inside a submodule keep it");
+        assert!(!noise_only("1 .M S..U 160000 160000 160000 abc abc backend"), "new files inside a submodule keep it");
         assert!(!noise_only("u UU N... 100644 100644 100644 100644 a b c src/x.rs"), "a conflict keeps it");
         assert!(noise_only("1 .M N... 100644 100644 100644 a a apps/web/package-lock.json"), "nested lockfile");
     }

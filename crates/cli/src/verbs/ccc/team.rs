@@ -466,6 +466,8 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
             "--hours" => o.hours = value()?.parse().map_err(|_| anyhow::anyhow!("--hours cần một số\n{USAGE}"))?,
             "--usd-per-hour" => o.rate = Some(value()?.parse().map_err(|_| anyhow::anyhow!("--usd-per-hour cần một số\n{USAGE}"))?),
             "--clear-ss" | "--clean" => o.clear = true,
+            // Before: `-h` became the task text, so `auto up -h` turned auto on and queued a card "-h".
+            "-h" | "--help" => bail!("{USAGE}"),
             "--omp" => o.engine = Some(Engine::Both),
             "--ccc" => o.engine = Some(Engine::Ccc),
             "--company" => o.company = true,
@@ -976,7 +978,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     // The auto-ship loop ([`super::ship_loop::tick`]): the lead gets the next round once the board
     // drained; it waits (never ends) while the $/hour cap rests or the guard holds the project.
     // An omp team (no Claude Code rooms): the lead/rd lines below go to its omp rooms' inboxes.
-    let ccc = auto::ccc_team(t.home);
+    let ccc = auto::ccc_team(t.home, t.root);
     let registry: Vec<(String, String)> = if ccc { t.store.load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect() } else { super::omp_team::registry(t.root) };
     if let Some(line) = super::ship_loop::tick(t.home, t.root, &registry, !st["cap"].is_null(), super::pressure::holds(t.home, t.root), now) {
         rows.push(Row { name: "lead".into(), role: room::role("lead").0, model: String::new(), state: line, short: String::new() });
@@ -991,7 +993,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
     }
     // Approved cards piling up: the lead asks the owner's one-tap Ship (debounced; owner
     // 2026-10-21: "lead agent nên xem board thường xuyên hơn, kẹt để còn approve").
-    if let Some(line) = super::ship_fast::ask_ship(t.home, t.root, &registry, now) {
+    if let Some(line) = super::ship_fast::ask_ship(t.home, t.root, &registry, !ccc, now) {
         rows.push(Row { name: "lead".into(), role: room::role("lead").0, model: String::new(), state: line, short: String::new() });
     }
     // Claude Code rooms are revived only when they are the team's (`--ccc`/`--omp`): an omp team's

@@ -740,6 +740,16 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
                 for (id, room, lane) in &r.freed {
                     println!("card #{id} của {room} trả về cột {lane}.");
                 }
+                // The same rooms of team omp (`omp-<room>`), and the cards they held.
+                let d = omp_team::down_only(env, root, &names)?;
+                if !d.stopped.is_empty() {
+                    let held: Vec<&str> = d.stopped.iter().map(String::as_str).collect();
+                    let freed = target::release(&env.home, root, &held, "tắt (down --only)", now)?;
+                    println!("đội omp: đã dừng {}.", d.stopped.join(", "));
+                    for (id, room, lane) in &freed {
+                        println!("card #{id} của {room} trả về cột {lane}.");
+                    }
+                }
                 println!("Các phòng khác vẫn chạy.");
                 return Ok(());
             }
@@ -781,17 +791,20 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     if team_model.is_some() && o.engine == Some(team::Engine::Ccc) {
         bail!("--omp-model không đi cùng --ccc\n{}", team::USAGE);
     }
-    // The engine (owner 2026-10-23: "all mặc định là omp"): omp unless `--ccc`; `--omp` = both.
-    // No usable omp model (omp's default is anthropic/… and none was set) → the Claude Code team,
-    // said out loud: the subscription never runs outside Claude Code.
+    // The engine (owner 2026-10-23: "all mặc định là omp"): the flag (`--ccc`, `--omp` = both), else
+    // what this project ran last (HQ's "Mở lại team" keeps a `--ccc` team a Claude Code team), else
+    // omp. No usable omp model (omp's default is anthropic/… and none was set) → the Claude Code
+    // team, said out loud: the subscription never runs outside Claude Code.
     let help = args.iter().any(|a| a == "-h" || a == "--help");
-    let blocked = if o.add || o.engine == Some(team::Engine::Ccc) {
+    let before = auto::engine_of(&env.home, root);
+    let asked = o.engine.or(before);
+    let blocked = if o.add || asked == Some(team::Engine::Ccc) {
         auto::omp_blocked(&env.home)
     } else {
         auto::omp_on(&env.home, team_model.as_deref(), now).err().map(|e| e.to_string())
     };
     if !o.add {
-        let engine = match (o.engine, &blocked) {
+        let engine = match (asked, &blocked) {
             (Some(e), _) => e,
             (None, None) => team::Engine::Omp,
             (None, Some(why)) => {
@@ -801,9 +814,6 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
         };
         if engine != team::Engine::Ccc && blocked.is_some() {
             bail!("đội omp: {}\n{}", blocked.unwrap_or_default(), team::USAGE);
-        }
-        if !help {
-            auto::set_teams(&env.home, engine.teams(), now)?;
         }
         o.engine = Some(engine);
     }
@@ -829,6 +839,17 @@ fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs());
     // Under the lock (no revive re-opens what this stops), before anything here starts; `--add`
     // stops nothing (up_locked).
+    // A project switching to an omp-only team: its Claude Code rooms stop first (they would run on
+    // unmanaged, never revived and never mailed). Then the engine is recorded for this project.
+    if let (false, Some(engine)) = (o.add || help, o.engine) {
+        if !engine.ccc() && before.is_none_or(team::Engine::ccc) {
+            let stopped = team::down(&t, now)?;
+            if !stopped.is_empty() {
+                println!("đổi sang đội omp: đã dừng {} phòng Claude Code: {} (hội thoại giữ nguyên; lại đội Claude: `8sync ccc auto up --ccc`).", stopped.len(), stopped.join(", "));
+            }
+        }
+        auto::set_engine(&env.home, root, engine, now)?;
+    }
     let (status, gone, rows) = team::up_locked(&t, &o, now, || if help { Ok(()) } else { down_nested(env, root) })?;
     if !rows.is_empty() {
         team::print_up(&status, &gone, &rows, o.every, subscription);

@@ -62,8 +62,17 @@ describe("pure rules", () => {
     expect(loadIsTheirs({ level: 0, top: [] })).toBe(false);
     expect(loadIsTheirs(undefined)).toBe(false);
     // The Claude sweep joins only a team with Claude Code rooms; absent `teams` (older 8sync) = ["ccc"].
-    for (const t of [undefined, null, ["ccc"], ["ccc", "omp"]]) expect(sweepAllowed(t), JSON.stringify(t)).toBe(true);
-    for (const t of [["omp"], []]) expect(sweepAllowed(t), JSON.stringify(t)).toBe(false);
+    for (const t of [undefined, null, ["ccc"], ["ccc", "omp"]]) expect(sweepAllowed(t, undefined, "C:/p/a"), JSON.stringify(t)).toBe(true);
+    for (const t of [["omp"], []]) expect(sweepAllowed(t, undefined, "C:/p/a"), JSON.stringify(t)).toBe(false);
+    // Per project: `engines` (canonical `\\?\C:\…` keys, compared like diskKey) wins over `teams`; no entry falls back.
+    const engines = { "\\\\?\\C:\\p\\a": "omp", "\\\\?\\C:\\p\\b": "ccc", "\\\\?\\C:\\p\\c": "both", "\\\\?\\C:\\p\\d": "weird" };
+    expect(sweepAllowed(["ccc"], engines, "C:/p/a")).toBe(false);
+    expect(sweepAllowed(["omp"], engines, "c:\\P\\B\\")).toBe(true);
+    expect(sweepAllowed(["omp"], engines, "C:/p/c")).toBe(true);
+    expect(sweepAllowed(["omp"], engines, "C:/p/d"), "unknown value: teams rule").toBe(false);
+    expect(sweepAllowed(["omp"], engines, "C:/p/e"), "no entry: teams rule").toBe(false);
+    expect(sweepAllowed(undefined, engines, "C:/p/e")).toBe(true);
+    expect(sweepAllowed(["ccc"], ["omp"], "C:/p/a"), "engines not an object: teams rule").toBe(true);
   });
 });
 
@@ -112,6 +121,22 @@ describe("ensure, switch, alert", () => {
     expect(ups()).toEqual([]);
     // Both teams: the Claude team gets its sweep as before.
     expect(await sweepTick(db, 1_000, deps({ ...status.v, teams: ["ccc", "omp"] }))).toEqual([root]);
+  });
+
+  it("per project: one omp root and one ccc root (`engines`) → only the ccc root gets the sweep, the omp row shows why", async () => {
+    const db = getDb();
+    const other = repo();
+    const canon = (p: string) => `\\\\?\\${p.replace(/\//g, "\\")}`;
+    status.v = { on: true, paused: false, team_roots: [root, other], teams: ["omp"], engines: { [canon(root)]: "omp", [canon(other)]: "ccc" } };
+    expect(await sweepTick(db, 1_000, deps(status.v))).toEqual([other]);
+    expect(ups().map((c) => c[3])).toEqual([other]);
+    expect(sweepView(db, status.v as AutoStatus).map((p) => [p.root, p.blocked])).toEqual([
+      [root, SWEEP_OMP_ONLY],
+      [other, null],
+    ]);
+    await autoStatus();
+    expect((await post({ root, on: true })).status).toBe(409);
+    expect((await post({ root: other, on: true })).status).toBe(200);
   });
 
   it("one pass at a time; a failure backs off 5 min, doubling", async () => {

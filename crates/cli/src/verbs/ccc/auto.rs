@@ -189,7 +189,7 @@ fn write_marker(home: &Path, v: &Value) -> Result<()> {
     }
     let mut v = v.clone();
     let old = idle::read_json(&p);
-    for k in ["teams", "omp_model", "omp_until", "guard", "eco", "cap", "cpu", "lease_auto", "company"] {
+    for k in ["teams", "engines", "omp_model", "omp_until", "guard", "eco", "cap", "cpu", "lease_auto", "company"] {
         if v.get(k).is_none() {
             if let Some(t) = old.as_ref().and_then(|m| m.get(k).cloned()) {
                 v[k] = t;
@@ -205,32 +205,69 @@ fn write_marker(home: &Path, v: &Value) -> Result<()> {
     Ok(())
 }
 
-/// Teams auto drives, from the marker: `["omp"]` (an omp team, `auto up`'s default since
-/// 2026-10-23), `["ccc"]` (absent too), or `["ccc","omp"]`.
+/// Teams auto drives, from the marker: `["omp"]`, `["ccc"]` (absent too), `["ccc","omp"]`, or `[]`
+/// (omp turned off on an omp-only setup: nobody). The machine-wide view; which team a project runs
+/// is [`engine_of`].
 fn teams_of(m: Option<&Value>) -> Vec<&'static str> {
-    let has = |k: &str| m.and_then(|m| m["teams"].as_array()).is_some_and(|a| a.iter().any(|t| t == k));
+    let Some(a) = m.and_then(|m| m["teams"].as_array()) else { return vec!["ccc"] };
+    let has = |k: &str| a.iter().any(|t| t == k);
     match (has("ccc"), has("omp")) {
         (false, true) => vec!["omp"],
         (true, true) => vec!["ccc", "omp"],
-        _ => vec!["ccc"],
+        (true, false) => vec!["ccc"],
+        (false, false) if a.is_empty() => Vec::new(),
+        (false, false) => vec!["ccc"],
     }
 }
 
-/// `auto up`'s engine ([`super::team::Engine::teams`]) into the marker's `teams`, the rest kept.
-pub(super) fn set_teams(home: &Path, teams: &[&str], now: u64) -> Result<()> {
+/// The engine `auto up` chose for project `root` (marker `engines`, keyed by canonical root): one
+/// project's `--ccc` team and another's omp team live side by side. None = never chosen.
+pub(super) fn engine_of(home: &Path, root: &Path) -> Option<super::team::Engine> {
+    let m = idle::read_json(&marker(home))?;
+    match m["engines"][canon(root).to_string_lossy().as_ref()].as_str()? {
+        "omp" => Some(super::team::Engine::Omp),
+        "ccc" => Some(super::team::Engine::Ccc),
+        "both" => Some(super::team::Engine::Both),
+        _ => None,
+    }
+}
+
+/// Record `root`'s engine; the machine-wide `teams` becomes the union of every project's engine,
+/// so the omp extension (`teams` has "omp") and the Claude Code rooms of other projects keep going.
+pub(super) fn set_engine(home: &Path, root: &Path, e: super::team::Engine, now: u64) -> Result<()> {
     let p = marker(home);
     let mut m = match idle::read_json(&p) {
         Some(m) => m,
         None if p.exists() => bail!("{} hỏng: sửa hoặc xoá file rồi chạy lại", p.display()),
         None => json!({ "schema": 1, "on": false, "paused": false, "since": now }),
     };
-    m["teams"] = json!(teams);
+    let name = match e {
+        super::team::Engine::Omp => "omp",
+        super::team::Engine::Ccc => "ccc",
+        super::team::Engine::Both => "both",
+    };
+    if !m["engines"].is_object() {
+        m["engines"] = json!({});
+    }
+    m["engines"][canon(root).to_string_lossy().as_ref()] = json!(name);
+    let all: Vec<&str> = m["engines"].as_object().map(|o| o.values().filter_map(Value::as_str).collect()).unwrap_or_default();
+    let ccc = all.iter().any(|v| *v != "omp");
+    let omp = all.iter().any(|v| *v != "ccc");
+    m["teams"] = json!(match (ccc, omp) {
+        (true, true) => vec!["ccc", "omp"],
+        (false, true) => vec!["omp"],
+        _ => vec!["ccc"],
+    });
     write_marker(home, &m)
 }
 
-/// Whether Claude Code rooms are part of the team (`teams` has "ccc"; absent = yes).
-pub(super) fn ccc_team(home: &Path) -> bool {
-    teams_of(idle::read_json(&marker(home)).as_ref()).contains(&"ccc")
+/// Whether Claude Code rooms are part of `root`'s team: its engine, else (a team from before
+/// engines) the marker's `teams`.
+pub(super) fn ccc_team(home: &Path, root: &Path) -> bool {
+    match engine_of(home, root) {
+        Some(e) => e.ccc(),
+        None => teams_of(idle::read_json(&marker(home)).as_ref()).contains(&"ccc"),
+    }
 }
 
 /// `auto omp on|off` (and `on --omp`): only the marker's `teams` (and `omp_model` when `model` is
@@ -243,12 +280,14 @@ pub(super) fn set_omp(home: &Path, on: bool, model: Option<&str>, now: u64) -> R
         None if p.exists() => bail!("{} hỏng: sửa hoặc xoá file rồi chạy lại", p.display()),
         None => json!({ "schema": 1, "on": false, "paused": false, "since": now }),
     };
-    // On adds omp to whatever runs (an omp-only team stays omp-only); off leaves the Claude Code team.
-    let ccc = teams_of(Some(&m)).contains(&"ccc");
+    // On adds omp to whatever runs (an omp-only team stays omp-only). Off removes omp only: an
+    // omp-only setup then runs nobody, never a Claude Code team the owner did not ask for.
+    let ccc = m["teams"].as_array().is_none() || teams_of(Some(&m)).contains(&"ccc");
     m["teams"] = json!(match (on, ccc) {
         (true, true) => vec!["ccc", "omp"],
         (true, false) => vec!["omp"],
-        (false, _) => vec!["ccc"],
+        (false, true) => vec!["ccc"],
+        (false, false) => Vec::<&str>::new(),
     });
     if let Some(model) = model {
         m["omp_model"] = json!(model);
@@ -810,6 +849,8 @@ pub(super) fn status(home: &Path, subscription: bool, now: u64) -> Value {
         "team_roots": super::team::team_roots(home),
         "omp_model": m.as_ref().and_then(|m| m["omp_model"].as_str()),
         "omp_until": m.as_ref().and_then(|m| m["omp_until"].as_u64()),
+        // Which team each project runs (`auto up`: omp by default, `--ccc`, `--omp` = both).
+        "engines": m.as_ref().map(|m| m["engines"].clone()).filter(Value::is_object).unwrap_or_else(|| json!({})),
         "omp_blocked": omp_blocked(home),
         "guard": super::pressure::status_json(home, guard_pct(home)),
         // `auto loop` per project root (HQ "Auto-ship: vòng N" chip, [`super::ship_loop::view`]).
@@ -1533,7 +1574,7 @@ fn record_nudge(file: &Path, sent: &[u64], now: u64) -> Result<()> {
 /// --as <name>` would hand it in its lane, or (a qa room) a review card nobody picked up.
 pub(super) fn omp_board_due(cards: &[target::Target], name: &str, now: u64) -> bool {
     let Some(lane) = super::room::find(name).and_then(|r| r.lane) else { return false };
-    target::claimable(cards, name, lane, now).is_some() || (lane == "qa" && target::review_waiting(cards, now))
+    target::claimable(cards, name, lane, now).is_some() || (lane == "qa" && target::review_waiting(cards, name, now).is_some())
 }
 
 /// The nudge of a board team's omp room ([`omp_board_due`]): claim from its lane, work that card by
@@ -1714,10 +1755,12 @@ fn run_target(
             // qa with nothing to test takes a review card no reviewer picked up: the default team
             // (lead, dev, qa) has no review room ([`target::review_waiting`]).
             let mut lane = lane;
-            if card.is_none() && focus.is_none() && lane == "qa" && target::review_waiting(&target::list(home, root)?, now) {
-                card = target::claim(home, root, &room, "review", now)?;
-                if card.is_some() {
-                    lane = "review".into();
+            if card.is_none() && focus.is_none() && lane == "qa" {
+                if let Some(id) = target::review_waiting(&target::list(home, root)?, &room, now) {
+                    card = target::claim_review(home, root, &room, id, now)?;
+                    if card.is_some() {
+                        lane = "review".into();
+                    }
                 }
             }
             // A company room with nothing at home takes the most urgent card of another project in
@@ -2600,7 +2643,7 @@ pub(super) fn run(
             )?;
             if omp {
                 set_omp(home, true, team_model.as_deref(), now)?;
-                v["teams"] = json!(["ccc", "omp"]);
+                v["teams"] = json!(teams_of(idle::read_json(&marker(home)).as_ref()));
                 v["omp_model"] = json!(omp_model(home));
                 v["omp_blocked"] = json!(omp_blocked(home));
             }
@@ -3222,6 +3265,7 @@ mod tests {
                 "cap",
                 "company",
                 "delegate",
+                "engines",
                 "five_hour_pct",
                 "focus",
                 "gate",
@@ -4137,12 +4181,38 @@ mod tests {
         assert!(omp_board_due(&stale, "omp-qa", now) && !omp_board_due(&stale, "omp-dev", now));
         let mut held = stale[0].clone();
         held.claim = Some(target::Claim { room: "omp-review".into(), at: now - 30 });
-        assert!(!target::review_waiting(&[held], now), "a reviewer holds it");
+        assert!(target::review_waiting(&[held], "omp-qa", now).is_none(), "a reviewer holds it");
+        // qa never reviews a card it worked on itself.
+        let mut tested = stale[0].clone();
+        tested.notes.push(target::Note { at: now - target::REVIEW_FALLBACK_S, room: Some("omp-qa".into()), text: "qa → review".into() });
+        assert!(target::review_waiting(&[tested.clone()], "omp-qa", now).is_none() && target::review_waiting(&[tested], "qa2", now).is_some());
         // The text claims as the room itself and carries the lane's playbook; no Ship question.
         let t = omp_board_text("omp-dev").unwrap();
         assert!(t.contains("auto claim --json --as omp-dev") && t.contains(lane_playbook("ready")) && t.contains("--as omp-dev"));
         assert!(!omp_board_text("omp-lead").unwrap().contains("AskUserQuestion"));
         assert!(omp_board_text("omp-rd").is_none());
+    }
+
+    #[test]
+    fn each_project_keeps_its_own_engine_and_omp_off_never_wakes_a_claude_team() {
+        use super::super::team::Engine;
+        let h = home("engines");
+        let (a, b) = (h.join("proj-a"), h.join("proj-b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        assert_eq!(engine_of(&h, &a), None);
+        assert!(ccc_team(&h, &a), "a team from before engines is a Claude Code team");
+        set_engine(&h, &a, Engine::Ccc, 1).unwrap();
+        set_engine(&h, &b, Engine::Omp, 1).unwrap();
+        assert_eq!((engine_of(&h, &a), engine_of(&h, &b)), (Some(Engine::Ccc), Some(Engine::Omp)));
+        assert!(ccc_team(&h, &a) && !ccc_team(&h, &b), "B's omp team does not stop A's Claude rooms");
+        assert_eq!(status(&h, false, 1)["teams"], json!(["ccc", "omp"]), "machine-wide: the union");
+        // Only omp teams left; turning omp off then runs nobody, not a Claude Code team.
+        set_engine(&h, &a, Engine::Omp, 1).unwrap();
+        assert_eq!(status(&h, false, 1)["teams"], json!(["omp"]));
+        set_omp(&h, false, None, 1).unwrap();
+        assert_eq!(status(&h, false, 1)["teams"], json!([]));
+        assert!(!ccc_team(&h, &a), "its own engine still says omp");
     }
 
     #[test]

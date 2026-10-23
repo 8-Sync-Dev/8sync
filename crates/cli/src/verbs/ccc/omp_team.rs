@@ -276,8 +276,18 @@ pub(super) struct Down {
 
 /// `auto down`: stop this repo's `omp-<role>` rooms; nothing else, nothing deleted.
 pub(super) fn down(env: &Env, root: &Path) -> Result<Down> {
+    down_where(env, root, |_| true)
+}
+
+/// `auto down --only <room,…>` for team omp: the `omp-<room>` rooms alone (HQ "Tắt Sấm Sét" on an
+/// omp team stops omp-dev2 and omp-review).
+pub(super) fn down_only(env: &Env, root: &Path, roles: &[&str]) -> Result<Down> {
+    down_where(env, root, |r| roles.contains(&r))
+}
+
+fn down_where(env: &Env, root: &Path, keep: impl Fn(&str) -> bool) -> Result<Down> {
     let reg = session::load(env, root);
-    let rooms: Vec<(&str, &session::Session)> = reg.sessions.iter().filter_map(|s| role_of(&s.name).map(|r| (r, s))).collect();
+    let rooms: Vec<(&str, &session::Session)> = reg.sessions.iter().filter_map(|s| role_of(&s.name).filter(|r| keep(r)).map(|r| (r, s))).collect();
     let mut stopped = Vec::new();
     if rooms.is_empty() {
         return Ok(Down { stopped, note: None });

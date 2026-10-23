@@ -140,7 +140,9 @@ fn approved_cards(home: &Path, root: &Path) -> Vec<target::Target> {
 /// cards wait and no self-merge grant holds (with one, `merge::background` is already landing
 /// them); at most once every [`NUDGE_S`] per project. Returns the line for the report, None when
 /// nothing to do.
-pub(super) fn ask_ship(home: &Path, root: &Path, registry: &[(String, String)], now: u64) -> Option<String> {
+/// `omp`: the team is omp rooms, which cannot ask the owner (the grant is read from a Claude Code
+/// transcript): the owner gets one HQ alert instead, same debounce.
+pub(super) fn ask_ship(home: &Path, root: &Path, registry: &[(String, String)], omp: bool, now: u64) -> Option<String> {
     const NUDGE_S: u64 = 30 * 60;
     let approved = approved_cards(home, root);
     if approved.is_empty() || super::grant::self_merge(&super::grant::dir(home), root, now).is_some() {
@@ -157,12 +159,17 @@ pub(super) fn ask_ship(home: &Path, root: &Path, registry: &[(String, String)], 
     if !due {
         return None;
     }
+    if omp {
+        let name = root.file_name().map_or_else(|| root.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let text = format!("{} card approved ở {name} chờ Ship: bấm \"Ship card approved\" trên HQ (đội omp không hỏi được câu Ship).", approved.len());
+        return crate::verbs::hq::alert_owner("Ship", &text).ok().map(|()| format!("ship-ask: {} card approved → owner (HQ)", approved.len()));
+    }
     let leads: Vec<(String, String)> = registry.iter().filter(|(n, _)| super::room::crew(n) == "lead").cloned().collect();
     if leads.is_empty() {
         return None;
     }
     let text = format!(
-        "[🚀 owner] {} card approved đang chờ Ship: hỏi owner MỘT câu AskUserQuestion header \"Ship\" gom mọi card approved (option \"Duyệt tất cả (Recommended)\" | \"Chỉ merge, chưa deploy\" | \"Dừng\") NGAY lượt này, trước `auto wait`; owner duyệt xong `8sync ccc auto merge` tự land.",
+        "[🚀 owner] {} card approved đang chờ Ship: hỏi owner MỘT câu AskUserQuestion header \"Ship\" gom mọi card approved (option \"Duyệt tất cả (Recommended)\" | \"Chỉ merge, chưa deploy\" | \"Chỉ merge, tự merge 24h\" | \"Dừng\") NGAY lượt này, trước `auto wait`; owner duyệt xong `8sync ccc auto merge` tự land.",
         approved.len()
     );
     let sent: Vec<String> = leads.iter().filter(|(_, id)| crate::verbs::hq::queue_inbox(home, id, &text, now * 1000).is_ok()).map(|(n, _)| n.clone()).collect();
@@ -285,7 +292,7 @@ mod tests {
     fn approved_pile_up_nudges_the_lead_once_per_half_hour() {
         let (h, root) = tmp("ask");
         let reg = vec![("lead".to_string(), "11111111-1111-4111-8111-111111111111".to_string())];
-        assert!(ask_ship(&h, &root, &reg, 100).is_none(), "nothing approved");
+        assert!(ask_ship(&h, &root, &reg, false, 100).is_none(), "nothing approved");
         let a = card(&h, &root, "done thing", "ready", 100);
         for (step, m) in [
             ("building", target::Move::default()),
@@ -295,10 +302,10 @@ mod tests {
         ] {
             target::move_to(&h, &root, a, step, &m, None, 150).unwrap();
         }
-        let line = ask_ship(&h, &root, &reg, 200).expect("nudged");
+        let line = ask_ship(&h, &root, &reg, false, 200).expect("nudged");
         assert!(line.contains("1 card approved") && line.contains("lead"), "{line}");
-        assert!(ask_ship(&h, &root, &reg, 300).is_none(), "debounced");
-        assert!(ask_ship(&h, &root, &reg, 200 + 31 * 60).is_some(), "half an hour later it asks again");
+        assert!(ask_ship(&h, &root, &reg, false, 300).is_none(), "debounced");
+        assert!(ask_ship(&h, &root, &reg, false, 200 + 31 * 60).is_some(), "half an hour later it asks again");
         let _ = std::fs::remove_dir_all(&h);
     }
 
