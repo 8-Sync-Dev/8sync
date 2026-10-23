@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDownIcon, PlayIcon, PowerOffIcon, RefreshCwIcon, RocketIcon, SparklesIcon, SquareIcon, UsersIcon, ZapIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -311,12 +311,33 @@ export function TeamControls({ root, name, token, boost = false, after }: { root
 }
 
 /**
- * Projects in view with no room running: one click opens the team there — "Mở team" (`auto up`, the
- * 3-room omp team) or "⚡ Sấm Sét" (`auto up --roles boost`, 5 rooms). In company mode too (owner
- * 2026-10-23): the company team may serve the project, the owner can still give it rooms of its own.
+ * One project with no room running: "Mở team" (`auto up`, the 3-room omp team, primary) then
+ * "⚡ Sấm Sét" (`auto up --roles boost`, 5 rooms); `full` adds "Team đầy đủ", `children` follow as
+ * secondary actions. The empty office puts these inside its card (owner 2026-10-23: a block below the
+ * card sat under the fold behind the composer).
  */
-export function TeamStarter({ projects, token, after, company = false }: { projects: { path: string; name: string }[]; token: string; after?: () => void; company?: boolean }) {
+export function TeamStartButtons({ path, name, token, after, full = false, children }: { path: string; name: string; token: string; after?: () => void; full?: boolean; children?: ReactNode }) {
   const { busy, act } = useTeam(token, after);
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      <Button type="button" size="sm" disabled={busy != null} onClick={() => void act(path, name, "up")} title="8sync ccc auto up: đội omp mặc định">
+        <PlayIcon aria-hidden /> Mở team ({DEFAULT_TEAM.length} phòng: {DEFAULT_TEAM.join(", ")})
+      </Button>
+      <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(path, name, "boost")} title={`${BOOST_COST} (auto up --roles boost --hours 2)`} className="font-semibold">
+        <ZapIcon aria-hidden className="text-brand-ink dark:text-brand" /> Sấm Sét ({BOOST_TEAM.length} phòng)
+      </Button>
+      {full && (
+        <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => void act(path, name, "full")} title={`${teamText(FULL_TEAM)}, tốn quota gần gấp ${FULL_TEAM.length} lần một session`}>
+          <UsersIcon aria-hidden /> Team đầy đủ
+        </Button>
+      )}
+      {children}
+    </div>
+  );
+}
+
+/** Several projects with no room running (all projects in view): one row of team buttons each. */
+export function TeamStarter({ projects, token, after, company = false }: { projects: { path: string; name: string }[]; token: string; after?: () => void; company?: boolean }) {
   if (!projects.length) return null;
   return (
     <section aria-labelledby="team-starter" className="space-y-2">
@@ -333,24 +354,10 @@ export function TeamStarter({ projects, token, after, company = false }: { proje
                 {p.path}
               </span>
             </span>
-            <Button type="button" size="sm" disabled={busy != null} onClick={() => void act(p.path, p.name, "up")} title="8sync ccc auto up: đội omp mặc định">
-              <PlayIcon aria-hidden /> Mở team ({DEFAULT_TEAM.length} phòng: {DEFAULT_TEAM.join(", ")})
-            </Button>
-            <Button type="button" size="sm" variant="outline" disabled={busy != null} onClick={() => void act(p.path, p.name, "boost")} title={`${BOOST_COST} (auto up --roles boost --hours 2)`} className="font-semibold">
-              <ZapIcon aria-hidden className="text-brand-ink dark:text-brand" /> Sấm Sét ({BOOST_TEAM.length} phòng)
-            </Button>
-            {!company && (
-              <Button type="button" size="sm" variant="ghost" disabled={busy != null} onClick={() => void act(p.path, p.name, "full")} title={`${teamText(FULL_TEAM)}, tốn quota gần gấp ${FULL_TEAM.length} lần một session`}>
-                <UsersIcon aria-hidden /> Team đầy đủ
-              </Button>
-            )}
+            <TeamStartButtons path={p.path} name={p.name} token={token} after={after} full={!company} />
           </li>
         ))}
       </ul>
-      <p className="max-w-[75ch] text-xs text-muted-foreground text-pretty">
-        Mở team: {teamText(DEFAULT_TEAM)} của đội omp (mặc định): lead viết card, dev làm, qa kiểm và duyệt. ⚡ Sấm Sét: {teamText(BOOST_TEAM)}, lease 2 giờ.
-        {company ? " Team công ty vẫn nhận card của dự án này khi rảnh; mở team ở đây là thêm phòng riêng." : ` Team đầy đủ: ${teamText(FULL_TEAM)}. Thêm thư mục khác ở mục Projects bên trái.`}
-      </p>
     </section>
   );
 }

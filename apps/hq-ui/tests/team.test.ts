@@ -15,7 +15,7 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { POST } from "@/app/api/team/route";
-import { BoostButton, BoostChoices, boostOn, TeamControls, TeamStarter } from "@/components/hq/team-controls";
+import { BoostButton, BoostChoices, boostOn, TeamControls, TeamStartButtons, TeamStarter } from "@/components/hq/team-controls";
 import { getToken } from "@/lib/server/auth";
 import { pinnedRootsPath } from "@/lib/server/paths";
 import { onePerBoard, type ProjectBoard } from "@/lib/server/board";
@@ -80,17 +80,23 @@ describe("team", () => {
     expect(boostOn(rooms)).toBe(false);
   });
 
-  it("empty office: real buttons under the text; company mode says where the company team runs", () => {
-    const open = emptyOfficeCopy({ repo: true, company: false, homes: [], starters: 1 });
+  it("empty office: one line above the buttons; company mode names only where a team runs (team_roots), not auto's scope", () => {
+    const game = "C:\\Users\\P\\3d-game";
+    const open = emptyOfficeCopy({ repo: game, company: false, teamRoots: [], buttons: true });
     expect(open.title).toBe("Dự án này chưa có phòng nào chạy");
-    expect(open.body).toContain("“Mở team” bên dưới: 3 phòng (lead, dev, qa)");
-    expect(open.body).toContain("5 phòng (lead, dev, dev2, qa, review)");
-    const co = emptyOfficeCopy({ repo: true, company: true, homes: ["platform"], starters: 1 });
+    expect(open.body).toBe("Mở team: 3 phòng (lead, dev, qa) của đội omp; ⚡ Sấm Sét: 5 phòng (lead, dev, dev2, qa, review).");
+    // Live 2026-10-23: scope had 4 repos, only ide ran a team; 3d-game's own root is never listed.
+    const co = emptyOfficeCopy({ repo: game, company: true, teamRoots: ["\\\\?\\C:\\Users\\P\\ide", "\\\\?\\C:\\Users\\P\\3d-game"], buttons: true });
     expect(co.title).toBe("Dự án này chưa có phòng riêng");
-    expect(co.body).toContain("Team công ty đang chạy ở platform: các phòng đó nhận card của dự án này");
-    expect(co.body).toContain("Mở team");
-    expect(co.body).not.toContain("chưa có phòng nào chạy");
-    expect(emptyOfficeCopy({ repo: false, company: false, homes: [], starters: 0 }).body).not.toContain("Bấm “Mở team”");
+    expect(co.body).toBe("Team công ty đang chạy ở ide: các phòng đó nhận card của dự án này khi hết việc ở dự án mình; thêm card ở Board để giao.");
+    const none = emptyOfficeCopy({ repo: game, company: true, teamRoots: ["\\\\?\\C:\\Users\\P\\3d-game"], buttons: true });
+    expect(none.body).toContain("Công ty chưa có team nào chạy.");
+    expect(none.body).not.toContain("đang chạy ở");
+    for (const c of [open, co, none]) expect(c.body).not.toMatch(/bên dưới|Cần phòng riêng|chưa có phòng nào chạy/);
+    expect(emptyOfficeCopy({ repo: null, company: false, teamRoots: [], buttons: false }).body).toContain("Projects bên trái");
+    const card = renderToStaticMarkup(createElement(TeamStartButtons, { path: game, name: "3d-game", token: "t" }, createElement("button", null, "Mở một session lẻ")));
+    expect(card.indexOf("Mở team (3 phòng: lead, dev, qa)")).toBeLessThan(card.indexOf("Sấm Sét (5 phòng)"));
+    expect(card.indexOf("Sấm Sét (5 phòng)")).toBeLessThan(card.indexOf("Mở một session lẻ"));
     for (const company of [false, true]) {
       const html = renderToStaticMarkup(createElement(TeamStarter, { projects: [{ path: "C:/p/zus", name: "zus" }], token: "t", company }));
       expect(html).toContain("Mở team (3 phòng: lead, dev, qa)");

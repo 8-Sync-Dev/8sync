@@ -2,6 +2,8 @@
 // `room::BOOST_TEAM` (crates/cli/src/verbs/ccc/room.rs; tests/team.test.ts pins them). The default
 // engine is omp (rooms `omp-<role>`, owner 2026-10-23 "all mặc định là omp"); `--ccc` opens the same
 // roles as Claude Code rooms. Pure: the buttons' copy and lib/server/team.ts read these.
+import { diskKey } from "./disk";
+import { repoOf } from "./sidebar";
 
 /** "Chạy" / "Mở lại team" (HQ "Thường"): `auto up`. */
 export const DEFAULT_TEAM = ["lead", "dev", "qa"] as const;
@@ -16,22 +18,22 @@ export const BOOST_ONLY: string[] = BOOST_TEAM.filter((r) => !(DEFAULT_TEAM as r
 export const teamText = (team: readonly string[]) => `${team.length} phòng (${team.join(", ")})`;
 
 /**
- * What the empty office says (no room in view). `repo`: one project picked; `company`: `auto company
- * on`; `homes`: projects where the company team's rooms live now; `starters`: projects with team
- * buttons right below. Owner 2026-10-23: it said "Bấm “Mở team” ở một dự án" with no such button,
- * and "chưa có phòng nào chạy" while the company team ran in another project.
+ * What the empty office card says (no room in view); the team buttons sit right under it. `repo`: the
+ * project picked (null = all); `teamRoots`: status `team_roots`, where a team runs (the company
+ * team's rooms live only there, not in auto's whole scope); `buttons`: team buttons are shown.
+ * Owner 2026-10-23: it said "Bấm “Mở team” ở một dự án" with no such button, then listed every scope
+ * repo as "đang chạy ở" while only one ran a team.
  */
-export function emptyOfficeCopy(o: { repo: boolean; company: boolean; homes: readonly string[]; starters: number }): { title: string; body: string } {
-  const open = `Bấm “Mở team” bên dưới: ${teamText(DEFAULT_TEAM)} của đội omp; “⚡ Sấm Sét”: ${teamText(BOOST_TEAM)}.`;
-  if (o.company && o.homes.length) {
-    const where = o.homes.join(", ");
-    return {
-      title: o.repo ? "Dự án này chưa có phòng riêng" : "Chưa phòng nào làm ở đây",
-      body: `Team công ty đang chạy ở ${where}: các phòng đó nhận card của ${o.repo ? "dự án này" : "mọi dự án công ty"} khi hết việc ở dự án mình; thêm card ở Board để giao.${o.starters ? ` Cần phòng riêng: ${open}` : ""}`,
-    };
-  }
+export function emptyOfficeCopy(o: { repo: string | null; company: boolean; teamRoots: readonly string[]; buttons: boolean }): { title: string; body: string } {
+  const sizes = `Mở team: ${teamText(DEFAULT_TEAM)} của đội omp; ⚡ Sấm Sét: ${teamText(BOOST_TEAM)}.`;
+  const title = o.repo ? (o.company ? "Dự án này chưa có phòng riêng" : "Dự án này chưa có phòng nào chạy") : "Văn phòng đang trống";
+  if (!o.company) return { title, body: o.buttons ? sizes : "Thêm thư mục dự án ở mục Projects bên trái: nút “Mở team” hiện ở đây." };
+  const here = o.repo ? diskKey(o.repo) : null;
+  const homes = [...new Set(o.teamRoots.filter((r) => diskKey(r) !== here).map((r) => repoOf(r.replace(/^\\\\\?\\/, "")).name))];
   return {
-    title: o.repo ? "Dự án này chưa có phòng nào chạy" : "Văn phòng đang trống",
-    body: o.starters ? open : "Thêm thư mục dự án ở mục Projects bên trái: nút “Mở team” hiện ở đây.",
+    title,
+    body: homes.length
+      ? `Team công ty đang chạy ở ${homes.join(", ")}: các phòng đó nhận card của ${o.repo ? "dự án này" : "mọi dự án công ty"} khi hết việc ở dự án mình; thêm card ở Board để giao.`
+      : `Công ty chưa có team nào chạy.${o.buttons ? ` ${sizes}` : ""}`,
   };
 }

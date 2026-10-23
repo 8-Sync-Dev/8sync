@@ -374,7 +374,7 @@ export function readPins(file = pinnedRootsPath()): Pin[] {
  * `hidden`: projects the owner closed in the sidebar (lib/sidebar.ts splitClosed decides which still hide).
  * `pins`: projects the owner pinned (sidebar "Ghim", lib/sidebar.ts pinSidebar).
  */
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; pins: Pin[]; at: number; /** One team for every project (`auto company on`), from the last auto status poll. */ company: boolean; /** The company's repos (lib/sidebar.ts companyScope); empty when company is off. */ scope: string[] };
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; pins: Pin[]; at: number; /** One team for every project (`auto company on`), from the last auto status poll. */ company: boolean; /** The company's repos (lib/sidebar.ts companyScope); empty when company is off. */ scope: string[]; /** Where a team runs (`team_roots` of the last auto status, canonical roots): the company team's rooms live only there. */ team_roots: string[] };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
@@ -458,6 +458,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
   const recent = db
     .prepare("SELECT kind, ts, session, from_, to_, text FROM messages WHERE kind = 'session_message' AND ts > ? ORDER BY id DESC LIMIT 50")
     .all(now - 120_000) as { kind: string; ts: number; session: string | null; from_: string | null; to_: string | null; text: string | null }[];
+  const roots = lastAutoStatus()?.team_roots;
   return {
     rooms,
     visits: visitsFrom(recent, refs, now),
@@ -470,5 +471,6 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     at: now,
     company: lastAutoStatus()?.company === true,
     scope: companyScope(lastAutoStatus()),
+    team_roots: Array.isArray(roots) ? roots.filter((r): r is string => typeof r === "string" && r.length > 0 && r.length <= 1024) : [],
   };
 }

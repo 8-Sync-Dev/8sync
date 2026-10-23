@@ -26,7 +26,7 @@ import { RoleIcon } from "./role-badge";
 import { SpriteCanvas, WalkerCanvas } from "./sprite-canvas";
 import type { BoardsState } from "./use-board";
 import { AskPanel, askRoomOf, type AskRoom } from "./ask-panel";
-import { boostOn, TeamControls, TeamStarter } from "./team-controls";
+import { boostOn, TeamControls, TeamStartButtons, TeamStarter } from "./team-controls";
 import { useAuto, type Office, type OfficeState, type Room } from "./use-office";
 
 /*
@@ -531,12 +531,10 @@ export function OfficeView({
       ? [{ path: repo, name: repo.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || repo }]
       : [];
   const idleFolders = [...added, ...picked];
-  const empty = emptyOfficeCopy({
-    repo: !!repo,
-    company: !!office?.company,
-    homes: office?.company ? groupByRepo(office.rooms).map((g) => g.project.name) : [],
-    starters: idleFolders.length,
-  });
+  // One project in view with no room (the picked one, or the only idle folder): its team buttons sit
+  // inside the empty card; several idle folders (all projects) get a row each below it.
+  const single = repo ? (idleFolders.find((p) => slash(p.path) === slash(repo)) ?? null) : idleFolders.length === 1 ? idleFolders[0] : null;
+  const empty = emptyOfficeCopy({ repo: repo ?? null, company: !!office?.company, teamRoots: office?.team_roots ?? [], buttons: idleFolders.length > 0 });
   const labelOf = (key: string) => rooms.find((r) => r.key === key)?.label ?? key.slice(0, 8);
   const visits = office?.visits ?? [];
   const now = office?.at ?? 0;
@@ -590,11 +588,23 @@ export function OfficeView({
             <EmptyState
               icon={<UsersIcon />}
               title={empty.title}
-              action={<Button variant="outline" onClick={onStart}>Mở một session lẻ</Button>}
+              action={
+                single ? (
+                  <TeamStartButtons path={single.path} name={single.name} token={token} after={refresh}>
+                    <Button size="sm" variant="ghost" onClick={onStart}>
+                      Mở một session lẻ
+                    </Button>
+                  </TeamStartButtons>
+                ) : (
+                  <Button variant="outline" onClick={onStart}>
+                    Mở một session lẻ
+                  </Button>
+                )
+              }
             >
               {empty.body}
             </EmptyState>
-            <TeamStarter projects={idleFolders} token={token} after={refresh} company={office.company} />
+            {!single && <TeamStarter projects={idleFolders} token={token} after={refresh} company={office.company} />}
           </>
         ) : (
           <>
@@ -696,11 +706,6 @@ export function OfficeView({
                   );
                 })}
                 <TeamStarter projects={idleFolders} token={token} after={refresh} company={office.company} />
-                {repo && office.company && inScope(scope, repo) && rooms.length === 0 && (
-                  <p className="max-w-[75ch] rounded-lg border bg-card px-3.5 py-2.5 text-sm text-pretty">
-                    Dự án này đã thuộc công ty nhưng chưa phòng nào làm. Thêm card ở tab Board: phòng rảnh của công ty nhận card gấp nhất, ở bất kỳ dự án nào.
-                  </p>
-                )}
                 <details className="text-xs text-muted-foreground">
                   <summary className="w-fit cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60">Cách đọc văn phòng</summary>
                   <p className="mt-2 max-w-[75ch] text-pretty">
