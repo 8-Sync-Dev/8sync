@@ -49,7 +49,11 @@ pub struct Args {
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
     /// Run the MCP server on stdin/stdout (the client starts this)
-    Serve,
+    Serve {
+        /// The PC-control server (shell, files) instead of the harness one
+        #[arg(long)]
+        pc: bool,
+    },
     /// Register the server in Claude Desktop (and Claude Code with --claude-code)
     Install {
         /// Also register it in Claude Code's user scope (`claude mcp add-json --scope user`)
@@ -58,6 +62,15 @@ pub enum Cmd {
         /// Print the config entry instead of writing it
         #[arg(long)]
         print: bool,
+        /// Also give Claude Desktop control of this PC: a second server `8sync-pc` (shell, read,
+        /// write, list) behind the guard, secret-path refusals and an audit log
+        #[arg(long)]
+        pc: bool,
+    },
+    /// Switch Claude Desktop's PC control on or off without editing its config
+    Pc {
+        /// on | off | status
+        action: String,
     },
     /// Remove the server from Claude Desktop (and Claude Code)
     Uninstall,
@@ -67,8 +80,9 @@ pub enum Cmd {
 
 pub fn run(a: Args) -> Result<()> {
     match a.cmd {
-        Cmd::Serve => serve(),
-        Cmd::Install { claude_code, print } => install(claude_code, print),
+        Cmd::Serve { pc } => serve(pc),
+        Cmd::Install { claude_code, print, pc } => install(claude_code, print, pc),
+        Cmd::Pc { action } => super::mcp_pc::switch(&action),
         Cmd::Uninstall => uninstall(),
         Cmd::Tools => {
             for t in tools() {
@@ -85,7 +99,7 @@ fn repo_prop() -> Value {
     json!({ "type": "string", "description": "Absolute path of the project's git repo (as `sessions` lists it)." })
 }
 
-fn tool(name: &str, title: &str, description: &str, props: Value, required: &[&str], read_only: bool) -> Value {
+pub(crate) fn tool(name: &str, title: &str, description: &str, props: Value, required: &[&str], read_only: bool) -> Value {
     json!({
         "name": name,
         "title": title,
@@ -227,7 +241,12 @@ pub(crate) fn argv(name: &str, a: &Value) -> Result<Option<(Vec<String>, Option<
 /// Runs this binary with `args` in `cwd`; (exit ok, stdout + stderr), cut to [`OUT_MAX`].
 fn run_self(args: &[String], cwd: Option<&Path>) -> Result<(bool, String)> {
     let exe = std::env::current_exe().context("current_exe")?;
-    let mut c = Command::new(exe);
+    run_cmd(&exe, args, cwd, CALL_TIMEOUT)
+}
+
+/// `prog args` without a shell window, output bounded, the whole tree killed after `limit`.
+pub(crate) fn run_cmd(prog: &Path, args: &[String], cwd: Option<&Path>, limit: Duration) -> Result<(bool, String)> {
+    let mut c = Command::new(prog);
     c.args(args)
         .env("SUSYNC_NO_AUTO_CHECK", "1")
         .env("NO_COLOR", "1")
@@ -264,7 +283,7 @@ fn run_self(args: &[String], cwd: Option<&Path>) -> Result<(bool, String)> {
         if let Some(st) = child.try_wait()? {
             break Some(st);
         }
-        if start.elapsed() > CALL_TIMEOUT {
+        if start.elapsed() > limit {
             kill_tree(&mut child);
             break None;
         }
@@ -281,7 +300,7 @@ fn run_self(args: &[String], cwd: Option<&Path>) -> Result<(bool, String)> {
     let text = strip_ansi(&text);
     let ok = status.is_some_and(|s| s.success());
     let text = match status {
-        None => format!("{text}\n(stopped after {} s)", CALL_TIMEOUT.as_secs()),
+        None => format!("{text}\n(stopped after {} s)", limit.as_secs()),
         Some(_) => text,
     };
     Ok((ok, cut(&text)))
@@ -354,6 +373,18 @@ fn err(id: &Value, code: i64, message: &str) -> Value {
 /// The reply to one incoming message; None for a notification (no `id`) or a response.
 /// `call` runs a tool (injected in tests).
 pub(crate) fn handle(msg: &Value, call: &dyn Fn(&str, &Value) -> (bool, String)) -> Option<Value> {
+    handle_with(msg, &Server { name: NAME, title: "8 Sync harness", tools: tools(), instructions: "8sync harness on this machine. `machine` shows RAM/CPU/GPU/power now; `sessions` lists every Claude Code / omp session and its repo; board/queue/report/knowledge read one project (pass its absolute `repo`). queue_add and know_add write; say what you add." }, call)
+}
+
+/// Who answers: the harness server or the PC-control one.
+pub(crate) struct Server {
+    pub name: &'static str,
+    pub title: &'static str,
+    pub tools: Vec<Value>,
+    pub instructions: &'static str,
+}
+
+pub(crate) fn handle_with(msg: &Value, srv: &Server, call: &dyn Fn(&str, &Value) -> (bool, String)) -> Option<Value> {
     let id = msg.get("id")?.clone();
     let Some(method) = msg["method"].as_str() else {
         // A response to something we never asked, or garbage with an id.
@@ -369,16 +400,16 @@ pub(crate) fn handle(msg: &Value, call: &dyn Fn(&str, &Value) -> (bool, String))
                 json!({
                     "protocolVersion": v,
                     "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": { "name": NAME, "title": "8 Sync harness", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "8sync harness on this machine. `machine` shows RAM/CPU/GPU/power now; `sessions` lists every Claude Code / omp session and its repo; board/queue/report/knowledge read one project (pass its absolute `repo`). queue_add and know_add write; say what you add.",
+                    "serverInfo": { "name": srv.name, "title": srv.title, "version": env!("CARGO_PKG_VERSION") },
+                    "instructions": srv.instructions,
                 }),
             )
         }
         "ping" => ok(&id, json!({})),
-        "tools/list" => ok(&id, json!({ "tools": tools() })),
+        "tools/list" => ok(&id, json!({ "tools": srv.tools })),
         "tools/call" => {
             let Some(name) = p["name"].as_str() else { return Some(err(&id, -32602, "tools/call needs `name`")) };
-            if !tools().iter().any(|t| t["name"] == name) {
+            if !srv.tools.iter().any(|t| t["name"] == name) {
                 return Some(err(&id, -32602, &format!("unknown tool `{name}`")));
             }
             let args = if p["arguments"].is_object() { p["arguments"].clone() } else { json!({}) };
@@ -391,7 +422,11 @@ pub(crate) fn handle(msg: &Value, call: &dyn Fn(&str, &Value) -> (bool, String))
     })
 }
 
-fn serve() -> Result<()> {
+fn serve(pc: bool) -> Result<()> {
+    if pc {
+        super::mcp_pc::refuse_terminal()?;
+    }
+    let srv = if pc { Some(super::mcp_pc::server()) } else { None };
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -401,7 +436,10 @@ fn serve() -> Result<()> {
         }
         let reply = match serde_json::from_str::<Value>(&line) {
             Ok(Value::Array(_)) => Some(err(&Value::Null, -32600, "batches are not supported")),
-            Ok(m) => handle(&m, &call),
+            Ok(m) => match &srv {
+                Some(sv) => handle_with(&m, sv, &super::mcp_pc::call),
+                None => handle(&m, &call),
+            },
             Err(_) => Some(err(&Value::Null, -32700, "parse error")),
         };
         if let Some(r) = reply {
@@ -450,6 +488,10 @@ fn desktop_configs() -> Vec<PathBuf> {
 /// `config` with `mcpServers.8sync` set to `entry` (None removes it); every other key kept.
 /// Err when the file is not a JSON object (never overwritten then).
 pub(crate) fn merged(config: Option<&str>, entry: Option<&Value>) -> Result<Value> {
+    merged_as(config, NAME, entry)
+}
+
+pub(crate) fn merged_as(config: Option<&str>, name: &str, entry: Option<&Value>) -> Result<Value> {
     let mut v: Value = match config.map(str::trim).filter(|s| !s.is_empty()) {
         Some(s) => serde_json::from_str(s).context("claude_desktop_config.json is not valid JSON: fix it first (left untouched)")?,
         None => json!({}),
@@ -459,10 +501,10 @@ pub(crate) fn merged(config: Option<&str>, entry: Option<&Value>) -> Result<Valu
     let servers = servers.as_object_mut().context("`mcpServers` is not an object (left untouched)")?;
     match entry {
         Some(e) => {
-            servers.insert(NAME.into(), e.clone());
+            servers.insert(name.into(), e.clone());
         }
         None => {
-            servers.remove(NAME);
+            servers.remove(name);
         }
     }
     Ok(v)
@@ -470,15 +512,23 @@ pub(crate) fn merged(config: Option<&str>, entry: Option<&Value>) -> Result<Valu
 
 /// Whether `config` has `mcpServers.8sync` (uninstall leaves other files alone).
 pub(crate) fn has_entry(config: &str) -> bool {
-    serde_json::from_str::<Value>(config).is_ok_and(|v| v["mcpServers"].get(NAME).is_some())
+    has_entry_as(config, NAME)
+}
+
+pub(crate) fn has_entry_as(config: &str, name: &str) -> bool {
+    serde_json::from_str::<Value>(config).is_ok_and(|v| v["mcpServers"].get(name).is_some())
 }
 
 fn write_config(p: &Path, entry: Option<&Value>) -> Result<bool> {
+    write_config_as(p, NAME, entry)
+}
+
+fn write_config_as(p: &Path, name: &str, entry: Option<&Value>) -> Result<bool> {
     let old = std::fs::read_to_string(p).ok();
-    if entry.is_none() && !old.as_deref().is_some_and(has_entry) {
+    if entry.is_none() && !old.as_deref().is_some_and(|c| has_entry_as(c, name)) {
         return Ok(false);
     }
-    let v = merged(old.as_deref(), entry)?;
+    let v = merged_as(old.as_deref(), name, entry)?;
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
     }
@@ -497,11 +547,16 @@ fn find_claude() -> Option<PathBuf> {
     which::which("claude").ok()
 }
 
-fn install(claude_code: bool, print: bool) -> Result<()> {
+fn install(claude_code: bool, print: bool, pc: bool) -> Result<()> {
     let exe = exe_path()?;
     let entry = server_entry(&exe);
+    let pc_entry = pc.then(|| super::mcp_pc::entry(&exe));
     if print {
-        println!("{}", serde_json::to_string_pretty(&json!({ "mcpServers": { NAME: entry } }))?);
+        let mut servers = json!({ NAME: entry });
+        if let Some(e) = &pc_entry {
+            servers[super::mcp_pc::NAME] = e.clone();
+        }
+        println!("{}", serde_json::to_string_pretty(&json!({ "mcpServers": servers }))?);
         return Ok(());
     }
     if exe.contains("/target/") || exe.contains("\\target\\") {
@@ -515,6 +570,10 @@ fn install(claude_code: bool, print: bool) -> Result<()> {
         }
         write_config(&p, Some(&entry))?;
         ui::ok(&format!("Claude Desktop: {} → mcpServers.{NAME}", p.display()));
+        if let Some(e) = &pc_entry {
+            write_config_as(&p, super::mcp_pc::NAME, Some(e))?;
+            ui::ok(&format!("Claude Desktop: mcpServers.{} (điều khiển máy này, có guard + audit)", super::mcp_pc::NAME));
+        }
         wrote += 1;
     }
     if wrote == 0 {
@@ -537,6 +596,9 @@ fn uninstall() -> Result<()> {
     for p in desktop_configs() {
         if write_config(&p, None)? {
             ui::ok(&format!("Claude Desktop: bỏ mcpServers.{NAME} khỏi {}", p.display()));
+        }
+        if write_config_as(&p, super::mcp_pc::NAME, None)? {
+            ui::ok(&format!("Claude Desktop: bỏ mcpServers.{} khỏi {}", super::mcp_pc::NAME, p.display()));
         }
     }
     if let Some(claude) = find_claude() {

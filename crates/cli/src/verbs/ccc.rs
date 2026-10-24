@@ -521,6 +521,19 @@ fn project_harness(env: &Env, root: &Path) -> Result<()> {
 }
 
 /// Machine usage as JSON (`8sync eco --json`, the MCP `machine` tool).
+/// The destructive-command guard for callers outside Claude Code's hooks (the PC-control MCP
+/// server): `Some((deny, why))` when the command is refused outright (`deny`) or merely needs an
+/// extra look (`!deny`: deletion outside the project, run-time paths, shipping steps).
+pub(crate) fn guard_command(cmd: &str, cwd: Option<&Path>) -> Option<(bool, String)> {
+    use danger::{Shell, Verdict};
+    let shell = if cfg!(windows) { Shell::PowerShell } else { Shell::Bash };
+    match danger::check(cmd, shell, &danger::Ctx::local(cwd))? {
+        Verdict::Deny(w) => Some((true, w)),
+        Verdict::Ask(w) | Verdict::Unsure(w) => Some((false, w)),
+        Verdict::Ship { why, .. } => Some((false, why)),
+    }
+}
+
 pub(crate) fn eco_snapshot(home: &Path, s: &crate::verbs::hq_core::sampler::Sample) -> Value {
     eco::snapshot_json(home, s)
 }
