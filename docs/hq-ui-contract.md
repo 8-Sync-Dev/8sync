@@ -66,5 +66,5 @@ Machine-readable output for IDE integrations (ZUS Sessions). Every object carrie
 
 - `8sync ccc . ls --json`, `8sync ls [--all] --json`: array of rows (`engine, sid, name, status, title, doing, last_user, tasks_done, tasks_total, resume, ...`), each with `schema`.
 - `8sync ccc . show <name> --json` (also `8sync show <name> [--engine ccc] --json`): one row plus `last_users: [str]` (max 5), `last_text: str|null`, `tasks: [{id,title,state}]` (`state` = `pending|in_progress|done`), `files: [str]`.
-- `8sync ccc kit status --json`: `{schema, kit_version, files:{present,total,missing:[]}, hooks:{guard,verify,stop_gate,watchdog,ship_grant,session_start: bool}, skills:{linked,libraries:[]}, mcp:{cbm,serena:"on"|"off"}, claude:{found,version}}`.
+- `8sync ccc kit status --json`: `{schema, kit_version, files:{present,total,missing:[]}, hooks:{guard,verify,stop_gate,watchdog,ship_grant,session_start: bool}, skills:{linked,libraries:[]}, claude:{found,version}}`.
 - `8sync ccc login-kind [--json]`: `{schema, kind:"subscription"|"api-key"|"none", source:"env"|"claude-config"|"unknown"}`. `api-key` when `ANTHROPIC_API_KEY` is set (presence only), else `subscription` when `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`) has an `oauthAccount`, else `none`. Plain form: `kind (source)`.

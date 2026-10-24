@@ -19,11 +19,11 @@ Read, in order (token-lean; `headroom_compress` anything > ~50 lines):
 2. **`su-code/KNOWLEDGE.md`** — the most recent `validated:` / `failure:` entries (append-only, at the tail) so I don't repeat a known dead-end.
 3. **`CHANGELOG.md`** `## [Unreleased]` + top released version; **`git log --oneline -5`** to see what just landed.
 4. If a large feature is active: `su-code/planning/ACTIVE.md` → the active slug's `STATE.md`.
-Explore code with **codegraph** (codebase-memory-mcp / serena only if enabled) — never grep/Read-all.
+Explore code with **trail** (`trail ask` / `trail callers`) — never grep/Read-all.
 
 ## 3. Prepare the workspace (make it actually runnable HERE)
 Follow the handoff's new-machine runbook + per-machine section. Concretely:
-- **Binary current?** If the pulled diff touched `crates/` or `assets/`, rebuild: `bash scripts/bootstrap.sh` (or `cargo build --release` + install). Then `8sync harness` so skills/commands/AGENTS/codegraph index refresh on THIS box.
+- **Binary current?** If the pulled diff touched `crates/` or `assets/`, rebuild: `bash scripts/bootstrap.sh` (or `cargo build --release` + install). Then `8sync harness` so skills/commands/AGENTS/trail graph (`trail build`) refresh on THIS box.
 - **Per-machine gotchas** the handoff called out (these live in `~`, NOT git) — verify each that's relevant, e.g.: `npm --version` prints a number (else fix the pnpm shim per KNOWLEDGE), `8sync feynman auth-omp` if using Feynman, `8sync harness browser`, custom models in `~/.omp/agent/models.yml`, VPN. Don't run heavyweight/sudo/reroute steps (`vpn install`/`on`, big AUR) unprompted — list them as "run if you need X".
 - **Sanity:** `8sync doctor` (or the project's build/test smoke) to confirm green before continuing.
 

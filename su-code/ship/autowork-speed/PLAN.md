@@ -7,7 +7,7 @@ tự cập nhật GitHub trending để học; giữ /rules /aup-audit /sec; Rus
 
 ## Goal
 1. **R&D trực thật sự** (`RD_DUTY`): mỗi lượt lịch = đọc backlog (STATE/KNOWLEDGE/`research/trending`) → nghiên cứu
-   codebase (`codegraph`), internet (WebSearch, primary) và học thuật (arXiv/Semantic Scholar) → **giao ≤2 task cụ thể cho
+   codebase (`trail ask`), internet (WebSearch, primary) và học thuật (arXiv/Semantic Scholar) → **giao ≤2 task cụ thể cho
    phòng đang rảnh** qua `POST /api/tasks` hoặc SendMessage, ghi `su-code/research/<slug>.md`.
 2. `8sync learn trending [--lang rust|ts] [--days 7]` (Rust): GitHub REST `search/repositories` (official API, không scrape
    trang trending) → `su-code/research/trending/<date>.md` (tên, sao, licence, mô tả một dòng, "có ích cho 8sync vì"-ô trống

@@ -73,7 +73,7 @@
 # measured asset. v0.67.0 was tagged but not published; v0.67.1 is the release.
 #
 # 2026-10-13 (after v0.68.0: `8sync watchdog` — std-only /proc monitor, kill/
-# quarantine, systemd unit, `ccc hook watchdog` — plus `harness cbm|serena` opt-in
+# quarantine, systemd unit, `ccc hook watchdog` — plus opt-in
 # switches). Local x86_64-unknown-linux-gnu release, same flags: v0.68.0 ad9151a
 # 5,917,472 B → 6,004,648 B (+87,176). v0.68.0 musl asset 6,050,768 B, so the next
 # one is ≈ 6,137,944 B → ceiling 6016 KiB (~22 KiB left). Re-check against the real

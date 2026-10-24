@@ -1,6 +1,6 @@
 ---
 name: tauri-v2
-description: Use when building, migrating (v1→v2), or debugging a Tauri 2.x desktop app — adding a `#[tauri::command]`, fixing "command not allowed"/capabilities/ACL errors, wiring plugins, bundling per-OS, configuring the auto-updater, or attaching a heavy native/Python sidecar. Produces a verified Rust+webview app whose IPC round-trip and bundle target are exercised. Grounded in official Tauri v2 docs (v2.tauri.app); extends with opinionated patterns from 8syncdev's open-musik/zus/sidex and omp-native tooling (codegraph, codebase-memory, serena, engine_*, browser).
+description: Use when building, migrating (v1→v2), or debugging a Tauri 2.x desktop app — adding a `#[tauri::command]`, fixing "command not allowed"/capabilities/ACL errors, wiring plugins, bundling per-OS, configuring the auto-updater, or attaching a heavy native/Python sidecar. Produces a verified Rust+webview app whose IPC round-trip and bundle target are exercised. Grounded in official Tauri v2 docs (v2.tauri.app); extends with opinionated patterns from 8syncdev's open-musik/zus/sidex and omp-native tooling (trail, engine_*, browser).
 locked: true
 ---
 
@@ -35,16 +35,11 @@ Every step names a real tool. Prefer omp primitives over reinvention — when om
 upgrades a primitive, a step that only references it inherits the upgrade.
 
 ### 0. Ground the change before editing
-- If `.codegraph/` exists: `codegraph query "<command_or_fn>"` and
-  `codegraph context "tauri ipc"` to map commands/events/state. Else
-  `codegraph init -i .` once. After edits: `codegraph sync`.
-- If cbm/serena are enabled (opt-in: `8sync harness cbm|serena on`), cross-check structure with `mcp__codebase_memory_mcp__search_graph` /
-  `trace_path` (calls) if the project is indexed, and
-  `mcp__serena__get_symbols_overview` on the `src-tauri/src/*.rs` file you'll
-  touch; `mcp__serena__get_diagnostics_for_file` to see type errors live.
+- `trail build` once, then `trail ask "<command_or_fn>"` / `trail ask "tauri ipc"` to map commands/events/state;
+  `trail skeleton src-tauri/src/*.rs` for the file you'll touch; `trail callers <fn>` for call paths.
 - Read the exact slices you need with `read` (`src-tauri/tauri.conf.json`,
   `src-tauri/Cargo.toml`, `capabilities/*.json`) — never whole-file a >200-line
-  Rust file blind; `codegraph`/serena locate first, `read` the narrow range.
+  Rust file blind; `trail` locates first, `read` the narrow range.
 
 ### 1. Scaffolding / migration checks
 - New app: `cargo tauri init` (or the create-tauri-app template). Confirm
@@ -125,7 +120,7 @@ upgrades a primitive, a step that only references it inherits the upgrade.
 - `engine_status` shows per-slice progress / blockers across the batch. Delegate
   independent slices (e.g. "frontend wrapper", "macOS signing") to `task`
   subagents — but keep capability/IPC changes in one slice; they share a schema.
-- After a Rust change, `mcp__serena__get_diagnostics_for_file` re-checks the file
+- After a Rust change, `cargo check` re-checks the file
   before you spend a `cargo tauri build` cycle.
 
 ### 9. Capture durable decisions

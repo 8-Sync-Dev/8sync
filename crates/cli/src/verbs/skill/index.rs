@@ -21,7 +21,7 @@ pub(crate) fn always_on_names_in_order(root: &Path) -> Vec<String> {
 }
 
 const SUBDIR_IGNORE: &[&str] = &[
-    ".git", ".hg", ".svn", ".jj", ".codegraph", "su-code", "agents", "node_modules", "target",
+    ".git", ".hg", ".svn", ".jj", ".trail", "su-code", "agents", "node_modules", "target",
     "dist", "build", "out", ".next", ".nuxt", ".svelte-kit", ".venv", "venv",
     "vendor", "__pycache__", ".cache", "coverage", ".idea", ".vscode", "assets",
 ];
@@ -95,7 +95,7 @@ fn direct_code_file_count(dir: &Path) -> usize {
 fn subfolder_index_block(root: &Path) -> String {
     let names = always_on_names_in_order(root);
     let chain = if names.is_empty() {
-        "codegraph → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing → locate-anything".to_string()
+        "trail → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing → locate-anything".to_string()
     } else {
         names.join(" → ")
     };
@@ -114,7 +114,7 @@ Bạn đang ở **sub-folder**. Rule + skill force-load đầy đủ KHÔNG lặ
 **Always-on (đọc trước tool call đầu tiên, ĐÚNG thứ tự):** {chain}.\n\
 SKILL.md ở `su-code/skills/<name>/` (repo-relative) hoặc `~/.omp/skills/<name>/`.\n\
 \n\
-**Cách tận dụng (bắt buộc):** `codegraph` cho mọi explore code (query/callers/callees — KHÔNG grep) · \
+**Cách tận dụng (bắt buộc):** `trail` cho mọi explore code (ask/callers/skeleton — KHÔNG grep) · \
 `karpathy` + `ponytail` = YAGNI, làm ít nhất, xoá > thêm · `assp` cho copy/offer hướng người dùng · \
 **`impeccable` = design system CHUẨN, BẮT BUỘC cho mọi UI/design/redesign/audit (kèm `references/house/*`)** + `taste` chống slop.\n\
 \n\

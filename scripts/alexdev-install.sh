@@ -64,7 +64,7 @@ ok "alexdev override written (trim nvidia/dev-stack/bluetooth/displaylink/apps-p
 # ─────────────────────────────────────────────────────────────
 c "3/5  apply alexdev profile (pacman/paru/yay — sudo)"
 # ─────────────────────────────────────────────────────────────
-# Stage A harness (omp/gh/paru/codegraph/skills/PATH) + bundle đã trim.
+# Stage A harness (omp/gh/paru/skills/PATH) + bundle đã trim.
 # Idempotent (pacman --needed); log tại ~/.cache/8sync/.
 8sync setup --profile alexdev
 

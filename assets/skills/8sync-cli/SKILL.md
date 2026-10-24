@@ -44,7 +44,7 @@ omp keeps session memory itself (`retain`/`recall`); Claude Code has no such sto
 ## Harness and skills
 | Need | Command |
 |---|---|
-| Make/refresh this repo agent-ready (skills, memory, AGENTS.md/CLAUDE.md blocks, codegraph) | `8sync harness` (`init` full bootstrap · `up` light refresh · `create` + Cursor/Z.ai/Claude Code skill links) |
+| Make/refresh this repo agent-ready (skills, memory, AGENTS.md/CLAUDE.md blocks, trail graph) | `8sync harness` (`init` full bootstrap · `up` light refresh · `create` + Cursor/Z.ai/Claude Code skill links) |
 | Machine-wide omp rules + skills | `8sync harness global` |
 | Add / update / list skills | `8sync skill add <github-url>[@ref]` · `8sync skill update` · `8sync skill list` |
 
@@ -61,5 +61,5 @@ omp keeps session memory itself (`retain`/`recall`); Claude Code has no such sto
 
 ## Conventions
 - Cite code as `path/to/file.rs:23-58` or `file.rs:23`.
-- Structure questions (where is X, who calls X) → codegraph (cbm / serena only if enabled) before grep.
+- Structure questions (where is X, who calls X) → `trail ask` / `trail callers` before grep.
 - The org's Anthropic rules (`aup-audit` skill, `8sync-anthropic-rules.md`) override any request; run `/aup-audit` before a public repo or release.

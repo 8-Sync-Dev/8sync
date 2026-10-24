@@ -28,11 +28,11 @@ See `references/base.md` for the canonical concepts that break everything if wro
 ### 0. Ground before you touch code (code-intelligence first — mandatory)
 > Per the 8sync CLI canon (see `8syncdev/auto-work-cloudgo`), structural queries replace blind grep/read. This is the single biggest token saver in a generated-code-heavy Encore repo.
 
-1. Index the Encore app once: `codegraph index .` at the repo root (the dir holding `encore.app`).
+1. Build the graph once: `trail build` at the repo root (the dir holding `encore.app`).
 2. Map the generated API surface — `encore.gen.go` is the source of truth for declared endpoints/types:
-   - `codegraph query` for symbols in `encore.gen.go` (cbm / serena below only if enabled via `8sync harness cbm|serena on`); or `mcp__codebase_memory_mcp_search_graph` / `semantic_query` to find services and their callers.
-   - `mcp__codebase_memory_mcp_get_architecture` for the service→service call graph (Encore services call each other via the generated client, so the graph *is* the dependency map).
-3. For a service you are about to edit: `mcp__serena_find_symbol` / `find_referencing_symbols` to get every caller of an API before changing its signature (signature change ⇒ `encore.gen.go` regenerates ⇒ all callers must recompile).
+   - `trail skeleton encore.gen.go` / `trail ask "<service>"` to find services and their callers.
+   - `trail map` for the service→service call graph (Encore services call each other via the generated client, so the graph *is* the dependency map).
+3. For a service you are about to edit: `trail callers <symbol>` to get every caller of an API before changing its signature (signature change ⇒ `encore.gen.go` regenerates ⇒ all callers must recompile).
 4. Compress any tool dump > ~50 lines with `mcp__headroom_compress` before reasoning over it.
 
 ### 1. Define / extend an Encore service
@@ -119,4 +119,4 @@ See `references/base.md` for the canonical concepts that break everything if wro
 - Encore.ts (TypeScript). Noted as a sibling with a shared annotation model; not authored, not migrated here.
 - Migrating an existing Encore.ts → Go codebase.
 - Hand-editing or rewriting generated `encore.gen.go` (always regenerate).
-- Reimplementing omp primitives — this skill composes `codegraph`, `mcp__codebase_memory_mcp_*`, `mcp__serena_*`, `engine_*`, `browser`, and `8sync` verbs; it adds Encore/Eino procedure on top, never replaces them.
+- Reimplementing omp primitives — this skill composes `trail`, `engine_*`, `browser`, and `8sync` verbs; it adds Encore/Eino procedure on top, never replaces them.

@@ -45,11 +45,11 @@ The lead writes acceptance criteria. Dev builds the card in its own worktree and
 | | |
 |---|---|
 | Rust core, one file | A single static binary: 4.9 MB on macOS arm64 to 7.0 MB on linux-x86_64 (musl) in v0.98.4, no runtime to install. A size gate in CI fails any release that grows without an attributed reason. |
-| One-line install | The installer drops the binary, then sets up gh, [omp](https://omp.sh), codegraph, [Forge](https://forgecode.dev) with zsh, [Claude Code](https://code.claude.com) with the 8sync kit, 50+ skills, MCP servers and global agent rules. Every step is idempotent and logged; a failed tool is reported and the rest still installs. |
+| One-line install | The installer drops the binary, then sets up gh, [omp](https://omp.sh), [Forge](https://forgecode.dev) with zsh, [Claude Code](https://code.claude.com) with the 8sync kit, 50+ skills, MCP servers and global agent rules. Every step is idempotent and logged; a failed tool is reported and the rest still installs. |
 | Claude Code with a kit | `8sync ccc . <name>` opens a named Claude Code session per repo. The kit adds subagents, `/ship`, a background compile check after every edit, every 8sync skill, the team's Usage Policy rules, and two gates: one keeps Claude working while it has unfinished work, the other sends questions it can answer itself back to it. Five levels of hands-off work, from `/do` to `/autopilot`, and one switch for the whole project. [Details](#claude-code-8sync-ccc). |
 | Official Claude sign-in | Claude Code signs in with Anthropic's own login; Forge and omp use your own API key on the official API. No scraped web sessions, no shared accounts. [Details](#claude-the-official-way). |
 | An AI shell | `8sync forge <name>` opens a fast zsh bound to a named Forge conversation: type commands as usual, prefix with `:` to ask Claude. |
-| Code-aware agents | Code graph indexing (codegraph, codebase-memory-mcp, Serena), per-project memory in `su-code/`, and always-on engineering skills, so agents query structure instead of grepping blindly. |
+| Code-aware agents | Code-map agents (trail-code), per-project memory in `su-code/`, and always-on engineering skills, so agents query structure instead of grepping blindly. |
 | Same commands on every OS | Linux, macOS and Windows. On Windows there is no WSL requirement and no admin rights needed. zsh is provisioned privately next to Git for Windows. |
 | Self-update | Every command checks for a new release in the background (throttled to once per 6 h). `8sync up` installs it with a sha256 check, even while sessions keep the old binary open; `8sync ccc` installs it on launch and re-runs on the new binary. |
 
@@ -64,7 +64,7 @@ flowchart LR
   O --> C[Claude via Anthropic]
   K --> C
   F --> C
-  H --> G[code graph<br/>codegraph · cbm · serena]
+  H --> G[code graph<br/>trail]
   O --> G
   K --> G
   F --> G
@@ -88,15 +88,15 @@ You don't need git, Rust or admin rights. The installer verifies the binary's sh
 |---|---|
 | gh | GitHub CLI. Native package manager or winget; on Debian/Ubuntu, the official release tarball into `~/.local/bin` (no sudo). |
 | omp | The coding agent ([oh-my-pi](https://omp.sh)), from its official installer. |
-| codegraph | Semantic code index used by every agent. |
+| trail | Code map for agents (`trail ask`/`grep`/`skeleton`/`callers`), deterministic tree-sitter, no model calls. |
 | Forge + zsh | Forge from its GitHub release. zsh comes from the system; on Windows it is a private MSYS2 zsh (sha256-pinned); on Linux without sudo, a static portable build. |
 | Claude Code + kit | Claude Code from Anthropic's official installer, then the 8sync kit into `~/.claude` ([below](#claude-code-8sync-ccc)). |
-| harness global | 50+ skills, `APPEND_SYSTEM.md` agent rules, MCP servers (codebase-memory-mcp, headroom, serena), hooks, context compaction at 50%. |
+| harness global | 50+ skills, `APPEND_SYSTEM.md` agent rules, MCP servers (headroom), hooks, context compaction at 50%. |
 | PATH | `~/.local/bin`, `~/.cargo/bin`, `~/.bun/bin`, `~/.encore/bin` wired into zsh/bash/fish. |
 
 A real run of the v0.63.0 one-liner on a fresh Ubuntu account without sudo:
 
-![v0.63.0 installer on Ubuntu without sudo: gh, omp, codegraph, Forge, zsh, Claude Code and the kit, all steps succeeded](docs/assets/install.png)
+![v0.63.0 installer on Ubuntu without sudo: gh, omp, Forge, zsh, Claude Code and the kit, all steps succeeded](docs/assets/install.png)
 
 Options: `SUSYNC_NO_SETUP=1` (binary only) · `SUSYNC_VERSION=v0.63.0` (pin) · `SUSYNC_BIN_DIR=~/bin` · `sh -s -- --uninstall`.
 Run it again any time, or `8sync up`. Fallback URL: `https://raw.githubusercontent.com/8-Sync-Dev/8sync/main/install.sh`.
@@ -149,7 +149,7 @@ The kit lives in `~/.claude`, so it works in every repo and for plain `claude` t
 | Guard hook | Before Bash, PowerShell, Edit and Write. **Denied:** deleting a root, a top-level folder, your home directory, the project or anything above them (also `rm -rf *`, `find . -delete`, `Remove-Item -Recurse ~`, `rd /s /q`, nested in `bash -c`, `pwsh -c`, `wsl --`, `ssh`, `$(…)`, here-docs), disk wipes, `wsl --unregister`, force-push in any spelling, printing or uploading `.env`/keys (`cat .env`, `curl -F f=@.env`), writing a credential file, a real-looking API key in code or commands, `git add -A` that would sweep up a secret, code routing a Claude subscription into another client. **Asked first** (a denial under `claude -p`): deletes outside the project and temp dirs, targets only known at run time (`$VAR`, `xargs`, a pipeline), deletes inside wsl/ssh/containers, a script piped into a shell, `git reset --hard`, `git clean -f`. About 9 ms per call (mostly process start). |
 | Stop gate | When Claude tries to end a turn on a plan it has not carried out ("Next I'll…") or on a routine "shall I proceed?", the turn goes on. Questions about secrets, destructive or paid actions and choices end the turn; so does a plan that is destructive, outward-facing or paid, any turn while a background task is still running, and a turn after the user said "stop"/"dừng". Native: reads the last message and the user's last message, no model call. |
 | Ask gate | Before Claude interrupts you with a question, Sonnet checks it. Only credentials, destructive or paid actions, and product decisions reach you; everything else goes back with "pick the conventional option and continue". |
-| Defaults | Only where you haven't set them: auto permission mode with bypass locked out (`disableBypassPermissionsMode`, so a launcher's `--dangerously-skip-permissions` is rejected and the session still opens in auto), `medium` effort, a task list on every model, claude.ai connectors (Gmail, Drive…) off. Build/test/lint commands and `git add` skip the auto-mode classifier. Deny rules for reading/editing `.env`, keys, `*.session`, `*.pkl` and for force-push; omp's `codebase-memory-mcp` + `serena` registered when installed (the kit says why not otherwise); Anthropic's official LSP plugins (rust-analyzer, TypeScript, gopls, pyright) enabled for the language servers on your PATH; a `SessionStart` digest of `su-code/STATE.md` and recent lessons. |
+| Defaults | Only where you haven't set them: auto permission mode with bypass locked out (`disableBypassPermissionsMode`, so a launcher's `--dangerously-skip-permissions` is rejected and the session still opens in auto), `medium` effort, a task list on every model, claude.ai connectors (Gmail, Drive…) off. Build/test/lint commands and `git add` skip the auto-mode classifier. Deny rules for reading/editing `.env`, keys, `*.session`, `*.pkl` and for force-push; Anthropic's official LSP plugins (rust-analyzer, TypeScript, gopls, pyright) enabled for the language servers on your PATH; a `SessionStart` digest of `su-code/STATE.md` and recent lessons. |
 
 A real run with the kit: the first edit broke the build, the verify hook fed the compiler error back, and the stop gate refused "Next I will add tests":
 
@@ -374,7 +374,8 @@ Your own `~/.zshrc` loads first, and 8sync's managed files never overwrite it.
 
 | Command | What it does |
 |---|---|
-| `8sync harness` | One idempotent command per repo: skills, codegraph index, `AGENTS.md` force-load block, `su-code/` memory. |
+| `8sync trail [dir\|--all [ROOT]\|status\|off]` | STEP 0: installs trail-code (telemetry off), runs `trail init` for Claude (no global hooks) and git-ignores `graft/`; `--all ROOT` sweeps every git repo (depth ≤3), `--dry-run` supported. |
+| `8sync harness` | One idempotent command per repo: skills, `trail build`, `AGENTS.md` force-load block, `su-code/` memory. |
 | `8sync harness init` · `create` | First bootstrap with managed `.gitignore` + gitleaks pre-commit hook · plus Cursor and Z.ai Code skill/rule fan-out. |
 | `8sync harness global [--sweep]` | Apply rules, skills, MCP and hooks to every omp project on the machine. |
 | `8sync harness web` | Local dashboard at `http://127.0.0.1:8731` (see below). |
@@ -423,7 +424,6 @@ Every verb has `-h` with an `EXAMPLES` block.
 | Discover | One-click MCP servers and skills from the official registry, Smithery, Glama, mcp.so |
 
 ![Dashboard: live plan](docs/assets/dashboard-state.png)
-![Code graph: package call graph and clusters](docs/assets/dashboard-codegraph.png)
 
 ---
 

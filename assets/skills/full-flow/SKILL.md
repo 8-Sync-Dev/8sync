@@ -1,14 +1,14 @@
 ---
 name: full-flow
 description: >-
-  Use this skill for ANY fix/dev/enhance task on the 8syncdev-pro-v2 stack that must be PROVEN on the running app — "làm full flow", "fix theo flow chuẩn", "dev + verify", "tự chạy đến done". It is the entry playbook + verification gate: ground first (codegraph), reproduce, implement DATA→BACKEND(Encore)→FRONTEND(Next), then self-verify end-to-end through BOTH the Next.js UI (oh-my-pi `browser` tool) AND Encore structured trace logs before claiming done. Composes with `codegraph` (navigate first); never replaces it.
+  Use this skill for ANY fix/dev/enhance task on the 8syncdev-pro-v2 stack that must be PROVEN on the running app — "làm full flow", "fix theo flow chuẩn", "dev + verify", "tự chạy đến done". It is the entry playbook + verification gate: ground first (trail), reproduce, implement DATA→BACKEND(Encore)→FRONTEND(Next), then self-verify end-to-end through BOTH the Next.js UI (oh-my-pi `browser` tool) AND Encore structured trace logs before claiming done. Composes with `trail` (navigate first); never replaces it.
 ---
 
 # full-flow — self-driving fix / dev / enhance loop (8syncdev-pro-v2)
 
 > **HARD MANDATE:** "Done" = the running app proves it. Drive the FE as a real user with the oh-my-pi `browser` tool **and** read the Encore trace for the same action. One source alone (only a screenshot, or only a curl) = guessing. NEVER declare "works" from a typecheck/build alone.
 >
-> **★ CODEGRAPH / GROUND FIRST:** any symbol/path/endpoint lookup → `codegraph` (or `search`/`read`) BEFORE guessing. State the `path:line` hit before editing.
+> **★ TRAIL / GROUND FIRST:** any symbol/path/endpoint lookup → `trail ask`/`trail grep` (or `search`/`read`) BEFORE guessing. State the `path:line` hit before editing.
 >
 > **★ READ THE WHOLE EVIDENCE:** after a browser action, `tab.observe()` (not just a screenshot) AND read the matching `[encore]` log lines (correlate by `trace_id`). Scan for non-`ok` codes, 4xx/5xx, error toasts.
 
@@ -21,7 +21,7 @@ description: >-
 
 ## 1. THE LOOP
 ```
-1. GROUND     codegraph/search the symbol/route; read the FE component + BE endpoint
+1. GROUND     trail/search the symbol/route; read the FE component + BE endpoint
 2. REPRO      bring the stack up (§3); browser the current state
 3. IMPLEMENT  order DATA → BACKEND (Encore) → FRONTEND (Next). Respect §2 gates.
 4. VERIFY     browser drives the UI as a user  ⨉  read [encore] trace by trace_id

@@ -1,5 +1,5 @@
 //! Bundled-skill deployment (embedded assets → ~/.omp/skills), project mirror,
-//! and codegraph bootstrap. The building blocks `8sync harness init` composes.
+//! and trail bootstrap. The building blocks `8sync harness init` composes.
 use anyhow::Result;
 use std::path::Path;
 use std::process::Command;
@@ -14,8 +14,8 @@ use crate::{assets, env_detect, ui};
 /// Module-level so the guard tests can assert BOTH directions against the real
 /// data — a fn-local literal can only be text-scraped, and the direction that
 /// actually bites (an asset dir nobody registered) needs the list itself.
-const BUNDLED_SKILLS: [(&str, &str); 34] = [
-    ("skills/codegraph",               "codegraph"),
+const BUNDLED_SKILLS: [(&str, &str); 33] = [
+    ("skills/trail",                   "trail"),
     ("skills/karpathy-guidelines",     "karpathy-guidelines"),
     ("skills/ponytail",                "ponytail"),
     ("skills/assp-skill",              "assp-skill"),
@@ -37,7 +37,6 @@ const BUNDLED_SKILLS: [(&str, &str); 34] = [
     ("skills/full-flow",               "full-flow"),
     ("skills/encore-deploy",           "encore-deploy"),
     ("skills/last30days",              "last30days"),
-    ("skills/token-bench",             "token-bench"),
     ("skills/feature",                 "feature"),
     ("skills/branch-sync",             "branch-sync"),
     ("skills/super-pdf",             "super-pdf"),
@@ -374,7 +373,7 @@ pub(crate) fn link_bundled_skills(home: &Path, skills_dir: &Path) -> Result<usiz
 /// features.toml, written by `8sync ccc kit --skills-from <dir>`): absolute dirs
 /// whose children are skill folders, e.g. a workspace's `su-code/skills`.
 pub(crate) fn skill_libraries(home: &Path) -> Vec<std::path::PathBuf> {
-    let p = crate::verbs::harness::cbm::features_path(home);
+    let p = crate::verbs::harness::features::features_path(home);
     let Some(t) = std::fs::read_to_string(p).ok().and_then(|s| s.parse::<toml::Table>().ok()) else { return Vec::new() };
     t.get("skill_libraries")
         .and_then(|v| v.as_array())
@@ -395,7 +394,7 @@ pub(crate) fn add_skill_library(home: &Path, dir: &Path) -> Result<bool> {
     if skill_libraries(home).iter().any(|p| p.canonicalize().is_ok_and(|c| c == dir)) {
         return Ok(false);
     }
-    let p = crate::verbs::harness::cbm::features_path(home);
+    let p = crate::verbs::harness::features::features_path(home);
     let mut t = match std::fs::read_to_string(&p) {
         Ok(s) => s.parse::<toml::Table>().map_err(|e| anyhow::anyhow!("{} is not valid TOML ({e}); fix it first", p.display()))?,
         Err(_) => toml::Table::new(),
@@ -435,109 +434,6 @@ pub(crate) fn link_library_skills(home: &Path, skills_dir: &Path) -> Result<usiz
         }
     }
     Ok(linked)
-}
-
-/// Make sure the `codegraph` binary is installed (upstream curl installer) and
-/// registered in the skills.toml registry. The SKILL.md tree is deployed
-/// separately from embedded assets.
-pub(crate) fn ensure_codegraph(env: &env_detect::Env) -> Result<()> {
-    if which::which("codegraph").is_err() {
-        ui::step("codegraph (binary missing — running upstream curl installer)");
-        let url = "https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh";
-        let st = Command::new("sh")
-            .arg("-c")
-            .arg(format!("curl -fsSL {} | sh", url))
-            .status();
-        match st {
-            Ok(s) if s.success() => ui::ok("codegraph installed"),
-            Ok(s) => ui::warn(&format!("codegraph installer exited {} — skill SKILL.md was still deployed", s)),
-            Err(e) => ui::warn(&format!("could not run installer: {} — continuing", e)),
-        }
-    } else {
-        let v = env_detect::cmd_version("codegraph", &["--version"]).unwrap_or_default();
-        ui::skip("codegraph", &format!("present ({})", v));
-    }
-
-    let toml_path = env.xdg_config.join("8sync/skills.toml");
-    if let Some(parent) = toml_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let existing = std::fs::read_to_string(&toml_path).unwrap_or_default();
-    if !existing.contains("[codegraph]") {
-        let mut s = existing;
-        if !s.ends_with('\n') && !s.is_empty() {
-            s.push('\n');
-        }
-        s.push_str("\n[codegraph]\nsrc  = \"builtin:codegraph\"\nwhen = \"always\"\n");
-        std::fs::write(&toml_path, s)?;
-        ui::ok(&format!("registered 'codegraph' → {}", toml_path.display()));
-    }
-    Ok(())
-}
-
-/// If `<root>/.codegraph/` is missing and the `codegraph` binary is on PATH,
-/// run `codegraph init <root>`. Best-effort: warns on failure, never bails.
-pub(crate) fn ensure_codegraph_init(root: &Path) {
-    let marker = root.join(".codegraph");
-    if marker.exists() {
-        ui::skip(&marker.display().to_string(), "codegraph already initialised");
-        return;
-    }
-    if which::which("codegraph").is_err() {
-        ui::warn("codegraph binary not on PATH — skipping `codegraph init`");
-        return;
-    }
-    ui::step(&format!("codegraph init {}", root.display()));
-    let st = Command::new("codegraph").arg("init").arg(root).status();
-    match st {
-        Ok(s) if s.success() => ui::ok(&format!("initialised {}", marker.display())),
-        Ok(s) => ui::warn(&format!("`codegraph init` exited {} — run manually", s)),
-        Err(e) => ui::warn(&format!("could not invoke codegraph: {}", e)),
-    }
-}
-
-/// OPT-IN (see `harness::cbm`): installs the `codebase-memory-mcp` binary and
-/// registers it as an omp MCP server ONLY when the owner enabled it
-/// (`8sync harness cbm on` / `EIGHTSYNC_CBM=1`). Off (default) → one skip line,
-/// nothing installed or registered. A stub binary counts as not installed.
-pub(crate) fn ensure_codebase_memory_mcp(env: &env_detect::Env) -> Result<()> {
-    use crate::verbs::harness::cbm::{self, Action};
-    let on = cbm::enabled(&env.home);
-    let mut inst = cbm::detect_install();
-    match cbm::decide(on, inst) {
-        Action::Skip => {
-            ui::skip("codebase-memory-mcp", "opt-in, off (enable: 8sync harness cbm on)");
-            return Ok(());
-        }
-        Action::Install => {
-            ui::step("codebase-memory-mcp (missing/stub — upstream installer, binary-only)");
-            let url = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh";
-            let st = Command::new("sh")
-                .arg("-c")
-                .arg(format!("curl -fsSL {} | bash -s -- --skip-config", url))
-                .status();
-            match st {
-                Ok(s) if s.success() => ui::ok("codebase-memory-mcp installed"),
-                Ok(s) => ui::warn(&format!("codebase-memory-mcp installer exited {} — continuing", s)),
-                Err(e) => ui::warn(&format!("could not run installer: {} — continuing", e)),
-            }
-            inst = cbm::detect_install();
-        }
-        Action::Register => {
-            let v = env_detect::cmd_version("codebase-memory-mcp", &["--version"]).unwrap_or_default();
-            ui::skip("codebase-memory-mcp", &format!("present ({})", v));
-        }
-    }
-    if inst != cbm::Install::Real {
-        ui::warn("codebase-memory-mcp not a real binary — not registering");
-        return Ok(());
-    }
-    // Index ON DEMAND only: auto_index=true made every MCP connect (one per agent
-    // session) start an index worker — the CPU/RAM spike that made machines lag.
-    let _ = Command::new("codebase-memory-mcp")
-        .args(["config", "set", "auto_index", "false"])
-        .status();
-    register_omp_mcp(&env.home, "codebase-memory-mcp", "codebase-memory-mcp", &[], &[])
 }
 
 /// Idempotently add an MCP server `name` (stdio `command` + `args`) to omp's user
@@ -583,7 +479,7 @@ fn register_omp_mcp(home: &Path, name: &str, command: &str, args: &[&str], env: 
         ui::skip(name, "already in omp mcp.json");
         return Ok(());
     }
-    // Self-heal: update in place when the command/args changed (e.g. serena's
+    // Self-heal: update in place when the command/args changed (e.g. an
     // executable rename) instead of skipping a stale entry.
     let updating = smap.contains_key(name);
     smap.insert(name.to_string(), desired);
@@ -602,14 +498,14 @@ fn register_omp_mcp(home: &Path, name: &str, command: &str, args: &[&str], env: 
 }
 
 /// Best-effort bootstrap of `uv` (Astral's Python tool manager) — the canonical
-/// installer for both `headroom-ai[mcp]` and serena (`uvx`). User-level curl
+/// installer for `headroom-ai[mcp]` (`uvx`). User-level curl
 /// install (no sudo); lands in `~/.local/bin` (already on PATH). Idempotent.
 /// Returns true if `uv` is available afterwards.
 fn ensure_uv() -> bool {
     if which::which("uv").is_ok() {
         return true;
     }
-    ui::step("uv (missing — bootstrapping Astral uv: powers headroom + serena)");
+    ui::step("uv (missing — bootstrapping Astral uv: powers headroom)");
     let _ = Command::new("sh")
         .arg("-c")
         .arg("curl -fsSL https://astral.sh/uv/install.sh | sh")
@@ -642,25 +538,9 @@ fn deregister_omp_mcp(home: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Best-effort: build/refresh the codebase-memory-mcp knowledge graph for `root`.
-pub(crate) fn index_codebase_memory(root: &Path) {
-    let home = dirs::home_dir().unwrap_or_default();
-    if !crate::verbs::harness::cbm::enabled(&home)
-        || crate::verbs::harness::cbm::detect_install() != crate::verbs::harness::cbm::Install::Real
-    {
-        return;
-    }
-    ui::step("codebase-memory-mcp index (knowledge graph)");
-    let arg = serde_json::json!({ "repo_path": root.display().to_string() }).to_string();
-    let _ = Command::new("codebase-memory-mcp")
-        .args(["cli", "index_repository"])
-        .arg(arg)
-        .status();
-}
-
 /// Ensure `headroom` (context-compression MCP) is installed + registered as an
 /// omp MCP server. Headroom compresses long tool outputs / logs / diffs before
-/// they reach the model (60–95% fewer tokens) — complements codegraph/cbm.
+/// they reach the model (60–95% fewer tokens) — complements trail.
 pub(crate) fn ensure_headroom_mcp(env: &env_detect::Env) -> Result<()> {
     if which::which("headroom").is_err() {
         ui::step("headroom (missing — installing headroom-ai[mcp] via uv)");
@@ -732,31 +612,17 @@ pub(crate) fn ensure_omp_memory_config(home: &Path) -> Result<()> {
 
 /// Which STEP-0 code-intel replacements are actually reachable on THIS machine.
 ///
-/// This is the UC-7 predicate. Every layer that redirects a search to
-/// codegraph/serena/codebase-memory is installed only while at least one of them
-/// can answer, and is un-installed again when none can — enforcement must never
+/// This is the UC-7 predicate. Every layer that redirects a search to `trail` is
+/// installed only while it can answer, and is un-installed again when it cannot — enforcement must never
 /// dead-end a box that lacks the replacement. omp cannot express a capability test
 /// in a rule `condition:` or an interceptor `pattern`, so the test happens here, at
 /// deploy time, which is the only place the capability is observable.
 ///
-/// Mirrors `doctor::check_ai_engines`: codegraph is a plain binary, while the MCP
-/// engines need BOTH a runnable command and a registration in
-/// `~/.omp/agent/mcp.json` — an unregistered binary is invisible to the session.
-pub(crate) fn code_intel_available(home: &Path) -> Vec<&'static str> {
-    let mcp = std::fs::read_to_string(home.join(".omp/agent/mcp.json")).unwrap_or_default();
-    let registered = |name: &str| mcp.contains(&format!("\"{}\"", name));
+/// Mirrors `doctor::check_ai_engines`: `trail` is a plain binary on PATH.
+pub(crate) fn code_intel_available(_home: &Path) -> Vec<&'static str> {
     let mut out = Vec::new();
-    if which::which("codegraph").is_ok() {
-        out.push("codegraph");
-    }
-    if crate::verbs::harness::cbm::enabled(home)
-        && which::which("codebase-memory-mcp").is_ok()
-        && registered("codebase-memory-mcp")
-    {
-        out.push("codebase-memory-mcp");
-    }
-    if crate::verbs::harness::serena::enabled(home) && which::which("uvx").is_ok() && registered("serena") {
-        out.push("serena");
+    if crate::verbs::harness::trail::found().is_some() {
+        out.push("trail");
     }
     out
 }
@@ -793,7 +659,7 @@ pub(crate) fn code_intel_available(home: &Path) -> Vec<&'static str> {
 /// UC-7 safe degradation: the guard is installed only while this machine has a
 /// replacement ([`code_intel_available`]). With none — or with `enabled = false` /
 /// an empty pattern list — the block we previously wrote is REMOVED, so `bash`
-/// never dead-ends on a box without codegraph/serena/cbm.
+/// never dead-ends on a box without trail.
 ///
 /// Idempotent. If the user authored their OWN `bashInterceptor:` block, this bails
 /// out rather than appending: omp parses config.yml with `Bun.YAML.parse`, which
@@ -804,13 +670,7 @@ pub(crate) fn ensure_bash_interceptor(home: &Path) -> Result<()> {
     let bi = &models.bash_interceptor;
     let have = code_intel_available(home);
     let block = (bi.enabled && !bi.patterns.is_empty() && !have.is_empty())
-        .then(|| {
-            render_interceptor_block(
-                bi,
-                crate::verbs::harness::cbm::enabled(home),
-                crate::verbs::harness::serena::enabled(home),
-            )
-        });
+        .then(|| render_interceptor_block(bi));
     let cfg = home.join(".omp/agent/config.yml");
     if let Some(p) = cfg.parent() {
         std::fs::create_dir_all(p)?;
@@ -866,7 +726,7 @@ pub(crate) fn ensure_bash_interceptor(home: &Path) -> Result<()> {
             ui::skip("bashInterceptor", "no rules in models.toml [bashInterceptor]");
         } else {
             ui::warn(
-                "  bashInterceptor OFF: no codegraph / codebase-memory-mcp / serena on this machine — shell search stays ALLOWED rather than dead-ending (install the code-intel stack, then re-run)",
+                "  bashInterceptor OFF: no `trail` on this machine — shell search stays ALLOWED rather than dead-ending (run `8sync trail`, then re-run)",
             );
         }
         return Ok(());
@@ -897,7 +757,7 @@ pub(crate) fn ensure_bash_interceptor(home: &Path) -> Result<()> {
     s.push_str(&block);
     std::fs::write(&cfg, s)?;
     ui::ok(&format!(
-        "bashInterceptor ON (STEP-0): {} rule(s) → code-intel (present: {})",
+        "bashInterceptor ON (STEP-0): {} rule(s) → trail (present: {})",
         bi.patterns.len(),
         have.join(" · ")
     ));
@@ -909,7 +769,7 @@ pub(crate) fn ensure_bash_interceptor(home: &Path) -> Result<()> {
 /// The indented `STEP-0` comment is the OWNERSHIP MARKER: block detection must not
 /// depend on `message` text, which the user is invited to edit, and an indented
 /// line stays inside the block for the column-0 end scan above.
-fn render_interceptor_block(bi: &crate::models::BashInterceptor, cbm: bool, serena: bool) -> String {
+fn render_interceptor_block(bi: &crate::models::BashInterceptor) -> String {
     let mut out = format!(
         "\nbashInterceptor:\n  # {}:STEP-0 guard — generated from models.toml [bashInterceptor]; edits here are overwritten\n  enabled: true\n  patterns:\n",
         crate::brand::NS
@@ -920,7 +780,7 @@ fn render_interceptor_block(bi: &crate::models::BashInterceptor, cbm: bool, sere
         out.push_str("\n      tool: ");
         out.push_str(&yaml_sq(&r.tool));
         out.push_str("\n      message: ");
-        out.push_str(&yaml_sq(&crate::verbs::harness::cbm::strip_mcp_mentions(&r.message, cbm, serena)));
+        out.push_str(&yaml_sq(&r.message));
         out.push('\n');
     }
     out
@@ -1014,8 +874,8 @@ fn requirements_met(raw: &str, have: &[&str]) -> bool {
 /// Keep the STEP-0 MCP servers' tools ALWAYS VISIBLE via `mcp.discoveryDefaultServers`
 /// in `~/.omp/agent/config.yml`. omp's default `tools.discoveryMode: auto` hides ALL
 /// MCP tools behind a `search_tool_bm25` discovery hop once the registry exceeds 40
-/// tools — measured effect: serena/headroom 0 calls across 29 sessions. Listing the
-/// four harness servers keeps their full catalogs in the active tool set (verified in
+/// tools — measured effect: headroom 0 calls across 29 sessions. Listing the
+/// harness servers keeps their full catalogs in the active tool set (verified in
 /// omp 16.4.8: the setting filters discoverable MCP tools by `serverName` and merges
 /// them into the session baseline). `tools.essentialOverride` does NOT work for this —
 /// omp filters its entries to BUILT-IN tool names only. Key-presence idempotent:
@@ -1028,26 +888,15 @@ pub(crate) fn ensure_mcp_tools_visible(home: &Path) -> Result<()> {
     // (absent from omp's schema) — writing it is dead weight omp strips on rewrite,
     // which is exactly the churn that made STEP-0 look like it kept "regressing".
     if env_detect::omp_major().is_some_and(|m| m >= 17) {
-        ui::ok("STEP-0 MCP tools mounted as xd:// devices (omp ≥17 tools.xdev) — serena/cbm/headroom/zai callable, no config key needed");
+        ui::ok("STEP-0 MCP tools mounted as xd:// devices (omp ≥17 tools.xdev) — headroom/zai callable, no config key needed");
         return Ok(());
     }
-    const SERVERS: &[&str] = &["codebase-memory-mcp", "headroom", "serena", "zai-vision"];
-    // The exact block written by the earlier essentialOverride approach. MCP names
-    // in essentialOverride are filtered out by omp (builtins only) AND clobber the
-    // builtin essential defaults — remove it, but ONLY this byte-exact 8sync block.
-    const LEGACY_PIN: &str = "tools:\n  essentialOverride:\n    - mcp__codebase_memory_mcp_search_graph\n    - mcp__codebase_memory_mcp_trace_path\n    - mcp__codebase_memory_mcp_get_architecture\n    - mcp__codebase_memory_mcp_get_code_snippet\n    - mcp__serena_find_symbol\n    - mcp__serena_find_referencing_symbols\n    - mcp__serena_get_symbols_overview\n    - mcp__headroom_compress\n    - mcp__zai_vision_extract_text_from_screenshot\n    - mcp__zai_vision_analyze_image\n";
+    const SERVERS: &[&str] = &["headroom", "zai-vision"];
     let cfg = home.join(".omp/agent/config.yml");
     if let Some(p) = cfg.parent() { std::fs::create_dir_all(p)?; }
     let mut s = std::fs::read_to_string(&cfg).unwrap_or_default();
-    let mut changed = false;
-    if s.contains(LEGACY_PIN) {
-        s = s.replace(LEGACY_PIN, "");
-        changed = true;
-        ui::info("migrated: dropped inert tools.essentialOverride MCP pin (builtins-only setting)");
-    }
     if s.contains("discoveryDefaultServers") {
         ui::skip("STEP-0 MCP visibility", "mcp.discoveryDefaultServers already set (user-configured)");
-        if changed { std::fs::write(&cfg, s)?; }
         return Ok(());
     }
     let list: String = SERVERS.iter().map(|t| format!("    - {t}\n")).collect();
@@ -1075,7 +924,7 @@ pub(crate) fn ensure_mcp_tools_visible(home: &Path) -> Result<()> {
         s.push_str(&format!("\nmcp:\n  discoveryDefaultServers:\n{list}"));
     }
     std::fs::write(&cfg, s)?;
-    ui::ok("STEP-0 MCP servers always visible (mcp.discoveryDefaultServers) — serena/cbm/headroom/zai callable, no search_tool_bm25 hop");
+    ui::ok("STEP-0 MCP servers always visible (mcp.discoveryDefaultServers) — headroom/zai callable, no search_tool_bm25 hop");
     Ok(())
 }
 
@@ -1107,7 +956,7 @@ pub(crate) fn ensure_append_system(home: &Path) -> Result<()> {
     let Some(body) = assets::read("configs/omp/APPEND_SYSTEM.md") else {
         return Ok(());
     };
-    let body = crate::brand::render(&crate::verbs::harness::cbm::gate(home, &body)).into_owned();
+    let body = crate::brand::render(&body).into_owned();
     let target = home.join(".omp/agent/APPEND_SYSTEM.md");
     if let Some(p) = target.parent() {
         std::fs::create_dir_all(p)?;
@@ -1141,42 +990,6 @@ pub(crate) fn ensure_mcp_spec(home: &Path) -> Result<()> {
     std::fs::write(&target, &body)?;
     ui::ok(&format!("MCP standard spec → {}", target.display()));
     Ok(())
-}
-
-/// Register serena (LSP-based semantic code toolkit) as an omp MCP server, giving
-/// the agent symbol-level find + precise edits — token-cheaper than blind file
-/// reads/rewrites. Launched via `uvx` (always-latest, no install); bootstraps
-/// `uv` if absent. Skipped (and any stale entry purged) only if uv can't install.
-///
-/// `--enable-web-dashboard False`: serena defaults to `web_dashboard: true` +
-/// `web_dashboard_open_on_launch: true`, so EVERY server start binds an HTTP
-/// dashboard and pops a browser tab. omp spawns one serena per session and does
-/// not reap them, so this compounds — measured on this machine: 16 live serena
-/// processes holding 878 MB, plus a browser tab each. The dashboard is pure
-/// observability; the MCP tools are unaffected. Passing the flag (rather than
-/// editing `~/.serena/serena_config.yml`) makes it authoritative per-launch —
-/// serena owns that file and rewrites it, so a config edit alone does not stick.
-pub(crate) fn ensure_serena_mcp(env: &env_detect::Env) -> Result<()> {
-    // OPT-IN (default off): `8sync harness serena on` / EIGHTSYNC_SERENA=1.
-    if !crate::verbs::harness::serena::enabled(&env.home) {
-        ui::skip("serena MCP", "opt-in, off (enable: 8sync harness serena on)");
-        return Ok(());
-    }
-    if which::which("uvx").is_err() && which::which("uv").is_err() {
-        ensure_uv();
-    }
-    if which::which("uvx").is_ok() || which::which("uv").is_ok() {
-        register_omp_mcp(
-            &env.home,
-            "serena",
-            "uvx",
-            &crate::verbs::harness::serena::UVX_ARGS,
-            &[],
-        )
-    } else {
-        ui::skip("serena MCP", "needs `uv` (https://astral.sh/uv) — install failed, skipped");
-        deregister_omp_mcp(&env.home, "serena")
-    }
 }
 
 /// Resolve the Z.AI API key for the vision MCP. Prefer an explicit env var
@@ -1250,55 +1063,14 @@ pub(crate) fn ensure_zai_vision_mcp(env: &env_detect::Env) -> Result<()> {
 /// run) but kept in sync with the pinned tool sets this harness installs —
 /// this is what `ensure_omp_capabilities_snapshot` embeds verbatim so the
 /// agent gets EXACT tool names instead of guessing/hallucinating them (the
-/// codegraph-verb hallucination bug in KNOWLEDGE.md is exactly what this
+/// tool-name hallucination bug in KNOWLEDGE.md is exactly what this
 /// prevents). Unknown/user-added servers get no catalog — the snapshot says so.
 fn known_mcp_tool_catalog(server: &str) -> &'static [(&'static str, &'static str)] {
     match server {
-        "codebase-memory-mcp" => &[
-            ("search_graph", "BM25 / name-pattern / semantic search over functions, classes, routes"),
-            ("query_graph", "raw Cypher against the knowledge graph (complex joins, aggregations)"),
-            ("trace_path", "callers/callees, data-flow with args, or cross-service (HTTP/async) trace"),
-            ("get_architecture", "packages/services/deps + Leiden community clusters overview"),
-            ("get_code_snippet", "read a symbol's source by qualified_name (from search_graph first)"),
-            ("get_graph_schema", "node labels + edge types available to query"),
-            ("search_code", "grep enriched with graph context, deduped into containing functions"),
-            ("detect_changes", "diff-based impact analysis vs a base ref/branch"),
-            ("index_repository", "(re)index a repo; `cross-repo-intelligence` mode links routes across repos"),
-            ("index_status", "indexing progress/state for a project"),
-            ("list_projects", "every project currently indexed"),
-            ("delete_project", "drop a project's index"),
-            ("manage_adr", "get/update/list-sections of the Architecture Decision Record"),
-            ("ingest_traces", "feed runtime traces into the graph to enrich edges"),
-        ],
         "headroom" => &[
             ("headroom_compress", "compress >~50-line output BEFORE it enters context (60-95% fewer tokens)"),
             ("headroom_retrieve", "fetch the original uncompressed content back by its hash"),
             ("headroom_stats", "this session's compression stats (tokens/cost saved)"),
-        ],
-        "serena" => &[
-            ("find_symbol", "locate classes/functions/methods by name path (supports include_body)"),
-            ("find_referencing_symbols", "who calls/uses a symbol — run before editing an exported symbol"),
-            ("find_declaration", "declaration of a symbol via a regex-captured call-site context"),
-            ("find_implementations", "implementations of an interface/abstract symbol"),
-            ("get_symbols_overview", "structural summary of a file (first call when opening it)"),
-            ("replace_symbol_body", "precise symbol-level rewrite (MUST have read include_body=True first)"),
-            ("insert_after_symbol", "insert code right after a def/class/method"),
-            ("insert_before_symbol", "insert code right before a def/class (e.g. a new import)"),
-            ("rename_symbol", "project-wide rename via LSP — use instead of text search/replace"),
-            ("rename_file", "move/rename a file AND rewrite every import/reference"),
-            ("safe_delete_symbol", "delete only if no references remain, else lists them"),
-            ("replace_content", "regex/literal replace within one file (large wildcard ranges OK)"),
-            ("replace_in_files", "bulk regex/literal replace across many files (dry_run previews first)"),
-            ("get_diagnostics_for_file", "LSP errors/warnings grouped by symbol"),
-            ("get_current_config", "active project/tools/contexts/modes"),
-            ("activate_project", "switch the active project by name or path"),
-            ("list_memories", "serena's own project memory notes (topic-filterable)"),
-            ("read_memory", "read one serena memory by name"),
-            ("write_memory", "write/update a serena memory"),
-            ("edit_memory", "regex-edit a serena memory"),
-            ("rename_memory", "rename/move a serena memory"),
-            ("delete_memory", "delete a serena memory (only when explicitly asked)"),
-            ("onboarding", "first-run project onboarding instructions"),
         ],
         "zai-vision" => &[
             ("ui_to_artifact", "UI screenshot -> frontend code / AI prompt / design spec / description"),
@@ -1419,7 +1191,7 @@ pub(crate) fn ensure_omp_capabilities_snapshot(home: &Path) -> Result<()> {
     out.push_str(
         "\n## Modality routing (token discipline)\n\n\
          Read STRUCTURE as an image, PRECISE things as text. Vision models (Opus-class): \
-         render a codegraph / diagram / dashboard / big PDF with `8sync shot`/`pdf-img` and \
+         render a graph / diagram / dashboard / big PDF with `8sync shot`/`pdf-img` and \
          read the image (modality-fit — structure beats its adjacency-list text). NEVER \
          image-ify source code / exact config / line-numbered data — text is cheaper AND \
          lossless (Claude bills images per 28x28 patch, pay-per-pixel; the 10x/90% figure \
@@ -1536,7 +1308,7 @@ fn deploy_omp_pair(
         return Ok(());
     };
     let body = if asset.ends_with(".md") {
-        crate::brand::render(&crate::verbs::harness::cbm::gate(home, &body)).into_owned()
+        crate::brand::render(&body).into_owned()
     } else {
         body
     };
@@ -1824,9 +1596,9 @@ mod tests {
     /// none is, and an ungated rule always ships.
     #[test]
     fn requires_marker_gates_deployment() {
-        let gated = "body\n<!-- 8sync:requires codegraph,codebase-memory-mcp,serena -->\n";
-        assert!(requirements_met(gated, &["serena"]));
-        assert!(requirements_met(gated, &["codegraph", "serena"]));
+        let gated = "body\n<!-- 8sync:requires trail,other -->\n";
+        assert!(requirements_met(gated, &["trail"]));
+        assert!(requirements_met(gated, &["headroom", "other"]));
         assert!(!requirements_met(gated, &[]));
         assert!(!requirements_met(gated, &["headroom"]));
         assert!(requirements_met("a rule that needs nothing", &[]));
@@ -1888,7 +1660,7 @@ mod tests {
         let bi = crate::models::ModelConfig::default().bash_interceptor;
         assert!(bi.enabled, "embedded models.toml disabled the STEP-0 guard");
         assert_eq!(bi.patterns.len(), 3, "embedded models.toml lost its rules");
-        let block = render_interceptor_block(&bi, true, true);
+        let block = render_interceptor_block(&bi);
         // Ownership marker — `ensure_bash_interceptor` finds its own block by it.
         assert!(block.contains("STEP-0"), "block carries no STEP-0 ownership marker");
         for r in &bi.patterns {
@@ -1900,7 +1672,7 @@ mod tests {
                 "pattern not rendered verbatim: {}",
                 r.pattern
             );
-            assert!(r.message.contains("codegraph"), "message names no replacement");
+            assert!(r.message.contains("trail"), "message names no replacement");
         }
         assert_eq!(yaml_sq("a'b"), "'a''b'");
     }

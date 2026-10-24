@@ -32,7 +32,7 @@ Gọi **`engine_plan`** một lần cho phase:
 
 Lặp tới khi `engine_next` báo done (mọi task done/blocked):
 
-1. **`engine_next`** → task kế + context scoped. Hiểu TRƯỚC khi sửa (R10: `codegraph callers/impact` + `git log/blame` + `su-code/DECISIONS.md`).
+1. **`engine_next`** → task kế + context scoped. Hiểu TRƯỚC khi sửa (R10: `trail callers <symbol>` + `git log/blame` + `su-code/DECISIONS.md`).
 2. **Code task ở đúng size:**
    - **Wave ≥ `config.workflow.min_parallel_tasks` task độc lập + khác file + `parallelization === true`** → spawn `task` subagent ĐỒNG THỜI (1 message, nhiều tool-call), `agent: task` (executor). Mỗi agent **1 file/folder RIÊNG**. Prompt mỗi agent BẮT BUỘC nhúng (subagent KHÔNG đọc được CONTEXT/config/skill):
      1. Task cụ thể + file được phép sửa + "chỉ làm task này".
@@ -42,8 +42,8 @@ Lặp tới khi `engine_next` báo done (mọi task done/blocked):
      5. **Skill (cột `[skill:]`) — 2 lớp:** (a) nhúng literal luật cốt lõi + anti-pattern skill; (b) ra lệnh agent Read `su-code/skills/<skill>/SKILL.md` (hoặc `~/.omp/skills/<skill>/SKILL.md`) TRƯỚC khi code.
      6. Convention: `AGENTS.md` + `su-code/DECISIONS.md`/`PREFERENCES.md` liên quan.
      7. Ground-truth cần thiết (schema/symbol thật từ research) nếu task đụng DB/code có sẵn.
-     8. **R10 literal**: "Trước khi sửa file, dùng `codegraph query/callers/impact \"<symbol|file>\"` (CLI) (cbm/serena nếu đã bật) xem source + call path + blast radius — KHÔNG grep/Read tràn lan. Chỉ Read khi sắp sửa. Output dài (>50 dòng) sắp đưa vào báo cáo cuối → `mcp__headroom_compress` trước, không dump thô."
-   - **Wave nhỏ (< ngưỡng) / task phụ thuộc / `parallelization === false`** → code thẳng ở main thread, tuần tự. Ưu tiên serena `replace_symbol_body` symbol-level (activate qua `search_tool_bm25` nếu chưa có trong tool list) thay vì rewrite cả file.
+     8. **R10 literal**: "Trước khi sửa file, dùng `trail ask \"<symbol|file>\"` / `trail callers <symbol>` / `trail skeleton <file>` xem source + call path — KHÔNG grep/Read tràn lan. Chỉ Read khi sắp sửa. Output dài (>50 dòng) sắp đưa vào báo cáo cuối → `mcp__headroom_compress` trước, không dump thô."
+   - **Wave nhỏ (< ngưỡng) / task phụ thuộc / `parallelization === false`** → code thẳng ở main thread, tuần tự. Ưu tiên sửa có mục tiêu thay vì rewrite cả file.
 3. **`engine_verify {taskId}`** — gate chạy đúng `verify` của task. FAILED → sửa NGUYÊN NHÂN rồi verify lại với 1 fix KHÁC (2 fail giống nhau = warn, 3 = engine BLOCK task sớm — doom-loop guard). BLOCKED → ghi `failure:` vào `su-code/KNOWLEDGE.md`, chuyển task unblocked kế hoặc escalate.
 4. **`engine_advance {taskId, commit:true}`** — engine từ chối nếu `engine_verify` chưa pass (self-report "xong" KHÔNG phải tín hiệu dừng); gitleaks clean. Message Conventional Commits (R8): `<type>: M<x> - T<n> <English desc>`, no AI ref. KHÔNG `git push`.
 5. **Bookkeeping skill-side (engine KHÔNG quản):**

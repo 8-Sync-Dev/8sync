@@ -21,7 +21,7 @@ export type GuardProject = {
   defender: string | null;
   /** Live rooms, heaviest RAM first: whole process tree RAM (MB) and CPU % of the machine over the last tick. */
   rooms: GuardRoom[];
-  /** ≤ 3 heaviest CPU eaters, e.g. "MCP codebase-memory 24% (dev2)". */
+  /** ≤ 3 heaviest CPU eaters, e.g. "MCP trail 24% (dev2)". */
   top: string[];
   /** Since when (unix s) each breach has held; null = not breaching. */
   breach: GuardBreach | null;

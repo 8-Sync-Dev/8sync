@@ -2,11 +2,9 @@
 //! fully agent-ready and current, in a single idempotent pass:
 //!   skills (deploy bundled + external) → update (pull registered from source) →
 //!   mirror into the project (additive) → inject force-load → seed memory +
-//!   gitleaks hook → consolidate learnings → re-index codegraph.
+//!   gitleaks hook → consolidate learnings → wire the trail code map.
 //! Re-run anytime; safe + cheap. `harness init` = explicit full bootstrap with
 //! progress UI; `harness up` = light refresh; `harness up --timer` = background loop.
-use std::process::Command;
-
 use anyhow::Result;
 
 use super::memory::{consolidate_learnings, seed_gitleaks_hook, seed_harness_memory};
@@ -39,8 +37,8 @@ pub(crate) fn harness_auto(env: &env_detect::Env, force: bool) -> Result<()> {
         deploy::ensure_skill_layout(&d);
     }
 
-    // 3. The self-learning loop, one pass: codegraph + memory + safety + inject.
-    deploy::ensure_codegraph_init(&root);
+    // 3. The self-learning loop, one pass: trail + memory + safety + inject.
+    super::trail::ensure_for_harness(env, &root);
     seed_harness_memory(&root)?;
     seed_gitleaks_hook(&root);
     inject_agents_md(&env.home, &root)?;
@@ -50,13 +48,6 @@ pub(crate) fn harness_auto(env: &env_detect::Env, force: bool) -> Result<()> {
     let _ = deploy::ensure_host_adapters(&env.home, &root, force);
     let _ = deploy::cleanup_legacy_gs(&env.home, Some(&root));
     let _ = consolidate_learnings(&root);
-
-    // 4. Re-index so the agent learns the current tree.
-    if which::which("codegraph").is_ok() {
-        ui::step("codegraph index (re-learn current state)");
-        let _ = Command::new("codegraph").arg("index").arg(&root).status();
-    }
-    deploy::index_codebase_memory(&root);
 
     ui::ok(&format!("harness ready → {}", root.display()));
     ui::info("background loop: `8sync harness up --timer 30m` · full rebuild: `8sync harness init`");

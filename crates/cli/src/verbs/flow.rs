@@ -14,10 +14,11 @@ pub fn run() -> Result<()> {
     ]);
 
     section("1b. AI TEAM — harness + /auto (the autonomous engine)", &[
-        ("8sync harness", "(bare) ONE idempotent command: skills + memory loop + /auto + MCP (codegraph/cbm/headroom)"),
+        ("8sync harness", "(bare) ONE idempotent command: skills + memory loop + /auto + trail + MCP (headroom)"),
         ("8sync . then /auto <goal>", "in omp: research → plan → slices/tasks → verify each → QA/closeout → done"),
         ("/auto status | resume", "report · continue the saved plan to Definition-of-Done"),
         ("8sync harness audit|bench|eval", "doc-hygiene · token budget · loop-quality probe"),
+        ("8sync trail [dir|--all ROOT]",   "STEP 0 code map: install trail-code, telemetry off, wire repo(s); `trail ask` before grep"),
         ("8sync harness web",              "(bare) local dashboard — manage skills/memory/engines/team/submodules"),
         ("8sync feature new <slug>",       "large multi-phase scope (GSD): planning tree + AC gates; then /feature plan|go|ship in omp"),
     ]);

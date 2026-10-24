@@ -18,7 +18,7 @@ Gate: review/test FAIL → fix → re-run. KHÔNG ship khi fail.
 
 Spawn ĐỒNG THỜI `task` subagent `agent: reviewer`. Số agent = số phần tử `config.workflow.review_dimensions`; nhúng **tên dimension thật** vào prompt mỗi agent (vd "dimension: security"), KHÔNG ghi chữ `config.workflow.review_dimensions` vào prompt. Dimension mặc định (`["security","correctness","convention"]`):
 - **security**: injection (query tham số hoá?), XSS/escape output, CSRF/permission check, type cast, secret leak.
-- **correctness**: symbol/method tồn tại (`codegraph query`), logic, runtime, config key/DB column đúng.
+- **correctness**: symbol/method tồn tại (`trail grep`), logic, runtime, config key/DB column đúng.
 - **convention**: `AGENTS.md` + `su-code/DECISIONS.md`/`PREFERENCES.md`, naming, tách file, error-handling.
 
 Scope = file phase này đụng (từ PLAN). Barrier → gộp findings.

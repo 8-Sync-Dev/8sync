@@ -7,7 +7,7 @@ description: Use this skill on EVERY read request AND before dumping large conte
 
 Two directions, one rule: **pick the modality that fits the content.**
 - **Incoming** (you must read a PDF/UI/diagram/graph) — decision table below.
-- **Outgoing** (about to emit a big dump — a codegraph, dep-tree, dashboard) — if you can
+- **Outgoing** (about to emit a big dump — a call graph, dep-tree, dashboard) — if you can
   see images, render the STRUCTURE to one image instead of dumping its text form.
 
 ## STEP 0 — self-check your modality
@@ -45,7 +45,7 @@ Two directions, one rule: **pick the modality that fits the content.**
 | Source code (`.rs`, `.ts`, `.py`, …)  | **text**  | exact lines; OCR'd code costs MORE + loses nums|
 | Exact config / hashes / line data     | **text**  | precise + lossless                             |
 | Plain text doc < ~50 KB               | text      | already cheap + exact                          |
-| Codegraph / call- or dep-graph / tree | **image** | structure ≪ its adjacency-list text (vision)   |
+| Call graph / call- or dep-graph / tree | **image** | structure ≪ its adjacency-list text (vision)   |
 | Architecture / diagram / mermaid      | **image** | layout is the information                       |
 | Rendered UI / dashboard review        | **image** | one shot ≪ DOM + styles                        |
 | Long PDF (> 5 pages, figures/scans)   | **image** | `8sync pdf-img <file>`                          |
@@ -61,7 +61,7 @@ Two directions, one rule: **pick the modality that fits the content.**
   (OpenAI / api.apikey.fun). Generates logos, icons, diagrams, UI mockups, and illustrations.
   Detailed runbook in the **`image-gen`** skill (`~/.omp/skills/image-gen/SKILL.md`).
 - **Memory the OCR-Memory way** (arXiv 2604.26622): use an image to LOCATE a segment (the graph /
-  an indexed page), then fetch the CONTENT as exact text from codebase-memory-mcp or the file.
+  an indexed page), then fetch the CONTENT as exact text from `trail ask` or the file.
   Image to find, text to read — never OCR precise content back out of a picture.
 
 ## Examples
@@ -69,9 +69,3 @@ Two directions, one rule: **pick the modality that fits the content.**
 Review a UI: `8sync shot http://localhost:3000/login` → one PNG instead of `LoginScreen.tsx` +
 styles (~8k tok). GLM-5.3 / 5.3-Flash: look at the PNG yourself. GLM-5.2 only: zai-vision → text.
 
-Grok the architecture (vision model): boot `8sync harness web`, then
-`8sync shot 'http://127.0.0.1:8731/codegraph?shot=1' -o /tmp/cg.png` — **`?shot=1` = canvas-only**
-(the React-Flow package graph full-viewport, big + legible, ~2k vision tokens). Never full-page-capture
-that page: clusters/hotspots/search are exact text via `/api/codegraph/overview|search|trace`. Then for
-a precise change, read the exact file slice as text. Non-vision model: read node positions from the
-shot with `8sync locate /tmp/cg.png "<node label>"` (automatic — see locate-anything skill).

@@ -3,7 +3,7 @@
 > Every pattern below is cited `repo:path` and was read from the actual repo via
 > `gh api repos/8syncdev/<repo>/contents/<path>`. These are the opinionated
 > extensions on top of the canonical base in `base.md`. Re-verify with `gh` /
-> `codegraph` before copying — these repos move fast.
+> `trail ask` before copying — these repos move fast.
 >
 > Repos: `8syncdev/open-musik` (Tauri 2 + Python ACE‑Step engine, the sidecar
 > reference) · `8syncdev/zus` (ZUS AI IDE, production bundling/updater) ·

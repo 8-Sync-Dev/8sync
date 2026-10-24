@@ -30,7 +30,7 @@ Modes compose: a replication usually starts with a recipe pass; an audit often p
 
 ### Tool mapping
 
-Papers/docs/HF hub pages → `web_search` + `read <url>` (Hugging Face dataset/repo pages are plain URLs — read them directly; there is no dedicated HF tool in omp). Codebases → `read`/`grep` on the clone (`git clone` first if not local), or `codebase-memory-mcp`'s `search_graph`/`get_code_snippet` when already indexed. Broad sweeps → `task` (role "Researcher"). Citations/source checks → `task` (role "Verifier"). Long write-ups from gathered notes → `task` (role "Writer"). Narrow scopes: do it yourself.
+Papers/docs/HF hub pages → `web_search` + `read <url>` (Hugging Face dataset/repo pages are plain URLs — read them directly; there is no dedicated HF tool in omp). Codebases → `read`/`grep` on the clone (`git clone` first if not local), or `trail ask`/`trail skeleton` after `trail build`. Broad sweeps → `task` (role "Researcher"). Citations/source checks → `task` (role "Verifier"). Long write-ups from gathered notes → `task` (role "Writer"). Narrow scopes: do it yourself.
 
 ---
 

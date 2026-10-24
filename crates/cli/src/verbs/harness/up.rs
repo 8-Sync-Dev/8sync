@@ -1,10 +1,10 @@
 //! `8sync harness up` — refresh the harness to the project's CURRENT state:
 //! re-inject AGENTS.md + sub-folder indexes, refresh the KNOWLEDGE breadcrumb,
-//! and re-index codegraph so the agent keeps learning as the project grows.
+//! and rebuild the trail map so the agent keeps learning as the project grows.
 //! `--loop <dur>` runs it in the foreground; `--timer <dur|off>` installs a
 //! systemd user timer (the recommended background option — memory-bounded to its
-//! own cgroup so a heavy re-index can't OOM the machine). Per tick the harness
-//! refreshes context (re-inject + re-index + consolidate); the agent then drives
+//! own cgroup so a heavy refresh can't OOM the machine). Per tick the harness
+//! refreshes context (re-inject + trail build + consolidate); the agent then drives
 //! the L1→L3 loop off STATE.md (read STATE → Next → verify-gate → update spine →
 //! `--commit`), per the loop-engineering rules in 00-force-load.md.
 use std::process::Command;
@@ -30,7 +30,7 @@ pub(crate) fn harness_up(
     if let Some(dur) = loop_every {
         let secs = platform::parse_dur_secs(dur).max(60);
         ui::header(&format!("8sync harness up --loop ({}s interval)", secs));
-        ui::info("Ctrl-C to stop. Each pass re-injects rules + refreshes memory + re-indexes codegraph.");
+        ui::info("Ctrl-C to stop. Each pass re-injects rules + refreshes memory + rebuilds the trail map.");
         loop {
             let _ = refresh_once(env, pull, commit);
             ui::step(&format!("sleeping {}s …", secs));
@@ -56,18 +56,13 @@ fn refresh_once(env: &env_detect::Env, pull: bool, commit: bool) -> Result<()> {
     let _ = crate::verbs::skill::deploy::ensure_append_system(&env.home);
     let _ = crate::verbs::skill::deploy::ensure_mcp_spec(&env.home);
     let _ = crate::verbs::skill::deploy::ensure_recall_hook(&env.home);
-    let _ = crate::verbs::skill::deploy::ensure_serena_mcp(env);
     let _ = crate::verbs::skill::deploy::ensure_engine(&env.home, Some(&root));
     let _ = crate::verbs::skill::deploy::ensure_rules(&env.home, Some(&root));
     let _ = crate::verbs::skill::deploy::cleanup_legacy_gs(&env.home, Some(&root));
     seed_harness_memory(&root)?;
     let _ = consolidate_learnings(&root);
     seed_gitleaks_hook(&root);
-    if which::which("codegraph").is_ok() {
-        ui::step("codegraph index (re-learn current state)");
-        let _ = Command::new("codegraph").arg("index").arg(&root).status();
-    }
-    crate::verbs::skill::deploy::index_codebase_memory(&root);
+    super::trail::refresh(&root);
     if commit {
         commit_memory(&root);
     }
@@ -152,7 +147,7 @@ fn commit_memory(root: &Path) {
 
 /// Install/remove the periodic `8sync harness up` background job (systemd user
 /// timer on Linux, launchd LaunchAgent on macOS, Scheduled Task on Windows).
-/// Bounded to its own cgroup on Linux so a heavy `codegraph index` tick can't
+/// Bounded to its own cgroup on Linux so a heavy `trail build` tick can't
 /// OOM the machine.
 fn manage_timer(spec: &str) -> Result<()> {
     if spec.eq_ignore_ascii_case("off") {

@@ -64,7 +64,7 @@ pub(crate) fn gen_skill(env: &env_detect::Env, args: &[String]) -> Result<()> {
         ui::err("usage: 8sync skill gen <id1> <id2> [id3 …]");
         ui::info("  ids: 1-based index from `8sync skill` local list, or skill name");
         ui::info("  example: 8sync skill gen 1 2");
-        ui::info("           8sync skill gen karpathy-guidelines codegraph");
+        ui::info("           8sync skill gen karpathy-guidelines trail");
         return Ok(());
     }
     let root = detect_current_project_root()

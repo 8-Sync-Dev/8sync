@@ -17,7 +17,7 @@ You own the whole lifecycle. `/sx-auto` runs a plan; this runs a **product**. Ob
 ## Phase 0 — Ground (cheap, always)
 
 1. Read `su-code/STATE.md` and the `failure:` entries in `su-code/KNOWLEDGE.md`. Those are traps already paid for; re-paying is the most expensive mistake available.
-2. Map the code with **codegraph** (cbm / serena only if enabled) — never `grep`-and-read-everything.
+2. Map the code with **trail** (`trail map` / `trail ask`) — never `grep`-and-read-everything.
 3. `git log --oneline -15` + `su-code/DECISIONS.md` for intent behind current shape.
 4. `read su-code/PROJECT.md` for stack, entrypoints and the REAL build/test/lint commands. Those exact commands become the verify gate; do not invent your own.
 
@@ -45,7 +45,7 @@ Decompose the goal into slices with real acceptance criteria. **Never delegate t
 
 - Independent slices → one `task` batch, fanned out. State the shared contract in the batch `context`; tell every agent to SKIP build/test/lint (concurrent cargo/npm runs deadlock on the target lock) and that you run the gate once at the end.
 - Dependent work → `engine_next` → implement → `engine_verify` → `engine_advance`.
-- Prefer symbol-level edits over whole-file rewrites (serena if enabled).
+- Prefer targeted edits over whole-file rewrites.
 - Two identical verify failures = warning, three = BLOCKED. On block: write a `failure:` line to `su-code/KNOWLEDGE.md`, then change approach — never retry the same fix a third time.
 - Fix causes. Suppressing a warning, widening a type, or special-casing an input is not a fix.
 

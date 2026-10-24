@@ -11,7 +11,7 @@ use crate::verbs::ccc::reap::{self, Proc};
 #[command(after_help = indoc::indoc! {"
     EXAMPLES
       8sync shot http://localhost:3000/dashboard
-      8sync shot 'http://127.0.0.1:8731/codegraph?shot=1' -o /tmp/cg.png   # ?shot=1 = graph canvas only
+      8sync shot 'http://127.0.0.1:8731/?page=engines' -o /tmp/engines.png
       8sync shot http://localhost:5173/login -o /tmp/login.png
       8sync shot ./docs/index.html
       8sync shot <url> --width 1400 --height 2200 --wait 4000

@@ -23,7 +23,7 @@ const project = {
     { name: "dev2", mb: 1800, cpu: 24 },
     { name: "lead", mb: 900, cpu: null },
   ],
-  top: ["MCP codebase-memory 24% (dev2)", "msmpeng 4% (máy)"],
+  top: ["MCP trail 24% (dev2)", "msmpeng 4% (máy)"],
   breach: { ram: 1792399990, ram_hi: null, cpu: 1792399980, cpu_max: null },
   last: { at: 1792400000, text: "L1: dọn 3 tiến trình (1.2 GB)" },
   ram_split: { rooms_mb: 12600, omp_mb: 2870, other_mb: 20580, top: [{ name: "Edge", mb: 2870 }, { name: "ChatGPT", mb: 2250 }], stuck: true },

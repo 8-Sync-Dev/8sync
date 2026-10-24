@@ -40,8 +40,8 @@ describe("pure rules", () => {
     expect(nextBackoff(null)).toBe(BACKOFF_MIN_MS);
     expect(nextBackoff(BACKOFF_MIN_MS)).toBe(2 * BACKOFF_MIN_MS);
     expect(nextBackoff(BACKOFF_MAX_MS)).toBe(BACKOFF_MAX_MS);
-    const t = alertText("CPU 72% ×3", ["MCP codebase-memory 24% (dev2)", "node 9% (ui)"]);
-    expect(t.startsWith("[máy] CPU 72% ×3 · top: MCP codebase-memory 24% (dev2), node 9% (ui)")).toBe(true);
+    const t = alertText("CPU 72% ×3", ["MCP trail 24% (dev2)", "node 9% (ui)"]);
+    expect(t.startsWith("[máy] CPU 72% ×3 · top: MCP trail 24% (dev2), node 9% (ui)")).toBe(true);
     expect(t).not.toContain("\n");
     expect(runningTeams({ on: true, paused: false, team_roots: ["C:/a", 3, ""] })).toEqual(["C:/a"]);
     expect(runningTeams({ on: true, paused: true, team_roots: ["C:/a"] })).toEqual([]);
@@ -55,7 +55,7 @@ describe("pure rules", () => {
     expect(runningTeams({ on: true, paused: false, team_roots: ["C:/p/ab"], repos: ["C:/p/a"] })).toEqual([]);
     // The load is the project's own only when a top CPU user is one of its rooms; the guard level is
     // machine-wide (every project's pass is up during any breach), so it alone alerts nobody.
-    expect(loadIsTheirs({ level: 0, top: ["MCP codebase-memory 24% (dev2)"] })).toBe(true);
+    expect(loadIsTheirs({ level: 0, top: ["MCP trail 24% (dev2)"] })).toBe(true);
     expect(loadIsTheirs({ level: 2, top: [] })).toBe(false);
     expect(loadIsTheirs({ level: 2, top: ["rustc 30% (máy)"] })).toBe(false);
     expect(loadIsTheirs({ level: 0, top: ["chrome 40% (máy)", "node 0% (dev)"] })).toBe(false);
@@ -199,14 +199,14 @@ describe("ensure, switch, alert", () => {
     const st = {
       ...status.v,
       team_roots: [root, other],
-      guard: { pct: 60, eco: true, temp_qa: null, projects: [proj(root, ["MCP codebase-memory 24% (dev2)"]), proj(other, ["chrome 40% (máy)"])] },
+      guard: { pct: 60, eco: true, temp_qa: null, projects: [proj(root, ["MCP trail 24% (dev2)"]), proj(other, ["chrome 40% (máy)"])] },
     } as unknown as AutoStatus;
     expect(await sweepAlert(db, "CPU 72% ×3", 0, deps(st)), "no sweep room yet: nothing sent").toEqual([]);
     expect(run).not.toHaveBeenCalled();
     const live = deps(st, [sweepRoom(root), sweepRoom(other)]);
     expect(await sweepAlert(db, "CPU 72% ×3", 0, live), "the other project's load is not its rooms'").toEqual([root]);
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "msg", "sweep", alertText("CPU 72% ×3", ["MCP codebase-memory 24% (dev2)"])], 30_000, root);
+    expect(run).toHaveBeenLastCalledWith("8sync", ["ccc", "msg", "sweep", alertText("CPU 72% ×3", ["MCP trail 24% (dev2)"])], 30_000, root);
     expect(await sweepAlert(db, "RAM 81% ×2", ALERT_EVERY_MS - 1, live)).toEqual([]);
     expect(run).toHaveBeenCalledTimes(1);
     // A failed send does not use up the window.

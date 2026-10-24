@@ -1,7 +1,7 @@
 //! `8sync harness init` — one command to stand up a maximal agent harness:
-//! deploy every bundled skill (+ codegraph binary + external skill packs),
+//! deploy every bundled skill (+ trail binary + external skill packs),
 //! pull registered skills (su-code/skills.toml), mirror them into the project,
-//! init codegraph, seed agent memory + CHANGELOG,
+//! wire trail, seed agent memory + CHANGELOG,
 //! and inject force-load rules into the root AGENTS.md/CLAUDE.md plus a compact
 //! index into every significant sub-folder. Progress is tracked step by step.
 use std::time::Instant;
@@ -49,18 +49,20 @@ pub(crate) fn harness_init(env: &env_detect::Env, force: bool) -> Result<()> {
     let target = env.home.join(".omp/skills/00-force-load.md");
     std::fs::create_dir_all(target.parent().unwrap())?;
     let content = assets::read("skills/00-force-load.md")
-        .map(|c| crate::brand::render(&crate::verbs::harness::cbm::gate(&env.home, &c)).into_owned())
+        .map(|c| crate::brand::render(&c).into_owned())
         .unwrap_or_default();
     std::fs::write(&target, content)?;
 
     // 2. Deploy bundled skills (embedded assets → ~/.omp/skills).
-    p.step("deploy bundled skills (codegraph · karpathy · ponytail · assp · impeccable · taste · …)");
+    p.step("deploy bundled skills (trail · karpathy · ponytail · assp · impeccable · taste · …)");
     deploy::install_bundled_global(env)?;
 
-    // 3. codegraph binary (auto curl installer if missing).
-    p.step("ensure codegraph binary");
-    deploy::ensure_codegraph(env)?;
-    deploy::ensure_codebase_memory_mcp(env)?;
+    // 3. trail binary (npm install -g --ignore-scripts if missing) + telemetry off.
+    p.step("ensure trail binary");
+    match super::trail::ensure_installed() {
+        Ok(bin) => super::trail::ensure_telemetry_off(&env.home, &bin),
+        Err(e) => ui::warn(&format!("trail not available: {e:#} — STEP 0 falls back to grep/read")),
+    }
     deploy::ensure_headroom_mcp(env)?;
     let _ = deploy::ensure_omp_memory_config(&env.home);
     let _ = deploy::ensure_bash_interceptor(&env.home);
@@ -68,7 +70,6 @@ pub(crate) fn harness_init(env: &env_detect::Env, force: bool) -> Result<()> {
     let _ = deploy::ensure_recall_hook(&env.home);
     let _ = deploy::ensure_append_system(&env.home);
     let _ = deploy::ensure_mcp_spec(&env.home);
-    let _ = deploy::ensure_serena_mcp(env);
     let _ = deploy::ensure_zai_vision_mcp(env);
     let _ = deploy::ensure_omp_capabilities_snapshot(&env.home);
     deploy::ensure_feynman_cli();
@@ -102,8 +103,8 @@ pub(crate) fn harness_init(env: &env_detect::Env, force: bool) -> Result<()> {
             deploy::ensure_skill_layout(&d);
         }
 
-        p.step("codegraph init + seed memory/CHANGELOG");
-        deploy::ensure_codegraph_init(&root);
+        p.step("trail init + seed memory/CHANGELOG");
+        super::trail::ensure_for_harness(env, &root);
         seed_harness_memory(&root)?;
         seed_gitleaks_hook(&root);
 

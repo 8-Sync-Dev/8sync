@@ -10,7 +10,7 @@
     irm https://get.8syncdev.com/install.ps1 | iex
 
   After the binary lands, the installer runs `8sync setup --no-profile`: the AI
-  harness (gh, omp, codegraph, forge + zsh, configs, skills, `harness global`).
+  harness (gh, omp, forge + zsh, configs, skills, `harness global`).
 
   Upgrade:   re-run the same command (atomically replaces the old binary).
   Uninstall: download the script and run:  .\install.ps1 -Uninstall
@@ -269,7 +269,7 @@ Write-Host ""
 if ($env:SUSYNC_NO_SETUP -eq '1') {
     Write-Host "SUSYNC_NO_SETUP=1 - skipped setup. Run it any time: 8sync setup --no-profile"
 } else {
-    Write-Host "Running 8sync setup --no-profile (AI harness: omp, codegraph, forge, skills, MCP)..."
+    Write-Host "Running 8sync setup --no-profile (AI harness: omp, forge, skills, MCP)..."
     # Native-command failures must not abort the installer under 'Stop'; setup
     # reports its own per-step summary.
     $ErrorActionPreference = 'Continue'
@@ -279,7 +279,7 @@ if ($env:SUSYNC_NO_SETUP -eq '1') {
     } else {
         Write-Warning "8sync setup exited with code $LASTEXITCODE - re-run: 8sync setup --no-profile"
     }
-    # Installers run by setup (omp, codegraph, forge) extend the user PATH; pick
+    # Installers run by setup (omp, forge) extend the user PATH; pick
     # those up so this window can use them immediately.
     $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')
 }

@@ -101,7 +101,10 @@ impl Env {
 
 
 pub fn cmd_version(name: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(name).args(args).output().ok()?;
+    // Resolve through PATH/PATHEXT first: on Windows `trail`/`headroom` are `.cmd` shims that a bare
+    // `Command::new(name)` cannot start.
+    let bin = which::which(name).unwrap_or_else(|_| name.into());
+    let out = Command::new(bin).args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }

@@ -142,7 +142,7 @@ fn install_gitleaks() -> Result<()> {
           · github-cli (gh)                     (native pkg manager; Debian/Ubuntu/other Linux: GitHub release → ~/.local/bin)
           · omp AI CLI                          (official installer: install.sh / install.ps1)
           · paru                                (AUR helper — Arch family only)
-          · codegraph                           (semantic code index)
+          · trail                               (code map for agents: npm i -g @trailhq/trail-code --ignore-scripts)
           · forge + zsh                         (`8sync forge <name>`; Windows: MSYS2 zsh; Linux without sudo: static zsh)
           · Claude Code + 8sync kit             (`8sync ccc . <name>`; official installer; agents · skills · hooks)
           · gitleaks                            (secret scanner for the pre-commit hook + /aup-audit; GitHub release)
@@ -283,13 +283,13 @@ pub fn run(a: Args) -> Result<()> {
                 env.os_id
             ));
         }
-        ui::info("would install codegraph (official installer) if missing");
+        ui::info("would install trail (npm install -g @trailhq/trail-code --ignore-scripts) if missing, then `trail telemetry disable`");
         ui::info("would install forge (GitHub release) + zsh (Windows: MSYS2 zsh) if missing");
         ui::info("would install Claude Code (official installer) if missing + the 8sync kit into ~/.claude");
         ui::info("would install gitleaks (GitHub release → ~/.local/bin, sha256-checked) if missing");
         ui::info("would write: configs + skills");
         ui::info("would patch PATH in zsh/bash + ~/.config/fish/conf.d/8sync-path.fish");
-        ui::info("would register codegraph as a global+local skill");
+        ui::info("would register trail as a global+local skill");
         ui::info("would run `8sync harness global` (skills, APPEND_SYSTEM, MCP, hooks)");
     } else {
         try_step("gh cli", yolo, &mut failures, || {
@@ -309,13 +309,13 @@ pub fn run(a: Args) -> Result<()> {
         // The AUR helper is an Arch-family concept. Gating this on `Os::Linux`
         // made it run on Fedora/Debian too, where `pacman` does not exist: the
         // step failed, and in strict (non-yolo) mode `try_step` propagates, so
-        // the `?` aborted Stage A before codegraph/configs/skills ever ran.
+        // the `?` aborted Stage A before trail/configs/skills ever ran.
         if env.is_cachyos_or_arch() {
             try_step("paru",   yolo, &mut failures, install_aur_helper)?;
         } else if platform::os() == platform::Os::Linux {
             ui::info(&format!("AUR helper is Arch-only — skipping on {}", env.os_id));
         }
-        try_step("codegraph",  yolo, &mut failures, install_codegraph)?;
+        try_step("trail",      yolo, &mut failures, install_trail)?;
         try_step("forge",      yolo, &mut failures, || {
             ui::step("Forge + zsh (`8sync forge <name>`)");
             let forge = crate::verbs::forge::ensure_forge()?;
@@ -333,13 +333,12 @@ pub fn run(a: Args) -> Result<()> {
         try_step("path-bootstrap", yolo, &mut failures, || { ensure_path_in_shells(); Ok(()) })?;
         try_step("configs",    yolo, &mut failures, || install_configs(&env))?;
         try_step("skills",     yolo, &mut failures, || install_skills(&env))?;
-        try_step("codegraph-skill", yolo, &mut failures, || register_codegraph_skill(&env))?;
+        try_step("trail-skill", yolo, &mut failures, || register_trail_skill(&env))?;
         try_step("harness-global", yolo, &mut failures, || {
             crate::verbs::harness::global::harness_global(&env, None, false, false)
         })?;
-        // After harness-global, so the code-intelligence MCP servers it installs
-        // exist when the kit copies them into Claude Code.
-        try_step("claude-kit", yolo, &mut failures, || crate::verbs::ccc::install_kit(&env, false, false))?;
+        // After harness-global, so the skills it deploys exist when the kit links them into Claude Code.
+        try_step("claude-kit", yolo, &mut failures, || crate::verbs::ccc::install_kit(&env, false))?;
     }
     // `terminal` is cross-platform (winget / brew / release downloads), so it is
     // dispatched before the native-package gate below.
@@ -653,16 +652,19 @@ fn install_aur_helper() -> Result<()> {
     Ok(())
 }
 
-fn install_codegraph() -> Result<()> {
-    ui::step("codegraph (semantic code index for omp / claude / cursor)");
-    if let Some(v) = tool_present("codegraph", &["codegraph", "current", "bin", "codegraph.cmd"]) {
-        ui::skip("codegraph", &format!("present ({})", v));
+fn install_trail() -> Result<()> {
+    ui::step("trail (code map for omp / claude / cursor)");
+    if let Some(bin) = crate::verbs::harness::trail::found() {
+        ui::skip("trail", &format!("present ({})", bin.display()));
+        if let Some(h) = dirs::home_dir() {
+            crate::verbs::harness::trail::ensure_telemetry_off(&h, &bin);
+        }
         return Ok(());
     }
-    run_installer(
-        "https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh",
-        "https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1",
-    )?;
+    let bin = crate::verbs::harness::trail::ensure_installed()?;
+    if let Some(h) = dirs::home_dir() {
+        crate::verbs::harness::trail::ensure_telemetry_off(&h, &bin);
+    }
     ensure_path_in_shells();
     Ok(())
 }
@@ -671,7 +673,7 @@ fn install_codegraph() -> Result<()> {
 /// `conf.d/` snippet that does the same via `fish_add_path`. Idempotent.
 ///
 /// Paths covered (any that exist or will exist after setup):
-///   ~/.local/bin   — codegraph, 8sync, encore (most installers)
+///   ~/.local/bin   — 8sync, encore (most installers)
 ///   ~/.cargo/bin   — rustup-installed binaries (cargo, rust-analyzer)
 ///   ~/.bun/bin     — bun runtime / `bun install -g` shims
 ///   ~/.encore/bin  — encore CLI
@@ -684,7 +686,7 @@ fn ensure_path_in_shells() {
     // ── zsh / bash ────────────────────────────────────────────────
     // `$HOME/…`, not the expanded path: on Windows the expansion is `C:\Users\…`,
     // whose `:` splits PATH in Git Bash / MSYS zsh into junk entries.
-    let marker = "# 8sync: PATH bootstrap (user-local bins for codegraph/bun/encore/cargo)";
+    let marker = "# 8sync: PATH bootstrap (user-local bins for bun/encore/cargo)";
     let lines: Vec<String> = dirs
         .iter()
         .map(|d| format!("case \":$PATH:\" in *\":$HOME/{d}:\"*) ;; *) export PATH=\"$HOME/{d}:$PATH\" ;; esac"))
@@ -757,27 +759,27 @@ fn upsert_marked_block(existing: &str, marker: &str, lines: &[String], is_block:
     Some(out.join("\n") + "\n")
 }
 
-fn register_codegraph_skill(env: &env_detect::Env) -> Result<()> {
-    ui::step("Register codegraph skill (bundled)");
-    // SKILL.md tree is shipped from embedded assets via `install_skills`
-    // (no upstream README synthesis). Here we just append a registry entry to
-    // skills.toml so `8sync skill list` shows codegraph as an always-on skill.
+fn register_trail_skill(env: &env_detect::Env) -> Result<()> {
+    ui::step("Register trail skill (bundled)");
+    // SKILL.md tree is shipped from embedded assets via `install_skills`.
+    // Here we just append a registry entry to skills.toml so `8sync skill list`
+    // shows trail as an always-on skill.
     let toml_path = env.xdg_config.join("8sync/skills.toml");
     if let Some(parent) = toml_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let existing = std::fs::read_to_string(&toml_path).unwrap_or_default();
-    if existing.contains("[codegraph]") {
-        ui::skip(&toml_path.display().to_string(), "codegraph already registered");
+    if existing.contains("[trail]") {
+        ui::skip(&toml_path.display().to_string(), "trail already registered");
         return Ok(());
     }
     let mut s = existing;
     if !s.ends_with('\n') && !s.is_empty() {
         s.push('\n');
     }
-    s.push_str("\n[codegraph]\nsrc  = \"builtin:codegraph\"\nwhen = \"always\"\n");
+    s.push_str("\n[trail]\nsrc  = \"builtin:trail\"\nwhen = \"always\"\n");
     std::fs::write(&toml_path, s)?;
-    ui::ok(&format!("registered 'codegraph' → {}", toml_path.display()));
+    ui::ok(&format!("registered 'trail' → {}", toml_path.display()));
     Ok(())
 }
 
@@ -1222,7 +1224,7 @@ fn install_skills(env: &env_detect::Env) -> Result<()> {
         ("skills/karpathy-guidelines",      "karpathy-guidelines"),
         ("skills/image-routing", "image-routing"),
         ("skills/8sync-cli",     "8sync-cli"),
-        ("skills/codegraph",     "codegraph"),
+        ("skills/trail",         "trail"),
     ];
     for (prefix, name) in &bundled {
         let target = skills_dir.join(name);
@@ -1241,7 +1243,7 @@ fn install_skills(env: &env_detect::Env) -> Result<()> {
     }
     let master = skills_dir.join("00-force-load.md");
     if let Some(c) = assets::read("skills/00-force-load.md") {
-        std::fs::write(&master, crate::brand::render(&crate::verbs::harness::cbm::gate(&env.home, &c)).as_ref())?;
+        std::fs::write(&master, crate::brand::render(&c).as_ref())?;
     }
     ui::ok(&format!("wrote {}", master.display()));
     Ok(())
@@ -1397,7 +1399,7 @@ fn preflight(env: &env_detect::Env) {
         ("omp", "omp"),
         ("paru", "paru"),
         ("yay", "yay"),
-        ("codegraph", "codegraph"),
+        ("trail", "trail"),
         ("gh", "gh"),
         ("encore", "encore"),
     ]

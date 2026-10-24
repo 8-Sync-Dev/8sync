@@ -210,9 +210,9 @@ vecs, err := models.EmbedDocs(ctx, texts)   // OpenAI-compatible /embeddings cal
 ## Workflow canon (8sync CLI / omp tooling) — `8syncdev/auto-work-cloudgo`
 
 `8syncdev/auto-work-cloudgo:AGENTS.md` is the canonical statement of the code-intelligence-first workflow this skill inherits:
-> codegraph (local index) + codebase-memory-mcp (`search_graph`, `trace_path`, `get_architecture`, `detect_changes`, `query_graph`, `get_code_snippet`) replace blind grep/read; compress any >~50-line dump with `headroom` before it enters context.
+> `trail ask` / `trail callers` / `trail skeleton` replace blind grep/read; compress any >~50-line dump with `headroom` before it enters context.
 
-In an Encore+Eino repo this is doubly important because `encore.gen.go` regenerates constantly — always read the *generated* surface through `codegraph`/cbm, and only `read` a raw file right before you edit it. (Note: `auto-work-cloudgo` is the 8sync CLI/agent harness, **not** an Encore app — cited here for the tooling workflow, not for Encore patterns.)
+In an Encore+Eino repo this is doubly important because `encore.gen.go` regenerates constantly — always read the *generated* surface through `trail skeleton`, and only `read` a raw file right before you edit it. (Note: `auto-work-cloudgo` is the 8sync CLI/agent harness, **not** an Encore app — cited here for the tooling workflow, not for Encore patterns.)
 
 ---
 

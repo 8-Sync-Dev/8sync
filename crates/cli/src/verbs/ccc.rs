@@ -116,9 +116,7 @@ mod verify;
       hq hooks TaskCreated/TaskCompleted/TeammateIdle/Notification → `8sync hq hook <Event>`, async
                (no-op until `8sync hq setup`)
       also     auto permission mode · medium effort · task list · claude.ai connectors off (each only
-               if unset) · build/test commands skip the classifier · deny .env / keys / *.session / *.pkl and force-push ·
-               serena / codebase-memory-mcp ONLY if opted in (`8sync harness serena|cbm on`) from omp's MCP config when on PATH
-               (serena alwaysLoad=false; failures are reported)
+               if unset) · build/test commands skip the classifier · deny .env / keys / *.session / *.pkl and force-push
 "})]
 pub struct Args {
     /// `.` then a session name, or a subcommand: `ls`, `new <name>`, `rm <name>`,
@@ -202,7 +200,7 @@ pub fn run(a: Args) -> Result<()> {
                     ui::ok(&format!("skill library registered → {}", dir.display()));
                 }
             }
-            let res = install_kit(&env, rest.iter().any(|a| a == "--force"), offline);
+            let res = install_kit(&env, rest.iter().any(|a| a == "--force"));
             refresh_ancestor_claude_md(&env, &root);
             res
         }
@@ -445,7 +443,7 @@ fn prepare(env: &Env, root: &Path, offline: bool) {
         }
     }
     if kit_version(env).as_deref() != Some(env!("CARGO_PKG_VERSION")) {
-        if let Err(e) = deploy::install_bundled_global(env).and_then(|()| install_kit(env, false, offline)) {
+        if let Err(e) = deploy::install_bundled_global(env).and_then(|()| install_kit(env, false)) {
             ui::warn(&format!("kit refresh failed: {e:#} — `8sync ccc kit` retries"));
         }
     }
@@ -1309,16 +1307,14 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
 const CORE_SKILLS: [&str; 16] =
-    ["ship", "ship-loop", "ship-tick", "autopilot", "sprint", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "sysdesign", "8sync-cli", "codegraph", "karpathy-guidelines", "ponytail", "impeccable"];
+    ["ship", "ship-loop", "ship-tick", "autopilot", "sprint", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "sysdesign", "8sync-cli", "trail", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
-pub(crate) fn install_kit(env: &Env, force: bool, offline: bool) -> Result<()> {
-    install_kit_at(env, &claude_dir(env), force, offline)
+pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
+    install_kit_at(env, &claude_dir(env), force)
 }
 
-/// Offline: every file write and the local skill linking still happen; only the
-/// MCP mirroring (`claude mcp add-json`) is skipped.
-fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<()> {
+fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
     ui::step("Claude Code kit → ~/.claude (agents · skills · verify hook · guard · stop + ask gates)");
     let dir = dir.to_path_buf();
     let stamp_path = dir.join(KIT_STAMP);
@@ -1330,10 +1326,7 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<(
     let mut kept = Vec::new();
     let mut rewritten = Vec::new();
     for (asset, rel) in KIT_FILES {
-        let body = crate::verbs::harness::cbm::gate(
-            &env.home,
-            &assets::read(asset).with_context(|| format!("asset missing: {asset}"))?,
-        );
+        let body = assets::read(asset).with_context(|| format!("asset missing: {asset}"))?;
         let target = dir.join(rel);
         match std::fs::read_to_string(&target) {
             Ok(cur) if cur == body => {}
@@ -1385,10 +1378,7 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<(
         ui::info(&format!("kept your edited {} (`8sync ccc kit --force` overwrites)", dir.join(rel).display()));
     }
 
-    let rules = crate::verbs::harness::cbm::gate(
-        &env.home,
-        &assets::read("configs/claude/CLAUDE.md").context("asset missing: configs/claude/CLAUDE.md")?,
-    );
+    let rules = assets::read("configs/claude/CLAUDE.md").context("asset missing: configs/claude/CLAUDE.md")?;
     crate::verbs::harness::memory::upsert_block(&dir.join("CLAUDE.md"), CLAUDE_MD_BEGIN, CLAUDE_MD_END, rules.trim_end())?;
 
     let settings = dir.join("settings.json");
@@ -1413,13 +1403,6 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool, offline: bool) -> Result<(
         "kit: {agents} agents · /ship · /aup-audit · deep-research · verify hook · guard · stop + ask gates · auto mode · CLAUDE.md rules ({})",
         dir.display()
     ));
-
-    let mcp_ok = net_allowed(offline, "MCP mirror (`claude mcp add-json`)").is_ok();
-    if let Some(claude) = find_claude().filter(|_| mcp_ok) {
-        mirror_mcp(env, &claude);
-    } else if mcp_ok {
-        ui::info("MCP: run `8sync ccc kit` again after `claude` is installed to add opted-in MCP servers (harness serena|cbm on)");
-    }
     Ok(())
 }
 
@@ -1432,7 +1415,7 @@ fn hook_exe() -> Result<String> {
 
 /// Official LSP plugins (anthropics/claude-plugins-official, `lspServers` only)
 /// and the language-server binary each one starts. Claude Code's LSP tool needs
-/// no MCP schema in the prompt; serena stays as the fallback when it is present.
+/// no MCP schema in the prompt.
 const LSP_PLUGINS: [(&str, &str); 4] = [
     ("rust-analyzer-lsp", "rust-analyzer"),
     ("typescript-lsp", "typescript-language-server"),
@@ -2038,55 +2021,6 @@ fn session_block(d: &crate::verbs::session_view::Digest) -> String {
     out
 }
 
-/// Copy omp's code-intelligence MCP servers into Claude Code's user scope so
-/// subagents get the same graph tools. Existing registrations are left alone.
-fn mirror_mcp(env: &Env, claude: &Path) {
-    let read = |p: PathBuf| -> Value {
-        std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null)
-    };
-    let omp = read(env.home.join(".omp").join("agent").join("mcp.json"));
-    let user = read(match std::env::var_os("CLAUDE_CONFIG_DIR") {
-        Some(d) => PathBuf::from(d).join(".claude.json"),
-        None => env.home.join(".claude.json"),
-    });
-    let cbm_on = crate::verbs::harness::cbm::enabled(&env.home);
-    for name in ["codebase-memory-mcp", "serena"] {
-        if name == "serena" && !crate::verbs::harness::serena::enabled(&env.home) {
-            ui::skip("MCP serena", "opt-in, off (8sync harness serena on)");
-            continue;
-        }
-        if name == "codebase-memory-mcp" && !cbm_on {
-            ui::skip("MCP codebase-memory-mcp", "opt-in, off (8sync harness cbm on)");
-            continue;
-        }
-        if user["mcpServers"].get(name).is_some() {
-            ui::skip(&format!("MCP {name}"), "already in Claude Code");
-            continue;
-        }
-        let mut spec = omp["mcpServers"][name].clone();
-        let Some(bin) = spec["command"].as_str().map(str::to_string) else {
-            ui::warn(&format!("MCP {name}: not in ~/.omp/agent/mcp.json — not registered in Claude Code"));
-            continue;
-        };
-        if which::which(&bin).is_err() {
-            ui::warn(&format!("MCP {name}: command `{bin}` not found on PATH — not registered in Claude Code"));
-            continue;
-        }
-        if name == "serena" {
-            spec["alwaysLoad"] = json!(false);
-        }
-        match Command::new(claude)
-            .args(["mcp", "add-json", "--scope", "user", name, &spec.to_string()])
-            .stdin(Stdio::null())
-            .output()
-        {
-            Ok(o) if o.status.success() => ui::ok(&format!("MCP {name} → Claude Code (user scope)")),
-            Ok(o) => ui::warn(&format!("MCP {name}: `claude mcp add-json` failed: {}", String::from_utf8_lossy(&o.stderr).trim())),
-            Err(e) => ui::warn(&format!("MCP {name}: could not run `claude mcp add-json`: {e}")),
-        }
-    }
-}
-
 /// FNV-1a 64 — a stable content fingerprint for the kit stamp file.
 fn fnv1a(s: &str) -> String {
     let h = s.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3));
@@ -2099,8 +2033,8 @@ fn fnv1a(s: &str) -> String {
 /// (the kit plugin). `github` source shape: settings-reference#strictknownmarketplaces
 /// (https://code.claude.com/docs/en/settings-reference).
 const POLICY_MARKETPLACES: [&str; 3] = ["anthropics/claude-plugins-official", "8-Sync-Dev/8sync", "8-Sync-Dev/su-code"];
-/// MCP servers the kit mirrors from omp's config (see `mirror_mcp`).
-const POLICY_MCP: [&str; 2] = ["codebase-memory-mcp", "serena"];
+/// MCP servers `--lock-mcp` allows. The kit mirrors none, so the lock admits no server until you add yours.
+const POLICY_MCP: [&str; 0] = [];
 
 /// Recommended managed settings for an org (Claude Team, solo owner, official OAuth only), built
 /// only from keys checked against https://code.claude.com/docs/en/settings-reference and
@@ -2215,7 +2149,7 @@ fn policy(args: &[String]) -> Result<()> {
     stderr_note("  - forceLoginMethod refuses to start while an API key, token or apiKeyHelper is configured;");
     stderr_note("    the error names it (remove it, then `claude auth login`).");
     if lock_mcp {
-        stderr_note("  - --lock-mcp: allowManagedMcpServersOnly limits MCP to codebase-memory-mcp and serena. Plugin MCP servers (e.g. the");
+        stderr_note("  - --lock-mcp: allowManagedMcpServersOnly allows no MCP server (the kit mirrors none). Plugin MCP servers (e.g. the");
         stderr_note("    Discord Channels plugin) are blocked unless added to allowedMcpServers. A plugin server registers as");
         stderr_note("    `plugin:<plugin>:<server>` (https://code.claude.com/docs/en/mcp); whether allowedMcpServers `serverName` matches that");
         stderr_note("    scoped name is not verified (managed-mcp docs not confirmed) - test with /mcp after installing.");
@@ -2264,7 +2198,6 @@ fn kit_status_json(env: &Env, dir: &Path) -> Value {
     let hooks: serde_json::Map<String, Value> = kit_hook_flags(&settings).iter().map(|(k, v)| (k.to_string(), json!(v))).collect();
     let claude = find_claude();
     let version = claude.as_ref().and_then(|c| crate::env_detect::cmd_version(&c.display().to_string(), &["--version"])).unwrap_or_default();
-    let onoff = |b: bool| if b { "on" } else { "off" };
     json!({
         "schema": 1,
         "kit_version": kit_version(env),
@@ -2273,10 +2206,6 @@ fn kit_status_json(env: &Env, dir: &Path) -> Value {
         "skills": {
             "linked": linked_bundled_skills(&env.home, &dir.join("skills")).len(),
             "libraries": deploy::skill_libraries(&env.home).iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
-        },
-        "mcp": {
-            "cbm": onoff(crate::verbs::harness::cbm::enabled(&env.home)),
-            "serena": onoff(crate::verbs::harness::serena::enabled(&env.home)),
         },
         "claude": { "found": claude.is_some(), "version": version },
     })
@@ -2593,8 +2522,6 @@ mod tests {
         assert_eq!(v["hooks"]["guard"], true);
         assert_eq!(v["hooks"]["watchdog"], false);
         assert!(v["skills"]["libraries"].is_array());
-        assert!(matches!(v["mcp"]["cbm"].as_str(), Some("on" | "off")));
-        assert!(matches!(v["mcp"]["serena"].as_str(), Some("on" | "off")));
         assert!(v["claude"]["found"].is_boolean());
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -2714,7 +2641,7 @@ mod tests {
                 "PreToolUse": [{ "matcher": "AskUserQuestion", "hooks": [{ "type": "prompt", "prompt": "8sync gate: ask. v1", "model": "claude-sonnet-5" }] }]
             }
         });
-        let skills: Vec<String> = ["ship", "codegraph", "impeccable", "ponytail", "taste"].map(String::from).to_vec();
+        let skills: Vec<String> = ["ship", "trail", "impeccable", "ponytail", "taste"].map(String::from).to_vec();
         apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
         let stop = v["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.iter().filter(|g| g["hooks"][0]["prompt"].is_string()).count(), 0, "Haiku stop gate retired");
@@ -2725,7 +2652,7 @@ mod tests {
         let o = &v["skillOverrides"];
         assert_eq!(o["impeccable"], "off", "user value kept");
         assert_eq!(o["taste"], "name-only");
-        assert!(o.get("ship").is_none() && o.get("codegraph").is_none() && o.get("ponytail").is_none(), "core skills untouched");
+        assert!(o.get("ship").is_none() && o.get("trail").is_none() && o.get("ponytail").is_none(), "core skills untouched");
         assert_eq!(v["hooks"]["SessionStart"][0]["matcher"], "startup|resume|clear|compact");
         let once = v.clone();
         apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
@@ -2937,7 +2864,7 @@ mod tests {
         assert!(p.get("allowManagedMcpServersOnly").is_none() && p.get("allowedMcpServers").is_none());
         let locked = org_policy_with(None, None, true);
         assert_eq!(locked["allowManagedMcpServersOnly"], true);
-        assert!(locked["allowedMcpServers"].as_array().unwrap().iter().any(|m| m["serverName"] == "serena"));
+        assert!(locked["allowedMcpServers"].as_array().unwrap().is_empty());
         let lower = text.to_lowercase();
         assert!(["sk-ant", "ghp_", "api_key", "apikey", "bearer "].iter().all(|n| !lower.contains(n)));
     }
@@ -3135,7 +3062,7 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         let env = Env { home: home.clone(), xdg_config: home.join(".config"), os_id: String::new(), os_id_like: String::new() };
         let dir = tmp.join("claude");
-        install_kit_at(&env, &dir, false, true).unwrap();
+        install_kit_at(&env, &dir, false).unwrap();
         assert!(dir.join("settings.json").exists() && dir.join("CLAUDE.md").exists());
         assert!(dir.join("agents/explore.md").exists());
         assert!(!home.join(".claude.json").exists(), "offline kit must not touch MCP config");
@@ -3166,7 +3093,7 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         let env = Env { home: home.clone(), xdg_config: home.join(".config"), os_id: String::new(), os_id_like: String::new() };
         let dir = tmp.join("claude");
-        install_kit_at(&env, &dir, false, true).unwrap();
+        install_kit_at(&env, &dir, false).unwrap();
         let reg = std::fs::read_to_string(dir.join("skills/8sync-inbox/hooks/register.ts")).unwrap();
         assert_eq!(reg, assets::read("configs/claude/mods/8sync-inbox/hooks/register.ts").unwrap());
         assert!(reg.contains("'8sync', 'ccc', 'inbox'") && reg.contains("$.prompt.submit"), "the mod takes the inbox and submits it");
@@ -3176,7 +3103,7 @@ mod tests {
     }
 
     /// The `8sync-hints` mod ships in the kit: five files under `skills/8sync-hints`, written
-    /// byte-for-byte from the repo assets (the cbm gate leaves non-markdown alone).
+    /// byte-for-byte from the repo assets (non-markdown assets are written as is).
     #[test]
     fn kit_installs_the_hints_mod() {
         let mod_files: Vec<&str> = KIT_FILES.iter().map(|(_, r)| *r).filter(|r| r.starts_with("skills/8sync-hints/")).collect();
@@ -3190,7 +3117,7 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         let env = Env { home: home.clone(), xdg_config: home.join(".config"), os_id: String::new(), os_id_like: String::new() };
         let dir = tmp.join("claude");
-        install_kit_at(&env, &dir, false, true).unwrap();
+        install_kit_at(&env, &dir, false).unwrap();
         let reg = std::fs::read_to_string(dir.join("skills/8sync-hints/hooks/register.tsx")).unwrap();
         assert_eq!(reg, assets::read("configs/claude/mods/8sync-hints/hooks/register.tsx").unwrap());
         assert!(reg.contains("'8sync', 'ccc', 'hint'"), "the mod calls the Rust side");

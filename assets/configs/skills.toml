@@ -11,6 +11,6 @@ when = "always"
 src  = "builtin:8sync-cli"
 when = "always"
 
-[codegraph]
-src  = "builtin:codegraph"
+[trail]
+src  = "builtin:trail"
 when = "always"

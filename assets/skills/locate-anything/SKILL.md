@@ -24,7 +24,7 @@ adds a **click-center** per box so you can drive the `browser` tool straight to 
 | --- | --- |
 | "What does this screen say / what's the error?" (describe) | **Look yourself** if GLM-5.3 / 5.3-Flash; **zai-vision** only if text-only |
 | "Where EXACTLY is the Sign-in button?" (coordinates to click) | **`8sync locate`** (this skill) |
-| Read structure of a graph/dashboard | render + read as image (`8sync shot`, image-routing); codegraph canvas: `8sync shot 'http://127.0.0.1:8731/codegraph?shot=1'` — non-vision models then get positions via **`8sync locate`** (automatic) |
+| Read structure of a graph/dashboard | render + read as image (`8sync shot`, image-routing) — non-vision models then get positions via **`8sync locate`** (automatic) |
 | Precise code/config/text | read as TEXT (never image) |
 
 Self-check: if the next action is a **click / crop / measure at a pixel**, you want a
