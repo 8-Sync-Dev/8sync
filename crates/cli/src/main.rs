@@ -177,6 +177,23 @@ enum Cmd {
         rest: Vec<String>,
     },
 
+    /// Screen off + lock now while Claude keeps working (= `8sync ccc sleep work`); `8sync sleep off`
+    #[command(disable_help_flag = true)]
+    Sleep {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
+
+    /// Keep the machine light for long sessions (= `8sync ccc eco …`): usage now, eco pass, run at logon
+    #[command(disable_help_flag = true)]
+    Eco {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
+
+    /// 8sync as an MCP server for Claude Desktop / Cowork / Claude Code: 8sync mcp install
+    Mcp(verbs::mcp::Args),
+
     /// Always-on guard: alerts Claude Code + you and SIGTERMs runaway harness helpers (MCP servers, LSPs, index workers)
     Watchdog(verbs::watchdog::Args),
 
@@ -205,7 +222,7 @@ fn main() -> Result<()> {
     };
     let hook = matches!(&cli.cmd, Some(Cmd::Ccc(a)) if a.is_hook())
         || matches!(&cli.cmd, Some(Cmd::Hq(a)) if a.is_hook());
-    if !hook && !matches!(cli.cmd, Some(Cmd::Up(_)) | Some(Cmd::Setup(_)) | Some(Cmd::Help)) {
+    if !hook && !matches!(cli.cmd, Some(Cmd::Up(_)) | Some(Cmd::Setup(_)) | Some(Cmd::Help) | Some(Cmd::Mcp(_))) {
         verbs::selfup::auto_check_notice();
     }
     match cli.cmd {
@@ -248,6 +265,9 @@ fn main() -> Result<()> {
         Some(Cmd::Ccc(a))     => verbs::ccc::run(a),
         Some(Cmd::Awake { rest }) => verbs::ccc::run(verbs::ccc::Args { rest: std::iter::once("awake".to_string()).chain(rest).collect() }),
         Some(Cmd::Stop { rest }) => verbs::ccc::run(verbs::ccc::Args { rest: std::iter::once("stop".to_string()).chain(rest).collect() }),
+        Some(Cmd::Sleep { rest }) => verbs::ccc::run(verbs::ccc::Args { rest: std::iter::once("sleep".to_string()).chain(rest).collect() }),
+        Some(Cmd::Eco { rest }) => verbs::ccc::run(verbs::ccc::Args { rest: std::iter::once("eco".to_string()).chain(rest).collect() }),
+        Some(Cmd::Mcp(a)) => verbs::mcp::run(a),
         Some(Cmd::Completions(a)) => verbs::completions::run(a),
         Some(Cmd::Watchdog(a)) => verbs::watchdog::run(a),
         Some(Cmd::Learn(a)) => verbs::learn::run(a),

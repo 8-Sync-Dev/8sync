@@ -4,11 +4,11 @@
 /// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
 #[cfg(test)]
 pub(super) const VERBS: &[&str] =
-    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "msg", "ls", "list", "urgent", "goal", "standup", "know", "rm", "new", "compact", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet", "term", "stop", "awake"];
+    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "msg", "ls", "list", "urgent", "goal", "standup", "know", "rm", "new", "compact", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet", "term", "stop", "awake", "eco", "sleep"];
 
 /// Words that look like verbs: never a session name, never a headless claude launch.
 /// Includes hook sub-verbs people type without `hook`.
-pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "msg", "know", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet", "term", "stop", "awake"];
+pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "msg", "know", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet", "term", "stop", "awake", "eco", "sleep"];
 
 pub(super) const TEXT: &str = "\
 8sync ccc — Claude Code + kit của 8 Sync. Mọi lệnh (chạy `8sync ccc <verb>`):
@@ -79,10 +79,12 @@ XEM
   8sync hq ui                       dashboard HQ trong trình duyệt
   8sync ccc hint [--complete <token>] [--json]   gợi ý prompt kế (ghost text), band trên prompt, typeahead /skill · 8sync · ccc — mod 8sync-hints gọi
   8sync ccc inbox [--session <id>] [--json]   lấy task/tin HQ đang chờ cho phiên rảnh (một lần, masked) — mod 8sync-inbox gọi
+  8sync ccc sleep (= 8sync sleep) work [--hours N] [--screen-off PHÚT] [--no-lock] [--force] | off | status [--json]   tắt màn hình + khoá máy ngay (Win+L), máy vẫn thức cho Claude Desktop / Claude Code làm tiếp; chạm chuột/phím là sáng lại, tự tắt lại sau 2 phút; Modern Standby: không tự tắt màn hình trừ --force
+  8sync ccc eco (= 8sync eco) [status|tick|run|install|uninstall|set ram|cpu <%>|set battery on|off] [--json]   máy đang dùng bao nhiêu (RAM, CPU, GPU, W, pin, Claude Code/node) + giữ máy nhẹ cho phiên chạy lâu: hạ ưu tiên tiến trình phiên sinh ra, Efficiency mode khi chạy pin/RAM-CPU chạm ngưỡng (80/75%), trả RAM helper; `install` chạy nền khi đăng nhập (không cần auto)
   8sync completions <bash|zsh|fish|powershell|elvish>   script tab-completion cho lệnh 8sync (nguồn vào shell rc)
 
 AN TOÀN
-  8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|permit|wake>
+  8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|permit|wake|plugin <hook>>
                                hook do kit đăng ký, không gõ tay
   8sync ccc risk [--base <ref>] [--paths a,b] [--release] [--json]   gate bắt buộc cho diff này từ tên file đổi (token nguyên từ, không đọc nội dung): /sec luôn; /rules + /aup-audit khi đụng auth · data · messaging · third-party · release · high-risk (+ người review) hoặc có --release; /harden khi đụng .claude/ · settings · hook của kit
   8sync ccc term <session-id> [--cols 120] [--rows 34]   terminal thật của một phòng nền cho HQ web: chạy `claude attach` trong pseudo-terminal (ConPTY trên Windows), stdin nhận JSON {\"i\":\"phím\"} hoặc {\"r\":[cột,dòng]}, stdout là màn hình; đóng stdin chỉ rời phòng, phòng vẫn chạy

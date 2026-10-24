@@ -14,7 +14,16 @@ Role-routed subagents and the delivery skills from [8sync](https://get.8syncdev.
 
 ## What it runs and sends
 
-The plugin is Markdown only: no hooks, no MCP servers, no scripts, no settings changes, and no network calls of its own. The skills ask Claude to run commands in your repository with your normal permission prompts: `git`, `gh` (pull requests, CI runs), your project's build, test and lint commands, and `8sync` subcommands when the binary is installed. The researcher and verifier agents read web pages with Claude Code's own web tools. Nothing goes to 8 Sync.
+Agents and skills are Markdown. The plugin also ships `hooks/hooks.json`: seven hooks (secret and destructive-command guard before Bash/PowerShell/Edit/Write, verify after edits, stop gate, session start digest, resume note after an API error, watchdog alerts). Each one runs `8sync ccc hook plugin <name>` and does nothing when:
+
+- the `8sync` binary is neither on `PATH` nor at the installer's default location (`~/.local/bin`, `%LOCALAPPDATA%\Programs\8sync`): the hook exits 0 at once, or
+- `8sync ccc kit` already registered the same hook in `~/.claude/settings.json` (so no hook runs twice).
+
+No MCP servers, no settings changes, and no network calls of its own. The skills ask Claude to run commands in your repository with your normal permission prompts: `git`, `gh` (pull requests, CI runs), your project's build, test and lint commands, and `8sync` subcommands when the binary is installed. The researcher and verifier agents read web pages with Claude Code's own web tools. Nothing goes to 8 Sync.
+
+## Claude Desktop and Cowork
+
+`8sync mcp install` registers 8sync as a local MCP server in Claude Desktop (`claude_desktop_config.json`; restart the app after). Tools: `machine` (RAM, CPU, GPU, watts, battery now), `sessions`, `board`, `queue`, `knowledge`, `report`, `kit`, and two writes, `queue_add` and `know_add`. Add `--claude-code` to register it in Claude Code too. `8sync eco install` keeps long sessions light in the background (see `8sync eco`).
 
 ## The full kit
 

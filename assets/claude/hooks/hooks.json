@@ -1,0 +1,94 @@
+{
+  "description": "8sync safety and quality gates (secret/destructive-command guard, verify after edits, stop gate, resume note). Each hook finds the 8sync binary on PATH or at the installer's default location, is a no-op when it is not installed, and stays silent when `8sync ccc kit` already registered the same hook in settings.json. The guard fails closed if 8sync is installed but crashes.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin session-start",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin guard",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin verify",
+            "asyncRewake": true,
+            "timeout": 600
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin watchdog",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin verify-stop",
+            "timeout": 600
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin stop-failure",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin resume-note",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin watchdog",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
