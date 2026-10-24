@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.81: STEP 0 = Trail-code (`8sync trail`); codegraph, codebase-memory-mcp, serena removed with one-time legacy cleanup.
 v0.110.79: `8sync mcp install --pc` — Claude Desktop controls the PC through server `8sync-pc` (pc_run/read/write/list) behind the ccc guard, credential-path refusals, audit log and `8sync mcp pc on|off`.
 v0.110.78: sleep work / eco / mcp; size ceiling 8192 KiB.
 v0.110.77: `8sync stop all` — auto off + omp off, `auto down` every known root, stop leftover background Claude sessions (live: 16 rooms stopped, RAM 49% → 37.5%).

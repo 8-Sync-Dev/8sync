@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.81] — 2026-10-24
+
 ### Changed
 - **STEP 0 đổi từ codegraph / codebase-memory-mcp / serena sang Trail-code (`trail`)** (owner: xem video Graft, nay là Trail-code, MIT: "xoá hẳn 3 tool cũ khỏi harness, thay bằng trail"). `trail ask|grep|skeleton|callers|map` là bản đồ code tree-sitter chạy local, không gọi model; `trail note` ghi bài học bền vào `.trail/learnings/`. Mọi chỗ sinh luật (khối `8sync:skills` trong AGENTS.md/CLAUDE.md/`.cursor`, `APPEND_SYSTEM.md`, `00-force-load.md`, rule TTSR `code-intel-first`, `bashInterceptor` trong `models.toml`, help, README, docs) giờ nói "trail trước, `Read` chỉ khi sắp sửa". Skill CORE `codegraph` → skill bundled mới `trail` (bundled 29 → 28 skill: bỏ `codegraph` và `token-bench`).
 - `8sync harness` / `up` / `init` / `global` / `setup` / `doctor` / `toolstats` / `eval` / dashboard: bỏ hẳn cài đặt, đăng ký MCP, index và kiểm tra của codegraph, cbm, serena (`harness cbm|serena on|off`, `EIGHTSYNC_CBM`, `EIGHTSYNC_SERENA`, `ensure_serena_mcp`, `index_codebase_memory`, `mirror_mcp` của kit Claude Code, trang Codegraph của dashboard, route `/api/codegraph/*`). Cờ bật tắt chung của ccc (idle/delegate/fence/skill_libraries) tách ra `harness/features.rs`. `harness up` chạy `trail build`; `ccc policy --lock-mcp` không còn allowlist mặc định; phòng "lean" của ccc chỉ còn tắt plugin LSP; watchdog và pressure guard không còn tên riêng của 3 tool. Xoá submodule `reference/codebase-memory-mcp` và `.serena/`.
