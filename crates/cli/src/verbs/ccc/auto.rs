@@ -1376,7 +1376,8 @@ pub(super) fn starved(home: &Path, root: &Path, rooms: &[(String, String)], now:
 /// no room named (`--as`) and no room env at all. A room in a worktree that forgot `--as`, an omp
 /// room, or a room whose forked id is not rebound yet is not the owner.
 pub(super) fn owner(who: Option<&str>, env: impl Fn(&str) -> Option<String>) -> bool {
-    who.is_none() && ["CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID"].iter().all(|k| env(k).map_or(true, |s| s.trim().is_empty()))
+    // `EIGHTSYNC_MCP`: a call a model made through `8sync mcp serve` (Claude Desktop) is not the owner's own line.
+    who.is_none() && ["CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID", "EIGHTSYNC_MCP"].iter().all(|k| env(k).map_or(true, |s| s.trim().is_empty()))
 }
 
 /// Who `auto add --now` speaks as: the `msg` label of the session it runs in, None from a terminal
@@ -2927,6 +2928,7 @@ mod tests {
         assert!(!owner(None, env(&[("CLAUDE_CODE_SESSION_ID", "e2830544")])), "a Claude Code session (unrebound fork)");
         assert!(!owner(None, env(&[("EIGHTSYNC_ROOM", "dev")])), "an omp room");
         assert!(!owner(None, env(&[("EIGHTSYNC_ROOM_ID", "omp-0123456789abcdef")])));
+        assert!(!owner(None, env(&[("EIGHTSYNC_MCP", "1")])), "a model's call through 8sync mcp");
     }
 
     fn on(hours: f64, after: u64) -> Mode {

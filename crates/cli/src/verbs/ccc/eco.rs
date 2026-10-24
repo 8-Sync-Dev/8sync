@@ -58,14 +58,26 @@ pub(super) struct Battery {
     pub saver: bool,
 }
 
-/// `/sys/class/power_supply/*` entries `(type, status, capacity, online)` → the battery, None when
-/// the machine has none.
+/// One `/sys/class/power_supply/<x>` entry.
+#[derive(Debug, Clone, Default)]
+pub(super) struct Supply {
+    pub kind: String,
+    pub status: String,
+    pub capacity: Option<u8>,
+    pub online: Option<bool>,
+    /// `Device` for a mouse/keyboard/headset battery (not the machine's).
+    pub scope: String,
+}
+
+/// `/sys/class/power_supply/*` → the machine's battery, None when it has none. A peripheral's
+/// battery (`scope=Device`, e.g. `hidpp_battery_0`) is not the machine's; any `Mains`/`USB` supply
+/// online means plugged in.
 #[cfg_attr(not(test), allow(dead_code))] // each OS uses one reader
-pub(super) fn parse_power_supply(entries: &[(String, String, Option<u8>, Option<bool>)]) -> Option<Battery> {
-    let bat = entries.iter().find(|e| e.0.eq_ignore_ascii_case("battery"))?;
-    let mains = entries.iter().find(|e| e.0.eq_ignore_ascii_case("mains")).and_then(|e| e.3);
-    let discharging = bat.1.eq_ignore_ascii_case("discharging");
-    Some(Battery { pct: bat.2.map(|p| p.min(100)), on_ac: mains.unwrap_or(!discharging) && !discharging, saver: false })
+pub(super) fn parse_power_supply(entries: &[Supply]) -> Option<Battery> {
+    let bat = entries.iter().find(|e| e.kind.eq_ignore_ascii_case("battery") && !e.scope.eq_ignore_ascii_case("device"))?;
+    let plugged = entries.iter().any(|e| (e.kind.eq_ignore_ascii_case("mains") || e.kind.to_ascii_lowercase().starts_with("usb")) && e.online == Some(true));
+    let discharging = bat.status.eq_ignore_ascii_case("discharging");
+    Some(Battery { pct: bat.capacity.map(|p| p.min(100)), on_ac: plugged || !discharging, saver: false })
 }
 
 /// `pmset -g batt` (macOS): `Now drawing from 'Battery Power'` + ` 84%;` → the battery, None when
@@ -80,7 +92,8 @@ pub(super) fn parse_pmset(s: &str) -> Option<Battery> {
 /// Windows `SYSTEM_POWER_STATUS` fields → the battery (flag 128 = no system battery).
 #[cfg_attr(not(test), allow(dead_code))] // each OS uses one reader
 pub(super) fn from_power_status(ac_line: u8, flag: u8, pct: u8, saver: u8) -> Option<Battery> {
-    if flag == 128 || flag == 255 {
+    // BatteryFlag is a bit mask: 128 = no system battery, 255 = unknown status.
+    if flag == 255 || flag & 128 != 0 {
         return None;
     }
     Some(Battery { pct: (pct <= 100).then_some(pct), on_ac: ac_line != 0, saver: saver & 1 == 1 })
@@ -119,7 +132,13 @@ pub(super) fn battery() -> Option<Battery> {
             .flatten()
             .map(|e| {
                 let p = e.path();
-                (rd(&p, "type").unwrap_or_default(), rd(&p, "status").unwrap_or_default(), rd(&p, "capacity").and_then(|c| c.parse().ok()), rd(&p, "online").map(|o| o == "1"))
+                Supply {
+                    kind: rd(&p, "type").unwrap_or_default(),
+                    status: rd(&p, "status").unwrap_or_default(),
+                    capacity: rd(&p, "capacity").and_then(|c| c.parse().ok()),
+                    online: rd(&p, "online").map(|o| o == "1"),
+                    scope: rd(&p, "scope").unwrap_or_default(),
+                }
             })
             .collect();
         parse_power_supply(&entries)
@@ -237,10 +256,16 @@ impl Mode {
     }
 }
 
-pub(super) fn mode(ram: Option<u32>, cpu: Option<u32>, bat: Option<Battery>, c: Cfg) -> Mode {
+/// Points under a threshold RAM and CPU must both fall before Hot ends (no flapping: a build at
+/// 100% CPU in Efficiency mode drops under the threshold, and must not be let out next tick).
+pub(super) const HYSTERESIS: u32 = 10;
+
+/// `was_hot`: the previous pass was Hot.
+pub(super) fn mode(ram: Option<u32>, cpu: Option<u32>, bat: Option<Battery>, c: Cfg, was_hot: bool) -> Mode {
+    let over = |v: Option<u32>, t: u32| v.is_some_and(|v| v >= if was_hot { t.saturating_sub(HYSTERESIS) } else { t });
     if c.battery && bat.is_some_and(|b| !b.on_ac || b.saver) {
         Mode::Battery
-    } else if ram.is_some_and(|r| r >= c.ram) || cpu.is_some_and(|x| x >= c.cpu) {
+    } else if over(ram, c.ram) || over(cpu, c.cpu) {
         Mode::Hot
     } else {
         Mode::Calm
@@ -287,16 +312,16 @@ fn ecoed_of(st: &Value) -> Vec<(u32, u64)> {
 }
 
 /// One pass: returns what it did (also kept in the state file for `status`).
-pub(super) fn tick(home: &Path, sampler: &Sampler) -> Value {
+pub(super) fn tick(home: &Path, sampler: Option<&Sampler>) -> Value {
     let now = now_s();
     let c = cfg(home);
-    let s = sampler.get(Duration::from_secs(5));
+    let s = sampler.map(|x| x.get(Duration::from_secs(5))).unwrap_or_default();
     let ram = reap::ram_pct(s.mem);
     let bat = battery();
-    let m = mode(ram, s.cpu_pct, bat, c);
+    let st = read_json(&state_path(home));
+    let m = mode(ram, s.cpu_pct, bat, c, st["last"]["mode"] == "hot");
     let procs = reap::list(now);
     let t = targets(&procs, std::process::id());
-    let st = read_json(&state_path(home));
     let ecoed = ecoed_of(&st);
     let team_guard = super::auto::running(home);
     let p = plan(&t, m, ram, c, &ecoed, st["trimmedAt"].as_u64().unwrap_or(0), team_guard, now);
@@ -361,7 +386,7 @@ pub(crate) fn snapshot_json(home: &Path, s: &Sample) -> Value {
             "node": { "n": n.n, "mb": n.bytes / MIB },
         })),
         "eco": {
-            "mode": mode(ram, s.cpu_pct, bat, c).key(),
+            "mode": mode(ram, s.cpu_pct, bat, c, st["last"]["mode"] == "hot").key(),
             "ramPct": c.ram, "cpuPct": c.cpu, "battery": c.battery,
             "installed": installed(home),
             "last": st["last"].clone(),
@@ -446,7 +471,6 @@ pub(super) fn snapshot_text(v: &Value) -> String {
 
 const TASK: &str = "8sync\\eco";
 const UNIT: &str = "8sync-eco.service";
-const LABEL: &str = "dev.8sync.eco";
 
 fn marker(home: &Path) -> PathBuf {
     home.join(".config/8sync/eco-installed")
@@ -463,16 +487,20 @@ pub(super) fn systemd_unit(exe: &str) -> String {
     )
 }
 
-pub(super) fn launchd_plist(exe: &str) -> String {
-    let x = exe.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+/// Windows: the logon task, registered through PowerShell's ScheduledTasks module because
+/// `schtasks /Create` keeps Task Scheduler's defaults (no start on battery, stopped when the
+/// laptop unplugs, killed after 72 h): exactly when eco matters. `conhost --headless` keeps it
+/// from opening a console window; restarted up to 3 times if it dies.
+pub(super) fn ps_register(exe: &str) -> String {
+    let q = |s: &str| s.replace('\'', "''");
+    let arg = q(&format!("--headless \"{exe}\" ccc eco run"));
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n  <key>Label</key><string>{LABEL}</string>\n  <key>ProgramArguments</key><array><string>{x}</string><string>ccc</string><string>eco</string><string>run</string></array>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>Nice</key><integer>15</integer>\n  <key>LowPriorityIO</key><true/>\n  <key>ProcessType</key><string>Background</string>\n</dict></plist>\n"
+        "$a = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument '{arg}'; \
+         $t = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME; \
+         $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew; \
+         Register-ScheduledTask -TaskPath '\\8sync\\' -TaskName 'eco' -Action $a -Trigger $t -Settings $s -Force | Out-Null; \
+         Start-ScheduledTask -TaskPath '\\8sync\\' -TaskName 'eco'"
     )
-}
-
-/// Windows: `conhost --headless` keeps the logon task from opening a console window.
-pub(super) fn schtasks_tr(exe: &str) -> String {
-    format!("conhost.exe --headless \"{exe}\" ccc eco run")
 }
 
 fn quiet(cmd: &mut Command) -> bool {
@@ -486,22 +514,15 @@ fn install(home: &Path) -> Result<()> {
         ui::warn(&format!("{exe} trông như bản build tạm: task sẽ trỏ vào đây. Cài bản phát hành rồi chạy lại nếu không muốn vậy."));
     }
     if cfg!(windows) {
-        let ok = quiet(Command::new("schtasks").args(["/Create", "/TN", TASK, "/TR", &schtasks_tr(&exe), "/SC", "ONLOGON", "/RL", "LIMITED", "/F"]));
+        let ok = quiet(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &ps_register(&exe)]));
         if !ok {
-            bail!("schtasks /Create {TASK} không thành công");
+            bail!("Register-ScheduledTask {TASK} không thành công");
         }
-        let _ = quiet(Command::new("schtasks").args(["/Run", "/TN", TASK]));
-        ui::ok(&format!("Scheduled Task `{TASK}`: chạy khi đăng nhập (ẩn cửa sổ), đã chạy ngay"));
+        ui::ok(&format!("Scheduled Task `{TASK}`: chạy khi đăng nhập, cả khi chạy pin, không giới hạn giờ, ẩn cửa sổ; đã chạy ngay"));
     } else if cfg!(target_os = "macos") {
-        let dir = home.join("Library/LaunchAgents");
-        std::fs::create_dir_all(&dir)?;
-        let plist = dir.join(format!("{LABEL}.plist"));
-        std::fs::write(&plist, launchd_plist(&exe))?;
-        let _ = quiet(Command::new("launchctl").args(["unload", "-w"]).arg(&plist));
-        if !quiet(Command::new("launchctl").args(["load", "-w"]).arg(&plist)) {
-            bail!("launchctl load {} không thành công", plist.display());
-        }
-        ui::ok(&format!("LaunchAgent {LABEL}: chạy khi đăng nhập, nice 15"));
+        // No priority read (ps), no Efficiency mode, no working-set trim on macOS yet: a service
+        // would run and change nothing. `8sync eco` (status) works there.
+        bail!("eco chạy nền chưa hỗ trợ macOS (chỉ xem: `8sync eco`)");
     } else {
         let dir = home.join(".config/systemd/user");
         std::fs::create_dir_all(&dir)?;
@@ -521,18 +542,21 @@ fn uninstall(home: &Path) -> Result<()> {
     if cfg!(windows) {
         let _ = quiet(Command::new("schtasks").args(["/End", "/TN", TASK]));
         let _ = quiet(Command::new("schtasks").args(["/Delete", "/TN", TASK, "/F"]));
-    } else if cfg!(target_os = "macos") {
-        let plist = home.join("Library/LaunchAgents").join(format!("{LABEL}.plist"));
-        let _ = quiet(Command::new("launchctl").args(["unload", "-w"]).arg(&plist));
-        let _ = std::fs::remove_file(plist);
-    } else {
+    } else if !cfg!(target_os = "macos") {
         let _ = quiet(Command::new("systemctl").args(["--user", "disable", "--now", UNIT]));
         let _ = std::fs::remove_file(home.join(".config/systemd/user").join(UNIT));
         let _ = quiet(Command::new("systemctl").args(["--user", "daemon-reload"]));
     }
-    // What eco put in Efficiency mode goes back.
+    // A loop the service manager left running (e.g. the task's conhost ended, its child not).
+    let procs = reap::list(now_s());
+    let me = std::process::id();
+    let loops: Vec<u32> = procs.iter().filter(|p| p.pid != me && p.image == "8sync" && p.cmd.contains("ccc eco run")).map(|p| p.pid).collect();
+    if !loops.is_empty() {
+        reap::kill(&loops);
+    }
+    // What eco put in Efficiency mode goes back: only the very processes (pid + start time).
     let st = read_json(&state_path(home));
-    let pids: Vec<u32> = ecoed_of(&st).into_iter().map(|(p, _)| p).collect();
+    let pids: Vec<u32> = ecoed_of(&st).into_iter().filter(|(pid, started)| procs.iter().any(|q| q.pid == *pid && q.started == *started)).map(|(p, _)| p).collect();
     let n = super::pressure::eco(&pids, false);
     let _ = std::fs::remove_file(marker(home));
     let _ = std::fs::remove_file(state_path(home));
@@ -580,8 +604,8 @@ pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
             Ok(())
         }
         Some("tick") => {
-            let sampler = Sampler::new().context("không đọc được máy (OS chưa hỗ trợ)")?;
-            let v = tick(home, &sampler);
+            let sampler = Sampler::new();
+            let v = tick(home, sampler.as_ref());
             if json_out {
                 println!("{}", serde_json::to_string_pretty(&v)?);
             } else {
@@ -593,15 +617,15 @@ pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
             // The loop itself is the lightest thing on the machine.
             super::pressure::lower(&[std::process::id()], true);
             let _ = super::pressure::eco(&[std::process::id()], true);
-            let sampler = Sampler::new().context("không đọc được máy (OS chưa hỗ trợ)")?;
+            let sampler = Sampler::new();
             loop {
-                tick(home, &sampler);
+                tick(home, sampler.as_ref());
                 std::thread::sleep(Duration::from_secs(EVERY_S));
             }
         }
         Some("install") => install(home),
         Some("uninstall") => uninstall(home),
-        Some("set") => set(home, &rest[1..]),
+        Some("set") => set(home, &args[1..].iter().map(|s| s.to_string()).collect::<Vec<_>>()),
         _ => bail!("{USAGE}"),
     }
 }
@@ -616,17 +640,24 @@ mod tests {
 
     #[test]
     fn battery_parsers() {
-        let e = |t: &str, s: &str, c: Option<u8>, o: Option<bool>| (t.to_string(), s.to_string(), c, o);
+        let e = |t: &str, s: &str, c: Option<u8>, o: Option<bool>| Supply { kind: t.into(), status: s.into(), capacity: c, online: o, scope: String::new() };
         assert_eq!(parse_power_supply(&[e("Mains", "", None, Some(true))]), None);
         let b = parse_power_supply(&[e("Mains", "", None, Some(false)), e("Battery", "Discharging", Some(64), None)]).unwrap();
         assert_eq!((b.pct, b.on_ac), (Some(64), false));
         let b = parse_power_supply(&[e("Mains", "", None, Some(true)), e("Battery", "Charging", Some(90), None)]).unwrap();
         assert!(b.on_ac);
+        // A wireless mouse's battery is not the machine's: a desktop has none.
+        let mouse = Supply { scope: "Device".into(), ..e("Battery", "Discharging", Some(40), None) };
+        assert_eq!(parse_power_supply(&[e("Mains", "", None, Some(true)), mouse.clone()]), None);
+        // Plugged in over USB-C while the battery still reports discharging (some firmware).
+        let b = parse_power_supply(&[mouse, e("USB", "", None, Some(true)), e("Battery", "Discharging", Some(70), None)]).unwrap();
+        assert!(b.on_ac && b.pct == Some(70));
         let mac = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1234)\t84%; discharging; 4:10 remaining present: true";
         assert_eq!(parse_pmset(mac), Some(Battery { pct: Some(84), on_ac: false, saver: false }));
         assert_eq!(parse_pmset("Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged;").map(|b| b.on_ac), Some(true));
         assert_eq!(parse_pmset("Now drawing from 'AC Power'\n"), None);
         assert_eq!(from_power_status(1, 128, 255, 0), None);
+        assert_eq!(from_power_status(1, 128 | 8, 255, 0), None, "a bit mask: no battery + charging bits");
         assert_eq!(from_power_status(0, 0, 55, 1), Some(Battery { pct: Some(55), on_ac: false, saver: true }));
         assert_eq!(from_power_status(1, 8, 255, 0).map(|b| b.pct), Some(None));
     }
@@ -635,13 +666,18 @@ mod tests {
     fn mode_prefers_battery_then_load() {
         let c = Cfg::default();
         let bat = Some(Battery { pct: Some(50), on_ac: false, saver: false });
-        assert_eq!(mode(Some(10), Some(5), bat, c), Mode::Battery);
-        assert_eq!(mode(Some(10), Some(5), bat, Cfg { battery: false, ..c }), Mode::Calm);
-        assert_eq!(mode(Some(80), Some(5), None, c), Mode::Hot);
-        assert_eq!(mode(Some(10), Some(75), None, c), Mode::Hot);
-        assert_eq!(mode(None, None, None, c), Mode::Calm);
+        assert_eq!(mode(Some(10), Some(5), bat, c, false), Mode::Battery);
+        assert_eq!(mode(Some(10), Some(5), bat, Cfg { battery: false, ..c }, false), Mode::Calm);
+        assert_eq!(mode(Some(80), Some(5), None, c, false), Mode::Hot);
+        assert_eq!(mode(Some(10), Some(75), None, c, false), Mode::Hot);
+        assert_eq!(mode(None, None, None, c, false), Mode::Calm);
         let saver = Some(Battery { pct: Some(90), on_ac: true, saver: true });
-        assert_eq!(mode(Some(10), Some(5), saver, c), Mode::Battery);
+        assert_eq!(mode(Some(10), Some(5), saver, c, false), Mode::Battery);
+        // Hysteresis: once hot, stays hot until both are HYSTERESIS points under.
+        assert_eq!(mode(Some(40), Some(70), None, c, false), Mode::Calm);
+        assert_eq!(mode(Some(40), Some(70), None, c, true), Mode::Hot);
+        assert_eq!(mode(Some(72), Some(10), None, c, true), Mode::Hot);
+        assert_eq!(mode(Some(69), Some(64), None, c, true), Mode::Calm);
     }
 
     #[test]
@@ -702,9 +738,11 @@ mod tests {
     fn service_files_run_eco_low_and_hidden() {
         let u = systemd_unit("/home/a/.local/bin/8sync");
         assert!(u.contains("ExecStart=\"/home/a/.local/bin/8sync\" ccc eco run") && u.contains("Nice=15") && u.contains("CPUQuota=5%"));
-        let pl = launchd_plist("/usr/local/bin/8sync");
-        assert!(pl.contains("<string>/usr/local/bin/8sync</string><string>ccc</string><string>eco</string><string>run</string>") && pl.contains("<key>KeepAlive</key><true/>"));
-        assert_eq!(schtasks_tr(r"C:\Users\a\.local\bin\8sync.exe"), r#"conhost.exe --headless "C:\Users\a\.local\bin\8sync.exe" ccc eco run"#);
+        let ps = ps_register(r"C:\Users\O'Neil\AppData\Local\Programs\8sync\8sync.exe");
+        assert!(ps.contains(r#"-Argument '--headless "C:\Users\O''Neil\AppData\Local\Programs\8sync\8sync.exe" ccc eco run'"#), "{ps}");
+        for need in ["-AllowStartIfOnBatteries", "-DontStopIfGoingOnBatteries", "-ExecutionTimeLimit ([TimeSpan]::Zero)", "-AtLogOn", r"-TaskPath '\8sync\'", "Start-ScheduledTask"] {
+            assert!(ps.contains(need), "{need} missing: {ps}");
+        }
     }
 
     #[test]

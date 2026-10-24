@@ -1,5 +1,5 @@
 {
-  "description": "8sync safety and quality gates (secret/destructive-command guard, verify after edits, stop gate, resume note). Each hook is a no-op when the 8sync binary is missing or when `8sync ccc kit` already registered it in settings.json.",
+  "description": "8sync safety and quality gates (secret/destructive-command guard, verify after edits, stop gate, resume note). Each hook finds the 8sync binary on PATH or at the installer's default location, is a no-op when it is not installed, and stays silent when `8sync ccc kit` already registered the same hook in settings.json. The guard fails closed if 8sync is installed but crashes.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin session-start",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin session-start",
             "timeout": 10
           }
         ]
@@ -19,8 +19,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin guard",
-            "timeout": 30
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin guard",
+            "timeout": 30,
+            "onFailure": "block"
           }
         ]
       }
@@ -31,7 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin verify",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin verify",
             "asyncRewake": true,
             "timeout": 600
           }
@@ -41,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin watchdog",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin watchdog",
             "timeout": 5
           }
         ]
@@ -52,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin verify-stop",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin verify-stop",
             "timeout": 600
           }
         ]
@@ -63,7 +64,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin stop-failure",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin stop-failure",
             "timeout": 5
           }
         ]
@@ -74,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin resume-note",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin resume-note",
             "timeout": 5
           }
         ]
@@ -83,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin watchdog",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin watchdog",
             "timeout": 5
           }
         ]

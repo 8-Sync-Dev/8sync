@@ -2961,12 +2961,14 @@ mod tests {
         let plugin: Value = serde_json::from_str(&String::from_utf8(crate::assets::Assets::get("claude/hooks/hooks.json").unwrap().data.to_vec()).unwrap()).unwrap();
         let text = plugin.to_string();
         for h in PLUGIN_HOOKS {
-            assert!(text.contains(&format!("8sync ccc hook plugin {h}")), "{h} missing from the plugin");
+            assert!(text.contains(&format!("ccc hook plugin {h}\"")), "{h} missing from the plugin");
         }
         for c in plugin["hooks"].as_object().unwrap().values().flat_map(|g| g.as_array().unwrap()).flat_map(|g| g["hooks"].as_array().unwrap()) {
             let cmd = c["command"].as_str().unwrap();
-            assert!(cmd.starts_with("command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin "), "{cmd}");
+            assert!(cmd.starts_with("B=$(command -v 8sync ") && cmd.contains("[ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin "), "{cmd}");
         }
+        // The guard fails closed like the kit's copy (a crash blocks, a missing binary does not).
+        assert_eq!(plugin["hooks"]["PreToolUse"][0]["hooks"][0]["onFailure"], "block");
     }
 
     #[test]

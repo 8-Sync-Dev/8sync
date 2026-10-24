@@ -16,7 +16,7 @@ Role-routed subagents and the delivery skills from [8sync](https://get.8syncdev.
 
 Agents and skills are Markdown. The plugin also ships `hooks/hooks.json`: seven hooks (secret and destructive-command guard before Bash/PowerShell/Edit/Write, verify after edits, stop gate, session start digest, resume note after an API error, watchdog alerts). Each one runs `8sync ccc hook plugin <name>` and does nothing when:
 
-- the `8sync` binary is not on `PATH` (the hook exits 0 at once), or
+- the `8sync` binary is neither on `PATH` nor at the installer's default location (`~/.local/bin`, `%LOCALAPPDATA%\Programs\8sync`): the hook exits 0 at once, or
 - `8sync ccc kit` already registered the same hook in `~/.claude/settings.json` (so no hook runs twice).
 
 No MCP servers, no settings changes, and no network calls of its own. The skills ask Claude to run commands in your repository with your normal permission prompts: `git`, `gh` (pull requests, CI runs), your project's build, test and lint commands, and `8sync` subcommands when the binary is installed. The researcher and verifier agents read web pages with Claude Code's own web tools. Nothing goes to 8 Sync.

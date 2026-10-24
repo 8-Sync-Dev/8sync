@@ -23,6 +23,8 @@ use crate::ui;
 /// Protocol revisions this server speaks; a client asking for another gets the newest.
 const PROTOCOLS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long the output readers get once the child ended (or was killed).
+const READ_GRACE: Duration = Duration::from_secs(3);
 /// Characters of a tool's output handed back (the rest is cut with a note).
 const OUT_MAX: usize = 40_000;
 /// Longest task / lesson text a write tool takes.
@@ -242,35 +244,34 @@ fn run_self(args: &[String], cwd: Option<&Path>) -> Result<(bool, String)> {
         c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     let mut child = c.spawn().context("could not start 8sync")?;
-    let (mut out, mut err) = (child.stdout.take(), child.stderr.take());
-    let ro = std::thread::spawn(move || {
-        let mut s = String::new();
-        if let Some(o) = out.as_mut() {
-            let _ = o.read_to_string(&mut s);
-        }
-        s
-    });
-    let re = std::thread::spawn(move || {
-        let mut s = String::new();
-        if let Some(e) = err.as_mut() {
-            let _ = e.read_to_string(&mut s);
-        }
-        s
-    });
+    // Readers report over channels: a grandchild still holding a pipe after a timeout must not
+    // hang the server (the joins below wait at most READ_GRACE).
+    let reader = |pipe: Option<Box<dyn Read + Send>>| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut s = String::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_string(&mut s);
+            }
+            let _ = tx.send(s);
+        });
+        rx
+    };
+    let ro = reader(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let re = reader(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
     let start = Instant::now();
     let status = loop {
         if let Some(st) = child.try_wait()? {
             break Some(st);
         }
         if start.elapsed() > CALL_TIMEOUT {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_tree(&mut child);
             break None;
         }
         std::thread::sleep(Duration::from_millis(50));
     };
-    let mut text = ro.join().unwrap_or_default();
-    let e = re.join().unwrap_or_default();
+    let mut text = ro.recv_timeout(READ_GRACE).unwrap_or_default();
+    let e = re.recv_timeout(READ_GRACE).unwrap_or_default();
     if !e.trim().is_empty() {
         if !text.is_empty() {
             text.push('\n');
@@ -284,6 +285,17 @@ fn run_self(args: &[String], cwd: Option<&Path>) -> Result<(bool, String)> {
         Some(_) => text,
     };
     Ok((ok, cut(&text)))
+}
+
+/// The child and, on Windows, everything it started (`taskkill /T`); unix: the child.
+fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill").args(["/T", "/F", "/PID", &child.id().to_string()]).creation_flags(0x0800_0000).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 pub(crate) fn strip_ansi(s: &str) -> String {
@@ -456,17 +468,24 @@ pub(crate) fn merged(config: Option<&str>, entry: Option<&Value>) -> Result<Valu
     Ok(v)
 }
 
+/// Whether `config` has `mcpServers.8sync` (uninstall leaves other files alone).
+pub(crate) fn has_entry(config: &str) -> bool {
+    serde_json::from_str::<Value>(config).is_ok_and(|v| v["mcpServers"].get(NAME).is_some())
+}
+
 fn write_config(p: &Path, entry: Option<&Value>) -> Result<bool> {
     let old = std::fs::read_to_string(p).ok();
-    if entry.is_none() && old.is_none() {
+    if entry.is_none() && !old.as_deref().is_some_and(has_entry) {
         return Ok(false);
     }
     let v = merged(old.as_deref(), entry)?;
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
     }
-    if let Some(o) = &old {
-        std::fs::write(p.with_extension("json.bak-8sync"), o)?;
+    // The first backup is the owner's own file: never overwritten by a later install.
+    let bak = p.with_extension("json.bak-8sync");
+    if let (Some(o), false) = (&old, bak.exists()) {
+        std::fs::write(&bak, o)?;
     }
     let tmp = p.with_extension("json.tmp-8sync");
     std::fs::write(&tmp, serde_json::to_string_pretty(&v)? + "\n")?;
@@ -607,6 +626,7 @@ mod tests {
         assert!(v["mcpServers"].get("8sync").is_none() && v["mcpServers"]["fs"].is_object());
         assert_eq!(merged(None, Some(&e)).unwrap()["mcpServers"]["8sync"]["command"], "C:\\Users\\a\\.local\\bin\\8sync.exe");
         assert!(merged(Some("{not json"), Some(&e)).is_err());
+        assert!(has_entry(r#"{"mcpServers":{"8sync":{}}}"#) && !has_entry(r#"{"mcpServers":{"fs":{}}}"#) && !has_entry("{bad"));
         assert!(merged(Some("[1]"), Some(&e)).is_err());
         assert!(merged(Some(r#"{"mcpServers":[]}"#), Some(&e)).is_err());
     }
