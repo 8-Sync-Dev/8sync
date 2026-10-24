@@ -651,3 +651,5 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - validated: (2026-10-23) RAM thật mỗi phòng Claude nền ≈ 450 MB phiên + ~140 MB pty-host; phòng omp ≈ 1,3 GB (MCP mỗi phiên). Ngốn RAM lớn của máy owner là app ngoài fleet (omnivoice 2,3 GB, Edge 3,8, ChatGPT 2,1, WSL 2,3) + serena/headroom MCP mỗi phiên (12 + 10 tiến trình ≈ 1,1 GB) + WmiPrvSE (đã bỏ WMI).
 
 - validated: (2026-10-23) `8sync stop all` live: 2 dự án, 15 phòng qua `auto down` + 1 phòng nền sót (dev2-platform trong card worktree, không thuộc registry) qua `claude agents --json` không `--cwd` → RAM 30,1 → 23,1 GB. Phòng nền sót ngoài registry có thật — stop-all phải quét cả danh sách toàn cục, không chỉ team roots.
+
+- validated: PC control for Claude Desktop = second stdio MCP server `8sync-pc` (`8sync mcp install --pc`); reuses `ccc::guard_command` (danger.rs) + path/command credential refusals + audit log + `8sync mcp pc off` switch. Smoke: wipe of home denied, ~/.ssh read refused, delete outside project -> NEED_CONFIRM, hostname ran. Claude Desktop must be fully quit and reopened to load it. (2026-10-24)

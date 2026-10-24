@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.79] — 2026-10-24
+### Added
+- **`8sync mcp install --pc`: Claude Desktop điều khiển cả máy, có guard cứng** (owner: "claude desktop control all máy … an toàn sec cứng chỉ claude desktop được all quyền"). Thêm server MCP thứ hai `8sync-pc` (`8sync mcp serve --pc`, chỉ stdio, từ chối chạy khi stdin là terminal) với 4 tool: `pc_run` (PowerShell), `pc_read`, `pc_write`, `pc_list`. `pc_run` đi qua đúng guard lệnh phá dữ liệu của Claude Code (`ccc::guard_command`): xoá root/home/project, format đĩa, force-push bị từ chối; lệnh chỉ đáng ngờ trả `NEED_CONFIRM` và chỉ chạy khi gọi lại với `confirmed=true` sau khi owner đồng ý trong chat. Credential không tool nào chạm được: `.env*`, `.ssh`/`.aws`/`.gnupg`/`.kube`, khoá riêng, `Login Data`/`Cookies` của trình duyệt, file credential git/npm/omp/Claude, `*.pem|pfx|key|kdbx`. Mọi lệnh ghi vào `pc-audit.jsonl`; công tắc `8sync mcp pc on|off|status` tắt hết mà không sửa config của Claude Desktop; `8sync mcp uninstall` gỡ cả hai entry. Đăng nhập, mật khẩu, đổi cài đặt hệ thống/bảo mật vẫn là việc của owner.
+
 ## [0.110.78] — 2026-10-24
 ### Added
 - **`8sync sleep work`** (= `8sync ccc sleep work`; owner: "màn hình tắt mà claude desktop vẫn làm việc an toàn … chỉ tỉnh khi tôi click chuột hoặc bấm phím, giống lock sleep"): giữ máy thức (hold không theo phòng, vì việc của Claude Desktop không hiện trong `claude agents`; hold `awake on` đang theo phòng được thay), đợi 1,5 s cho phím Enter nhả, khoá phiên (Windows `LockWorkStation` như Win+L; Linux `loginctl lock-session`; macOS `pmset displaysleepnow`) rồi tắt màn hình. Chạm chuột/phím là sáng lại (nhập mật khẩu), màn hình tự tắt lại sau 2 phút không ai đụng; mặc định 8 giờ (`--hours`, tối đa 24), `--no-lock`, máy Modern Standby không tự tắt màn hình trừ `--force`. `8sync sleep off` nhả, `8sync sleep status` xem. Gập nắp laptop thì máy vẫn ngủ. Test +1.

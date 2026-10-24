@@ -43,3 +43,4 @@ pub mod session_cmds;
 pub mod secret_mask;
 pub mod completions;
 pub mod mcp;
+pub mod mcp_pc;
