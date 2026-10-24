@@ -131,6 +131,17 @@ mod win {
     const WM_SYSCOMMAND: u32 = 0x0112;
     const SC_MONITORPOWER: usize = 0xF170;
 
+    #[link(name = "user32")]
+    extern "system" {
+        fn LockWorkStation() -> i32;
+    }
+
+    /// Lock the session (the Win+L screen); apps and background work keep running.
+    pub fn lock() -> bool {
+        // SAFETY: no arguments; returns non-zero when the lock was started.
+        unsafe { LockWorkStation() != 0 }
+    }
+
     /// Screen off until the next input (or an app that forces it on). Posted, so a hung window
     /// can't block the loop.
     pub fn screen_off() {
@@ -491,6 +502,148 @@ pub(super) fn off(home: &Path) -> Result<()> {
     Ok(())
 }
 
+// ── `8sync sleep work`: screen off + lock now, machine and Claude keep working ─────────────────
+
+pub(super) const SLEEP_USAGE: &str = "usage: 8sync sleep work [--hours N] [--screen-off PHÚT] [--no-lock] [--force]   (tắt màn hình + khoá máy ngay, máy vẫn thức cho Claude Desktop / Claude Code làm tiếp; chạm chuột/phím là sáng lại; mặc định 8 giờ, màn hình tự tắt lại sau 2 phút không ai đụng)\n       8sync sleep off   (nhả giữ thức: máy ngủ lại theo cài đặt nguồn)\n       8sync sleep status [--json]";
+
+/// After a glance at the screen, how soon it goes dark again (minutes).
+const SLEEP_SCREEN_OFF_MIN: u64 = 2;
+/// The key that ran the command is still going up: a screen turned off before that comes back on.
+const KEY_RELEASE: Duration = Duration::from_millis(1500);
+
+#[derive(Debug, PartialEq)]
+pub(super) struct SleepOpts {
+    pub hours: f64,
+    pub screen_off: u64,
+    pub lock: bool,
+    /// Turn the screen off even on a Modern Standby machine.
+    pub force: bool,
+}
+
+pub(super) fn parse_sleep(rest: &[String]) -> Result<SleepOpts> {
+    let mut o = SleepOpts { hours: DEFAULT_HOURS, screen_off: SLEEP_SCREEN_OFF_MIN, lock: true, force: false };
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--hours" => {
+                let Some(h) = it.next().and_then(|v| v.parse::<f64>().ok()).filter(|h| h.is_finite() && *h > 0.0) else { bail!("--hours cần một số > 0\n{SLEEP_USAGE}") };
+                o.hours = h.min(MAX_HOURS);
+            }
+            "--screen-off" => {
+                let Some(m) = it.next().and_then(|v| v.parse::<u64>().ok()).filter(|m| *m <= 24 * 60) else { bail!("--screen-off cần số phút từ 0 tới 1440\n{SLEEP_USAGE}") };
+                o.screen_off = m;
+            }
+            "--no-lock" => o.lock = false,
+            "--force" => o.force = true,
+            x => bail!("không rõ `{x}`\n{SLEEP_USAGE}"),
+        }
+    }
+    Ok(o)
+}
+
+/// The hold `sleep work` starts: no `--while-rooms` (Claude Desktop's own work is not a room that
+/// `claude agents` lists, so a room watch would let the machine sleep under it).
+pub(super) fn work_argv(o: &SleepOpts) -> Vec<String> {
+    ["awake", "--hours", &o.hours.to_string(), "--screen-off", &o.screen_off.to_string()].map(String::from).to_vec()
+}
+
+/// What locks the session on `os` (Windows: `LockWorkStation`, an API call: None here).
+#[cfg_attr(windows, allow(dead_code))] // Windows uses the API calls instead
+pub(super) fn lock_argv(os: &str) -> Option<Vec<&'static str>> {
+    match os {
+        "linux" => Some(vec!["loginctl", "lock-session"]),
+        // Display sleep locks when "require password after sleep" is on (the macOS default).
+        "macos" => Some(vec!["pmset", "displaysleepnow"]),
+        _ => None,
+    }
+}
+
+/// What turns the screen off on `os` (Windows: `SC_MONITORPOWER`, an API call: None here).
+#[cfg_attr(windows, allow(dead_code))] // Windows uses the API calls instead
+pub(super) fn screen_argv(os: &str) -> Option<Vec<&'static str>> {
+    match os {
+        "linux" => Some(vec!["xset", "dpms", "force", "off"]),
+        "macos" => Some(vec!["pmset", "displaysleepnow"]),
+        _ => None,
+    }
+}
+
+#[cfg_attr(windows, allow(dead_code))] // Windows uses the API calls instead
+fn run_quiet(argv: &[&str]) -> bool {
+    std::process::Command::new(argv[0]).args(&argv[1..]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+}
+
+/// A hold for `sleep work`: an existing one that does not watch rooms is kept; one that does
+/// (`awake on`) is replaced, since it would let go while Claude Desktop still works.
+fn ensure_work_hold(o: &SleepOpts, home: &Path) -> Result<Pidfile> {
+    let pf = pid_path(home);
+    if let Some(h) = live_hold(read_pidfile(&pf), ident) {
+        if !h.while_rooms {
+            return Ok(h);
+        }
+        if !kill(h.pid) {
+            bail!("không thay được giữ thức đang theo phòng (pid {})", h.pid);
+        }
+        let _ = std::fs::remove_file(&pf);
+    }
+    let Some(_lock) = take_lock(&lock_path(home), LOCK_STALE)? else { bail!("một lệnh giữ thức khác đang khởi động; thử lại sau vài giây") };
+    let mut child = spawn_detached(&std::env::current_exe()?, &work_argv(o))?;
+    let end = Instant::now() + ON_WAIT;
+    loop {
+        if let Some(f) = read_pidfile(&pf).filter(|f| f.pid == child.id()) {
+            return Ok(f);
+        }
+        if let Some(st) = child.try_wait()? {
+            bail!("không giữ được máy thức: `8sync awake` thoát ({st})");
+        }
+        if Instant::now() >= end {
+            bail!("giữ thức (pid {}) chưa báo đã chạy sau {} giây", child.id(), ON_WAIT.as_secs());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// `8sync sleep …` (= `8sync ccc sleep …`).
+pub(super) fn sleep(rest: &[String], home: &Path) -> Result<()> {
+    match rest.first().map(String::as_str) {
+        Some("off") => return off(home),
+        Some("status") => return status(&rest[1..]),
+        Some("work") => {}
+        _ => bail!("{SLEEP_USAGE}"),
+    }
+    let o = parse_sleep(&rest[1..])?;
+    let h = ensure_work_hold(&o, home)?;
+    let os = std::env::consts::OS;
+    let ms = probe().modern_standby == Some(true);
+    println!("máy giữ thức (pid {}, còn {}): Claude Desktop / Claude Code làm tiếp khi màn hình tắt.", h.pid, dur_vi(h.until.saturating_sub(now_s())));
+    std::thread::sleep(KEY_RELEASE);
+    if o.lock {
+        #[cfg(windows)]
+        let locked = win::lock();
+        #[cfg(not(windows))]
+        let locked = lock_argv(os).is_some_and(|a| run_quiet(&a));
+        if !locked {
+            println!("không khoá được phiên trên {os}: màn hình vẫn tắt, nhưng ai chạm vào là thấy desktop.");
+        }
+    }
+    if ms && !o.force {
+        println!("máy có Modern Standby: 8sync không tự tắt màn hình (có thể kéo máy vào ngủ nhẹ, app bị bóp); thêm --force nếu đã thử thấy ổn.");
+    } else {
+        #[cfg(windows)]
+        win::screen_off();
+        #[cfg(not(windows))]
+        if !(os == "macos" && o.lock) && !screen_argv(os).is_some_and(|a| run_quiet(&a)) {
+            println!("không tắt được màn hình trên {os} (cần xset trên X11, hoặc để cài đặt nguồn lo).");
+        }
+    }
+    println!("chạm chuột/phím để sáng lại{}; màn hình tự tắt lại sau {} phút không ai đụng. Tắt hẳn: `8sync sleep off`. Gập nắp laptop thì máy vẫn ngủ.", if o.lock { " (nhập mật khẩu để mở khoá)" } else { "" }, o.screen_off);
+    let installed = home.join(".config/8sync/eco-installed").exists();
+    if !installed {
+        println!("gợi ý: `8sync eco install` để giữ RAM/CPU/điện nhẹ trong lúc chạy lâu.");
+    }
+    Ok(())
+}
+
 /// This hold's pidfile, or why there can't be one: without an ident `off`, `status` and the HQ
 /// switch would never recognise it, a hold nobody can stop.
 pub(super) fn own_pidfile(pid: u32, ident: Option<String>, until: u64, while_rooms: bool) -> Result<Pidfile> {
@@ -847,6 +1000,24 @@ mod probe {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sleep_work_parses_and_holds_without_a_room_watch() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(parse_sleep(&[]).unwrap(), SleepOpts { hours: DEFAULT_HOURS, screen_off: SLEEP_SCREEN_OFF_MIN, lock: true, force: false });
+        let o = parse_sleep(&v(&["--hours", "30", "--screen-off", "5", "--no-lock", "--force"])).unwrap();
+        assert_eq!(o, SleepOpts { hours: MAX_HOURS, screen_off: 5, lock: false, force: true });
+        assert!(parse_sleep(&v(&["--hours", "-1"])).is_err());
+        assert!(parse_sleep(&v(&["--wat"])).is_err());
+        let a = work_argv(&o);
+        assert_eq!(a, v(&["awake", "--hours", "24", "--screen-off", "5"]));
+        assert!(!a.iter().any(|x| x == "--while-rooms"), "Claude Desktop is not a room: no room watch");
+        // The hold argv parses back with the awake parser.
+        assert_eq!(parse(&a[1..]).unwrap(), Opts { while_rooms: false, hours: 24.0, screen_off: 5 });
+        assert_eq!(lock_argv("linux"), Some(vec!["loginctl", "lock-session"]));
+        assert_eq!(screen_argv("macos"), Some(vec!["pmset", "displaysleepnow"]));
+        assert_eq!(lock_argv("windows"), None);
+    }
 
     fn args(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()

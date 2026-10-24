@@ -159,6 +159,10 @@ pub fn run(a: Args) -> Result<()> {
             _ => {}
         }
     }
+    if verb == "sleep" {
+        // Before Env::detect, like `awake on|off|status`.
+        return awake::sleep(rest, &dirs::home_dir().filter(|h| h.is_absolute()).context("no HOME")?);
+    }
     if verb == "eco" {
         // Before Env::detect: the logon task runs it with no repo and a bare environment.
         return eco::run(rest, &dirs::home_dir().filter(|h| h.is_absolute()).context("no HOME")?);
