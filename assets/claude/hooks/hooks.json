@@ -1,0 +1,93 @@
+{
+  "description": "8sync safety and quality gates (secret/destructive-command guard, verify after edits, stop gate, resume note). Each hook is a no-op when the 8sync binary is missing or when `8sync ccc kit` already registered it in settings.json.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin session-start",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin guard",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin verify",
+            "asyncRewake": true,
+            "timeout": 600
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin watchdog",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin verify-stop",
+            "timeout": 600
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin stop-failure",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin resume-note",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin watchdog",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

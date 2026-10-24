@@ -43,6 +43,7 @@ pub(super) const CCC_VERBS: &[(&str, &str)] = &[
     ("risk", "gate bắt buộc cho diff này: /sec, /rules, /aup-audit…"),
     ("term", "terminal thật của một phòng nền cho HQ web (claude attach)"),
     ("auto", "team luôn work: on [--omp] · pause · off · omp on|off · status"),
+    ("eco", "máy dùng bao nhiêu (RAM, CPU, GPU, W, pin) + giữ phiên chạy lâu nhẹ: status · tick · run · install · uninstall · set ram|cpu <%> · set battery on|off [--json]"),
     ("awake", "giữ máy không ngủ khi phòng chạy, tắt màn hình khi không ai đụng: on [--hours 8] · off · --while-rooms [--screen-off 10] · status [--json]"),
     ("stop", "dừng hết: `stop all` tắt auto + đội omp, dừng mọi phòng nền của mọi dự án (phiên terminal giữ nguyên)"),
     ("meet", "họp sprint daily: --say \"done|doing|blocked\" vào su-code/standup"),

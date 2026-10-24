@@ -4,6 +4,11 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Added
+- **`8sync eco`** (= `8sync ccc eco`; owner: "đảm bảo harness giữ ram, cpu, điện, gpu luôn ổn định nhẹ làm việc lâu dài, in ra tôi xem hiện tại máy tôi dùng bao nhiêu"): `8sync eco` in máy đang dùng bao nhiêu (RAM, CPU, GPU util/VRAM/nhiệt/W, CPU W, pin, RAM của Claude Code và node); `--json` cho máy đọc. Guard của auto chỉ chạy khi auto lái dự án, nên phiên mở tay (`claude`, `8sync ccc . core`, tab Code của Claude Desktop) không được giữ nhẹ. Giờ một nhịp eco: mọi tiến trình phiên sinh ra (build, dev server, LSP, MCP) còn ở normal xuống below normal; chạy pin, bật tiết kiệm pin, hoặc RAM ≥ 80% / CPU ≥ 75% → Efficiency mode (Windows EcoQoS), hết thì trả lại đúng những tiến trình eco đã đặt; RAM chạm ngưỡng → trả working set của helper ≥ 200 MB (tối đa 10 phút một lần). Không kill, không pause (vẫn là việc của `auto guard`). `8sync eco install` chạy nền khi đăng nhập: Scheduled Task ẩn cửa sổ trên Windows, systemd --user (Nice 15, CPUQuota 5%, MemoryMax 96M), LaunchAgent trên macOS; `eco set ram|cpu <%>`, `eco set battery on|off`. Test +7.
+- **`8sync mcp`: 8sync cho Claude Desktop, Cowork và Claude Code qua MCP.** `8sync mcp install` ghi `mcpServers.8sync` vào `claude_desktop_config.json` (giữ mọi server khác, backup `.bak-8sync`, file hỏng thì không đụng; `--claude-code` thêm user scope của Claude Code). Server stdio có tool `machine`, `sessions`, `board`, `queue`, `knowledge`, `report`, `kit` (đọc) và `queue_add`, `know_add` (ghi); chạy chính binary bằng argv trong repo có `.git`, timeout 60 s, không đọc token hay secret. Test +6.
+### Changed
+- **Plugin `8sync-kit` có hook an toàn** (`assets/claude/hooks/hooks.json`): người cài bằng `/plugin install` có guard (secret, lệnh phá huỷ), verify sau khi sửa, Stop gate, digest đầu phiên, resume note, cảnh báo watchdog. Mỗi hook gọi `8sync ccc hook plugin <tên>`: không có binary `8sync` → thoát 0 ngay; `8sync ccc kit` đã đăng ký hook đó trong `settings.json` → im lặng, không chạy hai lần. Test +1.
 
 ## [0.110.77] — 2026-10-23
 ### Added

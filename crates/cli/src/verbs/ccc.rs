@@ -29,6 +29,7 @@ mod ci;
 mod compact;
 mod danger;
 mod delegate;
+mod eco;
 mod fence;
 mod gate;
 mod grant;
@@ -157,6 +158,10 @@ pub fn run(a: Args) -> Result<()> {
             Some("off") => return awake::off(&dirs::home_dir().context("no HOME")?),
             _ => {}
         }
+    }
+    if verb == "eco" {
+        // Before Env::detect: the logon task runs it with no repo and a bare environment.
+        return eco::run(rest, &dirs::home_dir().filter(|h| h.is_absolute()).context("no HOME")?);
     }
     if verb == "help" {
         print!("{}", help::TEXT);
@@ -509,6 +514,11 @@ fn project_harness(env: &Env, root: &Path) -> Result<()> {
         crate::verbs::skill::inject::claude_skill_overrides(&env.home, root)?;
     }
     crate::verbs::harness::memory::seed_gitignore(root)
+}
+
+/// Machine usage as JSON (`8sync eco --json`, the MCP `machine` tool).
+pub(crate) fn eco_snapshot(home: &Path, s: &crate::verbs::hq_core::sampler::Sample) -> Value {
+    eco::snapshot_json(home, s)
 }
 
 /// Whether a kit was ever installed on this machine (what `8sync up` uses to decide on a refresh).
@@ -2347,7 +2357,34 @@ fn find_state_root(start: &Path, home: Option<&Path>) -> Option<PathBuf> {
     None
 }
 
+/// Hooks the `8sync-kit` plugin (`assets/claude/hooks/hooks.json`) runs through `hook plugin <name>`.
+const PLUGIN_HOOKS: [&str; 7] = ["guard", "verify", "verify-stop", "session-start", "stop-failure", "resume-note", "watchdog"];
+
+/// Whether `settings.json` (the kit's user settings) already runs `8sync ccc hook <name>`: the
+/// plugin's copy then stays silent so a hook never runs twice.
+fn kit_runs_hook(settings: &Value, name: &str) -> bool {
+    let want = ["ccc", "hook", name];
+    settings["hooks"].as_object().into_iter().flat_map(|m| m.values()).filter_map(Value::as_array).flatten().filter_map(|g| g["hooks"].as_array()).flatten().any(|h| {
+        let args: Vec<&str> = h["args"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        args == want || h["command"].as_str().is_some_and(|c| c.trim_end().ends_with(&format!("ccc hook {name}")))
+    })
+}
+
 fn hook(rest: &[String]) -> Result<()> {
+    if rest.first().map(String::as_str) == Some("plugin") {
+        let name = rest.get(1).map(String::as_str).unwrap_or("");
+        if !PLUGIN_HOOKS.contains(&name) {
+            bail!("usage: 8sync ccc hook plugin <{}>   (run by the 8sync-kit plugin's hooks)", PLUGIN_HOOKS.join("|"));
+        }
+        let dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
+        let settings: Value = dir.and_then(|d| std::fs::read_to_string(d.join("settings.json")).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+        if kit_runs_hook(&settings, name) {
+            let mut sink = String::new();
+            let _ = std::io::stdin().read_to_string(&mut sink);
+            return Ok(());
+        }
+        return hook(&rest[1..]);
+    }
     let mut input = String::new();
     let _ = std::io::stdin().read_to_string(&mut input);
     let out = match rest.first().map(String::as_str) {
@@ -2910,6 +2947,28 @@ mod tests {
         assert!(managed_settings_dir("macos").unwrap().ends_with("ClaudeCode"));
         assert_eq!(managed_settings_dir("freebsd"), None);
     }
+    #[test]
+    fn plugin_hooks_stay_silent_where_the_kit_runs_them() {
+        let v = json!({ "hooks": {
+            "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "/x/8sync", "args": ["ccc", "hook", "guard"] }] }],
+            "Stop": [{ "hooks": [{ "type": "command", "command": "/x/8sync ccc hook verify-stop" }] }],
+        }});
+        assert!(kit_runs_hook(&v, "guard"));
+        assert!(kit_runs_hook(&v, "verify-stop"));
+        assert!(!kit_runs_hook(&v, "verify"), "verify-stop is not verify");
+        assert!(!kit_runs_hook(&Value::Null, "guard"));
+        // Every plugin hook is a real `ccc hook` the dispatcher knows (bundled hooks.json uses them all).
+        let plugin: Value = serde_json::from_str(&String::from_utf8(crate::assets::Assets::get("claude/hooks/hooks.json").unwrap().data.to_vec()).unwrap()).unwrap();
+        let text = plugin.to_string();
+        for h in PLUGIN_HOOKS {
+            assert!(text.contains(&format!("8sync ccc hook plugin {h}")), "{h} missing from the plugin");
+        }
+        for c in plugin["hooks"].as_object().unwrap().values().flat_map(|g| g.as_array().unwrap()).flat_map(|g| g["hooks"].as_array().unwrap()) {
+            let cmd = c["command"].as_str().unwrap();
+            assert!(cmd.starts_with("command -v 8sync >/dev/null 2>&1 || exit 0; exec 8sync ccc hook plugin "), "{cmd}");
+        }
+    }
+
     #[test]
     fn kit_remove_strips_only_8sync_hooks() {
         let mut v = json!({});
