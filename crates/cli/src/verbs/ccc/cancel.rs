@@ -279,8 +279,8 @@ mod tests {
         fx.live_loop("b");
         std::fs::create_dir_all(fx.repo().join("su-code/ship/done")).unwrap();
         std::fs::write(fx.repo().join("su-code/ship/done/loop.json"), r#"{"slug":"done","stopped":"done","iter":1,"started":1,"max_iter":1,"max_min":1,"digests":[]}"#).unwrap();
-        crate::verbs::harness::cbm::write_flag_key(&fx.home(), super::super::idle::KEY, true).unwrap();
-        crate::verbs::harness::cbm::write_flag_key(&fx.home(), super::super::delegate::KEY, true).unwrap();
+        crate::verbs::harness::features::write_flag_key(&fx.home(), super::super::idle::KEY, true).unwrap();
+        crate::verbs::harness::features::write_flag_key(&fx.home(), super::super::delegate::KEY, true).unwrap();
         let r = cancel(&fx.store, true, Some("core"), None, &fx.repo(), &fx.home(), 50).unwrap();
         assert!(r.ok(), "{r:?}");
         assert_eq!(fx.loop_stopped("a").as_deref(), Some("cancelled"));

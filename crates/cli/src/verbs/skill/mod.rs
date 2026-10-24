@@ -39,7 +39,7 @@ pub(crate) use inject::inject_agents_md;
       8sync skill new --command ship-notes 'Draft release notes.'      scaffold a new slash command instead
       8sync skill new command ship-notes                               same, bare word; add --force to overwrite
       8sync skill gen 1 2                                        FUSE local skill #1 and #2 into one combined SKILL.md
-      8sync skill gen karpathy-guidelines codegraph              same, but by name
+      8sync skill gen karpathy-guidelines trail              same, but by name
       8sync skill learn donnemartin/system-design-primer         DISTIL a repo README (≤6 KB SKILL.md + refs/, .git dropped) into ~/.claude/skills/ — local only
       8sync skill update [name]                                  re-pull registered skills from their source (git/builtin/path)
 

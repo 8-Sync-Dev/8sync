@@ -1,9 +1,9 @@
 //! `8sync harness` — stand up & refresh the project's agent harness.
 //!
-//! `init` (default): full bootstrap — deploy bundled skills + codegraph binary +
-//! external skill packs, mirror into the project, init codegraph, seed memory +
+//! `init` (default): full bootstrap — deploy bundled skills + the trail binary +
+//! external skill packs, mirror into the project, wire trail, seed memory +
 //! CHANGELOG, inject force-load into AGENTS.md/CLAUDE.md + every sub-folder.
-//! `up`: refresh to the current project state (re-inject + re-index codegraph),
+//! `up`: refresh to the current project state (re-inject + refresh the trail map),
 //! with `--loop`/`--timer` for periodic runs.
 use anyhow::Result;
 use clap::Args as ClapArgs;
@@ -23,8 +23,9 @@ mod model;
 mod local_model;
 mod custom_model;
 mod browser;
-pub(crate) mod cbm;
-pub(crate) mod serena;
+pub(crate) mod features;
+pub(crate) mod legacy;
+pub(crate) mod trail;
 mod gateway;
 pub(crate) mod claude_code;
 mod up;
@@ -48,7 +49,7 @@ mod toolstats;
       8sync harness global            apply omp rules MACHINE-WIDE (all projects) + Anthropic token-optimizer defaults
       8sync harness global --sweep    …and stamp skills/memory into every omp project (has su-code/ or AGENTS.md) under ~/Projects
       8sync harness init              explicit full bootstrap with progress UI (force re-deploy everything)
-      8sync harness up                refresh skills/AGENTS.md/memory + re-index codegraph to current state
+      8sync harness up                refresh skills/AGENTS.md/memory + rebuild the trail map to current state
       8sync harness up --pull        refresh AND re-pull registered skills from their source repos
       8sync harness up --commit      refresh AND git-commit agent memory (portable; default off)
       8sync harness up --loop 10m     foreground: refresh every 10m (Ctrl-C to stop)
@@ -64,12 +65,11 @@ mod toolstats;
       8sync harness add-local-model list|rm <name>  list / remove registered local models
       8sync harness add-model <provider/model> --url <baseUrl> [--key|--api|--ctx|--max|--vision|--think]  register a REMOTE model omp's catalog lacks
       8sync harness add-model list|rm <provider/model>  list / remove registered remote models
-      8sync harness cbm [on|off|status]  codebase-memory-mcp is OPT-IN (default off; EIGHTSYNC_CBM=1|0 overrides)
-      8sync harness serena [on|off|status]  serena MCP (Python/uvx) is OPT-IN (default off; EIGHTSYNC_SERENA=1|0 overrides)
+      8sync trail [dir|--all ROOT|status|off]  STEP 0: install trail-code, telemetry off, wire repo(s) for Claude Code (not a harness sub-command)
       8sync harness browser [fix|status|off]  point omp's browser at system Chromium (ungoogled) so it reaches the internet
 
     WHAT init DEPLOYS
-      always-on : codegraph · karpathy · ponytail · assp · impeccable · taste · 8sync-cli · image-routing
+      always-on : trail · karpathy · ponytail · assp · impeccable · taste · 8sync-cli · image-routing
       on-demand : code-review-and-quality · senior-security · senior-frontend · full-flow · last30days
       tech-gated: encore-deploy (only surfaced when the project uses Encore)
       external  : ponytail (full) + addyosmani/agent-skills (best-effort clone → ~/.omp/skills)
@@ -205,14 +205,6 @@ pub fn run(a: Args) -> Result<()> {
             let args: Vec<String> = [v1.clone(), a.value2.clone()].into_iter().flatten().collect();
             browser::harness_browser(&env, &args)
         }
-        Some("cbm") => {
-            let args: Vec<String> = [v1.clone(), a.value2.clone()].into_iter().flatten().collect();
-            cbm::harness_cbm(&env, &args)
-        }
-        Some("serena") => {
-            let args: Vec<String> = [v1.clone(), a.value2.clone()].into_iter().flatten().collect();
-            serena::harness_serena(&env, &args)
-        }
         Some("help") => {
             print_help();
             Ok(())
@@ -250,8 +242,8 @@ fn print_help() {
     println!("{}", crate::brand::render("  8sync harness create --sweep [DIR]  …and stamp every omp project (su-code/ or AGENTS.md) under DIR (default ~/Projects)"));
     println!("{}", crate::brand::render("  8sync harness global            apply omp rules MACHINE-WIDE: ~/.omp skills+APPEND_SYSTEM+MCP → ALL projects, + Anthropic token defaults"));
     println!("{}", crate::brand::render("  8sync harness global --sweep [DIR]  …and stamp skills/memory into every omp project (su-code/ or AGENTS.md) under DIR (default ~/Projects)"));
-    println!("{}", crate::brand::render("  8sync harness init              full bootstrap: skills + codegraph + AGENTS.md + memory + CHANGELOG + .gitignore"));
-    println!("{}", crate::brand::render("  8sync harness up                refresh: re-inject rules + KNOWLEDGE breadcrumb + codegraph index"));
+    println!("{}", crate::brand::render("  8sync harness init              full bootstrap: skills + trail + AGENTS.md + memory + CHANGELOG + .gitignore"));
+    println!("{}", crate::brand::render("  8sync harness up                refresh: re-inject rules + KNOWLEDGE breadcrumb + trail build"));
     println!("{}", crate::brand::render("  8sync harness up --pull         …and re-pull registered skills from their source repos (network)"));
     println!("{}", crate::brand::render("  8sync harness up --commit       …and git-commit the refreshed agent memory (portable; default off)"));
     println!("{}", crate::brand::render("  8sync harness up --loop <dur>   foreground refresh every <dur> (10m, 1h, 30s)"));
@@ -266,11 +258,10 @@ fn print_help() {
     println!("{}", crate::brand::render("  8sync harness add-local-model <path> [name]  serve a local GGUF via mistral.rs (Rust) + register as omp `local/<name>`"));
     println!("{}", crate::brand::render("  8sync harness add-model <provider/model> --url <baseUrl>  register a REMOTE model omp's catalog lacks (custom provider)"));
     println!("{}", crate::brand::render("  8sync harness browser [fix|status|off]  point omp's browser at system Chromium (ungoogled) — fixes browser control not reaching the internet"));
-    println!("{}", crate::brand::render("  8sync harness cbm [on|off|status]  codebase-memory-mcp opt-in (default off — it can peg the CPU); off also unregisters it"));
-    println!("{}", crate::brand::render("  8sync harness serena [on|off|status]  serena MCP opt-in (default off); off also unregisters it"));
+    println!("{}", crate::brand::render("  8sync trail [dir|--all ROOT|status|off]  STEP 0: install trail-code, telemetry off, wire repo(s) for Claude Code"));
     #[cfg(feature = "web")]
     println!("{}", crate::brand::render("  8sync harness web [--port N]    local dashboard (axum+Vite): skills/memory/engines/team/submodules"));
-    println!("{}", crate::brand::render("  8sync harness toolstats         omp tool-call tracker: optimizer (codegraph/cbm/serena) vs fallback (grep/read) call ratio + fails"));
+    println!("{}", crate::brand::render("  8sync harness toolstats         omp tool-call tracker: optimizer (trail/headroom) vs fallback (grep/read) call ratio + fails"));
     println!("{}", crate::brand::render("  8sync skill [list|add|gen|update]   manage the library (`skill update [name]` re-pulls from skills.toml)"));
     println!("{}", crate::brand::render("  8sync feature [new|switch|status|list]  large multi-phase GSD scope (planning tree + ACTIVE switch); /feature plan|go|ship in omp"));
 
@@ -295,7 +286,7 @@ fn print_help() {
     println!("{}", crate::brand::render("  note: selector = <provider>/<model>; --url is required (omp rejects custom models without it). GGUF? use add-local-model."));
 
     println!("\nSKILLS (deployed by init)");
-    println!("{}", crate::brand::render("  always-on (read order): codegraph → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing"));
+    println!("{}", crate::brand::render("  always-on (read order): trail → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing"));
     println!("  on-demand : code-review-and-quality · senior-security · senior-frontend · full-flow · last30days");
     println!("  tech-gated: encore-deploy (only when the project uses Encore)");
     println!("{}", crate::brand::render("  opt-in    : social-growth — enable with `8sync skill add builtin:social-growth`"));
@@ -303,7 +294,7 @@ fn print_help() {
 
     println!("\nFILE TAXONOMY (portability — survives a move to a new machine)");
     println!("  COMMIT : AGENTS.md · CLAUDE.md · su-code/*.md · CHANGELOG.md · su-code/skills/ · .cursor/rules/   (learned/decided)");
-    println!("{}", crate::brand::render("  IGNORE : .codegraph/ · .cache/8sync/ · .cursor/skills · .zcode/skills · .claude/skills (links → su-code/skills, rebuilt by create/init)"));
+    println!("{}", crate::brand::render("  IGNORE : .trail/cache/ · graft/ · .cache/8sync/ · .cursor/skills · .zcode/skills · .claude/skills (links → su-code/skills, rebuilt by create/init)"));
     println!("  SECRET : .env · .env.* (keep .env.example) · *.pem/*.p12 · id_rsa* · *.session · *.pkl   (NEVER commit)");
     println!("{}", crate::brand::render("  → init seeds these into a managed .gitignore block; `8sync doctor` warns if memory is ignored."));
 
@@ -317,7 +308,7 @@ fn print_help() {
     println!("\nNEW MACHINE (nothing lost)");
     println!("  1) git clone <repo> && cd <repo>     # su-code/*.md + su-code/skills/ arrive with the clone");
     println!("{}", crate::brand::render("  2) 8sync up                          # install/refresh the 8sync binary + omp"));
-    println!("{}", crate::brand::render("  3) 8sync harness init                # rebuild .codegraph + global skills, re-inject rules"));
+    println!("{}", crate::brand::render("  3) 8sync harness init                # rebuild global skills + trail wiring, re-inject rules"));
     println!("{}", crate::brand::render("  3b) 8sync harness gateway apply     # deploy omp gateway config (set $NINE_ROUTER_KEY first)"));
     println!("  4) prior memory (KNOWLEDGE/DECISIONS/STATE) is already present — the agent resumes context.");
 }

@@ -168,7 +168,7 @@ pub struct TimerSpec<'a> {
     pub workdir: Option<&'a Path>,
     pub every: &'a str,
     /// Linux only: bound the unit to its own cgroup so a heavy tick can't OOM
-    /// the machine (the `harness up` codegraph re-index can hit multiple GB).
+    /// the machine (the `harness up` trail rebuild can use a lot of RAM).
     pub memory_bounded: bool,
     pub timeout_secs: u64,
 }

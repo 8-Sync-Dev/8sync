@@ -1,6 +1,5 @@
 //! `8sync harness toolstats` — track omp tool-call usage for the current project,
-//! exposing the **optimizer** (codegraph / codebase-memory-mcp / serena /
-//! headroom) vs **fallback** (grep / read / search / find / glob) ratio + per-tool
+//! exposing the **optimizer** (trail / headroom) vs **fallback** (grep / read / search / find / glob) ratio + per-tool
 //! failures. The source of truth is omp's own session JSONL — what the agent
 //! *actually* called — so you can see whether the token-optimization stack (STEP 0)
 //! is being used, and catch failing tool calls (e.g. a dead MCP server).
@@ -128,29 +127,18 @@ fn ingest(sess_dir: &Path) -> Result<(Vec<Call>, usize)> {
     Ok((out, n_sessions))
 }
 
-/// Map a tool call to (category, detail). codegraph runs via `bash`, so its
-/// command string is inspected; serena/cbm/headroom are MCP tools.
+/// True when the shell command runs the `trail` CLI (`trail ask …`, `cd x && trail callers y`).
+fn runs_trail(cmd: &str) -> bool {
+    cmd.replace([';', '&', '|', '(', ')', '`'], " ").split_whitespace().any(|w| w == "trail" || w.ends_with("/trail") || w.ends_with("\\trail"))
+}
+
+/// Map a tool call to (category, detail). trail runs via `bash`, so its command
+/// string is inspected; headroom is an MCP tool.
 fn categorize(name: &str, cmd: &str) -> (&'static str, String) {
-    const SERENA: &[&str] = &[
-        "find_symbol", "find_referencing_symbols", "find_implementations", "find_declaration",
-        "get_symbols_overview", "get_diagnostics_for_file", "get_diagnostics_for_symbol",
-        "rename_symbol", "replace_symbol_body", "insert_after_symbol", "insert_before_symbol",
-        "safe_delete_symbol",
-    ];
-    const CBM: &[&str] = &[
-        "search_graph", "trace_path", "get_architecture", "query_graph",
-        "get_code_snippet", "detect_changes", "manage_adr",
-    ];
     const SEARCH: &[&str] = &["grep", "glob", "search", "find"];
     let n = name.to_lowercase();
-    if name == "bash" && cmd.contains("codegraph") {
-        return ("optimizer", "codegraph".into());
-    }
-    if n.contains("serena") || SERENA.contains(&name) {
-        return ("optimizer", "serena".into());
-    }
-    if n.contains("codebase") || n.contains("cbm") || CBM.contains(&name) {
-        return ("optimizer", "cbm".into());
+    if name == "bash" && runs_trail(cmd) {
+        return ("optimizer", "trail".into());
     }
     if n.contains("headroom") {
         return ("compress", "headroom".into()); // auto-compression, not a lookup tool
@@ -208,8 +196,8 @@ fn report(calls: &[Call], root: &Path) -> Result<()> {
     ui::step(&format!("project: {}  ·  {} tracked tool calls", root.display(), total));
     println!();
     println!("  CODE-LOOKUP calls (optimizer + raw-search) = {}", lookup);
-    println!("  ┌ OPTIMIZER  (codegraph·cbm·serena)   {:>6}   {:>5.1}% of lookups   {} fail", opt, lookup_pct, opt_fail);
-    for d in ["codegraph", "cbm", "serena"] {
+    println!("  ┌ OPTIMIZER  (trail)                  {:>6}   {:>5.1}% of lookups   {} fail", opt, lookup_pct, opt_fail);
+    for d in ["trail"] {
         let n = by_detail.get(d).copied().unwrap_or(0);
         let flag = if n == 0 { "  ← never called" } else { "" };
         println!("  │    {:<10} {:>6}{}", d, n, flag);
@@ -238,7 +226,7 @@ fn report(calls: &[Call], root: &Path) -> Result<()> {
         ui::info("no code-lookup calls yet.");
     } else if opt == 0 {
         ui::warn("0% of code-lookups used the optimizer — every where-is/who-calls went through raw grep/search.");
-        ui::info("check `8sync doctor` (codegraph/cbm/serena reachable?). serena was fixed in 0.29.3 — re-measure after omp usage.");
+        ui::info("check `8sync doctor` (trail installed? `8sync trail status`) — re-measure after omp usage.");
     } else if lookup_pct < 50.0 {
         ui::warn(&format!("optimizer = {:.0}% of code-lookups — STEP-0 under-used; agent still defaults to raw search.", lookup_pct));
     } else {
@@ -260,4 +248,18 @@ fn ranked<'a>(
             .then_with(|| first_seen.get(a.0).cmp(&first_seen.get(b.0)))
     });
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trail_calls_are_optimizer_calls() {
+        for c in ["trail ask \"where is x\"", "cd repo && trail callers foo", "(trail map)", "npx trail grep x", "C:/n/trail skeleton a.rs"] {
+            assert_eq!(categorize("bash", c), ("optimizer", "trail".into()), "{c}");
+        }
+        assert_eq!(categorize("bash", "cargo test trailing").0, "other");
+        assert_eq!(categorize("grep", "").0, "search");
+    }
 }

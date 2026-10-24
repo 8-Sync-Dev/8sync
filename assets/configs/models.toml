@@ -28,7 +28,7 @@ advisor = true
 # step0 = STEP-0 tool-routing enforcement (default ON). 8sync launches omp with a
 # `--config` overlay setting `grep.enabled = false` + `glob.enabled = false`, so
 # the two redundant searchers are gone from the session and code lookup MUST use
-# codegraph (CLI) first (cbm / serena only if enabled). It names only what to REMOVE,
+# trail (CLI) first. It names only what to REMOVE,
 # so every other tool omp ships (MCP/xdev included) survives untouched.
 # `bash rg`/`grep -r` shell escapes on source are also blocked by
 # `bashInterceptor.patterns` — the rules are the `[bashInterceptor]` section at
@@ -60,11 +60,11 @@ trivial = "glm"     # tiny mechanical ops → GLM
 # SKIPS any rule whose `tool` is absent from the session, so naming an MCP tool
 # that may not be registered silently disables the rule. `lsp` is always present
 # and is an honest code-intel answer, so every rule points there and names the
-# real replacement (codegraph / serena / codebase-memory) in `message`.
+# real replacement (trail) in `message`.
 #
 # Safe degradation (UC-7): 8sync writes this block only on a machine that really
-# has one of codegraph / codebase-memory-mcp / serena, and REMOVES the block it
-# wrote when none is left — a codegraph-less box is never dead-ended. Opt out by
+# has `trail` on PATH, and REMOVES the block it wrote when it is gone — a
+# trail-less box is never dead-ended. Opt out by
 # hand with `enabled = false` or an empty `patterns` list; the next
 # `8sync harness` then un-installs the block. Editing `message` is safe; the
 # block is identified by a managed comment, not by its text.
@@ -82,14 +82,14 @@ enabled = true
 [[bashInterceptor.patterns]]
 pattern = '(?:^|[;&|])\s*\\?(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:sudo|time|command|nohup|env|xargs|do|then|else)\s+)*(?:rg|ripgrep|ag|ack|fd|git\s+grep)\s+'
 tool = "lsp"
-message = 'STEP-0: search code with `codegraph query "<symbol>"` (or `codegraph explore`) / mcp__codebase_memory_mcp_search_graph / mcp__serena_find_symbol — not rg/fd/ag/ack/git grep.'
+message = 'STEP-0: search code with `trail ask "<question>"` / `trail grep "<pattern>"` — not rg/fd/ag/ack/git grep.'
 
 [[bashInterceptor.patterns]]
 pattern = '''(?:^|[;&|])\s*\\?(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:sudo|time|command|nohup|env|xargs|do|then|else)\s+)*(?:e|f)?grep\s+(?:(?:-(?!-\s)[^\s;&|]+|[^\s;&|'"-][^\s;&|]*)\s+)*(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive|--dereference-recursive)\b'''
 tool = "lsp"
-message = 'STEP-0: recursive code search goes through `codegraph query "<symbol>"` / mcp__codebase_memory_mcp_search_graph. Single-file and log `grep` stay allowed.'
+message = 'STEP-0: recursive code search goes through `trail ask "<question>"` / `trail grep "<pattern>"`. Single-file and log `grep` stay allowed.'
 
 [[bashInterceptor.patterns]]
 pattern = '(?:^|[;&|])\s*\\?(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:sudo|time|command|nohup|env|xargs|do|then|else)\s+)*find\s+[^;&|]*(?<=\s)(?:-name|-iname|-type|-regex|-path|-wholename)\b'
 tool = "lsp"
-message = 'STEP-0: locate files with `codegraph query "<name>"` / mcp__codebase_memory_mcp_search_graph instead of find.'
+message = 'STEP-0: locate files and symbols with `trail ask "<name>"` / `trail skeleton <file>` instead of find.'

@@ -1,5 +1,5 @@
 # The published one-line installers, run as a new user would on every platform
-# that has a release asset: after each release, weekly (omp / codegraph / forge /
+# that has a release asset: after each release, weekly (omp / forge /
 # Claude Code installers change upstream), and on demand. A run fails unless the
 # installer exits 0, `8sync --version` is the latest release, and `8sync setup`
 # reports "all steps succeeded". Free on public repositories.

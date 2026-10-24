@@ -1018,7 +1018,7 @@ const LOOP_MD: &str = "# Loop của dự án (8sync ⚡ Chế độ Sấm Sét)
 Sửa file là đổi việc của mọi phòng từ nhịp kế. 8sync không ghi đè file đã có.
 Owner giao đích cho cả team: `8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"]` (vào hàng), thêm `--now` để gửi ngay
 (có team board: tới lead/ba; không team: mọi phòng); trong phòng, owner nói \"đưa vào loop: …\" / \"làm ngay: …\" thì chạy đúng lệnh đó. Xem hàng: `8sync ccc auto queue`.
-⚡ Chuyên gia thực chiến: `codegraph` (Rust native local search) TRƯỚC grep/read · chỉ claim card đúng vai · output súc tích kiểu RTK/Caveman · ảnh UAT chỉ lưu đúng chuẩn `qa/evidence/card-<id>-<slug>.png` (không xả ảnh hàng loạt không gắn `card-<id>` vào `qa/evidence/`).
+⚡ Chuyên gia thực chiến: `trail ask`/`trail callers` (bản đồ code, tree-sitter local) TRƯỚC grep/read · chỉ claim card đúng vai · output súc tích kiểu RTK/Caveman · ảnh UAT chỉ lưu đúng chuẩn `qa/evidence/card-<id>-<slug>.png` (không xả ảnh hàng loạt không gắn `card-<id>` vào `qa/evidence/`).
 
 Mỗi nhịp:
 1. Chạy `8sync ccc auto status --json`. `on` là false hoặc `paused` là true → huỷ loop của phòng này (CronDelete job

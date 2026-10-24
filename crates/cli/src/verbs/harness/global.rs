@@ -3,7 +3,7 @@
 //! needed for the rule layer):
 //!   ~/.omp/skills + 00-force-load.md        → skill library, read every session
 //!   ~/.omp/agent/APPEND_SYSTEM.md           → appended to EVERY omp system prompt
-//!   MCP servers (cbm · headroom · serena · zai-vision) + recall hook + capabilities
+//!   MCP servers (headroom · zai-vision) + trail binary + recall hook + capabilities
 //! plus the Anthropic token-optimizer defaults:
 //!   compaction 50% (only if unset) · headroom compress >50-line outputs ·
 //!   byte-stable APPEND_SYSTEM writes (identical ⇒ skip) so the system prefix
@@ -23,7 +23,7 @@ use crate::verbs::skill::{deploy, discover, inject_agents_md, update};
 use crate::{assets, env_detect, ui};
 
 /// The global (machine-wide) layer, shared by bare `8sync harness` and
-/// `8sync harness global`: master force-load + bundled skills + codegraph binary
+/// `8sync harness global`: master force-load + bundled skills + trail binary
 /// + MCP servers + omp memory config/recall hook + APPEND_SYSTEM directives +
 /// capabilities snapshot + external packs + layout normalization. Idempotent.
 pub(crate) fn global_pass(env: &env_detect::Env) -> Result<()> {
@@ -33,11 +33,17 @@ pub(crate) fn global_pass(env: &env_detect::Env) -> Result<()> {
         std::fs::create_dir_all(p)?;
     }
     if let Some(c) = assets::read("skills/00-force-load.md") {
-        std::fs::write(&force_load, crate::brand::render(&crate::verbs::harness::cbm::gate(&env.home, &c)).as_ref())?;
+        std::fs::write(&force_load, crate::brand::render(&c).as_ref())?;
     }
     deploy::install_bundled_global(env)?;
-    deploy::ensure_codegraph(env)?;
-    deploy::ensure_codebase_memory_mcp(env)?;
+    // One-time cutover from codegraph / codebase-memory-mcp / serena (idempotent, quiet when done).
+    super::legacy::retire_mcp(&env.home);
+    deploy::cleanup_legacy_gs(&env.home, None);
+    super::legacy::refresh_interceptor_messages(&env.home);
+    match super::trail::ensure_installed() {
+        Ok(bin) => super::trail::ensure_telemetry_off(&env.home, &bin),
+        Err(e) => ui::warn(&format!("trail not available: {e:#} — STEP 0 falls back to grep/read")),
+    }
     deploy::ensure_headroom_mcp(env)?;
     let _ = deploy::ensure_omp_memory_config(&env.home);
     let _ = deploy::ensure_bash_interceptor(&env.home);
@@ -46,7 +52,6 @@ pub(crate) fn global_pass(env: &env_detect::Env) -> Result<()> {
     let _ = deploy::ensure_recall_hook(&env.home);
     let _ = deploy::ensure_append_system(&env.home);
     let _ = deploy::ensure_mcp_spec(&env.home);
-    let _ = deploy::ensure_serena_mcp(env);
     let _ = deploy::ensure_zai_vision_mcp(env);
     let _ = deploy::ensure_omp_capabilities_snapshot(&env.home);
     deploy::ensure_feynman_cli();
@@ -127,7 +132,7 @@ pub(crate) fn harness_global(
             );
         }
         ui::info(&format!(
-            "sweep: {} omp project(s) stamped{} — full pass (codegraph index) per project: `cd <repo> && 8sync harness`",
+            "sweep: {} omp project(s) stamped{} — full pass per project: `cd <repo> && 8sync harness` · trail map for all repos: `8sync trail --all <ROOT>`",
             ok,
             if failed > 0 { format!(", {failed} failed") } else { String::new() }
         ));
@@ -135,10 +140,10 @@ pub(crate) fn harness_global(
 
     // 5. Summary — what now applies to every omp session on this machine.
     ui::ok("omp rules are now GLOBAL — every omp session in every project gets:");
-    ui::info("  • ~/.omp/agent/APPEND_SYSTEM.md appended to EVERY system prompt (code-intel-first, never compacted)");
-    ui::info("  • ~/.omp/agent/rules/*.md TTSR rules — omp aborts a grep/glob on code STRUCTURE mid-stream and re-routes it to codegraph/serena/cbm (zero prompt cost, never compacted; auto-withheld when none of those is installed)");
-    ui::info("  • skills @ ~/.omp/skills + 00-force-load.md · MCP: codebase-memory · headroom · serena · zai-vision");
-    ui::info("  • STEP-0 MCP tools always in the tool set (omp ≥17: xd:// devices via tools.xdev) — serena/cbm/headroom/zai callable");
+    ui::info("  • ~/.omp/agent/APPEND_SYSTEM.md appended to EVERY system prompt (trail-first, never compacted)");
+    ui::info("  • ~/.omp/agent/rules/*.md TTSR rules — omp aborts a grep/glob on code STRUCTURE mid-stream and re-routes it to trail (zero prompt cost, never compacted; auto-withheld when trail is not installed)");
+    ui::info("  • skills @ ~/.omp/skills + 00-force-load.md · MCP: headroom · zai-vision");
+    ui::info("  • STEP-0 MCP tools always in the tool set (omp ≥17: xd:// devices via tools.xdev) — headroom/zai callable");
     ui::info("  • token optimizer: headroom compress >50-line outputs · compaction 50% · stable prefix → Anthropic prompt-cache hits");
     if sweep.is_none() {
         ui::info("stamp the per-project layer everywhere: `8sync harness global --sweep` (default ~/Projects)");
@@ -224,6 +229,5 @@ fn find_git_repos(root: &Path, max_depth: usize) -> Vec<PathBuf> {
      deploy::ensure_engine(&env.home, Some(root))?;
      deploy::ensure_rules(&env.home, Some(root))?;
      deploy::ensure_host_adapters(&env.home, root, force)?;
-     deploy::ensure_codegraph_init(root);
      Ok(mirrored)
  }

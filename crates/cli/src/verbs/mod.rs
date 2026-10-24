@@ -18,6 +18,7 @@ pub mod skill;
 pub mod theme;
 pub mod bg;
 pub mod harness;
+pub mod trail;
 pub mod shot;
 pub mod diff_img;
 pub mod pdf_img;

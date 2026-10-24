@@ -5,9 +5,8 @@ Enforced, so NOT restated here: a TTSR rule interrupts `grep`/`glob` on code-str
 the moment they fire. Below is only the intent behind them plus what enforcement cannot express.
 
 ## RULE #0 — code intelligence before native search
-Structure questions (where is X · who calls X · impact · architecture): `codegraph query|explore "<symbol>"` in bash first (local, fast).
-@cbm Also enabled: `mcp__codebase_memory_mcp_search_graph` / `_trace_path` / `_get_architecture` / `_get_code_snippet`.
-@serena Also enabled: `mcp__serena_find_symbol` / `_find_referencing_symbols`.
+Structure questions (where is X · who calls X · impact · architecture): `trail ask "<question>"` · `trail grep <pattern>` · `trail skeleton <file>` · `trail callers <symbol>` · `trail map` in bash first (local, deterministic).
+After learning something durable about the repo: `trail note "<fact>"`.
 Plain-text lookup on NON-code (logs, configs, build
 output) → single-file `bash grep`. `read` a file when you are about to edit it (read-before-edit).
 Under `step0` (default) the `grep`/`glob` TOOLS are not in the session at all; MCP tools are
@@ -29,7 +28,7 @@ text. Decision table: `~/.omp/skills/image-routing/SKILL.md`.
 (powered by `gpt-image-2`). Runbook: `~/.omp/skills/image-gen/SKILL.md`.
 
 ## Always-on skills — open the SKILL.md before acting, in this order
-1. **codegraph** — `~/.omp/skills/codegraph/SKILL.md` — semantic code intel (the loop's senses).
+1. **trail** — `~/.omp/skills/trail/SKILL.md` — code map for agents (the loop's senses).
 2. **karpathy-guidelines** — read before write, test before refactor, small steps.
 3. **ponytail** — YAGNI: do the least that works; delete > add.
 4. **8sync-cli** — prefer `8sync` verbs over raw shell.

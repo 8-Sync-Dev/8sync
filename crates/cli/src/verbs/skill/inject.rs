@@ -47,15 +47,15 @@ fn find_block(existing: &str) -> Option<(usize, usize, usize)> {
 /// Priority rank for always-on skills (lower = read earlier). The force-load
 /// block lists always-on skills in EXACTLY this order; agents read top-down so
 /// position == priority. The canonical chain is:
-///   codegraph → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing → locate-anything
-/// codegraph (code intel), karpathy (engineering discipline) and ponytail
+///   trail → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing → locate-anything
+/// trail (code map), karpathy (engineering discipline) and ponytail
 /// (lazy-senior YAGNI) form the engineering core; the brand + frontend-design
 /// skills follow; the harness/token-routing tooling closes. Skills not listed
 /// here are on-demand (read only when the task matches their description) and
 /// rank `usize::MAX`.
 pub(crate) fn always_on_rank(dirname: &str) -> usize {
     match dirname {
-        "codegraph" => 0,
+        "trail" => 0,
         "karpathy-guidelines" => 1,
         "ponytail" => 2,
         "assp-skill" => 3,
@@ -79,7 +79,7 @@ pub(crate) fn is_always_on(dirname: &str) -> bool {
 /// matching task triggers it (progressive disclosure → leaner, KV-cache-stable
 /// prefix; Anthropic "skills" + Manus KV-cache lessons).
 pub(crate) fn always_on_core(dirname: &str) -> bool {
-    matches!(dirname, "codegraph" | "karpathy-guidelines" | "ponytail" | "8sync-cli")
+    matches!(dirname, "trail" | "karpathy-guidelines" | "ponytail" | "8sync-cli")
 }
 
 /// On-demand skills gated by a project-tech predicate: only surfaced in the
@@ -217,31 +217,25 @@ pub(crate) fn build_force_load(home: &Path, root: &Path) -> ForceLoadStats {
         ondemand_lines.push_str("- _(none — add via `8sync skill add <github-url>`)_\n");
     }
 
-    let has_codegraph_bin = which::which("codegraph").is_ok();
-    let codegraph_install_hint: &str = if has_codegraph_bin {
+    let trail_install_hint: &str = if crate::verbs::harness::trail::found().is_some() {
         ""
     } else {
-        "> ⚠ `codegraph` binary chưa cài. Chạy `8sync harness init` (auto cài) HOẶC `npx -y @colbymchenry/codegraph install` rồi quay lại đọc tiếp.\n\n"
+        "> ⚠ `trail` chưa cài. Chạy `8sync trail` (cài `npm i -g @trailhq/trail-code --ignore-scripts`, tắt telemetry, nối repo) rồi quay lại đọc tiếp.\n\n"
     };
-
-    let mcp_lines = mcp_lines(
-        crate::verbs::harness::cbm::enabled(home),
-        crate::verbs::harness::serena::enabled(home),
-    );
 
     let block = format!(
         "{BEGIN}\n\
-## 🚨 STEP 0 — CODE INTELLIGENCE FIRST (codegraph CLI trước)\n\
+## 🚨 STEP 0 — CODE MAP FIRST (trail CLI trước)\n\
 \n\
-Mọi câu hỏi về code → dùng code-intelligence engine TRƯỚC grep/read (tiết kiệm ~99% token). Bạn (AI) **PHẢI**:\n\
+Mọi câu hỏi về code → hỏi bản đồ code `trail` TRƯỚC grep/read (tree-sitter local, không gọi model, tiết kiệm rất nhiều token). Bạn (AI) **PHẢI**:\n\
 \n\
-1. **codegraph** (local index): `codegraph index .` 1 lần/session; rồi `codegraph query/explore/node/callers/callees/impact` thay cho `grep`/`rg`/`fd`/`Grep`/`Glob` và `Read` toàn file.\n\
-{mcp_lines}\
+1. **trail** (local code map): `trail ask \"<câu hỏi>\"` · `trail grep <pattern>` · `trail skeleton <file>` · `trail callers <symbol>` (`--direction out` = callees) · `trail map` thay cho `grep`/`rg`/`fd`/`Grep`/`Glob` và `Read` toàn file. Làm mới: `trail build`; repo mới: `8sync trail`.\n\
+2. Tìm/hiểu/định vị code · impact · route→handler · architecture → trail trước. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit). Học được điều bền (vì sao, đã thử gì) → `trail note`.\n\
 3. **Nén những gì BẠN phát lại:** báo cáo / subagent prompt / nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill vào context.\n\
 \n\
-Lý do: 5 query cấu trúc ≈ 3.4k token vs ≈ 412k token grep từng file (−99%). Dump cả file / grep mù = đốt token = bug.\n\
+Lý do: vài query cấu trúc ≪ token so với grep từng file. Dump cả file / grep mù = đốt token = bug.\n\
 \n\
-{codegraph_install_hint}\
+{trail_install_hint}\
 ## 🚨 STEP 1 — skills 2 tầng: CORE (đọc ngay) · SPECIALIST + on-demand (đọc khi cần)\n\
 \n\
 Mỗi skill = 1 directory (Agent Skills open standard): `SKILL.md` có frontmatter `name`+`description`. Skill vendored ở `su-code/skills/<name>/` (bản commit trong repo, mirror từ `~/.omp/skills/`). Mỗi skill liệt kê 1 lần.\n\
@@ -261,9 +255,9 @@ KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Kh
 {ondemand_lines}\n\
 ### Quy tắc bất biến\n\
 \n\
-- **Code-intelligence FIRST** (codegraph CLI trước) cho mọi câu hỏi explore code (Step 0). Bypass = bug.\n\
+- **Code map FIRST** (trail CLI trước) cho mọi câu hỏi explore code (Step 0). Bypass = bug.\n\
 - **Output > ~50 dòng → BẮT BUỘC `headroom_compress`** trước khi vào context — không dump thô.\n\
-- Đọc body **CORE** (codegraph → karpathy → ponytail → 8sync-cli) TRƯỚC tool call đầu tiên. **SPECIALIST** (assp · impeccable · taste · image-routing) đọc body KHI task khớp — `impeccable` bắt buộc ngay khi có việc UI/design.\n\
+- Đọc body **CORE** (trail → karpathy → ponytail → 8sync-cli) TRƯỚC tool call đầu tiên. **SPECIALIST** (assp · impeccable · taste · image-routing) đọc body KHI task khớp — `impeccable` bắt buộc ngay khi có việc UI/design.\n\
 - Skill **on-demand**: chỉ mở khi description khớp task hiện tại — đừng đọc thừa.\n\
 - Nếu skill có `scripts/` → ưu tiên invoke script đó thay vì viết lại logic.\n\
 - Khi áp dụng skill, **cite** rõ: ví dụ `su-code/skills/<name>/SKILL.md:line`.\n\
@@ -278,42 +272,17 @@ KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Kh
     ForceLoadStats { block, core, specialist, ondemand }
 }
 
-/// STEP-0 item 2: codegraph CLI first; cbm / serena lines appear only when enabled.
-fn mcp_lines(cbm: bool, serena: bool) -> String {
-    let mut l = String::from("2. Tìm/hiểu/định vị code · impact · route→handler · dead code · architecture → codegraph CLI trước. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit).\n");
-    if cbm {
-        l.push_str("   - codebase-memory-mcp (đã bật): `mcp__codebase_memory_mcp_search_graph` · `_trace_path` · `_get_architecture` · `_get_code_snippet`.\n");
-    }
-    if serena {
-        l.push_str("   - serena (đã bật): `mcp__serena_find_symbol` · `_find_referencing_symbols` · `_get_symbols_overview`.\n");
-    }
-    l
-}
-
 /// CLAUDE.md's block: a compact pointer (~1 KB). Claude Code loads CLAUDE.md
 /// into every request and already lists skills with descriptions, so the block
 /// does NOT force-read SKILL.md bodies and does NOT claim MCP tools exist.
 /// The full CORE/SPECIALIST block stays in AGENTS.md (omp/Cursor harnesses).
-fn claude_block(home: &Path) -> String {
-    claude_block_with(
-        crate::verbs::harness::cbm::enabled(home),
-        crate::verbs::harness::serena::enabled(home),
-    )
-}
-
-fn claude_block_with(cbm: bool, serena: bool) -> String {
-    let mcp = match (cbm, serena) {
-        (false, false) => "",
-        (true, false) => "; codebase-memory-mcp đã bật",
-        (false, true) => "; serena đã bật",
-        (true, true) => "; codebase-memory-mcp + serena đã bật",
-    };
+fn claude_block() -> String {
     let block = format!(
         "{BEGIN}\n\
 ## 8sync harness — Claude Code\n\
 \n\
 - **Repo:** quy ước, lệnh build/test, kiến trúc nằm trong `AGENTS.md` — xem mục lục (`grep -n '^#' AGENTS.md`), đọc đúng mục cần.\n\
-- **Code intelligence:** `codegraph query|explore` qua Bash (nhanh, local){mcp}. Chỉ đọc raw file khi sắp sửa.\n\
+- **Code map:** `trail ask \"<câu hỏi>\"` / `trail callers <symbol>` / `trail skeleton <file>` qua Bash (nhanh, local, tree-sitter). Chỉ đọc raw file khi sắp sửa.\n\
 - **Skills nạp theo nhu cầu:** Claude Code đã liệt kê skill kèm mô tả; chỉ mở khi task khớp (UI/design → `impeccable`). Không đọc SKILL.md trước.\n\
 - **Lệnh:** ưu tiên `8sync` (`8sync run test`, `8sync find` …) hơn shell thô.\n\
 - **Memory:** `su-code/STATE.md` đầu phiên; bài học → `su-code/KNOWLEDGE.md`; thay đổi → `CHANGELOG.md`.\n\
@@ -358,7 +327,7 @@ pub(crate) fn refresh_ancestor_blocks(home: &Path, start: &Path) -> Result<Vec<P
     if !start.starts_with(home) {
         return Ok(changed);
     }
-    let block = claude_block(home);
+    let block = claude_block();
     for dir in start.ancestors().take_while(|a| *a != home) {
         let path = dir.join("CLAUDE.md");
         let Ok(old) = std::fs::read_to_string(&path) else { continue };
@@ -446,7 +415,7 @@ pub(crate) fn inject_agents_md(home: &Path, root: &Path) -> Result<()> {
     let stats = build_force_load(home, root);
     let always_count = stats.core.len() + stats.specialist.len();
     let on_count = stats.ondemand.len();
-    let claude_block = claude_block(home);
+    let claude_block = claude_block();
     let ancestor_dup = ancestor_claude_has_block(home, root);
     let block = stats.block;
 
@@ -511,7 +480,7 @@ pub(crate) fn inject_cursor_rule(home: &Path, root: &Path) -> Result<()> {
     }
     let body = format!(
         "---\n\
-         description: 8sync harness force-load (CORE skills, code-intel first). Always applied.\n\
+         description: 8sync harness force-load (CORE skills, trail code map first). Always applied.\n\
          alwaysApply: true\n\
          ---\n\n\
          {}\n\n\
@@ -621,15 +590,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         let home = base.join("home");
         let root = base.join("repo");
-        // codegraph + ponytail are CORE (rank 0 / 2); impeccable is SPECIALIST.
-        skill_fixture(&root.join("su-code/skills"), "codegraph");
+        // trail + ponytail are CORE (rank 0 / 2); impeccable is SPECIALIST.
+        skill_fixture(&root.join("su-code/skills"), "trail");
         skill_fixture(&home.join(".omp/skills"), "ponytail");
         skill_fixture(&home.join(".omp/skills"), "impeccable");
 
         let stats = build_force_load(&home, &root);
 
         assert!(
-            stats.block.contains("  1. `su-code/skills/codegraph/SKILL.md`"),
+            stats.block.contains("  1. `su-code/skills/trail/SKILL.md`"),
             "CORE project skill must render repo-relative"
         );
         assert!(
@@ -655,12 +624,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         let home = base.join("home");
         let root = base.join("repo");
-        skill_fixture(&root.join("su-code/skills"), "codegraph");
+        skill_fixture(&root.join("su-code/skills"), "trail");
         inject_cursor_rule(&home, &root).unwrap();
         let body = std::fs::read_to_string(root.join(".cursor/rules/8sync-harness.mdc")).unwrap();
         assert!(body.contains("alwaysApply: true"), "Cursor standard: alwaysApply mdc");
         assert!(body.contains(".cursor/skills/"), "points at Cursor skill dir");
-        assert!(body.contains("su-code/skills/codegraph/SKILL.md"));
+        assert!(body.contains("su-code/skills/trail/SKILL.md"));
         assert!(
             body.contains("GLM-5.3") && body.contains("CẤM") && body.contains("mcp__zai_vision_*"),
             "Cursor alwaysApply rule must tell GLM-5.3 to look at images, not zai-vision"
@@ -728,7 +697,7 @@ mod tests {
 
     #[test]
     fn compact_block_replaces_old_full_block_and_is_small() {
-        let blk = claude_block_with(false, false);
+        let blk = claude_block();
         assert!(blk.len() <= 1100, "block is {} B", blk.len());
         assert!(!blk.contains("ĐỌC NGAY") && !blk.contains("LUÔN có"));
         let old = format!("# T\n\nmine-before\n\n{BEGIN}\n## OLD full block\n{END}\n\nmine-after\n");
@@ -739,17 +708,12 @@ mod tests {
     }
 
     #[test]
-    fn code_intel_text_omits_cbm_serena_when_off() {
-        let off = format!("{}{}", claude_block_with(false, false), mcp_lines(false, false));
-        for w in ["codebase-memory", "codebase_memory", "serena"] {
-            assert!(!off.contains(w), "`{w}` leaked while off");
-        }
-        assert!(off.contains("codegraph"));
-        let on = format!("{}{}", claude_block_with(true, true), mcp_lines(true, true));
-        assert!(on.contains("codebase-memory") && on.contains("serena"));
+    fn step0_text_points_at_trail() {
+        let off = format!("{}{}", claude_block(), build_force_load(Path::new("/no/such/home"), Path::new("/no/such/repo")).block);
+        assert!(off.contains("trail ask") && off.contains("trail callers"));
     }
 
-    const FULL: &str = "## OLD full block\nĐỌC NGAY codebase-memory-mcp LUÔN có\n";
+    const FULL: &str = "## OLD full block\nĐỌC NGAY the old stack LUÔN có\n";
 
     #[test]
     fn ancestor_refresh_compacts_full_block_in_non_git_dir_keeping_user_text() {
@@ -823,13 +787,5 @@ mod tests {
         refresh_ancestor_blocks(&home, &mem2).unwrap();
         assert_eq!(std::fs::read_to_string(mem2.join("CLAUDE.md")).unwrap(), "# Notes\n\nkeep me\n\nand me\n");
         let _ = std::fs::remove_dir_all(&home);
-    }
-
-    #[test]
-    fn ancestor_block_mentions_cbm_serena_only_when_on() {
-        let off = claude_block_with(false, false);
-        assert!(!off.contains("codebase-memory") && !off.contains("serena"));
-        assert!(claude_block_with(true, false).contains("codebase-memory") && !claude_block_with(true, false).contains("serena"));
-        assert!(claude_block_with(false, true).contains("serena") && !claude_block_with(false, true).contains("codebase-memory"));
     }
 }

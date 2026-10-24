@@ -12,7 +12,7 @@ Chất lượng đến từ nguồn primary và verify, không từ khối lư�
 |---|---|---|
 | Search | `web_search` | `WebSearch` |
 | Read a page | `read <url>` (ranges `:N-M`) | `WebFetch` with a narrow prompt ("extract X, Y with quotes") |
-| Code structure | `codegraph` (+ cbm / serena if enabled) | `codegraph` via Bash |
+| Code structure | `trail` | `trail ask` via Bash |
 | Parallel workers | `task` with a `tasks[]` batch | `Agent` (`researcher`, `verifier`, `reviewer`), several in one message |
 | Plan / ledger | `todo` | task list (`TaskCreate`) |
 

@@ -654,7 +654,7 @@ pub(super) fn up(t: &Team, o: &Opts, now: u64) -> Result<(Value, Vec<Gone>, Vec<
     } else {
         super::pressure::clear_paused(t.home, t.root);
     }
-    // Staggered start: a room's first minutes index the repo (codebase-memory, tsserver); with the
+    // Staggered start: a room's first minutes index the repo (tsserver, rust-analyzer); with the
     // guard on, each next room waits for the CPU to settle, this long at most in total — less what
     // this run already spent waiting for the lock ([`up_stagger`]).
     let mut stagger = up_stagger();
@@ -1668,7 +1668,7 @@ mod tests {
         assert_eq!(v["enabledPlugins"], json!({ "typescript-lsp@claude-plugins-official": false }));
         assert_eq!(v["deniedMcpServers"], json!([{ "serverName": "codebase-memory-mcp" }, { "serverName": "serena" }]));
         assert!(room_settings_with(&h, &[], &[]).unwrap().ends_with("room-settings.json"), "nothing to turn off: the plain file");
-        // A lean room always denies the indexers, so it always gets the lean file.
+        // A lean room always denies the retired indexers, so it always gets the lean file.
         assert!(room_settings(&h, true).unwrap().ends_with("room-settings-lean.json"));
         let _ = std::fs::remove_dir_all(&h);
     }

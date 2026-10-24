@@ -255,7 +255,7 @@ mod tests {
     fn hook_holds_then_passes_and_leaves_one_learning_nudge_for_both_triggers() {
         for (tag, teammate) in [("update", None), ("turn-end", Some("be"))] {
             let home = sandbox(&format!("{tag}-home"));
-            crate::verbs::harness::cbm::write_flag_key(&home, super::super::idle::KEY, true).unwrap();
+            crate::verbs::harness::features::write_flag_key(&home, super::super::idle::KEY, true).unwrap();
             let repo = sandbox(&format!("{tag}-repo"));
             let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&repo).output().unwrap().status.success(), "git {args:?}");
             git(&["init", "-q"]);

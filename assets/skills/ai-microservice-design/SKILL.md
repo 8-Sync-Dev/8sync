@@ -1,6 +1,6 @@
 ---
 name: ai-microservice-design
-description: Use when designing or adding an AI feature to a service — an LLM gateway, RAG retrieval, an agent/tool-use loop, per-member keys + usage metering, LLM tracing, or an eval gate. Produces a service topology (mermaid), an ownership table, a provider-abstraction interface, and a defined eval threshold before any model change ships. Grounded in canonical AI-gateway/RAG/agent/eval patterns; extends them with an opinionated design workflow driven by omp-native tooling (codegraph · cbm · serena · engine_* · browser · 8sync verbs).
+description: Use when designing or adding an AI feature to a service — an LLM gateway, RAG retrieval, an agent/tool-use loop, per-member keys + usage metering, LLM tracing, or an eval gate. Produces a service topology (mermaid), an ownership table, a provider-abstraction interface, and a defined eval threshold before any model change ships. Grounded in canonical AI-gateway/RAG/agent/eval patterns; extends them with an opinionated design workflow driven by omp-native tooling (trail · engine_* · browser · 8sync verbs).
 locked: true
 ---
 
@@ -36,15 +36,14 @@ Real, mined shape: `skill://ai-microservice-design/references/patterns.md`.
 
 ### 1. Ground in the EXISTING topology — never design in a vacuum
 
-Map what already runs before adding to it (`mcp__codebase_memory_mcp_*` / `mcp__serena_*` only if enabled: `8sync harness cbm|serena on`; else codegraph):
+Map what already runs before adding to it (`trail map`, `trail ask`, `trail callers`):
 
-- `codegraph` / `mcp__codebase_memory_mcp_get_architecture` — service graph,
-  packages, cross-service calls. Note the **clusters**: which service owns
+- `trail map` / `trail ask "service graph"` — packages, cross-service calls. Note the **clusters**: which service owns
   auth, which owns data, where model calls already happen.
-- `mcp__codebase_memory_mcp_trace_path` (mode `cross_service`) — follow a live
+- `trail callers <symbol>` — follow a live
   request: client → gateway → router → model → vector store. Find the gaps
   (a concern with no owner, a model call with no trace).
-- `mcp__serena_find_symbol` / `get_symbols_overview` — locate the existing
+- `trail skeleton <file>` / `trail ask` — locate the existing
   auth boundary, key store, and any model-call site to extend, not duplicate.
 - If the repo is the control-plane pattern (`gate`/`core`/`shared`), confirm
   the envelope convention (`{success,message,result}`) before adding endpoints.
@@ -86,7 +85,7 @@ One provider-agnostic interface (the `ChatModel`/`ResolvedModel` shape from
 - **Timeouts:** cap every chat-completion (eino-ext openai defaults to *no*
   timeout — a hung upstream hangs the worker).
 
-Validate the interface against ≥2 providers with `mcp__codebase_memory_mcp_search_code`
+Validate the interface against ≥2 providers with `trail grep`
 before committing — confirm no provider-specific type leaks into the agent loop.
 
 ### 4. Place auth + metering
@@ -98,7 +97,7 @@ before committing — confirm no provider-specific type leaks into the agent loo
   Enforce quota **before** the call (today's spend vs. per-member daily limit).
   A failed upstream turn **stays in the ledger with its status**.
 - **Limits:** per-key rate (req/min) + per-member cost (tokens/day or $/day).
-- Where it already exists, extend it: `mcp__serena_find_referencing_symbols`
+- Where it already exists, extend it: `trail callers <auth handler>`
   on the auth handler to find every call site that must adopt the new key path.
 
 ### 5. Place the RAG slice (if retrieval is in scope)
@@ -107,7 +106,7 @@ Decide and write down: chunking strategy + size, embedding model + dimensions,
 vector store + **migration trigger** (pgvector while ≤10M vectors **and**
 p95 ≤ 200ms; flip when either trips), hybrid retrieve (dense+sparse →
 canonical dedup → 1-hop expand), rerank (knob-gated, **fail-open**). Use
-`mcp__codebase_memory_mcp_query_graph` to confirm the retrieve path doesn't
+`trail ask` to confirm the retrieve path doesn't
 duplicate an existing search.
 
 ### 6. Place the agent slice (if tool-use is in scope)
@@ -147,7 +146,7 @@ The thing that prevents silent regressions. Write into `DECISIONS.md`:
 
 - Write each load-bearing decision as an **ADR** in `su-code/DECISIONS.md`
   (or `docs/adr/`): the vector-store trigger, the routing policy, the eval
-  threshold, the key-vaulting invariant. `mcp__codebase_memory_mcp_manage_adr`
+  threshold, the key-vaulting invariant. `trail note "<fact>"`
   can index them into the graph.
 - Use `engine_*` for the build loop: `engine_plan` slices the work; each task's
   **verify = service tests AND eval-pass threshold** (`engine_verify`), not

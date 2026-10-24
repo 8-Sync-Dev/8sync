@@ -247,23 +247,19 @@ fn check_portability() {
 }
 
 /// Verify the token-optimization stack is installed AND registered with omp so
-/// the loop actually uses it ("luôn xài"): codegraph (local index) + the omp MCP
-/// engines codebase-memory-mcp (semantic graph) and headroom (output
-/// compression). A missing or unregistered engine silently defeats STEP 0 token
+/// the loop actually uses it ("luôn xài"): trail (code map) + the omp MCP
+/// engine headroom (output compression). A missing or unregistered engine silently defeats STEP 0 token
 /// discipline — flag it with the one-command fix.
 fn check_ai_engines(home: &std::path::Path) {
     ui::info("AI engines (token-optimization stack — STEP 0):");
-    if which::which("codegraph").is_ok() {
-        let ver = env_detect::cmd_version("codegraph", &["--version"]).unwrap_or_default();
-        ui::ok(&format!("  codegraph {} (local code index)", ver.trim()));
+    if which::which("trail").is_ok() {
+        let ver = env_detect::cmd_version("trail", &["--version"]).unwrap_or_default();
+        ui::ok(&format!("  trail {} (code map: ask/grep/skeleton/callers)", ver.trim()));
     } else {
-        ui::warn("  codegraph MISSING — run `8sync harness` (STEP 0 falls back to slow grep/read)");
+        ui::warn("  trail MISSING — run `8sync trail` (STEP 0 falls back to slow grep/read)");
     }
     let mcp = std::fs::read_to_string(home.join(".omp/agent/mcp.json")).unwrap_or_default();
-    for (bin, what) in [
-        ("codebase-memory-mcp", "semantic graph (search_graph/trace_path/cypher)"),
-        ("headroom", "output compression (>50-line dumps)"),
-    ] {
+    for (bin, what) in [("headroom", "output compression (>50-line dumps)")] {
         let has_bin = which::which(bin).is_ok();
         let registered = mcp.contains(&format!("\"{}\"", bin));
         if has_bin && registered {
@@ -289,27 +285,22 @@ fn check_ai_engines(home: &std::path::Path) {
         ui::warn("  mnemopi memory OFF — `8sync harness` enables deep project recall (API-only)");
     }
     if env_detect::omp_major().is_some_and(|m| m >= 17) {
-        ui::ok("  STEP-0 MCP tools mounted as xd:// devices (omp ≥17 tools.xdev) — serena/cbm/headroom/zai callable");
+        ui::ok("  STEP-0 MCP tools mounted as xd:// devices (omp ≥17 tools.xdev) — headroom/zai callable");
     } else if cfg.contains("discoveryDefaultServers") {
         ui::ok("  STEP-0 MCP servers always visible (mcp.discoveryDefaultServers)");
     } else {
-        ui::warn("  MCP tools HIDDEN behind search_tool_bm25 (fix: run `8sync harness global`) — serena/cbm never get called");
+        ui::warn("  MCP tools HIDDEN behind search_tool_bm25 (fix: run `8sync harness global`) — headroom never gets called");
     }
     // STEP-0 is a deny-list overlay (`grep.enabled`/`glob.enabled` = false), so
     // it cannot rot into an unlaunchable state the way the old `--tools`
     // allowlist did. It can still stop BITING if omp renames those keys, and
     // that failure is silent — so ask omp whether the two names really are gone.
     match crate::models::step0_effective() {
-        Some(true) => ui::ok("  STEP-0 in force: omp rejects grep/glob (code lookup → codegraph/cbm/serena)"),
+        Some(true) => ui::ok("  STEP-0 in force: omp rejects grep/glob (code lookup → trail)"),
         Some(false) => ui::warn(
             "  STEP-0 NOT in force: omp still offers grep/glob — the `grep.enabled`/`glob.enabled` keys changed. Fix STEP0_OVERLAY in models.rs",
         ),
         None => {}
-    }
-    if mcp.contains("\"serena\"") && which::which("uvx").is_ok() {
-        ui::ok("  serena registered + runnable via uvx — LSP symbol intel (mcp__serena_find_symbol/…)");
-    } else {
-        ui::warn("  serena NOT registered/runnable (uvx + mcp.json) — run `8sync harness`");
     }
     let hook = home.join(".omp/hooks/pre").join(crate::brand::ns_file("recall.ts")).exists();
     if hook && cfg.contains("thresholdPercent: 50") {

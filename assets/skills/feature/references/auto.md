@@ -15,7 +15,7 @@
 
 | Loại | Ví dụ | Xử lý auto |
 |------|-------|-----------|
-| **AI tra được** (repo/DB/docs) | schema cột nào, pattern nào, module tham khảo, API nào có sẵn, convention | Tự tra (R10: `codegraph`) → quyết. KHÔNG spawn subagent nếu đã rõ. |
+| **AI tra được** (repo/DB/docs) | schema cột nào, pattern nào, module tham khảo, API nào có sẵn, convention | Tự tra (R10: `trail ask`) → quyết. KHÔNG spawn subagent nếu đã rõ. |
 | **Cần phán đoán thiết kế** (nhiều hướng hợp lệ) | chọn approach A/B, cắt task, UX flow, trade-off | **Spawn subagent discuss** (xem §Spawn) → lấy khuyến nghị → quyết → ghi `CONTEXT.Decisions`. |
 | **Block thật** (subagent+repo+DB bó tay) | credential, URL instance live, holder/account thật, dữ liệu môi trường ngoài | SKIP + NEEDS-CONFIRM (luật 2). KHÔNG bịa. |
 | **Không đảo được / outward** | xoá data, push, gọi API production gửi tin thật ra ngoài | VẪN escalate user (an toàn > tự động). |

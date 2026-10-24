@@ -1,4 +1,4 @@
-// Layered graph layout for the codegraph + workflow canvases.
+// Layered graph layout for the workflow canvas.
 //
 // Backed by dagre rather than elkjs: both call sites only ever asked for
 // `elk.algorithm: layered` with a direction and a node spacing, and read back

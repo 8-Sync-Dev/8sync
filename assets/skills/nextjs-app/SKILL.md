@@ -1,6 +1,6 @@
 ---
 name: nextjs-app
-description: Use when building, editing, or debugging a Next.js App Router app (Next 15/16, React 19) — anything involving the `app/` route tree, Server Components vs `'use client'`, Server Actions, Route Handlers, the fetch cache, `middleware.ts`, SEO/metadata, an Encore.ts (or other) backend client, a Turborepo monorepo, or Vercel/Docker deployment. Produces correct RSC boundaries, non-stale caching, verified UI. Grounded in the Next.js 16 App Router canon; extends with the 8syncdev repo patterns + omp-native tooling (codegraph · codebase-memory · serena · engine_* · browser).
+description: Use when building, editing, or debugging a Next.js App Router app (Next 15/16, React 19) — anything involving the `app/` route tree, Server Components vs `'use client'`, Server Actions, Route Handlers, the fetch cache, `middleware.ts`, SEO/metadata, an Encore.ts (or other) backend client, a Turborepo monorepo, or Vercel/Docker deployment. Produces correct RSC boundaries, non-stale caching, verified UI. Grounded in the Next.js 16 App Router canon; extends with the 8syncdev repo patterns + omp-native tooling (trail · engine_* · browser).
 locked: true
 ---
 
@@ -35,8 +35,7 @@ Every step names a real omp tool. Do not improvise alternatives.
 
 You NEVER open `app/` files hoping. Before editing:
 
-1. **codegraph** (semantic index, ~35% token save vs grep): `codegraph index .` then `codegraph context "route tree, middleware, server actions"`. Locate routes, actions, and the backend client in one call.
-2. Only if **codebase-memory** is enabled (`8sync harness cbm on`) and the project is indexed, call `mcp__codebase_memory_mcp_get_architecture` (or `search_graph` for a symbol, `trace_path` for a call chain RSC→action→backend). For per-file symbols use `mcp__serena_get_symbols_overview` on the target file; for diagnostics before/after an edit use `mcp__serena_get_diagnostics_for_file`.
+1. **trail**: `trail build` then `trail ask "route tree, middleware, server actions"`. Locate routes, actions, and the backend client in one call; `trail callers <symbol>` for a call chain RSC→action→backend; `trail skeleton <file>` for per-file symbols.
 3. Confirm the **App vs Pages** boundary: if `app/` exists, you're here. `src/app/` is the same router (just under `src/`).
 
 ### 1. Place the RSC vs Client boundary correctly
@@ -55,7 +54,7 @@ This is the #1 source of Next bugs. **Next 15+ changed the default: `fetch` is n
 - `unstable_cache(fn, keys, { revalidate, tags })` wraps a non-`fetch` function (DB calls) the same way.
 - `generateStaticParams` for `[param]` pages you want prerendered at build.
 
-When a page mysteriously shows stale data, the cause is almost always a `fetch` that picked up `force-cache` (or a leftover `{ revalidate }` you forgot). Grep the data path with `codegraph query "<fetch site>"` and read the option.
+When a page mysteriously shows stale data, the cause is almost always a `fetch` that picked up `force-cache` (or a leftover `{ revalidate }` you forgot). Grep the data path with `trail grep "<fetch site>"` and read the option.
 
 ### 3. Mutations: Server Actions vs Route Handlers
 
@@ -106,7 +105,7 @@ Never put a raw backend URL + secret in a Client Component. Resolve env server-s
 - **Vercel** (8syncdev default for web): multi-project monorepo — each `apps/<name>` is a Vercel project with its Root Directory; `turbo-ignore` skips unaffected apps; env vars per project (prefix `NEXT_PUBLIC_*` to expose to browser). Edge runtime + ISR/PPR + per-PR preview URLs.
 - **Self-host / Docker**: set `output: 'standalone'` in `next.config.ts`, build, copy `.next/standalone` + `.next/static`, run `node server.js` (or `next start`). Resolve env at runtime, NOT build — `NEXT_PUBLIC_*` is inlined at build time.
 - **Static export**: `output: 'export'` → fully static `out/` (no Server Actions, no middleware, no ISR). Used by `8sync-verse` learn app.
-- **Env rule**: `NEXT_PUBLIC_*` is the *only* prefix the browser can see. Everything else is server-only. Verify with `mcp__codebase_memory_mcp_detect_changes` after wiring env so no secret leaks into a client module.
+- **Env rule**: `NEXT_PUBLIC_*` is the *only* prefix the browser can see. Everything else is server-only. Verify with `trail grep NEXT_PUBLIC` / `git diff` after wiring env so no secret leaks into a client module.
 
 ### 9. Build loop + UI verification
 
@@ -121,7 +120,7 @@ Before declaring done, ALL of these must hold:
 1. **`next build` clean** — zero errors; dynamic/static prerender report matches intent (routes you expect prerendered are prerendered, dynamic ones are dynamic).
 2. **Route tree renders** — drive ≥1 real flow in the `browser`; screenshot evidence (`8sync shot`). No console errors on the pages you touched.
 3. **Cache invalidation proven** — for every `revalidatePath`/`revalidateTag` the product depends on: mutate → reload → assert the new value is visible. State which path/tag and how you proved it.
-4. **Boundary correct** — no `'use client'` leaks data-fetching that should be server-side; no Server Component reaches for `useState`. (Spot-check with `mcp__serena_get_diagnostics_for_file`.)
+4. **Boundary correct** — no `'use client'` leaks data-fetching that should be server-side; no Server Component reaches for `useState`.
 5. **Env hygiene** — no backend secret in a client module; `NEXT_PUBLIC_*` only where the browser truly needs it.
 
 ## Non-goals
@@ -129,4 +128,4 @@ Before declaring done, ALL of these must hold:
 - Pages Router (legacy) unless the repo actually uses it.
 - Pages → App migration (separate task).
 - Picking/imposing a CSS framework — follow the repo's existing Tailwind/CSS choice.
-- Reinventing omp primitives — this skill composes codegraph/codebase-memory/serena/engine_*/browser/8sync verbs; it never reimplements them.
+- Reinventing omp primitives — this skill composes trail/engine_*/browser/8sync verbs; it never reimplements them.

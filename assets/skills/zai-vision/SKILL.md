@@ -99,8 +99,7 @@ All 8 tools take `image_source` (or `video_source`) as a **local file path OR a 
 | `8sync shot <url>` (render a live page) | `ui_to_artifact` (design→code) or `analyze_image` (review) | Generate/compare frontend code with **impeccable** skill |
 | `8sync pdf-img <file>` (long PDF → per-page PNG) | `extract_text_from_screenshot` per page | Concatenate extracted text; treat as normal text doc |
 | `8sync diff-img <ref>` (git diff render, >500 lines) | `ui_diff_check` (visual regression) or `extract_text_from_screenshot` (read the diff) | Review/comment as if reading the raw diff |
-| Codegraph/**codebase-memory-mcp** `get_architecture` rendered as a diagram image | `understand_technical_diagram` | Cross-check the graph's textual answer against the rendered picture |
-| **serena** symbol edits guided by a UI mock | `ui_to_artifact` → get a code skeleton | Hand the skeleton to `serena rename`/`code_actions` for precise symbol-level edits, not blind rewrites |
+| Call-graph / architecture rendered as a diagram image | `understand_technical_diagram` | Cross-check the graph's textual answer (`trail map`) against the rendered picture |
 | Long/garbled vision tool output (>50 lines) | — | Pipe through **headroom** `headroom_compress` before it enters context (STEP 0 rule applies to vision output too) |
 | omp's built-in `inspect_image` tool | — | Generic fallback when a specialized zai-vision tool doesn't fit (rare — zai-vision's 8 tools cover almost everything) |
 | Chart/graph screenshot from a dashboard | `analyze_data_visualization` | Feed the trend/anomaly summary into `retain` if it's a durable project fact |

@@ -7,7 +7,7 @@ Việc: $ARGUMENTS
 
 Level 1 của thang `/do` → `/ship` → `/ship-auto` → `/ship-loop` → `/autopilot` (xem `/ship`). Một lượt, không plan, không commit.
 
-1. **Cổng từ chối** — đọc đủ để biết việc chạm file nào (codegraph/LSP trước grep). Từ chối, KHÔNG sửa gì, nói rõ lý do và bảo owner dùng `/ship <việc>` nếu:
+1. **Cổng từ chối** — đọc đủ để biết việc chạm file nào (trail/LSP trước grep). Từ chối, KHÔNG sửa gì, nói rõ lý do và bảo owner dùng `/ship <việc>` nếu:
    - chạm > 3 file, hoặc cần thiết kế/migration/đổi API công khai;
    - đụng cấu hình Claude Code / kit: `.claude/settings*.json`, hooks, guard/deny rule, `CLAUDE.md`, `AGENTS.md`, `su-code/skills/**`;
    - đụng auth/OAuth, secret/`.env`/credential, deploy/CI/release config, dependency, hoặc thu thập dữ liệu / nhắn người ngoài;

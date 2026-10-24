@@ -2,15 +2,15 @@
 
 
 <!-- 8sync:skills:begin -->
-## 🚨 STEP 0 — CODE INTELLIGENCE FIRST (codegraph CLI trước)
+## 🚨 STEP 0 — CODE MAP FIRST (trail CLI trước)
 
-Mọi câu hỏi về code → dùng code-intelligence engine TRƯỚC grep/read (tiết kiệm ~99% token). Bạn (AI) **PHẢI**:
+Mọi câu hỏi về code → hỏi bản đồ code `trail` TRƯỚC grep/read (tree-sitter local, không gọi model, tiết kiệm rất nhiều token). Bạn (AI) **PHẢI**:
 
-1. **codegraph** (local index): `codegraph index .` 1 lần/session; rồi `codegraph query/explore/node/callers/callees/impact` thay cho `grep`/`rg`/`fd`/`Grep`/`Glob` và `Read` toàn file.
-2. Tìm/hiểu/định vị code · impact · route→handler · dead code · architecture → codegraph CLI trước. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit).
+1. **trail** (local code map): `trail ask "<câu hỏi>"` · `trail grep <pattern>` · `trail skeleton <file>` · `trail callers <symbol>` (`--direction out` = callees) · `trail map` thay cho `grep`/`rg`/`fd`/`Grep`/`Glob` và `Read` toàn file. Làm mới: `trail build`; repo mới: `8sync trail`.
+2. Tìm/hiểu/định vị code · impact · route→handler · architecture → trail trước. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit). Học được điều bền (vì sao, đã thử gì) → `trail note`.
 3. **Nén những gì BẠN phát lại:** báo cáo / subagent prompt / nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill vào context.
 
-Lý do: 5 query cấu trúc ≈ 3.4k token vs ≈ 412k token grep từng file (−99%). Dump cả file / grep mù = đốt token = bug.
+Lý do: vài query cấu trúc ≪ token so với grep từng file. Dump cả file / grep mù = đốt token = bug.
 
 ## 🚨 STEP 1 — skills 2 tầng: CORE (đọc ngay) · SPECIALIST + on-demand (đọc khi cần)
 
@@ -20,7 +20,7 @@ Mỗi skill = 1 directory (Agent Skills open standard): `SKILL.md` có frontmatt
 
 Nhỏ + dùng cho MỌI task. **Thứ tự = ưu tiên (đọc top-down).** Mở `SKILL.md` ở path dưới rồi mới gọi tool đầu tiên:
 
-  1. `su-code/skills/codegraph/SKILL.md`
+  1. `su-code/skills/trail/SKILL.md`
   2. `su-code/skills/karpathy-guidelines/SKILL.md`
   3. `su-code/skills/ponytail/SKILL.md`
   4. `su-code/skills/8sync-cli/SKILL.md`
@@ -87,15 +87,14 @@ KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Kh
 - `taste-soft` — `su-code/skills/taste-soft/SKILL.md`
 - `tauri-v2` — `su-code/skills/tauri-v2/SKILL.md`
 - `test-driven-development` — `su-code/skills/test-driven-development/SKILL.md`
-- `token-bench` — `su-code/skills/token-bench/SKILL.md`
 - `using-agent-skills` — `su-code/skills/using-agent-skills/SKILL.md`
 - `zai-vision` — `su-code/skills/zai-vision/SKILL.md`
 
 ### Quy tắc bất biến
 
-- **Code-intelligence FIRST** (codegraph CLI trước) cho mọi câu hỏi explore code (Step 0). Bypass = bug.
+- **Code map FIRST** (trail CLI trước) cho mọi câu hỏi explore code (Step 0). Bypass = bug.
 - **Output > ~50 dòng → BẮT BUỘC `headroom_compress`** trước khi vào context — không dump thô.
-- Đọc body **CORE** (codegraph → karpathy → ponytail → 8sync-cli) TRƯỚC tool call đầu tiên. **SPECIALIST** (assp · impeccable · taste · image-routing) đọc body KHI task khớp — `impeccable` bắt buộc ngay khi có việc UI/design.
+- Đọc body **CORE** (trail → karpathy → ponytail → 8sync-cli) TRƯỚC tool call đầu tiên. **SPECIALIST** (assp · impeccable · taste · image-routing) đọc body KHI task khớp — `impeccable` bắt buộc ngay khi có việc UI/design.
 - Skill **on-demand**: chỉ mở khi description khớp task hiện tại — đừng đọc thừa.
 - Nếu skill có `scripts/` → ưu tiên invoke script đó thay vì viết lại logic.
 - Khi áp dụng skill, **cite** rõ: ví dụ `su-code/skills/<name>/SKILL.md:line`.
@@ -138,13 +137,13 @@ bash scripts/bootstrap.sh        # cài rustup (nếu thiếu) + build + install
 
 Sau đó:
 ```bash
-8sync setup                      # Stage A (gh · omp · codegraph · forge+zsh · configs · harness global) + hỏi y/N từng profile
+8sync setup                      # Stage A (gh · omp · forge+zsh · configs · harness global) + hỏi y/N từng profile
 # hoặc:
 8sync setup --yall               # unattended: mọi profile COMMUNITY (không gồm personal), không hỏi
 8sync setup --no-profile         # chỉ harness, unattended (installer chạy lệnh này): bước lỗi được ghi lại, phần còn lại vẫn cài
 8sync setup --profile alexdev    # apply bundle cá nhân hóa của alexdev
 
-# omp/codegraph cài bằng installer chính thức (install.sh / install.ps1 -Binary); forge từ GitHub release
+# omp cài bằng installer chính thức (install.sh / install.ps1 -Binary); forge từ GitHub release
 8sync doctor                     # verify
 ```
 
@@ -194,7 +193,7 @@ su-code/
 └── assets/                                                  bundled vào binary qua rust-embed
     ├── configs/                                             helix config + theme + kitty/8sync.session + 8sync/{global,skills}.toml
     ├── profiles/                                            7 personal profile TOML (vietnamese, hw-cooling, hw-lianli, displaylink, apps-personal, warp, alexdev-bundle)
-    └── skills/                                              8 bundled (codegraph, karpathy, assp-skill, impeccable, taste-skill, 8sync-cli, image-routing, last30days) + 00-force-load.md
+    └── skills/                                              8 bundled (trail, karpathy, assp-skill, impeccable, taste-skill, 8sync-cli, image-routing, last30days) + 00-force-load.md
 ```
 
 ---
@@ -211,7 +210,7 @@ su-code/
 | `8sync run [dev\|build\|test\|fmt\|lint]` | Project command theo recipe |
 | `8sync ship "msg"` | `git add -A && commit && push && gh pr create` |
 | `8sync forge <name> [--tui]` | Session ForgeCode theo tên (alias `forgecode`): mặc định zsh có plugin Forge gắn đúng conversation (`: <prompt>` hỏi Forge, `:<Tab>` liệt kê lệnh, `@<Tab>` file); `--tui` mở TUI; `-p` one-shot. Prompt 2 dòng dùng chung `assets/configs/zsh/8sync.zsh` (repo-relative path · branch đọc thẳng `.git/HEAD` · segment Forge async · duration · `❯` theo exit) + autosuggestions/syntax-highlighting pin commit. Tự cài Forge; zsh: Windows MSYS2 trong `%LOCALAPPDATA%\8sync\zsh`, Linux/macOS không sudo → zsh-bin static. Sub: `ls`/`new`/`rm`/`key`/`status` |
-| `8sync ccc . <name>` | Claude Code (`claude`) theo tên trong repo: tên → UUID (`--session-id` lần đầu, `--resume` sau), registry dùng chung với forge (`uuid_sessions.rs`). `8sync ccc .` = session dùng gần nhất; `. ls`/`. new`/`. rm` (xoá cả transcript)/`status`; flag sau tên chuyển thẳng cho `claude`. Tự cài Claude Code bằng installer chính thức. **Mỗi lần mở** (`prepare`, không chặn launch, không mạng trên đường chính): release mới (cache probe 6h) → tự `up` rồi chạy lại lệnh trên binary mới (`SUSYNC_NO_AUTO_UPDATE=1` tắt); kit stamp khác version → refresh bundled skills + kit; repo git → harness (vendor skill thiếu vào `su-code/skills`, AGENTS.md/CLAUDE.md block, `.claude/skills` → `su-code/skills`, `.claude/settings.local.json` `skillOverrides` on-demand = `name-only`, gitignore). **Kit** (`8sync ccc kit`, setup tự chạy) vào `~/.claude`: 5 subagent (`explore` Haiku, `reviewer`/`designer` inherit) + skill `/ship` · `/aup-audit` · `deep-research` + mọi bundled skill link → `~/.omp/skills/<tên>` (personal thắng project → luôn bản mới), `CLAUDE.md` import luật org `~/.claude/skills/aup-audit/8sync-anthropic-rules.md` (bản gốc `assets/skills/aup-audit/8sync-anthropic-rules.md`, luôn nạp), hook verify **async** (`asyncRewake`, edit mới nhất thắng, lỗi đánh thức Claude) + `hook verify-stop` (Stop: build hỏng → chặn 1 lần mỗi trạng thái; build ổn → Stop gate native `ccc/gate.rs`, không gọi model, bỏ qua khi còn background task hoặc tin nhắn cuối của user bảo dừng, đọc từ transcript), hook guard native cho Bash **và PowerShell** (`ccc/danger.rs`: parser shell + backstop quét text thô; deny xoá root/home/project/tổ tiên, wipe disk, `wsl --unregister`, force-push mọi kiểu, in/upload `.env`; ask xoá ngoài project/temp, target runtime, xoá trong wsl/ssh/container, `\| sh`, `git reset --hard`/`clean -f`; analyser panic → ask; cộng credential, secret thật, `git add -A` dính secret, subscription Claude sang client khác), allow build/test/lint + `git add` (bỏ classifier auto mode ~0.65 s/lệnh), Ask gate (Sonnet, full model id), connectors claude.ai tắt (`disableClaudeAiConnectors`), auto mode, deny đọc/sửa `.env`/key/`*.session`/`*.pkl` + force-push (rule path chỉ `Read(...)`/`Edit(...)`), MCP cbm + serena; file user sửa được giữ (`--force` đè) |
+| `8sync ccc . <name>` | Claude Code (`claude`) theo tên trong repo: tên → UUID (`--session-id` lần đầu, `--resume` sau), registry dùng chung với forge (`uuid_sessions.rs`). `8sync ccc .` = session dùng gần nhất; `. ls`/`. new`/`. rm` (xoá cả transcript)/`status`; flag sau tên chuyển thẳng cho `claude`. Tự cài Claude Code bằng installer chính thức. **Mỗi lần mở** (`prepare`, không chặn launch, không mạng trên đường chính): release mới (cache probe 6h) → tự `up` rồi chạy lại lệnh trên binary mới (`SUSYNC_NO_AUTO_UPDATE=1` tắt); kit stamp khác version → refresh bundled skills + kit; repo git → harness (vendor skill thiếu vào `su-code/skills`, AGENTS.md/CLAUDE.md block, `.claude/skills` → `su-code/skills`, `.claude/settings.local.json` `skillOverrides` on-demand = `name-only`, gitignore). **Kit** (`8sync ccc kit`, setup tự chạy) vào `~/.claude`: 5 subagent (`explore` Haiku, `reviewer`/`designer` inherit) + skill `/ship` · `/aup-audit` · `deep-research` + mọi bundled skill link → `~/.omp/skills/<tên>` (personal thắng project → luôn bản mới), `CLAUDE.md` import luật org `~/.claude/skills/aup-audit/8sync-anthropic-rules.md` (bản gốc `assets/skills/aup-audit/8sync-anthropic-rules.md`, luôn nạp), hook verify **async** (`asyncRewake`, edit mới nhất thắng, lỗi đánh thức Claude) + `hook verify-stop` (Stop: build hỏng → chặn 1 lần mỗi trạng thái; build ổn → Stop gate native `ccc/gate.rs`, không gọi model, bỏ qua khi còn background task hoặc tin nhắn cuối của user bảo dừng, đọc từ transcript), hook guard native cho Bash **và PowerShell** (`ccc/danger.rs`: parser shell + backstop quét text thô; deny xoá root/home/project/tổ tiên, wipe disk, `wsl --unregister`, force-push mọi kiểu, in/upload `.env`; ask xoá ngoài project/temp, target runtime, xoá trong wsl/ssh/container, `\| sh`, `git reset --hard`/`clean -f`; analyser panic → ask; cộng credential, secret thật, `git add -A` dính secret, subscription Claude sang client khác), allow build/test/lint + `git add` (bỏ classifier auto mode ~0.65 s/lệnh), Ask gate (Sonnet, full model id), connectors claude.ai tắt (`disableClaudeAiConnectors`), auto mode, deny đọc/sửa `.env`/key/`*.session`/`*.pkl` + force-push (rule path chỉ `Read(...)`/`Edit(...)`); file user sửa được giữ (`--force` đè) |
 
 ### Session mgmt — named per-project sessions (sub của `.`)
 Nhiều feature song song trong 1 repo, mỗi cái 1 omp conversation cô lập. Lever = omp có sẵn (`--session-dir` + `--continue`); 8sync chỉ thêm lớp **tên → session-dir** + **git worktree** + **merge**. Registry máy-local: `~/.config/8sync/sessions/<repo>/index.json` (KHÔNG commit — trỏ path máy-local).
@@ -276,7 +275,7 @@ Không tự nói chuyện USB: đi qua IPC của `lian-li-linux` daemon (`$XDG_R
 ### Lifecycle
 | Verb | Mô tả |
 |---|---|
-| `8sync setup` | Stage A = **AI core thuần** (omp · codegraph · MCP/skills · gh · forge + zsh · Claude Code + kit · gitleaks · PATH bootstrap) + Stage B (curated y/N: dev-stack, nvidia, bluetooth, warp, **terminal**). `--profile terminal` chạy MỌI OS: helix + JetBrainsMono Nerd Font (+ font mặc định Windows Terminal nếu chưa set) + pro zsh; kitty glass chỉ Arch/Fedora |
+| `8sync setup` | Stage A = **AI core thuần** (omp · trail · MCP/skills · gh · forge + zsh · Claude Code + kit · gitleaks · PATH bootstrap) + Stage B (curated y/N: dev-stack, nvidia, bluetooth, warp, **terminal**). `--profile terminal` chạy MỌI OS: helix + JetBrainsMono Nerd Font (+ font mặc định Windows Terminal nếu chưa set) + pro zsh; kitty glass chỉ Arch/Fedora |
 | `8sync setup --community` | Auto-yes — Stage A + dev-stack + bluetooth (KHÔNG include warp) |
 | `8sync setup --no-profile` | Chỉ harness, không hỏi profile |
 | `8sync setup --profile <name>` | Apply 1 profile cụ thể non-interactive (cả community + personal) |
@@ -290,10 +289,11 @@ Không tự nói chuyện USB: đi qua IPC của `lian-li-linux` daemon (`$XDG_R
 ### AI tooling
 | Verb | Mô tả |
 |---|---|
-| `8sync harness [init\|up\|help]` | **bare `8sync harness`** = ONE idempotent command: deploy/update skill + mirror (additive, KHÔNG đè skill đã sửa) + inject + seed memory + consolidate + codegraph index. **init**: full bootstrap (progress UI) + **managed `.gitignore`** (ignore `.codegraph/`/`.cache/`/`.env*`, keep `su-code/`+`su-code/skills/`) + **gitleaks pre-commit hook**; `--force` re-mirror đè hết. **up**: light refresh (`--pull` re-pull skill; `--commit` git-commit memory — gitleaks scan trước, abort nếu rò secret; `--loop`/`--timer` chạy nền; tự consolidate `## Learnings` >200 dòng → `su-code/archive/`). **help**: cheatsheet |
+| `8sync harness [init\|up\|help]` | **bare `8sync harness`** = ONE idempotent command: deploy/update skill + mirror (additive, KHÔNG đè skill đã sửa) + inject + seed memory + consolidate + `trail build`. **init**: full bootstrap (progress UI) + **managed `.gitignore`** (ignore `graft/`/`.cache/`/`.env*`, keep `su-code/`+`su-code/skills/`) + **gitleaks pre-commit hook**; `--force` re-mirror đè hết. **up**: light refresh (`--pull` re-pull skill; `--commit` git-commit memory — gitleaks scan trước, abort nếu rò secret; `--loop`/`--timer` chạy nền; tự consolidate `## Learnings` >200 dòng → `su-code/archive/`). **help**: cheatsheet |
 | `8sync harness create [--sweep [DIR]]` | **Full host bootstrap** for Cursor + Z.ai Code + Claude Code + omp: same as `init`, then fan `su-code/skills/` → `.cursor/skills` + `.zcode/skills` + `.claude/skills` (symlink/junction; a repo's own `.claude/skills/` is never replaced) and write `.cursor/rules/8sync-harness.mdc` (`alwaysApply: true`) + `.claude/settings.local.json` (`skillOverrides`: on-demand → `name-only`). Ignore lines have no trailing slash (git sees a link as a file). `--sweep` stamps every omp project under DIR (default `~/Projects`) |
-| `8sync harness global [--sweep [DIR]]` | Apply rule omp **TOÀN CỤC** (mọi project dùng omp, không cần chạy per-project): `~/.omp/skills` + `00-force-load.md` + `APPEND_SYSTEM.md` (append vào MỌI system prompt) + MCP (cbm/headroom/serena/zai-vision) + hooks + capabilities — CWD-independent, không đụng project hiện tại. Kèm token-optimizer default cho Anthropic: compaction 50% (chỉ khi chưa set), headroom compress, APPEND_SYSTEM ghi byte-stable → prompt-cache hit. `--sweep [DIR]` (default `~/Projects`): stamp per-project layer (mirror skills + inject AGENTS.md + seed memory + gitleaks hook + `.cursor`/`.zcode` hosts) vào MỌI **omp project** dưới DIR — chỉ repo có `su-code/` hoặc `AGENTS.md`/`CLAUDE.md`, repo không dùng omp skip + report (onboard: `cd <repo> && 8sync harness`); codegraph index vẫn per-project. `--pull` re-pull registered skills |
-| `8sync harness toolstats` | Đọc omp session JSONL → tỉ lệ **optimizer** (codegraph/cbm/serena/headroom) vs **fallback** (grep/read/search/find/glob) + fail per tool. Phát hiện STEP-0 không được dùng. **Không DB** — mỗi lần chạy re-scan toàn bộ JSONL rồi fold in-memory (bản SQLite cũ mở đầu bằng `DELETE FROM calls` nên chưa bao giờ lưu gì; xoá `rusqlite` = −1 060 840 B) |
+| `8sync harness global [--sweep [DIR]]` | Apply rule omp **TOÀN CỤC** (mọi project dùng omp, không cần chạy per-project): `~/.omp/skills` + `00-force-load.md` + `APPEND_SYSTEM.md` (append vào MỌI system prompt) + MCP (headroom/zai-vision) + hooks + capabilities — CWD-independent, không đụng project hiện tại. Kèm token-optimizer default cho Anthropic: compaction 50% (chỉ khi chưa set), headroom compress, APPEND_SYSTEM ghi byte-stable → prompt-cache hit. `--sweep [DIR]` (default `~/Projects`): stamp per-project layer (mirror skills + inject AGENTS.md + seed memory + gitleaks hook + `.cursor`/`.zcode` hosts) vào MỌI **omp project** dưới DIR — chỉ repo có `su-code/` hoặc `AGENTS.md`/`CLAUDE.md`, repo không dùng omp skip + report (onboard: `cd <repo> && 8sync harness`); `trail build` vẫn per-project. `--pull` re-pull registered skills |
+| `8sync trail [dir\|--all [ROOT]\|status\|off]` | STEP 0: cài trail-code (`npm i -g @trailhq/trail-code --ignore-scripts`), tắt telemetry, `trail init` cho repo (Claude hook, không global hook, không statusline) + thêm `graft/` vào .gitignore; `--all ROOT` quét mọi git repo (depth ≤3) với `--dry-run` |
+| `8sync harness toolstats` | Đọc omp session JSONL → tỉ lệ **optimizer** (trail/headroom) vs **fallback** (grep/read/search/find/glob) + fail per tool. Phát hiện STEP-0 không được dùng. **Không DB** — mỗi lần chạy re-scan toàn bộ JSONL rồi fold in-memory (bản SQLite cũ mở đầu bằng `DELETE FROM calls` nên chưa bao giờ lưu gì; xoá `rusqlite` = −1 060 840 B) |
 | `8sync skill [add <spec>\|gen \|list\|update]` | Quản lý skill: `add` clone GitHub (collection-aware) / `builtin:<name>` / **`<url>@<ref>` để pin commit/tag** (ghi `rev` vào `skills.toml` = lockfile, reproducible); `update [name]` re-pull theo `src` (git dedup theo URL, honor `rev` pin); `gen` fuse N skill |
 | `8sync mcp [serve\|install\|uninstall\|tools]` | 8sync làm **MCP server stdio** (`verbs/mcp.rs`, JSON-RPC 2.0 mỗi dòng một message, protocol 2025-06-18/03-26/2024-11-05) cho **Claude Desktop (chat) / Cowork / Claude Code**: tool `machine` (RAM/CPU/GPU/W/pin, in-process) + `sessions` · `board` · `queue` · `knowledge` · `report` · `kit` (đọc) + `queue_add` · `know_add` (ghi). Mỗi tool (trừ `machine`) chạy chính binary bằng argv (không shell) trong `repo` tuyệt đối có `.git`, timeout 60 s, cắt 40k ký tự, không đọc token/secret/inbox/grant. `install` merge `mcpServers.8sync` vào `claude_desktop_config.json` (`%APPDATA%\Claude`, `~/Library/Application Support/Claude`, `~/.config/Claude`; + bản Store `Packages\Claude_*\LocalCache\Roaming\Claude` nếu có), backup `.bak-8sync`, JSON hỏng → không đụng; `--claude-code` thêm user scope; `--print` chỉ in |
 | `8sync sleep work [--hours N] [--screen-off PHÚT] [--no-lock] [--force] \| off \| status` | (= `8sync ccc sleep`, `ccc/awake.rs`) Màn hình tắt + khoá máy ngay mà Claude Desktop / Claude Code vẫn làm: hold giữ thức không theo phòng (thay hold `awake on` theo phòng), chờ 1,5 s cho phím nhả, `LockWorkStation` / `loginctl lock-session` / `pmset displaysleepnow`, rồi `SC_MONITORPOWER` / `xset dpms force off`; chạm chuột/phím sáng lại, tự tắt lại sau 2 phút; Modern Standby không tắt màn hình trừ `--force`; `off` = `awake off` |
@@ -354,11 +354,11 @@ Session memory được `omp` tự quản (retain/recall/auto-compact). 8sync ch
 
 ## 7. Skill system (force-load)
 
-Khi `8sync harness init` (hoặc `8sync setup`) chạy, **29 skill bundled** được deploy vào `~/.omp/skills/` theo [Agent Skills open standard](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview). 10 skill **always-on** chia 2 tầng (progressive disclosure — giữ prefix gọn cho KV-cache): 4 **CORE** đọc body ngay đúng thứ tự (codegraph → karpathy-guidelines → ponytail → 8sync-cli), 6 **specialist** chỉ biết khả năng rồi đọc body khi task khớp; phần còn lại on-demand; `encore-deploy` tech-gated; `social-growth` opt-in:
+Khi `8sync harness init` (hoặc `8sync setup`) chạy, **28 skill bundled** được deploy vào `~/.omp/skills/` theo [Agent Skills open standard](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview). 10 skill **always-on** chia 2 tầng (progressive disclosure — giữ prefix gọn cho KV-cache): 4 **CORE** đọc body ngay đúng thứ tự (trail → karpathy-guidelines → ponytail → 8sync-cli), 6 **specialist** chỉ biết khả năng rồi đọc body khi task khớp; phần còn lại on-demand; `encore-deploy` tech-gated; `social-growth` opt-in:
 
 | Skill | Trigger | Mô tả |
 |---|---|---|
-|`codegraph`|`always` (CORE)|semantic code intelligence (binary + SKILL.md) — STEP 0, mọi explore code|
+|`trail`|`always` (CORE)|code map for agents (trail ask/grep/skeleton/callers/map) — STEP 0|
 |`karpathy-guidelines`|`always` (CORE)|kỷ luật engineering Karpathy-style|
 |`ponytail`|`always` (CORE)|"laziest senior dev" — YAGNI, làm ít nhất, xoá > thêm|
 |`8sync-cli`|`always` (CORE)|dạy AI ưu tiên verb 8sync hơn shell thô|
@@ -374,7 +374,6 @@ Khi `8sync harness init` (hoặc `8sync setup`) chạy, **29 skill bundled** đ�
 |`full-flow`|on-demand|self-driving fix/dev/verify loop (Encore + Next)|
 |`branch-sync`|on-demand|check/preview/merge/sync mọi git branch về main không conflict|
 |`super-pdf`|on-demand|báo cáo/tài liệu PDF "boardroom-grade" từ HTML design system (chips strip + kicker cover, §N section spine, bảng cmp navy + pills, callout 4 màu, stat cards, footer chạy) — template + `scripts/build.sh` (WeasyPrint); cùng họ với các PDF review CloudGO|
-|`token-bench`|on-demand|đo token thật mà codegraph/codebase-memory-mcp tiết kiệm vs grep+read (kèm correctness check)|
 |`last30days`|on-demand|research social recency (Reddit/X/YouTube/HN…)|
 |`deep-research`|on-demand|điều tra source-heavy → 1 brief có citation; token-lean (snippet trước page, worker trả gọn); cũng nằm trong kit Claude Code|
 |`aup-audit`|on-demand|Usage Policy Anthropic + quy tắc 8 Sync: gitleaks cả history, file nhạy cảm, đường truy cập Claude, tính năng rủi ro (`RULES.md`); cũng nằm trong kit Claude Code|

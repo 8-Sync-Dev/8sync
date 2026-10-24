@@ -117,8 +117,7 @@ Before implementing any code task:
 
 3. Inspect the affected codebase area with a graph tool if available:
    - `code-review-graph`
-   - `codegraph`
-   - `Serena`
+   - `trail`
    - any equivalent codebase graph or symbol index
 
 4. Use graph inspection to understand:
@@ -295,7 +294,7 @@ Before implementation:
 2. Load Clouds F or the configured primary coordinator if available.
 3. Classify the task type.
 4. Estimate scope and risk.
-5. Inspect the affected area using code-review-graph, codegraph, Serena, or an equivalent graph tool if available.
+5. Inspect the affected area using code-review-graph, trail, or an equivalent graph tool if available.
 6. Confirm graph findings by reading the actual source files.
 7. Identify the source of truth, reusable patterns, affected files, and regression risks.
 

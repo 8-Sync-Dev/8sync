@@ -52,7 +52,7 @@ Replace every `<placeholder>`. Keep it operational:
 
 Length discipline: if it exceeds ~200 lines, split the detail into `references/` and keep `SKILL.md`
 as the router. Never vendor a public README into `references/` — link it. (A 32.9 KB vendored README
-was 83.7% of the `codegraph` skill before it was removed.)
+was 83.7% of the removed code-map skill before it was removed.)
 
 ## 4. Pair it with a command when it needs an entry point
 

@@ -2,8 +2,8 @@
 //! and the harness from runaway helpers.
 //!
 //! It reads `/proc` directly every ~2 s, finds the process trees under `claude` / `omp`
-//! plus a configurable list of known harness helpers (codebase-memory-mcp, serena,
-//! tsserver…), and when one burns CPU or RAM it (1) appends an alert to
+//! plus a configurable list of known harness helpers (headroom, tsserver…; the
+//! retired codebase-memory-mcp and serena stay listed for one release so a leftover is killed), and when one burns CPU or RAM it (1) appends an alert to
 //! `~/.local/state/8sync/watchdog/alerts.jsonl` (which `8sync ccc hook watchdog` feeds
 //! to Claude Code as `additionalContext`), (2) calls `notify-send`, and (3) for KNOWN
 //! HELPERS ONLY sends SIGTERM, then SIGKILL after a grace period, and quarantines a
@@ -117,7 +117,7 @@ pub struct Config {
     pub notify: bool,
     pub roots: Vec<String>,
     pub helpers: Vec<String>,
-    /// Helpers that are legitimately heavy while indexing (LSPs, codegraph): alert, never kill.
+    /// Helpers that are legitimately heavy while indexing (LSPs): alert, never kill.
     pub warn_only: Vec<String>,
     pub watch: Vec<String>,
     pub build: Vec<String>,
@@ -156,11 +156,11 @@ impl Default for Config {
             notify: true,
             roots: v(&["claude", "omp"]),
             helpers: v(&[
-                "codebase-memory-mcp", "serena", "headroom", "codegraph", "tsserver", "rust-analyzer",
+                "codebase-memory-mcp", "serena", "headroom", "tsserver", "rust-analyzer",
                 "typescript-language-server", "gopls", "pyright-langserver", "basedpyright-langserver",
             ]),
             warn_only: v(&[
-                "codegraph", "tsserver", "rust-analyzer", "typescript-language-server", "gopls", "pyright-langserver",
+                "tsserver", "rust-analyzer", "typescript-language-server", "gopls", "pyright-langserver",
                 "basedpyright-langserver",
             ]),
             build: v(&[
@@ -201,9 +201,9 @@ respawn_limit = 3            # killed more than this many times ...
 respawn_window_secs = 600.0  # ... within this window = quarantined (~/.config/8sync/watchdog-blocked)
 notify = true
 roots = [\"claude\", \"omp\"]
-helpers = [\"codebase-memory-mcp\", \"serena\", \"headroom\", \"codegraph\", \"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
+helpers = [\"codebase-memory-mcp\", \"serena\", \"headroom\", \"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
 # helpers that index heavily by design: alert only, never killed
-warn_only = [\"codegraph\", \"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
+warn_only = [\"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
 # under pressure (low MemAvailable, high load or PSI), session processes above renice_cpu_pct
 # get renice 19 + ionice idle (they keep running, the desktop stays responsive)
 auto_renice = true
@@ -668,11 +668,10 @@ pub fn suggest_for(helper: bool, name: &str) -> String {
     }
 }
 
-/// Remedy for a helper alert; 8sync-managed MCP servers get their own off switch.
+/// Remedy for a helper alert; the retired indexing MCP servers get their cleanup command.
 pub fn helper_suggest(name: &str) -> String {
     let off = match name {
-        "codebase-memory-mcp" => "run `8sync harness cbm off` (8sync-managed MCP, default off)",
-        "serena" => "run `8sync harness serena off` (8sync-managed MCP, default off)",
+        "codebase-memory-mcp" | "serena" => "retired MCP server: run `8sync harness global` (removes the entry 8sync registered)",
         _ => "keep that helper off for this task (disable its MCP server / LSP) or work in smaller repos",
     };
     format!("{off}; the watchdog blocks it if it keeps respawning (`8sync watchdog unblock <name>` allows it again).")
@@ -1457,7 +1456,7 @@ fn status(paths: &Paths) -> Result<()> {
 mod tests {
     use super::*;
 
-    const STAT: &str = "119579 (codebase (mem) mcp) S 4242 119579 119579 0 -1 4194560 100 0 0 0 7000 1500 0 0 20 0 9 0 5555 1000 2000 18446744073709551615 0 0 0 0 0 0 0 0 0 0 0 0 17 3 0 0 0 0 0";
+    const STAT: &str = "119579 (head (room) mcp) S 4242 119579 119579 0 -1 4194560 100 0 0 0 7000 1500 0 0 20 0 9 0 5555 1000 2000 18446744073709551615 0 0 0 0 0 0 0 0 0 0 0 0 17 3 0 0 0 0 0";
 
     fn tmp(tag: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU32, Ordering};
@@ -1483,15 +1482,15 @@ mod tests {
         Snap { now, dt: 2.0, wall_ms: 1_000_000 + (now * 1000.0) as u64, procs, avail_pct: 50.0, load: 1.0, cores: 8.0, protect: HashSet::from([1]), ..Default::default() }
     }
 
-    /// claude(100) → helper cbm(200) burning `ticks_per_step` ticks every 2 s step.
+    /// claude(100) → helper hr(200) burning `ticks_per_step` ticks every 2 s step.
     fn burn_world(now: f64, step: u64) -> Snap {
-        snap(now, vec![proc(100, 1, "claude", Kind::Root, 10, 500), proc(200, 100, "codebase-memory-mcp", Kind::Helper, step * (now as u64 / 2 + 1), 800)])
+        snap(now, vec![proc(100, 1, "claude", Kind::Root, 10, 500), proc(200, 100, "headroom", Kind::Helper, step * (now as u64 / 2 + 1), 800)])
     }
 
     #[test]
     fn proc_parsers_on_fixtures() {
         let st = parse_stat(STAT).unwrap();
-        assert_eq!((st.pid, st.comm.as_str(), st.ppid, st.ticks, st.start), (119579, "codebase (mem) mcp", 4242, 8500, 5555));
+        assert_eq!((st.pid, st.comm.as_str(), st.ppid, st.ticks, st.start), (119579, "head (room) mcp", 4242, 8500, 5555));
         assert_eq!(parse_statm_rss("5000 2000 100 1 0 300 0"), Some(2000 * 4096));
         let mi = "MemTotal:       32000000 kB\nMemFree: 1 kB\nMemAvailable:    3200000 kB\n";
         assert_eq!(parse_meminfo(mi), Some((3_200_000, 32_000_000)));
@@ -1592,7 +1591,7 @@ mod tests {
         assert_eq!(classify(&n, &cfg), (Kind::Helper, "tsserver".into()));
         // a helper list entry that is a protected runtime/editor never becomes killable
         assert_eq!(classify(&names(&["node"]), &cfg).0, Kind::Watched);
-        assert_eq!(classify(&names(&["codebase-memory-mcp"]), &cfg).0, Kind::Helper);
+        assert_eq!(classify(&names(&["headroom"]), &cfg).0, Kind::Helper);
         assert_eq!(classify(&names(&["firefox"]), &cfg).0, Kind::Other);
         assert_eq!(classify(&names(&["cargo"]), &cfg).0, Kind::Build, "builds are reniced, never killed");
     }
@@ -1602,7 +1601,7 @@ mod tests {
         let ps = [
             proc(100, 1, "claude", Kind::Root, 0, 1),
             proc(150, 100, "sh", Kind::Other, 0, 1),
-            proc(200, 150, "serena", Kind::Helper, 0, 1),
+            proc(200, 150, "gopls", Kind::Helper, 0, 1),
             proc(300, 1, "headroom", Kind::Helper, 0, 1),
             proc(400, 100, "omp", Kind::Root, 0, 1),
             proc(500, 200, "node", Kind::Watched, 0, 1),
@@ -1643,7 +1642,7 @@ mod tests {
         let first = res.iter().find(|(_, o)| !o.alerts.is_empty()).unwrap();
         assert!(first.0 >= 20.0, "not before the 20 s window: {}", first.0);
         let a = &first.1.alerts[0];
-        assert_eq!((a.kind.as_str(), a.exe.as_str(), a.pid, a.root_pid, a.action.as_str()), ("cpu", "codebase-memory-mcp", 200, 100, "killed"));
+        assert_eq!((a.kind.as_str(), a.exe.as_str(), a.pid, a.root_pid, a.action.as_str()), ("cpu", "headroom", 200, 100, "killed"));
         assert!(a.value > 280.0 && a.msg.contains("283% CPU for 20 s"));
         assert_eq!(first.1.acts, vec![Act::Term(200, 2000)]);
         let kill = res.iter().find(|(_, o)| o.acts.contains(&Act::Kill(200, 2000))).unwrap();
@@ -1706,11 +1705,11 @@ mod tests {
             let pid = 200 + gen;
             for i in 0..12u64 {
                 let t = gen as f64 * 30.0 + i as f64 * 2.0;
-                let procs = vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(pid, 100, "codebase-memory-mcp", Kind::Helper, 566 * i, 100)];
+                let procs = vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(pid, 100, "headroom", Kind::Helper, 566 * i, 100)];
                 let o = e.step(&snap(t, procs));
                 kills += o.acts.iter().filter(|a| matches!(a, Act::Term(..))).count();
                 if let Some(Act::Block(n)) = o.acts.iter().find(|a| matches!(a, Act::Block(_))) {
-                    assert_eq!(n, "codebase-memory-mcp");
+                    assert_eq!(n, "headroom");
                     assert!(o.alerts.iter().any(|a| a.kind == "quarantine" && a.msg.contains("blocked")));
                     blocked_at = Some(gen);
                     break 'outer;
@@ -1719,7 +1718,7 @@ mod tests {
         }
         assert_eq!((blocked_at, kills), (Some(3), 4), "4th kill within 10 min quarantines");
         // once blocked, a new instance is terminated on sight
-        let procs = vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(900, 100, "codebase-memory-mcp", Kind::Helper, 0, 10)];
+        let procs = vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(900, 100, "headroom", Kind::Helper, 0, 10)];
         let o = e.step(&snap(400.0, procs));
         assert_eq!(o.acts, vec![Act::Term(900, 9000)]);
     }
@@ -1727,16 +1726,16 @@ mod tests {
     #[test]
     fn unblock_clears_list_and_kill_history() {
         let set = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<BTreeSet<String>>();
-        let cur = set(&["codebase-memory-mcp", "serena"]);
-        let (keep, rm, unk) = unblock_names(&cur, &["serena".into(), "gopls".into()], false);
-        assert_eq!((keep, rm, unk), (set(&["codebase-memory-mcp"]), vec!["serena".to_string()], vec!["gopls".to_string()]));
+        let cur = set(&["headroom", "tsserver"]);
+        let (keep, rm, unk) = unblock_names(&cur, &["tsserver".into(), "gopls".into()], false);
+        assert_eq!((keep, rm, unk), (set(&["headroom"]), vec!["tsserver".to_string()], vec!["gopls".to_string()]));
         let (keep, rm, _) = unblock_names(&cur, &[], true);
         assert!(keep.is_empty() && rm.len() == 2);
 
-        let mut e = Engine::new(Config::default(), false, set(&["serena"]));
-        e.kills.insert("serena".into(), vec![1.0, 2.0, 3.0, 4.0]);
+        let mut e = Engine::new(Config::default(), false, set(&["tsserver"]));
+        e.kills.insert("tsserver".into(), vec![1.0, 2.0, 3.0, 4.0]);
         e.set_blocked(BTreeSet::new());
-        assert!(e.blocked.is_empty() && !e.kills.contains_key("serena"), "unblocked helper starts clean");
+        assert!(e.blocked.is_empty() && !e.kills.contains_key("tsserver"), "unblocked helper starts clean");
         // a blocked-again helper keeps nothing stale either; a still-blocked one keeps its history
         e.kills.insert("gopls".into(), vec![1.0]);
         e.set_blocked(set(&["gopls"]));
@@ -1755,16 +1754,16 @@ mod tests {
         };
         // a helper the owner runs outside any claude/omp tree (editor, terminal)
         let mut e = Engine::new(Config::default(), false, BTreeSet::new());
-        let outside = burn(&mut e, &|i| vec![proc(300, 1, "codebase-memory-mcp", Kind::Helper, 566 * i, 100)]);
+        let outside = burn(&mut e, &|i| vec![proc(300, 1, "headroom", Kind::Helper, 566 * i, 100)]);
         assert!(outside.is_empty(), "no session root → alert only: {outside:?}");
         // an LSP under a session indexes hard by design → alert only
         let mut e = Engine::new(Config::default(), false, BTreeSet::new());
         let lsp = burn(&mut e, &|i| vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(301, 100, "rust-analyzer", Kind::Helper, 566 * i, 100)]);
         assert!(lsp.is_empty(), "warn_only helper is never signalled: {lsp:?}");
-        // the same burn by cbm under a session is killed
+        // the same burn by hr under a session is killed
         let mut e = Engine::new(Config::default(), false, BTreeSet::new());
-        let cbm = burn(&mut e, &|i| vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(302, 100, "codebase-memory-mcp", Kind::Helper, 566 * i, 100)]);
-        assert!(cbm.contains(&Act::Term(302, 3020)));
+        let hr = burn(&mut e, &|i| vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(302, 100, "headroom", Kind::Helper, 566 * i, 100)]);
+        assert!(hr.contains(&Act::Term(302, 3020)));
     }
 
     #[test]
@@ -1804,9 +1803,10 @@ mod tests {
     }
 
     #[test]
-    fn helper_remedy_names_the_8sync_switch() {
-        assert!(helper_suggest("codebase-memory-mcp").contains("8sync harness cbm off"));
-        assert!(helper_suggest("serena").contains("8sync harness serena off"));
+    fn helper_remedy_names_the_switch() {
+        assert!(helper_suggest("codebase-memory-mcp").contains("8sync harness global"));
+        assert!(helper_suggest("serena").contains("8sync harness global"));
+        assert!(helper_suggest("headroom").contains("keep that helper off"));
         assert!(suggest_for(false, "node").contains("only reports") && !suggest_for(false, "node").contains("helper off"));
         let other = helper_suggest("gopls");
         assert!(!other.contains("8sync harness") && other.contains("8sync watchdog unblock"));
@@ -1836,8 +1836,8 @@ mod tests {
         let paths = Paths::at(&home);
         let input = json!({"session_id": "s-1", "hook_event_name": "UserPromptSubmit"}).to_string();
         assert!(hook_output(&input, &paths, 1_100, || Some(100)).is_none(), "no alerts file");
-        write_alert(&paths, 1, 100, "codebase-memory-mcp", "codebase-memory-mcp pid 7 used 283% CPU for 20 s → killed");
-        write_alert(&paths, 2, 555, "serena", "serena of another session");
+        write_alert(&paths, 1, 100, "headroom", "headroom pid 7 used 283% CPU for 20 s → killed");
+        write_alert(&paths, 2, 555, "tsserver", "tsserver of another session");
         write_alert(&paths, 3, 0, "machine", "machine MemAvailable 6%");
         let out = hook_output(&input, &paths, 1_100, || Some(100)).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
@@ -1847,7 +1847,7 @@ mod tests {
         assert!(!ctx.contains("another session") && ctx.chars().count() <= HOOK_MAX_CHARS);
         assert!(hook_output(&input, &paths, 1_100, || Some(100)).is_none(), "cursor: seen once, silent after");
         assert!(hook_output(&json!({"session_id": "s-2"}).to_string(), &paths, 1_100, || Some(100)).is_some(), "other session has its own cursor");
-        write_alert(&paths, 4, 100, "codebase-memory-mcp", "again");
+        write_alert(&paths, 4, 100, "headroom", "again");
         let v: Value = serde_json::from_str(&hook_output(&json!({"session_id": "s-1", "hook_event_name": "PostToolUse"}).to_string(), &paths, 1_100, || Some(100)).unwrap()).unwrap();
         assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PostToolUse");
         assert!(hook_output(&json!({"session_id": "../x"}).to_string(), &paths, 1_100, || None).is_none(), "unsafe session id");

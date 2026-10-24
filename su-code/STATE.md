@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.81: STEP 0 = Trail-code (`8sync trail`); codegraph, codebase-memory-mcp, serena removed with one-time legacy cleanup.
 v0.110.79: `8sync mcp install --pc` — Claude Desktop controls the PC through server `8sync-pc` (pc_run/read/write/list) behind the ccc guard, credential-path refusals, audit log and `8sync mcp pc on|off`.
 v0.110.78: sleep work / eco / mcp; size ceiling 8192 KiB.
 v0.110.77: `8sync stop all` — auto off + omp off, `auto down` every known root, stop leftover background Claude sessions (live: 16 rooms stopped, RAM 49% → 37.5%).
@@ -110,7 +111,7 @@ Make official Claude Code + the 8sync kit stronger than omp without breaking Ant
 - [x] `8sync hq` (Discord Agent HQ) + `/rules /sec /harden` + `ccc policy`. UAT: mock Discord full flow, parallel-hook race → 1 post, real `claude -p` sessions back to back (found + fixed task-id-per-session bug), `systemd-analyze verify` (found + fixed quoted WorkingDirectory). 3 reviewer rounds → MERGEABLE; `/aup-audit` PASS.
 - [x] 235 tests; size ceiling 5,521,408 → 5,767,168 with per-commit attribution.
 - [x] Released: PR #6 merged (5caa5f0, closes #5); tag v0.66.0 → Release run 38227111385 all green; assets linux-x86_64 5,747,632 B (19,536 under ceiling; estimate was 5,749,888), linux-aarch64 4,742,400, darwin-arm64 4,174,624, darwin-x86_64 4,728,872, windows 4,544,000. install-smoke run 38227740499: ubuntu x64/arm64, macOS arm64/Intel, Windows all green.
-- [x] This box: `8sync up` 0.65.0 → 0.66.0 (checksum ok 9ab61a69…); `ccc kit` → 19/19 files, hq + session-start hooks, gates sonnet-5-5/haiku-5-5, 22 name-only skills, rust-analyzer LSP plugin, codebase-memory-mcp + serena registered (was 0). First-request context in ~/startup/su-code (Opus 5.5, `-p`): 35,918 tokens vs 57,914 at session start on 0.65 (1 sample each; omp sample 37,129).
+- [x] This box: `8sync up` 0.65.0 → 0.66.0 (checksum ok 9ab61a69…); `ccc kit` → 19/19 files, hq + session-start hooks, gates sonnet-5-5/haiku-5-5, 22 name-only skills, rust-analyzer LSP plugin, MCP registered (was 0). First-request context in ~/startup/su-code (Opus 5.5, `-p`): 35,918 tokens vs 57,914 at session start on 0.65 (1 sample each; omp sample 37,129).
 
 ## Current
 Released and installed. Not verified: real Discord (needs the owner's bot token), agent-team mode (teammates need an interactive session), Channels plugin under a Team org (`channelsEnabled`).
@@ -171,7 +172,7 @@ See v0.65.0.
 - [x] `ccc.rs` + shared `uuid_sessions.rs`; kit assets in `assets/claude/`; Stage A `claude-code` + `claude-kit` steps; PSModulePath fix; `harness claude-code` merge fix.
 - [x] Live proof (API key, isolated CLAUDE_CONFIG_DIR): verify hook fed E0425 back; stop gate continued "Next I will add tests"; named session remembered PELICAN-63 across runs; `. rm` deleted the transcript. Gates: stop 18/18 Haiku, ask 6/6 Sonnet (Haiku 4/6).
 - [x] 136 tests; `--no-default-features` builds; size ceiling 5,505,024 B with attribution.
-- [x] v0.63.0 published (run 38140427447, 5 assets, linux-x86_64 5,464,624 B under 5,505,024). WSL Ubuntu one-liner (fresh HOME, no sudo): Claude Code 2.1.296 + kit + cbm/serena in Claude Code, "all steps succeeded". This box: `8sync up` 0.62.0 → 0.63.0 checksum ok, `8sync ccc kit` refreshed. README images from real output (hero, install, ccc-kit, ccc-gates, forge-prompt).
+- [x] v0.63.0 published (run 38140427447, 5 assets, linux-x86_64 5,464,624 B under 5,505,024). WSL Ubuntu one-liner (fresh HOME, no sudo): Claude Code 2.1.296 + kit in Claude Code, "all steps succeeded". This box: `8sync up` 0.62.0 → 0.63.0 checksum ok, `8sync ccc kit` refreshed. README images from real output (hero, install, ccc-kit, ccc-gates, forge-prompt).
 
 ## Current
 Done. Installed 8sync 0.63.0 + Claude Code 2.1.296 on this box (not logged in: `claude auth login`).
@@ -182,20 +183,20 @@ After release: `8sync up` on this box, then `8sync ccc kit` (hooks point at the 
 # v0.61.0 → v0.62.0 — zsh-native `8sync forge`, self-setting-up installers, pro zsh + terminal profile
 
 ## Goal
-Every member installs with one line (`curl … /install | sh` · `irm … /install.ps1 | iex`) and gets the full AI harness (gh, omp, codegraph, forge + zsh, skills, `harness global`); `8sync forge <name>` is a zsh shell bound to the named Forge conversation (`--tui` = Forge TUI); `8sync` notices new releases.
+Every member installs with one line (`curl … /install | sh` · `irm … /install.ps1 | iex`) and gets the full AI harness (gh, omp, forge + zsh, skills, `harness global`); `8sync forge <name>` is a zsh shell bound to the named Forge conversation (`--tui` = Forge TUI); `8sync` notices new releases.
 
 ## Checklist
 - [x] `8sync forge <name>`: zsh + Forge plugin, `_FORGE_CONVERSATION_ID` = session UUID; `--tui`; `-p` one-shot; Forge auto-install; Windows zsh (MSYS2, sha256-pinned) + ConPTY proof.
-- [x] Stage A: omp `-Binary`, codegraph `install.ps1`, gh, forge + zsh, `harness global`; installers auto-run `setup --no-profile` (`SUSYNC_NO_SETUP=1` opts out).
+- [x] Stage A: omp `-Binary`, gh, forge + zsh, `harness global`; installers auto-run `setup --no-profile` (`SUSYNC_NO_SETUP=1` opts out).
 - [x] v0.61.0 published (run 38091385123, 5 assets) after size-gate attribution (ceiling 5180 → 5300 KiB) and the `--no-default-features` build fix.
 - [x] Notice proven: installed v0.60.0 printed `! 8sync update available: v0.60.0 → v0.61.0`.
 - [x] v0.61.1 published (run 38092267328): NTFS-proof probe throttle (epoch in content), install.ps1 replaces a running exe, install.ps1 checksum via .NET — each reproduced before, proven after. `8sync up` 0.60.0 → 0.61.1 on this box with live sessions holding the exe.
 - [x] v0.61.2 published (run 38092880520): `8sync up` checksum on Windows (`\\?\` path broke MSYS `sha256sum`). Installed 0.61.1 printed the v0.61.2 notice and `8sync up` installed it.
-- [x] Published `install.sh` on WSL Ubuntu (temp HOME): 8sync, omp, codegraph, forge, 58 skills, APPEND_SYSTEM — but gh MISSING (Manual route) and zsh needs sudo.
+- [x] Published `install.sh` on WSL Ubuntu (temp HOME): 8sync, omp, forge, 58 skills, APPEND_SYSTEM — but gh MISSING (Manual route) and zsh needs sudo.
 - [x] `8sync forge probe` zsh re-proven after setup patched `~/.zshrc`: `shell-42`, session UUID, `: …` → `ZSHCHECK612`.
-- [x] v0.61.3 published (run 38093303867): WSL `install.sh` installed gh v2.102.0 (sha256 ok) next to 8sync/omp/codegraph/forge; `8sync up` 0.61.2 → 0.61.3 printed `checksum ok`; published `install.ps1` one-liner (PS 5.1, temp BinDir) → checksum ok + idempotent setup.
+- [x] v0.61.3 published (run 38093303867): WSL `install.sh` installed gh v2.102.0 (sha256 ok) next to 8sync/omp/forge; `8sync up` 0.61.2 → 0.61.3 printed `checksum ok`; published `install.ps1` one-liner (PS 5.1, temp BinDir) → checksum ok + idempotent setup.
 - [x] v0.62.0 local: pro zsh (two-line prompt, async Forge segment, menu completion, pinned autosuggestions + syntax-highlighting), `--profile terminal` on every OS, zsh-bin without sudo, `$HOME` PATH block, README rewrite. ConPTY: 0.36 s to prompt, ~0.2 s per command, `:` prompt → `SHELL062`. 134 tests; linux/macOS type-check via fake cc.
-- [x] v0.62.0 published (run 38097639848, 5 assets, linux-x86_64 5,415,216 B under the 5,427,200 ceiling). WSL Ubuntu published installer: gh, omp, codegraph, forge, zsh-bin 5.8 (no sudo), plugins — zero failed steps; `--profile terminal` → helix 25.07.1 (sha256 ok) + pro zsh block. Windows: `8sync up` 0.61.3 → 0.62.0 `checksum ok`; `--profile terminal` set the Windows Terminal default font.
+- [x] v0.62.0 published (run 38097639848, 5 assets, linux-x86_64 5,415,216 B under the 5,427,200 ceiling). WSL Ubuntu published installer: gh, omp, forge, zsh-bin 5.8 (no sudo), plugins — zero failed steps; `--profile terminal` → helix 25.07.1 (sha256 ok) + pro zsh block. Windows: `8sync up` 0.61.3 → 0.62.0 `checksum ok`; `--profile terminal` set the Windows Terminal default font.
 
 ## Current
 Done. Installed binary on this box: 0.62.0.
@@ -255,7 +256,7 @@ Commit toàn bộ thay đổi, push lên GitHub remote và tạo tag / release n
 ## Brief — phiên core, 2026-10-16 (handoff sang máy khác)
 - SHIPPED v0.96.0: PR #53 /sysdesign skill (8d93e1c), #54 HQ sprite handover + 21 sprite-pipeline gates (448c753), #55 ask-gate prompt 1,374 → 886 byte (e34800c); bump b9a3749; tag v0.96.0 → release run 38897057076 (kết quả trong `su-code/handoff/2026-10-16-core-session.md` §2). Gates trên bump: /sec OK · /rules ALLOWED · /aup-audit no BLOCK · risk medium (third-party/release file).
 - Mọi nhánh local đã lên GitHub (ahead=0), không PR mở. Memory ngoài git của máy cũ (STATE Brief, KNOWLEDGE, loop-me LOG) đã gộp vào `su-code/KNOWLEDGE.md` + `su-code/handoff/`.
-- Backlog còn mở: hints-realtime (ghost text/Tab, cần R&D mod API) · `braces` advisory hq-ui · size gate còn ~54 KB → release kế tiếp có thể cần nâng trần · research chưa chọn (caveman-lite / `8sync find --ai` / token-bench).
+- Backlog còn mở: hints-realtime (ghost text/Tab, cần R&D mod API) · `braces` advisory hq-ui · size gate còn ~54 KB → release kế tiếp có thể cần nâng trần · research chưa chọn (caveman-lite / `8sync find --ai`).
 - Release run 38897057076 xanh 7/7; `8sync up` 0.96.0 + kit đã chạy trên máy cũ (binary không có .sha256 → `up` báo checksum not verified; backlog S: publish SHA256SUMS).
 - Owner to do: Ctrl-C + `8sync hq ui` lại; `/reload-plugins` trong phiên đang mở; trust folder tmux hq-rd-1; máy mới: xem handoff §5; gõ lại `/loop 5m /loop-me /ship …` nếu muốn tick tiếp (cron chỉ sống trong phiên).
 - Not verified: sprites mới trên HQ sống; Windows/macOS máy thật; ask-gate trong phiên tương tác; HQ "Chạy liên tục"/"Giao việc" UAT.

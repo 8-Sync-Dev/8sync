@@ -11,7 +11,7 @@
 # Uninstall: curl -fsSL .../install.sh | sh -s -- --uninstall
 #
 # After the binary lands, the installer runs `8sync setup --no-profile`: the AI
-# harness (gh, omp, codegraph, forge + zsh, configs, skills, `harness global`).
+# harness (gh, omp, forge + zsh, configs, skills, `harness global`).
 #
 # Environment:
 #   SUSYNC_VERSION   release tag to install (default: latest, e.g. v0.12.1)
@@ -175,7 +175,7 @@ echo ""
 if [ "${SUSYNC_NO_SETUP:-0}" = "1" ]; then
   echo "SUSYNC_NO_SETUP=1 — skipped setup. Run it any time: 8sync setup"
 else
-  echo "Running 8sync setup --no-profile (AI harness: omp, codegraph, forge, skills, MCP)..."
+  echo "Running 8sync setup --no-profile (AI harness: omp, forge, skills, MCP)..."
   if (exec </dev/tty) 2>/dev/null; then setup_in=/dev/tty; else setup_in=/dev/null; fi
   # Tools installed during setup land in these dirs; later steps must see them
   # even before the user's shell rc picks them up.

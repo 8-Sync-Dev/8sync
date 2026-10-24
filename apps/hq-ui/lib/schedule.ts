@@ -77,7 +77,7 @@ export const RD_DUTY = {
   details: [
     "Nếu phòng đang có việc dở: bỏ qua lượt này.",
     "1. Backlog: item kế trong su-code/STATE.md Next, dòng `failure:` trong su-code/KNOWLEDGE.md chưa có ghi chú, hoặc dòng còn trống cột 'Có ích cho 8sync vì' trong su-code/research/trending/<hôm nay>.md (chưa có file hôm nay → chạy `8sync learn trending` một lần).",
-    "2. Nghiên cứu (≤5 lần search, nguồn primary, ghi ngày/phiên bản): codebase (`codegraph query`), internet (WebSearch/WebFetch), học thuật (arXiv / Semantic Scholar, trích DOI hoặc arXiv id). Ghi su-code/research/<slug>.md: kết luận trước, bằng chứng, việc đề xuất.",
+    "2. Nghiên cứu (≤5 lần search, nguồn primary, ghi ngày/phiên bản): codebase (`trail ask`), internet (WebSearch/WebFetch), học thuật (arXiv / Semantic Scholar, trích DOI hoặc arXiv id). Ghi su-code/research/<slug>.md: kết luận trước, bằng chứng, việc đề xuất.",
     "3. Giao việc: `8sync ccc . ls` xem phòng nào rảnh (không có task in_progress); gửi ≤2 task cụ thể (file/lệnh kiểm/tiêu chí) cho phòng khớp tên bằng SendMessage, ghi 'từ R&D trực, theo research/<slug>.md'. Việc không khớp phòng nào → HQ Giao việc (POST /api/tasks) hoặc ghi vào STATE.md Next.",
     "Repo đáng học (có licence) → đề xuất lệnh `8sync skill learn <owner/repo>` trong STATE.md Next cho owner chạy; KHÔNG tự cài (skill cài vào ~/.claude/skills được nạp toàn cục, cần người duyệt).",
     "Không còn item: nói 'rest: hết backlog' một dòng. Không sửa code sản phẩm; không tự merge/push/deploy.",

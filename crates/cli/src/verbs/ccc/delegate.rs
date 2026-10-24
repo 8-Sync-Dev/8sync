@@ -43,11 +43,11 @@ const OWNER_ONLY: [&str; 55] = [
 
 /// Flag off (`delegate off`, `ccc cancel --all`); the `--after` value is left as set.
 pub(super) fn off(home: &Path) -> Result<()> {
-    crate::verbs::harness::cbm::write_flag_key(home, KEY, false)
+    crate::verbs::harness::features::write_flag_key(home, KEY, false)
 }
 
 pub(super) fn enabled(home: &Path) -> bool {
-    crate::verbs::harness::cbm::resolve(std::env::var(ENV).ok().as_deref(), crate::verbs::harness::cbm::read_flag_key(home, KEY))
+    crate::verbs::harness::features::resolve(std::env::var(ENV).ok().as_deref(), crate::verbs::harness::features::read_flag_key(home, KEY))
 }
 
 /// Flag on with `delegate_after_s = after_s` (0 = always). Validate with [`parse_after`] first.
@@ -55,8 +55,8 @@ pub(super) fn on(home: &Path, after_s: u64) -> Result<()> {
     if after_s > AFTER_MAX {
         bail!("--after: tối đa 1 ngày");
     }
-    crate::verbs::harness::cbm::write_flag_key(home, KEY, true)?;
-    crate::verbs::harness::cbm::write_key(home, AFTER_KEY, toml::Value::Integer(after_s as i64))
+    crate::verbs::harness::features::write_flag_key(home, KEY, true)?;
+    crate::verbs::harness::features::write_key(home, AFTER_KEY, toml::Value::Integer(after_s as i64))
 }
 
 /// Pure: the reason to hand the question back to Claude, or `None` = let the owner see it.
@@ -97,7 +97,7 @@ pub(super) fn decide(tool_input: &Value) -> Option<String> {
 }
 
 pub(super) fn after_s(home: &Path) -> u64 {
-    crate::verbs::harness::cbm::read_int_key(home, AFTER_KEY).map_or(0, |n| (n.max(0) as u64).min(AFTER_MAX))
+    crate::verbs::harness::features::read_int_key(home, AFTER_KEY).map_or(0, |n| (n.max(0) as u64).min(AFTER_MAX))
 }
 
 /// Pure: with a threshold, the owner counts as away only when their last typed prompt is known and
@@ -161,7 +161,7 @@ pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
                 on(home, after)?;
             } else {
                 off(home)?;
-                crate::verbs::harness::cbm::write_key(home, AFTER_KEY, toml::Value::Integer(0))?;
+                crate::verbs::harness::features::write_key(home, AFTER_KEY, toml::Value::Integer(0))?;
             }
             if x == "on" {
                 println!("delegate: BẬT — critic chọn thay owner cho câu hỏi sản phẩm/kỹ thuật, ghi su-code/DECISIONS.md.");
@@ -382,7 +382,7 @@ mod tests {
         if std::env::var(ENV).is_err() {
             assert!(hook(&input, &home).is_none(), "off by default");
         }
-        crate::verbs::harness::cbm::write_flag_key(&home, KEY, true).unwrap();
+        crate::verbs::harness::features::write_flag_key(&home, KEY, true).unwrap();
         let out: Value = serde_json::from_str(&hook(&input, &home).unwrap()).unwrap();
         assert_eq!(out["hookSpecificOutput"]["permissionDecision"], "deny");
         assert_eq!(out["hookSpecificOutput"]["hookEventName"], "PreToolUse");
@@ -400,7 +400,7 @@ mod tests {
         if std::env::var(ENV).is_err() {
             assert_eq!(check(&q, None, &home)["critic"], false, "delegate off: the owner answers");
         }
-        crate::verbs::harness::cbm::write_flag_key(&home, KEY, true).unwrap();
+        crate::verbs::harness::features::write_flag_key(&home, KEY, true).unwrap();
         assert_eq!(check(&q, None, &home)["critic"], true);
         let ship = ask("Ship", "Merge PR 20?", &["Duyệt tất cả (Recommended)", "Dừng"]).to_string();
         assert_eq!(check(&ship, None, &home)["critic"], false, "Ship stays with the owner");

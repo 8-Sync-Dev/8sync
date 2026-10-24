@@ -72,7 +72,7 @@ fn ensure_slice(home: &Path) -> bool {
 
 /// `cmd` wrapped in the fence, or `None` to run it as is (off, not Linux, no systemd --user).
 pub(super) fn wrap(cmd: &Command, home: &Path) -> Option<Command> {
-    let file = crate::verbs::harness::cbm::read_flag_key(home, "session_fence");
+    let file = crate::verbs::harness::features::read_flag_key(home, "session_fence");
     if !resolve(std::env::var("EIGHTSYNC_FENCE").ok().as_deref(), file) {
         return None;
     }

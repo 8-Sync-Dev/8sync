@@ -1,10 +1,10 @@
 //! Resource guard of `auto revive`. 3d-game, night of 2026-10-20: a 13-room boost team drove the
 //! machine to 100% RAM and 100% CPU. A room held 2–2.5 GB: claude.exe 0.3–1 GB, the
-//! `typescript-lsp` plugin's tsserver per worktree 0.6–1 GB, serena MCP ~150 MB, dev servers
+//! `typescript-lsp` plugin's tsserver per worktree 0.6–1 GB, an MCP server ~150 MB, dev servers
 //! ~100 MB each, headless chrome; Defender burned CPU scanning 13 worktrees' node_modules. Owner
 //! (2026-10-21): "ccc auto phải có chế độ tự động clean dọn khi đạt ngưỡng 60% để kill và bắn cho
 //! agent nào đó dọn gấp và sẽ khởi động lại team tối ưu ram, cpu, gpu".
-//! Same day, CPU: `auto up` started every room's codebase-memory indexer and tsserver at once and
+//! Same day, CPU: `auto up` started every room's code indexer and tsserver at once and
 //! Defender scanned every write in the worktrees ("check cpu bị cao lắm phải auto dừng chặn clean
 //! up ngay khi bị cao tải và auto run lại tối ưu hóa cpu, ram nhất").
 //!
@@ -27,7 +27,7 @@
 //!   all (owner 2026-10-21: RAM 69% with 23 rooms at 12 GB and the owner's own apps at 20 GB,
 //!   the guard said "không cần đổi gì").
 //! - L2 — RAM ≥ threshold + 15, or over the threshold for [`L2_RAM_S`]: restart up to [`RESTARTS`]
-//!   idle heavy rooms (same conversation) lean ([`lean`]): LSP plugins and indexing MCP servers off.
+//!   idle heavy rooms (same conversation) lean ([`lean`]): LSP plugins and the retired indexing MCP servers off.
 //!   A room is restarted once per high-RAM spell; `revive` re-checks it right before the stop.
 //! - L3 — CPU ≥ [`CPU_MAX`]% for [`L3_CPU_S`], or RAM ≥ threshold + 15 for [`L3_RAM_S`]: pause the
 //!   rooms that do not fit ([`keep_count`], [`DROP_ORDER`]); their cards go back to the lane. The
@@ -303,7 +303,7 @@ fn owner<'a>(trees: &'a [(String, Vec<u32>)], pid: u32) -> Option<&'a str> {
     trees.iter().find(|(_, t)| t.contains(&pid)).map(|(n, _)| n.as_str())
 }
 
-/// The top 3 CPU users of the tick, by kind and owning room: `codebase-memory-mcp 12% (dev2)`,
+/// The top 3 CPU users of the tick, by kind and owning room: `MCP headroom 12% (dev2)`,
 /// `MsMpEng 4% (máy)`; processes of one kind and owner add up.
 pub(super) fn cpu_top(procs: &[Proc], deltas: &[(u32, u64)], trees: &[(String, Vec<u32>)], ms: u64, cores: usize) -> Vec<String> {
     let mut by: Vec<((String, String), u64)> = Vec::new();
@@ -390,7 +390,7 @@ fn headless_main(c: &str) -> bool {
 }
 
 /// What a process is, for a kill row or a room's list: `vite preview`, `tsserver`, `chrome
-/// headless`, `MCP serena`, …; a heavy process of no known kind by its image. None: nothing to name.
+/// headless`, `MCP headroom`, …; a heavy process of no known kind by its image. None: nothing to name.
 fn what(p: &Proc) -> Option<String> {
     let c = p.cmd.to_lowercase().replace('\\', "/");
     if let Some(m) = mcp(&c) {
@@ -432,7 +432,7 @@ pub(super) struct Pick {
 /// - a language server of a room worktree whose card is closed (`closed`) or whose folder is gone,
 ///   detached or under a room's claude.exe (`rooms`: their pids);
 /// - a detached test runner left watching in a room worktree, from [`LEFT_AGE_S`] old;
-/// - an orphaned headless browser (main process) or MCP server (serena, headroom …) of this
+/// - an orphaned headless browser (main process) or MCP server (headroom …) of this
 ///   project only: the project root or a room worktree in its own line or the chain above it, or
 ///   seen inside a room's tree before (`owned`: pid, start). Its driver / host is gone.
 ///
@@ -1566,14 +1566,11 @@ pub(super) fn lean_plugins(user_settings: &Value) -> Vec<String> {
     v
 }
 
-/// Indexing MCP servers every room would start its own copy of (codebase-memory-mcp indexed for
-/// ~43 s of CPU in each new room's first 5 min, 2026-10-21; serena ~190 MB a room): these names
-/// always, plus any server of the user's `~/.claude.json` named like them. A lean room denies them
-/// with `--settings` `deniedMcpServers` (`serverName`), which merges from every scope and keeps all
-/// other servers — user, project `.mcp.json`, plugins
-/// (https://code.claude.com/docs/en/settings-reference#deniedmcpservers; checked live 2026-10-21:
-/// the init event lists `codebase-memory-mcp` and `serena` without it, neither with it).
-/// `--strict-mcp-config` would also drop the project's and plugins' servers rooms may need.
+/// RETIRED indexing MCP servers (codebase-memory-mcp, serena — replaced by trail; `harness legacy`
+/// removes the entries 8sync registered). Kept for one release so a leftover one is still denied in
+/// a lean room: these names always, plus any server of the user's `~/.claude.json` named like them
+/// or like codegraph. `deniedMcpServers` (`serverName`) merges from every scope and keeps all other
+/// servers (https://code.claude.com/docs/en/settings-reference#deniedmcpservers).
 pub(super) fn lean_mcp(claude_json: &Value) -> Vec<String> {
     let mut v: Vec<String> = ["codebase-memory-mcp", "serena"].iter().map(|s| s.to_string()).collect();
     for k in claude_json["mcpServers"].as_object().into_iter().flatten().map(|(k, _)| k) {
@@ -2532,15 +2529,15 @@ mod tests {
         idle.cpu = 1000 * s;
         let mut room = p(100, 1, 60, "claude.exe", "claude --bg", 500);
         room.cpu = 10 * s;
-        let mut cbm = p(101, 100, 60, "codebase-memory-mcp.exe", "codebase-memory-mcp", 50);
-        cbm.cpu = 50 * s;
+        let mut hr = p(101, 100, 60, "headroom.exe", "headroom mcp serve", 50);
+        hr.cpu = 50 * s;
         let mut av = p(200, 4, 900, "msmpeng.exe", "", 600);
         av.cpu = 100 * s;
-        let before = cpu_snapshot(&[idle.clone(), room.clone(), cbm.clone(), av.clone()]);
-        // 100 s later on 4 threads (400 CPU-s): 240 idle → 40% busy; cbm 96 s, Defender 40 s, claude 4 s.
+        let before = cpu_snapshot(&[idle.clone(), room.clone(), hr.clone(), av.clone()]);
+        // 100 s later on 4 threads (400 CPU-s): 240 idle → 40% busy; hr 96 s, Defender 40 s, claude 4 s.
         idle.cpu += 240 * s;
         room.cpu += 4 * s;
-        cbm.cpu += 96 * s;
+        hr.cpu += 96 * s;
         av.cpu += 40 * s;
         // a recycled pid counts from its own start
         let mut reborn = p(300, 1, 1, "node.exe", "node x.js", 10);
@@ -2550,14 +2547,14 @@ mod tests {
         // a pid the last snapshot did not have (started during the tick) counts from 0
         let mut newcomer = p(400, 1, 1, "node.exe", "node build.js", 10);
         newcomer.cpu = 5 * s;
-        let procs = vec![idle, room, cbm, av, reborn, newcomer];
+        let procs = vec![idle, room, hr, av, reborn, newcomer];
         let d = cpu_deltas(&procs, &prev);
         assert_eq!(d.iter().find(|(p, _)| *p == 300).map(|x| x.1), Some(8 * s));
         assert_eq!(d.iter().find(|(p, _)| *p == 400).map(|x| x.1), Some(5 * s));
         assert_eq!(tick_cpu(&d, &procs, 100_000, 4), Some(40));
         assert_eq!(tick_cpu(&d, &procs[1..], 100_000, 4), None, "no idle counter: none");
         let trees = vec![("dev2".to_string(), vec![100, 101])];
-        assert_eq!(cpu_top(&procs, &d, &trees, 100_000, 4), ["MCP codebase-memory 24% (dev2)", "msmpeng 10% (máy)", "node 3% (máy)"]);
+        assert_eq!(cpu_top(&procs, &d, &trees, 100_000, 4), ["MCP headroom 24% (dev2)", "msmpeng 10% (máy)", "node 3% (máy)"]);
         // only room trees still at normal priority are lowered (idempotent: below-normal ones stay out)
         let mut norm = procs.clone();
         norm[1].normal = true;
@@ -2594,7 +2591,7 @@ mod tests {
             p(12, 10, 5, "esbuild.exe", "esbuild --service=0.21", 40),
             p(13, 10, 5, "rustc.exe", "rustc --crate-name game", 900),
             p(14, 10, 60, "node.exe", r"node C:\Users\A\mcp\chrome-devtools-mcp\index.js", 90),
-            p(15, 10, 60, "python.exe", "python serena start-mcp-server", 150),
+            p(15, 10, 60, "python.exe", "python headroom mcp serve", 150),
             p(16, 10, 5, "8sync.exe", "8sync ccc auto wait --json --as dev", 10),
             p(17, 10, 5, "8sync.exe", "8sync ccc auto status --json", 10),
             // the owner's own build: not a room's
@@ -2682,9 +2679,9 @@ mod tests {
             // a preview started through bash: the bash is walked through.
             p(103, 100, 30, "bash.exe", "bash -c npx vite preview --port 4197", 5),
             p(104, 103, 30, "node.exe", r"node C:\w\game\.claude\worktrees\card-5\node_modules\vite\bin\vite.js preview --port 4197", 120),
-            // serena MCP: uvx → python
-            p(105, 100, 300, "uvx.exe", "uvx --from git+https://github.com/oraios/serena serena start-mcp-server", 8),
-            p(106, 105, 300, "python.exe", "python serena start-mcp-server", 150),
+            // headroom MCP: uvx → python
+            p(105, 100, 300, "uvx.exe", "uvx --from git+https://github.com/example/headroom headroom mcp serve", 8),
+            p(106, 105, 300, "python.exe", "python headroom mcp serve", 150),
             // waiting for a card
             p(107, 100, 5, "8sync.exe", "8sync ccc auto wait --json --as dev", 10),
             // another room, light
@@ -2699,7 +2696,7 @@ mod tests {
         assert!(dev.waiting);
         assert_eq!(dev.items.len(), 3);
         assert!(dev.items[0].starts_with("typescript-language-server pid 101 (3h 20m, 1000 MB)"), "{:?}", dev.items);
-        assert!(dev.items[1].starts_with("MCP serena pid 105 (5h 0m, 158 MB)"), "{:?}", dev.items);
+        assert!(dev.items[1].starts_with("MCP headroom pid 105 (5h 0m, 158 MB)"), "{:?}", dev.items);
         assert!(dev.items[2].starts_with("vite preview :4197 pid 104 (30m, 120 MB)"), "{:?}", dev.items);
         assert_eq!((loads[1].held, loads[1].waiting), (0, false));
     }
@@ -2734,13 +2731,13 @@ mod tests {
             p(41, 40, 30, "chrome.exe", r#""chrome.exe" --type=renderer --headless=new"#, 400),
             p(42, 0, 900, "msedge.exe", r#""msedge.exe" --no-startup-window"#, 300),
             p(43, 33, 10, "chrome.exe", tmp_chrome, 300),
-            // Orphaned serena (uvx → uv → python, host gone): nothing in its lines names the
+            // Orphaned headroom (uvx → uv → python, host gone): nothing in its lines names the
             // project, so it goes only once seen inside a room (`owned`); the owner's live one stays.
-            p(50, 4242, 300, "uvx.exe", "uvx --from git+https://github.com/oraios/serena serena start-mcp-server", 8),
-            p(51, 50, 300, "uv.exe", "uv tool uvx --from git+https://github.com/oraios/serena serena start-mcp-server", 50),
-            p(52, 51, 300, "python.exe", r"C:\cache\python.exe serena start-mcp-server", 150),
+            p(50, 4242, 300, "uvx.exe", "uvx --from git+https://github.com/example/headroom headroom mcp serve", 8),
+            p(51, 50, 300, "uv.exe", "uv tool uvx --from git+https://github.com/example/headroom headroom mcp serve", 50),
+            p(52, 51, 300, "python.exe", r"C:\cache\python.exe headroom mcp serve", 150),
             p(60, 0, 900, "omp.exe", "omp", 500),
-            p(61, 60, 300, "uvx.exe", "uvx --from git+https://github.com/oraios/serena serena start-mcp-server", 8),
+            p(61, 60, 300, "uvx.exe", "uvx --from git+https://github.com/example/headroom headroom mcp serve", 8),
             // An orphaned MCP naming this project goes; one naming another project, or one a
             // service manager runs (ppid 1, unix), stays.
             p(80, 4242, 300, "node.exe", r"node C:\Users\A\mcp\chrome-devtools-mcp\index.js --cwd C:\w\game", 90),
@@ -2757,7 +2754,7 @@ mod tests {
         assert_eq!(tops, [20, 12, 30, 40, 80], "machine-wide matches that are not this project's stay");
         assert_eq!(picks[2].tree, [30, 31]);
         assert_eq!(picks[3].tree, [40, 41]);
-        // serena's python seen in a room earlier (pid + start): the whole orphaned chain goes.
+        // headroom's python seen in a room earlier (pid + start): the whole orphaned chain goes.
         let owned = [(52, NOW - 300 * 60)];
         let with = l1_pick(&procs, &root, NOW, 2, &[10], &owned, &|_| true, &closed);
         assert_eq!(with.iter().find(|p| p.pid == 50).map(|p| p.tree.clone()), Some(vec![50, 51, 52]));
@@ -2787,7 +2784,9 @@ mod tests {
         assert!(watch("node c:/x/node_modules/jest/bin/jest.js").is_none());
         assert!(headless_main("chrome.exe --headless=new") && !headless_main("chrome.exe --type=gpu-process --headless"));
         assert_eq!(mcp("c:/scoop/shims/headroom.exe mcp serve"), Some("headroom"));
-        assert_eq!(mcp("uvx --from git+https://github.com/oraios/serena serena start-mcp-server"), Some("serena"));
+        assert_eq!(mcp("uvx --from git+https://github.com/oraios/serena serena start-mcp-server"), Some("serena"), "retired, still recognised for one release");
+        assert_eq!(mcp("c:/bin/codebase-memory-mcp.exe"), Some("codebase-memory"));
+        assert_eq!(mcp("uvx --from git+https://github.com/example/tool tool start-mcp-server"), Some("mcp"));
         assert_eq!(mcp("node c:/w/game/scripts/build.js"), None);
         assert!(is_browser("msedge.exe") && is_browser("chromium") && !is_browser("claude.exe"));
     }
@@ -2860,7 +2859,7 @@ mod tests {
         assert_eq!(lean_plugins(&user), ["pyright-lsp@claude-plugins-official", "typescript-lsp@claude-plugins-official"]);
         assert!(lean_plugins(&json!({})).is_empty());
         let cj = json!({ "mcpServers": { "serena-dev": {}, "codegraph": {}, "headroom": {}, "playwright": {} } });
-        assert_eq!(lean_mcp(&cj), ["codebase-memory-mcp", "codegraph", "serena", "serena-dev"], "indexers only; the rest stay");
+        assert_eq!(lean_mcp(&cj), ["codebase-memory-mcp", "codegraph", "serena", "serena-dev"], "retired indexers only; the rest stay");
         assert_eq!(lean_mcp(&Value::Null), ["codebase-memory-mcp", "serena"]);
         for n in ["lead", "ba", "qa", "qa2", "review", "review2", "rd", "eye", "sweep"] {
             assert!(lean_role(n), "{n}");

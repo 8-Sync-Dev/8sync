@@ -349,7 +349,7 @@ pub(super) fn write_json(p: &Path, v: &Value) {
 
 /// Flag off and the lease gone (`idle off`, `ccc cancel --all`).
 pub(super) fn off(home: &Path) -> Result<()> {
-    crate::verbs::harness::cbm::write_flag_key(home, KEY, false)?;
+    crate::verbs::harness::features::write_flag_key(home, KEY, false)?;
     let lease = state_dir(home).join("lease.json");
     if lease.exists() {
         std::fs::remove_file(&lease).with_context(|| format!("cannot remove {}", lease.display()))?;
@@ -358,7 +358,7 @@ pub(super) fn off(home: &Path) -> Result<()> {
 }
 
 pub(super) fn enabled(home: &Path) -> bool {
-    crate::verbs::harness::cbm::resolve(std::env::var(ENV).ok().as_deref(), crate::verbs::harness::cbm::read_flag_key(home, KEY))
+    crate::verbs::harness::features::resolve(std::env::var(ENV).ok().as_deref(), crate::verbs::harness::features::read_flag_key(home, KEY))
 }
 
 fn cost_of(s: &Value) -> Option<(String, f64)> {
@@ -732,7 +732,7 @@ pub(super) fn on(home: &Path, hours: f64, rate: Option<f64>, subscription: bool,
     if subscription && hours > SUB_MAX_HOURS {
         bail!("login subscription: --hours tối đa {SUB_MAX_HOURS} (owner phải có mặt). Chạy lâu / không người trông → Console API key.");
     }
-    crate::verbs::harness::cbm::write_flag_key(home, KEY, true)?;
+    crate::verbs::harness::features::write_flag_key(home, KEY, true)?;
     let dir = state_dir(home);
     let t = now();
     let baseline: serde_json::Map<String, Value> = costs(home).into_iter().map(|(k, c)| (k, json!(c))).collect();

@@ -24,8 +24,7 @@ pub struct ModelConfig {
     /// STEP-0 tool-routing enforcement (default ON). When ON, 8sync launches omp
     /// with a `--config` overlay that sets `grep.enabled`/`glob.enabled` to
     /// false, so the two redundant searchers are absent from the session and
-    /// code lookup MUST go through codegraph (CLI) first (codebase-memory-mcp /
-    /// serena only if enabled). Everything else omp offers — including MCP/xdev tools — is
+    /// code lookup MUST go through trail (CLI) first. Everything else omp offers — including MCP/xdev tools — is
     /// untouched, because this names only what to remove. `bash rg`/`grep -r`
     /// shell escapes are additionally blocked by `bashInterceptor.patterns`
     /// (deployed by `8sync harness`). Opt out: `8sync ai --no-step0`, or
@@ -91,7 +90,7 @@ impl Default for BashInterceptor {
 /// One interceptor rule in omp's own shape. `tool` is the availability GATE, not
 /// the suggestion: omp's matcher skips any rule whose `tool` is missing from the
 /// session, so it must name a tool that is always there (`lsp`) while `message`
-/// names the real replacement (codegraph / serena / codebase-memory).
+/// names the real replacement (trail).
 #[derive(Debug, Deserialize)]
 pub struct InterceptRule {
     pub pattern: String,
@@ -133,7 +132,7 @@ fn embedded_bash_interceptor() -> BashInterceptor {
 /// scope per-launch, so `8sync ai --no-step0` and the user's own bare `omp` are
 /// untouched.
 const STEP0_OVERLAY: &str = "# 8sync STEP-0 — managed file, rewritten whenever it drifts.\n\
-                             # Code lookup goes through codegraph CLI (cbm / serena only if enabled).\n\
+                             # Code lookup goes through the trail CLI.\n\
                              grep:\n  enabled: false\nglob:\n  enabled: false\n";
 
 /// Path to the STEP-0 overlay, written only when its bytes differ (omp treats a

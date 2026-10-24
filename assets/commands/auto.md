@@ -1,7 +1,7 @@
 ---
 name: sx-auto
 argument-hint: '[<goal> | status | resume]'
-description: 8sync autonomous engine — decompose a goal into slices/tasks and run to DONE on omp core via the code-enforced engine_* tools (durable state, verify-with-retry gate, git worktree). Right-sized, token-lean (codegraph/headroom), ponytail/karpathy discipline.
+description: 8sync autonomous engine — decompose a goal into slices/tasks and run to DONE on omp core via the code-enforced engine_* tools (durable state, verify-with-retry gate, git worktree). Right-sized, token-lean (trail/headroom), ponytail/karpathy discipline.
 ---
 
 # /sx-auto — run to done on the 8sync engine
@@ -11,20 +11,20 @@ description: 8sync autonomous engine — decompose a goal into slices/tasks and 
 You drive the **8sync-engine** (model-callable `engine_*` tools). It owns the durable plan state, the verify gate, and worktrees in CODE — you supply judgement. Obey `~/.omp/agent/APPEND_SYSTEM.md` (code-intel first; always-on skills).
 
 ## 0. Ground (token-lean)
-Read `su-code/STATE.md` + the recent `failure:` entries in `su-code/KNOWLEDGE.md`. Explore with **codegraph** (codebase-memory-mcp / serena only if enabled) — never grep/Read-all. `headroom_compress` any tool output > ~50 lines.
+Read `su-code/STATE.md` + the recent `failure:` entries in `su-code/KNOWLEDGE.md`. Explore with **trail** (`trail ask` / `trail callers` / `trail skeleton`) — never grep/Read-all. `headroom_compress` any tool output > ~50 lines.
 
 ## 1. Right-size first (ponytail)
 Trivial / small (a few files, clear path) → just do it, no engine ceremony. Medium / large / multi-slice → use the engine.
 
 ## 2. Research, then plan (research is INTEGRATED into planning)
 First **research** the unknowns so the plan is grounded — never guess:
-- Scout the codebase: **codegraph** (callers/deps/impact); cbm / serena only if enabled.
+- Scout the codebase: **trail** (`trail ask`, `trail callers <symbol>`).
 - Domain/external unknowns: **feynman** skills (`deep-research` / `research-paper`) + `web_search` / `last30days`. Log decisions under `## Assumptions` in `su-code/STATE.md`.
 Then call **engine_plan** with the goal + slices; each slice's atomic tasks; each task's `verify` commands = the project's REAL lint/test/build (this is the gate). Smallest-first.
 
 ## 3. Loop until done (in an autonomous run, do not yield between tasks)
-1. **engine_next** → next task + scoped context. Understand before editing (codegraph callers/deps + `git log/blame` + `su-code/DECISIONS.md`).
-2. Implement at the right size. Prefer symbol-level edits over blind whole-file rewrites (serena if enabled).
+1. **engine_next** → next task + scoped context. Understand before editing (`trail callers` / `trail ask` + `git log/blame` + `su-code/DECISIONS.md`).
+2. Implement at the right size. Prefer targeted edits over blind whole-file rewrites.
 3. **engine_verify** `{taskId}` — the gate runs the commands. FAILED → fix the cause, call engine_verify again — with a DIFFERENT fix: 2 identical failures warn, 3 BLOCK the task early (no-progress/doom-loop guard). BLOCKED → write a `failure:` to `su-code/KNOWLEDGE.md`, move to the next unblocked task or escalate.
 4. **engine_advance** `{taskId, commit:true}` — code-REFUSED unless engine_verify passed (your own "done" is not a stop signal); gitleaks clean.
 5. Tick `su-code/STATE.md` (Current/Next); distill a `validated:` runbook into `su-code/PLAYBOOKS.md` when a multi-step procedure worked.

@@ -31,7 +31,7 @@ The short URL `https://get.8syncdev.com/install` serves the same script; see the
 ## What `8sync setup` does now
 
 - Stage A runs every time and is idempotent: `gh`, omp, `paru` (Arch family
-  only), `codegraph`, Forge with zsh, Claude Code with the 8sync kit, gitleaks,
+  only), Forge with zsh, Claude Code with the 8sync kit, gitleaks,
   the PATH bootstrap (bash/zsh/fish), configs and skills, and `harness global`.
 - Stage B is opt-in: the profiles `dev-stack`, `nvidia`, `warp`, `bluetooth`
   and `terminal`, picked from a y/N menu, with `--community` (dev-stack and

@@ -102,8 +102,11 @@ enum Cmd {
     /// Manage kitty wallpaper: 8sync bg [show | get | set | list | add] (live swap, inline preview)
     Bg(verbs::bg::Args),
 
-    /// Stand up / refresh the agent harness (init = deploy skills+codegraph+AGENTS.md+memory; up = refresh)
+    /// Stand up / refresh the agent harness (init = deploy skills+trail+AGENTS.md+memory; up = refresh)
     Harness(verbs::harness::Args),
+
+    /// STEP 0 code map: install trail-code, telemetry off, wire repo(s) for Claude Code (`trail ask` before grep)
+    Trail(verbs::trail::Args),
 
     /// Render web route / file to PNG (for AI image-routing)
     Shot(verbs::shot::Args),
@@ -248,6 +251,7 @@ fn main() -> Result<()> {
         Some(Cmd::Clean(a))   => verbs::clean::run(a),
         Some(Cmd::Skill(a))   => verbs::skill::run(a),
         Some(Cmd::Harness(a)) => verbs::harness::run(a),
+        Some(Cmd::Trail(a))   => verbs::trail::run(a),
         Some(Cmd::Shot(a))    => verbs::shot::run(a),
         Some(Cmd::DiffImg(a)) => verbs::diff_img::run(a),
         Some(Cmd::PdfImg(a))  => verbs::pdf_img::run(a),

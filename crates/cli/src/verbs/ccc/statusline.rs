@@ -812,7 +812,7 @@ mod tests {
         let prev = json!({"type": "command", "command": "orca-status --x", "padding": 2});
         let mut s = json!({"theme": "dark", "statusLine": prev});
         let mut f = toml::Table::new();
-        f.insert("serena".into(), toml::Value::Boolean(true));
+        f.insert("other_flag".into(), toml::Value::Boolean(true));
         install_into(&mut s, "/bin/8sync", &mut f).unwrap();
         assert_eq!(s["statusLine"]["command"], "/bin/8sync ccc statusline");
         assert_eq!(s["statusLine"]["refreshInterval"], 5);
@@ -825,7 +825,7 @@ mod tests {
         uninstall_from(&mut s, &mut f);
         assert_eq!(s["statusLine"], prev, "whole object restored");
         assert!(s.get("subagentStatusLine").is_none());
-        assert!(f.get(PREV_KEY).is_none() && f["serena"].as_bool() == Some(true));
+        assert!(f.get(PREV_KEY).is_none() && f["other_flag"].as_bool() == Some(true));
         assert_eq!(s["theme"], "dark");
     }
 

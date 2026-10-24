@@ -198,7 +198,9 @@ pub(crate) fn upsert_block(path: &Path, begin: &str, end: &str, body: &str) -> R
 /// entries outside it (incl. a tool-repo's own `su-code/skills/` rule) survive.
 pub(crate) fn seed_gitignore(root: &Path) -> Result<()> {
     let body = concat!(
-        "# Derived / machine-local — rebuilt by `8sync harness init` + codegraph. Safe to ignore:\n",
+        "# Derived / machine-local — rebuilt by `8sync harness init` + trail. Safe to ignore:\n",
+        "graft/\n",
+        // Legacy (codegraph era): kept so old checkouts keep ignoring their index.
         ".codegraph/\n",
         ".cache/8sync/\n",
         ".gs/\n",
@@ -346,7 +348,7 @@ pub(crate) fn seed_harness_memory(root: &Path) -> Result<()> {
     let chain = {
         let names = always_on_names_in_order(root);
         if names.is_empty() {
-            "codegraph → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing".to_string()
+            "trail → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing".to_string()
         } else {
             names.join(" → ")
         }
@@ -354,7 +356,7 @@ pub(crate) fn seed_harness_memory(root: &Path) -> Result<()> {
     let body = format!(
         "## 🧠 8sync harness\n\n\
 - **Always-on (đọc theo thứ tự; CORE đọc body ngay, SPECIALIST đọc khi task khớp):** {}.\n\
-- **Cách tận dụng:** codegraph = explore code (query/callers/callees, không grep) · karpathy + ponytail = YAGNI, làm ít nhất, xoá > thêm · impeccable = design CHUẨN, BẮT BUỘC khi UI/design (đọc body lúc đó) + taste chống slop.\n\
+- **Cách tận dụng:** trail = explore code (ask/callers/skeleton, không grep) · karpathy + ponytail = YAGNI, làm ít nhất, xoá > thêm · impeccable = design CHUẨN, BẮT BUỘC khi UI/design (đọc body lúc đó) + taste chống slop.\n\
 - **Output lớn (>~50 dòng) → BẮT BUỘC `headroom_compress`** trước khi vào context.\n\
 - **Sau mỗi thay đổi:** cập nhật `CHANGELOG.md` (Unreleased) + ghi học được vào file này (prefix `validated:` nếu test/build xác nhận, `hypothesis:` nếu chưa).",
         chain,

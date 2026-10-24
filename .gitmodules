@@ -13,6 +13,3 @@
 [submodule "reference/ponytail"]
 	path = reference/ponytail
 	url = https://github.com/DietrichGebert/ponytail
-[submodule "reference/codebase-memory-mcp"]
-	path = reference/codebase-memory-mcp
-	url = https://github.com/DeusData/codebase-memory-mcp
