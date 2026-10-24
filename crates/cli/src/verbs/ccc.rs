@@ -1316,6 +1316,7 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
 
 fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
     ui::step("Claude Code kit → ~/.claude (agents · skills · verify hook · guard · stop + ask gates)");
+    crate::verbs::harness::legacy::retire_mcp(&env.home);
     let dir = dir.to_path_buf();
     let stamp_path = dir.join(KIT_STAMP);
     let mut stamps: BTreeMap<String, String> = std::fs::read_to_string(&stamp_path)

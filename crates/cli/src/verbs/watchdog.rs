@@ -2,8 +2,8 @@
 //! and the harness from runaway helpers.
 //!
 //! It reads `/proc` directly every ~2 s, finds the process trees under `claude` / `omp`
-//! plus a configurable list of known harness helpers (headroom,
-//! tsserver…), and when one burns CPU or RAM it (1) appends an alert to
+//! plus a configurable list of known harness helpers (headroom, tsserver…; the
+//! retired codebase-memory-mcp and serena stay listed for one release so a leftover is killed), and when one burns CPU or RAM it (1) appends an alert to
 //! `~/.local/state/8sync/watchdog/alerts.jsonl` (which `8sync ccc hook watchdog` feeds
 //! to Claude Code as `additionalContext`), (2) calls `notify-send`, and (3) for KNOWN
 //! HELPERS ONLY sends SIGTERM, then SIGKILL after a grace period, and quarantines a
@@ -156,7 +156,7 @@ impl Default for Config {
             notify: true,
             roots: v(&["claude", "omp"]),
             helpers: v(&[
-                "headroom", "tsserver", "rust-analyzer",
+                "codebase-memory-mcp", "serena", "headroom", "tsserver", "rust-analyzer",
                 "typescript-language-server", "gopls", "pyright-langserver", "basedpyright-langserver",
             ]),
             warn_only: v(&[
@@ -201,7 +201,7 @@ respawn_limit = 3            # killed more than this many times ...
 respawn_window_secs = 600.0  # ... within this window = quarantined (~/.config/8sync/watchdog-blocked)
 notify = true
 roots = [\"claude\", \"omp\"]
-helpers = [\"headroom\", \"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
+helpers = [\"codebase-memory-mcp\", \"serena\", \"headroom\", \"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
 # helpers that index heavily by design: alert only, never killed
 warn_only = [\"tsserver\", \"rust-analyzer\", \"typescript-language-server\", \"gopls\", \"pyright-langserver\", \"basedpyright-langserver\"]
 # under pressure (low MemAvailable, high load or PSI), session processes above renice_cpu_pct
@@ -668,9 +668,13 @@ pub fn suggest_for(helper: bool, name: &str) -> String {
     }
 }
 
-/// Remedy for a helper alert.
-pub fn helper_suggest(_name: &str) -> String {
-    "keep that helper off for this task (disable its MCP server / LSP) or work in smaller repos; the watchdog blocks it if it keeps respawning (`8sync watchdog unblock <name>` allows it again).".to_string()
+/// Remedy for a helper alert; the retired indexing MCP servers get their cleanup command.
+pub fn helper_suggest(name: &str) -> String {
+    let off = match name {
+        "codebase-memory-mcp" | "serena" => "retired MCP server: run `8sync harness global` (removes the entry 8sync registered)",
+        _ => "keep that helper off for this task (disable its MCP server / LSP) or work in smaller repos",
+    };
+    format!("{off}; the watchdog blocks it if it keeps respawning (`8sync watchdog unblock <name>` allows it again).")
 }
 
 impl Engine {
@@ -1799,7 +1803,9 @@ mod tests {
     }
 
     #[test]
-    fn helper_remedy_names_the_unblock_switch() {
+    fn helper_remedy_names_the_switch() {
+        assert!(helper_suggest("codebase-memory-mcp").contains("8sync harness global"));
+        assert!(helper_suggest("serena").contains("8sync harness global"));
         assert!(helper_suggest("headroom").contains("keep that helper off"));
         assert!(suggest_for(false, "node").contains("only reports") && !suggest_for(false, "node").contains("helper off"));
         let other = helper_suggest("gopls");

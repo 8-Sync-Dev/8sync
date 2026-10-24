@@ -200,6 +200,8 @@ pub(crate) fn seed_gitignore(root: &Path) -> Result<()> {
     let body = concat!(
         "# Derived / machine-local — rebuilt by `8sync harness init` + trail. Safe to ignore:\n",
         "graft/\n",
+        // Legacy (codegraph era): kept so old checkouts keep ignoring their index.
+        ".codegraph/\n",
         ".cache/8sync/\n",
         ".gs/\n",
         "# Large-scope feature-planning evidence screenshots (regenerable binaries):\n",

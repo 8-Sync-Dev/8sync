@@ -24,6 +24,7 @@ mod local_model;
 mod custom_model;
 mod browser;
 pub(crate) mod features;
+pub(crate) mod legacy;
 pub(crate) mod trail;
 mod gateway;
 pub(crate) mod claude_code;

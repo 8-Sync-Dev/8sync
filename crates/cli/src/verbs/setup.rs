@@ -652,20 +652,26 @@ fn install_aur_helper() -> Result<()> {
     Ok(())
 }
 
+/// Best-effort: a missing Node/npm or an npm permission error (EACCES) must not abort strict
+/// `8sync setup` before configs, harness-global and the Claude Code kit run.
 fn install_trail() -> Result<()> {
     ui::step("trail (code map for omp / claude / cursor)");
-    if let Some(bin) = crate::verbs::harness::trail::found() {
-        ui::skip("trail", &format!("present ({})", bin.display()));
-        if let Some(h) = dirs::home_dir() {
-            crate::verbs::harness::trail::ensure_telemetry_off(&h, &bin);
+    let had = crate::verbs::harness::trail::found().is_some();
+    let bin = match crate::verbs::harness::trail::ensure_installed() {
+        Ok(b) => b,
+        Err(e) => {
+            ui::warn(&format!("trail not installed: {e:#} — STEP 0 falls back to grep/read; fix it and run `8sync trail`"));
+            return Ok(());
         }
-        return Ok(());
+    };
+    if had {
+        ui::skip("trail", &format!("present ({})", bin.display()));
+    } else {
+        ensure_path_in_shells();
     }
-    let bin = crate::verbs::harness::trail::ensure_installed()?;
     if let Some(h) = dirs::home_dir() {
         crate::verbs::harness::trail::ensure_telemetry_off(&h, &bin);
     }
-    ensure_path_in_shells();
     Ok(())
 }
 

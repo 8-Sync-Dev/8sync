@@ -77,6 +77,8 @@ pub(crate) fn cleanup_legacy_gs(home: &Path, root: Option<&Path>) {
         let _ = std::fs::remove_file(r.join(".omp/commands/gs.md"));
         let _ = std::fs::remove_dir_all(r.join("su-code/skills/gs"));
     }
+    // Same one-time cutover for the skills retired with codegraph (`codegraph`, `token-bench`).
+    crate::verbs::harness::legacy::retire_skills(home, root);
 }
 
 /// Ensure a skill directory follows the Agent Skills 3-folder layout:
@@ -262,7 +264,7 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn remove_link_or_dir(path: &Path) -> Result<()> {
+pub(crate) fn remove_link_or_dir(path: &Path) -> Result<()> {
     let meta = std::fs::symlink_metadata(path)?;
     // Unlink the name only. Never `remove_dir_all` a junction/symlink — that
     // can walk into `su-code/skills` and delete the canonical tree.
@@ -276,6 +278,11 @@ fn remove_link_or_dir(path: &Path) -> Result<()> {
         std::fs::remove_file(path)?;
     }
     Ok(())
+}
+
+/// True for a symlink or a Windows junction/reparse point (what `link_dir` creates).
+pub(crate) fn is_link(meta: &std::fs::Metadata) -> bool {
+    meta.file_type().is_symlink() || is_windows_reparse_point(meta)
 }
 
 fn is_windows_reparse_point(_meta: &std::fs::Metadata) -> bool {
@@ -1389,7 +1396,7 @@ fn remove_retired_extensions(home: &Path, root: Option<&Path>) {
 /// dependency-free lines beat adding `sha2` or shelling out to `sha256sum` once
 /// per command file. `DefaultHasher` is explicitly not used: its output is not
 /// guaranteed stable across Rust releases, and these constants must never rot.
-fn fnv1a64(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in bytes {
         h ^= *b as u64;

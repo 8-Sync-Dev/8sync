@@ -319,21 +319,25 @@ pub(super) const ROOM_WINDOW: u32 = 300_000;
 /// The `--settings` file every team room starts with: env that beats the user settings' env for
 /// that launch only (checked live: `claude --bg --settings <this>` → the room sees 300000). A `lean`
 /// room ([`super::pressure::lean`]) also turns the user's LSP plugins off
-/// ([`super::pressure::lean_plugins`]) (`room-settings-lean.json`).
+/// ([`super::pressure::lean_plugins`]) and denies the indexing MCP servers
+/// ([`super::pressure::lean_mcp`]): `room-settings-lean.json`.
 pub(super) fn room_settings(home: &Path, lean: bool) -> Result<PathBuf> {
-    let plugins = if lean { super::pressure::lean_of(home) } else { Vec::new() };
-    room_settings_with(home, &plugins, lean)
+    let (plugins, mcp) = if lean { super::pressure::lean_of(home) } else { (Vec::new(), Vec::new()) };
+    room_settings_with(home, &plugins, &mcp)
 }
 
-/// [`room_settings`] with the plugins to turn off given; a `lean` room always gets
-/// `room-settings-lean.json`, even when the user has no plugin to turn off.
-pub(super) fn room_settings_with(home: &Path, plugins: &[String], lean: bool) -> Result<PathBuf> {
+/// [`room_settings`] with the plugins to turn off and the MCP servers to deny given (none = the
+/// plain file).
+pub(super) fn room_settings_with(home: &Path, plugins: &[String], mcp: &[String]) -> Result<PathBuf> {
     let d = idle::state_dir(home);
-    let name = if lean { "room-settings-lean.json" } else { "room-settings.json" };
+    let name = if plugins.is_empty() && mcp.is_empty() { "room-settings.json" } else { "room-settings-lean.json" };
     let f = d.parent().unwrap_or(&d).join(name);
     let mut v = serde_json::json!({ "env": { (super::compact::WIN_VAR): ROOM_WINDOW.to_string(), "BASH_MAX_TIMEOUT_MS": BASH_MAX_MS.to_string() } });
     if !plugins.is_empty() {
         v["enabledPlugins"] = plugins.iter().map(|p| (p.clone(), Value::Bool(false))).collect::<serde_json::Map<_, _>>().into();
+    }
+    if !mcp.is_empty() {
+        v["deniedMcpServers"] = mcp.iter().map(|m| json!({ "serverName": m })).collect::<Vec<_>>().into();
     }
     let body = format!("{v}\n");
     if std::fs::read_to_string(&f).ok().as_deref() != Some(body.as_str()) {
@@ -1131,7 +1135,7 @@ pub(super) fn revive(t: &Team, every: u64, now: u64) -> Result<Vec<Row>> {
             super::pressure::restart_done(t.home, t.root, &s.name, now);
         }
         let state = if lean_restart {
-            "khởi động lại gọn nhẹ (máy quá tải: tắt LSP, cùng hội thoại)"
+            "khởi động lại gọn nhẹ (máy quá tải: tắt LSP + MCP index, cùng hội thoại)"
         } else if idle {
             "chạy lại /goal (phòng đứng không việc)"
         } else {
@@ -1656,13 +1660,16 @@ mod tests {
         assert!(v.get("enabledPlugins").is_none());
         // A lean room: same env, the user's LSP plugins off (the rest of the user's plugins stay on).
         let off = ["typescript-lsp@claude-plugins-official".to_string()];
-        let lean = room_settings_with(&h, &off, true).unwrap();
+        let deny = ["codebase-memory-mcp".to_string(), "serena".to_string()];
+        let lean = room_settings_with(&h, &off, &deny).unwrap();
         assert!(lean.ends_with("room-settings-lean.json"));
         let v: Value = serde_json::from_str(&std::fs::read_to_string(lean).unwrap()).unwrap();
         assert_eq!(v["env"]["BASH_MAX_TIMEOUT_MS"], BASH_MAX_MS.to_string());
         assert_eq!(v["enabledPlugins"], json!({ "typescript-lsp@claude-plugins-official": false }));
-        assert!(room_settings_with(&h, &[], false).unwrap().ends_with("room-settings.json"), "not lean: the plain file");
-        assert!(room_settings(&h, true).unwrap().ends_with("room-settings-lean.json"), "a lean room always gets the lean file");
+        assert_eq!(v["deniedMcpServers"], json!([{ "serverName": "codebase-memory-mcp" }, { "serverName": "serena" }]));
+        assert!(room_settings_with(&h, &[], &[]).unwrap().ends_with("room-settings.json"), "nothing to turn off: the plain file");
+        // A lean room always denies the retired indexers, so it always gets the lean file.
+        assert!(room_settings(&h, true).unwrap().ends_with("room-settings-lean.json"));
         let _ = std::fs::remove_dir_all(&h);
     }
 
@@ -1875,7 +1882,7 @@ mod tests {
         let rows = revive(&t, 10, 2).unwrap();
         let mut got: Vec<(&str, &str)> = rows.iter().map(|r| (r.name.as_str(), r.state.as_str())).collect();
         got.sort();
-        assert_eq!(got, [("dev", "khởi động lại gọn nhẹ (máy quá tải: tắt LSP, cùng hội thoại)"), ("qa", "chạy lại nền (phiên cũ đã chết)")]);
+        assert_eq!(got, [("dev", "khởi động lại gọn nhẹ (máy quá tải: tắt LSP + MCP index, cùng hội thoại)"), ("qa", "chạy lại nền (phiên cũ đã chết)")]);
         let calls = fake.calls.borrow();
         let stops: Vec<_> = calls.iter().filter(|c| c[0] == "stop").map(|c| c[1].clone()).collect();
         assert_eq!(stops, [dev.conversation_id[..8].to_string()], "only the room to restart is stopped");
@@ -2335,7 +2342,7 @@ mod tests {
         assert_eq!(bg.len(), 1, "only the sweep opens: {bg:?}");
         assert_eq!(&bg[0][..3], ["--bg", "--name", "sweep"]);
         let settings = bg[0].windows(2).find(|w| w[0] == "--settings").map(|w| w[1].clone()).unwrap();
-        assert!(settings.ends_with("room-settings-lean.json"), "lean: no LSP plugins: {settings}");
+        assert!(settings.ends_with("room-settings-lean.json"), "lean: no LSP plugins, no indexing MCP: {settings}");
         assert!(bg[0].last().unwrap().starts_with("/goal Phòng `sweep`"), "{:?}", bg[0].last());
         drop(calls);
         // Running already: a second `--add sweep` sends nothing (no loop message to a /goal room).

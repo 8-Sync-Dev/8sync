@@ -36,6 +36,10 @@ pub(crate) fn global_pass(env: &env_detect::Env) -> Result<()> {
         std::fs::write(&force_load, crate::brand::render(&c).as_ref())?;
     }
     deploy::install_bundled_global(env)?;
+    // One-time cutover from codegraph / codebase-memory-mcp / serena (idempotent, quiet when done).
+    super::legacy::retire_mcp(&env.home);
+    deploy::cleanup_legacy_gs(&env.home, None);
+    super::legacy::refresh_interceptor_messages(&env.home);
     match super::trail::ensure_installed() {
         Ok(bin) => super::trail::ensure_telemetry_off(&env.home, &bin),
         Err(e) => ui::warn(&format!("trail not available: {e:#} — STEP 0 falls back to grep/read")),

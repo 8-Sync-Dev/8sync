@@ -27,7 +27,7 @@
 //!   all (owner 2026-10-21: RAM 69% with 23 rooms at 12 GB and the owner's own apps at 20 GB,
 //!   the guard said "không cần đổi gì").
 //! - L2 — RAM ≥ threshold + 15, or over the threshold for [`L2_RAM_S`]: restart up to [`RESTARTS`]
-//!   idle heavy rooms (same conversation) lean ([`lean`]): LSP plugins off.
+//!   idle heavy rooms (same conversation) lean ([`lean`]): LSP plugins and the retired indexing MCP servers off.
 //!   A room is restarted once per high-RAM spell; `revive` re-checks it right before the stop.
 //! - L3 — CPU ≥ [`CPU_MAX`]% for [`L3_CPU_S`], or RAM ≥ threshold + 15 for [`L3_RAM_S`]: pause the
 //!   rooms that do not fit ([`keep_count`], [`DROP_ORDER`]); their cards go back to the lane. The
@@ -334,12 +334,16 @@ fn is_py_uv(name: &str) -> bool {
 
 /// The MCP server a command line runs (lowercased `c`).
 fn mcp(c: &str) -> Option<&'static str> {
-    if c.contains("headroom") && c.contains("mcp") {
+    if c.contains("serena") && c.contains("mcp") {
+        Some("serena")
+    } else if c.contains("headroom") && c.contains("mcp") {
         Some("headroom")
     } else if c.contains("@playwright/mcp") || c.contains("playwright-mcp") {
         Some("playwright")
     } else if c.contains("chrome-devtools-mcp") {
         Some("chrome-devtools")
+    } else if c.contains("codebase-memory-mcp") {
+        Some("codebase-memory")
     } else if c.contains("mcp-server") || c.contains("start-mcp-server") {
         Some("mcp")
     } else {
@@ -1533,7 +1537,7 @@ fn lean_role(name: &str) -> bool {
     !room::builds(name) || room::crew(name) == "eye"
 }
 
-/// Room `name` starts lean ([`lean_plugins`] off): the sweep always (it reads
+/// Room `name` starts lean ([`lean_plugins`] and [`lean_mcp`] off): the sweep always (it reads
 /// sizes and processes, never code), others while the guard is on: always for a non-builder, for
 /// every room while the project's guard is at L2 or more.
 pub(super) fn lean(home: &Path, root: &Path, name: &str) -> bool {
@@ -1562,9 +1566,29 @@ pub(super) fn lean_plugins(user_settings: &Value) -> Vec<String> {
     v
 }
 
-/// [`lean_plugins`] of this machine's Claude Code config.
-pub(super) fn lean_of(home: &Path) -> Vec<String> {
-    idle::read_json(&claude_dir(home).join("settings.json")).map(|v| lean_plugins(&v)).unwrap_or_default()
+/// RETIRED indexing MCP servers (codebase-memory-mcp, serena — replaced by trail; `harness legacy`
+/// removes the entries 8sync registered). Kept for one release so a leftover one is still denied in
+/// a lean room: these names always, plus any server of the user's `~/.claude.json` named like them
+/// or like codegraph. `deniedMcpServers` (`serverName`) merges from every scope and keeps all other
+/// servers (https://code.claude.com/docs/en/settings-reference#deniedmcpservers).
+pub(super) fn lean_mcp(claude_json: &Value) -> Vec<String> {
+    let mut v: Vec<String> = ["codebase-memory-mcp", "serena"].iter().map(|s| s.to_string()).collect();
+    for k in claude_json["mcpServers"].as_object().into_iter().flatten().map(|(k, _)| k) {
+        let low = k.to_lowercase();
+        if (low.contains("serena") || low.contains("codebase-memory") || low.contains("codegraph")) && !v.contains(k) {
+            v.push(k.clone());
+        }
+    }
+    v.sort();
+    v
+}
+
+/// [`lean_plugins`] and [`lean_mcp`] of this machine's Claude Code config.
+pub(super) fn lean_of(home: &Path) -> (Vec<String>, Vec<String>) {
+    let dir = claude_dir(home);
+    let user = idle::read_json(&dir.join("settings.json")).map(|v| lean_plugins(&v)).unwrap_or_default();
+    let global = if std::env::var_os("CLAUDE_CONFIG_DIR").is_some() { dir.join(".claude.json") } else { home.join(".claude.json") };
+    (user, lean_mcp(&idle::read_json(&global).unwrap_or(Value::Null)))
 }
 
 // ── state ───────────────────────────────────────────────────────────────────────────────────
@@ -2148,7 +2172,7 @@ fn pass(home: &Path, root: &Path, claude: &dyn Claude, registry: &[(String, Stri
                 *acted = true;
                 freed_any = true;
                 let heavy: Vec<String> = asked.iter().map(|l| format!("{} ({} MB)", l.name, l.total / MIB)).collect();
-                let text = format!("L2 RAM {ram}% (ngưỡng {pct}%): khởi động lại gọn nhẹ (tắt LSP, cùng hội thoại) {}", heavy.join(", "));
+                let text = format!("L2 RAM {ram}% (ngưỡng {pct}%): khởi động lại gọn nhẹ (tắt LSP + MCP index, cùng hội thoại) {}", heavy.join(", "));
                 rows.push(row("L2", text.clone()));
                 log(&mut st, now, &text);
                 said.push(text);
@@ -2760,6 +2784,8 @@ mod tests {
         assert!(watch("node c:/x/node_modules/jest/bin/jest.js").is_none());
         assert!(headless_main("chrome.exe --headless=new") && !headless_main("chrome.exe --type=gpu-process --headless"));
         assert_eq!(mcp("c:/scoop/shims/headroom.exe mcp serve"), Some("headroom"));
+        assert_eq!(mcp("uvx --from git+https://github.com/oraios/serena serena start-mcp-server"), Some("serena"), "retired, still recognised for one release");
+        assert_eq!(mcp("c:/bin/codebase-memory-mcp.exe"), Some("codebase-memory"));
         assert_eq!(mcp("uvx --from git+https://github.com/example/tool tool start-mcp-server"), Some("mcp"));
         assert_eq!(mcp("node c:/w/game/scripts/build.js"), None);
         assert!(is_browser("msedge.exe") && is_browser("chromium") && !is_browser("claude.exe"));
@@ -2832,6 +2858,9 @@ mod tests {
         } });
         assert_eq!(lean_plugins(&user), ["pyright-lsp@claude-plugins-official", "typescript-lsp@claude-plugins-official"]);
         assert!(lean_plugins(&json!({})).is_empty());
+        let cj = json!({ "mcpServers": { "serena-dev": {}, "codegraph": {}, "headroom": {}, "playwright": {} } });
+        assert_eq!(lean_mcp(&cj), ["codebase-memory-mcp", "codegraph", "serena", "serena-dev"], "retired indexers only; the rest stay");
+        assert_eq!(lean_mcp(&Value::Null), ["codebase-memory-mcp", "serena"]);
         for n in ["lead", "ba", "qa", "qa2", "review", "review2", "rd", "eye", "sweep"] {
             assert!(lean_role(n), "{n}");
         }

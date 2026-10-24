@@ -162,30 +162,39 @@ fn is_wired(dir: &Path) -> bool {
     dir.join(HOOK_SHIM).is_file()
 }
 
-/// `git status --porcelain` lines for the repo's `.claude/settings.json`.
-fn settings_status(dir: &Path) -> String {
+/// `git status --porcelain --ignored` for the repo's `.claude/settings.json`; None when git fails
+/// (not a repo, git missing, corrupt index).
+fn settings_status(dir: &Path) -> Option<String> {
     Command::new("git")
         .arg("-C")
         .arg(dir)
-        .args(["status", "--porcelain", "--", SETTINGS])
+        .args(["status", "--porcelain", "--ignored", "--", SETTINGS])
         .stdin(Stdio::null())
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default()
 }
 
-/// True when git reports any change (modified or untracked) to the repo's `.claude/settings.json`:
-/// a file the owner may have written, so `init` must not merge into it.
+/// Pure: may `trail init` merge into `.claude/settings.json`? Only when it can be proven clean:
+/// a missing file is nothing to merge into; otherwise git must run and report nothing for it
+/// (modified, untracked and ignored files all print a line, and a git failure prints none).
+pub(crate) fn settings_unsafe(status: Option<&str>, exists: bool) -> bool {
+    exists && status.is_none_or(|s| !s.trim().is_empty())
+}
+
 fn settings_dirty(dir: &Path) -> bool {
-    !settings_status(dir).trim().is_empty()
+    settings_unsafe(settings_status(dir).as_deref(), dir.join(SETTINGS).exists())
 }
 
-/// True when a TRACKED `.claude/settings.json` has uncommitted edits. `off` only needs this: a
-/// still-untracked file in a wired repo is the one `trail init` wrote.
+/// True when a TRACKED `.claude/settings.json` has uncommitted edits, or git cannot say. `off`
+/// only needs this: a still-untracked file in a wired repo is the one `trail init` wrote.
 fn settings_edited(dir: &Path) -> bool {
-    settings_status(dir).lines().any(|l| !l.trim().is_empty() && !l.starts_with("??"))
+    let exists = dir.join(SETTINGS).exists();
+    match settings_status(dir) {
+        None => exists,
+        Some(s) => s.lines().any(|l| !l.trim().is_empty() && !l.starts_with("??")),
+    }
 }
 
 /// Pure: `existing` with a `graft/` line appended, or None when it already ignores it. Keeps the
@@ -373,12 +382,11 @@ fn off(dir: Option<&str>, dry_run: bool) -> Result<()> {
     if settings_edited(&dir) {
         bail!("{}", Outcome::DirtySettings.label());
     }
-    let mut c = trail_cmd(&bin);
-    c.args(["uninstall", "--no-global"]);
-    if !dry_run {
-        c.arg("--yes");
+    if dry_run {
+        ui::info(&format!("dry-run: would run: trail uninstall --no-global --yes {}", dir.display()));
+        return Ok(());
     }
-    let st = c.arg(&dir).status().context("run trail uninstall")?;
+    let st = trail_cmd(&bin).args(["uninstall", "--no-global", "--yes"]).arg(&dir).status().context("run trail uninstall")?;
     if !st.success() {
         bail!("`trail uninstall` exited {st}");
     }
@@ -550,6 +558,22 @@ mod tests {
         let found: Vec<String> = find_repos(&root, 3).iter().map(|p| p.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/")).collect();
         assert_eq!(found, ["a", "g/h/i"]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn settings_are_merged_only_when_provably_clean() {
+        assert!(!settings_unsafe(None, false), "no file: nothing to merge into");
+        assert!(!settings_unsafe(Some(""), true) && !settings_unsafe(Some("\n"), true), "git ran and printed nothing");
+        assert!(settings_unsafe(None, true), "git failed: cannot prove it clean");
+        for dirty in [" M .claude/settings.json", "?? .claude/settings.json", "!! .claude/settings.json"] {
+            assert!(settings_unsafe(Some(dirty), true), "{dirty}");
+        }
+        // a directory that is not a repo at all, with an owner file in it
+        let d = tmp("nogit");
+        std::fs::create_dir_all(d.join(".claude")).unwrap();
+        std::fs::write(d.join(SETTINGS), "{}").unwrap();
+        assert!(settings_dirty(&d), "not a repo (or untracked): never merge");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
