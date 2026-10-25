@@ -18,7 +18,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   - **Chỉ liệt kê cho owner chọn:**
     - model: Hugging Face qua `hf cache ls`, vì huggingface_hub 1.x để blob dùng chung trong `hub/blobs` (35 GB ở đó trên máy owner, trong khi thư mục từng repo trông như trống). Thêm Ollama, LM Studio, torch hub;
     - kết quả train ≥ 100 MB;
-    - volume Docker không container nào dùng.
+    - volume Docker ẩn danh không container nào dùng. `--forget docker-volumes` chạy `docker volume prune` không có `-a`: volume có tên, như DB dev `sqldb-*` của Encore, được giữ.
 
     Xoá một mục bằng `8sync clean --forget <id>` (`hf cache rm` / `ollama rm`).
   - **Không** xoá model theo "lần đọc cuối": một lần `hf cache ls` đã đặt mọi model về "28 seconds ago". Cũng không chạy `hf cache prune` tự động, vì nó xoá cả repo không có ref (như `bge-reranker-v2-m3` 2.3 GB).

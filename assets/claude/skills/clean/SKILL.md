@@ -27,8 +27,9 @@ Owner (2026-10-25): "auto clear rác sau ci local, train, finetune, pull image o
    - bản tải dở của Hugging Face.
 3. **Cần anh quyết** — gom mục "cần anh quyết" của output vào MỘT `AskUserQuestion` (`multiSelect: true`, ≤ 4 câu, mục lớn nhất trước, mỗi mục ghi dung lượng + lúc tải). Sau khi owner chọn:
    - model: `8sync clean --forget <id>` (dùng `hf cache rm` / `ollama rm` / xoá file torch, LM Studio);
-   - volume Docker: `8sync clean --forget docker-volumes`;
-   - kết quả train (`checkpoints`, `checkpoint-*`, `wandb`, `mlruns`, `runs`): xoá đúng path owner chọn; với `checkpoint-*` gợi ý giữ cái cuối/tốt nhất.
+   - volume Docker: `8sync clean --forget docker-volumes` (chỉ volume ẩn danh; volume có tên như `sqldb-*` của Encore là DB dev, luôn giữ);
+   - checkpoint / kết quả train (`checkpoints`, `checkpoint-*`, `wandb`, `mlruns`, `runs`): `checkpoints/` hay là weight dự án đang chạy (open-musik: ACE-Step) — đọc code dự án trước; xoá đúng path owner chọn; với `checkpoint-*` gợi ý giữ cái cuối/tốt nhất.
+   - Trước khi đưa model vào câu hỏi, `rg` tên repo trong các dự án: dự án nào còn tham chiếu thì ghi rõ trong option ("đang dùng bởi …"), mặc định không chọn.
    Owner không trả lời → để nguyên, không xoá.
 4. **Lịch tự động** (một lần cho mỗi máy, nếu chưa có): `8sync clean --dev --timer 24h` — Windows tạo Scheduled Task `8sync\clean` (chạy ẩn, không bật console), Linux systemd user timer, macOS launchd. Kiểm: `schtasks /Query /TN "8sync\clean"` (Windows).
 5. **Báo cáo** ≤ 6 dòng: "đã dọn: <X GB> (<nhóm chính>)", các mục còn chờ owner, lệnh đã chạy.

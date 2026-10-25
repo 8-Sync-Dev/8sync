@@ -221,7 +221,7 @@ fn project(root: &Path, cwds: &[(PathBuf, SystemTime)], o: &Opts, now: SystemTim
     for d in found.iter().filter(|f| f.kind == Kind::Train) {
         let b = size(&d.path);
         if b >= TRAIN_MIN {
-            t.ask.push(format!("{:<48} {:>9}  kết quả train  → xoá tay nếu không cần", d.path.display(), human(b)));
+            t.ask.push(format!("{:<48} {:>9}  checkpoint / kết quả train (có thể là weight dự án đang chạy)  → xoá tay nếu chắc không cần", d.path.display(), human(b)));
         }
     }
     if !idle(commit, transcript, now, o.idle_days) {
@@ -369,6 +369,16 @@ pub(crate) fn parse_size(s: &str) -> Option<u64> {
     Some((n * m) as u64)
 }
 
+/// Docker ≥ 23: without `-a`, `volume prune` removes only anonymous volumes.
+pub(crate) const VOLUME_PRUNE: [&str; 3] = ["volume", "prune", "-f"];
+
+/// (anonymous, named) among `docker volume ls -q` names: an anonymous volume's name is 64 hex chars.
+pub(crate) fn volume_split(ls: &str) -> (usize, usize) {
+    let names: Vec<&str> = ls.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let anon = names.iter().filter(|n| n.len() == 64 && n.bytes().all(|b| b.is_ascii_hexdigit())).count();
+    (anon, names.len() - anon)
+}
+
 pub(crate) fn docker_prunes(image_days: u64) -> Vec<Vec<String>> {
     let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     vec![
@@ -399,11 +409,13 @@ fn docker(o: &Opts, t: &mut Tally) {
             ui::ok(&format!("docker {}: {}", args[..2].join(" "), human(b)));
         }
     }
-    // Volumes hold data: listed, removed only on `--forget docker-volumes`.
+    // Volumes hold data: listed, removed only on `--forget docker-volumes`, and then only anonymous
+    // ones. Named ones (Encore's `sqldb-*` dev databases) are a project's data even when no
+    // container holds them right now.
     if let Some(v) = out_timeout("docker", &["volume", "ls", "-q", "--filter", "dangling=true"], 60) {
-        let n = v.lines().filter(|l| !l.trim().is_empty()).count();
-        if n > 0 {
-            t.ask.push(format!("{:<48} {:>9}  {n} volume không container nào dùng (có thể là dữ liệu)  → 8sync clean --forget docker-volumes", "docker-volumes", "?"));
+        let (anon, named) = volume_split(&v);
+        if anon > 0 {
+            t.ask.push(format!("{:<48} {:>9}  {anon} volume ẩn danh không container nào dùng (giữ {named} volume có tên, vd DB dev của Encore)  → 8sync clean --forget docker-volumes", "docker-volumes", "?"));
         }
     }
     ui::info("Docker Desktop trên Windows: file đĩa WSL không tự co sau prune — Docker Desktop → Troubleshoot → Clean / Purge data, hoặc để nguyên.");
@@ -659,9 +671,9 @@ fn hf_incomplete(dir: &Path, now: SystemTime, dry: bool) -> (u64, u64) {
 fn forget(id: &str, home: &Path, dry: bool) -> Result<()> {
     if id == "docker-volumes" {
         if dry {
-            ui::info("sẽ chạy: docker volume prune -a -f");
+            ui::info("sẽ chạy: docker volume prune -f (chỉ volume ẩn danh; volume có tên như DB dev của Encore được giữ)");
         } else {
-            let b = out_timeout("docker", &["volume", "prune", "-a", "-f"], 600).map(|s| reclaimed(&s));
+            let b = out_timeout("docker", &VOLUME_PRUNE, 600).map(|s| reclaimed(&s));
             match b {
                 Some(b) => ui::ok(&format!("docker volume prune: {}", human(b))),
                 None => bail!("docker volume prune không chạy được (Docker có đang chạy?)"),
@@ -741,6 +753,13 @@ mod tests {
         assert!(p.iter().all(|a| a[0] != "volume" && a[0] != "system"), "volumes are data: only on --forget");
         assert_eq!(p[3], ["image", "prune", "-a", "-f", "--filter", "until=720h"]);
         assert!(p[0].contains(&"until=24h".to_string()));
+        assert!(!VOLUME_PRUNE.contains(&"-a"), "-a would take named volumes: Encore's dev databases");
+        let ls = format!("{}
+sqldb-acoleads-core-default
+
+{}
+", "a".repeat(64), "0f".repeat(32));
+        assert_eq!(volume_split(&ls), (2, 1));
     }
 
     #[test]
