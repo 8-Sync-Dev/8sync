@@ -6,10 +6,12 @@
 //! - Windows: `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` (kernel32, no crate);
 //!   Linux: `systemd-inhibit --what=sleep:idle … tail --pid=<8sync> -f /dev/null`; macOS:
 //!   `caffeinate -i -w <8sync>`. Both end with this process even when it is killed; the hold ends
-//!   with Ctrl+C, `--hours`, or no room left.
+//!   with Ctrl+C / `awake off`, `--hours` when given, or no room left with `--while-rooms`.
+//! - No deadline by default (owner, 2026-10-25: "tắt mãi cho tới khi tôi bấm … chứ không phải
+//!   chỉ 8h"): on stays on until the switch turns it off; the screen still goes off when idle.
 //! - `--while-rooms`: checks `claude agents --json` every minute and lets go after two checks in a
 //!   row with no live Claude Code session.
-//! - Never starts a room and never renews the auto lease; capped at 24 h. A closed laptop lid
+//! - Never starts a room and never renews the auto lease. A closed laptop lid
 //!   still sleeps, and a shutdown still kills the rooms (`auto revive` brings them back).
 //! - Windows: also turns the screen off after `--screen-off N` minutes (default 10, 0 = leave it
 //!   to the power plan) without mouse/keyboard input, unless an app holds the display (video) or
@@ -19,8 +21,8 @@
 //! - `awake status [--json]`: what the OS says right now (held awake?, screen on/off, idle since
 //!   the last mouse/keyboard input, time asleep since boot) plus `ours`, this 8sync's own hold.
 //!   HQ polls the JSON every ~30 s.
-//! - `awake on [--hours N] [--screen-off N]` / `awake off`: the HQ switch (owner, 2026-10-19: "awake
-//!   on/off … có nút"). `on` starts `8sync awake --while-rooms` detached (no console, null stdio,
+//! - `awake on [--while-rooms] [--hours N] [--screen-off N]` / `awake off`: the HQ switch (owner,
+//!   2026-10-19: "awake on/off … có nút"). `on` starts `8sync awake` detached (no console, null stdio,
 //!   out of the caller's job) and returns; `off` stops only the hold named in our pidfile
 //!   (`~/.local/state/8sync/ccc/awake.json`, written by the hold itself, removed when it ends).
 //!   `held` can't drive a switch: on Windows it is the system-wide aggregate (omp.exe holds SYSTEM too).
@@ -29,10 +31,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 
-pub(super) const USAGE: &str = "usage: 8sync ccc awake [--while-rooms] [--hours N] [--screen-off PHÚT]   (mặc định 8 giờ, tối đa 24; tắt màn hình sau 10 phút không ai đụng, 0 = để Windows lo)\n       8sync ccc awake on [--hours N] [--screen-off PHÚT] | off   (bật/tắt giữ thức chạy nền, tự nhả khi hết phòng)\n       8sync ccc awake status [--json]   (máy có đang thức, màn hình, lần cuối đụng chuột/phím)";
+pub(super) const USAGE: &str = "usage: 8sync ccc awake [--while-rooms] [--hours N] [--screen-off PHÚT]   (mặc định giữ tới khi tắt; tắt màn hình sau 10 phút không ai đụng, 0 = để Windows lo)\n       8sync ccc awake on [--while-rooms] [--hours N] [--screen-off PHÚT] | off   (bật/tắt giữ thức chạy nền, giữ tới khi `off`; --while-rooms = nhả khi hết phòng)\n       8sync ccc awake status [--json]   (máy có đang thức, màn hình, lần cuối đụng chuột/phím)";
 
-const DEFAULT_HOURS: f64 = 8.0;
-const MAX_HOURS: f64 = 24.0;
 const EVERY: Duration = Duration::from_secs(60);
 const SCREEN_OFF_MIN: u64 = 10;
 /// `on` waits this long for the detached hold to write its pidfile (`claude agents` can be slow).
@@ -41,13 +41,14 @@ const ON_WAIT: Duration = Duration::from_secs(20);
 #[derive(Debug, PartialEq)]
 pub(super) struct Opts {
     pub while_rooms: bool,
-    pub hours: f64,
+    /// None = until `off` (no deadline).
+    pub hours: Option<f64>,
     /// Minutes without input before the screen goes off; 0 = the OS power plan decides.
     pub screen_off: u64,
 }
 
 pub(super) fn parse(rest: &[String]) -> Result<Opts> {
-    let mut o = Opts { while_rooms: false, hours: DEFAULT_HOURS, screen_off: SCREEN_OFF_MIN };
+    let mut o = Opts { while_rooms: false, hours: None, screen_off: SCREEN_OFF_MIN };
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -55,7 +56,7 @@ pub(super) fn parse(rest: &[String]) -> Result<Opts> {
             "--hours" => {
                 let v = it.next().and_then(|v| v.parse::<f64>().ok()).filter(|h| h.is_finite() && *h > 0.0);
                 let Some(h) = v else { bail!("--hours cần một số > 0\n{USAGE}") };
-                o.hours = h.min(MAX_HOURS);
+                o.hours = Some(h);
             }
             "--screen-off" => {
                 let Some(m) = it.next().and_then(|v| v.parse::<u64>().ok()).filter(|m| *m <= 24 * 60) else {
@@ -303,7 +304,7 @@ impl super::team::Claude for Quiet {
 pub(super) struct Pidfile {
     pub pid: u32,
     pub ident: String,
-    /// Epoch seconds when `--hours` runs out.
+    /// Epoch seconds when `--hours` runs out; 0 = until `off`.
     pub until: u64,
     pub while_rooms: bool,
 }
@@ -375,9 +376,36 @@ fn kill(pid: u32) -> bool {
 #[cfg(windows)]
 use win::{ident, kill};
 
-/// The argv `on` starts: always `--while-rooms`, so the hold lets go when the last room ends.
+/// The argv `on` starts: the same options, held until `off` unless `--while-rooms` / `--hours`.
 pub(super) fn on_argv(o: &Opts) -> Vec<String> {
-    ["awake", "--while-rooms", "--hours", &o.hours.to_string(), "--screen-off", &o.screen_off.to_string()].map(String::from).to_vec()
+    let mut v = vec!["awake".to_string()];
+    if o.while_rooms {
+        v.push("--while-rooms".into());
+    }
+    if let Some(h) = o.hours {
+        v.extend(["--hours".into(), h.to_string()]);
+    }
+    v.extend(["--screen-off".into(), o.screen_off.to_string()]);
+    v
+}
+
+/// "tới khi tắt" / "còn tối đa 6 giờ 9 phút" for a hold that ends at `until` (0 = no deadline).
+fn left_vi(until: u64) -> String {
+    if until == 0 {
+        "tới khi tắt".to_string()
+    } else {
+        format!("còn tối đa {}", dur_vi(until.saturating_sub(now_s())))
+    }
+}
+
+/// When a hold with these options lets go, for the owner.
+fn ends_vi(o: &Opts) -> String {
+    match (o.while_rooms, o.hours) {
+        (false, None) => "giữ tới khi anh tắt (`8sync awake off` hoặc công tắc HQ)".to_string(),
+        (false, Some(h)) => format!("giữ tới khi anh tắt hoặc sau {h} giờ"),
+        (true, None) => "tự nhả khi không còn phòng nào chạy".to_string(),
+        (true, Some(h)) => format!("tự nhả khi không còn phòng nào chạy hoặc sau {h} giờ"),
+    }
 }
 
 /// Null stdio (or Node's execFile waits on the inherited pipe), no console, its own process group,
@@ -446,12 +474,12 @@ pub(super) fn take_lock(p: &Path, stale: Duration) -> Result<Option<OnLock>> {
     Ok(None)
 }
 
-/// `8sync ccc awake on [--hours N] [--screen-off N]`: our hold alive → say so; else start one
+/// `8sync ccc awake on [--while-rooms] [--hours N] [--screen-off N]`: our hold alive → say so; else start one
 /// detached and return once it has written its pidfile.
 pub(super) fn on(rest: &[String], home: &Path) -> Result<()> {
     let o = parse(rest)?;
     let pf = pid_path(home);
-    let running = |h: Pidfile| println!("đã đang giữ máy thức (pid {}, còn {}).", h.pid, dur_vi(h.until.saturating_sub(now_s())));
+    let running = |h: Pidfile| println!("đã đang giữ máy thức (pid {}, {}).", h.pid, left_vi(h.until));
     if let Some(h) = live_hold(read_pidfile(&pf), ident) {
         running(h);
         return Ok(());
@@ -469,7 +497,7 @@ pub(super) fn on(rest: &[String], home: &Path) -> Result<()> {
     let end = Instant::now() + ON_WAIT;
     loop {
         if read_pidfile(&pf).is_some_and(|f| f.pid == child.id()) {
-            println!("đã bật giữ máy thức (pid {}): tự nhả khi không còn phòng nào chạy hoặc sau {} giờ; màn hình tắt sau {} phút không ai đụng.", child.id(), o.hours, o.screen_off);
+            println!("đã bật giữ máy thức (pid {}): {}; màn hình tắt sau {} phút không ai đụng, chạm chuột/phím là sáng lại.", child.id(), ends_vi(&o), o.screen_off);
             return Ok(());
         }
         if let Some(st) = child.try_wait()? {
@@ -504,7 +532,7 @@ pub(super) fn off(home: &Path) -> Result<()> {
 
 // ── `8sync sleep work`: screen off + lock now, machine and Claude keep working ─────────────────
 
-pub(super) const SLEEP_USAGE: &str = "usage: 8sync sleep work [--hours N] [--screen-off PHÚT] [--no-lock] [--force]   (tắt màn hình + khoá máy ngay, máy vẫn thức cho Claude Desktop / Claude Code làm tiếp; chạm chuột/phím là sáng lại; mặc định 8 giờ, màn hình tự tắt lại sau 2 phút không ai đụng)\n       8sync sleep off   (nhả giữ thức: máy ngủ lại theo cài đặt nguồn)\n       8sync sleep status [--json]";
+pub(super) const SLEEP_USAGE: &str = "usage: 8sync sleep work [--hours N] [--screen-off PHÚT] [--no-lock] [--force]   (tắt màn hình + khoá máy ngay, máy vẫn thức cho Claude Desktop / Claude Code làm tiếp; chạm chuột/phím là sáng lại; giữ tới khi `8sync sleep off`, màn hình tự tắt lại sau 2 phút không ai đụng)\n       8sync sleep off   (nhả giữ thức: máy ngủ lại theo cài đặt nguồn)\n       8sync sleep status [--json]";
 
 /// After a glance at the screen, how soon it goes dark again (minutes).
 const SLEEP_SCREEN_OFF_MIN: u64 = 2;
@@ -513,7 +541,8 @@ const KEY_RELEASE: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, PartialEq)]
 pub(super) struct SleepOpts {
-    pub hours: f64,
+    /// None = until `sleep off` (owner 2026-10-25: "chứ không phải chỉ 8h").
+    pub hours: Option<f64>,
     pub screen_off: u64,
     pub lock: bool,
     /// Turn the screen off even on a Modern Standby machine.
@@ -521,13 +550,13 @@ pub(super) struct SleepOpts {
 }
 
 pub(super) fn parse_sleep(rest: &[String]) -> Result<SleepOpts> {
-    let mut o = SleepOpts { hours: DEFAULT_HOURS, screen_off: SLEEP_SCREEN_OFF_MIN, lock: true, force: false };
+    let mut o = SleepOpts { hours: None, screen_off: SLEEP_SCREEN_OFF_MIN, lock: true, force: false };
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--hours" => {
                 let Some(h) = it.next().and_then(|v| v.parse::<f64>().ok()).filter(|h| h.is_finite() && *h > 0.0) else { bail!("--hours cần một số > 0\n{SLEEP_USAGE}") };
-                o.hours = h.min(MAX_HOURS);
+                o.hours = Some(h);
             }
             "--screen-off" => {
                 let Some(m) = it.next().and_then(|v| v.parse::<u64>().ok()).filter(|m| *m <= 24 * 60) else { bail!("--screen-off cần số phút từ 0 tới 1440\n{SLEEP_USAGE}") };
@@ -544,7 +573,7 @@ pub(super) fn parse_sleep(rest: &[String]) -> Result<SleepOpts> {
 /// The hold `sleep work` starts: no `--while-rooms` (Claude Desktop's own work is not a room that
 /// `claude agents` lists, so a room watch would let the machine sleep under it).
 pub(super) fn work_argv(o: &SleepOpts) -> Vec<String> {
-    ["awake", "--hours", &o.hours.to_string(), "--screen-off", &o.screen_off.to_string()].map(String::from).to_vec()
+    on_argv(&Opts { while_rooms: false, hours: o.hours, screen_off: o.screen_off })
 }
 
 /// What locks the session on `os` (Windows: `LockWorkStation`, an API call: None here).
@@ -615,7 +644,7 @@ pub(super) fn sleep(rest: &[String], home: &Path) -> Result<()> {
     let h = ensure_work_hold(&o, home)?;
     let os = std::env::consts::OS;
     let ms = probe().modern_standby == Some(true);
-    println!("máy giữ thức (pid {}, còn {}): Claude Desktop / Claude Code làm tiếp khi màn hình tắt.", h.pid, dur_vi(h.until.saturating_sub(now_s())));
+    println!("máy giữ thức (pid {}, {}): Claude Desktop / Claude Code làm tiếp khi màn hình tắt.", h.pid, left_vi(h.until));
     std::thread::sleep(KEY_RELEASE);
     if o.lock {
         #[cfg(windows)]
@@ -671,29 +700,29 @@ pub(super) fn run(o: &Opts, claude: Option<&dyn super::team::Claude>, subscripti
             return Ok(());
         }
     }
-    let own = own_pidfile(me, ident(me), now_s() + (o.hours * 3600.0) as u64, o.while_rooms)?;
+    let until = o.hours.map_or(0, |h| now_s() + (h * 3600.0) as u64);
+    let own = own_pidfile(me, ident(me), until, o.while_rooms)?;
     let _hold = Hold::take()?;
     write_pidfile(&pf, &own)?;
     // Dropped before `_hold`: the pidfile goes first, then the OS hold.
     let _pid = PidGuard(pf.clone(), me);
     #[cfg(windows)]
     win::clean_on_ctrl(pf);
-    let until = if o.while_rooms { "không còn phòng nào chạy" } else { "Ctrl+C" };
     let screen = match (o.screen_off, probe().modern_standby) {
         (m, Some(false)) if m > 0 => format!("màn hình tự tắt sau {m} phút không ai đụng chuột/phím, chạm là sáng lại"),
         (m, Some(true)) if m > 0 => "máy có Modern Standby nên 8sync không tự tắt màn hình (tắt có thể kéo máy vào ngủ nhẹ)".to_string(),
         _ => "màn hình tắt theo cài đặt nguồn của máy".to_string(),
     };
-    println!("giữ máy thức tới khi hết {} giờ hoặc {until}; {screen}. Gập nắp laptop / tắt máy thì phòng vẫn dừng (`8sync ccc auto revive` mở lại).", o.hours);
+    println!("giữ máy thức: {}; {screen}. Gập nắp laptop / tắt máy thì phòng vẫn dừng (`8sync ccc auto revive` mở lại).", ends_vi(o));
     if subscription {
         println!("gói subscription: auto vẫn theo lease ≤ 4 giờ khi anh có mặt; chạy không người trông nhiều giờ thì dùng Routines (`/schedule`) hoặc Console API key.");
     }
-    let deadline = Instant::now() + Duration::from_secs_f64(o.hours * 3600.0);
+    let deadline = o.hours.map(|h| Instant::now() + Duration::from_secs_f64(h * 3600.0));
     let mut empty = 0;
     loop {
         std::thread::sleep(EVERY);
-        if Instant::now() >= deadline {
-            println!("hết {} giờ — nhả, máy được ngủ lại.", o.hours);
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            println!("hết {} giờ — nhả, máy được ngủ lại.", o.hours.unwrap_or_default());
             return Ok(());
         }
         if let Some(c) = watch {
@@ -782,7 +811,7 @@ pub(super) fn status_text(s: &Status) -> String {
         None => {}
     }
     if let Some(o) = s.ours {
-        l1.push(format!("8sync đang giữ (pid {}, còn tối đa {})", o.pid, dur_vi(o.until.saturating_sub(now_s()))));
+        l1.push(format!("8sync đang giữ (pid {}, {})", o.pid, left_vi(o.until)));
     }
     if let Some(d) = s.display {
         let d = match d {
@@ -1004,16 +1033,17 @@ mod tests {
     #[test]
     fn sleep_work_parses_and_holds_without_a_room_watch() {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(parse_sleep(&[]).unwrap(), SleepOpts { hours: DEFAULT_HOURS, screen_off: SLEEP_SCREEN_OFF_MIN, lock: true, force: false });
+        assert_eq!(parse_sleep(&[]).unwrap(), SleepOpts { hours: None, screen_off: SLEEP_SCREEN_OFF_MIN, lock: true, force: false }, "until `sleep off`");
+        assert_eq!(work_argv(&parse_sleep(&[]).unwrap()), v(&["awake", "--screen-off", "2"]), "no deadline by default");
         let o = parse_sleep(&v(&["--hours", "30", "--screen-off", "5", "--no-lock", "--force"])).unwrap();
-        assert_eq!(o, SleepOpts { hours: MAX_HOURS, screen_off: 5, lock: false, force: true });
+        assert_eq!(o, SleepOpts { hours: Some(30.0), screen_off: 5, lock: false, force: true }, "no 24 h cap");
         assert!(parse_sleep(&v(&["--hours", "-1"])).is_err());
         assert!(parse_sleep(&v(&["--wat"])).is_err());
         let a = work_argv(&o);
-        assert_eq!(a, v(&["awake", "--hours", "24", "--screen-off", "5"]));
+        assert_eq!(a, v(&["awake", "--hours", "30", "--screen-off", "5"]));
         assert!(!a.iter().any(|x| x == "--while-rooms"), "Claude Desktop is not a room: no room watch");
         // The hold argv parses back with the awake parser.
-        assert_eq!(parse(&a[1..]).unwrap(), Opts { while_rooms: false, hours: 24.0, screen_off: 5 });
+        assert_eq!(parse(&a[1..]).unwrap(), Opts { while_rooms: false, hours: Some(30.0), screen_off: 5 });
         assert_eq!(lock_argv("linux"), Some(vec!["loginctl", "lock-session"]));
         assert_eq!(screen_argv("macos"), Some(vec!["pmset", "displaysleepnow"]));
         assert_eq!(lock_argv("windows"), None);
@@ -1024,14 +1054,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_flags_and_caps_the_hours() {
-        assert_eq!(parse(&[]).unwrap(), Opts { while_rooms: false, hours: 8.0, screen_off: 10 });
+    fn parses_flags_and_holds_until_off_by_default() {
+        assert_eq!(parse(&[]).unwrap(), Opts { while_rooms: false, hours: None, screen_off: 10 }, "no deadline, rooms or not");
         assert_eq!(
             parse(&args(&["--while-rooms", "--hours", "2.5", "--screen-off", "0"])).unwrap(),
-            Opts { while_rooms: true, hours: 2.5, screen_off: 0 },
+            Opts { while_rooms: true, hours: Some(2.5), screen_off: 0 },
             "0 leaves the screen to the power plan"
         );
-        assert_eq!(parse(&args(&["--hours", "100"])).unwrap().hours, 24.0, "never more than a day");
+        assert_eq!(parse(&args(&["--hours", "100"])).unwrap().hours, Some(100.0), "the owner's number, no 24 h cap");
         assert_eq!(parse(&args(&["--screen-off", "1440"])).unwrap().screen_off, 1440);
         for bad in [&["--hours"][..], &["--hours", "0"], &["--hours", "x"], &["--hours", "NaN"], &["--forever"], &["--screen-off"], &["--screen-off", "-1"], &["--screen-off", "1441"], &["--screen-off", "5.5"]] {
             assert!(parse(&args(bad)).is_err(), "{bad:?}");
@@ -1085,10 +1115,15 @@ mod tests {
     }
 
     #[test]
-    fn on_starts_the_room_watching_hold() {
-        let o = parse(&args(&["--hours", "2.5", "--screen-off", "0"])).unwrap();
+    fn on_holds_until_off_unless_asked_otherwise() {
+        assert_eq!(on_argv(&parse(&[]).unwrap()), ["awake", "--screen-off", "10"], "defaults: until off, screen off after 10 min");
+        let o = parse(&args(&["--while-rooms", "--hours", "2.5", "--screen-off", "0"])).unwrap();
         assert_eq!(on_argv(&o), ["awake", "--while-rooms", "--hours", "2.5", "--screen-off", "0"]);
-        assert_eq!(on_argv(&parse(&[]).unwrap()), ["awake", "--while-rooms", "--hours", "8", "--screen-off", "10"], "defaults: 8 h, screen off after 10 min");
+        assert_eq!(parse(&on_argv(&o)[1..]).unwrap(), o, "the detached hold parses what on passed");
+        assert_eq!(left_vi(0), "tới khi tắt");
+        assert!(left_vi(now_s() + 2 * 3600 + 30).starts_with("còn tối đa "));
+        assert!(ends_vi(&parse(&[]).unwrap()).starts_with("giữ tới khi anh tắt"));
+        assert!(ends_vi(&o).contains("không còn phòng") && ends_vi(&o).contains("2.5 giờ"));
     }
 
     #[test]

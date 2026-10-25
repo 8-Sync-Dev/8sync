@@ -19,7 +19,7 @@ import type { Spec } from "@/lib/server/machine";
 import type { SweepProject } from "@/lib/server/sweep";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
-import { Bar, dayTime, energy, gb, hhmm, level, LoadChart, Meter, ramSplitText, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
+import { Bar, dayTime, energy, gb, holdLine, hhmm, level, LoadChart, Meter, ramSplitText, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
 import type { Hq } from "./use-hq";
 import type { Room } from "./use-office";
 import { usePoll } from "./use-poll";
@@ -231,10 +231,10 @@ function AwakePanel({ a, api, onChanged }: { a: Awake; api: Hq["api"]; onChanged
     <Panel id="may-awake" title="Thức & màn hình">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">Giữ máy thức khi phòng chạy</p>
-          <p className="text-xs leading-snug text-muted-foreground">Máy không ngủ khi còn phòng chạy; màn hình tắt sau 10 phút không ai đụng chuột/phím.</p>
+          <p className="text-sm font-medium">Giữ máy thức</p>
+          <p className="text-xs leading-snug text-muted-foreground">Bật là máy không ngủ tới khi anh tắt; màn hình tắt sau 10 phút không ai đụng chuột/phím, chạm là sáng lại.</p>
         </div>
-        <Switch on={on} busy={busy} label="Giữ máy thức khi phòng chạy" onChange={(v) => void flip(v)} />
+        <Switch on={on} busy={busy} label="Giữ máy thức" onChange={(v) => void flip(v)} />
       </div>
       <p role="status" className={cn("text-xs", on ? "text-foreground" : "text-muted-foreground")}>
         {busy
@@ -242,7 +242,7 @@ function AwakePanel({ a, api, onChanged }: { a: Awake; api: Hq["api"]; onChanged
             ? "Đang bật…"
             : "Đang tắt…"
           : ours
-            ? `Đang giữ: tự nhả khi hết phòng, chậm nhất ${dayTime(ours.until * 1000)}`
+            ? holdLine(ours)
             : "Đang tắt: máy ngủ theo cài đặt nguồn khi rảnh."}
       </p>
       <dl className="space-y-1 border-t pt-2.5">

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { Awake } from "@/lib/server/awake";
+import type { Awake, AwakeHold } from "@/lib/server/awake";
 import type { GuardRamSplit } from "@/lib/server/guard";
 import type { GuardView } from "@/lib/server/guard-trigger";
 import type { Sample } from "@/lib/server/history";
@@ -169,4 +169,11 @@ export function MachineChip({ m, onOpen, compact }: { m: MachineView | null; onO
       {w != null && <span className={cn("tabular", compact && "text-[11px]", m.power?.over ? "text-destructive" : "text-foreground")}>{w} W</span>}
     </button>
   );
+}
+
+/** When our hold lets go: `until` 0 = never (until the switch), `while_rooms` = when the last room ends. */
+export function holdLine(o: AwakeHold): string {
+  const by = o.until > 0 ? dayTime(o.until * 1000) : null;
+  if (o.while_rooms) return by ? `Đang giữ: tự nhả khi hết phòng, chậm nhất ${by}` : "Đang giữ: tự nhả khi hết phòng";
+  return by ? `Đang giữ tới khi anh tắt, chậm nhất ${by}` : "Đang giữ tới khi anh tắt";
 }

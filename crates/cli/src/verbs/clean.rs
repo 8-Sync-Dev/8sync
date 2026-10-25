@@ -15,6 +15,8 @@
 //   8sync clean --watch [S]  run forever, cleaning every S seconds (default 3600)
 //   8sync clean --timer 1h   install a systemd USER timer (1h | 30min | …)
 //   8sync clean --timer off  remove the timer
+//   8sync clean --dev        dev junk on every project + Docker + models list (every OS;
+//                            the default off Linux) — see clean_dev.rs
 
 use anyhow::Result;
 use clap::Args as ClapArgs;
@@ -35,6 +37,12 @@ use crate::{pkg, platform, ui};
           8sync clean --watch 1800   loop, clean every 30 min
           8sync clean --timer 1h     install systemd user timer (every 1h)
           8sync clean --timer off    remove the timer
+          8sync clean --dev          dev junk of every project Claude Code worked in, Docker,
+                                     tool caches, old temp files; lists AI models (every OS;
+                                     what `8sync clean` does on Windows/macOS)
+          8sync clean --dev --deep   + go build cache, pip cache
+          8sync clean --dev --timer 24h        every day (Windows: Scheduled Task)
+          8sync clean --forget hf:org/name     remove one listed model
 
         NEVER auto-deleted (only reported + manual reclaim hint): AI models
         (huggingface/torch), Playwright/Puppeteer/Cypress/Electron browser binaries,
@@ -72,13 +80,62 @@ pub struct Args {
     /// Install a systemd user timer (`1h`, `30min`, …) or remove it with `off`.
     #[arg(long, value_name = "DUR")]
     pub timer: Option<String>,
+
+    /// Dev junk across every project Claude Code worked in, Docker, tool caches, old temp files;
+    /// lists AI models and training output for the owner. Every OS; the default off Linux.
+    #[arg(long)]
+    pub dev: bool,
+
+    /// Dev: a project's build output goes only after this many days without a commit or a
+    /// Claude Code session there.
+    #[arg(long, value_name = "DAYS", default_value_t = 14)]
+    pub idle_days: u64,
+
+    /// Dev: Docker images no container uses go when created this many days ago.
+    #[arg(long, value_name = "DAYS", default_value_t = 30)]
+    pub image_days: u64,
+
+    /// Dev: also scan the git repos under this folder (repeatable).
+    #[arg(long, value_name = "DIR")]
+    pub root: Vec<std::path::PathBuf>,
+
+    /// Remove one item the dev clean listed: `hf:org/name`, `ollama:name:tag`,
+    /// `lmstudio:pub/name`, `torch:file`, or `docker-volumes` (repeatable).
+    #[arg(long, value_name = "ID")]
+    pub forget: Vec<String>,
+}
+
+/// The dev clean runs on `--dev`, on a `--forget`, and by default off Linux.
+pub(crate) fn wants_dev(a: &Args, linux: bool) -> bool {
+    a.dev || !a.forget.is_empty() || !linux
+}
+
+fn dev_opts(a: &Args) -> crate::verbs::clean_dev::Opts {
+    crate::verbs::clean_dev::Opts {
+        dry: a.dry_run,
+        deep: a.deep,
+        idle_days: a.idle_days,
+        image_days: a.image_days,
+        roots: a.root.clone(),
+        forget: a.forget.clone(),
+    }
 }
 
 pub fn run(a: Args) -> Result<()> {
     if let Some(spec) = a.timer.as_deref() {
         // Timer removal works anywhere; install too (harmless if clean is a
         // no-op on this OS). Only the reclaim body below is Linux-only.
-        return manage_timer(spec);
+        return manage_timer(spec, &timer_args(a.dev || !matches!(platform::os(), platform::Os::Linux), a.deep));
+    }
+    if wants_dev(&a, matches!(platform::os(), platform::Os::Linux)) {
+        let o = dev_opts(&a);
+        if let Some(secs) = a.watch.filter(|_| a.forget.is_empty()) {
+            loop {
+                crate::verbs::clean_dev::run(&o)?;
+                std::thread::sleep(std::time::Duration::from_secs(secs.max(60)));
+            }
+        }
+        return crate::verbs::clean_dev::run(&o);
     }
     if !platform::require_linux(
         "clean",
@@ -370,7 +427,19 @@ fn human_mb_delta(mb: i64) -> String {
 
 // ── periodic timer (systemd / launchd / schtasks via platform) ──────
 
-fn manage_timer(spec: &str) -> Result<()> {
+/// What the timer runs: the dev clean where it is the point (Windows/macOS, or `--dev`).
+pub(crate) fn timer_args(dev: bool, deep: bool) -> Vec<&'static str> {
+    let mut v = vec!["clean"];
+    if dev {
+        v.push("--dev");
+    }
+    if deep {
+        v.push("--deep");
+    }
+    v
+}
+
+fn manage_timer(spec: &str, args: &[&str]) -> Result<()> {
     if spec.eq_ignore_ascii_case("off") {
         ui::header("8sync clean --timer off");
         return platform::remove_timer("clean");
@@ -379,10 +448,43 @@ fn manage_timer(spec: &str) -> Result<()> {
     platform::install_timer(&platform::TimerSpec {
         name: "clean",
         description: "8sync periodic clean",
-        exec_args: &["clean"],
+        exec_args: args,
         workdir: None,
         every: spec,
         memory_bounded: false,
         timeout_secs: 300,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        a: Args,
+    }
+
+    fn args(v: &[&str]) -> Args {
+        Cli::parse_from(std::iter::once("clean").chain(v.iter().copied())).a
+    }
+
+    #[test]
+    fn dev_clean_is_the_default_off_linux_and_opt_in_on_linux() {
+        assert!(wants_dev(&args(&[]), false), "Windows/macOS: `8sync clean` is the dev clean");
+        assert!(!wants_dev(&args(&[]), true), "Linux keeps the system clean");
+        assert!(wants_dev(&args(&["--dev"]), true));
+        assert!(wants_dev(&args(&["--forget", "hf:a/b"]), true));
+        let a = args(&["--dev", "--idle-days", "7", "--root", "C:/x", "--root", "D:/y"]);
+        assert_eq!((a.idle_days, a.image_days, a.root.len()), (7, 30, 2));
+    }
+
+    #[test]
+    fn the_timer_runs_the_dev_clean_where_it_matters() {
+        assert_eq!(timer_args(true, false), ["clean", "--dev"]);
+        assert_eq!(timer_args(true, true), ["clean", "--dev", "--deep"]);
+        assert_eq!(timer_args(false, false), ["clean"]);
+    }
 }
