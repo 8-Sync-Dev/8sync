@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.82] — 2026-10-25
+
 ### Added
 - **`8sync clean --dev` + skill `/clean`: dọn rác dev cho mọi dự án trên máy, trên cả ba OS.** Owner (2026-10-25): "auto clear rác sau ci local, train, finetune, pull image old rác không sài, model ai local không sài … all deep", "apply liền cho all dự án trong máy". Trước đây `8sync clean` chỉ chạy trên Linux. Giờ trên Windows/macOS `8sync clean` chính là bản dev, còn trên Linux thì thêm `--dev`.
   - **Dự án** = mọi `cwd` trong transcript Claude Code (`~/.claude/projects`) cộng các `--root`. Dry-run trên máy owner thấy 27 dự án.
