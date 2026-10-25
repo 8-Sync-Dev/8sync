@@ -5,6 +5,39 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.82] — 2026-10-25
+
+### Added
+- **`8sync clean --dev` + skill `/clean`: dọn rác dev cho mọi dự án trên máy, trên cả ba OS.** Owner (2026-10-25): "auto clear rác sau ci local, train, finetune, pull image old rác không sài, model ai local không sài … all deep", "apply liền cho all dự án trong máy". Trước đây `8sync clean` chỉ chạy trên Linux. Giờ trên Windows/macOS `8sync clean` chính là bản dev, còn trên Linux thì thêm `--dev`.
+  - **Dự án** = mọi `cwd` trong transcript Claude Code (`~/.claude/projects`) cộng các `--root`. Dry-run trên máy owner thấy 27 dự án.
+  - **Tự xoá** (build hoặc tải lại được):
+    - build output được git ignore của dự án nghỉ ≥ 14 ngày, tính theo commit cuối và transcript cuối;
+    - `git worktree prune`;
+    - Docker khi daemon đã chạy: container dừng > 24 giờ, image dangling, build cache > 7 ngày, image không container nào dùng > 30 ngày. Không đụng volume;
+    - `uv cache prune`, `pnpm store prune`, `npm cache verify`; thêm `go clean -cache` và `pip cache purge` với `--deep`;
+    - file tạm > 7 ngày;
+    - bản tải dở của Hugging Face.
+  - **Chỉ liệt kê cho owner chọn:**
+    - model: Hugging Face qua `hf cache ls`, vì huggingface_hub 1.x để blob dùng chung trong `hub/blobs` (35 GB ở đó trên máy owner, trong khi thư mục từng repo trông như trống). Thêm Ollama, LM Studio, torch hub;
+    - kết quả train ≥ 100 MB;
+    - volume Docker ẩn danh không container nào dùng. `--forget docker-volumes` chạy `docker volume prune` không có `-a`: volume có tên, như DB dev `sqldb-*` của Encore, được giữ.
+
+    Xoá một mục bằng `8sync clean --forget <id>` (`hf cache rm` / `ollama rm`).
+  - **Không** xoá model theo "lần đọc cuối": một lần `hf cache ls` đã đặt mọi model về "28 seconds ago". Cũng không chạy `hf cache prune` tự động, vì nó xoá cả repo không có ref (như `bge-reranker-v2-m3` 2.3 GB).
+  - Dry-run trên máy owner: 4.9 GB tự dọn được; 22.1 GB FLUX.2, 9.4 GB checkpoint và 95 volume Docker chờ owner chọn.
+  - Skill `/clean` (kit, mọi dự án) và một dòng trong khối CLAUDE.md của kit: dọn ngay sau CI/build/train/pull, gom phần cần quyết vào một `AskUserQuestion`.
+
+### Changed
+- **Giữ thức tới khi tắt:** `8sync awake on`, công tắc "Giữ máy thức" của HQ và `8sync sleep work` giữ máy thức không hạn giờ, cho tới khi bấm tắt (`awake off` / `sleep off`). Owner (2026-10-25): "tắt mãi cho tới khi tôi bấm … tắt màn máy vẫn làm việc chứ không phải chỉ 8h".
+  - Trước đây mặc định 8 giờ, tối đa 24 giờ, và `awake on` tự nhả khi hết phòng.
+  - `--hours N` (bỏ trần 24 giờ) và `--while-rooms` vẫn dùng được nếu muốn tự nhả.
+  - `ours.until = 0` nghĩa là không hạn; HQ hiện "Đang giữ tới khi anh tắt".
+
+### Fixed
+- **Scheduled Task trên Windows:**
+  - Lịch ≥ 24 giờ giờ tạo bằng `/SC DAILY` (hoặc `HOURLY` khi chẵn giờ). `/SC MINUTE` chỉ nhận 1–1439 nên `--timer 24h` trước đây thất bại.
+  - Task chạy qua `conhost --headless`, không bật cửa sổ console mỗi lần chạy.
+
 ## [0.110.81] — 2026-10-24
 
 ### Changed

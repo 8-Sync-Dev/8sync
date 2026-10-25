@@ -1107,7 +1107,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 40] = [
+const KIT_FILES: [(&str, &str); 41] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -1134,6 +1134,7 @@ const KIT_FILES: [(&str, &str); 40] = [
     ("claude/skills/ship-tick/SKILL.md", "skills/ship-tick/SKILL.md"),
     ("claude/skills/sysdesign/SKILL.md", "skills/sysdesign/SKILL.md"),
     ("claude/skills/sprint/SKILL.md", "skills/sprint/SKILL.md"),
+    ("claude/skills/clean/SKILL.md", "skills/clean/SKILL.md"),
     ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
     ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
     // The org's rules: summarised in the kit's CLAUDE.md block, full text opened on demand (/aup-audit).

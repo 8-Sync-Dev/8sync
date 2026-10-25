@@ -5,6 +5,7 @@ vi.mock("@/lib/server/proc", async (orig) => ({ ...(await orig<typeof import("@/
 
 import { POST } from "@/app/api/machine/awake/route";
 import { awake, parseAwake } from "@/lib/server/awake";
+import { holdLine } from "@/components/hq/machine-chip";
 import { getToken } from "@/lib/server/auth";
 import { ORIGIN, req, tempHome } from "./helpers";
 
@@ -34,6 +35,18 @@ describe("parseAwake: the switch reads ours, never held", () => {
     expect(parseAwake(`{"schema":1,"held":true}`)?.ours).toBeNull();
     expect(parseAwake(status(`{"pid":0,"until":5}`))?.ours).toBeNull();
     expect(parseAwake(status(`"yes"`))?.ours).toBeNull();
+  });
+});
+
+describe("holdLine: the switch says when our hold lets go", () => {
+  it("until 0 is held until the owner switches it off", () => {
+    expect(parseAwake(status(`{"pid":9,"until":0,"while_rooms":false}`))?.ours).toEqual({ pid: 9, until: 0, while_rooms: false });
+    expect(holdLine({ pid: 9, until: 0, while_rooms: false })).toBe("Đang giữ tới khi anh tắt");
+    expect(holdLine({ pid: 9, until: 0, while_rooms: true })).toBe("Đang giữ: tự nhả khi hết phòng");
+  });
+  it("a deadline is named", () => {
+    expect(holdLine({ pid: 9, until: 1_792_442_725, while_rooms: false })).toMatch(/^Đang giữ tới khi anh tắt, chậm nhất /);
+    expect(holdLine({ pid: 9, until: 1_792_442_725, while_rooms: true })).toMatch(/^Đang giữ: tự nhả khi hết phòng, chậm nhất /);
   });
 });
 

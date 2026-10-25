@@ -45,7 +45,7 @@ pub(super) const CCC_VERBS: &[(&str, &str)] = &[
     ("auto", "team luôn work: on [--omp] · pause · off · omp on|off · status"),
     ("sleep", "tắt màn hình + khoá máy ngay, Claude vẫn làm tiếp: work [--hours N] [--no-lock] · off · status"),
     ("eco", "máy dùng bao nhiêu (RAM, CPU, GPU, W, pin) + giữ phiên chạy lâu nhẹ: status · tick · run · install · uninstall · set ram|cpu <%> · set battery on|off [--json]"),
-    ("awake", "giữ máy không ngủ khi phòng chạy, tắt màn hình khi không ai đụng: on [--hours 8] · off · --while-rooms [--screen-off 10] · status [--json]"),
+    ("awake", "giữ máy không ngủ khi phòng chạy, tắt màn hình khi không ai đụng: on (giữ tới khi off) · off · --while-rooms · --hours N · --screen-off 10 · status [--json]"),
     ("stop", "dừng hết: `stop all` tắt auto + đội omp, dừng mọi phòng nền của mọi dự án (phiên terminal giữ nguyên)"),
     ("meet", "họp sprint daily: --say \"done|doing|blocked\" vào su-code/standup"),
     ("msg", "nhắn phòng khác (cả đội omp): msg <phòng|--all> \"…\""),

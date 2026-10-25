@@ -13,7 +13,7 @@ const EVERY_MS = 30_000;
 /** Shorter than this away is just reading the page: no "trong lúc vắng" line. */
 export const AWAY_AFTER_S = 300;
 
-/** This 8sync's detached hold (`8sync ccc awake on`); `until` in unix seconds. */
+/** This 8sync's detached hold (`8sync ccc awake on`); `until` in unix seconds, 0 = until switched off. */
 export type AwakeHold = { pid: number; until: number; while_rooms: boolean };
 
 export type AwakeStatus = {
@@ -132,7 +132,7 @@ export async function awake(now = Date.now()): Promise<Awake | null> {
 const SWITCH_TIMEOUT_MS = 30_000;
 
 /**
- * The Máy tab switch: `8sync ccc awake on|off`. `on` starts `8sync awake --while-rooms` detached
+ * The Máy tab switch: `8sync ccc awake on|off`. `on` starts `8sync awake` detached, held until `off`
  * (outside HQ, so it survives an HQ restart) and returns; `off` stops only that hold.
  * `message`: 8sync's own line (success or why not), shown in the toast. One flip at a time (two
  * tabs, a double tap): a second request while one runs is refused (`busy`), never queued.

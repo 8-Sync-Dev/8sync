@@ -346,21 +346,33 @@ fn install_timer_launchd(spec: &TimerSpec, exe: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `/SC` + `/MO` for a period in minutes: MINUTE takes 1–1439, so a day or more is DAILY (whole
+/// days) and whole hours are HOURLY (1–23).
+pub(crate) fn schtasks_schedule(mins: u64) -> (&'static str, u64) {
+    match mins {
+        m if m >= 1440 => ("DAILY", (m / 1440).clamp(1, 365)),
+        m if m >= 60 && m % 60 == 0 => ("HOURLY", m / 60),
+        m => ("MINUTE", m.clamp(1, 1439)),
+    }
+}
+
 fn install_timer_schtasks(spec: &TimerSpec, exe: &Path) -> Result<()> {
     let task = format!("8sync\\{}", spec.name);
     let mins = (parse_dur_secs(spec.every) / 60).max(1);
+    let (sc, mo) = schtasks_schedule(mins);
     let args = spec.exec_args.join(" ");
-    // schtasks has no per-task working directory; wrap in `cmd /c cd … && exe`.
+    // schtasks has no per-task working directory; wrap in `cmd /c cd … && exe`. `conhost
+    // --headless` keeps a console window from popping up on every run.
     let tr = match spec.workdir {
-        Some(w) => format!("cmd /c cd /d \"{}\" && \"{}\" {}", w.display(), exe.display(), args),
-        None => format!("\"{}\" {}", exe.display(), args),
+        Some(w) => format!("conhost.exe --headless cmd /c cd /d \"{}\" && \"{}\" {}", w.display(), exe.display(), args),
+        None => format!("conhost.exe --headless \"{}\" {}", exe.display(), args),
     };
     let st = Command::new("schtasks")
-        .args(["/Create", "/TN", &task, "/TR", &tr, "/SC", "MINUTE", "/MO", &mins.to_string(), "/F"])
+        .args(["/Create", "/TN", &task, "/TR", &tr, "/SC", sc, "/MO", &mo.to_string(), "/F"])
         .status();
     match st {
         Ok(s) if s.success() => {
-            ui::ok(&format!("Scheduled Task `{task}` created — every {mins} min"));
+            ui::ok(&format!("Scheduled Task `{task}` created — /SC {sc} /MO {mo}"));
             ui::info(&format!("status: schtasks /Query /TN \"{task}\""));
         }
         _ => ui::warn("could not create Scheduled Task (is `schtasks` available?)"),
@@ -400,6 +412,15 @@ mod tests {
     }
 
     /// macOS/Windows are unaffected by the distro family (there isn't one).
+    #[test]
+    fn schtasks_takes_a_day_as_daily_not_1440_minutes() {
+        assert_eq!(schtasks_schedule(30), ("MINUTE", 30));
+        assert_eq!(schtasks_schedule(90), ("MINUTE", 90));
+        assert_eq!(schtasks_schedule(120), ("HOURLY", 2));
+        assert_eq!(schtasks_schedule(1440), ("DAILY", 1), "MINUTE /MO 1440 is refused by schtasks");
+        assert_eq!(schtasks_schedule(10_080), ("DAILY", 7));
+    }
+
     #[test]
     fn mac_and_windows_routes_are_family_independent() {
         for f in [Family::Arch, Family::Fedora, Family::Other] {
