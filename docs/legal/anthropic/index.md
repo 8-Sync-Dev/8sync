@@ -1,6 +1,6 @@
 <!-- source: https://www.anthropic.com/sitemap.xml (every /legal/ page) — snapshot by scripts/legal-sync.py; do not edit -->
 
-Snapshot date: 2026-10-19 (UTC)
+Snapshot date: 2026-10-26 (UTC)
 
 - https://www.anthropic.com/legal/acst-disclosure
 - https://www.anthropic.com/legal/aup
@@ -11,6 +11,7 @@ Snapshot date: 2026-10-19 (UTC)
 - https://www.anthropic.com/legal/cpna
 - https://www.anthropic.com/legal/credit-terms
 - https://www.anthropic.com/legal/data-processing-addendum
+- https://www.anthropic.com/legal/guest-investigator-program-terms
 - https://www.anthropic.com/legal/inbound-services-agreement
 - https://www.anthropic.com/legal/independent-contractor-agreement
 - https://www.anthropic.com/legal/k12-addendum

@@ -1,7 +1,29 @@
 <!-- source: https://www.anthropic.com/legal/privacy — snapshot by scripts/legal-sync.py; do not edit -->
 
+### Section 01: Collection of Personal Data
+Legal center
 # Privacy Policy
-Effective September 10, 2026Previous VersionEnglish
+Download PDF
+- 01Collection of Personal Data
+- 02Uses of Personal Data Permitted Under Applicable Data Protection Laws
+- 03Recipients and Third-Party Data Sources
+- 04Rights and Choices
+- 05Data Transfers
+- 06Data Retention, Data Lifecycle, and Security Controls
+- 07Children
+- 08Changes to Our Privacy Policy
+- 09Contact Information
+- 10Legal Bases for Processing
+- 11Regional Supplemental Disclosures
+- Effective
+Sep 10, 2026
+- Type
+Policy
+- Audience
+Individual
+- Language
+English
+- See version history
 Anthropic is an AI safety and research company working to build reliable, interpretable, and steerable AI systems.
 This Privacy Policy explains how we collect, use, disclose, and process your personal data when you use our website, Claude.ai, or other Anthropic products and services (the “Services”). This Privacy Policy does not apply to content that we process on behalf of customers of our business offerings, such as our Enterprise accounts. Our use of that data is governed by our customer agreements covering access to and use of those offerings.
 Please see our Non-User Privacy Policy for information on how our large language models are ‘trained’ and how personal data obtained from third party sources, including where others may submit personal data when using our services, may be used when developing or delivering our products and services.
@@ -108,7 +130,9 @@ If you have any questions about this Privacy Policy, or have any questions, comp
 You can email us at privacy@anthropic.com and contact our Data Protection Officer at dpo@anthropic.com.
 Please note that under many countries' laws, you have the right to lodge a complaint with the supervisory authority in the place in which you live or work. A full list of EU supervisory authorities’ contact details is available here. If you live or work in the UK, you have the right to lodge a complaint with the UK Information Commissioner’s Office. If you live in Brazil, you have the right to lodge a complaint with the Brazilian Data Protection Authority (ANPD). If you live in Australia, you have the right to lodge a complaint with the Office of the Australian Information Commissioner.
 ## 10. Legal Bases for Processing
-PurposeType of DataLegal Basis
+Purpose
+Type of Data
+Legal Basis
 To provide, maintain and facilitate any products and services offered to you with respect to your Anthropic account, which are governed by our Terms of Service
 - Identity and Contact Data
 - Payment Information
@@ -195,7 +219,8 @@ To improve the Services and conduct research (excluding model training)
 - Scientific Research
 - Legitimate interests
 It is in our legitimate interests and in the interest of Anthropic users to evaluate the use of the Services and adoption of new features to inform the development of future features and improve direction and development of the Services. Our research also benefits the AI industry and society: it investigates the safety, inner workings, and societal impact of AI models so that artificial intelligence has a positive impact on society as it becomes increasingly advanced and capable.
-To improve the Services and conduct research (including model training). See our Non-User Privacy Policy for more details on the data used to train our models, and the different stages of development.
+To improve the Services and conduct research (including model training).
+See our Non-User Privacy Policy for more details on the data used to train our models, and the different stages of development.
 - Feedback
 - Study Participation Data
 - Inputs and Outputs
