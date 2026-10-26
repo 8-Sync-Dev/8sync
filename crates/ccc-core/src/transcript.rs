@@ -126,6 +126,9 @@ pub struct Row {
     /// Inbox HQ and `ccc msg` deliver to: a Claude Code room's session id, an omp named
     /// session's [`crate::room_id`]; `None` for every other row.
     pub inbox_id: Option<String>,
+    /// The room's own flag (`8sync ccc . urgent high|med|low`): "high" | "med" | "low", Claude Code
+    /// rooms only. `ls` puts flagged rooms first.
+    pub urgency: Option<String>,
 }
 
 // ── secrets ─────────────────────────────────────────────────────────────────
@@ -1008,20 +1011,30 @@ pub fn safe_id(s: &str) -> Option<String> {
 
 /// API error type and planned automatic resume time (`resume_at`, epoch s) recorded by the kit's
 /// StopFailure hook for a Claude session (`<dir>/<session_id>.json`, written by `ccc/resume.rs`).
-/// Read-only; records older than 24 h, or already resumed by 8sync (`resumed_at`), are ignored.
+/// Read-only; records older than 24 h, already resumed by 8sync (`resumed_at`), or older than the
+/// room's own activity (it moved on some other way) are ignored.
+/// The failed turn's last transcript lines land within seconds of the record: activity this long
+/// after it means the room is working again.
+const MOVED_ON_S: u64 = 120;
+
 fn stalled_error_in(dir: &Path, row: &Row, now_s: u64) -> Option<(String, Option<u64>)> {
-    if row.engine != "claude" {
+    // `ccc` is what every named Claude Code room carries (`uuid_rows`); checking only `claude`
+    // left `stalled_error` null for all of them, so HQ never showed a room stopped by an API error.
+    if !matches!(row.engine, "claude" | "ccc") {
         return None;
     }
     let id = safe_id(row.transcript.as_deref()?.file_stem()?.to_str()?)?;
     let rec: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(format!("{id}.json"))).ok()?).ok()?;
-    if now_s.saturating_sub(rec["ts"].as_u64()?) > 24 * 3600 || !rec["resumed_at"].is_null() {
+    let ts = rec["ts"].as_u64()?;
+    if now_s.saturating_sub(ts) > 24 * 3600 || !rec["resumed_at"].is_null() || row.last_active > ts + MOVED_ON_S {
         return None;
     }
     Some((rec["error"].as_str()?.to_string(), rec["resume_at"].as_u64()))
 }
 
-fn stalled_error(row: &Row) -> Option<(String, Option<u64>)> {
+/// The API error a Claude Code room stopped on and when 8sync resumes it, while that is still
+/// pending (the StopFailure record, see [`stalled_error_in`]); `ls` shows it and sorts it first.
+pub fn stalled_error(row: &Row) -> Option<(String, Option<u64>)> {
     // Same home as the writer (`8sync ccc hook stop-failure`): `$HOME` on unix, the profile
     // folder on Windows, where a hook or HQ child often has no HOME.
     let home = dirs::home_dir();
@@ -1114,6 +1127,7 @@ pub fn unreadable(engine: &'static str, name: &str, resume: String, last_active:
         resume,
         transcript: None,
         inbox_id: None,
+        urgency: None,
     }
 }
 
@@ -1135,6 +1149,7 @@ mod tests {
             resume: "8sync . core".into(),
             transcript: None,
             inbox_id: None,
+            urgency: None,
         }
     }
 
@@ -1371,8 +1386,15 @@ mod tests {
         std::fs::write(dir.join("abc-123.json"), r#"{"error":"overloaded","ts":1000,"cwd":"/w","auto":0,"resume_at":1060,"resumed_at":1061}"#).unwrap();
         assert_eq!(stalled_error_in(&dir, &r, 2000), None, "resumed by 8sync: not stuck");
         assert!(dir.join("abc-123.json").exists(), "never deleted");
+        r.engine = "ccc";
+        std::fs::write(dir.join("abc-123.json"), r#"{"error":"rate_limit","ts":1000,"cwd":"/w","resume_at":1060,"resumed_at":null}"#).unwrap();
+        assert_eq!(stalled_error_in(&dir, &r, 2000), Some(("rate_limit".into(), Some(1060))), "named Claude Code rooms are `ccc` rows");
+        r.last_active = 1000 + 121;
+        assert_eq!(stalled_error_in(&dir, &r, 2000), None, "the room wrote again after the stop: not stuck");
+        r.last_active = 1000 + 120;
+        assert!(stalled_error_in(&dir, &r, 2000).is_some(), "the failed turn's own lines");
         r.engine = "omp";
-        assert_eq!(stalled_error_in(&dir, &r, 2000), None, "claude only");
+        assert_eq!(stalled_error_in(&dir, &r, 2000), None, "Claude Code rows only");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

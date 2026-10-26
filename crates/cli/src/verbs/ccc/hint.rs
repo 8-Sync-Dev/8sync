@@ -51,7 +51,7 @@ pub(super) const CCC_VERBS: &[(&str, &str)] = &[
     ("msg", "nhắn phòng khác (cả đội omp): msg <phòng|--all> \"…\""),
     ("standup", "bảng sprint: role nào rảnh, việc trùng file"),
     ("know", "cây tri thức chung của máy: add \"<bài học>\" | ls"),
-    ("ls", "session của repo, mới nhất lên đầu"),
+    ("ls", "session của repo, cần anh / kẹt / đang chạy lên đầu: --sort time|name|status, -r đảo"),
     ("report", "token, cost, thời gian, loop"),
     ("show", "tóm tắt một session"),
     ("urgent", "đặt mức cần owner chú ý: high|med|low|clear"),

@@ -370,17 +370,18 @@ fn create(env: &Env, root: &Path, reg: &mut Registry, name: &str, worktree: bool
 }
 
 /// `8sync . ls` / `8sync . --list` — list this repo's omp sessions with what
-/// each is doing (rendering in `session_view.rs`). `json=true` emits a
-/// machine-readable array (scripting).
-pub fn cmd_ls(env: &Env, root: &Path, json: bool) -> Result<()> {
+/// each is doing (rendering in `session_view.rs`), in `sort` order (key, reversed). `json=true`
+/// emits a machine-readable array (scripting), in the same order.
+pub fn cmd_ls(env: &Env, root: &Path, json: bool, sort: (super::session_view::SortKey, bool)) -> Result<()> {
     use super::session_view as view;
     let reg = load(env, root);
     let rows = view::omp_rows(&reg, Some(root), &view::agent_cmdlines(), false, true);
     debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry (zip below)");
+    let order = view::order(&rows, sort.0, sort.1);
     if json {
-        let arr: Vec<serde_json::Value> = rows
+        let arr: Vec<serde_json::Value> = order
             .iter()
-            .zip(&reg.sessions)
+            .map(|&i| (&rows[i], &reg.sessions[i]))
             .map(|(r, s)| {
                 let mut v = view::row_json(r);
                 v["worktree"] = serde_json::json!(s.worktree.as_ref().map(|w| w.path.clone()));
@@ -397,12 +398,13 @@ pub fn cmd_ls(env: &Env, root: &Path, json: bool) -> Result<()> {
     }
     ui::header(&format!("sessions · {}", root.display()));
     let (now, width, color) = (now(), view::term_width(), view::use_color());
-    for r in &rows {
-        for l in view::render(r, width, now, color) {
+    ui::info(&sort.0.note(sort.1, width));
+    for i in order {
+        for l in view::render(&rows[i], width, now, color) {
             println!("{l}");
         }
     }
-    println!("\n  8sync . <name> resume  ·  8sync . new <name> [--worktree]  ·  8sync show <name>  ·  8sync ls --all");
+    println!("\n  8sync . <name> resume  ·  8sync . ls --sort time|name|status [-r]  ·  8sync . new <name> [--worktree]  ·  8sync show <name>  ·  8sync ls --all");
     Ok(())
 }
 

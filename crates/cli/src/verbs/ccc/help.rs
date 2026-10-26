@@ -16,7 +16,7 @@ pub(super) const TEXT: &str = "\
 SESSION
   8sync ccc . <tên>            tạo hoặc tiếp tục session <tên> trong repo này (flag sau tên đi thẳng vào claude)
   8sync ccc .                  tiếp tục session dùng gần nhất
-  8sync ccc . ls [--json]      liệt kê session, mới hoạt động nhất lên đầu, kèm mức urgent (alias: list)
+  8sync ccc . ls [--sort priority|time|name|status] [-r] [--json]   liệt kê session (alias: list); mặc định ưu tiên: ▲ high → ⚠ dừng vì lỗi API/hết usage → ◆ med → đang chạy → ▽ low → nghỉ, cùng mức: trạng thái → mới nhất → tên; --json theo cùng thứ tự
   8sync ccc . urgent <high|med|low|clear> [ghi chú] [--session <tên>]   agent tự đặt mức cần owner chú ý cho session của mình
   8sync ccc . goal <mục tiêu> [--files a,b] [--session <tên>]   agent ghi mục tiêu + file đang giữ của session (phòng khác thấy, tránh trùng file); goal clear để bỏ
   8sync ccc . new <tên>        tạo session mới (từ chối tên đã có)

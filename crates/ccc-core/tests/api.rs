@@ -55,6 +55,7 @@ fn scan_fixture_to_schema_1_row() {
         resume: "8sync ccc . demo".into(),
         transcript: Some(f),
         inbox_id: Some("s".into()),
+        urgency: None,
     };
     let j = row_json(&row);
     assert_eq!(j["schema"], ccc_core::SCHEMA);

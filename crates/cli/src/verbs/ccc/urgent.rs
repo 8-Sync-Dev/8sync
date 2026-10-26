@@ -97,14 +97,6 @@ pub(super) fn decorate(lines: &mut Vec<String>, u: Option<&Urgency>, width: usiz
     lines.insert(1.min(lines.len()), line);
 }
 
-/// Indices of `sessions` ordered newest activity first (`last_active` of the rendered rows,
-/// which also counts transcript mtime). Stable for ties.
-pub(super) fn newest_first(last_active: &[u64]) -> Vec<usize> {
-    let mut idx: Vec<usize> = (0..last_active.len()).collect();
-    idx.sort_by_key(|&i| std::cmp::Reverse(last_active[i]));
-    idx
-}
-
 /// JSON form of a session's flag for `ls --json`.
 pub(super) fn json(s: &Session) -> serde_json::Value {
     match &s.urgency {
@@ -182,11 +174,5 @@ mod tests {
         let mut colored = vec!["x".to_string()];
         decorate(&mut colored, Some(&u), 100, 100, true);
         assert!(colored[0].contains("\u{1b}[") && colored[0].contains("▲ high"), "colour plus text");
-    }
-
-    #[test]
-    fn newest_first_is_stable() {
-        assert_eq!(newest_first(&[10, 30, 20, 30]), [1, 3, 2, 0]);
-        assert!(newest_first(&[]).is_empty());
     }
 }

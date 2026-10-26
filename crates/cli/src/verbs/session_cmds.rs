@@ -40,6 +40,12 @@ pub struct LsArgs {
     /// Emit JSON instead of text
     #[arg(long)]
     pub json: bool,
+    /// Order: priority (default: ▲ high, stopped on an API error, ◆ med, running, ▽ low, idle; then status, newest, name) | time | name | status
+    #[arg(long, value_name = "KEY", value_parser = clap::builder::ValueParser::new(|s: &str| s.parse::<view::SortKey>()))]
+    pub sort: Option<view::SortKey>,
+    /// Reverse the order
+    #[arg(short = 'r', long)]
+    pub reverse: bool,
 }
 
 #[derive(ClapArgs, Debug)]
@@ -152,12 +158,15 @@ fn engine_label(e: &str) -> &'static str {
 pub fn run_ls(a: LsArgs) -> Result<()> {
     let (env, root) = root_and_env()?;
     let procs = view::agent_cmdlines();
+    let (key, reverse) = (a.sort.unwrap_or_default(), a.reverse);
     if a.all {
-        return ls_all(&env, &procs, a.json);
+        return ls_all(&env, &procs, a.json, key, reverse);
     }
     let groups = repo_rows(&env, &root, &procs, false, true);
+    // Engine groups keep their fixed order (omp, Claude Code, …); rows inside follow the sort.
+    let orders: Vec<Vec<usize>> = groups.iter().map(|(_, rows)| view::order(rows, key, reverse)).collect();
     if a.json {
-        let arr: Vec<Value> = groups.iter().flat_map(|(_, rows)| rows.iter().map(view::row_json)).collect();
+        let arr: Vec<Value> = groups.iter().zip(&orders).flat_map(|((_, rows), o)| o.iter().map(|&i| view::row_json(&rows[i]))).collect();
         println!("{}", serde_json::to_string_pretty(&arr)?);
         return Ok(());
     }
@@ -167,16 +176,17 @@ pub fn run_ls(a: LsArgs) -> Result<()> {
     }
     ui::header(&format!("sessions · {}", root.display()));
     let (now, width, color) = (view::now_secs(), view::term_width(), view::use_color());
-    for (engine, rows) in &groups {
+    ui::info(&key.note(reverse, width));
+    for ((engine, rows), o) in groups.iter().zip(&orders) {
         println!("{}", if color { engine_label(engine).bold().to_string() } else { engine_label(engine).to_string() });
-        for r in rows {
-            for l in view::render(r, width, now, color) {
+        for &i in o {
+            for l in view::render(&rows[i], width, now, color) {
                 println!("  {l}");
             }
         }
         println!();
     }
-    println!("  8sync . <name> resume  ·  8sync . new <name>  ·  8sync show <name>  ·  8sync ls --all");
+    println!("  8sync . <name> resume  ·  8sync ls --sort time|name|status [-r]  ·  8sync . new <name>  ·  8sync show <name>  ·  8sync ls --all");
     Ok(())
 }
 
@@ -197,29 +207,43 @@ fn all_repos(env: &Env, procs: &[Vec<u8>]) -> BTreeMap<String, Groups> {
     repos
 }
 
-/// What `8sync ls --all --json` prints (one object per session, `repo` added); the HQ core serves
-/// the same array without a process per poll.
-pub fn ls_all_json(env: &Env, procs: &[Vec<u8>]) -> Vec<Value> {
+/// What `8sync ls --all --json` prints (one object per session, `repo` added), repos and their
+/// sessions in `key` order; the HQ core serves the same array (default order) without a process
+/// per poll.
+pub fn ls_all_json(env: &Env, procs: &[Vec<u8>], key: view::SortKey, reverse: bool) -> Vec<Value> {
     let repos = all_repos(env, procs);
-    repos
-        .iter()
-        .flat_map(|(key, g)| {
-            g.iter().flat_map(move |(_, rows)| {
-                rows.iter().map(move |r| {
-                    let mut v = view::row_json(r);
-                    v["repo"] = Value::String(repo_label(key, g));
-                    v
-                })
+    sorted_repos(&repos, key, reverse)
+        .into_iter()
+        .flat_map(|(label, rows)| {
+            rows.into_iter().map(move |(_, r)| {
+                let mut v = view::row_json(r);
+                v["repo"] = Value::String(label.clone());
+                v
             })
+        })
+        .collect()
+}
+
+/// Repos (label) and their sessions (engine, row) in `key` order: a repo ranks by its first row.
+fn sorted_repos<'a>(repos: &'a BTreeMap<String, Groups>, key: view::SortKey, reverse: bool) -> Vec<(String, Vec<(&'static str, &'a Row)>)> {
+    let all: Vec<(&String, &Groups, Vec<(&'static str, &Row)>)> =
+        repos.iter().map(|(k, g)| (k, g, g.iter().flat_map(|(e, rows)| rows.iter().map(move |r| (*e, r))).collect())).collect();
+    let refs: Vec<Vec<&Row>> = all.iter().map(|(_, _, v)| v.iter().map(|(_, r)| *r).collect()).collect();
+    let labels: Vec<String> = all.iter().map(|(k, g, _)| repo_label(k, g)).collect();
+    view::order_groups(&refs, &labels, key, reverse)
+        .into_iter()
+        .map(|(gi, o)| {
+            let (k, g, rows) = &all[gi];
+            (repo_label(k, g), o.into_iter().map(|i| rows[i]).collect())
         })
         .collect()
 }
 
 /// Every repo in every registry. The repo path is recovered from a transcript's cwd; the
 /// registry key is the fallback.
-fn ls_all(env: &Env, procs: &[Vec<u8>], json: bool) -> Result<()> {
+fn ls_all(env: &Env, procs: &[Vec<u8>], json: bool, key: view::SortKey, reverse: bool) -> Result<()> {
     if json {
-        println!("{}", serde_json::to_string_pretty(&ls_all_json(env, procs))?);
+        println!("{}", serde_json::to_string_pretty(&ls_all_json(env, procs, key, reverse))?);
         return Ok(());
     }
     let repos = all_repos(env, procs);
@@ -227,21 +251,16 @@ fn ls_all(env: &Env, procs: &[Vec<u8>], json: bool) -> Result<()> {
         ui::info("no sessions recorded on this machine yet");
         return Ok(());
     }
-    let newest = |g: &Groups| g.iter().flat_map(|(_, r)| r.iter().map(|r| r.last_active)).max().unwrap_or(0);
-    let mut order: Vec<(&String, &Groups)> = repos.iter().collect();
-    order.sort_by_key(|(_, g)| std::cmp::Reverse(newest(g)));
     let (now, width, color) = (view::now_secs(), view::term_width(), view::use_color());
     ui::header("all sessions");
-    for (key, g) in order {
-        let label = repo_label(key, g);
+    ui::info(&key.note(reverse, width));
+    for (label, rows) in sorted_repos(&repos, key, reverse) {
         println!("{}", if color { label.bold().cyan().to_string() } else { label });
-        for (engine, rows) in g {
-            for r in rows {
-                println!("{} {}", view::render_compact(r, width.saturating_sub(7), now, color), if color { format!("[{engine}]").dimmed().to_string() } else { format!("[{engine}]") });
-            }
+        for (engine, r) in rows {
+            println!("{} {}", view::render_compact(r, width.saturating_sub(7), now, color), if color { format!("[{engine}]").dimmed().to_string() } else { format!("[{engine}]") });
         }
     }
-    println!("\n  8sync show <name> (in that repo) for details");
+    println!("\n  8sync show <name> (in that repo) for details  ·  8sync ls --all --sort time|name|status [-r]");
     Ok(())
 }
 
@@ -437,6 +456,49 @@ mod tests {
     }
 
     #[test]
+    fn ls_args_take_sort_and_reverse() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            a: LsArgs,
+        }
+        let p = |v: &[&str]| Cli::try_parse_from(std::iter::once("ls").chain(v.iter().copied())).map(|c| c.a);
+        let a = p(&[]).unwrap();
+        assert_eq!((a.sort, a.reverse), (None, false));
+        let a = p(&["--all", "--sort", "time", "-r"]).unwrap();
+        assert_eq!((a.all, a.sort, a.reverse), (true, Some(view::SortKey::Time), true));
+        assert!(p(&["--sort", "size"]).is_err(), "unknown key refused by clap");
+    }
+
+    #[test]
+    fn sorted_repos_puts_the_flagged_repo_first_and_keeps_engines() {
+        let mk = |name: &str, last: u64, urg: Option<&str>, cwd: &str| Row {
+            engine: "ccc",
+            name: name.into(),
+            is_last: false,
+            status: Status::Idle,
+            last_active: last,
+            branch: None,
+            dirty: false,
+            digest: view::Digest { cwd: Some(cwd.into()), ..Default::default() },
+            resume: String::new(),
+            transcript: None,
+            inbox_id: None,
+            urgency: urg.map(str::to_string),
+        };
+        let mut repos: BTreeMap<String, Groups> = BTreeMap::new();
+        repos.insert("-a".into(), vec![("omp", vec![mk("o1", 90, None, "/a")]), ("ccc", vec![mk("c1", 10, None, "/a")])]);
+        repos.insert("-b".into(), vec![("ccc", vec![mk("c2", 5, Some("high"), "/b")])]);
+        let got: Vec<(String, Vec<(&str, String)>)> = sorted_repos(&repos, view::SortKey::Priority, false).into_iter().map(|(l, rows)| (l, rows.into_iter().map(|(e, r)| (e, r.name.clone())).collect())).collect();
+        assert_eq!(got, [("/b".to_string(), vec![("ccc", "c2".to_string())]), ("/a".to_string(), vec![("omp", "o1".to_string()), ("ccc", "c1".to_string())])]);
+        let by_time: Vec<String> = sorted_repos(&repos, view::SortKey::Time, false).into_iter().map(|(l, _)| l).collect();
+        assert_eq!(by_time, ["/a", "/b"]);
+        let by_name: Vec<String> = sorted_repos(&repos, view::SortKey::Name, true).into_iter().map(|(l, _)| l).collect();
+        assert_eq!(by_name, ["/b", "/a"], "repo label Z→A with -r");
+    }
+
+    #[test]
     fn repo_label_prefers_cwd() {
         let r = Row {
             engine: "omp",
@@ -450,6 +512,7 @@ mod tests {
             resume: String::new(),
             transcript: None,
             inbox_id: None,
+            urgency: None,
         };
         assert_eq!(repo_label("-srv-app", &[("omp", vec![r])]), "/srv/app");
         assert_eq!(repo_label("-srv-app", &[]), "-srv-app");
