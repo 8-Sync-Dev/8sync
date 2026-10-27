@@ -155,9 +155,10 @@ Claude Code sessions · /home/you/works/du-an
 | `/sec` | Trước commit/PR: quét secret (chỉ báo file:dòng), dependency, guard, OWASP |
 | `/harden` | Siết cấu hình Claude Code của máy |
 | `/aup-audit` | Trước release, hoặc khi thêm thu thập dữ liệu / nhắn tin người ngoài |
-| `deep-research` | Nghiên cứu có trích nguồn (verifier + reviewer) |
+| `deep-research` | Nghiên cứu có trích nguồn: plan + ledger, chọn số researcher theo độ khó, verifier rồi `research-reviewer`, bản cuối `outputs/<slug>.md` kèm provenance (PASS / PASS WITH NOTES / BLOCKED) |
+| `/autoresearch` | Chỉ anh gõ. Tối ưu theo benchmark trong worktree riêng: hỏi một thẻ Start (mục tiêu, lệnh đo, phạm vi, ngân sách), đo baseline nhiều lần, mỗi vòng một giả thuyết, chỉ giữ cải thiện vượt nhiễu, báo cáo mọi cấu hình đã thử; đưa vào code qua `/ship` |
 
-Agent có sẵn trong kit: `explore`, `task`, `quick-task`, `reviewer`, `designer`, `pm`, `architect`, `qa`, `researcher`, `verifier`. Mỗi agent chạy model hợp với vai: Haiku cho việc dò, Sonnet cho việc làm và review.
+Agent có sẵn trong kit: `explore`, `task`, `quick-task`, `reviewer`, `designer`, `pm`, `architect`, `qa`, `critic`, `researcher`, `verifier`, `research-reviewer`. Mỗi agent chạy model hợp với vai: Haiku cho việc dò, Sonnet cho việc làm và review.
 
 ## 4b. Team agent trong một session: `--team`
 

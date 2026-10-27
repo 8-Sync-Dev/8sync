@@ -1,6 +1,6 @@
 ---
 name: assp-skill
-description: Brand DNA + ASSP validation framework for 8 Sync Dev (Avatar → Brand Voice → Hero Mechanism → Money Model → Offer Architect). MUST be consulted for any user-facing copy (UI microcopy, landing/pricing pages, emails, error messages): Alex Dev voice (terse, direct, dev-to-dev Vietnamese, EN tech terms kept, banned-phrase list), brand identity + standard footer, offer/pricing structure (4-week billing). Also governs validate-before-build for new product features.
+description: Brand DNA + ASSP validation framework for 8 Sync Dev (Avatar → Brand Voice → Hero Mechanism → Money Model → Offer Architect). MUST be consulted for any user-facing copy (UI microcopy, landing/pricing pages, emails, error messages) — Alex Dev voice (terse, direct, dev-to-dev Vietnamese, EN tech terms kept, banned-phrase list), brand identity + standard footer, offer/pricing structure (4-week billing). Also governs validate-before-build for new product features.
 ---
 
 # SKILL.md — ASSP cho 8 Sync Dev

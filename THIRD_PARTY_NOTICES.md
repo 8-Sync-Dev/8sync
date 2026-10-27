@@ -5,11 +5,17 @@
 Parts of the following files are adapted from Feynman.
 
 - Source: https://github.com/companion-inc/feynman
-- Commit: 4cec627
-- Adapted files:
-  - `assets/claude/agents/researcher.md` (from `.feynman/agents/researcher.md`)
-  - `assets/claude/agents/verifier.md` (from `.feynman/agents/verifier.md`)
-  - `assets/skills/deep-research/SKILL.md` (pipeline from `deepresearch.md`)
+- Adapted files (upstream path, upstream commit):
+  - `assets/skills/deep-research/SKILL.md` — `prompts/deepresearch.md`, `.feynman/SYSTEM.md`, `.feynman/agents/researcher.md` — 87a4567 (v0.5.58, 2026-10-26)
+  - `assets/skills/deep-research/references/templates.md` — `prompts/deepresearch.md`, `.feynman/agents/*.md` — 87a4567
+  - `assets/skills/deep-research/references/large-sources.md` — `prompts/summarize.md` — 87a4567
+  - `assets/skills/autoresearch/SKILL.md` — `prompts/autoresearch.md` — 87a4567
+  - `assets/claude/agents/researcher.md` — `.feynman/agents/researcher.md` — 87a4567 (first port 4cec627)
+  - `assets/claude/agents/verifier.md` — `.feynman/agents/verifier.md` — 87a4567 (first port 4cec627)
+  - `assets/claude/agents/research-reviewer.md` — `.feynman/agents/reviewer.md` — 87a4567
+  - `assets/skills/research-paper/SKILL.md` — `prompts/replicate.md`, `prompts/recipe.md`, `prompts/audit.md`, `prompts/draft.md` — earlier port, commit not recorded
+  - `assets/skills/remote-compute/SKILL.md` — `skills/docker`, `skills/modal-compute`, `skills/runpod-compute` — earlier port, commit not recorded (modal/runpod skills were removed upstream in 83a8575)
+- The installed copies carry this notice in `skills/deep-research/LICENSE-feynman.md`.
 
 Upstream license text:
 

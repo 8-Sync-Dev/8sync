@@ -19,7 +19,7 @@ Trivial / small (a few files, clear path) → just do it, no engine ceremony. Me
 ## 2. Research, then plan (research is INTEGRATED into planning)
 First **research** the unknowns so the plan is grounded — never guess:
 - Scout the codebase: **trail** (`trail ask`, `trail callers <symbol>`).
-- Domain/external unknowns: **feynman** skills (`deep-research` / `research-paper`) + `web_search` / `last30days`. Log decisions under `## Assumptions` in `su-code/STATE.md`.
+- Domain/external unknowns: **feynman** skills (`deep-research` / `research-paper`; benchmark loops: owner runs `/autoresearch`) + `web_search` / `last30days`. Log decisions under `## Assumptions` in `su-code/STATE.md`.
 Then call **engine_plan** with the goal + slices; each slice's atomic tasks; each task's `verify` commands = the project's REAL lint/test/build (this is the gate). Smallest-first.
 
 ## 3. Loop until done (in an autonomous run, do not yield between tasks)

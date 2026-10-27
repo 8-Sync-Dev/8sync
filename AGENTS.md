@@ -357,7 +357,7 @@ Session memory được `omp` tự quản (retain/recall/auto-compact). 8sync ch
 
 ## 7. Skill system (force-load)
 
-Khi `8sync harness init` (hoặc `8sync setup`) chạy, **28 skill bundled** được deploy vào `~/.omp/skills/` theo [Agent Skills open standard](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview). 10 skill **always-on** chia 2 tầng (progressive disclosure — giữ prefix gọn cho KV-cache): 4 **CORE** đọc body ngay đúng thứ tự (trail → karpathy-guidelines → ponytail → 8sync-cli), 6 **specialist** chỉ biết khả năng rồi đọc body khi task khớp; phần còn lại on-demand; `encore-deploy` tech-gated; `social-growth` opt-in:
+Khi `8sync harness init` (hoặc `8sync setup`) chạy, **34 skill bundled** được deploy vào `~/.omp/skills/` theo [Agent Skills open standard](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview). 10 skill **always-on** chia 2 tầng (progressive disclosure — giữ prefix gọn cho KV-cache): 4 **CORE** đọc body ngay đúng thứ tự (trail → karpathy-guidelines → ponytail → 8sync-cli), 6 **specialist** chỉ biết khả năng rồi đọc body khi task khớp; phần còn lại on-demand; `encore-deploy` tech-gated; `social-growth` opt-in:
 
 | Skill | Trigger | Mô tả |
 |---|---|---|
@@ -378,9 +378,10 @@ Khi `8sync harness init` (hoặc `8sync setup`) chạy, **28 skill bundled** đ�
 |`branch-sync`|on-demand|check/preview/merge/sync mọi git branch về main không conflict|
 |`super-pdf`|on-demand|báo cáo/tài liệu PDF "boardroom-grade" từ HTML design system (chips strip + kicker cover, §N section spine, bảng cmp navy + pills, callout 4 màu, stat cards, footer chạy) — template + `scripts/build.sh` (WeasyPrint); cùng họ với các PDF review CloudGO|
 |`last30days`|on-demand|research social recency (Reddit/X/YouTube/HN…)|
-|`deep-research`|on-demand|điều tra source-heavy → 1 brief có citation; token-lean (snippet trước page, worker trả gọn); cũng nằm trong kit Claude Code|
+|`deep-research`|on-demand|điều tra source-heavy → brief có citation + provenance (Feynman v0.5.58: plan 6 mục, scale 0-6 researcher, verifier rồi `research-reviewer` cho brief dẫn tới quyết định, PASS/PASS WITH NOTES/BLOCKED); `references/templates.md` (mẫu + từ vựng trạng thái), `references/large-sources.md` (đọc trọn nguồn lớn), `LICENSE-feynman.md`; cũng nằm trong kit Claude Code|
 |`aup-audit`|on-demand|Usage Policy Anthropic + quy tắc 8 Sync: gitleaks cả history, file nhạy cảm, đường truy cập Claude, tính năng rủi ro (`RULES.md`); cũng nằm trong kit Claude Code|
-|`research-paper`|on-demand|paper end-to-end: replicate · recipe · audit · draft · autoresearch loop|
+|`research-paper`|on-demand|paper end-to-end: replicate · recipe · audit · draft|
+|`autoresearch`|owner-only (`disable-model-invocation`)|vòng thử/đo/giữ-bỏ có giới hạn: Start card (target, bench, gate, scope, env, budget phút CI/USD), worktree `ar-<slug>`, patch thay commit, keep khi `delta% ≥ max(1%, 2·√((cv_best²+cv_cand²)/n))`, sát ngưỡng đo lại A/B, plateau/time/budget stop, file benchmark đóng băng, held-out A/B; state `outputs/autoresearch/<slug>/`|
 |`remote-compute`|on-demand|chạy code ở Docker sandbox · Modal GPU · RunPod pod thay vì bare host|
 |`encore-deploy`|tech-gated|deploy runbook — chỉ hiện khi project dùng Encore|
 |`social-growth`|opt-in|social/branding/leads — bật bằng `8sync skill add builtin:social-growth`|

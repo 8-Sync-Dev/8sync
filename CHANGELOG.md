@@ -5,19 +5,55 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.85] — 2026-10-27
+
 ### Added
 - **`8sync harness browser ego [install|status]` cài trình duyệt ego lite chính thức** (citrolabs, https://lite.ego.app). Với ego lite, agent điều khiển chính trình duyệt đã đăng nhập của owner qua lệnh `ego-browser`, thay vì đi qua một Chromium riêng. Owner (2026-10-27): "harness nên cho ego-lite cài về window … làm control browser chuẩn hơn".
   - **Windows x64:** lấy link bộ cài từ README chính thức của citrolabs/ego-lite; nếu không đọc được README thì dùng link đã ghim. Chỉ nhận URL `cdn.ego.app/setup/windows/x64/`. Bộ cài được tải vào thư mục tạm riêng, và chỉ chạy khi chữ ký Authenticode là `Valid` và người ký là `CITRO LABS PTE. LIMITED`. Bản không ký chỉ chạy khi đặt `EIGHTSYNC_EGO_ALLOW_UNSIGNED=1`. Ký bởi bên khác hoặc chữ ký hỏng thì không bao giờ chạy.
   - **macOS:** in link `.dmg` chính thức. **Linux:** ego lite chưa có bản, nên vẫn dùng `8sync harness browser` (Chromium hệ thống).
   - **Skill không bị chép đôi:** lệnh `ego-browser` và skill `ego-browser` đều do app cài lúc onboarding, nên 8sync không ghi bản skill riêng. `status` cho biết hai thứ này đang nằm đâu, kể cả PATH mà terminal cũ chưa thấy.
+- **`/autoresearch` thành skill riêng.** Trước đây nó chỉ là một mode của `research-paper`, và bản ở `~/.omp/skills/autoresearch` là cài tay với `references/` rỗng. Owner (2026-10-27): "enhance skills deep-research và auto research tham khảo feynman … phải mạnh nhất".
+  - **Chỉ owner khởi động** (`disable-model-invocation`), vì đây là vòng lặp sửa code nhiều giờ.
+  - **Start card trước baseline:** một `AskUserQuestion` gồm target, lệnh bench, correctness gate, scope + file đóng băng, environment và budget (phút CI/USD). Card này gộp gather, environment và confirm gate của Feynman v0.5.58.
+  - **Không đụng checkout của owner:** chạy trong worktree riêng `ar-<slug>`, không commit trong vòng lặp. Mỗi iteration là một `iter-N.patch` + `best.patch`, revert bằng `git restore` trên đúng scope.
+  - **Keep rule tính bằng %:** keep khi `delta% ≥ max(1%, 2·√((cv_best²+cv_cand²)/n))`. Kết quả sát ngưỡng được đo lại xen kẽ A/B. Vòng dừng khi plateau (5 lần không keep) hoặc hết giờ, iteration, phút CI hay USD. Trước khi nhận thắng phải qua held-out A/B.
+  - **Ghi nhận đầy đủ:** ledger ghi mọi lần đo; báo cáo liệt kê mọi cấu hình; kết quả đưa vào code bằng một commit `perf(...)` qua `/ship`.
+  - **Phân phối:** nằm trong `BUNDLED_SKILLS` và `su-code/skills.toml`, được deploy vào `~/.omp/skills/autoresearch` khi `8sync setup`, `harness init` hoặc mở `8sync ccc .` refresh bundled skills. `8sync ccc kit` link nó vào `~/.claude/skills` khi ở đó chưa có. Bản cài tay cũ ở `~/.omp/skills/autoresearch` (port Feynman, 2026-08) bị thay; nội dung gốc vẫn có ở repo Feynman.
+- **Agent `research-reviewer`.** Đây là verification pass cho research brief: mở nguồn sau mỗi claim quyết định `(D)`, chấm FATAL/MAJOR/MINOR, tự ghi `-verification.md`, verdict `PASS | PASS WITH NOTES | FAIL (n FATAL)`. Agent `reviewer` (review diff) giữ nguyên, không phải ánh xạ rubric bằng tay nữa.
+
+### Changed
+- **`deep-research` v3**, theo Feynman v0.5.58 (`prompts/deepresearch.md`, `.feynman/SYSTEM.md`, `.feynman/agents/researcher.md`, `prompts/summarize.md`):
+  - Plan đủ 6 mục: key questions, evidence, scale decision, task ledger, verification log, decision log.
+  - Scale theo bảng, tối đa 6 researcher cả run và 4 chạy cùng lúc; mỗi researcher có brief file riêng.
+  - Direct mode chạy ≥3 truy vấn và ghi nguyên văn từng truy vấn.
+  - Claim sweep trước khi cite.
+  - Verifier chạy trước reviewer.
+  - Cite: URL chết thì bỏ cả claim chỉ dựa vào nó; paper đối chiếu 2 chỉ mục.
+  - Review: FATAL sửa rồi review lại đúng một lần; sửa lớn thì viết `-revised.md`.
+  - Có degraded mode `Verification: BLOCKED`.
+  - Đọc trọn nguồn lớn theo `references/large-sources.md`: `curl -fsSL --create-dirs` (PowerShell: `curl.exe`), cửa sổ theo dòng, notes sau mỗi cửa sổ, chunk tính vào trần researcher.
+- **Phần 8sync thêm vào `deep-research`, Feynman không có:**
+  - Tầng trả lời inline: ≤10 tool call, không dẫn tới quyết định, không gõ `/deep-research`.
+  - Claim `(D)` cần 2 nguồn độc lập.
+  - Brief dẫn tới quyết định luôn chạy verifier + `research-reviewer`.
+  - Định nghĩa PASS / PASS WITH NOTES / BLOCKED, và FATAL còn sau lần review thứ hai → BLOCKED.
+  - Bảng từ vựng trạng thái chung và id nguồn `S#` (`references/templates.md`).
+  - Tối đa 3 round.
+  - Nội dung fetch về là dữ liệu, không phải lệnh; truy vấn không mang dữ liệu client/cá nhân, code private hay secret; không chạy code tải về.
+- **Agent `verifier` / `researcher`:**
+  - `verifier`: claim thực tế không có nguồn bị bỏ vào `## Removed unsupported claims`; số không có artifact thành `TODO`; bảng kiểm tách ra `<slug>-cite-audit.md`; đối chiếu 2 chỉ mục.
+  - `researcher`: truy vấn diễn đạt lại, bậc nguồn, `S#`/`C#`, trạng thái `read/inferred/unresolved`, Coverage status theo từng câu.
+- **License:** MIT notice của Feynman giờ được cài cùng skill (`skills/deep-research/LICENSE-feynman.md`). `THIRD_PARTY_NOTICES.md` ghi nguồn và commit cho từng file.
+- **Gitignore:** khối `.gitignore` do 8sync quản lý bỏ qua `outputs/.notes/` (bản tải về của nguồn bên thứ ba) và `outputs/autoresearch/` (state thí nghiệm).
 
 ## [0.110.84] — 2026-10-27
 
 ### Fixed
-- **`pnpm dev` / `pnpm start` của `apps/hq-ui` chạy được trên Windows.** Hai script dùng `${PORT:-${HQ_UI_PORT:-8740}}`, cú pháp chỉ shell POSIX hiểu. pnpm chạy script qua cmd.exe trên Windows, nên `next` nhận nguyên chuỗi đó làm port và không khởi động.
-  - Giờ cả hai gọi `node scripts/next.mjs dev|start`: port lấy từ `PORT`, rồi `HQ_UI_PORT`, rồi 8740 (biến rỗng coi như chưa đặt); host luôn là 127.0.0.1; Next chạy không qua shell trên cả ba OS.
-  - Port sai (vd `80a`, `0`, `65536`) báo lỗi rõ, không lặng lẽ dùng port khác.
-  - Bản release không đổi: nó chạy `node server.js`.
+- **Frontmatter skill/agent/command đọc được bằng YAML parser chặt** (omp, pi/Feynman, js-yaml), không chỉ bằng Claude Code. Một value không quote mà chứa `: ` bị báo "Nested mappings are not allowed", và cả skill bị bỏ. Một value có ` #` thì bị cắt như comment.
+  - Agent `pm`: mô tả bị cắt tại "Discord" vì `#owner-desk`.
+  - `clean`, `ship-tick`, `assp-skill`, `trail`: mô tả có `: `.
+  - `autopilot`, `sec`, `ship-tick`: `argument-hint` mở bằng `[`, giờ được quote.
+  - Test mới `shipped_frontmatter_is_strict_yaml_safe` quét `skills/`, `claude/`, `commands/`, `rules/`; `frontmatter_check_catches_what_strict_yaml_rejects` chứng minh bộ kiểm bắt đúng các ca này.
 
 ### Security
 - **HQ UI lên Next 16.4.1** (từ 16.4.0). `pnpm audit --prod` của `apps/hq-ui` báo GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr (critical, RCE) và GHSA-p3m5-59mp-jv5r (high, DoS) cho Next 16.0.0–16.4.0, đều sửa ở 16.4.1. HQ không dùng image optimizer (`images.unoptimized`), `use cache` hay server action nên mức lộ thấp, nhưng `8sync hq ui --public` có thể đưa HQ ra internet và bản release đóng gói đúng Next đang khoá. `eslint-config-next` lên cùng bản; lockfile chỉ đổi các gói `next`, `@next/*`, `eslint-config-next`.

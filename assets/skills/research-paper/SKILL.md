@@ -1,11 +1,11 @@
 ---
 name: research-paper
-description: Work a paper, claim, or benchmark end to end — replicate a result, extract an implementable ML training recipe, audit a paper against its released code, draft a paper-style write-up, or run a bounded try/measure/keep-or-revert experiment loop. Use when the user wants to reproduce, verify, optimize against, or formally write up research rather than get a casual summary.
+description: Work a paper, claim, or benchmark end to end — replicate a result, extract an implementable ML training recipe, audit a paper against its released code, or draft a paper-style write-up (experiment loops against a benchmark live in `autoresearch`). Use when the user wants to reproduce, verify, or formally write up research rather than get a casual summary.
 ---
 
 # Research Paper
 
-Ported from `companion-inc/feynman`'s `/replicate`, `/recipe`, `/audit`, `/draft`, and `/autoresearch` slash-commands. Self-contained omp-native version — no `feynman` CLI required.
+Ported from `companion-inc/feynman`'s `/replicate`, `/recipe`, `/audit` and `/draft` slash-commands (MIT, Copyright (c) 2026 Companion, Inc.; notice in `deep-research/LICENSE-feynman.md`; `/autoresearch` is now the `autoresearch` skill). Self-contained omp-native version — no `feynman` CLI required.
 
 ## Pick a mode
 
@@ -15,7 +15,7 @@ Ported from `companion-inc/feynman`'s `/replicate`, `/recipe`, `/audit`, `/draft
 | A concrete, source-backed training/fine-tuning recipe | [Recipe](#recipe) |
 | To know whether the paper matches its released code | [Audit](#audit) |
 | A formal paper/technical-report write-up | [Draft](#draft) |
-| An automated optimization loop against a benchmark command | [Autoresearch](#autoresearch) |
+| An automated optimization loop against a benchmark command | the `autoresearch` skill |
 
 Modes compose: a replication usually starts with a recipe pass; an audit often precedes a replication; a draft consumes any of the above.
 
@@ -76,11 +76,4 @@ Required final shape: **Recommendation** (the one recipe to try first, and why) 
 
 ## Autoresearch
 
-A bounded foreground loop: try a hypothesis, measure, keep what works, revert what doesn't, repeat — driven by omp's own tools (`bash`/`eval` for the benchmark, `edit`/`write` for the change and the log).
-
-1. **Gather** — if `autoresearch.md` and `autoresearch.jsonl` already exist, `ask` whether to resume or start fresh. Otherwise collect first: what to optimize (accuracy, retrieval quality, loss, latency, …), the benchmark command, the metric name/unit/direction, the files in scope, max iterations (default 20).
-2. **Environment** — `ask` (see the environment gate above). Do not proceed without a clear answer. For an iterative Docker loop use a named persistent container (see `remote-compute`).
-3. **Confirm** — present the full plan (target metric + direction, benchmark command, files in scope, environment, max iterations) and `ask` for explicit approval before starting.
-4. **Run** — initialize `autoresearch.md` (human-readable log), `autoresearch.jsonl` (one JSON record per iteration: `{iteration, change, metric_value, baseline_value, decision, evidence}`), and `autoresearch.sh` (re-runnable benchmark invocation). Record the baseline as iteration 0. Each iteration: `edit` the change → run the benchmark → append result + evidence + decision → compare against baseline and keep, revert, or record the failed hypothesis → next.
-
-Informal subcommands: "resume autoresearch" (read the log files, continue) · "stop autoresearch" (stop, keep the data) · "clear autoresearch" (delete `autoresearch.md`/`.jsonl`/`.sh` and start fresh — destructive, confirm first).
+Moved to its own skill, `autoresearch` (owner types `/autoresearch`). Same gather/environment/confirm gates (now one Start card) and on-disk ledger, plus a noise-aware keep rule, patch files instead of commits, plateau/time/budget stops, frozen benchmark files and a held-out check. State lives in `outputs/autoresearch/<slug>/`; old `autoresearch.md`/`.jsonl` files from this mode can be read as history.
