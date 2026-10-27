@@ -58,8 +58,9 @@ out=$(run env -u CLAUDE_CODE_SESSION_ID "$B" ccc . urgent high 2>&1); rc=$?
 [ $rc != 0 ] && grep -qF -- "--session" <<<"$out" && ok "no id, no --session -> clear error" || bad "no target" "rc=$rc $out"
 out=$(run env CLAUDE_CODE_SESSION_ID="$OLD" "$B" ccc . urgent clear 2>&1); grep -qF "cleared urgency of 'stale'" <<<"$out" && ok "clear" || bad "clear" "$out"
 out=$(run "$B" ccc . ls 2>&1)
-grep -q '▲ high' <<<"$out" && bad "cleared chip still shown" "$out" || ok "cleared chip gone"
-grep -q '▽ low' <<<"$out" && ok "low chip shown" || bad "low chip" "$out"
+# Session lines only: the order note under the header lists the chips as a legend.
+grep -E '^(★| ) stale .*▲ high$' <<<"$out" >/dev/null && bad "cleared chip still shown" "$out" || ok "cleared chip gone"
+grep -E '^(★| ) fresh .*▽ low$' <<<"$out" >/dev/null && ok "low chip shown" || bad "low chip" "$out"
 
 [ $fail = 0 ] && echo "ALL PASS" || echo "SOME FAILED"
 exit $fail
