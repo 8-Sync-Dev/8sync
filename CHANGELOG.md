@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.83] — 2026-10-27
+
 ### Added
 - **Sắp xếp danh sách session: `--sort priority|time|name|status` và `-r`** trên `8sync ccc . ls`, `8sync . ls`, `8sync ls` và `8sync ls --all`. Owner (2026-10-27): "8sync . ls, 8sync ccc . ls chưa có sắp xếp theo time, priority".
   - **Thứ tự cũ:** `ccc . ls` mới nhất trước; `. ls` và `ls` theo thứ tự registry; `ls --all` xếp repo theo hoạt động mới nhất, còn session trong repo theo registry.
