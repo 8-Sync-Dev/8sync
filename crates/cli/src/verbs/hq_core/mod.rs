@@ -217,7 +217,7 @@ fn ls(core: &Core) -> Arc<[u8]> {
         }
     }
     let procs = crate::verbs::session_view::agent_cmdlines();
-    let rows = crate::verbs::session_cmds::ls_all_json(&core.env, &procs);
+    let rows = crate::verbs::session_cmds::ls_all_json(&core.env, &procs, crate::verbs::session_view::SortKey::default(), false);
     let body: Arc<[u8]> = Arc::from(serde_json::to_vec(&rows).unwrap_or_else(|_| b"[]".to_vec()));
     *c = Some((Instant::now(), body.clone()));
     body

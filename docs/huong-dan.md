@@ -130,7 +130,8 @@ Claude Code sessions · /home/you/works/du-an
 - `● running`: đang có tiến trình Claude Code mở session này. `● active`: vừa ghi trong 2 phút. `○ idle`: đang nghỉ.
 - `8sync show <tên>`: chi tiết gồm 5 yêu cầu gần nhất, câu trả lời cuối, checklist task, file vừa sửa và lệnh resume.
 - `8sync ls`: mọi session của repo (ccc, omp, forge). `8sync ls --all`: mọi repo trên máy.
-- `--json` có ở `ls` và `ccc . ls` cho script.
+- **Thứ tự:** mặc định theo ưu tiên — phòng cắm cờ `▲ high` (`8sync ccc . urgent high`), phòng dừng vì lỗi API / hết usage (`⚠ stopped … auto-resume in 12m`), `◆ med`, phòng đang chạy, `▽ low`, rồi phòng nghỉ; cùng mức thì theo trạng thái (running → active → idle), rồi mới nhất, rồi tên. Đổi: `--sort time` (mới nhất), `--sort name`, `--sort status`; `-r` đảo ngược. Có ở `ccc . ls`, `. ls`, `ls`, `ls --all`.
+- `--json` có ở `ls` và `ccc . ls` cho script (cùng thứ tự với bản in).
 
 ## 3b. Status line của Claude Code
 

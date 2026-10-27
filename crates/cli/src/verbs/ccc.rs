@@ -335,9 +335,11 @@ pub fn run(a: Args) -> Result<()> {
             msg::run(rest, &env.home, &root, &msg::rooms(&root, ccc, omp))
         }
         "ls" | "list" => {
-            print_sessions(&env, &root, rest.iter().any(|a| a == "--json"))
+            let (key, reverse) = super::session_view::sort_args(rest)?;
+            print_sessions(&env, &root, rest.iter().any(|a| a == "--json"), key, reverse)
         }
-        "report" => report::run(&env.home, &root, &session_rows_json(&env, &root), rest.iter().any(|a| a == "--json")),
+        // The report keeps its newest-first order: a usage table, not a work queue.
+        "report" => report::run(&env.home, &root, &session_rows_json(&env, &root, super::session_view::SortKey::Time, false), rest.iter().any(|a| a == "--json")),
         "urgent" => {
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
             ui::ok(&urgent::run(&sessions(&env, &root), rest, id.as_deref(), view_now())?);
@@ -553,14 +555,13 @@ fn sessions(env: &Env, root: &Path) -> Store {
 
 /// `8sync ccc . ls`: per session — running?, last request, last action, task
 /// progress (rendering shared with `8sync . ls` in `session_view.rs`).
-/// This repo's sessions as `ls --json` rows (also the input of `ccc . report`).
-fn session_rows_json(env: &Env, root: &Path) -> Vec<Value> {
+/// This repo's sessions as `ls --json` rows, in `key` order (also the input of `ccc . report`).
+fn session_rows_json(env: &Env, root: &Path, key: super::session_view::SortKey, reverse: bool) -> Vec<Value> {
     use super::session_view as view;
     let reg = sessions(env, root).load();
     let rows = view::uuid_rows(env, "ccc", &reg, &view::agent_cmdlines(), false);
     debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry (zip below)");
-    let order = urgent::newest_first(&rows.iter().map(|r| r.last_active).collect::<Vec<_>>());
-    order
+    view::order(&rows, key, reverse)
         .into_iter()
         .map(|i| {
             let mut v = view::row_json(&rows[i]);
@@ -576,10 +577,10 @@ fn view_now() -> u64 {
     super::session_view::now_secs()
 }
 
-fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
+fn print_sessions(env: &Env, root: &Path, json: bool, key: super::session_view::SortKey, reverse: bool) -> Result<()> {
     use super::session_view as view;
     if json {
-        println!("{}", serde_json::to_string_pretty(&session_rows_json(env, root))?);
+        println!("{}", serde_json::to_string_pretty(&session_rows_json(env, root, key, reverse))?);
         return Ok(());
     }
     let reg = sessions(env, root).load();
@@ -590,8 +591,9 @@ fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
     }
     ui::header(&format!("Claude Code sessions · {}", root.display()));
     let (now, width, color) = (view::now_secs(), view::term_width(), view::use_color());
+    ui::info(&key.note(reverse, width));
     debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry");
-    for i in urgent::newest_first(&rows.iter().map(|r| r.last_active).collect::<Vec<_>>()) {
+    for i in view::order(&rows, key, reverse) {
         let mut lines = view::render(&rows[i], width, now, color);
         urgent::decorate(&mut lines, reg.sessions[i].urgency.as_ref(), width, now, color);
         if let Some(g) = &reg.sessions[i].goal {
@@ -608,7 +610,7 @@ fn print_sessions(env: &Env, root: &Path, json: bool) -> Result<()> {
             println!("{l}");
         }
     }
-    println!("\n  8sync ccc . <name> resume  ·  8sync ccc . urgent <high|med|low|clear> [note]  ·  8sync ccc . goal <mục tiêu> [--files a,b]  ·  8sync ccc . new <name>  ·  8sync show <name> --engine ccc  ·  8sync ls --all");
+    println!("\n  8sync ccc . <name> resume  ·  8sync ccc . ls --sort time|name|status [-r]  ·  8sync ccc . urgent <high|med|low|clear> [note]  ·  8sync ccc . goal <mục tiêu> [--files a,b]  ·  8sync ccc . new <name>  ·  8sync show <name> --engine ccc  ·  8sync ls --all");
     Ok(())
 }
 
@@ -2286,7 +2288,7 @@ fn status(env: &Env, root: &Path) -> Result<()> {
         ui::ok(&format!("managed settings: {}", names.join(", ")));
     }
     println!();
-    print_sessions(env, root, false)
+    print_sessions(env, root, false, super::session_view::SortKey::default(), false)
 }
 
 // ── hooks ───────────────────────────────────────────────────────────────────

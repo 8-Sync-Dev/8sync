@@ -221,6 +221,9 @@ pub fn render(row: &Row, width: usize, now: u64, color: bool) -> Vec<String> {
     let name = truncate(&row.name, width.saturating_sub(fixed + 2).clamp(8, 40));
     let tail_s = if tail.is_empty() { String::new() } else { p.dim(&tail) };
     out.push(format!("{star} {}  {badge}  {}{tail_s}", p.bold(&name), p.dim(&when)));
+    if let Some((err, at)) = stalled_error(row) {
+        out.push(format!("{INDENT}{} {}", p.yellow("⚠ stopped"), truncate(&stalled_text(&err, at, now), width.saturating_sub(INDENT.len() + 10).max(10))));
+    }
 
     let d = &row.digest;
     let room = width.saturating_sub(INDENT.chars().count() + 5).max(10);
@@ -268,8 +271,16 @@ pub fn render_compact(row: &Row, width: usize, now: u64, color: bool) -> String 
         Status::Idle => p.dim("○"),
     };
     let when = ago(row.last_active, now);
+    // One column, always one char wide: flag (▲ ◆ ▽), else ⚠ for a room stopped on an API error.
+    let mark = match row.urgency.as_deref() {
+        Some("high") => p.yellow("▲"),
+        Some("med") => p.yellow("◆"),
+        Some(_) => p.dim("▽"),
+        None if stalled_error(row).is_some() => p.yellow("⚠"),
+        None => " ".to_string(),
+    };
     let name = truncate(&row.name, 18);
-    let used = 4 + 18 + 2 + 9 + 2 + 2;
+    let used = 6 + 18 + 2 + 9 + 2 + 2;
     let ask = row
         .digest
         .current_task()
@@ -279,7 +290,167 @@ pub fn render_compact(row: &Row, width: usize, now: u64, color: bool) -> String 
         .unwrap_or_else(|| "(no messages yet)".into());
     let ask = truncate(&clean(&ask, 300), width.saturating_sub(used).max(10));
     let pad = " ".repeat(18usize.saturating_sub(name.chars().count()));
-    format!("  {star} {dot} {}{pad}  {:<9}  {}", p.bold(&name), when, p.dim(&ask))
+    format!("  {star} {dot} {mark} {}{pad}  {:<9}  {}", p.bold(&name), when, p.dim(&ask))
+}
+
+/// "rate_limit · auto-resume in 12m" / "overloaded · needs you" for a stopped room.
+pub fn stalled_text(err: &str, resume_at: Option<u64>, now: u64) -> String {
+    match resume_at.filter(|&t| t > now) {
+        Some(t) => {
+            let d = t - now;
+            let left = if d < 3600 { format!("{}m", d.div_ceil(60)) } else { format!("{}h{:02}m", d / 3600, d % 3600 / 60) };
+            format!("{err} · auto-resume in {left}")
+        }
+        None => format!("{err} · needs you"),
+    }
+}
+
+// ── ordering ────────────────────────────────────────────────────────────────
+
+/// How `ls` orders sessions (`--sort`). Owner (2026-10-27): "8sync . ls, 8sync ccc . ls chưa có
+/// sắp xếp theo time, priority". Priority (the default) puts what needs the owner first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SortKey {
+    #[default]
+    Priority,
+    Time,
+    Name,
+    Status,
+}
+
+pub const SORT_KEYS: &str = "priority | time | name | status";
+
+impl std::str::FromStr for SortKey {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s.trim().to_lowercase().as_str() {
+            "priority" | "prio" | "p" | "uu-tien" | "ưu-tiên" => Ok(Self::Priority),
+            "time" | "t" | "recent" | "newest" => Ok(Self::Time),
+            "name" | "n" => Ok(Self::Name),
+            "status" | "s" | "state" => Ok(Self::Status),
+            x => Err(format!("--sort `{x}`: dùng {SORT_KEYS}")),
+        }
+    }
+}
+
+impl SortKey {
+    /// One line under the `ls` header: the order in use and how to change it, at most `width` chars.
+    pub fn note(self, reverse: bool, width: usize) -> String {
+        let what = match self {
+            SortKey::Priority => "ưu tiên: ▲ high · ⚠ lỗi API/hết usage · ◆ med · đang chạy · ▽ low · nghỉ",
+            SortKey::Time => "thời gian: mới nhất trước",
+            SortKey::Name => "tên: A → Z",
+            SortKey::Status => "trạng thái: running · active · idle",
+        };
+        let line = format!("sắp theo {what}{} — --sort time|name|status|priority, -r đảo", if reverse { " (đảo ngược)" } else { "" });
+        truncate(&line, width.saturating_sub(4).max(20))
+    }
+}
+
+/// `--sort KEY`, `--sort=KEY`, `-r`/`--reverse` among hand-parsed arguments (`ccc . ls`); other
+/// arguments are left to the caller.
+pub fn sort_args(args: &[String]) -> anyhow::Result<(SortKey, bool)> {
+    let (mut key, mut reverse) = (SortKey::default(), false);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--sort" => {
+                let v = it.next().ok_or_else(|| anyhow::anyhow!("--sort cần một giá trị: {SORT_KEYS}"))?;
+                key = v.parse().map_err(anyhow::Error::msg)?;
+            }
+            "-r" | "--reverse" => reverse = true,
+            x if x.starts_with("--sort=") => key = x["--sort=".len()..].parse().map_err(anyhow::Error::msg)?,
+            _ => {}
+        }
+    }
+    Ok((key, reverse))
+}
+
+/// Priority tier, smaller first: the room's own flag and a stop on an API error before plain work.
+pub fn tier(row: &Row, stalled: bool) -> u8 {
+    let working = matches!(row.status, Status::Running | Status::Active);
+    match row.urgency.as_deref() {
+        Some("high") => 0,
+        _ if stalled => 1,
+        Some("med") => 2,
+        _ if working => 3,
+        Some(_) => 4,
+        None => 5,
+    }
+}
+
+fn status_rank(s: Status) -> u8 {
+    match s {
+        Status::Running => 0,
+        Status::Active => 1,
+        Status::Idle => 2,
+    }
+}
+
+/// Compare two rows under `key` (`stalled`: precomputed per row, priority only). Ties end on the
+/// name, so the order never depends on the registry's.
+fn cmp_rows(a: (&Row, bool), b: (&Row, bool), key: SortKey) -> std::cmp::Ordering {
+    use std::cmp::Reverse;
+    let ((ra, sa), (rb, sb)) = (a, b);
+    let name = |r: &Row| r.name.to_lowercase();
+    let newest = ra.last_active.cmp(&rb.last_active).reverse();
+    match key {
+        SortKey::Priority => (tier(ra, sa), status_rank(ra.status)).cmp(&(tier(rb, sb), status_rank(rb.status))).then(newest),
+        SortKey::Time => newest,
+        SortKey::Status => status_rank(ra.status).cmp(&status_rank(rb.status)).then(newest),
+        SortKey::Name => name(ra).cmp(&name(rb)).then(Reverse(ra.last_active).cmp(&Reverse(rb.last_active))),
+    }
+    .then_with(|| name(ra).cmp(&name(rb)))
+}
+
+/// Indices of `rows` in `key` order (`reverse` flips it). Reads each room's stop record only when
+/// sorting by priority.
+pub fn order(rows: &[Row], key: SortKey, reverse: bool) -> Vec<usize> {
+    let refs: Vec<&Row> = rows.iter().collect();
+    order_with(&refs, &stalled_flags(&refs, key), key, reverse)
+}
+
+/// Per row: stopped on an API error (read only when sorting by priority).
+fn stalled_flags(rows: &[&Row], key: SortKey) -> Vec<bool> {
+    rows.iter().map(|r| key == SortKey::Priority && stalled_error(r).is_some()).collect()
+}
+
+fn order_with(rows: &[&Row], stalled: &[bool], key: SortKey, reverse: bool) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..rows.len()).collect();
+    idx.sort_by(|&i, &j| cmp_rows((rows[i], stalled[i]), (rows[j], stalled[j]), key));
+    if reverse {
+        idx.reverse();
+    }
+    idx
+}
+
+/// Groups of rows (repos in `ls --all`, named by `labels`) in `key` order of each group's first
+/// row (by label for [`SortKey::Name`]); the rows of every group sorted the same way. Returns, per
+/// group in display order, its index and its row order.
+pub fn order_groups(groups: &[Vec<&Row>], labels: &[String], key: SortKey, reverse: bool) -> Vec<(usize, Vec<usize>)> {
+    let stalled: Vec<Vec<bool>> = groups.iter().map(|g| stalled_flags(g, key)).collect();
+    let inner: Vec<Vec<usize>> = groups.iter().zip(&stalled).map(|(g, s)| order_with(g, s, key, false)).collect();
+    let mut gi: Vec<usize> = (0..groups.len()).filter(|&i| !groups[i].is_empty()).collect();
+    gi.sort_by(|&a, &b| {
+        let (ra, rb) = (inner[a][0], inner[b][0]);
+        let by_row = || cmp_rows((groups[a][ra], stalled[a][ra]), (groups[b][rb], stalled[b][rb]), key);
+        match key {
+            SortKey::Name => labels[a].to_lowercase().cmp(&labels[b].to_lowercase()).then_with(by_row),
+            _ => by_row(),
+        }
+    });
+    if reverse {
+        gi.reverse();
+    }
+    gi.into_iter()
+        .map(|i| {
+            let mut o = inner[i].clone();
+            if reverse {
+                o.reverse();
+            }
+            (i, o)
+        })
+        .collect()
 }
 
 // ── collecting rows ─────────────────────────────────────────────────────────
@@ -341,6 +512,7 @@ pub fn omp_rows(reg: &crate::verbs::session::Registry, root: Option<&std::path::
             resume: format!("8sync . {}", s.name),
             transcript: tr,
             inbox_id: inbox(&s.name),
+            urgency: None,
         }
     }, |s| Row { inbox_id: inbox(&s.name), ..unreadable("omp", &s.name, format!("8sync . {}", s.name), s.last_active) })
 }
@@ -368,9 +540,11 @@ pub fn uuid_rows(env: &Env, engine: &'static str, reg: &crate::verbs::uuid_sessi
             resume: if engine == "ccc" { format!("8sync ccc . {}", s.name) } else { format!("8sync forge {}", s.name) },
             transcript: tr,
             inbox_id: inbox(&s.conversation_id),
+            urgency: s.urgency.as_ref().map(|u| u.level.clone()),
         }
     }, |s| Row {
         inbox_id: inbox(&s.conversation_id),
+        urgency: s.urgency.as_ref().map(|u| u.level.clone()),
         ..unreadable(engine, &s.name, if engine == "ccc" { format!("8sync ccc . {}", s.name) } else { format!("8sync forge {}", s.name) }, s.last_active)
     })
 }
@@ -397,6 +571,7 @@ pub fn feynman_rows(index: &Value) -> Vec<Row> {
                 name,
                 transcript: None,
                 inbox_id: None,
+                urgency: None,
             })
         })
         .collect()
@@ -421,6 +596,7 @@ mod tests {
             resume: "8sync . core".into(),
             transcript: None,
             inbox_id: None,
+            urgency: None,
         }
     }
 
@@ -504,6 +680,100 @@ mod tests {
             assert_eq!(*r, if n % 7 == 3 { 1000 + n } else { n * 2 });
         }
         assert!(par_map(&[] as &[u32], |n| *n, |n| *n).is_empty());
+    }
+
+    fn r(name: &str, status: Status, last_active: u64, urgency: Option<&str>) -> Row {
+        Row { name: name.into(), status, last_active, urgency: urgency.map(str::to_string), is_last: false, ..row(Digest::default()) }
+    }
+
+    fn names(rows: &[Row], o: &[usize]) -> Vec<String> {
+        o.iter().map(|&i| rows[i].name.clone()).collect()
+    }
+
+    #[test]
+    fn sort_keys_parse_with_aliases_and_a_clear_error() {
+        assert_eq!("priority".parse::<SortKey>(), Ok(SortKey::Priority));
+        assert_eq!("ưu-tiên".parse::<SortKey>(), Ok(SortKey::Priority));
+        assert_eq!(" Time ".parse::<SortKey>(), Ok(SortKey::Time));
+        assert_eq!("recent".parse::<SortKey>(), Ok(SortKey::Time));
+        assert_eq!("n".parse::<SortKey>(), Ok(SortKey::Name));
+        assert_eq!("state".parse::<SortKey>(), Ok(SortKey::Status));
+        assert!("size".parse::<SortKey>().unwrap_err().contains(SORT_KEYS));
+        assert_eq!(SortKey::default(), SortKey::Priority, "what needs the owner first, by default");
+        let a = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(sort_args(&a(&["--json"])).unwrap(), (SortKey::Priority, false));
+        assert_eq!(sort_args(&a(&["--sort", "time", "-r", "--json"])).unwrap(), (SortKey::Time, true));
+        assert_eq!(sort_args(&a(&["--sort=name", "--reverse"])).unwrap(), (SortKey::Name, true));
+        assert!(sort_args(&a(&["--sort"])).is_err(), "a value is required");
+        assert!(sort_args(&a(&["--sort", "bogus"])).is_err());
+        for k in [SortKey::Priority, SortKey::Time, SortKey::Name, SortKey::Status] {
+            assert!(k.note(false, 200).starts_with("sắp theo ") && k.note(true, 200).contains("đảo ngược"), "{k:?}");
+            assert!(k.note(true, 60).chars().count() <= 56, "fits the terminal: {}", k.note(true, 60));
+        }
+    }
+
+    #[test]
+    fn priority_tiers_put_the_owner_and_stuck_rooms_first() {
+        let idle = r("a", Status::Idle, 0, None);
+        assert_eq!(tier(&r("a", Status::Idle, 0, Some("high")), false), 0);
+        assert_eq!(tier(&idle, true), 1, "stopped on an API error");
+        assert_eq!(tier(&r("a", Status::Running, 0, Some("high")), true), 0, "the flag wins over the stop");
+        assert_eq!(tier(&r("a", Status::Idle, 0, Some("med")), false), 2);
+        assert_eq!(tier(&r("a", Status::Running, 0, None), false), 3);
+        assert_eq!(tier(&r("a", Status::Active, 0, Some("low")), false), 3, "working outranks a low flag");
+        assert_eq!(tier(&r("a", Status::Idle, 0, Some("low")), false), 4);
+        assert_eq!(tier(&idle, false), 5);
+    }
+
+    #[test]
+    fn every_sort_key_orders_and_reverses_deterministically() {
+        let rows = vec![
+            r("lead", Status::Idle, 50, None),
+            r("Dev", Status::Running, 10, None),
+            r("qa", Status::Idle, 90, Some("high")),
+            r("core", Status::Active, 70, None),
+            r("rd", Status::Idle, 90, None),
+            r("ops", Status::Idle, 30, Some("med")),
+        ];
+        assert_eq!(names(&rows, &order(&rows, SortKey::Priority, false)), ["qa", "ops", "Dev", "core", "rd", "lead"]);
+        assert_eq!(names(&rows, &order(&rows, SortKey::Time, false)), ["qa", "rd", "core", "lead", "ops", "Dev"], "ties (qa, rd at 90) by name");
+        assert_eq!(names(&rows, &order(&rows, SortKey::Name, false)), ["core", "Dev", "lead", "ops", "qa", "rd"], "case-insensitive");
+        assert_eq!(names(&rows, &order(&rows, SortKey::Status, false)), ["Dev", "core", "qa", "rd", "lead", "ops"]);
+        assert_eq!(names(&rows, &order(&rows, SortKey::Time, true)), ["Dev", "ops", "lead", "core", "rd", "qa"]);
+        assert!(order(&[], SortKey::Priority, false).is_empty());
+        // Same input in another registry order: same output.
+        let mut shuffled = rows.clone();
+        shuffled.reverse();
+        assert_eq!(names(&shuffled, &order(&shuffled, SortKey::Priority, false)), ["qa", "ops", "Dev", "core", "rd", "lead"]);
+    }
+
+    #[test]
+    fn groups_rank_by_their_first_row_and_sort_inside() {
+        let a = [r("x", Status::Idle, 10, None), r("y", Status::Running, 5, None)];
+        let b = [r("z", Status::Idle, 99, Some("high"))];
+        let c: [Row; 0] = [];
+        let d = [r("w", Status::Idle, 60, None)];
+        let groups: Vec<Vec<&Row>> = vec![a.iter().collect(), b.iter().collect(), c.iter().collect(), d.iter().collect()];
+        let labels: Vec<String> = ["~/beta", "~/Alpha", "~/empty", "~/gamma"].map(String::from).to_vec();
+        assert_eq!(order_groups(&groups, &labels, SortKey::Priority, false), [(1, vec![0]), (0, vec![1, 0]), (3, vec![0])], "flagged repo first; empty dropped");
+        assert_eq!(order_groups(&groups, &labels, SortKey::Time, false), [(1, vec![0]), (3, vec![0]), (0, vec![0, 1])]);
+        assert_eq!(order_groups(&groups, &labels, SortKey::Time, true), [(0, vec![1, 0]), (3, vec![0]), (1, vec![0])], "reverse flips repos and rows");
+        assert_eq!(order_groups(&groups, &labels, SortKey::Name, false), [(1, vec![0]), (0, vec![0, 1]), (3, vec![0])], "repos by label A→Z, not by their first room");
+    }
+
+    #[test]
+    fn stopped_rooms_say_when_they_resume_and_compact_rows_carry_one_mark() {
+        assert_eq!(stalled_text("rate_limit", Some(1_000 + 61), 1_000), "rate_limit · auto-resume in 2m");
+        assert_eq!(stalled_text("overloaded", Some(1_000 + 7_260), 1_000), "overloaded · auto-resume in 2h01m");
+        assert_eq!(stalled_text("server_error", Some(900), 1_000), "server_error · needs you", "a resume time in the past");
+        assert_eq!(stalled_text("billing_error", None, 1_000), "billing_error · needs you");
+        let line = |u: Option<&str>| render_compact(&r("core", Status::Idle, 0, u), 100, 10, false);
+        assert!(line(Some("high")).starts_with("    ○ ▲ core"), "{}", line(Some("high")));
+        assert!(line(Some("med")).starts_with("    ○ ◆ core"));
+        assert!(line(Some("low")).starts_with("    ○ ▽ core"));
+        assert!(line(None).starts_with("    ○   core"), "the column keeps its width");
+        let col = |l: String| l[..l.find("core").unwrap()].chars().count();
+        assert_eq!(col(line(Some("high"))), col(line(None)), "aligned (in chars) with or without a mark");
     }
 
 }

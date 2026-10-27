@@ -5,6 +5,30 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.83] — 2026-10-27
+
+### Added
+- **Sắp xếp danh sách session: `--sort priority|time|name|status` và `-r`** trên `8sync ccc . ls`, `8sync . ls`, `8sync ls` và `8sync ls --all`. Owner (2026-10-27): "8sync . ls, 8sync ccc . ls chưa có sắp xếp theo time, priority".
+  - **Thứ tự cũ:** `ccc . ls` mới nhất trước; `. ls` và `ls` theo thứ tự registry; `ls --all` xếp repo theo hoạt động mới nhất, còn session trong repo theo registry.
+  - **Mặc định giờ là ưu tiên**, một thứ tự dùng chung (`session_view.rs` `SortKey` / `order`):
+    1. ▲ high;
+    2. ⚠ dừng vì lỗi API / hết usage;
+    3. ◆ med;
+    4. đang chạy;
+    5. ▽ low;
+    6. nghỉ.
+
+    Cùng mức thì xếp theo trạng thái, rồi mới nhất, rồi tên, nên kết quả không còn phụ thuộc thứ tự registry.
+  - **`ls --all`** xếp repo theo dòng đầu của nó (`--sort name` thì theo tên repo), và dạng compact có thêm một cột đánh dấu ▲ ◆ ▽ ⚠.
+  - **`--json`** theo cùng thứ tự với bản in. Không nơi dùng nào phụ thuộc thứ tự dòng: HQ floor tự `sortFloor`, room-end tìm theo `id`. `ccc . report` giữ mới nhất trước.
+  - **`Row` có thêm `urgency`**, lấy từ registry, nên `ls` / `ls --all` / HQ core cũng xếp được phòng cắm cờ lên đầu. JSON của `ls` không thêm trường mới; `ccc . ls --json` vẫn trả `urgency` như trước.
+  - Phòng đang dừng vì lỗi có thêm dòng `⚠ stopped rate_limit · auto-resume in 12m` (hoặc `· needs you`).
+  - Đo trên máy owner bằng bản 0.110.82 (trước thay đổi, best of 3): `ccc . ls` 71 ms, `ls --all` 215 ms với 120 session. Sắp theo ưu tiên chỉ đọc thêm bản ghi StopFailure nhỏ của mỗi phòng Claude Code.
+  - `scripts/uat/ls-urgency.sh` kiểm thứ tự mới và kiểm `id`/`urgency` đi đúng với dòng của nó sau khi sắp. Script báo rõ "chỉ chạy trên Linux": registry đọc qua `dirs::config_dir()`, hàm này bỏ qua `XDG_CONFIG_HOME` trên Windows và macOS, nên bản cũ vốn đã fail ở hai nền tảng đó.
+
+### Fixed
+- **`stalled_error` không bao giờ hiện cho phòng Claude Code.** `stalled_error_in` chỉ nhận engine `"claude"`, nhưng mọi phòng Claude Code có tên đều là row `"ccc"` (`uuid_rows`). Vì vậy `ls --json` luôn trả `stalled_error: null`, và HQ không thấy phòng nào dừng vì lỗi API / hết usage. Giờ nhận cả `"ccc"`, có test. Một bản ghi cũ hơn hoạt động của chính phòng hơn 120 giây thì bỏ qua: phòng đã chạy tiếp bằng đường khác, nên không báo "stalled" sai.
+
 ## [0.110.82] — 2026-10-25
 
 ### Added

@@ -52,6 +52,14 @@ pub struct Args {
     #[arg(long)]
     pub json: bool,
 
+    /// With `ls`/`--list`: order — priority (default: running/active first, then newest; omp rooms carry no flag) | time | name | status.
+    #[arg(long, value_name = "KEY", value_parser = clap::builder::ValueParser::new(|s: &str| s.parse::<crate::verbs::session_view::SortKey>()))]
+    pub sort: Option<crate::verbs::session_view::SortKey>,
+
+    /// With `ls`/`--list`: reverse the order.
+    #[arg(short = 'r', long)]
+    pub reverse: bool,
+
     /// With a bare `<name>`: run omp on this model (`--model <provider/model>`, e.g. zai/glm-5.3).
     #[arg(long)]
     pub model: Option<String>,
@@ -69,11 +77,12 @@ pub fn run(a: Args) -> Result<()> {
         .unwrap_or(("", &[][..]));
 
     // Registry-only ops — quick, no context seed or omp launch.
+    let sort = (a.sort.unwrap_or_default(), a.reverse);
     if a.list && verb.is_empty() {
-        return session::cmd_ls(&env, &root, a.json);
+        return session::cmd_ls(&env, &root, a.json, sort);
     }
     match verb {
-        "ls" | "list" => return session::cmd_ls(&env, &root, a.json),
+        "ls" | "list" => return session::cmd_ls(&env, &root, a.json, sort),
         "rm" => {
             let name = rest.first().context("usage: 8sync . rm <name> [--force]")?;
             return session::cmd_rm(&env, &root, name, a.force);
@@ -307,6 +316,22 @@ Session memory được omp tự quản (retain/recall/auto-compact). Không c�
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn dot_ls_takes_sort_and_reverse() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            a: Args,
+        }
+        let p = |v: &[&str]| Cli::try_parse_from(std::iter::once(".").chain(v.iter().copied())).map(|c| c.a);
+        let a = p(&["ls", "--sort", "name", "-r"]).unwrap();
+        assert_eq!((a.rest.as_slice(), a.sort, a.reverse), (["ls".to_string()].as_slice(), Some(crate::verbs::session_view::SortKey::Name), true));
+        let a = p(&["ls"]).unwrap();
+        assert_eq!((a.sort, a.reverse), (None, false));
+        assert!(p(&["ls", "--sort", "nope"]).is_err());
+    }
     use super::*;
 
     fn git(dir: &Path, args: &[&str]) -> bool {

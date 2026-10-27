@@ -35,6 +35,12 @@ jobs:
       - name: Release helper scripts
         shell: bash
         run: bash su-code/handoff/scripts/test-scripts.sh
+      # `ccc . ls` order, urgency chip and JSON against the real binary in a sandbox registry. Linux
+      # only: the sandbox needs XDG_CONFIG_HOME, which dirs::config_dir() ignores on Windows/macOS.
+      - name: UAT ls order + urgency
+        if: matrix.runner == 'ubuntu-latest'
+        shell: bash
+        run: cargo build --locked -p su-code --bin 8sync && bash scripts/uat/ls-urgency.sh target/debug/8sync
 
   minimal:
     runs-on: ubuntu-latest

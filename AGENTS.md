@@ -218,7 +218,7 @@ Nhiều feature song song trong 1 repo, mỗi cái 1 omp conversation cô lập.
 |---|---|
 | `8sync . <name>` | create-or-resume session theo tên |
 | `8sync . new <name> [--worktree]` | tạo session mới; `--worktree` = `git worktree` + branch `8sync/<name>` để cô lập file (2 feat sửa cùng file không đụng nhau) |
-| `8sync . ls` (hoặc `--list`, `--json`) | liệt kê session (★ = mới nhất; kèm branch + `*dirty`) |
+| `8sync . ls` (hoặc `--list`, `--json`) `[--sort priority\|time\|name\|status] [-r]` | liệt kê session (★ = dùng gần nhất; kèm branch + `*dirty`). Sắp xếp chung với `ccc . ls`, `ls`, `ls --all` (`session_view.rs` `SortKey`/`order`): mặc định priority = ▲ high → ⚠ dừng vì lỗi API/hết usage (bản ghi StopFailure chưa resume) → ◆ med → running/active → ▽ low → idle, cùng mức: trạng thái → mới nhất → tên; `ls --all` xếp repo theo dòng đầu của nó; `--json` cùng thứ tự; `ccc . report` giữ mới nhất trước |
 | `8sync . mv <old> <new>` | đổi tên (kèm `git worktree move` + rename branch) |
 | `8sync . rm <name> [--force]` | xoá session; guard worktree dirty/unmerged; `--force` xoá cả transcript + worktree |
 | `8sync . merge <name>... [--keep-worktree]` | land branch session vào nhánh hiện tại: `git merge-tree` preflight → `git merge --no-edit` → rebase-to-unblock → cleanup. **Local-only, không push** |
