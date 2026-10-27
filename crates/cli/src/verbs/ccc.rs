@@ -1467,8 +1467,11 @@ const ECC_REPO: &str = "affaan-m/ECC";
 fn apply_ecc_plugin(v: &mut Value) {
     let Some(obj) = v.as_object_mut() else { return };
     if let Some(m) = obj.entry("extraKnownMarketplaces").or_insert_with(|| json!({})).as_object_mut() {
-        m.entry(ECC_MARKETPLACE)
-            .or_insert_with(|| json!({ "source": { "source": "github", "repo": ECC_REPO }, "autoUpdate": true }));
+        let e = m.entry(ECC_MARKETPLACE).or_insert_with(|| json!({ "source": { "source": "github", "repo": ECC_REPO } }));
+        // `claude plugin marketplace add` rewrites the entry without `autoUpdate`.
+        if let Some(e) = e.as_object_mut() {
+            e.entry("autoUpdate").or_insert(json!(true));
+        }
     }
     if let Some(en) = obj.entry("enabledPlugins").or_insert_with(|| json!({})).as_object_mut() {
         en.entry(format!("ecc@{ECC_MARKETPLACE}")).or_insert(json!(true));
@@ -2884,6 +2887,9 @@ mod tests {
         let kept = user.clone();
         apply_ecc_plugin(&mut user);
         assert_eq!(user, kept);
+        let mut added_by_cli = json!({ "extraKnownMarketplaces": { "ecc": { "source": { "source": "github", "repo": "affaan-m/ECC" } } } });
+        apply_ecc_plugin(&mut added_by_cli);
+        assert_eq!(added_by_cli["extraKnownMarketplaces"]["ecc"]["autoUpdate"], json!(true));
         assert!(org_policy_with(None, None, false)["strictKnownMarketplaces"].as_array().unwrap().iter().any(|m| m["repo"] == "affaan-m/ECC"));
     }
 
