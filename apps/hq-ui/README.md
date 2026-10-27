@@ -6,14 +6,17 @@ Local team view for Claude Code sessions (contract: `docs/hq-ui-contract.md`). N
 pnpm install
 pnpm build          # eslint + next build (typecheck)
 pnpm test           # vitest: ingest mapping, validation, auth, inbox, heartbeat, delivery path
-PORT=8740 pnpm start
+pnpm dev            # or `pnpm start` after a build; port from PORT / HQ_UI_PORT (table below)
 ```
+
+`pnpm dev` / `pnpm start` go through `scripts/next.mjs`, which reads the port and runs Next with no shell, so
+they work the same on Windows (where pnpm runs scripts through cmd.exe), macOS and Linux.
 
 ## Environment
 
 | Var | Default | Meaning |
 |---|---|---|
-| `PORT` / `HQ_UI_PORT` | `8740` | Listen port (host is always 127.0.0.1). Passed to sessions as `HQ_UI_PORT` so their channel finds the UI. |
+| `PORT` / `HQ_UI_PORT` | `8740` | Listen port (host is always 127.0.0.1); `PORT` wins, an empty value counts as unset, and a value that is not a port (1-65535) stops `pnpm dev` / `pnpm start` with an error. Passed to sessions as `HQ_UI_PORT` so their channel finds the UI. |
 | `HQ_CHANNEL_FLAGS` | contract §3 flags | Extra `claude` argv for sessions started here, split on whitespace (no shell). `off` = no channel; owner messages are typed into the tmux pane. Unset = `--mcp-config ~/.config/8sync/hq/channel-mcp.json --dangerously-load-development-channels server:8sync-hq`, used only when that file exists. |
 
 Generate the channel config with `pnpm run mcp-config` in `apps/hq-channel`.
