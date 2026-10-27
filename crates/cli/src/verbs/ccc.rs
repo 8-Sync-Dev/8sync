@@ -1400,6 +1400,7 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
     };
     apply_kit_settings(&mut v, &exe, &skills)?;
     apply_lsp_plugins(&mut v, |bin| which::which(bin).is_ok());
+    apply_ecc_plugin(&mut v);
     for m in statusline::kit_apply(&mut v, &exe, &statusline::features(&env.home))? {
         ui::ok(&m);
     }
@@ -1450,6 +1451,33 @@ fn apply_lsp_plugins(v: &mut Value, on_path: impl Fn(&str) -> bool) {
         for p in wanted {
             en.entry(format!("{p}@{OFFICIAL_MARKETPLACE}")).or_insert(json!(true));
         }
+    }
+}
+
+/// ECC (github.com/affaan-m/ECC, MIT): skills, agents and commands under `ecc:*`, kept current by
+/// Claude Code's marketplace auto-update (off by default for third-party marketplaces, so set here).
+/// Its hooks stay off (`ECC_HOOKS_ENABLED`, read by ECC's `scripts/lib/hook-flags.js`): they log every
+/// Bash command, deny the first Edit, run `npx` formatters and `claude -p` summaries, and would track
+/// ECC's unpinned main on every tool call. Owner 2026-10-27: "sài mạnh cho claude code all máy tôi".
+const ECC_MARKETPLACE: &str = "ecc";
+const ECC_REPO: &str = "affaan-m/ECC";
+
+/// Insert-only, like the LSP plugins: `"ecc@ecc": false`, `autoUpdate: false` or
+/// `ECC_HOOKS_ENABLED=true` set by the user is kept.
+fn apply_ecc_plugin(v: &mut Value) {
+    let Some(obj) = v.as_object_mut() else { return };
+    if let Some(m) = obj.entry("extraKnownMarketplaces").or_insert_with(|| json!({})).as_object_mut() {
+        let e = m.entry(ECC_MARKETPLACE).or_insert_with(|| json!({ "source": { "source": "github", "repo": ECC_REPO } }));
+        // `claude plugin marketplace add` rewrites the entry without `autoUpdate`.
+        if let Some(e) = e.as_object_mut() {
+            e.entry("autoUpdate").or_insert(json!(true));
+        }
+    }
+    if let Some(en) = obj.entry("enabledPlugins").or_insert_with(|| json!({})).as_object_mut() {
+        en.entry(format!("ecc@{ECC_MARKETPLACE}")).or_insert(json!(true));
+    }
+    if let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() {
+        env.entry("ECC_HOOKS_ENABLED").or_insert(json!("false"));
     }
 }
 
@@ -2038,10 +2066,10 @@ fn fnv1a(s: &str) -> String {
 
 // ── org managed-settings policy ─────────────────────────────────────────────
 
-/// Marketplaces a managed policy lets people add: the official Anthropic one and 8sync's own
-/// (the kit plugin). `github` source shape: settings-reference#strictknownmarketplaces
-/// (https://code.claude.com/docs/en/settings-reference).
-const POLICY_MARKETPLACES: [&str; 3] = ["anthropics/claude-plugins-official", "8-Sync-Dev/8sync", "8-Sync-Dev/su-code"];
+/// Marketplaces a managed policy lets people add: the official Anthropic one, 8sync's own
+/// (the kit plugin) and ECC (the kit enables it). `github` source shape:
+/// settings-reference#strictknownmarketplaces (https://code.claude.com/docs/en/settings-reference).
+const POLICY_MARKETPLACES: [&str; 4] = ["anthropics/claude-plugins-official", "8-Sync-Dev/8sync", "8-Sync-Dev/su-code", ECC_REPO];
 /// MCP servers `--lock-mcp` allows. The kit mirrors none, so the lock admits no server until you add yours.
 const POLICY_MCP: [&str; 0] = [];
 
@@ -2838,6 +2866,31 @@ mod tests {
         let mut none = json!({});
         apply_lsp_plugins(&mut none, |_| false);
         assert_eq!(none, json!({}));
+    }
+
+    #[test]
+    fn ecc_plugin_enabled_with_auto_update_and_hooks_off_and_user_values_kept() {
+        let mut v = json!({});
+        apply_ecc_plugin(&mut v);
+        assert_eq!(v["extraKnownMarketplaces"]["ecc"]["source"]["repo"], json!("affaan-m/ECC"));
+        assert_eq!(v["extraKnownMarketplaces"]["ecc"]["autoUpdate"], json!(true));
+        assert_eq!(v["enabledPlugins"]["ecc@ecc"], json!(true));
+        assert_eq!(v["env"]["ECC_HOOKS_ENABLED"], json!("false"));
+        let before = v.clone();
+        apply_ecc_plugin(&mut v);
+        assert_eq!(v, before);
+        let mut user = json!({
+            "enabledPlugins": { "ecc@ecc": false },
+            "env": { "ECC_HOOKS_ENABLED": "true" },
+            "extraKnownMarketplaces": { "ecc": { "source": { "source": "github", "repo": "affaan-m/ECC" }, "autoUpdate": false } }
+        });
+        let kept = user.clone();
+        apply_ecc_plugin(&mut user);
+        assert_eq!(user, kept);
+        let mut added_by_cli = json!({ "extraKnownMarketplaces": { "ecc": { "source": { "source": "github", "repo": "affaan-m/ECC" } } } });
+        apply_ecc_plugin(&mut added_by_cli);
+        assert_eq!(added_by_cli["extraKnownMarketplaces"]["ecc"]["autoUpdate"], json!(true));
+        assert!(org_policy_with(None, None, false)["strictKnownMarketplaces"].as_array().unwrap().iter().any(|m| m["repo"] == "affaan-m/ECC"));
     }
 
     #[test]
