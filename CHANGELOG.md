@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- **`pnpm dev` / `pnpm start` của `apps/hq-ui` chạy được trên Windows.** Hai script dùng `${PORT:-${HQ_UI_PORT:-8740}}`, cú pháp chỉ shell POSIX hiểu. pnpm chạy script qua cmd.exe trên Windows, nên `next` nhận nguyên chuỗi đó làm port và không khởi động.
+  - Giờ cả hai gọi `node scripts/next.mjs dev|start`: port lấy từ `PORT`, rồi `HQ_UI_PORT`, rồi 8740 (biến rỗng coi như chưa đặt); host luôn là 127.0.0.1; Next chạy không qua shell trên cả ba OS.
+  - Port sai (vd `80a`, `0`, `65536`) báo lỗi rõ, không lặng lẽ dùng port khác.
+  - Bản release không đổi: nó chạy `node server.js`.
+
 ## [0.110.83] — 2026-10-27
 
 ### Added
