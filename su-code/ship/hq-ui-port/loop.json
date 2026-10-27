@@ -3,7 +3,8 @@
   "iter": 0,
   "max_iter": 12,
   "max_min": 90,
+  "note": "merged #234, released v0.110.84",
   "slug": "hq-ui-port",
   "started": 1793063517,
-  "stopped": null
+  "stopped": "done"
 }

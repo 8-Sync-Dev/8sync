@@ -3,7 +3,8 @@
   "iter": 0,
   "max_iter": 12,
   "max_min": 90,
+  "note": "merged #235, released v0.110.84",
   "slug": "hq-ui-next-cve",
   "started": 1793064059,
-  "stopped": null
+  "stopped": "done"
 }
