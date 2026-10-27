@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- **`8sync ccc kit` bật plugin ECC trên mọi máy** (github.com/affaan-m/ECC, MIT: 71 agent, 311 skill, 97 command dưới namespace `ecc:*`). Owner (2026-10-27): "auto cài … vào harness liên tục", "sài mạnh cho claude code all máy tôi".
+  - **Cập nhật liên tục:** kit ghi marketplace `ecc` với `autoUpdate: true` vào `extraKnownMarketplaces` và bật `ecc@ecc`. Mặc định Claude Code không tự cập nhật marketplace bên thứ ba; khi bật, nó tự kéo bản mới sau tin nhắn đầu và bản mới có hiệu lực từ lần mở sau. Máy mới cài plugin trong nền ngay phiên đầu.
+  - **Hook ECC tắt** (`ECC_HOOKS_ENABLED=false` trong `env`): hook của ECC ghi mọi lệnh Bash ra `~/.claude/bash-commands.log`, chặn lần Edit đầu (làm kẹt `/ship-loop` và `/autopilot`), chạy formatter qua `npx` và `claude -p` để tóm tắt, và chạy code mới nhất của main chưa ai review trên mỗi tool call. Skill, agent và command của ECC vẫn dùng đủ.
+  - **Giá trị của owner được giữ** (chỉ thêm, không ghi đè): đặt `"ecc@ecc": false`, `autoUpdate: false` hoặc `ECC_HOOKS_ENABLED=true` thì kit giữ nguyên.
+  - Policy org (`strictKnownMarketplaces`) cho phép thêm `affaan-m/ECC`.
+
 ## [0.110.85] — 2026-10-27
 
 ### Added
