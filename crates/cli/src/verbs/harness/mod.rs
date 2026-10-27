@@ -23,6 +23,7 @@ mod model;
 mod local_model;
 mod custom_model;
 mod browser;
+mod ego;
 pub(crate) mod features;
 pub(crate) mod legacy;
 pub(crate) mod trail;
@@ -67,6 +68,7 @@ mod toolstats;
       8sync harness add-model list|rm <provider/model>  list / remove registered remote models
       8sync trail [dir|--all ROOT|status|off]  STEP 0: install trail-code, telemetry off, wire repo(s) for Claude Code (not a harness sub-command)
       8sync harness browser [fix|status|off]  point omp's browser at system Chromium (ungoogled) so it reaches the internet
+      8sync harness browser ego [install|status]  install the official ego lite browser (Windows x64; macOS link) — agents drive your logged-in browser via `ego-browser`
 
     WHAT init DEPLOYS
       always-on : trail · karpathy · ponytail · assp · impeccable · taste · 8sync-cli · image-routing
@@ -258,6 +260,7 @@ fn print_help() {
     println!("{}", crate::brand::render("  8sync harness add-local-model <path> [name]  serve a local GGUF via mistral.rs (Rust) + register as omp `local/<name>`"));
     println!("{}", crate::brand::render("  8sync harness add-model <provider/model> --url <baseUrl>  register a REMOTE model omp's catalog lacks (custom provider)"));
     println!("{}", crate::brand::render("  8sync harness browser [fix|status|off]  point omp's browser at system Chromium (ungoogled) — fixes browser control not reaching the internet"));
+    println!("{}", crate::brand::render("  8sync harness browser ego [install|status]  install the official ego lite browser (lite.ego.app) — agents drive your logged-in browser via `ego-browser`"));
     println!("{}", crate::brand::render("  8sync trail [dir|--all ROOT|status|off]  STEP 0: install trail-code, telemetry off, wire repo(s) for Claude Code"));
     #[cfg(feature = "web")]
     println!("{}", crate::brand::render("  8sync harness web [--port N]    local dashboard (axum+Vite): skills/memory/engines/team/submodules"));

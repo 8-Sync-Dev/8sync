@@ -6,6 +6,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [Unreleased]
 
 ### Added
+- **`8sync harness browser ego [install|status]` cài trình duyệt ego lite chính thức** (citrolabs, https://lite.ego.app). Với ego lite, agent điều khiển chính trình duyệt đã đăng nhập của owner qua lệnh `ego-browser`, thay vì đi qua một Chromium riêng. Owner (2026-10-27): "harness nên cho ego-lite cài về window … làm control browser chuẩn hơn".
+  - **Windows x64:** lấy link bộ cài từ README chính thức của citrolabs/ego-lite; nếu không đọc được README thì dùng link đã ghim. Chỉ nhận URL `cdn.ego.app/setup/windows/x64/`. Bộ cài được tải vào thư mục tạm riêng, và chỉ chạy khi chữ ký Authenticode là `Valid` và người ký là `CITRO LABS PTE. LIMITED`. Bản không ký chỉ chạy khi đặt `EIGHTSYNC_EGO_ALLOW_UNSIGNED=1`. Ký bởi bên khác hoặc chữ ký hỏng thì không bao giờ chạy.
+  - **macOS:** in link `.dmg` chính thức. **Linux:** ego lite chưa có bản, nên vẫn dùng `8sync harness browser` (Chromium hệ thống).
+  - **Skill không bị chép đôi:** lệnh `ego-browser` và skill `ego-browser` đều do app cài lúc onboarding, nên 8sync không ghi bản skill riêng. `status` cho biết hai thứ này đang nằm đâu, kể cả PATH mà terminal cũ chưa thấy.
 - **`/autoresearch` thành skill riêng.** Trước đây nó chỉ là một mode của `research-paper`, và bản ở `~/.omp/skills/autoresearch` là cài tay với `references/` rỗng. Owner (2026-10-27): "enhance skills deep-research và auto research tham khảo feynman … phải mạnh nhất".
   - **Chỉ owner khởi động** (`disable-model-invocation`), vì đây là vòng lặp sửa code nhiều giờ.
   - **Start card trước baseline:** một `AskUserQuestion` gồm target, lệnh bench, correctness gate, scope + file đóng băng, environment và budget (phút CI/USD). Card này gộp gather, environment và confirm gate của Feynman v0.5.58.
