@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.84] — 2026-10-27
+
+### Fixed
+- **`pnpm dev` / `pnpm start` của `apps/hq-ui` chạy được trên Windows.** Hai script dùng `${PORT:-${HQ_UI_PORT:-8740}}`, cú pháp chỉ shell POSIX hiểu. pnpm chạy script qua cmd.exe trên Windows, nên `next` nhận nguyên chuỗi đó làm port và không khởi động.
+  - Giờ cả hai gọi `node scripts/next.mjs dev|start`: port lấy từ `PORT`, rồi `HQ_UI_PORT`, rồi 8740 (biến rỗng coi như chưa đặt); host luôn là 127.0.0.1; Next chạy không qua shell trên cả ba OS.
+  - Port sai (vd `80a`, `0`, `65536`) báo lỗi rõ, không lặng lẽ dùng port khác.
+  - Bản release không đổi: nó chạy `node server.js`.
+
 ### Security
 - **HQ UI lên Next 16.4.1** (từ 16.4.0). `pnpm audit --prod` của `apps/hq-ui` báo GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr (critical, RCE) và GHSA-p3m5-59mp-jv5r (high, DoS) cho Next 16.0.0–16.4.0, đều sửa ở 16.4.1. HQ không dùng image optimizer (`images.unoptimized`), `use cache` hay server action nên mức lộ thấp, nhưng `8sync hq ui --public` có thể đưa HQ ra internet và bản release đóng gói đúng Next đang khoá. `eslint-config-next` lên cùng bản; lockfile chỉ đổi các gói `next`, `@next/*`, `eslint-config-next`.
 

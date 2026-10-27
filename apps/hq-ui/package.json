@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 127.0.0.1 -p ${PORT:-${HQ_UI_PORT:-8740}}",
+    "dev": "node scripts/next.mjs dev",
     "build": "eslint && next build",
-    "start": "next start -H 127.0.0.1 -p ${PORT:-${HQ_UI_PORT:-8740}}",
+    "start": "node scripts/next.mjs start",
     "lint": "eslint",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
