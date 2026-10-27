@@ -9,6 +9,7 @@
 //! on Fedora) and exports those vars in zsh/bash/fish so EVERY omp launch —
 //! direct or via `8sync .`/`8sync ai` — uses it. Idempotent;
 //! `off` reverts to omp's bundled chromium, `status` shows the current wiring.
+//! `ego [install|status]` installs the official ego lite browser instead (see `ego.rs`).
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 
@@ -25,6 +26,7 @@ pub(crate) fn harness_browser(env: &env_detect::Env, args: &[String]) -> Result<
             Ok(())
         }
         Some("off") | Some("unset") | Some("revert") => unset(),
+        Some("ego") => super::ego::harness_ego(&args[1..]),
         _ => fix(env),
     }
 }
