@@ -1461,9 +1461,11 @@ fn apply_lsp_plugins(v: &mut Value, on_path: impl Fn(&str) -> bool) {
 /// ECC's unpinned main on every tool call. Owner 2026-10-27: "sài mạnh cho claude code all máy tôi".
 const ECC_MARKETPLACE: &str = "ecc";
 const ECC_REPO: &str = "affaan-m/ECC";
+/// Name Claude Code gives ECC's chrome-devtools server (`plugin:<plugin>:<server>`).
+const ECC_BROWSER_MCP: &str = "plugin:ecc:chrome-devtools";
 
-/// Insert-only, like the LSP plugins: `"ecc@ecc": false`, `autoUpdate: false` or
-/// `ECC_HOOKS_ENABLED=true` set by the user is kept.
+/// Insert-only, like the LSP plugins: `"ecc@ecc": false`, `autoUpdate: false`,
+/// `ECC_HOOKS_ENABLED=true` or other `deniedMcpServers` entries set by the user are kept.
 fn apply_ecc_plugin(v: &mut Value) {
     let Some(obj) = v.as_object_mut() else { return };
     if let Some(m) = obj.entry("extraKnownMarketplaces").or_insert_with(|| json!({})).as_object_mut() {
@@ -1478,6 +1480,15 @@ fn apply_ecc_plugin(v: &mut Value) {
     }
     if let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() {
         env.entry("ECC_HOOKS_ENABLED").or_insert(json!("false"));
+    }
+    // ECC's root `.mcp.json` starts chrome-devtools via `npx -y` (a download each session) while
+    // its plugin.json lists none; ego-browser covers browsing (owner 2026-10-27). The denylist is
+    // honoured in user settings and keeps the plugin's skills, agents and commands.
+    if let Some(d) = obj.entry("deniedMcpServers").or_insert_with(|| json!([])).as_array_mut() {
+        let deny = json!({ "serverName": ECC_BROWSER_MCP });
+        if !d.contains(&deny) {
+            d.push(deny);
+        }
     }
 }
 
@@ -2869,13 +2880,14 @@ mod tests {
     }
 
     #[test]
-    fn ecc_plugin_enabled_with_auto_update_and_hooks_off_and_user_values_kept() {
+    fn ecc_plugin_enabled_with_auto_update_hooks_off_browser_mcp_denied_and_user_values_kept() {
         let mut v = json!({});
         apply_ecc_plugin(&mut v);
         assert_eq!(v["extraKnownMarketplaces"]["ecc"]["source"]["repo"], json!("affaan-m/ECC"));
         assert_eq!(v["extraKnownMarketplaces"]["ecc"]["autoUpdate"], json!(true));
         assert_eq!(v["enabledPlugins"]["ecc@ecc"], json!(true));
         assert_eq!(v["env"]["ECC_HOOKS_ENABLED"], json!("false"));
+        assert_eq!(v["deniedMcpServers"], json!([{ "serverName": "plugin:ecc:chrome-devtools" }]));
         let before = v.clone();
         apply_ecc_plugin(&mut v);
         assert_eq!(v, before);
@@ -2884,9 +2896,13 @@ mod tests {
             "env": { "ECC_HOOKS_ENABLED": "true" },
             "extraKnownMarketplaces": { "ecc": { "source": { "source": "github", "repo": "affaan-m/ECC" }, "autoUpdate": false } }
         });
-        let kept = user.clone();
+        let mut kept = user.clone();
+        kept["deniedMcpServers"] = json!([{ "serverName": "plugin:ecc:chrome-devtools" }]);
         apply_ecc_plugin(&mut user);
         assert_eq!(user, kept);
+        let mut own_deny = json!({ "deniedMcpServers": [{ "serverName": "x" }] });
+        apply_ecc_plugin(&mut own_deny);
+        assert_eq!(own_deny["deniedMcpServers"], json!([{ "serverName": "x" }, { "serverName": "plugin:ecc:chrome-devtools" }]));
         let mut added_by_cli = json!({ "extraKnownMarketplaces": { "ecc": { "source": { "source": "github", "repo": "affaan-m/ECC" } } } });
         apply_ecc_plugin(&mut added_by_cli);
         assert_eq!(added_by_cli["extraKnownMarketplaces"]["ecc"]["autoUpdate"], json!(true));

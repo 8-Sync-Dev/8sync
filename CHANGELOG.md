@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.87] — 2026-10-27
+
+### Changed
+- **`8sync ccc kit` tắt MCP chrome-devtools của ECC trên mọi máy, giữ skill/agent/command `ecc:*`.** Owner (2026-10-27): "Tắt MCP chrome-devtools của ECC trên mọi máy", "spam terminal ram, cpu lag". `.mcp.json` gốc của ECC chạy `npx -y chrome-devtools-mcp@1.10.1` ở mỗi phiên (4 tiến trình node/cmd mỗi phiên; máy owner có 14 phiên = 56 tiến trình) dù `plugin.json` ghi không có MCP; duyệt web đã có ego-browser.
+  - Kit thêm `{ "serverName": "plugin:ecc:chrome-devtools" }` vào `deniedMcpServers` trong `~/.claude/settings.json` (Claude Code nhận denylist ở settings người dùng, code.claude.com/docs/en/managed-mcp). Entry deny khác của người dùng được giữ; không thêm trùng.
+  - Kiểm trên Windows: trước khi deny `claude mcp list` hiện `plugin:ecc:chrome-devtools … Connected`, sau khi deny server biến mất. Phiên đang mở vẫn giữ tiến trình cũ tới khi đóng phiên.
+
 ## [0.110.86] — 2026-10-27
 
 ### Added
