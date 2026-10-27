@@ -1,7 +1,7 @@
 ---
 name: ship-tick
-description: One iteration of an OPEN loop the owner already started (/ship-loop, /autopilot, /ship-auto, /ship --release) — /ship-tick [slug]. Model-invocable on purpose so a Claude Code scheduled task (CronCreate "*/5 * * * *") can re-enter the loop whenever the session goes idle (the /loop + loop-me pattern): standup, pick the red criterion or next step, research when stuck, implement the smallest step, check with evidence, tick; on done/stop it closes the loop and deletes its own cron. Never starts a level 3–5 loop by itself.
-argument-hint: [slug]
+description: One iteration of an OPEN loop the owner already started (/ship-loop, /autopilot, /ship-auto, /ship --release) — /ship-tick [slug]. Model-invocable on purpose so a Claude Code scheduled task (CronCreate "*/5 * * * *") can re-enter the loop whenever the session goes idle (the /loop + loop-me pattern) — standup, pick the red criterion or next step, research when stuck, implement the smallest step, check with evidence, tick; on done/stop it closes the loop and deletes its own cron. Never starts a level 3–5 loop by itself.
+argument-hint: "[slug]"
 ---
 Slug: $ARGUMENTS (rỗng → dòng đầu của `su-code/ship/ACTIVE`, bỏ dòng `autopilot`)
 

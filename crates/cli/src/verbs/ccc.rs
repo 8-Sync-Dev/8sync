@@ -1109,7 +1109,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 41] = [
+const KIT_FILES: [(&str, &str); 45] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -1121,6 +1121,7 @@ const KIT_FILES: [(&str, &str); 41] = [
     ("claude/agents/architect.md", "agents/architect.md"),
     ("claude/agents/qa.md", "agents/qa.md"),
     ("claude/agents/critic.md", "agents/critic.md"),
+    ("claude/agents/research-reviewer.md", "agents/research-reviewer.md"),
     ("claude/skills/ship/SKILL.md", "skills/ship/SKILL.md"),
     ("claude/skills/planning/SKILL.md", "skills/planning/SKILL.md"),
     ("claude/skills/ui-ux/SKILL.md", "skills/ui-ux/SKILL.md"),
@@ -1143,6 +1144,10 @@ const KIT_FILES: [(&str, &str); 41] = [
     ("skills/aup-audit/8sync-anthropic-rules.md", "skills/aup-audit/8sync-anthropic-rules.md"),
     ("skills/deep-research/SKILL.md", "skills/deep-research/SKILL.md"),
     ("skills/deep-research/references/binary-weight-audit.md", "skills/deep-research/references/binary-weight-audit.md"),
+    ("skills/deep-research/references/templates.md", "skills/deep-research/references/templates.md"),
+    ("skills/deep-research/references/large-sources.md", "skills/deep-research/references/large-sources.md"),
+    // MIT notice for the Feynman-derived research skills and agents (must travel with the copies).
+    ("skills/deep-research/LICENSE-feynman.md", "skills/deep-research/LICENSE-feynman.md"),
     // Mod `8sync-hints` (Claude Code function hooks): a plugin folder under ~/.claude/skills is
     // auto-loaded, so this is all it takes for ghost text + typeahead + the band above the prompt.
     ("configs/claude/mods/8sync-hints/.claude-plugin/plugin.json", "skills/8sync-hints/.claude-plugin/plugin.json"),

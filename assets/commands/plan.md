@@ -13,7 +13,7 @@ This command **extends omp canonically** — every step composes an omp-native p
 | step | omp primitive it extends | why that one |
 |------|--------------------------|--------------|
 | Ground | `recall`/`reflect` + `su-code/STATE.md` + `KNOWLEDGE.md` | past decisions live in Mnemopi + project memory; not re-deriving |
-| Research | trail (`trail ask` / `trail callers`) · `web_search` · feynman skills (`deep-research`/`research-paper`) · `last30days` | cheapest-first code intel + grounded external facts |
+| Research | trail (`trail ask` / `trail callers`) · `web_search` · feynman skills (`deep-research`/`research-paper`, owner-run `/autoresearch` for benchmark loops) · `last30days` | cheapest-first code intel + grounded external facts |
 | Decompose | your own judgement (NEVER a planning subagent) + `engine_plan` | the top-level decomposition is taste; the ledger is omp's |
 | Review | `task` → `reviewer` (fresh context) | an author cannot see the hole in their own plan |
 | Handoff | `engine_status` + `su-code/STATE.md` | durable state survives compaction + cold resume |
@@ -35,7 +35,7 @@ State the verdict in one line before continuing.
 ## 2. Research — resolve unknowns BEFORE the plan, not during it
 The part every planner skips. A plan built on guesses is a guess wearing a Gantt chart.
 - **Codebase unknowns** → `trail ask` / `trail callers <symbol>`.
-- **Domain / library / API unknowns** → `librarian` subagent to read the dependency's real source + feynman skills (`deep-research`/`research-paper`) + `web_search`; `last30days` when recency matters (a 2023 answer about a 2026 API is a liability).
+- **Domain / library / API unknowns** → `librarian` subagent to read the dependency's real source + feynman skills (`deep-research`/`research-paper`) + `web_search`; measuring on our own code → suggest `/autoresearch` to the owner; `last30days` when recency matters (a 2023 answer about a 2026 API is a liability).
 - Write every conclusion into `su-code/STATE.md` under `## Assumptions`, each with its **source** (a path, a URL, a symbol). An assumption with no source is a guess wearing a costume.
 
 **Gate:** every unknown is either answered or explicitly listed as an accepted risk. Then continue.

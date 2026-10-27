@@ -1,7 +1,7 @@
 ---
 name: autopilot
 description: Unattended backlog runner, level 5 — /autopilot. Picks items from labelled GitHub issues, STATE.md Next, or unguarded failure lines, runs each as /ship-loop (no release), batches green PRs, then ONE Ship question; writes a brief to STATE.md. Owner-only; also headless via claude -p.
-argument-hint: [--max-items 5] [--hours 8] [--backlog issues|state|knowledge]
+argument-hint: "[--max-items 5] [--hours 8] [--backlog issues|state|knowledge]"
 disable-model-invocation: true
 ---
 Tham số: $ARGUMENTS

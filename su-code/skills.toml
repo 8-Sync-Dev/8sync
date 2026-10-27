@@ -12,6 +12,10 @@ when = "always"
 src = "builtin:deep-research"
 when = "on-demand"
 
+[autoresearch]
+src = "builtin:autoresearch"
+when = "on-demand"
+
 [image-routing]
 src = "builtin:image-routing"
 when = "always"

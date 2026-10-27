@@ -6,7 +6,7 @@ allowed-tools: Bash(docker:*), Bash(modal:*), Bash(runpodctl:*)
 
 # Remote Compute
 
-Ported from `companion-inc/feynman`'s `docker`, `modal-compute`, and `runpod-compute` skills (generic CLI usage — no feynman dependency). One skill, three backends: the agent stays on the host, the job runs elsewhere, raw outputs come back into the artifact folder.
+Ported from `companion-inc/feynman`'s `docker`, `modal-compute`, and `runpod-compute` skills (MIT, Copyright (c) 2026 Companion, Inc.; notice in `deep-research/LICENSE-feynman.md`) (generic CLI usage — no feynman dependency). One skill, three backends: the agent stays on the host, the job runs elsewhere, raw outputs come back into the artifact folder.
 
 ## Pick a backend
 
@@ -16,7 +16,7 @@ Ported from `companion-inc/feynman`'s `docker`, `modal-compute`, and `runpod-com
 | Burst GPU, bounded job, no state between runs | **Modal** | `command -v modal` |
 | Long run, persistent state, large datasets, SSH between iterations | **RunPod** | `command -v runpodctl` |
 
-Never install packages, start training, or run an experiment before the user has confirmed the environment (`research-paper` asks this explicitly). Tie every remote resource to a named replication/benchmark objective — this skill is not for deploying services, unrelated batch jobs, or provider administration.
+Never install packages, start training, or run an experiment before the user has confirmed the environment (`research-paper` and `autoresearch` ask this explicitly). Tie every remote resource to a named replication/benchmark objective — this skill is not for deploying services, unrelated batch jobs, or provider administration.
 
 ---
 
@@ -62,7 +62,7 @@ docker run --rm --gpus all -v "$(pwd)":/workspace -w /workspace pytorch/pytorch:
 
 ### Persistent containers
 
-For an iterative loop (e.g. the `research-paper` autoresearch loop), use a named container instead of `--rm` so installed packages survive across iterations:
+For an iterative loop (e.g. the `autoresearch` loop), use a named container instead of `--rm` so installed packages survive across iterations:
 
 ```bash
 docker create --name <name> -v "$(pwd)":/workspace -w /workspace python:3.11 tail -f /dev/null

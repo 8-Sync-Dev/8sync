@@ -1,7 +1,7 @@
 ---
 name: sec
 description: Quét bảo mật diff hoặc repo hiện tại — secret (không in giá trị), file nhạy cảm đang track/trong history, dependency audit, guard/hook/deny rule của kit, rồi review code đổi theo OWASP. Dùng khi user gõ /sec, trước commit/PR/release, hoặc sau khi diff đụng auth, input, file credential, dependency.
-argument-hint: [diff | repo]
+argument-hint: "[diff | repo]"
 ---
 Mặc định quét diff hiện tại (`git diff` + file untracked); `repo` hoặc không có diff → cả repo. Chỉ báo file:dòng + loại, KHÔNG in giá trị secret.
 

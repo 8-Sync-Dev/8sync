@@ -1,6 +1,6 @@
 ---
 name: trail
-description: Use this skill on EVERY question that touches code — "where is X defined", "who calls Y", "how does Z work", "what breaks if I change W", "outline this file", "map this repo". STEP 0 of the 8sync harness: ask the code map (`trail`, deterministic tree-sitter, no model call) BEFORE grep / find / Read.
+description: Use this skill on EVERY question that touches code — "where is X defined", "who calls Y", "how does Z work", "what breaks if I change W", "outline this file", "map this repo". STEP 0 of the 8sync harness — ask the code map (`trail`, deterministic tree-sitter, no model call) BEFORE grep / find / Read.
 ---
 
 # trail — code map for agents (STEP 0, before grep)

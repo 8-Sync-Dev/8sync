@@ -14,7 +14,7 @@ use crate::{assets, env_detect, ui};
 /// Module-level so the guard tests can assert BOTH directions against the real
 /// data — a fn-local literal can only be text-scraped, and the direction that
 /// actually bites (an asset dir nobody registered) needs the list itself.
-const BUNDLED_SKILLS: [(&str, &str); 33] = [
+const BUNDLED_SKILLS: [(&str, &str); 34] = [
     ("skills/trail",                   "trail"),
     ("skills/karpathy-guidelines",     "karpathy-guidelines"),
     ("skills/ponytail",                "ponytail"),
@@ -41,6 +41,7 @@ const BUNDLED_SKILLS: [(&str, &str); 33] = [
     ("skills/branch-sync",             "branch-sync"),
     ("skills/super-pdf",             "super-pdf"),
     ("skills/deep-research",           "deep-research"),
+    ("skills/autoresearch",            "autoresearch"),
     ("skills/aup-audit",               "aup-audit"),
     ("skills/research-paper",          "research-paper"),
     ("skills/remote-compute",          "remote-compute"),
@@ -1773,6 +1774,98 @@ mod bundled_tests {
              BUNDLED_SKILLS, or to this test's OPT_IN list if it is deliberately \
              opt-in."
         );
+    }
+
+    /// Every shipped skill, agent, command and rule frontmatter must load in a strict
+    /// YAML parser, not only in Claude Code's lenient one. omp, pi/Feynman and js-yaml
+    /// reject a plain scalar that holds `: ` ("Nested mappings are not allowed in
+    /// compact mappings"), opens with an indicator (`[a] b` is a list followed by junk),
+    /// or has text after a closing quote, and drop the whole skill; ` #` silently cuts
+    /// the value as a comment (agent `pm` lost half its description that way). The
+    /// owner hit the first case on a workspace skill (2026-10-27). Quote the value, or
+    /// reword it.
+    #[test]
+    fn shipped_frontmatter_is_strict_yaml_safe() {
+        let mut bad = Vec::new();
+        for path in ["skills/", "claude/", "commands/", "rules/"].into_iter().flat_map(crate::assets::iter_under) {
+            let md_dir = ["claude/agents/", "commands/", "rules/"].iter().any(|d| path.starts_with(d));
+            if !(path.ends_with("/SKILL.md") || (md_dir && path.ends_with(".md"))) {
+                continue;
+            }
+            let Some(body) = crate::assets::read(&path) else { continue };
+            bad.extend(frontmatter_breaks(&body).into_iter().map(|k| format!("{path}: {k}")));
+        }
+        assert!(bad.is_empty(), "frontmatter a strict YAML parser rejects or cuts (quote the value or reword): {bad:#?}");
+    }
+
+    /// Frontmatter keys of `body` a strict YAML parser rejects or cuts (empty = fine).
+    fn frontmatter_breaks(body: &str) -> Vec<String> {
+        fn plain_breaks(v: &str, first: bool) -> bool {
+            let opens = first
+                && (v.starts_with(['[', '{', '&', '*', '!', '%', '@', '`', '#', ',', ']', '}'])
+                    || v.starts_with("- ")
+                    || v.starts_with("? ")
+                    || v == "-");
+            opens || v.contains(": ") || v.ends_with(':') || v.contains(" #") || v.contains("\t#")
+        }
+        let mut bad = Vec::new();
+        let lines: Vec<&str> = body.trim_start_matches('\u{feff}').lines().collect();
+        if lines.first().map(|l| l.trim()) != Some("---") {
+            return bad;
+        }
+        // No closing fence: not frontmatter, nothing to parse.
+        let Some(end) = lines.iter().skip(1).position(|l| l.trim() == "---") else { return bad };
+        let mut key = "";
+        let mut in_plain = false; // continuing a multi-line plain scalar
+        for line in &lines[1..=end] {
+            if line.starts_with([' ', '\t']) {
+                // Indented: the rest of a plain scalar, or a nested block under an empty key.
+                if in_plain && plain_breaks(line.trim(), false) {
+                    bad.push(format!("{key} (continuation)"));
+                }
+                continue;
+            }
+            in_plain = false;
+            if line.starts_with('#') {
+                continue;
+            }
+            let Some((k, value)) = line.split_once(':') else { continue };
+            key = k;
+            let v = value.trim();
+            if let Some(q) = v.chars().next().filter(|c| *c == '"' || *c == '\'') {
+                if v.len() < 2 || !v.ends_with(q) {
+                    bad.push(format!("{key} (text after the closing quote)"));
+                }
+                continue;
+            }
+            if v.is_empty() || v.starts_with(['|', '>']) {
+                continue;
+            }
+            in_plain = true;
+            if plain_breaks(v, true) {
+                bad.push(key.to_string());
+            }
+        }
+        bad
+    }
+
+    #[test]
+    fn frontmatter_check_catches_what_strict_yaml_rejects() {
+        let fm = |body: &str| frontmatter_breaks(&format!("---\nname: x\n{body}\n---\nbody: not: frontmatter\n"));
+        // Rejected or cut by strict parsers.
+        assert_eq!(fm("description: Dùng khi QA chấm (dashboard: tab Đánh giá)"), ["description"]);
+        assert_eq!(fm("description: owner (qua Discord #owner-desk) thành task"), ["description"]);
+        assert_eq!(fm("argument-hint: [--max-items 5] [--hours 8]"), ["argument-hint"]);
+        assert_eq!(fm("description: \"quoted\" then text"), ["description (text after the closing quote)"]);
+        assert_eq!(fm("description: #starts like a comment"), ["description"]);
+        assert_eq!(fm("description: first line\n  second line: breaks"), ["description (continuation)"]);
+        // Fine.
+        assert!(fm("description: Dùng khi QA chấm — dashboard, tab Đánh giá").is_empty());
+        assert!(fm("argument-hint: \"[--max-items 5] [--hours 8]\"").is_empty());
+        assert!(fm("homepage: https://example.com/a:b").is_empty());
+        assert!(fm("description: >-\n  folded: anything goes here").is_empty());
+        assert!(fm("metadata:\n  type: user").is_empty());
+        assert!(frontmatter_breaks("---\nno closing fence: here").is_empty());
     }
 }
 

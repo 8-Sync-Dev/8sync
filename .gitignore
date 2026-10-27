@@ -6,6 +6,9 @@ graft/
 .gs/
 # Large-scope feature-planning evidence screenshots (regenerable binaries):
 su-code/planning/**/evidence-*.png
+# Research downloads (third-party copies) and experiment state (deep-research, autoresearch):
+outputs/.notes/
+outputs/autoresearch/
 # Secrets — NEVER commit:
 .env
 .env.*

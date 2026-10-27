@@ -1,6 +1,6 @@
 ---
 name: clean
-description: Dọn rác dev trên máy — /clean, hoặc tự dùng ngay sau khi chạy CI/test/build local, train/finetune, docker build/pull, tải model AI (hf download, ollama pull, LM Studio), khi đĩa đầy hay máy nặng. Chạy `8sync clean --dev` cho MỌI dự án Claude Code từng làm trên máy: tự xoá phần build/tải lại được, gom model, kết quả train và volume Docker vào MỘT câu hỏi cho owner.
+description: Dọn rác dev trên máy — /clean, hoặc tự dùng ngay sau khi chạy CI/test/build local, train/finetune, docker build/pull, tải model AI (hf download, ollama pull, LM Studio), khi đĩa đầy hay máy nặng. Chạy `8sync clean --dev` cho MỌI dự án Claude Code từng làm trên máy — tự xoá phần build/tải lại được, gom model, kết quả train và volume Docker vào MỘT câu hỏi cho owner.
 argument-hint: "[--deep] [--root <thư mục>]"
 ---
 Thêm: $ARGUMENTS
