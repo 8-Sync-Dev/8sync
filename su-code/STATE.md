@@ -19,6 +19,8 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.84: hq-ui `pnpm dev`/`pnpm start` work on Windows (`scripts/next.mjs`, no POSIX `${PORT:-…}`); HQ on Next 16.4.1 (GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr, GHSA-p3m5-59mp-jv5r).
+v0.110.83: `--sort priority|time|name|status` on every session list.
 v0.110.81: STEP 0 = Trail-code (`8sync trail`); codegraph, codebase-memory-mcp, serena removed with one-time legacy cleanup.
 v0.110.79: `8sync mcp install --pc` — Claude Desktop controls the PC through server `8sync-pc` (pc_run/read/write/list) behind the ccc guard, credential-path refusals, audit log and `8sync mcp pc on|off`.
 v0.110.78: sleep work / eco / mcp; size ceiling 8192 KiB.
@@ -34,9 +36,15 @@ v0.110.36: stuck-question relay — idle room ending on an unanswered AskUserQue
 v0.110.29: tick auto chạy server 60 s (không cần tab); Báo cáo có dòng +/− từ transcript; phòng giữ card giữ thư mục build; guard nhắc kết thúc lượt khi có lệnh nền. Đang UAT: quét transcript phòng xem sau khi bị chặn `sleep` phòng làm gì. Chờ owner: repo công khai, token HQ, merge tay zus-backend #5-#14.
 
 ## Next
-- Upstream Windows bug: hq ingest stores NTFS inode > 2^53 in `ingest_state.offset` → RangeError (fix: bigint stat + `setReadBigInts`).
 - omp rooms: `last_used` side effect; `nudge_gate` ties omp to the Claude lease (design call).
-- apps/hq-ui `start` script uses POSIX `${PORT:-…}` (Windows dev only; release asset runs `node server.js`).
+
+## Brief — /autopilot "auto check", 2026-10-27 (2 items, ~1 h)
+- Done: hq-ui-port → PR #234 (e509184): `pnpm dev`/`start` via `scripts/next.mjs`. Evidence `su-code/ship/hq-ui-port/LOOP.md` C1–C4 (Windows UAT HTTP 200 on 8791; 1004 tests; CI 9/9).
+- Done: hq-ui-next-cve → PR #235: Next 16.4.1, found by the /sec `pnpm audit` step (2 critical, 1 high). Evidence `su-code/ship/hq-ui-next-cve/LOOP.md` C1–C4 (audit clean; 1000 tests; CI 9/9).
+- Released as v0.110.84 (Ship approved by owner: "Duyệt tất cả").
+- Removed from Next: NTFS inode > 2^53 (already fixed: `inoKey` in `apps/hq-ui/lib/server/ingest.ts`), hq-ui POSIX port (PR #234).
+- Skipped: omp `last_used`/`nudge_gate` (design call, owner); KNOWLEDGE `failure:` lines (166) not audited for missing guards (needs per-line research).
+- Owner: Next 16.4's `next dev` prints an upgrade notice addressed to the agent (`lib/upgrade/nudge.js`, trail learning); reported, `next upgrade` not run. Remote branches feat/ls-sort, fix/hq-ui-port, fix/hq-ui-next-16.4.1 wait for your OK to delete.
 
 # v0.67.1 — rich `ccc . ls`, local team UI (`8sync hq ui`), agent teams (`--team`), guard fixes, dnf5
 
