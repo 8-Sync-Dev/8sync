@@ -10,7 +10,7 @@ Role-routed subagents and the delivery skills from [8sync](https://get.8syncdev.
 ## What you get
 
 - **Subagents** (`agents/`): explore, task, quick-task, reviewer, designer, researcher, verifier, pm, architect, qa, critic.
-- **Skills** (`skills/`): `/do`, `/ship`, `/ship-auto`, `/ship-loop`, `/autopilot`, `/ship-tick`, `/sprint`, `/planning`, `/sysdesign`, `/ui-ux`, `/remember`, `/consolidate`, `/rules`, `/sec`, `/harden`.
+- **Skills** (`skills/`): `/do`, `/ship`, `/ship-auto`, `/ship-loop`, `/autopilot`, `/ship-tick`, `/auto-team`, `/team-tick`, `/sprint`, `/planning`, `/sysdesign`, `/ui-ux`, `/remember`, `/consolidate`, `/rules`, `/sec`, `/harden`.
 
 ## What it runs and sends
 

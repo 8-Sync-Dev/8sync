@@ -52,7 +52,7 @@ const USAGE: &str = "usage: 8sync ccc auto on [--here|--all] [--company] [--omp]
        8sync ccc auto omp on [--model <provider/model>] [--hours 0.5..24]|off [--json] | nudge --session <room id> --cwd <dir> [--model <provider/model>] [--json]
        (on --omp nhận thêm --omp-model <provider/model>: model của đội omp)
        8sync ccc auto up [--roles lead,dev,qa|boost|full] [--loop 30m] [--hours N] [--usd-per-hour X] [--clear-ss] [--ccc | --omp | --omp-only] [--omp-model <provider/model>] | up --add <phòng> | down [--only <phòng>]
-       8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--role <vai>] [--prio P0..P3] [--now] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id> | reopen <id> [--note \"…\"]
+       8sync ccc auto add \"<việc>\" [--check \"<lệnh>\"] [--label bug|feature|qa] [--role <vai>] [--prio P0..P3] [--now] [--as <phòng>] | queue | done <id> --evidence \"<lệnh: kết quả>\" | drop <id> | reopen <id> [--note \"…\"]
        8sync ccc auto board | lint | claim [--lane <cột>] [--as <phòng>] | wait [--lane <cột>|--mail] [--timeout <giây ≤1800>] | move <id> <cột> [--note \"…\"] [--check \"…\"] [--pr <số|owner/repo#số|URL>] [--sha <commit>] [--role <vai>] | prio <id> <P0..P3|none> | note <id> \"…\"   [--json]
        8sync ccc auto merge [--as <phòng>] [--json]   (lead: merge mọi card approved; cần quyền tự merge của owner)
        8sync ccc auto lease auto on|off | lease renew [--json] | pin [<thư mục>] | unpin [<thư mục>] | pins [--json]   (owner: lease liên tục — API key tự gia hạn trong ngân sách $/giờ, subscription chỉ khi owner có mặt; ghim dự án: usage chặt thì chỉ dự án ghim chạy)
@@ -1687,7 +1687,9 @@ fn run_target(
 ) -> Result<()> {
     let as_json = args.iter().any(|a| a == "--json");
     let takes: &[&str] = match verb {
-        "add" => &["--check", "--label", "--prio", "--role"],
+        // `--as`: a Claude Desktop room (/auto-team) is in no registry, so `me()` finds nobody and
+        // its card would count as the owner's; it names itself, like claim/move.
+        "add" => &["--check", "--label", "--prio", "--role", "--as"],
         "done" => &["--evidence"],
         "claim" => &["--lane", "--as"],
         "move" => &["--note", "--check", "--pr", "--sha", "--as", "--prio", "--role"],
@@ -3439,6 +3441,18 @@ mod tests {
             Vec::new
         )
         .is_err());
+        run(&s(&["add", "draw", "icons", "--as", "art", "--role", "art", "--check", "true"]), &h, false, &h, Vec::new).unwrap();
+        let card = target::list(&h, &h).unwrap().into_iter().find(|t| t.text == "draw icons").unwrap();
+        assert_eq!(card.role.as_deref(), Some("art"), "a Desktop room tags its own lane");
+        assert!(run(&s(&["add", "y", "--as"]), &h, false, &h, Vec::new).is_err(), "--as needs a room");
+        // A one-word lane handle (/auto-team: `art`, `hero`…) is its own crew: its cards go to that
+        // room only, never to qa or another builder.
+        let t0 = card.added + 1;
+        assert_eq!(card.from.as_deref(), Some("art"), "the room, not the owner, queued it");
+        assert!(target::claim(&h, &h, "dev", "ready", t0).unwrap().is_none(), "dev took an art card");
+        assert!(target::claim(&h, &h, "qa", "qa", t0).unwrap().is_none(), "qa took an art card");
+        let got = target::claim(&h, &h, "art", "ready", t0).unwrap().expect("art claims its own card");
+        assert_eq!((got.text.as_str(), got.lane.as_str()), ("draw icons", "building"));
         assert!(
             run(&s(&["done", "1"]), &h, false, &h, Vec::new).is_err(),
             "done needs evidence"
