@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
@@ -9,13 +9,19 @@ import { pathToFileURL } from 'node:url';
 export default async function (pi) {
   const managed = JSON.parse(readFileSync(process.env.EIGHTSYNC_FEYNMAN_BRIDGE
     ?? new URL('../.8sync-omp.json', import.meta.url), 'utf8'));
+  // pi-ai is ESM-only ("import" export condition), so createRequire().resolve() throws
+  // ERR_PACKAGE_PATH_NOT_EXPORTED. Walk up from Feynman's binary to its node_modules instead.
   const resolveAi = () => {
-    const req = createRequire(process.env.FEYNMAN_BIN_PATH);
-    let err;
-    for (const spec of ['@earendil-works/pi-ai', '@mariozechner/pi-ai']) {
-      try { return req.resolve(spec); } catch (e) { err ??= e; }
+    const start = dirname(realpathSync(process.env.FEYNMAN_BIN_PATH ?? process.argv[1]));
+    for (let dir = start; ; dir = dirname(dir)) {
+      for (const scope of ['@earendil-works', '@mariozechner']) {
+        for (const root of ['node_modules', 'app/node_modules']) {
+          const entry = join(dir, root, scope, 'pi-ai', 'dist', 'index.js');
+          if (existsSync(entry)) return entry;
+        }
+      }
+      if (dirname(dir) === dir) throw new Error("cannot locate Feynman's pi-ai package");
     }
-    throw err;
   };
   const aiEntry = process.env.EIGHTSYNC_FEYNMAN_AI ?? resolveAi();
   const { createAssistantMessageEventStream } = await import(pathToFileURL(aiEntry).href);

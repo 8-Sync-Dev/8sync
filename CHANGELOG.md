@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- **`8sync feynman` và `feynman` trực tiếp hết lỗi `cannot locate Feynman's pi-ai package` / `No "exports" main defined`.** Hai nguyên nhân: (1) `~/.local/bin/feynman` là wrapper `exec "<real>"` nên 8sync không thấy `app/node_modules`; nay đi theo wrapper. (2) pi-ai chỉ có điều kiện export `import`, nên `createRequire().resolve()` trong `feynman-omp.mjs` luôn lỗi; nay bridge tự tìm `dist/index.js` từ binary Feynman đi lên.
+
 ## [0.110.83] — 2026-10-27
 
 ### Added

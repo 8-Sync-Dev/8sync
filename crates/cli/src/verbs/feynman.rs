@@ -539,18 +539,34 @@ fn pi_package_candidates(node_modules: &Path, pkg: &str, file: &str) -> Vec<Path
         .collect()
 }
 
+/// The official installer drops `~/.local/bin/feynman` as a tiny `exec "<real>" "$@"` shell wrapper,
+/// so the install tree (`<real>/../app/node_modules`) is only reachable by following it.
+fn follow_exec_wrapper(bin: &Path) -> Option<PathBuf> {
+    std::fs::metadata(bin).ok().filter(|m| m.len() <= 4096)?;
+    let text = std::fs::read_to_string(bin).ok().filter(|t| t.starts_with("#!"))?;
+    let line = text.lines().find_map(|l| l.trim().strip_prefix("exec "))?;
+    let target = line.trim().strip_prefix('"')?.split('"').next()?;
+    std::fs::canonicalize(target).ok()
+}
+
 fn configure_omp_bridge(cmd: &mut Command, feynman_bin: &Path) -> Result<()> {
     let home = dirs::home_dir().context("cannot resolve home directory")?;
     let agent_dir = home.join(".feynman/agent");
     let canonical = std::fs::canonicalize(feynman_bin).unwrap_or_else(|_| feynman_bin.to_path_buf());
+    let real = follow_exec_wrapper(&canonical).unwrap_or_else(|| canonical.clone());
     let mut candidates = Vec::new();
     if let Some(parent) = feynman_bin.parent() {
         candidates.extend(pi_package_candidates(
             &parent.join("node_modules/@companion-ai/feynman/node_modules"), "pi-ai", "index.js"));
     }
-    if let Some(parent) = canonical.parent().and_then(Path::parent) {
-        candidates.extend(pi_package_candidates(&parent.join("node_modules"), "pi-ai", "index.js"));
-        candidates.extend(pi_package_candidates(&parent.join("app/node_modules"), "pi-ai", "index.js"));
+    for bin in [&canonical, &real] {
+        if let Some(parent) = bin.parent().and_then(Path::parent) {
+            candidates.extend(pi_package_candidates(&parent.join("node_modules"), "pi-ai", "index.js"));
+            candidates.extend(pi_package_candidates(&parent.join("app/node_modules"), "pi-ai", "index.js"));
+        }
+    }
+    if let Some(install) = real.parent() {
+        candidates.extend(pi_package_candidates(&install.join("app/node_modules"), "pi-ai", "index.js"));
     }
     let ai_entry = candidates.into_iter().find(|p| p.exists())
         .context("cannot locate Feynman's pi-ai package for the omp bridge")?;
@@ -811,6 +827,19 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn exec_wrapper_resolves_to_real_install_binary() {
+        let dir = std::env::temp_dir().join(format!("8sync-fw-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("real");
+        std::fs::write(&real, "bin").unwrap();
+        let wrapper = dir.join("wrapper");
+        std::fs::write(&wrapper, format!("#!/bin/sh\nset -eu\nexec \"{}\" \"$@\"\n", real.display())).unwrap();
+        assert_eq!(follow_exec_wrapper(&wrapper), Some(std::fs::canonicalize(&real).unwrap()));
+        assert_eq!(follow_exec_wrapper(&real), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn unknown_model_limits_are_omitted_instead_of_invalidating_pi_catalog() {
