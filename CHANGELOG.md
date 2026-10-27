@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.85] — 2026-10-27
+
 ### Added
 - **`8sync harness browser ego [install|status]` cài trình duyệt ego lite chính thức** (citrolabs, https://lite.ego.app). Với ego lite, agent điều khiển chính trình duyệt đã đăng nhập của owner qua lệnh `ego-browser`, thay vì đi qua một Chromium riêng. Owner (2026-10-27): "harness nên cho ego-lite cài về window … làm control browser chuẩn hơn".
   - **Windows x64:** lấy link bộ cài từ README chính thức của citrolabs/ego-lite; nếu không đọc được README thì dùng link đã ghim. Chỉ nhận URL `cdn.ego.app/setup/windows/x64/`. Bộ cài được tải vào thư mục tạm riêng, và chỉ chạy khi chữ ký Authenticode là `Valid` và người ký là `CITRO LABS PTE. LIMITED`. Bản không ký chỉ chạy khi đặt `EIGHTSYNC_EGO_ALLOW_UNSIGNED=1`. Ký bởi bên khác hoặc chữ ký hỏng thì không bao giờ chạy.
