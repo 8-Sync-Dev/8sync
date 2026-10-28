@@ -5,6 +5,22 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.88] — 2026-10-28
+
+### Added
+- **`/auto-team [mục tiêu]`: đội session Claude Desktop cố định cho mọi dự án** (skill kit, chỉ owner gõ) và **`/team-tick [handle]`** (nhịp của mỗi phòng). Owner (2026-10-28): "1 team thật sự tương tác liên tục không 1 session nào được ngồi không có việc làm, session chính control các session con thì session chính cũng phải làm việc", "các session cố định để sài á chứ không phải là tạo session mới liên tục", "đặt lên tên session đổi tên chuẩn biết cần chia bao nhiêu session con và task phân chia", "cần gấp hoàn chỉnh sớm nên có deadline". Tổng quát hoá từ `/tohe-auto-team`.
+  - **Chia đội:** đọc dự án trên nhánh tích hợp; lane maker = thư mục sửa độc lập có ≥2 việc mở; lane lớn nhất là của Trưởng nhóm (session gõ lệnh, vừa điều phối vừa làm). Phòng con = Build & Ship + Critic + R&D + một phòng mỗi lane còn lại (tối đa 3) → 2–5; hạn mức ≥70% hoặc máy áp lực → bớt một phòng.
+  - **Tên session tiếng Việt rõ vai** `<Dự án> · <Vai>: <việc chính>`. Phòng maker có handle riêng là một từ không trùng khoá vai 8sync (`art`, `hero`, `fx`…): card `--role <handle>` chỉ phòng đó nhận, hai phòng không tranh card; Build & Ship = `qa`, Critic + R&D = `review`.
+  - **Không churn, nhận đội có sẵn:** đội ghi ở `<git-common-dir>/8sync-team/ROSTER.md` (chung mọi worktree, không commit) kèm session id; chạy lại thì tìm phòng theo id → name → tên (`limit: 200`, cả archive), chỉ mở phòng thật sự mất; dự án đã có đội `<Dự án> · …` thì nhập nguyên tên, nhánh dở thành card `building`, board markdown riêng chuyển sang board 8sync. Phòng mới: `start_session` một lần, worktree riêng cắt từ nhánh tích hợp, Sonnet cho `qa`/`review`.
+  - **Mốc + rubric:** mốc M1…Mn có giờ Việt Nam và "xong khi", trễ báo owner ngay; `su-code/team/RUBRIC.md` mỗi yêu cầu owner một ô trích nguyên văn; owner nhắn thẳng phòng nào thì phòng đó ghi card `[owner] …`; trưởng nhóm tự mở bản xem đúng khổ màn, chụp ảnh rồi mới báo.
+  - **Không phòng nào ngồi không:** cron `*/15` `/team-tick <handle>` mỗi phòng (`CronList` trước, không nhân đôi); trưởng nhóm đánh thức phòng rảnh >30 phút và nhắc tạo lại cron mất; bơm card khi phòng không còn card ready; repo không remote thì card đi `--sha` và merge vào nhánh tích hợp ở máy; merge PR/push/deploy gom một câu `Ship`.
+  - **Hạn mức:** `five_hour_pct`/`seven_day_pct` ≥85 hoặc `cap`/`gate` → nghỉ nhịp; ≥70 → chỉ phòng giữ card làm. Việc thường trực chỉ khi ra được thứ cụ thể, không thì "rest".
+  - **ECC theo vai, phần chạy được khi hook ECC tắt:** planner/architect/loop-operator, tdd-guide, reviewer theo ngôn ngữ, e2e-runner/browser-qa (+ ego-browser), `/ecc:orch-review`, council, market-research, skill-scout, santa-method; học: `/remember` + `/ecc:learn-eval` (learn-v2 cần hook nên không dùng).
+  - **Dừng:** "dừng đội" → xoá `8sync-team/ON` + `CronDelete`; mọi phòng tự huỷ cron ở nhịp sau, phòng giữ nguyên để lần sau dùng lại. Đội không dùng `su-code/ship/ACTIVE`, nên `8sync ccc cancel` không đụng tới loop `/ship-loop` khác và ngược lại.
+
+### Changed
+- **`8sync ccc auto add` nhận `--as <phòng>`** như `claim`/`move`: phòng Claude Desktop không có trong sổ phòng nên trước đây card của nó bị tính là card của owner (lên đầu hàng, bỏ qua trần ready).
+
 ## [0.110.87] — 2026-10-27
 
 ### Changed

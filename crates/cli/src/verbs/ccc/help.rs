@@ -43,6 +43,8 @@ TỰ ĐỘNG (gõ trong Claude Code)
   /ship-auto <việc>            như /ship rồi PR → CI → merge → release sau một câu `Ship`
   /ship-loop <mục tiêu>        lặp tới khi tiêu chí xanh (có cap iter/phút)
   /autopilot                   nhiều item từ backlog, không người trông
+  /auto-team [mục tiêu]        đội session Desktop cố định (trưởng nhóm làm việc + 2–5 phòng con tên tiếng Việt rõ vai), dùng lại phòng cũ, board 8sync, chuyên gia ECC; owner gõ
+  /team-tick [handle]          một nhịp của đội /auto-team (cron */15 mỗi phòng; tự huỷ khi `8sync ccc cancel`)
   /ship-tick [slug]            một nhịp của vòng lặp đang mở (cron */5 do /ship-loop, /ship-auto, /autopilot đặt; tự xoá khi xong)
   /sysdesign <thay đổi>        system design theo The System Design Primer: cổng quy mô → đọc ≤3 mục → 4 bước + back-of-envelope → ADR (clone primer vào ~/.cache/8sync, không chép vào repo)
   8sync ccc standup <slug> [init|set <role> <status> [--agent a] [--files a,b] [việc]|--json]   bảng sprint 7 role (rd plan dev review qa quick critic): báo done/doing/blocked, exit 3 khi có role ngồi không, cảnh báo trùng file với phòng khác (/sprint)

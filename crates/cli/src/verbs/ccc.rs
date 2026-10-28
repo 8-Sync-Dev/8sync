@@ -1109,7 +1109,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 45] = [
+const KIT_FILES: [(&str, &str); 47] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -1135,6 +1135,8 @@ const KIT_FILES: [(&str, &str); 45] = [
     ("claude/skills/ship-loop/SKILL.md", "skills/ship-loop/SKILL.md"),
     ("claude/skills/autopilot/SKILL.md", "skills/autopilot/SKILL.md"),
     ("claude/skills/ship-tick/SKILL.md", "skills/ship-tick/SKILL.md"),
+    ("claude/skills/auto-team/SKILL.md", "skills/auto-team/SKILL.md"),
+    ("claude/skills/team-tick/SKILL.md", "skills/team-tick/SKILL.md"),
     ("claude/skills/sysdesign/SKILL.md", "skills/sysdesign/SKILL.md"),
     ("claude/skills/sprint/SKILL.md", "skills/sprint/SKILL.md"),
     ("claude/skills/clean/SKILL.md", "skills/clean/SKILL.md"),
@@ -1314,8 +1316,8 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
-const CORE_SKILLS: [&str; 16] =
-    ["ship", "ship-loop", "ship-tick", "autopilot", "sprint", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "sysdesign", "8sync-cli", "trail", "karpathy-guidelines", "ponytail", "impeccable"];
+const CORE_SKILLS: [&str; 18] =
+    ["ship", "ship-loop", "ship-tick", "autopilot", "auto-team", "team-tick", "sprint", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "sysdesign", "8sync-cli", "trail", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
@@ -2518,6 +2520,44 @@ mod tests {
             assert!(body.contains("`CronDelete`"), "{name}: never deletes its tick cron");
         }
         assert!(help::TEXT.contains("/ship-tick [slug]"));
+    }
+
+    /// `/auto-team` (owner-only) runs a fixed team of Desktop sessions; each room's cron prompt is
+    /// `/team-tick`, so that one must stay model-invocable, stop when the team is cancelled, and
+    /// read the team files from the main checkout (rooms work in card worktrees). Owner 2026-10-28:
+    /// "các session cố định để sài á chứ không phải là tạo session mới liên tục".
+    #[test]
+    fn auto_team_is_owner_only_and_team_tick_is_its_model_invocable_cron() {
+        let team = assets::read("claude/skills/auto-team/SKILL.md").unwrap();
+        let front = team.split("---").nth(1).unwrap();
+        assert!(front.contains("name: auto-team") && front.contains("disable-model-invocation: true"), "{front}");
+        // Team files live under the git common dir: shared by every worktree, never committed, and
+        // apart from `su-code/ship/ACTIVE` (whose `cancel` would also stop unrelated loops).
+        for needle in ["`CronList`", "`CronCreate`", "/team-tick", "`CronDelete`", "--git-common-dir` + `/8sync-team/`", "ROSTER.md", "auto done <id> --evidence", "8sync ccc idle on", "$T/ON", "set_session_title", "unarchive_session", "`limit: 200`", "`source_branch`", "`background`", "8sync ccc auto claim --as", "--lane ready", "--as lead", "Ship", "RUBRIC.md"] {
+            assert!(team.contains(needle), "auto-team lacks {needle}");
+        }
+        assert!(!team.contains("su-code/ship/ACTIVE"), "the team must not share ACTIVE with /ship-loop");
+        assert!(team.contains("Không bao giờ: mở phòng thứ hai cho cùng vai"), "auto-team must forbid session churn");
+        // Every reserved word a maker handle must avoid is a real role key, so the list cannot drift.
+        let reserved = team.split("KHÔNG bắt đầu bằng khoá vai 8sync (").nth(1).and_then(|r| r.split(')').next()).unwrap();
+        for w in reserved.split_whitespace() {
+            assert!(super::room::find(w).is_some(), "{w} is not a role key");
+        }
+        for h in ["art", "hero", "fx", "screen", "sim", "mobile"] {
+            assert!(super::room::find(h).is_none() && super::room::crew(h) == h, "{h} must be its own lane");
+        }
+        let tick = assets::read("claude/skills/team-tick/SKILL.md").unwrap();
+        assert!(!tick.contains("urgent"), "Desktop rooms are not `8sync ccc .` sessions: urgent bails there");
+        let front = tick.split("---").nth(1).unwrap();
+        assert!(front.contains("name: team-tick") && !front.contains("disable-model-invocation"), "{front}");
+        for needle in ["`CronDelete`", "auto-team", "--git-common-dir` + `/8sync-team/`", "$T/ON", "auto done <id> --evidence", "five_hour_pct", "8sync ccc auto claim --as", "--lane ready", "PushNotification", "không mở session mới"] {
+            assert!(tick.contains(needle), "team-tick lacks {needle}");
+        }
+        for rel in ["skills/auto-team/SKILL.md", "skills/team-tick/SKILL.md"] {
+            assert!(KIT_FILES.iter().any(|(_, r)| *r == rel), "{rel} not shipped");
+        }
+        assert!(CORE_SKILLS.contains(&"auto-team") && CORE_SKILLS.contains(&"team-tick"));
+        assert!(help::TEXT.contains("/auto-team [mục tiêu]") && help::TEXT.contains("/team-tick [handle]"));
     }
 
     /// Owner (2026-10-16): the System Design Primer as a skill "quy trình đọc" — a reading map

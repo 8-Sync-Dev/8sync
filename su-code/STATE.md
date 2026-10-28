@@ -19,6 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
+v0.110.88: `/auto-team` (đội session Desktop cố định: 2–5 phòng con theo lane, tên tiếng Việt rõ vai, handle lane riêng, ROSTER ở `<git-common-dir>/8sync-team/`, mốc + RUBRIC, nhận đội có sẵn) + `/team-tick` (cron */15 mỗi phòng, tự huỷ khi xoá `ON`); `auto add --as`.
 v0.110.87: kit tắt MCP chrome-devtools của ECC (`deniedMcpServers` serverName `plugin:ecc:chrome-devtools`), giữ skill/agent `ecc:*`.
 v0.110.86: `8sync ccc kit` bật plugin ECC (affaan-m/ECC, MIT) trên mọi máy: 71 agent, 311 skill, 97 command `ecc:*`, marketplace `autoUpdate`, hook ECC tắt (`ECC_HOOKS_ENABLED=false`), giữ giá trị owner; policy org cho phép `affaan-m/ECC`.
 v0.110.85: R&D từ Feynman v0.5.58 (MIT): `deep-research` v3 (plan 6 mục, scale 0–6 researcher, claim `(D)` cần 2 nguồn, verifier trước `research-reviewer`, provenance PASS/BLOCKED), `/autoresearch` chỉ owner khởi động (Start card, worktree, keep rule theo nhiễu, held-out), test frontmatter YAML chặt; `8sync harness browser ego install|status` cài ego lite chính thức (Windows: chữ ký CITRO LABS).
