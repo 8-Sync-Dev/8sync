@@ -5,6 +5,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.89] — 2026-10-29
+
+### Added
+- **`super-pdf` có chế độ Learner (Chromium)** cho tài liệu phát học viên/khách: bìa navy tràn viền, bản đồ hành trình SVG, flow chevron, banner từng phần, mỗi mục một card có hình SVG minh hoạ, rồi bẫy thường gặp + checklist + CTA; mẫu `references/learner-template.html` (lộ trình DSA & SQL 15 buổi). Owner (2026-10-29): "update lại skills cho super-pdf hiểu cái đó đẹp á". Chế độ Report (WeasyPrint) giữ nguyên.
+  - `scripts/build.sh --engine weasy|chromium`: tự chọn Chromium khi HTML có marker `super-pdf:learner`; WeasyPrint không nạp được GTK (Windows) thì tự chuyển Chromium; tìm Edge/Chrome trên Windows/macOS, `chromium`/`google-chrome` trên Linux. Đường dẫn PDF truyền qua `sys.argv` thay vì chèn vào code Python.
+  - `scripts/preview.sh` (mới): raster mọi trang bằng PyMuPDF qua `uv`, không cần `pdftoppm`; bước verify bắt buộc xem từng trang.
+  - Lệnh mẫu trong SKILL.md gọi `bash …/build.sh` (bản cài không giữ bit thực thi).
+  - Kiểm trên Windows: learner template → 7 trang (Chromium), preview ra 7 PNG. Not verified: macOS, Linux.
+
 ## [0.110.88] — 2026-10-28
 
 ### Added

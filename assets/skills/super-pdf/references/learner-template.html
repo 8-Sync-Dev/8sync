@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<!-- super-pdf:learner — learner/customer handout template (worked example: lộ trình 15 buổi DSA & SQL).
+     Render with Chromium (build.sh auto-detects this marker). Keep the <style> block; swap body content.
+     Components: .cover (full-bleed navy) · svg.journey (snake path, 15 slots: drop/relabel nodes) · .flow (4 chevrons)
+     · .tiles · .banner.{dsa,sql,fin} · .card.{dsa,sql,fin} = .vis (inline SVG, 140x100) + .bd (.num/h3/.ld/ul/.goal)
+     · .traps · ul.check · .cta. SVG helper classes: .ln .gl .bx .sd .t .ts .tw .mid, marker url(#ar). -->
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Lộ trình 15 buổi DSA &amp; SQL — 8 Sync</title>
+<style>
+  :root {
+    --navy:#0f2b46; --orange:#d47a1e; --ink:#1f2733; --muted:#5b6675; --line:#e4e9f1;
+    --dsa:#10618f; --dsa-l:#e8f2fa; --sql:#1c7c54; --sql-l:#e8f5ee; --fin:#d47a1e; --fin-l:#fdf3e6;
+  }
+  @page {
+    size: A4; margin: 14mm 14mm 16mm 14mm;
+    @bottom-left { content: "8 Sync · Lộ trình DSA & SQL 15 buổi"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #8a94a6; }
+    @bottom-right { content: counter(page) " / " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #8a94a6; }
+  }
+  @page :first { margin: 0; @bottom-left { content: ""; } @bottom-right { content: ""; } }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { margin:0; font-family:"Segoe UI","Be Vietnam Pro",Arial,sans-serif; font-size:9.8pt; line-height:1.5; color:var(--ink); }
+  h1,h2,h3 { margin:0; color:var(--navy); line-height:1.2; }
+  code { font-family:Consolas,"Liberation Mono",monospace; font-size:8.4pt; background:#eef2f7; padding:0 3px; border-radius:3px; color:var(--navy); }
+  .page { page-break-before: always; }
+  .avoid { break-inside: avoid; page-break-inside: avoid; }
+
+  /* ── Cover ── */
+  .cover { width:210mm; height:296mm; background:var(--navy); color:#fff; position:relative; overflow:hidden; padding:22mm 18mm 0; }
+  .cover .deco { position:absolute; right:-6mm; top:16mm; width:88mm; opacity:.9; }
+  .brand { display:flex; align-items:center; gap:8px; font-weight:700; font-size:13pt; letter-spacing:.5px; }
+  .brand .mk { background:var(--orange); color:#fff; width:30px; height:30px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:16pt; }
+  .cover .eyebrow { margin-top:92mm; color:var(--orange); font-weight:700; letter-spacing:3px; font-size:9.5pt; text-transform:uppercase; }
+  .cover h1 { color:#fff; font-size:34pt; margin-top:10px; letter-spacing:-.5px; max-width:150mm; }
+  .cover h1 em { font-style:normal; color:var(--orange); }
+  .cover .lead { margin-top:14px; font-size:12.5pt; color:#c9d6e5; max-width:140mm; }
+  .cover .bar { width:70px; height:5px; background:var(--orange); border-radius:3px; margin:22px 0 0; }
+  .phases { position:absolute; left:18mm; right:18mm; bottom:34mm; display:flex; gap:10px; }
+  .phase { flex:1; border-radius:10px; padding:12px 14px; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.15); }
+  .phase .big { font-size:24pt; font-weight:700; line-height:1; }
+  .phase .lbl { font-size:8pt; letter-spacing:1.5px; text-transform:uppercase; color:#c9d6e5; margin-top:4px; }
+  .phase .nm { font-size:10.5pt; font-weight:600; margin-top:6px; }
+  .phase.p1 .big { color:#6fb6e8; } .phase.p2 .big { color:#6fd0a4; } .phase.p3 .big { color:#f0a85a; }
+  .cover .foot { position:absolute; left:18mm; right:18mm; bottom:14mm; display:flex; justify-content:space-between; font-size:9pt; color:#9fb2c8; border-top:1px solid rgba(255,255,255,.15); padding-top:8px; }
+  .cover .foot b { color:#fff; }
+
+  /* ── Section heads ── */
+  .kicker { color:var(--orange); font-weight:700; letter-spacing:2.5px; font-size:8.5pt; text-transform:uppercase; }
+  h2.big { font-size:21pt; margin:4px 0 6px; }
+  .intro { color:var(--muted); font-size:10.5pt; margin:0 0 10px; }
+
+  /* ── Journey ── */
+  .journey { width:100%; margin:6px 0 4px; }
+  .legend { display:flex; gap:18px; justify-content:center; font-size:8.8pt; color:var(--muted); margin-bottom:14px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
+
+  /* ── Flow chevrons ── */
+  .flow { display:flex; gap:0; margin:10px 0 16px; }
+  .step { flex:1; position:relative; background:var(--navy); color:#fff; padding:10px 14px 10px 24px; clip-path:polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%, 14px 50%); margin-right:-6px; }
+  .step:first-child { clip-path:polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%); padding-left:14px; }
+  .step:nth-child(2) { background:#173d61; } .step:nth-child(3) { background:#1f507c; } .step:nth-child(4) { background:var(--orange); }
+  .step b { display:block; font-size:10pt; } .step span { font-size:8pt; color:#d5e0ec; } .step:nth-child(4) span { color:#fff3e3; }
+  .tiles { display:flex; gap:10px; }
+  .tile { flex:1; border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:#fafbfd; }
+  .tile h4 { margin:0 0 3px; color:var(--navy); font-size:10pt; }
+  .tile p { margin:0; font-size:8.8pt; color:var(--muted); }
+  .tile .ic { width:28px; height:28px; border-radius:8px; background:var(--navy); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:10pt; margin-bottom:8px; }
+
+  /* ── Phase banner ── */
+  .banner { border-radius:14px; padding:16px 20px; color:#fff; display:flex; align-items:center; gap:18px; margin-bottom:14px; }
+  .banner.dsa { background:var(--dsa); } .banner.sql { background:var(--sql); } .banner.fin { background:var(--fin); }
+  .banner .tx { flex:1; }
+  .banner .ph { font-size:8.5pt; letter-spacing:2.5px; text-transform:uppercase; opacity:.85; font-weight:700; }
+  .banner h2 { color:#fff; font-size:19pt; margin:3px 0 4px; }
+  .banner p { margin:0; font-size:9.5pt; opacity:.95; }
+  .banner .cnt { text-align:center; background:rgba(255,255,255,.16); border-radius:10px; padding:8px 14px; }
+  .banner .cnt b { display:block; font-size:22pt; line-height:1; } .banner .cnt span { font-size:7.8pt; letter-spacing:1px; text-transform:uppercase; }
+
+  /* ── Session card ── */
+  .card { display:flex; gap:14px; border:1px solid var(--line); box-shadow: inset 5px 0 0 var(--c); padding-left:18px !important; border-radius:10px; padding:12px 14px; margin-bottom:10px; background:#fff; }
+  .card.dsa { --c:var(--dsa); --cl:var(--dsa-l); } .card.sql { --c:var(--sql); --cl:var(--sql-l); } .card.fin { --c:var(--fin); --cl:var(--fin-l); }
+  .vis { flex:0 0 40mm; background:var(--cl); border-radius:8px; display:flex; align-items:center; justify-content:center; padding:4px; }
+  .vis svg { width:100%; height:auto; }
+  .bd { flex:1; }
+  .hd { display:flex; align-items:center; gap:10px; }
+  .num { background:var(--c); color:#fff; font-weight:700; font-size:9pt; border-radius:6px; padding:2px 8px; letter-spacing:.5px; white-space:nowrap; }
+  .hd h3 { font-size:12pt; }
+  .ld { color:var(--muted); font-style:italic; margin:3px 0 4px; font-size:9.3pt; }
+  .bd ul { margin:0 0 6px; padding-left:16px; } .bd li { margin:1px 0; }
+  .goal { background:var(--cl); border-radius:6px; padding:5px 10px; font-size:9pt; }
+  .goal b { color:var(--c); }
+
+  /* ── SVG helpers ── */
+  .ln { stroke:var(--c); stroke-width:1.6; fill:none; }
+  .gl { stroke:#9aa6b5; stroke-width:1.2; fill:none; }
+  .bx { fill:#fff; stroke:var(--c); stroke-width:1.4; }
+  .sd { fill:var(--c); }
+  .t { font:600 8px "Segoe UI",Arial,sans-serif; fill:var(--navy); }
+  .ts { font:600 6.5px "Segoe UI",Arial,sans-serif; fill:var(--muted); }
+  .tw { fill:#fff; }
+  .mid { text-anchor:middle; }
+
+  /* ── Closing ── */
+  .traps { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:8px 0 18px; }
+  .trap { border-radius:10px; background:#fbeeec; border-left:5px solid #c0392b; padding:9px 12px; }
+  .trap b { color:#a5281b; display:block; font-size:9.8pt; } .trap span { font-size:8.8pt; color:#4a3a38; }
+  .check { list-style:none; padding:0; margin:6px 0 18px; display:grid; grid-template-columns:1fr 1fr; column-gap:16px; }
+  .check li { padding-left:24px; position:relative; margin:0 0 7px; break-inside:avoid; }
+  .check li:before { content:""; position:absolute; left:0; top:2px; width:13px; height:13px; border:2px solid var(--sql); border-radius:3px; }
+  .cta { background:var(--navy); color:#fff; border-radius:14px; padding:18px 22px; display:flex; align-items:center; gap:18px; }
+  .cta .brand { font-size:15pt; }
+  .cta .q { flex:1; font-size:12pt; color:#dbe5f0; font-style:italic; }
+  .cta .q b { color:#fff; font-style:normal; display:block; font-size:9pt; letter-spacing:2px; text-transform:uppercase; color:var(--orange); margin-bottom:3px; }
+  .cta .url { font-weight:700; color:#fff; font-size:10.5pt; text-align:right; }
+  .cta .url span { display:block; color:#9fb2c8; font-weight:400; font-size:8.5pt; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute"><defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b7683"/></marker>
+</defs></svg>
+
+<!-- ═════════ COVER ═════════ -->
+<section class="cover">
+  <div class="brand"><span class="mk">8</span>8 Sync</div>
+  <svg class="deco" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+    <g stroke="#2a4a6b" stroke-width="2" fill="none">
+      <line x1="150" y1="40" x2="80" y2="120"/><line x1="150" y1="40" x2="220" y2="120"/>
+      <line x1="80" y1="120" x2="45" y2="200"/><line x1="80" y1="120" x2="115" y2="200"/>
+      <line x1="220" y1="120" x2="185" y2="200"/><line x1="220" y1="120" x2="255" y2="200"/>
+      <line x1="185" y1="200" x2="220" y2="270"/>
+    </g>
+    <circle cx="150" cy="40" r="20" fill="#d47a1e"/>
+    <circle cx="80" cy="120" r="16" fill="#10618f"/><circle cx="220" cy="120" r="16" fill="#1c7c54"/>
+    <circle cx="45" cy="200" r="12" fill="#1f507c"/><circle cx="115" cy="200" r="12" fill="#1f507c"/>
+    <circle cx="185" cy="200" r="12" fill="#2a8a62"/><circle cx="255" cy="200" r="12" fill="#2a8a62"/>
+    <circle cx="220" cy="270" r="9" fill="#d47a1e" opacity=".7"/>
+    <text x="150" y="46" text-anchor="middle" font-family="Segoe UI,Arial" font-weight="700" font-size="16" fill="#fff">15</text>
+  </svg>
+  <div class="eyebrow">Lộ trình ôn thi · 15 buổi</div>
+  <h1>Chinh phục <em>DSA</em> &amp; <em>SQL</em> từng bước một</h1>
+  <div class="lead">Cấu trúc dữ liệu – Giải thuật với Python và Cơ sở dữ liệu SQL. Từ nền tảng tới bài toán mở và thi thử bấm giờ.</div>
+  <div class="bar"></div>
+  <div class="phases">
+    <div class="phase p1"><div class="big">8</div><div class="lbl">buổi · Phần 1</div><div class="nm">Cấu trúc dữ liệu &amp; Giải thuật</div></div>
+    <div class="phase p2"><div class="big">5</div><div class="lbl">buổi · Phần 2</div><div class="nm">Cơ sở dữ liệu &amp; SQL</div></div>
+    <div class="phase p3"><div class="big">2</div><div class="lbl">buổi · Phần 3</div><div class="nm">Tổng ôn &amp; thi thử</div></div>
+  </div>
+  <div class="foot"><span><b>8syncdev.com</b> · course.8syncdev.com</span><span>We teach you to learn, not to copy.</span></div>
+</section>
+
+<!-- ═════════ JOURNEY ═════════ -->
+<section class="page">
+  <div class="kicker">Bản đồ hành trình</div>
+  <h2 class="big">15 buổi, 3 chặng, một đích đến</h2>
+  <p class="intro">Đi lần lượt từ trái sang phải theo con đường. Mỗi chấm là một buổi học; màu cho biết bạn đang ở chặng nào.</p>
+
+  <svg class="journey" viewBox="0 0 700 340" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
+    <path d="M70,60 H630 A55,55 0 0 1 630,170 H70 A55,55 0 0 0 70,280 H630" fill="none" stroke="#e4e9f1" stroke-width="26" stroke-linecap="round"/>
+    <path d="M70,60 H630 A55,55 0 0 1 630,170 H70 A55,55 0 0 0 70,280 H630" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="7 7"/>
+    <text x="70" y="22" text-anchor="middle" font-size="10" font-weight="700" fill="#d47a1e" letter-spacing="1.5">BẮT ĐẦU</text>
+    <g font-size="13" font-weight="700" fill="#fff" text-anchor="middle">
+      <circle cx="70"  cy="60" r="19" fill="#10618f"/><text x="70"  y="65">1</text>
+      <circle cx="210" cy="60" r="19" fill="#10618f"/><text x="210" y="65">2</text>
+      <circle cx="350" cy="60" r="19" fill="#10618f"/><text x="350" y="65">3</text>
+      <circle cx="490" cy="60" r="19" fill="#10618f"/><text x="490" y="65">4</text>
+      <circle cx="630" cy="60" r="19" fill="#10618f"/><text x="630" y="65">5</text>
+      <circle cx="630" cy="170" r="19" fill="#10618f"/><text x="630" y="175">6</text>
+      <circle cx="490" cy="170" r="19" fill="#10618f"/><text x="490" y="175">7</text>
+      <circle cx="350" cy="170" r="19" fill="#10618f"/><text x="350" y="175">8</text>
+      <circle cx="210" cy="170" r="19" fill="#1c7c54"/><text x="210" y="175">9</text>
+      <circle cx="70"  cy="170" r="19" fill="#1c7c54"/><text x="70"  y="175">10</text>
+      <circle cx="70"  cy="280" r="19" fill="#1c7c54"/><text x="70"  y="285">11</text>
+      <circle cx="210" cy="280" r="19" fill="#1c7c54"/><text x="210" y="285">12</text>
+      <circle cx="350" cy="280" r="19" fill="#1c7c54"/><text x="350" y="285">13</text>
+      <circle cx="490" cy="280" r="19" fill="#d47a1e"/><text x="490" y="285">14</text>
+      <circle cx="630" cy="280" r="22" fill="#d47a1e" stroke="#0f2b46" stroke-width="3"/><text x="630" y="285">15</text>
+    </g>
+    <g font-size="10.5" font-weight="600" fill="#0f2b46" text-anchor="middle">
+      <text x="70" y="98">Đệ quy</text><text x="210" y="98">Array &amp; Linked List</text><text x="350" y="98">Stack &amp; Queue</text><text x="490" y="98">Heap &amp; Hash</text><text x="630" y="98">Cây &amp; BST</text>
+      <text x="630" y="208">Đồ thị</text><text x="490" y="208">Big-O &amp; Tìm kiếm</text><text x="350" y="208">Sắp xếp</text><text x="210" y="208">SQL 1 bảng</text><text x="70" y="208">JOIN</text>
+      <text x="70" y="318">Subquery &amp; CTE</text><text x="210" y="318">Bảng &amp; Transaction</text><text x="350" y="318">ERD &amp; Chuẩn hóa</text><text x="490" y="318">Bài toán mở</text><text x="630" y="321">Thi thử</text>
+    </g>
+    <g transform="translate(658,236)"><line x1="0" y1="0" x2="0" y2="30" stroke="#0f2b46" stroke-width="2.5"/><path d="M0,0 h22 l-6,6 l6,6 h-22 z" fill="#d47a1e"/></g>
+    <text x="630" y="248" font-size="10" font-weight="700" fill="#d47a1e" text-anchor="middle" letter-spacing="1">ĐÍCH</text>
+  </svg>
+  <div class="legend"><span><i style="background:#10618f"></i>Phần 1 · DSA (buổi 1–8)</span><span><i style="background:#1c7c54"></i>Phần 2 · SQL &amp; CSDL (buổi 9–13)</span><span><i style="background:#d47a1e"></i>Phần 3 · Tổng ôn (buổi 14–15)</span></div>
+
+  <div class="kicker" style="margin-top:6px">Mỗi buổi học</div>
+  <h2 class="big" style="font-size:16pt">Bốn bước, lặp lại cho mọi chủ đề</h2>
+  <div class="flow">
+    <div class="step"><b>1 · Hiểu ý tưởng</b><span>Vì sao cần, dùng khi nào</span></div>
+    <div class="step"><b>2 · Trace bằng tay</b><span>Vẽ ra giấy từng bước</span></div>
+    <div class="step"><b>3 · Tự code / viết SQL</b><span>Python 3 &amp; sqlite3</span></div>
+    <div class="step"><b>4 · Tự kiểm tra</b><span>Đạt mục tiêu mới đi tiếp</span></div>
+  </div>
+
+  <div class="kicker">Chuẩn bị</div>
+  <div class="tiles" style="margin-top:8px">
+    <div class="tile"><div class="ic">Py</div><h4>Python 3</h4><p>Cài sẵn trên máy. Module <code>sqlite3</code> có sẵn trong Python, không cần cài thêm gì để chạy SQL.</p></div>
+    <div class="tile"><div class="ic">✎</div><h4>Giấy &amp; bút</h4><p>Phần lớn bài tập là trace tay: vẽ call stack, cây, bảng biến, ERD.</p></div>
+    <div class="tile"><div class="ic">⏱</div><h4>Thời gian sau buổi</h4><p>Làm xong phần “Bạn làm được” của buổi đó trước khi sang buổi mới.</p></div>
+  </div>
+</section>
+
+<!-- ═════════ PHẦN 1 ═════════ -->
+<section class="page">
+  <div class="banner dsa">
+    <div class="tx"><div class="ph">Phần 1 · Buổi 1–8</div><h2>Cấu trúc dữ liệu &amp; Giải thuật</h2><p>Hiểu cách dữ liệu được tổ chức và cách thuật toán xử lý nó, đủ để trace bằng tay mọi đoạn code trong đề.</p></div>
+    <div class="cnt"><b>8</b><span>buổi</span></div>
+  </div>
+
+  <div class="card dsa avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <rect class="bx" x="30" y="8" width="70" height="17" rx="3"/><text class="t mid" x="65" y="20">F(3)</text>
+      <rect class="bx" x="30" y="29" width="70" height="17" rx="3"/><text class="t mid" x="65" y="41">F(2)</text>
+      <rect class="bx" x="30" y="50" width="70" height="17" rx="3"/><text class="t mid" x="65" y="62">F(1)</text>
+      <rect class="sd" x="30" y="71" width="70" height="17" rx="3"/><text class="t tw mid" x="65" y="83">F(0) = 2</text>
+      <line class="gl" x1="114" y1="82" x2="114" y2="14" marker-end="url(#ar)"/><text class="ts" x="106" y="96">trả về</text>
+      <text class="ts" x="4" y="96">Call Stack</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 01</span><h3>Hàm, phạm vi biến &amp; đệ quy</h3></div>
+      <p class="ld">Hiểu một hàm tự gọi lại chính nó, và tự tính được kết quả bằng tay.</p>
+      <ul>
+        <li>Biến <code>local</code>, <code>global</code>, hằng số; truyền tham trị và tham chiếu trong Python.</li>
+        <li>Điều kiện dừng (base case) và công thức truy hồi; những bẫy hay gặp trong đề trắc nghiệm.</li>
+        <li>Vẽ Call Stack cho giai thừa biến thể <code>F(0) = 2</code>, Fibonacci, UCLN Euclid, lũy thừa.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> trace đúng một hàm đệ quy 3–4 tầng mà không cần chạy máy.</div>
+    </div>
+  </div>
+
+  <div class="card dsa avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <text class="ts" x="8" y="10">Array</text>
+      <g><rect class="bx" x="8" y="14" width="24" height="18"/><rect class="bx" x="32" y="14" width="24" height="18"/><rect class="bx" x="56" y="14" width="24" height="18"/><rect class="bx" x="80" y="14" width="24" height="18"/><rect class="bx" x="104" y="14" width="24" height="18"/></g>
+      <g class="t mid"><text x="20" y="26">4</text><text x="44" y="26">7</text><text x="68" y="26">1</text><text x="92" y="26">9</text><text x="116" y="26">3</text></g>
+      <text class="ts" x="8" y="54">Linked List</text>
+      <rect class="sd" x="6" y="60" width="28" height="18" rx="4"/><text class="t tw mid" x="20" y="72">4</text>
+      <rect class="sd" x="54" y="60" width="28" height="18" rx="4"/><text class="t tw mid" x="68" y="72">7</text>
+      <rect class="sd" x="102" y="60" width="28" height="18" rx="4"/><text class="t tw mid" x="116" y="72">1</text>
+      <line class="gl" x1="34" y1="69" x2="52" y2="69" marker-end="url(#ar)"/><line class="gl" x1="82" y1="69" x2="100" y2="69" marker-end="url(#ar)"/>
+      <text class="ts" x="104" y="92">→ None</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 02</span><h3>Array/List &amp; Linked List</h3></div>
+      <p class="ld">Hai cách lưu một dãy dữ liệu, và khi nào nên chọn cách nào.</p>
+      <ul>
+        <li>Mảng nằm liền nhau trong bộ nhớ; Linked List (đơn/đôi) nối các nút bằng tham chiếu.</li>
+        <li>Tự code: truy cập, chèn đầu/cuối/giữa, xóa, tìm kiếm, đảo ngược danh sách.</li>
+        <li>So sánh chi phí từng thao tác để chọn nhanh đáp án trắc nghiệm.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> tự viết class <code>Node</code>/<code>LinkedList</code> có chèn, xóa, đảo ngược.</div>
+    </div>
+  </div>
+
+  <div class="card dsa avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <path class="ln" d="M12,22 V86 H52 V22"/>
+      <rect class="bx" x="16" y="66" width="32" height="16" rx="2"/><text class="t mid" x="32" y="77">A</text>
+      <rect class="bx" x="16" y="48" width="32" height="16" rx="2"/><text class="t mid" x="32" y="59">B</text>
+      <rect class="sd" x="16" y="30" width="32" height="16" rx="2"/><text class="t tw mid" x="32" y="41">C</text>
+      <line class="gl" x1="32" y1="4" x2="32" y2="26" marker-end="url(#ar)"/><text class="ts" x="36" y="12">PUSH/POP</text>
+      <text class="t mid" x="32" y="97">Stack · LIFO</text>
+      <path class="ln" d="M70,40 H132 M70,60 H132"/>
+      <rect class="sd" x="72" y="43" width="18" height="14" rx="2"/><rect class="bx" x="92" y="43" width="18" height="14" rx="2"/><rect class="bx" x="112" y="43" width="18" height="14" rx="2"/>
+      <line class="gl" x1="78" y1="72" x2="66" y2="72" marker-end="url(#ar)"/><line class="gl" x1="136" y1="30" x2="124" y2="30" marker-end="url(#ar)"/>
+      <text class="ts" x="80" y="75">ra</text><text class="ts" x="100" y="33">vào</text>
+      <text class="t mid" x="101" y="97">Queue · FIFO</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 03</span><h3>Stack, Queue &amp; Deque</h3></div>
+      <p class="ld">Vào sau ra trước, vào trước ra trước: hai quy tắc xuất hiện khắp nơi.</p>
+      <ul>
+        <li>Stack (LIFO): <code>PUSH</code>, <code>POP</code>, <code>PEEK</code>; ghi trạng thái từ đáy lên đỉnh sau chuỗi lệnh.</li>
+        <li>Queue (FIFO) và Deque: <code>ENQUEUE</code>, <code>DEQUEUE</code>, dùng <code>collections.deque</code>.</li>
+        <li>Ứng dụng: Undo/Redo, kiểm tra dấu ngoặc hợp lệ, quản lý lời gọi hàm.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> ghi đúng trạng thái Stack/Queue sau 8–10 lệnh liên tiếp.</div>
+    </div>
+  </div>
+
+  <div class="card dsa avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <g class="gl"><line x1="44" y1="18" x2="24" y2="48"/><line x1="44" y1="18" x2="64" y2="48"/><line x1="24" y1="48" x2="14" y2="78"/><line x1="24" y1="48" x2="34" y2="78"/></g>
+      <circle class="sd" cx="44" cy="18" r="10"/><text class="t tw mid" x="44" y="21">1</text>
+      <circle class="bx" cx="24" cy="48" r="10"/><text class="t mid" x="24" y="51">3</text>
+      <circle class="bx" cx="64" cy="48" r="10"/><text class="t mid" x="64" y="51">2</text>
+      <circle class="bx" cx="14" cy="78" r="9"/><text class="t mid" x="14" y="81">7</text>
+      <circle class="bx" cx="34" cy="78" r="9"/><text class="t mid" x="34" y="81">4</text>
+      <text class="ts" x="20" y="97">Min-Heap</text>
+      <g><rect class="bx" x="88" y="12" width="44" height="14"/><rect class="sd" x="88" y="28" width="44" height="14"/><rect class="bx" x="88" y="44" width="44" height="14"/><rect class="bx" x="88" y="60" width="44" height="14"/></g>
+      <text class="ts" x="78" y="22">0</text><text class="ts" x="78" y="38">1</text><text class="ts" x="78" y="54">2</text><text class="ts" x="78" y="70">3</text>
+      <text class="t tw mid" x="110" y="38">"an" → 5</text>
+      <text class="ts" x="88" y="90">Hash Table</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 04</span><h3>Heap, Priority Queue &amp; Hash Table</h3></div>
+      <p class="ld">Lấy phần tử nhỏ nhất thật nhanh, và tra cứu gần như tức thì.</p>
+      <ul>
+        <li>Min-Heap / Max-Heap biểu diễn bằng mảng; chèn và lấy đỉnh; module <code>heapq</code>.</li>
+        <li>Priority Queue và bài toán lấy k phần tử lớn/nhỏ nhất.</li>
+        <li>Hash Table: hàm băm, xử lý va chạm; <code>dict</code> và <code>set</code> trong Python.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> vẽ heap sau từng lần chèn/xóa và điền bảng băm dò tuyến tính.</div>
+    </div>
+  </div>
+</section>
+
+<section class="page">
+  <div class="card dsa avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <g class="gl"><line x1="70" y1="16" x2="38" y2="46"/><line x1="70" y1="16" x2="102" y2="46"/><line x1="38" y1="46" x2="20" y2="78"/><line x1="102" y1="46" x2="120" y2="78"/></g>
+      <line class="ln" x1="38" y1="46" x2="56" y2="78" stroke-width="2.4"/><line class="ln" x1="70" y1="16" x2="38" y2="46" stroke-width="2.4"/>
+      <circle class="sd" cx="70" cy="16" r="10"/><text class="t tw mid" x="70" y="19">8</text>
+      <circle class="sd" cx="38" cy="46" r="10"/><text class="t tw mid" x="38" y="49">3</text>
+      <circle class="bx" cx="102" cy="46" r="10"/><text class="t mid" x="102" y="49">10</text>
+      <circle class="bx" cx="20" cy="78" r="9"/><text class="t mid" x="20" y="81">1</text>
+      <circle class="sd" cx="56" cy="78" r="9"/><text class="t tw mid" x="56" y="81">6</text>
+      <circle class="bx" cx="120" cy="78" r="9"/><text class="t mid" x="120" y="81">14</text>
+      <text class="ts mid" x="70" y="97">Trái &lt; Gốc &lt; Phải · tìm 6</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 05</span><h3>Cây nhị phân &amp; Cây tìm kiếm nhị phân</h3></div>
+      <p class="ld">Cấu trúc phân nhánh giúp tìm kiếm nhanh hơn đi lần lượt.</p>
+      <ul>
+        <li>Gốc, lá, cha/con, bậc, đường đi, chiều cao của cây.</li>
+        <li>4 phép duyệt bằng tay: Pre-order, In-order, Post-order, Level-order.</li>
+        <li>BST: tìm, chèn, xóa nút (lá, 1 con, 2 con); cây cân bằng và cây suy biến.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> dựng BST từ một dãy số và viết đủ 4 thứ tự duyệt.</div>
+    </div>
+  </div>
+
+  <div class="card dsa avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <g class="gl"><line x1="20" y1="26" x2="70" y2="16"/><line x1="70" y1="16" x2="120" y2="30"/><line x1="20" y1="26" x2="34" y2="78"/><line x1="34" y1="78" x2="104" y2="80"/><line x1="120" y1="30" x2="104" y2="80"/></g>
+      <line class="ln" x1="20" y1="26" x2="70" y2="16" stroke-width="2.6"/><line class="ln" x1="70" y1="16" x2="104" y2="80" stroke-width="2.6"/>
+      <g class="ts"><text x="40" y="14">2</text><text x="96" y="18">4</text><text x="18" y="56">3</text><text x="66" y="92">5</text><text x="118" y="60">1</text><text x="82" y="50">3</text></g>
+      <circle class="sd" cx="20" cy="26" r="10"/><text class="t tw mid" x="20" y="29">A</text>
+      <circle class="sd" cx="70" cy="16" r="10"/><text class="t tw mid" x="70" y="19">B</text>
+      <circle class="bx" cx="120" cy="30" r="10"/><text class="t mid" x="120" y="33">C</text>
+      <circle class="bx" cx="34" cy="78" r="10"/><text class="t mid" x="34" y="81">D</text>
+      <circle class="sd" cx="104" cy="80" r="10"/><text class="t tw mid" x="104" y="83">E</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 06</span><h3>Đồ thị: BFS, DFS &amp; đường đi ngắn nhất</h3></div>
+      <p class="ld">Mô hình hóa bản đồ, mạng lưới và các mối quan hệ.</p>
+      <ul>
+        <li>Đồ thị có hướng/vô hướng, có trọng số; ma trận kề và danh sách kề.</li>
+        <li>BFS dùng Queue, DFS dùng Stack hoặc đệ quy; đánh dấu đỉnh đã thăm.</li>
+        <li>Đường đi ngắn nhất: BFS trên đồ thị không trọng số, ý tưởng Dijkstra.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> liệt kê đúng thứ tự BFS/DFS và điền bảng Dijkstra trên đồ thị mẫu.</div>
+    </div>
+  </div>
+
+  <div class="card dsa avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <line class="gl" x1="16" y1="86" x2="16" y2="8" marker-end="url(#ar)"/><line class="gl" x1="16" y1="86" x2="130" y2="86" marker-end="url(#ar)"/>
+      <path d="M16,80 H120" stroke="#1c7c54" stroke-width="2" fill="none"/>
+      <path d="M16,84 C30,68 60,62 120,58" stroke="#10618f" stroke-width="2" fill="none"/>
+      <path d="M16,86 L120,34" stroke="#d47a1e" stroke-width="2" fill="none"/>
+      <path d="M16,86 C60,84 80,50 96,10" stroke="#c0392b" stroke-width="2" fill="none"/>
+      <g class="ts"><text x="98" y="77">O(1)</text><text x="96" y="55">O(log n)</text><text x="104" y="32">O(n)</text><text x="98" y="16">O(n²)</text><text x="112" y="96">n</text></g>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 07</span><h3>Độ phức tạp Big-O &amp; Tìm kiếm</h3></div>
+      <p class="ld">Nhìn đoạn code là đoán được nó chạy nhanh hay chậm.</p>
+      <ul>
+        <li>Vòng lặp đơn, lồng nhau, chia đôi, đệ quy → <code>O(1)</code>, <code>O(log n)</code>, <code>O(n)</code>, <code>O(n log n)</code>, <code>O(n²)</code>, <code>O(2ⁿ)</code>.</li>
+        <li>Dạng bài: dữ liệu tăng k lần thì thời gian chạy tăng bao nhiêu.</li>
+        <li>Linear Search và Binary Search, cài bằng vòng lặp và đệ quy.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> xác định Big-O của 10 đoạn code ngắn và trace Binary Search.</div>
+    </div>
+  </div>
+
+  <div class="card dsa avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <line class="gl" x1="8" y1="84" x2="132" y2="84"/>
+      <rect class="bx" x="12" y="54" width="12" height="30"/><rect class="bx" x="28" y="34" width="12" height="50"/><rect class="sd" x="44" y="24" width="12" height="60"/><rect class="sd" x="60" y="62" width="12" height="22"/>
+      <rect class="bx" x="76" y="44" width="12" height="40"/><rect class="bx" x="92" y="70" width="12" height="14"/><rect class="bx" x="108" y="30" width="12" height="54"/>
+      <path class="gl" d="M50,20 C54,6 62,6 66,56" marker-end="url(#ar)"/>
+      <text class="ts" x="72" y="14">đổi chỗ</text>
+      <text class="ts mid" x="70" y="96">Bubble Sort · lượt 1</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 08</span><h3>Thuật toán sắp xếp &amp; kỹ năng trace code</h3></div>
+      <p class="ld">Hiểu từng bước thuật toán sắp xếp làm gì với mảng.</p>
+      <ul>
+        <li>Bubble, Selection, Insertion Sort: viết lại mảng sau mỗi lượt.</li>
+        <li>Merge Sort, Quick Sort, Heap Sort: chia để trị, chọn pivot, so sánh tốc độ.</li>
+        <li>Trace table cho pseudo-code có <code>if/else</code>, <code>not</code> và vòng lặp lồng nhau.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> điền đúng trace table cho đoạn code có 2 vòng lặp lồng nhau.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ PHẦN 2 ═════════ -->
+<section class="page">
+  <div class="banner sql">
+    <div class="tx"><div class="ph">Phần 2 · Buổi 9–13</div><h2>Cơ sở dữ liệu &amp; SQL</h2><p>Hỏi dữ liệu bằng SQL, ghép nhiều bảng, và tự thiết kế một cơ sở dữ liệu từ đề bài.</p></div>
+    <div class="cnt"><b>5</b><span>buổi</span></div>
+  </div>
+
+  <div class="card sql avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <rect class="sd" x="10" y="10" width="120" height="16" rx="2"/>
+      <g class="t tw"><text x="16" y="21">ten</text><text x="58" y="21">lop</text><text x="96" y="21">diem</text></g>
+      <g><rect class="bx" x="10" y="26" width="120" height="14"/><rect x="10" y="40" width="120" height="14" fill="#cfe8da" stroke="#1c7c54" stroke-width="1.4"/><rect class="bx" x="10" y="54" width="120" height="14"/><rect x="10" y="68" width="120" height="14" fill="#cfe8da" stroke="#1c7c54" stroke-width="1.4"/></g>
+      <g class="t"><text x="16" y="36">An</text><text x="58" y="36">A1</text><text x="96" y="36">6</text><text x="16" y="50">Bình</text><text x="58" y="50">A2</text><text x="96" y="50">9</text><text x="16" y="64">Chi</text><text x="58" y="64">A1</text><text x="96" y="64">5</text><text x="16" y="78">Dũng</text><text x="58" y="78">A2</text><text x="96" y="78">8</text></g>
+      <text class="ts mid" x="70" y="95">WHERE diem &gt;= 8</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 09</span><h3>SQL cơ bản trên một bảng</h3></div>
+      <p class="ld">Đặt câu hỏi cho dữ liệu: lọc, đếm, tính tổng, gom nhóm.</p>
+      <ul>
+        <li>Thứ tự chạy thật: <code>FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY</code>.</li>
+        <li><code>COUNT</code>, <code>SUM</code>, <code>AVG</code>, <code>MIN</code>, <code>MAX</code>; <code>COUNT(*)</code> khác <code>COUNT(cột)</code>; xử lý <code>NULL</code>.</li>
+        <li><code>NOT &gt; AND &gt; OR</code>, dấu ngoặc, bẫy <code>&lt;</code> và <code>&lt;=</code>, <code>BETWEEN</code>.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> tính tay đúng kết quả một truy vấn có <code>GROUP BY</code> + <code>HAVING</code>.</div>
+    </div>
+  </div>
+
+  <div class="card sql avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <circle cx="54" cy="46" r="30" fill="#1c7c54" fill-opacity=".28" stroke="#1c7c54" stroke-width="1.5"/>
+      <circle cx="86" cy="46" r="30" fill="#1c7c54" fill-opacity=".28" stroke="#1c7c54" stroke-width="1.5"/>
+      <text class="t mid" x="40" y="49">A</text><text class="t mid" x="100" y="49">B</text>
+      <text class="ts mid" x="70" y="49">khớp</text>
+      <text class="t mid" x="70" y="94">INNER · LEFT · FULL</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 10</span><h3>JOIN nhiều bảng &amp; phép toán tập hợp</h3></div>
+      <p class="ld">Ghép nhiều bảng lại để trả lời những câu hỏi lớn hơn.</p>
+      <ul>
+        <li><code>INNER JOIN</code>, <code>LEFT JOIN</code>, <code>RIGHT</code>/<code>FULL JOIN</code>; dòng nào sinh ra <code>NULL</code>.</li>
+        <li>Self-Join: so sánh một bảng với chính nó.</li>
+        <li><code>UNION</code>, <code>UNION ALL</code>, <code>INTERSECT</code>, <code>EXCEPT</code>.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> dự đoán đúng số dòng kết quả của một LEFT JOIN.</div>
+    </div>
+  </div>
+
+  <div class="card sql avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <rect class="bx" x="6" y="10" width="38" height="20" rx="4"/><text class="t mid" x="25" y="23">WITH</text>
+      <rect class="bx" x="51" y="10" width="38" height="20" rx="4"/><text class="t mid" x="70" y="23">CASE</text>
+      <rect class="sd" x="96" y="10" width="38" height="20" rx="4"/><text class="t tw mid" x="115" y="23">RANK</text>
+      <line class="gl" x1="44" y1="20" x2="49" y2="20" marker-end="url(#ar)"/><line class="gl" x1="89" y1="20" x2="94" y2="20" marker-end="url(#ar)"/>
+      <g><rect class="bx" x="20" y="42" width="100" height="13"/><rect class="bx" x="20" y="55" width="100" height="13"/><rect class="bx" x="20" y="68" width="100" height="13"/></g>
+      <rect class="sd" x="96" y="42" width="24" height="39"/>
+      <g class="t"><text x="26" y="52">A1 · Bình</text><text x="26" y="65">A1 · An</text><text x="26" y="78">A2 · Dũng</text></g>
+      <g class="t tw mid"><text x="108" y="52">1</text><text x="108" y="65">2</text><text x="108" y="78">1</text></g>
+      <text class="ts mid" x="70" y="94">top-N mỗi nhóm</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 11</span><h3>Subquery, CTE, CASE, ngày giờ &amp; window function</h3></div>
+      <p class="ld">Viết truy vấn nhiều bước mà vẫn gọn và dễ đọc.</p>
+      <ul>
+        <li>Subquery với <code>IN</code>, <code>EXISTS</code>, đặt trong <code>WHERE</code> hoặc <code>FROM</code>.</li>
+        <li><code>WITH</code> (CTE) chia nhỏ truy vấn; <code>CASE WHEN</code> để phân loại và đếm có điều kiện.</li>
+        <li>Ngày giờ (<code>CAST AS DATE</code>, <code>DATEDIFF</code>); <code>ROW_NUMBER</code>, <code>RANK</code>.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> viết truy vấn lấy top-N mỗi nhóm bằng CTE và window function.</div>
+    </div>
+  </div>
+
+  <div class="card sql avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <rect class="sd" x="8" y="38" width="38" height="20" rx="4"/><text class="t tw mid" x="27" y="51">BEGIN</text>
+      <rect x="86" y="14" width="48" height="20" rx="4" fill="#1c7c54"/><text class="t tw mid" x="110" y="27">COMMIT</text>
+      <rect x="86" y="62" width="48" height="20" rx="4" fill="#c0392b"/><text class="t tw mid" x="110" y="75">ROLLBACK</text>
+      <path class="gl" d="M46,46 C64,46 66,24 84,24" marker-end="url(#ar)"/><path class="gl" d="M46,50 C64,50 66,72 84,72" marker-end="url(#ar)"/>
+      <text class="ts" x="56" y="20">thành công</text><text class="ts" x="62" y="90">có lỗi</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 12</span><h3>Tạo bảng, ràng buộc &amp; Transaction</h3></div>
+      <p class="ld">Tạo bảng đúng chuẩn và giữ dữ liệu luôn an toàn.</p>
+      <ul>
+        <li><code>CREATE</code>/<code>ALTER TABLE</code>; <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code> (đừng quên <code>WHERE</code>).</li>
+        <li>Ràng buộc <code>PRIMARY KEY</code>, <code>FOREIGN KEY</code>, <code>UNIQUE</code>, <code>NOT NULL</code>, <code>CHECK</code>.</li>
+        <li><code>BEGIN</code>, <code>COMMIT</code>, <code>ROLLBACK</code> và ACID; Index và View dùng khi nào.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> tạo 3 bảng có đủ ràng buộc và chạy thành công trên <code>sqlite3</code>.</div>
+    </div>
+  </div>
+</section>
+
+<section class="page">
+  <div class="card sql avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <rect class="bx" x="4" y="18" width="50" height="58" rx="3"/><rect class="sd" x="4" y="18" width="50" height="15" rx="3"/>
+      <text class="t tw mid" x="29" y="29">KHÁCH</text>
+      <g class="ts"><text x="9" y="45">PK  ma_kh</text><text x="9" y="57">ho_ten</text><text x="9" y="69">sdt</text></g>
+      <rect class="bx" x="86" y="18" width="50" height="58" rx="3"/><rect class="sd" x="86" y="18" width="50" height="15" rx="3"/>
+      <text class="t tw mid" x="111" y="29">ĐƠN</text>
+      <g class="ts"><text x="91" y="45">PK  ma_don</text><text x="91" y="57">FK  ma_kh</text><text x="91" y="69">ngay</text></g>
+      <path class="ln" d="M54,52 H86 M78,52 L86,46 M78,52 L86,58 M60,46 V58"/>
+      <text class="t" x="57" y="44">1</text><text class="t" x="76" y="44">n</text>
+      <text class="ts mid" x="70" y="94">1 khách – n đơn</text>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 13</span><h3>Phân tích đề &amp; thiết kế CSDL</h3></div>
+      <p class="ld">Biến một đề bài bằng chữ thành thiết kế cơ sở dữ liệu.</p>
+      <ul>
+        <li>Gạch chân danh từ để tìm thực thể, động từ để tìm chức năng và luồng nghiệp vụ.</li>
+        <li>Vẽ ERD: khóa chính, khóa ngoại, quan hệ 1-1, 1-n, tách n-n thành bảng trung gian.</li>
+        <li>Chuẩn hóa 1NF → 3NF; chuyển sang bảng vật lý với kiểu dữ liệu và ràng buộc.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> nộp ERD và bảng thiết kế vật lý đạt 3NF cho một đề nghiệp vụ.</div>
+    </div>
+  </div>
+
+  <!-- ═════════ PHẦN 3 ═════════ -->
+  <div class="banner fin avoid" style="margin-top:18px">
+    <div class="tx"><div class="ph">Phần 3 · Buổi 14–15</div><h2>Tổng ôn &amp; thi thử</h2><p>Ghép mọi kiến thức lại, làm như thi thật, và biết chính xác mình cần ôn thêm gì.</p></div>
+    <div class="cnt"><b>2</b><span>buổi</span></div>
+  </div>
+
+  <div class="card fin avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <rect class="bx" x="8" y="12" width="52" height="24" rx="5"/><text class="t mid" x="34" y="27">Đề bài</text>
+      <rect class="bx" x="80" y="12" width="52" height="24" rx="5"/><text class="t mid" x="106" y="27">ERD</text>
+      <rect class="bx" x="80" y="58" width="52" height="24" rx="5"/><text class="t mid" x="106" y="73">Bảng</text>
+      <rect class="sd" x="8" y="58" width="52" height="24" rx="5"/><text class="t tw mid" x="34" y="73">SQL</text>
+      <line class="gl" x1="60" y1="24" x2="78" y2="24" marker-end="url(#ar)"/><line class="gl" x1="106" y1="36" x2="106" y2="56" marker-end="url(#ar)"/><line class="gl" x1="80" y1="70" x2="62" y2="70" marker-end="url(#ar)"/>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 14</span><h3>Bài toán mở từ đầu đến cuối</h3></div>
+      <p class="ld">Ghép mọi thứ lại: từ đề bài đến những câu SQL chạy được.</p>
+      <ul>
+        <li>Làm trọn một đề: đọc đề → ERD → bảng vật lý → các câu SQL nghiệp vụ.</li>
+        <li>Thống kê giao dịch trong ngày, tính tổng tiền theo điều kiện, kiểm tra đúng hạn/quá hạn.</li>
+        <li>Viết tay trước, sau đó chạy kiểm chứng bằng <code>sqlite3</code> trên Python.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> một bộ lời giải chạy được, tên bảng và tên cột khớp với ERD.</div>
+    </div>
+  </div>
+
+  <div class="card fin avoid">
+    <div class="vis"><svg viewBox="0 0 140 100">
+      <rect class="sd" x="44" y="6" width="16" height="7" rx="2"/>
+      <circle cx="52" cy="54" r="36" fill="#fff" stroke="#d47a1e" stroke-width="3"/>
+      <path d="M52,54 L52,28" stroke="#0f2b46" stroke-width="3" stroke-linecap="round"/><path d="M52,54 L70,62" stroke="#0f2b46" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="52" cy="54" r="3.5" fill="#0f2b46"/>
+      <circle cx="112" cy="66" r="18" fill="#1c7c54"/><path d="M103,66 L110,73 L122,59" stroke="#fff" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg></div>
+    <div class="bd">
+      <div class="hd"><span class="num">BUỔI 15</span><h3>Thi thử bấm giờ &amp; tổng kết bẫy</h3></div>
+      <p class="ld">Tập dượt như thi thật, rồi biết chính xác chỗ nào cần ôn lại.</p>
+      <ul>
+        <li>Đề tổng hợp bấm giờ: trắc nghiệm DSA, đọc code, SQL và thiết kế CSDL.</li>
+        <li>Chữa từng câu, xếp lỗi sai theo chủ đề để biết cần xem lại buổi nào.</li>
+        <li>Luyện checklist kiểm tra bài trước khi nộp.</li>
+      </ul>
+      <div class="goal"><b>Bạn làm được:</b> có bảng tự đánh giá và danh sách bẫy của riêng mình.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ CLOSING ═════════ -->
+<section class="page">
+  <div class="kicker">Ghi nhớ</div>
+  <h2 class="big">6 bẫy hay làm mất điểm</h2>
+  <div class="traps">
+    <div class="trap"><b>Quên điều kiện dừng</b><span>Hàm đệ quy không có base case sẽ gọi mãi không dừng.</span></div>
+    <div class="trap"><b>Nhầm thứ tự duyệt cây</b><span>Nhớ vị trí của N: trước (Pre), giữa (In), sau (Post).</span></div>
+    <div class="trap"><b>COUNT(*) và COUNT(cột)</b><span><code>COUNT(cột)</code> bỏ qua các dòng có giá trị <code>NULL</code>.</span></div>
+    <div class="trap"><b>LEFT JOIN rồi lọc ở WHERE</b><span>Điều kiện trên bảng bên phải có thể làm mất dòng như INNER JOIN.</span></div>
+    <div class="trap"><b>UPDATE / DELETE thiếu WHERE</b><span>Câu lệnh sẽ tác động lên toàn bộ bảng.</span></div>
+    <div class="trap"><b>Tên cột không khớp ERD</b><span>Luôn so lại tên bảng, tên cột giữa ERD và câu SQL.</span></div>
+  </div>
+
+  <div class="kicker">Trước khi nộp bài</div>
+  <h2 class="big" style="font-size:16pt">Checklist 6 điểm</h2>
+  <ul class="check">
+    <li>Đã thử lại điều kiện biên: <code>&lt;</code> hay <code>&lt;=</code>, mảng rỗng, một phần tử.</li>
+    <li>Hàm đệ quy có điều kiện dừng và luôn tiến về điều kiện đó.</li>
+    <li>Mọi cột trong <code>SELECT</code> không gộp đều có trong <code>GROUP BY</code>.</li>
+    <li>Đã tính đến <code>NULL</code> trong điều kiện và hàm tổng hợp.</li>
+    <li>Mỗi khóa ngoại trỏ đúng tới khóa chính của bảng kia.</li>
+    <li>Tên bảng, tên cột trong SQL khớp với ERD.</li>
+  </ul>
+
+  <div class="kicker">Tài liệu nên đọc</div>
+  <ul style="margin:6px 0 20px; padding-left:16px">
+    <li>The Python Tutorial và tài liệu module <code>sqlite3</code> · docs.python.org</li>
+    <li>SQL As Understood By SQLite · sqlite.org</li>
+    <li>PostgreSQL Documentation, phần The SQL Language · postgresql.org</li>
+  </ul>
+
+  <div class="cta avoid">
+    <div class="brand"><span class="mk">8</span>8 Sync</div>
+    <div class="q"><b>Tinh thần học</b>We teach you to learn, not to copy. Tự làm trước, xem lời giải sau.</div>
+    <div class="url">course.8syncdev.com<span>8syncdev.com</span></div>
+  </div>
+</section>
+
+</body>
+</html>
