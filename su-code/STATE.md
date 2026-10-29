@@ -19,7 +19,7 @@ CLI = on/off; everything else from HQ (local or internet link). Rooms never stay
 - [x] Release v0.101.1 (12 assets) → installed → HQ 8740 restarted on 0.101.1 → `auto up --roles full --clear-ss` (rd, ui restarted on the new kit; 6 busy rooms move at their next idle `--clear-ss`) → `--public` UAT: wrong key 401, right key 303 + `hq_pub` HttpOnly Secure cookie, app loads data at 430 px; HQ back to local-only.
 
 ## Current
-v0.110.89: `super-pdf` chế độ Learner (Chromium, bìa + journey map + card SVG), `build.sh --engine`, `preview.sh` (PyMuPDF).
+v0.110.90: `/auto-team` 100% ECC — session con nhận lệnh bằng tin nhắn của trưởng nhóm, agent Kanban ECC `$T/BOARD.md` (chỉ trưởng nhóm ghi), không phòng/board/HQ 8sync; `/team-tick` chỉ còn nhịp của trưởng nhóm.
 v0.110.88: `/auto-team` (đội session Desktop cố định: 2–5 phòng con theo lane, tên tiếng Việt rõ vai, handle lane riêng, ROSTER ở `<git-common-dir>/8sync-team/`, mốc + RUBRIC, nhận đội có sẵn) + `/team-tick` (cron */15 mỗi phòng, tự huỷ khi xoá `ON`); `auto add --as`.
 v0.110.87: kit tắt MCP chrome-devtools của ECC (`deniedMcpServers` serverName `plugin:ecc:chrome-devtools`), giữ skill/agent `ecc:*`.
 v0.110.86: `8sync ccc kit` bật plugin ECC (affaan-m/ECC, MIT) trên mọi máy: 71 agent, 311 skill, 97 command `ecc:*`, marketplace `autoUpdate`, hook ECC tắt (`ECC_HOOKS_ENABLED=false`), giữ giá trị owner; policy org cho phép `affaan-m/ECC`.

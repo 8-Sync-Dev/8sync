@@ -186,7 +186,7 @@ Type one of these inside Claude Code. Each runs longer before it needs you; leve
 | 3 | `/ship-auto <task>` | `/ship`, then PR → CI green on Windows, macOS and Linux → merge → tag → release | one `Ship` answer that lists every step |
 | 4 | `/ship-loop <goal>` | every acceptance check exits 0 (caps: 12 iterations, 90 min, the same failure twice) | a cap, or the release |
 | 5 | `/autopilot` | up to 5 backlog items or 8 h (labelled issues, `su-code/STATE.md` Next, failures without a guard), each its own loop and branch | one `Ship` answer for the batch |
-| 5 | `/auto-team [goal]` | a fixed team of Claude Desktop sessions: the lead (who also works) plus 2–5 sub-rooms sized from the project's independent lanes, named in Vietnamese by role, reused instead of re-created; 8sync board, ECC specialists, `/team-tick` every 15 min per room | `8sync ccc cancel`, or one `Ship` answer per merge batch |
+| 5 | `/auto-team [goal]` | a fixed team of Claude Desktop sessions: the lead (who also works) plus 2–5 sub-rooms sized from the project's independent lanes, named in Vietnamese by role, reused instead of re-created; 100% ECC: an ECC agent Kanban only the lead writes, sub-sessions driven by prompt (SendMessage) and reporting back, lead heartbeat `/team-tick` every 15 min; no 8sync rooms, board or HQ | say "dừng đội", or one `Ship` answer per merge batch |
 
 #### The whole team, one command, no terminal per room
 
