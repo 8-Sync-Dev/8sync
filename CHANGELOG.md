@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.90] — 2026-10-29
+
+### Changed
+- **`/auto-team` chạy 100% bằng ECC + session Desktop, bỏ phòng/board/HQ của 8sync.** Owner (2026-10-29): "auto-team là dùng 100% ecc và session con trong prompt ra lệnh thông không phải rooms, teams hq ui đâu bỏ rồi".
+  - Trưởng nhóm giữ agent Kanban theo `ecc:team-agent-orchestration` ở `<git-common-dir>/ecc-team/BOARD.md` (chỉ trưởng nhóm ghi), giao từng card cho session con bằng `SendMessage` (`[giao] card …` kèm việc "làm tiếp" để không session nào ngồi không); session con làm bằng skill/agent ECC theo vai và báo lại `[<handle>] card <id> → …`.
+  - Session con không còn cron; `/team-tick` chỉ là nhịp 15 phút của trưởng nhóm (giao việc cho session rảnh, merge, mốc). `/team-tick <handle>` ở session con cũ chỉ gỡ cron của nó. Đội cũ ở `8sync-team/` được nhận lại.
+
 ## [0.110.89] — 2026-10-29
 
 ### Added

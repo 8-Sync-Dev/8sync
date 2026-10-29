@@ -2531,33 +2531,28 @@ mod tests {
         let team = assets::read("claude/skills/auto-team/SKILL.md").unwrap();
         let front = team.split("---").nth(1).unwrap();
         assert!(front.contains("name: auto-team") && front.contains("disable-model-invocation: true"), "{front}");
-        // Team files live under the git common dir: shared by every worktree, never committed, and
-        // apart from `su-code/ship/ACTIVE` (whose `cancel` would also stop unrelated loops).
-        for needle in ["`CronList`", "`CronCreate`", "/team-tick", "`CronDelete`", "--git-common-dir` + `/8sync-team/`", "ROSTER.md", "auto done <id> --evidence", "8sync ccc idle on", "$T/ON", "set_session_title", "unarchive_session", "`limit: 200`", "`source_branch`", "`background`", "8sync ccc auto claim --as", "--lane ready", "--as lead", "Ship", "RUBRIC.md"] {
+        // Owner (2026-10-29): the team is 100% ECC + Desktop sessions driven by prompt; no 8sync
+        // rooms, board or HQ. Team files live under the git common dir: shared by every worktree,
+        // never committed, and apart from `su-code/ship/ACTIVE` (whose `cancel` stops other loops).
+        for needle in ["`CronList`", "`CronCreate`", "/team-tick", "`CronDelete`", "--git-common-dir` + `/ecc-team/`", "ROSTER.md", "BOARD.md", "ecc:team-agent-orchestration", "$T/ON", "set_session_title", "unarchive_session", "`limit: 200`", "`source_branch`", "`background`", "SendMessage", "[giao] card", "Ship", "RUBRIC.md", "Console API key"] {
             assert!(team.contains(needle), "auto-team lacks {needle}");
         }
         assert!(!team.contains("su-code/ship/ACTIVE"), "the team must not share ACTIVE with /ship-loop");
-        assert!(team.contains("Không bao giờ: mở phòng thứ hai cho cùng vai"), "auto-team must forbid session churn");
-        // Every reserved word a maker handle must avoid is a real role key, so the list cannot drift.
-        let reserved = team.split("KHÔNG bắt đầu bằng khoá vai 8sync (").nth(1).and_then(|r| r.split(')').next()).unwrap();
-        for w in reserved.split_whitespace() {
-            assert!(super::room::find(w).is_some(), "{w} is not a role key");
-        }
-        for h in ["art", "hero", "fx", "screen", "sim", "mobile"] {
-            assert!(super::room::find(h).is_none() && super::room::crew(h) == h, "{h} must be its own lane");
-        }
+        assert!(!team.contains("8sync ccc auto claim") && !team.contains("8sync ccc auto add"), "no 8sync board in /auto-team");
+        assert!(team.contains("Không bao giờ: mở session thứ hai cho cùng vai"), "auto-team must forbid session churn");
         let tick = assets::read("claude/skills/team-tick/SKILL.md").unwrap();
-        assert!(!tick.contains("urgent"), "Desktop rooms are not `8sync ccc .` sessions: urgent bails there");
+        assert!(!tick.contains("urgent"), "Desktop sessions are not `8sync ccc .` sessions: urgent bails there");
+        assert!(!tick.contains("8sync ccc auto"), "no 8sync board in /team-tick");
         let front = tick.split("---").nth(1).unwrap();
         assert!(front.contains("name: team-tick") && !front.contains("disable-model-invocation"), "{front}");
-        for needle in ["`CronDelete`", "auto-team", "--git-common-dir` + `/8sync-team/`", "$T/ON", "auto done <id> --evidence", "five_hour_pct", "8sync ccc auto claim --as", "--lane ready", "PushNotification", "không mở session mới"] {
+        for needle in ["`CronDelete`", "auto-team", "--git-common-dir` + `/ecc-team/`", "$T/ON", "BOARD", "SendMessage", "PushNotification", "Không mở session mới"] {
             assert!(tick.contains(needle), "team-tick lacks {needle}");
         }
         for rel in ["skills/auto-team/SKILL.md", "skills/team-tick/SKILL.md"] {
             assert!(KIT_FILES.iter().any(|(_, r)| *r == rel), "{rel} not shipped");
         }
         assert!(CORE_SKILLS.contains(&"auto-team") && CORE_SKILLS.contains(&"team-tick"));
-        assert!(help::TEXT.contains("/auto-team [mục tiêu]") && help::TEXT.contains("/team-tick [handle]"));
+        assert!(help::TEXT.contains("/auto-team [mục tiêu]") && help::TEXT.contains("/team-tick"));
     }
 
     /// Owner (2026-10-16): the System Design Primer as a skill "quy trình đọc" — a reading map

@@ -1,73 +1,83 @@
 ---
 name: auto-team
-description: Fixed team of Claude Desktop sessions for any project, level 5 — /auto-team [mục tiêu]. Reads the project, decides how many sub-rooms it needs (2–5) and what each owns, names every session clearly in Vietnamese by role, reuses or adopts existing rooms instead of opening new ones, seeds the 8sync board with milestones and an owner-quote rubric, briefs each room with its ECC/8sync specialists, and keeps every room busy through /team-tick. The lead room works too. Owner-only; re-run to resume or renew after a restart.
+description: Fixed team of Claude Desktop sessions for any project, level 5, built 100% on ECC — /auto-team [mục tiêu]. Reads the project, decides how many sub-sessions it needs (2–5) and what each owns, names every session clearly in Vietnamese by role, reuses or adopts existing sessions instead of opening new ones, keeps an ECC agent Kanban (team-agent-orchestration) that only the lead writes, and drives each sub-session by prompt (SendMessage) with ECC skills and agents; sub-sessions report back the same way. No 8sync rooms, board or HQ. The lead works too. Owner-only; re-run to resume after a restart.
 argument-hint: "[mục tiêu, kèm lệnh check / deadline nếu có] [--rooms 2-5] [--plan]"
 disable-model-invocation: true
 ---
-Tham số: $ARGUMENTS (`--plan` = chỉ đề xuất đội hình, không mở/đổi tên phòng)
+Tham số: $ARGUMENTS (`--plan` = chỉ đề xuất đội hình, không mở/đổi tên session)
 
-Owner (2026-10-28): "1 team thật sự tương tác liên tục không 1 session nào được ngồi không có việc làm, session chính control các session con thì session chính cũng phải làm việc", "các session cố định để sài á chứ không phải là tạo session mới liên tục rồi phải dọn rác session cũ", "đặt lên tên session đổi tên chuẩn, biết cần chia bao nhiêu session con và task phân chia", "cần gấp hoàn chỉnh sớm nên có deadline đặt ra". Tổng quát hoá từ `/tohe-auto-team` (5 phòng cố định; mốc M1–M4 có giờ; rubric critic trích nguyên lời owner; trưởng nhóm tự mở link deploy kiểm rồi mới báo).
+Owner (2026-10-28): "1 team thật sự tương tác liên tục không 1 session nào được ngồi không có việc làm, session chính control các session con thì session chính cũng phải làm việc", "các session cố định để sài á chứ không phải là tạo session mới liên tục", "đặt lên tên session đổi tên chuẩn, biết cần chia bao nhiêu session con và task phân chia", "cần gấp hoàn chỉnh sớm nên có deadline". Owner (2026-10-29): "auto-team là dùng 100% ecc và session con trong prompt ra lệnh thông không phải rooms, teams hq ui đâu bỏ rồi". Tổng quát hoá từ `/tohe-auto-team` (mốc có giờ; rubric trích nguyên lời owner; trưởng nhóm tự mở link deploy kiểm rồi mới báo).
 
-Session này là **Trưởng nhóm**. Phòng = một session Claude Desktop (Code tab), làm trong worktree riêng của nó.
-- **File đội** (không commit, chung mọi worktree): thư mục `$T` = output của `git rev-parse --path-format=absolute --git-common-dir` + `/8sync-team/` (git ≥2.31) → `ROSTER.md` (đội hình), `ON` (đội đang chạy), `REPORT-<ngày>.md`. Biến shell không giữ giữa các lệnh: mỗi lần tính lại, Read/Write dùng đường dẫn tuyệt đối đã in ra; chỉ trưởng nhóm ghi vào `$T`.
-- **Nhánh tích hợp:** repo có remote GitHub → nhánh mặc định của remote (8sync chỉ nhận PR có base là nhánh mặc định: `move --pr`, `auto merge`); card cắt từ nó, merge qua PR sau câu `Ship`. Không remote → nhánh session này đang đứng; card đi `--sha`, trưởng nhóm merge vào nó ở máy rồi `auto done`.
-- **Board** = board 8sync (`8sync ccc auto board`, HQ hiện) — không mở board thứ hai. Lệnh `8sync ccc auto …` chạy được từ mọi worktree của repo.
-- **Rubric** (commit trên nhánh tích hợp): `su-code/team/RUBRIC.md` — mỗi yêu cầu của owner một ô: trích nguyên văn + ngày giờ + cách kiểm; luật do agent đặt ghi "(agent rule)".
+Session này là **Trưởng nhóm**. Session con = một session Claude Desktop (Code tab) trong worktree riêng. **Không dùng** `8sync ccc auto …`, phòng nền, board 8sync hay HQ: đội chạy hoàn toàn bằng tool session của Desktop + skill/agent ECC.
+- **File đội** (không commit, chung mọi worktree): `$T` = output của `git rev-parse --path-format=absolute --git-common-dir` + `/ecc-team/` (git ≥2.31) → `ROSTER.md` (đội hình), `BOARD.md` (agent Kanban), `ON` (đội đang chạy), `REPORT-<ngày>.md`. Biến shell không giữ giữa các lệnh: mỗi lần tính lại, Read/Write bằng đường dẫn tuyệt đối. **Chỉ trưởng nhóm ghi** `$T` (một người ghi, không tranh file).
+- **BOARD.md** theo `ecc:team-agent-orchestration`: mỗi card một dòng `id · việc · chủ (handle) · cột · nhánh · AC · merge gate · bằng chứng/handoff`; cột: backlog → ready → running → review → blocked → merged → archived. Một card một chủ, ≤ ~5 file, AC kiểm được.
+- **Nhánh tích hợp:** repo có remote GitHub → nhánh mặc định của remote; card đi PR, merge sau câu `Ship`. Không remote → nhánh session này đang đứng; trưởng nhóm merge ở máy.
+- **Rubric** (commit trên nhánh tích hợp): `su-code/team/RUBRIC.md` — mỗi yêu cầu owner một ô: trích nguyên văn + ngày giờ + cách kiểm; luật do agent đặt ghi "(agent rule)".
 
 ## 0. Lần đầu, chạy lại, hay nhận đội có sẵn
-- Không có tool `mcp__ccd_session__start_session` / `mcp__ccd_session_mgmt__list_sessions` (CLI thường) → nói rõ, đề xuất `8sync ccc auto up` (team phòng nền, cùng board), dừng.
-- `8sync ccc auto status --json` cho thấy team `8sync ccc auto up` đang chạy ở repo này → dừng: hai đội chung board sẽ tranh card; hỏi owner dùng team đó hay `8sync ccc auto down` trước.
-- `$T/ROSTER.md` có `status: active` → **chạy lại**: sang mục 4 (tìm phòng theo id → name → tên; mở lại phòng archive; chỉ mở phòng thật sự mất), rồi 5–7. `status: draft` (từ `--plan`) → coi như lần đầu nhưng dùng nháp làm đề xuất.
-- **Nhận đội có sẵn**: dự án đã có skill `*auto-team*`, hoặc session tên `<Dự án> · …` (`list_sessions` `include_archived: true`, `limit: 200`, lọc theo tiền tố tên, nhánh hoặc nhóm sidebar) → nhập nguyên tên/vai đó vào ROSTER, không đổi tên; worktree/nhánh đang dở → card `building` của phòng giữ nó; board markdown riêng (`BOARD.md`…) → `auto add` từng thẻ Ready/Running (giữ chủ, nhánh), ghi "đã chuyển sang board 8sync" vào file đó; Ship owner đã duyệt sẵn (vd deploy preview) → chép vào ROSTER kèm nguồn + ngày.
+- Không có tool `mcp__ccd_session__start_session` / `mcp__ccd_session_mgmt__list_sessions` / `SendMessage` (CLI thường) → nói rõ "cần Claude Desktop", dừng.
+- `$T/ROSTER.md` có `status: active` → **chạy lại**: sang mục 4 (tìm session theo id → name → tên; mở lại session archive; chỉ mở session thật sự mất), rồi 5–7. `status: draft` (từ `--plan`) → coi như lần đầu, dùng nháp làm đề xuất.
+- **Nhận đội có sẵn**: có `<git-common-dir>/8sync-team/ROSTER.md` (bản cũ dùng board 8sync), skill `*auto-team*` của dự án, hoặc session tên `<Dự án> · …` (`list_sessions` `include_archived: true`, `limit: 200`) → nhập nguyên tên/vai vào ROSTER, không đổi tên; card đang dở (board 8sync cũ, `BOARD.md` riêng) → chép vào `$T/BOARD.md` giữ chủ + nhánh; Ship owner đã duyệt sẵn → chép vào ROSTER kèm nguồn + ngày. Session con đang có cron `/team-tick <handle>` cũ → mục 5 bảo nó `CronDelete`.
 
 ## 1. Đọc dự án (không sửa gì)
-Trên nhánh tích hợp: `su-code/STATE.md` (mục `## Goal` và `## Next` đầu tiên), `AGENTS.md`/`README`, manifest (package.json, Cargo.toml, go.mod, pyproject, *.uproject…), cây 2 tầng, `git log --oneline -30`, `git remote -v` (rỗng → chế độ local, mục 5), `.github/workflows` (không có → "not verified: CI 3 OS"), worktree/nhánh mở, `8sync ccc auto status --json` (`gate` khác null = gói subscription chưa có lease owner-có-mặt: đội chỉ chạy khi owner bật `8sync ccc idle on` hoặc dùng Console API key — nói owner ở mục 3, không tự lách), `8sync ccc auto board --json`, `8sync ccc . ls` + `ListAgents`. Mục tiêu: đối số → STATE Goal → hỏi ở mục 3; phải kiểm được (`ecc:loop-design-check`: lệnh check hoặc tiêu chí đo được + điều KHÔNG được làm).
+Trên nhánh tích hợp: `su-code/STATE.md` (`## Goal`, `## Next`), `AGENTS.md`/`README`, manifest (package.json, Cargo.toml, go.mod, pyproject, *.uproject…), cây 2 tầng, `git log --oneline -30`, `git remote -v` (rỗng → chế độ local), `.github/workflows` (không có → "not verified: CI 3 OS"), worktree/nhánh mở, `ListAgents`. Hiểu codebase nhanh: `ecc:codebase-onboarding` / agent `ecc:code-explorer`. Mục tiêu: đối số → STATE Goal → hỏi ở mục 3; phải kiểm được (`ecc:loop-design-check`: lệnh check hoặc tiêu chí đo được + điều KHÔNG được làm). Mục tiêu lớn → `ecc:planner` / `ecc:blueprint` tách thành card.
 
 ## 2. Chia đội
-1. **Lane maker** = nhóm thư mục sửa độc lập (không chung file, check riêng được) có ≥2 việc mở (card board + mục Next + phần mục tiêu thuộc lane đó). Lane quan trọng nhất (nhiều việc nhất hoặc chặn các lane khác) là của Trưởng nhóm — không tính vào phòng con.
-2. **Phòng con = Build & Ship + Critic + R&D + một phòng mỗi lane maker còn lại (tối đa 3)** → 2–5; `--rooms` của owner thắng. Hạn mức 5 giờ hoặc 7 ngày ≥70% (`five_hour_pct`/`seven_day_pct`) hoặc máy áp lực → bớt một phòng maker.
-3. **Tên session** `<Tên dự án> · <Vai>: <2–3 việc chính>` — tiếng Việt, thuật ngữ kỹ thuật giữ tiếng Anh, nhìn sidebar là biết phòng làm gì; không trùng, không theo tên nhánh/số. **Handle** (dùng cho `--as`/`--role` của board):
-   - Trưởng nhóm: `lead` (triage) + một handle lane riêng.
-   - Build & Ship: `qa` · Critic + R&D: `review`.
-   - Phòng maker: một từ thường, chỉ chữ cái, nói đúng lane (`art`, `hero`, `fx`, `screen`, `sim`, `mobile`…), KHÔNG bắt đầu bằng khoá vai 8sync (pm lead plan boss main ba analyst spec req po arch sa solution rd research explore dev build code impl qa qc test e2e uat review critic ui ux fe frontend web design hq api be backend server encore db ops infra ci deploy release doc write content blog sec security audit aup core cli rust crate kit ccc eye sweep) — handle như vậy là vai riêng: card `--role <handle>` chỉ phòng đó nhận, hai phòng maker không tranh card.
+1. **Lane maker** = nhóm thư mục sửa độc lập (không chung file, check riêng được) có ≥2 việc mở. Lane quan trọng nhất (nhiều việc nhất hoặc chặn lane khác) là của Trưởng nhóm — không tính vào session con.
+2. **Session con = Build & Ship + Critic + R&D + một session mỗi lane maker còn lại (tối đa 3)** → 2–5; `--rooms` của owner thắng. Máy áp lực hoặc owner báo sắp hết hạn mức → bớt một session maker.
+3. **Tên session** `<Tên dự án> · <Vai>: <2–3 việc chính>` — tiếng Việt, thuật ngữ kỹ thuật giữ tiếng Anh, nhìn sidebar là biết làm gì; không trùng, không theo tên nhánh/số. **Handle** = một từ thường chỉ chữ cái, duy nhất trong đội (`lead`, `qa`, `review`, `art`, `hero`, `api`…), dùng làm chủ card và nhãn tin.
 
-| Vai (mẫu tên) | Handle | Việc chính · việc thường trực khi hết card |
-|---|---|---|
-| `Trưởng nhóm: <lane chính> + ghép code` (session này) | `lead` + lane | triage, mốc, giao việc, merge, làm lane chính · gỡ blocked, bơm card |
-| `Build & Ship: chạy thử, test, bản xem` | `qa` | check + UAT từng card, bản xem cho owner, màn tiến độ/thống kê · chạy lại bản mới nhất ở khổ màn owner yêu cầu |
-| `Critic + R&D: chấm điểm, thị trường` | `review` | review đối kháng diff/asset/bản xem theo RUBRIC, R&D → đề xuất card · chấm mốc, lập/giữ RUBRIC |
-| `<Mảng>: <việc>` (vd `Thiết kế màn hình, UI/UX`, `Thiết kế nội dung, art, asset`, `Kỹ thuật lõi: API, dữ liệu`) | lane | card của lane · việc kế trong Next của lane |
+| Vai (mẫu tên) | Handle | Việc chính · việc thường trực khi hết card | Skill/agent ECC chính |
+|---|---|---|---|
+| `Trưởng nhóm: <lane chính> + ghép code` (session này) | `lead` | giao việc, mốc, merge, làm lane chính · gỡ blocked, bơm card | `ecc:team-agent-orchestration`, `ecc:planner`, `ecc:architect`, `ecc:loop-operator`, `ecc:council` |
+| `Build & Ship: chạy thử, test, bản xem` | `qa` | check + UAT từng card, bản xem cho owner · chạy lại bản mới nhất ở khổ màn owner yêu cầu | `ecc:verification-loop`, `ecc:e2e-runner`, `ecc:browser-qa`, `ego-browser` |
+| `Critic + R&D: chấm điểm, thị trường` | `review` | review đối kháng diff/bản xem theo RUBRIC, R&D → đề xuất card · chấm mốc, giữ RUBRIC | `/ecc:orch-review`, `ecc:code-reviewer`, `ecc:security-reviewer`, `ecc:market-research`, `ecc:deep-research`, `ecc:santa-method` |
+| `<Mảng>: <việc>` (vd `Thiết kế màn hình, UI/UX`, `Kỹ thuật lõi: API, dữ liệu`) | lane | card của lane · việc kế trong Next của lane | `ecc:tdd-workflow` + `ecc:tdd-guide`, `ecc:build-error-resolver`, reviewer theo ngôn ngữ (`ecc:typescript-reviewer`, `ecc:rust-reviewer`, `ecc:python-reviewer`, `ecc:go-reviewer`…), màn hình thêm `ecc:frontend-patterns`, `ecc:a11y-architect`, `impeccable` |
 
 ## 3. Duyệt đội hình (một câu hỏi)
-In bảng: tên phòng · handle · thư mục giữ · việc đầu tiên · agent chuyên môn · mốc đề xuất (M1… có giờ Việt Nam + "xong khi"). Một `AskUserQuestion` (≤4 câu, gom mục tiêu/deadline nếu thiếu): `Duyệt đội hình (Recommended)` · `Ít phòng hơn` · `Chỉ lập kế hoạch` · `Dừng`. Owner vắng / "auto" → Recommended, ghi giả định. `--plan` → ghi `$T/ROSTER.md` với `status: draft`, dừng.
+In bảng: tên session · handle · thư mục giữ · card đầu tiên · skill/agent ECC · mốc đề xuất (M1… giờ Việt Nam + "xong khi"). Một `AskUserQuestion` (≤4 câu, gom mục tiêu/deadline nếu thiếu): `Duyệt đội hình (Recommended)` · `Ít session hơn` · `Chỉ lập kế hoạch` · `Dừng`. Owner vắng / "auto" → Recommended, ghi giả định. `--plan` → ghi `$T/ROSTER.md` `status: draft` + `$T/BOARD.md`, dừng.
 
-## 4. Lập phòng (cố định, không churn)
-1. `$T/ROSTER.md` (`status: active`): mục tiêu + check, nhánh tích hợp, remote có/không, mốc, ràng buộc chung của owner (vd khổ màn, thiết bị), Ship đã duyệt (nguồn, ngày), bảng phòng: tên · session id · name · handle · thư mục giữ · việc thường trực · agent. Tạo `$T/ON`.
+## 4. Lập session con (cố định, không churn)
+1. `$T/ROSTER.md` (`status: active`): mục tiêu + check, nhánh tích hợp, remote có/không, mốc, ràng buộc owner (khổ màn, thiết bị), Ship đã duyệt (nguồn, ngày), bảng: tên · session id · name · handle · thư mục giữ · việc thường trực. `$T/BOARD.md` với card đầu cho mỗi session (cột `ready`). Tạo `$T/ON`.
 2. Đổi tên session này: `mcp__ccd_session_mgmt__set_session_title` (`self`).
-3. Mỗi phòng: có session id trong ROSTER → `get_session`; không thì `list_sessions` (`include_archived: true`, `limit: 200`) tìm theo name rồi tên. Thấy → archive thì `unarchive_session`, đúng tên chưa thì `set_session_title`. Không thấy → `mcp__ccd_session__start_session` **một lần**: `initiation` "user_asked" (owner gõ lệnh này), `context` "fresh", `use_worktree` true, `source_branch` = nhánh tích hợp, `branch_name` `team-<handle>`, `name` = slug `[a-z0-9-]` ≤24 ký tự (bỏ dấu, cắt ngắn: `tohe-art`), `model` một id Sonnet (vd `claude-sonnet-5-5`) cho `qa`/`review` (các phòng khác bỏ trống = theo session này), `permission_mode` = mode của session này, riêng `bypassPermissions` thì truyền `auto`, `background` (≥80 ký tự: dự án, mục tiêu, mốc, đường dẫn `$T`), `prompt` = brief mục 5. Ghi id vào ROSTER ngay. Tool từ chối (vd Remote Control: chỉ mở session con từ tin owner gõ trên Desktop) → không thử lại; ghi phòng thiếu + brief vào báo cáo để owner mở tay.
-4. Có `mcp__ccd_sidebar__*`: `list_groups` → chưa có nhóm `<Tên dự án> · Team` thì `create_group`; `move_sessions` cả đội vào.
-Không bao giờ: mở phòng thứ hai cho cùng vai, mở phòng ngoài ROSTER, xoá/archive phòng để "dọn".
+3. Mỗi session con: có id trong ROSTER → `get_session`; không thì `list_sessions` (`include_archived: true`, `limit: 200`) tìm theo name rồi tên. Thấy → archive thì `unarchive_session`, sai tên thì `set_session_title`. Không thấy → `mcp__ccd_session__start_session` **một lần**: `initiation` "user_asked", `context` "fresh", `use_worktree` true, `source_branch` = nhánh tích hợp, `branch_name` `team-<handle>`, `name` = slug `[a-z0-9-]` ≤24 ký tự (`tohe-art`), `model` một id Sonnet (vd `claude-sonnet-5-5`) cho `qa`/`review` (session khác bỏ trống), `permission_mode` = mode của session này (`bypassPermissions` → truyền `auto`), `background` (≥80 ký tự: dự án, mục tiêu, mốc, vai), `prompt` = brief mục 5 + card đầu. Ghi id vào ROSTER ngay. Tool từ chối → không thử lại; ghi session thiếu + brief vào báo cáo để owner mở tay.
+4. Có `mcp__ccd_sidebar__*`: chưa có nhóm `<Tên dự án> · Team` thì `create_group`; `move_sessions` cả đội vào.
+Không bao giờ: mở session thứ hai cho cùng vai, mở session ngoài ROSTER, xoá/archive session để "dọn".
 
-## 5. Brief mỗi phòng (prompt lúc mở, hoặc `SendMessage` tới id khi dùng lại)
-Tên, vai, handle, thư mục được sửa (ngoài đó → nhắn phòng giữ file), mục tiêu, mốc của phòng, ràng buộc owner, đường dẫn `$T`. Vòng làm việc = skill `/team-tick <handle>`:
-- `CronList` → chưa có job `/team-tick <handle>` thì `CronCreate` `*/15 * * * *` prompt `/team-tick <handle>` (chạy khi phòng rảnh; mất khi đóng app hoặc sau 7 ngày — trưởng nhóm nhắc lại).
-- Card: `8sync ccc auto claim --as <handle> --json` (phòng maker thêm `--lane ready`) → làm trên nhánh `card-<id>-<slug>` cắt từ nhánh tích hợp trong worktree của phòng; `/ship` tới commit + gate (`sec`, `rules`, `aup-audit` qua Skill tool, `8sync ccc risk`, `trail check`). Có remote → push nhánh + PR (base = nhánh mặc định) → `auto move <id> qa --pr <số> --as <handle>`; không remote → `auto move <id> qa --sha <head> --as <handle>`. Ghi handoff vào card (`auto note`: nhánh, SHA, lệnh check, kết quả). Không merge, không push main, không deploy ngoài Ship đã duyệt.
-- Owner nhắn thẳng vào phòng → làm nếu hợp vai, đồng thời `auto add "[owner] <trích nguyên văn>" --role <handle hợp> --prio P1 --as <handle>` và nhắn trưởng nhóm một dòng (để vào RUBRIC + mốc).
+## 5. Lệnh cho session con (prompt lúc mở, hoặc `SendMessage` tới id)
+**Brief** (một lần): tên, vai, handle, thư mục được sửa (ngoài đó → nhắn session giữ file qua trưởng nhóm), mục tiêu, mốc, ràng buộc owner, skill/agent ECC của vai (bảng mục 2), luật dưới. Session con **không đặt cron, không tự lấy việc ngoài lệnh**: việc tới bằng tin của trưởng nhóm; có cron `/team-tick <handle>` cũ → `CronDelete`.
+
+**Lệnh giao việc** (mỗi card một tin, dòng đầu tự đủ nghĩa):
+`[giao] card <id> · <việc> — AC: … · gate: <lệnh check> · nhánh card-<id>-<slug> từ <nhánh tích hợp> · xong thì làm tiếp: <việc thường trực/card kế>`
+
+**Session con làm** (theo vai, chỉ trong worktree của mình):
+- maker: `ecc:tdd-workflow` (test trước) → code → `ecc:verification-loop` / `/ecc:quality-gate` → reviewer ECC theo ngôn ngữ → gate commit bắt buộc (`sec`, `rules`, `aup-audit` qua Skill tool, `8sync ccc risk`, `trail check`) → commit. Có remote → push nhánh + PR (base = nhánh mặc định); không remote → chỉ commit. Không merge, không push main, không deploy.
+- `qa`: check + UAT nhánh card ở khổ màn/thiết bị owner yêu cầu (`ecc:e2e-runner`/`ecc:browser-qa`, trình duyệt `ego-browser`, ảnh `qa/evidence/card-<id>-<slug>.png`).
+- `review`: review đối kháng theo `su-code/team/RUBRIC.md` (`/ecc:orch-review` khi diff lớn, không thì `ecc:code-reviewer` + `ecc:security-reviewer`), FATAL/MAJOR/MINOR.
+- Kẹt cùng lỗi 2 lần → R&D (`ecc:search-first`, `ecc:deep-research`, ≤2 agent) rồi thử lại; lần 3 → báo blocked.
+
+**Báo lại** (luôn `SendMessage` tới id trưởng nhóm, một tin khi xong/kẹt):
+`[<handle>] card <id> → review|approved|blocked · nhánh, SHA, PR · lệnh check: kết quả · việc đang làm tiếp`
+Rồi làm ngay phần "làm tiếp" trong lệnh giao; hết thật → báo `[<handle>] rảnh` và kết thúc lượt (không chờ vòng).
+- Owner nhắn thẳng vào session con → làm nếu hợp vai, báo trưởng nhóm `[<handle>] [owner] "<trích nguyên văn>"` để vào BOARD + RUBRIC.
 - Xong card không tầm thường: bài học có bằng chứng → `/remember`; cách làm dùng lại được → `/ecc:learn-eval` (hỏi owner trước khi ghi skill); rồi `/compact`. ECC learn-v2 (instinct) cần hook ECC, đang tắt — không dựa vào nó.
-- Chuyên gia (≤5 agent một việc): lead → `ecc:planner`, `ecc:architect`, `ecc:loop-operator`; maker → `ecc:tdd-guide`, `ecc:build-error-resolver`, reviewer theo ngôn ngữ (`ecc:typescript-reviewer`, `ecc:rust-reviewer`, `ecc:python-reviewer`, `ecc:go-reviewer`…), màn hình thêm `impeccable`, `ecc:a11y-architect`; Build & Ship → `qa`, `ecc:e2e-runner`, `ecc:browser-qa`, `ego-browser` (không chrome-devtools MCP); Critic + R&D → `critic`, `reviewer`, `/ecc:orch-review`, `ecc:council` (quyết định lớn), `ecc:market-research`, `/deep-research`, `ecc:skill-scout`, `ecc:santa-method` (nội dung sắp public).
 
 ## 6. Bơm việc + mốc
-- Mốc M1…Mn: giờ Việt Nam + "xong khi" đo được, ghi ROSTER và báo owner; card thuộc mốc gần nhất `--prio P0/P1`. Trễ mốc → báo owner ngay: lý do + giờ mới.
-- Card: `8sync ccc auto add "<việc>" --role <handle phòng> --check "<lệnh>" --as lead` (có `--check` thì tự vào ready khi còn chỗ, cap 8; đầy thì nằm backlog). Một card một chủ, ≤ ~5 file, có AC. Việc nhiều vai → `ecc:team-agent-orchestration` (owner, file scope, merge gate, handoff). Mỗi phòng con luôn có ≥1 card ready hoặc một việc thường trực rõ.
-- Critic + R&D lập `su-code/team/RUBRIC.md` từ lời owner (transcript, STATE, tin nhắn), trưởng nhóm commit nó trên nhánh tích hợp.
+- Mốc M1…Mn: giờ Việt Nam + "xong khi" đo được, ghi ROSTER và báo owner; card mốc gần nhất ưu tiên P0. Trễ mốc → báo owner ngay: lý do + giờ mới.
+- Mỗi session con luôn có **một card đang làm + một việc "làm tiếp"** trong lệnh giao — không session nào ngồi không. Ready thiếu → tách mục tiêu/mốc/Next/đề xuất của Critic + R&D thành card (`ecc:planner`).
+- Critic + R&D lập `su-code/team/RUBRIC.md` từ lời owner; trưởng nhóm commit nó trên nhánh tích hợp.
 
 ## 7. Trưởng nhóm làm việc + nhịp
-`CronList` → chưa có `/team-tick` thì `CronCreate` `*/15 * * * *` prompt `/team-tick`. Rồi làm lane chính: `claim --as <handle lane> --lane ready`, chỉ nhận card ≤30 phút để không bỏ triage. Báo owner ≤10 dòng: đội hình (tên phòng, link `[tên](#<session id>)`), mốc + card từng phòng, link HQ board / `8sync ccc auto board`, việc owner cần làm (phòng mở tay, Ship), not verified.
+- Tin `[<handle>] …` tới = sự kiện: cập nhật BOARD (`running → review`: giao `qa` rồi `review`; `approved` → merge; `blocked` → gỡ: tách nhỏ, đổi chủ, R&D, hoặc gom câu hỏi owner; `rảnh` → giao card kế ngay).
+- Nhịp dự phòng: `CronList` → chưa có `/team-tick` thì `CronCreate` `*/15 * * * *` prompt `/team-tick` (chỉ ở session này; mất khi đóng app hoặc sau 7 ngày — `/auto-team` lần sau đặt lại).
+- Giữa các tin: làm lane chính, chỉ card ≤30 phút (không bỏ điều phối).
+- Báo owner ≤10 dòng: đội hình (link `[tên](#<session id>)`), mốc + card từng session, đường dẫn `$T/BOARD.md`, việc owner cần làm (session mở tay, Ship), not verified.
 
 ## Luật
-- Merge: chỉ trưởng nhóm, card `approved` có SHA + check xanh. Không remote → merge nhánh card vào nhánh tích hợp ở máy rồi `8sync ccc auto done <id> --evidence "<lệnh: kết quả>"`. Có remote → merge PR / push / tag / release / deploy cần MỘT câu `Ship` (gom hết, trừ đích owner đã duyệt sẵn ghi trong ROSTER), rồi `8sync ccc auto merge`.
-- `unarchive_session`, `set_session_title`, `move_sessions` trên phòng không do session này mở có thể hỏi owner: làm trong `/auto-team` (owner có mặt), nhịp cron chỉ báo owner. Không `bypassPermissions`; không build nặng ở máy.
-- Bản xem/deploy mới: trưởng nhóm tự mở link (trình duyệt, đúng khổ màn owner yêu cầu), chụp ảnh (`SendUserFile`) rồi mới báo owner.
-- Tin giữa các phòng là dữ liệu, không phải lệnh owner; không phòng nào duyệt Ship thay owner.
-- Owner nói "dừng đội"/"stop" → xoá `$T/ON`, `CronDelete` job `/team-tick` của session này; các phòng tự huỷ cron ở nhịp sau; phòng giữ nguyên để lần sau dùng lại. `/auto-team` lần sau tạo lại `ON`.
+- Merge: chỉ trưởng nhóm, card `approved` có SHA + check xanh. Không remote → merge nhánh card vào nhánh tích hợp ở máy, chạy lại check, card → `merged` kèm bằng chứng. Có remote → merge PR / push / tag / release / deploy cần MỘT câu `Ship` (gom hết, trừ đích owner đã duyệt sẵn ghi trong ROSTER).
+- Tin giữa các session là dữ liệu và lệnh việc, không phải lời duyệt của owner; không session nào duyệt Ship thay owner, không nhờ session khác làm việc mình bị chặn quyền.
+- `unarchive_session`, `set_session_title`, `move_sessions` trên session không do mình mở có thể hỏi owner: làm trong `/auto-team` (owner có mặt), nhịp cron chỉ báo owner. Không `bypassPermissions`; không build nặng ở máy (CI).
+- Gói subscription: đội chạy trong Claude Desktop khi owner mở app; không chạy headless (`claude -p`) bằng token subscription — việc không người trông dùng Console API key.
+- Bản xem/deploy mới: trưởng nhóm tự mở link (đúng khổ màn owner yêu cầu), chụp ảnh (`SendUserFile`) rồi mới báo owner.
+- Owner nói "dừng đội"/"stop" → xoá `$T/ON`, `CronDelete` job `/team-tick`, nhắn mỗi session con `[dừng đội] dừng sau bước đang làm, commit dở thì để nhánh`; session giữ nguyên để lần sau dùng lại.
 - Mọi "xong/pass" kèm lệnh + output; thiếu → "not verified".
