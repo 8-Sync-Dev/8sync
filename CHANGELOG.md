@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- **`8sync harness` cảnh báo `builtin deep-research/karpathy not bundled` mỗi lần chạy:** registry (`su-code/skills.toml` + `~/.config/8sync/skills.toml`) còn giữ builtin bản cũ đã bỏ (`deep-research` thành `deep-research-web` từ 0.111.0; `karpathy` là tên cũ của `karpathy-guidelines`). Giờ `skill update` (cũng chạy trong `harness`) bỏ mọi `builtin:` mà binary không còn bundle, in một dòng thông báo và ghi lại manifest không có nó; `su-code/skills.toml` của repo đã dọn.
+
 ## [0.111.0] — 2026-10-30
 
 ### Added
