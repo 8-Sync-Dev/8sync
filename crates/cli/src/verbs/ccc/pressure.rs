@@ -899,7 +899,7 @@ mod win {
 /// Below-normal priority for `pids` (Windows `SetPriorityClass`, unix `renice +10`), or idle
 /// (`idle`: Windows idle class, unix `renice +19`), one by one by PID; how many changed. Only ever
 /// called with a room's tree.
-pub(super) fn lower(pids: &[u32], idle: bool) -> usize {
+pub(crate) fn lower(pids: &[u32], idle: bool) -> usize {
     #[cfg(windows)]
     {
         let class = if idle { win::IDLE_PRIORITY_CLASS } else { win::BELOW_NORMAL_PRIORITY_CLASS };
@@ -927,7 +927,7 @@ pub(super) fn lower(pids: &[u32], idle: bool) -> usize {
 /// changes does nothing twice. How many changed; 0 off Windows (no EcoQoS there). A child does not
 /// inherit EcoQoS (checked live 2026-10-21: a node spawned by a throttled, below-normal node came
 /// out below normal but not in EcoQoS), hence the sweep every tick.
-pub(super) fn eco(pids: &[u32], on: bool) -> usize {
+pub(crate) fn eco(pids: &[u32], on: bool) -> usize {
     #[cfg(windows)]
     {
         pids.iter().filter(|&&pid| win::eco(pid).is_some_and(|now| now != on) && win::set_eco(pid, on)).count()

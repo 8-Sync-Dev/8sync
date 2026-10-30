@@ -11,6 +11,15 @@
 //!
 //! The decision logic (`Engine`) is pure: it takes a `Snap` and returns alerts + actions,
 //! so every threshold, window and allowlist rule is unit-tested without touching /proc.
+//!
+//! Windows and macOS (owner 2026-10-30: "8sync mặc định có kiểm soát cpu, ram, gpu tốt") run the
+//! same engine on [`PortSampler`]: the native process listing of `ccc::reap` plus machine CPU,
+//! RAM and GPU (Windows `GetSystemTimes`/`GlobalMemoryStatusEx`/NVML, macOS `host_statistics`/
+//! `sysctl`, `nvidia-smi` when present). There it alerts and lowers priorities but kills nothing
+//! by default (`auto_kill = false`). Machine CPU above `machine_cpu_pct` or RAM above
+//! 100 − `mem_avail_pct` sustained → alert; under RAM/VRAM pressure an idle ComfyUI gives its
+//! model cache back (`POST /free`, only when `GET /queue` is empty). Installed as a launchd agent
+//! (macOS) or a Scheduled Task (Windows), at low priority.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -25,6 +34,8 @@ use clap::{Args as ClapArgs, Subcommand};
 use serde_json::{json, Value};
 
 use crate::ui;
+use crate::verbs::ccc::reap::{self, Proc};
+use crate::verbs::hq_core::sampler::{self as hs, Gpu};
 
 const TICKS_PER_SEC: f64 = 100.0; // CLK_TCK is 100 on every Linux 8sync targets
 const PAGE: u64 = 4096;
@@ -42,7 +53,8 @@ const RUNTIMES: [&str; 9] = ["node", "bun", "deno", "python", "python3", "uv", "
 #[command(after_help = indoc::indoc! {"
     EXAMPLES
       8sync watchdog run [--dry-run]   foreground loop (alerts only with --dry-run)
-      8sync watchdog install           systemd --user service (Linux): Nice=10 CPUQuota=5% MemoryMax=64M
+      8sync watchdog install           background guard: systemd --user (Linux, Nice=10 CPUQuota=5% MemoryMax=64M),
+                                       launchd agent (macOS), Scheduled Task (Windows); `8sync ccc kit` installs it
       8sync watchdog uninstall         stop + remove the service
       8sync watchdog status            service, thresholds file, recent alerts, blocked helpers
       8sync watchdog unblock <name>    allow a quarantined helper again (--all clears the list)
@@ -65,7 +77,7 @@ pub enum Cmd {
         #[arg(long)]
         config: Option<PathBuf>,
     },
-    /// Install + start the systemd --user service (Linux)
+    /// Install + start the background guard (systemd --user, launchd or a Scheduled Task)
     Install,
     /// Stop + remove the service
     Uninstall,
@@ -132,13 +144,26 @@ pub struct Config {
     /// Machine GPU (AMD sysfs; NVIDIA is measured per process via nvidia-smi): warn above these.
     pub gpu_vram_pct: f64,
     pub gpu_busy_pct: f64,
+    /// Machine CPU busy % (all cores) held for `machine_cpu_sustain_secs`: alert + renice.
+    pub machine_cpu_pct: f64,
+    pub machine_cpu_sustain_secs: f64,
+    /// ComfyUI whose model cache is freed under RAM/VRAM pressure while its queue is empty
+    /// (loopback only; "" = off), at most once per `free_every_secs`.
+    pub comfyui_url: String,
+    pub free_every_secs: f64,
 }
+
+/// Linux reads /proc every 2 s for a few µs; elsewhere a tick lists processes through the OS
+/// (Toolhelp, `ps`), so it runs less often.
+const PERIOD_SECS: f64 = if cfg!(target_os = "linux") { 2.0 } else { 5.0 };
+/// Windows/macOS kill nothing unless the owner turns it on: alerts and lower priorities only.
+const AUTO_KILL: bool = cfg!(target_os = "linux");
 
 impl Default for Config {
     fn default() -> Self {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Config {
-            period_secs: 2.0,
+            period_secs: PERIOD_SECS,
             cpu_pct: 150.0,
             cpu_sustain_secs: 20.0,
             watched_cpu_sustain_secs: 60.0,
@@ -149,7 +174,7 @@ impl Default for Config {
             load_factor: 2.0,
             sys_sustain_secs: 30.0,
             gpu_mem_mb: 4096,
-            auto_kill: true,
+            auto_kill: AUTO_KILL,
             kill_grace_secs: 10.0,
             respawn_limit: 3,
             respawn_window_secs: 600.0,
@@ -175,13 +200,17 @@ impl Default for Config {
             psi_cpu_some_pct: 70.0,
             gpu_vram_pct: 90.0,
             gpu_busy_pct: 98.0,
+            machine_cpu_pct: 85.0,
+            machine_cpu_sustain_secs: 120.0,
+            comfyui_url: "http://127.0.0.1:8188".into(),
+            free_every_secs: 600.0,
             watch: v(&["node", "bun", "python", "python3", "uv", "uvx", "npx", "deno", "java"]),
         }
     }
 }
 
 const CONFIG_TEMPLATE: &str = "\
-# 8sync watchdog thresholds. Edit and restart: systemctl --user restart 8sync-watchdog
+# 8sync watchdog thresholds. Read at start: after an edit run `8sync watchdog install` again.
 period_secs = 2.0
 # Known helpers (listed below) running under a claude/omp session are SIGTERMed after the
 # CPU/RSS window (except warn_only); claude/omp and processes outside a session never are.
@@ -213,8 +242,23 @@ psi_io_full_pct = 20.0       # /proc/pressure/io full avg10
 psi_cpu_some_pct = 70.0      # /proc/pressure/cpu some avg10
 gpu_vram_pct = 90.0          # AMD (sysfs) machine VRAM: warn above
 gpu_busy_pct = 98.0
+machine_cpu_pct = 85.0       # machine CPU busy above this ...
+machine_cpu_sustain_secs = 120.0  # ... this long: warn + renice busy session processes
+# under RAM/VRAM pressure an idle ComfyUI (empty /queue) gets POST /free; loopback only, \"\" = off
+comfyui_url = \"http://127.0.0.1:8188\"
+free_every_secs = 600.0
 watch = [\"node\", \"bun\", \"python\", \"python3\", \"uv\", \"uvx\", \"npx\", \"deno\", \"java\"]
 ";
+
+/// The documented defaults file for this OS (Windows/macOS: 5 s period, no kills).
+fn config_template() -> String {
+    let t = CONFIG_TEMPLATE.replace("period_secs = 2.0", &format!("period_secs = {PERIOD_SECS:.1}"));
+    if AUTO_KILL {
+        t
+    } else {
+        t.replace("auto_kill = true             # false = alert only", "auto_kill = false            # Windows/macOS default: alert + lower priority only")
+    }
+}
 
 impl Config {
     /// Overlay the keys present in `t` on the defaults; a wrong-typed key is ignored.
@@ -271,6 +315,12 @@ impl Config {
         if let Some(b) = t.get("auto_renice").and_then(|x| x.as_bool()) {
             c.auto_renice = b;
         }
+        f("machine_cpu_pct", &mut c.machine_cpu_pct);
+        f("machine_cpu_sustain_secs", &mut c.machine_cpu_sustain_secs);
+        f("free_every_secs", &mut c.free_every_secs);
+        if let Some(u) = t.get("comfyui_url").and_then(|x| x.as_str()) {
+            c.comfyui_url = u.trim().to_string();
+        }
         c
     }
 
@@ -290,7 +340,7 @@ impl Config {
                 if let Some(d) = path.parent() {
                     let _ = fs::create_dir_all(d);
                 }
-                let _ = fs::write(path, CONFIG_TEMPLATE);
+                let _ = fs::write(path, config_template());
                 Config::default()
             }
         }
@@ -454,7 +504,8 @@ pub enum Kind {
 }
 
 fn base(arg: &str, strip_ext: bool) -> String {
-    let b = arg.rsplit('/').next().unwrap_or(arg).to_lowercase();
+    let b = arg.rsplit(['/', '\\']).next().unwrap_or(arg).to_lowercase();
+    let b = b.strip_suffix(".exe").map_or(b.clone(), str::to_string);
     match b.rsplit_once('.') {
         Some((stem, "js" | "mjs" | "cjs" | "py" | "ts" | "jar")) if strip_ext && !stem.is_empty() => stem.to_string(),
         _ => b,
@@ -567,6 +618,8 @@ pub struct Snap {
     pub psi_cpu: f64,
     /// busiest GPU: (busy %, VRAM used %, label); None when no GPU can be read
     pub gpu: Option<(f64, f64, String)>,
+    /// machine CPU busy % (all cores) since the previous snapshot; None when unknown
+    pub cpu_busy: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -626,6 +679,8 @@ pub enum Act {
     Block(String),
     /// lowest CPU + idle IO priority (the process keeps running)
     Renice(u32, u64),
+    /// give idle caches back (ComfyUI `POST /free` when its queue is empty); kills nothing
+    FreeCaches,
 }
 
 #[derive(Default)]
@@ -647,6 +702,10 @@ pub struct Engine {
     load: Sustain,
     psi: Sustain,
     gpu_sys: Sustain,
+    cpu_sys: Sustain,
+    /// since when RAM or VRAM is tight, and when idle caches were last freed
+    tight_since: Option<f64>,
+    freed_at: Option<f64>,
     pressure_since: Option<f64>,
     reniced: HashSet<Key>,
     pending: HashMap<Key, f64>,
@@ -690,6 +749,9 @@ impl Engine {
             load: Sustain::default(),
             psi: Sustain::default(),
             gpu_sys: Sustain::default(),
+            cpu_sys: Sustain::default(),
+            tight_since: None,
+            freed_at: None,
             pressure_since: None,
             reniced: HashSet::new(),
             pending: HashMap::new(),
@@ -733,6 +795,11 @@ impl Engine {
             msg,
             suggest: suggest.into(),
         }
+    }
+
+    /// A machine-wide alert the runner raises itself (what an action did).
+    pub fn note(&mut self, s: &Snap, kind: &str, action: &str, msg: String) -> Alert {
+        self.alert(s, None, kind, kind, 0.0, 0.0, action, msg, "")
     }
 
     fn may_kill(&self, s: &Snap, p: &P) -> bool {
@@ -868,6 +935,13 @@ impl Engine {
             let a = self.alert(s, None, "mem", "mem_avail_pct", s.avail_pct, self.cfg.mem_avail_pct, "warn", msg, "pause heavy work and close idle sessions.");
             out.alerts.push(a);
         }
+        let busy = s.cpu_busy.unwrap_or(0.0);
+        let cpu_hot = busy > self.cfg.machine_cpu_pct;
+        if self.cpu_sys.update(s.now, cpu_hot, self.cfg.machine_cpu_sustain_secs) {
+            let msg = format!("machine CPU {busy:.0}% (> {:.0}%) for {:.0} s{tops}", self.cfg.machine_cpu_pct, self.cfg.machine_cpu_sustain_secs);
+            let a = self.alert(s, None, "cpu_machine", "cpu_busy_pct", busy, self.cfg.machine_cpu_pct, "warn", msg, THROTTLE);
+            out.alerts.push(a);
+        }
         let limit = self.cfg.load_factor * s.cores;
         if self.load.update(s.now, s.load > limit, self.cfg.sys_sustain_secs) {
             let msg = format!("load average {:.1} (> {limit:.0} = {}x {:.0} cores) for {:.0} s{tops}", s.load, self.cfg.load_factor, s.cores, self.cfg.sys_sustain_secs);
@@ -891,7 +965,16 @@ impl Engine {
             }
         }
         // soft remedy: under sustained pressure, lower the priority of busy session processes
-        let pressured = s.avail_pct < self.cfg.mem_avail_pct || s.load > limit || psi_over;
+        // idle caches go back once RAM or VRAM has been tight for the system window
+        let vram_tight = s.gpu.as_ref().is_some_and(|g| g.1 >= self.cfg.gpu_vram_pct);
+        let tight = s.avail_pct < self.cfg.mem_avail_pct || vram_tight;
+        self.tight_since = if tight { self.tight_since.or(Some(s.now)) } else { None };
+        let due = self.freed_at.is_none_or(|t| s.now - t >= self.cfg.free_every_secs);
+        if !self.dry && !self.cfg.comfyui_url.is_empty() && due && self.tight_since.is_some_and(|t| s.now - t >= self.cfg.sys_sustain_secs) {
+            out.acts.push(Act::FreeCaches);
+            self.freed_at = Some(s.now);
+        }
+        let pressured = s.avail_pct < self.cfg.mem_avail_pct || s.load > limit || psi_over || cpu_hot;
         self.pressure_since = if pressured { self.pressure_since.or(Some(s.now)) } else { None };
         let active = self.pressure_since.is_some_and(|t| s.now - t >= self.cfg.renice_after_secs);
         if active && self.cfg.auto_renice && self.dry {
@@ -939,6 +1022,7 @@ struct Sampler {
     gpu_at: Option<Instant>,
     gpu: HashMap<u32, u64>,
     last_gpu: Option<(f64, f64, String)>,
+    prev_cpu: Option<(u64, u64)>,
 }
 
 fn read(path: String) -> String {
@@ -984,7 +1068,12 @@ impl Sampler {
             gpu_at: None,
             gpu: HashMap::new(),
             last_gpu: None,
+            prev_cpu: None,
         }
+    }
+
+    fn gpu_on(&self) -> bool {
+        self.nvidia.is_some()
     }
 
     fn sample_gpu(&mut self) {
@@ -1065,9 +1154,12 @@ impl Sampler {
         }
         let (avail, total) = parse_meminfo(&read("/proc/meminfo".into())).unwrap_or((1, 1));
         let wall_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        let cpu_now = hs::parse_proc_stat(&read("/proc/stat".into()));
+        let cpu_busy = self.prev_cpu.zip(cpu_now).and_then(|(a, b)| hs::cpu_pct(a, b)).map(f64::from);
+        self.prev_cpu = cpu_now.or(self.prev_cpu);
         // AMD sysfs reads are cheap, but the GPU barely changes in 2 s: every 5th tick
         if self.tick % 5 == 1 {
-            self.last_gpu = machine_gpu();
+            self.last_gpu = machine_gpu().or_else(|| self.nvidia.as_deref().and_then(|b| busiest(&smi_gpus(b))));
         }
         Snap {
             now: now_i.duration_since(self.t0).as_secs_f64(),
@@ -1082,6 +1174,236 @@ impl Sampler {
             psi_io: parse_psi(&read("/proc/pressure/io".into())).1,
             psi_cpu: parse_psi(&read("/proc/pressure/cpu".into())).0,
             gpu: self.last_gpu.clone(),
+            cpu_busy,
+        }
+    }
+}
+
+// ───────────────────────── sampling (GPU, Windows, macOS) ─────────────────────────
+
+/// The busiest of `gpus` by max(busy, VRAM): (busy %, VRAM used %, label).
+pub fn busiest(gpus: &[Gpu]) -> Option<(f64, f64, String)> {
+    gpus.iter()
+        .map(|g| (f64::from(g.util), if g.mem_total > 0 { g.mem_used as f64 / g.mem_total as f64 * 100.0 } else { 0.0 }, g.name.clone()))
+        .max_by(|a, b| a.0.max(a.1).total_cmp(&b.0.max(b.1)))
+}
+
+/// Every NVIDIA GPU through `nvidia-smi` (machine-wide busy and VRAM).
+fn smi_gpus(bin: &Path) -> Vec<Gpu> {
+    let mut c = Command::new(bin);
+    c.args(["--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw", "--format=csv,noheader,nounits"]).stdin(Stdio::null()).stderr(Stdio::null());
+    no_window(&mut c);
+    c.output().map(|o| hs::parse_smi(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
+}
+
+/// No console window flashes from a child of the hidden guard (Windows).
+fn no_window(c: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    #[cfg(not(windows))]
+    let _ = c;
+}
+
+/// A command line split into at most 5 args, double quotes grouping (Windows `CommandLine`, `ps`).
+pub fn split_cmd(s: &str) -> Vec<String> {
+    let (mut out, mut cur, mut quoted, mut any) = (Vec::new(), String::new(), false, false);
+    for c in s.chars() {
+        match c {
+            '"' => (quoted, any) = (!quoted, true),
+            c if c.is_whitespace() && !quoted => {
+                if any || !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                any = false;
+            }
+            c => cur.push(c),
+        }
+        if out.len() == 5 {
+            return out;
+        }
+    }
+    if any || !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// The OS listing (`ccc::reap::list`) as the engine sees it: tracked processes with their session
+/// root, and the guard's own ancestry (`me` upwards), which is never signalled.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub(crate) fn port_procs(cfg: &Config, listed: &[Proc], me: u32) -> (Vec<P>, HashSet<u32>) {
+    let parent: HashMap<u32, u32> = listed.iter().map(|p| (p.pid, p.ppid)).collect();
+    let kinds: HashMap<u32, (Kind, String)> = listed.iter().map(|p| (p.pid, classify(&names_of(None, &p.image, &split_cmd(&p.cmd)), cfg))).collect();
+    let mut protect = HashSet::new();
+    let mut cur = me;
+    for _ in 0..64 {
+        protect.insert(cur);
+        match parent.get(&cur) {
+            Some(&pp) if pp > 1 && pp != cur => cur = pp,
+            _ => break,
+        }
+    }
+    let procs = listed
+        .iter()
+        .filter_map(|p| {
+            let (kind, name) = kinds.get(&p.pid).cloned()?;
+            (kind != Kind::Other).then(|| P {
+                pid: p.pid,
+                start: p.started,
+                ppid: p.ppid,
+                // 100 ns → clock ticks (TICKS_PER_SEC)
+                ticks: p.cpu / 100_000,
+                rss: p.rss,
+                name,
+                kind,
+                cwd: None,
+                gpu_mb: 0,
+                root: root_of(p.pid, |c| parent.get(&c).copied(), |c| kinds.get(&c).is_some_and(|k| k.0 == Kind::Root)),
+            })
+        })
+        .collect();
+    (procs, protect)
+}
+
+/// Machine CPU counters (idle, total) and memory (total, available bytes).
+#[cfg(windows)]
+fn machine_now() -> (Option<(u64, u64)>, Option<(u64, u64)>) {
+    use crate::verbs::hq_core::sys::win;
+    (win::system_times(), win::memory())
+}
+
+#[cfg(target_os = "macos")]
+fn machine_now() -> (Option<(u64, u64)>, Option<(u64, u64)>) {
+    (mac::cpu_ticks(), mac::memory())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn machine_now() -> (Option<(u64, u64)>, Option<(u64, u64)>) {
+    let cpu = hs::parse_proc_stat(&read("/proc/stat".into()));
+    (cpu, parse_meminfo(&read("/proc/meminfo".into())).map(|(a, t)| (t * 1024, a * 1024)))
+}
+
+/// macOS machine counters from libSystem (always linked): no new dependency, no child process.
+/// Not measured on Apple hardware by hand; the macos-latest CI test checks they read sanely.
+#[cfg(target_os = "macos")]
+mod mac {
+    use std::ffi::{c_char, c_int, c_void};
+    use std::sync::OnceLock;
+
+    extern "C" {
+        fn mach_host_self() -> u32;
+        fn host_statistics(host: u32, flavor: c_int, info: *mut c_int, count: *mut u32) -> c_int;
+        fn sysctlbyname(name: *const c_char, oldp: *mut c_void, oldlenp: *mut usize, newp: *mut c_void, newlen: usize) -> c_int;
+    }
+    /// mach/host_info.h: `host_cpu_load_info` = natural_t[CPU_STATE_MAX] (user, system, idle, nice).
+    const HOST_CPU_LOAD_INFO: c_int = 3;
+
+    /// (idle, total) ticks of every CPU since boot.
+    pub fn cpu_ticks() -> Option<(u64, u64)> {
+        // one send right for the life of the guard (each call adds a reference)
+        static HOST: OnceLock<u32> = OnceLock::new();
+        // SAFETY: plain call, no arguments.
+        let host = *HOST.get_or_init(|| unsafe { mach_host_self() });
+        let (mut t, mut n) = ([0u32; 4], 4u32);
+        // SAFETY: `t` is the natural_t[4] this flavor fills; `n` holds its length in natural_t.
+        let r = unsafe { host_statistics(host, HOST_CPU_LOAD_INFO, t.as_mut_ptr().cast(), &mut n) };
+        (r == 0 && n == 4).then(|| (u64::from(t[2]), t.iter().map(|&x| u64::from(x)).sum()))
+    }
+
+    /// A fixed-size sysctl by name (`name` ends in NUL).
+    fn sysctl<const N: usize>(name: &[u8]) -> Option<[u8; N]> {
+        let (mut buf, mut len) = ([0u8; N], N);
+        // SAFETY: `name` is NUL-terminated; `buf` is writable for `len` bytes.
+        let r = unsafe { sysctlbyname(name.as_ptr().cast(), buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) };
+        (r == 0 && len == N).then_some(buf)
+    }
+
+    /// (total, available) bytes: `hw.memsize` and `kern.memorystatus_level` (the % of memory the
+    /// kernel counts as free, what Activity Monitor's memory pressure follows).
+    pub fn memory() -> Option<(u64, u64)> {
+        let total = u64::from_ne_bytes(sysctl::<8>(b"hw.memsize\0")?);
+        let level = u32::from_ne_bytes(sysctl::<4>(b"kern.memorystatus_level\0")?).min(100);
+        Some((total, total / 100 * u64::from(level)))
+    }
+}
+
+/// Windows/macOS sampler: one OS process listing per tick plus the machine counters; the GPU every 10 s.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+struct PortSampler {
+    cfg: Config,
+    t0: Instant,
+    last: Option<Instant>,
+    prev_cpu: Option<(u64, u64)>,
+    cores: f64,
+    nvidia: Option<PathBuf>,
+    #[cfg(windows)]
+    nvml: Option<hs::win::Nvml>,
+    gpu_at: Option<Instant>,
+    last_gpu: Option<(f64, f64, String)>,
+}
+
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+impl PortSampler {
+    fn new(cfg: Config) -> PortSampler {
+        PortSampler {
+            cfg,
+            t0: Instant::now(),
+            last: None,
+            prev_cpu: None,
+            cores: std::thread::available_parallelism().map_or(1.0, |n| n.get() as f64),
+            nvidia: which::which("nvidia-smi").ok(),
+            #[cfg(windows)]
+            nvml: hs::win::Nvml::open(),
+            gpu_at: None,
+            last_gpu: None,
+        }
+    }
+
+    fn gpu_on(&self) -> bool {
+        #[cfg(windows)]
+        if self.nvml.is_some() {
+            return true;
+        }
+        self.nvidia.is_some()
+    }
+
+    fn read_gpu(&mut self) {
+        if self.gpu_at.is_some_and(|t| t.elapsed() < Duration::from_secs(10)) {
+            return;
+        }
+        self.gpu_at = Some(Instant::now());
+        #[cfg(windows)]
+        if let Some(g) = self.nvml.as_ref().and_then(|n| n.read()) {
+            self.last_gpu = busiest(&g);
+            return;
+        }
+        self.last_gpu = self.nvidia.as_deref().and_then(|b| busiest(&smi_gpus(b)));
+    }
+
+    fn sample(&mut self) -> Snap {
+        let now_i = Instant::now();
+        let dt = self.last.map_or(0.0, |t| now_i.duration_since(t).as_secs_f64());
+        self.last = Some(now_i);
+        let wall_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        let (procs, protect) = port_procs(&self.cfg, &reap::list(wall_ms / 1000), std::process::id());
+        let (cpu, mem) = machine_now();
+        let cpu_busy = self.prev_cpu.zip(cpu).and_then(|(a, b)| hs::cpu_pct(a, b)).map(f64::from);
+        self.prev_cpu = cpu.or(self.prev_cpu);
+        self.read_gpu();
+        Snap {
+            now: now_i.duration_since(self.t0).as_secs_f64(),
+            dt,
+            wall_ms,
+            procs,
+            avail_pct: mem.filter(|m| m.0 > 0).map_or(100.0, |(t, a)| a as f64 / t as f64 * 100.0),
+            cores: self.cores,
+            protect,
+            gpu: self.last_gpu.clone(),
+            cpu_busy,
+            ..Default::default()
         }
     }
 }
@@ -1185,6 +1507,7 @@ fn unblock(paths: &Paths, names: &[String], all: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn signal(sig: &str, pid: u32, start: u64) {
     // pid reuse guard: only signal the very process we measured
     let same = parse_stat(&read(format!("/proc/{pid}/stat"))).is_some_and(|s| s.start == start);
@@ -1194,6 +1517,7 @@ fn signal(sig: &str, pid: u32, start: u64) {
 }
 
 /// `renice 19` + `ionice -c3` on the very process we measured (pid-reuse guard as in `signal`).
+#[cfg(target_os = "linux")]
 fn renice(pid: u32, start: u64) {
     let same = parse_stat(&read(format!("/proc/{pid}/stat"))).is_some_and(|s| s.start == start);
     if same && pid > 1 {
@@ -1212,32 +1536,162 @@ fn renice(pid: u32, start: u64) {
     }
 }
 
-fn notify(a: &Alert) {
-    if let Ok(mut c) = Command::new("notify-send").args(["-u", "critical", "-a", "8sync", "8sync watchdog", &a.msg]).stdin(Stdio::null()).stderr(Stdio::null()).spawn() {
+/// Windows/macOS pid-reuse guard: a fresh listing still holds `pid` started when it was measured
+/// (macOS derives the start from `ps etime`, so ±2 s).
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub(crate) fn same_port(now: &[Proc], pid: u32, start: u64) -> bool {
+    pid > 4 && now.iter().any(|p| p.pid == pid && p.started.abs_diff(start) <= 2)
+}
+
+/// Windows: `taskkill` (asks the process to close; `/F` for the kill), macOS: SIGTERM / SIGKILL.
+#[cfg(not(target_os = "linux"))]
+fn signal_port(kill: bool, pid: u32, start: u64, now: &[Proc]) {
+    if !same_port(now, pid, start) {
+        return;
+    }
+    let mut c = if cfg!(windows) { Command::new("taskkill") } else { Command::new("kill") };
+    if cfg!(windows) {
+        c.args(["/PID", &pid.to_string()]);
+        if kill {
+            c.arg("/F");
+        }
+    } else {
+        c.args([if kill { "-KILL" } else { "-TERM" }, &pid.to_string()]);
+    }
+    no_window(&mut c);
+    let _ = c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+}
+
+/// Windows: idle priority class; macOS: `renice 19` + background (throttled CPU and IO) policy.
+#[cfg(not(target_os = "linux"))]
+fn renice_port(pid: u32, start: u64, now: &[Proc]) {
+    if !same_port(now, pid, start) {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        crate::verbs::ccc::pressure::lower(&[pid], true);
+    }
+    #[cfg(not(windows))]
+    {
+        for (bin, args) in [("renice", &["-n", "19", "-p"][..]), ("taskpolicy", &["-b", "-p"][..])] {
+            let _ = Command::new(bin).args(args).arg(pid.to_string()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        }
+    }
+}
+
+/// The guard itself runs at the lowest priority it can set (Windows idle class + EcoQoS; the
+/// systemd unit and the launchd agent set theirs).
+fn lower_self() {
+    #[cfg(windows)]
+    {
+        let me = std::process::id();
+        crate::verbs::ccc::pressure::lower(&[me], true);
+        crate::verbs::ccc::pressure::eco(&[me], true);
+    }
+}
+
+/// Desktop notification: `notify-send` (Linux), `osascript` (macOS); Windows has none without a
+/// dependency, there the alert reaches Claude Code through the hook and the status line.
+fn notifier() -> Option<PathBuf> {
+    if cfg!(target_os = "linux") {
+        which::which("notify-send").ok()
+    } else if cfg!(target_os = "macos") {
+        which::which("osascript").ok()
+    } else {
+        None
+    }
+}
+
+fn notify(bin: &Path, a: &Alert) {
+    let mut c = Command::new(bin);
+    if cfg!(target_os = "macos") {
+        let msg = a.msg.replace(['"', '\\'], "'");
+        c.args(["-e", &format!("display notification \"{msg}\" with title \"8sync watchdog\"")]);
+    } else {
+        c.args(["-u", "critical", "-a", "8sync", "8sync watchdog", &a.msg]);
+    }
+    if let Ok(mut c) = c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
         std::thread::spawn(move || {
             let _ = c.wait();
         });
     }
 }
 
-fn run_loop(paths: &Paths, config: Option<&Path>, dry: bool) -> Result<()> {
-    if !cfg!(target_os = "linux") {
-        bail!("8sync watchdog run: not supported yet on this OS (needs /proc)");
+/// Only a loopback ComfyUI is ever called: the guard sends nothing off the machine.
+pub fn local_url(u: &str) -> bool {
+    let Some(auth) = u.strip_prefix("http://").and_then(|r| r.split('/').next()) else { return false };
+    !auth.contains('@') && (auth.starts_with("[::1]:") || matches!(auth.split(':').next(), Some("127.0.0.1" | "localhost")))
+}
+
+/// ComfyUI `GET /queue`: nothing running and nothing pending.
+pub fn comfy_idle(queue: &str) -> bool {
+    serde_json::from_str::<Value>(queue).is_ok_and(|v| ["queue_running", "queue_pending"].iter().all(|k| v[k].as_array().is_some_and(|a| a.is_empty())))
+}
+
+/// An idle ComfyUI gives its models and cached memory back (`POST /free`); never while it works.
+/// What was freed, or None (off, not running, busy, no curl).
+fn free_caches(url: &str) -> Option<String> {
+    if !local_url(url) {
+        return None;
     }
+    let curl = which::which("curl").ok()?;
+    let base = url.trim_end_matches('/');
+    let call = |extra: &[&str], path: &str| -> Option<String> {
+        let mut c = Command::new(&curl);
+        c.args(["-s", "-f", "--noproxy", "*", "-m", "5"]).args(extra).arg(format!("{base}{path}")).stdin(Stdio::null()).stderr(Stdio::null());
+        no_window(&mut c);
+        let o = c.output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    if !comfy_idle(&call(&[], "/queue")?) {
+        return None;
+    }
+    call(&["-X", "POST", "-H", "Content-Type: application/json", "-d", r#"{"unload_models":true,"free_memory":true}"#], "/free")?;
+    Some(format!("ComfyUI at {base} was idle (empty queue) → freed its model cache (POST /free)"))
+}
+
+/// One guard per user: the lock is held for the life of the loop; None = another guard holds it.
+fn single_instance(paths: &Paths) -> Result<Option<fs::File>> {
+    ensure_private_dir(&paths.state);
+    let f = fs::OpenOptions::new().create(true).truncate(false).write(true).open(paths.state.join("watchdog.lock"))?;
+    match f.try_lock() {
+        Ok(()) => Ok(Some(f)),
+        Err(fs::TryLockError::WouldBlock) => Ok(None),
+        Err(fs::TryLockError::Error(e)) => Err(e.into()),
+    }
+}
+
+/// A guard is running for this user right now (it holds the lock).
+pub fn guard_running(paths: &Paths) -> bool {
+    let Ok(f) = fs::OpenOptions::new().create(true).truncate(false).write(true).open(paths.state.join("watchdog.lock")) else { return false };
+    matches!(f.try_lock(), Err(fs::TryLockError::WouldBlock))
+}
+
+fn run_loop(paths: &Paths, config: Option<&Path>, dry: bool) -> Result<()> {
     let cfg = Config::load(config.unwrap_or(&paths.config));
     ensure_private_dir(&paths.state);
     ensure_private_dir(&paths.cursors);
+    let Some(_lock) = single_instance(paths)? else {
+        println!("8sync watchdog: already running (`8sync watchdog status`)");
+        return Ok(());
+    };
     prune_cursors(paths);
-    let have_notify = cfg.notify && !dry && which::which("notify-send").is_ok();
+    lower_self();
+    let notifier = notifier().filter(|_| cfg.notify && !dry);
     let period = Duration::from_secs_f64(cfg.period_secs.clamp(0.5, 60.0));
+    let comfy = cfg.comfyui_url.clone();
     let mut engine = Engine::new(cfg.clone(), dry, read_blocked(paths));
+    #[cfg(target_os = "linux")]
     let mut sampler = Sampler::new(cfg);
+    #[cfg(not(target_os = "linux"))]
+    let mut sampler = PortSampler::new(cfg);
     println!(
         "8sync watchdog: {} · period {:?} · alerts → {}{}",
         if dry { "DRY RUN (never signals)" } else { "active" },
         period,
         paths.alerts.display(),
-        if sampler.nvidia.is_some() { " · GPU sampling on" } else { "" }
+        if sampler.gpu_on() { " · GPU sampling on" } else { "" }
     );
     loop {
         let t = Instant::now();
@@ -1246,27 +1700,45 @@ fn run_loop(paths: &Paths, config: Option<&Path>, dry: bool) -> Result<()> {
             engine.set_blocked(b);
         }
         let out = engine.step(&snap);
-        for a in &out.alerts {
-            println!("[{}] {} · {}", a.kind, a.msg, a.action);
-            let _ = append_alert(paths, a);
-            if have_notify {
-                notify(a);
-            }
-        }
+        let mut alerts = out.alerts;
+        // Windows/macOS: one fresh listing re-checks every pid before a process is touched
+        #[cfg(not(target_os = "linux"))]
+        let now_list = if out.acts.iter().any(|a| matches!(a, Act::Term(..) | Act::Kill(..) | Act::Renice(..))) { reap::list(snap.wall_ms / 1000) } else { Vec::new() };
         for act in out.acts {
             if dry {
                 continue; // belt and braces: the engine emits no acts in dry-run either
             }
             match act {
+                #[cfg(target_os = "linux")]
                 Act::Term(pid, start) => signal("-TERM", pid, start),
+                #[cfg(target_os = "linux")]
                 Act::Kill(pid, start) => signal("-KILL", pid, start),
+                #[cfg(target_os = "linux")]
                 Act::Renice(pid, start) => renice(pid, start),
+                #[cfg(not(target_os = "linux"))]
+                Act::Term(pid, start) => signal_port(false, pid, start, &now_list),
+                #[cfg(not(target_os = "linux"))]
+                Act::Kill(pid, start) => signal_port(true, pid, start, &now_list),
+                #[cfg(not(target_os = "linux"))]
+                Act::Renice(pid, start) => renice_port(pid, start, &now_list),
                 Act::Block(name) => {
                     let _ = update_blocked(paths, |b| {
                         b.insert(name.clone());
                     });
                     println!("blocked helper: {name} — `8sync watchdog unblock {name}` allows it again");
                 }
+                Act::FreeCaches => {
+                    if let Some(msg) = free_caches(&comfy) {
+                        alerts.push(engine.note(&snap, "free", "freed", msg));
+                    }
+                }
+            }
+        }
+        for a in &alerts {
+            println!("[{}] {} · {}", a.kind, a.msg, a.action);
+            let _ = append_alert(paths, a);
+            if let Some(n) = &notifier {
+                notify(n, a);
             }
         }
         std::thread::sleep(period.saturating_sub(t.elapsed()));
@@ -1285,6 +1757,7 @@ fn prune_cursors(paths: &Paths) {
 // ───────────────────────── hook (Claude Code) ─────────────────────────
 
 /// Hook-side: this process's nearest `claude`/`omp` ancestor.
+#[cfg(target_os = "linux")]
 fn my_session_root(cfg: &Config) -> Option<u32> {
     let mut cur = parse_stat(&read("/proc/self/stat".into()))?.ppid;
     for _ in 0..64 {
@@ -1298,6 +1771,17 @@ fn my_session_root(cfg: &Config) -> Option<u32> {
         cur = st.ppid;
     }
     None
+}
+
+/// Hook-side on Windows/macOS: the same walk over the OS listing (only taken when there are
+/// fresh alerts to place).
+#[cfg(not(target_os = "linux"))]
+fn my_session_root(cfg: &Config) -> Option<u32> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let listed = reap::list(now);
+    let parent: HashMap<u32, u32> = listed.iter().map(|p| (p.pid, p.ppid)).collect();
+    let is_root = |c: u32| listed.iter().any(|p| p.pid == c && classify(&names_of(None, &p.image, &split_cmd(&p.cmd)), cfg).0 == Kind::Root);
+    root_of(*parent.get(&std::process::id())?, |c| parent.get(&c).copied(), is_root)
 }
 
 pub(crate) use ccc_core::transcript::safe_id;
@@ -1375,70 +1859,250 @@ pub fn unit_text(exe: &str) -> String {
     )
 }
 
+/// Scheduled Task name (the `8sync\` folder `platform::install_timer` uses).
+const TASK: &str = "8sync\\watchdog";
+/// launchd label (the `dev.8sync.` prefix `platform::install_timer` uses).
+const AGENT: &str = "dev.8sync.watchdog";
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// Windows Scheduled Task: a 5-minute trigger with no admin rights needed (a logon trigger needs
+/// them); `IgnoreNew` plus the guard's own lock make every later tick a no-op while it runs, and
+/// a guard that died comes back within 5 minutes. No time limit, battery or idle stop, priority 7
+/// (below normal), hidden; `conhost --headless` keeps a console window from opening.
+pub fn task_xml(exe: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>8sync watchdog: keeps CPU, RAM and GPU in check (8sync watchdog status)</Description></RegistrationInfo>
+  <Triggers>
+    <TimeTrigger>
+      <Repetition><Interval>PT5M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
+      <StartBoundary>2026-01-01T00:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
+  </Triggers>
+  <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
+    <Hidden>true</Hidden>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>conhost.exe</Command><Arguments>--headless "{}" watchdog run</Arguments></Exec></Actions>
+</Task>
+"#,
+        xml_escape(exe)
+    )
+}
+
+/// macOS launch agent: starts at login, restarted only after a crash (a second guard exits 0),
+/// background process type with nice 10 and low-priority IO.
+pub fn agent_plist(exe: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+<plist version=\"1.0\"><dict>\n\
+  <key>Label</key><string>{AGENT}</string>\n\
+  <key>ProgramArguments</key><array><string>{}</string><string>watchdog</string><string>run</string></array>\n\
+  <key>RunAtLoad</key><true/>\n\
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n\
+  <key>ProcessType</key><string>Background</string>\n\
+  <key>Nice</key><integer>10</integer>\n\
+  <key>LowPriorityIO</key><true/>\n\
+  <key>StandardOutPath</key><string>/dev/null</string>\n\
+  <key>StandardErrorPath</key><string>/dev/null</string>\n\
+</dict></plist>\n",
+        xml_escape(exe)
+    )
+}
+
 fn unit_path() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("systemd/user").join(UNIT))
+}
+
+fn agent_path() -> Option<PathBuf> {
+    Some(dirs::home_dir()?.join("Library/LaunchAgents").join(format!("{AGENT}.plist")))
 }
 
 fn systemctl(args: &[&str]) -> bool {
     Command::new("systemctl").arg("--user").args(args).stdin(Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
+/// Runs a service tool quietly; whether it succeeded.
+fn quiet(bin: &str, args: &[&str]) -> bool {
+    let mut c = Command::new(bin);
+    c.args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    no_window(&mut c);
+    c.status().is_ok_and(|s| s.success())
+}
+
+/// UTF-16LE with a BOM: what `schtasks /XML` reads without complaint.
+fn utf16_bom(s: &str) -> Vec<u8> {
+    [0xFF, 0xFE].into_iter().chain(s.encode_utf16().flat_map(u16::to_le_bytes)).collect()
+}
+
+/// Stops the running guard (8sync's own process; nothing else is touched) so a reinstall picks up
+/// the new binary and thresholds.
+fn stop_guard() {
+    let me = std::process::id();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let pids: Vec<u32> = reap::list(now).into_iter().filter(|p| p.pid != me && p.image == crate::brand::CMD && split_cmd(&p.cmd).iter().skip(1).take(2).eq(["watchdog", "run"].iter())).map(|p| p.pid).collect();
+    if !pids.is_empty() {
+        reap::kill(&pids);
+    }
+}
+
+/// Whether the background guard is registered with the OS service manager.
+fn registered() -> bool {
+    if cfg!(target_os = "linux") {
+        unit_path().is_some_and(|p| p.exists())
+    } else if cfg!(target_os = "macos") {
+        agent_path().is_some_and(|p| p.exists())
+    } else {
+        cfg!(windows) && quiet("schtasks", &["/Query", "/TN", TASK])
+    }
+}
+
 fn install(paths: &Paths) -> Result<()> {
-    if !cfg!(target_os = "linux") {
-        println!("8sync watchdog install: not supported yet on this OS (status works)");
-        return Ok(());
-    }
     let exe = which::which(crate::brand::CMD).or_else(|_| std::env::current_exe()).context("locate the 8sync binary")?;
-    let unit = unit_path().context("no config dir")?;
-    fs::create_dir_all(unit.parent().context("unit dir")?)?;
-    fs::write(&unit, unit_text(&exe.display().to_string()))?;
+    let exe = exe.display().to_string();
     Config::load(&paths.config); // creates the defaults file
-    systemctl(&["daemon-reload"]);
-    if !systemctl(&["enable", "--now", UNIT]) {
-        bail!("systemctl --user enable --now {UNIT} failed (is a user systemd session running?)");
-    }
-    ui::ok(&format!("watchdog running as {UNIT} · thresholds {} · alerts {}", paths.config.display(), paths.alerts.display()));
+    ensure_private_dir(&paths.state);
+    let what = if cfg!(target_os = "linux") {
+        let unit = unit_path().context("no config dir")?;
+        fs::create_dir_all(unit.parent().context("unit dir")?)?;
+        fs::write(&unit, unit_text(&exe))?;
+        systemctl(&["daemon-reload"]);
+        if !systemctl(&["enable", "--now", UNIT]) {
+            bail!("systemctl --user enable --now {UNIT} failed (is a user systemd session running?)");
+        }
+        systemctl(&["restart", UNIT]);
+        UNIT.to_string()
+    } else if cfg!(target_os = "macos") {
+        let plist = agent_path().context("no home dir")?;
+        fs::create_dir_all(plist.parent().context("LaunchAgents dir")?)?;
+        fs::write(&plist, agent_plist(&exe))?;
+        let p = plist.display().to_string();
+        quiet("launchctl", &["unload", "-w", &p]);
+        stop_guard();
+        if !quiet("launchctl", &["load", "-w", &p]) {
+            bail!("launchctl load -w {p} failed");
+        }
+        format!("launch agent {AGENT}")
+    } else if cfg!(windows) {
+        let xml = paths.state.join("watchdog-task.xml");
+        fs::write(&xml, utf16_bom(&task_xml(&exe)))?;
+        quiet("schtasks", &["/End", "/TN", TASK]);
+        stop_guard();
+        let ok = quiet("schtasks", &["/Create", "/TN", TASK, "/XML", &xml.display().to_string(), "/F"]);
+        let _ = fs::remove_file(&xml);
+        if !ok {
+            bail!("schtasks /Create /TN {TASK} failed");
+        }
+        quiet("schtasks", &["/Run", "/TN", TASK]);
+        format!("Scheduled Task {TASK}")
+    } else {
+        println!("8sync watchdog install: no service manager on this OS (run `8sync watchdog run` yourself)");
+        return Ok(());
+    };
+    ui::ok(&format!("watchdog running as {what} · thresholds {} · alerts {}", paths.config.display(), paths.alerts.display()));
     ui::info("Claude Code reads alerts via the kit hook: run `8sync ccc kit` once to register `ccc hook watchdog`");
     Ok(())
 }
 
 fn uninstall() -> Result<()> {
-    if !cfg!(target_os = "linux") {
-        println!("8sync watchdog uninstall: not supported yet on this OS");
+    if cfg!(target_os = "linux") {
+        systemctl(&["disable", "--now", UNIT]);
+        if let Some(u) = unit_path() {
+            let _ = fs::remove_file(u);
+        }
+        systemctl(&["daemon-reload"]);
+    } else if cfg!(target_os = "macos") {
+        if let Some(p) = agent_path() {
+            quiet("launchctl", &["unload", "-w", &p.display().to_string()]);
+            let _ = fs::remove_file(p);
+        }
+        stop_guard();
+    } else if cfg!(windows) {
+        quiet("schtasks", &["/End", "/TN", TASK]);
+        quiet("schtasks", &["/Delete", "/TN", TASK, "/F"]);
+        stop_guard();
+    } else {
+        println!("8sync watchdog uninstall: nothing installed on this OS");
         return Ok(());
     }
-    systemctl(&["disable", "--now", UNIT]);
-    if let Some(u) = unit_path() {
-        let _ = fs::remove_file(u);
-    }
-    systemctl(&["daemon-reload"]);
     ui::ok("watchdog service removed (config and alerts kept)");
     Ok(())
+}
+
+/// `8sync ccc kit`: the guard is on by default on every OS. Nothing happens when it is registered
+/// and running; `EIGHTSYNC_NO_WATCHDOG=1` (or CI) skips it. A failure only warns.
+pub fn ensure_installed() {
+    if std::env::var_os("EIGHTSYNC_NO_WATCHDOG").is_some() || std::env::var_os("CI").is_some() {
+        return;
+    }
+    let Ok(paths) = Paths::detect() else { return };
+    if registered() && guard_running(&paths) {
+        return;
+    }
+    if let Err(e) = install(&paths) {
+        ui::warn(&format!("watchdog not installed: {e:#} (`8sync watchdog install` retries)"));
+    }
 }
 
 fn status(paths: &Paths) -> Result<()> {
     let svc = if cfg!(target_os = "linux") {
         let o = Command::new("systemctl").args(["--user", "is-active", UNIT]).stderr(Stdio::null()).output();
-        o.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|_| "unknown (no systemctl)".into())
+        format!("{UNIT}: {}", o.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|_| "unknown (no systemctl)".into()))
+    } else if cfg!(target_os = "macos") {
+        format!("launch agent {AGENT}: {}", if quiet("launchctl", &["list", AGENT]) { "loaded" } else if registered() { "installed, not loaded" } else { "not installed" })
+    } else if cfg!(windows) {
+        format!("Scheduled Task {TASK}: {}", if registered() { "registered" } else { "not installed" })
     } else {
-        "not supported yet on this OS".into()
+        "none on this OS".into()
     };
-    println!("service   {UNIT}: {svc}");
+    println!("service   {svc}");
+    let running = guard_running(paths);
+    println!("guard     {}", if running { "running" } else { "not running (`8sync watchdog install`)" });
     println!("config    {} ({})", paths.config.display(), if paths.config.exists() { "present" } else { "defaults; created on first run" });
-    let nv = which::which("nvidia-smi").is_ok();
-    let nv_card = Path::new("/proc/driver/nvidia/version").exists() || fs::read_dir("/sys/bus/pci/devices").into_iter().flatten().flatten().any(|d| {
-        fs::read_to_string(d.path().join("vendor")).is_ok_and(|v| v.trim() == "0x10de") && fs::read_to_string(d.path().join("class")).is_ok_and(|c| c.starts_with("0x03"))
-    });
-    let amd = machine_gpu().map(|(b, v, l)| format!("{l} busy {b:.0}% VRAM {v:.0}%"));
-    let nvs = match (nv_card, nv) {
-        (true, true) => "NVIDIA per-process VRAM via nvidia-smi".to_string(),
-        (true, false) => "NVIDIA card present but not measured (no nvidia-smi: install the NVIDIA driver utils)".into(),
-        _ => String::new(),
-    };
-    let gpus: Vec<String> = [amd.unwrap_or_default(), nvs].into_iter().filter(|x| !x.is_empty()).collect();
-    println!("gpu       {}", if gpus.is_empty() { "none readable".into() } else { gpus.join(" · ") });
-    let (ms, mf) = parse_psi(&read("/proc/pressure/memory".into()));
-    println!("pressure  memory some {ms:.1}% full {mf:.1}% · io full {:.1}% · cpu some {:.1}% (avg10)", parse_psi(&read("/proc/pressure/io".into())).1, parse_psi(&read("/proc/pressure/cpu".into())).0);
+    let (cpu0, _) = machine_now();
+    std::thread::sleep(Duration::from_millis(250));
+    let (cpu1, mem) = machine_now();
+    let mut machine = Vec::new();
+    if let Some(c) = cpu0.zip(cpu1).and_then(|(a, b)| hs::cpu_pct(a, b)) {
+        machine.push(format!("CPU {c}%"));
+    }
+    if let Some((t, a)) = mem.filter(|m| m.0 > 0) {
+        machine.push(format!("RAM {:.0}%", 100.0 - a as f64 / t as f64 * 100.0));
+    }
+    println!("machine   {}", if machine.is_empty() { "unreadable".into() } else { machine.join(" · ") });
+    if cfg!(target_os = "linux") {
+        let nv = which::which("nvidia-smi").is_ok();
+        let nv_card = Path::new("/proc/driver/nvidia/version").exists() || fs::read_dir("/sys/bus/pci/devices").into_iter().flatten().flatten().any(|d| {
+            fs::read_to_string(d.path().join("vendor")).is_ok_and(|v| v.trim() == "0x10de") && fs::read_to_string(d.path().join("class")).is_ok_and(|c| c.starts_with("0x03"))
+        });
+        let amd = machine_gpu().map(|(b, v, l)| format!("{l} busy {b:.0}% VRAM {v:.0}%"));
+        let nvs = match (nv_card, nv) {
+            (true, true) => "NVIDIA per-process VRAM via nvidia-smi".to_string(),
+            (true, false) => "NVIDIA card present but not measured (no nvidia-smi: install the NVIDIA driver utils)".into(),
+            _ => String::new(),
+        };
+        let gpus: Vec<String> = [amd.unwrap_or_default(), nvs].into_iter().filter(|x| !x.is_empty()).collect();
+        println!("gpu       {}", if gpus.is_empty() { "none readable".into() } else { gpus.join(" · ") });
+        let (ms, mf) = parse_psi(&read("/proc/pressure/memory".into()));
+        println!("pressure  memory some {ms:.1}% full {mf:.1}% · io full {:.1}% · cpu some {:.1}% (avg10)", parse_psi(&read("/proc/pressure/io".into())).1, parse_psi(&read("/proc/pressure/cpu".into())).0);
+    } else {
+        let mut s = PortSampler::new(Config::default());
+        s.read_gpu();
+        println!("gpu       {}", s.last_gpu.map_or("none readable".into(), |(b, v, l)| format!("{l} busy {b:.0}% VRAM {v:.0}%")));
+    }
     let blocked = read_blocked(paths);
     println!("blocked   {}", if blocked.is_empty() { "none".into() } else { blocked.into_iter().collect::<Vec<_>>().join(", ") });
     let text = fs::read_to_string(&paths.alerts).unwrap_or_default();
@@ -1465,6 +2129,11 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// The kill path itself (Linux default; Windows/macOS only when the owner turns it on).
+    fn kill_on() -> Config {
+        Config { auto_kill: true, ..Config::default() }
     }
 
     fn names(v: &[&str]) -> Vec<String> {
@@ -1637,7 +2306,7 @@ mod tests {
 
     #[test]
     fn engine_cpu_alert_then_sigterm_then_sigkill() {
-        let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+        let mut e = Engine::new(kill_on(), false, BTreeSet::new());
         let res = run_burn(&mut e, 40.0);
         let first = res.iter().find(|(_, o)| !o.alerts.is_empty()).unwrap();
         assert!(first.0 >= 20.0, "not before the 20 s window: {}", first.0);
@@ -1652,7 +2321,7 @@ mod tests {
 
     #[test]
     fn engine_respects_dry_run_and_auto_kill_false() {
-        let mut dry = Engine::new(Config::default(), true, BTreeSet::new());
+        let mut dry = Engine::new(kill_on(), true, BTreeSet::new());
         let res = run_burn(&mut dry, 40.0);
         assert!(res.iter().all(|(_, o)| o.acts.is_empty()));
         assert!(res.iter().flat_map(|(_, o)| &o.alerts).any(|a| a.action.contains("dry-run") || a.msg.contains("dry-run")));
@@ -1697,7 +2366,7 @@ mod tests {
 
     #[test]
     fn respawn_quarantine_after_more_than_three_kills() {
-        let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+        let mut e = Engine::new(kill_on(), false, BTreeSet::new());
         let mut blocked_at = None;
         let mut kills = 0;
         // a fresh pid every 30 s, each burning from birth
@@ -1753,15 +2422,15 @@ mod tests {
             acts
         };
         // a helper the owner runs outside any claude/omp tree (editor, terminal)
-        let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+        let mut e = Engine::new(kill_on(), false, BTreeSet::new());
         let outside = burn(&mut e, &|i| vec![proc(300, 1, "headroom", Kind::Helper, 566 * i, 100)]);
         assert!(outside.is_empty(), "no session root → alert only: {outside:?}");
         // an LSP under a session indexes hard by design → alert only
-        let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+        let mut e = Engine::new(kill_on(), false, BTreeSet::new());
         let lsp = burn(&mut e, &|i| vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(301, 100, "rust-analyzer", Kind::Helper, 566 * i, 100)]);
         assert!(lsp.is_empty(), "warn_only helper is never signalled: {lsp:?}");
         // the same burn by hr under a session is killed
-        let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+        let mut e = Engine::new(kill_on(), false, BTreeSet::new());
         let hr = burn(&mut e, &|i| vec![proc(100, 1, "claude", Kind::Root, 0, 1), proc(302, 100, "headroom", Kind::Helper, 566 * i, 100)]);
         assert!(hr.contains(&Act::Term(302, 3020)));
     }
@@ -1875,7 +2544,7 @@ mod tests {
 
     #[test]
     fn config_template_is_the_defaults_and_is_created() {
-        assert_eq!(Config::parse(CONFIG_TEMPLATE).unwrap(), Config::default());
+        assert_eq!(Config::parse(&config_template()).unwrap(), Config::default());
         let c = Config::parse("cpu_pct = 99\nauto_kill = false\nhelpers = [\"Foo\"]").unwrap();
         assert_eq!((c.cpu_pct, c.cpu_sustain_secs, c.auto_kill, c.helpers), (99.0, 20.0, false, names(&["foo"])));
         assert_eq!(Config::parse("cpu_pct = \"x\"").unwrap(), Config::default(), "wrong type ignored");
@@ -1891,6 +2560,153 @@ mod tests {
         let u = unit_text("/usr/bin/8sync");
         for want in ["ExecStart=/usr/bin/8sync watchdog run", "Restart=on-failure", "Nice=10", "CPUQuota=5%", "MemoryMax=64M"] {
             assert!(u.contains(want), "{want}");
+        }
+    }
+
+    #[test]
+    fn machine_cpu_over_85_for_two_minutes_alerts_once_and_renices() {
+        let cfg = Config::default();
+        assert_eq!((cfg.machine_cpu_pct, cfg.machine_cpu_sustain_secs, cfg.mem_avail_pct), (85.0, 120.0, 10.0));
+        let run = |busy: f64| {
+            let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+            let (mut kinds, mut acts) = (Vec::new(), Vec::new());
+            for i in 0..=30 {
+                let now = i as f64 * 5.0;
+                let procs = vec![proc(100, 1, "claude", Kind::Root, 0, 500), proc(200, 100, "cargo", Kind::Build, (now as u64) * 50, 300)];
+                let mut s = snap(now, procs);
+                s.cpu_busy = Some(busy);
+                let o = e.step(&s);
+                kinds.extend(o.alerts.into_iter().map(|a| (a.kind, now)));
+                acts.extend(o.acts);
+            }
+            (kinds, acts)
+        };
+        let (kinds, acts) = run(92.0);
+        assert_eq!(kinds.iter().filter(|(k, _)| k == "cpu_machine").map(|(_, t)| *t).collect::<Vec<_>>(), vec![120.0], "one alert, after 2 min");
+        assert_eq!(acts, vec![Act::Renice(200, 2000)], "busy session build lowered, nothing killed");
+        let (kinds, acts) = run(80.0);
+        assert!(kinds.is_empty() && acts.is_empty(), "under 85% nothing happens");
+    }
+
+    #[test]
+    fn never_kills_a_foreign_process_whatever_the_pressure() {
+        let mut e = Engine::new(kill_on(), false, BTreeSet::new());
+        let mut acts = Vec::new();
+        for i in 0..200 {
+            let now = i as f64 * 5.0;
+            let t = (now as u64 + 1) * 400; // 4 cores busy each
+            let procs = vec![
+                proc(10, 1, "comfyui", Kind::Other, t, 12_000),   // another app, not under a session
+                proc(11, 1, "python", Kind::Watched, t, 9_000),   // a runtime outside any session
+                proc(12, 1, "headroom", Kind::Helper, t, 4_000),  // a known helper, but not in a session
+                proc(13, 1, "cargo", Kind::Build, t, 2_000),      // another user's build
+                proc(100, 1, "claude", Kind::Root, t, 9_000),     // a session itself
+            ];
+            let mut s = snap(now, procs);
+            (s.avail_pct, s.cpu_busy, s.load, s.psi_mem) = (2.0, Some(100.0), 64.0, 50.0);
+            s.gpu = Some((100.0, 99.0, "gpu".into()));
+            acts.extend(e.step(&s).acts);
+        }
+        assert!(acts.iter().all(|a| *a == Act::FreeCaches), "only idle caches are freed: {acts:?}");
+        assert_eq!(acts.len(), 2, "freeing caches is rate-limited (first after 30 s, then every 10 min)");
+    }
+
+    #[test]
+    fn helpers_in_a_session_are_killed_only_where_auto_kill_defaults_on() {
+        let mut e = Engine::new(Config::default(), false, BTreeSet::new());
+        let acts: Vec<Act> = run_burn(&mut e, 40.0).into_iter().flat_map(|(_, o)| o.acts).collect();
+        let killed = acts.iter().any(|a| matches!(a, Act::Term(..)));
+        assert_eq!(killed, AUTO_KILL, "Linux keeps its helper kill; Windows/macOS alert only by default");
+        assert_eq!(AUTO_KILL, cfg!(target_os = "linux"));
+    }
+
+    #[test]
+    fn idle_caches_freed_after_the_window_never_in_dry_run_or_when_off() {
+        let run = |cfg: Config, dry: bool, avail: f64| {
+            let mut e = Engine::new(cfg, dry, BTreeSet::new());
+            (0..=40).filter(|i| e.step(&{ let mut s = snap(*i as f64 * 2.0, vec![]); s.avail_pct = avail; s }).acts.contains(&Act::FreeCaches)).map(|i| i * 2).collect::<Vec<_>>()
+        };
+        assert_eq!(run(Config::default(), false, 5.0), vec![30], "once RAM was tight for 30 s");
+        assert!(run(Config::default(), true, 5.0).is_empty(), "dry-run");
+        assert!(run(Config { comfyui_url: String::new(), ..Config::default() }, false, 5.0).is_empty(), "off");
+        assert!(run(Config::default(), false, 50.0).is_empty(), "RAM fine");
+    }
+
+    #[test]
+    fn comfyui_is_called_on_loopback_only_and_only_when_idle() {
+        for ok in ["http://127.0.0.1:8188", "http://localhost:8188/", "http://[::1]:8188", "http://127.0.0.1"] {
+            assert!(local_url(ok), "{ok}");
+        }
+        for bad in ["https://127.0.0.1:8188", "http://10.0.0.5:8188", "http://127.0.0.1.evil.com", "http://127.0.0.1:1@evil.com", "http://evil/127.0.0.1", "", "127.0.0.1:8188"] {
+            assert!(!local_url(bad), "{bad}");
+        }
+        assert!(comfy_idle(r#"{"queue_running": [], "queue_pending": []}"#));
+        assert!(!comfy_idle(r#"{"queue_running": [[1, "id", {}]], "queue_pending": []}"#));
+        assert!(!comfy_idle(r#"{"queue_running": [], "queue_pending": [[2]]}"#));
+        assert!(!comfy_idle("not json"));
+        assert!(!comfy_idle("{}"), "unknown shape is not idle");
+    }
+
+    #[test]
+    fn windows_listing_becomes_sessions_helpers_and_builds() {
+        let cfg = Config::default();
+        let pr = |pid: u32, ppid: u32, image: &str, cmd: &str| Proc { pid, ppid, started: 1000 + pid as u64, image: image.into(), cmd: cmd.into(), cpu: 30_000_000, rss: 1 << 20, ..Default::default() };
+        let listed = vec![
+            pr(10, 4, "claude", r#""C:\Users\a\.local\bin\claude.exe" --resume"#),
+            pr(20, 10, "node", r#""C:\Program Files\nodejs\node.exe" "C:\Users\a\AppData\tsserver.js" --stdio"#),
+            pr(30, 10, "cmd", "cmd /c cargo build"),
+            pr(31, 30, "cargo", r#"C:\Users\a\.cargo\bin\cargo.exe build -j2"#),
+            pr(40, 4, "chrome", r#""C:\Program Files\Google\Chrome\chrome.exe""#),
+            pr(50, 10, "8sync", r#""C:\bin\8sync.exe" watchdog run"#),
+        ];
+        let (procs, protect) = port_procs(&cfg, &listed, 50);
+        let mut got: Vec<_> = procs.iter().map(|p| (p.pid, p.kind, p.name.as_str(), p.root)).collect();
+        got.sort_by_key(|g| g.0);
+        assert_eq!(got, vec![(10, Kind::Root, "claude", Some(10)), (20, Kind::Helper, "tsserver", Some(10)), (31, Kind::Build, "cargo", Some(10))]);
+        assert!(procs.iter().all(|p| p.ticks == 300), "100 ns → clock ticks");
+        assert_eq!(protect, HashSet::from([50, 10, 4]), "the guard and its ancestors");
+        assert_eq!(split_cmd(r#""C:\a b\x.exe" -p "q r" s t u v"#), vec![r"C:\a b\x.exe", "-p", "q r", "s", "t"]);
+        assert_eq!(split_cmd(r#"a "" b"#), vec!["a", "", "b"]);
+        assert!(same_port(&listed, 20, 1021) && same_port(&listed, 20, 1019), "start within 2 s");
+        assert!(!same_port(&listed, 20, 1030) && !same_port(&listed, 99, 1099) && !same_port(&listed, 4, 1004), "reused pid, gone, system");
+    }
+
+    #[test]
+    fn busiest_gpu_and_machine_counters() {
+        let g = |name: &str, util: u32, used: u64| Gpu { name: name.into(), util, mem_used: used, mem_total: 16_000, temp: None, watts: None };
+        assert_eq!(busiest(&[g("a", 10, 15_200), g("b", 60, 100)]), Some((10.0, 95.0, "a".into())));
+        assert_eq!(busiest(&[]), None);
+        // every desktop OS 8sync ships for reads the machine counters (macOS: host_statistics + sysctl)
+        let (cpu, mem) = machine_now();
+        let (idle, total) = cpu.expect("cpu counters");
+        assert!(total > 0 && idle <= total, "{idle} / {total}");
+        let (t, a) = mem.expect("memory");
+        assert!(t > (256 << 20) && a <= t, "{a} / {t}");
+    }
+
+    #[test]
+    fn one_guard_per_user() {
+        let home = tmp("lock");
+        let paths = Paths::at(&home);
+        assert!(!guard_running(&paths));
+        let held = single_instance(&paths).unwrap();
+        assert!(held.is_some() && guard_running(&paths));
+        assert!(single_instance(&paths).unwrap().is_none(), "a second guard steps aside");
+        drop(held);
+        assert!(!guard_running(&paths));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn service_definitions_run_low_and_hidden() {
+        let x = task_xml(r"C:\Users\a & b\8sync.exe");
+        for want in ["<Interval>PT5M</Interval>", "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>", "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>", "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>", "<Priority>7</Priority>", "<Hidden>true</Hidden>", "<RunLevel>LeastPrivilege</RunLevel>", r#"--headless "C:\Users\a &amp; b\8sync.exe" watchdog run"#] {
+            assert!(x.contains(want), "{want}");
+        }
+        assert_eq!(&utf16_bom("<")[..4], &[0xFF, 0xFE, b'<', 0]);
+        let p = agent_plist("/opt/8sync");
+        for want in ["<string>dev.8sync.watchdog</string>", "<string>/opt/8sync</string><string>watchdog</string><string>run</string>", "<key>SuccessfulExit</key><false/>", "<string>Background</string>", "<key>LowPriorityIO</key><true/>"] {
+            assert!(p.contains(want), "{want}");
         }
     }
 }

@@ -493,7 +493,7 @@ pub(crate) fn list(now: u64) -> Vec<Proc> {
     #[cfg(target_os = "macos")]
     {
         let mut c = std::process::Command::new("ps");
-        c.args(["-axo", "pid=,ppid=,etime=,rss=,command="])
+        c.args(["-axo", "pid=,ppid=,etime=,time=,rss=,command="])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());
@@ -735,7 +735,17 @@ fn image_of(arg0: &str) -> String {
     base.strip_suffix(".exe").unwrap_or(&base).to_string()
 }
 
-/// `ps -axo pid=,ppid=,etime=,rss=,command=` (macOS: `etime` is `[[dd-]hh:]mm:ss`, `rss` KB).
+/// `ps -o time` (CPU time used): `[dd-][hh:]mm:ss[.cc]` → seconds; macOS prints `0:01.23`, and
+/// minutes past 59 when it leaves the hours out.
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn cputime_secs(s: &str) -> Option<f64> {
+    let (days, rest) = s.split_once('-').map_or(Some((0.0, s)), |(d, r)| d.parse::<f64>().ok().map(|d| (d, r)))?;
+    let t = rest.split(':').try_fold(0.0, |acc, x| x.parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0).map(|n| acc * 60.0 + n))?;
+    Some(days * 86_400.0 + t)
+}
+
+/// `ps -axo pid=,ppid=,etime=,time=,rss=,command=` (macOS: `etime` is `[[dd-]hh:]mm:ss`, `time`
+/// the CPU time used, `rss` KB).
 #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 fn parse_ps(s: &str, now: u64) -> Vec<Proc> {
     s.lines()
@@ -744,6 +754,7 @@ fn parse_ps(s: &str, now: u64) -> Vec<Proc> {
             let pid = f.next()?.parse().ok()?;
             let ppid = f.next()?.parse().ok()?;
             let etime = f.next()?;
+            let cpu = cputime_secs(f.next()?).map_or(0, |s| (s * 1e7) as u64);
             let rss: u64 = f.next()?.parse().ok()?;
             let cmd = f.collect::<Vec<_>>().join(" ");
             let arg0 = cmd.split_whitespace().next().unwrap_or_default();
@@ -752,7 +763,7 @@ fn parse_ps(s: &str, now: u64) -> Vec<Proc> {
             let (days, hms) = etime.split_once('-').map_or((0, etime), |(d, r)| (d.parse().unwrap_or(0), r));
             let secs = hms.split(':').try_fold(0u64, |acc, x| x.parse::<u64>().ok().map(|n| acc * 60 + n))?;
             let (shell, image) = (is_shell(arg0), image_of(arg0));
-            Some(Proc { pid, ppid, started: now.saturating_sub(days * 86_400 + secs), rss: rss * 1024, node, shell, image, cmd, name: base, cpu: 0, normal: false, idle: false })
+            Some(Proc { pid, ppid, started: now.saturating_sub(days * 86_400 + secs), rss: rss * 1024, node, shell, image, cmd, name: base, cpu, normal: false, idle: false })
         })
         .collect()
 }
@@ -887,12 +898,15 @@ mod tests {
         assert!(parse_windows("").is_empty());
         let sub = "[{\"ProcessId\":9,\"ParentProcessId\":1,\"Name\":\"claude.exe\",\"CommandLine\":\"claude /goal a \u{1a} b\",\"Started\":5}]";
         assert_eq!(parse_windows(sub)[0].cmd, "claude /goal a   b", "an OEM-mangled char does not sink the whole listing");
-        let ps = "  41     1 1-02:03:04  2048 /usr/local/bin/node /x/vite.js preview\n  42 1 05:06 10 /bin/zsh -l\n 43 1 07 1 node y.js\n";
+        let ps = "  41     1 1-02:03:04 0:00.00  2048 /usr/local/bin/node /x/vite.js preview\n  42 1 05:06 1:02.50 10 /bin/zsh -l\n 43 1 07 61:00.00 1 node y.js\n";
         let got = parse_ps(ps, NOW);
         assert_eq!(got.len(), 3);
         assert_eq!(got[0], Proc { pid: 41, ppid: 1, started: NOW - (86_400 + 2 * 3600 + 3 * 60 + 4), rss: 2048 * 1024, node: true, shell: false, image: "node".into(), cmd: "/usr/local/bin/node /x/vite.js preview".into(), name: "node".into(), cpu: 0, normal: false, idle: false });
         assert_eq!((got[1].node, got[1].shell, got[1].image.as_str(), got[1].cmd.as_str(), got[1].name.as_str(), got[1].started), (false, true, "zsh", "/bin/zsh -l", "zsh", NOW - 306));
         assert_eq!(got[2].started, NOW - 7);
+        assert_eq!((got[1].cpu, got[2].cpu), (625_000_000, 36_600_000_000), "ps time: 1:02.50 = 62.5 s, 61:00.00 = 3660 s, in 100 ns");
+        assert_eq!(cputime_secs("1-01:00:00"), Some(90_000.0));
+        assert_eq!(cputime_secs("x"), None);
     }
 
     #[test]
