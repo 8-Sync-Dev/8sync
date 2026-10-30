@@ -22,7 +22,7 @@
 //! (macOS) or a Scheduled Task (Windows), at low priority.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -70,7 +70,7 @@ pub struct Args {
 pub enum Cmd {
     /// Foreground monitor loop
     Run {
-        /// Alert only: never signal a process or write the blocked list
+        /// Print only: never signal a process, write alerts.jsonl or the blocked list
         #[arg(long)]
         dry_run: bool,
         /// Use this thresholds file instead of ~/.config/8sync/watchdog.toml
@@ -151,6 +151,14 @@ pub struct Config {
     /// (loopback only; "" = off), at most once per `free_every_secs`.
     pub comfyui_url: String,
     pub free_every_secs: f64,
+    /// A runtime (node, python, bun, uv, deno…) whose parent is gone for `orphan_secs`: cleaned when
+    /// its script is a harness job (a path part named in `orphan_jobs`, e.g. `.trail/hook.cjs`) and
+    /// `clean_orphans` is on; any other orphan is only reported.
+    pub clean_orphans: bool,
+    pub orphan_jobs: Vec<String>,
+    pub orphan_secs: f64,
+    /// The same command line this many times under live sessions: reported, never touched.
+    pub dup_report: u64,
 }
 
 /// Linux reads /proc every 2 s for a few µs; elsewhere a tick lists processes through the OS
@@ -204,6 +212,10 @@ impl Default for Config {
             machine_cpu_sustain_secs: 120.0,
             comfyui_url: "http://127.0.0.1:8188".into(),
             free_every_secs: 600.0,
+            clean_orphans: true,
+            orphan_jobs: v(&["hook", "hooks"]),
+            orphan_secs: 600.0,
+            dup_report: 2,
             watch: v(&["node", "bun", "python", "python3", "uv", "uvx", "npx", "deno", "java"]),
         }
     }
@@ -247,6 +259,12 @@ machine_cpu_sustain_secs = 120.0  # ... this long: warn + renice busy session pr
 # under RAM/VRAM pressure an idle ComfyUI (empty /queue) gets POST /free; loopback only, \"\" = off
 comfyui_url = \"http://127.0.0.1:8188\"
 free_every_secs = 600.0
+# node/python/bun/uv/deno whose parent is gone this long: a harness job (a path part named in
+# orphan_jobs, e.g. .trail/hook.cjs) is cleaned, any other orphan only reported
+clean_orphans = true
+orphan_jobs = [\"hook\", \"hooks\"]
+orphan_secs = 600.0
+dup_report = 2               # same command line this many times under live sessions: report only
 watch = [\"node\", \"bun\", \"python\", \"python3\", \"uv\", \"uvx\", \"npx\", \"deno\", \"java\"]
 ";
 
@@ -318,6 +336,12 @@ impl Config {
         f("machine_cpu_pct", &mut c.machine_cpu_pct);
         f("machine_cpu_sustain_secs", &mut c.machine_cpu_sustain_secs);
         f("free_every_secs", &mut c.free_every_secs);
+        f("orphan_secs", &mut c.orphan_secs);
+        n("dup_report", &mut c.dup_report);
+        l("orphan_jobs", &mut c.orphan_jobs);
+        if let Some(b) = t.get("clean_orphans").and_then(|x| x.as_bool()) {
+            c.clean_orphans = b;
+        }
         if let Some(u) = t.get("comfyui_url").and_then(|x| x.as_str()) {
             c.comfyui_url = u.trim().to_string();
         }
@@ -560,6 +584,10 @@ pub struct P {
     pub gpu_mb: u64,
     /// nearest ancestor (or self) that is a `claude`/`omp` root
     pub root: Option<u32>,
+    /// command line (first args); only matched, never written to an alert
+    pub cmd: String,
+    /// its parent is gone (reparented to init/launchd, missing, or a newer process on that pid)
+    pub orphan: bool,
 }
 
 /// Nearest `claude`/`omp` ancestor of `pid` (itself if it is one); chains are capped at 64.
@@ -703,6 +731,8 @@ pub struct Engine {
     psi: Sustain,
     gpu_sys: Sustain,
     cpu_sys: Sustain,
+    orphan: HashMap<Key, Sustain>,
+    dups: BTreeMap<String, Sustain>,
     /// since when RAM or VRAM is tight, and when idle caches were last freed
     tight_since: Option<f64>,
     freed_at: Option<f64>,
@@ -750,6 +780,8 @@ impl Engine {
             psi: Sustain::default(),
             gpu_sys: Sustain::default(),
             cpu_sys: Sustain::default(),
+            orphan: HashMap::new(),
+            dups: BTreeMap::new(),
             tight_since: None,
             freed_at: None,
             pressure_since: None,
@@ -927,6 +959,53 @@ impl Engine {
             }
         }
 
+        // runtimes a session or terminal left behind: harness jobs go, anything else is reported
+        self.orphan.retain(|k, _| live.contains(k));
+        for p in s.procs.iter().filter(|p| p.orphan && matches!(p.kind, Kind::Watched | Kind::Helper)) {
+            let key = (p.pid, p.start);
+            if !self.orphan.entry(key).or_default().update(s.now, true, self.cfg.orphan_secs) {
+                continue;
+            }
+            let job = harness_job(&p.cmd, &self.cfg.orphan_jobs);
+            let may = job && self.cfg.clean_orphans && p.pid > 4 && !s.protect.contains(&p.pid) && !self.pending.contains_key(&key);
+            let action = match (may, self.dry) {
+                (false, _) => "warn",
+                (true, true) => "dry-run",
+                (true, false) => {
+                    out.acts.push(Act::Term(p.pid, p.start));
+                    self.pending.insert(key, s.now);
+                    "killed"
+                }
+            };
+            let verdict = match action {
+                "killed" => "cleaned (SIGTERM, then kill)",
+                "dry-run" => "dry-run: would clean",
+                _ if job => "left running (clean_orphans = false)",
+                _ => "left running (not a harness job)",
+            };
+            let label = script_of(&p.cmd).unwrap_or_else(|| p.name.clone());
+            let msg = format!("{} `{label}` (pid {}, {} MB) has had no live parent for {:.0} min → {verdict}", p.name, p.pid, p.rss / (1024 * 1024), self.cfg.orphan_secs / 60.0);
+            let sug = if job { "a hook or helper whose session ended; nothing to do." } else { "started by a session or terminal that is gone: stop it if nobody uses it." };
+            let a = self.alert(s, Some(p), "orphan", "orphan_secs", self.cfg.orphan_secs, self.cfg.orphan_secs, action, msg, sug);
+            out.alerts.push(a);
+        }
+        // the same command line many times under live sessions (one LSP per session): report, keep
+        let mut groups: BTreeMap<&str, (u64, u64, &P)> = BTreeMap::new();
+        for p in s.procs.iter().filter(|p| !p.orphan && p.root.is_some() && matches!(p.kind, Kind::Watched | Kind::Helper) && !p.cmd.is_empty()) {
+            let g = groups.entry(p.cmd.as_str()).or_insert((0, 0, p));
+            g.0 += 1;
+            g.1 += p.rss;
+        }
+        self.dups.retain(|k, _| groups.contains_key(k.as_str()));
+        for (cmd, (n, rss, p)) in &groups {
+            if self.dups.entry(cmd.to_string()).or_default().update(s.now, *n >= self.cfg.dup_report.max(2), self.cfg.sys_sustain_secs) {
+                let label = script_of(cmd).unwrap_or_else(|| p.name.clone());
+                let msg = format!("{n}× {} `{label}` ({} MB together), each under a live session → kept", p.name, rss / (1024 * 1024));
+                let a = self.alert(s, None, "dup", "copies", *n as f64, self.cfg.dup_report as f64, "kept", msg, "one per open session is normal; close idle sessions to free them.");
+                out.alerts.push(a);
+            }
+        }
+
         // machine-wide
         let tops = top.map(|(c, n, pid)| format!("; busiest session process: {n} pid {pid} {c:.0}% CPU")).unwrap_or_default();
         let over = s.avail_pct < self.cfg.mem_avail_pct;
@@ -1006,6 +1085,7 @@ struct Ident {
     name: String,
     kind: Kind,
     cwd: Option<String>,
+    cmd: String,
     mine: bool,
 }
 
@@ -1051,7 +1131,7 @@ fn load_ident(st: &Stat, cfg: &Config, uid: Option<u32>) -> Ident {
     let args: Vec<String> = cmd.split(|b| *b == 0).filter(|a| !a.is_empty()).take(5).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
     let (kind, name) = classify(&names_of(exe.as_deref(), &st.comm, &args), cfg);
     let cwd = (kind == Kind::Root).then(|| fs::read_link(format!("/proc/{pid}/cwd")).ok().map(|p| p.display().to_string())).flatten();
-    Ident { start: st.start, ppid: st.ppid, name, kind, cwd, mine: uid.is_none() || uid_of(&format!("/proc/{pid}")) == uid }
+    Ident { start: st.start, ppid: st.ppid, name, kind, cwd, cmd: args.join(" "), mine: uid.is_none() || uid_of(&format!("/proc/{pid}")) == uid }
 }
 
 impl Sampler {
@@ -1140,6 +1220,8 @@ impl Sampler {
                 cwd: id.cwd.clone(),
                 gpu_mb: self.gpu.get(&st.pid).copied().unwrap_or(0),
                 root: None,
+                cmd: id.cmd.clone(),
+                orphan: st.ppid <= 1 || stats.get(&st.ppid).is_none_or(|pp| pp.start > st.start),
             });
         }
         self.idents.retain(|k, _| stats.contains_key(k));
@@ -1231,11 +1313,30 @@ pub fn split_cmd(s: &str) -> Vec<String> {
     out
 }
 
+/// The script a runtime runs (`node .trail/hook.cjs pre-bash` → `hook`): a file name, never its
+/// arguments, so an alert never carries a token passed on the command line.
+pub fn script_of(cmd: &str) -> Option<String> {
+    split_cmd(cmd).into_iter().skip(1).find(|a| !a.starts_with('-')).map(|a| base(&a, true)).filter(|b| !b.is_empty())
+}
+
+/// The script path has a part named in `jobs` (`.trail/hook.cjs`, `.claude/hooks/x.js`); a
+/// `webhook-server` does not match.
+pub fn harness_job(cmd: &str, jobs: &[String]) -> bool {
+    let Some(script) = split_cmd(cmd).into_iter().skip(1).find(|a| !a.starts_with('-')) else { return false };
+    let parts: Vec<String> = script.split(['/', '\\']).filter(|x| !x.is_empty()).map(|x| x.to_lowercase()).collect();
+    let n = parts.len();
+    parts.iter().enumerate().any(|(i, part)| {
+        let part = if i + 1 == n { base(part, true) } else { part.clone() };
+        jobs.contains(&part)
+    })
+}
+
 /// The OS listing (`ccc::reap::list`) as the engine sees it: tracked processes with their session
 /// root, and the guard's own ancestry (`me` upwards), which is never signalled.
 #[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn port_procs(cfg: &Config, listed: &[Proc], me: u32) -> (Vec<P>, HashSet<u32>) {
     let parent: HashMap<u32, u32> = listed.iter().map(|p| (p.pid, p.ppid)).collect();
+    let started: HashMap<u32, u64> = listed.iter().map(|p| (p.pid, p.started)).collect();
     let kinds: HashMap<u32, (Kind, String)> = listed.iter().map(|p| (p.pid, classify(&names_of(None, &p.image, &split_cmd(&p.cmd)), cfg))).collect();
     let mut protect = HashSet::new();
     let mut cur = me;
@@ -1262,6 +1363,9 @@ pub(crate) fn port_procs(cfg: &Config, listed: &[Proc], me: u32) -> (Vec<P>, Has
                 cwd: None,
                 gpu_mb: 0,
                 root: root_of(p.pid, |c| parent.get(&c).copied(), |c| kinds.get(&c).is_some_and(|k| k.0 == Kind::Root)),
+                cmd: p.cmd.clone(),
+                // macOS derives starts from `etime` (±1 s), hence the 2 s slack
+                orphan: p.ppid <= 1 || started.get(&p.ppid).is_none_or(|&ps| p.started > 0 && ps > p.started + 2),
             })
         })
         .collect();
@@ -1736,7 +1840,10 @@ fn run_loop(paths: &Paths, config: Option<&Path>, dry: bool) -> Result<()> {
         }
         for a in &alerts {
             println!("[{}] {} · {}", a.kind, a.msg, a.action);
-            let _ = append_alert(paths, a);
+            // a dry run (often with test thresholds) never reaches the sessions' hook
+            if !dry {
+                let _ = append_alert(paths, a);
+            }
             if let Some(n) = &notifier {
                 notify(n, a);
             }
@@ -2141,7 +2248,7 @@ mod tests {
     }
 
     fn proc(pid: u32, ppid: u32, name: &str, kind: Kind, ticks: u64, rss_mb: u64) -> P {
-        P { pid, start: pid as u64 * 10, ppid, ticks, rss: rss_mb * 1024 * 1024, name: name.into(), kind, cwd: Some("/work/repo".into()), gpu_mb: 0, root: None }
+        P { pid, start: pid as u64 * 10, ppid, ticks, rss: rss_mb * 1024 * 1024, name: name.into(), kind, cwd: Some("/work/repo".into()), gpu_mb: 0, root: None, cmd: name.into(), orphan: false }
     }
 
     fn snap(now: f64, procs: Vec<P>) -> Snap {
@@ -2708,5 +2815,78 @@ mod tests {
         for want in ["<string>dev.8sync.watchdog</string>", "<string>/opt/8sync</string><string>watchdog</string><string>run</string>", "<key>SuccessfulExit</key><false/>", "<string>Background</string>", "<key>LowPriorityIO</key><true/>"] {
             assert!(p.contains(want), "{want}");
         }
+    }
+
+    fn runtime(pid: u32, ppid: u32, cmd: &str, orphan: bool) -> P {
+        P { cmd: cmd.into(), orphan, ..proc(pid, ppid, "node", Kind::Watched, 0, 47) }
+    }
+
+    /// Steps `e` every 30 s for 15 min over `procs`; (alerts as (kind, pid, action), acts).
+    fn run_orphans(e: &mut Engine, procs: &[P]) -> (Vec<(String, u32, String)>, Vec<Act>) {
+        let (mut al, mut acts) = (Vec::new(), Vec::new());
+        for i in 0..=30 {
+            let o = e.step(&snap(i as f64 * 30.0, procs.to_vec()));
+            al.extend(o.alerts.into_iter().map(|a| (a.kind, a.pid, a.action)));
+            acts.extend(o.acts);
+        }
+        (al, acts)
+    }
+
+    #[test]
+    fn orphaned_hook_is_cleaned_other_orphans_only_reported() {
+        let procs = vec![
+            runtime(500, 1, "node .trail/hook.cjs pre-bash", true),
+            runtime(501, 1, r#"python C:\ai\ComfyUI\main.py --listen"#, true),
+            runtime(502, 1, "node C:/srv/webhook-server/index.js", true),
+            runtime(503, 9, "node .claude/hooks/notify.js", false), // parent alive: not an orphan
+        ];
+        let (al, acts) = run_orphans(&mut Engine::new(Config::default(), false, BTreeSet::new()), &procs);
+        assert_eq!(acts, vec![Act::Term(500, 5000), Act::Kill(500, 5000)], "only the stuck hook: after 10 min SIGTERM, then the kill after the grace");
+        let orphans: Vec<_> = al.iter().filter(|a| a.0 == "orphan").map(|a| (a.1, a.2.as_str())).collect();
+        assert_eq!(orphans, vec![(500, "killed"), (501, "warn"), (502, "warn")]);
+        let (al, acts) = run_orphans(&mut Engine::new(Config::default(), true, BTreeSet::new()), &procs);
+        assert!(acts.is_empty() && al.contains(&("orphan".into(), 500, "dry-run".into())), "dry-run");
+        let off = Config { clean_orphans: false, ..Config::default() };
+        assert!(run_orphans(&mut Engine::new(off, false, BTreeSet::new()), &procs).1.is_empty(), "owner switched it off");
+        let mut guarded = snap(0.0, procs.clone());
+        guarded.protect.insert(500);
+        let mut e = Engine::new(Config { orphan_secs: 0.0, ..Config::default() }, false, BTreeSet::new());
+        assert!(e.step(&guarded).acts.is_empty(), "the guard's own ancestry is never touched");
+    }
+
+    #[test]
+    fn duplicates_under_live_sessions_are_reported_and_kept() {
+        let mut procs = vec![proc(100, 1, "claude", Kind::Root, 0, 400), proc(101, 1, "claude", Kind::Root, 0, 400), proc(102, 1, "claude", Kind::Root, 0, 400)];
+        for (pid, parent) in [(200, 100), (201, 101), (202, 102)] {
+            procs.push(P { cmd: "node pyright-langserver.js --stdio".into(), ..proc(pid, parent, "node", Kind::Watched, 0, 326) });
+        }
+        let (al, acts) = run_orphans(&mut Engine::new(kill_on(), false, BTreeSet::new()), &procs);
+        assert!(acts.is_empty(), "never touched, even with kills on");
+        let dups: Vec<_> = al.iter().filter(|a| a.0 == "dup").collect();
+        assert_eq!(dups.len(), 1, "one report per episode: {al:?}");
+        assert_eq!(dups[0].2, "kept");
+        let one = vec![procs[0].clone(), procs[3].clone()];
+        assert!(run_orphans(&mut Engine::new(Config::default(), false, BTreeSet::new()), &one).0.iter().all(|a| a.0 != "dup"), "a single copy is fine");
+    }
+
+    #[test]
+    fn harness_jobs_and_orphans_from_the_listing() {
+        let jobs = Config::default().orphan_jobs;
+        assert!(harness_job("node .trail/hook.cjs pre-bash", &jobs));
+        assert!(harness_job(r#""C:\nodejs\node.exe" "C:\Users\a\.claude\hooks\x.js""#, &jobs));
+        assert!(!harness_job("node C:/srv/webhook-server/index.js", &jobs));
+        assert!(!harness_job("python main.py --hook x", &jobs), "an argument is not the script");
+        assert_eq!(script_of("node .trail/hook.cjs --token=SECRET"), Some("hook".into()));
+        let pr = |pid: u32, ppid: u32, started: u64, cmd: &str| Proc { pid, ppid, started, image: "node".into(), cmd: cmd.into(), ..Default::default() };
+        let listed = vec![
+            pr(10, 4, 100, "node a.js"),   // parent 4 not listed → orphan
+            pr(20, 30, 100, "node b.js"),  // parent started later → pid reused → orphan
+            pr(30, 4, 500, "node c.js"),
+            pr(40, 30, 600, "node d.js"),  // live parent
+        ];
+        let (procs, _) = port_procs(&Config::default(), &listed, 999);
+        let mut got: Vec<_> = procs.iter().map(|p| (p.pid, p.orphan)).collect();
+        got.sort();
+        assert_eq!(got, vec![(10, true), (20, true), (30, true), (40, false)]);
     }
 }
