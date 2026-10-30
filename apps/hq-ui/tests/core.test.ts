@@ -14,7 +14,7 @@ beforeAll(async () => {
     req.on("end", () => {
       seen.push({ path: req.url ?? "", token: req.headers["x-core-token"] as string | undefined, body });
       if (req.headers["x-core-token"] !== "t0k") return void res.writeHead(401).end('{"error":"token"}');
-      if (req.url === "/v1/board?root=x") return void res.writeHead(422).end('{"error":"no board"}');
+      if (req.url === "/v1/disk?root=x") return void res.writeHead(422).end('{"error":"no root"}');
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ path: req.url, body: body ? JSON.parse(body) : null }));
     });
   });
@@ -35,7 +35,7 @@ describe("core client", () => {
     expect(await coreCall("/v1/ls", {}, env)).toEqual({ status: 200, body: { path: "/v1/ls", body: null } });
     expect(await coreCall("/v1/usage", { body: { roots: ["/r"] } }, env)).toEqual({ status: 200, body: { path: "/v1/usage", body: { roots: ["/r"] } } });
     expect(seen.at(-1)?.token).toBe("t0k");
-    expect(await coreCall("/v1/board?root=x", {}, env)).toEqual({ status: 422, body: { error: "no board" } });
+    expect(await coreCall("/v1/disk?root=x", {}, env)).toEqual({ status: 422, body: { error: "no root" } });
     expect((await coreCall("/v1/ls", {}, { ...env, HQ_CORE_TOKEN: "bad" }))?.status).toBe(401);
   });
 

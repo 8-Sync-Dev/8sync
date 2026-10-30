@@ -4,8 +4,7 @@
 // Owner (2026-10-19): "xem dung lượng các file dự án phình to … phân tích cảnh báo các thứ bất
 // thường to … gửi tin nhắn cho phòng để dọn/check/clear/optimize luôn".
 import { roomRole } from "./now";
-import { leadOf, roomGroups } from "./room-send";
-import { isSweepRoom } from "./sweep";
+import { roomGroups } from "./room-send";
 
 export const MB = 2 ** 20;
 export const GB = 2 ** 30;
@@ -57,9 +56,9 @@ export type ProjectDisk = {
   cleaned?: Cleaned | null;
   /** Candidate build dirs HQ left because something uses them: never sent to a room to delete. */
   inUse?: string[];
-  /** HQ's last removal of idle merged/closed card worktrees (lib/server/disk-clean.ts pruneWorktrees), kept across scans. */
+  /** HQ's last removal of idle merged agent worktrees (lib/server/disk-clean.ts pruneWorktrees), kept across scans. */
   pruned?: Pruned | null;
-  /** Why the card worktrees left after the last pass stayed (null: not evaluated). */
+  /** Why the agent worktrees left after the last pass stayed (null: not evaluated). */
   wtKept?: WtKept | null;
 };
 
@@ -69,7 +68,7 @@ export type Cleaned = { at: number; bytes: number; dirs: string[] };
 export type Pruned = { at: number; n: number; names: string[] };
 /** The worktrees a prune pass kept, by its first reason; `n`: how many it looked at. */
 export type WtKept = { n: number; busy: number; recent: number; open: number; dirty: number; failed: number };
-/** A card worktree written this recently belongs to work in progress: left alone. */
+/** An agent worktree written this recently belongs to work in progress: left alone. */
 export const PRUNE_IDLE_MS = 3600_000;
 
 /** "giữ 5: 2 đang dùng, 3 chưa merge/đóng" for the worktrees finding; "" when nothing was kept. */
@@ -86,7 +85,7 @@ export function keptText(k: WtKept): string {
 }
 
 /**
- * Build output HQ removes by itself: `target` / `.next` anywhere in an agent's card worktree
+ * Build output HQ removes by itself: `target` / `.next` anywhere in an agent's worktree
  * (`src-tauri/target`, `apps/web/.next`); the next build makes it again. Group 1: the worktree.
  */
 export const AUTO_DIR = /^(\.claude\/worktrees\/[^/]+)\/(?:[^/]+\/)*(?:target|\.next)$/;
@@ -189,7 +188,7 @@ export function cleanupText(p: Pick<ProjectDisk, "root" | "name" | "truncated">,
   ].join("\n");
 }
 
-type CleanRoom = Parameters<typeof leadOf>[0][number];
+type CleanRoom = Parameters<typeof roomGroups>[0][number];
 
 /**
  * One project folder whatever its slashes, case or `\\?\` prefix. Not folded into its repo (unlike
@@ -202,10 +201,10 @@ export const diskKey = (p: string) =>
     .replace(/\/+$/, "")
     .toLowerCase();
 
-/** The room a project's cleanup goes to: its live sweep room (lib/sweep.ts), else its lead, else a dev room, else any room of it. */
+/** The room a project's cleanup goes to by default: a dev room, else any room of it. */
 export function cleanupRoom<T extends CleanRoom>(rooms: T[], root: string): T | null {
   const rs = projectRooms(rooms, root);
-  return rs.find((r) => isSweepRoom(r.label)) ?? leadOf(rs) ?? rs.find((r) => (roomRole(r.label) ?? roomRole(r.name))?.seat === "dev") ?? rs[0] ?? null;
+  return rs.find((r) => (roomRole(r.label) ?? roomRole(r.name))?.seat === "dev") ?? rs[0] ?? null;
 }
 
 /** Rooms of that project a cleanup can go to (the picker). */

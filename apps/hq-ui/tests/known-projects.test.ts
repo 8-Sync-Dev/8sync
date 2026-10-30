@@ -5,9 +5,9 @@ describe("Dự án trên máy (mergeKnown)", () => {
   it("dedupes by root, drops excluded ones, names by basename, sorts by name", () => {
     const out = mergeKnown(
       [
-        { path: "C:/code/zus", source: "scope" },
-        { path: "c:\\code\\zus\\", source: "pin" },
-        { path: "C:/code/8sync", source: "team" },
+        { path: "C:/code/zus", source: "session" },
+        { path: "c:\\code\\zus\\", source: "claude" },
+        { path: "C:/code/8sync", source: "disk" },
         { path: "/srv/app", source: "session" },
         { path: "", source: "x" },
       ],
@@ -15,7 +15,7 @@ describe("Dự án trên máy (mergeKnown)", () => {
     );
     expect(out).toEqual([
       { path: "/srv/app", name: "app", source: "session" },
-      { path: "C:/code/zus", name: "zus", source: "scope" },
+      { path: "C:/code/zus", name: "zus", source: "session" },
     ]);
     expect(mergeKnown([], [])).toEqual([]);
   });

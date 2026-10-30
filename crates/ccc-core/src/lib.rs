@@ -24,7 +24,7 @@ pub const SCHEMA: u32 = 1;
 
 /// Inbox id of an omp room: `omp-` + 16 lowercase hex of FNV-1a 64 over the canonical project
 /// root (UTF-8, lossy) + `"\0"` + the session name. The single source of truth for the id the
-/// omp launch exports (`EIGHTSYNC_ROOM_ID`), `ls --json` shows (`inbox_id`) and `ccc msg` queues to.
+/// omp launch exports (`EIGHTSYNC_ROOM_ID`) and `ls --json` shows (`inbox_id`).
 pub fn room_id(root: &std::path::Path, name: &str) -> String {
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;

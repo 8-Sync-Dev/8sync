@@ -113,7 +113,7 @@ type CoreMachine = Pick<Machine, "cpu" | "gpus" | "procs" | "at"> & { mem: Machi
 /**
  * One snapshot. CPU is the busy share since the previous call (the first call samples 250 ms).
  * With the core: its sampler's reading (Toolhelp + NVML in process, no tasklist / nvidia-smi).
- * `procs: false` (the guard trigger's 5 s loop) skips the tasklist / ps probe.
+ * `procs: false` (the history sampler's loop) skips the tasklist / ps probe.
  */
 export async function machine(platform: NodeJS.Platform = process.platform, run: Exec = exec, procs = true): Promise<Machine> {
   const c = (await coreGet("/v1/machine"))?.v as CoreMachine | undefined;

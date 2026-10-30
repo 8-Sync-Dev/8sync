@@ -1,53 +1,41 @@
-// The projects HQ shows a board and ⚡ buttons for. Live rooms alone are not enough: when
-// `claude agents` is down (claude off PATH, an older Claude Code, a long outage, the first probe of a
-// cold start) no session is alive and every board would vanish, with ⚡ Làm ngay answering 409.
-// The team roots 8sync keeps (`auto up` adds, `auto down` drops) stand in for them.
-import fs from "node:fs";
+// The projects HQ shows: the ones with a live room, plus the folders the owner added in the sidebar.
 import type { DatabaseSync } from "node:sqlite";
-import type { ProjectInfo } from "../office";
+import { groupByProject, type ProjectInfo } from "../office";
+import { repoOf } from "../sidebar";
 import { withMissing, type ProjectRow } from "./db";
 import { projectOf } from "./office";
-import { teamRootsPath } from "./paths";
 import { mergedSessions } from "./proc";
-import { liveProjects } from "./targets";
 
-/** One spelling per folder: `\\` vs `/`, case, the `\\?\\` prefix Rust adds on Windows, a trailing slash. */
-const key = (p: string) => p.replace(/\\/g, "/").replace(/^\/\/\?\//, "").replace(/\/+$/, "").toLowerCase();
-
-/** `team-roots.json`: absolute roots (Rust may write the `\\?\` prefix); [] when absent or unreadable. */
-export function teamRoots(file = teamRootsPath()): string[] {
-  try {
-    const v: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
-    return Array.isArray(v) ? v.filter((r): r is string => typeof r === "string" && r.length > 0).map((r) => r.replace(/^\\\\\?\\/, "")) : [];
-  } catch {
-    return [];
-  }
+/** Projects with a live room, keyed like the office (git root, else the session's cwd). */
+export function liveProjects(sessions: { name: string; cwd: string | null; status: string }[], projectOf: (cwd: string | null) => ProjectInfo | null): ProjectInfo[] {
+  const rooms = sessions
+    .filter((s) => s.status !== "ended" && s.cwd)
+    .map((s) => ({ key: s.name, cwd: s.cwd, project: projectOf(s.cwd) }));
+  return groupByProject(rooms).map((g) => g.project);
 }
 
-/** Projects with a live room, then the team roots no live room covers; one per root. */
+/** Projects with worktrees folded into their repo (lib/sidebar.ts repoOf), one entry per repo. */
+export function repoProjects(projects: ProjectInfo[]): ProjectInfo[] {
+  const out = new Map<string, ProjectInfo>();
+  for (const p of projects) {
+    const r = repoOf(p.root);
+    const q = r.worktree ? { root: r.root, name: r.name, branch: null } : p;
+    const k = q.root.toLowerCase();
+    // The repo's own row (with its branch) wins over one made up from a worktree.
+    if (!out.has(k) || !r.worktree) out.set(k, q);
+  }
+  return [...out.values()];
+}
+
+/** Projects with a live room, one per root. */
 export async function projectsInView(db: DatabaseSync): Promise<ProjectInfo[]> {
-  const out = liveProjects(await mergedSessions(db).catch(() => []), (cwd) => projectOf(cwd));
-  const seen = new Set(out.map((p) => key(p.root)));
-  for (const r of teamRoots()) {
-    const p = projectOf(r);
-    if (p && !seen.has(key(p.root))) {
-      seen.add(key(p.root));
-      out.push(p);
-    }
-  }
-  return out;
+  return liveProjects(await mergedSessions(db).catch(() => []), (cwd) => projectOf(cwd));
 }
 
-/** Every root HQ shows or the owner added in the sidebar (as `/api/team` accepts), each in its own spelling. */
+/** Every root HQ shows or the owner added in the sidebar, each in its own spelling. */
 export async function knownRoots(db: DatabaseSync): Promise<string[]> {
   const added = withMissing(db.prepare("SELECT id, path, name, added_at FROM projects").all() as ProjectRow[])
     .filter((p) => !p.missing)
     .map((p) => p.path);
   return [...(await projectsInView(db)).map((p) => p.root), ...added];
-}
-
-/** The root an action names, when HQ knows it (`knownRoots`), in its own spelling; null for any other path. */
-export async function knownRoot(db: DatabaseSync, root: string): Promise<string | null> {
-  const want = key(root);
-  return (await knownRoots(db)).find((r) => key(r) === want) ?? null;
 }

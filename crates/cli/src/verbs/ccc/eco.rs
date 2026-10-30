@@ -1,22 +1,21 @@
 //! `8sync ccc eco` (= `8sync eco`): keeps the machine light while Claude Code / omp sessions work
-//! for hours, with or without an auto team. Owner 2026-10-24: "đảm bảo harness giữ ram, cpu, điện,
+//! for hours. Owner 2026-10-24: "đảm bảo harness giữ ram, cpu, điện,
 //! gpu luôn ổn định nhẹ làm việc lâu dài, in ra tôi xem hiện tại máy tôi dùng bao nhiêu".
 //!
-//! The resource guard of `auto` ([`super::pressure`]) only runs while auto drives a project; a
-//! plain session the owner opened (`claude`, `8sync ccc . core`, Claude Desktop's Code tab) and the
-//! builds, dev servers, LSPs and MCP servers it spawns got nothing. One eco pass ([`tick`]):
+//! A session the owner opened (`claude`, `8sync ccc . core`, Claude Desktop's Code tab) and the
+//! builds, dev servers, LSPs and MCP servers it spawns. One eco pass ([`tick`]):
 //! - every process a session started (never the session itself, Claude Desktop's own app, 8sync, or
 //!   anything above this process) that still runs at normal priority goes to below normal — the
 //!   owner's apps and the session's own UI keep the CPU first;
 //! - on battery, Windows battery saver, or RAM/CPU at the eco thresholds: the same processes run in
 //!   Windows Efficiency mode (EcoQoS: low clocks, less power and heat); back on AC and calm, what
-//!   eco put there is put back (only that, and not while an auto team's guard runs);
+//!   eco put there is put back (only that);
 //! - RAM at the threshold: the working set of session helpers holding ≥ [`TRIM_MIN_MB`] is handed
 //!   back (`K32EmptyWorkingSet`, Windows), at most once per [`TRIM_EVERY_S`].
 //!
 //! Killed here: only an orphaned helper ([`reap_orphan_helpers`]): a language server / MCP server
-//! / trail worker whose host session is gone (no claude/omp/editor/terminal above it). Rooms stay
-//! with `auto guard`, everything else with `8sync watchdog`.
+//! / trail worker whose host session is gone (no claude/omp/editor/terminal above it). Everything
+//! else stays with `8sync watchdog`.
 //! `8sync ccc eco` alone prints what the machine uses now (RAM, CPU, GPU, watts, battery, what
 //! Claude Code / node hold); `run` loops every [`EVERY_S`]; `install` starts it at logon
 //! (Windows Scheduled Task, systemd --user, launchd). Settings: `~/.config/8sync/eco.json`.
@@ -419,15 +418,11 @@ pub(super) struct Plan {
 }
 
 /// What one pass does (pure). `ecoed`: `(pid, started)` eco put in Efficiency mode before;
-/// `trimmed_at`: last trim sweep (unix s); `team_guard`: an auto team's guard runs (it owns
-/// Efficiency mode for the rooms then, so eco never takes it back).
-#[allow(clippy::too_many_arguments)]
-pub(super) fn plan(t: &[&Proc], m: Mode, ram: Option<u32>, c: Cfg, ecoed: &[(u32, u64)], trimmed_at: u64, team_guard: bool, now: u64) -> Plan {
+/// `trimmed_at`: last trim sweep (unix s).
+pub(super) fn plan(t: &[&Proc], m: Mode, ram: Option<u32>, c: Cfg, ecoed: &[(u32, u64)], trimmed_at: u64, now: u64) -> Plan {
     let mut p = Plan { lower: t.iter().filter(|q| q.normal).map(|q| q.pid).collect(), ..Plan::default() };
     if m == Mode::Calm {
-        if !team_guard {
-            p.eco_off = ecoed.to_vec();
-        }
+        p.eco_off = ecoed.to_vec();
     } else {
         p.eco_on = t.iter().map(|q| q.pid).collect();
     }
@@ -458,8 +453,7 @@ pub(super) fn tick(home: &Path, sampler: Option<&Sampler>) -> Value {
     let reaped = reap_orphan_helpers(home, &procs, now, false).iter().filter(|r| r["killed"] == true).count();
     let t = targets(&procs, std::process::id());
     let ecoed = ecoed_of(&st);
-    let team_guard = super::auto::running(home);
-    let p = plan(&t, m, ram, c, &ecoed, st["trimmedAt"].as_u64().unwrap_or(0), team_guard, now);
+    let p = plan(&t, m, ram, c, &ecoed, st["trimmedAt"].as_u64().unwrap_or(0), now);
 
     let lowered = super::pressure::lower(&p.lower, false);
     let eco_on = super::pressure::eco(&p.eco_on, true);
@@ -468,7 +462,7 @@ pub(super) fn tick(home: &Path, sampler: Option<&Sampler>) -> Value {
     let eco_off = super::pressure::eco(&off, false);
     let (trimmed, trimmed_bytes) = if p.trim.is_empty() { (0, 0) } else { super::pressure::trim(&procs, &p.trim) };
 
-    let mut next: Vec<(u32, u64)> = if m == Mode::Calm && !team_guard { Vec::new() } else { ecoed.into_iter().filter(|(pid, st)| alive(*pid, *st)).collect() };
+    let mut next: Vec<(u32, u64)> = if m == Mode::Calm { Vec::new() } else { ecoed.into_iter().filter(|(pid, st)| alive(*pid, *st)).collect() };
     if m != Mode::Calm {
         for q in &t {
             if !next.iter().any(|(pid, _)| *pid == q.pid) {
@@ -879,19 +873,17 @@ mod tests {
         a.rss = 300 * MIB;
         let t = vec![&a, &b];
         let c = Cfg::default();
-        let calm = plan(&t, Mode::Calm, Some(40), c, &[(99, 5)], 0, false, 10_000);
+        let calm = plan(&t, Mode::Calm, Some(40), c, &[(99, 5)], 0, 10_000);
         assert_eq!(calm.lower, vec![11]);
         assert!(calm.eco_on.is_empty() && calm.trim.is_empty());
         assert_eq!(calm.eco_off, vec![(99, 5)]);
-        // An auto team's guard owns Efficiency mode: eco takes nothing back then.
-        assert!(plan(&t, Mode::Calm, Some(40), c, &[(99, 5)], 0, true, 10_000).eco_off.is_empty());
-        let hot = plan(&t, Mode::Hot, Some(85), c, &[], 0, false, 10_000);
+        let hot = plan(&t, Mode::Hot, Some(85), c, &[], 0, 10_000);
         assert_eq!(hot.eco_on, vec![11, 12]);
         assert_eq!(hot.trim, vec![11]);
         // Trim at most once per TRIM_EVERY_S.
-        assert!(plan(&t, Mode::Hot, Some(85), c, &[], 10_000 - 60, false, 10_000).trim.is_empty());
+        assert!(plan(&t, Mode::Hot, Some(85), c, &[], 10_000 - 60, 10_000).trim.is_empty());
         // On battery with RAM fine: Efficiency mode, no trim.
-        let bat = plan(&t, Mode::Battery, Some(30), c, &[], 0, false, 10_000);
+        let bat = plan(&t, Mode::Battery, Some(30), c, &[], 0, 10_000);
         assert_eq!((bat.eco_on.len(), bat.trim.len()), (2, 0));
     }
 

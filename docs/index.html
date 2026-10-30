@@ -288,10 +288,7 @@
       .fill { height: auto; width: calc(32% + (var(--h) - 1) * 17%); border-radius: 9px; align-items: center; }
     }
 
-    /* Team */
-    .team-grid { display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr); gap: clamp(1.75rem, 4vw, 3.5rem); align-items: start; }
-    @media (min-width: 921px) { .team-grid > div:last-child { position: sticky; top: 1.5rem; } }
-    @media (max-width: 920px) { .team-grid { grid-template-columns: minmax(0, 1fr); } }
+    /* Sessions */
     .term { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
     .term-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.55rem 0.55rem 0.55rem 1.1rem; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 0.76rem; color: var(--ink-3); }
     .term pre { margin: 0; padding: 1.1rem 1.2rem 1.25rem; overflow-x: auto; font-family: var(--mono); font-size: 0.8rem; line-height: 1.75; color: var(--ink); tab-size: 2; }
@@ -317,58 +314,14 @@
     .ref td:first-child { white-space: nowrap; }
     .ref td code { white-space: nowrap; }
     .ref p.alt { padding: 0 1rem 0.9rem; margin: 0.4rem 0 0; }
-    .onoff { margin: 0 0 clamp(2rem, 4vw, 3rem); }
-    .onoff h3 { margin: 0; padding: 0.8rem 1rem 0.4rem; font-size: 1rem; color: var(--ink); }
     @media (max-width: 720px) { .ref thead { display: none; } .ref tr { display: grid; } .ref td:empty { display: none; } .ref td:first-child, .ref td code { white-space: normal; } }
     .step .code-line { margin-top: 0.55rem; }
-    .rooms { list-style: none; margin: 0 0 1.75rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
-    .room { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.8rem; border: 1px solid var(--line); border-radius: 999px; font-size: 0.9rem; color: var(--ink-2); background: var(--bg-raised); }
-    .room b { color: var(--ink); font-family: var(--mono); font-size: 0.85rem; font-weight: 600; }
-    .room i { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--green); flex: none; }
-    @keyframes tick { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-    .say-it { margin: 1.6rem 0 0; padding: 1rem 1.15rem; border-radius: 10px; background: var(--bg-raised); color: var(--ink-2); font-size: 0.95rem; }
-    .say-it q { color: var(--ink); font-weight: 600; }
-    .say-it + .say-it { margin-top: 0.75rem; }
     .notes { display: grid; gap: clamp(2rem, 4vw, 2.75rem); margin-top: clamp(2.5rem, 5vw, 4rem); padding-top: clamp(2rem, 4vw, 2.75rem); border-top: 1px solid var(--line-soft); }
     .notes p { margin: 0.75rem 0 0; color: var(--ink-2); max-width: 70ch; }
     .cols { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem clamp(1.25rem, 3vw, 2.5rem); color: var(--ink-2); }
     .cols li { padding-top: 0.8rem; border-top: 1px solid var(--line); }
     .code-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.6rem; background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 10px; padding: 0.5rem 0.5rem 0.5rem 1rem; }
     .code-line code { font-size: 0.82rem; white-space: nowrap; overflow-x: auto; scrollbar-width: thin; padding: 0.35rem 0; }
-
-    /* Board demo: the static markup is the final state; the script replays how it got there */
-    .board { margin: 0 0 clamp(2.25rem, 4.5vw, 3.25rem); background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
-    .board-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.55rem 0.55rem 0.55rem 1.1rem; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 0.76rem; color: var(--ink-3); }
-    .lanes { list-style: none; margin: 0; padding: 1rem; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.6rem; }
-    .lane { display: flex; flex-direction: column; gap: 0.55rem; min-height: 10.5rem; padding: 0.65rem 0.6rem; border-radius: 10px; background: var(--bg); border: 1px solid var(--line-soft); }
-    .lane h3 { margin: 0; font-family: var(--mono); font-size: 0.72rem; font-weight: 600; line-height: 1.3; color: var(--ink-3); }
-    .lane[data-lane="approved"] h3 { color: var(--amber); }
-    .lane[data-lane="done"] h3 { color: var(--green); }
-    .lane ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; align-content: start; }
-    .card { padding: 0.5rem 0.55rem 0.55rem; border-radius: 8px; background: var(--bg-raised); border: 1px solid var(--line); font-size: 0.8rem; line-height: 1.35; color: var(--ink); }
-    .card .id { display: block; font-family: var(--mono); font-size: 0.68rem; color: var(--ink-3); }
-    .card .who { display: flex; width: fit-content; align-items: center; gap: 0.35rem; margin-top: 0.45rem; font-family: var(--mono); font-size: 0.68rem; color: var(--ink-2); }
-    .card .who::before { content: ""; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--room, var(--ink-3)); }
-    .card .who:empty { display: none; }
-    .card[data-room="lead"] { --room: var(--violet); }
-    .card[data-room="dev"] { --room: var(--cyan); }
-    .card[data-room="qa"] { --room: var(--amber); }
-    .card[data-room="review"] { --room: var(--green); }
-    .card[data-room="ship"] { --room: var(--amber); border-color: oklch(0.85 0.15 80 / 0.5); }
-    .lane[data-lane="done"] .card { background: transparent; color: var(--ink-3); }
-    .ticker { list-style: none; margin: 0; padding: 0.9rem 1.1rem 1rem; border-top: 1px solid var(--line-soft); font-family: var(--mono); font-size: 0.78rem; line-height: 1.6; display: grid; gap: 0.2rem; counter-reset: tk; }
-    .ticker li { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 0.6rem; color: var(--ink-3); }
-    .ticker b { color: var(--ink-2); font-weight: 600; }
-    .ticker code { font-size: 1em; color: var(--ink-2); background: none; padding: 0; overflow-wrap: anywhere; }
-    .ticker[data-play] li:not(.on) { visibility: hidden; }
-    .ticker li.now b, .ticker li.now code { color: var(--ink); }
-    .board figcaption { padding: 0.85rem 1.1rem 1rem; border-top: 1px solid var(--line-soft); font-size: 0.86rem; line-height: 1.55; color: var(--ink-3); }
-    @media (max-width: 860px) {
-      .lanes { grid-template-columns: minmax(0, 1fr); }
-      .lane { min-height: 0; display: grid; grid-template-columns: 5.6rem minmax(0, 1fr); align-items: start; }
-      .lane h3 { padding-top: 0.5rem; }
-      .ticker li { grid-template-columns: minmax(0, 1fr); gap: 0; }
-    }
 
     /* Bypass */
     .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(1.75rem, 5vw, 4.5rem); align-items: center; }
@@ -436,7 +389,6 @@
       .intro .hero-sub, .intro .lede, .intro .cmds, .intro .then { animation: fade-up 0.8s var(--ease-out) both; animation-delay: 0.32s; }
       .panel.test .lamp-label { animation: lamp-test 1.1s var(--ease-out) both; animation-delay: calc(var(--i) * 120ms); }
       .rungs.grow .fill { animation: rise 1s var(--ease-out) both; animation-delay: calc(var(--h) * 90ms); }
-      .rooms.sweep .room i { animation: tick 1.6s ease-in-out 3; animation-delay: calc(var(--i) * 220ms); }
       .copy, .replay { transition: background-color 0.2s var(--ease-out), border-color 0.2s var(--ease-out), color 0.2s var(--ease-out); }
       @media (max-width: 880px) { .rungs.grow .fill { animation-name: rise-x; } }
     }
@@ -456,7 +408,7 @@
       <ul>
         <li><a href="#ladder">Autopilot</a></li>
         <li><a href="#rails">Rails</a></li>
-        <li><a href="#team">Team</a></li>
+        <li><a href="#sessions">Sessions</a></li>
         <li><a href="#proof">Proof</a></li>
         <li><a href="#install">Install</a></li>
         <li><a href="https://github.com/8-Sync-Dev/8sync/blob/main/docs/huong-dan.md" lang="vi" hreflang="vi">Tiếng Việt</a></li>
@@ -468,7 +420,7 @@
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-title">
-        <p class="release"><a href="https://github.com/8-Sync-Dev/8sync/releases/latest"><span class="lit" aria-hidden="true"></span><span data-version>v0.100.0</span> · the whole team in the background: <code class="nb">auto up</code></a></p>
+        <p class="release"><a href="https://github.com/8-Sync-Dev/8sync/releases/latest"><span class="lit" aria-hidden="true"></span><span data-version>v0.100.0</span> · release notes</a></p>
         <h1 id="hero-title"><span class="ln" style="--i:0">Claude Code,</span> <span class="ln" style="--i:1">on autopilot.</span></h1>
       </div>
 
@@ -487,7 +439,7 @@
             <button class="copy" type="button" data-copy="irm https://get.8syncdev.com/install.ps1 | iex" aria-label="Copy the Windows PowerShell install command">Copy</button>
           </div>
         </div>
-        <p class="then">Then, in any repo, <code>8sync ccc . core</code> opens a Claude Code session named <code>core</code> with the kit; type <code>/ship</code> and a task. Or <code>8sync ccc auto up</code> starts the whole team in the background.</p>
+        <p class="then">Then, in any repo, <code>8sync ccc . core</code> opens a Claude Code session named <code>core</code> with the kit; type <code>/ship</code> and a task.</p>
       </div>
 
       <figure class="log" aria-labelledby="log-cap">
@@ -588,134 +540,48 @@
       <p class="panel-note">The guard is a seat belt, not a sandbox: a program that deletes files itself (<code>python -c</code>, a build script) is not inspected. Limits are listed in the <a href="https://github.com/8-Sync-Dev/8sync#claude-code-8sync-ccc">README</a>.</p>
     </section>
 
-    <section class="section" id="team" aria-labelledby="team-title">
+    <section class="section" id="sessions" aria-labelledby="sessions-title">
       <div class="sec-head">
-        <h2 id="team-title">Or run the whole team in the background</h2>
-        <p><code>auto up</code> starts every role room of the repo as a Claude Code background session (<code>claude --bg</code>), each on its role's model. Rooms run on Claude Code's own <code>/goal</code>: claim a card, do the lane's job, move it, and wait at <code>auto wait</code> (no tokens) while the lane is empty. You follow the work in <code>8sync hq ui</code>. <code>--clear-ss</code> first deletes leftover background sessions and never touches the ones you have open.</p>
+        <h2 id="sessions-title">Your sessions, in one place</h2>
+        <p>8sync never opens a session or sends a prompt on its own: every session is one you open, in a terminal or from HQ. <code>8sync hq ui</code> shows what each one is doing, lets you chat with it and open its terminal, and watches the machine.</p>
       </div>
 
-      <div class="ref onoff">
-        <h3 id="onoff-title">On / off: the only commands you need</h3>
-        <table aria-labelledby="onoff-title">
-          <thead><tr><th scope="col">Switch</th><th scope="col">Command</th><th scope="col">Same thing in HQ</th></tr></thead>
-          <tbody>
-            <tr><td>Team on · off</td><td><code>8sync ccc auto up</code> · <code>8sync ccc auto down</code></td><td><span lang="vi">Mở team · Dừng team</span></td></tr>
-            <tr><td>Second team on omp</td><td><code>8sync ccc auto up --omp</code> · <code>8sync ccc auto omp off</code></td><td><span lang="vi">Đội omp</span> switch</td></tr>
-            <tr><td>Pause · resume</td><td><code>8sync ccc auto pause</code> · <code>8sync ccc auto on</code></td><td>Auto button</td></tr>
-            <tr><td>HQ on this machine</td><td><code>8sync hq ui</code></td><td></td></tr>
-            <tr><td>HQ from your phone</td><td><code>8sync hq ui --public</code></td><td></td></tr>
-            <tr><td>Emergency stop</td><td><code>8sync ccc cancel --all</code></td><td></td></tr>
-          </tbody>
-        </table>
-        <p class="alt">Everything else happens in HQ: assign work, answer questions, approve steps, read the board, the chat and the usage reset time.</p>
-      </div>
+      <ol class="flow" aria-label="One project folder, in order">
+        <li><h3>Install once</h3>
+          <div class="code-line">
+            <code>curl -fsSL https://get.8syncdev.com/install | sh</code>
+            <button class="copy" type="button" data-copy="curl -fsSL https://get.8syncdev.com/install | sh" aria-label="Copy the install command">Copy</button>
+          </div>
+          <p class="alt">Windows: <code>irm https://get.8syncdev.com/install.ps1 | iex</code> · Claude Code logged in.</p></li>
+        <li><h3>Open HQ</h3>
+          <div class="code-line">
+            <code>8sync hq ui</code>
+            <button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button>
+          </div>
+          <p class="alt">Any folder; page at <code>127.0.0.1:8740</code>. Sessions · Preview · <span lang="vi">Máy</span> (RAM, CPU, GPU, 30-min load chart) · <span lang="vi">Tri thức</span> (the machine's knowledge tree). Away from the desk: <code>8sync hq ui --public</code> prints a one-time login link (Cloudflare quick tunnel; needs <code>cloudflared</code>). Anyone with the link controls your sessions, so keep it to yourself.</p></li>
+        <li><h3>Add the folder</h3>
+          <p>Sidebar → paste the repo path. First time: run <code>claude</code> there once and trust it.</p></li>
+        <li><h3>Open a session</h3>
+          <p>A named Claude Code session with the kit; the same name tomorrow continues today's thread.</p>
+          <p class="alt"><code>8sync ccc . core</code> · <code>8sync ccc . ls</code></p></li>
+        <li><h3>Give it work</h3>
+          <p>Type a level in the session, from the terminal or HQ's chat: one task, or a goal with checks that loops until green.</p>
+          <p class="alt"><code>/ship "fix login"</code> · <code>/ship-loop "login survives a token refresh"</code></p></li>
+        <li><h3>Answer only what needs you</h3>
+          <p>In the session's terminal, in HQ or your own. Safe in-repo steps proceed. Ship always waits for you.</p></li>
+      </ol>
 
-      <figure class="board" aria-labelledby="board-cap">
-        <div class="board-head">
-          <span>8sync ccc auto board</span>
-          <button class="replay" id="board-replay" type="button" hidden>Replay</button>
-        </div>
-        <ol class="lanes" id="lanes">
-          <li class="lane" data-lane="backlog"><h3>backlog</h3><ul>
-            <li class="card" id="c43" data-room=""><span class="id">#43</span>Dark mode toggle<span class="who"></span></li>
-          </ul></li>
-          <li class="lane" data-lane="ready"><h3>ready</h3><ul></ul></li>
-          <li class="lane" data-lane="building"><h3>building</h3><ul>
-            <li class="card" id="c42" data-room="dev"><span class="id">#42</span>Webhook returns 500 on retry<span class="who">dev</span></li>
-          </ul></li>
-          <li class="lane" data-lane="qa"><h3>qa</h3><ul></ul></li>
-          <li class="lane" data-lane="review"><h3>review</h3><ul></ul></li>
-          <li class="lane" data-lane="approved"><h3>approved</h3><ul></ul></li>
-          <li class="lane" data-lane="done"><h3>done</h3><ul>
-            <li class="card" id="c41" data-room=""><span class="id">#41</span>Login survives a token refresh<span class="who">merged 9f3c2e1</span></li>
-          </ul></li>
-        </ol>
-        <ol class="ticker" id="ticker" aria-label="What each room ran">
-          <li><b>dev</b><code>auto claim → #41 ready → building, worktree card-41</code></li>
-          <li><b>lead</b><code>auto move 42 ready --check "pnpm test webhook"</code></li>
-          <li><b>dev</b><code>auto move 41 qa --pr 81</code></li>
-          <li><b>qa</b><code>pnpm test auth exit 0, UAT ok → auto move 41 review</code></li>
-          <li><b>dev</b><code>auto claim → #42 ready → building</code></li>
-          <li><b>review</b><code>diff ok → auto move 41 approved --sha 9f3c2e1</code></li>
-          <li><b>you</b><code>Ship ✓ → gh pr merge 81 --squash --match-head-commit 9f3c2e1</code></li>
-        </ol>
-        <figcaption id="board-cap">How a card crosses the board, with example ids. Every step is a real <code>8sync ccc auto</code> command and its rule: a card enters <code>ready</code> only with a check, <code>approved</code> only with the reviewed SHA, a card bounced back more than twice lands in <code>blocked</code>, and nothing merges before your Ship answer.</figcaption>
-      </figure>
-
-      <div class="team-grid">
-        <div>
-        <ol class="flow" aria-label="One project folder, in order">
-          <li><h3>Install once</h3>
-            <div class="code-line">
-              <code>curl -fsSL https://get.8syncdev.com/install | sh</code>
-              <button class="copy" type="button" data-copy="curl -fsSL https://get.8syncdev.com/install | sh" aria-label="Copy the install command">Copy</button>
-            </div>
-            <p class="alt">Windows: <code>irm https://get.8syncdev.com/install.ps1 | iex</code> · Claude Code logged in.</p></li>
-          <li><h3>Open HQ</h3>
-            <div class="code-line">
-              <code>8sync hq ui</code>
-              <button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button>
-            </div>
-            <p class="alt">Any folder; page at <code>127.0.0.1:8740</code>. <span lang="vi">Tổng quan</span> · Board · Flow · Preview (the team's screenshots) · <span lang="vi">Máy</span> (RAM, CPU, GPU, 30-min load chart) · <span lang="vi">Tri thức</span> (the machine's knowledge tree) · 3D (a WebGL office, one floor per project). The Board's Approved column has a one-tap <span lang="vi">Ship tất cả / Duyệt tất cả</span> button. Away from the desk: <code>8sync hq ui --public</code> prints a one-time login link (Cloudflare quick tunnel; needs <code>cloudflared</code>). Anyone with the link controls your rooms, so keep it to yourself.</p></li>
-          <li><h3>Add the folder</h3>
-            <p>Sidebar → paste the repo path. One git repo = one team, one board; a repo nested inside another keeps its own. First time: run <code>claude</code> there once and trust it.</p></li>
-          <li><h3>Start the team</h3>
-            <p>HQ button <b lang="vi">Mở team</b> (start team): lead, dev, qa, review, rd in the background. <b lang="vi">Team đầy đủ</b> (full team): 6 rooms, three of them building (lead, dev, dev2, ui, qa, review). Put the first task in the same command.</p>
-            <p class="alt"><code>8sync ccc auto up "fix login" --roles full</code></p>
-            <p class="alt"><code>8sync ccc auto up --omp</code>: the same roles again as omp rooms (<code>omp-dev</code>, <code>omp-qa</code>…) on omp's own model. Both teams share the board and the inbox, and message each other with <code>8sync ccc msg</code>.</p></li>
-          <li><h3>Give it work</h3>
-            <p><b lang="vi">Giao việc</b> (assign) or the box under the office: the task + a command that proves it done, screenshots and files attached. Urgent: P0 on the card.</p>
-            <p class="alt"><code>8sync ccc auto add "fix login" --check "pnpm test auth" --prio P0</code></p></li>
-          <li><h3>Answer only what needs you</h3>
-            <p>The <b lang="vi">Anh cần trả lời</b> (needs you) panel, or the room's terminal: in HQ, in <a href="https://github.com/stablyai/orca">Orca</a> at the room's worktree, or copy <code>claude attach &lt;id&gt;</code>. Product and technical questions go to the critic at once (default on since 0.110.38; the "Critic trả lời ngay" switch in the office, or <code>auto on --after N</code> to be asked first). Safe in-repo steps proceed. Ship always waits for you. A room stopped by an API error or a usage limit restarts by itself: errors like <code>overloaded</code> after 1 to 15 min, a usage limit at the reset time the status line reports (HQ shows it).</p></li>
-          <li><h3>Update or stop</h3>
-            <p>After <code>8sync up</code>: <b lang="vi">Dọn &amp; mở lại</b> (clean and reopen) deletes only leftover sessions, never a named room. <b lang="vi">Dừng team</b> (stop) keeps every conversation; <code>auto up</code> resumes them. Other projects keep running.</p>
-            <p class="alt"><code>auto up --clear-ss</code> · <code>auto down</code></p></li>
-        </ol>
-        </div>
-        <div>
-          <ul class="rooms" data-anim="sweep" aria-label="Rooms, their model and what each does">
-            <li class="room" style="--i:0"><i aria-hidden="true"></i><b>lead</b> Opus, writes the check</li>
-            <li class="room" style="--i:1"><i aria-hidden="true"></i><b>dev</b> Sonnet, builds</li>
-            <li class="room" style="--i:2"><i aria-hidden="true"></i><b>qa</b> Haiku, tests</li>
-            <li class="room" style="--i:3"><i aria-hidden="true"></i><b>review</b> Sonnet, approves</li>
-            <li class="room" style="--i:4"><i aria-hidden="true"></i><b>rd</b> Opus, researches</li>
-            <li class="room" style="--i:5"><i aria-hidden="true"></i><b>ba</b> Opus, writes the card (full team)</li>
-            <li class="room" style="--i:6"><i aria-hidden="true"></i><b>arch</b> Opus, designs (full team)</li>
-            <li class="room" style="--i:7"><i aria-hidden="true"></i><b>ui</b> your default model, screens (full team)</li>
-          </ul>
-          <p class="say-it"><b>arch</b> writes an ADR from <a href="https://github.com/donnemartin/system-design-primer">The System Design Primer</a> before a card labelled <code>arch</code> is built. Every day it also reads a sourced radar of the repo's own stack and measures scale against the repo's budgets.</p>
-          <p class="say-it">The lanes follow <a href="https://github.com/EricTechPro/super-board">super-board</a> (MIT), rebuilt in the Rust CLI on a local file. Inside a room, say <q lang="vi">đưa vào loop: …</q> (add to the loop) or <q lang="vi">làm ngay: …</q> (do it now) and Claude queues it.</p>
-        </div>
-      </div>
       <details class="ref">
         <summary>Every command and option</summary>
         <table>
           <thead><tr><th scope="col">Command</th><th scope="col">Options</th><th scope="col">What it does</th></tr></thead>
           <tbody>
-            <tr><th colspan="3" scope="rowgroup">Team</th></tr>
-            <tr><td><code>auto up ["…"]</code></td><td><code>"task" --check "…"</code> <code>--roles small|full|lead,dev,…</code> <code>--omp</code> <code>--loop 10m</code> <code>--hours N</code> <code>--usd-per-hour X</code> <code>--clear-ss</code></td><td>Open or resume the rooms of this git repo; a task given here is the first card. <code>--clear-ss</code> deletes junk background sessions and restarts idle rooms on a newer kit; the board is never touched.</td></tr>
-            <tr><td><code>auto down</code></td><td></td><td>Stop this repo's background rooms, keep their conversations; other repos keep running.</td></tr>
-            <tr><td><code>auto revive</code></td><td></td><td>Bring back team rooms that died with the machine (same conversation). HQ runs it every 2 minutes and when you press Run; it never renews the lease.</td></tr>
-            <tr><td><code>8sync awake</code></td><td><code>--while-rooms</code> <code>--hours 8</code> <code>--screen-off 10</code></td><td>Keep the machine from sleeping while rooms run; lets go when none is left, at most 24 hours. On Windows it also turns the screen off after 10 minutes without mouse or keyboard input (<code>0</code> leaves it to the power plan); a touch brings it back.</td></tr>
-            <tr><td><code>auto omp on · off</code></td><td><code>--json</code></td><td>Second team on omp. <code>auto up --omp</code> also opens an <code>omp-&lt;role&gt;</code> room per role (tmux, or a Windows Terminal tab). Refused while omp's default model is <code>anthropic/…</code>.</td></tr>
-            <tr><td><code>auto on</code></td><td><code>--here</code> <code>--loop [10m]</code> <code>--team</code> <code>--target "…" --check "…"</code> <code>--hours N</code> <code>--after N</code> <code>--usd-per-hour X</code></td><td>Keep rooms you opened yourself working on a loop. <code>--here</code>: this folder only. <code>--after</code>: seconds of owner silence before the critic answers (default 0: at once).</td></tr>
-            <tr><td><code>auto off · pause · status</code></td><td><code>--json</code></td><td>Stop, pause, or show the loop, lease and usage cap.</td></tr>
-            <tr><th colspan="3" scope="rowgroup">Work and board</th></tr>
-            <tr><td><code>auto add "…"</code></td><td><code>--check "…"</code> <code>--label bug|feature|qa|arch</code> <code>--prio P0..P3</code> <code>--now</code></td><td>A card. <code>--now</code>: front of the queue and every room's inbox. P0 is claimed before anything else. <code>arch</code>: needs an ADR before it goes to ready.</td></tr>
-            <tr><td><code>auto board · queue · lint</code></td><td><code>--json</code></td><td>Cards by lane, the queue, problems on the board.</td></tr>
-            <tr><td><code>auto move &lt;id&gt; &lt;lane&gt;</code></td><td><code>--note</code> <code>--check</code> <code>--pr</code> <code>--sha</code> <code>--prio</code></td><td>Move a card: <code>ready</code> needs a check, <code>approved</code> needs the reviewed SHA.</td></tr>
-            <tr><td><code>auto prio &lt;id&gt; P0|…|none</code></td><td></td><td>Change how urgent a card is.</td></tr>
-            <tr><td><code>auto done &lt;id&gt;</code> · <code>drop &lt;id&gt;</code></td><td><code>--evidence "cmd: result"</code></td><td>Close a card with proof, or drop it.</td></tr>
-            <tr><th colspan="3" scope="rowgroup">Owner away</th></tr>
-            <tr><td><code>delegate on</code></td><td><code>--after 1m</code></td><td>The critic (Opus) answers product and technical questions, at once by default, or after that silence. Ship and secrets stay with you.</td></tr>
-            <tr><td><code>cancel</code></td><td><code>--all</code></td><td>Undo what this session set up: goal, urgent flag, loop.</td></tr>
             <tr><th colspan="3" scope="rowgroup">Sessions</th></tr>
-            <tr><td><code>8sync ccc . &lt;name&gt;</code></td><td><code>--team</code> <code>--panes</code></td><td>Open or resume a named session in this repo; <code>. ls</code> lists them.</td></tr>
-            <tr><td><code>term &lt;id&gt;</code></td><td><code>--cols</code> <code>--rows</code></td><td>A room's real terminal (HQ uses it for its web terminal).</td></tr>
-            <tr><td><code>auto up --company</code></td><td></td><td>One team for every project in auto's scope: a room with an empty home board claims the most urgent card of another project (P0 first); the card returns with its root and an <code>env -C</code> hint.</td></tr>
+            <tr><td><code>8sync ccc . &lt;name&gt;</code></td><td></td><td>Open or resume a named session in this repo; <code>. ls</code> lists them.</td></tr>
+            <tr><td><code>term &lt;id&gt;</code></td><td><code>--cols</code> <code>--rows</code></td><td>A session's real terminal (HQ uses it for its web terminal).</td></tr>
             <tr><td><code>know add "…"</code></td><td><code>--repo</code> · <code>ls [--all] [--json]</code></td><td>The machine's knowledge tree, one file per repo; every session start reads its own project first, then the others under their root. General lessons only, never a client's facts.</td></tr>
-            <tr><td><code>msg &lt;room&gt; "…"</code></td><td><code>--all</code> <code>--from</code></td><td>One room messages another, ccc or omp (rooms run it themselves). Marked as a room's words, never the owner's.</td></tr>
+            <tr><td><code>cancel</code></td><td><code>--all</code></td><td>Undo what this session set up: goal, urgent flag, loop.</td></tr>
+            <tr><td><code>8sync awake</code></td><td><code>--hours 8</code> <code>--screen-off 10</code></td><td>Keep the machine from sleeping. On Windows it also turns the screen off after 10 minutes without mouse or keyboard input (<code>0</code> leaves it to the power plan); a touch brings it back.</td></tr>
             <tr><th colspan="3" scope="rowgroup">HQ</th></tr>
             <tr><td><code>8sync hq ui</code></td><td><code>--public</code> <code>--off</code></td><td>The dashboard on <code>127.0.0.1:8740</code>; <code>--public</code> adds a login link from anywhere (new host and key each start, gone when HQ stops).</td></tr>
           </tbody>
@@ -735,11 +601,9 @@
         <div>
           <h3>Limits that hold it in check</h3>
           <ul class="cols">
-            <li>On a Claude subscription, auto holds a lease of at most 4 hours and runs while you're around. For runs over days, use Claude Code Routines (<code>/schedule</code>) or a Console API key.</li>
-            <li>On a subscription, rooms rest once the 5-hour or 7-day usage window reaches 90%. With an API key, or with <code class="nb">--usd-per-hour</code>, a ceiling on this project's spend (default $5 an hour) skips ticks.</li>
+            <li>A loop runs only while its session is open. For runs over days, use Claude Code Routines (<code>/schedule</code>) or a Console API key.</li>
             <li>Claude Code removes a loop after 7 days; run the command again to extend it.</li>
-            <li>A usage limit restarts a room at most twice in a row and never more than 24 hours out, like Claude Code's own auto-continue. 8sync reads usage only from what Claude Code gives the status line, never from your login.</li>
-            <li>Never sign in to a Claude plan (Pro/Max/Team) in omp: the plan stays in Claude Code. The omp team runs on another provider (GLM, OpenAI…); <code>--omp</code> is refused while omp's default model is <code>anthropic/…</code>, Console key or not.</li>
+            <li>8sync reads usage only from what Claude Code gives the status line, never from your login.</li>
           </ul>
         </div>
       </div>
@@ -858,7 +722,7 @@
       <dl class="box" aria-label="Also in the binary">
         <div><dt><code>8sync forge &lt;name&gt;</code></dt><dd>A zsh bound to a named Forge conversation: type commands as usual, start a line with <code>:</code> to ask.</dd></div>
         <div><dt><code>8sync . &lt;name&gt;</code></dt><dd>Named omp sessions, the same way, on your own API key.</dd></div>
-        <div><dt><code>8sync hq ui</code></dt><dd>Your sessions as a team on a local web page: chat, task board, who is doing what.</dd></div>
+        <div><dt><code>8sync hq ui</code></dt><dd>Your sessions on a local web page: chat, terminal, who is doing what.</dd></div>
         <div><dt><code>8sync ccc . ls</code></dt><dd>Every session in the repo, what it's running now and its task progress.</dd></div>
         <div><dt><code>su-code/</code></dt><dd>Project memory every agent reads at start: the live plan, lessons, decisions.</dd></div>
         <div><dt><code>8sync harness web</code></dt><dd>A local dashboard for models, skills, memory and the code graph.</dd></div>
@@ -926,71 +790,22 @@
         });
         timers.push(setTimeout(() => { delete log.dataset.play; lines.forEach(l => l.classList.remove('on')); }, t + 500));
       }
-      // Board demo: the markup is the state after the last ticker line; replay walks there.
-      const lanes = document.getElementById('lanes');
-      const ticker = document.getElementById('ticker');
-      const boardBtn = document.getElementById('board-replay');
-      const START = [['c41', 'ready', '', ''], ['c42', 'backlog', '', ''], ['c43', 'backlog', '', '']];
-      const STEPS = [
-        ['c41', 'building', 'dev', 'dev'],
-        ['c42', 'ready', 'check ✓', 'lead'],
-        ['c41', 'qa', 'qa · PR #81', 'qa'],
-        ['c41', 'review', 'review', 'review'],
-        ['c42', 'building', 'dev', 'dev'],
-        ['c41', 'approved', 'waits for Ship', 'ship'],
-        ['c41', 'done', 'merged 9f3c2e1', ''],
-      ];
-      let boardTimers = [];
-      function place(id, lane, who, room, animate) {
-        const card = document.getElementById(id);
-        const first = card.getBoundingClientRect();
-        lanes.querySelector('[data-lane="' + lane + '"] ul').appendChild(card);
-        card.dataset.room = room;
-        card.querySelector('.who').textContent = who;
-        if (!animate) return;
-        const last = card.getBoundingClientRect();
-        card.animate([{ transform: 'translate(' + (first.left - last.left) + 'px, ' + (first.top - last.top) + 'px)' }, { transform: 'none' }], { duration: 620, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
-      }
-      function playBoard() {
-        boardTimers.forEach(clearTimeout);
-        boardTimers = [];
-        const lines = [...ticker.children];
-        START.forEach(s => place(s[0], s[1], s[2], s[3], false));
-        lines.forEach(l => l.classList.remove('on', 'now'));
-        ticker.dataset.play = '';
-        let t = 600;
-        STEPS.forEach((s, i) => {
-          boardTimers.push(setTimeout(() => {
-            lines.forEach(l => l.classList.remove('now'));
-            lines[i].classList.add('on', 'now');
-            place(s[0], s[1], s[2], s[3], true);
-          }, t));
-          t += 1250;
-        });
-        boardTimers.push(setTimeout(() => { delete ticker.dataset.play; lines.forEach(l => l.classList.remove('on', 'now')); }, t + 900));
-      }
-      const boardOK = lanes && ticker && boardBtn && typeof Element.prototype.animate === 'function';
 
       if (!motionOK || !log) return;
 
       replay.hidden = false;
       replay.addEventListener('click', play);
-      if (boardOK) {
-        boardBtn.hidden = false;
-        boardBtn.addEventListener('click', playBoard);
-      }
 
       if (!('IntersectionObserver' in window)) return;
       const io = new IntersectionObserver(entries => {
         entries.forEach(en => {
           if (!en.isIntersecting || document.visibilityState !== 'visible') return;
           const el = en.target;
-          if (el === log) play(); else if (el === lanes) playBoard(); else el.classList.add(el.dataset.anim);
+          if (el === log) play(); else el.classList.add(el.dataset.anim);
           io.unobserve(el);
         });
       }, { threshold: 0.3 });
       io.observe(log);
-      if (boardOK) io.observe(lanes);
       document.querySelectorAll('[data-anim]').forEach(el => io.observe(el));
     })();
   </script>

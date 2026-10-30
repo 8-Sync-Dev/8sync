@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { fileError, toBase64 } from "@/lib/attach";
-import { parseTargetBody } from "@/lib/server/targets";
 import { placeUploads, safeName, saveUpload, UPLOAD_MAX, withFiles } from "@/lib/server/uploads";
 
 const tmps: string[] = [];
@@ -54,15 +53,9 @@ describe("composer attachments (owner 2026-10-18: gửi là phòng đọc đư�
     expect(fs.existsSync(path.join(stage, old.id))).toBe(false);
   });
 
-  it("the task lists the paths under the text; the body takes at most five ids", () => {
+  it("the message lists the paths under the text", () => {
     expect(withFiles("fix nút", [])).toBe("fix nút");
     expect(withFiles("fix nút", ["/r/.claude/hq-uploads/a/x.png"])).toBe("fix nút\n\nFile đính kèm (mở bằng Read trước khi làm):\n- /r/.claude/hq-uploads/a/x.png");
-    const id = "a".repeat(32);
-    const ok = parseTargetBody({ text: "x", root: "/r", files: [id, id] });
-    expect(ok.ok && ok.value.files).toEqual([id]);
-    expect(parseTargetBody({ text: "x", root: "/r" })).toMatchObject({ ok: true, value: { files: [] } });
-    expect(parseTargetBody({ text: "x", root: "/r", files: ["../../x"] }).ok).toBe(false);
-    expect(parseTargetBody({ text: "x", root: "/r", files: Array.from({ length: 6 }, (_, i) => String(i).repeat(32)) }).ok).toBe(false);
   });
 
   it("the browser side checks size and encodes base64", async () => {

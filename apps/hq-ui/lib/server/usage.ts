@@ -17,7 +17,7 @@ import { stateDir } from "./paths";
 
 const HOUR = 3_600_000;
 export const FIVE_HOURS = 5 * HOUR;
-/** Rooms rest at this share of a plan window (Room docs, `ccc auto` pause). */
+/** The share of a plan window the usage view marks as the rest line. */
 export const REST_PCT = 90;
 /** Team rooms auto-compact around here since 0.105.0: a median context above it costs tokens on every call. */
 export const CONTEXT_CAP = 195_000;

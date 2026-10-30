@@ -3,7 +3,7 @@
 import type { KnownProject } from "@/lib/known-projects";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { ChannelMode, Message, Project, Session, Task } from "./types";
+import type { ChannelMode, Message, Project, Session } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -102,7 +102,6 @@ export function useHq(token: string) {
   const [known, setKnown] = useState<KnownProject[]>([]);
   const [sessions, setSessions] = useState<Load<Session[]>>(init([]));
   const [channelMode, setChannelMode] = useState<ChannelMode | null>(null);
-  const [tasks, setTasks] = useState<Load<Task[]>>(init([]));
   const [messages, setMessages] = useState<Load<Message[]>>(init([]));
   const [live, setLive] = useState<Live>("connecting");
   const lastMsg = useRef(0);
@@ -127,15 +126,6 @@ export function useHq(token: string) {
     }
   }, [api]);
 
-  const loadTasks = useCallback(async () => {
-    try {
-      const r = await api<{ tasks: Task[] }>("/api/tasks");
-      setTasks({ data: r.tasks, loading: false, error: null });
-    } catch (e) {
-      setTasks((p) => ({ ...p, loading: false, error: (e as Error).message }));
-    }
-  }, [api]);
-
   const loadMessages = useCallback(async () => {
     try {
       const r = await api<{ messages: Message[] }>("/api/messages?limit=1000");
@@ -156,23 +146,15 @@ export function useHq(token: string) {
     });
   }, []);
 
-  const mergeTasks = useCallback((rows: Task[]) => {
-    setTasks((t) => {
-      const byId = new Map(t.data.map((x) => [x.task_id, x]));
-      for (const r of rows) byId.set(r.task_id, r);
-      return { ...t, data: [...byId.values()].sort((a, b) => b.updated_at - a.updated_at) };
-    });
-  }, []);
-
   // Initial loads, then the session list every 10 s (channel beats age out) while the tab is visible.
   useEffect(() => {
     // Async loaders set state after their fetch resolves, not synchronously.
-    void Promise.all([loadProjects(), loadSessions(), loadTasks(), loadMessages()]);
+    void Promise.all([loadProjects(), loadSessions(), loadMessages()]);
     const t = setInterval(() => {
       if (!document.hidden) void loadSessions();
     }, 10_000);
     return () => clearInterval(t);
-  }, [loadProjects, loadSessions, loadTasks, loadMessages]);
+  }, [loadProjects, loadSessions, loadMessages]);
 
   // SSE over fetch, reconnecting with a short backoff; polling when SSE cannot work.
   useEffect(() => {
@@ -225,11 +207,10 @@ export function useHq(token: string) {
               if (!data) continue;
               const payload = JSON.parse(data);
               if (event === "messages") mergeMessages(payload);
-              else if (event === "tasks") mergeTasks(payload);
               else if (event === "sessions") void loadSessions();
               else if (event === "projects") void loadProjects();
               // Rows changed in place (retried delivery, uuid rows renamed): reload them.
-              else if (event === "rewrite") void Promise.all([loadMessages(), loadTasks(), loadSessions()]);
+              else if (event === "rewrite") void Promise.all([loadMessages(), loadSessions()]);
             }
           }
         } catch {
@@ -256,7 +237,7 @@ export function useHq(token: string) {
           } catch {
             /* next round */
           }
-          await (n % FULL_EVERY === 0 ? Promise.all([loadTasks(), loadMessages(), loadSessions(), loadProjects()]) : loadTasks());
+          if (n % FULL_EVERY === 0) await Promise.all([loadMessages(), loadSessions(), loadProjects()]);
         }
         await sleep(POLL_MS, ac.signal);
       }
@@ -268,7 +249,7 @@ export function useHq(token: string) {
       if (!ac.signal.aborted) await poll();
     })();
     return () => ac.abort();
-  }, [token, api, mergeMessages, mergeTasks, loadSessions, loadProjects, loadMessages, loadTasks]);
+  }, [token, api, mergeMessages, loadSessions, loadProjects, loadMessages]);
 
   return {
     token,
@@ -278,11 +259,9 @@ export function useHq(token: string) {
     knownProjects: known,
     sessions,
     channelMode,
-    tasks,
     messages,
-    reload: { projects: loadProjects, sessions: loadSessions, tasks: loadTasks, messages: loadMessages },
+    reload: { projects: loadProjects, sessions: loadSessions, messages: loadMessages },
     mergeMessages,
-    mergeTasks,
   };
 }
 

@@ -1,9 +1,9 @@
-// Preview tab: the screenshots rooms save while they work (qa/ui put UAT shots in
-// `qa/evidence/card-<id>-<slug>.png`, crates/cli/src/verbs/ccc/room.rs). Read-only, a few known
+// Preview tab: the screenshots rooms save while they work (UAT shots in `qa/evidence/<slug>.png`).
+// Read-only, a few known
 // folders per project root and its worktrees, never a path the client sends: the file route serves
 // an image only by the opaque id this list gave it.
 //
-// Time: a checkout rewrites the mtime of every file it writes, so a 7-hour-old shot of card #5 looked
+// Time: a checkout rewrites the mtime of every file it writes, so a 7-hour-old shot looked
 // new each time a worktree was made. An image's time is the commit that last touched it when git
 // tracks it unmodified in that checkout, the file's mtime only when it is untracked or modified.
 import { execFile } from "node:child_process";
@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import type { ProjectInfo } from "../office";
-import { cardOf, mainRoot, rootKey, worktreeCard, type MainHead, type PreviewItem, type ProjectPreviews } from "../preview";
+import { mainRoot, rootKey, type MainHead, type PreviewItem, type ProjectPreviews } from "../preview";
 import { childEnv } from "./child-env";
 import { projectOf } from "./office";
 
@@ -295,7 +295,7 @@ function better(a: Cand, b: Cand): Cand {
   return b.item.at > a.item.at ? b : a;
 }
 
-/** One checkout's images with their true time and card; a card worktree keeps only its card's images. */
+/** One checkout's images with their true time. */
 async function scanBase(p: { root: string; name: string }, b: { dir: string; worktree: string | null }, realRoot: string): Promise<Cand[]> {
   const realBase = realOrNull(b.dir);
   // A worktree folder that is itself a link out of the repo is skipped whole.
@@ -312,7 +312,6 @@ async function scanBase(p: { root: string; name: string }, b: { dir: string; wor
   const changed = new Set(g?.changed);
   const changedDirs = g?.changed.filter((c) => c.endsWith("/")) ?? [];
   const branch = projectOf(b.dir)?.branch ?? null;
-  const wtCard = b.worktree ? worktreeCard(b.worktree, branch) : null;
   const out: Cand[] = [];
   for (const f of found) {
     // The real file must sit inside the root too (a linked folder above passed, a hard path never leaves).
@@ -321,15 +320,6 @@ async function scanBase(p: { root: string; name: string }, b: { dir: string; wor
     const sub = path.relative(b.dir, f.abs).split(path.sep).join("/");
     const dirty = !g || changed.has(sub) || changedDirs.some((d) => sub.startsWith(d));
     const commitAt = !g || dirty ? undefined : (g.times.get(sub) ?? (g.truncated ? g.oldest : undefined));
-    let card = cardOf(sub);
-    if (wtCard != null) {
-      // A card worktree carries the whole repo: other cards' images and tracked unassigned ones belong elsewhere.
-      if (card != null && card !== wtCard) continue;
-      if (card == null) {
-        if (commitAt !== undefined) continue;
-        card = wtCard;
-      }
-    }
     out.push({
       key: `${sub}|${f.st.size}`,
       target: { kind: "file", abs: f.abs, type: typeOf(f.abs) },
@@ -341,7 +331,6 @@ async function scanBase(p: { root: string; name: string }, b: { dir: string; wor
         worktree: b.worktree,
         branch,
         ref: null,
-        card,
         at: commitAt ?? Math.round(f.st.mtimeMs),
         timeFrom: commitAt !== undefined ? "commit" : "file",
         size: f.st.size,
@@ -372,7 +361,6 @@ async function scan(p: { root: string; name: string }): Promise<Scan> {
         worktree: null,
         branch: null,
         ref: main!.head.ref,
-        card: cardOf(f.sub),
         at: main!.times.get(f.sub) ?? (main!.truncated ? main!.oldest : main!.head.at),
         timeFrom: "commit",
         size: f.size,

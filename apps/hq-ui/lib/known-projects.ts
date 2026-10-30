@@ -3,7 +3,7 @@
 // merge here; the sources are read in lib/server/known-projects.ts. Tested in tests/known-projects.test.ts.
 import { rootKey } from "./preview";
 
-export type KnownProject = { path: string; name: string; /** Where it was seen: auto scope, team root, pin, a session's folder. */ source: string };
+export type KnownProject = { path: string; name: string; /** Where it was seen: a session's folder, Claude Code's trusted folders, a disk scan. */ source: string };
 
 const baseName = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() || p;
 

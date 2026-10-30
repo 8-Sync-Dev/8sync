@@ -8,7 +8,6 @@ vi.mock("@/lib/server/proc", async (orig) => ({
 }));
 
 import { POST as messagesPOST } from "@/app/api/messages/route";
-import { POST as tasksPOST } from "@/app/api/tasks/route";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { ORIGIN, req, tempHome } from "./helpers";
@@ -26,12 +25,5 @@ describe("409 session-waiting", () => {
     expect(await res.json()).toEqual({ error: "session-waiting", dialog: "Auto mode question" });
     expect(sendKeys).not.toHaveBeenCalled();
     expect(getDb().prepare("SELECT count(*) c FROM messages WHERE session = 'hq-w'").get()).toEqual({ c: 0 });
-  });
-  it("POST /api/tasks refuses, types nothing, creates no task", async () => {
-    const res = await tasksPOST(req("/api/tasks", { method: "POST", token, origin: ORIGIN, body: { session: "hq-w", subject: "do it" } }));
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toBe("session-waiting");
-    expect(sendKeys).not.toHaveBeenCalled();
-    expect(getDb().prepare("SELECT count(*) c FROM tasks WHERE session = 'hq-w'").get()).toEqual({ c: 0 });
   });
 });

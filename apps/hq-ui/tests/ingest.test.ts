@@ -8,17 +8,10 @@ import { tempHome } from "./helpers";
 const ts = 1791800000000;
 
 describe("mapEvent", () => {
-  it("task_created → todo task + timeline row", () => {
-    const m = mapEvent({ kind: "task_created", ts, session_id: "s1", task_id: "team:3", subject: "[be] Add /health", role: "backend", cwd: "/r" });
-    expect(m?.task).toMatchObject({ task_id: "team:3", status: "todo", subject: "[be] Add /health", role: "backend", session: "s1" });
-    expect(m?.message).toMatchObject({ kind: "task_created", text: "[be] Add /health" });
-    expect(m?.session).toMatchObject({ name: "s1", cwd: "/r", status: "running" });
-  });
-  it("task_completed → done", () => {
-    expect(mapEvent({ kind: "task_completed", session_id: "s1", task_id: "t" })?.task?.status).toBe("done");
-  });
-  it("task without id is dropped", () => {
-    expect(mapEvent({ kind: "task_created", session_id: "s1" })).toBeNull();
+  it("task and teammate events are no longer read", () => {
+    expect(mapEvent({ kind: "task_created", ts, session_id: "s1", task_id: "team:3", subject: "x", cwd: "/r" })).toBeNull();
+    expect(mapEvent({ kind: "task_completed", session_id: "s1", task_id: "t" })).toBeNull();
+    expect(mapEvent({ kind: "teammate_idle", session_id: "s1" })).toBeNull();
   });
   it("session_message keeps from/to/text and keys the session by the hq- sender", () => {
     const m = mapEvent({ kind: "session_message", ts, session_id: "uuid-1", from: "hq-api", to: "hq-web", text: "API is ready" });
@@ -59,7 +52,6 @@ describe("mapEvent", () => {
     expect(mapEvent({ kind: "session_reply", hq_session: "hq-a" })).toBeNull();
   });
   it("status mapping", () => {
-    expect(mapEvent({ kind: "teammate_idle", session_id: "u" })?.session?.status).toBe("idle");
     expect(mapEvent({ kind: "notification", session_id: "u", text: "permission_prompt: x" })?.session?.status).toBe("needs_input");
     expect(mapEvent({ kind: "session_end", session_id: "u" })?.session?.status).toBe("ended");
   });
@@ -84,15 +76,15 @@ describe("ingest", () => {
   it("is idempotent by byte offset and handles a partial tail", () => {
     fs.mkdirSync(stateDir(), { recursive: true });
     const { current } = journalFiles();
-    fs.writeFileSync(current, line({ kind: "session_start", session_id: "s1", cwd: "/r" }) + line({ kind: "task_created", session_id: "s1", task_id: "t1", subject: "A" }));
+    fs.writeFileSync(current, line({ kind: "session_start", session_id: "s1", cwd: "/r" }) + line({ kind: "notification", session_id: "s1", text: "A" }));
     const db = getDb();
     expect(ingest(db)).toBe(2);
     expect(ingest(db)).toBe(0);
-    fs.appendFileSync(current, '{"v":1,"kind":"task_completed","session_id":"s1","task_id":"t1"');
+    fs.appendFileSync(current, '{"v":1,"kind":"session_reply","session_id":"s1","hq_session":"hq-s1","text":"B"');
     expect(ingest(db)).toBe(0);
     fs.appendFileSync(current, "}\n");
     expect(ingest(db)).toBe(1);
-    expect((db.prepare("SELECT status FROM tasks WHERE task_id='t1'").get() as { status: string }).status).toBe("done");
+    expect((db.prepare("SELECT text FROM messages ORDER BY id DESC").get() as { text: string }).text).toBe("B");
   });
 
   it("reads the rotated tail, then the new file from 0", () => {
@@ -111,19 +103,17 @@ describe("ingest", () => {
     const { current } = journalFiles();
     const uuid = "35f02b12-1111-2222-3333-444455556666";
     // Before the hook knew hq_session: keyed by uuid.
-    fs.appendFileSync(current, line({ kind: "task_created", session_id: uuid, task_id: "u:1", subject: "Old", cwd: "/r" }));
+    fs.appendFileSync(current, line({ kind: "session_start", session_id: uuid, cwd: "/r" }));
     ingest(db);
-    expect((db.prepare("SELECT session FROM tasks WHERE task_id='u:1'").get() as { session: string }).session).toBe(uuid);
+    expect((db.prepare("SELECT session FROM messages WHERE kind='session_start' ORDER BY id DESC").get() as { session: string }).session).toBe(uuid);
     fs.appendFileSync(
       current,
-      line({ kind: "task_created", session_id: uuid, hq_session: "hq-uat2", task_id: "u:2", subject: "New" }) +
+      line({ kind: "notification", session_id: uuid, hq_session: "hq-uat2", text: "New" }) +
         // A later row without hq_session still lands on the known name.
         line({ kind: "notification", session_id: uuid, text: "permission_prompt: Bash" }) +
         line({ kind: "session_reply", session_id: uuid, hq_session: "hq-uat2", text: "All green." }),
     );
     ingest(db);
-    const tasks = db.prepare("SELECT task_id, session FROM tasks WHERE task_id LIKE 'u:%' ORDER BY task_id").all();
-    expect(tasks).toEqual([{ task_id: "u:1", session: "hq-uat2" }, { task_id: "u:2", session: "hq-uat2" }]);
     expect(db.prepare("SELECT count(*) c FROM messages WHERE session = ?").get(uuid)).toEqual({ c: 0 });
     expect(db.prepare("SELECT name, cwd FROM sessions WHERE name IN (?, 'hq-uat2')").all(uuid)).toEqual([{ name: "hq-uat2", cwd: "/r" }]);
     const reply = db.prepare("SELECT from_, to_, text, delivery FROM messages WHERE kind='session_reply' ORDER BY id DESC").get();

@@ -1,6 +1,6 @@
-// Regression (2026-10-21): "⚡ Đang Sấm Sét" stayed on for 3d-game after its boost rooms were stopped.
+// Regression (2026-10-21): stopped rooms of 3d-game still showed as alive.
 // `claude agents` timed out on a crawling machine, so every old journal row (dev2, review, …) came
-// back with its stored status and the boost team looked alive.
+// back with its stored status.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,8 +17,6 @@ vi.mock("node:child_process", async (orig) => ({
   },
 }));
 
-import { boostOn } from "@/components/hq/team-controls";
-import { BOOST_TEAM } from "@/lib/team-size";
 import { groupByRepo } from "@/lib/sidebar";
 import { getDb } from "@/lib/server/db";
 import { loadFloor, resetFloorCache } from "@/lib/server/floor";
@@ -26,7 +24,7 @@ import { loadOffice } from "@/lib/server/office";
 import { listClaudeAgents, mergedSessions, resetAgentsCache } from "@/lib/server/proc";
 import { tempHome } from "./helpers";
 
-const BOOST = [...BOOST_TEAM];
+const BOOST = ["lead", "dev", "dev2", "qa", "review"];
 const DEV = "1eb79553-8369-4a90-b428-2dedb50e18db";
 let game = "";
 
@@ -35,7 +33,7 @@ beforeAll(() => {
   game = fs.mkdtempSync(path.join(os.tmpdir(), "hq-3d-game-"));
   fs.mkdirSync(path.join(game, ".git"));
   fs.writeFileSync(path.join(game, ".git", "HEAD"), "ref: refs/heads/main\n");
-  // The journal still holds the stopped boost rooms as idle / running.
+  // The journal still holds the stopped rooms as idle / running.
   const ins = getDb().prepare("INSERT INTO sessions(name, project_id, started_at, status, cwd, role, updated_at) VALUES (?, NULL, ?, ?, ?, ?, 1)");
   BOOST.forEach((r, i) => ins.run(`hq-3d-game-${r}`, 1000 + i, i % 2 ? "running" : "idle", game, r));
   // `8sync ls --json --all`: the registry rooms, none running.
@@ -54,11 +52,10 @@ const gameRooms = async () => {
 };
 
 describe("rooms count only when alive", () => {
-  it("`claude agents` failing never resurrects journal rows: 3d-game runs 0 rooms and Sấm Sét is off", async () => {
+  it("`claude agents` failing never resurrects journal rows: 3d-game runs 0 rooms", async () => {
     const merged = await mergedSessions(getDb());
     expect(merged.filter((s) => s.cwd === game).map((s) => s.status)).toEqual(BOOST.map(() => "ended"));
     expect(await gameRooms()).toEqual([]);
-    expect(boostOn((await loadOffice(getDb())).rooms)).toBe(false);
     // The registry rows stay on the floor, but none is live.
     expect((await loadFloor(getDb())).filter((r) => r.live)).toEqual([]);
   });
@@ -76,7 +73,6 @@ describe("rooms count only when alive", () => {
     bins.claude = JSON.stringify([{ pid: 7, cwd: game, sessionId: DEV, name: "dev", status: "busy" }]);
     const rooms = await gameRooms();
     expect(rooms.map((r) => r.status)).toEqual(["running"]);
-    expect(boostOn(rooms)).toBe(false);
   });
 
   it("an interactive session (the owner's own window) is flagged on the merged view and its office room", async () => {
@@ -87,11 +83,5 @@ describe("rooms count only when alive", () => {
     resetAgentsCache();
     bins.claude = JSON.stringify([{ pid: 7, cwd: game, sessionId: DEV, name: "dev", kind: "background", status: "idle" }]);
     expect((await mergedSessions(getDb())).find((x) => x.session_id === DEV)?.interactive).toBeUndefined();
-  });
-
-  it("boostOn: every Sấm Sét room alive is on; the boost-only rooms ended are off", () => {
-    const rooms = BOOST.map((r) => ({ name: `hq-3d-game-${r}`, label: r, status: "running" }));
-    expect(boostOn(rooms)).toBe(true);
-    expect(boostOn(rooms.map((r) => (/^(dev2|review)$/.test(r.label) ? { ...r, status: "ended" } : r)))).toBe(false);
   });
 });

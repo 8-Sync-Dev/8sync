@@ -3,19 +3,17 @@ import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { POST as messagesPOST } from "@/app/api/messages/route";
-import { POST as tasksPOST } from "@/app/api/tasks/route";
 import { addressOf } from "@/lib/labels";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { inboxFile, inboxLive, isSessionId, LIVE_MS, pendingInbox } from "@/lib/server/inbox";
 import { applyMapped, mapEvent } from "@/lib/server/ingest";
-import { loadMeetings, projectOf, readLoops, readTranscriptStats, readUsage, type Room } from "@/lib/server/office";
+import { projectOf, readLoops, readTranscriptStats, readUsage, type Room } from "@/lib/server/office";
 import { messagesAfter } from "@/lib/server/queries";
 import { stateDir } from "@/lib/server/paths";
 import {
   SEATS,
   cloneCount,
-  costPerTask,
   fmtDuration,
   fmtTokens,
   fmtUsd,
@@ -113,11 +111,6 @@ describe("walks between rooms", () => {
 });
 
 describe("measurement", () => {
-  it("cost per task only when both are known", () => {
-    expect(costPerTask(2, 4)).toBe(0.5);
-    expect(costPerTask(null, 4)).toBeNull();
-    expect(costPerTask(2, 0)).toBeNull();
-  });
   it("reads the status-line usage snapshot, rejects unsafe ids", () => {
     fs.mkdirSync(path.join(stateDir(), "usage"), { recursive: true });
     fs.writeFileSync(
@@ -291,14 +284,14 @@ describe("a running session picked by any of its names (the 'Start a session' bu
 
 describe("office totals and formats", () => {
   const u = (cost: number | null) => ({ cost_usd: cost, duration_ms: 60_000, lines_added: 3, lines_removed: 1, context_pct: null, model: null });
-  it("sums only what was measured and never dilutes $/task with unmeasured rooms", () => {
+  it("sums only what was measured", () => {
     const t = officeTotals([
-      { tokens: 1000, usage: u(2), tasks: { done: 4, open: 1 } },
-      { tokens: null, usage: null, tasks: { done: 4, open: 0 } },
+      { tokens: 1000, usage: u(2) },
+      { tokens: null, usage: null },
     ]);
-    expect(t).toMatchObject({ rooms: 2, tokens: 1000, cost_usd: 2, done: 8, open: 1, cost_per_task: 0.5, measured: 1, lines_added: 3 });
-    const none = officeTotals([{ tokens: null, usage: null, tasks: { done: 2, open: 0 } }]);
-    expect([none.cost_usd, none.tokens, none.cost_per_task]).toEqual([null, null, null]);
+    expect(t).toMatchObject({ rooms: 2, tokens: 1000, cost_usd: 2, measured: 1, lines_added: 3 });
+    const none = officeTotals([{ tokens: null, usage: null }]);
+    expect([none.cost_usd, none.tokens]).toEqual([null, null]);
   });
   it("unknown reads 'chưa đo', not 0", () => {
     expect([fmtUsd(null), fmtTokens(undefined), fmtDuration(null)]).toEqual(["chưa đo", "chưa đo", "chưa đo"]);
@@ -376,23 +369,8 @@ describe("walker sprite", () => {
   });
 });
 
-describe("Board / Giao việc to a session started elsewhere", () => {
-  it("stores the task and queues it in the session inbox", async () => {
-    const before = pendingInbox(SID2);
-    const r = await tasksPOST(req("/api/tasks", { method: "POST", token, origin: ORIGIN, body: { session: SID2, subject: "Sửa giỏ hàng", prio: "P1" } }));
-    expect(r.status).toBe(201);
-    const body = await r.json();
-    expect(body).toMatchObject({ delivery: "inbox", session: SID2, started: false });
-    expect(body.task).toMatchObject({ session: SID2, subject: "Sửa giỏ hàng", status: "todo", prio: "P1" });
-    expect(pendingInbox(SID2)).toBe(before + 1);
-    const last = fs.readFileSync(inboxFile(SID2), "utf8").trim().split(/\r?\n/).pop()!;
-    expect(JSON.parse(last).text).toContain("New task: Sửa giỏ hàng");
-  });
-  it("still refuses names that are neither hq-* nor a session id", async () => {
-    const r = await tasksPOST(req("/api/tasks", { method: "POST", token, origin: ORIGIN, body: { session: "core", subject: "x" } }));
-    expect(r.status).toBe(422);
-  });
-  it("addressOf: session id for inbox sessions, the hq name for tmux ones", () => {
+describe("addressOf", () => {
+  it("session id for inbox sessions, the hq name for tmux ones", () => {
     expect(addressOf({ tmux: false, name: "core", session_id: SID })).toBe(SID);
     expect(addressOf({ tmux: true, name: "hq-api", session_id: SID })).toBe("hq-api");
     expect(addressOf({ tmux: false, name: SID, session_id: null })).toBe(SID);
@@ -410,38 +388,6 @@ describe("seat state in a meeting + clones", () => {
     expect(cloneCount({ active: [] })).toBe(0);
     expect(cloneCount({ active: ["a", "b"] })).toBe(2);
     expect(cloneCount({ active: ["a", "b", "c", "d", "e"] })).toBe(3);
-  });
-});
-
-describe("sprint meetings per project", () => {
-  const mk = (key: string, label: string, root: string | null, sid: string | null = null): Room =>
-    ({ key, name: key, session_id: sid, label, project: root ? { root, name: path.basename(root), branch: null } : null, meeting: null }) as unknown as Room;
-  it("reads only today's su-code/standup file and stamps matching rooms", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hq-meet-"));
-    const now = Date.parse("2026-10-16T09:10:00Z");
-    fs.mkdirSync(path.join(root, "su-code", "standup"), { recursive: true });
-    fs.writeFileSync(
-      path.join(root, "su-code", "standup", "2026-10-16.md"),
-      "# Họp sprint 2026-10-16\n\n| Giờ | Phòng | Done | Doing | Blocked |\n|---|---|---|---|---|\n| 09:00 | alpha | d | doing a | - |\n| 09:05 | abcdef12 | d | doing b | - |\n| 09:06 | ghost | d | x | - |\n",
-    );
-    fs.writeFileSync(path.join(root, "su-code", "standup", "2026-10-15.md"), "| 09:00 | gamma | old | old | - |\n");
-    const rooms = [mk("hq-a", "alpha", root), mk("hq-b", "beta", root, "abcdef1234567890"), mk("hq-c", "gamma", root), mk("hq-z", "alpha", null)];
-    const ms = loadMeetings(rooms, now);
-    expect(ms).toHaveLength(1);
-    expect(ms[0]).toMatchObject({ project: path.basename(root), root, date: "2026-10-16", until: Date.parse("2026-10-16T09:36:00Z") });
-    expect(ms[0].attendees.map((a) => a.room)).toEqual(["alpha", "abcdef12", "ghost"]);
-    expect(rooms[0].meeting).toEqual({ at: Date.parse("2026-10-16T09:00:00Z"), phase: "table" });
-    expect(rooms[1].meeting?.phase).toBe("table");
-    expect(rooms[2].meeting).toBeNull();
-    expect(rooms[3].meeting).toBeNull();
-  });
-  it("ignores a missing or oversized file", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hq-meet-"));
-    const now = Date.parse("2026-10-16T09:10:00Z");
-    expect(loadMeetings([mk("a", "alpha", root)], now)).toEqual([]);
-    fs.mkdirSync(path.join(root, "su-code", "standup"), { recursive: true });
-    fs.writeFileSync(path.join(root, "su-code", "standup", "2026-10-16.md"), "| 09:00 | alpha | d | d | - |\n" + "x".repeat(70 * 1024));
-    expect(loadMeetings([mk("a", "alpha", root)], now)).toEqual([]);
   });
 });
 

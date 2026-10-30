@@ -12,10 +12,7 @@ import { cn } from "@/lib/utils";
 import { sessionLabel } from "@/lib/labels";
 import { splitSessions } from "@/lib/sessions-list";
 import { ROLES, modelShort } from "@/lib/roles";
-import { formRoleOf, recommendRoles, reusableSession, roomTeamRole, teamRoleOf } from "@/lib/team-room";
-import { BOOST_TEAM, DEFAULT_TEAM } from "@/lib/team-size";
 import { RoleBadge } from "./role-badge";
-import { boostOn } from "./team-controls";
 import { EmptyState, ErrorNote, STATUS_LABEL, StatusDot, WaitingBadge, ago, shortName } from "./bits";
 import type { Hq } from "./use-hq";
 import type { ChannelMode, Project, Session } from "./types";
@@ -70,7 +67,7 @@ export function SessionsView({
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-5xl space-y-5 px-4 py-4 sm:px-6">
-        <StartSession hq={hq} projects={projects} sessions={sessions} projectId={projectId} inputId={nameInputId} mode={hq.channelMode} onUse={setViewing} />
+        <StartSession hq={hq} projects={projects} projectId={projectId} inputId={nameInputId} mode={hq.channelMode} />
 
         {error ? (
           <ErrorNote what="sessions" error={error} onRetry={hq.reload.sessions} />
@@ -225,28 +222,19 @@ function StopButton({ hq, name }: { hq: Hq; name: string }) {
   );
 }
 
-/**
- * "Start session". Vai trò: the roles of the seats the project's team misses now (lib/team-room.ts
- * recommendRoles; the Sấm Sét seats while it runs) stand out, covered ones are muted. Before a new
- * session: an idle session of the project that is exactly that team role (`lead`, or `omp-lead` in the omp team) is
- * offered first, "Dùng phiên trống" opens it instead of starting another.
- */
+/** "Start session": one session the owner names, in a project folder, optionally with a role (its model). */
 function StartSession({
   hq,
   projects,
-  sessions,
   projectId,
   inputId,
   mode,
-  onUse,
 }: {
   hq: Hq;
   projects: Project[];
-  sessions: Session[];
   projectId: number | null;
   inputId: string;
   mode: ChannelMode | null;
-  onUse: (name: string) => void;
 }) {
   const [picked, setPicked] = useState<string>("");
   const [name, setName] = useState("");
@@ -254,23 +242,8 @@ function StartSession({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const project = projects.find((p) => String(p.id) === picked) ?? projects.find((p) => p.id === projectId) ?? projects[0];
-  const live = project ? sessions.filter((s) => s.project_id === project.id && s.status !== "ended") : [];
-  const { missing, covered } = recommendRoles(boostOn(live) ? BOOST_TEAM : DEFAULT_TEAM, live.map((s) => s.label));
-  /** Form role → the missing seats it fills (`fullstack` → dev, dev2). */
-  const wanted = new Map<string, string[]>();
-  for (const slot of missing) {
-    const id = formRoleOf(slot);
-    if (id) wanted.set(id, [...(wanted.get(id) ?? []), slot]);
-  }
-  const held = new Set(covered.map(formRoleOf));
   const bare = name.trim().replace(/^hq-/, "");
   const nameOk = NAME_RE.test(bare);
-  const reuse = reusableSession(sessions, project?.id, roomTeamRole(bare) ?? teamRoleOf(role));
-  const pickRole = (v: string) => {
-    setRole(v);
-    // A recommended role with no name yet: name the session after the seat it fills.
-    if (!name.trim()) setName(wanted.get(v)?.[0] ?? "");
-  };
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -344,37 +317,21 @@ function StartSession({
           <span id="start-role-label" className="block text-xs font-medium text-muted-foreground">
             Vai trò
           </span>
-          <Select value={role} onValueChange={pickRole}>
+          <Select value={role} onValueChange={setRole}>
             <SelectTrigger size="sm" className="w-64 max-w-full" aria-labelledby="start-role-label">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="none">Không gán (model mặc định)</SelectItem>
-              {ROLES.map((r) => {
-                const seats = wanted.get(r.id);
-                return (
-                  <SelectItem key={r.id} value={r.id} className={cn(seats ? "font-medium text-brand-ink dark:text-brand" : held.has(r.id) && "text-muted-foreground")}>
-                    {r.labelVi} · {modelShort(r.model)}
-                    {seats ? ` · nên mở (thiếu ${seats.join(", ")})` : held.has(r.id) ? " · đã có" : ""}
-                  </SelectItem>
-                );
-              })}
+              {ROLES.map((r) => (
+                <SelectItem key={r.id} value={r.id}>
+                  {r.labelVi} · {modelShort(r.model)}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
-        {reuse && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => onUse(reuse.name)}
-            title="Phiên này của dự án đang rảnh và đúng vai: mở nó thay vì tạo phiên mới"
-            className="border-brand-ink/40 bg-brand/25 font-semibold text-brand-ink hover:bg-brand/40 hover:text-brand-ink dark:border-brand/40 dark:bg-brand/15 dark:text-brand"
-          >
-            Dùng phiên trống: {reuse.label} (đang chờ)
-          </Button>
-        )}
-        <Button type="submit" size="sm" variant={reuse ? "ghost" : "default"} disabled={busy || !project || !nameOk}>
+        <Button type="submit" size="sm" disabled={busy || !project || !nameOk}>
           <PlayIcon /> {busy ? "Starting…" : "Start session"}
         </Button>
       </div>

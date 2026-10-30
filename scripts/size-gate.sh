@@ -106,9 +106,9 @@
 #
 # 2026-10-15 v0.89.0 release run 38683277672: linux-x86_64 (musl) asset 6,616,688 B,
 # 63,088 B over 6400 KiB. v0.88.0 asset 6,547,024 (always-on office; only 6,576 B left)
-# → +69,664 B = `ccc standup` (sprint board: parse/render/lock/overlap, ~450 lines),
+# → +69,664 B = the sprint standup board (parse/render/lock/overlap, ~450 lines),
 # `ccc . goal` + registry Goal, `ccc . urgent` + newest-first `ls`, goals in the
-# SessionStart room block, and the embedded /sprint skill + longer ship/ship-auto/
+# SessionStart room block, and the embedded sprint skill + longer ship/ship-auto/
 # ship-loop/autopilot/planning text. Ceiling 6592 KiB (~133 KiB left). v0.89.0 was
 # tagged, not published.
 
@@ -123,15 +123,15 @@ export LC_ALL=C
 # was tagged, not published.
 #
 # 2026-10-16 v0.98.0 release run 38928620962: linux-x86_64 (musl) asset 6,973,520 B,
-# 26,704 B over 6784 KiB. v0.97.0 asset 6,903,888 → +69,632 B = `8sync ccc auto on
-# --loop/--team` (loop.md playbook, per-room cron prompt, team seat fill; auto.rs
+# 26,704 B over 6784 KiB. v0.97.0 asset 6,903,888 → +69,632 B = the auto-mode `on
+# --loop/--team` verb (loop.md playbook, per-room cron prompt, team seat fill; auto.rs
 # +773 lines incl. tests), the project target queue `ccc/target.rs` (+413 lines:
 # add/--now/queue/done/drop, lock + atomic rename, text cleaning) and the subscription
 # loop notes. No new dependency. Ceiling 6912 KiB (~102 KiB left). v0.98.0 was tagged,
 # not published.
 #
 # 2026-10-18 PR #85 run 39074148649: linux-x86_64 (musl) 7,104,624 B, 26,736 B over 6912 KiB.
-# v0.100.0..v0.100.4 added the board lanes and claims (`ccc/target.rs`), `auto up` headless
+# v0.100.0..v0.100.4 added the board lanes and claims (`ccc/target.rs`), headless team
 # rooms and `--clear-ss` reload (`ccc/team.rs`), the PermissionRequest hook with its allowlist
 # (`ccc/permit.rs`), card priority and the `auto wait` poller. No new dependency. Ceiling
 # 7040 KiB (~101 KiB left).
@@ -139,9 +139,9 @@ export LC_ALL=C
 # 2026-10-19 PR #116 run 39179917755: linux-x86_64 (musl) 7,280,784 B, 71,824 B over 7040 KiB;
 # v0.100.15 asset 7,198,832 → +81,952 B (Windows MSVC local: 5,726,720 → 5,798,912, +72,192 B).
 # v0.101.0: the embedded omp extension `8sync-team.ts` (17,039 B source), stop-failure resume
-# at the status-line reset (`ccc/resume.rs`), team omp + `auto nudge` (`ccc/auto.rs`,
-# `ccc/omp_team.rs`), `ccc msg` + room-line gating/quoting (`ccc/msg.rs`, `hq.rs`), the public
-# link (`hq.rs`: cloudflared, nonce), `auto revive` and `awake` (kernel32 FFI, no crate). No new
+# at the status-line reset (`ccc/resume.rs`), team omp + nudges (`ccc/auto.rs`,
+# `ccc/omp_team.rs`), room messages + room-line gating/quoting (`ccc/msg.rs`, `hq.rs`), the public
+# link (`hq.rs`: cloudflared, nonce), room revive and `awake` (kernel32 FFI, no crate). No new
 # dependency. Ceiling 7168 KiB (~58 KiB left).
 #
 # 2026-10-19 v0.107.0 (before tagging): v0.106.0 linux-x86_64 (musl) asset 7,329,936 B left only
@@ -149,13 +149,13 @@ export LC_ALL=C
 # Windows asset 5,851,648 → +139,776 B; at the last measured musl/MSVC ratio (1.135) the musl
 # asset lands near 7,488,600 B. v0.107.0: the HQ native core `hq_core/` (loopback HTTP + token,
 # `claude agents` fingerprint cache, warm transcript digests, 5 s machine sampler over
-# kernel32/psapi/PDH/NVML FFI + Linux /proc, usage scan, disk walk), `ccc auto omp on --model`
+# kernel32/psapi/PDH/NVML FFI + Linux /proc, usage scan, disk walk), the omp team `--model`
 # (team model, nudge model gate, `8sync . <name> --model`), lead merge-order prompt text. No new
 # dependency (Cargo.lock: version lines only). Ceiling 7360 KiB (~47 KiB left over the estimate).
 #
 # 2026-10-20 v0.108.0 (before tagging): v0.107.0 linux-x86_64 (musl) asset 7,498,000 B left 38,640 B
 # under 7360 KiB. Windows MSVC local release of v0.108.0 = 6,077,440 B vs the v0.107.0 Windows asset
-# 5,994,496 → +82,944 B; at 1.135 the musl asset lands near 7,592,100 B. v0.108.0: `ccc auto merge`
+# 5,994,496 → +82,944 B; at 1.135 the musl asset lands near 7,592,100 B. v0.108.0: the merge verb
 # (`ccc/merge.rs`), project-scoped merge permission (`grant.rs`) and its guard rule (`guard.rs`), PR
 # base/conflict/head checks + role-aware claims + `reopen` (`target.rs`, `room.rs`), CI health with
 # billing detection (`ccc/ci.rs`, owner alert in `hq.rs`), event-only rooms and longer waits
@@ -183,7 +183,7 @@ export LC_ALL=C
 # renew on owner presence; pinned projects + usage-tight focus) — CI musl asset 8,038,704 B
 # (+32,768 B over v0.110.26). No new dependency. Ceiling 7872 KiB (~20 KiB left).
 # 2026-10-22 v0.110.50: one company for many projects — auto.rs company flag / company_pick /
-# board --all, team.rs company_host (auto up joins scope), know.rs (machine knowledge tree + company
+# board --all, team.rs company_host (team start joins scope), know.rs (machine knowledge tree + company
 # book), merge.rs infer_pr, pressure.rs floor — CI musl asset 8,128,816 B, 2,352 B over the 8,126,464
 # ceiling. No new dependency. Ceiling 7968 KiB (~30 KiB left).
 # 2026-10-23 v0.110.71: omp default team — per-project engine (auto.rs engines/set_engine), omp

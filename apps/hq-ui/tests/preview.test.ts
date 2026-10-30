@@ -14,8 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { GET as list } from "@/app/api/preview/route";
 import { GET as file } from "@/app/api/preview/file/route";
-import type { Board, Card, Closed, LaneKey } from "@/lib/lanes";
-import { cardOf, mainRoot, previewSections, rootKey, worktreeCard, type PreviewItem } from "@/lib/preview";
+import { mainRoot, rootKey, type PreviewItem } from "@/lib/preview";
 import { getToken } from "@/lib/server/auth";
 import { inPreviewDir, openPreview, parseLogTimes, parseStatus, PREVIEW_MAX_BYTES, previewId, scanProject } from "@/lib/server/preview";
 import { req, tempHome } from "./helpers";
@@ -43,18 +42,7 @@ function git(cwd: string, args: string[], at?: number) {
 }
 
 describe("preview helpers", () => {
-  it("card id from the file name first, then the folders; a worktree's card from its branch, else its folder", () => {
-    expect(cardOf("qa/evidence/card-7-home.png")).toBe(7);
-    expect(cardOf("qa/evidence/card7.png")).toBe(7);
-    expect(cardOf("qa/evidence/card-12/home.png")).toBe(12);
-    expect(cardOf(".claude/worktrees/card-9/qa/evidence/card-12-login.png")).toBe(12);
-    expect(cardOf(".claude/worktrees/card-9/qa/evidence/home.png")).toBe(9);
-    expect(cardOf("screenshots/discard-3.png")).toBeNull();
-    expect(cardOf("screenshots/home.png")).toBeNull();
-    // Folders get reused: card-11's folder now builds card 22.
-    expect(worktreeCard("card-11-pbr-realism", "card-22-capacitor-android-r2")).toBe(22);
-    expect(worktreeCard("card-6", "a1b2c3d")).toBe(6);
-    expect(worktreeCard("qa", null)).toBeNull();
+  it("a worktree's main repo and a root key that ignores slash style, case and the \\\\?\\ prefix", () => {
     expect(mainRoot("/r/app/.claude/worktrees/card-9")).toBe("/r/app");
     expect(mainRoot("C:\\r\\app\\.claude\\worktrees\\x\\sub")).toBe("C:\\r\\app");
     expect(rootKey("\\\\?\\C:\\R\\App\\")).toBe("c:/r/app");
@@ -81,57 +69,6 @@ describe("preview helpers", () => {
   });
 });
 
-describe("previewSections", () => {
-  const H = 3600_000;
-  const now = 100 * H;
-  const shot = (id: string, card: number | null, at: number) => ({ id, card, at }) as PreviewItem;
-  const card = (id: number, lane: LaneKey, at: number): Card => ({
-    id,
-    text: `card ${id}`,
-    lane,
-    check: null,
-    label: null,
-    claim: null,
-    pr: null,
-    sha: null,
-    bounces: 0,
-    note: { room: "dev", text: "x", at },
-    added: 0,
-  });
-  const closed = (id: number, at: number): Closed => ({ id, text: `card ${id}`, state: "done", by: null, at });
-  const board: Board = {
-    lanes: {
-      backlog: [card(1, "backlog", 99 * H)],
-      ready: [],
-      building: [card(2, "building", 10 * H), card(3, "building", 50 * H)],
-      qa: [card(4, "qa", 90 * H)],
-      review: [],
-      approved: [card(5, "approved", 1 * H)],
-      blocked: [],
-    },
-    closed: [closed(6, 20 * H), closed(7, 95 * H), { ...closed(8, 99 * H), state: "dropped" }],
-  };
-
-  it("Đang làm: lane by lane, most recent activity first; Xong: last closed first; Khác: the rest, newest first", () => {
-    const items = [shot("a", 3, 5 * H), shot("b", 3, 40 * H), shot("c", 7, 30 * H), shot("d", null, 60 * H), shot("e", 1, 70 * H), shot("f", 99, 10 * H)];
-    const s = previewSections(items, board, now);
-    expect(s.working.map((w) => w.card.id)).toEqual([3, 2, 4, 5]);
-    expect(s.working[0].items.map((i) => i.id)).toEqual(["b", "a"]);
-    expect(s.working[1].items).toEqual([]);
-    expect(s.done.map((d) => d.card.id)).toEqual([7, 6]);
-    expect(s.done[0].items.map((i) => i.id)).toEqual(["c"]);
-    // Unassigned, a backlog card's and an unknown card's shots.
-    expect(s.other.map((i) => i.id)).toEqual(["e", "d", "f"]);
-    expect(s.done24h).toBe(1);
-  });
-
-  it("without a board every image is Khác", () => {
-    const s = previewSections([shot("a", 3, 1), shot("b", null, 2)], null, now);
-    expect(s).toMatchObject({ working: [], done: [], done24h: 0 });
-    expect(s.other.map((i) => i.id)).toEqual(["b", "a"]);
-  });
-});
-
 describe("scanProject outside git", () => {
   let root = "";
   beforeAll(() => {
@@ -155,8 +92,8 @@ describe("scanProject outside git", () => {
       "qa/evidence/a/b/c/deep.png",
       "docs/screenshots/home.webp",
     ]);
-    expect(items[0]).toMatchObject({ worktree: "card-9", card: 9, project: "app", root, size: PNG.length + 3, timeFrom: "file", at: 4_000_000, ref: null });
-    expect(items[1]).toMatchObject({ worktree: null, card: 7 });
+    expect(items[0]).toMatchObject({ worktree: "card-9", project: "app", root, size: PNG.length + 3, timeFrom: "file", at: 4_000_000, ref: null });
+    expect(items[1]).toMatchObject({ worktree: null });
     expect(items[0].id).toMatch(/^[0-9a-f]{40}$/);
   });
 
@@ -205,8 +142,8 @@ describe("scanProject in a git repo with worktrees", () => {
     put(wt7, "qa/evidence/card-7-done.png", png(7));
     git(wt7, ["add", "-A"]);
     git(wt7, ["commit", "-q", "-m", "card 7"], T_CARD7);
-    put(wt7, "qa/evidence/home.png", png(8), NEW); // untracked, unassigned: card 7's new shot
-    put(wt7, "qa/evidence/card-6-other.png", png(9), NEW); // another card's: not this worktree's
+    put(wt7, "qa/evidence/home.png", png(8), NEW); // untracked: this worktree's new shot
+    put(wt7, "qa/evidence/card-6-other.png", png(9), NEW); // untracked too: listed
     // A detached qa worktree holds the same card-5 file again.
     git(root, ["worktree", "add", "-q", "--detach", ".claude/worktrees/qa"]);
     // In the root: an untracked copy of card 7's committed shot, and a brand-new untracked shot.
@@ -227,11 +164,11 @@ describe("scanProject in a git repo with worktrees", () => {
 
   it("a tracked, unmodified image keeps its commit time even after a checkout or a touch", async () => {
     const m = await byRel();
-    expect(m.get("qa/evidence/card-5-old.png")).toMatchObject({ card: 5, at: T_OLD * 1000, timeFrom: "commit", worktree: null });
+    expect(m.get("qa/evidence/card-5-old.png")).toMatchObject({ at: T_OLD * 1000, timeFrom: "commit", worktree: null });
   });
 
   it("an untracked new image uses its mtime", async () => {
-    expect((await byRel()).get("qa/evidence/card-8-new.png")).toMatchObject({ card: 8, at: NEW - 1000, timeFrom: "file" });
+    expect((await byRel()).get("qa/evidence/card-8-new.png")).toMatchObject({ at: NEW - 1000, timeFrom: "file" });
   });
 
   it("a modified tracked image uses its mtime", async () => {
@@ -244,10 +181,10 @@ describe("scanProject in a git repo with worktrees", () => {
     }
   });
 
-  it("a card worktree shows only its card: its commits and its new unassigned shots, never the repo's other images", async () => {
+  it("a worktree shows its own commits and its new shots, never the repo's tracked images again", async () => {
     const wt = [...(await byRel()).values()].filter((i) => i.worktree === "card-7");
-    expect(wt.map((i) => i.rel).sort()).toEqual([".claude/worktrees/card-7/qa/evidence/card-7-done.png", ".claude/worktrees/card-7/qa/evidence/home.png"]);
-    expect(wt.find((i) => i.rel.endsWith("home.png"))).toMatchObject({ card: 7, timeFrom: "file", at: NEW, branch: "card-7-feature" });
+    expect(wt.map((i) => i.rel).sort()).toEqual([".claude/worktrees/card-7/qa/evidence/card-6-other.png", ".claude/worktrees/card-7/qa/evidence/card-7-done.png", ".claude/worktrees/card-7/qa/evidence/home.png"]);
+    expect(wt.find((i) => i.rel.endsWith("home.png"))).toMatchObject({ timeFrom: "file", at: NEW, branch: "card-7-feature" });
   });
 
   it("one image across checkouts is listed once, its commit time beating a copy's mtime", async () => {
@@ -261,15 +198,15 @@ describe("scanProject in a git repo with worktrees", () => {
 
   it("reads an image only the main tip has from git, and serves it by its id", async () => {
     const nine = (await scanProject({ root, name: "app" })).find((i) => i.rel === "qa/evidence/card-9-merged.png");
-    expect(nine).toMatchObject({ ref: "origin/main", card: 9, at: T_MAIN * 1000, timeFrom: "commit", worktree: null });
+    expect(nine).toMatchObject({ ref: "origin/main", at: T_MAIN * 1000, timeFrom: "commit", worktree: null });
     const hit = await openPreview(nine!.id, [{ root, name: "app", branch: "main" }]);
     expect(hit?.type).toBe("image/png");
     expect(Buffer.from(hit!.body as Uint8Array).equals(png(11))).toBe(true);
   });
 
   it("newest true time first: untracked new shots, then commits by date", async () => {
-    // shared.png shares card-5-old's commit: a tie, left out of the order.
-    const order = (await scanProject({ root, name: "app" })).map((i) => i.rel.split("/").pop()).filter((n) => n !== "shared.png");
+    // shared.png shares card-5-old's commit and card-6-other.png home.png's mtime: ties, left out of the order.
+    const order = (await scanProject({ root, name: "app" })).map((i) => i.rel.split("/").pop()).filter((n) => n !== "shared.png" && n !== "card-6-other.png");
     expect(order).toEqual(["home.png", "card-8-new.png", "card-9-merged.png", "card-7-done.png", "card-5-old.png"]);
   });
 });

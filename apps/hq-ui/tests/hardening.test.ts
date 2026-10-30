@@ -18,7 +18,6 @@ import * as keys from "@/app/api/sessions/[name]/keys/route";
 import * as screen from "@/app/api/sessions/[name]/screen/route";
 import * as stop from "@/app/api/sessions/[name]/stop/route";
 import * as stream from "@/app/api/stream/route";
-import * as tasks from "@/app/api/tasks/route";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { sendKeysPlan } from "@/lib/server/proc";
@@ -45,7 +44,6 @@ const ROUTES: { path: string; mod: Record<string, unknown> }[] = [
   { path: "/api/sessions/hq-x/screen", mod: screen },
   { path: "/api/sessions/hq-x/stop", mod: stop },
   { path: "/api/stream", mod: stream },
-  { path: "/api/tasks", mod: tasks },
 ];
 const METHODS = ["GET", "POST", "DELETE", "PUT", "PATCH"];
 const cases = ROUTES.flatMap((r) =>
@@ -54,7 +52,7 @@ const cases = ROUTES.flatMap((r) =>
 
 describe("every API route is gated", () => {
   it("covers every route file", () => {
-    expect(cases.length).toBeGreaterThanOrEqual(15);
+    expect(cases.length).toBeGreaterThanOrEqual(13);
   });
   it.each(cases.map((c) => [`${c.method} ${c.path}`, c] as const))("%s", async (_n, c) => {
     const ok = { method: c.method, token, origin: ORIGIN, body: c.method === "GET" ? undefined : {} };
@@ -79,12 +77,6 @@ describe("control characters are refused with 422", () => {
     expect(res.status).toBe(422);
     expect(sendKeys).not.toHaveBeenCalled();
     expect(getDb().prepare("SELECT count(*) c FROM messages WHERE session = 'hq-c'").get()).toEqual({ c: 0 });
-  });
-  it.each(bodies.map((b) => [JSON.stringify(b), b] as const))("POST /api/tasks subject %s", async (_n, subject) => {
-    const res = await tasks.POST(req("/api/tasks", { method: "POST", token, origin: ORIGIN, body: { session: "hq-c", subject } }));
-    expect(res.status).toBe(422);
-    expect(sendKeys).not.toHaveBeenCalled();
-    expect(getDb().prepare("SELECT count(*) c FROM tasks WHERE session = 'hq-c'").get()).toEqual({ c: 0 });
   });
   it("tab and newline stay allowed", async () => {
     expect(clampText("a\tb\nc").ok).toBe(true);

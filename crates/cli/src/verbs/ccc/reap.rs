@@ -1,29 +1,19 @@
 //! Leftover dev/preview servers of a project. Rooms start `npx vite preview --port 41xx` for a UAT
 //! screenshot and kill only the `npx` wrapper; on Windows the `node …/vite.js` child lives on.
 //! Seen live 2026-10-20: 73 of them (6 GB) plus 10 tsserver of long-closed worktrees (5.6 GB) on
-//! the 3d-game team. `auto revive` (HQ, every 2 min) patrols each project once per [`EVERY_S`],
-//! sooner (every [`PRESSURE_EVERY_S`], servers from [`PRESSURE_SERVER_AGE_S`] old) while RAM is at
-//! [`PRESSURE_PCT`] or more ("RAM ăn cao quá", owner 2026-10-20).
+//! the 3d-game team. Process listing, picking and killing shared by eco, shot and the guard.
 
 use std::path::Path;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
-use super::idle;
-use super::team::Row;
-use crate::verbs::hq_core::sampler::{Sample, Sampler};
+use crate::verbs::hq_core::sampler::Sample;
 
-/// A project is patrolled at most this often.
-const EVERY_S: u64 = 600;
 /// A dev/preview server younger than this may still be in use.
 const SERVER_AGE_S: u64 = 30 * 60;
 /// A language server of a worktree that still exists goes only after this long.
 const TS_AGE_S: u64 = 6 * 3600;
-/// RAM in use (%) from which a project is swept right away …
-const PRESSURE_PCT: u32 = 85;
-/// … at most this often …
-const PRESSURE_EVERY_S: u64 = 120;
-/// … taking dev/preview servers from this age.
+/// Dev/preview servers from this age go under RAM pressure.
 const PRESSURE_SERVER_AGE_S: u64 = 10 * 60;
 
 /// A process as the OS lists it (every image: a parent must be seen to tell an orphan).
@@ -35,8 +25,8 @@ pub(crate) struct Proc {
     pub started: u64,
     /// Resident memory (bytes), 0 when unknown.
     pub rss: u64,
-    /// The image is node: nothing else is ever picked or killed here (`auto close` takes more; the
-    /// resource guard, [`super::pressure`], also takes headless browsers and orphaned MCP servers).
+    /// The image is node: nothing else is ever picked or killed here (`eco reap` takes other
+    /// helpers through its own rules).
     pub node: bool,
     /// The image is a shell (bash, sh, zsh, cmd, pwsh…): what a room's background tool call leaves.
     pub shell: bool,
@@ -56,39 +46,9 @@ pub(crate) struct Proc {
     pub idle: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Sweep {
-    /// The regular pass, once per [`EVERY_S`].
-    Patrol,
-    /// RAM at [`PRESSURE_PCT`] or more.
-    Pressure,
-}
-
-impl Sweep {
-    fn server_age(self) -> u64 {
-        match self {
-            Sweep::Patrol => SERVER_AGE_S,
-            Sweep::Pressure => PRESSURE_SERVER_AGE_S,
-        }
-    }
-}
-
 /// RAM in use (%) of a sample's `(total, used)` MiB.
 pub(super) fn ram_pct(mem: Option<(u64, u64)>) -> Option<u32> {
     mem.filter(|(t, _)| *t > 0).map(|(t, u)| (u.min(t) * 100 / t) as u32)
-}
-
-/// Whether `root` (`key` in the stamps) is swept now: under pressure once per
-/// [`PRESSURE_EVERY_S`] (the patrol stamp ignored), else once per [`EVERY_S`].
-fn due(stamps: &Value, key: &str, now: u64, ram: Option<u32>) -> Option<Sweep> {
-    let since = |k: &str| stamps[k].as_u64().map_or(u64::MAX, |at| now.saturating_sub(at));
-    if ram.is_some_and(|r| r >= PRESSURE_PCT) && since(&format!("{key}|pressure")) >= PRESSURE_EVERY_S {
-        Some(Sweep::Pressure)
-    } else if since(key) >= EVERY_S {
-        Some(Sweep::Patrol)
-    } else {
-        None
-    }
 }
 
 /// `RAM 88% · CPU 40% · GPU 35% (6120/16303 MB)`; parts the OS did not give are left out.
@@ -106,111 +66,6 @@ pub(super) fn machine_line(s: &Sample) -> String {
     parts.join(" · ")
 }
 
-/// RAM in use (%) once `freed` bytes went back.
-fn pct_after(mem: (u64, u64), freed: u64) -> Option<u32> {
-    let (t, u) = mem;
-    ram_pct(Some((t, u.saturating_sub(freed / (1024 * 1024)))))
-}
-
-/// One process listing per revive pass, taken on first use and shared by the reaper and the
-/// resource guard ([`super::pressure`]); what one of them killed is left out for the other.
-pub(super) struct Listing {
-    now: u64,
-    procs: std::cell::OnceCell<(Vec<Proc>, Stamp)>,
-    killed: std::cell::RefCell<Vec<u32>>,
-}
-
-/// When a listing was taken (unix ms, read right after it) and the machine's CPU times then
-/// ([`super::pressure::system_times`]): per-process CPU deltas between two listings are divided
-/// by the time between them, not by the gap between the passes that asked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Stamp {
-    pub ms: u64,
-    pub sys: Option<(u64, u64)>,
-}
-
-impl Stamp {
-    pub(super) fn now() -> Stamp {
-        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
-        Stamp { ms, sys: super::pressure::system_times() }
-    }
-}
-
-impl Listing {
-    pub(super) fn new(now: u64) -> Listing {
-        Listing { now, procs: std::cell::OnceCell::new(), killed: std::cell::RefCell::new(Vec::new()) }
-    }
-
-    fn get(&self) -> &(Vec<Proc>, Stamp) {
-        self.procs.get_or_init(|| {
-            let p = list(self.now);
-            (p, Stamp::now())
-        })
-    }
-
-    /// The processes, minus the ones killed through [`Listing::killed`].
-    pub(super) fn procs(&self) -> Vec<Proc> {
-        let k = self.killed.borrow();
-        self.get().0.iter().filter(|p| !k.contains(&p.pid)).cloned().collect()
-    }
-
-    /// When the listing was taken ([`Stamp`]); takes it if not yet.
-    pub(super) fn stamp(&self) -> Stamp {
-        self.get().1
-    }
-
-    pub(super) fn killed(&self, pids: &[u32]) {
-        self.killed.borrow_mut().extend_from_slice(pids);
-    }
-}
-
-/// `auto revive`'s pass for `root`: a machine row, then one row per leftover server killed
-/// ([`pick`], with its node children: [`tree`]); under RAM pressure also a summary row. Nothing
-/// while auto does not run for `root` (the owner's machine without a team is never swept) or when
-/// the sweep is not [`due`].
-pub(super) fn tick(home: &Path, root: &Path, now: u64, listing: &Listing) -> Vec<Row> {
-    if !super::auto::running(home) || !super::auto::in_scope(home, Some(&root.to_string_lossy())) {
-        return Vec::new();
-    }
-    let sample = Sampler::new().map(|s| s.get(std::time::Duration::ZERO));
-    let ram = sample.as_ref().and_then(|s| ram_pct(s.mem));
-    let file = idle::state_dir(home).join("reap.json");
-    let mut stamps = idle::read_json(&file).filter(Value::is_object).unwrap_or_else(|| json!({}));
-    let key = root.to_string_lossy().into_owned();
-    let Some(sweep) = due(&stamps, &key, now, ram) else { return Vec::new() };
-    stamps[&key] = json!(now);
-    if sweep == Sweep::Pressure {
-        stamps[format!("{key}|pressure")] = json!(now);
-    }
-    idle::write_json(&file, &stamps);
-    let row = |role: String, state: String| Row { name: "máy".into(), role, model: String::new(), state, short: String::new() };
-    let mut rows = Vec::new();
-    if let Some(line) = sample.as_ref().map(machine_line).filter(|l| !l.is_empty()) {
-        rows.push(row("trạng thái".into(), line));
-    }
-    let procs = listing.procs();
-    let mut freed = (0, 0u64);
-    for pid in pick(&procs, root, now, sweep.server_age(), std::process::id(), &|p| p.exists()) {
-        let Some(p) = procs.iter().find(|p| p.pid == pid) else { continue };
-        let pids = tree(&procs, pid);
-        let rss = procs.iter().filter(|q| pids.contains(&q.pid)).map(|q| q.rss).sum();
-        let what = describe(&Proc { rss, ..p.clone() }, now);
-        // The server itself is first in the tree: its kill is the one that counts.
-        let ok = kill(&pids).first().copied().unwrap_or(false);
-        if ok {
-            listing.killed(&pids);
-            freed = (freed.0 + 1, freed.1 + rss);
-        }
-        let state = if ok { format!("dọn server cũ: {what}") } else { format!("không dọn được server cũ: {what}") };
-        rows.push(row(format!("pid {pid}"), state));
-    }
-    if let (Sweep::Pressure, Some(r), Some(mem)) = (sweep, ram, sample.and_then(|s| s.mem)) {
-        let after = pct_after(mem, freed.1).unwrap_or(r);
-        rows.push(row("RAM".into(), format!("RAM {r}%: dọn {} server cũ, còn {after}%", freed.0)));
-    }
-    rows
-}
-
 /// Which of `procs` to kill for `root` at `now`: a DETACHED node process — walking up through node
 /// and shell parents ends at one whose parent is gone (or names a pid reused by a later process).
 /// 3d-game 2026-10-20: 37 room servers each sat under `cmd < npx < bash < bash` whose top bash had
@@ -224,7 +79,7 @@ pub(super) fn tick(home: &Path, root: &Path, now: u64, listing: &Listing) -> Vec
 /// - `tsserver` / `typescript-language-server` of `<root>/.claude/worktrees/<dir>` where `<dir>` is
 ///   gone (`exists` false) or that is at least [`TS_AGE_S`] old.
 ///
-/// Never `me` or its ancestors (HQ runs `auto revive`), never HQ's own app (`hq-ui`, `hq-channel`),
+/// Never `me` or its ancestors (HQ runs 8sync), never HQ's own app (`hq-ui`, `hq-channel`),
 /// never a process with no start time.
 pub(super) fn pick(procs: &[Proc], root: &Path, now: u64, server_age: u64, me: u32, exists: &dyn Fn(&Path) -> bool) -> Vec<u32> {
     let fold = windows_path(&root.to_string_lossy());
@@ -311,8 +166,8 @@ pub(super) fn descendants(procs: &[Proc], pid: u32, skip: &dyn Fn(&Proc) -> bool
     walk
 }
 
-/// `me` and its ancestors: never killed (HQ runs `auto revive` and `auto close`; an agent may run
-/// `auto close` from a session of the project).
+/// `me` and its ancestors: never killed (HQ runs 8sync; an agent may run it from a session of
+/// the project).
 pub(super) fn lineage(procs: &[Proc], me: u32) -> Vec<u32> {
     let mut keep = vec![me];
     let mut cur = me;
@@ -818,7 +673,7 @@ mod tests {
     fn windows_picks_only_old_servers_of_this_project() {
         let root = PathBuf::from(r"C:\Users\Projects\startup\8sync-startup\game\3d-game");
         let procs = vec![
-            // HQ: runs `auto revive` (me = 2), its own next start in hq-ui.
+            // HQ: runs 8sync (me = 2), its own next start in hq-ui.
             p(1, 0, 900, r#""C:\Program Files\nodejs\node.exe" C:\Users\Admin\AppData\Local\8sync\hq-ui\server.js"#),
             p(3, 0, 900, r#"node C:\users\projects\startup\8sync-startup\game\3d-game\node_modules\next\dist\bin\next start"#),
             // old detached vite preview in the repo itself (the owner's launcher window): kept.
@@ -952,41 +807,10 @@ mod tests {
     }
 
     #[test]
-    fn nothing_while_auto_does_not_run_for_the_project() {
-        let home = std::env::temp_dir().join(format!("reap-off-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&home);
-        let listing = Listing::new(NOW);
-        assert!(tick(&home, Path::new(r"C:\w\game"), NOW, &listing).is_empty());
-        assert!(listing.procs.get().is_none(), "nothing listed when nothing is due");
-        assert!(!idle::state_dir(&home).join("reap.json").exists(), "no sweep, no stamp");
-        let _ = std::fs::remove_dir_all(&home);
-    }
-
-    #[test]
-    fn sweeps_every_ten_minutes_and_every_two_under_ram_pressure() {
-        let k = "C:/p";
-        let none = json!({});
-        assert_eq!(due(&none, k, NOW, None), Some(Sweep::Patrol));
-        assert_eq!(due(&none, k, NOW, Some(90)), Some(Sweep::Pressure));
-        let patrolled = json!({ k: NOW - 60 });
-        assert_eq!(due(&patrolled, k, NOW, Some(84)), None);
-        assert_eq!(due(&patrolled, k, NOW, Some(85)), Some(Sweep::Pressure), "pressure ignores the 10-min stamp");
-        let pressed = json!({ k: NOW - 60, "C:/p|pressure": NOW - 60 });
-        assert_eq!(due(&pressed, k, NOW, Some(95)), None, "at most once per 2 min");
-        let pressed = json!({ k: NOW - 130, "C:/p|pressure": NOW - 130 });
-        assert_eq!(due(&pressed, k, NOW, Some(95)), Some(Sweep::Pressure));
-        assert_eq!(due(&pressed, k, NOW, Some(50)), None);
-        assert_eq!(due(&json!({ k: NOW - 600 }), k, NOW, Some(50)), Some(Sweep::Patrol));
-        assert_eq!(due(&json!({ "C:/other": NOW }), k, NOW, None), Some(Sweep::Patrol), "stamps are per project");
-        assert_eq!((Sweep::Patrol.server_age(), Sweep::Pressure.server_age()), (1800, 600));
-    }
-
-    #[test]
     fn machine_numbers() {
         assert_eq!(ram_pct(Some((65_536, 57_672))), Some(88));
         assert_eq!(ram_pct(Some((0, 0))), None);
         assert_eq!(ram_pct(None), None);
-        assert_eq!(pct_after((65_536, 57_672), 6 * 1024 * 1024 * 1024), Some(78));
         let gpu = crate::verbs::hq_core::sampler::Gpu { name: "RTX".into(), util: 35, mem_used: 6120, mem_total: 16303, temp: None, watts: None };
         let s = Sample { mem: Some((65_536, 57_672)), cpu_pct: Some(40), gpus: Some(vec![gpu]), ..Sample::default() };
         assert_eq!(machine_line(&s), "RAM 88% · CPU 40% · GPU 35% (6120/16303 MB)");

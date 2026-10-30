@@ -18,9 +18,9 @@ const roles: Record<string, string> = { "hq-a": "fullstack", "hq-b": "reviewer" 
 const roleOf = (s: string) => roles[s];
 
 describe("buildTeamThread", () => {
-  it("orders chronologically and maps kinds, dropping teammate_idle", () => {
+  it("orders chronologically and maps kinds, dropping kinds it no longer shows (old task / teammate_idle rows)", () => {
     const t = buildTeamThread(ROWS, { roleOf });
-    expect(t.map((x) => x.kind)).toEqual(["owner", "reply", "handoff", "task_created", "task_completed", "needs_you"]);
+    expect(t.map((x) => x.kind)).toEqual(["owner", "reply", "handoff", "needs_you"]);
     expect(t[0]).toMatchObject({ from: "owner", to: "hq-a", session: "hq-a" });
     expect(t[1]).toMatchObject({ from: "hq-a", to: "owner" });
   });
@@ -30,11 +30,8 @@ describe("buildTeamThread", () => {
     expect(h).toMatchObject({ from: "hq-a", to: "hq-b", text: "please review", session: "hq-a" });
   });
 
-  it("tags tasks with their role and filters by session / role", () => {
-    const tasks = [{ session: "hq-b", subject: "Review PR", role: "qa" }];
-    const t = buildTeamThread(ROWS, { roleOf, tasks });
-    expect(t.find((x) => x.kind === "task_created")?.role).toBe("qa");
-    expect(buildTeamThread(ROWS, { session: "hq-b" }).map((x) => x.kind)).toEqual(["handoff", "task_created", "task_completed", "needs_you"]);
+  it("filters by session / role", () => {
+    expect(buildTeamThread(ROWS, { session: "hq-b" }).map((x) => x.kind)).toEqual(["handoff", "needs_you"]);
     expect(buildTeamThread(ROWS, { role: "fullstack", roleOf }).map((x) => x.kind)).toEqual(["owner", "reply", "handoff"]);
   });
 

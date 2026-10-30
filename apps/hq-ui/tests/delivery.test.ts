@@ -139,7 +139,7 @@ describe("channel → terminal retry", () => {
     recordBeat(db, "hq-talk");
     const sendKeys = vi.fn(ok);
     const r = await deliverOwnerMessage(db, "hq-talk", "q", { sendKeys, capture: async () => "> " });
-    insertMessage(db, { ts: Date.now(), session: "hq-talk", team: null, kind: "task_created", from_: null, to_: null, text: "t" });
+    insertMessage(db, { ts: Date.now(), session: "hq-talk", kind: "notification", from_: null, to_: null, text: "t" });
     expect(await retryIfUnanswered(db, r.message.id, { sendKeys })).toBe("answered");
     expect(sendKeys).not.toHaveBeenCalled();
   });

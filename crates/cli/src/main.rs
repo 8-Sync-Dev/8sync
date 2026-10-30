@@ -147,7 +147,7 @@ enum Cmd {
     /// Bridge Feynman (Pi research agent) to omp's logins: `auth-omp` (Claude needs a Console API key)
     Feynman(verbs::feynman::Args),
 
-    /// Discord Agent HQ: one-way reporting + server layout for the Claude Code agent team (Channels = two-way chat)
+    /// Discord Agent HQ: one-way reporting + server layout for your Claude Code sessions (Channels = two-way chat)
     Hq(verbs::hq::Args),
 
     /// Named ForgeCode sessions with persistent UUID conversation mapping: 8sync forge <name>
@@ -166,16 +166,9 @@ enum Cmd {
     /// Claude Code CLI with named per-repo sessions + the 8sync kit: 8sync ccc . <name>
     Ccc(verbs::ccc::Args),
 
-    /// Keep the machine awake while rooms work (= `8sync ccc awake …`); hidden, not a new verb.
+    /// Keep the machine awake while sessions work (= `8sync ccc awake …`); hidden, not a new verb.
     #[command(hide = true, disable_help_flag = true)]
     Awake {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        rest: Vec<String>,
-    },
-
-    /// Stop every team: `8sync stop all` (= `8sync ccc stop all`); hidden, not a new verb.
-    #[command(hide = true, disable_help_flag = true)]
-    Stop {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         rest: Vec<String>,
     },
@@ -268,7 +261,6 @@ fn main() -> Result<()> {
         Some(Cmd::Forge(a))   => verbs::forge::run(a),
         Some(Cmd::Ccc(a))     => verbs::ccc::run(a),
         Some(Cmd::Awake { rest }) => verbs::ccc::run(verbs::ccc::Args { rest: std::iter::once("awake".to_string()).chain(rest).collect() }),
-        Some(Cmd::Stop { rest }) => verbs::ccc::run(verbs::ccc::Args { rest: std::iter::once("stop".to_string()).chain(rest).collect() }),
         Some(Cmd::Sleep { rest }) => verbs::ccc::run(verbs::ccc::Args { rest: std::iter::once("sleep".to_string()).chain(rest).collect() }),
         Some(Cmd::Eco { rest }) => verbs::ccc::run(verbs::ccc::Args { rest: std::iter::once("eco".to_string()).chain(rest).collect() }),
         Some(Cmd::Mcp(a)) => verbs::mcp::run(a),

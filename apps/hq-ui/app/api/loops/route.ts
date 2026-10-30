@@ -2,7 +2,7 @@ import { json, open } from "@/lib/server/http";
 import { listLoops } from "@/lib/server/loops";
 import { projectOf } from "@/lib/server/office";
 import { mergedSessions } from "@/lib/server/proc";
-import { liveProjects } from "@/lib/server/targets";
+import { liveProjects } from "@/lib/server/in-view";
 
 export const runtime = "nodejs";
 

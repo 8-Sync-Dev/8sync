@@ -11,18 +11,14 @@ import type { Message } from "./types";
 const FILTERS = [
   { key: "all", label: "All", kinds: null },
   { key: "chat", label: "Messages", kinds: ["owner_message", "session_reply", "session_message"] },
-  { key: "tasks", label: "Tasks", kinds: ["task_created", "task_completed"] },
   { key: "attention", label: "Needs you", kinds: ["notification"] },
-  { key: "lifecycle", label: "Sessions", kinds: ["session_start", "session_end", "teammate_idle"] },
+  { key: "lifecycle", label: "Sessions", kinds: ["session_start", "session_end"] },
 ] as const;
 
 const KIND_LABEL: Record<string, string> = {
   owner_message: "message",
   session_reply: "reply",
   session_message: "message",
-  task_created: "task +",
-  task_completed: "task ✓",
-  teammate_idle: "idle",
   notification: "notice",
   session_start: "start",
   session_end: "end",
@@ -67,7 +63,7 @@ export function ActivityView({ hq, messages }: { hq: Hq; messages: Message[] }) 
           </div>
         ) : rows.length === 0 ? (
           <EmptyState icon={<ActivityIcon />} title="Nothing logged yet">
-            Hook events from your sessions (tasks, notifications, starts and ends) are recorded here once{" "}
+            Hook events from your sessions (messages, notifications, starts and ends) are recorded here once{" "}
             <code className="font-mono text-[12px]">8sync hq hook</code> writes to the local journal.
           </EmptyState>
         ) : (

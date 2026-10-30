@@ -1,9 +1,9 @@
 //! `8sync mcp serve`: 8sync as a local MCP server (stdio, JSON-RPC 2.0, one message per line;
 //! https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#stdio), so Claude
 //! Desktop (chat), Cowork and Claude Code get the harness without a terminal: what the machine
-//! uses, every session, a project's board, its loop queue, the knowledge tree, cost report, kit
-//! state; and two writes (a loop target, a lesson). `8sync mcp install` registers it in Claude
-//! Desktop's `claude_desktop_config.json` (and, with `--claude-code`, Claude Code's user scope).
+//! uses, every session, the knowledge tree, cost report, kit state; and one write (a lesson).
+//! `8sync mcp install` registers it in Claude Desktop's `claude_desktop_config.json` (and, with
+//! `--claude-code`, Claude Code's user scope).
 //!
 //! Every tool but `machine` runs this same binary with an argv array (no shell) inside the repo
 //! the call names, bounded by [`CALL_TIMEOUT`] and [`OUT_MAX`]. Nothing leaves the machine; no
@@ -121,8 +121,6 @@ pub(crate) fn tools() -> Vec<Value> {
             true,
         ),
         tool("sessions", "Sessions", "Every Claude Code / omp session 8sync knows on this machine, per repo: running or not, last request, what it is doing.", json!({}), &[], true),
-        tool("board", "Project board", "A project's card board (backlog → ready → building → qa → review → approved → done) as JSON.", json!({ "repo": repo_prop() }), &["repo"], true),
-        tool("queue", "Loop queue", "The project's loop targets (what the auto team works on next).", json!({ "repo": repo_prop() }), &["repo"], true),
         tool(
             "knowledge",
             "Knowledge",
@@ -133,19 +131,6 @@ pub(crate) fn tools() -> Vec<Value> {
         ),
         tool("report", "Cost report", "Per-session cost and task report for a project.", json!({ "repo": repo_prop() }), &["repo"], true),
         tool("kit", "Kit status", "Whether the 8sync kit (hooks, agents, skills, mods) is installed in Claude Code, and its version.", json!({}), &[], true),
-        tool(
-            "queue_add",
-            "Add loop target",
-            "Add a task to the project's loop queue (`8sync ccc auto add`). now=true puts it first and tells every room.",
-            json!({
-                "repo": repo_prop(),
-                "task": { "type": "string", "description": "What to do, one sentence." },
-                "check": { "type": "string", "description": "Optional command whose success means done." },
-                "now": { "type": "boolean", "description": "Urgent: first in the queue." },
-            }),
-            &["repo", "task"],
-            false,
-        ),
         tool(
             "know_add",
             "Add lesson",
@@ -176,7 +161,7 @@ pub(crate) fn repo_arg(v: &Value, required: bool) -> Result<Option<PathBuf>> {
     if !p.is_dir() {
         bail!("`repo` is not a directory on this machine: {r}");
     }
-    // Only a git repo: `auto add` in any other folder would adopt it as a new project.
+    // Only a git repo: any other folder would be adopted as a new project.
     if !p.join(".git").exists() {
         bail!("`repo` is not a git repo (no .git): {r}");
     }
@@ -204,8 +189,6 @@ pub(crate) fn argv(name: &str, a: &Value) -> Result<Option<(Vec<String>, Option<
     Ok(Some(match name {
         "machine" => return Ok(None),
         "sessions" => (s(&["ls", "--all", "--json"]), None),
-        "board" => (s(&["ccc", "auto", "board", "--json"]), repo_arg(a, true)?),
-        "queue" => (s(&["ccc", "auto", "queue", "--json"]), repo_arg(a, true)?),
         "report" => (s(&["ccc", "report", "--json"]), repo_arg(a, true)?),
         "kit" => (s(&["ccc", "kit", "status"]), None),
         "knowledge" => {
@@ -214,18 +197,6 @@ pub(crate) fn argv(name: &str, a: &Value) -> Result<Option<(Vec<String>, Option<
                 v.push("--all".into());
             }
             (v, repo_arg(a, false)?)
-        }
-        "queue_add" => {
-            let repo = repo_arg(a, true)?;
-            let mut v = vec!["ccc".into(), "auto".into(), "add".into(), text_arg(a, "task")?];
-            if a["check"].as_str().is_some_and(|c| !c.trim().is_empty()) {
-                v.push("--check".into());
-                v.push(text_arg(a, "check")?);
-            }
-            if a["now"].as_bool() == Some(true) {
-                v.push("--now".into());
-            }
-            (v, repo)
         }
         "know_add" => {
             let mut v = vec!["ccc".into(), "know".into(), "add".into(), text_arg(a, "text")?];
@@ -373,7 +344,7 @@ fn err(id: &Value, code: i64, message: &str) -> Value {
 /// The reply to one incoming message; None for a notification (no `id`) or a response.
 /// `call` runs a tool (injected in tests).
 pub(crate) fn handle(msg: &Value, call: &dyn Fn(&str, &Value) -> (bool, String)) -> Option<Value> {
-    handle_with(msg, &Server { name: NAME, title: "8 Sync harness", tools: tools(), instructions: "8sync harness on this machine. `machine` shows RAM/CPU/GPU/power now; `sessions` lists every Claude Code / omp session and its repo; board/queue/report/knowledge read one project (pass its absolute `repo`). queue_add and know_add write; say what you add." }, call)
+    handle_with(msg, &Server { name: NAME, title: "8 Sync harness", tools: tools(), instructions: "8sync harness on this machine. `machine` shows RAM/CPU/GPU/power now; `sessions` lists every Claude Code / omp session and its repo; report/knowledge read one project (pass its absolute `repo`). know_add writes; say what you add." }, call)
 }
 
 /// Who answers: the harness server or the PC-control one.
@@ -639,7 +610,7 @@ mod tests {
     fn tools_list_and_call() {
         let r = handle(&json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}), &none).unwrap();
         let names: Vec<&str> = r["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["machine", "sessions", "board", "queue", "knowledge", "report", "kit", "queue_add", "know_add"]);
+        assert_eq!(names, ["machine", "sessions", "knowledge", "report", "kit", "know_add"]);
         for t in r["result"]["tools"].as_array().unwrap() {
             assert_eq!(t["inputSchema"]["type"], "object");
             let ro = t["annotations"]["readOnlyHint"].as_bool().unwrap();
@@ -658,18 +629,16 @@ mod tests {
         std::fs::create_dir_all(dir.join(".git")).unwrap();
         let d = dir.to_string_lossy().to_string();
         let plain = std::env::temp_dir();
-        assert!(argv("board", &json!({ "repo": plain.to_string_lossy() })).is_err(), "a folder without .git is refused");
+        assert!(argv("report", &json!({ "repo": plain.to_string_lossy() })).is_err(), "a folder without .git is refused");
         assert!(argv("machine", &json!({})).unwrap().is_none());
-        let (a, cwd) = argv("board", &json!({ "repo": d })).unwrap().unwrap();
-        assert_eq!(a, ["ccc", "auto", "board", "--json"]);
+        let (a, cwd) = argv("report", &json!({ "repo": d })).unwrap().unwrap();
+        assert_eq!(a, ["ccc", "report", "--json"]);
         assert_eq!(cwd.as_deref(), Some(dir.as_path()));
-        assert!(argv("board", &json!({})).is_err());
-        assert!(argv("board", &json!({ "repo": "relative/path" })).is_err());
-        assert!(argv("board", &json!({ "repo": dir.join("no-such-dir-8sync").to_string_lossy() })).is_err());
-        let (a, _) = argv("queue_add", &json!({ "repo": d, "task": "fix login", "check": "cargo test", "now": true })).unwrap().unwrap();
-        assert_eq!(a, ["ccc", "auto", "add", "fix login", "--check", "cargo test", "--now"]);
-        assert!(argv("queue_add", &json!({ "repo": d, "task": "--force" })).is_err());
-        assert!(argv("queue_add", &json!({ "repo": d, "task": "x".repeat(TEXT_MAX + 1) })).is_err());
+        assert!(argv("report", &json!({})).is_err());
+        assert!(argv("report", &json!({ "repo": "relative/path" })).is_err());
+        assert!(argv("report", &json!({ "repo": dir.join("no-such-dir-8sync").to_string_lossy() })).is_err());
+        assert!(argv("know_add", &json!({ "text": "--force" })).is_err());
+        assert!(argv("know_add", &json!({ "text": "x".repeat(TEXT_MAX + 1) })).is_err());
         let (a, cwd) = argv("know_add", &json!({ "text": "Windows paths need \\\\?\\ stripped", "shared": true })).unwrap().unwrap();
         assert_eq!((a.last().unwrap().as_str(), cwd), ("--shared", None));
         let (a, _) = argv("knowledge", &json!({ "all": true })).unwrap().unwrap();

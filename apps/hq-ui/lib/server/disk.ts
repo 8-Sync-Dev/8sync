@@ -15,13 +15,10 @@ import { loadFloor, ompSessions } from "./floor";
 import { mergedSessions } from "./proc";
 import type { ProjectInfo } from "../office";
 import { getDb, withMissing } from "./db";
-import { loadOffice, projectOf } from "./office";
-import { projectBoards } from "./board";
-import { heldCard, type BoardRef } from "../now";
-import { sessionLabel } from "../labels";
+import { loadOffice } from "./office";
 import { stateDir } from "./paths";
 import { PREVIEW_DIRS } from "./preview";
-import { repoProjects } from "./targets";
+import { repoProjects } from "./in-view";
 
 /** Per project: stop after this many directory entries or this long; sizes are then lower bounds. */
 export const WALK_ENTRIES = 400_000;
@@ -206,7 +203,7 @@ export type DiskState = { projects: DiskProject[]; at: number | null; scanning: 
 /** `queued`: folders (diskKey) a running or waiting scan will measure. */
 type Store = { projects: ProjectDisk[]; scanning: Promise<void> | null; queued: Set<string>; loaded: boolean };
 
-// On globalThis: the cleanup loop (instrumentation bundle) and the routes share one cache and one scan.
+// On globalThis: the routes share one cache and one scan.
 const g = globalThis as unknown as { __hqDisk?: Store };
 const store = (): Store => (g.__hqDisk ??= { projects: [], scanning: null, queued: new Set(), loaded: false });
 const diskFile = () => path.join(stateDir(), "disk.json");
@@ -232,30 +229,21 @@ function save(projects: ProjectDisk[]) {
 }
 
 /**
- * What is in use (disk-clean.ts): the folders of rooms in a turn, waiting on the owner, or holding a
- * card (between ticks, its next build would start cold), and every process's command line. A room with
- * no card builds nothing: dev-ide (2026-10-21) stood "Chờ card" in card-15's worktree for 13 h and kept
- * its 44 GB target out of every pass. Throws when the sessions or processes cannot be read, so nothing
- * is removed (loadOffice would read a failed session list as none); unreadable boards count as no card.
+ * What is in use (disk-clean.ts): the folders of every live room and every process's command line.
+ * Throws when the sessions or processes cannot be read, so nothing is removed (loadOffice would read a
+ * failed session list as none).
  */
 async function inUse(): Promise<string[]> {
   const db = getDb();
   const [merged, floor, procs] = await Promise.all([mergedSessions(db), loadFloor(db), processPaths()]);
   if (!procs) throw new Error("process list unreadable");
   const rooms = [...merged, ...ompSessions(db, floor)].filter((s) => s.status !== "ended");
-  const projects = new Map<string, ProjectInfo>();
-  for (const r of rooms) {
-    const p = projectOf(r.cwd);
-    if (p) projects.set(p.root, p);
-  }
-  const boards = await projectBoards([...projects.values()]).catch(() => [] as BoardRef[]);
-  const busy = rooms.filter((r) => r.status === "running" || r.status === "needs_input" || heldCard({ ...r, label: sessionLabel(r) }, boards) != null);
-  return [...busy.flatMap((r) => (r.cwd ? [r.cwd] : [])), ...procs];
+  return [...rooms.flatMap((r) => (r.cwd ? [r.cwd] : [])), ...procs];
 }
 
 /**
  * Measure `projects` (one at a time: the disk, not the CPU, is the limit). Each result replaces
- * only that project's earlier one, so a scan of a few projects (the loop) keeps everyone else's.
+ * only that project's earlier one, so a scan of a few projects keeps everyone else's.
  * Projects already queued are not measured twice; the rest wait for the running scan.
  */
 export function startScan(projects: ProjectInfo[]): Promise<void> {

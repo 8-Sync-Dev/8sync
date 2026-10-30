@@ -1,25 +1,18 @@
 // The office: every live Claude Code session is a room, grouped by its project (git root of
 // the session's cwd) and branch, with its specialists (SubagentStart/Stop), usage (the numbers
-// Claude Code gives the 8sync status line: crates/cli/src/verbs/ccc/report.rs), tasks, and the
+// Claude Code gives the 8sync status line: crates/cli/src/verbs/ccc/report.rs), and the
 // walks between rooms (SendMessage between sessions). No model calls, no network.
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { Ask } from "../ask";
-import { teamOf, type IdleRecord } from "../idle";
 import { deliveryOf, sessionLabel } from "../labels";
-import { costPerTask, roomFor, seatsFor, visitsFrom, type AgentRow, type Limits, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
-import { boardTasks } from "../now";
-import { attendeesNow, MEETING_MS, parseStandupDay, walkPhase, type Attendee, type WalkPhase } from "../meeting";
-import { companyScope, parsePins, type HiddenProject, type Pin } from "../sidebar";
+import { seatsFor, visitsFrom, type AgentRow, type Limits, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
+import type { HiddenProject } from "../sidebar";
 import { readAsk, transcriptOf } from "./ask";
-import { lastAutoStatus } from "./auto";
-import { projectBoards, type ProjectBoard } from "./board";
 import { loadFloor, ompSessions } from "./floor";
-import { readPermits, type Permit } from "./permit";
-import { readIdleStatus } from "./idle";
 import { inboxLive, pendingInbox } from "./inbox";
-import { pinnedRootsPath, stateDir } from "./paths";
+import { stateDir } from "./paths";
 import { mergedSessions, type SessionView } from "./proc";
 
 const projectCache = new Map<string, { at: number; v: ProjectInfo | null }>();
@@ -260,8 +253,6 @@ export type Room = {
   waiting: string | null;
   /** What it asks the owner (its transcript's open AskUserQuestion / permission prompt), only while waiting. */
   ask: Ask | null;
-  /** A permission request waiting for the owner's click while the room's hook counts down (`ccc hook permit`). */
-  permit: Permit | null;
   cwd: string | null;
   project: ProjectInfo | null;
   delivery: "terminal" | "inbox" | null;
@@ -276,57 +267,13 @@ export type Room = {
   tokens: number | null;
   model: string | null;
   usage: Usage | null;
-  tasks: { done: number; open: number };
-  cost_per_task: number | null;
   seats: Seat[];
   role: string | null;
-  /** Agent-team name of this session as lead ("session-" + 8 id chars): joins `Office.idle`. */
-  team: string | null;
-  /** Which team the room belongs to (contract C4): "ccc" (Claude Code) or "omp". */
+  /** Which engine runs the room (contract C4): "ccc" (Claude Code) or "omp". */
   engine: string;
   /** Opened by hand in the owner's terminal window (`claude agents` kind "interactive"): HQ cannot open its terminal. */
   interactive?: boolean;
-  /** The sprint meeting this room's lead is at (`su-code/standup/<today>.md` row < 30 min old), else null. */
-  meeting: { at: number; phase: WalkPhase } | null;
 };
-
-export type Meeting = { project: string; root: string; date: string; attendees: Attendee[]; until: number };
-
-const MAX_STANDUP_BYTES = 64 * 1024;
-
-/** Today's standup rows of one project root; only `su-code/standup/<UTC date>.md`, ≤ 64 KB, never throws. */
-export function readStandup(root: string, now: number): { date: string; rows: Attendee[] } {
-  const date = new Date(now).toISOString().slice(0, 10);
-  try {
-    const file = path.join(root, "su-code", "standup", `${date}.md`);
-    const st = fs.statSync(file);
-    if (!st.isFile() || st.size > MAX_STANDUP_BYTES) return { date, rows: [] };
-    return { date, rows: parseStandupDay(fs.readFileSync(file, "utf8"), date) };
-  } catch {
-    return { date, rows: [] };
-  }
-}
-
-/** Meetings in progress per project root; stamps `room.meeting` on every room whose label / name / session id an attendee names. */
-export function loadMeetings(rooms: Room[], now: number): Meeting[] {
-  const byRoot = new Map<string, { project: ProjectInfo; rooms: Room[] }>();
-  for (const r of rooms) if (r.project) (byRoot.get(r.project.root) ?? byRoot.set(r.project.root, { project: r.project, rooms: [] }).get(r.project.root)!).rooms.push(r);
-  const out: Meeting[] = [];
-  for (const { project, rooms: rs } of byRoot.values()) {
-    const { date, rows } = readStandup(project.root, now);
-    const attendees = attendeesNow(rows, now);
-    if (!attendees.length) continue;
-    const refs: RoomRef[] = rs.map((r) => ({ key: r.key, ids: [r.name, r.session_id ?? "", r.label].filter(Boolean) }));
-    for (const a of attendees) {
-      const key = roomFor(a.room, refs);
-      const room = rs.find((r) => r.key === key);
-      const phase = walkPhase(a.at, now);
-      if (room && phase && (!room.meeting || a.at >= room.meeting.at)) room.meeting = { at: a.at, phase };
-    }
-    out.push({ project: project.name, root: project.root, date, attendees, until: Math.max(...attendees.map((a) => a.at)) + MEETING_MS });
-  }
-  return out;
-}
 
 export type LoopInfo = { project: string; slug: string; iter: number; max_iter: number | null; started: number | null; stopped: string | null };
 
@@ -362,21 +309,11 @@ export function readLoops(roots: { root: string; name: string }[]): LoopInfo[] {
   return out.sort((a, b) => (b.started ?? 0) - (a.started ?? 0)).slice(0, 30);
 }
 
-/** `pinned-roots.json` (`8sync ccc auto pin`), oldest pin first, without Rust's `\\?\` prefix; [] when absent or unreadable. */
-export function readPins(file = pinnedRootsPath()): Pin[] {
-  try {
-    return parsePins(JSON.parse(fs.readFileSync(file, "utf8"))).map((p) => ({ ...p, root: p.root.replace(/^\\\\\?\\/, "") }));
-  } catch {
-    return [];
-  }
-}
-
 /**
- * `idle`: every agent-team member's "không ai rảnh" status (lib/idle.ts), stale ones included. `limits`: plan usage (header).
- * `hidden`: projects the owner closed in the sidebar (lib/sidebar.ts splitClosed decides which still hide).
- * `pins`: projects the owner pinned (sidebar "Ghim", lib/sidebar.ts pinSidebar).
+ * `limits`: plan usage (header). `hidden`: projects the owner closed in the sidebar (lib/sidebar.ts
+ * splitClosed decides which still hide).
  */
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; idle: IdleRecord[]; meetings: Meeting[]; limits: Limits | null; hidden: HiddenProject[]; pins: Pin[]; at: number; /** One team for every project (`auto company on`), from the last auto status poll. */ company: boolean; /** The company's repos (lib/sidebar.ts companyScope); empty when company is off. */ scope: string[]; /** Where a team runs (`team_roots` of the last auto status, canonical roots): the company team's rooms live only there. */ team_roots: string[] };
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; limits: Limits | null; hidden: HiddenProject[]; at: number };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
@@ -385,16 +322,12 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
   const agentsQ = db.prepare(
     "SELECT agent_id, agent_type, started_at, ended_at FROM agents WHERE session IN (?, ?) AND (ended_at IS NULL OR ended_at > ?) ORDER BY started_at DESC LIMIT 40",
   );
-  const tasksQ = db.prepare("SELECT status, COUNT(*) AS n FROM tasks WHERE session IN (?, ?) GROUP BY status");
-  const permits = readPermits(now);
   const projects = new Map(
     live.flatMap((s) => {
       const p = projectOf(s.cwd, now);
       return p ? [[p.root, p] as const] : [];
     }),
   );
-  // Tasks come from the project boards (cards a room moved on / holds); the HQ task journal only when no board is readable.
-  const boards = await projectBoards([...projects.values()]).catch(() => [] as ProjectBoard[]);
   const rooms: Room[] = live.map((s) => {
     const sid = s.session_id ?? (SAFE_ID.test(s.name) && !s.name.startsWith("hq-") ? s.name : null);
     const f =
@@ -405,13 +338,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     const agents = (agentsQ.all(s.name, sid ?? s.name, now - 10 * 60_000) as AgentRow[]).filter(
       (a) => a.ended_at != null || now - a.started_at < 6 * 3600_000,
     );
-    const counts = tasksQ.all(s.name, sid ?? s.name) as { status: string; n: number }[];
-    const journal = {
-      done: counts.filter((c) => c.status === "done").reduce((a, c) => a + Number(c.n), 0),
-      open: counts.filter((c) => c.status !== "done").reduce((a, c) => a + Number(c.n), 0),
-    };
     const label = sessionLabel(s);
-    const tasks = boardTasks({ label, cwd: s.cwd, started_at: s.started_at }, boards) ?? journal;
     // The status-line snapshot (cost, lines) when the room writes one; model and time from its transcript otherwise.
     const snap = readUsage(sid);
     const tr = s.engine === "omp" ? null : readTranscriptStats(sid, s.cwd);
@@ -435,7 +362,6 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       status: s.status,
       waiting: (s as SessionView & { waiting?: string | null }).waiting ?? null,
       ask: s.status === "needs_input" && sid ? readAsk(sid, s.cwd) : null,
-      permit: (sid && permits.find((p) => p.session === sid)) || null,
       cwd: s.cwd,
       project: projectOf(s.cwd, now),
       delivery: deliveryOf(s),
@@ -447,33 +373,22 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
       tokens: f?.tokens ?? null,
       model: usage?.model ?? s.model ?? null,
       usage,
-      tasks,
-      cost_per_task: costPerTask(usage?.cost_usd, tasks.done),
       seats: seatsFor(agents, busy, now),
       role: s.role ?? null,
-      team: teamOf(sid),
       engine: s.engine ?? "ccc",
       ...(s.interactive && { interactive: true }),
-      meeting: null,
     };
   });
   const refs: RoomRef[] = rooms.map((r) => ({ key: r.key, ids: [r.name, r.session_id ?? "", r.label].filter(Boolean) }));
   const recent = db
     .prepare("SELECT kind, ts, session, from_, to_, text FROM messages WHERE kind = 'session_message' AND ts > ? ORDER BY id DESC LIMIT 50")
     .all(now - 120_000) as { kind: string; ts: number; session: string | null; from_: string | null; to_: string | null; text: string | null }[];
-  const roots = lastAutoStatus()?.team_roots;
   return {
     rooms,
     visits: visitsFrom(recent, refs, now),
     loops: readLoops([...projects.values()]),
-    idle: readIdleStatus(),
-    meetings: loadMeetings(rooms, now),
     limits: readLimits(),
     hidden: db.prepare("SELECT key, root, name, hidden_at FROM hidden_projects ORDER BY hidden_at DESC").all() as HiddenProject[],
-    pins: readPins(),
     at: now,
-    company: lastAutoStatus()?.company === true,
-    scope: companyScope(lastAutoStatus()),
-    team_roots: Array.isArray(roots) ? roots.filter((r): r is string => typeof r === "string" && r.length > 0 && r.length <= 1024) : [],
   };
 }

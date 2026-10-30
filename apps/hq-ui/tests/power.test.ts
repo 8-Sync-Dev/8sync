@@ -1,17 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { POST as AUTO } from "@/app/api/auto/route";
 import { POST as SETTINGS } from "@/app/api/machine/power/route";
-import { awayFrom, parseAwake, parseDisplayHolders } from "@/lib/server/awake";
+import { parseAwake, parseDisplayHolders } from "@/lib/server/awake";
 import { getToken } from "@/lib/server/auth";
 import type { Exec } from "@/lib/server/machine";
 import { stateDir } from "@/lib/server/paths";
-import { credit, DEFAULTS, dayKey, type Ledger, parseGpuWatts, parseSettings, parseTypeperfWh, power, type Reading, readLedger, runBlocked, sampleOnce, step, summarize, type TeamCtl } from "@/lib/server/power";
+import { credit, DEFAULTS, dayKey, type Ledger, parseGpuWatts, parseSettings, parseTypeperfWh, power, type Reading, readLedger, sampleOnce, step, summarize } from "@/lib/server/power";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const R = (at: number, cpuWh: number | null, gpuW: number | null, cpuWrapWh: number | null = null): Reading => ({ at, cpuWh, gpuW, cpuWrapWh });
-const ledger = (o: Partial<Ledger> = {}): Ledger => ({ schema: 1, settings: { ...DEFAULTS }, days: {}, since: null, paused: null, ...o });
+const ledger = (o: Partial<Ledger> = {}): Ledger => ({ schema: 1, settings: { ...DEFAULTS }, days: {}, since: null, ...o });
 
 describe("power probes", () => {
   it("typeperf: the RAPL Energy counter is picowatt-hours; a decimal comma reads too; junk is null", () => {
@@ -80,66 +79,23 @@ describe("daily budget", () => {
   let counter = 0;
   const run: Exec = async (cmd) => (cmd === "typeperf" ? `"10/19/2026 13:00:00.000","${(counter += 1) * 1e12}"` : cmd === "nvidia-smi" ? "100\n" : null);
 
-  it("over budget: pauses a running team once, keeps it paused, refuses Chạy until the budget is raised", async () => {
-    const calls: string[] = [];
-    let team = { on: true, paused: false };
-    const ctl: TeamCtl = {
-      status: async () => (calls.push("status"), team),
-      pause: async () => (calls.push("pause"), (team = { on: true, paused: true })),
-    };
-    await sampleOnce(run, "win32", ctl);
-    await sampleOnce(run, "win32", ctl);
-    expect(calls).toEqual([]);
-    const spent = power()!.today.vnd;
-    expect(spent).toBeGreaterThan(0);
+  it("over budget: the chip says so; clearing the budget clears it", async () => {
+    await sampleOnce(run, "win32");
+    await sampleOnce(run, "win32");
+    expect(power()!.today.vnd).toBeGreaterThan(0);
 
     const r = await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { budgetVnd: 1000 } }));
     expect(r.status).toBe(200);
     // Each sample adds ~1 Wh (≈3.5 ₫): keep sampling until today's spend crosses 1.000 ₫.
-    for (let i = 0; i < 400 && !power()!.over; i++) await sampleOnce(run, "win32", ctl);
+    for (let i = 0; i < 400 && !power()!.over; i++) await sampleOnce(run, "win32");
     expect(power()!.over).toBe(true);
-    await sampleOnce(run, "win32", ctl);
-    expect(calls.filter((c) => c === "pause")).toHaveLength(1);
-    expect(power()!.paused?.at).toBeGreaterThan(0);
-    const saved = JSON.parse(fs.readFileSync(path.join(stateDir(), "power.json"), "utf8")) as Ledger;
-    expect(saved.paused?.day).toBe(dayKey(Date.now()));
-
-    expect(runBlocked()).toMatch(/vượt ngân sách 1\.000 ₫/);
-    const blocked = await AUTO(req("/api/auto", { method: "POST", token, origin: ORIGIN, body: { action: "on" } }));
-    expect(blocked.status).toBe(409);
 
     await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { budgetVnd: null } }));
-    expect(runBlocked()).toBeNull();
     expect(power()!.over).toBe(false);
   });
   it("settings route: 401 without the token, 422 out of range", async () => {
     expect((await SETTINGS(req("/api/machine/power", { method: "POST", origin: ORIGIN, body: { otherW: 50 } }))).status).toBe(401);
     expect((await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { otherW: 5000 } }))).status).toBe(422);
-  });
-  it("a budget raised while the team status was being read: no pause", async () => {
-    await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { budgetVnd: 1000 } }));
-    const calls: string[] = [];
-    const ctl: TeamCtl = {
-      status: async () => {
-        calls.push("status");
-        await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { budgetVnd: 9_000_000 } }));
-        return { on: true, paused: false };
-      },
-      pause: async () => (calls.push("pause"), { paused: true }),
-    };
-    await sampleOnce(run, "win32", ctl);
-    expect(calls).toEqual(["status"]);
-  });
-  it("a pause that didn't take is not recorded, and is not retried for 5 minutes", async () => {
-    await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { budgetVnd: 1000 } }));
-    const before = power()!.paused?.at;
-    const calls: string[] = [];
-    const ctl: TeamCtl = { status: async () => (calls.push("status"), { on: true, paused: false }), pause: async () => (calls.push("pause"), { paused: false, error: "8sync missing" }) };
-    await sampleOnce(run, "win32", ctl);
-    await sampleOnce(run, "win32", ctl);
-    expect(calls).toEqual(["status", "pause"]);
-    expect(power()!.paused?.at).toBe(before);
-    await SETTINGS(req("/api/machine/power", { method: "POST", token, origin: ORIGIN, body: { budgetVnd: null } }));
   });
 });
 
@@ -173,13 +129,6 @@ describe("awake", () => {
     expect(parseAwake('{"schema":1,"held":"yes","display":"blank","idle_s":-5}')).toMatchObject({ held: null, display: null, idle_s: null });
     expect(parseAwake('{"held":true}')).toBeNull();
     expect(parseAwake("error: không rõ `status`")).toBeNull();
-  });
-  it("away: rooms whose last turn came after the owner's last input; nothing while the owner is here", () => {
-    const now = 10_000_000;
-    const rec = (ts: number) => ({ team: "t", name: `n${ts}`, state: "rest", ts, detail: null }) as never;
-    expect(awayFrom(3600, [rec(now / 1000 - 4000), rec(now / 1000 - 100), rec(now / 1000 - 10)], now)).toEqual({ since: now - 3_600_000, rooms: 2, last: now - 10_000 });
-    expect(awayFrom(120, [rec(now / 1000)], now)).toBeNull();
-    expect(awayFrom(null, [], now)).toBeNull();
   });
 });
 

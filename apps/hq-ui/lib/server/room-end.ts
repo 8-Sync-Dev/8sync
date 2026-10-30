@@ -1,6 +1,5 @@
 // Sidebar room actions, through the verbs that already exist (never a second way):
-// - close: `claude stop <id>` for a Claude Code background room (its conversation is kept, `8sync ccc
-//   auto up` resumes it; what `auto down` runs per room), tmux kill for an hq-* room (/stop route).
+// - close: `claude stop <id>` for a Claude Code background room (its conversation is kept), tmux kill for an hq-* room (/stop route).
 // - delete: close, then `claude rm <id>` (drops the background session and its own worktree; Claude
 //   Code keeps a worktree with unpushed commits and says so), then `8sync ccc . rm <name>` for the
 //   registry entry bound to that session, which also deletes the room's transcript.
@@ -12,7 +11,7 @@ import { repoOf } from "@/lib/sidebar";
 import { stamp } from "./db";
 import { projectOf } from "./office";
 import { listClaudeAgents, mergedSessions, run, stopTmux, type SessionView } from "./proc";
-import { tail } from "./team";
+import { tail } from "./pane";
 
 export type RoomAction = "close" | "delete";
 export const isRoomAction = (v: unknown): v is RoomAction => v === "close" || v === "delete";
@@ -29,7 +28,7 @@ export type EndResult = {
 
 const fail = (status: number, error: string): EndResult => ({ status, body: { error } });
 
-/** `claude stop|rm <short id>` (team.rs passes the first 8 chars the same way). */
+/** `claude stop|rm <short id>` (the first 8 chars of the session id). */
 async function claude(verb: "stop" | "rm", id: string): Promise<{ ok: boolean; error: string }> {
   const r = await run("claude", [verb, id.slice(0, 8)], 30_000);
   return { ok: r.ok, error: r.killed ? `claude ${verb} không trả lời sau 30 giây` : tail(`${r.stderr}\n${r.stdout}`, 4) || `claude ${verb} thất bại` };
@@ -78,7 +77,7 @@ export function markEnded(db: DatabaseSync, s: Pick<SessionView, "name" | "proje
 }
 
 export async function endRoom(db: DatabaseSync, name: string, action: RoomAction): Promise<EndResult> {
-  if (isOmpRoomId(name)) return fail(409, "Phòng omp: dừng cả đội bằng “Dừng team” của dự án.");
+  if (isOmpRoomId(name)) return fail(409, "Phòng omp: dừng nó trong terminal omp của nó.");
   const s = (await mergedSessions(db)).find((x) => x.name === name);
   if (!s || (action === "close" && s.status === "ended")) {
     // Without `claude agents` nothing is known alive: say so instead of "it stopped" (it may still run).

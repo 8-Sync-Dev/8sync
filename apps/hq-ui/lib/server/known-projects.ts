@@ -1,6 +1,5 @@
-// Sources of "Dự án trên máy" (owner 2026-10-22: "không thấy đúng all dự án trên máy"): auto's scope /
-// team roots / closed projects (last `auto status`), pinned roots, the repo of every session HQ has
-// recorded, the folders Claude Code trusts (~/.claude.json `projects`, paths only), and a bounded scan
+// Sources of "Dự án trên máy" (owner 2026-10-22: "không thấy đúng all dự án trên máy"): the repo of
+// every session HQ has recorded, the folders Claude Code trusts (~/.claude.json `projects`, paths only), and a bounded scan
 // for repos below the folders those live in. Only folders that still exist are returned.
 import fs from "node:fs";
 import os from "node:os";
@@ -8,10 +7,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { mergeKnown, type KnownProject } from "../known-projects";
 import { rootKey } from "../preview";
-import { lastAutoStatus } from "./auto";
-import { projectOf, readPins } from "./office";
-
-const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((r): r is string => typeof r === "string" && r.length > 0 && r.length <= 1024) : []);
+import { projectOf } from "./office";
 
 /** Folders never descended into: dependencies, build output, caches. */
 const SKIP = new Set(["node_modules", "target", "dist", "build", "out", "vendor", "venv", "__pycache__", "AppData", "Library"]);
@@ -90,12 +86,7 @@ let cache: { at: number; found: { path: string; source: string }[] } | null = nu
 export function knownProjects(db: DatabaseSync, exclude: string[]): KnownProject[] {
   const now = Date.now();
   if (!cache || now - cache.at > CACHE_MS) {
-    const st = lastAutoStatus();
     const found: { path: string; source: string }[] = [];
-    for (const r of strings(st?.repos)) found.push({ path: r, source: "scope" });
-    for (const r of strings(st?.team_roots)) found.push({ path: r, source: "team" });
-    for (const r of strings(st?.out)) found.push({ path: r, source: "closed" });
-    for (const p of readPins()) found.push({ path: p.root, source: "pin" });
     const rows = db.prepare("SELECT DISTINCT cwd FROM sessions WHERE cwd IS NOT NULL").all() as { cwd: string }[];
     for (const r of rows) {
       const p = projectOf(r.cwd);

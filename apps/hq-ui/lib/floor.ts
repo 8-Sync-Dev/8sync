@@ -1,5 +1,4 @@
 // Pure derivation of a floor desk's state from `8sync ls --json` + hq session data.
-import { hhmm } from "./auto";
 import type { SpriteState } from "./sprite/frames";
 
 export type FloorState = SpriteState;
@@ -14,19 +13,12 @@ export type LsInput = {
   current_task?: string | null;
   last_active?: number | null; // unix seconds
   stalled_error?: string | boolean | null;
-  /** Unix seconds when 8sync resumes the stopped turn by itself (contract C2); null or absent = the owner must act. */
-  stalled_resume_at?: number | null;
 };
 
 export type HqInput = {
   status?: string | null; // needs_input | running | idle | ended
   detail?: string | null; // waitingFor
-  /** Newest `su-code/ship/<slug>/STANDUP.md` under the session's repo (`at` = mtime, unix ms). */
-  standup?: { slug: string; at: number } | null;
 } | null;
-
-/** A standup written less than this long ago puts the room in a sprint meeting. */
-export const MEETING_MS = 2 * 60_000;
 
 export type Derived = {
   state: FloorState;
@@ -66,14 +58,7 @@ export const LABEL: Record<FloorState, string> = {
   meeting: "họp sprint",
 };
 
-/** `8sync ccc auto status` fields that decide whether auto resumes stopped rooms by itself. */
-export type AutoGate = { on?: boolean; paused?: boolean; gate?: string | null } | null;
-
-/** Auto resumes a stopped turn only while it is on, not paused, and no lease/usage gate holds it. */
-export const autoMayAct = (s: AutoGate) => !!s && s.on === true && !s.paused && !s.gate;
-
-/** `autoActs`: auto may resume rooms now (autoMayAct); otherwise a stopped room waits on the owner. */
-export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now(), autoActs = false): Derived {
+export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now()): Derived {
   const status = ls?.status ?? (hq?.status === "running" ? "running" : "idle");
   const total = ls?.tasks_total ?? 0;
   const doneN = ls?.tasks_done ?? 0;
@@ -92,16 +77,7 @@ export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now(),
 
   if (ls?.stalled_error) {
     const err = typeof ls.stalled_error === "string" ? ls.stalled_error : null;
-    const at = ls.stalled_resume_at;
-    if (autoActs && typeof at === "number" && Number.isFinite(at) && at * 1000 > nowMs) {
-      const when = hhmm(at * 1000);
-      return make("stalled", err === "rate_limit" ? `Hết usage — tự chạy lại lúc ${when}` : `Lỗi API (${err ?? "không rõ"}) — tự thử lại lúc ${when}`, "chờ tự chạy lại");
-    }
     return make("stalled", `${err ?? "Lỗi API"} — cần anh xử lý`);
-  }
-  // `8sync ccc standup <slug>` just wrote the board: the room is in its sprint meeting for a moment.
-  if (hq?.standup && nowMs - hq.standup.at >= 0 && nowMs - hq.standup.at < MEETING_MS && status !== "idle") {
-    return make("meeting", `Họp sprint ${hq.standup.slug}${text ? `: ${text}` : ""}`);
   }
   // A live process whose transcript has not moved for 5 min is only "stuck" while
   // it still has open work; a session parked at its prompt (no open task, or hq

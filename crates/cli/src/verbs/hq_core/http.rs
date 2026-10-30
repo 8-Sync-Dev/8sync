@@ -13,7 +13,6 @@ pub struct Request {
     pub method: String,
     /// Path without the query string.
     pub path: String,
-    pub query: String,
     pub token: Option<String>,
     pub body: Vec<u8>,
 }
@@ -26,7 +25,7 @@ pub enum Bad {
     Io,
 }
 
-/// Head bytes (through the blank line) → method, path, query, token, declared body length.
+/// Head bytes (through the blank line) → method, path, token, declared body length.
 pub fn parse_head(head: &[u8]) -> Result<(Request, usize), Bad> {
     let text = std::str::from_utf8(head).map_err(|_| Bad::Status(400))?;
     let mut lines = text.split("\r\n");
@@ -37,7 +36,7 @@ pub fn parse_head(head: &[u8]) -> Result<(Request, usize), Bad> {
     if !ver.starts_with("HTTP/1.") || !target.starts_with('/') {
         return Err(Bad::Status(400));
     }
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let path = target.split_once('?').map_or(target, |(p, _)| p);
     let (mut token, mut len) = (None, 0usize);
     for l in lines {
         let Some((k, v)) = l.split_once(':') else { continue };
@@ -53,7 +52,7 @@ pub fn parse_head(head: &[u8]) -> Result<(Request, usize), Bad> {
     if len > MAX_BODY {
         return Err(Bad::Status(413));
     }
-    Ok((Request { method: method.to_string(), path: path.to_string(), query: query.to_string(), token, body: Vec::new() }, len))
+    Ok((Request { method: method.to_string(), path: path.to_string(), token, body: Vec::new() }, len))
 }
 
 /// Reads one request: the head up to [`MAX_HEAD`], then exactly `Content-Length` body bytes.
@@ -129,14 +128,6 @@ pub fn write_json(s: &mut impl Write, code: u16, body: &[u8]) -> std::io::Result
     s.flush()
 }
 
-/// One query parameter, percent-decoded (`+` is a space, as `URLSearchParams` writes it).
-pub fn query_param(query: &str, key: &str) -> Option<String> {
-    query.split('&').find_map(|kv| {
-        let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-        (k == key).then(|| urlencoding::decode(&v.replace('+', " ")).map(|c| c.into_owned()).ok()).flatten()
-    })
-}
-
 /// Same length and same bytes, without an early exit on the first difference.
 pub fn token_eq(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
@@ -151,10 +142,10 @@ mod tests {
     }
 
     #[test]
-    fn reads_head_token_query_and_sized_body() {
+    fn reads_head_token_path_and_sized_body() {
         let raw = b"POST /v1/usage?x=1 HTTP/1.1\r\nHost: a\r\nX-Core-Token: abc\r\nContent-Length: 5\r\n\r\nhello";
         let r = rd(raw).unwrap();
-        assert_eq!((r.method.as_str(), r.path.as_str(), r.query.as_str()), ("POST", "/v1/usage", "x=1"));
+        assert_eq!((r.method.as_str(), r.path.as_str()), ("POST", "/v1/usage"));
         assert_eq!(r.token.as_deref(), Some("abc"));
         assert_eq!(r.body, b"hello");
     }
@@ -197,9 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn decodes_query_params_and_compares_tokens() {
-        assert_eq!(query_param("root=C%3A%5CUsers%5Cx+y&z=1", "root").as_deref(), Some("C:\\Users\\x y"));
-        assert_eq!(query_param("a=1", "root"), None);
+    fn compares_tokens() {
         assert!(token_eq("abcd", "abcd"));
         assert!(!token_eq("abcd", "abce"));
         assert!(!token_eq("abcd", "abc"));

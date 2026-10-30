@@ -1,6 +1,6 @@
 import { afterParam, open } from "@/lib/server/http";
 import { ingest } from "@/lib/server/ingest";
-import { messagesAfter, tasksFor } from "@/lib/server/queries";
+import { messagesAfter } from "@/lib/server/queries";
 
 export const runtime = "nodejs";
 
@@ -18,7 +18,6 @@ export async function GET(req: Request) {
   const { db } = o;
   const url = new URL(req.url);
   let lastMsg = afterParam(url, "after");
-  let lastTask = afterParam(url, "tasks_after") || Date.now();
   let sessionsSig = "";
   let projectsSig = "";
   let rewriteSig = "";
@@ -48,18 +47,13 @@ export async function GET(req: Request) {
             lastMsg = messages[messages.length - 1].id;
             send("messages", messages);
           }
-          const tasks = tasksFor(db, null, lastTask);
-          if (tasks.length) {
-            lastTask = Math.max(...tasks.map((t) => t.updated_at));
-            send("tasks", tasks);
-          }
           const s = signature("SELECT count(*) c, max(updated_at) u FROM sessions");
           if (s !== sessionsSig) {
             if (sessionsSig) send("sessions", {});
             sessionsSig = s;
           }
           // Rows already sent that changed in place: a retried delivery, or uuid rows
-          // moved onto their hq-* name. The client reloads the timeline and board.
+          // moved onto their hq-* name. The client reloads the timeline.
           const w = signature(
             "SELECT (SELECT count(*) FROM session_alias) a, (SELECT count(*) FROM messages WHERE delivery IN ('channel→terminal', 'failed', 'held', 'unconfirmed')) d",
           );

@@ -8,27 +8,11 @@ owner's existing subscription login. Nothing here touches the owner's `~/.claude
 ## hook-latency.sh: how long the kit hooks keep Claude waiting (no model, free)
 
 `bash scripts/uat/hook-latency.sh [8sync] [runs]`: sandbox HOME, each hook fed the JSON Claude Code would send,
-median of 7 runs against a budget: guard, wake, watchdog, resume-note ≤ 20 ms; `verify` with a file outside any
+median of 7 runs against a budget: guard, watchdog, resume-note ≤ 20 ms; `verify` with a file outside any
 project (its no-op path) ≤ 50 ms. The real verify check (tsc/cargo) runs with `asyncRewake` and never blocks the
 model. Measured 2026-10-15 on Linux (v0.90.0 + this branch): every hook median 3 ms, PASS; the Orca per-event shell
 hook on the same machine ≈ 5 ms. Timing uses bash 5 `EPOCHREALTIME` with a `date +%s%N` fallback; not verified on
 macOS `/bin/bash` 3.2 (run it with Homebrew bash) or Windows.
-
-## no-idle-hook.sh: "không ai rảnh" ladder and rails (no model, free)
-
-`bash scripts/uat/no-idle-hook.sh target/debug/8sync`: sandbox HOME + a fake team task list; checks
-off-by-default, teammate takes the next task (exit 2), loop → rest, lead Stop block, rest, and subscription
-without a lease → rest, plus the `task-done` gate (an unchecked code edit on a dirty tree holds the task, a test run
-lets it pass, the next idle asks for one `/remember` lesson). Measured 2026-10-14 on Linux: 15/15 ok, PASS.
-
-Live run (owner-run, interactive, since agent teams do not spawn under `claude -p`): `8sync ccc idle on --hours 1
---usd-per-hour 2`, `8sync ccc kit`, open a new `8sync ccc . uat-idle --team`, ask the lead for 2 teammates and
-4 small tasks. Expect: a teammate that finishes takes the next task by itself; the
-lead stops when nothing is open; `8sync ccc idle status` shows each member and the rest reason. Gate check: ask a
-teammate to edit a `.rs` file and mark its task done without testing → the task stays open with the
-"8sync task-done" reason; the lead editing a file must not hold a teammate's task (the teammate transcript is read
-from `<lead id>/subagents/agent-<agent_id>.jsonl`, a layout seen on disk, not documented: not verified live). On a
-subscription login keep it attended (lease); unattended runs belong on a Console API key. Then `idle off`.
 
 ## compact-window.sh: `CLAUDE_CODE_AUTO_COMPACT_WINDOW` moves the trigger
 

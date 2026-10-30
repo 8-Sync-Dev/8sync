@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightIcon, BellRingIcon, CheckCircle2Icon, CircleDotIcon, HourglassIcon, PlayIcon, ReplyIcon, SquareIcon, TerminalSquareIcon } from "lucide-react";
+import { ArrowRightIcon, BellRingIcon, HourglassIcon, PlayIcon, ReplyIcon, SquareIcon, TerminalSquareIcon } from "lucide-react";
 import { useMemo } from "react";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent } from "@/components/ai-elements/message";
@@ -77,21 +77,6 @@ function Row({ it, token, onOpenSession }: { it: ThreadItem; token: string; onOp
           </div>
           {it.text && <p className="mt-2 line-clamp-3 border-l-2 pl-2 text-sm text-muted-foreground">{it.text}</p>}
         </article>
-      );
-    }
-    case "task_created":
-    case "task_completed": {
-      const done = it.kind === "task_completed";
-      return (
-        <p className="flex w-full max-w-[95%] items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm">
-          {done ? <CheckCircle2Icon className="size-4 text-st-running" aria-hidden /> : <CircleDotIcon className="size-4 text-muted-foreground" aria-hidden />}
-          <span className="text-xs text-muted-foreground">{done ? "Xong việc" : "Việc mới"}</span>
-          <span className="min-w-0 flex-1 truncate">{it.text || "(không tên)"}</span>
-          {it.role && <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">{it.role}</span>}
-          <span className="font-mono text-[11px] text-muted-foreground">{shortName(it.session)}</span>
-          <Times n={it.count} />
-          <Time ts={it.ts} />
-        </p>
       );
     }
     case "needs_you":

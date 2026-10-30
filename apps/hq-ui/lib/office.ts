@@ -1,7 +1,12 @@
 // Pure office model (no I/O): every live session is a room; the same specialist seats in
 // every room; specialists walk to another room when its session messages that one.
 // Tested in tests/office.test.ts.
-import { hhmm } from "./auto";
+
+/** Local "HH:MM" of a unix-ms time. */
+export const hhmm = (ms: number) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
 
 /** The seat template every room has, in display order. */
 export const SEATS = [
@@ -110,11 +115,6 @@ export type Usage = {
   model: string | null;
 };
 
-/** cost / finished tasks, only when both are known (never an invented price). */
-export function costPerTask(cost: number | null | undefined, done: number): number | null {
-  return cost != null && Number.isFinite(cost) && done > 0 ? cost / done : null;
-}
-
 /**
  * Plan limits from the freshest status-line snapshot (`STATE/usage/*.json`, contract C1): the only
  * place these numbers come from. `*_resets_at` are unix seconds; `ts` is the snapshot time (s).
@@ -200,7 +200,6 @@ export function matchesSession(s: { name: string; session_id: string | null; lab
 export type RoomStats = {
   tokens: number | null;
   usage: Usage | null;
-  tasks: { done: number; open: number };
 };
 
 /** Office-wide totals. A sum is null when no room measured it (never shown as 0). */
@@ -209,20 +208,13 @@ export function officeTotals(rooms: RoomStats[]) {
     const k = xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
     return k.length ? k.reduce((a, b) => a + b, 0) : null;
   };
-  const cost = sum(rooms.map((r) => r.usage?.cost_usd));
-  const done = rooms.reduce((a, r) => a + r.tasks.done, 0);
-  // $/task only over rooms that measured cost, so unmeasured rooms do not dilute it.
-  const measuredDone = rooms.filter((r) => r.usage?.cost_usd != null).reduce((a, r) => a + r.tasks.done, 0);
   return {
     rooms: rooms.length,
     tokens: sum(rooms.map((r) => r.tokens)),
-    cost_usd: cost,
+    cost_usd: sum(rooms.map((r) => r.usage?.cost_usd)),
     duration_ms: sum(rooms.map((r) => r.usage?.duration_ms)),
     lines_added: sum(rooms.map((r) => r.usage?.lines_added)),
     lines_removed: sum(rooms.map((r) => r.usage?.lines_removed)),
-    done,
-    open: rooms.reduce((a, r) => a + r.tasks.open, 0),
-    cost_per_task: costPerTask(cost, measuredDone),
     measured: rooms.filter((r) => r.usage?.cost_usd != null).length,
   };
 }

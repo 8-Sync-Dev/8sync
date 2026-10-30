@@ -194,9 +194,7 @@ describe("pruneWorktrees on a real repo", () => {
       sh(root, "commit", "-q", "-m", "init");
       const merged = worktree(root, "card-1", old, 1);
       sh(root, "merge", "-q", "--ff-only", "card-1-work");
-      fs.mkdirSync(path.join(merged, "su-code", "standup"), { recursive: true }); // 8sync's meet note: not the card's work
-      fs.writeFileSync(path.join(merged, "su-code", "standup", "2026-10-21.md"), "- dev: done");
-      for (const e of [merged, path.join(merged, "su-code")]) fs.utimesSync(e, old, old);
+      fs.utimesSync(merged, old, old);
       const dirty = worktree(root, "card-2", old);
       fs.writeFileSync(path.join(dirty, "scratch.txt"), "wip");
       for (const e of [dirty, path.join(dirty, "scratch.txt")]) fs.utimesSync(e, old, old);
@@ -206,27 +204,18 @@ describe("pruneWorktrees on a real repo", () => {
       const missing = worktree(root, "card-5", old);
       fs.rmSync(missing, { recursive: true, force: true });
       const open = worktree(root, "card-6", old, 1);
-      // Squash-merged: the branch's commit is no ancestor of main, but main's commit names the card.
-      const squashed = worktree(root, "card-7", old, 1);
-      fs.writeFileSync(path.join(root, "seven.txt"), "x");
-      sh(root, "add", "-A");
-      sh(root, "commit", "-q", "-m", "feat(x): seven (card #7) (#9)");
       const used = async () => [`node ${path.join(busy, "node_modules", ".bin", "next")} dev`];
-      const r = await pruneWorktrees({ root }, used, NOW, async () => new Set<number>());
-      expect([r.kept, r.pruned]).toEqual([{ n: 7, busy: 1, recent: 1, open: 1, dirty: 1, failed: 0 }, { at: NOW, n: 3, names: ["card-1", "card-5", "card-7"] }]);
-      expect(r.kept).toEqual({ n: 7, busy: 1, recent: 1, open: 1, dirty: 1, failed: 0 });
+      const r = await pruneWorktrees({ root }, used, NOW);
+      expect([r.kept, r.pruned]).toEqual([{ n: 6, busy: 1, recent: 1, open: 1, dirty: 1, failed: 0 }, { at: NOW, n: 2, names: ["card-1", "card-5"] }]);
       expect(fs.existsSync(merged)).toBe(false);
-      expect(fs.existsSync(squashed)).toBe(false);
-      expect(sh(root, "branch", "--list", "card-7-work").trim()).not.toBe(""); // squash-merged: never -D
       expect(sh(root, "branch", "--list", "card-1-work").trim()).toBe(""); // merged: branch gone
       expect(sh(root, "branch", "--list", "card-5-work").trim()).not.toBe(""); // only the registration went
       for (const wt of [dirty, busy, recent, open]) expect(fs.existsSync(wt)).toBe(true);
       expect(parseWorktrees(sh(root, "worktree", "list", "--porcelain")).map((w) => path.basename(w.path))).toEqual([path.basename(root), "card-2", "card-3", "card-4", "card-6"]);
-      // The board closed card-6: its unmerged work goes, the branch stays (never -D).
-      const r2 = await pruneWorktrees({ root }, used, NOW, async () => new Set([6]));
-      expect(r2.pruned).toEqual({ at: NOW, n: 1, names: ["card-6"] });
-      expect(fs.existsSync(open)).toBe(false);
-      expect(sh(root, "branch", "--list", "card-6-work").trim()).not.toBe("");
+      // Unmerged work is never removed.
+      const r2 = await pruneWorktrees({ root }, used, NOW);
+      expect(r2.pruned).toBeNull();
+      expect(fs.existsSync(open)).toBe(true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -242,10 +231,10 @@ describe("pruneWorktrees on a real repo", () => {
       const wt = worktree(root, "card-1", old);
       const elsewhere = path.join(root, "play-1");
       sh(root, "worktree", "add", "-q", "--detach", elsewhere, "main");
-      const r = await pruneWorktrees({ root }, () => Promise.reject(new Error("no office")), NOW, async () => new Set<number>());
+      const r = await pruneWorktrees({ root }, () => Promise.reject(new Error("no office")), NOW);
       expect(r).toEqual({ pruned: null, kept: null });
       expect(fs.existsSync(wt)).toBe(true);
-      const r2 = await pruneWorktrees({ root }, async () => [], NOW, async () => new Set<number>());
+      const r2 = await pruneWorktrees({ root }, async () => [], NOW);
       expect(r2.pruned?.names).toEqual(["card-1"]);
       expect(fs.existsSync(elsewhere)).toBe(true);
     } finally {

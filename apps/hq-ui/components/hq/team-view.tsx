@@ -3,11 +3,8 @@
 import {
   ArrowRightIcon,
   BellIcon,
-  CircleCheckIcon,
   ChevronDownIcon,
-  CirclePlusIcon,
   MessagesSquareIcon,
-  MoonIcon,
   PlayIcon,
   SendHorizontalIcon,
   SquareIcon,
@@ -243,9 +240,6 @@ function Row({ m, prev, who, token }: { m: Message; prev?: Message; who: Who; to
 }
 
 const EVENT_META: Record<string, { icon: ReactNode; verb: string }> = {
-  task_created: { icon: <CirclePlusIcon />, verb: "created task" },
-  task_completed: { icon: <CircleCheckIcon className="text-st-running" />, verb: "completed" },
-  teammate_idle: { icon: <MoonIcon />, verb: "is idle" },
   notification: { icon: <BellIcon className="text-st-needs" />, verb: "" },
   session_start: { icon: <PlayIcon />, verb: "started" },
   session_end: { icon: <SquareIcon />, verb: "ended" },

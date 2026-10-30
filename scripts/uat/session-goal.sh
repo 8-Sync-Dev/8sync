@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # UAT (no model, free): `8sync ccc . goal` sets a session's target + claimed files the way an agent
-# would (CLAUDE_CODE_SESSION_ID), `ccc . ls` / `--json` show it, and `ccc standup` lists the other
-# room's goal and warns when the board's files overlap its claim. Sandbox HOME/XDG + throwaway repo.
+# would (CLAUDE_CODE_SESSION_ID), and `ccc . ls` / `--json` show it. Sandbox HOME/XDG + throwaway repo.
 # Usage: scripts/uat/session-goal.sh [path/to/8sync]   Exit 0 = pass.
 set -uo pipefail
 B="${1:-target/debug/8sync}"
@@ -32,14 +31,6 @@ grep -qE '^ +goal T8 agent memory · file: assets/claude/agents/qa.md, crates/x.
 out=$(run "$B" ccc . ls --json 2>&1)
 python3 -I -c 'import json,sys; r={x["name"]:x for x in json.loads(sys.stdin.read())}; assert r["rd"]["goal"]["text"]=="T8 agent memory", r; assert r["core"]["goal"] is None, r' <<<"$out" \
   && ok "--json carries goal" || bad "json" "$out"
-
-run "$B" ccc standup g init >/dev/null 2>&1
-run env CLAUDE_CODE_SESSION_ID="$CORE" "$B" ccc standup g set dev doing --agent task --files crates/x.rs "standup verb" >/dev/null 2>&1
-out=$(run env CLAUDE_CODE_SESSION_ID="$CORE" "$B" ccc standup g 2>&1); rc=$?
-[ $rc = 3 ] && ok "standup exits 3 while roles idle" || bad "standup rc" "rc=$rc"
-grep -qF -- '- rd: T8 agent memory' <<<"$out" && ok "standup lists the other room's goal" || bad "peer goal" "$out"
-grep -qF '⚠ trùng file với rd: crates/x.rs' <<<"$out" && ok "standup warns on file overlap" || bad "conflict" "$out"
-grep -q -- '- core:' <<<"$out" && bad "own room listed as peer" "$out" || ok "own room not listed as a peer"
 
 out=$(run env CLAUDE_CODE_SESSION_ID="$RD" "$B" ccc . goal clear 2>&1); grep -qF "cleared goal of 'rd'" <<<"$out" && ok "clear" || bad "clear" "$out"
 out=$(run "$B" ccc . ls 2>&1); grep -qE '^ +goal ' <<<"$out" && bad "goal line after clear" "$out" || ok "goal gone after clear"

@@ -4,9 +4,6 @@ import { projectIdFor, stamp, tx } from "./db";
 import { journalFiles } from "./paths";
 import { isTmuxName } from "./validate";
 
-export const TASK_STATUSES = ["todo", "doing", "review", "blocked", "done"] as const;
-export type TaskStatus = (typeof TASK_STATUSES)[number];
-
 export type JournalEvent = {
   v?: number;
   ts?: number;
@@ -14,13 +11,10 @@ export type JournalEvent = {
   session_id?: string | null;
   /** Optional: the tmux name when the hook ran inside an HQ-started session. */
   hq_session?: string | null;
-  team?: string | null;
   cwd?: string | null;
+  /** subagent_start/stop: the agent id and its type. */
   task_id?: string | null;
   subject?: string | null;
-  role?: string | null;
-  prio?: string | null;
-  status?: string | null;
   from?: string | null;
   to?: string | null;
   /** SendMessage between sessions: Claude Code session names of the two ids above. */
@@ -37,20 +31,11 @@ export type Mapped = {
   /** Session id -> display name ("rd"), for handoff cards. */
   names?: { session_id: string; name: string }[];
   session?: { name: string; cwd: string | null; status: string | null; ts: number };
-  task?: {
-    task_id: string;
-    session: string | null;
-    subject: string | null;
-    role: string | null;
-    prio: string | null;
-    status: TaskStatus;
-  };
   /** A specialist entering (`ended_at` null) or leaving a session's room. */
   agent?: { agent_id: string; session: string; agent_type: string | null; ts: number; stop: boolean };
   message?: {
     ts: number;
     session: string | null;
-    team: string | null;
     kind: string;
     from_: string | null;
     to_: string | null;
@@ -61,7 +46,6 @@ export type Mapped = {
 
 const MESSAGE_KINDS = new Set([
   "session_message",
-  "teammate_idle",
   "notification",
   "session_start",
   "session_end",
@@ -70,11 +54,8 @@ const MESSAGE_KINDS = new Set([
 const SESSION_STATUS: Record<string, string | null> = {
   session_start: "running",
   session_end: "ended",
-  teammate_idle: "idle",
   notification: "needs_input",
   session_message: "running",
-  task_created: "running",
-  task_completed: "running",
 };
 
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
@@ -97,7 +78,7 @@ export function mapEvent(evt: JournalEvent): Mapped | null {
     const text = str(evt.text);
     if (!hq || !text) return null;
     out.session = { name: hq, cwd: str(evt.cwd), status: "idle", ts };
-    out.message = { ts, session: hq, team: str(evt.team), kind, from_: hq, to_: "owner", text, delivery: "terminal" };
+    out.message = { ts, session: hq, kind, from_: hq, to_: "owner", text, delivery: "terminal" };
     return out;
   }
   // A subagent (the kit's explore/task/reviewer…) starts or stops inside a session.
@@ -112,7 +93,7 @@ export function mapEvent(evt: JournalEvent): Mapped | null {
   }
   // owner_message is written by this UI's API only; a journal line claiming to
   // be one is dropped so the hook path cannot speak as the owner.
-  if (!MESSAGE_KINDS.has(kind) && kind !== "task_created" && kind !== "task_completed") return null;
+  if (!MESSAGE_KINDS.has(kind)) return null;
   const from = str(evt.from);
   const session = hq ?? (kind === "session_message" && from && isTmuxName(from) ? from : sessionId);
   if (session && session === sessionId && !hq) out.sid = sessionId;
@@ -122,46 +103,21 @@ export function mapEvent(evt: JournalEvent): Mapped | null {
   const base = {
     ts,
     session,
-    team: str(evt.team),
     kind,
     from_: str(evt.from),
     to_: str(evt.to),
     text: str(evt.text),
   };
 
-  if (kind === "task_created" || kind === "task_completed") {
-    const taskId = str(evt.task_id);
-    if (!taskId) return null;
-    const explicit = str(evt.status);
-    const status: TaskStatus =
-      kind === "task_completed"
-        ? "done"
-        : explicit && (TASK_STATUSES as readonly string[]).includes(explicit)
-          ? (explicit as TaskStatus)
-          : "todo";
-    out.task = {
-      task_id: taskId,
-      session,
-      subject: str(evt.subject),
-      role: str(evt.role),
-      prio: str(evt.prio),
-      status,
-    };
-    out.message = { ...base, text: str(evt.subject) ?? base.text };
-    return out;
+  out.message = base;
+  if (kind === "session_message") {
+    const names = [
+      [base.from_, str(evt.from_name)],
+      [base.to_, str(evt.to_name)],
+    ].flatMap(([id, name]) => (id && name && name.length <= 64 ? [{ session_id: id, name }] : []));
+    if (names.length) out.names = names;
   }
-  if (MESSAGE_KINDS.has(kind)) {
-    out.message = base;
-    if (kind === "session_message") {
-      const names = [
-        [base.from_, str(evt.from_name)],
-        [base.to_, str(evt.to_name)],
-      ].flatMap(([id, name]) => (id && name && name.length <= 64 ? [{ session_id: id, name }] : []));
-      if (names.length) out.names = names;
-    }
-    return out;
-  }
-  return null;
+  return out;
 }
 
 /** Rows keyed by a uuid we already know the hq-* name of are filed under that name. */
@@ -175,12 +131,12 @@ function resolveAlias(db: DatabaseSync, m: Mapped): Mapped {
     return x.session === m.sid ? { ...x, session: r.name } : x;
   };
   const agent = m.agent && m.agent.session === m.sid ? { ...m.agent, session: r.name } : m.agent;
-  return { ...m, sid: undefined, session: fix(m.session), task: fix(m.task), message: fix(m.message), agent };
+  return { ...m, sid: undefined, session: fix(m.session), message: fix(m.message), agent };
 }
 
 /**
  * Records uuid -> hq name once, and moves rows ingested before the name was
- * known (tasks, timeline, the uuid session row) onto the hq-* session.
+ * known (timeline, the uuid session row) onto the hq-* session.
  */
 export function applyAlias(db: DatabaseSync, a: { session_id: string; name: string }): boolean {
   const known = db.prepare("SELECT name FROM session_alias WHERE session_id = ?").get(a.session_id) as
@@ -190,7 +146,6 @@ export function applyAlias(db: DatabaseSync, a: { session_id: string; name: stri
   db.prepare(
     "INSERT INTO session_alias(session_id, name) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET name = excluded.name",
   ).run(a.session_id, a.name);
-  db.prepare("UPDATE tasks SET session = ? WHERE session = ?").run(a.name, a.session_id);
   db.prepare("UPDATE messages SET session = ? WHERE session = ?").run(a.name, a.session_id);
   db.prepare("UPDATE agents SET session = ? WHERE session = ?").run(a.name, a.session_id);
   db.prepare(
@@ -237,20 +192,6 @@ export function applyMapped(db: DatabaseSync, input: Mapped): void {
          ended_at = CASE WHEN ? THEN excluded.ended_at ELSE agents.ended_at END`,
     ).run(a.agent_id, a.session, a.agent_type, a.ts, a.stop ? a.ts : null, a.stop ? 1 : 0);
   }
-  if (m.task) {
-    const t = m.task;
-    db.prepare(
-      `INSERT INTO tasks(session, task_id, subject, role, prio, status, updated_at)
-       VALUES (?, ?, COALESCE(?, ?), ?, ?, ?, ?)
-       ON CONFLICT(task_id) DO UPDATE SET
-         session = COALESCE(excluded.session, tasks.session),
-         subject = COALESCE(?, tasks.subject),
-         role = COALESCE(excluded.role, tasks.role),
-         prio = COALESCE(excluded.prio, tasks.prio),
-         status = excluded.status,
-         updated_at = excluded.updated_at`,
-    ).run(t.session, t.task_id, t.subject, t.task_id, t.role, t.prio, t.status, stamp(), t.subject);
-  }
   if (m.message) {
     const x = m.message;
     if (x.kind === "session_reply") {
@@ -260,8 +201,8 @@ export function applyMapped(db: DatabaseSync, input: Mapped): void {
       if (dup) return;
     }
     db.prepare(
-      "INSERT INTO messages(ts, session, team, kind, from_, to_, text, delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run(x.ts, x.session, x.team, x.kind, x.from_, x.to_, x.text, x.delivery ?? null);
+      "INSERT INTO messages(ts, session, kind, from_, to_, text, delivery) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(x.ts, x.session, x.kind, x.from_, x.to_, x.text, x.delivery ?? null);
   }
 }
 

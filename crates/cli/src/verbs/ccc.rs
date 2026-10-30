@@ -21,14 +21,10 @@ use crate::verbs::uuid_sessions::Store;
 use crate::verbs::selfup;
 use crate::{assets, pkg, ui};
 
-mod auto;
 pub(crate) mod awake;
 mod cancel;
-mod close;
-mod ci;
 mod compact;
 mod danger;
-mod delegate;
 mod eco;
 mod fence;
 mod gate;
@@ -36,35 +32,21 @@ mod grant;
 mod guard;
 mod help;
 mod hint;
-mod idle;
-mod lease;
 mod looper;
 mod know;
-mod meet;
-mod merge;
 mod output_budget;
-mod msg;
-mod omp_team;
 mod omp_term;
-mod permit;
 mod term;
 pub(crate) mod report;
 mod risk;
 mod secret;
-mod ship_loop;
-mod ship_fast;
-pub(crate) mod resume;
+mod resume;
 mod pressure;
 pub(crate) mod reap;
 mod room;
 mod statusline;
-mod taskdone;
 mod urgent;
 mod goal;
-mod target;
-mod team;
-mod standup;
-mod wake;
 mod verify;
 
 #[derive(ClapArgs, Debug)]
@@ -76,8 +58,6 @@ mod verify;
       8sync ccc . ls                 list sessions in this repo
       8sync ccc . new <name>         create a session (refuses an existing name)
       8sync ccc . rm <name>          remove a session and its transcript
-      8sync ccc . <name> --team      same session with Claude Code agent teams on (lead + teammates; interactive)
-      8sync ccc . <name> --team --panes   teammates as tmux split panes (run inside tmux)
       8sync ccc help                 every ccc verb on one screen (Vietnamese)
       8sync ccc compact [--at N|--reset|--window N|--window-reset|--json]   auto-compact threshold (kit default 65% of the model window; needs a new session)
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
@@ -100,7 +80,7 @@ mod verify;
       rules    a short 8 Sync/Anthropic rules block in every session; full text (aup-audit/8sync-anthropic-rules.md)
                opens on demand through /rules
       agents   explore (haiku) · task · quick-task · reviewer · designer · verifier · researcher ·
-               pm (team lead) · architect (opus, writes docs/ADR/RFC only) · qa (tests only)
+               architect (opus, writes docs/ADR/RFC only) · qa (tests only) · critic
       skills   /ship · /rules (is X allowed?) · /aup-audit (repo vs Usage Policy) · /sec (secrets, deps, OWASP) ·
                /harden (Claude Code security posture) ·
                /do · /ship-auto · /ship-loop · /autopilot (graded auto levels) · deep-research + every bundled 8sync skill (linked to ~/.omp/skills)
@@ -115,8 +95,8 @@ mod verify;
                routine work continues; ask: questions without a real need go back to Claude to decide
       session  SessionStart digest of su-code/STATE.md + recent failure/validated notes (<= 6 KB,
                stable for the prompt cache); non-core bundled skills load name-only (skillOverrides)
-      hq hooks TaskCreated/TaskCompleted/TeammateIdle/Notification → `8sync hq hook <Event>`, async
-               (no-op until `8sync hq setup`)
+      hq hooks Notification/SessionStart/SessionEnd/SubagentStart/SubagentStop → `8sync hq hook <Event>`,
+               async (no-op until `8sync hq setup`)
       also     auto permission mode · medium effort · task list · claude.ai connectors off (each only
                if unset) · build/test commands skip the classifier · deny .env / keys / *.session / *.pkl and force-push
 "})]
@@ -207,8 +187,6 @@ pub fn run(a: Args) -> Result<()> {
             res
         }
         "compact" => compact::run(rest, &claude_dir(&env), &env.home),
-        "delegate" => delegate::run(rest, &env.home),
-        "idle" => idle::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription"),
         "secret" => secret::run(rest),
         "status" => status(&env, &root),
         "policy" => policy(rest),
@@ -216,103 +194,18 @@ pub fn run(a: Args) -> Result<()> {
         "cancel" => {
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
             let cwd = std::env::current_dir().context("no cwd")?;
-            if !cancel::run(&sessions(&env, &root), rest, id.as_deref(), &cwd, &env.home, view_now())? {
+            if !cancel::run(&sessions(&env, &root), rest, id.as_deref(), &cwd, view_now())? {
                 std::process::exit(1);
             }
             Ok(())
         }
-        // One team per git repo: a subfolder with its own package.json is not a project, a nested
-        // repo is (ai-game-studio inside 8sync-startup), and a worktree belongs to its repo.
-        "auto" => {
-            // A folder that only groups repos (8sync-startup/zus holds the submodules admin, ide,
-            // models, web; 8sync-startup/game holds 3d-game) is no project: `up` there started the
-            // PARENT repo's team. Checked before an untracked folder is `git init`ed.
-            let first = rest.first().map(String::as_str);
-            let starts = matches!(first, Some("up" | "add")) || first == Some("on") && rest.iter().any(|a| a == "--here");
-            // `close` only where the cwd is the repo itself: from a subfolder or a grouping folder
-            // (HQ can list one added by hand) it would close the whole parent repo.
-            if first == Some("close") {
-                return auto_team(&env, &close::close_root(&cwd)?, rest);
-            }
-            let before = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
-            if let Some(kids) = grouping_folder(&cwd, &before).filter(|_| starts) {
-                let repo = before;
-                bail!(
-                    "{} không phải repo riêng: nó là thư mục của repo {} và chứa repo con: {}.\nTeam, board và phòng chạy theo repo → `cd` vào repo muốn làm rồi chạy lại (vd `cd {}`), hoặc chạy ở {} nếu thật sự muốn team cho cả repo cha.",
-                    cwd.display(),
-                    repo.display(),
-                    kids.join(", "),
-                    cwd.join(&kids[0]).display(),
-                    repo.display()
-                );
-            }
-            if matches!(first, Some("up" | "add")) {
-                adopt_here(&cwd, true);
-            }
-            let repo = crate::verbs::here::repo_of(&cwd).unwrap_or_else(|| root.clone());
-            // `up` does it under its lock (auto_team); `on --here` once its arguments passed and the
-            // scope moved here (the nested repo is out of auto by then, revive no longer opens it).
-            let here = rest.first().is_some_and(|a| a == "on") && rest.iter().any(|a| a == "--here");
-            if rest.first().is_some_and(|a| a == "revive") {
-                // Shots whose 8sync died leave Chromium rendering: HQ runs revive every minute.
-                crate::verbs::shot::sweep_zombies();
-                // Only the roots `auto up` brought a team up in (HQ calls this without a cwd), one
-                // revive at a time (HQ and a boot hook can both fire it).
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-                // One deadline for every root of this run (HQ kills `revive` at 120 s), the lock
-                // wait included.
-                team::run_clock_start();
-                // A `guard now` pass holds the lock a few seconds: wait for it (≤ 10 s) rather than
-                // lose this tick; a revive or `up` still running after that keeps it.
-                let mut lock = team::revive_lock(&env.home, now)?;
-                for _ in 0..20 {
-                    if lock.is_some() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    lock = team::revive_lock(&env.home, now)?;
-                }
-                let Some(_lock) = lock else { return Ok(()) };
-                // Lease liên tục ([`lease::tick`]): API key within the $/hour budget; a subscription
-                // only on a prompt the owner typed in the last 30 min.
-                let subscription = login_kind_at(&env.home).kind == "subscription";
-                if let Some(l) = lease::tick(&env.home, subscription, now, || lease::presence(&claude_dir(&env), now)) {
-                    println!("{l}");
-                }
-                // Pinned projects first: rooms past this run's deadline open at the next tick.
-                for r in lease::revive_order(&env.home, team::team_roots(&env.home)) {
-                    let r = PathBuf::from(r);
-                    if let Err(e) = auto_team(&env, &r, rest) {
-                        eprintln!("{}: {e:#}", r.display());
-                    }
-                }
-                Ok(())
-            } else if rest.first().is_some_and(|a| a == "guard") && rest.get(1).is_some_and(|a| a == "now") {
-                guard_now(&env, &rest[2..])
-            } else if team::wants(rest) {
-                auto_team(&env, &repo, rest)
-            } else {
-                auto::run(rest, &env.home, login_kind_at(&env.home).kind == "subscription", &repo, || {
-                    sessions(&env, &repo).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect()
-                })?;
-                if here {
-                    down_nested(&env, &repo)?;
-                }
-                Ok(())
-            }
-        }
-        "meet" => {
-            let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
-            meet::run(&sessions(&env, &root), rest, id.as_deref(), &std::env::current_dir().context("no cwd")?, view_now())
-        }
         "risk" => risk::run(rest, &std::env::current_dir().context("no cwd")?),
         "term" => term::run(rest, &env),
-        "stop" => stop_all(&env, rest),
         "awake" => {
             let o = awake::parse(rest)?;
-            // `claude` is only needed to watch the rooms; never with a console window (a detached hold).
+            // `claude` is only needed to watch the sessions; never with a console window (a detached hold).
             let bin = if o.while_rooms { Some(awake::Quiet { exe: ensure_claude(true)?, root: env.home.clone() }) } else { None };
-            awake::run(&o, bin.as_ref().map(|b| b as &dyn team::Claude), login_kind_at(&env.home).kind == "subscription", &env.home)
+            awake::run(&o, bin.as_ref().map(|b| b as &dyn awake::Claude), &env.home)
         }
         "hint" => {
             let cwd = std::env::current_dir().context("no cwd")?;
@@ -328,13 +221,8 @@ pub fn run(a: Args) -> Result<()> {
         "know" => {
             let id = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
             let me = id.and_then(|id| sessions(&env, &root).load().sessions.into_iter().find(|s| s.conversation_id == id).map(|s| s.name));
-            let day = standup::utc_stamp(view_now())[..10].to_string();
+            let day = utc_stamp(view_now())[..10].to_string();
             know::run(rest, &env.home, &root, me.as_deref(), &day)
-        }
-        "msg" => {
-            let ccc = sessions(&env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
-            let omp = crate::verbs::session::load(&env, &root).sessions.into_iter().map(|s| s.name).collect();
-            msg::run(rest, &env.home, &root, &msg::rooms(&root, ccc, omp))
         }
         "ls" | "list" => {
             let (key, reverse) = super::session_view::sort_args(rest)?;
@@ -352,51 +240,23 @@ pub fn run(a: Args) -> Result<()> {
             ui::ok(&goal::run(&sessions(&env, &root), rest, id.as_deref(), view_now())?);
             Ok(())
         }
-        "standup" => {
-            // Other rooms = every registered session of this repo except the caller's own, with
-            // the goal/files it declared (`ccc . goal`), so the board can flag file overlaps.
-            // Only rooms active within a week (as the SessionStart block): a dead session's old
-            // claim must not raise overlap warnings forever.
-            let me = std::env::var("CLAUDE_CODE_SESSION_ID").unwrap_or_default();
-            let now = view_now();
-            let peers: Vec<standup::Peer> = sessions(&env, &root)
-                .load()
-                .sessions
-                .into_iter()
-                .filter(|s| s.conversation_id != me && now.saturating_sub(s.last_active) < 7 * 86400)
-                .map(|s| standup::Peer { name: s.name, goal: s.goal.as_ref().map(|g| g.text.clone()), files: s.goal.map(|g| g.files).unwrap_or_default() })
-                .collect();
-            // Exit 3 = a role is idle (1 stays "error"), so loops can tell the two apart.
-            if !standup::run(rest, &std::env::current_dir().context("no cwd")?, &peers)? {
-                std::process::exit(3);
-            }
-            Ok(())
-        }
         "rm" => cmd_rm(&env, &root, rest.first().context("usage: 8sync ccc . rm <name>")?),
         "new" => {
             let name = rest.first().context("usage: 8sync ccc . new <name>")?;
-            let root = adopt_here(&cwd, false).unwrap_or(root);
+            let root = adopt_here(&cwd).unwrap_or(root);
             prepare(&env, &root, offline);
             open(&env, &root, name, true, &rest[1..], offline)
         }
         "" => {
-            let root = adopt_here(&cwd, false).unwrap_or(root);
+            let root = adopt_here(&cwd).unwrap_or(root);
             prepare(&env, &root, offline);
             match sessions(&env, &root).load().last_used {
                 Some(name) => open(&env, &root, &name, false, &[], offline),
                 None => launch(Command::new(ensure_claude(offline)?).current_dir(&root)),
             }
         }
-        _ if verb.starts_with('-') && args.iter().any(|a| a == "--team" || a == "--panes") => {
-            let root = adopt_here(&cwd, false).unwrap_or(root);
-            prepare(&env, &root, offline);
-            match sessions(&env, &root).load().last_used {
-                Some(name) => open(&env, &root, &name, false, args, offline),
-                None => bail!("no session in this repo yet: start one with `8sync ccc . <name> --team`"),
-            }
-        }
         _ if verb.starts_with('-') => {
-            let root = adopt_here(&cwd, false).unwrap_or(root);
+            let root = adopt_here(&cwd).unwrap_or(root);
             prepare(&env, &root, offline);
             launch(Command::new(ensure_claude(offline)?).args(args).current_dir(&root))
         }
@@ -406,29 +266,26 @@ pub fn run(a: Args) -> Result<()> {
             bail!("`8sync ccc {name}` không phải verb ở dạng này — xem trợ giúp ở trên (hook chạy qua `8sync ccc hook <tên>`)")
         }
         name => {
-            let root = adopt_here(&cwd, false).unwrap_or(root);
+            let root = adopt_here(&cwd).unwrap_or(root);
             prepare(&env, &root, offline);
             open(&env, &root, name, false, rest, offline)
         }
     }
 }
 
-/// Commands that create work or open rooms first give an untracked folder inside another repo its
-/// own repo ([`crate::verbs::here::adopt_untracked`]), so its board, rooms and sessions are its own.
-/// A team (`auto up`/`add`) needs its own repo, so any untracked folder qualifies (a cluster repo
-/// often ignores its project folders: 8sync-startup has `/game/*`). A single session only adopts an
-/// EMPTY folder (`mkdir x; cd x`): an untracked folder with files may be new code of the parent
-/// (`crates/new/` before its first commit), and a nested repo would hide it from the parent.
-/// Read-only verbs never call this.
-fn adopt_here(cwd: &Path, team: bool) -> Option<PathBuf> {
-    if !team && std::fs::read_dir(cwd).map_or(true, |mut d| d.next().is_some()) {
+/// Commands that open a session first give an EMPTY untracked folder inside another repo its own
+/// repo ([`crate::verbs::here::adopt_untracked`], `mkdir x; cd x`), so its sessions are its own.
+/// An untracked folder with files may be new code of the parent (`crates/new/` before its first
+/// commit), and a nested repo would hide it from the parent. Read-only verbs never call this.
+fn adopt_here(cwd: &Path) -> Option<PathBuf> {
+    if std::fs::read_dir(cwd).map_or(true, |mut d| d.next().is_some()) {
         return None;
     }
     let parent = crate::verbs::here::repo_of(cwd)?;
     let dir = crate::verbs::here::adopt_untracked(cwd)?;
     let name = dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned());
     ui::ok(&format!(
-        "{name} chưa có git repo riêng (repo cha {} không theo dõi thư mục này) → đã `git init`: board, phòng và phiên của thư mục này ở đây",
+        "{name} chưa có git repo riêng (repo cha {} không theo dõi thư mục này) → đã `git init`: phiên của thư mục này ở đây",
         parent.display()
     ));
     Some(dir)
@@ -616,357 +473,34 @@ fn print_sessions(env: &Env, root: &Path, json: bool, key: super::session_view::
     Ok(())
 }
 
-/// 8sync's own flags on `ccc . <name>`: `--team` turns on Claude Code agent teams for
-/// this launch only (env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1, never written to a
-/// settings file), `--panes` shows teammates as tmux split panes (`teammateMode`).
-/// https://code.claude.com/docs/en/agent-teams — interactive only: `-p` spawns no teammates.
-fn team_flags(extra: &[String]) -> Result<(bool, bool, Vec<String>)> {
-    let team = extra.iter().any(|a| a == "--team");
-    let panes = extra.iter().any(|a| a == "--panes");
-    let rest: Vec<String> = extra.iter().filter(|a| *a != "--team" && *a != "--panes").cloned().collect();
-    // Any short-option cluster containing `p` (`-pc`, also `-xp`) counts as print:
-    // refusing too much is the safe direction for an interactive-only feature.
-    let is_print = |a: &String| {
-        a == "--print" || a.starts_with("--print=") || (a.starts_with('-') && !a.starts_with("--") && a.contains('p'))
-    };
-    if (team || panes) && rest.iter().any(is_print) {
-        bail!("--team needs an interactive session: Claude Code spawns no teammates with -p/--print");
-    }
-    Ok((team || panes, panes, rest))
+/// A JSON state file, None when missing or unreadable.
+pub(super) fn read_json(p: &Path) -> Option<Value> {
+    std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str(&t).ok())
 }
 
-/// `cwd` inside `repo` (not its root, not a card worktree) holding repos of its own (submodules,
-/// nested repos) one level down: their names, sorted.
-fn grouping_folder(cwd: &Path, repo: &Path) -> Option<Vec<String>> {
-    let (c, r) = (auto::canon(cwd), auto::canon(repo));
-    let rel = c.strip_prefix(&r).ok().filter(|rel| !rel.as_os_str().is_empty())?;
-    if rel.starts_with(Path::new(".claude").join("worktrees")) {
-        return None;
-    }
-    let mut kids: Vec<String> = std::fs::read_dir(cwd).ok()?.flatten().filter(|e| e.path().join(".git").exists()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
-    kids.sort();
-    (!kids.is_empty()).then_some(kids)
-}
-
-/// One team per folder tree: `up` / `on --here` in `root` first stops the team of a repo it sits in
-/// or holds (owner 2026-10-21: "vào đúng folder rồi mở ccc auto cứ bị dính ccc auto ở folder cha").
-/// A team that would not stop is an error: its rooms would run on with nothing tracking them.
-fn down_nested(env: &Env, root: &Path) -> Result<()> {
-    for n in team::nested_teams(&env.home, root) {
-        println!("{} lồng với {}: tắt team ở đó (mỗi cây thư mục một team)", n.display(), root.display());
-        auto_team(env, &n, &["down".to_string()]).with_context(|| format!("không tắt được team ở {} — chạy `8sync ccc auto down` ở đó rồi thử lại", n.display()))?;
-    }
-    Ok(())
-}
-
-/// `8sync stop all` (= `8sync ccc stop all`; owner 2026-10-23: "nên có lệnh 8sync stop all để dừng
-/// all gồm cả ccc auto"): auto off first (no revive brings a room back), then `auto down` in every
-/// team root auto knows (Claude Code + omp rooms, loop, sprint), then every background Claude Code
-/// session still listed anywhere. Sessions open in a terminal (the owner's own) are not touched.
-fn stop_all(env: &Env, rest: &[String]) -> Result<()> {
-    const USAGE: &str = "usage: 8sync stop all   (= 8sync ccc stop all: tắt auto, dừng mọi phòng nền Claude Code + omp của mọi dự án; phiên mở trong terminal giữ nguyên)";
-    if rest.iter().any(|a| a == "-h" || a == "--help") {
-        println!("{USAGE}");
-        return Ok(());
-    }
-    if rest != ["all"] {
-        bail!("{USAGE}");
-    }
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let subscription = login_kind_at(&env.home).kind == "subscription";
-    auto::set(&env.home, auto::Mode::Off, subscription, now)?;
-    auto::set_omp(&env.home, false, None, now)?;
-    println!("auto: TẮT (bật lại: `8sync ccc auto on` / `8sync ccc auto up`).");
-    let mut roots: Vec<PathBuf> = Vec::new();
-    for r in team::team_roots(&env.home).into_iter().chain(auto::remembered_roots(&env.home)) {
-        let p = PathBuf::from(r.trim_start_matches(r"\\?\"));
-        if p.is_dir() && !roots.iter().any(|o| auto::canon(o) == auto::canon(&p)) {
-            roots.push(p);
-        }
-    }
-    let mut failed = 0;
-    for r in &roots {
-        println!("— {}", r.display());
-        if let Err(e) = auto_team(env, r, &["down".to_string()]) {
-            failed += 1;
-            println!("  lỗi: {e:#}");
-        }
-    }
-    // Background sessions no team root covers (a root forgotten, a room started by hand).
-    let bin = team::Bin { exe: ensure_claude(true)?, root: &env.home };
-    let left: Vec<team::Live> = team::live(&team::Claude::run(&bin, &["agents".into(), "--json".into()])?)?.into_iter().filter(|l| l.background).collect();
-    for l in &left {
-        let id: String = l.id.chars().take(8).collect();
-        match team::Claude::run(&bin, &["stop".into(), id]) {
-            Ok(_) => println!("đã dừng phòng nền {} ({})", l.name, l.cwd),
-            Err(e) => {
-                failed += 1;
-                println!("không dừng được {}: {e:#}", l.name);
-            }
-        }
-    }
-    if failed > 0 {
-        bail!("{failed} chỗ chưa dừng được — xem dòng lỗi ở trên");
-    }
-    println!("xong: {} dự án, mọi phòng nền đã dừng. Phiên mở trong terminal không bị đóng.", roots.len());
-    Ok(())
-}
-
-/// `8sync ccc auto guard now`: one resource-guard pass ([`pressure::tick`]) for every team root
-/// where auto and the guard are on, outside `revive`. HQ fires it within seconds of a breach (owner
-/// 2026-10-21: "bị cao là auto xử lý liền luôn không có để lâu"); passes closer than
-/// [`pressure::NOW_GAP_S`] are skipped. It takes `revive`'s lock waiting ≤ 2 s and otherwise
-/// yields (a revive does the pass itself; revive waits ≤ 10 s for this one, never starved).
-/// `--json`: one object `{acted, skipped, rows}`; `acted` false = the pass changed nothing (no
-/// kill, restart, pause, resume or level change): HQ then backs off.
-fn guard_now(env: &Env, extra: &[String]) -> Result<()> {
-    if let Some(x) = extra.iter().find(|a| *a != "--json") {
-        bail!("không rõ `{x}`: dùng `8sync ccc auto guard now`");
-    }
-    let as_json = !extra.is_empty();
-    let clock = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let mut lock = team::revive_lock(&env.home, clock())?;
-    for _ in 0..4 {
-        if lock.is_some() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        lock = team::revive_lock(&env.home, clock())?;
-    }
-    let Some(_lock) = lock else {
-        if as_json {
-            println!("{}", serde_json::json!({ "acted": false, "skipped": "revive", "rows": [] }));
-        } else {
-            println!("máy: revive đang chạy, lượt bảo vệ chạy trong đó");
-        }
-        return Ok(());
-    };
-    let now = clock();
-    let subscription = login_kind_at(&env.home).kind == "subscription";
-    let gated = !auto::status(&env.home, subscription, now)["gate"].is_null();
-    let listing = reap::Listing::new(now);
-    let exe = ensure_claude(true)?;
-    let (mut rows, mut acted) = (Vec::new(), false);
-    for r in team::team_roots(&env.home) {
-        let root = PathBuf::from(r);
-        let registry: Vec<(String, String)> = sessions(env, &root).load().sessions.into_iter().map(|s| (s.name, s.conversation_id)).collect();
-        let bin = team::Bin { exe: exe.clone(), root: &root };
-        let (got, did) = pressure::tick(&env.home, &root, &bin, &registry, gated, now, pressure::NOW_GAP_S, &listing);
-        rows.extend(got);
-        acted |= did;
-    }
-    if as_json {
-        let rows: Vec<serde_json::Value> = rows.iter().map(|r| serde_json::json!({ "name": r.name, "role": r.role, "state": r.state })).collect();
-        println!("{}", serde_json::json!({ "acted": acted, "skipped": null, "rows": rows }));
-    } else {
-        for row in &rows {
-            println!("{} ({}): {}", row.name, row.role, row.state);
-        }
-    }
-    Ok(())
-}
-
-/// How long `auto up` waits for a running revive / up to finish.
-const UP_LOCK_WAIT_S: u64 = 150;
-
-/// `8sync ccc auto up|down|close` ([`team`], [`close`]): the project's role rooms as Claude Code
-/// background sessions; `close` stops everything of the project.
-fn auto_team(env: &Env, root: &Path, rest: &[String]) -> Result<()> {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let subscription = login_kind_at(&env.home).kind == "subscription";
-    let store = sessions(env, root);
-    let bin = team::Bin { exe: ensure_claude(true)?, root };
-    let has = |id: &str| transcripts(env, id).next().is_some();
-    let sessions_dir = claude_dir(env).join("sessions");
-    let title = |n: &str| display_name(&sessions_dir, n, root);
-    // The kit writes its hooks into settings.json: rooms that started before that run old hooks.
-    let kit_at = std::fs::metadata(claude_dir(env).join("settings.json"))
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as u64);
-    let pending_ask = |id: &str| transcripts(env, id).find_map(|p| delegate::pending_ask(&p));
-    let t = team::Team { home: &env.home, root, store: &store, subscription, claude: &bin, has_transcript: &has, pending_ask: &pending_ask, title: &title, kit_at };
-    if rest[0] == "revive" {
-        let rows = team::revive(&t, auto::DEFAULT_LOOP_MIN, now)?;
-        for r in &rows {
-            println!("{} ({}): {} {}", r.name, r.role, r.state, r.short);
-        }
-        // Approved cards land here, in code, while the owner's self-merge grant holds; not past this
-        // revive's deadline (the next tick merges). Not behind the lease/usage gate: a merge is `gh`
-        // calls, no Claude tokens, and the owner's grant + the reviewed SHA are its rails (owner
-        // 2026-10-23: approved cards sat while the lease had run out and the grant was still valid).
-        if team::revive_left() < std::time::Duration::from_secs(15) {
-            println!("merge nền: để lượt revive sau (hết giờ của lượt này)");
-        } else if auto::running(&env.home) && auto::in_scope(&env.home, Some(&root.to_string_lossy())) {
-            match merge::background(&env.home, root, now) {
-                Ok(lines) => lines.iter().for_each(|l| println!("{l}")),
-                Err(e) => println!("merge nền: lỗi — {e:#}"),
-            }
-        }
-        return Ok(());
-    }
-    if rest[0] == "close" {
-        return close::run(env, &t, &rest[1..], now);
-    }
-    if rest[0] == "down" {
-        // `down --only <room,room…>`: those rooms alone (HQ "Tự soi ảnh" off, "Tắt Sấm Sét");
-        // auto and the other rooms run on.
-        if let [_, flag, list] = rest {
-            if flag == "--only" && !list.starts_with("--") {
-                let names = team::only_list(list);
-                let r = team::down_only(&t, &names, now)?;
-                for (name, stopped) in &r.rooms {
-                    let state = if *stopped { "đã dừng" } else { "không có phiên nền đang chạy của" };
-                    println!("{state} phòng {name} (đã bỏ khỏi team; thêm lại: `8sync ccc auto up --add {name}`).");
-                }
-                for (id, room, lane) in &r.freed {
-                    println!("card #{id} của {room} trả về cột {lane}.");
-                }
-                // The same rooms of team omp (`omp-<room>`), and the cards they held.
-                let d = omp_team::down_only(env, root, &names)?;
-                if !d.stopped.is_empty() {
-                    let held: Vec<&str> = d.stopped.iter().map(String::as_str).collect();
-                    let freed = target::release(&env.home, root, &held, "tắt (down --only)", now)?;
-                    println!("đội omp: đã dừng {}.", d.stopped.join(", "));
-                    for (id, room, lane) in &freed {
-                        println!("card #{id} của {room} trả về cột {lane}.");
-                    }
-                }
-                println!("Các phòng khác vẫn chạy.");
-                return Ok(());
-            }
-        }
-        if let Some(x) = rest.get(1) {
-            bail!("không rõ `{x}`\n{}", team::USAGE);
-        }
-        let stopped = team::down(&t, now)?;
-        if stopped.is_empty() {
-            println!("không có phòng nền nào của dự án này đang chạy.");
-        } else {
-            println!("đã dừng {} phòng nền: {} (hội thoại giữ nguyên; mở lại: `8sync ccc auto up`).", stopped.len(), stopped.join(", "));
-        }
-        omp_team::print_down(&omp_team::down(env, root)?);
-        let st = auto::status(&env.home, subscription, now);
-        let left: Vec<&str> = st["repos"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|r| r.trim_start_matches(r"\\?\")).collect();
-        if st["on"] == true && !left.is_empty() {
-            println!("auto vẫn chạy cho: {}. Phòng mở trong terminal không bị đóng.", left.join(" + "));
-        } else {
-            println!("auto: TẠM DỪNG (owner). Phòng mở trong terminal không bị đóng.");
-        }
-        return Ok(());
-    }
-    // `--omp-model <provider/model>` (team omp's model) is ours; team::parse sees the rest.
-    let mut args = rest[1..].to_vec();
-    let team_model = match args.iter().position(|a| a == "--omp-model") {
-        Some(i) => {
-            let m = args.get(i + 1).filter(|v| !v.starts_with("--")).cloned().ok_or_else(|| anyhow::anyhow!("--omp-model cần một giá trị\n{}", team::USAGE))?;
-            args.drain(i..i + 2);
-            Some(auto::checked_model("--omp-model", &m)?)
-        }
-        None => None,
-    };
-    let mut o = team::parse(&args)?;
-    // `--add` joins the team running here, else is refused before anything is touched.
-    if o.add {
-        team::check_add(&t)?;
-    }
-    if team_model.is_some() && o.engine == Some(team::Engine::Ccc) {
-        bail!("--omp-model không đi cùng --ccc\n{}", team::USAGE);
-    }
-    // The engine: the flag (`--omp` = both, `--omp-only` = omp alone, `--ccc`), else what this project
-    // ran last (HQ's "Mở lại team" keeps a team what it was), else the Claude Code team (owner
-    // 2026-10-23: "mặc định giờ claude … ccc chính chủ làm mặc định như cũ"; omp opt-in). An omp
-    // engine without a usable omp model is refused: the subscription never runs outside Claude Code.
-    let help = args.iter().any(|a| a == "-h" || a == "--help");
-    let before = auto::engine_of(&env.home, root);
-    let engine = o.engine.or(before).unwrap_or(team::Engine::Ccc);
-    let blocked = if o.add || engine == team::Engine::Ccc {
-        auto::omp_blocked(&env.home)
-    } else {
-        auto::omp_on(&env.home, team_model.as_deref(), now).err().map(|e| e.to_string())
-    };
-    if !o.add {
-        if engine != team::Engine::Ccc {
-            if let Some(why) = &blocked {
-                bail!("đội omp: {why}\n{}", team::USAGE);
-            }
-        }
-        o.engine = Some(engine);
-    }
-    // One resumer at a time: HQ's revive and this `up` must not fork the same dead room twice.
-    // HQ's revive (every 2 min) holds this while it reopens rooms: wait for it rather than fail.
-    // The wait counts against `up`'s stagger budget (HQ gives `up` 300 s in all).
-    team::run_clock_start();
-    let mut waited = 0;
-    let _lock = loop {
-        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs());
-        if let Some(l) = team::revive_lock(&env.home, at)? {
-            break l;
-        }
-        if waited >= UP_LOCK_WAIT_S {
-            bail!("`auto revive` / `auto up` khác vẫn đang mở phòng sau {UP_LOCK_WAIT_S} giây — chạy lại sau ít phút");
-        }
-        if waited == 0 {
-            println!("đang có `auto revive` / `auto up` khác mở phòng (HQ tự mở lại phòng chết) — chờ tối đa {UP_LOCK_WAIT_S} giây…");
-        }
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        waited += 3;
-    };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(now, |d| d.as_secs());
-    // Under the lock (no revive re-opens what this stops), before anything here starts; `--add`
-    // stops nothing (up_locked).
-    // A project switching to an omp-only team: its Claude Code rooms stop first (they would run on
-    // unmanaged, never revived and never mailed). Then the engine is recorded for this project.
-    if let (false, Some(engine)) = (o.add || help, o.engine) {
-        // Back to the Claude Code team alone: this project's omp rooms stop (they hold ~1.3 GB each).
-        if engine == team::Engine::Ccc && before.is_some_and(|b| b != team::Engine::Ccc) {
-            omp_team::print_down(&omp_team::down(env, root)?);
-        }
-        if !engine.ccc() && before.is_none_or(team::Engine::ccc) {
-            let stopped = team::down(&t, now)?;
-            if !stopped.is_empty() {
-                println!("đổi sang đội omp: đã dừng {} phòng Claude Code: {} (hội thoại giữ nguyên; lại đội Claude: `8sync ccc auto up --ccc`).", stopped.len(), stopped.join(", "));
-            }
-        }
-        auto::set_engine(&env.home, root, engine, now)?;
-    }
-    let (status, gone, rows) = team::up_locked(&t, &o, now, || if help { Ok(()) } else { down_nested(env, root) })?;
-    if !rows.is_empty() {
-        team::print_up(&status, &gone, &rows, o.every, subscription);
-    }
-    // Team omp: the default engine, `--omp`, or omp in auto.json's teams (turned on from HQ); never for `--add`.
-    if !o.add && omp_team::wanted(o.engine != Some(team::Engine::Ccc), &status) {
-        match blocked {
-            Some(why) => println!("đội omp: không mở — {why}"),
-            None => {
-                let model = auto::omp_model(&env.home);
-                omp_team::print_up(&omp_team::up(env, root, &o.roles, model.as_deref()), model.as_deref());
-            }
-        }
-    }
-    Ok(())
+/// `YYYY-MM-DDTHH:MMZ` for unix seconds (UTC, no chrono).
+pub(super) fn utc_stamp(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}Z", rem / 3600, rem % 3600 / 60)
 }
 
 /// Create-or-resume `name`: a fresh session takes the registry UUID and the
 /// name as its display title; once Claude Code has a transcript, resume by UUID.
 fn open(env: &Env, root: &Path, name: &str, refuse_existing: bool, extra: &[String], offline: bool) -> Result<()> {
-    let (team, panes, extra) = team_flags(extra)?;
-    let extra = &extra[..];
     let s = sessions(env, root).touch(name, refuse_existing)?;
     let claude = ensure_claude(offline)?;
     ui::info(&format!("claude · {} · {}", s.name, root.display()));
     let mut cmd = Command::new(claude);
-    if team {
-        cmd.env("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1");
-        if panes && std::env::var_os("TMUX").is_some() {
-            cmd.args(["--settings", r#"{"teammateMode":"tmux"}"#]);
-        } else if panes {
-            ui::warn("--panes needs tmux (run inside a tmux session); teammates stay in-process");
-        }
-        ui::info("agent team on · ask the lead e.g. \"spawn 3 teammates: backend (agent task), qa (agent qa), reviewer (agent reviewer); each owns different files\"");
-        ui::info("teammates: ↑/↓ select · Enter open/message · x stop · Ctrl+T task list · 3–5 teammates; cost grows per teammate");
-    }
     if transcripts(env, &s.conversation_id).next().is_some() {
         cmd.args(["--resume", &s.conversation_id]);
     } else {
@@ -1038,15 +572,6 @@ fn display_name(sessions_dir: &Path, name: &str, root: &Path) -> String {
     }
 }
 
-/// `8sync ccc auto board --json` as if run with `cwd` as the working directory (the HQ core's
-/// `/v1/board`): same repo resolution as the `auto` verb, same object.
-pub(crate) fn board_json_at(home: &Path, cwd: &Path) -> Result<serde_json::Value> {
-    let root = crate::verbs::here::detect_project_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
-    let repo = crate::verbs::here::repo_of(cwd).unwrap_or(root);
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    auto::board_value(home, &repo, now)
-}
-
 fn claude_dir(env: &Env) -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| env.home.join(".claude"))
 }
@@ -1111,7 +636,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 47] = [
+const KIT_FILES: [(&str, &str); 43] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -1119,7 +644,6 @@ const KIT_FILES: [(&str, &str); 47] = [
     ("claude/agents/designer.md", "agents/designer.md"),
     ("claude/agents/verifier.md", "agents/verifier.md"),
     ("claude/agents/researcher.md", "agents/researcher.md"),
-    ("claude/agents/pm.md", "agents/pm.md"),
     ("claude/agents/architect.md", "agents/architect.md"),
     ("claude/agents/qa.md", "agents/qa.md"),
     ("claude/agents/critic.md", "agents/critic.md"),
@@ -1137,10 +661,7 @@ const KIT_FILES: [(&str, &str); 47] = [
     ("claude/skills/ship-loop/SKILL.md", "skills/ship-loop/SKILL.md"),
     ("claude/skills/autopilot/SKILL.md", "skills/autopilot/SKILL.md"),
     ("claude/skills/ship-tick/SKILL.md", "skills/ship-tick/SKILL.md"),
-    ("claude/skills/auto-team/SKILL.md", "skills/auto-team/SKILL.md"),
-    ("claude/skills/team-tick/SKILL.md", "skills/team-tick/SKILL.md"),
     ("claude/skills/sysdesign/SKILL.md", "skills/sysdesign/SKILL.md"),
-    ("claude/skills/sprint/SKILL.md", "skills/sprint/SKILL.md"),
     ("claude/skills/clean/SKILL.md", "skills/clean/SKILL.md"),
     ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
     ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
@@ -1170,7 +691,9 @@ const KIT_FILES: [(&str, &str); 47] = [
 /// Files an earlier kit installed and this one dropped: deleted while they are
 /// still exactly what 8sync wrote (the `plan` agent: the main agent plans in
 /// its own context instead of paying a second Opus context for it).
-const RETIRED: [&str; 1] = ["agents/plan.md"];
+/// The board / auto-team skills (`/auto-team`, `/team-tick`, `/sprint`) and the agent-team lead
+/// `pm` went with the board (owner 2026-10-30); emptied skill folders go too.
+const RETIRED: [&str; 5] = ["agents/plan.md", "agents/pm.md", "skills/auto-team/SKILL.md", "skills/team-tick/SKILL.md", "skills/sprint/SKILL.md"];
 
 /// Hashes of the files as 8sync last wrote them: a file whose current content
 /// no longer matches was edited by the user and is left alone.
@@ -1299,7 +822,22 @@ spend money) → JUSTIFIED.\n\
 /// Hook roles earlier kits installed and this one dropped: (event, role). The
 /// Haiku `Stop` prompt gate re-sent the whole transcript at every turn end
 /// (~2.6 s and ~30k Haiku tokens per turn end, ~48k per bench run); `verify-stop` now runs the gate natively.
-const RETIRED_HOOKS: [(&str, &str); 1] = [("Stop", "8sync gate: stop")];
+/// The board / auto-team hooks went with the board (owner 2026-10-30: no board, no cards, no team
+/// rooms; 8sync never pushes work into a session by itself): "không ai rảnh" (`hook idle` on Stop
+/// and TeammateIdle, `hook task-done`), the critic-answers-for-the-owner `hook delegate`, the
+/// scheduled-prompt `hook wake`, the away-owner `hook permit`, and the agent-team events HQ mirrored.
+const RETIRED_HOOKS: [(&str, &str); 10] = [
+    ("Stop", "8sync gate: stop"),
+    ("Stop", "hook idle"),
+    ("TeammateIdle", "hook idle"),
+    ("TaskCompleted", "hook task-done"),
+    ("PreToolUse", "hook delegate"),
+    ("UserPromptSubmit", "hook wake"),
+    ("PermissionRequest", "hook permit"),
+    ("TaskCreated", "hq TaskCreated"),
+    ("TaskCompleted", "hq TaskCompleted"),
+    ("TeammateIdle", "hq TeammateIdle"),
+];
 
 /// Hook-matcher for the guard: Windows without Git Bash only has `PowerShell`,
 /// whose commands no `Bash(...)` rule or `Bash` matcher sees.
@@ -1318,8 +856,8 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
-const CORE_SKILLS: [&str; 18] =
-    ["ship", "ship-loop", "ship-tick", "autopilot", "auto-team", "team-tick", "sprint", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "sysdesign", "8sync-cli", "trail", "karpathy-guidelines", "ponytail", "impeccable"];
+const CORE_SKILLS: [&str; 15] =
+    ["ship", "ship-loop", "ship-tick", "autopilot", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "sysdesign", "8sync-cli", "trail", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
@@ -1329,6 +867,12 @@ pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
 fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
     ui::step("Claude Code kit → ~/.claude (agents · skills · verify hook · guard · stop + ask gates)");
     crate::verbs::harness::legacy::retire_mcp(&env.home);
+    // features.toml keys of the deleted board/auto switches (`delegate`, `delegate_after_s`, `no_idle`).
+    match crate::verbs::harness::features::retire_dead_keys(&env.home) {
+        Ok(true) => ui::ok("features.toml: removed the retired delegate/no_idle keys"),
+        Ok(false) => {}
+        Err(e) => ui::warn(&format!("features.toml: retired keys not removed: {e:#}")),
+    }
     let dir = dir.to_path_buf();
     let stamp_path = dir.join(KIT_STAMP);
     let mut stamps: BTreeMap<String, String> = std::fs::read_to_string(&stamp_path)
@@ -1366,6 +910,10 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
             Ok(cur) if stamps.get(rel) == Some(&fnv1a(&cur)) => {
                 std::fs::remove_file(&target).with_context(|| format!("remove {}", target.display()))?;
                 ui::ok(&format!("removed retired {}", target.display()));
+                if rel.starts_with("skills/") {
+                    // Only when nothing else is left in it (remove_dir refuses a non-empty folder).
+                    let _ = target.parent().map(std::fs::remove_dir);
+                }
             }
             Ok(_) if stamps.contains_key(rel) => ui::info(&format!("kept your edited {} (no longer part of the kit)", target.display())),
             _ => {}
@@ -1585,6 +1133,8 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             groups.retain(|g| hook_role(g).as_deref() != Some(role));
         }
     }
+    // An event left with no group at all (TaskCreated, TeammateIdle…) goes too.
+    hooks.retain(|ev, g| !RETIRED_HOOKS.iter().any(|(e, _)| e == ev) || g.as_array().is_none_or(|a| !a.is_empty()));
     upsert_hook_group(
         hooks,
         "Stop",
@@ -1603,20 +1153,6 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
                 "continueOnBlock": true
             }]
         }),
-    );
-    // Owner-delegated questions (`8sync ccc delegate on`): a no-op unless the owner turned it on;
-    // then product/technical AskUserQuestion calls are denied with "let the critic pick".
-    upsert_hook_group(
-        hooks,
-        "PreToolUse",
-        json!({ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "delegate"], "timeout": 5 }] }),
-    );
-    // A permission prompt in a room the owner is away from: wait for the owner's HQ click, then deny
-    // with a "skip it, note the card, go on" message. A no-op unless auto + delegate are on.
-    upsert_hook_group(
-        hooks,
-        "PermissionRequest",
-        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "permit"], "timeout": permit::HOOK_TIMEOUT_S }] }),
     );
     // The guard stays on the broad matcher with no `if`: the hook `if` field takes
     // a single permission rule, and narrowing it would let some commands/edits
@@ -1667,14 +1203,7 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
         "UserPromptSubmit",
         json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "resume-note"], "timeout": 5 }] }),
     );
-    // Scheduled HQ prompts (`[8sync:wake]`): skip a fire while the session is busy or just ran one,
-    // before it reaches Claude (UserPromptSubmit also fires on CronCreate / /loop prompts).
-    upsert_hook_group(
-        hooks,
-        "UserPromptSubmit",
-        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "wake"], "timeout": 5 }] }),
-    );
-    // Agent-team events -> `8sync hq hook <Event>`. Event names, `async` (background, never
+    // Session events -> `8sync hq hook <Event>`. Event names, `async` (background, never
     // blocks) and `timeout` (seconds) per https://code.claude.com/docs/en/hooks (checked
     // 2026-10-12). `hq hook` is a fast no-op until `8sync hq setup`, so always registering is safe.
     for ev in HQ_EVENTS {
@@ -1684,12 +1213,6 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
             json!({ "hooks": [{ "type": "command", "command": exe, "args": ["hq", "hook", ev], "async": true, "timeout": 15 }] }),
         );
     }
-    // "Không ai rảnh" (`ccc idle on`): sync, so TeammateIdle exit 2 / Stop block can keep the
-    // team working. A no-op while the feature is off (default). Separate groups from `hq hook`.
-    upsert_hook_group(hooks, "TeammateIdle", json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "idle"], "timeout": 10 }] }));
-    upsert_hook_group(hooks, "Stop", json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "idle"], "timeout": 10 }] }));
-    // Its quality gate: exit 2 keeps a task open when code was edited after the last check.
-    upsert_hook_group(hooks, "TaskCompleted", json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "task-done"], "timeout": 10 }] }));
     // Terminal-mode replies for the local journal; separate group from `ccc hook verify-stop`.
     upsert_hook_group(
         hooks,
@@ -1705,7 +1228,7 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
     Ok(())
 }
 
-const HQ_EVENTS: [&str; 8] = ["TaskCreated", "TaskCompleted", "TeammateIdle", "Notification", "SessionStart", "SessionEnd", "SubagentStart", "SubagentStop"];
+const HQ_EVENTS: [&str; 5] = ["Notification", "SessionStart", "SessionEnd", "SubagentStart", "SubagentStop"];
 
 /// Which 8sync hook one hook entry is: `hook verify` / `hook guard` for the
 /// native commands, the first sentence of a gate prompt (`8sync gate: stop`).
@@ -2424,36 +1947,12 @@ fn hook(rest: &[String]) -> Result<()> {
                 None
             })
         }
-        // Sync: TeammateIdle exits 2 itself; the lead's Stop gets a block decision on stdout.
-        Some("idle") => {
-            // dirs: $HOME on unix, the profile folder on Windows.
-            let home = dirs::home_dir().filter(|h| h.is_absolute());
-            home.and_then(|h| idle::hook(&input, &h, login_kind_at(&h).kind == "subscription"))
-        }
-        // Sync TaskCompleted quality gate (same switch as idle): exit 2 + stderr keeps the task open.
-        Some("task-done") => {
-            if let Some(msg) = dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| taskdone::hook(&input, &h)) {
-                eprintln!("{msg}");
-                std::process::exit(2);
-            }
-            None
-        }
-        Some("wake") => {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| {
-                let sub = login_kind_at(&h).kind == "subscription";
-                wake::hook(&input, &h, now, sub)
-            })
-        }
-        Some("delegate") => dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| delegate::hook(&input, &h)),
-        // PermissionRequest: an away owner's room gets the owner's HQ click, or a deny that keeps it working.
-        Some("permit") => dirs::home_dir().filter(|h| h.is_absolute()).and_then(|h| permit::hook(&input, &h)),
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|idle|task-done|delegate|permit|wake   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -2524,45 +2023,64 @@ mod tests {
         assert!(help::TEXT.contains("/ship-tick [slug]"));
     }
 
-    /// `/auto-team` (owner-only) runs a fixed team of Desktop sessions; each room's cron prompt is
-    /// `/team-tick`, so that one must stay model-invocable, stop when the team is cancelled, and
-    /// read the team files from the main checkout (rooms work in card worktrees). Owner 2026-10-28:
-    /// "các session cố định để sài á chứ không phải là tạo session mới liên tục".
+    /// The board / auto-team skills and hooks are gone (owner 2026-10-30: no board, no cards, no
+    /// team rooms). An old kit on disk gets them removed by the next `8sync ccc kit` / `8sync up`:
+    /// the skill files only while still exactly what 8sync wrote, the hooks only where the command
+    /// is 8sync's own, the dead features.toml keys, and nothing of the owner's.
     #[test]
-    fn auto_team_is_owner_only_and_team_tick_is_its_model_invocable_cron() {
-        let team = assets::read("claude/skills/auto-team/SKILL.md").unwrap();
-        let front = team.split("---").nth(1).unwrap();
-        assert!(front.contains("name: auto-team") && front.contains("disable-model-invocation: true"), "{front}");
-        // Owner (2026-10-29): the team is 100% ECC + Desktop sessions driven by prompt; no 8sync
-        // rooms, board or HQ. Team files live under the git common dir: shared by every worktree,
-        // never committed, and apart from `su-code/ship/ACTIVE` (whose `cancel` stops other loops).
-        for needle in ["`CronList`", "`CronCreate`", "/team-tick", "`CronDelete`", "--git-common-dir` + `/ecc-team/`", "ROSTER.md", "BOARD.md", "ecc:team-agent-orchestration", "$T/ON", "set_session_title", "unarchive_session", "`limit: 200`", "`source_branch`", "`background`", "SendMessage", "[giao] card", "Ship", "RUBRIC.md", "Console API key"] {
-            assert!(team.contains(needle), "auto-team lacks {needle}");
+    fn kit_retires_the_board_skills_hooks_and_switches_on_an_old_machine() {
+        for rel in ["skills/auto-team/SKILL.md", "skills/team-tick/SKILL.md", "skills/sprint/SKILL.md"] {
+            assert!(!KIT_FILES.iter().any(|(_, r)| *r == rel) && RETIRED.contains(&rel), "{rel}");
         }
-        assert!(!team.contains("su-code/ship/ACTIVE"), "the team must not share ACTIVE with /ship-loop");
-        assert!(!team.contains("8sync ccc auto claim") && !team.contains("8sync ccc auto add"), "no 8sync board in /auto-team");
-        assert!(team.contains("Không bao giờ: mở session thứ hai cho cùng vai"), "auto-team must forbid session churn");
-        // Owner (2026-10-30): "auto-team only 3 session con", "cần hiệu quả optimize cao nhất", with
-        // the ECC skills they listed; each one is called on a trigger, never loaded into every prompt.
-        assert!(team.contains("Mặc định 3 session con = Build & Ship + Critic + R&D"), "default team is 3 sub-sessions");
-        for skill in ["ecc:loop-design-check", "ecc:continuous-agent-loop", "ecc:autonomous-agent-harness", "/ecc:learn", "/ecc:orch-fix-defect", "performance-optimization", "/ecc:security-scan", "ecc:agent-architecture-audit", "ecc:agent-security-hardening", "ecc:automation-audit-ops", "ecc:agent-self-evaluation", "ecc:deep-research", "ecc:market-research", "/ecc:marketing-campaign", "/ecc:auto-update"] {
-            assert!(team.contains(skill), "auto-team lacks ECC skill {skill}");
+        for s in ["auto-team", "team-tick", "sprint"] {
+            assert!(!CORE_SKILLS.contains(&s), "{s}");
         }
-        assert!(team.contains("Gọi skill ECC theo trigger, không nạp hết vào mọi prompt"), "ECC skills load on a trigger");
-        assert!(team.contains("tối đa 2 lượt"), "the fix/review loop is capped");
-        let tick = assets::read("claude/skills/team-tick/SKILL.md").unwrap();
-        assert!(!tick.contains("urgent"), "Desktop sessions are not `8sync ccc .` sessions: urgent bails there");
-        assert!(!tick.contains("8sync ccc auto"), "no 8sync board in /team-tick");
-        let front = tick.split("---").nth(1).unwrap();
-        assert!(front.contains("name: team-tick") && !front.contains("disable-model-invocation"), "{front}");
-        for needle in ["`CronDelete`", "auto-team", "--git-common-dir` + `/ecc-team/`", "$T/ON", "BOARD", "SendMessage", "PushNotification", "Không mở session mới"] {
-            assert!(tick.contains(needle), "team-tick lacks {needle}");
+        let tmp = std::env::temp_dir().join(format!("8sync-retire-board-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let home = tmp.join("home");
+        let dir = tmp.join("claude");
+        let env = Env { home: home.clone(), xdg_config: home.join(".config"), os_id: String::new(), os_id_like: String::new() };
+        // The old kit: two skills as 8sync wrote them, one the owner edited since, and a stamp.
+        let (ours, edited) = ("---\nname: auto-team\n---\nold\n", "---\nname: sprint\n---\nmy notes\n");
+        for (rel, body) in [("skills/auto-team/SKILL.md", ours), ("skills/team-tick/SKILL.md", ours), ("skills/sprint/SKILL.md", edited)] {
+            std::fs::create_dir_all(dir.join(rel).parent().unwrap()).unwrap();
+            std::fs::write(dir.join(rel), body).unwrap();
         }
-        for rel in ["skills/auto-team/SKILL.md", "skills/team-tick/SKILL.md"] {
-            assert!(KIT_FILES.iter().any(|(_, r)| *r == rel), "{rel} not shipped");
+        let stamps = json!({ "skills/auto-team/SKILL.md": fnv1a(ours), "skills/team-tick/SKILL.md": fnv1a(ours), "skills/sprint/SKILL.md": fnv1a("---\nname: sprint\n---\nold\n") });
+        std::fs::write(dir.join(KIT_STAMP), stamps.to_string()).unwrap();
+        // The old hooks, next to the owner's own on the same events.
+        let h = |args: &[&str]| json!({ "hooks": [{ "type": "command", "command": "/old/8sync", "args": args }] });
+        let mine = json!({ "hooks": [{ "type": "command", "command": "my-idle-notifier" }] });
+        let settings = json!({ "hooks": {
+            "Stop": [h(&["ccc", "hook", "idle"]), h(&["ccc", "hook", "verify-stop"])],
+            "TeammateIdle": [h(&["ccc", "hook", "idle"]), h(&["hq", "hook", "TeammateIdle"]), mine],
+            "TaskCompleted": [h(&["ccc", "hook", "task-done"]), h(&["hq", "hook", "TaskCompleted"])],
+            "TaskCreated": [h(&["hq", "hook", "TaskCreated"])],
+            "PreToolUse": [{ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "/old/8sync", "args": ["ccc", "hook", "delegate"] }] }],
+            "UserPromptSubmit": [h(&["ccc", "hook", "wake"])],
+            "PermissionRequest": [h(&["ccc", "hook", "permit"])]
+        }});
+        std::fs::write(dir.join("settings.json"), settings.to_string()).unwrap();
+        let features = crate::verbs::harness::features::features_path(&home);
+        std::fs::create_dir_all(features.parent().unwrap()).unwrap();
+        std::fs::write(&features, "# mine\ndelegate = true\ndelegate_after_s = 60\nno_idle = false\nsession_fence = true\n").unwrap();
+
+        install_kit_at(&env, &dir, false).unwrap();
+
+        assert!(!dir.join("skills/auto-team").exists() && !dir.join("skills/team-tick").exists(), "8sync's copies and their folders go");
+        assert_eq!(std::fs::read_to_string(dir.join("skills/sprint/SKILL.md")).unwrap(), edited, "the owner's edit stays");
+        let stamps: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(KIT_STAMP)).unwrap()).unwrap();
+        assert!(stamps.get("skills/auto-team/SKILL.md").is_none() && stamps.get("skills/sprint/SKILL.md").is_none());
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("settings.json")).unwrap()).unwrap();
+        let all = v["hooks"].to_string();
+        for gone in ["\"idle\"", "task-done", "\"delegate\"", "\"wake\"", "\"permit\"", "TaskCreated", "TaskCompleted", "\"TeammateIdle\"]"] {
+            assert!(!all.contains(gone), "{gone} still in {all}");
         }
-        assert!(CORE_SKILLS.contains(&"auto-team") && CORE_SKILLS.contains(&"team-tick"));
-        assert!(help::TEXT.contains("/auto-team [mục tiêu]") && help::TEXT.contains("/team-tick"));
+        assert!(v["hooks"].get("TaskCreated").is_none() && v["hooks"].get("TaskCompleted").is_none() && v["hooks"].get("PermissionRequest").is_none());
+        assert_eq!(v["hooks"]["TeammateIdle"], json!([mine]), "the owner's own hook on the event stays");
+        assert!(v["hooks"]["Stop"].as_array().unwrap().iter().any(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "verify-stop"])));
+        assert_eq!(std::fs::read_to_string(&features).unwrap(), "# mine\nsession_fence = true\n");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// Owner (2026-10-16): the System Design Primer as a skill "quy trình đọc" — a reading map
@@ -2682,15 +2200,11 @@ mod tests {
         let post = v["hooks"]["PostToolUse"].as_array().unwrap();
         assert_eq!(post.len(), 5, "user hook kept, ours replaced in place, watchdog + hq SendMessage + ship-grant appended");
         assert!(post.iter().any(|g| g["matcher"] == "AskUserQuestion" && g["hooks"][0]["args"] == json!(["ccc", "hook", "ship-grant"])));
-        // An away owner's room never sits on a permission prompt; the wait for the HQ click fits the timeout.
-        let permit = &v["hooks"]["PermissionRequest"][0]["hooks"][0];
-        assert_eq!(permit["args"], json!(["ccc", "hook", "permit"]));
-        assert!(permit["timeout"].as_u64().unwrap() > permit::WAIT_MAX_S);
         assert_eq!(post[0]["hooks"][0]["command"], "prettier");
         assert_eq!(post[1]["hooks"][0]["command"], "/new/8sync");
         assert_eq!(post[1]["hooks"][0]["asyncRewake"], true, "edits never wait for the check");
         let stop = v["hooks"]["Stop"].as_array().unwrap();
-        assert_eq!(stop.len(), 3, "retired Haiku stop gate removed; verify-stop + idle + hq Stop appended");
+        assert_eq!(stop.len(), 2, "retired Haiku stop gate removed; verify-stop + hq Stop appended");
         assert_eq!(stop[0]["hooks"][0]["args"], json!(["ccc", "hook", "verify-stop"]));
         assert_eq!(v["disableClaudeAiConnectors"], true);
         let mut keep = json!({ "disableClaudeAiConnectors": false });
@@ -2705,7 +2219,7 @@ mod tests {
         assert!(allow.iter().any(|r| r == "EnterWorktree"), "rooms open a card worktree without stopping on a prompt");
         assert!(!allow.iter().any(|r| r.as_str().is_some_and(|s| s.contains("git push"))), "pushes stay reviewed");
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
-        assert_eq!(pre.len(), 4, "ask gate replaced in place, user hook kept, delegate + guard appended");
+        assert_eq!(pre.len(), 3, "ask gate replaced in place, user hook kept, guard appended");
         assert_eq!(pre[0]["hooks"][0]["prompt"], format!("{ASK_GATE}{ASK_POLICY}"));
         // Claude Code echoes the whole prompt in the hook-error line when the gate denies
         // (owner 2026-10-16: "chữ vỡ"); keep it short enough to read in a terminal.
@@ -2717,9 +2231,8 @@ mod tests {
             assert!(prompt.contains(rule), "missing {rule}");
         }
         assert_eq!(pre[1]["hooks"][0]["command"], "my-linter");
-        assert_eq!(pre[2]["hooks"][0]["args"], json!(["ccc", "hook", "delegate"]));
-        assert_eq!(pre[3]["hooks"][0]["args"], json!(["ccc", "hook", "guard"]));
-        assert_eq!(pre[3]["hooks"][0]["onFailure"], "block", "guard fails closed");
+        assert_eq!(pre[2]["hooks"][0]["args"], json!(["ccc", "hook", "guard"]));
+        assert_eq!(pre[2]["hooks"][0]["onFailure"], "block", "guard fails closed");
         assert!(deny.iter().any(|r| r == "Read(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write(") || s.starts_with("Edit(**/.env"))));
         assert_eq!(v["permissions"]["defaultMode"], "auto");
         assert_eq!(v["permissions"]["disableBypassPermissionsMode"], "disable", "a launcher's bypass flag must not win");
@@ -2738,7 +2251,7 @@ mod tests {
         apply_kit_settings(&mut v, "/x/8sync", &skills).unwrap();
         let stop = v["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.iter().filter(|g| g["hooks"][0]["prompt"].is_string()).count(), 0, "Haiku stop gate retired");
-        assert_eq!(stop.len(), 3);
+        assert_eq!(stop.len(), 2);
         assert_eq!(stop[0]["hooks"][0]["args"], json!(["ccc", "hook", "verify-stop"]));
         assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["model"], ASK_GATE_MODEL);
         assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["args"], json!(["ccc", "hook", "session-start"]));
@@ -2771,18 +2284,11 @@ mod tests {
         let stop = v["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", "Stop"]) && g["hooks"][0]["async"] == true).count(), 1, "hq Stop once");
         assert_eq!(stop.iter().filter(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "verify-stop"])).count(), 1, "verify-stop kept");
-        // "không ai rảnh": sync (no `async`) so exit 2 / block can keep the team working.
-        for ev in ["Stop", "TeammateIdle"] {
-            let idle: Vec<&Value> = v["hooks"][ev].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "idle"])).collect();
-            assert_eq!(idle.len(), 1, "{ev} idle hook once");
-            assert!(idle[0]["hooks"][0]["async"].is_null(), "{ev} idle hook is sync");
-        }
-        let td: Vec<&Value> = v["hooks"]["TaskCompleted"].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "task-done"])).collect();
-        assert!(td.len() == 1 && td[0]["hooks"][0]["async"].is_null(), "task-done gate once, sync");
+        assert!(v["hooks"].get("TaskCompleted").is_none(), "the retired agent-team event goes with its hook");
         let pt = v["hooks"]["PostToolUse"].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["hq", "hook", "PostToolUse"]) && g["matcher"] == "SendMessage").count();
         assert_eq!(pt, 1, "SendMessage hook registered once");
-        let tc = &v["hooks"]["TaskCompleted"][0]["hooks"][0];
-        assert_eq!((tc["command"].as_str(), &tc["async"], &tc["timeout"]), (Some("/x/8sync"), &json!(true), &json!(15)));
+        let n0 = &v["hooks"]["SessionEnd"][0]["hooks"][0];
+        assert_eq!((n0["command"].as_str(), &n0["async"], &n0["timeout"]), (Some("/x/8sync"), &json!(true), &json!(15)));
         let n = v["hooks"]["Notification"].as_array().unwrap();
         assert_eq!(n.len(), 2);
         assert_eq!(n[0]["hooks"][0]["command"], "notify-send", "user hook kept");
@@ -3048,7 +2554,7 @@ mod tests {
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(pre.len(), 1);
         assert_eq!(pre[0]["hooks"][0]["command"], "my-linter");
-        assert!(v["hooks"].get("TaskCreated").is_none(), "empty events dropped");
+        assert!(v["hooks"].get("SessionEnd").is_none(), "empty events dropped");
         assert_eq!(strip_kit_hooks(&mut v), 0, "idempotent");
     }
 
@@ -3061,8 +2567,7 @@ mod tests {
         assert_eq!(args("StopFailure"), vec![json!(["ccc", "hook", "stop-failure"])]);
         let ups = args("UserPromptSubmit");
         assert!(ups.contains(&json!(["ccc", "hook", "resume-note"])) && ups.contains(&json!(["ccc", "hook", "watchdog"])), "both coexist: {ups:?}");
-        assert!(ups.contains(&json!(["ccc", "hook", "wake"])), "scheduled-prompt gate: {ups:?}");
-        assert_eq!(ups.len(), 3);
+        assert_eq!(ups.len(), 2);
         strip_kit_hooks(&mut v);
         assert!(v["hooks"].get("StopFailure").is_none() && v["hooks"].get("UserPromptSubmit").is_none());
     }
@@ -3132,24 +2637,6 @@ mod tests {
         assert_eq!(std::fs::read_to_string(d.join("settings.json.bak-8sync")).unwrap(), before, "backup holds the original");
         let _ = std::fs::remove_dir_all(&d);
     }
-
-    #[test]
-    fn team_flags_are_consumed_and_refuse_print() {
-        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let (t, p, rest) = team_flags(&v(&["--team", "--model", "opus"])).unwrap();
-        assert!(t && !p);
-        assert_eq!(rest, v(&["--model", "opus"]));
-        let (t, p, rest) = team_flags(&v(&["--panes"])).unwrap();
-        assert!(t && p && rest.is_empty(), "--panes implies --team");
-        let (t, _, rest) = team_flags(&v(&["-p", "hi"])).unwrap();
-        assert!(!t && rest.len() == 2, "plain -p passes through");
-        assert!(team_flags(&v(&["--team", "-p", "hi"])).is_err());
-        assert!(team_flags(&v(&["--team", "--print"])).is_err());
-        assert!(team_flags(&v(&["--team", "-pc"])).is_err());
-        assert!(team_flags(&v(&["--team", "--print=json"])).is_err());
-        assert!(team_flags(&v(&["--team", "--permission-mode", "auto"])).is_ok(), "--permission-mode is not -p");
-    }
-
 
     #[test]
     fn offline_parses_from_flag_and_env_and_is_not_passed_to_claude() {
@@ -3249,23 +2736,4 @@ mod tests {
         assert_eq!(manifest["types"], "./types/index.d.ts");
         let _ = std::fs::remove_dir_all(&tmp);
     }
-
-    #[test]
-    fn a_folder_that_only_groups_repos_is_not_a_project() {
-        let base = std::env::temp_dir().join(format!("8sync-group-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        let repo = base.join("startup");
-        for d in [repo.join(".git"), repo.join("zus").join("web"), repo.join("src"), repo.join(".claude").join("worktrees").join("card-1").join("game")] {
-            std::fs::create_dir_all(&d).unwrap();
-        }
-        std::fs::create_dir_all(repo.join("zus").join("ide").join(".git")).unwrap();
-        std::fs::write(repo.join("zus").join("web").join(".git"), "gitdir: ../../.git/modules/web").unwrap();
-        std::fs::create_dir_all(repo.join(".claude").join("worktrees").join("card-1").join("game").join(".git")).unwrap();
-        assert_eq!(grouping_folder(&repo.join("zus"), &repo), Some(vec!["ide".to_string(), "web".to_string()]), "submodule (.git file) and nested repo");
-        assert_eq!(grouping_folder(&repo, &repo), None, "the repo itself");
-        assert_eq!(grouping_folder(&repo.join("src"), &repo), None, "a plain subfolder is its repo");
-        assert_eq!(grouping_folder(&repo.join(".claude").join("worktrees").join("card-1"), &repo), None, "a card worktree");
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
 }

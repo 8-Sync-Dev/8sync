@@ -11,15 +11,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { bytes, cleanupRoom, cleanupText, diskKey, projectRooms, sendable, type Finding, type Severity } from "@/lib/disk";
 import { inboxText } from "@/lib/labels";
 import type { Awake } from "@/lib/server/awake";
-import type { GuardView } from "@/lib/server/guard-trigger";
-import type { LoopState } from "@/lib/server/cleanup-loop";
 import type { DiskProject, DiskState } from "@/lib/server/disk";
 import type { Power, PowerSettings } from "@/lib/server/power";
 import type { Spec } from "@/lib/server/machine";
-import type { SweepProject } from "@/lib/server/sweep";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
-import { Bar, dayTime, energy, gb, holdLine, hhmm, level, LoadChart, Meter, ramSplitText, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
+import { Bar, dayTime, energy, gb, holdLine, hhmm, level, LoadChart, Meter, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
 import type { Hq } from "./use-hq";
 import type { Room } from "./use-office";
 import { usePoll } from "./use-poll";
@@ -27,7 +24,6 @@ import { usePoll } from "./use-poll";
 const DISK_POLL_MS = 60_000;
 /** While a scan runs, ask often so the result shows as soon as it lands. */
 const DISK_SCANNING_MS = 3_000;
-const LOOP_POLL_MS = 60_000;
 /** Phones: every control is at least 44 px tall. */
 const TOUCH = "max-sm:h-11 max-sm:min-w-11";
 /** Amber that passes AA as text on light surfaces (same mix as nav / idle chip). */
@@ -150,7 +146,7 @@ function PowerPanel({ p, api, onSaved }: { p: Power; api: Hq["api"]; onSaved: ()
       )}
       {p.over && (
         <p role="status" className="rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
-          Vượt ngân sách hôm nay{p.paused ? `: đã dừng team lúc ${hhmm(p.paused.at)}` : ""}. Team giữ trạng thái dừng tới 0:00; tăng ngân sách để chạy tiếp.
+          Vượt ngân sách điện hôm nay.
         </p>
       )}
       {edit ? (
@@ -174,9 +170,9 @@ function PowerPanel({ p, api, onSaved }: { p: Power; api: Hq["api"]; onSaved: ()
             <Input inputMode="numeric" type="number" min={1000} max={10000000} placeholder="không giới hạn" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} className={cn("h-8 text-right", TOUCH)} />
           </label>
           <p className="text-[11px] leading-snug text-muted-foreground">
-            Vượt ngân sách: HQ dừng team (Chạy liên tục) tới hết ngày. Phần còn lại là mainboard, RAM, ổ, quạt, hao hụt nguồn; đo bằng ổ cắm có đồng hồ rồi chỉnh cho đúng.
+            Vượt ngân sách: chip Máy báo, HQ không dừng phòng nào. Phần còn lại là mainboard, RAM, ổ, quạt, hao hụt nguồn; đo bằng ổ cắm có đồng hồ rồi chỉnh cho đúng.
           </p>
-          {newBudget != null && newBudget <= p.today.vnd && <p className={cn("text-[11px]", NEEDS_INK)}>Thấp hơn mức đã dùng hôm nay ({vnd(p.today.vnd)}): team sẽ dừng ngay.</p>}
+          {newBudget != null && newBudget <= p.today.vnd && <p className={cn("text-[11px]", NEEDS_INK)}>Thấp hơn mức đã dùng hôm nay ({vnd(p.today.vnd)}): chip Máy báo vượt ngay.</p>}
           <div className="flex justify-end gap-1.5">
             <Button type="button" size="sm" variant="ghost" className={TOUCH} onClick={() => setEdit(false)} disabled={busy}>
               Huỷ
@@ -272,9 +268,6 @@ function AwakePanel({ a, api, onChanged }: { a: Awake; api: Hq["api"]; onChanged
             {a.boot_s != null && <span className="text-muted-foreground"> · bật lúc {dayTime(a.at - a.boot_s * 1000)}</span>}
           </Row>
         )}
-        {a.away && (
-          <Row k="Trong lúc vắng">{a.away.rooms ? `${a.away.rooms} phiên Claude xong lượt mới, gần nhất ${hhmm(a.away.last ?? a.at)}` : "chưa phiên nào xong lượt"}</Row>
-        )}
       </dl>
       {a.modern_standby != null && (
         <p className={cn("text-[11px] leading-snug", a.modern_standby ? NEEDS_INK : "text-muted-foreground")}>
@@ -284,257 +277,6 @@ function AwakePanel({ a, api, onChanged }: { a: Awake; api: Hq["api"]; onChanged
         </p>
       )}
     </Panel>
-  );
-}
-
-const GUARD_CHOICES = [50, 60, 70, 80] as const;
-const CPU_CHOICES = [45, 50, 55, 60] as const;
-const CAP_CHOICES = [25, 37, 50] as const;
-const GUARD_LEVELS = ["bình thường", "dọn mạnh", "khởi động lại phòng nặng", "tạm dừng bớt phòng"] as const;
-/** Defender eating at least this share of the machine's CPU is worth the owner's attention. */
-const DEFENDER_HOT_PCT = 3;
-/** The "vừa xử lý" line shows the latest action this long. */
-const RECENT_S = 600;
-/** %TEMP% QA copies worth a line from this size. */
-const TEMP_QA_MB = 500;
-
-/** "Bảo vệ máy": the ccc auto resource guard, and per running team its "Dọn máy tự động" switch. `at`: the poll's sample time (ms), the "now" for relative times. */
-function GuardPanel({ g, sweep, at, api, onChanged }: { g: GuardView; sweep: SweepProject[]; at: number; api: Hq["api"]; onChanged: () => void }) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const now = at / 1000;
-  const ago = (t: number) => (now - t < 60 ? `${Math.max(0, Math.round(now - t))} giây trước` : `${span(now - t)} trước`);
-  const last = g.projects.reduce<{ at: number; text: string } | null>((a, p) => (p.last && (!a || p.last.at > a.at) ? p.last : a), null);
-  const recent = last && now - last.at <= RECENT_S ? last : null;
-  // Over the threshold with nothing to kill: the newest pass says where the RAM is instead of "không cần đổi gì".
-  const ramSplit = g.projects.reduce<{ at: number; text: string } | null>((a, p) => (p.ram_split && p.at != null && (!a || p.at > a.at) ? { at: p.at, text: ramSplitText(p.ram_split) } : a), null);
-  // Runs that changed nothing back the trigger off (40 s … 5 min between runs).
-  const wait = g.lastRun && g.nextGapS > 20 ? ` · chờ ${g.nextGapS}s` : "";
-
-  async function send(key: string, body: { pct: number | null } | { cpu: number } | { cap: number | null } | { eco: boolean }, done: string) {
-    setBusy(key);
-    try {
-      const r = await api<{ message: string }>("/api/machine/guard", { method: "POST", body });
-      toast.success(done, { description: r.message });
-      onChanged();
-    } catch (e) {
-      toast.error("Chưa đổi được bảo vệ máy", { description: (e as Error).message });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  /** One selector button: `kind` the POST field, `value` what it sets (null = off), `on` whether it is the current setting. */
-  const pick = (kind: "pct" | "cpu" | "cap", value: number | null, on: boolean, done: string) => {
-    const key = `${kind}-${value ?? "off"}`;
-    return (
-      <Button
-        key={key}
-        type="button"
-        size="sm"
-        variant={on ? "default" : "outline"}
-        className={cn("h-7 px-2.5", TOUCH)}
-        aria-pressed={on}
-        disabled={busy != null}
-        onClick={() => void send(key, kind === "cpu" ? { cpu: value ?? 0 } : kind === "cap" ? { cap: value } : { pct: value }, done)}
-      >
-        {busy === key && <Loader2Icon className="animate-spin motion-reduce:animate-none" />} {value == null ? "Tắt" : `${value}%`}
-      </Button>
-    );
-  };
-  return (
-    <Panel
-      id="may-guard"
-      title="Bảo vệ máy"
-      aside={<span className="text-xs text-muted-foreground">{g.pct == null ? "Tự dọn: tắt" : `Tự dọn khi RAM ≥ ${g.pct}%${g.cpuPct != null ? ` · CPU ≥ ${g.cpuPct}%` : ""}`}</span>}
-    >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="w-10 text-xs text-muted-foreground">RAM</span>
-        <div role="group" aria-label="Ngưỡng RAM tự dọn" className="flex flex-wrap gap-1.5">
-          {GUARD_CHOICES.map((p) => pick("pct", p, g.pct === p, `Tự dọn khi RAM ≥ ${p}%`))}
-          {pick("pct", null, g.pct == null, "Đã tắt tự dọn")}
-        </div>
-      </div>
-      {g.pct != null && g.cpuPct != null && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="w-10 text-xs text-muted-foreground">CPU</span>
-          <div role="group" aria-label="Ngưỡng CPU tự dọn" className="flex flex-wrap gap-1.5">
-            {CPU_CHOICES.map((c) => pick("cpu", c, g.cpuPct === c, `Tự dọn khi CPU ≥ ${c}%`))}
-          </div>
-        </div>
-      )}
-      {/* `cpus` only comes from an 8sync with the cap: an older one shows no row (its POST would fail). */}
-      {g.pct != null && g.cpus != null && (
-        <div className="space-y-1.5">
-          <p className="text-sm font-medium">
-            {g.cap == null ? "CPU phòng: không giới hạn" : `CPU phòng tối đa ${g.cap}%${g.capN != null && g.cpus != null ? ` (${g.capN}/${g.cpus} luồng)` : ""}`}
-            {g.capTight && <span className={cn("ml-1 text-xs font-normal", NEEDS_INK)}>· đang siết (CPU vượt ngưỡng)</span>}
-          </p>
-          <div role="group" aria-label="Giới hạn CPU của phòng" className="flex flex-wrap gap-1.5">
-            {pick("cap", null, g.cap == null, "Đã bỏ giới hạn CPU phòng")}
-            {CAP_CHOICES.map((c) => pick("cap", c, g.cap === c, `CPU phòng tối đa ${c}%`))}
-          </div>
-        </div>
-      )}
-      {g.eco != null && (
-        <div className="flex items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">Tiết kiệm điện</p>
-            <p className="text-xs leading-snug text-muted-foreground">Phòng chạy ở chế độ Efficiency (EcoQoS), ưu tiên dưới bình thường.</p>
-          </div>
-          <Switch on={g.eco} busy={busy === "eco"} label="Tiết kiệm điện" onChange={(v) => void send("eco", { eco: v }, v ? "Đã bật tiết kiệm điện" : "Đã tắt tiết kiệm điện")} />
-        </div>
-      )}
-      {sweep.length > 0 && (
-        <div className="space-y-1.5 border-t pt-2.5">
-          <div>
-            <p className="text-sm font-medium">Dọn máy tự động</p>
-            <p className="text-xs leading-snug text-muted-foreground">Team chạy đội Claude có một phòng sweep (đội chỉ omp thì không). Phòng chỉ thức khi HQ báo máy quá tải hay rác đĩa, dọn thứ chắc chắn an toàn, nhắn đúng phòng gây tải, báo lead khi đã giải phóng chỗ.</p>
-          </div>
-          {sweep.map((p) => (
-            <SweepRow key={p.root} p={p} at={at} api={api} onChanged={onChanged} />
-          ))}
-        </div>
-      )}
-      {(g.running || recent || wait) && (
-        <p role="status" className={cn("text-xs", g.running ? NEEDS_INK : "text-muted-foreground")}>
-          {g.running ? (
-            <>
-              <Loader2Icon className="mr-1 inline size-3 animate-spin align-[-2px] motion-reduce:animate-none" />
-              đang xử lý: {g.runningWhy}…
-            </>
-          ) : recent ? (
-            <>
-              vừa xử lý: <span className="text-foreground">{recent.text}</span> · {ago(recent.at)}
-              {wait}
-            </>
-          ) : (
-            <>
-              {g.lastRun!.why === "revive đang chạy"
-                ? "bỏ qua lượt xử lý: revive đang chạy"
-                : g.lastRun!.ok
-                  ? `vừa kiểm tra (${g.lastRun!.why}): ${ramSplit ? ramSplit.text : "không cần đổi gì"}`
-                  : `chưa chạy được guard now (${g.lastRun!.why})`}{" "}
-              · {ago(g.lastRun!.at)}
-              {wait}
-            </>
-          )}
-        </p>
-      )}
-      {g.temp_qa && g.temp_qa.mb >= TEMP_QA_MB && (
-        <p className={cn("text-[11px] leading-snug", NEEDS_INK)}>
-          Thư mục tạm QA (%TEMP%\qa-card-*, qa-fetch*): {g.temp_qa.partial ? "≥ " : ""}
-          {gb(Math.round(g.temp_qa.mb))} / {g.temp_qa.dirs} mục — Defender quét liên tục; xoá tay khi xong
-        </p>
-      )}
-      {g.projects.map((p) => (
-        <div key={p.root} className="space-y-1 border-t pt-2.5">
-          <p className="truncate font-mono text-xs" title={p.root}>
-            {p.root.split(/[\\/]/).filter(Boolean).pop() ?? p.root}
-          </p>
-          <dl className="space-y-1">
-            <Row k="Mức" warn={p.level > 0}>
-              {p.level} · {GUARD_LEVELS[p.level]}
-              {p.ram != null && <span className="text-muted-foreground"> · RAM {p.ram}%</span>}
-              {p.cpu != null && <span className="text-muted-foreground"> · CPU {Math.round(p.cpu)}%</span>}
-              {p.at != null && <span className="text-muted-foreground"> · {ago(p.at)}</span>}
-            </Row>
-            {p.rooms.length > 0 && (
-              <Row k="Phòng ăn nhiều nhất">
-                {[...p.rooms]
-                  .sort((a, b) => b.mb - a.mb)
-                  .slice(0, 3)
-                  .map((r) => `${r.name} ${gb(Math.round(r.mb))}${r.cpu != null ? ` · ${Math.round(r.cpu)}%` : ""}`)
-                  .join(", ")}
-              </Row>
-            )}
-            {p.top.length > 0 && <Row k="Ăn CPU nhất">{p.top.join(", ")}</Row>}
-            {p.paused.length > 0 && <Row k="Phòng tạm dừng">{p.paused.join(", ")}</Row>}
-            {p.defender_cpu != null && (
-              <Row k="Defender" warn={p.defender_cpu >= DEFENDER_HOT_PCT}>
-                Defender (MsMpEng) ăn CPU {Math.round(p.defender_cpu)}% máy
-              </Row>
-            )}
-          </dl>
-          {p.actions.length > 0 && (
-            <ul className="space-y-0.5 text-xs text-muted-foreground">
-              {p.actions
-                .slice(-5)
-                .reverse()
-                .map((a, i) => (
-                  <li key={i}>
-                    <span className="tabular-nums">{ago(a.at)}</span> · <span className="text-foreground">{a.text}</span>
-                  </li>
-                ))}
-            </ul>
-          )}
-          {p.defender && (
-            <div className="space-y-1">
-              <p className={cn("text-[11px] leading-snug", (p.defender_cpu ?? 0) >= DEFENDER_HOT_PCT ? NEEDS_INK : "text-muted-foreground")}>
-                Loại trừ Defender: chạy PowerShell admin (HQ không tự chạy)
-              </p>
-              <div className="flex items-start gap-1.5">
-                <pre className="min-w-0 flex-1 overflow-x-auto rounded bg-muted p-2 font-mono text-[11px] leading-snug">{p.defender}</pre>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className={TOUCH}
-                  onClick={() =>
-                    void navigator.clipboard.writeText(p.defender!).then(
-                      () => toast.success("Đã chép lệnh"),
-                      () => toast.error("Không chép được, hãy chọn và chép tay"),
-                    )
-                  }
-                >
-                  Chép
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
-    </Panel>
-  );
-}
-
-/** One running team's sweep switch: on = HQ keeps a `sweep` room in it (`auto up --add sweep`), off = `auto down --only sweep`; greyed off with the reason while the team runs omp only. */
-function SweepRow({ p, at, api, onChanged }: { p: SweepProject; at: number; api: Hq["api"]; onChanged: () => void }) {
-  const [busy, setBusy] = useState(false);
-  async function flip(next: boolean) {
-    setBusy(true);
-    try {
-      await api("/api/machine/sweep", { method: "POST", body: { root: p.root, on: next } });
-      toast.success(next ? `Đã bật dọn máy tự động cho ${p.name}` : `Đã tắt dọn máy tự động cho ${p.name}`, {
-        description: next ? "Phòng sweep chờ tin, chỉ thức khi HQ báo máy quá tải hay rác đĩa." : "Đã dừng riêng phòng sweep; các phòng khác vẫn chạy.",
-      });
-      onChanged();
-    } catch (e) {
-      toast.error("Chưa đổi được dọn máy tự động", { description: (e as Error).message });
-    } finally {
-      setBusy(false);
-    }
-  }
-  const state = p.blocked
-    ? p.blocked
-    : !p.on
-      ? "tắt"
-      : p.live
-        ? "phòng sweep đang chạy"
-        : p.error
-          ? `chưa mở được: ${p.error}${p.retryAt ? ` · thử lại ${span(Math.max(0, (p.retryAt - at) / 1000))} nữa` : ""}`
-          : p.busy
-            ? "đang mở phòng sweep…"
-            : "sẽ mở phòng sweep trong vòng 1 phút";
-  return (
-    <div className="flex items-center gap-3">
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-mono text-xs" title={p.root}>
-          {p.name}
-        </p>
-        <p className={cn("text-[11px] leading-snug", p.on && p.error && !p.blocked ? NEEDS_INK : "text-muted-foreground")}>{state}</p>
-      </div>
-      <Switch on={p.on && !p.blocked} busy={busy || p.busy} disabled={p.blocked != null} label={`Dọn máy tự động ${p.name}`} onChange={(v) => void flip(v)} />
-    </div>
   );
 }
 
@@ -584,43 +326,21 @@ type SendFn = (p: DiskProject, fs: Finding[], room: Room, what: string) => Promi
 function ProjectDiskRow({
   p,
   rooms,
-  loop,
-  api,
-  onLoop,
   send,
   sending,
 }: {
   p: DiskProject;
   rooms: Room[];
-  loop: LoopState | null;
-  api: Hq["api"];
-  onLoop: () => void;
   send: SendFn;
   sending: string | null;
 }) {
   const k = diskKey(p.root);
-  const lp = loop?.projects[k];
   const mine = projectRooms(rooms, p.root);
-  const room = (lp?.room ? mine.find((r) => r.key === lp.room) : undefined) ?? cleanupRoom(rooms, p.root);
-  const sent = loop?.sent[k];
-  const failed = loop?.lastError[k];
-  const [loopBusy, setLoopBusy] = useState(false);
+  const [picked, setPicked] = useState<string | null>(null);
+  const room = (picked ? mine.find((r) => r.key === picked) : undefined) ?? cleanupRoom(rooms, p.root);
   const high = p.findings.filter((f) => f.severity === "high").length;
   const warn = p.findings.length - high;
   const ge = p.truncated ? "≥ " : "";
-
-  async function setLoop(patch: { on?: boolean; room?: string | null }) {
-    setLoopBusy(true);
-    try {
-      await api("/api/machine/cleanup", { method: "POST", body: { root: p.root, ...patch } });
-      if (patch.on !== undefined) toast.success(patch.on ? `Đã bật dọn định kỳ cho ${p.name}` : `Đã tắt dọn định kỳ cho ${p.name}`);
-      onLoop();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setLoopBusy(false);
-    }
-  }
 
   const busyAll = sending === `${k}:*`;
   return (
@@ -698,7 +418,7 @@ function ProjectDiskRow({
           {room ? (p.findings.length ? `Gửi dọn cho ${room.label}` : `Gửi kiểm tra cho ${room.label}`) : "Chưa có phòng"}
         </Button>
         {mine.length > 1 && room && (
-          <Select value={room.key} onValueChange={(v) => void setLoop({ room: v })} disabled={loopBusy}>
+          <Select value={room.key} onValueChange={setPicked}>
             <SelectTrigger size="sm" className={cn("max-w-[12rem] text-xs", TOUCH)} aria-label={`Phòng nhận tin dọn của ${p.name}`}>
               <SelectValue />
             </SelectTrigger>
@@ -712,10 +432,6 @@ function ProjectDiskRow({
             </SelectContent>
           </Select>
         )}
-        <label className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
-          Dọn định kỳ
-          <Switch on={lp?.on ?? false} busy={loopBusy} label={`Dọn định kỳ ${p.name}`} onChange={(v) => void setLoop({ on: v })} />
-        </label>
       </div>
       {!room && <p className="text-xs text-muted-foreground">Dự án chưa có phòng nào chạy: mở một phòng để gửi tin dọn.</p>}
       {p.cleaned && (
@@ -725,18 +441,7 @@ function ProjectDiskRow({
       )}
       {p.pruned && (
         <p className="text-xs text-muted-foreground">
-          HQ xoá {p.pruned.n} worktree rảnh đã merge/đóng {dayTime(p.pruned.at)}: {p.pruned.names.join(", ")}
-        </p>
-      )}
-      {sent && (
-        <p className="text-xs text-muted-foreground">
-          Tự gửi lần cuối {dayTime(sent.at)} cho {sent.room} ({sent.n} mục)
-        </p>
-      )}
-      {failed && (
-        <p role="status" className="text-xs text-destructive">
-          Lần tự gửi {dayTime(failed.at)}
-          {failed.room ? ` cho ${failed.room}` : ""} chưa tới phòng: {failed.error}. Lần chạy tới gửi lại.
+          HQ xoá {p.pruned.n} worktree rảnh đã merge {dayTime(p.pruned.at)}: {p.pruned.names.join(", ")}
         </p>
       )}
     </li>
@@ -793,11 +498,10 @@ function DiskPanel({ api, rooms, active }: { api: Hq["api"]; rooms: Room[]; acti
   const [asked, setAsked] = useState<number | null>(null);
   const [fast, setFast] = useState(false);
   const disk = usePoll<DiskState>(api, "/api/machine/disk", fast ? DISK_SCANNING_MS : DISK_POLL_MS, active);
-  const loop = usePoll<LoopState>(api, "/api/machine/cleanup", LOOP_POLL_MS, active);
   const [sending, setSending] = useState<string | null>(null);
   const d = disk.data;
   const busy = (asked != null && disk.at <= asked) || d?.scanning === true;
-  // Poll quickly while a scan runs (also one the loop or another tab started), slowly otherwise.
+  // Poll quickly while a scan runs (also one another tab started), slowly otherwise.
   if (fast !== busy) setFast(busy);
 
   async function rescan() {
@@ -827,7 +531,6 @@ function DiskPanel({ api, rooms, active }: { api: Hq["api"]; rooms: Room[]; acti
     }
   };
 
-  const l = loop.data;
   return (
     <Panel
       id="may-disk"
@@ -843,15 +546,7 @@ function DiskPanel({ api, rooms, active }: { api: Hq["api"]; rooms: Room[]; acti
       }
     >
       <p className="text-xs leading-snug text-muted-foreground">
-        Mỗi dự án: thư mục lớn, .git, worktree, bằng chứng, node_modules, thư mục build và file lớn đã commit. Mỗi giờ HQ đo lại mọi dự án và tự xoá ngay thư mục build (target, .next) trên 1 GB của worktree không phòng nào dùng và không build trong 1 giờ. Dọn định kỳ: phần còn lại tự gửi phòng khi có mục vượt ngưỡng chưa gửi trong 24 giờ.
-        {l && (
-          <span className="tabular">
-            {" "}
-            {l.lastRun != null ? `Chạy gần nhất ${dayTime(l.lastRun)}` : "Chưa chạy lần nào"}
-            {l.nextRun != null ? ` · lần tới ${dayTime(l.nextRun)}` : ""}
-            {l.running ? " · đang chạy" : ""}.
-          </span>
-        )}
+        Mỗi dự án: thư mục lớn, .git, worktree, bằng chứng, node_modules, thư mục build và file lớn đã commit. Mỗi lần đo, HQ tự xoá thư mục build (target, .next) trên 1 GB của worktree không phòng nào dùng và không build trong 1 giờ. Phần còn lại: bấm gửi cho một phòng dọn.
       </p>
       {disk.error && !d && <ErrorNote what="dung lượng dự án" error={disk.error} onRetry={disk.reload} />}
       {!d && !disk.error && <DiskSkeleton />}
@@ -859,7 +554,7 @@ function DiskPanel({ api, rooms, active }: { api: Hq["api"]; rooms: Room[]; acti
       {d && d.projects.length > 0 && (
         <ul className="divide-y">
           {d.projects.map((p) => (
-            <ProjectDiskRow key={p.root} p={p} rooms={rooms} loop={l} api={api} onLoop={loop.reload} send={send} sending={sending} />
+            <ProjectDiskRow key={p.root} p={p} rooms={rooms} send={send} sending={sending} />
           ))}
         </ul>
       )}
@@ -933,7 +628,7 @@ function ProcsPanel({ m, api }: { m: MachineData; api: Hq["api"] }) {
 
 /**
  * Tab "Máy": load, power, awake (with its switch), what the machine is, how big the projects have
- * grown (one-tap cleanup send, the 6-hourly loop) and the processes. `m` is the header chip's poll.
+ * grown (one-tap cleanup send) and the processes. `m` is the header chip's poll.
  */
 export function MachineView({ m, reload, api, rooms, active }: { m: MachineData | null; reload: () => void; api: Hq["api"]; rooms: Room[]; active: boolean }) {
   if (!m) {
@@ -962,14 +657,13 @@ export function MachineView({ m, reload, api, rooms, active }: { m: MachineData 
               {m.gpus == null && <p className="text-xs text-muted-foreground">Không thấy GPU NVIDIA (nvidia-smi).</p>}
               {m.history && (
                 <div className="pt-1">
-                  <LoadChart samples={m.history} now={m.at} guardPct={m.guard?.pct ?? null} />
+                  <LoadChart samples={m.history} now={m.at} />
                 </div>
               )}
             </div>
           </Panel>
           {m.power && <PowerPanel p={m.power} api={api} onSaved={reload} />}
           {m.awake && <AwakePanel a={m.awake} api={api} onChanged={reload} />}
-          {m.guard && <GuardPanel g={m.guard} sweep={m.sweep ?? []} at={m.at} api={api} onChanged={reload} />}
           {m.spec && <SpecPanel s={m.spec} />}
         </div>
         <DiskPanel api={api} rooms={rooms} active={active} />

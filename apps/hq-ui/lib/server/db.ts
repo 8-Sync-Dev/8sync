@@ -18,28 +18,16 @@ CREATE TABLE IF NOT EXISTS sessions (
   cwd TEXT,
   updated_at INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS tasks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session TEXT,
-  task_id TEXT NOT NULL UNIQUE,
-  subject TEXT NOT NULL,
-  role TEXT,
-  prio TEXT,
-  status TEXT NOT NULL DEFAULT 'todo',
-  updated_at INTEGER NOT NULL
-);
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,
   session TEXT,
-  team TEXT,
   kind TEXT NOT NULL,
   from_ TEXT,
   to_ TEXT,
   text TEXT
 );
 CREATE INDEX IF NOT EXISTS messages_session ON messages(session, id);
-CREATE INDEX IF NOT EXISTS tasks_updated ON tasks(updated_at);
 CREATE TABLE IF NOT EXISTS channel_beats (
   session TEXT PRIMARY KEY,
   at INTEGER NOT NULL
@@ -80,27 +68,6 @@ CREATE TABLE IF NOT EXISTS hidden_projects (
   name TEXT NOT NULL,
   hidden_at INTEGER NOT NULL
 );
--- "Tự soi ảnh" switch per project (lib/server/eye.ts); key = lib/preview.ts rootKey(root), since = when it went on.
-CREATE TABLE IF NOT EXISTS eye_on (
-  key TEXT PRIMARY KEY,
-  root TEXT NOT NULL,
-  since INTEGER NOT NULL
-);
--- Images already handed to a project's eye room (lib/eye.ts imageKey): never sent twice, across restarts.
-CREATE TABLE IF NOT EXISTS eye_sent (
-  key TEXT NOT NULL,
-  image TEXT NOT NULL,
-  at INTEGER NOT NULL,
-  PRIMARY KEY (key, image)
-);
--- "Dọn máy tự động" switch the owner flipped per project (lib/server/sweep.ts); no row = on.
--- key = lib/disk.ts diskKey(root), enabled = 0|1, at = when flipped.
-CREATE TABLE IF NOT EXISTS sweep_switch (
-  key TEXT PRIMARY KEY,
-  root TEXT NOT NULL,
-  enabled INTEGER NOT NULL,
-  at INTEGER NOT NULL
-);
 `;
 
 const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync; schema: string } };
@@ -136,10 +103,12 @@ export function getDb(): DatabaseSync {
   return db;
 }
 
-/** Additive column migrations for DBs created by an earlier build. */
+/** Migrations for DBs created by an earlier build: additive columns, and tables of removed features dropped. */
 function migrate(db: DatabaseSync): void {
+  // The board/auto-team subsystem is gone: its task journal, "Tự soi ảnh" and "Dọn máy tự động" state.
+  db.exec("DROP TABLE IF EXISTS tasks; DROP TABLE IF EXISTS eye_on; DROP TABLE IF EXISTS eye_sent; DROP TABLE IF EXISTS sweep_switch;");
   const scols = (db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]).map((c) => c.name);
-  // Team role the session was started with (lib/roles.ts) and the model it runs on.
+  // Role the session was started with (lib/roles.ts) and the model it runs on.
   if (!scols.includes("role")) db.exec("ALTER TABLE sessions ADD COLUMN role TEXT");
   if (!scols.includes("model")) db.exec("ALTER TABLE sessions ADD COLUMN model TEXT");
   const cols = (db.prepare("PRAGMA table_info(messages)").all() as { name: string }[]).map((c) => c.name);
@@ -148,6 +117,8 @@ function migrate(db: DatabaseSync): void {
   if (!cols.includes("delivery")) db.exec("ALTER TABLE messages ADD COLUMN delivery TEXT");
   // Owner messages: when /api/channel/inbox first handed the row to the channel poller.
   if (!cols.includes("picked_up_at")) db.exec("ALTER TABLE messages ADD COLUMN picked_up_at INTEGER");
+  // Only task/teammate journal rows carried a team; the journal has none now.
+  if (cols.includes("team")) db.exec("ALTER TABLE messages DROP COLUMN team");
 }
 
 let last = 0;

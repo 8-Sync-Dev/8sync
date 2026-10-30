@@ -24,7 +24,6 @@ export async function GET(req: Request) {
     messages: messagesAfter(o.db, {
       after: afterParam(url),
       session: q.get("session"),
-      team: q.get("team"),
       project: project && /^\d+$/.test(project) ? Number(project) : null,
       limit,
     }),

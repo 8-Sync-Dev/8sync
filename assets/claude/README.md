@@ -9,8 +9,8 @@ Role-routed subagents and the delivery skills from [8sync](https://get.8syncdev.
 
 ## What you get
 
-- **Subagents** (`agents/`): explore, task, quick-task, reviewer, designer, researcher, verifier, pm, architect, qa, critic.
-- **Skills** (`skills/`): `/do`, `/ship`, `/ship-auto`, `/ship-loop`, `/autopilot`, `/ship-tick`, `/auto-team`, `/team-tick`, `/sprint`, `/planning`, `/sysdesign`, `/ui-ux`, `/remember`, `/consolidate`, `/rules`, `/sec`, `/harden`.
+- **Subagents** (`agents/`): explore, task, quick-task, reviewer, designer, researcher, verifier, architect, qa, critic.
+- **Skills** (`skills/`): `/do`, `/ship`, `/ship-auto`, `/ship-loop`, `/autopilot`, `/ship-tick`, `/planning`, `/sysdesign`, `/ui-ux`, `/remember`, `/consolidate`, `/rules`, `/sec`, `/harden`.
 
 ## What it runs and sends
 
@@ -23,7 +23,7 @@ No MCP servers, no settings changes, and no network calls of its own. The skills
 
 ## Claude Desktop and Cowork
 
-`8sync mcp install` registers 8sync as a local MCP server in Claude Desktop (`claude_desktop_config.json`; restart the app after). Tools: `machine` (RAM, CPU, GPU, watts, battery now), `sessions`, `board`, `queue`, `knowledge`, `report`, `kit`, and two writes, `queue_add` and `know_add`. Add `--claude-code` to register it in Claude Code too. `8sync eco install` keeps long sessions light in the background (see `8sync eco`).
+`8sync mcp install` registers 8sync as a local MCP server in Claude Desktop (`claude_desktop_config.json`; restart the app after). Tools: `machine` (RAM, CPU, GPU, watts, battery now), `sessions`, `knowledge`, `report`, `kit`, and one write, `know_add`. Add `--claude-code` to register it in Claude Code too. `8sync eco install` keeps long sessions light in the background (see `8sync eco`).
 
 ## The full kit
 

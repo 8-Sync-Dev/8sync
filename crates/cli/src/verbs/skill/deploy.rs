@@ -1392,6 +1392,36 @@ fn remove_retired_extensions(home: &Path, root: Option<&Path>) {
     }
 }
 
+/// Removes the retired `8sync-team` omp extension (it polled `ccc inbox` and fed
+/// rooms nudges/resumes; 8sync no longer pushes prompts into sessions). Checks the
+/// global and project extension dirs under the current and historical names, and
+/// deletes a file only when it carries the header every shipped version started
+/// with, so a user's own same-named file survives. Returns how many were removed.
+pub(crate) fn retire_team_extension(home: &Path, root: Option<&Path>) -> usize {
+    let mut dirs = vec![home.join(".omp/agent/extensions")];
+    if let Some(r) = root {
+        dirs.push(r.join(".omp/extensions"));
+    }
+    let ns = crate::brand::ns_file("team.ts");
+    let mut names = vec![ns.as_str()];
+    if ns != "8sync-team.ts" {
+        names.push("8sync-team.ts");
+    }
+    let mut removed = 0;
+    for d in &dirs {
+        for name in &names {
+            let f = d.join(name);
+            let ours = std::fs::read_to_string(&f)
+                .is_ok_and(|b| b.trim_start_matches('\u{feff}').starts_with("// 8sync-team —"));
+            if ours && std::fs::remove_file(&f).is_ok() {
+                ui::ok(&format!("removed retired extension → {}", f.display()));
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
 /// FNV-1a 64 over `bytes`. Not a crate and not a security boundary — the only
 /// use is recognising a file we wrote against the frozen list below, so eight
 /// dependency-free lines beat adding `sha2` or shelling out to `sha256sum` once
@@ -1462,12 +1492,12 @@ fn remove_unprefixed_predecessor(home: &Path, root: Option<&Path>, file: &str) {
 
 /// Deploy the gsd-pi-style automation engine — the `8sync-engine` omp extension
 /// (durable slice/task state machine + code-enforced verify-retry gate + git
-/// worktree tools), the `8sync-team` omp extension (inbox / nudge / resume for omp
-/// rooms launched by `8sync . <name>`) and every slash command under
-/// `assets/commands/`. 100% on omp core (config dirs only, never patches omp) so
-/// updates stay safe.
+/// worktree tools) and every slash command under `assets/commands/`, and remove
+/// the retired `8sync-team` extension. 100% on omp core (config dirs only, never
+/// patches omp) so updates stay safe.
 pub(crate) fn ensure_engine(home: &Path, root: Option<&Path>) -> Result<()> {
     remove_retired_extensions(home, root);
+    retire_team_extension(home, root);
     let eng = crate::brand::ns_file("engine.ts");
     deploy_omp_pair(
         home,
@@ -1476,17 +1506,6 @@ pub(crate) fn ensure_engine(home: &Path, root: Option<&Path>) -> Result<()> {
         &format!(".omp/agent/extensions/{eng}"),
         &format!(".omp/extensions/{eng}"),
         "8sync-engine extension",
-    )?;
-    // Global only: a project copy would load it twice in that project (two pollers,
-    // two nudges). It is inert outside a room (`EIGHTSYNC_ROOM_ID` unset).
-    let team = crate::brand::ns_file("team.ts");
-    deploy_omp_pair(
-        home,
-        None,
-        "extensions/8sync-team.ts",
-        &format!(".omp/agent/extensions/{team}"),
-        &format!(".omp/extensions/{team}"),
-        "8sync-team extension",
     )?;
     // Slash commands deploy by ITERATING the `commands/` asset dir — never a
     // hardcoded block per file. Dropping a new `assets/commands/<n>.md` into the
@@ -2063,5 +2082,29 @@ mod skill_library_tests {
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&lib);
         let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    #[test]
+    fn retired_team_extension_goes_only_when_ours() {
+        let home = tmp("team-home");
+        let root = tmp("team-root");
+        let global = home.join(".omp/agent/extensions");
+        let proj = root.join(".omp/extensions");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::create_dir_all(&proj).unwrap();
+        let ns = crate::brand::ns_file("team.ts");
+        std::fs::write(global.join(&ns), "// 8sync-team — the omp side of 8 Sync's two teams\nexport default 1;\n").unwrap();
+        std::fs::write(proj.join(&ns), "// my own team helper\n").unwrap();
+        std::fs::write(global.join("8sync-engine.ts"), "// 8sync-engine\n").unwrap();
+
+        assert_eq!(retire_team_extension(&home, Some(&root)), 1);
+        assert!(!global.join(&ns).exists(), "8sync's copy is removed");
+        assert!(proj.join(&ns).exists(), "a user's same-named file survives");
+        assert!(global.join("8sync-engine.ts").exists(), "other extensions untouched");
+        assert_eq!(retire_team_extension(&home, Some(&root)), 0, "idempotent");
+        assert_eq!(retire_team_extension(&tmp("team-empty"), None), 0, "absent is fine");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(tmp("team-empty"));
     }
 }
