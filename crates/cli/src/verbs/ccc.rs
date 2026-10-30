@@ -54,7 +54,7 @@ mod secret;
 mod ship_loop;
 mod ship_fast;
 pub(crate) mod resume;
-mod pressure;
+pub(crate) mod pressure;
 pub(crate) mod reap;
 mod room;
 mod statusline;
@@ -202,6 +202,10 @@ pub fn run(a: Args) -> Result<()> {
             }
             let res = install_kit(&env, rest.iter().any(|a| a == "--force"));
             refresh_ancestor_claude_md(&env, &root);
+            // CPU/RAM/GPU guard on by default on every OS (owner 2026-10-30)
+            if res.is_ok() && !rest.iter().any(|a| a == "--no-watchdog") {
+                crate::verbs::watchdog::ensure_installed();
+            }
             res
         }
         "compact" => compact::run(rest, &claude_dir(&env), &env.home),

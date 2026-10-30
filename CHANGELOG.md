@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- **`8sync watchdog` giữ CPU, RAM, GPU thấp mặc định trên Windows và macOS, không chỉ Linux.** Owner (2026-10-30): "nhớ là 8sync mặc định có kiểm soát cpu, ram, gpu tốt nha không để hao điện cao ăn nhiều".
+  - Cùng engine với Linux, nguồn số liệu mới: danh sách process native của `ccc::reap` (Toolhelp trên Windows, `ps` trên macOS, nay có cả CPU time), CPU/RAM máy (Windows `GetSystemTimes`/`GlobalMemoryStatusEx`, macOS `host_statistics` + `sysctl`), GPU qua NVML (Windows) hoặc `nvidia-smi` khi có (cả Linux khi không có AMD sysfs). Không thêm dependency.
+  - Ngưỡng mặc định: CPU máy > 85% liên tục 2 phút → cảnh báo + hạ ưu tiên build/runtime trong session; RAM > 90% (MemAvailable < 10%) → cảnh báo. Trên Windows/macOS guard không kill gì (`auto_kill = false`), chỉ cảnh báo và hạ ưu tiên (Windows idle class, macOS `renice 19` + `taskpolicy -b`); process ngoài session claude/omp không bao giờ bị đụng.
+  - RAM hoặc VRAM căng ≥ 30 s: ComfyUI ở loopback được `POST /free` chỉ khi `GET /queue` rỗng, tối đa 10 phút một lần (`comfyui_url = ""` để tắt).
+  - `8sync ccc kit` cài guard mặc định (`--no-watchdog` hoặc `EIGHTSYNC_NO_WATCHDOG=1` để bỏ): Scheduled Task `8sync\watchdog` (5 phút một lần, không cần logon trigger, priority 7, ẩn, `conhost --headless`), launch agent `dev.8sync.watchdog` (Background, Nice 10, LowPriorityIO), systemd user unit như cũ. Một guard mỗi user (lock file); `8sync watchdog status` báo `guard running`.
+  - Process runtime (node, python, bun, uv, deno…) mồ côi (cha đã mất, hoặc pid cha bị process mới dùng lại) quá 10 phút: là job của harness (đường dẫn script có phần tên `hook`/`hooks`, vd `node .trail/hook.cjs` kẹt sau khi session kết thúc) → guard dọn (`clean_orphans = true`, tắt được); mồ côi khác (vd ComfyUI chạy từ terminal đã đóng) chỉ báo. Cùng command line ≥ 2 lần dưới các session còn sống (pyright mỗi session, `headroom mcp serve`) → chỉ báo, không đụng. Alert chỉ ghi tên script, không ghi tham số.
+  - `watchdog run --dry-run` chỉ in ra màn hình, không ghi `alerts.jsonl` nữa (một lần chạy thử với ngưỡng test từng hiện lên hook của session khác).
+  - Not verified: Scheduled Task tạo từ tài khoản không admin (đã thử từ shell admin), số đo macOS trên máy thật (chỉ CI macos-latest).
+
 ## [0.110.91] — 2026-10-30
 
 ### Changed

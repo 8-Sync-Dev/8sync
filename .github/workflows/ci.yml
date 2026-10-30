@@ -41,6 +41,11 @@ jobs:
         if: matrix.runner == 'ubuntu-latest'
         shell: bash
         run: cargo build --locked -p su-code --bin 8sync && bash scripts/uat/ls-urgency.sh target/debug/8sync
+      # The CPU/RAM/GPU guard registers with the OS service manager and reports itself running.
+      - name: UAT watchdog service
+        if: matrix.runner != 'ubuntu-latest'
+        shell: bash
+        run: cargo build --locked -p su-code --bin 8sync && bash scripts/uat/watchdog-service.sh target/debug/8sync
 
   minimal:
     runs-on: ubuntu-latest

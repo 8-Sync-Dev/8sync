@@ -291,7 +291,7 @@ impl Backend {
 }
 
 #[cfg(windows)]
-mod win {
+pub(crate) mod win {
     use super::super::sys::win::Lib;
     use super::Gpu;
     use std::ffi::c_void;
