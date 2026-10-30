@@ -1,0 +1,2675 @@
+{
+ "agents": {
+  "a11y-architect": {
+   "purpose": "Accessibility Architect specializing in WCAG 2.2 compliance for Web and Native platforms"
+  },
+  "agent-evaluator": {
+   "purpose": "Evaluates agent output against 5-axis quality rubric (accuracy, completeness, clarity, actionability, conciseness)"
+  },
+  "architect": {
+   "purpose": "System design, scalability, and architectural decisions",
+   "web": "workflow",
+   "web_desc": "System design, scalability, and architectural decisions."
+  },
+  "bengali-reviewer": {
+   "purpose": "Reviews code handling Bengali (Bangla) text for Unicode correctness, proper normalization, script-aware"
+  },
+  "build-error-resolver": {
+   "purpose": "Build and TypeScript error resolution with minimal diffs",
+   "web": "workflow",
+   "web_desc": "Build and TypeScript error resolution with minimal diffs."
+  },
+  "chief-of-staff": {
+   "purpose": "Communication triage across email, Slack, and messaging platforms",
+   "web": "specialized",
+   "web_desc": "Communication triage across email, Slack, and messaging platforms."
+  },
+  "code-architect": {
+   "purpose": "Designs feature architectures by analyzing existing codebase patterns and conventions, then providing"
+  },
+  "code-explorer": {
+   "purpose": "Deeply analyzes existing codebase features by tracing execution paths, mapping architecture layers"
+  },
+  "code-reviewer": {
+   "purpose": "Code review for quality, security, and maintainability",
+   "web": "workflow",
+   "web_desc": "Code review for quality, security, and maintainability."
+  },
+  "code-simplifier": {
+   "purpose": "Simplifies and refines code for clarity, consistency, and maintainability while preserving behavior"
+  },
+  "comment-analyzer": {
+   "purpose": "Analyze code comments for accuracy, completeness, maintainability, and comment rot risk"
+  },
+  "commit-reviewer": {
+   "purpose": "Reviews a staged diff and drafts a Conventional Commits-compliant message matching the"
+  },
+  "conversation-analyzer": {
+   "purpose": "Use this agent when analyzing conversation transcripts to find behaviors worth preventing"
+  },
+  "cpp-build-resolver": {
+   "purpose": "C++ build, CMake, and compilation error resolution specialist"
+  },
+  "cpp-reviewer": {
+   "purpose": "Expert C++ code reviewer specializing in memory safety, modern C++ idioms, concurrency"
+  },
+  "csharp-reviewer": {
+   "purpose": "Expert C# code reviewer specializing in .NET conventions, async patterns, security, nullable"
+  },
+  "dart-build-resolver": {
+   "purpose": "Dart/Flutter build, analysis, and dependency error resolution specialist"
+  },
+  "database-reviewer": {
+   "purpose": "PostgreSQL specialist for query optimization and schema design",
+   "web": "backend",
+   "web_desc": "PostgreSQL specialist for query optimization and schema design."
+  },
+  "django-build-resolver": {
+   "purpose": "Django/Python build, migration, and dependency error resolution specialist"
+  },
+  "django-reviewer": {
+   "purpose": "Expert Django code reviewer specializing in ORM correctness, DRF patterns, migration safety"
+  },
+  "doc-updater": {
+   "purpose": "Documentation and codemap generation and updates",
+   "web": "workflow",
+   "web_desc": "Documentation and codemap generation and updates."
+  },
+  "docs-lookup": {
+   "purpose": "When the user asks how to use a library, framework, or API"
+  },
+  "e2e-runner": {
+   "purpose": "End-to-end testing with Playwright, screenshots, and traces",
+   "web": "workflow",
+   "web_desc": "End-to-end testing with Playwright, screenshots, and traces."
+  },
+  "fastapi-reviewer": {
+   "purpose": "Reviews FastAPI applications for async correctness, dependency injection, Pydantic schemas, security, OpenAPI"
+  },
+  "flutter-reviewer": {
+   "purpose": "Flutter and Dart code reviewer"
+  },
+  "fsharp-reviewer": {
+   "purpose": "Expert F# code reviewer specializing in functional idioms, type safety, pattern matching"
+  },
+  "gan-evaluator": {
+   "purpose": "GAN Harness"
+  },
+  "gan-generator": {
+   "purpose": "GAN Harness"
+  },
+  "gan-planner": {
+   "purpose": "GAN Harness"
+  },
+  "go-build-resolver": {
+   "purpose": "Go build, vet, and compilation error resolution",
+   "web": "golang",
+   "web_desc": "Go build, vet, and compilation error resolution."
+  },
+  "go-reviewer": {
+   "purpose": "Go code review for idiomatic patterns and concurrency",
+   "web": "golang",
+   "web_desc": "Go code review for idiomatic patterns and concurrency."
+  },
+  "harmonyos-app-resolver": {
+   "purpose": "HarmonyOS application development expert specializing in ArkTS and ArkUI. Reviews code for"
+  },
+  "harness-optimizer": {
+   "purpose": "Analyze and improve local agent harness configuration",
+   "web": "ai-agent",
+   "web_desc": "Analyze and improve local agent harness configuration."
+  },
+  "healthcare-reviewer": {
+   "purpose": "Reviews healthcare application code for clinical safety, CDSS accuracy, PHI compliance, and"
+  },
+  "homelab-architect": {
+   "purpose": "Designs home and small-lab network plans from hardware inventory, goals, and operator"
+  },
+  "java-build-resolver": {
+   "purpose": "Java/Maven/Gradle build, compilation, and dependency error resolution specialist"
+  },
+  "java-reviewer": {
+   "purpose": "Expert Java code reviewer for Spring Boot and Quarkus projects"
+  },
+  "kotlin-build-resolver": {
+   "purpose": "Kotlin/Gradle build and dependency error resolution",
+   "web": "jvm",
+   "web_desc": "Kotlin/Gradle build and dependency error resolution."
+  },
+  "kotlin-reviewer": {
+   "purpose": "Kotlin and Android/KMP code review for patterns and pitfalls",
+   "web": "jvm",
+   "web_desc": "Kotlin and Android/KMP code review for patterns and pitfalls."
+  },
+  "loop-operator": {
+   "purpose": "Operate autonomous agent loops and intervene when loops stall",
+   "web": "ai-agent",
+   "web_desc": "Operate autonomous agent loops and intervene when loops stall."
+  },
+  "marketing-agent": {
+   "purpose": "Marketing strategist and copywriter for campaign planning, audience research, positioning, copy creation"
+  },
+  "mle-reviewer": {
+   "purpose": "Production machine-learning engineering reviewer for data contracts, feature pipelines, training reproducibility, offline/online"
+  },
+  "network-architect": {
+   "purpose": "Designs enterprise or multi-site network architecture from requirements, using existing network skills"
+  },
+  "network-config-reviewer": {
+   "purpose": "Reviews router and switch configurations for security, correctness, stale references, risky change-window"
+  },
+  "network-troubleshooter": {
+   "purpose": "Diagnoses network connectivity, routing, DNS, interface, and policy symptoms with a read-only"
+  },
+  "opensource-forker": {
+   "purpose": "Fork any project for open-sourcing"
+  },
+  "opensource-packager": {
+   "purpose": "Generate complete open-source packaging for a sanitized project"
+  },
+  "opensource-sanitizer": {
+   "purpose": "Verify an open-source fork is fully sanitized before release"
+  },
+  "performance-optimizer": {
+   "purpose": "Performance analysis and optimization specialist"
+  },
+  "php-reviewer": {
+   "purpose": "Expert PHP code reviewer specializing in PSR-12 compliance, PHP type system, Eloquent"
+  },
+  "planner": {
+   "purpose": "Implementation planning for complex features and refactoring",
+   "web": "workflow",
+   "web_desc": "Implementation planning for complex features and refactoring."
+  },
+  "pr-test-analyzer": {
+   "purpose": "Review pull request test coverage quality and completeness, with emphasis on behavioral"
+  },
+  "python-reviewer": {
+   "purpose": "Python code review for PEP 8, type hints, and security",
+   "web": "python",
+   "web_desc": "Python code review for PEP 8, type hints, and security."
+  },
+  "pytorch-build-resolver": {
+   "purpose": "PyTorch runtime, CUDA, and training error resolution specialist"
+  },
+  "rag-pipeline-reviewer": {
+   "purpose": "Reviews RAG (Retrieval-Augmented Generation) pipelines for retrieval quality, chunking strategy, embedding choices"
+  },
+  "react-build-resolver": {
+   "purpose": "Diagnose and fix React build failures across Vite, webpack, Next.js, CRA, Parcel"
+  },
+  "react-reviewer": {
+   "purpose": "Expert React/JSX code reviewer specializing in hook correctness, render performance, server/client component"
+  },
+  "refactor-cleaner": {
+   "purpose": "Dead code cleanup with knip, depcheck, and ts-prune",
+   "web": "workflow",
+   "web_desc": "Dead code cleanup with knip, depcheck, and ts-prune."
+  },
+  "ruby-reviewer": {
+   "purpose": "Expert Ruby and Rails code reviewer specializing in idiomatic Ruby, Active Record"
+  },
+  "rust-build-resolver": {
+   "purpose": "Rust build, compilation, and dependency error resolution specialist"
+  },
+  "rust-reviewer": {
+   "purpose": "Expert Rust code reviewer specializing in ownership, lifetimes, error handling, unsafe usage"
+  },
+  "security-reviewer": {
+   "purpose": "Security vulnerability detection and OWASP top 10 scanning",
+   "web": "security",
+   "web_desc": "Security vulnerability detection and OWASP top 10 scanning."
+  },
+  "seo-specialist": {
+   "purpose": "SEO specialist for technical SEO audits, on-page optimization, structured data, Core Web"
+  },
+  "silent-failure-hunter": {
+   "purpose": "Review code for silent failures, swallowed errors, bad fallbacks, and missing error"
+  },
+  "spec-miner": {
+   "purpose": "Extracts behavioral specs from existing codebases for OpenSpec"
+  },
+  "swift-build-resolver": {
+   "purpose": "Swift/Xcode build, compilation, and dependency error resolution specialist"
+  },
+  "swift-reviewer": {
+   "purpose": "Expert Swift code reviewer specializing in protocol-oriented design, value semantics, ARC memory"
+  },
+  "tdd-guide": {
+   "purpose": "Test-driven development enforcement with 80%+ coverage",
+   "web": "workflow",
+   "web_desc": "Test-driven development enforcement with 80%+ coverage."
+  },
+  "type-design-analyzer": {
+   "purpose": "Analyze type design for encapsulation, invariant expression, usefulness, and enforcement"
+  },
+  "typescript-reviewer": {
+   "purpose": "Expert TypeScript/JavaScript code reviewer specializing in type safety, async correctness, Node/web security"
+  },
+  "vue-reviewer": {
+   "purpose": "Expert Vue.js code reviewer specializing in Composition API correctness, reactivity pitfalls, component"
+  }
+ },
+ "commands": {
+  "aside": {
+   "purpose": "Quick side task without losing main context",
+   "web": "workflow",
+   "web_desc": "Quick side task without losing main context."
+  },
+  "astra-review": {
+   "purpose": "Send Claude-written code to GPT-6-Astra (ChatGPT, via Codex CLI) for an independent"
+  },
+  "auto-update": {
+   "purpose": "Pull the latest ECC repo changes and reinstall the current managed targets"
+  },
+  "build-fix": {
+   "purpose": "Fix build errors automatically",
+   "web": "workflow",
+   "web_desc": "Fix build errors automatically."
+  },
+  "checkpoint": {
+   "purpose": "Create a checkpoint of current work state",
+   "web": "workflow",
+   "web_desc": "Create a checkpoint of current work state."
+  },
+  "code-review": {
+   "purpose": "Run code review on recent changes",
+   "web": "workflow",
+   "web_desc": "Run code review on recent changes."
+  },
+  "cost-report": {
+   "purpose": "Generate a local Claude Code cost report from the ECC cost-tracker metrics"
+  },
+  "cpp-build": {
+   "purpose": "Fix C++ build errors, CMake issues, and linker problems incrementally"
+  },
+  "cpp-review": {
+   "purpose": "Comprehensive C++ code review for memory safety, modern C++ idioms, concurrency, and"
+  },
+  "cpp-test": {
+   "purpose": "Enforce TDD workflow for C++. Write GoogleTest tests first, then implement"
+  },
+  "ecc-guide": {
+   "purpose": "Navigate ECC's current agents, skills, commands, hooks, install profiles, and docs from"
+  },
+  "epic-claim": {
+   "purpose": "Claim an epic issue, stamp coordination state, and sync local ownership"
+  },
+  "epic-decompose": {
+   "purpose": "Break an epic into task children without creating task branches"
+  },
+  "epic-publish": {
+   "purpose": "Publish a validated epic update back to the issue and local cache"
+  },
+  "epic-review": {
+   "purpose": "Mark epic review requested, approved, or changes requested"
+  },
+  "epic-sync": {
+   "purpose": "Sync epic issue bodies, labels, and local coordination snapshots from GitHub"
+  },
+  "epic-unblock": {
+   "purpose": "Sweep blocked epic issues and reopen anything whose dependencies are closed"
+  },
+  "epic-validate": {
+   "purpose": "Validate epic readiness, dependencies, and coordination policy"
+  },
+  "evolve": {
+   "purpose": "Evolve instincts into skills and commands",
+   "web": "ai-agent",
+   "web_desc": "Evolve instincts into skills and commands."
+  },
+  "fastapi-review": {
+   "purpose": "Review a FastAPI application for architecture, async correctness, dependency injection, Pydantic schemas"
+  },
+  "feature-dev": {
+   "purpose": "Guided feature development with codebase understanding and architecture focus"
+  },
+  "flutter-build": {
+   "purpose": "Fix Dart analyzer errors and Flutter build failures incrementally"
+  },
+  "flutter-review": {
+   "purpose": "Review Flutter/Dart code for idiomatic patterns, widget best practices, state management, performance"
+  },
+  "flutter-test": {
+   "purpose": "Run Flutter/Dart tests, report failures, and incrementally fix test issues"
+  },
+  "gan-build": {
+   "purpose": "Run a generator/evaluator build loop for implementation tasks with bounded iterations and"
+  },
+  "gan-design": {
+   "purpose": "Run a generator/evaluator design loop for frontend or visual work with bounded"
+  },
+  "go-build": {
+   "purpose": "Fix Go build errors",
+   "web": "golang",
+   "web_desc": "Fix Go build errors."
+  },
+  "go-review": {
+   "purpose": "Run Go code review",
+   "web": "golang",
+   "web_desc": "Run Go code review."
+  },
+  "go-test": {
+   "purpose": "Run Go tests with coverage",
+   "web": "golang",
+   "web_desc": "Run Go tests with coverage."
+  },
+  "gradle-build": {
+   "purpose": "Fix Gradle build configuration issues",
+   "web": "jvm",
+   "web_desc": "Fix Gradle build configuration issues."
+  },
+  "harness-audit": {
+   "purpose": "Audit harness configuration for issues",
+   "web": "ai-agent",
+   "web_desc": "Audit harness configuration for issues."
+  },
+  "hookify": {
+   "purpose": "Create hooks to prevent unwanted behaviors from conversation analysis or explicit instructions"
+  },
+  "hookify-configure": {
+   "purpose": "Enable or disable hookify rules interactively"
+  },
+  "hookify-help": {
+   "purpose": "Get help with the hookify system"
+  },
+  "hookify-list": {
+   "purpose": "List all configured hookify rules"
+  },
+  "instinct-export": {
+   "purpose": "Export learned instincts to portable format",
+   "web": "ai-agent",
+   "web_desc": "Export learned instincts to portable format."
+  },
+  "instinct-import": {
+   "purpose": "Import instincts from exported format",
+   "web": "ai-agent",
+   "web_desc": "Import instincts from exported format."
+  },
+  "instinct-status": {
+   "purpose": "Check status of learned instincts",
+   "web": "ai-agent",
+   "web_desc": "Check status of learned instincts."
+  },
+  "jira": {
+   "purpose": "Retrieve a Jira ticket, analyze requirements, update status, or add comments"
+  },
+  "kotlin-build": {
+   "purpose": "Fix Kotlin/Gradle build errors",
+   "web": "jvm",
+   "web_desc": "Fix Kotlin/Gradle build errors."
+  },
+  "kotlin-review": {
+   "purpose": "Run Kotlin code review",
+   "web": "jvm",
+   "web_desc": "Run Kotlin code review."
+  },
+  "kotlin-test": {
+   "purpose": "Run Kotlin tests",
+   "web": "jvm",
+   "web_desc": "Run Kotlin tests."
+  },
+  "learn": {
+   "purpose": "Trigger learning from current session",
+   "web": "ai-agent",
+   "web_desc": "Trigger learning from current session."
+  },
+  "learn-eval": {
+   "purpose": "Evaluate learned instincts for quality",
+   "web": "ai-agent",
+   "web_desc": "Evaluate learned instincts for quality."
+  },
+  "loop-start": {
+   "purpose": "Start an autonomous agent loop",
+   "web": "ai-agent",
+   "web_desc": "Start an autonomous agent loop."
+  },
+  "loop-status": {
+   "purpose": "Check status of running agent loops",
+   "web": "ai-agent",
+   "web_desc": "Check status of running agent loops."
+  },
+  "marketing-campaign": {
+   "purpose": "Plan and execute a full marketing campaign"
+  },
+  "model-route": {
+   "purpose": "Route tasks to optimal model by complexity",
+   "web": "ai-agent",
+   "web_desc": "Route tasks to optimal model by complexity."
+  },
+  "multi-backend": {
+   "purpose": "Backend tasks across multiple agents",
+   "web": "ai-agent",
+   "web_desc": "Backend tasks across multiple agents."
+  },
+  "multi-execute": {
+   "purpose": "Execute tasks across multiple agents",
+   "web": "ai-agent",
+   "web_desc": "Execute tasks across multiple agents."
+  },
+  "multi-frontend": {
+   "purpose": "Frontend tasks across multiple agents",
+   "web": "ai-agent",
+   "web_desc": "Frontend tasks across multiple agents."
+  },
+  "multi-plan": {
+   "purpose": "Plan across multiple agents or repos",
+   "web": "ai-agent",
+   "web_desc": "Plan across multiple agents or repos."
+  },
+  "multi-workflow": {
+   "purpose": "Workflow orchestration across agents",
+   "web": "ai-agent",
+   "web_desc": "Workflow orchestration across agents."
+  },
+  "orch-add-feature": {
+   "purpose": "Orchestrate building a brand-new feature end to end"
+  },
+  "orch-build-mvp": {
+   "purpose": "Orchestrate bootstrapping a working MVP from a design/spec doc"
+  },
+  "orch-change-feature": {
+   "purpose": "Orchestrate altering an existing, working feature to new desired behavior"
+  },
+  "orch-fix-defect": {
+   "purpose": "Orchestrate fixing a bug"
+  },
+  "orch-refine-code": {
+   "purpose": "Orchestrate a behavior-preserving refactor"
+  },
+  "orch-review": {
+   "purpose": "Run the orch-review native Workflow over a diff"
+  },
+  "plan": {
+   "purpose": "Create step-by-step implementation plans",
+   "web": "workflow",
+   "web_desc": "Create step-by-step implementation plans."
+  },
+  "plan-canvas": {
+   "purpose": "Open a plan or HTML artifact in the browser Plan Canvas for"
+  },
+  "plan-prd": {
+   "purpose": "Generate a lean, problem-first PRD and hand off to /plan for implementation"
+  },
+  "pm2": {
+   "purpose": "PM2 process management integration",
+   "web": "specialized",
+   "web_desc": "PM2 process management integration."
+  },
+  "pr": {
+   "purpose": "Create a GitHub PR from current branch with unpushed commits"
+  },
+  "project-init": {
+   "purpose": "Detect a project's stack and produce a dry-run ECC onboarding plan using"
+  },
+  "projects": {
+   "purpose": "Manage multi-project workspaces",
+   "web": "workflow",
+   "web_desc": "Manage multi-project workspaces."
+  },
+  "promote": {
+   "purpose": "Promote an instinct to a full skill",
+   "web": "ai-agent",
+   "web_desc": "Promote an instinct to a full skill."
+  },
+  "prp-commit": {
+   "purpose": "Quick commit with natural language file targeting"
+  },
+  "prp-implement": {
+   "purpose": "Execute an implementation plan with rigorous validation loops"
+  },
+  "prp-plan": {
+   "purpose": "Create comprehensive feature implementation plan with codebase analysis and pattern extraction"
+  },
+  "prp-pr": {
+   "purpose": "Alias of /pr for the PRP workflow series"
+  },
+  "prp-prd": {
+   "purpose": "Interactive PRD generator - problem-first, hypothesis-driven product spec with back-and-forth questioning"
+  },
+  "prune": {
+   "purpose": "Delete pending instincts older than 30 days that were never promoted"
+  },
+  "python-review": {
+   "purpose": "Run Python code review",
+   "web": "python",
+   "web_desc": "Run Python code review."
+  },
+  "quality-gate": {
+   "purpose": "Run quality gate checks before merge",
+   "web": "security",
+   "web_desc": "Run quality gate checks before merge."
+  },
+  "react-build": {
+   "purpose": "Fix React build failures (Vite, webpack, Next.js, CRA, Parcel, esbuild, Bun) incrementally"
+  },
+  "react-review": {
+   "purpose": "Comprehensive React/JSX code review for hook correctness, render performance, server/client component boundaries"
+  },
+  "react-test": {
+   "purpose": "Enforce TDD workflow for React"
+  },
+  "refactor-clean": {
+   "purpose": "Clean up dead code and consolidate",
+   "web": "workflow",
+   "web_desc": "Clean up dead code and consolidate."
+  },
+  "resume-session": {
+   "purpose": "Resume a previously saved session",
+   "web": "workflow",
+   "web_desc": "Resume a previously saved session."
+  },
+  "review-pr": {
+   "purpose": "Comprehensive PR review using specialized agents (code-reviewer, comment-analyzer, pr-test-analyzer, silent-failure-hunter, type-design-analyzer, code-simplifier)"
+  },
+  "rust-build": {
+   "purpose": "Fix Rust build errors, borrow checker issues, and dependency problems incrementally"
+  },
+  "rust-review": {
+   "purpose": "Comprehensive Rust code review for ownership, lifetimes, error handling, unsafe usage, and"
+  },
+  "rust-test": {
+   "purpose": "Enforce TDD workflow for Rust"
+  },
+  "santa-loop": {
+   "purpose": "Adversarial dual-review convergence loop"
+  },
+  "save-session": {
+   "purpose": "Save current session for later resume",
+   "web": "workflow",
+   "web_desc": "Save current session for later resume."
+  },
+  "security-scan": {
+   "purpose": "Run AgentShield against agent, hook, MCP, permission, and secret surfaces"
+  },
+  "sessions": {
+   "purpose": "List and manage saved sessions",
+   "web": "workflow",
+   "web_desc": "List and manage saved sessions."
+  },
+  "setup-pm": {
+   "purpose": "Set up package manager configuration",
+   "web": "workflow",
+   "web_desc": "Set up package manager configuration."
+  },
+  "skill-create": {
+   "purpose": "Create a new skill from a template",
+   "web": "workflow",
+   "web_desc": "Create a new skill from a template."
+  },
+  "skill-health": {
+   "purpose": "Show skill portfolio health dashboard with charts and analytics"
+  },
+  "skill-host-compat": {
+   "purpose": "Lint ECC skills for Codex/Cursor-safe frontmatter and Claude-only substitutions before a skill"
+  },
+  "test-coverage": {
+   "purpose": "Check and report test coverage",
+   "web": "workflow",
+   "web_desc": "Check and report test coverage."
+  },
+  "token-card": {
+   "purpose": "Render a token-usage stat card from local agent session logs and commit"
+  },
+  "update-codemaps": {
+   "purpose": "Generate or update codemap files",
+   "web": "workflow",
+   "web_desc": "Generate or update codemap files."
+  },
+  "update-docs": {
+   "purpose": "Update documentation files",
+   "web": "workflow",
+   "web_desc": "Update documentation files."
+  },
+  "vue-review": {
+   "purpose": "Comprehensive Vue.js code review for Composition API correctness, reactivity, composable patterns, template"
+  }
+ },
+ "skills": {
+  "accessibility": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Design, implement, and audit accessible UI to WCAG 2.2 Level AA across"
+  },
+  "agent-architecture-audit": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Full-stack diagnostic for agent and LLM applications"
+  },
+  "agent-eval": {
+   "modules": [
+    "optimization-workflows"
+   ],
+   "purpose": "Head-to-head comparison of coding agents (Claude Code, Aider, Codex, etc.) on custom"
+  },
+  "agent-harness-construction": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Design and optimize AI agent action spaces and tool definitions",
+   "web": "ai-agent",
+   "web_desc": "Design and optimize AI agent action spaces and tool definitions."
+  },
+  "agent-introspection-debugging": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Structured self-debugging workflow for AI agent failures using capture, diagnosis, contained recovery"
+  },
+  "agent-payment-x402": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Add x402 payment execution to AI agents with per-task budgets, spending controls"
+  },
+  "agent-runtime-gateway-smoke-test": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Verify a local agent API, temporary gateway tunnel, and remote sandbox callback"
+  },
+  "agent-security-hardening": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Security hardening guidance for AI agent frameworks that process untrusted content, invoke"
+  },
+  "agent-self-evaluation": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": ". The agent self-rates its output on 5 axes"
+  },
+  "agent-sort": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Build an evidence-backed ECC install plan for a specific repo by sorting"
+  },
+  "agentic-engineering": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Eval-first execution, decomposition, and cost-aware model routing",
+   "web": "ai-agent",
+   "web_desc": "Eval-first execution, decomposition, and cost-aware model routing."
+  },
+  "agentic-os": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Build persistent multi-agent operating systems on Claude Code"
+  },
+  "ai-first-engineering": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Operating model for teams where AI agents generate implementation output",
+   "web": "ai-agent",
+   "web_desc": "Operating model for teams where AI agents generate implementation output."
+  },
+  "ai-regression-testing": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Regression testing strategies for AI-assisted development"
+  },
+  "android-clean-architecture": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Clean Architecture for Android and KMP: modules, UseCases, and Repositories",
+   "web": "jvm",
+   "web_desc": "Clean Architecture for Android and KMP: modules, UseCases, and Repositories."
+  },
+  "angular-developer": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Generates Angular code and provides architectural guidance"
+  },
+  "api-connector-builder": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Build a new API connector or provider by matching the target repo's"
+  },
+  "api-design": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "REST API design: resource naming, status codes, pagination, and versioning",
+   "web": "backend",
+   "web_desc": "REST API design: resource naming, status codes, pagination, and versioning."
+  },
+  "architecture-decision-records": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Capture architectural decisions as numbered ADR markdown files in docs/adr/ with context"
+  },
+  "article-writing": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Long-form content, guides, blog posts, and tutorials with voice consistency",
+   "web": "content",
+   "web_desc": "Long-form content, guides, blog posts, and tutorials with voice consistency."
+  },
+  "automation-audit-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Evidence-first automation inventory and overlap audit workflow for ECC. Use when the"
+  },
+  "autonomous-agent-harness": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Transform Claude Code into a fully autonomous agent system with persistent memory"
+  },
+  "autonomous-loops": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Patterns for autonomous Claude Code loops from sequential to multi-agent DAGs",
+   "web": "ai-agent",
+   "web_desc": "Patterns for autonomous Claude Code loops from sequential to multi-agent DAGs."
+  },
+  "backend-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Node.js, Express, and Next.js API architecture and optimization",
+   "web": "backend",
+   "web_desc": "Node.js, Express, and Next.js API architecture and optimization."
+  },
+  "benchmark": {
+   "modules": [
+    "optimization-workflows"
+   ],
+   "purpose": "Measure performance baselines and detect regressions across browser Core Web Vitals"
+  },
+  "benchmark-methodology": {
+   "modules": [
+    "optimization-workflows"
+   ],
+   "purpose": "Score a scoped competitor set into comparable profile cards: nine weighted dimensions"
+  },
+  "benchmark-optimization-loop": {
+   "modules": [
+    "optimization-workflows"
+   ],
+   "purpose": "Convert 'make it faster' requests into a bounded measured optimization loop"
+  },
+  "bengali-nlp": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Bengali (Bangla) text processing patterns including Unicode normalization, script detection, tokenization, conjunct"
+  },
+  "blender-motion-state-inspection": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "Rigs, poses, animation retargeting, ground contact, facing direction, or model-vs-motion alignment where"
+  },
+  "blueprint": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Turn objectives into step-by-step construction plans for multi-session projects",
+   "web": "workflow",
+   "web_desc": "Turn objectives into step-by-step construction plans for multi-session projects."
+  },
+  "brand-discovery": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Run a structured, resumable multi-session brand identity interview across 8 modules"
+  },
+  "brand-voice": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Build a source-derived writing style profile from real posts, essays, launch notes"
+  },
+  "brownfield-retrospective": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Run the ECC engineering process retroactively against an existing project slice"
+  },
+  "browser-qa": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Run automated post-deploy UI verification with a browser automation MCP"
+  },
+  "bun-runtime": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Bun as runtime, package manager, bundler, and test runner"
+  },
+  "canary-watch": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Checks HTTP endpoints, SSE streams, static assets, console errors, and performance regressions"
+  },
+  "carrier-relationship-management": {
+   "modules": [
+    "supply-chain-domain"
+   ],
+   "purpose": "Carrier portfolios, freight rate negotiation, and performance tracking",
+   "web": "industry",
+   "web_desc": "Carrier portfolios, freight rate negotiation, and performance tracking."
+  },
+  "change-impact": {
+   "modules": [
+    "documentation-change-impact"
+   ],
+   "purpose": "Perform evidence-backed impact analysis before changing code, data, interfaces, or governance documents"
+  },
+  "cisco-ios-patterns": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Cisco IOS and IOS-XE review patterns for show commands, config hierarchy, wildcard"
+  },
+  "ck": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Persistent per-project memory for Claude Code (Context Keeper) driven by deterministic Node.js"
+  },
+  "claude-devfleet": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Orchestrate multi-agent coding tasks via Claude DevFleet"
+  },
+  "click-path-audit": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Trace every user-facing button/touchpoint through its full state change sequence to find"
+  },
+  "clickhouse-io": {
+   "modules": [
+    "database"
+   ],
+   "purpose": "ClickHouse analytics, query optimization, and data engineering patterns",
+   "web": "backend",
+   "web_desc": "ClickHouse analytics, query optimization, and data engineering patterns."
+  },
+  "code-tour": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Create CodeTour .tour files"
+  },
+  "codebase-onboarding": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Analyze an unfamiliar codebase and generate a structured onboarding guide with architecture"
+  },
+  "codehealth-mcp": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Real-time structural Code Health via CodeScene MCP"
+  },
+  "coding-standards": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Universal coding standards and best practices for TypeScript, JavaScript, React, and Node.js",
+   "web": "core",
+   "web_desc": "Universal coding standards and best practices for TypeScript, JavaScript, React, and Node.js."
+  },
+  "competitive-platform-analysis": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Identifying, categorising, and score-filtering a competitor set before any benchmarking begins"
+  },
+  "competitive-report-structure": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Assemble scored competitor profile cards (from benchmark-methodology) into a decision-grade competitive report"
+  },
+  "compose-multiplatform-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Compose UI patterns for KMP: state, navigation, theming, and platform UI",
+   "web": "jvm",
+   "web_desc": "Compose UI patterns for KMP: state, navigation, theming, and platform UI."
+  },
+  "config-gc": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Garbage collection for your Claude Code configuration"
+  },
+  "configure-ecc": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Interactive installer for selecting and installing skills and rules",
+   "web": "core",
+   "web_desc": "Interactive installer for selecting and installing skills and rules."
+  },
+  "connections-optimizer": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Reorganize the user's X and LinkedIn network with review-first pruning, add/follow recommendations"
+  },
+  "content-engine": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Multi-platform content systems for X, LinkedIn, TikTok, YouTube, and newsletters",
+   "web": "content",
+   "web_desc": "Multi-platform content systems for X, LinkedIn, TikTok, YouTube, and newsletters."
+  },
+  "content-hash-cache-pattern": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "SHA-256 content hash caching for expensive file processing",
+   "web": "workflow",
+   "web_desc": "SHA-256 content hash caching for expensive file processing."
+  },
+  "context-and-decisions": {
+   "modules": [
+    "documentation-context"
+   ],
+   "purpose": "Govern stable domain context with a narrowly scoped CONTEXT.md when needed, and"
+  },
+  "context-budget": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Routes live context checks to the native Codex or Claude Code meter"
+  },
+  "continuous-agent-loop": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Quality gates, evals, and recovery controls for continuous agent loops",
+   "web": "ai-agent",
+   "web_desc": "Quality gates, evals, and recovery controls for continuous agent loops."
+  },
+  "continuous-learning": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Extract reusable patterns from sessions and save as learned skills",
+   "web": "core",
+   "web_desc": "Extract reusable patterns from sessions and save as learned skills."
+  },
+  "continuous-learning-v2": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Instinct-based learning with confidence scoring and project-scoped instincts",
+   "web": "core",
+   "web_desc": "Instinct-based learning with confidence scoring and project-scoped instincts."
+  },
+  "contract-first": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Coordinate frontend/backend or service-to-service work through one authoritative machine-checkable contract"
+  },
+  "conventional-commit-review": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Reviews staged changes and drafts a Conventional Commits-compliant commit message with the"
+  },
+  "cost-aware-llm-pipeline": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Model routing by complexity, budget tracking, retry logic, and prompt caching",
+   "web": "ai-agent",
+   "web_desc": "Model routing by complexity, budget tracking, retry logic, and prompt caching."
+  },
+  "cost-tracking": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Track and report Claude Code token usage, spending, and budgets from the"
+  },
+  "council": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Convene a four-voice council for ambiguous decisions, tradeoffs, and go/no-go calls"
+  },
+  "council-multi-model": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Add one optional external Codex critique after the existing council has produced"
+  },
+  "counterparty-channel-discipline": {
+   "modules": [
+    "operator-desk-patterns"
+   ],
+   "purpose": "Per-channel strict prompts, mention gating, silent observation, and a communication autonomy policy"
+  },
+  "cpp-coding-standards": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "C++ Core Guidelines: modern, safe, and idiomatic practices",
+   "web": "cpp",
+   "web_desc": "C++ Core Guidelines: modern, safe, and idiomatic practices."
+  },
+  "cpp-testing": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "GoogleTest, CTest, coverage, and sanitizer configuration",
+   "web": "cpp",
+   "web_desc": "GoogleTest, CTest, coverage, and sanitizer configuration."
+  },
+  "crosspost": {
+   "modules": [
+    "social-distribution"
+   ],
+   "purpose": "Multi-platform distribution across X, LinkedIn, Threads, and Bluesky",
+   "web": "content",
+   "web_desc": "Multi-platform distribution across X, LinkedIn, Threads, and Bluesky."
+  },
+  "csharp-testing": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "C# and .NET testing patterns with xUnit, FluentAssertions, mocking, integration tests, and"
+  },
+  "customer-billing-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Operate customer billing workflows such as subscriptions, refunds, churn triage, billing-portal recovery"
+  },
+  "customs-trade-compliance": {
+   "modules": [
+    "supply-chain-domain"
+   ],
+   "purpose": "Customs documentation, tariff classification, and regulatory compliance",
+   "web": "industry",
+   "web_desc": "Customs documentation, tariff classification, and regulatory compliance."
+  },
+  "dart-flutter-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Production-ready Dart and Flutter patterns covering null safety, immutable state with Freezed"
+  },
+  "dashboard-builder": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Build monitoring dashboards that answer real operator questions for Grafana, SigNoz, and"
+  },
+  "data-scraper-agent": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Build a fully automated AI-powered data collection agent for any public source"
+  },
+  "data-throughput-accelerator": {
+   "modules": [
+    "optimization-workflows"
+   ],
+   "purpose": "Diagnose and accelerate large data movement"
+  },
+  "database-migrations": {
+   "modules": [
+    "database"
+   ],
+   "purpose": "Schema changes, data migrations, rollbacks, and zero-downtime deployments",
+   "web": "workflow",
+   "web_desc": "Schema changes, data migrations, rollbacks, and zero-downtime deployments."
+  },
+  "deep-research": {
+   "modules": [
+    "research-apis"
+   ],
+   "purpose": "Multi-source research using firecrawl and exa MCPs with cited reports",
+   "web": "research",
+   "web_desc": "Multi-source research using firecrawl and exa MCPs with cited reports."
+  },
+  "deepseek-harness-setup": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Install and operate Everything Claude Code (ECC) on the DeepSeek Harness (DSH)"
+  },
+  "defi-amm-security": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Security checklist for Solidity AMM contracts, liquidity pools, and swap flows"
+  },
+  "delivery-gate": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Stop hook that blocks Claude from finishing until quality checks pass"
+  },
+  "deployment-patterns": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "CI/CD pipelines, Docker, health checks, rollback strategies, and production readiness",
+   "web": "workflow",
+   "web_desc": "CI/CD pipelines, Docker, health checks, rollback strategies, and production readiness."
+  },
+  "design-system": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Generate a design system from an existing codebase or audit one for"
+  },
+  "dev-team": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Simulate a collaborative dev team session where multiple role-based personas"
+  },
+  "django-celery": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Django + Celery async task patterns"
+  },
+  "django-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Django architecture, DRF, ORM best practices, and caching",
+   "web": "python",
+   "web_desc": "Django architecture, DRF, ORM best practices, and caching."
+  },
+  "django-security": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Django security best practices, CSRF, SQL injection, and secure deployment",
+   "web": "security",
+   "web_desc": "Django security best practices, CSRF, SQL injection, and secure deployment."
+  },
+  "django-tdd": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Django testing with pytest-django, factory_boy, and coverage",
+   "web": "python",
+   "web_desc": "Django testing with pytest-django, factory_boy, and coverage."
+  },
+  "django-verification": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Django verification loop: migrations, linting, tests, and security scans",
+   "web": "python",
+   "web_desc": "Django verification loop: migrations, linting, tests, and security scans."
+  },
+  "dmux-workflows": {
+   "modules": [
+    "orchestration"
+   ],
+   "purpose": "Multi-agent orchestration using dmux for parallel agent sessions",
+   "web": "workflow",
+   "web_desc": "Multi-agent orchestration using dmux for parallel agent sessions."
+  },
+  "docker-patterns": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Multi-stage builds, Compose, health checks, and container best practices",
+   "web": "workflow",
+   "web_desc": "Multi-stage builds, Compose, health checks, and container best practices."
+  },
+  "docs-governance": {
+   "modules": [
+    "documentation-governance"
+   ],
+   "purpose": "Route broad documentation-governance requests to existing ECC skills and run an opt-in"
+  },
+  "documentation-lookup": {
+   "modules": [
+    "research-apis"
+   ],
+   "purpose": "Use up-to-date library and framework docs via Context7 MCP instead of training"
+  },
+  "dotnet-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Idiomatic C# and .NET patterns, conventions, dependency injection, async/await, and best practices"
+  },
+  "dynamic-workflow-mode": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Design task-local harnesses, eval gates, and reusable skill extraction for Claude dynamic"
+  },
+  "e2e-testing": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Playwright E2E testing patterns, Page Object Model, configuration, CI/CD integration, artifact management"
+  },
+  "ecc-guide": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Answer questions about ECC by reading the live repo surface"
+  },
+  "ecc-recipes": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Map a described workflow to the right ECC command group with run-order"
+  },
+  "ecc-tools-cost-audit": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Evidence-first ECC Tools burn and billing audit workflow"
+  },
+  "email-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Evidence-first mailbox triage, drafting, send verification, and sent-mail-safe follow-up workflow for ECC"
+  },
+  "energy-procurement": {
+   "modules": [
+    "supply-chain-domain"
+   ],
+   "purpose": "Energy procurement patterns and utility management",
+   "web": "industry",
+   "web_desc": "Energy procurement patterns and utility management."
+  },
+  "enterprise-agent-ops": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Operational controls for long-lived or cloud-hosted agent systems"
+  },
+  "error-handling": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Patterns for robust error handling across TypeScript, Python, and Go"
+  },
+  "esign-field-placement": {
+   "modules": [
+    "operator-desk-patterns"
+   ],
+   "purpose": "Deterministic method for placing signature, date, and text fields in a web"
+  },
+  "eval-harness": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Evaluation harness for testing agent outputs and scoring results",
+   "web": "workflow",
+   "web_desc": "Evaluation harness for testing agent outputs and scoring results."
+  },
+  "evm-token-decimals": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Prevent silent decimal mismatch bugs across EVM chains"
+  },
+  "exa-search": {
+   "modules": [
+    "research-apis"
+   ],
+   "purpose": "Exa neural search integration for semantic web retrieval",
+   "web": "research",
+   "web_desc": "Exa neural search integration for semantic web retrieval."
+  },
+  "fal-ai-media": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "Fal.ai media generation integration for images, video, and audio",
+   "web": "specialized",
+   "web_desc": "fal.ai media generation integration for images, video, and audio."
+  },
+  "fastapi-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "FastAPI best practices covering project structure, Pydantic v2 schemas, dependency injection, async"
+  },
+  "finance-billing-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Evidence-first revenue, pricing, refunds, team-billing, and billing-model truth workflow for ECC. Use"
+  },
+  "flox-environments": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Create reproducible, cross-platform (macOS/Linux) development environments with Flox, a declarative Nix-based environment"
+  },
+  "flutter-dart-code-review": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Library-agnostic Flutter/Dart code review checklist covering widget best practices, state management patterns"
+  },
+  "foundation-models-on-device": {
+   "modules": [
+    "swift-apple"
+   ],
+   "purpose": "Patterns for running foundation models on-device with edge inference",
+   "web": "ai-agent",
+   "web_desc": "Patterns for running foundation models on-device with edge inference."
+  },
+  "frontend-a11y": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Accessibility patterns for React and Next.js"
+  },
+  "frontend-design-direction": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Set an ECC-specific frontend design direction for production UI work"
+  },
+  "frontend-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "React, Next.js, state management, performance, and UI best practices",
+   "web": "frontend",
+   "web_desc": "React, Next.js, state management, performance, and UI best practices."
+  },
+  "frontend-slides": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Presentation and slide deck generation with web technologies",
+   "web": "frontend",
+   "web_desc": "Presentation and slide deck generation with web technologies."
+  },
+  "fsharp-testing": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "F# testing patterns with xUnit, FsUnit, Unquote, FsCheck property-based testing, integration tests"
+  },
+  "gan-style-harness": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "GAN-inspired Generator-Evaluator agent harness for building high-quality applications autonomously"
+  },
+  "gateguard": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "PreToolUse fact-forcing gate that denies the first Edit/Write/Bash (including MultiEdit and NotebookEdit)"
+  },
+  "generating-python-installer": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Commercial-grade Python installer expert for Windows: Nuitka extreme compilation, dist slimming, DLL"
+  },
+  "git-workflow": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Git workflow patterns including branching strategies, commit conventions, keeping history clean and"
+  },
+  "github-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "GitHub repository operations, automation, and management"
+  },
+  "golang-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Idiomatic Go patterns, concurrency, error handling, and project layout",
+   "web": "golang",
+   "web_desc": "Idiomatic Go patterns, concurrency, error handling, and project layout."
+  },
+  "golang-testing": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Go testing patterns, table-driven tests, benchmarks, and fuzzing",
+   "web": "golang",
+   "web_desc": "Go testing patterns, table-driven tests, benchmarks, and fuzzing."
+  },
+  "google-workspace-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Operate across Google Drive, Docs, Sheets, and Slides as one workflow surface"
+  },
+  "growth-log": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Write growth log entries that extract reusable patterns from completed work"
+  },
+  "healthcare-cdss-patterns": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Clinical Decision Support System (CDSS) development patterns"
+  },
+  "healthcare-emr-patterns": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "EMR/EHR development patterns for healthcare applications"
+  },
+  "healthcare-eval-harness": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Patient safety evaluation harness for healthcare application deployments"
+  },
+  "healthcare-phi-compliance": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Protected Health Information (PHI) and PII compliance patterns for healthcare applications: data"
+  },
+  "hermes-imports": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Convert local Hermes operator workflows into sanitized ECC skills and release-pack artifacts"
+  },
+  "hexagonal-architecture": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Design, implement, and refactor Ports & Adapters systems with clear domain boundaries"
+  },
+  "hipaa-compliance": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "HIPAA-specific entrypoint for healthcare privacy and security work"
+  },
+  "homelab-network-readiness": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Readiness checklist for homelab VLAN segmentation, local DNS filtering (Pi-hole, AdGuard Home)"
+  },
+  "homelab-network-setup": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Practical home and homelab network planning for gateways, switches, access points, IP"
+  },
+  "homelab-pihole-dns": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Pi-hole installation, blocklist management, DNS-over-HTTPS setup, DHCP integration, local DNS records, and"
+  },
+  "homelab-vlan-segmentation": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Segmenting home networks into VLANs for IoT, guest, trusted, and server traffic"
+  },
+  "homelab-wireguard-vpn": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "WireGuard VPN server setup, peer configuration, key generation, split tunneling vs full"
+  },
+  "hookify-rules": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Create and configure hookify rules"
+  },
+  "i18n-sync": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Translate and synchronize application JSON locale files using source-key usage, project terminology"
+  },
+  "inherit-legacy-style": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Prevent AI style drift on legacy projects by scanning the codebase for"
+  },
+  "intent-driven-development": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Turn ambiguous or high-impact product and engineering changes into scoped, verifiable acceptance"
+  },
+  "inventory-demand-planning": {
+   "modules": [
+    "supply-chain-domain"
+   ],
+   "purpose": "Inventory optimization, demand forecasting, and replenishment",
+   "web": "industry",
+   "web_desc": "Inventory optimization, demand forecasting, and replenishment."
+  },
+  "investor-materials": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Pitch decks, financial models, and investor-facing documents",
+   "web": "content",
+   "web_desc": "Pitch decks, financial models, and investor-facing documents."
+  },
+  "investor-outreach": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Investor pipeline management, outreach sequences, and follow-ups",
+   "web": "content",
+   "web_desc": "Investor pipeline management, outreach sequences, and follow-ups."
+  },
+  "ios-icon-gen": {
+   "modules": [
+    "swift-apple"
+   ],
+   "purpose": "Generate iOS app icons as PNG imagesets for Xcode asset catalogs from"
+  },
+  "iterative-retrieval": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Multi-round retrieval patterns for building comprehensive context",
+   "web": "research",
+   "web_desc": "Multi-round retrieval patterns for building comprehensive context."
+  },
+  "ito-baskets": {
+   "modules": [
+    "prediction-market-skills"
+   ],
+   "purpose": "Read-only Itô basket and prediction-market data skill"
+  },
+  "ito-compute": {
+   "modules": [
+    "ito-compute"
+   ],
+   "purpose": "Query live GPU inventory, submit an authenticated Itô fixed-rate RFQ, inspect RFQ"
+  },
+  "ito-inference": {
+   "modules": [
+    "ito-compute"
+   ],
+   "purpose": "Inspect the availability of model serving on a completed Itô compute booking"
+  },
+  "ito-training": {
+   "modules": [
+    "ito-compute"
+   ],
+   "purpose": "Inspect the availability of ML training on a completed Itô compute booking"
+  },
+  "java-coding-standards": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Java coding conventions, naming, and modern Java idioms",
+   "web": "jvm",
+   "web_desc": "Java coding conventions, naming, and modern Java idioms."
+  },
+  "jira-integration": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Analyzing requirements, updating ticket status, adding comments, or transitioning issues"
+  },
+  "jpa-patterns": {
+   "modules": [
+    "database"
+   ],
+   "purpose": "JPA/Hibernate patterns, entity design, and query optimization",
+   "web": "jvm",
+   "web_desc": "JPA/Hibernate patterns, entity design, and query optimization."
+  },
+  "knowledge-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Knowledge base management, ingestion, sync, and retrieval across multiple storage layers"
+  },
+  "kotlin-coroutines-flows": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Coroutine patterns, Flow operators, and structured concurrency",
+   "web": "jvm",
+   "web_desc": "Coroutine patterns, Flow operators, and structured concurrency."
+  },
+  "kotlin-exposed-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Exposed ORM patterns for Kotlin database access",
+   "web": "jvm",
+   "web_desc": "Exposed ORM patterns for Kotlin database access."
+  },
+  "kotlin-ktor-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Ktor server patterns, routing, serialization, and plugins",
+   "web": "jvm",
+   "web_desc": "Ktor server patterns, routing, serialization, and plugins."
+  },
+  "kotlin-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Idiomatic Kotlin, null safety, sealed classes, and DSL design",
+   "web": "jvm",
+   "web_desc": "Idiomatic Kotlin, null safety, sealed classes, and DSL design."
+  },
+  "kotlin-testing": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Kotlin testing with MockK, Kotest, and coroutine test patterns",
+   "web": "jvm",
+   "web_desc": "Kotlin testing with MockK, Kotest, and coroutine test patterns."
+  },
+  "kubernetes-patterns": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Kubernetes workload patterns, resource management, RBAC, probes, autoscaling, ConfigMap/Secret handling, and kubectl"
+  },
+  "laravel-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Laravel architecture patterns, routing/controllers, Eloquent ORM, service layers, queues, events, caching, and"
+  },
+  "laravel-plugin-discovery": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Discover and evaluate Laravel packages via LaraPlugins.io MCP. Use when the user"
+  },
+  "laravel-security": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Laravel security best practices"
+  },
+  "laravel-tdd": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Laravel testing strategies with PHPUnit, Pest, model factories, HTTP tests, Sanctum authentication"
+  },
+  "laravel-verification": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Verification loop for Laravel projects: env checks, linting, static analysis, tests with"
+  },
+  "latency-critical-systems": {
+   "modules": [
+    "optimization-workflows"
+   ],
+   "purpose": "Optimize and verify latency-sensitive systems"
+  },
+  "lead-intelligence": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "AI-native lead intelligence and outreach pipeline"
+  },
+  "liquid-glass-design": {
+   "modules": [
+    "swift-apple"
+   ],
+   "purpose": "Apple-inspired liquid glass and translucent UI patterns",
+   "web": "frontend",
+   "web_desc": "Apple-inspired liquid glass and translucent UI patterns."
+  },
+  "living-docs-governance": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Keep a long-lived project's documentation from rotting by assigning existing project docs"
+  },
+  "llm-trading-agent-security": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Security patterns for autonomous trading agents with wallet or transaction authority"
+  },
+  "logistics-exception-management": {
+   "modules": [
+    "supply-chain-domain"
+   ],
+   "purpose": "Exception handling for logistics and freight management",
+   "web": "industry",
+   "web_desc": "Exception handling for logistics and freight management."
+  },
+  "loop-design-check": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Design a goal-oriented agent loop or review one for failure modes: spinning"
+  },
+  "mailtrap-email-integration": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Guides agents through integrating transactional email sending via Mailtrap's Email API, including"
+  },
+  "make-interfaces-feel-better": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Apply concrete design-engineering details that make interfaces feel polished"
+  },
+  "manim-video": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "Build reusable Manim explainers for technical concepts, graphs, system diagrams, and product"
+  },
+  "market-research": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Market analysis, competitive intelligence, and industry research",
+   "web": "research",
+   "web_desc": "Market analysis, competitive intelligence, and industry research."
+  },
+  "marketing-campaign": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "End-to-end marketing campaign planning and execution"
+  },
+  "master-agreement-generator": {
+   "modules": [
+    "operator-desk-patterns"
+   ],
+   "purpose": "Generate review drafts of counterparty master agreements from one template plus a"
+  },
+  "mcp-dependency-review": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Statically review MCP configuration for mutable package references before approval or CI"
+  },
+  "mcp-server-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Build MCP servers with Node/TypeScript SDK"
+  },
+  "messages-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Evidence-first live messaging workflow for ECC. Use when the user wants to"
+  },
+  "ml-adoption-playbook": {
+   "modules": [
+    "machine-learning"
+   ],
+   "purpose": "End-to-end methodology for AI agents and software engineers to add machine learning"
+  },
+  "mle-workflow": {
+   "modules": [
+    "machine-learning"
+   ],
+   "purpose": "Production machine-learning engineering workflow for data contracts, reproducible training, model evaluation, deployment"
+  },
+  "module-regression": {
+   "modules": [
+    "documentation-test-regression"
+   ],
+   "purpose": "Govern cross-module regression in large repositories with a REGRESSION.md ledger that records"
+  },
+  "motion-advanced": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Advanced motion patterns for React / Next.js"
+  },
+  "motion-foundations": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Motion tokens, spring presets, performance rules, device adaptation, accessibility enforcement, and SSR"
+  },
+  "motion-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Production-ready animation patterns for React / Next.js"
+  },
+  "mybatis-patterns": {
+   "modules": [
+    "database"
+   ],
+   "purpose": "MyBatis and MyBatis-Spring patterns for mapper design, XML and annotation SQL, result"
+  },
+  "mysql-patterns": {
+   "modules": [
+    "database"
+   ],
+   "purpose": "MySQL and MariaDB schema, query, indexing, transaction, replication, and connection-pool patterns for"
+  },
+  "nanoclaw-repl": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Nanoclaw REPL patterns for interactive agent sessions",
+   "web": "specialized",
+   "web_desc": "Nanoclaw REPL patterns for interactive agent sessions."
+  },
+  "nasiko-control-plane": {
+   "modules": [
+    "nasiko-control-plane"
+   ],
+   "purpose": "Manage the experimental Nasiko CLI lifecycle through ECC"
+  },
+  "nestjs-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "NestJS architecture patterns for modules, controllers, providers, DTO validation, guards, interceptors, config"
+  },
+  "netmiko-ssh-automation": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Safe Python Netmiko patterns for read-only collection, bounded batch SSH, TextFSM parsing"
+  },
+  "network-bgp-diagnostics": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Diagnostics-only BGP troubleshooting patterns for neighbor state, route exchange, prefix policy, AS"
+  },
+  "network-config-validation": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Pre-deployment checks for router and switch configuration, including dangerous commands, duplicate addresses"
+  },
+  "network-interface-health": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Diagnose interface errors, drops, CRCs, duplex mismatches, flapping, speed negotiation issues, and"
+  },
+  "nextjs-turbopack": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Next.js 16+ and Turbopack guidance"
+  },
+  "nodejs-keccak256": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Prevent Ethereum hashing bugs in JavaScript and TypeScript"
+  },
+  "nutrient-document-processing": {
+   "modules": [
+    "document-processing"
+   ],
+   "purpose": "Document processing with Nutrient SDK for PDFs and forms",
+   "web": "specialized",
+   "web_desc": "Document processing with Nutrient SDK for PDFs and forms."
+  },
+  "nuxt4-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Nuxt 4 app patterns for hydration safety, performance, route rules, lazy loading"
+  },
+  "openclaw-persona-forge": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "为 OpenClaw AI Agent 锻造完整的龙虾灵魂方案。根据用户偏好或随机抽卡， 输出身份定位、灵魂描述(SOUL.md)、角色化底线规则、名字和头像生图提示词。 如当前环境提供已审核的生图 skill，可自动生成统一风格头像图片。 当用户需要创建、设计或定制 OpenClaw 龙虾灵魂时使用。 不适用于：微调已有"
+  },
+  "opensource-pipeline": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Open-source pipeline: fork, sanitize, and package private projects for safe public release"
+  },
+  "operator-approval-loop": {
+   "modules": [
+    "operator-desk-patterns"
+   ],
+   "purpose": "Operator approval contract with internal filing notices for agent-drafted outbound messages, hashed"
+  },
+  "orch-add-feature": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Orchestrate building a brand-new feature end to end"
+  },
+  "orch-build-mvp": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Orchestrate bootstrapping a working MVP from a design or spec document"
+  },
+  "orch-change-feature": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Orchestrate altering an existing, working feature to new desired behavior"
+  },
+  "orch-fix-defect": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Orchestrate fixing a bug"
+  },
+  "orch-pipeline": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Shared orchestration engine behind the orch-* skill family"
+  },
+  "orch-refine-code": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Orchestrate a behavior-preserving refactor"
+  },
+  "osint-investigation": {
+   "modules": [
+    "research-apis"
+   ],
+   "purpose": "Sparse-clue OSINT investigation methodology for extracting overlooked leads, connecting fragmented evidence, and"
+  },
+  "parallel-execution-optimizer": {
+   "modules": [
+    "optimization-workflows"
+   ],
+   "purpose": "Speed up a task by turning it into a dependency graph of"
+  },
+  "perl-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Modern Perl patterns, Moose, and best practices",
+   "web": "perl",
+   "web_desc": "Modern Perl patterns, Moose, and best practices."
+  },
+  "perl-security": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Perl security patterns, taint checking, and input validation",
+   "web": "security",
+   "web_desc": "Perl security patterns, taint checking, and input validation."
+  },
+  "perl-testing": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Perl testing with Test2, TAP, and coverage tools",
+   "web": "perl",
+   "web_desc": "Perl testing with Test2, TAP, and coverage tools."
+  },
+  "plan-canvas": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Open plans and HTML artifacts in a local browser canvas where the"
+  },
+  "plan-orchestrate": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Read a plan document, decompose it into steps, classify each step, and"
+  },
+  "plankton-code-quality": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Code quality analysis and metrics tracking",
+   "web": "specialized",
+   "web_desc": "Code quality analysis and metrics tracking."
+  },
+  "postgres-patterns": {
+   "modules": [
+    "database"
+   ],
+   "purpose": "PostgreSQL query optimization, indexing, and schema design",
+   "web": "backend",
+   "web_desc": "PostgreSQL query optimization, indexing, and schema design."
+  },
+  "prediction-market-oracle-research": {
+   "modules": [
+    "prediction-market-skills"
+   ],
+   "purpose": "Research prediction markets as data sources or oracle signals for products, agents"
+  },
+  "prediction-market-risk-review": {
+   "modules": [
+    "prediction-market-skills"
+   ],
+   "purpose": "Review prediction-market, basket, oracle, and trading-agent workflows for compliance, safety, data-quality, privacy"
+  },
+  "prisma-patterns": {
+   "modules": [
+    "database"
+   ],
+   "purpose": "Prisma ORM patterns for TypeScript backends"
+  },
+  "product-capability": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Translate PRD intent, roadmap asks, or product discussions into an implementation-ready capability"
+  },
+  "product-lens": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Validate the why before building through four product diagnostics"
+  },
+  "production-audit": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Local-evidence production readiness audit for shipped apps, pre-launch reviews, post-merge checks, and"
+  },
+  "production-scheduling": {
+   "modules": [
+    "supply-chain-domain"
+   ],
+   "purpose": "Manufacturing scheduling, capacity planning, and optimization",
+   "web": "industry",
+   "web_desc": "Manufacturing scheduling, capacity planning, and optimization."
+  },
+  "project-flow-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Operate execution flow across GitHub and Linear by triaging issues and pull"
+  },
+  "prompt-caching-strategy": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Optimize LLM prompt caching hit rate to reduce API costs and improve"
+  },
+  "prompt-optimizer": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Optimize prompts for better quality, lower cost, and faster responses",
+   "web": "ai-agent",
+   "web_desc": "Optimize prompts for better quality, lower cost, and faster responses."
+  },
+  "python-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Pythonic idioms, type hints, async patterns, and project structure",
+   "web": "python",
+   "web_desc": "Pythonic idioms, type hints, async patterns, and project structure."
+  },
+  "python-testing": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Pytest patterns, fixtures, mocking, and coverage configuration",
+   "web": "python",
+   "web_desc": "pytest patterns, fixtures, mocking, and coverage configuration."
+  },
+  "pytorch-patterns": {
+   "modules": [
+    "machine-learning"
+   ],
+   "purpose": "PyTorch deep learning patterns and best practices for building robust, efficient, and"
+  },
+  "quality-nonconformance": {
+   "modules": [
+    "supply-chain-domain"
+   ],
+   "purpose": "Quality control, nonconformance tracking, and CAPA processes",
+   "web": "industry",
+   "web_desc": "Quality control, nonconformance tracking, and CAPA processes."
+  },
+  "quarkus-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Quarkus 3.x LTS architecture patterns with Camel for messaging, RESTful API design"
+  },
+  "quarkus-security": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Quarkus security implementation patterns: JWT and OIDC authentication, @RolesAllowed RBAC and SecurityIdentity"
+  },
+  "quarkus-tdd": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Test-driven development for Quarkus 3.x LTS using JUnit 5, Mockito, REST Assured"
+  },
+  "quarkus-verification": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Verification loop for Quarkus projects: build, static analysis (Checkstyle, PMD, SpotBugs), tests"
+  },
+  "rails-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Ruby on Rails framework patterns for Rails 7.1+ and 8.x apps"
+  },
+  "ralphinho-rfc-pipeline": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "RFC-driven development pipeline for structured proposals",
+   "web": "specialized",
+   "web_desc": "RFC-driven development pipeline for structured proposals."
+  },
+  "react-native-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "React Native and Expo app patterns"
+  },
+  "react-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "React 18/19 patterns including hooks discipline, server/client component boundaries, Suspense + error"
+  },
+  "react-performance": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "React and Next.js performance optimization patterns adapted from Vercel Engineering's React Best"
+  },
+  "react-testing": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "React component testing with React Testing Library, Vitest/Jest, MSW for network mocking"
+  },
+  "recsys-pipeline-architect": {
+   "modules": [
+    "machine-learning"
+   ],
+   "purpose": "Design composable recommendation, ranking, and feed pipelines using the six-stage Source→Hydrator→Filter→Scorer→Selector→SideEffect framework"
+  },
+  "recursive-decision-ledger": {
+   "modules": [
+    "optimization-workflows"
+   ],
+   "purpose": "Run repeated rollouts (\"Prime Gauss\" style recursive prompting) while keeping an append-only"
+  },
+  "redis-patterns": {
+   "modules": [
+    "database"
+   ],
+   "purpose": "Redis data structure patterns, caching strategies, distributed locks, rate limiting, pub/sub, and"
+  },
+  "regex-vs-llm-structured-text": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Decision framework for regex vs LLM-based text extraction",
+   "web": "specialized",
+   "web_desc": "Decision framework for regex vs LLM-based text extraction."
+  },
+  "remotion-video-creation": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "Best practices for Remotion - Video creation in React"
+  },
+  "repo-scan": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Bootstrap pointer that installs the external repo-scan skill from a pinned, reviewable"
+  },
+  "research-ops": {
+   "modules": [
+    "research-apis"
+   ],
+   "purpose": "Evidence-first current-state research workflow for ECC. Use when the user wants fresh"
+  },
+  "returns-reverse-logistics": {
+   "modules": [
+    "supply-chain-domain"
+   ],
+   "purpose": "Returns processing, reverse logistics, and refurbishment workflows",
+   "web": "industry",
+   "web_desc": "Returns processing, reverse logistics, and refurbishment workflows."
+  },
+  "rules-distill": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Scan skills to extract cross-cutting principles and distill them into rules"
+  },
+  "rust-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Idiomatic Rust patterns, ownership, error handling, traits, concurrency, and best practices for"
+  },
+  "rust-testing": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Rust testing patterns including unit tests, integration tests, async testing, property-based testing"
+  },
+  "safety-guard": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Guard against destructive operations with three modes: Careful intercepts dangerous commands"
+  },
+  "santa-method": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Multi-agent adversarial verification: two independent reviewers with the same rubric must both"
+  },
+  "scientific-db-pubmed-database": {
+   "modules": [
+    "research-apis"
+   ],
+   "purpose": "Direct PubMed and NCBI E-utilities search workflows for biomedical literature, MeSH queries"
+  },
+  "scientific-db-uspto-database": {
+   "modules": [
+    "research-apis"
+   ],
+   "purpose": "USPTO patent and trademark data workflow for official record lookup, PatentSearch queries"
+  },
+  "scientific-pkg-gget": {
+   "modules": [
+    "research-apis"
+   ],
+   "purpose": "Gget CLI and Python workflow for quick genomic database queries, sequence lookup"
+  },
+  "scientific-thinking-literature-review": {
+   "modules": [
+    "research-apis"
+   ],
+   "purpose": "Systematic literature-review workflow for academic, biomedical, technical, and scientific topics, including search"
+  },
+  "scientific-thinking-scholar-evaluation": {
+   "modules": [
+    "research-apis"
+   ],
+   "purpose": "Structured scholarly-work evaluation for papers, proposals, literature reviews, methods sections, evidence quality"
+  },
+  "search-first": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Search-first patterns for grounding responses in retrieved context",
+   "web": "research",
+   "web_desc": "Search-first patterns for grounding responses in retrieved context."
+  },
+  "security-bounty-hunter": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Hunt for exploitable, bounty-worthy security issues in repositories"
+  },
+  "security-review": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "OWASP top 10, secret detection, injection prevention, and security checklists",
+   "web": "security",
+   "web_desc": "OWASP top 10, secret detection, injection prevention, and security checklists."
+  },
+  "security-scan": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Automated security scanning for codebases and configurations",
+   "web": "security",
+   "web_desc": "Automated security scanning for codebases and configurations."
+  },
+  "seo": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Audit, plan, and implement SEO improvements across technical SEO, on-page optimization, structured"
+  },
+  "skill-comply": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Visualize whether skills, rules, and agent definitions are actually followed"
+  },
+  "skill-host-compat": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Lint ECC skills for Codex/Cursor-safe frontmatter and Claude-only substitutions before a skill"
+  },
+  "skill-scout": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Search existing local, marketplace, GitHub, and web skill sources before creating a"
+  },
+  "skill-stocktake": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Audit and inventory installed skills across harness configurations",
+   "web": "specialized",
+   "web_desc": "Audit and inventory installed skills across harness configurations."
+  },
+  "social-graph-ranker": {
+   "modules": [
+    "business-content"
+   ],
+   "purpose": "Weighted social-graph ranking for warm intro discovery, bridge scoring, and network gap"
+  },
+  "social-publisher": {
+   "modules": [
+    "social-distribution"
+   ],
+   "purpose": "Agent-driven scheduling and publishing of social media posts across 13 platforms via"
+  },
+  "springboot-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Spring Boot architecture, dependency injection, and configuration",
+   "web": "jvm",
+   "web_desc": "Spring Boot architecture, dependency injection, and configuration."
+  },
+  "springboot-security": {
+   "modules": [
+    "security"
+   ],
+   "purpose": "Spring Security patterns, OAuth2, JWT, and secure API configurations",
+   "web": "security",
+   "web_desc": "Spring Security patterns, OAuth2, JWT, and secure API configurations."
+  },
+  "springboot-tdd": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Spring Boot testing with MockMvc, Testcontainers, and slicing",
+   "web": "jvm",
+   "web_desc": "Spring Boot testing with MockMvc, Testcontainers, and slicing."
+  },
+  "springboot-verification": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Spring Boot verification loop for build, tests, and deployment",
+   "web": "jvm",
+   "web_desc": "Spring Boot verification loop for build, tests, and deployment."
+  },
+  "story-lifecycle": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Manage a file-based epic → story → sprint development loop without requiring"
+  },
+  "strategic-compact": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Manual context compaction at logical intervals to preserve context across task phases",
+   "web": "core",
+   "web_desc": "Manual context compaction at logical intervals to preserve context across task phases."
+  },
+  "swift-actor-persistence": {
+   "modules": [
+    "swift-apple"
+   ],
+   "purpose": "Actor-based persistence patterns for Swift applications",
+   "web": "swift",
+   "web_desc": "Actor-based persistence patterns for Swift applications."
+  },
+  "swift-concurrency-6-2": {
+   "modules": [
+    "swift-apple"
+   ],
+   "purpose": "Swift 6.2 concurrency: actors, sendable, and structured concurrency",
+   "web": "swift",
+   "web_desc": "Swift 6.2 concurrency: actors, sendable, and structured concurrency."
+  },
+  "swift-protocol-di-testing": {
+   "modules": [
+    "swift-apple"
+   ],
+   "purpose": "Protocol-based dependency injection for testable Swift code"
+  },
+  "swiftui-patterns": {
+   "modules": [
+    "swift-apple"
+   ],
+   "purpose": "SwiftUI declarative UI patterns, navigation, and state management",
+   "web": "swift",
+   "web_desc": "SwiftUI declarative UI patterns, navigation, and state management."
+  },
+  "taste": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "Creative-direction layer for music videos and short-form edits in the angelcore /"
+  },
+  "taste-application": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "Generate new video against a distilled style pack and cut it into"
+  },
+  "taste-distillation": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "Measure a set of reference videos into a reusable style pack "
+  },
+  "tasteforge-video": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "Video, and 3D-asset discovery"
+  },
+  "tdd-workflow": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Test-driven development patterns and workflow enforcement",
+   "web": "workflow",
+   "web_desc": "Test-driven development patterns and workflow enforcement."
+  },
+  "team-agent-orchestration": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Run team-based orchestration for agent squads: work items with owners and scope"
+  },
+  "team-builder": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Interactive picker that discovers available agent personas via the claude agents command"
+  },
+  "terminal-opener": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Open an executable and its argument array in a visible terminal window"
+  },
+  "terminal-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Evidence-first repo execution workflow for ECC. Use when the user wants a"
+  },
+  "test-collaboration": {
+   "modules": [
+    "documentation-test-regression"
+   ],
+   "purpose": "Inventory and govern a project's test assets"
+  },
+  "tinystruct-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Expert guidance for developing with the tinystruct Java framework"
+  },
+  "token-budget-advisor": {
+   "modules": [
+    "agentic-patterns"
+   ],
+   "purpose": "Offer a choice of response depth (25%/50%/75%/100%) with token estimates before answering"
+  },
+  "token-card": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Render a token-usage stat card from local Claude Code, Codex, Gemini CLI"
+  },
+  "ui-demo": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "Record polished UI demo videos using Playwright"
+  },
+  "ui-to-vue": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Especially with Vant, Element Plus, or Ant Design Vue"
+  },
+  "uncloud": {
+   "modules": [
+    "devops-infra"
+   ],
+   "purpose": "Deploying services, configuring Caddy ingress, adding static proxy routes for non-cluster devices"
+  },
+  "unified-memory": {
+   "modules": [
+    "skill-unified-memory"
+   ],
+   "purpose": "Share durable, inspectable context and handoffs between Claude, Codex, Hermes, Cursor, OpenCode"
+  },
+  "unified-notifications-ops": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Operate notifications as one ECC-native workflow across GitHub, Linear, desktop alerts, hooks"
+  },
+  "verification-loop": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "Structured verification loop for code quality, tests, and deployment readiness",
+   "web": "workflow",
+   "web_desc": "Structured verification loop for code quality, tests, and deployment readiness."
+  },
+  "video-editing": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "Video editing automation and processing patterns",
+   "web": "specialized",
+   "web_desc": "Video editing automation and processing patterns."
+  },
+  "videodb": {
+   "modules": [
+    "media-generation"
+   ],
+   "purpose": "VideoDB integration for video search and analysis",
+   "web": "specialized",
+   "web_desc": "VideoDB integration for video search and analysis."
+  },
+  "visa-doc-translate": {
+   "modules": [
+    "document-processing"
+   ],
+   "purpose": "Visa document translation and immigration paperwork processing",
+   "web": "industry",
+   "web_desc": "Visa document translation and immigration paperwork processing."
+  },
+  "vite-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Vite build tool patterns including config, plugins, HMR, env variables, proxy setup"
+  },
+  "vue-patterns": {
+   "modules": [
+    "framework-language"
+   ],
+   "purpose": "Vue.js 3 Composition API patterns, component architecture, reactivity best practices, Pinia state"
+  },
+  "windows-desktop-e2e": {
+   "modules": [
+    "workflow-quality"
+   ],
+   "purpose": "E2E testing for Windows native desktop apps (WPF, WinForms, Win32/MFC, Qt) using"
+  },
+  "workspace-surface-audit": {
+   "modules": [
+    "operator-workflows"
+   ],
+   "purpose": "Audit the active repo, MCP servers, plugins, connectors, env surfaces, and harness"
+  },
+  "x-api": {
+   "modules": [
+    "social-distribution"
+   ],
+   "purpose": "X (Twitter) API integration patterns and automation",
+   "web": "content",
+   "web_desc": "X (Twitter) API integration patterns and automation."
+  }
+ },
+ "source": "ECC plugin 2.2.3 + ecc.tools/skills catalog"
+}

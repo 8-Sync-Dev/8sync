@@ -7,7 +7,7 @@
 //! Every source is best-effort: a single failure (offline, no `git`, repo gone)
 //! warns and is skipped; the command still exits 0. The core bundled skills are
 //! NOT touched here — refresh those with `8sync harness init`.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::Result;
@@ -37,6 +37,13 @@ pub(crate) fn update_skills(
     if reg.is_empty() {
         ui::info("no registered skills — `8sync skill add <url>` (or commit su-code/skills.toml)");
         return Ok(());
+    }
+    // A `builtin:` this binary does not bundle was registered by an older release (`skill add`
+    // refuses unknown builtins): forget it — the manifest rewrite below drops it — instead of
+    // warning on every run (`deep-research` ships as `deep-research-web` since 0.111.0;
+    // `karpathy` was the pre-`karpathy-guidelines` name).
+    for name in drop_unbundled_builtins(&mut reg) {
+        ui::info(&format!("dropped `{name}` from the skill registry: this 8sync no longer bundles it"));
     }
     let omp_skills = env.home.join(".omp/skills");
     let mut updated = 0usize;
@@ -113,10 +120,6 @@ pub(crate) fn update_skills(
             continue;
         }
         let prefix = format!("skills/{}", bname);
-        if assets::iter_under(&format!("{}/", prefix)).is_empty() {
-            ui::warn(&format!("builtin `{}` not bundled (assets/skills/{}/ absent)", bname, bname));
-            continue;
-        }
         matched = true;
         let gt = omp_skills.join(name);
         let (w, _) = assets::install_tree(&prefix, &gt)?;
@@ -165,4 +168,39 @@ fn sanitize(url: &str) -> String {
     url.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect()
+}
+
+/// Remove the entries whose `builtin:` source this binary does not bundle; returns their names.
+fn drop_unbundled_builtins(reg: &mut BTreeMap<String, discover::SkillEntry>) -> Vec<String> {
+    let mut gone = Vec::new();
+    reg.retain(|name, e| {
+        let bundled = e.src.strip_prefix("builtin:").is_none_or(|b| !assets::iter_under(&format!("skills/{b}/")).is_empty());
+        if !bundled {
+            gone.push(name.clone());
+        }
+        bundled
+    });
+    gone
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_forgets_builtins_this_binary_no_longer_bundles() {
+        let e = |src: &str| discover::SkillEntry { src: src.into(), when: None, rev: None };
+        let mut reg: BTreeMap<String, discover::SkillEntry> = [
+            ("deep-research", e("builtin:deep-research")),
+            ("karpathy", e("builtin:karpathy")),
+            ("trail", e("builtin:trail")),
+            ("mine", e("https://github.com/owner/mine")),
+            ("local", e("path:/x/local")),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        assert_eq!(drop_unbundled_builtins(&mut reg), ["deep-research", "karpathy"]);
+        assert_eq!(reg.keys().map(String::as_str).collect::<Vec<_>>(), ["local", "mine", "trail"]);
+    }
 }

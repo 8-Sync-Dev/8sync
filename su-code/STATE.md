@@ -1,16 +1,15 @@
-# v0.111.0 — harness gọn: bỏ board, per-repo chỉ ECC, cắt token
+# v0.111.1 — lệnh /eccx-* cho mọi người dùng
 
 ## Goal
-Owner 2026-10-30: xoá board/card/team/auto tự chế (8sync không tự mở hay nhắc session); per-repo harness chỉ ECC (`ecc@ecc` giữ đủ); tối ưu token mạnh nhất, Rust, nhẹ RAM. Lịch sử các bản trước nằm trong CHANGELOG và git.
+Owner 2026-10-30: bỏ board/card/team/auto; per-repo harness chỉ ECC (`ecc@ecc` giữ đủ); tối ưu token mạnh nhất, Rust, nhẹ RAM; ai cài/`8sync up` cũng có `/eccx-<nhóm>`. Lịch sử các bản trước nằm trong CHANGELOG và git.
 
 ## Checklist
-- [x] #247 bỏ board/card/auto-team/delegate/permit; exe −771 584 B
-- [x] #246 per-repo ECC-only: hết vendor `su-code/skills`, block AGENTS/CLAUDE 955 B, ECC rule pack theo stack, session-start ≤1 200 ký tự
-- [x] #248 compaction ~200K (ccc 80 % × 250K, omp `thresholdTokens` 200000); hook ECC tắt thật; seed skill-listing 0,005 + deny 3 tool không dùng; luật giọng gọn
+- [x] v0.111.0: bỏ board (#247), per-repo ECC-only (#246), compaction ~200K + hook ECC tắt thật + seed gọn prompt (#248)
+- [x] v0.111.1: `/eccx-<nhóm>` bundle trong binary (Claude Code qua `ccc kit`, omp qua `harness global`); registry bỏ builtin đã retire
 - [ ] Đo lại 24 h sau release so với mốc cũ
 
 ## Current
-v0.111.0 vừa phát hành. Mốc trước release (24 h transcript Claude Code): 10 020 call, 2,41 B token phía input, 78 % ở context ≥200K. Prefix probe "OK": trung tính 43 968 → 36 882, repo su-code 96 026 → 41 084.
+Prefix probe "OK" sau v0.111.0: Claude Code trung tính 43 968 → 36 388; repo su-code 41 084 → 47 876 vì rule ECC `common/` (10 file, 18 KB, không có `paths:`) giờ luôn nạp. omp: trung tính 40 837 (không đổi), repo su-code 69 589 → 59 970.
 
 ## Next
 - Chạy lại `usage-scan` 24 h sau release; kỳ vọng ~−50 % token input (replay: nén ở 200K = −53 %).

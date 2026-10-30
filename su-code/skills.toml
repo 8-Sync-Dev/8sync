@@ -8,10 +8,6 @@ when = "always"
 src = "builtin:trail"
 when = "always"
 
-[deep-research]
-src = "builtin:deep-research"
-when = "on-demand"
-
 [autoresearch]
 src = "builtin:autoresearch"
 when = "on-demand"
@@ -23,10 +19,6 @@ when = "always"
 [impeccable]
 src = "builtin:impeccable"
 when = "on-demand"
-
-[karpathy]
-src = "builtin:karpathy"
-when = "always"
 
 [karpathy-guidelines]
 src = "builtin:karpathy-guidelines"
