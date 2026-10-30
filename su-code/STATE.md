@@ -5,7 +5,8 @@ Owner 2026-10-30: bỏ board/card/team/auto; per-repo harness chỉ ECC (`ecc@ec
 
 ## Checklist
 - [x] v0.111.0: bỏ board (#247), per-repo ECC-only (#246), compaction ~200K + hook ECC tắt thật + seed gọn prompt (#248)
-- [x] v0.111.1: `/eccx-<nhóm>` bundle trong binary (Claude Code qua `ccc kit`, omp qua `harness global`); registry bỏ builtin đã retire (0.111.2: ghi xuống cả registry máy)
+- [x] v0.111.1 (tag, không có bản phát hành: build macOS bị huỷ do brownout `macos-14`): `/eccx-<nhóm>` bundle trong binary (Claude Code qua `ccc kit`, omp qua `harness global`); registry bỏ builtin đã retire
+- [x] v0.111.2: bản phát hành đầu tiên có `/eccx-*`; cắt builtin đã retire khỏi cả registry máy; release macOS chạy trên `macos-latest`
 - [ ] Đo lại 24 h sau release so với mốc cũ
 
 ## Current

@@ -9,6 +9,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Fixed
 - **Dọn builtin đã bỏ khỏi registry của máy cho hẳn:** 0.111.1 chỉ bỏ khỏi bản gộp trong bộ nhớ và ghi lại `su-code/skills.toml`, nên máy có `[karpathy]`/`[deep-research]` trong `8sync/skills.toml` (thư mục config) sẽ in "dropped …" mỗi lần chạy `harness`. Giờ `skill update` cắt đúng các bảng đó trong từng file (registry máy + manifest dự án), phần còn lại giữ nguyên (comment đầu file, entry git có `rev`), và cắt trước khi gộp nên entry dự án cùng tên vẫn được tính.
+- **Bản phát hành macOS:** `release.yml` build 2 slice darwin trên `macos-latest` thay `macos-14`. Image macOS 14 bị brownout theo lịch (30/10, 31/10, 1/11 từ 14:00 đến 24:00 UTC) và ngừng hẳn ngày 2/11/2026 (actions/runner-images#13518). Build của tag v0.111.1 bị huỷ vì brownout nên 0.111.1 không có bản phát hành; 0.111.2 là bản đầu tiên có `/eccx-*`.
 
 ## [0.111.1] — 2026-10-31
 
