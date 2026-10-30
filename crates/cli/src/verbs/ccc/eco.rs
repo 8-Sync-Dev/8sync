@@ -14,7 +14,9 @@
 //! - RAM at the threshold: the working set of session helpers holding ≥ [`TRIM_MIN_MB`] is handed
 //!   back (`K32EmptyWorkingSet`, Windows), at most once per [`TRIM_EVERY_S`].
 //!
-//! Nothing is killed or paused here: that stays with `auto guard` (rooms) and `8sync watchdog`.
+//! Killed here: only an orphaned helper ([`reap_orphan_helpers`]): a language server / MCP server
+//! / trail worker whose host session is gone (no claude/omp/editor/terminal above it). Rooms stay
+//! with `auto guard`, everything else with `8sync watchdog`.
 //! `8sync ccc eco` alone prints what the machine uses now (RAM, CPU, GPU, watts, battery, what
 //! Claude Code / node hold); `run` loops every [`EVERY_S`]; `install` starts it at logon
 //! (Windows Scheduled Task, systemd --user, launchd). Settings: `~/.config/8sync/eco.json`.
@@ -44,7 +46,7 @@ const TRIM_EVERY_S: u64 = 600;
 const ECO_KEEP: usize = 400;
 const MIB: u64 = 1024 * 1024;
 
-const USAGE: &str = "usage: 8sync ccc eco [status] [--json] | tick [--json] | run | install | uninstall | set ram <50..95> | set cpu <30..95> | set battery on|off";
+const USAGE: &str = "usage: 8sync ccc eco [status] [--json] | tick [--json] | reap [--dry-run] [--json] | run | install | uninstall | set ram <50..95> | set cpu <30..95> | set battery on|off";
 
 // ── battery ──────────────────────────────────────────────────────────────────────────────────
 
@@ -235,6 +237,138 @@ pub(super) fn targets(procs: &[Proc], me: u32) -> Vec<&Proc> {
         .collect()
 }
 
+// ── orphaned helpers ─────────────────────────────────────────────────────────────────────────
+
+/// An orphaned helper goes only from this age (one just started may not be handed over yet).
+const REAP_AGE_S: u64 = 120;
+/// A trail-code worker goes only from this age.
+const TRAIL_AGE_S: u64 = 600;
+/// At most this many helpers (each with its tree) killed per pass.
+pub(super) const REAP_MAX: usize = 20;
+
+/// What keeps a helper in use while it sits anywhere above it: a coding session or editor/terminal
+/// (claude incl. Claude Desktop, omp, VS Code, Cursor, Codex desktop, Windows Terminal), 8sync, a
+/// headless `conhost` (scheduled tasks), HQ's app and the OKX trader.
+fn is_host(p: &Proc) -> bool {
+    let c = p.cmd.to_lowercase();
+    matches!(p.image.as_str(), "claude" | "omp" | "code" | "code - insiders" | "cursor" | "windsurf" | "codex" | "chatgpt" | "windowsterminal" | "wt" | "8sync")
+        || (p.image == "conhost" && c.contains("--headless"))
+        || reap::is_hq(&c)
+        || c.contains("okx-click-trader")
+}
+
+/// The helper `p` runs, junk only once orphaned. Never a shell, 8sync or a host; an MCP only from
+/// this list (an MCP a bot runs, like okx-trade-mcp, is that bot's).
+pub(super) fn helper_kind(p: &Proc) -> Option<&'static str> {
+    if p.shell || is_host(p) {
+        return None;
+    }
+    let c = p.cmd.to_lowercase().replace('\\', "/");
+    let has = |s: &str| c.contains(s);
+    Some(if has("@trailhq/trail-code") && has("_trail-") {
+        "trail worker"
+    } else if has("bash-language-server") {
+        "bash-language-server"
+    } else if has("typescript-language-server") {
+        "typescript-language-server"
+    } else if has("tsserver") {
+        "tsserver"
+    } else if has("pyright") || has("langserver") || has("language-server") {
+        "language server"
+    } else if has("@z_ai/mcp-server") || has("zai-mcp-server") {
+        "MCP zai"
+    } else if has("headroom") && has("mcp") {
+        "MCP headroom"
+    } else if has("unreal-mcp") {
+        "MCP unreal"
+    } else if has("codebase-memory-mcp") {
+        "MCP codebase-memory"
+    } else if has("serena") && has("mcp") {
+        "MCP serena"
+    } else {
+        return None;
+    })
+}
+
+/// A live host ([`is_host`]) above `p`, walking up only to a parent that started no later than its
+/// child (a recycled pid is never followed). A parent of unknown start counts as a host: kept
+/// rather than guessed.
+fn hosted(procs: &[Proc], p: &Proc) -> bool {
+    let mut cur = p;
+    for _ in 0..64 {
+        let Some(q) = procs.iter().find(|q| cur.ppid != 0 && q.pid == cur.ppid && q.pid != cur.pid && q.started <= cur.started) else { return false };
+        if q.started == 0 || is_host(q) {
+            return true;
+        }
+        cur = q;
+    }
+    true
+}
+
+/// One orphaned helper: its pid, kind, tree (itself first, then what it started) and the tree's RAM.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Orphan {
+    pub pid: u32,
+    pub kind: &'static str,
+    pub tree: Vec<u32>,
+    pub rss: u64,
+}
+
+/// What [`reap_orphan_helpers`] kills (pure): helpers ([`helper_kind`]) of known start, at least
+/// [`REAP_AGE_S`] old ([`TRAIL_AGE_S`] for a trail worker), with no host above them, never `me` or
+/// its ancestors; one inside another's tree goes with that one; at most [`REAP_MAX`].
+pub(super) fn orphans(procs: &[Proc], now: u64, me: u32) -> Vec<Orphan> {
+    let keep = reap::lineage(procs, me);
+    let mut out: Vec<Orphan> = Vec::new();
+    for p in procs {
+        let Some(kind) = helper_kind(p) else { continue };
+        let min = if kind == "trail worker" { TRAIL_AGE_S } else { REAP_AGE_S };
+        if p.started == 0 || now.saturating_sub(p.started) < min || keep.contains(&p.pid) || hosted(procs, p) {
+            continue;
+        }
+        let tree = reap::descendants(procs, p.pid, &|q| is_host(q) || keep.contains(&q.pid));
+        let rss = procs.iter().filter(|q| tree.contains(&q.pid)).map(|q| q.rss).sum();
+        out.push(Orphan { pid: p.pid, kind, tree, rss });
+    }
+    let all = out.clone();
+    out.retain(|o| !all.iter().any(|x| x.pid != o.pid && x.tree.contains(&o.pid)));
+    out.truncate(REAP_MAX);
+    out
+}
+
+fn reap_log(home: &Path) -> PathBuf {
+    home.join(".config/8sync/eco-reap.log")
+}
+
+/// Kills (with `dry_run` only lists) the [`orphans`] of `procs`, each pid of a tree alone
+/// ([`reap::kill`]: no `taskkill /T`, which follows stale parent links); every kill is appended to
+/// `~/.config/8sync/eco-reap.log` (started over past 512 KB). One row per helper.
+pub(super) fn reap_orphan_helpers(home: &Path, procs: &[Proc], now: u64, dry_run: bool) -> Vec<Value> {
+    let mut rows = Vec::new();
+    let mut log = String::new();
+    for o in orphans(procs, now, std::process::id()) {
+        let p = procs.iter().find(|q| q.pid == o.pid);
+        let name = p.map_or("", |p| p.name.as_str());
+        let killed = !dry_run && reap::kill(&o.tree).first().copied().unwrap_or(false);
+        let (mb, age_m) = (o.rss / MIB, p.map_or(0, |p| now.saturating_sub(p.started) / 60));
+        if killed {
+            log.push_str(&format!("{now} killed {} {name} pid {} ({} pids, {age_m}m, {mb} MB)\n", o.kind, o.pid, o.tree.len()));
+        }
+        let cmd: String = p.map_or(String::new(), |p| p.cmd.chars().take(140).collect());
+        rows.push(json!({ "pid": o.pid, "kind": o.kind, "name": name, "pids": o.tree.len(), "mb": mb, "ageMin": age_m, "killed": killed, "cmd": cmd }));
+    }
+    if !log.is_empty() {
+        use std::io::Write;
+        let path = reap_log(home);
+        let fresh = std::fs::metadata(&path).is_ok_and(|m| m.len() > 512 * 1024);
+        let _ = path.parent().map(std::fs::create_dir_all);
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).write(true).append(!fresh).truncate(fresh).open(&path) {
+            let _ = f.write_all(log.as_bytes());
+        }
+    }
+    rows
+}
+
 // ── one pass ─────────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,6 +455,7 @@ pub(super) fn tick(home: &Path, sampler: Option<&Sampler>) -> Value {
     let st = read_json(&state_path(home));
     let m = mode(ram, s.cpu_pct, bat, c, st["last"]["mode"] == "hot");
     let procs = reap::list(now);
+    let reaped = reap_orphan_helpers(home, &procs, now, false).iter().filter(|r| r["killed"] == true).count();
     let t = targets(&procs, std::process::id());
     let ecoed = ecoed_of(&st);
     let team_guard = super::auto::running(home);
@@ -344,7 +479,7 @@ pub(super) fn tick(home: &Path, sampler: Option<&Sampler>) -> Value {
     next.truncate(ECO_KEEP);
     let last = json!({
         "at": now, "mode": m.key(), "ram": ram, "cpu": s.cpu_pct, "targets": t.len(),
-        "lowered": lowered, "ecoOn": eco_on, "ecoOff": eco_off, "trimmed": trimmed, "trimmedMb": trimmed_bytes / MIB,
+        "lowered": lowered, "ecoOn": eco_on, "ecoOff": eco_off, "trimmed": trimmed, "trimmedMb": trimmed_bytes / MIB, "reaped": reaped,
     });
     let state = json!({
         "ecoed": next.iter().map(|(a, b)| json!([a, b])).collect::<Vec<_>>(),
@@ -455,13 +590,14 @@ pub(super) fn snapshot_text(v: &Value) -> String {
     out.push(format!("Eco: {mode} · ngưỡng RAM {}% / CPU {}% · {svc}", e["ramPct"].as_u64().unwrap_or(0), e["cpuPct"].as_u64().unwrap_or(0)));
     if let Some(l) = e["last"].as_object() {
         out.push(format!(
-            "Lần chạy gần nhất: {} tiến trình của phiên · hạ ưu tiên {} · Efficiency mode +{}/-{} · trả RAM {} ({} MB)",
+            "Lần chạy gần nhất: {} tiến trình của phiên · hạ ưu tiên {} · Efficiency mode +{}/-{} · trả RAM {} ({} MB) · dọn helper mồ côi {}",
             l["targets"].as_u64().unwrap_or(0),
             l["lowered"].as_u64().unwrap_or(0),
             l["ecoOn"].as_u64().unwrap_or(0),
             l["ecoOff"].as_u64().unwrap_or(0),
             l["trimmed"].as_u64().unwrap_or(0),
-            l["trimmedMb"].as_u64().unwrap_or(0)
+            l["trimmedMb"].as_u64().unwrap_or(0),
+            l.get("reaped").and_then(Value::as_u64).unwrap_or(0) // absent in a state written before reaping
         ));
     }
     out.join("\n")
@@ -609,7 +745,32 @@ pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
             if json_out {
                 println!("{}", serde_json::to_string_pretty(&v)?);
             } else {
-                println!("eco: {} · hạ ưu tiên {} · Efficiency +{}/-{} · trả RAM {}", v["mode"].as_str().unwrap_or("?"), v["lowered"], v["ecoOn"], v["ecoOff"], v["trimmed"]);
+                println!("eco: {} · hạ ưu tiên {} · Efficiency +{}/-{} · trả RAM {} · dọn helper mồ côi {}", v["mode"].as_str().unwrap_or("?"), v["lowered"], v["ecoOn"], v["ecoOff"], v["trimmed"], v["reaped"]);
+            }
+            Ok(())
+        }
+        Some("reap") => {
+            let dry = args.iter().any(|a| *a == "--dry-run");
+            let now = now_s();
+            let rows = reap_orphan_helpers(home, &reap::list(now), now, dry);
+            if json_out {
+                println!("{}", serde_json::to_string_pretty(&json!({ "dryRun": dry, "helpers": rows }))?);
+                return Ok(());
+            }
+            let verb = if dry { "sẽ dọn" } else { "đã dọn" };
+            println!("eco reap{}: {} helper mồ côi (không còn claude/omp/editor/terminal nào phía trên)", if dry { " (dry-run)" } else { "" }, rows.len());
+            for r in &rows {
+                let ok = if dry || r["killed"] == true { verb } else { "không dọn được" };
+                println!(
+                    "  {ok}: {} {} pid {} ({} tiến trình, {}m, {} MB) · {}",
+                    r["kind"].as_str().unwrap_or("?"),
+                    r["name"].as_str().unwrap_or(""),
+                    r["pid"],
+                    r["pids"],
+                    r["ageMin"],
+                    r["mb"],
+                    r["cmd"].as_str().unwrap_or("")
+                );
             }
             Ok(())
         }
@@ -763,5 +924,58 @@ mod tests {
         assert!(t.contains("Điện: CPU 32 W · GPU 18 W · không có pin"));
         assert!(t.contains("Claude Code: 3 tiến trình, 1.4 GB"));
         assert!(t.contains("Eco: bình thường"));
+    }
+
+    #[test]
+    fn reap_takes_only_orphaned_helpers_old_enough() {
+        let now = 100 + 3600;
+        let pyright = r#""node" "C:\nodejs\node_modules\pyright\langserver.index.js" "--stdio""#;
+        let sh = |pid, ppid, cmd: &str| Proc { shell: true, ..p(pid, ppid, "cmd", cmd) };
+        let at = |q: Proc, started: u64| Proc { started, ..q };
+        let procs = vec![
+            p(1, 0, "explorer", ""),
+            p(10, 1, "claude", r"C:\Users\a\.local\bin\claude.exe"),
+            sh(11, 10, "cmd /c pyright-langserver.cmd --stdio"),
+            p(12, 11, "node", pyright), // its claude lives: kept
+            sh(21, 999, "cmd /c pyright-langserver.cmd --stdio"),
+            p(22, 21, "node", pyright), // its claude is gone: killed, child with it
+            p(23, 22, "node", "node worker.js"),
+            p(30, 999, "msedge", "msedge.exe --remote-debugging-port=9222 --user-data-dir=x"),
+            p(31, 999, "node", r"node C:\x\okx-click-trader\bot\main.ts"),
+            p(32, 31, "node", "node okx-trade-mcp/dist/index.js --modules market"),
+            p(33, 999, "python", r"python C:\ComfyUI\main.py --listen"),
+            p(34, 999, "node", "node node_modules/vite/bin/vite.js dev"),
+            p(35, 999, "node", r"node C:\hq-ui\server.js"),
+            p(36, 35, "node", "node tsserver.js"), // under HQ: kept
+            p(40, 999, "node", "node @trailhq/trail-code/dist/cli.js _trail-index"),
+            at(p(41, 999, "node", "node @trailhq/trail-code/dist/cli.js _trail-embed"), now - 300), // trail < 10 min
+            at(p(42, 999, "node", "node bash-language-server/out/cli.js start"), now - 60), // < 2 min
+            at(p(50, 10, "node", "node typescript-language-server --stdio"), 50), // parent pid recycled by claude
+            at(p(60, 1, "svc", ""), 0),
+            p(61, 60, "node", "node tsserver.js"), // parent of unknown start: kept
+            p(70, 999, "headroom", "headroom.exe mcp serve"),
+            p(71, 70, "python", "python headroom.exe mcp serve"), // goes with its shim
+            p(80, 999, "conhost", "conhost.exe --headless 8sync.exe ccc eco run"),
+            p(81, 80, "node", "node bash-language-server start"), // under a scheduled task: kept
+        ];
+        let got: Vec<(u32, Vec<u32>)> = orphans(&procs, now, 0).into_iter().map(|o| (o.pid, o.tree)).collect();
+        assert_eq!(got, vec![(22, vec![22, 23]), (40, vec![40]), (50, vec![50]), (70, vec![70, 71])]);
+        assert_eq!(orphans(&procs, now, 0)[0].kind, "language server");
+        // Never me or my ancestors (`8sync ccc eco reap` run from such a tree).
+        assert!(orphans(&procs, now, 23).iter().all(|o| o.pid != 22));
+    }
+
+    #[test]
+    fn reap_is_capped_per_pass() {
+        let procs: Vec<Proc> = (0..25).map(|i| p(100 + i, 999, "node", "node tsserver.js")).collect();
+        assert_eq!(orphans(&procs, 10_000, 0).len(), REAP_MAX);
+        let rows = reap_orphan_helpers(Path::new("/nonexistent"), &procs, 10_000, true);
+        assert_eq!(rows.len(), REAP_MAX);
+        assert!(rows.iter().all(|r| r["killed"] == false), "dry run kills nothing");
+        let mut last = json!({ "targets": 1, "lowered": 0, "ecoOn": 0, "ecoOff": 0, "trimmed": 0, "trimmedMb": 0 });
+        assert!(snapshot_text(&json!({ "eco": { "last": last.clone() } })).contains("dọn helper mồ côi 0"), "older state file");
+        last["reaped"] = json!(3);
+        let t = snapshot_text(&json!({ "eco": { "last": last } }));
+        assert!(t.contains("dọn helper mồ côi 3"), "{t}");
     }
 }

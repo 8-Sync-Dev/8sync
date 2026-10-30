@@ -89,6 +89,8 @@ mod verify;
       8sync ccc status               claude binary, login, kit, managed settings, MCP and sessions
       8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]
                                      print a recommended managed-settings.json (never installs it)
+      8sync ccc eco reap --dry-run   orphaned LSP/MCP helpers (no claude/omp/editor above, ≥ 2 min) eco would kill
+      8sync ccc eco reap             kill them now (eco's logon loop does it every pass, max 20)
 
     EVERY LAUNCH (no network on the launch path; SUSYNC_NO_AUTO_UPDATE=1 skips the update)
       newer 8sync release → install + re-run · after an update: bundled skills + kit refresh ·
