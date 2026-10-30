@@ -43,7 +43,7 @@ TỰ ĐỘNG (gõ trong Claude Code)
   /ship-auto <việc>            như /ship rồi PR → CI → merge → release sau một câu `Ship`
   /ship-loop <mục tiêu>        lặp tới khi tiêu chí xanh (có cap iter/phút)
   /autopilot                   nhiều item từ backlog, không người trông
-  /auto-team [mục tiêu]        đội session Desktop cố định, 100% ECC (trưởng nhóm làm việc + 2–5 session con tên tiếng Việt rõ vai, ra lệnh bằng tin nhắn, agent Kanban ECC); không phòng/board/HQ 8sync; owner gõ
+  /auto-team [mục tiêu]        đội session Desktop cố định, 100% ECC (trưởng nhóm làm việc + 3 session con mặc định: Build & Ship, Critic, R&D; 2–5 với --rooms; skill ECC gọi theo trigger, ra lệnh bằng tin nhắn, agent Kanban ECC); không phòng/board/HQ 8sync; owner gõ
   /team-tick                   nhịp dự phòng của trưởng nhóm /auto-team (cron */15): giao việc cho session con rảnh, merge, mốc
   /ship-tick [slug]            một nhịp của vòng lặp đang mở (cron */5 do /ship-loop, /ship-auto, /autopilot đặt; tự xoá khi xong)
   /sysdesign <thay đổi>        system design theo The System Design Primer: cổng quy mô → đọc ≤3 mục → 4 bước + back-of-envelope → ADR (clone primer vào ~/.cache/8sync, không chép vào repo)

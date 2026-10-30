@@ -2540,6 +2540,14 @@ mod tests {
         assert!(!team.contains("su-code/ship/ACTIVE"), "the team must not share ACTIVE with /ship-loop");
         assert!(!team.contains("8sync ccc auto claim") && !team.contains("8sync ccc auto add"), "no 8sync board in /auto-team");
         assert!(team.contains("Không bao giờ: mở session thứ hai cho cùng vai"), "auto-team must forbid session churn");
+        // Owner (2026-10-30): "auto-team only 3 session con", "cần hiệu quả optimize cao nhất", with
+        // the ECC skills they listed; each one is called on a trigger, never loaded into every prompt.
+        assert!(team.contains("Mặc định 3 session con = Build & Ship + Critic + R&D"), "default team is 3 sub-sessions");
+        for skill in ["ecc:loop-design-check", "ecc:continuous-agent-loop", "ecc:autonomous-agent-harness", "/ecc:learn", "/ecc:orch-fix-defect", "performance-optimization", "/ecc:security-scan", "ecc:agent-architecture-audit", "ecc:agent-security-hardening", "ecc:automation-audit-ops", "ecc:agent-self-evaluation", "ecc:deep-research", "ecc:market-research", "/ecc:marketing-campaign", "/ecc:auto-update"] {
+            assert!(team.contains(skill), "auto-team lacks ECC skill {skill}");
+        }
+        assert!(team.contains("Gọi skill ECC theo trigger, không nạp hết vào mọi prompt"), "ECC skills load on a trigger");
+        assert!(team.contains("tối đa 2 lượt"), "the fix/review loop is capped");
         let tick = assets::read("claude/skills/team-tick/SKILL.md").unwrap();
         assert!(!tick.contains("urgent"), "Desktop sessions are not `8sync ccc .` sessions: urgent bails there");
         assert!(!tick.contains("8sync ccc auto"), "no 8sync board in /team-tick");
