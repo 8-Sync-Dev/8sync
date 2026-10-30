@@ -31,7 +31,7 @@ pub(crate) use inject::inject_agents_md;
       8sync skill                                                list installed skills (global + project-local) with descriptions
       8sync skill list                                           same as above
       8sync skill help                                           explain the auto-inject flow and config paths
-      8sync skill add https://github.com/addyosmani/agent-skills install a skill OR a whole skills/<name>/ collection
+      8sync skill add https://github.com/DietrichGebert/ponytail      install a skill OR a whole skills/<name>/ collection
       8sync skill add gh:owner/repo                              same, short form
       8sync skill add path:/abs/path#better-name                 register a local dir (symlink), optionally renamed
       8sync skill add builtin:karpathy-guidelines                register a builtin skill (already shipped)
@@ -56,7 +56,7 @@ pub(crate) use inject::inject_agents_md;
       ~/.config/8sync/skills.toml      skill registry (editable TOML)
       ~/.omp/skills/                   global skill directories (one per skill)
       ~/.omp/skills/00-force-load.md   master file — omp reads this first in every session
-      <project>/su-code/skills/         project-local skills (referenced from AGENTS.md)
+      <project>/su-code/skills/         your own project skills (8sync no longer vendors copies here)
 "})]
 pub struct Args {
     /// Sub-action: list (default) | help | new <name> | add <spec> | gen <id> <id> … | update [name]

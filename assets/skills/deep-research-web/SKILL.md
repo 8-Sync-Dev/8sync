@@ -1,6 +1,6 @@
 ---
-name: deep-research
-description: Source-heavy investigation of a topic or codebase that ends in a cited, verified brief with provenance on disk. Use when the user asks for deep research, R&D, a comparison, a multi-source investigation, an in-depth technical report, or "R&D to pick the best option". Scales from direct search to 6 researchers, verifier before reviewer.
+name: deep-research-web
+description: Web research without extra MCPs (no firecrawl/exa needed). Source-heavy investigation of a topic or codebase that ends in a cited, verified brief with provenance on disk. Use when the user asks for deep research, R&D, a comparison, a multi-source investigation, an in-depth technical report, or "R&D to pick the best option". Scales from direct search to 6 researchers, verifier before reviewer.
 ---
 
 # Deep research v3 (Feynman-grade, token-lean)
@@ -18,8 +18,8 @@ Chất lượng đến từ nguồn primary, kiểm từng claim và dấu vết
 | Ledger | `todo` | task list + plan file |
 
 ## Khi nào ra file
-- Câu hỏi ≤10 tool call, không dẫn tới quyết định, user không gõ `/deep-research` → trả lời inline kèm URL, không file.
-- Còn lại (gõ `/deep-research`, brief dẫn tới quyết định, survey) → đủ artifact dưới, không kết thúc chỉ bằng chat.
+- Câu hỏi ≤10 tool call, không dẫn tới quyết định, user không gõ `/deep-research-web` → trả lời inline kèm URL, không file.
+- Còn lại (gõ `/deep-research-web`, brief dẫn tới quyết định, survey) → đủ artifact dưới, không kết thúc chỉ bằng chat.
 
 ## Artifacts (đúng thứ tự stage; không tạo placeholder trước stage của nó)
 Slug: 2-5 từ, lowercase, gạch nối, bỏ từ đệm; mọi file của run mang prefix slug, cấm tên chung (`research.md`, `draft.md`). Slug đã có `outputs/<slug>.md` của câu hỏi khác → thêm `-v2` hoặc ngày, không ghi đè.

@@ -1,4 +1,4 @@
-# deep-research templates
+# deep-research-web templates
 
 Copy the block for the stage you are in. Keep headings; fill or write `none`. Never create a later stage's file early.
 

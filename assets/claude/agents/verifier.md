@@ -30,4 +30,4 @@ không vào bản cited (bản cited thành bản giao).
 ## Return format
 Một dòng: số claim OK/FIXED/UNVERIFIED/DEAD-LINK/REMOVED + path hai file output. Không paste lại draft.
 
-<!-- Adapted from Feynman (MIT, Copyright (c) 2026 Companion, Inc.) .feynman/agents/verifier.md v0.5.58; full notice in ~/.claude/skills/deep-research/LICENSE-feynman.md -->
+<!-- Adapted from Feynman (MIT, Copyright (c) 2026 Companion, Inc.) .feynman/agents/verifier.md v0.5.58; full notice in ~/.claude/skills/deep-research-web/LICENSE-feynman.md -->

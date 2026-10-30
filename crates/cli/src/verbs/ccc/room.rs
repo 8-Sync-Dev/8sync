@@ -35,7 +35,7 @@ const ROLES: [Role; 13] = [
     r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối: tách việc của owner thành bước nhỏ có tiêu chí + lệnh check, gỡ chỗ kẹt; merge/tag/deploy chỉ sau câu Ship của owner"),
     r(&["ba", "analyst", "spec", "req", "po"], "BA", "viết yêu cầu: acceptance criteria + đúng một lệnh check, tách việc lớn thành việc nhỏ; không sửa code sản phẩm"),
     r(&["arch", "architect", "architecture", "sa", "solution"], "Architect", "solution architecture: ADR trước khi build (/sysdesign theo System Design Primer + docs chính thức), review kiến trúc diff; không sửa code sản phẩm"),
-    r(&["rd", "r&d", "rnd", "research", "explore"], "R&D", "nghiên cứu: /deep-research câu hỏi mở → brief có nguồn trong su-code/research/ → /planning; chưa sửa code sản phẩm khi chưa có plan"),
+    r(&["rd", "r&d", "rnd", "research", "explore"], "R&D", "nghiên cứu: /deep-research-web câu hỏi mở → brief có nguồn trong su-code/research/ → /planning; chưa sửa code sản phẩm khi chưa có plan"),
     r(&["dev", "build", "builder", "code", "coder", "impl"], "Dev/Builder", "code + test trên nhánh riêng (worktree trong repo), PR; không merge"),
     r(&["qa", "qc", "test", "tester", "e2e", "uat"], "QA", "chạy check/test/UAT trên nhánh PR; ảnh chụp UAT lưu `qa/evidence/<slug>.png`; viết test, không sửa code sản phẩm"),
     r(&["review", "reviewer", "critic"], "Review", "review đối kháng diff, chấm FATAL/MAJOR/MINOR, chỉ duyệt khi không còn lỗi mở; không sửa code"),

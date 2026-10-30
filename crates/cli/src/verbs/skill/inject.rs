@@ -1,11 +1,9 @@
-//! Force-load block injection into root agent entry files (AGENTS.md, CLAUDE.md,
-//! …) + always-on ranking + project-tech gating for conditional skills.
+//! The 8sync block in every root agent entry file (AGENTS.md, CLAUDE.md, …) and
+//! `.cursor/rules/8sync-harness.mdc`: STEP 0 (trail) + the memory rules. Skills,
+//! agents and commands come from the global ECC plugin, never from the repo.
 use anyhow::Result;
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use super::discover::list_installed_skill_dirs;
-use super::meta::meta_for_dir;
 use crate::ui;
 
 pub(crate) const BEGIN: &str = "<!-- 8sync:skills:begin -->";
@@ -44,248 +42,26 @@ fn find_block(existing: &str) -> Option<(usize, usize, usize)> {
     None
 }
 
-/// Priority rank for always-on skills (lower = read earlier). The force-load
-/// block lists always-on skills in EXACTLY this order; agents read top-down so
-/// position == priority. The canonical chain is:
-///   trail → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing → locate-anything
-/// trail (code map), karpathy (engineering discipline) and ponytail
-/// (lazy-senior YAGNI) form the engineering core; the brand + frontend-design
-/// skills follow; the harness/token-routing tooling closes. Skills not listed
-/// here are on-demand (read only when the task matches their description) and
-/// rank `usize::MAX`.
-pub(crate) fn always_on_rank(dirname: &str) -> usize {
-    match dirname {
-        "trail" => 0,
-        "karpathy-guidelines" => 1,
-        "ponytail" => 2,
-        "assp-skill" => 3,
-        "impeccable" => 4,
-        "taste-skill" => 5,
-        "8sync-cli" => 6,
-        "image-routing" => 7,
-        "locate-anything" => 8,
-        _ => usize::MAX,
-    }
-}
-
-/// Always-on skills are read on EVERY session before the first tool call.
-pub(crate) fn is_always_on(dirname: &str) -> bool {
-    always_on_rank(dirname) != usize::MAX
-}
-
-/// CORE always-on skills: small + universal, so their SKILL.md body is read
-/// upfront EVERY session. The remaining always-on skills are specialists —
-/// listed (capability noted) but their body is read lazily, only when a
-/// matching task triggers it (progressive disclosure → leaner, KV-cache-stable
-/// prefix; Anthropic "skills" + Manus KV-cache lessons).
-pub(crate) fn always_on_core(dirname: &str) -> bool {
-    matches!(dirname, "trail" | "karpathy-guidelines" | "ponytail" | "8sync-cli")
-}
-
-/// On-demand skills gated by a project-tech predicate: only surfaced in the
-/// force-load block when the tech is actually present (keeps a non-Encore
-/// project from listing the Encore deploy runbook). Returns true = hide it.
-fn skill_gated_out(dirname: &str, root: &Path) -> bool {
-    match dirname {
-        "encore-deploy" => !project_uses_encore(root),
-        _ => false,
-    }
-}
-
-/// Detect whether the project uses the Encore.dev framework.
-fn project_uses_encore(root: &Path) -> bool {
-    if root.join("encore.app").is_file() {
-        return true;
-    }
-    for sub in ["backend", "api", "server"] {
-        if root.join(sub).join("encore.app").is_file() {
-            return true;
-        }
-    }
-    for f in ["go.mod", "package.json"] {
-        if let Ok(s) = std::fs::read_to_string(root.join(f)) {
-            if s.contains("encore.dev") || s.contains("encore.app") {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Classified skill dirs + the rendered force-load block. Single source of
-/// truth shared by `inject_agents_md` (writes the block) and `harness bench`
-/// (measures it) so the benchmark never drifts from what is actually injected.
-pub(crate) struct ForceLoadStats {
-    pub(crate) block: String,
-    pub(crate) core: Vec<PathBuf>,        // CORE always-on — body read upfront every session
-    pub(crate) specialist: Vec<PathBuf>,  // SPECIALIST always-on — body read on trigger
-    pub(crate) ondemand: Vec<PathBuf>,    // on-demand visible — body read on trigger
-}
-
-/// Machine-portable reference to a skill's entry file, exactly as embedded in
-/// AGENTS.md. Project-local skills are **repo-relative**
-/// (`su-code/skills/<dir>/<entry>`) so the block survives a clone into any path;
-/// global skills genuinely live in `$HOME`, so they are `~/`-anchored and stay
-/// user-agnostic. Emitting `/home/<user>/…` is a bug: it resolves only on the
-/// machine that ran the harness, and every other machine silently skips the
-/// skill because the file the agent is told to read does not exist.
-fn skill_ref(dirname: &str, entry: &str, is_local: bool) -> String {
-    if is_local {
-        format!("su-code/skills/{}/{}", dirname, entry)
-    } else {
-        format!("~/.omp/skills/{}/{}", dirname, entry)
-    }
-}
-
-/// Gather installed skills (global ∪ project-local, deduped), classify them into
-/// CORE / SPECIALIST / on-demand, and render the force-load block. Pure: reads
-/// the skill dirs, writes nothing.
-pub(crate) fn build_force_load(home: &Path, root: &Path) -> ForceLoadStats {
-    let global_dir = home.join(".omp/skills");
-    let local_dir = root.join("su-code/skills");
-
-    let globals = list_installed_skill_dirs(&global_dir).unwrap_or_default();
-    let locals = list_installed_skill_dirs(&local_dir).unwrap_or_default();
-
-    // Dedupe global vs local (locals mirror globals): list each skill once,
-    // preferring the committed local copy under su-code/skills/.
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    let mut chosen: Vec<(PathBuf, bool)> = Vec::new(); // (dir, is_local)
-    for p in locals.iter() {
-        if let Some(n) = p.file_name().and_then(|s| s.to_str()) {
-            if seen.insert(n.to_string()) { chosen.push((p.clone(), true)); }
-        }
-    }
-    for p in globals.iter() {
-        if let Some(n) = p.file_name().and_then(|s| s.to_str()) {
-            if seen.insert(n.to_string()) { chosen.push((p.clone(), false)); }
-        }
-    }
-    // Always-on lead in canonical force-load order; on-demand (rank usize::MAX)
-    // trail, ordered alphabetically by directory name.
-    chosen.sort_by(|(a, _), (b, _)| {
-        let an = a.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        let bn = b.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        always_on_rank(an).cmp(&always_on_rank(bn)).then_with(|| an.cmp(bn))
-    });
-
-    let mut core: Vec<PathBuf> = Vec::new();
-    let mut specialist: Vec<PathBuf> = Vec::new();
-    let mut ondemand: Vec<PathBuf> = Vec::new();
-    let mut core_lines = String::new();
-    let mut specialist_lines = String::new();
-    let mut ondemand_lines = String::new();
-    let mut seen_names: BTreeSet<String> = BTreeSet::new();
-    for (p, is_local) in chosen.iter() {
-        let dirname = p.file_name().and_then(|s| s.to_str()).unwrap_or("?");
-        let (m, entry) = meta_for_dir(p);
-        if is_always_on(dirname) {
-            // Collapse cross-dir duplicates (e.g. a stale `karpathy` dir beside
-            // the canonical `karpathy-guidelines` — same frontmatter name): list
-            // each logical skill once, keeping the higher-ranked dir (sorted first).
-            if !seen_names.insert(m.name.clone()) {
-                continue;
-            }
-            let rel = skill_ref(dirname, entry, *is_local);
-            if always_on_core(dirname) {
-                core.push(p.clone());
-                core_lines.push_str(&format!("  {}. `{}`\n", core.len(), rel));
-            } else {
-                specialist.push(p.clone());
-                specialist_lines.push_str(&format!("- `{}` — `{}`\n", m.name, rel));
-            }
-        } else {
-            // Tech-gated on-demand skill in a project that doesn't use that tech → hide.
-            if skill_gated_out(dirname, root) {
-                continue;
-            }
-            if !seen_names.insert(m.name.clone()) {
-                continue;
-            }
-            let rel = skill_ref(dirname, entry, *is_local);
-            ondemand.push(p.clone());
-            ondemand_lines.push_str(&format!("- `{}` — `{}`\n", m.name, rel));
-        }
-    }
-    if core.is_empty() {
-        core_lines.push_str("  _(no core skills — run `8sync harness init`)_\n");
-    }
-    if specialist.is_empty() {
-        specialist_lines.push_str("- _(none)_\n");
-    }
-    if ondemand.is_empty() {
-        ondemand_lines.push_str("- _(none — add via `8sync skill add <github-url>`)_\n");
-    }
-
-    let trail_install_hint: &str = if crate::verbs::harness::trail::found().is_some() {
-        ""
-    } else {
-        "> ⚠ `trail` chưa cài. Chạy `8sync trail` (cài `npm i -g @trailhq/trail-code --ignore-scripts`, tắt telemetry, nối repo) rồi quay lại đọc tiếp.\n\n"
-    };
-
+/// The block written between the sentinels of every agent entry file and the
+/// Cursor rule. Deliberately small and machine-independent: no skill list (the
+/// ECC plugin `ecc@ecc` provides skills/agents/commands globally, the repo's ECC
+/// rule packs live in `.claude/rules/ecc/`), only STEP 0 and the memory rules.
+/// Byte-stable on every run and machine, so the prompt prefix stays cache-hot.
+pub(crate) fn harness_block() -> String {
     let block = format!(
         "{BEGIN}\n\
-## 🚨 STEP 0 — CODE MAP FIRST (trail CLI trước)\n\
+## 8sync harness\n\
 \n\
-Mọi câu hỏi về code → hỏi bản đồ code `trail` TRƯỚC grep/read (tree-sitter local, không gọi model, tiết kiệm rất nhiều token). Bạn (AI) **PHẢI**:\n\
+**STEP 0 — code map trước (trail):** hỏi `trail` TRƯỚC grep/đọc cả file (tree-sitter local, không gọi model).\n\
+- `trail ask \"<câu hỏi>\"` — định vị/giải thích code · `trail grep <pattern>` — tìm kèm ngữ cảnh symbol\n\
+- `trail skeleton <file>` — khung file, không body · `trail callers <symbol>` (`--direction out` = callees) — impact trước khi sửa\n\
+- Chỉ đọc raw file khi sắp sửa nó. Map cũ → `trail build`; repo chưa nối → `8sync trail`.\n\
 \n\
-1. **trail** (local code map): `trail ask \"<câu hỏi>\"` · `trail grep <pattern>` · `trail skeleton <file>` · `trail callers <symbol>` (`--direction out` = callees) · `trail map` thay cho `grep`/`rg`/`fd`/`Grep`/`Glob` và `Read` toàn file. Làm mới: `trail build`; repo mới: `8sync trail`.\n\
-2. Tìm/hiểu/định vị code · impact · route→handler · architecture → trail trước. Chỉ `Read` raw file khi sắp SỬA nó (read-before-edit). Học được điều bền (vì sao, đã thử gì) → `trail note`.\n\
-3. **Nén những gì BẠN phát lại:** báo cáo / subagent prompt / nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token). omp tự spill output quá dài ra artifact — KHÔNG paste lại blob đã spill vào context.\n\
+**Quy tắc bất biến:**\n\
+- Sau mỗi thay đổi: cập nhật `CHANGELOG.md` (mục `[Unreleased]`) + ghi bài học vào `su-code/KNOWLEDGE.md`.\n\
+- Đọc `su-code/STATE.md` đầu phiên; rewrite nó ở mỗi phase-boundary (Goal · Checklist · Current · Next).\n\
 \n\
-Lý do: vài query cấu trúc ≪ token so với grep từng file. Dump cả file / grep mù = đốt token = bug.\n\
-\n\
-{trail_install_hint}\
-## 🚨 STEP 1 — skills 2 tầng: CORE (đọc ngay) · SPECIALIST + on-demand (đọc khi cần)\n\
-\n\
-Mỗi skill = 1 directory (Agent Skills open standard): `SKILL.md` có frontmatter `name`+`description`. Skill vendored ở `su-code/skills/<name>/` (bản commit trong repo, mirror từ `~/.omp/skills/`). Mỗi skill liệt kê 1 lần.\n\
-\n\
-### ⛔ CORE always-on — ĐỌC NGAY (body), trước tool call đầu tiên (không skip)\n\
-\n\
-Nhỏ + dùng cho MỌI task. **Thứ tự = ưu tiên (đọc top-down).** Mở `SKILL.md` ở path dưới rồi mới gọi tool đầu tiên:\n\
-\n\
-{core_lines}\n\
-### 🧩 SPECIALIST always-on — biết khả năng, đọc body KHI task khớp (progressive disclosure)\n\
-\n\
-KHÔNG đọc body mỗi phiên (giữ prefix gọn, tiết kiệm KV-cache). Khi task khớp → mở `SKILL.md` tương ứng NGAY. **`impeccable` = design system CHUẨN, BẮT BUỘC mở body ngay khi có việc UI/design/redesign/audit** (kèm `references/house/*`); `assp` cho copy/offer; `taste` chống slop; `image-routing` khi xử lý ảnh/diff/PDF. **GLM-5.3 / GLM-5.3-Flash = native VLM** (https://docs.z.ai/guides/vlm/glm-5.3-flash): nhìn ảnh trực tiếp trong session — **CẤM** `mcp__zai_vision_*` / `@z_ai/mcp-server`. zai-vision chỉ cho GLM-5.2 text-only.\n\
-\n\
-{specialist_lines}\n\
-### 🔎 On-demand — tên = trigger; mở `SKILL.md` của skill khi task khớp (mô tả ở frontmatter, KHÔNG nhồi ở đây)\n\
-\n\
-{ondemand_lines}\n\
-### Quy tắc bất biến\n\
-\n\
-- **Code map FIRST** (trail CLI trước) cho mọi câu hỏi explore code (Step 0). Bypass = bug.\n\
-- **Output > ~50 dòng → BẮT BUỘC `headroom_compress`** trước khi vào context — không dump thô.\n\
-- Đọc body **CORE** (trail → karpathy → ponytail → 8sync-cli) TRƯỚC tool call đầu tiên. **SPECIALIST** (assp · impeccable · taste · image-routing) đọc body KHI task khớp — `impeccable` bắt buộc ngay khi có việc UI/design.\n\
-- Skill **on-demand**: chỉ mở khi description khớp task hiện tại — đừng đọc thừa.\n\
-- Nếu skill có `scripts/` → ưu tiên invoke script đó thay vì viết lại logic.\n\
-- Khi áp dụng skill, **cite** rõ: ví dụ `su-code/skills/<name>/SKILL.md:line`.\n\
-- **Sau mỗi thay đổi:** cập nhật `CHANGELOG.md` (mục Unreleased) + ghi học được vào `su-code/KNOWLEDGE.md`.\n\
-- **Doc-hygiene**: chạy `8sync harness audit` khi đụng vùng có docs — path lệch→fix, doc rác/superseded→xóa (thêm doc phải kèm xóa cái cũ), oversized→trim.\n\
-- **Loop / STATE spine**: đọc `su-code/STATE.md` đầu phiên; rewrite ở mỗi phase-boundary (Goal·Checklist·Current·Next). Context gần đầy → handoff vào STATE + bài học vào KNOWLEDGE rồi reinit. Đo loop: `8sync harness bench`.\n\
-- **Loop discipline (C/D/E)**: implementer↔verifier qua `task` (verifier chạy build/test ĐỘC LẬP, verify-gate TRƯỚC commit); FAIL → ghi `failure:` vào KNOWLEDGE, đọc đầu phiên để khỏi lặp; quy trình `validated:` → distill vào `su-code/PLAYBOOKS.md` (index theo `When:`); autonomy L1 report · L2 assisted · L3 unattended — không tự `push`/PR ở L3 mặc định.\n\
-{END}"
-    );
-
-    let block = crate::brand::render(&block).into_owned();
-    ForceLoadStats { block, core, specialist, ondemand }
-}
-
-/// CLAUDE.md's block: a compact pointer (~1 KB). Claude Code loads CLAUDE.md
-/// into every request and already lists skills with descriptions, so the block
-/// does NOT force-read SKILL.md bodies and does NOT claim MCP tools exist.
-/// The full CORE/SPECIALIST block stays in AGENTS.md (omp/Cursor harnesses).
-fn claude_block() -> String {
-    let block = format!(
-        "{BEGIN}\n\
-## 8sync harness — Claude Code\n\
-\n\
-- **Repo:** quy ước, lệnh build/test, kiến trúc nằm trong `AGENTS.md` — xem mục lục (`grep -n '^#' AGENTS.md`), đọc đúng mục cần.\n\
-- **Code map:** `trail ask \"<câu hỏi>\"` / `trail callers <symbol>` / `trail skeleton <file>` qua Bash (nhanh, local, tree-sitter). Chỉ đọc raw file khi sắp sửa.\n\
-- **Skills nạp theo nhu cầu:** Claude Code đã liệt kê skill kèm mô tả; chỉ mở khi task khớp (UI/design → `impeccable`). Không đọc SKILL.md trước.\n\
-- **Lệnh:** ưu tiên `8sync` (`8sync run test`, `8sync find` …) hơn shell thô.\n\
-- **Memory:** `su-code/STATE.md` đầu phiên; bài học → `su-code/KNOWLEDGE.md`; thay đổi → `CHANGELOG.md`.\n\
+**Skills / agents / commands:** plugin ECC `ecc@ecc` (global) + rule của repo trong `.claude/rules/ecc/`.\n\
 {END}"
     );
     crate::brand::render(&block).into_owned()
@@ -318,7 +94,7 @@ pub(crate) fn ancestor_claude_has_block(home: &Path, root: &Path) -> bool {
 /// folder (e.g. `~/startup`, no `.git`) keeps being injected into every session.
 /// Walks `start` and its ancestors up to `home` (exclusive; nothing above, nothing
 /// when `start` is outside `home`). Only text between the markers is touched:
-/// a block in a normal dir becomes the current compact block, a block in a su-code
+/// a block in a normal dir becomes the current block, a block in a su-code
 /// MEMORY dir is removed (a bare 8sync stub is deleted with it; the original is
 /// kept as `CLAUDE.md.bak-8sync`). Files without markers are never written.
 /// Returns the files changed.
@@ -327,7 +103,7 @@ pub(crate) fn refresh_ancestor_blocks(home: &Path, start: &Path) -> Result<Vec<P
     if !start.starts_with(home) {
         return Ok(changed);
     }
-    let block = claude_block();
+    let block = harness_block();
     for dir in start.ancestors().take_while(|a| *a != home) {
         let path = dir.join("CLAUDE.md");
         let Ok(old) = std::fs::read_to_string(&path) else { continue };
@@ -365,64 +141,20 @@ fn strip_block(old: &str, b: usize, end: usize) -> String {
     format!("{head}{tail}")
 }
 
-/// Skills the Claude Code kit installs into `~/.claude/skills`: their
-/// descriptions stay listed whatever tier the project gives them.
-const KIT_SKILLS: [&str; 3] = ["ship", "aup-audit", "deep-research"];
-
-/// `.claude/settings.local.json` → `skillOverrides`: on-demand skills are listed
-/// by name only, the same progressive disclosure as `AGENTS.md` (always-on
-/// skills keep their descriptions). Listing every description of 237 skills
-/// measured +18.4k tokens on every request. Adds missing entries only, so a
-/// value set in Claude Code's `/skills` menu wins.
-pub(crate) fn claude_skill_overrides(home: &Path, root: &Path) -> Result<()> {
-    use anyhow::Context;
-    let stats = build_force_load(home, root);
-    let path = root.join(".claude/settings.local.json");
-    let raw = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut v: serde_json::Value = if raw.trim().is_empty() {
-        serde_json::json!({})
-    } else {
-        serde_json::from_str(&raw).with_context(|| format!("{} is not valid JSON", path.display()))?
-    };
-    let overrides = v
-        .as_object_mut()
-        .context("settings.local.json is not a JSON object")?
-        .entry("skillOverrides")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .context("`skillOverrides` is not an object")?;
-    for name in stats.ondemand.iter().filter_map(|p| p.file_name()?.to_str()) {
-        if !KIT_SKILLS.contains(&name) {
-            overrides.entry(name).or_insert_with(|| serde_json::json!("name-only"));
-        }
-    }
-    let out = serde_json::to_string_pretty(&v)? + "\n";
-    if out != raw {
-        std::fs::create_dir_all(root.join(".claude"))?;
-        std::fs::write(&path, out).with_context(|| format!("write {}", path.display()))?;
-    }
-    Ok(())
-}
-
-/// Rewrite (or insert) the force-load block in **every** agent entry file at the
+/// Rewrite (or insert) the 8sync block in **every** agent entry file at the
 /// project root: AGENTS.md, CLAUDE.md, GEMINI.md, OPENCODE.md,
-/// .github/copilot-instructions.md, .cursorrules, .windsurfrules.
+/// .github/copilot-instructions.md, .cursorrules, .windsurfrules. Only the
+/// sentinel block is rewritten; text outside it is never touched.
 pub(crate) fn inject_agents_md(home: &Path, root: &Path) -> Result<()> {
     if is_memory_dir(root) {
-        ui::info(&format!("skip force-load: {} is a su-code memory dir, not a repo root", root.display()));
+        ui::info(&format!("skip 8sync block: {} is a su-code memory dir, not a repo root", root.display()));
         return Ok(());
     }
-    let stats = build_force_load(home, root);
-    let always_count = stats.core.len() + stats.specialist.len();
-    let on_count = stats.ondemand.len();
-    let claude_block = claude_block();
     let ancestor_dup = ancestor_claude_has_block(home, root);
-    let block = stats.block;
-
+    let block = harness_block();
     // Inject into every known agent entry file (markdown: sentinel rewrite or
     // skeleton; plain text: prepend). AGENTS.md + CLAUDE.md are stub-created;
-    // the rest are touched only if they already exist. CLAUDE.md gets the
-    // compact block (see `claude_block`).
+    // the rest are touched only if they already exist.
     let targets: &[(&str, EntryKind)] = &[
         ("AGENTS.md",                       EntryKind::Markdown { h1: "AGENTS.md — guidance for AI" }),
         ("CLAUDE.md",                       EntryKind::Markdown { h1: "CLAUDE.md — guidance for Claude Code" }),
@@ -446,47 +178,40 @@ pub(crate) fn inject_agents_md(home: &Path, root: &Path) -> Result<()> {
             ui::info(&format!("skip {}: an ancestor CLAUDE.md already has the 8sync block", path.display()));
             continue;
         }
-        let block = if *name == "CLAUDE.md" { &claude_block } else { &block };
         let new_contents = match kind {
-            EntryKind::Markdown { h1 } => rewrite_md_with_block(&existing, block, h1),
-            EntryKind::Plain => rewrite_plain_with_block(&existing, block),
+            EntryKind::Markdown { h1 } => rewrite_md_with_block(&existing, &block, h1),
+            EntryKind::Plain => rewrite_plain_with_block(&existing, &block),
         };
         if new_contents != existing {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&path, &new_contents)?;
-            ui::ok(&format!("injected force-load → {}", path.display()));
+            ui::ok(&format!("injected 8sync block → {}", path.display()));
             written += 1;
         }
     }
 
-    ui::info(&format!(
-        "force-load: {} always-on, {} on-demand skill(s), written into {} file(s)",
-        always_count, on_count, written,
-    ));
+    if written > 0 {
+        ui::info(&format!("8sync block written into {written} file(s)"));
+    }
     Ok(())
 }
 
-/// Cursor-native always-on rule. Cursor discovers project skills from
-/// `.cursor/skills/` (not `su-code/skills/`); this `.mdc` is the equivalent of
-/// the AGENTS.md force-load block so a Cursor session loads the same CORE
-/// contract without reading omp's `~/.omp` tree.
-pub(crate) fn inject_cursor_rule(home: &Path, root: &Path) -> Result<()> {
-    let stats = build_force_load(home, root);
+/// Cursor-native always-applied rule carrying the same block as AGENTS.md, so a
+/// Cursor session gets STEP 0 and the memory rules without reading `~/.omp`.
+pub(crate) fn inject_cursor_rule(root: &Path) -> Result<()> {
     let path = root.join(".cursor/rules/8sync-harness.mdc");
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?;
     }
     let body = format!(
         "---\n\
-         description: 8sync harness force-load (CORE skills, trail code map first). Always applied.\n\
+         description: 8sync harness (trail code map first, memory rules). Always applied.\n\
          alwaysApply: true\n\
          ---\n\n\
-         {}\n\n\
-         Project skills live in `.cursor/skills/<name>/SKILL.md` (Cursor Agent Skills standard; \
-         mirrored from `su-code/skills/` by `8sync harness create`).\n",
-        stats.block.trim()
+         {}\n",
+        harness_block().trim()
     );
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     if existing != body {
@@ -567,74 +292,60 @@ fn insert_block_after_h1(existing: &str, block: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Minimal Agent-Skills dir: `<parent>/<name>/SKILL.md` with frontmatter, so
-    /// `meta_for_dir` resolves the name and the `SKILL.md` entry point.
-    fn skill_fixture(parent: &Path, name: &str) {
-        let dir = parent.join(name);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("SKILL.md"),
-            format!("---\nname: {name}\ndescription: fixture\n---\n\nbody\n"),
-        )
-        .unwrap();
+    /// The block is the whole contract now: STEP 0 (the four trail verbs), the
+    /// memory rules, and the ECC pointer — no skill list, no machine path.
+    #[test]
+    fn block_is_minimal_and_lists_no_skills() {
+        let b = harness_block();
+        assert!(b.starts_with(BEGIN) && b.ends_with(END));
+        for verb in ["trail ask", "trail grep", "trail skeleton", "trail callers"] {
+            assert!(b.contains(verb), "STEP 0 must teach `{verb}`");
+        }
+        for rule in ["CHANGELOG.md", "[Unreleased]", "su-code/KNOWLEDGE.md", "su-code/STATE.md"] {
+            assert!(b.contains(rule), "invariant rule `{rule}` missing");
+        }
+        assert!(b.contains("`ecc@ecc`") && b.contains("`.claude/rules/ecc/`"));
+        assert!(!b.contains("SKILL.md") && !b.contains("su-code/skills") && !b.contains("~/.omp/skills"), "no skill list:\n{b}");
+        assert!(b.lines().count() <= 16, "block grew to {} lines", b.lines().count());
+        assert_eq!(harness_block(), b, "byte-stable on rebuild");
     }
 
-    /// Every skill path in the force-load block MUST be machine-portable:
-    /// repo-relative for a project skill, `~/`-anchored for a global one. An
-    /// absolute path is the dead-path bug — it resolves only on the box that ran
-    /// the harness, so agents on every other machine (or clone) are told to read
-    /// a file that is not there and silently skip the skill.
+    /// Re-running the harness rewrites ONLY the sentinel block: the user's text
+    /// around it survives byte for byte, and a second pass changes nothing.
     #[test]
-    fn force_load_paths_are_portable() {
-        let base = std::env::temp_dir().join(format!("8sync-force-load-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        let home = base.join("home");
-        let root = base.join("repo");
-        // trail + ponytail are CORE (rank 0 / 2); impeccable is SPECIALIST.
-        skill_fixture(&root.join("su-code/skills"), "trail");
-        skill_fixture(&home.join(".omp/skills"), "ponytail");
-        skill_fixture(&home.join(".omp/skills"), "impeccable");
-
-        let stats = build_force_load(&home, &root);
-
-        assert!(
-            stats.block.contains("  1. `su-code/skills/trail/SKILL.md`"),
-            "CORE project skill must render repo-relative"
-        );
-        assert!(
-            stats.block.contains("  2. `~/.omp/skills/ponytail/SKILL.md`"),
-            "CORE global skill must render ~/-anchored"
-        );
-        assert!(
-            stats.block.contains("`impeccable` — `~/.omp/skills/impeccable/SKILL.md`"),
-            "SPECIALIST global skill must render ~/-anchored"
-        );
-        assert!(!stats.block.contains("/home/"), "no machine-specific path may leak");
-        assert!(
-            !stats.block.contains(&root.display().to_string()),
-            "the absolute project root must never appear in the block"
-        );
-
+    fn block_rewrite_keeps_outside_text_and_is_idempotent() {
+        let base = tmp("idem");
+        let (home, root) = (base.join("home"), base.join("repo"));
+        std::fs::create_dir_all(&root).unwrap();
+        let old_block = format!("{BEGIN}\n## 🚨 STEP 1 — skills\n  1. `su-code/skills/trail/SKILL.md`\n{END}");
+        let agents = format!("# Mine\n\nbefore \u{e9}\n\n{old_block}\n\nafter\n");
+        let claude = format!("# C\r\nkeep top\r\n{old_block}\r\nkeep bottom\r\n");
+        std::fs::write(root.join("AGENTS.md"), &agents).unwrap();
+        std::fs::write(root.join("CLAUDE.md"), &claude).unwrap();
+        inject_agents_md(&home, &root).unwrap();
+        let block = harness_block();
+        let a1 = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert_eq!(a1, agents.replace(&old_block, &block));
+        let c1 = std::fs::read_to_string(root.join("CLAUDE.md")).unwrap();
+        assert_eq!(c1, claude.replace(&old_block, &block), "same block in CLAUDE.md, CRLF outside kept");
+        inject_agents_md(&home, &root).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("AGENTS.md")).unwrap(), a1, "idempotent");
+        assert_eq!(std::fs::read_to_string(root.join("CLAUDE.md")).unwrap(), c1, "idempotent");
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
-    fn cursor_rule_is_always_apply_mdc() {
-        let base = std::env::temp_dir().join(format!("8sync-cursor-rule-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        let home = base.join("home");
-        let root = base.join("repo");
-        skill_fixture(&root.join("su-code/skills"), "trail");
-        inject_cursor_rule(&home, &root).unwrap();
-        let body = std::fs::read_to_string(root.join(".cursor/rules/8sync-harness.mdc")).unwrap();
+    fn cursor_rule_is_always_apply_mdc_with_the_same_block() {
+        let root = tmp("cursor-rule");
+        inject_cursor_rule(&root).unwrap();
+        let path = root.join(".cursor/rules/8sync-harness.mdc");
+        let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains("alwaysApply: true"), "Cursor standard: alwaysApply mdc");
-        assert!(body.contains(".cursor/skills/"), "points at Cursor skill dir");
-        assert!(body.contains("su-code/skills/trail/SKILL.md"));
-        assert!(
-            body.contains("GLM-5.3") && body.contains("CẤM") && body.contains("mcp__zai_vision_*"),
-            "Cursor alwaysApply rule must tell GLM-5.3 to look at images, not zai-vision"
-        );
-        let _ = std::fs::remove_dir_all(&base);
+        assert!(body.contains(harness_block().trim()));
+        assert!(!body.contains("su-code/skills") && !body.contains(".cursor/skills"));
+        inject_cursor_rule(&root).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn tmp(tag: &str) -> PathBuf {
@@ -696,21 +407,14 @@ mod tests {
     }
 
     #[test]
-    fn compact_block_replaces_old_full_block_and_is_small() {
-        let blk = claude_block();
-        assert!(blk.len() <= 1100, "block is {} B", blk.len());
+    fn new_block_replaces_old_full_block() {
+        let blk = harness_block();
         assert!(!blk.contains("ĐỌC NGAY") && !blk.contains("LUÔN có"));
         let old = format!("# T\n\nmine-before\n\n{BEGIN}\n## OLD full block\n{END}\n\nmine-after\n");
         let out = rewrite_md_with_block(&old, &blk, "T");
         assert!(!out.contains("OLD full block"));
         assert!(out.contains("mine-before") && out.contains("mine-after"));
         assert_eq!(out.matches(BEGIN).count(), 1);
-    }
-
-    #[test]
-    fn step0_text_points_at_trail() {
-        let off = format!("{}{}", claude_block(), build_force_load(Path::new("/no/such/home"), Path::new("/no/such/repo")).block);
-        assert!(off.contains("trail ask") && off.contains("trail callers"));
     }
 
     const FULL: &str = "## OLD full block\nĐỌC NGAY the old stack LUÔN có\n";

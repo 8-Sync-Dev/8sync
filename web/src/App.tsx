@@ -736,7 +736,7 @@ function BenchPage() {
   return (
     <Page
       title="Bench"
-      sub="Per-session context budget — what the agent pays upfront vs. what progressive disclosure defers."
+      sub="Per-session context budget — what the repo puts in front of the agent every session (skills come from the global ECC plugin)."
       action={
         <button className="primary" onClick={() => refetch()} disabled={isFetching}>
           {isFetching ? "Running…" : "Re-run"}
@@ -757,14 +757,10 @@ function BenchPage() {
               <strong>Upfront <span className="muted">(paid every session)</span></strong>
               <span className="pct mono">~{data.upfront} tok</span>
             </div>
-            {seg("Force-load prefix", data.force_load_prefix)}
-            {seg("CORE skill bodies", data.core_tok)}
+            {seg("8sync block", data.force_load_prefix)}
             {seg(<>Memory spine <span className="muted">(agents/*.md)</span></>, data.spine_tok)}
           </div>
           <div className="card list">
-            <div className="row"><span>Deferred <span className="muted">(read only on trigger)</span></span><span className="mono">~{data.deferred} tok</span></div>
-            <div className="row"><span>Naive baseline <span className="muted">(all always-on upfront)</span></span><span className="mono">~{data.naive_tok} tok</span></div>
-            <div className="row"><span>A2 progressive disclosure saved</span><span className="pct">{data.a2_saved_pct}%</span></div>
             <div className="row"><span>A1 stable-prefix (KV-cache)</span><span className={`tag ${data.a1_pass ? "ok" : "warn"}`}>{data.a1_pass ? "pass" : "fail"}</span></div>
           </div>
         </>
@@ -852,7 +848,7 @@ function WorkspacesPage() {
   );
 }
 
-// ── New project modal (scaffold + skills + MCP + knowledge) ─────────────────
+// ── New project modal (scaffold + MCP + knowledge) ─────────────────────────
 function toggleInSet<T>(set: (u: (s: Set<T>) => Set<T>) => void, v: T) {
   set((s) => {
     const n = new Set(s);
@@ -878,10 +874,8 @@ function ModalSection({ title, count, children }: { title: string; count: number
 
 function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState("");
-  const [skills, setSkills] = useState<Set<string>>(new Set());
   const [mcp, setMcp] = useState<Map<string, string>>(new Map());
   const [cats, setCats] = useState<Set<string>>(new Set());
-  const skillsQ = useQuery({ queryKey: ["skills"], queryFn: api.skills });
   const mcpQ = useQuery({ queryKey: ["mp", "mcp", "", "top"], queryFn: () => api.marketplace("mcp", "", "top") });
   const knQ = useQuery({ queryKey: ["knowledge", ""], queryFn: () => api.knowledge("") });
   const create = useMutation({
@@ -891,7 +885,6 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
         .flatMap((c) => c.entries.map((e) => ({ name: e.name, url: e.url, desc: e.desc, category: c.name })));
       return api.projectCreate({
         name: name.trim(),
-        skills: [...skills],
         mcp: [...mcp].map(([n, spec]) => ({ name: n, spec })),
         knowledge,
       });
@@ -923,7 +916,7 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
                 <strong>Created ✓</strong>
                 <span className="muted mono">{create.data.path}</span>
                 <span className="muted">
-                  {create.data.skills.filter((s) => s.ok).length}/{create.data.skills.length} skills · {create.data.mcp_added} MCP · {create.data.knowledge_added} knowledge links
+                  {create.data.mcp_added} MCP · {create.data.knowledge_added} knowledge links
                 </span>
               </div>
             </div>
@@ -940,14 +933,6 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
                 <input type="text" placeholder="my-new-project" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
                 <span className="hint-inline muted mono">~/Projects/{name.trim() || "<name>"}</span>
               </div>
-              <ModalSection title="Skills to vendor" count={skills.size}>
-                {(skillsQ.data ?? []).filter((s) => !s.name.endsWith(".md")).map((s) => (
-                  <label className={`kn-entry${skills.has(s.name) ? " on" : ""}`} key={s.name}>
-                    <input type="checkbox" checked={skills.has(s.name)} onChange={() => toggleInSet(setSkills, s.name)} />
-                    <span className="kn-entry-main"><span className="kn-entry-name">{s.name}</span></span>
-                  </label>
-                ))}
-              </ModalSection>
               <ModalSection title="MCP tools" count={mcp.size}>
                 {(mcpQ.data?.items ?? []).slice(0, 24).map((it) => {
                   const on = mcp.has(it.name);

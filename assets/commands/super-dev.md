@@ -25,7 +25,7 @@ You own the whole lifecycle. `/sx-auto` runs a plan; this runs a **product**. Ob
 
 Unknowns get resolved before the plan, not during the build.
 - Codebase unknowns → code-intel (Phase 0 tools).
-- Domain / library / API unknowns → **feynman** skills (`deep-research`, `research-paper`) + `web_search`; benchmark loops → owner runs `/autoresearch`; `last30days` when recency matters (a 2023 answer about a 2026 API is a liability).
+- Domain / library / API unknowns → **feynman** skills (`deep-research-web`, `research-paper`) + `web_search`; benchmark loops → owner runs `/autoresearch`; `last30days` when recency matters (a 2023 answer about a 2026 API is a liability).
 - Read the actual source of a dependency before assuming its behaviour. `librarian` subagent for anything non-trivial.
 
 Write conclusions into `su-code/STATE.md` under `## Assumptions`, each with its source. An assumption with no source is a guess wearing a costume.

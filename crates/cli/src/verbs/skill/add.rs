@@ -63,19 +63,13 @@ pub(crate) fn add_skill(env: &env_detect::Env, toml_path: &Path, spec: Option<&s
                 let body = synthesize_skill_md(&readme, &name, url);
                 write_synth_skill(&global_target, &body)?;
                 audit_skill_layout(&global_target);
-                if let Some(root) = project_root.as_ref() {
-                    let lt = root.join("su-code/skills").join(&name);
-                    write_synth_skill(&lt, &body)?;
-                    audit_skill_layout(&lt);
-                }
                 installed.push(name.clone());
             } else {
                 ui::ok(&format!("{} → {} skill(s)", url, found.len()));
                 for (sname, sdir) in &found {
                     let gt = env.home.join(".omp/skills").join(sname);
-                    let lt = project_root.as_ref().map(|r| r.join("su-code/skills").join(sname));
                     // Additive by default: don't clobber an already-installed skill.
-                    if (gt.exists() || lt.as_ref().is_some_and(|p| p.exists())) && !force {
+                    if gt.exists() && !force {
                         ui::skip(sname, "already installed (--force to overwrite)");
                         installed.push(sname.clone());
                         continue;
@@ -83,10 +77,6 @@ pub(crate) fn add_skill(env: &env_detect::Env, toml_path: &Path, spec: Option<&s
                     let _ = std::fs::remove_dir_all(&gt);
                     copy_dir_recursive(sdir, &gt)?;
                     audit_skill_layout(&gt);
-                    if let Some(lt) = &lt {
-                        let _ = std::fs::remove_dir_all(lt);
-                        copy_dir_recursive(sdir, lt)?;
-                    }
                     ui::ok(&format!("installed skill `{}`", sname));
                     installed.push(sname.clone());
                 }
@@ -102,20 +92,10 @@ pub(crate) fn add_skill(env: &env_detect::Env, toml_path: &Path, spec: Option<&s
             }
             install_path_skill(src, &global_target)?;
             audit_skill_layout(&global_target);
-            if let Some(root) = project_root.as_ref() {
-                let local_target = root.join("su-code/skills").join(&name);
-                if force {
-                    let _ = std::fs::remove_file(&local_target);
-                }
-                install_path_skill(src, &local_target)?;
-                audit_skill_layout(&local_target);
-            }
             installed.push(name.clone());
         }
         Source::Builtin { .. } => {
-            // Deploy the embedded asset tree `assets/skills/<name>/` → global (+ local).
-            // This is how opt-in bundled skills (e.g. `social-growth`) are enabled:
-            // they ship in the binary but are NOT auto-deployed by `harness init`.
+            // Deploy the embedded asset tree `assets/skills/<name>/` → global.
             let prefix = format!("skills/{}", name);
             if assets::iter_under(&format!("{}/", prefix)).is_empty() {
                 ui::warn(&format!("no bundled skill `{}` (assets/skills/{}/ not found)", name, name));
@@ -126,11 +106,6 @@ pub(crate) fn add_skill(env: &env_detect::Env, toml_path: &Path, spec: Option<&s
                 let (w, _) = assets::install_tree(&prefix, &global_target)?;
                 ui::ok(&format!("enabled builtin `{}` ({} file(s)) → {}", name, w, global_target.display()));
                 audit_skill_layout(&global_target);
-                if let Some(root) = project_root.as_ref() {
-                    let lt = root.join("su-code/skills").join(&name);
-                    let _ = assets::install_tree(&prefix, &lt)?;
-                    audit_skill_layout(&lt);
-                }
                 installed.push(name.clone());
             }
         }

@@ -133,13 +133,13 @@ Only want the subagents and `/ship`? They are also a Claude Code plugin in this 
 /plugin install 8sync-kit@8sync
 ```
 
-The kit lives in `~/.claude`, so it works in every repo and for plain `claude` too. Every `8sync ccc` launch also keeps things current, without network on the launch path: a newer 8sync release is installed and the command re-runs on it, the kit and bundled skills refresh after an update, and the repo gets the 8sync harness (memory, `AGENTS.md`/`CLAUDE.md` blocks, `.claude/skills` → `su-code/skills`). `SUSYNC_NO_AUTO_UPDATE=1` keeps the installed binary.
+The kit lives in `~/.claude`, so it works in every repo and for plain `claude` too. Every `8sync ccc` launch also keeps things current, without network on the launch path: a newer 8sync release is installed and the command re-runs on it, the kit and bundled skills refresh after an update, and the repo gets the 8sync harness (memory, the short `AGENTS.md`/`CLAUDE.md` block, ECC rule packs in `.claude/rules/ecc/` from the cached ECC checkout). Skills, agents and commands come from the global ECC plugin `ecc@ecc`; nothing is vendored into the repo. `SUSYNC_NO_AUTO_UPDATE=1` keeps the installed binary.
 
 | Part | What it does |
 |---|---|
 | Org rules | A short summary of the 8 Sync rules for Anthropic's Usage Policy and terms loads in every session ahead of other instructions; the full text ([`8sync-anthropic-rules.md`](assets/skills/aup-audit/8sync-anthropic-rules.md)) opens on demand and in `/aup-audit`. |
-| Subagents | Routed by role: `explore` and `quick-task` on Haiku (low effort), `task` and `reviewer` on Sonnet, `designer` on your session model, plus `researcher` and `verifier` for `deep-research`. Each has `maxTurns`; the read-only ones cannot edit; all return a short summary with details in a file. |
-| Skills | `/ship <task>`: explore → task list → implement with build/test → `reviewer` → CHANGELOG + commit, never pushes. `/aup-audit`: Usage Policy + secret check before you publish. `deep-research`: cited research brief. Plus every 8sync skill: bundled ones linked to the current `~/.omp/skills` copy, project ones through `.claude/skills`; on-demand skills are listed by name only to keep the prefix small. |
+| Subagents | Routed by role: `explore` and `quick-task` on Haiku (low effort), `task` and `reviewer` on Sonnet, `designer` on your session model, plus `researcher` and `verifier` for `deep-research-web`. Each has `maxTurns`; the read-only ones cannot edit; all return a short summary with details in a file. |
+| Skills | `/ship <task>`: explore → task list → implement with build/test → `reviewer` → CHANGELOG + commit, never pushes. `/aup-audit`: Usage Policy + secret check before you publish. `deep-research-web`: cited research brief. Plus every bundled 8sync skill, linked to the current `~/.omp/skills` copy; on-demand skills are listed by name only to keep the prefix small. |
 | Verify hook | After every Edit/Write, runs `cargo check`, the package's `typecheck` script (or `tsc --noEmit`) or `go vet` from the edited file's nearest manifest **in the background**; only a failure comes back to Claude. The latest edit wins, so a burst of edits costs one check. Before a turn ends, the build must pass (blocked once per broken state). Native Rust, works on Windows. |
 | Guard hook | Before Bash, PowerShell, Edit and Write. **Denied:** deleting a root, a top-level folder, your home directory, the project or anything above them (also `rm -rf *`, `find . -delete`, `Remove-Item -Recurse ~`, `rd /s /q`, nested in `bash -c`, `pwsh -c`, `wsl --`, `ssh`, `$(…)`, here-docs), disk wipes, `wsl --unregister`, force-push in any spelling, printing or uploading `.env`/keys (`cat .env`, `curl -F f=@.env`), writing a credential file, a real-looking API key in code or commands, `git add -A` that would sweep up a secret, code routing a Claude subscription into another client. **Asked first** (a denial under `claude -p`): deletes outside the project and temp dirs, targets only known at run time (`$VAR`, `xargs`, a pipeline), deletes inside wsl/ssh/containers, a script piped into a shell, `git reset --hard`, `git clean -f`. About 9 ms per call (mostly process start). |
 | Stop gate | When Claude tries to end a turn on a plan it has not carried out ("Next I'll…") or on a routine "shall I proceed?", the turn goes on. Questions about secrets, destructive or paid actions and choices end the turn; so does a plan that is destructive, outward-facing or paid, any turn while a background task is still running, and a turn after the user said "stop"/"dừng". Native: reads the last message and the user's last message, no model call. |
@@ -334,7 +334,7 @@ Your own `~/.zshrc` loads first, and 8sync's managed files never overwrite it.
 | Command | What it does |
 |---|---|
 | `8sync trail [dir\|--all [ROOT]\|status\|off]` | STEP 0: installs trail-code (telemetry off), runs `trail init` for Claude (no global hooks) and git-ignores `graft/`; `--all ROOT` sweeps every git repo (depth ≤3), `--dry-run` supported. |
-| `8sync harness` | One idempotent command per repo: skills, `trail build`, `AGENTS.md` force-load block, `su-code/` memory. |
+| `8sync harness` | One idempotent command per repo: `trail build`, the short `AGENTS.md`/`CLAUDE.md` block (STEP 0 + memory rules), `su-code/` memory, ECC rule packs for the detected stacks in `.claude/rules/ecc/`. Skills come from the global ECC plugin `ecc@ecc`; `global --sweep` applies it to every repo under `~/Projects`. |
 | `8sync harness init` · `create` | First bootstrap with managed `.gitignore` + gitleaks pre-commit hook · plus Cursor and Z.ai Code skill/rule fan-out. |
 | `8sync harness global [--sweep]` | Apply rules, skills, MCP and hooks to every omp project on the machine. |
 | `8sync harness web` | Local dashboard at `http://127.0.0.1:8731` (see below). |
@@ -392,14 +392,14 @@ Every verb has `-h` with an `EXAMPLES` block.
 
 ```text
 <repo>/
-├── AGENTS.md          anchor: force-loaded skills and rules
+├── AGENTS.md          anchor: STEP 0 (trail) + memory rules, in the 8sync block
+├── .claude/rules/ecc/ ECC rule packs for the repo's stacks
 └── su-code/
     ├── STATE.md       the live plan, rewritten at every phase
     ├── KNOWLEDGE.md   validated lessons and recorded failures
     ├── DECISIONS.md   architecture decisions
     ├── PREFERENCES.md how you like things done
-    ├── NOTES.md       `8sync note`
-    └── skills/        project-local skills
+    └── NOTES.md       `8sync note`
 ```
 
 ---

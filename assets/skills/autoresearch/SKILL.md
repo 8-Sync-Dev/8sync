@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # Autoresearch (thử → đo → giữ/bỏ, có giới hạn)
 
-Câu hỏi trả lời được bằng đọc nguồn → `deep-research`. Cần đo trên code/model của mình → skill này (chỉ owner khởi động: vòng lặp sửa code nhiều giờ). Một phép đo đơn lẻ → chạy luôn, không cần loop.
+Câu hỏi trả lời được bằng đọc nguồn → `deep-research-web`. Cần đo trên code/model của mình → skill này (chỉ owner khởi động: vòng lặp sửa code nhiều giờ). Một phép đo đơn lẻ → chạy luôn, không cần loop.
 
 ## 1. Start card (bắt buộc trước baseline)
 Lấy từ yêu cầu/repo trước; rồi hỏi MỘT `AskUserQuestion` header `Start` (≤4 câu, option khuyến nghị đứng đầu): các mục còn thiếu, và câu cuối là xác nhận plan với tóm tắt đủ các mục dưới. Chưa có "Start" → chưa cài, chưa chạy gì.
@@ -57,4 +57,4 @@ Lấy từ yêu cầu/repo trước; rồi hỏi MỘT `AskUserQuestion` header 
 - Máy owner để code: local chạy ưu tiên thấp; việc nặng lên CI; guard báo máy áp lực → dừng phép đo.
 - Secret/key không bao giờ in ra hoặc ghi vào ledger.
 
-<!-- Loop adapted from Feynman prompts/autoresearch.md v0.5.58 (MIT, Copyright (c) 2026 Companion, Inc.; full notice in skills/deep-research/LICENSE-feynman.md). 8sync additions: Start card with budget, worktree + patch files instead of in-loop commits, % keep rule with combined noise and A/B remeasure, correctness gate, frozen files, CI/USD budget, plateau/time/3-fail stops, held-out A/B check, METRIC line and ledger schema. -->
+<!-- Loop adapted from Feynman prompts/autoresearch.md v0.5.58 (MIT, Copyright (c) 2026 Companion, Inc.; full notice in skills/deep-research-web/LICENSE-feynman.md). 8sync additions: Start card with budget, worktree + patch files instead of in-loop commits, % keep rule with combined noise and A/B remeasure, correctness gate, frozen files, CI/USD budget, plateau/time/3-fail stops, held-out A/B check, METRIC line and ledger schema. -->

@@ -295,8 +295,8 @@ async fn api_engine(State(_ctx): State<Arc<Ctx>>) -> Json<serde_json::Value> {
     }))
 }
 
-async fn api_bench(State(ctx): State<Arc<Ctx>>) -> Result<Json<super::bench::BenchMetrics>, ApiErr> {
-    super::bench::bench_metrics(&ctx.home)
+async fn api_bench() -> Result<Json<super::bench::BenchMetrics>, ApiErr> {
+    super::bench::bench_metrics()
         .map(Json)
         .ok_or((StatusCode::NOT_FOUND, "not in a project".into()))
 }
@@ -391,10 +391,10 @@ async fn api_team(State(ctx): State<Arc<Ctx>>) -> Result<Json<serde_json::Value>
     let roster = serde_json::json!([
         { "type": "explore", "role": "scout", "skills": "trail" },
         { "type": "plan", "role": "architect", "skills": "planning-*, spec-driven-*" },
-        { "type": "reviewer", "role": "code review", "skills": "code-review-and-quality, senior-security" },
+        { "type": "reviewer", "role": "code review", "skills": "ecc:code-review, senior-security" },
         { "type": "oracle", "role": "2nd opinion / debug", "skills": "debugging, performance" },
         { "type": "designer", "role": "UI/UX", "skills": "impeccable, taste, senior-frontend" },
-        { "type": "librarian", "role": "research", "skills": "agent-reach, deep-research" },
+        { "type": "librarian", "role": "research", "skills": "agent-reach, deep-research-web" },
         { "type": "task", "role": "implementer", "skills": "full-flow, tdd" },
         { "type": "quick_task", "role": "mechanical", "skills": "—" }
     ]);
@@ -1401,9 +1401,6 @@ struct CreateProjectBody {
     name: Option<String>,
     #[serde(default)]
     path: Option<String>,
-    /// Skill specs to add into the new project (`builtin:<name>` or a repo URL).
-    #[serde(default)]
-    skills: Vec<String>,
     /// MCP servers → project `.omp/mcp.json` (`{name, spec}` where spec is a
     /// command line like `npx -y pkg` or a remote URL).
     #[serde(default)]
@@ -1414,9 +1411,10 @@ struct CreateProjectBody {
 }
 
 /// `POST /api/projects/create` — scaffold a brand-new 8sync project: create the
-/// dir + `git init` + seed AGENTS.md/su-code memory/skills block, then apply the
-/// selected skills (`8sync skill add`), MCP servers (project `.omp/mcp.json`),
-/// and knowledge (REFERENCES.md), and activate it in the dashboard.
+/// dir + `git init` + seed AGENTS.md/su-code memory/8sync block, then apply the
+/// selected MCP servers (project `.omp/mcp.json`) and knowledge (REFERENCES.md),
+/// and activate it in the dashboard. Skills are never copied into the project:
+/// they come from the global ECC plugin `ecc@ecc`.
 async fn api_project_create(
     State(ctx): State<Arc<Ctx>>,
     Json(body): Json<CreateProjectBody>,
@@ -1440,17 +1438,6 @@ async fn api_project_create(
     let env = crate::env_detect::Env::detect().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     crate::verbs::here::scaffold_project(&env, &target)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("scaffold: {e}")))?;
-
-    // Selected skills → vendored into the project by copying the global skill
-    // dir (`~/.omp/skills/<name>` → `<proj>/su-code/skills/<name>`). `skill add`
-    // would no-op for already-global skills, so copy the tree directly.
-    let mut skills = Vec::new();
-    for name in body.skills.iter().map(|s| s.trim().trim_start_matches("builtin:")).filter(|s| !s.is_empty()) {
-        let src = ctx.home.join(".omp/skills").join(name);
-        let ok = src.is_dir()
-            && crate::verbs::skill::deploy::copy_dir_recursive(&src, &target.join("su-code/skills").join(name)).is_ok();
-        skills.push(serde_json::json!({ "spec": name, "ok": ok }));
-    }
 
     // Selected MCP servers → project-scoped `.omp/mcp.json`.
     let mut mcp_added = 0usize;
@@ -1508,7 +1495,6 @@ async fn api_project_create(
     Ok(Json(serde_json::json!({
         "ok": true,
         "path": target.display().to_string(),
-        "skills": skills,
         "mcp_added": mcp_added,
         "knowledge_added": knowledge_added,
     })))

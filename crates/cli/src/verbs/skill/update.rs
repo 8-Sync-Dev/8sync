@@ -94,11 +94,6 @@ pub(crate) fn update_skills(
                 ui::warn(&format!("  {} → global copy failed: {}", sname, e));
                 continue;
             }
-            if let Some(root) = project_root.as_ref() {
-                let lt = root.join("su-code/skills").join(sname);
-                let _ = std::fs::remove_dir_all(&lt);
-                let _ = copy_dir_recursive(sdir, &lt);
-            }
             ui::ok(&format!("updated `{}`", sname));
             updated += 1;
             any_here = true;
@@ -125,10 +120,6 @@ pub(crate) fn update_skills(
         matched = true;
         let gt = omp_skills.join(name);
         let (w, _) = assets::install_tree(&prefix, &gt)?;
-        if let Some(root) = project_root.as_ref() {
-            let lt = root.join("su-code/skills").join(name);
-            let _ = assets::install_tree(&prefix, &lt)?;
-        }
         ui::ok(&format!("updated builtin `{}` ({} file(s))", name, w));
         updated += 1;
         sources += 1;
@@ -145,10 +136,6 @@ pub(crate) fn update_skills(
         matched = true;
         let gt = omp_skills.join(name);
         let _ = install_path_skill(Path::new(p), &gt);
-        if let Some(root) = project_root.as_ref() {
-            let lt = root.join("su-code/skills").join(name);
-            let _ = install_path_skill(Path::new(p), &lt);
-        }
         updated += 1;
         sources += 1;
     }

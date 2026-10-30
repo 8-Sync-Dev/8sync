@@ -74,7 +74,7 @@ mod verify;
 
     EVERY LAUNCH (no network on the launch path; SUSYNC_NO_AUTO_UPDATE=1 skips the update)
       newer 8sync release → install + re-run · after an update: bundled skills + kit refresh ·
-      git repo → harness: su-code/ memory, AGENTS.md/CLAUDE.md blocks, .claude/skills → su-code/skills
+      git repo → harness: su-code/ memory, AGENTS.md/CLAUDE.md blocks, ECC rules → .claude/rules/ecc/ (cached checkout only)
 
     THE KIT (installed by `8sync setup`; edited files are kept unless --force)
       rules    a short 8 Sync/Anthropic rules block in every session; full text (aup-audit/8sync-anthropic-rules.md)
@@ -83,7 +83,7 @@ mod verify;
                architect (opus, writes docs/ADR/RFC only) · qa (tests only) · critic
       skills   /ship · /rules (is X allowed?) · /aup-audit (repo vs Usage Policy) · /sec (secrets, deps, OWASP) ·
                /harden (Claude Code security posture) ·
-               /do · /ship-auto · /ship-loop · /autopilot (graded auto levels) · deep-research + every bundled 8sync skill (linked to ~/.omp/skills)
+               /do · /ship-auto · /ship-loop · /autopilot (graded auto levels) · deep-research-web + every bundled 8sync skill (linked to ~/.omp/skills)
       policy   `8sync ccc policy` prints org managed settings (bypass off, deny rules, login pinned to your
                claude.ai org, marketplace allowlist, opt-in MCP allowlist, sandbox, channels); you install it with sudo
       verify   after every Edit/Write, in the background: cargo check · package typecheck/tsc · go vet;
@@ -93,7 +93,7 @@ mod verify;
                force-push; deletes outside the project, `git reset --hard`, `git clean -f` ask first
       gates    stop (native, no model call): a turn that announces more work or asks to go ahead with
                routine work continues; ask: questions without a real need go back to Claude to decide
-      session  SessionStart digest of su-code/STATE.md + recent failure/validated notes (<= 6 KB,
+      session  SessionStart digest: `## Current` + `## Next` of su-code/STATE.md (<= 1,200 chars,
                stable for the prompt cache); non-core bundled skills load name-only (skillOverrides)
       hq hooks Notification/SessionStart/SessionEnd/SubagentStart/SubagentStop → `8sync hq hook <Event>`,
                async (no-op until `8sync hq setup`)
@@ -366,16 +366,10 @@ fn refresh_ancestor_claude_md(env: &Env, dir: &Path) {
 }
 
 /// The repo side of the harness, the same files `8sync .` gives omp: the
-/// su-code memory + AGENTS.md / CLAUDE.md blocks, every skill under
-/// `su-code/skills/` (bundled ones vendored in when missing), `.claude/skills/`
-/// linked to that tree, and on-demand skills listed by name only.
+/// su-code memory, the AGENTS.md / CLAUDE.md blocks, ECC rule packs from the
+/// cached ECC checkout, and the managed .gitignore block.
 fn project_harness(env: &Env, root: &Path) -> Result<()> {
-    deploy::vendor_missing_skills(&env.home, root)?;
     crate::verbs::here::seed_project_context(env, root, &crate::verbs::here::detect_stack(root))?;
-    deploy::ensure_claude_skills(root)?;
-    if deploy::claude_skills_is_ours(root) {
-        crate::verbs::skill::inject::claude_skill_overrides(&env.home, root)?;
-    }
     crate::verbs::harness::memory::seed_gitignore(root)
 }
 
@@ -667,12 +661,12 @@ const KIT_FILES: [(&str, &str); 43] = [
     ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
     // The org's rules: summarised in the kit's CLAUDE.md block, full text opened on demand (/aup-audit).
     ("skills/aup-audit/8sync-anthropic-rules.md", "skills/aup-audit/8sync-anthropic-rules.md"),
-    ("skills/deep-research/SKILL.md", "skills/deep-research/SKILL.md"),
-    ("skills/deep-research/references/binary-weight-audit.md", "skills/deep-research/references/binary-weight-audit.md"),
-    ("skills/deep-research/references/templates.md", "skills/deep-research/references/templates.md"),
-    ("skills/deep-research/references/large-sources.md", "skills/deep-research/references/large-sources.md"),
+    ("skills/deep-research-web/SKILL.md", "skills/deep-research-web/SKILL.md"),
+    ("skills/deep-research-web/references/binary-weight-audit.md", "skills/deep-research-web/references/binary-weight-audit.md"),
+    ("skills/deep-research-web/references/templates.md", "skills/deep-research-web/references/templates.md"),
+    ("skills/deep-research-web/references/large-sources.md", "skills/deep-research-web/references/large-sources.md"),
     // MIT notice for the Feynman-derived research skills and agents (must travel with the copies).
-    ("skills/deep-research/LICENSE-feynman.md", "skills/deep-research/LICENSE-feynman.md"),
+    ("skills/deep-research-web/LICENSE-feynman.md", "skills/deep-research-web/LICENSE-feynman.md"),
     // Mod `8sync-hints` (Claude Code function hooks): a plugin folder under ~/.claude/skills is
     // auto-loaded, so this is all it takes for ghost text + typeahead + the band above the prompt.
     ("configs/claude/mods/8sync-hints/.claude-plugin/plugin.json", "skills/8sync-hints/.claude-plugin/plugin.json"),
@@ -692,8 +686,20 @@ const KIT_FILES: [(&str, &str); 43] = [
 /// still exactly what 8sync wrote (the `plan` agent: the main agent plans in
 /// its own context instead of paying a second Opus context for it).
 /// The board / auto-team skills (`/auto-team`, `/team-tick`, `/sprint`) and the agent-team lead
-/// `pm` went with the board (owner 2026-10-30); emptied skill folders go too.
-const RETIRED: [&str; 5] = ["agents/plan.md", "agents/pm.md", "skills/auto-team/SKILL.md", "skills/team-tick/SKILL.md", "skills/sprint/SKILL.md"];
+/// `pm` went with the board (owner 2026-10-30); `deep-research` was renamed `deep-research-web`
+/// so ECC's `deep-research` is not shadowed. Emptied skill folders go too.
+const RETIRED: [&str; 10] = [
+    "agents/plan.md",
+    "agents/pm.md",
+    "skills/auto-team/SKILL.md",
+    "skills/team-tick/SKILL.md",
+    "skills/sprint/SKILL.md",
+    "skills/deep-research/SKILL.md",
+    "skills/deep-research/references/binary-weight-audit.md",
+    "skills/deep-research/references/templates.md",
+    "skills/deep-research/references/large-sources.md",
+    "skills/deep-research/LICENSE-feynman.md",
+];
 
 /// Hashes of the files as 8sync last wrote them: a file whose current content
 /// no longer matches was edited by the user and is left alone.
@@ -857,7 +863,7 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
 const CORE_SKILLS: [&str; 15] =
-    ["ship", "ship-loop", "ship-tick", "autopilot", "ui-ux", "planning", "remember", "aup-audit", "deep-research", "sysdesign", "8sync-cli", "trail", "karpathy-guidelines", "ponytail", "impeccable"];
+    ["ship", "ship-loop", "ship-tick", "autopilot", "ui-ux", "planning", "remember", "aup-audit", "deep-research-web", "sysdesign", "8sync-cli", "trail", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
@@ -911,8 +917,15 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
                 std::fs::remove_file(&target).with_context(|| format!("remove {}", target.display()))?;
                 ui::ok(&format!("removed retired {}", target.display()));
                 if rel.starts_with("skills/") {
-                    // Only when nothing else is left in it (remove_dir refuses a non-empty folder).
-                    let _ = target.parent().map(std::fs::remove_dir);
+                    // Drop the folders it leaves empty (`skills/deep-research/references`, …),
+                    // never the kit's top-level `skills/` (remove_dir refuses a non-empty folder).
+                    let mut up = target.parent();
+                    while let Some(d) = up.filter(|d| d.parent().is_some_and(|p| p != dir.as_path()) && d.starts_with(&dir)) {
+                        if std::fs::remove_dir(d).is_err() {
+                            break;
+                        }
+                        up = d.parent();
+                    }
                 }
             }
             Ok(_) if stamps.contains_key(rel) => ui::info(&format!("kept your edited {} (no longer part of the kit)", target.display())),
@@ -962,7 +975,7 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
     }
     let agents = KIT_FILES.iter().filter(|(_, rel)| rel.starts_with("agents/")).count();
     ui::ok(&format!(
-        "kit: {agents} agents · /ship · /aup-audit · deep-research · verify hook · guard · stop + ask gates · auto mode · CLAUDE.md rules ({})",
+        "kit: {agents} agents · /ship · /aup-audit · deep-research-web · verify hook · guard · stop + ask gates · auto mode · CLAUDE.md rules ({})",
         dir.display()
     ));
     Ok(())
@@ -1446,39 +1459,41 @@ fn skill_frontmatter_name(skill_md: &Path) -> Option<String> {
     None
 }
 
-/// A KNOWLEDGE.md lesson line: `- failure:` / `- validated:` / `- decision:` (what `/remember`
-/// writes), optionally bold (`- **failure:`).
-fn is_lesson(l: &str) -> bool {
-    let Some(rest) = l.strip_prefix("- ") else { return false };
-    let rest = rest.strip_prefix("**").unwrap_or(rest);
-    rest.starts_with("failure:") || rest.starts_with("validated:") || rest.starts_with("decision:")
+/// The `## Current…` and `## Next…` sections of a STATE.md, headings included, each up to
+/// the next `#`/`##` heading; the first 600 chars when it has neither.
+fn state_brief(state: &str) -> String {
+    let mut keep = false;
+    let mut out: Vec<&str> = Vec::new();
+    for l in state.lines() {
+        if l.starts_with("# ") || l.starts_with("## ") {
+            keep = l.starts_with("## Current") || l.starts_with("## Next");
+        }
+        if keep {
+            out.push(l);
+        }
+    }
+    if out.is_empty() {
+        return take_chars(state, 600).trim_end().to_string();
+    }
+    out.join("\n").trim_end().to_string()
 }
 
-/// Stable digest for `hook session-start`: head of `su-code/STATE.md`, then the
-/// last failure/validated lines of `su-code/KNOWLEDGE.md`. No timestamps, so the
-/// prompt prefix stays cache-stable. Empty when the repo has no `su-code/STATE.md`.
+/// The first `n` chars of `s` (never splits a char).
+fn take_chars(s: &str, n: usize) -> &str {
+    s.char_indices().nth(n).map_or(s, |(i, _)| &s[..i])
+}
+
+/// Stable digest for `hook session-start`: the running `/ship`, then the `## Current` and
+/// `## Next` sections of `su-code/STATE.md`, at most 1,200 chars. KNOWLEDGE stays on disk
+/// (read on demand). No timestamps, so the prompt prefix stays cache-stable. Empty when the
+/// repo has no `su-code/STATE.md`.
 fn session_digest(root: &Path) -> String {
-    const CAP: usize = 6000;
+    const CAP: usize = 1200;
     let Ok(state) = std::fs::read_to_string(root.join("su-code/STATE.md")) else { return String::new() };
     // The running `/ship` (su-code/ship/ACTIVE → su-code/ship/<slug>/STATE.md) comes first.
     let mut out = active_ship(root).unwrap_or_default();
-    out.push_str(&state.lines().take(60).collect::<Vec<_>>().join("\n"));
-    if let Ok(k) = std::fs::read_to_string(root.join("su-code/KNOWLEDGE.md")) {
-        let lines: Vec<&str> = k.lines().filter(|l| is_lesson(l)).collect();
-        let tail = &lines[lines.len().saturating_sub(20)..];
-        if !tail.is_empty() {
-            out.push_str("\n\n");
-            out.push_str(&tail.join("\n"));
-        }
-    }
-    if out.len() > CAP {
-        let mut end = CAP;
-        while !out.is_char_boundary(end) {
-            end -= 1;
-        }
-        out.truncate(end);
-    }
-    out
+    out.push_str(&state_brief(&state));
+    take_chars(&out, CAP).to_string()
 }
 
 /// `hook session-start`: repo digest, plus this session's thread on compact/resume.
@@ -1544,8 +1559,7 @@ fn active_ship(root: &Path) -> Option<String> {
         return None;
     }
     let st = std::fs::read_to_string(root.join("su-code/ship").join(&slug).join("STATE.md")).ok()?;
-    let head = st.lines().take(40).collect::<Vec<_>>().join("\n");
-    Some(format!("## Active /ship: {slug} (su-code/ship/{slug}/)\n{head}\n\n"))
+    Some(format!("## Active /ship: {slug} (su-code/ship/{slug}/)\n{}\n\n", state_brief(&st)))
 }
 
 /// Pure: this session's thread for `hook session-start` on compact/resume — latest
@@ -2350,7 +2364,6 @@ mod tests {
         // an ACTIVE slug that tries to leave su-code/ship is ignored
         std::fs::write(d.join("su-code/ship/ACTIVE"), "../../etc\n").unwrap();
         assert!(active_ship(&d).is_none());
-        assert!(is_lesson("- decision: x") && is_lesson("- **failure: y") && !is_lesson("- note: z"));
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -2378,23 +2391,23 @@ mod tests {
     }
 
     #[test]
-    fn session_digest_is_bounded_and_stable() {
+    fn session_digest_is_current_and_next_only_bounded_and_stable() {
         let d = std::env::temp_dir().join(format!("8sync-digest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         assert_eq!(session_digest(&d), "", "no su-code/ prints nothing");
         std::fs::create_dir_all(d.join("su-code")).unwrap();
-        let state: String = (0..100).map(|i| format!("state {i}\n")).collect();
+        let state = "# STATE — v0.101.1 two teams (stale header)\n\n## Goal\nold goal\n\n## Current step\nwire ECC\n### detail\nsub kept\n\n## Checklist\n- [x] a\n\n## Next\nopen PR\n";
         std::fs::write(d.join("su-code/STATE.md"), state).unwrap();
-        let know: String = (0..30).map(|i| format!("- **failure:** f{i}\n- **other:** x{i}\n- validated: v{i}\n- failures: nope{i}\n")).collect();
-        std::fs::write(d.join("su-code/KNOWLEDGE.md"), know).unwrap();
+        std::fs::write(d.join("su-code/KNOWLEDGE.md"), "- validated: v1\n- failure: f1\n").unwrap();
         let out = session_digest(&d);
-        assert!(out.contains("state 59") && !out.contains("state 60"));
-        assert!(out.contains("f29") && out.contains("f20") && !out.contains("f19\n") && !out.contains("other") && !out.contains("nope"));
-        assert!(out.contains("- validated: v29") && out.contains("- validated: v20") && !out.contains("v19\n"), "plain form kept, last 20 only");
+        assert_eq!(out, "## Current step\nwire ECC\n### detail\nsub kept\n\n## Next\nopen PR");
+        assert!(!out.contains("validated") && !out.contains("v0.101.1"), "no KNOWLEDGE, no stale header");
         assert_eq!(out, session_digest(&d), "deterministic");
+        // neither section → the first 600 chars; everything capped at 1,200 chars
         std::fs::write(d.join("su-code/STATE.md"), "é".repeat(5000)).unwrap();
-        let out = session_digest(&d);
-        assert!(out.len() <= 6000 && out.chars().all(|c| c == 'é' || c == '\n' || c.is_ascii()));
+        assert_eq!(session_digest(&d), "é".repeat(600));
+        std::fs::write(d.join("su-code/STATE.md"), format!("## Current\n{}", "é".repeat(5000))).unwrap();
+        assert_eq!(session_digest(&d).chars().count(), 1200);
         let _ = std::fs::remove_dir_all(&d);
     }
 

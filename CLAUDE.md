@@ -1,11 +1,16 @@
 # CLAUDE.md — guidance for Claude Code
 
 <!-- 8sync:skills:begin -->
-## 8sync harness — Claude Code
+## 8sync harness
 
-- **Repo:** quy ước, lệnh build/test, kiến trúc nằm trong `AGENTS.md` — xem mục lục (`grep -n '^#' AGENTS.md`), đọc đúng mục cần.
-- **Code map:** `trail ask "<câu hỏi>"` / `trail callers <symbol>` / `trail skeleton <file>` qua Bash (nhanh, local, tree-sitter). Chỉ đọc raw file khi sắp sửa.
-- **Skills nạp theo nhu cầu:** Claude Code đã liệt kê skill kèm mô tả; chỉ mở khi task khớp (UI/design → `impeccable`). Không đọc SKILL.md trước.
-- **Lệnh:** ưu tiên `8sync` (`8sync run test`, `8sync find` …) hơn shell thô.
-- **Memory:** `su-code/STATE.md` đầu phiên; bài học → `su-code/KNOWLEDGE.md`; thay đổi → `CHANGELOG.md`.
+**STEP 0 — code map trước (trail):** hỏi `trail` TRƯỚC grep/đọc cả file (tree-sitter local, không gọi model).
+- `trail ask "<câu hỏi>"` — định vị/giải thích code · `trail grep <pattern>` — tìm kèm ngữ cảnh symbol
+- `trail skeleton <file>` — khung file, không body · `trail callers <symbol>` (`--direction out` = callees) — impact trước khi sửa
+- Chỉ đọc raw file khi sắp sửa nó. Map cũ → `trail build`; repo chưa nối → `8sync trail`.
+
+**Quy tắc bất biến:**
+- Sau mỗi thay đổi: cập nhật `CHANGELOG.md` (mục `[Unreleased]`) + ghi bài học vào `su-code/KNOWLEDGE.md`.
+- Đọc `su-code/STATE.md` đầu phiên; rewrite nó ở mỗi phase-boundary (Goal · Checklist · Current · Next).
+
+**Skills / agents / commands:** plugin ECC `ecc@ecc` (global) + rule của repo trong `.claude/rules/ecc/`.
 <!-- 8sync:skills:end -->

@@ -5,7 +5,7 @@ description: Work a paper, claim, or benchmark end to end — replicate a result
 
 # Research Paper
 
-Ported from `companion-inc/feynman`'s `/replicate`, `/recipe`, `/audit` and `/draft` slash-commands (MIT, Copyright (c) 2026 Companion, Inc.; notice in `deep-research/LICENSE-feynman.md`; `/autoresearch` is now the `autoresearch` skill). Self-contained omp-native version — no `feynman` CLI required.
+Ported from `companion-inc/feynman`'s `/replicate`, `/recipe`, `/audit` and `/draft` slash-commands (MIT, Copyright (c) 2026 Companion, Inc.; notice in `deep-research-web/LICENSE-feynman.md`; `/autoresearch` is now the `autoresearch` skill). Self-contained omp-native version — no `feynman` CLI required.
 
 ## Pick a mode
 

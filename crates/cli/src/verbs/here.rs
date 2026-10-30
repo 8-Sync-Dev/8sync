@@ -302,15 +302,16 @@ Session memory được omp tự quản (retain/recall/auto-compact). Không c�
         }
     }
 
-    // Re-inject the dynamic skills block (root) + a compact index into every
-    // significant sub-folder, so an agent opening any sub-tree still sees the
-    // skill rules (progressive disclosure: nearest AGENTS.md wins).
+    // Re-inject the 8sync block (root) + a compact pointer into every
+    // significant sub-folder (progressive disclosure: nearest AGENTS.md wins).
     if let Err(e) = skill::inject_agents_md(&env.home, root) {
-        ui::warn(&format!("could not inject AGENTS.md skills block: {}", e));
+        ui::warn(&format!("could not inject AGENTS.md block: {}", e));
     }
     if let Err(e) = skill::inject_subfolder_indexes(root) {
-        ui::warn(&format!("could not inject sub-folder skill indexes: {}", e));
+        ui::warn(&format!("could not inject sub-folder pointers: {}", e));
     }
+    // Launch path: cached ECC checkout only, never the network.
+    crate::verbs::harness::ecc::project_layer(&env.home, root, false);
     Ok(())
 }
 

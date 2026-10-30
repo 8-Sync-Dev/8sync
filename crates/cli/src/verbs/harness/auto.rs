@@ -1,17 +1,18 @@
 //! `8sync harness` (bare, no subcommand) — the ONE command that makes a project
 //! fully agent-ready and current, in a single idempotent pass:
-//!   skills (deploy bundled + external) → update (pull registered from source) →
-//!   mirror into the project (additive) → inject force-load → seed memory +
-//!   gitleaks hook → consolidate learnings → wire the trail code map.
-//! Re-run anytime; safe + cheap. `harness init` = explicit full bootstrap with
-//! progress UI; `harness up` = light refresh; `harness up --timer` = background loop.
+//!   global layer (bundled skills under ~/.omp, trail, MCPs) → update registered
+//!   skills → trail + memory + gitleaks hook → the 8sync block in AGENTS.md/CLAUDE.md
+//!   → ECC rule packs (`.claude/rules/ecc/`) → consolidate learnings.
+//! Nothing is vendored into the repo: skills/agents/commands come from the global
+//! ECC plugin `ecc@ecc`. Re-run anytime; safe + cheap. `harness init` = explicit
+//! full bootstrap with progress UI; `harness up` = light refresh.
 use anyhow::Result;
 
 use super::memory::{consolidate_learnings, seed_gitleaks_hook, seed_harness_memory};
-use crate::verbs::skill::{deploy, discover, inject_agents_md, inject_subfolder_indexes, update};
+use crate::verbs::skill::{deploy, discover, inject, inject_agents_md, inject_subfolder_indexes, update};
 use crate::{env_detect, ui};
 
-pub(crate) fn harness_auto(env: &env_detect::Env, force: bool) -> Result<()> {
+pub(crate) fn harness_auto(env: &env_detect::Env) -> Result<()> {
     ui::header("8sync harness");
 
     // 1. Global skill library + rule layer — idempotent, shared with
@@ -26,26 +27,19 @@ pub(crate) fn harness_auto(env: &env_detect::Env, force: bool) -> Result<()> {
         return Ok(());
     };
 
-    // 2. Update registered skills from their sources, then mirror the rest in
-    //    (additive: never clobber an edited local skill — pass `--force` to refresh).
+    // 2. Update registered skills from their sources (global library only).
     let _ = update::update_skills(env, &env.xdg_config.join("8sync/skills.toml"), None);
-    let count = deploy::mirror_global_to_local(&env.home, &root, force)?;
-    if count > 0 {
-        ui::ok(&format!("skills vendored → {}", root.join("su-code/skills").display()));
-    }
-    for d in discover::list_installed_skill_dirs(&root.join("su-code/skills")).unwrap_or_default() {
-        deploy::ensure_skill_layout(&d);
-    }
 
-    // 3. The self-learning loop, one pass: trail + memory + safety + inject.
+    // 3. The self-learning loop, one pass: trail + memory + safety + inject + ECC rules.
     super::trail::ensure_for_harness(env, &root);
     seed_harness_memory(&root)?;
     seed_gitleaks_hook(&root);
     inject_agents_md(&env.home, &root)?;
     inject_subfolder_indexes(&root)?;
+    let _ = inject::inject_cursor_rule(&root);
+    super::ecc::project_layer(&env.home, &root, true);
     let _ = deploy::ensure_engine(&env.home, Some(&root));
     let _ = deploy::ensure_rules(&env.home, Some(&root));
-    let _ = deploy::ensure_host_adapters(&env.home, &root, force);
     let _ = deploy::cleanup_legacy_gs(&env.home, Some(&root));
     let _ = consolidate_learnings(&root);
 

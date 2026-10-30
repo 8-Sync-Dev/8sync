@@ -19,7 +19,7 @@ Một nhịp (≤ một việc nhỏ) của vòng lặp đang mở. Skill cha (`
 Việc phải ≤ ~5 file; lớn hơn → tách, ghi phần còn lại vào `Next`.
 
 ## 3. R&D khi có ẩn số (không research thứ đã có trong repo)
-- Cùng lỗi lặp hai iteration (digest giống trong LOOP.md) hoặc không biết sửa ở đâu → `explore` cho codebase lạ, `researcher` song song ≤2 agent cho câu hỏi con (≤10 bullet, `claim — file:line/URL`). Lựa chọn lớn (thư viện, kiến trúc, so sánh ≥2 cách) → skill `deep-research` (scale gate của nó: lookup thì tự search, không fan-out).
+- Cùng lỗi lặp hai iteration (digest giống trong LOOP.md) hoặc không biết sửa ở đâu → `explore` cho codebase lạ, `researcher` song song ≤2 agent cho câu hỏi con (≤10 bullet, `claim — file:line/URL`). Lựa chọn lớn (thư viện, kiến trúc, so sánh ≥2 cách) → skill `deep-research-web` (scale gate của nó: lookup thì tự search, không fan-out).
 - Kết quả → `su-code/ship/<slug>/research.md` (ngày, câu hỏi, kết luận, nguồn) để tick sau không hỏi lại. Máy báo áp lực (watchdog) → không mở thêm agent.
 
 ## 4. Làm → kiểm → tick
