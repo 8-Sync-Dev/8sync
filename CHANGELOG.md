@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.111.2] — 2026-10-31
+
+### Fixed
+- **Dọn builtin đã bỏ khỏi registry của máy cho hẳn:** 0.111.1 chỉ bỏ khỏi bản gộp trong bộ nhớ và ghi lại `su-code/skills.toml`, nên máy có `[karpathy]`/`[deep-research]` trong `8sync/skills.toml` (thư mục config) sẽ in "dropped …" mỗi lần chạy `harness`. Giờ `skill update` cắt đúng các bảng đó trong từng file (registry máy + manifest dự án), phần còn lại giữ nguyên (comment đầu file, entry git có `rev`), và cắt trước khi gộp nên entry dự án cùng tên vẫn được tính.
+
 ## [0.111.1] — 2026-10-31
 
 ### Added

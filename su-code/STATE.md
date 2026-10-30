@@ -1,11 +1,11 @@
-# v0.111.1 — lệnh /eccx-* cho mọi người dùng
+# v0.111.2 — lệnh /eccx-* cho mọi người dùng
 
 ## Goal
 Owner 2026-10-30: bỏ board/card/team/auto; per-repo harness chỉ ECC (`ecc@ecc` giữ đủ); tối ưu token mạnh nhất, Rust, nhẹ RAM; ai cài/`8sync up` cũng có `/eccx-<nhóm>`. Lịch sử các bản trước nằm trong CHANGELOG và git.
 
 ## Checklist
 - [x] v0.111.0: bỏ board (#247), per-repo ECC-only (#246), compaction ~200K + hook ECC tắt thật + seed gọn prompt (#248)
-- [x] v0.111.1: `/eccx-<nhóm>` bundle trong binary (Claude Code qua `ccc kit`, omp qua `harness global`); registry bỏ builtin đã retire
+- [x] v0.111.1: `/eccx-<nhóm>` bundle trong binary (Claude Code qua `ccc kit`, omp qua `harness global`); registry bỏ builtin đã retire (0.111.2: ghi xuống cả registry máy)
 - [ ] Đo lại 24 h sau release so với mốc cũ
 
 ## Current

@@ -28,22 +28,27 @@ pub(crate) fn update_skills(
     // committed) — the manifest is what makes skills reproducible on a new machine.
     let project_root = detect_current_project_root();
     let proj_manifest = project_root.as_ref().map(|r| r.join("su-code/skills.toml"));
+    // A `builtin:` this binary does not bundle was registered by an older release (`skill add`
+    // refuses unknown builtins; `deep-research` ships as `deep-research-web` since 0.111.0,
+    // `karpathy` was the pre-`karpathy-guidelines` name). Cut it from each file it sits in, the
+    // machine registry included, so the next run is quiet — and before the union, so a project
+    // entry of the same name still counts.
+    let mut dropped = forget_unbundled_builtins(toml_path);
     let mut reg = discover::read_registry(toml_path);
     if let Some(pm) = &proj_manifest {
+        dropped.extend(forget_unbundled_builtins(pm));
         for (k, v) in discover::read_registry(pm) {
             reg.entry(k).or_insert(v);
         }
     }
+    dropped.sort();
+    dropped.dedup();
+    for name in dropped {
+        ui::info(&format!("dropped `{name}` from the skill registry: this 8sync no longer bundles it"));
+    }
     if reg.is_empty() {
         ui::info("no registered skills — `8sync skill add <url>` (or commit su-code/skills.toml)");
         return Ok(());
-    }
-    // A `builtin:` this binary does not bundle was registered by an older release (`skill add`
-    // refuses unknown builtins): forget it — the manifest rewrite below drops it — instead of
-    // warning on every run (`deep-research` ships as `deep-research-web` since 0.111.0;
-    // `karpathy` was the pre-`karpathy-guidelines` name).
-    for name in drop_unbundled_builtins(&mut reg) {
-        ui::info(&format!("dropped `{name}` from the skill registry: this 8sync no longer bundles it"));
     }
     let omp_skills = env.home.join(".omp/skills");
     let mut updated = 0usize;
@@ -183,6 +188,31 @@ fn drop_unbundled_builtins(reg: &mut BTreeMap<String, discover::SkillEntry>) -> 
     gone
 }
 
+/// Cut from the registry file at `path` every entry whose `builtin:` source this binary does not
+/// bundle; returns their names. The rest of the file (header comment, layout) stays as it was.
+fn forget_unbundled_builtins(path: &Path) -> Vec<String> {
+    let gone = drop_unbundled_builtins(&mut discover::read_registry(path));
+    if !gone.is_empty() {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            let _ = std::fs::write(path, without_tables(&text, &gone));
+        }
+    }
+    gone
+}
+
+/// Pure: `text` without the `[name]` tables in `names` (from the header to the next table).
+fn without_tables(text: &str, names: &[String]) -> String {
+    let mut skip = false;
+    text.split_inclusive('\n')
+        .filter(|line| {
+            if let Some(name) = line.trim().strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                skip = names.iter().any(|n| n == name.trim());
+            }
+            !skip
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,5 +232,20 @@ mod tests {
         .collect();
         assert_eq!(drop_unbundled_builtins(&mut reg), ["deep-research", "karpathy"]);
         assert_eq!(reg.keys().map(String::as_str).collect::<Vec<_>>(), ["local", "mine", "trail"]);
+    }
+
+    #[test]
+    fn retired_builtins_leave_the_registry_file_for_good() {
+        let path = std::env::temp_dir().join(format!("8sync-skills-toml-{}", std::process::id()));
+        let header = "# ~/.config/8sync/skills.toml — skill registry (managed by 8sync skill)\n";
+        let tables = "[karpathy]\nsrc  = \"builtin:karpathy\"\nwhen = \"always\"\n\n[trail]\nsrc  = \"builtin:trail\"\nwhen = \"always\"\n\n[mine]\nsrc = \"https://github.com/owner/mine\"\nrev = \"abc123\"\n\n[deep-research]\nsrc = \"builtin:deep-research\"\nwhen = \"on-demand\"\n";
+        std::fs::write(&path, format!("{header}{tables}")).unwrap();
+        assert_eq!(forget_unbundled_builtins(&path), ["deep-research", "karpathy"]);
+        let kept = discover::read_registry(&path);
+        assert_eq!(kept.keys().map(String::as_str).collect::<Vec<_>>(), ["mine", "trail"]);
+        assert_eq!(kept["mine"].rev.as_deref(), Some("abc123"));
+        assert!(std::fs::read_to_string(&path).unwrap().starts_with(header));
+        assert!(forget_unbundled_builtins(&path).is_empty(), "the next run finds nothing to drop");
+        let _ = std::fs::remove_file(&path);
     }
 }
