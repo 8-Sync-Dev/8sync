@@ -1,6 +1,6 @@
 // Pure: merge journal-derived message rows into one chronological team thread.
 // Input rows are the `messages` API rows (owner_message, session_reply,
-// session_message, task_created/completed, notification, session_start/end).
+// session_message, notification, session_start/end).
 
 export type ThreadRow = {
   id?: number;
@@ -18,8 +18,6 @@ export type ThreadKind =
   | "owner"
   | "reply"
   | "handoff"
-  | "task_created"
-  | "task_completed"
   | "needs_you"
   | "session_start"
   | "session_end";
@@ -48,18 +46,14 @@ export type ThreadItem = {
 export type ThreadFilters = {
   session?: string | null;
   role?: string | null;
-  /** Role of a session; used for the role filter and to tag task cards. */
+  /** Role of a session; used for the role filter. */
   roleOf?: (session: string) => string | null | undefined;
-  /** Task rows give the role of a task by (session, subject). */
-  tasks?: { session: string | null; subject: string; role: string | null }[];
 };
 
 const KIND: Record<string, ThreadKind> = {
   owner_message: "owner",
   session_reply: "reply",
   session_message: "handoff",
-  task_created: "task_created",
-  task_completed: "task_completed",
   notification: "needs_you",
   session_start: "session_start",
   session_end: "session_end",
@@ -89,7 +83,6 @@ const sender = (r: ThreadRow) => (r.from_ && r.from_ !== "***" ? r.from_ : r.ses
 
 export function buildTeamThread(rows: ThreadRow[], filters: ThreadFilters = {}): ThreadItem[] {
   const roleOfSession = (s: string | null) => (s ? (filters.roleOf?.(s) ?? null) : null);
-  const taskRole = (r: ThreadRow) => filters.tasks?.find((t) => t.session === r.session && t.subject === r.text)?.role ?? null;
 
   const sorted = rows
     .map((r, i) => ({ r, i }))
@@ -102,7 +95,7 @@ export function buildTeamThread(rows: ThreadRow[], filters: ThreadFilters = {}):
     const session = kind === "handoff" ? sender(r) : r.session;
     const from = kind === "owner" ? "owner" : kind === "handoff" ? session : sender(r);
     const to = kind === "owner" ? (r.to_ ?? r.session) : kind === "reply" ? "owner" : kind === "handoff" ? r.to_ : null;
-    const role = kind === "task_created" || kind === "task_completed" ? (taskRole(r) ?? roleOfSession(session)) : roleOfSession(session);
+    const role = roleOfSession(session);
     const item: ThreadItem = {
       key: `${r.id ?? `i${i}`}`,
       kind,

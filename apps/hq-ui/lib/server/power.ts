@@ -2,11 +2,9 @@
 // Measured: CPU package energy (Windows "Energy Meter" RAPL counter through `typeperf`; Linux
 // powercap `energy_uj` when readable) and GPU board power (`nvidia-smi power.draw`). Estimated: the
 // rest of the box (board, RAM, disks, fans, PSU loss) as the owner's `otherW`. A 15 s timer started
-// by instrumentation.ts keeps counting with no tab open. Over budget: the team stays paused
-// (`8sync ccc auto pause`) for the rest of the day, and "Chạy" is refused until the budget is raised.
+// by instrumentation.ts keeps counting with no tab open. Over budget: the Máy chip says so.
 import fs from "node:fs";
 import path from "node:path";
-import { autoSet, autoStatus } from "./auto";
 import { coreGet } from "./core";
 import { exec, type Exec } from "./machine";
 import { stateDir } from "./paths";
@@ -33,8 +31,6 @@ export type Ledger = {
   days: Record<string, Use>;
   /** First sample ever counted (ms). */
   since: number | null;
-  /** When the budget last paused the team. */
-  paused: { day: string; at: number } | null;
 };
 /** One probe. `cpuWh`: the cumulative counter in Wh; `cpuWrapWh`: where it wraps (Linux), else null. */
 export type Reading = { at: number; cpuWh: number | null; cpuWrapWh: number | null; gpuW: number | null };
@@ -47,9 +43,8 @@ export type Power = {
   month: Use;
   settings: PowerSettings;
   since: number | null;
-  /** Today's spend reached the budget: the team is held paused until tomorrow or a higher budget. */
+  /** Today's spend reached the budget. */
   over: boolean;
-  paused: { at: number } | null;
 };
 
 const ZERO: Use = { wh: 0, cpuWh: 0, gpuWh: 0, vnd: 0 };
@@ -128,7 +123,6 @@ export function summarize(l: Ledger, live: Live | null, now: number): Power {
     settings: l.settings,
     since: l.since,
     over: overBudget(l, day),
-    paused: l.paused?.day === day ? { at: l.paused.at } : null,
   };
 }
 
@@ -162,7 +156,7 @@ export function parseSettings(body: Record<string, unknown> | null, cur: PowerSe
 const file = () => path.join(stateDir(), "power.json");
 
 function fresh(): Ledger {
-  return { schema: 1, settings: { ...DEFAULTS }, days: {}, since: null, paused: null };
+  return { schema: 1, settings: { ...DEFAULTS }, days: {}, since: null };
 }
 
 /**
@@ -187,8 +181,7 @@ export function readLedger(): Ledger | null {
       if (/^\d{4}-\d{2}-\d{2}$/.test(k) && [x.wh, x.cpuWh, x.gpuWh, x.vnd].every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0)) days[k] = x as Use;
     }
     const since = typeof j.since === "number" && Number.isFinite(j.since) ? j.since : null;
-    const paused = typeof j.paused?.day === "string" && typeof j.paused?.at === "number" ? { day: j.paused.day, at: j.paused.at } : null;
-    return { schema: 1, settings, days, since, paused };
+    return { schema: 1, settings, days, since };
   } catch {
     try {
       fs.renameSync(file(), `${file()}.bad`);
@@ -254,12 +247,10 @@ async function readGpu(run: Exec = exec): Promise<number | null> {
   return out == null ? null : parseGpuWatts(out);
 }
 
-type State = { ledger: Ledger | null; prev: Reading | null; live: Live | null; unsaved: number; timer: NodeJS.Timeout | null; busy: boolean; pauseRetryAt: number };
+type State = { ledger: Ledger | null; prev: Reading | null; live: Live | null; unsaved: number; timer: NodeJS.Timeout | null; busy: boolean };
 /** On `globalThis`: instrumentation.ts and the route handlers are separate bundles with their own module copies. */
 const g = globalThis as unknown as { __hqPower?: State };
-const S = (g.__hqPower ??= { ledger: null, prev: null, live: null, unsaved: 0, timer: null, busy: false, pauseRetryAt: 0 });
-/** After a pause that didn't take (8sync broken), wait this long before trying again. */
-const PAUSE_RETRY_MS = 300_000;
+const S = (g.__hqPower ??= { ledger: null, prev: null, live: null, unsaved: 0, timer: null, busy: false });
 
 /** The ledger in memory, read once; null while power.json exists but can't be read. */
 const loaded = (): Ledger | null => (S.ledger ??= readLedger());
@@ -267,10 +258,6 @@ const loaded = (): Ledger | null => (S.ledger ??= readLedger());
 function save(): void {
   if (S.ledger) S.unsaved = writeLedger(S.ledger) ? 0 : SAVE_EVERY;
 }
-
-/** How the sampler sees and pauses the team; tests pass fakes so they never touch the real one. */
-export type TeamCtl = { status: () => Promise<{ on: boolean; paused: boolean }>; pause: () => Promise<{ paused: boolean; error?: string }> };
-const realCtl: TeamCtl = { status: autoStatus, pause: () => autoSet("pause") };
 
 /** The core's sampler reading (PDH + NVML opened once), or null without a core: then typeperf + nvidia-smi. */
 async function coreReading(): Promise<Reading | null> {
@@ -280,8 +267,8 @@ async function coreReading(): Promise<Reading | null> {
   return { at: v.at, cpuWh: n(v.cpuWh), cpuWrapWh: n(v.cpuWrapWh), gpuW: n(v.gpuW) };
 }
 
-/** One sample: read, count, save now and then, hold the team paused while over budget. */
-export async function sampleOnce(run: Exec = exec, platform: NodeJS.Platform = process.platform, ctl: TeamCtl = realCtl): Promise<void> {
+/** One sample: read, count, save now and then. */
+export async function sampleOnce(run: Exec = exec, platform: NodeJS.Platform = process.platform): Promise<void> {
   let cur = await coreReading();
   if (!cur) {
     const [cpu, gpuW] = await Promise.all([readCpu(platform, run), readGpu(run)]);
@@ -298,22 +285,6 @@ export async function sampleOnce(run: Exec = exec, platform: NodeJS.Platform = p
   if (r.add) {
     S.ledger = credit(l, day, r.add, cur.at);
     S.unsaved += 1;
-  }
-  if (overBudget(S.ledger!, day) && cur.at >= S.pauseRetryAt) {
-    const st = await ctl.status();
-    // Checked again: the budget may have been raised or cleared while status ran.
-    if (st.on && !st.paused && overBudget(S.ledger!, day)) {
-      const res = await ctl.pause();
-      const now = S.ledger!;
-      if (res.paused) {
-        S.ledger = { ...now, paused: { day, at: cur.at } };
-        console.log(`[hq] power: over the daily budget (${Math.round(now.days[day]?.vnd ?? 0)} ₫ ≥ ${now.settings.budgetVnd} ₫), team paused`);
-        save();
-      } else {
-        S.pauseRetryAt = cur.at + PAUSE_RETRY_MS;
-        console.error(`[hq] power: over the daily budget but the pause failed (${res.error ?? "unknown"}); retrying in 5 min`);
-      }
-    }
   }
   if (S.unsaved >= SAVE_EVERY) save();
 }
@@ -355,12 +326,3 @@ export function setPowerSettings(s: PowerSettings, now = Date.now()): Power | nu
 }
 
 export const powerSettings = (): PowerSettings => loaded()?.settings ?? DEFAULTS;
-
-/** "Chạy" while today's spend is over the budget: the reason to refuse, else null. */
-export function runBlocked(now = Date.now()): string | null {
-  const l = loaded();
-  const day = dayKey(now);
-  if (!l || !overBudget(l, day)) return null;
-  const fmt = (n: number) => Math.round(n).toLocaleString("vi-VN");
-  return `Hôm nay đã dùng ${fmt(l.days[day]?.vnd ?? 0)} ₫ điện, vượt ngân sách ${fmt(l.settings.budgetVnd ?? 0)} ₫: tăng ngân sách trong "Máy" để chạy tiếp.`;
-}

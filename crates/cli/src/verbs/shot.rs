@@ -236,8 +236,7 @@ pub(crate) fn zombies(procs: &[Proc]) -> Vec<u32> {
         .collect()
 }
 
-/// Kill [`zombies`] (native process list, no WMI). Best effort, never fails a shot. `8sync ccc auto
-/// revive` (HQ, every minute) calls it too.
+/// Kill [`zombies`] (native process list, no WMI). Best effort, never fails a shot.
 pub(crate) fn sweep_zombies() {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let z = zombies(&reap::list(now));

@@ -1,17 +1,12 @@
 // "Thức & màn hình" in the Máy tab: is the machine held awake, is the screen off, how long since
-// anyone touched it, and which rooms kept working since. From `8sync ccc awake status --json`
-// (OS truth: execution state, console display state, last input, time asleep) at most every 30 s,
-// plus the rooms' idle-hook status files. Older 8sync without `status`: the section is left out.
+// anyone touched it. From `8sync ccc awake status --json` (OS truth: execution state, console display
+// state, last input, time asleep) at most every 30 s. Older 8sync without `status`: the section is left out.
 // The switch reads `ours` (this 8sync's own hold), never `held`: on Windows `held` is the
 // system-wide aggregate (omp.exe holds SYSTEM too), so it can't say whether the switch is on.
-import { readIdleStatus } from "./idle";
 import { coreGet } from "./core";
 import { run } from "./proc";
-import type { IdleRecord } from "../idle";
 
 const EVERY_MS = 30_000;
-/** Shorter than this away is just reading the page: no "trong lúc vắng" line. */
-export const AWAY_AFTER_S = 300;
 
 /** This 8sync's detached hold (`8sync ccc awake on`); `until` in unix seconds, 0 = until switched off. */
 export type AwakeHold = { pid: number; until: number; while_rooms: boolean };
@@ -27,11 +22,8 @@ export type AwakeStatus = {
   /** null: no hold of ours (or an 8sync too old to say). */
   ours: AwakeHold | null;
 };
-/**
- * `displayBy`: what keeps the screen on (from `powercfg /requests`, which needs an elevated HQ; null when unknown).
- * `away`: since the last keyboard/mouse input, how many rooms finished a turn and when the newest did.
- */
-export type Awake = AwakeStatus & { at: number; displayBy: string[] | null; away: { since: number; rooms: number; last: number | null } | null };
+/** `displayBy`: what keeps the screen on (from `powercfg /requests`, which needs an elevated HQ; null when unknown). */
+export type Awake = AwakeStatus & { at: number; displayBy: string[] | null };
 
 const bool = (v: unknown) => (typeof v === "boolean" ? v : null);
 const secs = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
@@ -61,14 +53,6 @@ export function parseAwake(stdout: string): AwakeStatus | null {
   } catch {
     return null;
   }
-}
-
-/** Rooms whose last hook fired after the owner's last input (record `ts` is in seconds). */
-export function awayFrom(idleS: number | null, records: IdleRecord[], now: number): Awake["away"] {
-  if (idleS == null || idleS < AWAY_AFTER_S) return null;
-  const since = now - idleS * 1000;
-  const after = records.filter((r) => r.ts * 1000 >= since);
-  return { since, rooms: after.length, last: after.length ? Math.max(...after.map((r) => r.ts * 1000)) : null };
 }
 
 /** `powercfg /requests`, DISPLAY section: "Godot_v4.7.2-stable_win64.exe", driver names; [] for "None.". */
@@ -125,7 +109,7 @@ export async function awake(now = Date.now()): Promise<Awake | null> {
   if (!v) return null;
   // idle_s was true at probe time; it has grown since unless someone came back (next probe).
   const idle = v.idle_s == null ? null : v.idle_s + Math.floor(Math.max(0, now - c.at) / 1000);
-  return { ...v, idle_s: idle, at: now, displayBy: displayBy?.length ? displayBy : null, away: awayFrom(idle, readIdleStatus(), now) };
+  return { ...v, idle_s: idle, at: now, displayBy: displayBy?.length ? displayBy : null };
 }
 
 /** `on` waits up to 20 s for the detached hold to report in (it asks `claude agents` first). */

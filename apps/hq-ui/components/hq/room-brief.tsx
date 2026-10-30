@@ -1,11 +1,10 @@
 "use client";
 
-import { CircleDotIcon, SquareTerminalIcon } from "lucide-react";
+import { SquareTerminalIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { attachCommand } from "@/lib/ask";
 import { interactiveHint } from "@/lib/interactive";
-import { LANES } from "@/lib/lanes";
 import { agoVi, spanVi, type RoomNow } from "@/lib/now";
 import { roomModelLabel } from "@/lib/roles";
 import { repoOf } from "@/lib/sidebar";
@@ -15,8 +14,6 @@ import { RoleIcon } from "./role-badge";
 import { RoomLog } from "./room-log";
 import type { Room } from "./use-office";
 import { openWebTerminal } from "./web-terminal-sheet";
-
-const laneLabel = (k: string) => LANES.find((l) => l.key === k)?.label ?? k;
 
 /**
  * The room's title row: name, state, project · branch · model, and the terminal button. Pinned at the
@@ -44,8 +41,8 @@ export function RoomBar({ room, n, token, onTerminal }: { room: Room; n: RoomNow
 }
 
 /**
- * The top of Chat phòng: what this room is doing now (its line and the card it holds), what it asks
- * the owner, and the way into its terminal. The message box under the timeline sends it work.
+ * The top of Chat phòng: what this room is doing now, what it asks the owner, and the way into its
+ * terminal. The message box under the timeline messages it.
  */
 export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: RoomNow; now: number; token: string; onTerminal: () => void }) {
   const tmux = room.delivery === "terminal";
@@ -65,28 +62,13 @@ export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: 
           ) : (
             <span className="text-muted-foreground">Chưa có dòng nào từ phòng này.</span>
           )}
-          {n.quietMs != null && n.flagged && <span className="block text-xs text-muted-foreground">Rảnh {spanVi(n.quietMs)}: gửi việc ở ô bên dưới.</span>}
-        </dd>
-        <dt className="text-muted-foreground">Card</dt>
-        <dd className="min-w-0">
-          {n.card ? (
-            <span className="inline-flex max-w-full items-baseline gap-1.5">
-              <CircleDotIcon aria-hidden className="size-3 shrink-0 self-center text-muted-foreground" />
-              <span className="font-mono text-xs text-muted-foreground tabular">#{n.card.id}</span>
-              <span className="truncate" title={n.card.text}>
-                {n.card.text}
-              </span>
-              <span className="shrink-0 text-xs text-muted-foreground">· {laneLabel(n.card.lane)}</span>
-            </span>
-          ) : (
-            <span className="text-muted-foreground">Không giữ card nào.</span>
-          )}
+          {n.quietMs != null && n.flagged && <span className="block text-xs text-muted-foreground">Rảnh {spanVi(n.quietMs)}: nhắn nó ở ô bên dưới.</span>}
         </dd>
       </dl>
 
-      {(n.state === "needs" || room.permit) && (
+      {n.state === "needs" && (
         <AskPanel
-          rooms={[{ key: room.key, label: room.label, session_id: room.session_id, project: where?.name ?? null, waiting: room.waiting, ask: room.ask, permit: room.permit, tmux, interactive: room.interactive }]}
+          rooms={[{ key: room.key, label: room.label, session_id: room.session_id, project: where?.name ?? null, waiting: room.waiting, ask: room.ask, tmux, interactive: room.interactive }]}
           now={now}
           token={token}
           onOpen={onTerminal}

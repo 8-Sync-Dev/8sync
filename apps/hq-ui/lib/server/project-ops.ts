@@ -1,18 +1,16 @@
-// Sidebar project actions: close (stop everything of the project with `8sync ccc auto close`, then
-// hide it until new activity) and remove a project that is a git worktree (`git worktree remove`,
+// Sidebar project actions: close (hide it until new activity) and remove a project that is a git worktree (`git worktree remove`,
 // never `--force`). Every root comes from HQ's own list (rooms it has seen, folders added in the
-// sidebar), never from the request; git and 8sync run argv-only, in that root.
+// sidebar), never from the request; git runs argv-only, in that root.
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { parseClosePlan, type ClosePlan } from "@/lib/close-plan";
 import { repoOf, groupKey, type HiddenProject } from "@/lib/sidebar";
 import { parseWorktreeList, within, worktreeVerdict, type WorktreeFacts, type WorktreeVerdict } from "@/lib/worktree";
 import { withMissing, type ProjectRow } from "./db";
 import { loadFloor, ompSessions } from "./floor";
 import { projectOf } from "./office";
 import { mergedSessions, run, type SessionView } from "./proc";
-import { tail } from "./team";
+import { tail } from "./pane";
 
 /**
  * Project roots HQ knows, keyed like the sidebar (lib/sidebar.ts groupKey): the repo of every room it
@@ -45,39 +43,6 @@ export function hideProject(db: DatabaseSync, root: string, now = Date.now()): H
 
 export function showProject(db: DatabaseSync, key: string): boolean {
   return Number(db.prepare("DELETE FROM hidden_projects WHERE key = ?").run(key).changes) > 0;
-}
-
-/** `auto close` stops rooms one by one (`claude stop` each) before the leftover sweep. */
-const CLOSE_MS = 120_000;
-/** Roots with a close in flight: a double click must not run two. */
-const closing = new Set<string>();
-
-export type CloseResult = { ok: true; plan: ClosePlan } | { ok: false; error: string; plan: ClosePlan | null; busy?: boolean };
-
-/**
- * `8sync ccc auto close [--dry-run] --json` in `root`: stop (or, dry, list) every room, session and
- * leftover process of the project. Not ok when 8sync failed, timed out or answered no plan.
- */
-export async function closeProject(root: string, dry: boolean): Promise<CloseResult> {
-  const key = groupKey(root);
-  if (!dry && closing.has(key)) return { ok: false, error: "Đang đóng dự án này, đợi lần trước xong.", plan: null, busy: true };
-  if (!dry) closing.add(key);
-  try {
-    const r = await run("8sync", ["ccc", "auto", "close", ...(dry ? ["--dry-run"] : []), "--json"], dry ? 60_000 : CLOSE_MS, root);
-    const plan = parseClosePlan(r.stdout);
-    // 8sync resolves the repo from the folder it runs in: a plan for another root (a subfolder
-    // resolving to its parent repo) is never shown as this project's, nor hidden as done.
-    if (plan && groupKey(plan.root) !== key) {
-      return { ok: false, error: `8sync ${dry ? "định đóng" : "đã chạy cho"} ${plan.root}, không phải ${root}: HQ không ${dry ? "đóng" : "ẩn"} dự án này.`, plan: null };
-    }
-    if (r.ok && plan) return { ok: true, plan };
-    const error = r.killed
-      ? `8sync không trả lời sau ${(dry ? 60_000 : CLOSE_MS) / 1000} giây: ${dry ? "thử lại" : "một phần có thể đã dừng, mở lại hộp này để xem còn gì"}.`
-      : tail(r.stderr, 4) || (plan ? "Một số thứ không dừng được." : "8sync không trả kết quả `auto close` (cần 8sync mới hơn?).");
-    return { ok: false, error, plan };
-  } finally {
-    if (!dry) closing.delete(key);
-  }
 }
 
 /**

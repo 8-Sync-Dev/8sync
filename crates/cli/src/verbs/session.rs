@@ -130,8 +130,8 @@ pub fn save(env: &Env, root: &Path, reg: &Registry) -> Result<()> {
 /// conversation (no `--continue`); otherwise it resumes the latest one there.
 /// Reuses `ModelConfig` so STEP-0 tool-routing + advisor survive every launch.
 /// `room` = (project root, session name): exported as `EIGHTSYNC_ROOM` / `EIGHTSYNC_ROOM_ID`
-/// so the omp extension polls this room's inbox and `ccc msg` knows the sender, plus
-/// `EIGHTSYNC_BIN` (this executable) so the extension never resolves `8sync` from PATH/cwd.
+/// (the session's HQ inbox id), plus `EIGHTSYNC_BIN` (this executable) so a tool never resolves
+/// `8sync` from PATH/cwd.
 /// `model` = `--model <id>` for omp (`8sync . <name> --model <id>`); None = omp's default.
 fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str), model: Option<&str>) -> Result<()> {
     if which::which("omp").is_err() {
@@ -306,8 +306,8 @@ pub fn resume_named(env: &Env, root: &Path, name: &str, model: Option<&str>) -> 
         let cwd = session_cwd(s, root).to_path_buf();
         ui::ok(&format!("→ resume session '{name}'"));
         touch(env, root, &mut reg, name)?;
-        // A session made without a launch (`8sync ccc auto up --omp` creates its rooms first) has
-        // no conversation yet: open a fresh one instead of continuing nothing.
+        // A registered session without a launch yet has no conversation: open a fresh one
+        // instead of continuing nothing.
         let fresh = crate::verbs::session_view::omp_transcript(&dir).is_none();
         launch(&cwd, &dir, fresh, (root, name), model)
     } else {
@@ -337,21 +337,6 @@ pub fn cmd_new(env: &Env, root: &Path, name: &str, worktree: bool) -> Result<()>
     ui::ok(&format!("created session '{name}'"));
     touch(env, root, &mut reg, name)?;
     launch(&cwd, &dir, true, (root, name), None)
-}
-
-/// The session dir of the named session `name` of this repo, creating the session like
-/// `8sync . new <name>` when missing but never launching omp. `last_used` is left alone, so the
-/// owner's bare `8sync .` still resumes what it did. Used by `8sync ccc auto up --omp`.
-pub(crate) fn ensure(env: &Env, root: &Path, name: &str) -> Result<PathBuf> {
-    if !valid_name(name) {
-        bail!("invalid session name '{name}' (use letters, digits, '-', '_', '.'; ≤64 chars)");
-    }
-    let mut reg = load(env, root);
-    if let Some(s) = reg.get(name) {
-        return Ok(s.session_dir.clone());
-    }
-    create(env, root, &mut reg, name, false)?;
-    reg.get(name).map(|s| s.session_dir.clone()).context("session vừa tạo không có trong registry")
 }
 
 fn create(env: &Env, root: &Path, reg: &mut Registry, name: &str, worktree: bool) -> Result<()> {

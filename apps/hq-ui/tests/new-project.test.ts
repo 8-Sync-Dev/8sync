@@ -2,7 +2,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { teamArgs, withTask } from "@/lib/server/team";
 import { validateNewProjectPath } from "@/lib/server/validate";
 
 describe("new project from HQ", () => {
@@ -25,12 +24,5 @@ describe("new project from HQ", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
-  it("gives the team its first task (the spec) only when it comes up, never as a flag", () => {
-    expect(withTask(teamArgs("up"), "up", "Làm landing page")).toEqual(["ccc", "auto", "up", "Làm landing page"]);
-    expect(withTask(teamArgs("full"), "full", "  spec  ")).toEqual(["ccc", "auto", "up", "--roles", "full", "spec"]);
-    expect(withTask(teamArgs("down"), "down", "x")).toEqual(["ccc", "auto", "down"]);
-    expect(withTask(teamArgs("up"), "up", "  ")).toEqual(["ccc", "auto", "up"]);
-    expect(withTask(teamArgs("up"), "up", "--roles boost").at(-1)).toBe(" --roles boost");
   });
 });

@@ -1,4 +1,4 @@
-// "Vòng lặp" panel of the Flow tab: each `/ship-loop` under `su-code/ship/<slug>/` with how many
+// "Vòng lặp" tab: each `/ship-loop` under `su-code/ship/<slug>/` with how many
 // iterations it ran and the last evidence line of its LOOP.md (crates/cli/src/verbs/ccc/looper.rs
 // appends "iter N | <check> | exit X | <tail>"). LOOP.md is hand-written too, so parsing is lenient:
 // a file we cannot read is skipped, never an error for the whole list.

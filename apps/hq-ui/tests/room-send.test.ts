@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LANES, type Board, type Card } from "@/lib/lanes";
-import { askText, containRect, imageRoom, leadOf, parseTarget, pinLine, pinPx, pinRadius, pointToPin, roomGroups, suggestion, targetValue } from "@/lib/room-send";
+import { askText, containRect, imageRoom, pinLine, pinPx, pinRadius, pointToPin, roomGroups } from "@/lib/room-send";
 
 const room = (label: string, root: string | null, o: { tokens?: number | null; role?: string | null; delivery?: "terminal" | "inbox" | null; cwd?: string } = {}) => ({
   key: `k-${label}`,
@@ -13,14 +12,7 @@ const room = (label: string, root: string | null, o: { tokens?: number | null; r
   tokens: o.tokens === undefined ? 40_000 : o.tokens,
 });
 
-describe("targets", () => {
-  it("round-trips select values", () => {
-    expect(parseTarget(targetValue({ kind: "all", root: "C:\\w\\shop" }))).toEqual({ kind: "all", root: "C:\\w\\shop" });
-    expect(parseTarget(targetValue({ kind: "room", key: "abc" }))).toEqual({ kind: "room", key: "abc" });
-    expect(parseTarget("all:")).toBeNull();
-    expect(parseTarget("x")).toBeNull();
-  });
-
+describe("room groups", () => {
   it("groups only rooms a message can reach", () => {
     const g = roomGroups([room("dev", "/w/shop"), room("ghost", "/w/shop", { delivery: null }), room("ops", "/w/tools")]);
     expect(g.map((x) => [x.root, x.rooms.map((r) => r.label)])).toEqual([
@@ -30,42 +22,11 @@ describe("targets", () => {
   });
 });
 
-describe("suggestion picker", () => {
-  it("lead by name, `lead` first, plan role counts, unreachable never", () => {
-    expect(leadOf([room("dev", "/w"), room("pm", "/w"), room("lead", "/w")])?.label).toBe("lead");
-    expect(leadOf([room("dev", "/w"), room("x", "/w", { role: "plan" })])?.label).toBe("x");
-    expect(leadOf([room("dev", "/w"), room("lead", "/w", { delivery: null })])).toBeNull();
-  });
-
-  it("names the saving from the other rooms' context, else only the room count", () => {
-    const s = suggestion([room("lead", "/w", { tokens: 90_000 }), room("dev", "/w", { tokens: 60_000 }), room("qa", "/w", { tokens: 30_000 })]);
-    expect(s).toMatchObject({ room: "k-lead", rooms: 3, tokens: 90_000 });
-    expect(s!.line).toBe("1 phòng đọc thay vì 3, bớt khoảng 90 nghìn token ngữ cảnh; lead chia việc cho phòng khác bằng `8sync ccc msg`.");
-    const u = suggestion([room("lead", "/w"), room("dev", "/w", { tokens: null })]);
-    expect(u!.tokens).toBeNull();
-    expect(u!.line).toBe("1 phòng đọc thay vì 2; lead chia việc cho phòng khác bằng `8sync ccc msg`.");
-  });
-
-  it("no suggestion without a lead or with a lone room", () => {
-    expect(suggestion([room("dev", "/w"), room("qa", "/w")])).toBeNull();
-    expect(suggestion([room("lead", "/w")])).toBeNull();
-  });
-});
-
 describe("image room", () => {
-  const card = (id: number, lane: Card["lane"], claim: string | null) => ({ id, lane, claim: claim ? { room: claim, at: 1 } : null }) as unknown as Card;
-  const rooms = [room("lead", "/w/shop"), room("dev", "/w/shop"), room("qa", "/w/shop"), room("wt", "/w/shop/.claude/worktrees/card-9")];
-  const board = (cards: Card[]): Board => {
-    const lanes = Object.fromEntries(LANES.map((l) => [l.key, cards.filter((c) => c.lane === l.key)])) as Board["lanes"];
-    return { lanes, closed: [] };
-  };
-
-  it("card holder first, then the worktree room, then the lane's role, else null", () => {
-    const boards = [{ root: "/w/shop", board: board([card(7, "qa", "dev"), card(8, "qa", null)]) }];
-    expect(imageRoom({ root: "/w/shop", card: 7, worktree: null }, rooms, boards)?.label).toBe("dev");
-    expect(imageRoom({ root: "/w/shop/.claude/worktrees/card-9", card: 9, worktree: "card-9" }, rooms, boards)?.label).toBe("wt");
-    expect(imageRoom({ root: "/w/shop", card: 8, worktree: null }, rooms, boards)?.label).toBe("qa");
-    expect(imageRoom({ root: "/w/shop", card: null, worktree: null }, rooms, boards)).toBeNull();
+  it("a worktree image goes to the room working in that worktree, else nobody is picked", () => {
+    const rooms = [room("lead", "/w/shop"), room("wt", "/w/shop/.claude/worktrees/wt-9")];
+    expect(imageRoom({ root: "/w/shop/.claude/worktrees/wt-9", worktree: "wt-9" }, rooms)?.label).toBe("wt");
+    expect(imageRoom({ root: "/w/shop", worktree: null }, rooms)).toBeNull();
   });
 });
 

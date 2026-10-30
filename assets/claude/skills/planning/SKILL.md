@@ -9,7 +9,7 @@ Task: $ARGUMENTS
 2. Viết `su-code/ship/<slug>/PLAN.md` (không có `su-code/` → `.claude/ship/<slug>/PLAN.md`):
    - **Goal** (1–2 câu) · **Non-goals**
    - **Acceptance criteria** — mỗi dòng kiểm được bằng một lệnh/hành vi cụ thể (cái UAT sẽ chạy)
-   - **Tasks** — thứ tự, file/module chạm tới, test kèm theo; đánh dấu task chạy song song được và gán role `/sprint` (rd · plan · dev · review · qa · quick · critic) để không role nào ngồi không
+   - **Tasks** — thứ tự, file/module chạm tới, test kèm theo; đánh dấu task chạy song song được và gán subagent hợp (`explore` · `task` · `quick-task` · `reviewer` · `qa` · `critic`)
    - **Risks** — cái gì dễ vỡ, migration, tương thích, chi phí, rule Anthropic/8 Sync liên quan
    - **Assumptions** — mọi giả định tự chọn
 3. Câu hỏi: chỉ loại thật sự cần (secret/quyền, thao tác phá huỷ/tốn tiền, hướng sản phẩm khác hẳn nhau). Gom tất cả vào MỘT `AskUserQuestion` (≤4 câu, option Recommended đầu). Owner đã nói "tự làm đi" → tự chọn Recommended và ghi vào Assumptions.

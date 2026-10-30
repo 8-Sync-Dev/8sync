@@ -123,7 +123,7 @@ pub struct Row {
     /// Command that resumes it.
     pub resume: String,
     pub transcript: Option<PathBuf>,
-    /// Inbox HQ and `ccc msg` deliver to: a Claude Code room's session id, an omp named
+    /// Inbox HQ delivers the owner's messages to: a Claude Code room's session id, an omp named
     /// session's [`crate::room_id`]; `None` for every other row.
     pub inbox_id: Option<String>,
     /// The room's own flag (`8sync ccc . urgent high|med|low`): "high" | "med" | "low", Claude Code

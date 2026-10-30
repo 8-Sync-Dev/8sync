@@ -1,6 +1,6 @@
 //! The HQ native core: a loopback JSON server inside the long-running `8sync hq ui` supervisor.
 //! It keeps the data the HQ web server polls warm in one process — the `claude agents` listing,
-//! `8sync ls --all` rows, boards, the awake probe, a machine/energy sampler and transcript token
+//! `8sync ls --all` rows, the awake probe, a machine/energy sampler and transcript token
 //! sums — so node stops starting a process per request. Node finds it through `HQ_CORE` (URL) and
 //! `HQ_CORE_TOKEN`; `HQ_*` never reaches a room (`apps/hq-ui/lib/server/child-env.ts`).
 //! Endpoints and caches: see each submodule; node side: `apps/hq-ui/lib/server/core.ts`.
@@ -30,7 +30,6 @@ pub struct Handle {
 
 struct Core {
     token: String,
-    home: std::path::PathBuf,
     env: crate::env_detect::Env,
     agents: Mutex<agents::Cache>,
     ls: Mutex<Option<(Instant, Arc<[u8]>)>>,
@@ -68,7 +67,6 @@ pub fn start() -> Option<Handle> {
     crate::verbs::session_view::enable_digest_cache();
     let core = Arc::new(Core {
         token: token.clone(),
-        home: env.home.clone(),
         env,
         agents: Mutex::default(),
         ls: Mutex::default(),
@@ -147,15 +145,6 @@ fn route(core: &Core, req: &http::Request) -> (u16, Arc<[u8]>) {
         ("GET", "/v1/health") => ok(&json!({ "ok": true, "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id() })),
         ("GET", "/v1/agents") => (200, agents::get(&core.agents)),
         ("GET", "/v1/ls") => (200, ls(core)),
-        ("GET", "/v1/board") => {
-            let Some(root) = http::query_param(&req.query, "root").filter(|r| std::path::Path::new(r).is_absolute()) else {
-                return err(400, "root: absolute path required");
-            };
-            match crate::verbs::ccc::board_json_at(&core.home, std::path::Path::new(&root)) {
-                Ok(v) => ok(&v),
-                Err(e) => err(422, &format!("{e:#}")),
-            }
-        }
         ("GET", "/v1/awake") => match serde_json::to_vec(&crate::verbs::ccc::awake::status_now()) {
             Ok(b) => (200, Arc::from(b)),
             Err(e) => err(500, &e.to_string()),
@@ -203,7 +192,7 @@ fn route(core: &Core, req: &http::Request) -> (u16, Arc<[u8]>) {
             };
             ok(&disk::scan(&ask.root, &ask.name, ask.at))
         }
-        (_, "/v1/health" | "/v1/agents" | "/v1/ls" | "/v1/board" | "/v1/awake" | "/v1/machine" | "/v1/power" | "/v1/usage" | "/v1/disk") => err(405, "method"),
+        (_, "/v1/health" | "/v1/agents" | "/v1/ls" | "/v1/awake" | "/v1/machine" | "/v1/power" | "/v1/usage" | "/v1/disk") => err(405, "method"),
         _ => err(404, "route"),
     }
 }
@@ -231,7 +220,6 @@ mod tests {
     fn core() -> Core {
         Core {
             token: "t0k".into(),
-            home: std::env::temp_dir(),
             env: crate::env_detect::Env::detect().unwrap(),
             agents: Mutex::default(),
             ls: Mutex::default(),
@@ -243,8 +231,8 @@ mod tests {
     }
 
     fn req(method: &str, path: &str, token: Option<&str>, body: &str) -> http::Request {
-        let (path, query) = path.split_once('?').unwrap_or((path, ""));
-        http::Request { method: method.into(), path: path.into(), query: query.into(), token: token.map(str::to_string), body: body.as_bytes().to_vec() }
+        let path = path.split_once('?').map_or(path, |(p, _)| p);
+        http::Request { method: method.into(), path: path.into(), token: token.map(str::to_string), body: body.as_bytes().to_vec() }
     }
 
     #[test]
@@ -258,7 +246,6 @@ mod tests {
         assert_eq!(route(&c, &req("GET", "/v1/nope", Some("t0k"), "")).0, 404);
         assert_eq!(route(&c, &req("DELETE", "/v1/ls", Some("t0k"), "")).0, 405);
         assert_eq!(route(&c, &req("GET", "/v1/machine", Some("t0k"), "")).0, 404, "no sampler: node keeps its probes");
-        assert_eq!(route(&c, &req("GET", "/v1/board?root=relative", Some("t0k"), "")).0, 400);
         assert_eq!(route(&c, &req("POST", "/v1/usage", Some("t0k"), "{}")).0, 400);
         let (code, body) = route(&c, &req("POST", "/v1/usage", Some("t0k"), r#"{"roots":[],"keep_from":0,"day_start":0,"window_start":0}"#));
         assert_eq!(code, 200);

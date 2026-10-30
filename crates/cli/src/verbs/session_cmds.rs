@@ -414,8 +414,8 @@ pub fn run_guide() -> Result<()> {
     row("8sync ls", "mọi session của repo này (ccc, omp, forge, feynman)");
     row("8sync ls --all", "mọi repo trên máy, mỗi session một dòng");
 
-    h("3. Team trên web local (127.0.0.1, không lên mạng)");
-    row("8sync hq ui", "mở web: thêm dự án, start session, giao task, xem team chat + board");
+    h("3. Web local (127.0.0.1, không lên mạng)");
+    row("8sync hq ui", "mở web: thêm dự án, start session, nhắn session, xem chat");
     println!("  {}", "Session nhắn nhau bằng SendMessage; tin của anh gõ vào terminal session (hoặc qua Channels nếu org bật).".dimmed());
 
     h("4. Kit và bảo mật");

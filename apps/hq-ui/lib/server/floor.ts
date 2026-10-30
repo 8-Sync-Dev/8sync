@@ -3,10 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { isOmpRoomId, sessionLabel } from "../labels";
-import { isOmpTeamRoom } from "../team-room";
 import { roomLabel } from "../room-label";
-import { autoMayAct, deriveFloor, type FloorRow, type LsInput } from "../floor";
-import { lastAutoStatus } from "./auto";
+import { deriveFloor, type FloorRow, type LsInput } from "../floor";
 import { projectIdFor } from "./db";
 import { coreGet } from "./core";
 import { inboxLive } from "./inbox";
@@ -114,31 +112,6 @@ async function lsRows(): Promise<LsRow[]> {
   return Array.isArray(v) ? (v as LsRow[]).filter((x) => x && typeof x.name === "string") : [];
 }
 
-/**
- * Newest `su-code/ship/<slug>/STANDUP.md` under a session's repo ("~/x" or absolute), or null.
- * `8sync ccc standup <slug>` appends it; a fresh one puts the room in a sprint meeting (lib/floor.ts).
- */
-export function newestStandup(repo: string | null | undefined, home = os.homedir()): { slug: string; at: number } | null {
-  if (!repo || repo.startsWith("-")) return null;
-  const dir = path.join(expand(repo, home), "su-code", "ship");
-  let best: { slug: string; at: number } | null = null;
-  let slugs: string[];
-  try {
-    slugs = fs.readdirSync(dir);
-  } catch {
-    return null;
-  }
-  for (const slug of slugs) {
-    try {
-      const at = fs.statSync(path.join(dir, slug, "STANDUP.md")).mtimeMs;
-      if (!best || at > best.at) best = { slug, at };
-    } catch {
-      /* no standup in this ship dir */
-    }
-  }
-  return best;
-}
-
 async function build(db: DatabaseSync): Promise<{ rows: FloorRow[]; transcripts: Map<string, string> }> {
   const [ls, merged] = await Promise.all([lsRows(), mergedSessions(db).catch(() => [] as SessionView[])]);
   // omp room id -> its transcript, for "Nhật ký" (readOmpActivity). Only absolute `.jsonl` paths.
@@ -147,18 +120,8 @@ async function build(db: DatabaseSync): Promise<{ rows: FloorRow[]; transcripts:
     if (r.engine === "omp" && isOmpRoomId(r.inbox_id) && typeof r.transcript === "string" && path.isAbsolute(r.transcript) && r.transcript.endsWith(".jsonl")) transcripts.set(r.inbox_id, r.transcript);
   }
   const now = Date.now();
-  // "tự chạy lại lúc …" only while auto will actually resume the room (on, not paused, no gate);
-  // the status GET /api/auto last fetched, unknown (no poll yet) = the owner must act.
-  const autoActs = autoMayAct(lastAutoStatus());
   const used = new Set<string>();
   const ids = new Set<string>();
-  // One readdir per repo per build, not per session.
-  const standups = new Map<string, ReturnType<typeof newestStandup>>();
-  const standupOf = (repo: string | null | undefined) => {
-    const k = repo ?? "";
-    if (!standups.has(k)) standups.set(k, newestStandup(repo));
-    return standups.get(k) ?? null;
-  };
   const uniq = (base: string) => {
     let id = base;
     for (let n = 2; ids.has(id); n++) id = `${base}#${n}`;
@@ -188,7 +151,7 @@ async function build(db: DatabaseSync): Promise<{ rows: FloorRow[]; transcripts:
       // Alive: a process has it open (`8sync ls`) or its hq session is in tmux / `claude agents`.
       live: r.status === "running" || r.status === "active" || (hq != null && hq.status !== "ended"),
       model: typeof r.model === "string" ? r.model : null,
-      ...deriveFloor(r, { ...(hq ?? {}), standup: standupOf(repo) }, now, autoActs),
+      ...deriveFloor(r, hq, now),
     };
   });
   // hq sessions `8sync ls` does not know (fresh tmux panes, `claude agents` only).
@@ -207,7 +170,7 @@ async function build(db: DatabaseSync): Promise<{ rows: FloorRow[]; transcripts:
       sid: sidOf(s.session_id, s.name),
       inbox_id: s.session_id,
       live: true,
-      ...deriveFloor(null, { ...s, standup: standupOf(repo) }, now, autoActs),
+      ...deriveFloor(null, s, now),
     });
   }
   return { rows, transcripts };
@@ -217,15 +180,10 @@ async function build(db: DatabaseSync): Promise<{ rows: FloorRow[]; transcripts:
 const OMP_STATUS: Partial<Record<FloorRow["state"], SessionView["status"]>> = { waiting: "needs_input", idle: "idle", done: "idle" };
 
 /**
- * The omp team's live rooms as sessions (contract C3/C4). HQ cannot type into them; it queues into
- * their inbox by `inbox_id`, so they join the room list, "Giao việc" and "Cả dự án" like any inbox room.
- * `model` of a team room (`omp-<role>`): the team's model from auto status (`omp_model`, null = omp's
- * default; lib/roles.ts ompModelLabel); the row's own `8sync ls` model for the owner's own omp
- * sessions, and before a status that carries `omp_model`.
+ * The live omp rooms as sessions (contract C3/C4). HQ cannot type into them; it queues into their
+ * inbox by `inbox_id`, so they join the room list like any inbox room. `model`: the row's own `8sync ls` model.
  */
 export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
-  const st = lastAutoStatus();
-  const team = st && "omp_model" in st ? { model: typeof st.omp_model === "string" ? st.omp_model : null } : null;
   return rows.flatMap((r): SessionView[] => {
     const id = r.inbox_id;
     if (r.engine !== "omp" || !r.live || !isOmpRoomId(id)) return [];
@@ -244,7 +202,7 @@ export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
         detail: r.caption || null,
         inbox_live: inboxLive(id),
         engine: "omp",
-        model: team && isOmpTeamRoom(r.name) ? team.model : (r.model ?? null),
+        model: r.model ?? null,
       },
     ];
   });

@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { hhmm } from "@/lib/auto";
 import {
   ageLabel,
-  autoMayAct,
   cleanTitle,
   deriveFloor,
   disambiguate,
@@ -37,10 +35,6 @@ describe("deriveFloor", () => {
     ["all done but still running -> keeps working", { status: "running", tasks_done: 3, tasks_total: 3, last_tool: "Bash", last_active: ago(10) }, null, "running", "chạy lệnh"],
     ["total 0 is not done", { status: "idle", tasks_done: 0, tasks_total: 0 }, null, "idle", "nghỉ"],
     ["idle ignores old tool", { status: "idle", last_tool: "Edit", last_active: ago(7200) }, null, "idle", "nghỉ"],
-    ["fresh STANDUP.md -> sprint meeting", { status: "running", last_tool: "Edit", last_active: ago(5) }, { status: "running", standup: { slug: "autowork", at: NOW - 30_000 } }, "meeting", "họp sprint"],
-    ["standup older than 2 min -> back to work", { status: "running", last_tool: "Edit", last_active: ago(5) }, { status: "running", standup: { slug: "autowork", at: NOW - 3 * 60_000 } }, "typing", "đang gõ code"],
-    ["needs_input wins over a meeting", { status: "running", last_tool: "Edit", last_active: ago(5) }, { status: "needs_input", detail: "Ship?", standup: { slug: "a", at: NOW } }, "waiting", "chờ anh"],
-    ["an idle desk does not meet", { status: "idle", last_active: ago(5) }, { status: "idle", standup: { slug: "a", at: NOW } }, "idle", "nghỉ"],
   ];
   it.each(cases)("%s", (_n, ls, hq, state, label) => {
     const d = deriveFloor(ls, hq, NOW);
@@ -193,32 +187,11 @@ describe("deriveHandoffs", () => {
 });
 
 describe("stalled captions (contract C2)", () => {
-  const at = NOW / 1000 + 1800;
-  const when = hhmm(at * 1000);
-  const cap = (stalled_error: string | boolean, stalled_resume_at?: number | null, autoActs = true) =>
-    deriveFloor({ status: "running", last_active: ago(5), stalled_error, stalled_resume_at }, null, NOW, autoActs);
-  it("usage limit with a resume time", () => {
-    expect(cap("rate_limit", at)).toMatchObject({ state: "stalled", caption: `Hết usage — tự chạy lại lúc ${when}` });
-  });
-  it("other API error with a retry time", () => {
-    expect(cap("overloaded", at).caption).toBe(`Lỗi API (overloaded) — tự thử lại lúc ${when}`);
-  });
-  it("no resume time: the owner must act", () => {
-    expect(cap("billing_error", null).caption).toBe("billing_error — cần anh xử lý");
-    expect(cap("rate_limit").caption).toBe("rate_limit — cần anh xử lý");
-    expect(cap(true, null).caption).toBe("Lỗi API — cần anh xử lý");
-  });
-  it("auto off, paused or gated, or a resume time already past: the owner must act (review #9)", () => {
-    expect(cap("rate_limit", at, false).caption).toBe("rate_limit — cần anh xử lý");
-    expect(cap("overloaded", NOW / 1000 - 60).caption).toBe("overloaded — cần anh xử lý");
-    expect(deriveFloor({ status: "running", stalled_error: "rate_limit", stalled_resume_at: at }, null, NOW).caption).toBe("rate_limit — cần anh xử lý");
-  });
-  it("autoMayAct: on, not paused, no gate", () => {
-    expect(autoMayAct({ on: true, paused: false, gate: null })).toBe(true);
-    expect(autoMayAct({ on: true })).toBe(true);
-    expect(autoMayAct({ on: false, paused: false })).toBe(false);
-    expect(autoMayAct({ on: true, paused: true })).toBe(false);
-    expect(autoMayAct({ on: true, paused: false, gate: "lease expired" })).toBe(false);
-    expect(autoMayAct(null)).toBe(false);
+  // Nothing resumes a room on its own any more: every API stall asks the owner.
+  const cap = (stalled_error: string | boolean) => deriveFloor({ status: "running", last_active: ago(5), stalled_error }, null, NOW);
+  it("names the error and asks the owner", () => {
+    expect(cap("rate_limit")).toMatchObject({ state: "stalled", caption: "rate_limit — cần anh xử lý" });
+    expect(cap("billing_error").caption).toBe("billing_error — cần anh xử lý");
+    expect(cap(true).caption).toBe("Lỗi API — cần anh xử lý");
   });
 });

@@ -1,7 +1,6 @@
 // Pure display rules for sessions (no React). Tested in tests/labels.test.ts.
 import type { Session } from "@/components/hq/types";
 import { roomLabel } from "./room-label";
-import { isOmpTeamRoom } from "./team-room";
 
 const DAY_MS = 86_400_000;
 const UUIDISH = /^[0-9a-f-]{20,}$/i;
@@ -56,15 +55,6 @@ export function deliveryOf(s: Pick<Session, "tmux" | "name" | "session_id">): "t
   if (s.tmux) return "terminal";
   const id = s.session_id ?? s.name;
   return id && (SESSION_ID.test(id) || isOmpRoomId(id)) ? "inbox" : null;
-}
-
-/**
- * Team badge of a room: "Đội ccc" for a Claude Code room (absent engine), "Đội omp" only for an omp
- * team room (`omp-<role>`, lib/team-room.ts); the owner's own omp sessions (`core`, `team`, `vps`) get none.
- */
-export function teamBadge(room: { engine?: string | null; label: string }): string | null {
-  if (room.engine === "omp") return isOmpTeamRoom(room.label) ? "Đội omp" : null;
-  return `Đội ${room.engine === "claude" || !room.engine ? "ccc" : room.engine}`;
 }
 
 /** Inbox wording in toasts and summaries: when the task enters depends on whether the mod is loaded. */

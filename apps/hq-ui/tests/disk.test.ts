@@ -102,7 +102,7 @@ describe("cleanupText", () => {
   });
 });
 
-describe("cleanupRoom: lead, else dev, else any room of the project", () => {
+describe("cleanupRoom: a dev room, else any room of the project", () => {
   const room = (key: string, label: string, root = "C:/p/shop", role: string | null = null) => ({
     key,
     name: key,
@@ -115,16 +115,9 @@ describe("cleanupRoom: lead, else dev, else any room of the project", () => {
   });
   it("picks by role within the project only", () => {
     const rooms = [room("hq-qa", "qa"), room("hq-dev", "dev"), room("hq-lead", "lead"), room("hq-x", "lead", "C:/p/other")];
-    expect(cleanupRoom(rooms, "C:/p/shop")?.key).toBe("hq-lead");
-    expect(cleanupRoom(rooms.filter((r) => r.key !== "hq-lead"), "C:/p/shop")?.key).toBe("hq-dev");
+    expect(cleanupRoom(rooms, "C:/p/shop")?.key).toBe("hq-dev");
     expect(cleanupRoom([room("hq-qa", "qa")], "C:/p/shop")?.key).toBe("hq-qa");
     expect(cleanupRoom(rooms, "C:/p/none")).toBeNull();
-  });
-  it("the project's sweep room gets it first when one runs (worktrees cleaned by the machine cleaner, not the lead)", () => {
-    const rooms = [room("hq-lead", "lead"), room("hq-dev", "dev"), room("hq-sw", "sweep-shop"), room("hq-sw2", "sweep", "C:/p/other")];
-    expect(cleanupRoom(rooms, "C:/p/shop")?.key).toBe("hq-sw");
-    expect(cleanupRoom(rooms.filter((r) => r.key !== "hq-sw"), "C:/p/shop")?.key).toBe("hq-lead");
-    expect(cleanupRoom([room("hq-lead", "lead"), { ...room("hq-sw", "sweep"), delivery: null }], "C:/p/shop")?.key).toBe("hq-lead");
   });
   it("a worktree with its own rooms is its own project (sidebar grouping), slashes and case aside", () => {
     const wt = "C:/p/shop/.claude/worktrees/card-91";

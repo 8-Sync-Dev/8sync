@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Removed
+- **Board, card, phòng team tự mở và chế độ chạy không cần owner — bỏ hẳn.** Owner (2026-10-30): "không board, không card, không team session; chỉ dùng session Claude Code anh tự mở; 8sync không bao giờ tự mở session". Máy board/team/auto đẩy prompt vào session và tự mở phòng → đốt token nhanh mà ít giá trị.
+  - Verb đã bỏ: mọi `8sync ccc auto …` (up/down/revive/board/claim/wait/add/queue/merge/omp/lease/loop/ship-fast/ci/close/…), `8sync stop all`, `ccc idle`, `ccc delegate`, `ccc msg`, `ccc meet`, `ccc standup`, `ccc . <tên> --team/--panes`, `8sync hq task`, `8sync hq standup`; tool MCP `board`/`queue`/`queue_add`; HQ `/v1/board`, tab Board/Team/Office, route board/tasks/team/auto/permit; extension omp `8sync-team.ts`; skill kit `/auto-team`, `/team-tick`, `/sprint`; quyền "Tự merge" theo dự án (grant `Ship` theo session vẫn còn).
+  - Hook đã bỏ: `ccc hook idle|task-done|delegate|wake|permit`, `hq` TaskCreated/TaskCompleted/TeammateIdle. `ccc kit` trên máy cũ tự gỡ các hook đó (chỉ entry của 8sync), các skill 8sync đã ghi (khớp stamp), khoá `delegate`/`delegate_after_s`/`no_idle` trong `features.toml`, và extension `8sync-team.ts` đã deploy. Unit systemd HQ không còn bật `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`; session omp không còn poll inbox HQ.
+  - Giữ: session (`ccc . <tên>`, ls/urgent/goal/cancel/report/know/inbox), `/ship*`, `/autopilot`, `ccc loop`, `ccc risk`, `ccc eco` (+ `eco reap`), `ccc awake` (đếm phòng sống qua `claude agents --json`), ghi nhận Stop lỗi + báo (không tự mở lại phòng). Từ khoá verb cũ vẫn bị cấm làm tên session nên `8sync ccc auto revive` cũ không mở session tên "auto".
+
 ## [0.110.92] — 2026-10-28
 - Size gate trần 8192 → 8256 KiB: `ccc eco reap` đẩy asset musl lên 8 391 216 B (vượt 2 608 B).
 

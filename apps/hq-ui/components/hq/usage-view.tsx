@@ -4,7 +4,7 @@ import { ArrowDownIcon, GaugeIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { hhmm } from "@/lib/auto";
+import { hhmm } from "@/lib/office";
 import type { Tokens, UsageReport, UsageRow } from "@/lib/server/usage";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";

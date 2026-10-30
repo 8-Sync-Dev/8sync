@@ -2,7 +2,7 @@ import { parseKnow } from "@/lib/know";
 import { bad, json, open } from "@/lib/server/http";
 import { projectOf } from "@/lib/server/office";
 import { mergedSessions, run } from "@/lib/server/proc";
-import { liveProjects } from "@/lib/server/targets";
+import { liveProjects } from "@/lib/server/in-view";
 
 export const runtime = "nodejs";
 

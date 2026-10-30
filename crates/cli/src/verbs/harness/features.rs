@@ -1,6 +1,5 @@
-//! `<config_dir>/features.toml` — the owner's small on/off + integer switches
-//! (ccc idle/delegate/fence …). One flat TOML table; writes keep the other keys.
-//! An env var (`1/0/true/false/on/off/yes/no`) always wins over the file value.
+//! `<config_dir>/features.toml` — the owner's small on/off switches
+//! (fence, skill libraries …). One flat TOML table.
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
@@ -8,43 +7,40 @@ pub(crate) fn features_path(home: &Path) -> PathBuf {
     crate::brand::config_dir(home).join("features.toml")
 }
 
-/// Pure: env override wins over the file value; default off.
-pub(crate) fn resolve(env: Option<&str>, file: Option<bool>) -> bool {
-    match env.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
-        Some("1" | "true" | "on" | "yes") => true,
-        Some("0" | "false" | "off" | "no") => false,
-        _ => file.unwrap_or(false),
-    }
-}
-
-pub(crate) fn read_int_key(home: &Path, key: &str) -> Option<i64> {
-    let s = std::fs::read_to_string(features_path(home)).ok()?;
-    s.parse::<toml::Table>().ok()?.get(key)?.as_integer()
-}
-
 pub(crate) fn read_flag_key(home: &Path, key: &str) -> Option<bool> {
     let s = std::fs::read_to_string(features_path(home)).ok()?;
     s.parse::<toml::Table>().ok()?.get(key)?.as_bool()
 }
 
-pub(crate) fn write_flag_key(home: &Path, key: &str, on: bool) -> Result<()> {
-    write_key(home, key, toml::Value::Boolean(on))
-}
+/// Keys of features 8sync no longer has (room-to-room delegation and the idle
+/// nudge went with the board and teams).
+const DEAD_KEYS: [&str; 3] = ["delegate", "delegate_after_s", "no_idle"];
 
-/// Any value in `features.toml`, keeping the owner's other keys.
-pub(crate) fn write_key(home: &Path, key: &str, value: toml::Value) -> Result<()> {
+/// Deletes the [`DEAD_KEYS`] lines from an existing features.toml, keeping every
+/// other line (and the owner's comments) byte for byte. True when the file changed;
+/// a missing file is `Ok(false)`.
+pub(crate) fn retire_dead_keys(home: &Path) -> Result<bool> {
     let p = features_path(home);
-    let mut t = match std::fs::read_to_string(&p) {
-        // never replace a file we cannot parse: it may hold the owner's other keys
-        Ok(s) => s.parse::<toml::Table>().map_err(|e| anyhow::anyhow!("{} is not valid TOML ({e}); fix it first", p.display()))?,
-        Err(_) => toml::Table::new(),
-    };
-    t.insert(key.into(), value);
-    if let Some(d) = p.parent() {
-        std::fs::create_dir_all(d)?;
+    let Ok(s) = std::fs::read_to_string(&p) else { return Ok(false) };
+    let mut top_level = true;
+    let mut changed = false;
+    let mut out = String::with_capacity(s.len());
+    for line in s.split_inclusive('\n') {
+        let t = line.trim_start();
+        if t.starts_with('[') {
+            top_level = false;
+        }
+        let key = t.split('=').next().unwrap_or("").trim().trim_matches('"');
+        if top_level && t.contains('=') && DEAD_KEYS.contains(&key) {
+            changed = true;
+            continue;
+        }
+        out.push_str(line);
     }
-    std::fs::write(&p, toml::to_string_pretty(&t)?)?;
-    Ok(())
+    if changed {
+        std::fs::write(&p, out)?;
+    }
+    Ok(changed)
 }
 
 #[cfg(test)]
@@ -52,36 +48,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_off_and_env_override() {
-        assert!(!resolve(None, None));
-        assert!(!resolve(None, Some(false)));
-        assert!(resolve(None, Some(true)));
-        assert!(resolve(Some("1"), Some(false)));
-        assert!(!resolve(Some("0"), Some(true)));
-        assert!(!resolve(Some("garbage"), None));
-    }
-
-    #[test]
-    fn flag_roundtrip_default_off() {
+    fn flags_read_from_the_file_and_absent_is_none() {
         let d = std::env::temp_dir().join(format!("features-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         assert_eq!(read_flag_key(&d, "k"), None);
-        write_flag_key(&d, "k", true).unwrap();
-        assert_eq!(read_flag_key(&d, "k"), Some(true));
-        write_flag_key(&d, "k", false).unwrap();
-        assert_eq!(read_flag_key(&d, "k"), Some(false));
+        let p = features_path(&d);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "k = true\nn = 3\n").unwrap();
+        assert_eq!((read_flag_key(&d, "k"), read_flag_key(&d, "n"), read_flag_key(&d, "x")), (Some(true), None, None));
+        std::fs::write(&p, "other = [unclosed\n").unwrap();
+        assert_eq!(read_flag_key(&d, "k"), None, "unparseable file reads as unset");
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
-    fn unparseable_features_file_is_not_overwritten() {
-        let d = std::env::temp_dir().join(format!("features-badtoml-{}", std::process::id()));
+    fn dead_keys_are_retired_and_the_rest_kept() {
+        let d = std::env::temp_dir().join(format!("features-retire-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
+        assert!(!retire_dead_keys(&d).unwrap(), "no file → nothing to do");
         let p = features_path(&d);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(&p, "other = [unclosed\n").unwrap();
-        assert!(write_flag_key(&d, "k", true).is_err());
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "other = [unclosed\n");
+        let before = "# mine\ndelegate = true\nfence = true\ndelegate_after_s = 600\n\"no_idle\" = false\nskill_libraries = [\"/x\"]\ndelegates = 1\n\n[other]\nno_idle = 1\n";
+        std::fs::write(&p, before).unwrap();
+        assert!(retire_dead_keys(&d).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&p).unwrap(),
+            "# mine\nfence = true\nskill_libraries = [\"/x\"]\ndelegates = 1\n\n[other]\nno_idle = 1\n"
+        );
+        assert!(!retire_dead_keys(&d).unwrap(), "idempotent");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

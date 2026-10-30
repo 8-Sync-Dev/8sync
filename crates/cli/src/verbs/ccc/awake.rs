@@ -11,8 +11,8 @@
 //!   chỉ 8h"): on stays on until the switch turns it off; the screen still goes off when idle.
 //! - `--while-rooms`: checks `claude agents --json` every minute and lets go after two checks in a
 //!   row with no live Claude Code session.
-//! - Never starts a room and never renews the auto lease. A closed laptop lid
-//!   still sleeps, and a shutdown still kills the rooms (`auto revive` brings them back).
+//! - Never starts or reopens a room. A closed laptop lid still sleeps, and a shutdown still
+//!   ends the sessions (the owner reopens them).
 //! - Windows: also turns the screen off after `--screen-off N` minutes (default 10, 0 = leave it
 //!   to the power plan) without mouse/keyboard input, unless an app holds the display (video) or
 //!   the machine has Modern Standby (screen off can pull it into standby there). Owner
@@ -268,22 +268,30 @@ impl Drop for Hold {
     }
 }
 
-/// Live Claude Code sessions on this machine (background rooms and terminals), from `claude agents`.
-fn live_rooms(claude: &dyn super::team::Claude) -> Result<usize> {
-    Ok(super::team::live(&claude.run(&["agents".into(), "--json".into()])?)?.len())
+/// Runs `claude <args>` and returns stdout + stderr ([`Quiet`] in production, fakes in tests).
+pub(super) trait Claude {
+    fn run(&self, args: &[String]) -> Result<String>;
+}
+
+/// Live Claude Code sessions on this machine (background and terminal ones), from `claude agents --json`.
+fn live_rooms(claude: &dyn Claude) -> Result<usize> {
+    let out = claude.run(&["agents".into(), "--json".into()])?;
+    let v: serde_json::Value = serde_json::from_str(out.trim())
+        .map_err(|_| anyhow::anyhow!("`claude agents --json` không trả JSON ({}): cần Claude Code ≥ 2.1.29x", crate::verbs::session_view::truncate(out.trim(), 120)))?;
+    Ok(v.as_array().into_iter().flatten().filter(|a| a["sessionId"].as_str().is_some_and(|s| !s.is_empty())).count())
 }
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// `claude` for the hold loop: [`super::team::Bin`] without a console window, or a detached hold
+/// `claude` for the hold loop, without a console window: a detached hold
 /// flashes one every minute on Windows.
 pub(super) struct Quiet {
     pub exe: PathBuf,
     pub root: PathBuf,
 }
 
-impl super::team::Claude for Quiet {
+impl Claude for Quiet {
     fn run(&self, args: &[String]) -> Result<String> {
         let mut c = std::process::Command::new(&self.exe);
         c.args(args).current_dir(&self.root).stdin(std::process::Stdio::null());
@@ -683,7 +691,7 @@ pub(super) fn own_pidfile(pid: u32, ident: Option<String>, until: u64, while_roo
 }
 
 /// `claude` is only needed (and only resolved by the caller) with `--while-rooms`.
-pub(super) fn run(o: &Opts, claude: Option<&dyn super::team::Claude>, subscription: bool, home: &Path) -> Result<()> {
+pub(super) fn run(o: &Opts, claude: Option<&dyn Claude>, home: &Path) -> Result<()> {
     let watch = match (o.while_rooms, claude) {
         (true, Some(c)) => Some(c),
         (true, None) => bail!("--while-rooms cần `claude` để xem phòng nào đang chạy"),
@@ -713,10 +721,7 @@ pub(super) fn run(o: &Opts, claude: Option<&dyn super::team::Claude>, subscripti
         (m, Some(true)) if m > 0 => "máy có Modern Standby nên 8sync không tự tắt màn hình (tắt có thể kéo máy vào ngủ nhẹ)".to_string(),
         _ => "màn hình tắt theo cài đặt nguồn của máy".to_string(),
     };
-    println!("giữ máy thức: {}; {screen}. Gập nắp laptop / tắt máy thì phòng vẫn dừng (`8sync ccc auto revive` mở lại).", ends_vi(o));
-    if subscription {
-        println!("gói subscription: auto vẫn theo lease ≤ 4 giờ khi anh có mặt; chạy không người trông nhiều giờ thì dùng Routines (`/schedule`) hoặc Console API key.");
-    }
+    println!("giữ máy thức: {}; {screen}. Gập nắp laptop / tắt máy thì session vẫn dừng (anh tự mở lại).", ends_vi(o));
     let deadline = o.hours.map(|h| Instant::now() + Duration::from_secs_f64(h * 3600.0));
     let mut empty = 0;
     loop {

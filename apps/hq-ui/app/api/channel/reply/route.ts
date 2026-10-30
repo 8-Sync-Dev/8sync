@@ -20,7 +20,6 @@ export async function POST(req: Request) {
   const message = insertMessage(o.db, {
     ts: Date.now(),
     session: body.session,
-    team: null,
     kind: "session_reply",
     from_: body.session,
     to_: "owner",

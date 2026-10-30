@@ -7,7 +7,7 @@
 [![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-0ea5e9)](#install)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-a78bfa)](COMMERCIAL.md)
 
-[Install](#install) · [Claude Code](#claude-code-8sync-ccc) · [Autopilot](#hands-off-five-levels-one-switch) · [Team](#the-whole-team-one-command-no-terminal-per-room) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://get.8syncdev.com)
+[Install](#install) · [Claude Code](#claude-code-8sync-ccc) · [Autopilot](#hands-off-five-levels) · [Forge shell](#forge-the-ai-shell) · [Commands](#commands) · [Dashboard](#dashboard) · [Docs](https://get.8syncdev.com)
 
 </div>
 
@@ -17,7 +17,7 @@
 
 ```bash
 curl -fsSL https://get.8syncdev.com/install | sh            # Windows: irm https://get.8syncdev.com/install.ps1 | iex
-8sync hq ui                                                 # http://127.0.0.1:8740: the rest is buttons
+8sync hq ui                                                 # http://127.0.0.1:8740: your sessions, chat, machine
 ```
 
 One project folder, in order:
@@ -26,17 +26,12 @@ One project folder, in order:
 |---|---|---|---|
 | 1 | Open HQ (keep that terminal open) | — | `8sync hq ui` |
 | 2 | Add the repo folder; the first time, open `claude` there once and accept the trust question | **Projects** → paste the path | — |
-| 3 | Start the team: lead, dev, qa, review, rd as background sessions | **Mở team** | `cd my-app && 8sync ccc auto up --clear-ss` |
-| 4 | Give it work; done when the check exits 0 | **Giao việc** | `8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"` |
-| 5 | Answer what needs you; product/technical questions go to the critic at once (default on; `--after N` to wait for you first), safe work proceeds; Ship waits for you | **Anh cần trả lời** (top of the office) | `claude attach <id>` |
-| 6 | After `8sync up`: reload the rooms onto the new version, conversations kept | **Dọn & mở lại** | `8sync ccc auto up --clear-ss` |
-| 7 | Stop the team | **Dừng team** | `8sync ccc auto down` |
-| 8 | Approved cards waiting on Ship: one tap on the Board's Approved column answers the lead's Ship question with "Duyệt tất cả" (or nudges the lead to ask it) | **Ship tất cả / Duyệt tất cả** | `8sync ccc auto ship-fast ship-ask` |
-| 9 | One team for every project on the machine: a room with nothing on its own board takes the most urgent card of another project in scope | — | `8sync ccc auto up --company` |
-| 10 | Lessons every project can use (tools, hooks, ways of working) go to the machine's knowledge tree; each session's start reads its own project first, then the others under their root | **Tri thức** tab | `8sync ccc know add "<lesson>"` · `know ls` |
-| 11 | A WebGL office: one floor per project, one desk per room, colour = state; three.js loads only when the tab opens | **3D** tab | — |
+| 3 | Open a named Claude Code session in the repo (create or resume) | — | `cd my-app && 8sync ccc . api` |
+| 4 | Give it work inside the session: one task, or a goal with checks that loops until green | **Sessions** → chat | `/ship <task>` · `/ship-loop <goal>` |
+| 5 | See what each session does and what waits for you; Ship always waits for you | **Sessions** | `8sync ccc . ls` |
+| 6 | Lessons every project can use (tools, hooks, ways of working) go to the machine's knowledge tree; each session's start reads its own project first, then the others under their root | **Tri thức** tab | `8sync ccc know add "<lesson>"` · `know ls` |
 
-The lead writes acceptance criteria. Dev builds the card in its own worktree and opens a PR, qa runs the check and a UAT, and review approves the head SHA. Nothing merges until you answer one `Ship` question. `8sync ccc auto down` stops the team. Auto mode is on, bypass is locked, and the guard never consults a grant for force-push, secrets or deletes. More in [The whole team](#the-whole-team-one-command-no-terminal-per-room) and, in Vietnamese, [docs/huong-dan.md](docs/huong-dan.md).
+8sync never opens a session or sends a prompt on its own: every session is one you open. Nothing merges until you answer one `Ship` question. Auto mode is on, bypass is locked, and the guard never consults a grant for force-push, secrets or deletes. More in [Hands-off](#hands-off-five-levels) and, in Vietnamese, [docs/huong-dan.md](docs/huong-dan.md).
 
 ---
 
@@ -46,7 +41,7 @@ The lead writes acceptance criteria. Dev builds the card in its own worktree and
 |---|---|
 | Rust core, one file | A single static binary: 4.9 MB on macOS arm64 to 7.0 MB on linux-x86_64 (musl) in v0.98.4, no runtime to install. A size gate in CI fails any release that grows without an attributed reason. |
 | One-line install | The installer drops the binary, then sets up gh, [omp](https://omp.sh), [Forge](https://forgecode.dev) with zsh, [Claude Code](https://code.claude.com) with the 8sync kit, 50+ skills, MCP servers and global agent rules. Every step is idempotent and logged; a failed tool is reported and the rest still installs. |
-| Claude Code with a kit | `8sync ccc . <name>` opens a named Claude Code session per repo. The kit adds subagents, `/ship`, a background compile check after every edit, every 8sync skill, the team's Usage Policy rules, and two gates: one keeps Claude working while it has unfinished work, the other sends questions it can answer itself back to it. Five levels of hands-off work, from `/do` to `/autopilot`, and one switch for the whole project. [Details](#claude-code-8sync-ccc). |
+| Claude Code with a kit | `8sync ccc . <name>` opens a named Claude Code session per repo. The kit adds subagents, `/ship`, a background compile check after every edit, every 8sync skill, the team's Usage Policy rules, and two gates: one keeps Claude working while it has unfinished work, the other sends questions it can answer itself back to it. Five levels of hands-off work, from `/do` to `/autopilot`. [Details](#claude-code-8sync-ccc). |
 | Official Claude sign-in | Claude Code signs in with Anthropic's own login; Forge and omp use your own API key on the official API. No scraped web sessions, no shared accounts. [Details](#claude-the-official-way). |
 | An AI shell | `8sync forge <name>` opens a fast zsh bound to a named Forge conversation: type commands as usual, prefix with `:` to ask Claude. |
 | Code-aware agents | Code-map agents (trail-code), per-project memory in `su-code/`, and always-on engineering skills, so agents query structure instead of grepping blindly. |
@@ -175,7 +170,7 @@ Limits, so you know what you are getting:
 - The verify hook checks the whole package, not only the edited file. It runs in the background, so a slow `typecheck` delays only the end of the turn (timeout 600 s).
 - `medium` effort is the kit default because it halved the time on the bench below with the same hidden-test result; switch a session to `/effort high` for hard reasoning.
 
-### Hands-off: five levels, one switch
+### Hands-off: five levels
 
 Type one of these inside Claude Code. Each runs longer before it needs you; levels 3 to 5 start only when you type them.
 
@@ -186,45 +181,8 @@ Type one of these inside Claude Code. Each runs longer before it needs you; leve
 | 3 | `/ship-auto <task>` | `/ship`, then PR → CI green on Windows, macOS and Linux → merge → tag → release | one `Ship` answer that lists every step |
 | 4 | `/ship-loop <goal>` | every acceptance check exits 0 (caps: 12 iterations, 90 min, the same failure twice) | a cap, or the release |
 | 5 | `/autopilot` | up to 5 backlog items or 8 h (labelled issues, `su-code/STATE.md` Next, failures without a guard), each its own loop and branch | one `Ship` answer for the batch |
-| 5 | `/auto-team [goal]` | a fixed team of Claude Desktop sessions: the lead (who also works) plus 3 sub-sessions by default (Build & Ship, Critic, R&D; 2–5 with `--rooms`), each calling ECC skills when a trigger fires rather than in every prompt, named in Vietnamese by role, reused instead of re-created; 100% ECC: an ECC agent Kanban only the lead writes, sub-sessions driven by prompt (SendMessage) and reporting back, lead heartbeat `/team-tick` every 15 min; no 8sync rooms, board or HQ | say "dừng đội", or one `Ship` answer per merge batch |
 
-#### The whole team, one command, no terminal per room
-
-`auto up` opens every role room of the project as a Claude Code background session (`claude --bg`), each on its role's model, with a loop. Follow the work in the browser.
-
-```bash
-cd my-repo
-8sync ccc auto up --clear-ss          # lead, dev, qa, review, rd in the background; --clear-ss deletes junk background sessions first
-8sync hq ui                           # web: rooms, what each does, chat; or: claude agents · 8sync ccc auto board
-8sync ccc auto add "login survives a token refresh" --check "pnpm test auth"   # a card; done when the check exits 0
-8sync ccc auto add "webhook returns 500 on retry" --label bug --now            # front of the queue, straight to lead/ba (no team: every room)
-8sync ccc auto prio 7 P0              # card 7 is urgent: rooms take P0 before anything else (unset = P2)
-8sync ccc auto down                   # stop the background rooms (conversations kept), pause auto
-```
-
-| Room (aliases) | Role | Model | Board lane it pulls |
-|---|---|---|---|
-| `lead` (pm, plan) | splits work, writes acceptance + check, asks you `Ship` for approved cards | opus | backlog |
-| `ba` (analyst, spec, po) | requirements and acceptance criteria | opus | backlog |
-| `rd` (research) | unknowns, options, research briefs | opus | none |
-| `dev` (build, coder) | worktree `card-<id>`, `/ship` to a PR | sonnet | ready → building |
-| `qa` (qc, test, uat) | runs the check and a real UAT | haiku | qa |
-| `review` (critic) | adversarial diff review, approves the head SHA | sonnet | review |
-| `ui`, `api`, `core` | specialised builders | default | ready |
-| `ops`, `docs`, `sec` | their area | default | none |
-
-Default team: 3 Claude Code rooms `lead,dev,qa` (qa also takes review cards nobody picked up for 10 minutes). `--omp` adds an omp team on a non-Anthropic model (`8sync ccc auto omp on --model zai/glm-5.3`), `--omp-only` runs the omp team alone; a project keeps the engine it ran last. `--roles boost` (⚡ Sấm Sét) opens 5 (lead, dev, dev2, qa, review), `--roles full` 6 (lead, dev, dev2, ui, qa, review), and `--roles lead,ba,dev,dev2,qa,review` picks your own (up to 14). Every room with a lane opens on Claude Code's own [`/goal`](https://code.claude.com/docs/en/goal), so it keeps taking turns (claim → work → move) instead of waiting for the next loop tick. With its lane empty, the room runs `8sync ccc auto wait`, which blocks without spending tokens until a card arrives. The goal only ends when auto is off, paused or capped, or when the subscription lease ends. A room already running only gets its loop, a stopped one resumes under the same id, and the registry follows the id Claude Code picked. `--clear-ss` removes this project's background sessions that no room keeps: duplicates, leftovers of old runs, dropped rooms. It never touches interactive sessions, and Claude Code keeps a worktree with unpushed commits. Rooms run in `--permission-mode auto`, never bypass. The workspace must be trusted once (open `claude` there and accept).
-
-Stop everything: `8sync stop all` turns auto off and stops every background room (Claude Code and omp) of every project; sessions open in a terminal are kept.
-
-The board follows [super-board](https://github.com/EricTechPro/super-board) (MIT), rebuilt in the Rust CLI with a local JSON store and no GitHub Projects: `backlog → ready → building → qa → review → approved → done`, plus `blocked`. Each room claims the first free card of its lane and moves it on. `ready` needs a check command and `approved` needs the reviewed head SHA. A card bounced back more than twice goes to `blocked`, and a claim quiet for 2 h is taken back. Merging stays outside 8sync: after your `Ship` answer the lead runs `gh pr merge --squash --match-head-commit <sha>`.
-
-```bash
-8sync ccc auto board        # cards by lane · --json for HQ
-8sync ccc auto lint         # what needs the lead or you: no check, no PR, blocked, approved waiting for Ship
-```
-
-Inside a room, "đưa vào loop: …" (add to the loop) or "làm ngay: …" (do it now) is enough. `8sync ccc auto on --here --loop 10m --team` still gives the rooms you opened yourself the same loop. On a subscription, auto holds a lease of at most 4 h and runs while you're around. Rooms rest once the 5-hour or 7-day usage window reaches 90% (`--usd-per-hour X` adds a $/hour ceiling), and Claude Code drops a loop after 7 days. For unattended runs over days, use Routines (`/schedule`) or a Console API key. Without a terminal:
+Claude Code drops a loop after 7 days and a loop runs only while its session is open. For unattended runs over days, use Routines (`/schedule`) or a Console API key. Without a terminal:
 
 ```bash
 claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20
@@ -289,7 +247,7 @@ How to read these numbers:
 
 ## Agent HQ on Discord: `8sync hq`
 
-Run your Claude Code agent team in the open, in a private Discord server. A forum task board has status, role and priority tags, and there are daily standups, team rooms, logs and alerts. Personas post through webhooks driven by Claude Code hooks, and you talk to the lead session through Anthropic's official Channels plugin. `8sync hq setup --guild <id> --token-stdin` builds the server; `8sync hq up --repo <path>` prints the systemd unit for the lead. Setup and rules: [docs/hq.md](docs/hq.md).
+Post your Claude Code sessions' work to a private Discord server: personas post logs and alerts through webhooks driven by Claude Code hooks, and you talk to the lead session through Anthropic's official Channels plugin. `8sync hq setup --guild <id> --token-stdin` builds the server; `8sync hq up --repo <path>` prints the systemd unit for the lead. Setup and rules: [docs/hq.md](docs/hq.md).
 
 ## Claude, the official way
 

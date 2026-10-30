@@ -10,7 +10,6 @@ import os from "node:os";
 import path from "node:path";
 import * as fileRoute from "@/app/api/play/[key]/[[...path]]/route";
 import * as playRoute from "@/app/api/play/route";
-import * as autoRoute from "@/app/api/auto/route";
 import * as messagesRoute from "@/app/api/messages/route";
 import * as officeRoute from "@/app/api/office/route";
 import * as projectsRoute from "@/app/api/projects/route";
@@ -287,8 +286,6 @@ describe("auth: the signature in the path is the only lock", () => {
     const only = (p: string, method = "GET") =>
       new Request(ORIGIN + p, { method, headers: { host: "127.0.0.1:8740", origin: ORIGIN, cookie: ck, ...(method === "GET" ? {} : { "content-type": "application/json" }) }, body: method === "GET" ? undefined : "{}" });
     for (const [name, fn] of [
-      ["GET /api/auto", () => autoRoute.GET(only("/api/auto"))],
-      ["POST /api/auto", () => autoRoute.POST(only("/api/auto", "POST"))],
       ["GET /api/office", () => officeRoute.GET(only("/api/office"))],
       ["GET /api/projects", () => projectsRoute.GET(only("/api/projects"))],
       ["POST /api/messages", () => messagesRoute.POST(only("/api/messages", "POST"))],

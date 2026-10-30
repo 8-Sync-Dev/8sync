@@ -1,6 +1,6 @@
 # HQ UI contract (journal · local API · channel)
 
-Local-only team view for Claude Code sessions. Nothing here talks to Claude's API or holds a Claude credential. Sessions are official `claude` processes started on the owner's machine.
+Local-only view of the owner's own Claude Code sessions. Nothing here talks to Claude's API or holds a Claude credential. Sessions are official `claude` processes started on the owner's machine.
 
 ## 1. Event journal (written by `8sync hq hook`, Rust)
 
@@ -9,13 +9,11 @@ Local-only team view for Claude Code sessions. Nothing here talks to Claude's AP
 - One JSON object per line:
 
 ```json
-{"v":1,"ts":1791800000000,"kind":"task_created","session_id":"…","team":"…","cwd":"/abs/repo",
- "hq_session":"hq-a","task_id":"team:3","subject":"[be] Add /health","role":"backend","from":"implementer","to":null,"text":null}
+{"v":1,"ts":1791800000000,"kind":"session_message","session_id":"…","cwd":"/abs/repo",
+ "hq_session":"hq-a","from":"hq-a","to":"hq-b","text":"API is ready"}
 ```
 
 `kind` is one of:
-- `task_created`, `task_completed` (TaskCreated / TaskCompleted hooks)
-- `teammate_idle`
 - `notification`: `text` = the notification type plus its message (masked). Written only when `hq_session` is set
 - `session_message`: from PostToolUse on `SendMessage`. `from` is this session, `to` is `tool_input.to`, `text` is `tool_input.message`
 - `session_start`, `session_end` (SessionStart / SessionEnd)
@@ -23,7 +21,7 @@ Local-only team view for Claude Code sessions. Nothing here talks to Claude's AP
 
 `hq_session` is on every row: env `EIGHTSYNC_HQ_SESSION` (hooks inherit the claude process env) when it matches `hq-[a-z0-9][a-z0-9-]{0,31}`, else `null`. The UI should prefer it over the `session_id` uuid. `from` keeps its `session_message` meaning.
 
-`text` is capped at 4000 chars, cut on a char boundary. Every free-text field (`text`, `subject`, `from`, `to`) is passed through `secret_mask::mask` before it is appended. The masker is a heuristic: it splits on any whitespace and masks `key: value`, `key=value`, `"key":"value"` for token/secret/password/passwd/api_key/apikey/access_key/private_key/authorization/bearer/cookie/session names, known token prefixes/shapes (`sk-ant-`, `sk-`, `ghp_`, `gho_`, `github_pat_`, `AKIA`, `ASIA`, `xox[bpas]-`, JWT `eyJ`, `AIza`, Discord bot tokens) and PEM blocks. A secret with no name and no known shape is not caught, so message bodies of `hq-*` sessions are stored locally on purpose (that is the feature), not guaranteed secret-free.
+`text` is capped at 4000 chars, cut on a char boundary. Every free-text field (`text`, `from`, `to`) is passed through `secret_mask::mask` before it is appended. The masker is a heuristic: it splits on any whitespace and masks `key: value`, `key=value`, `"key":"value"` for token/secret/password/passwd/api_key/apikey/access_key/private_key/authorization/bearer/cookie/session names, known token prefixes/shapes (`sk-ant-`, `sk-`, `ghp_`, `gho_`, `github_pat_`, `AKIA`, `ASIA`, `xox[bpas]-`, JWT `eyJ`, `AIza`, Discord bot tokens) and PEM blocks. A secret with no name and no known shape is not caught, so message bodies of `hq-*` sessions are stored locally on purpose (that is the feature), not guaranteed secret-free.
 
 Retention: the journal is rotated at 5 MB (`events.1.jsonl` kept, older dropped); `hq.db` and `channel-*.json` have no expiry. `8sync hq ui` prints a notice when it turns `local = true` on (after the UI process started). `8sync hq ui --off` sets `local = false`. `8sync hq purge [--yes]` deletes `events*.jsonl`, `hq.db*` and `channel-*.json` in `~/.local/state/8sync/hq` (without `--yes` it lists what it would delete; stop the UI first).
 
@@ -36,8 +34,7 @@ Retention: the journal is rotated at 5 MB (`events.1.jsonl` kept, older dropped)
   - `GET /api/projects` and `POST /api/projects {path}` register or list project folders. A path must be an existing absolute directory.
   - `GET /api/sessions` merges `claude agents --json` with the tmux sessions named `hq-*`. `POST /api/sessions {project, name}` starts `tmux new-session -d -s hq-<name> -c <path> "env EIGHTSYNC_HQ_SESSION=hq-<name> claude <channels flags>"`. `POST /api/sessions/:name/stop` stops one.
   - `GET /api/sessions/:name/screen` returns `tmux capture-pane -p` text (read-only terminal view).
-  - `GET /api/tasks?project=` and `POST /api/tasks {session, subject, role, prio}`. A task from the owner becomes an owner message to the session: "New task: …".
-  - `GET /api/messages?session=|team=&after=` and `POST /api/messages {session, text}` (an owner message, stored with `kind=owner_message`).
+  - `GET /api/messages?session=&after=` and `POST /api/messages {session, text}` (an owner message, stored with `kind=owner_message`).
   - `GET /api/stream` is SSE that pushes new rows from all tables.
 - Channel endpoints (token required):
   - `GET /api/channel/inbox?session=<EIGHTSYNC_HQ_SESSION>&after=<id>` long-polls owner messages for that session.

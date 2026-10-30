@@ -150,7 +150,7 @@ pub(crate) fn detect_project_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
-/// The git repo a path belongs to, for `ccc auto` teams: a Claude Code worktree
+/// The git repo a path belongs to: a Claude Code worktree
 /// (`<repo>/.claude/worktrees/<name>`) counts as its repo; otherwise the nearest ancestor holding
 /// `.git`, so a repo nested inside another (`8sync-startup/game/ai-game-studio`) is its own project.
 /// A subfolder with its own `package.json` is not (unlike [`detect_project_root`]).
@@ -171,9 +171,9 @@ pub(crate) fn repo_of(start: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Give an untracked folder inside another repo its own git repo, so `ccc auto` and sessions file
-/// its board and rooms there. Live 2026-10-20: `8sync-startup/game/3d-game` was a new, empty folder
-/// with no `.git`; [`repo_of`] walked up to 8sync-startup and every room of the new project opened
+/// Give an untracked folder inside another repo its own git repo, so its sessions file under it.
+/// Live 2026-10-20: `8sync-startup/game/3d-game` was a new, empty folder
+/// with no `.git`; [`repo_of`] walked up to 8sync-startup and every session of the new project opened
 /// in the parent. A new project made inside a cluster repo must not land under the parent.
 ///
 /// Inits (`git init -b main` + one empty commit) and returns `dir` only when `dir` has no `.git`,
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn only_an_untracked_folder_under_a_repo_gets_its_own() {
-        // Live 2026-10-20: an empty `game/3d-game` in 8sync-startup filed its board and rooms under the parent.
+        // Live 2026-10-20: an empty `game/3d-game` in 8sync-startup filed its sessions under the parent.
         if Command::new("git").arg("--version").output().is_err() {
             return;
         }

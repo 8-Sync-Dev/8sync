@@ -1,9 +1,8 @@
 // HQ's own disk cleanup (owner 2026-10-21: "tình trạng cao chú ý là phải auto xử lý gấp luôn không
 // đợi gửi"). Right after a project is measured, flagged build output (`target`, `.next` over
-// LIMITS.dir) of an agent's card worktree is removed when nothing uses that worktree and no build
-// wrote to it for AUTO_IDLE_MS: what `cargo clean` does, the next build makes it again. Then the card
-// worktrees nothing uses whose work is merged or whose card is closed go too ([pruneWorktrees]:
-// platform had 74, ide 21 on 2026-10-21, mailed to a room each day and never removed). Anything that
+// LIMITS.dir) of an agent's worktree is removed when nothing uses that worktree and no build
+// wrote to it for AUTO_IDLE_MS: what `cargo clean` does, the next build makes it again. Then the agent
+// worktrees nothing uses whose work is merged go too ([pruneWorktrees]). Anything that
 // needs judgment (node_modules, .git, committed files) still goes to a room.
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -11,7 +10,6 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { AUTO_DIR, AUTO_IDLE_MS, autoCandidates, diskKey, PRUNE_IDLE_MS, type Cleaned, type ProjectDisk, type Pruned, type Sized, type WtKept } from "../disk";
-import { readBoard } from "./board";
 
 /** Moved build dirs wait here for deletion (git-ignored); what a stopped HQ left goes on the next pass. */
 export const trashDir = (root: string) => path.join(root, ".claude", "hq-trash");
@@ -56,7 +54,7 @@ export async function processPaths(platform: NodeJS.Platform = process.platform)
   return out == null ? null : out.split("\n").filter(Boolean);
 }
 
-/** Whether a folder or command line names `dir` (or something in it): `card-1` is not `card-13`. */
+/** Whether a folder or command line names `dir` (or something in it): `wt-1` is not `wt-13`. */
 export function names(line: string, dir: string): boolean {
   const l = line.replace(/\\/g, "/").toLowerCase();
   const k = diskKey(dir);
@@ -176,12 +174,6 @@ async function defaultBranch(root: string): Promise<string | null> {
   return null;
 }
 
-/** Ids of the cards the board closed (done or dropped): their worktree has nothing left to do. Unreadable board: none. */
-async function closedCards(root: string): Promise<Set<number>> {
-  const b = await readBoard({ root, name: path.basename(root), branch: null });
-  return new Set(b.board?.closed.map((c) => c.id) ?? []);
-}
-
 /** Newest change at the top of a worktree: the folder, its entries and the `.git` file (a checkout or commit rewrites it). */
 async function newestTop(dir: string): Promise<number> {
   const es = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
@@ -190,15 +182,11 @@ async function newestTop(dir: string): Promise<number> {
 }
 
 /**
- * Remove the card worktrees (`<root>/.claude/worktrees/<name>`) of `p` that are done with, in series
+ * Remove the agent worktrees (`<root>/.claude/worktrees/<name>`) of `p` that are done with, in series
  * (git holds one worktree lock). One goes only when ALL hold: nothing in `busy` (room folders and
- * process paths) names it; nothing wrote at its top for PRUNE_IDLE_MS; its work landed on the default
- * branch — HEAD reachable from it, or a commit there names the card ("(card 106) (#123)": every PR of
- * platform is squash-merged, so on 2026-10-21 none of its 72 worktree HEADs was an ancestor of
- * origin/main and the board kept only the last 10 closed cards) — or the board closed its card
- * (`card-<id>`, done or dropped); and `git status --porcelain` is empty but for 8sync's own standup
- * note (a failing git keeps it).
- * `git worktree remove` without `--force`, then `branch -d` (never `-D`: a squash-merged branch stays).
+ * process paths) names it; nothing wrote at its top for PRUNE_IDLE_MS; its HEAD is reachable from the
+ * default branch; and `git status --porcelain` is empty (a failing git keeps it).
+ * `git worktree remove` without `--force`, then `branch -d` (never `-D`).
  * A worktree git still lists whose folder is gone only needs `worktree prune`. `busy` failing
  * removes nothing (`kept` null: unknown).
  */
@@ -206,9 +194,8 @@ export async function pruneWorktrees(
   p: Pick<ProjectDisk, "root">,
   busy: () => Promise<string[]>,
   now = Date.now(),
-  closed: (root: string) => Promise<Set<number>> = closedCards,
 ): Promise<{ pruned: Pruned | null; kept: WtKept | null }> {
-  // Only the repo's own card worktrees: one registered anywhere else (hq-play's, the owner's) is not HQ's to remove.
+  // Only the repo's own agent worktrees: one registered anywhere else (hq-play's, the owner's) is not HQ's to remove.
   const under = `${diskKey(path.join(p.root, ".claude", "worktrees"))}/`;
   const list = await git(["-C", p.root, "worktree", "list", "--porcelain"]);
   const wts = list == null ? [] : parseWorktrees(list).filter((w) => diskKey(w.path).startsWith(under));
@@ -216,7 +203,7 @@ export async function pruneWorktrees(
   if (!wts.length) return { pruned: null, kept };
   const used = await busy().catch(() => null);
   if (!used) return { pruned: null, kept: null };
-  const [base, done] = await Promise.all([defaultBranch(p.root), closed(p.root).catch(() => new Set<number>())]);
+  const base = await defaultBranch(p.root);
   const names_: string[] = [];
   let stale = false;
   for (const w of wts) {
@@ -234,23 +221,16 @@ export async function pruneWorktrees(
       kept.recent++;
       continue;
     }
-    const id = /^card-(\d+)/.exec(name)?.[1] ?? null;
     const merged = base != null && w.head !== "" && (await git(["-C", p.root, "merge-base", "--is-ancestor", w.head, base])) != null;
-    const landed = merged || (base != null && id != null && ((await git(["-C", p.root, "log", base, "-1", "--format=%H", "-E", "-i", `--grep=card #?${id}([^0-9]|$)`])) ?? "").trim() !== "");
-    if (!landed && !(id != null && done.has(Number(id)))) {
+    if (!merged) {
       kept.open++;
       continue;
     }
-    // `8sync ccc meet` writes its daily note into the room's cwd (su-code/standup/<date>.md): 8sync's
-    // own log, not the card's work. On 2026-10-21, 50 of platform's 72 worktrees differed from HEAD by
-    // it alone, and `worktree remove` refuses any untracked file, so it goes first. Anything else
-    // untracked (a nested .claude/worktrees, a stray file) or modified is the room's: kept.
-    const status = (await git(["-C", w.path, "status", "--porcelain", "-uall"]))?.split(/\r?\n/).filter(Boolean);
-    if (!status || status.some((l) => !/^\?\? su-code\/standup\//.test(l))) {
+    const status = await git(["-C", w.path, "status", "--porcelain", "-uall"]);
+    if (status == null || status.trim() !== "") {
       kept.dirty++;
       continue;
     }
-    if (status.length) await fsp.rm(path.join(w.path, "su-code", "standup"), { recursive: true, force: true });
     // Deleting node_modules on Windows is slow: longer than the 20 s a query gets.
     if ((await git(["-C", p.root, "worktree", "remove", w.path], 120_000)) == null) {
       kept.failed++;
@@ -258,7 +238,7 @@ export async function pruneWorktrees(
     }
     stale = true;
     names_.push(name);
-    if (merged && w.branch) await git(["-C", p.root, "branch", "-d", w.branch]);
+    if (w.branch) await git(["-C", p.root, "branch", "-d", w.branch]);
   }
   if (stale) await git(["-C", p.root, "worktree", "prune"]);
   return { pruned: names_.length ? { at: now, n: names_.length, names: names_ } : null, kept };

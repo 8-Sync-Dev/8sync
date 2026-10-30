@@ -1,6 +1,5 @@
-// Team roles: which model and kit agent a session of that role runs with.
+// Session roles: which model and kit agent a session of that role runs with.
 // Shared by the UI (badges, assign dialog) and the server (spawn validation).
-import { isOmpTeamRoom } from "./team-room";
 
 export const MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"] as const;
 export type ModelId = (typeof MODELS)[number];
@@ -52,8 +51,7 @@ export function modelShort(model: string): string {
 }
 
 /**
- * The omp team's model (`omp_model` of `8sync ccc auto status --json`, `<provider>/<model>[:level]`)
- * as a card label: "zai/glm-5.3" -> "GLM-5.3", "openai/gpt-5.6-sol" -> "GPT-5.6-sol", a Claude id ->
+ * An omp model id (`<provider>/<model>[:level]`) as a label: "zai/glm-5.3" -> "GLM-5.3", "openai/gpt-5.6-sol" -> "GPT-5.6-sol", a Claude id ->
  * modelShort, anything else -> the model id after the slash. null/empty = omp's own default model.
  */
 export function ompModelLabel(id: string | null | undefined): string {
@@ -64,13 +62,8 @@ export function ompModelLabel(id: string | null | undefined): string {
   return fam ? `${fam[1].toUpperCase()}-${fam[2]}` : modelShort(model);
 }
 
-/**
- * The model label a room card shows: an omp team room (`omp-<role>`) always names its team's model
- * (ompModelLabel; null = omp's default), the owner's own omp session its model when known, a Claude
- * Code room its own (modelShort) or nothing when unknown.
- */
+/** The model label a room card shows: an omp session's model (ompModelLabel), a Claude Code room's (modelShort), or nothing when unknown. */
 export function roomModelLabel(room: { model?: string | null; engine?: string | null; label: string }): string | null {
-  if (room.engine === "omp" && isOmpTeamRoom(room.label)) return ompModelLabel(room.model);
   if (!room.model) return null;
   return room.engine === "omp" ? ompModelLabel(room.model) : modelShort(room.model);
 }

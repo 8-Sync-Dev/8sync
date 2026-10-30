@@ -47,7 +47,7 @@ export function KnowView({ token, roots, repo, active }: { token: string; roots:
     return (
       <div className="p-4 sm:px-6">
         <EmptyState icon={<BookOpenIcon />} title="Chưa có phòng nào đang chạy">
-          Cây tri thức hiện theo dự án đang có phòng. Mở team rồi quay lại.
+          Cây tri thức hiện theo dự án đang có phòng. Mở một session rồi quay lại.
         </EmptyState>
       </div>
     );

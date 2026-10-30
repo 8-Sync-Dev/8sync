@@ -39,8 +39,8 @@ describe("roles", () => {
   });
 });
 
-describe("omp team model label", () => {
-  it("names the omp team's model from status omp_model: null → omp's default, provider dropped, GLM/GPT upper-cased", () => {
+describe("omp model label", () => {
+  it("names an omp session's model: null → omp's default, provider dropped, GLM/GPT upper-cased", () => {
     for (const v of [null, undefined, "", "  "]) expect(ompModelLabel(v), String(v)).toBe("omp mặc định");
     expect(ompModelLabel("zai/glm-5.3")).toBe("GLM-5.3");
     expect(ompModelLabel("zai/glm-5.3:max"), "thinking level dropped").toBe("GLM-5.3");
@@ -52,9 +52,8 @@ describe("omp team model label", () => {
     expect(ompModelLabel("openrouter/moonshot/kimi-k3")).toBe("kimi-k3");
     expect(ompModelLabel("mistral-large")).toBe("mistral-large");
   });
-  it("a room card: omp team rooms always name the team model, the owner's own omp sessions and Claude rooms their own or nothing", () => {
+  it("a room card: an omp or Claude room's own model, or nothing when unknown", () => {
     expect(roomModelLabel({ engine: "omp", label: "omp-lead", model: "zai/glm-5.3" })).toBe("GLM-5.3");
-    expect(roomModelLabel({ engine: "omp", label: "omp-dev2", model: null })).toBe("omp mặc định");
     expect(roomModelLabel({ engine: "omp", label: "core", model: null })).toBeNull();
     expect(roomModelLabel({ engine: "omp", label: "vps", model: "openai/gpt-5.6" })).toBe("GPT-5.6");
     expect(roomModelLabel({ label: "dev", model: "claude-sonnet-5-5" })).toBe("Sonnet 5.5");

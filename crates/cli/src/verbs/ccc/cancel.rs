@@ -7,7 +7,7 @@
 //! Default scope: the goal and urgency this session declared (registry), every live loop named in
 //! the repo's `su-code/ship/ACTIVE` (the running `/ship-loop`/`/autopilot`; ACTIVE is per repo, not
 //! per session — a loop another session listed there stops too), then ACTIVE itself. `--all` adds
-//! every loop under `su-code/ship`, `idle off` and `delegate off`. Claude Code's own scheduled tasks
+//! every loop under `su-code/ship`. Claude Code's own scheduled tasks
 //! (`/loop`, CronCreate) cannot be reached from outside the session: the summary says `/loop clear`.
 //!
 //! Fail-closed means: a slug that cannot be verified stopped (unreadable or unwritable loop.json,
@@ -84,9 +84,9 @@ fn parse(args: &[String]) -> Result<Opts> {
 }
 
 /// Parse, cancel, print. Returns whether everything was cancelled (false → caller exits 1).
-pub(super) fn run(store: &Store, args: &[String], env_id: Option<&str>, cwd: &Path, home: &Path, now: u64) -> Result<bool> {
+pub(super) fn run(store: &Store, args: &[String], env_id: Option<&str>, cwd: &Path, now: u64) -> Result<bool> {
     let o = parse(args)?;
-    let r = cancel(store, o.all, o.session.as_deref(), env_id, cwd, home, now)?;
+    let r = cancel(store, o.all, o.session.as_deref(), env_id, cwd, now)?;
     if o.json {
         println!("{}", r.json());
     } else {
@@ -97,7 +97,7 @@ pub(super) fn run(store: &Store, args: &[String], env_id: Option<&str>, cwd: &Pa
 
 /// The whole cancel, pure over its inputs. Refuses (nothing touched) when no session is named and
 /// `CLAUDE_CODE_SESSION_ID` is unset, or when `--session` names a session this repo does not have.
-pub(super) fn cancel(store: &Store, all: bool, session: Option<&str>, env_id: Option<&str>, cwd: &Path, home: &Path, now: u64) -> Result<Report> {
+pub(super) fn cancel(store: &Store, all: bool, session: Option<&str>, env_id: Option<&str>, cwd: &Path, now: u64) -> Result<Report> {
     let id = env_id.filter(|s| !s.is_empty());
     if session.is_none() && id.is_none() {
         bail!("no session: pass --session <name> (CLAUDE_CODE_SESSION_ID is not set) — nothing cancelled");
@@ -185,25 +185,6 @@ pub(super) fn cancel(store: &Store, all: bool, session: Option<&str>, env_id: Op
             Err(e) => r.failed.push(format!("su-code/ship/ACTIVE: {e}")),
         },
     }
-    // 3. --all: the machine-wide switches, verified off afterwards (an env override keeps them on).
-    if all {
-        match super::idle::off(home) {
-            Ok(()) if super::idle::enabled(home) => r.failed.push("idle: vẫn BẬT sau khi tắt (biến môi trường EIGHTSYNC_NO_IDLE đè cờ?)".into()),
-            Ok(()) => r.done.push("idle (không-ai-rảnh): TẮT".into()),
-            Err(e) => r.failed.push(format!("idle off: {e:#}")),
-        }
-        match super::delegate::off(home) {
-            Ok(()) if super::delegate::enabled(home) => r.failed.push("delegate: vẫn BẬT sau khi tắt (biến môi trường đè cờ?)".into()),
-            Ok(()) => r.done.push("delegate: TẮT".into()),
-            Err(e) => r.failed.push(format!("delegate off: {e:#}")),
-        }
-        // The owner's off switch: HQ (`ccc auto`) must not turn the pair on again by itself.
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        match super::auto::mark_paused(home, now) {
-            Ok(()) => r.done.push("auto: TẠM DỪNG (HQ không tự bật lại)".into()),
-            Err(e) => r.failed.push(format!("auto pause: {e:#}")),
-        }
-    }
     Ok(r)
 }
 
@@ -220,15 +201,11 @@ mod tests {
         fn new(tag: &str) -> Self {
             let dir = std::env::temp_dir().join(format!("8sync-cancel-{tag}-{}-{}", std::process::id(), crate::verbs::uuid_sessions::new_uuid()));
             std::fs::create_dir_all(dir.join("repo/su-code/ship")).unwrap();
-            std::fs::create_dir_all(dir.join("home")).unwrap();
             let store = Store::new(&dir.join("cfg"), std::path::Path::new("/repo"), "claude-sessions", "ccc .");
             Self { dir, store }
         }
         fn repo(&self) -> std::path::PathBuf {
             self.dir.join("repo")
-        }
-        fn home(&self) -> std::path::PathBuf {
-            self.dir.join("home")
         }
         fn live_loop(&self, slug: &str) {
             let d = self.repo().join("su-code/ship").join(slug);
@@ -255,7 +232,7 @@ mod tests {
         fx.live_loop("mine");
         fx.live_loop("other");
         std::fs::write(fx.repo().join("su-code/ship/ACTIVE"), "autopilot\nmine\n").unwrap();
-        let r = cancel(&fx.store, false, None, Some(&a.conversation_id), &fx.repo(), &fx.home(), 50).unwrap();
+        let r = cancel(&fx.store, false, None, Some(&a.conversation_id), &fx.repo(), 50).unwrap();
         assert!(r.ok(), "{r:?}");
         assert_eq!(r.done, ["goal của 'core' xoá", "urgent của 'core' xoá", "loop mine: dừng (cancelled)", "su-code/ship/ACTIVE xoá"]);
         assert_eq!(r.skipped, ["loop autopilot: không chạy"], "the autopilot marker has no loop.json");
@@ -265,33 +242,25 @@ mod tests {
         assert_eq!(fx.loop_stopped("other"), None, "a loop not in ACTIVE is not touched without --all");
         assert!(!fx.repo().join("su-code/ship/ACTIVE").exists());
         // Idempotent: a second run cancels nothing and still succeeds.
-        let r2 = cancel(&fx.store, false, None, Some(&a.conversation_id), &fx.repo(), &fx.home(), 51).unwrap();
+        let r2 = cancel(&fx.store, false, None, Some(&a.conversation_id), &fx.repo(), 51).unwrap();
         assert!(r2.ok() && r2.done.is_empty(), "{r2:?}");
         let t = r2.text();
         assert!(t.contains("cancel: 0 huỷ") && t.contains("/loop clear"), "{t}");
     }
 
     #[test]
-    fn cancel_all_stops_every_live_loop_and_the_switches() {
+    fn cancel_all_stops_every_live_loop() {
         let fx = Fx::new("all");
-        let a = fx.store.touch("core", false).unwrap();
+        fx.store.touch("core", false).unwrap();
         fx.live_loop("a");
         fx.live_loop("b");
         std::fs::create_dir_all(fx.repo().join("su-code/ship/done")).unwrap();
         std::fs::write(fx.repo().join("su-code/ship/done/loop.json"), r#"{"slug":"done","stopped":"done","iter":1,"started":1,"max_iter":1,"max_min":1,"digests":[]}"#).unwrap();
-        crate::verbs::harness::features::write_flag_key(&fx.home(), super::super::idle::KEY, true).unwrap();
-        crate::verbs::harness::features::write_flag_key(&fx.home(), super::super::delegate::KEY, true).unwrap();
-        let r = cancel(&fx.store, true, Some("core"), None, &fx.repo(), &fx.home(), 50).unwrap();
+        let r = cancel(&fx.store, true, Some("core"), None, &fx.repo(), 50).unwrap();
         assert!(r.ok(), "{r:?}");
         assert_eq!(fx.loop_stopped("a").as_deref(), Some("cancelled"));
         assert_eq!(fx.loop_stopped("b").as_deref(), Some("cancelled"));
         assert_eq!(fx.loop_stopped("done").as_deref(), Some("done"), "a finished loop keeps its reason");
-        assert!(!super::super::idle::enabled(&fx.home()) && !super::super::delegate::enabled(&fx.home()));
-        assert!(r.done.iter().any(|l| l.starts_with("idle")) && r.done.iter().any(|l| l.starts_with("delegate")), "{r:?}");
-        // HQ reads the auto marker: after cancel --all it must say paused, so the Office tab does not turn the pair on again.
-        assert!(r.done.iter().any(|l| l.starts_with("auto: TẠM DỪNG")), "{r:?}");
-        assert_eq!(super::super::auto::status(&fx.home(), false, 1)["paused"], true);
-        let _ = a;
         let j = r.json();
         assert_eq!(j["ok"], true);
         assert_eq!(j["done"].as_array().unwrap().len(), r.done.len());
@@ -302,13 +271,13 @@ mod tests {
         let fx = Fx::new("closed");
         fx.live_loop("x");
         std::fs::write(fx.repo().join("su-code/ship/ACTIVE"), "x\n").unwrap();
-        let e = cancel(&fx.store, false, None, None, &fx.repo(), &fx.home(), 1).unwrap_err().to_string();
+        let e = cancel(&fx.store, false, None, None, &fx.repo(), 1).unwrap_err().to_string();
         assert!(e.contains("--session") && e.contains("nothing cancelled"), "{e}");
         assert_eq!(fx.loop_stopped("x"), None, "refused = untouched");
-        let e = cancel(&fx.store, false, Some("ghost"), None, &fx.repo(), &fx.home(), 1).unwrap_err().to_string();
+        let e = cancel(&fx.store, false, Some("ghost"), None, &fx.repo(), 1).unwrap_err().to_string();
         assert!(e.contains("no session 'ghost'"), "{e}");
         // An unregistered session id still cancels its loops; goal/urgent are reported as skipped.
-        let r = cancel(&fx.store, false, None, Some("not-registered"), &fx.repo(), &fx.home(), 1).unwrap();
+        let r = cancel(&fx.store, false, None, Some("not-registered"), &fx.repo(), 1).unwrap();
         assert!(r.ok() && r.skipped[0].starts_with("goal/urgent"), "{r:?}");
         assert_eq!(fx.loop_stopped("x").as_deref(), Some("cancelled"));
         // A corrupt loop.json named in ACTIVE cannot be verified stopped → FAILED, exit 1, and
@@ -319,7 +288,7 @@ mod tests {
         std::fs::write(d.join("loop.json"), "{not json").unwrap();
         fx.live_loop("good");
         std::fs::write(fx.repo().join("su-code/ship/ACTIVE"), "bad\n../etc\ngood\n").unwrap();
-        let r = cancel(&fx.store, false, None, Some("not-registered"), &fx.repo(), &fx.home(), 2).unwrap();
+        let r = cancel(&fx.store, false, None, Some("not-registered"), &fx.repo(), 2).unwrap();
         assert!(!r.ok(), "{r:?}");
         assert!(r.failed.iter().any(|l| l.starts_with("loop bad")) && r.failed.iter().any(|l| l.contains("không phải slug")), "{r:?}");
         assert_eq!(fx.loop_stopped("good").as_deref(), Some("cancelled"));
@@ -327,7 +296,7 @@ mod tests {
         assert!(r.text().contains("CHƯA huỷ hết") && r.json()["ok"] == false);
         // --all also fails on a corrupt loop that is not in ACTIVE.
         std::fs::remove_file(fx.repo().join("su-code/ship/ACTIVE")).unwrap();
-        let r = cancel(&fx.store, true, None, Some("not-registered"), &fx.repo(), &fx.home(), 3).unwrap();
+        let r = cancel(&fx.store, true, None, Some("not-registered"), &fx.repo(), 3).unwrap();
         assert!(!r.ok() && r.failed.iter().any(|l| l.starts_with("loop bad")), "{r:?}");
         assert!(parse(&["--nope".to_string()]).is_err() && parse(&["--session".to_string()]).is_err());
     }

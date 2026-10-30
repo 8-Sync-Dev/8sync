@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # UAT (no model, free): how long each kit hook keeps Claude Code waiting. The hooks run on every
 # prompt / tool call, so they must stay far below the model's own latency; omp/forge have no such
-# hooks, and this is where ccc pays. Budget (median of N runs, sandbox HOME): guard, wake, watchdog,
+# hooks, and this is where ccc pays. Budget (median of N runs, sandbox HOME): guard, watchdog,
 # resume-note <= 20 ms; verify with a file outside any project (its no-op path) <= 50 ms. The real
 # verify check (tsc/cargo) runs with asyncRewake and never blocks the model: see ccc/verify.rs.
 # Usage: scripts/uat/hook-latency.sh [path/to/8sync] [runs]   Exit 0 = every hook within budget.
@@ -42,7 +42,6 @@ bench() {
 }
 SID=bench-0123-4567
 bench guard       20 guard       '{"hook_event_name":"PreToolUse","session_id":"'$SID'","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"'$T'"}'
-bench wake        20 wake        '{"hook_event_name":"UserPromptSubmit","session_id":"'$SID'","prompt":"làm tiếp","cwd":"'$T'"}'
 bench watchdog    20 watchdog    '{"hook_event_name":"PostToolUse","session_id":"'$SID'","tool_name":"Read","cwd":"'$T'"}'
 bench resume-note 20 resume-note '{"hook_event_name":"UserPromptSubmit","session_id":"'$SID'","prompt":"làm tiếp","cwd":"'$T'"}'
 bench verify-noop 50 verify      '{"hook_event_name":"PostToolUse","session_id":"'$SID'","tool_name":"Write","tool_input":{"file_path":"'$T'/nowhere/x.ts"},"cwd":"'$T'"}'

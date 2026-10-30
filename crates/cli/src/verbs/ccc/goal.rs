@@ -1,6 +1,6 @@
 //! `8sync ccc . goal <text…> [--files a,b] [--session <name>]` (or `goal clear`): the agent in a
 //! session states its current target and the files it claims, so the other rooms see who is doing
-//! what (`ccc . ls`, the SessionStart "Phòng khác đang làm" block, `ccc standup`) and do not edit the
+//! what (`ccc . ls`, the SessionStart "Phòng khác đang làm" block) and do not edit the
 //! same files. The session is picked like `ccc . urgent` (`--session`, else `$CLAUDE_CODE_SESSION_ID`).
 
 use anyhow::{bail, Result};
@@ -65,7 +65,7 @@ fn hidden(c: char) -> bool {
 }
 
 /// First non-empty line, hidden characters dropped, secrets masked, at most `max` chars. Used on
-/// write and on every read path, since an index or board file may predate it or be hand-edited.
+/// write and on every read path, since an index file may predate it or be hand-edited.
 pub(super) fn clean(s: &str, max: usize) -> String {
     let line = s.lines().map(|l| l.chars().filter(|c| !hidden(*c)).collect::<String>()).find(|l| !l.trim().is_empty()).unwrap_or_default();
     crate::verbs::session_view::truncate(&crate::verbs::session_view::mask_secrets(line.trim()), max)

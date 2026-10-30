@@ -14,7 +14,7 @@ function Num({ v, className }: { v: string; className?: string }) {
   return <td className={cn("px-3 py-2 text-right tabular", v === "chưa đo" && "text-muted-foreground", className)}>{v}</td>;
 }
 
-/** Cost, context, time, lines and tasks per room (session), with totals. Same numbers as `8sync ccc . report`. */
+/** Cost, context, time and lines per room (session), with totals. Same numbers as `8sync ccc . report`. */
 export function ReportView({ data: { office, error, retry }, onOpen, repo = null }: { data: OfficeState; onOpen: (room: Room) => void; repo?: string | null }) {
   // The sidebar's repo: only its rooms (worktree rooms count under their repo, like the sidebar).
   const rooms = useMemo(() => {
@@ -48,12 +48,10 @@ export function ReportView({ data: { office, error, retry }, onOpen, repo = null
           </EmptyState>
         ) : (
           <>
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
               {[
                 ["Phòng", String(t.rooms)],
                 ["Chi phí", fmtUsd(t.cost_usd)],
-                ["$/task xong", fmtUsd(t.cost_per_task)],
-                ["Task", `${t.done} xong · ${t.open} mở`],
                 ["Context đang dùng", fmtTokens(t.tokens)],
                 ["Thời gian", fmtDuration(t.duration_ms)],
               ].map(([k, v]) => (
@@ -77,8 +75,6 @@ export function ReportView({ data: { office, error, retry }, onOpen, repo = null
                     <th scope="col" className="px-3 py-2 text-right font-medium">Chi phí</th>
                     <th scope="col" className="px-3 py-2 text-right font-medium">Thời gian</th>
                     <th scope="col" className="px-3 py-2 text-right font-medium">Dòng +/−</th>
-                    <th scope="col" className="px-3 py-2 text-right font-medium">Task</th>
-                    <th scope="col" className="px-3 py-2 text-right font-medium">$/task</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -104,8 +100,6 @@ export function ReportView({ data: { office, error, retry }, onOpen, repo = null
                         <Num v={fmtUsd(r.usage?.cost_usd)} />
                         <Num v={fmtDuration(r.usage?.duration_ms)} />
                         <Num v={r.usage?.lines_added != null ? `+${r.usage.lines_added} −${r.usage.lines_removed ?? 0}` : "chưa đo"} />
-                        <Num v={`${r.tasks.done}/${r.tasks.done + r.tasks.open}`} />
-                        <Num v={fmtUsd(r.cost_per_task)} />
                       </tr>
                     ))}
                 </tbody>
@@ -136,8 +130,7 @@ export function ReportView({ data: { office, error, retry }, onOpen, repo = null
             <p className="max-w-[70ch] text-xs text-muted-foreground">
               Nguồn: chi phí và số dòng là con số Claude Code đưa cho status line của 8sync (lưu ở{" "}
               <code className="font-mono">~/.local/state/8sync/hq/usage</code>); model và thời gian đọc từ transcript của phòng khi chưa có
-              status line; context từ <code className="font-mono">8sync ls</code>; task xong = thẻ phòng đã chuyển sang QA/Review/Approved trên
-              board, task mở = thẻ đang giữ. Chưa có số thật thì ghi &quot;chưa đo&quot;, không ước lượng. $/task chỉ tính trên phòng đã đo chi phí.
+              status line; context từ <code className="font-mono">8sync ls</code>. Chưa có số thật thì ghi &quot;chưa đo&quot;, không ước lượng.
               Trong terminal: <code className="font-mono">8sync ccc . report</code>.
             </p>
           </>

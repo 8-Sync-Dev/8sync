@@ -2,24 +2,15 @@
 
 import type { ReactNode } from "react";
 import type { Awake, AwakeHold } from "@/lib/server/awake";
-import type { GuardRamSplit } from "@/lib/server/guard";
-import type { GuardView } from "@/lib/server/guard-trigger";
 import type { Sample } from "@/lib/server/history";
 import type { Machine, Spec } from "@/lib/server/machine";
 import type { Power } from "@/lib/server/power";
-import type { SweepProject } from "@/lib/server/sweep";
 import { cn } from "@/lib/utils";
 
-/** GET /api/machine: the load snapshot plus power (null before the sampler runs), awake and guard (null on an older 8sync), what the machine is, each running team's "Dọn máy tự động" (absent on an older HQ), and the last 30 min of RAM / CPU / watts (absent before v0.110.33). */
-export type MachineView = Machine & { power: Power | null; awake: Awake | null; spec: Spec | null; guard: GuardView | null; sweep?: SweepProject[]; history?: Sample[] };
+/** GET /api/machine: the load snapshot plus power (null before the sampler runs), awake (null on an older 8sync), what the machine is, and the last 30 min of RAM / CPU / watts (absent before v0.110.33). */
+export type MachineView = Machine & { power: Power | null; awake: Awake | null; spec: Spec | null; history?: Sample[] };
 
 export const gb = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
-/** The guard's RAM attribution (8sync ≥ the trim): "phòng 12.3 GB · omp/8sync 2.8 GB · app khác 20.1 GB (Edge 2.8 GB · ChatGPT 2.2 GB)" + the no-way-out hint. */
-export function ramSplitText(s: GuardRamSplit): string {
-  const top = s.top.length ? ` (${s.top.map((t) => `${t.name} ${gb(t.mb)}`).join(" · ")})` : "";
-  const hint = s.stuck ? " — ngưỡng không đạt được bằng dọn phòng: hạ app khác hoặc nâng ngưỡng" : "";
-  return `phòng ${gb(s.rooms_mb)} · omp/8sync ${gb(s.omp_mb)} · app khác ${gb(s.other_mb)}${top}${hint}`;
-}
 export const pctOf = (used: number, total: number) => (total > 0 ? Math.round((100 * used) / total) : 0);
 export const vnd = (n: number) => `${Math.round(n).toLocaleString("vi-VN")} ₫`;
 export const energy = (wh: number) => (wh < 1000 ? `${Math.round(wh)} Wh` : `${(wh / 1000).toLocaleString("vi-VN", { maximumFractionDigits: 2 })} kWh`);
@@ -83,10 +74,10 @@ const range = (xs: number[]) => (xs.length ? `${Math.min(...xs)}–${Math.max(..
 
 /**
  * "Tải máy" over the last 30 minutes (owner 2026-10-21: "chưa có đồ thị"): RAM and CPU as two lines
- * on one 0–100 % scale, the guard's RAM threshold as a rule when there is one, watts as a range. One
+ * on one 0–100 % scale, watts as a range. One
  * point per 30 s from the server loop (lib/server/history.ts), so it is full even if no tab was open.
  */
-export function LoadChart({ samples, now, guardPct, windowMs = 30 * 60_000 }: { samples: readonly Sample[]; now: number; guardPct: number | null; windowMs?: number }) {
+export function LoadChart({ samples, now, windowMs = 30 * 60_000 }: { samples: readonly Sample[]; now: number; windowMs?: number }) {
   const W = 300;
   const H = 56;
   const from = now - windowMs;
@@ -102,7 +93,6 @@ export function LoadChart({ samples, now, guardPct, windowMs = 30 * 60_000 }: { 
     <figure className="space-y-1.5">
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-14 w-full" role="img" aria-label={label}>
         <line x1="0" y1={H - 0.5} x2={W} y2={H - 0.5} className="stroke-border" strokeWidth="1" />
-        {guardPct != null && <line x1="0" y1={H - (guardPct / 100) * H} x2={W} y2={H - (guardPct / 100) * H} className="stroke-st-needs/60" strokeWidth="1" strokeDasharray="3 3" />}
         <polyline points={polyline(recent, (s) => s.cpu, from, now, W, H)} fill="none" className="stroke-muted-foreground" strokeWidth="1.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
         <polyline points={polyline(recent, (s) => s.ram, from, now, W, H)} fill="none" className="stroke-st-running" strokeWidth="1.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       </svg>
@@ -120,8 +110,7 @@ export function LoadChart({ samples, now, guardPct, windowMs = 30 * 60_000 }: { 
             Điện <span className="tabular text-foreground">{range(watts)} W</span>
           </span>
         )}
-        {guardPct != null && <span className="ml-auto">nét đứt: ngưỡng RAM {guardPct}%</span>}
-        <span className={cn(guardPct == null && "ml-auto")}>30 phút qua</span>
+        <span className="ml-auto">30 phút qua</span>
       </figcaption>
     </figure>
   );

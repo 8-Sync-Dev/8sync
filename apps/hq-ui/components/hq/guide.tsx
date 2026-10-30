@@ -1,19 +1,6 @@
 "use client";
 
-import {
-  BellRingIcon,
-  CheckCircle2Icon,
-  CircleDotIcon,
-  CoffeeIcon,
-  EyeIcon,
-  FolderPlusIcon,
-  HourglassIcon,
-  MessagesSquareIcon,
-  PowerIcon,
-  SendIcon,
-  TerminalIcon,
-  type LucideIcon,
-} from "lucide-react";
+import { BellRingIcon, CircleDotIcon, CoffeeIcon, FolderPlusIcon, HourglassIcon, MessagesSquareIcon, PowerIcon, SendIcon, TerminalIcon, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Dialog,
@@ -22,65 +9,46 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { DEFAULT_SHIP_HOURS, hoursLabel, SHIP_HOURS } from "@/lib/ship-fast";
-import { BOOST_ONLY, BOOST_TEAM, DEFAULT_TEAM, FULL_TEAM, teamText } from "@/lib/team-size";
 
 export type GuideStep = { icon: LucideIcon; title: string; body: string };
 
 export const GUIDE_STEPS: GuideStep[] = [
   {
     icon: FolderPlusIcon,
-    title: "Mở team cho dự án",
+    title: "Phòng là session của anh",
     body:
-      `Thêm thư mục ở "Mở team ở repo mới" bên trái (dự án đã có phòng tự hiện), rồi bấm "Mở team" (Chạy): team thường ${teamText(DEFAULT_TEAM)} chạy nền liên tục. ` +
-      "Đội mặc định là Claude Code: Opus (claude-opus-5-5) cho lead, Sonnet (claude-sonnet-5-5) cho dev và review, Haiku (claude-haiku-5-5) cho qa. Đội omp (phòng omp-<vai>, model ghi trên thẻ phòng, ví dụ GLM-5.3) chỉ chạy khi anh bật công tắc Đội omp (`--omp`). " +
-      `"⚡ Sấm Sét" (đầu dự án ở Tổng quan và Văn phòng) mở ${teamText(BOOST_TEAM)} kèm Ship tốc độ cao ${hoursLabel(DEFAULT_SHIP_HOURS)}, lease 2 giờ; đang chạy thì bấm lại để gia hạn hoặc tắt (Tắt Sấm Sét dừng ${BOOST_ONLY.join(", ")}, về team thường, card chúng đang giữ trả về cột). ` +
-      `"Team đầy đủ" mở ${teamText(FULL_TEAM)}. ` +
-      `"Ship tốc độ cao" (🚀, cạnh Sấm Sét): chọn ${SHIP_HOURS.map(hoursLabel).join(" / ")} (mặc định ${hoursLabel(DEFAULT_SHIP_HOURS)}), cả team dồn land card gần xong trước — review/qa dọn cột trước, builder không lấy card mới khi ≥ 3 card chờ qa/review/approved, lead hỏi Ship một chạm khi card approved (anh mới bấm merge/release); hết giờ/hết card 8sync tự báo. ` +
-      "Phòng rd, ba, arch chỉ mở khi cần (`--roles`).",
+      "Mỗi session Claude Code hoặc omp anh mở là một phòng; HQ không tự mở phòng nào. Dự án có phòng tự hiện bên trái; thêm thư mục ở đó để mở session mới từ tab Sessions.",
   },
   {
     icon: SendIcon,
-    title: "Giao việc",
-    body:
-      "Bấm \"Giao việc\" hoặc gõ vào ô \"Gửi cho mọi phòng\": việc thành card trên Board. lead viết tiêu chí và lệnh kiểm, dev làm trên nhánh card-<số>, qa kiểm, review duyệt. " +
-      "Việc gấp: bấm \"⚡ Làm ngay\" trên card Backlog/Ready (P0: báo lead, gọi phòng rảnh của cột nhận ngay); card Blocked có \"⚡ Gỡ block ngay\".",
+    title: "Nhắn một phòng",
+    body: "Bấm tên phòng để mở Chat phòng rồi gõ tin: tin gõ thẳng vào terminal của phòng hoặc vào inbox của nó. Ở Preview, “Hỏi về ảnh này” gửi ảnh có ghim cho một phòng.",
   },
   {
     icon: TerminalIcon,
-    title: "Theo dõi như một ngày làm việc",
-    body:
-      "Văn phòng: mỗi phòng đang làm gì, giữ card nào. Board: card đi Backlog → Ready → Building → QA → Review → Approved; bấm card để xem chi tiết. " +
-      "Bấm tên phòng ở bên trái để xem Nhật ký từng bước nó làm, hoặc mở terminal của phòng.",
+    title: "Theo dõi",
+    body: "Văn phòng: mỗi phòng đang làm gì. Bấm tên phòng ở bên trái để xem Nhật ký từng bước nó làm, hoặc mở terminal của phòng.",
   },
   {
     icon: BellRingIcon,
     title: "Chỉ trả lời việc cần anh",
-    body:
-      "Khung \"Anh cần trả lời\" hiện câu hỏi và xin quyền của mọi phòng. Câu hỏi sản phẩm/kỹ thuật thì critic (Opus) chọn ngay (mặc định bật, công tắc ở Văn phòng; muốn chờ anh N giây: `8sync ccc auto on --after N`); xin quyền thì việc an toàn trong dự án (test, sửa file, đẩy nhánh card) tự chạy, còn merge, release, cài gói, file secret luôn chờ anh. " +
-      "Câu Ship (merge, phát hành) chỉ anh trả lời.",
+    body: "Khung “Anh cần trả lời” hiện câu hỏi và xin quyền của mọi phòng đang dừng chờ anh, kèm cách mở terminal để trả lời.",
   },
   {
     icon: MessagesSquareIcon,
-    title: "Cập nhật và dừng",
-    body:
-      "Sau `8sync up`, bấm \"Dọn & mở lại\": phòng rảnh chạy lại trên bản mới, giữ hội thoại; session rác được dọn, worktree còn thay đổi được giữ. Bấm \"Dừng team\" để nghỉ (hội thoại vẫn giữ). " +
-      "Chat tổng xem các phòng nhắn nhau và bàn giao \"A → B\".",
+    title: "Chat",
+    body: "Tab Chat xem các phòng nhắn nhau và tin anh gửi, theo thời gian.",
   },
   {
     icon: PowerIcon,
-    title: "CLI chỉ để bật / tắt",
-    body:
-      "Terminal chỉ cần hai lệnh: `8sync ccc auto on [--omp]` bật chạy liên tục (--omp cho Đội omp làm cạnh Đội ccc) và `8sync hq ui [--public]` mở HQ (--public in link internet để mở từ điện thoại, hết hạn sau 12 giờ). " +
-      "Mọi việc khác làm ở đây: Tạm dừng / Chạy liên tục, công tắc Đội omp, giao việc, trả lời câu hỏi. Phòng dừng vì hết usage hoặc lỗi API tự chạy lại; chỉ phòng ghi \"cần anh xử lý\" mới chờ anh.",
+    title: "Mở HQ",
+    body: "`8sync hq ui [--public]` mở HQ (--public in link internet để mở từ điện thoại, hết hạn sau 12 giờ).",
   },
 ];
 
 export const GUIDE_LEGEND: { icon: LucideIcon; label: string; hint: string }[] = [
   { icon: CircleDotIcon, label: "Đang làm", hint: "đang chạy việc" },
   { icon: BellRingIcon, label: "Cần bạn", hint: "chờ bạn trả lời hoặc duyệt" },
-  { icon: EyeIcon, label: "Chờ review", hint: "làm xong, chờ người kiểm" },
-  { icon: CheckCircle2Icon, label: "Xong", hint: "đã hoàn thành" },
   { icon: CoffeeIcon, label: "Rảnh", hint: "chưa có việc" },
 ];
 

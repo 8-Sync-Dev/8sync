@@ -272,7 +272,7 @@ pub(super) fn run(rest: &[String], claude_dir: &Path, home: &Path) -> Result<()>
         for l in measured_lines(&measured(home), current(&v).as_deref(), cur_var(&v, WIN_VAR).as_deref()) {
             println!("{l}");
         }
-        println!("Status line hiện `ctx N%→nén M%` theo env session đó đang thấy. Chắc chắn nhất: mở lại session (`/exit` rồi `claude --resume`; phòng nền: `8sync ccc auto down` → `auto up`).");
+        println!("Status line hiện `ctx N%→nén M%` theo env session đó đang thấy. Chắc chắn nhất: mở lại session (`/exit` rồi `claude --resume`).");
     }
     Ok(())
 }

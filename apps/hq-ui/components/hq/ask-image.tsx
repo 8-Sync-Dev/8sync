@@ -7,9 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toBase64 } from "@/lib/attach";
-import { fileName, rootKey, type PreviewItem } from "@/lib/preview";
-import { askText, containRect, imageRoom, pinPx, pinRadius, pointToPin, roomGroups, suggestion, type Pin, type Size } from "@/lib/room-send";
-import type { ProjectBoard } from "@/lib/server/board";
+import { fileName, type PreviewItem } from "@/lib/preview";
+import { askText, containRect, imageRoom, pinPx, pinRadius, pointToPin, type Pin, type Size } from "@/lib/room-send";
 import { RoomSend, type Upload } from "./room-send";
 import type { Api } from "./use-hq";
 import type { Room } from "./use-office";
@@ -28,7 +27,7 @@ const PIN_FILL = "#e11d48";
  * arrows move it, Delete removes it), a note per pin, and the shared composer. On send the pins are
  * drawn onto a full-size copy of the image (PNG) that goes with the message as an attachment.
  */
-export function AskImage({ item, path, token, api, rooms, boards, onDone }: { item: PreviewItem; path: string; token: string; api: Api; rooms: Room[]; boards: ProjectBoard[] | null; onDone: () => void }) {
+export function AskImage({ item, path, token, api, rooms, onDone }: { item: PreviewItem; path: string; token: string; api: Api; rooms: Room[]; onDone: () => void }) {
   const [pins, setPins] = useState<Pin[]>([]);
   const [nat, setNat] = useState<Size | null>(null);
   const notes = useRef<(HTMLInputElement | null)[]>([]);
@@ -36,11 +35,8 @@ export function AskImage({ item, path, token, api, rooms, boards, onDone }: { it
   /** A marker added from the keyboard takes focus once it is on screen (after the next render). */
   const focusMarker = useRef<number | null>(null);
 
-  // The room that saved the shot (card holder, worktree, lane), else the project's lead.
-  const { preferRoom, preferRoot } = useMemo(() => {
-    const g = roomGroups(rooms).find((x) => rootKey(x.root) === rootKey(item.root));
-    return { preferRoom: imageRoom(item, rooms, boards ?? [])?.key ?? (g ? suggestion(g.rooms)?.room : null) ?? null, preferRoot: g?.root ?? null };
-  }, [item, rooms, boards]);
+  // The room working in the shot's worktree, else the first room of its project.
+  const preferRoom = useMemo(() => imageRoom(item, rooms)?.key ?? null, [item, rooms]);
 
   useEffect(() => {
     if (focusMarker.current == null) return;
@@ -140,7 +136,7 @@ export function AskImage({ item, path, token, api, rooms, boards, onDone }: { it
           rooms={rooms}
           id="ask-image"
           preferRoom={preferRoom}
-          preferRoot={preferRoot}
+          preferRoot={item.root}
           placeholder="Câu hỏi về ảnh, vd: nút này lệch so với thiết kế? (Ctrl+Enter để gửi)"
           prepare={prepare}
           allowEmpty={pins.length > 0}

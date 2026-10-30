@@ -1,89 +1,71 @@
 "use client";
 
-import { ArrowRightIcon, GitBranchIcon, LayoutDashboardIcon, LifeBuoyIcon, ZapIcon } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { ArrowRightIcon, GitBranchIcon, LayoutDashboardIcon } from "lucide-react";
+import { useMemo, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { askLine } from "@/lib/ask";
-import { cardParts } from "@/lib/card-tags";
-import { LANES, type Board, type Card } from "@/lib/lanes";
 import { agoShort, roster, rosterSummary } from "@/lib/now";
-import { companyRooms, groupByRepo, worktreeOf } from "@/lib/sidebar";
-import { recentMoves, topCards } from "@/lib/overview";
+import { groupByRepo, worktreeOf } from "@/lib/sidebar";
 import { fileName, rootKey, type ProjectPreviews } from "@/lib/preview";
 import { roomModelLabel } from "@/lib/roles";
-import type { ProjectBoard } from "@/lib/server/board";
 import { buildTeamThread, partyKey, type ThreadItem } from "@/lib/team-thread";
 import { cn } from "@/lib/utils";
 import { AskPanel, askRoomOf, type AskRoom } from "./ask-panel";
 import { EmptyState, ErrorNote, shortName } from "./bits";
-import { LANE_VI, TONE_INK, laneTone } from "./card-sheet";
 import { PlayButton } from "./play-view";
 import { PreviewImage } from "./preview-view";
 import { StateTag, type RosterRow } from "./now-roster";
 import { RoleIcon } from "./role-badge";
 import type { Message } from "./types";
-import { TeamControls, boostOn } from "./team-controls";
-import { makeApi } from "./use-hq";
-import type { BoardsState } from "./use-board";
 import type { OfficeState, Room } from "./use-office";
 import type { PreviewState } from "./preview-view";
 
-export type OverviewTab = "office" | "group" | "board" | "preview" | "flow";
+export type OverviewTab = "office" | "group" | "preview";
 
-const CHAT_KINDS = new Set<ThreadItem["kind"]>(["owner", "reply", "handoff", "task_created", "task_completed"]);
+const CHAT_KINDS = new Set<ThreadItem["kind"]>(["owner", "reply", "handoff"]);
 
 /**
- * Tổng quan: every live project on one wide screen. Each project is one block with five panels
- * (rooms, board, previews, latest moves, chat), separated by hairlines, never cards in cards.
+ * Tổng quan: every live project on one wide screen. Each project is one block with three panels
+ * (rooms, previews, chat), separated by hairlines, never cards in cards.
  * What waits for the owner is pinned above all projects.
  */
 export function OverviewView({
   office,
-  boards,
   previews,
   messages,
   token,
   onTab,
   onOpenRoom,
-  onOpenCard,
   focus = null,
   onAll,
 }: {
   office: OfficeState;
-  boards: BoardsState;
   previews: PreviewState;
   messages: Message[];
   token: string;
   onTab: (t: OverviewTab) => void;
   onOpenRoom: (r: Room) => void;
-  onOpenCard: (root: string, id: number) => void;
   /** A repo root picked in the sidebar: only its block (and its asks) show. */
   focus?: string | null;
   onAll?: () => void;
 }) {
-  // Company mode: each room sits at the project whose card it holds (lib/sidebar.ts companyRooms).
-  const rooms = useMemo(
-    () => (office.office?.company ? companyRooms(office.office.rooms, boards.boards ?? []) : (office.office?.rooms ?? [])),
-    [office.office, boards.boards],
-  );
+  const rooms = useMemo(() => office.office?.rooms ?? [], [office.office]);
   const now = office.office?.at ?? 0;
   const rows: RosterRow[] = useMemo(
-    () => roster(rooms, boards.boards ?? [], now).map((r) => ({ ...r, modelLabel: roomModelLabel(r.room), waiting: askLine(r.room.ask) ?? r.room.waiting })),
-    [rooms, boards.boards, now],
+    () => roster(rooms, now).map((r) => ({ ...r, modelLabel: roomModelLabel(r.room), waiting: askLine(r.room.ask) ?? r.room.waiting })),
+    [rooms, now],
   );
-  // Same rule as the office: rooms stopped on the owner, plus permission hooks counting down.
+  // Same rule as the office: rooms stopped on the owner.
   const asking: AskRoom[] = useMemo(
     () =>
       rows.flatMap((n) => {
         const r = rooms.find((x) => x.key === n.key);
-        if (!r || (n.state !== "needs" && !r.permit)) return [];
+        if (!r || n.state !== "needs") return [];
         return [askRoomOf(r)];
       }),
     [rows, rooms],
   );
-  // A room in a worktree belongs to its repo's block: same board, same previews.
+  // A room in a worktree belongs to its repo's block: same previews.
   const all = useMemo(() => groupByRepo(rooms.filter((r) => r.status !== "ended")), [rooms]);
   const groups = useMemo(() => (focus ? all.filter((g) => rootKey(g.project.root) === rootKey(focus)) : all), [all, focus]);
   // Words only: session start/end and "needs you" pings are status, the roster already shows them.
@@ -103,15 +85,9 @@ export function OverviewView({
         {!office.office ? (
           <OverviewSkeleton />
         ) : groups.length === 0 ? (
-          office.office.company && focus ? (
-            <EmptyState icon={<LayoutDashboardIcon />} title="Chưa phòng nào làm dự án này" action={<Button variant="outline" onClick={() => onTab("board")}>Mở Board để giao việc</Button>}>
-              Dự án thuộc công ty: thêm card ở Board, phòng rảnh của công ty sẽ nhận card gấp nhất. Không cần mở thêm phòng.
-            </EmptyState>
-          ) : (
-            <EmptyState icon={<LayoutDashboardIcon />} title="Chưa có phòng nào đang chạy">
-              Mở team ở tab Văn phòng: mỗi dự án có phòng chạy sẽ thành một khối ở đây, gồm phòng, board, ảnh preview, card vừa chuyển và chat.
-            </EmptyState>
-          )
+          <EmptyState icon={<LayoutDashboardIcon />} title="Chưa có phòng nào đang chạy">
+            Mở một session (tab Sessions hoặc terminal): mỗi dự án có phòng chạy sẽ thành một khối ở đây, gồm phòng, ảnh preview và chat.
+          </EmptyState>
         ) : (
           <>
             {focus && all.length > 1 && (
@@ -135,7 +111,6 @@ export function OverviewView({
             <div className="grid gap-6 [grid-template-columns:repeat(auto-fit,minmax(min(100%,56rem),1fr))]">
               {groups.map((g) => {
                 const k = rootKey(g.project.root);
-                const pb = (boards.boards ?? []).find((b) => rootKey(b.root) === k || (b.filed != null && rootKey(b.filed) === k));
                 const pv = previews.data?.projects.find((p) => rootKey(p.root) === k);
                 const keys = new Set(g.rooms.map((r) => r.key));
                 const names = new Set(g.rooms.flatMap((r) => [r.name, r.session_id, r.label].filter(Boolean).map((x) => partyKey(x))));
@@ -147,8 +122,6 @@ export function OverviewView({
                     branches={[...new Set(g.rooms.filter((r) => !worktreeOf(r)).map((r) => r.project?.branch).filter(Boolean))] as string[]}
                     rows={rows.filter((r) => keys.has(r.key))}
                     rooms={g.rooms}
-                    board={pb ?? null}
-                    boardsLoaded={boards.boards != null}
                     previews={pv ?? null}
                     previewsLoaded={previews.data != null}
                     chat={thread.filter((t) => [t.session, t.from, t.to].some((x) => x != null && names.has(partyKey(x)))).slice(-5)}
@@ -156,8 +129,6 @@ export function OverviewView({
                     token={token}
                     onTab={onTab}
                     onOpenRoom={onOpenRoom}
-                    onOpenCard={(id) => onOpenCard(pb?.root ?? g.project.root, id)}
-                    onUnblock={(c) => boards.force(pb?.root ?? g.project.root, c)}
                   />
                 );
               })}
@@ -166,40 +137,6 @@ export function OverviewView({
         )}
       </div>
     </div>
-  );
-}
-
-/**
- * "Gỡ kẹt ngay" (owner 2026-10-20): shown while a room of the project waits on the owner or is stuck.
- * Brings the "Anh cần trả lời" panel into view, then renews THIS project (POST /api/auto `on` with its
- * root = `auto on --here`: a fresh lease, then `8sync ccc auto revive` brings back rooms that died).
- * Never a plain `on`: that resumed every remembered project, a parent repo's team included.
- */
-export function UnstickButton({ token, stuck, root }: { token: string; stuck: number; root: string }) {
-  const [busy, setBusy] = useState(false);
-  async function unstick() {
-    const panel = document.getElementById("ask-panel");
-    if (panel) {
-      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      panel.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
-      panel.closest("section")?.querySelector<HTMLElement>("button:not([disabled])")?.focus({ preventScroll: true });
-    }
-    setBusy(true);
-    try {
-      const st = await makeApi(token)<{ error?: string }>("/api/auto", { method: "POST", body: { action: "on", root } });
-      if (st.error) toast.error(`Chưa gỡ được: ${st.error}`);
-      else toast.success(panel ? "Đang mở lại phòng chết. Câu hỏi đang chờ anh ở khung trên." : "Đang mở lại phòng chết và đẩy team chạy tiếp.");
-    } catch (e) {
-      toast.error(`Chưa gỡ được: ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Button type="button" size="sm" disabled={busy} aria-busy={busy} onClick={() => void unstick()} title="Mở khung “Anh cần trả lời” và chạy 8sync ccc auto revive">
-      <LifeBuoyIcon aria-hidden /> Gỡ kẹt ngay
-      <span className="rounded-full bg-primary-foreground/20 px-1.5 text-[11px] tabular">{stuck}</span>
-    </Button>
   );
 }
 
@@ -216,57 +153,13 @@ function OverviewSkeleton() {
   );
 }
 
-/**
- * "N card blocked · Gỡ hết ngay": "⚡ Gỡ block ngay" on every Blocked card of the board, one after
- * the other (same route as the card button), then one toast with what went through.
- */
-export function UnblockAll({ cards, onUnblock }: { cards: Card[]; onUnblock: (c: Card) => Promise<unknown> }) {
-  const [busy, setBusy] = useState<number | null>(null);
-  if (!cards.length) return null;
-  async function all() {
-    const done: number[] = [];
-    const failed: string[] = [];
-    for (const c of cards) {
-      setBusy(c.id);
-      try {
-        await onUnblock(c);
-        done.push(c.id);
-      } catch (e) {
-        failed.push(`#${c.id}: ${(e as Error).message}`);
-      }
-    }
-    setBusy(null);
-    if (done.length) toast.success(`${done.map((id) => `#${id}`).join(" ")} ra khỏi Blocked, P0 — lead xử lý ngay`);
-    if (failed.length) toast.error(`Chưa gỡ được ${failed.join(" · ")}`);
-  }
-  return (
-    <p className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-      <span className="font-medium text-destructive tabular">{cards.length} card blocked</span>
-      <span aria-hidden className="text-muted-foreground">·</span>
-      <button
-        type="button"
-        disabled={busy != null}
-        aria-busy={busy != null}
-        onClick={() => void all()}
-        title="Mỗi card: về Backlog kèm ghi chú cho lead, rồi P0 (8sync ccc auto move … backlog --note, auto prio … P0)"
-        className="inline-flex items-center gap-1 rounded-sm font-semibold underline underline-offset-4 outline-none hover:no-underline focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-60"
-      >
-        <ZapIcon aria-hidden className="size-3 text-st-needs" />
-        {busy != null ? `Đang gỡ #${busy}…` : "Gỡ hết ngay"}
-      </button>
-    </p>
-  );
-}
-
-/** One project: a header line, then five panels on a fluid grid (5 across at ~2000 px, stacking below). */
+/** One project: a header line, then its panels on a fluid grid (side by side when wide, stacking below). */
 function ProjectBlock({
   name,
   root,
   branches,
   rows,
   rooms,
-  board,
-  boardsLoaded,
   previews,
   previewsLoaded,
   chat,
@@ -274,16 +167,12 @@ function ProjectBlock({
   token,
   onTab,
   onOpenRoom,
-  onOpenCard,
-  onUnblock,
 }: {
   name: string;
   root: string;
   branches: string[];
   rows: RosterRow[];
   rooms: Room[];
-  board: ProjectBoard | null;
-  boardsLoaded: boolean;
   previews: ProjectPreviews | null;
   previewsLoaded: boolean;
   chat: ThreadItem[];
@@ -291,12 +180,8 @@ function ProjectBlock({
   token: string;
   onTab: (t: OverviewTab) => void;
   onOpenRoom: (r: Room) => void;
-  onOpenCard: (id: number) => void;
-  /** "Gỡ block ngay" on one Blocked card of this board (useBoards.force). */
-  onUnblock: (c: Card) => Promise<unknown>;
 }) {
   const id = `ov-${root.replace(/[^\w-]/g, "_")}`;
-  const stuck = rows.filter((n) => n.state === "needs" || n.state === "blocked").length;
   return (
     <section aria-labelledby={id} className="rounded-xl border bg-card">
       <header className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-2.5">
@@ -311,10 +196,7 @@ function ProjectBlock({
         ))}
         <span className="text-xs text-muted-foreground tabular">{rows.length ? rosterSummary(rows) : `${rooms.length} phòng`}</span>
         <span className="ml-auto flex flex-wrap items-center gap-2 self-center">
-          {stuck > 0 && <UnstickButton token={token} stuck={stuck} root={root} />}
           <PlayButton root={root} name={name} token={token} />
-          {/* This project's speed buttons right here (owner 2026-10-22: "các nút tăng tốc để trong văn phòng không ở ngoài tổng quan dự án"): Ship card approved; Ship tốc độ cao, Sấm Sét and the team actions behind Thao tác team. */}
-          <TeamControls root={root} name={name} token={token} boost={boostOn(rooms)} />
         </span>
       </header>
       {/* Hairlines between panels: each panel draws its right and bottom edge, the outer ones are clipped. */}
@@ -349,7 +231,6 @@ function ProjectBlock({
                       <span className="min-w-0">
                         <StateTag n={n} />
                         <span className="block truncate text-[11px] text-muted-foreground" title={n.waiting ?? n.last?.text ?? undefined}>
-                          {n.card ? `#${n.card.id} · ` : ""}
                           {n.state === "needs" ? (n.waiting ?? "chờ anh") : (n.last?.text ?? "chưa có hoạt động")}
                         </span>
                       </span>
@@ -358,19 +239,6 @@ function ProjectBlock({
                 );
               })}
             </ul>
-          )}
-        </Panel>
-
-        <Panel title="Board" action="Board" onAction={() => onTab("board")}>
-          {!boardsLoaded ? (
-            <Skeleton className="h-24 w-full" />
-          ) : !board?.board ? (
-            <Quiet>{board?.error ?? "Chưa đọc được board của dự án này."}</Quiet>
-          ) : (
-            <>
-              <UnblockAll cards={board.board.lanes.blocked} onUnblock={onUnblock} />
-              <MiniBoard b={board.board} onOpenCard={onOpenCard} />
-            </>
           )}
         </Panel>
 
@@ -386,7 +254,6 @@ function ProjectBlock({
                   <button type="button" onClick={() => onTab("preview")} className="block w-full rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-label={`${fileName(i.rel)}, mở tab Preview`}>
                     <PreviewImage id={i.id} token={token} alt="" className="aspect-[16/10] w-full rounded-md border" />
                     <span className="mt-0.5 block truncate text-[11px] text-muted-foreground tabular">
-                      {i.card != null ? `#${i.card} · ` : ""}
                       {agoShort(i.at, now)}
                     </span>
                   </button>
@@ -396,10 +263,6 @@ function ProjectBlock({
           )}
         </Panel>
         )}
-
-        <Panel title="Vừa chuyển" action="Flow" onAction={() => onTab("flow")}>
-          {!boardsLoaded ? <Skeleton className="h-24 w-full" /> : !board?.board ? <Quiet>Chưa có board.</Quiet> : <MiniFlow b={board.board} now={now} />}
-        </Panel>
 
         <Panel title="Chat" action="Chat tổng" onAction={() => onTab("group")}>
           {chat.length === 0 ? (
@@ -443,88 +306,3 @@ function Panel({ title, action, onAction, children }: { title: string; action: s
 }
 
 const Quiet = ({ children }: { children: ReactNode }) => <p className="text-xs text-pretty text-muted-foreground">{children}</p>;
-
-/** Lane counts as one strip, then the first cards of each busy lane. */
-function MiniBoard({ b, onOpenCard }: { b: Board; onOpenCard: (id: number) => void }) {
-  const busy = topCards(b, 2);
-  const done = b.closed.filter((c) => c.state === "done").length;
-  return (
-    <div className="space-y-2.5">
-      <ol className="grid grid-cols-7 gap-1" aria-label="Số card mỗi cột">
-        {LANES.map((l) => {
-          const n = b.lanes[l.key].length;
-          return (
-            <li key={l.key} style={laneTone(l.key)} className="min-w-0 text-center" title={`${l.label}: ${n} card`}>
-              <span className={cn("block h-1 rounded-full", n ? "bg-(--tone)" : "bg-muted")} />
-              <span className={cn("block text-[13px] font-semibold tabular", n ? "text-foreground" : "text-muted-foreground/60")}>{n}</span>
-              <span className="block truncate text-[10px] text-muted-foreground">{l.label}</span>
-            </li>
-          );
-        })}
-      </ol>
-      {busy.length === 0 ? (
-        <Quiet>Hết card mở{done ? ` · ${done} đã xong gần đây` : ""}.</Quiet>
-      ) : (
-        <ul className="space-y-1.5">
-          {busy.flatMap((g) =>
-            g.cards.map((c) => (
-              <li key={c.id}>
-                <button
-                  type="button"
-                  onClick={() => onOpenCard(c.id)}
-                  className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left text-[12px] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60"
-                >
-                  <span style={laneTone(g.lane)} className={cn("w-16 shrink-0 truncate text-[11px] font-medium", TONE_INK)}>
-                    {LANE_VI[g.lane]}
-                  </span>
-                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground">#{c.id}</span>
-                  <span className="min-w-0 truncate">{cardParts(c.text).title}</span>
-                  {c.prio != null && c.prio < 2 && (
-                    <span className={cn("ml-auto shrink-0 rounded px-1 font-mono text-[10px] font-semibold", c.prio === 0 ? "bg-destructive/12 text-destructive" : "bg-st-needs/18 text-[color-mix(in_oklch,var(--st-needs),black_38%)] dark:text-st-needs")}>
-                      P{c.prio}
-                    </span>
-                  )}
-                </button>
-              </li>
-            )),
-          )}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/** The latest lane change of each card: from → to, who, when. */
-function MiniFlow({ b, now }: { b: Board; now: number }) {
-  const moves = recentMoves(b, 5);
-  if (!moves.length) return <Quiet>Chưa card nào chuyển cột.</Quiet>;
-  return (
-    <ul className="space-y-1.5">
-      {moves.map((m) => (
-        <li key={`${m.id}-${m.at}`} className="min-w-0 text-[12px] leading-snug">
-          <span className="flex min-w-0 items-baseline gap-1">
-            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">#{m.id}</span>
-            <span className="truncate">{cardParts(m.text).title}</span>
-          </span>
-          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <LaneDot k={m.from} />
-            <ArrowRightIcon aria-hidden className="size-3" />
-            <LaneDot k={m.to} />
-            {m.room && <span className="truncate">· {m.room}</span>}
-            <span className="shrink-0 tabular">· {agoShort(m.at, now)}</span>
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function LaneDot({ k }: { k: (typeof LANES)[number]["key"] | "done" | "dropped" }) {
-  if (k === "done" || k === "dropped") return <span className={cn("font-medium", k === "done" ? "text-st-running" : "")}>{k === "done" ? "Xong" : "Bỏ"}</span>;
-  return (
-    <span style={laneTone(k)} className={cn("inline-flex items-center gap-0.5 font-medium", TONE_INK)}>
-      <span aria-hidden className="size-1.5 rounded-full bg-(--tone)" />
-      {LANE_VI[k]}
-    </span>
-  );
-}

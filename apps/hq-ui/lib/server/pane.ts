@@ -47,3 +47,13 @@ export function detectPane(raw: string): PaneState {
   const hit = DIALOGS.find((d) => d.re.test(tail) && (!d.menu || menu));
   return { blocked: BLOCKED_BY_ORG.test(bannerTail), waiting: hit?.label ?? null };
 }
+
+/** The last lines of a CLI's own report, without colour codes. */
+export function tail(text: string, lines = 24): string {
+  return stripAnsi(text)
+    .split(/\r?\n/)
+    .filter((l) => l.trim() !== "")
+    .slice(-lines)
+    .join("\n")
+    .slice(0, 4000);
+}

@@ -1,39 +1,17 @@
 "use client";
 
-import {
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  ExternalLinkIcon,
-  GitBranchIcon,
-  GitCommitHorizontalIcon,
-  GitPullRequestIcon,
-  ImageIcon,
-  ImageOffIcon,
-  KanbanSquareIcon,
-  MessageSquarePlusIcon,
-  RefreshCwIcon,
-  UserIcon,
-  XIcon,
-} from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { ChevronLeftIcon, ChevronRightIcon, GitBranchIcon, GitCommitHorizontalIcon, ImageIcon, ImageOffIcon, MessageSquarePlusIcon, RefreshCwIcon, XIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cardParts, prRef } from "@/lib/card-tags";
-import { LANES, type Board, type LaneKey, type Step } from "@/lib/lanes";
 import { agoShort, agoVi } from "@/lib/now";
-import { demoLinks, fileName, isVideo, lastActivity, previewSections, rootKey, viewableRow, type PreviewItem, type ProjectPreviews } from "@/lib/preview";
+import { fileName, isVideo, type PreviewItem, type ProjectPreviews } from "@/lib/preview";
 import { entryFor, useFollowRepo } from "@/lib/follow-repo";
-import type { ProjectBoard } from "@/lib/server/board";
-import { boardCard, eyeNote } from "@/lib/eye";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
 import { EmptyState, ErrorNote } from "./bits";
-import { LANE_VI, TONE_INK, laneTone } from "./card-sheet";
 import { AskImage } from "./ask-image";
-import { Switch } from "./machine-view";
 import { PlayButton } from "./play-view";
 import { makeApi, type Api } from "./use-hq";
 import type { Room } from "./use-office";
@@ -41,75 +19,34 @@ import { previewFileUrl, useAuthedImage, useNearView } from "./use-poll";
 
 export type PreviewState = { data: { projects: ProjectPreviews[] } | null; error: string | null; at: number; reload: () => void };
 
-/** Done cards shown before "Xem thêm". */
-const DONE_FIRST = 6;
-/** Thumbs per card row; the lightbox walks all of the card's images. */
-const ROW_SHOTS = 3;
-
-/** The board this project's cards are filed on (a worktree shares its repo's), if read. */
-function boardOf(boards: ProjectBoard[] | null, root: string): Board | null {
-  const k = rootKey(root);
-  return (boards ?? []).find((b) => b.board && (rootKey(b.root) === k || (b.filed && rootKey(b.filed) === k)))?.board ?? null;
-}
-
-/** What the board says about a card: its title and lane (or done/dropped). */
-export type CardInfo = { title: string; lane: LaneKey | "done" | "dropped" };
-
-/** What the board says about card #id in this project, if known. */
-export function cardInfo(boards: ProjectBoard[] | null, root: string, id: number): CardInfo | null {
-  const b = boardOf(boards, root);
-  if (!b) return null;
-  for (const l of LANES) {
-    const c = b.lanes[l.key].find((x) => x.id === id);
-    if (c) return { title: cardParts(c.text).title, lane: l.key };
-  }
-  const c = b.closed.find((x) => x.id === id);
-  return c ? { title: cardParts(c.text).title, lane: c.state } : null;
-}
-
 /**
- * Where the project really is: the cards being worked on with their newest shots, the cards just
- * finished with their evidence, then every other image. Times are commit times (a checkout never
- * moves an old shot to the top); the lightbox walks one card's images.
+ * Where the project really is: every screenshot and demo video the rooms saved, newest first. Times
+ * are commit times (a checkout never moves an old shot to the top); the lightbox walks the list.
  */
 export function PreviewView({
   state,
-  boards,
   token,
   rooms,
-  onOpenCard,
   repo = null,
 }: {
   state: PreviewState;
-  boards: ProjectBoard[] | null;
   token: string;
   /** Office rooms: who "Hỏi về ảnh này" can send to. */
   rooms: Room[];
-  onOpenCard: (root: string, id: number) => void;
   /** The repo picked in the sidebar: the picker follows it. */
   repo?: string | null;
 }) {
   const [pick, setPick] = useState<string | null>(repo);
   useFollowRepo(repo, setPick);
-  /** The open image and the list prev/next walks: one card's images, or "other". */
-  const [view, setView] = useState<{ scope: number | "other"; id: string } | null>(null);
+  /** The open image. */
+  const [view, setView] = useState<string | null>(null);
   const [ask, setAsk] = useState(false);
-  const [allDone, setAllDone] = useState(false);
-  const [otherOpen, setOtherOpen] = useState<boolean | null>(null);
   const api = useMemo(() => makeApi(token), [token]);
   const list = useMemo(() => [...(state.data?.projects ?? [])].sort((a, b) => (b.items[0]?.at ?? 0) - (a.items[0]?.at ?? 0)), [state.data]);
   const cur = (pick ? entryFor(list, pick) : undefined) ?? list[0];
   // The poll clock: relative times move with each answer, never with a render.
   const now = state.at;
-  const board = cur ? boardOf(boards, cur.root) : null;
-  // Owner 2026-10-22: "các task không có ảnh không có gì xem được không nên hiển thị, ưu tiên xem được
-  // kết quả": a card shows only with an image, a video or a real demo link.
-  const sec = useMemo(() => {
-    const raw = previewSections(cur?.items ?? [], board, now);
-    const working = raw.working.map((r) => ({ ...r, links: demoLinks([r.card.note?.text, ...(r.card.history ?? []).map((h) => h.text)]) })).filter((r) => viewableRow(r.items, r.links));
-    const done = raw.done.map((r) => ({ ...r, links: demoLinks([...(r.card.history ?? []).map((h) => h.text), r.card.evidence]) })).filter((r) => viewableRow(r.items, r.links));
-    return { ...raw, working, done };
-  }, [cur, board, now]);
+  const items = useMemo(() => [...(cur?.items ?? [])].sort((a, b) => b.at - a.at), [cur]);
 
   if (state.error && !state.data) {
     return (
@@ -118,14 +55,6 @@ export function PreviewView({
       </div>
     );
   }
-
-  const viewItems =
-    view == null ? [] : view.scope === "other" ? sec.other : [...sec.working, ...sec.done].find((r) => r.card.id === view.scope)?.items ?? cur?.items.filter((i) => i.card === view.scope) ?? [];
-  const open = (scope: number | "other", id: string) => setView({ scope, id });
-  const doneShown = allDone ? sec.done : sec.done.slice(0, DONE_FIRST);
-  // Without a board every image is "other": show them open.
-  const showOther = otherOpen ?? !board;
-  const empty = !!cur && cur.items.length === 0 && sec.working.length === 0 && sec.done.length === 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -150,35 +79,18 @@ export function PreviewView({
           <Skeleton className="h-4 w-32" />
         )}
         <div className="ml-auto flex items-center gap-2">
-          {cur && <EyeToggle key={cur.root} root={cur.root} since={cur.eye ?? null} api={api} onChanged={state.reload} />}
           {cur && <PlayButton key={cur.root} root={cur.root} name={cur.name} token={token} />}
           <Button type="button" variant="ghost" size="icon-sm" onClick={state.reload} aria-label="Tải lại ảnh">
             <RefreshCwIcon />
           </Button>
         </div>
-        {cur && (
+        {cur?.main && (
           <p className="flex w-full min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground tabular">
-            {cur.main && (
-              <span className="inline-flex items-center gap-1" title={`${cur.main.ref} · ${cur.main.subject} · ${agoVi(cur.main.at, now)}`}>
-                <GitCommitHorizontalIcon aria-hidden className="size-3.5" />
-                main <code className="font-mono text-foreground">{cur.main.sha.slice(0, 7)}</code>
-                <span>{agoShort(cur.main.at, now)}</span>
-              </span>
-            )}
-            {cur.main && <span aria-hidden>·</span>}
-            {board ? (
-              <>
-                <span>
-                  <span className="font-medium text-foreground">{sec.working.length}</span> card đang chạy
-                </span>
-                <span aria-hidden>·</span>
-                <span>
-                  <span className="font-medium text-foreground">{sec.done24h}</span> xong 24h
-                </span>
-              </>
-            ) : (
-              <span>{boards ? "chưa đọc được board" : "đang đọc board…"}</span>
-            )}
+            <span className="inline-flex items-center gap-1" title={`${cur.main.ref} · ${cur.main.subject} · ${agoVi(cur.main.at, now)}`}>
+              <GitCommitHorizontalIcon aria-hidden className="size-3.5" />
+              main <code className="font-mono text-foreground">{cur.main.sha.slice(0, 7)}</code>
+              <span>{agoShort(cur.main.at, now)}</span>
+            </span>
           </p>
         )}
       </div>
@@ -188,265 +100,34 @@ export function PreviewView({
           <RowsSkeleton />
         ) : !cur ? (
           <PreviewEmpty title="Chưa có phòng nào đang chạy" />
-        ) : empty ? (
+        ) : items.length === 0 ? (
           <PreviewEmpty title={`${cur.name} chưa có ảnh chụp nào`} />
         ) : (
-          <div className="space-y-7 px-4 py-4 sm:px-6">
-            {board && (
-              <Section id="pv-work" title="Đang làm" count={sec.working.length}>
-                {sec.working.length === 0 ? (
-                  <p className="py-2 text-sm text-muted-foreground">Chưa card nào đang làm có ảnh, video hay link demo.</p>
-                ) : (
-                  <ul className="divide-y">
-                    {sec.working.map(({ card: c, items, links }) => {
-                      const pr = c.pr ? prRef(c.pr) : null;
-                      return (
-                        <CardRow
-                          key={c.id}
-                          id={c.id}
-                          title={cardParts(c.text).title}
-                          onTitle={() => onOpenCard(cur.root, c.id)}
-                          items={items}
-                          links={links}
-                          token={token}
-                          now={now}
-                          onOpen={(id) => open(c.id, id)}
-                          meta={
-                            <>
-                              <LaneChip lane={c.lane} />
-                              {c.claim && (
-                                <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-px font-medium text-foreground" title={`${c.claim.room} nhận card ${agoVi(c.claim.at, now)}`}>
-                                  <UserIcon aria-hidden className="size-3" />
-                                  {c.claim.room}
-                                </span>
-                              )}
-                              {pr &&
-                                (pr.href ? (
-                                  <a href={pr.href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-foreground underline-offset-2 hover:underline">
-                                    <GitPullRequestIcon aria-hidden className="size-3" />
-                                    {pr.text}
-                                  </a>
-                                ) : (
-                                  <span className="inline-flex items-center gap-0.5 text-foreground">
-                                    <GitPullRequestIcon aria-hidden className="size-3" />
-                                    {pr.text}
-                                  </span>
-                                ))}
-                              <span className="tabular" title={`hoạt động cuối ${agoVi(lastActivity(c), now)}`}>
-                                {agoShort(lastActivity(c), now)}
-                              </span>
-                            </>
-                          }
-                          note={c.note ? `${c.note.room ? `${c.note.room}: ` : ""}${c.note.text}` : null}
-                        />
-                      );
-                    })}
-                  </ul>
-                )}
-              </Section>
-            )}
-
-            {board && sec.done.length > 0 && (
-              <Section id="pv-done" title="Xong gần đây" count={sec.done.length}>
-                <ul className="divide-y">
-                  {doneShown.map(({ card: c, items, links }) => (
-                    <CardRow
-                      key={c.id}
-                      id={c.id}
-                      title={cardParts(c.text).title}
-                      items={items}
-                      links={links}
-                      token={token}
-                      now={now}
-                      onOpen={(id) => open(c.id, id)}
-                      meta={
-                        <>
-                          <LaneChip lane="done" />
-                          {c.at != null && (
-                            <span className="tabular" title={agoVi(c.at, now)}>
-                              xong {agoShort(c.at, now)}
-                            </span>
-                          )}
-                          {c.evidence && <span className="min-w-0 truncate font-mono">{c.evidence}</span>}
-                        </>
-                      }
-                      note={null}
-                    />
-                  ))}
-                </ul>
-                {sec.done.length > DONE_FIRST && (
-                  <Button type="button" variant="ghost" size="sm" className="mt-1 max-sm:h-11" onClick={() => setAllDone((v) => !v)} aria-expanded={allDone}>
-                    {allDone ? "Thu gọn" : `Xem thêm ${sec.done.length - DONE_FIRST} card`}
-                  </Button>
-                )}
-              </Section>
-            )}
-
-            {sec.other.length > 0 && (
-              <section aria-labelledby="pv-other" className="space-y-2.5">
-                <h2 id="pv-other" className="text-sm">
-                  <button
-                    type="button"
-                    onClick={() => setOtherOpen(!showOther)}
-                    aria-expanded={showOther}
-                    aria-controls="pv-other-list"
-                    className="-mx-1 inline-flex min-h-8 items-center gap-1.5 rounded-md px-1 font-semibold outline-none hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11"
-                  >
-                    <ChevronDownIcon aria-hidden className={cn("size-4 transition-transform duration-150 motion-reduce:transition-none", !showOther && "-rotate-90")} />
-                    Khác
-                    <span className="font-normal text-muted-foreground tabular">{sec.other.length} ảnh</span>
-                  </button>
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">không gắn card, hoặc card không ở hai mục trên</span>
-                </h2>
-                {showOther && (
-                  <ul id="pv-other-list" className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,11rem),1fr))] gap-3">
-                    {sec.other.map((i) => (
-                      <li key={i.id}>
-                        <Thumb item={i} token={token} now={now} onOpen={() => open("other", i.id)} caption />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            )}
-          </div>
+          <ul aria-label="Ảnh, mới nhất trước" className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,11rem),1fr))] gap-3 px-4 py-4 sm:px-6">
+            {items.map((i) => (
+              <li key={i.id}>
+                <Thumb item={i} token={token} now={now} onOpen={() => setView(i.id)} />
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
       <Viewer
-        items={viewItems}
-        id={view?.id ?? null}
+        items={items}
+        id={view}
         token={token}
         now={now}
         onId={(id) => {
-          setView(id && view ? { scope: view.scope, id } : null);
+          setView(id);
           if (!id) setAsk(false);
         }}
         ask={ask}
         onAsk={setAsk}
         api={api}
         rooms={rooms}
-        boards={boards}
-        cardInfo={(id) => (cur ? cardInfo(boards, cur.root, id) : null)}
-        onOpenCard={(id) => {
-          if (!cur) return;
-          setView(null);
-          setAsk(false);
-          onOpenCard(cur.root, id);
-        }}
       />
     </div>
-  );
-}
-
-function Section({ id, title, count, children }: { id: string; title: string; count: number; children: ReactNode }) {
-  return (
-    <section aria-labelledby={id}>
-      <h2 id={id} className="flex items-baseline gap-2 text-sm font-semibold">
-        {title}
-        <span className="text-xs font-normal text-muted-foreground tabular">{count}</span>
-      </h2>
-      {children}
-    </section>
-  );
-}
-
-/** One card: what it is and where it stands on the left, its newest shots on the right (below on a phone). */
-function CardRow({
-  id,
-  title,
-  onTitle,
-  meta,
-  note,
-  items,
-  links = [],
-  token,
-  now,
-  onOpen,
-}: {
-  id: number;
-  title: string;
-  onTitle?: () => void;
-  meta: ReactNode;
-  note: string | null;
-  items: PreviewItem[];
-  /** Real demo links from the card's notes (lib/preview.ts demoLinks). */
-  links?: string[];
-  token: string;
-  now: number;
-  onOpen: (id: string) => void;
-}) {
-  const shots = items.slice(0, ROW_SHOTS);
-  const more = items.length - shots.length;
-  const label = (
-    <>
-      <span className="mr-1 font-mono text-[11px] font-normal text-muted-foreground">#{id}</span>
-      {title}
-    </>
-  );
-  return (
-    <li className="grid gap-x-5 gap-y-2.5 py-3 sm:grid-cols-[minmax(0,1fr)_25.5rem]">
-      <div className="min-w-0 space-y-1.5">
-        {onTitle ? (
-          <button
-            type="button"
-            onClick={onTitle}
-            aria-haspopup="dialog"
-            title="Mở card"
-            className="line-clamp-2 rounded-sm text-left text-[13px] leading-snug font-medium text-pretty outline-none hover:underline hover:underline-offset-2 focus-visible:ring-2 focus-visible:ring-ring/60"
-          >
-            {label}
-          </button>
-        ) : (
-          <p className="line-clamp-2 text-[13px] leading-snug font-medium text-pretty">{label}</p>
-        )}
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">{meta}</div>
-        {note && <p className="line-clamp-1 text-[11px] text-muted-foreground">{note}</p>}
-        {links.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {links.map((u) => (
-              <a
-                key={u}
-                href={u}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium hover:bg-muted"
-                title={u}
-              >
-                <ExternalLinkIcon aria-hidden className="size-3 shrink-0" />
-                <span className="truncate">Mở demo · {linkHost(u)}</span>
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
-      {shots.length ? (
-        <ul className="grid grid-cols-3 gap-2" aria-label={`Ảnh của card #${id}, mới nhất trước`}>
-          {shots.map((i, k) => (
-            <li key={i.id} className="relative">
-              <Thumb item={i} token={token} now={now} onOpen={() => onOpen(i.id)} />
-              {k === shots.length - 1 && more > 0 && (
-                <span className="pointer-events-none absolute top-1 right-1 rounded-md bg-background/90 px-1.5 py-px text-[11px] font-medium tabular shadow-sm">+{more}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <>
-          <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground sm:hidden">
-            <ImageIcon aria-hidden className="size-3.5" />
-            chưa có ảnh
-          </p>
-          {/* Same slot as a first thumb: the column stays aligned, the state reads at a glance. */}
-          <div className="grid grid-cols-3 gap-2 max-sm:hidden">
-            <p className="flex aspect-[16/10] flex-col items-center justify-center gap-1 rounded-md border border-dashed text-[11px] text-muted-foreground">
-              <ImageIcon aria-hidden className="size-3.5" />
-              chưa có ảnh
-            </p>
-          </div>
-        </>
-      )}
-    </li>
   );
 }
 
@@ -460,28 +141,14 @@ const fullPath = (i: PreviewItem) => {
 /** "commit 3 giờ trước" / "tệp chưa commit, 2 phút trước": which clock `at` is. */
 const timeLabel = (i: PreviewItem, now: number) => (i.timeFrom === "commit" ? `commit ${agoVi(i.at, now)}` : `tệp chưa commit, ${agoVi(i.at, now)}`);
 
-const isOpenLane = (l: LaneKey | "done" | "dropped"): l is LaneKey => l !== "done" && l !== "dropped";
-
-export function LaneChip({ lane }: { lane: LaneKey | "done" | "dropped" }) {
-  if (lane === "done" || lane === "dropped") {
-    return <span className="rounded-md bg-muted px-1.5 py-px text-[11px] font-medium text-muted-foreground">{lane === "done" ? "Xong" : "Bỏ"}</span>;
-  }
-  return (
-    <span style={laneTone(lane)} className={cn("inline-flex items-center gap-1 rounded-md bg-[color-mix(in_oklch,var(--tone)_14%,transparent)] px-1.5 py-px text-[11px] font-medium", TONE_INK)}>
-      <span aria-hidden className="size-1.5 rounded-full bg-(--tone)" />
-      {LANE_VI[lane]}
-    </span>
-  );
-}
-
 function PreviewEmpty({ title }: { title: string }) {
   return (
     <EmptyState icon={<ImageIcon />} title={title} className="max-w-md">
       <p>
-        Phòng qa/ui lưu ảnh chụp vào <code className="font-mono text-foreground">qa/evidence/card-&lt;số&gt;-&lt;mô tả&gt;.png</code>, ảnh hiện ở đây theo card.
+        Phòng lưu ảnh chụp vào <code className="font-mono text-foreground">qa/evidence/&lt;mô tả&gt;.png</code>, ảnh hiện ở đây, mới nhất trước.
       </p>
       <p className="mt-2">Chụp một trang:</p>
-      <code className="mt-1 block rounded-md bg-muted px-2 py-1.5 text-left font-mono text-xs break-all text-foreground">8sync shot &lt;url&gt; -o qa/evidence/card-7-home.png</code>
+      <code className="mt-1 block rounded-md bg-muted px-2 py-1.5 text-left font-mono text-xs break-all text-foreground">8sync shot &lt;url&gt; -o qa/evidence/home.png</code>
       <p className="mt-2 text-xs">
         HQ cũng đọc <code className="font-mono">evidence/</code>, <code className="font-mono">screenshots/</code>, <code className="font-mono">su-code/shots/</code>,{" "}
         <code className="font-mono">docs/screenshots/</code> ở gốc dự án, mỗi worktree và nhánh main.
@@ -537,8 +204,8 @@ export function PreviewImage({ id, token, alt, className, eager, video = false }
   );
 }
 
-/** A fixed 16:10 box (no layout shift while it loads), its true time under it; `caption` adds the name and card. */
-function Thumb({ item, token, now, onOpen, caption }: { item: PreviewItem; token: string; now: number; onOpen: () => void; caption?: boolean }) {
+/** A fixed 16:10 box (no layout shift while it loads), its name and true time under it. */
+function Thumb({ item, token, now, onOpen }: { item: PreviewItem; token: string; now: number; onOpen: () => void }) {
   const name = fileName(item.rel);
   return (
     <button
@@ -556,9 +223,8 @@ function Thumb({ item, token, now, onOpen, caption }: { item: PreviewItem; token
         video={isVideo(item.rel)}
         className="aspect-[16/10] w-full rounded-md border transition-[border-color] duration-150 group-hover:border-foreground/25 motion-reduce:transition-none"
       />
-      {caption && <span className="mt-1.5 block truncate text-[13px] font-medium">{name}</span>}
+      <span className="mt-1.5 block truncate text-[13px] font-medium">{name}</span>
       <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
-        {caption && item.card != null && <span className="shrink-0 font-mono">#{item.card}</span>}
         <span className="shrink-0 tabular">{agoShort(item.at, now)}</span>
         {item.timeFrom === "file" && <span className="truncate">chưa commit</span>}
       </span>
@@ -605,7 +271,7 @@ function useSwipe(onMove: (d: number) => void, onClose: () => void) {
   };
 }
 
-/** Full-size view of one card's images: prev/next (buttons, ← →, swipe), name, card, true time, source, "Hỏi về ảnh này". */
+/** Full-size view of the images: prev/next (buttons, ← →, swipe), name, true time, source, "Hỏi về ảnh này". */
 function Viewer({
   items,
   id,
@@ -616,9 +282,6 @@ function Viewer({
   onAsk,
   api,
   rooms,
-  boards,
-  cardInfo: infoOf,
-  onOpenCard,
 }: {
   items: PreviewItem[];
   id: string | null;
@@ -630,9 +293,6 @@ function Viewer({
   onAsk: (on: boolean) => void;
   api: Api;
   rooms: Room[];
-  boards: ProjectBoard[] | null;
-  cardInfo: (id: number) => CardInfo | null;
-  onOpenCard: (id: number) => void;
 }) {
   const i = id ? items.findIndex((x) => x.id === id) : -1;
   const item = i >= 0 ? items[i] : null;
@@ -654,10 +314,6 @@ function Viewer({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
-  const info = item?.card != null ? infoOf(item.card) : null;
-  const canOpen = !!info && isOpenLane(info.lane);
-  // The eye room's latest `[soi ảnh]` note on this card, from the board HQ already reads.
-  const note = item?.card != null ? eyeNote(boardCard(boardOf(boards, item.root), item.card)?.card) : null;
   return (
     <Dialog open={item != null} onOpenChange={(o) => !o && onId(null)}>
       <DialogContent
@@ -680,7 +336,7 @@ function Viewer({
             <DialogDescription asChild>
               <code className="min-w-0 font-mono text-xs break-all text-muted-foreground">{fullPath(item)}</code>
             </DialogDescription>
-            <AskImage key={item.id} item={item} path={fullPath(item)} token={token} api={api} rooms={rooms} boards={boards} onDone={() => onAsk(false)} />
+            <AskImage key={item.id} item={item} path={fullPath(item)} token={token} api={api} rooms={rooms} onDone={() => onAsk(false)} />
           </>
         )}
         {item && !ask && (
@@ -691,12 +347,6 @@ function Viewer({
                 {items.length > 1 && (
                   <span className="tabular">
                     {i + 1}/{items.length}
-                  </span>
-                )}
-                {item.card != null && (
-                  <span className="min-w-0 truncate">
-                    <span className="font-mono">#{item.card}</span>
-                    {info && <span className="text-foreground"> {info.title}</span>}
                   </span>
                 )}
                 <span className="tabular" title={new Date(item.at).toLocaleString()}>
@@ -719,15 +369,9 @@ function Viewer({
               )}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-              {note && <EyeNoteBox step={note} now={now} />}
               <DialogDescription asChild>
                 <code className="min-w-0 flex-1 font-mono text-xs break-all text-muted-foreground max-sm:basis-full">{fullPath(item)}</code>
               </DialogDescription>
-              {item.card != null && (
-                <Button type="button" size="sm" variant="outline" className="max-sm:h-11" onClick={() => onOpenCard(item.card!)} disabled={!canOpen} title={canOpen ? undefined : info ? "Card đã đóng" : "Card không còn trên board"}>
-                  <KanbanSquareIcon /> Mở card #{item.card}
-                </Button>
-              )}
               <Button type="button" size="sm" className="max-sm:h-11" onClick={() => onAsk(true)}>
                 <MessageSquarePlusIcon /> Hỏi về ảnh này
               </Button>
@@ -737,58 +381,4 @@ function Viewer({
       </DialogContent>
     </Dialog>
   );
-}
-
-/** The eye room's `[soi ảnh]` note on the open image's card: who, when, the note itself. */
-export function EyeNoteBox({ step, now }: { step: Step; now: number }) {
-  return (
-    <p role="note" aria-label="Nhận xét soi ảnh" className="max-h-28 basis-full overflow-y-auto rounded-md bg-muted/60 px-2.5 py-1.5 text-xs leading-snug break-words whitespace-pre-wrap">
-      <span className="text-muted-foreground">
-        {step.room ?? "owner"} · <span className="tabular">{agoShort(step.at, now)}</span> ·{" "}
-      </span>
-      {step.text}
-    </p>
-  );
-}
-
-/**
- * "Tự soi ảnh" for this project: on adds the `eye` room to the running team (`auto up --add eye`),
- * which reviews each card's new screenshots; off stops that room only. `since`: when it went on.
- */
-function EyeToggle({ root, since, api, onChanged }: { root: string; since: number | null; api: Api; onChanged: () => void }) {
-  // The state asked for, while the poll still shows the `since` it was asked from.
-  const [want, setWant] = useState<{ on: boolean; from: number | null } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const on = want && want.from === since ? want.on : since != null;
-
-  async function flip(next: boolean) {
-    setBusy(true);
-    setWant({ on: next, from: since });
-    try {
-      await api("/api/preview/eye", { method: "POST", body: { root, on: next } });
-      toast.success(next ? "Đã bật tự soi ảnh" : "Đã tắt tự soi ảnh", { description: next ? "Phòng eye soi ảnh mới của card đang mở, ghi note [soi ảnh] và báo lead khi lệch AC." : "Đã dừng riêng phòng eye; các phòng khác vẫn chạy." });
-      onChanged();
-    } catch (e) {
-      setWant(null);
-      toast.error(next ? "Chưa bật được tự soi ảnh" : "Chưa tắt được tự soi ảnh", { description: (e as Error).message });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1 text-xs" title="Phòng eye soi ảnh mới của card đang mở so với AC và ghi note [soi ảnh]">
-      <span className={cn(on ? "text-foreground" : "text-muted-foreground")}>Tự soi ảnh: {on ? "bật" : "tắt"}</span>
-      <Switch on={on} busy={busy} label="Tự soi ảnh" onChange={(v) => void flip(v)} />
-    </span>
-  );
-}
-
-/** "zus-landing.vercel.app" from a URL, for the demo button. */
-function linkHost(u: string): string {
-  try {
-    return new URL(u).host;
-  } catch {
-    return u;
-  }
 }

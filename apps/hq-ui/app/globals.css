@@ -19,8 +19,6 @@
   --color-st-needs: var(--st-needs);
   --color-st-ended: var(--st-ended);
   --color-via-channel: var(--via-channel);
-  --color-lane-qa: var(--lane-qa);
-  --color-lane-review: var(--lane-review);
   --color-owner: var(--owner);
   --color-brand: var(--brand);
   --color-brand-ink: var(--brand-ink);
@@ -108,9 +106,6 @@
   --st-needs: oklch(0.55 0.15 60);
   --st-ended: oklch(0.8 0 0);
   --via-channel: oklch(0.52 0.12 250);
-  /* Board lanes without a status colour of their own (dots and light tints only). */
-  --lane-qa: oklch(0.5 0.15 300);
-  --lane-review: oklch(0.5 0.09 200);
   --owner: oklch(0.96 0.03 134);
   /* 8 Sync brand. --brand = lime fill; --brand-ink = brand-green text, one step deeper than leaf (--primary) so it
      keeps AA on lime tints too (#396d00: 6.0:1 on the page, 5.2:1 on a bg-brand/25 chip; leaf there is 4.4). */
@@ -157,8 +152,6 @@
   --st-needs: oklch(0.78 0.14 75);
   --st-ended: oklch(0.42 0 0);
   --via-channel: oklch(0.74 0.11 250);
-  --lane-qa: oklch(0.74 0.12 300);
-  --lane-review: oklch(0.75 0.09 200);
   --owner: oklch(0.24 0.04 134);
   --brand: oklch(0.8 0.2 134);
   --brand-ink: oklch(0.8 0.2 134);
@@ -271,18 +264,6 @@
     opacity: 1;
   }
   to {
-    transform: none;
-  }
-}
-
-/* A board card that changed lane in the latest poll (lanes-view): one lift + brand tint, then rest. */
-@keyframes hq-card-moved {
-  from {
-    background-color: color-mix(in oklch, var(--brand) 30%, var(--card));
-    transform: translateY(-4px);
-  }
-  to {
-    background-color: var(--card);
     transform: none;
   }
 }
