@@ -1,6 +1,7 @@
-//! Auto-install external skill collections (ponytail, addyosmani) into the
-//! global `~/.omp/skills/`. Best-effort + idempotent (skipped when a sentinel
+//! Auto-install external skill collections (ponytail) into the global
+//! `~/.omp/skills/`. Best-effort + idempotent (skipped when a sentinel
 //! sub-skill is already present); never fails `harness init` when offline.
+//! addyosmani/agent-skills is no longer pulled: the ECC plugin covers it.
 use anyhow::Result;
 
 use crate::env_detect;
@@ -11,7 +12,6 @@ use crate::verbs::skill::spec::{collect_repo_skills, git_clone_shallow};
 /// (clone URL, sentinel sub-skill that proves the pack is already installed).
 const PACKS: &[(&str, &str)] = &[
     ("https://github.com/DietrichGebert/ponytail.git", "ponytail-review"),
-    ("https://github.com/addyosmani/agent-skills.git", "using-agent-skills"),
 ];
 
 /// Clone each external pack and install every `skills/<name>/SKILL.md` it carries

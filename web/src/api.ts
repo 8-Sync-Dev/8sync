@@ -86,7 +86,7 @@ export type KnowledgeEntry = { name: string; url: string; desc: string };
 export type KnowledgeCategory = { name: string; count: number; entries: KnowledgeEntry[] };
 export type KnowledgeCatalog = { source: string; categories: KnowledgeCategory[]; category_count: number; total: number };
 export type KnowledgeApplyResult = { ok: boolean; added: number; path: string };
-export type ProjectCreateResult = { ok: boolean; path: string; skills: { spec: string; ok: boolean }[]; mcp_added: number; knowledge_added: number };
+export type ProjectCreateResult = { ok: boolean; path: string; mcp_added: number; knowledge_added: number };
 export type WfKind = "step" | "subagent" | "tool";
 export type WfData = { label: string; kind: WfKind; ref: string };
 export type WfNode = { id: string; type?: string; position: { x: number; y: number }; data: WfData };
@@ -271,11 +271,10 @@ export const api = {
   knowledgeApply: (items: (KnowledgeEntry & { category: string })[], project?: string) =>
     json<KnowledgeApplyResult>("/api/knowledge/apply", POST_JSON({ items, project })),
 
-  // ── Create project (scaffold + skills + mcp + knowledge) ──
+  // ── Create project (scaffold + mcp + knowledge) ──
   projectCreate: (body: {
     name?: string;
     path?: string;
-    skills?: string[];
     mcp?: { name: string; spec: string }[];
     knowledge?: (KnowledgeEntry & { category: string })[];
   }) =>

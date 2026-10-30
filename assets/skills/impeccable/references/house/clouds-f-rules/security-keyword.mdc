@@ -22,7 +22,7 @@ Apply this rule for `security`, `OWASP`, `XSS`, `CSRF`, `auth`, `authz`, `secret
 
 | Priority | Skill | Purpose |
 | --- | --- | --- |
-| Primary | `code-review-and-quality` | Security review inside broader correctness and architecture checks |
+| Primary | `ecc:code-review` | Security review inside broader correctness and architecture checks |
 | Primary | `best-practices` | Web security hardening baseline (headers, CSP, dependency hygiene) |
 | Secondary | `frontend-patterns` | Safe UI/data-flow implementation patterns |
 | Secondary | `web-quality-audit` | Structured audit across security/performance/accessibility/SEO |
@@ -30,7 +30,7 @@ Apply this rule for `security`, `OWASP`, `XSS`, `CSRF`, `auth`, `authz`, `secret
 
 ## Skill Paths
 
-- `skills/code-review-and-quality/SKILL.md`
+- `ecc:code-review` (ECC plugin)
 - `skills/best-practices/SKILL.md`
 - `skills/frontend-patterns/SKILL.md`
 - `skills/web-quality-audit/SKILL.md`

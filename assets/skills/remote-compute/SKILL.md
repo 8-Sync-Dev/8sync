@@ -6,7 +6,7 @@ allowed-tools: Bash(docker:*), Bash(modal:*), Bash(runpodctl:*)
 
 # Remote Compute
 
-Ported from `companion-inc/feynman`'s `docker`, `modal-compute`, and `runpod-compute` skills (MIT, Copyright (c) 2026 Companion, Inc.; notice in `deep-research/LICENSE-feynman.md`) (generic CLI usage — no feynman dependency). One skill, three backends: the agent stays on the host, the job runs elsewhere, raw outputs come back into the artifact folder.
+Ported from `companion-inc/feynman`'s `docker`, `modal-compute`, and `runpod-compute` skills (MIT, Copyright (c) 2026 Companion, Inc.; notice in `deep-research-web/LICENSE-feynman.md`) (generic CLI usage — no feynman dependency). One skill, three backends: the agent stays on the host, the job runs elsewhere, raw outputs come back into the artifact folder.
 
 ## Pick a backend
 

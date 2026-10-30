@@ -76,8 +76,8 @@ pub(crate) fn harness_init(env: &env_detect::Env) -> Result<()> {
     let _ = deploy::ensure_engine(&env.home, None);
     let _ = deploy::cleanup_legacy_gs(&env.home, None);
 
-    // 4. External skill packs (ponytail full + addyosmani) — best-effort/network.
-    p.step("download external skill packs (ponytail · addyosmani)");
+    // 4. External skill pack (ponytail full) — best-effort/network.
+    p.step("download external skill pack (ponytail)");
     let _ = install_external_skill_packs(env);
 
     // Normalise every global skill dir to the 3-folder layout.

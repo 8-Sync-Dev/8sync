@@ -23,7 +23,7 @@ Apply this rule for `fix`, `resolve`, `sua loi`, patch requests, and defect corr
 | Priority | Skill | Purpose |
 | --- | --- | --- |
 | Primary | `frontend-patterns` | Safe implementation patterns for React/Next and UI logic |
-| Primary | `code-review-and-quality` | Correctness, architecture, security, and regression checks |
+| Primary | `ecc:code-review` | Correctness, architecture, security, and regression checks |
 | Secondary | `javascript-cheatsheet` | Fast JS debugging and API syntax checks |
 | Secondary | `typescript-advanced-types` | Strong type-safety and type-level correctness |
 | Secondary | `explore-codebase` | Impact mapping across call sites and flows |
@@ -32,7 +32,7 @@ Apply this rule for `fix`, `resolve`, `sua loi`, patch requests, and defect corr
 ## Skill Paths
 
 - `skills/frontend-patterns/SKILL.md`
-- `skills/code-review-and-quality/SKILL.md`
+- `ecc:code-review` (ECC plugin)
 - `skills/javascript-cheatsheet/SKILL.md`
 - `skills/typescript-advanced-types/SKILL.md`
 - `skills/explore-codebase/SKILL.md`

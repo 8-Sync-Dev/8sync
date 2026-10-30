@@ -188,7 +188,7 @@ pub(crate) fn eval_project_data(home: &std::path::Path) -> Option<EvalData> {
     let roles_raw: Vec<(&str, Vec<(&str, bool)>)> = vec![
         ("dev", vec![("trail", has(".trail/hook.cjs")), ("build", build_cmd), ("karpathy+ponytail", skill("karpathy-guidelines") && skill("ponytail"))]),
         ("qa/testing", vec![("test", test_cmd), ("full-flow", skill("full-flow")), ("browser-testing", skill("browser-testing-with-devtools")), ("headroom", bin("headroom"))]),
-        ("research", vec![("omp/web_search", bin("omp")), ("agent-reach|deep-research", skill("agent-reach") || skill("deep-research")), ("last30days", skill("last30days"))]),
+        ("research", vec![("omp/web_search", bin("omp")), ("agent-reach|deep-research-web", skill("agent-reach") || skill("deep-research-web")), ("last30days", skill("last30days"))]),
         ("ba/po", vec![("planning", skill("planning-and-task-breakdown")), ("spec-driven", skill("spec-driven-development")), ("STATE+DECISIONS", has("su-code/STATE.md") && has("su-code/DECISIONS.md"))]),
         ("fe", vec![("frontend-stack", frontend), ("impeccable+taste", skill("impeccable") && skill("taste-skill")), ("senior-frontend", skill("senior-frontend"))]),
         ("be", vec![("backend-stack", backend), ("api-design", skill("api-and-interface-design")), ("security", skill("senior-security") || skill("security-and-hardening"))]),

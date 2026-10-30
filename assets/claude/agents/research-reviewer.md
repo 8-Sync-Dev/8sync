@@ -1,6 +1,6 @@
 ---
 name: research-reviewer
-description: Verification pass trên một research brief đã cite (deep-research) — mở nguồn sau mỗi claim quyết định, chấm FATAL/MAJOR/MINOR, ghi file verification. Không sửa brief, không sửa code.
+description: Verification pass trên một research brief đã cite (deep-research-web) — mở nguồn sau mỗi claim quyết định, chấm FATAL/MAJOR/MINOR, ghi file verification. Không sửa brief, không sửa code.
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Write
 model: sonnet
 effort: high
@@ -23,11 +23,11 @@ Thấy một lỗi vẫn tìm tiếp tới hết brief.
 Mức: FATAL = sai sự thật hoặc kết luận không đứng được · MAJOR = claim quan trọng thiếu căn cứ hoặc chỉ một nguồn ·
 MINOR = diễn đạt, format.
 
-File output theo mẫu `skills/deep-research/references/templates.md` (mục verification): `## Checks performed`
+File output theo mẫu `skills/deep-research-web/references/templates.md` (mục verification): `## Checks performed`
 (kiểm gì, mở nguồn nào, kết quả), `## Findings` dạng `[W#] FATAL|MAJOR|MINOR — <mục/claim> — "<trích nguyên văn>" — <vì sao> — <cách sửa>`,
 `## Questions` dạng `[Q#]`, dòng cuối `Verdict: PASS | PASS WITH NOTES | FAIL (<n> FATAL) — <một dòng>`.
 
 ## Return format
 Một dòng: verdict + số FATAL/MAJOR/MINOR + path file verification. Không paste lại findings.
 
-<!-- Adapted from Feynman (MIT, Copyright (c) 2026 Companion, Inc.) .feynman/agents/reviewer.md v0.5.58; full notice in ~/.claude/skills/deep-research/LICENSE-feynman.md -->
+<!-- Adapted from Feynman (MIT, Copyright (c) 2026 Companion, Inc.) .feynman/agents/reviewer.md v0.5.58; full notice in ~/.claude/skills/deep-research-web/LICENSE-feynman.md -->

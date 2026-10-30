@@ -1,7 +1,7 @@
 # Feynman license (MIT)
 
 Parts of the 8sync research skills and agents are adapted from Feynman, https://github.com/companion-inc/feynman:
-- from v0.5.58 (commit 87a4567): `skills/deep-research/` (SKILL.md, references/templates.md, references/large-sources.md), `skills/autoresearch/SKILL.md`, and the Claude Code agents `researcher`, `verifier`, `research-reviewer`;
+- from v0.5.58 (commit 87a4567): `skills/deep-research/` (shipped by 8sync as `skills/deep-research-web/`) (SKILL.md, references/templates.md, references/large-sources.md), `skills/autoresearch/SKILL.md`, and the Claude Code agents `researcher`, `verifier`, `research-reviewer`;
 - from an earlier port (upstream commit not recorded): `skills/research-paper/SKILL.md`, `skills/remote-compute/SKILL.md`.
 
 MIT License

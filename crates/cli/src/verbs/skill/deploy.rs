@@ -13,7 +13,7 @@ use crate::{assets, env_detect, ui};
 /// Module-level so the guard tests can assert BOTH directions against the real
 /// data — a fn-local literal can only be text-scraped, and the direction that
 /// actually bites (an asset dir nobody registered) needs the list itself.
-const BUNDLED_SKILLS: [(&str, &str); 34] = [
+const BUNDLED_SKILLS: [(&str, &str); 33] = [
     ("skills/trail",                   "trail"),
     ("skills/karpathy-guidelines",     "karpathy-guidelines"),
     ("skills/ponytail",                "ponytail"),
@@ -30,7 +30,6 @@ const BUNDLED_SKILLS: [(&str, &str); 34] = [
     ("skills/zai-vision",              "zai-vision"),
     ("skills/locate-anything",         "locate-anything"),
     ("skills/image-gen",               "image-gen"),
-    ("skills/code-review-and-quality", "code-review-and-quality"),
     ("skills/senior-security",         "senior-security"),
     ("skills/senior-frontend",         "senior-frontend"),
     ("skills/full-flow",               "full-flow"),
@@ -39,7 +38,8 @@ const BUNDLED_SKILLS: [(&str, &str); 34] = [
     ("skills/feature",                 "feature"),
     ("skills/branch-sync",             "branch-sync"),
     ("skills/super-pdf",             "super-pdf"),
-    ("skills/deep-research",           "deep-research"),
+    // `-web`: works without firecrawl/exa MCPs, and never shadows ECC's `deep-research`.
+    ("skills/deep-research-web",       "deep-research-web"),
     ("skills/autoresearch",            "autoresearch"),
     ("skills/aup-audit",               "aup-audit"),
     ("skills/research-paper",          "research-paper"),
@@ -53,7 +53,9 @@ const BUNDLED_SKILLS: [(&str, &str); 34] = [
 
 /// Deploy every bundled skill tree under `assets/skills/<name>/` into
 /// `~/.omp/skills/<name>/`. Each tree is deployed verbatim including any
-/// `references/` or `scripts/` subdirs. Shell scripts get mode 0755.
+/// `references/` or `scripts/` subdirs. Shell scripts get mode 0755. Then the
+/// unedited copies of skills this binary no longer ships (or ships renamed) go,
+/// before any caller (the Claude Code kit) links `~/.omp/skills` into place.
 pub(crate) fn install_bundled_global(env: &env_detect::Env) -> Result<()> {
     let skills_dir = env.home.join(".omp/skills");
     for (asset_prefix, name) in BUNDLED_SKILLS {
@@ -64,6 +66,7 @@ pub(crate) fn install_bundled_global(env: &env_detect::Env) -> Result<()> {
             ui::ok(&format!("synced {} ({} file(s) written) → {}", name, written, target_dir.display()));
         }
     }
+    crate::verbs::harness::legacy::retire_skills(&env.home, None);
     Ok(())
 }
 

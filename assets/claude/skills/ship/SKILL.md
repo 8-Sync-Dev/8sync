@@ -19,7 +19,7 @@ Trạng thái sống trong file, không chỉ trong hội thoại (sống sót q
 `su-code/ship/<slug>/STATE.md` gồm Goal · Checklist các phase · Evidence (lệnh + output ngắn) · Next; ghi `<slug>` vào `su-code/ship/ACTIVE` để digest đầu phiên/sau /compact nạp lại (xong việc → xoá dòng đó). Repo không có `su-code/` → `.claude/ship/<slug>/` (không được nạp tự động). Cập nhật ở mỗi ranh giới phase. Theo dõi việc bằng TaskCreate/TaskUpdate.
 
 1. **Plan** — làm như `/planning`: goal, acceptance criteria kiểm được, task + file, rủi ro. Câu hỏi thật sự cần → gom MỘT `AskUserQuestion` (≤4 câu, Recommended đầu). Owner đã nói "tự làm đi"/"auto" → chọn Recommended, ghi giả định, đi tiếp.
-2. **R&D** (chỉ khi có ẩn số) — `explore` cho codebase lạ; `researcher` song song cho câu hỏi con (≤10 bullet mỗi agent); lựa chọn lớn → `deep-research`. Không research thứ đã có trong repo.
+2. **R&D** (chỉ khi có ẩn số) — `explore` cho codebase lạ; `researcher` song song cho câu hỏi con (≤10 bullet mỗi agent); lựa chọn lớn → `deep-research-web`. Không research thứ đã có trong repo.
 3. **Code** — từng task; giao `task`/`quick-task` song song khi file tách bạch. Code mới phải có test. Không sửa test cho pass. Sau mỗi task chạy build/test của repo.
 4. **Test** — full build + test + lint của repo. Fail → sửa gốc, không skip.
 5. **UAT** — chạy thật như người dùng: CLI chạy lệnh thật trên dữ liệu thật/tạm; web → script e2e của repo hoặc `/chrome`; API → gọi endpoint thật ở local. Ghi lệnh + output vào Evidence. Không chạy được → ghi "UAT: not verified (<lý do>)".

@@ -26,7 +26,7 @@ Apply this rule for `refactor`, `cleanup`, `simplify`, and maintainability-focus
 | Secondary | `clean-code-javascript` | Naming, function boundaries, and maintainable JS patterns |
 | Secondary | `javascript-refactoring` | Practical JS modularization and refactor process |
 | Secondary | `composition-patterns` | Better component composition and API ergonomics |
-| Secondary | `code-review-and-quality` | Final safety review across correctness/security/performance |
+| Secondary | `ecc:code-review` | Final safety review across correctness/security/performance |
 
 ## Skill Paths
 
@@ -35,7 +35,7 @@ Apply this rule for `refactor`, `cleanup`, `simplify`, and maintainability-focus
 - `skills/clean-code-javascript/SKILL.md`
 - `skills/javascript-refactoring/SKILL.md`
 - `skills/composition-patterns/SKILL.md`
-- `skills/code-review-and-quality/SKILL.md`
+- `ecc:code-review` (ECC plugin)
 ## Subagent Candidates
 
 - `code-simplifier` for behavior-preserving cleanup.

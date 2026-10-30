@@ -148,8 +148,11 @@ pub(crate) fn retire_mcp(home: &Path) {
 // ── retired skills ─────────────────────────────────────────────────────────────────────────
 
 /// (skill, [(relative file, LF-normalised FNV-1a 64, `deploy::fnv1a64`)]) of the copies 8sync bundled
-/// up to v0.110.79. A folder is "ours" only when every file is listed here with the same hash.
-const RETIRED_SKILLS: [(&str, &[(&str, u64)]); 2] = [
+/// before retiring them: codegraph/token-bench up to v0.110.79; `code-review-and-quality` (ECC's
+/// code-reviewer + /code-review cover it) and `deep-research` (renamed `deep-research-web`, so ECC's
+/// `deep-research` is not shadowed) up to v0.110.92. A folder is "ours" only when every file is
+/// listed here with the same hash.
+const RETIRED_SKILLS: [(&str, &[(&str, u64)]); 4] = [
     (
         "codegraph",
         &[
@@ -160,6 +163,17 @@ const RETIRED_SKILLS: [(&str, &[(&str, u64)]); 2] = [
         ],
     ),
     ("token-bench", &[("SKILL.md", 0x5cac_bc52_fe89_3ebd), ("scripts/token_bench.py", 0x2d39_4d08_0b3d_7d03)]),
+    ("code-review-and-quality", &[("SKILL.md", 0x6b85_6674_f94d_6fec)]),
+    (
+        "deep-research",
+        &[
+            ("LICENSE-feynman.md", 0x98da_cb8f_d325_1143),
+            ("SKILL.md", 0x1105_d879_beb7_16ff),
+            ("references/binary-weight-audit.md", 0x1344_0600_0627_0af6),
+            ("references/large-sources.md", 0x30bc_8db4_bd56_f7ab),
+            ("references/templates.md", 0xd111_f677_920c_91e5),
+        ],
+    ),
 ];
 
 /// The skill's `skills.toml` registration, written by `setup`/`ensure_codegraph`.
@@ -222,7 +236,7 @@ fn strip_registry_section(text: &str, name: &str) -> Option<String> {
     Some(out)
 }
 
-/// Retire the `codegraph` and `token-bench` skills: the global copy, the Claude Code link/copy, the
+/// Retire the skills in [`RETIRED_SKILLS`]: the global copy, the Claude Code link/copy, the
 /// `skills.toml` registration and (with `root`) the per-project mirror — each only when it is
 /// 8sync's own, unedited copy.
 pub(crate) fn retire_skills(home: &Path, root: Option<&Path>) {
@@ -259,7 +273,7 @@ pub(crate) fn retire_skills(home: &Path, root: Option<&Path>) {
             }
         }
         if changed && std::fs::write(&reg, text).is_ok() {
-            ui::ok(&format!("retired codegraph/token-bench from {}", reg.display()));
+            ui::ok(&format!("retired skill registrations from {}", reg.display()));
         }
     }
 }

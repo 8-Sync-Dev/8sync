@@ -119,14 +119,14 @@ Treat skills as execution playbooks, not optional reading.
 - `skills/frontend-patterns/SKILL.md`
 - `skills/frontend-ui-engineering/SKILL.md`
 - `skills/coding-standards/SKILL.md`
-- `skills/code-review-and-quality/SKILL.md`
+- `ecc:code-review` (ECC plugin)
 
 ### Task-to-Skill Routing
 
 | Task Type | Primary Skills | Secondary Skills |
 | --- | --- | --- |
 | Codebase exploration, architecture tracing | `explore-codebase`, `improve-codebase-architecture` | `refactor-safely`, `workspace-surface-audit` |
-| Bug fixing (`fix`, `resolve`, `sửa lỗi`) | `frontend-patterns`, `code-review-and-quality` | `javascript-cheatsheet`, `typescript-advanced-types`, `lint` |
+| Bug fixing (`fix`, `resolve`, `sửa lỗi`) | `frontend-patterns`, `ecc:code-review` | `javascript-cheatsheet`, `typescript-advanced-types`, `lint` |
 | Debugging (`debug`, diagnose) | `debug-like-expert` (analysis-first) | `browser-testing-with-devtools`, `agent-browser` |
 | Safe refactor | `code-simplification`, `refactor-safely` | `clean-code-javascript`, `javascript-refactoring`, `composition-patterns` |
 | UI/UX implementation or redesign | `frontend-ui-engineering`, `frontend-design` | `web-component-design`, `tailwind-design-system`, `shadcn`, `ui-ux-pro-max` |
@@ -137,7 +137,7 @@ Treat skills as execution playbooks, not optional reading.
 | Data table/list scale | `tanstack-table`, `tanstack-virtual` | `tanstack-query`, `performance-optimization` |
 | React/Next implementation details | `react`, `react-best-practices` | `react-view-transitions`, `shadcn` |
 | Vue implementation details | `vue` | `responsive-design`, `accessibility` |
-| Quality review and release hardening | `code-review-and-quality`, `lint` | `web-quality-audit`, `best-practices`, `seo` |
+| Quality review and release hardening | `ecc:code-review`, `lint` | `web-quality-audit`, `best-practices`, `seo` |
 | Browser automation and UI workflow scripting | `agent-browser` | `browser-testing-with-devtools` |
 | Prompt-only optimization request | `prompt-optimizer` | none |
 
@@ -217,7 +217,7 @@ Always prefer existing repo implementation when:
 | Routing/transitions | Current router implementation | `react`, `react-view-transitions`, repo routing conventions |
 | Forms and validation | Existing form stack first | `frontend-patterns`, `shadcn`, project form libs |
 | API and data fetching | Existing API client/query layer | `tanstack-query`, `frontend-patterns`, `typescript-advanced-types` |
-| Testing and QA | Existing test stack/scripts | `lint`, `code-review-and-quality`, `browser-testing-with-devtools`, `web-quality-audit` |
+| Testing and QA | Existing test stack/scripts | `lint`, `ecc:code-review`, `browser-testing-with-devtools`, `web-quality-audit` |
 | Build and release checks | Project scripts/config first | `lint`, `performance-optimization`, `best-practices` |
 
 ## Keyword Routing

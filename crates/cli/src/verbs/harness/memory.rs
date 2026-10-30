@@ -205,7 +205,7 @@ pub(crate) fn seed_gitignore(root: &Path) -> Result<()> {
         ".gs/\n",
         "# Large-scope feature-planning evidence screenshots (regenerable binaries):\n",
         "su-code/planning/**/evidence-*.png\n",
-        "# Research downloads (third-party copies) and experiment state (deep-research, autoresearch):\n",
+        "# Research downloads (third-party copies) and experiment state (deep-research-web, autoresearch):\n",
         "outputs/.notes/\n",
         "outputs/autoresearch/\n",
         "# Secrets — NEVER commit:\n",
