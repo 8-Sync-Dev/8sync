@@ -6,6 +6,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [Unreleased]
 
 ## [0.110.92] — 2026-10-28
+- Size gate trần 8192 → 8256 KiB: `ccc eco reap` đẩy asset musl lên 8 391 216 B (vượt 2 608 B).
 
 ### Added
 - **`8sync eco` tự dọn helper mồ côi mỗi lượt (`8sync ccc eco reap [--dry-run]`).** Owner (2026-10-30): tự check kill node/python rác chồng chất làm nặng máy. `watchdog` chỉ chạy Linux (`/proc`); trên Windows thứ chạy nền luôn là `eco run` (Scheduled Task lúc đăng nhập), nên dọn gắn vào lượt eco (mọi OS).
