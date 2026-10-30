@@ -14,5 +14,5 @@ v0.111.0 vừa phát hành. Mốc trước release (24 h transcript Claude Code)
 
 ## Next
 - Chạy lại `usage-scan` 24 h sau release; kỳ vọng ~−50 % token input (replay: nén ở 200K = −53 %).
-- Compaction 200K làm mất ngữ cảnh → `8sync ccc compact --at 65 --window 1000000` để trả mốc cũ.
 - Compaction 200K làm mất ngữ cảnh → `8sync ccc compact --at 65` rồi `8sync ccc compact --window 1000000` để trả mốc cũ.
+- Không dựng filter output kiểu rtk: replay 27 341 output Bash thật chỉ −1,7 % (85,5 % là đọc file phải giữ nguyên).
