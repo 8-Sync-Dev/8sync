@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.91] — 2026-10-30
+
+### Changed
+- **`/auto-team` mặc định 3 session con (Build & Ship, Critic, R&D) và gọi skill ECC theo trigger.** Owner (2026-10-30): "auto-team only 3 session con", "cần hiệu quả optimize cao nhất", kèm danh sách skill ECC.
+  - Bảng trigger: `loop-design-check`, `continuous-agent-loop` (thay `autonomous-loops`, ECC giữ nó chỉ để tương thích), `autonomous-agent-harness` (memory + hàng đợi; cron vẫn là `/team-tick`), `learn`, `orch-fix-defect`/`orch-add-feature` (cổng plan/commit do trưởng nhóm trả lời), `performance-optimization`, `security-scan`, `agent-architecture-audit`, `agent-security-hardening`, `automation-audit-ops`, `agent-self-evaluation`, `deep-research`, `market-research`, `marketing-campaign`. `/ecc:auto-update` để owner tự chạy.
+  - Session con chạy Sonnet, trưởng nhóm Opus; thêm lane maker chỉ khi `--rooms` 4–5; máy áp lực hoặc sắp hết hạn mức → `--rooms 2`. Vòng sửa ↔ chấm tối đa 2 lượt rồi trưởng nhóm quyết. Brief: `su-code/research/2026-10-30-auto-team-ecc-org.md`.
+
 ## [0.110.90] — 2026-10-29
 
 ### Changed
