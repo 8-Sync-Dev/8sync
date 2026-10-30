@@ -39,7 +39,7 @@ Mức 3–5 chỉ anh khởi động; agent không tự gõ được. Dừng: n�
 
 Không mở terminal: `claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20`. Chạy headless không trả lời được câu `Ship`, nên dừng trước merge và để lại brief. Chạy nhiều ngày không người trông thì dùng Routines (`/schedule`) hoặc Console API key. Chi tiết ở mục 4 và 6.
 
-**Auto-compact:** kit đặt nén ở 65% window của model, nên model 1M nén ở khoảng 650K và model 200K ở khoảng 130K. Status line hiện mốc của từng session, ví dụ `ctx 22%→nén 65%` (đỏ khi dưới 50%). `8sync ccc compact` liệt kê window đo được theo từng model; đổi mốc bằng `--at <N>`.
+**Auto-compact:** kit đặt nén ở 80% × window 250000, tức khoảng 200K token: model 1M nén ở 200K, model 200K ở 160K. Status line tính % trên window của model, nên model 1M hiện `ctx 12%→nén 20%` (đúng, không phải lỗi). Cặp kit cũ (65% × 1M, 60% × 400K) tự chuyển ở lần `ccc kit` sau; mốc anh tự đặt thì giữ nguyên. `8sync ccc compact` liệt kê window đo được theo từng model; đổi mốc bằng `--at <N>` / `--window <N>`. Hook của plugin ECC tắt thật khi `ECC_HOOKS_ENABLED=false` (hooks.json gốc giữ ở `hooks.json.8sync-off`).
 
 ## 1. Cài và cập nhật
 

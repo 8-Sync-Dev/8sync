@@ -29,10 +29,11 @@ KIT & CẤU HÌNH
   8sync ccc status             claude, login, kit, managed settings, MCP, session
   8sync ccc policy [--org-uuid <u>] [--out <f>] [--strict-hooks] [--lock-mcp]   in managed-settings.json khuyến nghị
   8sync ccc statusline --install | --uninstall | --agents   status line của Claude Code
-  8sync ccc compact            xem mốc auto-compact (mặc định kit: 65% của window model)
+  8sync ccc compact            xem mốc auto-compact (mặc định kit: 80% × window 250000 = nén ở ~200K token)
+                               status line tính % trên window model: model 1M hiện `nén 20%`, model 200K `nén 80%` — đúng, không phải lỗi
   8sync ccc compact --at 50    đặt mốc 10..95 (thấp hơn = nén sớm hơn; cần session mới)
   8sync ccc compact --reset    về mặc định của Claude Code   (--json để máy đọc)
-  8sync ccc compact --window 400000   trần tuyệt đối 100000..1000000 (kit mặc định 1000000 = window model; trigger ≈ % × window)
+  8sync ccc compact --window 400000   trần tuyệt đối 100000..1000000 (kit mặc định 250000; trigger ≈ % × min(window, window model))
   8sync ccc compact --window-reset    bỏ trần window
   8sync ccc login-kind [--json]   kiểu login (claude.ai hay API key; không in token)
   8sync ccc <verb> --offline   không chạm mạng (cũng EIGHTSYNC_OFFLINE=1)

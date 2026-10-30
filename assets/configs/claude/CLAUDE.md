@@ -27,3 +27,5 @@
 - Task lớn: `/ship <task>` = plan → R&D → code → test → UAT → review/QC → docs+memory → commit (cờ `--release`/`--deploy` ở cuối để đi tiếp tới CI, release, monitor). Chỉ plan: `/planning <task>`.
 - Memory: bài học có bằng chứng → `/remember` (vào `su-code/KNOWLEDGE.md`, digest tự nạp đầu phiên và sau /compact); dọn định kỳ → `/consolidate`.
 - Subagent trả ≤10 bullet (`claim — file:line/URL`); chi tiết dài ghi vào file, trả path.
+- Trả lời: kết luận trước; bỏ chào, "để tôi", tóm lại, lời kể giữa tool call. Câu một ý ≤20 từ, bỏ từ đệm; giữ đúng phủ định, "chỉ", số, đơn vị.
+- Code, lệnh, path, lỗi chép nguyên văn. Cảnh báo bảo mật, việc không hoàn tác, owner rối: viết đủ câu.

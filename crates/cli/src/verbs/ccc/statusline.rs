@@ -34,7 +34,7 @@ pub(super) struct Extras {
     pub grant: bool,
     pub chained: Vec<String>,
     /// Where this session auto-compacts, in % of its context window ([`super::compact::point`] over
-    /// the env Claude Code started it with), so `ctx 22%→nén 24%` shows a too-early point at once.
+    /// the env Claude Code started it with): the kit pair (80 % x 250K) shows `ctx 12%→nén 20%` on 1M.
     pub compact: Option<u64>,
 }
 
@@ -142,7 +142,7 @@ fn row1(v: &Value, x: &Extras, now: u64, color: bool) -> String {
     }
     if v["context_window"].is_object() {
         let p = pct_of(&v["context_window"]["used_percentage"]).unwrap_or(0);
-        let at = x.compact.map(|c| paint(color, if c < 50 { "31" } else { "2" }, &format!("→nén {c}%"))).unwrap_or_default();
+        let at = x.compact.map(|c| paint(color, "2", &format!("→nén {c}%"))).unwrap_or_default();
         seg.push(format!("ctx {} {}{at}", bar(p, color), paint(color, pct_color(p), &format!("{p}%"))));
     }
     for (key, label) in [("five_hour", "5h"), ("seven_day", "7d")] {
@@ -738,14 +738,14 @@ mod tests {
     }
 
     #[test]
-    fn an_early_compaction_point_shows_red() {
-        let v = json!({"model": {"display_name": "Opus 5.5 (1M context)"}, "context_window": {"used_percentage": 22, "context_window_size": 1_000_000}});
-        // the old kit pair: 60 % of a 400K window on a 1M model
-        let at = crate::verbs::ccc::compact::point(1_000_000, Some("60"), Some("400000"));
-        assert_eq!(at, Some(24));
+    fn the_kit_compaction_point_on_1m_shows_20_dim() {
+        let v = json!({"model": {"display_name": "Opus 5.5 (1M context)"}, "context_window": {"used_percentage": 12, "context_window_size": 1_000_000}});
+        // the kit pair: 80 % of a 250K window on a 1M model = 200K, deliberate (not an alarm)
+        let at = crate::verbs::ccc::compact::point(1_000_000, Some("80"), Some("250000"));
+        assert_eq!(at, Some(20));
         let r = render(&v, &Extras { compact: at, ..Default::default() }, NOW, 200, true);
-        assert!(r[0].contains("\x1b[31m→nén 24%"), "{:?}", r[0]);
-        assert_eq!(strip(&render(&v, &Extras::default(), NOW, 200, true)[0]), "8sync · Opus 5.5 · 1M · ctx ▓▓▓░░░░░░░ 22%");
+        assert!(r[0].contains("\x1b[2m→nén 20%"), "{:?}", r[0]);
+        assert_eq!(strip(&render(&v, &Extras::default(), NOW, 200, true)[0]), "8sync · Opus 5.5 · 1M · ctx ▓▓░░░░░░░░ 12%");
     }
 
     #[test]
