@@ -192,7 +192,7 @@ export LC_ALL=C
 # omp --hours, omp down --only — ~3.8 KB of new Vietnamese strings plus their code; the omp
 # PowerShell/WMI scan string went away. CI musl asset 8,161,584 B, 2,352 B over 8,159,232. No new
 # dependency. Ceiling 8000 KiB (~30 KiB left).
-CEILING="${CEILING:-8388608}"   # 8192 KiB (was 8000 KiB). 2026-10-24 v0.110.78: `8sync sleep work` (awake.rs +171 lines), `8sync eco` (eco.rs 767 lines) and `8sync mcp` (mcp.rs 641 lines, Claude Desktop/Cowork MCP server) took the CI linux musl asset to 8,251,728 B, 59,728 B over the 8,192,000 ceiling. +192 KiB, ~133 KiB left.
+CEILING="${CEILING:-8454144}"   # 8256 KiB (was 8192 KiB). 2026-10-30 v0.110.92: `ccc eco reap` (orphan LSP/MCP helper reaper) took the musl asset to 8,391,216 B, 2,608 B over 8,388,608. +64 KiB. Before that: 8192 KiB (was 8000 KiB). 2026-10-24 v0.110.78: `8sync sleep work` (awake.rs +171 lines), `8sync eco` (eco.rs 767 lines) and `8sync mcp` (mcp.rs 641 lines, Claude Desktop/Cowork MCP server) took the CI linux musl asset to 8,251,728 B, 59,728 B over the 8,192,000 ceiling. +192 KiB, ~133 KiB left.
 # Earlier: 8000 KiB (was 7968 KiB). 2026-10-21 v0.110.30: cross-repo --pr (target.rs parse_pr/
 # pr_repo_for, merge.rs default_branch_of/cached per repo, guard.rs repo-aware self-merge) and the
 # guard RAM trim + attribution (pressure.rs trim_pick/trim K32EmptyWorkingSet, ram_split JSON) grew

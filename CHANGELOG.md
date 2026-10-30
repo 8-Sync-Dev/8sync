@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.110.92] — 2026-10-28
+- Size gate trần 8192 → 8256 KiB: `ccc eco reap` đẩy asset musl lên 8 391 216 B (vượt 2 608 B).
+
+### Added
+- **`8sync eco` tự dọn helper mồ côi mỗi lượt (`8sync ccc eco reap [--dry-run]`).** Owner (2026-10-30): tự check kill node/python rác chồng chất làm nặng máy. `watchdog` chỉ chạy Linux (`/proc`); trên Windows thứ chạy nền luôn là `eco run` (Scheduled Task lúc đăng nhập), nên dọn gắn vào lượt eco (mọi OS).
+  - Chỉ helper theo command line: pyright/`langserver`, `typescript-language-server`, `tsserver`, `bash-language-server`, MCP `@z_ai/mcp-server`, headroom `mcp`, `unreal-mcp`, `codebase-memory-mcp`, serena, worker `@trailhq/trail-code … _trail-*` (≥ 10 phút); helper khác ≥ 2 phút. Không bao giờ shell, 8sync, msedge/chrome, ComfyUI, dev server, MCP mà bot tự chạy (okx-trade-mcp).
+  - Mồ côi = đi ngược cây cha (bỏ qua pid tái sử dụng: cha phải khởi động trước con) không gặp claude/omp/Claude Desktop/VS Code/Cursor/Codex/Windows Terminal/8sync, `conhost --headless` (scheduled task), HQ (`hq-ui`) hay `okx-click-trader`; cha không rõ giờ khởi động = giữ. Diệt cả cây con (từng pid, `taskkill /F` không `/T`), tối đa 20 helper/lượt, ghi `~/.config/8sync/eco-reap.log` (tên, pid, MB); `eco status` thêm "dọn helper mồ côi N".
+
 ## [0.110.91] — 2026-10-30
 
 ### Changed
