@@ -86,7 +86,7 @@ You don't need git, Rust or admin rights. The installer verifies the binary's sh
 | trail | Code map for agents (`trail ask`/`grep`/`skeleton`/`callers`), deterministic tree-sitter, no model calls. |
 | Forge + zsh | Forge from its GitHub release. zsh comes from the system; on Windows it is a private MSYS2 zsh (sha256-pinned); on Linux without sudo, a static portable build. |
 | Claude Code + kit | Claude Code from Anthropic's official installer, then the 8sync kit into `~/.claude` ([below](#claude-code-8sync-ccc)). |
-| harness global | 50+ skills, `APPEND_SYSTEM.md` agent rules, MCP servers (headroom), hooks, context compaction at 50%. |
+| harness global | 50+ skills, `APPEND_SYSTEM.md` agent rules, MCP servers (headroom), hooks, context compaction at 200K tokens (`thresholdTokens`, else 50%). |
 | PATH | `~/.local/bin`, `~/.cargo/bin`, `~/.bun/bin`, `~/.encore/bin` wired into zsh/bash/fish. |
 
 A real run of the v0.63.0 one-liner on a fresh Ubuntu account without sudo:
@@ -119,7 +119,7 @@ cd <project>
 8sync ccc kit                  # (re)install the kit; `8sync setup` already did (also sets a tool-output budget in settings `env`, only when absent: Bash 20k chars, Read 15k tokens)
 8sync ccc status               # claude, login, kit, sessions
 8sync ccc help                 # every ccc verb on one screen
-8sync ccc compact --at 50      # auto-compact threshold (kit default 65% of the model window = 65% on the status line); --reset, --json, --window N | --window-reset; new session to apply
+8sync ccc compact --at 50      # auto-compact threshold (kit default 80% x window 250000 = 200K tokens; a 1M status line shows `nén 20%`); --reset, --json, --window N | --window-reset; new session to apply
 ```
 
 Each name maps to a fixed conversation id per repo, so `8sync ccc . core` tomorrow continues today's thread, next to `8sync forge core` and `8sync . core` for the other agents.

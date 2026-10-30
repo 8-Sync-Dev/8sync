@@ -6,22 +6,25 @@
 //! `/autocompact`, `--autocompact` and the `autoCompactWindow` setting) is an absolute cap on that window:
 //! trigger ≈ pct × min(window, model window). The model window comes from the status line
 //! (`context_window.context_window_size`, https://code.claude.com/docs/en/statusline): the status
-//! line shows each session's point (`ctx 22%→nén 65%`) and `compact` lists it per model seen.
+//! line shows each session's point (`ctx 12%→nén 20%` on 1M with the kit pair) and `compact` lists it per model seen.
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::path::Path;
 
 pub(super) const VAR: &str = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE";
-/// What `ccc kit` sets when the key is absent (owner, 2026-10-17: compact at 60-70 % of the context, not ~22 %).
-pub(super) const KIT_DEFAULT: u32 = 65;
+/// What `ccc kit` sets when the key is absent. Paired with [`KIT_WINDOW`]: 80 % x 250K = 200K on any model with a
+/// window of 250K or more (1M: the status line shows `nén 20%`), 80 % = 160K on a 200K model. Replaying the owner's
+/// real per-session context trajectories (24 h, 2.41 B input-side tokens) with compaction at 200K: −53 % input
+/// tokens vs the 650K point of the previous kit pair.
+pub(super) const KIT_DEFAULT: u32 = 80;
 const RANGE: std::ops::RangeInclusive<u32> = 10..=95;
 pub(super) const WIN_VAR: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
-/// What `ccc kit` sets when the window is absent everywhere: the top of the range, which Claude Code caps at
-/// the model window, so the trigger is pct x model window and the status line's `ctx` % at compaction is
-/// the pct (65 % = 650K on 1M, 130K on 200K). Measured: override 60 with window 200K → 60.0 % (CHANGELOG 0.84.0).
-pub(super) const KIT_WINDOW: u32 = 1_000_000;
-/// The kit pair before 0.100 (60 % x 400K = 240K, ~24 % on a 1M status line): migrated by the next `ccc kit`.
-const OLD_KIT: (&str, &str) = ("60", "400000");
+/// What `ccc kit` sets with [`KIT_DEFAULT`] when no window is chosen anywhere. Claude Code caps it at the model
+/// window, so the trigger is pct x min(250K, model window). Measured: override 60 with window 200K → 60.0 % (CHANGELOG 0.84.0).
+pub(super) const KIT_WINDOW: u32 = 250_000;
+/// Pairs earlier kits wrote: 65 % x 1M (650K) and, before 0.100, 60 % x 400K (240K). The next `ccc kit`
+/// moves exactly these pairs to the current one; any other pair is the owner's.
+const OLD_KITS: [(&str, &str); 2] = [("65", "1000000"), ("60", "400000")];
 const WIN_RANGE: std::ops::RangeInclusive<u32> = 100_000..=1_000_000;
 
 fn current(v: &Value) -> Option<String> {
@@ -69,19 +72,21 @@ fn reset_var(v: &mut Value, var: &str) -> bool {
     had
 }
 
-/// `ccc kit`: defaults only when absent (an owner value is never touched), except the old kit window
-/// 400000, which only the kit wrote: it becomes the model window, and the 60 % paired with it 65 %.
+/// `ccc kit`: defaults only when absent (an owner value is never touched), except an exact earlier kit pair
+/// ([`OLD_KITS`]), which only the kit wrote: it becomes the current pair. The window is added only together
+/// with the percent, so an owner percent alone keeps compacting against the model window.
 pub(super) fn kit_default(v: &mut Value) -> Result<()> {
     let obj = v.as_object_mut().context("settings.json is not a JSON object")?;
-    if let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() {
-        if env.get(WIN_VAR).and_then(Value::as_str) == Some(OLD_KIT.1) {
-            env.remove(WIN_VAR);
-            if env.get(VAR).and_then(Value::as_str) == Some(OLD_KIT.0) {
-                env.remove(VAR);
-            }
-        }
-        env.entry(VAR).or_insert_with(|| json!(KIT_DEFAULT.to_string()));
+    let Some(env) = obj.entry("env").or_insert_with(|| json!({})).as_object_mut() else { return Ok(()) };
+    let pair = (env.get(VAR).and_then(Value::as_str), env.get(WIN_VAR).and_then(Value::as_str));
+    if OLD_KITS.iter().any(|(p, w)| pair == (Some(*p), Some(*w))) {
+        env.remove(VAR);
+        env.remove(WIN_VAR);
     }
+    if env.contains_key(VAR) {
+        return Ok(());
+    }
+    env.insert(VAR.into(), json!(KIT_DEFAULT.to_string()));
     if !owner_window(v) {
         if let Some(env) = v["env"].as_object_mut() {
             env.insert(WIN_VAR.into(), json!(KIT_WINDOW.to_string()));
@@ -103,13 +108,13 @@ fn owner_window(v: &Value) -> bool {
     cur_var(v, WIN_VAR).is_some() || v.get("autoCompactWindow").is_some() || v.get("modelSettings").is_some_and(has_key)
 }
 
-/// `ccc kit --remove`: drop each key only when it still equals a kit default (this one or the old pair).
+/// `ccc kit --remove`: drop each key only when it still equals a kit value (this pair or an earlier one).
 pub(super) fn strip_kit_default(v: &mut Value) -> bool {
     let mut changed = false;
-    if current(v).is_some_and(|c| c == KIT_DEFAULT.to_string() || c == OLD_KIT.0) {
+    if current(v).is_some_and(|c| c == KIT_DEFAULT.to_string() || OLD_KITS.iter().any(|(p, _)| c == *p)) {
         changed |= reset(v);
     }
-    if cur_var(v, WIN_VAR).is_some_and(|w| w == KIT_WINDOW.to_string() || w == OLD_KIT.1) {
+    if cur_var(v, WIN_VAR).is_some_and(|w| w == KIT_WINDOW.to_string() || OLD_KITS.iter().any(|(_, o)| w == *o)) {
         changed |= reset_var(v, WIN_VAR);
     }
     changed
@@ -162,7 +167,7 @@ fn measured_lines(seen: &[(String, u64)], pct: Option<&str>, win: Option<&str>) 
     }
     seen.iter()
         .map(|(m, n)| match point(*n, pct, win) {
-            Some(p) => format!("{m}: window {n} → nén ở ≈ {} token = {p}% ctx{}", n * p / 100, if p < 50 { "  ⚠ sớm: `8sync ccc compact --window 1000000`" } else { "" }),
+            Some(p) => format!("{m}: window {n} → nén ở ≈ {} token = {p}% ctx", n * p / 100),
             None => format!("{m}: window {n} → nén theo mặc định của Claude Code"),
         })
         .collect()
@@ -251,15 +256,16 @@ pub(super) fn run_at(rest: &[String], path: &Path) -> Result<String> {
         None => "auto-compact %: mặc định của Claude Code".into(),
     };
     let w = match &win {
-        Some(w) if *w == KIT_WINDOW.to_string() => {
-            format!("window {w} ({WIN_VAR}) = window của model → nén khi ctx trên status line chạm {}%", cur.as_deref().unwrap_or("mặc định"))
-        }
         Some(w) => format!("window {w} ({WIN_VAR})"),
         None => "window: mặc định của model (~967K trên 1M)".into(),
     };
     let tail = match eff {
         Some(t) => format!("≈ {t} token (≈ %×min(window, window của model); 8sync không biết window model)"),
         None => "trigger thực: chưa tính được (thiếu % hoặc window)".into(),
+    };
+    let tail = match (point(1_000_000, cur.as_deref(), win.as_deref()), point(200_000, cur.as_deref(), win.as_deref())) {
+        (Some(a), Some(b)) => format!("{tail}\nstatus line tính % trên window của model: model 1M hiện `nén {a}%`, model 200K hiện `nén {b}%`"),
+        _ => tail,
     };
     Ok(format!("{pct}\n{w}\n{tail}\nĐổi: `8sync ccc compact --at <N>` · `--window <N>` · `--window-reset`"))
 }
@@ -353,13 +359,12 @@ mod tests {
     fn kit_default_only_when_absent_and_remove_only_if_default() {
         let mut v = json!({});
         kit_default(&mut v).unwrap();
-        assert_eq!(v["env"][VAR], "65");
+        assert_eq!(v["env"][VAR], "80");
         let mut owner = json!({"env":{VAR:"45"}});
         kit_default(&mut owner).unwrap();
+        assert_eq!(owner, json!({"env":{VAR:"45"}}), "an owner percent alone gets no kit window");
+        assert!(!strip_kit_default(&mut owner));
         assert_eq!(owner["env"][VAR], "45");
-        assert!(strip_kit_default(&mut owner), "removes the kit window only");
-        assert_eq!(owner["env"][VAR], "45");
-        assert!(cur_var(&owner, WIN_VAR).is_none());
         assert!(strip_kit_default(&mut v));
         assert_eq!(v, json!({}));
     }
@@ -403,9 +408,9 @@ mod tests {
     fn kit_window_only_when_owner_has_none() {
         let mut v = json!({});
         kit_default(&mut v).unwrap();
-        assert_eq!(v["env"][WIN_VAR], "1000000");
+        assert_eq!(v["env"][WIN_VAR], "250000");
         kit_default(&mut v).unwrap(); // idempotent
-        assert_eq!(v["env"][WIN_VAR], "1000000");
+        assert_eq!(v["env"][WIN_VAR], "250000");
         for owner in [
             json!({"env":{WIN_VAR:"200000"}}),
             json!({"autoCompactWindow":300000}),
@@ -414,7 +419,7 @@ mod tests {
             let mut o = owner.clone();
             kit_default(&mut o).unwrap();
             assert!(cur_var(&o, WIN_VAR) == cur_var(&owner, WIN_VAR), "{owner}");
-            strip_kit_default(&mut o); // owner window values are never kit-owned unless == 400000
+            strip_kit_default(&mut o); // owner window values are never kit-owned unless an earlier kit window
             assert_eq!(cur_var(&o, WIN_VAR), cur_var(&owner, WIN_VAR));
         }
         // remove: only the unchanged kit value goes
@@ -431,15 +436,16 @@ mod tests {
         assert_eq!(effective(Some("60"), Some("400000")), Some(240_000));
         assert_eq!(effective(Some("60"), Some("120000")), Some(72_000));
         assert_eq!(effective(None, Some("120000")), None);
-        assert_eq!((KIT_WINDOW as u64) * (KIT_DEFAULT as u64) / 100, 650_000);
+        assert_eq!((KIT_WINDOW as u64) * (KIT_DEFAULT as u64) / 100, 200_000);
     }
 
     #[test]
     fn the_point_follows_the_window_the_status_line_reports() {
-        // 1M model: old kit pair → 24 %, new kit → 65 %; 200K model: the 1M cap is the model window
+        // 1M model: 60 % x 400K → 24 %, 65 % x 1M → 65 %, kit 80 % x 250K → 20 %; 200K model: the cap is the model window
         assert_eq!(point(1_000_000, Some("60"), Some("400000")), Some(24));
         assert_eq!(point(1_000_000, Some("65"), Some("1000000")), Some(65));
-        assert_eq!(point(200_000, Some("65"), Some("1000000")), Some(65));
+        assert_eq!(point(1_000_000, Some("80"), Some("250000")), Some(20));
+        assert_eq!(point(200_000, Some("80"), Some("250000")), Some(80));
         assert_eq!(point(200_000, Some("60"), Some("400000")), Some(60));
         assert_eq!(point(1_000_000, Some("65"), None), Some(65), "no window: the model's");
         assert_eq!(point(1_000_000, Some("65"), Some("500k")), Some(65), "a value Claude Code would not take counts as none");
@@ -456,9 +462,9 @@ mod tests {
         std::fs::write(d.join("old.json"), json!({"session_id": "old", "model": "x", "ts": 1}).to_string()).unwrap();
         let seen = measured(&home);
         assert_eq!(seen, [("claude-opus-5-5".to_string(), 1_000_000), ("claude-haiku-5-5".to_string(), 200_000)]);
-        let l = measured_lines(&seen, Some("60"), Some("400000"));
-        assert!(l[0].contains("window 1000000 → nén ở ≈ 240000 token = 24% ctx") && l[0].contains("⚠ sớm"), "{l:?}");
-        assert!(l[1].contains("= 60% ctx") && !l[1].contains('⚠'));
+        let l = measured_lines(&seen, Some("80"), Some("250000"));
+        assert!(l[0].contains("window 1000000 → nén ở ≈ 200000 token = 20% ctx"), "{l:?}");
+        assert!(l[1].contains("≈ 160000 token = 80% ctx"), "{l:?}");
         let l = measured_lines(&seen, Some("65"), Some("1000000"));
         assert!(l.iter().all(|x| x.contains("= 65% ctx")), "{l:?}");
         assert!(measured_lines(&[], None, None)[0].contains("chưa đo"));
@@ -466,26 +472,26 @@ mod tests {
     }
 
     #[test]
-    fn the_old_kit_window_moves_to_the_model_window_and_owner_values_stay() {
-        // the pair the kit wrote before: compacted at 240K, ~24 % of a 1M status line
-        let mut old = json!({"env":{VAR:"60", WIN_VAR:"400000", "X":"1"}});
-        kit_default(&mut old).unwrap();
-        assert_eq!(old["env"], json!({VAR:"65", WIN_VAR:"1000000", "X":"1"}));
-        // owner percent with the old kit window: the percent stays
-        let mut pct = json!({"env":{VAR:"45", WIN_VAR:"400000"}});
-        kit_default(&mut pct).unwrap();
-        assert_eq!(pct["env"], json!({VAR:"45", WIN_VAR:"1000000"}));
-        // 60 % with an owner window is the owner's: untouched
-        let mut mine = json!({"env":{VAR:"60", WIN_VAR:"200000"}});
-        kit_default(&mut mine).unwrap();
-        assert_eq!(mine["env"], json!({VAR:"60", WIN_VAR:"200000"}));
-        // remove takes the old pair too
-        let mut gone = json!({"env":{VAR:"60", WIN_VAR:"400000"}});
+    fn an_exact_earlier_kit_pair_moves_to_200k_and_owner_pairs_stay() {
+        for (p, w) in OLD_KITS {
+            let mut old = json!({"env":{VAR:p, WIN_VAR:w, "X":"1"}});
+            kit_default(&mut old).unwrap();
+            assert_eq!(old["env"], json!({VAR:"80", WIN_VAR:"250000", "X":"1"}), "{p}/{w}");
+        }
+        // pairs the owner chose (even with one half equal to a kit value) are untouched
+        for (p, w) in [("50", "300000"), ("45", "400000"), ("65", "200000"), ("60", "1000000")] {
+            let mut mine = json!({"env":{VAR:p, WIN_VAR:w}});
+            kit_default(&mut mine).unwrap();
+            assert_eq!(mine["env"], json!({VAR:p, WIN_VAR:w}), "{p}/{w}");
+        }
+        // remove takes the earlier pairs too
+        let mut gone = json!({"env":{VAR:"65", WIN_VAR:"1000000"}});
         assert!(strip_kit_default(&mut gone));
         assert_eq!(gone, json!({}));
-        // status says when the compaction lands on the status line
+        // status explains the 20 % a 1M status line shows
         let (_d, p) = tmp();
-        std::fs::write(&p, old.to_string()).unwrap();
-        assert!(run_at(&[], &p).unwrap().contains("chạm 65%"));
+        std::fs::write(&p, json!({"env":{VAR:"80", WIN_VAR:"250000"}}).to_string()).unwrap();
+        let t = run_at(&[], &p).unwrap();
+        assert!(t.contains("≈ 200000 token") && t.contains("model 1M hiện `nén 20%`") && t.contains("model 200K hiện `nén 80%`"), "{t}");
     }
 }

@@ -74,7 +74,7 @@ pub(crate) fn harness_global(env: &env_detect::Env, sweep: Option<&str>, pull: b
 
     // 2. Anthropic token-optimizer defaults (never override a user setting).
     ui::step("token-optimizer defaults (Anthropic)");
-    let _ = compaction::ensure_threshold_default(&env.home, 50);
+    let _ = compaction::ensure_defaults(&env.home);
 
     // 3. Auto-stamp current project root if inside an omp project (su-code/ or AGENTS.md).
     if let Some(cwd_root) = discover::detect_current_project_root() {

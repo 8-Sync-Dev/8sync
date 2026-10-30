@@ -5,6 +5,19 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Changed
+- **Auto-compact của kit ở ~200K token thay vì 650K** (`8sync ccc kit`): `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 80 × `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 250000 (model 1M nén ở 200K, model 200K ở 160K). Bằng chứng (transcript Claude Code của owner, 24 h: 10 020 API call, 2,41 B token phía input, 99 % Opus 5.5): 78 % token input đến từ call có context ≥200K (200–400K: 39 %, ≥400K: 39 %); session lớn nhất ngồi ở ~636K, sát mốc cũ 65 % × 1M = 650K. Replay quỹ đạo context thật từng session với mốc nén T: 150K −59 %, 200K −53 %, 250K −48 %, 300K −42 %, 400K −29 %, 650K −0 % (khớp thực tế trong 0,1 %, xác nhận replay).
+  - Lần `ccc kit` / refresh kit sau chỉ chuyển cặp env bằng đúng cặp kit cũ (65/1000000 hoặc 60/400000); cặp owner tự đặt (vd 50/300000) giữ nguyên; % owner đặt riêng không bị thêm window.
+  - Status line model 1M hiện `nén 20%` (đúng: % tính trên window model) và không còn tô đỏ mốc dưới 50 %; `ccc compact` in mốc trên cả model 1M và 200K.
+- **omp nén ở 200K token:** `8sync harness global` seed `compaction.thresholdTokens: 200000` vào `~/.omp/agent/config.yml` khi chưa set (token thắng %, nên model 1M không còn nén ở 500K của `thresholdPercent: 50`); giá trị owner giữ nguyên; `8sync harness compaction` in cả hai giá trị.
+
+### Added
+- **Seed settings gọn prefix** (`~/.claude/settings.json`, `ccc kit`): `skillListingBudgetFraction: 0.005` khi chưa có (0,01 → 0,005 bớt 4 048 token mỗi session, mọi tên skill vẫn liệt kê — 644 dòng); deny `ShareOnboardingGuide`, `ReportFindings`, `ScheduleWakeup` **một lần** (stamp `seed:deny-unused-tools` trong `.8sync-kit.json`, owner xoá thì không thêm lại): schema tool 50 698 → 37 770 ký tự, −2 986 token; 7 ngày dùng: 0 (`Workflow` 81 lần, `ListAgents` 22 lần giữ nguyên).
+- **Luật giọng trả lời trong CLAUDE.md của kit** (2 dòng, ~88 token o200k): kết luận trước, không chào/"để tôi"/tóm lại/kể giữa tool call, câu một ý ≤20 từ, giữ đúng phủ định/"chỉ"/số/đơn vị, code/lệnh/path/lỗi nguyên văn, viết đủ câu cho cảnh báo bảo mật, việc không hoàn tác, owner đang rối. Cơ sở: Opus 5.5 "Answer concisely" 4 334 token output, `/caveman` 4 119, `/ultracave` 2 693 (README caveman); A/B agentic của JetBrains −8,5 % output, không giảm chất lượng (p = 0,82); luật caveman tốn ~1 160 token input.
+
+### Fixed
+- **Hook ECC chạy dù đã tắt:** `ECC_HOOKS_ENABLED=false` chỉ được đọc sau khi node khởi động, nên 27 lệnh hook của ECC (PreToolUse 10, Stop 8, SessionStart 2, PostToolUse 2, PostToolUseFailure 2, UserPromptSubmit 1, PreCompact 1, SessionEnd 1) vẫn spawn node; trên Windows mỗi lệnh chết lúc parse (`.replace(/\\/g,'/')` mất một backslash qua shell): một session 24 h có 4 936 lần sync lỗi + 7 627 lần async, ~8 node spawn mỗi Bash call. Giờ `ccc kit` và mỗi lần mở `ccc` với cờ "false" chuyển `hooks/hooks.json` của mọi bản plugin `ecc` sang `hooks.json.8sync-off` (chỉ khi chưa có backup) và ghi `{"hooks":{}}`; cờ "true" trả lại; backup + hooks.json rỗng = đã tắt, không làm gì.
+
 ### Removed
 - **Board, card, phòng team tự mở và chế độ chạy không cần owner — bỏ hẳn.** Owner (2026-10-30): "không board, không card, không team session; chỉ dùng session Claude Code anh tự mở; 8sync không bao giờ tự mở session". Máy board/team/auto đẩy prompt vào session và tự mở phòng → đốt token nhanh mà ít giá trị.
   - Verb đã bỏ: mọi `8sync ccc auto …` (up/down/revive/board/claim/wait/add/queue/merge/omp/lease/loop/ship-fast/ci/close/…), `8sync stop all`, `ccc idle`, `ccc delegate`, `ccc msg`, `ccc meet`, `ccc standup`, `ccc . <tên> --team/--panes`, `8sync hq task`, `8sync hq standup`; tool MCP `board`/`queue`/`queue_add`; HQ `/v1/board`, tab Board/Team/Office, route board/tasks/team/auto/permit; extension omp `8sync-team.ts`; skill kit `/auto-team`, `/team-tick`, `/sprint`; quyền "Tự merge" theo dự án (grant `Ship` theo session vẫn còn).

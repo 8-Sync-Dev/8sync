@@ -34,6 +34,7 @@ mod help;
 mod hint;
 mod looper;
 mod know;
+mod lean;
 mod output_budget;
 mod omp_term;
 mod term;
@@ -59,7 +60,7 @@ mod verify;
       8sync ccc . new <name>         create a session (refuses an existing name)
       8sync ccc . rm <name>          remove a session and its transcript
       8sync ccc help                 every ccc verb on one screen (Vietnamese)
-      8sync ccc compact [--at N|--reset|--window N|--window-reset|--json]   auto-compact threshold (kit default 65% of the model window; needs a new session)
+      8sync ccc compact [--at N|--reset|--window N|--window-reset|--json]   auto-compact threshold (kit default 80% x window 250000 = 200K; a 1M status line shows nén 20%; needs a new session)
       8sync ccc kit [--force]        install/refresh the 8sync kit in ~/.claude
       8sync ccc . <name> --offline   no network step at all: no auto-update, installer, `claude mcp add` or download
                                      (also `EIGHTSYNC_OFFLINE=1`; works on `new`, `.`, `kit`; `claude` must already be installed)
@@ -308,6 +309,7 @@ fn prepare(env: &Env, root: &Path, offline: bool) {
             ui::warn(&format!("kit refresh failed: {e:#} — `8sync ccc kit` retries"));
         }
     }
+    lean::sync_ecc_hooks(&claude_dir(env));
     refresh_ancestor_claude_md(env, root);
     if root.join(".git").exists() {
         if let Err(e) = project_harness(env, root) {
@@ -966,6 +968,7 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
     apply_kit_settings(&mut v, &exe, &skills)?;
     apply_lsp_plugins(&mut v, |bin| which::which(bin).is_ok());
     apply_ecc_plugin(&mut v);
+    let seeded = lean::seed_settings(&mut v, &mut stamps);
     for m in statusline::kit_apply(&mut v, &exe, &statusline::features(&env.home))? {
         ui::ok(&m);
     }
@@ -973,6 +976,10 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
     if out != raw {
         std::fs::write(&settings, out).with_context(|| format!("write {}", settings.display()))?;
     }
+    if seeded {
+        std::fs::write(&stamp_path, serde_json::to_string_pretty(&stamps)?)?;
+    }
+    lean::sync_ecc_hooks(&dir);
     let agents = KIT_FILES.iter().filter(|(_, rel)| rel.starts_with("agents/")).count();
     ui::ok(&format!(
         "kit: {agents} agents · /ship · /aup-audit · deep-research-web · verify hook · guard · stop + ask gates · auto mode · CLAUDE.md rules ({})",
@@ -1062,7 +1069,7 @@ fn apply_ecc_plugin(v: &mut Value) {
 /// (a user value wins), `permissions` rules, and 8sync's hooks (replaced in
 /// place on re-run, retired ones removed, so the file only changes when the kit does).
 fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()> {
-    // Auto-compact at 65% of the model window unless the owner chose a value (`8sync ccc compact --at N`).
+    // Auto-compact at 80% x 250K = 200K tokens unless the owner chose a value (`8sync ccc compact --at N`).
     compact::kit_default(v)?;
     // Tool-output budget (Bash 20k chars, Read 15k tokens), only when absent; see output_budget.rs.
     output_budget::kit_default(v)?;
