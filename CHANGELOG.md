@@ -5,8 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.111.1] — 2026-10-31
+
+### Added
+- **`/eccx-<category>` cho mọi user** (Claude Code + omp). Owner (2026-10-30): "release để người khác tải về sài được eccx-*". 19 lệnh: 16 category của https://ecc.tools/skills + `ads` (marketing/campaign/social/SEO), `game` (three.js/R3F/GSAP/3D) + `full` (router liên category, có sẵn bảng category). Mỗi lệnh liệt kê MỌI member — skill/agent/command ECC + skill 8sync bundle — mỗi dòng ≤12 từ; agent chọn hết cái áp dụng, đọc skill khi tới bước, plan (`--dry-run` dừng), làm có verify, báo cáo ngắn. File ≤12 KB (lớn nhất 11,9 KB: workflow).
+  - Claude Code: `8sync ccc kit` ghi `~/.claude/commands/eccx-*.md` (ref `ecc:<skill>` / subagent `ecc:<agent>` / `/ecc:<cmd>`; `disable-model-invocation: true` nên mô tả không tốn prefix); bản user tự viết/sửa được giữ, `--force` ghi đè; `kit status` đếm cả lệnh. Cũng có trong plugin `8sync-kit` (`commands/`).
+  - omp: `8sync harness`/`up` ghi `~/.omp/agent/commands/eccx-*.md` — tên trần (không `sx-`), chỉ global. Member ECC đọc từ checkout ECC pin của 8sync `~/.cache/8sync/ecc/` (hoặc bản plugin mới nhất trong `~/.claude/plugins/cache/ecc/ecc/`).
+  - Sinh bởi `scripts/eccx-gen.py` từ `scripts/eccx/ecc-snapshot.json` (ECC 2.2.3: 311 skill, 71 agent, 97 command + category ecc.tools) và `assets/skills`/`assets/claude/skills`; chạy lại cho đúng byte; skill bundle mới chưa xếp category → script dừng.
+
 ### Fixed
-- **`8sync harness` cảnh báo `builtin deep-research/karpathy not bundled` mỗi lần chạy:** registry (`su-code/skills.toml` + `~/.config/8sync/skills.toml`) còn giữ builtin bản cũ đã bỏ (`deep-research` thành `deep-research-web` từ 0.111.0; `karpathy` là tên cũ của `karpathy-guidelines`). Giờ `skill update` (cũng chạy trong `harness`) bỏ mọi `builtin:` mà binary không còn bundle, in một dòng thông báo và ghi lại manifest không có nó; `su-code/skills.toml` của repo đã dọn.
+- **`8sync harness` cảnh báo `builtin deep-research/karpathy not bundled` mỗi lần chạy:** registry (`su-code/skills.toml` + `8sync/skills.toml` trong thư mục config của máy) còn giữ builtin bản cũ đã bỏ (`deep-research` thành `deep-research-web` từ 0.111.0; `karpathy` là tên cũ của `karpathy-guidelines`). Giờ `skill update` (cũng chạy trong `harness`) bỏ mọi `builtin:` mà binary không còn bundle, in một dòng thông báo và ghi lại manifest không có nó; `su-code/skills.toml` của repo đã dọn.
 
 ## [0.111.0] — 2026-10-30
 

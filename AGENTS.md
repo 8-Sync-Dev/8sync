@@ -105,10 +105,13 @@ su-code/
 └── assets/                                                  bundled vào binary qua rust-embed
     ├── configs/                                             helix config + theme + kitty/8sync.session + 8sync/{global,skills}.toml
     ├── profiles/                                            7 personal profile TOML (vietnamese, hw-cooling, hw-lianli, displaylink, apps-personal, warp, alexdev-bundle)
+    ├── claude/commands/ · eccx/                             `/eccx-<category>` (Claude Code kit · omp) — SINH bởi `scripts/eccx-gen.py`, đừng sửa tay
     └── skills/                                              bundled skill → deploy vào ~/.omp/skills (global, KHÔNG vendor vào repo) + 00-force-load.md
 ```
 
 Mỗi repo 8sync quản (`8sync harness`): `AGENTS.md`/`CLAUDE.md`/`.cursor/rules/8sync-harness.mdc` (block tối giản trong sentinel) · `su-code/*.md` (memory) · `.claude/rules/ecc/<pack>/` (ECC rule pack theo stack). Skills/agents/commands = plugin ECC `ecc@ecc` (global).
+
+**`/eccx-<category>`** (x = extra, không đụng lệnh của ECC): 1 lệnh mỗi category của https://ecc.tools/skills (core, workflow, ai-agent, security, research, frontend, backend, python, golang, jvm, swift, cpp, perl, industry, content, specialized) + `ads`, `game`, `full` (router liên category). Mỗi lệnh liệt kê MỌI member (skill/agent/command ECC + skill 8sync bundle), mỗi dòng 1 mục ≤12 từ; agent chọn hết cái áp dụng → đọc skill khi tới bước → plan (`--dry-run` dừng ở đây) → làm có verify → báo cáo. Claude Code: `8sync ccc kit` ghi `~/.claude/commands/eccx-*.md` (giữ bản user tự sửa, `--force` ghi đè; cũng có trong plugin `8sync-kit`). omp: `8sync harness`/`up` ghi `~/.omp/agent/commands/eccx-*.md` (tên trần, không `sx-`). Sửa: chỉnh `scripts/eccx-gen.py` rồi chạy `python scripts/eccx-gen.py` (deterministic, ≤12 KB/file); ECC đổi → `--refresh <plugin dir> [--catalog <ecc.tools json>]` cập nhật `scripts/eccx/ecc-snapshot.json`.
 
 ---
 
