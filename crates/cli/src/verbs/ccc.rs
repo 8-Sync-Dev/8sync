@@ -74,7 +74,7 @@ mod verify;
 
     EVERY LAUNCH (no network on the launch path; SUSYNC_NO_AUTO_UPDATE=1 skips the update)
       newer 8sync release → install + re-run · after an update: bundled skills + kit refresh ·
-      git repo → harness: su-code/ memory, AGENTS.md/CLAUDE.md blocks, .claude/skills → su-code/skills
+      git repo → harness: su-code/ memory, AGENTS.md/CLAUDE.md blocks, ECC rules → .claude/rules/ecc/ (cached checkout only)
 
     THE KIT (installed by `8sync setup`; edited files are kept unless --force)
       rules    a short 8 Sync/Anthropic rules block in every session; full text (aup-audit/8sync-anthropic-rules.md)
@@ -366,16 +366,10 @@ fn refresh_ancestor_claude_md(env: &Env, dir: &Path) {
 }
 
 /// The repo side of the harness, the same files `8sync .` gives omp: the
-/// su-code memory + AGENTS.md / CLAUDE.md blocks, every skill under
-/// `su-code/skills/` (bundled ones vendored in when missing), `.claude/skills/`
-/// linked to that tree, and on-demand skills listed by name only.
+/// su-code memory, the AGENTS.md / CLAUDE.md blocks, ECC rule packs from the
+/// cached ECC checkout, and the managed .gitignore block.
 fn project_harness(env: &Env, root: &Path) -> Result<()> {
-    deploy::vendor_missing_skills(&env.home, root)?;
     crate::verbs::here::seed_project_context(env, root, &crate::verbs::here::detect_stack(root))?;
-    deploy::ensure_claude_skills(root)?;
-    if deploy::claude_skills_is_ours(root) {
-        crate::verbs::skill::inject::claude_skill_overrides(&env.home, root)?;
-    }
     crate::verbs::harness::memory::seed_gitignore(root)
 }
 

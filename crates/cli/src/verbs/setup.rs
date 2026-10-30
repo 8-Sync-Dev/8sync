@@ -335,7 +335,7 @@ pub fn run(a: Args) -> Result<()> {
         try_step("skills",     yolo, &mut failures, || install_skills(&env))?;
         try_step("trail-skill", yolo, &mut failures, || register_trail_skill(&env))?;
         try_step("harness-global", yolo, &mut failures, || {
-            crate::verbs::harness::global::harness_global(&env, None, false, false)
+            crate::verbs::harness::global::harness_global(&env, None, false)
         })?;
         // After harness-global, so the skills it deploys exist when the kit links them into Claude Code.
         try_step("claude-kit", yolo, &mut failures, || crate::verbs::ccc::install_kit(&env, false))?;

@@ -4,7 +4,6 @@ use anyhow::Result;
 use std::path::Path;
 use std::process::Command;
 
-use super::discover::list_installed_skill_dirs;
 use crate::{assets, env_detect, ui};
 
 /// Every bundled skill tree: (asset prefix, target subdir name). Always-on first
@@ -94,59 +93,6 @@ pub(crate) fn ensure_skill_layout(dir: &Path) {
     }
 }
 
-/// For every skill dir under `~/.omp/skills/`, create or refresh a copy under
-/// `<root>/su-code/skills/<name>/`. Returns the number of skills processed.
-pub(crate) fn mirror_global_to_local(home: &Path, root: &Path, force: bool) -> Result<usize> {
-    let global_dir = home.join(".omp/skills");
-    let local_dir = root.join("su-code/skills");
-    std::fs::create_dir_all(&local_dir)?;
-    let globals = list_installed_skill_dirs(&global_dir).unwrap_or_default();
-    let mut count = 0usize;
-    for g in &globals {
-        let name = match g.file_name().and_then(|s| s.to_str()) {
-            Some(n) => n,
-            None => continue,
-        };
-        let local_target = local_dir.join(name);
-
-        // Self-mirror guard: if the global skill is a symlink that resolves to
-        // local_target (e.g. `path:` install with cwd == project root), refusing
-        // to remove+copy would otherwise WIPE the source. Skip cleanly.
-        let g_canon = std::fs::canonicalize(g).ok();
-        let l_canon = std::fs::canonicalize(&local_target).ok();
-        if let (Some(gc), Some(lc)) = (g_canon.as_ref(), l_canon.as_ref()) {
-            if gc == lc {
-                ui::skip(
-                    &local_target.display().to_string(),
-                    "global symlink resolves here (skipped — already source-of-truth)",
-                );
-                count += 1;
-                continue;
-            }
-        }
-
-        // Additive by default: never clobber an existing (maybe customized) local
-        // skill — only vendor missing ones. `--force` re-mirrors everything.
-        let existed = local_target.exists();
-        if existed && !force {
-            ui::skip(&local_target.display().to_string(), "exists (use --force to refresh)");
-            count += 1;
-            continue;
-        }
-        if existed {
-            let _ = std::fs::remove_dir_all(&local_target);
-        }
-        copy_dir_recursive(g, &local_target)?;
-        ui::ok(&format!(
-            "{} → {}",
-            if existed { "refreshed" } else { "vendored " },
-            local_target.display()
-        ));
-        count += 1;
-    }
-    Ok(count)
-}
-
 /// Recursively copy `src` into `dst`. Skips `.git/` (vendor copies should not
 /// carry the git history of an unrelated repo). Overwrites existing files.
 pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
@@ -175,90 +121,7 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Host adapters that speak the Agent Skills open standard from a *different*
-/// project path than `su-code/skills/` (the committed canonical tree):
-///   `.cursor/skills/`  — Cursor Agent Skills (project)
-///   `.zcode/skills/`   — Z.ai Code
-///   `.claude/skills/`  — Claude Code (project skills)
-/// Prefer a relative symlink / Windows junction so the trees cannot drift; fall
-/// back to a copy when the OS refuses links. Also writes `.cursor/rules/*.mdc`.
-pub(crate) fn ensure_host_adapters(home: &Path, root: &Path, force: bool) -> Result<()> {
-    let src = root.join("su-code/skills");
-    if src.is_dir() {
-        for (rel, label) in [(".cursor/skills", "Cursor"), (".zcode/skills", "Z.ai Code"), (".claude/skills", "Claude Code")] {
-            // A repo's own committed `.claude/skills/` is not ours to replace, even with --force.
-            if rel == ".claude/skills" && !claude_skills_is_ours(root) {
-                continue;
-            }
-            mirror_skill_host(&src, &root.join(rel), label, force)?;
-        }
-    }
-    if src.is_dir() && claude_skills_is_ours(root) {
-        super::inject::claude_skill_overrides(home, root)?;
-    }
-    super::inject::inject_cursor_rule(home, root)?;
-    Ok(())
-}
-
-/// `.claude/skills/` → `su-code/skills/` for `8sync ccc` launches: links once,
-/// silent afterwards. A `.claude/skills/` the repo already has is left alone.
-pub(crate) fn ensure_claude_skills(root: &Path) -> Result<()> {
-    let (src, dst) = (root.join("su-code/skills"), root.join(".claude/skills"));
-    if !src.is_dir() || dst.exists() {
-        return Ok(());
-    }
-    let how = link_or_copy_dir(&src, &dst)?;
-    ui::ok(&format!("Claude Code skills → {} ({how})", dst.display()));
-    Ok(())
-}
-
-/// Whether `.claude/skills/` is 8sync's link to `su-code/skills/` (or absent,
-/// about to become one) rather than skills the repo commits itself.
-pub(crate) fn claude_skills_is_ours(root: &Path) -> bool {
-    let dst = root.join(".claude/skills");
-    !dst.exists() || same_dir(&root.join("su-code/skills"), &dst)
-}
-
-/// Copy into `su-code/skills/` every global skill the project lacks. Silent
-/// and additive: an existing (maybe customised) project skill is never touched.
-pub(crate) fn vendor_missing_skills(home: &Path, root: &Path) -> Result<usize> {
-    let local_dir = root.join("su-code/skills");
-    let mut added = 0;
-    for g in list_installed_skill_dirs(&home.join(".omp/skills")).unwrap_or_default() {
-        let Some(name) = g.file_name() else { continue };
-        let target = local_dir.join(name);
-        if !target.exists() {
-            copy_dir_recursive(&g, &target)?;
-            added += 1;
-        }
-    }
-    if added > 0 {
-        ui::ok(&format!("{added} skill(s) vendored → {}", local_dir.display()));
-    }
-    Ok(added)
-}
-
-fn mirror_skill_host(src: &Path, dst: &Path, label: &str, force: bool) -> Result<()> {
-    if dst.exists() && !force {
-        if same_dir(src, dst) {
-            ui::skip(&dst.display().to_string(), "already linked");
-            return Ok(());
-        }
-        ui::skip(
-            &dst.display().to_string(),
-            "exists (use --force to refresh)",
-        );
-        return Ok(());
-    }
-    if dst.exists() {
-        remove_link_or_dir(dst)?;
-    }
-    let how = link_or_copy_dir(src, dst)?;
-    ui::ok(&format!("{label} skills → {} ({how})", dst.display()));
-    Ok(())
-}
-
-fn same_dir(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_dir(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(x), Ok(y)) => x == y,
         _ => false,
@@ -303,16 +166,9 @@ fn strip_verbatim(path: &Path) -> String {
     s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
 }
 
-/// Both host dirs sit one level under the repo root, so the relative link is
-/// always `../su-code/skills`. Hardcoded on purpose — a computed relative path
-/// is a bigger function for two known layouts.
-fn link_or_copy_dir(src: &Path, dst: &Path) -> Result<&'static str> {
-    link_dir(src, dst, &Path::new("..").join("su-code").join("skills"))
-}
-
 /// `dst` → `src` as a symlink whose text is `link` (Windows: a junction when
 /// symlinks need developer mode), else a copy.
-fn link_dir(src: &Path, dst: &Path, link: &Path) -> Result<&'static str> {
+pub(crate) fn link_dir(src: &Path, dst: &Path, link: &Path) -> Result<&'static str> {
     if let Some(p) = dst.parent() {
         std::fs::create_dir_all(p)?;
     }
@@ -1967,65 +1823,6 @@ mod legacy_command_tests {
                 "`{asset}` ships today yet is listed as a retired body"
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod host_adapter_tests {
-    #[test]
-    fn host_adapters_create_cursor_and_zcode_from_su_code_skills() {
-        let base = std::env::temp_dir().join(format!("8sync-hosts-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        let home = base.join("home");
-        let root = base.join("repo");
-        let skill = root.join("su-code/skills/foo");
-        std::fs::create_dir_all(&skill).unwrap();
-        std::fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: foo\ndescription: fixture\n---\n\nbody\n",
-        )
-        .unwrap();
-
-        super::ensure_host_adapters(&home, &root, true).unwrap();
-
-        assert!(
-            root.join(".cursor/skills/foo/SKILL.md").is_file(),
-            "Cursor Agent Skills dir must expose SKILL.md"
-        );
-        assert!(
-            root.join(".zcode/skills/foo/SKILL.md").is_file(),
-            "Z.ai Code skills dir must expose SKILL.md"
-        );
-        let rule = std::fs::read_to_string(root.join(".cursor/rules/8sync-harness.mdc")).unwrap();
-        assert!(rule.contains("alwaysApply: true"));
-        assert!(root.join(".claude/skills/foo/SKILL.md").is_file(), "Claude Code project skills dir must expose SKILL.md");
-        let overrides: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(root.join(".claude/settings.local.json")).unwrap()).unwrap();
-        assert_eq!(overrides["skillOverrides"]["foo"], "name-only", "on-demand skill listed by name only");
-
-        // The links must be ignored as links: git sees a symlink/junction as a
-        // file, so a `dir/` pattern lets `git add -A` commit it.
-        std::process::Command::new("git").args(["init", "-q"]).current_dir(&root).status().unwrap();
-        crate::verbs::harness::memory::seed_gitignore(&root).unwrap();
-        let out = std::process::Command::new("git").args(["status", "--porcelain", "--untracked-files=all"]).current_dir(&root).output().unwrap();
-        let status = String::from_utf8_lossy(&out.stdout);
-        for link in [".cursor/skills", ".zcode/skills", ".claude/"] {
-            assert!(!status.contains(link), "{link} must be ignored, git status:\n{status}");
-        }
-
-        // A repo's own `.claude/skills/` is never replaced, even with --force.
-        let own = base.join("own");
-        std::fs::create_dir_all(own.join("su-code/skills/foo")).unwrap();
-        std::fs::create_dir_all(own.join(".claude/skills/mine")).unwrap();
-        std::fs::write(own.join(".claude/skills/mine/SKILL.md"), "---\nname: mine\n---\n").unwrap();
-        super::ensure_host_adapters(&home, &own, true).unwrap();
-        assert!(own.join(".claude/skills/mine/SKILL.md").is_file(), "repo-owned Claude Code skills survive --force");
-
-        super::ensure_host_adapters(&home, &root, true).unwrap();
-        assert!(skill.join("SKILL.md").is_file(), "canonical skill must survive --force");
-        assert!(root.join(".cursor/skills/foo/SKILL.md").is_file());
-
-        let _ = std::fs::remove_dir_all(&base);
     }
 }
 

@@ -11,6 +11,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
   - Hook đã bỏ: `ccc hook idle|task-done|delegate|wake|permit`, `hq` TaskCreated/TaskCompleted/TeammateIdle. `ccc kit` trên máy cũ tự gỡ các hook đó (chỉ entry của 8sync), các skill 8sync đã ghi (khớp stamp), khoá `delegate`/`delegate_after_s`/`no_idle` trong `features.toml`, và extension `8sync-team.ts` đã deploy. Unit systemd HQ không còn bật `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`; session omp không còn poll inbox HQ.
   - Giữ: session (`ccc . <tên>`, ls/urgent/goal/cancel/report/know/inbox), `/ship*`, `/autopilot`, `ccc loop`, `ccc risk`, `ccc eco` (+ `eco reap`), `ccc awake` (đếm phòng sống qua `claude agents --json`), ghi nhận Stop lỗi + báo (không tự mở lại phòng). Từ khoá verb cũ vẫn bị cấm làm tên session nên `8sync ccc auto revive` cũ không mở session tên "auto".
 
+### Changed
+- **Harness per-project = ECC-only: không vendor skill vào repo nữa.** Owner (2026-10-30, "Chỉ ECC"): skills/agents/commands đến từ plugin Claude Code `ecc@ecc` (global); repo chỉ giữ block 8sync tối giản + ECC rule pack.
+  - Block `8sync:skills` trong `AGENTS.md`/`CLAUDE.md`/`.cursor/rules/8sync-harness.mdc` còn ~13 dòng: STEP 0 trail (`trail ask/grep/skeleton/callers`), luật CHANGELOG `[Unreleased]` + `su-code/KNOWLEDGE.md` + `su-code/STATE.md`, 1 dòng ECC. Không liệt kê skill; byte-stable; chỉ sentinel bị ghi. Pointer sub-folder + breadcrumb KNOWLEDGE rút gọn theo.
+  - ECC rule pack: phát hiện stack bằng `config/project-stack-mappings.json` của ECC (root + sub-dir cấp 1), copy `rules/common` + pack của stack vào `.claude/rules/ecc/<pack>/`, không bao giờ đè pack đã có. Nguồn: checkout nông ECC `v2.2.3` cache ở `~/.cache/8sync/ecc` (chỉ clone lại khi đổi pin; offline → cảnh báo, không fail). `ccc` launch + `8sync .` dùng cache, không mạng. `.claude/rules/ecc/` vào managed `.gitignore` chỉ khi repo đã ignore `su-code/skills`.
+  - Gỡ layout cũ khi harness chạy: xoá `su-code/skills/<name>` chỉ khi là skill 8sync VÀ là bản copy chưa sửa (trùng byte với bản bundled hoặc `~/.omp/skills/<name>`); skill của user / đã sửa giữ lại + báo. Gỡ link `.claude`/`.cursor`/`.zcode/skills`, key `skillOverrides: name-only` 8sync đã ghi, `su-code/skills` nếu rỗng; managed `.gitignore` bỏ dòng link skill.
+  - `harness bare/init/up/create/global --sweep`, `ccc` launch, `8sync .`, `skill add`/`skill update` không còn copy skill vào `su-code/skills`. Bỏ flag `harness --force` (chỉ dùng cho re-mirror). `harness bench` (+ `/api/bench`) chỉ đo block + memory spine.
+
 ## [0.110.92] — 2026-10-28
 - Size gate trần 8192 → 8256 KiB: `ccc eco reap` đẩy asset musl lên 8 391 216 B (vượt 2 608 B).
 

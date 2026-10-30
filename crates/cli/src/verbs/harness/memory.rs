@@ -4,7 +4,6 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::ui;
-use crate::verbs::skill::index::always_on_names_in_order;
 
 /// Verifiable facts about THIS repo, for `su-code/PROJECT.md`.
 ///
@@ -193,9 +192,9 @@ pub(crate) fn upsert_block(path: &Path, begin: &str, end: &str, body: &str) -> R
 }
 
 /// Seed/refresh a managed block in `<root>/.gitignore` so durable agent memory
-/// + skills stay committed (portable to a new machine) while derived caches and
-/// secrets are ignored. Only the sentinel-bounded block is owned; any user
-/// entries outside it (incl. a tool-repo's own `su-code/skills/` rule) survive.
+/// stays committed (portable to a new machine) while derived caches and secrets
+/// are ignored. Only the sentinel-bounded block is owned; any user entries
+/// outside it survive.
 pub(crate) fn seed_gitignore(root: &Path) -> Result<()> {
     let body = concat!(
         "# Derived / machine-local — rebuilt by `8sync harness init` + trail. Safe to ignore:\n",
@@ -222,20 +221,25 @@ pub(crate) fn seed_gitignore(root: &Path) -> Result<()> {
         "*.session-journal\n",
         "*.pkl\n",
         "# KEEP COMMITTED (do NOT add here): su-code/ (memory), AGENTS.md, CHANGELOG.md, .cursor/rules/\n",
-        "# Host skill mirrors (rebuilt from su-code/skills/ by `8sync harness create`).\n",
-        "# No trailing slash: git sees a symlink/junction as a file, and `dir/` never matches it.\n",
-        ".cursor/skills\n",
-        ".zcode/skills\n",
+        "# Claude Code per-machine settings:\n",
+        ".claude/settings.local.json\n",
     );
-    // `.claude/skills` is 8sync's link only when the repo has no skills of its own
-    // there; `.claude/settings.local.json` (skill listing overrides) is per machine.
-    let claude = if crate::verbs::skill::deploy::claude_skills_is_ours(root) { ".claude/skills\n.claude/settings.local.json\n" } else { ".claude/settings.local.json\n" };
-    upsert_block(
-        &root.join(".gitignore"),
-        "# >>> 8sync (managed) >>>",
-        "# <<< 8sync <<<",
-        &format!("{body}{claude}"),
-    )
+    let path = root.join(".gitignore");
+    // ECC rule packs are copies of a pinned upstream: tracked unless the repo
+    // already chose to ignore generated copies (it ignores the old vendored
+    // `su-code/skills/` tree itself, outside this block).
+    let ecc = if ignores_generated_copies(&std::fs::read_to_string(&path).unwrap_or_default()) {
+        "# ECC rule packs (copied from the pinned ECC checkout by `8sync harness`):\n.claude/rules/ecc/\n"
+    } else {
+        ""
+    };
+    upsert_block(&path, "# >>> 8sync (managed) >>>", "# <<< 8sync <<<", &format!("{body}{ecc}"))
+}
+
+/// True when a non-comment `.gitignore` line ignores `su-code/skills` — the
+/// repo's own policy of not tracking generated skill copies.
+fn ignores_generated_copies(gitignore: &str) -> bool {
+    gitignore.lines().map(str::trim).filter(|l| !l.starts_with('#')).any(|l| l.trim_matches('/') == "su-code/skills")
 }
 
 /// One-time legacy `agents/` → `su-code/` migration. Renames the old agent-memory
@@ -348,27 +352,15 @@ pub(crate) fn seed_harness_memory(root: &Path) -> Result<()> {
         ui::ok(&format!("seeded {}", changelog.display()));
     }
     // KNOWLEDGE.md — managed harness breadcrumb (always current).
-    let chain = {
-        let names = always_on_names_in_order(root);
-        if names.is_empty() {
-            "trail → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing".to_string()
-        } else {
-            names.join(" → ")
-        }
-    };
-    let body = format!(
-        "## 🧠 8sync harness\n\n\
-- **Always-on (đọc theo thứ tự; CORE đọc body ngay, SPECIALIST đọc khi task khớp):** {}.\n\
-- **Cách tận dụng:** trail = explore code (ask/callers/skeleton, không grep) · karpathy + ponytail = YAGNI, làm ít nhất, xoá > thêm · impeccable = design CHUẨN, BẮT BUỘC khi UI/design (đọc body lúc đó) + taste chống slop.\n\
-- **Output lớn (>~50 dòng) → BẮT BUỘC `headroom_compress`** trước khi vào context.\n\
-- **Sau mỗi thay đổi:** cập nhật `CHANGELOG.md` (Unreleased) + ghi học được vào file này (prefix `validated:` nếu test/build xác nhận, `hypothesis:` nếu chưa).",
-        chain,
-    );
+    let body = "## 🧠 8sync harness\n\n\
+- **STEP 0:** `trail ask` / `trail grep` / `trail skeleton` / `trail callers` thay grep/đọc cả file.\n\
+- **Skills/agents/commands:** plugin ECC `ecc@ecc` (global) + rule của repo trong `.claude/rules/ecc/`.\n\
+- **Sau mỗi thay đổi:** cập nhật `CHANGELOG.md` (Unreleased) + ghi học được vào file này (prefix `validated:` nếu test/build xác nhận, `hypothesis:` nếu chưa).";
     upsert_block(
         &agents_dir.join("KNOWLEDGE.md"),
         "<!-- 8sync:harness:begin -->",
         "<!-- 8sync:harness:end -->",
-        &body,
+        body,
     )?;
     Ok(())
 }
@@ -515,5 +507,29 @@ mod project_facts_tests {
         let d = scratch("malformed", &[("package.json", "{ this is not json")]);
         let f = project_facts(&d.0).expect("still recognised as a node project");
         assert!(f.contains("Node/TS `?`"), "{f}");
+    }
+}
+
+#[cfg(test)]
+mod gitignore_tests {
+    use super::*;
+
+    /// `.claude/rules/ecc/` joins the managed block only where the repo already
+    /// ignores generated skill copies; the retired skill-link entries are gone.
+    #[test]
+    fn ecc_rules_ignored_only_when_the_repo_ignores_generated_copies() {
+        let d = std::env::temp_dir().join(format!("8sync-gitignore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        seed_gitignore(&d).unwrap();
+        let plain = std::fs::read_to_string(d.join(".gitignore")).unwrap();
+        assert!(!plain.contains(".claude/rules/ecc/") && !plain.contains(".cursor/skills") && !plain.contains(".claude/skills"));
+        assert!(plain.contains(".claude/settings.local.json"));
+        std::fs::write(d.join(".gitignore"), format!("{plain}\n# mine\n/su-code/skills/\n")).unwrap();
+        seed_gitignore(&d).unwrap();
+        let gen = std::fs::read_to_string(d.join(".gitignore")).unwrap();
+        assert!(gen.contains(".claude/rules/ecc/\n") && gen.ends_with("# mine\n/su-code/skills/\n"));
+        assert!(!ignores_generated_copies("# su-code/skills/ is mentioned in a comment\n"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

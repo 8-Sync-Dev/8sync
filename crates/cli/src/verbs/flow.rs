@@ -71,7 +71,7 @@ pub fn run() -> Result<()> {
         ("8sync clean",                    "reclaim disk + tidy caches + CPU/GPU/RAM report (--deep/--timer 1h)"),
         ("8sync doctor",                   "full health check"),
         ("8sync skill",                    "list installed skills + project-local skills"),
-        ("8sync skill add <url>",          "clone a skill repo into ~/.omp/skills/ and project su-code/skills/"),
+        ("8sync skill add <url>",          "clone a skill repo into ~/.omp/skills/"),
         ("8sync harness",                  "(bare) refresh skills + memory + /gs + MCP + reindex"),
         ("8sync setup profile list",       "show all profiles and which are applied"),
         ("8sync setup profile show warp",  "show resolved content of a profile"),

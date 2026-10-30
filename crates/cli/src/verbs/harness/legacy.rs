@@ -64,7 +64,7 @@ fn strip_allow_rules(settings: &mut Value) -> usize {
 
 /// 8sync's config dirs for `home`: `<home>/.config/8sync`, plus the platform config dir
 /// (`%APPDATA%\8sync` on Windows, where `setup` writes) only when `home` is the real home.
-fn config_dirs(home: &Path) -> Vec<PathBuf> {
+pub(crate) fn config_dirs(home: &Path) -> Vec<PathBuf> {
     let mut v = vec![crate::brand::config_dir(home)];
     if dirs::home_dir().as_deref() == Some(home) {
         if let Some(d) = dirs::config_dir().map(|d| d.join(crate::brand::NS)) {

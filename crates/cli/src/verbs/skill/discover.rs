@@ -67,7 +67,7 @@ pub(crate) fn list_installed_skill_dirs(skills_dir: &Path) -> Result<Vec<PathBuf
 }
 
 /// The project-memory directory name. A literal, matching every other call site
-/// (`deploy::mirror_global_to_local`, `memory::migrate_legacy_layout`) — it is
+/// (`memory::seed_harness_memory`, `memory::migrate_legacy_layout`) — it is
 /// NOT `brand::NS`, which is the config/artifact namespace (`8sync`).
 pub(crate) const MEMORY_DIR: &str = "su-code";
 

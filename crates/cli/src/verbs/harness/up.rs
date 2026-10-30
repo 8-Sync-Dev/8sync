@@ -1,6 +1,7 @@
 //! `8sync harness up` — refresh the harness to the project's CURRENT state:
-//! re-inject AGENTS.md + sub-folder indexes, refresh the KNOWLEDGE breadcrumb,
-//! and rebuild the trail map so the agent keeps learning as the project grows.
+//! re-inject the AGENTS.md block + sub-folder pointers, refresh the KNOWLEDGE
+//! breadcrumb and the ECC rule packs, and rebuild the trail map so the agent
+//! keeps learning as the project grows.
 //! `--loop <dur>` runs it in the foreground; `--timer <dur|off>` installs a
 //! systemd user timer (the recommended background option — memory-bounded to its
 //! own cgroup so a heavy refresh can't OOM the machine). Per tick the harness
@@ -59,6 +60,7 @@ fn refresh_once(env: &env_detect::Env, pull: bool, commit: bool) -> Result<()> {
     let _ = crate::verbs::skill::deploy::ensure_engine(&env.home, Some(&root));
     let _ = crate::verbs::skill::deploy::ensure_rules(&env.home, Some(&root));
     let _ = crate::verbs::skill::deploy::cleanup_legacy_gs(&env.home, Some(&root));
+    super::ecc::project_layer(&env.home, &root, true);
     seed_harness_memory(&root)?;
     let _ = consolidate_learnings(&root);
     seed_gitleaks_hook(&root);

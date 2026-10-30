@@ -1,8 +1,10 @@
 //! `8sync harness` — stand up & refresh the project's agent harness.
 //!
-//! `init` (default): full bootstrap — deploy bundled skills + the trail binary +
-//! external skill packs, mirror into the project, wire trail, seed memory +
-//! CHANGELOG, inject force-load into AGENTS.md/CLAUDE.md + every sub-folder.
+//! `init` (default): full bootstrap — the global layer (bundled skills under
+//! ~/.omp, trail binary, MCPs) plus the project layer: trail wiring, memory +
+//! CHANGELOG, the minimal 8sync block in AGENTS.md/CLAUDE.md, and ECC rule packs
+//! in `.claude/rules/ecc/` (skills/agents/commands come from the global ECC
+//! plugin `ecc@ecc`, never vendored into the repo).
 //! `up`: refresh to the current project state (re-inject + refresh the trail map),
 //! with `--loop`/`--timer` for periodic runs.
 use anyhow::Result;
@@ -17,6 +19,7 @@ mod bench;
 mod eval;
 mod external;
 pub(crate) mod global;
+pub(crate) mod ecc;
 mod init;
 pub(crate) mod memory;
 mod model;
@@ -44,13 +47,13 @@ mod toolstats;
 #[derive(ClapArgs, Debug)]
 #[command(after_help = indoc::indoc! {"
     EXAMPLES
-      8sync harness                   ONE command — deploy/update skills + mirror + inject + memory + index (idempotent)
-      8sync harness create            FULL host bootstrap: omp + su-code/skills + .cursor (Cursor standard) + .zcode
+      8sync harness                   ONE command — global skills/trail/MCP + project block + memory + ECC rules (idempotent)
+      8sync harness create            same as init, then `--sweep` stamps every omp project
       8sync harness create --sweep    …and stamp every omp project (has su-code/ or AGENTS.md) under ~/Projects
       8sync harness global            apply omp rules MACHINE-WIDE (all projects) + Anthropic token-optimizer defaults
-      8sync harness global --sweep    …and stamp skills/memory into every omp project (has su-code/ or AGENTS.md) under ~/Projects
-      8sync harness init              explicit full bootstrap with progress UI (force re-deploy everything)
-      8sync harness up                refresh skills/AGENTS.md/memory + rebuild the trail map to current state
+      8sync harness global --sweep    …and stamp the project layer (block · memory · ECC rules) into every omp project under ~/Projects
+      8sync harness init              explicit full bootstrap with progress UI
+      8sync harness up                refresh AGENTS.md block/memory/ECC rules + rebuild the trail map to current state
       8sync harness up --pull        refresh AND re-pull registered skills from their source repos
       8sync harness up --commit      refresh AND git-commit agent memory (portable; default off)
       8sync harness up --loop 10m     foreground: refresh every 10m (Ctrl-C to stop)
@@ -70,11 +73,10 @@ mod toolstats;
       8sync harness browser [fix|status|off]  point omp's browser at system Chromium (ungoogled) so it reaches the internet
       8sync harness browser ego [install|status]  install the official ego lite browser (Windows x64; macOS link) — agents drive your logged-in browser via `ego-browser`
 
-    WHAT init DEPLOYS
-      always-on : trail · karpathy · ponytail · assp · impeccable · taste · 8sync-cli · image-routing
-      on-demand : code-review-and-quality · senior-security · senior-frontend · full-flow · last30days
-      tech-gated: encore-deploy (only surfaced when the project uses Encore)
-      external  : ponytail (full) + addyosmani/agent-skills (best-effort clone → ~/.omp/skills)
+    PER REPO (no skills are vendored into the repo)
+      AGENTS.md/CLAUDE.md block : STEP 0 trail + CHANGELOG/KNOWLEDGE/STATE rules (sentinel block only)
+      .claude/rules/ecc/<pack>/ : ECC rule packs for the detected stacks (common + rust/typescript/…), never overwritten
+      skills/agents/commands    : the global Claude Code plugin `ecc@ecc`
 "})]
 pub struct Args {
     /// init (default) | create | up | global | audit | bench | eval | toolstats | model | gateway | web | compaction | help
@@ -97,10 +99,6 @@ pub struct Args {
     /// su-code/ + AGENTS.md/CLAUDE.md/CHANGELOG.md/.gitignore; never your code)
     #[arg(long)]
     pub commit: bool,
-    /// `init --force`: re-mirror skills into su-code/skills/, overwriting existing.
-    /// Default is additive — never clobber an already-vendored (maybe edited) skill.
-    #[arg(long)]
-    pub force: bool,
     /// `eval --baseline`: save this run as outputs/eval-baseline.json (the
     /// reference future `eval` runs diff against).
     #[arg(long)]
@@ -119,9 +117,8 @@ pub struct Args {
     #[arg(long)]
     pub no_open: bool,
     /// `global --sweep [DIR]` / `create --sweep [DIR]`: also stamp the per-project layer
-    /// (skills mirror + AGENTS.md inject + memory seed + gitleaks hook + .cursor/.zcode hosts)
-    /// into every omp project (repo with su-code/ or AGENTS.md/CLAUDE.md) under DIR (default
-    /// ~/Projects)
+    /// (AGENTS.md block + memory seed + gitleaks hook + ECC rules + Cursor rule) into every
+    /// omp project (repo with su-code/ or AGENTS.md/CLAUDE.md) under DIR (default ~/Projects)
     #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "")]
     pub sweep: Option<String>,
     /// `add-model --url <baseUrl>`: the model's API endpoint (REQUIRED — omp
@@ -160,12 +157,12 @@ pub fn run(a: Args) -> Result<()> {
         None => (a.sub.clone(), a.value.clone()),
     };
     match sub.as_deref() {
-        None => auto::harness_auto(&env, a.force),
-        Some("init") => init::harness_init(&env, a.force),
-        Some("create") => init::harness_create(&env, a.force, a.sweep.as_deref()),
+        None => auto::harness_auto(&env),
+        Some("init") => init::harness_init(&env),
+        Some("create") => init::harness_create(&env, a.sweep.as_deref()),
         Some("up") => up::harness_up(&env, a.loop_every.as_deref(), a.timer.as_deref(), a.pull, a.commit),
-        Some("global") => global::harness_global(&env, a.sweep.as_deref(), a.pull, a.force),
-        Some("bench") => bench::harness_bench(&env),
+        Some("global") => global::harness_global(&env, a.sweep.as_deref(), a.pull),
+        Some("bench") => bench::harness_bench(),
         Some("audit") => audit::harness_audit(&env),
         Some("eval") if a.project => eval::harness_eval_project(&env),
         Some("eval") => eval::harness_eval(&env, a.baseline),
@@ -239,13 +236,13 @@ fn print_help() {
     ui::header("8sync harness help");
 
     println!("COMMANDS");
-    println!("{}", crate::brand::render("  8sync harness                   ONE command — skills+update+mirror+inject+memory+index (idempotent, re-run anytime)"));
-    println!("{}", crate::brand::render("  8sync harness create            FULL host bootstrap: omp + su-code/skills + .cursor (Cursor Agent Skills + rules) + .zcode"));
+    println!("{}", crate::brand::render("  8sync harness                   ONE command — global layer + project block + memory + ECC rules + trail (idempotent, re-run anytime)"));
+    println!("{}", crate::brand::render("  8sync harness create            same as init; with --sweep also stamps every omp project"));
     println!("{}", crate::brand::render("  8sync harness create --sweep [DIR]  …and stamp every omp project (su-code/ or AGENTS.md) under DIR (default ~/Projects)"));
     println!("{}", crate::brand::render("  8sync harness global            apply omp rules MACHINE-WIDE: ~/.omp skills+APPEND_SYSTEM+MCP → ALL projects, + Anthropic token defaults"));
-    println!("{}", crate::brand::render("  8sync harness global --sweep [DIR]  …and stamp skills/memory into every omp project (su-code/ or AGENTS.md) under DIR (default ~/Projects)"));
-    println!("{}", crate::brand::render("  8sync harness init              full bootstrap: skills + trail + AGENTS.md + memory + CHANGELOG + .gitignore"));
-    println!("{}", crate::brand::render("  8sync harness up                refresh: re-inject rules + KNOWLEDGE breadcrumb + trail build"));
+    println!("{}", crate::brand::render("  8sync harness global --sweep [DIR]  …and stamp the project layer (block · memory · ECC rules) into every omp project under DIR"));
+    println!("{}", crate::brand::render("  8sync harness init              full bootstrap: global layer + trail + AGENTS.md block + memory + CHANGELOG + .gitignore + ECC rules"));
+    println!("{}", crate::brand::render("  8sync harness up                refresh: re-inject the block + KNOWLEDGE breadcrumb + ECC rules + trail build"));
     println!("{}", crate::brand::render("  8sync harness up --pull         …and re-pull registered skills from their source repos (network)"));
     println!("{}", crate::brand::render("  8sync harness up --commit       …and git-commit the refreshed agent memory (portable; default off)"));
     println!("{}", crate::brand::render("  8sync harness up --loop <dur>   foreground refresh every <dur> (10m, 1h, 30s)"));
@@ -288,28 +285,26 @@ fn print_help() {
     println!("{}", crate::brand::render("  → registry: ~/.config/8sync/custom-models.tsv · provider block: ~/.omp/agent/models.yml (sentinel-managed)"));
     println!("{}", crate::brand::render("  note: selector = <provider>/<model>; --url is required (omp rejects custom models without it). GGUF? use add-local-model."));
 
-    println!("\nSKILLS (deployed by init)");
-    println!("{}", crate::brand::render("  always-on (read order): trail → karpathy → ponytail → assp → impeccable → taste → 8sync-cli → image-routing"));
-    println!("  on-demand : code-review-and-quality · senior-security · senior-frontend · full-flow · last30days");
-    println!("  tech-gated: encore-deploy (only when the project uses Encore)");
-    println!("{}", crate::brand::render("  opt-in    : social-growth — enable with `8sync skill add builtin:social-growth`"));
-    println!("  external  : ponytail (full) + addyosmani/agent-skills (best-effort clone → ~/.omp/skills)");
+    println!("\nPER REPO — ECC only (nothing vendored into su-code/skills)");
+    println!("  block   : AGENTS.md/CLAUDE.md/.cursor/rules/8sync-harness.mdc — STEP 0 trail + CHANGELOG/KNOWLEDGE/STATE rules");
+    println!("  skills  : the global Claude Code plugin `ecc@ecc` (skills · agents · commands)");
+    println!("{}", crate::brand::render("  rules   : .claude/rules/ecc/<pack>/ — ECC packs for the detected stacks, from the pinned checkout ~/.cache/8sync/ecc (offline → skipped)"));
+    println!("  retired : unedited 8sync copies in su-code/skills/ + .claude/.cursor/.zcode skills links are removed; your own/edited skills stay");
 
     println!("\nFILE TAXONOMY (portability — survives a move to a new machine)");
-    println!("  COMMIT : AGENTS.md · CLAUDE.md · su-code/*.md · CHANGELOG.md · su-code/skills/ · .cursor/rules/   (learned/decided)");
-    println!("{}", crate::brand::render("  IGNORE : .trail/cache/ · graft/ · .cache/8sync/ · .cursor/skills · .zcode/skills · .claude/skills (links → su-code/skills, rebuilt by create/init)"));
+    println!("  COMMIT : AGENTS.md · CLAUDE.md · su-code/*.md · CHANGELOG.md · .cursor/rules/ · .claude/rules/ecc/ (unless the repo ignores generated copies)");
+    println!("{}", crate::brand::render("  IGNORE : .trail/cache/ · graft/ · .cache/8sync/ · .claude/settings.local.json"));
     println!("  SECRET : .env · .env.* (keep .env.example) · *.pem/*.p12 · id_rsa* · *.session · *.pkl   (NEVER commit)");
     println!("{}", crate::brand::render("  → init seeds these into a managed .gitignore block; `8sync doctor` warns if memory is ignored."));
 
     println!("\nOVERWRITE POLICY (default = NEVER overwrite — only add what's missing)");
-    println!("  user-owned : su-code/*.md · CHANGELOG.md · su-code/skills/ · AGENTS.md outside sentinels · hooks · your config keys");
+    println!("  user-owned : su-code/*.md · CHANGELOG.md · AGENTS.md outside sentinels · .claude/rules/ecc/<pack> once present · hooks · your config keys");
     println!("               → seed-if-missing or sentinel-block updates ONLY; your edits are never clobbered");
     println!("  managed    : ~/.omp/skills (bundled) · 00-force-load.md · APPEND_SYSTEM.md · extensions/commands");
-    println!("{}", crate::brand::render("               → 8sync-shipped copies, refreshed when the binary updates (edit the PROJECT copy, not these)"));
-    println!("  overwrite  : ONLY with an explicit flag — `--force` re-mirrors su-code/skills/ over local edits");
+    println!("{}", crate::brand::render("               → 8sync-shipped copies, refreshed when the binary updates"));
 
     println!("\nNEW MACHINE (nothing lost)");
-    println!("  1) git clone <repo> && cd <repo>     # su-code/*.md + su-code/skills/ arrive with the clone");
+    println!("  1) git clone <repo> && cd <repo>     # su-code/*.md + .claude/rules/ecc/ arrive with the clone");
     println!("{}", crate::brand::render("  2) 8sync up                          # install/refresh the 8sync binary + omp"));
     println!("{}", crate::brand::render("  3) 8sync harness init                # rebuild global skills + trail wiring, re-inject rules"));
     println!("{}", crate::brand::render("  3b) 8sync harness gateway apply     # deploy omp gateway config (set $NINE_ROUTER_KEY first)"));

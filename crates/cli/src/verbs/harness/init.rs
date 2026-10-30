@@ -1,16 +1,16 @@
 //! `8sync harness init` — one command to stand up a maximal agent harness:
-//! deploy every bundled skill (+ trail binary + external skill packs),
-//! pull registered skills (su-code/skills.toml), mirror them into the project,
-//! wire trail, seed agent memory + CHANGELOG,
-//! and inject force-load rules into the root AGENTS.md/CLAUDE.md plus a compact
-//! index into every significant sub-folder. Progress is tracked step by step.
+//! deploy every bundled skill under ~/.omp (+ trail binary + external skill
+//! packs), pull registered skills, wire trail, seed agent memory + CHANGELOG,
+//! write the 8sync block into the root AGENTS.md/CLAUDE.md plus a pointer into
+//! every significant sub-folder, and seed the ECC rule packs for the repo's
+//! stacks. Nothing is vendored into the repo. Progress is tracked step by step.
 use std::time::Instant;
 
 use anyhow::Result;
 
 use super::external::install_external_skill_packs;
 use super::memory::{seed_gitleaks_hook, seed_harness_memory};
-use crate::verbs::skill::{deploy, discover, inject_agents_md, inject_subfolder_indexes, update};
+use crate::verbs::skill::{deploy, discover, inject, inject_agents_md, inject_subfolder_indexes, update};
 use crate::{assets, env_detect, ui};
 
 /// Lightweight stepped progress indicator (no TUI dep): `▸ [i/N] label`.
@@ -37,11 +37,11 @@ impl Progress {
     }
 }
 
-pub(crate) fn harness_init(env: &env_detect::Env, force: bool) -> Result<()> {
+pub(crate) fn harness_init(env: &env_detect::Env) -> Result<()> {
     ui::header("8sync harness init");
     deploy::migrate_namespace(&env.home);
     let in_project = discover::detect_current_project_root().is_some();
-    let total = if in_project { 10 } else { 4 };
+    let total = if in_project { 9 } else { 4 };
     let mut p = Progress::new(total);
 
     // 1. Master force-load file (omp reads this first every session).
@@ -88,36 +88,27 @@ pub(crate) fn harness_init(env: &env_detect::Env, force: bool) -> Result<()> {
 
     // 5-9. Project-scoped scaffolding.
     if let Some(root) = discover::detect_current_project_root() {
-        // Pull every skill registered in su-code/skills.toml from its source
-        // (git collections like feynman, builtin:, path:) — mirrors bare
-        // `8sync harness` so init is a true superset, not a smaller bootstrap.
-        p.step("pull registered skills (su-code/skills.toml: feynman, …)");
+        // Pull every registered skill (skills.toml: feynman, builtin:, path:) into
+        // the global library — mirrors bare `8sync harness`.
+        p.step("pull registered skills (skills.toml: feynman, …)");
         let _ = update::update_skills(env, &env.xdg_config.join("8sync/skills.toml"), None);
-        p.step("mirror skills → su-code/skills/");
-        let count = deploy::mirror_global_to_local(&env.home, &root, force)?;
-        if count > 0 {
-            ui::ok(&format!("mirrored {} skill(s) into {}", count, root.join("su-code/skills").display()));
-        }
-        let local_dir = root.join("su-code/skills");
-        for d in discover::list_installed_skill_dirs(&local_dir).unwrap_or_default() {
-            deploy::ensure_skill_layout(&d);
-        }
 
         p.step("trail init + seed memory/CHANGELOG");
         super::trail::ensure_for_harness(env, &root);
         seed_harness_memory(&root)?;
         seed_gitleaks_hook(&root);
 
-        p.step("inject force-load → AGENTS.md / CLAUDE.md");
+        p.step("8sync block → AGENTS.md / CLAUDE.md");
         inject_agents_md(&env.home, &root)?;
 
-        p.step("inject sub-folder skill indexes");
+        p.step("sub-folder pointers");
         let n = inject_subfolder_indexes(&root)?;
         if n > 0 {
-            ui::ok(&format!("dropped skill-index AGENTS.md into {} sub-folder(s)", n));
+            ui::ok(&format!("dropped sub-folder AGENTS.md pointer into {} sub-folder(s)", n));
         }
-        p.step("host adapters → .cursor/ + .zcode/ (Cursor + Z.ai Code)");
-        let _ = deploy::ensure_host_adapters(&env.home, &root, force);
+        p.step("ECC rules → .claude/rules/ecc/ + Cursor rule");
+        let _ = inject::inject_cursor_rule(&root);
+        super::ecc::project_layer(&env.home, &root, true);
         let _ = deploy::ensure_engine(&env.home, Some(&root));
         let _ = deploy::cleanup_legacy_gs(&env.home, Some(&root));
         p.done();
@@ -133,20 +124,14 @@ pub(crate) fn harness_init(env: &env_detect::Env, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// `8sync harness create` — full multi-host bootstrap: omp + su-code/skills +
-/// `.cursor/` (Cursor Agent Skills + alwaysApply rule) + `.zcode/skills`.
-/// Current project always; `--sweep [DIR]` also stamps every omp project
-/// (has `su-code/` or AGENTS.md) under DIR (default ~/Projects).
-pub(crate) fn harness_create(
-    env: &env_detect::Env,
-    force: bool,
-    sweep: Option<&str>,
-) -> Result<()> {
+/// `8sync harness create` — `init` for the current project; `--sweep [DIR]`
+/// also stamps every omp project (has `su-code/` or AGENTS.md) under DIR
+/// (default ~/Projects).
+pub(crate) fn harness_create(env: &env_detect::Env, sweep: Option<&str>) -> Result<()> {
     ui::header("8sync harness create");
-    ui::info("full host bootstrap: omp · su-code/skills · .cursor · .zcode");
-    harness_init(env, force)?;
+    harness_init(env)?;
     if let Some(dir) = sweep {
-        super::global::harness_global(env, Some(dir), false, force)?;
+        super::global::harness_global(env, Some(dir), false)?;
     }
     Ok(())
 }

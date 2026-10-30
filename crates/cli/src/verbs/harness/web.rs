@@ -295,8 +295,8 @@ async fn api_engine(State(_ctx): State<Arc<Ctx>>) -> Json<serde_json::Value> {
     }))
 }
 
-async fn api_bench(State(ctx): State<Arc<Ctx>>) -> Result<Json<super::bench::BenchMetrics>, ApiErr> {
-    super::bench::bench_metrics(&ctx.home)
+async fn api_bench() -> Result<Json<super::bench::BenchMetrics>, ApiErr> {
+    super::bench::bench_metrics()
         .map(Json)
         .ok_or((StatusCode::NOT_FOUND, "not in a project".into()))
 }

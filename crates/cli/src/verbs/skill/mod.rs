@@ -56,7 +56,7 @@ pub(crate) use inject::inject_agents_md;
       ~/.config/8sync/skills.toml      skill registry (editable TOML)
       ~/.omp/skills/                   global skill directories (one per skill)
       ~/.omp/skills/00-force-load.md   master file — omp reads this first in every session
-      <project>/su-code/skills/         project-local skills (referenced from AGENTS.md)
+      <project>/su-code/skills/         your own project skills (8sync no longer vendors copies here)
 "})]
 pub struct Args {
     /// Sub-action: list (default) | help | new <name> | add <spec> | gen <id> <id> … | update [name]

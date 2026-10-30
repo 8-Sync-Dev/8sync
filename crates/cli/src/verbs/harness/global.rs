@@ -9,9 +9,9 @@
 //!   byte-stable APPEND_SYSTEM writes (identical ⇒ skip) so the system prefix
 //!   stays cache-hot for Anthropic prompt caching.
 //! CWD-independent — never touches the current project. `--sweep [DIR]` then
-//! stamps the per-project layer (mirror skills + inject AGENTS.md + seed memory
-//! + gitleaks hook + `.cursor` / `.zcode` hosts) into every git repo under DIR
-//! (default ~/Projects, then `<home-parent>/Projects` on Windows).
+//! stamps the per-project layer (8sync block in AGENTS.md/CLAUDE.md + memory
+//! seed + gitleaks hook + ECC rule packs + Cursor rule) into every omp project
+//! under DIR (default ~/Projects, then `<home-parent>/Projects` on Windows).
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -19,7 +19,7 @@ use anyhow::Result;
 use super::compaction;
 use super::external::install_external_skill_packs;
 use super::memory::{migrate_legacy_layout, seed_gitleaks_hook, seed_harness_memory};
-use crate::verbs::skill::{deploy, discover, inject_agents_md, update};
+use crate::verbs::skill::{deploy, discover, inject, inject_agents_md, update};
 use crate::{assets, env_detect, ui};
 
 /// The global (machine-wide) layer, shared by bare `8sync harness` and
@@ -63,12 +63,7 @@ pub(crate) fn global_pass(env: &env_detect::Env) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn harness_global(
-    env: &env_detect::Env,
-    sweep: Option<&str>,
-    pull: bool,
-    force: bool,
-) -> Result<()> {
+pub(crate) fn harness_global(env: &env_detect::Env, sweep: Option<&str>, pull: bool) -> Result<()> {
     ui::header("8sync harness global");
 
     // 1. Machine-wide rule layer (~/.omp) — applies to EVERY omp session anywhere.
@@ -85,8 +80,8 @@ pub(crate) fn harness_global(
     if let Some(cwd_root) = discover::detect_current_project_root() {
         if is_omp_project(&cwd_root) {
             ui::step(&format!("auto-stamp active project: {}", cwd_root.display()));
-            match stamp_project(env, &cwd_root, force) {
-                Ok(m) => ui::ok(&format!("active project harness updated ({} skill(s) synced)", m)),
+            match stamp_project(env, &cwd_root) {
+                Ok(()) => ui::ok("active project harness updated"),
                 Err(e) => ui::warn(&format!("active project update warning: {}", e)),
             }
         }
@@ -113,11 +108,11 @@ pub(crate) fn harness_global(
         }
         let (mut ok, mut failed) = (0usize, 0usize);
         for repo in &repos {
-            match stamp_project(env, repo, force) {
-                Ok(mirrored) => {
+            match stamp_project(env, repo) {
+                Ok(()) => {
                     ok += 1;
                     let name = repo.strip_prefix(&root).unwrap_or(repo);
-                    ui::ok(&format!("{} ({} skill(s) synced)", name.display(), mirrored));
+                    ui::ok(&name.display().to_string());
                 }
                 Err(e) => {
                     failed += 1;
@@ -213,21 +208,18 @@ fn find_git_repos(root: &Path, max_depth: usize) -> Vec<PathBuf> {
 }
 
 /// Per-project layer for one repo (the light, additive subset of bare
-/// `8sync harness`): mirror skills, inject force-load into AGENTS.md/CLAUDE.md,
-/// seed su-code/ memory, install the gitleaks hook. Returns mirrored-skill count.
- fn stamp_project(env: &env_detect::Env, root: &Path, force: bool) -> Result<usize> {
-     let mirrored = deploy::mirror_global_to_local(&env.home, root, force)?;
-     for d in discover::list_installed_skill_dirs(&root.join("su-code/skills")).unwrap_or_default() {
-         deploy::ensure_skill_layout(&d);
-     }
-     inject_agents_md(&env.home, root)?;
-     seed_harness_memory(root)?;
-     seed_gitleaks_hook(root);
-     // Redeploy the /auto command + engine to the project so a swept repo's
-     // `.omp/commands/auto.md` (precedence over global) points at su-code/, not
-     // a stale agents/ copy from an older binary.
-     deploy::ensure_engine(&env.home, Some(root))?;
-     deploy::ensure_rules(&env.home, Some(root))?;
-     deploy::ensure_host_adapters(&env.home, root, force)?;
-     Ok(mirrored)
- }
+/// `8sync harness`): the 8sync block in AGENTS.md/CLAUDE.md, su-code/ memory,
+/// the gitleaks hook, the /auto engine, the ECC rule packs (retiring the old
+/// vendored skill layout) and the Cursor rule.
+fn stamp_project(env: &env_detect::Env, root: &Path) -> Result<()> {
+    inject_agents_md(&env.home, root)?;
+    seed_harness_memory(root)?;
+    seed_gitleaks_hook(root);
+    // Redeploy the /auto command + engine to the project so a swept repo's
+    // `.omp/commands/auto.md` (precedence over global) points at su-code/, not
+    // a stale agents/ copy from an older binary.
+    deploy::ensure_engine(&env.home, Some(root))?;
+    deploy::ensure_rules(&env.home, Some(root))?;
+    super::ecc::project_layer(&env.home, root, true);
+    inject::inject_cursor_rule(root)
+}

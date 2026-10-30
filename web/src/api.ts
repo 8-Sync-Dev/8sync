@@ -22,13 +22,9 @@ export type SkillEntry = {
 };
 export type BenchReport = {
   upfront: number;
-  deferred: number;
   a1_pass: boolean;
-  a2_saved_pct: number;
   force_load_prefix: number;
-  core_tok: number;
   spine_tok: number;
-  naive_tok: number;
   spine_advice: string | null;
 };
 export type RoleScore = { role: string; pct: number; detail: string[] };

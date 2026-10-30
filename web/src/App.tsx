@@ -736,7 +736,7 @@ function BenchPage() {
   return (
     <Page
       title="Bench"
-      sub="Per-session context budget — what the agent pays upfront vs. what progressive disclosure defers."
+      sub="Per-session context budget — what the repo puts in front of the agent every session (skills come from the global ECC plugin)."
       action={
         <button className="primary" onClick={() => refetch()} disabled={isFetching}>
           {isFetching ? "Running…" : "Re-run"}
@@ -757,14 +757,10 @@ function BenchPage() {
               <strong>Upfront <span className="muted">(paid every session)</span></strong>
               <span className="pct mono">~{data.upfront} tok</span>
             </div>
-            {seg("Force-load prefix", data.force_load_prefix)}
-            {seg("CORE skill bodies", data.core_tok)}
+            {seg("8sync block", data.force_load_prefix)}
             {seg(<>Memory spine <span className="muted">(agents/*.md)</span></>, data.spine_tok)}
           </div>
           <div className="card list">
-            <div className="row"><span>Deferred <span className="muted">(read only on trigger)</span></span><span className="mono">~{data.deferred} tok</span></div>
-            <div className="row"><span>Naive baseline <span className="muted">(all always-on upfront)</span></span><span className="mono">~{data.naive_tok} tok</span></div>
-            <div className="row"><span>A2 progressive disclosure saved</span><span className="pct">{data.a2_saved_pct}%</span></div>
             <div className="row"><span>A1 stable-prefix (KV-cache)</span><span className={`tag ${data.a1_pass ? "ok" : "warn"}`}>{data.a1_pass ? "pass" : "fail"}</span></div>
           </div>
         </>
