@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.111.0] — 2026-10-30
+
 ### Added
 - **Seed settings gọn prefix** (`~/.claude/settings.json`, `ccc kit`): `skillListingBudgetFraction: 0.005` khi chưa có (0,01 → 0,005 bớt 4 048 token mỗi session, mọi tên skill vẫn liệt kê — 644 dòng); deny `ShareOnboardingGuide`, `ReportFindings`, `ScheduleWakeup` **một lần** (stamp `seed:deny-unused-tools` trong `.8sync-kit.json`, owner xoá thì không thêm lại): schema tool 50 698 → 37 770 ký tự, −2 986 token; 7 ngày dùng: 0 (`Workflow` 81 lần, `ListAgents` 22 lần giữ nguyên).
 - **Luật giọng trả lời trong CLAUDE.md của kit** (2 dòng, ~88 token o200k): kết luận trước, không chào/"để tôi"/tóm lại/kể giữa tool call, câu một ý ≤20 từ, giữ đúng phủ định/"chỉ"/số/đơn vị, code/lệnh/path/lỗi nguyên văn, viết đủ câu cho cảnh báo bảo mật, việc không hoàn tác, owner đang rối. Cơ sở: Opus 5.5 "Answer concisely" 4 334 token output, `/caveman` 4 119, `/ultracave` 2 693 (README caveman); A/B agentic của JetBrains −8,5 % output, không giảm chất lượng (p = 0,82); luật caveman tốn ~1 160 token input.
