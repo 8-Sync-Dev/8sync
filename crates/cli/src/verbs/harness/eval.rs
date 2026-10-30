@@ -179,6 +179,13 @@ pub(crate) fn eval_project_data(home: &std::path::Path) -> Option<EvalData> {
     let has = |p: &str| root.join(p).exists();
     let pkg = std::fs::read_to_string(root.join("package.json")).unwrap_or_default();
     let cfg = std::fs::read_to_string(home.join(".omp/agent/config.yml")).unwrap_or_default();
+    // Planning/spec/API/docs/e2e skills come from the global Claude Code plugin `ecc@ecc`
+    // (8sync no longer installs the addyosmani pack that used to cover them).
+    let claude = std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".claude"));
+    let ecc = std::fs::read_to_string(claude.join("settings.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .is_some_and(|v| v["enabledPlugins"]["ecc@ecc"] == true);
     let dep = |k: &str| pkg.contains(k);
     let frontend = dep("react") || dep("vue") || dep("next") || dep("svelte") || dep("\"vite\"");
     let backend = dep("encore.dev") || dep("express") || dep("fastify") || dep("@nestjs")
@@ -187,12 +194,12 @@ pub(crate) fn eval_project_data(home: &std::path::Path) -> Option<EvalData> {
     let test_cmd = pkg.contains("\"test\"") || has("Cargo.toml") || pkg.contains("vitest") || pkg.contains("jest");
     let roles_raw: Vec<(&str, Vec<(&str, bool)>)> = vec![
         ("dev", vec![("trail", has(".trail/hook.cjs")), ("build", build_cmd), ("karpathy+ponytail", skill("karpathy-guidelines") && skill("ponytail"))]),
-        ("qa/testing", vec![("test", test_cmd), ("full-flow", skill("full-flow")), ("browser-testing", skill("browser-testing-with-devtools")), ("headroom", bin("headroom"))]),
+        ("qa/testing", vec![("test", test_cmd), ("full-flow", skill("full-flow")), ("ECC e2e/browser", ecc), ("headroom", bin("headroom"))]),
         ("research", vec![("omp/web_search", bin("omp")), ("agent-reach|deep-research-web", skill("agent-reach") || skill("deep-research-web")), ("last30days", skill("last30days"))]),
-        ("ba/po", vec![("planning", skill("planning-and-task-breakdown")), ("spec-driven", skill("spec-driven-development")), ("STATE+DECISIONS", has("su-code/STATE.md") && has("su-code/DECISIONS.md"))]),
+        ("ba/po", vec![("ECC planning/spec", ecc), ("STATE+DECISIONS", has("su-code/STATE.md") && has("su-code/DECISIONS.md"))]),
         ("fe", vec![("frontend-stack", frontend), ("impeccable+taste", skill("impeccable") && skill("taste-skill")), ("senior-frontend", skill("senior-frontend"))]),
-        ("be", vec![("backend-stack", backend), ("api-design", skill("api-and-interface-design")), ("security", skill("senior-security") || skill("security-and-hardening"))]),
-        ("docs", vec![("docs-skill", skill("documentation-and-adrs")), ("AGENTS.md", has("AGENTS.md")), ("CHANGELOG", has("CHANGELOG.md"))]),
+        ("be", vec![("backend-stack", backend), ("ECC api-design", ecc), ("security", skill("senior-security"))]),
+        ("docs", vec![("ECC docs", ecc), ("AGENTS.md", has("AGENTS.md")), ("CHANGELOG", has("CHANGELOG.md"))]),
         ("memory/learn", vec![("Mnemopi-ON", cfg.contains("backend: mnemopi")), ("KNOWLEDGE+PLAYBOOKS", has("su-code/KNOWLEDGE.md") && has("su-code/PLAYBOOKS.md"))]),
         ("token-opt", vec![("trail", bin("trail")), ("headroom", bin("headroom"))]),
     ];
