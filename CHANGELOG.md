@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.112.0] — 2026-10-31
+
 ### Added
 - **Hook `ecc-pick` (UserPromptSubmit):** khi tắt plugin `ecc@ecc`, mỗi prompt được chấm điểm với index skill/agent/command của bản ECC mới nhất trong plugin cache (cộng stack của repo: `Cargo.toml` → rust, `go.mod` → go…); khớp đủ thì thêm tối đa 3 member kèm đường dẫn file vào context, không khớp thì không in gì (0 token). Hiểu cụm tiếng Việt thường gặp (bảo mật, kiểm thử, tối ưu, triển khai…), bỏ member của ngôn ngữ khác stack, mỗi member chỉ gợi ý một lần mỗi session. Index cache ở `~/.local/state/8sync/ccc/ecc-pick/`, build lại khi đổi version ECC. Tắt: `ECC_PICK=0`. Cài qua `8sync ccc kit` hoặc plugin 8sync-kit.
 
