@@ -11,8 +11,9 @@ Goal: `$ARGUMENTS` (`--dry-run` = stop after the merged plan).
 1. **Route.** From the categories below pick EVERY one relevant to the goal (default to inclusion); one line of why per pick.
 2. **Select.** For each pick open `~/.claude/commands/eccx-<cat>.md` (or the 8sync-kit plugin's `commands/`) and do its Select step on its member lists. Merge into one deduplicated set.
 3. **Plan.** One numbered plan (research → design → build → verify → ship/distribute); each step names its skills/agents/commands and its check. `--dry-run`: print it and stop.
-4. **Execute** step by step. Read each skill just before its step, never all up front. Follow `ecc:verification-loop`: run the project's real build/type-check/lint/tests after every code step; fix before moving on.
-5. **Report** (short): categories used, members used/skipped, checks run + results, open risks.
+4. **Execute** as ONE Workflow (this command opts in; load `workflow-authoring` first): `phase()` per plan stage, `pipeline()` by default, each agent prompt names only its picked member files, `effort: 'low'` on mechanical stages, every code stage ends with the project's real build/type-check/lint/tests (`ecc:verification-loop`). Stopped mid-run → re-run with `resumeFromRunId`. A goal of ≤2 small steps → do it inline, no Workflow.
+5. **Learn.** Last stage: one agent records only evidence-backed lessons (cause, fix, what was ruled out) via `/remember` or `trail note`; none → skip.
+6. **Report** (short): categories used, members used/skipped, checks run + results, lessons kept, open risks.
 
 ## Categories (skills/agents/commands)
 - `core` — Core: harness basics: standards, learning, compaction, always-on rules (16/0/3)
@@ -35,7 +36,5 @@ Goal: `$ARGUMENTS` (`--dry-run` = stop after the merged plan).
 - `game` — Game & 3D: three.js, R3F, GSAP/3D web, Unreal/Blender, game assets (3/0/0)
 
 ## How to call members
-- Skills: Skill tool — `ecc:<name>` = ECC plugin, plain name = 8sync skill (`~/.claude/skills/`).
-- Agents: Task subagent with `subagent_type: "ecc:<agent>"`.
-- Commands: run `/ecc:<cmd>` with that step's arguments.
-- Needs the ECC plugin (`ecc@ecc`, enabled by `8sync ccc kit`). A member that does not resolve: skip it, say so.
+- `ecc:` members: plugin `ecc@ecc` on → Skill tool / `subagent_type` / `/ecc:<cmd>`; off (saves ~9k tokens a call) → read `<ECC>/skills/<name>/SKILL.md`, a `general-purpose` agent opening with `<ECC>/agents/<agent>.md`, `<ECC>/commands/<cmd>.md`. `<ECC>` = newest `~/.claude/plugins/cache/ecc/ecc/*/`. Plain name = 8sync skill (Skill tool).
+- One session: parallel members = Agent calls in one message or one Workflow, no sub-sessions. Unresolved member: skip it, say so.

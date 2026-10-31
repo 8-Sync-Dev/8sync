@@ -84,6 +84,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin ecc-pick",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
             "command": "B=$(command -v 8sync 2>/dev/null || ls \"$HOME/.local/bin/8sync\" \"$LOCALAPPDATA/Programs/8sync/8sync.exe\" 2>/dev/null | head -n 1); [ -n \"$B\" ] || exit 0; exec \"$B\" ccc hook plugin watchdog",
             "timeout": 5
           }

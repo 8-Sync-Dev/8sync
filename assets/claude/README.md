@@ -11,7 +11,7 @@ Role-routed subagents and the delivery skills from [8sync](https://get.8syncdev.
 
 - **Subagents** (`agents/`): explore, task, quick-task, reviewer, designer, researcher, verifier, architect, qa, critic.
 - **Skills** (`skills/`): `/do`, `/ship`, `/ship-auto`, `/ship-loop`, `/autopilot`, `/ship-tick`, `/planning`, `/sysdesign`, `/ui-ux`, `/remember`, `/consolidate`, `/rules`, `/sec`, `/harden`.
-- **Commands** (`commands/`): `/eccx-<category>` for every [ECC catalog](https://ecc.tools/skills) category plus `ads`, `game` and the router `full`: one goal in, a plan built from every matching ECC skill, agent and command. Needs the ECC plugin `ecc@ecc` (`/plugin marketplace add affaan-m/ECC`, then `/plugin install ecc@ecc`).
+- **Commands** (`commands/`): `/eccx-<category>` for every [ECC catalog](https://ecc.tools/skills) category plus `ads`, `game` and the router `full`: one goal in, a plan built from every matching ECC skill, agent and command. Needs ECC files in the plugin cache (`/plugin marketplace add affaan-m/ECC`, then `/plugin install ecc@ecc`); the plugin may then be disabled: members are read from `~/.claude/plugins/cache/ecc/ecc/<ver>/` on demand, which keeps ~9k tokens of ECC listings out of every call.
 
 ## What it runs and sends
 

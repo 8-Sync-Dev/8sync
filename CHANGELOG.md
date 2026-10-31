@@ -5,6 +5,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.112.0] — 2026-10-31
+
+### Added
+- **Hook `ecc-pick` (UserPromptSubmit):** khi tắt plugin `ecc@ecc`, mỗi prompt được chấm điểm với index skill/agent/command của bản ECC mới nhất trong plugin cache (cộng stack của repo: `Cargo.toml` → rust, `go.mod` → go…); khớp đủ thì thêm tối đa 3 member kèm đường dẫn file vào context, không khớp thì không in gì (0 token). Hiểu cụm tiếng Việt thường gặp (bảo mật, kiểm thử, tối ưu, triển khai…), bỏ member của ngôn ngữ khác stack, mỗi member chỉ gợi ý một lần mỗi session. Index cache ở `~/.local/state/8sync/ccc/ecc-pick/`, build lại khi đổi version ECC. Tắt: `ECC_PICK=0`. Cài qua `8sync ccc kit` hoặc plugin 8sync-kit.
+
+### Changed
+- **`/eccx-*` trên Claude Code chạy thành MỘT Workflow + bước Learn:** bước Execute giờ là một Workflow (`phase()` theo stage, `pipeline()` mặc định, prompt mỗi agent chỉ nêu file member được chọn, `effort: 'low'` cho stage cơ học, `resumeFromRunId` khi dừng giữa chừng); mục tiêu ≤2 bước nhỏ thì làm inline. Stage cuối Learn chỉ ghi bài học có bằng chứng qua `/remember`/`trail note`. Bản omp giữ nguyên. Giới hạn kích thước file sinh ra nâng 12 → 13 KB.
+- **`/eccx-*` chạy được khi tắt plugin `ecc@ecc`:** mục "How to call members" (sinh bởi `scripts/eccx-gen.py`) giờ có hai đường: plugin bật → Skill tool / `subagent_type: ecc:*` / `/ecc:*`; plugin tắt → đọc `SKILL.md`, file role agent, file command trong `~/.claude/plugins/cache/ecc/ecc/<ver>/` ngay trước bước dùng (cách omp làm). Tắt plugin bỏ listing ECC khỏi mỗi call: 311 tên skill (~8,3k ký tự) + 71 agent (~14,9k) + 97 command (~13,8k) ≈ 37k ký tự ≈ 9k token (ước lượng theo ký tự/4, chưa đo bằng `/context`: not verified); kèm hết 27 hook ECC spawn node. Thêm luật một session: chạy song song = nhiều Agent call trong một message hoặc một Workflow, không mở session con. Plugin bật vẫn chạy như cũ.
+
 ## [0.111.2] — 2026-10-31
 
 ### Fixed
