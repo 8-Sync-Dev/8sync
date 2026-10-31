@@ -35,6 +35,10 @@ jobs:
       - name: Release helper scripts
         shell: bash
         run: bash su-code/handoff/scripts/test-scripts.sh
+      # Token tooling (token-usage.py, scope-ecc-rules.py): stdlib only, no install.
+      - name: Python script tests
+        shell: bash
+        run: '"$(command -v python3 || command -v python)" -I -m unittest discover -s scripts -p "test_*.py"'
       # `ccc . ls` order, urgency chip and JSON against the real binary in a sandbox registry. Linux
       # only: the sandbox needs XDG_CONFIG_HOME, which dirs::config_dir() ignores on Windows/macOS.
       - name: UAT ls order + urgency

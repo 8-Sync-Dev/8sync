@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.112.1] — 2026-10-31
+
+### Added
+- **`scripts/token-usage.py`:** đo token Claude Code từ transcript local (chỉ số, không in nội dung/đường dẫn): input-side mỗi turn main/subagent, số lần compaction/ngày, phân bố theo cỡ context, prefix turn đầu của subagent. `python -I scripts/token-usage.py [DAYS]` hoặc `--since ISO`. Dùng để UAT trước/sau mỗi thay đổi token.
+- **`scripts/scope-ecc-rules.py REPO…`:** thêm frontmatter `paths:` cho 8 rule generic trong `.claude/rules/ecc/common/` (ECC cài không có `paths:` nên luôn nạp); `security.md`, `git-workflow.md` vẫn luôn nạp. Idempotent, chạy lại sau khi cài lại ECC. UAT A/B `claude -p` ở repo su-code: prefix phiên mới 50 244 → 43 560 token (−13 %).
+- CI chạy test script Python (`scripts/test_*.py`) trên Windows, macOS, Linux.
+
 ## [0.112.0] — 2026-10-31
 
 ### Added
