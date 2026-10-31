@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Changed
+- **`/eccx-*` chạy được khi tắt plugin `ecc@ecc`:** mục "How to call members" (sinh bởi `scripts/eccx-gen.py`) giờ có hai đường: plugin bật → Skill tool / `subagent_type: ecc:*` / `/ecc:*`; plugin tắt → đọc `SKILL.md`, file role agent, file command trong `~/.claude/plugins/cache/ecc/ecc/<ver>/` ngay trước bước dùng (cách omp làm). Tắt plugin bỏ listing ECC khỏi mỗi call: 311 tên skill (~8,3k ký tự) + 71 agent (~14,9k) + 97 command (~13,8k) ≈ 37k ký tự ≈ 9k token (ước lượng theo ký tự/4, chưa đo bằng `/context`: not verified); kèm hết 27 hook ECC spawn node. Thêm luật một session: chạy song song = nhiều Agent call trong một message hoặc một Workflow, không mở session con. Plugin bật vẫn chạy như cũ.
+
 ## [0.111.2] — 2026-10-31
 
 ### Fixed

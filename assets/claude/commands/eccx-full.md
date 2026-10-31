@@ -35,7 +35,5 @@ Goal: `$ARGUMENTS` (`--dry-run` = stop after the merged plan).
 - `game` — Game & 3D: three.js, R3F, GSAP/3D web, Unreal/Blender, game assets (3/0/0)
 
 ## How to call members
-- Skills: Skill tool — `ecc:<name>` = ECC plugin, plain name = 8sync skill (`~/.claude/skills/`).
-- Agents: Task subagent with `subagent_type: "ecc:<agent>"`.
-- Commands: run `/ecc:<cmd>` with that step's arguments.
-- Needs the ECC plugin (`ecc@ecc`, enabled by `8sync ccc kit`). A member that does not resolve: skip it, say so.
+- `ecc:` members: plugin `ecc@ecc` on → Skill tool / `subagent_type` / `/ecc:<cmd>`; off (saves ~9k tokens a call) → read `<ECC>/skills/<name>/SKILL.md`, a `general-purpose` agent opening with `<ECC>/agents/<agent>.md`, `<ECC>/commands/<cmd>.md`. `<ECC>` = newest `~/.claude/plugins/cache/ecc/ecc/*/`. Plain name = 8sync skill (Skill tool).
+- One session: parallel members = Agent calls in one message or one Workflow, no sub-sessions. Unresolved member: skip it, say so.

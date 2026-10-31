@@ -16,10 +16,8 @@ Scope: Go patterns, testing, build and review.
 5. **Report** (short): what changed, checks + results, members skipped, open risks.
 
 ## How to call members
-- Skills: Skill tool — `ecc:<name>` = ECC plugin, plain name = 8sync skill (`~/.claude/skills/`).
-- Agents: Task subagent with `subagent_type: "ecc:<agent>"`.
-- Commands: run `/ecc:<cmd>` with that step's arguments.
-- Needs the ECC plugin (`ecc@ecc`, enabled by `8sync ccc kit`). A member that does not resolve: skip it, say so.
+- `ecc:` members: plugin `ecc@ecc` on → Skill tool / `subagent_type` / `/ecc:<cmd>`; off (saves ~9k tokens a call) → read `<ECC>/skills/<name>/SKILL.md`, a `general-purpose` agent opening with `<ECC>/agents/<agent>.md`, `<ECC>/commands/<cmd>.md`. `<ECC>` = newest `~/.claude/plugins/cache/ecc/ecc/*/`. Plain name = 8sync skill (Skill tool).
+- One session: parallel members = Agent calls in one message or one Workflow, no sub-sessions. Unresolved member: skip it, say so.
 
 ## Skills
 - `encore-deploy` — Deploy/secrets/rollout runbook for the 8syncdev Encore Cloud backend and Vercel frontends

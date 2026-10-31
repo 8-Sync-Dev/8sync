@@ -334,10 +334,9 @@ def classify(snap):
 ECC_DIR = ("`<ECC>` = 8sync's pinned ECC checkout `~/.cache/8sync/ecc/` (made by `8sync harness`), "
            "else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.")
 HOW = {
-    "cc": ("- Skills: Skill tool — `ecc:<name>` = ECC plugin, plain name = 8sync skill (`~/.claude/skills/`).\n"
-           "- Agents: Task subagent with `subagent_type: \"ecc:<agent>\"`.\n"
-           "- Commands: run `/ecc:<cmd>` with that step's arguments.\n"
-           "- Needs the ECC plugin (`ecc@ecc`, enabled by `8sync ccc kit`). A member that does not resolve: skip it, say so."),
+    "cc": ("- `ecc:` members: plugin `ecc@ecc` on → Skill tool / `subagent_type` / `/ecc:<cmd>`; off (saves ~9k tokens a call) → read `<ECC>/skills/<name>/SKILL.md`, a `general-purpose` agent opening with `<ECC>/agents/<agent>.md`, `<ECC>/commands/<cmd>.md`. "
+           "`<ECC>` = newest `~/.claude/plugins/cache/ecc/ecc/*/`. Plain name = 8sync skill (Skill tool).\n"
+           "- One session: parallel members = Agent calls in one message or one Workflow, no sub-sessions. Unresolved member: skip it, say so."),
     "omp": ("- " + ECC_DIR + "\n"
             "- Skills: `skill://<name>` = 8sync skill; plain name = ECC skill: `skill://<name>` if it resolves, else read `<ECC>/skills/<name>/SKILL.md`.\n"
             "- Agents: spawn a `task` subagent whose prompt opens with the role file `<ECC>/agents/<agent>.md`.\n"
