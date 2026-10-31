@@ -26,6 +26,7 @@ mod cancel;
 mod compact;
 mod danger;
 mod eco;
+mod ecc_pick;
 mod fence;
 mod gate;
 mod grant;
@@ -1237,6 +1238,11 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
         "UserPromptSubmit",
         json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "resume-note"], "timeout": 5 }] }),
     );
+    upsert_hook_group(
+        hooks,
+        "UserPromptSubmit",
+        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "ecc-pick"], "timeout": 5 }] }),
+    );
     // Session events -> `8sync hq hook <Event>`. Event names, `async` (background, never
     // blocks) and `timeout` (seconds) per https://code.claude.com/docs/en/hooks (checked
     // 2026-10-12). `hq hook` is a fast no-op until `8sync hq setup`, so always registering is safe.
@@ -1916,7 +1922,7 @@ fn find_state_root(start: &Path, home: Option<&Path>) -> Option<PathBuf> {
 }
 
 /// Hooks the `8sync-kit` plugin (`assets/claude/hooks/hooks.json`) runs through `hook plugin <name>`.
-const PLUGIN_HOOKS: [&str; 7] = ["guard", "verify", "verify-stop", "session-start", "stop-failure", "resume-note", "watchdog"];
+const PLUGIN_HOOKS: [&str; 8] = ["guard", "verify", "verify-stop", "session-start", "stop-failure", "resume-note", "watchdog", "ecc-pick"];
 
 /// Whether `settings.json` (the kit's user settings) already runs `8sync ccc hook <name>`: the
 /// plugin's copy then stays silent so a hook never runs twice.
@@ -1984,12 +1990,18 @@ fn hook(rest: &[String]) -> Result<()> {
                 None
             })
         }
+        // ECC plugin off: the few ECC members this prompt needs, or nothing.
+        Some("ecc-pick") => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            let state = ecc_pick::state_dir(dirs::home_dir().as_deref());
+            ecc_pick::claude_dir().zip(state).and_then(|(claude, state)| ecc_pick::run(&input, &claude, &state, now))
+        }
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ecc-pick|ship-grant   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -2604,7 +2616,8 @@ mod tests {
         assert_eq!(args("StopFailure"), vec![json!(["ccc", "hook", "stop-failure"])]);
         let ups = args("UserPromptSubmit");
         assert!(ups.contains(&json!(["ccc", "hook", "resume-note"])) && ups.contains(&json!(["ccc", "hook", "watchdog"])), "both coexist: {ups:?}");
-        assert_eq!(ups.len(), 2);
+        assert!(ups.contains(&json!(["ccc", "hook", "ecc-pick"])), "{ups:?}");
+        assert_eq!(ups.len(), 3);
         strip_kit_hooks(&mut v);
         assert!(v["hooks"].get("StopFailure").is_none() && v["hooks"].get("UserPromptSubmit").is_none());
     }

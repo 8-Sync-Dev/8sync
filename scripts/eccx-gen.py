@@ -33,7 +33,7 @@ SNAP = os.path.join(ROOT, "scripts", "eccx", "ecc-snapshot.json")
 BUNDLED = os.path.join(ROOT, "assets", "skills")
 KIT = os.path.join(ROOT, "assets", "claude", "skills")
 OUT = {"cc": os.path.join(ROOT, "assets", "claude", "commands"), "omp": os.path.join(ROOT, "assets", "eccx")}
-MAX_BYTES = 12 * 1024
+MAX_BYTES = 13 * 1024
 
 CATS = {  # id: (title, scope)
     "core": ("Core", "harness basics: standards, learning, compaction, always-on rules"),
@@ -345,6 +345,16 @@ HOW = {
 }
 
 
+def run_steps(h, vl, n):
+    """The Execute (+ Learn on Claude Code) steps, numbered from `n`; returns (text, next n)."""
+    if h == "omp":
+        return (f"{n}. **Execute** step by step with `{vl}` discipline: after each code step run the project's real build/type-check/lint/tests as applicable; fix before moving on; no step is done without its check output.\n"), n + 1
+    return (f"{n}. **Execute** as ONE Workflow (this command opts in; load `workflow-authoring` first): `phase()` per plan stage, `pipeline()` by default, "
+            "each agent prompt names only its picked member files, `effort: 'low'` on mechanical stages, every code stage ends with the project's real "
+            f"build/type-check/lint/tests (`{vl}`). Stopped mid-run → re-run with `resumeFromRunId`. A goal of ≤2 small steps → do it inline, no Workflow.\n"
+            f"{n + 1}. **Learn.** Last stage: one agent records only evidence-backed lessons (cause, fix, what was ruled out) via `/remember` or `trail note`; none → skip.\n"), n + 2
+
+
 def ref(h, kind, name, src):
     if kind == "skills":
         if h == "cc":
@@ -396,9 +406,10 @@ def body(h, c, members, maxw):
                 "1. **Route.** From the categories below pick EVERY one relevant to the goal (default to inclusion); one line of why per pick.\n"
                 f"2. **Select.** For each pick open {cmd} and do its Select step on its member lists. Merge into one deduplicated set.\n"
                 "3. **Plan.** One numbered plan (research → design → build → verify → ship/distribute); each step names its skills/agents/commands and its check. `--dry-run`: print it and stop.\n"
-                f"4. **Execute** step by step. Read each skill just before its step, never all up front. Follow `{vl}`: run the project's real build/type-check/lint/tests after every code step; fix before moving on.\n"
-                "5. **Report** (short): categories used, members used/skipped, checks run + results, open risks.\n\n"
-                "## Categories (skills/agents/commands)\n" + "\n".join(idx) + "\n\n"
+                + (f"4. **Execute** step by step. Read each skill just before its step, never all up front. Follow `{vl}`: run the project's real build/type-check/lint/tests after every code step; fix before moving on.\n"
+                   "5. **Report** (short): categories used, members used/skipped, checks run + results, open risks.\n\n" if h == "omp" else
+                   run_steps(h, vl, 4)[0] + "6. **Report** (short): categories used, members used/skipped, checks run + results, lessons kept, open risks.\n\n")
+                + "## Categories (skills/agents/commands)\n" + "\n".join(idx) + "\n\n"
                 "## How to call members\n" + HOW[h] + "\n")
     out = [head(h, c, f"Run a full {title} plan for a goal using every relevant ECC + 8sync skill in this category"),
            f"# /eccx-{c} — {title}\n\n",
@@ -407,8 +418,8 @@ def body(h, c, members, maxw):
            "1. **Select.** From the lists below pick EVERY member that applies to the goal — default to inclusion. List picks with a one-line why; name notable skips.\n",
            "2. **Load on demand.** Read a picked skill only just before the step that uses it. Never preload all.\n",
            "3. **Plan.** Numbered steps, each mapped to its skills/agents/commands and its check. `--dry-run`: print the plan and stop.\n",
-           f"4. **Execute** step by step with `{vl}` discipline: after each code step run the project's real build/type-check/lint/tests as applicable; fix before moving on; no step is done without its check output.\n",
-           "5. **Report** (short): what changed, checks + results, members skipped, open risks.\n\n",
+           run_steps(h, vl, 4)[0],
+           f"{run_steps(h, vl, 4)[1]}. **Report** (short): what changed, checks + results, members skipped, open risks.\n\n",
            "## How to call members\n", HOW[h], "\n"]
     for kind, label in (("skills", "Skills"), ("agents", "Agents"), ("commands", "Commands")):
         r = rows(h, members[c], kind, maxw)
