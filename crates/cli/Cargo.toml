@@ -56,3 +56,7 @@ tower-http = { version = "0.5", features = ["cors"], optional = true }
 # html5ever + CSS selectors) for aggregator sites without a JSON API (mcp.so).
 # HTTP still shells out to `curl` (no reqwest); scraper only parses the DOM.
 scraper = { version = "0.20", optional = true }
+
+[dev-dependencies]
+# disk.rs tests: age classification needs old mtimes without waiting.
+filetime = "0.2"
