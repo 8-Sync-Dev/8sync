@@ -995,9 +995,10 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
     }
     lean::sync_ecc_hooks(&dir);
     let agents = KIT_FILES.iter().filter(|(_, rel)| rel.starts_with("agents/")).count();
-    let eccx = assets::iter_under("claude/commands/eccx-").len();
+    let eccx_loop = assets::iter_under("claude/commands/eccx-loop-").len();
+    let eccx = assets::iter_under("claude/commands/eccx-").len() - eccx_loop;
     ui::ok(&format!(
-        "kit: {agents} agents · /ship · /aup-audit · deep-research-web · {eccx} /eccx-<category> · verify hook · guard · stop + ask gates · auto mode · CLAUDE.md rules ({})",
+        "kit: {agents} agents · /ship · /aup-audit · deep-research-web · {eccx} /eccx-<category> + {eccx_loop} /eccx-loop-<category> · verify hook · guard · stop + ask gates · auto mode · CLAUDE.md rules ({})",
         dir.display()
     ));
     Ok(())
@@ -2754,6 +2755,24 @@ mod tests {
         install_kit_at(&env, &dir, true).unwrap();
         assert_eq!(std::fs::read_to_string(dir.join("commands/eccx-ads.md")).unwrap(), assets::read("claude/commands/eccx-ads.md").unwrap(), "--force takes over");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Owner (2026-11-01): `/eccx-loop-<category>` loops an eccx goal until its criteria pass. It rides
+    /// `/ship-loop`'s machinery (loop verb, evidence, `/ship-tick` cron) and stays owner-only.
+    #[test]
+    fn kit_installs_an_eccx_loop_command_per_category() {
+        let cmds: Vec<String> = kit_files().into_iter().map(|(_, r)| r).collect();
+        let n = cmds.iter().filter(|r| r.starts_with("commands/eccx-loop-")).count();
+        assert_eq!(n, cmds.iter().filter(|r| r.starts_with("commands/eccx-") && !r.starts_with("commands/eccx-loop-")).count());
+        for c in ["full", "workflow", "ai-agent", "frontend"] {
+            let body = assets::read(&format!("claude/commands/eccx-loop-{c}.md")).unwrap();
+            for want in ["disable-model-invocation: true", "$ARGUMENTS", "8sync ccc loop init", "8sync ccc loop ev", "8sync ccc loop tick",
+                         "/ship-tick <slug>", &format!("Driver: /eccx-{c}"), &format!("eccx-{c}.md"), "`sec`, `rules`, `aup-audit`"] {
+                assert!(body.contains(want), "eccx-loop-{c} lacks {want:?}");
+            }
+        }
+        let tick = assets::read("claude/skills/ship-tick/SKILL.md").unwrap();
+        assert!(tick.contains("Driver: /eccx-<cat>"), "ship-tick must follow an eccx loop's members");
     }
 
     /// Rewriting a mod file tells the owner to `/reload-plugins` in open sessions; other kit

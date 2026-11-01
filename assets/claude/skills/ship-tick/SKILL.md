@@ -24,6 +24,7 @@ Việc phải ≤ ~5 file; lớn hơn → tách, ghi phần còn lại vào `Nex
 
 ## 4. Làm → kiểm → tick
 1. **Implement** phần nhỏ nhất tiến tới việc đã chọn (đọc file trước khi sửa; `task`/`quick-task` song song chỉ khi file tách bạch). Code mới có test; không sửa test cho pass; không sửa file session khác đang giữ.
+   PLAN.md có `Driver: /eccx-<cat>` (loop của `/eccx-loop-<cat>`) → làm bước này bằng các member ở dòng `Members:` theo bước Execute của `~/.claude/commands/eccx-<cat>.md`, giới hạn vào việc đã chọn; sau check: nguyên nhân tìm được → một dòng vào `research.md`, bài học có bằng chứng → `trail note`/`/remember` (≤1 mỗi tick); stuck → chọn lại member (thêm member đã bỏ hợp với lỗi) và ghi lại `Members:`.
 2. **Check nhẹ, local**: `8sync ccc loop ev <slug> <C#> -- '<lệnh>'` cho từng criterion (nó chạy lệnh, in 15 dòng cuối, ghi evidence vào LOOP.md). `nice -n 19 ionice -c3`, `-j2`; một module/một file (`cargo test -q -j2 -p <crate> <filter>`, `pnpm exec vitest run <file>`, lint). Build/test nặng → push nhánh feature + `gh workflow run <wf> --ref <nhánh>` → `gh run watch <id> --exit-status` chạy nền; kết quả về ở tick sau (mục 2.1). Không có dòng evidence → chưa pass.
 3. **Tick**: còn criterion đỏ → `8sync ccc loop tick --changed <số file đổi> --digest "<sha256 diff 16 ký tự + dòng cuối của check đỏ đầu tiên>"`. In `continue` → kết thúc lượt bình thường (cron gọi tick sau). In `stop:<reason>` hoặc bất cứ gì khác → mục 5. Mọi criterion xanh → mục 5 "tất cả xanh", KHÔNG tick.
 
