@@ -2762,8 +2762,10 @@ mod tests {
     #[test]
     fn kit_installs_an_eccx_loop_command_per_category() {
         let cmds: Vec<String> = kit_files().into_iter().map(|(_, r)| r).collect();
+        // `eccx-clear` is a utility (clears running loops), not a category: excluded from the pairing count.
+        let cats = |r: &str| r.starts_with("commands/eccx-") && !r.starts_with("commands/eccx-loop-") && r != "commands/eccx-clear.md";
         let n = cmds.iter().filter(|r| r.starts_with("commands/eccx-loop-")).count();
-        assert_eq!(n, cmds.iter().filter(|r| r.starts_with("commands/eccx-") && !r.starts_with("commands/eccx-loop-")).count());
+        assert_eq!(n, cmds.iter().filter(|r| cats(r)).count());
         for c in ["full", "workflow", "ai-agent", "frontend"] {
             let body = assets::read(&format!("claude/commands/eccx-loop-{c}.md")).unwrap();
             for want in ["disable-model-invocation: true", "$ARGUMENTS", "8sync ccc loop init", "8sync ccc loop ev", "8sync ccc loop tick",
@@ -2771,6 +2773,11 @@ mod tests {
                 assert!(body.contains(want), "eccx-loop-{c} lacks {want:?}");
             }
         }
+        let clear = assets::read("claude/commands/eccx-clear.md").unwrap();
+        for want in ["disable-model-invocation: true", "$ARGUMENTS", "8sync ccc loop done", "/ship-tick <slug>", "su-code/ship/ACTIVE"] {
+            assert!(clear.contains(want), "eccx-clear lacks {want:?}");
+        }
+        assert!(assets::read("eccx/eccx-clear.md").unwrap().contains("No cron on omp"), "omp eccx-clear must drop the cron step");
         let tick = assets::read("claude/skills/ship-tick/SKILL.md").unwrap();
         assert!(tick.contains("Driver: /eccx-<cat>"), "ship-tick must follow an eccx loop's members");
     }
