@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.115.0] — 2026-11-01
+
 ## [0.114.0] — 2026-11-01
 ### Added
 - **`8sync clean scan`:** auto tracking dung lượng bất thường + plan xoá (mục tiêu từ đợt dọn tay 2026-11-01). Đo no-follow mọi root (Downloads, `~/tmp`, `/tmp`, `C:/tmp` + root trong `~/.config/8sync/disk.toml` hoặc `--root`), canonicalize + dedupe (qua `/tmp` hay `C:/tmp` là 1 root); symlink/junction tính 0 (bẫy `du` 151 GB node_modules); entry top-level là file được stat trực tiếp (walk chỉ áp cho dir); `bytes` logical + `unique` (nlink==1; Windows = logical vì `number_of_links` chưa stable). Snapshot `~/.local/state/8sync/disk/last.json`, so với lần trước: root +≥10 GB hoặc +≥20% (sàn 500 MB), entry mới/lớn thêm ≥5 GB → anomaly. Ghi `plan.md`/`plan.json` nhóm A scratch / B artifacts / C outputs / REVIEW (.git) / PROTECTED (model ext + tên bảo vệ: huggingface, comfyui, models, node_modules…). Không tự xoá: `--apply scratch|artifacts|outputs|all` là đường xoá duy nhất, guard bắt entry nằm ngay dưới root đã quét, không đi qua `.git`/protected. `--watch N` loop mọi OS, `--json` cho script, `SUSYNC_DISK_HOME` sandbox config+state cho test/smoke an toàn.
