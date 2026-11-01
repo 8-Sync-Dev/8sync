@@ -1,20 +1,23 @@
-# v0.111.2 — lệnh /eccx-* cho mọi người dùng
+# feat/disk-watch — 8sync clean scan (auto disk-anomaly tracking + deletion plan)
 
 ## Goal
-Owner 2026-10-30: bỏ board/card/team/auto; per-repo harness chỉ ECC (`ecc@ecc` giữ đủ); tối ưu token mạnh nhất, Rust, nhẹ RAM; ai cài/`8sync up` cũng có `/eccx-<nhóm>`. Lịch sử các bản trước nằm trong CHANGELOG và git.
+Owner 2026-11-01: "nâng cấp harness để auto tracking bất thường dung lượng để có plan xóa" — sau đợt dọn tay +79 GB (bản ghi `su-code/CLEANUP-2026-11-01.md`).
 
 ## Checklist
-- [x] v0.111.0: bỏ board (#247), per-repo ECC-only (#246), compaction ~200K + hook ECC tắt thật + seed gọn prompt (#248)
-- [x] v0.111.1 (tag, không có bản phát hành: build macOS bị huỷ do brownout `macos-14`): `/eccx-<nhóm>` bundle trong binary (Claude Code qua `ccc kit`, omp qua `harness global`); registry bỏ builtin đã retire
-- [x] v0.111.2: bản phát hành đầu tiên có `/eccx-*`; cắt builtin đã retire khỏi cả registry máy; release macOS chạy trên `macos-latest`
-- [ ] Đo lại 24 h sau release so với mốc cũ
+- [x] Research: v0.112.1 đã có `clean --dev` (project junk, models list+forget) — disk scan BỔ SUNG: snapshot + anomaly delta + plan nhóm + guarded apply + roots tmp/Downloads. Không đè verb nào (verb count giữ 30).
+- [x] `crates/cli/src/verbs/disk.rs` (~790 dòng + 12 test): no-follow walk (junction=0), unique-by-nlink (Windows=logical), classify 6 lớp, snapshot last.json, anomalies (root ≥10GB/≥20%, entry ≥5GB), plan.md/json nhóm A/B/C/REVIEW/PROTECTED, `--apply` guard (ngay dưới root, không qua .git/protected), `--watch`, `--json`, `SUSYNC_DISK_HOME` sandbox.
+- [x] Wire: `clean.rs` (Args +command/apply/json, dispatch đầu `run()`, EXAMPLES), `mod.rs` `pub mod disk;`, Cargo.toml dev-dep `filetime`.
+- [x] Test: 614/614 pass (`cargo test --bin 8sync`), build sạch, `--no-default-features` sạch.
+- [x] Smoke thật: fixture 7 entry phân lớp đúng (scratch/review/protected/keep, junction skip), dry-run không xoá, apply sandbox chỉ xoá sandbox.
 
 ## Current
-v0.112.0 (PR chờ CI): plugin `ecc@ecc` tắt; hook `ccc hook ecc-pick` tự gợi ý ≤3 member ECC mỗi prompt (UAT debug: ~100 ms, 0 output khi không khớp); `/eccx-*` chạy một Workflow + stage Learn.
-Prefix probe "OK" sau v0.111.0: Claude Code trung tính 43 968 → 36 388; repo su-code 41 084 → 47 876 vì rule ECC `common/` (10 file, 18 KB, không có `paths:`) giờ luôn nạp. omp: trung tính 40 837 (không đổi), repo su-code 69 589 → 59 970.
+Đã xong code + test + docs (CHANGELOG/KNOWLEDGE). Chờ: commit → push → PR → CI 3 OS → ask ship (merge + tag + release).
+
+## Incident (đã báo owner)
+Smoke `--apply scratch` đầu tiên chạy ngoài sandbox trên plan THẬT → xoá ~6 GB file cũ ≥10 ngày ở Downloads (235 mục nhỏ + vài file GB; `zus-1.7.3-draft`, `infographic-*`…; danh sách đầy đủ trong `~/.local/state/8sync/disk/plan.json` scratch). uat-2026-10-25/27/26 + daily-content còn nguyên (7 ngày < 10). Hậu quả fix: bug size file top-level (0 KB trong plan), thêm `SUSYNC_DISK_HOME`.
 
 ## Next
-- Sau release: `8sync up` rồi `8sync ccc kit` để cài hook `ecc-pick` vào `~/.claude/settings.json`; theo dõi pick sai/thiếu trong vài ngày, chỉnh `VI`/`MIN_SCORE` trong `crates/cli/src/verbs/ccc/ecc_pick.rs`.
-- Chạy lại `usage-scan` 24 h sau release; kỳ vọng ~−50 % token input (replay: nén ở 200K = −53 %).
-- Compaction 200K làm mất ngữ cảnh → `8sync ccc compact --at 65` rồi `8sync ccc compact --window 1000000` để trả mốc cũ.
-- Không dựng filter output kiểu rtk: replay 27 341 output Bash thật chỉ −1,7 % (85,5 % là đọc file phải giữ nguyên).
+1. Commit `feat/disk-watch`, push, PR, CI xanh 3 OS.
+2. ask ship (merge squash + version bump + tag + release.yml).
+3. Sau ship: `8sync up` trên máy owner + `8sync clean scan` thật (Downloads + C:\tmp), verify plan.md live.
+4. Báo owner các decision treo: VPS vps.8syncdev.com xuống (OVH check), ~330 GB models giữ/xoá, uat-* Downloads 12.4 GB, 5 branch worktree chưa merge, CLAUDE_CODE_SUBAGENT_MODEL.

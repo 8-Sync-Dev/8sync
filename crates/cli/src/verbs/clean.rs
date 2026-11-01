@@ -43,6 +43,12 @@ use crate::{pkg, platform, ui};
           8sync clean --dev --deep   + go build cache, pip cache
           8sync clean --dev --timer 24h        every day (Windows: Scheduled Task)
           8sync clean --forget hf:org/name     remove one listed model
+          8sync clean scan            disk anomaly tracking: measure tmp/Downloads/extra
+                                     roots (junction-safe), diff vs last snapshot, write a
+                                     grouped deletion plan (scratch/artifacts/outputs) — never
+                                     deletes by itself
+          8sync clean scan --apply scratch   run the saved plan's group (guarded)
+          8sync clean scan --root D --watch 86400   daily tracking loop (any OS)
 
         NEVER auto-deleted (only reported + manual reclaim hint): AI models
         (huggingface/torch), Playwright/Puppeteer/Cypress/Electron browser binaries,
@@ -55,6 +61,22 @@ use crate::{pkg, platform, ui};
     "}
 )]
 pub struct Args {
+    /// `scan` — disk anomaly tracking + deletion plan (see `verbs/disk.rs`):
+    /// measures tmp/Downloads/extra roots no-follow (junction-safe), snapshots
+    /// sizes, reports growth anomalies since the last scan and writes a grouped
+    /// plan (scratch / artifacts / outputs / review / protected). Never deletes
+    /// by itself — `--apply <group>` runs the saved plan with guards.
+    #[arg(value_name = "COMMAND")]
+    pub command: Option<String>,
+
+    /// scan: apply a group from the saved plan (scratch|artifacts|outputs|all).
+    #[arg(long, value_name = "GROUP")]
+    pub apply: Option<String>,
+
+    /// scan: machine-readable report on stdout.
+    #[arg(long)]
+    pub json: bool,
+
     /// Deep clean: orphan packages + pure build caches (go-build/tsc/node-gyp) +
     /// tighter journal vacuum. Does NOT touch models, browser binaries, or
     /// package download caches (those are only reported).
@@ -122,6 +144,18 @@ fn dev_opts(a: &Args) -> crate::verbs::clean_dev::Opts {
 }
 
 pub fn run(a: Args) -> Result<()> {
+    if let Some(cmd) = a.command.as_deref() {
+        if cmd != "scan" {
+            anyhow::bail!("unknown clean command '{cmd}' — try `8sync clean scan`");
+        }
+        return crate::verbs::disk::run_scan(crate::verbs::disk::ScanOpts {
+            extra_roots: a.root.clone(),
+            apply: a.apply.clone(),
+            json: a.json,
+            dry_run: a.dry_run,
+            watch: a.watch,
+        });
+    }
     if let Some(spec) = a.timer.as_deref() {
         // Timer removal works anywhere; install too (harmless if clean is a
         // no-op on this OS). Only the reclaim body below is Linux-only.

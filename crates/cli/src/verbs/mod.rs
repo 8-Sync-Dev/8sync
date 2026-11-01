@@ -7,6 +7,7 @@ pub mod hz;
 pub mod lcd;
 pub mod clean;
 pub mod clean_dev;
+pub mod disk;
 pub mod up;
 pub mod selfup;
 pub mod doctor;
