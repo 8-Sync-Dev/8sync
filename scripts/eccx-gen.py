@@ -13,7 +13,8 @@ Inputs (committed, so the default run is deterministic and offline):
   assets/skills/*/SKILL.md         8sync-bundled skills (both harnesses)
   assets/claude/skills/*/SKILL.md  8sync Claude Code kit skills (Claude only)
 Outputs:
-  assets/claude/commands/eccx-*.md  Claude Code (`8sync ccc kit` + the 8sync-kit plugin)
+  assets/claude/commands/eccx-*.md  Claude Code (`8sync ccc kit` + the 8sync-kit plugin),
+                                    incl. eccx-loop-*.md (loop until criteria pass)
   assets/eccx/eccx-*.md             omp (deployed bare to ~/.omp/agent/commands/)
 
   python scripts/eccx-gen.py                       regenerate from the snapshot
@@ -428,6 +429,47 @@ def body(h, c, members, maxw):
     return "".join(out)
 
 
+def loop_body(c):
+    """`/eccx-loop-<cat>` (Claude Code only: the loop rides CronCreate + `/ship-tick`). A thin
+    driver: members stay in `eccx-<cat>.md`, the loop machinery is `/ship-loop`'s."""
+    title, _ = CATS[c]
+    src = f"`~/.claude/commands/eccx-{c}.md` (or the 8sync-kit plugin's `commands/`)"
+    select = ("its Route + Select steps (every relevant category, then each category's members)" if c == "full"
+              else "its Select step")
+    return (head("cc", c, f"Loop /eccx-{c} on a goal until every acceptance criterion passes: criteria with check commands, "
+                 "evidence, learn each iteration, iteration/time/stuck caps").replace(
+                     "argument-hint: \"<goal> [--dry-run]\"",
+                     "argument-hint: \"<goal> [--max-iter 8] [--max-min 90] [--release] [--dry-run]\"")
+            + f"# /eccx-loop-{c} — {title}, looped until green\n\n"
+            "Goal: `$ARGUMENTS`. Level 4 like `/ship-loop`: owner-only; \"dừng\"/\"stop\" ends it at once. "
+            "Defaults `--max-iter 8`, `--max-min 90`.\n\n"
+            f"1. **Members.** Open {src} and do {select} for this goal.\n"
+            "2. **Criteria.** Write `su-code/ship/<slug>/PLAN.md`: acceptance criteria, each with ONE check command "
+            "(exit 0 = pass; light and local, or a CI workflow name for heavy builds), plus three lines the ticks read: "
+            f"`Driver: /eccx-{c}`, `Members: <picks>`, `Release: yes|no` (yes only with `--release`). "
+            "No criterion can get a command → say so and stop; never loop on taste. `--dry-run`: print PLAN and stop.\n"
+            "3. **Open the loop** exactly as `/ship-loop` A.2–A.4: `LOOP.md`, `<slug>` in `su-code/ship/ACTIVE`, "
+            "`8sync ccc . goal`, `8sync ccc loop init <slug> --max-iter <N> --max-min <M>`, then `CronCreate` "
+            "`*/5 * * * *` recurring `/ship-tick <slug>` so the loop survives turn ends, /compact and CI waits.\n"
+            "4. **Iterate** (this turn, then every `/ship-tick`), one red item per iteration:\n"
+            "   - **Pick:** red CI on the branch, else the first criterion without green evidence.\n"
+            f"   - **Execute** with the `Members:` picks, as the Execute step of `eccx-{c}.md` scoped to that one criterion: "
+            "a Workflow for >2 steps (same criterion carried over → `resumeFromRunId`), inline otherwise.\n"
+            "   - **Eval:** every criterion via `8sync ccc loop ev <slug> <C#> -- '<cmd>'`; no evidence line = not passed.\n"
+            "   - **Learn:** cause of a red check found → one dated line in `su-code/ship/<slug>/research.md`; "
+            "an evidence-backed lesson → `trail note` or `/remember` (≤1 per iteration, none is fine).\n"
+            "   - **Tick:** all green → step 5, no tick. Else `8sync ccc loop tick --changed <n> --digest \"<diff sha256 16 chars + "
+            "last line of the first red check>\"`; `continue` → next iteration; `stop:<reason>` or anything else → step 5.\n"
+            "   - **Stuck** (same digest twice, or the same check red after a fix): research before retrying (`/ship-tick` §3), "
+            "then re-Select: add skipped members that fit the failure, `ecc:agent-introspection-debugging` when the loop itself "
+            "misbehaves; record the change in `Members:`.\n"
+            "5. **Close** as `/ship-loop` D: all green → review + `8sync ccc risk` + skills `sec`, `rules`, `aup-audit` on the diff "
+            "→ CHANGELOG + commit on the feature branch; `Release: yes` → ONE `Ship` question, CI green on Windows, macOS and "
+            "Linux before merge/tag. Stop or cap → brief ≤10 lines in LOOP.md, `8sync ccc loop done`, drop the `ACTIVE` line, "
+            "`CronDelete` the `/ship-tick <slug>` job. Report: criteria + evidence, iterations/minutes used, lessons kept, open items.\n\n"
+            "## How to call members\n" + HOW["cc"] + "\n")
+
+
 def generate():
     snap = json.load(open(SNAP, encoding="utf-8"))
     members = classify(snap)
@@ -446,6 +488,11 @@ def generate():
             with open(p, "w", encoding="utf-8", newline="\n") as f:
                 f.write(text)
             print(f"{h:3} eccx-{c:12} {len(text.encode('utf-8')):6} B  purposes<={maxw}w")
+            if h == "cc":
+                p = os.path.join(d, f"eccx-loop-{c}.md")
+                want.add(os.path.basename(p))
+                with open(p, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(loop_body(c))
         for f in listdir(d):  # a dropped category leaves no stale file behind
             if f.startswith("eccx-") and f.endswith(".md") and f not in want:
                 os.remove(os.path.join(d, f))
