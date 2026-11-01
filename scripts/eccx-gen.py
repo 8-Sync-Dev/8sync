@@ -469,6 +469,33 @@ def loop_body(c):
             "`CronDelete` the `/ship-tick <slug>` job. Report: criteria + evidence, iterations/minutes used, lessons kept, open items.\n\n"
             "## How to call members\n" + HOW["cc"] + "\n")
 
+def clear_body(h):
+    """`/eccx-clear` — clear running time-loops (`/eccx-loop-<cat>`, `/ship-loop`): stop the
+    waker, close the loop state, keep the evidence. Utility, not a category."""
+    desc = "Clear running time-loops (/eccx-loop-<cat>, /ship-loop): stop the tick cron, close loop state, keep evidence — no review, no ship"
+    wake = ("2. **Stop the waker.** `CronList` → `CronDelete` every `/ship-tick <slug>` job; "
+            "`/goal clear` if that slug's goal is still set.\n"
+            if h == "cc" else
+            "2. **No cron on omp** — a loop only ticks inside its session; step 3 is the whole stop.\n")
+    return (head(h, "clear", desc).replace('argument-hint: "<goal> [--dry-run]"',
+                                           'argument-hint: "<slug>|all [--reason <why>]"')
+            + "# /eccx-clear — clear a running time-loop\n\n"
+            "`$ARGUMENTS` — a loop `<slug>`, or `all`. Owner-only, Level 4 like `/ship-loop`. Clears ONLY: "
+            "no review, no ship, no new work. `su-code/ship/<slug>/` (PLAN.md, LOOP.md) stays as evidence.\n\n"
+            "1. **Pick.** No slug → read `su-code/ship/ACTIVE` + `8sync ccc loop ls`. None → say so, done. "
+            "Several → list one line each `slug · iter/max · min/max` (`8sync ccc loop status <slug>`) and ask ONE question. "
+            "`all` → steps 2–4 for every ACTIVE slug.\n"
+            + wake +
+            "3. **Close state.** `8sync ccc loop status <slug>` → brief ≤10 lines into `su-code/ship/<slug>/LOOP.md` "
+            "(why cleared, criteria green/red + last evidence, iters/minutes used, open items if the owner resumes later) → "
+            "`8sync ccc loop done <slug> --reason \"<why>\"` → remove the `<slug>` line from `su-code/ship/ACTIVE`. "
+            "Never delete `su-code/ship/<slug>/`; never touch git.\n"
+            "4. **Report** ≤6 lines: each cleared loop (slug · iters used · green/red · cron deleted · `done` exit 0) "
+            "+ what is still in ACTIVE.\n\n"
+            "Rails: only loops listed in ACTIVE; no `8sync ccc cancel` unless the owner typed it; "
+            "every \"deleted/done\" claim shows its command output.\n")
+
+
 
 def generate():
     snap = json.load(open(SNAP, encoding="utf-8"))
@@ -493,6 +520,11 @@ def generate():
                 want.add(os.path.basename(p))
                 with open(p, "w", encoding="utf-8", newline="\n") as f:
                     f.write(loop_body(c))
+        p = os.path.join(d, "eccx-clear.md")
+        want.add("eccx-clear.md")
+        with open(p, "w", encoding="utf-8", newline="\n") as f:
+            f.write(clear_body(h))
+        print(f"{h:3} eccx-clear       (utility)")
         for f in listdir(d):  # a dropped category leaves no stale file behind
             if f.startswith("eccx-") and f.endswith(".md") and f not in want:
                 os.remove(os.path.join(d, f))
