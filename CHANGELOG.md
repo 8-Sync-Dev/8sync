@@ -5,6 +5,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- **`EIGHTSYNC_HQ_HOME`:** đặt home riêng cho config/state HQ (supervisor truyền xuống node qua `HOME`/`USERPROFILE`), để smoke test chạy cạnh HQ thật mà không đụng `~/.config/8sync/hq`.
+
+### Changed
+- **Link `hq ui --public` giữ nguyên suốt đời supervisor:** khi `8sync up` thay binary sang bản mới, HQ `--public` không khởi động lại cả tiến trình nữa mà chỉ đổi node sang UI của bản mới (bản `8sync up` đã cài sẵn, thiếu thì binary mới tự `hq ui --install`), cùng port, cùng `HQ_PUBLIC_NONCE`/`EIGHTSYNC_BIN`/`HQ_CHANNEL_FLAGS`/core; cloudflared và `public.json` giữ nguyên nên link trycloudflare và cookie `hq_pub` trên điện thoại vẫn dùng được. Vẫn chờ khi shell trong HQ đang mở. Node chết bất thường (crash, bị kill) → chạy lại sau 2 s, tối đa 5 lần/10 phút, quá thì dừng và dọn link như cũ; Ctrl-C / thoát sạch vẫn dọn tunnel + `public.json`. HQ local giữ hành vi cũ (khởi động lại cả tiến trình trên bản mới).
+
+### Fixed
+- **`hq ui` thứ hai không còn xoá link của HQ `--public` đang chạy:** `public.json` ghi thêm `pid`/`pid_start`/`port` của supervisor; lúc khởi động, file chỉ bị xoá khi đã cũ (port ghi trong file là port của lần chạy này, pid đã chết hoặc bị tái dùng, hoặc port ghi trong file không còn ai nghe); file đời cũ không có pid/port thì giữ. `hq ui --public` ở port khác khi link đang thuộc HQ còn sống → báo lỗi thay vì cướp link.
+
 ## [0.117.0] — 2026-11-02
 
 ### Added
