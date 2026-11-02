@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.118.0] — 2026-11-02
+
 ### Added
 - **`EIGHTSYNC_HQ_HOME`:** đặt home riêng cho config/state HQ (supervisor truyền xuống node qua `HOME`/`USERPROFILE`), để smoke test chạy cạnh HQ thật mà không đụng `~/.config/8sync/hq`.
 - **HQ sidebar theo cây Claude Code Desktop (dự án → phiên → phiên con):** "+ Phiên mới" (Ctrl/Alt+N), Tìm, Tổng quan/Văn phòng/Preview/Chat/Vòng lặp/Thêm; mỗi dự án là một nhóm (tên đậm, ▾ thu gọn, "+" mở phiên trong thư mục đó, "⋯" Nhóm & sắp xếp: theo Dự án/Trạng thái/Không nhóm, sắp Gần đây/Ngày tạo/Tên, nhớ trong trình duyệt). Dòng phiên chỉ còn tiêu đề + số phiên con, chấm xanh "xong chưa xem", ⚠ lỗi, vòng quay khi đang làm, thời gian. Phiên con (task subagent của omp, agent đang chạy của phòng Claude Code) nằm dưới dòng └, hiện cái đang chạy/mới, còn lại "+N cũ hơn". Menu "⋯" từng phiên: Mở cạnh nhau (Alt+click), Chat phòng, Lưu trữ, Đóng/Xoá phòng; mục "Đã lưu trữ". Chân sidebar: tài khoản (Thêm dự án…, đổi theme, Cách dùng) + bánh răng mở tab Máy. Ctrl+Tab/Ctrl+Shift+Tab và Alt+↓/↑ chuyển phiên. Mobile mở bằng drawer.
