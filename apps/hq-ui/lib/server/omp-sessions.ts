@@ -45,8 +45,14 @@ export function roomIdOf(root: string, name: string): string {
   return `omp-${h.toString(16).padStart(16, "0")}`;
 }
 
-/** The room id `8sync . <name>` run in `cwd` gets. */
-export const ompIdFor = (cwd: string, name: string) => roomIdOf(canonicalRoot(projectRoot(cwd)), name);
+/** The room id `8sync . <name>` run in `cwd` gets. Symlinks resolved first: Rust's `current_dir()` returns the real path. */
+export const ompIdFor = (cwd: string, name: string) => {
+  let real = cwd;
+  try {
+    real = fs.realpathSync.native(cwd);
+  } catch {}
+  return roomIdOf(canonicalRoot(projectRoot(real)), name);
+};
 
 /** `cwd` as an existing absolute folder, or null. */
 export function existingDir(cwd: unknown): string | null {

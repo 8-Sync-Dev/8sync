@@ -375,11 +375,25 @@ pub(super) fn restart_target(procs: &[Proc], root: u32, me: u32) -> Result<Targe
     Ok(Target { app: h.app.clone(), root, pids: app.iter().map(|p| p.pid).collect(), mb: app.iter().map(|p| p.rss).sum::<u64>() / MIB, exe })
 }
 
+/// Body of a PowerShell single-quoted string. PowerShell also reads the curly quotes U+2018–U+201B as `'`,
+/// so every one of them is doubled, not just the ASCII quote.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn ps_single_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        out.push(c);
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Windows: ask every window of `exe` to close, wait up to [`CLOSE_WAIT`], then force only what
 /// still runs from that very path (`Get-Process` `Path -eq`, never by name).
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
 pub(super) fn ps_close(exe: &str) -> String {
-    let q = exe.replace('\'', "''");
+    let q = ps_single_quoted(exe);
     let ticks = CLOSE_WAIT.as_millis() / 500;
     format!(
         "$ErrorActionPreference = 'SilentlyContinue'; $exe = '{q}'; \
@@ -394,7 +408,7 @@ pub(super) fn ps_close(exe: &str) -> String {
 /// a Store package (`\WindowsApps\<PackageFullName>\`) by `shell:AppsFolder\<family>!<AppId>`.
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
 pub(super) fn ps_relaunch(exe: &str) -> String {
-    let q = exe.replace('\'', "''");
+    let q = ps_single_quoted(exe);
     format!(
         "$ErrorActionPreference = 'Stop'; $exe = '{q}'; $pkg = $null; \
          if ($exe -match '\\\\WindowsApps\\\\([^\\\\]+)\\\\') {{ $full = $Matches[1]; $pkg = Get-AppxPackage | Where-Object {{ $_.PackageFullName -eq $full }} | Select-Object -First 1 }}; \
@@ -1335,5 +1349,12 @@ mod tests {
         for need in [r"-match '\\WindowsApps\\([^\\]+)\\'", "Get-AppxPackageManifest", r"'shell:AppsFolder\' + $pkg.PackageFamilyName + '!' + $id", r#"Start-Process explorer.exe -ArgumentList ('"' + $exe + '"')"#] {
             assert!(r.contains(need), "{need} missing: {r}");
         }
+    }
+
+    #[test]
+    fn curly_quotes_in_an_exe_path_cannot_end_the_powershell_string() {
+        let exe = "C:\\x\u{2019}; Remove-Item C:\\ -Recurse; \u{2018}\\a.exe";
+        let c = ps_close(exe);
+        assert!(c.contains("$exe = 'C:\\x\u{2019}\u{2019}; Remove-Item C:\\ -Recurse; \u{2018}\u{2018}\\a.exe'"), "{c}");
     }
 }

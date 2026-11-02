@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.116.0] — 2026-11-02
+
 ### Added
 - **Renderer nặng (`8sync ccc eco`):** báo mọi renderer Chromium/Electron (`--type=renderer`) giữ ≥ 4 GB RAM (`heavy` trong `eco --json` / MCP `machine`, một dòng trong `8sync eco`, lệnh riêng `8sync eco heavy [--json]`), kèm app, pid, tiến trình chính (`rootPid`) và `restartable`. `8sync eco restart <rootPid> [--json]` đóng rồi mở lại app đó, chỉ khi lúc chạy `rootPid` vẫn là tiến trình chính của một renderer nặng thuộc Claude Desktop, ChatGPT, Slack, Discord hoặc Notion (trình duyệt, editor, terminal, Orca chỉ báo). Windows: `CloseMainWindow` cho các tiến trình cùng đường dẫn exe, chờ ≤ 10 s, rồi chỉ force đúng exe đó; mở lại qua Explorer (gói Store qua `shell:AppsFolder\<family>!<AppId>`). macOS/Linux: SIGTERM, chờ, SIGKILL phần còn lại của cây; mở lại tách khỏi 8sync (`open -a` cho `.app`). Eco không bao giờ tự khởi động lại.
 - **HQ tab Máy + chip header:** cảnh báo từng renderer nặng (app, GB, pid); app được phép có nút "Khởi động lại" kèm hộp xác nhận, app khác gợi ý đóng bớt tab/cửa sổ. `GET /api/machine` thêm `heavy` (đọc tối đa 30 s/lần); `POST /api/machine/restart {rootPid}` chỉ chạy phía local (403 qua link `--public`, như `/api/shell`).
@@ -15,6 +17,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Changed
 - **HQ UI giao diện mới theo dashboard 8 Sync (content-ai "Sử dụng"):** mặc định theme tối, nền zinc (#09090b / #111114 / #18181b, viền #27272a), một màu nhấn duy nhất là lime brand (#85d840 tối, #387500 sáng), trạng thái success/danger/warning/info kiểu GitHub (sáng lấy bậc đậm hơn để đạt WCAG AA); font Inter + JetBrains Mono (cả hai có subset tiếng Việt); terminal xterm cùng bảng màu. Utility dùng chung theo anatomy card của dashboard: `neon-panel`, `neon-elevated`, `neon-muted`, `neon-heading`, `neon-label`, `neon-value`, `neon-bar`/`neon-bar-fill`, `neon-pill`, `neon-code`, `neon-empty` (tone qua `data-tone`), màu `primary-wash`, `success|danger|warning|info`, `bg-overlay`.
 - **HQ UI nhẹ hơn:** các tab không phải màn hình đầu (Tổng quan, Văn phòng, Chat, Preview, Báo cáo, Hạn mức, Máy, Tri thức, Loops, Sessions, Hoạt động) tải chunk riêng bằng `next/dynamic` khi mở lần đầu.
+
+### Security
+- `eco restart` nhân đôi cả nháy cong U+2018–U+201B khi nhúng đường dẫn exe vào chuỗi PowerShell (PowerShell coi chúng là `'`). Room id omp của HQ tính trên đường dẫn thật (symlink đã resolve) như `current_dir()` của Rust.
 
 ## [0.115.0] — 2026-11-01
 
