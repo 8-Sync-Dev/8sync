@@ -26,7 +26,11 @@ pub const SCHEMA: u32 = 1;
 /// root (UTF-8, lossy) + `"\0"` + the session name. The single source of truth for the id the
 /// omp launch exports (`EIGHTSYNC_ROOM_ID`) and `ls --json` shows (`inbox_id`).
 pub fn room_id(root: &std::path::Path, name: &str) -> String {
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    room_id_canonical(&std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()), name)
+}
+
+/// [`room_id`] for a root already through `std::fs::canonicalize` (one call for a registry's rows).
+pub fn room_id_canonical(root: &std::path::Path, name: &str) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in root.to_string_lossy().as_bytes().iter().chain(b"\0").chain(name.as_bytes()) {
         h ^= u64::from(*b);

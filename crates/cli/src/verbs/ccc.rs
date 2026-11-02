@@ -25,7 +25,7 @@ pub(crate) mod awake;
 mod cancel;
 mod compact;
 mod danger;
-mod eco;
+pub(crate) mod eco;
 mod ecc_pick;
 mod fence;
 mod gate;

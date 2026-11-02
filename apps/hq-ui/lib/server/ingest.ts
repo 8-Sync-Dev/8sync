@@ -283,6 +283,9 @@ export function ingest(db: DatabaseSync): number {
   }
   const size = Number(st.size);
   const id = inoKey(st.ino);
+  // Nothing new (the common case: every API request and each SSE tick lands here): two reads, no
+  // write transaction, so an idle HQ stops rewriting ingest_state (and growing the WAL) every second.
+  if (getState(db, INO_KEY) === id && getState(db, "events.jsonl") === size) return 0;
   return tx(db, () => {
     let offset = getState(db, "events.jsonl") ?? 0;
     const ino = getState(db, INO_KEY);

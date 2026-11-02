@@ -38,7 +38,9 @@ export function hasTmux(): Promise<boolean> {
 
 export type TmuxSession = { name: string; created: number; pid: number | null; cwd: string | null };
 
+/** Live tmux sessions, read fresh each call (POST /api/sessions checks a name against it). No tmux on this machine (Windows): none, without a failed spawn per office/sessions poll. */
 export async function listTmux(): Promise<TmuxSession[]> {
+  if (!(await hasTmux())) return [];
   const r = await run("tmux", [
     "list-sessions",
     "-F",

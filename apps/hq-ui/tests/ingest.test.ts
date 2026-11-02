@@ -87,6 +87,16 @@ describe("ingest", () => {
     expect((db.prepare("SELECT text FROM messages ORDER BY id DESC").get() as { text: string }).text).toBe("B");
   });
 
+  it("writes nothing when the journal did not move (each API request and SSE tick ingests)", () => {
+    const db = getDb();
+    ingest(db);
+    const changes = () => (db.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
+    const before = changes();
+    expect(ingest(db)).toBe(0);
+    expect(ingest(db)).toBe(0);
+    expect(changes()).toBe(before);
+  });
+
   it("reads the rotated tail, then the new file from 0", () => {
     const db = getDb();
     const { current, rotated } = journalFiles();

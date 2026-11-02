@@ -1,3 +1,4 @@
+import { REWRITTEN_DELIVERY } from "@/lib/server/db";
 import { afterParam, open } from "@/lib/server/http";
 import { ingest } from "@/lib/server/ingest";
 import { messagesAfter } from "@/lib/server/queries";
@@ -54,9 +55,7 @@ export async function GET(req: Request) {
           }
           // Rows already sent that changed in place: a retried delivery, or uuid rows
           // moved onto their hq-* name. The client reloads the timeline.
-          const w = signature(
-            "SELECT (SELECT count(*) FROM session_alias) a, (SELECT count(*) FROM messages WHERE delivery IN ('channel→terminal', 'failed', 'held', 'unconfirmed')) d",
-          );
+          const w = signature(`SELECT (SELECT count(*) FROM session_alias) a, (SELECT count(*) FROM messages WHERE ${REWRITTEN_DELIVERY}) d`);
           if (w !== rewriteSig) {
             if (rewriteSig) send("rewrite", {});
             rewriteSig = w;

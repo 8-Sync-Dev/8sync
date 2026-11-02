@@ -119,7 +119,13 @@ function migrate(db: DatabaseSync): void {
   if (!cols.includes("picked_up_at")) db.exec("ALTER TABLE messages ADD COLUMN picked_up_at INTEGER");
   // Only task/teammate journal rows carried a team; the journal has none now.
   if (cols.includes("team")) db.exec("ALTER TABLE messages DROP COLUMN team");
+  // The SSE tick counts these every second per client: without it, a scan of every message (3 ms at
+  // 5k rows, growing); with it, a few index entries.
+  db.exec(`CREATE INDEX IF NOT EXISTS messages_rewritten ON messages(delivery) WHERE ${REWRITTEN_DELIVERY}`);
 }
+
+/** Rows whose delivery changes after they were sent (app/api/stream "rewrite"); the partial index's WHERE, which a query must repeat verbatim to use it. */
+export const REWRITTEN_DELIVERY = "delivery IN ('channel→terminal', 'failed', 'held', 'unconfirmed')";
 
 let last = 0;
 /** Strictly increasing ms timestamp, so `updated_at > x` never misses a row. */

@@ -29,12 +29,15 @@ export type OmpSessionRow = {
 
 /** The rows of `8sync . ls --json` output that are omp sessions with an id; anything else is dropped. */
 export function parseOmpRows(stdout: string): OmpSessionRow[] {
-  let v: unknown;
   try {
-    v = JSON.parse(stdout);
+    return ompRowsOf(JSON.parse(stdout));
   } catch {
     return [];
   }
+}
+
+/** [`parseOmpRows`] of an already parsed answer (the HQ core's `/v1/omp-ls`). */
+export function ompRowsOf(v: unknown): OmpSessionRow[] {
   if (!Array.isArray(v)) return [];
   return v.filter((r): r is OmpSessionRow => !!r && typeof r === "object" && typeof r.name === "string" && (r.engine === undefined || r.engine === "omp"));
 }

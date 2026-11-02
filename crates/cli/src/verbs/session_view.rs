@@ -45,29 +45,71 @@ static DIGESTS: std::sync::OnceLock<std::sync::Mutex<DigestCache>> = std::sync::
 const DIGEST_CAP: usize = 256;
 const HEAD_BYTES: usize = 256;
 
-/// Session id → its transcript path, enabled with the digest cache: finding a Claude transcript
-/// probes every `projects/*` folder, which is most of a warm `ls` rebuild.
-static PATHS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::path::PathBuf>>> = std::sync::OnceLock::new();
-
 pub fn enable_digest_cache() {
     DIGESTS.get_or_init(|| std::sync::Mutex::new(DigestCache { tick: 0, map: std::collections::HashMap::new() }));
-    PATHS.get_or_init(Default::default);
 }
 
-/// [`claude_transcript`], remembered while the file is still there (a session's transcript never moves).
+/// True in a long-running process that called [`enable_digest_cache`] (the HQ core).
+pub fn digest_cache_on() -> bool {
+    DIGESTS.get().is_some()
+}
+
+/// `<id>.jsonl` under Claude Code's `projects/*/` → its path, from one listing of every project
+/// folder. Probing every folder per session made a warm `ls` rebuild ~100 ms of CPU (2026-11: 89
+/// Claude rooms whose transcripts are gone × 18 folders, a listing and 18 stats each, every 4 s).
+/// The index stands while no folder's mtime moved (creating or removing a transcript moves its
+/// folder's), checked at most every [`INDEX_RECHECK`]; the HQ core keeps it, a CLI run builds it once.
+struct ClaudeIndex {
+    base: std::path::PathBuf,
+    checked: std::time::Instant,
+    stamp: Vec<(std::ffi::OsString, u128)>,
+    map: std::collections::HashMap<String, std::path::PathBuf>,
+}
+
+static CLAUDE_INDEX: std::sync::Mutex<Option<ClaudeIndex>> = std::sync::Mutex::new(None);
+const INDEX_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn mtime_ns(m: &std::fs::Metadata) -> u128 {
+    m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos())
+}
+
+/// `projects` itself, then each folder in it (listing order), with its mtime. Each folder is stat'ed
+/// itself: the copy in its parent's listing can lag on NTFS.
+fn index_stamp(base: &std::path::Path) -> Vec<(std::ffi::OsString, u128)> {
+    let Ok(top) = std::fs::metadata(base) else { return Vec::new() };
+    let mut out = vec![(std::ffi::OsString::new(), mtime_ns(&top))];
+    for e in std::fs::read_dir(base).into_iter().flatten().flatten() {
+        if let Some(m) = std::fs::metadata(e.path()).ok().filter(std::fs::Metadata::is_dir) {
+            out.push((e.file_name(), mtime_ns(&m)));
+        }
+    }
+    out
+}
+
+/// [`claude_transcript`] through [`ClaudeIndex`]: the first folder (listing order) holding it.
 fn claude_transcript_cached(home: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
-    let Some(paths) = PATHS.get() else { return claude_transcript(home, id) };
-    let hit = paths.lock().unwrap_or_else(|p| p.into_inner()).get(id).cloned();
-    if let Some(p) = hit.filter(|p| p.is_file()) {
-        return Some(p);
+    let base = std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".claude")).join("projects");
+    let mut g = CLAUDE_INDEX.lock().unwrap_or_else(|p| p.into_inner());
+    if !g.as_ref().is_some_and(|ix| ix.base == base && ix.checked.elapsed() < INDEX_RECHECK) {
+        let stamp = index_stamp(&base);
+        match g.as_mut() {
+            Some(ix) if ix.base == base && ix.stamp == stamp => ix.checked = std::time::Instant::now(),
+            _ => {
+                let mut map = std::collections::HashMap::new();
+                for (dir, _) in stamp.iter().skip(1) {
+                    for e in std::fs::read_dir(base.join(dir)).into_iter().flatten().flatten() {
+                        let name = e.file_name();
+                        let Some(stem) = name.to_str().and_then(|n| n.strip_suffix(".jsonl")) else { continue };
+                        if !map.contains_key(stem) && e.file_type().is_ok_and(|t| t.is_file()) {
+                            map.insert(stem.to_string(), e.path());
+                        }
+                    }
+                }
+                *g = Some(ClaudeIndex { base, checked: std::time::Instant::now(), stamp, map });
+            }
+        }
     }
-    let p = claude_transcript(home, id)?;
-    let mut m = paths.lock().unwrap_or_else(|p| p.into_inner());
-    if m.len() >= 4 * DIGEST_CAP {
-        m.clear();
-    }
-    m.insert(id.to_string(), p.clone());
-    Some(p)
+    g.as_ref()?.map.get(id).cloned()
 }
 
 /// [`scan_file`], served from [`DigestCache`] when enabled: unchanged → cached, appended → only
@@ -458,25 +500,39 @@ pub fn order_groups(groups: &[Vec<&Row>], labels: &[String], key: SortKey, rever
 use crate::env_detect::Env;
 
 
-/// Run `f` over `items` on at most 8 scoped threads (transcript scans are I/O +
-/// parse). Output has one entry per item, in order: an item whose `f` panics
-/// gets `fallback(item)` instead of being dropped, so callers can zip the
-/// result with the registry. (Release builds use `panic = "abort"`, so there a
-/// panic still ends the process; this keeps tests and dev builds aligned.)
+/// Work [`par_map`] does on the calling thread before handing the rest to threads. A warm row
+/// (digest cached, or no transcript) takes microseconds while starting a thread on Windows takes
+/// 0.1–2 ms: spawning per registry was most of a warm `ls --all` (~90 threads every 4 s in the HQ
+/// core). Cold scans pass the budget on their first item, so they still fan out.
+const INLINE_BUDGET: std::time::Duration = std::time::Duration::from_millis(2);
+
+/// Run `f` over `items`: inline while that stays under [`INLINE_BUDGET`], the rest on at most 8
+/// scoped threads (transcript scans are I/O + parse). Output has one entry per item, in order: an
+/// item whose `f` panics gets `fallback(item)` instead of being dropped, so callers can zip the
+/// result with the registry. (Release builds use `panic = "abort"`, so there a panic still ends
+/// the process; this keeps tests and dev builds aligned.)
 fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync, fallback: impl Fn(&T) -> R + Sync) -> Vec<R> {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    let call = |it: &T| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(it))).unwrap_or_else(|_| fallback(it));
+    let start = std::time::Instant::now();
+    let mut out = Vec::with_capacity(items.len());
+    while out.len() < items.len() && start.elapsed() < INLINE_BUDGET {
+        out.push(call(&items[out.len()]));
+    }
+    let rest = &items[out.len()..];
+    if rest.is_empty() {
+        return out;
+    }
     let next = AtomicUsize::new(0);
-    let workers = items.len().min(8);
     let mut done: Vec<(usize, R)> = std::thread::scope(|s| {
-        let hs: Vec<_> = (0..workers)
+        let hs: Vec<_> = (0..rest.len().min(8))
             .map(|_| {
                 s.spawn(|| {
                     let mut got = Vec::new();
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(it) = items.get(i) else { break };
-                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(it))).unwrap_or_else(|_| fallback(it));
-                        got.push((i, r));
+                        let Some(it) = rest.get(i) else { break };
+                        got.push((i, call(it)));
                     }
                     got
                 })
@@ -485,7 +541,8 @@ fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync, fallback: 
         hs.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
     });
     done.sort_by_key(|(i, _)| *i);
-    done.into_iter().map(|(_, r)| r).collect()
+    out.extend(done.into_iter().map(|(_, r)| r));
+    out
 }
 
 /// omp sessions of one repo registry. `detail` keeps the extra tool-call ring
@@ -493,8 +550,9 @@ fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync, fallback: 
 /// root the registry recorded); it keys each room's inbox id ([`ccc_core::room_id`]).
 pub fn omp_rows(reg: &crate::verbs::session::Registry, root: Option<&std::path::Path>, procs: &[Vec<u8>], detail: bool, git: bool) -> Vec<Row> {
     let now = now_secs();
-    let root = root.or(reg.root.as_deref());
-    let inbox = |name: &str| root.map(|r| ccc_core::room_id(r, name));
+    // Canonicalised once for every row (a file open + path query each on Windows).
+    let root = root.or(reg.root.as_deref()).map(|r| std::fs::canonicalize(r).unwrap_or_else(|_| r.to_path_buf()));
+    let inbox = |name: &str| root.as_deref().map(|r| ccc_core::room_id_canonical(r, name));
     par_map(&reg.sessions, |s| {
         let tr = omp_transcript(&s.session_dir);
         let digest = tr.as_deref().map(|p| scan_cached(p, Fmt::Omp, detail)).unwrap_or_default();
@@ -680,6 +738,40 @@ mod tests {
             assert_eq!(*r, if n % 7 == 3 { 1000 + n } else { n * 2 });
         }
         assert!(par_map(&[] as &[u32], |n| *n, |n| *n).is_empty());
+        // Slow items pass the inline budget: the rest fans out to threads, still in order.
+        let main = std::thread::current().id();
+        let slow = par_map(&items[..12], |&n| {
+            std::thread::sleep(INLINE_BUDGET);
+            if n % 5 == 4 {
+                panic!("boom")
+            }
+            (n, std::thread::current().id())
+        }, |&n| (1000 + n, main));
+        assert_eq!(slow.iter().map(|(n, _)| *n).collect::<Vec<_>>(), (0..12).map(|n| if n % 5 == 4 { 1000 + n } else { n }).collect::<Vec<_>>());
+        assert_eq!(slow[0].1, main, "the first item runs inline");
+        assert!(slow.iter().any(|(n, id)| *n < 1000 && *id != main), "items past the budget run on threads");
+    }
+
+    #[test]
+    fn claude_index_finds_transcripts_and_sees_new_and_removed_ones() {
+        if std::env::var_os("CLAUDE_CONFIG_DIR").is_some() {
+            return;
+        }
+        let home = std::env::temp_dir().join(format!("sv-claude-index-{}", std::process::id()));
+        let projects = home.join(".claude").join("projects");
+        std::fs::create_dir_all(projects.join("a")).unwrap();
+        std::fs::create_dir_all(projects.join("b")).unwrap();
+        std::fs::write(projects.join("a").join("one.jsonl"), "{}\n").unwrap();
+        std::fs::write(projects.join("a").join("one.txt"), "").unwrap();
+        assert_eq!(claude_transcript_cached(&home, "one"), Some(projects.join("a").join("one.jsonl")));
+        assert_eq!(claude_transcript_cached(&home, "two"), None);
+        assert_eq!(claude_transcript_cached(&home, "one.txt"), None);
+        std::fs::write(projects.join("b").join("two.jsonl"), "{}\n").unwrap();
+        std::fs::remove_file(projects.join("a").join("one.jsonl")).unwrap();
+        std::thread::sleep(INDEX_RECHECK + std::time::Duration::from_millis(100));
+        assert_eq!(claude_transcript_cached(&home, "two"), Some(projects.join("b").join("two.jsonl")), "a folder's mtime moved");
+        assert_eq!(claude_transcript_cached(&home, "one"), None);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     fn r(name: &str, status: Status, last_active: u64, urgency: Option<&str>) -> Row {

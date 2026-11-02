@@ -1,8 +1,9 @@
 //! The HQ native core: a loopback JSON server inside the long-running `8sync hq ui` supervisor.
 //! It keeps the data the HQ web server polls warm in one process — the `claude agents` listing,
-//! `8sync ls --all` rows, the awake probe, a machine/energy sampler and transcript token
-//! sums — so node stops starting a process per request. Node finds it through `HQ_CORE` (URL) and
-//! `HQ_CORE_TOKEN`; `HQ_*` never reaches a room (`apps/hq-ui/lib/server/child-env.ts`).
+//! `8sync ls --all` rows, a repo's `8sync . ls` rows, the awake probe, the heavy renderers, a
+//! machine/energy sampler and transcript token sums — so node stops starting a process per
+//! request. Node finds it through `HQ_CORE` (URL) and `HQ_CORE_TOKEN`; `HQ_*` never reaches a room
+//! (`apps/hq-ui/lib/server/child-env.ts`).
 //! Endpoints and caches: see each submodule; node side: `apps/hq-ui/lib/server/core.ts`.
 
 pub mod agents;
@@ -14,6 +15,7 @@ pub mod usage;
 
 use serde_json::{json, Value};
 use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -38,6 +40,21 @@ struct Core {
     /// One disk walk at a time: the disk, not the CPU, is the limit (disk.ts `startScan`).
     disk: Mutex<()>,
     busy: AtomicUsize,
+}
+
+impl Core {
+    fn new(token: String, env: crate::env_detect::Env, sampler: Option<sampler::Sampler>) -> Core {
+        Core {
+            token,
+            env,
+            agents: Mutex::default(),
+            ls: Mutex::default(),
+            usage: Mutex::default(),
+            sampler,
+            disk: Mutex::default(),
+            busy: AtomicUsize::new(0),
+        }
+    }
 }
 
 /// Binds 127.0.0.1 on an ephemeral port and starts the core's threads. None (with the reason on
@@ -65,16 +82,7 @@ pub fn start() -> Option<Handle> {
         Err(e) => return fail("home", &e),
     };
     crate::verbs::session_view::enable_digest_cache();
-    let core = Arc::new(Core {
-        token: token.clone(),
-        env,
-        agents: Mutex::default(),
-        ls: Mutex::default(),
-        usage: Mutex::default(),
-        sampler: sampler::Sampler::new(),
-        disk: Mutex::default(),
-        busy: AtomicUsize::new(0),
-    });
+    let core = Arc::new(Core::new(token.clone(), env, sampler::Sampler::new()));
     if core.sampler.is_some() {
         let c = core.clone();
         let _ = std::thread::Builder::new().name("hq-core-sampler".into()).spawn(move || loop {
@@ -115,6 +123,9 @@ const READ_DEADLINE: Duration = Duration::from_secs(5);
 
 fn serve(core: &Core, s: TcpStream) {
     let _ = s.set_write_timeout(Some(Duration::from_secs(10)));
+    // Head and body go out as two writes: without this the body waited on the head's delayed ACK
+    // (Nagle), ~14 ms a call on Windows loopback even for a cached answer.
+    let _ = s.set_nodelay(true);
     let deadline = Instant::now() + READ_DEADLINE;
     let req = match http::read_request(&mut &s, deadline, &core.token, &mut |d| s.set_read_timeout(Some(d))) {
         Ok(r) => r,
@@ -149,6 +160,21 @@ fn route(core: &Core, req: &http::Request) -> (u16, Arc<[u8]>) {
             Ok(b) => (200, Arc::from(b)),
             Err(e) => err(500, &e.to_string()),
         },
+        ("GET", "/v1/heavy") => ok(&crate::verbs::ccc::eco::heavy_now()),
+        ("POST", "/v1/omp-ls") => {
+            #[derive(serde::Deserialize)]
+            struct Ask {
+                cwd: PathBuf,
+            }
+            let ask: Ask = match serde_json::from_slice(&req.body) {
+                Ok(a) => a,
+                Err(e) => return err(400, &format!("body: {e}")),
+            };
+            if !ask.cwd.is_absolute() || !ask.cwd.is_dir() {
+                return err(400, "cwd: an existing absolute folder required");
+            }
+            (200, Arc::from(omp_ls(core, &ask.cwd)))
+        }
         ("GET", "/v1/machine") => match &core.sampler {
             Some(s) => {
                 s.touch();
@@ -192,7 +218,7 @@ fn route(core: &Core, req: &http::Request) -> (u16, Arc<[u8]>) {
             };
             ok(&disk::scan(&ask.root, &ask.name, ask.at))
         }
-        (_, "/v1/health" | "/v1/agents" | "/v1/ls" | "/v1/awake" | "/v1/machine" | "/v1/power" | "/v1/usage" | "/v1/disk") => err(405, "method"),
+        (_, "/v1/health" | "/v1/agents" | "/v1/ls" | "/v1/omp-ls" | "/v1/awake" | "/v1/heavy" | "/v1/machine" | "/v1/power" | "/v1/usage" | "/v1/disk") => err(405, "method"),
         _ => err(404, "route"),
     }
 }
@@ -212,22 +238,22 @@ fn ls(core: &Core) -> Arc<[u8]> {
     body
 }
 
+/// `8sync . ls --json` run in `cwd` (its project root as `8sync .` finds it), read now: one
+/// registry plus warm digests is cheap, and a session HQ just created must show at once
+/// (omp-sessions.ts keeps each answer 3 s and drops it on create).
+fn omp_ls(core: &Core, cwd: &Path) -> Vec<u8> {
+    let root = crate::verbs::here::detect_project_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+    let rows = crate::verbs::session::ls_json(&core.env, &root, &crate::verbs::session_view::agent_cmdlines(), (crate::verbs::session_view::SortKey::default(), false));
+    serde_json::to_vec(&rows).unwrap_or_else(|_| b"[]".to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Read, Write};
 
     fn core() -> Core {
-        Core {
-            token: "t0k".into(),
-            env: crate::env_detect::Env::detect().unwrap(),
-            agents: Mutex::default(),
-            ls: Mutex::default(),
-            usage: Mutex::default(),
-            sampler: None,
-            disk: Mutex::default(),
-            busy: AtomicUsize::new(0),
-        }
+        Core::new("t0k".into(), crate::env_detect::Env::detect().unwrap(), None)
     }
 
     fn req(method: &str, path: &str, token: Option<&str>, body: &str) -> http::Request {
@@ -252,6 +278,29 @@ mod tests {
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["scan"]["files"], json!(0));
         assert_eq!(v["totals"]["today"]["median_ctx"], Value::Null);
+    }
+
+    #[test]
+    fn heavy_and_omp_ls_answer_what_the_cli_prints() {
+        let c = core();
+        let (code, body) = route(&c, &req("GET", "/v1/heavy", Some("t0k"), ""));
+        assert_eq!(code, 200);
+        assert!(serde_json::from_slice::<Value>(&body).unwrap()["heavy"].is_array());
+        assert_eq!(route(&c, &req("GET", "/v1/omp-ls", Some("t0k"), "")).0, 405);
+        assert_eq!(route(&c, &req("POST", "/v1/omp-ls", Some("t0k"), "{}")).0, 400);
+        assert_eq!(route(&c, &req("POST", "/v1/omp-ls", Some("t0k"), r#"{"cwd":"rel/dir"}"#)).0, 400);
+        let repo = std::env::temp_dir().join(format!("hq-core-omp-ls-{}", std::process::id()));
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("sub")).unwrap();
+        let ask = json!({ "cwd": repo.join("sub") }).to_string();
+        let (code, first) = route(&c, &req("POST", "/v1/omp-ls", Some("t0k"), &ask));
+        assert_eq!(code, 200);
+        // the project root of `sub` (its `.git` parent), as `8sync . ls --json` run in `sub` lists it
+        let cli = crate::verbs::session::ls_json(&c.env, &repo, &[], (crate::verbs::session_view::SortKey::default(), false));
+        assert_eq!(serde_json::from_slice::<Value>(&first).unwrap(), json!(cli));
+        let (_, at_root) = route(&c, &req("POST", "/v1/omp-ls", Some("t0k"), &json!({ "cwd": repo }).to_string()));
+        assert_eq!(first, at_root, "a folder inside the repo lists the repo");
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     #[test]
@@ -288,5 +337,18 @@ mod tests {
         s.read_to_string(&mut out).unwrap();
         assert!(out.starts_with("HTTP/1.1 401") && t.elapsed() < READ_DEADLINE, "{out}");
         assert_eq!(h.token.len(), 64);
+    }
+
+    /// Not a check: serves a core until killed, for timing it from outside (its URL, token and pid
+    /// in the file `HQ_CORE_BENCH_OUT`). `cargo test --release -p su-code serve_for_bench -- --ignored`.
+    #[test]
+    #[ignore]
+    fn serve_for_bench() {
+        let Some(out) = std::env::var_os("HQ_CORE_BENCH_OUT") else { return };
+        let h = start().expect("core starts");
+        std::fs::write(out, format!("{}\n{}\n{}\n", h.url, h.token, std::process::id())).unwrap();
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
     }
 }
