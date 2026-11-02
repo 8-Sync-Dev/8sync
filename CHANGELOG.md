@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.119.1] — 2026-11-03
+
+### Added
+- **`8sync hq ui --relink`:** in link đăng nhập mới (10 phút) cho HQ `--public` đang chạy mà **không đổi địa chỉ** trycloudflare: chỉ xoay `key` + `since` trong `public.json` (host/nonce/pid giữ nguyên), server đọc lại file khi mtime đổi nên link mới dùng được ngay, link cũ hết hiệu lực, thiết bị đã đăng nhập giữ cookie 12 giờ. Trước đây hết 10 phút muốn vào từ thiết bị mới phải tắt/mở lại HQ = đổi link.
+
 ## [0.119.0] — 2026-11-03
 
 ### Changed

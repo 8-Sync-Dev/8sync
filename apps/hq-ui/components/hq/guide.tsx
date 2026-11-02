@@ -42,7 +42,7 @@ export const GUIDE_STEPS: GuideStep[] = [
   {
     icon: PowerIcon,
     title: "Mở HQ",
-    body: "`8sync hq ui [--public]` mở HQ (--public in link internet để mở từ điện thoại, hết hạn sau 12 giờ).",
+    body: "`8sync hq ui [--public]` mở HQ (--public in link internet để mở từ điện thoại: link đăng nhập dùng trong 10 phút, đã vào thì giữ 12 giờ; `8sync hq ui --relink` in link mới, địa chỉ không đổi).",
   },
 ];
 
