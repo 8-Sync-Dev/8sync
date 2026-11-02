@@ -119,8 +119,8 @@ describe("an omp room's terminal", () => {
     const keep = { APPDATA: process.env.APPDATA, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
     process.env.APPDATA = cfg;
     process.env.XDG_CONFIG_HOME = cfg;
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "hq-omp-repo-"));
     try {
-      const repo = fs.mkdtempSync(path.join(os.tmpdir(), "uat-hier-repo-"));
       const key = repo.replace(/[^A-Za-z0-9]/g, "-");
       fs.mkdirSync(path.join(ompRegistryDir(), key), { recursive: true });
       fs.writeFileSync(path.join(ompRegistryDir(), key, "index.json"), JSON.stringify({ root: repo, sessions: [{ name: "core" }] }));
@@ -137,6 +137,8 @@ describe("an omp room's terminal", () => {
     } finally {
       Object.assign(process.env, keep);
       for (const [k, v] of Object.entries(keep)) if (v === undefined) delete process.env[k];
+      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(cfg, { recursive: true, force: true });
     }
   });
 
