@@ -346,6 +346,11 @@ fn heavy_json(h: &[Heavy]) -> Value {
     json!(h.iter().map(|h| json!({ "pid": h.pid, "rootPid": h.root, "app": h.app, "image": h.image, "mb": h.mb, "restartable": h.restartable })).collect::<Vec<_>>())
 }
 
+/// What `eco heavy --json` prints (`{"heavy":[…]}`), read now; the HQ core serves the same.
+pub(crate) fn heavy_now() -> Value {
+    json!({ "heavy": heavy_json(&heavy_renderers(&reap::list(now_s()))) })
+}
+
 /// What `eco restart` closes and opens again.
 #[derive(Debug, PartialEq)]
 pub(super) struct Target {
@@ -1020,13 +1025,14 @@ pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
             Ok(())
         }
         Some("heavy") => {
-            let h = heavy_json(&heavy_renderers(&reap::list(now_s())));
+            let v = heavy_now();
+            let h = &v["heavy"];
             if json_out {
-                println!("{}", serde_json::to_string_pretty(&json!({ "heavy": h }))?);
+                println!("{}", serde_json::to_string_pretty(&v)?);
             } else if h.as_array().is_some_and(|a| a.is_empty()) {
                 println!("Không có renderer nào ≥ {} GB", HEAVY_RENDERER_MB / 1024);
             } else {
-                println!("{}", heavy_lines(&h).join("\n"));
+                println!("{}", heavy_lines(h).join("\n"));
             }
             Ok(())
         }

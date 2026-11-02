@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Changed
+- **HQ core (Rust) nhận thêm việc nóng, HQ nhẹ hơn khi mở cả ngày:** `GET /v1/heavy` (renderer nặng, thay `8sync ccc eco heavy --json` mỗi 30 s của `/api/machine`) và `POST /v1/omp-ls {cwd}` (đúng mảng `8sync . ls --json` chạy trong thư mục đó, thay một tiến trình mỗi 10 s của tab Không gian); node dùng core khi có `HQ_CORE`, không có thì spawn như cũ, JSON không đổi. Socket core bật `TCP_NODELAY` (head + body hai lần ghi từng chờ delayed-ACK ~14 ms mỗi call, kể cả `/v1/ls` đã cache).
+- **`8sync ls --all` / `/v1/ls` rebuild rẻ hơn:** tìm transcript Claude qua một index `projects/*/*.jsonl` (làm lại khi mtime một thư mục đổi, kiểm tối đa 1 s/lần) thay vì mỗi phiên dò mọi thư mục (89 phòng không còn transcript × 18 thư mục); `par_map` làm inline khi việc ấm (< 2 ms) thay vì mở ~90 thread mỗi lần; core giữ `index.json` đã parse theo len+mtime; `canonicalize` root một lần mỗi registry; nhãn repo gọi home một lần.
+- **HQ node:** `ingest` không mở write transaction khi journal không đổi (mỗi request API và mỗi tick SSE 1 s trước đây ghi lại `ingest_state` → WAL lớn dần); index một phần `messages_rewritten` cho phép đếm `delivery IN (…)` của SSE (3 ms → 0,01 ms ở 5k dòng); `listTmux` không spawn `tmux` mỗi poll trên máy không có tmux (Windows).
+
 ## [0.118.0] — 2026-11-02
 
 ### Added

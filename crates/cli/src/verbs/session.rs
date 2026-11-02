@@ -357,29 +357,37 @@ fn create(env: &Env, root: &Path, reg: &mut Registry, name: &str, worktree: bool
     save(env, root, reg)
 }
 
-/// `8sync . ls` / `8sync . --list` — list this repo's omp sessions with what
-/// each is doing (rendering in `session_view.rs`), in `sort` order (key, reversed). `json=true`
-/// emits a machine-readable array (scripting), in the same order.
-pub fn cmd_ls(env: &Env, root: &Path, json: bool, sort: (super::session_view::SortKey, bool)) -> Result<()> {
+/// What `8sync . ls --json` prints for `root`, in `sort` order; the HQ core serves the same rows
+/// (`/v1/omp-ls`) without a process per poll. `procs`: [`agent_cmdlines`](super::session_view::agent_cmdlines).
+pub fn ls_json(env: &Env, root: &Path, procs: &[Vec<u8>], sort: (super::session_view::SortKey, bool)) -> Vec<serde_json::Value> {
     use super::session_view as view;
     let reg = load(env, root);
-    let rows = view::omp_rows(&reg, Some(root), &view::agent_cmdlines(), false, true);
+    let rows = view::omp_rows(&reg, Some(root), procs, false, true);
     debug_assert_eq!(rows.len(), reg.sessions.len(), "one row per registry entry (zip below)");
-    let order = view::order(&rows, sort.0, sort.1);
+    view::order(&rows, sort.0, sort.1)
+        .into_iter()
+        .map(|i| {
+            let s = &reg.sessions[i];
+            let mut v = view::row_json(&rows[i]);
+            v["worktree"] = serde_json::json!(s.worktree.as_ref().map(|w| w.path.clone()));
+            v["session_dir"] = serde_json::json!(s.session_dir);
+            v
+        })
+        .collect()
+}
+
+/// `8sync . ls` / `8sync . --list` — list this repo's omp sessions with what
+/// each is doing (rendering in `session_view.rs`), in `sort` order (key, reversed). `json=true`
+/// emits a machine-readable array (scripting, [`ls_json`]), in the same order.
+pub fn cmd_ls(env: &Env, root: &Path, json: bool, sort: (super::session_view::SortKey, bool)) -> Result<()> {
+    use super::session_view as view;
     if json {
-        let arr: Vec<serde_json::Value> = order
-            .iter()
-            .map(|&i| (&rows[i], &reg.sessions[i]))
-            .map(|(r, s)| {
-                let mut v = view::row_json(r);
-                v["worktree"] = serde_json::json!(s.worktree.as_ref().map(|w| w.path.clone()));
-                v["session_dir"] = serde_json::json!(s.session_dir);
-                v
-            })
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&arr)?);
+        println!("{}", serde_json::to_string_pretty(&ls_json(env, root, &view::agent_cmdlines(), sort))?);
         return Ok(());
     }
+    let reg = load(env, root);
+    let rows = view::omp_rows(&reg, Some(root), &view::agent_cmdlines(), false, true);
+    let order = view::order(&rows, sort.0, sort.1);
     if rows.is_empty() {
         ui::info("no named sessions in this repo — create one: `8sync . new <name>`");
         return Ok(());

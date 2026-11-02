@@ -83,8 +83,37 @@ fn kind_dir(env: &Env, kind: &str) -> PathBuf {
     env.xdg_config.join("8sync").join(kind)
 }
 
+/// Registries parsed by a long-running process (the HQ core, [`view::digest_cache_on`]), kept
+/// while their length and mtime stay: a stat costs a fraction of opening, reading and parsing
+/// ~100 small `index.json` files on every `ls --all` rebuild.
+static REGISTRIES: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, (u64, std::time::SystemTime, Value)>>> = std::sync::Mutex::new(None);
+const REGISTRY_CAP: usize = 1024;
+
 fn read_json(p: &Path) -> Option<Value> {
+    if view::digest_cache_on() { read_json_kept(p) } else { parse_json(p) }
+}
+
+fn parse_json(p: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
+}
+
+/// [`read_json`] through [`REGISTRIES`].
+fn read_json_kept(p: &Path) -> Option<Value> {
+    let m = std::fs::metadata(p).ok()?;
+    let stamp = (m.len(), m.modified().ok()?);
+    let mut g = REGISTRIES.lock().unwrap_or_else(|e| e.into_inner());
+    let map = g.get_or_insert_with(Default::default);
+    if let Some((len, at, v)) = map.get(p) {
+        if (*len, *at) == stamp {
+            return Some(v.clone());
+        }
+    }
+    let v = parse_json(p)?;
+    if map.len() >= REGISTRY_CAP {
+        map.clear();
+    }
+    map.insert(p.to_path_buf(), (stamp.0, stamp.1, v.clone()));
+    Some(v)
 }
 
 /// Rows of one engine for the registry dir `dir` (`<kind>/<project-key>`). `root`: the repo of
@@ -100,8 +129,9 @@ pub fn engine_rows(env: &Env, engine: &'static str, dir: &Path, root: Option<&Pa
                 if root.is_none() && r.root.is_none() {
                     let key = dir.file_name().map(|k| k.to_string_lossy().into_owned()).unwrap_or_default();
                     if let Some(found) = rows.iter().filter_map(|x| x.digest.cwd.as_deref()).find_map(|c| root_by_key(Path::new(c), &key)) {
+                        let found = std::fs::canonicalize(&found).unwrap_or(found);
                         for x in &mut rows {
-                            x.inbox_id = Some(ccc_core::room_id(&found, &x.name));
+                            x.inbox_id = Some(ccc_core::room_id_canonical(&found, &x.name));
                         }
                     }
                 }
@@ -195,10 +225,12 @@ fn all_repos(env: &Env, procs: &[Vec<u8>]) -> BTreeMap<String, Groups> {
     let mut repos: BTreeMap<String, Groups> = BTreeMap::new();
     for (engine, kind) in ENGINES {
         for e in std::fs::read_dir(kind_dir(env, kind)).into_iter().flatten().flatten() {
-            if !e.path().is_dir() {
+            // The listing's own type (no stat); a link is followed as before.
+            let dir = e.path();
+            if !e.file_type().is_ok_and(|t| t.is_dir() || (t.is_symlink() && dir.is_dir())) {
                 continue;
             }
-            let rows = engine_rows(env, engine, &e.path(), None, procs, false, false);
+            let rows = engine_rows(env, engine, &dir, None, procs, false, false);
             if !rows.is_empty() {
                 repos.entry(e.file_name().to_string_lossy().into_owned()).or_default().push((engine, rows));
             }
@@ -229,12 +261,14 @@ fn sorted_repos<'a>(repos: &'a BTreeMap<String, Groups>, key: view::SortKey, rev
     let all: Vec<(&String, &Groups, Vec<(&'static str, &Row)>)> =
         repos.iter().map(|(k, g)| (k, g, g.iter().flat_map(|(e, rows)| rows.iter().map(move |r| (*e, r))).collect())).collect();
     let refs: Vec<Vec<&Row>> = all.iter().map(|(_, _, v)| v.iter().map(|(_, r)| *r).collect()).collect();
-    let labels: Vec<String> = all.iter().map(|(k, g, _)| repo_label(k, g)).collect();
+    // One home lookup (SHGetKnownFolderPath on Windows) for every label, each label made once.
+    let home = dirs::home_dir().map(|h| h.to_string_lossy().into_owned());
+    let labels: Vec<String> = all.iter().map(|(k, g, _)| repo_label(k, g, home.as_deref())).collect();
     view::order_groups(&refs, &labels, key, reverse)
         .into_iter()
         .map(|(gi, o)| {
-            let (k, g, rows) = &all[gi];
-            (repo_label(k, g), o.into_iter().map(|i| rows[i]).collect())
+            let rows = &all[gi].2;
+            (labels[gi].clone(), o.into_iter().map(|i| rows[i]).collect())
         })
         .collect()
 }
@@ -264,13 +298,13 @@ fn ls_all(env: &Env, procs: &[Vec<u8>], json: bool, key: view::SortKey, reverse:
     Ok(())
 }
 
-/// `~/x/y` from a transcript cwd, else the registry key.
-fn repo_label(key: &str, g: &[(&'static str, Vec<Row>)]) -> String {
-    let cwd = g.iter().flat_map(|(_, r)| r.iter()).find_map(|r| r.digest.cwd.clone());
+/// `~/x/y` from a transcript cwd (`home`: the user's home), else the registry key.
+fn repo_label(key: &str, g: &[(&'static str, Vec<Row>)], home: Option<&str>) -> String {
+    let cwd = g.iter().flat_map(|(_, r)| r.iter()).find_map(|r| r.digest.cwd.as_deref());
     match cwd {
-        Some(c) => match dirs::home_dir().and_then(|h| c.strip_prefix(h.to_string_lossy().as_ref()).map(str::to_string)) {
+        Some(c) => match home.and_then(|h| c.strip_prefix(h)) {
             Some(rest) => format!("~{rest}"),
-            None => c,
+            None => c.to_string(),
         },
         None => key.to_string(),
     }
@@ -447,6 +481,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_kept_registry_is_read_again_once_it_changes() {
+        // `read_json_kept` directly: turning the process-wide cache on would change other tests.
+        let dir = std::env::temp_dir().join(format!("ls-reg-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("index.json");
+        std::fs::write(&p, r#"{"sessions":[]}"#).unwrap();
+        assert_eq!(read_json_kept(&p), Some(serde_json::json!({ "sessions": [] })));
+        assert_eq!(read_json_kept(&p), Some(serde_json::json!({ "sessions": [] })), "served from the cache");
+        std::fs::write(&p, r#"{"sessions":[{"name":"a"}]}"#).unwrap();
+        assert_eq!(read_json_kept(&p), Some(serde_json::json!({ "sessions": [{ "name": "a" }] })));
+        std::fs::remove_file(&p).unwrap();
+        assert_eq!(read_json_kept(&p), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn guide_stays_short() {
         // The text is in run_guide; keep the visible output under the 80-line cap.
         let src = include_str!("session_cmds.rs");
@@ -514,8 +564,9 @@ mod tests {
             inbox_id: None,
             urgency: None,
         };
-        assert_eq!(repo_label("-srv-app", &[("omp", vec![r])]), "/srv/app");
-        assert_eq!(repo_label("-srv-app", &[]), "-srv-app");
+        assert_eq!(repo_label("-srv-app", &[("omp", vec![r.clone()])], None), "/srv/app");
+        assert_eq!(repo_label("-srv-app", &[("omp", vec![r])], Some("/srv")), "~/app");
+        assert_eq!(repo_label("-srv-app", &[], None), "-srv-app");
     }
 
     #[test]
