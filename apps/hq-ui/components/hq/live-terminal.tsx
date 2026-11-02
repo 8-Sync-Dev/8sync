@@ -222,7 +222,10 @@ export function LiveTerminal({ url, kind = "room", token, onEnded, compact = fal
   }
 
   /** "Chuyển sang HQ": the server ends the other terminal's omp for this session and opens it here; then reconnect. */
+  const movingRef = useRef(false);
   async function takeover() {
+    if (movingRef.current) return;
+    movingRef.current = true;
     setMoving(true);
     try {
       const res = await fetch(url, { method: "POST", headers: { "x-hq-token": token, "content-type": "application/json" }, body: JSON.stringify({ takeover: true, ...sizeRef.current }) });
@@ -233,9 +236,16 @@ export function LiveTerminal({ url, kind = "room", token, onEnded, compact = fal
       setError((e as Error).message);
       setState("error");
     } finally {
+      movingRef.current = false;
       setMoving(false);
     }
   }
+  // Typing into the read-only view switches it here (owner 2026-11-03: the button every time was a
+  // chore); the key itself is not sent, omp is not up yet.
+  const takeoverRef = useRef(takeover);
+  useEffect(() => {
+    takeoverRef.current = takeover;
+  });
 
   // The session is open in another terminal: show what omp is doing, read only — its Nhật ký
   // (`/activity`: secrets masked, shell commands by intent), redrawn when it changes.
@@ -292,10 +302,13 @@ export function LiveTerminal({ url, kind = "room", token, onEnded, compact = fal
       // While a replay is written, xterm's answers to the queries in it (ConPTY's `ESC[6n`…) are
       // dropped: they were answered when the bytes were live, and a second answer types junk.
       let muted = 0;
-      // A read-only view (the session is open in another terminal) sends no keys.
+      // A read-only view (the session is open in another terminal) sends no keys: a typed key (not
+      // a terminal answer, which starts with ESC) moves the session here instead.
       let readOnly = false;
       t.onData((data) => {
-        if (!muted && !readOnly) void post({ data });
+        if (muted) return;
+        if (!readOnly) return void post({ data });
+        if (data && !data.startsWith("\x1b")) void takeoverRef.current();
       });
       let last = size;
       ro = new ResizeObserver(() => {
@@ -452,7 +465,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded, compact = fal
       {state === "elsewhere" && (
         <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-st-needs bg-st-needs/6 px-3 py-2.5 text-sm">
           <p className="min-w-0 flex-1 basis-64">
-            Muốn gõ ở đây: “Chuyển sang HQ” đóng terminal kia rồi mở tiếp phiên trong HQ (việc đang dở chạy tiếp). Chưa chuyển thì chat qua inbox vẫn tới phòng như thường.
+            Gõ phím bất kỳ vào khung (hoặc bấm “Chuyển sang HQ”) để gõ ở đây: terminal kia đóng, phiên mở tiếp trong HQ (việc đang dở chạy tiếp). Chưa chuyển thì chat qua inbox vẫn tới phòng như thường.
           </p>
           <Button type="button" size="sm" className="h-8 max-sm:min-h-11" disabled={moving} aria-busy={moving} onClick={() => void takeover()}>
             {moving ? "Đang chuyển…" : "Chuyển sang HQ"}
@@ -469,6 +482,8 @@ export function LiveTerminal({ url, kind = "room", token, onEnded, compact = fal
         className={cn("rounded-lg border bg-card transition-[border-color,box-shadow] duration-150 focus-within:border-primary/60 focus-within:shadow-glow motion-reduce:transition-none", compact && "md:hidden")}
         onSubmit={(e) => {
           e.preventDefault();
+          // read only: move the session here first; the line stays for Enter once it is up
+          if (state === "elsewhere") return void takeover();
           keysRef.current?.(lineBytes(line, view.current?.modes.bracketedPasteMode === true));
           setLine("");
         }}

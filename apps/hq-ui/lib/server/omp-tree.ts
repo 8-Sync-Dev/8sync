@@ -108,6 +108,9 @@ export function allOmpSessions(db: DatabaseSync, now = Date.now()): Promise<OmpT
   return rows;
 }
 
+/** A deleted session leaves the tree at once, not after the TTL. */
+export const forgetOmpTree = () => (cache = null);
+
 async function build(db: DatabaseSync, now: number): Promise<OmpTreeRow[]> {
   const floor = await loadFloor(db);
   const created = registryCreated();

@@ -652,6 +652,21 @@ fn end_session(session_dir: &Path) -> Result<()> {
     }
 }
 
+/// Before a transcript is deleted (`8sync . rm --purge/--force`): Ok when no omp has the session
+/// open, or only this room's own host does (HQ opened it; that omp is ended and the host exits with
+/// it). Err(pid) when an omp in another terminal has it: that one is the owner's, never ended here.
+pub(crate) fn free_session(home: &Path, id: &str, session_dir: &Path) -> std::result::Result<(), u32> {
+    let live = session_pids(&ccc_core::transcript::agent_procs(), session_dir);
+    if live.is_empty() {
+        return Ok(());
+    }
+    let own = read_state(&state_path(home, id), id).filter(host_is_ours).and_then(|r| r.omp_pid);
+    if let Some(&p) = live.iter().find(|&&p| Some(p) != own) {
+        return Err(p);
+    }
+    end_session(session_dir).map_err(|_| own.unwrap_or(0))
+}
+
 /// HQ's side of a connection: the host's bytes to stdout, stdin's control lines to the host. Ends
 /// when the host does (omp exited) or when stdin closes (HQ let go: only this connection ends).
 fn relay(sock: TcpStream) -> Result<()> {
@@ -698,17 +713,47 @@ pub(super) fn new_session(env: &Env, name: &str, model: Option<&str>, cols: u16,
 
 /// `model`: omp's `--model` when this client starts the host (a running host keeps its own).
 pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool, model: Option<&str>) -> Result<()> {
+    match open_host(env, id, cols, rows, takeover, model)? {
+        Ok(s) => relay(s),
+        Err(pid) => {
+            let mut out = std::io::stdout().lock();
+            let _ = write!(out, "phiên đang mở ở terminal khác trên máy (pid {pid}) — bấm 'Chuyển sang HQ' để mở ở đây\r\n");
+            let _ = out.flush();
+            std::process::exit(ELSEWHERE);
+        }
+    }
+}
+
+/// `8sync . <name> --share`: this terminal joins the room's host (started when none runs) like
+/// `tmux attach`, so HQ and this terminal type into one omp. Closing the terminal only leaves.
+pub(crate) fn share_session(env: &Env, root: &Path, name: &str, model: Option<&str>) -> Result<()> {
+    if which::which("omp").is_err() {
+        bail!("omp chưa cài — chạy `8sync setup` trước");
+    }
+    let (cols, rows) = tty::size().unwrap_or((120, 34));
+    match open_host(env, &ccc_core::room_id(root, name), cols, rows, false, model)? {
+        Ok(s) => {
+            crate::ui::info("dùng chung với HQ: đóng terminal này = rời phiên, omp vẫn chạy (mở lại bằng lệnh này hoặc trong HQ)");
+            tty_relay(s)
+        }
+        Err(pid) => bail!("phiên '{name}' đang mở ở terminal khác (omp pid {pid}) — đóng nó trước, rồi mở lại bằng `8sync . {name} --share`"),
+    }
+}
+
+/// The room's host as a socket (joined, or started first); `Err(pid)`: an omp in another terminal
+/// has the session open and `takeover` is off.
+fn open_host(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool, model: Option<&str>) -> Result<std::result::Result<TcpStream, u32>> {
     let room = resolve(env, id)?;
     let state = state_path(&env.home, id);
     if let Some(s) = connect(&state, id, &room.session_dir, cols, rows) {
-        return relay(s);
+        return Ok(Ok(s));
     }
     let Some(lock) = StartLock::take(&lock_path(&state))? else {
-        return relay(wait_host(&state, id, &room.session_dir, cols, rows, LOCK_STALE)?);
+        return Ok(Ok(wait_host(&state, id, &room.session_dir, cols, rows, LOCK_STALE)?));
     };
     if let Some(s) = connect(&state, id, &room.session_dir, cols, rows) {
         drop(lock);
-        return relay(s);
+        return Ok(Ok(s));
     }
     // `connect` already dropped a record whose host is gone; one left is a live host of ours that did not answer in time.
     let host_omp = read_state(&state, id).and_then(|r| r.omp_pid);
@@ -716,16 +761,10 @@ pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool, 
     let restore = match plan(&live, host_omp, takeover) {
         Plan::Wait => {
             drop(lock);
-            return relay(wait_host(&state, id, &room.session_dir, cols, rows, START_WAIT)?);
+            return Ok(Ok(wait_host(&state, id, &room.session_dir, cols, rows, START_WAIT)?));
         }
         Plan::Start => false,
-        Plan::Elsewhere(pid) => {
-            drop(lock);
-            let mut out = std::io::stdout().lock();
-            let _ = write!(out, "phiên đang mở ở terminal khác trên máy (pid {pid}) — bấm 'Chuyển sang HQ' để mở ở đây\r\n");
-            let _ = out.flush();
-            std::process::exit(ELSEWHERE);
-        }
+        Plan::Elsewhere(pid) => return Ok(Err(pid)),
         // The host ends the other omp itself (see [`host`]).
         Plan::Takeover => true,
     };
@@ -741,12 +780,245 @@ pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool, 
     super::awake::spawn_detached(&exe, &args).context("không chạy được host terminal omp")?;
     // From here the host owns the lock (see [`host_logged`]), also if this client is killed.
     std::mem::forget(lock);
-    relay(wait_host(&state, id, &room.session_dir, cols, rows, LOCK_STALE)?)
+    Ok(Ok(wait_host(&state, id, &room.session_dir, cols, rows, LOCK_STALE)?))
+}
+
+/// `s` decoded: the valid UTF-8 of `carry + b`, an invalid byte as U+FFFD, a cut-off last
+/// character kept in `carry` for the next read (JSON lines and the Windows console take text only).
+fn utf8_chunk(carry: &mut Vec<u8>, b: &[u8]) -> String {
+    carry.extend_from_slice(b);
+    let mut out = String::new();
+    let mut rest: &[u8] = carry;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(s) => {
+                out.push_str(s);
+                rest = &[];
+                break;
+            }
+            Err(e) => {
+                let (ok, tail) = rest.split_at(e.valid_up_to());
+                out.push_str(std::str::from_utf8(ok).unwrap_or_default());
+                match e.error_len() {
+                    Some(n) => {
+                        out.push('\u{fffd}');
+                        rest = &tail[n..];
+                    }
+                    None => {
+                        rest = tail;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    *carry = rest.to_vec();
+    out
+}
+
+/// A real terminal's side of a connection: the console in raw mode (keys, Ctrl-C included, go to
+/// omp), its keys as `{"i":…}` lines, its size as `{"r":…}` when it changes, the host's bytes out.
+/// Ends when omp exits (the host closes) or the terminal's input ends.
+fn tty_relay(sock: TcpStream) -> Result<()> {
+    let raw = Arc::new(tty::Raw::enter());
+    let mut from = sock.try_clone()?;
+    let back = raw.clone();
+    std::thread::spawn(move || {
+        let (mut buf, mut carry) = ([0u8; 8192], Vec::new());
+        // Locked per write, not across reads: leaving prints from the other thread.
+        let out = std::io::stdout();
+        while let Ok(n) = from.read(&mut buf) {
+            let text = utf8_chunk(&mut carry, &buf[..n]);
+            let mut o = out.lock();
+            if n == 0 || o.write_all(text.as_bytes()).and_then(|_| o.flush()).is_err() {
+                break;
+            }
+        }
+        back.restore();
+        let mut o = out.lock();
+        let _ = o.write_all("\r\n8sync: omp đã thoát\r\n".as_bytes());
+        let _ = o.flush();
+        std::process::exit(0);
+    });
+    let mut sizes = sock.try_clone()?;
+    std::thread::spawn(move || {
+        let mut last = tty::size();
+        loop {
+            std::thread::sleep(Duration::from_millis(400));
+            let now = tty::size();
+            if let Some((c, r)) = now.filter(|_| now != last) {
+                last = now;
+                if sizes.write_all(format!("{}\n", serde_json::json!({ "r": [c, r] })).as_bytes()).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    let (mut to, mut buf, mut carry) = (sock, [0u8; 4096], Vec::new());
+    let mut inp = std::io::stdin().lock();
+    while let Ok(n) = inp.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        let keys = utf8_chunk(&mut carry, &buf[..n]);
+        if !keys.is_empty() && to.write_all(format!("{}\n", serde_json::json!({ "i": keys })).as_bytes()).is_err() {
+            break;
+        }
+    }
+    // Leaving, not omp's exit: end here before the reader sees the socket close and says it exited.
+    raw.restore();
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all("\r\n8sync: đã rời phiên — omp vẫn chạy (mở lại bằng `8sync . <tên> --share` hoặc trong HQ)\r\n".as_bytes());
+    let _ = out.flush();
+    drop(to);
+    std::process::exit(0);
+}
+
+/// The controlling console: raw mode and size, without a terminal crate.
+#[cfg(windows)]
+mod tty {
+    use std::ffi::c_void;
+    #[repr(C)]
+    #[derive(Default)]
+    struct Info {
+        size: [i16; 2],
+        cursor: [i16; 2],
+        attr: u16,
+        win: [i16; 4], // left, top, right, bottom
+        max: [i16; 2],
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetStdHandle(n: u32) -> *mut c_void;
+        fn GetConsoleMode(h: *mut c_void, m: *mut u32) -> i32;
+        fn SetConsoleMode(h: *mut c_void, m: u32) -> i32;
+        fn GetConsoleScreenBufferInfo(h: *mut c_void, i: *mut Info) -> i32;
+        fn GetConsoleCP() -> u32;
+        fn SetConsoleCP(cp: u32) -> i32;
+        fn GetConsoleOutputCP() -> u32;
+        fn SetConsoleOutputCP(cp: u32) -> i32;
+    }
+    const STD_IN: u32 = -10i32 as u32;
+    const STD_OUT: u32 = -11i32 as u32;
+    /// Input: only ENABLE_VIRTUAL_TERMINAL_INPUT (no line editing, echo or Ctrl-C handling).
+    const IN_RAW: u32 = 0x0200;
+    /// Output: processed + ENABLE_VIRTUAL_TERMINAL_PROCESSING + DISABLE_NEWLINE_AUTO_RETURN.
+    const OUT_VT: u32 = 0x0001 | 0x0004 | 0x0008;
+
+    /// The modes before [`Raw::enter`]; `None` when stdin/stdout is not a console.
+    pub(super) struct Raw(Option<(u32, u32, u32, u32)>);
+
+    impl Raw {
+        pub(super) fn enter() -> Raw {
+            // SAFETY: plain console API calls on this process's std handles.
+            unsafe {
+                let (i, o) = (GetStdHandle(STD_IN), GetStdHandle(STD_OUT));
+                let (mut im, mut om) = (0u32, 0u32);
+                if GetConsoleMode(i, &mut im) == 0 || GetConsoleMode(o, &mut om) == 0 {
+                    return Raw(None);
+                }
+                let (cp, ocp) = (GetConsoleCP(), GetConsoleOutputCP());
+                SetConsoleMode(i, IN_RAW);
+                SetConsoleMode(o, om | OUT_VT);
+                SetConsoleCP(65001);
+                SetConsoleOutputCP(65001);
+                Raw(Some((im, om, cp, ocp)))
+            }
+        }
+        pub(super) fn restore(&self) {
+            let Some((im, om, cp, ocp)) = self.0 else { return };
+            // SAFETY: as in `enter`.
+            unsafe {
+                SetConsoleMode(GetStdHandle(STD_IN), im);
+                SetConsoleMode(GetStdHandle(STD_OUT), om);
+                SetConsoleCP(cp);
+                SetConsoleOutputCP(ocp);
+            }
+        }
+    }
+
+    /// The visible window (columns, rows).
+    pub(super) fn size() -> Option<(u16, u16)> {
+        let mut i = Info::default();
+        // SAFETY: `i` is a CONSOLE_SCREEN_BUFFER_INFO-shaped out parameter.
+        (unsafe { GetConsoleScreenBufferInfo(GetStdHandle(STD_OUT), &mut i) } != 0).then_some(())?;
+        super::size_ok((i.win[2] - i.win[0] + 1) as u64, (i.win[3] - i.win[1] + 1) as u64)
+    }
+}
+
+#[cfg(unix)]
+mod tty {
+    use std::process::{Command, Stdio};
+
+    /// `stty -g` before [`Raw::enter`]; `None` when stdin is not a terminal.
+    pub(super) struct Raw(Option<String>);
+
+    fn stty(args: &[&str]) -> Option<String> {
+        let o = Command::new("stty").args(args).stdin(Stdio::inherit()).stderr(Stdio::null()).output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    }
+
+    impl Raw {
+        pub(super) fn enter() -> Raw {
+            let saved = stty(&["-g"]);
+            if saved.is_some() {
+                stty(&["raw", "-echo"]);
+            }
+            Raw(saved)
+        }
+        pub(super) fn restore(&self) {
+            if let Some(s) = &self.0 {
+                stty(&[s]);
+            }
+        }
+    }
+
+    #[repr(C)]
+    struct Winsize {
+        row: u16,
+        col: u16,
+        x: u16,
+        y: u16,
+    }
+    extern "C" {
+        fn ioctl(fd: i32, req: std::ffi::c_ulong, ...) -> i32;
+    }
+    #[cfg(target_os = "linux")]
+    const TIOCGWINSZ: std::ffi::c_ulong = 0x5413;
+    #[cfg(target_os = "macos")]
+    const TIOCGWINSZ: std::ffi::c_ulong = 0x4008_7468;
+
+    /// The terminal's (columns, rows).
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) fn size() -> Option<(u16, u16)> {
+        let mut w = Winsize { row: 0, col: 0, x: 0, y: 0 };
+        // SAFETY: TIOCGWINSZ fills a `struct winsize` on stdout's fd.
+        (unsafe { ioctl(1, TIOCGWINSZ, &mut w as *mut Winsize) } == 0).then_some(())?;
+        super::size_ok(w.col as u64, w.row as u64)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    pub(super) fn size() -> Option<(u16, u16)> {
+        stty(&["size"]).and_then(|s| {
+            let mut it = s.split_whitespace().filter_map(|n| n.parse::<u64>().ok());
+            let (r, c) = (it.next()?, it.next()?);
+            super::size_ok(c, r)
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn utf8_chunk_keeps_a_cut_character_for_the_next_read() {
+        let mut carry = Vec::new();
+        let e = "ệ".as_bytes();
+        assert_eq!(utf8_chunk(&mut carry, &[b'a', e[0]]), "a");
+        assert_eq!(utf8_chunk(&mut carry, &e[1..]), "ệ");
+        assert_eq!(utf8_chunk(&mut carry, &[0xff, b'b']), "\u{fffd}b");
+        assert!(carry.is_empty());
+    }
     use std::io::Cursor;
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";

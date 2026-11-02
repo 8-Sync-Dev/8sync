@@ -422,22 +422,27 @@ pub fn health(env: &Env, root: &Path) -> Option<(usize, usize, usize)> {
 }
 
 /// `8sync . rm <name>` — remove a session. Deletes the transcript store only
-/// with `--force` (default: unregister + keep the store, warn).
-pub fn cmd_rm(env: &Env, root: &Path, name: &str, force: bool) -> Result<()> {
+/// with `--force` (default: unregister + keep the store, warn). `purge`: delete the store too but
+/// keep the dirty-worktree guard (HQ "Xóa phiên"). Either deletion first needs the session free: an
+/// omp open in another terminal refuses; only this room's own HQ host is ended.
+pub fn cmd_rm(env: &Env, root: &Path, name: &str, force: bool, purge: bool) -> Result<()> {
     let mut reg = load(env, root);
     let Some(pos) = reg.sessions.iter().position(|s| s.name == name) else {
         bail!("no session '{name}' in this repo");
     };
     let s = reg.sessions[pos].clone();
-
-    // Worktree teardown (guard dirty unless --force).
-    if let Some(w) = &s.worktree {
-        if is_dirty(&w.path) && !force {
-            bail!(
-                "session '{name}' worktree has uncommitted changes at {} — commit/merge it first, or `rm --force`",
-                w.path.display()
-            );
+    let delete = force || purge;
+    if let Some(w) = s.worktree.as_ref().filter(|w| !force && is_dirty(&w.path)) {
+        bail!("phiên '{name}' có worktree còn thay đổi chưa commit ở {} — commit/merge trước, hoặc `rm --force`", w.path.display());
+    }
+    if delete {
+        if let Err(pid) = crate::verbs::ccc::free_session(&env.home, &ccc_core::room_id(root, name), &s.session_dir) {
+            bail!("phiên '{name}' đang mở ở terminal khác (omp pid {pid}) — đóng nó trước rồi xoá");
         }
+    }
+
+    // Worktree teardown (dirty already refused unless --force).
+    if let Some(w) = &s.worktree {
         let wt_str = w.path.to_string_lossy().to_string();
         let mut wt_args = vec!["worktree", "remove", wt_str.as_str()];
         if force {
@@ -456,7 +461,7 @@ pub fn cmd_rm(env: &Env, root: &Path, name: &str, force: bool) -> Result<()> {
         }
     }
 
-    if !force {
+    if !delete {
         ui::warn(&format!(
             "unregistering '{name}' but KEEPING its transcript at {} — use `--force` to delete it too",
             s.session_dir.display()

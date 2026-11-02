@@ -5,8 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.120.0] — 2026-11-03
+
 ### Added
 - **HQ tab "Vòng lặp": lệnh `/eccx-loop-*` và `/eccx-*`.** Dưới bảng `/ship-loop`, tab liệt kê mọi lệnh eccx đã cài (`~/.claude/commands`, `~/.omp/agent/commands`; vòng lặp trước): tên, một dòng tiếng Việt + phạm vi, dòng mẫu `/eccx-loop-frontend <mục tiêu>` với nút **Chép**, và **Gửi vào phiên**: gõ mục tiêu, chọn phiên (chỉ phiên có lệnh đó; `/eccx-loop-*` chỉ Claude Code) rồi gửi qua đúng đường `POST /api/messages` sẵn có. Gửi qua inbox (lệnh slash không tự mở) kèm một dòng chỉ file lệnh cần đọc. `GET /api/loops` trả thêm `commands`.
+- **HQ "Xóa phiên…" và "Xóa mọi phiên…".** Menu ⋯ của phiên omp có **Xóa phiên…** (xoá transcript kèm phiên con, worktree riêng sạch xoá kèm; worktree còn thay đổi chưa commit hoặc phiên đang mở ở terminal khác → từ chối, báo lý do; phiên đang mở trong HQ được tắt trước). Menu ⋯ của dự án có **Xóa mọi phiên…**: xoá lần lượt mọi phiên omp + phòng Claude Code của dự án, giữ lại và báo tên phiên từ chối, xoá hết thì ẩn dự án (thư mục code không bị đụng). API `DELETE /api/omp/sessions?id=` (tên + thư mục lấy từ `8sync ls`, không từ client).
+- **`8sync . rm <name> --purge`:** xoá cả transcript nhưng vẫn giữ guard worktree dirty (khác `--force`). `--purge`/`--force` giờ từ chối khi một omp ở terminal khác đang mở phiên (báo pid) và tự tắt host HQ của chính phiên.
+- **`8sync . <name> --share` (dùng chung như tmux):** terminal này nhập vào host omp của phòng (khởi động nếu chưa có) thay vì chạy omp riêng: HQ và terminal cùng gõ một omp, không ai bị chỉ-đọc. Console ở raw mode (Windows `SetConsoleMode` VT input, unix `stty raw`), phím → `{"i":…}`, đổi cỡ → `{"r":…}`; đóng terminal chỉ rời phiên.
+
+### Changed
+- **HQ khung chỉ đọc: gõ là chuyển.** Khung "Đang xem (chỉ đọc)" giờ chuyển phiên sang HQ ngay khi anh gõ phím bất kỳ (phím đầu không gửi vì omp chưa lên; câu trả lời terminal bắt đầu bằng ESC không tính); gửi ô nhập dòng cũng chuyển và giữ nguyên dòng để Enter lại.
 
 ## [0.119.1] — 2026-11-03
 
