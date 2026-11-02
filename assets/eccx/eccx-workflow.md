@@ -16,11 +16,12 @@ Scope: plan, build, test, review, refactor, ship — the engineering loop.
 5. **Report** (short): what changed, checks + results, members skipped, open risks.
 
 ## How to call members
-- `<ECC>` = 8sync's pinned ECC checkout `~/.cache/8sync/ecc/` (made by `8sync harness`), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.
-- Skills: `skill://<name>` = 8sync skill; plain name = ECC skill: `skill://<name>` if it resolves, else read `<ECC>/skills/<name>/SKILL.md`.
-- Agents: spawn a `task` subagent whose prompt opens with the role file `<ECC>/agents/<agent>.md`.
-- Commands: read `<ECC>/commands/<cmd>.md` and follow it with that step's arguments.
+- `<ECC>` = 8sync's ECC checkout `~/.cache/8sync/ecc/` (tracks upstream: `8sync harness` + a 6-hourly background refresh), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.
+- Skills: `skill://<name>` loads any skill: `skill://` refs are 8sync's, plain names ECC's (8sync mirrors ECC into omp). Not found → read `<ECC>/skills/<name>/SKILL.md`.
+- Agents: a `task` subagent whose assignment opens with "read the role file `<ECC>/agents/<agent>.md` first"; independent agents/steps → ONE `task` call with several `tasks[]` (parallel).
+- Commands: run `/ecc-<cmd>` with that step's arguments; not found → read `<ECC>/commands/<cmd>.md` and follow it.
 - A member that does not resolve: skip it, say so.
+- A skill in your session's skill list that fits the goal but is missing below (ECC updated since this list) is eligible too.
 
 ## Skills
 - `ai-regression-testing` — Regression testing strategies for AI-assisted development
@@ -101,44 +102,44 @@ Scope: plan, build, test, review, refactor, ship — the engineering loop.
 - `type-design-analyzer` — Analyze type design for encapsulation, invariant expression, usefulness, and enforcement
 
 ## Commands
-- `aside` — Quick side task without losing main context
-- `astra-review` — Send Claude-written code to GPT-6-Astra (ChatGPT, via Codex CLI) for an independent
-- `build-fix` — Fix build errors automatically
-- `checkpoint` — Create a checkpoint of current work state
-- `code-review` — Run code review on recent changes
-- `epic-claim` — Claim an epic issue, stamp coordination state, and sync local ownership
-- `epic-decompose` — Break an epic into task children without creating task branches
-- `epic-publish` — Publish a validated epic update back to the issue and local cache
-- `epic-review` — Mark epic review requested, approved, or changes requested
-- `epic-sync` — Sync epic issue bodies, labels, and local coordination snapshots from GitHub
-- `epic-unblock` — Sweep blocked epic issues and reopen anything whose dependencies are closed
-- `epic-validate` — Validate epic readiness, dependencies, and coordination policy
-- `feature-dev` — Guided feature development with codebase understanding and architecture focus
-- `jira` — Retrieve a Jira ticket, analyze requirements, update status, or add comments
-- `orch-add-feature` — Orchestrate building a brand-new feature end to end
-- `orch-build-mvp` — Orchestrate bootstrapping a working MVP from a design/spec doc
-- `orch-change-feature` — Orchestrate altering an existing, working feature to new desired behavior
-- `orch-fix-defect` — Orchestrate fixing a bug
-- `orch-refine-code` — Orchestrate a behavior-preserving refactor
-- `orch-review` — Run the orch-review native Workflow over a diff
-- `plan` — Create step-by-step implementation plans
-- `plan-canvas` — Open a plan or HTML artifact in the browser Plan Canvas
-- `plan-prd` — Generate a lean, problem-first PRD and hand off to /plan for implementation
-- `pr` — Create a GitHub PR from current branch with unpushed commits
-- `projects` — Manage multi-project workspaces
-- `prp-commit` — Quick commit with natural language file targeting
-- `prp-implement` — Execute an implementation plan with rigorous validation loops
-- `prp-plan` — Create comprehensive feature implementation plan with codebase analysis and pattern extraction
-- `prp-pr` — Alias of /pr for the PRP workflow series
-- `prp-prd` — Interactive PRD generator - problem-first, hypothesis-driven product spec with back-and-forth questioning
-- `refactor-clean` — Clean up dead code and consolidate
-- `resume-session` — Resume a previously saved session
-- `review-pr` — Comprehensive PR review using specialized agents (code-reviewer, comment-analyzer, pr-test-analyzer, silent-failure-hunter, type-design-analyzer, code-simplifier)
-- `santa-loop` — Adversarial dual-review convergence loop
-- `save-session` — Save current session for later resume
-- `sessions` — List and manage saved sessions
-- `setup-pm` — Set up package manager configuration
-- `skill-create` — Create a new skill from a template
-- `test-coverage` — Check and report test coverage
-- `update-codemaps` — Generate or update codemap files
-- `update-docs` — Update documentation files
+- `/ecc-aside` — Quick side task without losing main context
+- `/ecc-astra-review` — Send Claude-written code to GPT-6-Astra (ChatGPT, via Codex CLI) for an independent
+- `/ecc-build-fix` — Fix build errors automatically
+- `/ecc-checkpoint` — Create a checkpoint of current work state
+- `/ecc-code-review` — Run code review on recent changes
+- `/ecc-epic-claim` — Claim an epic issue, stamp coordination state, and sync local ownership
+- `/ecc-epic-decompose` — Break an epic into task children without creating task branches
+- `/ecc-epic-publish` — Publish a validated epic update back to the issue and local cache
+- `/ecc-epic-review` — Mark epic review requested, approved, or changes requested
+- `/ecc-epic-sync` — Sync epic issue bodies, labels, and local coordination snapshots from GitHub
+- `/ecc-epic-unblock` — Sweep blocked epic issues and reopen anything whose dependencies are closed
+- `/ecc-epic-validate` — Validate epic readiness, dependencies, and coordination policy
+- `/ecc-feature-dev` — Guided feature development with codebase understanding and architecture focus
+- `/ecc-jira` — Retrieve a Jira ticket, analyze requirements, update status, or add comments
+- `/ecc-orch-add-feature` — Orchestrate building a brand-new feature end to end
+- `/ecc-orch-build-mvp` — Orchestrate bootstrapping a working MVP from a design/spec doc
+- `/ecc-orch-change-feature` — Orchestrate altering an existing, working feature to new desired behavior
+- `/ecc-orch-fix-defect` — Orchestrate fixing a bug
+- `/ecc-orch-refine-code` — Orchestrate a behavior-preserving refactor
+- `/ecc-orch-review` — Run the orch-review native Workflow over a diff
+- `/ecc-plan` — Create step-by-step implementation plans
+- `/ecc-plan-canvas` — Open a plan or HTML artifact in the browser Plan Canvas
+- `/ecc-plan-prd` — Generate a lean, problem-first PRD and hand off to /plan for implementation
+- `/ecc-pr` — Create a GitHub PR from current branch with unpushed commits
+- `/ecc-projects` — Manage multi-project workspaces
+- `/ecc-prp-commit` — Quick commit with natural language file targeting
+- `/ecc-prp-implement` — Execute an implementation plan with rigorous validation loops
+- `/ecc-prp-plan` — Create comprehensive feature implementation plan with codebase analysis and pattern extraction
+- `/ecc-prp-pr` — Alias of /pr for the PRP workflow series
+- `/ecc-prp-prd` — Interactive PRD generator - problem-first, hypothesis-driven product spec with back-and-forth questioning
+- `/ecc-refactor-clean` — Clean up dead code and consolidate
+- `/ecc-resume-session` — Resume a previously saved session
+- `/ecc-review-pr` — Comprehensive PR review using specialized agents (code-reviewer, comment-analyzer, pr-test-analyzer, silent-failure-hunter, type-design-analyzer, code-simplifier)
+- `/ecc-santa-loop` — Adversarial dual-review convergence loop
+- `/ecc-save-session` — Save current session for later resume
+- `/ecc-sessions` — List and manage saved sessions
+- `/ecc-setup-pm` — Set up package manager configuration
+- `/ecc-skill-create` — Create a new skill from a template
+- `/ecc-test-coverage` — Check and report test coverage
+- `/ecc-update-codemaps` — Generate or update codemap files
+- `/ecc-update-docs` — Update documentation files

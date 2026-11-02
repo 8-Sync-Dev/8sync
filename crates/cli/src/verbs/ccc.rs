@@ -1994,8 +1994,10 @@ fn hook(rest: &[String]) -> Result<()> {
         // ECC plugin off: the few ECC members this prompt needs, or nothing.
         Some("ecc-pick") => {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            let state = ecc_pick::state_dir(dirs::home_dir().as_deref());
-            ecc_pick::claude_dir().zip(state).and_then(|(claude, state)| ecc_pick::run(&input, &claude, &state, now))
+            let home = dirs::home_dir();
+            let checkout = home.as_deref().map(crate::verbs::harness::ecc::cache_dir);
+            let state = ecc_pick::state_dir(home.as_deref());
+            ecc_pick::claude_dir().zip(state).and_then(|(claude, state)| ecc_pick::run(&input, &claude, checkout.as_deref(), &state, now))
         }
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);

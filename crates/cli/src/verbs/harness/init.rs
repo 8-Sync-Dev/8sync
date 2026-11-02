@@ -108,7 +108,7 @@ pub(crate) fn harness_init(env: &env_detect::Env) -> Result<()> {
         }
         p.step("ECC rules → .claude/rules/ecc/ + Cursor rule");
         let _ = inject::inject_cursor_rule(&root);
-        super::ecc::project_layer(&env.home, &root, true);
+        super::ecc::project_layer(&env.home, &root, super::ecc::Fetch::IfDue);
         let _ = deploy::ensure_engine(&env.home, Some(&root));
         let _ = deploy::cleanup_legacy_gs(&env.home, Some(&root));
         p.done();

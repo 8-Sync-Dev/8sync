@@ -8,10 +8,12 @@ argument-hint: "<goal> [--dry-run]"
 
 Goal: `$ARGUMENTS` (`--dry-run` = stop after the merged plan).
 
+**Always (8sync harness):** `skill://trail` STEP 0 before any grep/read of code; `skill://karpathy-guidelines` every code step; `skill://ponytail` pick the simplest plan that works; `skill://8sync-cli` any `8sync` verb (ship, ccc, harness); `skill://impeccable` every UI step.
+
 1. **Route.** From the categories below pick EVERY one relevant to the goal (default to inclusion); one line of why per pick.
 2. **Select.** For each pick open `~/.omp/agent/commands/eccx-<cat>.md` and do its Select step on its member lists. Merge into one deduplicated set.
 3. **Plan.** One numbered plan (research → design → build → verify → ship/distribute); each step names its skills/agents/commands and its check. `--dry-run`: print it and stop.
-4. **Execute** step by step. Read each skill just before its step, never all up front. Follow `verification-loop`: run the project's real build/type-check/lint/tests after every code step; fix before moving on.
+4. **Execute** step by step. Read each skill just before its step, never all up front. Independent steps → parallel `task` subagents in one call. Follow `verification-loop`: run the project's real build/type-check/lint/tests after every code step; fix before moving on.
 5. **Report** (short): categories used, members used/skipped, checks run + results, open risks.
 
 ## Categories (skills/agents/commands)
@@ -35,8 +37,9 @@ Goal: `$ARGUMENTS` (`--dry-run` = stop after the merged plan).
 - `game` — Game & 3D: three.js, R3F, GSAP/3D web, Unreal/Blender, game assets (3/0/0)
 
 ## How to call members
-- `<ECC>` = 8sync's pinned ECC checkout `~/.cache/8sync/ecc/` (made by `8sync harness`), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.
-- Skills: `skill://<name>` = 8sync skill; plain name = ECC skill: `skill://<name>` if it resolves, else read `<ECC>/skills/<name>/SKILL.md`.
-- Agents: spawn a `task` subagent whose prompt opens with the role file `<ECC>/agents/<agent>.md`.
-- Commands: read `<ECC>/commands/<cmd>.md` and follow it with that step's arguments.
+- `<ECC>` = 8sync's ECC checkout `~/.cache/8sync/ecc/` (tracks upstream: `8sync harness` + a 6-hourly background refresh), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.
+- Skills: `skill://<name>` loads any skill: `skill://` refs are 8sync's, plain names ECC's (8sync mirrors ECC into omp). Not found → read `<ECC>/skills/<name>/SKILL.md`.
+- Agents: a `task` subagent whose assignment opens with "read the role file `<ECC>/agents/<agent>.md` first"; independent agents/steps → ONE `task` call with several `tasks[]` (parallel).
+- Commands: run `/ecc-<cmd>` with that step's arguments; not found → read `<ECC>/commands/<cmd>.md` and follow it.
 - A member that does not resolve: skip it, say so.
+- A skill in your session's skill list that fits the goal but is missing below (ECC updated since this list) is eligible too.

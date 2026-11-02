@@ -16,11 +16,12 @@ Scope: UI, design systems, React/Vue/Next, a11y, motion, web quality.
 5. **Report** (short): what changed, checks + results, members skipped, open risks.
 
 ## How to call members
-- `<ECC>` = 8sync's pinned ECC checkout `~/.cache/8sync/ecc/` (made by `8sync harness`), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.
-- Skills: `skill://<name>` = 8sync skill; plain name = ECC skill: `skill://<name>` if it resolves, else read `<ECC>/skills/<name>/SKILL.md`.
-- Agents: spawn a `task` subagent whose prompt opens with the role file `<ECC>/agents/<agent>.md`.
-- Commands: read `<ECC>/commands/<cmd>.md` and follow it with that step's arguments.
+- `<ECC>` = 8sync's ECC checkout `~/.cache/8sync/ecc/` (tracks upstream: `8sync harness` + a 6-hourly background refresh), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.
+- Skills: `skill://<name>` loads any skill: `skill://` refs are 8sync's, plain names ECC's (8sync mirrors ECC into omp). Not found → read `<ECC>/skills/<name>/SKILL.md`.
+- Agents: a `task` subagent whose assignment opens with "read the role file `<ECC>/agents/<agent>.md` first"; independent agents/steps → ONE `task` call with several `tasks[]` (parallel).
+- Commands: run `/ecc-<cmd>` with that step's arguments; not found → read `<ECC>/commands/<cmd>.md` and follow it.
 - A member that does not resolve: skip it, say so.
+- A skill in your session's skill list that fits the goal but is missing below (ECC updated since this list) is eligible too.
 
 ## Skills
 - `accessibility` — Design, implement, and audit accessible UI to WCAG 2.2 Level AA across
@@ -70,11 +71,11 @@ Scope: UI, design systems, React/Vue/Next, a11y, motion, web quality.
 - `vue-reviewer` — Expert Vue.js code reviewer specializing in Composition API correctness, reactivity pitfalls, component
 
 ## Commands
-- `flutter-build` — Fix Dart analyzer errors and Flutter build failures incrementally
-- `flutter-review` — Review Flutter/Dart code for idiomatic patterns, widget best practices, state management, performance
-- `flutter-test` — Run Flutter/Dart tests, report failures, and incrementally fix test issues
-- `gan-design` — Run a generator/evaluator design loop for frontend or visual work with bounded
-- `react-build` — Fix React build failures (Vite, webpack, Next.js, CRA, Parcel, esbuild, Bun) incrementally
-- `react-review` — Comprehensive React/JSX code review for hook correctness, render performance, server/client component boundaries
-- `react-test` — Enforce TDD workflow for React
-- `vue-review` — Comprehensive Vue.js code review for Composition API correctness, reactivity, composable patterns, template
+- `/ecc-flutter-build` — Fix Dart analyzer errors and Flutter build failures incrementally
+- `/ecc-flutter-review` — Review Flutter/Dart code for idiomatic patterns, widget best practices, state management, performance
+- `/ecc-flutter-test` — Run Flutter/Dart tests, report failures, and incrementally fix test issues
+- `/ecc-gan-design` — Run a generator/evaluator design loop for frontend or visual work with bounded
+- `/ecc-react-build` — Fix React build failures (Vite, webpack, Next.js, CRA, Parcel, esbuild, Bun) incrementally
+- `/ecc-react-review` — Comprehensive React/JSX code review for hook correctness, render performance, server/client component boundaries
+- `/ecc-react-test` — Enforce TDD workflow for React
+- `/ecc-vue-review` — Comprehensive Vue.js code review for Composition API correctness, reactivity, composable patterns, template

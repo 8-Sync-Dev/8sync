@@ -16,11 +16,12 @@ Scope: agent harnesses, loops, evals, prompts, context and token economy.
 5. **Report** (short): what changed, checks + results, members skipped, open risks.
 
 ## How to call members
-- `<ECC>` = 8sync's pinned ECC checkout `~/.cache/8sync/ecc/` (made by `8sync harness`), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.
-- Skills: `skill://<name>` = 8sync skill; plain name = ECC skill: `skill://<name>` if it resolves, else read `<ECC>/skills/<name>/SKILL.md`.
-- Agents: spawn a `task` subagent whose prompt opens with the role file `<ECC>/agents/<agent>.md`.
-- Commands: read `<ECC>/commands/<cmd>.md` and follow it with that step's arguments.
+- `<ECC>` = 8sync's ECC checkout `~/.cache/8sync/ecc/` (tracks upstream: `8sync harness` + a 6-hourly background refresh), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.
+- Skills: `skill://<name>` loads any skill: `skill://` refs are 8sync's, plain names ECC's (8sync mirrors ECC into omp). Not found → read `<ECC>/skills/<name>/SKILL.md`.
+- Agents: a `task` subagent whose assignment opens with "read the role file `<ECC>/agents/<agent>.md` first"; independent agents/steps → ONE `task` call with several `tasks[]` (parallel).
+- Commands: run `/ecc-<cmd>` with that step's arguments; not found → read `<ECC>/commands/<cmd>.md` and follow it.
 - A member that does not resolve: skip it, say so.
+- A skill in your session's skill list that fits the goal but is missing below (ECC updated since this list) is eligible too.
 
 ## Skills
 - `agent-architecture-audit` — Full-stack diagnostic for agent and LLM applications
@@ -85,29 +86,29 @@ Scope: agent harnesses, loops, evals, prompts, context and token economy.
 - `rag-pipeline-reviewer` — Reviews RAG (Retrieval-Augmented Generation) pipelines for retrieval quality, chunking strategy, embedding choices
 
 ## Commands
-- `cost-report` — Generate a local Claude Code cost report from the ECC cost-tracker metrics
-- `evolve` — Evolve instincts into skills and commands
-- `gan-build` — Run a generator/evaluator build loop for implementation tasks with bounded iterations
-- `harness-audit` — Audit harness configuration for issues
-- `hookify` — Create hooks to prevent unwanted behaviors from conversation analysis or explicit instructions
-- `hookify-configure` — Enable or disable hookify rules interactively
-- `hookify-help` — Get help with the hookify system
-- `hookify-list` — List all configured hookify rules
-- `instinct-export` — Export learned instincts to portable format
-- `instinct-import` — Import instincts from exported format
-- `instinct-status` — Check status of learned instincts
-- `learn` — Trigger learning from current session
-- `learn-eval` — Evaluate learned instincts for quality
-- `loop-start` — Start an autonomous agent loop
-- `loop-status` — Check status of running agent loops
-- `model-route` — Route tasks to optimal model by complexity
-- `multi-backend` — Backend tasks across multiple agents
-- `multi-execute` — Execute tasks across multiple agents
-- `multi-frontend` — Frontend tasks across multiple agents
-- `multi-plan` — Plan across multiple agents or repos
-- `multi-workflow` — Workflow orchestration across agents
-- `promote` — Promote an instinct to a full skill
-- `prune` — Delete pending instincts older than 30 days that were never promoted
-- `skill-health` — Show skill portfolio health dashboard with charts and analytics
-- `skill-host-compat` — Lint ECC skills for Codex/Cursor-safe frontmatter and Claude-only substitutions before a skill
-- `token-card` — Render a token-usage stat card from local agent session logs and commit
+- `/ecc-cost-report` — Generate a local Claude Code cost report from the ECC cost-tracker metrics
+- `/ecc-evolve` — Evolve instincts into skills and commands
+- `/ecc-gan-build` — Run a generator/evaluator build loop for implementation tasks with bounded iterations
+- `/ecc-harness-audit` — Audit harness configuration for issues
+- `/ecc-hookify` — Create hooks to prevent unwanted behaviors from conversation analysis or explicit instructions
+- `/ecc-hookify-configure` — Enable or disable hookify rules interactively
+- `/ecc-hookify-help` — Get help with the hookify system
+- `/ecc-hookify-list` — List all configured hookify rules
+- `/ecc-instinct-export` — Export learned instincts to portable format
+- `/ecc-instinct-import` — Import instincts from exported format
+- `/ecc-instinct-status` — Check status of learned instincts
+- `/ecc-learn` — Trigger learning from current session
+- `/ecc-learn-eval` — Evaluate learned instincts for quality
+- `/ecc-loop-start` — Start an autonomous agent loop
+- `/ecc-loop-status` — Check status of running agent loops
+- `/ecc-model-route` — Route tasks to optimal model by complexity
+- `/ecc-multi-backend` — Backend tasks across multiple agents
+- `/ecc-multi-execute` — Execute tasks across multiple agents
+- `/ecc-multi-frontend` — Frontend tasks across multiple agents
+- `/ecc-multi-plan` — Plan across multiple agents or repos
+- `/ecc-multi-workflow` — Workflow orchestration across agents
+- `/ecc-promote` — Promote an instinct to a full skill
+- `/ecc-prune` — Delete pending instincts older than 30 days that were never promoted
+- `/ecc-skill-health` — Show skill portfolio health dashboard with charts and analytics
+- `/ecc-skill-host-compat` — Lint ECC skills for Codex/Cursor-safe frontmatter and Claude-only substitutions before a skill
+- `/ecc-token-card` — Render a token-usage stat card from local agent session logs and commit

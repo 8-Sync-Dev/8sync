@@ -16,11 +16,12 @@ Scope: harness basics: standards, learning, compaction, always-on rules.
 5. **Report** (short): what changed, checks + results, members skipped, open risks.
 
 ## How to call members
-- `<ECC>` = 8sync's pinned ECC checkout `~/.cache/8sync/ecc/` (made by `8sync harness`), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.
-- Skills: `skill://<name>` = 8sync skill; plain name = ECC skill: `skill://<name>` if it resolves, else read `<ECC>/skills/<name>/SKILL.md`.
-- Agents: spawn a `task` subagent whose prompt opens with the role file `<ECC>/agents/<agent>.md`.
-- Commands: read `<ECC>/commands/<cmd>.md` and follow it with that step's arguments.
+- `<ECC>` = 8sync's ECC checkout `~/.cache/8sync/ecc/` (tracks upstream: `8sync harness` + a 6-hourly background refresh), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.
+- Skills: `skill://<name>` loads any skill: `skill://` refs are 8sync's, plain names ECC's (8sync mirrors ECC into omp). Not found → read `<ECC>/skills/<name>/SKILL.md`.
+- Agents: a `task` subagent whose assignment opens with "read the role file `<ECC>/agents/<agent>.md` first"; independent agents/steps → ONE `task` call with several `tasks[]` (parallel).
+- Commands: run `/ecc-<cmd>` with that step's arguments; not found → read `<ECC>/commands/<cmd>.md` and follow it.
 - A member that does not resolve: skip it, say so.
+- A skill in your session's skill list that fits the goal but is missing below (ECC updated since this list) is eligible too.
 
 ## Skills
 - `skill://8sync-cli` — .md or CLAUDE.md mentions 8sync, or a su-code/ folder exists)
@@ -38,6 +39,6 @@ Scope: harness basics: standards, learning, compaction, always-on rules.
 - `skill://trail` — "where is X defined", "who calls Y", "how does Z work", "what
 
 ## Commands
-- `auto-update` — Pull the latest ECC repo changes and reinstall the current managed targets
-- `ecc-guide` — Navigate ECC's current agents, skills, commands, hooks, install profiles, and docs
-- `project-init` — Detect a project's stack and produce a dry-run ECC onboarding plan using
+- `/ecc-auto-update` — Pull the latest ECC repo changes and reinstall the current managed targets
+- `/ecc-ecc-guide` — Navigate ECC's current agents, skills, commands, hooks, install profiles, and docs
+- `/ecc-project-init` — Detect a project's stack and produce a dry-run ECC onboarding plan using
