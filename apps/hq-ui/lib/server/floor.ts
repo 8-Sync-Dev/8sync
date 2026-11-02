@@ -9,6 +9,7 @@ import { projectIdFor } from "./db";
 import { coreGet } from "./core";
 import { inboxLive } from "./inbox";
 import { mergedSessions, run, type SessionView } from "./proc";
+import { ompRepoDir } from "./omp-sessions";
 
 type LsRow = LsInput & {
   name: string;
@@ -230,11 +231,11 @@ export async function ompTranscript(db: DatabaseSync, id: string): Promise<strin
   return cache?.transcripts.get(id) ?? null;
 }
 
-/** The omp room `id` as `8sync ls` lists it (any status: its terminal can start it), or null. `cwd`: its repo. */
+/** The omp room `id` as `8sync ls` lists it (any status: its terminal can start it), or null. `cwd`: its repo folder (see ompRepoDir). */
 export async function ompRoom(db: DatabaseSync, id: string): Promise<{ cwd: string | null } | null> {
   if (!isOmpRoomId(id)) return null;
   const r = (await loadFloor(db)).find((x) => x.engine === "omp" && x.inbox_id === id);
-  return r ? { cwd: r.repo ? expand(r.repo) : null } : null;
+  return r ? { cwd: r.repo ? ompRepoDir(expand(r.repo)) : null } : null;
 }
 
 export function resetFloorCache() {

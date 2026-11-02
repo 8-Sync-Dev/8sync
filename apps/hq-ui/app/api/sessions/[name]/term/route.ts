@@ -25,8 +25,9 @@ type RoomRef = { cwd: string | null; name: string | null; label: string; project
 async function room(db: Parameters<typeof mergedSessions>[0], id: string): Promise<RoomRef | null> {
   if (isOmpRoomId(id)) {
     const o = await ompRoom(db, id);
-    if (o) return { cwd: o.cwd, name: null, label: id, project_id: null, started_at: null };
     const n = pendingNew(id);
+    // Listed: an ordinary omp room (its folder from ls, else the one its POST checked; null = the CLI finds it by id).
+    if (o) return { cwd: o.cwd ?? n?.cwd ?? null, name: null, label: id, project_id: null, started_at: null };
     return n && { cwd: n.cwd, name: null, label: id, project_id: null, started_at: null, fresh: { name: n.name, model: n.model } };
   }
   const s = (await mergedSessions(db)).find((x) => x.session_id === id && !x.tmux && x.status !== "ended") ?? null;

@@ -4,6 +4,7 @@
 // `8sync ccc term --omp-new <name>` (lib/server/term.ts openOmpNew), which creates it like `8sync . <name>`.
 // Tested in tests/omp-sessions.test.ts.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseOmpRows, type OmpSessionRow } from "../omp-workspace";
 import { run } from "./proc";
@@ -60,6 +61,44 @@ export function existingDir(cwd: unknown): string | null {
   const dir = path.resolve(cwd);
   try {
     return fs.statSync(dir).isDirectory() ? dir : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where `8sync .` keeps its omp session registry (crates/cli/src/verbs/session.rs, under Rust's
+ * `dirs::config_dir()`): %APPDATA% on Windows, ~/Library/Application Support on macOS,
+ * $XDG_CONFIG_HOME or ~/.config elsewhere; one `<project key>/index.json` per project.
+ */
+export function ompRegistryDir(env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform, home = os.homedir()): string {
+  const base =
+    platform === "win32"
+      ? env.APPDATA || path.join(home, "AppData", "Roaming")
+      : platform === "darwin"
+        ? path.join(home, "Library", "Application Support")
+        : env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME)
+          ? env.XDG_CONFIG_HOME
+          : path.join(home, ".config");
+  return path.join(base, "8sync", "sessions");
+}
+
+/** A registry project key (`session::project_key`: the root with every non-alphanumeric as `-`). */
+const PROJECT_KEY = /^[A-Za-z0-9-]{1,160}$/;
+
+/**
+ * The folder of an omp row's `repo` from `8sync ls --all`. That is usually the repo path, but for a
+ * folder ls cannot map back it is the registry's project key (`C--Users-me-AppData-Local-Temp-x`):
+ * spawned as a cwd it does not exist, the spawn fails at once and the reopened session's terminal
+ * ends before a byte ("Đã rời phòng", owner 2026-11-02). A key resolves through its registry
+ * `index.json` `root` when that is an existing folder; anything else that is not a path is null.
+ */
+export function ompRepoDir(repo: string | null | undefined, registry = ompRegistryDir()): string | null {
+  if (!repo) return null;
+  if (!PROJECT_KEY.test(repo)) return repo;
+  try {
+    const root: unknown = JSON.parse(fs.readFileSync(path.join(registry, repo, "index.json"), "utf8")).root;
+    return typeof root === "string" && path.isAbsolute(root) && fs.statSync(root).isDirectory() ? root : null;
   } catch {
     return null;
   }
