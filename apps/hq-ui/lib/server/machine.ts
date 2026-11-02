@@ -2,7 +2,8 @@
 // `nvidia-smi` when there is one; how much RAM Claude Code and Node processes hold, from `tasklist`
 // (Windows) or `ps` (macOS, Linux). argv only, short timeouts, a failed probe is just left out.
 // `spec()`: what the machine is (CPU, RAM, GPU, OS), read once per HQ process.
-// `heavy()`: Electron / Chromium renderers holding ≥ 4 GB (`8sync ccc eco heavy --json`);
+// `heavy()`: Electron / Chromium renderers holding ≥ 4 GB (the HQ core's `/v1/heavy`, else
+// `8sync ccc eco heavy --json`);
 // `restartApp()`: the owner's button for one of them (`8sync ccc eco restart <rootPid> --json`).
 import { execFile } from "node:child_process";
 import fs from "node:fs";
@@ -187,14 +188,29 @@ const isHeavy = (h: unknown): h is Heavy => {
   );
 };
 
+/** `{heavy:[…]}` → the rows; null when it is not that (an 8sync without `eco heavy`). */
+function heavyRows(v: unknown): Heavy[] | null {
+  const h = v && typeof v === "object" && "heavy" in v ? v.heavy : undefined;
+  return Array.isArray(h) ? h.filter(isHeavy) : null;
+}
+
 /** `{"heavy":[…]}` → the rows; null when it is not that (an 8sync without `eco heavy`). */
 export function parseHeavy(out: string): Heavy[] | null {
   try {
-    const v = JSON.parse(out) as { heavy?: unknown };
-    return Array.isArray(v?.heavy) ? v.heavy.filter(isHeavy) : null;
+    return heavyRows(JSON.parse(out));
   } catch {
     return null;
   }
+}
+
+/** In the core when HQ has one (no `8sync` started), else `8sync ccc eco heavy --json`; `r` given: that runner only. */
+async function readHeavy(r: Run8 | null): Promise<Heavy[] | null> {
+  if (!r) {
+    const viaCore = await coreGet("/v1/heavy");
+    if (viaCore) return heavyRows(viaCore.v);
+  }
+  const x = await (r ?? run8)(["ccc", "eco", "heavy", "--json"], HEAVY_TIMEOUT_MS);
+  return x.ok ? parseHeavy(x.stdout) : null;
 }
 
 let heavyAt = 0;
@@ -202,10 +218,9 @@ let heavyLast: Heavy[] | null = null;
 let heavyRun: Promise<Heavy[] | null> | null = null;
 
 /** The heavy renderers: the first call waits for the read, later ones get the last read at once and refresh it past {@link HEAVY_TTL_MS}. */
-export function heavy(r: Run8 = run8, now = Date.now()): Promise<Heavy[] | null> {
+export function heavy(r: Run8 | null = null, now = Date.now()): Promise<Heavy[] | null> {
   if (!heavyRun && now - heavyAt >= HEAVY_TTL_MS) {
-    heavyRun = r(["ccc", "eco", "heavy", "--json"], HEAVY_TIMEOUT_MS)
-      .then((x) => (x.ok ? parseHeavy(x.stdout) : null))
+    heavyRun = readHeavy(r)
       .then((h) => {
         heavyLast = h;
         heavyAt = now;

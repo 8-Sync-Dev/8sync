@@ -6,8 +6,10 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const run = vi.hoisted(() => vi.fn());
+const coreGet = vi.hoisted(() => vi.fn());
 const spawned = vi.hoisted(() => [] as { args: string[]; cwd?: string }[]);
 vi.mock("@/lib/server/proc", async (orig) => ({ ...(await orig<typeof import("@/lib/server/proc")>()), run, mergedSessions: vi.fn(async () => []) }));
+vi.mock("@/lib/server/core", async (orig) => ({ ...(await orig<typeof import("@/lib/server/core")>()), coreGet }));
 vi.mock("node:child_process", async (orig) => ({
   ...(await orig<typeof import("node:child_process")>()),
   spawn: (_cmd: string, args: string[], opts: { cwd?: string }) => {
@@ -43,6 +45,8 @@ beforeEach(() => {
   spawned.length = 0;
   run.mockReset();
   run.mockResolvedValue(lsOut([]));
+  coreGet.mockReset();
+  coreGet.mockResolvedValue(null);
 });
 afterEach(() => {
   for (const d of tmps.splice(0)) fs.rmSync(d, { recursive: true, force: true });
@@ -93,6 +97,16 @@ describe("GET/POST /api/omp/sessions", () => {
     forgetOmpSessions(path.resolve(d));
     expect((await LIST(req(`/api/omp/sessions?cwd=relative`, { token }))).status).toBe(422);
     expect((await LIST(req(`/api/omp/sessions?cwd=${encodeURIComponent(d)}`, {}))).status).toBe(401);
+  });
+
+  it("asks the HQ core first and starts no `8sync` when it answers", async () => {
+    const d = tmp();
+    coreGet.mockResolvedValue({ v: [{ engine: "omp", name: "web", inbox_id: "omp-00000000000000c2", status: "running" }, { engine: "ccc", name: "x" }] });
+    const res = await LIST(req(`/api/omp/sessions?cwd=${encodeURIComponent(d)}`, { token }));
+    expect(await res.json()).toEqual({ cwd: path.resolve(d), sessions: [{ engine: "omp", name: "web", inbox_id: "omp-00000000000000c2", status: "running" }] });
+    expect(coreGet).toHaveBeenCalledWith("/v1/omp-ls", { body: { cwd: path.resolve(d) }, timeoutMs: 15_000 });
+    expect(run).not.toHaveBeenCalled();
+    forgetOmpSessions(path.resolve(d));
   });
 
   it("POST validates folder, name and model, answers the room id, and the terminal then runs `--omp-new` in that folder", async () => {

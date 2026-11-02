@@ -1,12 +1,13 @@
-// omp sessions of any folder for the workspace tab: `8sync . ls --json` run in that folder (GET
-// /api/omp/sessions), and new ones (POST): their room id is computed here exactly as the CLI's
+// omp sessions of any folder for the workspace tab: `8sync . ls --json` as run in that folder (the HQ
+// core's `/v1/omp-ls`, else the CLI there; GET /api/omp/sessions), and new ones (POST): their room id is computed here exactly as the CLI's
 // `ccc_core::room_id` makes it, and the session waits in [`pendingNew`] until its terminal opens with
 // `8sync ccc term --omp-new <name>` (lib/server/term.ts openOmpNew), which creates it like `8sync . <name>`.
 // Tested in tests/omp-sessions.test.ts.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseOmpRows, type OmpSessionRow } from "../omp-workspace";
+import { ompRowsOf, parseOmpRows, type OmpSessionRow } from "../omp-workspace";
+import { coreGet } from "./core";
 import { run } from "./proc";
 
 /** `8sync .`'s project root of `cwd` (crates/cli/src/verbs/here.rs detect_project_root): the nearest folder with one of these, else `cwd`. */
@@ -107,11 +108,18 @@ export function ompRepoDir(repo: string | null | undefined, registry = ompRegist
 const LS_TTL_MS = 3000;
 const lsCache = new Map<string, { at: number; rows: Promise<OmpSessionRow[]> }>();
 
-/** omp sessions of `cwd` (`8sync . ls --json` there); concurrent and 3 s-close callers share one run. */
+/**
+ * omp sessions of `cwd` (`8sync . ls --json` there); concurrent and 3 s-close callers share one read.
+ * The HQ core answers it in process (`/v1/omp-ls`, no cache of its own); without one, the CLI runs in `cwd`.
+ */
 export function listOmpSessions(cwd: string, now = Date.now()): Promise<OmpSessionRow[]> {
   const hit = lsCache.get(cwd);
   if (hit && now - hit.at < LS_TTL_MS) return hit.rows;
-  const rows = run("8sync", [".", "ls", "--json"], 15_000, cwd).then((r) => (r.ok ? parseOmpRows(r.stdout) : []));
+  const rows = coreGet("/v1/omp-ls", { body: { cwd }, timeoutMs: 15_000 }).then(async (c) => {
+    if (c) return ompRowsOf(c.v);
+    const r = await run("8sync", [".", "ls", "--json"], 15_000, cwd);
+    return r.ok ? parseOmpRows(r.stdout) : [];
+  });
   lsCache.set(cwd, { at: now, rows });
   if (lsCache.size > 64) lsCache.delete(lsCache.keys().next().value!);
   return rows;
