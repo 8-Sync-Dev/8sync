@@ -40,6 +40,15 @@ pub struct Args {
     #[arg(long)]
     pub force: bool,
 
+    /// With `rm`: also delete the transcript store, but keep a worktree with uncommitted changes (refuses).
+    #[arg(long)]
+    pub purge: bool,
+
+    /// With a bare `<name>`: open it in the room's shared host (like `tmux attach`), so HQ and this
+    /// terminal both type into the same omp; closing this terminal leaves omp running there.
+    #[arg(long)]
+    pub share: bool,
+
     /// With `new`: give the session its own git worktree + branch `8sync/<name>`.
     #[arg(long)]
     pub worktree: bool,
@@ -84,8 +93,8 @@ pub fn run(a: Args) -> Result<()> {
     match verb {
         "ls" | "list" => return session::cmd_ls(&env, &root, a.json, sort),
         "rm" => {
-            let name = rest.first().context("usage: 8sync . rm <name> [--force]")?;
-            return session::cmd_rm(&env, &root, name, a.force);
+            let name = rest.first().context("usage: 8sync . rm <name> [--purge | --force]")?;
+            return session::cmd_rm(&env, &root, name, a.force, a.purge);
         }
         "mv" => {
             let old = rest.first().context("usage: 8sync . mv <old> <new>")?;
@@ -113,6 +122,10 @@ pub fn run(a: Args) -> Result<()> {
             session::cmd_new(&env, &root, name, a.worktree)
         }
         "" => session::resume_latest(&env, &root),
+        name if a.share => {
+            session::ensure_named(&env, &root, name)?;
+            crate::verbs::ccc::share_session(&env, &root, name, a.model.as_deref())
+        }
         name => session::resume_named(&env, &root, name, a.model.as_deref()),
     }
 }

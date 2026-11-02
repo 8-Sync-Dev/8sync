@@ -59,7 +59,7 @@ import { MORE_LABEL, MORE_TABS } from "@/lib/tabs";
 import { cn } from "@/lib/utils";
 import { ErrorNote } from "./bits";
 import { BrandMark } from "./brand-mark";
-import { CloseDialog, RoomEndDialog, WorktreeDialog, useWorktreeKeys, type Confirm } from "./nav-actions";
+import { CloseDialog, OmpDeleteDialog, ProjectDeleteDialog, RoomEndDialog, WorktreeDialog, useWorktreeKeys, type Confirm } from "./nav-actions";
 import { useArchive, useTreePrefs, useUnread, type SessionTree } from "./use-session-tree";
 import type { Hq, Live } from "./use-hq";
 import type { OfficeState, Room } from "./use-office";
@@ -221,7 +221,17 @@ export function Nav({
       sort={prefs.sort}
       onGroup={setGroup}
       onSort={setSort}
-      project={g?.root ? { onOverview: () => onOpenRepo(g.root!, g.label), worktree: worktrees.worktrees.includes(groupKey(g.root)), onHide: () => setConfirm({ kind: "close", g: groupOf(g)! }), onDelete: () => setConfirm({ kind: "worktree", g: groupOf(g)! }) } : null}
+      project={
+        g?.root
+          ? {
+              onOverview: () => onOpenRepo(g.root!, g.label),
+              worktree: worktrees.worktrees.includes(groupKey(g.root)),
+              onHide: () => setConfirm({ kind: "close", g: groupOf(g)! }),
+              onDelete: () => setConfirm({ kind: "worktree", g: groupOf(g)! }),
+              onDeleteAll: () => setConfirm({ kind: "project", g }),
+            }
+          : null
+      }
     />
   );
 
@@ -370,6 +380,7 @@ export function Nav({
                             }}
                             room={roomOf(s)}
                             onEnd={(x, action) => setConfirm({ kind: "room", x, action })}
+                            onDelete={() => setConfirm({ kind: "omp", s })}
                           />
                         ))}
                       </ul>
@@ -397,6 +408,29 @@ export function Nav({
           hq={hq}
           x={confirm.x}
           action={confirm.action}
+          onCancel={() => setConfirm(null)}
+          onDone={() => {
+            setConfirm(null);
+            refresh();
+          }}
+        />
+      )}
+      {confirm?.kind === "omp" && (
+        <OmpDeleteDialog
+          hq={hq}
+          s={confirm.s}
+          onCancel={() => setConfirm(null)}
+          onDone={() => {
+            setConfirm(null);
+            refresh();
+          }}
+        />
+      )}
+      {confirm?.kind === "project" && (
+        <ProjectDeleteDialog
+          hq={hq}
+          g={confirm.g}
+          roomOf={roomOf}
           onCancel={() => setConfirm(null)}
           onDone={() => {
             setConfirm(null);
@@ -446,7 +480,7 @@ function GroupMenu({
   sort: SortBy;
   onGroup: (g: GroupBy) => void;
   onSort: (s: SortBy) => void;
-  project: { onOverview: () => void; worktree: boolean; onHide: () => void; onDelete: () => void } | null;
+  project: { onOverview: () => void; worktree: boolean; onHide: () => void; onDelete: () => void; onDeleteAll: () => void } | null;
 }) {
   return (
     // Non-modal: an item opens a dialog, and a modal menu would hand focus back over it.
@@ -486,6 +520,9 @@ function GroupMenu({
                 <Trash2Icon aria-hidden /> Xóa worktree…
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem className="max-md:min-h-10" variant="destructive" onSelect={project.onDeleteAll}>
+              <Trash2Icon aria-hidden /> Xóa mọi phiên…
+            </DropdownMenuItem>
           </>
         )}
       </DropdownMenuContent>
@@ -518,6 +555,7 @@ function SessionRow({
   onArchive,
   room,
   onEnd,
+  onDelete,
 }: {
   s: TreeSession;
   now: number;
@@ -530,6 +568,7 @@ function SessionRow({
   onArchive: () => void;
   room: SidebarRoom<Room> | null;
   onEnd: (x: SidebarRoom<Room>, action: "close" | "delete") => void;
+  onDelete: () => void;
 }) {
   const [more, setMore] = useState(false);
   const { shown, older } = useMemo(() => splitChildren(s.children, now), [s.children, now]);
@@ -575,7 +614,7 @@ function SessionRow({
           <span className="mr-1 md:hidden">
             <Mark state={s.state} unread={unread} />
           </span>
-          <RowMenu s={s} onOpen={onOpen} onChat={room ? onChat : null} onArchive={onArchive} room={room} onEnd={onEnd} />
+          <RowMenu s={s} onOpen={onOpen} onChat={room ? onChat : null} onArchive={onArchive} room={room} onEnd={onEnd} onDelete={onDelete} />
         </span>
       </div>
       {hasKids && !folded && (
@@ -632,6 +671,7 @@ function RowMenu({
   onArchive,
   room,
   onEnd,
+  onDelete,
 }: {
   s: TreeSession;
   onOpen: (s: TreeSession, split: boolean) => void;
@@ -639,6 +679,7 @@ function RowMenu({
   onArchive: () => void;
   room: SidebarRoom<Room> | null;
   onEnd: (x: SidebarRoom<Room>, action: "close" | "delete") => void;
+  onDelete: () => void;
 }) {
   const ccc = room && room.room.engine !== "omp";
   return (
@@ -673,6 +714,14 @@ function RowMenu({
             </DropdownMenuItem>
             <DropdownMenuItem className="max-md:min-h-10" variant="destructive" onSelect={() => onEnd(room, "delete")}>
               <Trash2Icon aria-hidden /> Xóa phòng…
+            </DropdownMenuItem>
+          </>
+        )}
+        {!ccc && s.ompId && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="max-md:min-h-10" variant="destructive" onSelect={onDelete}>
+              <Trash2Icon aria-hidden /> Xóa phiên…
             </DropdownMenuItem>
           </>
         )}

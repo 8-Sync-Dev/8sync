@@ -12,12 +12,18 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_WORD, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
+import type { TreeGroup, TreeSession } from "@/lib/session-tree";
 import type { WorktreeFacts, WorktreeVerdict } from "@/lib/worktree";
 import type { Hq } from "./use-hq";
 import type { Room } from "./use-office";
 
 export type RoomAction = "close" | "delete";
-export type Confirm = { kind: "room"; x: SidebarRoom<Room>; action: RoomAction } | { kind: "worktree"; g: SidebarGroup<Room> } | { kind: "close"; g: SidebarGroup<Room> };
+export type Confirm =
+  | { kind: "room"; x: SidebarRoom<Room>; action: RoomAction }
+  | { kind: "omp"; s: TreeSession }
+  | { kind: "project"; g: TreeGroup }
+  | { kind: "worktree"; g: SidebarGroup<Room> }
+  | { kind: "close"; g: SidebarGroup<Room> };
 
 /** Row-end "⋯": on a mouse it shows on hover / keyboard focus / open menu; always on a phone or touch screen. */
 const TRIGGER =
@@ -178,6 +184,150 @@ export function RoomEndDialog({ hq, x, action, onDone, onCancel }: { hq: Hq; x: 
           <Button type="button" variant={del ? "destructive" : "default"} className="max-sm:h-11" onClick={submit} disabled={busy} autoFocus={!del}>
             {busy ? (del ? "Đang xóa…" : "Đang đóng…") : `${del ? "Xóa" : "Đóng"} phòng ${room.label}`}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** "Xóa phiên…" of an omp session: `8sync . rm <name> --purge` (DELETE /api/omp/sessions). */
+export function OmpDeleteDialog({ hq, s, onDone, onCancel }: { hq: Hq; s: TreeSession; onDone: () => void; onCancel: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    if (!s.ompId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await hq.api(`/api/omp/sessions?id=${encodeURIComponent(s.ompId)}`, { method: "DELETE" });
+      toast.success(`Đã xóa phiên “${s.title}”`);
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onCancel()}>
+      <DialogContent className="sm:max-w-md" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle className="text-pretty">Xóa phiên “{s.title}”?</DialogTitle>
+          <DialogDescription className="text-pretty">
+            Xóa hội thoại (transcript) của phiên và gỡ khỏi danh sách. Worktree riêng của phiên được xóa kèm khi sạch; còn thay đổi chưa commit thì HQ không xóa. Phiên đang mở trong HQ được tắt trước; đang mở ở terminal khác thì anh đóng terminal đó trước. Không khôi phục được.
+          </DialogDescription>
+        </DialogHeader>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+          <dt className="text-muted-foreground">Tên</dt>
+          <dd className="font-mono break-all">{s.name}</dd>
+          {s.cwd && (
+            <>
+              <dt className="text-muted-foreground">Thư mục</dt>
+              <dd className="font-mono break-all">{s.cwd}</dd>
+            </>
+          )}
+        </dl>
+        {s.state === "working" && (
+          <p className="flex items-start gap-2 rounded-lg bg-st-needs/15 px-2.5 py-2 text-xs text-[color-mix(in_oklch,var(--st-needs),black_45%)] dark:text-st-needs">
+            <AlertTriangleIcon className="mt-px size-3.5 shrink-0" aria-hidden />
+            Phiên đang làm việc: xóa lúc này cắt ngang lượt đang chạy.
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            Không xóa được: {error}
+          </p>
+        )}
+        <DialogFooter>
+          <Button type="button" variant="outline" className="max-sm:h-11" onClick={onCancel} disabled={busy}>
+            Giữ phiên
+          </Button>
+          <Button type="button" variant="destructive" className="max-sm:h-11" onClick={submit} disabled={busy}>
+            {busy ? "Đang xóa…" : "Xóa phiên"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * "Xóa mọi phiên…" of a project: every session of the group, one at a time — an omp session as
+ * [`OmpDeleteDialog`] (transcript + sub-sessions, clean worktree), a Claude Code room as "Xóa phòng"
+ * (`/end` delete: stopped, transcript removed). A session that refuses (open in another terminal,
+ * uncommitted worktree) is kept and named; then the project is hidden when nothing is left.
+ */
+export function ProjectDeleteDialog({ hq, g, roomOf, onDone, onCancel }: { hq: Hq; g: TreeGroup; roomOf: (s: TreeSession) => SidebarRoom<Room> | null; onDone: () => void; onCancel: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [failed, setFailed] = useState<{ title: string; error: string }[]>([]);
+  const targets = g.sessions.filter((s) => s.ompId || roomOf(s));
+
+  async function submit() {
+    const bad: { title: string; error: string }[] = [];
+    for (const s of targets) {
+      setBusy(s.title);
+      const room = roomOf(s);
+      try {
+        if (s.ompId) await hq.api(`/api/omp/sessions?id=${encodeURIComponent(s.ompId)}`, { method: "DELETE" });
+        else if (room) await hq.api(`/api/sessions/${encodeURIComponent(room.room.name)}/end`, { method: "POST", body: { action: "delete" } });
+      } catch (e) {
+        bad.push({ title: s.title, error: (e as Error).message });
+      }
+    }
+    setBusy(null);
+    setFailed(bad);
+    const gone = targets.length - bad.length;
+    if (!bad.length && g.root) await hq.api("/api/projects/sidebar", { method: "POST", body: { root: g.root, hidden: true } }).catch(() => null);
+    if (gone) toast.success(`Đã xóa ${gone} phiên của ${g.label}`);
+    if (!bad.length) onDone();
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && (failed.length ? onDone() : onCancel())}>
+      <DialogContent className="sm:max-w-md" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle className="text-pretty">Xóa mọi phiên của “{g.label}”?</DialogTitle>
+          <DialogDescription className="text-pretty">
+            {targets.length} phiên: mỗi phiên bị dừng và xóa hội thoại kèm phiên con; worktree riêng sạch được xóa kèm. Phiên còn thay đổi chưa commit hoặc đang mở ở terminal khác thì giữ lại và báo tên. Xóa hết thì dự án ẩn khỏi danh sách (thư mục code không bị đụng). Không khôi phục được.
+          </DialogDescription>
+        </DialogHeader>
+        <ul className="max-h-40 overflow-auto text-xs">
+          {targets.map((s) => (
+            <li key={s.key} className="truncate font-mono">
+              {s.title}
+            </li>
+          ))}
+        </ul>
+        {busy && <p className="text-xs text-muted-foreground">Đang xóa “{busy}”…</p>}
+        {failed.length > 0 && (
+          <div role="alert" className="text-xs text-destructive">
+            Giữ lại {failed.length} phiên:
+            <ul className="mt-1 list-disc pl-4">
+              {failed.map((f) => (
+                <li key={f.title}>
+                  {f.title}: {f.error}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <DialogFooter>
+          {failed.length ? (
+            <Button type="button" className="max-sm:h-11" onClick={onDone}>
+              Xong
+            </Button>
+          ) : (
+            <>
+              <Button type="button" variant="outline" className="max-sm:h-11" onClick={onCancel} disabled={!!busy}>
+                Giữ lại
+              </Button>
+              <Button type="button" variant="destructive" className="max-sm:h-11" onClick={submit} disabled={!!busy || !targets.length}>
+                {busy ? "Đang xóa…" : `Xóa ${targets.length} phiên`}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

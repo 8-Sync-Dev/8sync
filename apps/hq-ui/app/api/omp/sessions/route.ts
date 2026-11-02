@@ -4,7 +4,9 @@ import { isOmpModel, isOmpSessionName } from "@/lib/omp-workspace";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { queueInbox } from "@/lib/server/inbox";
 import { existingDir, forgetOmpSessions, listOmpSessions, ompIdFor, projectRoot, rememberNew } from "@/lib/server/omp-sessions";
-import { allOmpSessions } from "@/lib/server/omp-tree";
+import { allOmpSessions, forgetOmpTree } from "@/lib/server/omp-tree";
+import { ompRoom, resetFloorCache } from "@/lib/server/floor";
+import { isOmpRoomId } from "@/lib/labels";
 import { run } from "@/lib/server/proc";
 import { ownerMessage } from "@/lib/server/queries";
 import { clampText } from "@/lib/server/validate";
@@ -73,6 +75,29 @@ export async function POST(req: Request) {
     ownerMessage(o.db, id, text, "inbox");
   }
   return json({ id, name, cwd });
+}
+
+/**
+ * ?id=<omp room id>: "Xóa phiên" — `8sync . rm <name> --purge` in the session's repo: transcript
+ * deleted, a clean worktree removed. Refused (409, the CLI's reason) when its worktree has
+ * uncommitted changes or an omp in another terminal has it open; HQ's own host for it is ended.
+ * The name and folder come from `8sync ls`, never from the client.
+ */
+export async function DELETE(req: Request) {
+  const o = open(req);
+  if ("res" in o) return o.res;
+  const id = new URL(req.url).searchParams.get("id");
+  if (!id || !isOmpRoomId(id)) return bad("id phải là id phiên omp", 422);
+  const cwd = (await ompRoom(o.db, id))?.cwd;
+  if (!cwd) return bad("không thấy phiên này", 404);
+  const row = (await listOmpSessions(cwd)).find((r) => r.inbox_id === id);
+  if (!row) return bad("không thấy phiên này", 404);
+  const r = await run("8sync", [".", "rm", row.name, "--purge"], 30_000, cwd);
+  forgetOmpSessions(cwd);
+  resetFloorCache();
+  forgetOmpTree();
+  if (!r.ok) return bad((r.stderr || r.stdout).trim().split("\n").pop()?.replace(/^Error:\s*/, "") || "8sync . rm lỗi", 409);
+  return json({ ok: true, name: row.name });
 }
 
 /** `<repo>/.claude/worktrees/<name>` on branch `<name>` (made from HEAD; the branch is reused when it exists). */
