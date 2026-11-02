@@ -68,6 +68,33 @@ CREATE TABLE IF NOT EXISTS hidden_projects (
   name TEXT NOT NULL,
   hidden_at INTEGER NOT NULL
 );
+-- API keys members call models with through /api/omp/v1 (lib/server/api-keys.ts): sha256 + 12-char prefix only.
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  token_prefix TEXT NOT NULL,
+  token_sha256 TEXT NOT NULL UNIQUE,
+  models_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  revoked_at INTEGER,
+  last_used_at INTEGER
+);
+-- One row per member call (owner-machine calls are not logged); kept 90 days.
+CREATE TABLE IF NOT EXISTS api_key_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key_id TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  root TEXT NOT NULL,
+  route TEXT NOT NULL,
+  model TEXT,
+  summary TEXT,
+  status INTEGER NOT NULL,
+  ms INTEGER NOT NULL,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  source TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS api_key_calls_at ON api_key_calls(at);
 `;
 
 const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync; schema: string } };

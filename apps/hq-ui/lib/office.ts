@@ -8,6 +8,13 @@ export const hhmm = (ms: number) => {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 
+/** "22:30" today, "T5 22:30" on another day. */
+export function resetClock(ms: number, now: number): string {
+  const d = new Date(ms);
+  if (d.toDateString() === new Date(now).toDateString()) return hhmm(ms);
+  return `${d.toLocaleDateString("vi-VN", { weekday: "short" })} ${hhmm(ms)}`;
+}
+
 /** The seat template every room has, in display order. */
 export const SEATS = [
   { key: "lead", label: "Lead", hint: "the session itself" },

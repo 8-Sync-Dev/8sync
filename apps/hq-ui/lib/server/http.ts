@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { checkAuth, cookieValue, getToken, PUB_COOKIE, readPublic, viaTunnel, type AuthOptions } from "./auth";
+import { checkAuth, cookieValue, getToken, PUB_COOKIE, readPublic, sideOf, viaTunnel, type AuthOptions } from "./auth";
 import { getDb } from "./db";
 import { ingest } from "./ingest";
 
@@ -35,6 +35,12 @@ export function open(req: Request, opts?: AuthOptions): { db: DatabaseSync } | {
     console.error("[hq] ingest failed", e);
   }
   return { db };
+}
+
+/** 403 unless the request is from this machine's side (loopback, not the `--public` tunnel); like /api/shell. */
+export function localOnly(req: Request, error = "Chỉ tạo / thu hồi key từ HQ trên máy chủ (không qua link --public)."): Response | null {
+  const side = sideOf({ host: req.headers.get("host"), cookie: cookieValue(req.headers.get("cookie"), PUB_COOKIE), tunnel: viaTunnel(req.headers) }, readPublic());
+  return side === "local" ? null : bad(error, 403);
 }
 
 const MAX_BODY = 64 * 1024;
