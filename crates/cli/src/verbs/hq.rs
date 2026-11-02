@@ -123,6 +123,9 @@ pub enum Sub {
         /// also open a Cloudflare quick tunnel and print a one-time remote-control link (needs cloudflared)
         #[arg(long)]
         public: bool,
+        /// mint a fresh 10-minute login link for the running `--public` HQ (same host, old link stops working) and exit
+        #[arg(long, conflicts_with_all = ["off", "install", "update", "public"])]
+        relink: bool,
     },
     /// Delete the local HQ data: events*.jsonl, hq.db*, channel-*.json (asks with no --yes: only lists)
     Purge {
@@ -2173,6 +2176,28 @@ fn cmd_ui_off() -> Result<()> {
     Ok(())
 }
 
+/// A new login key for the live `--public` HQ: the tunnel, host, nonce and owner stay, so the
+/// remote URL does not change; the server re-reads `public.json` on mtime change, so the new key
+/// (and its 10-minute window) works at once and the old login link stops. Signed-in cookies stay.
+fn cmd_ui_relink() -> Result<()> {
+    let paths = Paths::new()?;
+    let file = paths.cfg_dir.join("public.json");
+    let raw = std::fs::read_to_string(&file).map_err(|_| anyhow!("chưa có HQ `--public` nào đang chạy — mở bằng `8sync hq ui --public`"))?;
+    let mut v: Value = serde_json::from_str(&raw).context("public.json hỏng")?;
+    // port 0: never "ours", so only a gone/reused owner pid or a free recorded port reads stale
+    if public_file_stale(Some(&v), 0, crate::verbs::hq_core::sys::proc_start, ui_port_busy) {
+        bail!("HQ `--public` ghi trong public.json đã tắt — mở lại bằng `8sync hq ui --public`");
+    }
+    let host = v["host"].as_str().filter(|h| tunnel_host(&format!("https://{h}")).as_deref() == Some(*h)).ok_or_else(|| anyhow!("public.json không có host hợp lệ"))?.to_owned();
+    let key = random_hex32()?;
+    v["key"] = json!(key);
+    v["since"] = json!(SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0));
+    write_private(&file, format!("{v}\n").as_bytes())?;
+    println!("Link điều khiển từ xa (10 phút): https://{host}/api/login?k={key}");
+    ui::warn("Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Thiết bị đã đăng nhập vẫn giữ phiên.");
+    Ok(())
+}
+
 /// Local HQ data files under the state dir: `events*.jsonl`, `hq.db*`, `channel-*.json`.
 fn purge_targets(state_dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(state_dir)
@@ -2369,7 +2394,7 @@ fn start_public(port: u16, file: &Path, nonce: &str) -> Result<Option<std::proce
         return Err(e);
     }
     println!("Link điều khiển từ xa: https://{host}/api/login?k={key}");
-    ui::warn("Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Link chết khi tắt `8sync hq ui`; quick tunnel của Cloudflare không có SLA.");
+    ui::warn("Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Link đăng nhập dùng trong 10 phút (thiết bị đã vào giữ 12 giờ); cần link mới cùng địa chỉ: `8sync hq ui --relink`. Địa chỉ giữ nguyên qua `8sync up`, chết khi tắt `8sync hq ui`; quick tunnel của Cloudflare không có SLA.");
     Ok(Some(tun))
 }
 
@@ -2918,7 +2943,8 @@ pub fn run(a: Args) -> Result<()> {
             Ok(())
         }
         Sub::Ui { off: true, .. } => cmd_ui_off(),
-        Sub::Ui { port, app, no_open, off: false, update, install, public } => cmd_ui(port, app, no_open, update, install, dry, public),
+        Sub::Ui { relink: true, .. } => cmd_ui_relink(),
+        Sub::Ui { port, app, no_open, off: false, update, install, public, .. } => cmd_ui(port, app, no_open, update, install, dry, public),
         Sub::Purge { yes } => cmd_purge(yes),
         Sub::Status => cmd_status(),
         Sub::Up { repo, name, install, now } => cmd_up(repo, &name, install, now),
