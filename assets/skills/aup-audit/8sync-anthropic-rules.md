@@ -2,7 +2,7 @@
 
 Tài liệu nội bộ. Dùng khi dev build sản phẩm trên Claude (Claude Code, API, các app 8 Sync).
 Đây **không phải tư vấn pháp lý** — link gốc là nguồn chính thức, phần dưới chỉ tóm tắt để dev nhớ.
-Cập nhật: 2026-10-11. Chủ: Alex (atus@8syncdev.com).
+Cập nhật: 2026-11-02 (thêm gói Ultra theo legal snapshot 2026-11-02). Chủ: Alex (atus@8syncdev.com).
 Bản gốc trong repo org: `assets/skills/aup-audit/8sync-anthropic-rules.md` (github.com/8-Sync-Dev/8sync). `8sync` cài nó vào `~/.omp/skills/aup-audit/` và `~/.claude/skills/aup-audit/`; Claude Code đọc nó ở mọi phiên. Snapshot văn bản gốc của Anthropic cập nhật tự động hàng tuần: `docs/legal/anthropic/`.
 
 ---
@@ -12,10 +12,10 @@ Bản gốc trong repo org: `assets/skills/aup-audit/8sync-anthropic-rules.md` (
 | Bạn truy cập Claude qua | Chịu điều khoản |
 |---|---|
 | **API key / Console** (backend 8 Sync, tool bên thứ ba) | Commercial Terms of Service |
-| **Claude.ai / Claude Pro-Max / Claude Code login** | Consumer Terms (cá nhân) hoặc Team/Enterprise terms |
+| **Claude.ai / Claude Pro / Max / Ultra / Claude Code login** | Consumer Terms (cá nhân) hoặc Team/Enterprise terms |
 | **Mọi cách dùng, không trừ ai** | Usage Policy (AUP) — áp cho tất cả |
 
-Quy tắc vàng rút ra từ các vụ OMP/ForgeCode: **token subscription (Pro/Max) chỉ dùng trong Claude Code & Claude.ai chính chủ. Tool bên thứ ba → bắt buộc dùng API key qua Console.** Proxy/giả client = vi phạm AUP "Do Not Abuse Our Platform".
+Quy tắc vàng rút ra từ các vụ OMP/ForgeCode: **token subscription (Pro/Max/Ultra) chỉ dùng trong Claude Code & Claude.ai chính chủ. Tool bên thứ ba → bắt buộc dùng API key qua Console.** Proxy/giả client = vi phạm AUP "Do Not Abuse Our Platform".
 
 ---
 

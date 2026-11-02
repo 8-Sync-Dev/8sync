@@ -170,7 +170,7 @@ Dữ liệu nằm ở `~/.local/state/8sync/hq/` (SQLite, quyền 0600), chỉ t
 
 ## 7. Luật dùng Claude (tóm tắt — `/rules` để có điều khoản chính xác)
 
-- Subscription (Pro/Max/Team) chỉ dùng **trong Claude Code / claude.ai chính chủ**, cho mức dùng cá nhân thông thường. Tool hay bot khác thì dùng **Console API key**.
+- Subscription (Pro/Max/Ultra/Team) chỉ dùng **trong Claude Code / claude.ai chính chủ**, cho mức dùng cá nhân thông thường. Tool hay bot khác thì dùng **Console API key**.
 - Không proxy, không giả client, không chia sẻ token, không decompile Claude Code.
 - Nhiều account của chính mình (công việc / cá nhân) thì được: mỗi account một `CLAUDE_CONFIG_DIR`. Xoay account khi hết hạn mức thì **không**.
 - Không dán secret vào chat. Lỡ dán thì **rotate ngay**.
