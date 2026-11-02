@@ -7,6 +7,7 @@
 // the omp host stops: the room keeps running); the shell lives 30 min without a viewer, then exits.
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { isOmpRoomId } from "../labels";
+import { isOmpModel, isOmpSessionName } from "../omp-workspace";
 import { binFor, childEnv } from "./child-env";
 
 export const TERM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -84,6 +85,19 @@ function start(key: string, args: string[], cwd: string | null, idleMs: number, 
 export function openTerm(id: string, cwd: string | null, size: { cols: number; rows: number }, spawn: Spawn = nodeSpawn as unknown as Spawn): Term {
   if (!isTermId(id)) throw new Error("bad session id");
   return start(id, termArgs(id, size.cols, size.rows), cwd, IDLE_CLOSE_MS, spawn);
+}
+
+/** `8sync ccc term --omp-new <name> [--model m]`, run in the session's folder (contract C1). */
+export const ompNewArgs = (name: string, model: string | null, cols: number, rows: number) => ["ccc", "term", "--omp-new", name, ...(model ? ["--model", model] : []), "--cols", String(cols), "--rows", String(rows)];
+
+/**
+ * A session the workspace just created (POST /api/omp/sessions): its bridge, keyed by the room id the
+ * CLI gives it, runs `--omp-new` in `cwd`, which creates the session like `8sync . <name>` and joins its
+ * omp host — from then on it is an ordinary omp room (openTerm / takeoverTerm). `name`/`model` are checked.
+ */
+export function openOmpNew(id: string, spec: { cwd: string; name: string; model: string | null }, size: { cols: number; rows: number }, spawn: Spawn = nodeSpawn as unknown as Spawn): Term {
+  if (!isOmpRoomId(id) || !isOmpSessionName(spec.name) || (spec.model !== null && !isOmpModel(spec.model))) throw new Error("bad new omp session");
+  return start(id, ompNewArgs(spec.name, spec.model, size.cols, size.rows), spec.cwd, IDLE_CLOSE_MS, spawn);
 }
 
 /**

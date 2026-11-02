@@ -1,0 +1,137 @@
+// The workspace tab (components/hq/workspace-view.tsx): pure rules shared by the page and the server —
+// omp session names and models as `8sync ccc term --omp-new` accepts them, the omp session rows of a
+// folder (`8sync . ls --json`), and the panes the owner keeps open. Tested in tests/omp-workspace.test.ts.
+
+/** A new omp session's name: stricter than the CLI's (lowercase, ≤48) and never one of `8sync .`'s verbs. */
+export const OMP_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,47}$/;
+const RESERVED = /^(ls|list|rm|mv|merge|new)$/;
+export const isOmpSessionName = (s: unknown): s is string => typeof s === "string" && OMP_NAME_RE.test(s) && !RESERVED.test(s);
+
+/** omp `--model` (`provider/model[:thinking]`), as the CLI checks it (crates/cli/src/verbs/ccc/term.rs valid_model). */
+const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9/._:@-]{0,127}$/;
+export const isOmpModel = (s: unknown): s is string => typeof s === "string" && MODEL_RE.test(s);
+
+/** One row of `8sync . ls --json` (the fields the workspace reads; the rest passes through). */
+export type OmpSessionRow = {
+  name: string;
+  engine?: string;
+  inbox_id?: string | null;
+  status?: string | null;
+  title?: string | null;
+  doing?: string | null;
+  last_active?: number | null;
+  last_used?: boolean | null;
+  branch?: string | null;
+  tokens?: number | null;
+  model?: string | null;
+  [k: string]: unknown;
+};
+
+/** The rows of `8sync . ls --json` output that are omp sessions with an id; anything else is dropped. */
+export function parseOmpRows(stdout: string): OmpSessionRow[] {
+  let v: unknown;
+  try {
+    v = JSON.parse(stdout);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(v)) return [];
+  return v.filter((r): r is OmpSessionRow => !!r && typeof r === "object" && typeof r.name === "string" && (r.engine === undefined || r.engine === "omp"));
+}
+
+/** "vừa xong", "5 phút", "3 giờ", "2 ngày" since unix seconds `t`. */
+export function agoVi(t: number | null | undefined, nowMs = Date.now()): string {
+  if (!t) return "";
+  const s = Math.max(0, Math.floor(nowMs / 1000 - t));
+  if (s < 60) return "vừa xong";
+  if (s < 3600) return `${Math.floor(s / 60)} phút`;
+  if (s < 86_400) return `${Math.floor(s / 3600)} giờ`;
+  return `${Math.floor(s / 86_400)} ngày`;
+}
+
+/** 191200 -> "191k", 1_250_000 -> "1.3M". */
+export function tokensShort(n: number | null | undefined): string {
+  if (!n || n < 0) return "";
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+}
+
+// ── panes ────────────────────────────────────────────────────────────────────
+
+/** An open session window: its terminal id (the omp room id), what it shows, and where it lives. */
+export type Pane = { id: string; name: string; cwd: string };
+export const MAX_PANES = 4;
+export type WorkspaceState = { panes: Pane[]; active: string | null; max: string | null };
+export const EMPTY_WORKSPACE: WorkspaceState = { panes: [], active: null, max: null };
+
+const OMP_ID = /^omp-[0-9a-f]{16}$/;
+
+/** A stored workspace, kept only as far as it is well formed (localStorage is user-editable). */
+export function readWorkspace(raw: string | null): WorkspaceState {
+  let v: unknown;
+  try {
+    v = raw ? JSON.parse(raw) : null;
+  } catch {
+    return EMPTY_WORKSPACE;
+  }
+  if (!v || typeof v !== "object") return EMPTY_WORKSPACE;
+  const o = v as Record<string, unknown>;
+  const seen = new Set<string>();
+  const panes = (Array.isArray(o.panes) ? o.panes : [])
+    .filter((p): p is Pane => !!p && typeof p === "object" && OMP_ID.test((p as Pane).id) && typeof (p as Pane).name === "string" && typeof (p as Pane).cwd === "string")
+    .filter((p) => !seen.has(p.id) && seen.add(p.id))
+    .slice(0, MAX_PANES)
+    .map((p) => ({ id: p.id, name: p.name, cwd: p.cwd }));
+  const pick = (x: unknown) => (typeof x === "string" && panes.some((p) => p.id === x) ? x : null);
+  return { panes, active: pick(o.active) ?? panes[0]?.id ?? null, max: pick(o.max) };
+}
+
+/**
+ * Opens `p`: already open → it becomes the active pane; else it is added, and when MAX_PANES are open
+ * the oldest one that is not active makes room. A maximized pane gives way to the one just opened.
+ */
+export function openPane(s: WorkspaceState, p: Pane): WorkspaceState {
+  if (s.panes.some((x) => x.id === p.id)) return { ...s, active: p.id, max: s.max && s.max !== p.id ? p.id : s.max };
+  let panes = [...s.panes, p];
+  if (panes.length > MAX_PANES) {
+    const drop = panes.find((x) => x.id !== s.active) ?? panes[0];
+    panes = panes.filter((x) => x !== drop);
+  }
+  return { panes, active: p.id, max: s.max ? p.id : null };
+}
+
+/** Closes pane `id`; the active one moves to its neighbour. */
+export function closePane(s: WorkspaceState, id: string): WorkspaceState {
+  const i = s.panes.findIndex((x) => x.id === id);
+  if (i < 0) return s;
+  const panes = s.panes.filter((x) => x.id !== id);
+  const active = s.active === id ? (panes[Math.min(i, panes.length - 1)]?.id ?? null) : s.active;
+  return { panes, active, max: s.max === id ? null : s.max };
+}
+
+/** How `n` panes sit: 1 → one, 2 → side by side, 3 → one left + two stacked right, 4 → 2×2. Rows of pane indexes. */
+export function paneGrid(n: number): number[][] {
+  if (n <= 0) return [];
+  if (n === 1) return [[0]];
+  if (n === 2) return [[0, 1]];
+  if (n === 3) return [[0], [1, 2]];
+  return [
+    [0, 1],
+    [2, 3],
+  ];
+}
+
+// ── folders ──────────────────────────────────────────────────────────────────
+
+/** The last opened folders, newest first, without duplicates, at most `max`. */
+export function pushRecent(list: string[], p: string, max = 8): string[] {
+  return [p, ...list.filter((x) => x !== p)].slice(0, max);
+}
+
+/** A folder's display name: its last path segment (a drive root stays `C:\`). */
+export function folderName(p: string): string {
+  const t = p.replace(/[\\/]+$/, "");
+  const seg = t.split(/[\\/]/).pop() ?? "";
+  return seg && !/^[a-z]:$/i.test(seg) ? seg : p;
+}

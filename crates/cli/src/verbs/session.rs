@@ -97,7 +97,7 @@ fn index_path(env: &Env, root: &Path) -> PathBuf {
 }
 
 /// Names are used as directory + git branch slugs — keep them safe.
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
@@ -296,29 +296,32 @@ fn resume_default(root: &Path) -> Result<()> {
 
 /// `8sync . <name> [--model <id>]` — create-or-resume a named session.
 pub fn resume_named(env: &Env, root: &Path, name: &str, model: Option<&str>) -> Result<()> {
+    let (reg, created) = ensure_named(env, root, name)?;
+    if created {
+        ui::info(&format!("no session '{name}' yet — created it"));
+    } else {
+        ui::ok(&format!("→ resume session '{name}'"));
+    }
+    let s = reg.get(name).context("session vanished from the registry")?;
+    // A registered session without a launch yet has no conversation: open a fresh one
+    // instead of continuing nothing.
+    let fresh = crate::verbs::session_view::omp_transcript(&s.session_dir).is_none();
+    launch(session_cwd(s, root), &s.session_dir, fresh, (root, name), model)
+}
+
+/// The registry side of `8sync . <name>` without the launch (also HQ's `ccc term --omp-new`): the
+/// session is created when new, then marked active + last used. `true` = it was just created.
+pub(crate) fn ensure_named(env: &Env, root: &Path, name: &str) -> Result<(Registry, bool)> {
     if !valid_name(name) {
         bail!("invalid session name '{name}' (use letters, digits, '-', '_', '.'; ≤64 chars)");
     }
     let mut reg = load(env, root);
-    if reg.get(name).is_some() {
-        let s = reg.get(name).unwrap();
-        let dir = s.session_dir.clone();
-        let cwd = session_cwd(s, root).to_path_buf();
-        ui::ok(&format!("→ resume session '{name}'"));
-        touch(env, root, &mut reg, name)?;
-        // A registered session without a launch yet has no conversation: open a fresh one
-        // instead of continuing nothing.
-        let fresh = crate::verbs::session_view::omp_transcript(&dir).is_none();
-        launch(&cwd, &dir, fresh, (root, name), model)
-    } else {
-        ui::info(&format!("no session '{name}' yet — creating it"));
+    let created = reg.get(name).is_none();
+    if created {
         create(env, root, &mut reg, name, false)?;
-        let s = reg.get(name).unwrap();
-        let dir = s.session_dir.clone();
-        let cwd = session_cwd(s, root).to_path_buf();
-        touch(env, root, &mut reg, name)?;
-        launch(&cwd, &dir, true, (root, name), model)
     }
+    touch(env, root, &mut reg, name)?;
+    Ok((reg, created))
 }
 
 /// `8sync . new <name>` — create a named session (refuses an existing name).

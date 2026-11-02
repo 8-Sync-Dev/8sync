@@ -5,6 +5,17 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- **Renderer nặng (`8sync ccc eco`):** báo mọi renderer Chromium/Electron (`--type=renderer`) giữ ≥ 4 GB RAM (`heavy` trong `eco --json` / MCP `machine`, một dòng trong `8sync eco`, lệnh riêng `8sync eco heavy [--json]`), kèm app, pid, tiến trình chính (`rootPid`) và `restartable`. `8sync eco restart <rootPid> [--json]` đóng rồi mở lại app đó, chỉ khi lúc chạy `rootPid` vẫn là tiến trình chính của một renderer nặng thuộc Claude Desktop, ChatGPT, Slack, Discord hoặc Notion (trình duyệt, editor, terminal, Orca chỉ báo). Windows: `CloseMainWindow` cho các tiến trình cùng đường dẫn exe, chờ ≤ 10 s, rồi chỉ force đúng exe đó; mở lại qua Explorer (gói Store qua `shell:AppsFolder\<family>!<AppId>`). macOS/Linux: SIGTERM, chờ, SIGKILL phần còn lại của cây; mở lại tách khỏi 8sync (`open -a` cho `.app`). Eco không bao giờ tự khởi động lại.
+- **HQ tab Máy + chip header:** cảnh báo từng renderer nặng (app, GB, pid); app được phép có nút "Khởi động lại" kèm hộp xác nhận, app khác gợi ý đóng bớt tab/cửa sổ. `GET /api/machine` thêm `heavy` (đọc tối đa 30 s/lần); `POST /api/machine/restart {rootPid}` chỉ chạy phía local (403 qua link `--public`, như `/api/shell`).
+- **HQ tab "Không gian" (mặc định, đứng đầu):** cây thư mục cả máy (đánh dấu repo git, ô lọc hoặc dán đường dẫn, nhớ thư mục gần đây) → các phiên omp của thư mục (`8sync . ls`: trạng thái, việc đang làm, lần cuối, tokens) → mở phiên có sẵn hoặc tạo "Phiên mới" (tên + model tuỳ chọn); tối đa 4 cửa sổ terminal cạnh nhau (1/2/3/4, kéo đổi cỡ, phóng to, lưu trong trình duyệt), điện thoại thành tab. "Chuyển sang HQ" (takeover) chỉ chạy khi bấm. Route mới: `GET /api/tree`, `GET|POST /api/omp/sessions`, `GET /api/commands` (xem `docs/hq-ui-contract.md`).
+- **`8sync ccc term --omp-new <name> [--model <m>]`:** tạo hoặc mở lại phiên omp tên `<name>` ở thư mục hiện tại y như `8sync . <name>`, nhưng trong cầu PTY của HQ (cùng room id nên `ccc term omp-<id>`/`--takeover` về đúng phiên). `--host` nhận thêm `--model`.
+- **Composer HQ gợi ý lệnh `/`:** gõ `/` đầu dòng liệt kê lệnh omp (`~/.omp/agent/commands`) và Claude (`~/.claude/commands`); ↑/↓, Enter/Tab, Esc.
+
+### Changed
+- **HQ UI giao diện mới theo dashboard 8 Sync (content-ai "Sử dụng"):** mặc định theme tối, nền zinc (#09090b / #111114 / #18181b, viền #27272a), một màu nhấn duy nhất là lime brand (#85d840 tối, #387500 sáng), trạng thái success/danger/warning/info kiểu GitHub (sáng lấy bậc đậm hơn để đạt WCAG AA); font Inter + JetBrains Mono (cả hai có subset tiếng Việt); terminal xterm cùng bảng màu. Utility dùng chung theo anatomy card của dashboard: `neon-panel`, `neon-elevated`, `neon-muted`, `neon-heading`, `neon-label`, `neon-value`, `neon-bar`/`neon-bar-fill`, `neon-pill`, `neon-code`, `neon-empty` (tone qua `data-tone`), màu `primary-wash`, `success|danger|warning|info`, `bg-overlay`.
+- **HQ UI nhẹ hơn:** các tab không phải màn hình đầu (Tổng quan, Văn phòng, Chat, Preview, Báo cáo, Hạn mức, Máy, Tri thức, Loops, Sessions, Hoạt động) tải chunk riêng bằng `next/dynamic` khi mở lần đầu.
+
 ## [0.115.0] — 2026-11-01
 
 ## [0.114.0] — 2026-11-01

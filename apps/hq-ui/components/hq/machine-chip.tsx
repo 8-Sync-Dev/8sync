@@ -1,14 +1,15 @@
 "use client";
 
+import { TriangleAlertIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Awake, AwakeHold } from "@/lib/server/awake";
 import type { Sample } from "@/lib/server/history";
-import type { Machine, Spec } from "@/lib/server/machine";
+import type { Heavy, Machine, Spec } from "@/lib/server/machine";
 import type { Power } from "@/lib/server/power";
 import { cn } from "@/lib/utils";
 
-/** GET /api/machine: the load snapshot plus power (null before the sampler runs), awake (null on an older 8sync), what the machine is, and the last 30 min of RAM / CPU / watts (absent before v0.110.33). */
-export type MachineView = Machine & { power: Power | null; awake: Awake | null; spec: Spec | null; history?: Sample[] };
+/** GET /api/machine: the load snapshot plus power (null before the sampler runs), awake (null on an older 8sync), what the machine is, the last 30 min of RAM / CPU / watts (absent before v0.110.33), and renderers holding ≥ 4 GB (null on an older 8sync, absent on an older HQ). */
+export type MachineView = Machine & { power: Power | null; awake: Awake | null; spec: Spec | null; history?: Sample[]; heavy?: Heavy[] | null };
 
 export const gb = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
 export const pctOf = (used: number, total: number) => (total > 0 ? Math.round((100 * used) / total) : 0);
@@ -142,6 +143,9 @@ export function MachineChip({ m, onOpen, compact }: { m: MachineView | null; onO
   const { ram, gpu, worst } = worstLoad(m);
   const l = level(worst);
   const w = m.power?.live ? Math.round(m.power.live.w) : null;
+  // The largest first (eco sorts them): one is enough for the header; the tab lists them all.
+  const top = m.heavy?.[0];
+  const heavyLabel = top ? `, ${top.app} giữ ${gb(top.mb)} RAM trong một renderer` : "";
   return (
     <button
       type="button"
@@ -151,11 +155,22 @@ export function MachineChip({ m, onOpen, compact }: { m: MachineView | null; onO
         "flex min-h-11 items-center rounded-md px-1.5 text-xs whitespace-nowrap text-muted-foreground outline-none transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:bg-muted/70 sm:min-h-8 motion-reduce:transition-none",
         compact ? "min-w-11 flex-col justify-center gap-0 leading-tight" : "gap-1.5",
       )}
-      aria-label={`Máy: RAM ${ram}%, CPU ${m.cpu.pct ?? "…"}%${gpu != null ? `, GPU ${gpu}%` : ""}${w != null ? `, ${w} W` : ""}${m.power?.over ? ", vượt ngân sách điện" : ""}. Mở tab Máy`}
+      aria-label={`Máy: RAM ${ram}%, CPU ${m.cpu.pct ?? "…"}%${gpu != null ? `, GPU ${gpu}%` : ""}${w != null ? `, ${w} W` : ""}${m.power?.over ? ", vượt ngân sách điện" : ""}${heavyLabel}. Mở tab Máy`}
     >
       {!compact && <span>Máy</span>}
-      <span className={cn("text-sm font-medium tabular", text[l])}>{worst}%</span>
+      <span className={cn("flex items-center gap-0.5 text-sm font-medium tabular", text[l])}>
+        {top && compact && <TriangleAlertIcon aria-hidden className="size-3 text-st-needs" />}
+        {worst}%
+      </span>
       {w != null && <span className={cn("tabular", compact && "text-[11px]", m.power?.over ? "text-destructive" : "text-foreground")}>{w} W</span>}
+      {top && !compact && (
+        <span className="flex items-center gap-1 text-st-needs">
+          <TriangleAlertIcon aria-hidden className="size-3.5" />
+          <span className="tabular">
+            {top.app} {gb(top.mb)}
+          </span>
+        </span>
+      )}
     </button>
   );
 }

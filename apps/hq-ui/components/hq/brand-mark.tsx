@@ -1,6 +1,6 @@
 /**
  * The 8 Sync mark ("The Cut", brand kit 2026-09: outputs/brand-2026-09/logos/mark.svg), cropped to the
- * glyph so it fills its box. `currentColor`: lime on dark, leaf on light via `text-primary`.
+ * glyph so it fills its box. `currentColor`: lime on dark, leaf on light via `text-brand-ink dark:text-brand`.
  * Never recolour it with a gradient, outline it or rotate it (brand board do/don't).
  */
 export function BrandMark({ className }: { className?: string }) {

@@ -4,23 +4,31 @@ import { ompRoom } from "@/lib/server/floor";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { projectOf } from "@/lib/server/office";
 import { mergedSessions } from "@/lib/server/proc";
-import { clampSize, closeTerm, input, isTermId, openTerm, takeoverTerm, watch, type Term } from "@/lib/server/term";
+import { pendingNew } from "@/lib/server/omp-sessions";
+import { clampSize, closeTerm, input, isTermId, openOmpNew, openTerm, takeoverTerm, watch, type Term } from "@/lib/server/term";
 import { markEnded } from "@/lib/server/room-end";
 import { termResponse } from "@/lib/server/term-http";
 import { FILES_PER_TASK, isUploadId, placeUploads } from "@/lib/server/uploads";
 
 export const runtime = "nodejs";
 
-type RoomRef = { cwd: string | null; name: string | null; label: string; project_id: number | null; started_at: number | null; interactive?: boolean };
+/** `fresh`: an omp session the workspace just created (POST /api/omp/sessions) that `8sync ls` does not list yet. */
+type RoomRef = { cwd: string | null; name: string | null; label: string; project_id: number | null; started_at: number | null; interactive?: boolean; fresh?: { name: string; model: string | null } };
 
 /**
  * The room's session view, or null when there is no such room: a live background Claude Code room (tmux
  * rooms keep their own drawer), or an omp room `8sync ls` lists (resolved server side, never a path
- * from the client; idle is fine, its terminal starts it). An interactive session comes back flagged:
- * the caller refuses it (lib/interactive.ts termGate).
+ * from the client; idle is fine, its terminal starts it), or one just created in the workspace
+ * (folder and name checked by its POST). An interactive session comes back flagged: the caller
+ * refuses it (lib/interactive.ts termGate).
  */
 async function room(db: Parameters<typeof mergedSessions>[0], id: string): Promise<RoomRef | null> {
-  if (isOmpRoomId(id)) { const o = await ompRoom(db, id); return o ? { cwd: o.cwd, name: null, label: id, project_id: null, started_at: null } : null; }
+  if (isOmpRoomId(id)) {
+    const o = await ompRoom(db, id);
+    if (o) return { cwd: o.cwd, name: null, label: id, project_id: null, started_at: null };
+    const n = pendingNew(id);
+    return n && { cwd: n.cwd, name: null, label: id, project_id: null, started_at: null, fresh: { name: n.name, model: n.model } };
+  }
   const s = (await mergedSessions(db)).find((x) => x.session_id === id && !x.tmux && x.status !== "ended") ?? null;
   return s && { cwd: s.cwd, name: s.name, label: s.label, project_id: s.project_id, started_at: s.started_at, interactive: s.interactive };
 }
@@ -51,7 +59,7 @@ export async function GET(req: Request, ctx: RouteContext<"/api/sessions/[name]/
   const url = new URL(req.url);
   const size = clampSize(Number(url.searchParams.get("cols")), Number(url.searchParams.get("rows")));
   try {
-    const term = openTerm(name, s.cwd, size);
+    const term = s.fresh && s.cwd ? openOmpNew(name, { cwd: s.cwd, ...s.fresh }, size) : openTerm(name, s.cwd, size);
     forgetIfDead(o.db, s, name, term);
     return termResponse(req, name, term);
   } catch (e) {

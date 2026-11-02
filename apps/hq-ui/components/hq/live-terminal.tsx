@@ -59,9 +59,32 @@ const TEXT = {
 };
 
 const FONT_SIZE = 13;
+/** The HQ page colours (zinc #09090b, brand-lime cursor, GitHub-dark ANSI); the frame's background below is the same colour. */
 const THEMES = {
-  dark: { background: "#0b0c0e", foreground: "#e6e6e6", cursor: "#e6e6e6" },
-  light: { background: "#fbfbfa", foreground: "#1f1f1f", cursor: "#1f1f1f", selectionBackground: "#00000022" },
+  dark: {
+    background: "#09090b",
+    foreground: "#e6edf3",
+    cursor: "#85d840",
+    cursorAccent: "#09090b",
+    selectionBackground: "#85d84040",
+    black: "#27272a",
+    red: "#f85149",
+    green: "#3fb950",
+    yellow: "#d29922",
+    blue: "#58a6ff",
+    magenta: "#bc8cff",
+    cyan: "#39c5cf",
+    white: "#b1bac4",
+    brightBlack: "#6e7681",
+    brightRed: "#ff7b72",
+    brightGreen: "#85d840",
+    brightYellow: "#e3b341",
+    brightBlue: "#79c0ff",
+    brightMagenta: "#d2a8ff",
+    brightCyan: "#56d4dd",
+    brightWhite: "#f0f6fc",
+  },
+  light: { background: "#ffffff", foreground: "#1a1d2e", cursor: "#387500", cursorAccent: "#ffffff", selectionBackground: "#38750026" },
 };
 
 /** `elsewhere`: an omp room whose session is open in another terminal on the PC (HQ offers the takeover). */
@@ -120,9 +143,10 @@ const withQuery = (url: string, q: string) => `${url}${url.includes("?") ? "&" :
  * A real terminal in the page: a background room (`claude attach`, or an omp room's host;
  * `kind="room"`) or the owner's shell (`kind="shell"`), both through `8sync ccc term`. Type, pick
  * with the arrow keys and Enter, scroll back; a key bar covers keys a phone lacks. Closing it only
- * detaches.
+ * detaches. `compact` (a workspace pane): on a wide screen the owner types into xterm itself, so the
+ * phone input line is hidden there.
  */
-export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: string; kind?: "room" | "shell"; token: string; onEnded?: () => void }) {
+export function LiveTerminal({ url, kind = "room", token, onEnded, compact = false }: { url: string; kind?: "room" | "shell"; token: string; onEnded?: () => void; compact?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const keysRef = useRef<((data: string) => void) | null>(null);
   const appKeys = useRef<() => boolean>(() => false);
@@ -412,10 +436,14 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
           </Button>
         </div>
       )}
-      <div ref={host} className="min-h-[200px] flex-1 overflow-hidden rounded-lg border bg-[#fbfbfa] p-2 dark:bg-[#0b0c0e]" aria-label={text.label} />
+      <div
+        ref={host}
+        className="min-h-[200px] flex-1 overflow-hidden rounded-lg border bg-white p-2 transition-[border-color,box-shadow] duration-150 focus-within:border-primary/60 focus-within:shadow-glow motion-reduce:transition-none dark:bg-[#09090b]"
+        aria-label={text.label}
+      />
       {/* A phone keyboard (IME, Vietnamese, autocorrect) types reliably into a real textarea, not into xterm's hidden one. */}
       <form
-        className="rounded-xl border bg-card transition-shadow duration-150 focus-within:ring-2 focus-within:ring-ring/40 motion-reduce:transition-none"
+        className={cn("rounded-lg border bg-card transition-[border-color,box-shadow] duration-150 focus-within:border-primary/60 focus-within:shadow-glow motion-reduce:transition-none", compact && "md:hidden")}
         onSubmit={(e) => {
           e.preventDefault();
           keysRef.current?.(lineBytes(line, view.current?.modes.bracketedPasteMode === true));
