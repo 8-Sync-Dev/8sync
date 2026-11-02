@@ -424,7 +424,7 @@ pub fn harness_claude_code(env: &env_detect::Env, args: &[String]) -> Result<()>
             "refusing base URL host {:?}: not on the allowlist (api.anthropic.com, Amazon Bedrock, Google Vertex, Microsoft Foundry; https required, plain http only for localhost). \
              Routing Claude through a third-party gateway/proxy conflicts with Anthropic's Usage Policy (\"Do Not Abuse Our Platform\", https://www.anthropic.com/legal/aup) \
              and would send your code and token to an undisclosed third party. localhost is allowed for a gateway you run yourself (otherwise set EIGHTSYNC_SELF_HOSTED_GATEWAY=<host>, https, host must equal the URL host exactly). \
-             Local tools or proxies that re-route a Claude subscription (Pro/Max/OAuth) into other clients are still forbidden.",
+             Local tools or proxies that re-route a Claude subscription (Pro/Max/Ultra/OAuth) into other clients are still forbidden.",
             base_url_host(base_url).unwrap_or_default()
         );
     }

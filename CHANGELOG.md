@@ -4,6 +4,8 @@ Mọi thay đổi đáng kể của `8sync` ghi vào đây. Format theo [Keep a 
 versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nhật mục `Unreleased`.
 
 ## [Unreleased]
+### Fixed
+- **Rules gói Ultra:** legal snapshot 2026-11-02 (91640ef) thêm gói **Ultra** vào Consumer Terms, OAuth và câu "ordinary, individual usage". Block rules của `8sync ccc kit`, `aup-audit` (`8sync-anthropic-rules.md`, `RULES.md`), lỗi gateway của `harness claude-code`, `docs/hq.md` (trích nguyên văn mới) và `docs/huong-dan.md` giờ ghi Pro/Max/Ultra — token gói Ultra cũng chỉ dùng trong Claude Code/claude.ai chính chủ.
 
 ## [0.115.0] — 2026-11-01
 

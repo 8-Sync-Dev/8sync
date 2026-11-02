@@ -6,7 +6,7 @@ Luật gốc của org: `8sync-anthropic-rules.md` (cùng thư mục) — đọc
 | Truy cập qua | Điều khoản | Dấu hiệu sai |
 |---|---|---|
 | API key Console (backend, tool bên thứ ba) | Commercial Terms | — |
-| Claude.ai / Pro-Max / đăng nhập Claude Code | Consumer hoặc Team/Enterprise | token `sk-ant-oat…`, OAuth client id của Claude Code, header beta `oauth-…`, gateway/proxy chuyển token gói sang tool khác, giả client Claude Code |
+| Claude.ai / Pro / Max / Ultra / đăng nhập Claude Code | Consumer hoặc Team/Enterprise | token `sk-ant-oat…`, OAuth client id của Claude Code, header beta `oauth-…`, gateway/proxy chuyển token gói sang tool khác, giả client Claude Code |
 
 Quy tắc: token gói chỉ chạy trong Claude Code và claude.ai chính chủ; tool khác (omp, Forge, Feynman, app 8 Sync) dùng API key Console. Proxy/giả client = AUP "Do Not Abuse Our Platform". → **BLOCK**
 
