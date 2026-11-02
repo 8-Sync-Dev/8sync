@@ -39,24 +39,6 @@ export function parseOmpRows(stdout: string): OmpSessionRow[] {
   return v.filter((r): r is OmpSessionRow => !!r && typeof r === "object" && typeof r.name === "string" && (r.engine === undefined || r.engine === "omp"));
 }
 
-/** "vừa xong", "5 phút", "3 giờ", "2 ngày" since unix seconds `t`. */
-export function agoVi(t: number | null | undefined, nowMs = Date.now()): string {
-  if (!t) return "";
-  const s = Math.max(0, Math.floor(nowMs / 1000 - t));
-  if (s < 60) return "vừa xong";
-  if (s < 3600) return `${Math.floor(s / 60)} phút`;
-  if (s < 86_400) return `${Math.floor(s / 3600)} giờ`;
-  return `${Math.floor(s / 86_400)} ngày`;
-}
-
-/** 191200 -> "191k", 1_250_000 -> "1.3M". */
-export function tokensShort(n: number | null | undefined): string {
-  if (!n || n < 0) return "";
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
-  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-}
-
 // ── panes ────────────────────────────────────────────────────────────────────
 
 /** An open session window: its terminal id (the omp room id), what it shows, and where it lives. */
@@ -101,6 +83,17 @@ export function openPane(s: WorkspaceState, p: Pane): WorkspaceState {
   return { panes, active: p.id, max: s.max ? p.id : null };
 }
 
+/**
+ * A plain click in the sidebar (Claude Code Desktop): `p` takes the active pane's place, the other
+ * windows stay; already open → it becomes active; no pane yet → the only one.
+ */
+export function replacePane(s: WorkspaceState, p: Pane): WorkspaceState {
+  if (s.panes.some((x) => x.id === p.id)) return openPane(s, p);
+  if (s.panes.length === 0) return { panes: [p], active: p.id, max: null };
+  const at = Math.max(0, s.panes.findIndex((x) => x.id === s.active));
+  return { panes: s.panes.map((x, i) => (i === at ? p : x)), active: p.id, max: s.max ? p.id : null };
+}
+
 /** Closes pane `id`; the active one moves to its neighbour. */
 export function closePane(s: WorkspaceState, id: string): WorkspaceState {
   const i = s.panes.findIndex((x) => x.id === id);
@@ -135,14 +128,6 @@ export function folderName(p: string): string {
   const seg = t.split(/[\\/]/).pop() ?? "";
   return seg && !/^[a-z]:$/i.test(seg) ? seg : p;
 }
-
-/** What an omp row's status reads as, in words (never colour alone). */
-export const OMP_STATUS_WORD: Record<"running" | "needs_input" | "idle" | "ended", string> = {
-  running: "Đang làm",
-  needs_input: "Chờ anh",
-  idle: "Rảnh",
-  ended: "Đã dừng",
-};
 
 // ── project picker ───────────────────────────────────────────────────────────
 

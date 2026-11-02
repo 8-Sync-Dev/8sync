@@ -17,7 +17,10 @@ import { shortName, StatusDot } from "./bits";
 import { FirstRun } from "./first-run";
 import type { LoopsState } from "./loops-view";
 import { Guide, useGuideFirstRun } from "./guide";
-import { Nav, type Scope } from "./nav";
+import { AddProjectDialog, Nav, type Scope } from "./nav";
+import { useArchive, useSessionTree, useTreePrefs } from "./use-session-tree";
+import { COMPOSER_ID, useWorkspace, workspace } from "./workspace-store";
+import { cycleKey, groupSessions, type TreeSession } from "@/lib/session-tree";
 import { RoomBar, RoomBrief } from "./room-brief";
 import type { PreviewState } from "./preview-view";
 import { FloatShell } from "./float-shell";
@@ -85,6 +88,9 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   // The session whose live terminal is open in the right drawer (hq-* tmux sessions only).
   const [drawer, setDrawer] = useState<string | null>(null);
   const [firstGuide, dismissGuide] = useGuideFirstRun();
+  const ws = useWorkspace();
+  const { prefs } = useTreePrefs();
+  const archive = useArchive();
   const previews = usePoll<{ projects: NonNullable<PreviewState["data"]>["projects"] }>(hq.api, "/api/preview", PREVIEW_POLL_MS, tab === "preview" || tab === "overview");
   const machine = usePoll<MachineData>(hq.api, "/api/machine", MACHINE_POLL_MS, true);
   const openMachine = useCallback(() => setTab("may"), []);
@@ -104,6 +110,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
 
   const [guideOpen, setGuideOpen] = useState(false);
   const [shellOpen, setShellOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   const onScope = useCallback((s: Scope) => {
     setScope(s);
@@ -158,12 +165,35 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     ? `${new Set(officeRooms.map((r) => r.project?.root ?? r.cwd)).size} dự án · ${officeRooms.length} phòng`
     : "";
   const scoped = scope.session ? hq.sessions.data.find((x) => isScoped(x, scope.session)) : undefined;
-  const title = scope.session ? (scoped ? sessionLabel(scoped) : shortName(scope.session)) : project ? project.name : (repo?.name ?? "Tất cả phòng");
-  const subtitle = scope.session
-    ? (view.sessions[0]?.cwd ?? project?.path ?? "")
-    : project
-      ? project.path
-      : (repo?.root ?? officeSummary);
+  // The room Chat phòng is about: its office row (doing, ask) feeds the brief above the timeline.
+  const room = scope.session ? officeRooms.find((r) => matchesSession(r, scope.session) || (scoped != null && (r.name === scoped.name || (scoped.session_id != null && r.session_id === scoped.session_id)))) : undefined;
+  // The session on screen: the active window in Không gian, the room in Chat phòng. It reads as
+  // current in the sidebar and never collects a blue dot.
+  const activeKey = tab === "workspace" ? (ws.composer ? null : ws.ws.active) : tab === "room" ? (room?.key ?? null) : null;
+  const tree = useSessionTree(hq, office, activeKey);
+  // Không gian titles the window on screen (or the composer), like Claude Code Desktop.
+  const pane = tab === "workspace" && !ws.composer ? ws.ws.panes.find((p) => p.id === ws.ws.active) : undefined;
+  const paneSession = pane ? tree.sessions.find((s) => s.ompId === pane.id) : undefined;
+  const title =
+    tab === "workspace"
+      ? pane
+        ? (paneSession?.title ?? pane.name)
+        : "Phiên mới"
+      : scope.session
+        ? scoped
+          ? sessionLabel(scoped)
+          : shortName(scope.session)
+        : project
+          ? project.name
+          : (repo?.name ?? "Tất cả phòng");
+  const subtitle =
+    tab === "workspace"
+      ? (pane?.cwd ?? ws.folder ?? "")
+      : scope.session
+        ? (view.sessions[0]?.cwd ?? project?.path ?? "")
+        : project
+          ? project.path
+          : (repo?.root ?? officeSummary);
   const needsYou = view.sessions.filter((s) => s.status === "needs_input").length;
   const running = view.sessions.filter((s) => s.status !== "ended").length;
   // Plan usage (contract C1): the freshest status-line snapshot, drawn like Orca's meter.
@@ -192,28 +222,12 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     setTarget(s?.name ?? r.name);
     setTab("room");
   };
-  const goHome = () => {
-    onScope({ project: null, session: null });
-    setTab("office");
-  };
-  /** A repo with rooms, from the sidebar: its Tổng quan. */
+  /** A repo, from its sidebar heading: its Tổng quan. */
   const openRepo = (root: string, name: string) => {
     onScope({ project: null, session: null });
     setRepo({ root, name });
     setTab("overview");
   };
-  /**
-   * A folder with no room yet: the office, focused on that folder (owner 2026-10-22: "mở cũng không
-   * được": the office kept every project on screen, so opening looked like nothing happened).
-   */
-  const openFolder = (id: number, p?: { path: string; name: string }) => {
-    onScope({ project: id, session: null });
-    const f = p ?? hq.projects.data.find((x) => x.id === id);
-    if (f) setRepo({ root: f.path, name: f.name });
-    setTab("office");
-  };
-  // The room Chat phòng is about: its office row (doing, ask) feeds the brief above the timeline.
-  const room = scope.session ? officeRooms.find((r) => matchesSession(r, scope.session) || (scoped != null && (r.name === scoped.name || (scoped.session_id != null && r.session_id === scoped.session_id)))) : undefined;
   const roomState = room ? roomNow(room, office.office?.at ?? 0) : null;
   const openTerminal = () => {
     const s = room ? hq.sessions.data.find((x) => x.name === room.name || (room.session_id != null && x.session_id === room.session_id)) : undefined;
@@ -222,30 +236,108 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const liveRooms = hq.sessions.data.filter((s) => s.status !== "ended");
   const roleOf = (name: string) => hq.sessions.data.find((x) => x.name === name || x.session_id === name)?.role ?? null;
 
-  const focusAddProject = () => {
-    setNavOpen(true);
-    // The input lives in the sidebar (or the mobile sheet once it opens).
-    setTimeout(() => {
-      const els = document.querySelectorAll<HTMLInputElement>("#add-project");
-      [...els].find((el) => el.offsetParent !== null)?.focus();
-    }, 60);
-  };
+  const focusAddProject = () => setAddOpen(true);
   const focusStartSession = () => {
     setTab("sessions");
     setTimeout(() => document.getElementById(SESSION_NAME_INPUT)?.focus(), 60);
   };
+  /** "+ Phiên mới" (Ctrl+N / Alt+N) or a group's "+": Không gian's composer, in that folder when given. */
+  const newSession = useCallback((root: string | null) => {
+    if (root) workspace.folder(root);
+    workspace.composer(true);
+    setTab("workspace");
+    setNavOpen(false);
+    setTimeout(() => document.getElementById(COMPOSER_ID)?.focus(), 60);
+  }, []);
+  /** A sidebar session: an omp one opens in Không gian (beside the others on `split`), a Claude Code room in its chat. */
+  const openTreeSession = (s: TreeSession, split: boolean) => {
+    if (s.ompId) {
+      workspace.open(token, { id: s.ompId, name: s.name, cwd: s.cwd ?? s.folder }, split);
+      setTab("workspace");
+      setNavOpen(false);
+      return;
+    }
+    const r = s.room ? officeRooms.find((x) => x.key === s.room) : undefined;
+    if (r) openRoom(r);
+    setNavOpen(false);
+  };
+  const openTreeRef = useRef(openTreeSession);
+  useEffect(() => {
+    openTreeRef.current = openTreeSession;
+  });
+  // The sidebar's order, for Ctrl+Tab / Alt+↓↑.
+  const order = useMemo(() => groupSessions(tree.sessions.filter((s) => !archive.keys.includes(s.key)), prefs.group, prefs.sort).flatMap((g) => g.sessions), [tree.sessions, archive.keys, prefs.group, prefs.sort]);
+  const activeRef = useRef(activeKey);
+  const orderRef = useRef(order);
+  useEffect(() => {
+    activeRef.current = activeKey;
+    orderRef.current = order;
+  }, [activeKey, order]);
+  // Claude Code Desktop's keys. Capture phase: they work inside a terminal too. A browser keeps Ctrl+N
+  // and Ctrl+Tab for itself in a normal tab (they work in an installed app), so Alt+N and Alt+↓/↑ always do.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (e.code === "KeyN" && !e.shiftKey && ((mod && !e.altKey) || (e.altKey && !mod))) {
+        e.preventDefault();
+        e.stopPropagation();
+        newSession(null);
+        return;
+      }
+      const dir = (mod && e.key === "Tab") ? (e.shiftKey ? -1 : 1) : e.altKey && !mod && e.key === "ArrowDown" ? 1 : e.altKey && !mod && e.key === "ArrowUp" ? -1 : 0;
+      if (!dir) return;
+      const list = orderRef.current;
+      const next = cycleKey(
+        list.map((s) => s.key),
+        activeRef.current,
+        dir,
+      );
+      const s = next ? list.find((x) => x.key === next) : undefined;
+      if (!s) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openTreeRef.current(s, false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [newSession]);
+  const nav = (
+    <Nav
+      hq={hq}
+      office={office}
+      tree={tree}
+      tab={tab}
+      active={activeKey}
+      onTab={(t) => {
+        if (t === "overview") setRepo(null);
+        setTab(t);
+        setNavOpen(false);
+      }}
+      onNew={newSession}
+      onOpenSession={openTreeSession}
+      onOpenRoom={openRoom}
+      onOpenRepo={(root, name) => {
+        openRepo(root, name);
+        setNavOpen(false);
+      }}
+      onOpenFolder={(id, p) => {
+        const f = p ?? hq.projects.data.find((x) => x.id === id);
+        if (f) newSession(f.path);
+      }}
+      onAddProject={focusAddProject}
+      onHelp={() => setGuideOpen(true)}
+    />
+  );
 
   return (
     <>
       {/* viewport-fit=cover (layout.tsx): the notch side in landscape stays clear. */}
-      <div className="grid h-dvh grid-cols-1 grid-rows-1 pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] md:grid-cols-[264px_minmax(0,1fr)]">
-        <aside className="hidden min-h-0 border-r border-sidebar-border md:block">
-          <Nav hq={hq} scope={scope} office={office} onHome={goHome} onOpenRoom={openRoom} onOpenFolder={openFolder} onOpenRepo={openRepo} repo={repo?.root ?? null} />
-        </aside>
+      <div className="grid h-dvh grid-cols-1 grid-rows-1 pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] md:grid-cols-[272px_minmax(0,1fr)]">
+        <aside className="hidden min-h-0 border-r border-sidebar-border md:block">{nav}</aside>
         <Sheet open={navOpen} onOpenChange={setNavOpen}>
-          <SheetContent side="left" className="w-72 p-0 md:hidden" showCloseButton={false}>
-            <SheetTitle className="sr-only">Dự án và phòng</SheetTitle>
-            <Nav hq={hq} scope={scope} office={office} onHome={goHome} onOpenRoom={openRoom} onOpenFolder={openFolder} onOpenRepo={openRepo} repo={repo?.root ?? null} />
+          <SheetContent side="left" className="w-[19rem] max-w-[85vw] p-0 md:hidden" showCloseButton={false}>
+            <SheetTitle className="sr-only">Phiên và dự án</SheetTitle>
+            {nav}
           </SheetContent>
         </Sheet>
 
@@ -254,7 +346,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
           <header className="shrink-0 border-b bg-background/90 pt-[env(safe-area-inset-top)]">
             {/* Phones: 44 px targets; px-3 and gap-2 leave the title room at 360 px. */}
             <div className="flex items-center gap-2 px-3 pt-2 sm:gap-3 sm:px-6 sm:pt-3">
-              <Button size="icon-sm" variant="ghost" className="-ml-1 max-sm:size-11 md:hidden" onClick={() => setNavOpen(true)} aria-label="Open projects">
+              <Button size="icon-sm" variant="ghost" className="-ml-1 max-sm:size-11 md:hidden" onClick={() => setNavOpen(true)} aria-label="Mở danh sách phiên">
                 <MenuIcon />
               </Button>
               <div className="min-w-0 flex-1">
@@ -317,7 +409,8 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 </div>
               )}
             </div>
-            <div className="mt-1 flex items-center sm:mt-2">
+            {/* Wide screens: the sidebar lists the views (Claude Code Desktop); phones keep the tab row. */}
+            <div className="mt-1 flex items-center sm:mt-2 md:hidden">
               {/* Phones: 12 tabs scroll (edges fade while more are hidden, snapping to a tab); each is a full 44 px tall target, its underline kept inside the scroller. */}
               <TabsList
                 ref={tabRow}
@@ -369,7 +462,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
 
           <main className="min-h-0 flex-1">
             <TabsContent value="workspace" className="h-full">
-              <WorkspaceView token={token} projects={wsProjects} selected={repo?.root ?? project?.path ?? room?.project?.root ?? null} />
+              <WorkspaceView token={token} projects={wsProjects} sessions={tree.sessions} />
             </TabsContent>
             <TabsContent value="overview" className="h-full">
               <OverviewView
@@ -381,6 +474,8 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 onOpenRoom={openRoom}
                 focus={repo?.root ?? null}
                 onAll={() => setRepo(null)}
+                sessions={tree.sessions}
+                onOpenSession={(s) => openTreeSession(s, false)}
               />
             </TabsContent>
             <TabsContent value="office" className="h-full">
@@ -464,6 +559,14 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
         onOpenChange={(open) => {
           setGuideOpen(open);
           if (!open) dismissGuide();
+        }}
+      />
+      <AddProjectDialog
+        hq={hq}
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onAdded={(_id, p) => {
+          if (p) newSession(p.path);
         }}
       />
       <Toaster position="bottom-right" />

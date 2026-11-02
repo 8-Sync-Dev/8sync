@@ -9,6 +9,7 @@ import { groupByRepo, worktreeOf } from "@/lib/sidebar";
 import { fileName, rootKey, type ProjectPreviews } from "@/lib/preview";
 import { roomModelLabel } from "@/lib/roles";
 import { buildTeamThread, partyKey, type ThreadItem } from "@/lib/team-thread";
+import { TREE_WORD, byState, type TreeSession, type TreeState } from "@/lib/session-tree";
 import { cn } from "@/lib/utils";
 import { AskPanel, askRoomOf, type AskRoom } from "./ask-panel";
 import { EmptyState, ErrorNote, shortName } from "./bits";
@@ -38,6 +39,8 @@ export function OverviewView({
   onOpenRoom,
   focus = null,
   onAll,
+  sessions,
+  onOpenSession,
 }: {
   office: OfficeState;
   previews: PreviewState;
@@ -48,6 +51,9 @@ export function OverviewView({
   /** A repo root picked in the sidebar: only its block (and its asks) show. */
   focus?: string | null;
   onAll?: () => void;
+  /** Every session (lib/session-tree.ts): the board by state. */
+  sessions: TreeSession[];
+  onOpenSession: (s: TreeSession) => void;
 }) {
   const rooms = useMemo(() => office.office?.rooms ?? [], [office.office]);
   const now = office.office?.at ?? 0;
@@ -70,6 +76,7 @@ export function OverviewView({
   const groups = useMemo(() => (focus ? all.filter((g) => rootKey(g.project.root) === rootKey(focus)) : all), [all, focus]);
   // Words only: session start/end and "needs you" pings are status, the roster already shows them.
   const thread = useMemo(() => buildTeamThread(messages).filter((t) => t.text.trim() && CHAT_KINDS.has(t.kind)), [messages]);
+  const board = useMemo(() => (focus ? sessions.filter((s) => s.root != null && rootKey(s.root) === rootKey(focus)) : sessions), [sessions, focus]);
 
   if (office.error && !office.office) {
     return (
@@ -82,6 +89,7 @@ export function OverviewView({
   return (
     <div className="h-full overflow-y-auto">
       <div className="space-y-6 px-4 py-5 sm:px-6">
+        {board.length > 0 && now > 0 && <StateBoard sessions={board} now={now} onOpen={onOpenSession} />}
         {!office.office ? (
           <OverviewSkeleton />
         ) : groups.length === 0 ? (
@@ -150,6 +158,58 @@ function OverviewSkeleton() {
         </div>
       ))}
     </div>
+  );
+}
+
+const BOARD: { state: TreeState; ink: string }[] = [
+  { state: "needs", ink: "bg-st-needs" },
+  { state: "working", ink: "bg-st-running" },
+  { state: "done", ink: "bg-st-unread" },
+  { state: "error", ink: "bg-destructive" },
+];
+const BOARD_ROWS = 5;
+/** Xong counts what finished in the last day: older ones are history, not news. */
+const DONE_WINDOW_MS = 24 * 3600_000;
+
+/** Every session (omp and Claude Code) by state: what waits on the owner, what runs, what just finished or failed. */
+function StateBoard({ sessions, now, onOpen }: { sessions: TreeSession[]; now: number; onOpen: (s: TreeSession) => void }) {
+  const by = byState(sessions.filter((s) => s.state !== "done" || (s.at ?? 0) >= now - DONE_WINDOW_MS));
+  return (
+    <section aria-labelledby="board-h">
+      <h2 id="board-h" className="neon-heading mb-2">
+        Phiên theo trạng thái
+      </h2>
+      <div className="grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2 xl:grid-cols-4">
+        {BOARD.map(({ state, ink }) => {
+          const list = by[state];
+          return (
+            <div key={state} className="min-w-0 bg-card p-3">
+              <h3 className="mb-1.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <span aria-hidden className={cn("size-1.5 rounded-full", ink)} />
+                {TREE_WORD[state]}
+                <span className="ml-auto text-foreground tabular">{list.length}</span>
+              </h3>
+              {list.length === 0 ? (
+                <p className="py-1 text-xs text-muted-foreground">Không có.</p>
+              ) : (
+                <ul className="space-y-px">
+                  {list.slice(0, BOARD_ROWS).map((s) => (
+                    <li key={s.key}>
+                      <button type="button" className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1.5 text-left text-[13px] outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 max-md:h-11" title={[s.title, s.doing, s.cwd].filter(Boolean).join("\n")} onClick={() => onOpen(s)}>
+                        <span className="min-w-0 flex-1 truncate">{s.title}</span>
+                        <span className="max-w-[40%] shrink-0 truncate text-[11px] text-muted-foreground">{s.folder}</span>
+                        <span className="w-9 shrink-0 text-right text-[11px] text-muted-foreground tabular">{agoShort(s.at, now)}</span>
+                      </button>
+                    </li>
+                  ))}
+                  {list.length > BOARD_ROWS && <li className="px-1.5 pt-0.5 text-[11px] text-muted-foreground">+{list.length - BOARD_ROWS} phiên nữa trong thanh bên</li>}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

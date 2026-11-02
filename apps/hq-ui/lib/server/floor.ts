@@ -47,7 +47,7 @@ const claudeEngine = (e: string | null | undefined) => !e || e === "ccc" || e ==
 
 const trimSlash = (p: string) => p.replace(/\/+$/, "");
 /** Expand "~" so ls `repo` and hq cwd compare as absolute paths (`8sync ls` on Windows prints `~\x`). */
-const expand = (p: string, home = os.homedir()) => (p === "~" ? home : p.startsWith("~/") || p.startsWith("~\\") ? home + p.slice(1) : p);
+export const expand = (p: string, home = os.homedir()) => (p === "~" ? home : p.startsWith("~/") || p.startsWith("~\\") ? home + p.slice(1) : p);
 /** `repo` may also be Claude's dash-encoded project dir. */
 const dashed = (p: string) => p.replace(/[/.]/g, "-");
 
@@ -188,7 +188,7 @@ export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
   return rows.flatMap((r): SessionView[] => {
     const id = r.inbox_id;
     if (r.engine !== "omp" || !r.live || !isOmpRoomId(id)) return [];
-    const cwd = r.repo ? expand(r.repo) : null;
+    const cwd = r.repo ? ompRepoDir(expand(r.repo)) : null;
     return [
       {
         name: id,

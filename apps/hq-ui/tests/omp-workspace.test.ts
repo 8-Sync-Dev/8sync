@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   EMPTY_WORKSPACE,
   MAX_PANES,
-  agoVi,
   browseStart,
   closePane,
   filterProjects,
@@ -16,7 +15,6 @@ import {
   pushRecent,
   readWorkspace,
   shortPath,
-  tokensShort,
   type Pane,
 } from "@/lib/omp-workspace";
 
@@ -34,16 +32,6 @@ describe("workspace rules", () => {
     expect(parseOmpRows('[{"engine":"omp","name":"a"},{"engine":"ccc","name":"b"},{"x":1},null]')).toEqual([{ engine: "omp", name: "a" }]);
     expect(parseOmpRows("not json")).toEqual([]);
     expect(parseOmpRows("{}")).toEqual([]);
-  });
-
-  it("formats time and tokens short", () => {
-    const now = 1_000_000_000_000;
-    expect(agoVi(now / 1000 - 5, now)).toBe("vừa xong");
-    expect(agoVi(now / 1000 - 300, now)).toBe("5 phút");
-    expect(agoVi(now / 1000 - 7200, now)).toBe("2 giờ");
-    expect(agoVi(now / 1000 - 3 * 86_400, now)).toBe("3 ngày");
-    expect(agoVi(null, now)).toBe("");
-    expect([tokensShort(191_200), tokensShort(1_250_000), tokensShort(900), tokensShort(0)]).toEqual(["191k", "1.3M", "900", ""]);
   });
 
   it("opens panes up to MAX_PANES, dropping the oldest inactive one; reopening focuses", () => {

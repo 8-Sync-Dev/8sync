@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { repoOf, groupKey, sidebarGroups, splitClosed } from "@/lib/sidebar";
 import type { Room } from "@/lib/server/office";
+import { mergeSessions, type OmpTreeRow, type TreeChild } from "@/lib/session-tree";
+import type { SessionTree } from "@/components/hq/use-session-tree";
 
 const NOW = Date.parse("2026-10-17T16:00:00Z");
 
@@ -124,66 +126,62 @@ describe("sidebar UI", () => {
     reload: { projects: async () => {}, sessions: async () => {} },
   };
   const office = (rooms: Room[] | null, error: string | null = null, hidden: unknown[] = []) => ({ office: rooms ? { at: NOW, rooms, hidden } : null, error, retry: () => {} });
+  const kid = (agent: string, state: TreeChild["state"], ago: number): TreeChild => ({ key: `omp-00000000000000aa/${agent}`, title: agent, state, at: NOW - ago, detail: null });
+  const ompRow = (over: Partial<OmpTreeRow> = {}): OmpTreeRow => ({ id: "omp-00000000000000aa", name: "fix-login", title: "Sửa đăng nhập", cwd: "/w/8sync-startup", state: "working", doing: null, last_active: NOW - 5_000, created: NOW - 60_000, children: [], ...over });
 
-  async function nav(o: ReturnType<typeof office>, session: string | null = null) {
+  async function nav(o: ReturnType<typeof office>, omp: OmpTreeRow[] = [], active: string | null = null, tree?: Partial<SessionTree>) {
     const { createElement } = await import("react");
     const { renderToStaticMarkup } = await import("react-dom/server");
     const { Nav } = await import("@/components/hq/nav");
-    const props = { hq, scope: { project: null, session }, office: o, onHome: () => {}, onOpenRoom: () => {}, onOpenFolder: () => {} };
+    const t: SessionTree = { sessions: mergeSessions(o.office?.rooms ?? [], omp), at: NOW, loading: false, error: null, reload: () => {}, ...tree };
+    const noop = () => {};
+    const props = { hq, office: o, tree: t, tab: "workspace", active, onTab: noop, onNew: noop, onOpenSession: noop, onOpenRoom: noop, onOpenRepo: noop, onOpenFolder: noop, onAddProject: noop, onHelp: noop };
     return renderToStaticMarkup(createElement(Nav, props as unknown as Parameters<typeof Nav>[0]));
   }
 
-  it("shows rooms with a state word and a Chờ anh badge, worktrees under their repo, no misleading empty copy", async () => {
+  it("groups sessions by project with plain titles and state words; a worktree folds under its repo", async () => {
     const html = await nav(
       office([
         room({ name: "core", root: "/w/8sync-startup", status: "running" }),
         room({ name: "dev", root: "/w/8sync-startup/.claude/worktrees/card-12", status: "needs_input", waiting: "input needed" }),
       ]),
+      [],
       "core",
     );
-    for (const s of ["8sync-startup", "core", "Đang làm", "Chờ anh", "card-12", "1<span class=\"sr-only\"> phòng chờ anh</span>", "Chưa có phòng", "new-repo", "Dự án</button>"]) expect(html).toContain(s);
+    for (const s of ["Phiên mới", "Tổng quan", "Văn phòng", "Vòng lặp", ">8sync-startup<", ">core<", ">dev<", "Đang làm", "Chờ anh", "worktree card-12", "Alex · 8 Sync", "Cài đặt máy"]) expect(html).toContain(s);
     expect(html).toContain('aria-current="true"');
-    expect(html).not.toContain("No folders yet");
-    // A registered folder that already has rooms is not listed again as roomless.
+    // A folder added in HQ with no session yet: its heading with "+" to start one there.
+    expect(html).toContain("Phiên mới trong new-repo");
     expect(html.match(/>8sync-startup</g)).toHaveLength(1);
   });
 
-  it("tags the owner's omp sessions as omp; no team badges", async () => {
-    const html = await nav(office([room({ name: "omp-00000000000000aa", label: "mine", engine: "omp", status: "running" }), room({ name: "core", status: "running" })]));
-    expect(html).toContain("mine · omp: Đang làm");
-    expect(html).toContain("core: Đang làm");
-    expect(html).not.toContain("Đội");
+  it("nests an omp session's sub-sessions on └ lines: running and recent shown, older behind +N cũ hơn", async () => {
+    const html = await nav(office([]), [ompRow({ children: [kid("Scout", "working", 10_000), kid("Fixer", "done", 60_000), kid("Old", "done", 3 * 3_600_000)] })]);
+    for (const s of ["Sửa đăng nhập", "Phiên con của Sửa đăng nhập", ">Scout<", ">Fixer<", "+1 cũ hơn", "Thu gọn 3 phiên con"]) expect(html).toContain(s);
+    expect(html).not.toContain(">Old<");
   });
 
   it("has loading, empty and error states", async () => {
-    expect(await nav(office(null))).toContain('aria-busy="true"');
-    expect(await nav(office([]))).toContain("Dự án có phòng đang chạy tự hiện ở đây");
-    const err = await nav(office(null, "HTTP 500"));
+    expect(await nav(office(null), [], null, { loading: true })).toContain('aria-busy="true"');
+    // No session yet: the added folders stand as empty groups, each with its "+".
+    const empty = await nav(office([]));
+    expect(empty).toContain("Phiên mới trong new-repo");
+    expect(empty).not.toContain("Thao tác với phiên");
+    const err = await nav(office(null, "HTTP 500"), [], null, { error: "HTTP 500" });
     expect(err).toContain("HTTP 500");
     expect(err).toContain('role="alert"');
   });
 
-  it("puts a ⋯ menu on every project and room row, and lists a closed project behind its toggle", async () => {
-    const rooms = [
-      room({ name: "core", root: "/w/8sync-startup", status: "running" }),
-      room({ name: "dev", root: "/w/game/.claude/worktrees/card-113-dev/.claude/worktrees/card-147-fix", last_active: NOW - 3_600_000 }),
-    ];
+  it("puts Nhóm & sắp xếp on every heading and a ⋯ menu on every session; a hidden project waits in Đã lưu trữ", async () => {
+    const rooms = [room({ name: "core", root: "/w/8sync-startup", status: "running" }), room({ name: "dev", root: "/w/game", last_active: NOW - 3_600_000 })];
     const open = await nav(office(rooms));
-    for (const s of ["Thao tác với dự án 8sync-startup", "Thao tác với phòng core", "Thao tác với dự án card-113-dev", "Thao tác với phòng dev", "card-147-fix"]) expect(open).toContain(s);
-    expect(open).not.toContain("dự án đã đóng");
+    for (const s of ["Nhóm &amp; sắp xếp: danh sách phiên", "Nhóm &amp; sắp xếp: 8sync-startup", "Nhóm &amp; sắp xếp: game", "Thao tác với phiên core", "Thao tác với phiên dev"]) expect(open).toContain(s);
+    expect(open).not.toContain("Đã lưu trữ");
 
-    const root = "/w/game/.claude/worktrees/card-113-dev";
-    const closed = await nav(office(rooms, null, [{ key: groupKey(root), root, name: "card-113-dev", hidden_at: NOW - 60_000 }]));
-    expect(closed).toContain("Hiện dự án đã đóng (1)");
-    expect(closed).toContain("Hiện lại dự án card-113-dev");
-    expect(closed).not.toContain("Thao tác với dự án card-113-dev");
-    expect(closed).toContain("Thao tác với dự án 8sync-startup");
-  });
-
-  it("says so when every project is closed", async () => {
-    const html = await nav(office([room({ name: "dev", root: "/w/game", last_active: NOW - 3_600_000 })], null, [{ key: "/w/game", root: "/w/game", name: "game", hidden_at: NOW }]));
-    expect(html).toContain("Mọi dự án đang ẩn");
-    expect(html).toContain("Hiện dự án đã đóng (1)");
+    const closed = await nav(office(rooms, null, [{ key: groupKey("/w/game"), root: "/w/game", name: "game", hidden_at: NOW - 60_000 }]));
+    expect(closed).not.toContain("Thao tác với phiên dev");
+    expect(closed).toContain("Thao tác với phiên core");
+    expect(closed).toContain("Đã lưu trữ");
   });
 
   it("room brief: doing line, terminal button; the ask panel replaces it while the room waits", async () => {

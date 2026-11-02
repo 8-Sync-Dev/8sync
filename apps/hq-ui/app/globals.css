@@ -26,6 +26,7 @@
   --color-st-idle: var(--st-idle);
   --color-st-needs: var(--st-needs);
   --color-st-ended: var(--st-ended);
+  --color-st-unread: var(--st-unread);
   --color-via-channel: var(--via-channel);
   --color-owner: var(--owner);
   --color-brand: var(--brand);
@@ -77,31 +78,32 @@
    (#16a34a, #ca8a04, #0284c7), HQ takes deeper steps of the same hue; every text pair here is ≥ 4.5:1, also as an
    11 px pill on the sidebar and on --muted. */
 
-/* Light (default, owner 2026-11-02): off-white page tinted a hair toward the brand hue (not cream), white panels on
-   it, a slightly deeper sidebar layer, ink text. Lime stays the brand; on light it is the deep leaf #336d00. */
+/* Light (default, owner 2026-11-02, Claude Code Desktop): a white page and panels, a near-white sidebar, gray text
+   steps, neutral gray selection. Lime only on the 8 Sync mark and the primary button (deep leaf #336d00 on light). */
 :root {
-  --background: #f7f7f4;
-  --foreground: #1c1d1a;
+  --background: #ffffff;
+  --foreground: #18181b;
   --card: #ffffff;
-  --card-foreground: #1c1d1a;
+  --card-foreground: #18181b;
   --popover: #ffffff;
-  --popover-foreground: #1c1d1a;
-  /* Deep leaf: white text on it 6.3:1, as text on the page 5.9:1, on its wash 5.6:1. #448100 is the ring/focus step. */
+  --popover-foreground: #18181b;
+  /* Deep leaf: white text on it 6.3:1, as text on the page 5.9:1, on its wash 5.6:1. */
   --primary: #336d00;
   --primary-foreground: #ffffff;
   --primary-wash: #eaf4dd;
-  --secondary: #efefea;
-  --secondary-foreground: #1c1d1a;
-  --muted: #efefea;
-  /* text-2: 6.9:1 on the page, 6.3:1 on --muted, 5.8:1 on --accent. Never a lighter gray for text. */
-  --muted-foreground: #565850;
-  --accent: #e7e7e1;
-  --accent-foreground: #1c1d1a;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  /* text-2: 7.7:1 on white, 7.0:1 on --muted, 6.6:1 on --sidebar-accent. Never a lighter gray for text. */
+  --muted-foreground: #52525b;
+  --accent: #f1f1f2;
+  --accent-foreground: #18181b;
   --destructive: #b91c1c;
-  --border: #deded6;
-  /* Form controls get a firmer edge than the hairline (1.8:1 on white). */
-  --input: #c2c2b8;
-  --ring: #448100;
+  --border: #e6e6e8;
+  /* Form controls get a firmer edge than the hairline. */
+  --input: #d0d0d4;
+  /* Focus stays gray (4.8:1 on white): lime is only the mark and the primary button. */
+  --ring: #71717a;
   --success: #116a35;
   --danger: #b91c1c;
   --warning: #7a5000;
@@ -112,23 +114,25 @@
   --chart-4: #7a5000;
   --chart-5: #6d28d9;
   --radius: 0.5rem;
-  --sidebar: #f0f0eb;
-  --sidebar-foreground: #1c1d1a;
+  --sidebar: #fafafa;
+  --sidebar-foreground: #18181b;
   --sidebar-primary: #336d00;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e6e6df;
-  --sidebar-accent-foreground: #1c1d1a;
-  --sidebar-border: #deded6;
-  --sidebar-ring: #448100;
+  --sidebar-accent: #ececee;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: #e6e6e8;
+  --sidebar-ring: #71717a;
   /* Selected edge + a tight drop (≤ 8 px blur: a border never pairs with a wide soft shadow). */
   --glow: 0 0 0 1px color-mix(in srgb, #448100 45%, transparent), 0 4px 8px -4px color-mix(in srgb, #448100 40%, transparent);
   --overlay: rgb(28 29 26 / 30%);
   --shadow-color: rgb(28 29 26 / 12%);
   /* HQ semantic status, same vocabulary as the reference chips: running = success, needs you = warning. */
   --st-running: var(--success);
-  --st-idle: #62645b;
+  --st-idle: #71717a;
   --st-needs: var(--warning);
-  --st-ended: #c2c2b8;
+  --st-ended: #d4d4d8;
+  /* The sidebar's "xong, chưa xem" dot (Claude Code Desktop's blue). */
+  --st-unread: #2563eb;
   --via-channel: var(--info);
   --owner: var(--primary-wash);
   /* 8 Sync brand lime #85d840 (oklch 0.8 0.2 134). --brand-ink = brand text on the light page. The mark keeps it. */
@@ -183,6 +187,7 @@
   --st-idle: #8b949e;
   --st-needs: var(--warning);
   --st-ended: #3f3f46;
+  --st-unread: #60a5fa;
   --via-channel: var(--info);
   --owner: var(--primary-wash);
   --brand: #85d840;

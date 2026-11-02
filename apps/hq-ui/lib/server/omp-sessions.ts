@@ -135,3 +135,8 @@ export function pendingNew(id: string, now = Date.now()): NewOmp | null {
   const v = pending.get(id);
   return v && now - v.at <= PENDING_MS ? v : null;
 }
+
+/** Every pending new session (id → spec) still inside its 10 min window. */
+export function pendingAll(now = Date.now()): [string, NewOmp][] {
+  return [...pending].filter(([, v]) => now - v.at <= PENDING_MS);
+}
