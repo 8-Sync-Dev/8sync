@@ -634,13 +634,16 @@ fn spawn_detached_probe() {
 /// so it never appears in help and can never collide with a real verb.
 pub const PROBE_ARG: &str = "__update-probe";
 
-/// Child-process entry point: fetch the latest tag and cache it. Never prints.
+/// Child-process entry point: fetch the latest tag and cache it, then refresh the ECC
+/// checkout and mirror it into omp (skills + `/ecc-*` commands). Never prints (stdio is null).
 pub fn run_probe() {
-    let Some((tag, _url, _digest)) = fetch_latest_release() else {
-        return;
-    };
-    let _ = std::fs::create_dir_all(cache_dir());
-    let _ = std::fs::write(latest_tag_file(), tag);
+    if let Some((tag, _url, _digest)) = fetch_latest_release() {
+        let _ = std::fs::create_dir_all(cache_dir());
+        let _ = std::fs::write(latest_tag_file(), tag);
+    }
+    if let Some(home) = dirs::home_dir() {
+        crate::verbs::harness::ecc::global_layer(&home, crate::verbs::harness::ecc::Fetch::Now);
+    }
 }
 
 /// Force self-update: download the latest release asset and install it.

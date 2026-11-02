@@ -5,6 +5,17 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.117.0] — 2026-11-02
+
+### Added
+- **ECC tự cập nhật cho omp:** checkout `~/.cache/8sync/ecc` theo nhánh mặc định của ECC (bỏ ghim tag `v2.2.3`), fetch lại khi quá 6h: probe nền 6h (`8sync __update-probe`, cùng nhịp kiểm release), `harness`/`global`/`init`/`up` khi đến hạn, ngay lập tức với `harness up --pull`/`harness global --pull`; offline → giữ bản cũ. Mỗi khi checkout đổi commit, skill ECC được mirror vào `~/.omp/agent/managed-skills/<name>/` và command vào `~/.omp/agent/commands/ecc-<cmd>.md` (đổi `/cmd` → `/ecc-cmd`), manifest `~/.omp/agent/.8sync-ecc.json` lưu hash từng bản đã ghi: bản owner sửa / skill auto-learn trùng tên → giữ + báo; bản upstream xoá chỉ gỡ khi chưa sửa. omp chỉ nạp name + description, body đọc khi cần (`skill://`).
+- **`harness global` seed `ask.timeout: 60`** vào `~/.omp/agent/config.yml` khi chưa có (câu hỏi không ai trả lời sau 60s → omp tự chọn option khuyến nghị); giá trị user (kể cả `0`) không bị đụng.
+
+### Changed
+- **Scope rule ECC tự động:** `paths:` cho 8 rule generic `.claude/rules/ecc/common/` chạy trong Rust ở mọi `harness`/`ccc`/`8sync .` (sau khi ECC cài lại ghi đè cũng tự scope lại); file đã có frontmatter giữ nguyên. Xoá `scripts/scope-ecc-rules.py` + test.
+- **Claude Code đọc cùng checkout:** hook `ecc-pick` và `/eccx-*` dùng `~/.cache/8sync/ecc` trước plugin cache (CC chỉ làm mới cache khi ECC đổi version, nên bản 2.2.3 trong cache đứng ở commit 25278e7); index `ecc-pick` build lại khi checkout đổi commit.
+- **`/eccx-*` (omp + CC):** dòng "Always (8sync harness)" trong `/eccx-full` (`trail` STEP 0, `karpathy-guidelines`, `ponytail`, `8sync-cli`, `impeccable` cho UI); omp gọi skill qua `skill://`, agent qua `task` subagent (song song trong một call), command qua `/ecc-<cmd>`; skill mới có trong session nhưng chưa có trong danh sách vẫn được chọn.
+
 ## [0.116.0] — 2026-11-02
 
 ### Added

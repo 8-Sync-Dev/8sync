@@ -43,12 +43,15 @@ pub(crate) fn harness_up(
 }
 
 fn refresh_once(env: &env_detect::Env, pull: bool, commit: bool) -> Result<()> {
+    if pull {
+        ui::step("re-pull ECC (→ omp skills + /ecc-* commands) and registered skills (--pull)");
+        super::ecc::global_layer(&env.home, super::ecc::Fetch::Now);
+    }
     let Some(root) = discover::detect_current_project_root() else {
         ui::warn("not inside a project — nothing to refresh");
         return Ok(());
     };
     if pull {
-        ui::step("re-pull registered skills (--pull)");
         let registry = env.xdg_config.join("8sync/skills.toml");
         let _ = crate::verbs::skill::update::update_skills(env, &registry, None);
     }
@@ -60,7 +63,7 @@ fn refresh_once(env: &env_detect::Env, pull: bool, commit: bool) -> Result<()> {
     let _ = crate::verbs::skill::deploy::ensure_engine(&env.home, Some(&root));
     let _ = crate::verbs::skill::deploy::ensure_rules(&env.home, Some(&root));
     let _ = crate::verbs::skill::deploy::cleanup_legacy_gs(&env.home, Some(&root));
-    super::ecc::project_layer(&env.home, &root, true);
+    super::ecc::project_layer(&env.home, &root, super::ecc::Fetch::IfDue);
     seed_harness_memory(&root)?;
     let _ = consolidate_learnings(&root);
     seed_gitleaks_hook(&root);

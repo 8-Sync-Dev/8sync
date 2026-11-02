@@ -20,6 +20,7 @@ mod eval;
 mod external;
 pub(crate) mod global;
 pub(crate) mod ecc;
+mod ecc_omp;
 mod init;
 pub(crate) mod memory;
 mod model;
@@ -75,8 +76,9 @@ mod toolstats;
 
     PER REPO (no skills are vendored into the repo)
       AGENTS.md/CLAUDE.md block : STEP 0 trail + CHANGELOG/KNOWLEDGE/STATE rules (sentinel block only)
-      .claude/rules/ecc/<pack>/ : ECC rule packs for the detected stacks (common + rust/typescript/…), never overwritten
-      skills/agents/commands    : the global Claude Code plugin `ecc@ecc`
+      .claude/rules/ecc/<pack>/ : ECC rule packs for the detected stacks (common + rust/typescript/…), never overwritten;
+                                  generic common/ rules get `paths:` (loaded only for matching files)
+      skills/agents/commands    : omp: ECC mirrored into ~/.omp/agent (managed-skills + /ecc-*); Claude Code: `ecc@ecc`
 "})]
 pub struct Args {
     /// init (default) | create | up | global | audit | bench | eval | toolstats | model | gateway | web | compaction | help
@@ -287,8 +289,8 @@ fn print_help() {
 
     println!("\nPER REPO — ECC only (nothing vendored into su-code/skills)");
     println!("  block   : AGENTS.md/CLAUDE.md/.cursor/rules/8sync-harness.mdc — STEP 0 trail + CHANGELOG/KNOWLEDGE/STATE rules");
-    println!("  skills  : the global Claude Code plugin `ecc@ecc` (skills · agents · commands)");
-    println!("{}", crate::brand::render("  rules   : .claude/rules/ecc/<pack>/ — ECC packs for the detected stacks, from the pinned checkout ~/.cache/8sync/ecc (offline → skipped)"));
+    println!("  skills  : omp → ECC skills in ~/.omp/agent/managed-skills + /ecc-* commands (edited copies kept); Claude Code → plugin `ecc@ecc`");
+    println!("{}", crate::brand::render("  rules   : .claude/rules/ecc/<pack>/ — ECC packs for the detected stacks, from ~/.cache/8sync/ecc (ECC main, refreshed every 6h; offline → last copy)"));
     println!("  retired : unedited 8sync copies in su-code/skills/ + .claude/.cursor/.zcode skills links are removed; your own/edited skills stay");
 
     println!("\nFILE TAXONOMY (portability — survives a move to a new machine)");

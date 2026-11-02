@@ -56,6 +56,8 @@ pub(crate) fn global_pass(env: &env_detect::Env) -> Result<()> {
     let _ = deploy::ensure_omp_capabilities_snapshot(&env.home);
     deploy::ensure_feynman_cli();
     let _ = install_external_skill_packs(env); // best-effort; skips packs already present
+    // ECC: refresh the checkout when due, mirror skills + /ecc-* commands into omp.
+    super::ecc::global_layer(&env.home, super::ecc::Fetch::IfDue);
     let global_dir = env.home.join(".omp/skills");
     for d in discover::list_installed_skill_dirs(&global_dir).unwrap_or_default() {
         deploy::ensure_skill_layout(&d);
@@ -72,9 +74,15 @@ pub(crate) fn harness_global(env: &env_detect::Env, sweep: Option<&str>, pull: b
     let _ = deploy::ensure_engine(&env.home, None);
     let _ = deploy::cleanup_legacy_gs(&env.home, None);
 
-    // 2. Anthropic token-optimizer defaults (never override a user setting).
-    ui::step("token-optimizer defaults (Anthropic)");
+    // 2. Anthropic token-optimizer defaults + omp auto mode (never override a user setting).
+    ui::step("token-optimizer defaults (Anthropic) + omp ask auto-answer");
     let _ = compaction::ensure_defaults(&env.home);
+    let cfg = env.home.join(".omp/agent/config.yml");
+    match seed_ask_timeout(&cfg) {
+        Ok(true) => ui::ok(&format!("ask.timeout = {ASK_TIMEOUT_S} (default: an unanswered question takes the recommended option) → {}", cfg.display())),
+        Ok(false) => {}
+        Err(e) => ui::warn(&format!("ask.timeout not seeded: {e:#}")),
+    }
 
     // 3. Auto-stamp current project root if inside an omp project (su-code/ or AGENTS.md).
     if let Some(cwd_root) = discover::detect_current_project_root() {
@@ -89,7 +97,8 @@ pub(crate) fn harness_global(env: &env_detect::Env, sweep: Option<&str>, pull: b
 
     // 4. Optional: re-pull registered skills from their sources (network).
     if pull {
-        ui::step("re-pull registered skills (network)");
+        ui::step("re-pull ECC + registered skills (network)");
+        super::ecc::global_layer(&env.home, super::ecc::Fetch::Now);
         let _ = update::update_skills(env, &env.xdg_config.join("8sync/skills.toml"), None);
     }
 
@@ -220,6 +229,79 @@ fn stamp_project(env: &env_detect::Env, root: &Path) -> Result<()> {
     // a stale agents/ copy from an older binary.
     deploy::ensure_engine(&env.home, Some(root))?;
     deploy::ensure_rules(&env.home, Some(root))?;
-    super::ecc::project_layer(&env.home, root, true);
+    super::ecc::project_layer(&env.home, root, super::ecc::Fetch::IfDue);
     inject::inject_cursor_rule(root)
+}
+
+/// omp's `ask.timeout` (seconds) that `harness global` seeds: a question nobody answers
+/// within a minute takes the recommended option, so long runs never stall on the owner
+/// (owner 2026-11-02: "no reply for 1 minute → answer yourself and keep going").
+const ASK_TIMEOUT_S: u32 = 60;
+
+/// Seed `ask.timeout: 60` into omp's config.yml only when no `ask.timeout` is set (nested
+/// `ask:` block or a flat `ask.timeout:` key); a user value — including `0` — is never
+/// touched, nor an inline `ask: {…}` map. Line-level like `compaction::ensure_defaults`
+/// (omp normalizes config.yml). Returns whether the file changed.
+fn seed_ask_timeout(cfg: &Path) -> Result<bool> {
+    let s = std::fs::read_to_string(cfg).unwrap_or_default();
+    let lines: Vec<&str> = s.lines().collect();
+    if lines.iter().any(|l| l.starts_with("ask.timeout:")) {
+        return Ok(false);
+    }
+    let out = match lines.iter().position(|l| l.trim_end() == "ask:" || l.starts_with("ask: ")) {
+        Some(i) if lines[i].trim_end() != "ask:" => return Ok(false), // inline map: leave it
+        Some(i) => {
+            let block: Vec<&str> =
+                lines[i + 1..].iter().copied().take_while(|l| l.is_empty() || l.starts_with(' ') || l.starts_with('\t')).collect();
+            if block.iter().any(|l| l.trim_start().starts_with("timeout:")) {
+                return Ok(false);
+            }
+            let indent: String = block.iter().find(|l| !l.trim().is_empty()).map_or("  ".into(), |l| l.chars().take_while(|c| c.is_whitespace()).collect());
+            let mut v: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+            v.insert(i + 1, format!("{indent}timeout: {ASK_TIMEOUT_S}"));
+            v.join("\n") + "\n"
+        }
+        None => {
+            let mut v = s.clone();
+            if !v.is_empty() && !v.ends_with('\n') {
+                v.push('\n');
+            }
+            v + &format!("ask:\n  timeout: {ASK_TIMEOUT_S}\n")
+        }
+    };
+    if let Some(p) = cfg.parent() {
+        std::fs::create_dir_all(p)?;
+    }
+    std::fs::write(cfg, out)?;
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ask_timeout_seeded_only_when_unset() {
+        let d = std::env::temp_dir().join(format!("8sync-ask-timeout-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let cfg = d.join(".omp/agent/config.yml");
+        let run = |before: Option<&str>| -> (bool, String) {
+            let _ = std::fs::remove_file(&cfg);
+            if let Some(b) = before {
+                std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+                std::fs::write(&cfg, b).unwrap();
+            }
+            let changed = seed_ask_timeout(&cfg).unwrap();
+            (changed, std::fs::read_to_string(&cfg).unwrap_or_default())
+        };
+        assert_eq!(run(None), (true, "ask:\n  timeout: 60\n".into()));
+        assert_eq!(run(Some("model: x\ncompaction:\n  timeout: 5\n")), (true, "model: x\ncompaction:\n  timeout: 5\nask:\n  timeout: 60\n".into()), "another block's timeout is not ask's");
+        assert_eq!(run(Some("ask:\n    notify: off\nmodel: x")), (true, "ask:\n    timeout: 60\n    notify: off\nmodel: x\n".into()));
+        for user in ["ask:\n  timeout: 0\n", "ask:\n  notify: on\n  timeout: 300\n", "ask.timeout: 10\n", "ask: {timeout: 5}\n"] {
+            assert_eq!(run(Some(user)), (false, user.to_string()), "user value kept: {user}");
+        }
+        let (_, once) = run(None);
+        assert!(!seed_ask_timeout(&cfg).unwrap() && std::fs::read_to_string(&cfg).unwrap() == once, "idempotent");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

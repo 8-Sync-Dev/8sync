@@ -8,6 +8,8 @@ disable-model-invocation: true
 
 Goal: `$ARGUMENTS` (`--dry-run` = stop after the merged plan).
 
+**Always (8sync harness):** `trail` STEP 0 before any grep/read of code; `karpathy-guidelines` every code step; `ponytail` pick the simplest plan that works; `8sync-cli` any `8sync` verb (ship, ccc, harness); `impeccable` every UI step.
+
 1. **Route.** From the categories below pick EVERY one relevant to the goal (default to inclusion); one line of why per pick.
 2. **Select.** For each pick open `~/.claude/commands/eccx-<cat>.md` (or the 8sync-kit plugin's `commands/`) and do its Select step on its member lists. Merge into one deduplicated set.
 3. **Plan.** One numbered plan (research → design → build → verify → ship/distribute); each step names its skills/agents/commands and its check. `--dry-run`: print it and stop.
@@ -36,5 +38,6 @@ Goal: `$ARGUMENTS` (`--dry-run` = stop after the merged plan).
 - `game` — Game & 3D: three.js, R3F, GSAP/3D web, Unreal/Blender, game assets (3/0/0)
 
 ## How to call members
-- `ecc:` members: plugin `ecc@ecc` on → Skill tool / `subagent_type` / `/ecc:<cmd>`; off (saves ~9k tokens a call) → read `<ECC>/skills/<name>/SKILL.md`, a `general-purpose` agent opening with `<ECC>/agents/<agent>.md`, `<ECC>/commands/<cmd>.md`. `<ECC>` = newest `~/.claude/plugins/cache/ecc/ecc/*/`. Plain name = 8sync skill (Skill tool).
+- `ecc:` members: plugin `ecc@ecc` on → Skill tool / `subagent_type` / `/ecc:<cmd>`; off (saves ~9k tokens a call) → read `<ECC>/skills/<name>/SKILL.md`, a `general-purpose` agent opening with `<ECC>/agents/<agent>.md`, `<ECC>/commands/<cmd>.md`. `<ECC>` = 8sync's ECC checkout `~/.cache/8sync/ecc/` (tracks upstream: `8sync harness` + a 6-hourly background refresh), else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`. Plain name = 8sync skill (Skill tool).
 - One session: parallel members = Agent calls in one message or one Workflow, no sub-sessions. Unresolved member: skip it, say so.
+- A skill in your session's skill list that fits the goal but is missing below (ECC updated since this list) is eligible too.

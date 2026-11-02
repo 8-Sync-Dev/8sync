@@ -2,10 +2,11 @@
 //!
 //! With the `ecc@ecc` plugin off, Claude Code no longer lists ECC's skills/agents/commands in
 //! every call (~9k tokens, estimate). This hook gives that choice back for free: it scores the
-//! prompt (plus the repo's stack) against an index of the newest ECC plugin cache and adds at most
+//! prompt (plus the repo's stack) against an index of the ECC checkout 8sync keeps current
+//! (`~/.cache/8sync/ecc`, else the newest ECC plugin cache) and adds at most
 //! [`MAX_PICKS`] members, with their file paths, as context. Nothing matches → no output, 0 tokens.
-//! - the index (`kind\tname\tdescription` per line, first line = the ECC dir it came from) is
-//!   rebuilt only when that dir changes (a new ECC version);
+//! - the index (`kind\tname\tdescription` per line, first line = the ECC dir + commit it came
+//!   from) is rebuilt only when that changes (a new ECC version or checkout commit);
 //! - a member already suggested in a session is not suggested again there;
 //! - the plugin on, no ECC cache, `ECC_PICK=0`, or any error → silent.
 use serde_json::{json, Value};
@@ -78,8 +79,13 @@ pub(super) fn state_dir(home: Option<&Path>) -> Option<PathBuf> {
     home.filter(|h| h.is_absolute()).map(|h| h.join(".local/state/8sync/ccc/ecc-pick"))
 }
 
-/// Newest `plugins/cache/ecc/ecc/<version>/` (numeric compare, so 2.10.0 > 2.9.9).
-pub(super) fn ecc_root(claude: &Path) -> Option<PathBuf> {
+/// The ECC dir to index: 8sync's auto-refreshed `checkout` when it has skills, else the newest
+/// `plugins/cache/ecc/ecc/<version>/` (numeric compare, so 2.10.0 > 2.9.9). Claude Code only
+/// refreshes that cache when ECC bumps its version, so it lags the checkout.
+pub(super) fn ecc_root(claude: &Path, checkout: Option<&Path>) -> Option<PathBuf> {
+    if let Some(c) = checkout.filter(|c| c.join("skills").is_dir()) {
+        return Some(c.to_path_buf());
+    }
     let base = ["plugins", "cache", "ecc", "ecc"].iter().fold(claude.to_path_buf(), |p, c| p.join(c));
     let key = |n: &str| n.split('.').map(|p| p.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
     std::fs::read_dir(base)
@@ -148,9 +154,13 @@ pub(super) fn build(root: &Path) -> Vec<Entry> {
     out
 }
 
-/// The index for `root`, from `cache` when it was built from the same dir, else rebuilt + saved.
+/// The index for `root`, from `cache` when it was built from the same dir at the same commit,
+/// else rebuilt + saved.
 pub(super) fn index(root: &Path, cache: &Path) -> Vec<Entry> {
-    let tag = root.to_string_lossy().to_string();
+    let tag = match crate::verbs::harness::ecc::head(root) {
+        Some(h) => format!("{}@{h}", root.to_string_lossy()),
+        None => root.to_string_lossy().to_string(),
+    };
     if let Ok(text) = std::fs::read_to_string(cache) {
         let mut lines = text.lines();
         if lines.next() == Some(tag.as_str()) {
@@ -305,8 +315,9 @@ fn render(root: &Path, picks: &[&Entry]) -> String {
     s
 }
 
-/// The hook: input = the UserPromptSubmit JSON. `claude` = `~/.claude`, `state` = [`state_dir`].
-pub(super) fn run(input: &str, claude: &Path, state: &Path, now_s: u64) -> Option<String> {
+/// The hook: input = the UserPromptSubmit JSON. `claude` = `~/.claude`, `checkout` = 8sync's ECC
+/// checkout, `state` = [`state_dir`].
+pub(super) fn run(input: &str, claude: &Path, checkout: Option<&Path>, state: &Path, now_s: u64) -> Option<String> {
     if std::env::var("ECC_PICK").is_ok_and(|v| v == "0") || plugin_on(claude) {
         return None;
     }
@@ -315,7 +326,7 @@ pub(super) fn run(input: &str, claude: &Path, state: &Path, now_s: u64) -> Optio
     if prompt.trim_start().starts_with("/ecc") {
         return None;
     }
-    let root = ecc_root(claude)?;
+    let root = ecc_root(claude, checkout)?;
     let entries = index(&root, &state.join("index.tsv"));
     let stack = v["cwd"].as_str().map(|c| stack(Path::new(c))).unwrap_or_default();
     let sid = v["session_id"].as_str().filter(|s| crate::verbs::ccc::report::safe_id(s));
@@ -385,7 +396,7 @@ mod tests {
     #[test]
     fn newest_version_wins_and_descriptions_parse() {
         let c = claude("root");
-        let root = ecc_root(&c).unwrap();
+        let root = ecc_root(&c, None).unwrap();
         assert!(root.ends_with("2.10.0"), "{root:?}");
         let es = build(&root);
         assert_eq!(es.len(), 6);
@@ -395,12 +406,22 @@ mod tests {
     }
 
     #[test]
+    fn the_8sync_checkout_wins_over_the_plugin_cache() {
+        let c = claude("checkout");
+        let co = tmp("checkout-ecc");
+        assert!(ecc_root(&c, Some(&co)).unwrap().ends_with("2.10.0"), "a checkout without skills/ is ignored");
+        put(&co.join("skills/fresh/SKILL.md"), "---\ndescription: z\n---\n");
+        assert_eq!(ecc_root(&c, Some(&co)), Some(co.clone()));
+        assert_eq!(ecc_root(&tmp("no-claude"), Some(&co)), Some(co));
+    }
+
+    #[test]
     fn picks_stack_members_and_drops_other_languages() {
         let c = claude("pick");
         let repo = tmp("repo");
         put(&repo.join("Cargo.toml"), "[package]\n");
         let state = tmp("state");
-        let out = run(&input("write unit tests and review this module", &repo, "s1"), &c, &state, 1_000).unwrap();
+        let out = run(&input("write unit tests and review this module", &repo, "s1"), &c, None, &state, 1_000).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let ctx = v["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
         assert!(ctx.contains("`rust-testing` skills/rust-testing/SKILL.md"), "{ctx}");
@@ -409,24 +430,24 @@ mod tests {
         assert!(!ctx.contains("golang") && !ctx.contains("go-reviewer"), "other stacks are dropped: {ctx}");
         assert!(ctx.lines().count() <= 1 + MAX_PICKS);
         // the same session is not told twice; a new session is
-        assert!(run(&input("write unit tests and review this module", &repo, "s1"), &c, &state, 1_001).is_none(), "nothing new to say");
-        assert!(run(&input("write unit tests and review this module", &repo, "s2"), &c, &state, 1_002).unwrap().contains("rust-testing"));
+        assert!(run(&input("write unit tests and review this module", &repo, "s1"), &c, None, &state, 1_001).is_none(), "nothing new to say");
+        assert!(run(&input("write unit tests and review this module", &repo, "s2"), &c, None, &state, 1_002).unwrap().contains("rust-testing"));
         // the prompt naming another language brings it back
-        assert!(run(&input("port the golang testing suite", &repo, "s3"), &c, &state, 1_003).unwrap().contains("golang-testing"));
+        assert!(run(&input("port the golang testing suite", &repo, "s3"), &c, None, &state, 1_003).unwrap().contains("golang-testing"));
     }
 
     #[test]
     fn vietnamese_phrases_match() {
         let c = claude("vi");
         let state = tmp("vi-state");
-        let out = run(&input("rà soát bảo mật phần auth giúp anh", &tmp("norepo"), "v1"), &c, &state, 1).unwrap();
+        let out = run(&input("rà soát bảo mật phần auth giúp anh", &tmp("norepo"), "v1"), &c, None, &state, 1).unwrap();
         assert!(out.contains("security-review"), "{out}");
-        put(&ecc_root(&c).unwrap().join("agents/performance-optimizer.md"), "---
+        put(&ecc_root(&c, None).unwrap().join("agents/performance-optimizer.md"), "---
 description: Performance analysis and optimization specialist.
 ---
 ");
         let _ = std::fs::remove_file(state.join("index.tsv"));
-        let out = run(&input("tối ưu hiệu năng api", &tmp("norepo2"), "v2"), &c, &state, 1).unwrap();
+        let out = run(&input("tối ưu hiệu năng api", &tmp("norepo2"), "v2"), &c, None, &state, 1).unwrap();
         assert!(out.contains("performance-optimizer"), "{out}");
     }
 
@@ -435,19 +456,19 @@ description: Performance analysis and optimization specialist.
         let c = claude("off");
         let state = tmp("off-state");
         let repo = tmp("off-repo");
-        assert!(run(&input("tiếp", &repo, "o1"), &c, &state, 1).is_none(), "short prompt");
-        assert!(run(&input("what time is the meeting tomorrow", &repo, "o1"), &c, &state, 1).is_none(), "no match");
-        assert!(run(&input("/eccx-full write rust tests", &repo, "o1"), &c, &state, 1).is_none(), "explicit eccx");
-        assert!(run("not json", &c, &state, 1).is_none());
-        assert!(run(&input("review rust tests", &repo, "o1"), &tmp("empty"), &state, 1).is_none(), "no ECC cache");
+        assert!(run(&input("tiếp", &repo, "o1"), &c, None, &state, 1).is_none(), "short prompt");
+        assert!(run(&input("what time is the meeting tomorrow", &repo, "o1"), &c, None, &state, 1).is_none(), "no match");
+        assert!(run(&input("/eccx-full write rust tests", &repo, "o1"), &c, None, &state, 1).is_none(), "explicit eccx");
+        assert!(run("not json", &c, None, &state, 1).is_none());
+        assert!(run(&input("review rust tests", &repo, "o1"), &tmp("empty"), None, &state, 1).is_none(), "no ECC cache");
         put(&c.join("settings.json"), r#"{"enabledPlugins":{"ecc@ecc":true}}"#);
-        assert!(run(&input("write rust unit tests", &repo, "o1"), &c, &state, 1).is_none(), "plugin on lists them itself");
+        assert!(run(&input("write rust unit tests", &repo, "o1"), &c, None, &state, 1).is_none(), "plugin on lists them itself");
     }
 
     #[test]
     fn index_is_cached_per_ecc_dir() {
         let c = claude("cache");
-        let root = ecc_root(&c).unwrap();
+        let root = ecc_root(&c, None).unwrap();
         let cache = tmp("cache-state").join("index.tsv");
         assert_eq!(index(&root, &cache).len(), 6);
         put(&root.join("skills/added-later/SKILL.md"), "---\ndescription: x\n---\n");
@@ -455,6 +476,10 @@ description: Performance analysis and optimization specialist.
         let other = c.join("plugins/cache/ecc/ecc/2.11.0");
         put(&other.join("skills/a/SKILL.md"), "---\ndescription: y\n---\n");
         assert_eq!(index(&other, &cache).len(), 1, "new version → rebuilt");
+        put(&other.join(".git/HEAD"), "1111111111111111111111111111111111111111\n");
+        put(&other.join("skills/b/SKILL.md"), "---\ndescription: w\n---\n");
+        assert_eq!(index(&other, &cache).len(), 2, "same dir, new commit → rebuilt");
+        assert_eq!(index(&other, &cache).len(), 2);
         assert!(state_dir(None).is_none() && state_dir(Some(Path::new("rel"))).is_none());
     }
 }

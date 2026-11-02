@@ -1,13 +1,19 @@
-//! The per-project layer of the ECC-only harness. Skills, agents and commands
-//! come from the global Claude Code plugin `ecc@ecc`; a repo gets only ECC's
-//! `rules/` packs for the stacks it uses, copied into
-//! `<repo>/.claude/rules/ecc/<pack>/` (never over an existing pack dir).
+//! The ECC layer of the harness. A shallow checkout of upstream ECC's default
+//! branch lives at `~/.cache/8sync/ecc` and refreshes itself: every 6 h from the
+//! detached release probe any 8sync command spawns, on `harness init/up/global`
+//! when the last fetch is older than 6 h, and at once on `harness up --pull`.
+//! Offline → the last checkout stays in use, never an error.
+//!
+//! From that checkout:
+//! - omp gets ECC's skills and commands (`super::ecc_omp`), refreshed whenever the
+//!   checkout moves; Claude Code reads the same checkout (`ecc-pick`, `/eccx-*`);
+//! - a repo gets ECC's `rules/` packs for the stacks it uses, copied into
+//!   `<repo>/.claude/rules/ecc/<pack>/` (never over an existing pack dir), with the
+//!   generic `common/` rules scoped by `paths:` so they stop loading every turn.
 //!
 //! Stacks are detected with ECC's own `config/project-stack-mappings.json`
 //! (indicators `{file, contains}`, `*`/`?` globs) over the repo root and its
-//! first-level non-hidden sub-dirs. The ECC source is a shallow checkout of a
-//! pinned tag cached at `~/.cache/8sync/ecc`, re-cloned only when the pin
-//! changes; offline → skipped with a warning, never an error.
+//! first-level non-hidden sub-dirs.
 //!
 //! Also retires the layout 8sync used before: vendored `su-code/skills/` copies
 //! and the `.claude/skills` / `.cursor/skills` / `.zcode/skills` links to them.
@@ -23,74 +29,166 @@ use crate::verbs::skill::{deploy, discover};
 use crate::{assets, ui};
 
 const ECC_REPO: &str = "https://github.com/affaan-m/ECC";
-/// Bump to move every machine to a newer ECC release (re-clones the cache once).
-const ECC_TAG: &str = "v2.2.3";
-const PIN_FILE: &str = ".8sync-pin";
+/// What the tag-pinned checkout (≤ v0.114) wrote into the cache; removed on the first refresh.
+const LEGACY_PIN_FILE: &str = ".8sync-pin";
+/// Epoch seconds of the last successful fetch, beside the checkout (not inside it).
+const STAMP_FILE: &str = "ecc.fetched";
+/// A harness run fetches again only after this long (the release probe has its own 6 h gate).
+const REFRESH_S: u64 = 6 * 3600;
 const MAPPINGS: &str = "config/project-stack-mappings.json";
 /// Dependency/build output: never scanned for stack indicators.
 const SKIP: [&str; 7] = ["node_modules", "target", "dist", "build", ".next", "vendor", ".venv"];
 /// Indicator files larger than this are not read for `contains`.
 const MAX_INDICATOR_BYTES: u64 = 2_000_000;
 
+/// How a caller may touch the network for the checkout.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Fetch {
+    /// Launch paths: the cache only.
+    No,
+    /// Harness commands: fetch when the last fetch is older than [`REFRESH_S`].
+    IfDue,
+    /// `harness up --pull` and the 6 h release probe.
+    Now,
+}
+
 /// The per-project ECC layer every harness path runs: retire the vendored skill
-/// layout, then seed the rule packs for the repo's stacks. `fetch` lets it clone
-/// the pinned checkout (harness commands); launch paths pass false (no network
-/// on launch) and use the cache only. Never fails the caller.
-pub(crate) fn project_layer(home: &Path, root: &Path, fetch: bool) {
+/// layout, refresh the checkout (per `fetch`) and mirror it into omp, then seed and
+/// scope the rule packs for the repo's stacks. Never fails the caller.
+pub(crate) fn project_layer(home: &Path, root: &Path, fetch: Fetch) {
     retire_vendored_skills(home, root);
-    let Some(ecc) = checkout(home, fetch) else { return };
-    let seeded = detect(&ecc, root).and_then(|(ids, packs)| Ok((ids, seed_rules(&ecc, root, &packs)?)));
-    match seeded {
-        Ok((ids, packs)) => {
-            let added: Vec<&str> = packs.iter().filter(|(_, a)| *a).map(|(p, _)| p.as_str()).collect();
-            if !added.is_empty() {
-                let stacks = if ids.is_empty() { "none detected".to_string() } else { ids.join(", ") };
-                ui::ok(&format!("ECC rules → .claude/rules/ecc/ ({}) · stacks: {stacks}", added.join(", ")));
+    if let Some(ecc) = global_layer(home, fetch) {
+        let seeded = detect(&ecc, root).and_then(|(ids, packs)| Ok((ids, seed_rules(&ecc, root, &packs)?)));
+        match seeded {
+            Ok((ids, packs)) => {
+                let added: Vec<&str> = packs.iter().filter(|(_, a)| *a).map(|(p, _)| p.as_str()).collect();
+                if !added.is_empty() {
+                    let stacks = if ids.is_empty() { "none detected".to_string() } else { ids.join(", ") };
+                    ui::ok(&format!("ECC rules → .claude/rules/ecc/ ({}) · stacks: {stacks}", added.join(", ")));
+                }
             }
+            Err(e) => ui::warn(&format!("ECC rules skipped: {e:#}")),
         }
-        Err(e) => ui::warn(&format!("ECC rules skipped: {e:#}")),
+    }
+    // Also after ECC's own installer rewrote `common/` without `paths:`.
+    let scoped = scope_common_rules(root);
+    if !scoped.is_empty() {
+        ui::ok(&format!("ECC rules: `paths:` scoped {} generic rule(s) in .claude/rules/ecc/common/ ({})", scoped.len(), scoped.join(", ")));
     }
 }
 
-// ── pinned checkout ─────────────────────────────────────────────────────────────
-
-fn is_current(dir: &Path) -> bool {
-    std::fs::read_to_string(dir.join(PIN_FILE)).is_ok_and(|p| p.trim() == ECC_TAG) && dir.join(MAPPINGS).is_file()
+/// The machine-wide ECC layer: refresh the checkout (per `fetch`), then mirror it
+/// into omp when it moved since the last mirror (a few stats otherwise). Returns
+/// the checkout. Never fails the caller.
+pub(crate) fn global_layer(home: &Path, fetch: Fetch) -> Option<PathBuf> {
+    let ecc = checkout(home, fetch)?;
+    let head = head(&ecc).unwrap_or_default();
+    match super::ecc_omp::sync(home, &ecc, &head) {
+        Ok(Some(r)) => ui::ok(&format!("ECC {} → omp: {r}", version(&ecc))),
+        Ok(None) => {}
+        Err(e) => ui::warn(&format!("ECC → omp skipped: {e:#}")),
+    }
+    Some(ecc)
 }
 
-/// The ECC checkout at [`ECC_TAG`]: the cache when it carries the pin; else,
-/// with `fetch`, a fresh shallow clone swapped into place. None when the cache
-/// is stale and `fetch` is off, or the clone failed (offline).
-fn checkout(home: &Path, fetch: bool) -> Option<PathBuf> {
-    let dir = home.join(".cache/8sync/ecc");
-    if is_current(&dir) {
-        return Some(dir);
+// ── the checkout ────────────────────────────────────────────────────────────────
+
+/// `~/.cache/8sync/ecc`: the checkout every ECC consumer reads.
+pub(crate) fn cache_dir(home: &Path) -> PathBuf {
+    home.join(".cache/8sync/ecc")
+}
+
+/// The commit the checkout is at, read from `.git` (no process: launch paths call this).
+pub(crate) fn head(dir: &Path) -> Option<String> {
+    let git = dir.join(".git");
+    let raw = std::fs::read_to_string(git.join("HEAD")).ok()?;
+    let raw = raw.trim();
+    let Some(r) = raw.strip_prefix("ref: ") else { return Some(raw.to_string()) };
+    if let Ok(sha) = std::fs::read_to_string(git.join(r)) {
+        return Some(sha.trim().to_string());
     }
-    if !fetch {
-        return None;
+    let packed = std::fs::read_to_string(git.join("packed-refs")).ok()?;
+    packed.lines().find_map(|l| l.strip_suffix(r).and_then(|s| s.strip_suffix(' ')).map(str::to_string))
+}
+
+/// `2.2.3@b38be6a` (ECC's `VERSION` + short commit), for messages.
+pub(crate) fn version(dir: &Path) -> String {
+    let v = std::fs::read_to_string(dir.join("VERSION")).map(|v| v.trim().to_string()).unwrap_or_else(|_| "?".into());
+    match head(dir) {
+        Some(h) => format!("{v}@{}", &h[..h.len().min(7)]),
+        None => v,
     }
-    // Clone beside the cache, then swap: a concurrent run never sees half a tree.
+}
+
+/// Whether a fetch is due: no stamp, garbage, older than [`REFRESH_S`], or from the future.
+fn fetch_due(stamp: &str, now: u64) -> bool {
+    stamp.trim().parse::<u64>().map_or(true, |t| t > now || now - t > REFRESH_S)
+}
+
+fn now_s() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// The ECC checkout, refreshed per `fetch`. A failed fetch (offline) keeps the
+/// last checkout; None only when there is none and it could not be cloned.
+fn checkout(home: &Path, fetch: Fetch) -> Option<PathBuf> {
+    let dir = cache_dir(home);
+    let stamp = dir.with_file_name(STAMP_FILE);
+    let due = match fetch {
+        Fetch::No => false,
+        Fetch::Now => true,
+        Fetch::IfDue => fetch_due(&std::fs::read_to_string(&stamp).unwrap_or_default(), now_s()),
+    };
+    let usable = |d: &Path| d.join(MAPPINGS).is_file();
+    if due {
+        let ok = if dir.join(".git").is_dir() { pull(&dir) } else { clone(&dir) };
+        if ok && usable(&dir) {
+            let _ = std::fs::write(&stamp, now_s().to_string());
+            let _ = std::fs::remove_file(dir.join(LEGACY_PIN_FILE));
+        } else if usable(&dir) {
+            ui::warn(&format!("ECC: could not fetch {ECC_REPO} (offline?) — keeping {}", version(&dir)));
+        } else {
+            ui::warn(&format!("ECC skipped: could not clone {ECC_REPO} (offline?) — re-run `8sync harness up --pull` later"));
+        }
+    }
+    usable(&dir).then_some(dir)
+}
+
+/// `git` with no prompt and a stall limit, so an offline or captive network fails fast.
+fn git() -> Command {
+    let mut c = Command::new("git");
+    c.env("GIT_TERMINAL_PROMPT", "0")
+        .args(["-c", "advice.detachedHead=false", "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    c
+}
+
+/// Move the checkout to upstream's default-branch tip (depth 1).
+fn pull(dir: &Path) -> bool {
+    let ok = |c: &mut Command| c.status().is_ok_and(|s| s.success());
+    ok(git().arg("-C").arg(dir).args(["fetch", "--quiet", "--depth", "1", ECC_REPO, "HEAD"]))
+        && ok(git().arg("-C").arg(dir).args(["checkout", "--quiet", "--force", "--detach", "FETCH_HEAD"]))
+}
+
+/// First clone, beside the cache then swapped in: a concurrent run never sees half a tree.
+fn clone(dir: &Path) -> bool {
     let tmp = dir.with_file_name(format!("ecc.tmp-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     if let Some(p) = tmp.parent() {
         let _ = std::fs::create_dir_all(p);
     }
-    let cloned = Command::new("git")
-        .args(["-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1", "--branch", ECC_TAG, ECC_REPO])
-        .arg(&tmp)
-        .stdin(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-    if !cloned || std::fs::write(tmp.join(PIN_FILE), ECC_TAG).is_err() || !is_current(&tmp) {
+    let cloned = git().args(["clone", "--quiet", "--depth", "1", ECC_REPO]).arg(&tmp).status().is_ok_and(|s| s.success());
+    if !cloned || !tmp.join(MAPPINGS).is_file() {
         let _ = std::fs::remove_dir_all(&tmp);
-        ui::warn(&format!("ECC rules skipped: could not clone {ECC_REPO} @ {ECC_TAG} (offline?) — re-run `8sync harness` later"));
-        return None;
+        return false;
     }
-    let _ = std::fs::remove_dir_all(&dir);
-    if std::fs::rename(&tmp, &dir).is_err() {
+    let _ = std::fs::remove_dir_all(dir);
+    if std::fs::rename(&tmp, dir).is_err() {
         let _ = std::fs::remove_dir_all(&tmp); // a concurrent run swapped first
     }
-    is_current(&dir).then_some(dir)
+    true
 }
 
 // ── stack detection ─────────────────────────────────────────────────────────────
@@ -194,6 +292,47 @@ fn seed_rules(ecc: &Path, root: &Path, packs: &[String]) -> Result<Vec<(String, 
         out.push((p.clone(), true));
     }
     Ok(out)
+}
+
+/// Source-code globs the generic ECC rules are about.
+const CODE: &[&str] = &["**/*.rs", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py", "**/*.go"];
+
+/// `paths:` per generic `common/` rule. `security.md` and `git-workflow.md` gate commits, so
+/// they stay always-on. Without `paths:` Claude Code loads all ten (~18 KB, ~4.6k tokens) into
+/// every main turn and every subagent's first turn (A/B in su-code: prefix 50 244 → 43 560).
+fn rule_scope(name: &str) -> Option<Vec<&'static str>> {
+    Some(match name {
+        "code-review.md" | "coding-style.md" | "development-workflow.md" | "patterns.md" => CODE.to_vec(),
+        "testing.md" => CODE.iter().copied().chain(["**/tests/**"]).collect(),
+        "agents.md" => vec![".claude/agents/**"],
+        "hooks.md" => vec!["**/hooks.json", "**/hooks/**", ".claude/settings*.json"],
+        "performance.md" => vec![".claude/settings*.json", ".claude/agents/**"],
+        _ => return None,
+    })
+}
+
+/// Prepend `paths:` frontmatter to each generic rule in `<root>/.claude/rules/ecc/common/`
+/// that has no frontmatter yet; a file already starting with `---` (scoped, or edited by the
+/// owner) is left alone. Returns the files changed.
+fn scope_common_rules(root: &Path) -> Vec<String> {
+    let dir = root.join(".claude/rules/ecc/common");
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&dir) else { return out };
+    let mut names: Vec<String> = entries.flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
+    names.sort();
+    for name in names {
+        let Some(globs) = rule_scope(&name) else { continue };
+        let path = dir.join(&name);
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        if text.starts_with("---\n") || text.starts_with("---\r\n") {
+            continue;
+        }
+        let head: String = globs.iter().map(|g| format!("  - \"{g}\"\n")).collect();
+        if std::fs::write(&path, format!("---\npaths:\n{head}---\n{text}")).is_ok() {
+            out.push(name);
+        }
+    }
+    out
 }
 
 // ── retire the vendored layout ──────────────────────────────────────────────────
@@ -317,7 +456,7 @@ fn is_unedited_copy(home: &Path, name: &str, dir: &Path) -> bool {
 
 /// LF-normalised contents of every file under `dir` keyed by `/`-relative path
 /// (`.git` skipped, empty dirs ignored, symlinks followed). None if unreadable.
-fn tree_files(dir: &Path) -> Option<BTreeMap<String, Vec<u8>>> {
+pub(super) fn tree_files(dir: &Path) -> Option<BTreeMap<String, Vec<u8>>> {
     fn walk(d: &Path, base: &Path, out: &mut BTreeMap<String, Vec<u8>>) -> Option<()> {
         for e in std::fs::read_dir(d).ok()?.flatten() {
             if e.file_name() == ".git" {
@@ -356,7 +495,7 @@ fn bundled_files(name: &str) -> BTreeMap<String, Vec<u8>> {
         .collect()
 }
 
-fn lf(b: Vec<u8>) -> Vec<u8> {
+pub(super) fn lf(b: Vec<u8>) -> Vec<u8> {
     if !b.contains(&b'\r') {
         return b;
     }
@@ -467,16 +606,60 @@ mod tests {
     }
 
     #[test]
-    fn only_a_pinned_cache_is_used_without_fetch() {
-        let home = tmp("pin");
-        let dir = home.join(".cache/8sync/ecc");
-        assert!(checkout(&home, false).is_none(), "no cache, no network");
+    fn launch_uses_any_cached_checkout_without_network() {
+        let home = tmp("cache");
+        let dir = cache_dir(&home);
+        assert!(checkout(&home, Fetch::No).is_none(), "no cache, no network");
         write(&dir.join(MAPPINGS), r#"{"stacks":[]}"#);
-        write(&dir.join(PIN_FILE), "v0.0.1\n");
-        assert!(checkout(&home, false).is_none(), "an older pin is stale");
-        write(&dir.join(PIN_FILE), ECC_TAG);
-        assert_eq!(checkout(&home, false), Some(dir));
+        write(&dir.join(LEGACY_PIN_FILE), "v2.2.3\n");
+        assert_eq!(checkout(&home, Fetch::No), Some(dir.clone()), "the tag-pinned cache is still usable");
+        assert!(dir.join(LEGACY_PIN_FILE).exists(), "only a successful fetch retires the pin file");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn fetch_is_due_after_six_hours_or_on_a_bad_stamp() {
+        let now = 1_800_000_000;
+        assert!(!fetch_due(&now.to_string(), now));
+        assert!(!fetch_due(&format!("{}\n", now - REFRESH_S), now));
+        assert!(fetch_due(&(now - REFRESH_S - 1).to_string(), now));
+        assert!(fetch_due("", now) && fetch_due("x", now) && fetch_due(&(now + 60).to_string(), now));
+    }
+
+    #[test]
+    fn head_reads_detached_branch_and_packed_refs() {
+        let d = tmp("head");
+        assert_eq!(head(&d), None);
+        let sha = "b38be6a7f6350964d59328b52f0624e1d1d552d1";
+        write(&d.join(".git/HEAD"), &format!("{sha}\n"));
+        write(&d.join("VERSION"), "2.2.3\n");
+        assert_eq!(head(&d).as_deref(), Some(sha));
+        assert_eq!(version(&d), "2.2.3@b38be6a");
+        write(&d.join(".git/HEAD"), "ref: refs/heads/main\n");
+        write(&d.join(".git/packed-refs"), &format!("# pack-refs\n{sha} refs/heads/main\n"));
+        assert_eq!(head(&d).as_deref(), Some(sha), "packed");
+        write(&d.join(".git/refs/heads/main"), "c05b2d6614f62f6db0047669aa4eefb223d478f9\n");
+        assert_eq!(head(&d).as_deref(), Some("c05b2d6614f62f6db0047669aa4eefb223d478f9"), "loose ref wins");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn generic_rules_get_paths_once_and_commit_gates_and_edits_stay() {
+        let d = tmp("scope");
+        let common = d.join(".claude/rules/ecc/common");
+        assert!(scope_common_rules(&d).is_empty(), "no rules dir");
+        write(&common.join("agents.md"), "# Agent Orchestration\n");
+        write(&common.join("testing.md"), "# Testing\r\nbody\r\n");
+        write(&common.join("security.md"), "# Security\n");
+        write(&common.join("coding-style.md"), "---\npaths:\n  - \"src/**\"\n---\n# mine\n");
+        assert_eq!(scope_common_rules(&d), ["agents.md", "testing.md"]);
+        let read = |n: &str| std::fs::read_to_string(common.join(n)).unwrap();
+        assert_eq!(read("agents.md"), "---\npaths:\n  - \".claude/agents/**\"\n---\n# Agent Orchestration\n");
+        assert!(read("testing.md").starts_with("---\npaths:\n  - \"**/*.rs\"\n") && read("testing.md").contains("  - \"**/tests/**\"\n---\n# Testing\r\n"));
+        assert_eq!(read("security.md"), "# Security\n", "commit gate stays always-on");
+        assert_eq!(read("coding-style.md"), "---\npaths:\n  - \"src/**\"\n---\n# mine\n", "owner's frontmatter kept");
+        assert!(scope_common_rules(&d).is_empty(), "idempotent");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

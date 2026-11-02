@@ -311,7 +311,7 @@ Session memory được omp tự quản (retain/recall/auto-compact). Không c�
         ui::warn(&format!("could not inject sub-folder pointers: {}", e));
     }
     // Launch path: cached ECC checkout only, never the network.
-    crate::verbs::harness::ecc::project_layer(&env.home, root, false);
+    crate::verbs::harness::ecc::project_layer(&env.home, root, crate::verbs::harness::ecc::Fetch::No);
     Ok(())
 }
 

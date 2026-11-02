@@ -37,7 +37,7 @@ pub(crate) fn harness_auto(env: &env_detect::Env) -> Result<()> {
     inject_agents_md(&env.home, &root)?;
     inject_subfolder_indexes(&root)?;
     let _ = inject::inject_cursor_rule(&root);
-    super::ecc::project_layer(&env.home, &root, true);
+    super::ecc::project_layer(&env.home, &root, super::ecc::Fetch::IfDue);
     let _ = deploy::ensure_engine(&env.home, Some(&root));
     let _ = deploy::ensure_rules(&env.home, Some(&root));
     let _ = deploy::cleanup_legacy_gs(&env.home, Some(&root));

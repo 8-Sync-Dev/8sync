@@ -332,18 +332,24 @@ def classify(snap):
 
 
 # ------------------------------------------------------------------ render
-ECC_DIR = ("`<ECC>` = 8sync's pinned ECC checkout `~/.cache/8sync/ecc/` (made by `8sync harness`), "
+ECC_DIR = ("`<ECC>` = 8sync's ECC checkout `~/.cache/8sync/ecc/` (tracks upstream: `8sync harness` + a 6-hourly background refresh), "
            "else the newest dir under `~/.claude/plugins/cache/ecc/ecc/`.")
+NEW = "- A skill in your session's skill list that fits the goal but is missing below (ECC updated since this list) is eligible too."
 HOW = {
     "cc": ("- `ecc:` members: plugin `ecc@ecc` on → Skill tool / `subagent_type` / `/ecc:<cmd>`; off (saves ~9k tokens a call) → read `<ECC>/skills/<name>/SKILL.md`, a `general-purpose` agent opening with `<ECC>/agents/<agent>.md`, `<ECC>/commands/<cmd>.md`. "
-           "`<ECC>` = newest `~/.claude/plugins/cache/ecc/ecc/*/`. Plain name = 8sync skill (Skill tool).\n"
-           "- One session: parallel members = Agent calls in one message or one Workflow, no sub-sessions. Unresolved member: skip it, say so."),
+           + ECC_DIR + " Plain name = 8sync skill (Skill tool).\n"
+           "- One session: parallel members = Agent calls in one message or one Workflow, no sub-sessions. Unresolved member: skip it, say so.\n" + NEW),
     "omp": ("- " + ECC_DIR + "\n"
-            "- Skills: `skill://<name>` = 8sync skill; plain name = ECC skill: `skill://<name>` if it resolves, else read `<ECC>/skills/<name>/SKILL.md`.\n"
-            "- Agents: spawn a `task` subagent whose prompt opens with the role file `<ECC>/agents/<agent>.md`.\n"
-            "- Commands: read `<ECC>/commands/<cmd>.md` and follow it with that step's arguments.\n"
-            "- A member that does not resolve: skip it, say so."),
+            "- Skills: `skill://<name>` loads any skill: `skill://` refs are 8sync's, plain names ECC's (8sync mirrors ECC into omp). Not found → read `<ECC>/skills/<name>/SKILL.md`.\n"
+            "- Agents: a `task` subagent whose assignment opens with \"read the role file `<ECC>/agents/<agent>.md` first\"; independent agents/steps → ONE `task` call with several `tasks[]` (parallel).\n"
+            "- Commands: run `/ecc-<cmd>` with that step's arguments; not found → read `<ECC>/commands/<cmd>.md` and follow it.\n"
+            "- A member that does not resolve: skip it, say so.\n" + NEW),
 }
+# Harness skills /eccx-full applies on every goal, whatever the categories (all bundled, `core`
+# except impeccable): (name, when). Checked against BUNDLED_CATS at generate time.
+ALWAYS = [("trail", "STEP 0 before any grep/read of code"), ("karpathy-guidelines", "every code step"),
+          ("ponytail", "pick the simplest plan that works"), ("8sync-cli", "any `8sync` verb (ship, ccc, harness)"),
+          ("impeccable", "every UI step")]
 
 
 def run_steps(h, vl, n):
@@ -363,7 +369,7 @@ def ref(h, kind, name, src):
         return name if src == "ecc" else "skill://" + name
     if kind == "agents":
         return "ecc:" + name if h == "cc" else name
-    return ("/ecc:" if h == "cc" else "") + name
+    return ("/ecc:" if h == "cc" else "/ecc-") + name
 
 
 def head(h, c, desc):
@@ -401,13 +407,15 @@ def body(h, c, members, maxw):
                 continue
             n = [len(rows(h, members[k], kind, maxw)) for kind in ("skills", "agents", "commands")]
             idx.append(f"- `{k}` — {t}: {s} ({n[0]}/{n[1]}/{n[2]})")
+        always = "; ".join(f"`{ref(h, 'skills', n, '8sync')}` {w}" for n, w in ALWAYS)
         return (head(h, c, "Run a full cross-category plan for a goal using every relevant ECC + 8sync skill across the eccx categories")
                 + "# /eccx-full — route a goal across every relevant category\n\n"
                 "Goal: `$ARGUMENTS` (`--dry-run` = stop after the merged plan).\n\n"
+                f"**Always (8sync harness):** {always}.\n\n"
                 "1. **Route.** From the categories below pick EVERY one relevant to the goal (default to inclusion); one line of why per pick.\n"
                 f"2. **Select.** For each pick open {cmd} and do its Select step on its member lists. Merge into one deduplicated set.\n"
                 "3. **Plan.** One numbered plan (research → design → build → verify → ship/distribute); each step names its skills/agents/commands and its check. `--dry-run`: print it and stop.\n"
-                + (f"4. **Execute** step by step. Read each skill just before its step, never all up front. Follow `{vl}`: run the project's real build/type-check/lint/tests after every code step; fix before moving on.\n"
+                + (f"4. **Execute** step by step. Read each skill just before its step, never all up front. Independent steps → parallel `task` subagents in one call. Follow `{vl}`: run the project's real build/type-check/lint/tests after every code step; fix before moving on.\n"
                    "5. **Report** (short): categories used, members used/skipped, checks run + results, open risks.\n\n" if h == "omp" else
                    run_steps(h, vl, 4)[0] + "6. **Report** (short): categories used, members used/skipped, checks run + results, lessons kept, open risks.\n\n")
                 + "## Categories (skills/agents/commands)\n" + "\n".join(idx) + "\n\n"
@@ -500,6 +508,9 @@ def clear_body(h):
 def generate():
     snap = json.load(open(SNAP, encoding="utf-8"))
     members = classify(snap)
+    missing = [n for n, _ in ALWAYS if n not in BUNDLED_CATS]
+    if missing:
+        sys.exit(f"eccx-gen: always-on harness skills not bundled: {missing}")
     for h, d in OUT.items():
         os.makedirs(d, exist_ok=True)
         want = set()
