@@ -5,6 +5,23 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.118.0] — 2026-11-02
+
+### Added
+- **`EIGHTSYNC_HQ_HOME`:** đặt home riêng cho config/state HQ (supervisor truyền xuống node qua `HOME`/`USERPROFILE`), để smoke test chạy cạnh HQ thật mà không đụng `~/.config/8sync/hq`.
+- **HQ sidebar theo cây Claude Code Desktop (dự án → phiên → phiên con):** "+ Phiên mới" (Ctrl/Alt+N), Tìm, Tổng quan/Văn phòng/Preview/Chat/Vòng lặp/Thêm; mỗi dự án là một nhóm (tên đậm, ▾ thu gọn, "+" mở phiên trong thư mục đó, "⋯" Nhóm & sắp xếp: theo Dự án/Trạng thái/Không nhóm, sắp Gần đây/Ngày tạo/Tên, nhớ trong trình duyệt). Dòng phiên chỉ còn tiêu đề + số phiên con, chấm xanh "xong chưa xem", ⚠ lỗi, vòng quay khi đang làm, thời gian. Phiên con (task subagent của omp, agent đang chạy của phòng Claude Code) nằm dưới dòng └, hiện cái đang chạy/mới, còn lại "+N cũ hơn". Menu "⋯" từng phiên: Mở cạnh nhau (Alt+click), Chat phòng, Lưu trữ, Đóng/Xoá phòng; mục "Đã lưu trữ". Chân sidebar: tài khoản (Thêm dự án…, đổi theme, Cách dùng) + bánh răng mở tab Máy. Ctrl+Tab/Ctrl+Shift+Tab và Alt+↓/↑ chuyển phiên. Mobile mở bằng drawer.
+- **Ô soạn việc ở giữa màn hình:** "Mô tả việc cần làm hoặc đặt câu hỏi", Enter gửi, dán/đính kèm file; chip Máy này, thư mục (gần đây + "Chọn thư mục khác…"), Worktree, Model. Gửi là tạo phiên omp mới (tên tự sinh từ câu đầu) và việc vào inbox làm lượt đầu. API: `GET /api/omp/sessions?all=1` (cây phiên + phiên con), `POST /api/omp/sessions` nhận thêm `worktree`/`prompt`/`files`.
+- **Tổng quan có bảng trạng thái:** Chờ anh · Đang làm · Xong (24 giờ) · Lỗi, mỗi cột tối đa 5 phiên bấm mở được.
+
+### Changed
+- **Link `hq ui --public` giữ nguyên suốt đời supervisor:** khi `8sync up` thay binary sang bản mới, HQ `--public` không khởi động lại cả tiến trình nữa mà chỉ đổi node sang UI của bản mới (bản `8sync up` đã cài sẵn, thiếu thì binary mới tự `hq ui --install`), cùng port, cùng `HQ_PUBLIC_NONCE`/`EIGHTSYNC_BIN`/`HQ_CHANNEL_FLAGS`/core; cloudflared và `public.json` giữ nguyên nên link trycloudflare và cookie `hq_pub` trên điện thoại vẫn dùng được. Vẫn chờ khi shell trong HQ đang mở. Node chết bất thường (crash, bị kill) → chạy lại sau 2 s, tối đa 5 lần/10 phút, quá thì dừng và dọn link như cũ; Ctrl-C / thoát sạch vẫn dọn tunnel + `public.json`. HQ local giữ hành vi cũ (khởi động lại cả tiến trình trên bản mới).
+- **Giao diện sáng trung tính kiểu Claude Code Desktop:** nền trắng, sidebar #fafafa, chữ/viền xám kẽm, chọn/focus màu xám; lime chỉ còn ở logo và nút chính. Bỏ khung "Bắt đầu phiên omp" của tab Không gian (thay bằng ô soạn việc).
+- **HQ mặc định giao diện sáng, tab "Không gian" chọn dự án kiểu Claude Code Desktop:** người chưa chọn theme thấy nền sáng (off-white ngả xanh lá, chữ/nút lime đậm, mọi cặp chữ/nền ≥ 4.5:1, terminal có bảng màu sáng); ai đã bật tối vẫn giữ. "Không gian" mở bằng ô tìm dự án (gần đây + mọi repo HQ biết, mỗi dòng tên + thư mục chứa; dán đường dẫn rồi Enter cũng được), "Duyệt thư mục…" đi từng tầng và bắt đầu ở thư mục chứa nhiều dự án nhất (bỏ qua Temp/AppData), không bao giờ ở `C:\`; dự án chọn ở sidebar là mặc định. Giữa màn hình là khung "Bắt đầu phiên omp" (chip dự án, tên phiên, model tuỳ chọn, "Bắt đầu"/"Mở lại") và danh sách phiên omp của dự án (trạng thái, lần cuối, token) để mở lại. Có cửa sổ thì khung chọn thu vào nút "Mở phiên" (phủ lên các cửa sổ, terminal không bị đo lại kích thước); 1–4 cửa sổ như cũ; điện thoại 430px hiện từng phần một. `/api/tree` trả thêm `home`.
+
+### Fixed
+- **HQ "Không gian": mở lại phiên omp có sẵn không còn tắt ngay ("Đã rời phòng"):** với thư mục `8sync ls --all` không dịch ngược được (vd repo trong `%TEMP%`), cột `repo` là khoá registry (`C--Users-…`), HQ đưa nguyên khoá đó làm `cwd` cho `8sync ccc term omp-…` → spawn ENOENT, stream `end` trước byte đầu. Giờ khoá được dịch qua `<config>/8sync/sessions/<khoá>/index.json` (`root`), không dịch được thì chạy không `cwd` (CLI tự tìm phòng theo id); phiên vừa tạo dùng thư mục mà POST đã kiểm.
+- **`hq ui` thứ hai không còn xoá link của HQ `--public` đang chạy:** `public.json` ghi thêm `pid`/`pid_start`/`port` của supervisor; lúc khởi động, file chỉ bị xoá khi đã cũ (port ghi trong file là port của lần chạy này, pid đã chết hoặc bị tái dùng, hoặc port ghi trong file không còn ai nghe); file đời cũ không có pid/port thì giữ. `hq ui --public` ở port khác khi link đang thuộc HQ còn sống → báo lỗi thay vì cướp link.
+
 ## [0.117.0] — 2026-11-02
 
 ### Added

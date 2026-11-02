@@ -1,4 +1,6 @@
+import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +25,7 @@ vi.mock("node:child_process", async (orig) => ({
 import { DELETE, GET, POST } from "@/app/api/sessions/[name]/term/route";
 import { getToken } from "@/lib/server/auth";
 import { resetFloorCache } from "@/lib/server/floor";
+import { ompRegistryDir, ompRepoDir } from "@/lib/server/omp-sessions";
 import { ELSEWHERE_EXIT, IDLE_CLOSE_MS, closeTerm, openTerm, poll, takeoverTerm, termArgs, termOpen, watch } from "@/lib/server/term";
 import { activityScreen } from "@/lib/term-activity";
 import { ORIGIN, req, tempHome } from "./helpers";
@@ -108,6 +111,35 @@ describe("an omp room's terminal", () => {
     run.mockResolvedValue(lsOut([{ ...ompRow, repo: "~\\w\\app" }]));
     await GET(req(`/api/sessions/${ROOM}/term?gen=0&since=-1`, { token }), params(ROOM));
     expect(spawned.map((s) => s.cwd)).toEqual([`${os.homedir()}\\w\\app`]);
+  });
+
+  it("reopening a listed session whose ls `repo` is the registry key (a folder ls cannot map back) spawns in the registry root, not the key", async () => {
+    // Owner 2026-11-02: "Mở lại" on an existing session ended at once ("Đã rời phòng"): the key went to spawn as a cwd (ENOENT).
+    const cfg = fs.mkdtempSync(path.join(os.tmpdir(), "hq-omp-reg-"));
+    const keep = { APPDATA: process.env.APPDATA, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+    process.env.APPDATA = cfg;
+    process.env.XDG_CONFIG_HOME = cfg;
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "hq-omp-repo-"));
+    try {
+      const key = repo.replace(/[^A-Za-z0-9]/g, "-");
+      fs.mkdirSync(path.join(ompRegistryDir(), key), { recursive: true });
+      fs.writeFileSync(path.join(ompRegistryDir(), key, "index.json"), JSON.stringify({ root: repo, sessions: [{ name: "core" }] }));
+      run.mockResolvedValue(lsOut([{ ...ompRow, repo: key }]));
+      await GET(req(`/api/sessions/${ROOM}/term?cols=80&rows=24&gen=0&since=-1`, { token }), params(ROOM));
+      expect(spawned.map((s) => [s.args, s.cwd])).toEqual([[termArgs(ROOM, 80, 24), repo]]);
+      closeTerm(ROOM);
+      // A key with no registry entry: no cwd at all (the CLI resolves the room by id), never the key itself.
+      resetFloorCache();
+      run.mockResolvedValue(lsOut([{ ...ompRow, repo: "C--gone-folder" }]));
+      await GET(req(`/api/sessions/${ROOM}/term?gen=0&since=-1`, { token }), params(ROOM));
+      expect(spawned[1].cwd).toBeUndefined();
+      expect(ompRepoDir("C:\\w\\app")).toBe("C:\\w\\app");
+    } finally {
+      Object.assign(process.env, keep);
+      for (const [k, v] of Object.entries(keep)) if (v === undefined) delete process.env[k];
+      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(cfg, { recursive: true, force: true });
+    }
   });
 
   it("a takeover bridge no page reconnects to closes after the idle time; a viewer keeps it", () => {

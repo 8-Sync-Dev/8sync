@@ -319,10 +319,20 @@ struct Paths {
     state_dir: PathBuf,
 }
 
+/// The home the HQ's config/state live under: `EIGHTSYNC_HQ_HOME` when set (a sandboxed smoke run
+/// beside the owner's live HQ; the supervisor hands it to node as HOME/USERPROFILE), else the
+/// user's home.
+fn hq_home_override() -> Option<PathBuf> {
+    std::env::var_os("EIGHTSYNC_HQ_HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+fn hq_home() -> Result<PathBuf> {
+    hq_home_override().or_else(dirs::home_dir).ok_or_else(|| anyhow!("cannot resolve home directory"))
+}
+
 impl Paths {
     fn new() -> Result<Self> {
-        let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot resolve home directory"))?;
-        Ok(Self::under(&home))
+        Ok(Self::under(&hq_home()?))
     }
     fn under(home: &Path) -> Self {
         Paths {
@@ -1742,8 +1752,8 @@ const SELF_RESTART_SINCE: &str = "0.102.0";
 /// HQ is, so it gives both cases.
 pub(crate) fn up_restart_hint(port: u16) -> String {
     format!(
-        "HQ đang chạy trên port {port}: HQ từ v{SELF_RESTART_SINCE} trở lên (không `--public`) tự khởi động lại trên bản mới trong ~30 giây; \
-         HQ cũ hơn hoặc `--public`: Ctrl-C trong terminal `8sync hq ui` rồi chạy lại `8sync hq ui`"
+        "HQ đang chạy trên port {port}: HQ từ v{SELF_RESTART_SINCE} trở lên tự khởi động lại trên bản mới trong ~30 giây (`--public` đời mới chỉ đổi UI, link từ xa giữ nguyên); \
+         HQ cũ hơn hoặc `--public` đời cũ: Ctrl-C trong terminal `8sync hq ui` rồi chạy lại `8sync hq ui`"
     )
 }
 
@@ -2220,10 +2230,57 @@ fn tunnel_host(line: &str) -> Option<String> {
     None
 }
 
+/// The `hq ui --public` supervisor that owns `public.json`: its pid, the pid's start time (so a
+/// reused pid reads as gone) and the HQ port.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LinkOwner {
+    pid: u32,
+    start: Option<u64>,
+    port: u16,
+}
+
 /// `public.json`: `nonce` is this launch's `HQ_PUBLIC_NONCE` (the HQ server's env), so the server
-/// trusts only the file its own launcher wrote, not one a session dropped there.
-fn public_json(host: &str, key: &str, nonce: &str, since_ms: u64) -> Value {
-    json!({"v": 1, "host": host, "key": key, "nonce": nonce, "since": since_ms})
+/// trusts only the file its own launcher wrote, not one a session dropped there. `pid`/`pid_start`/
+/// `port` say which supervisor owns the link, so another `hq ui` leaves a live one alone.
+fn public_json(host: &str, key: &str, nonce: &str, since_ms: u64, owner: LinkOwner) -> Value {
+    json!({"v": 1, "host": host, "key": key, "nonce": nonce, "since": since_ms, "pid": owner.pid, "pid_start": owner.start, "port": owner.port})
+}
+
+/// Whether a `public.json` found when this run starts the server on its (free) `port` is left
+/// over. `None` = unreadable/junk: left over. Its port = ours: its server is gone. A recorded pid
+/// that is gone or reused: left over. Otherwise its recorded port decides (busy = live); an older
+/// file with neither pid nor port is kept (the server's nonce check already ignores a stale one,
+/// and the next `--public` run overwrites it).
+fn public_file_stale(v: Option<&Value>, port: u16, start_of: impl Fn(u32) -> Option<u64>, busy: impl Fn(u16) -> bool) -> bool {
+    let Some(v) = v else { return true };
+    let theirs = v["port"].as_u64().and_then(|p| u16::try_from(p).ok());
+    if theirs == Some(port) {
+        return true;
+    }
+    if let Some(pid) = v["pid"].as_u64().and_then(|p| u32::try_from(p).ok()) {
+        match (start_of(pid), v["pid_start"].as_u64()) {
+            (Some(now), Some(rec)) => return now != rec,
+            (Some(_), None) => return false,
+            // gone, or this OS cannot tell: the port decides
+            (None, _) => {}
+        }
+    }
+    theirs.is_some_and(|p| !busy(p))
+}
+
+/// Remove `file` when [`public_file_stale`]; Err(owner text) when it belongs to a live HQ.
+fn drop_stale_public(file: &Path, port: u16) -> std::result::Result<(), String> {
+    let Ok(raw) = std::fs::read_to_string(file) else { return Ok(()) };
+    let v = serde_json::from_str::<Value>(&raw).ok();
+    if public_file_stale(v.as_ref(), port, crate::verbs::hq_core::sys::proc_start, ui_port_busy) {
+        let _ = std::fs::remove_file(file);
+        return Ok(());
+    }
+    let v = v.unwrap_or_default();
+    Err(match (v["pid"].as_u64(), v["port"].as_u64()) {
+        (Some(pid), Some(p)) => format!("pid {pid}, port {p}"),
+        _ => "một `hq ui --public` khác".into(),
+    })
 }
 
 /// 32 random bytes as 64 lowercase hex chars.
@@ -2304,7 +2361,9 @@ fn start_public(port: u16, file: &Path, nonce: &str) -> Result<Option<std::proce
         }
     };
     let since = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-    if let Err(e) = write_private(file, format!("{}\n", public_json(&host, &key, nonce, since)).as_bytes()) {
+    let pid = std::process::id();
+    let owner = LinkOwner { pid, start: crate::verbs::hq_core::sys::proc_start(pid), port };
+    if let Err(e) = write_private(file, format!("{}\n", public_json(&host, &key, nonce, since, owner)).as_bytes()) {
         let _ = tun.kill();
         let _ = tun.wait();
         return Err(e);
@@ -2356,11 +2415,113 @@ fn normal_priority() {
     }
 }
 
+/// How the HQ server process starts; startup, an update swap and a crash respawn share it, so the
+/// new node gets the same port, nonce, `8sync` path, channel flags and core.
+struct NodeSpec {
+    prog: String,
+    args: Vec<String>,
+    port: u16,
+    nonce: Option<String>,
+    flags: Option<String>,
+    /// (url, token) of this supervisor's native core
+    core: Option<(String, String)>,
+}
+
+fn spawn_node(s: &NodeSpec) -> Result<std::process::Child> {
+    // Full path: on Windows pnpm/npm are `.cmd` shims that `Command::new("npm")` does not find.
+    let mut cmd = Command::new(which::which(&s.prog).unwrap_or_else(|_| s.prog.clone().into()));
+    cmd.args(&s.args).env("HOSTNAME", "127.0.0.1").env("PORT", s.port.to_string()).env_remove("HQ_PUBLIC_NONCE");
+    if let Some(n) = &s.nonce {
+        cmd.env("HQ_PUBLIC_NONCE", n);
+    }
+    // The UI runs `8sync` by this binary's path (proc.ts): never a different `8sync` on its PATH.
+    match std::env::current_exe() {
+        Ok(me) => {
+            cmd.env("EIGHTSYNC_BIN", me);
+        }
+        Err(_) => {
+            cmd.env_remove("EIGHTSYNC_BIN");
+        }
+    }
+    if let Some(f) = &s.flags {
+        cmd.env("HQ_CHANNEL_FLAGS", f);
+    }
+    // `HQ_*`: node never passes it on to a room.
+    cmd.env_remove("HQ_CORE").env_remove("HQ_CORE_TOKEN");
+    if let Some((url, token)) = &s.core {
+        cmd.env("HQ_CORE", url).env("HQ_CORE_TOKEN", token);
+    }
+    // node finds its config dir from the home (lib/server/paths.ts): keep it on the sandbox
+    if let Some(h) = hq_home_override() {
+        cmd.env("HOME", &h).env("USERPROFILE", &h);
+    }
+    cmd.spawn().with_context(|| format!("start {}", s.prog))
+}
+
+/// A `--public` run restarts a dead node at most this often, then stops like before.
+const RESPAWN_MAX: usize = 5;
+const RESPAWN_WINDOW: Duration = Duration::from_secs(600);
+
+/// Respawns in the last [`RESPAWN_WINDOW`].
+#[derive(Default)]
+struct RespawnBudget(Vec<std::time::Instant>);
+
+impl RespawnBudget {
+    /// Spend one respawn at `now` if fewer than [`RESPAWN_MAX`] happened in the window before it.
+    fn allow(&mut self, now: std::time::Instant) -> bool {
+        self.0.retain(|t| now.saturating_duration_since(*t) < RESPAWN_WINDOW);
+        let ok = self.0.len() < RESPAWN_MAX;
+        if ok {
+            self.0.push(now);
+        }
+        ok
+    }
+}
+
+/// A node exit worth a respawn: a crash or a kill. Not a clean exit, and not the Ctrl-C (Windows
+/// STATUS_CONTROL_C_EXIT, a shell's 130/143) or SIGHUP/SIGINT/SIGTERM that stops this supervisor too.
+fn respawn_after(code: Option<i32>, signal: Option<i32>) -> bool {
+    const CTRL_C_EXIT: i32 = 0xC000_013Au32 as i32;
+    match (code, signal) {
+        (Some(c), _) => !matches!(c, 0 | 130 | 143 | CTRL_C_EXIT),
+        (None, Some(s)) => !matches!(s, 1 | 2 | 15),
+        (None, None) => false,
+    }
+}
+
+fn exit_signal(st: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        std::os::unix::process::ExitStatusExt::signal(st)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = st;
+        None
+    }
+}
+
+/// The installed UI of `newv`, the binary `8sync up` just put at `exe`: `8sync up` normally unpacked
+/// it already (`hq ui --install`); else that binary installs it now. None: not available.
+fn ui_for_version(exe: &Path, newv: &str, port: u16) -> Option<PathBuf> {
+    let dir = hq_ui_data_dir().ok()?.join(newv);
+    if !hq_ui_installed(&dir) {
+        let _ = Command::new(exe)
+            .args(["hq", "ui", "--install", "--port", &port.to_string()])
+            .env("SUSYNC_NO_AUTO_UPDATE", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    hq_ui_installed(&dir).then_some(dir)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_only: bool, dry: bool, public: bool) -> Result<()> {
     let paths = Paths::new()?;
     let public_file = paths.cfg_dir.join("public.json");
-    let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot resolve home directory"))?;
+    let home = hq_home()?;
     let ver = env!("CARGO_PKG_VERSION");
     let installed = hq_ui_data_dir()?.join(ver);
     let env_app = std::env::var_os("EIGHTSYNC_HQ_UI_APP").map(PathBuf::from);
@@ -2424,43 +2585,27 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
         return Ok(());
     }
     // Only the run that really starts the server drops a previous link (`--install` and a second
-    // `hq ui` on a busy port leave a running `--public` link alone).
+    // `hq ui` on a busy port leave a running `--public` link alone), and only a stale one: a live
+    // `--public` HQ on another port keeps its link.
     let port_busy = ui_port_busy(port);
     if port_busy {
         if public {
             // the tunnel would front the other server and overwrite its link
             bail!("{}", stale_ui_hint(port, ver));
         }
-    } else {
-        let _ = std::fs::remove_file(&public_file);
+    } else if let Err(owner) = drop_stale_public(&public_file, port) {
+        if public {
+            // one `public.json` per machine: taking it would kill that HQ's link
+            bail!("link từ xa đang thuộc về HQ khác ({owner}) — tắt HQ đó trước khi chạy `8sync hq ui --public` ở port {port}");
+        }
     }
     let nonce = if public { Some(random_hex32()?) } else { None };
-    // Full path: on Windows pnpm/npm are `.cmd` shims that `Command::new("npm")` does not find.
-    let mut cmd = Command::new(which::which(prog).unwrap_or_else(|_| prog.into()));
-    cmd.args(&args).env("HOSTNAME", "127.0.0.1").env("PORT", port.to_string()).env_remove("HQ_PUBLIC_NONCE");
-    if let Some(n) = &nonce {
-        cmd.env("HQ_PUBLIC_NONCE", n);
-    }
-    // The UI runs `8sync` by this binary's path (proc.ts): never a different `8sync` on its PATH.
-    match std::env::current_exe() {
-        Ok(me) => {
-            cmd.env("EIGHTSYNC_BIN", me);
-        }
-        Err(_) => {
-            cmd.env_remove("EIGHTSYNC_BIN");
-        }
-    }
-    if let Some(f) = &flags {
-        cmd.env("HQ_CHANNEL_FLAGS", f);
-    }
     // The native core (verbs/hq_core): warm data on a loopback port this supervisor owns, so node
-    // doesn't start a process per poll. `HQ_*`: node never passes it on to a room. Not on a busy
-    // port: that node exits at once and a second core would only idle beside the running HQ's.
-    cmd.env_remove("HQ_CORE").env_remove("HQ_CORE_TOKEN");
-    if let Some(core) = (!port_busy).then(crate::verbs::hq_core::start).flatten() {
-        cmd.env("HQ_CORE", &core.url).env("HQ_CORE_TOKEN", &core.token);
-    }
-    let mut child = cmd.spawn().with_context(|| format!("start {prog}"))?;
+    // doesn't start a process per poll. Not on a busy port: that node exits at once and a second
+    // core would only idle beside the running HQ's.
+    let core = (!port_busy).then(crate::verbs::hq_core::start).flatten().map(|c| (c.url, c.token));
+    let mut spec = NodeSpec { prog: prog.to_string(), args, port, nonce: nonce.clone(), flags, core };
+    let mut child = spawn_node(&spec)?;
     // journal on only once the UI process exists
     let mut cfg = load_config(&paths).unwrap_or_default();
     if !cfg.local {
@@ -2499,24 +2644,41 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
             }
         });
     }
-    // An installed, local-only HQ follows `8sync up`: when this binary's file is replaced by another
-    // version, stop the server and start the new binary with the same arguments (owner 2026-10-19:
-    // the old one kept its version until a Ctrl-C). A `--public` run keeps its link and its version.
-    let mut watch = (!public && !explicit && matches!(src, AppSrc::Installed(_)))
+    // An installed HQ follows `8sync up`: when this binary's file is replaced by another version, a
+    // local HQ stops the server and starts the new binary with the same arguments (owner 2026-10-19:
+    // the old one kept its version until a Ctrl-C). A `--public` run swaps only node onto the new
+    // version's UI: this process, its tunnel and `public.json` stay, so the link and the phone's
+    // `hq_pub` cookie keep working (owner 2026-11-02: the link must stay fixed from when it opened).
+    let mut watch = (!explicit && matches!(src, AppSrc::Installed(_)))
         .then(std::env::current_exe)
         .and_then(Result::ok)
         .map(|exe| {
             let stamp = exe_stamp(&exe);
             (exe, stamp)
         });
+    let mut running = ver.to_string();
     let mut checked = std::time::Instant::now();
     let mut told = false;
+    let mut budget = RespawnBudget::default();
     let token_file = paths.cfg_dir.join("ui-token");
-    let st = loop {
+    let st: Result<std::process::ExitStatus> = loop {
         match child.try_wait() {
-            Ok(Some(s)) => break Ok(s),
+            Ok(Some(s)) => {
+                // a `--public` link outlives a crashed node: start it again on the same port
+                if !(public && respawn_after(s.code(), exit_signal(&s)) && budget.allow(std::time::Instant::now())) {
+                    break Ok(s);
+                }
+                ui::warn(&format!("HQ UI dừng ({s}) — chạy lại, link từ xa giữ nguyên"));
+                // a Ctrl-C that also reaches this process ends it here, before a new node starts
+                std::thread::sleep(Duration::from_secs(2));
+                match spawn_node(&spec) {
+                    Ok(c) => child = c,
+                    Err(e) => break Err(e),
+                }
+                continue;
+            }
             Ok(None) => {}
-            Err(e) => break Err(e),
+            Err(e) => break Err(e.into()),
         }
         std::thread::sleep(Duration::from_secs(1));
         let Some((exe, stamp)) = watch.as_mut() else { continue };
@@ -2530,7 +2692,7 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
         }
         // no version yet (the file is still being written): look again next round
         let Some(newv) = probe_version(exe) else { continue };
-        if newv == ver {
+        if newv == running {
             *stamp = now;
             continue;
         }
@@ -2542,10 +2704,41 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
             }
             continue;
         }
-        ui::info(&format!("8sync {newv} đã cài: HQ khởi động lại trên bản mới"));
+        if !public {
+            ui::info(&format!("8sync {newv} đã cài: HQ khởi động lại trên bản mới"));
+            let _ = child.kill();
+            let _ = child.wait();
+            return relaunch(exe);
+        }
+        *stamp = now;
+        told = false;
+        let Some(dir) = ui_for_version(exe, &newv, port) else {
+            ui::warn(&format!("8sync {newv} đã cài nhưng chưa có HQ UI {newv} — giữ UI {running} (link từ xa giữ nguyên)"));
+            continue;
+        };
+        let node = which::which("node").map(|p| p.display().to_string()).unwrap_or_else(|_| "node".into());
+        if let Err(e) = write_channel_mcp(&paths, &dir.join("hq-channel/server.mjs"), &node) {
+            ui::warn(&format!("HQ UI {newv}: {e:#} — giữ UI {running}"));
+            continue;
+        }
+        ui::info(&format!("8sync {newv} đã cài: HQ đổi sang UI {newv}, link từ xa giữ nguyên"));
+        let old = std::mem::replace(&mut spec.args, ui_argv(&AppSrc::Installed(dir), true).1);
         let _ = child.kill();
         let _ = child.wait();
-        return relaunch(exe);
+        match spawn_node(&spec) {
+            Ok(c) => {
+                child = c;
+                running = newv;
+            }
+            Err(e) => {
+                ui::warn(&format!("không chạy được UI {newv}: {e:#} — chạy lại UI {running}"));
+                spec.args = old;
+                match spawn_node(&spec) {
+                    Ok(c) => child = c,
+                    Err(e) => break Err(e),
+                }
+            }
+        }
     };
     if public {
         // a tunnel still starting would stay up without this join (cloudflared bounds it to 45 s)
@@ -2560,7 +2753,7 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
         }
     }
     let st = st?;
-    if st.success() { Ok(()) } else { bail!("{prog} exited with {st}") }
+    if st.success() { Ok(()) } else { bail!("{} exited with {st}", spec.prog) }
 }
 
 // ── status / doctor ─────────────────────────────────────────────────────────
@@ -2753,9 +2946,60 @@ mod tests {
     }
 
     #[test]
+    fn public_file_stale_only_when_its_owner_is_gone() {
+        let owner = LinkOwner { pid: 42, start: Some(7), port: 8740 };
+        let v = public_json("a.trycloudflare.com", &"0f".repeat(32), &"1a".repeat(32), 1, owner);
+        let busy = |p: u16| p == 8740;
+        // live owner on another port: kept, whatever its port says
+        assert!(!public_file_stale(Some(&v), 8753, |_| Some(7), busy));
+        assert!(!public_file_stale(Some(&v), 8753, |_| Some(7), |_| false));
+        // the pid was reused by a later process / is gone and its port is free
+        assert!(public_file_stale(Some(&v), 8753, |_| Some(8), busy));
+        assert!(public_file_stale(Some(&v), 8753, |_| None, |_| false));
+        // the pid cannot be read (gone, or an OS without proc_start) but its port answers: live
+        assert!(!public_file_stale(Some(&v), 8753, |_| None, busy));
+        // it recorded the port this run is starting on (free): its server is gone
+        assert!(public_file_stale(Some(&v), 8740, |_| Some(7), busy));
+        // pid alive without a recorded start: kept
+        let mut no_start = v.clone();
+        no_start["pid_start"] = Value::Null;
+        assert!(!public_file_stale(Some(&no_start), 8753, |_| Some(1), |_| false));
+        // older file (no pid, no port): kept; junk: dropped
+        let old = json!({"v": 1, "host": "a.trycloudflare.com", "key": "k", "nonce": "n", "since": 1});
+        assert!(!public_file_stale(Some(&old), 8753, |_| None, |_| false));
+        assert!(public_file_stale(None, 8753, |_| Some(7), busy));
+        // old file with a port only: the port decides
+        let port_only = json!({"v": 1, "port": 8740});
+        assert!(!public_file_stale(Some(&port_only), 8753, |_| None, busy));
+        assert!(public_file_stale(Some(&port_only), 8753, |_| None, |_| false));
+    }
+
+    #[test]
+    fn respawn_budget_and_exit_kinds() {
+        let t0 = std::time::Instant::now();
+        let mut b = RespawnBudget::default();
+        for i in 0..RESPAWN_MAX as u64 {
+            assert!(b.allow(t0 + Duration::from_secs(60 * i)), "respawn {i}");
+        }
+        assert!(!b.allow(t0 + Duration::from_secs(300)), "6th within 10 min");
+        // the first one leaves the window: one more is allowed
+        assert!(b.allow(t0 + RESPAWN_WINDOW + Duration::from_secs(1)));
+        assert!(!b.allow(t0 + RESPAWN_WINDOW + Duration::from_secs(2)));
+        // crash / kill (taskkill /F = 1) respawn; clean exit and Ctrl-C do not
+        assert!(respawn_after(Some(1), None) && respawn_after(Some(-1), None) && respawn_after(None, Some(9)));
+        for (c, s) in [(Some(0), None), (Some(130), None), (Some(143), None), (Some(0xC000_013Au32 as i32), None), (None, Some(2)), (None, Some(15)), (None, Some(1)), (None, None)] {
+            assert!(!respawn_after(c, s), "{c:?} {s:?}");
+        }
+    }
+
+    #[test]
     fn public_json_shape() {
-        let v = public_json("a-b.trycloudflare.com", &"0f".repeat(32), &"1a".repeat(32), 1_760_000_000_000);
-        assert_eq!(v, json!({"v": 1, "host": "a-b.trycloudflare.com", "key": "0f".repeat(32), "nonce": "1a".repeat(32), "since": 1_760_000_000_000u64}));
+        let owner = LinkOwner { pid: 4242, start: Some(99), port: 8740 };
+        let v = public_json("a-b.trycloudflare.com", &"0f".repeat(32), &"1a".repeat(32), 1_760_000_000_000, owner);
+        assert_eq!(
+            v,
+            json!({"v": 1, "host": "a-b.trycloudflare.com", "key": "0f".repeat(32), "nonce": "1a".repeat(32), "since": 1_760_000_000_000u64, "pid": 4242, "pid_start": 99, "port": 8740})
+        );
         let n = random_hex32().unwrap();
         assert!(n.len() == 64 && n.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) && n != random_hex32().unwrap());
     }

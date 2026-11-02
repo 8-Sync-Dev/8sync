@@ -9,7 +9,8 @@ import path from "node:path";
 export const TREE_MAX = 500;
 
 export type TreeDir = { name: string; path: string; git: boolean };
-export type TreeListing = { path: string; parent: string | null; roots: string[]; dirs: TreeDir[] };
+/** `home`: the user's home folder, so the picker can show `~\…` paths and start browsing there. */
+export type TreeListing = { path: string; parent: string | null; roots: string[]; home: string; dirs: TreeDir[] };
 
 /** Folders never worth a step: dot-dirs, dependency dumps, Windows system folders. */
 export function hiddenDir(name: string, platform: NodeJS.Platform = process.platform): boolean {
@@ -87,9 +88,9 @@ export function listTree(dir: string, platform: NodeJS.Platform = process.platfo
 }
 
 /** GET /api/tree's answer: `path` empty = the roots themselves, listed as `dirs` too (no parent). */
-export function treeListing(p: string, roots: string[] = cachedRoots()): TreeListing | null {
-  if (!p) return { path: "", parent: null, roots, dirs: roots.map((r) => ({ name: r, path: r, git: fs.existsSync(path.join(r, ".git")) })) };
+export function treeListing(p: string, roots: string[] = cachedRoots(), home = os.homedir()): TreeListing | null {
+  if (!p) return { path: "", parent: null, roots, home, dirs: roots.map((r) => ({ name: r, path: r, git: fs.existsSync(path.join(r, ".git")) })) };
   const dir = resolveTreeDir(p);
   if (!dir) return null;
-  return { path: dir, parent: treeParent(dir), roots, dirs: listTree(dir) };
+  return { path: dir, parent: treeParent(dir), roots, home, dirs: listTree(dir) };
 }
