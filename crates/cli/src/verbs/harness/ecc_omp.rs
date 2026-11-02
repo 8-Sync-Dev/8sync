@@ -64,10 +64,13 @@ enum Act {
     Same,
     Update,
     Keep,
+    /// Mirrored once, then deleted locally (owner or `manage_skill delete`): stays deleted.
+    Deleted,
 }
 
 fn decide(on_disk: Option<u64>, upstream: u64, recorded: Option<u64>) -> Act {
     match on_disk {
+        None if recorded.is_some() => Act::Deleted,
         None => Act::Add,
         Some(h) if h == upstream => Act::Same,
         Some(h) if Some(h) == recorded => Act::Update,
@@ -130,6 +133,7 @@ fn mirror_skills(src: &Path, dst: &Path, rec: &mut BTreeMap<String, u64>, r: &mu
                 r.kept.push(n.clone());
                 continue;
             }
+            Act::Deleted => continue,
             act => {
                 let _ = std::fs::remove_dir_all(&to);
                 if let Err(e) = copy_dir_recursive(&src.join(n), &to) {
@@ -175,6 +179,7 @@ fn mirror_commands(src: &Path, dst: &Path, rec: &mut BTreeMap<String, u64>, r: &
                 r.kept.push(format!("/{CMD_PREFIX}{n}"));
                 continue;
             }
+            Act::Deleted => continue,
             act => {
                 std::fs::write(&to, &body).with_context(|| format!("write {}", to.display()))?;
                 if act == Act::Add { r.added += 1 } else { r.updated += 1 }
@@ -262,6 +267,7 @@ mod tests {
         assert_eq!(decide(Some(2), 1, Some(2)), Act::Update);
         assert_eq!(decide(Some(3), 1, Some(2)), Act::Keep, "edited");
         assert_eq!(decide(Some(3), 1, None), Act::Keep, "not ours");
+        assert_eq!(decide(None, 1, Some(2)), Act::Deleted, "deleted after mirroring stays deleted");
     }
 
     /// A checkout at commit `head` with skills `a`, `b` and commands `plan`, `aside`.
