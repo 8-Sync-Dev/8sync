@@ -50,7 +50,9 @@ describe("readProjectLoops + GET /api/loops", () => {
   let root = "";
   let token = "";
   beforeAll(() => {
-    tempHome();
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, ".claude", "commands"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".claude", "commands", "eccx-loop-x.md"), '---\ndescription: "Loop"\nargument-hint: "<goal>"\n---\n\n# /eccx-loop-x — X, looped until green\n');
     token = getToken();
     root = path.resolve(fs.mkdtempSync(path.join(os.tmpdir(), "hq-loops-")));
     fs.mkdirSync(path.join(root, ".git"));
@@ -80,8 +82,9 @@ describe("readProjectLoops + GET /api/loops", () => {
     expect((await GET(req("/api/loops"))).status).toBe(401);
     const r = await GET(req("/api/loops", { token }));
     expect(r.status).toBe(200);
-    const { projects } = (await r.json()) as { projects: { root: string; loops: LoopRow[] }[] };
+    const { projects, commands } = (await r.json()) as { projects: { root: string; loops: LoopRow[] }[]; commands: unknown[] };
     expect(projects).toHaveLength(1);
     expect(projects[0].loops.map((l) => l.slug)).toEqual(["live", "gate"]);
+    expect(commands).toEqual([{ name: "eccx-loop-x", kind: "loop", cat: "x", title: "X", scope: null, description: "Loop", hint: "<goal>", engines: ["claude"] }]);
   });
 });

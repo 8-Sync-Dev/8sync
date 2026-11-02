@@ -57,8 +57,8 @@ export function RoomSend({
   /** Room key picked first (Preview: the room that saved the image) until the owner picks. */
   preferRoom?: string | null;
   placeholder: string;
-  /** Builds the text actually sent (Preview: image path + pins) and adds uploads made at send time. */
-  prepare?: (typed: string) => Promise<{ text: string; files: Upload[] }>;
+  /** Builds the text actually sent for the picked room (Preview: image path + pins) and adds uploads made at send time. */
+  prepare?: (typed: string, room: Room) => Promise<{ text: string; files: Upload[] }>;
   /** Send with an empty box (Preview: the pins carry the question). */
   allowEmpty?: boolean;
   /** File slots `prepare` will use (the pinned PNG). */
@@ -127,7 +127,7 @@ export function RoomSend({
     if (!room || (!typed && !allowEmpty) || busy || uploading > 0) return;
     setBusy(true);
     try {
-      const made = prepare ? await prepare(typed) : { text: typed, files: [] };
+      const made = prepare ? await prepare(typed, room) : { text: typed, files: [] };
       const ids = [...files, ...made.files].map((f) => f.id);
       const r = await api<{ message: Message; delivery: string; live?: boolean; error: string | null }>("/api/messages", {
         method: "POST",

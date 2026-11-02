@@ -528,7 +528,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               <PreviewView state={previews} token={token} rooms={officeRooms} repo={repo?.root ?? null} />
             </TabsContent>
             <TabsContent value="loops" className="h-full">
-              <LoopsView loops={loops} repo={repo?.root ?? null} />
+              <LoopsView loops={loops} repo={repo?.root ?? null} token={token} rooms={officeRooms} />
             </TabsContent>
             <TabsContent value="sessions" className="h-full">
               <SessionsView

@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- **HQ tab "Vòng lặp": lệnh `/eccx-loop-*` và `/eccx-*`.** Dưới bảng `/ship-loop`, tab liệt kê mọi lệnh eccx đã cài (`~/.claude/commands`, `~/.omp/agent/commands`; vòng lặp trước): tên, một dòng tiếng Việt + phạm vi, dòng mẫu `/eccx-loop-frontend <mục tiêu>` với nút **Chép**, và **Gửi vào phiên**: gõ mục tiêu, chọn phiên (chỉ phiên có lệnh đó; `/eccx-loop-*` chỉ Claude Code) rồi gửi qua đúng đường `POST /api/messages` sẵn có. Gửi qua inbox (lệnh slash không tự mở) kèm một dòng chỉ file lệnh cần đọc. `GET /api/loops` trả thêm `commands`.
+
 ## [0.119.1] — 2026-11-03
 
 ### Added
