@@ -23,8 +23,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="vi" className={`h-full ${inter.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
       <body className="h-full overflow-hidden">
-        {/* Dark first (zinc + brand lime); light stays one tap away in the sidebar. */}
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
+        {/* Light first (owner 2026-11-02); dark stays one tap away in the sidebar, and an explicit pick is kept (next-themes stores it). */}
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
           {children}
         </ThemeProvider>
       </body>

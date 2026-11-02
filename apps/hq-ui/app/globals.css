@@ -74,65 +74,69 @@
 
 /* Values follow the 8 Sync dashboard system (content-ai `web/src/styles/index.css` + DESIGN.md): neutral layers, one
    brand-lime accent, GitHub-style status hues. Where the reference's light status hues fail AA as small text
-   (#16a34a, #ca8a04, #0284c7), HQ takes the next deeper step of the same hue; every text pair here is ≥ 4.5:1. */
+   (#16a34a, #ca8a04, #0284c7), HQ takes deeper steps of the same hue; every text pair here is ≥ 4.5:1, also as an
+   11 px pill on the sidebar and on --muted. */
 
-/* Light: mist page, white panels, ink text. */
+/* Light (default, owner 2026-11-02): off-white page tinted a hair toward the brand hue (not cream), white panels on
+   it, a slightly deeper sidebar layer, ink text. Lime stays the brand; on light it is the deep leaf #336d00. */
 :root {
-  --background: #f5f6fa;
-  --foreground: #1a1d2e;
+  --background: #f7f7f4;
+  --foreground: #1c1d1a;
   --card: #ffffff;
-  --card-foreground: #1a1d2e;
+  --card-foreground: #1c1d1a;
   --popover: #ffffff;
-  --popover-foreground: #1a1d2e;
-  /* Deep Sync Green: white text on it 5.66:1, as text on the page 5.24:1. #448100 is the ring/focus step. */
-  --primary: #387500;
+  --popover-foreground: #1c1d1a;
+  /* Deep leaf: white text on it 6.3:1, as text on the page 5.9:1, on its wash 5.6:1. #448100 is the ring/focus step. */
+  --primary: #336d00;
   --primary-foreground: #ffffff;
-  --primary-wash: #edf9e2;
-  --secondary: #f0f1f7;
-  --secondary-foreground: #1a1d2e;
-  --muted: #f0f1f7;
-  /* text-2: 7.4:1 on the page. The reference's text-3 (#8a90a8, 2.9:1) is never used for text here. */
-  --muted-foreground: #4a5068;
-  --accent: #e8eaf2;
-  --accent-foreground: #1a1d2e;
+  --primary-wash: #eaf4dd;
+  --secondary: #efefea;
+  --secondary-foreground: #1c1d1a;
+  --muted: #efefea;
+  /* text-2: 6.9:1 on the page, 6.3:1 on --muted, 5.8:1 on --accent. Never a lighter gray for text. */
+  --muted-foreground: #565850;
+  --accent: #e7e7e1;
+  --accent-foreground: #1c1d1a;
   --destructive: #b91c1c;
-  --border: #e2e4ed;
-  --input: #d0d3e0;
+  --border: #deded6;
+  /* Form controls get a firmer edge than the hairline (1.8:1 on white). */
+  --input: #c2c2b8;
   --ring: #448100;
-  --success: #15803d;
+  --success: #116a35;
   --danger: #b91c1c;
-  --warning: #92600a;
-  --info: #0369a1;
-  --chart-1: #387500;
-  --chart-2: #0369a1;
-  --chart-3: #15803d;
-  --chart-4: #92600a;
+  --warning: #7a5000;
+  --info: #025f8c;
+  --chart-1: #336d00;
+  --chart-2: #025f8c;
+  --chart-3: #116a35;
+  --chart-4: #7a5000;
   --chart-5: #6d28d9;
   --radius: 0.5rem;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #1a1d2e;
-  --sidebar-primary: #387500;
+  --sidebar: #f0f0eb;
+  --sidebar-foreground: #1c1d1a;
+  --sidebar-primary: #336d00;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f0f1f7;
-  --sidebar-accent-foreground: #1a1d2e;
-  --sidebar-border: #e2e4ed;
+  --sidebar-accent: #e6e6df;
+  --sidebar-accent-foreground: #1c1d1a;
+  --sidebar-border: #deded6;
   --sidebar-ring: #448100;
-  --glow: 0 0 0 1px color-mix(in srgb, #448100 45%, transparent), 0 12px 28px -18px color-mix(in srgb, #448100 55%, transparent);
-  --overlay: rgb(26 29 46 / 30%);
-  --shadow-color: rgb(0 0 0 / 10%);
+  /* Selected edge + a tight drop (≤ 8 px blur: a border never pairs with a wide soft shadow). */
+  --glow: 0 0 0 1px color-mix(in srgb, #448100 45%, transparent), 0 4px 8px -4px color-mix(in srgb, #448100 40%, transparent);
+  --overlay: rgb(28 29 26 / 30%);
+  --shadow-color: rgb(28 29 26 / 12%);
   /* HQ semantic status, same vocabulary as the reference chips: running = success, needs you = warning. */
   --st-running: var(--success);
-  --st-idle: #6b7189;
+  --st-idle: #62645b;
   --st-needs: var(--warning);
-  --st-ended: #d0d3e0;
+  --st-ended: #c2c2b8;
   --via-channel: var(--info);
   --owner: var(--primary-wash);
   /* 8 Sync brand lime #85d840 (oklch 0.8 0.2 134). --brand-ink = brand text on the light page. The mark keeps it. */
   --brand: #85d840;
-  --brand-ink: #387500;
+  --brand-ink: #336d00;
 }
 
-/* Dark (default): zinc layers #09090b page, #111114 panel, #18181b raised, #27272a hairline; the brand lime exactly. */
+/* Dark (the owner's pick in the sidebar toggle): zinc layers #09090b page, #111114 panel, #18181b raised, #27272a hairline; the brand lime exactly. */
 .dark {
   --background: #09090b;
   --foreground: #e6edf3;

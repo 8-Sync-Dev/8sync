@@ -135,3 +135,100 @@ export function folderName(p: string): string {
   const seg = t.split(/[\\/]/).pop() ?? "";
   return seg && !/^[a-z]:$/i.test(seg) ? seg : p;
 }
+
+/** What an omp row's status reads as, in words (never colour alone). */
+export const OMP_STATUS_WORD: Record<"running" | "needs_input" | "idle" | "ended", string> = {
+  running: "Đang làm",
+  needs_input: "Chờ anh",
+  idle: "Rảnh",
+  ended: "Đã dừng",
+};
+
+// ── project picker ───────────────────────────────────────────────────────────
+
+/** A folder the picker offers: a repo HQ knows (live rooms, added folders, "Dự án trên máy") or a recent pick. */
+export type WsProject = { path: string; name: string; recent?: boolean };
+
+/** Same folder across `\` vs `/`, case and a trailing separator. */
+export const pathKey = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+
+/**
+ * The picker's list: the recent picks first (newest first, `recent: true`), then every other source in
+ * order, each folder once (the first source's name wins).
+ */
+export function mergeProjects(recent: string[], ...sources: WsProject[][]): WsProject[] {
+  const named = new Map<string, string>();
+  for (const list of sources) for (const p of list) if (!named.has(pathKey(p.path))) named.set(pathKey(p.path), p.name);
+  const seen = new Set<string>();
+  const out: WsProject[] = [];
+  for (const p of recent) {
+    const k = pathKey(p);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push({ path: p, name: named.get(k) ?? folderName(p), recent: true });
+  }
+  for (const list of sources)
+    for (const p of list) {
+      const k = pathKey(p.path);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push({ path: p.path, name: p.name });
+    }
+  return out;
+}
+
+/** Projects whose name or path holds `q` (any case, either slash); names that start with it come first. */
+export function filterProjects(list: WsProject[], q: string): WsProject[] {
+  const s = q.trim().toLowerCase();
+  if (!s) return list;
+  const sp = pathKey(s);
+  const hits = list.filter((p) => p.name.toLowerCase().includes(s) || pathKey(p.path).includes(sp));
+  const head = (p: WsProject) => p.name.toLowerCase().startsWith(s);
+  return [...hits.filter(head), ...hits.filter((p) => !head(p))];
+}
+
+/** `C:\Users\me\code\app` → `~\code\app` when it sits below `home`; any other path unchanged. */
+export function shortPath(p: string, home: string | null | undefined): string {
+  if (!home) return p;
+  const h = pathKey(home);
+  const k = pathKey(p);
+  if (h && k === h) return "~";
+  if (!h || !k.startsWith(`${h}/`)) return p;
+  const sep = p.includes("\\") ? "\\" : "/";
+  return `~${sep}${p.replace(/[\\/]+$/, "").slice(home.replace(/[\\/]+$/, "").length + 1)}`;
+}
+
+/** The folder holding `p` (`C:\a\b` → `C:\a`); null when that would be a drive or filesystem root. */
+function parentOf(p: string): string | null {
+  const t = p.replace(/[\\/]+$/, "");
+  const i = Math.max(t.lastIndexOf("\\"), t.lastIndexOf("/"));
+  if (i <= 0) return null;
+  const up = t.slice(0, i);
+  return /^[a-z]:$/i.test(up) ? null : up;
+}
+
+/** Throwaway places a scan finds repos in (test fixtures under %TEMP%, app data): never where browsing starts. */
+const SCRATCH = /\/(appdata|temp|tmp)(\/|$)/;
+
+/**
+ * Where "Duyệt thư mục…" opens: the folder holding the most known projects (the machine's Projects folder),
+ * counting every ancestor so a deep group of repos can't outvote it; a tie goes to the deeper folder.
+ * Folders above `home` (C:\Users) and temp folders never count; with nothing left, `home`. Never a drive root.
+ */
+export function browseStart(paths: string[], home: string | null): string | null {
+  const above = home ? `${pathKey(home)}/` : null;
+  const count = new Map<string, { path: string; n: number }>();
+  for (const p of paths) {
+    if (SCRATCH.test(pathKey(p))) continue;
+    for (let up = parentOf(p); up; up = parentOf(up)) {
+      const k = pathKey(up);
+      if (above?.startsWith(`${k}/`)) continue;
+      const c = count.get(k);
+      if (c) c.n++;
+      else count.set(k, { path: up, n: 1 });
+    }
+  }
+  let best: { path: string; n: number } | null = null;
+  for (const c of count.values()) if (!best || c.n > best.n || (c.n === best.n && c.path.length > best.path.length)) best = c;
+  return best?.path ?? home ?? null;
+}

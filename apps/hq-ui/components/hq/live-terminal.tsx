@@ -84,7 +84,30 @@ const THEMES = {
     brightCyan: "#56d4dd",
     brightWhite: "#f0f6fc",
   },
-  light: { background: "#ffffff", foreground: "#1a1d2e", cursor: "#387500", cursorAccent: "#ffffff", selectionBackground: "#38750026" },
+  // GitHub-light ANSI: a TUI's yellow or bright white stays readable on the white frame (the light theme is the default).
+  light: {
+    background: "#ffffff",
+    foreground: "#1c1d1a",
+    cursor: "#336d00",
+    cursorAccent: "#ffffff",
+    selectionBackground: "#336d0026",
+    black: "#24292f",
+    red: "#cf222e",
+    green: "#116329",
+    yellow: "#7a5000",
+    blue: "#0969da",
+    magenta: "#8250df",
+    cyan: "#1b7c83",
+    white: "#6e7781",
+    brightBlack: "#57606a",
+    brightRed: "#a40e26",
+    brightGreen: "#1a7f37",
+    brightYellow: "#633c01",
+    brightBlue: "#0550ae",
+    brightMagenta: "#6639ba",
+    brightCyan: "#1b7c83",
+    brightWhite: "#8c959f",
+  },
 };
 
 /** `elsewhere`: an omp room whose session is open in another terminal on the PC (HQ offers the takeover). */

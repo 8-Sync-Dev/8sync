@@ -60,8 +60,9 @@ describe("machine folder tree (workspace)", () => {
     expect(treeParent(path.join(d, "x"))).toBe(d);
   });
 
-  it("empty path lists the roots as dirs", () => {
-    expect(treeListing("", [os.tmpdir()])).toMatchObject({ path: "", parent: null, roots: [os.tmpdir()], dirs: [{ name: os.tmpdir(), path: os.tmpdir() }] });
+  it("empty path lists the roots as dirs, with the home folder", () => {
+    expect(treeListing("", [os.tmpdir()], "/home/me")).toMatchObject({ path: "", parent: null, roots: [os.tmpdir()], home: "/home/me", dirs: [{ name: os.tmpdir(), path: os.tmpdir() }] });
+    expect(treeListing(os.tmpdir(), [], "/home/me")?.home).toBe("/home/me");
   });
 
   it("GET /api/tree needs the HQ token and answers 404 for a non-folder", async () => {

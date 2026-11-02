@@ -145,6 +145,15 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     for (const r of office.office?.rooms ?? []) if (r.project && r.status !== "ended" && !seen.has(rootKey(r.project.root))) seen.set(rootKey(r.project.root), { root: r.project.root, name: r.project.name });
     return [...seen.values()];
   }, [office.office?.rooms]);
+  // Không gian's picker: repos with a live room, then the added folders, then "Dự án trên máy" (deduped there).
+  const wsProjects = useMemo(
+    () => [
+      ...knowRoots.map((r) => ({ path: r.root, name: r.name })),
+      ...hq.projects.data.filter((p) => !p.missing).map((p) => ({ path: p.path, name: p.name })),
+      ...hq.knownProjects.map((k) => ({ path: k.path, name: k.name })),
+    ],
+    [knowRoots, hq.projects.data, hq.knownProjects],
+  );
   const officeSummary = office.office
     ? `${new Set(officeRooms.map((r) => r.project?.root ?? r.cwd)).size} dự án · ${officeRooms.length} phòng`
     : "";
@@ -360,7 +369,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
 
           <main className="min-h-0 flex-1">
             <TabsContent value="workspace" className="h-full">
-              <WorkspaceView token={token} />
+              <WorkspaceView token={token} projects={wsProjects} selected={repo?.root ?? project?.path ?? room?.project?.root ?? null} />
             </TabsContent>
             <TabsContent value="overview" className="h-full">
               <OverviewView
