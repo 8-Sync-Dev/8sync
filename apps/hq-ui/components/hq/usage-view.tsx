@@ -4,11 +4,12 @@ import { ArrowDownIcon, GaugeIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { hhmm } from "@/lib/office";
+import { hhmm, resetClock } from "@/lib/office";
 import type { Tokens, UsageReport, UsageRow } from "@/lib/server/usage";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
 import { level, span } from "./machine-chip";
+import { OmpSections } from "./omp-view";
 
 const POLL_MS = 60_000;
 /** While transcripts are still being read (first visit, bounded per request), ask again soon. */
@@ -125,6 +126,8 @@ export function UsageView({ token }: { token: string }) {
         {error && <ErrorNote what="số mới" error={error} onRetry={retry} />}
 
         <PlanWindows data={data} now={now} />
+
+        <OmpSections token={token} now={now} />
 
         <section aria-labelledby="usage-tokens-h" className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -276,13 +279,6 @@ function WindowMeter({ label, pct, resetsAt, restPct, now }: { label: string; pc
       {!resting && l === "warn" && !past && <p className="text-xs text-st-needs">Gần ngưỡng nghỉ {restPct}%.</p>}
     </div>
   );
-}
-
-/** "22:30" today, "T5 22:30" on another day. */
-function resetClock(ms: number, now: number): string {
-  const d = new Date(ms);
-  if (d.toDateString() === new Date(now).toDateString()) return hhmm(ms);
-  return `${d.toLocaleDateString("vi-VN", { weekday: "short" })} ${hhmm(ms)}`;
 }
 
 function Totals({ t, cap }: { t: Tokens; cap: number }) {
