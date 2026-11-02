@@ -1,20 +1,19 @@
-# v0.116.0 — HQ omp workspace + redesign + eco heavy renderers; ECC auto-update for omp
+# Shipped v0.118.0 → v0.119.1 — HQ Claude-Desktop UI, stable public link, Rust core hot path
 
 ## Goal
-Owner 2026-11-02: HQ on OVH (vps.8syncdev.com/hq) = Rust-native, fast, realtime, HTTP/3, strong security, modern (look of content-ai "Sử dụng" dashboard). omp first: folder tree → `8sync . ls` → open/create session → multi-pane. ECC full skills auto-update for omp + Claude Code, `/eccx-full` uses ECC + 8sync harness. PC: lowest power, stable all-day long tasks. Later: per-project public artifact link (comments, email allowlist roles view/comment/edit, tracking, comments reach omp).
+Owner 2026-11-02/03: HQ looks like Claude Code Desktop (project → session → sub-session → group, light default); public trycloudflare link fixed from the moment HQ opens; HQ Rust core does the hot work. Later: VPS HQ (OVH), artifact public-link feature, HTTP/3/realtime, lowest PC power.
 
 ## Checklist
-- [x] PR #259: Workspace tab, `ccc term --omp-new`, `/api/tree|omp/sessions|commands`, slash autocomplete, eco `heavy` + `eco restart` + HQ button, lime/zinc redesign, lazy tabs. Reviewer: OK (2 P3 fixed). cargo 620 ok · vitest 698 ok · tsc · lint 0 err · next build · browser 1440/430.
-- [x] Bump 0.116.0 (Cargo.toml, Cargo.lock, plugin.json, CHANGELOG).
-- [ ] Merge #259 → tag v0.116.0 → release → `8sync up` → HQ local 200.
-- [ ] ECC auto-update for omp (agent EccAuto, branch feat/ecc-auto-update).
-- [ ] VPS UAT: blocked — vps.8syncdev.com unreachable (HTTPS/SSH/ping timeout since 2026-11-01 ~17:00); owner must check OVH Manager.
-- [ ] Branch cleanup (bundle backup `~/.local/state/8sync/backup/su-code-branches-2026-11-02.bundle`).
-- [ ] Artifact public-link feature (not started).
-- [ ] content-post-agency `feat/omp-key-activity` (worktree C:/tmp/cpa-omp-keys): activity route done, UI not built.
-
-## Current
-Shipping v0.116.0. PC tuned: display off 10 min, AC sleep never, MuMuPlayer closed, Defender exclusions UAC sent.
+- [x] v0.118.0 (PR #261): `--public` supervisor hot-swaps node on `8sync up`, respawns crashed node; `public.json` owner pid/port; `EIGHTSYNC_HQ_HOME` sandbox; light default; Claude-Desktop sidebar tree + composer; reopen fix.
+- [x] v0.119.0 (PR #262): core `/v1/heavy` + `/v1/omp-ls`, transcript index, `/v1/ls` CPU 86.7 → 28.1 ms, TCP_NODELAY, idle ingest skips write tx.
+- [x] Verified live: `8sync up` 0.118 → 0.119 swapped node, host `studio-half-principal-phys.trycloudflare.com` unchanged.
+- [x] v0.119.1 (PR #263): `8sync hq ui --relink` — new 10-min login key on the same host (live smoke: new 303, old 401).
+- [x] OVH order refunded; GoDaddy M365 ₫1,668,000 refunded (4202175184R).
+- [ ] VPS: OVH service expired — owner's renewal decision.
+- [ ] Artifact public-link feature (blueprint first).
+- [ ] HQ HTTP/3 / realtime; remaining spawns (git preview, /api/know, /api/version, powercfg).
 
 ## Next
-Merge + release, install, then branch cleanup, then ECC PR.
+1. Owner: renew VPS or keep the quick tunnel.
+2. Artifact link blueprint.
+3. `docs/hq-ui-contract.md` line 46 stale.
