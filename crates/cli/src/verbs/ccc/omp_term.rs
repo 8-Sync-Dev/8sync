@@ -326,7 +326,7 @@ const SECOND_STAGE: &str = "EIGHTSYNC_TERM_HOST";
 /// the client that started it (a tree kill of HQ, `taskkill /T`, must not take omp with it).
 /// From the client's spawn on, the host owns the client's [`StartLock`]: it goes once the host is
 /// up or has failed, also when the client was killed meanwhile.
-pub(super) fn host_logged(env: &Env, id: &str, restore: bool, cols: u16, rows: u16) -> Result<()> {
+pub(super) fn host_logged(env: &Env, id: &str, restore: bool, model: Option<&str>, cols: u16, rows: u16) -> Result<()> {
     let r = if std::env::var_os(SECOND_STAGE).is_none() {
         std::env::set_var(SECOND_STAGE, "1");
         std::env::current_exe()
@@ -334,7 +334,7 @@ pub(super) fn host_logged(env: &Env, id: &str, restore: bool, cols: u16, rows: u
             .and_then(|exe| super::awake::spawn_detached(&exe, &std::env::args().skip(1).collect::<Vec<_>>()).map(drop))
     } else {
         std::env::remove_var(SECOND_STAGE);
-        host(env, id, restore, cols, rows)
+        host(env, id, restore, model, cols, rows)
     };
     if let Err(e) = &r {
         let state = state_path(&env.home, id);
@@ -353,7 +353,7 @@ const OPENING_QUERY: &[u8] = b"\x1b[6n";
 
 /// `restore` (a takeover): first end the omp that has the session open elsewhere, here in the
 /// detached host, so a client killed meanwhile never leaves the room without omp.
-fn host(env: &Env, id: &str, restore: bool, cols: u16, rows: u16) -> Result<()> {
+fn host(env: &Env, id: &str, restore: bool, model: Option<&str>, cols: u16, rows: u16) -> Result<()> {
     let room = resolve(env, id)?;
     if restore {
         end_session(&room.session_dir)?;
@@ -361,7 +361,7 @@ fn host(env: &Env, id: &str, restore: bool, cols: u16, rows: u16) -> Result<()> 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).context("không mở được cổng trên 127.0.0.1")?;
     let port = listener.local_addr()?.port();
     let token = new_token()?;
-    let mut cmd = crate::verbs::session::omp_command(&room.cwd, &room.session_dir, (&room.root, &room.name), None);
+    let mut cmd = crate::verbs::session::omp_command(&room.cwd, &room.session_dir, (&room.root, &room.name), model);
     if let Some(t) = &room.transcript {
         cmd.arg(if restore { "--restore" } else { "--resume" }).arg(t);
     }
@@ -680,7 +680,24 @@ fn relay(sock: TcpStream) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool) -> Result<()> {
+/// `ccc term --omp-new <name> [--model m]`: `8sync . <name>` of the current dir (project root as
+/// `8sync .` finds it, context seeded, session created when new), then [`client`] on its room
+/// (`ccc_core::room_id(root, name)`, the id `8sync . ls` prints): a session already running in a
+/// host is joined, one open in another terminal answers [`ELSEWHERE`] like any omp room.
+pub(super) fn new_session(env: &Env, name: &str, model: Option<&str>, cols: u16, rows: u16) -> Result<()> {
+    use crate::verbs::{here, session};
+    if which::which("omp").is_err() {
+        bail!("omp chưa cài — chạy `8sync setup` trước");
+    }
+    let cwd = std::env::current_dir().context("không đọc được thư mục hiện tại")?;
+    let root = here::detect_project_root(&cwd).unwrap_or(cwd);
+    here::seed_project_context(env, &root, &here::detect_stack(&root))?;
+    session::ensure_named(env, &root, name)?;
+    client(env, &ccc_core::room_id(&root, name), cols, rows, false, model)
+}
+
+/// `model`: omp's `--model` when this client starts the host (a running host keeps its own).
+pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool, model: Option<&str>) -> Result<()> {
     let room = resolve(env, id)?;
     let state = state_path(&env.home, id);
     if let Some(s) = connect(&state, id, &room.session_dir, cols, rows) {
@@ -717,6 +734,9 @@ pub(super) fn client(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool) 
     let mut args: Vec<String> = ["ccc", "term", "--host", id, "--cols", &cols.to_string(), "--rows", &rows.to_string()].map(String::from).to_vec();
     if restore {
         args.push("--restore".into());
+    }
+    if let Some(m) = model {
+        args.extend(["--model".into(), m.to_string()]);
     }
     super::awake::spawn_detached(&exe, &args).context("không chạy được host terminal omp")?;
     // From here the host owns the lock (see [`host_logged`]), also if this client is killed.
@@ -781,7 +801,8 @@ mod tests {
         use super::super::term::{parse, Target};
         assert_eq!(parse(&a(&[id, "--cols", "80", "--rows", "24"])).unwrap(), (Target::Omp { id: id.into(), takeover: false }, 80, 24));
         assert_eq!(parse(&a(&[id, "--takeover"])).unwrap().0, Target::Omp { id: id.into(), takeover: true });
-        assert_eq!(parse(&a(&["--host", id, "--restore"])).unwrap().0, Target::Host { id: id.into(), restore: true });
+        assert_eq!(parse(&a(&["--host", id, "--restore"])).unwrap().0, Target::Host { id: id.into(), restore: true, model: None });
+        assert_eq!(parse(&a(&["--host", id, "--model", "zai/glm-5.3"])).unwrap().0, Target::Host { id: id.into(), restore: false, model: Some("zai/glm-5.3".into()) });
         assert!(parse(&a(&[uuid, "--takeover"])).is_err(), "a Claude room is never taken over");
         assert!(parse(&a(&["--shell", "--host"])).is_err() && parse(&a(&[id, "--restore"])).is_err() && parse(&a(&["--host", id, "--takeover"])).is_err());
     }

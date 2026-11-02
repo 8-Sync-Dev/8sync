@@ -5,7 +5,8 @@
 // Owner 2026-10-22 again ("nhiều chữ nhiều tab đang bị rối"): four in the bar; "room" (Chat phòng) only
 // while a room is open, Tri thức joins the menu.
 // Preview is back in the bar (owner 2026-10-22: "Tab preview rất quan trọng … ưu tiên xem được kết quả").
-export const MAIN_TABS = ["overview", "office", "preview", "group", "room"] as const;
+// Không gian (owner 2026-11-02, omp-first): folders on the machine → omp sessions → several windows; first and the default tab.
+export const MAIN_TABS = ["workspace", "overview", "office", "preview", "group", "room"] as const;
 export const MORE_TABS = ["know", "loops", "report", "usage", "may", "sessions", "activity"] as const;
 export type MoreTab = (typeof MORE_TABS)[number];
 

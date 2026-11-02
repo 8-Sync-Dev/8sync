@@ -1,16 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { Be_Vietnam_Pro, Geist, Geist_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
-const geist = Geist({ subsets: ["latin"], variable: "--font-geist", display: "swap" });
-const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono", display: "swap" });
-const beVietnam = Be_Vietnam_Pro({
-  subsets: ["vietnamese", "latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-be-vietnam",
-  display: "swap",
-});
+// Same faces as the 8 Sync dashboards (content-ai DESIGN.md): Inter for every word, JetBrains Mono for ids, paths and
+// numbers. Both are variable fonts and ship the `vietnamese` subset (ă đ ơ ư and every stacked tone mark), so a
+// Vietnamese word never falls back to a second family. Two files per subset on first paint.
+const inter = Inter({ subsets: ["vietnamese", "latin"], variable: "--font-inter", display: "swap" });
+const jetbrainsMono = JetBrains_Mono({ subsets: ["vietnamese", "latin"], variable: "--font-jetbrains-mono", display: "swap" });
 
 export const metadata: Metadata = {
   title: "8 Sync HQ",
@@ -24,9 +21,10 @@ export const viewport: Viewport = { width: "device-width", initialScale: 1, view
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`h-full ${geist.variable} ${geistMono.variable} ${beVietnam.variable}`} suppressHydrationWarning>
+    <html lang="vi" className={`h-full ${inter.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
       <body className="h-full overflow-hidden">
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        {/* Dark first (zinc + brand lime); light stays one tap away in the sidebar. */}
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
           {children}
         </ThemeProvider>
       </body>

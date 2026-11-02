@@ -35,3 +35,31 @@ export function applyPick(text: string, m: Mention, e: Entry): { text: string; c
   const head = `${text.slice(0, m.start)}@${path}${tail}`;
   return { text: head + rest, caret: head.length, open: e.dir };
 }
+
+// "/" commands (owner 2026-11-02): a "/" that starts a line lists the owner's omp and Claude Code
+// commands (GET /api/commands, lib/server/commands.ts); picking one puts "/name " in its place.
+
+export type SlashCommand = { name: string; description: string; source: "omp" | "claude" };
+/** The "/token" under the caret: `start` is the index of "/", `prefix` what follows it. */
+export type Slash = { start: number; end: number; prefix: string };
+
+/** A "/…" at the start of a line, running to the caret with no space in it. */
+export function slashAt(text: string, caret: number): Slash | null {
+  const m = /(^|\n)\/([\w.:-]*)$/.exec(text.slice(0, caret));
+  return m ? { start: caret - m[2].length - 1, end: caret, prefix: m[2] } : null;
+}
+
+/** Commands whose name starts with the prefix, then those that contain it (case-insensitive). */
+export function filterCommands(cmds: SlashCommand[], prefix: string, max = 8): SlashCommand[] {
+  const p = prefix.toLowerCase();
+  const starts = cmds.filter((c) => c.name.toLowerCase().startsWith(p));
+  const has = cmds.filter((c) => !c.name.toLowerCase().startsWith(p) && c.name.toLowerCase().includes(p));
+  return [...starts, ...has].slice(0, max);
+}
+
+/** Put "/name " in place of the "/token". */
+export function applyCommand(text: string, s: Slash, c: SlashCommand): { text: string; caret: number } {
+  const rest = text.slice(s.end);
+  const head = `${text.slice(0, s.start)}/${c.name}${rest.startsWith(" ") ? "" : " "}`;
+  return { text: head + rest, caret: head.length };
+}

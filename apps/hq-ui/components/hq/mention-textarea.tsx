@@ -1,9 +1,9 @@
 "use client";
 
-import { FileIcon, FolderIcon, FolderUpIcon } from "lucide-react";
+import { FileIcon, FolderIcon, FolderUpIcon, SlashIcon } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type KeyboardEvent } from "react";
 import { Textarea } from "@/components/ui/textarea";
-import { applyPick, filterEntries, mentionAt, type Entry, type Mention } from "@/lib/mention";
+import { applyCommand, applyPick, filterCommands, filterEntries, mentionAt, slashAt, type Entry, type Mention, type Slash, type SlashCommand } from "@/lib/mention";
 import { cn } from "@/lib/utils";
 import type { Api } from "./use-hq";
 
@@ -17,7 +17,8 @@ type Props = Omit<ComponentProps<typeof Textarea>, "value" | "onChange"> & {
 
 /**
  * A Textarea with an "@path" picker: it lists the folder ("@src/" one level down, "@../" one level
- * up, out of the project too; a folder keeps the list open). ↑/↓ choose, Enter or Tab picks, Esc
+ * up, out of the project too; a folder keeps the list open), and a "/command" picker at the start
+ * of a line (omp and Claude commands, GET /api/commands). ↑/↓ choose, Enter or Tab picks, Esc
  * closes; a tap picks on a phone.
  */
 export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function MentionTextarea({ value, onValueChange, base, api, onKeyDown, className, ...rest }, ref) {
@@ -26,6 +27,9 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
   const [m, setM] = useState<Mention | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [active, setActive] = useState(0);
+  const [sl, setSl] = useState<Slash | null>(null);
+  // Loaded on the first "/" typed, then kept (the server caches the list 30 s).
+  const [cmds, setCmds] = useState<SlashCommand[] | null>(null);
   const listId = useRef(`mention-${Math.random().toString(36).slice(2)}`).current;
 
   // One listing per folder typed; the prefix only filters.
@@ -41,12 +45,27 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dirKey carries base + dir
   }, [dirKey]);
 
-  const shown = m ? filterEntries(entries, m.prefix) : [];
-  const count = shown.length;
+  const wantCmds = sl != null && cmds == null;
+  useEffect(() => {
+    if (!wantCmds) return;
+    const ac = new AbortController();
+    api<{ commands: SlashCommand[] }>("/api/commands", { signal: ac.signal })
+      .then((r) => setCmds(r.commands))
+      .catch(() => {
+        if (!ac.signal.aborted) setCmds([]);
+      });
+    return () => ac.abort();
+  }, [wantCmds, api]);
+
+  const cmdShown = sl && cmds ? filterCommands(cmds, sl.prefix) : [];
+  const slash = cmdShown.length > 0;
+  const shown = m && !slash ? filterEntries(entries, m.prefix) : [];
+  const count = slash ? cmdShown.length : shown.length;
   const open = count > 0;
 
   const sync = (text: string, caret: number) => {
     setM(base ? mentionAt(text, caret) : null);
+    setSl(slashAt(text, caret));
     setActive(0);
   };
 
@@ -68,6 +87,13 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
     if (!r.open) setM(null);
   };
 
+  const pickCmd = (c: SlashCommand) => {
+    if (!sl) return;
+    const r = applyCommand(value, sl, c);
+    place(r.text, r.caret);
+    setSl(null);
+  };
+
   function keys(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (open) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -77,12 +103,15 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
       }
       if ((e.key === "Enter" && !e.nativeEvent.isComposing) || e.key === "Tab") {
         e.preventDefault();
-        pick(shown[Math.min(active, count - 1)]);
+        const i = Math.min(active, count - 1);
+        if (slash) pickCmd(cmdShown[i]);
+        else pick(shown[i]);
         return;
       }
       if (e.key === "Escape") {
         e.preventDefault();
         setM(null);
+        setSl(null);
         return;
       }
     }
@@ -109,9 +138,45 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
         }}
         onKeyDown={keys}
         onClick={(e) => sync(value, e.currentTarget.selectionStart ?? value.length)}
-        onBlur={() => setTimeout(() => setM(null), 120)}
+        onBlur={() =>
+          setTimeout(() => {
+            setM(null);
+            setSl(null);
+          }, 120)
+        }
       />
-      {open && m && (
+      {open && slash && sl && (
+        <ul
+          id={listId}
+          role="listbox"
+          aria-label="Lệnh"
+          className="absolute bottom-full left-0 z-50 mb-1 max-h-64 w-full max-w-md overflow-y-auto rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+        >
+          <li aria-hidden className="px-2 py-1 font-mono text-[11px] text-muted-foreground">
+            /{sl.prefix} · ↑↓ chọn · Enter/Tab · Esc đóng
+          </li>
+          {cmdShown.map((c, i) => (
+            <li
+              key={`${c.source}:${c.name}`}
+              id={`${listId}-${i}`}
+              role="option"
+              aria-selected={i === active}
+              className={optionClass(i)}
+              onMouseDown={(ev) => {
+                ev.preventDefault();
+                pickCmd(c);
+              }}
+              onMouseEnter={() => setActive(i)}
+            >
+              <SlashIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="shrink-0 font-mono">{c.name}</span>
+              {c.description && <span className="min-w-0 truncate text-muted-foreground">{c.description}</span>}
+              <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground uppercase">{c.source}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && !slash && m && (
         <ul
           id={listId}
           role="listbox"

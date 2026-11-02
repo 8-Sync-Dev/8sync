@@ -1,10 +1,11 @@
 "use client";
 
-import { ChevronDownIcon, HardDriveIcon, Loader2Icon, RotateCwIcon, SendIcon } from "lucide-react";
+import { ChevronDownIcon, HardDriveIcon, Loader2Icon, RotateCwIcon, SendIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,7 +14,7 @@ import { inboxText } from "@/lib/labels";
 import type { Awake } from "@/lib/server/awake";
 import type { DiskProject, DiskState } from "@/lib/server/disk";
 import type { Power, PowerSettings } from "@/lib/server/power";
-import type { Spec } from "@/lib/server/machine";
+import type { Heavy, Restarted, Spec } from "@/lib/server/machine";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
 import { Bar, dayTime, energy, gb, holdLine, hhmm, level, LoadChart, Meter, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
@@ -626,6 +627,96 @@ function ProcsPanel({ m, api }: { m: MachineData; api: Hq["api"] }) {
   );
 }
 
+/** "Khởi động lại {app}?": what closes, then POST /api/machine/restart. */
+function RestartDialog({ h, api, onDone, onCancel }: { h: Heavy; api: Hq["api"]; onDone: () => void; onCancel: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<Restarted>("/api/machine/restart", { method: "POST", body: { rootPid: h.rootPid } });
+      const freed = r.freedMb > 0 ? `Trả lại ${gb(r.freedMb)} RAM` : "Đã đóng";
+      if (r.relaunched) toast.success(`Đã khởi động lại ${r.app}`, { description: freed });
+      else toast.warning(`${r.app} đã đóng nhưng chưa tự mở lại`, { description: `${freed}. Anh mở lại tay giúp em.` });
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onCancel()}>
+      <DialogContent className="sm:max-w-md" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Khởi động lại {h.app}?</DialogTitle>
+          <DialogDescription className="text-pretty">
+            {h.app} sẽ đóng hẳn rồi tự mở lại, trả lại khoảng {gb(h.mb)} RAM. Mọi cửa sổ của {h.app} đều đóng: việc đang dở trong đó (tin nhắn chưa gửi, câu trả lời đang chạy) sẽ mất. Các
+            app khác không bị đụng tới.
+          </DialogDescription>
+        </DialogHeader>
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
+        <DialogFooter>
+          <Button type="button" variant="outline" className="max-sm:h-11" onClick={onCancel} disabled={busy}>
+            Để sau
+          </Button>
+          <Button type="button" variant="destructive" className="max-sm:h-11" onClick={() => void submit()} disabled={busy}>
+            {busy && <Loader2Icon className="animate-spin motion-reduce:animate-none" />}
+            {busy ? "Đang khởi động lại…" : "Khởi động lại"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Renderers holding ≥ 4 GB: a chat app gets a restart button (with a confirm), anything else a hint. Nothing happens on its own. */
+function HeavyPanel({ heavy, api, onRestarted }: { heavy: Heavy[]; api: Hq["api"]; onRestarted: () => void }) {
+  const [ask, setAsk] = useState<Heavy | null>(null);
+  return (
+    <Panel id="may-heavy" title="Renderer nặng" className="border-st-needs/50" aside={<TriangleAlertIcon aria-hidden className={cn("size-4", NEEDS_INK)} />}>
+      <ul className="space-y-2">
+        {heavy.map((h) => (
+          <li key={h.pid} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm">
+                <span className="font-medium">{h.app}</span> <span className={cn("tabular", NEEDS_INK)}>{gb(h.mb)}</span>{" "}
+                <span className="text-xs text-muted-foreground tabular">pid {h.pid}</span>
+              </p>
+              <p className="text-xs leading-snug text-muted-foreground">
+                {h.restartable ? `Một renderer của ${h.app} đang giữ quá nhiều RAM; khởi động lại là trả hết.` : `Không tự khởi động lại ${h.app} vì có thể đang giữ việc của anh: đóng bớt tab/cửa sổ.`}
+              </p>
+            </div>
+            {h.restartable && (
+              <Button size="sm" variant="outline" className={TOUCH} onClick={() => setAsk(h)}>
+                <RotateCwIcon /> Khởi động lại
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {ask && (
+        <RestartDialog
+          h={ask}
+          api={api}
+          onCancel={() => setAsk(null)}
+          onDone={() => {
+            setAsk(null);
+            onRestarted();
+          }}
+        />
+      )}
+    </Panel>
+  );
+}
+
 /**
  * Tab "Máy": load, power, awake (with its switch), what the machine is, how big the projects have
  * grown (one-tap cleanup send) and the processes. `m` is the header chip's poll.
@@ -646,6 +737,7 @@ export function MachineView({ m, reload, api, rooms, active }: { m: MachineData 
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-5xl space-y-4 px-4 pt-5 pb-10 sm:px-6">
+        {m.heavy && m.heavy.length > 0 && <HeavyPanel heavy={m.heavy} api={api} onRestarted={reload} />}
         <div className="gap-4 lg:columns-2 [&>*]:mb-4 [&>*]:break-inside-avoid [&>*:last-child]:mb-0">
           <Panel id="may-load" title="Tải máy">
             <div className="space-y-2">

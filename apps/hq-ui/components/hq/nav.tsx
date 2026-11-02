@@ -123,7 +123,8 @@ export function Nav({
   return (
     <nav aria-label="Dự án và phòng" className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border px-3">
-        <BrandMark className="h-6 w-4 shrink-0 text-primary dark:drop-shadow-[0_0_6px_color-mix(in_oklch,var(--brand)_45%,transparent)]" />
+        {/* The mark keeps the 8 Sync lime/leaf whatever the UI accent is (brand kit: never recolour it). */}
+        <BrandMark className="h-6 w-4 shrink-0 text-brand-ink dark:text-brand" />
         <span className="text-[15px] font-semibold tracking-tight">8 Sync HQ</span>
         <LiveDot live={hq.live} />
       </div>
@@ -327,7 +328,7 @@ function RoomRows({
         >
           <RoleIcon role={n.role ?? room.role} className="size-3.5 text-muted-foreground group-aria-[current=true]:text-foreground" />
           <span className="min-w-0 flex-1 truncate text-[13px]">{room.label}</span>
-          {room.engine === "omp" && <span className="shrink-0 text-[10px] text-muted-foreground">omp</span>}
+          {room.engine === "omp" && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">omp</span>}
           {n.state === "needs" ? (
             <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full bg-st-needs/15 px-1.5 py-px text-[11px] font-semibold", NEEDS_INK)}>
               <span aria-hidden className="size-1.5 rounded-full bg-st-needs motion-safe:animate-pulse" />
@@ -356,7 +357,7 @@ function FolderItem({ p, current, onOpen }: { p: Project; current: boolean; onOp
 
 function Count({ n }: { n: number }) {
   if (!n) return null;
-  return <span className="tabular text-xs text-muted-foreground">{n}</span>;
+  return <span className="neon-label">{n}</span>;
 }
 
 function LiveDot({ live }: { live: Live }) {

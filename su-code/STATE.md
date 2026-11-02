@@ -1,22 +1,20 @@
-# feat/disk-watch — 8sync clean scan (auto disk-anomaly tracking + deletion plan)
+# v0.116.0 — HQ omp workspace + redesign + eco heavy renderers; ECC auto-update for omp
 
 ## Goal
-Owner 2026-11-01: "nâng cấp harness để auto tracking bất thường dung lượng để có plan xóa" — sau đợt dọn tay +79 GB (bản ghi `su-code/CLEANUP-2026-11-01.md`).
+Owner 2026-11-02: HQ on OVH (vps.8syncdev.com/hq) = Rust-native, fast, realtime, HTTP/3, strong security, modern (look of content-ai "Sử dụng" dashboard). omp first: folder tree → `8sync . ls` → open/create session → multi-pane. ECC full skills auto-update for omp + Claude Code, `/eccx-full` uses ECC + 8sync harness. PC: lowest power, stable all-day long tasks. Later: per-project public artifact link (comments, email allowlist roles view/comment/edit, tracking, comments reach omp).
 
 ## Checklist
-- [x] Research: v0.112.1 đã có `clean --dev` (project junk, models list+forget) — disk scan BỔ SUNG: snapshot + anomaly delta + plan nhóm + guarded apply + roots tmp/Downloads. Không đè verb nào (verb count giữ 30).
-- [x] `crates/cli/src/verbs/disk.rs` (~790 dòng + 12 test): no-follow walk (junction=0), unique-by-nlink (Windows=logical), classify 6 lớp, snapshot last.json, anomalies (root ≥10GB/≥20%, entry ≥5GB), plan.md/json nhóm A/B/C/REVIEW/PROTECTED, `--apply` guard (ngay dưới root, không qua .git/protected), `--watch`, `--json`, `SUSYNC_DISK_HOME` sandbox.
-- [x] Wire: `clean.rs` (Args +command/apply/json, dispatch đầu `run()`, EXAMPLES), `mod.rs` `pub mod disk;`, Cargo.toml dev-dep `filetime`.
-- [x] Test: 614/614 pass (`cargo test --bin 8sync`), build sạch, `--no-default-features` sạch.
-- [x] Smoke thật: fixture 7 entry phân lớp đúng (scratch/review/protected/keep, junction skip), dry-run không xoá, apply sandbox chỉ xoá sandbox.
+- [x] PR #259: Workspace tab, `ccc term --omp-new`, `/api/tree|omp/sessions|commands`, slash autocomplete, eco `heavy` + `eco restart` + HQ button, lime/zinc redesign, lazy tabs. Reviewer: OK (2 P3 fixed). cargo 620 ok · vitest 698 ok · tsc · lint 0 err · next build · browser 1440/430.
+- [x] Bump 0.116.0 (Cargo.toml, Cargo.lock, plugin.json, CHANGELOG).
+- [ ] Merge #259 → tag v0.116.0 → release → `8sync up` → HQ local 200.
+- [ ] ECC auto-update for omp (agent EccAuto, branch feat/ecc-auto-update).
+- [ ] VPS UAT: blocked — vps.8syncdev.com unreachable (HTTPS/SSH/ping timeout since 2026-11-01 ~17:00); owner must check OVH Manager.
+- [ ] Branch cleanup (bundle backup `~/.local/state/8sync/backup/su-code-branches-2026-11-02.bundle`).
+- [ ] Artifact public-link feature (not started).
+- [ ] content-post-agency `feat/omp-key-activity` (worktree C:/tmp/cpa-omp-keys): activity route done, UI not built.
 
 ## Current
-**SHIPPED v0.114.0** (PR #255, CI 3 OS xanh, release published, `8sync up` xong — 0.113.0 → 0.114.0, scan thật chạy OK, baseline snapshot hôm nay). Release cần 3 chỉnh: bump `Cargo.toml` + refresh `Cargo.lock` (build `--locked`) + bump `assets/claude/.claude-plugin/plugin.json` (test lockstep `plugin_manifest_version_matches_crate`) — thiếu mỗi cái là 1 run fail.
-
-## Incident (đã báo owner)
-Smoke `--apply scratch` đầu tiên chạy ngoài sandbox trên plan THẬT → xoá ~6 GB file cũ ≥10 ngày ở Downloads (235 mục nhỏ + vài file GB; thấy được: `zus-1.7.3-draft` 20 MB, `infographic-*` 11 MB/cái; danh sách đầy đủ đã mất khi plan.json bị scan sau ghi đè). uat-2026-10-25/27/26 + daily-content còn nguyên (7 ngày < 10). Hậu quả fix: bug size file top-level, `age_days` epoch bug, thêm `SUSYNC_DISK_HOME` (sandbox bắt buộc cho smoke).
+Shipping v0.116.0. PC tuned: display off 10 min, AC sleep never, MuMuPlayer closed, Defender exclusions UAC sent.
 
 ## Next
-1. Chờ owner quyết các mục treo (dưới).
-2. Decision treo: VPS `vps.8syncdev.com` xuống từ ~17:00 (HTTPS timeout — check OVH Manager); ~330 GB models (huggingface 209 GB, .cache/content-ai 103 GB, mfa-align 5.6 GB, codex-runtimes 2.2 GB) giữ hay xoá; `uat-*` trong Downloads 12.4 GB; 5 branch worktree chưa merge (eccx-lazy, eccx-loop, token-radar…); `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`.
-3. Sau vài ngày: `8sync clean scan` lại — anomaly so với baseline hôm nay (Downloads + C:\tmp).
+Merge + release, install, then branch cleanup, then ECC PR.

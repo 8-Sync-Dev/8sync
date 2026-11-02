@@ -10,10 +10,18 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  /* Fonts come from next/font (self-hosted at build, no runtime request to Google). */
-  --font-sans: var(--font-geist), var(--font-be-vietnam), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* Fonts come from next/font (self-hosted at build, no runtime request to Google). Inter carries the full
+     Vietnamese subset, so a word never mixes two families; JetBrains Mono marks ids, paths and numbers. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --font-heading: var(--font-sans);
+  /* One accent (brand lime = primary) asks for clicks; the four status hues only mark state, never decorate. */
+  --color-primary-wash: var(--primary-wash);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-overlay: var(--overlay);
   --color-st-running: var(--st-running);
   --color-st-idle: var(--st-idle);
   --color-st-needs: var(--st-needs);
@@ -22,9 +30,10 @@
   --color-owner: var(--owner);
   --color-brand: var(--brand);
   --color-brand-ink: var(--brand-ink);
-  /* Neon halo for the primary action and the active tab only (never on text). */
+  /* The selected / focused surface's lime edge and soft drop (content-ai `.ui-selectable[data-selected]`). State only. */
   --shadow-glow: var(--glow);
-  --shadow-glow-dot: 0 0 6px 1px color-mix(in oklch, var(--st-running) 65%, transparent);
+  /* The live dot gets a quiet ring, not a halo. */
+  --shadow-glow-dot: 0 0 0 3px color-mix(in oklab, var(--st-running) 22%, transparent);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -63,98 +72,117 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* 8 Sync palette (brand kit 2026-09, hue 134) on the ZUS IDE Pro surfaces: neutrals carry a trace of the brand hue. */
+/* Values follow the 8 Sync dashboard system (content-ai `web/src/styles/index.css` + DESIGN.md): neutral layers, one
+   brand-lime accent, GitHub-style status hues. Where the reference's light status hues fail AA as small text
+   (#16a34a, #ca8a04, #0284c7), HQ takes the next deeper step of the same hue; every text pair here is ≥ 4.5:1. */
+
+/* Light: mist page, white panels, ink text. */
 :root {
-  --background: oklch(0.985 0.003 134);
-  --foreground: oklch(0.18 0.01 134);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.01 134);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.01 134);
-  /* Leaf #417a00: the brand green that passes AA on light. */
-  --primary: oklch(0.52 0.15 134);
-  --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.955 0.006 134);
-  --secondary-foreground: oklch(0.22 0.01 134);
-  --muted: oklch(0.955 0.006 134);
-  --muted-foreground: oklch(0.47 0.012 134);
-  --accent: oklch(0.955 0.006 134);
-  --accent-foreground: oklch(0.22 0.01 134);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.905 0.008 134);
-  --input: oklch(0.905 0.008 134);
-  --ring: oklch(0.52 0.15 134);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.97 0.005 134);
-  --sidebar-foreground: oklch(0.18 0.01 134);
-  --sidebar-primary: oklch(0.52 0.15 134);
-  --sidebar-primary-foreground: oklch(0.99 0 0);
-  --sidebar-accent: oklch(0.935 0.008 134);
-  --sidebar-accent-foreground: oklch(0.22 0.01 134);
-  --sidebar-border: oklch(0.905 0.008 134);
-  --sidebar-ring: oklch(0.52 0.15 134);
-  /* On light a glow is a tinted lift, not a halo. */
-  --glow: 0 1px 2px oklch(0.52 0.15 134 / 25%), 0 2px 8px -2px oklch(0.52 0.15 134 / 45%);
-  /* HQ semantic status. Used for small dots/tags only, never large fills. */
-  --st-running: oklch(0.5 0.13 150);
-  --st-idle: oklch(0.62 0.01 260);
-  --st-needs: oklch(0.55 0.15 60);
-  --st-ended: oklch(0.8 0 0);
-  --via-channel: oklch(0.52 0.12 250);
-  --owner: oklch(0.96 0.03 134);
-  /* 8 Sync brand. --brand = lime fill; --brand-ink = brand-green text, one step deeper than leaf (--primary) so it
-     keeps AA on lime tints too (#396d00: 6.0:1 on the page, 5.2:1 on a bg-brand/25 chip; leaf there is 4.4). */
-  --brand: oklch(0.8 0.2 134);
-  --brand-ink: oklch(0.48 0.14 134);
+  --background: #f5f6fa;
+  --foreground: #1a1d2e;
+  --card: #ffffff;
+  --card-foreground: #1a1d2e;
+  --popover: #ffffff;
+  --popover-foreground: #1a1d2e;
+  /* Deep Sync Green: white text on it 5.66:1, as text on the page 5.24:1. #448100 is the ring/focus step. */
+  --primary: #387500;
+  --primary-foreground: #ffffff;
+  --primary-wash: #edf9e2;
+  --secondary: #f0f1f7;
+  --secondary-foreground: #1a1d2e;
+  --muted: #f0f1f7;
+  /* text-2: 7.4:1 on the page. The reference's text-3 (#8a90a8, 2.9:1) is never used for text here. */
+  --muted-foreground: #4a5068;
+  --accent: #e8eaf2;
+  --accent-foreground: #1a1d2e;
+  --destructive: #b91c1c;
+  --border: #e2e4ed;
+  --input: #d0d3e0;
+  --ring: #448100;
+  --success: #15803d;
+  --danger: #b91c1c;
+  --warning: #92600a;
+  --info: #0369a1;
+  --chart-1: #387500;
+  --chart-2: #0369a1;
+  --chart-3: #15803d;
+  --chart-4: #92600a;
+  --chart-5: #6d28d9;
+  --radius: 0.5rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1a1d2e;
+  --sidebar-primary: #387500;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f0f1f7;
+  --sidebar-accent-foreground: #1a1d2e;
+  --sidebar-border: #e2e4ed;
+  --sidebar-ring: #448100;
+  --glow: 0 0 0 1px color-mix(in srgb, #448100 45%, transparent), 0 12px 28px -18px color-mix(in srgb, #448100 55%, transparent);
+  --overlay: rgb(26 29 46 / 30%);
+  --shadow-color: rgb(0 0 0 / 10%);
+  /* HQ semantic status, same vocabulary as the reference chips: running = success, needs you = warning. */
+  --st-running: var(--success);
+  --st-idle: #6b7189;
+  --st-needs: var(--warning);
+  --st-ended: #d0d3e0;
+  --via-channel: var(--info);
+  --owner: var(--primary-wash);
+  /* 8 Sync brand lime #85d840 (oklch 0.8 0.2 134). --brand-ink = brand text on the light page. The mark keeps it. */
+  --brand: #85d840;
+  --brand-ink: #387500;
 }
 
-/* ZUS IDE Pro Dark surfaces (canvas #0c0c0c → panel #171717 → raised #262626, line #333) with lime #85d840 as the one neon. */
+/* Dark (default): zinc layers #09090b page, #111114 panel, #18181b raised, #27272a hairline; the brand lime exactly. */
 .dark {
-  --background: oklch(0.155 0.004 134);
-  --foreground: oklch(0.975 0.003 134);
-  --card: oklch(0.2 0.006 134);
-  --card-foreground: oklch(0.975 0.003 134);
-  --popover: oklch(0.22 0.006 134);
-  --popover-foreground: oklch(0.975 0.003 134);
-  --primary: oklch(0.8 0.2 134);
-  --primary-foreground: oklch(0.155 0.004 134);
-  --secondary: oklch(0.26 0.008 134);
-  --secondary-foreground: oklch(0.975 0.003 134);
-  --muted: oklch(0.26 0.008 134);
-  --muted-foreground: oklch(0.75 0.01 134);
-  --accent: oklch(0.26 0.008 134);
-  --accent-foreground: oklch(0.975 0.003 134);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.31 0.01 134);
-  --input: oklch(0.33 0.01 134);
-  --ring: oklch(0.8 0.2 134);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.18 0.005 134);
-  --sidebar-foreground: oklch(0.975 0.003 134);
-  --sidebar-primary: oklch(0.8 0.2 134);
-  --sidebar-primary-foreground: oklch(0.155 0.004 134);
-  --sidebar-accent: oklch(0.26 0.008 134);
-  --sidebar-accent-foreground: oklch(0.975 0.003 134);
-  --sidebar-border: oklch(0.29 0.01 134);
-  --sidebar-ring: oklch(0.8 0.2 134);
-  --glow: 0 0 0 1px oklch(0.8 0.2 134 / 40%), 0 0 12px -2px oklch(0.8 0.2 134 / 60%);
-  --st-running: oklch(0.72 0.14 155);
-  --st-idle: oklch(0.6 0.01 260);
-  --st-needs: oklch(0.78 0.14 75);
-  --st-ended: oklch(0.42 0 0);
-  --via-channel: oklch(0.74 0.11 250);
-  --owner: oklch(0.24 0.04 134);
-  --brand: oklch(0.8 0.2 134);
-  --brand-ink: oklch(0.8 0.2 134);
+  --background: #09090b;
+  --foreground: #e6edf3;
+  --card: #111114;
+  --card-foreground: #e6edf3;
+  --popover: #18181b;
+  --popover-foreground: #e6edf3;
+  /* Sync Lime: near-black text on it 11.3:1, as text on the page 11.3:1. Pressed step #6cbe18. */
+  --primary: #85d840;
+  --primary-foreground: #09090b;
+  --primary-wash: #16290a;
+  --secondary: #18181b;
+  --secondary-foreground: #e6edf3;
+  --muted: #18181b;
+  /* text-2: 6.5:1 on the page, 5.8:1 on --muted, 4.8:1 on #27272a. */
+  --muted-foreground: #8b949e;
+  --accent: #27272a;
+  --accent-foreground: #e6edf3;
+  --destructive: #f85149;
+  --border: #27272a;
+  --input: #3f3f46;
+  --ring: #85d840;
+  --success: #3fb950;
+  --danger: #f85149;
+  --warning: #d29922;
+  --info: #58a6ff;
+  --chart-1: #85d840;
+  --chart-2: #58a6ff;
+  --chart-3: #3fb950;
+  --chart-4: #d29922;
+  --chart-5: #a371f7;
+  --sidebar: #111114;
+  --sidebar-foreground: #e6edf3;
+  --sidebar-primary: #85d840;
+  --sidebar-primary-foreground: #09090b;
+  --sidebar-accent: #18181b;
+  --sidebar-accent-foreground: #e6edf3;
+  --sidebar-border: #27272a;
+  --sidebar-ring: #85d840;
+  --glow: 0 0 0 1px color-mix(in srgb, #85d840 45%, transparent), 0 12px 28px -18px color-mix(in srgb, #85d840 55%, transparent);
+  --overlay: rgb(0 0 0 / 60%);
+  --shadow-color: rgb(0 0 0 / 40%);
+  --st-running: var(--success);
+  --st-idle: #8b949e;
+  --st-needs: var(--warning);
+  --st-ended: #3f3f46;
+  --via-channel: var(--info);
+  --owner: var(--primary-wash);
+  --brand: #85d840;
+  --brand-ink: #85d840;
 }
 
 @layer base {
@@ -168,17 +196,184 @@
     @apply font-sans;
   }
   ::selection {
-    background: color-mix(in oklch, var(--brand) 35%, transparent);
+    background: color-mix(in oklch, var(--primary) 32%, transparent);
   }
 }
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+  }
+  /* Inter as the reference sets it: slightly tight body, tighter headings, the straight-sided alternates. */
+  body {
+    font-feature-settings: "cv11", "ss01", "calt";
+    letter-spacing: -0.011em;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
   }
   .tabular {
     font-variant-numeric: tabular-nums;
   }
+}
+
+/* Shared card anatomy, copied from the 8 Sync usage dashboard (content-ai UsagePage / OmpQuotaCard / OmpKeysCard).
+   All are Tailwind utilities, so a class placed next to one still wins. Tones go on `data-tone`:
+   success | danger | warning | info | accent (default: neutral). */
+
+/* A panel (card): white / #111114 fill, one hairline, 0.7rem corners. Selected or focused, the edge turns lime and the
+   panel gets the reference's soft lime drop; flat at rest. Use data-active="true" for the selected pane. */
+@utility neon-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background-color: var(--card);
+  color: var(--card-foreground);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+  &[data-active="true"],
+  &:focus-within {
+    border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
+    box-shadow: var(--glow);
+  }
+}
+
+/* Raised panel without a border (reference `.panel-elevated`): a top highlight and a long soft shadow. For stat
+   cards and quota cards that sit on the page directly. Never add a border to it (ghost-card ban). */
+@utility neon-elevated {
+  border-radius: var(--radius-xl);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--card) 90%, var(--foreground) 4%) 0%, var(--card) 100%);
+  color: var(--card-foreground);
+  box-shadow:
+    0 1px 0 0 color-mix(in srgb, var(--foreground) 6%, transparent) inset,
+    0 24px 48px -32px var(--shadow-color);
+}
+
+/* Quiet inset panel (reference `.panel-muted`): secondary lists, history rows. */
+@utility neon-muted {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background-color: color-mix(in srgb, var(--muted) 82%, transparent);
+}
+
+/* Section heading above a group of cards: 0.8rem semibold, secondary ink. Not uppercase, no tracking. */
+@utility neon-heading {
+  font-size: 0.8rem;
+  line-height: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--muted-foreground);
+}
+
+/* Ids, paths, counts and short machine labels: JetBrains Mono, small, muted, aligned digits. Not for sentences. */
+@utility neon-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+/* The headline number of a stat card ("1,2 tr", "84%"). */
+@utility neon-value {
+  font-size: 1.25rem;
+  line-height: 1;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+
+/* Quota / usage bar: the track; put one `neon-bar-fill` inside with style={{ width }} and a data-tone
+   (warning from 70 %, danger from 90 %, as the reference). Give the track role="progressbar" + aria-value*. */
+@utility neon-bar {
+  display: block;
+  height: 0.375rem;
+  overflow: hidden;
+  border-radius: 9999px;
+  background-color: var(--muted);
+}
+@utility neon-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 9999px;
+  background-color: var(--primary);
+  transition: width 200ms ease-out;
+  &[data-tone="warning"] {
+    background-color: var(--warning);
+  }
+  &[data-tone="danger"] {
+    background-color: var(--danger);
+  }
+  &[data-tone="info"] {
+    background-color: var(--info);
+  }
+  &[data-tone="success"] {
+    background-color: var(--success);
+  }
+}
+
+/* Status chip (reference signature): pill, 10-14 % wash of the tone, text in the tone. Pair with a size-1.5 dot
+   (bg-current) when it is a live state. Neutral by default (Chờ / idle). */
+@utility neon-pill {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  padding: 0.0625rem 0.5rem;
+  font-size: 11px;
+  line-height: 1rem;
+  font-weight: 500;
+  white-space: nowrap;
+  background-color: var(--muted);
+  color: var(--muted-foreground);
+  &[data-tone="accent"] {
+    background-color: var(--primary-wash);
+    color: var(--primary);
+  }
+  &[data-tone="success"] {
+    background-color: color-mix(in srgb, var(--success) 12%, transparent);
+    color: var(--success);
+  }
+  &[data-tone="danger"] {
+    background-color: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
+  }
+  &[data-tone="warning"] {
+    background-color: color-mix(in srgb, var(--warning) 14%, transparent);
+    color: var(--warning);
+  }
+  &[data-tone="info"] {
+    background-color: color-mix(in srgb, var(--info) 12%, transparent);
+    color: var(--info);
+  }
+}
+
+/* A copyable value (base URL, key prefix, path) in a row: mono on the inset fill. */
+@utility neon-code {
+  border-radius: var(--radius-sm);
+  background-color: var(--muted);
+  padding: 0.125rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+/* Empty state box (reference `<Empty className="border border-dashed py-6">`): one title line, one teaching line. */
+@utility neon-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-xl);
+  padding: 1.5rem 1rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
 }
 
 /* A horizontal scroller that hides content: the edge with more to see fades out (useEdgeFade sets the attributes). */

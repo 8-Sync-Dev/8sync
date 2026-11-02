@@ -4,31 +4,27 @@ import { sessionLabel } from "@/lib/labels";
 import { roomNow } from "@/lib/now";
 import { limitsView, matchesSession } from "@/lib/office";
 import { ChevronDownIcon, CircleHelpIcon, MenuIcon, SquareTerminalIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNarrow } from "@/hooks/use-narrow";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Toaster } from "@/components/ui/sonner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ActivityView } from "./activity-view";
 import { shortName, StatusDot } from "./bits";
 import { FirstRun } from "./first-run";
-import { LoopsView, type LoopsState } from "./loops-view";
+import type { LoopsState } from "./loops-view";
 import { Guide, useGuideFirstRun } from "./guide";
 import { Nav, type Scope } from "./nav";
 import { RoomBar, RoomBrief } from "./room-brief";
-import { OfficeView } from "./office-view";
-import { OverviewView } from "./overview-view";
-import { PreviewView, type PreviewState } from "./preview-view";
-import { ReportView } from "./report-view";
-import { SessionsView } from "./sessions-view";
+import type { PreviewState } from "./preview-view";
 import { FloatShell } from "./float-shell";
-import { TeamThread } from "./team-thread";
-import { TeamView } from "./team-view";
 import { useEdgeFade } from "./scroll-strip";
 import { TerminalDrawer } from "./terminal-drawer";
 import { WebTerminalSheet } from "./web-terminal-sheet";
+import { WorkspaceView } from "./workspace-view";
 import { useHq } from "./use-hq";
 import { useReloadOnNewUi } from "./use-ui-version";
 import { useOffice, type Room } from "./use-office";
@@ -37,21 +33,34 @@ import { MachineChip, type MachineView as MachineData } from "./machine-chip";
 import { rootKey } from "@/lib/preview";
 import { MORE_LABEL, MORE_TABS, isMore, moreLabel } from "@/lib/tabs";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { KnowView } from "./know-view";
-import { MachineView } from "./machine-view";
-import { UsageView } from "./usage-view";
 import type { Session } from "./types";
 
-/** office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens. */
-type Tab = "overview" | "office" | "group" | "room" | "preview" | "loops" | "report" | "usage" | "may" | "know" | "sessions" | "activity";
-/** Tổng quan is the first screen on a wide monitor; below this the office stays the default. */
-const WIDE_QUERY = "(min-width: 1600px)";
-const subscribeWide = (cb: () => void) => {
-  const m = window.matchMedia(WIDE_QUERY);
-  m.addEventListener("change", cb);
-  return () => m.removeEventListener("change", cb);
-};
-const isWide = () => window.matchMedia(WIDE_QUERY).matches;
+/** A view's chunk on its way: the shape of a page (title, two rows), not a spinner. */
+function ViewLoading() {
+  return (
+    <div className="mx-auto w-full max-w-5xl space-y-3 px-4 py-6 sm:px-6" aria-busy="true" aria-label="Đang tải">
+      <Skeleton className="h-5 w-40" />
+      <Skeleton className="h-24 w-full" />
+      <Skeleton className="h-24 w-full" />
+    </div>
+  );
+}
+// Every tab but the first screen loads its own chunk on first open (Radix unmounts hidden tabs, so they also stop working).
+const OverviewView = dynamic(() => import("./overview-view").then((m) => m.OverviewView), { loading: ViewLoading });
+const OfficeView = dynamic(() => import("./office-view").then((m) => m.OfficeView), { loading: ViewLoading });
+const TeamThread = dynamic(() => import("./team-thread").then((m) => m.TeamThread), { loading: ViewLoading });
+const TeamView = dynamic(() => import("./team-view").then((m) => m.TeamView), { loading: ViewLoading });
+const PreviewView = dynamic(() => import("./preview-view").then((m) => m.PreviewView), { loading: ViewLoading });
+const ReportView = dynamic(() => import("./report-view").then((m) => m.ReportView), { loading: ViewLoading });
+const UsageView = dynamic(() => import("./usage-view").then((m) => m.UsageView), { loading: ViewLoading });
+const MachineView = dynamic(() => import("./machine-view").then((m) => m.MachineView), { loading: ViewLoading });
+const KnowView = dynamic(() => import("./know-view").then((m) => m.KnowView), { loading: ViewLoading });
+const LoopsView = dynamic(() => import("./loops-view").then((m) => m.LoopsView), { loading: ViewLoading });
+const SessionsView = dynamic(() => import("./sessions-view").then((m) => m.SessionsView), { loading: ViewLoading });
+const ActivityView = dynamic(() => import("./activity-view").then((m) => m.ActivityView), { loading: ViewLoading });
+
+/** workspace: folders → omp sessions → windows · office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens. */
+type Tab = "workspace" | "overview" | "office" | "group" | "room" | "preview" | "loops" | "report" | "usage" | "may" | "know" | "sessions" | "activity";
 const PREVIEW_POLL_MS = 15_000;
 const LOOPS_POLL_MS = 30_000;
 /** The header chip and the Máy tab share one poll. */
@@ -67,11 +76,10 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const [scope, setScope] = useState<Scope>({ project: null, session: null });
   // The repo the owner opened from the sidebar: Tổng quan shows that project's block only.
   const [repo, setRepo] = useState<{ root: string; name: string } | null>(null);
-  // null until the owner picks a tab: the default follows the screen (Tổng quan on a wide monitor).
+  // null until the owner picks a tab: Không gian is the first screen on every width (owner 2026-11-02, omp-first).
   const [picked, setTab] = useState<Tab | null>(null);
-  const wide = useSyncExternalStore(subscribeWide, isWide, () => false);
   const narrow = useNarrow();
-  const tab: Tab = picked ?? (wide ? "overview" : "office");
+  const tab: Tab = picked ?? "workspace";
   const [target, setTarget] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   // The session whose live terminal is open in the right drawer (hq-* tmux sessions only).
@@ -234,7 +242,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
 
         {/* The composers end at the bottom edge: keep them above a phone's home indicator. */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex min-h-0 flex-col gap-0 pb-[env(safe-area-inset-bottom)]">
-          <header className="shrink-0 border-b pt-[env(safe-area-inset-top)]">
+          <header className="shrink-0 border-b bg-background/90 pt-[env(safe-area-inset-top)]">
             {/* Phones: 44 px targets; px-3 and gap-2 leave the title room at 360 px. */}
             <div className="flex items-center gap-2 px-3 pt-2 sm:gap-3 sm:px-6 sm:pt-3">
               <Button size="icon-sm" variant="ghost" className="-ml-1 max-sm:size-11 md:hidden" onClick={() => setNavOpen(true)} aria-label="Open projects">
@@ -243,7 +251,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               <div className="min-w-0 flex-1">
                 <h1 className="truncate text-base font-semibold tracking-tight">{title}</h1>
                 <p
-                  className={cn("truncate text-xs text-muted-foreground", subtitle.startsWith("/") && "font-mono")}
+                  className={cn("truncate text-xs text-muted-foreground", /^([a-z]:[\\/]|[/~])/i.test(subtitle) && "font-mono")}
                   title={subtitle}
                 >
                   {subtitle || " "}
@@ -261,18 +269,18 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               <dl className="hidden shrink-0 items-center gap-4 text-xs text-muted-foreground xl:flex">
                 <div className="flex items-baseline gap-1.5">
                   <dt>Running</dt>
-                  <dd className="text-sm font-medium text-foreground tabular">{running}</dd>
+                  <dd className="font-mono text-sm font-medium text-foreground tabular">{running}</dd>
                 </div>
                 {limits.length > 0 && (
                   <div className="flex items-center gap-2" title="Hạn mức gói Claude (5 giờ / 7 ngày), từ status line của phiên mới nhất; tự chạy lại khi reset">
                     <dt className="sr-only">Usage</dt>
-                    <dd className="flex items-center gap-2 text-foreground tabular">
+                    <dd className="flex items-center gap-2 font-mono text-foreground tabular">
                       {limits.map((w, i) => (
                         <span key={w.label} className="flex items-center gap-1.5">
                           {i === 0 && (
                             <span aria-hidden className="h-1.5 w-12 overflow-hidden rounded-full bg-muted">
                               <span
-                                className={`block h-full rounded-full ${w.pct >= 90 ? "bg-destructive" : w.pct >= 70 ? "bg-st-needs" : "bg-foreground/70"}`}
+                                className={`block h-full rounded-full ${w.pct >= 90 ? "bg-destructive" : w.pct >= 70 ? "bg-st-needs" : "bg-primary"}`}
                                 style={{ width: `${w.pct}%` }}
                               />
                             </span>
@@ -290,7 +298,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 {needsYou > 0 && (
                   <div className="flex items-baseline gap-1.5 text-st-needs">
                     <dt>Needs you</dt>
-                    <dd className="text-sm font-semibold tabular">{needsYou}</dd>
+                    <dd className="font-mono text-sm font-semibold tabular">{needsYou}</dd>
                   </div>
                 )}
               </dl>
@@ -307,6 +315,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 variant="line"
                 className="hq-fade-x relative h-9 min-w-0 flex-1 snap-x snap-proximity scroll-px-4 justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] max-sm:gap-5 max-sm:group-data-horizontal/tabs:h-[50px] max-sm:*:data-[slot=tabs-trigger]:h-11 max-sm:*:data-[slot=tabs-trigger]:snap-start max-sm:*:data-[slot=tabs-trigger]:after:bottom-0 sm:px-6"
               >
+                <TabsTrigger value="workspace" className="flex-none px-0">Không gian</TabsTrigger>
                 <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
                 <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
                 <TabsTrigger value="preview" className="flex-none px-0">Preview</TabsTrigger>
@@ -322,7 +331,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   <DropdownMenuTrigger
                     className={cn(
                       "relative inline-flex h-full flex-none items-center gap-1 text-sm font-medium whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-                      isMore(tab) ? "text-foreground after:absolute after:inset-x-0 after:bottom-[-5px] after:h-0.5 after:bg-foreground" : "text-muted-foreground hover:text-foreground",
+                      isMore(tab) ? "text-foreground after:absolute after:inset-x-0 after:bottom-[-5px] after:h-0.5 after:rounded-full after:bg-primary" : "text-muted-foreground hover:text-foreground",
                     )}
                     aria-label={`Tab khác: ${moreLabel(tab)}`}
                   >
@@ -350,6 +359,9 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
           </header>
 
           <main className="min-h-0 flex-1">
+            <TabsContent value="workspace" className="h-full">
+              <WorkspaceView token={token} />
+            </TabsContent>
             <TabsContent value="overview" className="h-full">
               <OverviewView
                 office={office}

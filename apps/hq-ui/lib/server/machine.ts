@@ -2,10 +2,13 @@
 // `nvidia-smi` when there is one; how much RAM Claude Code and Node processes hold, from `tasklist`
 // (Windows) or `ps` (macOS, Linux). argv only, short timeouts, a failed probe is just left out.
 // `spec()`: what the machine is (CPU, RAM, GPU, OS), read once per HQ process.
+// `heavy()`: Electron / Chromium renderers holding ≥ 4 GB (`8sync ccc eco heavy --json`);
+// `restartApp()`: the owner's button for one of them (`8sync ccc eco restart <rootPid> --json`).
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import { coreGet } from "./core";
+import { run as runProc } from "./proc";
 
 const TIMEOUT_MS = 4_000;
 /** `8sync clean` can take minutes (package caches, journal). */
@@ -156,6 +159,97 @@ export async function clean(dryRun: boolean, run: Exec = exec): Promise<string |
 }
 
 let cleaning: Promise<string | null> | null = null;
+
+/** A renderer holding ≥ 4 GB; `rootPid` is its app's main process, `restartable` only for chat apps (never a browser, editor, Orca). */
+export type Heavy = { pid: number; rootPid: number; app: string; image: string; mb: number; restartable: boolean };
+export type Restarted = { ok: true; app: string; freedMb: number; relaunched: boolean };
+/** `8sync` through the argv-only runner (the binary that started this HQ). */
+export type Run8 = (args: string[], timeoutMs: number) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
+
+const run8: Run8 = (args, timeoutMs) => runProc("8sync", args, timeoutMs);
+/** The renderers change slowly; the 5 s machine poll reads them at most this often. */
+const HEAVY_TTL_MS = 30_000;
+const HEAVY_TIMEOUT_MS = 10_000;
+/** The app gets 10 s to close, then PowerShell / the relaunch. */
+const RESTART_TIMEOUT_MS = 60_000;
+
+const isHeavy = (h: unknown): h is Heavy => {
+  const r = h as Record<string, unknown> | null;
+  return (
+    !!r &&
+    typeof r === "object" &&
+    Number.isInteger(r.pid) &&
+    Number.isInteger(r.rootPid) &&
+    typeof r.app === "string" &&
+    typeof r.image === "string" &&
+    typeof r.mb === "number" &&
+    typeof r.restartable === "boolean"
+  );
+};
+
+/** `{"heavy":[…]}` → the rows; null when it is not that (an 8sync without `eco heavy`). */
+export function parseHeavy(out: string): Heavy[] | null {
+  try {
+    const v = JSON.parse(out) as { heavy?: unknown };
+    return Array.isArray(v?.heavy) ? v.heavy.filter(isHeavy) : null;
+  } catch {
+    return null;
+  }
+}
+
+let heavyAt = 0;
+let heavyLast: Heavy[] | null = null;
+let heavyRun: Promise<Heavy[] | null> | null = null;
+
+/** The heavy renderers: the first call waits for the read, later ones get the last read at once and refresh it past {@link HEAVY_TTL_MS}. */
+export function heavy(r: Run8 = run8, now = Date.now()): Promise<Heavy[] | null> {
+  if (!heavyRun && now - heavyAt >= HEAVY_TTL_MS) {
+    heavyRun = r(["ccc", "eco", "heavy", "--json"], HEAVY_TIMEOUT_MS)
+      .then((x) => (x.ok ? parseHeavy(x.stdout) : null))
+      .then((h) => {
+        heavyLast = h;
+        heavyAt = now;
+        return h;
+      })
+      .finally(() => {
+        heavyRun = null;
+      });
+  }
+  return heavyAt === 0 && heavyRun ? heavyRun : Promise.resolve(heavyLast);
+}
+
+/** `{rootPid}` → a pid (a positive 32-bit integer), else null. */
+export function restartPid(body: Record<string, unknown> | null): number | null {
+  const p = body?.rootPid;
+  return typeof p === "number" && Number.isInteger(p) && p > 0 && p <= 0xffff_ffff ? p : null;
+}
+
+let restarting: Promise<{ ok: true; v: Restarted } | { ok: false; error: string }> | null = null;
+
+/** `8sync ccc eco restart <pid> --json` (it refuses anything but a heavy, restartable app's main process); one at a time. */
+export function restartApp(pid: number, r: Run8 = run8): Promise<{ ok: true; v: Restarted } | { ok: false; error: string }> {
+  if (restarting) return Promise.resolve({ ok: false, error: "Đang khởi động lại một app, chờ xong rồi thử lại" });
+  restarting = r(["ccc", "eco", "restart", String(pid), "--json"], RESTART_TIMEOUT_MS)
+    .then((x) => {
+      // Its card goes at once; the next read says what is left.
+      heavyLast = heavyLast?.filter((h) => h.rootPid !== pid) ?? null;
+      heavyAt = 0;
+      if (x.ok) {
+        try {
+          const v = JSON.parse(x.stdout) as Partial<Restarted>;
+          if (v?.ok === true && typeof v.app === "string") return { ok: true as const, v: { ok: true as const, app: v.app, freedMb: Number(v.freedMb) || 0, relaunched: v.relaunched === true } };
+        } catch {
+          // fall through: not the JSON asked for
+        }
+      }
+      const last = (x.stderr || x.stdout).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? "";
+      return { ok: false as const, error: last.replace(/^error:\s*/i, "") || "8sync ccc eco restart không chạy được" };
+    })
+    .finally(() => {
+      restarting = null;
+    });
+  return restarting;
+}
 
 export type Spec = {
   cpu: { model: string; cores: number | null; threads: number };

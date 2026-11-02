@@ -14,8 +14,8 @@ const REFRESH_MS = 1500;
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
 const THEMES = {
-  dark: { background: "#00000000", foreground: "#e6e6e6", cursor: "#00000000" },
-  light: { background: "#00000000", foreground: "#1f1f1f", cursor: "#00000000", black: "#1f1f1f", white: "#6b6b6b", brightWhite: "#404040" },
+  dark: { background: "#00000000", foreground: "#e6edf3", cursor: "#00000000" },
+  light: { background: "#00000000", foreground: "#1a1d2e", cursor: "#00000000", black: "#1a1d2e", white: "#6b7189", brightWhite: "#4a5068" },
 };
 
 type PaneState = "loading" | "ok" | "gone" | "error";

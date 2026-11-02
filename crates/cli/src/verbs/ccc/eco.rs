@@ -16,6 +16,9 @@
 //! Killed here: only an orphaned helper ([`reap_orphan_helpers`]): a language server / MCP server
 //! / trail worker whose host session is gone (no claude/omp/editor/terminal above it). Everything
 //! else stays with `8sync watchdog`.
+//! Reported, never acted on alone: a Chromium / Electron renderer holding ≥ [`HEAVY_RENDERER_MB`]
+//! ([`heavy_renderers`]; `8sync ccc eco heavy`). `eco restart <rootPid>` (the owner's button in
+//! HQ) closes and reopens such an app, only one of [`RESTARTABLE`] and only processes of its exe.
 //! `8sync ccc eco` alone prints what the machine uses now (RAM, CPU, GPU, watts, battery, what
 //! Claude Code / node hold); `run` loops every [`EVERY_S`]; `install` starts it at logon
 //! (Windows Scheduled Task, systemd --user, launchd). Settings: `~/.config/8sync/eco.json`.
@@ -45,7 +48,7 @@ const TRIM_EVERY_S: u64 = 600;
 const ECO_KEEP: usize = 400;
 const MIB: u64 = 1024 * 1024;
 
-const USAGE: &str = "usage: 8sync ccc eco [status] [--json] | tick [--json] | reap [--dry-run] [--json] | run | install | uninstall | set ram <50..95> | set cpu <30..95> | set battery on|off";
+const USAGE: &str = "usage: 8sync ccc eco [status] [--json] | heavy [--json] | restart <rootPid> [--json] | tick [--json] | reap [--dry-run] [--json] | run | install | uninstall | set ram <50..95> | set cpu <30..95> | set battery on|off";
 
 // ── battery ──────────────────────────────────────────────────────────────────────────────────
 
@@ -214,8 +217,14 @@ pub(super) fn is_session(p: &Proc) -> bool {
 /// the install paths (`AnthropicClaude`, the Store package, `Claude.app`) and Electron's
 /// `--type=` helpers. Not verified against every installer layout.
 pub(super) fn is_desktop_app(p: &Proc) -> bool {
-    let c = p.cmd.to_ascii_lowercase().replace('\\', "/");
-    c.contains("--type=") || c.contains("/anthropicclaude/") || c.contains("/windowsapps/claude") || c.contains("/claude.app/contents/macos/claude")
+    p.cmd.contains("--type=") || is_desktop_install(&p.cmd)
+}
+
+/// A command line run from Claude Desktop's install (`AnthropicClaude`, the Store package,
+/// `Claude.app`), not the Claude Code CLI.
+fn is_desktop_install(cmd: &str) -> bool {
+    let c = cmd.to_ascii_lowercase().replace('\\', "/");
+    c.contains("/anthropicclaude/") || c.contains("/windowsapps/claude") || c.contains("/claude.app/contents/macos/claude")
 }
 
 /// What eco may touch: every process a session started, minus sessions, Claude Desktop, 8sync
@@ -234,6 +243,257 @@ pub(super) fn targets(procs: &[Proc], me: u32) -> Vec<&Proc> {
         .iter()
         .filter(|p| pids.contains(&p.pid) && !is_session(p) && !is_desktop_app(p) && p.image != "8sync" && !keep.contains(&p.pid))
         .collect()
+}
+
+// ── heavy renderers ──────────────────────────────────────────────────────────────────────────
+
+/// A Chromium / Electron renderer (`--type=renderer`) holding at least this much is reported
+/// (owner 2026-11-02: Claude Desktop's renderer reached 11 GB).
+pub(super) const HEAVY_RENDERER_MB: u64 = 4096;
+/// Apps whose restart `eco restart` may do: chat apps whose open work lives on their servers.
+/// Browsers, editors, terminals and Orca may hold the owner's unsaved work: reported only.
+const RESTARTABLE: [&str; 5] = ["claude", "chatgpt", "slack", "discord", "notion"];
+/// `eco restart`: how long the app gets to close by itself before what is left is forced.
+const CLOSE_WAIT: Duration = Duration::from_secs(10);
+
+/// One heavy renderer: its pid, the app's main process (`root`), the app, its RAM.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Heavy {
+    pub pid: u32,
+    pub root: u32,
+    pub app: String,
+    pub image: String,
+    pub mb: u64,
+    pub restartable: bool,
+}
+
+fn app_name(image: &str) -> String {
+    match image {
+        "claude" => "Claude Desktop",
+        "chatgpt" => "ChatGPT",
+        "slack" => "Slack",
+        "discord" => "Discord",
+        "notion" => "Notion",
+        "msedge" => "Microsoft Edge",
+        "chrome" | "google chrome" => "Chrome",
+        "brave" => "Brave",
+        "orca" => "Orca",
+        "code" => "VS Code",
+        "cursor" => "Cursor",
+        "windsurf" => "Windsurf",
+        "ms-teams" => "Microsoft Teams",
+        "codex" => "Codex",
+        other => return other.to_string(),
+    }
+    .to_string()
+}
+
+/// The executable a command line runs: the quoted first word, an unquoted Windows path up to its
+/// `.exe` (spaces allowed), a macOS bundle binary up to its first flag, else the first word.
+pub(super) fn exe_of(cmd: &str) -> &str {
+    let c = cmd.trim_start();
+    if let Some(r) = c.strip_prefix('"') {
+        return r.split('"').next().unwrap_or("");
+    }
+    let l = c.to_ascii_lowercase(); // same byte offsets as `c`
+    if let Some(i) = l.find(".exe").filter(|i| l[i + 4..].is_empty() || l[i + 4..].starts_with(' ')) {
+        return &c[..i + 4];
+    }
+    if let Some(i) = l.find(".app/contents/macos/") {
+        return c[i..].find(" -").map_or(c.trim_end(), |j| &c[..i + j]);
+    }
+    c.split_whitespace().next().unwrap_or("")
+}
+
+/// Same executable path: case-insensitive for a Windows path.
+fn same_exe(p: &Proc, exe: &str) -> bool {
+    let e = exe_of(&p.cmd);
+    !exe.is_empty() && if reap::windows_path(exe) { e.eq_ignore_ascii_case(exe) } else { e == exe }
+}
+
+/// The app's main process above renderer `p`: the topmost ancestor of the same image without
+/// `--type=`, following a parent only when it started no later than its child (never a recycled pid).
+fn root_of<'a>(procs: &'a [Proc], p: &'a Proc) -> Option<&'a Proc> {
+    let (mut cur, mut root) = (p, None);
+    for _ in 0..64 {
+        let Some(q) = procs.iter().find(|q| cur.ppid != 0 && q.pid == cur.ppid && q.pid != cur.pid && q.image == p.image && q.started <= cur.started) else { break };
+        if !q.cmd.contains("--type=") {
+            root = Some(q);
+        }
+        cur = q;
+    }
+    root
+}
+
+/// Renderers holding at least [`HEAVY_RENDERER_MB`], largest first (pure). `restartable` only for
+/// an app of [`RESTARTABLE`] whose main process was found (Claude: Claude Desktop's install, never
+/// the CLI); a renderer without one keeps its own pid as `root`.
+pub(super) fn heavy_renderers(procs: &[Proc]) -> Vec<Heavy> {
+    let mut out: Vec<Heavy> = procs
+        .iter()
+        .filter(|p| p.rss >= HEAVY_RENDERER_MB * MIB && p.cmd.contains("--type=renderer"))
+        .map(|p| {
+            let root = root_of(procs, p);
+            let restartable = root.is_some_and(|r| RESTARTABLE.contains(&p.image.as_str()) && (p.image != "claude" || is_desktop_install(&r.cmd)) && !exe_of(&r.cmd).is_empty());
+            Heavy { pid: p.pid, root: root.map_or(p.pid, |r| r.pid), app: app_name(&p.image), image: p.image.clone(), mb: p.rss / MIB, restartable }
+        })
+        .collect();
+    out.sort_by(|a, b| b.mb.cmp(&a.mb).then(a.pid.cmp(&b.pid)));
+    out
+}
+
+fn heavy_json(h: &[Heavy]) -> Value {
+    json!(h.iter().map(|h| json!({ "pid": h.pid, "rootPid": h.root, "app": h.app, "image": h.image, "mb": h.mb, "restartable": h.restartable })).collect::<Vec<_>>())
+}
+
+/// What `eco restart` closes and opens again.
+#[derive(Debug, PartialEq)]
+pub(super) struct Target {
+    pub app: String,
+    pub root: u32,
+    pub exe: String,
+    /// Every process running `exe` now (only these are ever forced).
+    pub pids: Vec<u32>,
+    pub mb: u64,
+}
+
+/// The refusal rule of `eco restart` (pure): `root` must be, right now, the main process of a
+/// heavy renderer of a restartable app, and not above `me`.
+pub(super) fn restart_target(procs: &[Proc], root: u32, me: u32) -> Result<Target, String> {
+    let heavy = heavy_renderers(procs);
+    let Some(h) = heavy.iter().find(|h| h.root == root) else {
+        return Err(format!("pid {root} không phải tiến trình chính của app nào có renderer ≥ {} GB lúc này", HEAVY_RENDERER_MB / 1024));
+    };
+    if !h.restartable {
+        return Err(format!("{} không được khởi động lại từ 8sync (có thể đang giữ việc của anh): đóng bớt tab/cửa sổ", h.app));
+    }
+    if reap::lineage(procs, me).contains(&root) {
+        return Err(format!("8sync đang chạy bên trong {}: chạy lệnh này từ ngoài app đó", h.app));
+    }
+    let exe = procs.iter().find(|p| p.pid == root).map(|p| exe_of(&p.cmd).to_string()).unwrap_or_default();
+    let app: Vec<&Proc> = procs.iter().filter(|p| same_exe(p, &exe)).collect();
+    Ok(Target { app: h.app.clone(), root, pids: app.iter().map(|p| p.pid).collect(), mb: app.iter().map(|p| p.rss).sum::<u64>() / MIB, exe })
+}
+
+/// Body of a PowerShell single-quoted string. PowerShell also reads the curly quotes U+2018–U+201B as `'`,
+/// so every one of them is doubled, not just the ASCII quote.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn ps_single_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        out.push(c);
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Windows: ask every window of `exe` to close, wait up to [`CLOSE_WAIT`], then force only what
+/// still runs from that very path (`Get-Process` `Path -eq`, never by name).
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(super) fn ps_close(exe: &str) -> String {
+    let q = ps_single_quoted(exe);
+    let ticks = CLOSE_WAIT.as_millis() / 500;
+    format!(
+        "$ErrorActionPreference = 'SilentlyContinue'; $exe = '{q}'; \
+         function app {{ @(Get-Process | Where-Object {{ $_.Path -eq $exe }}) }}; \
+         foreach ($p in app) {{ if ($p.MainWindowHandle -ne 0) {{ [void]$p.CloseMainWindow() }} }}; \
+         for ($i = 0; $i -lt {ticks} -and (app).Count -gt 0; $i++) {{ Start-Sleep -Milliseconds 500 }}; \
+         app | Stop-Process -Force"
+    )
+}
+
+/// Windows: open `exe` again through Explorer (out of any job of the caller, as the owner would):
+/// a Store package (`\WindowsApps\<PackageFullName>\`) by `shell:AppsFolder\<family>!<AppId>`.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(super) fn ps_relaunch(exe: &str) -> String {
+    let q = ps_single_quoted(exe);
+    format!(
+        "$ErrorActionPreference = 'Stop'; $exe = '{q}'; $pkg = $null; \
+         if ($exe -match '\\\\WindowsApps\\\\([^\\\\]+)\\\\') {{ $full = $Matches[1]; $pkg = Get-AppxPackage | Where-Object {{ $_.PackageFullName -eq $full }} | Select-Object -First 1 }}; \
+         if ($pkg) {{ $id = @((Get-AppxPackageManifest $pkg).Package.Applications.Application)[0].Id; Start-Process explorer.exe -ArgumentList ('shell:AppsFolder\\' + $pkg.PackageFamilyName + '!' + $id) }} \
+         else {{ Start-Process explorer.exe -ArgumentList ('\"' + $exe + '\"') }}"
+    )
+}
+
+/// `/Applications/Claude.app/Contents/MacOS/Claude` → `/Applications/Claude.app`.
+#[cfg_attr(windows, allow(dead_code))]
+fn app_bundle(exe: &str) -> Option<&str> {
+    exe.find(".app/Contents/MacOS/").map(|i| &exe[..i + 4])
+}
+
+#[cfg(windows)]
+fn powershell(script: &str) -> bool {
+    use std::os::windows::process::CommandExt;
+    quiet(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]).creation_flags(0x0800_0000)) // CREATE_NO_WINDOW
+}
+
+/// Closes the app (see [`ps_close`]; elsewhere SIGTERM to its main process, then SIGKILL to what
+/// is left of its tree and of `exe`, each matched by pid + start time).
+fn close_app(t: &Target, procs: &[Proc]) {
+    #[cfg(windows)]
+    {
+        let _ = procs;
+        powershell(&ps_close(&t.exe));
+    }
+    #[cfg(unix)]
+    {
+        let sig = |s: &str, pid: u32| quiet(Command::new("kill").args([s, &pid.to_string()]));
+        let mut tree = reap::descendants(procs, t.root, &|_| false);
+        tree.extend(t.pids.iter().filter(|p| !tree.contains(p)).copied().collect::<Vec<_>>());
+        let tree: Vec<(u32, u64)> = tree.into_iter().filter_map(|pid| procs.iter().find(|p| p.pid == pid).map(|p| (pid, p.started))).collect();
+        sig("-TERM", t.root);
+        let step = Duration::from_millis(500);
+        for _ in 0..CLOSE_WAIT.as_millis() / 500 {
+            if !sig("-0", t.root) {
+                break;
+            }
+            std::thread::sleep(step);
+        }
+        let now = reap::list(now_s());
+        for (pid, started) in tree {
+            if now.iter().any(|p| p.pid == pid && p.started == started) {
+                sig("-KILL", pid);
+            }
+        }
+    }
+}
+
+/// Opens the app again, detached from 8sync (macOS: `open -a` its bundle).
+fn relaunch(exe: &str) -> bool {
+    #[cfg(windows)]
+    {
+        powershell(&ps_relaunch(exe))
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(b) = app_bundle(exe).filter(|_| cfg!(target_os = "macos")) {
+            return quiet(Command::new("open").args(["-a", b]));
+        }
+        super::awake::spawn_detached(Path::new(exe), &[]).is_ok()
+    }
+}
+
+/// `8sync ccc eco restart <rootPid>`: closes the app whose renderer is heavy and opens it again.
+fn restart(root: u32, json_out: bool) -> Result<()> {
+    let procs = reap::list(now_s());
+    let t = restart_target(&procs, root, std::process::id()).map_err(anyhow::Error::msg)?;
+    if !json_out {
+        ui::info(&format!("đóng {} ({} tiến trình, {} GB), chờ tối đa {} s rồi mở lại", t.app, t.pids.len(), gb(t.mb), CLOSE_WAIT.as_secs()));
+    }
+    close_app(&t, &procs);
+    let left: u64 = reap::list(now_s()).iter().filter(|p| same_exe(p, &t.exe)).map(|p| p.rss).sum::<u64>() / MIB;
+    let freed = t.mb.saturating_sub(left);
+    let relaunched = relaunch(&t.exe);
+    if json_out {
+        println!("{}", serde_json::to_string_pretty(&json!({ "ok": true, "app": t.app, "freedMb": freed, "relaunched": relaunched }))?);
+    } else if relaunched {
+        ui::ok(&format!("{}: trả lại {} GB RAM, đã mở lại", t.app, gb(freed)));
+    } else {
+        ui::warn(&format!("{}: trả lại {} GB RAM nhưng chưa mở lại được, mở tay giúp em", t.app, gb(freed)));
+    }
+    Ok(())
 }
 
 // ── orphaned helpers ─────────────────────────────────────────────────────────────────────────
@@ -491,7 +751,8 @@ fn gb(mb: u64) -> String {
 }
 
 /// Machine usage as JSON (also the MCP `machine` tool): RAM, CPU, GPUs, watts, battery, what
-/// Claude Code / node hold, the eco thresholds and its last pass.
+/// Claude Code / node hold, renderers holding ≥ [`HEAVY_RENDERER_MB`], the eco thresholds and its
+/// last pass.
 pub(crate) fn snapshot_json(home: &Path, s: &Sample) -> Value {
     let c = cfg(home);
     let bat = battery();
@@ -509,6 +770,7 @@ pub(crate) fn snapshot_json(home: &Path, s: &Sample) -> Value {
             "name": g.name, "util": g.util, "memUsedMb": g.mem_used, "memTotalMb": g.mem_total, "temp": g.temp, "watts": g.watts,
         })).collect::<Vec<_>>()),
         "gpuWatts": gpu_w,
+        "heavy": heavy_json(&heavy_renderers(&reap::list(now_s()))),
         "battery": bat.map(|b| json!({ "pct": b.pct, "onAc": b.on_ac, "saver": b.saver })),
         "procs": s.procs.map(|(c, n)| json!({
             "claude": { "n": c.n, "mb": c.bytes / MIB },
@@ -521,6 +783,19 @@ pub(crate) fn snapshot_json(home: &Path, s: &Sample) -> Value {
             "last": st["last"].clone(),
         },
     })
+}
+
+/// One Vietnamese line per heavy renderer of [`heavy_json`].
+fn heavy_lines(heavy: &Value) -> Vec<String> {
+    heavy
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|h| {
+            let what = if h["restartable"] == true { format!("có thể khởi động lại (`8sync eco restart {}`)", h["rootPid"]) } else { "đóng bớt tab/cửa sổ".to_string() };
+            format!("Renderer nặng: {} {} GB (pid {}) — {what}", h["app"].as_str().unwrap_or("?"), gb(h["mb"].as_u64().unwrap_or(0)), h["pid"])
+        })
+        .collect()
 }
 
 /// The human view of [`snapshot_json`] (Vietnamese, one line per part).
@@ -574,6 +849,7 @@ pub(super) fn snapshot_text(v: &Value) -> String {
             gb(pr["node"]["mb"].as_u64().unwrap_or(0))
         ));
     }
+    out.extend(heavy_lines(&v["heavy"]));
     let e = &v["eco"];
     let mode = match e["mode"].as_str() {
         Some("battery") => "tiết kiệm (đang chạy pin)",
@@ -742,6 +1018,21 @@ pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
                 println!("eco: {} · hạ ưu tiên {} · Efficiency +{}/-{} · trả RAM {} · dọn helper mồ côi {}", v["mode"].as_str().unwrap_or("?"), v["lowered"], v["ecoOn"], v["ecoOff"], v["trimmed"], v["reaped"]);
             }
             Ok(())
+        }
+        Some("heavy") => {
+            let h = heavy_json(&heavy_renderers(&reap::list(now_s())));
+            if json_out {
+                println!("{}", serde_json::to_string_pretty(&json!({ "heavy": h }))?);
+            } else if h.as_array().is_some_and(|a| a.is_empty()) {
+                println!("Không có renderer nào ≥ {} GB", HEAVY_RENDERER_MB / 1024);
+            } else {
+                println!("{}", heavy_lines(&h).join("\n"));
+            }
+            Ok(())
+        }
+        Some("restart") => {
+            let pid: u32 = args.get(1).and_then(|s| s.parse().ok()).filter(|p| *p > 0).with_context(|| USAGE.to_string())?;
+            restart(pid, json_out)
         }
         Some("reap") => {
             let dry = args.iter().any(|a| *a == "--dry-run");
@@ -969,5 +1260,101 @@ mod tests {
         last["reaped"] = json!(3);
         let t = snapshot_text(&json!({ "eco": { "last": last } }));
         assert!(t.contains("dọn helper mồ côi 3"), "{t}");
+    }
+
+    const STORE: &str = r"C:\Program Files\WindowsApps\Claude_1.0.734.0_x64__pzs8sxrjxfjjc\app\claude.exe";
+
+    /// Claude Desktop (Store) with an 11 GB renderer, Edge, Orca, a renderer without its main
+    /// process, the Claude Code CLI and 8sync run from inside Claude Desktop.
+    fn desktop_procs() -> Vec<Proc> {
+        let mb = |q: Proc, mb: u64| Proc { rss: mb * MIB, ..q };
+        let edge = r#""C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe""#;
+        let orca = r"C:\Users\a\AppData\Local\Programs\orca\Orca.exe";
+        vec![
+            p(1, 0, "explorer", ""),
+            p(46360, 1, "claude", &format!("\"{STORE}\"")),
+            mb(p(46364, 46360, "claude", &format!("\"{STORE}\" --type=renderer --user-data-dir=x --app-path=y")), 11_366),
+            p(46365, 46360, "claude", &format!("\"{STORE}\" --type=gpu-process")),
+            mb(p(46366, 46360, "claude", &format!("{} --type=renderer", STORE.to_lowercase())), 1_024),
+            mb(p(46367, 46360, "claude", &format!("\"{STORE}\" --type=renderer")), 4_095), // under the threshold
+            p(500, 1, "msedge", &format!("{edge} --profile-directory=Default")),
+            mb(p(501, 500, "msedge", &format!("{edge} --type=renderer --extension-process")), 5_000),
+            p(600, 1, "orca", orca),
+            mb(p(601, 600, "orca", &format!("{orca} --type=renderer")), 6_000),
+            mb(p(701, 1, "claude", &format!("\"{STORE}\" --type=renderer")), 4_096), // its main process is gone
+            p(900, 1, "claude", r"C:\Users\a\.local\bin\claude.exe"),
+            p(999, 46360, "8sync", "8sync ccc eco restart 46360"),
+        ]
+    }
+
+    #[test]
+    fn heavy_renderers_name_the_app_root_and_whether_it_may_restart() {
+        let procs = desktop_procs();
+        let heavy = heavy_renderers(&procs);
+        let got: Vec<(u32, u32, &str, u64, bool)> = heavy.iter().map(|h| (h.pid, h.root, h.app.as_str(), h.mb, h.restartable)).collect();
+        assert_eq!(
+            got,
+            vec![(46364, 46360, "Claude Desktop", 11_366, true), (601, 600, "Orca", 6_000, false), (501, 500, "Microsoft Edge", 5_000, false), (701, 701, "Claude Desktop", 4_096, false)]
+        );
+        let v = heavy_json(&heavy_renderers(&procs));
+        assert_eq!(v[0], json!({ "pid": 46364, "rootPid": 46360, "app": "Claude Desktop", "image": "claude", "mb": 11_366, "restartable": true }));
+        let t = snapshot_text(&json!({ "heavy": v }));
+        assert!(t.contains("Renderer nặng: Claude Desktop 11.1 GB (pid 46364) — có thể khởi động lại (`8sync eco restart 46360`)"), "{t}");
+        assert!(t.contains("Renderer nặng: Microsoft Edge 4.9 GB (pid 501) — đóng bớt tab/cửa sổ"), "{t}");
+        // A renderer is never a session, and eco never targets Claude Desktop.
+        assert!(targets(&procs, 0).is_empty());
+    }
+
+    #[test]
+    fn restart_takes_only_a_restartable_root_and_only_its_exe() {
+        let procs = desktop_procs();
+        let t = restart_target(&procs, 46360, 4242).unwrap();
+        assert_eq!((t.app.as_str(), t.exe.as_str(), t.root), ("Claude Desktop", STORE, 46360));
+        // Same exe path in any case (Windows), never the CLI's claude.exe nor 8sync.
+        assert_eq!(t.pids, vec![46360, 46364, 46365, 46366, 46367, 701]);
+        assert_eq!(t.mb, 50 * 2 + 11_366 + 1_024 + 4_095 + 4_096);
+        let no = |root: u32, me: u32| restart_target(&procs, root, me).unwrap_err();
+        assert!(no(500, 4242).contains("Microsoft Edge") && no(500, 4242).contains("đóng bớt"), "browsers are reported only");
+        assert!(no(600, 4242).contains("Orca"));
+        assert!(no(46364, 4242).contains("không phải tiến trình chính"), "a renderer pid is not the root");
+        assert!(no(701, 4242).contains("không được khởi động lại"), "no main process: nothing to reopen");
+        assert!(no(4242, 4242).contains("không phải"));
+        assert!(no(46360, 999).contains("bên trong Claude Desktop"), "8sync run from inside the app would close itself");
+        // The renderer shrank under the threshold meanwhile: refused (recomputed now).
+        let calm: Vec<Proc> = procs.iter().map(|q| if q.pid == 46364 { Proc { rss: MIB, ..q.clone() } } else { q.clone() }).collect();
+        assert!(restart_target(&calm, 46360, 4242).is_err());
+    }
+
+    #[test]
+    fn exe_of_reads_quoted_unquoted_and_bundle_paths() {
+        assert_eq!(exe_of(r#""C:\a b\x.exe" --flag"#), r"C:\a b\x.exe");
+        assert_eq!(exe_of(r"C:\a b\Orca.EXE --type=renderer"), r"C:\a b\Orca.EXE");
+        assert_eq!(exe_of("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --type=renderer"), "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
+        assert_eq!(exe_of("/usr/lib/slack/slack --enable-crashpad"), "/usr/lib/slack/slack");
+        assert_eq!(exe_of(""), "");
+        assert_eq!(app_bundle("/Applications/Claude.app/Contents/MacOS/Claude"), Some("/Applications/Claude.app"));
+        assert_eq!(app_bundle("/usr/bin/slack"), None);
+    }
+
+    #[test]
+    fn restart_scripts_close_by_exe_path_only_and_reopen_through_explorer() {
+        let exe = r"C:\Program Files\WindowsApps\O'Neil_1.0_x64__abc\app\claude.exe";
+        let c = ps_close(exe);
+        assert!(c.contains(r"$exe = 'C:\Program Files\WindowsApps\O''Neil_1.0_x64__abc\app\claude.exe'"), "{c}");
+        for need in ["$_.Path -eq $exe", "CloseMainWindow()", "-lt 20", "app | Stop-Process -Force"] {
+            assert!(c.contains(need), "{need} missing: {c}");
+        }
+        assert!(!c.contains("-Name") && !c.contains("taskkill") && !c.contains("ProcessName"), "never by name: {c}");
+        let r = ps_relaunch(exe);
+        for need in [r"-match '\\WindowsApps\\([^\\]+)\\'", "Get-AppxPackageManifest", r"'shell:AppsFolder\' + $pkg.PackageFamilyName + '!' + $id", r#"Start-Process explorer.exe -ArgumentList ('"' + $exe + '"')"#] {
+            assert!(r.contains(need), "{need} missing: {r}");
+        }
+    }
+
+    #[test]
+    fn curly_quotes_in_an_exe_path_cannot_end_the_powershell_string() {
+        let exe = "C:\\x\u{2019}; Remove-Item C:\\ -Recurse; \u{2018}\\a.exe";
+        let c = ps_close(exe);
+        assert!(c.contains("$exe = 'C:\\x\u{2019}\u{2019}; Remove-Item C:\\ -Recurse; \u{2018}\u{2018}\\a.exe'"), "{c}");
     }
 }
