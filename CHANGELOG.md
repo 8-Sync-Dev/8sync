@@ -8,7 +8,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [0.120.2] — 2026-11-03
 
 ### Fixed
-- HQ: nút **Terminal** (Shell trên máy) mở từ Không gian (phiên bấm ở sidebar hoặc khung soạn đã chọn thư mục) giờ mở shell trong thư mục của phiên đang xem. Trước đây ở Không gian shell luôn mở ở `~`; Tổng quan / Chat phòng vẫn như cũ.
+- HQ: nút **Terminal** (Shell trên máy) mở từ Không gian (phiên bấm ở sidebar hoặc khung soạn đã chọn thư mục) giờ mở shell trong thư mục của phiên đang xem, như khi mở từ Tổng quan. Hai nguyên nhân: Không gian không truyền thư mục, và `/api/shell` chỉ nhận thư mục đã có trong bảng project/phiên Claude Code (phiên omp không có ở đó) nên rơi về `~`. Giờ `/api/shell` nhận mọi thư mục có thật (route vẫn chỉ mở phía máy, không qua link `--public`), và mỗi thư mục một shell riêng: shell ở `~` đang chạy không bị thay, mở lại thư mục cũ thì vào lại đúng shell đó (giữ 30 phút).
 
 ## [0.120.1] — 2026-11-03
 

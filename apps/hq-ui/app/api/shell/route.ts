@@ -1,8 +1,8 @@
 import os from "node:os";
 import { cookieValue, PUB_COOKIE, readPublic, sideOf, viaTunnel } from "@/lib/server/auth";
 import { bad, json, open, readBody } from "@/lib/server/http";
-import { mergedSessions } from "@/lib/server/proc";
-import { SHELL_KEY, clampSize, closeTerm, input, openShell } from "@/lib/server/term";
+import { existingDir } from "@/lib/server/omp-sessions";
+import { clampSize, closeTerm, input, openShell, shellKey } from "@/lib/server/term";
 import { termResponse } from "@/lib/server/term-http";
 
 export const runtime = "nodejs";
@@ -17,17 +17,16 @@ function refused(req: Request): Response | null {
   return side === "local" ? null : bad("Shell không mở qua link Cloudflare (--public); dùng HQ trên máy hoặc link VPS có đăng nhập GitHub.", 403);
 }
 
-/** `cwd` only when it is a folder HQ already knows (a sidebar project or a session's folder); else home. */
-async function folder(db: Parameters<typeof mergedSessions>[0], want: string | null): Promise<string> {
-  if (want) {
-    const projects = db.prepare("SELECT path FROM projects").all() as { path: string }[];
-    if (projects.some((p) => p.path === want)) return want;
-    if ((await mergedSessions(db)).some((s) => s.cwd === want)) return want;
-  }
-  return os.homedir();
+/**
+ * `cwd` when it is an existing absolute folder, else home. Any folder: this route only answers on this
+ * machine's side (see `refused`) and the shell can `cd` anywhere anyway; the old "known folders only"
+ * check missed omp sessions (Không gian), so their shell landed in home.
+ */
+function folder(req: Request): string {
+  return existingDir(new URL(req.url).searchParams.get("cwd")) ?? os.homedir();
 }
 
-/** The shell (`8sync ccc term --shell`): a stream, or one poll with `?gen=&since=` (see termResponse). */
+/** The shell of `?cwd=` (`8sync ccc term --shell`): a stream, or one poll with `?gen=&since=` (see termResponse). */
 export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
@@ -35,10 +34,11 @@ export async function GET(req: Request) {
   if (no) return no;
   const url = new URL(req.url);
   const size = clampSize(Number(url.searchParams.get("cols")), Number(url.searchParams.get("rows")));
-  return termResponse(req, SHELL_KEY, openShell(await folder(o.db, url.searchParams.get("cwd")), size));
+  const cwd = folder(req);
+  return termResponse(req, shellKey(cwd), openShell(cwd, size));
 }
 
-/** `{data}` keys typed in the browser and/or `{cols, rows}`. */
+/** `{data}` keys typed in the browser and/or `{cols, rows}`, for the shell of `?cwd=`. */
 export async function POST(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
@@ -46,13 +46,13 @@ export async function POST(req: Request) {
   if (no) return no;
   const body = await readBody(req);
   if (!body) return bad("body must be a JSON object", 422);
-  return input(SHELL_KEY, body) ? json({ ok: true }) : bad("shell chưa mở", 409);
+  return input(shellKey(folder(req)), body) ? json({ ok: true }) : bad("shell chưa mở", 409);
 }
 
-/** End the shell now. */
+/** End the shell of `?cwd=` now. */
 export async function DELETE(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
-  closeTerm(SHELL_KEY);
+  closeTerm(shellKey(folder(req)));
   return json({ ok: true });
 }

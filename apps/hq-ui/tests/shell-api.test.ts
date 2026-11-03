@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DELETE, GET, POST } from "@/app/api/shell/route";
 import { __setNonceForTest, getToken, PUB_COOKIE, sessionCookie } from "@/lib/server/auth";
 import { publicPath } from "@/lib/server/paths";
-import { SHELL_KEY, termOpen } from "@/lib/server/term";
+import { shellsOpen } from "@/lib/server/term";
 import { tempHome } from "./helpers";
 
 const HOST = "calm-river-42.trycloudflare.com";
@@ -41,7 +41,7 @@ describe("/api/shell through the --public quick tunnel", () => {
   it("never opens or types into a shell: the link key alone must not give a shell on the PC", async () => {
     const get = await GET(viaQuickTunnel("GET"));
     expect(get.status).toBe(403);
-    expect(termOpen(SHELL_KEY)).toBe(false);
+    expect(shellsOpen()).toBe(false);
     expect((await POST(viaQuickTunnel("POST", { data: "whoami\r" }))).status).toBe(403);
   });
 

@@ -14,8 +14,9 @@ const WIDE = 768;
 
 /**
  * The owner's shell on the PC, floating over every HQ view (`8sync ccc term --shell`: 8sync's zsh with
- * autosuggestions when installed, else PowerShell / $SHELL). Opens in `cwd` (the folder in view) the
- * first time; closing keeps the shell 30 min, "Tắt shell" ends it. Toggle: header button or Ctrl+`.
+ * autosuggestions when installed, else PowerShell / $SHELL). Each opening shows the shell of `cwd` (the
+ * folder in view; one shell per folder, see `shellKey`); closing keeps it 30 min, "Tắt shell" ends it.
+ * Toggle: header button or Ctrl+`.
  */
 export function FloatShell({ token, cwd, open, onOpenChange }: { token: string; cwd: string | null; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [big, setBig] = useState(false);
@@ -23,8 +24,9 @@ export function FloatShell({ token, cwd, open, onOpenChange }: { token: string; 
   const [wide, setWide] = useState(true);
   const [gen, setGen] = useState(0);
   const drag = useRef<{ dx: number; dy: number } | null>(null);
-  // The folder is fixed when the panel opens: a later scope change must not reopen the terminal.
+  // Picked when the panel opens, not on every scope change: an open panel never jumps to another shell.
   const [url, setUrl] = useState<string | null>(null);
+  const [shown, setShown] = useState(false);
 
   useEffect(() => {
     const m = window.matchMedia(`(min-width: ${WIDE}px)`);
@@ -46,7 +48,10 @@ export function FloatShell({ token, cwd, open, onOpenChange }: { token: string; 
   }, [open, onOpenChange]);
 
   // Adjusting state while rendering (React's documented pattern), not in an effect.
-  if (open && !url) setUrl(cwd ? `/api/shell?cwd=${encodeURIComponent(cwd)}` : "/api/shell");
+  if (open !== shown || (open && !url)) {
+    setShown(open);
+    if (open) setUrl(cwd ? `/api/shell?cwd=${encodeURIComponent(cwd)}` : "/api/shell");
+  }
 
   const onDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!wide || big || (e.target instanceof Element && e.target.closest("button"))) return;
@@ -64,7 +69,7 @@ export function FloatShell({ token, cwd, open, onOpenChange }: { token: string; 
   }, []);
 
   async function kill() {
-    await fetch("/api/shell", { method: "DELETE", headers: { "x-hq-token": token } }).catch(() => {});
+    if (url) await fetch(url, { method: "DELETE", headers: { "x-hq-token": token } }).catch(() => {});
     setUrl(null);
     setGen((n) => n + 1);
     onOpenChange(false);
