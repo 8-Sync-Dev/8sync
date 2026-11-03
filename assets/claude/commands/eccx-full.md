@@ -32,8 +32,8 @@ Goal: `$ARGUMENTS` (`--dry-run` = stop after the merged plan).
 - `cpp` — C++: C++, CUDA kernels, x86/SIMD performance (2/2/3)
 - `perl` — Perl: Perl patterns, security, testing (2/0/0)
 - `industry` — Industry: supply chain, logistics, energy, healthcare, documents (16/1/0)
-- `content` — Content: articles, docs, papers, CVs, investor and business writing (12/0/0)
-- `specialized` — Specialized: operator tools, media, desks, homelab, niche domains (40/5/1)
+- `content` — Content: articles, docs, papers, CVs, investor and business writing (13/0/0)
+- `specialized` — Specialized: operator tools, media, desks, homelab, niche domains (41/5/1)
 - `ads` — Ads & Marketing: campaigns, ads, social, SEO, brand, content distribution, lead gen (32/2/1)
 - `game` — Game & 3D: three.js, R3F, GSAP/3D web, Unreal/Blender, game assets (3/0/0)
 

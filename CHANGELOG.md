@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.120.5] — 2026-11-03
+
+### Added
+- Skill bundled `ego-zalo-advisor` (on-demand, deploy vào `~/.omp/skills` mọi máy qua `8sync up`/`harness`, Claude Code kit tự link): nhắn Zalo Web thay chủ qua ego browser. Gồm: tìm đúng profile ego có dữ liệu (ego mở từ Claude Desktop bản MSIX dùng `Packages\Claude_*\LocalCache\Local\Citro Labs\ego lite\User Data`, không phải `%LOCALAPPDATA%\Citro Labs`), mở chat theo số + kiểm header trước khi gõ, gửi ảnh qua file chooser, danh thiếp, canh sidebar không click; đọc trạng thái "Đã nhận"/"Đã gửi"/"Không thể nhận tin nhắn từ bạn"; bảng khi nào nên/không nên nhắn; xưng hô (vai "anh" không mở đầu "Dạ"); tâm lý shop/khách Việt, đàm phán theo bước, mẫu câu, checklist chống lừa đảo.
+
 ## [0.120.4] — 2026-11-03
 
 ### Fixed

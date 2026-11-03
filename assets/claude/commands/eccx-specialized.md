@@ -29,6 +29,7 @@ Scope: operator tools, media, desks, homelab, niche domains.
 - `ecc:counterparty-channel-discipline` — Per-channel strict prompts, mention gating, silent observation, and a communication autonomy policy
 - `ecc:customer-billing-ops` — Operate customer billing workflows such as subscriptions, refunds, churn triage, billing-portal recovery
 - `ecc:dashboard-builder` — Build monitoring dashboards that answer real operator questions
+- `ego-zalo-advisor` — Điều khiển ego browser (ego lite) để đọc và nhắn Zalo Web
 - `ecc:email-ops` — Evidence-first mailbox triage, drafting, send verification, and sent-mail-safe follow-up workflow for ECC
 - `ecc:fal-ai-media` — Fal.ai media generation integration for images, video, and audio
 - `ecc:finance-billing-ops` — Evidence-first revenue, pricing, refunds, team-billing, and billing-model truth workflow for ECC. Use

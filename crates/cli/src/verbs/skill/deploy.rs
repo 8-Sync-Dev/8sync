@@ -13,7 +13,7 @@ use crate::{assets, env_detect, ui};
 /// Module-level so the guard tests can assert BOTH directions against the real
 /// data — a fn-local literal can only be text-scraped, and the direction that
 /// actually bites (an asset dir nobody registered) needs the list itself.
-const BUNDLED_SKILLS: [(&str, &str); 33] = [
+const BUNDLED_SKILLS: [(&str, &str); 34] = [
     ("skills/trail",                   "trail"),
     ("skills/karpathy-guidelines",     "karpathy-guidelines"),
     ("skills/ponytail",                "ponytail"),
@@ -44,6 +44,8 @@ const BUNDLED_SKILLS: [(&str, &str); 33] = [
     ("skills/aup-audit",               "aup-audit"),
     ("skills/research-paper",          "research-paper"),
     ("skills/remote-compute",          "remote-compute"),
+    // Zalo via ego browser: profile location, guarded 1-1 messaging, VN negotiation.
+    ("skills/ego-zalo-advisor",        "ego-zalo-advisor"),
     // Foundation references (locked): stack-specific, opened on demand.
     ("skills/tauri-v2",                "tauri-v2"),
     ("skills/nextjs-app",              "nextjs-app"),
