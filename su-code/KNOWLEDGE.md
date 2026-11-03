@@ -703,3 +703,4 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 
 - validated (2026-11-03, v0.120.3): HQ `LiveTerminal` sized rows by a `line-height:normal` probe (17 px) while xterm draws 17.6 px rows, and subtracted 8 px for a 16 px vertical padding: the last 1–2 rows (omp prompt + status line) were clipped by `overflow-hidden`. Measure the cell from `.xterm-screen` after `open()` (width/cols, height/rows) and fit to the content box (computed padding).
 - failure (2026-11-03): `8sync . core` started a second omp while an HQ host (`ccc term --host`) already ran that session (takeover earlier) — HQ's pane showed the idle host omp, not the one working. `here::run` now joins a live host (`ccc::room_hosted`) via `share_session`.
+- validated (2026-11-03, v0.120.4): every HQ text input that types into a room uses `MentionTextarea` (`/` commands from GET /api/commands, `@` files from /api/fs); `commands={false}` for shells, where `/` begins a path.

@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.120.4] — 2026-11-03
+
+### Fixed
+- HQ: ô gõ của terminal (Không gian, **Mở terminal**, Shell nổi) giờ là cùng ô với ô nhắn của Chat phòng: gõ `/` đầu dòng hiện danh sách lệnh omp/Claude (↑↓ chọn, Enter/Tab điền, Esc đóng), gõ `@` hiện file của thư mục phiên (Không gian, Shell nổi). Shell nổi không mở danh sách lệnh vì `/` ở đó là đường dẫn.
+
 ## [0.120.3] — 2026-11-03
 
 ### Fixed

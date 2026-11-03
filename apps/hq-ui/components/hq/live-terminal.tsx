@@ -3,10 +3,11 @@
 import "@xterm/xterm/css/xterm.css";
 import type { Terminal } from "@xterm/xterm";
 import { useTheme } from "next-themes";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ImageIcon, SendIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { MentionTextarea } from "./mention-textarea";
+import { makeApi } from "./use-hq";
 import { lineBytes } from "@/lib/term-input";
 import { cn } from "@/lib/utils";
 import { TOUCH } from "./room-send";
@@ -184,7 +185,8 @@ const withQuery = (url: string, q: string) => `${url}${url.includes("?") ? "&" :
  * detaches. The input line shows at every width: typing into xterm works too, but the line (Enter/Gửi,
  * history, key bar) is the same everywhere, so a pane does not change shape when the window is resized.
  */
-export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: string; kind?: "room" | "shell"; token: string; onEnded?: () => void }) {
+export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }: { url: string; kind?: "room" | "shell"; token: string; /** Folder of "@path" picks; null = no "@" picker. */ cwd?: string | null; onEnded?: () => void }) {
+  const api = useMemo(() => makeApi(token), [token]);
   const host = useRef<HTMLDivElement>(null);
   const keysRef = useRef<((data: string) => void) | null>(null);
   const appKeys = useRef<() => boolean>(() => false);
@@ -513,9 +515,13 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
           setLine("");
         }}
       >
-        <Textarea
+        {/* The same input as the room composer: "/" lists omp/Claude commands, "@" lists files of `cwd`. */}
+        <MentionTextarea
           value={line}
-          onChange={(e) => setLine(e.target.value)}
+          onValueChange={setLine}
+          base={cwd}
+          api={api}
+          commands={kind === "room"}
           onKeyDown={(e) => {
             // Enter sends, Shift+Enter breaks the line; never while an IME (Vietnamese) is composing.
             if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing || e.keyCode === 229) return;
