@@ -139,7 +139,7 @@ export function RoomSend({
         toast.error(`Chưa gửi được tới ${room.label}`);
         return;
       }
-      setLast({ ok: true, text: `${room.label}: ${r.delivery === "inbox" ? inboxText(r.live) : "đã gõ vào terminal"}` });
+      setLast({ ok: true, text: `${room.label}: ${r.delivery === "inbox" ? inboxText(r.live, room.session_id ?? room.name) : "đã gõ vào terminal"}` });
       toast.success(`Đã gửi cho ${room.label}`);
       setText("");
       setFiles([]);
@@ -161,7 +161,7 @@ export function RoomSend({
   }
 
   const summary = room
-    ? `Chỉ ${room.label}${group ? ` (${group.name})` : ""} nhận, ${room.delivery === "inbox" ? inboxText(room.inboxLive) : "gõ thẳng vào terminal của phòng"}.${room.waiting ? " Phòng đang chờ anh trả lời, trả lời trước rồi gửi." : ""}`
+    ? `Chỉ ${room.label}${group ? ` (${group.name})` : ""} nhận, ${room.delivery === "inbox" ? inboxText(room.inboxLive, room.session_id ?? room.name) : "gõ thẳng vào terminal của phòng"}.${room.waiting ? " Phòng đang chờ anh trả lời, trả lời trước rồi gửi." : ""}`
     : "Chưa có phòng nào nhận tin được.";
   const titleId = `${id}-title`;
 

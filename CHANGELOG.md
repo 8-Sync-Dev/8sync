@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.120.2] — 2026-11-03
+
+### Fixed
+- HQ: bấm một phiên ở **sidebar** giờ mở đúng trang như bấm từ **Tổng quan**: phòng đang chạy (Claude Code hoặc omp) mở Chat phòng (Nhật ký, ô nhắn, nút **Mở terminal**); phiên omp không còn chạy, hoặc Ctrl/⌘-click để xếp cạnh nhau, vẫn mở ở Không gian. Dòng sidebar của phiên omp sáng lên khi đang xem Chat phòng của nó.
+- HQ: tin nhắn gửi tới phòng **omp** (ô nhắn ở Tổng quan / Chat phòng) giờ tới phiên trong vài giây, kể cả khi phiên đang làm. Trước đây tin vào inbox của phòng nhưng omp không có gì đọc inbox nên không bao giờ tới. Extension omp mới `8sync-inbox` (`~/.omp/agent/extensions/8sync-inbox.ts`, `ccc kit` / `8sync up` / `harness` cài) đọc `8sync ccc inbox --session $EIGHTSYNC_ROOM_ID` mỗi 5 s (rảnh lâu thì 15 s, 30 s), đưa tin vào như tin của owner, rồi `--ack`. Phiên omp mở trước bản này cần thoát và mở lại một lần; HQ nói rõ điều đó ở ô nhắn.
+- HQ: terminal ở Không gian luôn có ô nhập (Enter/Gửi, lịch sử, phím Esc/Tab/↑↓/^C) như terminal mở từ Chat phòng; trước đây ô này ẩn khi cửa sổ rộng ≥ 768 px nên giao diện đổi khi kéo cửa sổ.
+- HQ: nút **Terminal** (Shell trên máy) mở từ Không gian (phiên bấm ở sidebar hoặc khung soạn đã chọn thư mục) giờ mở shell trong thư mục của phiên đang xem, như khi mở từ Tổng quan. Hai nguyên nhân: Không gian không truyền thư mục, và `/api/shell` chỉ nhận thư mục đã có trong bảng project/phiên Claude Code (phiên omp không có ở đó) nên rơi về `~`. Giờ `/api/shell` nhận mọi thư mục có thật (route vẫn chỉ mở phía máy, không qua link `--public`), và mỗi thư mục một shell riêng: shell ở `~` đang chạy không bị thay, mở lại thư mục cũ thì vào lại đúng shell đó (giữ 30 phút).
+
 ## [0.120.1] — 2026-11-03
 
 ### Added

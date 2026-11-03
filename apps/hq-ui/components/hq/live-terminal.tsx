@@ -166,10 +166,10 @@ const withQuery = (url: string, q: string) => `${url}${url.includes("?") ? "&" :
  * A real terminal in the page: a background room (`claude attach`, or an omp room's host;
  * `kind="room"`) or the owner's shell (`kind="shell"`), both through `8sync ccc term`. Type, pick
  * with the arrow keys and Enter, scroll back; a key bar covers keys a phone lacks. Closing it only
- * detaches. `compact` (a workspace pane): on a wide screen the owner types into xterm itself, so the
- * phone input line is hidden there.
+ * detaches. The input line shows at every width: typing into xterm works too, but the line (Enter/Gửi,
+ * history, key bar) is the same everywhere, so a pane does not change shape when the window is resized.
  */
-export function LiveTerminal({ url, kind = "room", token, onEnded, compact = false }: { url: string; kind?: "room" | "shell"; token: string; onEnded?: () => void; compact?: boolean }) {
+export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: string; kind?: "room" | "shell"; token: string; onEnded?: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const keysRef = useRef<((data: string) => void) | null>(null);
   const appKeys = useRef<() => boolean>(() => false);
@@ -479,7 +479,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded, compact = fal
       />
       {/* A phone keyboard (IME, Vietnamese, autocorrect) types reliably into a real textarea, not into xterm's hidden one. */}
       <form
-        className={cn("rounded-lg border bg-card transition-[border-color,box-shadow] duration-150 focus-within:border-primary/60 focus-within:shadow-glow motion-reduce:transition-none", compact && "md:hidden")}
+        className="rounded-lg border bg-card transition-[border-color,box-shadow] duration-150 focus-within:border-primary/60 focus-within:shadow-glow motion-reduce:transition-none"
         onSubmit={(e) => {
           e.preventDefault();
           // read only: move the session here first; the line stays for Enter once it is up

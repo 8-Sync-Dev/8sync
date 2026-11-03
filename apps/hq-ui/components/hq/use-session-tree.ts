@@ -86,7 +86,7 @@ export type SessionTree = { sessions: TreeSession[]; at: number; loading: boolea
 
 /**
  * Every session HQ can show: live rooms and all omp sessions, with sub-sessions. `active`: the session
- * on screen now; it never collects a blue dot.
+ * on screen now (its key, or the key of its room when its Chat phòng is open); it never collects a blue dot.
  */
 export function useSessionTree(hq: Hq, office: OfficeState, active: string | null): SessionTree {
   const omp = usePoll<{ sessions: OmpTreeRow[] }>(hq.api, "/api/omp/sessions?all=1", OMP_POLL_MS, true);
@@ -99,7 +99,8 @@ export function useSessionTree(hq: Hq, office: OfficeState, active: string | nul
     const was = prev.current;
     prev.current = Object.fromEntries(sessions.map((s) => [s.key, s.state]));
     if (!was) return;
-    const done = finishedSince(was, sessions).filter((k) => k !== active);
+    const onScreen = new Set(sessions.filter((s) => s.key === active || (active != null && s.room === active)).map((s) => s.key));
+    const done = finishedSince(was, sessions).filter((k) => !onScreen.has(k));
     if (done.length) unreadStore.set([...new Set([...unreadStore.get(), ...done])].slice(-500));
   }, [sessions, active]);
 

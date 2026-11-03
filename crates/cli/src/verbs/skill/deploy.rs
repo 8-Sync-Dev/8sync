@@ -1349,6 +1349,13 @@ fn remove_unprefixed_predecessor(home: &Path, root: Option<&Path>, file: &str) {
     }
 }
 
+/// Deploy the `8sync-inbox` omp extension, global only (one poller per omp process: a project copy
+/// would load it twice): the HQ owner's messages to an omp room reach the session as they are sent.
+pub(crate) fn ensure_omp_inbox(home: &Path) -> Result<()> {
+    let file = crate::brand::ns_file("inbox.ts");
+    deploy_omp_pair(home, None, "extensions/8sync-inbox.ts", &format!(".omp/agent/extensions/{file}"), "", "8sync-inbox omp extension")
+}
+
 /// Deploy the gsd-pi-style automation engine — the `8sync-engine` omp extension
 /// (durable slice/task state machine + code-enforced verify-retry gate + git
 /// worktree tools) and every slash command under `assets/commands/`, and remove
@@ -1366,6 +1373,7 @@ pub(crate) fn ensure_engine(home: &Path, root: Option<&Path>) -> Result<()> {
         &format!(".omp/extensions/{eng}"),
         "8sync-engine extension",
     )?;
+    ensure_omp_inbox(home)?;
     // Slash commands deploy by ITERATING the `commands/` asset dir — never a
     // hardcoded block per file. Dropping a new `assets/commands/<n>.md` into the
     // tree is therefore all it takes to ship a command; `/create-command` relies

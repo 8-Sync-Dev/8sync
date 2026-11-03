@@ -15,8 +15,12 @@ export const TERM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 export const isTermId = (id: string) => TERM_ID.test(id) || isOmpRoomId(id);
 /** Exit code of `8sync ccc term <omp-room-id>` when the session is open in another terminal on the PC. */
 export const ELSEWHERE_EXIT = 3;
-/** Bridge key of the owner's shell (never a session id). */
-export const SHELL_KEY = "shell";
+/**
+ * Bridge key of the owner's shell in `cwd` (never a session id): one shell per folder, so the shell
+ * opened from a session is in that session's folder even while another folder's shell still runs.
+ */
+export const shellKey = (cwd: string) => `shell:${cwd}`;
+const isShellKey = (key: string) => key.startsWith("shell:");
 const KEEP_BYTES = 256 * 1024;
 export const IDLE_CLOSE_MS = 60_000;
 export const SHELL_IDLE_MS = 30 * 60_000;
@@ -59,7 +63,7 @@ function start(key: string, args: string[], cwd: string | null, idleMs: number, 
   terms.set(key, t);
   proc.stdout.on("data", (b: Buffer) => {
     // A room (never the owner's shell) whose attach found no job: the room is gone, not just detached.
-    if (!t.dead && key !== SHELL_KEY && b.includes(DEAD_MARK)) t.dead = true;
+    if (!t.dead && !isShellKey(key) && b.includes(DEAD_MARK)) t.dead = true;
     t.chunks.push(b);
     t.bytes += b.length;
     t.total += b.length;
@@ -116,9 +120,9 @@ export function takeoverTerm(id: string, cwd: string | null, size: { cols: numbe
   return t;
 }
 
-/** The owner's shell, started in `cwd` on first use; later opens join the running one. */
-export function openShell(cwd: string | null, size: { cols: number; rows: number }, spawn: Spawn = nodeSpawn as unknown as Spawn): Term {
-  return start(SHELL_KEY, shellArgs(size.cols, size.rows), cwd, SHELL_IDLE_MS, spawn);
+/** The owner's shell in `cwd`, started on first use; later opens of that folder join it. */
+export function openShell(cwd: string, size: { cols: number; rows: number }, spawn: Spawn = nodeSpawn as unknown as Spawn): Term {
+  return start(shellKey(cwd), shellArgs(size.cols, size.rows), cwd, SHELL_IDLE_MS, spawn);
 }
 
 /**
@@ -189,3 +193,5 @@ export function closeTerm(id: string) {
 }
 
 export const termOpen = (id: string) => terms.has(id);
+/** Whether any of the owner's shells is open. */
+export const shellsOpen = () => [...terms.keys()].some(isShellKey);
