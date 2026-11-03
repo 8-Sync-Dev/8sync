@@ -113,16 +113,31 @@ const THEMES = {
 /** `elsewhere`: an omp room whose session is open in another terminal on the PC (HQ offers the takeover). */
 type State = "connecting" | "live" | "ended" | "error" | "elsewhere";
 
-/** Columns and rows that fit `el` for a monospace cell measured once in the page's mono font. */
-function fit(el: HTMLElement, font: string): { cols: number; rows: number } {
+type Cell = { w: number; h: number };
+
+/** A monospace cell estimated in the page's mono font, before xterm has rendered one. */
+function probeCell(font: string): Cell {
   const probe = document.createElement("span");
   probe.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:${FONT_SIZE}px ${font};line-height:normal`;
   probe.textContent = "W".repeat(50);
   document.body.appendChild(probe);
-  const cw = probe.getBoundingClientRect().width / 50 || 8;
-  const ch = probe.getBoundingClientRect().height || 16;
+  const r = probe.getBoundingClientRect();
   probe.remove();
-  return { cols: Math.max(20, Math.floor((el.clientWidth - 16) / cw)), rows: termRows(Math.floor((el.clientHeight - 8) / ch), null, false) };
+  return { w: r.width / 50 || 8, h: r.height || 16 };
+}
+
+/** The cell xterm actually draws (its row height is not the font's `line-height:normal`), or `null` before the first render. */
+function xtermCell(el: HTMLElement, cols: number, rows: number): Cell | null {
+  const r = el.querySelector(".xterm-screen")?.getBoundingClientRect();
+  return r && r.width > 0 && r.height > 0 ? { w: r.width / cols, h: r.height / rows } : null;
+}
+
+/** Columns and rows of `cell` that fit inside `el`'s padding: none of the last rows hides under the box's bottom edge. */
+function fit(el: HTMLElement, cell: Cell): { cols: number; rows: number } {
+  const cs = getComputedStyle(el);
+  const w = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const h = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  return { cols: Math.max(20, Math.floor(w / cell.w)), rows: termRows(Math.floor(h / cell.h), null, false) };
 }
 
 /** Decode SSE `data:` lines of `event: out` (base64 bytes) as they arrive. */
@@ -291,13 +306,23 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
     (async () => {
       const { Terminal } = await import("@xterm/xterm");
       if (ac.signal.aborted) return;
-      const size = fit(el, font);
-      sizeRef.current = size;
+      let cell = probeCell(font);
+      let size = fit(el, cell);
       const t = new Terminal({ cols: size.cols, rows: size.rows, fontFamily: font, fontSize: FONT_SIZE, cursorBlink: true, scrollback: 5000, theme: dark ? THEMES.dark : THEMES.light, allowProposedApi: false });
       term = t;
       view.current = t;
       appKeys.current = () => t.modes.applicationCursorKeysMode;
       t.open(el);
+      // xterm's rows are taller than the probe's line (17.6 vs 17 px at 13 px): sized by the probe, the
+      // last rows (omp's prompt and status line) sat under the box's bottom edge. Re-fit to its own cell
+      // before the room is opened with this size.
+      cell = xtermCell(el, size.cols, size.rows) ?? cell;
+      const real = fit(el, cell);
+      if (real.cols !== size.cols || real.rows !== size.rows) {
+        size = real;
+        t.resize(size.cols, size.rows);
+      }
+      sizeRef.current = size;
       t.focus();
       // While a replay is written, xterm's answers to the queries in it (ConPTY's `ESC[6n`…) are
       // dropped: they were answered when the bytes were live, and a second answer types junk.
@@ -312,7 +337,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
       });
       let last = size;
       ro = new ResizeObserver(() => {
-        const f = fit(el, font);
+        const f = fit(el, xtermCell(el, t.cols, t.rows) ?? cell);
         // A phone keyboard makes the box short: keep the rows (the box scrolls) so a question's options stay whole.
         const s = { cols: f.cols, rows: termRows(f.rows, last.rows, keyboardOpen(window.visualViewport?.height, window.innerHeight)) };
         if (s.cols === last.cols && s.rows === last.rows) return;

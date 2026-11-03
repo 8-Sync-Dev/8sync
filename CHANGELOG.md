@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.120.3] — 2026-11-03
+
+### Fixed
+- HQ: terminal (Không gian, **Mở terminal**, Shell nổi) không còn bị che mất mấy dòng cuối (ô prompt và thanh trạng thái của omp nằm dưới mép khung). Số dòng tính theo chiều cao ô mà xterm thật sự vẽ (17,6 px, không phải 17 px của font) và trừ đúng padding của khung; đo trên HQ thật ở 1400, 710 và 390 px.
+- `8sync . <tên>` (và `8sync .`) khi phiên đó đang chạy trong HQ (đã mở bằng terminal HQ hoặc "Chuyển sang HQ") giờ vào chung phiên đó như `--share`, không mở omp thứ hai trên cùng transcript. Trước đây hai omp cùng chạy một phiên: HQ hiện omp cũ đứng yên trong khi omp kia đang làm, nên terminal HQ "không đúng màn hình mới nhất".
+
 ## [0.120.2] — 2026-11-03
 
 ### Fixed

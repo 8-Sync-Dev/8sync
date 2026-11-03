@@ -38,7 +38,7 @@ mod know;
 mod lean;
 mod output_budget;
 mod omp_term;
-pub(crate) use omp_term::{free_session, share_session};
+pub(crate) use omp_term::{free_session, room_hosted, share_session};
 mod term;
 pub(crate) mod report;
 mod risk;

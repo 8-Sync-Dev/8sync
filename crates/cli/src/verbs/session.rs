@@ -254,6 +254,12 @@ fn touch(env: &Env, root: &Path, reg: &mut Registry, name: &str) -> Result<()> {
 
 // ── commands ───────────────────────────────────────────────────────────────
 
+/// The session `8sync .` resumes: the last used named one that still exists.
+pub fn latest_name(env: &Env, root: &Path) -> Option<String> {
+    let reg = load(env, root);
+    reg.last_used.clone().filter(|n| reg.get(n).is_some())
+}
+
 /// `8sync .` — resume the last-used session (or omp's default store if none).
 pub fn resume_latest(env: &Env, root: &Path) -> Result<()> {
     let mut reg = load(env, root);
