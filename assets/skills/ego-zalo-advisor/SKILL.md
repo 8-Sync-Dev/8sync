@@ -42,7 +42,7 @@ ego lite cài từ Claude Desktop (bản MSIX/Store) có dữ liệu thật tron
 | Cảm ơn ngắn khi họ từ chối lịch sự (giữ đường quay lại) | Tin cảm ơn đáp tin cảm ơn; nhắn dồn khi họ chưa đọc |
 | Hỏi mức tối đa sau khi họ từ chối giá mình nêu (một lần) | Ngoài giờ (trước 8:00, sau 21:30) hoặc giờ nghỉ trưa họ đã báo |
 
-Tin mới cho shop lạ: giãn vài phút, mỗi shop một câu mở khác nhau, gửi ảnh trước, chữ ngắn. Thấy bong bóng chặn lần nữa → dừng cả lượt, báo chủ.
+Tin mới cho shop lạ: giãn vài phút, mỗi shop một câu mở khác nhau. Chào và giới thiệu bằng chữ TRƯỚC, rồi gửi ảnh ngay sau trong cùng lượt; không bao giờ gửi ảnh trơn (chủ nhắc: gửi ảnh không chào là thiếu lịch sự). Thấy bong bóng chặn lần nữa → dừng cả lượt, báo chủ.
 
 ## 5. Xưng hô — đọc cách họ xưng rồi theo
 - Họ gọi chủ "anh", tự xưng "em" → chủ là **anh**: KHÔNG mở đầu "Dạ" (dạ là lời người nhỏ). Dùng "Ừ em", "Ok em", "Anh hiểu", "Cảm ơn em".

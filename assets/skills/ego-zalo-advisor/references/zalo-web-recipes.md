@@ -48,7 +48,9 @@ Kiểm tra bằng `page.screenshot` sau khi gửi: đủ số ảnh, trạng th�
 Bấm nút "Nhắn Tin" cuối cùng trong `#messageViewScroll` (đếm phần tử lá có text đúng "Nhắn Tin", click `text="Nhắn Tin" >> nth=k`), kiểm header rồi mới gửi. Người được giới thiệu thường không chặn tin.
 
 ## Canh tin trả lời (không click)
-Đọc sidebar: `[id^='conversationItem'], .msg-item` → `innerText` từng dòng. Lọc theo danh sách tên đang theo dõi. Preview bắt đầu "Bạn:" = tin của mình; khác baseline và không phải "Bạn:" = tin mới → thoát để agent đọc kỹ chat đó. Lưu baseline ra file. Đặt giờ thoát (vd 20 phút hoặc trước giờ đã hẹn) để không lỡ lời hứa. Bỏ tên shop đã kết thúc khỏi danh sách để tin "cảm ơn" không đánh thức vòng lặp.
+Cách tin cậy: quét từng chat. Mở lần lượt chat của mọi shop đang theo dõi (theo số), đọc phần sau tin cuối của mình trong `#messageViewScroll`; có chữ khác giờ/"Đã nhận"/"Đã xem" = tin mới. Quét lại mỗi 10–15 phút, hoặc ngay khi chủ nhắn "check". Một script gõ vào page tại một thời điểm: dừng vòng canh riêng một shop trước khi quét cả danh sách.
+
+Sidebar CHỈ là gợi ý, không dùng để kết luận "chưa ai trả lời": danh sách bị ảo hoá (chỉ dòng đang hiện mới có trong DOM) và preview của tài khoản Zalo Business có thể không đổi như mong đợi. Lần chạy 2026-11-03 watcher sidebar báo yên từ 16:53 tới 18:21 trong khi hai shop đã trả lời lúc 17:22 và 18:02, shop thứ nhất phải chờ hơn một giờ. Nếu vẫn đọc sidebar: `[id^='conversationItem'], .msg-item` → `innerText`, preview "Bạn:" = tin của mình, khác baseline = có thể có tin mới → mở chat đó đọc kỹ. Đặt giờ thoát (vd 20 phút hoặc trước giờ đã hẹn) để không lỡ lời hứa. Bỏ shop đã kết thúc khỏi danh sách để tin "cảm ơn" không đánh thức vòng lặp.
 
 ## Dọn dẹp
 Xoá file chứa link chia sẻ/khoá (`sk=`, token) sau khi dùng. Ảnh chụp chat là dữ liệu riêng tư: để trong thư mục việc, không đưa vào repo.
