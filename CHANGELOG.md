@@ -7,6 +7,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Changed
 - Skill `ego-zalo-advisor`: tin đầu cho shop lạ giờ chào và giới thiệu bằng chữ trước rồi mới gửi ảnh trong cùng lượt, không gửi ảnh trơn (bản cũ dặn "gửi ảnh trước"). Công thức canh tin chuyển sang quét từng chat mỗi 10–15 phút; sidebar chỉ là gợi ý vì danh sách bị ảo hoá và đã bỏ sót hai tin trả lời trong lần chạy 2026-11-03.
+- `hook session-start`, phòng có tên (`8sync ccc . <name>`): khối "Phòng của bạn" thêm luật báo owner. Chỉ nhắn owner khi owner phải quyết hoặc làm gì, hoặc có kết quả dùng được; đang làm thì im; mỗi lần hỏi một câu, kèm đáp án gợi ý. Phòng Lead/PM giao việc bằng nguyên lời owner, không thêm yêu cầu owner chưa nói. Lấy từ `docs/000-philosophy.md` và `prompts/shared.md` của [dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype). Mỗi phiên thêm khoảng 170 ký tự.
 
 ## [0.120.7] — 2026-11-03
 
