@@ -73,6 +73,7 @@ BUNDLED_CATS = {
     "taste-brutalist": ["frontend"], "taste-minimalist": ["frontend"], "taste-output": ["core"],
     "taste-redesign": ["frontend"], "taste-skill": ["frontend"], "taste-soft": ["frontend"],
     "tauri-v2": ["backend", "frontend"], "trail": ["core"], "zai-vision": ["specialized"],
+    "ego-zalo-advisor": ["content", "specialized"],
 }
 KIT_CATS = {  # Claude Code kit only
     "autopilot": ["workflow"], "clean": ["specialized"], "consolidate": ["core"], "do": ["workflow"],

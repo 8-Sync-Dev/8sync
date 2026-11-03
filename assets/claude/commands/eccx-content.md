@@ -28,6 +28,7 @@ Scope: articles, docs, papers, CVs, investor and business writing.
 - `ecc:content-engine` — Multi-platform content systems for X, LinkedIn, TikTok, YouTube, and newsletters
 - `ecc:crosspost` — Multi-platform distribution across X, LinkedIn, Threads, and Bluesky
 - `ecc:docs-governance` — Route broad documentation-governance requests to existing ECC skills and run an opt-in
+- `ego-zalo-advisor` — Điều khiển ego browser (ego lite) để đọc và nhắn Zalo Web
 - `ecc:investor-materials` — Pitch decks, financial models, and investor-facing documents
 - `ecc:investor-outreach` — Investor pipeline management, outreach sequences, and follow-ups
 - `ecc:living-docs-governance` — Keep a long-lived project's documentation from rotting by assigning existing project docs
