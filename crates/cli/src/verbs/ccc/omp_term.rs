@@ -28,6 +28,9 @@ use std::time::{Duration, Instant};
 
 /// Exit code of a client whose session is open in another process (HQ offers "Chuyển sang HQ").
 pub(super) const ELSEWHERE: i32 = 3;
+/// Exit code of a client whose host closed: omp itself ended (exited or crashed), so HQ tells the
+/// remote viewer instead of reopening a fresh host under it (`HOST_GONE_EXIT` in apps/hq-ui/lib/server/term.ts).
+pub(super) const HOST_GONE: i32 = 4;
 /// Output a late viewer gets replayed.
 const KEEP: usize = 256 * 1024;
 /// The host's first bytes to a client that sent its token: anything else on that port is not our host.
@@ -670,16 +673,25 @@ pub(crate) fn free_session(home: &Path, id: &str, session_dir: &Path) -> std::re
 /// HQ's side of a connection: the host's bytes to stdout, stdin's control lines to the host. Ends
 /// when the host does (omp exited) or when stdin closes (HQ let go: only this connection ends).
 fn relay(sock: TcpStream) -> Result<()> {
+    // Set before this side shuts the socket: the reader then ends because HQ let go, not because omp did.
+    let leaving = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut from = sock.try_clone()?;
+    let left = leaving.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         let mut out = std::io::stdout().lock();
-        while let Ok(n) = from.read(&mut buf) {
-            if n == 0 || out.write_all(&buf[..n]).and_then(|_| out.flush()).is_err() {
-                break;
+        let host_closed = loop {
+            match from.read(&mut buf) {
+                Ok(0) | Err(_) => break true,
+                Ok(n) => {
+                    if out.write_all(&buf[..n]).and_then(|_| out.flush()).is_err() {
+                        break false; // HQ is gone, omp is not
+                    }
+                }
             }
-        }
-        std::process::exit(0);
+        };
+        let gone = host_closed && !left.load(std::sync::atomic::Ordering::SeqCst);
+        std::process::exit(if gone { HOST_GONE } else { 0 });
     });
     let mut to = sock;
     for line in std::io::stdin().lock().lines() {
@@ -691,6 +703,7 @@ fn relay(sock: TcpStream) -> Result<()> {
             }
         }
     }
+    leaving.store(true, std::sync::atomic::Ordering::SeqCst);
     let _ = to.shutdown(Shutdown::Both);
     Ok(())
 }

@@ -15,12 +15,14 @@ import { FILES_MAX, fileError, toBase64 } from "@/lib/attach";
 import { isLocalHost } from "@/lib/hosts";
 import type { ActivityEvent } from "@/lib/server/activity";
 import { activityScreen } from "@/lib/term-activity";
-import { afterStream, giveUp, keyboardOpen, retryDelay, termRows } from "@/lib/term-stream";
+import { afterStream, giveUp, keyboardOpen, keyQueue, retryDelay, termRows } from "@/lib/term-stream";
 
 /** Off loopback: no byte (not even the opening ping) this long = the proxy holds the stream back, so poll. */
 const FIRST_BYTE_MS = 4000;
-/** Polling: gap while the terminal prints, and while it is quiet. */
-const POLL_BUSY_MS = 150;
+/** Polling: each poll is held by HQ until output arrives (at most this long), so the page asks again at once. */
+const POLL_WAIT_MS = 20_000;
+/** A poll answered this fast with nothing new was not held (HQ restarting, an old HQ): wait before asking again. */
+const POLL_FAST_MS = 100;
 const POLL_IDLE_MS = 600;
 /** Read-only view (an omp session open in another terminal): how often its Nhật ký is read again. */
 const READ_ONLY_MS = 2000;
@@ -46,6 +48,8 @@ const TEXT = {
     live: "Đang nối: gõ, mũi tên và Enter đi thẳng vào phòng. Đóng khung này phòng vẫn chạy.",
     ended: "Đã rời phòng (phòng vẫn chạy nền).",
     dead: "Phiên đã tắt hẳn trên máy — phòng không còn chạy nền. Mở lại bằng “Mở lại team” của dự án này, hoặc bỏ qua.",
+    exited: "omp trên máy đã thoát hoặc bị crash — terminal này dừng ở đây. Bấm Nối lại để mở lại phiên (lịch sử vẫn giữ).",
+    lost: "Phím vừa gõ chưa tới máy (terminal đã đóng) — bấm Nối lại rồi gõ lại.",
     hint: "↑↓ chọn · Enter xác nhận · Esc huỷ · số = chọn nhanh",
     label: "Terminal của phòng",
   },
@@ -54,6 +58,8 @@ const TEXT = {
     live: "Shell trên máy anh: lệnh chạy thật như ở terminal. Đóng khung vẫn giữ shell 30 phút.",
     ended: "Shell đã thoát.",
     dead: "Shell đã thoát.",
+    exited: "Shell đã thoát.",
+    lost: "Phím vừa gõ chưa tới shell (shell đã đóng) — bấm Nối lại rồi gõ lại.",
     hint: "Tab gợi ý/hoàn thành · → nhận gợi ý xám · ↑ lệnh trước · ^R tìm lịch sử · ^C dừng lệnh",
     label: "Shell trên máy",
   },
@@ -167,7 +173,7 @@ function parseSse(buf: string): { events: { event: string; data: string }[]; res
 export { parseSse };
 
 /** One poll of the remote terminal (`GET /term?gen=&since=`), `out` in base64. */
-type PollJson = { gen: number; cursor: number; out: string; reset: boolean; answered?: boolean; ended: boolean; elsewhere?: boolean; dead?: boolean };
+type PollJson = { gen: number; cursor: number; out: string; reset: boolean; answered?: boolean; ended: boolean; elsewhere?: boolean; dead?: boolean; exited?: boolean };
 
 function isPoll(v: unknown): v is PollJson {
   return !!v && typeof v === "object" && "gen" in v && typeof v.gen === "number" && "cursor" in v && typeof v.cursor === "number" && "out" in v && typeof v.out === "string" && "reset" in v && "ended" in v;
@@ -200,6 +206,8 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
   const view = useRef<Terminal | null>(null);
   const [state, setState] = useState<State>("connecting");
   const [dead, setDead] = useState(false);
+  /** The bridge ended because omp itself ended on the PC (exit or crash), or typed keys did not reach it. */
+  const [stopped, setStopped] = useState<"exited" | "lost" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const [moving, setMoving] = useState(false);
@@ -307,8 +315,20 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
     let term: Terminal | null = null;
     let ro: ResizeObserver | null = null;
     const headers = { "x-hq-token": token, "content-type": "application/json" };
+    // Keys go in typed order, one POST at a time (lib/term-stream.ts keyQueue); keys HQ refused (the
+    // bridge closed under them) say so instead of vanishing.
+    const keys = keyQueue(
+      (data) =>
+        fetch(url, { method: "POST", headers, body: JSON.stringify({ data }), signal: ac.signal }).then(
+          (r) => r.ok,
+          () => ac.signal.aborted,
+        ),
+      () => {
+        if (!ac.signal.aborted) setStopped((s) => s ?? "lost");
+      },
+    );
     const post = (body: object) => fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal }).catch(() => {});
-    keysRef.current = (data) => void post({ data });
+    keysRef.current = keys;
     const font = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || "ui-monospace, monospace";
 
     (async () => {
@@ -340,7 +360,7 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
       let readOnly = false;
       t.onData((data) => {
         if (muted) return;
-        if (!readOnly) return void post({ data });
+        if (!readOnly) return keys(data);
         if (data && !data.startsWith("\x1b")) void takeoverRef.current();
       });
       let last = size;
@@ -374,10 +394,11 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
           if (stick) toBottom();
         });
       };
-      const end = (elsewhere = false, gone = false) => {
+      const end = (elsewhere = false, gone = false, exited = false) => {
         readOnly = elsewhere;
         setState(elsewhere ? "elsewhere" : "ended");
         if (gone) setDead(true);
+        if (exited) setStopped("exited");
         if (!elsewhere) onEnded?.();
       };
       // Off loopback the stream may be held back by the proxy (a Cloudflare quick tunnel does; the VPS
@@ -413,7 +434,7 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
               else if (e.event === "replay") write(e.data, true);
               else if (e.event === "end") {
                 ended = true;
-                end(e.data.includes('"elsewhere":true'), e.data.includes('"dead":true'));
+                end(e.data.includes('"elsewhere":true'), e.data.includes('"dead":true'), e.data.includes('"exited":true'));
               }
             }
           }
@@ -438,8 +459,9 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
         let failingSince = 0;
         while (!ac.signal.aborted) {
           let p: PollJson;
+          const asked = Date.now();
           try {
-            const res = await fetch(withQuery(url, `cols=${last.cols}&rows=${last.rows}&gen=${gen}&since=${since}`), { headers: { "x-hq-token": token }, signal: ac.signal, cache: "no-store" });
+            const res = await fetch(withQuery(url, `cols=${last.cols}&rows=${last.rows}&gen=${gen}&since=${since}&wait=${POLL_WAIT_MS}`), { headers: { "x-hq-token": token }, signal: ac.signal, cache: "no-store" });
             if (!res.ok) throw res.status < 500 ? new PollRefused(await errorOf(res)) : new Error(await errorOf(res));
             const body: unknown = await res.json();
             if (!isPoll(body)) throw new Error("terminal: bad reply");
@@ -459,8 +481,9 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
           if (p.out) write(p.out, p.reset && p.answered);
           gen = p.gen;
           since = p.cursor;
-          if (p.ended) return end(p.elsewhere === true, p.dead === true);
-          await new Promise((r) => setTimeout(r, p.out ? POLL_BUSY_MS : POLL_IDLE_MS));
+          if (p.ended) return end(p.elsewhere === true, p.dead === true, p.exited === true);
+          // HQ held the poll until there was output: ask again at once, unless it answered empty at once.
+          if (!p.out && Date.now() - asked < POLL_FAST_MS) await new Promise((r) => setTimeout(r, POLL_IDLE_MS));
         }
       };
       try {
@@ -486,13 +509,13 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
-        <span className={state === "live" ? "size-2 rounded-full bg-st-running" : state === "error" || (state === "ended" && dead) ? "size-2 rounded-full bg-destructive" : state === "elsewhere" ? "size-2 rounded-full bg-st-needs" : "size-2 rounded-full bg-st-idle"} aria-hidden />
+        <span className={state === "live" && !stopped ? "size-2 rounded-full bg-st-running" : state === "error" || stopped || (state === "ended" && dead) ? "size-2 rounded-full bg-destructive" : state === "elsewhere" ? "size-2 rounded-full bg-st-needs" : "size-2 rounded-full bg-st-idle"} aria-hidden />
         {state === "connecting" && text.connecting}
-        {state === "live" && text.live}
-        {state === "ended" && (dead ? text.dead : text.ended)}
+        {state === "live" && (stopped === "lost" ? text.lost : text.live)}
+        {state === "ended" && (dead ? text.dead : stopped === "exited" ? text.exited : stopped === "lost" ? text.lost : text.ended)}
         {state === "error" && `Không nối được: ${error}`}
         {state === "elsewhere" && "Đang xem (chỉ đọc) — phiên mở ở terminal khác trên máy"}
-        {(state === "ended" || state === "error" || state === "elsewhere") && (
+        {(state === "ended" || state === "error" || state === "elsewhere" || stopped === "lost") && (
           <Button
             type="button"
             size="sm"
@@ -501,6 +524,7 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
             onClick={() => {
               setState("connecting");
               setDead(false);
+              setStopped(null);
               setRetry((n) => n + 1);
             }}
           >
