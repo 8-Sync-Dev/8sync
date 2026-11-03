@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.121.0] — 2026-11-04
+
+### Added
+- HQ tab **Nội dung** (trong "Thêm"): đọc và sửa thẳng sổ `content_items` của content-post-agency (bài FB ↔ tin news). Bảng có định dạng, tiêu đề, trang FB, nguồn (+ ai duyệt), check, tin news, bài FB, trạng thái; sửa từng ô tại chỗ (Enter/bấm ra ngoài là lưu, Esc huỷ); nút chuyển trạng thái theo luồng đặt → soạn → check → duyệt → đăng (+ Bỏ); "Duyệt nguồn" ghi `hq:<user>` + giờ, đổi URL nguồn là phải duyệt lại; cột cảnh báo đỏ khi đã có bài FB mà thiếu tin news hoặc nguồn chưa duyệt; mỗi dòng có "Gửi task" chọn phòng rồi anh bấm gửi (qua `/api/messages`, không tự gửi). Trigger của DB là cổng duy nhất: chặn duyệt/đăng thì API trả 409 kèm đúng câu của trigger (vd `content_items: published needs news_url and fb_post_url`), hiện ở dòng + toast. HQ không tạo hay sửa schema; chưa có bảng thì báo "mở app content-ai một lần để chạy migration". Đường dẫn DB: `EIGHTSYNC_CONTENT_DB` hoặc `~/.config/8sync/hq/content.json` `{"db": "<đường dẫn tuyệt đối>"}`; không đặt thì tab ẩn. API `/api/content` (GET lọc `status`/`format`/`fb_page`, POST, PATCH `?id=`, DELETE `?id=`) qua cùng cổng token/cookie/Origin, nên dùng được qua `8sync hq ui --public`.
+
+### Fixed
+- Phòng HQ mở không còn mang env riêng của server Next của HQ (`__NEXT_PRIVATE_STANDALONE_CONFIG`, `__NEXT_PRIVATE_ORIGIN`, `TURBOPACK`, `NEXT_DEPLOYMENT_ID`). Trước đây `next build` của bất kỳ dự án Next nào chạy trong phòng đó lỗi `failed to canonicalize path /home/runner/work/8sync/8sync/apps/hq-ui` (config build của CI HQ lọt vào).
+
 ## [0.120.7] — 2026-11-03
 
 ### Fixed
