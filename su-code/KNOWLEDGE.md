@@ -709,8 +709,10 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 
 ## 2026-11-03 — skill ego-zalo-advisor (v0.120.5)
 - validated: ego lite mở từ Claude Desktop (MSIX) ghi profile vào `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Local\Citro Labs\ego lite\User Data`; mở từ terminal thì dùng `%LOCALAPPDATA%\Citro Labs\...` gần trống → onboarding. Chạy `ego.exe --user-data-dir=<container> --profile-directory="Profile N" --startup-ego-browser-service`.
-- failure: gửi cùng một đoạn chữ dài cho ~11 shop lạ liên tiếp → Zalo hiện "Không thể nhận tin nhắn từ bạn" ngay sau tin chữ (ảnh vẫn "Đã nhận"). Sau khi shop trả lời, tin ngắn đi qua. Không burst; giãn, đổi câu mở, ảnh trước.
+- failure: gửi cùng một đoạn chữ dài cho ~11 shop lạ liên tiếp → Zalo hiện "Không thể nhận tin nhắn từ bạn" ngay sau tin chữ (ảnh vẫn "Đã nhận"). Sau khi shop trả lời, tin ngắn đi qua. Không burst; giãn, đổi câu mở. (Bản đầu ghi "ảnh trước" — sai: chủ yêu cầu chào bằng chữ trước rồi gửi ảnh cùng lượt, ảnh trơn là thiếu lịch sự.)
 - validated: tên Zalo trong kết quả tìm chứa NBSP (`\u00a0`) → so header phải chuẩn hoá. Env var không vào `ego-browser nodejs`; space đã `finish` thành của user (label p1/p2 mất).
+- failure: watcher đọc preview sidebar báo yên 16:53→18:21 trong khi Thiên Ấn (Zalo Business) trả lời 17:22 và PC79 18:02 → shop chờ hơn 1 giờ. Sidebar bị ảo hoá, preview không tin được; kết luận "chưa ai trả lời" chỉ sau khi quét từng chat (mở theo số, đọc sau tin cuối của mình).
+- validated: `ccc hook session-start` lấy home từ biến `HOME`. Trong shell của omp trên Windows `HOME` rỗng → hook chỉ in digest, không có "Phòng của bạn" lẫn "Tri thức công ty"; smoke tay phải `HOME='C:\Users\<user>' 8sync ccc hook session-start < in.json`.
 
 ## 2026-11-03 — HQ link: thứ tự phím, crash omp, long-poll (v0.120.6)
 - failure: POST phím song song qua Cloudflare quick tunnel tới HQ lộn thứ tự ("the quick brown fox" → "t eqk rnbhowo…"). Input terminal phải tuần tự (một POST bay, phím chờ gom lại).

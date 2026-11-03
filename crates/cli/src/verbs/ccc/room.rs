@@ -16,6 +16,9 @@ const PEER_SECS: u64 = 2 * 3600;
 const MAX_PEERS: usize = 5;
 /// Hard cap for the whole block (the hook output limit is 10,000 chars, shared with the digest).
 pub(super) const CAP: usize = 2500;
+/// Each named room's rule for owner messages: attention is the scarce resource (after
+/// dsh-superagent `docs/000-philosophy.md`).
+const ATTENTION: &str = "Báo owner chỉ khi owner phải quyết/làm gì hoặc có kết quả dùng được; đang làm thì im. Cần hỏi: một câu một lần, kèm đáp án gợi ý trả lời được bằng một chữ.";
 
 /// What a room name stands for: any name token starting with a key (keys of ≥4 chars match as a
 /// prefix, shorter ones only as the whole token; trailing digits are dropped, so `dev2` is a
@@ -32,7 +35,7 @@ const fn r(keys: &'static [&'static str], name: &'static str, duty: &'static str
 
 /// In match order. "qc" is a tester here, as Vietnamese teams use the word.
 const ROLES: [Role; 13] = [
-    r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối: tách việc của owner thành bước nhỏ có tiêu chí + lệnh check, gỡ chỗ kẹt; merge/tag/deploy chỉ sau câu Ship của owner"),
+    r(&["pm", "lead", "plan", "boss", "main"], "Lead/PM", "điều phối: tách việc của owner thành bước nhỏ có tiêu chí + lệnh check, gỡ chỗ kẹt; giao việc bằng nguyên lời owner, không thêm yêu cầu owner chưa nói; merge/tag/deploy chỉ sau câu Ship của owner"),
     r(&["ba", "analyst", "spec", "req", "po"], "BA", "viết yêu cầu: acceptance criteria + đúng một lệnh check, tách việc lớn thành việc nhỏ; không sửa code sản phẩm"),
     r(&["arch", "architect", "architecture", "sa", "solution"], "Architect", "solution architecture: ADR trước khi build (/sysdesign theo System Design Primer + docs chính thức), review kiến trúc diff; không sửa code sản phẩm"),
     r(&["rd", "r&d", "rnd", "research", "explore"], "R&D", "nghiên cứu: /deep-research-web câu hỏi mở → brief có nguồn trong su-code/research/ → /planning; chưa sửa code sản phẩm khi chưa có plan"),
@@ -89,7 +92,7 @@ fn block(name: Option<&str>, goal: Option<&str>, recall: &[String], peers: &[Pee
     if let Some(n) = name {
         let (r, duty) = role(n);
         let goal = goal.map(|g| format!(" Mục tiêu đã đặt: {}.", clean(g, 120))).unwrap_or_default();
-        out.push_str(&format!("## Phòng của bạn: {n} — {r}\nViệc của phòng: {duty}.{goal} Ưu tiên việc khớp tên phòng; việc của phòng khác → SendMessage/để lại cho họ.\n"));
+        out.push_str(&format!("## Phòng của bạn: {n} — {r}\nViệc của phòng: {duty}.{goal} Ưu tiên việc khớp tên phòng; việc của phòng khác → SendMessage/để lại cho họ.\n{ATTENTION}\n"));
         if !recall.is_empty() {
             out.push_str("Nhớ lại theo chủ đề phòng:\n");
             for l in recall.iter().take(5) {
