@@ -9,6 +9,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Fixed
 - HQ: ô gõ của terminal (Không gian, **Mở terminal**, Shell nổi) giờ là cùng ô với ô nhắn của Chat phòng: gõ `/` đầu dòng hiện danh sách lệnh omp/Claude (↑↓ chọn, Enter/Tab điền, Esc đóng), gõ `@` hiện file của thư mục phiên (Không gian, Shell nổi). Shell nổi không mở danh sách lệnh vì `/` ở đó là đường dẫn.
+- HQ: lệnh `/…` gửi từ ô nhắn (Tổng quan, Chat phòng) tới một phòng omp giờ chạy như gõ trong omp: `/model`, `/settings`, `/compact`, `/skill:<tên>`, lệnh `ecc-*`/`eccx-*`… Trước đây extension `8sync-inbox` đưa vào bằng `sendUserMessage`, vốn bỏ qua mọi lệnh, nên model nhận nguyên chữ `/model`. Giờ tin chỉ gồm lệnh được đặt vào ô gõ của omp rồi Enter (bản nháp đang gõ dở được trả lại); không có UI hoặc đang mở bảng chọn thì vẫn gửi như tin thường. `8sync ccc inbox --json` thêm `messages` (từng tin, đã che secret).
+- HQ: danh sách `/` có thêm lệnh built-in của omp (`/model`, `/settings`, `/compact`, `/context`, `/plan`, `/goal`, `/new`, `/resume`, …; bỏ `exit`/`quit`/`drop`/`logout`) và lệnh mà phiên omp báo lúc khởi động (`/skill:<tên>`, lệnh plugin, MCP prompt) qua `<state>/hq/omp-commands.json`.
+- HQ: terminal cao hơn khung (tối thiểu 22 dòng để câu hỏi 5 lựa chọn của Claude không bị cắt) giờ cuộn được và luôn bám dòng cuối, không còn mất 21 px đáy ở màn 390 px.
+- HQ: đóng **Mở terminal** hay chuyển tab không còn thu phòng về 20 cột (khung ẩn 0×0 bị đo rồi resize cả phòng, làm vỡ màn của người đang xem khác) và không còn lỗi `This API only accepts integers` khi khung đang bị gỡ.
 
 ## [0.120.3] — 2026-11-03
 

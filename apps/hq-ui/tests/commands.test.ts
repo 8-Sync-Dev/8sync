@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyCommand, filterCommands, slashAt, type SlashCommand } from "@/lib/mention";
-import { commandDescription, listCommands } from "@/lib/server/commands";
+import { commandDescription, listCommands, readOmpSession } from "@/lib/server/commands";
 import { tempHome } from "./helpers";
 
 describe("slash commands (GET /api/commands)", () => {
@@ -15,21 +15,50 @@ describe("slash commands (GET /api/commands)", () => {
     expect(commandDescription(`---\ndescription: ${"x".repeat(400)}\n---\n`)).toHaveLength(160);
   });
 
-  it("reads ~/.omp/agent/commands and ~/.claude/commands, name = file name, omp first", () => {
+  it("omp built-ins, omp files, the live omp list, then Claude's; first name wins", () => {
     const home = tempHome();
     const omp = path.join(home, ".omp", "agent", "commands");
     const claude = path.join(home, ".claude", "commands");
+    const state = path.join(home, ".local", "state", "8sync", "hq");
     fs.mkdirSync(omp, { recursive: true });
     fs.mkdirSync(path.join(claude, "nested"), { recursive: true });
+    fs.mkdirSync(state, { recursive: true });
     fs.writeFileSync(path.join(omp, "ship.md"), "---\ndescription: Ship\n---\n");
+    fs.writeFileSync(path.join(omp, "model.md"), "# my model\n");
     fs.writeFileSync(path.join(omp, "notes.txt"), "x");
     fs.writeFileSync(path.join(claude, "review.md"), "# Review\n");
+    fs.writeFileSync(path.join(claude, "ship.md"), "# Claude ship\n");
     fs.writeFileSync(path.join(claude, "bad name.md"), "x");
-    expect(listCommands(home)).toEqual([
+    fs.writeFileSync(
+      path.join(state, "omp-commands.json"),
+      JSON.stringify({ commands: [{ name: "skill:trail", description: "Code map\n for agents" }, { name: "bad name" }, { name: "review", description: "omp review" }, 7] }),
+    );
+    const got = listCommands(home);
+    const names = got.map((c) => c.name);
+    // A bare "/" shows the everyday built-ins.
+    expect(names.slice(0, 3)).toEqual(["model", "settings", "compact"]);
+    expect(got[0]).toEqual({ name: "model", description: "Switch model for this session", source: "omp" });
+    expect(names).not.toContain("quit");
+    expect(names).not.toContain("drop");
+    expect(names).not.toContain("bad name");
+    expect(new Set(names).size).toBe(names.length);
+    const rest = got.slice(names.indexOf("ship"));
+    expect(rest).toEqual([
       { name: "ship", description: "Ship", source: "omp" },
-      { name: "review", description: "Review", source: "claude" },
+      { name: "review", description: "omp review", source: "omp" },
+      { name: "skill:trail", description: "Code map for agents", source: "omp" },
     ]);
-    expect(listCommands(path.join(home, "none"))).toEqual([]);
+    const bare = listCommands(path.join(home, "none"));
+    expect(bare.every((c) => c.source === "omp") && bare.some((c) => c.name === "model")).toBe(true);
+  });
+
+  it("a broken live list is none", () => {
+    const home = tempHome();
+    const state = path.join(home, ".local", "state", "8sync", "hq");
+    fs.mkdirSync(state, { recursive: true });
+    fs.writeFileSync(path.join(state, "omp-commands.json"), "{not json");
+    expect(readOmpSession(path.join(state, "omp-commands.json"))).toEqual([]);
+    expect(readOmpSession(path.join(state, "missing.json"))).toEqual([]);
   });
 });
 

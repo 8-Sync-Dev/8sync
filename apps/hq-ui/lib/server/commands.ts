@@ -1,11 +1,15 @@
-// Slash commands for the composer's "/" autocomplete (GET /api/commands): the owner's omp commands
-// (`~/.omp/agent/commands/*.md`) and Claude Code commands (`~/.claude/commands/*.md`). The name is the
-// file name; the description comes from the frontmatter (else the first line of the body). Names and
-// descriptions only, never the command bodies. Tested in tests/commands.test.ts.
+// Slash commands for the composer's "/" autocomplete (GET /api/commands), first name wins:
+// omp's built-ins (/model, /settings, /compact: lib/server/omp-builtins.ts), the owner's omp commands
+// (`~/.omp/agent/commands/*.md`), what a running omp reports through the 8sync-inbox extension
+// (`<state>/omp-commands.json`: `/skill:<name>`, plugin, MCP-prompt and extension commands), then
+// Claude Code commands (`~/.claude/commands/*.md`). The name is the file name; the description comes
+// from the frontmatter (else the first line of the body). Names and descriptions only, never the
+// command bodies. Tested in tests/commands.test.ts.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { SlashCommand } from "../mention";
+import { OMP_BUILTINS } from "./omp-builtins";
 
 const DESC_MAX = 160;
 const PER_SOURCE_MAX = 300;
@@ -53,9 +57,38 @@ export function readCommands(dir: string, source: SlashCommand["source"]): Slash
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** omp's commands first, then Claude Code's. */
+/**
+ * The commands a running omp reported (`{"commands":[{"name","description"}]}`, written by the
+ * 8sync-inbox extension at session start); a missing or broken file is none.
+ */
+export function readOmpSession(file: string): SlashCommand[] {
+  let v: unknown;
+  try {
+    v = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return [];
+  }
+  const list = v !== null && typeof v === "object" && "commands" in v && Array.isArray(v.commands) ? (v.commands as unknown[]) : [];
+  const out: SlashCommand[] = [];
+  for (const c of list) {
+    if (c === null || typeof c !== "object" || !("name" in c) || typeof c.name !== "string" || !NAME_RE.test(c.name)) continue;
+    const d = "description" in c && typeof c.description === "string" ? c.description.replace(/\s+/g, " ").trim().slice(0, DESC_MAX) : "";
+    out.push({ name: c.name, description: d, source: "omp" });
+    if (out.length >= PER_SOURCE_MAX * 2) break;
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** omp's built-ins, its command files, the live session's list, then Claude Code's; first name wins. */
 export function listCommands(home = os.homedir()): SlashCommand[] {
-  return [...readCommands(path.join(home, ".omp", "agent", "commands"), "omp"), ...readCommands(path.join(home, ".claude", "commands"), "claude")];
+  const all: SlashCommand[] = [
+    ...OMP_BUILTINS.map(([name, description]): SlashCommand => ({ name, description, source: "omp" })),
+    ...readCommands(path.join(home, ".omp", "agent", "commands"), "omp"),
+    ...readOmpSession(path.join(home, ".local", "state", "8sync", "hq", "omp-commands.json")),
+    ...readCommands(path.join(home, ".claude", "commands"), "claude"),
+  ];
+  const seen = new Set<string>();
+  return all.filter((c) => !seen.has(c.name) && (seen.add(c.name), true));
 }
 
 const TTL_MS = 30_000;
