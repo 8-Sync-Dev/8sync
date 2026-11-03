@@ -42,7 +42,12 @@ export async function GET(req: Request) {
   const c = openContent();
   if ("configured" in c) return json({ configured: false });
   if ("error" in c) return json({ configured: true, ready: false, error: c.error });
-  return json(listContent(c.db, { status, format, fb_page: page }));
+  try {
+    return json(listContent(c.db, { status, format, fb_page: page }));
+  } catch (e) {
+    // A DB replaced or damaged since it opened: shown in the view, not a bare 500 on every poll.
+    return json({ configured: true, ready: false, error: `không đọc được sổ nội dung: ${(e as Error).message}` });
+  }
 }
 
 export async function POST(req: Request) {
@@ -59,7 +64,7 @@ export async function POST(req: Request) {
   }
 }
 
-/** `?id=`: body = fields to change, `status`, or `approve_source: true`. */
+/** `?id=`: body = fields to change, `status`, or `approve_source: "<source URL the owner saw>"`. */
 export async function PATCH(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;

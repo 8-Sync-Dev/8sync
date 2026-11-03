@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangleIcon, CheckIcon, FileTextIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
-import { useCallback, useMemo, useState, type KeyboardEvent } from "react";
+import { Fragment, useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,7 +74,7 @@ export function ContentView({ token, rooms, active }: { token: string; rooms: Ro
             <div className="ml-auto flex flex-wrap items-center gap-1.5">
               <Filter label="Trạng thái" value={status} onChange={setStatus} options={CONTENT_STATUSES.map((s) => [s, STATUS_LABEL[s]])} />
               <Filter label="Định dạng" value={format} onChange={setFormat} options={CONTENT_FORMATS.map((f) => [f, FORMAT_LABEL[f]])} />
-              {pages.length > 1 && <Filter label="Trang FB" value={page} onChange={setPage} options={pages.map((p) => [p, p])} />}
+              {(pages.length > 1 || page !== ALL) && <Filter label="Trang FB" value={page} onChange={setPage} options={pages.map((p) => [p, p])} />}
               <Button type="button" size="sm" variant={adding ? "secondary" : "default"} className={cn("text-xs", TOUCH)} aria-expanded={adding} onClick={() => setAdding((a) => !a)}>
                 <PlusIcon aria-hidden /> Mục mới
               </Button>
@@ -251,8 +251,9 @@ function Items({ items, api, token, rooms, now, reload }: { items: ContentItem[]
             const warn = contentWarning(it);
             const err = errors[it.id];
             const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
-            return [
-              <tr key={it.id} className={cn("align-top", warn && "bg-destructive/5")}>
+            return (
+              <Fragment key={it.id}>
+              <tr className={cn("align-top", warn && "bg-destructive/5")}>
                 <td className="px-2 py-2 font-mono text-muted-foreground tabular">{it.id}</td>
                 <td className="w-64 min-w-56 px-2 py-2">
                   <div className="font-medium">
@@ -325,7 +326,7 @@ function Items({ items, api, token, rooms, now, reload }: { items: ContentItem[]
                       <CheckIcon aria-hidden className="size-3" /> {it.source_approved_by} · {agoShort(it.source_approved_at, now)}
                     </p>
                   ) : it.source_url ? (
-                    <Button type="button" size="sm" variant="outline" className={cn("mt-1 h-6 px-2 text-[11px]", TOUCH)} onClick={() => void patch(it.id, { approve_source: true })}>
+                    <Button type="button" size="sm" variant="outline" className={cn("mt-1 h-6 px-2 text-[11px]", TOUCH)} onClick={() => void patch(it.id, { approve_source: it.source_url })}>
                       Duyệt nguồn
                     </Button>
                   ) : null}
@@ -346,15 +347,16 @@ function Items({ items, api, token, rooms, now, reload }: { items: ContentItem[]
                     </dd>
                   </dl>
                 </td>
-              </tr>,
-              sendFor === it.id && (
-                <tr key={`${it.id}-send`}>
+              </tr>
+              {sendFor === it.id && (
+                <tr>
                   <td colSpan={8} className="bg-muted/20 px-3 py-2.5">
                     <TaskBox it={it} api={api} token={token} rooms={rooms} onSent={() => setSendFor(null)} />
                   </td>
                 </tr>
-              ),
-            ];
+              )}
+              </Fragment>
+            );
           })}
         </tbody>
       </table>
@@ -376,13 +378,20 @@ function TaskBox({ it, api, token, rooms, onSent }: { it: ContentItem; api: Api;
 /** A value shown as text (a link for URLs); click or Enter edits, Enter or leaving saves, Esc cancels. */
 function Editable({ value, label, onSave, link = false, required = false }: { value: string | null; label: string; onSave: (v: string) => Promise<boolean>; link?: boolean; required?: boolean }) {
   const [draft, setDraft] = useState<string | null>(null);
+  // Enter saves, and the blur that follows must not send the same PATCH again.
+  const saving = useRef(false);
   const shown = value ?? "";
 
   async function commit() {
-    if (draft === null) return;
+    if (draft === null || saving.current) return;
     const v = draft.trim();
     if (v === shown || (required && !v)) return setDraft(null);
-    if (await onSave(v)) setDraft(null);
+    saving.current = true;
+    try {
+      if (await onSave(v)) setDraft(null);
+    } finally {
+      saving.current = false;
+    }
   }
   function onKey(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && !e.nativeEvent.isComposing) void commit();
@@ -393,7 +402,7 @@ function Editable({ value, label, onSave, link = false, required = false }: { va
     return <Input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} onBlur={() => void commit()} aria-label={label} className="h-7 text-xs" autoFocus />;
   return (
     <div className="group/ed flex min-w-0 items-baseline gap-1">
-      {link && value ? (
+      {link && value && /^https?:\/\//i.test(value) ? (
         <a href={value} target="_blank" rel="noreferrer noopener" className="block max-w-40 min-w-0 truncate text-primary underline-offset-2 hover:underline" title={value}>
           {value.replace(/^https?:\/\//, "")}
         </a>

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import { CONTENT_TEXT_FIELDS, isFormat, isStatus, type ContentItem, type ContentList, type ContentStatus } from "../content";
 import { configDir } from "./paths";
 
@@ -44,7 +45,8 @@ function connect(file: string): DatabaseSync {
   if (g.__contentDb?.file === file) return g.__contentDb.db;
   g.__contentDb?.db.close();
   g.__contentDb = undefined;
-  const db = new DatabaseSync(file);
+  // mode=rw: SQLite itself refuses to create the file (existsSync below only words the error).
+  const db = new DatabaseSync(`${pathToFileURL(file).href}?mode=rw`);
   db.exec("PRAGMA busy_timeout = 5000;");
   g.__contentDb = { file, db };
   return db;
@@ -62,8 +64,12 @@ export function openContent(env?: Record<string, string | undefined>): { db: Dat
   } catch (e) {
     return { error: `không mở được DB nội dung: ${(e as Error).message}` };
   }
-  const has = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'content_items'").get();
-  return has ? { db } : { error: NO_REGISTRY };
+  try {
+    const has = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'content_items'").get();
+    return has ? { db } : { error: NO_REGISTRY };
+  } catch (e) {
+    return { error: `không đọc được DB nội dung: ${(e as Error).message}` };
+  }
 }
 
 /** An error the API answers with a status: a gate trigger (409, its own message), a bad value (422), a locked DB (503). */
@@ -149,8 +155,9 @@ export function createContent(db: DatabaseSync, body: Record<string, unknown>, n
 }
 
 /**
- * Edit one item. Body: any text field, `format`, `status`, and `approve_source: true` (records who
- * and when). A new `source_url` drops an earlier approval: it approved the old source.
+ * Edit one item. Body: any text field, `format`, `status`, and `approve_source: "<the source URL the
+ * owner saw>"` (records who and when; 409 when the row's source has changed since).
+ * A new `source_url` drops an earlier approval: it approved the old source.
  */
 export function updateContent(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now = Date.now()): ContentItem {
   const item = getContent(db, id);
@@ -169,9 +176,10 @@ export function updateContent(db: DatabaseSync, id: number, body: Record<string,
     set.source_approved_by = null;
     set.source_approved_at = null;
   }
-  if (body.approve_source === true) {
+  if ("approve_source" in body) {
     const src = "source_url" in set ? set.source_url : item.source_url;
     if (!src) throw new ContentError("chưa có nguồn để duyệt", 422);
+    if (body.approve_source !== src) throw new ContentError("Nguồn đã đổi so với lúc anh xem, tải lại rồi duyệt.", 409);
     set.source_approved_by = approver;
     set.source_approved_at = now;
   }

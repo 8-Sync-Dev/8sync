@@ -85,6 +85,14 @@ describe("/api/content without a configured DB", () => {
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'content_items'").get()).toBeUndefined();
     db.close();
   });
+  it("a configured file that is not SQLite is reported in the view, not a 500", async () => {
+    const file = path.join(home, "notes.db");
+    fs.writeFileSync(file, "not a database, just notes");
+    configure(file);
+    const res = await GET(call("GET", ""));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ configured: true, ready: false, error: expect.stringContaining("không") });
+  });
   it("EIGHTSYNC_CONTENT_DB wins over content.json; a relative path is refused", async () => {
     configure(path.join(home, "nope.db"));
     process.env.EIGHTSYNC_CONTENT_DB = "relative/daily.db";
@@ -107,7 +115,7 @@ describe("/api/content against the 0062 gate", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("content_items: source must be approved before approved/published");
 
-    res = await PATCH(call("PATCH", q, { approve_source: true }));
+    res = await PATCH(call("PATCH", q, { approve_source: "https://example.com/a" }));
     expect((await res.json()).item.source_approved_by).toMatch(/^hq:/);
     res = await PATCH(call("PATCH", q, { status: "checked" }));
     expect((await res.json()).item.checked_at).toEqual(expect.any(Number));
@@ -127,7 +135,11 @@ describe("/api/content against the 0062 gate", () => {
   it("a new source drops the earlier approval; an empty field becomes NULL", async () => {
     configure(makeDb("src.db", MIGRATION_0062));
     const { item } = await (await POST(call("POST", "", { format: "text", title: "B", source_url: "https://a" }))).json();
-    await PATCH(call("PATCH", `?id=${item.id}`, { approve_source: true }));
+    // Approval names the source the owner saw: one changed since is refused, not approved unseen.
+    const stale = await PATCH(call("PATCH", `?id=${item.id}`, { approve_source: "https://old" }));
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error).toMatch(/Nguồn đã đổi/);
+    await PATCH(call("PATCH", `?id=${item.id}`, { approve_source: "https://a" }));
     const same = (await (await PATCH(call("PATCH", `?id=${item.id}`, { source_url: "https://a", caption: "" }))).json()).item;
     expect(same.source_approved_at).toEqual(expect.any(Number));
     expect(same.caption).toBeNull();
