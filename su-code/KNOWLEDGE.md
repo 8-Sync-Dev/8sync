@@ -719,3 +719,4 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - validated: UAT link bằng Chromium headless: login link `?k=` chỉ sống 10 phút; cookie `hq_pub` = `<issued>.<hmac-sha256(key, issued)>` tự ký được để test mà không in key.
 - failure (v0.120.7): `t.closed` chỉ chặn tombstone; poll đang treo trong `waitOutput` lúc HQ `closeTerm` vẫn trả `ended:true` của bridge cũ → link báo "Đã rời phòng". Sau khi chờ phải kiểm `term.closed` và trả "không có gì mới".
 - validated: omp echo một phím = 2–3 lần ghi (8 B điều khiển ở ~1–6 ms, khung ~50–90 B ở ~17–21 ms, đo bằng bridge `ccc term` song song). Long-poll trả ngay byte đầu → mất thêm 1 RTT tunnel; giữ 40 ms sau byte đầu gom đủ khung.
+- failure (CI): `statusline::tests::chained_timeout_kills_group` là flake thời gian trên Windows CI (release v0.120.7 đỏ ở `statusline.rs:869` left None/right "hi", re-run `gh run rerun <id> --failed` xanh, không đổi code).
