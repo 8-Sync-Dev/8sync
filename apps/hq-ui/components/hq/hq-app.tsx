@@ -553,7 +553,12 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
         model={drawerSession?.model}
       />
       <WebTerminalSheet token={token} />
-      <FloatShell token={token} cwd={scope.session ? (view.sessions[0]?.cwd ?? null) : (project?.path ?? repo?.root ?? null)} open={shellOpen} onOpenChange={setShellOpen} />
+      <FloatShell
+        token={token}
+        cwd={tab === "workspace" ? (pane?.cwd ?? ws.folder ?? null) : scope.session ? (view.sessions[0]?.cwd ?? null) : (project?.path ?? repo?.root ?? null)}
+        open={shellOpen}
+        onOpenChange={setShellOpen}
+      />
       <Guide
         open={guideOpen || firstGuide}
         onOpenChange={(open) => {

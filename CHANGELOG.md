@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.120.2] — 2026-11-03
+
+### Fixed
+- HQ: nút **Terminal** (Shell trên máy) mở từ Không gian (phiên bấm ở sidebar hoặc khung soạn đã chọn thư mục) giờ mở shell trong thư mục của phiên đang xem. Trước đây ở Không gian shell luôn mở ở `~`; Tổng quan / Chat phòng vẫn như cũ.
+
 ## [0.120.1] — 2026-11-03
 
 ### Added
