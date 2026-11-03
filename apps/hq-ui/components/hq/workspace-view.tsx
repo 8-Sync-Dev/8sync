@@ -206,7 +206,7 @@ function PaneView({ pane, token, s, active, maxed, onFocus, onClose, onMax }: { 
         </Button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col p-2">
-        <LiveTerminal key={gen} url={url} token={token} compact />
+        <LiveTerminal key={gen} url={url} token={token} />
       </div>
     </div>
   );

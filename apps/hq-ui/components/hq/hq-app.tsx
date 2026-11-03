@@ -169,8 +169,10 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const room = scope.session ? officeRooms.find((r) => matchesSession(r, scope.session) || (scoped != null && (r.name === scoped.name || (scoped.session_id != null && r.session_id === scoped.session_id)))) : undefined;
   // The session on screen: the active window in Không gian, the room in Chat phòng. It reads as
   // current in the sidebar and never collects a blue dot.
-  const activeKey = tab === "workspace" ? (ws.composer ? null : ws.ws.active) : tab === "room" ? (room?.key ?? null) : null;
-  const tree = useSessionTree(hq, office, activeKey);
+  const viewKey = tab === "workspace" ? (ws.composer ? null : ws.ws.active) : tab === "room" ? (room?.key ?? null) : null;
+  const tree = useSessionTree(hq, office, viewKey);
+  // An omp session's sidebar row is keyed by its omp id, not its room's key: its Chat phòng lights that row.
+  const activeKey = tab === "room" && room ? (tree.sessions.find((s) => s.room === room.key)?.key ?? room.key) : viewKey;
   // Không gian titles the window on screen (or the composer), like Claude Code Desktop.
   const pane = tab === "workspace" && !ws.composer ? ws.ws.panes.find((p) => p.id === ws.ws.active) : undefined;
   const paneSession = pane ? tree.sessions.find((s) => s.ompId === pane.id) : undefined;
@@ -249,16 +251,19 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     setNavOpen(false);
     setTimeout(() => document.getElementById(COMPOSER_ID)?.focus(), 60);
   }, []);
-  /** A sidebar session: an omp one opens in Không gian (beside the others on `split`), a Claude Code room in its chat. */
+  /**
+   * A session from the sidebar or Tổng quan: a live room (Claude Code or omp) opens its Chat phòng —
+   * Nhật ký, the composer and "Mở terminal" — so both places show the same page (owner 2026-11-03).
+   * An omp session with no live room, or any omp session on `split`, opens in Không gian.
+   */
   const openTreeSession = (s: TreeSession, split: boolean) => {
-    if (s.ompId) {
+    const r = s.room ? officeRooms.find((x) => x.key === s.room) : undefined;
+    if (r && !(split && s.ompId)) {
+      openRoom(r);
+    } else if (s.ompId) {
       workspace.open(token, { id: s.ompId, name: s.name, cwd: s.cwd ?? s.folder }, split);
       setTab("workspace");
-      setNavOpen(false);
-      return;
     }
-    const r = s.room ? officeRooms.find((x) => x.key === s.room) : undefined;
-    if (r) openRoom(r);
     setNavOpen(false);
   };
   const openTreeRef = useRef(openTreeSession);

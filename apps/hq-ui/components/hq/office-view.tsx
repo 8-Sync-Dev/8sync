@@ -220,7 +220,7 @@ function RoomCard({
             <span
               title={
                 room.engine === "omp"
-                  ? "Phòng omp đọc inbox khi rảnh"
+                  ? "Phòng omp: extension 8sync-inbox nhận tin trong vài giây, kể cả khi đang làm"
                   : room.inboxLive
                     ? "Mod 8sync-inbox đang nạp: việc vào ngay khi phòng rảnh"
                     : "Mod 8sync-inbox chưa nạp: việc vào ở lượt kế"

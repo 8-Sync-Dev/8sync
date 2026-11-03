@@ -884,6 +884,10 @@ const CORE_SKILLS: [&str; 15] =
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
+    // omp sessions take HQ messages through this extension: `up` and every version change come here.
+    if let Err(e) = deploy::ensure_omp_inbox(&env.home) {
+        ui::warn(&format!("8sync-inbox omp extension not deployed: {e:#}"));
+    }
     install_kit_at(env, &claude_dir(env), force)
 }
 

@@ -57,11 +57,18 @@ export function deliveryOf(s: Pick<Session, "tmux" | "name" | "session_id">): "t
   return id && (SESSION_ID.test(id) || isOmpRoomId(id)) ? "inbox" : null;
 }
 
-/** Inbox wording in toasts and summaries: when the task enters depends on whether the mod is loaded. */
+/**
+ * Inbox wording in toasts and summaries. Claude Code: when the task enters depends on whether the
+ * `8sync-inbox` mod is loaded. omp (`id` an omp room id): the `8sync-inbox` omp extension takes it within
+ * seconds, even mid-turn; `live` false means the session started before the extension was deployed.
+ */
 export const INBOX_LIVE_TEXT = "qua inbox (nhận ngay khi phiên rảnh)";
 export const INBOX_STOP_TEXT = "qua inbox (nhận khi xong lượt — gõ /reload-plugins trong phiên để nhận ngay)";
+export const INBOX_OMP_TEXT = "qua inbox (omp nhận trong vài giây, kể cả khi đang làm)";
+export const INBOX_OMP_OLD_TEXT = "qua inbox (phiên omp này mở trước khi có 8sync-inbox: thoát rồi mở lại phiên để nhận tin)";
 
-export function inboxText(live: boolean | undefined): string {
+export function inboxText(live: boolean | undefined, id?: string | null): string {
+  if (id && isOmpRoomId(id)) return live ? INBOX_OMP_TEXT : INBOX_OMP_OLD_TEXT;
   return live ? INBOX_LIVE_TEXT : INBOX_STOP_TEXT;
 }
 

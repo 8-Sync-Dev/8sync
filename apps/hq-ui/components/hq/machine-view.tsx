@@ -523,7 +523,7 @@ function DiskPanel({ api, rooms, active }: { api: Hq["api"]; rooms: Room[]; acti
         body: { session: room.name, text: cleanupText(p, fs), base: room.cwd },
       });
       if (r.delivery === "failed") toast.error(`Chưa gửi được tới ${room.label}`, { description: r.error ?? undefined });
-      else toast.success(`Đã gửi tin dọn cho ${room.label}`, { description: r.delivery === "inbox" ? inboxText(r.live) : "đã gõ vào terminal" });
+      else toast.success(`Đã gửi tin dọn cho ${room.label}`, { description: r.delivery === "inbox" ? inboxText(r.live, room.session_id ?? room.name) : "đã gõ vào terminal" });
     } catch (e) {
       const m = (e as Error).message;
       toast.error(m === "session-waiting" ? `${room.label} đang chờ anh trả lời trong terminal: trả lời trước rồi gửi lại` : m);

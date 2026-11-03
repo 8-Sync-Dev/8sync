@@ -19,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MessageText } from "./attachments";
 import { ComposerDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
-import { addressOf, deliveryOf, messageTargets, sessionLabel, splitStale } from "@/lib/labels";
+import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
 import type { Hq } from "./use-hq";
@@ -336,9 +336,11 @@ function Composer({
   const hint = !current
     ? "Start a session to message it."
     : via === "inbox"
-      ? current.inbox_live
-        ? "Inbox: mod 8sync-inbox đang chạy — session nhận tin ngay khi rảnh, trả lời hiện ở đây."
-        : "Inbox: session nhận tin khi xong lượt đang làm (Stop hook). Nhận ngay khi rảnh: gõ /reload-plugins trong phiên đó (không cần restart)."
+      ? isOmpRoomId(current.session_id ?? current.name)
+        ? `Gửi ${inboxText(current.inbox_live, current.session_id ?? current.name)}.`
+        : current.inbox_live
+          ? "Inbox: mod 8sync-inbox đang chạy — session nhận tin ngay khi rảnh, trả lời hiện ở đây."
+          : "Inbox: session nhận tin khi xong lượt đang làm (Stop hook). Nhận ngay khi rảnh: gõ /reload-plugins trong phiên đó (không cần restart)."
       : current.channel_state === "blocked-by-org"
       ? "Typed into the session's terminal (Channels off for your org)."
       : current.channel_state === "unresponsive"
