@@ -8,11 +8,12 @@ HQ qua link `--public` điều khiển terminal mượt + báo đúng khi omp cr
 - [x] Repro trên link thật: phím lộn thứ tự; kill omp → link vẫn "Đang nối", bridge+omp mới lặng lẽ mở
 - [x] Fix: `keyQueue` (phím tuần tự), bridge thoát mã 4 khi host đóng, HQ giữ bridge đã kết thúc theo gen, long-poll `&wait=`
 - [x] Test: vitest 760, cargo 636; smoke bridge: rời = 0, omp chết = 4
-- [ ] Release v0.120.6 → `8sync up` → HQ tự restart → UAT lại qua link (thứ tự phím, độ trễ, crash notice, Nối lại, nhắn qua link)
+- [x] Release v0.120.6; UAT link: phím đúng thứ tự, crash báo sau ~0,2 s, Nối lại OK, PONG/PING2 tới phòng
+- [ ] v0.120.7: poll treo trên bridge HQ tự đóng (báo nhầm "Đã rời phòng"), settle 40 ms → UAT lại
 - [ ] Dọn phiên thử `uat-link-phien-thu-se`, tab `hqpub`
 
 ## Current
-Release v0.120.6 (branch fix/hq-link-term-crash-realtime, worktree su-code-term).
+Release v0.120.7 (branch fix/hq-link-poll-close-settle).
 
 ## Next
 UAT lại trên link public, dọn scratch, báo owner.

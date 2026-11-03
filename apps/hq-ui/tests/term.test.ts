@@ -206,6 +206,15 @@ describe("omp ended on the PC (owner 2026-11-03: crashed there, the link never k
     expect(fresh).not.toBe(t);
     expect(poll(OMP, fresh, p.gen, p.cursor)).toMatchObject({ reset: true, ended: false });
   });
+  it("a link poll held on a bridge HQ closes meanwhile hears nothing, not that the room ended", async () => {
+    const f = fakeSpawn();
+    const t = openTerm(OMP, null, { cols: 80, rows: 20 }, f.spawn);
+    const p = poll(OMP, t, 0, -1);
+    const held = termResponse(new Request(`http://127.0.0.1/t?gen=${p.gen}&since=${p.cursor}&wait=20000`), OMP, t);
+    closeTerm(OMP);
+    f.proc().emit("exit", 0);
+    expect(await (await held).json()).toMatchObject({ ended: false, exited: false, out: "", gen: p.gen, cursor: p.cursor });
+  });
   it("a bridge HQ closed itself, or a Claude room's, is not reported as omp exiting", () => {
     const f = fakeSpawn();
     const t = openTerm(OMP, null, { cols: 80, rows: 20 }, f.spawn);
@@ -228,9 +237,12 @@ describe("long poll", () => {
     void reply.then(() => (done = true));
     await new Promise((r) => setTimeout(r, 30));
     expect(done).toBe(false);
+    // omp's echo: control bytes first, the redraw a few ms later; both go back in one reply.
+    f.proc().stdout.write("\x1b[?25l");
+    await new Promise((r) => setTimeout(r, 15));
     f.proc().stdout.write("typed");
     const body = await (await reply).json();
-    expect(Buffer.from(body.out, "base64").toString()).toBe("typed");
+    expect(Buffer.from(body.out, "base64").toString()).toBe("\x1b[?25ltyped");
   });
   it("lets go when the bridge ends, the wait runs out, or the page leaves", async () => {
     const f = fakeSpawn();

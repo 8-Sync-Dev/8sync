@@ -32,6 +32,9 @@ export async function termResponse(req: Request, key: string, term: Term): Promi
     const since = Number(url.searchParams.get("since"));
     const wait = Math.min(LONG_POLL_MAX_MS, Math.max(0, Number(url.searchParams.get("wait")) || 0));
     if (gen === term.gen && since === term.total) await waitOutput(term, since, wait, req.signal);
+    // HQ closed this bridge while the poll waited on it (a pane closed on the PC, idle): no news for
+    // the link. Answer "nothing new"; its next poll finds no ended bridge and gets a fresh one.
+    if (term.closed) return json({ gen, cursor: since, out: "", reset: false, answered: false, ended: false, elsewhere: false, dead: false, exited: false });
     const p = poll(key, term, gen, since);
     return json({ gen: p.gen, cursor: p.cursor, out: p.out.toString("base64"), reset: p.reset, answered: p.answered, ended: p.ended, elsewhere: p.elsewhere, dead: p.dead, exited: p.exited });
   }
