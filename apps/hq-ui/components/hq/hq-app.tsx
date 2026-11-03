@@ -34,7 +34,7 @@ import { useOffice, type Room } from "./use-office";
 import { usePoll } from "./use-poll";
 import { MachineChip, type MachineView as MachineData } from "./machine-chip";
 import { rootKey } from "@/lib/preview";
-import { MORE_LABEL, MORE_TABS, isMore, moreLabel } from "@/lib/tabs";
+import { MORE_LABEL, isMore, moreLabel, moreTabs } from "@/lib/tabs";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { Session } from "./types";
 
@@ -61,9 +61,10 @@ const KnowView = dynamic(() => import("./know-view").then((m) => m.KnowView), { 
 const LoopsView = dynamic(() => import("./loops-view").then((m) => m.LoopsView), { loading: ViewLoading });
 const SessionsView = dynamic(() => import("./sessions-view").then((m) => m.SessionsView), { loading: ViewLoading });
 const ActivityView = dynamic(() => import("./activity-view").then((m) => m.ActivityView), { loading: ViewLoading });
+const ContentView = dynamic(() => import("./content-view").then((m) => m.ContentView), { loading: ViewLoading });
 
 /** workspace: folders → omp sessions → windows · office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens. */
-type Tab = "workspace" | "overview" | "office" | "group" | "room" | "preview" | "loops" | "report" | "usage" | "may" | "know" | "sessions" | "activity";
+type Tab = "workspace" | "overview" | "office" | "group" | "room" | "preview" | "loops" | "report" | "usage" | "may" | "know" | "content" | "sessions" | "activity";
 const PREVIEW_POLL_MS = 15_000;
 const LOOPS_POLL_MS = 30_000;
 /** The header chip and the Máy tab share one poll. */
@@ -107,6 +108,16 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     else if (t.offsetLeft + t.offsetWidth + pad > row.scrollLeft + row.clientWidth) row.scrollTo({ left: t.offsetLeft + t.offsetWidth + pad - row.clientWidth });
   }, [tab]);
   const loops = usePoll<NonNullable<LoopsState["data"]>>(hq.api, "/api/loops", LOOPS_POLL_MS, tab === "loops");
+  // "Nội dung" exists only while a content DB is configured: asked once per load.
+  const [contentOn, setContentOn] = useState(false);
+  const { api } = hq;
+  useEffect(() => {
+    const ac = new AbortController();
+    api<{ configured: boolean }>("/api/content?probe=1", { signal: ac.signal })
+      .then((r) => setContentOn(r.configured))
+      .catch(() => {});
+    return () => ac.abort();
+  }, [api]);
 
   const [guideOpen, setGuideOpen] = useState(false);
   const [shellOpen, setShellOpen] = useState(false);
@@ -331,6 +342,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
       }}
       onAddProject={focusAddProject}
       onHelp={() => setGuideOpen(true)}
+      contentOn={contentOn}
     />
   );
 
@@ -447,7 +459,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                     <ChevronDownIcon aria-hidden className="size-3.5 opacity-70" />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="min-w-44">
-                    {MORE_TABS.map((t) => (
+                    {moreTabs(contentOn).map((t) => (
                       <DropdownMenuItem key={t} onSelect={() => setTab(t)} className={cn(tab === t && "font-semibold")}>
                         {MORE_LABEL[t]}
                         {t === "sessions" && needsYou > 0 && <span aria-label={`${needsYou} need you`} className="ml-auto size-1.5 rounded-full bg-st-needs" />}
@@ -528,6 +540,9 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
             </TabsContent>
             <TabsContent value="know" className="h-full">
               <KnowView token={token} roots={knowRoots} repo={repo?.root ?? null} active={tab === "know"} />
+            </TabsContent>
+            <TabsContent value="content" className="h-full">
+              {contentOn && <ContentView token={token} rooms={officeRooms} active={tab === "content"} />}
             </TabsContent>
             <TabsContent value="preview" className="h-full">
               <PreviewView state={previews} token={token} rooms={officeRooms} repo={repo?.root ?? null} />

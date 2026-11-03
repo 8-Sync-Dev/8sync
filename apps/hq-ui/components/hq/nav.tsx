@@ -55,7 +55,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { agoShort } from "@/lib/now";
 import { GROUP_WORD, SORT_WORD, TREE_WORD, groupSessions, isUnread, splitChildren, type GroupBy, type SortBy, type TreeChild, type TreeGroup, type TreeSession } from "@/lib/session-tree";
 import { groupKey, sidebarGroups, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
-import { MORE_LABEL, MORE_TABS } from "@/lib/tabs";
+import { MORE_LABEL, MORE_TABS, moreTabs } from "@/lib/tabs";
 import { cn } from "@/lib/utils";
 import { ErrorNote } from "./bits";
 import { BrandMark } from "./brand-mark";
@@ -89,8 +89,6 @@ const VIEWS: { tab: NavView; label: string; icon: typeof SearchIcon }[] = [
   { tab: "group", label: "Chat", icon: MessagesSquareIcon },
   { tab: "loops", label: "Vòng lặp", icon: CalendarClockIcon },
 ];
-const MORE = MORE_TABS.filter((t) => t !== "loops" && t !== "may");
-
 const fold = (s: string) =>
   s
     .normalize("NFD")
@@ -112,6 +110,7 @@ export function Nav({
   onOpenFolder,
   onAddProject,
   onHelp,
+  contentOn,
 }: {
   hq: Hq;
   office: OfficeState;
@@ -130,7 +129,10 @@ export function Nav({
   onOpenFolder: (id: number, p?: { path: string; name: string }) => void;
   onAddProject: () => void;
   onHelp: () => void;
+  /** A content DB is configured: "Nội dung" is offered. */
+  contentOn: boolean;
 }) {
+  const MORE = useMemo(() => moreTabs(contentOn).filter((t) => t !== "loops" && t !== "may"), [contentOn]);
   const { prefs, setGroup, setSort, toggleCollapsed } = useTreePrefs();
   const archive = useArchive();
   const unread = useUnread();
