@@ -740,6 +740,13 @@ pub(crate) fn share_session(env: &Env, root: &Path, name: &str, model: Option<&s
     }
 }
 
+/// A live host of ours runs session `name` of `root` (HQ opened it, or a takeover moved it there):
+/// `8sync . <name>` then joins it instead of starting a second omp on the same transcript.
+pub(crate) fn room_hosted(env: &Env, root: &Path, name: &str) -> bool {
+    let id = ccc_core::room_id(root, name);
+    read_state(&state_path(&env.home, &id), &id).is_some_and(|s| host_is_ours(&s))
+}
+
 /// The room's host as a socket (joined, or started first); `Err(pid)`: an omp in another terminal
 /// has the session open and `takeover` is off.
 fn open_host(env: &Env, id: &str, cols: u16, rows: u16, takeover: bool, model: Option<&str>) -> Result<std::result::Result<TcpStream, u32>> {

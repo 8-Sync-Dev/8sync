@@ -121,13 +121,25 @@ pub fn run(a: Args) -> Result<()> {
             let name = rest.first().context("usage: 8sync . new <name> [--worktree]")?;
             session::cmd_new(&env, &root, name, a.worktree)
         }
-        "" => session::resume_latest(&env, &root),
+        "" => match session::latest_name(&env, &root) {
+            Some(name) if crate::verbs::ccc::room_hosted(&env, &root, &name) => join_host(&env, &root, &name, a.model.as_deref()),
+            _ => session::resume_latest(&env, &root),
+        },
         name if a.share => {
             session::ensure_named(&env, &root, name)?;
             crate::verbs::ccc::share_session(&env, &root, name, a.model.as_deref())
         }
+        name if crate::verbs::ccc::room_hosted(&env, &root, name) => join_host(&env, &root, name, a.model.as_deref()),
         name => session::resume_named(&env, &root, name, a.model.as_deref()),
     }
+}
+
+/// The session already runs in a host (HQ opened it): a second omp on the same transcript would
+/// leave HQ showing one omp while the other one works (owner 2026-11-03: "không xem đúng latest
+/// terminal đang làm gì"), so this terminal joins the host, as `--share` does.
+fn join_host(env: &env_detect::Env, root: &Path, name: &str, model: Option<&str>) -> Result<()> {
+    ui::info(&format!("phiên '{name}' đang chạy trong HQ: terminal này vào chung phiên đó, không mở omp thứ hai"));
+    crate::verbs::ccc::share_session(env, root, name, model)
 }
 
 /// Scaffold a brand-new project directory headlessly (no omp exec): create the
