@@ -51,6 +51,8 @@ const terms = new Map<string, Term>();
  */
 const endedTerms = new Map<string, Term>();
 export const ENDED_KEEP_MS = 5 * 60_000;
+/** A held poll answers this long after the first new bytes: omp echoes a key as a few control bytes, then the redraw ~20 ms later (measured at the bridge). */
+export const OUTPUT_SETTLE_MS = 40;
 let gens = 0;
 
 /** `takeover` (omp rooms only): end the other process that has the session open, then open it here. */
@@ -192,20 +194,28 @@ export function endedTerm(key: string, gen: number): Term | undefined {
 
 /**
  * Long poll: resolves once the bridge has bytes after `since`, ends, `ms` pass or `signal` aborts. A
- * poll that waits here answers the moment output arrives, instead of the page asking again every
+ * poll that waits here answers right after output arrives ([OUTPUT_SETTLE_MS]), instead of the page asking again every
  * 150–600 ms through a tunnel whose round trip alone is 0.2–1.6 s.
  */
 export function waitOutput(t: Term, since: number, ms: number, signal?: AbortSignal): Promise<void> {
   if (t.ended || t.total > since || ms <= 0 || signal?.aborted) return Promise.resolve();
   return new Promise((done) => {
+    let settle: ReturnType<typeof setTimeout> | undefined;
     const finish = () => {
       clearTimeout(timer);
-      t.waiters.delete(finish);
+      clearTimeout(settle);
+      t.waiters.delete(wake);
       signal?.removeEventListener("abort", finish);
       done();
     };
+    // Output: answer OUTPUT_SETTLE_MS after its first bytes, so one redraw goes back in one reply
+    // instead of its leading control bytes alone (each extra poll costs a tunnel round trip).
+    const wake = () => {
+      if (t.ended) return finish();
+      settle ??= setTimeout(finish, OUTPUT_SETTLE_MS);
+    };
     const timer = setTimeout(finish, ms);
-    t.waiters.add(finish);
+    t.waiters.add(wake);
     signal?.addEventListener("abort", finish, { once: true });
   });
 }

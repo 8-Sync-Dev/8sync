@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.120.7] — 2026-11-03
+
+### Fixed
+- HQ qua link: terminal không còn tự "Đã rời phòng" khi trên máy có ai đóng/đổi khung của cùng phòng. Poll của link đang chờ trên bridge HQ vừa tự đóng giờ nhận "chưa có gì mới" và poll sau mở bridge mới, thay vì báo phòng đã kết thúc (UAT v0.120.6 trên link thật gặp 2 lần).
+- HQ qua link: phím hiện lại nhanh hơn. omp hiện một phím thành 2 lần ghi (vài byte điều khiển, rồi khung ~20 ms sau — đo ở bridge); long-poll trả ngay lần đầu nên phần khung phải chờ thêm một vòng tunnel. Giờ giữ 40 ms sau byte đầu để gửi cả khung một lần (đo trên link: 546–692 ms/phím ở v0.120.6, RTT tunnel ~300 ms).
+
 ## [0.120.6] — 2026-11-03
 
 ### Fixed
