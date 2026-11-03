@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- Skill bundled **`hq-control`** (on-demand, cả omp và kit Claude Code, có trong `/eccx-ai-agent`, `/eccx-workflow`): agent làm việc với các phòng đang mở qua API local của HQ. `scripts/hq.mjs` (Node, không dependency) có `ls` (phòng còn sống: id · nhãn · status · engine · cwd · việc đang làm · `WAITING`), `log <id> [n]`, `msgs <id> [n]`, `send <id> <text>`, `dialog <id> permission|question`, `answer <id> <1-9>`. Token đọc từ `~/.config/8sync/hq/ui-token` và không bao giờ in; POST tự đặt `Origin`. Hộp thoại quyền chỉ đọc (báo chủ, chủ bấm trong HQ); `answer` chỉ cho câu hỏi và chỉ trả lời đúng hộp thoại vừa đọc (HQ trả 409 nếu màn hình đã đổi). Skill không mở hay đóng phòng.
+
 ## [0.121.0] — 2026-11-04
 
 ### Added

@@ -19,8 +19,8 @@ Goal: `$ARGUMENTS` (`--dry-run` = stop after the merged plan).
 
 ## Categories (skills/agents/commands)
 - `core` — Core: harness basics: standards, learning, compaction, always-on rules (16/0/3)
-- `workflow` — Workflow: plan, build, test, review, refactor, ship — the engineering loop (64/18/41)
-- `ai-agent` — AI Agent: agent harnesses, loops, evals, prompts, context and token economy (50/8/26)
+- `workflow` — Workflow: plan, build, test, review, refactor, ship — the engineering loop (65/18/41)
+- `ai-agent` — AI Agent: agent harnesses, loops, evals, prompts, context and token economy (51/8/26)
 - `security` — Security: security review, scanning, hardening, compliance, crypto (23/2/2)
 - `research` — Research: deep research, papers, literature, replication, remote compute (20/1/0)
 - `frontend` — Frontend: UI, design systems, React/Vue/Next, a11y, motion, web quality (37/7/8)
