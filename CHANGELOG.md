@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.120.1] — 2026-11-03
+
+### Added
+- **HQ `--public`: đăng nhập bằng GitHub.** Trang "Chưa đăng nhập" của link public có nút **Đăng nhập bằng GitHub** (device flow: hiện mã, nhập ở github.com/login/device, HQ tự vào khi GitHub xác nhận; không cần callback URL nên host trycloudflare đổi vẫn chạy, không có client secret). Chỉ login trong `~/.config/8sync/hq/github.json` `{"client_id": "…", "allow": ["8syncdev", "Quin19FD"]}` vào được (không phân biệt hoa thường), nhận cùng cookie 12 giờ như link `/api/login?k=`; tài khoản khác bị từ chối và ghi log. Token GitHub chỉ dùng một lần để đọc `/user` (quyền public) rồi bỏ. Không có file = tắt, chỉ còn link có key. Tối đa 20 lượt chờ cùng lúc; `POST /api/login/github` đòi đúng Origin của host public. Lưu ý: mọi login được phép = quyền như owner trong HQ (phòng, terminal).
+
 ## [0.120.0] — 2026-11-03
 
 ### Added
