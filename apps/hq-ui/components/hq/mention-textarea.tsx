@@ -13,6 +13,8 @@ type Props = Omit<ComponentProps<typeof Textarea>, "value" | "onChange"> & {
   /** Folder "@" paths start from (the project root or the room's cwd); null = no picker. */
   base: string | null;
   api: Api;
+  /** The "/command" picker (omp and Claude commands); off for a shell, where "/" starts a path. */
+  commands?: boolean;
 };
 
 /**
@@ -21,7 +23,7 @@ type Props = Omit<ComponentProps<typeof Textarea>, "value" | "onChange"> & {
  * of a line (omp and Claude commands, GET /api/commands). ↑/↓ choose, Enter or Tab picks, Esc
  * closes; a tap picks on a phone.
  */
-export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function MentionTextarea({ value, onValueChange, base, api, onKeyDown, className, ...rest }, ref) {
+export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function MentionTextarea({ value, onValueChange, base, api, commands = true, onKeyDown, className, ...rest }, ref) {
   const inner = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(ref, () => inner.current!, []);
   const [m, setM] = useState<Mention | null>(null);
@@ -65,7 +67,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
 
   const sync = (text: string, caret: number) => {
     setM(base ? mentionAt(text, caret) : null);
-    setSl(slashAt(text, caret));
+    setSl(commands ? slashAt(text, caret) : null);
     setActive(0);
   };
 

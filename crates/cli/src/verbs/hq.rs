@@ -1301,13 +1301,24 @@ fn frame(n: usize, body: &str, f: Framing) -> String {
 /// owner's `{"ts","text"}` lines from HQ count: a `"from"` line (retired room-to-room mail) left in
 /// an old inbox is dropped, never delivered.
 fn inbox_text(raw: &str, f: Framing) -> Option<String> {
-    let owner: Vec<String> = raw
-        .lines()
+    let owner = owner_messages(raw);
+    (!owner.is_empty()).then(|| frame(owner.len(), &owner.join("\n---\n"), f).chars().take(INBOX_TEXT).collect())
+}
+
+/// The owner's messages in an inbox file, each trimmed and masked, oldest first.
+fn owner_messages(raw: &str) -> Vec<String> {
+    raw.lines()
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
         .filter(|v| v.get("from").is_none())
         .filter_map(|v| v["text"].as_str().map(str::trim).filter(|t| !t.is_empty()).map(secret_mask::mask))
-        .collect();
-    (!owner.is_empty()).then(|| frame(owner.len(), &owner.join("\n---\n"), f).chars().take(INBOX_TEXT).collect())
+        .collect()
+}
+
+/// A claimed delivery: the framed prompt, and the messages it holds one by one (the omp extension
+/// runs a message that is a "/command" through omp's input box instead of framing it).
+pub(crate) struct Claim {
+    pub(crate) text: String,
+    pub(crate) messages: Vec<String>,
 }
 
 /// Take (and remove) the owner's pending messages for a session: the Stop-hook block reason.
@@ -1387,7 +1398,7 @@ fn touch(p: &Path, at: SystemTime) {
 /// mod acks once its prompt entered the session, or releases them when it did not. A fresh claim
 /// means a delivery is in flight (None, the claim file stays); a stale one is served again with
 /// anything queued since.
-pub(crate) fn claim_inbox(home: &Path, session_id: &str, now: SystemTime) -> Option<String> {
+pub(crate) fn claim_inbox(home: &Path, session_id: &str, now: SystemTime) -> Option<Claim> {
     let file = inbox_file(home, session_id)?;
     let claim = file.with_extension("claimed");
     sweep_orphans(&file, now);
@@ -1423,11 +1434,11 @@ pub(crate) fn claim_inbox(home: &Path, session_id: &str, now: SystemTime) -> Opt
     // The claim's age is the claim's, not the last queued message's (rename/link keep the mtime).
     stamp(&claim, now);
     let raw = std::fs::read_to_string(&claim).ok()?;
-    let text = inbox_text(&raw, Framing::Idle);
-    if text.is_none() {
+    let Some(text) = inbox_text(&raw, Framing::Idle) else {
         let _ = std::fs::remove_file(&claim); // nothing deliverable in it
-    }
-    text
+        return None;
+    };
+    Some(Claim { text, messages: owner_messages(&raw) })
 }
 
 /// Set a file's mtime without touching its content (a rewrite would truncate it first).
@@ -1504,7 +1515,10 @@ pub(crate) fn inbox_cmd(home: &Path, rest: &[String], env_session: Option<&str>,
         return json!({ "ok": id.is_some_and(|id| release_inbox(home, id)) });
     }
     let Some(id) = id else { return json!({ "text": null }) };
-    json!({ "text": claim_inbox(home, id, now) })
+    match claim_inbox(home, id, now) {
+        Some(c) => json!({ "text": c.text, "messages": c.messages }),
+        None => json!({ "text": null }),
+    }
 }
 
 pub(crate) fn run_inbox(home: &Path, rest: &[String], env_session: Option<&str>) -> Result<()> {
@@ -3102,7 +3116,8 @@ mod tests {
         let f = inbox_file(&home, sid).unwrap();
         std::fs::create_dir_all(f.parent().unwrap()).unwrap();
         std::fs::write(&f, line(1, "New task: sửa nút Giao (prio: P1)")).unwrap();
-        let msg = claim_inbox(&home, sid, t0).unwrap();
+        let Claim { text: msg, messages } = claim_inbox(&home, sid, t0).unwrap();
+        assert_eq!(messages, ["New task: sửa nút Giao (prio: P1)"], "one by one, unframed");
         assert!(msg.starts_with("8 Sync HQ: the owner sent you 1 message(s) from the HQ dashboard. Read"), "idle framing: {msg}");
         assert!(msg.ends_with("New task: sửa nút Giao (prio: P1)"), "{msg}");
         assert!(claim_inbox(&home, sid, t0).is_none(), "in flight: not served twice");
@@ -3123,7 +3138,7 @@ mod tests {
         assert!(claim_inbox(&home, sid, t0).is_some());
         std::fs::write(&f, line(5, "việc năm")).unwrap();
         assert!(claim_inbox(&home, sid, t0 + Duration::from_secs(30)).is_none(), "fresh claim");
-        let msg = claim_inbox(&home, sid, t0 + CLAIM_STALE + Duration::from_secs(5)).unwrap();
+        let msg = claim_inbox(&home, sid, t0 + CLAIM_STALE + Duration::from_secs(5)).unwrap().text;
         assert!(msg.contains("2 message(s)") && msg.contains("việc bốn") && msg.contains("việc năm"), "{msg}");
         assert!(ack_inbox(&home, sid));
         // A task queued long ago (the session was busy) is claimed fresh: not re-served at once.
@@ -3140,7 +3155,7 @@ mod tests {
         let file = std::fs::OpenOptions::new().append(true).open(&orphan).unwrap();
         file.set_modified(t0 - Duration::from_secs(3600)).unwrap();
         drop(file);
-        let msg = claim_inbox(&home, sid, t0 + CLAIM_STALE * 2).unwrap();
+        let msg = claim_inbox(&home, sid, t0 + CLAIM_STALE * 2).unwrap().text;
         assert!(msg.contains("2 message(s)") && msg.contains("việc cũ") && msg.contains("việc mồ côi"), "{msg}");
         assert!(!orphan.exists());
         assert!(ack_inbox(&home, sid));
@@ -3193,6 +3208,7 @@ mod tests {
         std::fs::write(&f, format!("{}\n", json!({"ts":1,"text":"x"}))).unwrap();
         let v = inbox_cmd(&home, &a(&["--json"]), Some(sid), now);
         assert!(v["text"].as_str().unwrap().ends_with("\nx"), "env fallback: {v}");
+        assert_eq!(v["messages"], json!(["x"]), "each message unframed, for the omp extension");
         assert_eq!(inbox_cmd(&home, &a(&["--session", sid, "--release", "--json"]), None, now), json!({ "ok": true }));
         assert!(inbox_cmd(&home, &a(&["--session", sid, "--json"]), None, now)["text"].is_string());
         assert_eq!(inbox_cmd(&home, &a(&["--session", sid, "--ack"]), None, now), json!({ "ok": true }));

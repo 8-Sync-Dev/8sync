@@ -106,7 +106,7 @@ export function FloatShell({ token, cwd, open, onOpenChange }: { token: string; 
           <XIcon aria-hidden />
         </Button>
       </div>
-      <LiveTerminal key={`${url}#${gen}`} url={url} kind="shell" token={token} />
+      <LiveTerminal key={`${url}#${gen}`} url={url} kind="shell" token={token} cwd={cwd} />
     </section>
   );
 }

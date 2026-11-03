@@ -3,10 +3,11 @@
 import "@xterm/xterm/css/xterm.css";
 import type { Terminal } from "@xterm/xterm";
 import { useTheme } from "next-themes";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ImageIcon, SendIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { MentionTextarea } from "./mention-textarea";
+import { makeApi } from "./use-hq";
 import { lineBytes } from "@/lib/term-input";
 import { cn } from "@/lib/utils";
 import { TOUCH } from "./room-send";
@@ -132,12 +133,18 @@ function xtermCell(el: HTMLElement, cols: number, rows: number): Cell | null {
   return r && r.width > 0 && r.height > 0 ? { w: r.width / cols, h: r.height / rows } : null;
 }
 
-/** Columns and rows of `cell` that fit inside `el`'s padding: none of the last rows hides under the box's bottom edge. */
+/**
+ * Columns and rows of `cell` that fit inside `el`'s padding: none of the last rows hides under the
+ * box's bottom edge. A box being removed (sheet closing) has no computed padding: never NaN, which
+ * xterm's `resize` throws on.
+ */
 function fit(el: HTMLElement, cell: Cell): { cols: number; rows: number } {
   const cs = getComputedStyle(el);
-  const w = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-  const h = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  return { cols: Math.max(20, Math.floor(w / cell.w)), rows: termRows(Math.floor(h / cell.h), null, false) };
+  const px = (v: string) => parseFloat(v) || 0;
+  const whole = (n: number) => (Number.isFinite(n) ? Math.floor(n) : 0);
+  const w = el.clientWidth - px(cs.paddingLeft) - px(cs.paddingRight);
+  const h = el.clientHeight - px(cs.paddingTop) - px(cs.paddingBottom);
+  return { cols: Math.max(20, whole(w / cell.w)), rows: termRows(whole(h / cell.h), null, false) };
 }
 
 /** Decode SSE `data:` lines of `event: out` (base64 bytes) as they arrive. */
@@ -184,7 +191,8 @@ const withQuery = (url: string, q: string) => `${url}${url.includes("?") ? "&" :
  * detaches. The input line shows at every width: typing into xterm works too, but the line (Enter/Gửi,
  * history, key bar) is the same everywhere, so a pane does not change shape when the window is resized.
  */
-export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: string; kind?: "room" | "shell"; token: string; onEnded?: () => void }) {
+export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }: { url: string; kind?: "room" | "shell"; token: string; /** Folder of "@path" picks; null = no "@" picker. */ cwd?: string | null; onEnded?: () => void }) {
+  const api = useMemo(() => makeApi(token), [token]);
   const host = useRef<HTMLDivElement>(null);
   const keysRef = useRef<((data: string) => void) | null>(null);
   const appKeys = useRef<() => boolean>(() => false);
@@ -336,22 +344,35 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
         if (data && !data.startsWith("\x1b")) void takeoverRef.current();
       });
       let last = size;
+      // MIN_ROWS can be taller than a phone's box: the box scrolls, and stays at its bottom (the
+      // prompt and status line) unless the owner scrolled up to read.
+      const atBottom = () => el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+      const toBottom = () => {
+        el.scrollTop = el.scrollHeight;
+      };
       ro = new ResizeObserver(() => {
+        // A hidden box (other tab, sheet closing) is 0×0: shrinking the room to 20 columns would
+        // rewrap it for every other viewer.
+        if (!el.isConnected || !el.clientWidth || !el.clientHeight) return;
         const f = fit(el, xtermCell(el, t.cols, t.rows) ?? cell);
         // A phone keyboard makes the box short: keep the rows (the box scrolls) so a question's options stay whole.
         const s = { cols: f.cols, rows: termRows(f.rows, last.rows, keyboardOpen(window.visualViewport?.height, window.innerHeight)) };
-        if (s.cols === last.cols && s.rows === last.rows) return;
+        if (s.cols === last.cols && s.rows === last.rows) return toBottom();
         last = s;
         sizeRef.current = s;
         t.resize(s.cols, s.rows);
+        toBottom();
         void post(s);
       });
       ro.observe(el);
       const write = (b64: string, replay = false) => {
         const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        if (!replay) return t.write(bytes);
-        muted++;
-        t.write(bytes, () => muted--);
+        const stick = replay || atBottom();
+        if (replay) muted++;
+        t.write(bytes, () => {
+          if (replay) muted--;
+          if (stick) toBottom();
+        });
       };
       const end = (elsewhere = false, gone = false) => {
         readOnly = elsewhere;
@@ -499,7 +520,7 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
       )}
       <div
         ref={host}
-        className="min-h-[200px] flex-1 overflow-hidden rounded-lg border bg-white p-2 transition-[border-color,box-shadow] duration-150 focus-within:border-primary/60 focus-within:shadow-glow motion-reduce:transition-none dark:bg-[#09090b]"
+        className="min-h-[200px] flex-1 overflow-y-auto overflow-x-hidden overscroll-contain rounded-lg border bg-white p-2 transition-[border-color,box-shadow] duration-150 focus-within:border-primary/60 focus-within:shadow-glow motion-reduce:transition-none dark:bg-[#09090b]"
         aria-label={text.label}
       />
       {/* A phone keyboard (IME, Vietnamese, autocorrect) types reliably into a real textarea, not into xterm's hidden one. */}
@@ -513,9 +534,13 @@ export function LiveTerminal({ url, kind = "room", token, onEnded }: { url: stri
           setLine("");
         }}
       >
-        <Textarea
+        {/* The same input as the room composer: "/" lists omp/Claude commands, "@" lists files of `cwd`. */}
+        <MentionTextarea
           value={line}
-          onChange={(e) => setLine(e.target.value)}
+          onValueChange={setLine}
+          base={cwd}
+          api={api}
+          commands={kind === "room"}
           onKeyDown={(e) => {
             // Enter sends, Shift+Enter breaks the line; never while an IME (Vietnamese) is composing.
             if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing || e.keyCode === 229) return;
