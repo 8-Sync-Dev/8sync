@@ -3,7 +3,7 @@ import { cookieValue, PUB_COOKIE, readPublic, sideOf, viaTunnel } from "@/lib/se
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { existingDir } from "@/lib/server/omp-sessions";
 import { clampSize, closeTerm, input, openShell, shellKey } from "@/lib/server/term";
-import { termResponse } from "@/lib/server/term-http";
+import { polledEnded, termResponse } from "@/lib/server/term-http";
 
 export const runtime = "nodejs";
 
@@ -35,7 +35,8 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const size = clampSize(Number(url.searchParams.get("cols")), Number(url.searchParams.get("rows")));
   const cwd = folder(req);
-  return termResponse(req, shellKey(cwd), openShell(cwd, size));
+  const gone = polledEnded(req, shellKey(cwd));
+  return termResponse(req, shellKey(cwd), gone ?? openShell(cwd, size));
 }
 
 /** `{data}` keys typed in the browser and/or `{cols, rows}`, for the shell of `?cwd=`. */

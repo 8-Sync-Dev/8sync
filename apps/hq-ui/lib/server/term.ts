@@ -15,6 +15,8 @@ export const TERM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 export const isTermId = (id: string) => TERM_ID.test(id) || isOmpRoomId(id);
 /** Exit code of `8sync ccc term <omp-room-id>` when the session is open in another terminal on the PC. */
 export const ELSEWHERE_EXIT = 3;
+/** Exit code of `8sync ccc term <omp-room-id>` when the room's host closed: omp itself ended on the PC (exited or crashed). */
+export const HOST_GONE_EXIT = 4;
 /**
  * Bridge key of the owner's shell in `cwd` (never a session id): one shell per folder, so the shell
  * opened from a session is in that session's folder even while another folder's shell still runs.
@@ -32,13 +34,23 @@ type Spawn = (cmd: string, args: string[], opts: { cwd?: string; windowsHide: bo
  * `elsewhere`: an omp room's bridge ended because the session is open in another terminal (HQ offers the takeover).
  * `dead`: a room's bridge ended because `claude attach` found no job (owner 2026-10-22: a room kept showing
  * "Đang làm" and its terminal said "No job matching" with the input disabled) — the room is not running at all.
+ * `exited`: an omp room's bridge ended because omp itself ended on the PC (owner 2026-11-03: the terminal crashed
+ * on the PC and the link kept showing it live — a poll reopened a new bridge without a word).
+ * `waiters`: long polls parked until output arrives or the bridge ends.
+ * `closed`: HQ ended the bridge itself (closeTerm), so its end is not reported to a polling link.
  */
-export type Term = { proc: ChildProcessWithoutNullStreams; gen: number; chunks: Buffer[]; bytes: number; total: number; viewers: Set<(b: Buffer | null, answered?: boolean) => void>; idle?: ReturnType<typeof setTimeout>; idleMs: number; typed: boolean; ended: boolean; elsewhere: boolean; dead: boolean };
+export type Term = { proc: ChildProcessWithoutNullStreams; gen: number; chunks: Buffer[]; bytes: number; total: number; viewers: Set<(b: Buffer | null, answered?: boolean) => void>; waiters: Set<() => void>; idle?: ReturnType<typeof setTimeout>; idleMs: number; typed: boolean; ended: boolean; elsewhere: boolean; dead: boolean; exited: boolean; closed: boolean };
 
 /** What `claude attach` prints into the pty when the session's job is gone (anywhere in a chunk). */
 const DEAD_MARK = "No job matching";
 
 const terms = new Map<string, Term>();
+/**
+ * Bridges that ended, kept a while by key: a poll still on that bridge's `gen` is told it ended (and why)
+ * instead of the route opening a fresh bridge under it, which hid every crash from the remote link.
+ */
+const endedTerms = new Map<string, Term>();
+export const ENDED_KEEP_MS = 5 * 60_000;
 let gens = 0;
 
 /** `takeover` (omp rooms only): end the other process that has the session open, then open it here. */
@@ -59,7 +71,7 @@ function start(key: string, args: string[], cwd: string | null, idleMs: number, 
   const cur = terms.get(key);
   if (cur && !cur.ended) return cur;
   const proc = spawn(binFor("8sync"), args, { cwd: cwd ?? undefined, windowsHide: true, env: childEnv() });
-  const t: Term = { proc, gen: ++gens, chunks: [], bytes: 0, total: 0, viewers: new Set(), idleMs, typed: false, ended: false, elsewhere: false, dead: false };
+  const t: Term = { proc, gen: ++gens, chunks: [], bytes: 0, total: 0, viewers: new Set(), waiters: new Set(), idleMs, typed: false, ended: false, elsewhere: false, dead: false, exited: false, closed: false };
   terms.set(key, t);
   proc.stdout.on("data", (b: Buffer) => {
     // A room (never the owner's shell) whose attach found no job: the room is gone, not just detached.
@@ -69,16 +81,27 @@ function start(key: string, args: string[], cwd: string | null, idleMs: number, 
     t.total += b.length;
     while (t.bytes > KEEP_BYTES && t.chunks.length > 1) t.bytes -= t.chunks.shift()!.length;
     for (const v of t.viewers) v(b);
+    for (const w of [...t.waiters]) w();
   });
   const end = () => {
     if (t.ended) return;
     t.ended = true;
     clearTimeout(t.idle);
     if (terms.get(key) === t) terms.delete(key);
+    // A bridge HQ closed itself (idle, a pane closed on the PC) is no news for a link still polling it:
+    // that poll quietly gets a fresh bridge. Only a bridge that ended on its own is reported.
+    if (!t.closed) {
+      endedTerms.set(key, t);
+      setTimeout(() => {
+        if (endedTerms.get(key) === t) endedTerms.delete(key);
+      }, ENDED_KEEP_MS).unref?.();
+    }
     for (const v of t.viewers) v(null);
+    for (const w of [...t.waiters]) w();
   };
   proc.on("exit", (code: number | null) => {
     t.elsewhere = code === ELSEWHERE_EXIT && isOmpRoomId(key);
+    t.exited = code === HOST_GONE_EXIT && isOmpRoomId(key);
     end();
   });
   proc.on("error", end);
@@ -141,8 +164,8 @@ export function watch(id: string, t: Term, fn: (b: Buffer | null, answered?: boo
   };
 }
 
-/** One poll: bridge `gen`, byte `cursor` to send next, `out` after the asked cursor (all kept output on `reset`); `answered` as in [watch], for a `reset` replay; `elsewhere` and `dead` as in [Term]. */
-export type TermPoll = { gen: number; cursor: number; out: Buffer; reset: boolean; answered: boolean; ended: boolean; elsewhere: boolean; dead: boolean };
+/** One poll: bridge `gen`, byte `cursor` to send next, `out` after the asked cursor (all kept output on `reset`); `answered` as in [watch], for a `reset` replay; `elsewhere`, `dead` and `exited` as in [Term]. */
+export type TermPoll = { gen: number; cursor: number; out: Buffer; reset: boolean; answered: boolean; ended: boolean; elsewhere: boolean; dead: boolean; exited: boolean };
 
 /**
  * The remote link's view (a Cloudflare quick tunnel holds an event stream back, so the page polls):
@@ -158,7 +181,33 @@ export function poll(id: string, t: Term, gen: number, since: number): TermPoll 
   const first = t.total - t.bytes;
   const reset = gen !== t.gen || !Number.isInteger(since) || since < first || since > t.total;
   const all = Buffer.concat(t.chunks);
-  return { gen: t.gen, cursor: t.total, out: reset ? all : all.subarray(since - first), reset, answered: reset && t.typed, ended: t.ended, elsewhere: t.elsewhere, dead: t.dead };
+  return { gen: t.gen, cursor: t.total, out: reset ? all : all.subarray(since - first), reset, answered: reset && t.typed, ended: t.ended, elsewhere: t.elsewhere, dead: t.dead, exited: t.exited };
+}
+
+/** The bridge of `key` that ended while a poll was on its `gen` (kept ENDED_KEEP_MS): that poll must hear it ended. */
+export function endedTerm(key: string, gen: number): Term | undefined {
+  const t = endedTerms.get(key);
+  return t && t.gen === gen ? t : undefined;
+}
+
+/**
+ * Long poll: resolves once the bridge has bytes after `since`, ends, `ms` pass or `signal` aborts. A
+ * poll that waits here answers the moment output arrives, instead of the page asking again every
+ * 150–600 ms through a tunnel whose round trip alone is 0.2–1.6 s.
+ */
+export function waitOutput(t: Term, since: number, ms: number, signal?: AbortSignal): Promise<void> {
+  if (t.ended || t.total > since || ms <= 0 || signal?.aborted) return Promise.resolve();
+  return new Promise((done) => {
+    const finish = () => {
+      clearTimeout(timer);
+      t.waiters.delete(finish);
+      signal?.removeEventListener("abort", finish);
+      done();
+    };
+    const timer = setTimeout(finish, ms);
+    t.waiters.add(finish);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
 }
 
 /** Keys typed in the browser (xterm's onData), or a new size. */
@@ -182,6 +231,7 @@ export function closeTerm(id: string) {
   if (!t) return;
   clearTimeout(t.idle);
   terms.delete(id);
+  t.closed = true;
   try {
     t.proc.stdin.end();
   } catch {

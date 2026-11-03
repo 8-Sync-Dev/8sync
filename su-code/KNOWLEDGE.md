@@ -711,3 +711,9 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - validated: ego lite mở từ Claude Desktop (MSIX) ghi profile vào `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Local\Citro Labs\ego lite\User Data`; mở từ terminal thì dùng `%LOCALAPPDATA%\Citro Labs\...` gần trống → onboarding. Chạy `ego.exe --user-data-dir=<container> --profile-directory="Profile N" --startup-ego-browser-service`.
 - failure: gửi cùng một đoạn chữ dài cho ~11 shop lạ liên tiếp → Zalo hiện "Không thể nhận tin nhắn từ bạn" ngay sau tin chữ (ảnh vẫn "Đã nhận"). Sau khi shop trả lời, tin ngắn đi qua. Không burst; giãn, đổi câu mở, ảnh trước.
 - validated: tên Zalo trong kết quả tìm chứa NBSP (`\u00a0`) → so header phải chuẩn hoá. Env var không vào `ego-browser nodejs`; space đã `finish` thành của user (label p1/p2 mất).
+
+## 2026-11-03 — HQ link: thứ tự phím, crash omp, long-poll (v0.120.6)
+- failure: POST phím song song qua Cloudflare quick tunnel tới HQ lộn thứ tự ("the quick brown fox" → "t eqk rnbhowo…"). Input terminal phải tuần tự (một POST bay, phím chờ gom lại).
+- failure: route GET term mở bridge mới cho MỌI poll khi bridge cũ đã kết thúc → crash omp trên máy bị che (bridge mới khởi động host + omp mới, link không hề biết). Giữ bridge đã kết thúc theo key+gen; chỉ poll `gen=0` (Nối lại) mới mở mới. Bridge HQ tự `closeTerm` thì không giữ (không báo nhầm).
+- validated: bridge `ccc term <omp-room>` thoát 0 cả khi omp chết lẫn khi HQ rời → không phân biệt được; nay mã 4 (`HOST_GONE`) khi host đóng mà HQ chưa rời (cờ `leaving` set trước `shutdown`).
+- validated: UAT link bằng Chromium headless: login link `?k=` chỉ sống 10 phút; cookie `hq_pub` = `<issued>.<hmac-sha256(key, issued)>` tự ký được để test mà không in key.

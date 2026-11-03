@@ -53,3 +53,37 @@ export function termRows(fitRows: number, prevRows: number | null, keyboardOpen:
 }
 /** A phone keyboard is open when the visual viewport is much shorter than the layout viewport. */
 export const keyboardOpen = (visual: number | null | undefined, layout: number): boolean => visual != null && layout > 0 && visual < layout * 0.75;
+
+/** Longest `{data}` the terminal POST takes (MAX_INPUT in lib/server/term.ts). */
+export const MAX_KEYS = 4096;
+/**
+ * Keys to the terminal in the order they were typed (owner 2026-11-03: through the link, typing "the
+ * quick brown fox" reached omp as "t eqk rnbhowo…"): one POST at a time, since parallel POSTs through a
+ * tunnel land in any order, and the keys typed while one is in flight go together in the next. `send`
+ * resolves false when the keys did not reach the terminal: the rest is dropped and `onFail` told once.
+ */
+export function keyQueue(send: (data: string) => Promise<boolean>, onFail: () => void): (data: string) => void {
+  let pending = "";
+  let busy = false;
+  const pump = async () => {
+    busy = true;
+    while (pending) {
+      let cut = Math.min(pending.length, MAX_KEYS);
+      // Never split a surrogate pair (an emoji) across two POSTs.
+      const c = pending.charCodeAt(cut - 1);
+      if (cut < pending.length && c >= 0xd800 && c <= 0xdbff) cut--;
+      const data = pending.slice(0, cut);
+      pending = pending.slice(cut);
+      if (!(await send(data))) {
+        pending = "";
+        onFail();
+      }
+    }
+    busy = false;
+  };
+  return (data) => {
+    if (!data) return;
+    pending += data;
+    if (!busy) void pump();
+  };
+}

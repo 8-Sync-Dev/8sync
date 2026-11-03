@@ -7,7 +7,7 @@ import { mergedSessions } from "@/lib/server/proc";
 import { pendingNew } from "@/lib/server/omp-sessions";
 import { clampSize, closeTerm, input, isTermId, openOmpNew, openTerm, takeoverTerm, watch, type Term } from "@/lib/server/term";
 import { markEnded } from "@/lib/server/room-end";
-import { termResponse } from "@/lib/server/term-http";
+import { polledEnded, termResponse } from "@/lib/server/term-http";
 import { FILES_PER_TASK, isUploadId, placeUploads } from "@/lib/server/uploads";
 
 export const runtime = "nodejs";
@@ -53,6 +53,9 @@ export async function GET(req: Request, ctx: RouteContext<"/api/sessions/[name]/
   if ("res" in o) return o.res;
   const { name } = await ctx.params;
   if (!isTermId(name)) return bad("terminal is opened by a Claude Code session id or an omp room id", 422);
+  // A poll on a bridge that ended (omp crashed or exited on the PC): say so, never reopen under it.
+  const gone = polledEnded(req, name);
+  if (gone) return termResponse(req, name, gone);
   const s = await room(o.db, name);
   if (!s) return bad("phòng này không chạy nền (hoặc đã dừng)", 404);
   const gate = termGate(s);

@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.120.6] — 2026-11-03
+
+### Fixed
+- HQ qua link `--public`: gõ nhanh vào terminal không còn bị đảo chữ. Trước đây mỗi phím là một POST riêng chạy song song qua tunnel nên tới máy lộn thứ tự (gõ "the quick brown fox jumps 0123456789" thì omp nhận "t eqk rnbhowo ix upucf2j3…", đo trên link thật). Giờ phím đi đúng thứ tự, mỗi lần một POST, phím gõ trong lúc chờ gom vào POST sau (`keyQueue`, ≤ 4096 ký tự, không cắt đôi emoji). Phím HQ từ chối (terminal đã đóng) báo "Phím vừa gõ chưa tới máy" thay vì mất im lặng.
+- HQ qua link: omp chết hoặc thoát trên máy thì người dùng link giờ biết. Trước đây poll kế tiếp lặng lẽ mở bridge mới và một omp mới (đo: kill omp của phiên thử, trang link vẫn "Đang nối", máy đã chạy omp khác). Bridge `ccc term <omp-room>` giờ thoát mã 4 khi host đóng (omp kết thúc), HQ giữ bridge đã kết thúc 5 phút để poll cùng `gen` nhận `ended`/`exited`; trang hiện "omp trên máy đã thoát hoặc bị crash… Bấm Nối lại" (cả SSE lẫn poll). Bridge HQ tự đóng (hết hạn, đóng khung trên máy) không bị báo nhầm: poll của link vẫn lặng lẽ mở lại như cũ.
+- HQ qua link: terminal gần realtime hơn. Poll giờ là long-poll (`&wait=`, tối đa 20 s): HQ giữ yêu cầu tới khi có output rồi trả ngay, thay cho hỏi lại mỗi 150–600 ms cộng RTT tunnel 0,2–1,6 s.
+
 ## [0.120.5] — 2026-11-03
 
 ### Added
