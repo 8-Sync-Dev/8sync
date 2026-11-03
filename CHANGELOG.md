@@ -10,6 +10,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Added
 - **HQ `--public`: đăng nhập bằng GitHub.** Trang "Chưa đăng nhập" của link public có nút **Đăng nhập bằng GitHub** (device flow: hiện mã, nhập ở github.com/login/device, HQ tự vào khi GitHub xác nhận; không cần callback URL nên host trycloudflare đổi vẫn chạy, không có client secret). Chỉ login trong `~/.config/8sync/hq/github.json` `{"client_id": "…", "allow": ["8syncdev", "Quin19FD"]}` vào được (không phân biệt hoa thường), nhận cùng cookie 12 giờ như link `/api/login?k=`; tài khoản khác bị từ chối và ghi log. Token GitHub chỉ dùng một lần để đọc `/user` (quyền public) rồi bỏ. Không có file = tắt, chỉ còn link có key. Tối đa 20 lượt chờ cùng lúc; `POST /api/login/github` đòi đúng Origin của host public. Lưu ý: mọi login được phép = quyền như owner trong HQ (phòng, terminal).
 
+### Fixed
+- HQ/`ls`: tìm transcript Claude không còn bỏ sót file mới tạo ngay sau lần dựng index. Trên Windows thời gian file nhảy theo nhịp ~15,6 ms, nên mtime của folder có thể không đổi; giờ index có folder mới đổi (< 2 s) sẽ được dựng lại ở lần check sau thay vì tin stamp. Cũng sửa test Windows `claude_index_finds_transcripts_and_sees_new_and_removed_ones` hay fail.
+
 ## [0.120.0] — 2026-11-03
 
 ### Added

@@ -63,11 +63,16 @@ struct ClaudeIndex {
     base: std::path::PathBuf,
     checked: std::time::Instant,
     stamp: Vec<(std::ffi::OsString, u128)>,
+    /// Every mtime in `stamp` was older than [`MTIME_SLACK`] when it was taken. A newer one may
+    /// not move again for the next change (file times tick at ~15.6 ms on Windows), so an
+    /// unsettled index is rebuilt at the next check instead of trusted.
+    settled: bool,
     map: std::collections::HashMap<String, std::path::PathBuf>,
 }
 
 static CLAUDE_INDEX: std::sync::Mutex<Option<ClaudeIndex>> = std::sync::Mutex::new(None);
 const INDEX_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
+const MTIME_SLACK: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn mtime_ns(m: &std::fs::Metadata) -> u128 {
     m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos())
@@ -93,7 +98,7 @@ fn claude_transcript_cached(home: &std::path::Path, id: &str) -> Option<std::pat
     if !g.as_ref().is_some_and(|ix| ix.base == base && ix.checked.elapsed() < INDEX_RECHECK) {
         let stamp = index_stamp(&base);
         match g.as_mut() {
-            Some(ix) if ix.base == base && ix.stamp == stamp => ix.checked = std::time::Instant::now(),
+            Some(ix) if ix.settled && ix.base == base && ix.stamp == stamp => ix.checked = std::time::Instant::now(),
             _ => {
                 let mut map = std::collections::HashMap::new();
                 for (dir, _) in stamp.iter().skip(1) {
@@ -105,7 +110,9 @@ fn claude_transcript_cached(home: &std::path::Path, id: &str) -> Option<std::pat
                         }
                     }
                 }
-                *g = Some(ClaudeIndex { base, checked: std::time::Instant::now(), stamp, map });
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+                let settled = stamp.iter().all(|(_, m)| now.saturating_sub(*m) > MTIME_SLACK.as_nanos());
+                *g = Some(ClaudeIndex { base, checked: std::time::Instant::now(), stamp, settled, map });
             }
         }
     }
