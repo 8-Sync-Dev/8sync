@@ -87,6 +87,18 @@ export function nextStatuses(s: ContentStatus): ContentStatus[] {
   return s === "published" ? [] : next ? [next, "rejected"] : ["rejected"];
 }
 
+/**
+ * Why a 1-tap step would only meet the DB trigger's refusal (0062: approved needs an approved
+ * source and a check time, published also needs the news and Facebook links). Null = the step can go.
+ */
+export function stepHint(it: Pick<ContentItem, "source_approved_at" | "checked_at" | "news_url" | "fb_post_url">, s: ContentStatus): string | null {
+  if (s !== "approved" && s !== "published") return null;
+  if (it.source_approved_at == null) return "Duyệt nguồn trước";
+  if (it.checked_at == null) return "Mục chưa ghi giờ check (checked_at trống)";
+  if (s === "published" && (!it.news_url || !it.fb_post_url)) return "Điền link tin news và bài FB trước";
+  return null;
+}
+
 /** The red flag on a row: a post is on Facebook but the item misses what the gate asks of it. Null = fine. */
 export function contentWarning(it: Pick<ContentItem, "fb_post_url" | "news_url" | "source_approved_at" | "source_url">): string | null {
   if (!it.fb_post_url) return null;

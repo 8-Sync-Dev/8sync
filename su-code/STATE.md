@@ -9,13 +9,15 @@ HQ tab "Nội dung" nâng cấp (v0.122.0): lịch Ngày/Tuần/Tháng/Năm ki�
 - [x] UI: `content-calendar.tsx`, `content-sheet.tsx`, `content-bits.tsx`, `content-view.tsx`
 - [x] vitest content (0063, AI gate, media route, lịch), tsc, eslint, `next build`
 - [x] UAT sandbox (bản sao DB): mở link ngày, chip → khung, Duyệt có tick AI, trigger chặn hiện đúng câu, sửa caption/giờ, giao việc + reload giữ phiên, mobile 390 px
-- [ ] PR → reviewer → merge → tag v0.122.0 → `8sync up` → UAT HQ :8740 + link public
+- [x] PR #279 → reviewer → merge → tag v0.122.0 → `8sync up`
+- [ ] v0.122.1 (branch `fix/hq-content-gate`, PR #280): tick AI ở mọi lần vào approved/published (giữ như v0.122.0, thêm test video thả vào sau khi duyệt + check → đăng thẳng); approved đổi sang nội dung AI → về checked; `stepHint` tắt nút trigger sẽ chặn. vitest 22/22 content, tsc, eslint, next build, UAT sandbox xong → merge → tag → `8sync up`
+- [ ] UAT HQ :8740 + link public trên DB thật
 
 ## Current
-Ship v0.122.0 từ worktree `tu-session-marketing-phong-core`, branch `feat/hq-content-calendar`.
+Ship v0.122.1 từ worktree `tu-session-marketing-phong-core`, branch `fix/hq-content-gate`.
 
 ## Next
-- Merge content-post-agency#95; xem PR ad-frames "MKT short không nhãn AI" (subagent AdFramesMktShort, repo content-post-agency).
+- content-post-agency#95 đã merge; PR #96 ad-frames "MKT short không nhãn AI" (subagent AdFramesMktShort, repo content-post-agency).
 - `aiLabel` của job ad-frames chưa nối vào `content_items`: nếu cần, lưu cờ lên mục để HQ chặn luôn.
 - Sửa gốc inbox phòng do Orca mở (xem KNOWLEDGE 2026-11-04).
 - `statusline::tests::chained_timeout_kills_group` flake Windows CI; đỏ lại thì `gh run rerun --failed`.
