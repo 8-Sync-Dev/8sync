@@ -282,8 +282,9 @@ describe("/api/content calendar fields (0063)", () => {
     expect((await res.json()).error).toMatch(/^Bài đã đăng không đổi sang nội dung rủi ro nhãn AI/);
   });
   it("a 1-tap step the trigger would refuse says why", () => {
-    const base = { source_approved_at: 1, news_url: "https://n", fb_post_url: "https://f" };
+    const base = { source_approved_at: 1, checked_at: 1, news_url: "https://n", fb_post_url: "https://f" };
     expect(stepHint({ ...base, source_approved_at: null }, "approved")).toBe("Duyệt nguồn trước");
+    expect(stepHint({ ...base, checked_at: null }, "approved")).toBe("Mục chưa ghi giờ check (checked_at trống)");
     expect(stepHint({ ...base, fb_post_url: null }, "approved")).toBeNull();
     expect(stepHint({ ...base, fb_post_url: null }, "published")).toBe("Điền link tin news và bài FB trước");
     expect(stepHint({ ...base, source_approved_at: null }, "rejected")).toBeNull();

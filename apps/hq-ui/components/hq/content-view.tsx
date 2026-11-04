@@ -407,7 +407,9 @@ function Items({
           {items.map((it) => {
             const warn = contentWarning(it);
             const ai = aiReason(it);
-            const note = nextStatuses(it.status).map((s) => stepHint(it, s)).find((h) => h != null);
+            // Approving or publishing an AI-marked item needs the sheet's confirmation tick.
+            const steps = nextStatuses(it.status).filter((s) => !(ai && (s === "approved" || s === "published")));
+            const note = steps.map((s) => stepHint(it, s)).find((h) => h != null);
             const err = errors[it.id];
             const who = assigneeShort(it);
             const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
@@ -443,9 +445,7 @@ function Items({
                 <td className="px-2 py-2">
                   <p className={cn("whitespace-nowrap", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</p>
                   <div className="mt-1 flex flex-col items-start gap-1">
-                    {nextStatuses(it.status)
-                      // Approving or publishing an AI-marked item needs the sheet's confirmation tick.
-                      .filter((s) => !(ai && (s === "approved" || s === "published")))
+                    {steps
                       .map((s) => {
                         const hint = stepHint(it, s);
                         return (
