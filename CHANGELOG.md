@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.2] — 2026-11-04
+
+### Fixed
+- HQ web terminal làm sập cả HQ: bridge `8sync ccc term` chết đúng lúc anh đang gõ → ghi vào stdin gãy (EPIPE) không có listener `error` → Node ném uncaught và server thoát (`hq-ui.log`: `node exited with exit code: 0xffffffff`, watchdog phải mở lại, link public đổi host). Giờ lỗi pipe chỉ đóng terminal đó (`lib/server/term.ts`), có test.
+- Terminal hiện "Đang nối" mà màn đen: trạng thái live bật ngay khi fetch OK / nhận ping mở đầu. Giờ chỉ live khi có byte màn hình (`out`/`replay`); stream im quá 40 s (HQ ping mỗi 15 s) = kết nối chết → tự chuyển sang poll thay vì treo màn cũ (`live-terminal.tsx`).
+- Tên phòng gây nhầm: composer, ô chọn phòng và toast giờ ghi `<phòng> · <dự án>` (vd `core · su-code`, `core · tohe`) thay vì chỉ `core`.
+- Gửi vào phòng đang chờ anh trả lời trong terminal không còn im lặng: hiện toast bảo trả lời trước (Mở terminal) rồi gửi lại.
+
 ## [0.122.1] — 2026-11-04
 
 ### Fixed

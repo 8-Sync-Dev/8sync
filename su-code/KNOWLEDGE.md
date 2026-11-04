@@ -737,3 +737,8 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - failure: tưởng trigger 0062 bắt "phải duyệt rồi mới đăng" nên bỏ tick AI ở bước đăng. Sai hai lần: (1) `content_items_gate_*` chỉ kiểm tra cột của `NEW` (nguồn đã duyệt, `checked_at`, link news/FB), không xem `OLD.status`, nên `checked → published` đi thẳng được; (2) `aiReason` đọc thư mục `media_path` lúc bấm, video có thể được thả vào SAU khi duyệt, mà không có cột ghi lại cái đã duyệt. Nên tick phải hỏi ở mọi lần vào approved/published, kể cả approved → published. Đọc body trigger và nguồn dữ liệu của cổng trước khi bỏ một lần hỏi.
 - validated: mục đã duyệt bị đổi định dạng/media thành rủi ro AI mà không tick → hạ về `checked` (không có cột dấu duyệt riêng, trạng thái chính là dấu) thay vì 409 cụt; body có `status` tường minh thì vẫn 409 để không âm thầm làm khác ý người gửi; bài đã đăng thì 409.
 - validated: nút 1 chạm mà trigger chắc chắn chặn thì tắt + nói lý do (`stepHint`), vì câu RAISE tiếng Anh của trigger không giúp người duyệt biết bấm gì tiếp.
+
+## 2026-11-04 — HQ terminal sập server + "live" giả (v0.122.2)
+- failure: `child.stdin.write` sau khi child chết phát `error` (EPIPE) trên stream; không có listener → uncaught → cả Next server chết. Mọi pipe của child spawn lâu dài cần `.on("error")`. validated: test `term.test.ts` "pipe breaks" đỏ trước, xanh sau.
+- validated: SSE "live" phải dựa trên byte nội dung, không phải ping/HTTP 200; thêm watchdog im lặng > 2 nhịp ping để rơi về poll.
+

@@ -4,13 +4,14 @@
 HQ tab "Nội dung" nâng cấp (v0.122.0): lịch Ngày/Tuần/Tháng/Năm kiểu Notion + "Danh sách", khung chi tiết theo ngày (`?day=&item=`), Duyệt 1 chạm qua trigger, sửa caption/giờ tại chỗ, giao việc cho phiên omp lưu vào DB, luật không nhãn AI.
 
 ## Checklist
+- [ ] v0.122.2 (branch `fix/hq-room-label-terminal`): terminal EPIPE crash, live chỉ khi có output + stall watchdog, nhãn phòng `core · dự án`, toast phòng đang chờ
 - [x] content-post-agency migration 0063 (`scheduled_at`, `assignee_session`, `assigned_at`, `assignee_base`), PR 8syncdev/content-post-agency#95, đã chạy trên DB thật (backup `%TEMP%\daily-dev.pre-0063.db`)
 - [x] Server: PATCH nhận giờ + phiên, route `GET /api/content/media`, cổng AI (`no_ai_confirmed`)
 - [x] UI: `content-calendar.tsx`, `content-sheet.tsx`, `content-bits.tsx`, `content-view.tsx`
 - [x] vitest content (0063, AI gate, media route, lịch), tsc, eslint, `next build`
 - [x] UAT sandbox (bản sao DB): mở link ngày, chip → khung, Duyệt có tick AI, trigger chặn hiện đúng câu, sửa caption/giờ, giao việc + reload giữ phiên, mobile 390 px
 - [x] PR #279 → reviewer → merge → tag v0.122.0 → `8sync up`
-- [ ] v0.122.1 (branch `fix/hq-content-gate`, PR #280): tick AI ở mọi lần vào approved/published (giữ như v0.122.0, thêm test video thả vào sau khi duyệt + check → đăng thẳng); approved đổi sang nội dung AI → về checked; `stepHint` tắt nút trigger sẽ chặn. vitest 22/22 content, tsc, eslint, next build, UAT sandbox xong → merge → tag → `8sync up`
+- [x] v0.122.1 (branch `fix/hq-content-gate`, PR #280): tick AI ở mọi lần vào approved/published (giữ như v0.122.0, thêm test video thả vào sau khi duyệt + check → đăng thẳng); approved đổi sang nội dung AI → về checked; `stepHint` tắt nút trigger sẽ chặn. vitest 22/22 content, tsc, eslint, next build, UAT sandbox xong → merge → tag → `8sync up`
 - [ ] UAT HQ :8740 + link public trên DB thật
 
 ## Current
