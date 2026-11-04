@@ -95,26 +95,6 @@ export function mediaSigValid(sig: string, item: number, index: number, name: st
   return safeEqual(sig, mediaSig(item, index, name, size, exp));
 }
 
-/**
- * One `Range: bytes=…` of a `size`-byte file as inclusive [start, end]. null = no usable range header
- * (absent, another unit, several ranges, or invalid like `5-3`): answer 200 with the whole file,
- * which RFC 9110 allows. "unsatisfiable" = a single byte range outside the file: 416.
- */
-export function byteRange(header: string | null, size: number): { start: number; end: number } | "unsatisfiable" | null {
-  const m = header ? /^bytes=(\d*)-(\d*)$/.exec(header.trim()) : null;
-  if (!m || (m[1] === "" && m[2] === "")) return null;
-  if (m[1] === "") {
-    const n = Number(m[2]);
-    if (n === 0 || size === 0) return "unsatisfiable";
-    return { start: Math.max(0, size - n), end: size - 1 };
-  }
-  const start = Number(m[1]);
-  if (m[2] !== "" && Number(m[2]) < start) return null;
-  if (start >= size) return "unsatisfiable";
-  const end = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1);
-  return { start, end };
-}
-
 // Byte patterns, case-insensitive where the spec spells them in mixed case.
 // IPTC digital source type (XMP, or a C2PA assertion): trainedAlgorithmicMedia,
 // compositeWithTrainedAlgorithmicMedia, algorithmicMedia all end in "algorithmicmedia".

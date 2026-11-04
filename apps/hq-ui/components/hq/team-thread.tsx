@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { shirtFor } from "@/lib/sprite/frames";
 import { buildTeamThread, type ThreadFilters, type ThreadItem, type ThreadRow } from "@/lib/team-thread";
 import { ago, shortName } from "./bits";
-import { MessageText } from "./attachments";
+import { Linkified, MessageText, ReplyMedia } from "./attachments";
 
 /** Tiny coloured initial, same shirt colour as the session's desk sprite. */
 function Avatar({ name }: { name: string | null }) {
@@ -46,7 +46,14 @@ function Row({ it, token, onOpenSession }: { it: ThreadItem; token: string; onOp
             <Times n={it.count} />
           </div>
           <MessageContent>
-            <MessageText text={it.text} token={token} className="whitespace-pre-wrap" />
+            {it.kind === "owner" ? (
+              <MessageText text={it.text} token={token} className="wrap-anywhere whitespace-pre-wrap" />
+            ) : (
+              <>
+                <Linkified text={it.text ?? ""} className="wrap-anywhere whitespace-pre-wrap" />
+                <ReplyMedia text={it.text} token={token} />
+              </>
+            )}
           </MessageContent>
         </Message>
       );

@@ -1,8 +1,9 @@
 "use client";
 
-import { BotIcon, CircleAlertIcon, MessageSquareIcon, ScrollTextIcon, UsersIcon, WrenchIcon, type LucideIcon } from "lucide-react";
+import { BotIcon, CircleAlertIcon, MessageSquareIcon, PaperclipIcon, ScrollTextIcon, UsersIcon, WrenchIcon, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { parseAttachments, type Attachment } from "@/lib/attachments";
 import { agoShort, agoVi } from "@/lib/now";
 import type { ActivityEvent } from "@/lib/server/activity";
 import { cn } from "@/lib/utils";
@@ -68,7 +69,7 @@ export function RoomLog({ sessionId, token, onFull, fill }: { sessionId: string;
         </h3>
         {data && <span className="text-xs text-muted-foreground tabular">{data.events.length} việc gần nhất</span>}
         {onFull && (
-          <button type="button" onClick={onFull} className="ml-auto rounded-sm text-xs font-medium text-brand-ink underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 dark:text-brand">
+          <button type="button" onClick={onFull} className="ml-auto inline-flex items-center rounded-sm text-xs font-medium text-brand-ink underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:min-h-10 dark:text-brand">
             Mở log đầy đủ
           </button>
         )}
@@ -131,8 +132,8 @@ export function LogLines({ events, now, fill }: { events: ActivityEvent[]; now: 
 const CLAMP_CHARS = 600;
 const CLAMP_LINES = 8;
 
-/** A reply or prompt in full, rendered as markdown; a long one opens clamped. */
-function LogProse({ text, className }: { text: string; className?: string }) {
+/** A reply or prompt in full, rendered as markdown; a long one opens clamped. `files`: a prompt's attachments, by name. */
+function LogProse({ text, files, className }: { text: string; files: Attachment[]; className?: string }) {
   const long = text.length > CLAMP_CHARS || text.split("\n").length > CLAMP_LINES;
   const [open, setOpen] = useState(false);
   const clamped = long && !open;
@@ -148,8 +149,24 @@ function LogProse({ text, className }: { text: string; className?: string }) {
       >
         <MessageResponse>{text}</MessageResponse>
       </div>
+      {files.length > 0 && (
+        // Names only: the chat below shows the files themselves; the full path stays in the hover title.
+        <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground" aria-label="File đính kèm">
+          {files.map((f) => (
+            <li key={f.id} className="inline-flex min-w-0 items-center gap-1" title={f.path}>
+              <PaperclipIcon aria-hidden className="size-3 shrink-0" />
+              <span className="max-w-56 truncate">{f.name}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {long && (
-        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="mt-1 text-xs text-primary hover:underline">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="mt-1 inline-flex items-center rounded-sm text-xs text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:min-h-10"
+        >
           {open ? "Thu gọn" : "Xem hết"}
         </button>
       )}
@@ -175,17 +192,20 @@ function LogLine({ ev, now }: { ev: ActivityEvent; now: number }) {
       {ev.status === "error" ? ", lỗi" : ev.status === "pending" ? ", đang chạy" : ""}:{" "}
     </span>
   );
-  if ((ev.kind === "text" || ev.kind === "prompt") && !ev.tool && !ev.error)
+  if ((ev.kind === "text" || ev.kind === "prompt") && !ev.tool && !ev.error) {
+    // A prompt sent with files carries their paths (lib/attachments.ts): markdown would eat the `\` before `.claude`.
+    const { body, files } = ev.kind === "prompt" ? parseAttachments(ev.text) : { body: ev.text, files: [] };
     return (
       <li className={cn("px-3 py-1.5", ev.kind === "prompt" && "bg-owner/60")}>
         <div className="flex items-start gap-2">
           {icon}
           {label}
-          <LogProse text={ev.text} className={ink} />
+          <LogProse text={body} files={files} className={ink} />
           {time}
         </div>
       </li>
     );
+  }
   return (
     <li className={cn("px-3 py-1.5", ev.kind === "prompt" && "bg-owner/60")}>
       {long ? (
