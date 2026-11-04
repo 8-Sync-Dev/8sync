@@ -225,18 +225,17 @@ export function updateContent(db: DatabaseSync, id: number, body: Record<string,
     set.status = body.status;
     Object.assign(set, statusStamps(item, body.status, now));
   }
-  // The AI tick is the human check on entering approved, and on entering published from anywhere
-  // but approved: the 0062 trigger checks fields, not the previous status, so checked → published is
-  // possible and must not skip the tick. approved → published was ticked already.
+  // The AI tick is asked on every entry into approved or published: `aiReason` reads the media
+  // folder as it is now, and a video can land there after approval (no column records what was
+  // approved, and HQ never alters the schema). The 0062 trigger checks fields, not the previous status.
   // An approved item edited into AI-risk content lost that check: without the tick it drops back to
   // checked (re-approve in the sheet). A published post cannot be quietly un-published: refused.
   const next = (set.status as ContentStatus | undefined) ?? item.status;
   const nextFormat = (set.format as ContentItem["format"] | undefined) ?? item.format;
   const nextMedia = "media_path" in set ? (set.media_path as string | null) : item.media_path;
-  const enters = next !== item.status;
   const changed = nextFormat !== item.format || nextMedia !== item.media_path;
   const after = { format: nextFormat, media_path: nextMedia };
-  if (enters && (next === "approved" || (next === "published" && item.status !== "approved"))) aiGate(after, next, body);
+  if (next !== item.status) aiGate(after, next, body);
   else if (changed && (next === "approved" || next === "published") && body.no_ai_confirmed !== true) {
     const why = aiReason({ format: nextFormat, media: mediaFiles(nextMedia) });
     if (why && item.status === "published") throw new ContentError(`Bài đã đăng không đổi sang nội dung rủi ro nhãn AI (${why}) được.`, 409);

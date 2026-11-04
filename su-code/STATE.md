@@ -10,7 +10,7 @@ HQ tab "Nội dung" nâng cấp (v0.122.0): lịch Ngày/Tuần/Tháng/Năm ki�
 - [x] vitest content (0063, AI gate, media route, lịch), tsc, eslint, `next build`
 - [x] UAT sandbox (bản sao DB): mở link ngày, chip → khung, Duyệt có tick AI, trigger chặn hiện đúng câu, sửa caption/giờ, giao việc + reload giữ phiên, mobile 390 px
 - [x] PR #279 → reviewer → merge → tag v0.122.0 → `8sync up`
-- [ ] v0.122.1 (branch `fix/hq-content-gate`): tick AI chỉ khi vào approved / vào published không từ approved; approved đổi sang nội dung AI → về checked; `stepHint` tắt nút trigger sẽ chặn. vitest 22/22 content, tsc, eslint, next build, UAT sandbox xong → PR → merge → tag → `8sync up`
+- [ ] v0.122.1 (branch `fix/hq-content-gate`, PR #280): tick AI ở mọi lần vào approved/published (giữ như v0.122.0, thêm test video thả vào sau khi duyệt + check → đăng thẳng); approved đổi sang nội dung AI → về checked; `stepHint` tắt nút trigger sẽ chặn. vitest 22/22 content, tsc, eslint, next build, UAT sandbox xong → merge → tag → `8sync up`
 - [ ] UAT HQ :8740 + link public trên DB thật
 
 ## Current

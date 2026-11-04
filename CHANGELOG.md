@@ -8,7 +8,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [0.122.1] — 2026-11-04
 
 ### Fixed
-- HQ Nội dung, tick "không dùng AI": chỉ hỏi khi vào **Đã duyệt**, và khi vào **Đã đăng** từ trạng thái khác "Đã duyệt" (trigger 0062 kiểm tra cột, không kiểm tra trạng thái trước, nên check → đăng thẳng vẫn phải tick). Duyệt rồi (đã tick) → "→ Đã đăng" không hỏi lại, nút này hiện lại trong Danh sách cho mục có rủi ro nhãn AI.
+- HQ Nội dung, tick "không dùng AI" vẫn hỏi ở MỌI lần vào **Đã duyệt** hoặc **Đã đăng** (kể cả từ Đã duyệt): `aiReason` đọc thư mục media lúc bấm, video có thể được thêm vào sau khi duyệt, và trigger 0062 không xem trạng thái trước nên check → đăng thẳng cũng bị chặn. Có test cho video thêm sau khi duyệt.
 - Mục **đã duyệt** đổi định dạng hoặc `media_path` sang nội dung rủi ro nhãn AI mà không tick: tự về **Đã check** để duyệt lại trong khung chi tiết (trước đây là 409 cụt). Gửi kèm `status: "approved"` thì vẫn 409; mục **đã đăng** thì 409 "Bài đã đăng không đổi sang nội dung rủi ro nhãn AI".
 - Nút bước kế tiếp mà trigger chắc chắn chặn thì tắt và nói lý do ngay ("Duyệt nguồn trước", "Điền link tin news và bài FB trước"), thay vì bấm rồi mới nhận câu lỗi tiếng Anh của trigger (`stepHint` trong `lib/content.ts`, dùng cho cả Danh sách và khung).
 

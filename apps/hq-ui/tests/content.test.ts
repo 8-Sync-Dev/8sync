@@ -254,7 +254,7 @@ describe("/api/content calendar fields (0063)", () => {
     expect((await PATCH(call("PATCH", r, { status: "approved", no_ai_confirmed: true }))).status).toBe(200);
     expect((await (await PATCH(call("PATCH", r, { caption: "mới" }))).json()).item.status).toBe("approved");
   });
-  it("publishing an AI item needs the tick unless it comes from approved; a published post refuses the swap", async () => {
+  it("publishing an AI item needs the tick from any status, including a video added after approval; a published post refuses the swap", async () => {
     configure(makeDb("ai-pub.db", MIGRATION_0062 + MIGRATION_0063));
     const links = { news_url: "https://n", fb_post_url: "https://f" };
     // The trigger checks fields, not the previous status: checked → published must not skip the tick.
@@ -264,10 +264,15 @@ describe("/api/content calendar fields (0063)", () => {
     expect((await res.json()).error).toMatch(/^Mục có rủi ro nhãn AI/);
     expect((await POST(call("POST", "", { format: "ai_video", title: "C", status: "published" }))).status).toBe(409);
 
-    // approved (ticked) → published goes without a second tick.
-    const r = await readyToApprove({ format: "course_video", ...links });
-    expect((await PATCH(call("PATCH", r, { status: "approved", no_ai_confirmed: true }))).status).toBe(200);
-    expect((await PATCH(call("PATCH", r, { status: "published" }))).status).toBe(200);
+    // A text item approved with a clean media folder; a video lands there afterwards.
+    const dir = path.join(home, "late-media");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "a.txt"), "caption");
+    const r = await readyToApprove({ format: "text", media_path: dir, ...links });
+    expect((await PATCH(call("PATCH", r, { status: "approved" }))).status).toBe(200);
+    fs.writeFileSync(path.join(dir, "r.mp4"), Buffer.alloc(64));
+    expect((await PATCH(call("PATCH", r, { status: "published" }))).status).toBe(409);
+    expect((await PATCH(call("PATCH", r, { status: "published", no_ai_confirmed: true }))).status).toBe(200);
 
     const t = await readyToApprove({ format: "text", ...links });
     expect((await PATCH(call("PATCH", t, { status: "approved" }))).status).toBe(200);

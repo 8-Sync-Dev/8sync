@@ -444,8 +444,8 @@ function Items({
                   <p className={cn("whitespace-nowrap", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</p>
                   <div className="mt-1 flex flex-col items-start gap-1">
                     {nextStatuses(it.status)
-                      // Approving an AI-marked item needs the sheet's confirmation tick.
-                      .filter((s) => !(ai && s === "approved"))
+                      // Approving or publishing an AI-marked item needs the sheet's confirmation tick.
+                      .filter((s) => !(ai && (s === "approved" || s === "published")))
                       .map((s) => {
                         const hint = stepHint(it, s);
                         return (
