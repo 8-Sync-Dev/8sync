@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
-import { aiReason, CONTENT_TEXT_FIELDS, isFormat, isStatus, NO_SCHEDULE, type ContentItem, type ContentList, type ContentRow, type ContentStatus } from "../content";
+import { CONTENT_TEXT_FIELDS, isFormat, isStatus, NO_SCHEDULE, type ContentItem, type ContentList, type ContentRow, type ContentStatus } from "../content";
 import { mediaFiles, publicMedia } from "./content-media";
 import { isInboxId } from "./inbox";
 import { configDir } from "./paths";
@@ -37,6 +37,18 @@ export function contentDbPath(env: Record<string, string | undefined> = process.
   }
   if (!path.isAbsolute(raw)) return { error: `đường dẫn DB nội dung phải tuyệt đối: ${raw}` };
   return { path: raw };
+}
+
+/** The git checkout holding the DB (content-post-agency), where the owner's `cpa-live` omp session runs; null when none. */
+export function contentRepo(env: Record<string, string | undefined> = process.env): string | null {
+  const p = contentDbPath(env);
+  if (!p || "error" in p) return null;
+  for (let dir = path.dirname(p.path); ; ) {
+    if (fs.existsSync(path.join(dir, ".git"))) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
 }
 
 export const NO_REGISTRY = "Chưa có sổ nội dung, mở app content-ai một lần để chạy migration.";
@@ -185,20 +197,12 @@ function statusStamps(item: Pick<ContentItem, "checked_at" | "published_at"> | n
   return s;
 }
 
-/** Owner rule 2026-11-04: an item with an AI mark is approved only with the reviewer's tick. */
-function aiGate(item: Pick<ContentItem, "format" | "media_path">, status: ContentStatus, body: Record<string, unknown>): void {
-  if (status !== "approved" && status !== "published") return;
-  const why = aiReason({ format: item.format, media: mediaFiles(item.media_path) });
-  if (why && body.no_ai_confirmed !== true) throw new ContentError(`Mục có rủi ro nhãn AI (${why}): tick xác nhận không dùng hình/giọng AI photoreal rồi mới duyệt.`, 409);
-}
-
 export function createContent(db: DatabaseSync, body: Record<string, unknown>, now = Date.now()): ContentRow {
   if (!isFormat(body.format)) throw new ContentError("format: một trong text, infographic, course_video, ai_video, asmr, clip, other", 422);
   if (body.status !== undefined && !isStatus(body.status)) throw new ContentError("status: không hợp lệ", 422);
   const t = textFields(body);
   if (!t.title) throw new ContentError("title: không được trống", 422);
   const status: ContentStatus = (body.status as ContentStatus | undefined) ?? "ordered";
-  aiGate({ format: body.format, media_path: t.media_path ?? null }, status, body);
   const row: Record<string, string | number | null> = { ...t, ...scheduleFields(db, body, now), format: body.format, status, ...statusStamps(null, status, now), created_at: now, updated_at: now };
   const cols = Object.keys(row);
   const id = write(() => db.prepare(`INSERT INTO content_items (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).run(...cols.map((c) => row[c])).lastInsertRowid);
@@ -208,9 +212,7 @@ export function createContent(db: DatabaseSync, body: Record<string, unknown>, n
 /**
  * Edit one item. Body: any text field, `format`, `status`, `scheduled_at`, `assignee_session` (+
  * `assignee_base`), and `approve_source: "<the source URL the owner saw>"` (records who and when;
- * 409 when the row's source has changed since). Approving an item with an AI mark needs
- * `no_ai_confirmed: true`; an approved item edited into AI-risk content without it drops back to
- * `checked`, a published one answers 409. A new `source_url` drops an earlier approval: it approved the old source.
+ * 409 when the row's source has changed since). A new `source_url` drops an earlier approval: it approved the old source.
  */
 export function updateContent(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now = Date.now()): ContentRow {
   const item = getContent(db, id);
@@ -224,23 +226,6 @@ export function updateContent(db: DatabaseSync, id: number, body: Record<string,
     if (!isStatus(body.status)) throw new ContentError("status: không hợp lệ", 422);
     set.status = body.status;
     Object.assign(set, statusStamps(item, body.status, now));
-  }
-  // The AI tick is asked on every entry into approved or published: `aiReason` reads the media
-  // folder as it is now, and a video can land there after approval (no column records what was
-  // approved, and HQ never alters the schema). The 0062 trigger checks fields, not the previous status.
-  // An approved item edited into AI-risk content lost that check: without the tick it drops back to
-  // checked (re-approve in the sheet). A published post cannot be quietly un-published: refused.
-  const next = (set.status as ContentStatus | undefined) ?? item.status;
-  const nextFormat = (set.format as ContentItem["format"] | undefined) ?? item.format;
-  const nextMedia = "media_path" in set ? (set.media_path as string | null) : item.media_path;
-  const changed = nextFormat !== item.format || nextMedia !== item.media_path;
-  const after = { format: nextFormat, media_path: nextMedia };
-  if (next !== item.status) aiGate(after, next, body);
-  else if (changed && (next === "approved" || next === "published") && body.no_ai_confirmed !== true) {
-    const why = aiReason({ format: nextFormat, media: mediaFiles(nextMedia) });
-    if (why && item.status === "published") throw new ContentError(`Bài đã đăng không đổi sang nội dung rủi ro nhãn AI (${why}) được.`, 409);
-    if (why && "status" in body) aiGate(after, next, body);
-    if (why) set.status = "checked";
   }
   if ("source_url" in set && set.source_url !== item.source_url) {
     set.source_approved_by = null;

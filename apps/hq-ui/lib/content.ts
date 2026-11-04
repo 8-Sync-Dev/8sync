@@ -65,8 +65,6 @@ export type ContentMedia = {
   name: string;
   kind: "image" | "video";
   size: number;
-  /** Why the file reads as AI-made (C2PA / IPTC), null = no mark found. */
-  ai: string | null;
   url: string;
 };
 
@@ -81,7 +79,20 @@ export type ContentTextField = (typeof CONTENT_TEXT_FIELDS)[number];
 export type ContentList =
   | { configured: false }
   | { configured: true; ready: false; error: string }
-  | { configured: true; ready: true; items: ContentRow[]; pages: string[]; /** Migration 0063 is in: schedule + assignee columns exist. */ schedule: boolean };
+  | {
+      configured: true;
+      ready: true;
+      items: ContentRow[];
+      pages: string[];
+      /** Migration 0063 is in: schedule + assignee columns exist. */
+      schedule: boolean;
+      /** The content-post-agency checkout (owner only): where `8sync . cpa-live` opens its omp session. */
+      repo?: string | null;
+    };
+
+/** The omp session that keeps content-post-agency up to date from HQ (create-or-resume by name). */
+export const CPA_SESSION = "cpa-live";
+export const cpaCommand = (repo: string) => `cd "${repo}" && 8sync . ${CPA_SESSION}`;
 
 /** What the calendar and the sheet say when the DB predates migration 0063. */
 export const NO_SCHEDULE = "DB nội dung chưa có cột lịch đăng (migration 0063): mở app content-ai một lần để chạy migration.";
@@ -125,28 +136,6 @@ export function contentWarning(it: Pick<ContentItem, "fb_post_url" | "news_url" 
 export function contentTaskText(it: Pick<ContentItem, "id" | "title" | "fb_page">, typed: string): string {
   return `[Nội dung #${it.id} · ${it.fb_page}] ${it.title}\n${typed.trim()}`;
 }
-
-/** Formats that are video: the course pipeline's lip-synced presenter and cloned voice carry no C2PA mark, yet Meta labelled reel 1.2 "AI". */
-const VIDEO_FORMATS: readonly ContentFormat[] = ["course_video", "ai_video", "asmr", "clip"];
-
-/**
- * Why an item may come out on Facebook as "AI info" (owner rule 2026-11-04: no post may carry Meta's
- * AI label): an AI video by format; any video (a lip-synced face or a cloned voice leaves no mark in
- * the file, so "no mark" is not "safe"); media carrying a C2PA manifest / an IPTC AI source type.
- * Approving it needs the reviewer's "không dùng hình/giọng AI photoreal" tick. Null = nothing to check.
- */
-export function aiReason(it: Pick<ContentItem, "format"> & { media?: Pick<ContentMedia, "name" | "ai" | "kind">[] }): string | null {
-  const why: string[] = [];
-  const media = it.media ?? [];
-  if (it.format === "ai_video") why.push("định dạng AI video");
-  else if (VIDEO_FORMATS.includes(it.format) || media.some((m) => m.kind === "video"))
-    why.push("video: mặt lip-sync hay giọng clone không để lại dấu trong file, phải nghe/xem lại");
-  for (const m of media) if (m.ai) why.push(`${m.name}: ${m.ai}`);
-  return why.length ? why.join("; ") : null;
-}
-
-/** The text a reviewer ticks before approving an item `aiReason` flags; sent as `no_ai_confirmed: true`. */
-export const NO_AI_CONFIRM = "Tôi đã xem: bài không dùng hình/giọng AI photoreal (không để Meta gắn nhãn \"AI info\").";
 
 // ── Calendar (local time: the owner plans posts by the wall clock of this machine) ──
 

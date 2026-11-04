@@ -5,8 +5,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Changed
+- HQ Nội dung: bỏ hẳn cảnh báo và tick "Rủi ro nhãn AI". Mọi bài hiện, duyệt và đăng như nhau (lịch, danh sách, khung chi tiết, API không còn `no_ai_confirmed`). Trigger 0062 của DB vẫn chặn như cũ. Lý do: cảnh báo đỏ ở mọi video làm thành viên duyệt qua loa.
+- HQ Nội dung: ảnh và video trong khung chi tiết to hơn (ô rộng tối thiểu 14rem thay vì 9rem). Bấm ảnh hoặc nút phóng to để xem gần toàn màn hình, video cũng phát ở khung lớn.
+- HQ Nội dung (chủ HQ): nút "Chép lệnh mở omp cpa-live" chép `cd "<checkout content-post-agency>" && 8sync . cpa-live`. Khi phiên `cpa-live` của checkout đó đã có ở thanh trái thì chỉ ghi "cpa-live ở thanh trái".
+
 ### Fixed
 - HQ Nội dung → Giao việc: menu "Chọn phiên omp" cuộn được tới phiên cuối. Kiểu `item-aligned` của Radix Select đặt sát đáy màn hình thì nuốt lăn chuột (10 lần lăn chỉ đi 24 px trên 1 028 px). Giờ menu dùng `popper`: mở phía trên ô chọn, cao tối đa 20rem, cuộn thường.
+- HQ Nội dung: bài đã "Bỏ" rời lịch và danh sách. Trước đây nó chỉ bị gạch ngang nên trông như chưa xoá. Nút "Đã bỏ (N)" chuyển bộ lọc Trạng thái sang Bỏ để xem lại hoặc mở lại.
+- HQ: phòng omp (không có phòng Claude Code) giờ được tính là dự án HQ biết, nên `hq-control artifact add`, tải file và Preview không còn trả 403 "file không nằm trong dự án nào HQ đang biết".
 
 ## [0.122.14] — 2026-11-04
 

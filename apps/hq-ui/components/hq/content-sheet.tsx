@@ -1,19 +1,18 @@
 "use client";
 
 // The sheet a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
-// approve, inline caption / time edits, the AI-label check and "Giao việc". Esc or a click outside
+// approve, inline caption / time edits and "Giao việc". Esc or a click outside
 // closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner can share or come back.
-import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, PlayIcon, ShieldAlertIcon, XIcon } from "lucide-react";
+import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, Maximize2Icon, PlayIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
-  aiReason,
   contentWarning,
   FORMAT_LABEL,
   fromLocalInput,
-  NO_AI_CONFIRM,
   NO_SCHEDULE,
   nextStatuses,
   stepHint,
@@ -165,24 +164,18 @@ function ItemDetail({
   const role = useAccess();
   const canEdit = atLeast(role, "editor");
   const warn = contentWarning(it);
-  const ai = aiReason(it);
-  const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
   const at = whenOf(it);
   // The flow's next steps, same as the list: "Duyệt" only once checked, so the 1-tap never meets a
   // trigger refusal it could have avoided; a step the trigger would refuse says why instead.
-  // Approve and publish both need the AI tick when flagged: the media folder can change after approval.
   const steps = nextStatuses(it.status);
-  const gated = (s: ContentStatus) => (s === "approved" || s === "published") && ai != null;
-  const needsTick = steps.some(gated);
-  const blocked = needsTick && !confirmed;
   const hints = [...new Set(steps.map((s) => stepHint(it, s)).filter((h): h is string => h != null))];
 
   async function setStatus(status: ContentStatus) {
     setBusy(true);
     try {
-      await patch(it.id, gated(status) ? { status, no_ai_confirmed: confirmed } : { status });
+      await patch(it.id, { status });
     } finally {
       setBusy(false);
     }
@@ -214,22 +207,8 @@ function ItemDetail({
         </p>
       </header>
 
-      {(warn || ai || error) && (
+      {(warn || error) && (
         <div className="space-y-2">
-          {ai && (
-            <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/8 px-3 py-2.5 text-sm text-destructive">
-              <p className="flex items-start gap-1.5 font-medium">
-                <ShieldAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-                Rủi ro nhãn AI: {ai}. Luật mới: không bài nào được để Meta gắn nhãn &quot;AI info&quot;.
-              </p>
-              {needsTick && (
-                <label className="mt-2 flex cursor-pointer items-start gap-2 text-foreground">
-                  <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1 size-4 shrink-0 accent-primary max-sm:size-5" />
-                  <span className="text-sm">{NO_AI_CONFIRM}</span>
-                </label>
-              )}
-            </div>
-          )}
           {warn && (
             <p className="flex items-start gap-1.5 text-sm font-medium text-destructive">
               <AlertTriangleIcon aria-hidden className="mt-0.5 size-4 shrink-0" /> {warn}
@@ -247,7 +226,7 @@ function ItemDetail({
         <div className="flex flex-wrap items-center gap-2">
           {steps.map((s) =>
             s === "approved" ? (
-              <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || blocked || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
+              <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
                 <CheckIcon aria-hidden /> Duyệt
               </Button>
             ) : s === "rejected" ? (
@@ -255,7 +234,7 @@ function ItemDetail({
                 <XIcon aria-hidden /> Bỏ
               </Button>
             ) : (
-              <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy || (gated(s) && !confirmed) || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
+              <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
                 → {STATUS_LABEL[s]}
               </Button>
             ),
@@ -265,7 +244,6 @@ function ItemDetail({
               {h}.
             </span>
           ))}
-          {blocked && hints.length === 0 && <span className="text-xs text-muted-foreground">Tick xác nhận ở trên để duyệt.</span>}
         </div>
       )}
 
@@ -295,7 +273,7 @@ function ItemDetail({
             (it.media.length === 0 ? (
               <p className="mt-0.5 text-xs text-muted-foreground">không đọc được file ảnh/video ở đường dẫn này</p>
             ) : (
-              <div className="mt-1.5 grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(9rem,1fr))]">
+              <div className="mt-1.5 grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(14rem,1fr))]">
                 {it.media.map((m) => (
                   <MediaTile key={`${m.index}:${m.name}:${m.size}`} m={m} />
                 ))}
@@ -392,12 +370,14 @@ function MediaTile({ m }: { m: ContentMedia }) {
   // `m.url` is signed (no token header needed): the browser streams it. A video loads only on tap, then
   // seeks with Range requests, so a 2 GB render never sits in memory. The URL is pinned on first view
   // so the hourly re-signed URL of a later poll does not restart a playing video; the tile is keyed by
-  // name + size, so a re-rendered file remounts with its new URL.
+  // name + size, so a re-rendered file remounts with its new URL. A tap on the picture (or the expand
+  // button) opens it near full screen: reviewing a post at thumbnail size misses what is in it.
   const [want, setWant] = useState(m.kind === "image");
   const [src] = useState(m.url);
   const [failed, setFailed] = useState(false);
+  const [big, setBig] = useState(false);
   return (
-    <figure className={cn("overflow-hidden rounded-lg border", m.ai && "border-destructive/60")}>
+    <figure className="overflow-hidden rounded-lg border">
       <div className="relative grid aspect-video place-items-center bg-muted">
         {!want ? (
           <Button type="button" size="sm" variant="outline" className={TOUCH} onClick={() => setWant(true)} aria-label={`Xem video ${m.name}`}>
@@ -406,22 +386,28 @@ function MediaTile({ m }: { m: ContentMedia }) {
         ) : failed ? (
           <span className="px-2 text-center text-[11px] text-muted-foreground">không tải được, mở lại mục này</span>
         ) : m.kind === "video" ? (
-          <video src={src} controls autoPlay playsInline preload="metadata" onError={() => setFailed(true)} className="absolute inset-0 size-full object-contain" aria-label={m.name} />
+          !big && <video src={src} controls autoPlay playsInline preload="metadata" onError={() => setFailed(true)} className="absolute inset-0 size-full object-contain" aria-label={m.name} />
         ) : (
-          // A signed API URL: next/image would proxy it through the optimizer.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={src} alt={m.name} onError={() => setFailed(true)} className="absolute inset-0 size-full object-contain" />
+          <button type="button" onClick={() => setBig(true)} className="absolute inset-0 cursor-zoom-in outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-label={`Phóng to ${m.name}`}>
+            {/* A signed API URL: next/image would proxy it through the optimizer. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt={m.name} onError={() => setFailed(true)} className="size-full object-contain" />
+          </button>
         )}
       </div>
       <figcaption className="flex items-center gap-1 px-1.5 py-1 text-[11px]">
         <span className="min-w-0 flex-1 truncate" title={m.name}>
           {m.name}
         </span>
-        {m.ai && (
-          <span className="shrink-0 font-medium text-destructive" title={m.ai}>
-            AI
-          </span>
-        )}
+        <button
+          type="button"
+          onClick={() => setBig(true)}
+          className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-9"
+          aria-label={`Phóng to ${m.name}`}
+          title="Phóng to"
+        >
+          <Maximize2Icon className="size-3.5" aria-hidden />
+        </button>
         {/* A real link: the browser's own download manager streams it to disk, any size, with progress. */}
         <a
           href={`${m.url}&dl=1`}
@@ -433,6 +419,22 @@ function MediaTile({ m }: { m: ContentMedia }) {
           <DownloadIcon className="size-3.5" aria-hidden />
         </a>
       </figcaption>
+      <Dialog open={big} onOpenChange={setBig}>
+        <DialogContent
+          aria-describedby={undefined}
+          className="h-dvh w-screen max-w-none gap-0 rounded-none border-0 bg-black/95 p-0 text-white ring-0 sm:h-[94dvh] sm:w-[min(96vw,1400px)] sm:max-w-none sm:rounded-xl [&_[data-slot=dialog-close]]:size-10 [&_[data-slot=dialog-close]]:bg-black/40 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-black/60 [&_[data-slot=dialog-close]]:hover:text-white"
+        >
+          <DialogTitle className="absolute top-4 left-4 z-10 max-w-[calc(100%-8rem)] truncate text-xs font-medium text-white/85">{m.name}</DialogTitle>
+          <div className="grid size-full touch-pinch-zoom place-items-center overflow-auto overscroll-contain p-3 pt-14 sm:p-6 sm:pt-14">
+            {m.kind === "video" ? (
+              <video src={src} controls autoPlay playsInline preload="metadata" className="max-h-full max-w-full object-contain" aria-label={m.name} />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={src} alt={m.name} draggable={false} className="max-h-full max-w-full object-contain" />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </figure>
   );
 }
