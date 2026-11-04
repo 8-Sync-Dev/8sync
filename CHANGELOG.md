@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.9] — 2026-11-04
+
+### Fixed
+- Nội dung: nút "Tải" và xem video không còn giới hạn 150 MB. Trước đây file lớn hơn (vd video bài học C++ bài 2, 178,5 MB) trả 413, còn file nhỏ hơn thì bị nạp cả vào RAM của trang trước khi phát. Giờ mỗi file có một link ký sẵn, hết hạn sau 11 đến 12 giờ. Trình duyệt tải thẳng từ link (`Content-Disposition: attachment`, tên file gốc, có tiến độ trong trình quản lý tải), còn video phát qua `Range` (206) nên tua được và không tải trước cả file.
+
 ## [0.122.8] — 2026-11-04
 
 ### Changed

@@ -3,19 +3,16 @@
 // The sheet a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
 // approve, inline caption / time edits, the AI-label check and "Giao việc". Esc or a click outside
 // closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner can share or come back.
-import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, Loader2Icon, PlayIcon, ShieldAlertIcon, XIcon } from "lucide-react";
+import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, PlayIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   aiReason,
   contentWarning,
   FORMAT_LABEL,
   fromLocalInput,
-  MEDIA_SERVE_MAX,
   NO_AI_CONFIRM,
   NO_SCHEDULE,
   nextStatuses,
@@ -37,7 +34,6 @@ import { AssignBox, Editable, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon,
 import { DAY_NAMES } from "./content-calendar";
 import { TOUCH } from "./room-send";
 import type { Api } from "./use-hq";
-import { useAuthedImage } from "./use-poll";
 
 /** The sheet's `day`: a "YYYY-MM-DD", or this for the items with no time yet. */
 export const NO_DAY = "none";
@@ -54,7 +50,6 @@ export function ContentSheet({
   items,
   schedule,
   api,
-  token,
   now,
   patch,
   errors,
@@ -69,7 +64,6 @@ export function ContentSheet({
   items: ContentRow[];
   schedule: boolean;
   api: Api;
-  token: string;
   now: number;
   patch: Patch;
   errors: Record<number, string>;
@@ -97,7 +91,7 @@ export function ContentSheet({
               {items.map((it) => (
                 <li key={it.id}>
                   {shown === it.id ? (
-                    <ItemDetail it={it} api={api} token={token} now={now} patch={patch} error={errors[it.id]} schedule={schedule} onCollapse={items.length > 1 ? () => onItem(null) : undefined} reload={reload} />
+                    <ItemDetail it={it} api={api} now={now} patch={patch} error={errors[it.id]} schedule={schedule} onCollapse={items.length > 1 ? () => onItem(null) : undefined} reload={reload} />
                   ) : (
                     <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50">
                       <ItemLine it={it} />
@@ -142,7 +136,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function ItemDetail({
   it,
   api,
-  token,
   now,
   patch,
   error,
@@ -152,7 +145,6 @@ function ItemDetail({
 }: {
   it: ContentRow;
   api: Api;
-  token: string;
   now: number;
   patch: Patch;
   error: string | undefined;
@@ -281,7 +273,7 @@ function ItemDetail({
             ) : (
               <div className="mt-1.5 grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(9rem,1fr))]">
                 {it.media.map((m) => (
-                  <MediaTile key={m.name} item={it.id} m={m} token={token} />
+                  <MediaTile key={`${m.name}:${m.size}`} m={m} />
                 ))}
               </div>
             ))}
@@ -368,58 +360,29 @@ function TimeEdit({ id, at, fallback, onSave }: { id: number; at: number | null;
   );
 }
 
-function MediaTile({ item, m, token }: { item: number; m: ContentMedia; token: string }) {
-  // Images load with the sheet; a video only on tap (the blob is fetched whole, so 12 renders at
-  // once would pull gigabytes). The name pins the file: a shifted folder answers 409, not another file.
+function MediaTile({ m }: { m: ContentMedia }) {
+  // `m.url` is signed (no token header needed): the browser streams it. A video loads only on tap, then
+  // seeks with Range requests, so a 2 GB render never sits in memory. The URL is pinned on first view
+  // so the hourly re-signed URL of a later poll does not restart a playing video; the tile is keyed by
+  // name + size, so a re-rendered file remounts with its new URL.
   const [want, setWant] = useState(m.kind === "image");
-  const [save, setSave] = useState(false);
-  const url = `/api/content/media?id=${item}&i=${m.index}&n=${encodeURIComponent(m.name)}&v=${m.size}`;
-  const { src, failed } = useAuthedImage(token, url, want);
-  const tooBig = m.size > MEDIA_SERVE_MAX;
-  // "Tải": the preview's blob when it is loaded, else one authed fetch; saved under the file's own name.
-  async function download() {
-    if (save) return;
-    setSave(true);
-    let href = src;
-    let own = false;
-    try {
-      if (!href) {
-        const res = await fetch(url, { headers: { "x-hq-token": token }, cache: "no-store" });
-        if (!res.ok) throw new Error(`${res.status}`);
-        href = URL.createObjectURL(await res.blob());
-        own = true;
-      }
-      const a = document.createElement("a");
-      a.href = href;
-      a.download = m.name;
-      a.click();
-    } catch (e) {
-      toast.error(`Không tải được ${m.name} (${(e as Error).message})`);
-    } finally {
-      const made = own ? href : null;
-      if (made) setTimeout(() => URL.revokeObjectURL(made), 60_000);
-      setSave(false);
-    }
-  }
+  const [src] = useState(m.url);
+  const [failed, setFailed] = useState(false);
   return (
     <figure className={cn("overflow-hidden rounded-lg border", m.ai && "border-destructive/60")}>
       <div className="relative grid aspect-video place-items-center bg-muted">
         {!want ? (
-          <Button type="button" size="sm" variant="outline" className={TOUCH} disabled={tooBig} onClick={() => setWant(true)} aria-label={`Xem video ${m.name}`}>
-            <PlayIcon aria-hidden /> {tooBig ? `${bytes(m.size)}: quá lớn để xem trên HQ` : `Xem · ${bytes(m.size)}`}
+          <Button type="button" size="sm" variant="outline" className={TOUCH} onClick={() => setWant(true)} aria-label={`Xem video ${m.name}`}>
+            <PlayIcon aria-hidden /> Xem · {bytes(m.size)}
           </Button>
-        ) : src ? (
-          m.kind === "video" ? (
-            <video src={src} controls autoPlay playsInline className="absolute inset-0 size-full object-contain" aria-label={m.name} />
-          ) : (
-            // An object URL from an authed fetch: next/image cannot load it.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={src} alt={m.name} className="absolute inset-0 size-full object-contain" />
-          )
         ) : failed ? (
-          <span className="px-2 text-center text-[11px] text-muted-foreground">không tải được</span>
+          <span className="px-2 text-center text-[11px] text-muted-foreground">không tải được, mở lại mục này</span>
+        ) : m.kind === "video" ? (
+          <video src={src} controls autoPlay playsInline preload="metadata" onError={() => setFailed(true)} className="absolute inset-0 size-full object-contain" aria-label={m.name} />
         ) : (
-          <Skeleton className="absolute inset-0 rounded-none" />
+          // A signed API URL: next/image would proxy it through the optimizer.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={src} alt={m.name} onError={() => setFailed(true)} className="absolute inset-0 size-full object-contain" />
         )}
       </div>
       <figcaption className="flex items-center gap-1 px-1.5 py-1 text-[11px]">
@@ -431,18 +394,16 @@ function MediaTile({ item, m, token }: { item: number; m: ContentMedia; token: s
             AI
           </span>
         )}
-        {!tooBig && (
-          <button
-            type="button"
-            className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-9"
-            aria-label={`Tải ${m.name}`}
-            title={`Tải ${m.name}`}
-            disabled={save}
-            onClick={() => void download()}
-          >
-            {save ? <Loader2Icon className="size-3.5 motion-safe:animate-spin" aria-hidden /> : <DownloadIcon className="size-3.5" aria-hidden />}
-          </button>
-        )}
+        {/* A real link: the browser's own download manager streams it to disk, any size, with progress. */}
+        <a
+          href={`${m.url}&dl=1`}
+          download={m.name}
+          className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-9"
+          aria-label={`Tải ${m.name} (${bytes(m.size)})`}
+          title={`Tải ${m.name} (${bytes(m.size)})`}
+        >
+          <DownloadIcon className="size-3.5" aria-hidden />
+        </a>
       </figcaption>
     </figure>
   );

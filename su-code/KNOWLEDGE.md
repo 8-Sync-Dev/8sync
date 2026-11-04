@@ -761,3 +761,8 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 ## 2026-11-04 — Nhật ký phòng mất markdown
 - failure: `clip()` trong `lib/server/activity.ts` gộp mọi khoảng trắng (`\s+` → " ") và cắt ở 400 ký tự, nên bảng markdown trong câu trả lời chỉ còn một dòng `| Món | … |---|`.
 - validated: dùng `clipText` (chỉ bỏ CR, khoảng trắng cuối dòng và dòng trống thừa; vẫn `maskSecrets` trước) cho prompt và reply; UI render bằng `MessageResponse` (Streamdown), dài thì kẹp `max-h-44` + "Xem hết". Mỗi lần poll tối đa 80 × 4 000 ký tự.
+
+## 2026-11-04 — Nội dung: tải / xem media lớn (v0.122.9)
+- failure: media lấy bằng `fetch` + header `x-hq-token` rồi `URL.createObjectURL(blob)` bắt trang giữ cả file trong RAM và không tua được (không có Range), nên phải đặt trần 150 MB và video bài học 178 MB không tải được. `<video src>` và `<a download>` là request trần của trình duyệt, không gửi được header.
+- validated: link ký HMAC theo từng file (`publicMedia` trong `lib/server/content-media.ts`, secret riêng `media-secret`, ký `[item, index, name, size, expiry]`, expiry = tròn giờ + 11 h nên URL đứng yên một giờ và poll không làm video đang phát load lại). Route stream từ đĩa, `Range` → 206, `&dl=1` → attachment. Tile pin URL lúc mount, key theo `name:size`.
+- validated: kiểm tải thật trong headless: `Browser.setDownloadBehavior` phải gửi qua session CẤP BROWSER (`browser.target().createCDPSession()`). Gửi qua session của page thì download báo `canceled` dù `totalBytes` đúng.
