@@ -10,12 +10,13 @@ HQ terminal qua link public (Cloudflare quick tunnel) trống dưới chấm xan
 - [x] Nguyên nhân: replay phòng (≤ 256 KB, một event) → lô đầu có ping + một phần replay trong 4 s → trang ở lại stream, trống
 - [x] Sửa (branch `fix/hq-term-held-stream`, PR #282, rebase lên #281): HQ ping 2 s kèm giờ, ngoài loopback poll khi im 6 s hoặc ping trễ > 3 s; bỏ `arm(STALL_MS)` đầu vòng đọc của #281 (đè mốc 4 s → 40 s); `end` thắng ping trễ; interval ping của stream đã kết thúc được dọn
 - [x] Reviewer: approve sau P2 (`!ended`), P3 test payload ping + interval, P3 ghi tradeoff một chiều
-- [ ] Tái hiện lại trên code đã rebase (proxy gom lô 127.0.0.2:8790 + `next start` sandbox), CI xanh
-- [ ] merge → tag v0.122.3 → release.yml → `8sync up` → `/api/version` ui 0.122.3
-- [ ] Owner lấy link public mới: `8sync hq ui --relink` trên PC (HQ public cũ chết do lần thử `hq ui --public` thứ hai, xem KNOWLEDGE)
+- [x] Tái hiện lại trên code đã rebase: proxy gom lô 6,1 s; loopback 0,6 s, 0 poll; CI 8/8 → merge #282 → tag v0.122.3
+- [x] UAT HQ thật (0.122.2) lộ lỗi khác: 1/12 lần tải sập "This page couldn't load" (`makeApi` nuốt AbortError → `worktrees` undefined). Sửa ở v0.122.4 (branch `fix/hq-api-abort`)
+- [ ] v0.122.4: PR → CI → merge → tag → release.yml → `8sync up` → `/api/version` ui 0.122.4 + 12 lần tải 0 sập
+- [ ] Owner lấy link public mới nếu cần: `8sync hq ui --relink` (HQ public đang chạy, host mới; cookie cũ chết do lần thử `hq ui --public` thứ hai, xem KNOWLEDGE)
 
 ## Current
-Ship v0.122.3 từ worktree `tu-session-marketing-phong-core`, branch `fix/hq-term-held-stream`.
+Ship v0.122.4 từ worktree `tu-session-marketing-phong-core`, branch `fix/hq-api-abort`.
 
 ## Next
 - VPS `vps.8syncdev.com` không vào được (ssh :22 timeout) → link cố định `/hq` không kiểm được.

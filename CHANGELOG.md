@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.4] — 2026-11-04
+
+### Fixed
+- HQ đôi lúc mở ra trang lỗi "This page couldn't load" (đo trên HQ thật 0.122.2: 1/12 lần tải): `makeApi` biến MỌI lỗi đọc body thành `{}` thành công, kể cả request bị huỷ giữa chừng. Sidebar hỏi lại danh sách worktree ngay khi nhóm phòng tải xong nên request đầu bị huỷ lúc đang đọc body, trả `{}`, `worktrees` thành `undefined` và `worktrees.includes` làm sập cả trang. Giờ request bị huỷ thì reject (như `fetch` vốn làm khi huỷ trước header); body không phải JSON (204, rỗng) vẫn là `{}`. Có test.
+
 ## [0.122.3] — 2026-11-04
 
 ### Fixed
