@@ -28,6 +28,43 @@ export function afterStream(s: StreamStop): "poll" | "fail" | "done" {
 }
 
 /**
+ * A stream that a proxy passes in batches (owner 2026-11-04: "terminal không hiển gì, lúc hiện lúc
+ * không" through the quick tunnel link): Cloudflare's quick tunnel releases a stream ~130 KB at a time
+ * and never on a timer. A room's replay (up to 256 KB kept, one event) crosses that at once, so the first
+ * batch (the opening ping and part of the replay) arrived inside FIRST_BYTE_MS: the page said live and
+ * stayed on the stream, but the rest of the replay sat in the tunnel until the room printed another
+ * ~130 KB, i.e. never while it idles: a blank box under a green dot. HQ pings every PING_MS with its
+ * clock; off loopback the page polls instead once the stream is quiet for STALE_MS or a ping comes
+ * HELD_MS later than the quickest one did. The switch is one-way for that view: a hiccup on a link that
+ * streams fine (the VPS gate) costs polling until the terminal is reopened, never a blank box.
+ */
+export const PING_MS = 2000;
+export const STALE_MS = 6000;
+export const HELD_MS = 3000;
+/**
+ * `(sentAt, now)` of each ping → true once it arrived HELD_MS later than the quickest ping so far.
+ * Relative to that quickest lag, so the PC's and the phone's clocks need not agree.
+ */
+export function heldBack(): (sentAt: number, now: number) => boolean {
+  let quickest = Infinity;
+  return (sentAt, now) => {
+    const lag = now - sentAt;
+    if (lag < quickest) quickest = lag;
+    return lag - quickest > HELD_MS;
+  };
+}
+
+/** HQ's clock in a ping's data (`{"t":<ms>}`); null for an old HQ's `{}` or anything else. */
+export function pingTime(data: string): number | null {
+  try {
+    const v: unknown = JSON.parse(data);
+    return v && typeof v === "object" && "t" in v && typeof v.t === "number" && Number.isFinite(v.t) ? v.t : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Polling through the VPS tunnel (owner 2026-10-22: "Fail connect terminal rất nhiều"): a phone that
  * sleeps or hops from Wi-Fi to 4G loses the tunnel for longer than five quick polls (~3 s). Keep trying
  * with backoff for a minute before saying the terminal is gone.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_KEYS, MIN_ROWS, POLL_GIVE_UP_MS, afterStream, giveUp, keyQueue, keyboardOpen, retryDelay, termRows } from "@/lib/term-stream";
+import { HELD_MS, MAX_KEYS, MIN_ROWS, POLL_GIVE_UP_MS, afterStream, giveUp, heldBack, keyQueue, keyboardOpen, pingTime, retryDelay, termRows } from "@/lib/term-stream";
 
 const base = { remote: true, aborted: false, refused: false, ended: false, threw: false };
 
@@ -16,6 +16,27 @@ describe("room terminal: when the stream stops", () => {
   it("loopback keeps the old behaviour: an error shows, a clean close stops", () => {
     expect(afterStream({ ...base, remote: false, threw: true })).toBe("fail");
     expect(afterStream({ ...base, remote: false })).toBe("done");
+  });
+});
+
+describe("room terminal: a stream the tunnel passes in batches", () => {
+  it("pings arriving with a steady lag stay on the stream, whatever the clocks say", () => {
+    const late = heldBack();
+    // The phone's clock is 7 min behind the PC: every lag reads negative, steadily.
+    for (let i = 0; i < 10; i++) expect(late(1_000_000 + i * 2000, 1_000_000 - 420_000 + i * 2000 + 80)).toBe(false);
+  });
+  it("a ping released by the next batch, later than the quickest by more than HELD_MS, means poll", () => {
+    const late = heldBack();
+    expect(late(0, 900)).toBe(false); // first batch: ping + start of the replay, 0.9 s after it was sent
+    expect(late(2000, 2000 + 900 + HELD_MS)).toBe(false); // exactly HELD_MS later: not yet
+    expect(late(4000, 4000 + 900 + HELD_MS + 1)).toBe(true);
+  });
+  it("reads HQ's clock from a ping, and nothing from an old HQ's or a broken one", () => {
+    expect(pingTime('{"t":1793754438000}')).toBe(1793754438000);
+    expect(pingTime("{}")).toBeNull();
+    expect(pingTime('{"t":"1"}')).toBeNull();
+    expect(pingTime("{")).toBeNull();
+    expect(pingTime("null")).toBeNull();
   });
 });
 

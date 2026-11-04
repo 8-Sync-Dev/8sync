@@ -1,24 +1,24 @@
 # STATE — su-code
 
 ## Goal
-HQ tab "Nội dung" nâng cấp (v0.122.0): lịch Ngày/Tuần/Tháng/Năm kiểu Notion + "Danh sách", khung chi tiết theo ngày (`?day=&item=`), Duyệt 1 chạm qua trigger, sửa caption/giờ tại chỗ, giao việc cho phiên omp lưu vào DB, luật không nhãn AI.
+HQ terminal qua link public (Cloudflare quick tunnel) trống dưới chấm xanh "Đang nối", lúc hiện lúc không (owner 2026-11-04). Sửa, ship v0.122.3, `8sync up`, kiểm trên bề mặt thật.
 
 ## Checklist
-- [ ] v0.122.2 (branch `fix/hq-room-label-terminal`): terminal EPIPE crash, live chỉ khi có output + stall watchdog, nhãn phòng `core · dự án`, toast phòng đang chờ
-- [x] content-post-agency migration 0063 (`scheduled_at`, `assignee_session`, `assigned_at`, `assignee_base`), PR 8syncdev/content-post-agency#95, đã chạy trên DB thật (backup `%TEMP%\daily-dev.pre-0063.db`)
-- [x] Server: PATCH nhận giờ + phiên, route `GET /api/content/media`, cổng AI (`no_ai_confirmed`)
-- [x] UI: `content-calendar.tsx`, `content-sheet.tsx`, `content-bits.tsx`, `content-view.tsx`
-- [x] vitest content (0063, AI gate, media route, lịch), tsc, eslint, `next build`
-- [x] UAT sandbox (bản sao DB): mở link ngày, chip → khung, Duyệt có tick AI, trigger chặn hiện đúng câu, sửa caption/giờ, giao việc + reload giữ phiên, mobile 390 px
-- [x] PR #279 → reviewer → merge → tag v0.122.0 → `8sync up`
-- [x] v0.122.1 (branch `fix/hq-content-gate`, PR #280): tick AI ở mọi lần vào approved/published (giữ như v0.122.0, thêm test video thả vào sau khi duyệt + check → đăng thẳng); approved đổi sang nội dung AI → về checked; `stepHint` tắt nút trigger sẽ chặn. vitest 22/22 content, tsc, eslint, next build, UAT sandbox xong → merge → tag → `8sync up`
-- [ ] UAT HQ :8740 + link public trên DB thật
+- [x] v0.122.0 (#279), v0.122.1 (#280) Nội dung; v0.122.2 (#281, phiên khác): EPIPE không còn sập HQ, live chỉ khi có output, watchdog 40 s, nhãn phòng `core · dự án`
+- [x] content-post-agency #95, #96 (ad-frames MKT short không nhãn AI) đã merge
+- [x] Đo quick tunnel: nhả stream theo lô ~130 KB, không flush theo giờ (KNOWLEDGE 2026-11-04)
+- [x] Nguyên nhân: replay phòng (≤ 256 KB, một event) → lô đầu có ping + một phần replay trong 4 s → trang ở lại stream, trống
+- [x] Sửa (branch `fix/hq-term-held-stream`, PR #282, rebase lên #281): HQ ping 2 s kèm giờ, ngoài loopback poll khi im 6 s hoặc ping trễ > 3 s; bỏ `arm(STALL_MS)` đầu vòng đọc của #281 (đè mốc 4 s → 40 s); `end` thắng ping trễ; interval ping của stream đã kết thúc được dọn
+- [x] Reviewer: approve sau P2 (`!ended`), P3 test payload ping + interval, P3 ghi tradeoff một chiều
+- [ ] Tái hiện lại trên code đã rebase (proxy gom lô 127.0.0.2:8790 + `next start` sandbox), CI xanh
+- [ ] merge → tag v0.122.3 → release.yml → `8sync up` → `/api/version` ui 0.122.3
+- [ ] Owner lấy link public mới: `8sync hq ui --relink` trên PC (HQ public cũ chết do lần thử `hq ui --public` thứ hai, xem KNOWLEDGE)
 
 ## Current
-Ship v0.122.1 từ worktree `tu-session-marketing-phong-core`, branch `fix/hq-content-gate`.
+Ship v0.122.3 từ worktree `tu-session-marketing-phong-core`, branch `fix/hq-term-held-stream`.
 
 ## Next
-- content-post-agency#95 đã merge; PR #96 ad-frames "MKT short không nhãn AI" (subagent AdFramesMktShort, repo content-post-agency).
-- `aiLabel` của job ad-frames chưa nối vào `content_items`: nếu cần, lưu cờ lên mục để HQ chặn luôn.
-- Sửa gốc inbox phòng do Orca mở (xem KNOWLEDGE 2026-11-04).
+- VPS `vps.8syncdev.com` không vào được (ssh :22 timeout) → link cố định `/hq` không kiểm được.
+- `aiLabel` của job ad-frames chưa nối vào `content_items`.
+- Sửa gốc inbox phòng do Orca mở (KNOWLEDGE 2026-11-04).
 - `statusline::tests::chained_timeout_kills_group` flake Windows CI; đỏ lại thì `gh run rerun --failed`.
