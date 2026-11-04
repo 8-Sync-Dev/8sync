@@ -425,12 +425,12 @@ function MediaTile({ m }: { m: ContentMedia }) {
           className="h-dvh w-screen max-w-none gap-0 rounded-none border-0 bg-black/95 p-0 text-white ring-0 sm:h-[94dvh] sm:w-[min(96vw,1400px)] sm:max-w-none sm:rounded-xl [&_[data-slot=dialog-close]]:size-10 [&_[data-slot=dialog-close]]:bg-black/40 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-black/60 [&_[data-slot=dialog-close]]:hover:text-white"
         >
           <DialogTitle className="absolute top-4 left-4 z-10 max-w-[calc(100%-8rem)] truncate text-xs font-medium text-white/85">{m.name}</DialogTitle>
-          <div className="grid size-full touch-pinch-zoom place-items-center overflow-auto overscroll-contain p-3 pt-14 sm:p-6 sm:pt-14">
+          <div className="absolute inset-0 touch-pinch-zoom overscroll-contain p-3 pt-14 sm:p-6 sm:pt-14">
             {m.kind === "video" ? (
-              <video src={src} controls autoPlay playsInline preload="metadata" className="max-h-full max-w-full object-contain" aria-label={m.name} />
+              <video src={src} controls autoPlay playsInline preload="metadata" className="size-full object-contain" aria-label={m.name} />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={src} alt={m.name} draggable={false} className="max-h-full max-w-full object-contain" />
+              <img src={src} alt={m.name} draggable={false} className="size-full object-contain" />
             )}
           </div>
         </DialogContent>
