@@ -78,7 +78,7 @@ pub fn run(a: Args) -> Result<()> {
     };
 
     if !status.success() {
-        ui::warn("omp exited non-zero");
+        ui::warn(&format!("omp exited non-zero ({status})"));
     }
     Ok(())
 }
