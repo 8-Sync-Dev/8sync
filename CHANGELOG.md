@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.13] — 2026-11-04
+
 ### Added
 - Harness: graphify làm code graph dự phòng cho trail. `8sync setup` cài `graphifyy==0.9.102` qua `uv tool` (không có uv thì chỉ hướng dẫn, không lỗi); block AGENTS.md/CLAUDE.md, `APPEND_SYSTEM.md` và `00-force-load.md` dạy agent: trail báo `no indexed callers` hoặc cần đường A→B → `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` rồi `graphify explain` / `graphify path`, không dùng `graphify query`; `.gitignore` managed thêm `graphify-out/`. Đo trên su-code (1 183 file): callers của `open()` trail 0 file, graphify 49/50; build lạnh 32 worker 2,1 GB RAM → 4 worker 490 MB / 18,7 s; query trail 0,7 s ~150 MB, graphify 1,4 s ~135 MB, ripgrep 0,1 s ~10 MB; `graphify query` ~6,7 KB và bị cắt, `GRAPH_REPORT.md` không có LLM là 160 KB nhãn "Community N" nên không dùng.
 
