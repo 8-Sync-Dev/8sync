@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Security
+- HQ Chia sẻ: khách "Sửa nội dung" sửa một mục giờ chỉ nhận lại tên thư mục media, không còn đường dẫn đầy đủ trên ổ của chủ; lỗi DB nội dung khách thấy là câu chung, không kèm đường dẫn file (audit #302).
+
 ## [0.122.11] — 2026-11-04
 
 ### Added

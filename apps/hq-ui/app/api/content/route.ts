@@ -18,11 +18,19 @@ function fail(e: unknown): Response {
   return bad("ghi DB nội dung lỗi", 500);
 }
 
-/** The registry for writes: 404 when no DB is configured, 409 with the reason when it cannot be used. */
-function registry() {
+/** What a guest (Chia sẻ) reads instead of a DB error: those name paths on the owner's disk. */
+const GUEST_DB_ERROR = "sổ nội dung trên máy chủ HQ chưa sẵn sàng";
+
+/** A guest sees the media (signed URLs), not where it sits on the owner's disk. */
+function guestItem<T extends { media_path?: string | null }>(it: T): T {
+  return { ...it, media_path: it.media_path && path.basename(it.media_path) };
+}
+
+/** The registry for writes: 404 when no DB is configured, 409 with the reason when it cannot be used (a guest gets no path). */
+function registry(guest = false) {
   const c = openContent();
   if ("configured" in c) return { res: bad("chưa cấu hình DB nội dung (EIGHTSYNC_CONTENT_DB hoặc ~/.config/8sync/hq/content.json)", 404) };
-  if ("error" in c) return { res: bad(c.error, 409) };
+  if ("error" in c) return { res: bad(guest ? GUEST_DB_ERROR : c.error, 409) };
   return c;
 }
 
@@ -43,15 +51,15 @@ export async function GET(req: Request) {
   if (page && page.length > 200) return bad("fb_page: quá dài", 400);
   const c = openContent();
   if ("configured" in c) return json({ configured: false });
-  if ("error" in c) return json({ configured: true, ready: false, error: c.error });
+  const guest = !!o.access.guest;
+  if ("error" in c) return json({ configured: true, ready: false, error: guest ? GUEST_DB_ERROR : c.error });
   try {
     const list = listContent(c.db, { status, format, fb_page: page });
-    // A guest sees the media (signed URLs), not where it sits on the owner's disk.
-    if (!o.access.guest || !("items" in list)) return json(list);
-    return json({ ...list, items: list.items.map((it) => ({ ...it, media_path: it.media_path && path.basename(it.media_path) })) });
+    if (!guest || !("items" in list)) return json(list);
+    return json({ ...list, items: list.items.map(guestItem) });
   } catch (e) {
     // A DB replaced or damaged since it opened: shown in the view, not a bare 500 on every poll.
-    return json({ configured: true, ready: false, error: `không đọc được sổ nội dung: ${(e as Error).message}` });
+    return json({ configured: true, ready: false, error: guest ? GUEST_DB_ERROR : `không đọc được sổ nội dung: ${(e as Error).message}` });
   }
 }
 
@@ -87,10 +95,11 @@ export async function PATCH(req: Request) {
   const guest = o.access.guest;
   const ownerField = guest ? OWNER_CONTENT_FIELDS.find((k) => k in body) : undefined;
   if (ownerField) return bad(`${ownerField}: chỉ chủ HQ sửa được`, 403);
-  const c = registry();
+  const c = registry(!!guest);
   if ("res" in c) return c.res;
   try {
-    return json({ item: updateContent(c.db, id, body, guest ? `chia sẻ: ${guest.label}` : hqApprover()) });
+    const item = updateContent(c.db, id, body, guest ? `chia sẻ: ${guest.label}` : hqApprover());
+    return json({ item: guest ? guestItem(item) : item });
   } catch (e) {
     return fail(e);
   }
