@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.10] — 2026-11-04
+
 ### Added
 - HQ Nội dung: nút chép caption ngay dưới Caption của từng bài. Dòng thu gọn trong khung ngày hiện số file ảnh/video bài đó đã có, nên biết bài nào xem hoặc tải được mà không cần mở từng bài.
 
