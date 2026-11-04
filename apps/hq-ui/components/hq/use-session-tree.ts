@@ -4,7 +4,7 @@
 // visible) merged with the office's live rooms, plus the owner's local choices kept in this browser:
 // group & sort, folded groups/sessions, the archive, and the "xong, chưa xem" dots.
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { DEFAULT_PREFS, finishedSince, mergeSessions, readArchive, readPrefs, toggle, type GroupBy, type OmpTreeRow, type SortBy, type TreePrefs, type TreeSession, type TreeState } from "@/lib/session-tree";
+import { DEFAULT_PREFS, NO_ORDER, finishedSince, mergeSessions, readArchive, readOrder, readPrefs, toggle, type GroupBy, type OmpTreeRow, type SortBy, type TreeOrder, type TreePrefs, type TreeSession, type TreeState } from "@/lib/session-tree";
 import type { Hq } from "./use-hq";
 import type { OfficeState } from "./use-office";
 import { usePoll } from "./use-poll";
@@ -13,6 +13,7 @@ const OMP_POLL_MS = 5000;
 const PREFS_KEY = "hq.tree.prefs";
 const ARCHIVE_KEY = "hq.tree.archive";
 const UNREAD_KEY = "hq.tree.unread";
+const ORDER_KEY = "hq.tree.order";
 
 /** One localStorage value as an external store, so the sidebar and the mobile drawer agree. */
 function localValue<T>(key: string, parse: (raw: string | null) => T, fallback: T) {
@@ -51,17 +52,32 @@ const NO_KEYS: string[] = [];
 const prefsStore = localValue<TreePrefs>(PREFS_KEY, readPrefs, DEFAULT_PREFS);
 const archiveStore = localValue<string[]>(ARCHIVE_KEY, readArchive, NO_KEYS);
 const unreadStore = localValue<string[]>(UNREAD_KEY, readArchive, NO_KEYS);
+const orderStore = localValue<TreeOrder>(ORDER_KEY, readOrder, NO_ORDER);
+
+// `v: 2` marks a sort the owner picked (readPrefs).
+const setPrefs = (p: TreePrefs) => prefsStore.set({ ...p, v: 2 } as TreePrefs);
+
+/** The drag-and-drop order. A drop also switches the list to "Tự sắp" so the move sticks. */
+export function useTreeOrder() {
+  const order = orderStore.useValue();
+  const set = useCallback((next: TreeOrder) => {
+    orderStore.set(next);
+    const p = prefsStore.get();
+    if (p.sort !== "manual") setPrefs({ ...p, sort: "manual" });
+  }, []);
+  return { order, set };
+}
 
 export function useTreePrefs() {
   const prefs = prefsStore.useValue();
   return {
     prefs,
-    setGroup: (group: GroupBy) => prefsStore.set({ ...prefsStore.get(), group }),
-    setSort: (sort: SortBy) => prefsStore.set({ ...prefsStore.get(), sort }),
+    setGroup: (group: GroupBy) => setPrefs({ ...prefsStore.get(), group }),
+    setSort: (sort: SortBy) => setPrefs({ ...prefsStore.get(), sort }),
     /** Folds or unfolds a group / a session's sub-sessions (keys are prefixed by the caller). */
     toggleCollapsed: (key: string) => {
       const p = prefsStore.get();
-      prefsStore.set({ ...p, collapsed: toggle(p.collapsed, key) });
+      setPrefs({ ...p, collapsed: toggle(p.collapsed, key) });
     },
   };
 }
