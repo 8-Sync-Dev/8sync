@@ -455,7 +455,8 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
             }
           }
         } catch (e) {
-          if (silent && !ac.signal.aborted) return "silent";
+          // A tunnel flushes what it held when HQ closes the stream, so late pings can come with `end`: the end wins.
+          if (silent && !ended && !ac.signal.aborted) return "silent";
           // A drop after the first bytes (ssh tunnel, proxy): poll on instead of giving up (lib/term-stream.ts).
           const next = afterStream({ remote, aborted: ac.signal.aborted, refused: e instanceof PollRefused, ended, threw: true });
           if (next === "poll") return "silent";

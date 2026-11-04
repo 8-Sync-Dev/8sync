@@ -10,6 +10,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Fixed
 - HQ terminal qua link public (Cloudflare quick tunnel) không còn trống trơn dưới chấm xanh "Đang nối": tunnel nhả stream theo lô ~130 KB, phòng có lịch sử (replay tới 256 KB) nhận lô đầu chỉ gồm một phần replay trong 4 s nên trang ở lại stream và phần còn lại kẹt trong tunnel khi phòng rảnh. HQ giờ ping mỗi 2 s kèm giờ máy; ngoài loopback trang chuyển sang polling khi stream im 6 s hoặc ping tới trễ hơn 3 s so với ping nhanh nhất. Tái hiện bằng proxy gom lô: trước sửa 36 s vẫn trống, sau sửa hiện dòng cuối và prompt ở 6,1 s.
 - Watchdog 40 s của 0.122.2 được đặt lại trước lần đọc đầu nên đè mất mốc 4 s "chưa có byte nào": qua tunnel giữ stream, terminal đứng "Đang kết nối" 40 s mới chuyển sang polling. Giờ ngoài loopback vẫn là 4 s, rồi 6 s im; 40 s chỉ áp cho loopback.
+- Stream terminal của phòng đã kết thúc không còn để ping 2 s chạy tới khi trang ngắt (interval được tạo sau `watch()` nên `clearInterval` lúc kết thúc không bắt được); ping trễ tới cùng `end` (tunnel xả hết khi HQ đóng stream) không còn kéo trang sang polling sau khi phòng đã kết thúc.
 
 ## [0.122.2] — 2026-11-04
 

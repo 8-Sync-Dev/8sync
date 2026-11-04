@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSse } from "@/components/hq/live-terminal";
 import { HOST_GONE_EXIT, IDLE_CLOSE_MS, SHELL_IDLE_MS, clampSize, closeTerm, endedTerm, input, openShell, openTerm, poll, shellArgs, shellKey, shellsOpen, termArgs, termOpen, waitOutput, watch } from "@/lib/server/term";
 import { termResponse } from "@/lib/server/term-http";
+import { pingTime } from "@/lib/term-stream";
 
 const ID = "3698e3a6-9b73-4b37-ab3a-368b169d0508";
 const OMP = "omp-00000000000000b2";
@@ -206,6 +207,18 @@ describe("omp ended on the PC (owner 2026-11-03: crashed there, the link never k
     const res = await termResponse(new Request(`http://127.0.0.1/t?gen=${p.gen}&since=${p.cursor}&wait=20000`), OMP, gone!);
     expect(await res.json()).toMatchObject({ ended: true, exited: true, out: "" });
     expect(endedTerm(OMP, 0)).toBeUndefined();
+  });
+  it("the stream opens with a ping carrying HQ's clock, and an ended room's stream ends without pinging on", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const f = fakeSpawn();
+    const t = openTerm(OMP, "/repo/x", { cols: 80, rows: 20 }, f.spawn);
+    f.proc().emit("exit", HOST_GONE_EXIT);
+    const res = await termResponse(new Request("http://127.0.0.1/t"), OMP, endedTerm(OMP, t.gen) ?? t);
+    const events = parseSse(await res.text()).events;
+    expect(events[0].event).toBe("ping");
+    expect(pingTime(events[0].data)).toEqual(expect.any(Number));
+    expect(events.at(-1)).toEqual({ event: "end", data: '{"exited":true}' });
+    expect(vi.getTimerCount()).toBe(0);
   });
   it("a bridge HQ closed itself (a pane closed on the PC) is no news: the link's next poll gets a fresh bridge", () => {
     const f = fakeSpawn();

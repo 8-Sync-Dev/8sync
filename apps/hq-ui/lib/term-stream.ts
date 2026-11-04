@@ -35,7 +35,8 @@ export function afterStream(s: StreamStop): "poll" | "fail" | "done" {
  * stayed on the stream, but the rest of the replay sat in the tunnel until the room printed another
  * ~130 KB, i.e. never while it idles: a blank box under a green dot. HQ pings every PING_MS with its
  * clock; off loopback the page polls instead once the stream is quiet for STALE_MS or a ping comes
- * HELD_MS later than the quickest one did.
+ * HELD_MS later than the quickest one did. The switch is one-way for that view: a hiccup on a link that
+ * streams fine (the VPS gate) costs polling until the terminal is reopened, never a blank box.
  */
 export const PING_MS = 2000;
 export const STALE_MS = 6000;

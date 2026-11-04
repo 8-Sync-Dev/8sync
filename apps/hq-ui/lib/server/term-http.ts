@@ -53,6 +53,8 @@ export async function termResponse(req: Request, key: string, term: Term): Promi
       };
       const ping = () => push("ping", JSON.stringify({ t: Date.now() }));
       ping();
+      // Before watch(): an ended term calls back at once, and its clearInterval must find the interval.
+      beat = setInterval(ping, PING_MS);
       // `replay`: kept output whose queries were answered already; the page writes it without answering.
       stop = watch(key, term, (b, answered) => {
         if (b) push(answered ? "replay" : "out", b.toString("base64"));
@@ -66,7 +68,6 @@ export async function termResponse(req: Request, key: string, term: Term): Promi
           }
         }
       });
-      beat = setInterval(ping, PING_MS);
       req.signal.addEventListener("abort", () => {
         clearInterval(beat);
         stop();
