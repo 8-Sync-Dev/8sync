@@ -2,7 +2,7 @@
 // hq-control: drive the local 8 Sync HQ UI API (apps/hq-ui) from an agent.
 // Reads the UI token from ~/.config/8sync/hq/ui-token and never prints it.
 // Usage: node hq.mjs <ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9>
-//                     | artifact add <file> [--title T] [--note N] [--session ID] | artifact ls [n] [--session ID]>
+//                     | artifact add <file> [--title T] [--note N] [--session ID] | artifact ls [n] [--session ID] | artifact show <id>>
 // Permission prompts are read-only here: the owner taps Yes/No in the HQ UI. `answer` picks an
 // option of a room's question, and only when the owner told you which one in this turn.
 import fs from "node:fs";
@@ -116,9 +116,26 @@ switch (cmd) {
       if (flags.session) q.set("session", flags.session);
       const { artifacts } = await call("GET", `/api/artifacts?${q}`);
       for (const a of artifacts) console.log(`${a.id}\t${a.project}\t${a.kind}\t${a.missing ? "MISSING" : (a.size ?? "")}\t${one(a.title, 80)}\t${a.path}`);
-    } else die("artifact add <file> [--title T] [--note N] [--session ID] | artifact ls [n] [--session ID]");
+    } else if (id === "show") {
+      // Metadata from the list, then the bytes through HQ (by id, never by path). Text kinds print inline;
+      // image/video/pdf/html print where the file is, for the agent's own reader.
+      const aid = need(pos[0], "artifact id (first column of `artifact ls`)");
+      const { artifacts } = await call("GET", "/api/artifacts?limit=500");
+      const a = artifacts.find((x) => x.id === aid) ?? die(`no artifact ${aid}: see \`artifact ls\``, 2);
+      console.log(`${a.id}\t${a.project}\t${a.kind}\t${a.missing ? "MISSING" : (a.size ?? "")}\t${one(a.title, 120)}\t${a.path}${a.note ? `\nnote: ${one(a.note, 400)}` : ""}`);
+      if (a.missing) break;
+      if (a.kind !== "markdown" && a.kind !== "text") {
+        console.log(`(${a.kind}: open ${a.path} with your image/PDF reader, or in HQ tab Kết quả)`);
+        break;
+      }
+      const res = await fetch(`${base}/api/artifacts/${enc(a.id)}/file`, { headers: { "x-hq-token": token } }).catch(() => die(`HQ is not answering on ${base}`));
+      if (!res.ok) die(`GET /api/artifacts/${a.id}/file → ${res.status}`, 2);
+      const text = await res.text();
+      const MAX = 40_000;
+      console.log(text.length > MAX ? `${text.slice(0, MAX)}\n… (${text.length - MAX} more chars: read ${a.path})` : text);
+    } else die("artifact add <file> [--title T] [--note N] [--session ID] | artifact ls [n] [--session ID] | artifact show <id>");
     break;
   }
   default:
-    die("usage: hq.mjs ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9> | artifact add <file> [--title T] [--note N] [--session ID] | artifact ls [n] [--session ID]");
+    die("usage: hq.mjs ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9> | artifact add <file> [--title T] [--note N] [--session ID] | artifact ls [n] [--session ID] | artifact show <id>");
 }

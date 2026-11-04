@@ -22,8 +22,11 @@ HQ là bảng điều khiển local của chủ. Agent dùng nó như chủ dùn
 |`answer <id> <1-9>`|Chọn đáp án cho câu hỏi (`question`) vừa đọc bằng `dialog`. HQ từ chối (409) nếu màn hình đã đổi|
 |`artifact add <file> [--title T] [--note N] [--session ID]`|Đăng một file vừa làm (báo cáo, PDF, ảnh, video, HTML, md/txt/json/csv…) lên tab **Kết quả** của HQ (`POST /api/artifacts`). HQ chỉ giữ đường dẫn, không copy; file phải nằm trong một dự án HQ đang biết. Đăng lại cùng file = cập nhật, giữ id|
 |`artifact ls [n] [--session ID]`|n kết quả mới nhất (mặc định 20): `id · dự án · loại · cỡ (MISSING khi file đã mất) · tiêu đề · đường dẫn`|
+|`artifact show <id>`|Đọc một kết quả: dòng thông tin + ghi chú, rồi nội dung nếu là md/txt/json/csv/log (tối đa 40 000 ký tự, đọc qua HQ theo id). Ảnh/video/PDF/HTML: in đường dẫn để mở bằng công cụ đọc ảnh/PDF|
 
 `id` lấy từ cột đầu của `ls`: `omp-<16hex>` cho phòng omp, UUID cho phòng Claude Code.
+
+Chủ gõ tắt trong HQ, Claude Code hay omp: `/hq-ls` (các phòng), `/hq-log <id>` (nhật ký + tin), `/hq-send <id> <tin>` (nhắn phòng), `/hq-artifact [ls|show <id>|add <file>]` (tab Kết quả). Mỗi lệnh chỉ gọi script này theo đúng luật dưới.
 
 ## 2. Luật
 - **Không trả lời hộp thoại quyền (permission).** `dialog … permission` chỉ để đọc rồi báo chủ đúng lệnh đang xin; chủ bấm Yes/No trong HQ UI ("Trả lời") hoặc terminal của phòng. Không gọi thẳng `/api/sessions/<id>/answer` với phím để lách luật này.
