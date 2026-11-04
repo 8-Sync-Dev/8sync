@@ -92,7 +92,8 @@ export type ContentList =
 
 /** The omp session that keeps content-post-agency up to date from HQ (create-or-resume by name). */
 export const CPA_SESSION = "cpa-live";
-export const cpaCommand = (repo: string) => `cd "${repo}" && 8sync . ${CPA_SESSION}`;
+/** `;` not `&&`: Windows PowerShell 5.1 rejects `&&`; `;` runs in PowerShell 5.1/7 and bash alike. */
+export const cpaCommand = (repo: string) => `cd "${repo}"; 8sync . ${CPA_SESSION}`;
 
 /** What the calendar and the sheet say when the DB predates migration 0063. */
 export const NO_SCHEDULE = "DB nội dung chưa có cột lịch đăng (migration 0063): mở app content-ai một lần để chạy migration.";

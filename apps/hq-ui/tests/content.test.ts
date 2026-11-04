@@ -246,7 +246,7 @@ describe("/api/content calendar fields (0063)", () => {
     configure(path.join(repo, "apps", "db", "daily-dev.db"));
     const { repo: got } = await (await GET(call("GET", ""))).json();
     expect(got).toBe(repo);
-    expect(cpaCommand(got)).toBe(`cd "${repo}" && 8sync . cpa-live`);
+    expect(cpaCommand(got)).toBe(`cd "${repo}"; 8sync . cpa-live`);
   });
   it("a 1-tap step the trigger would refuse says why", () => {
     const base = { source_approved_at: 1, checked_at: 1, news_url: "https://n", fb_post_url: "https://f" };
