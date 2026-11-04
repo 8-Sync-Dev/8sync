@@ -55,7 +55,7 @@ pub(crate) fn harness_block() -> String {
 **STEP 0 — code map trước (trail):** hỏi `trail` TRƯỚC grep/đọc cả file (tree-sitter local, không gọi model).\n\
 - `trail ask \"<câu hỏi>\"` — định vị/giải thích code · `trail grep <pattern>` — tìm kèm ngữ cảnh symbol\n\
 - `trail skeleton <file>` — khung file, không body · `trail callers <symbol>` (`--direction out` = callees) — impact trước khi sửa\n\
-- trail báo `no indexed callers` / cần đường A→B → `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` rồi `graphify explain <symbol>` / `graphify path \"A()\" \"B()\"` (bỏ `query`).\n\
+- trail báo `no indexed callers` / cần A→B → env `GRAPHIFY_MAX_WORKERS=4` + `graphify update . --no-cluster`, rồi `graphify explain <symbol|id>` / `graphify path \"A()\" \"B()\"` (bỏ `query`).\n\
 - Chỉ đọc raw file khi sắp sửa nó. Map cũ → `trail build`; repo chưa nối → `8sync trail`.\n\
 \n\
 **Quy tắc bất biến:**\n\
