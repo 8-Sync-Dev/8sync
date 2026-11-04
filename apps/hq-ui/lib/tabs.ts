@@ -8,10 +8,12 @@
 // Không gian (owner 2026-11-02, omp-first): folders on the machine → omp sessions → several windows; first and the default tab.
 export const MAIN_TABS = ["workspace", "overview", "office", "preview", "group", "room"] as const;
 // Nội dung (2026-11-04): content-post-agency's registry; listed only while a content DB is configured.
-export const MORE_TABS = ["know", "content", "loops", "report", "usage", "may", "sessions", "activity"] as const;
+// Kết quả (2026-11-04): files a room registered for the owner (POST /api/artifacts), first in the menu.
+export const MORE_TABS = ["artifacts", "know", "content", "loops", "report", "usage", "may", "sessions", "activity"] as const;
 export type MoreTab = (typeof MORE_TABS)[number];
 
 export const MORE_LABEL: Record<MoreTab, string> = {
+  artifacts: "Kết quả",
   know: "Tri thức",
   content: "Nội dung",
   loops: "Vòng lặp",

@@ -46,7 +46,7 @@ const BUNDLED_SKILLS: [(&str, &str); 35] = [
     ("skills/remote-compute",          "remote-compute"),
     // Zalo via ego browser: profile location, guarded 1-1 messaging, VN negotiation.
     ("skills/ego-zalo-advisor",        "ego-zalo-advisor"),
-    // HQ UI API from an agent: list rooms, read their log, message them; permission prompts read-only.
+    // HQ UI API from an agent: list rooms, read their log, message them, post artifacts; permission prompts read-only.
     ("skills/hq-control",              "hq-control"),
     // Foundation references (locked): stack-specific, opened on demand.
     ("skills/tauri-v2",                "tauri-v2"),
