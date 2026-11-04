@@ -3,8 +3,8 @@
 // The sheet a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
 // approve, inline caption / time edits, the AI-label check and "Giao việc". Esc or a click outside
 // closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner can share or come back.
-import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, ShieldAlertIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, PlayIcon, ShieldAlertIcon, XIcon } from "lucide-react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -27,6 +27,7 @@ import {
   type ContentRow,
   type ContentTextField,
 } from "@/lib/content";
+import { bytes } from "@/lib/disk";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import { AssignBox, Editable, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, type Patch } from "./content-bits";
@@ -268,7 +269,7 @@ function ItemDetail({
             ) : (
               <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(9rem,1fr))]">
                 {it.media.map((m) => (
-                  <MediaTile key={m.index} item={it.id} m={m} token={token} />
+                  <MediaTile key={m.name} item={it.id} m={m} token={token} />
                 ))}
               </div>
             )}
@@ -310,13 +311,28 @@ function ItemDetail({
 
 function TimeEdit({ id, at, fallback, onSave }: { id: number; at: number | null; fallback: number | null; onSave: (ms: number | null) => Promise<boolean> }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const saving = useRef(false);
   const value = draft ?? (at != null ? toLocalInput(at) : "");
   async function commit() {
-    if (draft === null) return;
+    if (draft === null || saving.current) return;
+    // Chromium reports "" while any part is blank (mid-retype): that is not "clear the date".
     const ms = draft ? fromLocalInput(draft) : null;
-    if (draft && ms == null) return;
-    if (ms === at) return setDraft(null);
-    if (await onSave(ms)) setDraft(null);
+    if (ms == null || ms === at) return setDraft(null);
+    saving.current = true;
+    try {
+      if (await onSave(ms)) setDraft(null);
+    } finally {
+      saving.current = false;
+    }
+  }
+  async function clear() {
+    if (saving.current) return;
+    saving.current = true;
+    try {
+      if (await onSave(null)) setDraft(null);
+    } finally {
+      saving.current = false;
+    }
   }
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -331,19 +347,31 @@ function TimeEdit({ id, at, fallback, onSave }: { id: number; at: number | null;
         aria-label={`Giờ đăng #${id}`}
         className={cn("h-8 w-auto text-sm", TOUCH)}
       />
+      {at != null && (
+        <Button type="button" size="sm" variant="ghost" className={cn("h-7 px-2 text-xs text-muted-foreground", TOUCH)} onClick={() => void clear()}>
+          Bỏ lịch
+        </Button>
+      )}
       {at == null && fallback != null && <span className="text-xs text-muted-foreground">chưa đặt lịch; đang xếp theo giờ đã đăng {timeOf(fallback)}</span>}
     </div>
   );
 }
 
 function MediaTile({ item, m, token }: { item: number; m: ContentMedia; token: string }) {
-  const { src, failed } = useAuthedImage(token, `/api/content/media?id=${item}&i=${m.index}`, true);
+  // Images load with the sheet; a video only on tap (the blob is fetched whole, so 12 renders at
+  // once would pull gigabytes). The name pins the file: a shifted folder answers 409, not another file.
+  const [want, setWant] = useState(m.kind === "image");
+  const { src, failed } = useAuthedImage(token, `/api/content/media?id=${item}&i=${m.index}&n=${encodeURIComponent(m.name)}&v=${m.size}`, want);
   return (
     <figure className={cn("overflow-hidden rounded-lg border", m.ai && "border-destructive/60")}>
       <div className="relative grid aspect-video place-items-center bg-muted">
-        {src ? (
+        {!want ? (
+          <Button type="button" size="sm" variant="outline" className={TOUCH} onClick={() => setWant(true)} aria-label={`Xem video ${m.name}`}>
+            <PlayIcon aria-hidden /> Xem · {bytes(m.size)}
+          </Button>
+        ) : src ? (
           m.kind === "video" ? (
-            <video src={src} controls playsInline preload="metadata" className="absolute inset-0 size-full object-contain" aria-label={m.name} />
+            <video src={src} controls autoPlay playsInline className="absolute inset-0 size-full object-contain" aria-label={m.name} />
           ) : (
             // An object URL from an authed fetch: next/image cannot load it.
             // eslint-disable-next-line @next/next/no-img-element

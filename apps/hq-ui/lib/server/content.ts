@@ -223,8 +223,13 @@ export function updateContent(db: DatabaseSync, id: number, body: Record<string,
     if (!isStatus(body.status)) throw new ContentError("status: không hợp lệ", 422);
     set.status = body.status;
     Object.assign(set, statusStamps(item, body.status, now));
-    if (body.status !== item.status) aiGate({ format: (set.format as ContentItem["format"] | undefined) ?? item.format, media_path: "media_path" in set ? (set.media_path as string | null) : item.media_path }, body.status, body);
   }
+  // The AI rule holds for the item as it ends up: reaching approved/published, or changing format or
+  // media while already there, needs the tick (else switching an approved text to ai_video skips it).
+  const next = (set.status as ContentStatus | undefined) ?? item.status;
+  const nextFormat = (set.format as ContentItem["format"] | undefined) ?? item.format;
+  const nextMedia = "media_path" in set ? (set.media_path as string | null) : item.media_path;
+  if (next !== item.status || nextFormat !== item.format || nextMedia !== item.media_path) aiGate({ format: nextFormat, media_path: nextMedia }, next, body);
   if ("source_url" in set && set.source_url !== item.source_url) {
     set.source_approved_by = null;
     set.source_approved_at = null;

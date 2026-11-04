@@ -230,6 +230,23 @@ describe("/api/content calendar fields (0063)", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("content_items: source must be approved before approved/published");
   });
+  it("an approved item cannot turn into AI content without the tick (format or media change)", async () => {
+    configure(makeDb("ai-swap.db", MIGRATION_0062 + MIGRATION_0063));
+    const q = await readyToApprove({ format: "text" });
+    expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
+    const res = await PATCH(call("PATCH", q, { format: "ai_video" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/^Mục có rủi ro nhãn AI/);
+    // Same status sent again does not slip it through either.
+    expect((await PATCH(call("PATCH", q, { status: "approved", format: "ai_video" }))).status).toBe(409);
+    const dir = path.join(home, "swap-media");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "r.mp4"), Buffer.alloc(64));
+    expect((await PATCH(call("PATCH", q, { media_path: dir }))).status).toBe(409);
+    expect((await PATCH(call("PATCH", q, { format: "ai_video", no_ai_confirmed: true }))).status).toBe(200);
+    // Edits that do not touch the AI rule stay free on an approved item.
+    expect((await PATCH(call("PATCH", q, { caption: "mới" }))).status).toBe(200);
+  });
   it("media with Content Credentials or an IPTC AI source flags the item; plain media does not", async () => {
     const dir = path.join(home, "media");
     fs.mkdirSync(dir, { recursive: true });
@@ -240,6 +257,10 @@ describe("/api/content calendar fields (0063)", () => {
     expect(aiMark(path.join(dir, "a.png"))).toMatch(/C2PA/);
     expect(aiMark(path.join(dir, "b.jpg"))).toMatch(/IPTC/);
     expect(aiMark(path.join(dir, "c.mp4"))).toBeNull();
+    // A long render is read at both ends only: an MP4 with its manifest after mdat is still caught.
+    const big = path.join(home, "big.mp4");
+    fs.writeFileSync(big, Buffer.concat([Buffer.alloc(20 * 1024 * 1024), Buffer.from("c2pa.claim"), Buffer.alloc(64)]));
+    expect(aiMark(big)).toMatch(/C2PA/);
 
     configure(makeDb("media.db", MIGRATION_0062 + MIGRATION_0063));
     const q = await readyToApprove({ format: "infographic", media_path: dir });
@@ -259,6 +280,9 @@ describe("/api/content calendar fields (0063)", () => {
     expect(video.status).toBe(200);
     expect(video.headers.get("content-type")).toBe("video/mp4");
     expect((await video.arrayBuffer()).byteLength).toBe(2048);
+    // The name pins the file: a folder that shifted since the list answers 409, not another file.
+    expect((await get(`?id=${row.id}&i=2&n=c.mp4`)).status).toBe(200);
+    expect((await get(`?id=${row.id}&i=1&n=c.mp4`)).status).toBe(409);
     expect((await get(`?id=${row.id}&i=3`)).status).toBe(404);
     expect((await get(`?id=9999&i=0`)).status).toBe(404);
     expect((await get(`?id=${row.id}&i=../notes.txt`)).status).toBe(400);

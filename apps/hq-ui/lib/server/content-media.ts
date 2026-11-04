@@ -19,9 +19,13 @@ const TYPES: Record<string, { type: string; kind: ContentMedia["kind"] }> = {
 export const MEDIA_MAX = 12;
 /** The browser fetches a file whole (authed blob): bigger ones are listed but not served. */
 export const MEDIA_SERVE_MAX = 150 * 1024 * 1024;
-/** Bytes read per file looking for marks; a C2PA manifest sits in a box/segment, rarely past this. */
-const SCAN_MAX = 256 * 1024 * 1024;
-const CHUNK = 4 * 1024 * 1024;
+/**
+ * Bytes read at each end of a file looking for marks: a C2PA manifest / XMP packet sits in a box or
+ * segment at the head (JPEG APP11, PNG before IDAT, MP4 before mdat) or the tail (MP4 after mdat).
+ * The list poll scans every file of every item, so a 2 GB render must not be read whole.
+ */
+const SCAN_WINDOW = 8 * 1024 * 1024;
+const CHUNK = 2 * 1024 * 1024;
 
 export type MediaFile = ContentMedia & { path: string; type: string };
 
@@ -87,7 +91,7 @@ export function aiMark(file: string): string | null {
   const key = `${st.size}:${st.mtimeMs}`;
   const hit = cache.get(file);
   if (hit?.key === key) return hit.mark;
-  const mark = scan(file, Math.min(st.size, SCAN_MAX));
+  const mark = scan(file, st.size);
   cache.set(file, { key, mark });
   return mark;
 }
@@ -99,26 +103,27 @@ function scan(file: string, size: number): string | null {
   } catch {
     return null;
   }
-  let iptc = false;
-  let c2pa = false;
+  const windows: [number, number][] = size <= 2 * SCAN_WINDOW ? [[0, size]] : [[0, SCAN_WINDOW], [size - SCAN_WINDOW, size]];
+  const iptcText = IPTC_AI.toString("latin1");
   try {
     const buf = Buffer.alloc(CHUNK + LONGEST);
-    let carry = 0;
-    for (let pos = 0; pos < size && !iptc; ) {
-      const n = fs.readSync(fd, buf, carry, Math.min(CHUNK, size - pos), pos);
-      if (n <= 0) break;
-      const view = buf.subarray(0, carry + n);
-      c2pa ||= C2PA.some((p) => view.includes(p));
-      iptc = view.toString("latin1").toLowerCase().includes(IPTC_AI.toString("latin1"));
-      // Keep the tail so a pattern split across two reads is still seen.
-      carry = Math.min(LONGEST - 1, view.length);
-      view.copy(buf, 0, view.length - carry);
-      pos += n;
+    for (const [start, end] of windows) {
+      let carry = 0;
+      for (let pos = start; pos < end; ) {
+        const n = fs.readSync(fd, buf, carry, Math.min(CHUNK, end - pos), pos);
+        if (n <= 0) break;
+        const view = buf.subarray(0, carry + n);
+        // First mark wins: either one is enough to flag the file.
+        if (view.toString("latin1").toLowerCase().includes(iptcText)) return "media khai nguồn AI (IPTC digitalSourceType)";
+        if (C2PA.some((p) => view.includes(p))) return "media có Content Credentials (C2PA), Meta đọc được để gắn nhãn AI";
+        // Keep the tail so a pattern split across two reads is still seen.
+        carry = Math.min(LONGEST - 1, view.length);
+        view.copy(buf, 0, view.length - carry);
+        pos += n;
+      }
     }
   } finally {
     fs.closeSync(fd);
   }
-  if (iptc) return "media khai nguồn AI (IPTC digitalSourceType)";
-  if (c2pa) return "media có Content Credentials (C2PA), Meta đọc được để gắn nhãn AI";
   return null;
 }
