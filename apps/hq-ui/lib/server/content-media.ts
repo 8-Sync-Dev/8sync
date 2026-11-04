@@ -17,8 +17,6 @@ const TYPES: Record<string, { type: string; kind: ContentMedia["kind"] }> = {
 };
 /** Files shown per item (a folder of renders keeps the sheet light). */
 export const MEDIA_MAX = 12;
-/** The browser fetches a file whole (authed blob): bigger ones are listed but not served. */
-export const MEDIA_SERVE_MAX = 150 * 1024 * 1024;
 /**
  * Bytes read at each end of a file looking for marks: a C2PA manifest / XMP packet sits in a box or
  * segment at the head (JPEG APP11, PNG before IDAT, MP4 before mdat) or the tail (MP4 after mdat).

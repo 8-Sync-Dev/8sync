@@ -752,3 +752,8 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - failure: `res.json().catch(() => ({}))` trong client API nuốt cả AbortError: request bị effect cleanup huỷ trong lúc đọc body vẫn resolve `{}` → caller nhận "thành công" thiếu field → `undefined.includes` sập cả cây React. Chỉ coi body hỏng là rỗng khi signal CHƯA abort. Lỗi theo thời điểm (1/12 lần tải trên HQ thật), reload thường hết nên dễ bị đổ cho mạng/tunnel.
 - validated: tìm frame minified của prod nhanh: `tab.errors()` cho `chunk.js:1:<offset>`, tải chunk từ chính HQ rồi cắt `s[offset-400:offset+300]` → thấy `D.worktrees.includes(` → `trail grep` ra source.
 - failure (v0.122.5): cookie phiên ký bằng khoá link → xoay link = đăng xuất tất cả. Tách secret phiên (file riêng, `fileSecret` trong `lib/server/auth.ts`, dùng chung với play-secret) khỏi secret dùng để mở link.
+
+## 2026-11-04 — HQ sidebar nhảy chỗ: sort theo `at` (last_active)
+- failure: sort "Gần đây" xếp phiên và dự án theo `at`, mà `at` đổi sau mỗi lượt, nên cứ 5 giây poll là một phiên đang làm nhảy lên đầu và kéo cả dự án theo.
+- validated: dùng sort "manual" (`inOrder` + `moveKey` trong `lib/session-tree.ts`). Phiên chưa xếp đi theo `created` (không đổi theo thời gian), dự án chưa xếp đi theo tên. Chỉ có drop mới ghi `hq.tree.order`, và drop chụp lại cả danh sách đang hiện. Prefs có `v: 2`: bản lưu cũ có `sort: "recent"` không có `v` chỉ là mặc định cũ (mỗi lần gập nhóm là lưu cả prefs), nên được chuyển sang manual.
+- validated: test HTML5 drag & drop trong headless bằng cách bắn `DragEvent` có `new DataTransfer()` (dragstart → dragover → drop → dragend) trong `page.evaluate`. Download blob kiểm bằng CDP `Browser.setDownloadBehavior`.

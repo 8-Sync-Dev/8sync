@@ -69,12 +69,13 @@ describe("composer '/' autocomplete", () => {
     { name: "code-review", description: "", source: "claude" },
   ];
 
-  it("a '/' at the start of a line, up to the caret, with no space", () => {
+  it("a '/' at the start or after a space, up to the caret, with no space", () => {
     expect(slashAt("/rev", 4)).toEqual({ start: 0, end: 4, prefix: "rev" });
     expect(slashAt("hi\n/", 4)).toEqual({ start: 3, end: 4, prefix: "" });
-    expect(slashAt("a /rev", 6)).toBeNull();
+    expect(slashAt("làm theo /rev", 13)).toEqual({ start: 9, end: 13, prefix: "rev" });
     expect(slashAt("/rev x", 6)).toBeNull();
     expect(slashAt("path/to", 7)).toBeNull();
+    expect(slashAt("xem https://a.b/c", 17)).toBeNull();
   });
 
   it("matches name prefix first, then substring, case-insensitive", () => {

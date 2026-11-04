@@ -10,7 +10,9 @@ import {
   groupSessions,
   isUnread,
   mergeSessions,
+  moveKey,
   readArchive,
+  readOrder,
   readPrefs,
   sessionNameFrom,
   sortSessions,
@@ -121,6 +123,25 @@ describe("groupSessions / sortSessions", () => {
     expect(g[1].sessions.map((s) => s.key)).toEqual(["b", "a", "e"]);
   });
 
+  it("manual: activity never moves a row; new sessions on top, then the saved order", () => {
+    const order = { sessions: ["b", "a", "e"], groups: ["c:/code/web", "c:/code/app"] };
+    const g = groupSessions([...list, S({ key: "e", at: 1 }), S({ key: "f", created: 50 }), S({ key: "h", created: 900 })], "project", "manual", order);
+    expect(g.map((x) => x.label)).toEqual(["web", "app", "Không rõ thư mục"]);
+    expect(g[1].sessions.map((s) => s.key)).toEqual(["h", "f", "b", "a", "e"]);
+    // Same sessions, every one just did a turn: nothing moves.
+    const busy = [...list, S({ key: "e" }), S({ key: "f", created: 50 }), S({ key: "h", created: 900 })].map((s) => ({ ...s, at: 99_999 - s.key.charCodeAt(0) }));
+    expect(groupSessions(busy, "project", "manual", order)[1].sessions.map((s) => s.key)).toEqual(["h", "f", "b", "a", "e"]);
+    // Projects not placed yet go by name, above the placed ones.
+    expect(groupSessions(list, "project", "manual").map((x) => x.label)).toEqual(["app", "web", "Không rõ thư mục"]);
+  });
+
+  it("moveKey: the dragged key takes the target's place, the shown list becomes the order", () => {
+    expect(moveKey([], ["a", "b", "c"], "a", "c")).toEqual(["b", "c", "a"]);
+    expect(moveKey([], ["a", "b", "c"], "c", "a")).toEqual(["c", "a", "b"]);
+    expect(moveKey(["x", "b", "a"], ["a", "b"], "a", "a")).toEqual(["a", "b", "x"]);
+    expect(moveKey(["x"], ["a", "b"], "z", "a")).toEqual(["x"]);
+  });
+
   it("groups by project in name order when sorting by name", () => {
     expect(groupSessions(list, "project", "name").map((x) => x.label)).toEqual(["app", "web", "Không rõ thư mục"]);
   });
@@ -176,9 +197,15 @@ describe("attention and keyboard", () => {
 describe("local prefs and archive", () => {
   it("keeps only well-formed prefs", () => {
     expect(readPrefs(JSON.stringify({ group: "state", sort: "name", collapsed: ["x", 3, ""] }))).toEqual({ group: "state", sort: "name", collapsed: ["x"] });
-    expect(readPrefs(JSON.stringify({ group: "bogus", sort: 1 }))).toEqual({ group: "project", sort: "recent", collapsed: [] });
-    expect(readPrefs("{not json")).toEqual({ group: "project", sort: "recent", collapsed: [] });
-    expect(readPrefs(null)).toEqual({ group: "project", sort: "recent", collapsed: [] });
+    expect(readPrefs(JSON.stringify({ group: "bogus", sort: 1 }))).toEqual({ group: "project", sort: "manual", collapsed: [] });
+    expect(readPrefs("{not json")).toEqual({ group: "project", sort: "manual", collapsed: [] });
+    expect(readPrefs(null)).toEqual({ group: "project", sort: "manual", collapsed: [] });
+  });
+
+  it("moves browsers that only saved the old default to manual, keeps a recent the owner picked", () => {
+    expect(readPrefs(JSON.stringify({ group: "project", sort: "recent", collapsed: [] })).sort).toBe("manual");
+    expect(readPrefs(JSON.stringify({ group: "project", sort: "recent", collapsed: [], v: 2 })).sort).toBe("recent");
+    expect(readOrder(JSON.stringify({ sessions: ["a", 2], groups: "x" }))).toEqual({ sessions: ["a"], groups: [] });
   });
 
   it("reads the archive list and toggles keys", () => {

@@ -36,7 +36,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import { Fragment, useMemo, useState, useSyncExternalStore, type FormEvent, type MouseEvent } from "react";
+import { Fragment, useMemo, useState, useSyncExternalStore, type DragEvent, type FormEvent, type MouseEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -53,14 +53,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agoShort } from "@/lib/now";
-import { GROUP_WORD, SORT_WORD, TREE_WORD, groupSessions, isUnread, splitChildren, type GroupBy, type SortBy, type TreeChild, type TreeGroup, type TreeSession } from "@/lib/session-tree";
+import { GROUP_WORD, SORT_WORD, TREE_WORD, groupSessions, isUnread, moveKey, orderGroups, splitChildren, type GroupBy, type SortBy, type TreeChild, type TreeGroup, type TreeSession } from "@/lib/session-tree";
 import { groupKey, sidebarGroups, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
 import { MORE_LABEL, MORE_TABS, moreTabs } from "@/lib/tabs";
 import { cn } from "@/lib/utils";
 import { ErrorNote } from "./bits";
 import { BrandMark } from "./brand-mark";
 import { CloseDialog, OmpDeleteDialog, ProjectDeleteDialog, RoomEndDialog, WorktreeDialog, useWorktreeKeys, type Confirm } from "./nav-actions";
-import { useArchive, useTreePrefs, useUnread, type SessionTree } from "./use-session-tree";
+import { useArchive, useTreeOrder, useTreePrefs, useUnread, type SessionTree } from "./use-session-tree";
 import type { Hq, Live } from "./use-hq";
 import type { OfficeState, Room } from "./use-office";
 import type { KnownProject } from "@/lib/known-projects";
@@ -134,6 +134,7 @@ export function Nav({
 }) {
   const MORE = useMemo(() => moreTabs(contentOn).filter((t) => t !== "loops" && t !== "may"), [contentOn]);
   const { prefs, setGroup, setSort, toggleCollapsed } = useTreePrefs();
+  const { order, set: setOrder } = useTreeOrder();
   const archive = useArchive();
   const unread = useUnread();
   const [query, setQuery] = useState<string | null>(null);
@@ -166,15 +167,68 @@ export function Nav({
   const stored = tree.sessions.filter((s) => archive.keys.includes(s.key));
   // Folders added in HQ with no session yet: a heading with "+" to start one there.
   const groups = useMemo(() => {
-    const gs = groupSessions(visible, prefs.group, prefs.sort);
+    const gs = groupSessions(visible, prefs.group, prefs.sort, order);
     if (prefs.group !== "project" || q) return gs;
     const extra: TreeGroup[] = hq.projects.data
       .filter((p) => !p.missing && !gs.some((g) => g.root && groupKey(g.root) === groupKey(p.path)) && !hiddenAt.has(groupKey(p.path)))
       .map((p) => ({ key: groupKey(p.path), label: p.name, root: p.path, sessions: [] }));
-    return [...gs, ...extra];
+    return prefs.sort === "manual" ? orderGroups([...gs, ...extra], order) : [...gs, ...extra];
     // `visible` is rebuilt every render; its inputs are the real dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tree.sessions, archive.keys, hidden, q, prefs.group, prefs.sort, hq.projects.data]);
+  }, [tree.sessions, archive.keys, hidden, q, prefs.group, prefs.sort, order, hq.projects.data]);
+
+  // Drag & drop: a session moves inside its own group, a project heading among the projects (not
+  // while searching: the list on screen is then a subset). A drop pins the whole list as it is now.
+  const [drag, setDrag] = useState<{ kind: "s" | "g"; key: string; group: string } | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const groupDrag = prefs.group === "project" && !q;
+  const shownSessions = groups.flatMap((g) => g.sessions.map((s) => s.key));
+  const shownGroups = groups.map((g) => g.key);
+  const dropOn = (kind: "s" | "g", to: string) => {
+    if (!drag || drag.kind !== kind || drag.key === to) return;
+    const pinGroups = prefs.group === "project" && shownGroups.length > 0;
+    setOrder({
+      sessions: moveKey(order.sessions, shownSessions, kind === "s" ? drag.key : shownSessions[0], kind === "s" ? to : shownSessions[0]),
+      groups: pinGroups ? moveKey(order.groups, shownGroups, kind === "g" ? drag.key : shownGroups[0], kind === "g" ? to : shownGroups[0]) : order.groups,
+    });
+  };
+  /** Where the dragged row would land on `key`: above it when coming from below, else below it. */
+  const landing = (kind: "s" | "g", key: string): "above" | "below" | null => {
+    if (!drag || drag.kind !== kind || over !== key) return null;
+    const list = kind === "s" ? shownSessions : shownGroups;
+    return list.indexOf(drag.key) > list.indexOf(key) ? "above" : "below";
+  };
+  const dnd = (kind: "s" | "g", key: string, group: string, on: boolean) =>
+    on
+      ? {
+          draggable: true,
+          onDragStart: (e: DragEvent) => {
+            e.stopPropagation();
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", key);
+            setDrag({ kind, key, group });
+          },
+          onDragEnd: () => {
+            setDrag(null);
+            setOver(null);
+          },
+          onDragOver: (e: DragEvent) => {
+            if (!drag || drag.kind !== kind || (kind === "s" && drag.group !== group)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = "move";
+            if (over !== key) setOver(key);
+          },
+          onDrop: (e: DragEvent) => {
+            if (!drag || drag.kind !== kind) return;
+            e.preventDefault();
+            e.stopPropagation();
+            dropOn(kind, key);
+            setDrag(null);
+            setOver(null);
+          },
+        }
+      : {};
   const knownRest = useMemo(
     () => (hq.knownProjects ?? []).filter((k) => !tree.sessions.some((s) => s.root && groupKey(s.root) === groupKey(k.path)) && !hq.projects.data.some((p) => groupKey(p.path) === groupKey(k.path))),
     [hq.knownProjects, hq.projects.data, tree.sessions],
@@ -339,8 +393,9 @@ export function Nav({
                 {groups.map((g) => {
                   const folded = prefs.collapsed.includes(`g:${g.key}`);
                   const listId = `grp-${g.key.replace(/[^\w-]/g, "_")}`;
+                  const gl = landing("g", g.key);
                   return (
-                    <li key={g.key}>
+                    <li key={g.key} {...dnd("g", g.key, "", groupDrag)} className={cn(drag?.key === g.key && "opacity-50", gl === "above" && "shadow-[inset_0_2px_0_var(--primary)]", gl === "below" && "shadow-[inset_0_-2px_0_var(--primary)]")}>
                       <div className="group/row flex h-7 items-center gap-0.5 pr-0.5 max-md:h-10">
                         <button
                           type="button"
@@ -365,6 +420,9 @@ export function Nav({
                         {g.sessions.map((s) => (
                           <SessionRow
                             key={s.key}
+                            dnd={dnd("s", s.key, g.key, true)}
+                            dragging={drag?.key === s.key}
+                            landing={landing("s", s.key)}
                             s={s}
                             now={now}
                             current={active === s.key || (s.room != null && active === s.room)}
@@ -546,6 +604,9 @@ function Mark({ state, unread }: { state: TreeSession["state"]; unread: boolean 
  * sub-sessions hang under it on a └ line: running and recent ones, the rest behind "+N cũ hơn".
  */
 function SessionRow({
+  dnd,
+  dragging,
+  landing,
   s,
   now,
   current,
@@ -559,6 +620,10 @@ function SessionRow({
   onEnd,
   onDelete,
 }: {
+  /** Drag & drop handlers from the Nav (the row is draggable inside its group). */
+  dnd: object;
+  dragging: boolean;
+  landing: "above" | "below" | null;
   s: TreeSession;
   now: number;
   current: boolean;
@@ -580,7 +645,7 @@ function SessionRow({
   const tip = [s.title !== s.name ? `${s.title} (${s.name})` : s.title, TREE_WORD[s.state], s.doing, s.cwd, s.ompId ? "Alt+click: mở cạnh nhau" : null].filter(Boolean).join("\n");
   const kidsId = `kids-${s.key.replace(/[^\w-]/g, "_")}`;
   return (
-    <li>
+    <li {...dnd} className={cn("rounded-md", dragging && "opacity-50", landing === "above" && "shadow-[inset_0_2px_0_var(--primary)]", landing === "below" && "shadow-[inset_0_-2px_0_var(--primary)]")}>
       <div className={cn("group/row relative flex h-7 items-center rounded-md transition-colors hover:bg-sidebar-accent max-md:h-10 motion-reduce:transition-none", current && "bg-sidebar-accent")}>
         <button type="button" className="flex h-full min-w-0 shrink items-center rounded-md pl-2 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-current={current} title={tip} onClick={click}>
           <span className={cn("truncate", current && "font-medium")}>{s.title}</span>

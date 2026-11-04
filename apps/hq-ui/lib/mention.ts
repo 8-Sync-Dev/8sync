@@ -36,16 +36,17 @@ export function applyPick(text: string, m: Mention, e: Entry): { text: string; c
   return { text: head + rest, caret: head.length, open: e.dir };
 }
 
-// "/" commands (owner 2026-11-02): a "/" that starts a line lists the owner's omp and Claude Code
-// commands (GET /api/commands, lib/server/commands.ts); picking one puts "/name " in its place.
+// "/" commands (owner 2026-11-02): a "/" at the start or after a space lists the owner's omp and
+// Claude Code commands (GET /api/commands, lib/server/commands.ts); picking one puts "/name " in its
+// place. Mid-text too (owner 2026-11-04: "/ ở đầu mới hint còn sau không"); "a/b" and URLs never open it.
 
 export type SlashCommand = { name: string; description: string; source: "omp" | "claude" };
 /** The "/token" under the caret: `start` is the index of "/", `prefix` what follows it. */
 export type Slash = { start: number; end: number; prefix: string };
 
-/** A "/…" at the start of a line, running to the caret with no space in it. */
+/** A "/…" that starts the text or follows whitespace, running to the caret with no space in it. */
 export function slashAt(text: string, caret: number): Slash | null {
-  const m = /(^|\n)\/([\w.:-]*)$/.exec(text.slice(0, caret));
+  const m = /(^|\s)\/([\w.:-]*)$/.exec(text.slice(0, caret));
   return m ? { start: caret - m[2].length - 1, end: caret, prefix: m[2] } : null;
 }
 

@@ -153,29 +153,73 @@ export function mergeSessions(rooms: TreeRoomIn[], omp: OmpTreeRow[]): TreeSessi
 // ── group & sort ─────────────────────────────────────────────────────────────
 
 export type GroupBy = "project" | "state" | "none";
-export type SortBy = "recent" | "created" | "name";
+export type SortBy = "manual" | "recent" | "created" | "name";
 export const GROUP_WORD: Record<GroupBy, string> = { project: "Dự án", state: "Trạng thái", none: "Không nhóm" };
-export const SORT_WORD: Record<SortBy, string> = { recent: "Gần đây", created: "Ngày tạo", name: "Tên" };
+export const SORT_WORD: Record<SortBy, string> = { manual: "Tự sắp (kéo thả)", recent: "Gần đây", created: "Ngày tạo", name: "Tên" };
 
 export type TreeGroup = { key: string; label: string; root: string | null; sessions: TreeSession[] };
 
 const byName = (a: string, b: string) => a.localeCompare(b, "vi", { sensitivity: "base", numeric: true });
 
-export function sortSessions(list: TreeSession[], sort: SortBy): TreeSession[] {
-  const when = (s: TreeSession) => (sort === "created" ? (s.created ?? s.at ?? 0) : (s.at ?? 0));
+/**
+ * The owner's drag-and-drop order (this browser): session keys and group keys, earlier = higher.
+ * Only a drop changes it; activity never moves a row (owner 2026-11-04: "chỉ có thể drag drop").
+ */
+export type TreeOrder = { sessions: string[]; groups: string[] };
+export const NO_ORDER: TreeOrder = { sessions: [], groups: [] };
+
+/**
+ * `items` in the saved order. Ones not placed yet (a new session or project) come first, ordered by
+ * `fresh` (which must not read activity): they show up on top, then stay until the owner drags them.
+ */
+export function inOrder<T>(items: T[], keyOf: (x: T) => string, fresh: (a: T, b: T) => number, saved: readonly string[]): T[] {
+  const at = new Map(saved.map((k, i) => [k, i]));
+  const pos = (x: T) => at.get(keyOf(x));
+  const unplaced = items.filter((x) => pos(x) === undefined).sort((a, b) => fresh(a, b) || keyOf(a).localeCompare(keyOf(b)));
+  const placed = items.filter((x) => pos(x) !== undefined).sort((a, b) => pos(a)! - pos(b)!);
+  return [...unplaced, ...placed];
+}
+
+const createdOf = (s: TreeSession) => s.created ?? s.at ?? 0;
+
+export function sortSessions(list: TreeSession[], sort: SortBy, order: TreeOrder = NO_ORDER): TreeSession[] {
+  // Newest created first; never `at` (it moves with every turn).
+  if (sort === "manual") return inOrder(list, (s) => s.key, (a, b) => (b.created ?? 0) - (a.created ?? 0), order.sessions);
+  const when = (s: TreeSession) => (sort === "created" ? createdOf(s) : (s.at ?? 0));
   return [...list].sort((a, b) => (sort === "name" ? byName(a.title, b.title) : when(b) - when(a)) || byName(a.title, b.title));
+}
+
+/** Groups in the saved order (manual sort; ones not placed yet by name), the "Không rõ thư mục" group last. */
+export function orderGroups(groups: TreeGroup[], order: TreeOrder): TreeGroup[] {
+  return inOrder(groups, (g) => g.key, (a, b) => byName(a.label, b.label), order.groups).sort((a, b) => Number(!a.root) - Number(!b.root));
+}
+
+/**
+ * The order after dragging key `from` onto key `to` (it takes `to`'s place) inside `shown` (the
+ * list as it is on screen now, which becomes the saved order: `from` === `to` just pins it). Keys
+ * saved before that are not on screen (archived, filtered) keep their order after the shown ones.
+ * A key not on screen: no change.
+ */
+export function moveKey(saved: readonly string[], shown: readonly string[], from: string, to: string): string[] {
+  const i = shown.indexOf(from);
+  const j = shown.indexOf(to);
+  if (i < 0 || j < 0) return [...saved];
+  const next = shown.filter((k) => k !== from);
+  next.splice(j, 0, from);
+  const on = new Set(shown);
+  return [...next, ...saved.filter((k) => !on.has(k))];
 }
 
 /**
  * Groups in display order. By project: the group with the newest activity first (by name when sorting
  * by name); by state: Chờ anh, Đang làm, Xong, Lỗi, Nghỉ (empty states skipped); none: one group.
  */
-export function groupSessions(list: TreeSession[], by: GroupBy, sort: SortBy): TreeGroup[] {
-  if (by === "none") return list.length ? [{ key: "all", label: "Phiên", root: null, sessions: sortSessions(list, sort) }] : [];
+export function groupSessions(list: TreeSession[], by: GroupBy, sort: SortBy, order: TreeOrder = NO_ORDER): TreeGroup[] {
+  if (by === "none") return list.length ? [{ key: "all", label: "Phiên", root: null, sessions: sortSessions(list, sort, order) }] : [];
   if (by === "state") {
     return TREE_STATES.flatMap((st) => {
       const xs = list.filter((s) => s.state === st);
-      return xs.length ? [{ key: `state:${st}`, label: TREE_WORD[st], root: null, sessions: sortSessions(xs, sort) }] : [];
+      return xs.length ? [{ key: `state:${st}`, label: TREE_WORD[st], root: null, sessions: sortSessions(xs, sort, order) }] : [];
     });
   }
   const groups = new Map<string, TreeGroup>();
@@ -185,9 +229,10 @@ export function groupSessions(list: TreeSession[], by: GroupBy, sort: SortBy): T
     if (!g) groups.set(key, (g = { key: key || "none", label: s.folder, root: s.root, sessions: [] }));
     g.sessions.push(s);
   }
-  const newest = (g: TreeGroup) => Math.max(0, ...g.sessions.map((s) => (sort === "created" ? (s.created ?? s.at ?? 0) : (s.at ?? 0))));
-  return [...groups.values()]
-    .map((g) => ({ ...g, sessions: sortSessions(g.sessions, sort) }))
+  const sorted = [...groups.values()].map((g) => ({ ...g, sessions: sortSessions(g.sessions, sort, order) }));
+  if (sort === "manual") return orderGroups(sorted, order);
+  const newest = (g: TreeGroup) => Math.max(0, ...g.sessions.map((s) => (sort === "created" ? createdOf(s) : (s.at ?? 0))));
+  return sorted
     .sort((a, b) => Number(!a.root) - Number(!b.root) || (sort === "name" ? byName(a.label, b.label) : newest(b) - newest(a)) || byName(a.label, b.label));
 }
 
@@ -229,19 +274,30 @@ export function cycleKey(keys: string[], cur: string | null, dir: 1 | -1): strin
 // ── local prefs (localStorage is user-editable: keep only what is well formed) ──
 
 export type TreePrefs = { group: GroupBy; sort: SortBy; collapsed: string[] };
-export const DEFAULT_PREFS: TreePrefs = { group: "project", sort: "recent", collapsed: [] };
+export const DEFAULT_PREFS: TreePrefs = { group: "project", sort: "manual", collapsed: [] };
 
 const strings = (x: unknown, max: number): string[] => (Array.isArray(x) ? x.filter((s): s is string => typeof s === "string" && s.length > 0 && s.length <= 300).slice(0, max) : []);
 
 export function readPrefs(raw: string | null): TreePrefs {
   try {
-    const v = JSON.parse(raw ?? "null") as Partial<Record<keyof TreePrefs, unknown>> | null;
+    const v = JSON.parse(raw ?? "null") as (Partial<Record<keyof TreePrefs, unknown>> & { v?: unknown }) | null;
     if (!v || typeof v !== "object") return DEFAULT_PREFS;
     const group = v.group === "state" || v.group === "none" || v.group === "project" ? v.group : DEFAULT_PREFS.group;
-    const sort = v.sort === "created" || v.sort === "name" || v.sort === "recent" ? v.sort : DEFAULT_PREFS.sort;
+    // Before `v: 2` "recent" was only the default (any fold saved it): those browsers start on manual.
+    const sort = v.sort === "created" || v.sort === "name" || v.sort === "manual" || (v.sort === "recent" && v.v === 2) ? v.sort : DEFAULT_PREFS.sort;
     return { group, sort, collapsed: strings(v.collapsed, 500) };
   } catch {
     return DEFAULT_PREFS;
+  }
+}
+
+export function readOrder(raw: string | null): TreeOrder {
+  try {
+    const v = JSON.parse(raw ?? "null") as Partial<Record<keyof TreeOrder, unknown>> | null;
+    if (!v || typeof v !== "object") return NO_ORDER;
+    return { sessions: strings(v.sessions, 3000), groups: strings(v.groups, 500) };
+  } catch {
+    return NO_ORDER;
   }
 }
 

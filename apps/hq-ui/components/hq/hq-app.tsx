@@ -18,7 +18,7 @@ import { FirstRun } from "./first-run";
 import type { LoopsState } from "./loops-view";
 import { Guide, useGuideFirstRun } from "./guide";
 import { AddProjectDialog, Nav, type Scope } from "./nav";
-import { useArchive, useSessionTree, useTreePrefs } from "./use-session-tree";
+import { useArchive, useSessionTree, useTreeOrder, useTreePrefs } from "./use-session-tree";
 import { COMPOSER_ID, useWorkspace, workspace } from "./workspace-store";
 import { cycleKey, groupSessions, type TreeSession } from "@/lib/session-tree";
 import { RoomBar, RoomBrief } from "./room-brief";
@@ -91,6 +91,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const [firstGuide, dismissGuide] = useGuideFirstRun();
   const ws = useWorkspace();
   const { prefs } = useTreePrefs();
+  const { order: treeOrder } = useTreeOrder();
   const archive = useArchive();
   const previews = usePoll<{ projects: NonNullable<PreviewState["data"]>["projects"] }>(hq.api, "/api/preview", PREVIEW_POLL_MS, tab === "preview" || tab === "overview");
   const machine = usePoll<MachineData>(hq.api, "/api/machine", MACHINE_POLL_MS, true);
@@ -286,7 +287,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     openTreeRef.current = openTreeSession;
   });
   // The sidebar's order, for Ctrl+Tab / Alt+↓↑.
-  const order = useMemo(() => groupSessions(tree.sessions.filter((s) => !archive.keys.includes(s.key)), prefs.group, prefs.sort).flatMap((g) => g.sessions), [tree.sessions, archive.keys, prefs.group, prefs.sort]);
+  const order = useMemo(() => groupSessions(tree.sessions.filter((s) => !archive.keys.includes(s.key)), prefs.group, prefs.sort, treeOrder).flatMap((g) => g.sessions), [tree.sessions, archive.keys, prefs.group, prefs.sort, treeOrder]);
   const activeRef = useRef(activeKey);
   const orderRef = useRef(order);
   useEffect(() => {

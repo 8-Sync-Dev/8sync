@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Changed
+- HQ sidebar: phiên và dự án không tự nhảy chỗ nữa. Kiểu sắp mặc định mới là "Tự sắp (kéo thả)": thứ tự chỉ đổi khi anh kéo thả một phiên trong dự án của nó, hoặc kéo tên dự án lên/xuống. Phiên mới hiện trên cùng dự án một lần rồi đứng yên. Thứ tự lưu trên trình duyệt này (`hq.tree.order`). Ctrl+Tab đi theo đúng thứ tự đó. Trình duyệt chỉ lưu "Gần đây" vì đó là mặc định cũ sẽ chuyển sang "Tự sắp"; "Gần đây" / "Ngày tạo" / "Tên" vẫn chọn được trong menu ⋯.
+- HQ Chat phòng / inbox: ô nhắn có "Đính kèm" và dán ảnh như ô gửi của terminal. Cả ba ô (Chat, gửi việc cho phòng, Không gian) dùng chung một component (`attach.tsx`).
+- Gợi ý lệnh "/" giờ mở cả giữa câu (sau dấu cách), không chỉ ở đầu. `a/b` và URL không bật gợi ý.
+
+### Fixed
+- Nội dung: mục chưa có file vẫn hiện dòng "Media" để dán đường dẫn file hoặc thư mục render. Mỗi ảnh/video có nút "Tải" để lưu file về máy, giới hạn 150 MB như khi xem.
+
 ## [0.122.6] — 2026-11-04
 
 ### Changed

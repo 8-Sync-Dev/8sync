@@ -3,8 +3,9 @@
 // The sheet a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
 // approve, inline caption / time edits, the AI-label check and "Giao việc". Esc or a click outside
 // closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner can share or come back.
-import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, PlayIcon, ShieldAlertIcon, XIcon } from "lucide-react";
+import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, Loader2Icon, PlayIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -14,6 +15,7 @@ import {
   contentWarning,
   FORMAT_LABEL,
   fromLocalInput,
+  MEDIA_SERVE_MAX,
   NO_AI_CONFIRM,
   NO_SCHEDULE,
   nextStatuses,
@@ -270,19 +272,20 @@ function ItemDetail({
         <Field label="Caption">
           <Editable value={it.caption} label={`Caption #${it.id}`} onSave={edit("caption")} multiline />
         </Field>
-        {it.media_path && (
-          <Field label="Media">
-            {it.media.length === 0 ? (
-              <span className="font-mono text-xs break-all text-muted-foreground">{it.media_path} (không đọc được file ảnh/video)</span>
+        {/* Always shown (owner 2026-11-04: a clip with no file had no way to watch or download it): set the render's path here. */}
+        <Field label="Media">
+          <Editable value={it.media_path} label={`Media #${it.id} (đường dẫn file hoặc thư mục)`} onSave={edit("media_path")} />
+          {it.media_path &&
+            (it.media.length === 0 ? (
+              <p className="mt-0.5 text-xs text-muted-foreground">không đọc được file ảnh/video ở đường dẫn này</p>
             ) : (
-              <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(9rem,1fr))]">
+              <div className="mt-1.5 grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(9rem,1fr))]">
                 {it.media.map((m) => (
                   <MediaTile key={m.name} item={it.id} m={m} token={token} />
                 ))}
               </div>
-            )}
-          </Field>
-        )}
+            ))}
+        </Field>
         <Field label="Nguồn">
           <Editable value={it.source_url} label={`Nguồn #${it.id}`} onSave={edit("source_url")} link />
           {it.source_approved_at != null ? (
@@ -369,13 +372,41 @@ function MediaTile({ item, m, token }: { item: number; m: ContentMedia; token: s
   // Images load with the sheet; a video only on tap (the blob is fetched whole, so 12 renders at
   // once would pull gigabytes). The name pins the file: a shifted folder answers 409, not another file.
   const [want, setWant] = useState(m.kind === "image");
-  const { src, failed } = useAuthedImage(token, `/api/content/media?id=${item}&i=${m.index}&n=${encodeURIComponent(m.name)}&v=${m.size}`, want);
+  const [save, setSave] = useState(false);
+  const url = `/api/content/media?id=${item}&i=${m.index}&n=${encodeURIComponent(m.name)}&v=${m.size}`;
+  const { src, failed } = useAuthedImage(token, url, want);
+  const tooBig = m.size > MEDIA_SERVE_MAX;
+  // "Tải": the preview's blob when it is loaded, else one authed fetch; saved under the file's own name.
+  async function download() {
+    if (save) return;
+    setSave(true);
+    let href = src;
+    let own = false;
+    try {
+      if (!href) {
+        const res = await fetch(url, { headers: { "x-hq-token": token }, cache: "no-store" });
+        if (!res.ok) throw new Error(`${res.status}`);
+        href = URL.createObjectURL(await res.blob());
+        own = true;
+      }
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = m.name;
+      a.click();
+    } catch (e) {
+      toast.error(`Không tải được ${m.name} (${(e as Error).message})`);
+    } finally {
+      const made = own ? href : null;
+      if (made) setTimeout(() => URL.revokeObjectURL(made), 60_000);
+      setSave(false);
+    }
+  }
   return (
     <figure className={cn("overflow-hidden rounded-lg border", m.ai && "border-destructive/60")}>
       <div className="relative grid aspect-video place-items-center bg-muted">
         {!want ? (
-          <Button type="button" size="sm" variant="outline" className={TOUCH} onClick={() => setWant(true)} aria-label={`Xem video ${m.name}`}>
-            <PlayIcon aria-hidden /> Xem · {bytes(m.size)}
+          <Button type="button" size="sm" variant="outline" className={TOUCH} disabled={tooBig} onClick={() => setWant(true)} aria-label={`Xem video ${m.name}`}>
+            <PlayIcon aria-hidden /> {tooBig ? `${bytes(m.size)}: quá lớn để xem trên HQ` : `Xem · ${bytes(m.size)}`}
           </Button>
         ) : src ? (
           m.kind === "video" ? (
@@ -399,6 +430,18 @@ function MediaTile({ item, m, token }: { item: number; m: ContentMedia; token: s
           <span className="shrink-0 font-medium text-destructive" title={m.ai}>
             AI
           </span>
+        )}
+        {!tooBig && (
+          <button
+            type="button"
+            className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-9"
+            aria-label={`Tải ${m.name}`}
+            title={`Tải ${m.name}`}
+            disabled={save}
+            onClick={() => void download()}
+          >
+            {save ? <Loader2Icon className="size-3.5 motion-safe:animate-spin" aria-hidden /> : <DownloadIcon className="size-3.5" aria-hidden />}
+          </button>
         )}
       </figcaption>
     </figure>
