@@ -1,6 +1,6 @@
 import { getContent, openContent } from "@/lib/server/content";
 import { mediaFiles, mediaSigValid } from "@/lib/server/content-media";
-import { bad, open } from "@/lib/server/http";
+import { bad, cookieAccess, open } from "@/lib/server/http";
 import { sendFile } from "@/lib/server/send-file";
 
 export const runtime = "nodejs";
@@ -12,7 +12,9 @@ export const runtime = "nodejs";
  *
  * Auth: the `x-hq-token` header, or the signed URL the list hands out (`&s=<size>&e=<expiry>&sig=`,
  * lib/server/content-media.ts publicMedia) so `<video src>`, `<img src>` and the "Tải" link work as
- * plain browser requests. Streamed from disk, never held whole, any size: `Range: bytes=` answers 206
+ * plain browser requests. A signed URL still needs the browser's own login (loopback, `hq_pub`, or a
+ * live `hq_guest`): a revoked guest loses the media it already had links to at the next request.
+ * Streamed from disk, never held whole, any size: `Range: bytes=` answers 206
  * (the player seeks without pulling the file), `&dl=1` adds `Content-Disposition: attachment`.
  */
 export async function GET(req: Request) {
@@ -25,6 +27,8 @@ export async function GET(req: Request) {
   const size = Number(q.get("s"));
   if (sig !== null) {
     if (name === null || !mediaSigValid(sig, id, i, name, size, Number(q.get("e")))) return bad("link hết hạn, mở lại mục này", 401);
+    const who = cookieAccess(req.headers);
+    if (!who || !("role" in who)) return bad(who && "error" in who ? who.error : "chưa đăng nhập", 401);
   } else {
     const o = open(req);
     if ("res" in o) return o.res;

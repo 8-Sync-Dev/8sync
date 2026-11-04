@@ -18,6 +18,7 @@ import type { Heavy, Restarted, Spec } from "@/lib/server/machine";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
 import { Bar, dayTime, energy, gb, holdLine, hhmm, level, LoadChart, Meter, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
+import { SharePanel } from "./share-panel";
 import type { Hq } from "./use-hq";
 import type { Room } from "./use-office";
 import { usePoll } from "./use-poll";
@@ -758,6 +759,9 @@ export function MachineView({ m, reload, api, rooms, active }: { m: MachineData 
           {m.awake && <AwakePanel a={m.awake} api={api} onChanged={reload} />}
           {m.spec && <SpecPanel s={m.spec} />}
         </div>
+        <Panel id="may-share" title="Chia sẻ">
+          <SharePanel api={api} active={active} />
+        </Panel>
         <DiskPanel api={api} rooms={rooms} active={active} />
         <ProcsPanel m={m} api={api} />
       </div>

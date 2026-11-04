@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "@/lib/server/db";
-import { bad, open } from "@/lib/server/http";
+import { bad, cookieAccess, open } from "@/lib/server/http";
 import { knownRoots } from "@/lib/server/in-view";
 import { sendFile } from "@/lib/server/send-file";
 import { findUpload, isUploadId, uploadSigValid } from "@/lib/server/uploads";
@@ -14,6 +14,8 @@ export const runtime = "nodejs";
  *
  * Auth: the `x-hq-token` header, or the signed URL `GET /api/uploads/<id>` hands out (`?e=&sig=`,
  * lib/server/uploads.ts uploadLink) so `<video src>` and a download link work as plain browser requests.
+ * A signed URL still needs the owner's own login (loopback or `hq_pub`): chat attachments are owner-only,
+ * so a link copied out of the chat is no use to a guest or to anyone without the cookie.
  * Streamed from disk: `Range: bytes=` answers 206, `&dl=1` adds `Content-Disposition: attachment` with
  * the file's name. Images, video and audio go out with their type; any other file only as a download.
  */
@@ -24,6 +26,8 @@ export async function GET(req: Request, ctx: RouteContext<"/api/uploads/[id]/fil
   let db: DatabaseSync;
   if (sig !== null) {
     if (!isUploadId(id) || !uploadSigValid(sig, id, Number(q.get("e")))) return bad("link hết hạn, tải lại trang", 401);
+    const who = cookieAccess(req.headers);
+    if (!who || !("role" in who) || who.role !== "owner") return bad(who && "error" in who ? who.error : "chưa đăng nhập", who && "role" in who ? 403 : 401);
     db = getDb();
   } else {
     const o = open(req);

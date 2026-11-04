@@ -2,9 +2,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { __resetFlows, MAX_FLOWS, pollFlow, readGithubConfig, startFlow, type Fetch } from "@/lib/server/github-login";
+import { __resetFlows, allowedRole, MAX_FLOWS, pollFlow, readGithubConfig, startFlow, type Fetch } from "@/lib/server/github-login";
 
-const cfg = { clientId: "Iv1.abcdef123456", allow: ["8syncdev", "Quin19FD"] };
+const cfg = {
+  clientId: "Iv1.abcdef123456",
+  allow: [
+    { login: "8syncdev", role: "owner" as const },
+    { login: "Quin19FD", role: "owner" as const },
+  ],
+};
 
 /** A fake GitHub: device code, then token answers in order, then `/user`. */
 function github(tokenAnswers: object[], login = "quin19fd") {
@@ -59,14 +65,37 @@ describe("github sign-in", () => {
     expect("error" in (await startFlow(cfg, gh.f, 0))).toBe(true);
   });
 
-  it("is off without a client id or an allowed login", () => {
+  it("is off without a client id; an empty allow keeps it for invites bound to a GitHub login", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hq-gh-"));
     const file = path.join(dir, "github.json");
     expect(readGithubConfig(file)).toBeNull();
-    fs.writeFileSync(file, JSON.stringify({ client_id: "Iv1.abcdef123456", allow: [] }));
+    fs.writeFileSync(file, JSON.stringify({ client_id: "nope", allow: ["8syncdev"] }));
     expect(readGithubConfig(file)).toBeNull();
-    fs.writeFileSync(file, JSON.stringify({ client_id: "Iv1.abcdef123456", allow: ["8syncdev", "bad login!"] }));
-    expect(readGithubConfig(file)).toEqual({ clientId: "Iv1.abcdef123456", allow: ["8syncdev"] });
+    fs.writeFileSync(file, JSON.stringify({ client_id: "Iv1.abcdef123456", allow: [] }));
+    expect(readGithubConfig(file)).toEqual({ clientId: "Iv1.abcdef123456", allow: [] });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reads plain logins as the owner (back-compat) and {login, role} as a guest role; drops bad entries", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hq-gh-"));
+    const file = path.join(dir, "github.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        client_id: "Iv1.abcdef123456",
+        allow: ["8syncdev", "bad login!", { login: "Editor-1", role: "editor" }, { login: "viewer1", role: "viewer" }, { login: "x", role: "admin" }, { login: "bad login", role: "viewer" }, 42],
+      }),
+    );
+    const c = readGithubConfig(file)!;
+    expect(c.allow).toEqual([
+      { login: "8syncdev", role: "owner" },
+      { login: "Editor-1", role: "editor" },
+      { login: "viewer1", role: "viewer" },
+    ]);
+    expect(allowedRole(c, "8SyncDev")).toBe("owner");
+    expect(allowedRole(c, "editor-1")).toBe("editor");
+    expect(allowedRole(c, "VIEWER1")).toBe("viewer");
+    expect(allowedRole(c, "x")).toBeNull();
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

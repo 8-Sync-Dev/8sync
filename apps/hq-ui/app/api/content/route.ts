@@ -1,3 +1,5 @@
+import path from "node:path";
+import { OWNER_CONTENT_FIELDS } from "@/lib/access";
 import { isFormat, isStatus } from "@/lib/content";
 import { ContentError, contentDbPath, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
 import { bad, json, open, readBody } from "@/lib/server/http";
@@ -43,7 +45,10 @@ export async function GET(req: Request) {
   if ("configured" in c) return json({ configured: false });
   if ("error" in c) return json({ configured: true, ready: false, error: c.error });
   try {
-    return json(listContent(c.db, { status, format, fb_page: page }));
+    const list = listContent(c.db, { status, format, fb_page: page });
+    // A guest sees the media (signed URLs), not where it sits on the owner's disk.
+    if (!o.access.guest || !("items" in list)) return json(list);
+    return json({ ...list, items: list.items.map((it) => ({ ...it, media_path: it.media_path && path.basename(it.media_path) })) });
   } catch (e) {
     // A DB replaced or damaged since it opened: shown in the view, not a bare 500 on every poll.
     return json({ configured: true, ready: false, error: `không đọc được sổ nội dung: ${(e as Error).message}` });
@@ -69,6 +74,8 @@ export async function POST(req: Request) {
  * `assignee_base`; null clears), `approve_source: "<source URL the owner saw>"`, and
  * `no_ai_confirmed: true` when approving an item with an AI mark (else 409). An approved item
  * edited into AI-risk content without it drops back to `checked`; a published one answers 409.
+ * An editor (Chia sẻ) changes the item but not its media path or its agent; the source it approves
+ * is signed with its invite label.
  */
 export async function PATCH(req: Request) {
   const o = open(req);
@@ -77,10 +84,13 @@ export async function PATCH(req: Request) {
   if (id === null) return bad("id: cần số mục", 400);
   const body = await readBody(req);
   if (!body) return bad("JSON body required");
+  const guest = o.access.guest;
+  const ownerField = guest ? OWNER_CONTENT_FIELDS.find((k) => k in body) : undefined;
+  if (ownerField) return bad(`${ownerField}: chỉ chủ HQ sửa được`, 403);
   const c = registry();
   if ("res" in c) return c.res;
   try {
-    return json({ item: updateContent(c.db, id, body, hqApprover()) });
+    return json({ item: updateContent(c.db, id, body, guest ? `chia sẻ: ${guest.label}` : hqApprover()) });
   } catch (e) {
     return fail(e);
   }

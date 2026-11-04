@@ -30,8 +30,10 @@ import {
   type ContentRow,
   type ContentTextField,
 } from "@/lib/content";
+import { atLeast } from "@/lib/access";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
+import { useAccess } from "./access";
 import { ErrorNote } from "./bits";
 import { ALL, assigneeShort, Editable, FORMAT_DOT, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, useContentPatch, type Patch } from "./content-bits";
 import { ContentCalendar, periodLabel } from "./content-calendar";
@@ -78,6 +80,7 @@ function writeSel({ day, item }: Sel) {
 /** "Nội dung" tab: content-post-agency's `content_items` (FB ↔ news) as a calendar or a list, read and written in place; the DB's triggers gate approve/publish. */
 export function ContentView({ token, active }: { token: string; active: boolean }) {
   const api = useMemo(() => makeApi(token), [token]);
+  const owner = useAccess() === "owner";
   const [status, setStatus] = useState(ALL);
   const [format, setFormat] = useState(ALL);
   const [page, setPage] = useState(ALL);
@@ -136,9 +139,11 @@ export function ContentView({ token, active }: { token: string; active: boolean 
               <Filter label="Trạng thái" value={status} onChange={setStatus} options={CONTENT_STATUSES.map((s) => [s, STATUS_LABEL[s]])} />
               <Filter label="Định dạng" value={format} onChange={setFormat} options={CONTENT_FORMATS.map((f) => [f, FORMAT_LABEL[f]])} />
               {(pages.length > 1 || page !== ALL) && <Filter label="Trang FB" value={page} onChange={setPage} options={pages.map((p) => [p, p])} />}
-              <Button type="button" size="sm" variant={adding ? "secondary" : "default"} className={cn("text-xs", TOUCH)} aria-expanded={adding} onClick={() => setAdding((a) => !a)}>
-                <PlusIcon aria-hidden /> Mục mới
-              </Button>
+              {owner && (
+                <Button type="button" size="sm" variant={adding ? "secondary" : "default"} className={cn("text-xs", TOUCH)} aria-expanded={adding} onClick={() => setAdding((a) => !a)}>
+                  <PlusIcon aria-hidden /> Mục mới
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -157,7 +162,7 @@ export function ContentView({ token, active }: { token: string; active: boolean 
           </p>
         ) : (
           <>
-            {adding && <NewItem api={api} pages={pages} onDone={() => (setAdding(false), list.reload())} />}
+            {owner && adding && <NewItem api={api} pages={pages} onDone={() => (setAdding(false), list.reload())} />}
             <div className="flex flex-wrap items-center gap-2">
               <ButtonGroup aria-label="Kiểu xem">
                 <Button type="button" size="sm" variant={view === "calendar" ? "secondary" : "outline"} aria-pressed={view === "calendar"} className={cn("text-xs", TOUCH)} onClick={() => setView("calendar")}>
@@ -372,6 +377,8 @@ function Items({
   onOpen: (it: ContentRow) => void;
   reload: () => void;
 }) {
+  const role = useAccess();
+  const canEdit = atLeast(role, "editor");
   const remove = useCallback(
     async (it: ContentItem) => {
       if (!window.confirm(`Xoá mục #${it.id} «${it.title}»?`)) return;
@@ -420,31 +427,38 @@ function Items({
                     <Editable value={it.title} label={`Tiêu đề #${it.id}`} onSave={edit("title")} required />
                   </div>
                   <div className="mt-1.5 flex items-center gap-1">
-                    <Select value={it.format} onValueChange={(v) => void patch(it.id, { format: v })}>
-                      <SelectTrigger size="sm" className={cn("h-7 text-xs", FORMAT_TONE[it.format])} aria-label={`Định dạng #${it.id}`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CONTENT_FORMATS.map((f) => (
-                          <SelectItem key={f} value={f} className="text-xs">
-                            {FORMAT_LABEL[f]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {canEdit ? (
+                      <Select value={it.format} onValueChange={(v) => void patch(it.id, { format: v })}>
+                        <SelectTrigger size="sm" className={cn("h-7 text-xs", FORMAT_TONE[it.format])} aria-label={`Định dạng #${it.id}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CONTENT_FORMATS.map((f) => (
+                            <SelectItem key={f} value={f} className="text-xs">
+                              {FORMAT_LABEL[f]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className={cn("rounded px-1.5 py-0.5 text-xs", FORMAT_TONE[it.format])}>{FORMAT_LABEL[it.format]}</span>
+                    )}
                     <Button type="button" size="sm" variant="outline" className={cn("h-7 px-2 text-[11px]", TOUCH)} onClick={() => onOpen(it)}>
                       <SendIcon aria-hidden /> Mở
                     </Button>
-                    <Button type="button" size="icon" variant="ghost" className={cn("size-7", TOUCH)} aria-label={`Xoá #${it.id}`} onClick={() => void remove(it)}>
-                      <Trash2Icon aria-hidden />
-                    </Button>
+                    {role === "owner" && (
+                      <Button type="button" size="icon" variant="ghost" className={cn("size-7", TOUCH)} aria-label={`Xoá #${it.id}`} onClick={() => void remove(it)}>
+                        <Trash2Icon aria-hidden />
+                      </Button>
+                    )}
                   </div>
                   {who && <p className="mt-1 text-[11px] text-muted-foreground">đang xử lý: {it.assignee_base ?? who}</p>}
                 </td>
                 <td className="px-2 py-2">
                   <p className={cn("whitespace-nowrap", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</p>
                   <div className="mt-1 flex flex-col items-start gap-1">
-                    {steps
+                    {canEdit &&
+                      steps
                       .map((s) => {
                         const hint = stepHint(it, s);
                         return (
@@ -491,7 +505,7 @@ function Items({
                     <p className="mt-0.5 flex items-center gap-1 text-[11px] text-st-running">
                       <CheckIcon aria-hidden className="size-3" /> {it.source_approved_by} · {agoShort(it.source_approved_at, now)}
                     </p>
-                  ) : it.source_url ? (
+                  ) : it.source_url && canEdit ? (
                     <Button type="button" size="sm" variant="outline" className={cn("mt-1 h-6 px-2 text-[11px]", TOUCH)} onClick={() => void patch(it.id, { approve_source: it.source_url })}>
                       Duyệt nguồn
                     </Button>
