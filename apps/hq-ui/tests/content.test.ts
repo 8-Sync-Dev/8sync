@@ -7,7 +7,7 @@ import { GET as MEDIA } from "@/app/api/content/media/route";
 import { addDays, aiReason, byDay, contentTaskText, contentWarning, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_SCHEDULE, stepCursor, stepHint, toLocalInput, weekStart } from "@/lib/content";
 import { getToken } from "@/lib/server/auth";
 import { contentConfigPath, NO_REGISTRY } from "@/lib/server/content";
-import { aiMark } from "@/lib/server/content-media";
+import { aiMark, mediaSigValid } from "@/lib/server/content-media";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 /** content-post-agency apps/content-ai/src/database/migrations/0062_content_registry.up.sql (table + gate). */
@@ -295,7 +295,7 @@ describe("/api/content calendar fields (0063)", () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "a.png"), Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(5000), Buffer.from("jumb c2pa.claim v2"), Buffer.alloc(10)]));
     fs.writeFileSync(path.join(dir, "b.jpg"), Buffer.concat([Buffer.alloc(100), Buffer.from("Iptc4xmpExt:DigitalSourceType=http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia")]));
-    fs.writeFileSync(path.join(dir, "c.mp4"), Buffer.alloc(2048, 7));
+    fs.writeFileSync(path.join(dir, "c.mp4"), Buffer.from(Array.from({ length: 2048 }, (_, k) => k % 251)));
     fs.writeFileSync(path.join(dir, "notes.txt"), "c2pa.claim");
     expect(aiMark(path.join(dir, "a.png"))).toMatch(/C2PA/);
     expect(aiMark(path.join(dir, "b.jpg"))).toMatch(/IPTC/);
@@ -330,6 +330,49 @@ describe("/api/content calendar fields (0063)", () => {
     expect((await get(`?id=9999&i=0`)).status).toBe(404);
     expect((await get(`?id=${row.id}&i=../notes.txt`)).status).toBe(400);
     expect((await MEDIA(req(`/api/content/media?id=${row.id}&i=0`, { method: "GET", token: null, origin: null }))).status).toBe(401);
+
+    // The list's signed URL works with no token (a <video src> / download link cannot send one).
+    const signed = row.media[2].url as string;
+    const plain = (url: string, range?: string) =>
+      MEDIA(new Request(ORIGIN + url, { headers: range ? { host: "127.0.0.1:8740", range } : { host: "127.0.0.1:8740" } }));
+    const whole = await plain(signed);
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get("accept-ranges")).toBe("bytes");
+    expect(whole.headers.get("content-disposition")).toBeNull();
+    const bytesOf = fs.readFileSync(path.join(dir, "c.mp4"));
+    expect(Buffer.from(await whole.arrayBuffer()).equals(bytesOf)).toBe(true);
+    // Range: the player seeks without pulling the whole file.
+    const mid = await plain(signed, "bytes=100-199");
+    expect(mid.status).toBe(206);
+    expect(mid.headers.get("content-range")).toBe("bytes 100-199/2048");
+    expect(Buffer.from(await mid.arrayBuffer()).equals(bytesOf.subarray(100, 200))).toBe(true);
+    const tail = await plain(signed, "bytes=-10");
+    expect(tail.headers.get("content-range")).toBe("bytes 2038-2047/2048");
+    expect(Buffer.from(await tail.arrayBuffer()).equals(bytesOf.subarray(2038))).toBe(true);
+    const open = await plain(signed, "bytes=2000-");
+    expect(open.headers.get("content-length")).toBe("48");
+    const past = await plain(signed, "bytes=5000-");
+    expect(past.status).toBe(416);
+    expect(past.headers.get("content-range")).toBe("bytes */2048");
+    // An invalid range (last < first) or several ranges: the whole file, not 416.
+    for (const r of ["bytes=5-3", "bytes=0-1,5-6"]) {
+      const res = await plain(signed, r);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-length")).toBe("2048");
+    }
+    // "Tải": attachment under the file's own name.
+    expect((await plain(`${signed}&dl=1`)).headers.get("content-disposition")).toBe(`attachment; filename="c.mp4"; filename*=UTF-8''c.mp4`);
+    // The signature pins item, index, name and size: any other value, or a forged one, is refused.
+    expect((await plain(signed.replace("&i=2&", "&i=1&"))).status).toBe(401);
+    expect((await plain(signed.replace(/sig=([0-9a-f])/, (_, c: string) => `sig=${c === "0" ? "1" : "0"}`))).status).toBe(401);
+    expect((await plain(signed.replace(/&s=\d+/, "&s=2049"))).status).toBe(401);
+    const sp = new URL(ORIGIN + signed).searchParams;
+    const exp = Number(sp.get("e"));
+    expect(mediaSigValid(sp.get("sig") ?? "", row.id, 2, "c.mp4", 2048, exp, exp - 1)).toBe(true);
+    expect(mediaSigValid(sp.get("sig") ?? "", row.id, 2, "c.mp4", 2048, exp, exp)).toBe(false);
+    // The file was re-rendered since the list: same name, new size → 409, not the wrong bytes.
+    fs.appendFileSync(path.join(dir, "c.mp4"), Buffer.alloc(1));
+    expect((await plain(signed)).status).toBe(409);
   });
 });
 

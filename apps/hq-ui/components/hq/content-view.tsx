@@ -228,7 +228,6 @@ export function ContentView({ token, active }: { token: string; active: boolean 
               items={sheetItems}
               schedule={data.schedule}
               api={api}
-              token={token}
               now={list.at}
               patch={patch}
               errors={errors}

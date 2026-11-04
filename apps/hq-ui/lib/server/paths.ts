@@ -23,6 +23,8 @@ export const publicPath = () => path.join(configDir(), "public.json");
 export const playSecretPath = () => path.join(configDir(), "play-secret");
 /** HMAC key of the `hq_pub` login cookie (lib/server/auth.ts): not the link key, so `--relink` keeps devices signed in. */
 export const sessionSecretPath = () => path.join(configDir(), "session-secret");
+/** HMAC key of the signed media URLs of the "Nội dung" sheet (lib/server/content-media.ts publicMedia). */
+export const mediaSecretPath = () => path.join(configDir(), "media-secret");
 
 export const channelMcpConfigPath = (home = os.homedir()) =>
   path.join(home, ".config", "8sync", "hq", "channel-mcp.json");

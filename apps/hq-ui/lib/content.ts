@@ -55,10 +55,20 @@ export type ContentItem = {
   assigned_at?: number | null;
 };
 
-/** A file under `media_path` the view can show (served by GET /api/content/media). */
-/** The browser fetches a media file whole (authed blob): bigger ones are listed but not served. */
-export const MEDIA_SERVE_MAX = 150 * 1024 * 1024;
-export type ContentMedia = { index: number; name: string; kind: "image" | "video"; size: number; /** Why the file reads as AI-made (C2PA / IPTC), null = no mark found. */ ai: string | null };
+/**
+ * A file under `media_path` the view can show. `url` is a signed, expiring GET /api/content/media URL
+ * (lib/server/content-media.ts publicMedia) the browser streams directly: Range for the player, `&dl=1`
+ * for "Tải". No size cap: nothing is held whole in the page or the server.
+ */
+export type ContentMedia = {
+  index: number;
+  name: string;
+  kind: "image" | "video";
+  size: number;
+  /** Why the file reads as AI-made (C2PA / IPTC), null = no mark found. */
+  ai: string | null;
+  url: string;
+};
 
 /** One row of the list: the DB row plus what HQ read from its media. */
 export type ContentRow = ContentItem & { media: ContentMedia[] };
