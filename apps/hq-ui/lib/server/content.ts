@@ -185,7 +185,7 @@ function statusStamps(item: Pick<ContentItem, "checked_at" | "published_at"> | n
   return s;
 }
 
-/** Owner rule 2026-11-04: an item with an AI mark goes to approved/published only with the reviewer's tick. */
+/** Owner rule 2026-11-04: an item with an AI mark is approved only with the reviewer's tick. */
 function aiGate(item: Pick<ContentItem, "format" | "media_path">, status: ContentStatus, body: Record<string, unknown>): void {
   if (status !== "approved" && status !== "published") return;
   const why = aiReason({ format: item.format, media: mediaFiles(item.media_path) });
@@ -209,7 +209,8 @@ export function createContent(db: DatabaseSync, body: Record<string, unknown>, n
  * Edit one item. Body: any text field, `format`, `status`, `scheduled_at`, `assignee_session` (+
  * `assignee_base`), and `approve_source: "<the source URL the owner saw>"` (records who and when;
  * 409 when the row's source has changed since). Approving an item with an AI mark needs
- * `no_ai_confirmed: true`. A new `source_url` drops an earlier approval: it approved the old source.
+ * `no_ai_confirmed: true`; an approved item edited into AI-risk content without it drops back to
+ * `checked`, a published one answers 409. A new `source_url` drops an earlier approval: it approved the old source.
  */
 export function updateContent(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now = Date.now()): ContentRow {
   const item = getContent(db, id);
@@ -224,12 +225,24 @@ export function updateContent(db: DatabaseSync, id: number, body: Record<string,
     set.status = body.status;
     Object.assign(set, statusStamps(item, body.status, now));
   }
-  // The AI rule holds for the item as it ends up: reaching approved/published, or changing format or
-  // media while already there, needs the tick (else switching an approved text to ai_video skips it).
+  // The AI tick is the human check on entering approved, and on entering published from anywhere
+  // but approved: the 0062 trigger checks fields, not the previous status, so checked → published is
+  // possible and must not skip the tick. approved → published was ticked already.
+  // An approved item edited into AI-risk content lost that check: without the tick it drops back to
+  // checked (re-approve in the sheet). A published post cannot be quietly un-published: refused.
   const next = (set.status as ContentStatus | undefined) ?? item.status;
   const nextFormat = (set.format as ContentItem["format"] | undefined) ?? item.format;
   const nextMedia = "media_path" in set ? (set.media_path as string | null) : item.media_path;
-  if (next !== item.status || nextFormat !== item.format || nextMedia !== item.media_path) aiGate({ format: nextFormat, media_path: nextMedia }, next, body);
+  const enters = next !== item.status;
+  const changed = nextFormat !== item.format || nextMedia !== item.media_path;
+  const after = { format: nextFormat, media_path: nextMedia };
+  if (enters && (next === "approved" || (next === "published" && item.status !== "approved"))) aiGate(after, next, body);
+  else if (changed && (next === "approved" || next === "published") && body.no_ai_confirmed !== true) {
+    const why = aiReason({ format: nextFormat, media: mediaFiles(nextMedia) });
+    if (why && item.status === "published") throw new ContentError(`Bài đã đăng không đổi sang nội dung rủi ro nhãn AI (${why}) được.`, 409);
+    if (why && "status" in body) aiGate(after, next, body);
+    if (why) set.status = "checked";
+  }
   if ("source_url" in set && set.source_url !== item.source_url) {
     set.source_approved_by = null;
     set.source_approved_at = null;

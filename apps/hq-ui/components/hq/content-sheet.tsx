@@ -17,6 +17,7 @@ import {
   NO_AI_CONFIRM,
   NO_SCHEDULE,
   nextStatuses,
+  stepHint,
   parseDay,
   STATUS_LABEL,
   timeOf,
@@ -164,11 +165,13 @@ function ItemDetail({
   const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
   const at = whenOf(it);
   // The flow's next steps, same as the list: "Duyệt" only once checked, so the 1-tap never meets a
-  // trigger refusal it could have avoided. Approve and publish both need the AI tick when flagged.
+  // trigger refusal it could have avoided; a step the trigger would refuse says why instead.
+  // Only approving asks for the AI tick here: the flow offers "→ Đã đăng" only from approved, which was ticked.
   const steps = nextStatuses(it.status);
-  const gated = (s: ContentStatus) => (s === "approved" || s === "published") && ai != null;
+  const gated = (s: ContentStatus) => s === "approved" && ai != null;
   const needsTick = steps.some(gated);
   const blocked = needsTick && !confirmed;
+  const hints = [...new Set(steps.map((s) => stepHint(it, s)).filter((h): h is string => h != null))];
 
   async function setStatus(status: ContentStatus) {
     setBusy(true);
@@ -238,7 +241,7 @@ function ItemDetail({
         <div className="flex flex-wrap items-center gap-2">
           {steps.map((s) =>
             s === "approved" ? (
-              <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || blocked} onClick={() => void setStatus(s)}>
+              <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || blocked || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
                 <CheckIcon aria-hidden /> Duyệt
               </Button>
             ) : s === "rejected" ? (
@@ -246,12 +249,17 @@ function ItemDetail({
                 <XIcon aria-hidden /> Bỏ
               </Button>
             ) : (
-              <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy || (gated(s) && !confirmed)} onClick={() => void setStatus(s)}>
+              <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
                 → {STATUS_LABEL[s]}
               </Button>
             ),
           )}
-          {blocked && <span className="text-xs text-muted-foreground">Tick xác nhận ở trên để duyệt.</span>}
+          {hints.map((h) => (
+            <span key={h} className="text-xs text-muted-foreground">
+              {h}.
+            </span>
+          ))}
+          {blocked && hints.length === 0 && <span className="text-xs text-muted-foreground">Tick xác nhận ở trên để duyệt.</span>}
         </div>
       )}
 

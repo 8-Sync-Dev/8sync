@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DELETE, GET, PATCH, POST } from "@/app/api/content/route";
 import { GET as MEDIA } from "@/app/api/content/media/route";
-import { addDays, aiReason, byDay, contentTaskText, contentWarning, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_SCHEDULE, stepCursor, toLocalInput, weekStart } from "@/lib/content";
+import { addDays, aiReason, byDay, contentTaskText, contentWarning, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_SCHEDULE, stepCursor, stepHint, toLocalInput, weekStart } from "@/lib/content";
 import { getToken } from "@/lib/server/auth";
 import { contentConfigPath, NO_REGISTRY } from "@/lib/server/content";
 import { aiMark } from "@/lib/server/content-media";
@@ -230,22 +230,59 @@ describe("/api/content calendar fields (0063)", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("content_items: source must be approved before approved/published");
   });
-  it("an approved item cannot turn into AI content without the tick (format or media change)", async () => {
+  it("an approved item edited into AI content without the tick drops back to checked; asking for approved again is refused", async () => {
     configure(makeDb("ai-swap.db", MIGRATION_0062 + MIGRATION_0063));
     const q = await readyToApprove({ format: "text" });
     expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
-    const res = await PATCH(call("PATCH", q, { format: "ai_video" }));
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/^Mục có rủi ro nhãn AI/);
-    // Same status sent again does not slip it through either.
-    expect((await PATCH(call("PATCH", q, { status: "approved", format: "ai_video" }))).status).toBe(409);
+    let res = await PATCH(call("PATCH", q, { format: "ai_video" }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).item).toMatchObject({ format: "ai_video", status: "checked" });
+    // Re-approving the AI version needs the tick.
+    expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(409);
+    expect((await PATCH(call("PATCH", q, { status: "approved", no_ai_confirmed: true }))).status).toBe(200);
+
+    // Same for new media, and sending status "approved" with the change is a 409, not a silent demote.
+    const r = await readyToApprove({ format: "text" });
+    expect((await PATCH(call("PATCH", r, { status: "approved" }))).status).toBe(200);
     const dir = path.join(home, "swap-media");
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "r.mp4"), Buffer.alloc(64));
-    expect((await PATCH(call("PATCH", q, { media_path: dir }))).status).toBe(409);
-    expect((await PATCH(call("PATCH", q, { format: "ai_video", no_ai_confirmed: true }))).status).toBe(200);
-    // Edits that do not touch the AI rule stay free on an approved item.
-    expect((await PATCH(call("PATCH", q, { caption: "mới" }))).status).toBe(200);
+    expect((await PATCH(call("PATCH", r, { status: "approved", media_path: dir }))).status).toBe(409);
+    res = await PATCH(call("PATCH", r, { media_path: dir }));
+    expect((await res.json()).item.status).toBe("checked");
+    // With the tick the item stays approved; edits that do not touch the AI rule stay free.
+    expect((await PATCH(call("PATCH", r, { status: "approved", no_ai_confirmed: true }))).status).toBe(200);
+    expect((await (await PATCH(call("PATCH", r, { caption: "mới" }))).json()).item.status).toBe("approved");
+  });
+  it("publishing an AI item needs the tick unless it comes from approved; a published post refuses the swap", async () => {
+    configure(makeDb("ai-pub.db", MIGRATION_0062 + MIGRATION_0063));
+    const links = { news_url: "https://n", fb_post_url: "https://f" };
+    // The trigger checks fields, not the previous status: checked → published must not skip the tick.
+    const q = await readyToApprove({ format: "ai_video", ...links });
+    let res = await PATCH(call("PATCH", q, { status: "published" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/^Mục có rủi ro nhãn AI/);
+    expect((await POST(call("POST", "", { format: "ai_video", title: "C", status: "published" }))).status).toBe(409);
+
+    // approved (ticked) → published goes without a second tick.
+    const r = await readyToApprove({ format: "course_video", ...links });
+    expect((await PATCH(call("PATCH", r, { status: "approved", no_ai_confirmed: true }))).status).toBe(200);
+    expect((await PATCH(call("PATCH", r, { status: "published" }))).status).toBe(200);
+
+    const t = await readyToApprove({ format: "text", ...links });
+    expect((await PATCH(call("PATCH", t, { status: "approved" }))).status).toBe(200);
+    expect((await PATCH(call("PATCH", t, { status: "published" }))).status).toBe(200);
+    res = await PATCH(call("PATCH", t, { format: "ai_video" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/^Bài đã đăng không đổi sang nội dung rủi ro nhãn AI/);
+  });
+  it("a 1-tap step the trigger would refuse says why", () => {
+    const base = { source_approved_at: 1, news_url: "https://n", fb_post_url: "https://f" };
+    expect(stepHint({ ...base, source_approved_at: null }, "approved")).toBe("Duyệt nguồn trước");
+    expect(stepHint({ ...base, fb_post_url: null }, "approved")).toBeNull();
+    expect(stepHint({ ...base, fb_post_url: null }, "published")).toBe("Điền link tin news và bài FB trước");
+    expect(stepHint({ ...base, source_approved_at: null }, "rejected")).toBeNull();
+    expect(stepHint(base, "published")).toBeNull();
   });
   it("media with Content Credentials or an IPTC AI source flags the item; plain media does not", async () => {
     const dir = path.join(home, "media");

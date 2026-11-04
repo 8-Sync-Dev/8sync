@@ -732,3 +732,8 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - validated: UAT "Giao việc" thật mà không làm phiền phòng khác: chạy dev HQ với HOME thật (danh sách phiên thật) + `EIGHTSYNC_CONTENT_DB` trỏ bản sao, gửi task cho CHÍNH phiên đang làm; tin về inbox của mình chứng minh đường gửi.
 - failure: `datetime-local` bấm Tab chỉ nhảy giữa các ô ngày/tháng/giờ, không blur → test đổi giờ phải click ra ngoài. Đổi giờ làm bài rời ngày đang mở → khung phải lấy ngày từ bài đang chọn (`pickedDay ?? sel.day`), không thì bài biến mất khỏi khung.
 - validated: nút "Duyệt" chỉ hiện khi bài đã ở `checked` (bước kế của luồng, như bảng). Hiện cho bài `drafted` thì 1 chạm luôn nhận 409 từ trigger, phí một lần bấm.
+
+## 2026-11-04 — HQ Nội dung: cổng AI chỉ ở bước duyệt (v0.122.1)
+- failure: tưởng trigger 0062 bắt "phải duyệt rồi mới đăng" nên bỏ tick AI ở bước đăng. Sai: `content_items_gate_*` chỉ kiểm tra cột của `NEW` (nguồn đã duyệt, `checked_at`, link news/FB), không xem `OLD.status`, nên `checked → published` đi thẳng được. Cổng tick phải nằm ở server cho mọi đường vào `published` không xuất phát từ `approved` (và mọi POST tạo sẵn approved/published). Đọc body trigger trước khi dựa vào nó.
+- validated: mục đã duyệt bị đổi định dạng/media thành rủi ro AI mà không tick → hạ về `checked` (không có cột dấu duyệt riêng, trạng thái chính là dấu) thay vì 409 cụt; body có `status` tường minh thì vẫn 409 để không âm thầm làm khác ý người gửi; bài đã đăng thì 409.
+- validated: nút 1 chạm mà trigger chắc chắn chặn thì tắt + nói lý do (`stepHint`), vì câu RAISE tiếng Anh của trigger không giúp người duyệt biết bấm gì tiếp.
