@@ -107,6 +107,9 @@ function start(key: string, args: string[], cwd: string | null, idleMs: number, 
     end();
   });
   proc.on("error", end);
+  // A bridge that dies while the owner types breaks its stdin pipe (EPIPE). Without a listener Node throws
+  // that as an uncaught error and the whole HQ server exits; `exit` above already ends the bridge.
+  for (const s of [proc.stdin, proc.stdout]) s.on("error", end);
   return t;
 }
 

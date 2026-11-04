@@ -250,6 +250,8 @@ export function RoomSend({
                     <SelectItem key={r.key} value={r.key} className="text-xs">
                       {r.label}
                       <span className="text-muted-foreground">
+                        {/* The closed trigger shows only this item: without the project, rooms named alike ("core") look the same. */}
+                        {r.label.toLowerCase() !== g.name.toLowerCase() ? ` · ${g.name}` : ""}
                         {r.delivery === "inbox" ? " · inbox" : ""}
                         {r.waiting ? " · đang chờ anh" : ""}
                       </span>

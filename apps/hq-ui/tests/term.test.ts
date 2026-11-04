@@ -51,6 +51,18 @@ describe("web terminal bridge", () => {
     expect(termOpen(ID)).toBe(false);
   });
 
+  it("a bridge whose pipe breaks while the owner types ends that terminal instead of crashing HQ", () => {
+    const f = fakeSpawn();
+    const t = openTerm(ID, null, { cols: 100, rows: 30 }, f.spawn);
+    const seen: string[] = [];
+    watch(ID, t, (b) => seen.push(b ? b.toString() : "<end>"));
+    const epipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    expect(() => f.proc().stdin.emit("error", epipe)).not.toThrow();
+    expect(seen).toEqual(["<end>"]);
+    expect(termOpen(ID)).toBe(false);
+    expect(input(ID, { data: "x" })).toBe(false);
+  });
+
   it("sends keys and sizes as JSON lines, refuses oversize input and a closed terminal", async () => {
     const f = fakeSpawn();
     openTerm(ID, null, { cols: 100, rows: 30 }, f.spawn);
