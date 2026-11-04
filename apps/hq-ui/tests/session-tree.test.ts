@@ -161,8 +161,16 @@ describe("splitChildren", () => {
   it("shows running and recent sub-sessions, the rest as older", () => {
     const now = 10_000_000;
     const r = splitChildren([c("old", "done", now - 3_600_000), c("run", "working", now - 3_600_000), c("new", "done", now - 60_000), c("never", "idle", null)], now);
-    expect(r.shown.map((x) => x.key)).toEqual(["run", "new"]);
-    expect(r.older.map((x) => x.key)).toEqual(["old", "never"]);
+    expect(r.shown.map((x) => x.key)).toEqual(["new", "run"]);
+    expect(r.older.map((x) => x.key)).toEqual(["never", "old"]);
+  });
+
+  it("keeps siblings in place when one starts working or turns active", () => {
+    const now = 10_000_000;
+    const before = splitChildren([c("b", "done", now - 60_000), c("a", "done", now - 120_000), c("c", "idle", now - 90_000)], now);
+    const after = splitChildren([c("b", "done", now - 60_000), c("a", "done", now - 120_000), c("c", "working", now)], now);
+    expect(before.shown.map((x) => x.key)).toEqual(["a", "b", "c"]);
+    expect(after.shown.map((x) => x.key)).toEqual(["a", "b", "c"]);
   });
 });
 

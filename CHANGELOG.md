@@ -7,6 +7,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [0.122.9] — 2026-11-04
 
+### Changed
+- HQ sidebar: phiên con dưới một phiên không đổi chỗ khi một phiên bắt đầu hoặc xong việc nữa. Thứ tự cố định theo tên; chỉ chuyện hiện ngay hay nằm trong "+N cũ hơn" còn theo trạng thái và thời gian.
+- Nhật ký: câu trả lời dài hơn phần Nhật ký giữ (4 000 ký tự) có dòng báo đọc trọn trong "Mở log đầy đủ".
+
 ### Fixed
 - Nội dung: nút "Tải" và xem video không còn giới hạn 150 MB. Trước đây file lớn hơn (vd video bài học C++ bài 2, 178,5 MB) trả 413, còn file nhỏ hơn thì bị nạp cả vào RAM của trang trước khi phát. Giờ mỗi file có một link ký sẵn, hết hạn sau 11 đến 12 giờ. Trình duyệt tải thẳng từ link (`Content-Disposition: attachment`, tên file gốc, có tiến độ trong trình quản lý tải), còn video phát qua `Range` (206) nên tua được và không tải trước cả file.
 
