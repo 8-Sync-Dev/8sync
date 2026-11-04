@@ -20,7 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useDefaultLayout } from "react-resizable-panels";
 import { AttachButton, AttachList, useAttach } from "./attach";
-import { MessageText } from "./attachments";
+import { MessageText, ReplyMedia } from "./attachments";
 import { ComposerDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
 import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
@@ -253,7 +253,15 @@ function Row({ m, prev, who, token }: { m: Message; prev?: Message; who: Who; to
       )}
       <ChatMessage from={owner ? "user" : "assistant"}>
         <MessageContent className={cn(!owner && "rounded-lg border bg-card px-3 py-2")}>
-          {owner ? <MessageText text={m.text} token={token} className="break-words whitespace-pre-wrap" /> : <MessageResponse>{m.text ?? ""}</MessageResponse>}
+          {owner ? (
+            <MessageText text={m.text} token={token} className="wrap-anywhere whitespace-pre-wrap" />
+          ) : (
+            <>
+              {/* wrap-anywhere: a long path or URL breaks inside the bubble instead of being clipped on a phone. */}
+              <MessageResponse className="wrap-anywhere">{m.text ?? ""}</MessageResponse>
+              <ReplyMedia text={m.text} token={token} />
+            </>
+          )}
         </MessageContent>
       </ChatMessage>
       {owner && m.delivery && (

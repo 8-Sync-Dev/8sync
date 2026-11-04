@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as CONTENT, PATCH } from "@/app/api/content/route";
 import { GET as MEDIA } from "@/app/api/content/media/route";
+import { GET as UPLOAD_FILE } from "@/app/api/uploads/[id]/file/route";
 import { DELETE as INVITES_DELETE, GET as INVITES_GET, POST as INVITES_POST } from "@/app/api/invites/route";
 import { GET as LOGIN } from "@/app/api/login/route";
 import { GET as GH_POLL, POST as GH_START } from "@/app/api/login/github/route";
@@ -13,6 +14,7 @@ import { contentConfigPath } from "@/lib/server/content";
 import { __resetFlows, githubConfigPath } from "@/lib/server/github-login";
 import { cookieAccess } from "@/lib/server/http";
 import { createInvite, GUEST_COOKIE, GUEST_GH_MS, GUEST_MAX_MS, guestAccess, guestCookie, readInvites, revokeInvite } from "@/lib/server/invites";
+import { saveUpload, uploadLink } from "@/lib/server/uploads";
 import { invitesPath } from "@/lib/server/paths";
 import { ORIGIN, req, tempHome } from "./helpers";
 
@@ -252,6 +254,16 @@ describe("content as a guest", () => {
     expect((await MEDIA(new Request(`http://${HOST}${url}`, { headers: { host: HOST, "cf-ray": "1" } }))).status).toBe(401);
     revokeInvite(inv.id);
     expect((await MEDIA(guestReq(url, cookie))).status).toBe(401);
+  });
+
+  it("a signed chat-upload link is owner-only: a guest cookie is 403, no login on the tunnel is 401", async () => {
+    const up = saveUpload("clip.mp4", Buffer.alloc(64, 1));
+    const url = uploadLink(up.id);
+    const ctx = { params: Promise.resolve({ id: up.id }) } as unknown as Parameters<typeof UPLOAD_FILE>[1];
+    const { invite: inv } = invite("editor");
+    expect((await UPLOAD_FILE(guestReq(url, cookieFor(inv.id, "editor")), ctx)).status).toBe(403);
+    expect((await UPLOAD_FILE(new Request(`http://${HOST}${url}`, { headers: { host: HOST, "cf-ray": "1" } }), ctx)).status).toBe(401);
+    expect((await UPLOAD_FILE(new Request(`http://${HOST}${url}`, { headers: { host: HOST } }), ctx)).status).toBe(200);
   });
 
   it("editor edits caption and status, not the media path or assignees; the change is signed with the invite label", async () => {
