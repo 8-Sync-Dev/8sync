@@ -100,7 +100,7 @@ export function WorkspaceView({ token, projects, sessions }: { token: string; pr
             if (e.key === "Escape" && hasPanes) workspace.composer(false);
           }}
         >
-          <WorkspaceComposer api={api} folder={folder} list={list} home={home} browseFrom={browseFrom} taken={taken} onFolder={workspace.folder} onCreated={(p) => workspace.open(token, p)} />
+          <WorkspaceComposer api={api} token={token} folder={folder} list={list} home={home} browseFrom={browseFrom} taken={taken} onFolder={workspace.folder} onCreated={(p) => workspace.open(token, p)} />
         </div>
       </div>
     </div>

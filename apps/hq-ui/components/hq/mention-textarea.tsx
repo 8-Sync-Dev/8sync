@@ -20,7 +20,7 @@ type Props = Omit<ComponentProps<typeof Textarea>, "value" | "onChange"> & {
 /**
  * A Textarea with an "@path" picker: it lists the folder ("@src/" one level down, "@../" one level
  * up, out of the project too; a folder keeps the list open), and a "/command" picker at the start
- * of a line (omp and Claude commands, GET /api/commands). ↑/↓ choose, Enter or Tab picks, Esc
+ * or after a space (omp and Claude commands, GET /api/commands). ↑/↓ choose, Enter or Tab picks, Esc
  * closes; a tap picks on a phone.
  */
 export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function MentionTextarea({ value, onValueChange, base, api, commands = true, onKeyDown, className, ...rest }, ref) {

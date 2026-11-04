@@ -56,6 +56,8 @@ export type ContentItem = {
 };
 
 /** A file under `media_path` the view can show (served by GET /api/content/media). */
+/** The browser fetches a media file whole (authed blob): bigger ones are listed but not served. */
+export const MEDIA_SERVE_MAX = 150 * 1024 * 1024;
 export type ContentMedia = { index: number; name: string; kind: "image" | "video"; size: number; /** Why the file reads as AI-made (C2PA / IPTC), null = no mark found. */ ai: string | null };
 
 /** One row of the list: the DB row plus what HQ read from its media. */

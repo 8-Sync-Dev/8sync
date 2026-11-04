@@ -16,6 +16,7 @@ import { Message as ChatMessage, MessageContent, MessageResponse } from "@/compo
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AttachButton, AttachList, useAttach } from "./attach";
 import { MessageText } from "./attachments";
 import { ComposerDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
@@ -296,6 +297,7 @@ function Composer({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
+  const att = useAttach(hq.api);
   /** Folds the phone's bottom sheet after a send (ComposerDock); a no-op on desktop. */
   const closeDock = useRef<() => void>(() => {});
   const targets = messageTargets(sessions);
@@ -305,7 +307,7 @@ function Composer({
 
   async function send() {
     const body = text.trim();
-    if (!body || !current || busy) return;
+    if (!body || !current || busy || att.uploading > 0) return;
     if (current.waiting) {
       // Enter used to do nothing here, so a send looked lost: say why it is held.
       toast.error(`${targetLabel(current)} đang chờ anh trả lời trong terminal: trả lời trước (Mở terminal) rồi gửi lại`);
@@ -316,11 +318,12 @@ function Composer({
       const r = await hq.api<{ message: Message; delivery: string; error: string | null }>("/api/messages", {
         method: "POST",
         // Sessions started elsewhere are addressed by their Claude session id (inbox delivery).
-        body: { session: addressOf(current), text: body, base: current.cwd ?? null },
+        body: { session: addressOf(current), text: body, base: current.cwd ?? null, ...(att.files.length ? { files: att.files.map((f) => f.id) } : {}) },
       });
       hq.mergeMessages([r.message]);
       if (r.delivery === "failed") toast.error(`Not delivered to ${targetLabel(current)}: ${r.error}`);
       setText("");
+      att.clear();
       closeDock.current();
       area.current?.focus();
     } catch (e) {
@@ -357,7 +360,7 @@ function Composer({
         : "Typed into the session's terminal until its channel connects.";
 
   return (
-    <ComposerDock id="room" draft={text.trim().length > 0} label={current ? `Nhắn ${targetLabel(current)}` : "Nhắn phòng"}>
+    <ComposerDock id="room" draft={text.trim().length > 0 || att.files.length > 0} label={current ? `Nhắn ${targetLabel(current)}` : "Nhắn phòng"}>
       {({ close }) => {
         closeDock.current = close;
         return (
@@ -392,12 +395,14 @@ function Composer({
                   base={current?.cwd ?? null}
                   api={hq.api}
                   onKeyDown={onKey}
+                  onPaste={att.onPaste}
                   disabled={disabled}
                   rows={2}
                   maxLength={4000}
                   placeholder={current ? `Nhắn ${targetLabel(current)} · @ để chèn file` : "Message"}
                   className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
                 />
+                <AttachList a={att} token={hq.token} />
                 <div className="flex items-center gap-2 px-2 pb-2">
                   <Select value={current?.name ?? ""} onValueChange={onTarget} disabled={disabled}>
                     <SelectTrigger size="sm" className="h-7 max-w-[55%] gap-1.5 border-0 bg-muted/60 font-mono text-xs" aria-label="Send to session">
@@ -412,8 +417,9 @@ function Composer({
                       ))}
                     </SelectContent>
                   </Select>
+                  <AttachButton a={att} disabled={disabled || !current} />
                   <p className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">{hint}</p>
-                  <Button type="submit" size="sm" className="ml-auto" disabled={disabled || busy || !text.trim() || !!current?.waiting}
+                  <Button type="submit" size="sm" className="ml-auto" disabled={disabled || busy || att.uploading > 0 || !text.trim() || !!current?.waiting}
                     title={current?.waiting ? "Claude is waiting for you in the terminal — answer it first (Open terminal)" : undefined}>
                     <SendHorizontalIcon /> Send
                   </Button>

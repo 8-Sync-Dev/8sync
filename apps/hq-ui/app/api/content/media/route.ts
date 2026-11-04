@@ -2,7 +2,8 @@ import { once } from "node:events";
 import fs from "node:fs";
 import { Readable } from "node:stream";
 import { getContent, openContent } from "@/lib/server/content";
-import { MEDIA_SERVE_MAX, mediaFiles } from "@/lib/server/content-media";
+import { MEDIA_SERVE_MAX } from "@/lib/content";
+import { mediaFiles } from "@/lib/server/content-media";
 import { bad, open } from "@/lib/server/http";
 
 export const runtime = "nodejs";
