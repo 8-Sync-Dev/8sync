@@ -31,6 +31,7 @@ import { bytes } from "@/lib/disk";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import { AssignBox, Editable, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, type Patch } from "./content-bits";
+import { CopyButton } from "./copy-button";
 import { DAY_NAMES } from "./content-calendar";
 import { TOUCH } from "./room-send";
 import type { Api } from "./use-hq";
@@ -119,6 +120,13 @@ function ItemLine({ it }: { it: ContentRow }) {
         {FORMAT_LABEL[it.format]}
       </span>
       <span className="min-w-0 flex-1 truncate text-sm font-medium">{it.title}</span>
+      {/* Which items already have a file to watch or download, without opening each one. */}
+      {it.media.length > 0 && (
+        <span className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground" title={`${it.media.length} file ảnh/video`}>
+          <DownloadIcon className="size-3" aria-hidden />
+          {it.media.length}
+        </span>
+      )}
       <span className={cn("shrink-0 text-xs", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</span>
     </span>
   );
@@ -263,6 +271,12 @@ function ItemDetail({
         </Field>
         <Field label="Caption">
           <Editable value={it.caption} label={`Caption #${it.id}`} onSave={edit("caption")} multiline />
+          {it.caption && (
+            <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+              <CopyButton value={it.caption} label={`Chép caption #${it.id}`} />
+              Chép caption để dán lên trang
+            </div>
+          )}
         </Field>
         {/* Always shown (owner 2026-11-04: a clip with no file had no way to watch or download it): set the render's path here. */}
         <Field label="Media">
