@@ -12,11 +12,12 @@ HQ terminal qua link public (Cloudflare quick tunnel) trống dưới chấm xan
 - [x] Reviewer: approve sau P2 (`!ended`), P3 test payload ping + interval, P3 ghi tradeoff một chiều
 - [x] Tái hiện lại trên code đã rebase: proxy gom lô 6,1 s; loopback 0,6 s, 0 poll; CI 8/8 → merge #282 → tag v0.122.3
 - [x] UAT HQ thật (0.122.2) lộ lỗi khác: 1/12 lần tải sập "This page couldn't load" (`makeApi` nuốt AbortError → `worktrees` undefined). Sửa ở v0.122.4 (branch `fix/hq-api-abort`)
-- [ ] v0.122.4: PR → CI → merge → tag → release.yml → `8sync up` → `/api/version` ui 0.122.4 + 12 lần tải 0 sập
-- [ ] Owner lấy link public mới nếu cần: `8sync hq ui --relink` (HQ public đang chạy, host mới; cookie cũ chết do lần thử `hq ui --public` thứ hai, xem KNOWLEDGE)
+- [x] v0.122.4 (#284): reviewer approve, CI 8/8, release xanh, `8sync up` → HQ `/api/version` ui 0.122.4; 24 lần tải HQ thật 0 sập (trước 1/12); bundle đang phục vụ có `signal?.aborted)throw`
+- [x] Link public thật (host không đổi sau `up`): đăng nhập OK, terminal phòng hiện 33 dòng chữ sau 1,0 s, 0 pageerror. Shell máy qua Cloudflare bị chặn có chủ ý (`app/api/shell/route.ts:17`, khung hiện câu báo đỏ)
+- [ ] Owner lấy link đăng nhập mới khi cần: `8sync hq ui --relink` (giữ host + cookie thiết bị đã đăng nhập)
 
 ## Current
-Ship v0.122.4 từ worktree `tu-session-marketing-phong-core`, branch `fix/hq-api-abort`.
+Loop tick xong: goal (terminal trống qua link public) đã kiểm trên bề mặt thật. Chờ owner phản hồi trên điện thoại.
 
 ## Next
 - VPS `vps.8syncdev.com` không vào được (ssh :22 timeout) → link cố định `/hq` không kiểm được.
