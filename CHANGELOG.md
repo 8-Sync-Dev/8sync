@@ -9,6 +9,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Added
 - HQ tab Nội dung: một bài đăng ra nhiều kênh (Facebook, LinkedIn, Threads, YouTube) khi DB content-ai có migration 0064. Sheet có chip "Kênh", một ô caption mỗi kênh (lấy sẵn từ phần `=== FACEBOOK / LINKEDIN / THREADS / YOUTUBE ===` của caption chung cho tới khi viết riêng, đếm ký tự theo giới hạn kênh: LinkedIn 3.000, Threads 500, YouTube 5.000), dòng trạng thái từng kênh bằng chữ (Chờ tới lượt đăng, Đã lên lịch HH:mm dd/MM, Đã đăng + Mở bài, Lỗi / Bị chặn + Thử lại, Đã huỷ lịch). Duyệt vẫn một chạm cho mọi kênh đã chọn; HQ từ chối duyệt (409) khi kênh thiếu caption, quá giới hạn, hoặc YouTube thiếu video/tiêu đề. Bỏ duyệt rồi duyệt lại thì lên lịch lại. Danh sách hiện "FB · LI · TH". Việc lên lịch native trên từng nền tảng do worker `pnpm channels:tick` của content-ai làm qua ego-browser.
+- Nội dung: bấm "Duyệt" là duyệt và gửi luôn việc đăng vào phiên chọn ở ô "Giao việc". Tin gửi có dòng `[Nội dung #id · page]`, tiêu đề, định dạng, giờ đăng, kênh, nhãn AI, `media_path`, caption từng kênh, và lệnh lên lịch cho worker. Item lưu `assignee_session` / `assignee_base` / `assigned_at` và hiện "Đang xử lý: <phiên>" ở đầu khung chi tiết và trong danh sách. Gửi lỗi (phòng đóng, tin quá dài) thì trạng thái giữ nguyên và báo rõ lỗi. Bị từ chối duyệt thì không gửi gì. Chưa chọn phiên thì nút Duyệt không gọi gì, báo "Chọn phiên nhận việc đăng trước khi duyệt" và đưa con trỏ tới ô chọn phiên.
+- Nội dung: phiên đã chọn được nhớ làm mặc định cho lần duyệt sau, lưu trên máy chạy HQ (`~/.config/8sync/hq/content-prefs.json`, `GET /api/content` trả về `assign`, `PUT /api/content/prefs` đặt hoặc xoá). Mở item khác, reload hay mở từ thiết bị khác đều thấy sẵn phiên đó. Phiên mặc định đã bị xoá khỏi danh sách thì HQ tự quên.
+- Nội dung, lịch: ô tháng hiện 3 bài, cột tuần hiện 6 bài. Ngày nhiều hơn (5 bài/ngày) hiện "+N bài nữa", bấm vào mở khung của ngày đó. Màu theo định dạng giữ nguyên.
+
+### Changed
+- Nội dung, luật nhãn AI (owner 04/11): video có giọng clone hoặc lip-sync (khoá C++) được đăng nhưng phải bật khai báo AI khi đăng. Cảnh báo đỏ đổi thành nhắc vàng "Nhớ bật nhãn AI khi đăng". Ô tick xác nhận "không dùng AI" đổi thành lựa chọn bắt buộc: "Có AI: bật nhãn AI khi đăng" hoặc "Không dùng AI". API dùng `ai_label` (lưu vào cột 0064) thay cho `no_ai_confirmed`. Dòng trong danh sách không còn duyệt trực tiếp: bấm "Duyệt trong khung chi tiết" để mở khung, vì duyệt giờ cần chọn phiên.
 
 ## [0.122.9] — 2026-11-04
 
