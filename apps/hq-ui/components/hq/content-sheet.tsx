@@ -1,15 +1,24 @@
 "use client";
 
 // The sheet a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
-// approve, inline caption / time edits, the AI-label check and "Giao việc". Esc or a click outside
-// closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner can share or come back.
-import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, PlayIcon, ShieldAlertIcon, XIcon } from "lucide-react";
+// approve, inline caption / time edits, the channels (0064) with a caption and a post status each,
+// the AI-label check and "Giao việc". Esc or a click outside closes it; the URL keeps
+// `?day=YYYY-MM-DD&item=N` so the owner can share or come back.
+import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, ExternalLinkIcon, Loader2Icon, PlayIcon, RotateCcwIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   aiReason,
+  CAPTION_LIMIT,
+  captionFor,
+  CHANNEL_LABEL,
+  channelLine,
+  CHANNELS,
+  charCount,
   contentWarning,
   FORMAT_LABEL,
   fromLocalInput,
@@ -22,6 +31,9 @@ import {
   timeOf,
   toLocalInput,
   whenOf,
+  type Channel,
+  type ChannelLine,
+  type ChannelPost,
   type ContentMedia,
   type ContentStatus,
   type ContentRow,
@@ -166,6 +178,13 @@ function ItemDetail({
   const needsTick = steps.some(gated);
   const blocked = needsTick && !confirmed;
   const hints = [...new Set(steps.map((s) => stepHint(it, s)).filter((h): h is string => h != null))];
+  // An approved item whose posts already sit on a platform scheduler: they keep the text they were
+  // given. Editing captions or channels here says so, next to approve.
+  const live = (it.channel_posts ?? []).some((p) => p.state === "scheduled" || p.state === "scheduling");
+  const [stale, setStale] = useState(false);
+  const channelEdited = () => {
+    if (it.status === "approved" && live) setStale(true);
+  };
 
   async function setStatus(status: ContentStatus) {
     setBusy(true);
@@ -254,6 +273,15 @@ function ItemDetail({
             </span>
           ))}
           {blocked && hints.length === 0 && <span className="text-xs text-muted-foreground">Tick xác nhận ở trên để duyệt.</span>}
+          {stale && it.status === "approved" && (
+            <span className="flex flex-wrap items-center gap-1.5 text-xs text-foreground">
+              <AlertTriangleIcon aria-hidden className="size-3.5 shrink-0 text-destructive" />
+              Bài đã lên lịch không tự cập nhật caption: bỏ duyệt rồi duyệt lại.
+              <Button type="button" size="sm" variant="outline" className={cn("h-7 text-xs", TOUCH)} disabled={busy} onClick={() => void setStatus("checked")}>
+                Bỏ duyệt
+              </Button>
+            </span>
+          )}
         </div>
       )}
 
@@ -261,8 +289,22 @@ function ItemDetail({
         <Field label="Giờ đăng">
           {schedule ? <TimeEdit at={it.scheduled_at ?? null} fallback={at} onSave={(ms) => patch(it.id, { scheduled_at: ms })} id={it.id} /> : <span className="text-xs text-muted-foreground">{NO_SCHEDULE}</span>}
         </Field>
-        <Field label="Caption">
-          <Editable value={it.caption} label={`Caption #${it.id}`} onSave={edit("caption")} multiline />
+        {it.channels !== undefined && (
+          <Field label="Kênh">
+            <ChannelsBox it={it} patch={patch} onEdit={channelEdited} />
+          </Field>
+        )}
+        <Field label={it.channels !== undefined ? "Caption chung" : "Caption"}>
+          <Editable
+            value={it.caption}
+            label={`Caption #${it.id}`}
+            onSave={async (v) => {
+              const ok = await patch(it.id, { caption: v });
+              if (ok) channelEdited();
+              return ok;
+            }}
+            multiline
+          />
         </Field>
         {/* Always shown (owner 2026-11-04: a clip with no file had no way to watch or download it): set the render's path here. */}
         <Field label="Media">
@@ -309,6 +351,169 @@ function ItemDetail({
         <AssignBox it={it} api={api} now={now} canSave={schedule} onSaved={reload} />
       </div>
     </article>
+  );
+}
+
+/** "Kênh": which platforms get the item, each with its caption and how its post stands. */
+function ChannelsBox({ it, patch, onEdit }: { it: ContentRow; patch: Patch; onEdit: () => void }) {
+  const selected = it.channels ?? [];
+  const posts = new Map((it.channel_posts ?? []).map((p) => [p.channel, p]));
+  const [busy, setBusy] = useState(false);
+  async function toggle(ch: Channel) {
+    const next = selected.includes(ch) ? selected.filter((c) => c !== ch) : CHANNELS.filter((c) => c === ch || selected.includes(c));
+    setBusy(true);
+    try {
+      if (await patch(it.id, { channels: next })) onEdit();
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="space-y-3">
+      <div role="group" aria-label={`Kênh đăng #${it.id}`} className="flex flex-wrap gap-1.5">
+        {CHANNELS.map((ch) => {
+          const on = selected.includes(ch);
+          const last = on && selected.length === 1;
+          return (
+            <button
+              key={ch}
+              type="button"
+              aria-pressed={on}
+              disabled={busy || last}
+              title={last ? "Cần ít nhất một kênh" : undefined}
+              onClick={() => void toggle(ch)}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed max-sm:min-h-11 motion-reduce:transition-none",
+                on ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent/50",
+              )}
+            >
+              {on && <CheckIcon aria-hidden className="size-3" />}
+              {CHANNEL_LABEL[ch]}
+            </button>
+          );
+        })}
+      </div>
+      {selected.map((ch) => (
+        <ChannelCaption key={ch} it={it} ch={ch} post={posts.get(ch)} patch={patch} onEdit={onEdit} />
+      ))}
+    </div>
+  );
+}
+
+const LINE_TONE: Record<ChannelLine["tone"], string> = {
+  muted: "text-muted-foreground",
+  busy: "text-foreground",
+  ok: "text-st-running",
+  bad: "text-destructive",
+};
+
+/**
+ * One channel's caption: its own text (`captions_json`) or, until edited, what `captionFor` reads from
+ * the shared caption. Saving the shared text back keeps it shared; clearing an own caption returns to it.
+ */
+function ChannelCaption({ it, ch, post, patch, onEdit }: { it: ContentRow; ch: Channel; post: ChannelPost | undefined; patch: Patch; onEdit: () => void }) {
+  const own = it.captions_json?.[ch]?.trim() || null;
+  const shared = captionFor({ caption: it.caption, captions_json: null }, ch);
+  const value = own ?? shared ?? "";
+  const [draft, setDraft] = useState<string | null>(null);
+  const saving = useRef(false);
+  const [retrying, setRetrying] = useState(false);
+  const text = draft ?? value;
+  const count = charCount(text.trim());
+  const limit = CAPTION_LIMIT[ch];
+  const line = channelLine(it, post);
+  const id = `cap-${it.id}-${ch}`;
+
+  async function save(body: string) {
+    saving.current = true;
+    try {
+      if (await patch(it.id, { captions_json: { [ch]: body } })) {
+        setDraft(null);
+        onEdit();
+      }
+    } finally {
+      saving.current = false;
+    }
+  }
+  async function commit() {
+    if (draft === null || saving.current) return;
+    const v = draft.trim();
+    // Same as the shared text: keep reading it (no own copy to drift); an emptied box drops the own copy.
+    const body = v === (shared ?? "") ? "" : v;
+    if (v === value || (body === "" && !own)) return setDraft(null);
+    await save(body);
+  }
+  async function retry() {
+    setRetrying(true);
+    try {
+      await patch(it.id, { retry_channel: ch });
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  return (
+    <section aria-labelledby={`${id}-h`} className="space-y-1.5 border-t pt-2.5">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <h4 id={`${id}-h`} className="text-xs font-semibold">
+          {CHANNEL_LABEL[ch]}
+        </h4>
+        <p className={cn("flex min-w-0 items-center gap-1 text-xs", LINE_TONE[line.tone])}>
+          {line.tone === "busy" && <Loader2Icon aria-hidden className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />}
+          <span className="min-w-0 break-words">{line.text}</span>
+        </p>
+        {line.link && (
+          <a href={line.link} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-0.5 text-xs text-primary underline-offset-2 hover:underline">
+            Mở bài <ExternalLinkIcon aria-hidden className="size-3" />
+          </a>
+        )}
+        {line.retry && (
+          <Button type="button" size="sm" variant="outline" className={cn("h-6 px-2 text-[11px]", TOUCH)} disabled={retrying} onClick={() => void retry()}>
+            <RotateCcwIcon aria-hidden /> Thử lại
+          </Button>
+        )}
+      </div>
+      <Textarea
+        id={id}
+        value={text}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            void commit();
+          }
+          if (e.key === "Escape") {
+            // Inside the sheet, Esc cancels the edit only (not the sheet).
+            e.stopPropagation();
+            setDraft(null);
+          }
+        }}
+        aria-label={`Caption ${CHANNEL_LABEL[ch]} #${it.id}`}
+        aria-describedby={`${id}-meta`}
+        placeholder={`Chưa có caption cho ${CHANNEL_LABEL[ch]}: viết ở đây, hoặc thêm phần === ${ch.toUpperCase()} === vào caption chung`}
+        className="max-h-72 min-h-20 text-sm"
+      />
+      <div id={`${id}-meta`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+        <span className="min-w-0 flex-1">
+          {draft !== null && draft.trim() !== value
+            ? "Chưa lưu: Ctrl+Enter hoặc bấm ra ngoài để lưu, Esc để huỷ"
+            : own
+              ? `Caption riêng cho ${CHANNEL_LABEL[ch]}`
+              : shared
+                ? "Lấy từ caption chung; sửa ở đây để viết riêng cho kênh này"
+                : "Chưa có caption"}
+        </span>
+        {own && draft === null && (
+          <button type="button" className="rounded px-1 underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11" onClick={() => void save("")}>
+            Dùng caption chung
+          </button>
+        )}
+        <span className={cn("tabular-nums", count > limit && "font-medium text-destructive")}>
+          {count.toLocaleString("vi-VN")}/{limit.toLocaleString("vi-VN")} ký tự{count > limit ? ", quá giới hạn" : ""}
+        </span>
+      </div>
+    </section>
   );
 }
 

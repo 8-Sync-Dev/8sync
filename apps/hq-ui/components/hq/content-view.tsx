@@ -10,6 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   aiReason,
+  CHANNEL_LABEL,
+  CHANNEL_SHORT,
   byDay,
   CONTENT_FORMATS,
   CONTENT_STATUSES,
@@ -443,6 +445,12 @@ function Items({
                 </td>
                 <td className="px-2 py-2">
                   <p className={cn("whitespace-nowrap", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</p>
+                  {it.channels && (
+                    <p className="mt-0.5 whitespace-nowrap text-[11px] text-muted-foreground" title={it.channels.map((c) => CHANNEL_LABEL[c]).join(", ")}>
+                      {it.channels.map((c) => CHANNEL_SHORT[c]).join(" · ")}
+                      {it.channel_posts?.some((p) => p.state === "failed" || p.state === "blocked") && <span className="ml-1 font-medium text-destructive">· có kênh lỗi</span>}
+                    </p>
+                  )}
                   <div className="mt-1 flex flex-col items-start gap-1">
                     {steps
                       .map((s) => {

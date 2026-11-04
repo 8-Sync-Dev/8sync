@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.123.0] — 2026-11-04
+
+### Added
+- HQ tab Nội dung: một bài đăng ra nhiều kênh (Facebook, LinkedIn, Threads, YouTube) khi DB content-ai có migration 0064. Sheet có chip "Kênh", một ô caption mỗi kênh (lấy sẵn từ phần `=== FACEBOOK / LINKEDIN / THREADS / YOUTUBE ===` của caption chung cho tới khi viết riêng, đếm ký tự theo giới hạn kênh: LinkedIn 3.000, Threads 500, YouTube 5.000), dòng trạng thái từng kênh bằng chữ (Chờ tới lượt đăng, Đã lên lịch HH:mm dd/MM, Đã đăng + Mở bài, Lỗi / Bị chặn + Thử lại, Đã huỷ lịch). Duyệt vẫn một chạm cho mọi kênh đã chọn; HQ từ chối duyệt (409) khi kênh thiếu caption, quá giới hạn, hoặc YouTube thiếu video/tiêu đề. Bỏ duyệt rồi duyệt lại thì lên lịch lại. Danh sách hiện "FB · LI · TH". Việc lên lịch native trên từng nền tảng do worker `pnpm channels:tick` của content-ai làm qua ego-browser.
+
 ## [0.122.9] — 2026-11-04
 
 ### Changed

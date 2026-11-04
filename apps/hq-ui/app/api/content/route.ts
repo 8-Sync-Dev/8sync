@@ -69,6 +69,9 @@ export async function POST(req: Request) {
  * `assignee_base`; null clears), `approve_source: "<source URL the owner saw>"`, and
  * `no_ai_confirmed: true` when approving an item with an AI mark (else 409). An approved item
  * edited into AI-risk content without it drops back to `checked`; a published one answers 409.
+ * Migration 0064 (else 400): `channels`, `captions_json` (merged; "" drops a channel's own caption)
+ * and `retry_channel` (deletes a failed / blocked / cancelled channel row; 409 otherwise). Entering
+ * `approved` answers 409 with what a channel misses.
  */
 export async function PATCH(req: Request) {
   const o = open(req);

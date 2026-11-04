@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DELETE, GET, PATCH, POST } from "@/app/api/content/route";
 import { GET as MEDIA } from "@/app/api/content/media/route";
-import { addDays, aiReason, byDay, contentTaskText, contentWarning, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_SCHEDULE, stepCursor, stepHint, toLocalInput, weekStart } from "@/lib/content";
+import { addDays, aiReason, byDay, captionFor, contentTaskText, contentWarning, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_CHANNELS, NO_SCHEDULE, stepCursor, stepHint, toLocalInput, weekStart } from "@/lib/content";
 import { getToken } from "@/lib/server/auth";
 import { contentConfigPath, NO_REGISTRY } from "@/lib/server/content";
 import { aiMark, mediaSigValid } from "@/lib/server/content-media";
@@ -43,6 +43,25 @@ ALTER TABLE content_items ADD COLUMN assignee_session TEXT;
 ALTER TABLE content_items ADD COLUMN assignee_base TEXT;
 ALTER TABLE content_items ADD COLUMN assigned_at INTEGER;
 CREATE INDEX IF NOT EXISTS idx_content_items_scheduled ON content_items(scheduled_at);
+`;
+/** 0064_content_channels.up.sql, verbatim: channels per item and one row per channel post. */
+const MIGRATION_0064 = `
+ALTER TABLE content_items ADD COLUMN channels TEXT NOT NULL DEFAULT '["facebook"]'
+  CHECK (json_valid(channels) AND json_type(channels) = 'array');
+ALTER TABLE content_items ADD COLUMN captions_json TEXT
+  CHECK (captions_json IS NULL OR (json_valid(captions_json) AND json_type(captions_json) = 'object'));
+CREATE TABLE IF NOT EXISTS content_channel_posts (
+  item_id INTEGER NOT NULL REFERENCES content_items(id) ON DELETE CASCADE,
+  channel TEXT NOT NULL CHECK (channel IN ('facebook','linkedin','threads','youtube')),
+  state TEXT NOT NULL CHECK (state IN ('scheduling','scheduled','published','failed','blocked','cancelled')),
+  scheduled_for INTEGER,
+  permalink TEXT,
+  published_at INTEGER,
+  error TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+  PRIMARY KEY (item_id, channel)
+);
 `;
 
 let home = "";
@@ -427,5 +446,151 @@ describe("content rules", () => {
   });
   it("the task names the item", () => {
     expect(contentTaskText({ id: 12, title: "Bài A", fb_page: "zus" }, " sửa caption ")).toBe("[Nội dung #12 · zus] Bài A\nsửa caption");
+  });
+});
+
+describe("/api/content channels (0064)", () => {
+  const ALL = MIGRATION_0062 + MIGRATION_0063 + MIGRATION_0064;
+  const V1 = "=== FACEBOOK (Page) — 20:30 ===\nA\n\n=== LINKEDIN ===\nB\n=== THREADS — x ===\nC";
+  const CHS = ["facebook", "linkedin", "threads", "youtube"] as const;
+  /** The rows the worker would write, straight into the DB file. */
+  function putPost(file: string, item: number, channel: string, state: string) {
+    const db = new DatabaseSync(file);
+    db.prepare("INSERT OR REPLACE INTO content_channel_posts (item_id, channel, state, error) VALUES (?, ?, ?, ?)").run(item, channel, state, state === "scheduled" ? null : "lỗi thử");
+    db.close();
+  }
+  function posts(file: string): [string, string][] {
+    const db = new DatabaseSync(file, { readOnly: true });
+    const rows = db.prepare("SELECT channel, state FROM content_channel_posts ORDER BY item_id, channel").all() as { channel: string; state: string }[];
+    db.close();
+    return rows.map((r) => [r.channel, r.state]);
+  }
+
+  it("caption per channel: own caption, else its section, else the whole plain caption for Facebook only", () => {
+    const of = (caption: string | null, captions_json: Record<string, string> | null = null) => CHS.map((ch) => captionFor({ caption, captions_json }, ch));
+    expect(of(V1)).toEqual(["A", "B", "C", null]);
+    expect(of("plain")).toEqual(["plain", null, null, null]);
+    expect(of(V1, { linkedin: "X" })).toEqual(["A", "X", "C", null]);
+    expect(of(V1, { threads: "  " })).toEqual(["A", "B", "C", null]);
+    // A section under an unknown header is dropped; an empty section is no caption.
+    expect(of("=== TIKTOK ===\nT\n=== LINKEDIN ===\n  \n=== YOUTUBE ===\nY")).toEqual([null, null, null, "Y"]);
+    expect(of(null)).toEqual([null, null, null, null]);
+  });
+
+  it("channels and captions_json are validated, merged and stored (NULL once no own caption is left)", async () => {
+    const file = makeDb("ch.db", ALL);
+    configure(file);
+    const { item } = await (await POST(call("POST", "", { format: "text", title: "A", caption: V1 }))).json();
+    expect(item).toMatchObject({ channels: ["facebook"], captions_json: null, channel_posts: [] });
+    const q = `?id=${item.id}`;
+    for (const channels of [[], ["facebook", "facebook"], ["tiktok"], "facebook", null]) expect((await PATCH(call("PATCH", q, { channels }))).status).toBe(422);
+    for (const captions_json of [{ tiktok: "x" }, { threads: 5 }, ["x"], "x"]) expect((await PATCH(call("PATCH", q, { captions_json }))).status).toBe(422);
+
+    let res = await PATCH(call("PATCH", q, { channels: ["threads", "facebook"], captions_json: { threads: "  T  " } }));
+    expect((await res.json()).item).toMatchObject({ channels: ["threads", "facebook"], captions_json: { threads: "T" } });
+    res = await PATCH(call("PATCH", q, { captions_json: { linkedin: "L" } }));
+    expect((await res.json()).item.captions_json).toEqual({ threads: "T", linkedin: "L" });
+    res = await PATCH(call("PATCH", q, { captions_json: { threads: "" } }));
+    expect((await res.json()).item.captions_json).toEqual({ linkedin: "L" });
+    res = await PATCH(call("PATCH", q, { captions_json: { linkedin: "" } }));
+    expect((await res.json()).item.captions_json).toBeNull();
+    const db = new DatabaseSync(file, { readOnly: true });
+    expect(db.prepare("SELECT channels, captions_json FROM content_items WHERE id = ?").get(item.id)).toMatchObject({ channels: '["threads","facebook"]', captions_json: null });
+    db.close();
+  });
+
+  it("entering approved needs every channel's caption within its limit and YouTube a video file; the refusal is the sheet's hint and changes nothing", async () => {
+    configure(makeDb("appr.db", ALL));
+    const q = await readyToApprove({ format: "infographic", caption: "plain", channels: ["facebook", "threads"] });
+    const approve = async (extra: Record<string, unknown> = {}) => {
+      const res = await PATCH(call("PATCH", q, { status: "approved", ...extra }));
+      return { status: res.status, body: await res.json() };
+    };
+    let r = await approve();
+    expect(r.status).toBe(409);
+    // The refused write left the item checked, and the sheet's hint says the same as the API.
+    let it = (await (await PATCH(call("PATCH", q, { captions_json: { threads: "x".repeat(501) } }))).json()).item;
+    expect(it.status).toBe("checked");
+    expect(stepHint(it, "approved")).not.toBeNull();
+    r = await approve();
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe(stepHint(it, "approved"));
+    // Limits count characters, not UTF-16 units: 500 emoji fit Threads.
+    it = (await (await PATCH(call("PATCH", q, { captions_json: { threads: "😀".repeat(500) } }))).json()).item;
+    expect(stepHint(it, "approved")).toBeNull();
+    expect((await approve()).status).toBe(200);
+
+    // YouTube: a folder is no video, nor a missing file, nor an over-long title.
+    const dir = path.join(home, "yt");
+    fs.mkdirSync(dir, { recursive: true });
+    const video = path.join(dir, "v.MP4");
+    fs.writeFileSync(video, Buffer.alloc(64));
+    const y = await readyToApprove({ format: "clip", title: "Video", caption: "=== YOUTUBE ===\nMô tả", channels: ["youtube"], media_path: dir });
+    const approveY = async () => (await PATCH(call("PATCH", y, { status: "approved", no_ai_confirmed: true }))).status;
+    expect(await approveY()).toBe(409);
+    await PATCH(call("PATCH", y, { media_path: path.join(dir, "missing.mp4") }));
+    expect(await approveY()).toBe(409);
+    await PATCH(call("PATCH", y, { media_path: video, title: "x".repeat(101) }));
+    expect(await approveY()).toBe(409);
+    await PATCH(call("PATCH", y, { title: "Video" }));
+    expect(await approveY()).toBe(200);
+  });
+
+  it("Thử lại deletes only a failed, blocked or cancelled row; the list carries each item's rows; re-approving clears cancelled rows", async () => {
+    const file = makeDb("retry.db", ALL);
+    configure(file);
+    const q = await readyToApprove({ format: "infographic", caption: V1, channels: ["facebook", "linkedin", "threads"] });
+    const id = Number(q.slice("?id=".length));
+    expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
+    putPost(file, id, "facebook", "scheduled");
+    putPost(file, id, "linkedin", "failed");
+    putPost(file, id, "threads", "blocked");
+    const listed = (await (await GET(call("GET", ""))).json()).items.find((i: { id: number }) => i.id === id);
+    expect(listed.channel_posts.map((p: { channel: string; state: string }) => [p.channel, p.state])).toEqual([
+      ["facebook", "scheduled"],
+      ["linkedin", "failed"],
+      ["threads", "blocked"],
+    ]);
+
+    expect((await PATCH(call("PATCH", q, { retry_channel: "facebook" }))).status).toBe(409);
+    expect((await PATCH(call("PATCH", q, { retry_channel: "youtube" }))).status).toBe(409);
+    expect((await PATCH(call("PATCH", q, { retry_channel: "tiktok" }))).status).toBe(422);
+    // A refused retry leaves the other changes of the same write undone too.
+    expect((await PATCH(call("PATCH", q, { retry_channel: "facebook", caption: "khác" }))).status).toBe(409);
+    const res = await PATCH(call("PATCH", q, { retry_channel: "linkedin" }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).item).toMatchObject({ caption: V1, status: "approved" });
+    expect(posts(file)).toEqual([
+      ["facebook", "scheduled"],
+      ["threads", "blocked"],
+    ]);
+
+    // Un-approve: the worker cancels the scheduled post and keeps the row; approving again clears it so the post is planned again.
+    expect((await PATCH(call("PATCH", q, { status: "checked" }))).status).toBe(200);
+    putPost(file, id, "facebook", "cancelled");
+    expect((await PATCH(call("PATCH", q, { caption: V1 }))).status).toBe(200);
+    expect(posts(file)).toEqual([
+      ["facebook", "cancelled"],
+      ["threads", "blocked"],
+    ]);
+    expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
+    expect(posts(file)).toEqual([["threads", "blocked"]]);
+  });
+
+  it("a DB before 0064 lists and approves as before and refuses the channel fields with the reason", async () => {
+    configure(makeDb("pre64.db", MIGRATION_0062 + MIGRATION_0063));
+    const q = await readyToApprove({ format: "infographic" });
+    for (const body of [{ channels: ["facebook"] }, { captions_json: { threads: "x" } }, { retry_channel: "facebook" }]) {
+      const res = await PATCH(call("PATCH", q, body));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe(NO_CHANNELS);
+    }
+    expect((await POST(call("POST", "", { format: "text", title: "B", channels: ["threads"] }))).status).toBe(400);
+    const { items } = await (await GET(call("GET", ""))).json();
+    expect(items).toHaveLength(1);
+    expect(items[0]).not.toHaveProperty("channels");
+    expect(items[0]).not.toHaveProperty("channel_posts");
+    // No caption at all: without 0064 there is no channel rule to meet.
+    expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
   });
 });

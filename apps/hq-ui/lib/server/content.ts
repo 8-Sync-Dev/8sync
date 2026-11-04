@@ -1,13 +1,32 @@
 // The content registry HQ reads and writes: `content_items` in content-post-agency's own SQLite
 // (its migration 0062 makes the table and the publish-gate triggers, 0063 the schedule and assignee
-// columns). HQ never creates or alters that schema; every write goes through the DB's triggers like
-// any other writer.
+// columns, 0064 the channels and `content_channel_posts`). HQ never creates or alters that schema;
+// every write goes through the DB's triggers like any other writer.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
-import { aiReason, CONTENT_TEXT_FIELDS, isFormat, isStatus, NO_SCHEDULE, type ContentItem, type ContentList, type ContentRow, type ContentStatus } from "../content";
+import {
+  aiReason,
+  CHANNEL_LABEL,
+  channelGate,
+  CHANNELS,
+  CONTENT_TEXT_FIELDS,
+  isChannel,
+  isFormat,
+  isStatus,
+  NO_CHANNELS,
+  NO_SCHEDULE,
+  RETRYABLE_STATES,
+  type Captions,
+  type Channel,
+  type ChannelPost,
+  type ContentItem,
+  type ContentList,
+  type ContentRow,
+  type ContentStatus,
+} from "../content";
 import { mediaFiles, publicMedia } from "./content-media";
 import { isInboxId } from "./inbox";
 import { configDir } from "./paths";
@@ -94,9 +113,23 @@ function write<T>(fn: () => T): T {
     return fn();
   } catch (e) {
     const err = e as Error & { errcode?: number; errstr?: string };
+    if (err instanceof ContentError) throw err;
     if (err.errcode === CONSTRAINT_TRIGGER || err.message.startsWith("content_items:")) throw new ContentError(err.message, 409);
     if (((err.errcode ?? 0) & 0xff) === SQLITE_BUSY) throw new ContentError("DB nội dung đang bận (app content-ai đang ghi), thử lại.", 503);
     if (err.errstr === "constraint failed") throw new ContentError(err.message, 422);
+    throw e;
+  }
+}
+
+/** Several statements as one: a refusal halfway leaves nothing behind. */
+function tx<T>(db: DatabaseSync, fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const out = fn();
+    db.exec("COMMIT");
+    return out;
+  } catch (e) {
+    db.exec("ROLLBACK");
     throw e;
   }
 }
@@ -111,20 +144,53 @@ export function hasSchedule(db: DatabaseSync): boolean {
   return cols.has("scheduled_at") && cols.has("assignee_session") && cols.has("assignee_base") && cols.has("assigned_at");
 }
 
-const withMedia = (it: ContentItem): ContentRow => ({ ...it, media: mediaFiles(it.media_path).map((m) => publicMedia(it.id, m)) });
+/** Migration 0064 is in: the `channels` / `captions_json` columns and the `content_channel_posts` table exist. */
+export function hasChannels(db: DatabaseSync): boolean {
+  const cols = new Set((db.prepare("PRAGMA table_info(content_items)").all() as { name: string }[]).map((c) => c.name));
+  return cols.has("channels") && cols.has("captions_json") && db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'content_channel_posts'").get() !== undefined;
+}
+
+/** A row as SQLite returns it: 0064's columns are JSON text. */
+type DbItem = Omit<ContentItem, "channels" | "captions_json"> & { channels?: string; captions_json?: string | null };
+
+/** The row as the API hands it: 0064's JSON parsed; unknown channels and non-text captions are left out. */
+function fromRow(r: DbItem): ContentItem {
+  const { channels, captions_json, ...rest } = r;
+  if (channels === undefined) return rest;
+  const raw = captions_json ? (JSON.parse(captions_json) as Record<string, unknown>) : {};
+  const captions: Captions = {};
+  for (const ch of CHANNELS) {
+    const v = raw[ch];
+    if (typeof v === "string") captions[ch] = v;
+  }
+  return { ...rest, channels: [...new Set((JSON.parse(channels) as unknown[]).filter(isChannel))], captions_json: Object.keys(captions).length ? captions : null };
+}
+
+/** Items with their media, and on a 0064 DB their channel rows (one query for the whole list). */
+function rowsOf(db: DatabaseSync, items: ContentItem[], channels: boolean): ContentRow[] {
+  const rows: ContentRow[] = items.map((it) => ({ ...it, media: mediaFiles(it.media_path).map((m) => publicMedia(it.id, m)) }));
+  if (!channels || rows.length === 0) return rows;
+  const posts = db
+    .prepare("SELECT * FROM content_channel_posts WHERE item_id IN (SELECT value FROM json_each(?)) ORDER BY item_id, channel")
+    .all(JSON.stringify(rows.map((r) => r.id))) as unknown as ChannelPost[];
+  const by = new Map<number, ChannelPost[]>();
+  for (const p of posts) by.set(p.item_id, [...(by.get(p.item_id) ?? []), p]);
+  return rows.map((r) => ({ ...r, channel_posts: by.get(r.id) ?? [] }));
+}
 
 export function listContent(db: DatabaseSync, f: ContentFilter = {}): Extract<ContentList, { ready: true }> {
   const by = (["status", "format", "fb_page"] as const).filter((k) => f[k]);
   const where = by.map((k) => `${k} = ?`);
   const args = by.map((k) => f[k]!);
   const sql = `SELECT * FROM content_items${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY updated_at DESC, id DESC LIMIT ${LIST_MAX}`;
-  const items = (db.prepare(sql).all(...args) as unknown as ContentItem[]).map(withMedia);
+  const items = rowsOf(db, (db.prepare(sql).all(...args) as unknown as DbItem[]).map(fromRow), hasChannels(db));
   const pages = (db.prepare("SELECT DISTINCT fb_page FROM content_items ORDER BY fb_page").all() as { fb_page: string }[]).map((r) => r.fb_page);
   return { configured: true, ready: true, items, pages, schedule: hasSchedule(db) };
 }
 
 export function getContent(db: DatabaseSync, id: number): ContentItem | null {
-  return (db.prepare("SELECT * FROM content_items WHERE id = ?").get(id) as unknown as ContentItem | undefined) ?? null;
+  const row = db.prepare("SELECT * FROM content_items WHERE id = ?").get(id) as unknown as DbItem | undefined;
+  return row ? fromRow(row) : null;
 }
 
 const TEXT_MAX = 20_000;
@@ -192,6 +258,55 @@ function aiGate(item: Pick<ContentItem, "format" | "media_path">, status: Conten
   if (why && body.no_ai_confirmed !== true) throw new ContentError(`Mục có rủi ro nhãn AI (${why}): tick xác nhận không dùng hình/giọng AI photoreal rồi mới duyệt.`, 409);
 }
 
+/** The 0064 fields of a body, parsed. Absent on the body = absent here. */
+type ChannelFields = { channels?: Channel[]; captions_json?: Captions | null };
+
+/**
+ * `channels`: a non-empty list of the four channels, no repeats. `captions_json`: `{channel: text}`
+ * merged into the item's own (an empty text drops that channel's own caption, so it reads the shared
+ * caption again), or null to drop them all. A DB before 0064 refuses both.
+ */
+function channelFields(body: Record<string, unknown>, has: boolean, current: Captions | null): ChannelFields {
+  const out: ChannelFields = {};
+  if (!("channels" in body) && !("captions_json" in body)) return out;
+  if (!has) throw new ContentError(NO_CHANNELS, 400);
+  if ("channels" in body) {
+    const v = body.channels;
+    if (!Array.isArray(v) || v.length === 0 || !v.every(isChannel) || new Set(v).size !== v.length)
+      throw new ContentError(`channels: danh sách không rỗng, không trùng, trong ${CHANNELS.join(", ")}`, 422);
+    out.channels = v;
+  }
+  if ("captions_json" in body) {
+    const v = body.captions_json;
+    if (v !== null && (typeof v !== "object" || Array.isArray(v))) throw new ContentError("captions_json: object {kênh: caption} hoặc null", 422);
+    const next: Captions = v === null ? {} : { ...current };
+    for (const [k, s] of Object.entries(v ?? {})) {
+      if (!isChannel(k)) throw new ContentError(`captions_json: kênh lạ "${k}", chỉ có ${CHANNELS.join(", ")}`, 422);
+      if (typeof s !== "string") throw new ContentError(`captions_json.${k}: phải là chuỗi`, 422);
+      const t = s.trim();
+      if (t.length > TEXT_MAX) throw new ContentError(`captions_json.${k}: quá ${TEXT_MAX} ký tự`, 422);
+      if (t) next[k] = t;
+      else delete next[k];
+    }
+    out.captions_json = Object.keys(next).length ? next : null;
+  }
+  return out;
+}
+
+/** The columns `channelFields` writes (the DB keeps JSON text). */
+function channelColumns(c: ChannelFields): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  if (c.channels) out.channels = JSON.stringify(c.channels);
+  if ("captions_json" in c) out.captions_json = c.captions_json ? JSON.stringify(c.captions_json) : null;
+  return out;
+}
+
+/** Contract 0064: entering approved needs every channel's caption within its limit, and YouTube a video and a title. */
+function channelApproval(it: Pick<ContentItem, "title" | "caption" | "captions_json" | "channels" | "media_path">): void {
+  const why = channelGate({ ...it, media: mediaFiles(it.media_path) });
+  if (why) throw new ContentError(why, 409);
+}
+
 export function createContent(db: DatabaseSync, body: Record<string, unknown>, now = Date.now()): ContentRow {
   if (!isFormat(body.format)) throw new ContentError("format: một trong text, infographic, course_video, ai_video, asmr, clip, other", 422);
   if (body.status !== undefined && !isStatus(body.status)) throw new ContentError("status: không hợp lệ", 422);
@@ -199,10 +314,14 @@ export function createContent(db: DatabaseSync, body: Record<string, unknown>, n
   if (!t.title) throw new ContentError("title: không được trống", 422);
   const status: ContentStatus = (body.status as ContentStatus | undefined) ?? "ordered";
   aiGate({ format: body.format, media_path: t.media_path ?? null }, status, body);
-  const row: Record<string, string | number | null> = { ...t, ...scheduleFields(db, body, now), format: body.format, status, ...statusStamps(null, status, now), created_at: now, updated_at: now };
+  const has = hasChannels(db);
+  const ch = channelFields(body, has, null);
+  if (has && status === "approved")
+    channelApproval({ title: t.title, caption: t.caption ?? null, captions_json: ch.captions_json ?? null, channels: ch.channels ?? ["facebook"], media_path: t.media_path ?? null });
+  const row: Record<string, string | number | null> = { ...t, ...scheduleFields(db, body, now), ...channelColumns(ch), format: body.format, status, ...statusStamps(null, status, now), created_at: now, updated_at: now };
   const cols = Object.keys(row);
   const id = write(() => db.prepare(`INSERT INTO content_items (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).run(...cols.map((c) => row[c])).lastInsertRowid);
-  return withMedia(getContent(db, Number(id))!);
+  return rowsOf(db, [getContent(db, Number(id))!], has)[0];
 }
 
 /**
@@ -211,11 +330,23 @@ export function createContent(db: DatabaseSync, body: Record<string, unknown>, n
  * 409 when the row's source has changed since). Approving an item with an AI mark needs
  * `no_ai_confirmed: true`; an approved item edited into AI-risk content without it drops back to
  * `checked`, a published one answers 409. A new `source_url` drops an earlier approval: it approved the old source.
+ * 0064: `channels`, `captions_json` (see `channelFields`) and `retry_channel: "<channel>"`, which
+ * deletes that channel's failed / blocked / cancelled row so the worker plans it again (409 for any
+ * other state: a live or posted one must not be posted twice). Entering approved checks the channel
+ * rule and clears the item's cancelled rows (left from an earlier un-approve) so it is scheduled again.
  */
 export function updateContent(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now = Date.now()): ContentRow {
   const item = getContent(db, id);
   if (!item) throw new ContentError(`không có mục #${id}`, 404);
-  const set: Record<string, string | number | null> = { ...textFields(body), ...scheduleFields(db, body, now) };
+  const has = hasChannels(db);
+  const ch = channelFields(body, has, item.captions_json ?? null);
+  let retry: Channel | null = null;
+  if ("retry_channel" in body) {
+    if (!has) throw new ContentError(NO_CHANNELS, 400);
+    if (!isChannel(body.retry_channel)) throw new ContentError(`retry_channel: một trong ${CHANNELS.join(", ")}`, 422);
+    retry = body.retry_channel;
+  }
+  const set: Record<string, string | number | null> = { ...textFields(body), ...scheduleFields(db, body, now), ...channelColumns(ch) };
   if ("format" in body) {
     if (!isFormat(body.format)) throw new ContentError("format: không hợp lệ", 422);
     set.format = body.format;
@@ -253,12 +384,33 @@ export function updateContent(db: DatabaseSync, id: number, body: Record<string,
     set.source_approved_by = approver;
     set.source_approved_at = now;
   }
+  const final = (set.status as ContentStatus | undefined) ?? item.status;
+  const entering = has && final === "approved" && item.status !== "approved";
+  if (entering)
+    channelApproval({
+      title: "title" in set ? (set.title as string) : item.title,
+      caption: "caption" in set ? (set.caption as string | null) : item.caption,
+      captions_json: "captions_json" in ch ? (ch.captions_json ?? null) : (item.captions_json ?? null),
+      channels: ch.channels ?? item.channels,
+      media_path: nextMedia,
+    });
   const cols = Object.keys(set);
-  if (cols.length === 0) throw new ContentError("không có gì để sửa", 400);
-  set.updated_at = now;
-  cols.push("updated_at");
-  write(() => db.prepare(`UPDATE content_items SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`).run(...cols.map((c) => set[c]), id));
-  return withMedia(getContent(db, id)!);
+  if (cols.length === 0 && retry === null) throw new ContentError("không có gì để sửa", 400);
+  write(() =>
+    tx(db, () => {
+      if (retry !== null) {
+        const states = RETRYABLE_STATES.map(() => "?").join(", ");
+        const gone = db.prepare(`DELETE FROM content_channel_posts WHERE item_id = ? AND channel = ? AND state IN (${states})`).run(id, retry, ...RETRYABLE_STATES).changes;
+        if (gone === 0) throw new ContentError(`${CHANNEL_LABEL[retry]}: chỉ thử lại được khi kênh lỗi, bị chặn hoặc đã huỷ lịch.`, 409);
+      }
+      if (cols.length === 0) return;
+      set.updated_at = now;
+      cols.push("updated_at");
+      db.prepare(`UPDATE content_items SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`).run(...cols.map((c) => set[c]), id);
+      if (entering) db.prepare("DELETE FROM content_channel_posts WHERE item_id = ? AND state = 'cancelled'").run(id);
+    }),
+  );
+  return rowsOf(db, [getContent(db, id)!], has)[0];
 }
 
 export function deleteContent(db: DatabaseSync, id: number): boolean {
