@@ -17,7 +17,7 @@ Owner 2026-11-04: chia khung Nhật ký/chat, media trong chat (xem/tải), ché
 - [ ] PR #297 (đa kênh Nội dung, phòng khác) còn mở
 
 ## Current
-Release v0.122.11 (#301, #302).
+Release v0.122.12: #304 vá 2 lỗi low từ audit #302 (khách không thấy đường dẫn ổ đĩa của chủ).
 
 ## Next
 - HQ qua Tailscale: `hq ui --tailscale` = `tailscale serve` + host `*.ts.net` vào public.json, nhận `Tailscale-User-Login` làm danh tính (chỉ sau khi tailscaled lên mạng).
