@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- HQ chat phòng có media: file đính kèm là ảnh thì hiện thumbnail (bấm mở Lightbox, có nút tải), video (mp4/webm/mov) và audio phát ngay trong chat, tua được (stream theo Range 206 qua link ký HMAC 12 h, `<video>` không gửi được `x-hq-token`), file khác hiện chip tên + dung lượng + nút tải (`?dl=1` → `Content-Disposition: attachment` giữ tên gốc). File không phải media luôn tải về dạng `application/octet-stream` nên .html/.svg không chạy trên origin của HQ. Reply của phiên: URL http(s) thành link, URL ảnh/video có preview phía trình duyệt (`referrerPolicy="no-referrer"`, không fetch OG phía server để tránh SSRF), đường dẫn upload nhắc trong reply cũng hiện player/chip. Nhật ký hiện tên file đính kèm thay cho đường dẫn dài.
+
+### Fixed
+- HQ chat phòng trên điện thoại: đường dẫn hay URL dài trong reply không còn bị cắt mất ở mép bong bóng (`wrap-anywhere`). Nút "Mở log đầy đủ", "Xem hết" và "Đường dẫn cho phòng" đủ 40 px trên màn cảm ứng và có focus ring; nút đóng Lightbox lên 40 px.
+
 ## [0.122.10] — 2026-11-04
 
 ### Added

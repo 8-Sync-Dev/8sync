@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { LogLines } from "@/components/hq/room-log";
+import { ATTACH_HEADER } from "@/lib/attachments";
 import { activityFrom, readActivity, toolSummary } from "@/lib/server/activity";
 
 const SID = "04d7c8d5-7473-44e7-bab9-0606b4db5a01";
@@ -119,15 +123,23 @@ describe("GET /api/sessions/[name]/activity", () => {
 });
 
 describe("Nhật ký UI", () => {
-  it("one line per event, errors expandable, empty state", async () => {
-    const { createElement } = await import("react");
-    const { renderToStaticMarkup } = await import("react-dom/server");
-    const { LogLines } = await import("@/components/hq/room-log");
+  it("one line per event, errors expandable, empty state", () => {
     const ev = activityFrom(FIXTURE);
     const html = renderToStaticMarkup(createElement(LogLines, { events: ev, now: Date.parse(at(30)) }));
     for (const s of ["Làm card #6", "Read: /w/ai-game-studio/su-code/STATE.md", "Bash: Kiểm PR đang mở", "401 Unauthorized", "<details", "researcher: Tìm sprite 64px", "đang chạy", "28s", 'aria-label="Nhật ký phòng, mới nhất ở cuối"'])
       expect(html).toContain(s);
     expect(html).not.toContain(FAKE_SECRET);
     expect(renderToStaticMarkup(createElement(LogLines, { events: [], now: 0 }))).toContain("Chưa có gì trong nhật ký");
+  });
+
+  it("a prompt sent with files shows its body and the file names, not the markdown-mangled paths", () => {
+    const file = "C:\\w\\proj\\.claude\\hq-uploads\\0123456789abcdef0123456789abcdef\\bao_cao.zip";
+    const html = renderToStaticMarkup(
+      createElement(LogLines, { events: [{ kind: "prompt", at: null, text: `Xem file này\n\n${ATTACH_HEADER}\n- ${file}` }], now: 0 }),
+    );
+    expect(html).toContain("Xem file này");
+    expect(html).toContain(">bao_cao.zip<");
+    expect(html).not.toContain(ATTACH_HEADER);
+    expect(html).not.toContain("proj.claude");
   });
 });
