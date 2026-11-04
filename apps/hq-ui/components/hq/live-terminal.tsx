@@ -15,10 +15,12 @@ import { FILES_MAX, fileError, toBase64 } from "@/lib/attach";
 import { isLocalHost } from "@/lib/hosts";
 import type { ActivityEvent } from "@/lib/server/activity";
 import { activityScreen } from "@/lib/term-activity";
-import { afterStream, giveUp, keyboardOpen, keyQueue, retryDelay, termRows } from "@/lib/term-stream";
+import { afterStream, giveUp, heldBack, keyboardOpen, keyQueue, pingTime, retryDelay, STALE_MS, termRows } from "@/lib/term-stream";
 
 /** Off loopback: no byte (not even the opening ping) this long = the proxy holds the stream back, so poll. */
 const FIRST_BYTE_MS = 4000;
+/** Loopback: a stream with no byte this long (HQ pings every 2 s) is dead even if still open. */
+const STALL_MS = 40_000;
 /** Polling: each poll is held by HQ until output arrives (at most this long), so the page asks again at once. */
 const POLL_WAIT_MS = 20_000;
 /** A poll answered this fast with nothing new was not held (HQ restarting, an old HQ): wait before asking again. */
@@ -363,6 +365,16 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
         if (!readOnly) return keys(data);
         if (data && !data.startsWith("\x1b")) void takeoverRef.current();
       });
+      // The room's pty has one size for all its viewers: `8sync . <name>` on the PC (or another tab)
+      // may have sized it since this page joined, and a pty taller than this xterm hides omp's live
+      // rows. A click into the terminal sizes it back to this page (HQ also does on join: joinSize).
+      el.addEventListener(
+        "pointerdown",
+        () => {
+          if (!readOnly) void post(sizeRef.current);
+        },
+        { signal: ac.signal },
+      );
       let last = size;
       // MIN_ROWS can be taller than a phone's box: the box scrolls, and stays at its bottom (the
       // prompt and status line) unless the owner scrolled up to read.
@@ -403,6 +415,8 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
       };
       // Off loopback the stream may be held back by the proxy (a Cloudflare quick tunnel does; the VPS
       // gate does not): the server pings at once, so no byte within FIRST_BYTE_MS means poll instead.
+      // A tunnel can also pass it in batches (lib/term-stream.ts heldBack): after the first bytes, quiet
+      // for STALE_MS (HQ pings every 2 s) or a ping that came late also means poll.
       const remote = !isLocalHost(window.location.host);
       const stream = async (): Promise<"silent" | "done"> => {
         const conn = new AbortController();
@@ -410,36 +424,49 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
         ac.signal.addEventListener("abort", stop, { once: true });
         let silent = false;
         let ended = false;
-        const dog = remote
-          ? setTimeout(() => {
-              silent = true;
-              conn.abort();
-            }, FIRST_BYTE_MS)
-          : undefined;
+        // Remote: no byte within FIRST_BYTE_MS (held back) means poll; after that, quiet for STALE_MS or a
+        // late ping (a tunnel passing the stream in batches) means poll. Loopback: a stream quiet for
+        // STALL_MS is a dead connection that still looks open: drop it and poll rather than show a frozen screen.
+        const held = () => {
+          silent = true;
+          conn.abort();
+        };
+        const late = heldBack();
+        let dog: ReturnType<typeof setTimeout> | undefined;
+        const arm = (ms: number) => {
+          clearTimeout(dog);
+          dog = setTimeout(held, ms);
+        };
+        arm(remote ? FIRST_BYTE_MS : STALL_MS);
         try {
           const res = await fetch(withQuery(url, `cols=${size.cols}&rows=${size.rows}`), { headers: { "x-hq-token": token }, signal: conn.signal, cache: "no-store" });
           if (!res.ok || !res.body) throw res.status < 500 && !res.ok ? new PollRefused(await errorOf(res)) : new Error(await errorOf(res));
-          if (!remote) setState("live");
           const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
           let rest = "";
           for (;;) {
             const { value, done } = await reader.read();
             if (done) break;
-            clearTimeout(dog);
-            setState("live");
+            arm(remote ? STALE_MS : STALL_MS);
             const p = parseSse(rest + value);
             rest = p.rest;
             for (const e of p.events) {
+              // "live" once the screen has something to show, not on the opening ping: a bridge still
+              // starting its room stays "connecting" rather than a blank pane marked connected.
+              if (e.event === "out" || e.event === "replay") setState("live");
               if (e.event === "out") write(e.data);
               else if (e.event === "replay") write(e.data, true);
-              else if (e.event === "end") {
+              else if (e.event === "ping" && remote) {
+                const t = pingTime(e.data);
+                if (t != null && late(t, Date.now())) held();
+              } else if (e.event === "end") {
                 ended = true;
                 end(e.data.includes('"elsewhere":true'), e.data.includes('"dead":true'), e.data.includes('"exited":true'));
               }
             }
           }
         } catch (e) {
-          if (silent && !ac.signal.aborted) return "silent";
+          // A tunnel flushes what it held when HQ closes the stream, so late pings can come with `end`: the end wins.
+          if (silent && !ended && !ac.signal.aborted) return "silent";
           // A drop after the first bytes (ssh tunnel, proxy): poll on instead of giving up (lib/term-stream.ts).
           const next = afterStream({ remote, aborted: ac.signal.aborted, refused: e instanceof PollRefused, ended, threw: true });
           if (next === "poll") return "silent";

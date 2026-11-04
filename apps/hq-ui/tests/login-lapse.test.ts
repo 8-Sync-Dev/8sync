@@ -45,4 +45,21 @@ describe("login lapse behind the VPS gate", () => {
     await expect(makeApi("t")("/api/sessions")).resolves.toEqual({ ok: 1 });
     expect(reload).not.toHaveBeenCalled();
   });
+
+  it("a request aborted while its body is read rejects, not resolves as empty data", async () => {
+    // The sidebar's worktree list is re-asked when the groups load: the first answer is aborted mid-body
+    // and used to resolve `{}`, so `r.worktrees` was undefined and the whole page crashed on `.includes`.
+    // A browser rejects the body read with an AbortError once the request's signal has aborted.
+    const ac = new AbortController();
+    const json = () => (ac.signal.aborted ? Promise.reject(new DOMException("The operation was aborted.", "AbortError")) : Promise.resolve({ worktrees: [] }));
+    vi.stubGlobal("fetch", vi.fn(async () => ({ type: "basic", ok: true, status: 200, json }) as unknown as Response));
+    const got = makeApi("t")("/api/projects/sidebar", { signal: ac.signal });
+    ac.abort();
+    await expect(got).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("a 2xx with no JSON body (204, empty) is still empty data", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    await expect(makeApi("t")("/api/x", { method: "POST" })).resolves.toEqual({});
+  });
 });

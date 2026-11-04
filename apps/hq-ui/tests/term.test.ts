@@ -2,8 +2,9 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSse } from "@/components/hq/live-terminal";
-import { HOST_GONE_EXIT, IDLE_CLOSE_MS, SHELL_IDLE_MS, clampSize, closeTerm, endedTerm, input, openShell, openTerm, poll, shellArgs, shellKey, shellsOpen, termArgs, termOpen, waitOutput, watch } from "@/lib/server/term";
+import { ELSEWHERE_EXIT, HOST_GONE_EXIT, IDLE_CLOSE_MS, SHELL_IDLE_MS, clampSize, closeTerm, endedTerm, input, openShell, openTerm, poll, shellArgs, shellKey, shellsOpen, termArgs, termOpen, waitOutput, watch } from "@/lib/server/term";
 import { termResponse } from "@/lib/server/term-http";
+import { pingTime } from "@/lib/term-stream";
 
 const ID = "3698e3a6-9b73-4b37-ab3a-368b169d0508";
 const OMP = "omp-00000000000000b2";
@@ -49,6 +50,19 @@ describe("web terminal bridge", () => {
     f.proc().emit("exit", 0);
     expect(seen.at(-1)).toBe("<end>");
     expect(termOpen(ID)).toBe(false);
+  });
+
+  it("a bridge whose pipe breaks while the owner types does not crash HQ, and its exit code still counts", () => {
+    const f = fakeSpawn();
+    const t = openTerm(OMP, null, { cols: 100, rows: 30 }, f.spawn);
+    const seen: string[] = [];
+    watch(OMP, t, (b) => seen.push(b ? b.toString() : "<end>"));
+    const epipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    expect(() => f.proc().stdin.emit("error", epipe)).not.toThrow();
+    f.proc().emit("exit", ELSEWHERE_EXIT);
+    expect(seen).toEqual(["<end>"]);
+    expect(termOpen(OMP)).toBe(false);
+    expect(endedTerm(OMP, t.gen)?.elsewhere).toBe(true);
   });
 
   it("sends keys and sizes as JSON lines, refuses oversize input and a closed terminal", async () => {
@@ -114,6 +128,38 @@ describe("web terminal bridge", () => {
     expect(termOpen(ID)).toBe(true);
     vi.advanceTimersByTime(2);
     expect(termOpen(ID)).toBe(false);
+  });
+
+  it("a viewer that leaves twice (a stream's abort and its cancel) leaves no timer that closes the bridge under the next one", () => {
+    vi.useFakeTimers();
+    const f = fakeSpawn();
+    const t = openTerm(OMP, null, { cols: 100, rows: 30 }, f.spawn);
+    const stop = watch(OMP, t, () => {});
+    stop();
+    stop();
+    watch(OMP, t, () => {});
+    vi.advanceTimersByTime(IDLE_CLOSE_MS * 2);
+    expect(termOpen(OMP)).toBe(true);
+  });
+
+  it("a page joining a running bridge sizes its pty to the page; a bridge just started has that size already", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const f = fakeSpawn();
+    const t = openTerm(OMP, null, { cols: 100, rows: 30 }, f.spawn);
+    const fresh = await termResponse(new Request("http://127.0.0.1/t?cols=100&rows=30"), OMP, t);
+    await fresh.body!.cancel();
+    f.proc().stdout.write("screen");
+    await new Promise((r) => setImmediate(r));
+    expect(f.written).toEqual([]);
+    // `8sync . <name>` on the PC made the pty 144×50; this page's xterm is 120×38.
+    const joined = await termResponse(new Request("http://127.0.0.1/t?cols=120&rows=38"), OMP, t);
+    await joined.body!.cancel();
+    // A link's first poll (reset) joins too; its next polls do not resize again.
+    const p = await (await termResponse(new Request("http://127.0.0.1/t?cols=90&rows=24&gen=0&since=-1"), OMP, t)).json();
+    expect(p.reset).toBe(true);
+    await termResponse(new Request(`http://127.0.0.1/t?cols=90&rows=24&gen=${p.gen}&since=${p.cursor}`), OMP, t);
+    await new Promise((r) => setImmediate(r));
+    expect(f.written.join("")).toBe(`{"r":[120,38]}\n{"r":[90,24]}\n`);
   });
 
   it("a replay is marked answered only once the bridge has had input, so a late viewer never re-answers ESC[6n", async () => {
@@ -194,6 +240,18 @@ describe("omp ended on the PC (owner 2026-11-03: crashed there, the link never k
     const res = await termResponse(new Request(`http://127.0.0.1/t?gen=${p.gen}&since=${p.cursor}&wait=20000`), OMP, gone!);
     expect(await res.json()).toMatchObject({ ended: true, exited: true, out: "" });
     expect(endedTerm(OMP, 0)).toBeUndefined();
+  });
+  it("the stream opens with a ping carrying HQ's clock, and an ended room's stream ends without pinging on", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const f = fakeSpawn();
+    const t = openTerm(OMP, "/repo/x", { cols: 80, rows: 20 }, f.spawn);
+    f.proc().emit("exit", HOST_GONE_EXIT);
+    const res = await termResponse(new Request("http://127.0.0.1/t"), OMP, endedTerm(OMP, t.gen) ?? t);
+    const events = parseSse(await res.text()).events;
+    expect(events[0].event).toBe("ping");
+    expect(pingTime(events[0].data)).toEqual(expect.any(Number));
+    expect(events.at(-1)).toEqual({ event: "end", data: '{"exited":true}' });
+    expect(vi.getTimerCount()).toBe(0);
   });
   it("a bridge HQ closed itself (a pane closed on the PC) is no news: the link's next poll gets a fresh bridge", () => {
     const f = fakeSpawn();

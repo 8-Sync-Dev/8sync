@@ -9,6 +9,114 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - Skill bundled **`hq-control`** (on-demand, cả omp và kit Claude Code, có trong `/eccx-ai-agent`, `/eccx-workflow`): agent làm việc với các phòng đang mở qua API local của HQ. `scripts/hq.mjs` (Node, không dependency) có `ls` (phòng còn sống: id · nhãn · status · engine · cwd · việc đang làm · `WAITING`), `log <id> [n]`, `msgs <id> [n]`, `send <id> <text>`, `dialog <id> permission|question`, `answer <id> <1-9>`. Token đọc từ `~/.config/8sync/hq/ui-token` và không bao giờ in; POST tự đặt `Origin`. Hộp thoại quyền chỉ đọc (báo chủ, chủ bấm trong HQ); `answer` chỉ cho câu hỏi và chỉ trả lời đúng hộp thoại vừa đọc (HQ trả 409 nếu màn hình đã đổi). Skill không mở hay đóng phòng.
 - HQ tab **Kết quả** (đầu menu "Thêm"): file các phòng đăng cho chủ xem (báo cáo, PDF, ảnh, video, HTML, md/txt/json/csv/yaml). HQ chỉ lưu đường dẫn, tiêu đề, ghi chú, phòng đăng vào SQLite; file vẫn nằm trên máy và được đọc lại mỗi lần mở. Danh sách mới nhất trước, nhóm theo dự án (lọc một dự án, theo dự án đang chọn ở sidebar), mỗi dòng có loại, cỡ, nhánh, thời gian, "mất file" khi file đã bị xoá/dời. Bấm một dòng mở ngay bên cạnh (trên điện thoại thì đè lên danh sách): ảnh/video xem tại chỗ, PDF trong khung, HTML trong iframe `srcdoc` sandbox (không `allow-same-origin`, không chạm token HQ), markdown/text dạng chữ (quá 2 MB thì chỉ "Tải về"); "Bỏ" chỉ gỡ khỏi danh sách, file giữ nguyên. API: `GET/POST /api/artifacts`, `GET /api/artifacts/:id/file`, `DELETE /api/artifacts/:id`. Đăng chỉ từ phía máy (link `--public` bị 403) và chỉ file nằm trong dự án HQ đang biết; từ chối tên giống file bí mật, `.git`/`.ssh`/`node_modules`, file quá 30 MB (video 60 MB); đọc file luôn kiểm lại đường thật còn trong dự án. Skill `hq-control` thêm `artifact add <file> [--title] [--note] [--session]` và `artifact ls [n]`.
 
+## [0.122.14] — 2026-11-04
+
+### Fixed
+- Hướng dẫn graphify fallback: thêm dạng PowerShell (`$env:GRAPHIFY_MAX_WORKERS=4; …`; `graphify update` không nhận `--max-workers`), tên trùng (như `open`, 7 node) → gọi lại `graphify explain <id>` theo danh sách nó in, và chạy lại `update` sau khi sửa code (incremental ~2 s) để khỏi đọc graph cũ.
+
+## [0.122.13] — 2026-11-04
+
+### Added
+- Harness: graphify làm code graph dự phòng cho trail. `8sync setup` cài `graphifyy==0.9.102` qua `uv tool` (không có uv thì chỉ hướng dẫn, không lỗi); block AGENTS.md/CLAUDE.md, `APPEND_SYSTEM.md` và `00-force-load.md` dạy agent: trail báo `no indexed callers` hoặc cần đường A→B → `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` rồi `graphify explain` / `graphify path`, không dùng `graphify query`; `.gitignore` managed thêm `graphify-out/`. Đo trên su-code (1 183 file): callers của `open()` trail 0 file, graphify 49/50; build lạnh 32 worker 2,1 GB RAM → 4 worker 490 MB / 18,7 s; query trail 0,7 s ~150 MB, graphify 1,4 s ~135 MB, ripgrep 0,1 s ~10 MB; `graphify query` ~6,7 KB và bị cắt, `GRAPH_REPORT.md` không có LLM là 160 KB nhãn "Community N" nên không dùng.
+
+## [0.122.12] — 2026-11-04
+
+### Security
+- HQ Chia sẻ: khách "Sửa nội dung" sửa một mục giờ chỉ nhận lại tên thư mục media, không còn đường dẫn đầy đủ trên ổ của chủ; lỗi DB nội dung khách thấy là câu chung, không kèm đường dẫn file (audit #302).
+
+## [0.122.11] — 2026-11-04
+
+### Added
+- HQ "Chia sẻ" (tab Máy): chủ HQ tạo link cho người ngoài xem tab Nội dung, quyền "Chỉ xem" (xem, tải media, chép caption) hoặc "Sửa nội dung" (thêm sửa trạng thái, caption, lịch đăng), hết hạn sau 1/7/30 ngày, có thể buộc thêm một tài khoản GitHub; danh sách link kèm trạng thái và nút Thu hồi. Link chỉ hiện một lần: `~/.config/8sync/hq/invites.json` (0600) chỉ giữ sha256 của token. Mở link → cookie `hq_guest` ký HMAC (tối đa 7 ngày, không bao giờ là ui-token); mỗi request kiểm lại lời mời, thu hồi hoặc hết hạn là 401 ngay, kể cả link media đã ký. Quyền kiểm ở một chỗ (`open()` + bảng `lib/access.ts`): route không mở cho khách là chỉ chủ HQ (403 tiếng Việt), test duyệt mọi `app/api/**/route.ts` nên route mới mặc định khoá. `github.json` `allow` nhận thêm `{"login","role"}`; chuỗi cũ vẫn là chủ HQ. Link ký của file đính kèm chat (ảnh/video trong phòng) cũng chỉ mở được khi trình duyệt đã đăng nhập chủ HQ: khách có cookie `hq_guest` nhận 403, không đăng nhập qua tunnel nhận 401.
+- HQ chat phòng có media: file đính kèm là ảnh thì hiện thumbnail (bấm mở Lightbox, có nút tải), video (mp4/webm/mov) và audio phát ngay trong chat, tua được (stream theo Range 206 qua link ký HMAC 12 h, `<video>` không gửi được `x-hq-token`), file khác hiện chip tên + dung lượng + nút tải (`?dl=1` → `Content-Disposition: attachment` giữ tên gốc). File không phải media luôn tải về dạng `application/octet-stream` nên .html/.svg không chạy trên origin của HQ. Reply của phiên: URL http(s) thành link, URL ảnh/video có preview phía trình duyệt (`referrerPolicy="no-referrer"`, không fetch OG phía server để tránh SSRF), đường dẫn upload nhắc trong reply cũng hiện player/chip. Nhật ký hiện tên file đính kèm thay cho đường dẫn dài.
+
+### Fixed
+- HQ chat phòng trên điện thoại: đường dẫn hay URL dài trong reply không còn bị cắt mất ở mép bong bóng (`wrap-anywhere`). Nút "Mở log đầy đủ", "Xem hết" và "Đường dẫn cho phòng" đủ 40 px trên màn cảm ứng và có focus ring; nút đóng Lightbox lên 40 px.
+
+## [0.122.10] — 2026-11-04
+
+### Added
+- HQ Nội dung: nút chép caption ngay dưới Caption của từng bài. Dòng thu gọn trong khung ngày hiện số file ảnh/video bài đó đã có, nên biết bài nào xem hoặc tải được mà không cần mở từng bài.
+
+### Changed
+- HQ Chat phòng (màn rộng): Nhật ký và chat chia hai khung, kéo đường ranh giữa để Nhật ký cao hơn hoặc chat rộng hơn. Trình duyệt nhớ tỉ lệ. Thanh tên phòng và ô nhắn đứng yên. Trên điện thoại giữ cách cũ: Nhật ký cuộn cùng chat.
+
+### Fixed
+- HQ "Dự án trên máy" không còn hiện thư mục trong %TEMP% (repo test, thư mục nháp): trên PC owner 197/302 dòng là rác đó. Bộ test của `apps/hq-ui` giờ dùng một thư mục tạm cho cả lượt chạy và xoá nó khi xong; trước đây mỗi lượt để lại khoảng 70 thư mục (đã đếm được 5 524 `hq-ui-test-*`).
+- HQ terminal của phòng omp không còn "lag" (không hiện phần mới nhất khi phòng đang làm, hết turn mới thấy đủ): pty của phòng có một cỡ chung cho mọi viewer, trang mở vào bridge đang chạy không gửi cỡ của mình nên pty giữ cỡ của viewer trước (`8sync . <tên>` trên PC, tab/máy khác). Pty cao hơn xterm thì các dòng cuối (omp đang làm gì, spinner, ô nhập) bị dồn vào dòng cuối: đo trên HQ dev, pty 144×50 vs pane 144×38, cả pane chỉ còn hàng chục dòng "Running …" lặp, 21/222 mẫu mất status line; sau khi sửa 0/222, 420/420 marker hiện, trễ p50 0,2 s (loopback) / 0,54 s (poll qua proxy RTT 300 ms). Giờ HQ đặt pty theo cỡ trang khi trang vào bridge (stream, hoặc poll `reset`), và click vào terminal đặt lại cỡ khi viewer khác đổi cỡ sau đó.
+- Bridge terminal không còn bị đóng giữa chừng ("Đã rời phòng") 60 s sau khi một viewer rời đi: stream rời gọi `stop()` hai lần (abort và cancel), lần hai để lại timer idle mồ côi mà `watch()` của viewer kế tiếp không huỷ được.
+
+## [0.122.9] — 2026-11-04
+
+### Changed
+- HQ sidebar: phiên con dưới một phiên không đổi chỗ khi một phiên bắt đầu hoặc xong việc nữa. Thứ tự cố định theo tên; chỉ chuyện hiện ngay hay nằm trong "+N cũ hơn" còn theo trạng thái và thời gian.
+- Nhật ký: câu trả lời dài hơn phần Nhật ký giữ (4 000 ký tự) có dòng báo đọc trọn trong "Mở log đầy đủ".
+
+### Fixed
+- Nội dung: nút "Tải" và xem video không còn giới hạn 150 MB. Trước đây file lớn hơn (vd video bài học C++ bài 2, 178,5 MB) trả 413, còn file nhỏ hơn thì bị nạp cả vào RAM của trang trước khi phát. Giờ mỗi file có một link ký sẵn, hết hạn sau 11 đến 12 giờ. Trình duyệt tải thẳng từ link (`Content-Disposition: attachment`, tên file gốc, có tiến độ trong trình quản lý tải), còn video phát qua `Range` (206) nên tua được và không tải trước cả file.
+
+## [0.122.8] — 2026-11-04
+
+### Changed
+- HQ Nhật ký phòng: câu trả lời và lời nhắn hiện đầy đủ (tới 4 000 / 2 000 ký tự, trước là 400 / 200 rồi cắt "…") và render markdown: bảng, danh sách, in đậm, code. Câu dài mở gọn 8 dòng, bấm "Xem hết" để đọc cả. Dòng công cụ giữ một dòng như cũ.
+
+## [0.122.7] — 2026-11-04
+
+### Changed
+- HQ sidebar: phiên và dự án không tự nhảy chỗ nữa. Kiểu sắp mặc định mới là "Tự sắp (kéo thả)": thứ tự chỉ đổi khi anh kéo thả một phiên trong dự án của nó, hoặc kéo tên dự án lên/xuống. Phiên mới hiện trên cùng dự án một lần rồi đứng yên. Thứ tự lưu trên trình duyệt này (`hq.tree.order`). Ctrl+Tab đi theo đúng thứ tự đó. Trình duyệt chỉ lưu "Gần đây" vì đó là mặc định cũ sẽ chuyển sang "Tự sắp"; "Gần đây" / "Ngày tạo" / "Tên" vẫn chọn được trong menu ⋯.
+- HQ Chat phòng / inbox: ô nhắn có "Đính kèm" và dán ảnh như ô gửi của terminal. Cả ba ô (Chat, gửi việc cho phòng, Không gian) dùng chung một component (`attach.tsx`).
+- Gợi ý lệnh "/" giờ mở cả giữa câu (sau dấu cách), không chỉ ở đầu. `a/b` và URL không bật gợi ý.
+
+### Fixed
+- Nội dung: mục chưa có file vẫn hiện dòng "Media" để dán đường dẫn file hoặc thư mục render. Mỗi ảnh/video có nút "Tải" để lưu file về máy, giới hạn 150 MB như khi xem.
+
+## [0.122.6] — 2026-11-04
+
+### Changed
+- `8sync ai` / `8sync .` in kèm mã thoát khi omp thoát lỗi (`omp exited non-zero (exit code: 1)`), để biết omp tự thoát, bị Ctrl-C hay crash.
+
+## [0.122.5] — 2026-11-04
+
+### Fixed
+- HQ public link bắt đăng nhập lại sau mỗi `8sync hq ui --relink` (và mỗi lần `--public` ghi `public.json` mới): cookie `hq_pub` ký bằng chính khoá của link 10 phút, nên link mới đăng xuất mọi thiết bị đã vào, kể cả ai vào bằng GitHub — trái với "thiết bị đã vào giữ 12 giờ". Giờ cookie ký bằng `~/.config/8sync/hq/session-secret` riêng (0600, tạo khi thiếu); khoá link chỉ dùng để mở link. Xoá file đó = đăng xuất mọi thiết bị. Lần đầu lên bản này các cookie cũ hết hiệu lực một lần.
+- Bridge terminal: lỗi pipe (EPIPE) giờ chỉ bị nuốt, còn `exit` mới đóng terminal, nên "mở ở nơi khác"/"phòng đã tắt" vẫn báo đúng khi bridge chết giữa lúc gõ.
+
+## [0.122.4] — 2026-11-04
+
+### Fixed
+- HQ đôi lúc mở ra trang lỗi "This page couldn't load" (đo trên HQ thật 0.122.2: 1/12 lần tải): `makeApi` biến MỌI lỗi đọc body thành `{}` thành công, kể cả request bị huỷ giữa chừng. Sidebar hỏi lại danh sách worktree ngay khi nhóm phòng tải xong nên request đầu bị huỷ lúc đang đọc body, trả `{}`, `worktrees` thành `undefined` và `worktrees.includes` làm sập cả trang. Giờ request bị huỷ thì reject (như `fetch` vốn làm khi huỷ trước header); body không phải JSON (204, rỗng) vẫn là `{}`. Có test.
+
+## [0.122.3] — 2026-11-04
+
+### Fixed
+- HQ terminal qua link public (Cloudflare quick tunnel) không còn trống trơn dưới chấm xanh "Đang nối": tunnel nhả stream theo lô ~130 KB, phòng có lịch sử (replay tới 256 KB) nhận lô đầu chỉ gồm một phần replay trong 4 s nên trang ở lại stream và phần còn lại kẹt trong tunnel khi phòng rảnh. HQ giờ ping mỗi 2 s kèm giờ máy; ngoài loopback trang chuyển sang polling khi stream im 6 s hoặc ping tới trễ hơn 3 s so với ping nhanh nhất. Tái hiện bằng proxy gom lô: trước sửa 36 s vẫn trống, sau sửa hiện dòng cuối và prompt ở 6,1 s.
+- Watchdog 40 s của 0.122.2 được đặt lại trước lần đọc đầu nên đè mất mốc 4 s "chưa có byte nào": qua tunnel giữ stream, terminal đứng "Đang kết nối" 40 s mới chuyển sang polling. Giờ ngoài loopback vẫn là 4 s, rồi 6 s im; 40 s chỉ áp cho loopback.
+- Stream terminal của phòng đã kết thúc không còn để ping 2 s chạy tới khi trang ngắt (interval được tạo sau `watch()` nên `clearInterval` lúc kết thúc không bắt được); ping trễ tới cùng `end` (tunnel xả hết khi HQ đóng stream) không còn kéo trang sang polling sau khi phòng đã kết thúc.
+
+## [0.122.2] — 2026-11-04
+
+### Fixed
+- HQ web terminal làm sập cả HQ: bridge `8sync ccc term` chết đúng lúc anh đang gõ → ghi vào stdin gãy (EPIPE) không có listener `error` → Node ném uncaught và server thoát (`hq-ui.log`: `node exited with exit code: 0xffffffff`, watchdog phải mở lại, link public đổi host). Giờ lỗi pipe chỉ đóng terminal đó (`lib/server/term.ts`), có test.
+- Terminal hiện "Đang nối" mà màn đen: trạng thái live bật ngay khi fetch OK / nhận ping mở đầu. Giờ chỉ live khi có byte màn hình (`out`/`replay`); stream im quá 40 s (HQ ping mỗi 15 s) = kết nối chết → tự chuyển sang poll thay vì treo màn cũ (`live-terminal.tsx`).
+- Tên phòng gây nhầm: composer, ô chọn phòng và toast giờ ghi `<phòng> · <dự án>` (vd `core · su-code`, `core · tohe`) thay vì chỉ `core`.
+- Gửi vào phòng đang chờ anh trả lời trong terminal không còn im lặng: hiện toast bảo trả lời trước (Mở terminal) rồi gửi lại.
+
+## [0.122.1] — 2026-11-04
+
+### Fixed
+- HQ Nội dung, tick "không dùng AI" vẫn hỏi ở MỌI lần vào **Đã duyệt** hoặc **Đã đăng** (kể cả từ Đã duyệt): `aiReason` đọc thư mục media lúc bấm, video có thể được thêm vào sau khi duyệt, và trigger 0062 không xem trạng thái trước nên check → đăng thẳng cũng bị chặn. Có test cho video thêm sau khi duyệt.
+- Mục **đã duyệt** đổi định dạng hoặc `media_path` sang nội dung rủi ro nhãn AI mà không tick: tự về **Đã check** để duyệt lại trong khung chi tiết (trước đây là 409 cụt). Gửi kèm `status: "approved"` thì vẫn 409; mục **đã đăng** thì 409 "Bài đã đăng không đổi sang nội dung rủi ro nhãn AI".
+- Nút bước kế tiếp mà trigger chắc chắn chặn thì tắt và nói lý do ngay ("Duyệt nguồn trước", "Điền link tin news và bài FB trước"), thay vì bấm rồi mới nhận câu lỗi tiếng Anh của trigger (`stepHint` trong `lib/content.ts`, dùng cho cả Danh sách và khung).
+
+## [0.122.0] — 2026-11-04
+
+### Added
+- HQ tab **Nội dung** thành lịch kiểu Notion: chế độ Ngày / Tuần / Tháng / Năm, nút "Hôm nay" và ←/→, vẫn giữ lọc trang FB / định dạng / trạng thái; bảng cũ thành chế độ "Danh sách" (chế độ đang xem nhớ trong trình duyệt). Mỗi bài là một chip: màu theo định dạng (thêm màu riêng cho ASMR, Clip), viền theo trạng thái (đặt: gạch, soạn: chấm, check: liền, duyệt/đăng: đậm + dấu tick, bỏ: gạch ngang chữ), kèm chữ trạng thái trong `aria-label`. Bài chưa có giờ nằm ở "Chưa có lịch (N)". Bài xếp theo `scheduled_at`, chưa có thì theo `published_at`.
+- Bấm một ngày hoặc chip: khung bên phải trượt ra với các bài của ngày đó. Mỗi bài có giờ, định dạng, tiêu đề, caption đầy đủ, xem trước `media_path` (ảnh hiện ngay, mp4 bấm "Xem" mới tải rồi chạy; route mới `GET /api/content/media?id=&i=&n=` có token, stream file, tên file phải khớp, tối đa 12 file, 150 MB), nguồn + trạng thái duyệt nguồn, cảnh báo, link tin news / bài FB, phiên đang giữ việc. Esc hoặc bấm ra ngoài là đóng. URL `?day=YYYY-MM-DD&item=N` gửi cho người khác được và mở lại đúng chỗ (link chỉ có `item=` tự tìm ngày). Đổi giờ đăng thì khung đi theo bài sang ngày mới; "Bỏ lịch" xoá giờ.
+- Thao tác 1 chạm trong khung: nút bước kế tiếp theo luồng (soạn → check, check → **Duyệt**, duyệt → đăng) + **Bỏ**, qua PATCH sẵn có nên trigger `content_items_gate_*` vẫn là cổng (bị chặn thì hiện đúng câu của trigger). Sửa caption (nhiều dòng, Ctrl+Enter lưu) và giờ đăng tại chỗ.
+- **Giao việc**: chọn phiên omp từ `GET /api/omp/sessions?all=1` (nhóm theo dự án), Gửi qua `POST /api/messages` kèm dòng `[Nội dung #id · trang]`; gửi được thì phiên lưu vào DB (`assignee_session`, `assignee_base`, `assigned_at`), không lưu trong state. Chip và khung hiện "đang xử lý: <phòng>"; mở lại khung thì phiên đã lưu được chọn sẵn. PATCH `/api/content` nhận `scheduled_at` và `assignee_session` (+ `assignee_base`); DB chưa chạy migration 0063 của content-post-agency thì trả 409 và giao diện báo, không tự tạo cột.
+- **Luật không nhãn AI** (Meta gắn nhãn "AI info" cho reel 1.2 dùng mặt lip-sync + giọng clone): bài video (course_video, ai_video, asmr, clip), bài có media video, hoặc media có dấu C2PA / IPTC `algorithmicmedia` (đọc 8 MB đầu + cuối mỗi file) hiện khung đỏ trong khung chi tiết; Duyệt / Đăng khoá tới khi người duyệt tick "không dùng hình/giọng AI photoreal". Server cũng chặn (`no_ai_confirmed`, 409), kể cả khi bài đã duyệt bị đổi định dạng hay media sang loại rủi ro, nên gọi API thẳng cũng không lách được.
+
 ## [0.121.0] — 2026-11-04
 
 ### Added

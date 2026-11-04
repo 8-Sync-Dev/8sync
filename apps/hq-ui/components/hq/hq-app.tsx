@@ -18,7 +18,7 @@ import { FirstRun } from "./first-run";
 import type { LoopsState } from "./loops-view";
 import { Guide, useGuideFirstRun } from "./guide";
 import { AddProjectDialog, Nav, type Scope } from "./nav";
-import { useArchive, useSessionTree, useTreePrefs } from "./use-session-tree";
+import { useArchive, useSessionTree, useTreeOrder, useTreePrefs } from "./use-session-tree";
 import { COMPOSER_ID, useWorkspace, workspace } from "./workspace-store";
 import { cycleKey, groupSessions, type TreeSession } from "@/lib/session-tree";
 import { RoomBar, RoomBrief } from "./room-brief";
@@ -92,6 +92,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const [firstGuide, dismissGuide] = useGuideFirstRun();
   const ws = useWorkspace();
   const { prefs } = useTreePrefs();
+  const { order: treeOrder } = useTreeOrder();
   const archive = useArchive();
   const previews = usePoll<{ projects: NonNullable<PreviewState["data"]>["projects"] }>(hq.api, "/api/preview", PREVIEW_POLL_MS, tab === "preview" || tab === "overview");
   const machine = usePoll<MachineData>(hq.api, "/api/machine", MACHINE_POLL_MS, true);
@@ -109,13 +110,17 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     else if (t.offsetLeft + t.offsetWidth + pad > row.scrollLeft + row.clientWidth) row.scrollTo({ left: t.offsetLeft + t.offsetWidth + pad - row.clientWidth });
   }, [tab]);
   const loops = usePoll<NonNullable<LoopsState["data"]>>(hq.api, "/api/loops", LOOPS_POLL_MS, tab === "loops");
-  // "Nội dung" exists only while a content DB is configured: asked once per load.
+  // "Nội dung" exists only while a content DB is configured: asked once per load. A shared calendar
+  // link (`?day=` / `?item=`) lands on that tab.
   const [contentOn, setContentOn] = useState(false);
   const { api } = hq;
   useEffect(() => {
     const ac = new AbortController();
     api<{ configured: boolean }>("/api/content?probe=1", { signal: ac.signal })
-      .then((r) => setContentOn(r.configured))
+      .then((r) => {
+        setContentOn(r.configured);
+        if (r.configured && /[?&](day|item)=/.test(window.location.search)) setTab("content");
+      })
       .catch(() => {});
     return () => ac.abort();
   }, [api]);
@@ -283,7 +288,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     openTreeRef.current = openTreeSession;
   });
   // The sidebar's order, for Ctrl+Tab / Alt+↓↑.
-  const order = useMemo(() => groupSessions(tree.sessions.filter((s) => !archive.keys.includes(s.key)), prefs.group, prefs.sort).flatMap((g) => g.sessions), [tree.sessions, archive.keys, prefs.group, prefs.sort]);
+  const order = useMemo(() => groupSessions(tree.sessions.filter((s) => !archive.keys.includes(s.key)), prefs.group, prefs.sort, treeOrder).flatMap((g) => g.sessions), [tree.sessions, archive.keys, prefs.group, prefs.sort, treeOrder]);
   const activeRef = useRef(activeKey);
   const orderRef = useRef(order);
   useEffect(() => {
@@ -520,10 +525,9 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 onTarget={setTarget}
                 onStartSession={focusStartSession}
                 bar={room && roomState ? <RoomBar room={room} n={roomState} token={token} onTerminal={openTerminal} /> : null}
+                split={room && roomState ? <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} /> : null}
                 header={
-                  room && roomState ? (
-                    <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} />
-                  ) : loaded && !liveRooms.length ? (
+                  !(room && roomState) && loaded && !liveRooms.length ? (
                     <FirstRun state={firstRun} onAddProject={focusAddProject} onStartSession={focusStartSession} />
                   ) : null
                 }
@@ -543,7 +547,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               <KnowView token={token} roots={knowRoots} repo={repo?.root ?? null} active={tab === "know"} />
             </TabsContent>
             <TabsContent value="content" className="h-full">
-              {contentOn && <ContentView token={token} rooms={officeRooms} active={tab === "content"} />}
+              {contentOn && <ContentView token={token} active={tab === "content"} />}
             </TabsContent>
             <TabsContent value="artifacts" className="h-full">
               <ArtifactsView token={token} repo={repo?.root ?? null} active={tab === "artifacts"} />

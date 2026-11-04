@@ -107,6 +107,10 @@ function start(key: string, args: string[], cwd: string | null, idleMs: number, 
     end();
   });
   proc.on("error", end);
+  // A bridge that dies while the owner types breaks its stdin pipe (EPIPE). Without a listener Node throws
+  // that as an uncaught error and the whole HQ server exits. Swallow it: `exit` (which follows) ends the
+  // bridge with its exit code, so "opened elsewhere" / "host gone" still reach the page.
+  for (const s of [proc.stdin, proc.stdout]) s.on("error", () => {});
   return t;
 }
 
@@ -160,10 +164,27 @@ export function watch(id: string, t: Term, fn: (b: Buffer | null, answered?: boo
   if (t.chunks.length) fn(Buffer.concat(t.chunks), t.typed);
   if (t.ended) fn(null);
   t.viewers.add(fn);
+  // Once only: a stream that leaves calls this from both its abort and its cancel, and a second idle
+  // timer would be left behind where watch() cannot clear it, closing the bridge 60 s later under the
+  // next viewer (measured: the pane said "Đã rời phòng" mid-turn).
   return () => {
-    t.viewers.delete(fn);
-    if (t.viewers.size === 0 && !t.ended) t.idle = setTimeout(() => closeTerm(id), t.idleMs);
+    if (!t.viewers.delete(fn)) return;
+    if (t.viewers.size === 0 && !t.ended) {
+      clearTimeout(t.idle);
+      t.idle = setTimeout(() => closeTerm(id), t.idleMs);
+    }
   };
+}
+
+/**
+ * A page joins a bridge that already runs (another tab or device opened it, or `8sync . <name>` on the
+ * PC sized the omp room since): the pty keeps that size, and a page whose xterm is shorter than the pty
+ * never shows the pty's bottom rows, where omp draws what it is doing now (measured 2026-11-04: the pane
+ * filled with copies of the spinner line while the room worked). Size the pty to the joining page, the
+ * last one opened wins like in tmux. A bridge with no output yet was just started with this size.
+ */
+export function joinSize(t: Term, size: { cols: number; rows: number }) {
+  if (t.total > 0) send(t, { r: [size.cols, size.rows] });
 }
 
 /** One poll: bridge `gen`, byte `cursor` to send next, `out` after the asked cursor (all kept output on `reset`); `answered` as in [watch], for a `reset` replay; `elsewhere`, `dead` and `exited` as in [Term]. */

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DELETE, GET, POST } from "@/app/api/shell/route";
-import { __setNonceForTest, getToken, PUB_COOKIE, sessionCookie } from "@/lib/server/auth";
+import { __setNonceForTest, getToken, PUB_COOKIE, sessionCookie, sessionSecret } from "@/lib/server/auth";
 import { publicPath } from "@/lib/server/paths";
 import { shellsOpen } from "@/lib/server/term";
 import { tempHome } from "./helpers";
@@ -29,7 +29,7 @@ function viaQuickTunnel(method: string, body?: unknown): Request {
   const headers = new Headers({
     host: HOST,
     "x-hq-token": token,
-    cookie: `${PUB_COOKIE}=${sessionCookie(KEY, Date.now())}`,
+    cookie: `${PUB_COOKIE}=${sessionCookie(sessionSecret(), Date.now())}`,
     "cf-ray": "8f00000000000000-SIN",
     origin: `https://${HOST}`,
   });

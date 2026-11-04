@@ -7,8 +7,10 @@ import { maskSecrets } from "../mask";
 import { claudeDir, transcriptOf } from "./ask";
 
 const TAIL_BYTES = 1024 * 1024;
-const TEXT_MAX = 400;
-const PROMPT_MAX = 200;
+// Replies and prompts keep their lines (the log renders them as markdown, owner 2026-11-04); 80
+// events × 4 000 chars bounds one poll at ~320 KB.
+const TEXT_MAX = 4000;
+const PROMPT_MAX = 2000;
 const ERROR_MAX = 200;
 
 export type ActivityEvent = {
@@ -34,6 +36,15 @@ const SHELLS = new Set(["Bash", "PowerShell", "BashOutput"]);
  */
 const clip = (s: string, n: number) => {
   const t = maskSecrets(s.slice(0, n + 256)).replace(/\s+/g, " ").trim();
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+};
+/** Like `clip` but keeps the lines (markdown): only CRs, trailing spaces and runs of blank lines go. */
+const clipText = (s: string, n: number) => {
+  const t = maskSecrets(s.slice(0, n + 256))
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
@@ -91,7 +102,7 @@ export function activityFrom(lines: string[], limit = 80): ActivityEvent[] {
     if (o.type === "user") {
       if (typeof content === "string") {
         // Slash-command echoes and hook output are wrapped in tags; only typed text is a prompt.
-        if (!content.trimStart().startsWith("<") && content.trim()) out.push({ kind: "prompt", at, text: clip(content, PROMPT_MAX) });
+        if (!content.trimStart().startsWith("<") && content.trim()) out.push({ kind: "prompt", at, text: clipText(content, PROMPT_MAX) });
         continue;
       }
       if (!Array.isArray(content)) continue;
@@ -102,7 +113,7 @@ export function activityFrom(lines: string[], limit = 80): ActivityEvent[] {
           ev.status = b.is_error ? "error" : "ok";
           if (b.is_error) ev.error = clip(blockText(b.content), ERROR_MAX);
         } else if (b?.type === "text" && typeof b.text === "string" && b.text.trim() && !b.text.trimStart().startsWith("<")) {
-          out.push({ kind: "prompt", at, text: clip(b.text, PROMPT_MAX) });
+          out.push({ kind: "prompt", at, text: clipText(b.text, PROMPT_MAX) });
         }
       }
       continue;
@@ -110,7 +121,7 @@ export function activityFrom(lines: string[], limit = 80): ActivityEvent[] {
     if (!Array.isArray(content)) continue;
     for (const b of content as Block[]) {
       if (b?.type === "text" && typeof b.text === "string" && b.text.trim()) {
-        out.push({ kind: "text", at, text: clip(b.text, TEXT_MAX) });
+        out.push({ kind: "text", at, text: clipText(b.text, TEXT_MAX) });
       } else if (b?.type === "tool_use" && typeof b.name === "string") {
         const input = (b.input ?? {}) as Record<string, unknown>;
         const agent = (b.name === "Agent" || b.name === "Task") && str(input.subagent_type);
@@ -170,13 +181,13 @@ export function ompActivityFrom(lines: string[], limit = 80): ActivityEvent[] {
     if (!Array.isArray(m.content)) continue;
     if (m.role === "user") {
       const text = blockText(m.content);
-      if (text.trim() && !text.trimStart().startsWith("<")) out.push({ kind: "prompt", at, text: clip(text, PROMPT_MAX) });
+      if (text.trim() && !text.trimStart().startsWith("<")) out.push({ kind: "prompt", at, text: clipText(text, PROMPT_MAX) });
       continue;
     }
     if (m.role !== "assistant") continue;
     for (const b of m.content as OmpBlock[]) {
       if (b?.type === "text" && typeof b.text === "string" && b.text.trim()) {
-        out.push({ kind: "text", at, text: clip(b.text, TEXT_MAX) });
+        out.push({ kind: "text", at, text: clipText(b.text, TEXT_MAX) });
       } else if (b?.type === "toolCall" && typeof b.name === "string") {
         const args = (b.arguments && typeof b.arguments === "object" ? b.arguments : {}) as Record<string, unknown>;
         const first = Array.isArray(args.tasks) ? (args.tasks[0] as Record<string, unknown> | undefined) : undefined;

@@ -48,6 +48,9 @@
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
+  /* Nội dung calendar: one hue per content format (chart-1 … 5 plus these two), labelled in a legend. */
+  --color-fmt-asmr: var(--fmt-asmr);
+  --color-fmt-clip: var(--fmt-clip);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -113,6 +116,8 @@
   --chart-3: #116a35;
   --chart-4: #7a5000;
   --chart-5: #6d28d9;
+  --fmt-asmr: #a3215f;
+  --fmt-clip: #0f6b6b;
   --radius: 0.5rem;
   --sidebar: #fafafa;
   --sidebar-foreground: #18181b;
@@ -172,6 +177,8 @@
   --chart-3: #3fb950;
   --chart-4: #d29922;
   --chart-5: #a371f7;
+  --fmt-asmr: #f778ba;
+  --fmt-clip: #39c5bb;
   --sidebar: #111114;
   --sidebar-foreground: #e6edf3;
   --sidebar-primary: #85d840;

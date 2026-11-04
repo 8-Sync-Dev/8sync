@@ -4,27 +4,26 @@
 // page with one composer pinned at the bottom: "+" (attach), the task, send; under it where the
 // session runs (Máy này), the folder, Worktree and the model. Sending starts a new omp session in that
 // folder, named from the task, with the task as its first message (POST /api/omp/sessions).
-import { ArrowUpIcon, CheckIcon, ChevronDownIcon, CpuIcon, FileIcon, FolderIcon, FolderSearchIcon, Loader2Icon, MonitorIcon, PlusIcon, XIcon } from "lucide-react";
-import { useMemo, useRef, useState, type ClipboardEvent, type FormEvent } from "react";
-import { toast } from "sonner";
+import { ArrowUpIcon, CheckIcon, ChevronDownIcon, CpuIcon, FolderIcon, FolderSearchIcon, Loader2Icon, MonitorIcon, PlusIcon } from "lucide-react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { FILE_MAX_MB, FILES_MAX, fileError, toBase64 } from "@/lib/attach";
+import { FILE_MAX_MB, FILES_MAX } from "@/lib/attach";
 import { folderName, isOmpModel, pathKey, shortPath, type Pane, type WsProject } from "@/lib/omp-workspace";
 import { sessionNameFrom } from "@/lib/session-tree";
 import { cn } from "@/lib/utils";
+import { AttachList, useAttach } from "./attach";
 import { COMPOSER_ID } from "./workspace-store";
 import { ProjectPicker, type Api } from "./workspace-launcher";
-
-type Upload = { id: string; name: string; size: number };
 
 const CHIP =
   "inline-flex h-7 max-w-[16rem] min-w-0 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 data-[state=open]:bg-accent data-[state=open]:text-foreground motion-reduce:transition-none max-md:h-10";
 
 export function WorkspaceComposer({
   api,
+  token,
   folder,
   list,
   home,
@@ -34,6 +33,8 @@ export function WorkspaceComposer({
   onCreated,
 }: {
   api: Api;
+  /** The HQ token, for the attachment thumbnails (an <img> cannot send the header). */
+  token: string;
   /** The folder the next session starts in (null: none picked yet). */
   folder: string | null;
   /** Recent folders first, then every project HQ knows. */
@@ -46,8 +47,8 @@ export function WorkspaceComposer({
   onCreated: (p: Pane) => void;
 }) {
   const [text, setText] = useState("");
-  const [files, setFiles] = useState<Upload[]>([]);
-  const [uploading, setUploading] = useState(0);
+  const att = useAttach(api);
+  const { files, uploading } = att;
   const [worktree, setWorktree] = useState(false);
   const [model, setModel] = useState("");
   const [picking, setPicking] = useState(false);
@@ -59,34 +60,6 @@ export function WorkspaceComposer({
   const label = folder ? (list.find((p) => pathKey(p.path) === pathKey(folder))?.name ?? folderName(folder)) : null;
   const recent = useMemo(() => list.filter((p) => p.recent).slice(0, 6), [list]);
   const canSend = !!folder && text.trim() !== "" && modelOk && !busy && uploading === 0;
-
-  async function attach(picked: File[]) {
-    const free = FILES_MAX - files.length - uploading;
-    if (picked.length > free) toast.warning(`Tối đa ${FILES_MAX} file mỗi lần gửi`);
-    for (const f of picked.slice(0, Math.max(0, free))) {
-      const why = fileError(f);
-      if (why) {
-        toast.error(why);
-        continue;
-      }
-      setUploading((n) => n + 1);
-      try {
-        const up = await api<Upload>("/api/uploads", { method: "POST", body: { name: f.name || "anh-dan.png", data: await toBase64(f) } });
-        setFiles((xs) => [...xs, up]);
-      } catch (e) {
-        toast.error(`${f.name}: ${(e as Error).message}`);
-      } finally {
-        setUploading((n) => n - 1);
-      }
-    }
-  }
-
-  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
-    const pasted = [...e.clipboardData.files];
-    if (pasted.length === 0) return;
-    e.preventDefault();
-    void attach(pasted);
-  }
 
   async function send(e?: FormEvent) {
     e?.preventDefault();
@@ -105,7 +78,7 @@ export function WorkspaceComposer({
         body: { cwd: folder, name, prompt, ...(files.length ? { files: files.map((f) => f.id) } : {}), ...(model.trim() ? { model: model.trim() } : {}), ...(worktree ? { worktree: true } : {}) },
       });
       setText("");
-      setFiles([]);
+      att.clear();
       onCreated({ id: r.id, name: r.name, cwd: r.cwd });
     } catch (err) {
       setError((err as Error).message);
@@ -127,24 +100,7 @@ export function WorkspaceComposer({
 
       <form onSubmit={(e) => void send(e)} className="mx-auto w-full max-w-3xl shrink-0 px-3 pb-4 md:px-6 md:pb-6">
         <div className="rounded-2xl border bg-card shadow-sm transition-shadow focus-within:border-ring/60 focus-within:shadow-md motion-reduce:transition-none">
-          {(files.length > 0 || uploading > 0) && (
-            <ul className="flex flex-wrap gap-1.5 px-3 pt-3" aria-label="File đính kèm">
-              {files.map((f) => (
-                <li key={f.id} className="inline-flex h-7 max-w-56 items-center gap-1.5 rounded-md border bg-muted/60 pr-1 pl-2 text-xs">
-                  <FileIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="truncate">{f.name}</span>
-                  <button type="button" className="grid size-5 place-items-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60" aria-label={`Bỏ ${f.name}`} onClick={() => setFiles((xs) => xs.filter((x) => x.id !== f.id))}>
-                    <XIcon className="size-3" aria-hidden />
-                  </button>
-                </li>
-              ))}
-              {uploading > 0 && (
-                <li className="inline-flex h-7 items-center gap-1.5 px-2 text-xs text-muted-foreground" role="status">
-                  <Loader2Icon className="size-3.5 motion-safe:animate-spin" aria-hidden /> Đang tải {uploading} file…
-                </li>
-              )}
-            </ul>
-          )}
+          <AttachList a={att} token={token} className="px-3 pt-3 pb-0" />
           <label htmlFor={COMPOSER_ID} className="sr-only">
             Việc cần làm cho phiên mới
           </label>
@@ -152,7 +108,7 @@ export function WorkspaceComposer({
             id={COMPOSER_ID}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            onPaste={onPaste}
+            onPaste={att.onPaste}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
@@ -173,7 +129,7 @@ export function WorkspaceComposer({
               onChange={(e) => {
                 const picked = [...(e.target.files ?? [])];
                 e.target.value = "";
-                void attach(picked);
+                void att.attach(picked);
               }}
             />
             <button
@@ -181,7 +137,7 @@ export function WorkspaceComposer({
               className="grid size-8 place-items-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50 motion-reduce:transition-none max-md:size-10"
               aria-label={`Đính kèm file (tối đa ${FILES_MAX}, ${FILE_MAX_MB} MB mỗi file)`}
               title={`Đính kèm file (tối đa ${FILES_MAX}, ${FILE_MAX_MB} MB mỗi file; dán ảnh cũng được)`}
-              disabled={files.length + uploading >= FILES_MAX}
+              disabled={att.full}
               onClick={() => fileRef.current?.click()}
             >
               <PlusIcon className="size-4" aria-hidden />

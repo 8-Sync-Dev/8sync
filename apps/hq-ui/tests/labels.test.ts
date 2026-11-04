@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deliveryOf, isStale, messageTargets, sessionLabel, splitStale } from "@/lib/labels";
+import { deliveryOf, isStale, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
 
 const UUID = "3f2b8c1e-9d4a-4e7b-8a21-5c6d7e8f9a0b";
 const base = { label: "", name: "", session_id: null as string | null };
@@ -58,5 +58,18 @@ describe("messageTargets", () => {
     expect(deliveryOf({ tmux: false, name: SID, session_id: null })).toBe("inbox");
     expect(deliveryOf({ tmux: false, name: "core", session_id: SID })).toBe("inbox");
     expect(deliveryOf({ tmux: false, name: "core", session_id: null })).toBeNull();
+  });
+});
+
+describe("targetLabel", () => {
+  it("tells rooms with the same name apart by their project, a worktree counting as its repo", () => {
+    const core = { ...base, label: "core", name: "omp-e127ac746f5322d4" };
+    expect(targetLabel({ ...core, cwd: "C:\\Users\\Projects\\su-code" })).toBe("core · su-code");
+    expect(targetLabel({ ...core, cwd: "C:\\Users\\Projects\\su-code\\.claude\\worktrees\\fix-1\\" })).toBe("core · su-code");
+    expect(targetLabel({ ...core, cwd: "/home/a/game/tohe" })).toBe("core · tohe");
+  });
+  it("does not repeat a project already in the name, and keeps the name without a cwd", () => {
+    expect(targetLabel({ ...base, label: "su-code", name: "x", cwd: "C:\\r\\Su-Code" })).toBe("su-code");
+    expect(targetLabel({ ...base, label: "core", name: "x", cwd: null })).toBe("core");
   });
 });

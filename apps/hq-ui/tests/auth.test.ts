@@ -3,13 +3,16 @@ import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { GET as login } from "@/app/api/login/route";
 import { isLocalHost } from "@/lib/hosts";
-import { __setNonceForTest, checkAuth, getToken, LINK_MS, readPublic, SESSION_MS, sessionCookie, sessionValid } from "@/lib/server/auth";
+import { __setNonceForTest, checkAuth, getToken, isDenied, LINK_MS, readPublic, SESSION_MS, sessionCookie, sessionSecret, sessionValid, type Access, type Denied } from "@/lib/server/auth";
 import { open } from "@/lib/server/http";
-import { publicPath, tokenPath } from "@/lib/server/paths";
+import { publicPath, sessionSecretPath, tokenPath } from "@/lib/server/paths";
 import { tempHome } from "./helpers";
 
 const T = "a".repeat(64);
 const base = { host: "127.0.0.1:8740", origin: null, token: T };
+/** The status a checkAuth result would answer (200 = let through), and its error text. */
+const status = (r: Access | Denied) => (isDenied(r) ? r.status : 200);
+const error = (r: Access | Denied) => (isDenied(r) ? r.error : null);
 
 describe("auth", () => {
   beforeAll(() => tempHome());
@@ -23,20 +26,20 @@ describe("auth", () => {
   });
 
   it("requires the token on every call", () => {
-    expect(checkAuth({ ...base, method: "GET", token: null }, T)?.status).toBe(401);
-    expect(checkAuth({ ...base, method: "GET", token: "b".repeat(64) }, T)?.status).toBe(401);
-    expect(checkAuth({ ...base, method: "GET", token: "short" }, T)?.status).toBe(401);
-    expect(checkAuth({ ...base, method: "GET" }, T)).toBeNull();
+    expect(status(checkAuth({ ...base, method: "GET", token: null }, T))).toBe(401);
+    expect(status(checkAuth({ ...base, method: "GET", token: "b".repeat(64) }, T))).toBe(401);
+    expect(status(checkAuth({ ...base, method: "GET", token: "short" }, T))).toBe(401);
+    expect(checkAuth({ ...base, method: "GET" }, T)).toEqual({ role: "owner", side: "local", guest: null });
   });
 
   it("checks Origin on mutating calls", () => {
-    expect(checkAuth({ ...base, method: "POST" }, T)?.error).toBe("missing Origin");
-    expect(checkAuth({ ...base, method: "POST", origin: "http://evil.test" }, T)?.error).toBe("bad Origin");
-    expect(checkAuth({ ...base, method: "POST", origin: "http://127.0.0.1:9999" }, T)?.error).toBe("bad Origin");
-    expect(checkAuth({ ...base, method: "POST", origin: "http://127.0.0.1:8740" }, T)).toBeNull();
+    expect(error(checkAuth({ ...base, method: "POST" }, T))).toBe("missing Origin");
+    expect(error(checkAuth({ ...base, method: "POST", origin: "http://evil.test" }, T))).toBe("bad Origin");
+    expect(error(checkAuth({ ...base, method: "POST", origin: "http://127.0.0.1:9999" }, T))).toBe("bad Origin");
+    expect(status(checkAuth({ ...base, method: "POST", origin: "http://127.0.0.1:8740" }, T))).toBe(200);
     // Channel endpoints: a local node process sends no Origin, but a wrong one is still refused.
-    expect(checkAuth({ ...base, method: "POST" }, T, { allowMissingOrigin: true })).toBeNull();
-    expect(checkAuth({ ...base, method: "POST", origin: "http://evil.test" }, T, { allowMissingOrigin: true })?.status).toBe(403);
+    expect(status(checkAuth({ ...base, method: "POST" }, T, { allowMissingOrigin: true }))).toBe(200);
+    expect(status(checkAuth({ ...base, method: "POST", origin: "http://evil.test" }, T, { allowMissingOrigin: true }))).toBe(403);
   });
 
   it("refuses non-loopback Host (DNS rebinding)", () => {
@@ -45,7 +48,7 @@ describe("auth", () => {
     expect(isLocalHost("evil.test:8740")).toBe(false);
     expect(isLocalHost("127.0.0.1.evil.test")).toBe(false);
     expect(isLocalHost(null)).toBe(false);
-    expect(checkAuth({ ...base, method: "GET", host: "evil.test" }, T)?.status).toBe(403);
+    expect(status(checkAuth({ ...base, method: "GET", host: "evil.test" }, T))).toBe(403);
   });
 });
 
@@ -77,7 +80,7 @@ describe("remote link", () => {
   beforeEach(() => {
     __setNonceForTest(NONCE);
     writePub({ v: 1, host: HOST, key: KEY, since: Date.now(), nonce: NONCE });
-    SESSION = sessionCookie(KEY, Date.now());
+    SESSION = sessionCookie(sessionSecret(), Date.now());
   });
   afterAll(() => {
     __setNonceForTest("");
@@ -106,7 +109,17 @@ describe("remote link", () => {
     const [issued, mac] = sessionCookie(KEY, now).split(".");
     expect(sessionValid(`${Number(issued) + 1}.${mac}`, KEY, now)).toBe(false); // forged issue time
     expect(sessionValid(KEY, KEY, now)).toBe(false);
-    expect(call({ host: HOST, cookie: `hq_pub=${sessionCookie(KEY, now - SESSION_MS - 1)}` })).toBe(403);
+    expect(call({ host: HOST, cookie: `hq_pub=${sessionCookie(sessionSecret(), now - SESSION_MS - 1)}` })).toBe(403);
+    expect(call({ host: HOST, cookie: `hq_pub=${sessionCookie(KEY, now)}` })).toBe(403); // signed with the link key: not a session
+  });
+
+  it("a new link (`--relink`, HQ restart) keeps devices signed in; deleting session-secret signs them out", () => {
+    expect(call({ host: HOST, cookie: `hq_pub=${SESSION}`, tunnel: true })).toBe(200);
+    writePub({ v: 1, host: HOST, key: "9".repeat(64), since: Date.now() + 1, nonce: NONCE });
+    expect(readPublic()?.key).toBe("9".repeat(64));
+    expect(call({ host: HOST, cookie: `hq_pub=${SESSION}`, tunnel: true })).toBe(200);
+    fs.rmSync(sessionSecretPath());
+    expect(call({ host: HOST, cookie: `hq_pub=${SESSION}`, tunnel: true })).toBe(403);
   });
 
   it("public.json counts only with the nonce of this HQ process (contract C-C)", () => {
@@ -170,7 +183,8 @@ describe("remote link", () => {
       expect(m).not.toBeNull();
       expect(m![1]).not.toContain(KEY);
       expect(Number(m![1].split(".")[0])).toBeGreaterThanOrEqual(before);
-      expect(sessionValid(m![1], KEY)).toBe(true);
+      expect(sessionValid(m![1], sessionSecret())).toBe(true);
+      expect(sessionValid(m![1], KEY)).toBe(false);
       expect(call({ host: HOST, cookie: `hq_pub=${m![1]}` })).toBe(200);
     });
 

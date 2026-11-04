@@ -15,11 +15,15 @@ import { Conversation, ConversationContent, ConversationEmptyState, Conversation
 import { Message as ChatMessage, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MessageText } from "./attachments";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useDefaultLayout } from "react-resizable-panels";
+import { AttachButton, AttachList, useAttach } from "./attach";
+import { MessageText, ReplyMedia } from "./attachments";
 import { ComposerDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
-import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale } from "@/lib/labels";
+import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
 import type { Hq } from "./use-hq";
@@ -34,6 +38,7 @@ export function TeamView({
   target,
   onTarget,
   header,
+  split,
   bar,
   onStartSession,
 }: {
@@ -43,6 +48,12 @@ export function TeamView({
   target: string | null;
   onTarget: (s: string) => void;
   header?: ReactNode;
+  /**
+   * Chat phòng: the room's brief and Nhật ký. On a wide screen it sits in its own panel above the chat,
+   * the border between them dragged to give either more room (size kept per browser); on a phone it
+   * scrolls with the chat as `header` does.
+   */
+  split?: ReactNode;
   /** Pinned above the scrolling log and chat, outside the scroller (Chat phòng: the room's title row and terminal button). */
   bar?: ReactNode;
   /** Opens the start-session form (hq-app: focusStartSession). Without it the CTA is text only. */
@@ -69,6 +80,48 @@ export function TeamView({
 
   const { loading, error } = hq.messages;
 
+  const mobile = useIsMobile();
+  const layout = useDefaultLayout({ id: "hq-room-split", panelIds: ["brief", "chat"] });
+  const top = mobile ? (split ?? header) : header;
+
+  const chat = (
+    <Conversation className="min-h-0 flex-1">
+      <ConversationContent className="mx-auto w-full max-w-3xl gap-0 px-4 py-4 sm:px-6">
+        {top && <div className="mb-6">{top}</div>}
+        <SessionStrip sessions={sessions} />
+        {error ? (
+          <ErrorNote what="messages" error={error} onRetry={hq.reload.messages} />
+        ) : loading ? (
+          <TimelineSkeleton />
+        ) : messages.length === 0 ? (
+          <ConversationEmptyState
+            icon={<MessagesSquareIcon />}
+            title="No conversation yet"
+            description="Messages you send, replies from sessions, and messages sessions send each other show up here as they happen."
+          />
+        ) : (
+          <div aria-label="Team timeline" className="pb-2">
+            {/* One section per day: its separator sticks only while that day is in view, then the next day's pushes it out (no stacked separators). */}
+            {groups.map((g) => (
+              <section key={g.day + g.rows[0].id}>
+                <div
+                  aria-hidden
+                  className="sticky top-0 z-10 -mx-2 bg-background/95 px-2 pt-3 pb-1.5 text-xs font-medium text-muted-foreground backdrop-blur-[2px]"
+                >
+                  {g.day}
+                </div>
+                {g.rows.map((m, i) => (
+                  <Row key={m.id} m={m} prev={g.rows[i - 1]} who={who} token={hq.token} />
+                ))}
+              </section>
+            ))}
+          </div>
+        )}
+      </ConversationContent>
+      <ConversationScrollButton />
+    </Conversation>
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
@@ -77,41 +130,19 @@ export function TeamView({
           <div className="mx-auto w-full max-w-3xl px-4 py-2 sm:px-6">{bar}</div>
         </div>
       )}
-      <Conversation className="min-h-0 flex-1">
-        <ConversationContent className="mx-auto w-full max-w-3xl gap-0 px-4 py-4 sm:px-6">
-          {header && <div className="mb-6">{header}</div>}
-          <SessionStrip sessions={sessions} />
-          {error ? (
-            <ErrorNote what="messages" error={error} onRetry={hq.reload.messages} />
-          ) : loading ? (
-            <TimelineSkeleton />
-          ) : messages.length === 0 ? (
-            <ConversationEmptyState
-              icon={<MessagesSquareIcon />}
-              title="No conversation yet"
-              description="Messages you send, replies from sessions, and messages sessions send each other show up here as they happen."
-            />
-          ) : (
-            <div aria-label="Team timeline" className="pb-2">
-              {/* One section per day: its separator sticks only while that day is in view, then the next day's pushes it out (no stacked separators). */}
-              {groups.map((g) => (
-                <section key={g.day + g.rows[0].id}>
-                  <div
-                    aria-hidden
-                    className="sticky top-0 z-10 -mx-2 bg-background/95 px-2 pt-3 pb-1.5 text-xs font-medium text-muted-foreground backdrop-blur-[2px]"
-                  >
-                    {g.day}
-                  </div>
-                  {g.rows.map((m, i) => (
-                    <Row key={m.id} m={m} prev={g.rows[i - 1]} who={who} token={hq.token} />
-                  ))}
-                </section>
-              ))}
-            </div>
-          )}
-        </ConversationContent>
-        <ConversationScrollButton />
-      </Conversation>
+      {split && !mobile ? (
+        <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
+          <ResizablePanel id="brief" defaultSize="45" minSize="15" className="min-h-0">
+            <div className="mx-auto flex h-full w-full max-w-3xl flex-col overflow-y-auto px-4 pt-4 pb-3 sm:px-6">{split}</div>
+          </ResizablePanel>
+          <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa Nhật ký và chat" />
+          <ResizablePanel id="chat" minSize="20" className="flex min-h-0 flex-col">
+            {chat}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        chat
+      )}
       {messageTargets(sessions).length === 0 ? (
         <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} />
       ) : (
@@ -222,7 +253,15 @@ function Row({ m, prev, who, token }: { m: Message; prev?: Message; who: Who; to
       )}
       <ChatMessage from={owner ? "user" : "assistant"}>
         <MessageContent className={cn(!owner && "rounded-lg border bg-card px-3 py-2")}>
-          {owner ? <MessageText text={m.text} token={token} className="break-words whitespace-pre-wrap" /> : <MessageResponse>{m.text ?? ""}</MessageResponse>}
+          {owner ? (
+            <MessageText text={m.text} token={token} className="wrap-anywhere whitespace-pre-wrap" />
+          ) : (
+            <>
+              {/* wrap-anywhere: a long path or URL breaks inside the bubble instead of being clipped on a phone. */}
+              <MessageResponse className="wrap-anywhere">{m.text ?? ""}</MessageResponse>
+              <ReplyMedia text={m.text} token={token} />
+            </>
+          )}
         </MessageContent>
       </ChatMessage>
       {owner && m.delivery && (
@@ -296,6 +335,7 @@ function Composer({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
+  const att = useAttach(hq.api);
   /** Folds the phone's bottom sheet after a send (ComposerDock); a no-op on desktop. */
   const closeDock = useRef<() => void>(() => {});
   const targets = messageTargets(sessions);
@@ -305,17 +345,23 @@ function Composer({
 
   async function send() {
     const body = text.trim();
-    if (!body || !current || busy || current.waiting) return;
+    if (!body || !current || busy || att.uploading > 0) return;
+    if (current.waiting) {
+      // Enter used to do nothing here, so a send looked lost: say why it is held.
+      toast.error(`${targetLabel(current)} đang chờ anh trả lời trong terminal: trả lời trước (Mở terminal) rồi gửi lại`);
+      return;
+    }
     setBusy(true);
     try {
       const r = await hq.api<{ message: Message; delivery: string; error: string | null }>("/api/messages", {
         method: "POST",
         // Sessions started elsewhere are addressed by their Claude session id (inbox delivery).
-        body: { session: addressOf(current), text: body, base: current.cwd ?? null },
+        body: { session: addressOf(current), text: body, base: current.cwd ?? null, ...(att.files.length ? { files: att.files.map((f) => f.id) } : {}) },
       });
       hq.mergeMessages([r.message]);
-      if (r.delivery === "failed") toast.error(`Not delivered to ${sessionLabel(current)}: ${r.error}`);
+      if (r.delivery === "failed") toast.error(`Not delivered to ${targetLabel(current)}: ${r.error}`);
       setText("");
+      att.clear();
       closeDock.current();
       area.current?.focus();
     } catch (e) {
@@ -352,7 +398,7 @@ function Composer({
         : "Typed into the session's terminal until its channel connects.";
 
   return (
-    <ComposerDock id="room" draft={text.trim().length > 0} label={current ? `Nhắn ${sessionLabel(current)}` : "Nhắn phòng"}>
+    <ComposerDock id="room" draft={text.trim().length > 0 || att.files.length > 0} label={current ? `Nhắn ${targetLabel(current)}` : "Nhắn phòng"}>
       {({ close }) => {
         closeDock.current = close;
         return (
@@ -387,12 +433,14 @@ function Composer({
                   base={current?.cwd ?? null}
                   api={hq.api}
                   onKeyDown={onKey}
+                  onPaste={att.onPaste}
                   disabled={disabled}
                   rows={2}
                   maxLength={4000}
-                  placeholder={current ? `Nhắn ${sessionLabel(current)} · @ để chèn file` : "Message"}
+                  placeholder={current ? `Nhắn ${targetLabel(current)} · @ để chèn file` : "Message"}
                   className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
                 />
+                <AttachList a={att} token={hq.token} />
                 <div className="flex items-center gap-2 px-2 pb-2">
                   <Select value={current?.name ?? ""} onValueChange={onTarget} disabled={disabled}>
                     <SelectTrigger size="sm" className="h-7 max-w-[55%] gap-1.5 border-0 bg-muted/60 font-mono text-xs" aria-label="Send to session">
@@ -401,14 +449,15 @@ function Composer({
                     <SelectContent>
                       {targets.map((s) => (
                         <SelectItem key={s.name} value={s.name} className="font-mono text-xs">
-                          <StatusDot status={s.status} /> {sessionLabel(s)}
+                          <StatusDot status={s.status} /> {targetLabel(s)}
                           {s.channel ? " · channel" : deliveryOf(s) === "inbox" ? " · inbox" : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  <AttachButton a={att} disabled={disabled || !current} />
                   <p className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">{hint}</p>
-                  <Button type="submit" size="sm" className="ml-auto" disabled={disabled || busy || !text.trim() || !!current?.waiting}
+                  <Button type="submit" size="sm" className="ml-auto" disabled={disabled || busy || att.uploading > 0 || !text.trim() || !!current?.waiting}
                     title={current?.waiting ? "Claude is waiting for you in the terminal — answer it first (Open terminal)" : undefined}>
                     <SendHorizontalIcon /> Send
                   </Button>

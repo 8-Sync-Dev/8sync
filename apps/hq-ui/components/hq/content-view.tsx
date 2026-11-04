@@ -1,49 +1,86 @@
 "use client";
 
-import { AlertTriangleIcon, CheckIcon, FileTextIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
-import { Fragment, useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { AlertTriangleIcon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, FileTextIcon, ListIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  aiReason,
+  byDay,
   CONTENT_FORMATS,
   CONTENT_STATUSES,
-  FORMAT_LABEL,
-  STATUS_LABEL,
-  contentTaskText,
   contentWarning,
+  dayKey,
+  FORMAT_LABEL,
   nextStatuses,
+  stepHint,
+  parseDay,
+  NO_SCHEDULE,
+  STATUS_LABEL,
+  stepCursor,
+  whenOf,
+  type CalendarMode,
   type ContentFormat,
   type ContentItem,
   type ContentList,
-  type ContentStatus,
+  type ContentRow,
   type ContentTextField,
 } from "@/lib/content";
+import { atLeast } from "@/lib/access";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
+import { useAccess } from "./access";
 import { ErrorNote } from "./bits";
-import { RoomSend, TOUCH } from "./room-send";
+import { ALL, assigneeShort, Editable, FORMAT_DOT, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, useContentPatch, type Patch } from "./content-bits";
+import { ContentCalendar, periodLabel } from "./content-calendar";
+import { ContentSheet, NO_DAY } from "./content-sheet";
+import { TOUCH } from "./room-send";
 import { makeApi, type Api } from "./use-hq";
-import type { Room } from "./use-office";
 import { usePoll } from "./use-poll";
 
 const POLL_MS = 15_000;
-const ALL = "__all";
+const VIEW_KEY = "hq.content.view";
+const MODE_KEY = "hq.content.mode";
+const MODES: [CalendarMode, string][] = [
+  ["day", "Ngày"],
+  ["week", "Tuần"],
+  ["month", "Tháng"],
+  ["year", "Năm"],
+];
+type View = "calendar" | "list";
+type Sel = { day: string | null; item: number | null };
 
-const STATUS_TONE: Record<ContentStatus, string> = {
-  ordered: "text-muted-foreground",
-  drafted: "text-foreground",
-  checked: "text-foreground",
-  approved: "text-st-running",
-  published: "font-semibold text-st-running",
-  rejected: "text-muted-foreground line-through",
+const stored = <T extends string>(key: string, ok: readonly T[], dflt: T): T => {
+  if (typeof window === "undefined") return dflt;
+  const v = window.localStorage.getItem(key);
+  return ok.includes(v as T) ? (v as T) : dflt;
 };
 
-/** "Nội dung" tab: content-post-agency's `content_items` (FB ↔ news), read and written in place; the DB's triggers gate approve/publish. */
-export function ContentView({ token, rooms, active }: { token: string; rooms: Room[]; active: boolean }) {
+/** `?day=YYYY-MM-DD|none&item=N`: the open sheet, shareable and restored on load. */
+function readSel(): Sel {
+  if (typeof window === "undefined") return { day: null, item: null };
+  const q = new URLSearchParams(window.location.search);
+  const day = q.get("day");
+  const item = Number(q.get("item"));
+  return { day: day === NO_DAY || parseDay(day) ? day : null, item: Number.isSafeInteger(item) && item > 0 ? item : null };
+}
+function writeSel({ day, item }: Sel) {
+  const u = new URL(window.location.href);
+  if (day) u.searchParams.set("day", day);
+  else u.searchParams.delete("day");
+  if (item != null) u.searchParams.set("item", String(item));
+  else u.searchParams.delete("item");
+  if (u.href !== window.location.href) window.history.replaceState(window.history.state, "", u);
+}
+
+/** "Nội dung" tab: content-post-agency's `content_items` (FB ↔ news) as a calendar or a list, read and written in place; the DB's triggers gate approve/publish. */
+export function ContentView({ token, active }: { token: string; active: boolean }) {
   const api = useMemo(() => makeApi(token), [token]);
+  const owner = useAccess() === "owner";
   const [status, setStatus] = useState(ALL);
   const [format, setFormat] = useState(ALL);
   const [page, setPage] = useState(ALL);
@@ -60,6 +97,33 @@ export function ContentView({ token, rooms, active }: { token: string; rooms: Ro
   const data = list.data;
   const ready = data && data.configured && data.ready ? data : null;
   const pages = ready?.pages ?? [];
+  const { patch, errors } = useContentPatch(api, list.reload);
+
+  const [view, setViewState] = useState<View>(() => stored(VIEW_KEY, ["calendar", "list"], "calendar"));
+  const [mode, setModeState] = useState<CalendarMode>(() => stored(MODE_KEY, ["day", "week", "month", "year"], "month"));
+  const [sel, setSel] = useState<Sel>(readSel);
+  const [cursor, setCursor] = useState<Date>(() => parseDay(sel.day) ?? new Date());
+  const setView = (v: View) => (setViewState(v), window.localStorage.setItem(VIEW_KEY, v));
+  const setMode = (m: CalendarMode) => (setModeState(m), window.localStorage.setItem(MODE_KEY, m));
+
+  useEffect(() => () => writeSel({ day: null, item: null }), []);
+
+  const items = useMemo(() => ready?.items ?? [], [ready]);
+  const days = useMemo(() => byDay(items), [items]);
+  const unscheduled = useMemo(() => items.filter((it) => whenOf(it) == null), [items]);
+  const openItem = useCallback((it: ContentRow) => {
+    const at = whenOf(it);
+    setSel({ day: at != null ? dayKey(at) : NO_DAY, item: it.id });
+  }, []);
+  const open = useMemo(() => ({ day: (day: string) => setSel({ day, item: null }), item: openItem }), [openItem]);
+  // The selected item decides the day: an `item=`-only link opens on its day, and a time edit moves
+  // the sheet along with the item instead of leaving it on a day it has left.
+  const picked = sel.item != null ? items.find((it) => it.id === sel.item) : undefined;
+  const pickedDay = picked ? (whenOf(picked) != null ? dayKey(whenOf(picked)!) : NO_DAY) : null;
+  const sheetDay = pickedDay ?? sel.day;
+  useEffect(() => writeSel(active ? { day: sheetDay, item: sel.item } : { day: null, item: null }), [sheetDay, sel.item, active]);
+  const sheetItems = sheetDay === NO_DAY ? unscheduled : sheetDay ? (days.get(sheetDay) ?? []) : [];
+  const today = dayKey(list.at || 0);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -75,9 +139,11 @@ export function ContentView({ token, rooms, active }: { token: string; rooms: Ro
               <Filter label="Trạng thái" value={status} onChange={setStatus} options={CONTENT_STATUSES.map((s) => [s, STATUS_LABEL[s]])} />
               <Filter label="Định dạng" value={format} onChange={setFormat} options={CONTENT_FORMATS.map((f) => [f, FORMAT_LABEL[f]])} />
               {(pages.length > 1 || page !== ALL) && <Filter label="Trang FB" value={page} onChange={setPage} options={pages.map((p) => [p, p])} />}
-              <Button type="button" size="sm" variant={adding ? "secondary" : "default"} className={cn("text-xs", TOUCH)} aria-expanded={adding} onClick={() => setAdding((a) => !a)}>
-                <PlusIcon aria-hidden /> Mục mới
-              </Button>
+              {owner && (
+                <Button type="button" size="sm" variant={adding ? "secondary" : "default"} className={cn("text-xs", TOUCH)} aria-expanded={adding} onClick={() => setAdding((a) => !a)}>
+                  <PlusIcon aria-hidden /> Mục mới
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -96,11 +162,111 @@ export function ContentView({ token, rooms, active }: { token: string; rooms: Ro
           </p>
         ) : (
           <>
-            {adding && <NewItem api={api} pages={pages} onDone={() => (setAdding(false), list.reload())} />}
-            <Items items={data.items} api={api} token={token} rooms={rooms} now={list.at} reload={list.reload} />
+            {owner && adding && <NewItem api={api} pages={pages} onDone={() => (setAdding(false), list.reload())} />}
+            <div className="flex flex-wrap items-center gap-2">
+              <ButtonGroup aria-label="Kiểu xem">
+                <Button type="button" size="sm" variant={view === "calendar" ? "secondary" : "outline"} aria-pressed={view === "calendar"} className={cn("text-xs", TOUCH)} onClick={() => setView("calendar")}>
+                  <CalendarIcon aria-hidden /> Lịch
+                </Button>
+                <Button type="button" size="sm" variant={view === "list" ? "secondary" : "outline"} aria-pressed={view === "list"} className={cn("text-xs", TOUCH)} onClick={() => setView("list")}>
+                  <ListIcon aria-hidden /> Danh sách
+                </Button>
+              </ButtonGroup>
+              {view === "calendar" && (
+                <>
+                  <ButtonGroup aria-label="Khoảng lịch">
+                    {MODES.map(([m, label]) => (
+                      <Button key={m} type="button" size="sm" variant={mode === m ? "secondary" : "outline"} aria-pressed={mode === m} className={cn("text-xs", TOUCH)} onClick={() => setMode(m)}>
+                        {label}
+                      </Button>
+                    ))}
+                  </ButtonGroup>
+                  <Button type="button" size="sm" variant="outline" className={cn("text-xs", TOUCH)} onClick={() => setCursor(new Date())}>
+                    Hôm nay
+                  </Button>
+                  <ButtonGroup>
+                    <Button type="button" size="icon-sm" variant="outline" className={TOUCH} aria-label="Kỳ trước" onClick={() => setCursor((c) => stepCursor(c, mode, -1))}>
+                      <ChevronLeftIcon aria-hidden />
+                    </Button>
+                    <Button type="button" size="icon-sm" variant="outline" className={TOUCH} aria-label="Kỳ sau" onClick={() => setCursor((c) => stepCursor(c, mode, 1))}>
+                      <ChevronRightIcon aria-hidden />
+                    </Button>
+                  </ButtonGroup>
+                  <h3 className="text-sm font-semibold tabular-nums" aria-live="polite">
+                    {periodLabel(mode, cursor)}
+                  </h3>
+                  {unscheduled.length > 0 && (
+                    <Button type="button" size="sm" variant="ghost" className={cn("ml-auto text-xs", TOUCH)} onClick={() => open.day(NO_DAY)}>
+                      Chưa có lịch ({unscheduled.length})
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+            {!data.schedule && (
+              <p role="status" className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
+                <AlertTriangleIcon aria-hidden className="size-4 shrink-0 text-st-needs" />
+                Lịch đang xếp theo giờ đã đăng. {NO_SCHEDULE}
+              </p>
+            )}
+            {view === "calendar" ? (
+              <>
+                <ContentCalendar
+                  mode={mode}
+                  cursor={cursor}
+                  days={days}
+                  today={today}
+                  open={open}
+                  onMonth={(d) => {
+                    setCursor(d);
+                    setMode("month");
+                  }}
+                />
+                <Legend />
+              </>
+            ) : (
+              <Items items={items} api={api} now={list.at} patch={patch} errors={errors} onOpen={openItem} reload={list.reload} />
+            )}
+            <ContentSheet
+              day={sheetDay}
+              item={sel.item}
+              items={sheetItems}
+              schedule={data.schedule}
+              api={api}
+              now={list.at}
+              patch={patch}
+              errors={errors}
+              onClose={() => setSel({ day: null, item: null })}
+              onItem={(item) => setSel({ day: sheetDay, item })}
+              reload={list.reload}
+            />
           </>
         )}
       </section>
+    </div>
+  );
+}
+
+/** What the chip colours and edges mean: format by hue, status by edge (plus a tick when approved/published). */
+function Legend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-muted-foreground">
+      <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        {CONTENT_FORMATS.map((f) => (
+          <span key={f} className="inline-flex items-center gap-1">
+            <span aria-hidden className={cn("size-2 rounded-full", FORMAT_DOT[f])} />
+            {FORMAT_LABEL[f]}
+          </span>
+        ))}
+      </span>
+      <span className="flex flex-wrap items-center gap-1.5">
+        {CONTENT_STATUSES.map((s) => (
+          <span key={s} className={cn("inline-flex items-center gap-0.5 rounded px-1.5 text-foreground", STATUS_EDGE[s])}>
+            <StatusIcon status={s} />
+            {STATUS_LABEL[s]}
+          </span>
+        ))}
+      </span>
     </div>
   );
 }
@@ -193,29 +359,26 @@ function NewItem({ api, pages, onDone }: { api: Api; pages: string[]; onDone: ()
   );
 }
 
-function Items({ items, api, token, rooms, now, reload }: { items: ContentItem[]; api: Api; token: string; rooms: Room[]; now: number; reload: () => void }) {
-  const [errors, setErrors] = useState<Record<number, string>>({});
-  const [sendFor, setSendFor] = useState<number | null>(null);
-  const patch = useCallback(
-    async (id: number, body: Record<string, unknown>) => {
-      try {
-        await api(`/api/content?id=${id}`, { method: "PATCH", body });
-        setErrors((x) => {
-          const rest = { ...x };
-          delete rest[id];
-          return rest;
-        });
-        reload();
-        return true;
-      } catch (e) {
-        const msg = (e as Error).message;
-        setErrors((x) => ({ ...x, [id]: msg }));
-        toast.error(`#${id}: ${msg}`);
-        return false;
-      }
-    },
-    [api, reload],
-  );
+/** "Danh sách": the table view; "Mở" opens the item in the sheet (approve, media, giao việc). */
+function Items({
+  items,
+  api,
+  now,
+  patch,
+  errors,
+  onOpen,
+  reload,
+}: {
+  items: ContentRow[];
+  api: Api;
+  now: number;
+  patch: Patch;
+  errors: Record<number, string>;
+  onOpen: (it: ContentRow) => void;
+  reload: () => void;
+}) {
+  const role = useAccess();
+  const canEdit = atLeast(role, "editor");
   const remove = useCallback(
     async (it: ContentItem) => {
       if (!window.confirm(`Xoá mục #${it.id} «${it.title}»?`)) return;
@@ -249,62 +412,79 @@ function Items({ items, api, token, rooms, now, reload }: { items: ContentItem[]
         <tbody className="divide-y">
           {items.map((it) => {
             const warn = contentWarning(it);
+            const ai = aiReason(it);
+            // Approving or publishing an AI-marked item needs the sheet's confirmation tick.
+            const steps = nextStatuses(it.status).filter((s) => !(ai && (s === "approved" || s === "published")));
+            const note = steps.map((s) => stepHint(it, s)).find((h) => h != null);
             const err = errors[it.id];
+            const who = assigneeShort(it);
             const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
             return (
-              <Fragment key={it.id}>
-              <tr className={cn("align-top", warn && "bg-destructive/5")}>
+              <tr key={it.id} className={cn("align-top", (warn || ai) && "bg-destructive/5")}>
                 <td className="px-2 py-2 font-mono text-muted-foreground tabular">{it.id}</td>
                 <td className="w-64 min-w-56 px-2 py-2">
                   <div className="font-medium">
                     <Editable value={it.title} label={`Tiêu đề #${it.id}`} onSave={edit("title")} required />
                   </div>
                   <div className="mt-1.5 flex items-center gap-1">
-                    <Select value={it.format} onValueChange={(v) => void patch(it.id, { format: v })}>
-                      <SelectTrigger size="sm" className="h-7 text-xs" aria-label={`Định dạng #${it.id}`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CONTENT_FORMATS.map((f) => (
-                          <SelectItem key={f} value={f} className="text-xs">
-                            {FORMAT_LABEL[f]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={sendFor === it.id ? "secondary" : "outline"}
-                      className={cn("h-7 px-2 text-[11px]", TOUCH)}
-                      aria-expanded={sendFor === it.id}
-                      onClick={() => setSendFor((x) => (x === it.id ? null : it.id))}
-                    >
-                      <SendIcon aria-hidden /> Gửi task
+                    {canEdit ? (
+                      <Select value={it.format} onValueChange={(v) => void patch(it.id, { format: v })}>
+                        <SelectTrigger size="sm" className={cn("h-7 text-xs", FORMAT_TONE[it.format])} aria-label={`Định dạng #${it.id}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CONTENT_FORMATS.map((f) => (
+                            <SelectItem key={f} value={f} className="text-xs">
+                              {FORMAT_LABEL[f]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className={cn("rounded px-1.5 py-0.5 text-xs", FORMAT_TONE[it.format])}>{FORMAT_LABEL[it.format]}</span>
+                    )}
+                    <Button type="button" size="sm" variant="outline" className={cn("h-7 px-2 text-[11px]", TOUCH)} onClick={() => onOpen(it)}>
+                      <SendIcon aria-hidden /> Mở
                     </Button>
-                    <Button type="button" size="icon" variant="ghost" className={cn("size-7", TOUCH)} aria-label={`Xoá #${it.id}`} onClick={() => void remove(it)}>
-                      <Trash2Icon aria-hidden />
-                    </Button>
+                    {role === "owner" && (
+                      <Button type="button" size="icon" variant="ghost" className={cn("size-7", TOUCH)} aria-label={`Xoá #${it.id}`} onClick={() => void remove(it)}>
+                        <Trash2Icon aria-hidden />
+                      </Button>
+                    )}
                   </div>
+                  {who && <p className="mt-1 text-[11px] text-muted-foreground">đang xử lý: {it.assignee_base ?? who}</p>}
                 </td>
                 <td className="px-2 py-2">
                   <p className={cn("whitespace-nowrap", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</p>
                   <div className="mt-1 flex flex-col items-start gap-1">
-                    {nextStatuses(it.status).map((s) => (
-                      <Button
-                        key={s}
-                        type="button"
-                        size="sm"
-                        variant={s === "rejected" ? "ghost" : "outline"}
-                        className={cn("h-6 px-2 text-[11px] whitespace-nowrap", TOUCH)}
-                        onClick={() => void patch(it.id, { status: s })}
-                      >
-                        {s === "rejected" ? "Bỏ" : `→ ${STATUS_LABEL[s]}`}
-                      </Button>
-                    ))}
+                    {canEdit &&
+                      steps
+                      .map((s) => {
+                        const hint = stepHint(it, s);
+                        return (
+                          <Button
+                            key={s}
+                            type="button"
+                            size="sm"
+                            variant={s === "rejected" ? "ghost" : "outline"}
+                            className={cn("h-6 px-2 text-[11px] whitespace-nowrap", TOUCH)}
+                            disabled={hint != null}
+                            title={hint ?? undefined}
+                            onClick={() => void patch(it.id, { status: s })}
+                          >
+                            {s === "rejected" ? "Bỏ" : `→ ${STATUS_LABEL[s]}`}
+                          </Button>
+                        );
+                      })}
+                    {note && <span className="text-[11px] text-muted-foreground">{note}</span>}
                   </div>
                 </td>
                 <td className="w-44 min-w-36 px-2 py-2">
+                  {ai && (
+                    <p className="flex items-start gap-1 font-medium text-destructive">
+                      <AlertTriangleIcon aria-hidden className="mt-px size-3.5 shrink-0" /> Rủi ro nhãn AI: {ai}. Duyệt trong khung chi tiết.
+                    </p>
+                  )}
                   {warn && (
                     <p className="flex items-start gap-1 font-medium text-destructive">
                       <AlertTriangleIcon aria-hidden className="mt-px size-3.5 shrink-0" /> {warn}
@@ -325,7 +505,7 @@ function Items({ items, api, token, rooms, now, reload }: { items: ContentItem[]
                     <p className="mt-0.5 flex items-center gap-1 text-[11px] text-st-running">
                       <CheckIcon aria-hidden className="size-3" /> {it.source_approved_by} · {agoShort(it.source_approved_at, now)}
                     </p>
-                  ) : it.source_url ? (
+                  ) : it.source_url && canEdit ? (
                     <Button type="button" size="sm" variant="outline" className={cn("mt-1 h-6 px-2 text-[11px]", TOUCH)} onClick={() => void patch(it.id, { approve_source: it.source_url })}>
                       Duyệt nguồn
                     </Button>
@@ -348,77 +528,10 @@ function Items({ items, api, token, rooms, now, reload }: { items: ContentItem[]
                   </dl>
                 </td>
               </tr>
-              {sendFor === it.id && (
-                <tr>
-                  <td colSpan={8} className="bg-muted/20 px-3 py-2.5">
-                    <TaskBox it={it} api={api} token={token} rooms={rooms} onSent={() => setSendFor(null)} />
-                  </td>
-                </tr>
-              )}
-              </Fragment>
             );
           })}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function TaskBox({ it, api, token, rooms, onSent }: { it: ContentItem; api: Api; token: string; rooms: Room[]; onSent: () => void }) {
-  const prepare = useCallback(async (typed: string) => ({ text: contentTaskText(it, typed), files: [] }), [it]);
-  return (
-    <RoomSend api={api} token={token} rooms={rooms} id={`content-${it.id}`} placeholder={`Việc cho mục #${it.id}, vd: sửa caption ngắn lại (Ctrl+Enter để gửi)`} prepare={prepare} onSent={onSent}>
-      <p className="mb-1.5 text-xs text-muted-foreground">
-        Gửi đi: <code className="font-mono">[Nội dung #{it.id} · {it.fb_page}] {it.title}</code> + dòng anh gõ. Chọn phòng rồi bấm gửi.
-      </p>
-    </RoomSend>
-  );
-}
-
-/** A value shown as text (a link for URLs); click or Enter edits, Enter or leaving saves, Esc cancels. */
-function Editable({ value, label, onSave, link = false, required = false }: { value: string | null; label: string; onSave: (v: string) => Promise<boolean>; link?: boolean; required?: boolean }) {
-  const [draft, setDraft] = useState<string | null>(null);
-  // Enter saves, and the blur that follows must not send the same PATCH again.
-  const saving = useRef(false);
-  const shown = value ?? "";
-
-  async function commit() {
-    if (draft === null || saving.current) return;
-    const v = draft.trim();
-    if (v === shown || (required && !v)) return setDraft(null);
-    saving.current = true;
-    try {
-      if (await onSave(v)) setDraft(null);
-    } finally {
-      saving.current = false;
-    }
-  }
-  function onKey(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && !e.nativeEvent.isComposing) void commit();
-    if (e.key === "Escape") setDraft(null);
-  }
-
-  if (draft !== null)
-    return <Input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} onBlur={() => void commit()} aria-label={label} className="h-7 text-xs" autoFocus />;
-  return (
-    <div className="group/ed flex min-w-0 items-baseline gap-1">
-      {link && value && /^https?:\/\//i.test(value) ? (
-        <a href={value} target="_blank" rel="noreferrer noopener" className="block max-w-40 min-w-0 truncate text-primary underline-offset-2 hover:underline" title={value}>
-          {value.replace(/^https?:\/\//, "")}
-        </a>
-      ) : (
-        <span className={cn("line-clamp-3 min-w-0 break-words", !value && "text-muted-foreground")} title={value ?? undefined}>
-          {value || "—"}
-        </span>
-      )}
-      <button
-        type="button"
-        className="shrink-0 rounded px-1 text-[11px] text-muted-foreground opacity-60 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11"
-        aria-label={`Sửa ${label}`}
-        onClick={() => setDraft(shown)}
-      >
-        sửa
-      </button>
     </div>
   );
 }

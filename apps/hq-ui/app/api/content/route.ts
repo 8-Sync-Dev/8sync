@@ -1,3 +1,5 @@
+import path from "node:path";
+import { OWNER_CONTENT_FIELDS } from "@/lib/access";
 import { isFormat, isStatus } from "@/lib/content";
 import { ContentError, contentDbPath, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
 import { bad, json, open, readBody } from "@/lib/server/http";
@@ -16,11 +18,19 @@ function fail(e: unknown): Response {
   return bad("ghi DB nội dung lỗi", 500);
 }
 
-/** The registry for writes: 404 when no DB is configured, 409 with the reason when it cannot be used. */
-function registry() {
+/** What a guest (Chia sẻ) reads instead of a DB error: those name paths on the owner's disk. */
+const GUEST_DB_ERROR = "sổ nội dung trên máy chủ HQ chưa sẵn sàng";
+
+/** A guest sees the media (signed URLs), not where it sits on the owner's disk. */
+function guestItem<T extends { media_path?: string | null }>(it: T): T {
+  return { ...it, media_path: it.media_path && path.basename(it.media_path) };
+}
+
+/** The registry for writes: 404 when no DB is configured, 409 with the reason when it cannot be used (a guest gets no path). */
+function registry(guest = false) {
   const c = openContent();
   if ("configured" in c) return { res: bad("chưa cấu hình DB nội dung (EIGHTSYNC_CONTENT_DB hoặc ~/.config/8sync/hq/content.json)", 404) };
-  if ("error" in c) return { res: bad(c.error, 409) };
+  if ("error" in c) return { res: bad(guest ? GUEST_DB_ERROR : c.error, 409) };
   return c;
 }
 
@@ -41,12 +51,15 @@ export async function GET(req: Request) {
   if (page && page.length > 200) return bad("fb_page: quá dài", 400);
   const c = openContent();
   if ("configured" in c) return json({ configured: false });
-  if ("error" in c) return json({ configured: true, ready: false, error: c.error });
+  const guest = !!o.access.guest;
+  if ("error" in c) return json({ configured: true, ready: false, error: guest ? GUEST_DB_ERROR : c.error });
   try {
-    return json(listContent(c.db, { status, format, fb_page: page }));
+    const list = listContent(c.db, { status, format, fb_page: page });
+    if (!guest || !("items" in list)) return json(list);
+    return json({ ...list, items: list.items.map(guestItem) });
   } catch (e) {
     // A DB replaced or damaged since it opened: shown in the view, not a bare 500 on every poll.
-    return json({ configured: true, ready: false, error: `không đọc được sổ nội dung: ${(e as Error).message}` });
+    return json({ configured: true, ready: false, error: guest ? GUEST_DB_ERROR : `không đọc được sổ nội dung: ${(e as Error).message}` });
   }
 }
 
@@ -64,7 +77,14 @@ export async function POST(req: Request) {
   }
 }
 
-/** `?id=`: body = fields to change, `status`, or `approve_source: "<source URL the owner saw>"`. */
+/**
+ * `?id=`: body = fields to change, `status`, `scheduled_at` (ms | null), `assignee_session` (+
+ * `assignee_base`; null clears), `approve_source: "<source URL the owner saw>"`, and
+ * `no_ai_confirmed: true` when approving an item with an AI mark (else 409). An approved item
+ * edited into AI-risk content without it drops back to `checked`; a published one answers 409.
+ * An editor (Chia sẻ) changes the item but not its media path or its agent; the source it approves
+ * is signed with its invite label.
+ */
 export async function PATCH(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
@@ -72,10 +92,14 @@ export async function PATCH(req: Request) {
   if (id === null) return bad("id: cần số mục", 400);
   const body = await readBody(req);
   if (!body) return bad("JSON body required");
-  const c = registry();
+  const guest = o.access.guest;
+  const ownerField = guest ? OWNER_CONTENT_FIELDS.find((k) => k in body) : undefined;
+  if (ownerField) return bad(`${ownerField}: chỉ chủ HQ sửa được`, 403);
+  const c = registry(!!guest);
   if ("res" in c) return c.res;
   try {
-    return json({ item: updateContent(c.db, id, body, hqApprover()) });
+    const item = updateContent(c.db, id, body, guest ? `chia sẻ: ${guest.label}` : hqApprover());
+    return json({ item: guest ? guestItem(item) : item });
   } catch (e) {
     return fail(e);
   }

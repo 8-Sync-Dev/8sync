@@ -1,23 +1,20 @@
 "use client";
 
-import { Loader2Icon, PaperclipIcon, SendIcon, XIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { Loader2Icon, SendIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FILE_MAX_MB, FILES_MAX, fileError, toBase64 } from "@/lib/attach";
-import { isImageName } from "@/lib/attachments";
+import { FILES_MAX } from "@/lib/attach";
 import { inboxText } from "@/lib/labels";
 import { roomGroups } from "@/lib/room-send";
 import { groupKey } from "@/lib/sidebar";
 import type { Message } from "./types";
 import { cn } from "@/lib/utils";
-import { Lightbox, UploadThumb, type Shown } from "./attachments";
+import { AttachButton, AttachList, useAttach, type Upload } from "./attach";
 import { MentionTextarea } from "./mention-textarea";
 import { ApiError, type Api } from "./use-hq";
 import type { Room } from "./use-office";
-
-export type Upload = { id: string; name: string; size: number };
 
 /** Phones: every control in the toolbar is a 44 px touch target; desktop keeps the dense row. */
 export const TOUCH = "max-sm:h-11 max-sm:min-w-11";
@@ -79,10 +76,9 @@ export function RoomSend({
   const [busy, setBusy] = useState(false);
   const [last, setLast] = useState<{ ok: boolean; text: string } | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
-  const picker = useRef<HTMLInputElement>(null);
-  const [files, setFiles] = useState<Upload[]>([]);
-  const [uploading, setUploading] = useState(0);
-  const [shown, setShown] = useState<Shown | null>(null);
+  const slots = FILES_MAX - reserve;
+  const att = useAttach(api, slots);
+  const { files, uploading } = att;
   const draft = text.trim().length > 0 || files.length > 0;
   useEffect(() => onDraft?.(draft), [draft, onDraft]);
 
@@ -92,35 +88,6 @@ export function RoomSend({
   const room = byKey(picked) ?? byKey(preferRoom) ?? inScope ?? all[0] ?? null;
   const group = room ? groups.find((g) => g.rooms.includes(room)) : undefined;
   const disabled = room == null;
-  const slots = FILES_MAX - reserve;
-
-  async function attach(list: File[]) {
-    const free = slots - files.length - uploading;
-    if (list.length > free) toast.warning(`Tối đa ${slots} file mỗi lần gửi`);
-    for (const f of list.slice(0, Math.max(0, free))) {
-      const why = fileError(f);
-      if (why) {
-        toast.error(why);
-        continue;
-      }
-      setUploading((n) => n + 1);
-      try {
-        const up = await api<Upload>("/api/uploads", { method: "POST", body: { name: f.name || "anh-dan.png", data: await toBase64(f) } });
-        setFiles((xs) => [...xs, up]);
-      } catch (e) {
-        toast.error(`${f.name}: ${(e as Error).message}`);
-      } finally {
-        setUploading((n) => n - 1);
-      }
-    }
-  }
-
-  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
-    const pasted = [...e.clipboardData.files];
-    if (pasted.length === 0) return;
-    e.preventDefault();
-    void attach(pasted);
-  }
 
   async function send() {
     const typed = text.trim();
@@ -142,7 +109,7 @@ export function RoomSend({
       setLast({ ok: true, text: `${room.label}: ${r.delivery === "inbox" ? inboxText(r.live, room.session_id ?? room.name) : "đã gõ vào terminal"}` });
       toast.success(`Đã gửi cho ${room.label}`);
       setText("");
-      setFiles([]);
+      att.clear();
       onSent?.();
       area.current?.focus();
     } catch (e) {
@@ -191,7 +158,7 @@ export function RoomSend({
           base={room?.cwd ?? null}
           api={api}
           onKeyDown={onKey}
-          onPaste={onPaste}
+          onPaste={att.onPaste}
           disabled={disabled}
           rows={2}
           maxLength={2000}
@@ -199,43 +166,7 @@ export function RoomSend({
           placeholder={placeholder}
           className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
-        {(files.length > 0 || uploading > 0) && (
-          <ul className="flex flex-wrap items-center gap-2 px-2 pt-1 pb-2" aria-label="File đính kèm">
-            {files.map((f) =>
-              isImageName(f.name) ? (
-                <li key={f.id}>
-                  <UploadThumb token={token} file={f} onOpen={setShown} className="size-16">
-                    <button
-                      type="button"
-                      className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full border bg-background text-muted-foreground shadow-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-7"
-                      aria-label={`Bỏ ${f.name}`}
-                      onClick={() => setFiles((xs) => xs.filter((x) => x.id !== f.id))}
-                    >
-                      <XIcon className="size-3" aria-hidden />
-                    </button>
-                  </UploadThumb>
-                </li>
-              ) : (
-                <li key={f.id} className="inline-flex max-w-56 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs">
-                  <PaperclipIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="truncate" title={f.name}>
-                    {f.name}
-                  </span>
-                  <button
-                    type="button"
-                    className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-8"
-                    aria-label={`Bỏ ${f.name}`}
-                    onClick={() => setFiles((xs) => xs.filter((x) => x.id !== f.id))}
-                  >
-                    <XIcon className="size-3" aria-hidden />
-                  </button>
-                </li>
-              ),
-            )}
-            {uploading > 0 && <li className="px-1.5 py-0.5 text-xs text-muted-foreground">Đang tải {uploading} file…</li>}
-          </ul>
-        )}
-        <Lightbox token={token} shown={shown} onClose={() => setShown(null)} />
+        <AttachList a={att} token={token} />
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2 pb-2">
           <Select value={room?.key ?? ""} onValueChange={setPicked} disabled={all.length === 0}>
             <SelectTrigger size="sm" className={cn("h-7 max-w-full min-w-0 gap-1.5 border-0 bg-muted/60 text-xs sm:max-w-[55%]", TOUCH, "max-sm:basis-full")} aria-label="Gửi tới">
@@ -250,6 +181,8 @@ export function RoomSend({
                     <SelectItem key={r.key} value={r.key} className="text-xs">
                       {r.label}
                       <span className="text-muted-foreground">
+                        {/* The closed trigger shows only this item: without the project, rooms named alike ("core") look the same. */}
+                        {r.label.toLowerCase() !== g.name.toLowerCase() ? ` · ${g.name}` : ""}
                         {r.delivery === "inbox" ? " · inbox" : ""}
                         {r.waiting ? " · đang chờ anh" : ""}
                       </span>
@@ -259,27 +192,7 @@ export function RoomSend({
               ))}
             </SelectContent>
           </Select>
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              void attach([...(e.target.files ?? [])]);
-              e.target.value = "";
-            }}
-          />
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className={cn("h-7 text-xs", TOUCH)}
-            disabled={disabled || files.length + uploading >= slots}
-            title={`Ảnh, PDF hay file bất kỳ, tối đa ${slots} file, ${FILE_MAX_MB} MB mỗi file; dán ảnh thẳng vào ô cũng được. Phòng mở bằng Read.`}
-            onClick={() => picker.current?.click()}
-          >
-            <PaperclipIcon /> <span className="max-sm:sr-only">Đính kèm</span>
-          </Button>
+          <AttachButton a={att} disabled={disabled} className={TOUCH} />
           <Button type="submit" size="sm" className={cn("ml-auto", TOUCH, "max-sm:px-4")} disabled={disabled || busy || uploading > 0 || (!text.trim() && !allowEmpty)} aria-busy={busy}>
             {busy ? <Loader2Icon className="animate-spin motion-reduce:animate-none" aria-hidden /> : <SendIcon aria-hidden />}
             {busy ? "Đang gửi…" : room ? `Gửi ${room.label}` : "Gửi"}

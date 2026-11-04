@@ -9,6 +9,6 @@ describe("room log stays fast on huge blocks", () => {
     const ev = activityFrom([line]);
     expect(performance.now() - t0).toBeLessThan(1000);
     expect(ev).toHaveLength(1);
-    expect(ev[0].text!.length).toBeLessThanOrEqual(400);
+    expect(ev[0].text!.length).toBeLessThanOrEqual(4000);
   });
 });

@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { LogLines } from "@/components/hq/room-log";
+import { ATTACH_HEADER } from "@/lib/attachments";
 import { activityFrom, readActivity, toolSummary } from "@/lib/server/activity";
 
 const SID = "04d7c8d5-7473-44e7-bab9-0606b4db5a01";
@@ -25,7 +29,7 @@ const FIXTURE = [
   assistant([{ type: "tool_use", id: "t3", name: "Bash", input: { command: `GH_TOKEN=${FAKE_SECRET} gh pr list` } }], 7),
   assistant([{ type: "tool_use", id: "t4", name: "WebFetch", input: { url: `https://example.com/a?token=${FAKE_SECRET}` } }], 8),
   assistant([{ type: "tool_use", id: "t5", name: "Agent", input: { subagent_type: "researcher", description: "Tìm sprite 64px" } }], 9),
-  assistant([{ type: "text", text: "x".repeat(900) }], 10),
+  assistant([{ type: "text", text: `**Gói:**\r\n\r\n\r\n| Món | Được |\n|---|---|\n| short |  có  \n${"x".repeat(5000)}` }], 10),
 ];
 
 describe("activityFrom", () => {
@@ -39,11 +43,14 @@ describe("activityFrom", () => {
       ["tool", "Bash", "gh", "pending"],
       ["tool", "WebFetch", "example.com", "pending"],
       ["agent", "researcher", "Tìm sprite 64px", "pending"],
-      ["text", null, "x".repeat(40), null],
+      ["text", null, "**Gói:**\n\n| Món | Được |\n|---|---|\n| sho", null],
     ]);
     expect(ev[3].error).toBe("exit 22: 401 Unauthorized");
     expect(ev[0].at).toBe(Date.parse(at(2)));
-    expect(ev[7].text.length).toBeLessThanOrEqual(400);
+    // A reply keeps its markdown lines (CRs and extra blank lines go) and stops at 4 000 chars.
+    expect(ev[7].text.startsWith("**Gói:**\n\n| Món | Được |\n|---|---|\n| short |  có\n")).toBe(true);
+    expect(ev[7].text.length).toBe(4000);
+    expect(ev[7].text.endsWith("…")).toBe(true);
   });
 
   it("never shows a command line: only its description or the first word", () => {
@@ -116,15 +123,23 @@ describe("GET /api/sessions/[name]/activity", () => {
 });
 
 describe("Nhật ký UI", () => {
-  it("one line per event, errors expandable, empty state", async () => {
-    const { createElement } = await import("react");
-    const { renderToStaticMarkup } = await import("react-dom/server");
-    const { LogLines } = await import("@/components/hq/room-log");
+  it("one line per event, errors expandable, empty state", () => {
     const ev = activityFrom(FIXTURE);
     const html = renderToStaticMarkup(createElement(LogLines, { events: ev, now: Date.parse(at(30)) }));
     for (const s of ["Làm card #6", "Read: /w/ai-game-studio/su-code/STATE.md", "Bash: Kiểm PR đang mở", "401 Unauthorized", "<details", "researcher: Tìm sprite 64px", "đang chạy", "28s", 'aria-label="Nhật ký phòng, mới nhất ở cuối"'])
       expect(html).toContain(s);
     expect(html).not.toContain(FAKE_SECRET);
     expect(renderToStaticMarkup(createElement(LogLines, { events: [], now: 0 }))).toContain("Chưa có gì trong nhật ký");
+  });
+
+  it("a prompt sent with files shows its body and the file names, not the markdown-mangled paths", () => {
+    const file = "C:\\w\\proj\\.claude\\hq-uploads\\0123456789abcdef0123456789abcdef\\bao_cao.zip";
+    const html = renderToStaticMarkup(
+      createElement(LogLines, { events: [{ kind: "prompt", at: null, text: `Xem file này\n\n${ATTACH_HEADER}\n- ${file}` }], now: 0 }),
+    );
+    expect(html).toContain("Xem file này");
+    expect(html).toContain(">bao_cao.zip<");
+    expect(html).not.toContain(ATTACH_HEADER);
+    expect(html).not.toContain("proj.claude");
   });
 });

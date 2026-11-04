@@ -1,5 +1,6 @@
 // Pure display rules for sessions (no React). Tested in tests/labels.test.ts.
 import type { Session } from "@/components/hq/types";
+import { mainRoot } from "./preview";
 import { roomLabel } from "./room-label";
 
 const DAY_MS = 86_400_000;
@@ -15,6 +16,19 @@ export function sessionLabel(s: Pick<Session, "label" | "name" | "session_id">):
   }
   const id = [s.label, s.name, s.session_id].find((x) => x && UUIDISH.test(x.trim()));
   return id ? id.trim().slice(0, 8) : "unknown";
+}
+
+/** The project folder a room works in (a worktree counts as its repo): "C:\\r\\su-code\\.claude\\worktrees\\x" -> "su-code". */
+export function roomProject(cwd: string | null | undefined): string | null {
+  const root = cwd?.trim() ? mainRoot(cwd.trim()).replace(/[\\/]+$/, "") : "";
+  return root.split(/[\\/]/).pop() || null;
+}
+
+/** Room name plus its project, so several rooms called "core" read apart: "core · su-code". */
+export function targetLabel(s: Pick<Session, "label" | "name" | "session_id" | "cwd">): string {
+  const name = sessionLabel(s);
+  const project = roomProject(s.cwd);
+  return project && project.toLowerCase() !== name.toLowerCase() ? `${name} · ${project}` : name;
 }
 
 /**

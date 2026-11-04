@@ -50,11 +50,20 @@ export function scanRepos(bases: string[], depth = 4, cap = 300): string[] {
   return out;
 }
 
+/** `p` is `dir` or inside it (rootKey: case and separators normalised). */
+const within = (p: string, dir: string) => {
+  const k = rootKey(p);
+  const d = rootKey(dir);
+  return k === d || k.startsWith(`${d}/`);
+};
+
 /**
  * Where to scan: the parent of every known repo, never a drive root, the home folder or above it
- * (a whole-disk walk), so "C:/Users/Projects/su-code" scans "C:/Users/Projects".
+ * (a whole-disk walk), so "C:/Users/Projects/su-code" scans "C:/Users/Projects". Nothing in the temp
+ * dir either: one trusted scratch folder there pulled every test fixture repo in (owner 2026-11-04,
+ * 197 of 302 entries in "Dự án trên máy" were %TEMP% dirs).
  */
-export function scanBases(known: string[], home: string): string[] {
+export function scanBases(known: string[], home: string, tmp = os.tmpdir()): string[] {
   const homeKey = rootKey(home);
   return [
     ...new Set(
@@ -62,7 +71,7 @@ export function scanBases(known: string[], home: string): string[] {
         .map((k) => path.dirname(k.replace(/[\\/]+$/, "")))
         .filter((p) => {
           const k = rootKey(p);
-          return k.length > 0 && !/^[a-z]:\/?$/.test(k) && k !== "/" && k !== homeKey && !homeKey.startsWith(`${k}/`);
+          return k.length > 0 && !/^[a-z]:\/?$/.test(k) && k !== "/" && k !== homeKey && !homeKey.startsWith(`${k}/`) && !within(p, tmp);
         }),
     ),
   ];
@@ -95,7 +104,9 @@ export function knownProjects(db: DatabaseSync, exclude: string[]): KnownProject
     const home = os.homedir();
     for (const r of claudeTrusted(home)) found.push({ path: r, source: "claude" });
     for (const r of scanRepos(scanBases(found.map((f) => f.path), home))) found.push({ path: r, source: "disk" });
-    cache = { at: now, found };
+    // Scratch repos (a session or trust in %TEMP%) are not projects.
+    const tmp = os.tmpdir();
+    cache = { at: now, found: found.filter((f) => !within(f.path, tmp)) };
   }
   return mergeKnown(cache.found, exclude).filter((k) => {
     try {

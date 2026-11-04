@@ -149,7 +149,7 @@ fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str), mode
     }
     let status = cmd.status().context("could not exec omp")?;
     if !status.success() {
-        ui::warn("omp exited non-zero");
+        ui::warn(&format!("omp exited non-zero ({status})"));
     }
     Ok(())
 }
@@ -295,7 +295,7 @@ fn resume_default(root: &Path) -> Result<()> {
         .status()
         .context("could not exec omp")?;
     if !status.success() {
-        ui::warn("omp exited non-zero");
+        ui::warn(&format!("omp exited non-zero ({status})"));
     }
     Ok(())
 }
