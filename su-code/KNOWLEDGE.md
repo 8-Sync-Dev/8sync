@@ -768,3 +768,8 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - failure: media lấy bằng `fetch` + header `x-hq-token` rồi `URL.createObjectURL(blob)` bắt trang giữ cả file trong RAM và không tua được (không có Range), nên phải đặt trần 150 MB và video bài học 178 MB không tải được. `<video src>` và `<a download>` là request trần của trình duyệt, không gửi được header.
 - validated: link ký HMAC theo từng file (`publicMedia` trong `lib/server/content-media.ts`, secret riêng `media-secret`, ký `[item, index, name, size, expiry]`, expiry = tròn giờ + 11 h nên URL đứng yên một giờ và poll không làm video đang phát load lại). Route stream từ đĩa, `Range` → 206, `&dl=1` → attachment. Tile pin URL lúc mount, key theo `name:size`.
 - validated: kiểm tải thật trong headless: `Browser.setDownloadBehavior` phải gửi qua session CẤP BROWSER (`browser.target().createCDPSession()`). Gửi qua session của page thì download báo `canceled` dù `totalBytes` đúng.
+
+## 2026-11-04 — %TEMP% rác từ test hq-ui
+- failure: `mkdtempSync(os.tmpdir())` trong setup/helpers/fixture không dọn, mỗi `vitest run` để lại ~70 thư mục; fixture có `.git` lọt vào "Dự án trên máy" vì một folder trusted trong %TEMP% làm %TEMP% thành scan base.
+- validated: `globalSetup` tạo 1 root/lượt, đặt TMPDIR/TEMP/TMP trước khi fork worker, teardown `rmSync` (try/catch vì SQLite giữ file trên Windows). `scanBases` + `knownProjects` bỏ mọi thứ dưới `os.tmpdir()`.
+- failure: `%TEMP%\hq-bench\home\.claude` là junction tới ~/.claude THẬT: đo size bằng os.walk ra 22,7 GB (du: 74 MB), và xoá đệ quy kiểu follow-link sẽ xoá ~/.claude thật. Dọn thư mục bench: gỡ junction trước (`[IO.Directory]::Delete` không recursive), rồi mới xoá.
