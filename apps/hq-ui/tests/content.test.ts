@@ -3,9 +3,11 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DELETE, GET, PATCH, POST } from "@/app/api/content/route";
-import { contentTaskText, contentWarning, nextStatuses } from "@/lib/content";
+import { GET as MEDIA } from "@/app/api/content/media/route";
+import { addDays, aiReason, byDay, contentTaskText, contentWarning, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_SCHEDULE, stepCursor, toLocalInput, weekStart } from "@/lib/content";
 import { getToken } from "@/lib/server/auth";
 import { contentConfigPath, NO_REGISTRY } from "@/lib/server/content";
+import { aiMark } from "@/lib/server/content-media";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 /** content-post-agency apps/content-ai/src/database/migrations/0062_content_registry.up.sql (table + gate). */
@@ -33,6 +35,14 @@ BEGIN SELECT CASE
   WHEN NEW.checked_at IS NULL THEN RAISE(ABORT, 'content_items: item must be checked before approved/published')
   WHEN NEW.status = 'published' AND (NEW.news_url IS NULL OR NEW.fb_post_url IS NULL) THEN RAISE(ABORT, 'content_items: published needs news_url and fb_post_url')
 END; END;
+`;
+/** 0063_content_schedule.up.sql: the calendar's columns. */
+const MIGRATION_0063 = `
+ALTER TABLE content_items ADD COLUMN scheduled_at INTEGER;
+ALTER TABLE content_items ADD COLUMN assignee_session TEXT;
+ALTER TABLE content_items ADD COLUMN assignee_base TEXT;
+ALTER TABLE content_items ADD COLUMN assigned_at INTEGER;
+CREATE INDEX IF NOT EXISTS idx_content_items_scheduled ON content_items(scheduled_at);
 `;
 
 let home = "";
@@ -162,6 +172,152 @@ describe("/api/content against the 0062 gate", () => {
   });
 });
 
+/** Source approved and checked: the next step is the owner's Duyệt. */
+async function readyToApprove(fields: Record<string, unknown>): Promise<string> {
+  const { item } = await (await POST(call("POST", "", { title: "Bài", source_url: "https://s", ...fields }))).json();
+  const q = `?id=${item.id}`;
+  await PATCH(call("PATCH", q, { approve_source: "https://s" }));
+  expect((await PATCH(call("PATCH", q, { status: "checked" }))).status).toBe(200);
+  return q;
+}
+
+describe("/api/content calendar fields (0063)", () => {
+  it("scheduled_at and the assignee are stored, validated and cleared", async () => {
+    configure(makeDb("sched.db", MIGRATION_0062 + MIGRATION_0063));
+    const at = new Date(2026, 10, 4, 19, 30).getTime();
+    const created = await POST(call("POST", "", { format: "text", title: "A", scheduled_at: at }));
+    expect(created.status).toBe(201);
+    const { item } = await created.json();
+    expect(item).toMatchObject({ scheduled_at: at, assignee_session: null, media: [] });
+    const q = `?id=${item.id}`;
+
+    for (const scheduled_at of ["2026-11-04", 1.5, 0, Date.UTC(2100, 0, 1)]) expect((await PATCH(call("PATCH", q, { scheduled_at }))).status).toBe(422);
+    expect((await PATCH(call("PATCH", q, { assignee_session: "core; rm -rf" }))).status).toBe(422);
+
+    let res = await PATCH(call("PATCH", q, { assignee_session: "omp-2364d8b9ca3a61ed", assignee_base: "mkt · 8sync-startup" }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).item).toMatchObject({ assignee_session: "omp-2364d8b9ca3a61ed", assignee_base: "mkt · 8sync-startup", assigned_at: expect.any(Number) });
+    // Saved in the DB: a fresh read (the reload the owner does) shows the same session.
+    const listed = (await (await GET(call("GET", ""))).json()) as { schedule: boolean; items: { id: number; assignee_session: string | null }[] };
+    expect(listed.schedule).toBe(true);
+    expect(listed.items.find((i) => i.id === item.id)?.assignee_session).toBe("omp-2364d8b9ca3a61ed");
+
+    res = await PATCH(call("PATCH", q, { assignee_session: null, scheduled_at: null }));
+    expect((await res.json()).item).toMatchObject({ assignee_session: null, assignee_base: null, assigned_at: null, scheduled_at: null });
+  });
+  it("a DB before 0063 lists without the calendar and refuses its fields with the reason", async () => {
+    configure(makeDb("old.db", MIGRATION_0062));
+    const { item } = await (await POST(call("POST", "", { format: "text", title: "A" }))).json();
+    expect((await (await GET(call("GET", ""))).json()).schedule).toBe(false);
+    const res = await PATCH(call("PATCH", `?id=${item.id}`, { scheduled_at: Date.now() }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe(NO_SCHEDULE);
+    // Other edits still work.
+    expect((await PATCH(call("PATCH", `?id=${item.id}`, { caption: "x" }))).status).toBe(200);
+  });
+  it("approving an AI-made item needs the reviewer's no-AI confirmation; the DB gate still runs after it", async () => {
+    configure(makeDb("ai.db", MIGRATION_0062 + MIGRATION_0063));
+    const q = await readyToApprove({ format: "ai_video" });
+    let res = await PATCH(call("PATCH", q, { status: "approved" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/^Mục có rủi ro nhãn AI \(.+\): tick xác nhận/);
+    res = await PATCH(call("PATCH", q, { status: "approved", no_ai_confirmed: true }));
+    expect(res.status).toBe(200);
+
+    // The confirmation is no way around the trigger: an unchecked item stays refused by the DB.
+    const { item } = await (await POST(call("POST", "", { format: "ai_video", title: "B" }))).json();
+    res = await PATCH(call("PATCH", `?id=${item.id}`, { status: "approved", no_ai_confirmed: true }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("content_items: source must be approved before approved/published");
+  });
+  it("an approved item cannot turn into AI content without the tick (format or media change)", async () => {
+    configure(makeDb("ai-swap.db", MIGRATION_0062 + MIGRATION_0063));
+    const q = await readyToApprove({ format: "text" });
+    expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
+    const res = await PATCH(call("PATCH", q, { format: "ai_video" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/^Mục có rủi ro nhãn AI/);
+    // Same status sent again does not slip it through either.
+    expect((await PATCH(call("PATCH", q, { status: "approved", format: "ai_video" }))).status).toBe(409);
+    const dir = path.join(home, "swap-media");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "r.mp4"), Buffer.alloc(64));
+    expect((await PATCH(call("PATCH", q, { media_path: dir }))).status).toBe(409);
+    expect((await PATCH(call("PATCH", q, { format: "ai_video", no_ai_confirmed: true }))).status).toBe(200);
+    // Edits that do not touch the AI rule stay free on an approved item.
+    expect((await PATCH(call("PATCH", q, { caption: "mới" }))).status).toBe(200);
+  });
+  it("media with Content Credentials or an IPTC AI source flags the item; plain media does not", async () => {
+    const dir = path.join(home, "media");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "a.png"), Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(5000), Buffer.from("jumb c2pa.claim v2"), Buffer.alloc(10)]));
+    fs.writeFileSync(path.join(dir, "b.jpg"), Buffer.concat([Buffer.alloc(100), Buffer.from("Iptc4xmpExt:DigitalSourceType=http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia")]));
+    fs.writeFileSync(path.join(dir, "c.mp4"), Buffer.alloc(2048, 7));
+    fs.writeFileSync(path.join(dir, "notes.txt"), "c2pa.claim");
+    expect(aiMark(path.join(dir, "a.png"))).toMatch(/C2PA/);
+    expect(aiMark(path.join(dir, "b.jpg"))).toMatch(/IPTC/);
+    expect(aiMark(path.join(dir, "c.mp4"))).toBeNull();
+    // A long render is read at both ends only: an MP4 with its manifest after mdat is still caught.
+    const big = path.join(home, "big.mp4");
+    fs.writeFileSync(big, Buffer.concat([Buffer.alloc(20 * 1024 * 1024), Buffer.from("c2pa.claim"), Buffer.alloc(64)]));
+    expect(aiMark(big)).toMatch(/C2PA/);
+
+    configure(makeDb("media.db", MIGRATION_0062 + MIGRATION_0063));
+    const q = await readyToApprove({ format: "infographic", media_path: dir });
+    const { items } = await (await GET(call("GET", ""))).json();
+    const row = items.find((i: { media_path: string }) => i.media_path === dir);
+    expect(row.media.map((m: { name: string; kind: string; ai: string | null }) => [m.name, m.kind, m.ai != null])).toEqual([
+      ["a.png", "image", true],
+      ["b.jpg", "image", true],
+      ["c.mp4", "video", false],
+    ]);
+    expect(aiReason(row)).toMatch(/a\.png/);
+    expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(409);
+
+    // The preview route serves the item's files by index only.
+    const get = (query: string) => MEDIA(req(`/api/content/media${query}`, { method: "GET", token, origin: null }));
+    const video = await get(`?id=${row.id}&i=2`);
+    expect(video.status).toBe(200);
+    expect(video.headers.get("content-type")).toBe("video/mp4");
+    expect((await video.arrayBuffer()).byteLength).toBe(2048);
+    // The name pins the file: a folder that shifted since the list answers 409, not another file.
+    expect((await get(`?id=${row.id}&i=2&n=c.mp4`)).status).toBe(200);
+    expect((await get(`?id=${row.id}&i=1&n=c.mp4`)).status).toBe(409);
+    expect((await get(`?id=${row.id}&i=3`)).status).toBe(404);
+    expect((await get(`?id=9999&i=0`)).status).toBe(404);
+    expect((await get(`?id=${row.id}&i=../notes.txt`)).status).toBe(400);
+    expect((await MEDIA(req(`/api/content/media?id=${row.id}&i=0`, { method: "GET", token: null, origin: null }))).status).toBe(401);
+  });
+});
+
+describe("calendar math (local time)", () => {
+  it("month grid: 6 weeks from the Monday on or before the 1st", () => {
+    const g = monthGrid(2026, 10); // November 2026 starts on a Sunday.
+    expect(g).toHaveLength(42);
+    expect(dayKey(g[0])).toBe("2026-10-26");
+    expect(dayKey(g[6])).toBe("2026-11-01");
+    expect(dayKey(weekStart(new Date(2026, 10, 1)))).toBe("2026-10-26");
+    expect(dayKey(addDays(new Date(2026, 11, 31), 1))).toBe("2027-01-01");
+  });
+  it("steps never skip a short month; a day key and a datetime-local value round-trip", () => {
+    expect(dayKey(stepCursor(new Date(2026, 0, 31), "month", 1))).toBe("2026-02-01");
+    expect(dayKey(stepCursor(new Date(2026, 2, 1), "week", -1))).toBe("2026-02-22");
+    const at = new Date(2026, 10, 4, 7, 5).getTime();
+    expect(toLocalInput(at)).toBe("2026-11-04T07:05");
+    expect(fromLocalInput("2026-11-04T07:05")).toBe(at);
+    expect(fromLocalInput("2026-11-04")).toBeNull();
+  });
+  it("by day: scheduled wins over published, each day in time order, undated left out", () => {
+    const t = (h: number, d = 4) => new Date(2026, 10, d, h).getTime();
+    const m = byDay([
+      { id: 1, scheduled_at: t(20), published_at: t(9, 1) },
+      { id: 2, scheduled_at: null, published_at: t(8) },
+      { id: 3, scheduled_at: null, published_at: null },
+    ]);
+    expect([...m.entries()].map(([k, v]) => [k, v.map((i) => i.id)])).toEqual([["2026-11-04", [2, 1]]]);
+  });
+});
+
 describe("content rules", () => {
   it("flow buttons: next step then Bỏ; rejected reopens; published ends", () => {
     expect(nextStatuses("ordered")).toEqual(["drafted", "rejected"]);
@@ -176,6 +332,12 @@ describe("content rules", () => {
     expect(contentWarning({ ...ok, news_url: null })).toBe("Đã có bài FB nhưng thiếu tin news");
     expect(contentWarning({ ...ok, source_approved_at: null })).toBe("Đã có bài FB nhưng nguồn chưa duyệt");
     expect(contentWarning({ ...ok, source_url: null, source_approved_at: null, news_url: null })).toBe("Đã có bài FB nhưng thiếu tin news, thiếu nguồn");
+  });
+  it("every video needs the no-AI check, marked or not (reel 1.2: lip-sync + cloned voice, no C2PA); plain text and images do not", () => {
+    for (const format of ["course_video", "clip", "asmr", "ai_video"] as const) expect(aiReason({ format })).not.toBeNull();
+    expect(aiReason({ format: "text", media: [{ name: "a.mp4", kind: "video", ai: null }] })).toMatch(/^video/);
+    expect(aiReason({ format: "infographic", media: [{ name: "a.png", kind: "image", ai: null }] })).toBeNull();
+    expect(aiReason({ format: "text" })).toBeNull();
   });
   it("the task names the item", () => {
     expect(contentTaskText({ id: 12, title: "Bài A", fb_page: "zus" }, " sửa caption ")).toBe("[Nội dung #12 · zus] Bài A\nsửa caption");

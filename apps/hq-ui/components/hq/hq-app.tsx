@@ -108,13 +108,17 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     else if (t.offsetLeft + t.offsetWidth + pad > row.scrollLeft + row.clientWidth) row.scrollTo({ left: t.offsetLeft + t.offsetWidth + pad - row.clientWidth });
   }, [tab]);
   const loops = usePoll<NonNullable<LoopsState["data"]>>(hq.api, "/api/loops", LOOPS_POLL_MS, tab === "loops");
-  // "Nội dung" exists only while a content DB is configured: asked once per load.
+  // "Nội dung" exists only while a content DB is configured: asked once per load. A shared calendar
+  // link (`?day=` / `?item=`) lands on that tab.
   const [contentOn, setContentOn] = useState(false);
   const { api } = hq;
   useEffect(() => {
     const ac = new AbortController();
     api<{ configured: boolean }>("/api/content?probe=1", { signal: ac.signal })
-      .then((r) => setContentOn(r.configured))
+      .then((r) => {
+        setContentOn(r.configured);
+        if (r.configured && /[?&](day|item)=/.test(window.location.search)) setTab("content");
+      })
       .catch(() => {});
     return () => ac.abort();
   }, [api]);
@@ -542,7 +546,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               <KnowView token={token} roots={knowRoots} repo={repo?.root ?? null} active={tab === "know"} />
             </TabsContent>
             <TabsContent value="content" className="h-full">
-              {contentOn && <ContentView token={token} rooms={officeRooms} active={tab === "content"} />}
+              {contentOn && <ContentView token={token} active={tab === "content"} />}
             </TabsContent>
             <TabsContent value="preview" className="h-full">
               <PreviewView state={previews} token={token} rooms={officeRooms} repo={repo?.root ?? null} />

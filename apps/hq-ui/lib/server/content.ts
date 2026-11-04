@@ -1,12 +1,15 @@
 // The content registry HQ reads and writes: `content_items` in content-post-agency's own SQLite
-// (its migration 0062 makes the table and the publish-gate triggers). HQ never creates or alters
-// that schema; every write goes through the DB's triggers like any other writer.
+// (its migration 0062 makes the table and the publish-gate triggers, 0063 the schedule and assignee
+// columns). HQ never creates or alters that schema; every write goes through the DB's triggers like
+// any other writer.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
-import { CONTENT_TEXT_FIELDS, isFormat, isStatus, type ContentItem, type ContentList, type ContentStatus } from "../content";
+import { aiReason, CONTENT_TEXT_FIELDS, isFormat, isStatus, NO_SCHEDULE, type ContentItem, type ContentList, type ContentRow, type ContentStatus } from "../content";
+import { mediaFiles, publicMedia } from "./content-media";
+import { isInboxId } from "./inbox";
 import { configDir } from "./paths";
 
 /** `~/.config/8sync/hq/content.json` = `{"db": "<absolute path to daily-dev.db>"}`; `EIGHTSYNC_CONTENT_DB` wins. */
@@ -102,14 +105,22 @@ export type ContentFilter = { status?: string | null; format?: string | null; fb
 
 const LIST_MAX = 500;
 
+/** Migration 0063 is in: the schedule and assignee columns exist. */
+export function hasSchedule(db: DatabaseSync): boolean {
+  const cols = new Set((db.prepare("PRAGMA table_info(content_items)").all() as { name: string }[]).map((c) => c.name));
+  return cols.has("scheduled_at") && cols.has("assignee_session") && cols.has("assignee_base") && cols.has("assigned_at");
+}
+
+const withMedia = (it: ContentItem): ContentRow => ({ ...it, media: mediaFiles(it.media_path).map(publicMedia) });
+
 export function listContent(db: DatabaseSync, f: ContentFilter = {}): Extract<ContentList, { ready: true }> {
   const by = (["status", "format", "fb_page"] as const).filter((k) => f[k]);
   const where = by.map((k) => `${k} = ?`);
   const args = by.map((k) => f[k]!);
   const sql = `SELECT * FROM content_items${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY updated_at DESC, id DESC LIMIT ${LIST_MAX}`;
-  const items = db.prepare(sql).all(...args) as unknown as ContentItem[];
+  const items = (db.prepare(sql).all(...args) as unknown as ContentItem[]).map(withMedia);
   const pages = (db.prepare("SELECT DISTINCT fb_page FROM content_items ORDER BY fb_page").all() as { fb_page: string }[]).map((r) => r.fb_page);
-  return { configured: true, ready: true, items, pages };
+  return { configured: true, ready: true, items, pages, schedule: hasSchedule(db) };
 }
 
 export function getContent(db: DatabaseSync, id: number): ContentItem | null {
@@ -134,6 +145,38 @@ function textFields(body: Record<string, unknown>): Record<string, string | null
   return out;
 }
 
+/** Planned times HQ accepts: 2000 … 2100, whole ms. */
+const SCHEDULE_MIN = Date.UTC(2000, 0, 1);
+const SCHEDULE_MAX = Date.UTC(2100, 0, 1);
+const BASE_MAX = 200;
+
+/**
+ * The 0063 fields of a body: `scheduled_at` (ms or null), `assignee_session` (an omp room id or a
+ * Claude session id; null clears it) with its label `assignee_base`. A new assignee stamps `assigned_at`.
+ */
+function scheduleFields(db: DatabaseSync, body: Record<string, unknown>, now: number): Record<string, string | number | null> {
+  const out: Record<string, string | number | null> = {};
+  const asks = "scheduled_at" in body || "assignee_session" in body;
+  if (!asks) return out;
+  if (!hasSchedule(db)) throw new ContentError(NO_SCHEDULE, 409);
+  if ("scheduled_at" in body) {
+    const v = body.scheduled_at;
+    if (v !== null && (typeof v !== "number" || !Number.isInteger(v) || v < SCHEDULE_MIN || v >= SCHEDULE_MAX)) throw new ContentError("scheduled_at: epoch ms (năm 2000 … 2099) hoặc null", 422);
+    out.scheduled_at = v;
+  }
+  if ("assignee_session" in body) {
+    const s = body.assignee_session;
+    if (s === null) Object.assign(out, { assignee_session: null, assignee_base: null, assigned_at: null });
+    else {
+      if (!isInboxId(s)) throw new ContentError("assignee_session: id phòng omp hoặc session Claude", 422);
+      const base = body.assignee_base;
+      if (base != null && (typeof base !== "string" || base.length > BASE_MAX)) throw new ContentError(`assignee_base: chuỗi tối đa ${BASE_MAX} ký tự`, 422);
+      Object.assign(out, { assignee_session: s, assignee_base: typeof base === "string" && base.trim() ? base.trim() : null, assigned_at: now });
+    }
+  }
+  return out;
+}
+
 /** Stamps a status change carries: "checked" records when, "published" records when it went out. */
 function statusStamps(item: Pick<ContentItem, "checked_at" | "published_at"> | null, status: ContentStatus, now: number): Record<string, number> {
   const s: Record<string, number> = {};
@@ -142,27 +185,36 @@ function statusStamps(item: Pick<ContentItem, "checked_at" | "published_at"> | n
   return s;
 }
 
-export function createContent(db: DatabaseSync, body: Record<string, unknown>, now = Date.now()): ContentItem {
+/** Owner rule 2026-11-04: an item with an AI mark goes to approved/published only with the reviewer's tick. */
+function aiGate(item: Pick<ContentItem, "format" | "media_path">, status: ContentStatus, body: Record<string, unknown>): void {
+  if (status !== "approved" && status !== "published") return;
+  const why = aiReason({ format: item.format, media: mediaFiles(item.media_path) });
+  if (why && body.no_ai_confirmed !== true) throw new ContentError(`Mục có rủi ro nhãn AI (${why}): tick xác nhận không dùng hình/giọng AI photoreal rồi mới duyệt.`, 409);
+}
+
+export function createContent(db: DatabaseSync, body: Record<string, unknown>, now = Date.now()): ContentRow {
   if (!isFormat(body.format)) throw new ContentError("format: một trong text, infographic, course_video, ai_video, asmr, clip, other", 422);
   if (body.status !== undefined && !isStatus(body.status)) throw new ContentError("status: không hợp lệ", 422);
   const t = textFields(body);
   if (!t.title) throw new ContentError("title: không được trống", 422);
   const status: ContentStatus = (body.status as ContentStatus | undefined) ?? "ordered";
-  const row: Record<string, string | number | null> = { ...t, format: body.format, status, ...statusStamps(null, status, now), created_at: now, updated_at: now };
+  aiGate({ format: body.format, media_path: t.media_path ?? null }, status, body);
+  const row: Record<string, string | number | null> = { ...t, ...scheduleFields(db, body, now), format: body.format, status, ...statusStamps(null, status, now), created_at: now, updated_at: now };
   const cols = Object.keys(row);
   const id = write(() => db.prepare(`INSERT INTO content_items (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).run(...cols.map((c) => row[c])).lastInsertRowid);
-  return getContent(db, Number(id))!;
+  return withMedia(getContent(db, Number(id))!);
 }
 
 /**
- * Edit one item. Body: any text field, `format`, `status`, and `approve_source: "<the source URL the
- * owner saw>"` (records who and when; 409 when the row's source has changed since).
- * A new `source_url` drops an earlier approval: it approved the old source.
+ * Edit one item. Body: any text field, `format`, `status`, `scheduled_at`, `assignee_session` (+
+ * `assignee_base`), and `approve_source: "<the source URL the owner saw>"` (records who and when;
+ * 409 when the row's source has changed since). Approving an item with an AI mark needs
+ * `no_ai_confirmed: true`. A new `source_url` drops an earlier approval: it approved the old source.
  */
-export function updateContent(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now = Date.now()): ContentItem {
+export function updateContent(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now = Date.now()): ContentRow {
   const item = getContent(db, id);
   if (!item) throw new ContentError(`không có mục #${id}`, 404);
-  const set: Record<string, string | number | null> = textFields(body);
+  const set: Record<string, string | number | null> = { ...textFields(body), ...scheduleFields(db, body, now) };
   if ("format" in body) {
     if (!isFormat(body.format)) throw new ContentError("format: không hợp lệ", 422);
     set.format = body.format;
@@ -172,6 +224,12 @@ export function updateContent(db: DatabaseSync, id: number, body: Record<string,
     set.status = body.status;
     Object.assign(set, statusStamps(item, body.status, now));
   }
+  // The AI rule holds for the item as it ends up: reaching approved/published, or changing format or
+  // media while already there, needs the tick (else switching an approved text to ai_video skips it).
+  const next = (set.status as ContentStatus | undefined) ?? item.status;
+  const nextFormat = (set.format as ContentItem["format"] | undefined) ?? item.format;
+  const nextMedia = "media_path" in set ? (set.media_path as string | null) : item.media_path;
+  if (next !== item.status || nextFormat !== item.format || nextMedia !== item.media_path) aiGate({ format: nextFormat, media_path: nextMedia }, next, body);
   if ("source_url" in set && set.source_url !== item.source_url) {
     set.source_approved_by = null;
     set.source_approved_at = null;
@@ -188,7 +246,7 @@ export function updateContent(db: DatabaseSync, id: number, body: Record<string,
   set.updated_at = now;
   cols.push("updated_at");
   write(() => db.prepare(`UPDATE content_items SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`).run(...cols.map((c) => set[c]), id));
-  return getContent(db, id)!;
+  return withMedia(getContent(db, id)!);
 }
 
 export function deleteContent(db: DatabaseSync, id: number): boolean {
