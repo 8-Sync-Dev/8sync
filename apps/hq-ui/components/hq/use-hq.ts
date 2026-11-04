@@ -65,7 +65,12 @@ export function makeApi(token: string): Api {
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
     });
     if (loginLapsed(res)) throw new ApiError(LAPSED, 401);
-    const data = await res.json().catch(() => ({}));
+    // A body that is not JSON (204, empty) is empty data; an aborted read is not: resolving `{}` there
+    // hands a superseded caller a success without its fields (the sidebar crashed on `worktrees.includes`).
+    const data = await res.json().catch((e: unknown) => {
+      if (init.signal?.aborted) throw e;
+      return {};
+    });
     if (!res.ok) throw new ApiError((data as { error?: string }).error ?? `HTTP ${res.status}`, res.status);
     return data as never;
   };
