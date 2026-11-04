@@ -1,8 +1,8 @@
 // The HTTP face of a web terminal (lib/server/term.ts), shared by a room's terminal and the shell.
 import { json } from "./http";
+import { PING_MS } from "../term-stream";
 import { endedTerm, poll, waitOutput, watch, type Term } from "./term";
 
-const HEARTBEAT_MS = 15_000;
 /** Longest a poll is held open waiting for output (a Cloudflare tunnel cuts a pending reply at 100 s). */
 export const LONG_POLL_MAX_MS = 20_000;
 
@@ -18,8 +18,9 @@ export function polledEnded(req: Request, key: string): Term | undefined {
 /**
  * GET of a terminal. Default: a stream, `event: out` = base64 terminal bytes, `event: end` when the
  * bridge exits (`{"elsewhere":true}` when an omp room's session is open in another terminal,
- * `{"exited":true}` when omp itself ended on the PC), `event: ping` at once (so the page knows the
- * stream reaches it) and every 15 s. Read with fetch() + a stream reader (EventSource cannot send the
+ * `{"exited":true}` when omp itself ended on the PC), `event: ping` `{"t":<HQ clock ms>}` at once (so
+ * the page knows the stream reaches it) and every PING_MS (so a page behind a proxy that passes the
+ * stream in batches can tell, lib/term-stream.ts heldBack). Read with fetch() + a stream reader (EventSource cannot send the
  * HQ token). With `?gen=&since=` (a link whose proxy holds a stream back, like a Cloudflare quick
  * tunnel) it answers once with JSON `{gen, cursor, out, reset, ended, elsewhere, dead, exited}`: the
  * bytes after `since`, `out` in base64; with `&wait=<ms>` (at most LONG_POLL_MAX_MS) an up-to-date
@@ -50,7 +51,8 @@ export async function termResponse(req: Request, key: string, term: Term): Promi
           /* closed */
         }
       };
-      push("ping", "{}");
+      const ping = () => push("ping", JSON.stringify({ t: Date.now() }));
+      ping();
       // `replay`: kept output whose queries were answered already; the page writes it without answering.
       stop = watch(key, term, (b, answered) => {
         if (b) push(answered ? "replay" : "out", b.toString("base64"));
@@ -64,7 +66,7 @@ export async function termResponse(req: Request, key: string, term: Term): Promi
           }
         }
       });
-      beat = setInterval(() => push("ping", "{}"), HEARTBEAT_MS);
+      beat = setInterval(ping, PING_MS);
       req.signal.addEventListener("abort", () => {
         clearInterval(beat);
         stop();
