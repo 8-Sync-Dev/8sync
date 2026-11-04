@@ -130,6 +130,8 @@ function LogProse({ text, className }: { text: string; className?: string }) {
   const long = text.length > CLAMP_CHARS || text.split("\n").length > CLAMP_LINES;
   const [open, setOpen] = useState(false);
   const clamped = long && !open;
+  // The server stops a reply at 4 000 chars (a prompt at 2 000) and ends it with "…".
+  const cut = text.length >= 2000 && text.endsWith("…");
   return (
     <div className={cn("min-w-0 flex-1", className)}>
       <div
@@ -145,6 +147,7 @@ function LogProse({ text, className }: { text: string; className?: string }) {
           {open ? "Thu gọn" : "Xem hết"}
         </button>
       )}
+      {cut && open && <p className="mt-1 text-xs text-muted-foreground">Câu này dài hơn phần Nhật ký giữ. Đọc trọn trong “Mở log đầy đủ”.</p>}
     </div>
   );
 }

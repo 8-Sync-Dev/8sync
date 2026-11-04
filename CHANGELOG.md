@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Changed
+- HQ sidebar: phiên con dưới một phiên không đổi chỗ khi một phiên bắt đầu hoặc xong việc nữa. Thứ tự cố định theo tên; chỉ chuyện hiện ngay hay nằm trong "+N cũ hơn" còn theo trạng thái và thời gian.
+- Nhật ký: câu trả lời dài hơn phần Nhật ký giữ (4 000 ký tự) có dòng báo đọc trọn trong "Mở log đầy đủ".
+
 ## [0.122.8] — 2026-11-04
 
 ### Changed
