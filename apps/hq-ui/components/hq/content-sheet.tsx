@@ -273,7 +273,7 @@ function ItemDetail({
             ) : (
               <div className="mt-1.5 grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(9rem,1fr))]">
                 {it.media.map((m) => (
-                  <MediaTile key={`${m.name}:${m.size}`} m={m} />
+                  <MediaTile key={`${m.index}:${m.name}:${m.size}`} m={m} />
                 ))}
               </div>
             ))}

@@ -354,6 +354,12 @@ describe("/api/content calendar fields (0063)", () => {
     const past = await plain(signed, "bytes=5000-");
     expect(past.status).toBe(416);
     expect(past.headers.get("content-range")).toBe("bytes */2048");
+    // An invalid range (last < first) or several ranges: the whole file, not 416.
+    for (const r of ["bytes=5-3", "bytes=0-1,5-6"]) {
+      const res = await plain(signed, r);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-length")).toBe("2048");
+    }
     // "Tải": attachment under the file's own name.
     expect((await plain(`${signed}&dl=1`)).headers.get("content-disposition")).toBe(`attachment; filename="c.mp4"; filename*=UTF-8''c.mp4`);
     // The signature pins item, index, name and size: any other value, or a forged one, is refused.
