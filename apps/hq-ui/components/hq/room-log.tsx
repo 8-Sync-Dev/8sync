@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { agoShort, agoVi } from "@/lib/now";
 import type { ActivityEvent } from "@/lib/server/activity";
 import { cn } from "@/lib/utils";
+import { MessageResponse } from "@/components/ai-elements/message";
 import { ErrorNote } from "./bits";
 import { makeApi } from "./use-hq";
 
@@ -120,6 +121,34 @@ export function LogLines({ events, now }: { events: ActivityEvent[]; now: number
   );
 }
 
+/** A reply or prompt longer than this (chars or lines) opens clamped, with "Xem hết". */
+const CLAMP_CHARS = 600;
+const CLAMP_LINES = 8;
+
+/** A reply or prompt in full, rendered as markdown; a long one opens clamped. */
+function LogProse({ text, className }: { text: string; className?: string }) {
+  const long = text.length > CLAMP_CHARS || text.split("\n").length > CLAMP_LINES;
+  const [open, setOpen] = useState(false);
+  const clamped = long && !open;
+  return (
+    <div className={cn("min-w-0 flex-1", className)}>
+      <div
+        className={cn(
+          "text-sm leading-relaxed break-words [&_pre]:my-1.5 [&_pre]:text-xs [&_table]:my-1.5 [&_table]:text-xs",
+          clamped && "max-h-44 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]",
+        )}
+      >
+        <MessageResponse>{text}</MessageResponse>
+      </div>
+      {long && (
+        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="mt-1 text-xs text-primary hover:underline">
+          {open ? "Thu gọn" : "Xem hết"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function LogLine({ ev, now }: { ev: ActivityEvent; now: number }) {
   const Icon = ev.status === "error" ? CircleAlertIcon : KIND_ICON[ev.kind];
   const head = ev.tool ? (ev.text ? `${ev.tool}: ${ev.text}` : ev.tool) : ev.text;
@@ -137,6 +166,17 @@ function LogLine({ ev, now }: { ev: ActivityEvent; now: number }) {
       {ev.status === "error" ? ", lỗi" : ev.status === "pending" ? ", đang chạy" : ""}:{" "}
     </span>
   );
+  if ((ev.kind === "text" || ev.kind === "prompt") && !ev.tool && !ev.error)
+    return (
+      <li className={cn("px-3 py-1.5", ev.kind === "prompt" && "bg-owner/60")}>
+        <div className="flex items-start gap-2">
+          {icon}
+          {label}
+          <LogProse text={ev.text} className={ink} />
+          {time}
+        </div>
+      </li>
+    );
   return (
     <li className={cn("px-3 py-1.5", ev.kind === "prompt" && "bg-owner/60")}>
       {long ? (

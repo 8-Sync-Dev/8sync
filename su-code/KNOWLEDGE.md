@@ -757,3 +757,7 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 - failure: sort "Gần đây" xếp phiên và dự án theo `at`, mà `at` đổi sau mỗi lượt, nên cứ 5 giây poll là một phiên đang làm nhảy lên đầu và kéo cả dự án theo.
 - validated: dùng sort "manual" (`inOrder` + `moveKey` trong `lib/session-tree.ts`). Phiên chưa xếp đi theo `created` (không đổi theo thời gian), dự án chưa xếp đi theo tên. Chỉ có drop mới ghi `hq.tree.order`, và drop chụp lại cả danh sách đang hiện. Prefs có `v: 2`: bản lưu cũ có `sort: "recent"` không có `v` chỉ là mặc định cũ (mỗi lần gập nhóm là lưu cả prefs), nên được chuyển sang manual.
 - validated: test HTML5 drag & drop trong headless bằng cách bắn `DragEvent` có `new DataTransfer()` (dragstart → dragover → drop → dragend) trong `page.evaluate`. Download blob kiểm bằng CDP `Browser.setDownloadBehavior`.
+
+## 2026-11-04 — Nhật ký phòng mất markdown
+- failure: `clip()` trong `lib/server/activity.ts` gộp mọi khoảng trắng (`\s+` → " ") và cắt ở 400 ký tự, nên bảng markdown trong câu trả lời chỉ còn một dòng `| Món | … |---|`.
+- validated: dùng `clipText` (chỉ bỏ CR, khoảng trắng cuối dòng và dòng trống thừa; vẫn `maskSecrets` trước) cho prompt và reply; UI render bằng `MessageResponse` (Streamdown), dài thì kẹp `max-h-44` + "Xem hết". Mỗi lần poll tối đa 80 × 4 000 ký tự.
