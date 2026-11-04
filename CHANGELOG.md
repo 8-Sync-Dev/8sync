@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.8] — 2026-11-04
+
 ### Changed
 - HQ Nhật ký phòng: câu trả lời và lời nhắn hiện đầy đủ (tới 4 000 / 2 000 ký tự, trước là 400 / 200 rồi cắt "…") và render markdown: bảng, danh sách, in đậm, code. Câu dài mở gọn 8 dòng, bấm "Xem hết" để đọc cả. Dòng công cụ giữ một dòng như cũ.
 

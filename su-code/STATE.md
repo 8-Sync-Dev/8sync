@@ -6,7 +6,9 @@ Owner 2026-11-04: (1) sidebar HQ không tự nhảy, chỉ kéo thả mới đ�
 ## Checklist
 - [x] v0.122.5 (#285) cookie `session-secret`; v0.122.6 (#287/#288) mã thoát omp
 - [x] #289: sidebar sort "Tự sắp (kéo thả)" mặc định, `hq.tree.order`; `attach.tsx` dùng chung; `slashAt` giữa câu; Media luôn hiện + nút Tải. Dev HQ :8791 kiểm thật: kéo phiên/dự án, 30 s không nhảy, `/rev` giữa câu, thumbnail, tải file 38 861 B
-- [ ] v0.122.7 release + `8sync up`
+- [x] v0.122.7 (#290) đã release
+- [x] #291 Nhật ký: reply/prompt đầy đủ + markdown, kẹp 8 dòng + "Xem hết"
+- [ ] v0.122.8 release + `8sync up`
 - [ ] Clip #3 (bài 35, Reels 17s) chưa có file render: chỉ có video bài học đầy đủ `content-ai/output/courses/8547-c/videos/35-toan-tu-bitwise-trong-c.mp4` (102 MB). Pipeline content-post-agency cần ghi `media_path` khi render
 - [ ] TermLag: lag terminal giữa lượt (native omp đúng, lỗi ở pipeline HQ) — chờ PR
 - [ ] #283 HQ Artifacts chờ #278
