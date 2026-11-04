@@ -524,10 +524,9 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 onTarget={setTarget}
                 onStartSession={focusStartSession}
                 bar={room && roomState ? <RoomBar room={room} n={roomState} token={token} onTerminal={openTerminal} /> : null}
+                split={room && roomState ? <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} /> : null}
                 header={
-                  room && roomState ? (
-                    <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} />
-                  ) : loaded && !liveRooms.length ? (
+                  !(room && roomState) && loaded && !liveRooms.length ? (
                     <FirstRun state={firstRun} onAddProject={focusAddProject} onStartSession={focusStartSession} />
                   ) : null
                 }

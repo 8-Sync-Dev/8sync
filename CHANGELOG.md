@@ -8,6 +8,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [0.122.9] — 2026-11-04
 
 ### Changed
+- HQ Chat phòng (màn rộng): Nhật ký và chat chia hai khung, kéo đường ranh giữa để Nhật ký cao hơn hoặc chat rộng hơn. Trình duyệt nhớ tỉ lệ. Thanh tên phòng và ô nhắn đứng yên. Trên điện thoại giữ cách cũ: Nhật ký cuộn cùng chat.
+
+### Changed
 - HQ sidebar: phiên con dưới một phiên không đổi chỗ khi một phiên bắt đầu hoặc xong việc nữa. Thứ tự cố định theo tên; chỉ chuyện hiện ngay hay nằm trong "+N cũ hơn" còn theo trạng thái và thời gian.
 - Nhật ký: câu trả lời dài hơn phần Nhật ký giữ (4 000 ký tự) có dòng báo đọc trọn trong "Mở log đầy đủ".
 
