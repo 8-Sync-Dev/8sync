@@ -8,10 +8,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Added
 - HQ Nội dung: nút chép caption ngay dưới Caption của từng bài. Dòng thu gọn trong khung ngày hiện số file ảnh/video bài đó đã có, nên biết bài nào xem hoặc tải được mà không cần mở từng bài.
 
-## [0.122.9] — 2026-11-04
-
 ### Changed
 - HQ Chat phòng (màn rộng): Nhật ký và chat chia hai khung, kéo đường ranh giữa để Nhật ký cao hơn hoặc chat rộng hơn. Trình duyệt nhớ tỉ lệ. Thanh tên phòng và ô nhắn đứng yên. Trên điện thoại giữ cách cũ: Nhật ký cuộn cùng chat.
+
+### Fixed
+- HQ terminal của phòng omp không còn "lag" (không hiện phần mới nhất khi phòng đang làm, hết turn mới thấy đủ): pty của phòng có một cỡ chung cho mọi viewer, trang mở vào bridge đang chạy không gửi cỡ của mình nên pty giữ cỡ của viewer trước (`8sync . <tên>` trên PC, tab/máy khác). Pty cao hơn xterm thì các dòng cuối (omp đang làm gì, spinner, ô nhập) bị dồn vào dòng cuối: đo trên HQ dev, pty 144×50 vs pane 144×38, cả pane chỉ còn hàng chục dòng "Running …" lặp, 21/222 mẫu mất status line; sau khi sửa 0/222, 420/420 marker hiện, trễ p50 0,2 s (loopback) / 0,54 s (poll qua proxy RTT 300 ms). Giờ HQ đặt pty theo cỡ trang khi trang vào bridge (stream, hoặc poll `reset`), và click vào terminal đặt lại cỡ khi viewer khác đổi cỡ sau đó.
+- Bridge terminal không còn bị đóng giữa chừng ("Đã rời phòng") 60 s sau khi một viewer rời đi: stream rời gọi `stop()` hai lần (abort và cancel), lần hai để lại timer idle mồ côi mà `watch()` của viewer kế tiếp không huỷ được.
+
+## [0.122.9] — 2026-11-04
 
 ### Changed
 - HQ sidebar: phiên con dưới một phiên không đổi chỗ khi một phiên bắt đầu hoặc xong việc nữa. Thứ tự cố định theo tên; chỉ chuyện hiện ngay hay nằm trong "+N cũ hơn" còn theo trạng thái và thời gian.

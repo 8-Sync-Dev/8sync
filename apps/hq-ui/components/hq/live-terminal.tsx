@@ -365,6 +365,16 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
         if (!readOnly) return keys(data);
         if (data && !data.startsWith("\x1b")) void takeoverRef.current();
       });
+      // The room's pty has one size for all its viewers: `8sync . <name>` on the PC (or another tab)
+      // may have sized it since this page joined, and a pty taller than this xterm hides omp's live
+      // rows. A click into the terminal sizes it back to this page (HQ also does on join: joinSize).
+      el.addEventListener(
+        "pointerdown",
+        () => {
+          if (!readOnly) void post(sizeRef.current);
+        },
+        { signal: ac.signal },
+      );
       let last = size;
       // MIN_ROWS can be taller than a phone's box: the box scrolls, and stays at its bottom (the
       // prompt and status line) unless the owner scrolled up to read.
