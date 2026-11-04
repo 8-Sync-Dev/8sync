@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.6] — 2026-11-04
+
 ### Changed
 - `8sync ai` / `8sync .` in kèm mã thoát khi omp thoát lỗi (`omp exited non-zero (exit code: 1)`), để biết omp tự thoát, bị Ctrl-C hay crash.
 
