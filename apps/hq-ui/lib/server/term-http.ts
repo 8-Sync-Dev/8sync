@@ -1,7 +1,7 @@
 // The HTTP face of a web terminal (lib/server/term.ts), shared by a room's terminal and the shell.
 import { json } from "./http";
 import { PING_MS } from "../term-stream";
-import { endedTerm, poll, waitOutput, watch, type Term } from "./term";
+import { clampSize, endedTerm, joinSize, poll, waitOutput, watch, type Term } from "./term";
 
 /** Longest a poll is held open waiting for output (a Cloudflare tunnel cuts a pending reply at 100 s). */
 export const LONG_POLL_MAX_MS = 20_000;
@@ -24,10 +24,12 @@ export function polledEnded(req: Request, key: string): Term | undefined {
  * HQ token). With `?gen=&since=` (a link whose proxy holds a stream back, like a Cloudflare quick
  * tunnel) it answers once with JSON `{gen, cursor, out, reset, ended, elsewhere, dead, exited}`: the
  * bytes after `since`, `out` in base64; with `&wait=<ms>` (at most LONG_POLL_MAX_MS) an up-to-date
- * poll is held until output arrives or the bridge ends.
+ * poll is held until output arrives or the bridge ends. The page's `cols`/`rows` size the pty when it
+ * joins a bridge already running (the stream, or a poll answered with `reset`): see joinSize.
  */
 export async function termResponse(req: Request, key: string, term: Term): Promise<Response> {
   const url = new URL(req.url);
+  const size = url.searchParams.has("cols") && url.searchParams.has("rows") ? clampSize(Number(url.searchParams.get("cols")), Number(url.searchParams.get("rows"))) : null;
   if (url.searchParams.has("since")) {
     const gen = Number(url.searchParams.get("gen"));
     const since = Number(url.searchParams.get("since"));
@@ -37,6 +39,7 @@ export async function termResponse(req: Request, key: string, term: Term): Promi
     // the link. Answer "nothing new"; its next poll finds no ended bridge and gets a fresh one.
     if (term.closed) return json({ gen, cursor: since, out: "", reset: false, answered: false, ended: false, elsewhere: false, dead: false, exited: false });
     const p = poll(key, term, gen, since);
+    if (p.reset && size) joinSize(term, size);
     return json({ gen: p.gen, cursor: p.cursor, out: p.out.toString("base64"), reset: p.reset, answered: p.answered, ended: p.ended, elsewhere: p.elsewhere, dead: p.dead, exited: p.exited });
   }
   const enc = new TextEncoder();
@@ -55,6 +58,7 @@ export async function termResponse(req: Request, key: string, term: Term): Promi
       ping();
       // Before watch(): an ended term calls back at once, and its clearInterval must find the interval.
       beat = setInterval(ping, PING_MS);
+      if (size) joinSize(term, size);
       // `replay`: kept output whose queries were answered already; the page writes it without answering.
       stop = watch(key, term, (b, answered) => {
         if (b) push(answered ? "replay" : "out", b.toString("base64"));

@@ -761,3 +761,6 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 ## 2026-11-04 — Nhật ký phòng mất markdown
 - failure: `clip()` trong `lib/server/activity.ts` gộp mọi khoảng trắng (`\s+` → " ") và cắt ở 400 ký tự, nên bảng markdown trong câu trả lời chỉ còn một dòng `| Món | … |---|`.
 - validated: dùng `clipText` (chỉ bỏ CR, khoảng trắng cuối dòng và dòng trống thừa; vẫn `maskSecrets` trước) cho prompt và reply; UI render bằng `MessageResponse` (Streamdown), dài thì kẹp `max-h-44` + "Xem hết". Mỗi lần poll tối đa 80 × 4 000 ký tự.
+
+## 2026-11-04 — HQ terminal "lag" khi phòng omp đang làm
+- failure: không phải mạng/xterm/host (đo: native vs HQ SSE trễ p50 0 ms, poll RTT 800 ms trễ ~RTT, omp+ConPTY+host luôn đúng giữa turn) mà là cỡ pty chung: trang vào bridge đang chạy không gửi cỡ, pty giữ cỡ viewer trước (`8sync . <tên>`), pty cao hơn xterm → dòng cuối của omp (spinner/ô nhập/việc đang làm) dồn vào hàng cuối. Đổi cỡ pty làm omp vẽ lại cả lịch sử (~270 KB), cùng cỡ chỉ ~3,7 KB; viewer đo đạc nào gửi `cols/rows` khi join cũng sẽ đổi cỡ pty (harness phải nối không kèm cỡ).
