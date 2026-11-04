@@ -241,9 +241,13 @@ export function groupSessions(list: TreeSession[], by: GroupBy, sort: SortBy, or
 /** Sub-sessions shown without asking: running ones and those active within this window. */
 export const CHILD_RECENT_MS = 30 * 60_000;
 
-/** Running and recent sub-sessions (running first, newest first) and the older rest ("+N cũ hơn"). */
+/**
+ * Running and recent sub-sessions and the older rest ("+N cũ hơn"), both in a fixed order (by name, then
+ * key): a sub-session that starts or finishes never moves past its siblings (owner 2026-11-04: nothing
+ * in the sidebar jumps). Only which list it sits in follows its state and time.
+ */
 export function splitChildren(children: TreeChild[], now: number, recentMs = CHILD_RECENT_MS): { shown: TreeChild[]; older: TreeChild[] } {
-  const sorted = [...children].sort((a, b) => Number(b.state === "working") - Number(a.state === "working") || (b.at ?? 0) - (a.at ?? 0));
+  const sorted = [...children].sort((a, b) => byName(a.title, b.title) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   const shown: TreeChild[] = [];
   const older: TreeChild[] = [];
   for (const c of sorted) (c.state === "working" || c.state === "needs" || (c.at != null && now - c.at <= recentMs) ? shown : older).push(c);
