@@ -25,7 +25,7 @@ const FIXTURE = [
   assistant([{ type: "tool_use", id: "t3", name: "Bash", input: { command: `GH_TOKEN=${FAKE_SECRET} gh pr list` } }], 7),
   assistant([{ type: "tool_use", id: "t4", name: "WebFetch", input: { url: `https://example.com/a?token=${FAKE_SECRET}` } }], 8),
   assistant([{ type: "tool_use", id: "t5", name: "Agent", input: { subagent_type: "researcher", description: "Tìm sprite 64px" } }], 9),
-  assistant([{ type: "text", text: "x".repeat(900) }], 10),
+  assistant([{ type: "text", text: `**Gói:**\r\n\r\n\r\n| Món | Được |\n|---|---|\n| short |  có  \n${"x".repeat(5000)}` }], 10),
 ];
 
 describe("activityFrom", () => {
@@ -39,11 +39,14 @@ describe("activityFrom", () => {
       ["tool", "Bash", "gh", "pending"],
       ["tool", "WebFetch", "example.com", "pending"],
       ["agent", "researcher", "Tìm sprite 64px", "pending"],
-      ["text", null, "x".repeat(40), null],
+      ["text", null, "**Gói:**\n\n| Món | Được |\n|---|---|\n| sho", null],
     ]);
     expect(ev[3].error).toBe("exit 22: 401 Unauthorized");
     expect(ev[0].at).toBe(Date.parse(at(2)));
-    expect(ev[7].text.length).toBeLessThanOrEqual(400);
+    // A reply keeps its markdown lines (CRs and extra blank lines go) and stops at 4 000 chars.
+    expect(ev[7].text.startsWith("**Gói:**\n\n| Món | Được |\n|---|---|\n| short |  có\n")).toBe(true);
+    expect(ev[7].text.length).toBe(4000);
+    expect(ev[7].text.endsWith("…")).toBe(true);
   });
 
   it("never shows a command line: only its description or the first word", () => {
