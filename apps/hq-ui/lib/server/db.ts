@@ -95,6 +95,21 @@ CREATE TABLE IF NOT EXISTS api_key_calls (
   source TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS api_key_calls_at ON api_key_calls(at);
+-- Files a room registered for the owner (lib/server/artifacts.ts): the path only, the bytes stay on disk.
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  root TEXT NOT NULL,
+  project TEXT NOT NULL,
+  branch TEXT,
+  session TEXT,
+  title TEXT NOT NULL,
+  note TEXT,
+  kind TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS artifacts_updated ON artifacts(updated_at);
 `;
 
 const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync; schema: string } };
