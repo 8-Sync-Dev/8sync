@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- HQ Nội dung → Giao việc: menu "Chọn phiên omp" cuộn được tới phiên cuối. Kiểu `item-aligned` của Radix Select đặt sát đáy màn hình thì nuốt lăn chuột (10 lần lăn chỉ đi 24 px trên 1 028 px). Giờ menu dùng `popper`: mở phía trên ô chọn, cao tối đa 20rem, cuộn thường.
+
 ## [0.122.14] — 2026-11-04
 
 ### Fixed
