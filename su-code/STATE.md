@@ -14,7 +14,10 @@ HQ terminal qua link public (Cloudflare quick tunnel) trống dưới chấm xan
 - [x] UAT HQ thật (0.122.2) lộ lỗi khác: 1/12 lần tải sập "This page couldn't load" (`makeApi` nuốt AbortError → `worktrees` undefined). Sửa ở v0.122.4 (branch `fix/hq-api-abort`)
 - [x] v0.122.4 (#284): reviewer approve, CI 8/8, release xanh, `8sync up` → HQ `/api/version` ui 0.122.4; 24 lần tải HQ thật 0 sập (trước 1/12); bundle đang phục vụ có `signal?.aborted)throw`
 - [x] Link public thật (host không đổi sau `up`): đăng nhập OK, terminal phòng hiện 33 dòng chữ sau 1,0 s, 0 pageerror. Shell máy qua Cloudflare bị chặn có chủ ý (`app/api/shell/route.ts:17`, khung hiện câu báo đỏ)
-- [ ] Owner lấy link đăng nhập mới khi cần: `8sync hq ui --relink` (giữ host + cookie thiết bị đã đăng nhập)
+- [x] v0.122.5 (#285): cookie `hq_pub` ký bằng `session-secret` riêng → `--relink` không còn đăng xuất thiết bị (kiểm trên HQ thật: relink xong cookie cũ vẫn vào); EPIPE chỉ nuốt, `exit` giữ trạng thái elsewhere/host-gone
+- [ ] #287: `8sync ai`/`8sync .` in mã thoát của omp (chưa release, đi cùng bản sau)
+- [ ] #283 HQ Artifacts (tab "Kết quả") chờ #278 merge rồi retarget `main`
+- [ ] Owner báo "omp exited non-zero": chưa tái hiện (`8sync ai` resume + one-shot đều chạy); chờ owner cho biết lệnh/thư mục
 
 ## Current
 Loop tick xong: goal (terminal trống qua link public) đã kiểm trên bề mặt thật. Chờ owner phản hồi trên điện thoại.
@@ -24,3 +27,4 @@ Loop tick xong: goal (terminal trống qua link public) đã kiểm trên bề m
 - `aiLabel` của job ad-frames chưa nối vào `content_items`.
 - Sửa gốc inbox phòng do Orca mở (KNOWLEDGE 2026-11-04).
 - `statusline::tests::chained_timeout_kills_group` flake Windows CI; đỏ lại thì `gh run rerun --failed`.
+- Link không cần đăng nhập lại khi tunnel restart cần host cố định (VPS hoặc Cloudflare named tunnel); quick tunnel đổi host.
