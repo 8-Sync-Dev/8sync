@@ -1,4 +1,4 @@
-import { LINK_MS, PUB_COOKIE, readPublic, safeEqual, SESSION_MS, sessionCookie } from "@/lib/server/auth";
+import { LINK_MS, PUB_COOKIE, readPublic, safeEqual, SESSION_MS, sessionCookie, sessionSecret } from "@/lib/server/auth";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,7 @@ export async function GET(req: Request) {
     headers: {
       location: "/",
       "cache-control": "no-store",
-      "set-cookie": `${PUB_COOKIE}=${sessionCookie(pub.key, now)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}`,
+      "set-cookie": `${PUB_COOKIE}=${sessionCookie(sessionSecret(), now)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}`,
     },
   });
 }

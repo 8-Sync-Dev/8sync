@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSse } from "@/components/hq/live-terminal";
-import { HOST_GONE_EXIT, IDLE_CLOSE_MS, SHELL_IDLE_MS, clampSize, closeTerm, endedTerm, input, openShell, openTerm, poll, shellArgs, shellKey, shellsOpen, termArgs, termOpen, waitOutput, watch } from "@/lib/server/term";
+import { ELSEWHERE_EXIT, HOST_GONE_EXIT, IDLE_CLOSE_MS, SHELL_IDLE_MS, clampSize, closeTerm, endedTerm, input, openShell, openTerm, poll, shellArgs, shellKey, shellsOpen, termArgs, termOpen, waitOutput, watch } from "@/lib/server/term";
 import { termResponse } from "@/lib/server/term-http";
 import { pingTime } from "@/lib/term-stream";
 
@@ -52,16 +52,17 @@ describe("web terminal bridge", () => {
     expect(termOpen(ID)).toBe(false);
   });
 
-  it("a bridge whose pipe breaks while the owner types ends that terminal instead of crashing HQ", () => {
+  it("a bridge whose pipe breaks while the owner types does not crash HQ, and its exit code still counts", () => {
     const f = fakeSpawn();
-    const t = openTerm(ID, null, { cols: 100, rows: 30 }, f.spawn);
+    const t = openTerm(OMP, null, { cols: 100, rows: 30 }, f.spawn);
     const seen: string[] = [];
-    watch(ID, t, (b) => seen.push(b ? b.toString() : "<end>"));
+    watch(OMP, t, (b) => seen.push(b ? b.toString() : "<end>"));
     const epipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
     expect(() => f.proc().stdin.emit("error", epipe)).not.toThrow();
+    f.proc().emit("exit", ELSEWHERE_EXIT);
     expect(seen).toEqual(["<end>"]);
-    expect(termOpen(ID)).toBe(false);
-    expect(input(ID, { data: "x" })).toBe(false);
+    expect(termOpen(OMP)).toBe(false);
+    expect(endedTerm(OMP, t.gen)?.elsewhere).toBe(true);
   });
 
   it("sends keys and sizes as JSON lines, refuses oversize input and a closed terminal", async () => {

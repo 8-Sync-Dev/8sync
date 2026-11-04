@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isLocalHost } from "../hosts";
-import { publicPath, tokenPath } from "./paths";
+import { publicPath, sessionSecretPath, tokenPath } from "./paths";
 
 let cached: { file: string; token: string } | null = null;
 
@@ -107,6 +107,58 @@ export function readPublic(): PublicLink | null {
   return link && nonce && safeEqual(nonce, link.nonce) ? link : null;
 }
 
+const SECRET_RE = /^[0-9a-f]{64}$/;
+// On globalThis like the job registry: every route bundle signs and checks with the same key.
+const SECRETS = Symbol.for("8sync.hq.fileSecrets");
+const secretStore = globalThis as { [SECRETS]?: Map<string, { mtimeMs: number; secret: string }> };
+
+/**
+ * 32 random hex bytes kept in `file` (0600), created on first use with `wx` (two bundles racing both end
+ * up reading the one file that won), re-read when its mtime changes. Deleting the file revokes everything
+ * signed with it.
+ */
+export function fileSecret(file: string): string {
+  const cache = (secretStore[SECRETS] ??= new Map());
+  const mtimeOf = () => {
+    try {
+      return fs.statSync(file).mtimeMs;
+    } catch {
+      return -1;
+    }
+  };
+  const mtimeMs = mtimeOf();
+  const c = cache.get(file);
+  if (c && c.mtimeMs === mtimeMs && mtimeMs >= 0) return c.secret;
+  const read = () => {
+    try {
+      return fs.readFileSync(file, "utf8").trim();
+    } catch {
+      return "";
+    }
+  };
+  let secret = read();
+  if (!SECRET_RE.test(secret)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    if (mtimeMs >= 0) fs.rmSync(file, { force: true }); // junk in the file: start over
+    try {
+      fs.writeFileSync(file, crypto.randomBytes(32).toString("hex") + "\n", { mode: 0o600, flag: "wx" });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    secret = read();
+    if (!SECRET_RE.test(secret)) throw new Error(`${path.basename(file)} unreadable`);
+  }
+  cache.set(file, { mtimeMs: mtimeOf(), secret });
+  return secret;
+}
+
+/**
+ * The key `hq_pub` cookies are signed with: its own file, not the link key in public.json. A new link
+ * (`--relink`, an HQ restart) must not sign out the phone that is already in; delete
+ * `~/.config/8sync/hq/session-secret` to sign every device out.
+ */
+export const sessionSecret = () => fileSecret(sessionSecretPath());
+
 const sign = (key: string, issued: number) => crypto.createHmac("sha256", key).update(String(issued)).digest("hex");
 
 /** Login cookie value `<issued_ms>.<hmac_sha256_hex(key, issued_ms)>`: the raw key never leaves the server. */
@@ -141,7 +193,7 @@ export const viaTunnel = (h: { get(name: string): string | null }) => h.get("cf-
 export function sideOf(req: Pick<AuthInput, "host" | "cookie" | "tunnel">, pub: PublicLink | null, now = Date.now()): "local" | "remote" | null {
   if (isLocalHost(req.host) && !req.tunnel) return "local";
   if (!pub || req.host?.toLowerCase() !== pub.host) return null;
-  return req.cookie && sessionValid(req.cookie, pub.key, now) ? "remote" : null;
+  return req.cookie && sessionValid(req.cookie, sessionSecret(), now) ? "remote" : null;
 }
 
 export type AuthInput = {

@@ -3,9 +3,9 @@ import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { GET as login } from "@/app/api/login/route";
 import { isLocalHost } from "@/lib/hosts";
-import { __setNonceForTest, checkAuth, getToken, LINK_MS, readPublic, SESSION_MS, sessionCookie, sessionValid } from "@/lib/server/auth";
+import { __setNonceForTest, checkAuth, getToken, LINK_MS, readPublic, SESSION_MS, sessionCookie, sessionSecret, sessionValid } from "@/lib/server/auth";
 import { open } from "@/lib/server/http";
-import { publicPath, tokenPath } from "@/lib/server/paths";
+import { publicPath, sessionSecretPath, tokenPath } from "@/lib/server/paths";
 import { tempHome } from "./helpers";
 
 const T = "a".repeat(64);
@@ -77,7 +77,7 @@ describe("remote link", () => {
   beforeEach(() => {
     __setNonceForTest(NONCE);
     writePub({ v: 1, host: HOST, key: KEY, since: Date.now(), nonce: NONCE });
-    SESSION = sessionCookie(KEY, Date.now());
+    SESSION = sessionCookie(sessionSecret(), Date.now());
   });
   afterAll(() => {
     __setNonceForTest("");
@@ -106,7 +106,17 @@ describe("remote link", () => {
     const [issued, mac] = sessionCookie(KEY, now).split(".");
     expect(sessionValid(`${Number(issued) + 1}.${mac}`, KEY, now)).toBe(false); // forged issue time
     expect(sessionValid(KEY, KEY, now)).toBe(false);
-    expect(call({ host: HOST, cookie: `hq_pub=${sessionCookie(KEY, now - SESSION_MS - 1)}` })).toBe(403);
+    expect(call({ host: HOST, cookie: `hq_pub=${sessionCookie(sessionSecret(), now - SESSION_MS - 1)}` })).toBe(403);
+    expect(call({ host: HOST, cookie: `hq_pub=${sessionCookie(KEY, now)}` })).toBe(403); // signed with the link key: not a session
+  });
+
+  it("a new link (`--relink`, HQ restart) keeps devices signed in; deleting session-secret signs them out", () => {
+    expect(call({ host: HOST, cookie: `hq_pub=${SESSION}`, tunnel: true })).toBe(200);
+    writePub({ v: 1, host: HOST, key: "9".repeat(64), since: Date.now() + 1, nonce: NONCE });
+    expect(readPublic()?.key).toBe("9".repeat(64));
+    expect(call({ host: HOST, cookie: `hq_pub=${SESSION}`, tunnel: true })).toBe(200);
+    fs.rmSync(sessionSecretPath());
+    expect(call({ host: HOST, cookie: `hq_pub=${SESSION}`, tunnel: true })).toBe(403);
   });
 
   it("public.json counts only with the nonce of this HQ process (contract C-C)", () => {
@@ -170,7 +180,8 @@ describe("remote link", () => {
       expect(m).not.toBeNull();
       expect(m![1]).not.toContain(KEY);
       expect(Number(m![1].split(".")[0])).toBeGreaterThanOrEqual(before);
-      expect(sessionValid(m![1], KEY)).toBe(true);
+      expect(sessionValid(m![1], sessionSecret())).toBe(true);
+      expect(sessionValid(m![1], KEY)).toBe(false);
       expect(call({ host: HOST, cookie: `hq_pub=${m![1]}` })).toBe(200);
     });
 

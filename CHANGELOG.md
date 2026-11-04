@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.5] — 2026-11-04
+
+### Fixed
+- HQ public link bắt đăng nhập lại sau mỗi `8sync hq ui --relink` (và mỗi lần `--public` ghi `public.json` mới): cookie `hq_pub` ký bằng chính khoá của link 10 phút, nên link mới đăng xuất mọi thiết bị đã vào, kể cả ai vào bằng GitHub — trái với "thiết bị đã vào giữ 12 giờ". Giờ cookie ký bằng `~/.config/8sync/hq/session-secret` riêng (0600, tạo khi thiếu); khoá link chỉ dùng để mở link. Xoá file đó = đăng xuất mọi thiết bị. Lần đầu lên bản này các cookie cũ hết hiệu lực một lần.
+- Bridge terminal: lỗi pipe (EPIPE) giờ chỉ bị nuốt, còn `exit` mới đóng terminal, nên "mở ở nơi khác"/"phòng đã tắt" vẫn báo đúng khi bridge chết giữa lúc gõ.
+
 ## [0.122.4] — 2026-11-04
 
 ### Fixed

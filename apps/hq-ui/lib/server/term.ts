@@ -108,8 +108,9 @@ function start(key: string, args: string[], cwd: string | null, idleMs: number, 
   });
   proc.on("error", end);
   // A bridge that dies while the owner types breaks its stdin pipe (EPIPE). Without a listener Node throws
-  // that as an uncaught error and the whole HQ server exits; `exit` above already ends the bridge.
-  for (const s of [proc.stdin, proc.stdout]) s.on("error", end);
+  // that as an uncaught error and the whole HQ server exits. Swallow it: `exit` (which follows) ends the
+  // bridge with its exit code, so "opened elsewhere" / "host gone" still reach the page.
+  for (const s of [proc.stdin, proc.stdout]) s.on("error", () => {});
   return t;
 }
 
