@@ -27,9 +27,11 @@ import {
   type ContentRow,
   type ContentTextField,
 } from "@/lib/content";
+import { atLeast } from "@/lib/access";
 import { bytes } from "@/lib/disk";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
+import { useAccess } from "./access";
 import { AssignBox, Editable, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, type Patch } from "./content-bits";
 import { CopyButton } from "./copy-button";
 import { DAY_NAMES } from "./content-calendar";
@@ -160,6 +162,8 @@ function ItemDetail({
   onCollapse?: () => void;
   reload: () => void;
 }) {
+  const role = useAccess();
+  const canEdit = atLeast(role, "editor");
   const warn = contentWarning(it);
   const ai = aiReason(it);
   const [confirmed, setConfirmed] = useState(false);
@@ -239,7 +243,7 @@ function ItemDetail({
         </div>
       )}
 
-      {steps.length > 0 && (
+      {canEdit && steps.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {steps.map((s) =>
             s === "approved" ? (
@@ -267,7 +271,13 @@ function ItemDetail({
 
       <dl className="space-y-3">
         <Field label="Giờ đăng">
-          {schedule ? <TimeEdit at={it.scheduled_at ?? null} fallback={at} onSave={(ms) => patch(it.id, { scheduled_at: ms })} id={it.id} /> : <span className="text-xs text-muted-foreground">{NO_SCHEDULE}</span>}
+          {!schedule ? (
+            <span className="text-xs text-muted-foreground">{NO_SCHEDULE}</span>
+          ) : canEdit ? (
+            <TimeEdit at={it.scheduled_at ?? null} fallback={at} onSave={(ms) => patch(it.id, { scheduled_at: ms })} id={it.id} />
+          ) : (
+            <span className="text-sm tabular-nums">{at != null ? timeOf(at) : "chưa đặt lịch"}</span>
+          )}
         </Field>
         <Field label="Caption">
           <Editable value={it.caption} label={`Caption #${it.id}`} onSave={edit("caption")} multiline />
@@ -280,7 +290,7 @@ function ItemDetail({
         </Field>
         {/* Always shown (owner 2026-11-04: a clip with no file had no way to watch or download it): set the render's path here. */}
         <Field label="Media">
-          <Editable value={it.media_path} label={`Media #${it.id} (đường dẫn file hoặc thư mục)`} onSave={edit("media_path")} />
+          <Editable value={it.media_path} label={`Media #${it.id} (đường dẫn file hoặc thư mục)`} onSave={edit("media_path")} ownerOnly />
           {it.media_path &&
             (it.media.length === 0 ? (
               <p className="mt-0.5 text-xs text-muted-foreground">không đọc được file ảnh/video ở đường dẫn này</p>
@@ -298,10 +308,12 @@ function ItemDetail({
             <p className="mt-0.5 flex items-center gap-1 text-xs text-st-running">
               <CheckIcon aria-hidden className="size-3" /> đã duyệt nguồn · {it.source_approved_by} · {agoShort(it.source_approved_at, now)}
             </p>
-          ) : it.source_url ? (
+          ) : it.source_url && canEdit ? (
             <Button type="button" size="sm" variant="outline" className={cn("mt-1 h-7 text-xs", TOUCH)} onClick={() => void patch(it.id, { approve_source: it.source_url })}>
               Duyệt nguồn
             </Button>
+          ) : it.source_url ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">nguồn chưa duyệt</p>
           ) : (
             <p className="mt-0.5 text-xs text-muted-foreground">chưa có nguồn</p>
           )}
@@ -319,9 +331,11 @@ function ItemDetail({
         )}
       </dl>
 
-      <div className="rounded-lg border p-3">
-        <AssignBox it={it} api={api} now={now} canSave={schedule} onSaved={reload} />
-      </div>
+      {role === "owner" && (
+        <div className="rounded-lg border p-3">
+          <AssignBox it={it} api={api} now={now} canSave={schedule} onSaved={reload} />
+        </div>
+      )}
     </article>
   );
 }

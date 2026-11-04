@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { atLeast, deniedText, requiredRole, type AccessRole, type GuestRole } from "../access";
 import { isLocalHost } from "../hosts";
+import { guestAccess, type Guest } from "./invites";
 import { publicPath, sessionSecretPath, tokenPath } from "./paths";
 
 let cached: { file: string; token: string } | null = null;
@@ -191,9 +193,15 @@ export const viaTunnel = (h: { get(name: string): string | null }) => h.get("cf-
  * host with the login cookie), or null (refused: DNS rebinding, lookalike host, no or wrong cookie).
  */
 export function sideOf(req: Pick<AuthInput, "host" | "cookie" | "tunnel">, pub: PublicLink | null, now = Date.now()): "local" | "remote" | null {
-  if (isLocalHost(req.host) && !req.tunnel) return "local";
-  if (!pub || req.host?.toLowerCase() !== pub.host) return null;
+  const side = hostSide(req, pub);
+  if (side !== "remote") return side;
   return req.cookie && sessionValid(req.cookie, sessionSecret(), now) ? "remote" : null;
+}
+
+/** The host alone: loopback (not tunnelled) or the public tunnel host; null = refused (DNS rebinding, lookalike). */
+export function hostSide(req: Pick<AuthInput, "host" | "tunnel">, pub: PublicLink | null): "local" | "remote" | null {
+  if (isLocalHost(req.host) && !req.tunnel) return "local";
+  return pub && req.host?.toLowerCase() === pub.host ? "remote" : null;
 }
 
 export type AuthInput = {
@@ -203,6 +211,10 @@ export type AuthInput = {
   token: string | null;
   /** `hq_pub` cookie value (remote link only). */
   cookie?: string | null;
+  /** `hq_guest` cookie value: someone the owner shared HQ with (lib/server/invites.ts). */
+  guest?: string | null;
+  /** URL pathname: the key of the role table (lib/access.ts requiredRole). Absent = owner only. */
+  path?: string;
   /** Arrived through the tunnel (Cloudflare edge headers present). */
   tunnel?: boolean;
 };
@@ -212,27 +224,58 @@ export type AuthOptions = {
   allowMissingOrigin?: boolean;
 };
 
-/** Pure check so it can be unit tested. Returns null when allowed. */
-export function checkAuth(
-  req: AuthInput,
-  expectedToken: string,
-  opts: AuthOptions = {},
-  pub: PublicLink | null = null,
-): { status: number; error: string } | null {
-  const side = sideOf(req, pub);
+/** Who is calling: the owner (token, plus `hq_pub` through the tunnel) or a guest (`hq_guest`, no token). */
+export type Access = { role: AccessRole; side: "local" | "remote"; guest: Guest | null };
+export type Denied = { status: number; error: string };
+export const isDenied = (r: Access | Denied): r is Denied => "status" in r;
+
+/**
+ * The one gate of every API route (lib/server/http.ts `open`). The owner proves itself with the UI
+ * token (and on the tunnel host with the `hq_pub` cookie too); a guest has no token, only its signed
+ * `hq_guest` cookie, re-checked against invites.json on every call (revoked/expired = 401 now). Then the
+ * role table: a route not opened to the caller's role answers 403 (deny by default).
+ */
+export function checkAuth(req: AuthInput, expectedToken: string, opts: AuthOptions = {}, pub: PublicLink | null = null, now = Date.now()): Access | Denied {
+  const side = hostSide(req, pub);
   if (!side) return { status: 403, error: "forbidden host" };
-  if (!req.token || !safeEqual(req.token, expectedToken)) {
-    return { status: 401, error: "missing or invalid x-hq-token" };
-  }
+  const pubOk = side === "local" || (!!req.cookie && sessionValid(req.cookie, sessionSecret(), now));
+  let access: Access;
+  if (pubOk && req.token && safeEqual(req.token, expectedToken)) access = { role: "owner", side, guest: null };
+  else if (req.guest) {
+    const g = guestAccess(req.guest, sessionSecret(), now);
+    if (!("ok" in g)) return { status: 401, error: "github" in g ? "Link chia sẻ này cần đăng nhập GitHub trước." : g.error };
+    access = { role: g.ok.role, side, guest: g.ok };
+  } else if (!pubOk) return { status: 403, error: "forbidden host" };
+  else return { status: 401, error: "missing or invalid x-hq-token" };
   const mutating = !["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase());
   if (mutating) {
     const uiOrigin = side === "remote" ? `https://${pub!.host}` : `http://${req.host}`;
     if (req.origin === null) {
-      // Only a local Node process (channel) may omit Origin; a browser through the tunnel always sends it.
-      if (side === "remote" || !opts.allowMissingOrigin) return { status: 403, error: "missing Origin" };
+      // Only a local Node process (channel, with the token) may omit Origin; a browser always sends it.
+      if (side === "remote" || access.guest || !opts.allowMissingOrigin) return { status: 403, error: "missing Origin" };
     } else if (req.origin !== uiOrigin) {
       return { status: 403, error: "bad Origin" };
     }
   }
-  return null;
+  if (!atLeast(access.role, requiredRole(req.method, req.path ?? ""))) return { status: 403, error: deniedText(access.role) };
+  return access;
+}
+
+/** What the page (and a signed media URL) may show, from the cookies alone: no token is involved. */
+export type PageAccess = { role: "owner" } | { role: GuestRole; guest: Guest } | { github: string } | { error: string } | null;
+
+/**
+ * The owner's `hq_pub` wins; else a guest cookie decides (valid = guest view, revoked/expired = the
+ * "link gone" page, even on loopback: a guest browser on this machine never falls back to the owner's
+ * view); else loopback is the owner. null = refused host, or the tunnel host with no login.
+ */
+export function pageAccess(req: Pick<AuthInput, "host" | "cookie" | "guest" | "tunnel">, pub: PublicLink | null, now = Date.now()): PageAccess {
+  const side = hostSide(req, pub);
+  if (!side) return null;
+  if (side === "remote" && req.cookie && sessionValid(req.cookie, sessionSecret(), now)) return { role: "owner" };
+  if (req.guest) {
+    const g = guestAccess(req.guest, sessionSecret(), now);
+    return "ok" in g ? { role: g.ok.role, guest: g.ok } : "github" in g ? { github: g.github.github! } : g;
+  }
+  return side === "local" ? { role: "owner" } : null;
 }

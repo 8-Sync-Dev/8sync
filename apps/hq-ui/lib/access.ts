@@ -1,0 +1,40 @@
+// Who may do what in HQ (owner, editor, viewer). Pure: the server's route gate (lib/server/auth.ts
+// `checkAuth`, run by lib/server/http.ts `open`) and the client's role-aware UI read the same ranks and words.
+
+export const ACCESS_ROLES = ["viewer", "editor", "owner"] as const;
+export type AccessRole = (typeof ACCESS_ROLES)[number];
+/** The roles an invite or a GitHub allow entry can hand out besides owner. */
+export const GUEST_ROLES = ["viewer", "editor"] as const;
+export type GuestRole = (typeof GUEST_ROLES)[number];
+
+export const isAccessRole = (v: unknown): v is AccessRole => typeof v === "string" && (ACCESS_ROLES as readonly string[]).includes(v);
+export const isGuestRole = (v: unknown): v is GuestRole => typeof v === "string" && (GUEST_ROLES as readonly string[]).includes(v);
+
+/** True when `role` grants at least what `need` asks. */
+export const atLeast = (role: AccessRole, need: AccessRole) => ACCESS_ROLES.indexOf(role) >= ACCESS_ROLES.indexOf(need);
+
+export const ACCESS_LABEL: Record<AccessRole, string> = { owner: "Chủ HQ", editor: "Sửa nội dung", viewer: "Chỉ xem" };
+
+/**
+ * The few routes a guest may call, with the least role each needs. Everything else (terminals, shell,
+ * sessions, messages, Nhật ký, uploads, keys, omp accounts, machine, invites, any route added later) is
+ * owner only: deny by default. Editors change items (PATCH); creating and deleting stay the owner's.
+ */
+export const GUEST_ROUTES: Readonly<Record<string, Readonly<Partial<Record<string, GuestRole>>>>> = {
+  "/api/content": { GET: "viewer", HEAD: "viewer", PATCH: "editor" },
+  "/api/content/media": { GET: "viewer", HEAD: "viewer" },
+};
+
+/** The least role `method pathname` needs (exact path, one trailing slash tolerated; own keys only: the path comes from the request). */
+export function requiredRole(method: string, pathname: string): AccessRole {
+  const p = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  const m = method.toUpperCase();
+  const route = Object.hasOwn(GUEST_ROUTES, p) ? GUEST_ROUTES[p] : undefined;
+  return (route && Object.hasOwn(route, m) ? route[m] : undefined) ?? "owner";
+}
+
+/** The 403 a guest gets for a route above its role. */
+export const deniedText = (role: AccessRole) => `Quyền "${ACCESS_LABEL[role]}" không dùng được chức năng này: chỉ chủ HQ hoặc người được giao quyền cao hơn.`;
+
+/** Content fields only the owner sets: a file path on the owner's machine, and the agent who holds the item. */
+export const OWNER_CONTENT_FIELDS = ["media_path", "assignee_session", "assignee_base"] as const;

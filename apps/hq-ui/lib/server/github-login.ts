@@ -1,34 +1,45 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isAccessRole, type AccessRole } from "../access";
 import { configDir } from "./paths";
 
 /**
  * GitHub sign-in for the `--public` link (device flow: no callback URL, so the trycloudflare host may
- * change; no client secret). `~/.config/8sync/hq/github.json` = `{"client_id": "...", "allow": ["login", ...]}`,
- * written by the owner; absent or empty `allow` = GitHub sign-in off (only the `/api/login?k=` link).
- * The GitHub token is used once to read `/user` and then dropped; only the login is kept.
+ * change; no client secret). `~/.config/8sync/hq/github.json` = `{"client_id": "...", "allow": [...]}`,
+ * written by the owner. An `allow` entry is a login (the owner, as before) or `{"login", "role"}` with
+ * role `owner` / `editor` / `viewer`. Empty `allow` = only invites bound to a GitHub login
+ * (lib/server/invites.ts) sign in with it. The GitHub token is used once to read `/user` and then
+ * dropped; only the login is kept.
  */
-export type GithubConfig = { clientId: string; allow: string[] };
+export type AllowEntry = { login: string; role: AccessRole };
+export type GithubConfig = { clientId: string; allow: AllowEntry[] };
 
 export const githubConfigPath = () => path.join(configDir(), "github.json");
 
 const CLIENT_ID_RE = /^[A-Za-z0-9._-]{8,64}$/;
-const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+export const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 
+function allowEntry(x: unknown): AllowEntry | null {
+  if (typeof x === "string") return LOGIN_RE.test(x) ? { login: x, role: "owner" } : null;
+  const o = x as { login?: unknown; role?: unknown } | null;
+  return o && typeof o === "object" && typeof o.login === "string" && LOGIN_RE.test(o.login) && isAccessRole(o.role) ? { login: o.login, role: o.role } : null;
+}
+
+/** null without a valid client id; `allow` keeps only well-formed entries (a bad one is dropped, never widened). */
 export function readGithubConfig(file = githubConfigPath()): GithubConfig | null {
   try {
     const v = JSON.parse(fs.readFileSync(file, "utf8"));
     const clientId = typeof v?.client_id === "string" ? v.client_id.trim() : "";
-    const allow = Array.isArray(v?.allow) ? v.allow.filter((x: unknown): x is string => typeof x === "string" && LOGIN_RE.test(x)) : [];
-    return CLIENT_ID_RE.test(clientId) && allow.length ? { clientId, allow } : null;
+    const allow = Array.isArray(v?.allow) ? v.allow.map(allowEntry).filter((e: AllowEntry | null): e is AllowEntry => e !== null) : [];
+    return CLIENT_ID_RE.test(clientId) ? { clientId, allow } : null;
   } catch {
     return null;
   }
 }
 
-/** GitHub logins are case-insensitive. */
-export const isAllowed = (cfg: GithubConfig, login: string) => cfg.allow.some((a) => a.toLowerCase() === login.toLowerCase());
+/** The role `allow` gives this login, or null (GitHub logins are case-insensitive; the first match counts). */
+export const allowedRole = (cfg: GithubConfig, login: string): AccessRole | null => cfg.allow.find((a) => a.login.toLowerCase() === login.toLowerCase())?.role ?? null;
 
 type Flow = { deviceCode: string; expires: number; interval: number; next: number };
 
@@ -72,9 +83,10 @@ export type PollResult =
 
 /**
  * One poll of the token endpoint (never faster than GitHub's interval: an early call just answers
- * pending). A finished flow (ok, denied, expired, refused) is removed.
+ * pending). A finished flow (ok, denied, expired, refused) is removed. `accept` decides who gets in:
+ * an `allow` entry by default; the login route also lets in the login a pending invite is bound to.
  */
-export async function pollFlow(cfg: GithubConfig, id: string, f: Fetch = fetch, now = Date.now()): Promise<PollResult> {
+export async function pollFlow(cfg: GithubConfig, id: string, f: Fetch = fetch, now = Date.now(), accept = (login: string) => allowedRole(cfg, login) !== null): Promise<PollResult> {
   prune(now);
   const flow = flows.get(id);
   if (!flow) return { state: "gone", error: "Mã đã hết hạn, bấm đăng nhập lại." };
@@ -105,7 +117,7 @@ export async function pollFlow(cfg: GithubConfig, id: string, f: Fetch = fetch, 
   const user = (await u.json().catch(() => null)) as Record<string, unknown> | null;
   const login = typeof user?.login === "string" ? user.login : "";
   if (!u.ok || !login) return { state: "gone", error: "Không đọc được tài khoản GitHub, thử lại." };
-  return isAllowed(cfg, login) ? { state: "ok", login } : { state: "denied", login };
+  return accept(login) ? { state: "ok", login } : { state: "denied", login };
 }
 
 /** Test seam. */

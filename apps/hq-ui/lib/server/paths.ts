@@ -25,6 +25,8 @@ export const playSecretPath = () => path.join(configDir(), "play-secret");
 export const sessionSecretPath = () => path.join(configDir(), "session-secret");
 /** HMAC key of the signed media URLs of the "Nội dung" sheet (lib/server/content-media.ts publicMedia). */
 export const mediaSecretPath = () => path.join(configDir(), "media-secret");
+/** "Chia sẻ" invites (lib/server/invites.ts): label, role, expiry and the sha256 of each link token, never the token. */
+export const invitesPath = () => path.join(configDir(), "invites.json");
 
 export const channelMcpConfigPath = (home = os.homedir()) =>
   path.join(home, ".config", "8sync", "hq", "channel-mcp.json");

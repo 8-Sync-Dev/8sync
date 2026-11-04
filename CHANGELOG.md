@@ -7,6 +7,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Added
 - HQ Nội dung: nút chép caption ngay dưới Caption của từng bài. Dòng thu gọn trong khung ngày hiện số file ảnh/video bài đó đã có, nên biết bài nào xem hoặc tải được mà không cần mở từng bài.
+- HQ "Chia sẻ" (tab Máy): chủ HQ tạo link cho người ngoài xem tab Nội dung, quyền "Chỉ xem" (xem, tải media, chép caption) hoặc "Sửa nội dung" (thêm sửa trạng thái, caption, lịch đăng), hết hạn sau 1/7/30 ngày, có thể buộc thêm một tài khoản GitHub; danh sách link kèm trạng thái và nút Thu hồi. Link chỉ hiện một lần: `~/.config/8sync/hq/invites.json` (0600) chỉ giữ sha256 của token. Mở link → cookie `hq_guest` ký HMAC (tối đa 7 ngày, không bao giờ là ui-token); mỗi request kiểm lại lời mời, thu hồi hoặc hết hạn là 401 ngay, kể cả link media đã ký. Quyền kiểm ở một chỗ (`open()` + bảng `lib/access.ts`): route không mở cho khách là chỉ chủ HQ (403 tiếng Việt), test duyệt mọi `app/api/**/route.ts` nên route mới mặc định khoá. `github.json` `allow` nhận thêm `{"login","role"}`; chuỗi cũ vẫn là chủ HQ.
 
 ### Changed
 - HQ Chat phòng (màn rộng): Nhật ký và chat chia hai khung, kéo đường ranh giữa để Nhật ký cao hơn hoặc chat rộng hơn. Trình duyệt nhớ tỉ lệ. Thanh tên phòng và ô nhắn đứng yên. Trên điện thoại giữ cách cũ: Nhật ký cuộn cùng chat.

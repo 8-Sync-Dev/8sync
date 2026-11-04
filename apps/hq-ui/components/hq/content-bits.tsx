@@ -9,12 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { atLeast } from "@/lib/access";
 import { contentTaskText, type ContentFormat, type ContentItem, type ContentStatus } from "@/lib/content";
 import { inboxText } from "@/lib/labels";
 import { agoShort } from "@/lib/now";
 import type { OmpTreeRow } from "@/lib/session-tree";
 import { repoOf } from "@/lib/sidebar";
 import { cn } from "@/lib/utils";
+import { useAccess } from "./access";
 import { TOUCH } from "./room-send";
 import type { Api } from "./use-hq";
 import type { Message } from "./types";
@@ -101,7 +103,8 @@ export function useContentPatch(api: Api, reload: () => void) {
 
 /**
  * A value shown as text (a link for URLs); "sửa" edits. One line: Enter or leaving saves. `multiline`:
- * Ctrl+Enter or leaving saves. Esc cancels.
+ * Ctrl+Enter or leaving saves. Esc cancels. A viewer (Chia sẻ) gets the text only; `ownerOnly`
+ * fields (the media path on the owner's disk) are not editable by an editor either.
  */
 export function Editable({
   value,
@@ -110,6 +113,7 @@ export function Editable({
   link = false,
   required = false,
   multiline = false,
+  ownerOnly = false,
   className,
 }: {
   value: string | null;
@@ -118,8 +122,11 @@ export function Editable({
   link?: boolean;
   required?: boolean;
   multiline?: boolean;
+  ownerOnly?: boolean;
   className?: string;
 }) {
+  const role = useAccess();
+  const canEdit = ownerOnly ? role === "owner" : atLeast(role, "editor");
   const [draft, setDraft] = useState<string | null>(null);
   // Enter saves, and the blur that follows must not send the same PATCH again.
   const saving = useRef(false);
@@ -166,14 +173,16 @@ export function Editable({
           {value || "chưa có"}
         </span>
       )}
-      <button
-        type="button"
-        className="shrink-0 rounded px-1 text-[11px] text-muted-foreground opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11"
-        aria-label={`Sửa ${label}`}
-        onClick={() => setDraft(shown)}
-      >
-        sửa
-      </button>
+      {canEdit && (
+        <button
+          type="button"
+          className="shrink-0 rounded px-1 text-[11px] text-muted-foreground opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11"
+          aria-label={`Sửa ${label}`}
+          onClick={() => setDraft(shown)}
+        >
+          sửa
+        </button>
+      )}
     </div>
   );
 }
