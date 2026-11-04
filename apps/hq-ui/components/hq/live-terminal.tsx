@@ -19,6 +19,8 @@ import { afterStream, giveUp, keyboardOpen, keyQueue, retryDelay, termRows } fro
 
 /** Off loopback: no byte (not even the opening ping) this long = the proxy holds the stream back, so poll. */
 const FIRST_BYTE_MS = 4000;
+/** Two missed server pings (term-http HEARTBEAT_MS = 15 s) and a bit: the stream is dead even if still open. */
+const STALL_MS = 40_000;
 /** Polling: each poll is held by HQ until output arrives (at most this long), so the page asks again at once. */
 const POLL_WAIT_MS = 20_000;
 /** A poll answered this fast with nothing new was not held (HQ restarting, an old HQ): wait before asking again. */
@@ -410,26 +412,33 @@ export function LiveTerminal({ url, kind = "room", token, cwd = null, onEnded }:
         ac.signal.addEventListener("abort", stop, { once: true });
         let silent = false;
         let ended = false;
-        const dog = remote
-          ? setTimeout(() => {
-              silent = true;
-              conn.abort();
-            }, FIRST_BYTE_MS)
-          : undefined;
+        // Remote: no byte within FIRST_BYTE_MS (held back) means poll. After that, on any side, a stream with
+        // no ping for STALL_MS (HQ pings every 15 s) is a dead connection that still looks open: drop it and
+        // poll, instead of showing "live" over a frozen screen.
+        let dog: ReturnType<typeof setTimeout> | undefined;
+        const arm = (ms: number) => {
+          clearTimeout(dog);
+          dog = setTimeout(() => {
+            silent = true;
+            conn.abort();
+          }, ms);
+        };
+        if (remote) arm(FIRST_BYTE_MS);
         try {
           const res = await fetch(withQuery(url, `cols=${size.cols}&rows=${size.rows}`), { headers: { "x-hq-token": token }, signal: conn.signal, cache: "no-store" });
           if (!res.ok || !res.body) throw res.status < 500 && !res.ok ? new PollRefused(await errorOf(res)) : new Error(await errorOf(res));
-          if (!remote) setState("live");
           const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
           let rest = "";
           for (;;) {
+            arm(STALL_MS);
             const { value, done } = await reader.read();
             if (done) break;
-            clearTimeout(dog);
-            setState("live");
             const p = parseSse(rest + value);
             rest = p.rest;
             for (const e of p.events) {
+              // "live" once the screen has something to show, not on the opening ping: a bridge still
+              // starting its room stays "connecting" rather than a blank pane marked connected.
+              if (e.event === "out" || e.event === "replay") setState("live");
               if (e.event === "out") write(e.data);
               else if (e.event === "replay") write(e.data, true);
               else if (e.event === "end") {

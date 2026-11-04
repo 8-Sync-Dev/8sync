@@ -19,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MessageText } from "./attachments";
 import { ComposerDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
-import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale } from "@/lib/labels";
+import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
 import type { Hq } from "./use-hq";
@@ -305,7 +305,12 @@ function Composer({
 
   async function send() {
     const body = text.trim();
-    if (!body || !current || busy || current.waiting) return;
+    if (!body || !current || busy) return;
+    if (current.waiting) {
+      // Enter used to do nothing here, so a send looked lost: say why it is held.
+      toast.error(`${targetLabel(current)} đang chờ anh trả lời trong terminal: trả lời trước (Mở terminal) rồi gửi lại`);
+      return;
+    }
     setBusy(true);
     try {
       const r = await hq.api<{ message: Message; delivery: string; error: string | null }>("/api/messages", {
@@ -314,7 +319,7 @@ function Composer({
         body: { session: addressOf(current), text: body, base: current.cwd ?? null },
       });
       hq.mergeMessages([r.message]);
-      if (r.delivery === "failed") toast.error(`Not delivered to ${sessionLabel(current)}: ${r.error}`);
+      if (r.delivery === "failed") toast.error(`Not delivered to ${targetLabel(current)}: ${r.error}`);
       setText("");
       closeDock.current();
       area.current?.focus();
@@ -352,7 +357,7 @@ function Composer({
         : "Typed into the session's terminal until its channel connects.";
 
   return (
-    <ComposerDock id="room" draft={text.trim().length > 0} label={current ? `Nhắn ${sessionLabel(current)}` : "Nhắn phòng"}>
+    <ComposerDock id="room" draft={text.trim().length > 0} label={current ? `Nhắn ${targetLabel(current)}` : "Nhắn phòng"}>
       {({ close }) => {
         closeDock.current = close;
         return (
@@ -390,7 +395,7 @@ function Composer({
                   disabled={disabled}
                   rows={2}
                   maxLength={4000}
-                  placeholder={current ? `Nhắn ${sessionLabel(current)} · @ để chèn file` : "Message"}
+                  placeholder={current ? `Nhắn ${targetLabel(current)} · @ để chèn file` : "Message"}
                   className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
                 />
                 <div className="flex items-center gap-2 px-2 pb-2">
@@ -401,7 +406,7 @@ function Composer({
                     <SelectContent>
                       {targets.map((s) => (
                         <SelectItem key={s.name} value={s.name} className="font-mono text-xs">
-                          <StatusDot status={s.status} /> {sessionLabel(s)}
+                          <StatusDot status={s.status} /> {targetLabel(s)}
                           {s.channel ? " · channel" : deliveryOf(s) === "inbox" ? " · inbox" : ""}
                         </SelectItem>
                       ))}
