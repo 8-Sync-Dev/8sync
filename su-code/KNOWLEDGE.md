@@ -751,3 +751,4 @@ _(consolidated 72 dòng cũ → su-code/archive/KNOWLEDGE-1790603711.md)_
 ## 2026-11-04 — HQ sập "This page couldn't load" ngẫu nhiên khi mở (v0.122.4)
 - failure: `res.json().catch(() => ({}))` trong client API nuốt cả AbortError: request bị effect cleanup huỷ trong lúc đọc body vẫn resolve `{}` → caller nhận "thành công" thiếu field → `undefined.includes` sập cả cây React. Chỉ coi body hỏng là rỗng khi signal CHƯA abort. Lỗi theo thời điểm (1/12 lần tải trên HQ thật), reload thường hết nên dễ bị đổ cho mạng/tunnel.
 - validated: tìm frame minified của prod nhanh: `tab.errors()` cho `chunk.js:1:<offset>`, tải chunk từ chính HQ rồi cắt `s[offset-400:offset+300]` → thấy `D.worktrees.includes(` → `trail grep` ra source.
+- failure (v0.122.5): cookie phiên ký bằng khoá link → xoay link = đăng xuất tất cả. Tách secret phiên (file riêng, `fileSecret` trong `lib/server/auth.ts`, dùng chung với play-secret) khỏi secret dùng để mở link.

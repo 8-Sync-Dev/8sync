@@ -21,6 +21,8 @@ export const tokenPath = () => path.join(configDir(), "ui-token");
 export const publicPath = () => path.join(configDir(), "public.json");
 /** HMAC key for "Chơi thử" cookies and demo links (lib/server/play.ts): its own random secret, never the UI token. */
 export const playSecretPath = () => path.join(configDir(), "play-secret");
+/** HMAC key of the `hq_pub` login cookie (lib/server/auth.ts): not the link key, so `--relink` keeps devices signed in. */
+export const sessionSecretPath = () => path.join(configDir(), "session-secret");
 
 export const channelMcpConfigPath = (home = os.homedir()) =>
   path.join(home, ".config", "8sync", "hq", "channel-mcp.json");

@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { groupKey } from "../sidebar";
-import { safeEqual } from "./auth";
+import { fileSecret, safeEqual } from "./auth";
 import { childEnv } from "./child-env";
 import { playRootDir, playSecretPath } from "./paths";
 
@@ -236,42 +236,12 @@ export function resolvePlayFile(dist: string, segments: string[]): { abs: string
 
 // ---- the path signature ----------------------------------------------------------------------
 
-const SECRET_RE = /^[0-9a-f]{64}$/;
-// On globalThis like the job registry: every route bundle signs and checks with the same key.
-const S = globalThis as { __hqPlaySecret?: { file: string; mtimeMs: number; secret: string } };
-
 /**
  * The HMAC key of play URLs: 32 random bytes in `~/.config/8sync/hq/play-secret` (0600). Not the UI
- * token and not derived from it, so a play URL can never be turned into API access. Created with
- * `wx` (two bundles racing on first use both end up reading the one file that won), re-read when its
- * mtime changes; deleting the file revokes every play URL.
+ * token and not derived from it, so a play URL can never be turned into API access. Deleting the file
+ * revokes every play URL.
  */
-export function playSecret(): string {
-  const file = playSecretPath();
-  const mtimeMs = (() => {
-    try {
-      return fs.statSync(file).mtimeMs;
-    } catch {
-      return -1;
-    }
-  })();
-  const c = S.__hqPlaySecret;
-  if (c && c.file === file && c.mtimeMs === mtimeMs && mtimeMs >= 0) return c.secret;
-  let secret = readText(file)?.trim() ?? "";
-  if (!SECRET_RE.test(secret)) {
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    if (mtimeMs >= 0) fs.rmSync(file, { force: true }); // junk in the file: start over
-    try {
-      fs.writeFileSync(file, crypto.randomBytes(32).toString("hex") + "\n", { mode: 0o600, flag: "wx" });
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-    }
-    secret = readText(file)?.trim() ?? "";
-    if (!SECRET_RE.test(secret)) throw new Error("play-secret unreadable");
-  }
-  S.__hqPlaySecret = { file, mtimeMs: fs.statSync(file).mtimeMs, secret };
-  return secret;
-}
+export const playSecret = (): string => fileSecret(playSecretPath());
 
 /** `<expiry ms>.<hmac_sha256(secret, "<key>.<expiry>")>`: good for one project key until `expiry`. */
 export function playSig(key: string, expiry: number, secret = playSecret()): string {

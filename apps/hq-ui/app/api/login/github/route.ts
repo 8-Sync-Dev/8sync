@@ -1,4 +1,4 @@
-import { PUB_COOKIE, readPublic, SESSION_MS, sessionCookie } from "@/lib/server/auth";
+import { PUB_COOKIE, readPublic, SESSION_MS, sessionCookie, sessionSecret } from "@/lib/server/auth";
 import { pollFlow, readGithubConfig, startFlow } from "@/lib/server/github-login";
 
 export const runtime = "nodejs";
@@ -41,6 +41,6 @@ export async function GET(req: Request) {
   }
   console.info(`[hq] GitHub sign-in: ${r.login}`);
   return out({ state: "ok", login: r.login }, 200, {
-    "set-cookie": `${PUB_COOKIE}=${sessionCookie(g.pub.key, Date.now())}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}`,
+    "set-cookie": `${PUB_COOKIE}=${sessionCookie(sessionSecret(), Date.now())}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}`,
   });
 }
