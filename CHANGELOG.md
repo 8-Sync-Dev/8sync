@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.14] — 2026-11-04
+
 ### Fixed
 - Hướng dẫn graphify fallback: thêm dạng PowerShell (`$env:GRAPHIFY_MAX_WORKERS=4; …`; `graphify update` không nhận `--max-workers`), tên trùng (như `open`, 7 node) → gọi lại `graphify explain <id>` theo danh sách nó in, và chạy lại `update` sau khi sửa code (incremental ~2 s) để khỏi đọc graph cũ.
 
