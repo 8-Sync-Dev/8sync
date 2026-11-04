@@ -2,7 +2,7 @@
 
 // The omp half of "Hạn mức": every account omp holds with its limit windows, the API keys members call models
 // with, and the log of their calls (docs/hq-quota-keys.md). Data: /api/omp/accounts, /api/omp/keys.
-import { CheckIcon, CopyIcon, KeyRoundIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { KeyRoundIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,7 @@ import type { ApiKey, CallView, KeyStats } from "@/lib/server/api-keys";
 import type { OmpAccount, OmpAccounts, OmpLimit } from "@/lib/server/omp-accounts";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
+import { CopyButton } from "./copy-button";
 import { Bar, dayTime, level, span, text } from "./machine-chip";
 import { makeApi, type Api } from "./use-hq";
 import { usePoll } from "./use-poll";
@@ -399,29 +400,6 @@ function RevealDialog({ apiKey: k, token, base, onClose }: { apiKey: ApiKey; tok
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function CopyButton({ value, label }: { value: string; label: string }) {
-  const [done, setDone] = useState(false);
-  return (
-    <Button
-      size="icon-xs"
-      variant="ghost"
-      aria-label={label}
-      title={label}
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(value);
-          setDone(true);
-          setTimeout(() => setDone(false), 1500);
-        } catch {
-          toast.error("Trình duyệt không cho chép: chọn và chép tay.");
-        }
-      }}
-    >
-      {done ? <CheckIcon /> : <CopyIcon />}
-    </Button>
   );
 }
 

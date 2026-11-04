@@ -15,7 +15,10 @@ import { Conversation, ConversationContent, ConversationEmptyState, Conversation
 import { Message as ChatMessage, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useDefaultLayout } from "react-resizable-panels";
 import { AttachButton, AttachList, useAttach } from "./attach";
 import { MessageText } from "./attachments";
 import { ComposerDock } from "./composer-dock";
@@ -35,6 +38,7 @@ export function TeamView({
   target,
   onTarget,
   header,
+  split,
   bar,
   onStartSession,
 }: {
@@ -44,6 +48,12 @@ export function TeamView({
   target: string | null;
   onTarget: (s: string) => void;
   header?: ReactNode;
+  /**
+   * Chat phòng: the room's brief and Nhật ký. On a wide screen it sits in its own panel above the chat,
+   * the border between them dragged to give either more room (size kept per browser); on a phone it
+   * scrolls with the chat as `header` does.
+   */
+  split?: ReactNode;
   /** Pinned above the scrolling log and chat, outside the scroller (Chat phòng: the room's title row and terminal button). */
   bar?: ReactNode;
   /** Opens the start-session form (hq-app: focusStartSession). Without it the CTA is text only. */
@@ -70,6 +80,48 @@ export function TeamView({
 
   const { loading, error } = hq.messages;
 
+  const mobile = useIsMobile();
+  const layout = useDefaultLayout({ id: "hq-room-split", panelIds: ["brief", "chat"] });
+  const top = mobile ? (split ?? header) : header;
+
+  const chat = (
+    <Conversation className="min-h-0 flex-1">
+      <ConversationContent className="mx-auto w-full max-w-3xl gap-0 px-4 py-4 sm:px-6">
+        {top && <div className="mb-6">{top}</div>}
+        <SessionStrip sessions={sessions} />
+        {error ? (
+          <ErrorNote what="messages" error={error} onRetry={hq.reload.messages} />
+        ) : loading ? (
+          <TimelineSkeleton />
+        ) : messages.length === 0 ? (
+          <ConversationEmptyState
+            icon={<MessagesSquareIcon />}
+            title="No conversation yet"
+            description="Messages you send, replies from sessions, and messages sessions send each other show up here as they happen."
+          />
+        ) : (
+          <div aria-label="Team timeline" className="pb-2">
+            {/* One section per day: its separator sticks only while that day is in view, then the next day's pushes it out (no stacked separators). */}
+            {groups.map((g) => (
+              <section key={g.day + g.rows[0].id}>
+                <div
+                  aria-hidden
+                  className="sticky top-0 z-10 -mx-2 bg-background/95 px-2 pt-3 pb-1.5 text-xs font-medium text-muted-foreground backdrop-blur-[2px]"
+                >
+                  {g.day}
+                </div>
+                {g.rows.map((m, i) => (
+                  <Row key={m.id} m={m} prev={g.rows[i - 1]} who={who} token={hq.token} />
+                ))}
+              </section>
+            ))}
+          </div>
+        )}
+      </ConversationContent>
+      <ConversationScrollButton />
+    </Conversation>
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
@@ -78,41 +130,19 @@ export function TeamView({
           <div className="mx-auto w-full max-w-3xl px-4 py-2 sm:px-6">{bar}</div>
         </div>
       )}
-      <Conversation className="min-h-0 flex-1">
-        <ConversationContent className="mx-auto w-full max-w-3xl gap-0 px-4 py-4 sm:px-6">
-          {header && <div className="mb-6">{header}</div>}
-          <SessionStrip sessions={sessions} />
-          {error ? (
-            <ErrorNote what="messages" error={error} onRetry={hq.reload.messages} />
-          ) : loading ? (
-            <TimelineSkeleton />
-          ) : messages.length === 0 ? (
-            <ConversationEmptyState
-              icon={<MessagesSquareIcon />}
-              title="No conversation yet"
-              description="Messages you send, replies from sessions, and messages sessions send each other show up here as they happen."
-            />
-          ) : (
-            <div aria-label="Team timeline" className="pb-2">
-              {/* One section per day: its separator sticks only while that day is in view, then the next day's pushes it out (no stacked separators). */}
-              {groups.map((g) => (
-                <section key={g.day + g.rows[0].id}>
-                  <div
-                    aria-hidden
-                    className="sticky top-0 z-10 -mx-2 bg-background/95 px-2 pt-3 pb-1.5 text-xs font-medium text-muted-foreground backdrop-blur-[2px]"
-                  >
-                    {g.day}
-                  </div>
-                  {g.rows.map((m, i) => (
-                    <Row key={m.id} m={m} prev={g.rows[i - 1]} who={who} token={hq.token} />
-                  ))}
-                </section>
-              ))}
-            </div>
-          )}
-        </ConversationContent>
-        <ConversationScrollButton />
-      </Conversation>
+      {split && !mobile ? (
+        <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
+          <ResizablePanel id="brief" defaultSize="45" minSize="15" className="min-h-0">
+            <div className="mx-auto flex h-full w-full max-w-3xl flex-col overflow-y-auto px-4 pt-4 pb-3 sm:px-6">{split}</div>
+          </ResizablePanel>
+          <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa Nhật ký và chat" />
+          <ResizablePanel id="chat" minSize="20" className="flex min-h-0 flex-col">
+            {chat}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        chat
+      )}
       {messageTargets(sessions).length === 0 ? (
         <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} />
       ) : (

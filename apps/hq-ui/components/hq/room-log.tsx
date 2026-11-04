@@ -57,11 +57,11 @@ function useActivity(token: string, sessionId: string) {
  * "Nhật ký": what the room did lately, one line per prompt, reply, tool call and subagent, newest at the
  * bottom. Follows new lines unless the owner scrolled up to read. `onFull` opens its terminal.
  */
-export function RoomLog({ sessionId, token, onFull }: { sessionId: string; token: string; onFull?: () => void }) {
+export function RoomLog({ sessionId, token, onFull, fill }: { sessionId: string; token: string; onFull?: () => void; fill?: boolean }) {
   const { data, error, retry } = useActivity(token, sessionId);
   return (
-    <section aria-labelledby="room-log" className="space-y-2">
-      <div className="flex items-center gap-2">
+    <section aria-labelledby="room-log" className={cn("space-y-2", fill && "md:flex md:min-h-40 md:flex-1 md:flex-col md:gap-2 md:space-y-0")}>
+      <div className="flex shrink-0 items-center gap-2">
         <h3 id="room-log" className="flex items-center gap-1.5 text-sm font-semibold">
           <ScrollTextIcon aria-hidden className="size-4 text-muted-foreground" />
           Nhật ký
@@ -82,14 +82,17 @@ export function RoomLog({ sessionId, token, onFull }: { sessionId: string; token
           <Skeleton className="h-3.5 w-3/4" />
         </div>
       ) : (
-        <LogLines events={data.events} now={data.at} />
+        <LogLines events={data.events} now={data.at} fill={fill} />
       )}
     </section>
   );
 }
 
-/** The scrolling list. Pinned to the bottom while the owner is there; reading older lines stops the follow. */
-export function LogLines({ events, now }: { events: ActivityEvent[]; now: number }) {
+/**
+ * The scrolling list. Pinned to the bottom while the owner is there; reading older lines stops the follow.
+ * `fill`: on a wide screen it takes the height its panel gives it instead of stopping at 20rem.
+ */
+export function LogLines({ events, now, fill }: { events: ActivityEvent[]; now: number; fill?: boolean }) {
   const box = useRef<HTMLOListElement>(null);
   const follow = useRef(true);
   useLayoutEffect(() => {
@@ -112,7 +115,10 @@ export function LogLines({ events, now }: { events: ActivityEvent[]; now: number
         const el = e.currentTarget;
         follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
       }}
-      className="max-h-80 divide-y divide-border/60 overflow-y-auto rounded-lg border text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+      className={cn(
+        "max-h-80 divide-y divide-border/60 overflow-y-auto rounded-lg border text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+        fill && "md:max-h-none md:min-h-0 md:flex-1",
+      )}
     >
       {events.map((ev, i) => (
         <LogLine key={`${ev.at ?? 0}-${i}`} ev={ev} now={now} />
