@@ -64,7 +64,11 @@ export async function POST(req: Request) {
   }
 }
 
-/** `?id=`: body = fields to change, `status`, or `approve_source: "<source URL the owner saw>"`. */
+/**
+ * `?id=`: body = fields to change, `status`, `scheduled_at` (ms | null), `assignee_session` (+
+ * `assignee_base`; null clears), `approve_source: "<source URL the owner saw>"`, and
+ * `no_ai_confirmed: true` when approving an item with an AI mark (else 409).
+ */
 export async function PATCH(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;

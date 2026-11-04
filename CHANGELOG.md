@@ -5,6 +5,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.0] — 2026-11-04
+
+### Added
+- HQ tab **Nội dung** thành lịch kiểu Notion: chế độ Ngày / Tuần / Tháng / Năm, nút "Hôm nay" và ←/→, vẫn giữ lọc trang FB / định dạng / trạng thái; bảng cũ thành chế độ "Danh sách" (chế độ đang xem nhớ trong trình duyệt). Mỗi bài là một chip: màu theo định dạng (thêm màu riêng cho ASMR, Clip), viền theo trạng thái (đặt: gạch, soạn: chấm, check: liền, duyệt/đăng: đậm + dấu tick, bỏ: gạch ngang chữ), kèm chữ trạng thái trong `aria-label`. Bài chưa có giờ nằm ở "Chưa có lịch (N)". Bài xếp theo `scheduled_at`, chưa có thì theo `published_at`.
+- Bấm một ngày hoặc chip: khung bên phải trượt ra với các bài của ngày đó. Mỗi bài có giờ, định dạng, tiêu đề, caption đầy đủ, xem trước `media_path` (ảnh, mp4 bấm chạy được, qua route mới `GET /api/content/media?id=&i=` có token, tối đa 12 file, 150 MB), nguồn + trạng thái duyệt nguồn, cảnh báo, link tin news / bài FB, phiên đang giữ việc. Esc hoặc bấm ra ngoài là đóng. URL `?day=YYYY-MM-DD&item=N` gửi cho người khác được và mở lại đúng chỗ (link chỉ có `item=` tự tìm ngày). Đổi giờ đăng thì khung đi theo bài sang ngày mới.
+- Thao tác 1 chạm trong khung: nút bước kế tiếp theo luồng (soạn → check, check → **Duyệt**, duyệt → đăng) + **Bỏ**, qua PATCH sẵn có nên trigger `content_items_gate_*` vẫn là cổng (bị chặn thì hiện đúng câu của trigger). Sửa caption (nhiều dòng, Ctrl+Enter lưu) và giờ đăng tại chỗ.
+- **Giao việc**: chọn phiên omp từ `GET /api/omp/sessions?all=1` (nhóm theo dự án), Gửi qua `POST /api/messages` kèm dòng `[Nội dung #id · trang]`; gửi được thì phiên lưu vào DB (`assignee_session`, `assignee_base`, `assigned_at`), không lưu trong state. Chip và khung hiện "đang xử lý: <phòng>"; mở lại khung thì phiên đã lưu được chọn sẵn. PATCH `/api/content` nhận `scheduled_at` và `assignee_session` (+ `assignee_base`); DB chưa chạy migration 0063 của content-post-agency thì trả 409 và giao diện báo, không tự tạo cột.
+- **Luật không nhãn AI** (Meta gắn nhãn "AI info" cho reel 1.2 dùng mặt lip-sync + giọng clone): bài video (course_video, ai_video, asmr, clip), bài có media video, hoặc media có dấu C2PA / IPTC `algorithmicmedia` hiện khung đỏ trong khung chi tiết; Duyệt / Đăng khoá tới khi người duyệt tick "không dùng hình/giọng AI photoreal". Server cũng chặn (`no_ai_confirmed`, 409), nên gọi API thẳng cũng không lách được.
+
 ## [0.121.0] — 2026-11-04
 
 ### Added
