@@ -111,7 +111,7 @@ export function hasSchedule(db: DatabaseSync): boolean {
   return cols.has("scheduled_at") && cols.has("assignee_session") && cols.has("assignee_base") && cols.has("assigned_at");
 }
 
-const withMedia = (it: ContentItem): ContentRow => ({ ...it, media: mediaFiles(it.media_path).map(publicMedia) });
+const withMedia = (it: ContentItem): ContentRow => ({ ...it, media: mediaFiles(it.media_path).map((m) => publicMedia(it.id, m)) });
 
 export function listContent(db: DatabaseSync, f: ContentFilter = {}): Extract<ContentList, { ready: true }> {
   const by = (["status", "format", "fb_page"] as const).filter((k) => f[k]);
