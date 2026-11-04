@@ -1,8 +1,9 @@
 import { afterParam, bad, limitParam, json, open, readBody } from "@/lib/server/http";
-import { deliverWatched, openDialog, SessionWaiting } from "@/lib/server/channel";
-import { capturePlain, mergedSessions, sendKeys } from "@/lib/server/proc";
-import { inboxLive, isInboxId, queueInbox } from "@/lib/server/inbox";
-import { messagesAfter, ownerMessage } from "@/lib/server/queries";
+import { openDialog, SessionWaiting } from "@/lib/server/channel";
+import { deliverText } from "@/lib/server/deliver";
+import { capturePlain, mergedSessions } from "@/lib/server/proc";
+import { isInboxId } from "@/lib/server/inbox";
+import { messagesAfter } from "@/lib/server/queries";
 import { clampText, isTmuxName } from "@/lib/server/validate";
 import { expandMentions } from "@/lib/server/fs-list";
 import { loadFloor, ompSessions } from "@/lib/server/floor";
@@ -60,16 +61,9 @@ export async function POST(req: Request) {
     text = clampText(withFiles(text.value, paths));
     if (!text.ok) return bad(`tin + đường dẫn file: ${text.error}`, 422);
   }
-  // Any other live room (Claude Code session started elsewhere, or an omp room): queue in its inbox.
-  // `live`: the room is polling (enters as soon as it is idle); otherwise at its next turn end.
-  if (inbox) {
-    queueInbox(session, text.value);
-    const message = ownerMessage(o.db, session, text.value, "inbox");
-    return json({ message, delivery: "inbox", live: inboxLive(session), error: null }, 201);
-  }
+  // An omp room or a Claude session started elsewhere: its inbox; an hq-* tmux room: typed in (`deliverText`).
   try {
-    const r = await deliverWatched(o.db, session, text.value, { sendKeys, capture: capturePlain });
-    return json({ message: r.message, delivery: r.delivery, error: r.error }, 201);
+    return json(await deliverText(o.db, session, text.value), 201);
   } catch (e) {
     if (e instanceof SessionWaiting) return json({ error: "session-waiting", dialog: e.dialog }, 409);
     throw e;

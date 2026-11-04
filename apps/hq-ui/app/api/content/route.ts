@@ -1,5 +1,6 @@
 import { isFormat, isStatus } from "@/lib/content";
-import { ContentError, contentDbPath, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
+import { approveAndSend, ContentError, contentDbPath, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
+import { deliverText } from "@/lib/server/deliver";
 import { bad, json, open, readBody } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -66,12 +67,16 @@ export async function POST(req: Request) {
 
 /**
  * `?id=`: body = fields to change, `status`, `scheduled_at` (ms | null), `assignee_session` (+
- * `assignee_base`; null clears), `approve_source: "<source URL the owner saw>"`, and
- * `no_ai_confirmed: true` when approving an item with an AI mark (else 409). An approved item
- * edited into AI-risk content without it drops back to `checked`; a published one answers 409.
+ * `assignee_base`; null clears), `approve_source: "<source URL the owner saw>"`, and `ai_label`
+ * (true = AI used, label on when posting; false = no AI), required when approving an item with an
+ * AI mark (else 409). An approved item edited into AI-risk content without it drops back to
+ * `checked`; a published one answers 409.
  * Migration 0064 (else 400): `channels`, `captions_json` (merged; "" drops a channel's own caption)
  * and `retry_channel` (deletes a failed / blocked / cancelled channel row; 409 otherwise). Entering
  * `approved` answers 409 with what a channel misses.
+ * "Duyệt" in one tap: `{ status: "approved", send: { session, base }, ai_label? }` approves AND
+ * sends the posting task to that session (`approveAndSend`): a refusal sends nothing, a failed
+ * delivery (502) leaves the status unchanged. Answers `{ item, sent }`.
  */
 export async function PATCH(req: Request) {
   const o = open(req);
@@ -83,7 +88,13 @@ export async function PATCH(req: Request) {
   const c = registry();
   if ("res" in c) return c.res;
   try {
-    return json({ item: updateContent(c.db, id, body, hqApprover()) });
+    if (!("send" in body)) return json({ item: updateContent(c.db, id, body, hqApprover()) });
+    const send = body.send;
+    if (body.status !== "approved" || Object.keys(body).some((k) => !["send", "status", "ai_label"].includes(k)) || !send || typeof send !== "object" || Array.isArray(send))
+      return bad('send: chỉ đi cùng status "approved" (và ai_label), dạng { session, base }', 422);
+    const { session, base } = send as Record<string, unknown>;
+    const args = { session, base, ...("ai_label" in body ? { ai_label: body.ai_label } : {}) };
+    return json(await approveAndSend(c.db, id, args, hqApprover(), (s, text) => deliverText(o.db, s, text)));
   } catch (e) {
     return fail(e);
   }

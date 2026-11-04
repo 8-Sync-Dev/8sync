@@ -5,7 +5,7 @@
 // opens the sheet on that item.
 import { UserRoundIcon } from "lucide-react";
 import { useMemo } from "react";
-import { addDays, aiReason, dayKey, FORMAT_LABEL, monthGrid, STATUS_LABEL, timeOf, weekStart, whenOf, type CalendarMode, type ContentRow } from "@/lib/content";
+import { addDays, aiReason, capDay, dayKey, FORMAT_LABEL, monthGrid, STATUS_LABEL, timeOf, weekStart, whenOf, type CalendarMode, type ContentRow } from "@/lib/content";
 import { cn } from "@/lib/utils";
 import { assigneeShort, FORMAT_DOT, FORMAT_TONE, STATUS_EDGE, StatusIcon } from "./content-bits";
 
@@ -14,8 +14,10 @@ export const WEEKDAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 export const DAY_NAMES = ["Chủ nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"];
 
 const MONTH_NAMES = Array.from({ length: 12 }, (_, i) => `Tháng ${i + 1}`);
-/** Chips a month cell shows before "+N". */
+/** Chips a month cell shows before "+N" (5 posts a day is the plan: 11:30, 12:30, 18:00, 20:30, 21:30). */
 const CELL_CHIPS = 3;
+/** Chips a week column shows before "+N". */
+const WEEK_CHIPS = 6;
 
 /** The period the toolbar names. */
 export function periodLabel(mode: CalendarMode, d: Date): string {
@@ -32,7 +34,7 @@ const chipTitle = (it: ContentRow) =>
     `#${it.id} ${it.title}`,
     `${FORMAT_LABEL[it.format]} · ${STATUS_LABEL[it.status]}`,
     it.assignee_session ? `đang xử lý: ${it.assignee_base ?? it.assignee_session}` : null,
-    aiReason(it) ? `rủi ro nhãn AI: ${aiReason(it)}` : null,
+    aiReason(it) ? `nhớ bật nhãn AI nếu dùng AI: ${aiReason(it)}` : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -135,21 +137,7 @@ function Month({ cursor, days, today, open }: { cursor: Date; days: Map<string, 
                 ))}
               </div>
               <div className="flex min-w-0 flex-col gap-0.5 max-sm:hidden">
-                {items.slice(0, CELL_CHIPS).map((it) => (
-                  <Chip key={it.id} it={it} onOpen={open.item} />
-                ))}
-                {items.length > CELL_CHIPS && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      open.day(k);
-                    }}
-                    className="rounded px-1.5 text-left text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
-                  >
-                    +{items.length - CELL_CHIPS} bài nữa
-                  </button>
-                )}
+                <DayChips items={items} max={CELL_CHIPS} day={d} open={open} />
               </div>
             </div>
           );
@@ -173,13 +161,36 @@ function Week({ cursor, days, today, open }: { cursor: Date; days: Map<string, C
               <span className="font-medium">{w}</span>
               <DayNumber d={d} today={today} onOpen={() => open.day(k)} />
             </div>
-            {items.map((it) => (
-              <Chip key={it.id} it={it} onOpen={open.item} />
-            ))}
+            <DayChips items={items} max={WEEK_CHIPS} day={d} open={open} />
           </section>
         );
       })}
     </div>
+  );
+}
+
+/** A cell's chips up to `max`, then "+N bài nữa", which opens the day's sheet (`capDay`). */
+function DayChips({ items, max, day, open }: { items: ContentRow[]; max: number; day: Date; open: Open }) {
+  const { shown, more } = capDay(items, max);
+  return (
+    <>
+      {shown.map((it) => (
+        <Chip key={it.id} it={it} onOpen={open.item} />
+      ))}
+      {more > 0 && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            open.day(dayKey(day));
+          }}
+          aria-label={`Mở ngày ${day.getDate()}/${day.getMonth() + 1}: thêm ${more} bài`}
+          className="rounded px-1.5 text-left text-[11px] font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
+          +{more} bài nữa
+        </button>
+      )}
+    </>
   );
 }
 

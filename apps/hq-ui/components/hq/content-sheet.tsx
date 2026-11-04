@@ -1,17 +1,18 @@
 "use client";
 
 // The sheet a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
-// approve, inline caption / time edits, the channels (0064) with a caption and a post status each,
-// the AI-label check and "Giao việc". Esc or a click outside closes it; the URL keeps
-// `?day=YYYY-MM-DD&item=N` so the owner can share or come back.
-import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, ExternalLinkIcon, Loader2Icon, PlayIcon, RotateCcwIcon, ShieldAlertIcon, XIcon } from "lucide-react";
-import { useRef, useState } from "react";
+// approve (which also sends the posting task to the chosen session), inline caption / time edits,
+// the channels (0064) with a caption and a post status each, the AI-label choice and "Giao việc".
+// Esc or a click outside closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner can share or come back.
+import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, ExternalLinkIcon, Loader2Icon, PlayIcon, RotateCcwIcon, SparklesIcon, XIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  AI_CHOICES,
   aiReason,
   CAPTION_LIMIT,
   captionFor,
@@ -22,7 +23,6 @@ import {
   contentWarning,
   FORMAT_LABEL,
   fromLocalInput,
-  NO_AI_CONFIRM,
   NO_SCHEDULE,
   nextStatuses,
   stepHint,
@@ -38,11 +38,12 @@ import {
   type ContentStatus,
   type ContentRow,
   type ContentTextField,
+  type AssignPref,
 } from "@/lib/content";
 import { bytes } from "@/lib/disk";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
-import { AssignBox, Editable, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, type Patch } from "./content-bits";
+import { AssignBox, Editable, FORMAT_TONE, sessionLabel, STATUS_EDGE, STATUS_TONE, StatusIcon, useAssignSessions, type Patch } from "./content-bits";
 import { DAY_NAMES } from "./content-calendar";
 import { TOUCH } from "./room-send";
 import type { Api } from "./use-hq";
@@ -61,6 +62,7 @@ export function ContentSheet({
   item,
   items,
   schedule,
+  assign,
   api,
   now,
   patch,
@@ -75,6 +77,8 @@ export function ContentSheet({
   /** That day's items, in time order. */
   items: ContentRow[];
   schedule: boolean;
+  /** The saved default session for "Duyệt" (GET /api/content `assign`). */
+  assign: AssignPref | null;
   api: Api;
   now: number;
   patch: Patch;
@@ -103,7 +107,17 @@ export function ContentSheet({
               {items.map((it) => (
                 <li key={it.id}>
                   {shown === it.id ? (
-                    <ItemDetail it={it} api={api} now={now} patch={patch} error={errors[it.id]} schedule={schedule} onCollapse={items.length > 1 ? () => onItem(null) : undefined} reload={reload} />
+                    <ItemDetail
+                      it={it}
+                      api={api}
+                      now={now}
+                      patch={patch}
+                      error={errors[it.id]}
+                      schedule={schedule}
+                      assign={assign}
+                      onCollapse={items.length > 1 ? () => onItem(null) : undefined}
+                      reload={reload}
+                    />
                   ) : (
                     <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50">
                       <ItemLine it={it} />
@@ -152,6 +166,7 @@ function ItemDetail({
   patch,
   error,
   schedule,
+  assign,
   onCollapse,
   reload,
 }: {
@@ -161,22 +176,24 @@ function ItemDetail({
   patch: Patch;
   error: string | undefined;
   schedule: boolean;
+  assign: AssignPref | null;
   onCollapse?: () => void;
   reload: () => void;
 }) {
   const warn = contentWarning(it);
   const ai = aiReason(it);
-  const [confirmed, setConfirmed] = useState(false);
+  // The owner's answer to `aiReason`, sent as `ai_label`; asked again on every entry into approved.
+  const [aiChoice, setAiChoice] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
   const at = whenOf(it);
   // The flow's next steps, same as the list: "Duyệt" only once checked, so the 1-tap never meets a
   // trigger refusal it could have avoided; a step the trigger would refuse says why instead.
-  // Approve and publish both need the AI tick when flagged: the media folder can change after approval.
+  // Approve and publish both need the AI choice when flagged: the media folder can change after approval.
   const steps = nextStatuses(it.status);
   const gated = (s: ContentStatus) => (s === "approved" || s === "published") && ai != null;
-  const needsTick = steps.some(gated);
-  const blocked = needsTick && !confirmed;
+  const needsChoice = steps.some(gated);
+  const blocked = needsChoice && aiChoice === null;
   const hints = [...new Set(steps.map((s) => stepHint(it, s)).filter((h): h is string => h != null))];
   // An approved item whose posts already sit on a platform scheduler: they keep the text they were
   // given. Editing captions or channels here says so, next to approve.
@@ -186,10 +203,63 @@ function ItemDetail({
     if (it.status === "approved" && live) setStale(true);
   };
 
+  // Where "Duyệt" sends the posting task: the pick in "Giao việc", else the item's holder, else the
+  // saved default; a session gone from the list is skipped (and a gone default is forgotten).
+  const sessions = useAssignSessions(api);
+  const known = (s: string | null | undefined): s is string => !!s && (!sessions.loaded || sessions.list.some((r) => r.id === s));
+  const [picked, setPicked] = useState<string | null>(null);
+  const session = picked ?? [it.assignee_session, assign?.session].find(known) ?? it.assignee_session ?? "";
+  const labelOf = (id: string) => {
+    const row = sessions.list.find((r) => r.id === id);
+    if (row) return sessionLabel(row);
+    if (id === it.assignee_session && it.assignee_base) return it.assignee_base;
+    if (id === assign?.session && assign.base) return assign.base;
+    return id;
+  };
+  const [need, setNeed] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const forgotten = useRef<string | null>(null);
+  const goneDefault = sessions.loaded && assign != null && !sessions.list.some((r) => r.id === assign.session) ? assign.session : null;
+  useEffect(() => {
+    if (!goneDefault || forgotten.current === goneDefault) return;
+    forgotten.current = goneDefault;
+    api("/api/content/prefs", { method: "PUT", body: { assign: null } })
+      .then(reload)
+      .catch(() => {});
+  }, [goneDefault, api, reload]);
+
+  async function pick(id: string) {
+    setPicked(id);
+    setNeed(false);
+    try {
+      await api("/api/content/prefs", { method: "PUT", body: { assign: { session: id, base: labelOf(id) } } });
+      reload();
+    } catch (e) {
+      toast.error(`Chưa lưu được phiên mặc định: ${(e as Error).message}`);
+    }
+  }
+
   async function setStatus(status: ContentStatus) {
     setBusy(true);
     try {
-      await patch(it.id, gated(status) ? { status, no_ai_confirmed: confirmed } : { status });
+      await patch(it.id, gated(status) ? { status, ai_label: aiChoice } : { status });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** One tap (owner 2026-11-04): approve AND send the posting task; nothing changes when either fails. */
+  async function approve() {
+    const to = known(session) ? session : "";
+    if (!to) {
+      setNeed(true);
+      trigger.current?.focus();
+      return;
+    }
+    setBusy(true);
+    try {
+      const ok = await patch(it.id, { status: "approved", send: { session: to, base: labelOf(to) }, ...(gated("approved") ? { ai_label: aiChoice } : {}) });
+      if (ok) toast.success(`Đã duyệt #${it.id} và gửi việc đăng cho ${labelOf(to)}`);
     } finally {
       setBusy(false);
     }
@@ -215,7 +285,7 @@ function ItemDetail({
           {it.assignee_session && (
             <>
               {" "}
-              · đang xử lý: <span className="font-medium text-foreground">{it.assignee_base ?? it.assignee_session}</span>
+              · Đang xử lý: <span className="font-medium text-foreground">{it.assignee_base ?? it.assignee_session}</span>
             </>
           )}
         </p>
@@ -224,16 +294,27 @@ function ItemDetail({
       {(warn || ai || error) && (
         <div className="space-y-2">
           {ai && (
-            <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/8 px-3 py-2.5 text-sm text-destructive">
+            <div role="note" className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-900 dark:text-amber-200">
               <p className="flex items-start gap-1.5 font-medium">
-                <ShieldAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-                Rủi ro nhãn AI: {ai}. Luật mới: không bài nào được để Meta gắn nhãn &quot;AI info&quot;.
+                <SparklesIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+                Nhớ bật nhãn AI khi đăng nếu bài dùng AI: {ai}.
               </p>
-              {needsTick && (
-                <label className="mt-2 flex cursor-pointer items-start gap-2 text-foreground">
-                  <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1 size-4 shrink-0 accent-primary max-sm:size-5" />
-                  <span className="text-sm">{NO_AI_CONFIRM}</span>
-                </label>
+              {needsChoice && (
+                <fieldset className="mt-2 space-y-1.5 text-foreground">
+                  <legend className="sr-only">Bài này có dùng AI không</legend>
+                  {AI_CHOICES.map((c) => (
+                    <label key={String(c.value)} className="flex cursor-pointer items-start gap-2 max-sm:min-h-11">
+                      <input
+                        type="radio"
+                        name={`ai-${it.id}`}
+                        checked={aiChoice === c.value}
+                        onChange={() => setAiChoice(c.value)}
+                        className="mt-1 size-4 shrink-0 accent-primary max-sm:size-5"
+                      />
+                      <span className="text-sm">{c.label}</span>
+                    </label>
+                  ))}
+                </fieldset>
               )}
             </div>
           )}
@@ -254,15 +335,15 @@ function ItemDetail({
         <div className="flex flex-wrap items-center gap-2">
           {steps.map((s) =>
             s === "approved" ? (
-              <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || blocked || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
-                <CheckIcon aria-hidden /> Duyệt
+              <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || blocked || stepHint(it, s) != null} onClick={() => void approve()}>
+                {busy ? <Loader2Icon aria-hidden className="animate-spin" /> : <CheckIcon aria-hidden />} Duyệt
               </Button>
             ) : s === "rejected" ? (
               <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy} onClick={() => void setStatus(s)}>
                 <XIcon aria-hidden /> Bỏ
               </Button>
             ) : (
-              <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy || (gated(s) && !confirmed) || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
+              <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy || (gated(s) && aiChoice === null) || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
                 → {STATUS_LABEL[s]}
               </Button>
             ),
@@ -272,7 +353,10 @@ function ItemDetail({
               {h}.
             </span>
           ))}
-          {blocked && hints.length === 0 && <span className="text-xs text-muted-foreground">Tick xác nhận ở trên để duyệt.</span>}
+          {blocked && hints.length === 0 && <span className="text-xs text-muted-foreground">Chọn có hay không dùng AI ở trên để duyệt.</span>}
+          {steps.includes("approved") && !blocked && hints.length === 0 && (
+            <span className="text-xs text-muted-foreground">Duyệt sẽ gửi việc đăng cho {known(session) ? labelOf(session) : "phiên chọn ở Giao việc"}.</span>
+          )}
           {stale && it.status === "approved" && (
             <span className="flex flex-wrap items-center gap-1.5 text-xs text-foreground">
               <AlertTriangleIcon aria-hidden className="size-3.5 shrink-0 text-destructive" />
@@ -348,7 +432,19 @@ function ItemDetail({
       </dl>
 
       <div className="rounded-lg border p-3">
-        <AssignBox it={it} api={api} now={now} canSave={schedule} onSaved={reload} />
+        <AssignBox
+          it={it}
+          api={api}
+          now={now}
+          canSave={schedule}
+          onSaved={reload}
+          sessions={sessions}
+          session={session}
+          label={session ? labelOf(session) : ""}
+          onPick={(id) => void pick(id)}
+          need={need}
+          triggerRef={trigger}
+        />
       </div>
     </article>
   );

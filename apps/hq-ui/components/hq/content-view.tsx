@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangleIcon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, FileTextIcon, ListIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
+import { AlertTriangleIcon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, FileTextIcon, ListIcon, PlusIcon, SendIcon, SparklesIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -229,6 +229,7 @@ export function ContentView({ token, active }: { token: string; active: boolean 
               item={sel.item}
               items={sheetItems}
               schedule={data.schedule}
+              assign={data.assign}
               api={api}
               now={list.at}
               patch={patch}
@@ -408,14 +409,16 @@ function Items({
           {items.map((it) => {
             const warn = contentWarning(it);
             const ai = aiReason(it);
-            // Approving or publishing an AI-marked item needs the sheet's confirmation tick.
-            const steps = nextStatuses(it.status).filter((s) => !(ai && (s === "approved" || s === "published")));
+            // "Duyệt" lives in the sheet: it also sends the posting task to a session picked there.
+            // Publishing an AI-marked item needs the sheet's AI choice.
+            const steps = nextStatuses(it.status).filter((s) => s !== "approved" && !(ai && s === "published"));
+            const toApprove = nextStatuses(it.status).includes("approved");
             const note = steps.map((s) => stepHint(it, s)).find((h) => h != null);
             const err = errors[it.id];
             const who = assigneeShort(it);
             const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
             return (
-              <tr key={it.id} className={cn("align-top", (warn || ai) && "bg-destructive/5")}>
+              <tr key={it.id} className={cn("align-top", warn && "bg-destructive/5")}>
                 <td className="px-2 py-2 font-mono text-muted-foreground tabular">{it.id}</td>
                 <td className="w-64 min-w-56 px-2 py-2">
                   <div className="font-medium">
@@ -441,7 +444,7 @@ function Items({
                       <Trash2Icon aria-hidden />
                     </Button>
                   </div>
-                  {who && <p className="mt-1 text-[11px] text-muted-foreground">đang xử lý: {it.assignee_base ?? who}</p>}
+                  {who && <p className="mt-1 text-[11px] text-muted-foreground">Đang xử lý: {it.assignee_base ?? who}</p>}
                 </td>
                 <td className="px-2 py-2">
                   <p className={cn("whitespace-nowrap", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</p>
@@ -471,12 +474,17 @@ function Items({
                         );
                       })}
                     {note && <span className="text-[11px] text-muted-foreground">{note}</span>}
+                    {toApprove && (
+                      <Button type="button" size="sm" variant="outline" className={cn("h-6 px-2 text-[11px] whitespace-nowrap", TOUCH)} onClick={() => onOpen(it)}>
+                        <CheckIcon aria-hidden /> Duyệt trong khung chi tiết
+                      </Button>
+                    )}
                   </div>
                 </td>
                 <td className="w-44 min-w-36 px-2 py-2">
                   {ai && (
-                    <p className="flex items-start gap-1 font-medium text-destructive">
-                      <AlertTriangleIcon aria-hidden className="mt-px size-3.5 shrink-0" /> Rủi ro nhãn AI: {ai}. Duyệt trong khung chi tiết.
+                    <p className="flex items-start gap-1 font-medium text-amber-700 dark:text-amber-300">
+                      <SparklesIcon aria-hidden className="mt-px size-3.5 shrink-0" /> Nhớ bật nhãn AI khi đăng nếu bài dùng AI: {ai}.
                     </p>
                   )}
                   {warn && (

@@ -2,8 +2,8 @@
 
 // Pieces the "Nội dung" list, calendar and sheet share: format hues, status edges, the PATCH helper,
 // the inline editor and the session picker that sends a task and remembers who holds the item.
-import { CheckCheckIcon, CheckIcon, Loader2Icon, SendIcon } from "lucide-react";
-import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { AlertTriangleIcon, CheckCheckIcon, CheckIcon, Loader2Icon, SendIcon } from "lucide-react";
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent, type Ref } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -181,16 +181,48 @@ export function Editable({
 const SESSIONS_POLL_MS = 60_000;
 
 /** A session's label as saved on the item and shown on the chip: "<name> · <repo>". */
-const sessionLabel = (s: Pick<OmpTreeRow, "name" | "cwd">) => (s.cwd ? `${s.name} · ${repoOf(s.cwd).name}` : s.name);
+export const sessionLabel = (s: Pick<OmpTreeRow, "name" | "cwd">) => (s.cwd ? `${s.name} · ${repoOf(s.cwd).name}` : s.name);
+
+/** The omp sessions "Giao việc" and "Duyệt" can send to (GET /api/omp/sessions?all=1); `loaded` once the first answer is in. */
+export function useAssignSessions(api: Api): { list: OmpTreeRow[]; loaded: boolean } {
+  const sessions = usePoll<{ sessions: OmpTreeRow[] }>(api, "/api/omp/sessions?all=1", SESSIONS_POLL_MS, true);
+  return useMemo(() => ({ list: sessions.data?.sessions ?? [], loaded: sessions.data != null }), [sessions.data]);
+}
 
 /**
- * "Giao việc": pick an omp session (GET /api/omp/sessions?all=1), type, send (POST /api/messages, the
- * item's `contentTaskText`), then save the pick on the item (`assignee_session`): the chip and the
- * sheet show who holds it, and the box opens on that session next time.
+ * "Giao việc": the session picked here (`session`, owned by the sheet) is also where "Duyệt" sends
+ * the posting task, and a pick becomes the default for every item (`onPick` saves it server-side).
+ * Typing a task and "Gửi" sends it (POST /api/messages, the item's `contentTaskText`), then saves
+ * the pick on the item (`assignee_session`): the chip and the sheet show who holds it.
+ * `need`: "Duyệt" was pressed with no session; says so next to the select (`triggerRef` takes focus).
  */
-export function AssignBox({ it, api, now, canSave, onSaved }: { it: ContentItem; api: Api; now: number; canSave: boolean; onSaved: () => void }) {
-  const sessions = usePoll<{ sessions: OmpTreeRow[] }>(api, "/api/omp/sessions?all=1", SESSIONS_POLL_MS, true);
-  const list = useMemo(() => sessions.data?.sessions ?? [], [sessions.data]);
+export function AssignBox({
+  it,
+  api,
+  now,
+  canSave,
+  onSaved,
+  sessions,
+  session,
+  label,
+  onPick,
+  need,
+  triggerRef,
+}: {
+  it: ContentItem;
+  api: Api;
+  now: number;
+  canSave: boolean;
+  onSaved: () => void;
+  sessions: { list: OmpTreeRow[]; loaded: boolean };
+  session: string;
+  /** The label of `session`, as saved on the item. */
+  label: string;
+  onPick: (id: string) => void;
+  need: boolean;
+  triggerRef: Ref<HTMLButtonElement>;
+}) {
+  const list = sessions.list;
   const groups = useMemo(() => {
     const by = new Map<string, OmpTreeRow[]>();
     for (const s of list) {
@@ -199,8 +231,6 @@ export function AssignBox({ it, api, now, canSave, onSaved }: { it: ContentItem;
     }
     return [...by.entries()];
   }, [list]);
-  const [picked, setPicked] = useState<string | null>(null);
-  const session = picked ?? it.assignee_session ?? "";
   const row = list.find((s) => s.id === session) ?? null;
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -215,7 +245,6 @@ export function AssignBox({ it, api, now, canSave, onSaved }: { it: ContentItem;
         method: "POST",
         body: { session, text: contentTaskText(it, typed), ...(row?.cwd ? { base: row.cwd } : {}) },
       });
-      const label = row ? sessionLabel(row) : (it.assignee_base ?? session);
       if (r.delivery === "failed") {
         toast.error(`Chưa gửi được tới ${label}: ${r.error ?? "lỗi không rõ"}`);
         return;
@@ -255,14 +284,21 @@ export function AssignBox({ it, api, now, canSave, onSaved }: { it: ContentItem;
         Giao việc
         {it.assignee_session && (
           <span className="font-normal text-muted-foreground">
-            · đang xử lý: <span className="font-medium text-foreground">{it.assignee_base ?? it.assignee_session}</span>
+            · Đang xử lý: <span className="font-medium text-foreground">{it.assignee_base ?? it.assignee_session}</span>
             {it.assigned_at ? ` · ${agoShort(it.assigned_at, now)}` : ""}
           </span>
         )}
       </h3>
-      <Select value={session || undefined} onValueChange={setPicked}>
-        <SelectTrigger size="sm" className={cn("w-full text-xs", TOUCH)} aria-label="Phiên nhận việc">
-          <SelectValue placeholder={sessions.data ? "Chọn phiên omp" : "Đang tải phiên…"} />
+      <Select value={session || undefined} onValueChange={onPick}>
+        <SelectTrigger
+          ref={triggerRef}
+          size="sm"
+          className={cn("w-full text-xs", TOUCH)}
+          aria-label="Phiên nhận việc"
+          aria-invalid={need || undefined}
+          aria-describedby={need ? `${id}-need` : undefined}
+        >
+          <SelectValue placeholder={sessions.loaded ? "Chọn phiên omp" : "Đang tải phiên…"} />
         </SelectTrigger>
         <SelectContent className="max-h-80">
           {savedMissing && (
@@ -286,6 +322,12 @@ export function AssignBox({ it, api, now, canSave, onSaved }: { it: ContentItem;
           ))}
         </SelectContent>
       </Select>
+      {need && (
+        <p id={`${id}-need`} role="alert" className="flex items-center gap-1 text-xs font-medium text-destructive">
+          <AlertTriangleIcon aria-hidden className="size-3.5 shrink-0" />
+          Chọn phiên nhận việc đăng trước khi duyệt
+        </p>
+      )}
       <label htmlFor={id} className="sr-only">
         Việc cho mục #{it.id}
       </label>

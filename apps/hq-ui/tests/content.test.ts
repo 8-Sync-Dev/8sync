@@ -3,11 +3,14 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DELETE, GET, PATCH, POST } from "@/app/api/content/route";
+import { PUT as PUT_PREFS } from "@/app/api/content/prefs/route";
 import { GET as MEDIA } from "@/app/api/content/media/route";
-import { addDays, aiReason, byDay, captionFor, contentTaskText, contentWarning, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_CHANNELS, NO_SCHEDULE, stepCursor, stepHint, toLocalInput, weekStart } from "@/lib/content";
+import { addDays, aiReason, byDay, capDay, captionFor, contentTaskText, contentWarning, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_CHANNELS, NO_SCHEDULE, stepCursor, stepHint, toLocalInput, weekStart } from "@/lib/content";
 import { getToken } from "@/lib/server/auth";
 import { contentConfigPath, NO_REGISTRY } from "@/lib/server/content";
 import { aiMark, mediaSigValid } from "@/lib/server/content-media";
+import { contentPrefsPath } from "@/lib/server/content-prefs";
+import { inboxDir, inboxFile } from "@/lib/server/inbox";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 /** content-post-agency apps/content-ai/src/database/migrations/0062_content_registry.up.sql (table + gate). */
@@ -50,6 +53,7 @@ ALTER TABLE content_items ADD COLUMN channels TEXT NOT NULL DEFAULT '["facebook"
   CHECK (json_valid(channels) AND json_type(channels) = 'array');
 ALTER TABLE content_items ADD COLUMN captions_json TEXT
   CHECK (captions_json IS NULL OR (json_valid(captions_json) AND json_type(captions_json) = 'object'));
+ALTER TABLE content_items ADD COLUMN ai_label INTEGER NOT NULL DEFAULT 0 CHECK (ai_label IN (0,1));
 CREATE TABLE IF NOT EXISTS content_channel_posts (
   item_id INTEGER NOT NULL REFERENCES content_items(id) ON DELETE CASCADE,
   channel TEXT NOT NULL CHECK (channel IN ('facebook','linkedin','threads','youtube')),
@@ -234,31 +238,34 @@ describe("/api/content calendar fields (0063)", () => {
     // Other edits still work.
     expect((await PATCH(call("PATCH", `?id=${item.id}`, { caption: "x" }))).status).toBe(200);
   });
-  it("approving an AI-made item needs the reviewer's no-AI confirmation; the DB gate still runs after it", async () => {
+  it("approving an AI-made item needs the owner's AI choice; the DB gate still runs after it", async () => {
     configure(makeDb("ai.db", MIGRATION_0062 + MIGRATION_0063));
     const q = await readyToApprove({ format: "ai_video" });
     let res = await PATCH(call("PATCH", q, { status: "approved" }));
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/^Mục có rủi ro nhãn AI \(.+\): tick xác nhận/);
-    res = await PATCH(call("PATCH", q, { status: "approved", no_ai_confirmed: true }));
+    expect((await res.json()).error).toMatch(/^Mục có thể dùng AI \(.+\)/);
+    expect((await PATCH(call("PATCH", q, { status: "approved", ai_label: "có" }))).status).toBe(422);
+    // Before 0064 the choice is taken but there is no column to keep it in.
+    res = await PATCH(call("PATCH", q, { status: "approved", ai_label: true }));
     expect(res.status).toBe(200);
+    expect((await res.json()).item).not.toHaveProperty("ai_label");
 
-    // The confirmation is no way around the trigger: an unchecked item stays refused by the DB.
+    // The choice is no way around the trigger: an unchecked item stays refused by the DB.
     const { item } = await (await POST(call("POST", "", { format: "ai_video", title: "B" }))).json();
-    res = await PATCH(call("PATCH", `?id=${item.id}`, { status: "approved", no_ai_confirmed: true }));
+    res = await PATCH(call("PATCH", `?id=${item.id}`, { status: "approved", ai_label: false }));
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("content_items: source must be approved before approved/published");
   });
-  it("an approved item edited into AI content without the tick drops back to checked; asking for approved again is refused", async () => {
+  it("an approved item edited into AI content without the choice drops back to checked; asking for approved again is refused", async () => {
     configure(makeDb("ai-swap.db", MIGRATION_0062 + MIGRATION_0063));
     const q = await readyToApprove({ format: "text" });
     expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
     let res = await PATCH(call("PATCH", q, { format: "ai_video" }));
     expect(res.status).toBe(200);
     expect((await res.json()).item).toMatchObject({ format: "ai_video", status: "checked" });
-    // Re-approving the AI version needs the tick.
+    // Re-approving the AI version needs the choice.
     expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(409);
-    expect((await PATCH(call("PATCH", q, { status: "approved", no_ai_confirmed: true }))).status).toBe(200);
+    expect((await PATCH(call("PATCH", q, { status: "approved", ai_label: true }))).status).toBe(200);
 
     // Same for new media, and sending status "approved" with the change is a 409, not a silent demote.
     const r = await readyToApprove({ format: "text" });
@@ -269,18 +276,18 @@ describe("/api/content calendar fields (0063)", () => {
     expect((await PATCH(call("PATCH", r, { status: "approved", media_path: dir }))).status).toBe(409);
     res = await PATCH(call("PATCH", r, { media_path: dir }));
     expect((await res.json()).item.status).toBe("checked");
-    // With the tick the item stays approved; edits that do not touch the AI rule stay free.
-    expect((await PATCH(call("PATCH", r, { status: "approved", no_ai_confirmed: true }))).status).toBe(200);
+    // With the choice the item stays approved; edits that do not touch the AI rule stay free.
+    expect((await PATCH(call("PATCH", r, { status: "approved", ai_label: false }))).status).toBe(200);
     expect((await (await PATCH(call("PATCH", r, { caption: "mới" }))).json()).item.status).toBe("approved");
   });
-  it("publishing an AI item needs the tick from any status, including a video added after approval; a published post refuses the swap", async () => {
+  it("publishing an AI item needs the choice from any status, including a video added after approval; a published post refuses the swap", async () => {
     configure(makeDb("ai-pub.db", MIGRATION_0062 + MIGRATION_0063));
     const links = { news_url: "https://n", fb_post_url: "https://f" };
-    // The trigger checks fields, not the previous status: checked → published must not skip the tick.
+    // The trigger checks fields, not the previous status: checked → published must not skip the choice.
     const q = await readyToApprove({ format: "ai_video", ...links });
     let res = await PATCH(call("PATCH", q, { status: "published" }));
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/^Mục có rủi ro nhãn AI/);
+    expect((await res.json()).error).toMatch(/^Mục có thể dùng AI/);
     expect((await POST(call("POST", "", { format: "ai_video", title: "C", status: "published" }))).status).toBe(409);
 
     // A text item approved with a clean media folder; a video lands there afterwards.
@@ -291,7 +298,7 @@ describe("/api/content calendar fields (0063)", () => {
     expect((await PATCH(call("PATCH", r, { status: "approved" }))).status).toBe(200);
     fs.writeFileSync(path.join(dir, "r.mp4"), Buffer.alloc(64));
     expect((await PATCH(call("PATCH", r, { status: "published" }))).status).toBe(409);
-    expect((await PATCH(call("PATCH", r, { status: "published", no_ai_confirmed: true }))).status).toBe(200);
+    expect((await PATCH(call("PATCH", r, { status: "published", ai_label: true }))).status).toBe(200);
 
     const t = await readyToApprove({ format: "text", ...links });
     expect((await PATCH(call("PATCH", t, { status: "approved" }))).status).toBe(200);
@@ -526,7 +533,7 @@ describe("/api/content channels (0064)", () => {
     const video = path.join(dir, "v.MP4");
     fs.writeFileSync(video, Buffer.alloc(64));
     const y = await readyToApprove({ format: "clip", title: "Video", caption: "=== YOUTUBE ===\nMô tả", channels: ["youtube"], media_path: dir });
-    const approveY = async () => (await PATCH(call("PATCH", y, { status: "approved", no_ai_confirmed: true }))).status;
+    const approveY = async () => (await PATCH(call("PATCH", y, { status: "approved", ai_label: true }))).status;
     expect(await approveY()).toBe(409);
     await PATCH(call("PATCH", y, { media_path: path.join(dir, "missing.mp4") }));
     expect(await approveY()).toBe(409);
@@ -592,5 +599,95 @@ describe("/api/content channels (0064)", () => {
     expect(items[0]).not.toHaveProperty("channel_posts");
     // No caption at all: without 0064 there is no channel rule to meet.
     expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
+  });
+});
+
+describe("/api/content Duyệt = approve + send (owner 2026-11-04)", () => {
+  const ALL = MIGRATION_0062 + MIGRATION_0063 + MIGRATION_0064;
+  const ROOM = "omp-2364d8b9ca3a61ed";
+  const send = (q: string, extra: Record<string, unknown> = {}) => PATCH(call("PATCH", q, { status: "approved", send: { session: ROOM, base: "mkt · 8sync-startup" }, ...extra }));
+  const queued = (): string[] => {
+    try {
+      return fs.readFileSync(inboxFile(ROOM), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l).text as string);
+    } catch {
+      return [];
+    }
+  };
+  const statusOf = async (q: string) => (await (await GET(call("GET", ""))).json()).items.find((i: { id: number }) => `?id=${i.id}` === q).status;
+  afterEach(() => {
+    fs.rmSync(inboxDir(), { recursive: true, force: true });
+    fs.rmSync(contentPrefsPath(), { force: true });
+  });
+
+  it("approves, sends the posting task to the session, records the holder and makes it the default", async () => {
+    configure(makeDb("send.db", ALL));
+    const at = new Date(2026, 10, 5, 18, 0).getTime();
+    const q = await readyToApprove({ format: "course_video", title: "C++ bài 1", caption: "=== FACEBOOK ===\nCap FB\n=== THREADS ===\nCap TH", channels: ["facebook", "threads"], scheduled_at: at });
+    const id = Number(q.slice("?id=".length));
+    const res = await send(q, { ai_label: true });
+    expect(res.status).toBe(200);
+    expect((await res.json()).item).toMatchObject({ status: "approved", ai_label: true, assignee_session: ROOM, assignee_base: "mkt · 8sync-startup", assigned_at: expect.any(Number) });
+    const [task, ...rest] = queued();
+    expect(rest).toHaveLength(0);
+    expect(task.split("\n")[0]).toBe(`[Nội dung #${id} · 8syncdev] C++ bài 1`);
+    expect(task).toContain("Cap FB");
+    expect(task).toContain("Cap TH");
+    expect(task).toContain(`--only ${id}`);
+    // A reload: the item still shows its holder; the session is the default for the next item.
+    const listed = await (await GET(call("GET", ""))).json();
+    expect(listed.items.find((i: { id: number }) => i.id === id)).toMatchObject({ status: "approved", assignee_session: ROOM });
+    expect(listed.assign).toEqual({ session: ROOM, base: "mkt · 8sync-startup" });
+  });
+
+  it("a refusal sends nothing: missing AI choice, a channel rule, a bad session or body", async () => {
+    configure(makeDb("send-refused.db", ALL));
+    const v = await readyToApprove({ format: "course_video", caption: "x", channels: ["facebook"] });
+    expect((await send(v)).status).toBe(409);
+    const t = await readyToApprove({ format: "infographic", caption: "=== FACEBOOK ===\nA", channels: ["facebook", "threads"] });
+    expect((await send(t)).status).toBe(409);
+    expect((await PATCH(call("PATCH", t, { status: "approved", send: { session: "core; rm -rf" } }))).status).toBe(422);
+    expect((await PATCH(call("PATCH", t, { status: "checked", send: { session: ROOM } }))).status).toBe(422);
+    expect((await PATCH(call("PATCH", t, { status: "approved", caption: "y", send: { session: ROOM } }))).status).toBe(422);
+    expect(queued()).toEqual([]);
+    expect(await statusOf(v)).toBe("checked");
+    expect(await statusOf(t)).toBe("checked");
+    expect((await (await GET(call("GET", ""))).json()).assign).toBeNull();
+  });
+
+  it("a failed delivery leaves the item as it was", async () => {
+    configure(makeDb("send-fail.db", ALL));
+    const q = await readyToApprove({ format: "infographic", caption: "Cap" });
+    // The inbox folder cannot be made: a file sits where it goes.
+    fs.mkdirSync(path.dirname(inboxDir()), { recursive: true });
+    fs.writeFileSync(inboxDir(), "");
+    const res = await send(q);
+    expect(res.status).toBe(502);
+    fs.rmSync(inboxDir(), { force: true });
+    expect(await statusOf(q)).toBe("checked");
+    const listed = await (await GET(call("GET", ""))).json();
+    expect(listed.items[0].assignee_session).toBeNull();
+    expect(listed.assign).toBeNull();
+  });
+
+  it("the default session is kept server-side across reads, replaced and forgotten", async () => {
+    configure(makeDb("prefs.db", ALL));
+    const put = (assign: unknown) => PUT_PREFS(req("/api/content/prefs", { method: "PUT", token, origin: ORIGIN, body: { assign } }));
+    expect((await put({ session: ROOM, base: " mkt · 8sync-startup " })).status).toBe(200);
+    expect((await (await GET(call("GET", ""))).json()).assign).toEqual({ session: ROOM, base: "mkt · 8sync-startup" });
+    expect((await (await GET(call("GET", ""))).json()).assign).toEqual({ session: ROOM, base: "mkt · 8sync-startup" });
+    expect((await put({ session: "../../etc", base: "x" })).status).toBe(422);
+    expect((await (await GET(call("GET", ""))).json()).assign?.session).toBe(ROOM);
+    expect((await put(null)).status).toBe(200);
+    expect((await (await GET(call("GET", ""))).json()).assign).toBeNull();
+  });
+});
+
+describe("calendar overflow", () => {
+  it("a day shows up to the cap, one more as a chip, and puts the rest behind +N", () => {
+    const five = [1, 2, 3, 4, 5];
+    expect(capDay(five, 3)).toEqual({ shown: [1, 2, 3], more: 2 });
+    expect(capDay([1, 2, 3, 4], 3)).toEqual({ shown: [1, 2, 3, 4], more: 0 });
+    expect(capDay(five, 6)).toEqual({ shown: five, more: 0 });
+    expect(capDay([], 3)).toEqual({ shown: [], more: 0 });
   });
 });
