@@ -85,6 +85,7 @@ describe("artifacts", () => {
   it("refuses files outside known projects, unshown types, secret-looking names, .git and the public link", async () => {
     expect((await post({ path: put(outside, "x.md", "x") })).status).toBe(403);
     expect((await post({ path: put(repo, "bin/app.exe", "x") })).status).toBe(422);
+    expect((await post({ path: put(repo, "outputs/logo.svg", "<svg xmlns='http://www.w3.org/2000/svg'><script>1</script></svg>") })).status).toBe(422);
     expect((await post({ path: put(repo, "outputs/.env.md", "K=1") })).status).toBe(422);
     expect((await post({ path: put(repo, ".git/notes.md", "x") })).status).toBe(422);
     expect((await post({ path: "outputs/report.md" })).status).toBe(422);
@@ -117,6 +118,19 @@ describe("artifacts", () => {
   it("does not serve a file whose path became a link out of its project", async () => {
     const target = put(outside, "secret.md", "nope");
     const f = put(repo, "outputs/swap.md", "ok");
+    const a = ((await (await post({ path: f })).json()) as { artifact: Artifact }).artifact;
+    fs.rmSync(f);
+    try {
+      fs.symlinkSync(target, f, "file");
+    } catch {
+      return; // no symlink right on this Windows account
+    }
+    expect((await file(req(`/api/artifacts/${a.id}/file`, { token: getToken() }), ctx(a.id))).status).toBe(404);
+  });
+
+  it("does not serve a file whose path became a link to a secret inside its project", async () => {
+    const target = put(repo, "config/secrets.md", "K=1");
+    const f = put(repo, "outputs/swap2.md", "ok");
     const a = ((await (await post({ path: f })).json()) as { artifact: Artifact }).artifact;
     fs.rmSync(f);
     try {

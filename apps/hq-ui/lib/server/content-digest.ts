@@ -82,12 +82,20 @@ export function pickRoom(rows: readonly FloorRow[], repo: string, names: readonl
 
 const hm = (ms: number) => new Date(ms).toTimeString().slice(0, 5);
 
+/** Guest editors can write these fields: one line, bounded, so they read as data in the room's task, not as more instructions. */
+const oneLine = (s: string, max: number) => {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+};
+
 /** The task text. `links`: per item, the result links rooms registered (`hq.mjs artifact add --link`). */
 export function digestText(d: Due, links: ReadonlyMap<number, string[]>, repo: string): string {
   const [y, m, dd] = d.day.split("-");
   const lines = d.items.map((it) => {
-    const where = it.fb_post_url || links.get(it.id)?.[0] || "chưa có link bài";
-    return `- #${it.id} ${hm(it.scheduled_at as number)} ${it.format} (${it.status}${it.fb_page ? `, ${it.fb_page}` : ""}): ${it.title} — ${where}`;
+    const fb = it.fb_post_url && /^https?:\/\/\S+$/i.test(it.fb_post_url.trim()) ? it.fb_post_url.trim() : null;
+    const where = fb || links.get(it.id)?.[0] || "chưa có link bài";
+    const page = it.fb_page ? `, ${oneLine(it.fb_page, 60)}` : "";
+    return `- #${it.id} ${hm(it.scheduled_at as number)} ${it.format} (${it.status}${page}): ${oneLine(it.title ?? "", 120)} — ${where}`;
   });
   return [
     `[HQ, việc cuối ngày ${dd}/${m}/${y}, gửi 1 lần] Đọc số liệu các bài đã lên lịch hôm đó và ghi vào Nội dung › Tổng quan.`,

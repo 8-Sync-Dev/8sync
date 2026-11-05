@@ -224,6 +224,9 @@ export function openArtifact(db: DatabaseSync, id: string): OpenArtifact | null 
   const real = realOrNull(row.path);
   const rootReal = realOrNull(row.root);
   if (!real || !rootReal || !inside(real, rootReal)) return null;
+  // The path may have been swapped for a symlink since registration: repeat the registration filters on what it is now.
+  if (SECRET_NAME.test(baseName(real))) return null;
+  if (path.relative(rootReal, real).split(path.sep).some((seg) => Object.hasOwn(BLOCKED_DIR, seg.toLowerCase()))) return null;
   const t = ARTIFACT_TYPES[extOf(real)];
   if (!t || t.kind !== row.kind) return null;
   let st: fs.Stats;
@@ -233,6 +236,8 @@ export function openArtifact(db: DatabaseSync, id: string): OpenArtifact | null 
     return null;
   }
   if (!st.isFile() || st.size > maxArtifactBytes(t.kind)) return null;
-  const body = Readable.toWeb(fs.createReadStream(real)) as unknown as ReadableStream;
+  // Bounded to the stat'ed size: a file still being appended to must not outrun content-length or the size cap.
+  const bytes = st.size > 0 ? fs.createReadStream(real, { start: 0, end: st.size - 1 }) : Readable.from([]);
+  const body = Readable.toWeb(bytes) as unknown as ReadableStream;
   return { artifact: withStat(row), type: t.type, size: st.size, body };
 }

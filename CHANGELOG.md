@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.17] — 2026-11-05
+
+### Security
+- HQ Kết quả: không nhận file `.svg` nữa. Giao diện đọc file thành blob URL; mở ảnh SVG đó ở tab mới thì script trong file chạy với origin của HQ và đọc được token chủ (cùng lý do file đính kèm chat không hiện SVG). SVG đã đăng trước đây hiện "mất file".
+- HQ Kết quả: mỗi lần đọc file kiểm lại cả tên giống file bí mật và thư mục cấm (`.git`, `.ssh`, `node_modules`…), không chỉ lúc đăng. Trước đây đổi file đã đăng thành symlink tới `config/secrets…` trong cùng dự án vẫn đọc được. File đang được ghi thêm chỉ gửi đúng số byte đã stat (không vượt `content-length` và giới hạn cỡ).
+- HQ việc cuối ngày gửi phòng nội dung: tên bài, trang FB (khách "Sửa nội dung" sửa được) gộp thành một dòng có giới hạn độ dài, link bài chỉ giữ khi là `http(s)`. Trước đây khách có thể chèn dòng lệnh vào tin HQ tự gửi cho phòng dưới danh nghĩa chủ.
+
 ## [0.122.16] — 2026-11-05
 
 ### Fixed
