@@ -5,7 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
-## [0.122.21] — 2026-11-05
+### Added
+- HQ tab mới **Bản đồ code** (menu Thêm, tải lười): chọn một dự án đã có trong HQ (hoặc một repo trên máy, chọn là thêm vào HQ) để xem trail đã index chưa và build lúc nào (mtime `.trail/cache/.graph/wiring.json`), bản đồ `trail map` theo module → thư mục/file → số symbol kèm hub và điểm nóng, ô tìm `trail ask`/`trail grep` ra kết quả file:dòng, bấm kết quả mở khung file (`trail skeleton`) ở panel bên, nút "Index ngay" chạy `trail build` có thanh tiến độ, và mục graphify khi repo có `graphify-out/graph.html` (mở trong iframe sandbox, origin rỗng). API `/api/codemap/*` chỉ nhận id dự án (không nhận đường dẫn), file phải nằm trong repo sau realpath, trail chạy bằng argv không qua shell với giới hạn thời gian và 200 KB output; khách không vào được, chỉ owner bấm Index.
+
+ — 2026-11-05
 
 ### Changed
 - HQ Chat phòng trên màn rộng: ô nhắn tách khỏi vùng chia, nằm thành một hàng riêng trải hết chiều ngang dưới cả hai cột. Kéo viền giữa chỉ đổi chỗ giữa tin nhắn và Nhật ký, không còn bóp ô nhắn theo cột chat. Màn hẹp/điện thoại giữ như cũ.

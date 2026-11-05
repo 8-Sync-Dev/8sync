@@ -1,0 +1,41 @@
+{
+ "query": "spawn trail process",
+ "mode": "lexical",
+ "hits": [
+  {
+   "kind": "symbol",
+   "title": "Spawn · type",
+   "pointer": "apps/hq-ui/lib/server/answer.ts:L22-L22",
+   "snippet": "type Spawn = (cmd: string, args: string[], opts: { cwd?: string; windowsHide: boolean; env?: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;",
+   "score": 1,
+   "scope": "apps/hq-ui"
+  },
+  {
+   "kind": "symbol",
+   "title": "Spawn · type",
+   "pointer": "apps/hq-ui/lib/server/term.ts:L25-L25",
+   "snippet": "type Spawn = (cmd: string, args: string[], opts: { cwd?: string; windowsHide: boolean; env?: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;",
+   "score": 1,
+   "scope": "apps/hq-ui"
+  },
+  {
+   "kind": "symbol",
+   "title": "trail_cmd · function",
+   "pointer": "crates/cli/src/verbs/harness/trail.rs:L75-L79",
+   "snippet": "fn trail_cmd(bin: &Path) -> Command",
+   "score": 0.8228837766030824,
+   "scope": "crates/cli"
+  },
+  {
+   "kind": "symbol",
+   "title": "spawn_detached_probe · function",
+   "pointer": "crates/cli/src/verbs/selfup.rs:L621-L631",
+   "snippet": "fn spawn_detached_probe()",
+   "score": 0.7051219608978009,
+   "scope": "crates/cli"
+  }
+ ],
+ "coverage": 0.6218263874392786,
+ "coverageStrong": 0.38664265811494886,
+ "notesChecked": true
+}
