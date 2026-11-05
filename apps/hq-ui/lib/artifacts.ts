@@ -20,6 +20,13 @@ export type Artifact = {
   title: string;
   note: string | null;
   kind: ArtifactKind;
+  /** Content items (Nội dung `content_items.id`) this file is the result of: shown in their sheet. */
+  content: number[];
+  /** An https page the result lives at (the Meta scheduled post, later the permalink). */
+  link: string | null;
+  /** The project the file is about when it is not the repo it sits in (`--for`); groups it there. */
+  for_root: string | null;
+  for_project: string | null;
   created_at: number;
   /** Last registration; a re-register of the same path moves it to the top. */
   updated_at: number;
@@ -86,10 +93,40 @@ export type ArtifactGroup = { key: string; root: string; project: string; items:
 export function groupArtifacts(list: Artifact[]): ArtifactGroup[] {
   const by = new Map<string, ArtifactGroup>();
   for (const a of list) {
-    const key = rootKey(a.root);
+    const root = a.for_root ?? a.root;
+    const key = rootKey(root);
     const g = by.get(key);
     if (g) g.items.push(a);
-    else by.set(key, { key, root: a.root, project: a.project, items: [a] });
+    else by.set(key, { key, root, project: a.for_project ?? a.project, items: [a] });
   }
   return [...by.values()];
+}
+
+/** Ids of content items, at most this many per artifact. */
+export const CONTENT_LINKS_MAX = 20;
+
+/** "38,16" / [38, 16] / 38 → [16, 38]; null when any part is not a positive id. */
+export function parseContentIds(v: unknown): number[] | null {
+  const parts = Array.isArray(v) ? v : typeof v === "number" ? [v] : typeof v === "string" ? v.split(",").map((s) => s.trim()).filter(Boolean) : null;
+  if (!parts || parts.length > CONTENT_LINKS_MAX) return null;
+  const out = new Set<number>();
+  for (const p of parts) {
+    const n = typeof p === "number" ? p : typeof p === "string" && /^\d{1,12}$/.test(p) ? Number(p) : NaN;
+    if (!Number.isSafeInteger(n) || n <= 0) return null;
+    out.add(n);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/** "Meta Business Suite" for business.facebook.com, else the host: what a link button says. */
+export function linkLabel(url: string): string {
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+  if (host === "business.facebook.com") return "Meta Business Suite";
+  if (host === "facebook.com" || host === "m.facebook.com" || host === "fb.com") return "Facebook";
+  return host;
 }

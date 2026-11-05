@@ -35,6 +35,7 @@ import { useAccess } from "./access";
 import { AssignBox, Editable, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, type Patch } from "./content-bits";
 import { CopyButton } from "./copy-button";
 import { DAY_NAMES } from "./content-calendar";
+import { ItemResults, NO_RESULTS, ResultMark, type ResultIndex } from "./content-results";
 import { TOUCH } from "./room-send";
 import type { Api } from "./use-hq";
 
@@ -53,6 +54,8 @@ export function ContentSheet({
   items,
   schedule,
   api,
+  token,
+  results = NO_RESULTS,
   now,
   patch,
   errors,
@@ -67,6 +70,9 @@ export function ContentSheet({
   items: ContentRow[];
   schedule: boolean;
   api: Api;
+  token: string;
+  /** What the rooms reported back (owner only; empty for a guest). */
+  results?: ResultIndex;
   now: number;
   patch: Patch;
   errors: Record<number, string>;
@@ -94,10 +100,10 @@ export function ContentSheet({
               {items.map((it) => (
                 <li key={it.id}>
                   {shown === it.id ? (
-                    <ItemDetail it={it} api={api} now={now} patch={patch} error={errors[it.id]} schedule={schedule} onCollapse={items.length > 1 ? () => onItem(null) : undefined} reload={reload} />
+                    <ItemDetail it={it} api={api} token={token} results={results} now={now} patch={patch} error={errors[it.id]} schedule={schedule} onCollapse={items.length > 1 ? () => onItem(null) : undefined} reload={reload} />
                   ) : (
                     <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50">
-                      <ItemLine it={it} />
+                      <ItemLine it={it} results={results} />
                       <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                     </button>
                   )}
@@ -112,7 +118,7 @@ export function ContentSheet({
 }
 
 /** Time, format, title, status: the collapsed row and the open item's heading. */
-function ItemLine({ it }: { it: ContentRow }) {
+function ItemLine({ it, results = NO_RESULTS }: { it: ContentRow; results?: ResultIndex }) {
   const at = whenOf(it);
   return (
     <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -129,6 +135,7 @@ function ItemLine({ it }: { it: ContentRow }) {
           {it.media.length}
         </span>
       )}
+      <ResultMark arts={results.arts.get(it.id)} metrics={results.metrics.get(it.id)} />
       <span className={cn("shrink-0 text-xs", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</span>
     </span>
   );
@@ -146,6 +153,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function ItemDetail({
   it,
   api,
+  token,
+  results,
   now,
   patch,
   error,
@@ -155,6 +164,8 @@ function ItemDetail({
 }: {
   it: ContentRow;
   api: Api;
+  token: string;
+  results: ResultIndex;
   now: number;
   patch: Patch;
   error: string | undefined;
@@ -194,10 +205,10 @@ function ItemDetail({
         <div className="flex items-center gap-2">
           {onCollapse ? (
             <button type="button" onClick={onCollapse} className="flex min-w-0 flex-1 items-center gap-2 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-label={`Thu gọn #${it.id}`}>
-              <ItemLine it={it} />
+              <ItemLine it={it} results={results} />
             </button>
           ) : (
-            <ItemLine it={it} />
+            <ItemLine it={it} results={results} />
           )}
         </div>
         <h3 id={`ci-${it.id}`} className="text-base font-semibold text-balance">
@@ -279,6 +290,11 @@ function ItemDetail({
             <span className="text-sm tabular-nums">{at != null ? timeOf(at) : "chưa đặt lịch"}</span>
           )}
         </Field>
+        {role === "owner" && (
+          <Field label="Kết quả">
+            <ItemResults id={it.id} token={token} arts={results.arts.get(it.id)} metrics={results.metrics.get(it.id)} now={now} />
+          </Field>
+        )}
         <Field label="Caption">
           <Editable value={it.caption} label={`Caption #${it.id}`} onSave={edit("caption")} multiline />
           {it.caption && (

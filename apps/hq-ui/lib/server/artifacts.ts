@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import type { DatabaseSync } from "node:sqlite";
-import { ARTIFACT_TYPES, baseName, extOf, maxArtifactBytes, type Artifact, type ArtifactKind } from "../artifacts";
+import { ARTIFACT_TYPES, baseName, extOf, maxArtifactBytes, parseContentIds, type Artifact, type ArtifactKind } from "../artifacts";
 import { rootKey } from "../preview";
 import { stamp } from "./db";
 import { projectOf } from "./office";
@@ -17,11 +17,13 @@ import { projectOf } from "./office";
 export const TITLE_MAX = 200;
 export const NOTE_MAX = 2000;
 export const ARTIFACT_LIST_MAX = 500;
+export const LINK_MAX = 2000;
 
 const ID = /^[0-9a-f]{32}$/;
 export const isArtifactId = (v: unknown): v is string => typeof v === "string" && ID.test(v);
 /** Claude session id, omp room id or hq-* name: what /api/messages addresses. */
 const SESSION = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|omp-[0-9a-f]{16}|hq-[a-z0-9][a-z0-9-]{0,31})$/i;
+export const isRoomRef = (v: unknown): v is string => typeof v === "string" && SESSION.test(v);
 /** Folders a registered file may never sit under, and names that read like a credential. */
 const BLOCKED_DIR: Record<string, true> = { ".git": true, ".ssh": true, ".gnupg": true, ".aws": true, ".kube": true, node_modules: true };
 const SECRET_NAME = /(^\.env)|secret|credential|password|passwd|id_rsa|id_ed25519|private[-_]?key|ui-token/i;
@@ -40,10 +42,26 @@ function realOrNull(p: string): string | null {
   }
 }
 
-export type RegisterInput = { path?: unknown; title?: unknown; note?: unknown; session?: unknown };
+export type RegisterInput = { path?: unknown; title?: unknown; note?: unknown; session?: unknown; content?: unknown; link?: unknown; for?: unknown };
 export type RegisterResult = { ok: true; artifact: Artifact; created: boolean } | { ok: false; status: number; error: string };
 
 type Row = Omit<Artifact, "missing" | "size" | "mtime">;
+type DbRow = Omit<Row, "content"> & { content: string | null };
+const COLS = "id, path, root, project, branch, session, title, note, kind, created_at, updated_at, content, link, for_root, for_project";
+
+/** ",16,38," in the DB → [16, 38]. */
+const toRow = (r: DbRow): Row => ({ ...r, content: r.content ? r.content.split(",").filter(Boolean).map(Number) : [] });
+
+/** An https URL as given, null for an empty value, undefined when it is not one. */
+function linkOf(v: unknown): string | null | undefined {
+  if (v === null || v === "") return null;
+  if (typeof v !== "string" || v.length > LINK_MAX) return undefined;
+  try {
+    return new URL(v.trim()).protocol === "https:" ? v.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** The kind a path is served as, or null when the type is not one HQ shows. */
 export const kindOf = (p: string): ArtifactKind | null => ARTIFACT_TYPES[extOf(p)]?.kind ?? null;
@@ -93,23 +111,68 @@ export function registerArtifact(db: DatabaseSync, input: RegisterInput, roots: 
   }
   const session = typeof input.session === "string" ? input.session : null;
   const project = git && gitReal === root ? git.name : baseName(root);
+  // Absent = keep what an earlier registration said; [] / "" / null = clear.
+  let content: string | null | undefined;
+  if (input.content !== undefined) {
+    const ids = input.content === null || input.content === "" ? [] : parseContentIds(input.content);
+    if (!ids) return fail(422, "content: id bài trong Nội dung, vd 38 hoặc \"38,16\" (tối đa 20)");
+    content = ids.length ? `,${ids.join(",")},` : null;
+  }
+  let link: string | null | undefined;
+  if (input.link !== undefined) {
+    link = linkOf(input.link);
+    if (link === undefined) return fail(422, `link: một URL https (tối đa ${LINK_MAX} ký tự)`);
+  }
+  // `for`: the known project the file is about (a social post for 8sync-startup made in content-post-agency).
+  let forRoot: string | null | undefined;
+  let forProject: string | null = null;
+  if (input.for !== undefined && input.for !== null && input.for !== "") {
+    if (typeof input.for !== "string" || !path.isAbsolute(input.for.trim())) return fail(422, "for: đường dẫn tuyệt đối tới thư mục dự án");
+    const want = realOrNull(input.for.trim());
+    const k = want ? known.find((r) => rootKey(r.real) === rootKey(want)) : undefined;
+    if (!want || !k) return fail(403, "for: không phải dự án HQ đang biết (mở phòng ở dự án đó hoặc thêm thư mục vào sidebar)");
+    const fg = projectOf(want);
+    forRoot = rootKey(want) === rootKey(root) ? null : want;
+    forProject = fg && rootKey(fg.root) === rootKey(want) ? fg.name : baseName(want);
+  } else if (input.for !== undefined) forRoot = null;
   const branch = git && gitReal === root ? git.branch : null;
 
   const now = stamp();
-  const old = db.prepare("SELECT id, created_at FROM artifacts WHERE path = ?").get(real) as { id: string; created_at: number } | undefined;
+  const old = db.prepare("SELECT id, created_at, content, link, for_root, for_project FROM artifacts WHERE path = ?").get(real) as
+    | { id: string; created_at: number; content: string | null; link: string | null; for_root: string | null; for_project: string | null }
+    | undefined;
   const id = old?.id ?? crypto.randomBytes(16).toString("hex");
+  const keepFor = forRoot === undefined;
   db.prepare(
-    `INSERT INTO artifacts (id, path, root, project, branch, session, title, note, kind, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO artifacts (id, path, root, project, branch, session, title, note, kind, created_at, updated_at, content, link, for_root, for_project)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(path) DO UPDATE SET root = excluded.root, project = excluded.project, branch = excluded.branch,
        session = COALESCE(excluded.session, artifacts.session), title = excluded.title, note = excluded.note,
-       kind = excluded.kind, updated_at = excluded.updated_at`,
-  ).run(id, real, root, project, branch, session, title, note, kind, old?.created_at ?? now, now);
+       kind = excluded.kind, updated_at = excluded.updated_at, content = excluded.content, link = excluded.link,
+       for_root = excluded.for_root, for_project = excluded.for_project`,
+  ).run(
+    id,
+    real,
+    root,
+    project,
+    branch,
+    session,
+    title,
+    note,
+    kind,
+    old?.created_at ?? now,
+    now,
+    content === undefined ? (old?.content ?? null) : content,
+    link === undefined ? (old?.link ?? null) : link,
+    keepFor ? (old?.for_root ?? null) : (forRoot ?? null),
+    keepFor ? (old?.for_project ?? null) : forRoot ? forProject : null,
+  );
   return { ok: true, artifact: withStat(getRow(db, id)!), created: !old };
 }
 
 function getRow(db: DatabaseSync, id: string): Row | null {
-  return (db.prepare("SELECT id, path, root, project, branch, session, title, note, kind, created_at, updated_at FROM artifacts WHERE id = ?").get(id) as Row | undefined) ?? null;
+  const r = db.prepare(`SELECT ${COLS} FROM artifacts WHERE id = ?`).get(id) as DbRow | undefined;
+  return r ? toRow(r) : null;
 }
 
 function withStat(r: Row): Artifact {
@@ -121,16 +184,30 @@ function withStat(r: Row): Artifact {
   }
 }
 
-/** Newest first; `root` narrows to one repo (its worktrees included), `session` to one room. */
-export function listArtifacts(db: DatabaseSync, opts: { root?: string | null; session?: string | null; limit?: number } = {}): Artifact[] {
+/**
+ * Newest first; `root` narrows to one project (the one it is about: `for` wins over where the file
+ * sits; worktrees included), `session` to one room, `content` to the results of one content item,
+ * `linked` to the ones that are a result of any content item.
+ */
+export function listArtifacts(db: DatabaseSync, opts: { root?: string | null; session?: string | null; content?: number | null; linked?: boolean; limit?: number } = {}): Artifact[] {
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), ARTIFACT_LIST_MAX);
-  const rows = (
-    opts.session
-      ? db.prepare("SELECT id, path, root, project, branch, session, title, note, kind, created_at, updated_at FROM artifacts WHERE session = ? ORDER BY updated_at DESC").all(opts.session)
-      : db.prepare("SELECT id, path, root, project, branch, session, title, note, kind, created_at, updated_at FROM artifacts ORDER BY updated_at DESC").all()
-  ) as Row[];
+  const where: string[] = [];
+  const args: (string | number)[] = [];
+  if (opts.session) {
+    where.push("session = ?");
+    args.push(opts.session);
+  }
+  if (opts.content) {
+    where.push("content LIKE ?");
+    args.push(`%,${opts.content},%`);
+  }
+  if (opts.linked) where.push("content IS NOT NULL");
+  const rows = db.prepare(`SELECT ${COLS} FROM artifacts ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY updated_at DESC`).all(...args) as DbRow[];
   const key = opts.root ? rootKey(opts.root) : null;
-  return rows.filter((r) => !key || rootKey(r.root) === key).slice(0, limit).map(withStat);
+  return rows
+    .filter((r) => !key || rootKey(r.for_root ?? r.root) === key)
+    .slice(0, limit)
+    .map((r) => withStat(toRow(r)));
 }
 
 /** Drops the row only: the file on disk is the room's and stays. */

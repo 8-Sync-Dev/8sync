@@ -4,19 +4,23 @@ import { ARTIFACT_LIST_MAX, listArtifacts, registerArtifact } from "@/lib/server
 
 export const runtime = "nodejs";
 
-/** Artifacts, newest first. `?root=` one repo (worktrees folded in), `?session=` one room, `?limit=` 1..500. */
+/** Artifacts, newest first. `?root=` one project (worktrees folded in), `?session=` one room, `?content=` one content item's results, `?limit=` 1..500. */
 export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
   const url = new URL(req.url);
   const limit = limitParam(url, 200, ARTIFACT_LIST_MAX);
   if (limit === null) return bad("limit must be 1-500");
-  const artifacts = listArtifacts(o.db, { root: url.searchParams.get("root"), session: url.searchParams.get("session"), limit });
+  const c = url.searchParams.get("content");
+  if (c !== null && !/^\d{1,12}$/.test(c)) return bad("content must be a content item id");
+  const artifacts = listArtifacts(o.db, { root: url.searchParams.get("root"), session: url.searchParams.get("session"), content: c ? Number(c) : null, limit });
   return json({ artifacts, at: Date.now() });
 }
 
 /**
- * `{path, title?, note?, session?}`: register a file a room made (same path again = update, same id).
+ * `{path, title?, note?, session?, content?, link?, for?}`: register a file a room made (same path again =
+ * update, same id). `content` = content item ids it is the result of, `link` = https page of the result,
+ * `for` = the known project it is about. Absent fields keep their earlier value.
  * Only from this machine's side: a path names a file on disk, the `--public` link never sends one.
  */
 export async function POST(req: Request) {

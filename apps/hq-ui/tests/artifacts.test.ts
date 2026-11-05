@@ -1,10 +1,18 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-/** The live room's repo: a real temp git repo (set in beforeAll). */
-const room = vi.hoisted(() => ({ cwd: "" }));
+/** The live rooms' repos: real temp git repos (set in beforeAll). */
+const room = vi.hoisted(() => ({ cwd: "", cwd2: "", omp: "" }));
 vi.mock("@/lib/server/proc", async (orig) => ({
   ...(await orig<typeof import("@/lib/server/proc")>()),
-  mergedSessions: async () => [{ name: "s1", cwd: room.cwd, status: "running" }],
+  mergedSessions: async () => [
+    { name: "s1", cwd: room.cwd, status: "running" },
+    { name: "s2", cwd: room.cwd2, status: "running" },
+  ],
+}));
+// A project whose only live room is omp (`8sync ls`): no Claude session there.
+vi.mock("@/lib/server/floor", async (orig) => ({
+  ...(await orig<typeof import("@/lib/server/floor")>()),
+  loadFloor: async () => [{ name: "core", engine: "omp", live: true, inbox_id: "omp-00000000000000aa", repo: room.omp, state: "working" }],
 }));
 
 import fs from "node:fs";
@@ -21,6 +29,7 @@ type Ctx = { params: Promise<{ id: string }> };
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) }) as Ctx;
 
 let repo = "";
+let site = "";
 let outside = "";
 const put = (dir: string, rel: string, data: string | Buffer) => {
   const f = path.join(dir, ...rel.split("/"));
@@ -34,11 +43,19 @@ const post = (body: unknown, tunnel = false) => {
   return register(r);
 };
 
+const gitRepo = (prefix: string) => {
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  fs.mkdirSync(path.join(d, ".git"));
+  fs.writeFileSync(path.join(d, ".git", "HEAD"), "ref: refs/heads/main\n");
+  return d;
+};
+
 beforeAll(() => {
-  repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hq-art-")));
-  fs.mkdirSync(path.join(repo, ".git"));
-  fs.writeFileSync(path.join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
+  repo = gitRepo("hq-art-");
+  site = gitRepo("hq-art-site-");
   room.cwd = repo;
+  room.cwd2 = site;
+  room.omp = gitRepo("hq-art-omp-");
   outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hq-art-out-")));
 });
 
@@ -110,12 +127,53 @@ describe("artifacts", () => {
     expect((await file(req(`/api/artifacts/${a.id}/file`, { token: getToken() }), ctx(a.id))).status).toBe(404);
   });
 
-  it("groups the list per project root, newest block first, whatever the slash or case", () => {
-    const row = (id: string, root: string, project: string, at: number): Artifact => ({
+  it("links a result to content items and the project it is about; a re-register keeps what it does not restate", async () => {
+    const f = put(repo, "reports/meta-scheduled.png", "png");
+    const meta = "https://business.facebook.com/latest/posts/scheduled_posts?business_id=1";
+    const r1 = await post({ path: f, content: "38,16", link: meta, for: site });
+    expect(r1.status).toBe(201);
+    const a = ((await r1.json()) as { artifact: Artifact }).artifact;
+    expect(a).toMatchObject({ content: [16, 38], link: meta, for_root: site, for_project: path.basename(site), root: repo });
+
+    const ids = async (q: string) => ((await (await list(req(`/api/artifacts?${q}`, { token: getToken() }))).json()) as { artifacts: Artifact[] }).artifacts.map((x) => x.id);
+    expect(await ids("content=38")).toEqual([a.id]);
+    expect(await ids("content=3")).toEqual([]); // ",38," holds no 3
+    expect(await ids(`root=${encodeURIComponent(site)}`)).toEqual([a.id]);
+    expect(await ids(`root=${encodeURIComponent(repo)}`)).not.toContain(a.id);
+
+    // The scheduled link becomes the permalink once the post is up; content and project stay.
+    const perma = "https://www.facebook.com/588402817683765/posts/1";
+    const r2 = ((await (await post({ path: f, link: perma })).json()) as { artifact: Artifact }).artifact;
+    expect(r2).toMatchObject({ id: a.id, content: [16, 38], link: perma, for_root: site });
+    // Empty values clear; `for` naming the file's own repo is no override.
+    expect(((await (await post({ path: f, content: "", link: "", for: repo })).json()) as { artifact: Artifact }).artifact).toMatchObject({ content: [], link: null, for_root: null, for_project: null });
+    // The file is still served from where it sits.
+    const res = await file(req(`/api/artifacts/${a.id}/file`, { token: getToken() }), ctx(a.id));
+    expect(await res.text()).toBe("png");
+  });
+
+  it("refuses a bad content id, a non-https link and a project HQ does not know", async () => {
+    const f = put(repo, "reports/x.png", "png");
+    expect((await post({ path: f, content: "38,abc" })).status).toBe(422);
+    expect((await post({ path: f, content: "0" })).status).toBe(422);
+    expect((await post({ path: f, link: "http://facebook.com/x" })).status).toBe(422);
+    expect((await post({ path: f, link: "javascript:alert(1)" })).status).toBe(422);
+    expect((await post({ path: f, for: outside })).status).toBe(403);
+    expect((await post({ path: f, for: "relative/dir" })).status).toBe(422);
+  });
+
+  it("groups the list per project root (the one it is about), newest block first, whatever the slash or case", () => {
+    const row = (id: string, root: string, project: string, at: number, forRoot: string | null = null): Artifact => ({
       id, path: `${root}/${id}.md`, root, project, branch: null, session: null, title: id, note: null, kind: "markdown",
+      content: [], link: null, for_root: forRoot, for_project: forRoot ? "site" : null,
       created_at: at, updated_at: at, missing: false, size: 1, mtime: at,
     });
-    const g = groupArtifacts([row("a", "C:\\x\\app", "app", 3), row("b", "C:\\x\\site", "site", 2), row("c", "c:/x/app", "app", 1)]);
-    expect(g.map((x) => [x.project, x.items.map((i) => i.id)])).toEqual([["app", ["a", "c"]], ["site", ["b"]]]);
+    const g = groupArtifacts([row("a", "C:\\x\\app", "app", 3), row("b", "C:\\x\\site", "site", 2), row("c", "c:/x/app", "app", 1), row("d", "C:\\x\\app", "app", 0, "c:/x/site")]);
+    expect(g.map((x) => [x.project, x.items.map((i) => i.id)])).toEqual([["app", ["a", "c"]], ["site", ["b", "d"]]]);
+  });
+
+  it("takes a file from a project whose only live room is omp", async () => {
+    const r = await post({ path: put(room.omp, "proof.png", Buffer.from([0x89, 0x50, 0x4e, 0x47])), title: "proof" });
+    expect(r.status).toBe(201);
   });
 });

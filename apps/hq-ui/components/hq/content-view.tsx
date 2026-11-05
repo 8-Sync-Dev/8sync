@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangleIcon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, FileTextIcon, ListIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
+import { AlertTriangleIcon, BarChart3Icon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, FileTextIcon, ListIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ import {
   type ContentTextField,
 } from "@/lib/content";
 import { atLeast } from "@/lib/access";
+import type { ContentResults } from "@/lib/content-metrics";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import { useAccess } from "./access";
@@ -38,6 +39,7 @@ import { ErrorNote } from "./bits";
 import { ALL, assigneeShort, Editable, FORMAT_DOT, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, useContentPatch, type Patch } from "./content-bits";
 import { ContentCalendar, periodLabel } from "./content-calendar";
 import { ContentSheet, NO_DAY } from "./content-sheet";
+import { ContentOverview, indexResults } from "./content-results";
 import { TOUCH } from "./room-send";
 import { makeApi, type Api } from "./use-hq";
 import { usePoll } from "./use-poll";
@@ -51,7 +53,7 @@ const MODES: [CalendarMode, string][] = [
   ["month", "Tháng"],
   ["year", "Năm"],
 ];
-type View = "calendar" | "list";
+type View = "calendar" | "list" | "overview";
 type Sel = { day: string | null; item: number | null };
 
 const stored = <T extends string>(key: string, ok: readonly T[], dflt: T): T => {
@@ -98,8 +100,11 @@ export function ContentView({ token, active }: { token: string; active: boolean 
   const ready = data && data.configured && data.ready ? data : null;
   const pages = ready?.pages ?? [];
   const { patch, errors } = useContentPatch(api, list.reload);
+  // Results (artifacts linked to items, numbers per post): owner only, so a guest never polls a 403.
+  const res = usePoll<ContentResults>(api, "/api/content/results", POLL_MS, active && owner);
+  const results = useMemo(() => indexResults(res.data), [res.data]);
 
-  const [view, setViewState] = useState<View>(() => stored(VIEW_KEY, ["calendar", "list"], "calendar"));
+  const [view, setViewState] = useState<View>(() => stored(VIEW_KEY, ["calendar", "list", "overview"], "calendar"));
   const [mode, setModeState] = useState<CalendarMode>(() => stored(MODE_KEY, ["day", "week", "month", "year"], "month"));
   const [sel, setSel] = useState<Sel>(readSel);
   const [cursor, setCursor] = useState<Date>(() => parseDay(sel.day) ?? new Date());
@@ -171,6 +176,11 @@ export function ContentView({ token, active }: { token: string; active: boolean 
                 <Button type="button" size="sm" variant={view === "list" ? "secondary" : "outline"} aria-pressed={view === "list"} className={cn("text-xs", TOUCH)} onClick={() => setView("list")}>
                   <ListIcon aria-hidden /> Danh sách
                 </Button>
+                {owner && (
+                  <Button type="button" size="sm" variant={view === "overview" ? "secondary" : "outline"} aria-pressed={view === "overview"} className={cn("text-xs", TOUCH)} onClick={() => setView("overview")}>
+                    <BarChart3Icon aria-hidden /> Tổng quan
+                  </Button>
+                )}
               </ButtonGroup>
               {view === "calendar" && (
                 <>
@@ -209,7 +219,7 @@ export function ContentView({ token, active }: { token: string; active: boolean 
                 Lịch đang xếp theo giờ đã đăng. {NO_SCHEDULE}
               </p>
             )}
-            {view === "calendar" ? (
+            {view === "calendar" || (view === "overview" && !owner) ? (
               <>
                 <ContentCalendar
                   mode={mode}
@@ -224,6 +234,8 @@ export function ContentView({ token, active }: { token: string; active: boolean 
                 />
                 <Legend />
               </>
+            ) : view === "overview" ? (
+              <ContentOverview items={items} results={res.data} error={res.error} now={list.at} onOpen={openItem} />
             ) : (
               <Items items={items} api={api} now={list.at} patch={patch} errors={errors} onOpen={openItem} reload={list.reload} />
             )}
@@ -233,6 +245,8 @@ export function ContentView({ token, active }: { token: string; active: boolean 
               items={sheetItems}
               schedule={data.schedule}
               api={api}
+              token={token}
+              results={results}
               now={list.at}
               patch={patch}
               errors={errors}

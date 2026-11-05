@@ -1847,7 +1847,7 @@ mod command_prefix_tests {
             assert!(!dir.join(format!("{}eccx-{c}.md", crate::brand::CMD_PREFIX)).exists());
         }
         // `/hq-*` rides the same bare deploy from the Claude Code source; the CC-only loops do not.
-        for c in ["ls", "log", "send", "artifact"] {
+        for c in ["ls", "log", "send", "artifact", "metrics"] {
             let body = std::fs::read_to_string(dir.join(format!("hq-{c}.md"))).unwrap();
             assert!(body.contains(&format!("\nname: hq-{c}\n")) && body.contains("hq-control/scripts/hq.mjs"), "{body}");
         }

@@ -2,7 +2,8 @@
 // hq-control: drive the local 8 Sync HQ UI API (apps/hq-ui) from an agent.
 // Reads the UI token from ~/.config/8sync/hq/ui-token and never prints it.
 // Usage: node hq.mjs <ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9>
-//                     | artifact add <file> [--title T] [--note N] [--session ID] | artifact ls [n] [--session ID] | artifact show <id>>
+//                     | artifact add <file> [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id>
+//                     | metrics add --content N --platform P [--url U] [--at T] [--reach --reactions --comments --shares --views N] [--session ID] | metrics ls [--content N]>
 // Permission prompts are read-only here: the owner taps Yes/No in the HQ UI. `answer` picks an
 // option of a room's question, and only when the owner told you which one in this turn.
 import fs from "node:fs";
@@ -101,21 +102,25 @@ switch (cmd) {
     const flags = {};
     const pos = [];
     for (let i = 0; i < rest.length; i++) {
-      const m = /^--(title|note|session)$/.exec(rest[i]);
-      if (m) flags[m[1]] = need(rest[++i], `value for --${m[1]}`);
+      const m = /^--(title|note|session|content|link|for)$/.exec(rest[i]);
+      // `--content ""` clears the links to content items; every other flag needs a value.
+      if (m) flags[m[1]] = m[1] === "content" && rest[i + 1] === "" ? rest[++i] : need(rest[++i], `value for --${m[1]}`);
       else pos.push(rest[i]);
     }
+    // --for names the project the file is about (its artifact group), when it sits in another repo.
+    if (flags.for) flags.for = path.resolve(flags.for);
     if (id === "add") {
       // HQ takes an absolute path inside a project it knows; it keeps the path, never a copy.
       const file = path.resolve(need(pos[0], "file path"));
       const r = await call("POST", "/api/artifacts", { path: file, ...flags });
       const a = r.artifact;
-      console.log(JSON.stringify({ id: a.id, created: r.created, title: a.title, kind: a.kind, project: a.project, size: a.size }));
+      console.log(JSON.stringify({ id: a.id, created: r.created, title: a.title, kind: a.kind, project: a.for_project ?? a.project, size: a.size, content: a.content, link: a.link }));
     } else if (id === "ls") {
       const q = new URLSearchParams({ limit: String(Number(pos[0]) || 20) });
       if (flags.session) q.set("session", flags.session);
+      if (flags.content) q.set("content", flags.content);
       const { artifacts } = await call("GET", `/api/artifacts?${q}`);
-      for (const a of artifacts) console.log(`${a.id}\t${a.project}\t${a.kind}\t${a.missing ? "MISSING" : (a.size ?? "")}\t${one(a.title, 80)}\t${a.path}`);
+      for (const a of artifacts) console.log(`${a.id}\t${a.for_project ?? a.project}\t${a.kind}\t${a.missing ? "MISSING" : (a.size ?? "")}\t${one(a.title, 80)}\t${a.path}${a.content?.length ? `\t#${a.content.join(",#")}` : ""}`);
     } else if (id === "show") {
       // Metadata from the list, then the bytes through HQ (by id, never by path). Text kinds print inline;
       // image/video/pdf/html print where the file is, for the agent's own reader.
@@ -133,9 +138,29 @@ switch (cmd) {
       const text = await res.text();
       const MAX = 40_000;
       console.log(text.length > MAX ? `${text.slice(0, MAX)}\n… (${text.length - MAX} more chars: read ${a.path})` : text);
-    } else die("artifact add <file> [--title T] [--note N] [--session ID] | artifact ls [n] [--session ID] | artifact show <id>");
+    } else die("artifact add <file> [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id>");
+    break;
+  }
+  case "metrics": {
+    // One reading of a published post. Each `add` is kept as its own snapshot (never overwritten);
+    // Nội dung shows the newest per post and platform.
+    const flags = {};
+    for (let i = 0; i < rest.length; i++) {
+      const m = /^--(content|platform|url|at|reach|reactions|comments|shares|views|session)$/.exec(rest[i]);
+      if (!m) die(`unknown argument ${rest[i]}`);
+      flags[m[1]] = need(rest[++i], `value for --${m[1]}`);
+    }
+    if (id === "add") {
+      const { content, ...body } = flags;
+      const r = await call("POST", "/api/content/metrics", { content_id: need(content, "--content <id>"), ...body, platform: need(body.platform, "--platform <facebook|tiktok|…>") });
+      console.log(JSON.stringify(r.metric ?? r));
+    } else if (id === "ls") {
+      const q = flags.content ? `?content=${enc(flags.content)}` : "";
+      const { metrics } = await call("GET", `/api/content/metrics${q}`);
+      for (const m of metrics) console.log(`#${m.content_id}\t${m.platform}\t${new Date(m.captured_at).toISOString()}\treach=${m.reach ?? "-"} reactions=${m.reactions ?? "-"} comments=${m.comments ?? "-"} shares=${m.shares ?? "-"} views=${m.views ?? "-"}\t${m.readings} lần\t${m.url ?? ""}`);
+    } else die("metrics add --content N --platform P [--url U] [--at T] [--reach N] [--reactions N] [--comments N] [--shares N] [--views N] [--session ID] | metrics ls [--content N]");
     break;
   }
   default:
-    die("usage: hq.mjs ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9> | artifact add <file> [--title T] [--note N] [--session ID] | artifact ls [n] [--session ID] | artifact show <id>");
+    die("usage: hq.mjs ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9> | artifact add <file> [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id> | metrics add --content N --platform P [--url U] [--at T] [--reach N …] | metrics ls [--content N]");
 }

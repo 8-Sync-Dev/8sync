@@ -7,7 +7,8 @@ import { fileSize, mediaKind, mediaUrls, parseAttachments, splitUrls, uploadFile
 import { cn } from "@/lib/utils";
 import { useAuthedImage, useNearView } from "./use-poll";
 
-export type Shown = { id: string; name: string };
+/** An image to show: an upload by id, or any authed HQ file route (`url`: an artifact's file). */
+export type Shown = { id: string; name: string; url?: string };
 
 /** A 40 px icon link that saves a file; the hit area the chat's touch targets use. */
 const DOWNLOAD =
@@ -42,7 +43,7 @@ function useUploadMeta(token: string, id: string, on: boolean) {
  */
 export function Lightbox({ token, shown, onClose }: { token: string; shown: Shown | null; onClose: () => void }) {
   const [full, setFull] = useState(false);
-  const { src, failed } = useAuthedImage(token, shown ? uploadFileUrl(shown.id) : null, !!shown);
+  const { src, failed } = useAuthedImage(token, shown ? (shown.url ?? uploadFileUrl(shown.id)) : null, !!shown);
   return (
     <Dialog
       open={!!shown}
@@ -92,7 +93,7 @@ export function Lightbox({ token, shown, onClose }: { token: string; shown: Show
 /** A thumbnail of one upload, loaded when near the viewport; a button that opens the lightbox. */
 export function UploadThumb({ token, file, onOpen, className, children }: { token: string; file: Shown; onOpen: (s: Shown) => void; className?: string; children?: ReactNode }) {
   const [ref, near] = useNearView<HTMLDivElement>();
-  const { src, failed } = useAuthedImage(token, uploadFileUrl(file.id), near);
+  const { src, failed } = useAuthedImage(token, file.url ?? uploadFileUrl(file.id), near);
   return (
     <div ref={ref} className={cn("relative shrink-0", className)}>
       <button

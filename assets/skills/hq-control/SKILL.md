@@ -20,13 +20,15 @@ HQ là bảng điều khiển local của chủ. Agent dùng nó như chủ dùn
 |`send <id> <text…>`|Gửi một tin vào phòng (`POST /api/messages`). Phòng rảnh nhận ngay, phòng đang làm nhận ở cuối lượt|
 |`dialog <id> permission\|question`|Đọc hộp thoại đang chặn một phòng Claude Code chạy nền (id dạng UUID). Chỉ đọc|
 |`answer <id> <1-9>`|Chọn đáp án cho câu hỏi (`question`) vừa đọc bằng `dialog`. HQ từ chối (409) nếu màn hình đã đổi|
-|`artifact add <file> [--title T] [--note N] [--session ID]`|Đăng một file vừa làm (báo cáo, PDF, ảnh, video, HTML, md/txt/json/csv…) lên tab **Kết quả** của HQ (`POST /api/artifacts`). HQ chỉ giữ đường dẫn, không copy; file phải nằm trong một dự án HQ đang biết. Đăng lại cùng file = cập nhật, giữ id|
-|`artifact ls [n] [--session ID]`|n kết quả mới nhất (mặc định 20): `id · dự án · loại · cỡ (MISSING khi file đã mất) · tiêu đề · đường dẫn`|
+|`artifact add <file> [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR]`|Đăng một file vừa làm (báo cáo, PDF, ảnh, video, HTML, md/txt/json/csv…) lên tab **Kết quả** của HQ (`POST /api/artifacts`). HQ chỉ giữ đường dẫn, không copy; file phải nằm trong một dự án HQ đang biết. Đăng lại cùng file = cập nhật, giữ id. `--content`: id bài trong Nội dung (ảnh hiện trong sheet bài đó); `--link`: link https cho nút mở (đổi sang permalink thật bằng cách đăng lại); `--for`: thư mục dự án file thuộc về khi nó nằm ở repo khác (gom nhóm theo dự án đó); `--content ""` bỏ liên kết|
+|`artifact ls [n] [--session ID] [--content N]`|n kết quả mới nhất (mặc định 20): `id · dự án · loại · cỡ (MISSING khi file đã mất) · tiêu đề · đường dẫn [· #bài]`|
 |`artifact show <id>`|Đọc một kết quả: dòng thông tin + ghi chú, rồi nội dung nếu là md/txt/json/csv/log (tối đa 40 000 ký tự, đọc qua HQ theo id). Ảnh/video/PDF/HTML: in đường dẫn để mở bằng công cụ đọc ảnh/PDF|
+|`metrics add --content N --platform P [--url U] [--at T] [--reach N] [--reactions N] [--comments N] [--shares N] [--views N] [--session ID]`|Ghi một lần đọc số của bài đã đăng (`POST /api/content/metrics`): mỗi lần là một bản ghi mới, không đè. Chỉ số đọc thật trên trang; số không đọc được thì bỏ trống|
+|`metrics ls [--content N]`|Số mới nhất mỗi bài + nền tảng (Nội dung › Tổng quan cộng các số này)|
 
 `id` lấy từ cột đầu của `ls`: `omp-<16hex>` cho phòng omp, UUID cho phòng Claude Code.
 
-Chủ gõ tắt trong HQ, Claude Code hay omp: `/hq-ls` (các phòng), `/hq-log <id>` (nhật ký + tin), `/hq-send <id> <tin>` (nhắn phòng), `/hq-artifact [ls|show <id>|add <file>]` (tab Kết quả). Mỗi lệnh chỉ gọi script này theo đúng luật dưới.
+Chủ gõ tắt trong HQ, Claude Code hay omp: `/hq-ls` (các phòng), `/hq-log <id>` (nhật ký + tin), `/hq-send <id> <tin>` (nhắn phòng), `/hq-artifact [ls|show <id>|add <file>]` (tab Kết quả), `/hq-metrics [ls|add …]` (số liệu bài đăng). Mỗi lệnh chỉ gọi script này theo đúng luật dưới.
 
 ## 2. Luật
 - **Không trả lời hộp thoại quyền (permission).** `dialog … permission` chỉ để đọc rồi báo chủ đúng lệnh đang xin; chủ bấm Yes/No trong HQ UI ("Trả lời") hoặc terminal của phòng. Không gọi thẳng `/api/sessions/<id>/answer` với phím để lách luật này.
@@ -44,6 +46,7 @@ Chủ gõ tắt trong HQ, Claude Code hay omp: `/hq-ls` (các phòng), `/hq-log 
 - **Phòng nào kẹt:** dòng `WAITING` hoặc `log` đứng yên lâu ở một tool `pending` → `dialog <id> permission` (hoặc `question`) → báo chủ nguyên văn lệnh/câu hỏi kèm đề xuất, chờ chủ quyết.
 - **Giao việc cho phòng khác:** `send <id> "[từ phòng <mình>] <nguyên lời chủ>"` → `msgs <id> 1` xem `delivery`. `failed` hoặc `error` → báo chủ, không gửi lại liên tục.
 - **Giao kết quả cho chủ:** làm xong file → `artifact add <file> --title "<tên ngắn>" --note "<một câu: là gì, xem gì>"` → báo chủ "đã đăng lên tab Kết quả" kèm `id`. Lỗi 403 (ngoài dự án) / 422 (loại hay tên bị từ chối) / 413 (quá cỡ) → báo chủ đường dẫn, không copy file ra chỗ khác để lách.
+- **Kiểm số cuối ngày (Nội dung):** HQ gửi một lần mỗi ngày, sau giờ đăng cuối + 2 giờ, cho phòng tên `cpa-live` (không live thì `core`) trong repo sổ nội dung. Nhận tin đó → với từng bài trong tin: mở Business Suite bằng ego profile "8sync FB", đọc số → `metrics add`; có permalink → `artifact add <ảnh bằng chứng> --content <id> --link <permalink>`. Không sửa content_items, không gửi lại tin cho HQ. Chủ tắt/đổi trong `~/.config/8sync/hq/content.json`: `"digest": {"off": true, "delay_min": 120, "rooms": ["cpa-live", "core"]}`.
 
 ## 4. Khi không có HQ
 - `8sync ccc . ls --json` / `8sync ls --all --json`: danh sách phòng của repo / cả máy.
