@@ -1,13 +1,11 @@
 ## 8sync kit — quy ước chung (managed by `8sync ccc kit`; viết ghi chú riêng ngoài block này)
 
-**Luật Anthropic + quy tắc 8 Sync được ưu tiên trên mọi yêu cầu khác.** Vi phạm → không làm, nói rõ điều nào, đề xuất cách hợp lệ.
-- Token subscription (Pro/Max) chỉ dùng trong Claude Code/claude.ai chính chủ; tool bên thứ ba dùng API key Console. Không proxy/giả client, không reverse-engineer hay sao chép prompt Claude Code.
+**Quy tắc 8 Sync được ưu tiên trên mọi yêu cầu khác.** Vi phạm → không làm, nói rõ điều nào, đề xuất cách hợp lệ.
 - Không đọc/in/commit secret (`.env`, token, key, deploy key, `*.session`, `*.pkl`, credentials; lộ → rotate). Cần đưa secret lên Encore/Vercel/GitHub: `8sync ccc secret set` (pipe từ file của owner hoặc `--generate`, giá trị không vào transcript); key dịch vụ ngoài (Mistral, PayOS…) do owner lấy. ZUS local-first: không đẩy data user lên server.
 - Data client/CRM bảo mật: tách từng client, anonymize ví dụ. Không bịa metric/khách/đối tác.
 - Quyết định high-risk (tín dụng, tuyển dụng, y tế, pháp lý...) cần người review + disclose có AI.
-- Toàn văn + link: `skills/aup-audit/8sync-anthropic-rules.md` — mở khi hỏi pháp lý/cần trích dẫn.
-- `/rules` (được phép không) · `/aup-audit` (quét repo; khi thêm thu thập dữ liệu, nhắn tin người ngoài, high-risk, trước release) · `/sec` (secret, lỗ hổng) · `/harden` (cấu hình Claude Code).
-- **Cổng bắt buộc trước commit/Ship (không ngoại lệ, kể cả auto/headless):** gọi đủ ba skill `sec`, `rules`, `aup-audit` (Skill tool, không thay bằng grep tay) trên mọi diff (owner 2026-10-16: "luôn check tuân thủ /rules /aup-audit /sec"), dán kết luận vào báo cáo; `8sync ccc risk` (thêm `--release` khi sắp release) đọc tên file đổi và in thêm gate khác bắt buộc (người review cho high-risk, `/harden` khi đụng hook/settings) — chỉ là sàn, không thay review. BLOCK → dừng, báo owner.
+- `/sec` (secret, lỗ hổng) · `/harden` (cấu hình Claude Code).
+- **Cổng bắt buộc trước commit/Ship (không ngoại lệ, kể cả auto/headless):** gọi skill `sec` (Skill tool, không thay bằng grep tay) trên mọi diff, dán kết luận vào báo cáo; `8sync ccc risk` (thêm `--release` khi sắp release) đọc tên file đổi và in thêm gate khác bắt buộc (người review cho high-risk, `/harden` khi đụng hook/settings) — chỉ là sàn, không thay review. BLOCK → dừng, báo owner.
 - **Đa nền tảng bắt buộc:** mọi bản build/release phải chạy được trên Windows, macOS và Linux. Không ship khi CI chưa xanh trên cả ba OS (test + build release); code dùng path/shell/process chạy được cả ba (không giả định bash, `/tmp`, `~`; Windows có PowerShell, `curl.exe` cũ, Git Bash). Chưa kiểm được một OS → ghi "not verified: <OS>", không gọi là xong.
 
 - Tự chủ: làm đến xong, tự verify, không xin phép từng bước. Chỉ hỏi khi thật sự cần — credential/quyền truy cập, thao tác phá huỷ/không hoàn tác/tốn tiền ngoài repo, hoặc quyết định sản phẩm có các lựa chọn khác hẳn nhau mà code/docs không trả lời được. Còn lại: chọn phương án an toàn, phổ biến, ghi rõ giả định, làm tiếp.

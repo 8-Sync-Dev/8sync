@@ -3,13 +3,12 @@
 //! model. Idea after oh-my-claudecode's risk assessor (`scripts/risk-assess.mjs` +
 //! `scripts/review-gate.mjs`, MIT): classify the diff's paths, let the classes pick the gates,
 //! print both. Code ours; the classes follow the kit rule (global CLAUDE.md "Cổng bắt buộc"):
-//! `/sec` always; `/rules` + `/aup-audit` when the diff touches auth/OAuth/login, data collection,
-//! messaging people outside, third-party tools, high-risk decisions, and before a release.
+//! `/sec` always; a human reviewer for high-risk domains.
 //!
 //! Only file names are read, never contents, and whole name tokens are matched (`login` in
 //! `apps/web/login.ts` or `user-login.rs`, not in `lesson.md`): a path that hides its purpose is
-//! not caught here — this is a floor under the review, not the review. `--release` forces the
-//! release gates (the kit rule says "luôn trước release"; a release diff can be code-only).
+//! not caught here — this is a floor under the review, not the review. `--release` lifts even a
+//! code-only diff to `medium` (a release is always worth a second look).
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -23,7 +22,7 @@ const USAGE: &str = "usage: 8sync ccc risk [--base <ref>] [--paths a,b] [--relea
 pub(super) enum Cat {
     /// `.env`, keys, certificates, session dumps: the guard denies most of these already.
     Secret,
-    /// Credit, hiring, medical, legal, insurance…: AUP high-risk, needs a human reviewer.
+    /// Credit, hiring, medical, legal, insurance…: high-risk domain, needs a human reviewer.
     HighRisk,
     /// Login, OAuth, tokens, SSO.
     Auth,
@@ -142,7 +141,7 @@ pub(super) struct Assessment {
     /// `(category, path)`, in category order then path order.
     pub hits: Vec<(Cat, String)>,
     pub gates: Vec<Gate>,
-    /// `low` (sec only) · `medium` (rules + aup-audit) · `high` (secret file or high-risk domain).
+    /// `low` (sec only) · `medium` (policy-sensitive paths) · `high` (secret file or high-risk domain).
     pub level: &'static str,
     /// Why the file list may be off (the base could not be fetched), shown with the result.
     pub warning: Option<String>,
@@ -168,14 +167,6 @@ pub(super) fn assess(base: &str, files: Vec<String>, release: bool) -> Assessmen
     let any = |cs: &[Cat]| hits.iter().any(|(c, _)| cs.contains(c));
     let policy = [Cat::Auth, Cat::Data, Cat::Messaging, Cat::ThirdParty, Cat::HighRisk, Cat::Release];
     let mut gates = vec![Gate { name: "sec", why: "luôn, trước mọi commit (secret + lỗ hổng trên diff)".into() }];
-    if any(&policy) || release {
-        let mut w = why(&hits, &policy);
-        if release {
-            w = if w.is_empty() { "--release: luôn trước release".into() } else { format!("--release: luôn trước release · {w}") };
-        }
-        gates.push(Gate { name: "rules", why: w.clone() });
-        gates.push(Gate { name: "aup-audit", why: w });
-    }
     if any(&[Cat::HighRisk]) {
         gates.push(Gate { name: "human-review", why: format!("quyết định high-risk cần người review + disclose có AI: {}", why(&hits, &[Cat::HighRisk])) });
     }
@@ -184,7 +175,7 @@ pub(super) fn assess(base: &str, files: Vec<String>, release: bool) -> Assessmen
     }
     let level = if any(&[Cat::Secret, Cat::HighRisk]) {
         "high"
-    } else if gates.len() > 1 {
+    } else if any(&policy) || release {
         "medium"
     } else {
         "low"
@@ -194,7 +185,7 @@ pub(super) fn assess(base: &str, files: Vec<String>, release: bool) -> Assessmen
 
 impl Assessment {
     /// The skills a room invokes for this diff, and only these (`/ship` and the lead's merge read
-    /// this line instead of loading `/sec` + `/rules` + `/aup-audit` on every diff: 1,003 skill
+    /// this line instead of loading `/sec` on every diff: 1,003 skill
     /// bodies in 36 h on ai-game-studio). `human-review` is a person, not a skill.
     pub(super) fn skills(&self) -> Vec<String> {
         self.gates.iter().filter(|g| g.name != "human-review").map(|g| format!("/{}", g.name)).collect()
@@ -397,39 +388,38 @@ mod tests {
         assert_eq!((a.level, a.gates.len(), a.gates[0].name), ("low", 1, "sec"));
         assert!(a.text().contains("gate bắt buộc:\n  /sec") && a.text().contains("chỉ đọc tên file"), "{}", a.text());
         let a = assess("origin/main", v(&["crates/cli/src/verbs/ccc/risk.rs"]), true);
-        assert_eq!(a.gates.iter().map(|g| g.name).collect::<Vec<_>>(), ["sec", "rules", "aup-audit"], "--release forces the release gates");
-        assert_eq!(a.gates[1].why, "--release: luôn trước release");
+        assert_eq!(a.gates.iter().map(|g| g.name).collect::<Vec<_>>(), ["sec"], "--release flags the level, adds no gate");
+        assert_eq!(a.level, "medium");
 
         let a = assess("origin/main", v(&["apps/web/lib/login.ts", "CHANGELOG.md", ".github/workflows/release.yml"]), false);
         assert_eq!(a.level, "medium");
-        assert_eq!(a.gates.iter().map(|g| g.name).collect::<Vec<_>>(), ["sec", "rules", "aup-audit"]);
-        assert_eq!(a.gates[1].why, "auth (apps/web/lib/login.ts) · release (.github/workflows/release.yml)");
+        assert_eq!(a.gates.iter().map(|g| g.name).collect::<Vec<_>>(), ["sec"]);
         assert_eq!(a.hits, [(Cat::Auth, "apps/web/lib/login.ts".to_string()), (Cat::Release, ".github/workflows/release.yml".to_string())]);
 
         let a = assess("HEAD", v(&["services/hiring/rank.go", ".claude/settings.json", "apps/web/.env"]), false);
         assert_eq!(a.level, "high");
-        assert_eq!(a.gates.iter().map(|g| g.name).collect::<Vec<_>>(), ["sec", "rules", "aup-audit", "human-review", "harden"]);
+        assert_eq!(a.gates.iter().map(|g| g.name).collect::<Vec<_>>(), ["sec", "human-review", "harden"]);
         let j = a.json();
         assert_eq!(j["level"], "high");
-        assert_eq!(j["gates"][3]["gate"], "human-review");
+        assert_eq!(j["gates"][1]["gate"], "human-review");
         assert_eq!(j["hits"][0], json!({"category": "secret", "path": "apps/web/.env"}));
 
         // Many hits of one class are elided after three.
-        let a = assess("HEAD", v(&["a/auth-1.rs", "a/auth-2.rs", "a/auth-3.rs", "a/auth-4.rs", "a/auth-5.rs"]), false);
-        assert_eq!(a.gates[1].why, "auth (a/auth-1.rs, a/auth-2.rs, a/auth-3.rs +2)");
+        let a = assess("HEAD", v(&["a/hiring-1.rs", "a/hiring-2.rs", "a/hiring-3.rs", "a/hiring-4.rs", "a/hiring-5.rs"]), false);
+        assert_eq!(a.gates[1].why, "quyết định high-risk cần người review + disclose có AI: high-risk (a/hiring-1.rs, a/hiring-2.rs, a/hiring-3.rs +2)");
     }
 
     /// What `/ship` and the lead's merge invoke (auto.rs lane playbooks point here).
     #[test]
-    fn risk_skill_list_is_sec_alone_for_docs_and_adds_compliance_for_auth() {
+    fn risk_skill_list_is_sec_alone_except_harden_for_harness() {
         let docs = assess("origin/main", v(&["docs/guide.md", "README.md", "CHANGELOG.md", "docs/auth/README.md"]), false);
         assert_eq!(docs.skills(), ["/sec"]);
         assert!(docs.text().contains("chỉ gọi: /sec\n"), "{}", docs.text());
         assert_eq!(docs.json()["skills"], json!(["/sec"]));
         let auth = assess("origin/main", v(&["apps/web/lib/oauth/callback.ts", "docs/guide.md"]), false);
-        assert_eq!(auth.skills(), ["/sec", "/rules", "/aup-audit"]);
+        assert_eq!(auth.skills(), ["/sec"]);
         let high = assess("HEAD", v(&["services/hiring/rank.go", ".claude/settings.json"]), false);
-        assert_eq!(high.skills(), ["/sec", "/rules", "/aup-audit", "/harden"], "a person reviews high-risk; not a skill");
+        assert_eq!(high.skills(), ["/sec", "/harden"], "a person reviews high-risk; not a skill");
     }
 
     #[test]

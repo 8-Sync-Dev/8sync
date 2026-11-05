@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.124.2] — 2026-11-05
+
+### Removed
+- Bỏ lớp rules AUP/Anthropic khỏi kit và sản phẩm theo quyết định của owner (2026-11-05): xoá skill `aup-audit` (kèm `8sync-anthropic-rules.md`, `RULES.md`), skill `rules`, workflow `legal-sync.yml` và `docs/legal/anthropic/`. `8sync ccc risk` giờ chỉ yêu cầu `/sec` (luôn) + người review cho high-risk + `/harden` khi đụng cấu hình kit; `--release` chỉ nâng mức lên `medium`. Block CLAUDE.md của kit bỏ các dòng luật Anthropic (token subscription, link toàn văn, cổng `/rules` `/aup-audit`); quy ước workflow (CHANGELOG/STATE, ship, đa nền tảng, memory) giữ nguyên. Các lệnh `/eccx-loop-*`, `/ship*`, help và docs cập nhật theo. Giữ nguyên các chặn bảo vệ có chủ đích: không bao giờ route subscription Claude qua proxy/gateway (guard, `harness claude-code`, `gateway`, doctor, Feynman) — chúng bảo vệ tài khoản Anthropic của owner, không phải lớp rules.
+
 ## [0.124.1] — 2026-11-05
 
 ### Security

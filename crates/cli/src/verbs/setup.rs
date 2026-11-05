@@ -63,7 +63,7 @@ fn install_gh_release() -> Result<()> {
 }
 
 /// gitleaks — the secret scanner behind the pre-commit hook `8sync harness`
-/// seeds and behind `/aup-audit`: the official release archive into
+/// seeds: the official release archive into
 /// `~/.local/bin`, verified against the release's checksums file.
 fn install_gitleaks() -> Result<()> {
     if which::which("gitleaks").is_ok() {
@@ -146,7 +146,7 @@ fn install_gitleaks() -> Result<()> {
           · graphify                            (fallback code graph, needs uv: uv tool install graphifyy)
           · forge + zsh                         (`8sync forge <name>`; Windows: MSYS2 zsh; Linux without sudo: static zsh)
           · Claude Code + 8sync kit             (`8sync ccc . <name>`; official installer; agents · skills · hooks)
-          · gitleaks                            (secret scanner for the pre-commit hook + /aup-audit; GitHub release)
+          · gitleaks                            (secret scanner for the pre-commit hook; GitHub release)
           · PATH bootstrap                      (~/.local/bin, ~/.cargo/bin, ~/.bun/bin,
                                                  ~/.encore/bin — zsh/bash + fish conf.d)
           · configs + skills under ~/.config/8sync/ and ~/.omp/skills/
