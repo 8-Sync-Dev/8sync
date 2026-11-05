@@ -1,7 +1,7 @@
 "use client";
 
 import { BotIcon, CircleAlertIcon, MessageSquareIcon, PaperclipIcon, ScrollTextIcon, UsersIcon, WrenchIcon, type LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { parseAttachments, type Attachment } from "@/lib/attachments";
 import { agoShort, agoVi } from "@/lib/now";
@@ -9,57 +9,37 @@ import type { ActivityEvent } from "@/lib/server/activity";
 import { cn } from "@/lib/utils";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { ErrorNote } from "./bits";
-import { makeApi } from "./use-hq";
+import { RoomOutputs, useRoomLog } from "./room-outputs";
 
-const POLL_MS = 4000;
 /** A line longer than this folds; the rest opens on demand. */
 const FOLD = 140;
 
 const KIND_ICON: Record<ActivityEvent["kind"], LucideIcon> = { prompt: MessageSquareIcon, text: BotIcon, tool: WrenchIcon, agent: UsersIcon };
 const KIND_VI: Record<ActivityEvent["kind"], string> = { prompt: "Lời nhắn", text: "Trả lời", tool: "Công cụ", agent: "Subagent" };
 
-/** GET the room's activity every 4 s while the tab is visible. */
-function useActivity(token: string, sessionId: string) {
-  const [data, setData] = useState<{ events: ActivityEvent[]; at: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const ac = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const load = async () => {
-      if (!document.hidden) {
-        try {
-          setData(await makeApi(token)<{ events: ActivityEvent[]; at: number }>(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, { signal: ac.signal }));
-          setError(null);
-        } catch (e) {
-          if (!ac.signal.aborted) setError((e as Error).message);
-        }
-      }
-      if (!ac.signal.aborted) timer = setTimeout(load, POLL_MS);
-    };
-    const onShow = () => {
-      if (!document.hidden) {
-        clearTimeout(timer);
-        void load();
-      }
-    };
-    document.addEventListener("visibilitychange", onShow);
-    void load();
-    return () => {
-      ac.abort();
-      clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onShow);
-    };
-  }, [token, sessionId, tick]);
-  return { data, error, retry: useCallback(() => setTick((t) => t + 1), []) };
-}
+type Tab = "results" | "steps";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "results", label: "Kết quả" },
+  { id: "steps", label: "Từng bước" },
+];
 
 /**
- * "Nhật ký": what the room did lately, one line per prompt, reply, tool call and subagent, newest at the
- * bottom. Follows new lines unless the owner scrolled up to read. `onFull` opens its terminal.
+ * "Nhật ký" of a room, read from RoomLogProvider (one poll shared with the chat). "Kết quả" (default):
+ * each turn's final output as a document with its table of contents; "Từng bước": one line per prompt,
+ * reply, tool call and subagent, newest at the bottom. A chat link to a result switches to Kết quả.
+ * `onFull` opens its terminal.
  */
-export function RoomLog({ sessionId, token, onFull, fill }: { sessionId: string; token: string; onFull?: () => void; fill?: boolean }) {
-  const { data, error, retry } = useActivity(token, sessionId);
+export function RoomLog({ room, working, onFull, fill }: { room: string; working?: boolean; onFull?: () => void; fill?: boolean }) {
+  const ctx = useRoomLog();
+  const [tab, setTab] = useState<Tab>("results");
+  const seq = ctx?.focused?.seq;
+  const [seen, setSeen] = useState(seq);
+  if (seq !== seen) {
+    // A link from the chat: show the results it points into (adjusting state while rendering, no effect pass).
+    setSeen(seq);
+    setTab("results");
+  }
+  const data = ctx?.log ?? null;
   return (
     <section aria-labelledby="room-log" className={cn("space-y-2", fill && "md:flex md:min-h-40 md:flex-1 md:flex-col md:gap-2 md:space-y-0")}>
       <div className="flex shrink-0 items-center gap-2">
@@ -67,23 +47,42 @@ export function RoomLog({ sessionId, token, onFull, fill }: { sessionId: string;
           <ScrollTextIcon aria-hidden className="size-4 text-muted-foreground" />
           Nhật ký
         </h3>
-        {data && <span className="text-xs text-muted-foreground tabular">{data.events.length} việc gần nhất</span>}
+        <div role="tablist" aria-label="Cách xem nhật ký" className="inline-flex rounded-md bg-muted p-0.5 text-xs">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                "rounded-[5px] px-2 py-0.5 font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:min-h-9",
+                tab === t.id && "bg-background text-foreground shadow-xs",
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {data && tab === "steps" && <span className="text-xs text-muted-foreground tabular">{data.events.length} việc gần nhất</span>}
         {onFull && (
           <button type="button" onClick={onFull} className="ml-auto inline-flex items-center rounded-sm text-xs font-medium text-brand-ink underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:min-h-10 dark:text-brand">
             Mở log đầy đủ
           </button>
         )}
       </div>
-      {error && !data ? (
-        <ErrorNote what="nhật ký" error={error} onRetry={retry} />
+      {ctx?.error && !data ? (
+        <ErrorNote what="nhật ký" error={ctx.error} onRetry={ctx.retry} />
       ) : !data ? (
         <div className="space-y-2 rounded-lg border p-3" aria-busy="true" aria-label="Đang tải nhật ký">
           <Skeleton className="h-3.5 w-2/3" />
           <Skeleton className="h-3.5 w-1/2" />
           <Skeleton className="h-3.5 w-3/4" />
         </div>
+      ) : tab === "results" ? (
+        <RoomOutputs turns={data.turns} now={ctx!.now} room={room} working={!!working} />
       ) : (
-        <LogLines events={data.events} now={data.at} fill={fill} />
+        <LogLines events={data.events} now={ctx!.now} fill={fill} />
       )}
     </section>
   );

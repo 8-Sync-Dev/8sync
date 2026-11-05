@@ -14,7 +14,7 @@ Owner 2026-11-05: "release sài liền" — gộp chuỗi PR HQ (#278 hq-control
 - [x] v0.122.17: review độc lập #315 → chặn SVG ở Kết quả, kiểm lại tên bí mật/thư mục cấm khi đọc, digest một dòng
 
 ## Current
-v0.122.18: digest đọc bài theo `scheduled_at` (không còn giới hạn 500 bài sửa gần nhất); F5 ghi rõ trong hợp đồng là cố ý.
+v0.122.19: Chat phòng chia dọc (chat trái, Nhật ký phải), tab Kết quả = tài liệu markdown từng lượt + mục lục + tải .md, nút agent trong chat nhảy tới kết quả; activity trả `turns`/`rev`, `?since=` cho poll rẻ.
 
 ## Next
 - Owner chọn phương án Không gian / Chat phòng (1 hay 2).

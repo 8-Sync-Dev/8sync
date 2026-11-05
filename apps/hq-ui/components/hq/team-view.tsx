@@ -25,6 +25,7 @@ import { ComposerDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
 import { ModelPicker } from "./model-picker";
 import { TOUCH } from "./room-send";
+import { TurnLink } from "./room-outputs";
 import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
@@ -51,9 +52,9 @@ export function TeamView({
   onTarget: (s: string) => void;
   header?: ReactNode;
   /**
-   * Chat phòng: the room's brief and Nhật ký. On a wide screen it sits in its own panel above the chat,
-   * the border between them dragged to give either more room (size kept per browser); on a phone it
-   * scrolls with the chat as `header` does.
+   * Chat phòng: the room's brief and Nhật ký (Kết quả · Từng bước). On a wide screen it is the right
+   * column beside the chat (the chat and its message box on the left), the border between them dragged
+   * to give either more room (size kept per browser); on a phone it scrolls with the chat as `header` does.
    */
   split?: ReactNode;
   /** Pinned above the scrolling log and chat, outside the scroller (Chat phòng: the room's title row and terminal button). */
@@ -83,7 +84,7 @@ export function TeamView({
   const { loading, error } = hq.messages;
 
   const mobile = useIsMobile();
-  const layout = useDefaultLayout({ id: "hq-room-split", panelIds: ["brief", "chat"] });
+  const layout = useDefaultLayout({ id: "hq-room-columns", panelIds: ["chat", "brief"] });
   const top = mobile ? (split ?? header) : header;
 
   const chat = (
@@ -124,31 +125,37 @@ export function TeamView({
     </Conversation>
   );
 
+  const composer =
+    messageTargets(sessions).length === 0 ? (
+      <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} />
+    ) : (
+      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} />
+    );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
       {bar && (
         <div className="shrink-0 border-b bg-background">
-          <div className="mx-auto w-full max-w-3xl px-4 py-2 sm:px-6">{bar}</div>
+          <div className={cn("mx-auto w-full px-4 py-2 sm:px-6", split && !mobile ? "max-w-none" : "max-w-3xl")}>{bar}</div>
         </div>
       )}
       {split && !mobile ? (
-        <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
-          <ResizablePanel id="brief" defaultSize="45" minSize="15" className="min-h-0">
-            <div className="mx-auto flex h-full w-full max-w-3xl flex-col overflow-y-auto px-4 pt-4 pb-3 sm:px-6">{split}</div>
-          </ResizablePanel>
-          <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa Nhật ký và chat" />
-          <ResizablePanel id="chat" minSize="20" className="flex min-h-0 flex-col">
+        <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
+          <ResizablePanel id="chat" minSize="28" className="flex min-h-0 flex-col">
             {chat}
+            {composer}
+          </ResizablePanel>
+          <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa chat và Nhật ký" />
+          <ResizablePanel id="brief" defaultSize="50" minSize="25" className="min-h-0">
+            <div className="flex h-full w-full flex-col overflow-y-auto px-4 pt-4 pb-3 sm:px-5">{split}</div>
           </ResizablePanel>
         </ResizablePanelGroup>
       ) : (
-        chat
-      )}
-      {messageTargets(sessions).length === 0 ? (
-        <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} />
-      ) : (
-        <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} />
+        <>
+          {chat}
+          {composer}
+        </>
       )}
     </div>
   );
@@ -271,6 +278,7 @@ function Row({ m, prev, who, token }: { m: Message; prev?: Message; who: Who; to
           <DeliveryTag delivery={m.delivery} />
         </div>
       )}
+      {(owner || m.kind === "session_reply") && <TurnLink m={m} align={owner ? "end" : "start"} />}
       {m.kind === "session_reply" && m.delivery === "terminal" && (
         <div className="mt-1">
           <ReplySource delivery={m.delivery} />
