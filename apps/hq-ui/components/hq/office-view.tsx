@@ -16,7 +16,7 @@ import { EmptyState, ErrorNote } from "./bits";
 import { NowRoster, type RosterRow } from "./now-roster";
 import { RoleIcon } from "./role-badge";
 import { SpriteCanvas, WalkerCanvas } from "./sprite-canvas";
-import { AskPanel, askRoomOf, type AskRoom } from "./ask-panel";
+import { AskPanel, askRoomOf, pinnedAsk, type AskRoom } from "./ask-panel";
 import type { OfficeState, Room } from "./use-office";
 
 /*
@@ -283,13 +283,14 @@ export function OfficeView({
     [rooms, now],
   );
   const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
-  // Rooms stopped on the owner, in roster order (the longest wait is not reordered away).
+  // Rooms stopped on the owner, in roster order (the longest wait is not reordered away). Questions and omp rooms are pinned above every tab (pinned-asks.tsx).
   const asking: AskRoom[] = useMemo(
     () =>
       rows.flatMap((n) => {
         const r = rooms.find((x) => x.key === n.key);
         if (!r || n.state !== "needs") return [];
-        return [askRoomOf(r)];
+        const a = askRoomOf(r);
+        return pinnedAsk(a) ? [] : [a];
       }),
     [rows, rooms],
   );

@@ -34,6 +34,7 @@ import { useReloadOnNewUi } from "./use-ui-version";
 import { useOffice, type Room } from "./use-office";
 import { usePoll } from "./use-poll";
 import { MachineChip, type MachineView as MachineData } from "./machine-chip";
+import { PinnedAsks } from "./pinned-asks";
 import { rootKey } from "@/lib/preview";
 import { MORE_LABEL, isMore, moreLabel, moreTabs } from "@/lib/tabs";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -484,7 +485,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               )}
             </div>
           </header>
-
+          <PinnedAsks office={office.office} token={token} onOpenRoom={openRoom} />
           <main className="min-h-0 flex-1">
             <TabsContent value="workspace" className="h-full">
               <WorkspaceView token={token} projects={wsProjects} sessions={tree.sessions} />

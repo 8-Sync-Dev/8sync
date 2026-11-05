@@ -151,3 +151,13 @@ export function askTitle(a: Ask): string {
   if (a.kind === "question") return a.questions.length > 1 ? `Hỏi anh ${a.questions.length} câu` : "Hỏi anh";
   return TOOL_ASK[a.tool] ?? `Xin quyền dùng ${a.tool}`;
 }
+
+/** Longest answer the owner types himself (a question's "Khác", a /solo answer). */
+export const ANSWER_MAX = 500;
+
+/** An answer the owner typed: one line (newlines and tabs become spaces), no control characters, at most ANSWER_MAX; null when unusable. */
+export function answerLine(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.replace(/\s+/g, " ").trim();
+  return t && t.length <= ANSWER_MAX && !/[\u0000-\u001f\u007f-\u009f]/.test(t) ? t : null;
+}
