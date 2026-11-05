@@ -40,6 +40,8 @@ cd my-app
 8sync . api --mode claude-code-cli    # the same, on Claude Code with the 8sync kit
 8sync hq ui                           # every session in a dashboard on http://127.0.0.1:8740
 8sync hq ui --public                  # plus a one-time login link for your phone
+8sync hq ui --tailnet                 # or: a fixed https://<machine>.<tailnet>.ts.net only your Tailscale devices reach
+8sync hq ui --at-login                # Windows: start the --tailnet HQ every time you sign in
 ```
 
 Each name is one conversation per repo, so `8sync . api` tomorrow continues today's thread. 8sync never opens a session or sends a prompt on its own: every session is one you open, in a terminal or from HQ.

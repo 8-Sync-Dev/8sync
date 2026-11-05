@@ -1,4 +1,4 @@
-import { hostSide, LINK_MS, PUB_COOKIE, readPublic, safeEqual, SESSION_MS, sessionCookie, sessionSecret, viaTunnel } from "@/lib/server/auth";
+import { hostSide, LINK_MS, PUB_COOKIE, readPublic, safeEqual, sessionCookie, sessionMs, sessionSecret, viaTunnel } from "@/lib/server/auth";
 import { GUEST_MAX_MS, guestCookie, guestSetCookie, inviteByToken } from "@/lib/server/invites";
 
 export const runtime = "nodejs";
@@ -10,8 +10,8 @@ const home = (cookie: string) => new Response(null, { status: 303, headers: { lo
 /**
  * The routes outside `open()`: the login links.
  * - `?k=<key>`: the link `8sync hq ui --public` prints (`https://<host>/api/login?k=<key>`, contract
- *   C6). Right host + key within 10 minutes of the link's `since` -> the signed 12 h `hq_pub` cookie
- *   (never the key itself) and a redirect to the app.
+ *   C6). Right host + key within 10 minutes of the link's `since` -> the signed `hq_pub` cookie (12 h,
+ *   30 days on the `--tailnet` host; never the key itself) and a redirect to the app.
  * - `?invite=<token>`: a "Chia sẻ" link (lib/server/invites.ts), on the tunnel host or loopback. An
  *   active invite -> the signed `hq_guest` cookie `{id, role, issued}`, good for min(invite expiry,
  *   7 days); an invite bound to a GitHub login also needs that account's device-flow sign-in.
@@ -35,5 +35,5 @@ export async function GET(req: Request) {
   }
   const k = q.get("k") ?? "";
   if (!pub || host !== pub.host || !safeEqual(k, pub.key) || now - pub.since > LINK_MS) return refused();
-  return home(`${PUB_COOKIE}=${sessionCookie(sessionSecret(), now)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}`);
+  return home(`${PUB_COOKIE}=${sessionCookie(sessionSecret(), now)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${sessionMs(pub) / 1000}`);
 }

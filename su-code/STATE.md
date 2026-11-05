@@ -1,7 +1,7 @@
 # STATE — su-code
 
 ## Goal
-Owner 2026-11-05 (tối): báo cáo đăng bài nằm ở sheet ngày của tab Nội dung; nút từ Báo cáo phòng chạy thẳng vào sheet; file báo cáo có Xem + mở thư mục; panel "Thư mục" kiểu IDE trong phòng (xem, sửa, preview link); ảnh dán giữ đúng thứ tự.
+Owner 2026-11-06: HQ từ xa qua Tailscale, link cố định, tự sống lại khi bật máy (`8sync hq ui --tailnet` + `--at-login`, v0.126.0). Tailnet `tail5204e3.ts.net`, máy `desktop-hrgdu0t`, HTTPS Certificates đã bật (console Tailscale, ego profile "8sync FB").
 
 ## Checklist
 - [x] v0.124.0 + v0.124.1 đã release (grant ship chỉ từ trang HQ của chủ)
@@ -9,7 +9,8 @@ Owner 2026-11-05 (tối): báo cáo đăng bài nằm ở sheet ngày của tab 
 - [x] vitest + next build + smoke UI trên sandbox HQ :8751 (phòng thật qua JSON của HQ live, ghi file chỉ trong worktree)
 - [x] v0.125.0 đã release (PR #326)
 - [x] v0.125.1: reply media không đánh số · Danh sách hiện trạng thái từng kênh + báo "lịch khi chưa duyệt" · bỏ `/rules` sót; vitest 996/996 + build + smoke sandbox :8752 (#77–80)
-- [ ] v0.125.1: PR → CI → squash → tag → release.yml → `8sync up` → curl HQ local + public
+- [x] v0.125.1 đã release (PR #327)
+- [ ] v0.126.0 `--tailnet` + `--at-login`: test → PR → release → `8sync up` → owner chạy `8sync hq ui --at-login` + `--relink`, cài Tailscale trên điện thoại (GitHub `8syncdev`)
 - [ ] Owner: #77–80 đã lên lịch trên nền tảng khi còn `checked` → huỷ trên nền tảng hoặc Duyệt trước 15:00 06/11
 - [ ] Owner: mua domain Cloudflare → `8sync hq ui --tunnel-setup hq.<domain>` → restart `--public`
 
@@ -23,7 +24,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-v0.125.0 trong worktree `C:/Users/Projects/su-code-rsheet` (nhánh `feat/hq-report-sheet`). HQ đang chạy 0.124.1 (supervisor pid 56696, quick tunnel).
+v0.126.0 trong worktree `C:/Users/Projects/su-code-tailnet` (nhánh `feat/hq-tailnet`). HQ live đang tắt (owner tắt).
 
 ## Next
 - Đa kênh: đưa 0064 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; tới lúc đó HQ chạy như DB chưa có kênh.

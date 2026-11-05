@@ -5,6 +5,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.126.0] — 2026-11-06
+
+### Added
+- `8sync hq ui --tailnet`: mở HQ từ xa qua Tailscale thay cho Cloudflare. `tailscale serve --https=443` đặt HQ ở địa chỉ cố định của máy (`https://<máy>.<tailnet>.ts.net`), chỉ thiết bị trong tailnet của chủ vào được. Vẫn cần link đăng nhập (`?k=`, 10 phút) + cookie như `--public`; trên host tailnet thiết bị giữ đăng nhập 30 ngày (tunnel vẫn 12 giờ). `serve` chạy foreground và (Windows) nằm trong job kill-on-close của `hq ui`: tắt `hq ui`, kể cả `taskkill /F`, là serve tắt theo và tailscaled bỏ cấu hình, không để link sống khi không có HQ. Lúc bật máy chờ Tailscale tối đa 5 phút.
+- `8sync hq ui --at-login` (Windows): Scheduled Task `\8sync\hq-ui` chạy `conhost --headless 8sync hq ui --tailnet --no-open` mỗi lần đăng nhập máy (không cần admin, cả khi chạy pin, không giới hạn giờ) và chạy luôn một lần nếu port còn trống. Link đăng nhập cho thiết bị mới: `8sync hq ui --relink`. Gỡ: `--at-login-off`.
+
+### Changed
+- `--relink` nhận cả host tailnet (đúng tên máy hiện tại trong `tailscale status`, không nhận máy khác cùng tailnet).
+
 ## [0.125.1] — 2026-11-05
 
 ### Fixed

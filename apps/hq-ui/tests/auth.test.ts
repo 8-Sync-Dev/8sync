@@ -122,6 +122,33 @@ describe("remote link", () => {
     expect(call({ host: HOST, cookie: `hq_pub=${SESSION}`, tunnel: true })).toBe(403);
   });
 
+  it("tailnet host (`--tailnet`): exact host + cookie, 30-day session, Origin of that host; headers as `tailscale serve` sends them", () => {
+    const TS = "desktop-a1.tail5204e3.ts.net";
+    const now = Date.now();
+    writePub({ v: 1, host: TS, key: KEY, since: now, nonce: NONCE, via: "tailnet" });
+    expect(readPublic()?.tailnet).toBe(true);
+    const ts = (h: { host?: string; cookie?: string; origin?: string; method?: string }) => {
+      const headers = new Headers({ host: h.host ?? TS, "x-hq-token": token, "x-forwarded-for": "100.104.88.90", "x-forwarded-proto": "https", "tailscale-user-login": "owner@github" });
+      if (h.cookie) headers.set("cookie", h.cookie);
+      if (h.origin) headers.set("origin", h.origin);
+      const r = open(new Request(`http://${h.host ?? TS}/api/x`, { method: h.method ?? "GET", headers }));
+      return "res" in r ? r.res.status : 200;
+    };
+    expect(ts({})).toBe(403); // the Tailscale login header alone is not a login
+    expect(ts({ cookie: `hq_pub=${SESSION}` })).toBe(200);
+    expect(ts({ host: "other.tail5204e3.ts.net", cookie: `hq_pub=${SESSION}` })).toBe(403);
+    expect(ts({ host: `${TS}:8443`, cookie: `hq_pub=${SESSION}` })).toBe(403);
+    expect(ts({ cookie: `hq_pub=${SESSION}`, method: "POST", origin: `https://${TS}` })).toBe(200);
+    expect(ts({ cookie: `hq_pub=${SESSION}`, method: "POST", origin: "https://evil.test" })).toBe(403);
+    const old = sessionCookie(sessionSecret(), now - SESSION_MS - 60_000);
+    expect(ts({ cookie: `hq_pub=${old}` })).toBe(200); // past 12 h, still in on the tailnet
+    expect(ts({ cookie: `hq_pub=${sessionCookie(sessionSecret(), now - 31 * 24 * 3600_000)}` })).toBe(403);
+    // `via` on a non-tailnet host does not stretch the tunnel's 12 h
+    writePub({ v: 1, host: HOST, key: KEY, since: now + 1, nonce: NONCE, via: "tailnet" });
+    expect(readPublic()?.tailnet).toBe(false);
+    expect(call({ host: HOST, cookie: `hq_pub=${old}`, tunnel: true })).toBe(403);
+  });
+
   it("public.json counts only with the nonce of this HQ process (contract C-C)", () => {
     expect(readPublic()?.host).toBe(HOST);
     __setNonceForTest("");

@@ -35,15 +35,20 @@ export function safeEqual(a: string, b: string): boolean {
 
 /**
  * The tunnel host and login key `8sync hq ui --public` wrote (contract C6). `since` = when the link
- * was minted (unix ms); `nonce` ties the file to the HQ process that 8sync started (contract C-C).
+ * was minted (unix ms); `nonce` ties the file to the HQ process that 8sync started (contract C-C);
+ * `tailnet` = `8sync hq ui --tailnet` (`"via": "tailnet"`, a `*.ts.net` host behind `tailscale serve`).
  */
-export type PublicLink = { host: string; key: string; since: number; nonce: string };
+export type PublicLink = { host: string; key: string; since: number; nonce: string; tailnet: boolean };
 
 export const PUB_COOKIE = "hq_pub";
 const HOST_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 const HEX64_RE = /^[0-9a-f]{64}$/;
 /** The login cookie lives 12 h, checked server side (not just Max-Age): a lost phone stops working by itself. */
 export const SESSION_MS = 12 * 3600_000;
+/** On the tailnet host 30 days: Tailscale already admits only the owner's devices (sign out: remove the device from the tailnet, or delete `session-secret`). */
+export const TAILNET_SESSION_MS = 30 * 24 * 3600_000;
+/** How long an `hq_pub` login cookie lives on this link's host. */
+export const sessionMs = (pub: PublicLink | null) => (pub?.tailnet ? TAILNET_SESSION_MS : SESSION_MS);
 /** The printed `/api/login?k=` link is good for 10 minutes after `8sync hq ui --public` minted it. */
 export const LINK_MS = 10 * 60_000;
 
@@ -97,7 +102,7 @@ export function readPublic(): PublicLink | null {
         HEX64_RE.test(v.nonce) &&
         since !== null
       ) {
-        link = { host, key: v.key, since, nonce: v.nonce };
+        link = { host, key: v.key, since, nonce: v.nonce, tailnet: v.via === "tailnet" && host.endsWith(".ts.net") };
       }
     } catch {
       /* half-written or junk: local only */
@@ -168,12 +173,12 @@ export function sessionCookie(key: string, issued: number): string {
   return `${issued}.${sign(key, issued)}`;
 }
 
-/** True when `value` was signed with `key` and was issued at most 12 h before `now`. */
-export function sessionValid(value: string, key: string, now = Date.now()): boolean {
+/** True when `value` was signed with `key` and was issued at most `maxMs` (12 h by default) before `now`. */
+export function sessionValid(value: string, key: string, now = Date.now(), maxMs = SESSION_MS): boolean {
   const m = /^(\d{1,15})\.([0-9a-f]{64})$/.exec(value);
   if (!m) return false;
   const issued = Number(m[1]);
-  return safeEqual(m[2], sign(key, issued)) && issued <= now && now - issued <= SESSION_MS;
+  return safeEqual(m[2], sign(key, issued)) && issued <= now && now - issued <= maxMs;
 }
 
 /** One cookie value from a `Cookie` header, or null. */
@@ -195,7 +200,7 @@ export const viaTunnel = (h: { get(name: string): string | null }) => h.get("cf-
 export function sideOf(req: Pick<AuthInput, "host" | "cookie" | "tunnel">, pub: PublicLink | null, now = Date.now()): "local" | "remote" | null {
   const side = hostSide(req, pub);
   if (side !== "remote") return side;
-  return req.cookie && sessionValid(req.cookie, sessionSecret(), now) ? "remote" : null;
+  return req.cookie && sessionValid(req.cookie, sessionSecret(), now, sessionMs(pub)) ? "remote" : null;
 }
 
 /** The host alone: loopback (not tunnelled) or the public tunnel host; null = refused (DNS rebinding, lookalike). */
@@ -238,7 +243,7 @@ export const isDenied = (r: Access | Denied): r is Denied => "status" in r;
 export function checkAuth(req: AuthInput, expectedToken: string, opts: AuthOptions = {}, pub: PublicLink | null = null, now = Date.now()): Access | Denied {
   const side = hostSide(req, pub);
   if (!side) return { status: 403, error: "forbidden host" };
-  const pubOk = side === "local" || (!!req.cookie && sessionValid(req.cookie, sessionSecret(), now));
+  const pubOk = side === "local" || (!!req.cookie && sessionValid(req.cookie, sessionSecret(), now, sessionMs(pub)));
   let access: Access;
   if (pubOk && req.token && safeEqual(req.token, expectedToken)) access = { role: "owner", side, guest: null };
   else if (req.guest) {
@@ -272,7 +277,7 @@ export type PageAccess = { role: "owner" } | { role: GuestRole; guest: Guest } |
 export function pageAccess(req: Pick<AuthInput, "host" | "cookie" | "guest" | "tunnel">, pub: PublicLink | null, now = Date.now()): PageAccess {
   const side = hostSide(req, pub);
   if (!side) return null;
-  if (side === "remote" && req.cookie && sessionValid(req.cookie, sessionSecret(), now)) return { role: "owner" };
+  if (side === "remote" && req.cookie && sessionValid(req.cookie, sessionSecret(), now, sessionMs(pub))) return { role: "owner" };
   if (req.guest) {
     const g = guestAccess(req.guest, sessionSecret(), now);
     return "ok" in g ? { role: g.ok.role, guest: g.ok } : "github" in g ? { github: g.github.github! } : g;
