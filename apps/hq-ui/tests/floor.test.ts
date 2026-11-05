@@ -12,6 +12,7 @@ import {
   toolOf,
   type FloorRow,
 } from "@/lib/floor";
+import { treeStateOfFloor } from "@/lib/session-tree";
 
 const NOW = 1_800_000_000_000;
 const ago = (s: number) => NOW / 1000 - s;
@@ -35,6 +36,11 @@ describe("deriveFloor", () => {
     ["all done but still running -> keeps working", { status: "running", tasks_done: 3, tasks_total: 3, last_tool: "Bash", last_active: ago(10) }, null, "running", "chạy lệnh"],
     ["total 0 is not done", { status: "idle", tasks_done: 0, tasks_total: 0 }, null, "idle", "nghỉ"],
     ["idle ignores old tool", { status: "idle", last_tool: "Edit", last_active: ago(7200) }, null, "idle", "nghỉ"],
+    ["running but the turn ended -> resting at the prompt", { status: "running", last_tool: "bash", doing: null, last_activity: "bash: Measuring distill coverage", turn_open: false, last_active: ago(60) }, null, "idle", "nghỉ"],
+    ["turn ended with open tasks is rest, not stall", { status: "running", last_tool: "Bash", turn_open: false, tasks_done: 1, tasks_total: 3, last_active: ago(400) }, null, "idle", "nghỉ"],
+    ["turn ended with every task done -> done", { status: "running", last_tool: "Bash", turn_open: false, tasks_done: 3, tasks_total: 3, last_active: ago(10) }, null, "done", "xong"],
+    ["turn still open keeps working", { status: "running", last_tool: "Bash", turn_open: true, last_active: ago(10) }, null, "running", "chạy lệnh"],
+    ["turn ended but Claude asks the owner -> waiting", { status: "running", turn_open: false, last_active: ago(10) }, { status: "needs_input", detail: "Trust?" }, "waiting", "chờ anh"],
   ];
   it.each(cases)("%s", (_n, ls, hq, state, label) => {
     const d = deriveFloor(ls, hq, NOW);
@@ -51,6 +57,12 @@ describe("deriveFloor", () => {
   it("hq-only session (no ls row) works", () => {
     expect(deriveFloor(null, { status: "running" }, NOW).state).toBe("typing");
     expect(deriveFloor(null, { status: "idle" }, NOW).state).toBe("idle");
+  });
+  it("a finished omp turn reads as resting in the session tree, not 'Đang làm'", () => {
+    // The row `8sync ls` gave for an omp room that had answered while its process stayed open.
+    const d = deriveFloor({ status: "running", last_tool: "bash", doing: null, last_activity: "bash: Measuring distill coverage", turn_open: false, last_active: ago(60) }, null, NOW);
+    expect(d).toMatchObject({ state: "idle", caption: "Đang chờ prompt mới" });
+    expect(treeStateOfFloor(d.state)).toBe("idle");
   });
   it("toolOf prefers last_tool, else the prefix before ':'", () => {
     expect(toolOf({ last_tool: "Read", last_activity: "Bash: x" })).toBe("read");
