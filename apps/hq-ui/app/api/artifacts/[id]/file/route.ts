@@ -5,7 +5,7 @@ import { baseName } from "@/lib/artifacts";
 export const runtime = "nodejs";
 
 /**
- * The bytes of one artifact by id (no path from the request). HTML and SVG come with a CSP sandbox:
+ * The bytes of one artifact by id (no path from the request). HTML comes with a CSP sandbox:
  * opened straight from this route they run in an opaque origin, never as HQ. `?download=1` = attachment.
  */
 export async function GET(req: Request, ctx: RouteContext<"/api/artifacts/[id]/file">) {
@@ -25,6 +25,6 @@ export async function GET(req: Request, ctx: RouteContext<"/api/artifacts/[id]/f
     "x-content-type-options": "nosniff",
     "content-disposition": `${download ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(name)}`,
   };
-  if (hit.artifact.kind === "html" || hit.type.startsWith("image/svg")) headers["content-security-policy"] = "sandbox allow-scripts allow-popups";
+  if (hit.artifact.kind === "html") headers["content-security-policy"] = "sandbox allow-scripts allow-popups";
   return new Response(hit.body, { headers });
 }

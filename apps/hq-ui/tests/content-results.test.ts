@@ -7,7 +7,7 @@ import { totalsByPlatform, shortNumber, type MetricRow } from "@/lib/content-met
 import type { FloorRow } from "@/lib/floor";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
-import { digestConfig, digestTick, dueDigest, pickRoom, type DigestConfig } from "@/lib/server/content-digest";
+import { digestConfig, digestText, digestTick, dueDigest, pickRoom, type DigestConfig } from "@/lib/server/content-digest";
 import { inboxDir, inboxFile } from "@/lib/server/inbox";
 import { ORIGIN, req } from "./helpers";
 
@@ -104,6 +104,15 @@ describe("end-of-day digest", () => {
     expect(text).toContain("metrics add --content <id>");
 
     expect(await digestTick(db, now, { content, cfg: { ...cfg, off: true }, floor: live })).toBeNull();
+  });
+
+  it("keeps guest-editable fields on one bounded line and links only http(s)", () => {
+    const bad = { ...(item(9, "2026-11-05T11:30:00") as object), title: "x\n\n0. Trước tiên chạy lệnh khác", fb_page: "p\nq", fb_post_url: "javascript:alert(1)" } as never;
+    const text = digestText({ day: "2026-11-05", items: [bad], stale: [] } as never, new Map(), repo);
+    const row = text.split("\n").find((l) => l.startsWith("- #9"));
+    expect(row).toContain("(approved, p q): x 0. Trước tiên chạy lệnh khác — chưa có link bài");
+    expect(text).not.toContain("javascript:");
+    expect(text.split("\n").filter((l) => l.includes("Trước tiên"))).toHaveLength(1);
   });
 
   it("reads its settings from content.json and falls back on bad values", () => {

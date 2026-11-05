@@ -43,7 +43,6 @@ export const ARTIFACT_TYPES: Record<string, { kind: ArtifactKind; type: string }
   ".jpeg": { kind: "image", type: "image/jpeg" },
   ".webp": { kind: "image", type: "image/webp" },
   ".gif": { kind: "image", type: "image/gif" },
-  ".svg": { kind: "image", type: "image/svg+xml" },
   ".mp4": { kind: "video", type: "video/mp4" },
   ".webm": { kind: "video", type: "video/webm" },
   ".pdf": { kind: "pdf", type: "application/pdf" },
