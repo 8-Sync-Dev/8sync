@@ -755,7 +755,7 @@ const CLAUDE_MD_END: &str = "<!-- 8sync:kit:end -->";
 /// file and writing a real secret anywhere (see RETIRED_DENY).
 /// The HQ owner files (UI token, public-link key, Discord secrets, usage snapshots, permit
 /// answers, inbox) back the guard's Bash/Write check for the Read tool, which the guard does not see.
-const DENY: [&str; 22] = [
+const DENY: [&str; 23] = [
     "Read(**/.env)",
     "Read(**/.env.*)",
     "Read(**/*.pem)",
@@ -771,6 +771,7 @@ const DENY: [&str; 22] = [
     "Bash(git push * --force*)",
     "Bash(git push * -f*)",
     "Read(~/.config/8sync/hq/ui-token)",
+    "Read(~/.config/8sync/web-token)",
     "Read(~/.config/8sync/hq/public.json)",
     "Edit(~/.config/8sync/hq/public.json)",
     "Read(~/.config/8sync/hq/secrets.json)",
@@ -1220,7 +1221,7 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
     upsert_hook_group(
         hooks,
         "PreToolUse",
-        json!({ "matcher": "Grep|Glob|Bash", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "trail-hint"], "timeout": 5 }] }),
+        json!({ "matcher": "Grep|Glob", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "trail-hint"], "timeout": 5 }] }),
     );
     // Watchdog alerts -> additionalContext (shape per https://code.claude.com/docs/en/hooks:
     // `hookSpecificOutput.{hookEventName, additionalContext}`). Synchronous: it must land before the
@@ -2306,6 +2307,18 @@ mod tests {
         assert!(deny.iter().any(|r| r == "Read(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write(") || s.starts_with("Edit(**/.env"))));
         assert_eq!(v["permissions"]["defaultMode"], "auto");
         assert_eq!(v["permissions"]["disableBypassPermissionsMode"], "disable", "a launcher's bypass flag must not win");
+    }
+
+    #[test]
+    fn kit_upgrade_narrows_the_trail_hint_group_in_place() {
+        // An earlier kit registered trail-hint on Bash too; upgrading must replace that group, not add one.
+        let old = json!({ "matcher": "Grep|Glob|Bash", "hooks": [{ "type": "command", "command": "/old/8sync", "args": ["ccc", "hook", "trail-hint"], "timeout": 5 }] });
+        let mut v = json!({ "hooks": { "PreToolUse": [old] } });
+        apply_kit_settings(&mut v, "/new/8sync", &[]).unwrap();
+        let hint: Vec<&Value> = v["hooks"]["PreToolUse"].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "trail-hint"])).collect();
+        assert_eq!(hint.len(), 1);
+        assert_eq!(hint[0]["matcher"], "Grep|Glob");
+        assert_eq!(hint[0]["hooks"][0]["command"], "/new/8sync");
     }
 
     #[test]

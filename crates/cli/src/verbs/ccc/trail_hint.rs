@@ -1,8 +1,8 @@
-//! `8sync ccc hook trail-hint` (PreToolUse on Grep|Glob|Bash): when the repo has a trail
-//! index (`.trail/`), remind Claude once per session per repo that `trail ask|grep|skeleton|
-//! callers` answers code questions cheaper than raw grep. Never blocks: the output carries
-//! only `additionalContext`, no `permissionDecision`. Silent (no output) on every other call,
-//! so the cost is one stdin parse and a few `stat`s.
+//! `8sync ccc hook trail-hint` (PreToolUse on Grep|Glob): when the repo has a trail index
+//! (`.trail/`), remind Claude once per session per repo that `trail ask|grep|skeleton|callers`
+//! answers code questions cheaper than raw grep. Never blocks: the output carries only
+//! `additionalContext`, no `permissionDecision`. Not on Bash: every Bash call would pay a second
+//! process spawn beside the guard. Silent on repeat calls (one stdin parse and a few `stat`s).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -17,18 +17,6 @@ const HINT: &str = "Repo có trail index (.trail/): dùng `trail ask|grep|skelet
 /// Where the per-session dedupe files live.
 pub(super) fn state_dir(home: Option<&Path>) -> Option<PathBuf> {
     home.filter(|h| h.is_absolute()).map(|h| h.join(".local/state/8sync/ccc/trail-hint"))
-}
-
-/// A raw search the trail index can usually answer.
-fn is_search(tool: &str, input: &Value) -> bool {
-    match tool {
-        "Grep" | "Glob" => true,
-        "Bash" => {
-            let c = input["command"].as_str().unwrap_or("").trim_start();
-            c.starts_with("rg ") || c.starts_with("grep -r") || c.starts_with("grep -R") || c.starts_with("find . -name")
-        }
-        _ => false,
-    }
 }
 
 /// The nearest ancestor of `cwd` holding a `.trail/` dir, stopping at the repo root (`.git`).
@@ -46,7 +34,7 @@ fn trail_root(cwd: &Path) -> Option<PathBuf> {
 
 pub(super) fn run(input: &str, state: &Path, now_s: u64) -> Option<String> {
     let v: Value = serde_json::from_str(input).ok()?;
-    if !is_search(v["tool_name"].as_str()?, &v["tool_input"]) {
+    if !matches!(v["tool_name"].as_str()?, "Grep" | "Glob") {
         return None;
     }
     // No usable session id = no dedupe = stay quiet rather than repeat on every call.
@@ -122,9 +110,8 @@ mod tests {
 
         // Same session + repo: silent, whatever the search tool.
         assert_eq!(run(&call("Glob", json!({ "pattern": "**/*.rs" }), &repo, "s1"), &state, 0), None);
-        assert_eq!(run(&call("Bash", json!({ "command": "rg foo" }), &repo, "s1"), &state, 0), None);
         // A new session hints again.
-        assert!(run(&call("Bash", json!({ "command": "grep -rn foo ." }), &repo, "s2"), &state, 0).is_some());
+        assert!(run(&call("Grep", json!({ "pattern": "foo" }), &repo, "s2"), &state, 0).is_some());
     }
 
     #[test]
@@ -134,11 +121,10 @@ mod tests {
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         let state = t.0.join("state");
         assert_eq!(run(&call("Grep", json!({ "pattern": "x" }), &repo, "s1"), &state, 0), None);
-        assert_eq!(run(&call("Bash", json!({ "command": "find . -name '*.rs'" }), &repo, "s1"), &state, 0), None);
 
         let indexed = t.0.join("indexed");
         std::fs::create_dir_all(indexed.join(".trail")).unwrap();
-        for (tool, input) in [("Bash", json!({ "command": "cargo build" })), ("Read", json!({ "file_path": "a.rs" })), ("Edit", json!({}))] {
+        for (tool, input) in [("Bash", json!({ "command": "rg foo" })), ("Read", json!({ "file_path": "a.rs" })), ("Edit", json!({}))] {
             assert_eq!(run(&call(tool, input, &indexed, "s1"), &state, 0), None, "tool={tool}");
         }
         // A `.trail` above the repo root (`.git`) does not count.
