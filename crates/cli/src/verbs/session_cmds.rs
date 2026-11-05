@@ -463,7 +463,7 @@ pub fn run_guide() -> Result<()> {
     row("/planning <việc>", "chỉ lập plan: acceptance criteria, task, rủi ro, câu hỏi gom 1 lần");
     row("/remember · /consolidate", "ghi bài học có bằng chứng vào KNOWLEDGE · dọn memory");
     row("/rules <việc>", "việc này có được phép không (Anthropic + quy tắc 8 Sync)");
-    row("/sec · /harden · /aup-audit", "quét secret/lỗ hổng · siết cấu hình · quét Usage Policy");
+    row("/sec · /harden", "quét secret/lỗ hổng · siết cấu hình Claude Code");
 
     h("6. Khác");
     row("8sync . <tên>", "session omp (engine phụ) — cùng cách đặt tên");

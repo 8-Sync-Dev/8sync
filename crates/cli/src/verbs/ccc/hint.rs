@@ -40,7 +40,7 @@ pub(super) const CCC_VERBS: &[(&str, &str)] = &[
     ("inbox", "task HQ đang chờ cho phiên rảnh (mod 8sync-inbox gọi)"),
     ("loop", "vòng lặp /ship-loop: init · tick · status · done · ev"),
     ("cancel", "huỷ hết việc session này đặt (goal, urgent, loop); --all xuyên session"),
-    ("risk", "gate bắt buộc cho diff này: /sec, /rules, /aup-audit…"),
+    ("risk", "gate bắt buộc cho diff này: /sec, /harden khi đụng cấu hình kit…"),
     ("term", "terminal thật của một phiên nền cho HQ web (claude attach)"),
     ("sleep", "tắt màn hình + khoá máy ngay, Claude vẫn làm tiếp: work [--hours N] [--no-lock] · off · status"),
     ("eco", "máy dùng bao nhiêu (RAM, CPU, GPU, W, pin) + giữ phiên chạy lâu nhẹ: status · tick · run · install · uninstall · set ram|cpu <%> · set battery on|off [--json]"),

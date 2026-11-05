@@ -19,7 +19,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-v0.124.0 trong `C:/Users/Projects/su-code-rel124` (nhánh `release/v0.124.0`). HQ đang chạy bản cài sẵn (supervisor pid 56696, quick tunnel).
+v0.124.2 (purge AUP rules) trong worktree `C:/Users/Projects/su-code-purge-aup`, chờ merge + tag. Trước đó: v0.124.0 trong `C:/Users/Projects/su-code-rel124` (nhánh `release/v0.124.0`). HQ đang chạy bản cài sẵn (supervisor pid 56696, quick tunnel).
 
 ## Next
 - Đa kênh: đưa 0064 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; tới lúc đó HQ chạy như DB chưa có kênh.

@@ -43,7 +43,7 @@ const ROLES: [Role; 13] = [
     r(&["api", "be", "backend", "server", "encore", "db"], "Backend/API", "API, dữ liệu, migration (migration/xoá dữ liệu vẫn hỏi owner)"),
     r(&["ops", "infra", "ci", "deploy", "release", "devops"], "Ops/CI", "CI 3 OS, release; merge/tag/deploy chỉ sau câu Ship của owner"),
     r(&["doc", "docs", "write", "content", "blog"], "Docs", "tài liệu, CHANGELOG, hướng dẫn; không bịa số liệu"),
-    r(&["sec", "security", "audit", "aup"], "Security", "/sec, /aup-audit, /rules; BLOCK → dừng, báo owner"),
+    r(&["sec", "security", "audit"], "Security", "/sec (secret + lỗ hổng); BLOCK → dừng, báo owner"),
     r(&["core", "cli", "rust", "crate", "kit", "ccc"], "Core/Rust", "crates/ (Rust): cargo check/test một module, nice -n 19 -j2"),
 ];
 

@@ -66,13 +66,13 @@ XEM
 AN TOÀN
   8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|plugin <hook>>
                                hook do kit đăng ký, không gõ tay
-  8sync ccc risk [--base <ref>] [--paths a,b] [--release] [--json]   gate bắt buộc cho diff này từ tên file đổi (token nguyên từ, không đọc nội dung): /sec luôn; /rules + /aup-audit khi đụng auth · data · messaging · third-party · release · high-risk (+ người review) hoặc có --release; /harden khi đụng .claude/ · settings · hook của kit
+  8sync ccc risk [--base <ref>] [--paths a,b] [--release] [--json]   gate bắt buộc cho diff này từ tên file đổi (token nguyên từ, không đọc nội dung): /sec luôn; người review khi đụng high-risk hoặc có --release; /harden khi đụng .claude/ · settings · hook của kit
   8sync ccc term <session-id> [--cols 120] [--rows 34]   terminal thật của một phòng nền cho HQ web: chạy `claude attach` trong pseudo-terminal (ConPTY trên Windows), stdin nhận JSON {\"i\":\"phím\"} hoặc {\"r\":[cột,dòng]}, stdout là màn hình; đóng stdin chỉ rời phòng, phòng vẫn chạy
   8sync ccc term --shell [--cols 120] [--rows 34]   cùng giao thức, nhưng là shell thật trên máy (thư mục hiện tại) cho terminal nổi của HQ: zsh của 8sync (prompt + gợi ý) nếu đã cài, không thì pwsh/powershell (Windows) hoặc $SHELL; không cài/tải gì; đóng stdin là tắt shell
   8sync ccc secret keys <file.env>  tên key trong file (không bao giờ in giá trị)
   8sync ccc secret set <encore|vercel|gh> <TÊN> (--from <file.env> | --generate) --type prod,dev | --env production
                                đưa secret thẳng vào Encore/Vercel/GitHub qua stdin, giá trị không vào transcript
-  /sec  /rules  /aup-audit  /harden   quét secret · được phép không · repo vs Usage Policy · cấu hình Claude Code
+  /sec  /harden   quét secret + lỗ hổng · siết cấu hình Claude Code
 
 ĐÃ BỎ (2026-10-30)
   board/card/team: `8sync ccc auto`, `8sync stop all`, `ccc idle`, `ccc delegate`, `ccc msg`, `ccc meet`, `ccc standup`
