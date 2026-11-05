@@ -1,19 +1,19 @@
 # STATE — su-code
 
 ## Goal
-Owner 2026-11-05 (`/eccx-loop-full`): tự fix/dev theo tick, không làm hư link public đang dùng (quick tunnel → HQ :8740), UAT ở port local. Tick 1 xuất phát từ: "sheet ngày 5/11 không có Kết quả, HQ đã lên bản mới chưa?".
+Owner 2026-11-05: "release sài liền" — gộp chuỗi PR HQ (#278 hq-control, #312 Kết quả nội dung, #310 picker giao việc, #311 site, #313 chọn model, #314 spinner neon) thành v0.122.15, cài lên máy, HQ link public giữ nguyên; phòng cpa cập nhật Kết quả vào sheet.
 
 ## Checklist
-- [x] Nguyên nhân: HQ :8740 chạy từ worktree `su-code-uat` = chỉ #310 (chưa có #312 Kết quả, #313 picker); phòng cpa ĐÃ đăng proof Meta cho #38 + #16 (artifact có `content:[16,38]` + link Business Suite)
-- [x] Build gộp #310 + #312 + #313 (`c92d05e5`, worktree `su-code-live`), vitest 847/847, tsc + ext tsc + build sạch, UAT :8741: sheet 5/11 #38 hiện "Kết quả" (link Meta + ảnh proof), Tổng quan hiện link #16/#38
-- [x] Đổi HQ :8740 sang bản gộp tại chỗ: `su-code-uat` checkout `c92d05e5` (bản sửa cũ ở `git stash` "uat working copy…"), build, kill cây node con của supervisor `8sync hq ui --public` → supervisor tự chạy lại node cùng port; cloudflared + `public.json` giữ nguyên → link không đổi (local + public trả 200, chunk mới 200, `/api/content/results` có 1 artifact)
-- [x] #313 CI đỏ (`hq-ui-test`, `package-hq-ui`): test import tĩnh extension → tsc đi theo type SDK omp; sửa `1758da68` (import lúc chạy), CI 8/8 xanh
-- [ ] Owner duyệt merge #278 → #312 → #310 → #311 → #313 rồi release v0.122.15 (sau đó `su-code-uat` về lại bản release)
-- [ ] Owner chọn phương án Không gian / Chat phòng (1 hay 2)
+- [x] Nhánh `release/v0.122.15` = origin/main + 6 PR head (xung đột docs gộp union, code lấy bản đã UAT `ef0c132b`)
+- [x] Bump Cargo.toml / Cargo.lock / plugin.json, CHANGELOG `[0.122.15]`
+- [ ] CI 8/8 → squash merge → tag → release.yml
+- [ ] `8sync up` + `8sync harness global`; HQ :8740 (`--app su-code-uat`) về commit release, respawn qua supervisor, link public giữ
+- [ ] Đóng #278 #310 #311 #312 #313 #314 trỏ về PR release
+- [ ] Phòng core cpa cập nhật Kết quả/metrics (nhắc inbox #5980)
 
 ## Current
-Tick 1 xong. 10:55: spinner neon (PR #314, base #313) đã lên HQ :8740 (`su-code-live` @`cebcfc36` = #310+#312+#313+#314; `su-code-uat` checkout cùng commit, respawn qua supervisor, link giữ). Đã nhắc phòng core cpa (inbox #5980) cập nhật Kết quả + metrics cho mọi bài đã lên lịch/đăng. Chờ owner: merge/release, phương án Chat phòng.
+Release v0.122.15 đang chạy CI.
 
 ## Next
-- Tick sau: không có việc tự làm an toàn còn lại khi chưa có quyết định của owner → 2 tick no-op thì dừng loop.
-- Treo từ trước: dọn đĩa (ct-plan 64,8 GB, pnpm 11,5 GB); VPS `vps.8syncdev.com`; PR #297; xoay token HQ UI.
+- Owner chọn phương án Không gian / Chat phòng (1 hay 2).
+- Treo: dọn đĩa (ct-plan 64,8 GB, pnpm 11,5 GB); VPS `vps.8syncdev.com`; PR #297; xoay token HQ UI.

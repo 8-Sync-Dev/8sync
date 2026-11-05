@@ -5,9 +5,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
-### Fixed
-- CI `hq-ui-test` / `package-hq-ui`: test model của hq-ui import extension `8sync-inbox` (kéo type của SDK omp, hq-ui không cài) làm `tsc` và `next build` đỏ; giờ test nạp extension lúc chạy (`import(new URL(…))`), `tsc` của hq-ui không đi theo nó nữa, test round-trip HQ → extension vẫn giữ.
-- HQ: icon xoay của phiên đang chạy ở thanh bên (cả phiên con) không còn mờ: màu xanh "đang chạy" của palette (`--st-running`), nét dày hơn, theme tối có viền sáng neon nhẹ, xoay nhanh hơn chút (1,6 s/vòng); tắt chuyển động thì vẫn đứng yên.
+## [0.122.15] — 2026-11-05
 
 ### Added
 - HQ **Nội dung › kết quả từng bài**: sheet của bài có mục "Kết quả" (ngay dưới "Giờ đăng", chỉ chủ) với nút mở link (Meta Business Suite "đã lên lịch", rồi permalink thật), ảnh bằng chứng xem tại chỗ (bấm để phóng to) và số liệu mới nhất mỗi nền tảng; dòng bài trong lịch/danh sách có dấu số ảnh/link. Thêm kiểu xem **Tổng quan** (cạnh Lịch, Danh sách): 7 ngày / 30 ngày / Tất cả, thẻ cộng reach/reactions/comments/shares/views theo nền tảng, bảng từng bài (giờ, bài → mở sheet, số liệu, link) và trạng thái lần kiểm số cuối ngày gần nhất. API `GET /api/content/results`, `GET/POST /api/content/metrics` (mỗi lần đọc số là một bản ghi mới, không đè; giờ ở tương lai hay không có số nào → 422).
@@ -19,17 +17,18 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - Skill bundled **`hq-control`** (on-demand, cả omp và kit Claude Code, có trong `/eccx-ai-agent`, `/eccx-workflow`): agent làm việc với các phòng đang mở qua API local của HQ. `scripts/hq.mjs` (Node, không dependency) có `ls` (phòng còn sống: id · nhãn · status · engine · cwd · việc đang làm · `WAITING`), `log <id> [n]`, `msgs <id> [n]`, `send <id> <text>`, `dialog <id> permission|question`, `answer <id> <1-9>`. Token đọc từ `~/.config/8sync/hq/ui-token` và không bao giờ in; POST tự đặt `Origin`. Hộp thoại quyền chỉ đọc (báo chủ, chủ bấm trong HQ); `answer` chỉ cho câu hỏi và chỉ trả lời đúng hộp thoại vừa đọc (HQ trả 409 nếu màn hình đã đổi). Skill không mở hay đóng phòng.
 - HQ tab **Kết quả** (đầu menu "Thêm"): file các phòng đăng cho chủ xem (báo cáo, PDF, ảnh, video, HTML, md/txt/json/csv/yaml). HQ chỉ lưu đường dẫn, tiêu đề, ghi chú, phòng đăng vào SQLite; file vẫn nằm trên máy và được đọc lại mỗi lần mở. Danh sách mới nhất trước, nhóm theo dự án (lọc một dự án, theo dự án đang chọn ở sidebar), mỗi dòng có loại, cỡ, nhánh, thời gian, "mất file" khi file đã bị xoá/dời. Bấm một dòng mở ngay bên cạnh (trên điện thoại thì đè lên danh sách): ảnh/video xem tại chỗ, PDF trong khung, HTML trong iframe `srcdoc` sandbox (không `allow-same-origin`, không chạm token HQ), markdown/text dạng chữ (quá 2 MB thì chỉ "Tải về"); "Bỏ" chỉ gỡ khỏi danh sách, file giữ nguyên. API: `GET/POST /api/artifacts`, `GET /api/artifacts/:id/file`, `DELETE /api/artifacts/:id`. Đăng chỉ từ phía máy (link `--public` bị 403) và chỉ file nằm trong dự án HQ đang biết; từ chối tên giống file bí mật, `.git`/`.ssh`/`node_modules`, file quá 30 MB (video 60 MB); đọc file luôn kiểm lại đường thật còn trong dự án. Skill `hq-control` thêm `artifact add <file> [--title] [--note] [--session]` và `artifact ls [n]`.
 
-### Fixed
-- HQ từ chối `artifact add` (403 "file không nằm trong dự án nào HQ đang biết") với dự án chỉ có phòng omp đang mở: danh sách dự án đang biết giờ gộp cả phòng omp (`8sync ls`), không chỉ phòng Claude Code.
 ### Changed
 - HQ Nội dung: bỏ hẳn cảnh báo và tick "Rủi ro nhãn AI". Mọi bài hiện, duyệt và đăng như nhau (lịch, danh sách, khung chi tiết, API không còn `no_ai_confirmed`). Trigger 0062 của DB vẫn chặn như cũ. Lý do: cảnh báo đỏ ở mọi video làm thành viên duyệt qua loa.
 - HQ Nội dung: ảnh và video trong khung chi tiết to hơn (ô rộng tối thiểu 14rem thay vì 9rem). Bấm ảnh hoặc nút phóng to để xem gần toàn màn hình, video cũng phát ở khung lớn.
 - HQ Nội dung (chủ HQ): nút "Chép lệnh mở omp cpa-live" chép `cd "<checkout content-post-agency>"; 8sync . cpa-live` (`;` chạy được cả PowerShell 5.1 lẫn bash, `&&` thì không). Khi phiên `cpa-live` của checkout đó đã có ở thanh trái thì chỉ ghi "cpa-live ở thanh trái".
 
 ### Fixed
+- CI `hq-ui-test` / `package-hq-ui`: test model của hq-ui import extension `8sync-inbox` (kéo type của SDK omp, hq-ui không cài) làm `tsc` và `next build` đỏ; giờ test nạp extension lúc chạy (`import(new URL(…))`), `tsc` của hq-ui không đi theo nó nữa, test round-trip HQ → extension vẫn giữ.
+- HQ: icon xoay của phiên đang chạy ở thanh bên (cả phiên con) không còn mờ: màu xanh "đang chạy" của palette (`--st-running`), nét dày hơn, theme tối có viền sáng neon nhẹ, xoay nhanh hơn chút (1,6 s/vòng); tắt chuyển động thì vẫn đứng yên.
 - HQ Nội dung → Giao việc: menu "Chọn phiên omp" cuộn được tới phiên cuối. Kiểu `item-aligned` của Radix Select đặt sát đáy màn hình thì nuốt lăn chuột (10 lần lăn chỉ đi 24 px trên 1 028 px). Giờ menu dùng `popper`: mở phía trên ô chọn, cao tối đa 20rem, cuộn thường.
 - HQ Nội dung: bài đã "Bỏ" rời lịch và danh sách. Trước đây nó chỉ bị gạch ngang nên trông như chưa xoá. Nút "Đã bỏ (N)" chuyển bộ lọc Trạng thái sang Bỏ để xem lại hoặc mở lại.
 - HQ: phòng omp (không có phòng Claude Code) giờ được tính là dự án HQ biết, nên `hq-control artifact add`, tải file và Preview không còn trả 403 "file không nằm trong dự án nào HQ đang biết".
+
 ### Docs
 - Website (get.8syncdev.com) và README có thêm 3 ảnh HQ thật (Văn phòng, Kết quả, Máy; tên phiên của dự án khác được che bằng khối đặc) và mục **Skills** liệt kê 35 skill bundled theo 6 nhóm, link "Skills" trên nav. `scripts/test_site_skills.py` fail khi danh sách hoặc con số trên site/README lệch với `assets/skills/*/SKILL.md`.
 
