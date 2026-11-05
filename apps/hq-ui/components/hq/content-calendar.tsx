@@ -5,7 +5,7 @@
 // opens the sheet on that item.
 import { UserRoundIcon } from "lucide-react";
 import { useMemo } from "react";
-import { addDays, aiReason, dayKey, FORMAT_LABEL, monthGrid, STATUS_LABEL, timeOf, weekStart, whenOf, type CalendarMode, type ContentRow } from "@/lib/content";
+import { addDays, dayKey, FORMAT_LABEL, monthGrid, STATUS_LABEL, timeOf, weekStart, whenOf, type CalendarMode, type ContentRow } from "@/lib/content";
 import { cn } from "@/lib/utils";
 import { assigneeShort, FORMAT_DOT, FORMAT_TONE, STATUS_EDGE, StatusIcon } from "./content-bits";
 
@@ -32,7 +32,6 @@ const chipTitle = (it: ContentRow) =>
     `#${it.id} ${it.title}`,
     `${FORMAT_LABEL[it.format]} · ${STATUS_LABEL[it.status]}`,
     it.assignee_session ? `đang xử lý: ${it.assignee_base ?? it.assignee_session}` : null,
-    aiReason(it) ? `rủi ro nhãn AI: ${aiReason(it)}` : null,
   ]
     .filter(Boolean)
     .join("\n");

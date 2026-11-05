@@ -55,6 +55,7 @@ Scope: plan, build, test, review, refactor, ship — the engineering loop.
 - `ecc:git-workflow` — Git workflow patterns including branching strategies, commit conventions, keeping history
 - `ecc:github-ops` — GitHub repository operations, automation, and management
 - `ecc:growth-log` — Write growth log entries that extract reusable patterns from completed
+- `hq-control` — Làm việc với các phòng Claude Code/omp đang mở qua
 - `ecc:inherit-legacy-style` — Prevent AI style drift on legacy projects by scanning
 - `ecc:intent-driven-development` — Turn ambiguous or high-impact product and engineering changes
 - `ecc:jira-integration` — Analyzing requirements, updating ticket status, adding comments, or transitioning issues

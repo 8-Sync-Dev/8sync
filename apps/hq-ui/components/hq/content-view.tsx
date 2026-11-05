@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangleIcon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, FileTextIcon, ListIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
+import { AlertTriangleIcon, BarChart3Icon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, FileTextIcon, ListIcon, PlusIcon, SendIcon, SquareTerminalIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,11 +9,12 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  aiReason,
   byDay,
   CONTENT_FORMATS,
   CONTENT_STATUSES,
   contentWarning,
+  CPA_SESSION,
+  cpaCommand,
   dayKey,
   FORMAT_LABEL,
   nextStatuses,
@@ -31,6 +32,8 @@ import {
   type ContentTextField,
 } from "@/lib/content";
 import { atLeast } from "@/lib/access";
+import type { OmpTreeRow } from "@/lib/session-tree";
+import type { ContentResults } from "@/lib/content-metrics";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import { useAccess } from "./access";
@@ -38,9 +41,49 @@ import { ErrorNote } from "./bits";
 import { ALL, assigneeShort, Editable, FORMAT_DOT, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, useContentPatch, type Patch } from "./content-bits";
 import { ContentCalendar, periodLabel } from "./content-calendar";
 import { ContentSheet, NO_DAY } from "./content-sheet";
+import { ContentOverview, indexResults } from "./content-results";
 import { TOUCH } from "./room-send";
 import { makeApi, type Api } from "./use-hq";
 import { usePoll } from "./use-poll";
+
+const CPA_POLL_MS = 60_000;
+const sameDir = (a: string | null, b: string) => a != null && a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
+
+/**
+ * The owner's way into the omp session that keeps content-post-agency current: `cpa-live` in its
+ * checkout. Already in the sidebar (a session of that name in that folder) → just says so; otherwise
+ * a button copies the create-or-resume command to paste in a terminal.
+ */
+function CpaLive({ api, repo, active }: { api: Api; repo: string; active: boolean }) {
+  const omp = usePoll<{ sessions: OmpTreeRow[] }>(api, "/api/omp/sessions?all=1", CPA_POLL_MS, active);
+  const shown = omp.data?.sessions.some((s) => s.name === CPA_SESSION && sameDir(s.cwd, repo));
+  const cmd = cpaCommand(repo);
+  if (shown)
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title={cmd}>
+        <SquareTerminalIcon aria-hidden className="size-3.5" /> {CPA_SESSION} ở thanh trái
+      </span>
+    );
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      className={cn("text-xs", TOUCH)}
+      title={cmd}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(cmd);
+          toast.success(`Đã chép: ${cmd}`);
+        } catch {
+          toast.message(`Lệnh: ${cmd}`);
+        }
+      }}
+    >
+      <CopyIcon aria-hidden /> Chép lệnh mở omp {CPA_SESSION}
+    </Button>
+  );
+}
 
 const POLL_MS = 15_000;
 const VIEW_KEY = "hq.content.view";
@@ -51,7 +94,7 @@ const MODES: [CalendarMode, string][] = [
   ["month", "Tháng"],
   ["year", "Năm"],
 ];
-type View = "calendar" | "list";
+type View = "calendar" | "list" | "overview";
 type Sel = { day: string | null; item: number | null };
 
 const stored = <T extends string>(key: string, ok: readonly T[], dflt: T): T => {
@@ -98,8 +141,11 @@ export function ContentView({ token, active }: { token: string; active: boolean 
   const ready = data && data.configured && data.ready ? data : null;
   const pages = ready?.pages ?? [];
   const { patch, errors } = useContentPatch(api, list.reload);
+  // Results (artifacts linked to items, numbers per post): owner only, so a guest never polls a 403.
+  const res = usePoll<ContentResults>(api, "/api/content/results", POLL_MS, active && owner);
+  const results = useMemo(() => indexResults(res.data), [res.data]);
 
-  const [view, setViewState] = useState<View>(() => stored(VIEW_KEY, ["calendar", "list"], "calendar"));
+  const [view, setViewState] = useState<View>(() => stored(VIEW_KEY, ["calendar", "list", "overview"], "calendar"));
   const [mode, setModeState] = useState<CalendarMode>(() => stored(MODE_KEY, ["day", "week", "month", "year"], "month"));
   const [sel, setSel] = useState<Sel>(readSel);
   const [cursor, setCursor] = useState<Date>(() => parseDay(sel.day) ?? new Date());
@@ -108,7 +154,10 @@ export function ContentView({ token, active }: { token: string; active: boolean 
 
   useEffect(() => () => writeSel({ day: null, item: null }), []);
 
-  const items = useMemo(() => ready?.items ?? [], [ready]);
+  // "Bỏ" takes an item off the calendar and the list; the Trạng thái filter "Bỏ" shows them again (to reopen one).
+  const all = useMemo(() => ready?.items ?? [], [ready]);
+  const rejected = useMemo(() => (status === ALL ? all.filter((it) => it.status === "rejected").length : 0), [all, status]);
+  const items = useMemo(() => (status === ALL ? all.filter((it) => it.status !== "rejected") : all), [all, status]);
   const days = useMemo(() => byDay(items), [items]);
   const unscheduled = useMemo(() => items.filter((it) => whenOf(it) == null), [items]);
   const openItem = useCallback((it: ContentRow) => {
@@ -134,6 +183,7 @@ export function ContentView({ token, active }: { token: string; active: boolean 
             Nội dung
             <span className="text-xs font-normal text-muted-foreground max-sm:hidden">sổ content_items của content-ai: bài FB ↔ tin news</span>
           </h2>
+          {owner && ready?.repo && <CpaLive api={api} repo={ready.repo} active={active} />}
           {ready && (
             <div className="ml-auto flex flex-wrap items-center gap-1.5">
               <Filter label="Trạng thái" value={status} onChange={setStatus} options={CONTENT_STATUSES.map((s) => [s, STATUS_LABEL[s]])} />
@@ -171,6 +221,11 @@ export function ContentView({ token, active }: { token: string; active: boolean 
                 <Button type="button" size="sm" variant={view === "list" ? "secondary" : "outline"} aria-pressed={view === "list"} className={cn("text-xs", TOUCH)} onClick={() => setView("list")}>
                   <ListIcon aria-hidden /> Danh sách
                 </Button>
+                {owner && (
+                  <Button type="button" size="sm" variant={view === "overview" ? "secondary" : "outline"} aria-pressed={view === "overview"} className={cn("text-xs", TOUCH)} onClick={() => setView("overview")}>
+                    <BarChart3Icon aria-hidden /> Tổng quan
+                  </Button>
+                )}
               </ButtonGroup>
               {view === "calendar" && (
                 <>
@@ -202,6 +257,11 @@ export function ContentView({ token, active }: { token: string; active: boolean 
                   )}
                 </>
               )}
+              {rejected > 0 && (
+                <Button type="button" size="sm" variant="ghost" className={cn("text-xs text-muted-foreground", TOUCH, view === "list" && "ml-auto")} onClick={() => setStatus("rejected")}>
+                  Đã bỏ ({rejected})
+                </Button>
+              )}
             </div>
             {!data.schedule && (
               <p role="status" className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
@@ -209,7 +269,7 @@ export function ContentView({ token, active }: { token: string; active: boolean 
                 Lịch đang xếp theo giờ đã đăng. {NO_SCHEDULE}
               </p>
             )}
-            {view === "calendar" ? (
+            {view === "calendar" || (view === "overview" && !owner) ? (
               <>
                 <ContentCalendar
                   mode={mode}
@@ -224,6 +284,8 @@ export function ContentView({ token, active }: { token: string; active: boolean 
                 />
                 <Legend />
               </>
+            ) : view === "overview" ? (
+              <ContentOverview items={items} results={res.data} error={res.error} now={list.at} onOpen={openItem} />
             ) : (
               <Items items={items} api={api} now={list.at} patch={patch} errors={errors} onOpen={openItem} reload={list.reload} />
             )}
@@ -233,6 +295,8 @@ export function ContentView({ token, active }: { token: string; active: boolean 
               items={sheetItems}
               schedule={data.schedule}
               api={api}
+              token={token}
+              results={results}
               now={list.at}
               patch={patch}
               errors={errors}
@@ -412,15 +476,13 @@ function Items({
         <tbody className="divide-y">
           {items.map((it) => {
             const warn = contentWarning(it);
-            const ai = aiReason(it);
-            // Approving or publishing an AI-marked item needs the sheet's confirmation tick.
-            const steps = nextStatuses(it.status).filter((s) => !(ai && (s === "approved" || s === "published")));
+            const steps = nextStatuses(it.status);
             const note = steps.map((s) => stepHint(it, s)).find((h) => h != null);
             const err = errors[it.id];
             const who = assigneeShort(it);
             const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
             return (
-              <tr key={it.id} className={cn("align-top", (warn || ai) && "bg-destructive/5")}>
+              <tr key={it.id} className={cn("align-top", warn && "bg-destructive/5")}>
                 <td className="px-2 py-2 font-mono text-muted-foreground tabular">{it.id}</td>
                 <td className="w-64 min-w-56 px-2 py-2">
                   <div className="font-medium">
@@ -480,11 +542,6 @@ function Items({
                   </div>
                 </td>
                 <td className="w-44 min-w-36 px-2 py-2">
-                  {ai && (
-                    <p className="flex items-start gap-1 font-medium text-destructive">
-                      <AlertTriangleIcon aria-hidden className="mt-px size-3.5 shrink-0" /> Rủi ro nhãn AI: {ai}. Duyệt trong khung chi tiết.
-                    </p>
-                  )}
                   {warn && (
                     <p className="flex items-start gap-1 font-medium text-destructive">
                       <AlertTriangleIcon aria-hidden className="mt-px size-3.5 shrink-0" /> {warn}

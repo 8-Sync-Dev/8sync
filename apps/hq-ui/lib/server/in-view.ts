@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { groupByProject, type ProjectInfo } from "../office";
 import { repoOf } from "../sidebar";
 import { withMissing, type ProjectRow } from "./db";
+import { loadFloor, ompSessions } from "./floor";
 import { projectOf } from "./office";
 import { mergedSessions } from "./proc";
 
@@ -27,9 +28,11 @@ export function repoProjects(projects: ProjectInfo[]): ProjectInfo[] {
   return [...out.values()];
 }
 
-/** Projects with a live room, one per root. */
+/** Projects with a live room (Claude Code and omp, as the office counts them), one per root. */
 export async function projectsInView(db: DatabaseSync): Promise<ProjectInfo[]> {
-  return liveProjects(await mergedSessions(db).catch(() => []), (cwd) => projectOf(cwd));
+
+  const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => []), loadFloor(db)]);
+  return liveProjects([...merged, ...ompSessions(db, floor)], (cwd) => projectOf(cwd));
 }
 
 /** Every root HQ shows or the owner added in the sidebar, each in its own spelling. */

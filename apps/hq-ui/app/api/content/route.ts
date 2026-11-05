@@ -1,7 +1,7 @@
 import path from "node:path";
 import { OWNER_CONTENT_FIELDS } from "@/lib/access";
 import { isFormat, isStatus } from "@/lib/content";
-import { ContentError, contentDbPath, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
+import { ContentError, contentDbPath, contentRepo, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
 import { bad, json, open, readBody } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -55,7 +55,7 @@ export async function GET(req: Request) {
   if ("error" in c) return json({ configured: true, ready: false, error: guest ? GUEST_DB_ERROR : c.error });
   try {
     const list = listContent(c.db, { status, format, fb_page: page });
-    if (!guest || !("items" in list)) return json(list);
+    if (!guest) return json({ ...list, repo: contentRepo() });
     return json({ ...list, items: list.items.map(guestItem) });
   } catch (e) {
     // A DB replaced or damaged since it opened: shown in the view, not a bare 500 on every poll.
@@ -79,9 +79,7 @@ export async function POST(req: Request) {
 
 /**
  * `?id=`: body = fields to change, `status`, `scheduled_at` (ms | null), `assignee_session` (+
- * `assignee_base`; null clears), `approve_source: "<source URL the owner saw>"`, and
- * `no_ai_confirmed: true` when approving an item with an AI mark (else 409). An approved item
- * edited into AI-risk content without it drops back to `checked`; a published one answers 409.
+ * `assignee_base`; null clears) and `approve_source: "<source URL the owner saw>"`.
  * An editor (Chia sẻ) changes the item but not its media path or its agent; the source it approves
  * is signed with its invite label.
  */

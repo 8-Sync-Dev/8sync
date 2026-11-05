@@ -7,13 +7,14 @@ describe("HQ tab bar groups", () => {
     expect(barTabs(true)).toEqual([...MAIN_TABS]);
     const all = [...MAIN_TABS, ...MORE_TABS];
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(14);
+    expect(all).toHaveLength(15);
   });
   it("names the open folded tab on the Thêm button", () => {
     expect(moreLabel("overview")).toBe("Thêm");
     expect(moreLabel("may")).toBe("Máy");
     expect(moreLabel("loops")).toBe("Vòng lặp");
     expect(moreLabel("know")).toBe("Tri thức");
+    expect(moreLabel("artifacts")).toBe("Kết quả");
     expect(isMore("preview")).toBe(false);
     expect(isMore("activity")).toBe(true);
   });
