@@ -6,8 +6,9 @@
 type Env = Record<string, string | undefined>;
 
 // A session identity inherited from whoever started HQ (a Claude Code or omp room) would make the
-// owner's HQ actions (`auto add --now`) look like that room's words.
-const DROP = ["PORT", "HOSTNAME", "NODE_ENV", "CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID", "TURBOPACK", "NEXT_DEPLOYMENT_ID"];
+// owner's HQ actions (`auto add --now`) look like that room's words. `SUSYNC_MODE` (default engine of
+// `8sync .`) would silently switch the engine of every room HQ opens.
+const DROP = ["PORT", "HOSTNAME", "NODE_ENV", "CLAUDE_CODE_SESSION_ID", "EIGHTSYNC_ROOM", "EIGHTSYNC_ROOM_ID", "TURBOPACK", "NEXT_DEPLOYMENT_ID", "SUSYNC_MODE"];
 // The standalone server's own `__NEXT_PRIVATE_*` (its build config, with the CI runner's
 // /home/runner/... root): inherited by a room, every `next build` there fails to canonicalize that path.
 const DROP_PREFIX = ["HQ_", "__NEXT_PRIVATE_"];

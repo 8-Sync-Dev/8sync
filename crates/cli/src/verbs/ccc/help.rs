@@ -2,14 +2,13 @@
 //! dispatcher's match arms in ccc.rs by a unit test, so a new verb cannot be left out.
 
 /// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
-#[cfg(test)]
-pub(super) const VERBS: &[&str] =
+pub(crate) const VERBS: &[&str] =
     &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "ls", "list", "urgent", "goal", "know", "rm", "new", "compact", "secret", "cancel", "risk", "term", "awake", "eco", "sleep"];
 
 /// Words that look like verbs: never a session name, never a headless claude launch.
 /// Includes hook sub-verbs people type without `hook`, and the verbs removed with the board
 /// (an old script's `8sync ccc auto …` must never open a session named "auto").
-pub(super) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "msg", "know", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet", "standup", "term", "stop", "awake", "eco", "sleep"];
+pub(crate) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "msg", "know", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet", "standup", "term", "stop", "awake", "eco", "sleep"];
 
 pub(super) const TEXT: &str = "\
 8sync ccc — Claude Code + kit của 8 Sync. Mọi lệnh (chạy `8sync ccc <verb>`):

@@ -31,7 +31,7 @@ mod fence;
 mod gate;
 mod grant;
 mod guard;
-mod help;
+pub(crate) mod help;
 mod hint;
 mod looper;
 mod know;

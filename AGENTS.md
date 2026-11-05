@@ -120,7 +120,7 @@ Mỗi repo 8sync quản (`8sync harness`): `AGENTS.md`/`CLAUDE.md`/`.cursor/rule
 ### Vibe loop (daily, dùng liên tục)
 | Verb | Mô tả |
 |---|---|
-| `8sync .` | Resume session **mới nhất** trong repo (seed `su-code/*` context, exec omp). Named sessions cho nhiều feat song song → xem "Session mgmt" |
+| `8sync .` | Resume session **mới nhất** trong repo (seed `su-code/*` context, exec omp). Named sessions cho nhiều feat song song → xem "Session mgmt". `--mode <engine>` (hoặc env `SUSYNC_MODE`, flag thắng) chọn engine: `omp` (mặc định), `claude-code-cli` (`claude`/`ccc`/`claude-code`) = `8sync ccc . <name>`, `forgecode` (`forge`) = `8sync forge <name>`, `codex-cli` (`codex`) = báo "chưa hỗ trợ" |
 | `8sync ai [prompt]` | AI session (resume hoặc one-shot, wrap omp) |
 | `8sync find <kw>` | rg/fd + fzf preview → mở bằng `$EDITOR` (fallback hx/helix/vi) tại `file:line` |
 | `8sync note "msg" [-t tag]` | Append `su-code/NOTES.md` |
@@ -135,6 +135,7 @@ Nhiều feature song song trong 1 repo, mỗi cái 1 omp conversation cô lập.
 |---|---|
 | `8sync . <name>` | create-or-resume session theo tên |
 | `8sync . new <name> [--worktree]` | tạo session mới; `--worktree` = `git worktree` + branch `8sync/<name>` để cô lập file (2 feat sửa cùng file không đụng nhau) |
+| `8sync . [<name> \| new <name>] --mode claude-code-cli\|forgecode` | mở phiên bằng engine khác: gọi thẳng `ccc::run` / `forge::run` (registry + prepare của engine đó); `--share`/`--worktree` chỉ dùng với omp; `ls`/`mv`/`rm`/`merge` luôn trên registry omp; map engine → launcher ở `here.rs` `launch_in` |
 | `8sync . ls` (hoặc `--list`, `--json`) `[--sort priority\|time\|name\|status] [-r]` | liệt kê session (★ = dùng gần nhất; kèm branch + `*dirty`). Sắp xếp chung với `ccc . ls`, `ls`, `ls --all` (`session_view.rs` `SortKey`/`order`): mặc định priority = ▲ high → ⚠ dừng vì lỗi API/hết usage (bản ghi StopFailure chưa resume) → ◆ med → running/active → ▽ low → idle, cùng mức: trạng thái → mới nhất → tên; `ls --all` xếp repo theo dòng đầu của nó; `--json` cùng thứ tự; `ccc . report` giữ mới nhất trước |
 | `8sync . mv <old> <new>` | đổi tên (kèm `git worktree move` + rename branch) |
 | `8sync . <name> --share` | mở phiên qua host chung (như `tmux attach`): terminal này và HQ cùng gõ một omp; đóng terminal = rời phiên, omp vẫn chạy trong host; phiên đang mở bằng `omp` trần ở terminal khác → từ chối, báo pid |
