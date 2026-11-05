@@ -10,6 +10,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { dayKey, type ContentItem } from "../content";
 import type { FloorRow } from "../floor";
 import { isInboxId, inboxLive, queueInbox } from "./inbox";
+import { AUTO, withSenderHeader } from "../sender";
 import { contentConfigPath, contentDbPath, hasSchedule, openContent } from "./content";
 import { getDb } from "./db";
 import { expand, loadFloor, targetOf } from "./floor";
@@ -153,8 +154,8 @@ export async function digestTick(db: DatabaseSync, now = Date.now(), deps: Parti
     if (l.length) links.set(it.id, l);
   }
   const text = digestText(due, links, repo);
-  queueInbox(room.inbox_id, text, targetOf(room, room.inbox_id), now);
-  ownerMessage(db, room.inbox_id, text, "inbox");
+  queueInbox(room.inbox_id, text, AUTO, targetOf(room, room.inbox_id), now);
+  ownerMessage(db, room.inbox_id, withSenderHeader(text, AUTO), "inbox");
   db.prepare("UPDATE content_digest SET status = 'sent' WHERE day = ?").run(due.day);
   return { sent: due.day, session: room.inbox_id };
 }

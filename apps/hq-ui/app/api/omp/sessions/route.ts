@@ -10,6 +10,8 @@ import { isOmpRoomId } from "@/lib/labels";
 import { run } from "@/lib/server/proc";
 import { ownerMessage } from "@/lib/server/queries";
 import { clampText } from "@/lib/server/validate";
+import { senderOf } from "@/lib/server/sender";
+import { withSenderHeader } from "@/lib/sender";
 import { FILES_PER_TASK, isUploadId, placeUploads, withFiles } from "@/lib/server/uploads";
 
 export const runtime = "nodejs";
@@ -71,8 +73,9 @@ export async function POST(req: Request) {
       }
       text = withFiles(text, paths);
     }
-    queueInbox(id, text, { engine: "omp", name, cwd });
-    ownerMessage(o.db, id, text, "inbox");
+    const sender = senderOf(req, o.access);
+    queueInbox(id, text, sender, { engine: "omp", name, cwd });
+    ownerMessage(o.db, id, withSenderHeader(text, sender), "inbox");
   }
   return json({ id, name, cwd });
 }

@@ -60,10 +60,14 @@ export function turnsFrom(events: readonly ActivityEvent[], max = TURNS_MAX): Tu
   return out.slice(-max);
 }
 
-/** HQ's inbox frame: the header line (`[8 Sync HQ · owner]`, `[8 Sync HQ · owner → omp core · C:\repo]`), or the lead-in older builds sent. */
-const FRAME = /^(?:\[8 Sync HQ · owner(?: → [^\]\n]*)?\]|8 Sync HQ: the owner sent you \d+ message\(s\)[^\n]*)\n/;
+/**
+ * HQ's frame: the source line (`[8 Sync HQ · owner]`, `[8 Sync HQ · owner → omp core · C:\repo]`,
+ * a room's `[8 Sync HQ · phòng web → …]` or HQ's own `[8 Sync HQ · tự động]`: lib/sender.ts), or the
+ * lead-in older builds sent.
+ */
+const FRAME = /^(?:\[8 Sync HQ · [^\]\n]*\]|8 Sync HQ: the owner sent you \d+ message\(s\)[^\n]*)\n/;
 
-/** What the owner wrote in a prompt: HQ's inbox frame dropped. */
+/** What the sender wrote in a prompt (or a timeline row): HQ's frame dropped. */
 export function promptBody(prompt: string): string {
   return prompt.replace(FRAME, "").trim();
 }
@@ -108,7 +112,8 @@ export function turnForMessage(turns: readonly Turn[], m: { kind: string; text: 
   }
   if (m.kind !== "owner_message" || !m.text) return null;
   // "/cmd args" reaches the room expanded (the command's body, the args inside it): match the args.
-  const text = m.text.trim();
+  // A room's message is stored under its source line, which an inbox delivery words differently.
+  const text = promptBody(m.text);
   const cmd = /^\/[\w:.-]+\s+([\s\S]+)$/.exec(text);
   const needle = norm(cmd ? cmd[1] : text).slice(0, 80);
   if (!needle) return null;

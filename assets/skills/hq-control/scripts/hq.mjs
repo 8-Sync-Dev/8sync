@@ -70,8 +70,10 @@ switch (cmd) {
     break;
   }
   case "send": {
+    // HQ delivers it under `[8 Sync HQ · phòng <from> → …]`, never the owner's header: a room's
+    // message is not the owner's prompt (no `/solo`, `/autopilot`… ship grant from it).
     const text = need(rest.join(" ").trim(), "message text");
-    const r = await call("POST", "/api/messages", { session: need(id, "session id"), text });
+    const r = await call("POST", "/api/messages", { session: need(id, "session id"), text, from: path.basename(process.cwd()) });
     console.log(JSON.stringify({ delivery: r.delivery, live: r.live ?? null, error: r.error ?? null, id: r.message?.id ?? null }));
     break;
   }

@@ -2,6 +2,7 @@ import { bad, json, open, readBody } from "@/lib/server/http";
 import { deliverWatched, SessionWaiting } from "@/lib/server/channel";
 import { capturePlain, sendKeys } from "@/lib/server/proc";
 import { inboxLive, queueInbox } from "@/lib/server/inbox";
+import { senderOf } from "@/lib/server/sender";
 import { ompModels, readRoomModel } from "@/lib/server/models";
 import { isTmuxName } from "@/lib/server/validate";
 import { isOmpRoomId } from "@/lib/labels";
@@ -47,7 +48,7 @@ export async function POST(req: Request) {
       const list = await ompModels();
       if (list.length > 0 && !list.some((m) => m.selector === model)) return bad("omp không có model này (hoặc chưa đăng nhập provider)", 422);
     }
-    queueInbox(session, ompControl({ model: model as string | null, thinking: thinking as string | null }));
+    queueInbox(session, ompControl({ model: model as string | null, thinking: thinking as string | null }), senderOf(req, o.access));
     return json({ apply: "inbox", live: inboxLive(session) }, 202);
   }
 

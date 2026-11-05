@@ -1,6 +1,7 @@
 "use client";
 
 import type { KnownProject } from "@/lib/known-projects";
+import { UI_HEADER, UI_VALUE } from "@/lib/sender";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { ChannelMode, Message, Project, Session } from "./types";
@@ -51,6 +52,7 @@ const LAPSED = "Phiên đăng nhập đã hết hạn: đang mở lại trang đ
 
 export type Api = <T>(path: string, init?: { method?: string; body?: unknown; signal?: AbortSignal }) => Promise<T>;
 
+/** Every call from HQ's page carries UI_HEADER: with the owner's login it is what makes a message the owner's (lib/sender.ts). */
 export function makeApi(token: string): Api {
   return async (path, init = {}) => {
     const res = await fetch(path, {
@@ -60,6 +62,7 @@ export function makeApi(token: string): Api {
       redirect: "manual",
       headers: {
         "x-hq-token": token,
+        [UI_HEADER]: UI_VALUE,
         ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
       },
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,

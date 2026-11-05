@@ -4,6 +4,7 @@ import { GUEST_CHANNEL_ERROR, isFormat, isStatus, type ChannelPost } from "@/lib
 import { approveAndSend, ContentError, contentDbPath, contentRepo, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
 import { deliverText } from "@/lib/server/deliver";
 import { bad, json, open, readBody } from "@/lib/server/http";
+import { senderOf } from "@/lib/server/sender";
 
 export const runtime = "nodejs";
 
@@ -119,7 +120,8 @@ export async function PATCH(req: Request) {
       return bad('send: chỉ đi cùng status "approved", seen (và ai_label), dạng { session, base }', 422);
     const { session, base } = send as Record<string, unknown>;
     const args = { session, base, seen: body.seen, ...("ai_label" in body ? { ai_label: body.ai_label } : {}) };
-    return json(await approveAndSend(c.db, id, args, hqApprover(), (s, text) => deliverText(o.db, s, text)));
+    const sender = senderOf(req, o.access);
+    return json(await approveAndSend(c.db, id, args, hqApprover(), (s, text) => deliverText(o.db, s, text, sender)));
   } catch (e) {
     return fail(e);
   }
