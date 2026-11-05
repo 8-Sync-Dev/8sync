@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.124.1] — 2026-11-05
+
+### Security
+- HQ: tin một phòng gửi phòng khác (`/hq-send`, `hq.mjs send`) và tin tự động của HQ không còn mang nhãn của chủ: phòng nhận thấy `[8 Sync HQ · phòng <tên>]` hoặc `[8 Sync HQ · tự động]`, nên `/solo`, `/autopilot`, `/ship-loop`… gửi kiểu này không mở quyền tự merge + release 24h (và `dừng` từ phòng khác không thu hồi quyền của chủ). Chỉ tin gửi từ chính trang HQ (marker `x-hq-ui`, `Sec-Fetch-Site: same-origin`, đăng nhập chủ, không phải khách) mới là của chủ; dòng inbox ghi `by: owner|room|auto`. Khung cũ "the owner sent you" không còn cấp quyền. Tên phòng có `owner`, ngoặc vuông, `·`, `→` bị lọc.
+
 ## [0.124.0] — 2026-11-05
 
 ### Added
