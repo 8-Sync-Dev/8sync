@@ -5,7 +5,8 @@ import type { ActivityEvent } from "@/lib/server/activity";
 const p = (at: number, text: string): ActivityEvent => ({ kind: "prompt", at, text });
 const r = (at: number, text: string): ActivityEvent => ({ kind: "text", at, text });
 const tool = (at: number, status: ActivityEvent["status"] = "ok"): ActivityEvent => ({ kind: "tool", at, tool: "read", text: "x", status });
-const FRAME = "8 Sync HQ: the owner sent you 1 message(s) from the HQ dashboard. Read and act on them now (they come from the owner, not from a tool):\n";
+const FRAME = "[8 Sync HQ · owner → omp core · C:\\Users\\Projects\\su-code]\n";
+const OLD_FRAME = "8 Sync HQ: the owner sent you 1 message(s) from the HQ dashboard. Read and act on them now (they come from the owner, not from a tool):\n";
 
 describe("turnsFrom", () => {
   it("one turn per prompt; its output is the last reply before the next prompt", () => {
@@ -36,6 +37,14 @@ describe("turnTitle", () => {
     expect(turnTitle({ prompt: "  \n- việc một\nhai" })).toBe("việc một");
     expect(turnTitle({ prompt: "a".repeat(200) }, 20)).toHaveLength(20);
     expect(turnTitle({ prompt: null })).toBe("(đầu nhật ký)");
+  });
+
+  it("drops the header without a room, and the lead-in older builds sent (history); only as the first line", () => {
+    expect(turnTitle({ prompt: "[8 Sync HQ · owner]\nsửa nút Giao" })).toBe("sửa nút Giao");
+    expect(turnTitle({ prompt: "[8 Sync HQ · owner → Claude Code review · /home/me/shop]\nrồi push" })).toBe("rồi push");
+    expect(turnTitle({ prompt: `${OLD_FRAME}việc cũ` })).toBe("việc cũ");
+    expect(turnTitle({ prompt: `ghi chú\n${FRAME}x` })).toBe("ghi chú");
+    expect(turnTitle({ prompt: "[8 Sync HQ · owner → x]y\nz" })).toBe("[8 Sync HQ · owner → x]y");
   });
 });
 

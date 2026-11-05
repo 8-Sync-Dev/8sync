@@ -1,7 +1,8 @@
 // Owner -> session messages for sessions HQ cannot type into (not in an hq-* tmux pane:
 // any Claude Code session started in another terminal, every session on Windows).
 // The kit's Stop hook (`8sync ccc hook verify-stop`, crates/cli/src/verbs/hq.rs take_inbox)
-// hands them to Claude when the session ends its current turn: delivered once, masked.
+// hands them to Claude when the session ends its current turn: delivered once, masked, under one
+// short header naming the source and the room (`[8 Sync HQ · owner → omp core · C:\repo]`, from `to`).
 import fs from "node:fs";
 import path from "node:path";
 import { isOmpRoomId } from "../labels";
@@ -26,11 +27,18 @@ export function inboxFile(id: string): string {
   return path.join(inboxDir(), `${id}.jsonl`);
 }
 
-/** Append one message (0600 file in a 0700 dir). */
-export function queueInbox(sessionId: string, text: string, ts = Date.now()): void {
+/**
+ * The room a message is for, as the header above it names it (crates/cli/src/verbs/hq.rs
+ * `header`, which sanitises each field). Never `from`: a line with `from` is retired room mail
+ * the CLI drops.
+ */
+export type InboxTarget = { engine: "omp" | "claude"; name?: string | null; cwd?: string | null };
+
+/** Append one message (0600 file in a 0700 dir). `to`: the room, for the header (none: `[8 Sync HQ · owner]`). */
+export function queueInbox(sessionId: string, text: string, to: InboxTarget | null = null, ts = Date.now()): void {
   const file = inboxFile(sessionId);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.appendFileSync(file, `${JSON.stringify({ ts, text })}\n`, { mode: 0o600 });
+  fs.appendFileSync(file, `${JSON.stringify(to ? { ts, text, to } : { ts, text })}\n`, { mode: 0o600 });
 }
 
 /**
