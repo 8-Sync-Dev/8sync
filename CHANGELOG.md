@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Docs
+- Website (get.8syncdev.com) và README có thêm 3 ảnh HQ thật (Văn phòng, Kết quả, Máy; tên phiên của dự án khác được che bằng khối đặc) và mục **Skills** liệt kê 35 skill bundled theo 6 nhóm, link "Skills" trên nav. `scripts/test_site_skills.py` fail khi danh sách hoặc con số trên site/README lệch với `assets/skills/*/SKILL.md`.
+
 ## [0.122.14] — 2026-11-04
 
 ### Fixed

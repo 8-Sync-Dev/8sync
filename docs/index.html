@@ -383,6 +383,22 @@
     .foot-in a:hover { color: var(--ink); }
     @media (max-width: 760px) { .foot-in { grid-template-columns: minmax(0, 1fr); } }
 
+    /* HQ screenshots and the skills catalogue */
+    .shots { margin: 2rem 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; }
+    .shots figure { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg-raised); }
+    .shots figure:first-child { grid-column: 1 / -1; }
+    .shots img { display: block; width: 100%; height: auto; }
+    .shots figcaption { padding: 0.6rem 0.9rem; font-size: 0.84rem; color: var(--ink-2); border-top: 1px solid var(--line-soft); }
+    .shots figcaption b { color: var(--ink); font-weight: 600; }
+    .shots-note { margin: 0.6rem 0 0; font-size: 0.8rem; color: var(--ink-3); }
+    .skills { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem; }
+    .skills section { border: 1px solid var(--line); border-radius: 10px; background: var(--bg-raised); padding: 0.9rem 1rem 1rem; }
+    .skills h3 { margin: 0; font-size: 0.95rem; color: var(--ink); }
+    .skills h3 small { color: var(--ink-3); font-weight: 500; font-size: 0.78rem; margin-left: 0.35rem; }
+    .skills p { margin: 0.3rem 0 0.7rem; font-size: 0.85rem; color: var(--ink-2); }
+    .skills ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+    .skills li { font-family: var(--mono); font-size: 0.74rem; color: var(--violet); background: var(--bg-sunk); border: 1px solid var(--line-soft); border-radius: 999px; padding: 0.15rem 0.55rem; }
+
     /* Motion: everything above is the final state; these only play when motion is welcome */
     @media (prefers-reduced-motion: no-preference) {
       .intro h1 .ln { animation: ln-in 0.95s var(--ease-out) both; animation-delay: calc(var(--i) * 110ms); }
@@ -409,6 +425,7 @@
         <li><a href="#ladder">Autopilot</a></li>
         <li><a href="#rails">Rails</a></li>
         <li><a href="#sessions">Sessions</a></li>
+        <li><a href="#skills">Skills</a></li>
         <li><a href="#proof">Proof</a></li>
         <li><a href="#install">Install</a></li>
         <li><a href="https://github.com/8-Sync-Dev/8sync/blob/main/docs/huong-dan.md" lang="vi" hreflang="vi">Tiếng Việt</a></li>
@@ -571,6 +588,13 @@
           <p>In the session's terminal, in HQ or your own. Safe in-repo steps proceed. Ship always waits for you.</p></li>
       </ol>
 
+      <div class="shots">
+        <figure><img src="assets/hq-office.webp" width="1600" height="1000" loading="lazy" alt="HQ office view: every open session by project, what each one is doing, and its context size"><figcaption><b>Office.</b> Every session you opened, grouped by project: working, idle, or waiting on you.</figcaption></figure>
+        <figure><img src="assets/hq-results.webp" width="1600" height="1000" loading="lazy" alt="HQ results tab: a report a session posted, opened in the preview pane"><figcaption><b>Results.</b> Reports, images and files your sessions post, readable from your phone.</figcaption></figure>
+        <figure><img src="assets/hq-machine.webp" width="1600" height="820" loading="lazy" alt="HQ machine view: RAM, CPU and GPU load, power draw and cost, keep-awake state, hardware"><figcaption><b>Machine.</b> RAM, CPU, GPU and power over 30 minutes, keep-awake state, and sharing.</figcaption></figure>
+      </div>
+      <p class="shots-note">Screenshots from a real HQ; other projects' session names are covered.</p>
+
       <details class="ref">
         <summary>Every command and option</summary>
         <table>
@@ -624,6 +648,27 @@
 }</code></pre>
           <p class="check">Checked on Claude Code 2.1.296: a session launched with the bypass flag reported <code>"permissionMode":"auto"</code>.</p>
         </div>
+      </div>
+    </section>
+
+    <section class="section" id="skills" aria-labelledby="skills-title">
+      <div class="sec-head">
+        <h2 id="skills-title">35 skills, read only when the task needs them</h2>
+        <p>8sync ships these inside the binary and installs them into <code>~/.omp/skills</code>; Claude Code links them from the kit. Four are read in every session. The rest only show the agent a one-line trigger, so they cost almost nothing until a task matches. 300+ more skills, agents and commands come from the ECC plugin.</p>
+      </div>
+      <div class="skills">
+        <section><h3>Always on <small>4</small></h3><p>Read first, every session.</p>
+          <ul><li>trail</li><li>karpathy-guidelines</li><li>ponytail</li><li>8sync-cli</li></ul></section>
+        <section><h3>Design &amp; frontend <small>10</small></h3><p>Design system, anti-slop taste, React/Next.js and Tauri.</p>
+          <ul><li>impeccable</li><li>taste-skill</li><li>taste-redesign</li><li>taste-minimalist</li><li>taste-soft</li><li>taste-brutalist</li><li>taste-output</li><li>senior-frontend</li><li>nextjs-app</li><li>tauri-v2</li></ul></section>
+        <section><h3>Research <small>5</small></h3><p>Cited web research, papers, bounded experiment loops, remote GPUs.</p>
+          <ul><li>deep-research-web</li><li>last30days</li><li>research-paper</li><li>autoresearch</li><li>remote-compute</li></ul></section>
+        <section><h3>Images &amp; vision <small>4</small></h3><p>Generate images, pick image or text reads, find click targets.</p>
+          <ul><li>image-gen</li><li>image-routing</li><li>locate-anything</li><li>zai-vision</li></ul></section>
+        <section><h3>Build &amp; ship <small>8</small></h3><p>Multi-phase features, fix-and-verify loops, branches, deploys, security.</p>
+          <ul><li>feature</li><li>full-flow</li><li>branch-sync</li><li>encore-deploy</li><li>encore-eino-go</li><li>ai-microservice-design</li><li>senior-security</li><li>aup-audit</li></ul></section>
+        <section><h3>Docs, brand &amp; reach <small>4</small></h3><p>Boardroom PDFs, brand voice, social growth, Zalo Web through a real browser.</p>
+          <ul><li>super-pdf</li><li>assp-skill</li><li>social-growth</li><li>ego-zalo-advisor</li></ul></section>
       </div>
     </section>
 
