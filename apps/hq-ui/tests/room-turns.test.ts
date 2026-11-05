@@ -29,8 +29,10 @@ describe("turnsFrom", () => {
 });
 
 describe("turnTitle", () => {
-  it("drops HQ's inbox frame and markdown marks, one bounded line", () => {
-    expect(turnTitle({ prompt: `${FRAME}# /eccx-full — route\n\nGoal: x` })).toBe("/eccx-full — route");
+  it("drops HQ's inbox frame and markdown marks, one bounded line; an expanded command is named by its Goal", () => {
+    expect(turnTitle({ prompt: `${FRAME}# /eccx-full — route\n\nGoal: \`dọn ổ đĩa\`\n\nSteps…` })).toBe("dọn ổ đĩa");
+    expect(turnTitle({ prompt: "# /eccx-full — route\n\nno goal here" })).toBe("/eccx-full — route");
+    expect(turnTitle({ prompt: "# Ghi chú\nGoal: không phải lệnh" })).toBe("Ghi chú");
     expect(turnTitle({ prompt: "  \n- việc một\nhai" })).toBe("việc một");
     expect(turnTitle({ prompt: "a".repeat(200) }, 20)).toHaveLength(20);
     expect(turnTitle({ prompt: null })).toBe("(đầu nhật ký)");
@@ -46,6 +48,12 @@ describe("turnForMessage", () => {
     expect(turnForMessage(turns, { kind: "owner_message", text: "Fix full việc", ts: 1_500_000 })?.output).toBe("xong 2");
     expect(turnForMessage(turns, { kind: "owner_message", text: "chưa giao", ts: 0 })).toBeNull();
     expect(turnForMessage(turns, { kind: "owner_message", text: "   ", ts: 0 })).toBeNull();
+  });
+
+  it("a message links only to a turn that started within 30 minutes of it", () => {
+    const late = turnsFrom([p(10_000_000, "ok làm tiếp"), r(10_100_000, "xong muộn")]);
+    expect(turnForMessage(late, { kind: "owner_message", text: "ok", ts: 10_000_000 - 31 * 60_000 })).toBeNull();
+    expect(turnForMessage(late, { kind: "owner_message", text: "ok", ts: 10_000_000 - 29 * 60_000 })?.output).toBe("xong muộn");
   });
 
   it("a /command message maps by its arguments, which the room sees inside the expanded command", () => {

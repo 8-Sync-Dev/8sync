@@ -34,15 +34,18 @@ const RoomLogCtx = createContext<Ctx | null>(null);
  * One poll per room for both halves of Chat phòng: the Nhật ký panel (steps, Kết quả) and the chat's
  * links from a message to its result. Every 4 s while the tab is visible; `?since=` turns an unchanged
  * transcript into a tiny `{same}` answer, and then nothing re-renders but the clock every 30 s.
+ * `working` (the room's state from the office): its newest turn is still going even when its last step
+ * is a reply, for the panel and the chat links alike.
  */
-export function RoomLogProvider({ sessionId, token, children }: { sessionId: string | null; token: string; children: ReactNode }) {
+export function RoomLogProvider({ sessionId, token, working, children }: { sessionId: string | null; token: string; working: boolean; children: ReactNode }) {
   // Tagged with the room they came from: another room shows nothing of the last one's log.
   const [got, setLog] = useState<{ id: string; log: Log } | null>(null);
   const [now, setNow] = useState(0);
   const [failed, setError] = useState<{ id: string; error: string } | null>(null);
   const [tick, setTick] = useState(0);
   const [focused, setFocused] = useState<Ctx["focused"]>(null);
-  const log = got && got.id === sessionId ? got.log : null;
+  const raw = got && got.id === sessionId ? got.log : null;
+  const log = useMemo(() => (raw && working ? withNewestLive(raw) : raw), [raw, working]);
   const error = failed && failed.id === sessionId ? failed.error : null;
   useEffect(() => {
     if (!sessionId) return;
@@ -87,6 +90,13 @@ export function RoomLogProvider({ sessionId, token, children }: { sessionId: str
   return <RoomLogCtx.Provider value={value}>{children}</RoomLogCtx.Provider>;
 }
 
+/** The log with its newest turn marked as still going (a new object for that turn only, so memoized sections keep). */
+function withNewestLive(log: Log): Log {
+  const last = log.turns.at(-1);
+  if (!last || last.live) return log;
+  return { ...log, turns: [...log.turns.slice(0, -1), { ...last, live: true }] };
+}
+
 export function useRoomLog(): Ctx | null {
   return useContext(RoomLogCtx);
 }
@@ -100,7 +110,8 @@ export function TurnLink({ m, align }: { m: { kind: string; text: string | null;
   const turns = ctx?.log?.turns;
   const turn = useMemo(() => (turns ? turnForMessage(turns, m) : null), [turns, m]);
   if (!ctx || !turn) return null;
-  const waiting = !turn.output;
+  // A live turn's output is only what it said so far.
+  const waiting = turn.live || !turn.output;
   return (
     <div className={cn("mt-1 flex", align === "end" ? "justify-end" : "justify-start")}>
       <button
@@ -109,7 +120,7 @@ export function TurnLink({ m, align }: { m: { kind: string; text: string | null;
         title={waiting ? "Phòng đang làm việc này: mở Kết quả" : "Xem kết quả của tin này"}
         className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:min-h-10"
       >
-        {turn.live && waiting ? <LoaderIcon aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" /> : <BotIcon aria-hidden className="size-3.5" />}
+        {turn.live ? <LoaderIcon aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" /> : <BotIcon aria-hidden className="size-3.5" />}
         {waiting ? "Đang làm" : "Kết quả"}
       </button>
     </div>
@@ -123,12 +134,11 @@ const stamp = (ms: number) => new Date(ms).toLocaleString("vi-VN", { hour: "2-di
  * contents beside it (above it when the panel is narrow). A link from the chat scrolls its turn into
  * view. Sections off screen skip layout and paint (`content-visibility`), so 20 long outputs stay cheap.
  */
-export function RoomOutputs({ turns, now, room, working }: { turns: Turn[]; now: number; room: string; working: boolean }) {
+export function RoomOutputs({ turns, now, room }: { turns: Turn[]; now: number; room: string }) {
   const ctx = useRoomLog();
   const doc = useRef<HTMLDivElement>(null);
   const list = useMemo(() => [...turns].reverse(), [turns]);
-  // The newest turn of a working room is still going even when its last step is a reply.
-  const busy = (t: Turn, i: number) => t.live || (working && i === 0);
+  const busy = (t: Turn) => t.live;
   const [active, setActive] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
 
@@ -214,7 +224,7 @@ export function RoomOutputs({ turns, now, room, working }: { turns: Turn[]; now:
                 >
                   <span className="mt-px w-5 shrink-0 text-right text-[11px] text-muted-foreground tabular">{list.length - i}</span>
                   <span className={cn("min-w-0 flex-1 line-clamp-2", !t.output && "text-muted-foreground")}>{turnTitle(t)}</span>
-                  <TurnMark t={t} busy={busy(t, i)} />
+                  <TurnMark t={t} busy={busy(t)} />
                 </button>
               </li>
             ))}
@@ -222,7 +232,7 @@ export function RoomOutputs({ turns, now, room, working }: { turns: Turn[]; now:
         </nav>
         <div ref={doc} tabIndex={0} aria-label="Kết quả từng việc, mới nhất ở trên" className="min-h-0 flex-1 overflow-y-auto rounded-lg border outline-none focus-visible:ring-2 focus-visible:ring-ring/60 max-md:max-h-[65svh]">
           {list.map((t, i) => (
-            <TurnSection key={t.key} t={t} busy={busy(t, i)} n={list.length - i} now={now} flash={flash === t.key} />
+            <TurnSection key={t.key} t={t} busy={busy(t)} n={list.length - i} now={now} flash={flash === t.key} />
           ))}
         </div>
       </div>

@@ -14,8 +14,10 @@ Owner 2026-11-05: "release sài liền" — gộp chuỗi PR HQ (#278 hq-control
 - [x] v0.122.17: review độc lập #315 → chặn SVG ở Kết quả, kiểm lại tên bí mật/thư mục cấm khi đọc, digest một dòng
 
 ## Current
-v0.122.19: Chat phòng chia dọc (chat trái, Nhật ký phải), tab Kết quả = tài liệu markdown từng lượt + mục lục + tải .md, nút agent trong chat nhảy tới kết quả; activity trả `turns`/`rev`, `?since=` cho poll rẻ.
+v0.122.20: Kết quả đặt tên lượt `/eccx-*` theo `Goal:`, cờ `working` vào `RoomLogProvider` (chat + panel cùng "Đang làm"), map tin → lượt trong 1 phút trước … 30 phút sau.
+Research (/eccx-research, chỉ báo cáo): trail/graphify đã cài trong harness nhưng agent ít dùng (Claude Code 7 ngày: trail 1 421 lần vs grep/Read ~23 k); HQ chưa có tab đồ thị code; `harness toolstats` sai tên thư mục session omp trên Windows (`toolstats.rs` + `web.rs` `session_slug`); dsh-superagent (DeepSeek) chỉ dùng read/glob/grep.
 
 ## Next
+- Owner chọn: sửa toolstats/web slug · hook gợi ý trail trong kit Claude Code + `8sync trail --all` · tab "Bản đồ code" HQ · graphify vào eccx core.
 - Owner chọn phương án Không gian / Chat phòng (1 hay 2).
-- Treo: dọn đĩa (ct-plan 64,8 GB, pnpm 11,5 GB); VPS `vps.8syncdev.com`; PR #297; xoay token HQ UI.
+- Treo: dọn đĩa (ct-plan 64,8 GB, pnpm 11,5 GB); VPS `vps.8syncdev.com`; PR #297; xoay token HQ UI (gấp: lộ qua `?k=` trong output tool).
