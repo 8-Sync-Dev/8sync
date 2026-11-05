@@ -147,13 +147,32 @@ describe("artifact file route", () => {
     expect((await get(`/api/artifacts/${a.id}/file`)).status).toBe(401);
   });
 
-  it("takes an SVG but serves it sandboxed with no script or outside loads", async () => {
-    const a = await add(put(repo, "out/logo.svg", "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"));
-    const r = await file(req(`/api/artifacts/${a.id}/file`, { token: getToken() }), ctx(a.id));
-    expect(r.headers.get("content-type")).toBe("image/svg+xml");
-    expect(r.headers.get("content-security-policy")).toMatch(/^sandbox; default-src 'none'/);
-    expect(r.headers.get("x-content-type-options")).toBe("nosniff");
-    await r.body?.cancel();
+  it("serves an SVG or HTML inline only to HQ's own <img>/fetch; opened as a page it is an octet-stream download, always sandboxed", async () => {
+    const svg = await add(put(repo, "out/logo.svg", "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"));
+    const html = await add(put(repo, "out/page.html", "<script>fetch('/api/x')</script>"));
+    const get = async (a: ArtifactView, url: string, dest: string | null) => {
+      const r = req(url, { token: url.includes("sig=") ? null : getToken() });
+      if (dest) r.headers.set("sec-fetch-dest", dest);
+      const res = await file(r, ctx(a.id));
+      await res.body?.cancel();
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-security-policy")).toMatch(/^sandbox; default-src 'none';.*frame-ancestors 'none'$/);
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      return { type: res.headers.get("content-type"), disposition: res.headers.get("content-disposition") ?? "" };
+    };
+    expect(await get(svg, svg.src, "image")).toMatchObject({ type: "image/svg+xml", disposition: expect.stringMatching(/^inline/) });
+    expect(await get(svg, `/api/artifacts/${svg.id}/file`, "empty")).toMatchObject({ type: "image/svg+xml", disposition: expect.stringMatching(/^inline/) });
+    expect(await get(html, `/api/artifacts/${html.id}/file`, "empty")).toMatchObject({ type: "text/html; charset=utf-8", disposition: expect.stringMatching(/^inline/) });
+    for (const [a, url] of [
+      [svg, svg.src],
+      [html, html.src],
+      [svg, `/api/artifacts/${svg.id}/file`],
+    ] as const)
+      for (const dest of ["document", "iframe", "object", null])
+        expect(await get(a, url, dest)).toEqual({ type: "application/octet-stream", disposition: expect.stringMatching(/^attachment; filename="/) });
+    // A passive kind keeps its type and inline disposition, and still carries the sandbox.
+    const song = await add(put(repo, "out/tune.mp3", "ID3"));
+    expect(await get(song, song.src, "document")).toMatchObject({ type: "audio/mpeg", disposition: expect.stringMatching(/^inline/) });
   });
 });
 

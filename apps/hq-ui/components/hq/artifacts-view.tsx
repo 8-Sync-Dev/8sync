@@ -10,6 +10,7 @@ import {
   FilmIcon,
   GlobeIcon,
   ImageIcon,
+  ImageOffIcon,
   InboxIcon,
   MusicIcon,
   PresentationIcon,
@@ -17,13 +18,13 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { toast } from "sonner";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { KIND_LABEL, TEXT_INLINE_MAX, artifactFileUrl, baseName, extOf, groupArtifacts, officeFamily, officeReadable, type ArtifactKind, type ArtifactView } from "@/lib/artifacts";
+import { KIND_LABEL, TEXT_INLINE_MAX, artifactFileUrl, baseName, extOf, groupArtifacts, officeFamily, officeReadable, safeImageSrc, type ArtifactKind, type ArtifactView } from "@/lib/artifacts";
 import { askRoomFor } from "@/lib/ask-quote";
 import { parseDelimited } from "@/lib/csv";
 import { bytes } from "@/lib/disk";
@@ -355,6 +356,23 @@ function useArtifactFile(token: string, a: ArtifactView, skip: boolean): Loaded 
 
 const FRAME = "h-[min(78dvh,60rem)] w-full rounded-lg border";
 
+/** Markdown `<img>`: only `data:` or HQ's own origin load (lib/artifacts.ts safeImageSrc); a remote one shows as a note. */
+function MarkdownImage({ src, alt }: ComponentProps<"img">) {
+  const ok = safeImageSrc(src, window.location.origin);
+  if (!ok)
+    return (
+      <span className="inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 text-xs text-muted-foreground" title={typeof src === "string" ? src : undefined}>
+        <ImageOffIcon aria-hidden className="size-3.5" />
+        Ảnh ngoài bị chặn{alt ? `: ${alt}` : ""}
+      </span>
+    );
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={ok} alt={alt ?? ""} referrerPolicy="no-referrer" className="max-w-full rounded" />;
+}
+
+/** `<picture><source srcset>` would load around the img check: dropped, the inner `<img>` still goes through it. */
+const markdownComponents = { img: MarkdownImage, source: () => null };
+
 function Body({ a, api, token }: { a: ArtifactView; api: Api; token: string }) {
   const big = TEXT_KINDS[a.kind] && (a.size ?? 0) > TEXT_INLINE_MAX;
   // Image, video and audio stream from the signed `src` (Range: a video seeks without loading whole).
@@ -397,7 +415,7 @@ function Body({ a, api, token }: { a: ArtifactView; api: Api; token: string }) {
       return (
         <TextFrame copy={f.text ?? ""}>
           <div className="text-sm">
-            <MessageResponse>{f.text ?? ""}</MessageResponse>
+            <MessageResponse components={markdownComponents}>{f.text ?? ""}</MessageResponse>
           </div>
         </TextFrame>
       );

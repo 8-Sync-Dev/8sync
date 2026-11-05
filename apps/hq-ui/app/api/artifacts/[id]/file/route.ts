@@ -1,7 +1,8 @@
+import { ARTIFACT_HEADERS, artifactDelivery } from "@/lib/artifact-headers";
 import { bad, cookieAccess, open } from "@/lib/server/http";
 import { getDb } from "@/lib/server/db";
 import { artifactSigValid, isArtifactId, resolveArtifact } from "@/lib/server/artifacts";
-import { sendFile } from "@/lib/server/send-file";
+import { attachment, sendFile } from "@/lib/server/send-file";
 
 export const runtime = "nodejs";
 
@@ -14,8 +15,10 @@ export const runtime = "nodejs";
  * link; a signed URL still needs the owner's own login in this browser (loopback or `hq_pub`): a guest
  * gets nothing, artifacts are the owner's.
  *
- * Everything but a PDF (the browser's viewer refuses a sandbox) comes with a CSP sandbox: an HTML page or
- * an SVG opened straight from this route runs in an opaque origin, never as HQ.
+ * Every response carries the strict sandbox CSP of lib/artifact-headers.ts (next.config.ts sets the same
+ * per path, which is what wins on the wire). An SVG or HTML file asked for as anything but HQ's own
+ * `<img>`/token fetch (`Sec-Fetch-Dest`) goes out as an `application/octet-stream` attachment: opened in
+ * a tab it downloads, it never renders on HQ's origin.
  */
 export async function GET(req: Request, ctx: RouteContext<"/api/artifacts/[id]/file">) {
   const { id } = await ctx.params;
@@ -36,10 +39,11 @@ export async function GET(req: Request, ctx: RouteContext<"/api/artifacts/[id]/f
   }
   const hit = resolveArtifact(db, id);
   if (!hit) return bad("not found", 404);
-  const headers: Record<string, string> = { "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(hit.file.name)}` };
-  if (hit.artifact.kind === "html") headers["content-security-policy"] = "sandbox allow-scripts allow-popups";
-  else if (hit.file.type === "image/svg+xml") headers["content-security-policy"] = "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'";
-  else if (hit.artifact.kind !== "pdf") headers["content-security-policy"] = "sandbox";
+  const { type, attachment: asFile } = artifactDelivery(hit.file.type, req.headers.get("sec-fetch-dest"), q.get("download") === "1");
+  const headers: Record<string, string> = {
+    ...ARTIFACT_HEADERS,
+    "content-disposition": asFile ? attachment(hit.file.name) : `inline; filename*=UTF-8''${encodeURIComponent(hit.file.name)}`,
+  };
   // A room may rewrite the file under the same id: always ask again.
-  return sendFile(req, hit.file, { download: q.get("download") === "1", cache: "private, no-cache", headers });
+  return sendFile(req, { ...hit.file, type }, { download: false, cache: "private, no-cache", headers });
 }

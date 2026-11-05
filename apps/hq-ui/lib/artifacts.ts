@@ -184,3 +184,19 @@ export function linkLabel(url: string): string {
   if (host === "facebook.com" || host === "m.facebook.com" || host === "fb.com") return "Facebook";
   return host;
 }
+
+/**
+ * An image in a markdown result may load only from `data:image/…` or HQ's own origin; null for anything
+ * else. A remote `![](https://…)` would tell that server the owner opened the file, from where, and when.
+ */
+export function safeImageSrc(src: unknown, origin: string): string | null {
+  if (typeof src !== "string" || !src.trim()) return null;
+  const s = src.trim();
+  if (/^data:image\/[a-z0-9.+-]+[;,]/i.test(s)) return s;
+  try {
+    const u = new URL(s, origin);
+    return u.origin === origin && (u.protocol === "http:" || u.protocol === "https:") ? u.href : null;
+  } catch {
+    return null;
+  }
+}

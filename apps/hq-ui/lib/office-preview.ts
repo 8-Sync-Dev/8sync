@@ -18,6 +18,10 @@ export const SHEETS_MAX = 3;
 export const SHEET_ROWS_MAX = 300;
 export const SHEET_COLS_MAX = 40;
 export const SLIDES_MAX = 300;
+/** Lists/sections nested deeper than this are left out: a crafted file cannot recurse the walk into a stack overflow. */
+export const ODF_NEST_MAX = 6;
+/** Inline elements (spans, runs, links) nested deeper than this contribute no text, for the same reason. */
+export const INLINE_NEST_MAX = 32;
 
 const xml = (s: string) => new DOMParser().parseFromString(s, "application/xml");
 const kids = (el: Element, name?: string) => [...el.children].filter((c) => !name || c.localName === name);
@@ -27,22 +31,24 @@ const allDeep = (el: Element | Document, name: string) => [...el.getElementsByTa
 /** Text of an OOXML paragraph or run tree: `t` text, `tab` as a tab, `br`/`cr` as a line break, in order. */
 function ooxmlText(el: Element): string {
   let s = "";
-  const walk = (n: Element) => {
+  const walk = (n: Element, d: number) => {
+    if (d > INLINE_NEST_MAX) return;
     for (const c of n.children) {
       if (c.localName === "t") s += c.textContent ?? "";
       else if (c.localName === "tab") s += "\t";
       else if (c.localName === "br" || c.localName === "cr") s += "\n";
-      else if (c.localName !== "delText" && c.localName !== "instrText" && c.localName !== "rPh") walk(c);
+      else if (c.localName !== "delText" && c.localName !== "instrText" && c.localName !== "rPh") walk(c, d + 1);
     }
   };
-  walk(el);
+  walk(el, 0);
   return s;
 }
 
 /** Text of an OpenDocument paragraph: `text:s` spaces, `text:tab`, `text:line-break`, notes left out. */
 function odfText(el: Element): string {
   let s = "";
-  const walk = (n: Node) => {
+  const walk = (n: Node, d: number) => {
+    if (d > INLINE_NEST_MAX) return;
     for (const c of n.childNodes) {
       if (c.nodeType === Node.TEXT_NODE) s += c.nodeValue ?? "";
       else if (c.nodeType === Node.ELEMENT_NODE) {
@@ -50,11 +56,11 @@ function odfText(el: Element): string {
         if (e.localName === "s") s += " ".repeat(Math.min(Number(e.getAttribute("text:c") ?? 1) || 1, 100));
         else if (e.localName === "tab") s += "\t";
         else if (e.localName === "line-break") s += "\n";
-        else if (e.localName !== "note" && e.localName !== "annotation") walk(e);
+        else if (e.localName !== "note" && e.localName !== "annotation") walk(e, d + 1);
       }
     }
   };
-  walk(el);
+  walk(el, 0);
   return s;
 }
 
@@ -104,7 +110,8 @@ function docx(parts: Map<string, string>): OfficeDoc {
     if (blocks.length >= DOC_BLOCKS_MAX) more = true;
     else blocks.push(b);
   };
-  const walk = (el: Element) => {
+  const walk = (el: Element, nest: number) => {
+    if (nest > ODF_NEST_MAX) return;
     for (const c of el.children) {
       if (c.localName === "p") {
         const text = ooxmlText(c).trim();
@@ -122,10 +129,10 @@ function docx(parts: Map<string, string>): OfficeDoc {
           .slice(0, SHEET_ROWS_MAX)
           .map((tr) => kids(tr, "tc").slice(0, SHEET_COLS_MAX).map((tc) => kids(tc, "p").map(ooxmlText).join("\n").trim()));
         if (rows.length) add({ t: "table", rows });
-      } else if (c.localName === "sdt" || c.localName === "sdtContent" || c.localName === "customXml") walk(c);
+      } else if (c.localName === "sdt" || c.localName === "sdtContent" || c.localName === "customXml") walk(c, nest + 1);
     }
   };
-  if (body) walk(body);
+  if (body) walk(body, 0);
   return { kind: "doc", blocks, more };
 }
 
@@ -229,13 +236,23 @@ function odf(parts: Map<string, string>, family: "doc" | "sheet" | "slides"): Of
     return { kind: "slides", slides, more: pages.length > SLIDES_MAX };
   }
   const text = firstDeep(d, "text");
+  const out = text ? odfBlocks(text) : { blocks: [], more: false };
+  return { kind: "doc", ...out };
+}
+
+/**
+ * The blocks of an OpenDocument `office:text`: headings, paragraphs, list items (with their depth),
+ * tables. Lists and sections count toward ODF_NEST_MAX; deeper ones are left out.
+ */
+export function odfBlocks(text: Element): { blocks: DocBlock[]; more: boolean } {
   const blocks: DocBlock[] = [];
   let more = false;
   const add = (b: DocBlock) => {
     if (blocks.length >= DOC_BLOCKS_MAX) more = true;
     else blocks.push(b);
   };
-  const walk = (el: Element, depth: number) => {
+  const walk = (el: Element, depth: number, nest: number) => {
+    if (nest > ODF_NEST_MAX) return;
     for (const c of el.children) {
       if (c.localName === "h") {
         const t = odfText(c).trim();
@@ -243,18 +260,18 @@ function odf(parts: Map<string, string>, family: "doc" | "sheet" | "slides"): Of
       } else if (c.localName === "p") {
         const t = odfText(c).trim();
         if (t) add(depth >= 0 ? { t: "li", depth, text: t } : { t: "p", text: t });
-      } else if (c.localName === "list") walk(c, depth + 1);
-      else if (c.localName === "list-item") walk(c, depth);
+      } else if (c.localName === "list") walk(c, depth + 1, nest + 1);
+      else if (c.localName === "list-item") walk(c, depth, nest);
       else if (c.localName === "table") {
         const rows = allDeep(c, "table-row")
           .slice(0, SHEET_ROWS_MAX)
           .map((r) => kids(r, "table-cell").slice(0, SHEET_COLS_MAX).map((tc) => kids(tc, "p").map(odfText).join("\n").trim()));
         if (rows.length) add({ t: "table", rows });
-      } else if (c.localName === "section") walk(c, depth);
+      } else if (c.localName === "section") walk(c, depth, nest + 1);
     }
   };
-  if (text) walk(text, -1);
-  return { kind: "doc", blocks, more };
+  walk(text, -1, 0);
+  return { blocks, more };
 }
 
 /** The parts each format needs, so a big embedded video is never inflated. */

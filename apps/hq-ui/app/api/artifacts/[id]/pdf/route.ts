@@ -1,3 +1,4 @@
+import { ARTIFACT_HEADERS } from "@/lib/artifact-headers";
 import { bad, open } from "@/lib/server/http";
 import { isArtifactId, resolveArtifact } from "@/lib/server/artifacts";
 import { findSoffice, officePdf } from "@/lib/server/office-pdf";
@@ -24,5 +25,5 @@ export async function GET(req: Request, ctx: RouteContext<"/api/artifacts/[id]/p
   const pdf = await officePdf(hit.file.path, st.size, st.mtimeMs);
   if (!pdf) return bad("LibreOffice không chuyển được file này sang PDF", 502);
   const size = fs.statSync(pdf).size;
-  return sendFile(req, { path: pdf, name: hit.file.name.replace(/\.[^.]+$/, "") + ".pdf", type: "application/pdf", size }, { download: false, cache: "private, no-cache" });
+  return sendFile(req, { path: pdf, name: hit.file.name.replace(/\.[^.]+$/, "") + ".pdf", type: "application/pdf", size }, { download: false, cache: "private, no-cache", headers: ARTIFACT_HEADERS });
 }

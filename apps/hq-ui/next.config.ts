@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { ARTIFACT_HEADERS } from "./lib/artifact-headers";
 import { PLAY_HEADERS } from "./lib/play-headers";
 
 /** Never framed (clickjacking), never leaks the URL (remote login key) as a referrer, never MIME-sniffed. */
@@ -14,6 +15,12 @@ export const securityHeaders = [
  * (lib/play-headers.ts; the route sets the same). A later entry overrides an earlier one for the same key.
  */
 export const playFrameHeaders = Object.entries(PLAY_HEADERS).map(([key, value]) => ({ key, value }));
+
+/**
+ * Artifact bytes (app/api/artifacts/[id]/file and /pdf): the strict sandbox CSP of lib/artifact-headers.ts.
+ * Must be set here: a config header beats the route's header of the same name on the wire.
+ */
+export const artifactFileHeaders = Object.entries(ARTIFACT_HEADERS).map(([key, value]) => ({ key, value }));
 
 const nextConfig: NextConfig = {
   // Self-contained server.js + traced node_modules: shipped as the hq-ui release asset (scripts/package-hq-ui.sh).
@@ -34,6 +41,8 @@ const nextConfig: NextConfig = {
     return [
       { source: "/:path*", headers: securityHeaders },
       { source: "/api/play/:key/:path+", headers: playFrameHeaders },
+      { source: "/api/artifacts/:id/file", headers: artifactFileHeaders },
+      { source: "/api/artifacts/:id/pdf", headers: artifactFileHeaders },
     ];
   },
 };
