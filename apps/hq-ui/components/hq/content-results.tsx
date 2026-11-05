@@ -214,7 +214,9 @@ export function ContentOverview({ items, results, error, now, onOpen }: { items:
               {posts.map((it) => {
                 const at = whenOf(it) as number;
                 const ms = idx.metrics.get(it.id) ?? [];
-                const link = it.fb_post_url ?? ms.find((m) => m.url)?.url ?? linksOf(idx.arts.get(it.id) ?? [])[0]?.link ?? null;
+                // fb_post_url is free text an editor guest can PATCH: only http(s) becomes a link (no `javascript:` in HQ's origin).
+                const fb = it.fb_post_url && /^https?:\/\//i.test(it.fb_post_url) ? it.fb_post_url : null;
+                const link = fb ?? ms.find((m) => m.url)?.url ?? linksOf(idx.arts.get(it.id) ?? [])[0]?.link ?? null;
                 return (
                   <tr key={it.id} className="align-top">
                     <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums">
