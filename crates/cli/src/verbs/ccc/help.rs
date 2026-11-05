@@ -40,10 +40,11 @@ KIT & CẤU HÌNH
 TỰ ĐỘNG (gõ trong Claude Code)
   /do <việc>                   đổi nhỏ ≤3 file, không plan/commit
   /ship <việc>                 một feature/bug tới commit
-  /ship-auto <việc>            như /ship rồi PR → CI → merge → release sau một câu `Ship`
-  /ship-loop <mục tiêu>        lặp tới khi tiêu chí xanh (có cap iter/phút)
-  /autopilot                   nhiều item từ backlog, không người trông
-  /ship-tick [slug]            một nhịp của vòng lặp đang mở (cron */5 do /ship-loop, /ship-auto, /autopilot đặt; tự xoá khi xong)
+  /ship-auto <việc>            như /ship rồi PR → CI xanh → tự merge → tự release (`--no-release`: chỉ merge)
+  /ship-loop <mục tiêu>        lặp tới khi tiêu chí xanh (có cap iter/phút), xanh → tự merge + release
+  /autopilot                   nhiều item từ backlog, không người trông; merge + release từng item khi xanh
+  /solo                        chạy liên tục qua eccx: làm → lặp → merge/release → học → item kế; chỉ dừng hỏi owner (Critic trả lời khi quá hạn); `dừng` để tắt
+  /ship-tick [slug]            một nhịp của vòng lặp đang mở (cron */5 do /ship-loop, /ship-auto, /autopilot, /solo đặt; tự xoá khi xong)
   /sysdesign <thay đổi>        system design theo The System Design Primer: cổng quy mô → đọc ≤3 mục → 4 bước + back-of-envelope → ADR (clone primer vào ~/.cache/8sync, không chép vào repo)
   8sync ccc loop <init|tick|ev|status|done|ls> <slug>   state vòng lặp cho /ship-loop; `ev <slug> <nhãn> -- <lệnh>` chạy check + ghi evidence vào LOOP.md
   8sync ccc cancel [--all] [--session <tên>] [--json]   huỷ hết việc session này đặt: goal, urgent, loop ghi trong su-code/ship/ACTIVE của repo (ACTIVE chung cả repo), rồi ACTIVE; `--all` thêm mọi loop; thiếu session hay huỷ hụt → exit 1 (fail-closed; /loop của Claude Code phải `/loop clear` trong session)

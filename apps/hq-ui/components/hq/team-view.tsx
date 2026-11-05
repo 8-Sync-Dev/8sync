@@ -25,6 +25,7 @@ import { ComposerDock, openDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
 import { ModelPicker } from "./model-picker";
 import { TOUCH } from "./room-send";
+import { ReportSplit } from "./room-report";
 import { TurnLink } from "./room-outputs";
 import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
 import { withQuote } from "@/lib/ask-quote";
@@ -45,6 +46,7 @@ export function TeamView({
   header,
   split,
   bar,
+  report,
   onStartSession,
 }: {
   hq: Hq;
@@ -61,6 +63,11 @@ export function TeamView({
   split?: ReactNode;
   /** Pinned above the scrolling log and chat, outside the scroller (Chat phòng: the room's title row and terminal button). */
   bar?: ReactNode;
+  /**
+   * Chat phòng's "Báo cáo" (room-report RoomReport): on a wide screen a pane under everything else, its
+   * height dragged or folded; on a phone a section under the room's brief in the scroll.
+   */
+  report?: ReactNode;
   /** Opens the start-session form (hq-app: focusStartSession). Without it the CTA is text only. */
   onStartSession?: () => void;
 }) {
@@ -87,7 +94,16 @@ export function TeamView({
 
   const mobile = useIsMobile();
   const layout = useDefaultLayout({ id: "hq-room-columns", panelIds: ["chat", "brief"] });
-  const top = mobile ? (split ?? header) : header;
+  // Phone: the brief (or header), then Báo cáo, scroll with the chat.
+  const head = mobile ? (split ?? header) : header;
+  const top = mobile && report ? (
+    <>
+      {head}
+      {report}
+    </>
+  ) : (
+    head
+  );
 
   const chat = (
     <Conversation className="min-h-0 flex-1">
@@ -136,14 +152,8 @@ export function TeamView({
       <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} wide={wide} />
     );
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
-      {bar && (
-        <div className="shrink-0 border-b bg-background">
-          <div className={cn("mx-auto w-full px-4 py-2 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}>{bar}</div>
-        </div>
-      )}
+  const body = (
+    <>
       {wide ? (
         <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
           <ResizablePanel id="chat" minSize="28" className="flex min-h-0 flex-col">
@@ -158,6 +168,18 @@ export function TeamView({
         chat
       )}
       {composer}
+    </>
+  );
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
+      {bar && (
+        <div className="shrink-0 border-b bg-background">
+          <div className={cn("mx-auto w-full px-4 py-2 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}>{bar}</div>
+        </div>
+      )}
+      {report && !mobile ? <ReportSplit pane={report}>{body}</ReportSplit> : body}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 // hq-control: drive the local 8 Sync HQ UI API (apps/hq-ui) from an agent.
 // Reads the UI token from ~/.config/8sync/hq/ui-token and never prints it.
 // Usage: node hq.mjs <ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9>
-//                     | artifact add <file> [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id>
+//                     | artifact add <file> [<file>…] [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id>
 //                     | metrics add --content N --platform P [--url U] [--at T] [--reach --reactions --comments --shares --views N] [--session ID] | metrics ls [--content N]>
 // Permission prompts are read-only here: the owner taps Yes/No in the HQ UI. `answer` picks an
 // option of a room's question, and only when the owner told you which one in this turn.
@@ -110,11 +110,14 @@ switch (cmd) {
     // --for names the project the file is about (its artifact group), when it sits in another repo.
     if (flags.for) flags.for = path.resolve(flags.for);
     if (id === "add") {
-      // HQ takes an absolute path inside a project it knows; it keeps the path, never a copy.
-      const file = path.resolve(need(pos[0], "file path"));
-      const r = await call("POST", "/api/artifacts", { path: file, ...flags });
-      const a = r.artifact;
-      console.log(JSON.stringify({ id: a.id, created: r.created, title: a.title, kind: a.kind, project: a.for_project ?? a.project, size: a.size, content: a.content, link: a.link }));
+      // HQ takes an absolute path inside a project it knows; it keeps the path, never a copy. Several files
+      // (the proof screenshots of one post) take the same flags: same --link = one report in the room's Báo cáo.
+      need(pos[0], "file path");
+      for (const p of pos) {
+        const r = await call("POST", "/api/artifacts", { path: path.resolve(p), ...flags });
+        const a = r.artifact;
+        console.log(JSON.stringify({ id: a.id, created: r.created, title: a.title, kind: a.kind, project: a.for_project ?? a.project, size: a.size, content: a.content, link: a.link }));
+      }
     } else if (id === "ls") {
       const q = new URLSearchParams({ limit: String(Number(pos[0]) || 20) });
       if (flags.session) q.set("session", flags.session);
@@ -138,7 +141,7 @@ switch (cmd) {
       const text = await res.text();
       const MAX = 40_000;
       console.log(text.length > MAX ? `${text.slice(0, MAX)}\n… (${text.length - MAX} more chars: read ${a.path})` : text);
-    } else die("artifact add <file> [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id>");
+    } else die("artifact add <file> [<file>…] [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id>");
     break;
   }
   case "metrics": {
@@ -162,5 +165,5 @@ switch (cmd) {
     break;
   }
   default:
-    die("usage: hq.mjs ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9> | artifact add <file> [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id> | metrics add --content N --platform P [--url U] [--at T] [--reach N …] | metrics ls [--content N]");
+    die("usage: hq.mjs ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9> | artifact add <file> [<file>…] [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id> | metrics add --content N --platform P [--url U] [--at T] [--reach N …] | metrics ls [--content N]");
 }

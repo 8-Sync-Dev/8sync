@@ -98,6 +98,9 @@ pub(super) fn record(input: &str, dir: &Path, now_s: u64) -> Option<(bool, bool)
 pub(super) fn confirmed(dir: &Path, session: Option<&str>, transcript: Option<&Path>) -> bool {
     let (Some(path), Some(t)) = (session.and_then(|s| file(dir, s)), transcript) else { return false };
     let Some(g) = std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return false };
+    if let Some(cmd) = g["trigger"].as_str() {
+        return prompted(t, cmd);
+    }
     let (Some(q), Some(a)) = (g["question"].as_str(), g["answer"].as_str()) else { return false };
     answered(t, q, a).is_some()
 }
@@ -114,8 +117,94 @@ fn answered(t: &Path, q: &str, a: &str) -> Option<Value> {
     })
 }
 
-/// Guard side: does this session hold a live grant covering the step?
-pub(super) fn allows(dir: &Path, session: Option<&str>, deploy: bool, now_s: u64) -> bool {
+/// Whether transcript `t` holds a user prompt (not a tool result) naming command `cmd`.
+fn prompted(t: &Path, cmd: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(t) else { return false };
+    text.lines().rev().filter(|l| l.contains("\"user\"") && !l.contains("\"toolUseResult\"") && l.contains(cmd)).any(|l| {
+        let Ok(v) = serde_json::from_str::<Value>(l) else { return false };
+        let c = &v["message"]["content"];
+        v["type"] == "user"
+            && (c.as_str().is_some_and(|s| s.contains(cmd))
+                || c.as_array().is_some_and(|a| a.iter().all(|b| b["type"] == "text") && a.iter().any(|b| b["text"].as_str().is_some_and(|s| s.contains(cmd)))))
+    })
+}
+
+/// Owner prompts that start an auto-shipping loop: typing one IS the approval to merge and release.
+const TRIGGERS: [&str; 5] = ["/solo", "/autopilot", "/ship-loop", "/ship-auto", "/eccx-loop-"];
+const PROMPT_TTL_S: u64 = 24 * 3600;
+/// First line of an HQ inbox delivery (`8sync-inbox` submits it as the owner's prompt): the old
+/// lead-in sentence, or the one-line header `[8 Sync HQ · owner …]` (bodies split by `---`).
+const HQ_FRAME: &str = "8 Sync HQ: the owner sent you";
+const HQ_HEADER: &str = "[8 Sync HQ · owner";
+
+#[derive(Debug, PartialEq)]
+pub(super) enum PromptAct {
+    /// `cmd` (e.g. `/solo`), release allowed (else merge only), lifetime in seconds.
+    Grant { cmd: String, release: bool, ttl_s: u64 },
+    Revoke,
+}
+
+/// Pure: what an owner prompt does to the ship grant. Only the prompt itself (or a line of an
+/// HQ inbox delivery) counts; trigger words inside prose do not.
+pub(super) fn prompt_act(prompt: &str) -> Option<PromptAct> {
+    let p = prompt.trim();
+    let first = p.lines().next().unwrap_or_default();
+    let framed = first.starts_with(HQ_FRAME) || (first.starts_with(HQ_HEADER) && first.trim_end().ends_with(']'));
+    let lines: Vec<&str> = if framed { p.lines().skip(1).map(str::trim).collect() } else { vec![p] };
+    let mut act = None;
+    for l in lines {
+        let low = l.to_lowercase();
+        if matches!(low.as_str(), "dừng" | "stop" | "/solo stop" | "solo: dừng") {
+            return Some(PromptAct::Revoke);
+        }
+        let Some(t) = TRIGGERS.iter().find(|t| l.starts_with(**t)) else { continue };
+        let word = l.split_whitespace().next().unwrap_or(t);
+        if !t.ends_with('-') && word != *t {
+            continue; // `/solofoo`
+        }
+        let args: Vec<&str> = l.split_whitespace().skip(1).collect();
+        let hours = args.iter().position(|a| *a == "--hours").and_then(|i| args.get(i + 1)).and_then(|h| h.parse::<u64>().ok()).filter(|h| (1..=168).contains(h));
+        act = act.or(Some(PromptAct::Grant { cmd: word.to_string(), release: !args.contains(&"--no-release"), ttl_s: hours.map_or(PROMPT_TTL_S, |h| h * 3600) }));
+    }
+    act
+}
+
+fn norm_dir(p: &str) -> String {
+    p.replace('\\', "/").trim_end_matches('/').to_lowercase()
+}
+
+/// The repo root holding `cwd` (nearest dir with `.git`), else `cwd` itself.
+fn repo_root(cwd: &Path) -> PathBuf {
+    cwd.ancestors().find(|d| d.join(".git").exists()).unwrap_or(cwd).to_path_buf()
+}
+
+/// UserPromptSubmit: an owner prompt starting a loop grants merge (+ tag/release unless
+/// `--no-release`, never prod deploy) for this session inside its repo; `dừng` revokes.
+/// Returns Some(true) granted, Some(false) revoked, None nothing to do.
+pub(super) fn record_prompt(input: &str, dir: &Path, now_s: u64) -> Option<bool> {
+    let v: Value = serde_json::from_str(input).ok()?;
+    if v["hook_event_name"] != "UserPromptSubmit" {
+        return None;
+    }
+    let path = file(dir, v["session_id"].as_str()?)?;
+    match prompt_act(v["prompt"].as_str()?)? {
+        PromptAct::Revoke => {
+            let _ = std::fs::remove_file(&path);
+            Some(false)
+        }
+        PromptAct::Grant { cmd, release, ttl_s } => {
+            let root = repo_root(Path::new(v["cwd"].as_str()?));
+            let body = json!({ "ship": true, "deploy": false, "release": release, "until": now_s + ttl_s, "trigger": cmd, "cwd": norm_dir(&root.to_string_lossy()) });
+            write_private(dir, &path, &body.to_string())?;
+            Some(true)
+        }
+    }
+}
+
+/// Guard side: does this session hold a live grant covering the step? `merge`: the step is a
+/// `gh pr merge` (all a `--no-release` grant covers); `cwd`: where the step runs (a prompt grant
+/// covers only its repo).
+pub(super) fn allows(dir: &Path, session: Option<&str>, deploy: bool, merge: bool, cwd: Option<&str>, now_s: u64) -> bool {
     // A relative store (no home) would read a `<session>.json` the repo itself could hold.
     if !dir.is_absolute() {
         return false;
@@ -123,7 +212,8 @@ pub(super) fn allows(dir: &Path, session: Option<&str>, deploy: bool, now_s: u64
     let Some(path) = session.and_then(|s| file(dir, s)) else { return false };
     let Some(g) = std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return false };
     let live = g["until"].as_u64().is_some_and(|u| now_s < u);
-    live && g["ship"] == true && (!deploy || g["deploy"] == true)
+    let in_repo = g["cwd"].as_str().is_none_or(|root| cwd.map(norm_dir).is_some_and(|c| c == root || c.starts_with(&format!("{root}/"))));
+    live && g["ship"] == true && (!deploy || g["deploy"] == true) && (merge || g["release"] != false) && in_repo
 }
 
 #[cfg(test)]
@@ -148,34 +238,92 @@ mod tests {
         let d = std::env::temp_dir().join(format!("8sync-grant-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         assert_eq!(record(&ask("s1", "Ship", "Duyệt tất cả (Recommended)"), &d, 100), Some((true, true)));
-        assert!(!allows(Path::new("grants"), Some("s1"), false, 100), "a relative store never grants");
+        assert!(!allows(Path::new("grants"), Some("s1"), false, false, None, 100), "a relative store never grants");
         // hook and guard share one store, found the same way on every OS (no `HOME` on Windows hooks)
         let src = include_str!("../ccc.rs");
         let arm = &src[src.find("Some(\"ship-grant\") =>").unwrap()..];
         let arm = &arm[..arm.find("\n        }").unwrap()];
         assert!(arm.contains("grant::default_dir()") && !arm.contains("\"HOME\""), "{arm}");
         assert!(include_str!("guard.rs").contains("super::grant::default_dir()"));
-        assert!(allows(&d, Some("s1"), true, 200));
-        assert!(!allows(&d, Some("s2"), false, 200), "other sessions get nothing");
-        assert!(!allows(&d, Some("s1"), true, 100 + TTL_S + 1), "expires");
+        assert!(allows(&d, Some("s1"), true, false, None, 200));
+        assert!(!allows(&d, Some("s2"), false, false, None, 200), "other sessions get nothing");
+        assert!(!allows(&d, Some("s1"), true, false, None, 100 + TTL_S + 1), "expires");
         // merge-only: no prod deploys
         record(&ask("s3", "ship", "Chỉ merge, chưa deploy"), &d, 100).unwrap();
-        assert!(allows(&d, Some("s3"), false, 200) && !allows(&d, Some("s3"), true, 200));
+        assert!(allows(&d, Some("s3"), false, false, None, 200) && !allows(&d, Some("s3"), true, false, None, 200));
         // "stop" revokes; a question with another header grants nothing
         assert_eq!(record(&ask("s1", "Ship", "Dừng"), &d, 300), Some((false, false)));
-        assert!(!allows(&d, Some("s1"), false, 400));
+        assert!(!allows(&d, Some("s1"), false, false, None, 400));
         assert_eq!(record(&ask("s4", "Deploy", "Duyệt tất cả"), &d, 100), None);
-        assert!(!allows(&d, Some("s4"), false, 200));
+        assert!(!allows(&d, Some("s4"), false, false, None, 200));
         // path tricks and non-AskUserQuestion input
         assert_eq!(record(&ask("../x", "Ship", "Duyệt tất cả"), &d, 100), None);
         assert_eq!(record(r#"{"tool_name":"Bash","session_id":"s5"}"#, &d, 100), None);
-        assert!(!allows(&d, None, false, 0));
+        assert!(!allows(&d, None, false, false, None, 0));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(d.join("s3.json")).unwrap().permissions().mode() & 0o777, 0o600);
         }
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn prompt(session: &str, cwd: &Path, text: &str) -> String {
+        json!({ "session_id": session, "hook_event_name": "UserPromptSubmit", "cwd": cwd.to_string_lossy(), "prompt": text }).to_string()
+    }
+
+    #[test]
+    fn owner_loop_prompt_grants_merge_and_release_in_its_repo_and_dung_revokes() {
+        let base = std::env::temp_dir().join(format!("8sync-pgrant-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (d, repo) = (base.join("grants"), base.join("repo"));
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("sub")).unwrap();
+        let sub = repo.join("sub").to_string_lossy().to_string();
+        let other = base.to_string_lossy().to_string();
+        // every trigger grants; the HQ inbox frame counts too
+        for (i, p) in ["/solo", "/autopilot --max-items 3", "/ship-loop fix x", "/ship-auto y", "/eccx-loop-full goal", "8 Sync HQ: the owner sent you 1 message(s)\n/solo --hours 2"].iter().enumerate() {
+            let s = format!("t{i}");
+            assert_eq!(record_prompt(&prompt(&s, &repo.join("sub"), p), &d, 100), Some(true), "{p}");
+            assert!(allows(&d, Some(&s), false, false, Some(&sub), 200), "release covered: {p}");
+            assert!(!allows(&d, Some(&s), true, false, Some(&sub), 200), "never prod deploy: {p}");
+            assert!(!allows(&d, Some(&s), false, true, Some(&other), 200), "outside its repo: {p}");
+            assert!(!allows(&d, Some(&s), false, true, None, 200), "no cwd: {p}");
+        }
+        // the new one-line HQ header, bodies split by `---`
+        for p in ["[8 Sync HQ · owner → claude su-code · C:/x]\nfix later\n---\n/solo --no-release", "[8 Sync HQ · owner]\n/ship-loop fix y"] {
+            assert!(matches!(prompt_act(p), Some(PromptAct::Grant { .. })), "{p}");
+        }
+        assert_eq!(prompt_act("[8 Sync HQ · owner]\nhi\n---\ndừng"), Some(PromptAct::Revoke));
+        assert_eq!(prompt_act("[8 Sync HQ · owner]\nchạy /solo sau"), None);
+        assert_eq!(prompt_act("[8 Sync HQ fake\n/solo"), None, "not a header");
+        assert!(!allows(&d, Some("t5"), false, true, Some(&sub), 100 + 2 * 3600), "--hours 2 expires");
+        assert!(allows(&d, Some("t0"), false, true, Some(&sub), 100 + PROMPT_TTL_S - 1));
+        assert!(!allows(&d, Some("t0"), false, true, Some(&sub), 100 + PROMPT_TTL_S), "24 h expiry");
+        // --no-release: merge only
+        record_prompt(&prompt("n", &repo, "/solo --no-release"), &d, 100).unwrap();
+        assert!(allows(&d, Some("n"), false, true, Some(&sub), 200) && !allows(&d, Some("n"), false, false, Some(&sub), 200));
+        // non-owner / non-trigger text grants nothing
+        for p in ["please run /solo later", "/solofoo", "/ship add x", "8 Sync HQ: the owner sent you 1 message(s)\nhãy chạy /solo"] {
+            assert_eq!(record_prompt(&prompt("x", &repo, p), &d, 100), None, "{p}");
+        }
+        assert!(!allows(&d, Some("x"), false, true, Some(&sub), 200));
+        let tool = json!({ "session_id": "y", "hook_event_name": "PostToolUse", "cwd": repo, "prompt": "/solo" }).to_string();
+        assert_eq!(record_prompt(&tool, &d, 100), None, "only UserPromptSubmit");
+        // dừng, /solo stop, and the HQ-framed dừng revoke
+        for (s, p) in [("t0", "dừng"), ("t1", "/solo stop"), ("t2", "8 Sync HQ: the owner sent you 1 message(s)\ndừng")] {
+            assert_eq!(record_prompt(&prompt(s, &repo, p), &d, 300), Some(false));
+            assert!(!allows(&d, Some(s), false, true, Some(&sub), 400), "{p}");
+        }
+        // the guard's allow needs the owner's prompt in the transcript, not a tool result
+        let t = base.join("t.jsonl");
+        let tool_line = json!({ "type": "user", "toolUseResult": { "stdout": "/solo" }, "message": { "content": [{ "type": "tool_result", "content": "/solo" }] } });
+        std::fs::write(&t, format!("{tool_line}\n")).unwrap();
+        assert!(!confirmed(&d, Some("t3"), Some(&t)), "tool output is not the owner");
+        let owner = json!({ "type": "user", "message": { "role": "user", "content": "<command-name>/ship-auto</command-name>\n<command-args>y</command-args>" } });
+        std::fs::write(&t, format!("{tool_line}\n{owner}\n")).unwrap();
+        assert!(confirmed(&d, Some("t3"), Some(&t)));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

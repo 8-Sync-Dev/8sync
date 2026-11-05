@@ -39,6 +39,15 @@ export type Artifact = {
 /** What the list route hands the view: the row plus `src`, a signed URL `<video>`, `<audio>`, `<img>` and "Tải về" load without the token header. */
 export type ArtifactView = Artifact & { src: string };
 
+/** Claude session id, omp room id or hq-* name: what /api/messages addresses and `--session` takes. */
+const ROOM_REF = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|omp-[0-9a-f]{16}|hq-[a-z0-9][a-z0-9-]{0,31})$/i;
+export const isRoomRef = (v: unknown): v is string => typeof v === "string" && ROOM_REF.test(v);
+/** `?session=` values one list takes: a room's names (hq name, Claude session id), never a long list. */
+export const SESSION_PARAMS_MAX = 4;
+
+/** The names a room may have registered its artifacts under, each once, only the ones `--session` takes. */
+export const roomRefs = (room: { name: string; session_id: string | null }): string[] => [...new Set([room.name, room.session_id])].filter(isRoomRef);
+
 const text = "text/plain; charset=utf-8";
 /** Source code and config: shown as text, always served as text/plain (never run, never rendered as XML/HTML). */
 const CODE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java", ".kt", ".c", ".h", ".cpp", ".hpp", ".cs", ".rb", ".php", ".swift", ".sh", ".ps1", ".bat", ".sql", ".xml", ".css", ".scss", ".ini", ".cfg", ".conf", ".diff", ".patch", ".srt", ".vtt"];
@@ -183,6 +192,68 @@ export function linkLabel(url: string): string {
   if (host === "business.facebook.com") return "Meta Business Suite";
   if (host === "facebook.com" || host === "m.facebook.com" || host === "fb.com") return "Facebook";
   return host;
+}
+
+/** The link when it is https, else null: the only kind a report button opens. */
+export function httpsLink(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+const META_HOSTS: Record<string, true> = { "facebook.com": true, "m.facebook.com": true, "business.facebook.com": true, "fb.com": true, "fb.watch": true, "instagram.com": true, "threads.net": true, "threads.com": true };
+
+/** What a report's open button says: "Mở trên Meta" for Facebook/Instagram/Threads, else "Mở trên <host>". */
+export function openLabel(url: string): string {
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "Mở link";
+  }
+  return Object.hasOwn(META_HOSTS, host) ? "Mở trên Meta" : `Mở trên ${host}`;
+}
+
+/**
+ * One posting report in a room's Báo cáo: the files registered for the same post (same `--link`) under
+ * the newest one's title, link and note; a file without a link is a report of its own.
+ */
+export type Report<A extends Artifact = Artifact> = {
+  key: string;
+  title: string;
+  /** Newest registration of any of its files. */
+  at: number;
+  link: string | null;
+  /** The newest note any of its files has. */
+  note: string | null;
+  /** Content items it reports on, ascending, each once. */
+  content: number[];
+  /** Images on disk: the proof screenshots. */
+  proofs: A[];
+  /** Everything else (other kinds, or a file gone from disk). */
+  files: A[];
+};
+
+/** `list` newest first (as /api/artifacts hands it) → reports newest first. */
+export function reportsOf<A extends Artifact>(list: readonly A[]): Report<A>[] {
+  const out = new Map<string, Report<A>>();
+  for (const a of list) {
+    const link = httpsLink(a.link);
+    const key = link ? `link:${link}` : `id:${a.id}`;
+    let r = out.get(key);
+    if (!r) {
+      r = { key, title: a.title, at: a.updated_at, link, note: null, content: [], proofs: [], files: [] };
+      out.set(key, r);
+    }
+    r.at = Math.max(r.at, a.updated_at);
+    r.note ??= a.note;
+    for (const id of a.content) if (!r.content.includes(id)) r.content.push(id);
+    (a.kind === "image" && !a.missing ? r.proofs : r.files).push(a);
+  }
+  return [...out.values()].map((r) => ({ ...r, content: r.content.sort((x, y) => x - y) })).sort((x, y) => y.at - x.at);
 }
 
 /**

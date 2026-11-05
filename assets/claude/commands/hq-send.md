@@ -13,3 +13,5 @@ Chạy `node ~/.omp/skills/hq-control/scripts/hq.mjs …` (skill `hq-control`; l
 1. Không gửi cho chính phòng mình (so nhãn và `cwd` trong `ls`). Phòng đang `running`: chỉ gửi khi cần (dừng, đổi hướng, phụ thuộc file); hỏi tiến độ thì dùng `/hq-log`.
 2. Một lệnh cho cả tin (nhiều dòng vẫn là một đối số), mở đầu bằng nguồn, chuyển nguyên lời chủ: `node ~/.omp/skills/hq-control/scripts/hq.mjs send <id> "[từ phòng <tên mình>] <tin>"`. Không thêm yêu cầu chủ chưa nói.
 3. `node ~/.omp/skills/hq-control/scripts/hq.mjs msgs <id> 1` → báo chủ `delivery`. `failed`/`error` → báo, không gửi lại liên tục.
+
+Báo cáo đăng bài → dùng `/hq-artifact add … --link … --note … --session <id phòng mình>`, không `/hq-send` (chủ xem nó ở phần Báo cáo dưới phòng, không ở tin nhắn).

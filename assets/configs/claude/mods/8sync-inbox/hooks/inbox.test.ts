@@ -5,7 +5,7 @@ import { parseInbox, parseOk, pollEvery } from './inbox'
 const out = (stdout: string, exitCode = 0) => ({
   value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
 })
-const TASK = '8 Sync HQ: the owner sent you 1 message(s) from the HQ dashboard. Read and act on them now:\nNew task: x'
+const TASK = '[8 Sync HQ · owner → Claude Code core · C:\\Users\\Projects\\su-code]\nNew task: x'
 
 /** A fake `8sync ccc inbox`: a queue, one claim at a time, ack drops it, release requeues it. */
 function fakeInbox(on: Parameters<Parameters<typeof test>[1]>[1]) {

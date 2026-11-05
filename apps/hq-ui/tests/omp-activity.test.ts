@@ -128,6 +128,25 @@ describe("omp rooms on the floor and in Nhật ký", () => {
     ]);
   });
 
+  it("a room whose turn ended is idle (no 'Đang làm', no live Nhật ký) while its process stays open; an older CLI row keeps working", async () => {
+    const now = Math.floor(Date.now() / 1000) - 30;
+    const row = (name: string, id: string, o: Record<string, unknown>) => ompRow({ name, inbox_id: id, last_active: now, last_tool: "bash", last_activity: "bash: Measuring distill coverage", ...o });
+    run.mockResolvedValue(
+      lsOut([
+        row("done", "omp-0000000000000011", { turn_open: false, doing: null }),
+        row("busy", "omp-0000000000000012", { turn_open: true, doing: "bash: Measuring distill coverage" }),
+        row("oldcli", "omp-0000000000000013", { doing: "bash: Measuring distill coverage" }),
+      ]),
+    );
+    const db = getDb();
+    const rooms = ompSessions(db, await loadFloor(db));
+    expect(rooms.map((r) => [r.label, r.status, r.detail])).toEqual([
+      ["done", "idle", "Đang chờ prompt mới"],
+      ["busy", "running", "bash: Measuring distill coverage"],
+      ["oldcli", "running", "bash: Measuring distill coverage"],
+    ]);
+  });
+
   it("GET activity reads an omp room's transcript from `8sync ls`, never a path from the client", async () => {
     run.mockResolvedValue(lsOut([ompRow({ inbox_id: ROOM, transcript: file }), ompRow({ name: "rel", inbox_id: "omp-0000000000000003", transcript: "sd/x.jsonl" })]));
     const params = (name: string) => ({ params: Promise.resolve({ name }) }) as never;

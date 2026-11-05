@@ -1,15 +1,13 @@
 # STATE — su-code
 
 ## Goal
-Owner 2026-11-05 (/eccx-full, /eccx-security ưu tiên nhất): README + site đúng logo 8 Sync, trọng tâm `8sync . <name> --mode`; HQ Kết quả (Chép, bôi đen hỏi, thư mục, preview video/nhạc/office); tab Bản đồ code; dọn mọi việc treo; auto ship.
+Owner 2026-11-05: auto merge + auto release cho mọi vòng lặp, `/solo` + Critic tự trả lời khi owner im, HQ ghim câu hỏi + thẻ Solo, link HQ cố định (Cloudflare named tunnel), nhãn inbox ngắn, phòng xong việc hết "Đang làm", khung Báo cáo đăng bài dưới mỗi phòng.
 
 ## Checklist
-- [x] Xoay token HQ UI (link `?k=` cũ hết hạn sau 10 phút); VPS đã huỷ chủ động (ticket OVH CS16955879), gỡ SSH block; pnpm store prune; ct-plan đã không còn
-- [x] `8sync trail --all C:/Users/Projects`: 25 repo
-- [x] Nhánh agent: here-mode, harness-trail-hints, readme-web-brand, hq-results-ux, hq-code-map, PR #297 (merge main)
-- [x] Review bảo mật vòng 1 (Rust: chặn tên phiên trùng lệnh engine, `--model=-x`; dashboard harness: Host/Origin/token, rule delete canonicalize; web-token vào deny/guard) + kiểm media public (bỏ 11 ảnh không dùng)
-- [ ] Review bảo mật vòng 2 (HQ results/codemap/content + follow-up Rust) → sửa
-- [ ] `release/v0.123.0` → PR → CI → squash → tag → release.yml → `8sync up` → swap HQ
+- [x] Nhánh agent: solo-auto-release, hq-inbox-tag, hq-named-tunnel, hq-solo, omp-turn-idle, hq-room-report
+- [x] Gộp vào `release/v0.124.0` (worktree `C:/Users/Projects/su-code-rel124`), cargo test + eccx-gen + vitest + next build
+- [ ] PR → CI → squash → tag v0.124.0 → release.yml → `8sync up` → kiểm HQ (không build đè bản đang chạy)
+- [ ] Owner: mua domain Cloudflare → `8sync hq ui --tunnel-setup hq.<domain>` → restart `--public`
 
 ## Goal: đa kênh cho tab Nội dung (phiên tu-session-marketing-phong-core)
 Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile Tú) + Threads @8syncdev + YouTube (8 Sync Dev) qua ego-browser profile "8sync FB" (task space id 2 "8sync content channels", tab p1 FB · p2 LinkedIn · p3 YouTube Studio · p4 Threads), ghi permalink + published_at về item; gate không nhãn AI giữ cho mọi kênh. Acceptance: UAT click thật trên HQ :8740 + 1 bài test lên lịch trên 3 kênh text rồi xoá lịch.
@@ -21,7 +19,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-v0.123.0 đang gộp trong worktree `C:/Users/Projects/su-code-v123` (nhánh `release/v0.123.0`).
+v0.124.0 trong `C:/Users/Projects/su-code-rel124` (nhánh `release/v0.124.0`). HQ đang chạy bản cài sẵn (supervisor pid 56696, quick tunnel).
 
 ## Next
 - Đa kênh: đưa 0064 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; tới lúc đó HQ chạy như DB chưa có kênh.

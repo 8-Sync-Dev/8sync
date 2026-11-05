@@ -23,7 +23,7 @@ function install(home: string, files: { cc?: string[]; omp?: string[] }) {
 describe("eccx commands on the Vòng lặp tab", () => {
   it("parses the generated heads: hint, title, scope", () => {
     const loop = parseEccxHead(fs.readFileSync(path.join(CC, "eccx-loop-frontend.md"), "utf8"));
-    expect(loop).toEqual({ hint: "<goal> [--max-iter 8] [--max-min 90] [--release] [--dry-run]", title: "Frontend", scope: null });
+    expect(loop).toEqual({ hint: "<goal> [--max-iter 8] [--max-min 90] [--no-release] [--dry-run]", title: "Frontend", scope: null });
     const plan = parseEccxHead(fs.readFileSync(path.join(CC, "eccx-ads.md"), "utf8"));
     expect(plan.title).toBe("Ads & Marketing");
     expect(plan.scope).toBe("campaigns, ads, social, SEO, brand, content distribution, lead gen");
@@ -56,7 +56,7 @@ describe("eccx commands on the Vòng lặp tab", () => {
     install(home, { cc: ["eccx-loop-frontend.md", "eccx-frontend.md", "eccx-clear.md"] });
     const [loop, plan, clear] = listEccx(home);
     expect(eccxExample(loop)).toBe("/eccx-loop-frontend <mục tiêu>");
-    expect(eccxFlags(loop.hint)).toBe("[--max-iter 8] [--max-min 90] [--release] [--dry-run]");
+    expect(eccxFlags(loop.hint)).toBe("[--max-iter 8] [--max-min 90] [--no-release] [--dry-run]");
     expect(eccxExample(plan)).toBe("/eccx-frontend <mục tiêu>");
     expect(eccxExample(clear)).toBe("/eccx-clear <slug>|all");
     expect(eccxLine(loop)).toContain("Lặp /eccx-frontend tới khi mọi tiêu chí xanh");

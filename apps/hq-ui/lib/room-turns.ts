@@ -60,7 +60,8 @@ export function turnsFrom(events: readonly ActivityEvent[], max = TURNS_MAX): Tu
   return out.slice(-max);
 }
 
-const FRAME = /^8 Sync HQ: the owner sent you \d+ message\(s\)[^\n]*\n/;
+/** HQ's inbox frame: the header line (`[8 Sync HQ · owner]`, `[8 Sync HQ · owner → omp core · C:\repo]`), or the lead-in older builds sent. */
+const FRAME = /^(?:\[8 Sync HQ · owner(?: → [^\]\n]*)?\]|8 Sync HQ: the owner sent you \d+ message\(s\)[^\n]*)\n/;
 
 /** What the owner wrote in a prompt: HQ's inbox frame dropped. */
 export function promptBody(prompt: string): string {

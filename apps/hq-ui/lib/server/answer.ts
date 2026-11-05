@@ -14,8 +14,11 @@ const ROWS = 34;
 /** ConPTY asks where the cursor is (`ESC[6n`) before it draws; the attach waits for this reply. */
 export const CURSOR_REPLY = "\u001b[1;1R";
 
-/** What the owner saw: a permission prompt, or one single-choice question with these option labels. */
-export type Expect = { kind: "permission" } | { kind: "question"; question: string; options: readonly string[] };
+/**
+ * What the owner saw: a permission prompt, or one single-choice question with these option labels.
+ * `other`: the owner typed his own answer, so the question's free-text row (`n+1. Type something.`) must show too.
+ */
+export type Expect = { kind: "permission" } | { kind: "question"; question: string; options: readonly string[]; other?: boolean };
 export type Dialog = { kind: "permission"; text: string; yes: boolean } | { kind: "question"; text: string };
 export type AnswerResult = { ok: true; dialog: Dialog } | { ok: false; status: number; error: string };
 
@@ -33,7 +36,16 @@ export function dialogOnScreen(lines: string[], expect: Expect): Dialog | null {
     return p ? { kind: "permission", ...p } : null;
   }
   const text = questionOnScreen(lines, expect.question, expect.options);
+  if (text && expect.other && !flatText(lines.join("\n")).includes(`${expect.options.length + 1}. Type something`)) return null;
   return text ? { kind: "question", text } : null;
+}
+
+/**
+ * Keys for a typed answer: the free-text row's digit (Claude Code focuses that input and waits, it does
+ * not submit an empty row), the text, then Enter (the input's submit).
+ */
+export function otherKeys(options: number, text: string): string[] {
+  return [String(options + 1), text, "\r"];
 }
 
 /**

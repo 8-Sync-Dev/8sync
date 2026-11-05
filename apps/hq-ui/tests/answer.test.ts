@@ -33,7 +33,7 @@ vi.mock("@/lib/server/proc", async (orig) => ({
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { POST } from "@/app/api/sessions/[name]/answer/route";
-import { AskPanel, oneTapKind, type AskRoom } from "@/components/hq/ask-panel";
+import { AskPanel, oneTapKind, pinnedAsk, type AskRoom } from "@/components/hq/ask-panel";
 import { permissionOnScreen, questionOnScreen, renderScreen } from "@/lib/screen";
 import { CURSOR_REPLY, TIMING, keysFit } from "@/lib/server/answer";
 import { getToken } from "@/lib/server/auth";
@@ -197,6 +197,29 @@ describe("POST /api/sessions/:id/answer", () => {
     ask.value = null;
     expect((await post(SID, { kind: "question", keys: ["1"], text: shownQ })).status).toBe(409);
   });
+
+  it("Khác: the free-text row's digit, the owner's text, Enter; only while that row shows; one clean line", async () => {
+    ask.value = ASK;
+    bridge.screen = draw(QUESTION);
+    const shownQ = "Merge card-46 vào main bây giờ hay đợi QA lần nữa?";
+    expect((await post(SID, { kind: "question", keys: [], text: shownQ, other: "  Đợi tới\nsáng mai  " })).status).toBe(200);
+    expect(typed()).toEqual([CURSOR_REPLY, "3", "Đợi tới sáng mai", "\r"]);
+    bridge.writes = [];
+    for (const bad of [{ keys: ["1"], other: "x" }, { keys: [], other: "" }, { keys: [], other: "a\u0003b" }, { keys: [], other: "x".repeat(501) }, { keys: [], other: 3 }])
+      expect((await post(SID, { kind: "question", text: shownQ, ...bad })).status).toBe(422);
+    expect((await post(SID, { kind: "permission", keys: [], text: SHOWN, other: "x" })).status).toBe(422);
+    expect(typed()).toEqual([]);
+    // The free-text row is gone (another dialog shape): nothing is typed.
+    bridge.screen = draw(QUESTION.slice(0, -1));
+    expect((await post(SID, { kind: "question", keys: [], text: shownQ, other: "Đợi" })).status).toBe(409);
+    expect(typed()).toEqual([CURSOR_REPLY]);
+    ask.value = null;
+  });
+
+  it("an omp room id is not a Claude Code session: 422 before anything is spawned", async () => {
+    expect((await post("omp-0123456789abcdef", { kind: "question", keys: ["1"], text: "q" })).status).toBe(422);
+    expect(bridge.spawned).toEqual([]);
+  });
 });
 
 describe("Anh cần trả lời: one-tap buttons", () => {
@@ -223,5 +246,19 @@ describe("Anh cần trả lời: one-tap buttons", () => {
     expect(html).toContain("Đang đọc màn hình của phòng");
     expect(html).toContain('aria-label="Trả lời nhanh cho lead"');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*?Cho phép/);
+  });
+
+  it("questions get a Khác box; an omp room is pinned with its terminal, never a `claude attach` line", () => {
+    expect(pinnedAsk(room({ ask: ASK }))).toBe(true);
+    expect(pinnedAsk(room({ omp: true }))).toBe(true);
+    expect(pinnedAsk(room({ waiting: "permission prompt" }))).toBe(false);
+    const html = renderToStaticMarkup(
+      createElement(AskPanel, { rooms: [room({ key: "b", label: "lead", ask: ASK }), room({ key: "o", label: "omp-dev", session_id: "omp-0123456789abcdef", omp: true })], now: 0, token: "t", onOpen: () => {} }),
+    );
+    expect(html).toContain("Khác");
+    expect(html).toContain('aria-label="Câu trả lời khác cho lead"');
+    expect(html).toContain("HQ chưa đọc được câu hỏi của omp");
+    expect(html).toContain("Mở phòng");
+    expect(html).not.toContain("attach omp-");
   });
 });

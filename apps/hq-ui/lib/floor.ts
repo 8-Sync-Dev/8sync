@@ -13,6 +13,8 @@ export type LsInput = {
   current_task?: string | null;
   last_active?: number | null; // unix seconds
   stalled_error?: string | boolean | null;
+  /** false: the session's last turn ended (it sits at its prompt even while its process runs); absent from older CLIs. */
+  turn_open?: boolean | null;
 };
 
 export type HqInput = {
@@ -79,6 +81,9 @@ export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now())
     const err = typeof ls.stalled_error === "string" ? ls.stalled_error : null;
     return make("stalled", `${err ?? "Lỗi API"} — cần anh xử lý`);
   }
+  // The transcript says the last turn ended: the agent answered and waits for a new prompt, even though
+  // its process still holds the session ("running"). Its last step is history, not work in progress.
+  if (ls?.turn_open === false) return total > 0 && doneN >= total ? make("done", text || `Xong ${progress}`) : make("idle", "Đang chờ prompt mới");
   // A live process whose transcript has not moved for 5 min is only "stuck" while
   // it still has open work; a session parked at its prompt (no open task, or hq
   // says idle) is resting.

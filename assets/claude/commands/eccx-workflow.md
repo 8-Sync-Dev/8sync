@@ -80,6 +80,7 @@ Scope: plan, build, test, review, refactor, ship — the engineering loop.
 - `ship-auto` — Auto ship through release, level 3
 - `ship-loop` — Goal loop until acceptance criteria pass, level 4
 - `ship-tick` — One iteration of an OPEN loop the owner already started
+- `solo` — Continuous solo mode, level 6
 - `ecc:story-lifecycle` — Manage a file-based epic → story → sprint development loop
 - `sysdesign` — System design for a real change
 - `ecc:tdd-workflow` — Test-driven development patterns and workflow enforcement

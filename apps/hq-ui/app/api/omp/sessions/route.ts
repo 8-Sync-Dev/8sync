@@ -71,7 +71,7 @@ export async function POST(req: Request) {
       }
       text = withFiles(text, paths);
     }
-    queueInbox(id, text);
+    queueInbox(id, text, { engine: "omp", name, cwd });
     ownerMessage(o.db, id, text, "inbox");
   }
   return json({ id, name, cwd });
