@@ -1,6 +1,6 @@
 ---
 name: solo
-description: Continuous solo mode, level 6 — /solo. Endless auto-do → auto-loop → auto-evolve through eccx: picks the next backlog item, runs it as /eccx-loop-full, auto-merges + auto-releases when green, learns, then the next item. Stops only for owner decisions, posted non-blocking in su-code/ship/solo/SOLO.md; a strict Critic answers after --answer-after minutes. "dừng" or /solo stop ends it. Owner-only.
+description: 'Continuous solo mode, level 6 — /solo. Endless auto-do → auto-loop → auto-evolve through eccx: picks the next backlog item, runs it as /eccx-loop-full, auto-merges + auto-releases when green, learns, then the next item. Stops only for owner decisions, posted non-blocking in su-code/ship/solo/SOLO.md; a strict Critic answers after --answer-after minutes. "dừng" or /solo stop ends it. Owner-only.'
 argument-hint: "[--hours 12] [--max-tokens 2000000] [--answer-after 15] [--backlog issues|state|knowledge] [--no-release] | stop"
 disable-model-invocation: true
 ---
