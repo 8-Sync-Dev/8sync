@@ -12,7 +12,7 @@ Owner 2026-11-05 (`/eccx-loop-full`): tự fix/dev theo tick, không làm hư li
 - [ ] Owner chọn phương án Không gian / Chat phòng (1 hay 2)
 
 ## Current
-Tick 1 xong. Chờ owner: merge/release, phương án Chat phòng.
+Tick 1 xong. 10:55: spinner neon (PR #314, base #313) đã lên HQ :8740 (`su-code-live` @`cebcfc36` = #310+#312+#313+#314; `su-code-uat` checkout cùng commit, respawn qua supervisor, link giữ). Đã nhắc phòng core cpa (inbox #5980) cập nhật Kết quả + metrics cho mọi bài đã lên lịch/đăng. Chờ owner: merge/release, phương án Chat phòng.
 
 ## Next
 - Tick sau: không có việc tự làm an toàn còn lại khi chưa có quyết định của owner → 2 tick no-op thì dừng loop.
