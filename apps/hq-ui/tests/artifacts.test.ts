@@ -85,7 +85,6 @@ describe("artifacts", () => {
   it("refuses files outside known projects, unshown types, secret-looking names, .git and the public link", async () => {
     expect((await post({ path: put(outside, "x.md", "x") })).status).toBe(403);
     expect((await post({ path: put(repo, "bin/app.exe", "x") })).status).toBe(422);
-    expect((await post({ path: put(repo, "outputs/logo.svg", "<svg xmlns='http://www.w3.org/2000/svg'><script>1</script></svg>") })).status).toBe(422);
     expect((await post({ path: put(repo, "outputs/.env.md", "K=1") })).status).toBe(422);
     expect((await post({ path: put(repo, ".git/notes.md", "x") })).status).toBe(422);
     expect((await post({ path: "outputs/report.md" })).status).toBe(422);
@@ -99,7 +98,7 @@ describe("artifacts", () => {
     const a = ((await (await post({ path: html })).json()) as { artifact: Artifact }).artifact;
     const res = await file(req(`/api/artifacts/${a.id}/file?download=1`, { token: getToken() }), ctx(a.id));
     expect(res.headers.get("content-security-policy")).toContain("sandbox");
-    expect(res.headers.get("content-disposition")).toMatch(/^attachment; filename\*=UTF-8''demo\.html$/);
+    expect(res.headers.get("content-disposition")).toBe("attachment; filename=\"demo.html\"; filename*=UTF-8''demo.html");
     await res.body?.cancel();
 
     const gone = put(repo, "outputs/gone.pdf", "%PDF-1.4");

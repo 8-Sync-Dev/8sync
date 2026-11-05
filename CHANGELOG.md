@@ -33,6 +33,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - Token dashboard `~/.config/8sync/web-token` được bảo vệ như `hq/ui-token`: kit thêm `Read(~/.config/8sync/web-token)` vào deny, guard chặn `cat`/`Get-Content` file đó (cả khi chỉ gọi tên `web-token` cạnh `8sync`).
 - `POST /api/rules/delete` không còn xoá được file ngoài thư mục rules: đường dẫn được canonicalize (giải `..` và symlink) và phải là file `.md`/`.mdc` nằm ngay trong `~/.omp/agent/rules` hoặc `<repo>/.omp/rules`. Trước đây chỉ cần chuỗi có `/rules/`.
 - `slug_to_path` chỉ đọc `X--…` thành ổ đĩa `X:\` trên Windows. `__pycache__/` vào `.gitignore` và file `.pyc` bị track nhầm đã gỡ khỏi git.
+- HQ Kết quả & Nhật ký: nút **Chép** trên từng lượt kết quả, từng câu trả lời trong Nhật ký và từng file văn bản đang xem (báo "Đã chép"; trình duyệt chặn clipboard thì chép bằng cách dự phòng).
+- HQ: bôi đen một đoạn trong kết quả/Nhật ký/file đang xem → nút **Hỏi về đoạn này** hiện ngay cạnh đoạn chọn; bấm là ô nhắn của phòng có sẵn `Về «lượt/file»:` + đoạn trích `> …`, con trỏ ở cuối để gõ câu hỏi. Ở tab Kết quả chung, câu hỏi về phòng đã làm ra file (còn chạy), không thì phòng mới nhất đang chạy của dự án; không có phòng nào thì nút mờ kèm lý do. Dùng được bằng bàn phím (Tab tới nút), Esc/cuộn/bấm ra ngoài để ẩn.
+- HQ: nút **thư mục** cạnh mỗi kết quả, file đính kèm và đường dẫn file mà lượt kết quả nhắc tới: xem và chép đường dẫn thư mục/file; trên máy chạy HQ có thêm **Mở thư mục** (mở Explorer/Finder/trình quản lý file, chọn sẵn file). Qua link `--public` chỉ chép đường dẫn, không mở được gì trên máy chủ.
+- HQ Kết quả xem trước thêm: nhạc (mp3/wav/ogg/m4a/flac/aac), video mov/mkv, ảnh svg/avif, CSV/TSV dạng bảng, file code dạng văn bản, và Office (docx/xlsx/pptx/doc/xls/ppt/odt/ods/odp): máy có LibreOffice thì đổi sang PDF để xem đúng như file gốc (có cache), không có thì docx/xlsx/pptx/odt/ods/odp hiện bản xem nhanh chữ + bảng ngay trong trình duyệt; .doc/.xls/.ppt cũ không có LibreOffice thì hiện thẻ "Chưa xem trước được loại file này" kèm nút Tải về.
+
+### Changed
+- HQ Kết quả: video/nhạc/ảnh phát thẳng từ link có chữ ký (hết hạn sau tối đa 12 giờ, vẫn cần đăng nhập chủ), stream theo `Range` (206) nên tua video không phải tải cả file; video/nhạc nhận tới 2 GB. SVG giờ được đăng, phục vụ với CSP `sandbox; default-src 'none'` (script trong SVG không chạy). "Tải về" là link tải thật thay vì đọc cả file vào bộ nhớ trình duyệt.
+- API mới `POST /api/reveal` (chỉ chủ, chỉ từ máy chạy HQ, chỉ file/thư mục thật nằm trong dự án HQ biết, chặn `.git`/`.ssh`/`node_modules`/tên giống secret và symlink trỏ ra ngoài; chạy file manager bằng argv, không qua shell) và `GET /api/artifacts/<id>/pdf` (LibreOffice chạy bằng argv, profile riêng, hàng đợi một job, timeout 120 giây, giới hạn 200 MB).
 
 ## [0.122.21] — 2026-11-05
 
