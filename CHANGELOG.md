@@ -5,6 +5,32 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.124.0] — 2026-11-05
+
+### Added
+- Kit Claude Code: lệnh **`/solo`** (skill `solo`, chỉ owner): chạy liên tục `--hours 12` / `--max-tokens 2000000`; lấy việc kế tiếp trong backlog, chạy như `/eccx-loop-full`, xanh là tự merge + tự release, ghi bài học rồi qua việc kế. Câu hỏi cần owner không chặn: ghi vào `su-code/ship/solo/SOLO.md` (`Status`, `Item`, `Question`, `Deadline`, `Options`, lựa chọn đầu là đề xuất); quá `--answer-after 15` phút mà owner chưa trả lời thì một Critic nghiêm khắc chọn thay (mục tiêu: ship liên tục, nhanh, đúng prompt gốc), ghi lý do vào log; owner chọn khác → ghi vào `su-code/PREFERENCES.md` để Critic học. `dừng` hoặc `/solo stop` là dừng.
+- HQ ghim mọi câu hỏi đang chờ anh lên đầu mọi tab: câu hỏi của phòng Claude Code (bấm chọn hoặc gõ ô "Khác"), câu hỏi của /solo (lựa chọn đề xuất, đếm ngược "Critic sẽ chọn sau N phút"), phòng omp đang chờ (mở terminal / mở phòng). Thanh ghim thu gọn được, có câu hỏi mới thì tự mở lại.
+- Tab "Vòng lặp" có thẻ Solo cho từng dự án: trạng thái (Đang chạy / Chờ anh chọn / Đã dừng), việc đang làm, câu hỏi đang chờ, các lựa chọn gần nhất của Critic kèm nút "Đổi", 5 dòng nhật ký mới nhất, nút "Bật Solo" / "Dừng Solo" và chọn phiên Claude Code nhận lệnh. API mới `POST /api/solo` (start / stop / answer / override): chỉ gửi vào phòng Claude Code đang chạy của đúng dự án, nội dung tin do server tạo.
+- HQ: trả lời câu hỏi chọn một của Claude Code bằng câu tự gõ ("Khác") ngay trong HQ.
+- HQ: phần **Báo cáo** ở đáy mỗi phòng. Kéo được chiều cao, thu gọn còn dòng tiêu đề (trình duyệt nhớ); trên điện thoại là một khung riêng thu gọn được. Mỗi dòng là một bài: tiêu đề, giờ, nút "Mở trên Meta" (link khác ghi tên trang, chỉ mở link https), ảnh chứng minh bấm để xem lớn, ghi chú, bài liên kết ở tab Nội dung kèm trạng thái. File cùng `--link` gộp một dòng; nút "Phòng này" / "Cả dự án"; phòng chưa có báo cáo thì hiện câu hướng dẫn `/hq-artifact add`.
+- `hq.mjs artifact add` nhận nhiều file trong một lệnh. Skill `hq-control` và `/hq-artifact` thêm luật "Báo cáo đăng bài": lên lịch hay đăng xong là chạy ngay `artifact add <ảnh> --link --note --content --session <id phòng mình>`, cập nhật bằng cách `add` lại đúng các file đó; `/hq-send` nhắc "báo cáo đăng bài → dùng /hq-artifact".
+- `8sync hq ui --tunnel-setup hq.<domain>`: tạo một lần named tunnel `8sync-hq` của Cloudflare (đăng nhập Cloudflare nếu chưa có cert, trỏ DNS, lưu `~/.config/8sync/hq/tunnel.json`); từ đó `8sync hq ui --public` luôn dùng địa chỉ cố định `https://hq.<domain>`, chỉ khoá đăng nhập đổi. `--tunnel-off` quay về quick tunnel (tunnel và DNS trên Cloudflare giữ nguyên, lệnh in cách xoá).
+- `8sync ls --json`: thêm `turn_open` (lượt cuối của phiên còn mở hay đã xong, đọc từ cuối transcript omp/Claude); lượt đã xong thì `doing` là `null`, vẫn giữ `last_tool`/`last_activity`.
+
+### Changed
+- `/ship-loop`, `/ship-tick`, `/ship-auto`, `/autopilot` và `/eccx-loop-*` mặc định tự merge + tự release khi mọi tiêu chí xanh (không còn câu hỏi "Ship?" cuối vòng); `--release` thành `--no-release` (chỉ merge), `Release:` mặc định yes. Guard cho phép merge/release nhờ grant lấy từ chính prompt của owner (`/solo`, `/autopilot`, `/ship-loop`, `/ship-auto`, `/eccx-loop-*`, gõ thẳng hoặc qua inbox HQ): chỉ phiên + repo đó, 24 giờ hoặc `--hours`, không bao giờ deploy prod; `dừng` / `/solo stop` thu hồi. Cần `8sync ccc kit` (hoặc `8sync up`) để cài hook mới.
+- Tin HQ gửi vào phòng mở đầu bằng nhãn ngắn `[8 Sync HQ · owner → <omp|Claude Code> <tên> · <thư mục>]` (hoặc `[8 Sync HQ · owner]`), nhiều tin cách nhau `---`; bỏ khung dài cũ.
+- Named tunnel chỉ đưa đúng hostname đã cài vào HQ (host khác 404); khoá + cookie HQ vẫn bắt buộc, lệnh khuyên bật thêm Cloudflare Access. Tunnel hỏng hoặc không nối được thì HQ chạy trên máy và báo lỗi, không tự rơi về quick tunnel.
+- `GET /api/artifacts?session=` được kiểm (phải là id phòng, tối đa 4 lần), sai trả 400.
+
+### Fixed
+- HQ: phòng có process omp/Claude còn mở nhưng đã trả lời xong không còn hiện "Đang làm"/vòng xoay ở Nhật ký và dòng "chưa phải kết quả cuối"; phòng hiện "Nghỉ · Đang chờ prompt mới" (hoặc "Xong" khi mọi task đã xong). CLI cũ không có `turn_open` thì giữ hành vi cũ.
+- HQ: thẻ phòng omp không còn hiện lệnh sai `claude attach omp-…`.
+- Mô tả skill `ship-tick` và `solo` được đặt trong nháy để parser YAML chặt (omp, js-yaml) không bỏ skill.
+
+### Security
+- Guard của kit chặn session đọc `~/.config/8sync/hq/tunnel-credentials.json` (ai có file này chạy được connector giả cho tunnel).
+
 ## [0.123.0] — 2026-11-05
 
 ### Added
