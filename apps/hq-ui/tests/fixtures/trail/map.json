@@ -1,0 +1,422 @@
+{
+ "totals": {
+  "files": 518,
+  "symbols": 7904,
+  "edges": 18870,
+  "languages": [
+   "javascript",
+   "python",
+   "tsx",
+   "typescript"
+  ]
+ },
+ "dirs": [],
+ "scopes": [
+  {
+   "scope": "apps/hq-channel/",
+   "dirs": [
+    {
+     "path": "apps/hq-channel/src/channel.ts",
+     "files": 1,
+     "symbols": 26,
+     "languages": [
+      "typescript"
+     ],
+     "hubs": [
+      {
+       "name": "call",
+       "kind": "method",
+       "path": "apps/hq-channel/src/channel.ts",
+       "span": "L118-L132",
+       "inDegree": 3
+      },
+      {
+       "name": "HqClient",
+       "kind": "class",
+       "path": "apps/hq-channel/src/channel.ts",
+       "span": "L108-L158",
+       "inDegree": 3
+      },
+      {
+       "name": "runPoller",
+       "kind": "function",
+       "path": "apps/hq-channel/src/channel.ts",
+       "span": "L177-L207",
+       "inDegree": 3
+      }
+     ],
+     "isFile": true
+    },
+    {
+     "path": "apps/hq-channel/src/channel.test.ts",
+     "files": 1,
+     "symbols": 3,
+     "languages": [
+      "typescript"
+     ],
+     "hubs": [
+      {
+       "name": "fakeUi",
+       "kind": "function",
+       "path": "apps/hq-channel/src/channel.test.ts",
+       "span": "L16-L30",
+       "inDegree": 1
+      },
+      {
+       "name": "run",
+       "kind": "function",
+       "path": "apps/hq-channel/src/channel.test.ts",
+       "span": "L75-L82",
+       "inDegree": 1
+      }
+     ],
+     "isFile": true
+    },
+    {
+     "path": "apps/hq-channel/src/server.ts",
+     "files": 1,
+     "symbols": 1,
+     "languages": [
+      "typescript"
+     ],
+     "hubs": [
+      {
+       "name": "shutdown",
+       "kind": "function",
+       "path": "apps/hq-channel/src/server.ts",
+       "span": "L61-L61",
+       "inDegree": 1
+      }
+     ],
+     "isFile": true
+    },
+    {
+     "path": "apps/hq-channel/src/mcp-config.ts",
+     "files": 1,
+     "symbols": 0,
+     "languages": [
+      "typescript"
+     ],
+     "hubs": [],
+     "isFile": true
+    }
+   ],
+   "dropped": 0
+  },
+  {
+   "scope": "apps/hq-ui/",
+   "dirs": [
+    {
+     "path": "apps/hq-ui/lib",
+     "files": 80,
+     "symbols": 918,
+     "languages": [
+      "typescript"
+     ],
+     "hubs": [
+      {
+       "name": "bad",
+       "kind": "function",
+       "path": "apps/hq-ui/lib/server/http.ts",
+       "span": "L10-L10",
+       "inDegree": 40
+      },
+      {
+       "name": "getToken",
+       "kind": "function",
+       "path": "apps/hq-ui/lib/server/auth.ts",
+       "span": "L10-L26",
+       "inDegree": 34
+      },
+      {
+       "name": "groupKey",
+       "kind": "function",
+       "path": "apps/hq-ui/lib/sidebar.ts",
+       "span": "L47-L47",
+       "inDegree": 24
+      }
+     ],
+     "isFile": false
+    },
+    {
+     "path": "apps/hq-ui/components",
+     "files": 72,
+     "symbols": 541,
+     "languages": [
+      "tsx",
+      "typescript"
+     ],
+     "hubs": [
+      {
+       "name": "makeApi",
+       "kind": "function",
+       "path": "apps/hq-ui/components/hq/use-hq.ts",
+       "span": "L54-L72",
+       "inDegree": 12
+      },
+      {
+       "name": "set",
+       "kind": "function",
+       "path": "apps/hq-ui/components/hq/workspace-store.ts",
+       "span": "L43-L50",
+       "inDegree": 8
+      },
+      {
+       "name": "shortName",
+       "kind": "function",
+       "path": "apps/hq-ui/components/hq/bits.tsx",
+       "span": "L222-L228",
+       "inDegree": 8
+      }
+     ],
+     "isFile": false
+    },
+    {
+     "path": "apps/hq-ui/tests",
+     "files": 81,
+     "symbols": 177,
+     "languages": [
+      "typescript"
+     ],
+     "hubs": [
+      {
+       "name": "req",
+       "kind": "function",
+       "path": "apps/hq-ui/tests/helpers.ts",
+       "span": "L19-L33",
+       "inDegree": 36
+      },
+      {
+       "name": "tempHome",
+       "kind": "function",
+       "path": "apps/hq-ui/tests/helpers.ts",
+       "span": "L10-L15",
+       "inDegree": 34
+      },
+      {
+       "name": "spawn",
+       "kind": "function",
+       "path": "apps/hq-ui/tests/term.test.ts",
+       "span": "L14-L20",
+       "inDegree": 10
+      }
+     ],
+     "isFile": false
+    },
+    {
+     "path": "apps/hq-ui/app",
+     "files": 44,
+     "symbols": 78,
+     "languages": [
+      "tsx",
+      "typescript"
+     ],
+     "hubs": [
+      {
+       "name": "knownRoot",
+       "kind": "function",
+       "path": "apps/hq-ui/app/api/play/route.ts",
+       "span": "L9-L13",
+       "inDegree": 2
+      },
+      {
+       "name": "refused",
+       "kind": "function",
+       "path": "apps/hq-ui/app/api/shell/route.ts",
+       "span": "L15-L18",
+       "inDegree": 2
+      },
+      {
+       "name": "room",
+       "kind": "function",
+       "path": "apps/hq-ui/app/api/sessions/[name]/orca/route.ts",
+       "span": "L9-L11",
+       "inDegree": 2
+      }
+     ],
+     "isFile": false
+    }
+   ],
+   "dropped": 0
+  },
+  {
+   "scope": "(root)",
+   "dirs": [
+    {
+     "path": "assets/skills",
+     "files": 60,
+     "symbols": 1614,
+     "languages": [
+      "javascript",
+      "python"
+     ],
+     "hubs": [
+      {
+       "name": "it",
+       "kind": "function",
+       "path": "assets/skills/impeccable/scripts/modern-screenshot.umd.js",
+       "span": "L1-L1",
+       "inDegree": 80
+      },
+      {
+       "name": "resolve",
+       "kind": "function",
+       "path": "assets/skills/impeccable/scripts/live-server.mjs",
+       "span": "L761-L766",
+       "inDegree": 31
+      },
+      {
+       "name": "C",
+       "kind": "function",
+       "path": "assets/skills/impeccable/scripts/modern-screenshot.umd.js",
+       "span": "L1-L1",
+       "inDegree": 24
+      }
+     ],
+     "isFile": false
+    },
+    {
+     "path": "scripts",
+     "files": 5,
+     "symbols": 38,
+     "languages": [
+      "python"
+     ],
+     "hubs": [
+      {
+       "name": "head",
+       "kind": "function",
+       "path": "scripts/eccx-gen.py",
+       "span": "L375-L382",
+       "inDegree": 3
+      },
+      {
+       "name": "listdir",
+       "kind": "function",
+       "path": "scripts/eccx-gen.py",
+       "span": "L235-L239",
+       "inDegree": 3
+      },
+      {
+       "name": "assistant",
+       "kind": "function",
+       "path": "scripts/test_token_usage.py",
+       "span": "L16-L19",
+       "inDegree": 2
+      }
+     ],
+     "isFile": false
+    },
+    {
+     "path": "assets/extensions",
+     "files": 2,
+     "symbols": 23,
+     "languages": [
+      "javascript",
+      "typescript"
+     ],
+     "hubs": [
+      {
+       "name": "counts",
+       "kind": "function",
+       "path": "assets/extensions/8sync-engine.ts",
+       "span": "L103-L115",
+       "inDegree": 5
+      },
+      {
+       "name": "load",
+       "kind": "function",
+       "path": "assets/extensions/8sync-engine.ts",
+       "span": "L86-L95",
+       "inDegree": 5
+      },
+      {
+       "name": "text",
+       "kind": "function",
+       "path": "assets/extensions/8sync-engine.ts",
+       "span": "L159-L161",
+       "inDegree": 5
+      }
+     ],
+     "isFile": false
+    },
+    {
+     "path": "assets/configs",
+     "files": 7,
+     "symbols": 22,
+     "languages": [
+      "tsx",
+      "typescript"
+     ],
+     "hubs": [
+      {
+       "name": "parseComplete",
+       "kind": "function",
+       "path": "assets/configs/claude/mods/8sync-hints/hooks/hint.ts",
+       "span": "L22-L37",
+       "inDegree": 3
+      },
+      {
+       "name": "completeArg",
+       "kind": "function",
+       "path": "assets/configs/claude/mods/8sync-hints/hooks/hint.ts",
+       "span": "L46-L54",
+       "inDegree": 2
+      },
+      {
+       "name": "hint",
+       "kind": "function",
+       "path": "assets/configs/claude/mods/8sync-hints/hooks/register.tsx",
+       "span": "L23-L35",
+       "inDegree": 2
+      }
+     ],
+     "isFile": false
+    }
+   ],
+   "dropped": 0
+  }
+ ],
+ "hotspots": [
+  {
+   "name": "join",
+   "kind": "function",
+   "path": "crates/cli/src/verbs/ccc/omp_term.rs",
+   "span": "L260-L267",
+   "inDegree": 689
+  },
+  {
+   "name": "map",
+   "kind": "function",
+   "path": "crates/cli/src/verbs/profile.rs",
+   "span": "L662-L664",
+   "inDegree": 651
+  },
+  {
+   "name": "collect",
+   "kind": "function",
+   "path": "crates/cli/src/verbs/bg.rs",
+   "span": "L369-L386",
+   "inDegree": 396
+  },
+  {
+   "name": "push",
+   "kind": "function",
+   "path": "crates/cli/src/verbs/ccc/omp_term.rs",
+   "span": "L251-L257",
+   "inDegree": 297
+  },
+  {
+   "name": "as_str",
+   "kind": "function",
+   "path": "crates/ccc-core/src/transcript.rs",
+   "span": "L62-L68",
+   "inDegree": 270
+  }
+ ],
+ "dropped": 0,
+ "saved": {
+  "files": 518,
+  "baselineChars": 6390706
+ }
+}

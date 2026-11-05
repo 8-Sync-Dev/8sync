@@ -1,0 +1,27 @@
+{
+ "file": "apps/hq-ui/lib/server/child-env.ts",
+ "entries": [
+  {
+   "name": "Env",
+   "kind": "type",
+   "span": "L6-L6",
+   "signature": "type Env = Record<string, string | undefined>;"
+  },
+  {
+   "name": "childEnv",
+   "kind": "function",
+   "span": "L13-L21",
+   "signature": "function childEnv(env: Env = process.env): NodeJS.ProcessEnv"
+  },
+  {
+   "name": "binFor",
+   "kind": "function",
+   "span": "L24-L26",
+   "signature": "function binFor(cmd: string, env: Env = process.env): string"
+  }
+ ],
+ "saved": {
+  "files": 1,
+  "baselineChars": 1382
+ }
+}

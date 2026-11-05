@@ -268,7 +268,8 @@ export function pushLog(log: string[], chunk: string, carry: { rest: string }) {
   if (log.length > LOG_LINES) log.splice(0, log.length - LOG_LINES);
 }
 
-function killTree(pid: number) {
+/** Stop a child and everything it started (Windows: taskkill /T; elsewhere its process group, so spawn it `detached`). */
+export function killTree(pid: number) {
   if (process.platform === "win32") execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, () => {});
   else {
     try {

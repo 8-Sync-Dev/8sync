@@ -7,7 +7,7 @@ describe("HQ tab bar groups", () => {
     expect(barTabs(true)).toEqual([...MAIN_TABS]);
     const all = [...MAIN_TABS, ...MORE_TABS];
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(15);
+    expect(all).toHaveLength(16);
   });
   it("names the open folded tab on the Thêm button", () => {
     expect(moreLabel("overview")).toBe("Thêm");

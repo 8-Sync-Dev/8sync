@@ -1,0 +1,66 @@
+{
+ "pattern": "childEnv",
+ "filesSearched": 518,
+ "totalHits": 16,
+ "groups": [
+  {
+   "symbol": {
+    "id": "apps/hq-ui/lib/server/child-env.ts#childEnv",
+    "name": "childEnv",
+    "kind": "function",
+    "path": "apps/hq-ui/lib/server/child-env.ts",
+    "span": "L13-L21"
+   },
+   "path": "apps/hq-ui/lib/server/child-env.ts",
+   "inDegree": 8,
+   "hits": [
+    {
+     "line": 16,
+     "text": "export function childEnv(env: Env = process.env): NodeJS.ProcessEnv {"
+    }
+   ]
+  },
+  {
+   "symbol": {
+    "id": "apps/hq-ui/lib/server/proc.ts#run",
+    "name": "run",
+    "kind": "function",
+    "path": "apps/hq-ui/lib/server/proc.ts",
+    "span": "L24-L30"
+   },
+   "path": "apps/hq-ui/lib/server/proc.ts",
+   "inDegree": 8,
+   "hits": [
+    {
+     "line": 26,
+     "text": "execFile(binFor(cmd), args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, cwd, env: childEnv() }, (err, stdout, stderr) => {"
+    }
+   ]
+  },
+  {
+   "symbol": {
+    "id": "apps/hq-ui/lib/server/preview.ts#git",
+    "name": "git",
+    "kind": "function",
+    "path": "apps/hq-ui/lib/server/preview.ts",
+    "span": "L154-L169"
+   },
+   "path": "apps/hq-ui/lib/server/preview.ts",
+   "inDegree": 2,
+   "hits": [
+    {
+     "line": 159,
+     "text": "execFile(\"git\", args, { timeout: GIT_TIMEOUT_MS, maxBuffer: 8 << 20, windowsHide: true, env: { ...childEnv(), GIT_TERMINAL_PROMPT: \"0\", GIT_OPTIONAL_LOCKS: \"0\" "
+    }
+   ]
+  }
+ ],
+ "truncated": {
+  "files": 0,
+  "hits": 0
+ },
+ "saved": {
+  "files": 7,
+  "baselineChars": 79723
+ }
+}
