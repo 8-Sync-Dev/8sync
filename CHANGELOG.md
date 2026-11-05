@@ -18,6 +18,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Security
 - Nội dung, Chia sẻ: khách (Chỉ xem / Sửa nội dung) không gửi được việc đăng vào phiên agent (`send` là trường chỉ chủ HQ, 403) và không thấy phiên mặc định của chủ (`assign` = null); khung chi tiết của khách chỉ duyệt, không gọi `/api/omp/sessions` hay `/api/content/prefs`.
+### Changed
+- README viết lại gọn: logo 8 Sync (số 8 chuyển lime → cyan → xanh dương), badge release động của shields.io thay cho số version viết tay, trọng tâm là `8sync . <name>` với `--mode` (omp mặc định, Claude Code đã test, Forge hỗ trợ, Codex CLI dự kiến), 8 Sync HQ (`8sync hq ui`, `--public`) kèm gif, 3 ảnh và video demo thật (dữ liệu riêng đã làm mờ); bỏ bảng bench, catalogue skill và các con số cũ.
+- Trang get.8syncdev.com (`docs/index.html`) thiết kế lại theo màu logo trên nền navy: hero có video HQ chạy vòng (tự dừng khi người dùng bật giảm chuyển động), dải Engines chọn `--mode` và copy đúng lệnh, mục HQ với video walkthrough 81 giây + ảnh, mục Claude Code giữ bảng rail và 5 cấp tự chạy, mục Install. Số release lấy từ GitHub API lúc tải trang, không còn version cố định trong trang; thêm favicon, apple-touch-icon và ảnh OG mới.
+
+### Removed
+- `docs/assets/hero.png` (ảnh hero cũ, không còn chỗ nào dùng).
 
 ## [0.122.21] — 2026-11-05
 

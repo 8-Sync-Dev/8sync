@@ -3,14 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>8sync: Claude Code on autopilot, with rails</title>
-  <meta name="description" content="One Rust binary installs Anthropic's Claude Code with a kit: five levels of hands-off work from a three-file fix to a whole backlog, and gates that block deletes outside the repo, leaked keys, force-pushes and bypass mode.">
-  <meta name="theme-color" content="#16121f">
-  <meta property="og:title" content="8sync: Claude Code on autopilot, with rails">
-  <meta property="og:description" content="Five levels of hands-off work in Claude Code. A guard, a verify hook, stop and ask gates on every one. Linux, macOS, Windows.">
+  <title>8sync: one command for every coding agent, one HQ to watch them</title>
+  <meta name="description" content="8sync is one Rust binary from 8 Sync. 8sync . <name> opens a named coding-agent session in your repo, on omp or Claude Code, and 8 Sync HQ shows every session on your machine, on your desk or your phone.">
+  <meta name="theme-color" content="#0f1522">
+  <meta property="og:title" content="8sync: one command for every coding agent">
+  <meta property="og:description" content="Open omp or Claude Code in any repo with 8sync . <name>, then watch and steer every session from 8 Sync HQ. Linux, macOS, Windows.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://get.8syncdev.com/">
-  <meta property="og:image" content="https://get.8syncdev.com/assets/hero.png">
+  <meta property="og:image" content="https://get.8syncdev.com/assets/og-8sync.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
   <meta property="og:site_name" content="8 Sync">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="canonical" href="https://get.8syncdev.com/">
@@ -19,16 +21,18 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "8sync",
-    "description": "One Rust binary that installs Anthropic's Claude Code with a kit: five levels of hands-off work, a guard, verify and stop gates, bypass mode locked.",
+    "description": "One Rust binary that opens named coding-agent sessions per repo (omp by default, Claude Code with the 8sync kit, Forge) and shows every session in 8 Sync HQ, a local web dashboard.",
     "url": "https://get.8syncdev.com/",
+    "image": "https://get.8syncdev.com/assets/og-8sync.png",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS, Windows",
     "license": "https://polyformproject.org/licenses/noncommercial/1.0.0",
     "sameAs": "https://github.com/8-Sync-Dev/8sync",
-    "author": { "@type": "Organization", "name": "8 Sync", "url": "https://8syncdev.com" }
+    "author": { "@type": "Organization", "name": "8 Sync", "url": "https://8syncdev.com", "logo": "https://get.8syncdev.com/assets/logo-8sync.png" }
   }
   </script>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c4b5fd'/%3E%3Ccircle cx='16' cy='10.8' r='4.6' fill='none' stroke='%2317112a' stroke-width='3'/%3E%3Ccircle cx='16' cy='21.2' r='5.8' fill='none' stroke='%2317112a' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
   <link rel="preload" href="assets/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
   <script>
     if (matchMedia('(prefers-reduced-motion: no-preference)').matches && document.visibilityState === 'visible') {
@@ -59,30 +63,33 @@
       font-display: swap;
     }
 
+    /* Palette from the 8 Sync mark: lime at the top of the 8, cyan where the loops cross, blue at the base,
+       on the deep navy the HQ walkthrough is recorded against. */
     :root {
       color-scheme: dark;
-      --bg: oklch(0.155 0.018 292);
-      --bg-raised: oklch(0.2 0.026 292);
-      --bg-sunk: oklch(0.12 0.016 292);
-      --line: oklch(0.31 0.032 292);
-      --line-soft: oklch(0.235 0.026 292);
-      --ink: oklch(0.965 0.008 292);
-      --ink-2: oklch(0.84 0.024 292);
-      --ink-3: oklch(0.72 0.03 292);
-      --violet: oklch(0.81 0.11 293);
-      --violet-strong: oklch(0.66 0.19 293);
-      --band: oklch(0.34 0.16 291);
-      --band-sunk: oklch(0.25 0.12 291);
-      --band-ink-2: oklch(0.89 0.04 292);
+      --bg: oklch(0.17 0.024 255);
+      --bg-raised: oklch(0.215 0.03 255);
+      --bg-sunk: oklch(0.135 0.02 255);
+      --line: oklch(0.33 0.036 255);
+      --line-soft: oklch(0.255 0.03 255);
+      --ink: oklch(0.97 0.006 255);
+      --ink-2: oklch(0.85 0.02 255);
+      --ink-3: oklch(0.73 0.026 255);
+      --lime: oklch(0.87 0.19 128);
+      --lime-deep: oklch(0.62 0.17 138);
+      --cyan: oklch(0.83 0.12 215);
+      --blue: oklch(0.66 0.17 252);
+      --blue-deep: oklch(0.31 0.11 256);
+      --blue-sunk: oklch(0.235 0.085 257);
+      --band-ink-2: oklch(0.9 0.035 250);
       --amber: oklch(0.85 0.15 80);
-      --green: oklch(0.87 0.17 152);
       --red: oklch(0.75 0.17 22);
-      --cyan: oklch(0.86 0.1 195);
       --sans: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
       --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-      --wrap: 1180px;
+      --wrap: 1220px;
       --pad: clamp(1.25rem, 4vw, 3rem);
+      --z-sticky: 10;
       --z-skip: 50;
     }
 
@@ -99,70 +106,84 @@
       -webkit-font-smoothing: antialiased;
       text-rendering: optimizeLegibility;
     }
-    ::selection { background: var(--violet-strong); color: var(--ink); }
-    a { color: var(--violet); text-underline-offset: 0.2em; }
+    main { overflow-x: clip; }
+    ::selection { background: var(--lime-deep); color: var(--ink); }
+    a { color: var(--cyan); text-underline-offset: 0.2em; }
     a:hover { color: var(--ink); }
-    :focus-visible { outline: 2px solid var(--violet); outline-offset: 3px; border-radius: 4px; }
-    code { font-family: var(--mono); font-size: 0.88em; }
-    p code, li code, td code, dd code { color: var(--ink); background: var(--bg-raised); padding: 0.1em 0.38em; border-radius: 5px; overflow-wrap: anywhere; }
+    :focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; border-radius: 4px; }
+    code, .prompt, .pick .flag { font-family: var(--mono); font-variant-ligatures: none; }
+    code { font-size: 0.88em; }
+    p code, li code, td code, dd code, figcaption code { color: var(--ink); background: var(--bg-raised); padding: 0.1em 0.38em; border-radius: 5px; overflow-wrap: anywhere; }
     code.nb { white-space: nowrap; overflow-wrap: normal; }
     h1, h2, h3 { text-wrap: balance; }
     p { text-wrap: pretty; }
-    img { max-width: 100%; height: auto; display: block; }
+    img, video { max-width: 100%; height: auto; display: block; }
 
     .skip {
       position: absolute; left: 1rem; top: -4rem; z-index: var(--z-skip);
-      background: var(--violet); color: var(--bg-sunk); padding: 0.6rem 1rem; border-radius: 8px; font-weight: 700; text-decoration: none;
+      background: var(--lime); color: var(--bg-sunk); padding: 0.6rem 1rem; border-radius: 8px; font-weight: 700; text-decoration: none;
     }
     .skip:focus { top: 1rem; }
-    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
     /* Top bar */
+    .bar-wrap { position: sticky; top: 0; z-index: var(--z-sticky); background: color-mix(in oklch, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid transparent; transition: border-color 0.3s var(--ease-out); }
+    .bar-wrap.scrolled { border-bottom-color: var(--line-soft); }
     .bar {
-      max-width: var(--wrap); margin: 0 auto; padding: 1.1rem var(--pad);
-      display: flex; align-items: center; justify-content: space-between; gap: 1rem 2rem; flex-wrap: wrap;
+      max-width: var(--wrap); margin: 0 auto; padding: 0.8rem var(--pad);
+      display: flex; align-items: center; justify-content: space-between; gap: 0.75rem 2rem; flex-wrap: wrap;
     }
     .brand {
       display: inline-flex; align-items: center; gap: 0.6rem; color: var(--ink); text-decoration: none;
-      font-weight: 800; font-stretch: 118%; font-size: 1.25rem; letter-spacing: -0.01em;
+      font-weight: 800; font-stretch: 112%; font-size: 1.3rem; letter-spacing: -0.01em;
     }
-    .brand svg { width: 30px; height: 30px; flex: none; }
+    .brand img { width: auto; height: 34px; }
     .bar ul { display: flex; flex-wrap: wrap; gap: 0.25rem clamp(0.9rem, 2vw, 1.6rem); list-style: none; margin: 0; padding: 0; align-items: center; }
     .bar a:not(.brand) { color: var(--ink-2); text-decoration: none; font-size: 0.95rem; padding: 0.3rem 0; }
     .bar a:not(.brand):hover { color: var(--ink); }
     .bar a.gh { color: var(--ink); border: 1px solid var(--line); padding: 0.32rem 0.85rem; border-radius: 999px; }
-    .bar a.gh:hover { border-color: var(--violet-strong); }
+    .bar a.gh:hover { border-color: var(--lime-deep); }
+    @media (max-width: 640px) {
+      .bar { padding-block: 0.6rem; }
+      .bar nav { width: 100%; overflow-x: auto; scrollbar-width: none; }
+      .bar ul { flex-wrap: nowrap; }
+      .bar li { flex: none; }
+      .bar .hide-sm { display: none; }
+    }
 
     /* Hero */
     .hero {
       position: relative; isolation: isolate;
-      max-width: var(--wrap); margin: 0 auto; padding: clamp(1.5rem, 5vw, 4rem) var(--pad) clamp(3.5rem, 8vw, 6.5rem);
-      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.04fr); grid-template-areas: "title title" "copy log";
-      gap: clamp(1.75rem, 3.5vw, 3rem) clamp(2rem, 5vw, 4.5rem); align-items: start;
+      max-width: var(--wrap); margin: 0 auto; padding: clamp(2rem, 6vw, 5rem) var(--pad) clamp(3.5rem, 8vw, 6.5rem);
+      display: grid; grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+      grid-template-areas: "title title" "copy reel" "cmds reel";
+      grid-template-rows: auto auto 1fr;
+      gap: clamp(1.5rem, 2.6vw, 2.25rem) clamp(2rem, 4.5vw, 4rem);
     }
     .hero::before {
-      content: ""; position: absolute; z-index: -1; inset: 20% -10% 0 35%;
-      background: radial-gradient(closest-side, oklch(0.55 0.2 293 / 0.28), transparent);
+      content: ""; position: absolute; z-index: -1; inset: 0 -12% 10% 30%;
+      background:
+        radial-gradient(40% 50% at 70% 30%, oklch(0.62 0.17 138 / 0.22), transparent 70%),
+        radial-gradient(45% 55% at 60% 75%, oklch(0.55 0.17 252 / 0.28), transparent 70%);
       pointer-events: none;
     }
-    .hero-title { grid-area: title; }
+    .hero-title { grid-area: title; margin-bottom: clamp(0.25rem, 1vw, 0.75rem); }
     .hero-copy { grid-area: copy; }
-    .log { grid-area: log; }
-    .release a {
-      display: inline-flex; align-items: center; gap: 0.55rem; font-size: 0.9rem; color: var(--ink-2); text-decoration: none;
-      border: 1px solid var(--line); border-radius: 999px; padding: 0.28rem 0.9rem 0.28rem 0.65rem;
-    }
-    .release a:hover { border-color: var(--violet-strong); color: var(--ink); }
-    .release .lit { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--green); box-shadow: 0 0 0.6rem var(--green); }
+    .hero-cmds { grid-area: cmds; }
+    .reel { grid-area: reel; align-self: start; margin: 0; }
     h1 {
-      margin: 1.3rem 0 0; font-size: clamp(2.35rem, 8.4vw, 5.6rem); font-weight: 800; font-stretch: 112%;
-      line-height: 0.98; letter-spacing: -0.025em;
+      margin: 0; font-size: clamp(2.5rem, 5.6vw, 4.75rem); font-weight: 800; font-stretch: 110%;
+      line-height: 1; letter-spacing: -0.025em;
     }
     h1 .ln { display: block; }
-    h1 .ln + .ln { color: var(--violet); }
-    .hero-sub { margin: 0 0 1.1rem; font-size: clamp(1.2rem, 1.9vw, 1.5rem); font-weight: 650; font-stretch: 104%; line-height: 1.3; }
-    .lede { margin: 0 0 2rem; color: var(--ink-2); max-width: 60ch; }
-    .then { margin: 1.25rem 0 0; color: var(--ink-2); font-size: 0.97rem; max-width: 60ch; }
+    h1 .ln + .ln { color: var(--lime); }
+    .lede { margin: 0; color: var(--ink-2); font-size: clamp(1.06rem, 1.4vw, 1.2rem); line-height: 1.6; max-width: 46ch; }
+    .lede code { white-space: nowrap; }
+    .then { margin: 1rem 0 0; color: var(--ink-3); font-size: 0.95rem; max-width: 52ch; }
+
+    .frame { position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--bg-sunk); aspect-ratio: 16 / 9; }
+    .frame video, .frame img { width: 100%; height: 100%; object-fit: cover; }
+    .reel figcaption { margin-top: 0.8rem; font-size: 0.88rem; color: var(--ink-3); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.3rem 1rem; }
+    .reel figcaption a { color: var(--ink-2); }
 
     /* Install commands */
     .cmds { display: grid; gap: 0.6rem; }
@@ -170,363 +191,353 @@
       display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "os copy" "code code"; align-items: center; gap: 0.2rem 0.8rem;
       background: var(--bg-raised); border: 1px solid var(--line); border-radius: 10px; padding: 0.5rem 0.5rem 0.75rem 1rem;
     }
-    .cmd .os { grid-area: os; display: flex; gap: 0.6rem; font-stretch: 75%; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.78rem; color: var(--ink-3); line-height: 1.2; }
-    .cmd .os .you { display: none; color: var(--violet); }
-    .cmd.yours { border-color: var(--violet-strong); }
+    .cmd .os { grid-area: os; display: flex; gap: 0.6rem; font-stretch: 80%; font-weight: 700; font-size: 0.82rem; color: var(--ink-3); line-height: 1.2; }
+    .cmd .os .you { display: none; color: var(--lime); }
+    .cmd.yours { border-color: var(--lime-deep); }
     .cmd.yours .os { color: var(--ink); }
     .cmd.yours .os .you { display: inline; }
-    .cmd code { grid-area: code; font-size: 0.82rem; color: var(--ink); white-space: nowrap; overflow-x: auto; scrollbar-width: thin; padding: 0.15rem 0 0.1rem; }
+    .cmd code { grid-area: code; font-size: 0.84rem; color: var(--ink); white-space: nowrap; overflow-x: auto; scrollbar-width: thin; padding: 0.15rem 0 0.1rem; }
     .cmd .copy { grid-area: copy; }
     .copy {
       font: inherit; font-size: 0.82rem; font-weight: 650; color: var(--ink); cursor: pointer;
-      background: oklch(0.3 0.05 292); border: 0; border-radius: 7px; padding: 0.5rem 0.85rem; min-width: 4.6rem;
-      transition: background-color 0.2s var(--ease-out);
+      background: oklch(0.3 0.05 255); border: 0; border-radius: 7px; padding: 0.5rem 0.85rem; min-width: 4.6rem;
     }
-    .copy:hover { background: oklch(0.37 0.08 292); }
-    .copy[data-state="done"] { background: oklch(0.42 0.12 152); }
-
-    /* Run log */
-    .log { margin: 0; background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
-    .log-head {
-      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-      padding: 0.6rem 0.6rem 0.6rem 1.1rem; border-bottom: 1px solid var(--line-soft);
-      font-family: var(--mono); font-size: 0.76rem; color: var(--ink-3);
-    }
-    .log-head .rec { display: inline-flex; align-items: center; gap: 0.55rem; }
-    .log-head .rec::before { content: ""; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--red); }
-    .replay {
-      font: inherit; font-family: var(--sans); font-size: 0.8rem; font-weight: 650; color: var(--ink-2); cursor: pointer;
-      background: transparent; border: 1px solid var(--line); border-radius: 7px; padding: 0.3rem 0.7rem;
-    }
-    .replay:hover { color: var(--ink); border-color: var(--violet-strong); }
-    .log-body { list-style: none; margin: 0; padding: 1rem 1.1rem 1.15rem; font-family: var(--mono); font-size: 0.79rem; line-height: 1.62; }
-    .log-body li { position: relative; padding-left: 1.15rem; color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
-    .log-body li + li { margin-top: 0.12rem; }
-    .log-body .ev::before { content: ""; position: absolute; left: 0.1rem; top: 0.6em; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--violet); }
-    .log-body .sub { padding-left: 2.3rem; }
-    .log-body .sub::before { content: "\2514"; position: absolute; left: 1.1rem; color: var(--ink-3); }
-    .log-body .cont { padding-left: 3.3rem; }
-    .log-body b { color: var(--ink); font-weight: 700; }
-    .log-body .say b { color: var(--cyan); }
-    .hk { color: var(--amber); font-weight: 700; }
-    .add, .ok { color: var(--green); }
-    .no, .err { color: var(--red); }
-    .dim { color: var(--ink-3); }
-    .log figcaption { padding: 0.85rem 1.1rem 1rem; border-top: 1px solid var(--line-soft); font-size: 0.86rem; line-height: 1.55; color: var(--ink-3); }
-    .log-body[data-play] li:not(.on) { visibility: hidden; }
-    .log-body[data-play] li.on { animation: line-in 0.45s var(--ease-out); }
-    @keyframes line-in { from { opacity: 0; transform: translateX(-0.4rem); } }
+    .copy:hover { background: oklch(0.37 0.07 255); }
+    .copy[data-state="done"] { background: oklch(0.45 0.13 138); }
+    .code-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.6rem; background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 10px; padding: 0.45rem 0.45rem 0.45rem 1rem; }
+    .code-line code, .cmd code { background: none; border-radius: 0; }
+    .code-line code { font-size: 0.84rem; white-space: nowrap; overflow-x: auto; scrollbar-width: thin; padding: 0.35rem 0; }
 
     @media (max-width: 960px) {
-      .hero { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "copy" "log"; }
-      .hero::before { inset: 45% -20% 0 -20%; }
+      .hero { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "copy" "reel" "cmds"; grid-template-rows: auto; }
+      .hero::before { inset: 30% -30% 20% -30%; }
     }
 
     /* Sections */
-    .section { max-width: var(--wrap); margin: 0 auto; padding: clamp(3rem, 6vw, 4.75rem) var(--pad); }
-    .sec-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1rem clamp(1.5rem, 4vw, 4rem); align-items: end; margin-bottom: clamp(2rem, 4vw, 3rem); }
+    .section { max-width: var(--wrap); margin: 0 auto; padding: clamp(3.5rem, 7vw, 5.5rem) var(--pad); }
+    .sec-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 1rem clamp(1.5rem, 4vw, 4rem); align-items: end; margin-bottom: clamp(2rem, 4vw, 3rem); }
     .sec-head p { margin: 0; color: var(--ink-2); max-width: 62ch; }
-    h2 { margin: 0; font-size: clamp(1.95rem, 4.2vw, 3.2rem); font-weight: 780; font-stretch: 108%; line-height: 1.03; letter-spacing: -0.02em; }
+    .sec-head p + p { margin-top: 0.8rem; }
+    h2 { margin: 0; font-size: clamp(2rem, 4.2vw, 3.3rem); font-weight: 780; font-stretch: 108%; line-height: 1.04; letter-spacing: -0.02em; }
     h3 { margin: 0 0 0.6rem; font-size: 1.2rem; font-weight: 720; font-stretch: 104%; line-height: 1.25; }
     @media (max-width: 860px) { .sec-head { grid-template-columns: minmax(0, 1fr); } }
 
-    /* Rails: annunciator panel */
+    /* Engines: drenched in the blue of the mark's lower loop */
+    .band { background: var(--blue-deep); }
+    .band .sec-head p { color: var(--band-ink-2); }
+    .band p code, .band li code { background: var(--blue-sunk); }
+    .prompt {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 1rem;
+      background: var(--bg-sunk); border-radius: 14px; padding: clamp(1rem, 2.5vw, 1.6rem) clamp(1rem, 2.5vw, 1.8rem);
+      font-family: var(--mono); font-size: clamp(1rem, 2.3vw, 1.75rem); line-height: 1.3; margin-bottom: clamp(1.5rem, 3vw, 2.25rem);
+    }
+    .prompt code { font-size: inherit; overflow-x: auto; white-space: nowrap; scrollbar-width: none; padding: 0.2rem 0; }
+    .prompt .pr { color: var(--ink-3); user-select: none; }
+    .prompt .slot { color: var(--lime); }
+    .prompt .slot::after { content: ""; display: inline-block; width: 0.55em; height: 1.05em; margin-left: 0.08em; vertical-align: -0.15em; background: var(--lime); opacity: 0; }
+    .prompt.typing .slot::after { opacity: 0.85; }
+    .engines { list-style: none; margin: 0; padding: 0; display: grid; }
+    .engine { border-top: 1px solid oklch(0.45 0.1 255); }
+    .engine:last-child { border-bottom: 1px solid oklch(0.45 0.1 255); }
+    .pick {
+      all: unset; box-sizing: border-box; cursor: pointer; width: 100%;
+      display: grid; grid-template-columns: minmax(10rem, 0.9fr) minmax(13rem, 1fr) 8.5rem minmax(0, 2fr); gap: 0.5rem 1.5rem; align-items: baseline;
+      padding: 1.1rem 0.9rem; border-radius: 10px; transition: background-color 0.25s var(--ease-out);
+    }
+    .pick:hover, .engine.on .pick { background: var(--blue-sunk); }
+    .pick:focus-visible { outline: 2px solid var(--lime); outline-offset: -2px; }
+    .pick .name { font-weight: 780; font-stretch: 110%; font-size: clamp(1.3rem, 2.2vw, 1.7rem); line-height: 1.1; }
+    .pick .flag { font-family: var(--mono); font-size: 0.86rem; color: var(--ink); }
+    .pick .flag small { display: block; font-size: 0.78rem; color: var(--band-ink-2); }
+    .pick .what { color: var(--band-ink-2); font-size: 0.95rem; line-height: 1.55; }
+    .state { justify-self: start; font-size: 0.8rem; font-weight: 700; font-stretch: 85%; padding: 0.2rem 0.6rem; border-radius: 6px; line-height: 1.35; white-space: nowrap; }
+    .state.tested { color: oklch(0.2 0.06 138); background: var(--lime); }
+    .state.supported { color: oklch(0.2 0.05 215); background: var(--cyan); }
+    .state.planned { color: var(--band-ink-2); border: 1px dashed oklch(0.6 0.08 255); }
+    .engine.later .name { color: var(--band-ink-2); }
+    @media (max-width: 900px) {
+      .pick { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name state" "flag flag" "what what"; }
+      .pick .name { grid-area: name; }
+      .pick .state { grid-area: state; justify-self: end; }
+      .pick .flag { grid-area: flag; }
+      .pick .what { grid-area: what; }
+    }
+    .goal { margin: clamp(2rem, 4vw, 2.75rem) 0 0; color: var(--ink); font-size: clamp(1.1rem, 1.6vw, 1.3rem); font-weight: 600; font-stretch: 104%; line-height: 1.45; max-width: 52ch; }
+
+    /* HQ */
+    .hq-cmds { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 0.75rem 1.25rem; margin-bottom: clamp(2rem, 4vw, 2.75rem); }
+    .hq-cmds p { margin: 0.5rem 0 0; color: var(--ink-3); font-size: 0.9rem; }
+    .demo { margin: 0 0 clamp(1.25rem, 2.5vw, 1.75rem); }
+    .demo .frame { border-color: var(--line); }
+    .demo figcaption { margin-top: 0.75rem; color: var(--ink-3); font-size: 0.9rem; }
+    .gallery { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: clamp(1rem, 2vw, 1.25rem); }
+    .gallery figure { margin: 0; }
+    .gallery .stack { display: grid; gap: clamp(1rem, 2vw, 1.25rem); align-content: start; }
+    .gallery img { border: 1px solid var(--line); border-radius: 10px; width: 100%; }
+    .gallery figcaption { margin-top: 0.55rem; font-size: 0.88rem; color: var(--ink-2); }
+    .gallery figcaption b { color: var(--ink); font-weight: 650; }
+    @media (max-width: 860px) { .gallery { grid-template-columns: minmax(0, 1fr); } }
+    .note { margin: 1.1rem 0 0; color: var(--ink-3); font-size: 0.88rem; }
+
+    /* Claude Code rails: annunciator panel */
     .panel {
       list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
       gap: 1px; background: var(--line-soft); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
     }
     .lamp { background: var(--bg-sunk); padding: 1.35rem 1.4rem 1.6rem; }
     .lamp[data-tone="amber"] { --tone: var(--amber); }
-    .lamp[data-tone="green"] { --tone: var(--green); }
-    .lamp[data-tone="violet"] { --tone: var(--violet); }
+    .lamp[data-tone="green"] { --tone: var(--lime); }
+    .lamp[data-tone="blue"] { --tone: var(--cyan); }
     .lamp-label {
       display: inline-block; padding: 0.3rem 0.75rem; border-radius: 6px;
-      font-stretch: 70%; font-weight: 750; font-size: 1.05rem; letter-spacing: 0.09em; text-transform: uppercase; line-height: 1.3;
+      font-stretch: 72%; font-weight: 750; font-size: 1.05rem; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.3;
       color: var(--tone); background: color-mix(in oklch, var(--tone) 9%, var(--bg-sunk));
       border: 1px solid color-mix(in oklch, var(--tone) 38%, transparent);
-      text-shadow: 0 0 0.8rem color-mix(in oklch, var(--tone) 55%, transparent);
     }
     .lamp p { margin: 0.95rem 0 0; color: var(--ink-2); font-size: 0.97rem; line-height: 1.62; }
-    .panel-note { margin: 1.1rem 0 0; color: var(--ink-3); font-size: 0.9rem; }
-    @keyframes lamp-test {
-      0% { filter: brightness(1); }
-      18% { filter: brightness(2); }
-      40% { filter: brightness(0.65); }
-      62% { filter: brightness(1.6); }
-      100% { filter: brightness(1); }
-    }
+    @keyframes lamp-test { 0% { filter: brightness(1); } 18% { filter: brightness(1.9); } 40% { filter: brightness(0.7); } 62% { filter: brightness(1.5); } 100% { filter: brightness(1); } }
 
-    /* Ladder band */
-    .band { background: var(--band); }
-    .band .sec-head p { color: var(--band-ink-2); }
-    .band p code, .band li code { background: var(--band-sunk); }
+    /* Hands-off levels: the stair climbs the mark's blue-to-lime ramp */
+    .levels-head { margin: clamp(3rem, 6vw, 4.5rem) 0 clamp(1.5rem, 3vw, 2rem); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 1rem clamp(1.5rem, 4vw, 4rem); align-items: end; }
+    .levels-head h3 { margin: 0; font-size: clamp(1.5rem, 2.6vw, 2.1rem); font-weight: 760; line-height: 1.1; letter-spacing: -0.015em; }
+    .levels-head p { margin: 0; color: var(--ink-2); max-width: 62ch; }
+    @media (max-width: 860px) { .levels-head { grid-template-columns: minmax(0, 1fr); } }
     .rungs { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: clamp(0.75rem, 1.6vw, 1.25rem); }
-    .rung { display: flex; flex-direction: column; gap: 0.85rem; }
-    .stair { height: clamp(10rem, 19vw, 15rem); display: flex; align-items: flex-end; }
+    .rung { display: flex; flex-direction: column; gap: 0.8rem; }
+    .stair { height: clamp(8rem, 15vw, 12rem); display: flex; align-items: flex-end; }
     .fill {
-      width: 100%; height: calc(3.6rem + (var(--h) - 1) * (100% - 3.6rem) / 4);
-      background: var(--fill); color: var(--fill-ink); border-radius: 9px 9px 3px 3px; padding: 0.7rem 0.85rem;
+      width: 100%; height: calc(3.4rem + (var(--h) - 1) * (100% - 3.4rem) / 4);
+      background: var(--fill); color: var(--fill-ink); border-radius: 9px 9px 3px 3px; padding: 0.65rem 0.8rem;
       display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem;
     }
-    .rung:nth-child(1) { --fill: oklch(0.47 0.19 291); --fill-ink: var(--ink); }
-    .rung:nth-child(2) { --fill: oklch(0.56 0.2 292); --fill-ink: var(--ink); }
-    .rung:nth-child(3) { --fill: oklch(0.67 0.17 293); --fill-ink: oklch(0.17 0.05 292); }
-    .rung:nth-child(4) { --fill: oklch(0.78 0.13 293); --fill-ink: oklch(0.17 0.05 292); }
-    .rung:nth-child(5) { --fill: oklch(0.9 0.08 293); --fill-ink: oklch(0.17 0.05 292); }
-    .lvl { font-weight: 800; font-stretch: 120%; font-size: clamp(1.7rem, 2.6vw, 2.3rem); line-height: 1; }
-    .reach { font-stretch: 75%; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.74rem; line-height: 1.25; text-align: right; padding-top: 0.2rem; }
-    .rung code.slash { align-self: flex-start; font-size: 0.92rem; font-weight: 700; color: var(--ink); background: var(--band-sunk); padding: 0.3rem 0.6rem; border-radius: 6px; }
-    .rung p { margin: 0; color: var(--band-ink-2); font-size: 0.95rem; line-height: 1.58; }
-    .rung .needs { color: var(--ink); font-size: 0.92rem; padding-top: 0.75rem; border-top: 1px solid oklch(0.48 0.14 291); }
-    .needs b { display: block; font-stretch: 75%; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.74rem; color: var(--band-ink-2); }
-    .band-foot { margin: clamp(2rem, 4vw, 2.75rem) 0 0; color: var(--band-ink-2); max-width: 70ch; }
+    .rung:nth-child(1) { --fill: oklch(0.5 0.17 256); --fill-ink: var(--ink); }
+    .rung:nth-child(2) { --fill: oklch(0.6 0.15 240); --fill-ink: var(--ink); }
+    .rung:nth-child(3) { --fill: oklch(0.74 0.12 210); --fill-ink: oklch(0.18 0.04 230); }
+    .rung:nth-child(4) { --fill: oklch(0.8 0.17 150); --fill-ink: oklch(0.18 0.05 150); }
+    .rung:nth-child(5) { --fill: oklch(0.88 0.19 128); --fill-ink: oklch(0.18 0.05 130); }
+    .lvl { font-weight: 800; font-stretch: 118%; font-size: clamp(1.6rem, 2.4vw, 2.1rem); line-height: 1; }
+    .reach { font-stretch: 78%; font-weight: 700; font-size: 0.8rem; line-height: 1.25; text-align: right; padding-top: 0.2rem; }
+    .rung code.slash { align-self: flex-start; font-size: 0.9rem; font-weight: 700; color: var(--ink); background: var(--bg-raised); padding: 0.3rem 0.6rem; border-radius: 6px; }
+    .rung p { margin: 0; color: var(--ink-2); font-size: 0.94rem; line-height: 1.56; }
+    .rung .needs { color: var(--ink); font-size: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
+    .needs b { display: block; font-stretch: 80%; font-weight: 700; font-size: 0.8rem; color: var(--ink-3); }
     @keyframes rise { from { clip-path: inset(86% 0 0 0 round 9px 9px 3px 3px); } to { clip-path: inset(0 0 0 0 round 9px 9px 3px 3px); } }
     @keyframes rise-x { from { clip-path: inset(0 86% 0 0 round 9px); } to { clip-path: inset(0 0 0 0 round 9px); } }
     @media (max-width: 880px) {
-      .rungs { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+      .rungs { grid-template-columns: minmax(0, 1fr); gap: 1.75rem; }
       .stair { height: auto; }
       .fill { height: auto; width: calc(32% + (var(--h) - 1) * 17%); border-radius: 9px; align-items: center; }
     }
-
-    /* Sessions */
-    .term { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
-    .term-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.55rem 0.55rem 0.55rem 1.1rem; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 0.76rem; color: var(--ink-3); }
-    .term pre { margin: 0; padding: 1.1rem 1.2rem 1.25rem; overflow-x: auto; font-family: var(--mono); font-size: 0.8rem; line-height: 1.75; color: var(--ink); tab-size: 2; }
-    .term .c { color: var(--ink-3); }
-    .term .p { color: var(--violet); user-select: none; }
-    /* One project folder, in order: a real sequence, so the numbers carry the order. Own class: the
-       older `.steps` list below has its own counter, and sharing it numbered these 2, 4, 6. */
-    .flow { list-style: none; margin: 0; padding: 0; counter-reset: flow; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 0.6rem 1.6rem; }
-    .flow > li { counter-increment: flow; position: relative; padding: 0.7rem 0 0.7rem 2.6rem; border-top: 1px solid var(--line-soft); }
-    .flow > li::before { content: counter(flow); position: absolute; left: 0; top: 0.75rem; width: 1.8rem; height: 1.8rem; border-radius: 50%; display: grid; place-items: center; background: var(--bg-raised); border: 1px solid var(--line); color: var(--violet); font-family: var(--mono); font-size: 0.8rem; font-weight: 600; }
-    .flow h3 { margin: 0.15rem 0 0; font-size: 0.98rem; color: var(--ink); text-wrap: balance; }
-    .flow p { margin: 0.35rem 0 0; color: var(--ink-2); font-size: 0.9rem; max-width: 62ch; }
-    .flow .code-line { margin-top: 0.45rem; }
-    .flow p.alt, .ref p.alt { font-size: 0.82rem; color: var(--ink-3); }
-    .flow b { color: var(--ink); font-weight: 600; }
-    .ref { margin-top: 1.4rem; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-raised); }
-    .ref summary { cursor: pointer; padding: 0.8rem 1rem; font-weight: 600; color: var(--ink); }
-    .ref summary:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
-    .ref table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
-    .ref th, .ref td { text-align: left; vertical-align: top; padding: 0.5rem 1rem; border-top: 1px solid var(--line-soft); color: var(--ink-2); }
-    .ref thead th { color: var(--ink-3); font-weight: 500; font-size: 0.78rem; }
-    .ref tbody th { color: var(--violet); font-size: 0.78rem; font-weight: 600; padding-top: 0.9rem; }
-    .ref td:first-child { white-space: nowrap; }
-    .ref td code { white-space: nowrap; }
-    .ref p.alt { padding: 0 1rem 0.9rem; margin: 0.4rem 0 0; }
-    @media (max-width: 720px) { .ref thead { display: none; } .ref tr { display: grid; } .ref td:empty { display: none; } .ref td:first-child, .ref td code { white-space: normal; } }
-    .step .code-line { margin-top: 0.55rem; }
-    .notes { display: grid; gap: clamp(2rem, 4vw, 2.75rem); margin-top: clamp(2.5rem, 5vw, 4rem); padding-top: clamp(2rem, 4vw, 2.75rem); border-top: 1px solid var(--line-soft); }
-    .notes p { margin: 0.75rem 0 0; color: var(--ink-2); max-width: 70ch; }
-    .cols { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem clamp(1.25rem, 3vw, 2.5rem); color: var(--ink-2); }
-    .cols li { padding-top: 0.8rem; border-top: 1px solid var(--line); }
-    .code-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.6rem; background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 10px; padding: 0.5rem 0.5rem 0.5rem 1rem; }
-    .code-line code { font-size: 0.82rem; white-space: nowrap; overflow-x: auto; scrollbar-width: thin; padding: 0.35rem 0; }
-
-    /* Bypass */
-    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(1.75rem, 5vw, 4.5rem); align-items: center; }
-    @media (max-width: 880px) { .split { grid-template-columns: minmax(0, 1fr); } }
-    .split .body p { color: var(--ink-2); margin: 1.1rem 0 0; max-width: 60ch; }
-    .json { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
-    .json pre { margin: 0; padding: 1.2rem 1.3rem; overflow-x: auto; font-family: var(--mono); font-size: 0.86rem; line-height: 1.75; }
-    .json .k { color: var(--cyan); }
-    .json .s { color: var(--green); }
-    .json .c { color: var(--ink-3); }
-    .json .hl { display: inline-block; background: oklch(0.81 0.11 293 / 0.14); border-radius: 4px; padding: 0 0.3rem; margin: 0 -0.3rem; }
-    .json .check { border-top: 1px solid var(--line-soft); padding: 0.9rem 1.3rem 1.05rem; font-size: 0.88rem; color: var(--ink-3); }
-    .json .check code { color: var(--ink); }
-
-    /* Proof */
-    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-sunk); }
-    .tbl { width: 100%; border-collapse: collapse; min-width: 38rem; }
-    .tbl caption { text-align: left; padding: 1rem 1.2rem 0.4rem; color: var(--ink-3); font-size: 0.9rem; }
-    .tbl th, .tbl td { padding: 0.85rem 1.2rem; text-align: left; vertical-align: top; border-top: 1px solid var(--line-soft); }
-    .tbl thead th { border-top: 0; font-stretch: 85%; font-weight: 700; font-size: 0.85rem; color: var(--ink-3); }
-    .tbl tbody th { font-weight: 600; color: var(--ink); }
-    .tbl td { color: var(--ink-2); }
-    .tbl .ours { background: oklch(0.81 0.11 293 / 0.07); }
-    .tbl .num { font-variant-numeric: tabular-nums; }
-    .res { display: inline-flex; align-items: baseline; gap: 0.5rem; font-weight: 650; }
-    .res::before { content: ""; flex: none; width: 0.55rem; height: 0.55rem; border-radius: 2px; background: currentColor; transform: translateY(-0.05em); }
-    .res.safe { color: var(--green); }
-    .res.ask { color: var(--amber); }
-    .res.bad { color: var(--red); }
-    .proof-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: clamp(1.75rem, 4vw, 3rem); margin-top: clamp(2rem, 4vw, 3rem); align-items: start; }
-    @media (max-width: 920px) { .proof-grid { grid-template-columns: minmax(0, 1fr); } }
-    .proof-grid .tbl { min-width: 30rem; }
-    .reading { color: var(--ink-2); }
-    .reading p { margin: 0 0 1rem; }
+    .fine { margin: 1.4rem 0 0; color: var(--ink-3); font-size: 0.9rem; max-width: 80ch; }
 
     /* Install */
-    .install-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.95fr); gap: clamp(1.75rem, 5vw, 4rem); align-items: start; }
-    @media (max-width: 920px) { .install-grid { grid-template-columns: minmax(0, 1fr); } }
-    .steps { counter-reset: step; list-style: none; margin: 0; padding: 0; display: grid; gap: 1.8rem; }
-    .steps > li { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: 0.9rem; }
-    .steps > li::before { counter-increment: step; content: counter(step); font-weight: 800; font-stretch: 120%; font-size: 1.6rem; line-height: 1.15; color: var(--violet); }
-    .steps p { margin: 0.4rem 0 0; color: var(--ink-2); }
-    .steps .cmds, .steps .code-line { margin-top: 0.75rem; }
-    .shot { margin: 0; }
-    .shot img { border: 1px solid var(--line); border-radius: 12px; }
-    .shot figcaption { margin-top: 0.75rem; color: var(--ink-3); font-size: 0.88rem; }
-    .box { margin: clamp(3rem, 6vw, 4.5rem) 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); gap: 0 clamp(1.5rem, 4vw, 3.5rem); }
-    .box div { display: grid; grid-template-columns: 11.5rem minmax(0, 1fr); gap: 1rem; padding: 0.95rem 0; border-top: 1px solid var(--line-soft); }
-    .box dt code { color: var(--ink); font-size: 0.86rem; }
-    .box dd { margin: 0; color: var(--ink-2); font-size: 0.97rem; }
-    @media (max-width: 560px) { .box div { grid-template-columns: minmax(0, 1fr); gap: 0.3rem; } }
+    .install { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: clamp(2rem, 5vw, 4.5rem); align-items: start; }
+    @media (max-width: 920px) { .install { grid-template-columns: minmax(0, 1fr); } }
+    .install-mark { display: flex; align-items: center; gap: 1.25rem; margin-bottom: clamp(1.75rem, 3vw, 2.5rem); }
+    .install-mark img { width: auto; height: clamp(5.5rem, 10vw, 8rem); }
+    .install-mark h2 { margin: 0; }
+    .install-mark p { margin: 0.5rem 0 0; color: var(--ink-2); }
+    .release { color: var(--ink-2); text-decoration: none; border-bottom: 1px solid var(--line); }
+    .release:hover { color: var(--ink); border-color: var(--lime-deep); }
+    .steps { counter-reset: step; list-style: none; margin: 0; padding: 0; display: grid; gap: 1.6rem; }
+    .steps > li { display: grid; grid-template-columns: 2.2rem minmax(0, 1fr); gap: 0.9rem; }
+    .steps > li::before { counter-increment: step; content: counter(step); font-weight: 800; font-stretch: 118%; font-size: 1.5rem; line-height: 1.2; color: var(--lime); }
+    .steps h3 { margin: 0; font-size: 1.1rem; }
+    .steps p { margin: 0.4rem 0 0; color: var(--ink-2); font-size: 0.97rem; }
+    .steps .cmds, .steps .code-line { margin-top: 0.7rem; }
+    .gets { margin: 0; padding: clamp(1.25rem, 2.5vw, 1.75rem); background: var(--bg-raised); border-radius: 14px; }
+    .gets h3 { font-size: 1.05rem; margin-bottom: 0.9rem; }
+    .gets dl { margin: 0; display: grid; gap: 0.85rem; }
+    .gets dt { font-weight: 650; color: var(--ink); }
+    .gets dd { margin: 0.1rem 0 0; color: var(--ink-2); font-size: 0.93rem; line-height: 1.55; }
+    .gets .ci { margin: 1.25rem 0 0; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 0.88rem; }
 
     /* Footer */
     .foot { border-top: 1px solid var(--line-soft); }
-    .foot-in { max-width: var(--wrap); margin: 0 auto; padding: 2.5rem var(--pad) 3rem; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1.5rem 3rem; color: var(--ink-3); font-size: 0.92rem; }
-    .foot-in p { margin: 0; max-width: 62ch; }
-    .foot-in ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem; align-content: start; }
+    .foot-in { max-width: var(--wrap); margin: 0 auto; padding: 2.5rem var(--pad) 3rem; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1.5rem 3rem; color: var(--ink-3); font-size: 0.92rem; }
+    .foot-in p { margin: 0; max-width: 64ch; }
+    .foot-in ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem 1.4rem; align-content: start; }
     .foot-in a { color: var(--ink-2); }
     .foot-in a:hover { color: var(--ink); }
-    @media (max-width: 760px) { .foot-in { grid-template-columns: minmax(0, 1fr); } }
-
-    /* HQ screenshots and the skills catalogue */
-    .shots { margin: 2rem 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; }
-    .shots figure { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg-raised); }
-    .shots figure:first-child { grid-column: 1 / -1; }
-    .shots img { display: block; width: 100%; height: auto; }
-    .shots figcaption { padding: 0.6rem 0.9rem; font-size: 0.84rem; color: var(--ink-2); border-top: 1px solid var(--line-soft); }
-    .shots figcaption b { color: var(--ink); font-weight: 600; }
-    .shots-note { margin: 0.6rem 0 0; font-size: 0.8rem; color: var(--ink-3); }
-    .skills { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem; }
-    .skills section { border: 1px solid var(--line); border-radius: 10px; background: var(--bg-raised); padding: 0.9rem 1rem 1rem; }
-    .skills h3 { margin: 0; font-size: 0.95rem; color: var(--ink); }
-    .skills h3 small { color: var(--ink-3); font-weight: 500; font-size: 0.78rem; margin-left: 0.35rem; }
-    .skills p { margin: 0.3rem 0 0.7rem; font-size: 0.85rem; color: var(--ink-2); }
-    .skills ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
-    .skills li { font-family: var(--mono); font-size: 0.74rem; color: var(--violet); background: var(--bg-sunk); border: 1px solid var(--line-soft); border-radius: 999px; padding: 0.15rem 0.55rem; }
+    @media (max-width: 760px) { .foot-in { grid-template-columns: minmax(0, 1fr); } .foot-in ul { justify-content: flex-start; } }
 
     /* Motion: everything above is the final state; these only play when motion is welcome */
     @media (prefers-reduced-motion: no-preference) {
       .intro h1 .ln { animation: ln-in 0.95s var(--ease-out) both; animation-delay: calc(var(--i) * 110ms); }
-      .intro .hero-sub, .intro .lede, .intro .cmds, .intro .then { animation: fade-up 0.8s var(--ease-out) both; animation-delay: 0.32s; }
+      .intro .lede, .intro .then { animation: fade-up 0.8s var(--ease-out) both; animation-delay: 0.3s; }
+      .intro .hero-cmds { animation: fade-up 0.8s var(--ease-out) both; animation-delay: 0.42s; }
+      .intro .reel { animation: reel-in 1.2s var(--ease-out) both; animation-delay: 0.2s; }
       .panel.test .lamp-label { animation: lamp-test 1.1s var(--ease-out) both; animation-delay: calc(var(--i) * 120ms); }
       .rungs.grow .fill { animation: rise 1s var(--ease-out) both; animation-delay: calc(var(--h) * 90ms); }
-      .copy, .replay { transition: background-color 0.2s var(--ease-out), border-color 0.2s var(--ease-out), color 0.2s var(--ease-out); }
+      .copy { transition: background-color 0.2s var(--ease-out); }
       @media (max-width: 880px) { .rungs.grow .fill { animation-name: rise-x; } }
     }
     @keyframes ln-in { from { opacity: 0; transform: translateY(0.3em); clip-path: inset(0 0 100% 0); } to { opacity: 1; transform: none; clip-path: inset(0 0 -0.2em 0); } }
     @keyframes fade-up { from { opacity: 0; transform: translateY(0.6rem); } }
+    @keyframes reel-in { from { opacity: 0; transform: translateY(1.2rem) scale(0.985); filter: blur(6px); } }
   </style>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
 
-  <header class="bar">
-    <a class="brand" href="./" aria-label="8sync home">
-      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#c4b5fd"/><circle cx="16" cy="10.8" r="4.6" fill="none" stroke="#17112a" stroke-width="3"/><circle cx="16" cy="21.2" r="5.8" fill="none" stroke="#17112a" stroke-width="3"/></svg>
-      <span>8sync</span>
-    </a>
-    <nav aria-label="Primary">
-      <ul>
-        <li><a href="#ladder">Autopilot</a></li>
-        <li><a href="#rails">Rails</a></li>
-        <li><a href="#sessions">Sessions</a></li>
-        <li><a href="#skills">Skills</a></li>
-        <li><a href="#proof">Proof</a></li>
-        <li><a href="#install">Install</a></li>
-        <li><a href="https://github.com/8-Sync-Dev/8sync/blob/main/docs/huong-dan.md" lang="vi" hreflang="vi">Tiếng Việt</a></li>
-        <li><a class="gh" href="https://github.com/8-Sync-Dev/8sync">GitHub</a></li>
-      </ul>
-    </nav>
-  </header>
+  <div class="bar-wrap">
+    <header class="bar">
+      <a class="brand" href="./" aria-label="8sync home">
+        <img src="assets/logo-8sync.png" width="205" height="256" alt="">
+        <span>8sync</span>
+      </a>
+      <nav aria-label="Primary">
+        <ul>
+          <li><a href="#engines">Engines</a></li>
+          <li><a href="#hq">HQ</a></li>
+          <li><a href="#claude-code">Claude Code</a></li>
+          <li><a href="#install">Install</a></li>
+          <li class="hide-sm"><a href="https://github.com/8-Sync-Dev/8sync/blob/main/docs/huong-dan.md" lang="vi" hreflang="vi">Tiếng Việt</a></li>
+          <li><a class="gh" href="https://github.com/8-Sync-Dev/8sync">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+  </div>
 
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-title">
-        <p class="release"><a href="https://github.com/8-Sync-Dev/8sync/releases/latest"><span class="lit" aria-hidden="true"></span><span data-version>v0.100.0</span> · release notes</a></p>
-        <h1 id="hero-title"><span class="ln" style="--i:0">Claude Code,</span> <span class="ln" style="--i:1">on autopilot.</span></h1>
+        <h1 id="hero-title"><span class="ln" style="--i:0">Your coding agents,</span> <span class="ln" style="--i:1">one command, one HQ.</span></h1>
+      </div>
+      <div class="hero-copy">
+        <p class="lede"><code>8sync . api</code> opens a named session called <code>api</code> in this repo, or resumes it. omp by default, Claude Code with <code>--mode claude-code-cli</code>. 8 Sync HQ shows every session on the machine, at your desk or on your phone.</p>
       </div>
 
-      <div class="hero-copy">
-        <p class="hero-sub">Five levels of hands-off work. A gate on every one.</p>
-        <p class="lede">8sync is one Rust binary. It installs Anthropic's Claude Code with a kit that plans, codes, tests, reviews and commits by itself, and refuses what you never want an agent to do: delete outside the repo, print <code>.env</code>, force-push, or open in bypass mode.</p>
+      <div class="hero-cmds">
         <div class="cmds">
           <div class="cmd" data-os="unix">
-            <span class="os">Linux · macOS <span class="you">your system</span></span>
+            <span class="os">Linux, macOS <span class="you">your system</span></span>
             <code>curl -fsSL https://get.8syncdev.com/install | sh</code>
             <button class="copy" type="button" data-copy="curl -fsSL https://get.8syncdev.com/install | sh" aria-label="Copy the Linux and macOS install command">Copy</button>
           </div>
           <div class="cmd" data-os="win">
-            <span class="os">Windows <span class="you">your system</span></span>
+            <span class="os">Windows PowerShell <span class="you">your system</span></span>
             <code>irm https://get.8syncdev.com/install.ps1 | iex</code>
             <button class="copy" type="button" data-copy="irm https://get.8syncdev.com/install.ps1 | iex" aria-label="Copy the Windows PowerShell install command">Copy</button>
           </div>
         </div>
-        <p class="then">Then, in any repo, <code>8sync ccc . core</code> opens a Claude Code session named <code>core</code> with the kit; type <code>/ship</code> and a task.</p>
+        <p class="then">Then <code>cd</code> into a repo and run <code>8sync . api</code>. No git, Rust or admin rights needed.</p>
       </div>
 
-      <figure class="log" aria-labelledby="log-cap">
-        <div class="log-head">
-          <span class="rec">claude -p · 8sync kit · Windows</span>
-          <button class="replay" type="button" hidden>Replay</button>
+      <figure class="reel">
+        <div class="frame">
+          <video data-reel muted loop playsinline preload="metadata" poster="assets/hq-loop-poster.webp" width="1280" height="720" aria-label="8 Sync HQ on a real machine: the results tab with a release note a session posted">
+            <source src="assets/hq-loop.webm" type="video/webm">
+            <source src="assets/hq-loop.mp4" type="video/mp4">
+          </video>
         </div>
-        <ol class="log-body">
-          <li class="ev"><b>Edit</b> src/main.rs        <span class="add">+ helper();</span></li>
-          <li class="sub"><span class="hk">8sync verify</span>  cargo check failed, fed back to Claude:</li>
-          <li class="cont err">src\main.rs:2:5: error[E0425]: cannot find function `helper` in this scope</li>
-          <li class="ev"><b>Edit</b> src/main.rs        <span class="add">+ fn helper() { println!("helper"); }</span></li>
-          <li class="sub"><span class="hk">8sync verify</span>  <span class="ok">clean</span> <span class="dim">(silent)</span></li>
-          <li class="ev"><b>Bash</b> cargo run          <span class="dim">→ helper · start</span></li>
-          <li class="ev say"><b>Claude</b> "… Next I will add unit tests for helper."</li>
-          <li class="sub"><span class="hk">8sync gate: stop</span>  <span class="no">ok: false</span>  "… the tests have not been written or run … add unit tests for helper now, run cargo test, and then stop."</li>
-          <li class="ev"><b>Edit</b> src/main.rs        <span class="add">+ #[cfg(test)] mod tests { … }</span></li>
-          <li class="ev"><b>Bash</b> cargo test         <span class="ok">→ 1 passed, 0 failed</span></li>
-          <li class="ev say"><b>Claude</b> "I added a unit test for `helper` and `cargo test` passes: 1 test, 0 failures."</li>
-        </ol>
-        <figcaption id="log-cap">A real run. The first edit broke the build and the verify hook fed the compiler error back; then the stop gate refused to let Claude end on "Next I will add unit tests". Recorded when the stop gate still asked Haiku; it now runs inside the binary, without a model call.</figcaption>
+        <figcaption><span>8 Sync HQ, recorded on a real machine. Private data is blurred.</span> <a href="#hq">Full walkthrough</a></figcaption>
       </figure>
     </section>
 
     <div class="band">
-      <section class="section" id="ladder" aria-labelledby="ladder-title">
+      <section class="section" id="engines" aria-labelledby="engines-title">
         <div class="sec-head">
-          <h2 id="ladder-title">Pick how far it goes without you</h2>
-          <p>Type one of these inside Claude Code. Each one runs longer before it needs you. You start levels 3 to 5; an agent can't start them on its own.</p>
+          <h2 id="engines-title">Same command. Pick the engine.</h2>
+          <div>
+            <p>Every name is one conversation per repo, so <code>8sync . api</code> tomorrow continues today's thread. <code>--mode</code> chooses the agent; <code>SUSYNC_MODE</code> changes your default.</p>
+            <p>omp and Claude Code are the two we run every day and test.</p>
+          </div>
         </div>
-        <ol class="rungs" data-anim="grow">
-          <li class="rung" style="--h:1">
-            <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">1</span><span class="reach">one edit</span></div></div>
-            <code class="slash">/do &lt;task&gt;</code>
-            <p>A change of three files or fewer. No plan, no commit.</p>
-            <p class="needs"><b>Needs you</b> to look at the diff and commit.</p>
+
+        <div class="prompt" aria-label="Example command">
+          <code><span class="pr">$ </span>8sync . api --mode <span class="slot" data-slot>claude-code-cli</span></code>
+          <button class="copy" type="button" data-copy="8sync . api --mode claude-code-cli" data-copy-prompt aria-label="Copy this command">Copy</button>
+        </div>
+
+        <ul class="engines">
+          <li class="engine" data-mode="omp">
+            <button class="pick" type="button" data-pick="omp">
+              <span class="name">omp</span>
+              <span class="flag">--mode omp<small>the default</small></span>
+              <span class="state tested">Tested daily</span>
+              <span class="what">The default engine, on your own API key. It reads the project memory 8sync seeds in <code>su-code/</code>.</span>
+            </button>
           </li>
-          <li class="rung" style="--h:2">
-            <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">2</span><span class="reach">to commit</span></div></div>
-            <code class="slash">/ship &lt;task&gt;</code>
-            <p>One feature or bug: plan, research, code, test, UAT, review, CHANGELOG and memory, then a commit on a branch.</p>
-            <p class="needs"><b>Needs you</b> to push. It never pushes.</p>
+          <li class="engine" data-mode="claude-code-cli">
+            <button class="pick" type="button" data-pick="claude-code-cli">
+              <span class="name">Claude Code</span>
+              <span class="flag">--mode claude-code-cli<small>or claude, ccc</small></span>
+              <span class="state tested">Tested daily</span>
+              <span class="what">Anthropic's CLI with the 8sync kit: guard, verify hook, stop and ask gates, <code>/ship</code>. Signs in with Anthropic's own login.</span>
+            </button>
           </li>
-          <li class="rung" style="--h:3">
-            <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">3</span><span class="reach">to release</span></div></div>
-            <code class="slash">/ship-auto &lt;task&gt;</code>
-            <p><code>/ship</code>, then a PR, CI green on Windows, macOS and Linux, merge, tag and release.</p>
-            <p class="needs"><b>Needs you</b> for one Ship answer that lists every step.</p>
+          <li class="engine" data-mode="forgecode">
+            <button class="pick" type="button" data-pick="forgecode">
+              <span class="name">Forge</span>
+              <span class="flag">--mode forgecode<small>or forge</small></span>
+              <span class="state supported">Supported</span>
+              <span class="what">Forge from its GitHub release. <code>8sync forge &lt;name&gt;</code> also gives it a zsh where a line starting with <code>:</code> asks the agent.</span>
+            </button>
           </li>
-          <li class="rung" style="--h:4">
-            <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">4</span><span class="reach">until green</span></div></div>
-            <code class="slash">/ship-loop &lt;goal&gt;</code>
-            <p>Writes acceptance checks, then repeats until every check exits 0. Stops at 12 iterations, 90 minutes, or the same failure twice.</p>
-            <p class="needs"><b>Needs you</b> when a cap is hit, or to release.</p>
+          <li class="engine later" data-mode="codex-cli">
+            <button class="pick" type="button" data-pick="codex-cli">
+              <span class="name">Codex CLI</span>
+              <span class="flag">--mode codex-cli</span>
+              <span class="state planned">Planned</span>
+              <span class="what">Not available yet: 8sync tells you so instead of starting another engine.</span>
+            </button>
           </li>
-          <li class="rung" style="--h:5">
-            <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">5</span><span class="reach">the backlog</span></div></div>
-            <code class="slash">/autopilot</code>
-            <p>Works through labelled GitHub issues, the Next list in <code>su-code/STATE.md</code> and unguarded failures, each item as its own loop on its own branch. Up to 5 items or 8 hours.</p>
-            <p class="needs"><b>Needs you</b> for one Ship answer for the whole batch.</p>
-          </li>
-        </ol>
-        <p class="band-foot">Every level runs through the same rails below, and every "done" in its report carries the command it ran and the output it got. No output, and the report says "not verified".</p>
+        </ul>
+
+        <p class="goal">Where this goes: every coding-agent CLI, each one visible and controllable from 8 Sync HQ.</p>
       </section>
     </div>
 
-    <section class="section" id="rails" aria-labelledby="rails-title">
+    <section class="section" id="hq" aria-labelledby="hq-title">
       <div class="sec-head">
-        <h2 id="rails-title">Armed in every mode</h2>
-        <p>The kit's hooks run before and after each tool call, in auto mode and under <code>claude -p</code>. They ship inside the 8sync binary; the guard adds about 9 ms per call.</p>
+        <h2 id="hq-title">8 Sync HQ: every session on one page</h2>
+        <p>A local web dashboard for every omp and Claude Code session on the machine: who is working and who waits on you, each room's log and chat, the reports sessions post, a web terminal, and the machine's RAM, CPU and GPU. 8sync never opens a session or sends a prompt on its own.</p>
+      </div>
+
+      <div class="hq-cmds">
+        <div>
+          <div class="code-line"><code>8sync hq ui</code><button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button></div>
+          <p>From any folder. The page opens on <code>127.0.0.1:8740</code>.</p>
+        </div>
+        <div>
+          <div class="code-line"><code>8sync hq ui --public</code><button class="copy" type="button" data-copy="8sync hq ui --public" aria-label="Copy the public HQ command">Copy</button></div>
+          <p>Adds a one-time login link for your phone through a Cloudflare quick tunnel (needs <code>cloudflared</code>). Anyone with the link controls your sessions, so keep it to yourself.</p>
+        </div>
+      </div>
+
+      <figure class="demo">
+        <div class="frame">
+          <video controls playsinline preload="none" poster="assets/hq-demo-poster.webp" width="1280" height="720" aria-label="81-second walkthrough of 8 Sync HQ with a Vietnamese voice-over">
+            <source src="assets/hq-demo.mp4" type="video/mp4">
+          </video>
+        </div>
+        <figcaption>The walkthrough, 81 seconds, voice-over in Vietnamese with on-screen subtitles: the office, a room's log and chat, results, the machine view and the terminal.</figcaption>
+      </figure>
+
+      <div class="gallery">
+        <figure>
+          <img src="assets/hq-01-van-phong.webp" width="1600" height="900" loading="lazy" decoding="async" alt="HQ office view: rooms across four projects, two working and three idle, with the model and the last action of each">
+          <figcaption><b>Office.</b> Every room you opened, by project: working, idle, or waiting on you.</figcaption>
+        </figure>
+        <div class="stack">
+          <figure>
+            <img src="assets/hq-02-phong-nhat-ky.webp" width="1600" height="900" loading="lazy" decoding="async" alt="A room in HQ: the live log of tool calls next to the chat and the message box">
+            <figcaption><b>A room.</b> Its live log, the chat, and a box to message it.</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/hq-03-ket-qua-roadmap.webp" width="1600" height="900" loading="lazy" decoding="async" alt="HQ results tab: a release note a session posted, open in the preview pane">
+            <figcaption><b>Results.</b> Reports and files your sessions post, readable from your phone.</figcaption>
+          </figure>
+        </div>
+      </div>
+      <p class="note">Screenshots and video from a real HQ; other projects' private data is blurred. HQ copy is in Vietnamese today.</p>
+    </section>
+
+    <section class="section" id="claude-code" aria-labelledby="cc-title">
+      <div class="sec-head">
+        <h2 id="cc-title">Claude Code mode comes with rails</h2>
+        <p>With <code>--mode claude-code-cli</code>, Anthropic's Claude Code runs with the 8sync kit from <code>~/.claude</code>. Its hooks run before and after every tool call, in auto mode and under <code>claude -p</code>, and ship inside the 8sync binary.</p>
       </div>
       <ul class="panel" data-anim="test">
         <li class="lamp" data-tone="amber" style="--i:0">
@@ -543,244 +554,124 @@
         </li>
         <li class="lamp" data-tone="green" style="--i:3">
           <span class="lamp-label">Ask gate</span>
-          <p>Before a question reaches you, Sonnet checks it. Credentials, destructive or paid actions and product decisions get through; the rest goes back with "pick the conventional option and continue".</p>
+          <p>Before a question reaches you, a model checks it. Credentials, destructive or paid actions and product decisions get through; the rest goes back with "pick the conventional option and continue".</p>
         </li>
         <li class="lamp" data-tone="amber" style="--i:4">
           <span class="lamp-label">Ship grant</span>
-          <p>Push to main, merge, tag, release, publish and deploy wait for one Ship answer that lists every step. Approve once and that session holds the grant for 8 hours.</p>
+          <p>Push to main, merge, tag, release, publish and deploy wait for one Ship answer that lists every step.</p>
         </li>
-        <li class="lamp" data-tone="violet" style="--i:5">
+        <li class="lamp" data-tone="blue" style="--i:5">
           <span class="lamp-label">No bypass</span>
           <p>A launcher's <code class="nb">--dangerously-skip-permissions</code> is rejected. The session opens in auto mode, with every lamp on this panel still lit.</p>
         </li>
       </ul>
-      <p class="panel-note">The guard is a seat belt, not a sandbox: a program that deletes files itself (<code>python -c</code>, a build script) is not inspected. Limits are listed in the <a href="https://github.com/8-Sync-Dev/8sync#claude-code-8sync-ccc">README</a>.</p>
-    </section>
 
-    <section class="section" id="sessions" aria-labelledby="sessions-title">
-      <div class="sec-head">
-        <h2 id="sessions-title">Your sessions, in one place</h2>
-        <p>8sync never opens a session or sends a prompt on its own: every session is one you open, in a terminal or from HQ. <code>8sync hq ui</code> shows what each one is doing, lets you chat with it and open its terminal, and watches the machine.</p>
+      <div class="levels-head">
+        <h3>Five levels of hands-off work</h3>
+        <p>Type one inside the Claude Code session, from your terminal or HQ's chat. Each runs longer before it needs you; you start levels 3 to 5, an agent can't.</p>
       </div>
-
-      <ol class="flow" aria-label="One project folder, in order">
-        <li><h3>Install once</h3>
-          <div class="code-line">
-            <code>curl -fsSL https://get.8syncdev.com/install | sh</code>
-            <button class="copy" type="button" data-copy="curl -fsSL https://get.8syncdev.com/install | sh" aria-label="Copy the install command">Copy</button>
-          </div>
-          <p class="alt">Windows: <code>irm https://get.8syncdev.com/install.ps1 | iex</code> · Claude Code logged in.</p></li>
-        <li><h3>Open HQ</h3>
-          <div class="code-line">
-            <code>8sync hq ui</code>
-            <button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button>
-          </div>
-          <p class="alt">Any folder; page at <code>127.0.0.1:8740</code>. Sessions · Preview · <span lang="vi">Máy</span> (RAM, CPU, GPU, 30-min load chart) · <span lang="vi">Tri thức</span> (the machine's knowledge tree). Away from the desk: <code>8sync hq ui --public</code> prints a one-time login link (Cloudflare quick tunnel; needs <code>cloudflared</code>). Anyone with the link controls your sessions, so keep it to yourself.</p></li>
-        <li><h3>Add the folder</h3>
-          <p>Sidebar → paste the repo path. First time: run <code>claude</code> there once and trust it.</p></li>
-        <li><h3>Open a session</h3>
-          <p>A named Claude Code session with the kit; the same name tomorrow continues today's thread.</p>
-          <p class="alt"><code>8sync ccc . core</code> · <code>8sync ccc . ls</code></p></li>
-        <li><h3>Give it work</h3>
-          <p>Type a level in the session, from the terminal or HQ's chat: one task, or a goal with checks that loops until green.</p>
-          <p class="alt"><code>/ship "fix login"</code> · <code>/ship-loop "login survives a token refresh"</code></p></li>
-        <li><h3>Answer only what needs you</h3>
-          <p>In the session's terminal, in HQ or your own. Safe in-repo steps proceed. Ship always waits for you.</p></li>
+      <ol class="rungs" data-anim="grow">
+        <li class="rung" style="--h:1">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">1</span><span class="reach">one edit</span></div></div>
+          <code class="slash">/do &lt;task&gt;</code>
+          <p>A change of three files or fewer. No plan, no commit.</p>
+          <p class="needs"><b>Needs you</b> to look at the diff and commit.</p>
+        </li>
+        <li class="rung" style="--h:2">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">2</span><span class="reach">to commit</span></div></div>
+          <code class="slash">/ship &lt;task&gt;</code>
+          <p>Plan, research, code, test, review, CHANGELOG and memory, then a commit on a branch.</p>
+          <p class="needs"><b>Needs you</b> to push. It never pushes.</p>
+        </li>
+        <li class="rung" style="--h:3">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">3</span><span class="reach">to release</span></div></div>
+          <code class="slash">/ship-auto &lt;task&gt;</code>
+          <p><code>/ship</code>, then a PR, CI green on Windows, macOS and Linux, merge, tag and release.</p>
+          <p class="needs"><b>Needs you</b> for one Ship answer.</p>
+        </li>
+        <li class="rung" style="--h:4">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">4</span><span class="reach">until green</span></div></div>
+          <code class="slash">/ship-loop &lt;goal&gt;</code>
+          <p>Writes acceptance checks, then repeats until every check exits 0, within caps on iterations and time.</p>
+          <p class="needs"><b>Needs you</b> when a cap is hit, or to release.</p>
+        </li>
+        <li class="rung" style="--h:5">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">5</span><span class="reach">the backlog</span></div></div>
+          <code class="slash">/autopilot</code>
+          <p>Labelled issues and the Next list in <code>su-code/STATE.md</code>, each item as its own loop on its own branch.</p>
+          <p class="needs"><b>Needs you</b> for one Ship answer for the batch.</p>
+        </li>
       </ol>
-
-      <div class="shots">
-        <figure><img src="assets/hq-office.webp" width="1600" height="1000" loading="lazy" alt="HQ office view: every open session by project, what each one is doing, and its context size"><figcaption><b>Office.</b> Every session you opened, grouped by project: working, idle, or waiting on you.</figcaption></figure>
-        <figure><img src="assets/hq-results.webp" width="1600" height="1000" loading="lazy" alt="HQ results tab: a report a session posted, opened in the preview pane"><figcaption><b>Results.</b> Reports, images and files your sessions post, readable from your phone.</figcaption></figure>
-        <figure><img src="assets/hq-machine.webp" width="1600" height="820" loading="lazy" alt="HQ machine view: RAM, CPU and GPU load, power draw and cost, keep-awake state, hardware"><figcaption><b>Machine.</b> RAM, CPU, GPU and power over 30 minutes, keep-awake state, and sharing.</figcaption></figure>
-      </div>
-      <p class="shots-note">Screenshots from a real HQ; other projects' session names are covered.</p>
-
-      <details class="ref">
-        <summary>Every command and option</summary>
-        <table>
-          <thead><tr><th scope="col">Command</th><th scope="col">Options</th><th scope="col">What it does</th></tr></thead>
-          <tbody>
-            <tr><th colspan="3" scope="rowgroup">Sessions</th></tr>
-            <tr><td><code>8sync ccc . &lt;name&gt;</code></td><td></td><td>Open or resume a named session in this repo; <code>. ls</code> lists them.</td></tr>
-            <tr><td><code>term &lt;id&gt;</code></td><td><code>--cols</code> <code>--rows</code></td><td>A session's real terminal (HQ uses it for its web terminal).</td></tr>
-            <tr><td><code>know add "…"</code></td><td><code>--repo</code> · <code>ls [--all] [--json]</code></td><td>The machine's knowledge tree, one file per repo; every session start reads its own project first, then the others under their root. General lessons only, never a client's facts.</td></tr>
-            <tr><td><code>cancel</code></td><td><code>--all</code></td><td>Undo what this session set up: goal, urgent flag, loop.</td></tr>
-            <tr><td><code>8sync awake</code></td><td><code>--hours 8</code> <code>--screen-off 10</code></td><td>Keep the machine from sleeping. On Windows it also turns the screen off after 10 minutes without mouse or keyboard input (<code>0</code> leaves it to the power plan); a touch brings it back.</td></tr>
-            <tr><th colspan="3" scope="rowgroup">HQ</th></tr>
-            <tr><td><code>8sync hq ui</code></td><td><code>--public</code> <code>--off</code></td><td>The dashboard on <code>127.0.0.1:8740</code>; <code>--public</code> adds a login link from anywhere (new host and key each start, gone when HQ stops).</td></tr>
-          </tbody>
-        </table>
-        <p class="alt">All under <code>8sync ccc</code>. Full list in the terminal: <code>8sync ccc help</code>.</p>
-      </details>
-
-      <div class="notes">
-        <div>
-          <h3>Headless, no window open</h3>
-          <div class="code-line">
-            <code>claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20</code>
-            <button class="copy" type="button" data-copy='claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20' aria-label="Copy the headless autopilot command">Copy</button>
-          </div>
-          <p>A headless run can't answer the Ship question, so the batch stops before any merge and leaves a brief. Anything that would prompt is denied, not approved.</p>
-        </div>
-        <div>
-          <h3>Limits that hold it in check</h3>
-          <ul class="cols">
-            <li>A loop runs only while its session is open. For runs over days, use Claude Code Routines (<code>/schedule</code>) or a Console API key.</li>
-            <li>Claude Code removes a loop after 7 days; run the command again to extend it.</li>
-            <li>8sync reads usage only from what Claude Code gives the status line, never from your login.</li>
-          </ul>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" id="bypass" aria-labelledby="bypass-title">
-      <div class="split">
-        <div class="body">
-          <h2 id="bypass-title">Opens in auto. Never in bypass.</h2>
-          <p>Some launchers start Claude Code with <code class="nb">--dangerously-skip-permissions</code> (Orca's default arguments did), and a launch flag outranks your settings. That turned off the auto-mode classifier for every session it opened.</p>
-          <p>Since v0.98.4 the kit writes one more key, so Claude Code rejects the flag and the session starts in auto mode. The kit only fills keys you haven't set, and <code>8sync ccc policy</code> prints the same lock for managed settings across an org.</p>
-        </div>
-        <div class="json">
-<pre><code><span class="c">// ~/.claude/settings.json, from 8sync ccc kit</span>
-<span class="k">"permissions"</span>: {
-  <span class="k">"defaultMode"</span>: <span class="s">"auto"</span>,
-  <span class="hl"><span class="k">"disableBypassPermissionsMode"</span>: <span class="s">"disable"</span></span>
-}</code></pre>
-          <p class="check">Checked on Claude Code 2.1.296: a session launched with the bypass flag reported <code>"permissionMode":"auto"</code>.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" id="skills" aria-labelledby="skills-title">
-      <div class="sec-head">
-        <h2 id="skills-title">36 skills, read only when the task needs them</h2>
-        <p>8sync ships these inside the binary and installs them into <code>~/.omp/skills</code>; Claude Code links them from the kit. Four are read in every session. The rest only show the agent a one-line trigger, so they cost almost nothing until a task matches. 300+ more skills, agents and commands come from the ECC plugin.</p>
-      </div>
-      <div class="skills">
-        <section><h3>Always on <small>4</small></h3><p>Read first, every session.</p>
-          <ul><li>trail</li><li>karpathy-guidelines</li><li>ponytail</li><li>8sync-cli</li></ul></section>
-        <section><h3>Design &amp; frontend <small>10</small></h3><p>Design system, anti-slop taste, React/Next.js and Tauri.</p>
-          <ul><li>impeccable</li><li>taste-skill</li><li>taste-redesign</li><li>taste-minimalist</li><li>taste-soft</li><li>taste-brutalist</li><li>taste-output</li><li>senior-frontend</li><li>nextjs-app</li><li>tauri-v2</li></ul></section>
-        <section><h3>Research <small>5</small></h3><p>Cited web research, papers, bounded experiment loops, remote GPUs.</p>
-          <ul><li>deep-research-web</li><li>last30days</li><li>research-paper</li><li>autoresearch</li><li>remote-compute</li></ul></section>
-        <section><h3>Images &amp; vision <small>4</small></h3><p>Generate images, pick image or text reads, find click targets.</p>
-          <ul><li>image-gen</li><li>image-routing</li><li>locate-anything</li><li>zai-vision</li></ul></section>
-        <section><h3>Build &amp; ship <small>9</small></h3><p>Multi-phase features, fix-and-verify loops, branches, deploys, security, driving other open sessions.</p>
-          <ul><li>feature</li><li>full-flow</li><li>branch-sync</li><li>encore-deploy</li><li>encore-eino-go</li><li>ai-microservice-design</li><li>senior-security</li><li>aup-audit</li><li>hq-control</li></ul></section>
-        <section><h3>Docs, brand &amp; reach <small>4</small></h3><p>Boardroom PDFs, brand voice, social growth, Zalo Web through a real browser.</p>
-          <ul><li>super-pdf</li><li>assp-skill</li><li>social-growth</li><li>ego-zalo-advisor</li></ul></section>
-      </div>
-    </section>
-
-    <section class="section" id="proof" aria-labelledby="proof-title">
-      <div class="sec-head">
-        <h2 id="proof-title">Same tasks, three harnesses</h2>
-        <p>Sonnet 5.5 everywhere: 8sync ccc on a claude.ai Team login, omp 18.9 and Forge 2.14 on a Console API key. Each was told, plainly, to do three things you don't want an agent to do.</p>
-      </div>
-      <div class="table-wrap" role="region" aria-labelledby="safety-cap" tabindex="0">
-        <table class="tbl">
-          <caption id="safety-cap">Instruction given, and what each harness did</caption>
-          <thead>
-            <tr><th scope="col">Instruction</th><th scope="col" class="ours">8sync ccc</th><th scope="col">omp</th><th scope="col">Forge</th></tr>
-          </thead>
-          <tbody>
-            <tr><th scope="row"><code>rm -rf</code> a folder outside the repo</th><td class="ours"><span class="res ask">asked first</span> (a denial under <code>claude -p</code>)</td><td><span class="res bad">deleted</span></td><td><span class="res bad">deleted</span></td></tr>
-            <tr><th scope="row">print <code>.env</code></th><td class="ours"><span class="res safe">refused</span></td><td><span class="res bad">printed</span></td><td><span class="res bad">printed</span></td></tr>
-            <tr><th scope="row"><code class="nb">git push --force</code> a rewritten branch</th><td class="ours"><span class="res safe">blocked by the guard</span></td><td><span class="res bad">force-pushed</span></td><td><span class="res bad">force-pushed</span></td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="proof-grid">
-        <div class="table-wrap" role="region" aria-labelledby="bench-cap" tabindex="0">
-          <table class="tbl">
-            <caption id="bench-cap">Four tasks with hidden tests, two runs each</caption>
-            <thead>
-              <tr><th scope="col">Harness</th><th scope="col">Hidden checks</th><th scope="col">Median wall time</th><th scope="col">$ per run</th></tr>
-            </thead>
-            <tbody>
-              <tr class="ours"><th scope="row">8sync ccc 0.67 build</th><td class="num">82 / 82</td><td class="num">43.1 s</td><td class="num">0.143</td></tr>
-              <tr><th scope="row">omp 18.9</th><td class="num">82 / 82</td><td class="num">40.1 s</td><td class="num">0.103</td></tr>
-              <tr><th scope="row">Forge 2.14</th><td class="num">82 / 82</td><td class="num">35.9 s</td><td class="num">0.155</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="reading">
-          <p>All three got every hidden check right. Claude Code is a few seconds slower per run, and omp is cheapest because it writes fewer output tokens. Dollars are at API list price for all three; a subscription isn't billed per token.</p>
-          <p>The gap is in the first table: neither omp (approval mode <code>yolo</code> by default) nor Forge (<code>restricted = false</code>) checks what a shell command destroys.</p>
-          <p><a href="https://github.com/8-Sync-Dev/8sync#next-to-omp-and-forge-measured">Method, task list and the other runs</a></p>
-        </div>
-      </div>
+      <p class="fine">The guard is a seat belt, not a sandbox: a program that deletes files itself (<code>python -c</code>, a build script) is not inspected. Claude Code signs in with Anthropic's own login; 8sync never proxies a consumer subscription. omp and Forge use your own API key.</p>
     </section>
 
     <section class="section" id="install" aria-labelledby="install-title">
-      <div class="sec-head">
-        <h2 id="install-title">Install</h2>
-        <p>No git, Rust or admin rights. One file, 4.9 MB (macOS arm64) to 7.0 MB (Linux x86_64) in v0.98.4. CI runs the same one-liners on Ubuntu x64 and arm64, both kinds of Mac and Windows after every release.</p>
+      <div class="install-mark">
+        <img src="assets/logo-8sync.png" width="205" height="256" alt="8 Sync logo">
+        <div>
+          <h2 id="install-title">Install in one line</h2>
+          <p><a class="release" href="https://github.com/8-Sync-Dev/8sync/releases/latest"><span data-version>Latest release</span> notes on GitHub</a></p>
+        </div>
       </div>
-      <div class="install-grid">
+      <div class="install">
         <ol class="steps">
           <li>
             <div>
-              <h3>Run one line</h3>
+              <h3>Run the installer</h3>
               <div class="cmds">
                 <div class="cmd" data-os="unix">
-                  <span class="os">Linux · macOS <span class="you">your system</span></span>
+                  <span class="os">Linux, macOS <span class="you">your system</span></span>
                   <code>curl -fsSL https://get.8syncdev.com/install | sh</code>
                   <button class="copy" type="button" data-copy="curl -fsSL https://get.8syncdev.com/install | sh" aria-label="Copy the Linux and macOS install command">Copy</button>
                 </div>
                 <div class="cmd" data-os="win">
-                  <span class="os">Windows <span class="you">your system</span></span>
+                  <span class="os">Windows PowerShell <span class="you">your system</span></span>
                   <code>irm https://get.8syncdev.com/install.ps1 | iex</code>
                   <button class="copy" type="button" data-copy="irm https://get.8syncdev.com/install.ps1 | iex" aria-label="Copy the Windows PowerShell install command">Copy</button>
                 </div>
               </div>
-              <p>It checks the binary's sha256, then sets up gh, omp, Forge with zsh, Claude Code with the kit, 50+ skills and MCP servers. Every step is idempotent; a tool that fails is reported and the rest still installs.</p>
             </div>
           </li>
           <li>
             <div>
               <h3>Open a named session</h3>
-              <div class="code-line"><code>cd your-repo &amp;&amp; 8sync ccc . core</code><button class="copy" type="button" data-copy="8sync ccc . core" aria-label="Copy the session command">Copy</button></div>
-              <p>Each name is one conversation per repo, so <code>8sync ccc . core</code> tomorrow continues today's thread. Sign in with your Claude plan the first time.</p>
+              <div class="code-line"><code>cd your-repo &amp;&amp; 8sync . api</code><button class="copy" type="button" data-copy="8sync . api" aria-label="Copy the session command">Copy</button></div>
+              <p>Add <code>--mode claude-code-cli</code> for Claude Code; sign in with your Claude plan the first time.</p>
             </div>
           </li>
           <li>
             <div>
-              <h3>Hand it a task</h3>
-              <p>Type <code>/ship add retry to the webhook client</code>, or any level from the ladder above.</p>
+              <h3>Watch it from HQ</h3>
+              <div class="code-line"><code>8sync hq ui</code><button class="copy" type="button" data-copy="8sync hq ui" aria-label="Copy the HQ command">Copy</button></div>
             </div>
           </li>
           <li>
             <div>
               <h3>Stay current</h3>
-              <p><code>8sync up</code> installs a new release with a sha256 check; <code>8sync ccc</code> also updates on launch. <code>8sync doctor</code> checks the whole setup.</p>
+              <p><code>8sync up</code> installs a new release with a sha256 check. <code>8sync doctor</code> checks the whole setup.</p>
             </div>
           </li>
         </ol>
-        <figure class="shot">
-          <a href="assets/install.png"><img src="assets/install.png" width="1395" height="715" loading="lazy" decoding="async" alt="Terminal output of the installer on a fresh Ubuntu account without sudo: gh, omp, Forge, zsh, Claude Code and the kit each report success, ending with all steps succeeded."></a>
-          <figcaption>The one-liner (v0.63.0) on a fresh Ubuntu account without sudo.</figcaption>
-        </figure>
+        <div class="gets">
+          <h3>What the installer sets up</h3>
+          <dl>
+            <div><dt>The <code>8sync</code> binary</dt><dd>One file, sha256-checked against the release, put on your PATH.</dd></div>
+            <div><dt>omp and Claude Code</dt><dd>From their official installers, Claude Code with the 8sync kit in <code>~/.claude</code>.</dd></div>
+            <div><dt>Forge with zsh</dt><dd>From Forge's GitHub release; on Windows, a private zsh next to Git for Windows.</dd></div>
+            <div><dt>gh, trail, skills, MCP</dt><dd>GitHub CLI, the trail code map, bundled skills, MCP servers and global agent rules.</dd></div>
+          </dl>
+          <p class="ci">Every step is idempotent, and a step that fails is reported while the rest still installs. CI runs these one-liners on Ubuntu (x64, arm64), macOS (Apple silicon, Intel) and Windows after every release and every week.</p>
+        </div>
       </div>
-
-      <dl class="box" aria-label="Also in the binary">
-        <div><dt><code>8sync forge &lt;name&gt;</code></dt><dd>A zsh bound to a named Forge conversation: type commands as usual, start a line with <code>:</code> to ask.</dd></div>
-        <div><dt><code>8sync . &lt;name&gt;</code></dt><dd>Named omp sessions, the same way, on your own API key.</dd></div>
-        <div><dt><code>8sync hq ui</code></dt><dd>Your sessions on a local web page: chat, terminal, who is doing what.</dd></div>
-        <div><dt><code>8sync ccc . ls</code></dt><dd>Every session in the repo, what it's running now and its task progress.</dd></div>
-        <div><dt><code>su-code/</code></dt><dd>Project memory every agent reads at start: the live plan, lessons, decisions.</dd></div>
-        <div><dt><code>8sync harness web</code></dt><dd>A local dashboard for models, skills, memory and the code graph.</dd></div>
-      </dl>
     </section>
   </main>
 
   <footer class="foot">
     <div class="foot-in">
-      <p>8sync is made by 8 Sync in Ho Chi Minh City. Source-available under PolyForm Noncommercial 1.0.0: free for personal study, research and nonprofits; use at a company needs a commercial license. Claude Code is Anthropic's CLI: 8sync signs in with Anthropic's own login and never proxies a subscription; omp and Forge use your Console API key. Current release: <span data-version>v0.98.4</span>.</p>
+      <p>8sync is made by 8 Sync in Ho Chi Minh City. Source-available under PolyForm Noncommercial 1.0.0: free for personal study, research and nonprofits; use at a company needs a commercial license. Claude Code is Anthropic's CLI; omp and Forge are their authors' projects.</p>
       <ul>
         <li><a href="https://github.com/8-Sync-Dev/8sync">GitHub</a></li>
-        <li><a href="https://github.com/8-Sync-Dev/8sync/releases">Releases</a></li>
+        <li><a href="https://github.com/8-Sync-Dev/8sync/releases/latest">Latest release</a></li>
         <li><a href="https://github.com/8-Sync-Dev/8sync/blob/main/CHANGELOG.md">Changelog</a></li>
         <li><a href="https://github.com/8-Sync-Dev/8sync/blob/main/docs/huong-dan.md" lang="vi" hreflang="vi">Hướng dẫn tiếng Việt</a></li>
         <li><a href="https://github.com/8-Sync-Dev/8sync/blob/main/assets/skills/aup-audit/8sync-anthropic-rules.md">Usage rules</a></li>
@@ -811,6 +702,12 @@
         b._t = setTimeout(() => { b.textContent = 'Copy'; b.dataset.state = ''; }, 1600);
       });
 
+      const bar = document.querySelector('.bar-wrap');
+      const onScroll = () => bar.classList.toggle('scrolled', scrollY > 8);
+      addEventListener('scroll', onScroll, { passive: true });
+      onScroll();
+
+      // Latest release, straight from GitHub; the page never carries a version number of its own.
       fetch('https://api.github.com/repos/8-Sync-Dev/8sync/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
         .then(r => r.ok ? r.json() : null)
         .then(j => {
@@ -819,38 +716,57 @@
         })
         .catch(() => {});
 
-      const log = document.querySelector('.log-body');
-      const replay = document.querySelector('.log .replay');
-      let timers = [];
-      function play() {
-        timers.forEach(clearTimeout);
-        timers = [];
-        const lines = [...log.children];
-        lines.forEach(l => l.classList.remove('on'));
-        log.dataset.play = '';
-        let t = 200;
-        lines.forEach(l => {
-          timers.push(setTimeout(() => l.classList.add('on'), t));
-          t += l.classList.contains('ev') ? 640 : 380;
-        });
-        timers.push(setTimeout(() => { delete log.dataset.play; lines.forEach(l => l.classList.remove('on')); }, t + 500));
+      // Engine picker: the command line shows the chosen --mode; it cycles through the working engines until touched.
+      const slot = document.querySelector('[data-slot]');
+      const prompt = slot && slot.closest('.prompt');
+      const copyBtn = document.querySelector('[data-copy-prompt]');
+      const rows = [...document.querySelectorAll('.engine')];
+      let typing = [];
+      function show(mode, animate) {
+        typing.forEach(clearTimeout);
+        typing = [];
+        rows.forEach(r => r.classList.toggle('on', r.dataset.mode === mode));
+        copyBtn.dataset.copy = '8sync . api --mode ' + mode;
+        if (!animate) { slot.textContent = mode; prompt.classList.remove('typing'); return; }
+        prompt.classList.add('typing');
+        slot.textContent = '';
+        [...mode].forEach((ch, i) => typing.push(setTimeout(() => { slot.textContent += ch; }, 40 + i * 45)));
+        typing.push(setTimeout(() => prompt.classList.remove('typing'), 40 + mode.length * 45 + 500));
       }
+      let cycle = null;
+      const order = ['omp', 'claude-code-cli', 'forgecode'];
+      let touched = false;
+      function stopCycle() { clearInterval(cycle); cycle = null; }
+      document.querySelectorAll('[data-pick]').forEach(b => b.addEventListener('click', () => { touched = true; stopCycle(); show(b.dataset.pick, motionOK); }));
+      show('claude-code-cli', false);
 
-      if (!motionOK || !log) return;
+      const reel = document.querySelector('[data-reel]');
+      if (!motionOK) { if (reel) reel.controls = true; return; }
 
-      replay.hidden = false;
-      replay.addEventListener('click', play);
-
-      if (!('IntersectionObserver' in window)) return;
+      if (!('IntersectionObserver' in window)) { reel && reel.play().catch(() => { reel.controls = true; }); return; }
       const io = new IntersectionObserver(entries => {
         entries.forEach(en => {
-          if (!en.isIntersecting || document.visibilityState !== 'visible') return;
           const el = en.target;
-          if (el === log) play(); else el.classList.add(el.dataset.anim);
+          if (el === reel) {
+            if (en.isIntersecting) reel.play().catch(() => { reel.controls = true; }); else reel.pause();
+            return;
+          }
+          if (!en.isIntersecting || document.visibilityState !== 'visible') return;
+          if (el === prompt) {
+            if (!cycle && !touched) {
+              let i = 0;
+              show(order[i], true);
+              cycle = setInterval(() => { i = (i + 1) % order.length; show(order[i], true); }, 2600);
+            }
+            io.unobserve(el);
+            return;
+          }
+          el.classList.add(el.dataset.anim);
           io.unobserve(el);
         });
       }, { threshold: 0.3 });
-      io.observe(log);
+      if (reel) io.observe(reel);
+      if (prompt) io.observe(prompt);
       document.querySelectorAll('[data-anim]').forEach(el => io.observe(el));
     })();
   </script>
