@@ -9,6 +9,7 @@ import { expandMentions } from "@/lib/server/fs-list";
 import { loadFloor, ompSessions } from "@/lib/server/floor";
 import { projectOf } from "@/lib/server/office";
 import { FILES_PER_TASK, isUploadId, placeUploads, withFiles } from "@/lib/server/uploads";
+import { senderOf } from "@/lib/server/sender";
 import type { DatabaseSync } from "node:sqlite";
 
 export const runtime = "nodejs";
@@ -62,8 +63,9 @@ export async function POST(req: Request) {
     if (!text.ok) return bad(`tin + đường dẫn file: ${text.error}`, 422);
   }
   // An omp room or a Claude session started elsewhere: its inbox; an hq-* tmux room: typed in (`deliverText`).
+  // The owner's page sends as the owner; anything else (hq.mjs: `from` names its room) as a room.
   try {
-    return json(await deliverText(o.db, session, text.value), 201);
+    return json(await deliverText(o.db, session, text.value, senderOf(req, o.access, body.from)), 201);
   } catch (e) {
     if (e instanceof SessionWaiting) return json({ error: "session-waiting", dialog: e.dialog }, 409);
     throw e;

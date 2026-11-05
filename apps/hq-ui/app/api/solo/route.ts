@@ -4,6 +4,7 @@ import { mainRoot, rootKey } from "@/lib/preview";
 import { SessionWaiting } from "@/lib/server/channel";
 import { deliverText } from "@/lib/server/deliver";
 import { bad, json, open, readBody } from "@/lib/server/http";
+import { senderOf } from "@/lib/server/sender";
 import { liveProjects } from "@/lib/server/in-view";
 import { projectOf } from "@/lib/server/office";
 import { mergedSessions } from "@/lib/server/proc";
@@ -49,7 +50,7 @@ export async function POST(req: Request) {
     if (solo?.state !== "waiting") return bad("Solo không còn chờ anh chọn", 409);
   }
   try {
-    return json(await deliverText(o.db, room.name, soloMessage(action, answer, deliveryOf(room))), 201);
+    return json(await deliverText(o.db, room.name, soloMessage(action, answer, deliveryOf(room)), senderOf(req, o.access)), 201);
   } catch (e) {
     if (e instanceof SessionWaiting) return json({ error: "session-waiting", dialog: e.dialog }, 409);
     throw e;

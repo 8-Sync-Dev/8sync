@@ -358,7 +358,7 @@ mod tests {
         let sid = "77cb0a68-ba5e-424e-bf43-15de95ed35fb";
         let f = crate::verbs::hq::inbox_file(&home, sid).unwrap();
         std::fs::create_dir_all(f.parent().unwrap()).unwrap();
-        std::fs::write(&f, format!("{}\n", json!({"ts":1,"text":"dừng lại, review PR #24","to":{"engine":"claude","name":"core","cwd":"/r"}}))).unwrap();
+        std::fs::write(&f, format!("{}\n", json!({"ts":1,"text":"dừng lại, review PR #24","to":{"engine":"claude","name":"core","cwd":"/r"},"by":"owner"}))).unwrap();
         let v = json!({ "session_id": sid, "stop_hook_active": true, "last_assistant_message": "Done." });
         let out = owner_inbox(&v, &home).unwrap();
         let reason: Value = serde_json::from_str(&out).unwrap();

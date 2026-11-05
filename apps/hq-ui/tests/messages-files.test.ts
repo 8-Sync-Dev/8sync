@@ -43,7 +43,7 @@ beforeEach(() => {
   ]);
 });
 
-const post = (body: unknown) => POST(req("/api/messages", { method: "POST", token, origin: ORIGIN, body }));
+const post = (body: unknown) => POST(req("/api/messages", { method: "POST", token, origin: ORIGIN, body, ui: true }));
 const placed = (id: string, name: string) => path.join(shop, ".claude", "hq-uploads", id, name);
 
 describe("POST /api/messages with files", () => {

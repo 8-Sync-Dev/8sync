@@ -190,7 +190,7 @@ describe("projects from the session folder", () => {
 
 describe("owner message to a session started elsewhere (no tmux, all of Windows)", () => {
   it("queues in the session inbox and records delivery 'inbox'", async () => {
-    const r = await messagesPOST(req("/api/messages", { method: "POST", token, origin: ORIGIN, body: { session: SID, text: "review PR #24 giúp" } }));
+    const r = await messagesPOST(req("/api/messages", { method: "POST", token, origin: ORIGIN, body: { session: SID, text: "review PR #24 giúp" }, ui: true }));
     expect(r.status).toBe(201);
     const body = await r.json();
     expect(body.delivery).toBe("inbox");
@@ -201,6 +201,7 @@ describe("owner message to a session started elsewhere (no tmux, all of Windows)
     expect(line.text).toBe("review PR #24 giúp");
     expect(line.to, "a Claude session HQ's room list does not know: its engine only").toMatchObject({ engine: "claude" });
     expect(line.from).toBeUndefined();
+    expect(line.by, "sent from the owner's page: the owner header").toBe("owner");
     if (process.platform !== "win32") {
       expect(fs.statSync(inboxFile(SID)).mode & 0o777).toBe(0o600);
       expect(fs.statSync(path.dirname(inboxFile(SID))).mode & 0o777).toBe(0o700);
