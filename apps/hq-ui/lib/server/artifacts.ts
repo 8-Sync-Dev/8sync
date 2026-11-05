@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { baseName, extOf, fileType, maxArtifactBytes, parseContentIds, ARTIFACT_TYPES, type Artifact, type ArtifactKind, type ArtifactView } from "../artifacts";
+import { baseName, extOf, fileType, isRoomRef, maxArtifactBytes, parseContentIds, ARTIFACT_TYPES, type Artifact, type ArtifactKind, type ArtifactView } from "../artifacts";
 import { rootKey } from "../preview";
 import { fileSecret, safeEqual } from "./auth";
 import { stamp } from "./db";
@@ -23,9 +23,6 @@ export const LINK_MAX = 2000;
 
 const ID = /^[0-9a-f]{32}$/;
 export const isArtifactId = (v: unknown): v is string => typeof v === "string" && ID.test(v);
-/** Claude session id, omp room id or hq-* name: what /api/messages addresses. */
-const SESSION = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|omp-[0-9a-f]{16}|hq-[a-z0-9][a-z0-9-]{0,31})$/i;
-export const isRoomRef = (v: unknown): v is string => typeof v === "string" && SESSION.test(v);
 /** Folders a registered file may never sit under, and names that read like a credential. */
 const BLOCKED_DIR: Record<string, true> = { ".git": true, ".ssh": true, ".gnupg": true, ".aws": true, ".kube": true, node_modules: true };
 const SECRET_NAME = /(^\.env)|secret|credential|password|passwd|id_rsa|id_ed25519|private[-_]?key|ui-token/i;
@@ -114,7 +111,7 @@ export function registerArtifact(db: DatabaseSync, input: RegisterInput, roots: 
 
   const title = typeof input.title === "string" && input.title.trim() ? input.title.trim().slice(0, TITLE_MAX) : baseName(real);
   const note = typeof input.note === "string" && input.note.trim() ? input.note.trim().slice(0, NOTE_MAX) : null;
-  if (input.session !== undefined && input.session !== null && (typeof input.session !== "string" || !SESSION.test(input.session))) {
+  if (input.session !== undefined && input.session !== null && !isRoomRef(input.session)) {
     return fail(422, "session: Claude session id, omp-<16hex> hoặc hq-<tên>");
   }
   const session = typeof input.session === "string" ? input.session : null;
@@ -194,16 +191,18 @@ function withStat(r: Row): Artifact {
 
 /**
  * Newest first; `root` narrows to one project (the one it is about: `for` wins over where the file
- * sits; worktrees included), `session` to one room, `content` to the results of one content item,
- * `linked` to the ones that are a result of any content item.
+ * sits; worktrees included), `session` to one room (several: any of a room's names, e.g. its hq name
+ * and its Claude session id), `content` to the results of one content item, `linked` to the ones that
+ * are a result of any content item.
  */
-export function listArtifacts(db: DatabaseSync, opts: { root?: string | null; session?: string | null; content?: number | null; linked?: boolean; limit?: number } = {}): Artifact[] {
+export function listArtifacts(db: DatabaseSync, opts: { root?: string | null; session?: string | readonly string[] | null; content?: number | null; linked?: boolean; limit?: number } = {}): Artifact[] {
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), ARTIFACT_LIST_MAX);
   const where: string[] = [];
   const args: (string | number)[] = [];
-  if (opts.session) {
-    where.push("session = ?");
-    args.push(opts.session);
+  const sessions = typeof opts.session === "string" ? [opts.session] : (opts.session ?? []);
+  if (sessions.length) {
+    where.push(`session IN (${sessions.map(() => "?").join(", ")})`);
+    args.push(...sessions);
   }
   if (opts.content) {
     where.push("content LIKE ?");

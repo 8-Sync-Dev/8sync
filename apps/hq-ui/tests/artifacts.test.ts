@@ -189,4 +189,20 @@ describe("artifacts", () => {
     const r = await post({ path: put(room.omp, "proof.png", Buffer.from([0x89, 0x50, 0x4e, 0x47])), title: "proof" });
     expect(r.status).toBe(201);
   });
+
+  it("lists one room's reports by any of its names and refuses a session that is not a room id", async () => {
+    const uuid = "0f0e0d0c-0b0a-4908-8706-050403020100";
+    const a = ((await (await post({ path: put(repo, "reports/room-a.png", "png"), session: "hq-cpa" })).json()) as { artifact: Artifact }).artifact;
+    const b = ((await (await post({ path: put(repo, "reports/room-b.png", "png"), session: uuid })).json()) as { artifact: Artifact }).artifact;
+    await post({ path: put(repo, "reports/other.png", "png"), session: "hq-other" });
+    const ids = async (q: string) => {
+      const r = await list(req(`/api/artifacts?${q}`, { token: getToken() }));
+      return r.status === 200 ? ((await r.json()) as { artifacts: Artifact[] }).artifacts.map((x) => x.id).sort() : r.status;
+    };
+    expect(await ids(`session=hq-cpa&session=${uuid}`)).toEqual([a.id, b.id].sort());
+    expect(await ids("session=hq-cpa")).toEqual([a.id]);
+    expect(await ids("session=rm%20-rf")).toBe(400);
+    expect(await ids("session=s1")).toBe(400);
+    expect(await ids(Array.from({ length: 5 }, (_, i) => `session=hq-r${i}`).join("&"))).toBe(400);
+  });
 });
