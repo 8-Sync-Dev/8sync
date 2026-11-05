@@ -1,4 +1,4 @@
-import { cookieValue, hostSide, PUB_COOKIE, readPublic, SESSION_MS, sessionCookie, sessionSecret, viaTunnel } from "@/lib/server/auth";
+import { cookieValue, hostSide, PUB_COOKIE, readPublic, sessionCookie, sessionMs, sessionSecret, viaTunnel } from "@/lib/server/auth";
 import { allowedRole, pollFlow, readGithubConfig, startFlow } from "@/lib/server/github-login";
 import { GUEST_COOKIE, GUEST_GH_MS, GUEST_MAX_MS, guestAccess, guestCookie, guestSetCookie } from "@/lib/server/invites";
 
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
 
 /**
  * Poll `?f=<id>`: pending → 202. Signed in → 200 + a cookie: an `allow` owner gets the same signed
- * 12 h `hq_pub` as the key link; the login a pending invite is bound to gets that invite's `hq_guest`;
+ * `hq_pub` as the key link (12 h, 30 days on the `--tailnet` host); the login a pending invite is bound to gets that invite's `hq_guest`;
  * an `allow` entry with a guest role gets a 12 h `hq_guest` of its own.
  */
 export async function GET(req: Request) {
@@ -58,7 +58,7 @@ export async function GET(req: Request) {
   console.info(`[hq] GitHub sign-in: ${r.login}`);
   if (role === "owner") {
     return out({ state: "ok", login: r.login }, 200, {
-      "set-cookie": `${PUB_COOKIE}=${sessionCookie(sessionSecret(), now)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}`,
+      "set-cookie": `${PUB_COOKIE}=${sessionCookie(sessionSecret(), now)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${sessionMs(readPublic()) / 1000}`,
     });
   }
   const inv = fitsInvite(r.login) ? g.bound! : null;

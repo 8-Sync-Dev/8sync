@@ -134,6 +134,18 @@ pub enum Sub {
         /// forget the named tunnel: `--public` goes back to a quick tunnel (the Cloudflare tunnel and DNS record stay)
         #[arg(long, conflicts_with_all = ["off", "install", "update", "public", "relink", "tunnel_setup"])]
         tunnel_off: bool,
+        /// like `--public`, through Tailscale instead of Cloudflare: `tailscale serve` puts HQ on this
+        /// machine's fixed `https://<machine>.<tailnet>.ts.net`, reachable only from devices in your
+        /// tailnet (needs Tailscale logged in, MagicDNS and HTTPS certificates on in the admin console)
+        #[arg(long, conflicts_with_all = ["off", "install", "update", "relink", "tunnel_setup", "tunnel_off"])]
+        tailnet: bool,
+        /// start `8sync hq ui --tailnet --no-open` (this `--port`) every time you sign in to this machine, and
+        /// once now in the background; get the login link with `--relink` (Windows)
+        #[arg(long, conflicts_with_all = ["off", "install", "update", "relink", "tunnel_setup", "tunnel_off", "public", "tailnet"])]
+        at_login: bool,
+        /// stop starting HQ at sign-in (a running HQ keeps running)
+        #[arg(long, conflicts_with_all = ["off", "install", "update", "relink", "tunnel_setup", "tunnel_off", "public", "tailnet", "at_login"])]
+        at_login_off: bool,
     },
     /// Delete the local HQ data: events*.jsonl, hq.db*, channel-*.json (asks with no --yes: only lists)
     Purge {
@@ -2292,10 +2304,11 @@ fn cmd_ui_relink() -> Result<()> {
         bail!("HQ `--public` ghi trong public.json đã tắt — mở lại bằng `8sync hq ui --public`");
     }
     let named = load_named(&paths.cfg_dir.join(TUNNEL_FILE)).ok().flatten();
+    let tailnet = tailscale_bin().and_then(|b| tailnet_now(&b));
     let host = v["host"]
         .as_str()
-        .filter(|h| public_host_ok(h, named.as_ref().map(|n| n.hostname.as_str())))
-        .ok_or_else(|| anyhow!("public.json không có host hợp lệ (không phải quick tunnel, cũng không phải hostname của `--tunnel-setup`)"))?
+        .filter(|h| public_host_ok(h, named.as_ref().map(|n| n.hostname.as_str()), tailnet.as_deref()))
+        .ok_or_else(|| anyhow!("public.json không có host hợp lệ (không phải quick tunnel, hostname của `--tunnel-setup` hay tên Tailscale của máy này)"))?
         .to_owned();
     let key = random_hex32()?;
     v["key"] = json!(key);
@@ -2572,10 +2585,196 @@ fn named_ready(line: &str) -> bool {
     line.contains("Registered tunnel connection")
 }
 
-/// A `public.json` host this machine's `--public` may have written: a quick-tunnel host
-/// ([`tunnel_host`], lookalikes refused) or exactly the configured named-tunnel hostname.
-fn public_host_ok(host: &str, named: Option<&str>) -> bool {
-    tunnel_host(&format!("https://{host}")).as_deref() == Some(host) || named == Some(host)
+/// A `public.json` host this machine's `--public` / `--tailnet` may have written: a quick-tunnel host
+/// ([`tunnel_host`], lookalikes refused), or exactly the configured named-tunnel hostname or this
+/// machine's current tailnet name.
+fn public_host_ok(host: &str, named: Option<&str>, tailnet: Option<&str>) -> bool {
+    tunnel_host(&format!("https://{host}")).as_deref() == Some(host) || named == Some(host) || tailnet == Some(host)
+}
+
+/// Tailscale's CLI: on PATH, else the Windows install dir.
+fn tailscale_bin() -> Option<PathBuf> {
+    if let Ok(p) = which::which("tailscale") {
+        return Some(p);
+    }
+    let p = PathBuf::from(std::env::var_os("ProgramFiles")?).join("Tailscale").join("tailscale.exe");
+    (cfg!(windows) && p.is_file()).then_some(p)
+}
+
+/// This machine's tailnet name in `tailscale status --json`: `Self.DNSName` without its root dot,
+/// only while the backend is `Running` and the name is a `<machine>.<tailnet>.ts.net` host. None:
+/// stopped, logged out, or a name HQ would not trust as a host.
+fn tailnet_host(status: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(status).ok()?;
+    if v["BackendState"].as_str() != Some("Running") {
+        return None;
+    }
+    let h = v["Self"]["DNSName"].as_str()?.trim_end_matches('.').to_ascii_lowercase();
+    (h.ends_with(".ts.net") && h.split('.').count() >= 4 && named_hostname(&h).ok().as_deref() == Some(h.as_str())).then_some(h)
+}
+
+fn tailnet_now(bin: &Path) -> Option<String> {
+    let o = Command::new(bin).args(["status", "--json"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    tailnet_host(&String::from_utf8_lossy(&o.stdout))
+}
+
+/// `tailscale serve` in the foreground prints the URL it serves (`https://<host>/`) once it is up.
+/// Foreground on purpose: tailscaled drops the serve config when this process ends, so a killed or
+/// crashed `hq ui` leaves nothing listening on the tailnet.
+fn serve_ready(line: &str, host: &str) -> bool {
+    line.trim().strip_prefix("https://").and_then(|r| r.strip_suffix('/')) == Some(host)
+}
+
+/// `--tailnet`: `tailscale serve --https=443` in front of the local HQ, then the same `public.json`
+/// and login link as `--public`. Tailscale keeps the `Host` header (no port on 443), so the server's
+/// exact-host check sees `<host>` and asks for the login cookie. Waits up to 5 minutes for Tailscale
+/// (HQ started at sign-in comes up before it). Ok(None) = no tunnel: HQ keeps running locally.
+fn start_tailnet(port: u16, file: &Path, nonce: &str) -> Result<Option<std::process::Child>> {
+    let Some(bin) = tailscale_bin() else {
+        ui::warn("không tìm thấy tailscale — HQ chỉ chạy trên máy này. Cài: https://tailscale.com/download");
+        return Ok(None);
+    };
+    let Some(host) = (0..60).find_map(|i| {
+        if i > 0 {
+            std::thread::sleep(Duration::from_secs(5));
+        }
+        tailnet_now(&bin)
+    }) else {
+        ui::warn("Tailscale chưa chạy hoặc chưa đăng nhập sau 5 phút (xem `tailscale status`) — HQ chỉ chạy trên máy này.");
+        return Ok(None);
+    };
+    let mut tun = Command::new(&bin)
+        .args(["serve", "--https=443", &format!("http://127.0.0.1:{port}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("start {}", bin.display()))?;
+    let (out, err) = (tun.stdout.take().ok_or_else(|| anyhow!("tailscale stdout"))?, tun.stderr.take().ok_or_else(|| anyhow!("tailscale stderr"))?);
+    let last_err: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
+    let slot = last_err.clone();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(err).split(b'\n').map_while(|l| l.ok()) {
+            let l = String::from_utf8_lossy(&line).trim().chars().take(300).collect::<String>();
+            if !l.is_empty() {
+                *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(l);
+            }
+        }
+    });
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let want = host.clone();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let mut tx = Some(tx);
+        // keep draining after the URL so the pipe never fills
+        for line in std::io::BufReader::new(out).split(b'\n').map_while(|l| l.ok()) {
+            if tx.is_some() && serve_ready(&String::from_utf8_lossy(&line), &want) {
+                let _ = tx.take().map(|t| t.send(()));
+            }
+        }
+    });
+    if rx.recv_timeout(Duration::from_secs(45)).is_err() {
+        let _ = tun.kill();
+        let _ = tun.wait();
+        let why = last_err.lock().unwrap_or_else(|p| p.into_inner()).take().unwrap_or_else(|| "không mở được trong 45 giây".into());
+        ui::warn(&format!("tailscale serve: {why} — HQ chỉ chạy trên máy này. Kiểm tra HTTPS Certificates đã bật ở https://login.tailscale.com/admin/dns"));
+        return Ok(None);
+    }
+    let note = format!("Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Link đăng nhập dùng trong 10 phút, thiết bị đã vào giữ {TAILNET_SESSION_DAYS} ngày; cần link mới: `8sync hq ui --relink`. Địa chỉ cố định https://{host}: chỉ thiết bị trong tailnet của anh vào được (điện thoại cài app Tailscale, cùng tài khoản); khoá HQ + cookie vẫn bắt buộc. Tự bật khi đăng nhập máy: `8sync hq ui --at-login`.");
+    publish_link(tun, &host, file, nonce, port, true, &note)
+}
+
+/// How long a device stays signed in on the tailnet host (`hq_pub` cookie); the HQ UI reads it from
+/// `"via": "tailnet"` in `public.json`. Longer than the tunnel's 12 h: Tailscale already admits only
+/// the owner's own devices.
+const TAILNET_SESSION_DAYS: u32 = 30;
+
+/// Mint the login key, write `public.json` for `host` (this launch's `nonce`, this supervisor as
+/// owner, `"via": "tailnet"` for `--tailnet`) and print the link once; `tun` is killed when that fails.
+fn publish_link(mut tun: std::process::Child, host: &str, file: &Path, nonce: &str, port: u16, tailnet: bool, note: &str) -> Result<Option<std::process::Child>> {
+    let key = match random_hex32() {
+        Ok(k) => k,
+        Err(e) => {
+            let _ = tun.kill();
+            let _ = tun.wait();
+            return Err(e);
+        }
+    };
+    let since = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let pid = std::process::id();
+    let owner = LinkOwner { pid, start: crate::verbs::hq_core::sys::proc_start(pid), port };
+    let mut v = public_json(host, &key, nonce, since, owner);
+    if tailnet {
+        v["via"] = json!("tailnet");
+    }
+    if let Err(e) = write_private(file, format!("{v}\n").as_bytes()) {
+        let _ = tun.kill();
+        let _ = tun.wait();
+        return Err(e);
+    }
+    println!("Link điều khiển từ xa: https://{host}/api/login?k={key}");
+    ui::warn(note);
+    Ok(Some(tun))
+}
+
+/// HKCU Run value that starts HQ at sign-in (`--at-login`).
+const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_NAME: &str = "8sync-hq";
+
+/// The sign-in command line: `exe hq ui --tailnet --no-open --port <port>` under a headless conhost
+/// (no console window; the same wrapper the Scheduled Tasks use).
+fn at_login_argv(exe: &Path, port: u16) -> Vec<String> {
+    ["conhost.exe", "--headless"].into_iter().map(String::from).chain([exe.display().to_string()]).chain(["hq", "ui", "--tailnet", "--no-open", "--port"].into_iter().map(String::from)).chain([port.to_string()]).collect()
+}
+
+/// `argv` as one Windows command line (each part quoted when it holds a space).
+fn win_cmdline(argv: &[String]) -> String {
+    argv.iter().map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a.clone() }).collect::<Vec<_>>().join(" ")
+}
+
+/// `--at-login` (on) / `--at-login-off`: the HKCU Run value (no admin needed), and on `on` the same
+/// command started now when `port` is free.
+fn cmd_at_login(port: u16, on: bool, dry: bool) -> Result<()> {
+    if !cfg!(windows) {
+        bail!("`--at-login` hiện chỉ có trên Windows — Linux/macOS: tự thêm `8sync hq ui --tailnet --no-open` vào systemd --user / launchd");
+    }
+    if !on {
+        if dry {
+            println!("reg delete {RUN_KEY} /v {RUN_NAME} /f");
+            return Ok(());
+        }
+        let gone = Command::new("reg").args(["delete", RUN_KEY, "/v", RUN_NAME, "/f"]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+        if gone {
+            ui::ok("HQ không còn tự bật khi đăng nhập (HQ đang chạy vẫn chạy tiếp)");
+        } else {
+            ui::info("HQ chưa được đặt tự bật khi đăng nhập");
+        }
+        return Ok(());
+    }
+    if tailscale_bin().is_none() {
+        bail!("không tìm thấy tailscale — cài https://tailscale.com/download rồi đăng nhập trước");
+    }
+    let exe = std::env::current_exe().context("đường dẫn 8sync")?;
+    let argv = at_login_argv(&exe, port);
+    let line = win_cmdline(&argv);
+    if dry {
+        println!("reg add {RUN_KEY} /v {RUN_NAME} /t REG_SZ /d {line} /f");
+        println!("start {line}{}", if ui_port_busy(port) { "   # skipped: port busy" } else { "" });
+        return Ok(());
+    }
+    let st = Command::new("reg").args(["add", RUN_KEY, "/v", RUN_NAME, "/t", "REG_SZ", "/d", &line, "/f"]).stdout(Stdio::null()).status().context("reg add")?;
+    if !st.success() {
+        bail!("không ghi được {RUN_KEY}\\{RUN_NAME}");
+    }
+    ui::ok("HQ sẽ tự bật (qua Tailscale, không mở cửa sổ) mỗi lần anh đăng nhập máy. Gỡ: `8sync hq ui --at-login-off`");
+    if ui_port_busy(port) {
+        ui::info(&format!("port {port} đang có HQ chạy — để nguyên; lần đăng nhập sau mới bật bản tailnet. Muốn ngay: tắt HQ đó rồi chạy `8sync hq ui --tailnet`"));
+        return Ok(());
+    }
+    Command::new(&argv[0]).args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().context("start HQ")?;
+    ui::info("đang bật HQ chạy nền; khoảng 20 giây nữa chạy `8sync hq ui --relink` để lấy link đăng nhập cho điện thoại");
+    Ok(())
 }
 
 /// cloudflared's login cert: `TUNNEL_ORIGIN_CERT`, else `~/.cloudflared/cert.pem` (where
@@ -2785,29 +2984,12 @@ fn start_public(port: u16, file: &Path, nonce: &str) -> Result<Option<std::proce
             return Ok(None);
         }
     };
-    let key = match random_hex32() {
-        Ok(k) => k,
-        Err(e) => {
-            let _ = tun.kill();
-            let _ = tun.wait();
-            return Err(e);
-        }
-    };
-    let since = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-    let pid = std::process::id();
-    let owner = LinkOwner { pid, start: crate::verbs::hq_core::sys::proc_start(pid), port };
-    if let Err(e) = write_private(file, format!("{}\n", public_json(&host, &key, nonce, since, owner)).as_bytes()) {
-        let _ = tun.kill();
-        let _ = tun.wait();
-        return Err(e);
-    }
-    println!("Link điều khiển từ xa: https://{host}/api/login?k={key}");
-    if named.is_some() {
-        ui::warn(&format!("Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Link đăng nhập dùng trong 10 phút (thiết bị đã vào giữ 12 giờ); cần link mới: `8sync hq ui --relink`. Địa chỉ cố định https://{host} (named tunnel {NAMED_TUNNEL}), giữ qua `8sync up` và các lần bật lại; khoá HQ + cookie vẫn bắt buộc — nên bật thêm Cloudflare Access cho {host}."));
+    let note = if named.is_some() {
+        format!("Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Link đăng nhập dùng trong 10 phút (thiết bị đã vào giữ 12 giờ); cần link mới: `8sync hq ui --relink`. Địa chỉ cố định https://{host} (named tunnel {NAMED_TUNNEL}), giữ qua `8sync up` và các lần bật lại; khoá HQ + cookie vẫn bắt buộc — nên bật thêm Cloudflare Access cho {host}.")
     } else {
-        ui::warn("Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Link đăng nhập dùng trong 10 phút (thiết bị đã vào giữ 12 giờ); cần link mới cùng địa chỉ: `8sync hq ui --relink`. Địa chỉ giữ nguyên qua `8sync up`, chết khi tắt `8sync hq ui`; quick tunnel của Cloudflare không có SLA. Muốn địa chỉ cố định: `8sync hq ui --tunnel-setup hq.<domain>`.");
-    }
-    Ok(Some(tun))
+        "Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Link đăng nhập dùng trong 10 phút (thiết bị đã vào giữ 12 giờ); cần link mới cùng địa chỉ: `8sync hq ui --relink`. Địa chỉ giữ nguyên qua `8sync up`, chết khi tắt `8sync hq ui`; quick tunnel của Cloudflare không có SLA. Muốn địa chỉ cố định: `8sync hq ui --tailnet` (chỉ thiết bị trong tailnet) hoặc `--tunnel-setup hq.<domain>`.".to_string()
+    };
+    publish_link(tun, &host, file, nonce, port, false, &note)
 }
 
 /// Task Scheduler starts a task at priority 7: BELOW_NORMAL CPU, low memory priority and low I/O
@@ -2955,7 +3137,7 @@ fn ui_for_version(exe: &Path, newv: &str, port: u16) -> Option<PathBuf> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_only: bool, dry: bool, public: bool) -> Result<()> {
+fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_only: bool, dry: bool, public: bool, tailnet: bool) -> Result<()> {
     let paths = Paths::new()?;
     let public_file = paths.cfg_dir.join("public.json");
     let home = hq_home()?;
@@ -3019,7 +3201,9 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
             println!("write {}", paths.cfg_dir.join("channel-mcp.json").display());
         }
         println!("set local = true in {}\nHOSTNAME=127.0.0.1 PORT={port} {prog} {}\nopen {url}{}", paths.config().display(), args.join(" "), if no_open { " (skipped)" } else { "" });
-        if public {
+        if tailnet {
+            println!("tailscale serve --https=443 http://127.0.0.1:{port}   # → https://<machine>.<tailnet>.ts.net");
+        } else if public {
             let run_cfg = paths.cfg_dir.join(TUNNEL_RUN_CFG);
             match load_named(&paths.cfg_dir.join(TUNNEL_FILE)) {
                 Ok(n) => println!("cloudflared {}{}", tunnel_args(port, n.as_ref().map(|t| (t, run_cfg.as_path()))).join(" "), n.map(|t| format!("   # named tunnel → https://{}", t.hostname)).unwrap_or_else(|| "   # quick tunnel".into())),
@@ -3061,7 +3245,8 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
         }
         ui::info(LOCAL_ON_NOTICE);
     }
-    // Tunnel thread: waits for the server, then opens the quick tunnel; the main thread owns cleanup.
+    // Tunnel thread: waits for the server, then opens the tunnel (Cloudflare, or `tailscale serve` for
+    // `--tailnet`); the main thread owns cleanup.
     let tunnel: std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>> = Default::default();
     let tunnel_job = nonce.map(|nonce| {
         let (slot, file) = (tunnel.clone(), public_file.clone());
@@ -3070,7 +3255,7 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
                 ui::warn("HQ chưa trả lời sau 60 giây — không mở link từ xa.");
                 return;
             }
-            match start_public(port, &file, &nonce) {
+            match if tailnet { start_tailnet(port, &file, &nonce) } else { start_public(port, &file, &nonce) } {
                 Ok(t) => *slot.lock().unwrap_or_else(|p| p.into_inner()) = t,
                 Err(e) => ui::warn(&format!("không mở được link từ xa: {e:#}")),
             }
@@ -3365,7 +3550,9 @@ pub fn run(a: Args) -> Result<()> {
         Sub::Ui { relink: true, .. } => cmd_ui_relink(),
         Sub::Ui { tunnel_setup: Some(host), .. } => cmd_tunnel_setup(&host, dry),
         Sub::Ui { tunnel_off: true, .. } => cmd_tunnel_off(),
-        Sub::Ui { port, app, no_open, off: false, update, install, public, .. } => cmd_ui(port, app, no_open, update, install, dry, public),
+        Sub::Ui { port, at_login: true, .. } => cmd_at_login(port, true, dry),
+        Sub::Ui { port, at_login_off: true, .. } => cmd_at_login(port, false, dry),
+        Sub::Ui { port, app, no_open, off: false, update, install, public, tailnet, .. } => cmd_ui(port, app, no_open, update, install, dry, public || tailnet, tailnet),
         Sub::Purge { yes } => cmd_purge(yes),
         Sub::Status => cmd_status(),
         Sub::Up { repo, name, install, now } => cmd_up(repo, &name, install, now),
@@ -3535,13 +3722,35 @@ mod tests {
     }
 
     #[test]
-    fn public_host_is_a_quick_host_or_exactly_the_named_one() {
-        assert!(public_host_ok("calm-river-42.trycloudflare.com", None));
-        assert!(public_host_ok("calm-river-42.trycloudflare.com", Some("hq.example.com")), "a quick HQ started before the setup");
-        assert!(public_host_ok("hq.example.com", Some("hq.example.com")));
+    fn public_host_is_a_quick_host_or_exactly_the_named_or_tailnet_one() {
+        const TS: &str = "desktop-a1.tail5204e3.ts.net";
+        assert!(public_host_ok("calm-river-42.trycloudflare.com", None, None));
+        assert!(public_host_ok("calm-river-42.trycloudflare.com", Some("hq.example.com"), Some(TS)), "a quick HQ started before the setup");
+        assert!(public_host_ok("hq.example.com", Some("hq.example.com"), None));
+        assert!(public_host_ok(TS, None, Some(TS)));
         for (h, n) in [("hq.example.com", None), ("hq.example.com.evil.io", Some("hq.example.com")), ("evil.hq.example.com", Some("hq.example.com")), ("a.trycloudflare.com.evil.io", Some("hq.example.com")), ("HQ.example.com", Some("hq.example.com"))] {
-            assert!(!public_host_ok(h, n), "{h} {n:?}");
+            assert!(!public_host_ok(h, n, Some(TS)), "{h} {n:?}");
         }
+        assert!(!public_host_ok("other.tail5204e3.ts.net", None, Some(TS)), "another machine of the tailnet");
+        assert!(!public_host_ok(TS, None, None), "Tailscale off now: the old tailnet link is not ours");
+    }
+
+    #[test]
+    fn tailnet_host_only_from_a_running_ts_net_name() {
+        let st = |state: &str, dns: &str| format!(r#"{{"BackendState":"{state}","Self":{{"DNSName":"{dns}"}}}}"#);
+        assert_eq!(tailnet_host(&st("Running", "Desktop-HRGDU0T.tail5204e3.ts.net.")).as_deref(), Some("desktop-hrgdu0t.tail5204e3.ts.net"));
+        for s in [st("Stopped", "desktop.tail5204e3.ts.net."), st("NeedsLogin", "desktop.tail5204e3.ts.net."), st("Running", "hq.example.com."), st("Running", "tail5204e3.ts.net."), st("Running", "evil.ts.net.example.com."), st("Running", ""), "junk".into()] {
+            assert_eq!(tailnet_host(&s), None, "{s}");
+        }
+        assert!(serve_ready("https://desktop-a1.tail5204e3.ts.net/", "desktop-a1.tail5204e3.ts.net"));
+        assert!(!serve_ready("https://desktop-a1.tail5204e3.ts.net:8443/", "desktop-a1.tail5204e3.ts.net"));
+        assert!(!serve_ready("|-- proxy http://127.0.0.1:8740", "desktop-a1.tail5204e3.ts.net"));
+    }
+
+    #[test]
+    fn at_login_runs_tailnet_hq_headless_on_the_port() {
+        let argv = at_login_argv(Path::new(r"C:\Users\A B\.local\bin\8sync.exe"), 8741);
+        assert_eq!(win_cmdline(&argv), r#"conhost.exe --headless "C:\Users\A B\.local\bin\8sync.exe" hq ui --tailnet --no-open --port 8741"#);
     }
 
     fn tmp(tag: &str) -> PathBuf {
