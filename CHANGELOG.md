@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.20] — 2026-11-05
+
+### Fixed
+- HQ Kết quả: lượt bắt đầu bằng lệnh đã bung (`# /eccx-… — …` rồi `Goal: \`…\``) giờ mang tên là nội dung `Goal:` (bỏ backtick) thay vì tiêu đề lệnh, nên các lượt `/eccx-*` trong mục lục không còn trùng tên nhau.
+- HQ Chat phòng: trạng thái "phòng đang làm" (`working`) giờ vào thẳng `RoomLogProvider`, nên nút dưới tin trong chat và khung Kết quả dùng chung một cờ: lượt mới nhất của phòng đang làm hiện "Đang làm" + vòng xoay ở cả hai chỗ, không còn chat ghi "Kết quả" trỏ vào câu trả lời dở.
+- HQ map tin của anh → lượt: chỉ nhận lượt bắt đầu trong khoảng 1 phút trước đến 30 phút sau tin, nên tin ngắn như "ok" không còn dính vào một lượt muộn hàng giờ sau.
+
 ## [0.122.19] — 2026-11-05
 
 ### Added

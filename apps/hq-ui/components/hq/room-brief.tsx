@@ -76,7 +76,7 @@ export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: 
       )}
 
       {room.session_id ? (
-        <RoomLog room={room.label} working={n.state === "working"} onFull={term.open ?? undefined} fill />
+        <RoomLog room={room.label} onFull={term.open ?? undefined} fill />
       ) : (
         <p className="text-xs text-muted-foreground">Nhật ký đọc từ transcript của Claude Code: phòng này chưa có session id. Mở terminal để xem nó làm gì.</p>
       )}

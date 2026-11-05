@@ -67,13 +67,21 @@ export function promptBody(prompt: string): string {
   return prompt.replace(FRAME, "").trim();
 }
 
-/** One line naming a turn in the table of contents. */
+/** An expanded slash command ("# /eccx-full — …" then "Goal: `what the owner typed`"): its heading names the command, not the work. */
+const COMMAND_HEAD = /^#\s+\/[\w:.-]+\s/;
+const GOAL = /^Goal:\s*(.+)$/m;
+
+/** One line naming a turn in the table of contents: an expanded command's `Goal:`, else the prompt's first line. */
 export function turnTitle(t: Pick<Turn, "prompt">, max = 90): string {
   if (t.prompt == null) return "(đầu nhật ký)";
-  const line = promptBody(t.prompt)
-    .split("\n")
-    .map((l) => l.replace(/^[#>*\-\s]+/, "").trim())
-    .find(Boolean);
+  const body = promptBody(t.prompt);
+  const goal = COMMAND_HEAD.test(body) ? GOAL.exec(body)?.[1].replace(/`/g, "").trim() : undefined;
+  const line =
+    goal ||
+    body
+      .split("\n")
+      .map((l) => l.replace(/^[#>*\-\s]+/, "").trim())
+      .find(Boolean);
   const s = (line ?? "").replace(/\s+/g, " ");
   if (!s) return "(lời nhắn trống)";
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
@@ -81,15 +89,20 @@ export function turnTitle(t: Pick<Turn, "prompt">, max = 90): string {
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
 
+/** Clock slack before a message, and how long after it the room may take to pick it up. */
+const SLACK_MS = 60_000;
+const PICKUP_MS = 30 * 60_000;
+
 /**
- * The turn an owner message started: the first turn at or after it (one minute of clock slack) whose
- * prompt carries the message's first 80 characters. A reply from the room maps to the turn it was
+ * The turn an owner message started: the first turn from one minute before it to 30 minutes after whose
+ * prompt carries the message's first 80 characters (an inbox delivery carries it under HQ's frame). The
+ * window keeps a short "ok" off a turn hours later. A reply from the room maps to the turn it was
  * written in: the last one that started before it.
  */
 export function turnForMessage(turns: readonly Turn[], m: { kind: string; text: string | null; ts: number }): Turn | null {
   if (m.kind === "session_reply") {
     let hit: Turn | null = null;
-    for (const t of turns) if (t.at != null && t.at <= m.ts + 60_000 && t.output) hit = t;
+    for (const t of turns) if (t.at != null && t.at <= m.ts + SLACK_MS && t.output) hit = t;
     return hit;
   }
   if (m.kind !== "owner_message" || !m.text) return null;
@@ -98,7 +111,9 @@ export function turnForMessage(turns: readonly Turn[], m: { kind: string; text: 
   const cmd = /^\/[\w:.-]+\s+([\s\S]+)$/.exec(text);
   const needle = norm(cmd ? cmd[1] : text).slice(0, 80);
   if (!needle) return null;
-  return turns.find((t) => t.prompt != null && (t.at == null || t.at >= m.ts - 60_000) && norm(t.prompt).includes(needle)) ?? null;
+  return (
+    turns.find((t) => t.prompt != null && (t.at == null || (t.at >= m.ts - SLACK_MS && t.at <= m.ts + PICKUP_MS)) && norm(t.prompt).includes(needle)) ?? null
+  );
 }
 
 /** Every turn's output as one markdown file: a heading per turn (its title and time), its output under it. */

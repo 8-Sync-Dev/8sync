@@ -29,7 +29,7 @@ const TABS: { id: Tab; label: string }[] = [
  * reply, tool call and subagent, newest at the bottom. A chat link to a result switches to Kết quả.
  * `onFull` opens its terminal.
  */
-export function RoomLog({ room, working, onFull, fill }: { room: string; working?: boolean; onFull?: () => void; fill?: boolean }) {
+export function RoomLog({ room, onFull, fill }: { room: string; onFull?: () => void; fill?: boolean }) {
   const ctx = useRoomLog();
   const [tab, setTab] = useState<Tab>("results");
   const seq = ctx?.focused?.seq;
@@ -80,7 +80,7 @@ export function RoomLog({ room, working, onFull, fill }: { room: string; working
           <Skeleton className="h-3.5 w-3/4" />
         </div>
       ) : tab === "results" ? (
-        <RoomOutputs turns={data.turns} now={ctx!.now} room={room} working={!!working} />
+        <RoomOutputs turns={data.turns} now={ctx!.now} room={room} />
       ) : (
         <LogLines events={data.events} now={ctx!.now} fill={fill} />
       )}
