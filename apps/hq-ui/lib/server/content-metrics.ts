@@ -2,8 +2,9 @@
 // HQ's SQLite, not the content DB: that one belongs to content-post-agency and HQ adds no tables to it.
 // A reading is never overwritten (numbers move by the hour); the view takes the newest per post+platform.
 import type { DatabaseSync } from "node:sqlite";
+import { isRoomRef } from "../artifacts";
 import { METRIC_FIELDS, PLATFORM_RE, type MetricField, type MetricRow } from "../content-metrics";
-import { isRoomRef, LINK_MAX } from "./artifacts";
+import { LINK_MAX } from "./artifacts";
 import { stamp } from "./db";
 
 /** A reading may be dated a little ahead (clock skew), never further. */
