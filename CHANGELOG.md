@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.21] — 2026-11-05
+
+### Changed
+- HQ Chat phòng trên màn rộng: ô nhắn tách khỏi vùng chia, nằm thành một hàng riêng trải hết chiều ngang dưới cả hai cột. Kéo viền giữa chỉ đổi chỗ giữa tin nhắn và Nhật ký, không còn bóp ô nhắn theo cột chat. Màn hẹp/điện thoại giữ như cũ.
+
 ## [0.122.20] — 2026-11-05
 
 ### Fixed

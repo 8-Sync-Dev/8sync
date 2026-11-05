@@ -14,6 +14,7 @@ Owner 2026-11-05: "release sài liền" — gộp chuỗi PR HQ (#278 hq-control
 - [x] v0.122.17: review độc lập #315 → chặn SVG ở Kết quả, kiểm lại tên bí mật/thư mục cấm khi đọc, digest một dòng
 
 ## Current
+v0.122.21: ô nhắn Chat phòng ra hàng riêng full-width dưới split (split chỉ còn tin nhắn | Nhật ký) theo ảnh owner 2026-11-05.
 v0.122.20: Kết quả đặt tên lượt `/eccx-*` theo `Goal:`, cờ `working` vào `RoomLogProvider` (chat + panel cùng "Đang làm"), map tin → lượt trong 1 phút trước … 30 phút sau.
 Research (/eccx-research, chỉ báo cáo): trail/graphify đã cài trong harness nhưng agent ít dùng (Claude Code 7 ngày: trail 1 421 lần vs grep/Read ~23 k); HQ chưa có tab đồ thị code; `harness toolstats` sai tên thư mục session omp trên Windows (`toolstats.rs` + `web.rs` `session_slug`); dsh-superagent (DeepSeek) chỉ dùng read/glob/grep.
 
