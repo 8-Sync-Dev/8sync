@@ -254,16 +254,28 @@ fn tail_hits(t: &[&str]) -> bool {
 /// A shell word that expands ([`EXPANDS`]) and can land on an owner file: an `8sync` segment (any
 /// glob before it: `~/.c*/8sync/web-t*`, `~/*/8sync/…`; a bare `*` there only when a later
 /// segment is fixed) followed by segments that fit an owner path. With the hook's cwd under an
-/// owner dir (`base`), relative words count from there (`web-t*`). A huge expanding word near
-/// owner files is refused unread.
+/// owner dir (`base`), relative words count from there (`web-t*`). A brace can span `/`
+/// (`8sync{/web-tok,}en`), so the segments from the first `{` to the last `}` stand for any
+/// number of segments (like `**`), and a span that names `8sync` itself is refused outright.
+/// No length cap: [`wild_match`] is linear, so a long word is decided, not waved through.
+///
+/// Limits, by design: a string matcher cannot resolve variables that spell a path across
+/// segments (`D=.config/8s; F=web-tok; cat ~/${D}ync/${F}en`), command output, or files a
+/// script reads later. This guard stops the plain and lightly-obfuscated reads a session makes
+/// by mistake; the real protection for the token, key and secrets is their owner-only file
+/// permissions and the HQ token checks.
 fn owner_dynamic(w: &str, base: Option<&[String]>) -> bool {
     if !w.contains(EXPANDS) {
         return false;
     }
-    if w.len() > 256 {
-        return w.contains("8sync") || base.is_some();
+    let mut segs: Vec<&str> = w.split('/').filter(|s| !s.is_empty()).collect();
+    if let Some(f) = segs.iter().position(|s| s.contains(['{', '}'])) {
+        let l = segs.iter().rposition(|s| s.contains('}')).filter(|&l| l >= f).unwrap_or(segs.len() - 1);
+        if segs[f..=l].iter().any(|s| s.contains("8sync")) {
+            return true;
+        }
+        segs.splice(f..=l, ["**"]);
     }
-    let segs: Vec<&str> = w.split('/').filter(|s| !s.is_empty()).collect();
     // `$x` may be relative too, so inside an owner dir it counts from there.
     let absolute = w.starts_with(['/', '~']) || w.as_bytes().get(1) == Some(&b':');
     if let (Some(base), false) = (base, absolute) {
@@ -803,6 +815,10 @@ mod tests {
             r"cat ~/.config/8sync/$'\x77eb-token'",
             "cat ~/.config/8sync/$(echo web)-token",
             "cat ~/.config/8sync/hq/**",
+            // Braces that span `/`, or name the `8sync` dir itself.
+            "cat ~/.config/8sync{/web-tok,}en",
+            "cat ~/.config/8sync/{a/b/c,web-token}",
+            "cat ~/.config/{8sync,x}/web-token",
         ] {
             assert!(decide_in(".", cmd).is_some_and(|d| d.contains("owner inbox")), "{cmd} must be denied");
         }
@@ -829,17 +845,28 @@ mod tests {
             (".", "ls ~/.config/*"),
             (".", "ls src/*/*"),
             (".", "cat $HOME/.config/8sync/skills/a.md"),
+            (".", "cat ~/.config/8sync/skills/{a,b}.md"),
+            (".", "ls ~/.local/state/8sync/ccc/{rooms,permit}"),
         ] {
             assert!(decide_in(cwd, cmd).is_none(), "{cmd} in {cwd} must pass");
         }
     }
 
     #[test]
-    fn a_huge_glob_word_is_denied_fast_not_matched_slowly() {
+    fn a_huge_glob_word_is_decided_fast_and_denied_when_it_reaches_an_owner_file() {
         // The old recursive matcher backtracked exponentially here: the hook hung and was skipped.
-        let word = format!("cat ~/.config/8sync/{}", "*".repeat(3000));
+        // No length cap either (it let `8s?nc` + 300 `*` through): every word goes through the matcher.
+        for word in [
+            format!("cat ~/.config/8sync/{}", "*".repeat(3000)),
+            format!("cat ~/.c*/8s?nc/web-t{}n", "*".repeat(300)),
+            format!("cat ~/.c*/8s?nc/web-t{}n", "*".repeat(3000)),
+        ] {
+            let t = std::time::Instant::now();
+            assert!(decide("Bash", json!({ "command": word })).is_some_and(|d| d.contains("owner inbox")), "{}…", &word[..30]);
+            assert!(t.elapsed() < std::time::Duration::from_millis(50), "took {:?}", t.elapsed());
+        }
         let t = std::time::Instant::now();
-        assert!(decide("Bash", json!({ "command": word })).is_some_and(|d| d.contains("owner inbox")));
+        assert!(decide("Bash", json!({ "command": format!("ls ~/.config/8sync/skills/{}", "*".repeat(3000)) })).is_none());
         assert!(t.elapsed() < std::time::Duration::from_millis(50), "took {:?}", t.elapsed());
         // Matching itself is linear-ish even on a long star pattern against a long name.
         let t = std::time::Instant::now();
