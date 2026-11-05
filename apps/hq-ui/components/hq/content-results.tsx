@@ -222,8 +222,8 @@ export function ContentOverview({ items, results, error, now, onOpen }: { items:
                     <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums">
                       {dayKey(at).slice(8, 10)}/{dayKey(at).slice(5, 7)} {timeOf(at)}
                     </td>
-                    <td className="max-w-[18rem] px-3 py-2">
-                      <button type="button" onClick={() => onOpen(it)} className="flex min-w-0 items-center gap-1.5 rounded text-left outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60">
+                    <td className="w-[21.5rem] px-3 py-2">
+                      <button type="button" onClick={() => onOpen(it)} title={`#${it.id} ${it.title}`} className="flex max-w-[20rem] min-w-0 items-center gap-1.5 rounded text-left outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60">
                         <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium", FORMAT_TONE[it.format], STATUS_EDGE[it.status])}>
                           <StatusIcon status={it.status} />
                           {FORMAT_LABEL[it.format]}
