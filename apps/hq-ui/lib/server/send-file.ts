@@ -36,10 +36,17 @@ export function attachment(name: string): string {
 /**
  * `file` as the answer to `req`: `Range: bytes=` gets 206 with just that slice (a player seeks without
  * pulling the file), an out-of-file range 416; `download` adds `Content-Disposition: attachment` with
- * the file's name. 404 when the file went away between the lookup and the open.
+ * the file's name; `headers` adds the caller's own (a CSP sandbox, an inline disposition). The body never
+ * runs past the stat'ed `size` (a file still being appended to cannot outrun content-length). 404 when
+ * the file went away between the lookup and the open.
  */
-export async function sendFile(req: Request, file: SentFile, { download, cache }: { download: boolean; cache: string }): Promise<Response> {
+export async function sendFile(
+  req: Request,
+  file: SentFile,
+  { download, cache, headers: extra }: { download: boolean; cache: string; headers?: Record<string, string> },
+): Promise<Response> {
   const headers: Record<string, string> = {
+    ...extra,
     "content-type": file.type,
     "accept-ranges": "bytes",
     "cache-control": cache,
@@ -50,10 +57,15 @@ export async function sendFile(req: Request, file: SentFile, { download, cache }
   if (range === "unsatisfiable") return new Response(null, { status: 416, headers: { ...headers, "content-range": `bytes */${file.size}` } });
   let stream: fs.ReadStream;
   try {
-    stream = range ? fs.createReadStream(file.path, { start: range.start, end: range.end }) : fs.createReadStream(file.path);
+    const span = range ?? (file.size > 0 ? { start: 0, end: file.size - 1 } : null);
+    stream = fs.createReadStream(file.path, span ?? undefined);
     await once(stream, "open");
   } catch {
     return bad("not found", 404);
+  }
+  if (file.size === 0) {
+    stream.destroy();
+    return new Response(null, { headers: { ...headers, "content-length": "0" } });
   }
   const body = Readable.toWeb(stream) as ReadableStream<Uint8Array>;
   if (!range) return new Response(body, { headers: { ...headers, "content-length": String(file.size) } });

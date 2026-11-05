@@ -518,7 +518,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   }}
                 />
               ) : (
-              <RoomLogProvider sessionId={room?.session_id ?? null} token={token} working={roomState?.state === "working"}>
+              <RoomLogProvider sessionId={room?.session_id ?? null} cwd={room?.cwd ?? null} token={token} working={roomState?.state === "working"}>
                 <TeamView
                   hq={hq}
                   messages={view.messages}
@@ -553,7 +553,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               {contentOn && <ContentView token={token} active={tab === "content"} />}
             </TabsContent>
             <TabsContent value="artifacts" className="h-full">
-              <ArtifactsView token={token} repo={repo?.root ?? null} active={tab === "artifacts"} />
+              <ArtifactsView token={token} repo={repo?.root ?? null} active={tab === "artifacts"} rooms={officeRooms} onAsk={openRoom} />
             </TabsContent>
             <TabsContent value="preview" className="h-full">
               <PreviewView state={previews} token={token} rooms={officeRooms} repo={repo?.root ?? null} />

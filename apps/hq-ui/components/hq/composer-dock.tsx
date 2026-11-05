@@ -97,3 +97,9 @@ export function ComposerDock({ id, draft, label, children }: { id: string; draft
     </>
   );
 }
+
+/** Opens dock `id`'s sheet from outside it (a quote put into its composer); nothing changes from `sm` up. */
+export function openDock(id: string) {
+  sessionStorage.setItem(KEY(id), "1");
+  for (const l of listeners) l();
+}

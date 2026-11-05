@@ -7,12 +7,14 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { Readable } from "node:stream";
 import type { DatabaseSync } from "node:sqlite";
-import { ARTIFACT_TYPES, baseName, extOf, maxArtifactBytes, parseContentIds, type Artifact, type ArtifactKind } from "../artifacts";
+import { baseName, extOf, fileType, maxArtifactBytes, parseContentIds, ARTIFACT_TYPES, type Artifact, type ArtifactKind, type ArtifactView } from "../artifacts";
 import { rootKey } from "../preview";
+import { fileSecret, safeEqual } from "./auth";
 import { stamp } from "./db";
 import { projectOf } from "./office";
+import { mediaSecretPath } from "./paths";
+import type { SentFile } from "./send-file";
 
 export const TITLE_MAX = 200;
 export const NOTE_MAX = 2000;
@@ -28,13 +30,19 @@ export const isRoomRef = (v: unknown): v is string => typeof v === "string" && S
 const BLOCKED_DIR: Record<string, true> = { ".git": true, ".ssh": true, ".gnupg": true, ".aws": true, ".kube": true, node_modules: true };
 const SECRET_NAME = /(^\.env)|secret|credential|password|passwd|id_rsa|id_ed25519|private[-_]?key|ui-token/i;
 
-const inside = (real: string, base: string) => {
+export const inside = (real: string, base: string) => {
   const a = process.platform === "win32" ? real.toLowerCase() : real;
   const b = process.platform === "win32" ? base.toLowerCase() : base;
   return a === b || a.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
 };
 
-function realOrNull(p: string): string | null {
+/** A real path HQ may point at: no credential-looking name, no `.git`/`.ssh`/`node_modules`… between `root` and it. */
+export function allowedUnder(real: string, root: string): boolean {
+  if (SECRET_NAME.test(baseName(real))) return false;
+  return !path.relative(root, real).split(path.sep).some((seg) => Object.hasOwn(BLOCKED_DIR, seg.toLowerCase()));
+}
+
+export function realOrNull(p: string): string | null {
   try {
     return fs.realpathSync.native(p);
   } catch {
@@ -64,7 +72,7 @@ function linkOf(v: unknown): string | null | undefined {
 }
 
 /** The kind a path is served as, or null when the type is not one HQ shows. */
-export const kindOf = (p: string): ArtifactKind | null => ARTIFACT_TYPES[extOf(p)]?.kind ?? null;
+export const kindOf = (p: string): ArtifactKind | null => fileType(p)?.kind ?? null;
 
 /**
  * Register (or refresh) one file. `roots` = the projects HQ knows (lib/server/in-view knownRoots).
@@ -215,19 +223,21 @@ export function forgetArtifact(db: DatabaseSync, id: string): boolean {
   return db.prepare("DELETE FROM artifacts WHERE id = ?").run(id).changes > 0;
 }
 
-export type OpenArtifact = { artifact: Artifact; type: string; size: number; body: ReadableStream };
+export type ResolvedArtifact = { artifact: Artifact; file: SentFile };
 
-/** The bytes of one artifact, or null when it is gone, moved out of its root or no longer a shown type. */
-export function openArtifact(db: DatabaseSync, id: string): OpenArtifact | null {
+/**
+ * One artifact's file as it is on disk now: its real path, served type and stat'ed size; null when it is
+ * gone, moved out of its root, swapped for a link to a secret, or no longer a shown type or size.
+ */
+export function resolveArtifact(db: DatabaseSync, id: string): ResolvedArtifact | null {
   const row = getRow(db, id);
   if (!row) return null;
   const real = realOrNull(row.path);
   const rootReal = realOrNull(row.root);
   if (!real || !rootReal || !inside(real, rootReal)) return null;
   // The path may have been swapped for a symlink since registration: repeat the registration filters on what it is now.
-  if (SECRET_NAME.test(baseName(real))) return null;
-  if (path.relative(rootReal, real).split(path.sep).some((seg) => Object.hasOwn(BLOCKED_DIR, seg.toLowerCase()))) return null;
-  const t = ARTIFACT_TYPES[extOf(real)];
+  if (!allowedUnder(real, rootReal)) return null;
+  const t = fileType(real);
   if (!t || t.kind !== row.kind) return null;
   let st: fs.Stats;
   try {
@@ -236,8 +246,32 @@ export function openArtifact(db: DatabaseSync, id: string): OpenArtifact | null 
     return null;
   }
   if (!st.isFile() || st.size > maxArtifactBytes(t.kind)) return null;
-  // Bounded to the stat'ed size: a file still being appended to must not outrun content-length or the size cap.
-  const bytes = st.size > 0 ? fs.createReadStream(real, { start: 0, end: st.size - 1 }) : Readable.from([]);
-  const body = Readable.toWeb(bytes) as unknown as ReadableStream;
-  return { artifact: withStat(row), type: t.type, size: st.size, body };
+  return { artifact: withStat(row), file: { path: real, name: baseName(real), type: t.type, size: st.size } };
 }
+
+/** How long a signed artifact URL stays good; the view's list poll hands out a fresh one. */
+export const ARTIFACT_LINK_MS = 12 * 3600_000;
+const SIG_HEX = /^[0-9a-f]{64}$/;
+
+export function artifactSig(id: string, exp: number, secret = fileSecret(mediaSecretPath())): string {
+  return crypto.createHmac("sha256", secret).update(JSON.stringify(["artifact", id, exp])).digest("hex");
+}
+
+/** True for a signature of exactly this id and expiry, not expired, at most ARTIFACT_LINK_MS ahead; constant-time compare. */
+export function artifactSigValid(sig: string, id: string, exp: number, now = Date.now()): boolean {
+  if (!SIG_HEX.test(sig) || !Number.isSafeInteger(exp) || exp <= now || exp > now + ARTIFACT_LINK_MS) return false;
+  return safeEqual(sig, artifactSig(id, exp));
+}
+
+/**
+ * `/api/artifacts/<id>/file?e=&sig=`: what `<video>`, `<audio>`, `<img>` and the "Tải về" link load
+ * (they cannot send `x-hq-token`). The expiry is the next full hour + 11 h, so the URL stays the same for
+ * an hour and a list poll never reloads a playing video. The route still asks for the owner's login.
+ */
+export function artifactSrc(id: string, now = Date.now()): string {
+  const hour = 3600_000;
+  const exp = Math.ceil(now / hour) * hour + ARTIFACT_LINK_MS - hour;
+  return `/api/artifacts/${id}/file?e=${exp}&sig=${artifactSig(id, exp)}`;
+}
+
+export const withSrc = (a: Artifact, now = Date.now()): ArtifactView => ({ ...a, src: artifactSrc(a.id, now) });
