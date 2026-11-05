@@ -143,26 +143,33 @@ export class EndpointMissingError extends Error {
   }
 }
 
-// Per-launch dashboard token: `8sync harness web` opens `/#t=<token>`. The fragment never
-// reaches the server, so the served page holds no secret. Read it once, keep it in
-// sessionStorage (this tab only, survives reloads), and strip it from the address bar.
-// Every /api call must echo it (the server refuses the call otherwise).
+// Per-launch dashboard token. `8sync harness web` opens `/#n=<nonce>`: a one-time nonce
+// (single use, 60 s) in the fragment, which the browser never sends. Strip it from the
+// address bar at once, trade it at /api/session for the token, keep that in sessionStorage
+// (this tab only, survives reloads). Every /api call must echo the token (the server refuses
+// the call otherwise). Under `vite dev` there is no nonce: the dev proxy adds the token.
 const TOKEN_KEY = "8sync-token";
-function launchToken(): string {
+async function launchToken(): Promise<string> {
   if (typeof window === "undefined") return "";
-  const t = /^#t=([0-9a-f]+)$/.exec(window.location.hash)?.[1];
-  if (t) {
-    sessionStorage.setItem(TOKEN_KEY, t);
-    history.replaceState(null, "", window.location.pathname + window.location.search);
-    return t;
-  }
-  return sessionStorage.getItem(TOKEN_KEY) ?? "";
+  const nonce = /^#n=([0-9a-f]+)$/.exec(window.location.hash)?.[1];
+  if (!nonce) return sessionStorage.getItem(TOKEN_KEY) ?? "";
+  history.replaceState(null, "", window.location.pathname + window.location.search);
+  const r = await fetch("/api/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ nonce }),
+  });
+  if (!r.ok) return sessionStorage.getItem(TOKEN_KEY) ?? "";
+  const { token } = (await r.json()) as { token: string };
+  sessionStorage.setItem(TOKEN_KEY, token);
+  return token;
 }
-const TOKEN = launchToken();
+const TOKEN: Promise<string> = launchToken().catch(() => "");
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (TOKEN) headers.set("x-8sync-token", TOKEN);
+  const token = await TOKEN;
+  if (token) headers.set("x-8sync-token", token);
   const r = await fetch(url, { ...init, headers });
   // SPA fallback: backend returns 200 + index.html for unknown /api paths. A
   // missing endpoint therefore looks like a successful HTML response.

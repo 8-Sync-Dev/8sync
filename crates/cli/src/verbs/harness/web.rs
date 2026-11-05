@@ -2,8 +2,8 @@
 //! (web/dist via rust-embed) + a JSON API over the harness state. Bound to
 //! 127.0.0.1 only (single-user local tool). Every request passes [`guard`]:
 //! Host must be this loopback port (blocks DNS rebinding), writes need a
-//! same-host or absent Origin, and `/api/*` needs the per-launch token the
-//! served index page carries. The API reuses the same data fns
+//! same-host or absent Origin, and `/api/*` needs the per-launch token, which the
+//! FE gets by trading the launch URL's one-time nonce at `/api/session`. The API reuses the same data fns
 //! as the CLI (`bench_metrics`, `eval_project_data`) and the skill registry
 //! helpers (`discover::read_registry`/`write_registry`).
 use std::net::SocketAddr;
@@ -22,41 +22,51 @@ use serde::Deserialize;
 
 use crate::{assets, ui, verbs::skill::discover::{self, detect_current_project_root}};
 
-#[derive(Clone)]
 struct Ctx {
     home: std::path::PathBuf,
     port: u16,
-    /// Random per launch; reaches the FE only in the launch URL's fragment, `/api/*` requires it (`x-8sync-token`).
+    /// Random per launch; `/api/*` requires it (`x-8sync-token`). Never on a command line or
+    /// in a page: the FE gets it from [`api_session`].
     token: String,
+    /// The launch URL's one-time nonce and when it was minted ([`redeem`]).
+    nonce: std::sync::Mutex<Option<(String, std::time::Instant)>>,
 }
 
 /// Header the FE sends the per-launch token in.
 const TOKEN_HEADER: &str = "x-8sync-token";
+/// Where the FE trades the launch nonce for the token (no token needed, same-origin POST only).
+const SESSION_PATH: &str = "/api/session";
+/// How long the launch nonce stays redeemable.
+const NONCE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
 const MEMORY_ALLOWLIST: &[&str] = &["STATE", "KNOWLEDGE", "PLAYBOOKS", "DECISIONS", "PROJECT", "NOTES"];
 
-pub(crate) fn harness_web(home: &std::path::Path, port: u16, no_open: bool) -> Result<()> {
+fn random_hex() -> Result<String> {
     let mut raw = [0u8; 16];
     getrandom::getrandom(&mut raw).map_err(|e| anyhow::anyhow!("getrandom: {e}"))?;
-    let token: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(raw.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+pub(crate) fn harness_web(home: &std::path::Path, port: u16, no_open: bool) -> Result<()> {
+    let token = random_hex()?;
+    let nonce = random_hex()?;
     // For the Vite dev proxy (web/vite.config.ts), which has no launch URL to read it from.
     let token_file = crate::brand::config_dir(home).join("web-token");
     if let Err(e) = write_private(&token_file, &token) {
         ui::warn(&format!("could not write {} ({e}); the Vite dev proxy will get 401s", token_file.display()));
     }
-    let ctx = Arc::new(Ctx { home: home.to_path_buf(), port, token: token.clone() });
+    let ctx = Arc::new(Ctx { home: home.to_path_buf(), port, token, nonce: std::sync::Mutex::new(Some((nonce.clone(), std::time::Instant::now()))) });
     apply_active_project(home); // honor last-activated project across restarts
     let app = app(ctx);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     ui::ok(&format!("8sync harness web → http://127.0.0.1:{}  (Ctrl+C to stop)", port));
-    // The token rides in the fragment: browsers never send it, so the page itself carries no
-    // secret for another local user to GET. The FE moves it to sessionStorage and strips it.
-    // Printed only when no browser was started (`--no-open` or the opener failed): a terminal
-    // line ends up in agent transcripts.
-    let launch = format!("http://127.0.0.1:{port}/#t={token}");
+    // The browser gets a one-time nonce in the fragment (browsers never send fragments, and the
+    // argv / shell history only ever see a nonce that dies on first use or after a minute); the
+    // FE trades it at `/api/session` for the token and keeps that in sessionStorage.
+    let launch = format!("http://127.0.0.1:{port}/#n={nonce}");
     let opened = !no_open && browser_command(&launch).spawn().is_ok();
     if !opened {
-        ui::info(&format!("open this URL (it carries this launch's API token; keep it to yourself): {launch}"));
+        ui::info(&format!("open this URL within {} s (works once): {launch}", NONCE_TTL.as_secs()));
     }
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -148,12 +158,45 @@ fn check_request(
             }
         }
     }
+    if path == SESSION_PATH {
+        // The nonce trade carries no token; only the dashboard page itself may make it.
+        let same = origin.is_some_and(|o| o.eq_ignore_ascii_case(&format!("http://{host}")));
+        return if method == Method::POST && same { Ok(()) } else { Err((StatusCode::FORBIDDEN, "session must be a same-origin POST")) };
+    }
     if path.starts_with("/api/") || path == "/api" {
         if !sent_token.is_some_and(|t| same_secret(t, token)) {
             return Err((StatusCode::UNAUTHORIZED, "missing or wrong dashboard token"));
         }
     }
     Ok(())
+}
+
+/// Spend the launch nonce: true once for the right value within [`NONCE_TTL`]. A right value or an
+/// expired slot empties it (single use); a wrong guess leaves it for the real page.
+fn redeem(slot: &mut Option<(String, std::time::Instant)>, sent: &str, now: std::time::Instant) -> bool {
+    let Some((nonce, minted)) = slot.as_ref() else { return false };
+    if now.saturating_duration_since(*minted) > NONCE_TTL {
+        *slot = None;
+        return false;
+    }
+    if !same_secret(nonce, sent) {
+        return false;
+    }
+    *slot = None;
+    true
+}
+
+#[derive(Deserialize)]
+struct SessionBody {
+    nonce: String,
+}
+
+async fn api_session(State(ctx): State<Arc<Ctx>>, Json(body): Json<SessionBody>) -> Response {
+    let ok = redeem(&mut ctx.nonce.lock().unwrap_or_else(|e| e.into_inner()), &body.nonce, std::time::Instant::now());
+    if !ok {
+        return (StatusCode::UNAUTHORIZED, "launch link used or expired; restart `8sync harness web`").into_response();
+    }
+    ([(header::CACHE_CONTROL, "no-store")], Json(serde_json::json!({ "token": ctx.token }))).into_response()
 }
 
 /// Every response, refusals included, refuses to be framed (clickjacking).
@@ -190,6 +233,7 @@ type ApiErr = (StatusCode, String);
 
 fn api_routes() -> Router<Arc<Ctx>> {
     Router::new()
+        .route(SESSION_PATH, post(api_session))
         .route("/api/state", get(api_state))
         .route("/api/skills", get(api_skills))
         .route("/api/skills/toggle", post(api_skill_toggle))
@@ -1857,7 +1901,7 @@ impl Drop for TmpDir {
 #[cfg(test)]
 mod tests {
     use super::super::sessions::session_slug;
-    use super::{app, check_request, is_link, rule_delete_target, slug_to_path, write_private, Ctx};
+    use super::{app, check_request, is_link, redeem, rule_delete_target, slug_to_path, write_private, Ctx, NONCE_TTL};
     use axum::http::{Method, StatusCode};
     use std::path::PathBuf;
 
@@ -1972,7 +2016,8 @@ mod tests {
         let listener = rt.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap();
         let port = listener.local_addr().unwrap().port();
         let home = TmpHome::new("serve");
-        let ctx = std::sync::Arc::new(Ctx { home: home.0.clone(), port, token: TOK.into() });
+        const NONCE: &str = "fedcba9876543210fedcba9876543210";
+        let ctx = std::sync::Arc::new(Ctx { home: home.0.clone(), port, token: TOK.into(), nonce: std::sync::Mutex::new(Some((NONCE.into(), std::time::Instant::now()))) });
         rt.spawn(async move { axum::serve(listener, app(ctx)).await });
         let host = format!("127.0.0.1:{port}");
         let page = http(port, &format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"));
@@ -1988,6 +2033,35 @@ mod tests {
         if page.starts_with("HTTP/1.1 200") {
             assert!(page.to_ascii_lowercase().contains("cache-control: no-store"), "{page}");
         }
+        // The page trades the launch nonce for the token once; a replay or a cross-site POST gets nothing.
+        let session = |origin: &str, nonce: &str| {
+            let body = format!("{{\"nonce\":\"{nonce}\"}}");
+            http(port, &format!("POST /api/session HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()))
+        };
+        let same = format!("http://{host}");
+        let foreign = session("http://evil.test", NONCE);
+        assert!(foreign.starts_with("HTTP/1.1 403") && !foreign.contains(TOK), "{foreign}");
+        let wrong = session(&same, "00000000000000000000000000000000");
+        assert!(wrong.starts_with("HTTP/1.1 401") && !wrong.contains(TOK), "{wrong}");
+        let first = session(&same, NONCE);
+        assert!(first.starts_with("HTTP/1.1 200") && first.contains(TOK), "{first}");
+        let replay = session(&same, NONCE);
+        assert!(replay.starts_with("HTTP/1.1 401") && !replay.contains(TOK), "{replay}");
+    }
+
+    #[test]
+    fn launch_nonce_is_single_use_expires_and_ignores_wrong_guesses() {
+        let t0 = std::time::Instant::now();
+        let fresh = || Some(("n0nce".to_string(), t0));
+        let mut slot = fresh();
+        assert!(!redeem(&mut slot, "guess", t0), "wrong nonce");
+        assert!(redeem(&mut slot, "n0nce", t0), "a wrong guess does not burn it for the real page");
+        assert!(!redeem(&mut slot, "n0nce", t0), "single use");
+        let mut slot = fresh();
+        assert!(!redeem(&mut slot, "n0nce", t0 + NONCE_TTL + std::time::Duration::from_secs(1)), "expired");
+        assert!(slot.is_none() && !redeem(&mut slot, "n0nce", t0), "an expired nonce is gone");
+        let mut slot = fresh();
+        assert!(redeem(&mut slot, "n0nce", t0 + NONCE_TTL - std::time::Duration::from_secs(1)));
     }
 
     #[test]

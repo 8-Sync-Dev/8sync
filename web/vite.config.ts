@@ -19,10 +19,13 @@ function devToken(): string {
 }
 
 // Only this dev page may borrow the token: a loopback Host on the dev port (no
-// DNS-rebound name) and no Origin or this same origin (no other site's fetch).
+// DNS-rebound name), no Origin or this same origin (no other site's fetch), and a
+// `Sec-Fetch-Site` (when the browser sends one) of same-origin or none.
 function fromDevPage(req: IncomingMessage): boolean {
   const host = req.headers.host ?? "";
   if (!new RegExp(`^(127\\.0\\.0\\.1|localhost|\\[::1\\]):${DEV_PORT}$`).test(host)) return false;
+  const site = req.headers["sec-fetch-site"];
+  if (site !== undefined && site !== "same-origin" && site !== "none") return false;
   const origin = req.headers.origin;
   return origin === undefined || origin === `http://${host}`;
 }

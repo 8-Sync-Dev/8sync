@@ -56,22 +56,33 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
     // only the HQ UI, the launcher and the hooks touch them.
     // The bare names too, so a `cd ~/.config/8sync/hq; cat public.json` that never spells the
     // folder path is caught — those only beside an `8sync`, or when the hook's cwd already is an
-    // owner dir (an app's own `public.json` is fine). Quotes are dropped first (`'web'-token`), and
-    // a glob that can reach an owner dir or name (`8sync/web-t*`, `.config/8s*/hq/*`) counts.
+    // owner dir (an app's own `public.json` is fine). Quotes are dropped first (`'web'-token`); for
+    // Bash a backslash-unescaped view is checked too (`web-to\ken`; PowerShell keeps `\` as a
+    // separator). A word the shell would expand (glob, brace, `$`, backtick) that can land on an
+    // owner file counts ([`owner_dynamic`]).
     const HQ_OWNER: [&str; 7] = ["8sync/hq/inbox", "8sync/hq/ui-token", "8sync/web-token", "8sync/hq/public.json", "8sync/hq/secrets.json", "8sync/hq/session-secret", "hq/inbox/"];
     const HQ_BARE: [&str; 7] = ["ui-token", "web-token", "public.json", "secrets.json", "session-secret", ".taking.", ".claimed"];
-    let owner_cwd = v["cwd"].as_str().map(norm).is_some_and(|c| {
+    // Segments of the hook's cwd below an owner `8sync` dir (`[]` for `.config/8sync`, `["hq"]` for
+    // `.config/8sync/hq`), when it is one.
+    let owner_base: Option<Vec<String>> = v["cwd"].as_str().map(norm).and_then(|c| {
         let c = format!("{}/", c.trim_end_matches('/'));
-        c.contains("config/8sync/") || c.contains("state/8sync/hq/")
+        let i = c.find("config/8sync/").map(|i| i + "config/8sync/".len()).or_else(|| c.find("state/8sync/hq/").map(|i| i + "state/8sync/".len()))?;
+        Some(c[i..].split('/').filter(|s| !s.is_empty()).map(str::to_string).collect())
     });
-    let unquoted: Vec<String> = touched.iter().map(|t| t.replace(['"', '\'', '`'], "")).collect();
+    let owner_cwd = owner_base.is_some();
+    let raw_inputs = [ti["command"].as_str(), ti["file_path"].as_str(), ti["notebook_path"].as_str(), ti["path"].as_str()];
+    let mut views: Vec<String> = touched.clone();
+    if tool == "Bash" {
+        views.extend(raw_inputs.into_iter().flatten().map(|t| norm(&bash_unescape(t))));
+    }
+    let views: Vec<String> = views.iter().map(|t| t.replace(['"', '\''], "")).collect();
     let owner_hit = |t: &String| {
-        HQ_OWNER.iter().any(|p| t.contains(p))
-            || ((t.contains("8sync") || owner_cwd) && HQ_BARE.iter().any(|p| t.contains(p)))
-            || owner_glob(t)
-            || (owner_cwd && shell_words(t).any(|w| w.contains(['*', '?', '[']) && HQ_BARE[..5].iter().any(|n| wild_match(last_seg(w), n))))
+        let lit = t.replace('`', "");
+        HQ_OWNER.iter().any(|p| lit.contains(p))
+            || ((lit.contains("8sync") || owner_cwd) && HQ_BARE.iter().any(|p| lit.contains(p)))
+            || shell_words(t).any(|w| owner_dynamic(w, owner_base.as_deref()))
     };
-    if unquoted.iter().any(owner_hit) {
+    if views.iter().any(owner_hit) {
         return Some(decision("deny", "the HQ owner inbox, UI token, public-link key and secrets belong to the owner's HQ dashboard; a session must not write the inbox, or read the token, key or secrets. To reach another session use SendMessage; to reach the owner, reply in this session."));
     }
     // Usage snapshots feed the status line and HQ's usage tab. Readable, never written.
@@ -139,38 +150,131 @@ fn shell_words(t: &str) -> impl Iterator<Item = &str> {
     t.split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | '<' | '>')).filter(|w| !w.is_empty())
 }
 
-fn last_seg(w: &str) -> &str {
-    w.rsplit('/').next().unwrap_or(w)
-}
+/// Chars that make the shell expand a word: globs, braces, `$` (variables, `$'…'`, `$(…)`), backticks.
+const EXPANDS: [char; 6] = ['*', '?', '[', '{', '$', '`'];
 
-/// Shell glob match of one path segment: `*`, `?`, and `[…]` as any one character.
-fn wild_match(pat: &str, name: &str) -> bool {
-    let (p, n): (Vec<char>, Vec<char>) = (pat.chars().collect(), name.chars().collect());
-    fn go(p: &[char], n: &[char]) -> bool {
-        match p.first() {
-            None => n.is_empty(),
-            Some('*') => (0..=n.len()).any(|i| go(&p[1..], &n[i..])),
-            Some('?') => !n.is_empty() && go(&p[1..], &n[1..]),
-            Some('[') => {
-                let close = p.iter().position(|&c| c == ']').unwrap_or(p.len() - 1);
-                !n.is_empty() && go(&p[close + 1..], &n[1..])
-            }
-            Some(&c) => n.first() == Some(&c) && go(&p[1..], &n[1..]),
+/// Bash's reading of backslash escapes: `\x` → `x` (`web-to\ken` is `web-token`).
+fn bash_unescape(t: &str) -> String {
+    let mut out = String::with_capacity(t.len());
+    let mut it = t.chars();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            out.extend(it.next());
+        } else {
+            out.push(c);
         }
     }
-    go(&p, &n)
+    out
 }
 
-/// A globbed path that can reach an owner dir: `….config/<8sync>/…` or `….local/state/<8sync>/<hq>/…`
-/// where a `*?[` sits in the `8sync`/`hq` segment or anywhere after it (a project's own
-/// `src/config/*` is not an owner dir).
-fn owner_glob(t: &str) -> bool {
-    let glob = |s: &str| s.contains(['*', '?', '[']);
-    shell_words(t).any(|w| {
-        let after = |root: &str| w.find(root).map(|i| w[i + root.len()..].split('/').collect::<Vec<_>>());
-        let config = after(".config/").is_some_and(|s| wild_match(s[0], "8sync") && s.iter().any(|x| glob(x)));
-        let state = after(".local/state/").is_some_and(|s| s.len() > 1 && wild_match(s[0], "8sync") && wild_match(s[1], "hq") && s.iter().any(|x| glob(x)));
-        config || state
+enum Tok {
+    Star,
+    One,
+    Lit(char),
+}
+
+/// Shell glob match of one path segment against a literal `name`: `*`, `?`, `[…]` as any one
+/// character; a segment with `$`, a backtick or a brace matches anything (its expansion is
+/// unknown here). Iterative two-pointer match, O(|pat|·|name|): no backtracking blow-up.
+fn wild_match(pat: &str, name: &str) -> bool {
+    if pat.contains(['$', '`', '{']) {
+        return true;
+    }
+    let mut p: Vec<Tok> = Vec::new();
+    let mut cs = pat.chars();
+    while let Some(c) = cs.next() {
+        match c {
+            '*' if matches!(p.last(), Some(Tok::Star)) => {}
+            '*' => p.push(Tok::Star),
+            '?' => p.push(Tok::One),
+            '[' => {
+                cs.by_ref().find(|&c| c == ']');
+                p.push(Tok::One);
+            }
+            c => p.push(Tok::Lit(c)),
+        }
+    }
+    let n: Vec<char> = name.chars().collect();
+    let (mut i, mut j, mut star, mut mark) = (0, 0, None, 0);
+    while j < n.len() {
+        match p.get(i) {
+            Some(Tok::Star) => {
+                star = Some(i);
+                mark = j;
+                i += 1;
+            }
+            Some(Tok::One) => (i, j) = (i + 1, j + 1),
+            Some(Tok::Lit(c)) if *c == n[j] => (i, j) = (i + 1, j + 1),
+            _ => match star {
+                Some(s) => {
+                    i = s + 1;
+                    mark += 1;
+                    j = mark;
+                }
+                None => return false,
+            },
+        }
+    }
+    p[i..].iter().all(|t| matches!(t, Tok::Star))
+}
+
+/// A segment with a fixed character the shell keeps (`8s*`, `web-t?ken`), unlike `*`, `$x`, `[ab]`.
+fn has_literal(seg: &str) -> bool {
+    if seg.contains(['$', '`']) {
+        return false;
+    }
+    let mut depth = 0i32;
+    seg.chars().any(|c| match c {
+        '[' | '{' => {
+            depth += 1;
+            false
+        }
+        ']' | '}' => {
+            depth -= 1;
+            false
+        }
+        _ => depth <= 0 && !matches!(c, '*' | '?'),
+    })
+}
+
+/// Owner files below an `8sync` dir (config or state side); `hq/inbox/…` is matched by depth.
+const OWNER_TAILS: [&[&str]; 5] = [&["web-token"], &["hq", "ui-token"], &["hq", "public.json"], &["hq", "secrets.json"], &["hq", "session-secret"]];
+
+/// Path segments below an `8sync` dir that can land on an owner file.
+fn tail_hits(t: &[&str]) -> bool {
+    let fits = |o: &[&str]| t.len() == o.len() && t.iter().zip(o).all(|(p, n)| wild_match(p, n));
+    let inbox = t.len() >= 3 && wild_match(t[0], "hq") && wild_match(t[1], "inbox");
+    // `**` (globstar) reaches any depth: a prefix that fits an owner path is enough.
+    let globstar = t.iter().position(|s| s.contains("**")).is_some_and(|k| {
+        OWNER_TAILS.iter().copied().chain([&["hq", "inbox", "x"][..]]).any(|o| k <= o.len() && t[..k].iter().zip(o).all(|(p, n)| wild_match(p, n)))
+    });
+    globstar || inbox || OWNER_TAILS.iter().any(|o| fits(o))
+}
+
+/// A shell word that expands ([`EXPANDS`]) and can land on an owner file: an `8sync` segment (any
+/// glob before it: `~/.c*/8sync/web-t*`, `~/*/8sync/…`; a bare `*` there only when a later
+/// segment is fixed) followed by segments that fit an owner path. With the hook's cwd under an
+/// owner dir (`base`), relative words count from there (`web-t*`). A huge expanding word near
+/// owner files is refused unread.
+fn owner_dynamic(w: &str, base: Option<&[String]>) -> bool {
+    if !w.contains(EXPANDS) {
+        return false;
+    }
+    if w.len() > 256 {
+        return w.contains("8sync") || base.is_some();
+    }
+    let segs: Vec<&str> = w.split('/').filter(|s| !s.is_empty()).collect();
+    // `$x` may be relative too, so inside an owner dir it counts from there.
+    let absolute = w.starts_with(['/', '~']) || w.as_bytes().get(1) == Some(&b':');
+    if let (Some(base), false) = (base, absolute) {
+        let t: Vec<&str> = base.iter().map(String::as_str).chain(segs.iter().copied()).collect();
+        if tail_hits(&t) {
+            return true;
+        }
+    }
+    (0..segs.len()).any(|i| {
+        let tail = &segs[i + 1..];
+        wild_match(segs[i], "8sync") && (has_literal(segs[i]) || tail.iter().any(|s| has_literal(s))) && tail_hits(tail)
     })
 }
 
@@ -689,22 +793,58 @@ mod tests {
             "cat ~/.config/8sync/hq/session-secret",
             "head ~/.local/state/8sync/h?/inbox/a.jsonl",
             r"Get-Content C:\Users\a\.config\8sync\web-t*",
+            // Globs before `8sync`, Bash escapes, braces, variables, ANSI-C quoting, substitution.
+            "cat ~/.c*/8sync/web-t*",
+            "cat ~/*/8sync/web-t*",
+            r"cat ~/.config/8sync/web-to\ken",
+            r"cat ~/.config/8sync/hq/ui\-token",
+            "cat ~/.config/8sync/web-tok{e,}n",
+            "cat ~/.config/8sync/$f",
+            r"cat ~/.config/8sync/$'\x77eb-token'",
+            "cat ~/.config/8sync/$(echo web)-token",
+            "cat ~/.config/8sync/hq/**",
         ] {
             assert!(decide_in(".", cmd).is_some_and(|d| d.contains("owner inbox")), "{cmd} must be denied");
         }
+        let ps = |cmd: &str| check(&json!({ "tool_name": "PowerShell", "tool_input": { "command": cmd }, "cwd": "." }).to_string());
+        assert!(ps(r"Get-Content C:\Users\a\.config\8sync\web-t*").is_some(), r"PowerShell keeps `\` as a separator");
         // The hook's cwd already is an owner dir: bare names and their globs count.
         for (cwd, cmd) in [
             ("/home/u/.config/8sync", "cat web-token"),
             ("/home/u/.config/8sync", "cat web-t*"),
+            ("/home/u/.config/8sync", "cat */ui-token"),
             ("/home/u/.config/8sync/hq", "cat 'ui'-token"),
+            ("/home/u/.config/8sync/hq", "cat $x"),
             (r"C:\Users\a\.config\8sync\hq", "Get-Content secrets.*"),
         ] {
             assert!(decide_in(cwd, cmd).is_some_and(|d| d.contains("owner inbox")), "{cmd} in {cwd} must be denied");
         }
-        // A project's own config dir, globs elsewhere, and a plain listing stay allowed.
-        for (cwd, cmd) in [(".", "ls src/config/*"), (".", "cat app/public.json"), ("/repo", "cat web-t*"), (".", "ls ~/.local/state/8sync/ccc/rooms")] {
+        // A project's own config dir, globs that cannot reach an owner file, and plain listings pass.
+        for (cwd, cmd) in [
+            (".", "ls src/config/*"),
+            (".", "cat app/public.json"),
+            ("/repo", "cat web-t*"),
+            (".", "ls ~/.local/state/8sync/ccc/rooms"),
+            (".", "ls ~/.config/8sync/skills/*"),
+            (".", "ls ~/.config/*"),
+            (".", "ls src/*/*"),
+            (".", "cat $HOME/.config/8sync/skills/a.md"),
+        ] {
             assert!(decide_in(cwd, cmd).is_none(), "{cmd} in {cwd} must pass");
         }
+    }
+
+    #[test]
+    fn a_huge_glob_word_is_denied_fast_not_matched_slowly() {
+        // The old recursive matcher backtracked exponentially here: the hook hung and was skipped.
+        let word = format!("cat ~/.config/8sync/{}", "*".repeat(3000));
+        let t = std::time::Instant::now();
+        assert!(decide("Bash", json!({ "command": word })).is_some_and(|d| d.contains("owner inbox")));
+        assert!(t.elapsed() < std::time::Duration::from_millis(50), "took {:?}", t.elapsed());
+        // Matching itself is linear-ish even on a long star pattern against a long name.
+        let t = std::time::Instant::now();
+        assert!(!super::wild_match(&format!("{}x", "a*".repeat(3000)), &"a".repeat(3000)));
+        assert!(t.elapsed() < std::time::Duration::from_millis(500), "took {:?}", t.elapsed());
     }
 
     #[test]
