@@ -60,8 +60,9 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
     // Bash a backslash-unescaped view is checked too (`web-to\ken`; PowerShell keeps `\` as a
     // separator). A word the shell would expand (glob, brace, `$`, backtick) that can land on an
     // owner file counts ([`owner_dynamic`]).
-    const HQ_OWNER: [&str; 7] = ["8sync/hq/inbox", "8sync/hq/ui-token", "8sync/web-token", "8sync/hq/public.json", "8sync/hq/secrets.json", "8sync/hq/session-secret", "hq/inbox/"];
-    const HQ_BARE: [&str; 7] = ["ui-token", "web-token", "public.json", "secrets.json", "session-secret", ".taking.", ".claimed"];
+    const HQ_OWNER: [&str; 8] =
+        ["8sync/hq/inbox", "8sync/hq/ui-token", "8sync/web-token", "8sync/hq/public.json", "8sync/hq/secrets.json", "8sync/hq/session-secret", "8sync/hq/tunnel-credentials", "hq/inbox/"];
+    const HQ_BARE: [&str; 8] = ["ui-token", "web-token", "public.json", "secrets.json", "session-secret", "tunnel-credentials", ".taking.", ".claimed"];
     // The hook's cwd is an owner `8sync` dir (config side, or state side's `hq/`).
     let owner_cwd = v["cwd"].as_str().map(norm).is_some_and(|c| {
         let c = format!("{}/", c.trim_end_matches('/'));
@@ -239,7 +240,7 @@ fn has_literal(seg: &str) -> bool {
 }
 
 /// Owner files below an `8sync` dir (config or state side); `hq/inbox/…` is matched by depth.
-const OWNER_TAILS: [&[&str]; 5] = [&["web-token"], &["hq", "ui-token"], &["hq", "public.json"], &["hq", "secrets.json"], &["hq", "session-secret"]];
+const OWNER_TAILS: [&[&str]; 6] = [&["web-token"], &["hq", "ui-token"], &["hq", "public.json"], &["hq", "secrets.json"], &["hq", "session-secret"], &["hq", "tunnel-credentials.json"]];
 
 /// Path segments below an `8sync` dir that can land on an owner file.
 fn tail_hits(t: &[&str]) -> bool {
@@ -743,6 +744,10 @@ mod tests {
             format!(r"Add-Content C:\Users\a\.local\state\8sync\hq\inbox\{sid}.jsonl x"),
             "cat ~/.config/8sync/hq/public.json".to_string(),
             r"Get-Content C:\Users\a\.config\8sync\hq\public.json".to_string(),
+            "cat ~/.config/8sync/hq/tunnel-credentials.json".to_string(),
+            r"type C:\Users\a\.config\8sync\hq\tunnel-credentials.json".to_string(),
+            "cd ~/.config/8sync/hq; cat tunnel-credentials.json".to_string(),
+            "cat ~/.config/8sync/hq/tunnel-cred*".to_string(),
         ] {
             assert!(decide("Bash", json!({ "command": cmd })).is_some_and(|d| d.contains("owner inbox")), "{cmd} must be denied");
         }
